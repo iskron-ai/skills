@@ -1,0 +1,44 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__nks__nks_orient",
+      "mcp__nks__nks_look",
+      "mcp__nks__nks_search",
+      "mcp__nks__nks_semantic_search",
+      "mcp__nks__nks_me",
+      "Bash(make:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(git checkout:*)",
+      "Bash(git branch:*)",
+      "Bash(unzip -l:*)"
+    ]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo '{\"hookSpecificOutput\":{\"hookEventName\":\"SessionStart\",\"additionalContext\":\"iskron/skills — orient in nks-dev before acting: nks_orient(realm=nks-dev, focus_holon=1506), then your agenda nks_orient(realm=nks-dev, focus=931); the entry skill runs the protocol. Source of truth is skills/<name>/SKILL.md — run make build after edits, review the SKILL.md diff by eye.\"}}'"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "jq -r '.tool_input.command // \"\"' | grep -q 'git push' && echo '{\"hookSpecificOutput\":{\"hookEventName\":\"PostToolUse\",\"additionalContext\":\"Pushed — update NKS in nks-dev: thread repo state into holon #1506, advance delivery bianhua #1516, close resolved vimarshas (driver #1515 when done), then run the after-green-push self-review of your diff.\"}}' || true"
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,107 @@
+# iskron/skills
+Agent-facing NKS skill bundles (Claude Code skills) for the **iskron.ru** deploy — a rebranded fork of the shared methodology skill set, pointing at `mcp.iskron.ru`. Includes `align` — the skill that bootstraps any repo to this `AGENTS.md` standard.
+
+## What this project is
+- **Nature**: `library` — reusable Claude Code skill bundles consumed by agents working on iskron. Relaxed vs production: content is prose + methodology, so there are no behavioural tests. The gates are (1) human review of the `SKILL.md` diff plus the skills' own discipline and (2) a lightweight CI that validates the frontmatter contract and bundle sync (`make check`). Breakage is otherwise silent, not loud (see Production statement) — CI catches the one mechanical class (malformed frontmatter / drifted bundles).
+- **NKS realm**: `nks-dev` — every session starts with `nks_orient` here.
+- **Focus holon**: `#1506 «📦 iskron/skills (скиллы агента для iskron)»`, under the RU deploy `#1086`.
+- **Agent karta**: `#931 «👨‍💻 Разработчик скилл-репозиториев агента»` — adhikarin, steward of #1506 (and of the sibling upstream skill repo #844). Your inbox: `nks_orient(realm="nks-dev", focus="931")` at session start (self-locate fallback: `nks_admin(action="my_kartas")`).
+- **Owner karta**: `#1226 «👑 Владелец продукта»` (svatantra 主) — out-of-mandate questions go there as `posed_to` vimarshas.
+- **Delivery map**: this repo advances sub-bianhua `#1516 «📦 Скилл-плагин iskron доставлен агентам»` (anga of `#1092 «🚀 Продакшн на iskron.ru»`). The build→publish→install chain lives as kriyas `#1512 → #1513 → #1514` in #1506; open work is driver vimarsha `#1515`.
+- **Stack**: Markdown `SKILL.md` files under `skills/<name>/`, packaged into derived `<name>.skill` zip bundles via `make build`. Distributed as a Claude Code plugin marketplace (`iskron@iskron`), versioned by semver in `.claude-plugin/plugin.json` — bumped **automatically on every merge to `main`** (feat→minor, feat!/BREAKING→major, else patch; `.github/workflows/version-bump.yml`, never by hand). MCP endpoint is `https://mcp.iskron.ru/` (`.mcp.json`). No runtime, no dependencies; CI is a dependency-free format gate (pure Node + bash) — see `.github/workflows/ci.yml`.
+- **Production statement**: skills install into agents' `~/.claude/skills/` and shape how every agent working on iskron uses NKS via `mcp.iskron.ru`. A wrong instruction — e.g. a reference to a tool that nks-mcp has dropped — silently degrades every agent that loads the skill; there is no crash, only methodology drift. The consumer is the agent, not a human user. Keeping skills in sync with the nks-mcp tool surface is the core maintenance obligation.
+
+## Persistence rules
+State lives in the **repo** or in **NKS** — nowhere else.
+- **Repo**: `skills/<name>/SKILL.md` (source of truth), the derived `<name>.skill` bundles, `README.md`, conventions.
+- **NKS** (`nks-dev`): design decisions, open questions (vimarshas), hand-offs, hints — the thinking around the skills. Don't restate NKS in the repo; link to the vimarsha/holon.
+- **`skills/<name>/SKILL.md` is the source of truth.** The `<name>.skill` zips are derived build artifacts (committed for download/claude.ai); the installed copy in `~/.claude/skills/` is derived too. Never treat a hand-edited bundle or installed copy as canonical — edit the source dir and run `make build`.
+- Fetch state; never reconstruct it from memory.
+
+## Session lifecycle
+- **Start:** `nks_orient(realm="nks-dev", focus_holon="1506")`; orient by the ACTIVE BIANHUA map (`lens="bianhua"` for the forest) — open work lives as anga-vimarshas on transformations; a `genre=hint` seed, if any, is a pointer for what the map doesn't carry. The `align` counterpart is the `entry` skill, which runs the protocol. Then open your agenda: `nks_orient(realm="nks-dev", focus="931")` — incoming `posed_to` vimarshas are your inbox; pick up or explicitly defer each before starting repo work.
+- **Every push → update NKS:** thread shipped repo state into holon #1506 and advance the delivery bianhua #1516 — close (visarjana) driver vimarsha #1515 (or split it) as the repo moves toward published/installed. The skill *pipeline* (kriyas #1512–#1514) is the carrier. A thin `genre=hint` is left only for what the graph can't carry (pointer, not payload — methodology #131), never by default.
+- **Shared methodology stays shared.** The skills' *substance* (kriyas «навигация», «создание узла», «приведение репо к стандарту», intake, roadmap, вахта) is common methodology modeled once under #844/methodology — do **not** duplicate it under #1506. Only when an iskron skill *diverges* from the shared version does that divergence get its own node.
+- **Keep git refs out of NKS** — no SHAs, branch names, or PR numbers in nodes.
+- **Skill ↔ tool sync is the recurring driver:** when nks-mcp (the server behind mcp.iskron.ru) renames or drops a tool, the matching skill edits land here, ideally in the same atomic unit of time.
+
+### Branch discipline
+One branch through to its merge — commit follow-ups into it, don't chain new branches before it merges. After merge: `git checkout main && git pull`, delete the merged branch, update NKS (#1506 + close resolved vimarshas).
+
+## Working principles
+1. **Think before editing.** Orient in nks-dev; read the bianhua map. Inspect the real source in `skills/<name>/SKILL.md` — not the derived `.skill` zip, not the installed copy, not assumptions.
+2. **Surgical changes.** Touch only the skill steps the task needs. Match each bundle's existing register and terminology. Don't mass-rewrite a bundle for one fix unless asked.
+3. **Sync over invention.** A skill instruction must match the live nks-mcp tool surface — verify tool names exist before writing them into a skill.
+4. **Terminology is load-bearing.** Skills teach vocabulary to every downstream agent. Use the realm's current terms (`phenomenon`, not the retired `entity`); a typed primitive (target of given_as / ahara / upadhi / context) is a `phenomenon`, a generic graph object is a `node`.
+
+## NKS ↔ repo: where things live
+| Concern | Repo | NKS |
+|---|---|---|
+| `skills/<name>/SKILL.md` (source of truth) + derived `.skill` bundles | ✓ | |
+| `.claude-plugin/marketplace.json`, build (`Makefile`, `scripts/`, `.githooks/`) | ✓ | |
+| README, conventions | ✓ (AGENTS.md) | |
+| Design decisions, open questions | | ✓ (vimarshas) |
+| Plans, hand-offs | | ✓ (bianhua map + anga-vimarshas on #1506/#1516; thin `genre=hint` only for off-map remainder) |
+| Commit history, SHAs, PRs | git | (never NKS) |
+
+## The bootstrap template lives in the `align` skill
+The fill-in `AGENTS.md` skeleton for future repos is `skills/align/references/agents-template.md`; the bootstrap protocol is `skills/align/SKILL.md`. **This** repo's own config is `AGENTS.md` (the file you are reading). Edit the template/protocol to improve bootstrapping for all future repos — don't confuse them with this file.
+
+## Stack
+Markdown `skills/<name>/SKILL.md` (+ optional `skills/<name>/references/*.md`) per skill — **edit these directly, they are plain files and fully greppable.** Each is packed into a derived `<name>.skill` zip (top-level `<name>/` dir containing `SKILL.md`) by `make build`. No code, no lockfiles. The only "code" is the build + format-validation scripts (`scripts/*.sh`, `scripts/*.mjs`), run by `make` and CI.
+
+## Commands
+Edit the source under `skills/<name>/` directly — no unzip dance. The `<name>.skill` zips are regenerated, not hand-edited.
+
+| Task | Command |
+|---|---|
+| Find / search across skills | `grep`/`Grep` over `skills/` (it's plain text) |
+| Edit a skill | edit `skills/<name>/SKILL.md` |
+| Rebuild the `.skill` bundles | `make build` (deterministic; or auto via the pre-commit hook) |
+| Enable the auto-rebuild hook | `make hooks` (sets `core.hooksPath -> .githooks`) |
+| Verify a bundle's contents | `unzip -l <name>.skill` |
+| Run the CI gate locally | `make check` (= `make validate` + `make check-bundles`) |
+| Validate skill frontmatter only | `make validate` (pure Node, no deps) |
+| Check committed bundles ↔ source | `make check-bundles` |
+
+The pre-commit hook (`.githooks/pre-commit`) rebuilds and stages the `.skill` bundles on every commit, so committed zips never drift from source. Run `make hooks` once per clone to enable it — **except on this owner's machine**: the `~/code/iskron/` gitconfig points `core.hooksPath` at a shared `pre-push` identity-guard (correct-user pushes), and `make hooks` would override it repo-locally and disable that guard here. On that machine, skip `make hooks` and run `make build` before committing instead (CI's `make check-bundles` catches any drift regardless). The only automated gate is **format**, not behaviour: `make validate` parses each `SKILL.md` frontmatter (catching malformed YAML such as an unescaped quote in a `description`) and `make check-bundles` confirms each `<name>.skill` contains a `<name>/` tree byte-identical to its source. Both run in GitHub CI on every push/PR (`.github/workflows/ci.yml`). The substance of a skill — whether its prose and tool references are right — is still gated by human review of the diff.
+
+## Project structure
+- `skills/<name>/SKILL.md` — **source of truth**, one dir per skill (`entry`, `writing`, `design`, `weaving`, `inquiry`, `assembly`, `integrity`, `intake`, `on-duty`, `methodology-work`, `align`, `product-roadmap`); `references/*` optional (`align`, `writing`, `product-roadmap` ship them).
+- `*.skill` — derived zip bundles (committed for manual / claude.ai install). Build output of `make build`; do not hand-edit.
+- `.claude-plugin/marketplace.json` — plugin marketplace manifest (`iskron@iskron`); `metadata.version` mirrors the plugin version. No component lists — the plugin's skills auto-discover from `skills/` (`strict: true`, plugin.json authoritative).
+- `.claude-plugin/plugin.json` — the `iskron` plugin manifest; its `version` is what Claude Code reads to deliver updates (bumped by `version-bump.yml` on every merge, never by hand).
+- `.mcp.json` — the nks MCP server binding for this repo: `https://mcp.iskron.ru/`.
+- `scripts/bump-version.mjs` + `.github/workflows/version-bump.yml` — the automatic per-merge version bump + `vX.Y.Z` tag.
+- `Makefile`, `scripts/build-skills.sh`, `.githooks/pre-commit` — the build.
+- `scripts/validate-skills.mjs` (frontmatter contract, pure Node), `scripts/check-bundles.sh` (bundle ↔ source sync), `.github/workflows/ci.yml` — the format gate.
+- `README.md` — short human-facing pointer.
+- `.claude/` — Claude Code settings: `settings.json` (committed — session hooks + team permissions), `settings.local.json` (gitignored, machine-local).
+- `.gitignore` — ignores `.DS_Store` and `.claude/settings.local.json`.
+
+## Code conventions
+- **This is a rebranded fork — keep it brand-clean.** The brand is **iskron** (`iskron@iskron`, `/iskron:<skill>`, `mcp.iskron.ru`) and the repo-bootstrap skill is **`align`**. Do not reintroduce the upstream plugin's brand or its bootstrap-skill name anywhere in tracked sources; when syncing changes from upstream, sweep those tokens out first (a case-insensitive search for the upstream brand over tracked files must come back empty). The shared `nks-dev` graph still carries the upstream brand for the sibling deploy — that's the shared graph, not this repo's sources.
+- **`SKILL.md` frontmatter**: `name:` (kebab, matches the skill dir) + `description:` carrying explicit trigger phrases — that description is what routes the skill, so keep triggers concrete.
+- **Skill names are bare** — no `nks-`/`iskron-` prefix. The `iskron` plugin namespaces them (`/iskron:<skill>`), so a prefix would only stutter. Trade-off: flat installs (`npx skills`, manual unzip) drop skills into `~/.claude/skills/<name>/` under the bare name and can collide there — the plugin is the canonical, collision-proof channel.
+- **Source of truth = `skills/<name>/SKILL.md`.** Edit it directly, then `make build` to regenerate the `<name>.skill` zip (which must contain `<name>/SKILL.md`, not a bare `SKILL.md`, or it won't install). New skill → add a `skills/<name>/` dir — it ships via plugin auto-discovery; never add component lists (`skills`, `commands`, …) to `marketplace.json`/`plugin.json` — a second copy of the truth drifts, and the format gate fails it.
+- **No realm seq-references in skills.** Skills ship to users who (almost certainly) have no access to `methodology`/`nks-dev`, and seq numbers are realm-instance-specific — a `#N` or `nks_look(node_id=…, realm="methodology")` in a skill is dead weight or a wrong pointer downstream. Name concepts by name; keep syntax placeholders (`#42`, `#N`, GitHub `#123`) only. Exception: `methodology-work` may reference the methodology realm operationally (name/attr-based search, not seqs) — the skill presupposes that realm. (Seq refs in **this AGENTS.md** are fine — it never ships.)
+- **Tool references must be live.** Any `nks_*` tool a skill names must exist in the current nks-mcp surface behind `mcp.iskron.ru`. Dropped tools (`nks_validate`, `nks_reflect`) must not appear; shipped behavior (validate-on-create → `CHECKS:` in the create response) belongs in create-flow guidance.
+- **Terminology**: `phenomenon` for the typed primitive, `node` for the generic; `kriya`/`holon`/`karta`/`vimarsha` per the realm ontology. Don't reintroduce retired terms.
+- **Test discipline**: CI validates **format only** (`make check` — frontmatter parseability + bundle sync); it does not check substance. Substance review is still manual: read the diffed `SKILL.md` and confirm every tool name against the live surface. The skill set ships by auto-discovery from `skills/`; `make validate` fails if a manifest re-introduces a component list.
+- **Frontmatter must be parseable YAML.** `description` values are double-quoted; **escape any inner quote as `\"`** (an unescaped `"` terminates the scalar early — the exact bug `make validate` guards). Keep frontmatter flat and single-line — only `name` and `description` keys.
+
+## What to update when
+- `AGENTS.md` — repo conventions, structure, or the skill set change.
+- `README.md` — the skill table, whenever the skill set changes (new/renamed/retired skill).
+- `DERIVATION.md` — the skills ← canon re-projection map (+ the four-layer language contract): walk it after any methodology-canon change; extend it when a new canon landmark gets projected into a skill.
+- `skills/align/` (`SKILL.md` + `references/agents-template.md`) — when improving the bootstrap protocol/template for all future repos.
+- `skills/align/references/superpowers-interop.md` — when superpowers renames its skills/paths/gates (re-verify checklist inside).
+- `skills/align/references/delegation.md` — when Claude Code / OpenCode agent-file surfaces change (dirs, frontmatter keys, model aliases/inheritance; re-verify checklist inside).
+- NKS (`nks-dev`, #1506) — every push: thread repo state into holon #1506, advance delivery bianhua #1516, close resolved vimarshas.
+
+## Git workflow
+- **Conventional commits** (`feat:`/`fix:`/`chore:`/`docs:`…). Branches `feat/…`, `fix/…`, `chore/…`; PR titles same format.
+- **No co-author trailer.**
+- **Format gate**: run `make check` before committing (CI runs the same on every push/PR). It catches malformed frontmatter and drifted bundles, not substance — still review the `SKILL.md` diff by eye.
+- **Definition of done**: change committed and merged to `main` on `github.com/iskron/skills` (direct push or PR, per the user's call); the user signals the merge. On merge, update NKS #1506 — close resolved vimarshas, advance the bianhua they drive.
+- **Never** `--force` or `git reset --hard` without explicit instruction.
