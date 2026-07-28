@@ -1,95 +1,104 @@
 ---
 name: intake
-description: "Use this skill to bring EXTERNAL WORD into an NKS realm — the agent-facing shabda-intake. Triggers: 'впусти внешнее слово', 'засей граф из issue/доков', 'внеси issue в граф', 'intake', 'ingest issues into the graph', 'seed the realm from docs/README/conversation', 'bring external word into NKS', 'shabda intake'. Source-independent: issues, docs, code, a conversation enter through an adapter under one discipline — form→node type, epistemic mode by kind of source, provenance source_kind=shabda, dedup, anchor to the source, verify and graduate. Distinct from writing (one node from a distinction you already hold), align (projects derived config), and product-roadmap (composes this layer with a GitHub adapter). Needs the nks_* MCP tools."
+description: "Используй, чтобы впустить ВНЕШНЕЕ СЛОВО в реалм NKS — шабда-интейк. Триггеры: «впусти внешнее слово», «засей граф из issue/доков», «внеси issue», «запиши пост», «внеси новость», intake, ingest issues, shabda intake. Источник-независим: issue, доки, код, разговор входят через адаптер под одной дисциплиной — форма→тип узла, эпистемика по виду источника, source_kind=shabda, дедуп, якорение, сверка. Distinct from writing (узел из готового различения), align (derived-конфиг), product-roadmap (композиция с GitHub-адаптером). Нужны тулы iskron_*."
 ---
 
-# NKS Intake
+# Впуск шабды в NKS
 
-External word — an issue, a README, a chunk of source, a conversation, an RFC — is **шабда**: testimony with existence outside the graph. It is not yet yours. This skill brings it in **as a claim, never as a fact** — mapped to the right node type, marked by provenance, deduped, anchored, and then verified by direct observation (пратьякша).
+Внешнее слово — issue, README, кусок исходников, разговор, RFC — это **шабда**: свидетельство с существованием вне графа. Оно ещё не твоё. Этот скилл впускает его **как утверждение, никогда как факт** — отображённым в верный тип узла, помеченным провенансом, дедуплицированным, заякоренным — и затем сверенным.
 
-The symptom this skill prevents: external word dumped *en masse as facts* floods the realm with authoritative-looking garbage and false tensions, breaking «the graph is a tension with reality» and «systems grow, not get built».
+Каноническая нить: **шабда → сверка → тезис**; поток given_as: ding → sachverhalt → любой. Чужое становится своим — через проверку, не через копирование.
 
-**Source-independence is the whole point.** The source is an *adapter*; the intake discipline below is one. `product-roadmap` composes this layer with a GitHub adapter; a future align seeding or a docs-intake composes it with another. Do not bake a source into the discipline.
+Симптом, который скилл предотвращает: внешнее слово, свалённое *массой как факты*, затапливает реалм авторитетно выглядящим мусором и ложными натяжениями, ломая «граф — натяжение с реальностью» и «системы растут, а не строятся».
 
-## The source adapter — its contract
+**Источник-независимость — весь смысл.** Источник — это *адаптер*; дисциплина впуска ниже — одна. `product-roadmap` композирует этот слой с GitHub-адаптером; будущий засев align или интейк документации — с другим. Не впаивай источник в дисциплину.
 
-Fetching external word is the adapter's job, not this skill's. Whatever the source (GitHub `gh`, file read, a conversation transcript), the adapter must hand the core, per item:
+## Контракт адаптера источника
 
-- **content** — the claim itself (title + trimmed body, or the prose chunk);
-- **form** — what kind of utterance it is (bug / feature-request / RFC / design-doc / source-fact / decision), so the core can map it;
-- **provenance** — a stable back-reference to the origin (issue URL, file path + symbol, "conversation 2026-…"), so each node can `arose_from` it;
-- **authority** — who said it and how directly it can be checked (a drive-by issue vs. the owner's decision vs. code you can read now). This sets the epistemic mode (step 3).
+Добыть внешнее слово — работа адаптера, не этого скилла. Каким бы ни был источник (GitHub `gh`, чтение файла, транскрипт разговора), адаптер обязан отдать ядру, по каждому элементу:
 
-If the adapter can't supply provenance for an item, that item is not intake-able — it would land unanchored and invisible.
+- **содержание** — само утверждение (заголовок + обрезанное тело, или фрагмент прозы);
+- **форма** — что это за высказывание (bug / feature-request / RFC / design-doc / факт-из-кода / решение) — по ней ядро отображает;
+- **провенанс** — устойчивая обратная ссылка на исток (URL issue, путь+символ, «разговор 2026-…»), чтобы каждый узел мог `arose_from` к нему;
+- **авторитет** — кто сказал и насколько прямо это проверяемо (случайный issue vs решение владельца vs код, который можно прочесть сейчас). Он задаёт эпистемический модус (шаг 2).
 
-## 1. Map the form to a node type
+Не может адаптер дать провенанс — элемент не впускается: он лёг бы незаякоренным и невидимым.
 
-External word is heterogeneous; one item is not one node-shape. Map by **form**, with the agent's judgement (propose → confirm), never a blind import:
+Гранулярность парсинга — это структура графа: мелко нарежешь — много узлов, крупно — узлы-контейнеры. Режь по различениям, которые реалм понесёт, а не по абзацам источника.
 
-| External form | Node | Note |
+## 1. Отобрази форму в тип узла
+
+Внешнее слово неоднородно; один элемент — не одна форма узла. Отображай по **форме**, с суждением агента (предложи → подтверди), никогда слепым импортом:
+
+| Внешняя форма | Узел | Замечание |
 |---|---|---|
-| bug / breakage report | `risk` vimarsha, or a 🔥 sachverhalt-incident if it already fired | a report is a claim that something is wrong |
-| feature / plan / direction | `bianhua` ("X becomes Y") + driving vimarshas — **or** a `kriya` (anagata/chanda) if it's one deed | a single wish is not a transformation — locate the existing bianhua first (assembly), don't spawn one per item |
-| RFC / design-discussion / open question | `samshaya` vimarsha | the question is the node |
-| stated fact about the system | `phenomenon` (given_as by what it is) | subject to пратьякша before it's asserted |
-| labels / tags | a hint to genre/holon, not a node | routing signal |
+| bug / сообщение о поломке | `risk`-вимарша, или 🔥 sachverhalt-инцидент, если уже сбылось | сообщение — утверждение, что что-то не так |
+| фича / план / направление | `bianhua` («X становится Y») + ведущие вимарши — **или** `kriya` (anagata/chanda), если это одно деяние | одно желание — не превращение: сначала найди существующее bianhua (assembly), не порождай по одному на элемент |
+| RFC / design-обсуждение / открытый вопрос | `samshaya`-вимарша | узел — сам вопрос |
+| заявленный факт о системе | `phenomenon` (given_as по тому, что это) | подлежит сверке до утверждения |
+| labels / теги | подсказка жанра/холона, не узел | сигнал маршрутизации |
 
-Naming, given_as, and the modes themselves are the **writing** skill's discipline — invoke it at each write. This skill decides *which* shape the external form takes.
+Именование, given_as и сами модусы — дисциплина скилла **writing**: вызывай его при каждой записи. Этот скилл решает, *какую* форму принимает внешнее слово.
 
-## 2. Set the epistemic mode BY KIND — and mark provenance
+## 2. Эпистемика ПО ВИДУ источника — и провенанс отдельно
 
-This is the move agents get wrong. **`source_kind=shabda` is provenance** (this entered as external word) — orthogonal to **epistemic mode** (how well we know it). `kalpita` is *not* a blanket stamp; it is the mode of an **unverified claim**. By kind of source:
+Ход, в котором агенты ошибаются. **`source_kind=shabda` — провенанс** (это вошло внешним словом) — ортогонален **эпистемическому модусу** (насколько мы это знаем). `kalpita` — *не* ковровый штамп; это модус **непроверенного утверждения**. По виду источника:
 
-| Kind of external word | Epistemic | Why |
+| Вид внешнего слова | Эпистемика | Почему |
 |---|---|---|
-| issue / feature-request / RFC / design-doc | **kalpita** | a proposal/assertion, not yet checked |
-| source code read directly, a release tag you see | **pratyakshita** | you witnessed it |
-| retro / report of a real run | pratyakshita (atita) | observed past |
-| briefing about a settled past | pramanita | confirmed |
-| stale document contradicting reality | **badhita** | its ground has fallen |
+| issue / feature-request / RFC / design-doc | **kalpita** | предложение/заявление, ещё не проверено |
+| исходный код, прочитанный напрямую; видимый релиз-тег | **pratyakshita** | ты засвидетельствовал |
+| retro / отчёт о реальном прогоне | pratyakshita (atita) | наблюдённое прошлое |
+| брифинг об устоявшемся прошлом | pramanita | подтверждено |
+| устаревший документ, противоречащий реальности | **badhita** | основание пало |
 
-Two consequences:
+Два следствия:
 
-- **The owner's volition is not shabda-to-verify.** When the external word is a *decision, goal, or telos* from the realm's owner (the āpta for their own intent), it does not enter `kalpita` awaiting verification — it lands at its **volitive** mode (`chanda`/`adhimoksha`), witnessed (`pratyakshita`). Only assertions *about a state of the world* take the kalpita-until-pratyaksha path.
-- **`kalpita` is never permanent.** It is the entry state of the шабда→сверка→тезис (word → check → thesis) thread; step 4 graduates it.
+- **Воля владельца — не шабда-на-проверку.** Когда внешнее слово — *решение, цель или телос* владельца реалма (апта для собственного намерения), оно не входит `kalpita` в ожидании сверки: оно ложится своим **волевым** модусом (`chanda`/`adhimoksha`), засвидетельствованным (`pratyakshita`). Путь kalpita-до-пратьякши — только для утверждений *о состоянии мира*.
+- **`kalpita` никогда не навсегда.** Это входное состояние нити шабда→сверка→тезис; шаг 5 его градуирует.
 
-Model the node accordingly: `attrs.source_kind="shabda"`, the given_as the content warrants, the epistemic mode from the table.
+Моделируй соответственно: `attrs.source_kind="shabda"`, given_as по содержанию (шабда-документ как таковой — ding: вещь, существующая вне графа; имя — по содержанию, не по файлу: «⚙️ Брифинг factory-system-prompt», не «⚙️ factory-system-prompt.md»), эпистемика из таблицы.
 
-## 3. Dedup before you write
+## 3. Дедуп до записи
 
-Before each insert, `nks_semantic_search(q=<the claim as a phrase>, realm=…)` against the existing graph (the *ground*, not only the prior backlog). Near-zero distance = the realm already carries this — link or update, do not duplicate. Locate-before-write is mandatory: intake's failure mode is N near-identical nodes, one per restated issue.
+Перед каждой вставкой — `iskron_semantic_search(q=<утверждение фразой>, realm=…)` против существующего графа (против *почвы*, не только прежнего бэклога). Дистанция около нуля = реалм это уже несёт — свяжи или обнови, не дублируй. Locate-before-write обязателен: провал интейка — N почти одинаковых узлов, по одному на пересказанный issue.
 
-## 4. Anchor every node to its source
+## 4. Якори каждый узел к истоку
 
-An intake node with no origin is a rumour. Each one needs:
+Интейк-узел без происхождения — слух. Каждому нужны:
 
-- **`arose_from`** → the provenance (the issue, the file, the conversation) — its traceable origin;
-- its type's home: a vimarsha needs **`vimarsha_of`** into the contour it's about (the holon/phenomenon/kriya the claim touches); a phenomenon needs **`context`** → its holon.
+- **`arose_from`** → провенанс (issue, файл, разговор) — трассируемый исток;
+- дом его типа: вимарше — **`vimarsha_of`** в контур, о котором она (холон/феномен/крия, которых утверждение касается); феномену — **`context`** → его холон.
 
-Anchoring is the **inquiry** skill's law (an unanchored vimarsha is invisible) — honour it at intake time, not post-hoc.
+Якорение — закон скилла **inquiry** (незаякоренная вимарша невидима): соблюдай при впуске, не задним числом.
 
-## 5. Verify by пратьякша and graduate the mode
+## 5. Сверь — и объяви ступень
 
-Intake is not done when the claim is written — it's done when it's been *reconciled with reality* (the сверка kriya). For each kalpita node, observe directly on the three levels: `nks_look` (recall — what's written), `nks_orient(lens="tensions")`/neighborhood (awareness — what pulls), `nks_orient(lens="trace")` (reflection — where it travels). Then graduate:
+Впуск не закончен, когда утверждение записано, — он закончен, когда оно *сверено*. И у сверки есть ступени; «сверено» без названной ступени — не результат:
 
-- **claim matches reality** → assert the thesis: `nks_update` the epistemic mode up (kalpita → pratyakshita/pramanita), or let it stand as confirmed;
-- **claim contradicts reality** → that's a tension, not a fact: leave it `badhita`, or raise a `vyabhichara`/`samshaya` (сверка routes found counter-examples to vyabhichara, not samshaya), or fix the incident;
-- **mode merely drifted** → update the recording mode.
+- **Первая ступень — шабда против ГРАФА** (этот скилл). Граф здесь — инструмент наблюдения: накопленное и ранее проверенное наблюдение мира, не сам мир. Пратьякша графа берётся на трёх уровнях, соответствующих качествам внимания: `iskron_look` — припоминание (что записано: имя, описание, рёбра); `iskron_orient(focus)` без линзы — осознавание (что тянет: натяжения, открытые вопрошания, соседи); `iskron_orient(lens="trace")` — рефлексия (куда путешествует: эстафета, взгляд на целое). Каждый уровень обнаруживает расхождение, невидимое предыдущему.
+- **Вторая ступень — граф против МИРА** — здесь не совершается: её несут крии свидетельствования (наблюдение перемены на её каноническом носителе). Совпадение шабды с графом НЕ есть подтверждение реальностью — это согласие слова с записанным. Закрывая вопрос словом «проверил», скажи, против чего сверял.
 
-A realm that ingests but never verifies is exactly the mass-dump failure with extra steps.
+Затем градуируй:
 
-## 6. Selectivity is a guard, not a convenience
+- **утверждение совпало с графом** → утверди тезис: `iskron_update` эпистемики вверх (kalpita → pratyakshita/pramanita) — либо оставь подтверждённым;
+- **утверждение противоречит графу** → это натяжение, не факт: оставь `badhita`, или подними `vyabhichara` (сверка маршрутизирует найденные контрпримеры в vyabhichara, не в samshaya), или зафиксируй инцидент;
+- **модус просто дрейфанул** → обнови модус записи.
 
-Never the whole tracker, never "all the docs". Declare the cut (open/labelled, a date bound, the high-signal subset), cap the volume, and **state what you dropped** — a silent cap reads as "ingested everything". Selectivity + the shabda modes + dedup are together the mitigation of the mass-dump failure; drop any one and the guard fails.
+Реалм, который впускает и не сверяет, — тот самый массовый свал, только с лишними шагами.
 
-## After writing
+## 6. Селективность — страж, не удобство
 
-Read the `CHECKS:` block each factory prints (orphan, missing anchor). A fresh intake phenomenon stays `not_orphan`-flagged until a kriya picks it up — wire it. Then `nks_orient(lens="trace", focus=<seq>)` on key phenomena: did the lifecycle connect?
+Никогда весь трекер, никогда «все доки». Объяви срез (открытые/размеченные, граница по дате, высокосигнальное подмножество), ограничь объём и **скажи, что отброшено** — молчаливый срез читается как «впустил всё». Селективность + шабда-модусы + дедуп — вместе митигируют массовый свал; убери любое — страж падает.
 
-## What intake is NOT
+## После записи
 
-- **Not writing** — writing creates one node from a distinction *you already hold*; intake creates many from *external word*, with the шабда provenance and the сверка loop.
-- **Not align** — align projects *derived config* (the AGENTS.md audit, "no duplication of NKS"); intake brings in *content*. Different acts; align may *compose* intake to offer засев at the end of bootstrap.
-- **Not product-roadmap** — that is an *applied* skill (GitHub adapter + present-state ground modelling + assembly + render) that **composes** this layer; intake is the base, not the pipeline.
-- **Not a renderer / not a modeller of the present-state ground** — those belong to the consumer.
-- **Not bound to GitHub** — issues are one adapter among many.
+Читай блок `CHECKS:`, который печатает каждая фабрика (сирота, недостающий якорь). Свежий интейк-феномен остаётся с флагом `not_orphan`, пока его не подхватит крия, — прошей. Затем `iskron_orient(lens="trace", focus=<seq>)` на ключевых феноменах: жизненный цикл связался?
+
+## Чем intake НЕ является
+
+- **Не writing** — writing создаёт один узел из различения, которое *ты уже держишь*; intake создаёт много из *внешнего слова*, с шабда-провенансом и петлёй сверки.
+- **Не align** — align проецирует *derived-конфиг* (аудит AGENTS.md, «не дублировать NKS»); intake вносит *содержание*. Разные акты; align может *композировать* intake, предлагая засев в конце бутстрапа.
+- **Не product-roadmap** — то *прикладной* скилл (GitHub-адаптер + моделирование почвы + сборка + рендер), **композирующий** этот слой; intake — базa, не конвейер.
+- **Не рендерер / не модельер почвы настоящего** — это принадлежит потребителю.
+- **Не привязан к GitHub** — issues лишь один адаптер из многих.

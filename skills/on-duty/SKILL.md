@@ -1,108 +1,134 @@
 ---
 name: on-duty
-description: "Use this skill to stand watch — the agent's duty cycle in an aligned repo, autonomous work from the doer's inbox agenda. Triggers: 'заступай на вахту', 'вахта', 'разгребай инбокс', 'on duty', 'stand watch', 'sweep the inbox', 'duty cycle', or an autonomous session start where AGENTS.md names an agent karta. Also scopes to one transformation: 'продвигай bianhua', 'доведи превращение', 'drive the bianhua' — the queue becomes its open anga, arrival is proposed to the owner. Loop: orient → agenda → pick workable vimarshas → work per repo ritual (commit, push, PR) → wire dependencies into other doers' inboxes → weave the wake → wait (webhook or ≤30-min re-check) → escalate transcendent will to the owner. Composes entry, inquiry, writing, weaving; the graph is the durable state between wakes. Needs nks_* MCP tools and an aligned AGENTS.md."
+description: "Заступить на вахту — цикл дежурства агента в выровненном репо, от инбокса делателя. Триггеры: «заступай на вахту», «вахта», «разгребай инбокс», on duty, stand watch, duty cycle, автономный старт с картой агента в AGENTS.md. Скоуп на превращение: «продвигай bianhua», «доведи превращение». Два такта: дешёвый дежурный (причина+дельта, взвести будильник, спать) и дорогой рабочий (выбрать→отгрузить→эстафета→проткать→закрыть). Режим пробуждения и фокус объявляются, не угадываются. Нужны тулы iskron_* и выровненный AGENTS.md."
 ---
 
-# NKS On-Duty — the watch
+# Вахта в NKS
 
-An agent in an aligned repo has an identity: the **agent karta** named in AGENTS.md, steward of the repo's contour. Its inbox — incoming `posed_to` vimarshas on that karta — is where other doers (human and agent) put work that expects *this* doer to act. This skill is the closed loop that drains it: take what is workable, ship it, wire the relay to whoever depends on it, wait consciously, repeat.
+У агента в выровненном репо есть идентичность: **карта агента**, названная в AGENTS.md, — стюард контура репозитория. Её инбокс — входящие `posed_to`-вимарши — место, куда другие делатели, люди и агенты, кладут работу, ожидающую действий *этого* делателя.
 
-The loop is **stateless by design**: the graph is the only durable state. Every exit point — a wait, a crash, a context death — must leave the graph consistent enough that a fresh session re-enters through the same inbox and continues. If resuming would require this session's memory, you have left the rails.
+**Вахта — два цикла, не один.** **Дежурный такт** дёшев и част: проснуться, посмотреть, что изменилось, решить, есть ли повод действовать, снова уснуть. **Рабочий такт** дорог и редок: взять работу, отгрузить, прошить эстафету, проткать, закрыть. Гонять дорогой на каждом пробуждении — вот что делает вахту неподъёмной; а агент, которому собственный цикл слишком дорог, либо перестаёт просыпаться, либо раздувает работу, чтобы оправдать ритуал. Держи их врозь.
 
-## 0 · Identity and orientation
+Когда три-пять агентов ведут одну фичу, они перекидывают вимарши за минуты. Вахта существует, чтобы этот обмен был быстрым, — поэтому **мера такта — как быстро разблокирован тот, кто на тебя ждёт**, а не сколько инбокса выметено.
 
-- Run the **entry** protocol: `nks_orient(realm=<AGENTS.md realm>, focus=<focus holon>)`; read the ACTIVE BIANHUA map.
-- Open the agenda: `nks_orient(realm=…, focus=<agent-karta-seq>)` — the doer's agenda: your род, the open `posed_to` queue (answered items fold away), the boundaries you steward with their transformation and tension counters.
-- No agent karta in AGENTS.md → this skill does not apply; tell the user the repo needs an align pass (the steward slot).
+## 0 · Заступление — объяви две вещи
 
-## 1 · Select
+**Режим пробуждения** — как стартует следующий такт:
 
-From the open queue (the mode badge is authoritative — visarjana/virodha are done, upeksha is parked; the agenda pre-filters, raw edge lists do not):
+| Режим | Кто будит | Каденция | Когда пусто |
+|---|---|---|---|
+| **webhook** | граф будит на изменение инбокса | по событию | проверь, что хук реально взведён (list/inspect — хук с умершим отправителем спит вечно), взведи ограниченный fallback, спи |
+| **sleep-poll** | ты сам | 5–10 мин, пока идёт волна; дольше, когда никто на тебя не ждёт | снова спи |
+| **интерактив** | пользователь | нет | доложи состояние и закончи ход — планировщик здесь пользователь |
 
-| Take | Skip — and say why in the report |
+**Фокус** — ради чего эта вахта: весь инбокс, одно превращение (§2b) или один холон/фича.
+
+Ни то ни другое не угадывается молча. Пользователь не сказал — выведи: названо превращение → его bianhua; только что отгружена работа → её контур; живой чат без таймеров → интерактив. **Вывод не сходится — спроси одной строкой с вариантами**: вахта в неверном режиме либо жжёт токены, полля пустоту, либо засыпает, когда человек ждал ответа.
+
+Затем, один раз на сессию: протокол **entry** и повестка — `iskron_orient(realm=…, focus=<seq карты агента>)`. Нет карты агента в AGENTS.md → скилл не применяется; репо нужен проход align (слот стюарда).
+
+## 1 · Дежурный такт — дёшев по построению
+
+На каждом пробуждении:
+
+1. **Причина пробуждения.** Webhook называет вимаршу, которая тебя разбудила, — читай сначала *её*, в контексте. Вот почему ты не спишь; остальной инбокс — фон.
+2. **Дельта.** `iskron_orient(lens="vimarshas", since=<прошлое пробуждение>)` — что изменилось, пока спал. Не пере-ориентация всего поля.
+3. **Повод действовать?** Кто-то ждёт на тебе, блокер снялся, прилетел вопрос. Нет → взведи следующее пробуждение по режиму и спи.
+
+Это весь такт: один-два вызова. Он **не** перечитывает поле, не ткёт, не отчитывается. **Пустой дежурный такт — успех**: вахта несётся.
+
+**Пробуждение — не амнезия.** Граф должен быть достаточен для холодного возобновления — это требование к *графу*, чтобы упавшая сессия перезапускалась от одного инбокса. Это не требование к живой сессии забывать: проснувшись, читай дельту и держи, что уже держишь. Перевыводить мир каждые пять минут — ровно тот способ, каким цикл становится слишком дорогим.
+
+## 2 · Рабочий такт — выбор
+
+Только когда дежурный такт нашёл повод.
+
+**Прочитай поле перед выбором, один раз на рабочую сессию.** Кластеры — элементы, едущие одной веткой, одним PR, одним решением, — видны только *поперёк* элементов, никогда из одного. Пропустить это — способ отгрузить пять несвязных PR там, где верным был один.
+
+Порядок:
+
+1. **Кто-то ждёт на тебе** — читается из эстафеты: кто `posed_to` на зависимых, какие bianhua стоят. В волне это доминирует над всем.
+2. **Служит committed-превращению** — `adhimoksha` на карте есть живой приоритет владельца; он уже в графе — пользуйся им, а не изобретай срочность.
+3. **Полностью специфицировано** — его «Answered when» не требует ничьих решений.
+
+Затем суди каждого кандидата:
+
+| Вердикт | Ход |
 |---|---|
-| **in-mandate**: the work lives in your stewarded contour and needs no transcendent will | out-of-mandate → escalate (step 6) |
-| **actionable**: you can state what would discharge it | under-specified → update it with the question you need answered, addressed back to its poser |
-| **unblocked**: not waiting on another doer's part | blocked → ensure the upstream vimarsha exists and is current (step 4); it waits, not you |
+| в мандате, действуемо, не заблокировано | бери |
+| вне мандата (нужна трансцендентная воля) | эскалируй (§5) — и бери ту часть, которой воля не нужна, вместо эскалации целиком |
+| недоспецифицировано | верни постановщику с точным вопросом и «Answered when: …» |
+| заблокировано | **сначала назови блокера** — делателя ищи по стрелке `steward` или `iskron_search(node_type="karta")`; «адресата нет» почти никогда не правда. Затем убедись, что в его инбоксе стоит актуальная вимарша, и иди дальше: ждёт она, не ты |
+| сам вопрос уродлив | не отвечай, как спрошено, — вытесни вопросом, который следовало поставить (**inquiry**), и ответь на него |
+| разрушительное без санкции | эскалируй за санкцией (§3, §5) |
 
-Order: items that **unblock another doer first** (someone's inbox waits on you — read it from the relay: who is posed_to on dependents, which bianhua stall), then newest first. Ranking comes from structure, never from urgency stamps.
+**Каждый отказ — акт в графе, не строка отчёта.** Обнови вимаршу: почему прошёл мимо. В автономном прогоне отчёт читать некому, а без записи нет счёта отскоков — вимаршу, вернувшуюся несколько раз, иначе не распознать как требующую владельца. Видишь по истории, что она отскакивала многократно, — переадресуй 主-карте: повторный отскок значит, что неверен вопрос или мандат, и ни то ни другое не чинится ещё одним кругом.
 
-Work **one coherent cluster at a time**: vimarshas that touch the same files/contour ride one branch and one PR; unrelated ones wait for the next turn of the loop.
+## 2b · Фокус: ведение bianhua
 
-## 1b · Mode: driving a bianhua
+Когда фокус — превращение, тот же цикл идёт к его **прибытию**:
 
-When the user names a transformation — "продвигай bianhua #N через инбокс", "доведи превращение" — the same loop runs scoped to its **arrival**:
+- **Сначала карта**: `iskron_orient(lens="bianhua", focus=<N>)` — телос, anga-драйверы с метками resolved, задетые холоны. Открытый `anantara`-предшественник значит: это bianhua заблокировано — вынеси это, а не выталкивай в него работу.
+- **Очередь — это anga**: `iskron_search(q="", posed_to=<твоя карта>, anga_of=<N>)`, затем неназначенный остаток. Инвариант: **нет открытого anga без инбокса** — anga в чужом контуре получает эстафетную вимаршу в *их* инбокс; неназначенный в твоём — берёшь ты.
+- Работа поднимает новых драйверов: вопрос, без ответа на который телос не достигается, → поставь его и прицепи anga (writing); он сразу в очереди.
+- Цикл кончается прибытием — каждый anga разряжен или сознательно запаркован. **Закрытие bianhua — приёмка владельца**: предложи с доказательствами, никогда не закрывай сам.
 
-- **Map first**: `nks_orient(lens="bianhua", focus=<N>)` — telos, anga drivers with resolved marks, touched holons. Check the forest for `anantara`: an open predecessor means this bianhua is blocked — surface that instead of pushing work into it.
-- **The queue is the anga.** Your picks: open anga of N in your mandate — `nks_search(q="", posed_to=<your-karta>, anga_of=<N>)` (the filters combine), then the unassigned remainder. The mode's core invariant: **no open anga without an inbox** — an anga living in another doer's contour gets a relay vimarsha (anchored, `posed_to`, "Answered when:") into *their* inbox; an unassigned anga in your contour you take.
-- **Work raises new drivers**: a question that must be answered for this telos → pose it and anga-attach it (writing); it joins the queue at once.
-- **Exit changes**: the cycle ends at arrival — every anga discharged or consciously parked/escalated, integration merged and verified. The bianhua's own closure is the **owner's acceptance**: propose it with the evidence (map at N/N, integration green); never close it yourself.
-- Report progress each tact from the map's resolved count.
+## 3 · Работа и эстафета
 
-## 2 · Work
+Каждая вимарша называет свой ход — следуй *ему*: дефект → фикс + тесты по гейтам AGENTS.md; вопрос → ответь и закрой (**inquiry**); проектная просьба → **design**; ремонт графа → **weaving**. Ритуал репо — закон: дисциплина веток, гейт качества, conventional commits. Никогда не мержи собственный PR без санкции AGENTS.md. PR в ожидании ревью — ожидание git-поверхности: не зеркаль его вимаршей; лишь когда несмерженная ветка блокирует чужой anga, эстафетная вимарша говорит об этом.
 
-Each vimarsha names its own flow — follow *it*, not a generic one: a code defect → fix + tests per the AGENTS.md gates; a question → answer it (**inquiry**: `addressed_by`, close); a design ask → the **design** skill; graph repair → **weaving**. Repo ritual is law: branch discipline, quality gate, conventional commits — all from AGENTS.md. Commit, push; open the PR when the repo's flow says PR. Never merge your own PR unless AGENTS.md explicitly sanctions it. A PR awaiting review is a git-surface expectation — do **not** mirror it as a vimarsha to the owner; only when the un-merged branch blocks another doer's anga does the relay vimarsha say so.
+**Разрушительной работе нужна выданная санкция.** Тест — обратимость: *могу ли я откатить это сам, тем же тулом, никого не спрашивая?* Ветка, коммит, узел графа — да, вперёд. Сброс данных, миграция, `--force`, релиз, что угодно, уходящее наружу репо, — нет, и ни один пункт инбокса не санкционирует это тем, что хорошо специфицирован. Разрушительная задача читается как максимально действуемая — именно поэтому гейт стоит здесь, а не в сортировке.
 
-## 3 · Integrate locally
+**Затем прошей эстафету** — шаг, который циклы забывают чаще всего, и причина, по которой граф вообще стоит между агентами:
 
-If AGENTS.md documents a local integration surface (dev backend, preview server, a make target) — restart or rebuild it and verify the change actually runs; the loop's claim is "shipped and running", not "pushed". Only what AGENTS.md documents: never invent restarts, never touch shared or production surfaces from this loop.
+- **Вниз** — кто-то зависит от отгруженного: пусть оно ляжет в *его* инбокс — новой вимаршей или обновлением той, за которой он уже следит. Обновление — **дельта, не пинг**: что изменилось, что теперь возможно. Бессодержательный пинг зовёт пинг-понг.
+- **Вверх** — ты зависишь от кого-то: в инбоксе блокера стоит *актуальная* вимарша: что тебе нужно и, явно, **«Answered when: …»** — эта строка и позволяет другому распознать, что он может тебя разрядить.
+- Оба направления — по дисциплине **writing**: якорь (`vimarsha_of` в территорию адресата) **и** ребро-инбокс (`posed_to`). Одно без другого невидимо.
 
-## 4 · Wire the relay
+Если AGENTS.md документирует локальную поверхность интеграции — пересобери её и проверь, что изменение реально работает: заявка цикла — «отгружено и работает», не «запушено». Только то, что документирует AGENTS.md; никогда не трогай общие и продовые поверхности из этого цикла.
 
-The step most loops forget — and the reason the graph sits between agents at all:
+### Интеграционные мержи — только по выданному праву
 
-- **Downstream** — another doer depends on what you shipped: make the change land in *their* inbox. Either a new vimarsha (anchored in their contour, `posed_to` their karta) or an **update to the vimarsha they already watch**. An update is a **delta, not a ping**: state what changed and what is now possible. A content-free "ping" invites ping-pong livelock.
-- **Upstream** — you depend on someone: make sure a *current* vimarsha sits in the blocker's inbox stating (a) exactly what you need and (b) what counts as an answer. An explicit **"Answered when: …"** line in the description is what lets the other agent recognize it can discharge you.
-- Both directions follow **writing** discipline: anchor (`vimarsha_of` into the addressee's territory) **and** inbox edge (`posed_to`, found via the `steward` arrow — never from the orient showcase). One without the other is invisible.
+Когда пользователь или AGENTS.md явно выдаёт право мержа, порядок **согласуется через инбоксы, никогда не угадывается**: цепь эстафетных вимарш и *есть* порядок. Мержи, только когда твоя upstream-вимарша разряжена; затем обнови вимаршу нижестоящего дельтой («смержено, интеграция зелёная» — состояния мира, никогда SHA и имена веток). Поперёк превращений тот же порядок — `anantara`.
 
-### Integration merges — only when granted
+## 4 · Закрытие рабочего такта
 
-Merging is off by default (step 2). When the user or AGENTS.md **explicitly grants merge rights** for the integration, the merge order is **agreed through inboxes, never guessed**: the chain of relay vimarshas *is* the order — each states whose part lands first ("Answered when: upstream branch merged, integration green"). Merge your branch only when your upstream vimarsha is discharged; then update the downstream doer's vimarsha with the delta ("merged, integration green" — states of the world, never SHAs/branch names in nodes) so their turn arrives. Across whole transformations the same ordering is `anantara`.
+- Каждая разрешённая вимарша уходит дверью **inquiry**: `addressed_by` → `visarjana`; кристаллизуй то, что стало стоячим знанием. Отвеченное-но-открытое пересуживает себя в следующей сессии.
+- **Протки кильватер** — `iskron_orient(lens="tensions", focus=<тронутый холон>)`: замкни циклы, которые открыла перемена, напиши смысл на новых стрелках, перецепи, что сдвинуло новое различение (**weaving**). Weave-класс — твой; address-класс — в повестку. Это принадлежит *рабочему* такту — дежурный никогда не ткёт.
+- Прогони ритуал репо push→NKS по AGENTS.md.
+- И назад в §1: другой повод — или взведи пробуждение и спи.
 
-## 5 · Close
+## 5 · Эскалация
 
-- Every resolved vimarsha leaves by an **inquiry** door: `addressed_by` → `visarjana`; crystallize what became standing knowledge. Never leave answered-but-open items — a swept inbox that is not closed re-litigates itself next session.
-- **Weave the wake.** Every tact ends with a weaving pass over what it touched: `nks_orient(lens="tensions", focus=<touched holon>)` — close the lifecycles the change opened, write sense on new arrows, reconnect what a new distinction moved (the **weaving** skill). Weave-class tensions are yours to fix before sleeping; address-class go to the agenda. A tact that ships code but leaves the graph torn is not closed.
-- Run the repo's push→NKS ritual (phenomena to shipped state, map advanced) per AGENTS.md.
+Трансцендентная воля не твоя: отказ, порядок между вопросами, изменение объёма или телоса, прод и деньги, санкция на разрушительное, всё, что AGENTS.md метит owner-only. Поставь это **карте владельца** (主 в AGENTS.md), заякорив там, где живёт решение, со своим «Answered when:». И продолжай работать над тем, что от него не зависит, — а если зависит *всё*, скажи это одним списком, а не замолкай.
 
-## 6 · Escalate
+В webhook-режиме можно взвести одноразовую подписку на эскалированную вимаршу — ответ разбудит тебя напрямую. Пиши вимаршу так, чтобы холодная сессия возобновилась от неё: если действуемой её делает только твой живой контекст — она недописана.
 
-Transcendent will is not yours (inquiry's boundary): refusal, ordering across questions, scope or telos changes, production and money risk, anything AGENTS.md marks owner-only. Pose it to the **owner karta** (主 in AGENTS.md), anchored where the decision lives, with its own "Answered when:" — then keep working whatever does not depend on it.
+## Инварианты
 
-## 7 · Wait — or don't
+- **Два цикла.** Дешёвый дежурный, дорогой рабочий. Никогда ритуал второго на каденции первого.
+- **Граф достаточен для холодного возобновления** — требование к графу, не обязанность забывать на каждом пробуждении.
+- **Режим пробуждения и фокус объявлены, не угаданы.**
+- **Обновления — дельты**, никогда голые пинги.
+- **Каждое ожидание — вимарша**: заякоренная, `posed_to`, с «Answered when:». Никаких зависимостей боковым каналом.
+- **Каждый отказ записан на вимарше** — отскоки счётны.
+- **Ничего необратимого без выданной санкции.**
+- **Один кластер в полёте** — когерентный для одного ревью, а не просто соседний по файловой системе.
+- **В фокусе bianhua — нет открытого anga без инбокса**; прибытие предлагается владельцу, никогда не самообъявляется.
+- **Ритуал репо — закон.** Никогда `--force`; никогда не мержить свой PR без санкции.
+- **Прямая инструкция пользователя прерывает цикл.** Инбокс служит пользователю, не наоборот.
 
-Before waiting, check the queue: is there a next item that does **not conflict** with in-flight work (different contour, different files, no shared branch)? Yes → loop to step 1.
+## Приёмка
 
-Genuinely waiting on another doer:
+Два цикла судятся разными мерками — общая для обоих одна, и она позволяет вахте пройти, ничего не сделав:
 
-| Capability (per AGENTS.md or documented public tooling) | Move |
-|---|---|
-| A webhook can wake you (e.g. a karta webhook on your inbox) | **verify it is actually armed** (list/inspect — don't assume), then sleep until fired; arm a bounded fallback re-check too if the harness allows — a webhook whose sender died sleeps forever |
-| Timers only | sleep the time you would honestly give the other side for its integration part — **never more than 30 minutes** — then re-enter at step 0 |
-| Neither (interactive session, no timer) | report state to the user and end the turn — the graph holds; the next watch ("заступай на вахту") re-enters cleanly |
+- **Дежурный такт удался, когда он почти ничего не стоил и следующее пробуждение взведено.** Не найти повода — нормальный исход. Провал — не взвести пробуждение или сложить мандат, а не пустой инбокс.
+- **Рабочий такт удался, когда что-то сдвинулось**: отгружено, передано эстафетой, эскалировано с названным адресатом или сознательно запарковано с причиной на узле. Рабочий такт из одних пропусков — провал: либо поле прочитано неверно, либо всё стоит на владельце, — и то и другое докладывается, а не молчится.
+- Каждое ожидание представлено в графе *до* сна.
+- Второй агент, читая только граф, может сказать, что этот отгрузил, чего ждёт и о чём просит.
 
-Waking up = **step 0 again** (orient → agenda), never "resume from memory": the world moved while you slept.
+## Чем вахта НЕ является
 
-## Invariants
-
-- **The graph is the durable state.** Every exit leaves it consistent; a dead session is resumable from the inbox alone.
-- **Updates are deltas**, never bare pings.
-- **Every expectation is a vimarsha** — anchored, `posed_to`, with "Answered when:". No side-channel dependencies.
-- **One cluster in flight.** No multi-front sprawl inside one loop turn.
-- **In bianhua mode, no open anga without an inbox** — assignment is visible in the graph, arrival is proposed to the owner, never self-declared.
-- **Every tact weaves its wake** before the loop sleeps or ends.
-- **Repo ritual is law.** Gates, branches, PR rules from AGENTS.md; never `--force`; never merge your own PRs without sanction.
-- **A direct user instruction interrupts the loop.** The inbox serves the user, not the other way around.
-- **Report at every pause**: what was swept, what shipped, what waits on whom, what was escalated.
-
-## What on-duty is NOT
-
-- Not **assembly** (the realm-wide pass) and not bare **inquiry** — it composes inquiry per item and adds the repo work, the relay, and the wait.
-- Not a mandate expander: the inbox says what is *asked*; the stewarded contour says what is *yours*.
-- Not a scheduler of other agents: you wire vimarshas into their inboxes; when they run is their loop's business.
-
-## Acceptance
-
-- From a cold session, the loop reaches "inbox drained, or every remaining item consciously waiting / escalated / skipped-with-reason" without human input.
-- Every wait is represented in the graph — an updated vimarsha in someone's inbox — *before* the agent sleeps.
-- A second agent reading only the graph can tell what this agent shipped, what it waits for, and what it asks.
+- Не **assembly** (проход по всему реалму) и не голый **inquiry** — она композирует inquiry по каждому элементу и добавляет работу в репо, эстафету и ожидание.
+- Не расширитель мандата: инбокс говорит, что *спрошено*; стюардимый контур — что *твоё*.
+- Не планировщик других агентов: ты прошиваешь вимарши в их инбоксы; когда они бегут — дело их циклов.

@@ -1,97 +1,99 @@
 ---
 name: integrity
-description: "Use this skill for a transformation's integrity — right after a bianhua is created (telos accepted by the owner) or on request: 'integrity check', 'impact analysis', 'what will this change touch', 'проверь бяньхуа на целостность', 'что затронет это превращение', 'кого заденет' — and for the reverse claim-audit when a prose artifact claims graph-backed leverage: 'is this backed by the graph', 'claim audit', 'подкреплено ли графом', 'не театр ли'. Forward: propagate the telos, pose clustered «is this affected?» samshayas on the wavefront. Reverse: verify each structural claim is carried by real edges, report claimed-but-unwired. Distinct from assembly (map from the field) and design (paths from goals). Needs the nks_* MCP tools."
+description: "Используй для целостности превращения — после создания bianhua (телос принят) или по запросу: «проверь бяньхуа на целостность», «что затронет превращение», «кого заденет», integrity check — и для обратного claim-аудита, когда проза заявляет опору на граф: «подкреплено ли графом», «не театр ли», claim audit. Вперёд: распространить телос, поставить кластерные samshaya «задето ли?». Назад: проверить, что утверждения несут реальные рёбра. Distinct from assembly (карта из поля) и design (пути от целей). Нужны тулы iskron_*."
 ---
 
-# NKS Integrity — the transformation's wavefront
+# Целостность в NKS — волновой фронт превращения
 
-A bianhua is a HOLISTIC change — cross-holon by definition. Its map shows what *drives* it (anga); it is silent about what it will *touch*. This skill makes the wavefront visible: every implicated part of the graph gets an explicit question — «is this affected? design the adaptation» — so the transformation cannot honestly close while its impact is unexamined.
+Bianhua — ХОЛИСТИЧЕСКАЯ перемена, кросс-холонная по определению. Его карта показывает, что его *двигает* (anga); она молчит о том, чего оно *коснётся*. Этот скилл делает волновой фронт видимым: каждая вовлечённая часть графа получает явный вопрос — «задето ли? спроектируй адаптацию» — чтобы превращение не могло честно закрыться, пока его воздействие не рассмотрено.
 
-Three entries:
+За скиллом стоит общий закон волны: у всякого изменяемого узла есть источники (входы — требования к нему) и потребители (выходы — волна от него); правка — не точечный акт, а событие на эстафете, и она не завершена, пока волна не рассмотрена — даже если сам узел исправлен. Обвязка bianhua — этот закон в масштабе превращения.
 
-- a bianhua was just created and its telos accepted by the owner (assembly step 5 and design Phase 4 hand off here) — the forward protocol below;
-- the user asks to check an existing bianhua for integrity / impact — the same forward protocol;
-- a prose artifact claims graph-backed leverage and must be verified — the **claim-audit** mode (Mode 3 below).
+Три входа:
 
-## Protocol
+- bianhua только что создано и телос принят владельцем (сюда передают assembly, шаг 5, и design, Фаза 4) — прямой протокол ниже;
+- пользователь просит проверить существующее bianhua на целостность / воздействие — тот же прямой протокол;
+- прозаический артефакт заявляет опору на граф и требует проверки — режим **claim-аудита** (Режим 3 ниже).
 
-### 1. Stand on the transformation
+## Протокол
 
-`nks_orient(lens="bianhua", focus=<seq>)` → telos, anga-drivers, computed scope.
+### 1. Встань на превращение
 
-**Seed set** = anchors (`vimarsha_of` targets) of the existing anga-vimarshas + nodes the telos names explicitly.
+`iskron_orient(lens="bianhua", focus=<seq>)` → телос, anga-драйверы, вычисленный охват.
 
-### 2. Propagate the wavefront — semantic closure, not radius
+**Затравочное множество** = якоря (`vimarsha_of`-цели) существующих anga-вимарш + узлы, которые телос называет явно.
 
-From each seed, walk the closure that carries its responsibility — one closure per seed, never N-hop from everything:
+### 2. Распространи фронт — семантическое замыкание, не радиус
 
-| Seed type | Closure | How |
+От каждой затравки иди по замыканию, несущему её ответственность — одно замыкание на затравку, никогда N-hop от всего сразу:
+
+| Тип затравки | Замыкание | Как |
 |---|---|---|
-| phenomenon | its estafeta, both directions | `nks_orient(lens="trace", focus=<seq>)` |
-| kriya | its next-thread + its ahara/utpatti/upadhi phenomena | `nks_orient(lens="topology", focus=<seq>, arrow_types="next")`, then trace the phenomena |
-| holon | contains-subtree | `nks_orient(focus=<holon>)` |
-| vollzug / grundsatz | upadhi-consumers — who applies the method/principle that is about to change | `nks_orient(focus=<seq>)` neighborhood |
+| феномен | его эстафета, в обе стороны | `iskron_orient(lens="trace", focus=<seq>)` |
+| крия | её next-нить + её ahara/utpatti/upadhi-феномены | `iskron_orient(lens="topology", focus=<seq>, arrow_types="next")`, затем трассируй феномены |
+| холон | contains-поддерево | `iskron_orient(focus=<холон>)` |
+| vollzug / grundsatz | upadhi-потребители — кто применяет метод/принцип, который вот-вот изменится | окрестность `iskron_orient(focus=<seq>)` |
 
-Plus one **semantic pass** over the whole realm: `nks_semantic_search(q=<the telos as a phrase>)` — conceptually-near nodes that structure misses.
+Плюс один **семантический проход** по всему реалму: `iskron_semantic_search(q=<телос фразой>)` — концептуально близкие узлы, которые структура пропускает.
 
-Collect pairs `(node, why-implicated)` — the justification is load-bearing, it goes into the vimarsha description.
+Собирай пары `(узел, почему-вовлечён)` — обоснование несущее: оно идёт в описание вимарши.
 
-### 3. Subtract the already-covered (idempotency)
+### 3. Вычти уже покрытое (идемпотентность)
 
-- anchors of the bianhua's existing anga-vimarshas — already in the field;
-- nodes already under a prior «is … affected?» samshaya of this bianhua (`nks_search(q="", anga_of=<bianhua>)` and read the anchors).
+- якоря существующих anga-вимарш этого bianhua — уже в поле;
+- узлы, уже стоящие под прежним samshaya «задето ли …?» этого bianhua (`iskron_search(q="", anga_of=<bianhua>)` и читай якоря).
 
-A re-run of the integrity pass adds only the **new** wavefront — it never duplicates questions.
+Повторный прогон добавляет только **новый** фронт — вопросов он не дублирует.
 
-### 4. Cluster and present — the owner accepts
+### 4. Кластеризуй и предъяви — принимает владелец
 
-Group the remainder by *shared adaptation*: per estafeta, per holon, per kriya-family. One samshaya per cluster; a node gets its own question only when its adaptation is clearly distinct. A vimarsha legitimately anchors to several nodes — pass one anchor via `vimarsha_of` and add the rest with `nks_arrow(action="link", arrow_type="vimarsha_of")`.
+Сгруппируй остаток по *общей адаптации*: по эстафете, по холону, по семейству крий. Один samshaya на кластер; узел получает собственный вопрос, только когда его адаптация явно особая. Вимарша законно якорится к нескольким узлам — один якорь через `vimarsha_of`, остальные — `iskron_arrow(action="link", arrow_type="vimarsha_of")`.
 
-**Present the candidate list to the user first** (AskUserQuestion when interactive), each with its why-implicated. Do not spray vimarshas unilaterally — the wavefront is a hypothesis until the owner nods.
+**Сначала предъяви список кандидатов пользователю** (AskUserQuestion в интерактиве), каждый со своим «почему вовлечён». Не распыляй вимарши в одностороннем порядке — фронт есть гипотеза, пока владелец не кивнул.
 
-### 5. Pose the integrity questions
+### 5. Поставь вопросы целостности
 
-For each approved cluster:
+Для каждого одобренного кластера:
 
 ```
-nks_add_vimarsha(genre="samshaya",
-  name="<emoji> Is <X> affected by transformation «<bianhua>»?",   # pose in the realm's language
-  vimarsha_of=<first anchor>, posed_by=...,
+iskron_add_vimarsha(genre="samshaya",
+  name="<эмодзи> Задето ли <X> превращением «<bianhua>»?",   # на языке реалма
+  vimarsha_of=<первый якорь>, posed_by=...,
   epistemic_mode="anumita", ontic_mode="vartamana", volitive_mode="chanda")
-→ extra anchors: nks_arrow(action="link", arrow_type="vimarsha_of", ...)
-→ nks_arrow(action="link", arrow_type="anga", source=<new>, target=<bianhua>,
-   sense="integrity front: the transformation cannot close until answered")
-→ optional: nks_arrow(action="link", arrow_type="posed_to", source=<new>, target=<steward-karta>,
-   sense="addressed to the steward of the affected contour")
+→ добавочные якоря: iskron_arrow(action="link", arrow_type="vimarsha_of", ...)
+→ iskron_arrow(action="link", arrow_type="anga", source=<новая>, target=<bianhua>,
+   sense="фронт целостности: превращение не может закрыться, пока не отвечено")
+→ опционально: iskron_arrow(action="link", arrow_type="posed_to", source=<новая>, target=<карта-стюард>,
+   sense="адресовано стюарду задетого контура")
 ```
 
-The `posed_to` **arrow** (optional) addresses the question to the **karta** who stewards the affected contour — a svatantra/adhikarin who can answer; never a `pratibimba` (an image can't answer).
+Стрелка `posed_to` (опциональна) адресует вопрос **карте**, стюардящей задетый контур — svatantra/adhikarin, способной ответить; никогда `pratibimba` (образ не ответит).
 
-Description states: what the telos implies for these nodes, and **what counts as an answer** — «not affected» (close visarjana, with the reason recorded) or «affected» (design the adaptation — **design** skill; the new work `arose_from` this question).
+Описание фиксирует: что телос означает для этих узлов и **что считается ответом** — «не задето» (закрыть visarjana с записанной причиной) или «задето» (спроектировать адаптацию — скилл **design**; новая работа `arose_from` этого вопроса).
 
-### 6. Report
+### 6. Доложи
 
-`nks_orient(lens="bianhua", focus=<seq>)` — the drivers now include the integrity front. Tell the user what was attached and what was consciously left out.
+`iskron_orient(lens="bianhua", focus=<seq>)` — среди драйверов теперь фронт целостности. Скажи пользователю, что привязано и что сознательно оставлено за бортом.
 
-## Mode 3 — claim-audit: is the claimed carried by the graph
+## Режим 3 — claim-аудит: несёт ли граф заявленное
 
-The forward pass asks "what will the transformation touch?". The reverse pass asks the mirror question: **does the graph carry what the prose claims?** Run it whenever an artifact *claims* graph-backed leverage — a rendered roadmap, a report, a summary, a telos citing capabilities: «direction D is driven by karta X», «D grows out of capability Y», «flow A feeds B», «the risk is covered». Node-grained detectors cannot catch this failure: each node is individually legal; the lie lives in the mismatch between text and structure.
+Прямой проход спрашивает «чего коснётся превращение?». Обратный — зеркальный вопрос: **несёт ли граф то, что заявляет проза?** Запускай всякий раз, когда артефакт *заявляет* опору на граф — отрендеренный роадмап, отчёт, резюме, телос со ссылками на способности: «направление D двигает карта X», «D растёт из способности Y», «поток A питает B», «риск покрыт». Детекторы узлового зерна этот провал не ловят: каждый узел по отдельности легален; ложь живёт в зазоре между текстом и структурой.
 
-1. **Extract the claims.** From the artifact, list every statement that asserts structure: ownership (a karta drives/owns X), figure-on-ground (a direction extends a capability), flow (A produces what B consumes), risk coverage («mitigated by…»), anchoring («tracked in the graph»).
-2. **Verify each claim read-only.** Ownership → the karta carries real `actor`/`steward` edges to the named deeds (`nks_look`; a zero-edge karta is theater). Extension → a driving kriya reaches the capability via `upadhi`/`context` (`lens="topology"`). Flow → the estafeta exists (`lens="trace"`). Coverage → the risk carries `addressed_by` or a conscious-acceptance mode. Anchoring → the vimarsha has `vimarsha_of` into the claimed contour.
-3. **Report claimed-but-unwired, pair by pair.** Each unbacked claim gets one of two fates, chosen with the owner: **wire it** (the claim was true but unrecorded — hand the missing edges to weaving) or **weaken the prose** (the claim was theater — the artifact overstates the graph). Never leave prose overstating the graph, and never wire edges solely to make prose true.
+1. **Извлеки утверждения.** Из артефакта выпиши каждое утверждение о структуре: владение (карта двигает/владеет X), фигура-на-почве (направление продолжает способность), поток (A производит то, что потребляет B), покрытие риска («смягчён…»), якорение («ведётся в графе»).
+2. **Проверь каждое read-only.** Владение → карта несёт реальные рёбра `actor`/`steward` к названным деяниям (`iskron_look`; карта с нулём рёбер — театр). Продолжение → ведущая крия достигает способности через `upadhi`/`context` (`lens="topology"`). Поток → эстафета существует (`lens="trace"`). Покрытие → риск несёт `addressed_by` или модус сознательного принятия. Якорение → у вимарши есть `vimarsha_of` в заявленный контур.
+3. **Доложи заявленное-но-непрошитое, пара за парой.** Каждое неподкреплённое утверждение получает одну из двух судеб, выбранных с владельцем: **прошить** (утверждение было верно, но не записано — недостающие рёбра отдай ткачеству) или **ослабить прозу** (утверждение было театром — артефакт преувеличивает граф). Никогда не оставляй прозу, преувеличивающую граф, и никогда не прошивай рёбра лишь ради того, чтобы проза стала правдой.
 
-The audit itself writes nothing; it produces the claims × verdicts table. Same acceptance discipline as the wavefront: the owner picks each fate.
+Сам аудит ничего не пишет; он производит таблицу «утверждения × вердикты». Дисциплина приёмки та же, что у фронта: каждую судьбу выбирает владелец.
 
-## Noise discipline
+## Дисциплина шума
 
-- One samshaya per cluster, not per node; a justification in every description — a question whose reader can't name the next move is noise by definition.
-- Idempotent re-runs (step 3).
-- **Never a new bianhua out of this pass.** If the wavefront reveals what looks like *another* transformation — that is an assembly observation: carry it to the user (a bianhua's name and telos are the owner's acceptance surface).
+- Один samshaya на кластер, не на узел; обоснование в каждом описании — вопрос, по которому читатель не назовёт следующий ход, есть шум по определению.
+- Идемпотентные повторные прогоны (шаг 3).
+- **Никогда — новое bianhua из этого прохода.** Если фронт открывает нечто похожее на *другое* превращение — это сборочное наблюдение: отнеси пользователю (имя и телос bianhua — поверхность приёмки владельца).
 
-## What it is NOT
+## Чем это НЕ является
 
-- **Not assembly** — assembly discerns the map from the field; integrity walks outward from one declared telos.
-- **Not design** — integrity poses the «is this affected?» questions; clusters answered «affected» are handed to design.
-- **Not weaving** — it does not repair structure; it marks where structure will have to move.
-- **Not a tension detector** — it runs from a telos, not from structural signals.
+- **Не assembly** — сборка различает карту из поля; целостность идёт наружу от одного объявленного телоса.
+- **Не design** — целостность ставит вопросы «задето ли?»; кластеры с ответом «задето» передаются проектированию.
+- **Не weaving** — она не чинит структуру; она метит, где структуре придётся сдвинуться.
+- **Не детектор натяжений** — она идёт от телоса, не от структурных сигналов.
