@@ -1,4 +1,5 @@
 {
+  "$schema": "https://json.schemastore.org/claude-code-marketplace.json",
   "name": "iskron",
   "owner": {
     "name": "iskron"
@@ -10,8 +11,9 @@
   "plugins": [
     {
       "name": "iskron",
-      "description": "NKS methodology skills — orient, write, design, and weave an NKS graph through the nks_* MCP tools.",
+      "description": "NKS methodology skills — orient, write, design, and weave an NKS graph through the iskron_* MCP tools.",
       "source": "./",
+      "version": "1.0.0",
       "strict": true
     }
   ]
