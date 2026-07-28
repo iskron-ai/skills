@@ -1,6 +1,6 @@
 ---
 name: product-roadmap
-description: "Используй, чтобы собрать продуктовый роадмап GitHub-репозитория — или мультирепо-продукта (org или набор репо как один продукт) — выведенный из issues и PR через граф рассуждений NKS. Триггеры: «собери роадмап из issues/PR», «роадмап по продукту», «что в этом репо делать дальше», roadmap from repo/github, roadmap for my org, multi-repo roadmap, quick roadmap, roadmap teaser, product-roadmap. Отыгрывает мейнтейнера: проверенная почва настоящего, взвешенный бэклог как шабда, идущие направления (bianhua), рендер graph + markdown + локальный HTML. Композирует align, intake и assembly. Нужны gh CLI и тулы iskron_*."
+description: "Используй, чтобы собрать продуктовый роадмап GitHub-репозитория — или мультирепо-продукта (org или набор репо как один продукт) — выведенный из issues и PR через граф рассуждений NKS. Триггеры: «собери роадмап из issues/PR», «роадмап по продукту», «что в этом репо делать дальше», roadmap from repo/github, roadmap for my org, multi-repo roadmap, quick roadmap, product-roadmap. Отыгрывает мейнтейнера: проверенная почва настоящего, взвешенный бэклог как шабда, направления (bianhua), рендер graph+markdown+HTML. Композирует align, intake и assembly. Нужны gh CLI и тулы iskron_*."
 ---
 
 # Продуктовый роадмап

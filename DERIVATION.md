@@ -1,50 +1,52 @@
-# Derivation map — skills ← methodology canon
+# Карта деривации — скиллы ← канон methodology
 
-The skills are the **portable projection** of the methodology realm: canon lives in
-the graph, skills carry its agent-facing summary inline (skills are realm-agnostic
-and may not point into the graph — see AGENTS.md conventions). That makes drift
-structural: when a canon landmark changes, the projected sections do NOT update
-themselves. This map is the maintainer's re-projection checklist.
+Скиллы — **портируемая проекция** реалма methodology: канон живёт в графе, скиллы несут его агентскую выжимку inline (скиллы реалм-агностичны и не могут указывать в граф — см. конвенции AGENTS.md). Поэтому дрейф структурен: когда канонический ориентир меняется, спроецированные секции сами НЕ обновляются. Эта карта — чек-лист ре-проекции для мейнтейнера.
 
-**Ritual:** after any push that changes a methodology canon landmark, walk the row —
-re-project each listed section from the landmark's current body, run `make check`,
-review the diff. Same audit-classify-act discipline align applies to AGENTS.md,
-applied to the skills.
+**Ритуал:** после любого пуша, меняющего канонический ориентир methodology, пройди строку — ре-спроецируй каждую перечисленную секцию из текущего тела ориентира, прогони `make check`, просмотри дифф. Та же дисциплина audit-classify-act, что align применяет к AGENTS.md, — применённая к скиллам.
 
-This file is maintainer-facing (realm access assumed); graph seqs are allowed here,
-they are forbidden inside `skills/`.
+Файл обращён к мейнтейнеру (доступ к реалму предполагается); seq графа здесь разрешены — внутри `skills/` они запрещены.
 
-| Methodology landmark (canon) | Seq | Projected into (skill → section) | Re-project when |
+**Скиллы этой дистрибуции пере-выведены из канона по-русски (ритуал переноса форка, 2026-07):** источник текста — канонические узлы methodology, сиблинговый текст использовался только как чек-лист покрытия. Авторские продуктовые блоки (superpowers-interop, realm≠repo, пороги вызовов, GitHub-адаптер) канона не имеют и сохранены как авторские.
+
+| Канонический ориентир (methodology) | Seq | Спроецирован в (скилл → секция) | Ре-проецировать, когда |
 |---|---|---|---|
-| Ось живости рода — carrier table, U1–U3, U6 | #464 | writing → «Starting triples & closure — carrier canon»; design → «Starting modes for projected work» (pointer); methodology-work → «Carrier canon» (pointer) | a carrier row or U-universal changes |
-| Грамматика переходов трипути — moves, suspicious transitions, kind-aware forbidden | #465 | weaving → «Carrier transitions are acts, not tensions»; writing → virodha-polarity bullets | a transition rule or forbidden state changes |
-| Устойчивые комбинации модусов — образцы | #53 | writing → `references/modes.md` (stable triads) | a sample triad is added/retired |
-| Конфликтные триады — forbidden triples | #52 | writing → `references/modes.md` (Forbidden) | a hard triple changes |
-| given_as канон + матрица стрелок | #372, #376 | writing → Decision 2 + `references/given_as.md`; design → «given_as — arrow legality» | a mode of givenness or arrow-legality cell changes |
-| manifested_as канон (роды делателя) | #460 | writing → Decision 2b; product-roadmap → actor-modeling rules (Step 2) | a род or its addressing/steward rule changes |
-| 時-цикл, bianhua, роли сборки, композиция | #431, #432, #434, #435 | assembly → the whole skill; inquiry → «Inquiry and transformation» | the ritual, roles, or 形 halves change |
-| Жизнь вимарши: исходы, кристаллизация | #387 + genre canon | inquiry → sections 2–3; writing → «Vimarsha genres» | an outcome or genre-resolution rule changes |
-| Шабда: виды источников, сверка | #104, #165, #157, #340 | intake → steps 1–2, 5; product-roadmap → Step 5 | a source-kind mode or сверка step changes |
-| Граница реалма топологична; boundary-маркер | #416 (+ nks-dev #978) | design → «Realm boundary»; weaving → «Boundary is the edge of the world»; writing → Decision 5 kriya note | boundary semantics or the marker changes |
-| Санкция bianhua (владелец принимает имя+телос) | #432 + factory SANCTION | writing → Decision 1 bianhua row; assembly → step 5; design → Phase 4; inquiry → section 4 | the sanction discipline changes |
-| Вневременность записи | #440 | writing → Decision 4 «Timelessness» | the timelessness rule changes |
+| Нить 1 «Вхождение и ориентация» (無極→太極→мотивация→фокус→место) + крии | #337, #147, #150, #148, #149 | entry → «Протокол входа» (весь скелет) | нить или её крии меняются |
+| Ориентировка ≠ узнавание; ENTRY ≠ INIT | #478, #382 | entry → «Ориентировка, не узнавание», ENTRY-строка протокола | различение уточняется |
+| Управление контекстом (3 слоя, intent-фильтр) | #365 | entry → «Экономия контекста», шаг «Опознай мотивацию» | слой или фильтр меняется |
+| Знание, передаваемое вперёд; контракт сида | #131 | entry → «Семена и карта»; writing → hint-пункт; methodology-work → «Замкни цикл на карте» | контракт сида меняется |
+| Граф — не реальность, а натяжение с реальностью | #403 | entry → преамбула; design → P3 | принцип меняется |
+| Ось живости рода — таблица носителей, U1–U3, U6 | #464 | writing → «Стартовые тройки и закрытие»; inquiry → колонка «ось закрытия» в §3; design → «Стартовые модусы» (указатель); methodology-work → «Канон носителей» (указатель) | строка носителя или U-универсалия меняется |
+| Грамматика переходов трипути — движения, подозрительные, kind-aware | #465 | weaving → «Переходы носителей — акты»; writing/references/modes.md → «Движения» | правило перехода меняется |
+| Устойчивые комбинации модусов — образцы | #53 | writing → `references/modes.md` (образцы) | образец добавлен/убран |
+| Конфликтные триады — forbidden triples | #52 | writing → `references/modes.md` (Запрещённые) | жёсткая триада меняется |
+| given_as канон + матрица стрелок | #372, #376 | writing → Решение 2 + `references/given_as.md`; design → «given_as — легальность» | способ данности или клетка матрицы меняется |
+| manifested_as канон (роды делателя) | #460 | writing → Решение 2b; product-roadmap → правила акторов (Шаг 2) | род или его правило адресации/стюардства меняется |
+| 正名 — правило живого имени | #72 | writing → Решение 4 «Имя» | правило имени меняется |
+| Вневременность записи — провенанс в attrs/arose_from/history | #440 | writing → Решение 4 «Вневременность» | правило меняется |
+| 時-цикл сборки, bianhua (变/化, anga, anantara), роли, композиция | #431, #432, #434, #435 | assembly → весь скилл; inquiry → §4; design → «Волевая крия…» | ритуал, роли или половины 形 меняются |
+| Жизнь вимарши: исходы, кристаллизация | #387 + жанровые строки #464 | inquiry → §2–3; writing → «Жанры вимарши» | исход или правило разрешения жанра меняется |
+| Шабда: виды источников, впуск, сверка (ступени!) | #104, #165, #157, #340 | intake → шаги 1–2, 5; product-roadmap → Шаг 5 | вид источника или ступень сверки меняется |
+| Нить 3 «Проектирование» + справа-налево (lean pull) | #339, #160, #405 | design → четыре фазы | нить или фазы меняются |
+| Нить 8 «Замыкание ЖЦ»; замкнутость ЖЦ; рост системы | #399, #389, #390 | weaving → Операции 1, 5; design → P1, P2 | нить или принцип меняется |
+| Граница реалма топологична; boundary-маркер | #416 | design → «Граница реалма»; weaving → «Граница — край мира»; writing → заметка в Решении 5 | семантика границы или маркер меняется |
+| Санкция bianhua (владелец принимает имя+телос) | #432 + SANCTION фабрики | writing → строка bianhua Решения 1; assembly → шаг 5; design → Фаза 4; inquiry → §4 | дисциплина санкции меняется |
+| Волна правки — «правка не завершена, пока волна не рассмотрена» | #480 | integrity → преамбула + весь прямой протокол | закон волны меняется |
+| Компоненты вахты: инбокс-протокол, 主-акты не делегируются | #460 (следствия), #475, #131 | on-duty → инварианты, §5 | компонент меняется. Единого канона вахты в methodology нет — целостная форма скилла продуктовая |
 
-Two more sync obligations live outside this table:
+Ещё две обязанности синхронизации вне таблицы:
 
-- **Tool surface → skills** (AGENTS.md: «tool references must be live») — when
-  nks-mcp renames/drops a tool or changes factory behaviour, grep `skills/` for the
-  tool name.
-- **superpowers → interop section** — `skills/align/references/superpowers-interop.md`
-  carries its own re-verify checklist.
+- **Поверхность тулов → скиллы** (AGENTS.md: «tool references must be live») — когда сервер за mcp.iskron.ru переименовывает/убирает тул или меняет поведение фабрик, грепни `skills/` по имени тула. Префикс этой поставки — `iskron_*`.
+- **superpowers → interop-секция** — `skills/align/references/superpowers-interop.md` несёт собственный чек-лист перепроверки.
 
-## Language contract (four layers, en-first product)
+Особый статус: **methodology-work живёт только здесь** — из сиблинга verstak-ai/skills он удаляется; апстрима для него больше нет, канон — сам реалм methodology.
 
-| Layer | Language | Owner |
+## Языковой контракт (четыре слоя, ru-first дистрибуция)
+
+| Слой | Язык | Владелец |
 |---|---|---|
-| Skill instructional prose | English (canonical) | the product |
-| NKS terms (kriya, шабда, сверка, 正名, возведение…) | as-is, glossed once per file on first use | the method |
-| Routing triggers in frontmatter descriptions | English + Russian | the router |
-| Realm content (names, teloi, vimarshas, senses posed into a user's graph) | the realm owner's language | the user |
+| Инструктивная проза скиллов | Русский (канонический) | продукт |
+| Термины NKS (крия, шабда, сверка, 正名, возведение…) | как есть, глосса при первом употреблении в файле | метод |
+| Триггеры маршрутизации в frontmatter-description | Русский + английский (≤900 байт UTF-8 — клифф на 1024) | роутер |
+| Содержимое реалма (имена, телосы, вимарши, sense в графе пользователя) | язык владельца реалма | пользователь |
 
-A skill violating a neighbouring layer's contract (RU instructional prose, EN-only
-triggers, seq-refs into someone else's realm) is drift — fix toward this table.
+Скилл, нарушающий контракт соседнего слоя (EN-инструктивная проза, RU-only-триггеры, seq-ссылки в чужой реалм), — дрейф: чини к этой таблице.
