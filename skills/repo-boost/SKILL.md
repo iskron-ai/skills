@@ -1,13 +1,13 @@
 ---
-name: align
-description: "Use when the user asks to align a repo — bootstrap or refresh its AGENTS.md / CLAUDE.md to the iskron standard, apply the NKS methodology conventions, or wire the session-lifecycle rituals (orient-in-NKS on start, push→update-NKS hooks, quality gate, memory guard, CLAUDE.md pointer — @AGENTS.md import, Windows-safe). Triggers: \"align\", \"align this repo\", \"привести проект к стандарту\", \"завести/обновить AGENTS.md\", \"set up AGENTS.md\", \"bootstrap AGENTS\", \"apply the meta template\", \"наведи порядок в конфиге агента\". AGENTS.md is a derived view, not hand-written prose: each concern is audited against its source of truth and re-projected when stale, preserving authored judgment; fresh repos ask the user for the authored slots. Needs the nks_* MCP tools for the NKS steps."
+name: repo-boost
+description: "Use when the user asks to repo-boost a repo — bootstrap or refresh its AGENTS.md / CLAUDE.md to the iskron standard, apply the NKS methodology conventions, or wire the session-lifecycle rituals (orient-in-NKS on start, push→update-NKS hooks, quality gate, memory guard, CLAUDE.md pointer — @AGENTS.md import, Windows-safe). Triggers: \"repo-boost\", \"repo-boost this repo\", \"привести проект к стандарту\", \"завести/обновить AGENTS.md\", \"set up AGENTS.md\", \"bootstrap AGENTS\", \"apply the meta template\", \"наведи порядок в конфиге агента\". AGENTS.md is a derived view, not hand-written prose: each concern is audited against its source of truth and re-projected when stale, preserving authored judgment; fresh repos ask the user for the authored slots. Needs the iskron_* MCP tools for the NKS steps."
 ---
 
-# Align
+# Repo-boost
 
 Bring the **current repo** to the iskron agent standard: a dense, AI-first
-`AGENTS.md` (read every session, not by a human once) + a `CLAUDE.md` symlink,
-the NKS session rituals wired as hooks, and a quality gate. You **generate** the
+`AGENTS.md` (read every session, not by a human once) + a `CLAUDE.md` pointing
+at it, the NKS session rituals wired as hooks, and a quality gate. You **generate** the
 config from the skeleton — nothing is copied by hand and the user pastes no
 template.
 
@@ -27,12 +27,17 @@ have, with `<…>` slots and a few `<!-- … -->` notes. Fill the slots, drop
 optional rows/sections that don't apply, strip every `<!-- … -->` note, never
 leave an angle bracket. The skeleton is *what to produce*; this file is *how*.
 
+**Contract: `2026-07-28`.** Step 7 stamps this date into every `AGENTS.md` it
+writes. Bump it only when a change here or in the skeleton makes an
+already-generated file *wrong* — a section added, renamed or retired, a ritual
+changed, a tool name dropped; never for wording. A repo whose stamp is older
+gets the full arc, and you name the contract its config came from.
+
 The skeleton deliberately *inlines* repo-agnostic agent-discipline (Working
 principles, parts of Session lifecycle) into every generated `AGENTS.md` so the
 file stands alone for agents with no NKS access. Keep it inline — don't replace
 it with a pointer to the methodology realm even though it duplicates content
-there. (Whether invariant discipline should instead live once in methodology
-with a pointer is a deliberate open trade-off, tracked as a samshaya in nks-dev.)
+there.
 
 ## Audit → classify → act (not fresh-vs-existing)
 
@@ -64,7 +69,8 @@ Each claim class has one authority. Verify there — don't recall:
 | Quality gate (strictness, max-warnings) | linter config, `tsconfig`, CI yaml | read |
 | Project structure, path aliases | filesystem + `tsconfig`/bundler config | glob / list |
 | Nature, production statement, relaxations | the user (authored) | confirm in conversation |
-| Design decisions, why-clauses, open questions | NKS | `nks_orient` / `nks_search` |
+| Reality carriers + how to observe them | the user (authored) | confirm in conversation — never derive |
+| Design decisions, why-clauses, open questions | NKS | `iskron_orient` / `iskron_search` |
 | Branch state, what's runnable | git + `HANDOVER.md` | `git status` / `log` |
 | Gotchas | authored (past pain) | sanity-check only — don't auto-derive |
 
@@ -119,6 +125,24 @@ sentences of rationale that belong in an NKS vimarsha.
 Idempotent throughout: in a mature repo, run each self-check and act only on
 failures; report what's still outstanding.
 
+**Quick mode — first contact only.** The full run is a heavy first thing to meet
+after a restart, before the newcomer has seen anything worth the cost. On a repo's
+*first* repo-boost, unless the user asked for the full pass: run **Step 2** (realm,
+focus holon, agent karta) plus a **skeleton `AGENTS.md`** of the slots you can
+derive without asking, then hand over to the roadmap teaser (Step 7's baton).
+Defer Steps 1, 3, 4, 6 in one line — "gate, hooks and the interview are deferred —
+say `repo-boost` again for the full pass." Two rules keep it honest: never write a
+*derived* line you haven't checked (an unasked authored slot stays absent, never
+guessed), and always name what was deferred. Every later run is the full arc.
+
+**A deferred authored section is declared, not dropped** — *Reality* and *Shared
+surfaces* especially, because other sections point at them. Keep the heading and
+write one real line under it — *"Not settled yet: run the interview (say
+repo-boost) before accepting any behavioral claim here."* — not a slot, so the
+no-angle-brackets check still passes. An absent section reads as "nothing to
+check here", the opposite of true, and leaves the pointers in *Session lifecycle*
+and Working principles 4 and 6 aimed at nothing.
+
 ### Step 1 — Settle with the user (do first)
 Don't silently pick defaults. Confirm in conversation, then write into *What this
 project is*: **Nature** (and, if not `production`, which principles are relaxed +
@@ -137,6 +161,22 @@ DB/schema, per-lane port, per-lane temp dir) as a gotcha: agents run branches
 concurrently in separate worktrees, and a shared resource corrupts across lanes.
 Skip when build/test has no shared mutable state.
 
+Also settle **shared surfaces**: which components, schemas, contracts or rules
+have more than one consumer, and which consumers. Authored slot — a silently
+forked component looks like two ordinary files, so the repo can't be grepped for
+it. Fills *Shared surfaces*; omit the section only if the answer is genuinely
+nothing.
+
+Also settle **reality** — what a claim here is verified *against*; fills the
+*Reality* table. A code repo, a data repo and an infrastructure repo answer this
+differently, so derive nothing, ask: where a change lands, what effects it
+produces, which of them are observable and with exactly what command / URL /
+query, and what the agent reaches alone versus what needs the user. Press for
+the *canonical carrier* of each claim class — the built artifact, not the
+sources; the live endpoint, not the handler; a clean install, not a warm cache.
+A class with no reachable observation goes under *Ceiling* with its reason,
+never left as an aspirational row.
+
 Also settle **workflow-suite coexistence** (only when a coercive workflow suite
 is detected — its skills appear in the skills list, or its dir exists in the
 plugin cache, e.g. `~/.claude/plugins/`; today that means superpowers): tell
@@ -149,18 +189,18 @@ the user what was found and settle the mode:
    sessions led by the suite won't persist to the realm by default).
 
 ### Step 2 — NKS bootstrap
-- Realm exists? If not: agree a name, then `nks_realm(action="create")`.
+- Realm exists? If not: agree a name, then `iskron_realm(action="create")`.
 - If the project has structure beyond the realm itself, a focus holon exists
   (named after the project's boundary, `contains`-linked from the realm root),
   and its `#seq` goes into *What this project is*. Design the boundary with the
-  `design` skill, create with `nks_add_holon`.
+  `design` skill, create with `iskron_add_holon`.
 - **The doer becomes a steward.** Create the repo's agent karta
-  (`nks_add_karta`, `manifested_as=adhikarin`, motivation distilled from the
+  (`iskron_add_karta`, `manifested_as=adhikarin`, motivation distilled from the
   Production statement) and draw its `steward` edge to the focus holon — an
   adhikarin without a steward edge is a live warning ("acts but answers for
   nothing"). Create the owner's svatantra karta if Step 1 found none. Record
   both seqs in *What this project is*. An agent can always re-find its kartas
-  via `nks_admin(action="my_kartas")` — the doc slot is the fast path, not the
+  via `iskron_me(action="kartas")` — the doc slot is the fast path, not the
   only one.
 
 ### Step 3 — Quality gate (propose strictest, user confirms)
@@ -196,7 +236,16 @@ in a follow-up branch, not the bootstrap.
 Write commands into *Commands*, discipline into *Code conventions*.
 
 ### Step 4 — Hooks
-Three hooks in `.claude/settings.json` (committed — project-wide rituals, every
+**The deliverable is the rituals, not the file.** Detect which harness the repo
+uses and wire *its* surface — Claude Code's hooks file, Codex's `[hooks]` in
+`config.toml`, OpenCode's plugin dir — from `references/harness-surfaces.md`,
+which carries the verified paths, event names and per-ritual mapping for each.
+More than one may be present; wire each. Where a harness has no surface for a
+ritual, say which one you couldn't automate — it still binds through the AGENTS.md
+*Session lifecycle* prose, which the skeleton inlines for exactly this reason.
+Never write a config for a format you're guessing.
+
+The rest of this step is Claude Code's shape. Three hooks in `.claude/settings.json` (committed — project-wide rituals, every
 agent on every clone needs them), plus a conditional fourth — the spec-write
 hook — **only when the Step-1 coexistence settle chose full interop** (the
 settled mode is recorded in the AGENTS.md interop stamp, Step 7; no subsection
@@ -206,16 +255,23 @@ arrays; deleting another suite's hooks breaks its rituals. Generate the JSON for
 *this* project — write it yourself:
 - **`SessionStart`** → reminder to orient in NKS before acting (skill `entry`),
   naming *this* realm slug, focus holon **and agent karta**: open the doer's
-  agenda (`nks_orient(realm, focus="<agent-karta-seq>")`) — incoming `posed_to`
+  agenda (`iskron_orient(realm, focus="<agent-karta-seq>")`) — incoming `posed_to`
   vimarshas are the session's inbox; pick up or explicitly defer each.
 - **`PostToolUse`** with `"matcher": "Bash"` → when the command contains `git
-  push`, reminder to update NKS (match reality + advance the bianhua map:
-  close resolved vimarshas), **sweep the shipped contour** (flip the modes of
+  push`, reminder to update NKS (match reality + advance the bianhua map, and
+  end what the push settled by axis — `addressed_by` records the answer, release
+  is its own act), **sweep the shipped contour** (flip the modes of
   every designed node the push realized — the whole contour, not only the nodes
-  you touched — and close the design vimarshas the ship settled), **sweep the
-  inbox** (visarjana the `posed_to` questions the work answered), run the
-  after-green-push self-review, and: uningested design/spec docs on this
-  branch → intake them (`intake` skill, then `design`) before closing.
+  you touched — and end the design vimarshas the ship settled), **work the
+  inbox** (the `posed_to` questions the work answered), run the
+  after-green-push self-review, **re-read the diff and the nodes for borrowed
+  project-management words** — ticket, backlog, sprint, epic, story, done,
+  blocker, committed — naming each to the user and asking what this project
+  calls it instead of swapping it yourself, and: uningested design/spec docs on
+  this branch → intake them (`intake` skill, then `design`) before closing.
+  The vocabulary re-read rides *this hook* on purpose: it is the prose ban's
+  mechanism, and a ban that lives only in AGENTS.md is the one an agent skates
+  past.
 - **`PreToolUse`** with `"matcher": "Write|Edit|MultiEdit"` → the **memory-guard
   hook**: when the target path is inside the local project-memory dir, **block
   the write** (exit 2, routing message on stderr) — project state lives in the
@@ -307,13 +363,17 @@ Project the delegation doctrine as **named role agents**, not as AGENTS.md
 prose (orchestration mechanics stay out of AGENTS.md — the output contract
 above). Doctrine + file templates: `references/delegation.md` (relative to
 this skill).
-- Always: `.claude/agents/reader.md` (cheap-tier recon) and
-  `.claude/agents/worker.md` (mid-tier brief execution), model aliases
-  `haiku`/`sonnet`.
+- Always: `.claude/agents/reader.md` (cheap-tier recon),
+  `.claude/agents/worker.md` (mid-tier brief execution) and
+  `.claude/agents/verifier.md` (top-tier cold acceptance), model aliases
+  `haiku`/`sonnet`/`opus`. The verifier is projected even where the repo has no
+  runtime yet — it is what makes the *Reality* table actionable, and a repo that
+  gains a carrier later should not need a re-run to gain its acceptor.
 - When the repo shows OpenCode use (`opencode.json` / `.opencode/` present, or
-  the user says so): `.opencode/agents/reader.md` + `worker.md`,
-  `mode: subagent`, model **pinned** per file — an unpinned OpenCode subagent
-  inherits the invoking primary's model, so the pin is the point. Resolve
+  the user says so): `.opencode/agents/reader.md`, `worker.md` and
+  `verifier.md`, `mode: subagent`, model **pinned** per file — an unpinned
+  OpenCode subagent inherits the invoking primary's model, so the pin is the
+  point, and on the verifier it decides whether acceptance is real. Resolve
   current `provider/model-id`s from the user's setup (ask, or read
   `opencode.json` / the global config); never hardcode from the reference.
 - The `description` fields are the delivery channel — they sit in the
@@ -323,23 +383,33 @@ this skill).
 - Judgment work (design, review, synthesis) gets no role file — it stays with
   the session model or a per-call top-tier override where the platform
   supports it.
-- **Merge, never overwrite**: a same-named `reader`/`worker` agent file from
-  another suite may already exist — fold your body/description in or rename
-  yours (`iskron-reader`); the same rule the hooks merge follows.
+- **Merge, never overwrite**: a same-named `reader` / `worker` / `verifier`
+  agent file from another suite may already exist — fold your body/description
+  in or rename yours (`iskron-reader`); the same rule the hooks merge follows.
 - Self-check: role files parse (frontmatter); pinned models exist in the
   user's setup; AGENTS.md carries **no** inlined delegation doctrine (a
   pointer at most); no pre-existing agent file was overwritten.
 
 ### Step 7 — Finalize
-- Write the filled body to **`AGENTS.md`**, then create the Claude Code pointer:
-  a one-line `CLAUDE.md` whose entire content is `@AGENTS.md` (no backticks in
-  the file — a code span suppresses the import). This is the docs-recommended
-  import: expanded at launch, identical to inline content, and it works
-  everywhere — Windows checkouts get plain text where a symlink would break
-  (`core.symlinks=false` is the default there). An existing
-  `ln -s AGENTS.md CLAUDE.md` symlink is an acceptable POSIX equivalent — don't
-  churn it. (`AGENTS.md` is the vendor-neutral canonical name; Claude Code reads
-  `CLAUDE.md`, not `AGENTS.md`.)
+- Write the filled body to **`AGENTS.md`** — the vendor-neutral canonical name,
+  which Codex and OpenCode read natively. **A pointer file is Claude Code's
+  requirement alone** (it reads `CLAUDE.md`, not `AGENTS.md`); don't create one
+  for a harness that doesn't need it. Two isomorphic forms, chosen by whether
+  symlinks survive the checkout — decide by `git config core.symlinks` plus the
+  platform, don't assume:
+  - **Symlinks work (POSIX default):** `ln -s AGENTS.md CLAUDE.md`. One file,
+    two names — nothing to keep in sync, and any tool reading `CLAUDE.md`
+    literally gets the real content, not an import directive.
+  - **Symlinks don't (Windows, `core.symlinks=false`):** copy `AGENTS.md` to
+    `CLAUDE.md` byte-for-byte. A copy is a second source of truth, so it is
+    regenerated on every repo-boost run and listed in *What to update when*;
+    edits go to `AGENTS.md` and never to the copy. A third form exists — a
+    one-line `CLAUDE.md` containing `@AGENTS.md`, Claude Code's import (no
+    backticks, a code span suppresses it) — use it where a copy would be worse
+    than an import that only Claude Code understands.
+  Don't churn a pointer that already works, whichever of the three it is.
+  Per-harness specifics, including Codex's root→cwd merge and its
+  `AGENTS.override.md` local override, are in `references/harness-surfaces.md`.
 - **Legacy config already present** (the common case): use the skeleton as the
   frame and fold existing content in *by line kind* — re-project derived facts
   from their source (don't carry a stale version, command, or path forward just
@@ -347,7 +417,7 @@ this skill).
   why-clauses, nature) that has no checkable source, sanity-checking it against
   the code. Project-specific content with no slot moves to *Code conventions* or a
   new section. End with `AGENTS.md` as the one file + `CLAUDE.md` as the pointer
-  (the `@AGENTS.md` import, or a pre-existing symlink) — if a *content-bearing*
+  (whichever of the three forms above the checkout supports) — if a *content-bearing*
   `CLAUDE.md` exists, fold its content into `AGENTS.md` and replace the file
   with the pointer. One source per concern — no duplicate sections.
 - If Step 1 settled full interop or prose-only: render the
@@ -368,14 +438,25 @@ this skill).
 - **Density pass:** for every body line ask "does this change what the agent
   does?" Cut narrative, motivation, design rationale (rationale → NKS).
 - Drift between runs is guaranteed — the doc goes stale the moment code changes.
-  align re-verifies only when re-run; an automatic "claimed vs actual" check
-  hook (e.g. doc versions vs `package.json`) is a deliberate non-default —
-  generic prose-vs-source parsing is brittle and would itself drift. Tracked as
-  an open vimarsha in nks-dev; re-running align is the current discipline.
+  repo-boost re-verifies only when re-run; an automatic "claimed vs actual" check
+  hook (e.g. doc versions vs `package.json`) is a **settled non-default** —
+  generic prose-vs-source parsing is brittle, throws false positives, and the
+  checker drifts alongside the doc it guards. Re-running repo-boost is the
+  discipline. A narrow per-repo checker on named lines is the only shape worth
+  building; never a generic one.
+- **Stamp the contract.** Trailing line of `AGENTS.md`: `*(repo-boost: contract
+  <the date from the top of this file> — re-run when the installed contract is
+  newer, or when the sources this file derives from have moved since.)*` On a
+  refresh, overwrite the old stamp; never leave two. A config carrying **no**
+  stamp predates the contract entirely — treat it as older than any date and
+  run the full arc.
 - Confirm no `<…>` slot and no `<!-- … -->` note survived into `AGENTS.md`.
 - On the bootstrap push, NKS reflects the change (vimarshas opened/closed,
   the bianhua map advanced).
-- **Pass the baton.** End the bootstrap by offering the first visible value —
-  a quick roadmap teaser (`product-roadmap` skill, quick mode) over the freshly
-  bootstrapped repo. The newcomer's first wow should not wait for them to guess
-  the next prompt.
+- **Pass the baton — name the next step, never let the user guess it.** End by
+  offering the first visible value: a quick roadmap teaser (`product-roadmap`
+  skill, quick mode) over the freshly bootstrapped repo. Say its name, don't
+  allude to it. After a quick-mode run the baton is two items in order: the
+  teaser, then "say `repo-boost` again for the gate, hooks and the interview".
+  The chain from setup to first wow breaks wherever the user is expected to
+  remember a word across a session restart.
