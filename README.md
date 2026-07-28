@@ -2,7 +2,7 @@
 
 Agent-facing skill bundles for working with **NKS** (Nyāya Knowledge System) — a method of
 structured inquiry over a directed graph. These are Claude Code skills that teach an agent how
-to read, write, design, and weave an NKS graph through the `nks_*` MCP tools, wired to
+to read, write, design, and weave an NKS graph through the `iskron_*` MCP tools, wired to
 `mcp.iskron.ru`.
 
 ## Skills
@@ -29,7 +29,7 @@ to read, write, design, and weave an NKS graph through the `nks_*` MCP tools, wi
 Paste this prompt into the agent you already run (Claude Code, Cursor, Codex):
 
 ```
-Set up the iskron skills for me: fetch https://raw.githubusercontent.com/iskron/skills/main/SETUP.md
+Set up the iskron skills for me: fetch https://raw.githubusercontent.com/iskron-ai/skills/main/SETUP.md
 and execute all steps autonomously, asking me for my token when needed.
 ```
 
@@ -39,7 +39,7 @@ if you like. Manual paths below.
 ### Claude Code plugin (recommended)
 
 ```sh
-/plugin marketplace add iskron/skills
+/plugin marketplace add iskron-ai/skills
 /plugin install iskron@iskron
 ```
 
@@ -68,7 +68,7 @@ name — rename the target directory if that happens. They don't affect the plug
 **npx** (Claude Code, Cursor, Codex, …):
 
 ```sh
-npx skills add iskron/skills --all --agent claude
+npx skills add iskron-ai/skills --all --agent claude
 ```
 
 `--agent claude` lands skills in `~/.claude/skills/` (what Claude Code scans), not the default
