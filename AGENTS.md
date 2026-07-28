@@ -1,5 +1,5 @@
 # iskron/skills
-Agent-facing NKS skill bundles (Claude Code skills) for the **iskron.ru** deploy — a rebranded fork of the shared methodology skill set, pointing at `mcp.iskron.ru`. Includes `align` — the skill that bootstraps any repo to this `AGENTS.md` standard.
+Agent-facing NKS skill bundles (Claude Code skills) for the **iskron.ru** deploy — a rebranded fork of the shared methodology skill set, pointing at `mcp.iskron.ru`. Includes `repo-boost` — the skill that bootstraps any repo to this `AGENTS.md` standard.
 
 ## What this project is
 - **Nature**: `library` — reusable Claude Code skill bundles consumed by agents working on iskron. Relaxed vs production: content is prose + methodology, so there are no behavioural tests. The gates are (1) human review of the `SKILL.md` diff plus the skills' own discipline and (2) a lightweight CI that validates the frontmatter contract and bundle sync (`make check`). Breakage is otherwise silent, not loud (see Production statement) — CI catches the one mechanical class (malformed frontmatter / drifted bundles).
@@ -19,7 +19,7 @@ State lives in the **repo** or in **NKS** — nowhere else.
 - Fetch state; never reconstruct it from memory.
 
 ## Session lifecycle
-- **Start:** `nks_orient(realm="nks-dev", focus_holon="1506")`; orient by the ACTIVE BIANHUA map (`lens="bianhua"` for the forest) — open work lives as anga-vimarshas on transformations; a `genre=hint` seed, if any, is a pointer for what the map doesn't carry. The `align` counterpart is the `entry` skill, which runs the protocol. Then open your agenda: `nks_orient(realm="nks-dev", focus="931")` — incoming `posed_to` vimarshas are your inbox; pick up or explicitly defer each before starting repo work.
+- **Start:** `nks_orient(realm="nks-dev", focus_holon="1506")`; orient by the ACTIVE BIANHUA map (`lens="bianhua"` for the forest) — open work lives as anga-vimarshas on transformations; a `genre=hint` seed, if any, is a pointer for what the map doesn't carry. The `repo-boost` counterpart is the `entry` skill, which runs the protocol. Then open your agenda: `nks_orient(realm="nks-dev", focus="931")` — incoming `posed_to` vimarshas are your inbox; pick up or explicitly defer each before starting repo work.
 - **Every push → update NKS:** thread shipped repo state into holon #1506 and advance the delivery bianhua #1516 — close (visarjana) driver vimarsha #1515 (or split it) as the repo moves toward published/installed. The skill *pipeline* (kriyas #1512–#1514) is the carrier. A thin `genre=hint` is left only for what the graph can't carry (pointer, not payload — methodology #131), never by default.
 - **Shared methodology stays shared.** The skills' *substance* (kriyas «навигация», «создание узла», «приведение репо к стандарту», intake, roadmap, вахта) is common methodology modeled once under #844/methodology — do **not** duplicate it under #1506. Only when an iskron skill *diverges* from the shared version does that divergence get its own node.
 - **Keep git refs out of NKS** — no SHAs, branch names, or PR numbers in nodes.
@@ -44,8 +44,8 @@ One branch through to its merge — commit follow-ups into it, don't chain new b
 | Plans, hand-offs | | ✓ (bianhua map + anga-vimarshas on #1506/#1516; thin `genre=hint` only for off-map remainder) |
 | Commit history, SHAs, PRs | git | (never NKS) |
 
-## The bootstrap template lives in the `align` skill
-The fill-in `AGENTS.md` skeleton for future repos is `skills/align/references/agents-template.md`; the bootstrap protocol is `skills/align/SKILL.md`. **This** repo's own config is `AGENTS.md` (the file you are reading). Edit the template/protocol to improve bootstrapping for all future repos — don't confuse them with this file.
+## The bootstrap template lives in the `repo-boost` skill
+The fill-in `AGENTS.md` skeleton for future repos is `skills/repo-boost/references/agents-template.md`; the bootstrap protocol is `skills/repo-boost/SKILL.md`. **This** repo's own config is `AGENTS.md` (the file you are reading). Edit the template/protocol to improve bootstrapping for all future repos — don't confuse them with this file.
 
 ## Stack
 Markdown `skills/<name>/SKILL.md` (+ optional `skills/<name>/references/*.md`) per skill — **edit these directly, they are plain files and fully greppable.** Each is packed into a derived `<name>.skill` zip (top-level `<name>/` dir containing `SKILL.md`) by `make build`. No code, no lockfiles. The only "code" is the build + format-validation scripts (`scripts/*.sh`, `scripts/*.mjs`), run by `make` and CI.
@@ -67,7 +67,7 @@ Edit the source under `skills/<name>/` directly — no unzip dance. The `<name>.
 The pre-commit hook (`.githooks/pre-commit`) rebuilds and stages the `.skill` bundles on every commit, so committed zips never drift from source. Run `make hooks` once per clone to enable it — **except on this owner's machine**: the `~/code/iskron/` gitconfig points `core.hooksPath` at a shared `pre-push` identity-guard (correct-user pushes), and `make hooks` would override it repo-locally and disable that guard here. On that machine, skip `make hooks` and run `make build` before committing instead (CI's `make check-bundles` catches any drift regardless). The only automated gate is **format**, not behaviour: `make validate` parses each `SKILL.md` frontmatter (catching malformed YAML such as an unescaped quote in a `description`) and `make check-bundles` confirms each `<name>.skill` contains a `<name>/` tree byte-identical to its source. Both run in GitHub CI on every push/PR (`.github/workflows/ci.yml`). The substance of a skill — whether its prose and tool references are right — is still gated by human review of the diff.
 
 ## Project structure
-- `skills/<name>/SKILL.md` — **source of truth**, one dir per skill (`entry`, `writing`, `design`, `weaving`, `inquiry`, `assembly`, `integrity`, `intake`, `on-duty`, `methodology-work`, `align`, `product-roadmap`); `references/*` optional (`align`, `writing`, `product-roadmap` ship them).
+- `skills/<name>/SKILL.md` — **source of truth**, one dir per skill (`entry`, `writing`, `design`, `weaving`, `inquiry`, `assembly`, `integrity`, `intake`, `on-duty`, `methodology-work`, `repo-boost`, `product-roadmap`); `references/*` optional (`repo-boost`, `writing`, `product-roadmap` ship them).
 - `*.skill` — derived zip bundles (committed for manual / claude.ai install). Build output of `make build`; do not hand-edit.
 - `.claude-plugin/marketplace.json` — plugin marketplace manifest (`iskron@iskron`); `metadata.version` and the plugin entry's `version` both mirror `plugin.json` (release-please writes all three; `make validate` fails if they diverge). No component lists — the plugin's skills auto-discover from `skills/` (`strict: true`, plugin.json authoritative).
 - `.claude-plugin/plugin.json` — the `iskron` plugin manifest; its `version` is what Claude Code reads to deliver updates (bumped by release-please when the release PR merges, never by hand).
@@ -80,7 +80,7 @@ The pre-commit hook (`.githooks/pre-commit`) rebuilds and stages the `.skill` bu
 - `.gitignore` — ignores `.DS_Store` and `.claude/settings.local.json`.
 
 ## Code conventions
-- **This is a rebranded fork — keep it brand-clean.** The brand is **iskron** (`iskron@iskron`, `/iskron:<skill>`, `mcp.iskron.ru`) and the repo-bootstrap skill is **`align`**. Do not reintroduce the upstream plugin's brand or its bootstrap-skill name anywhere in tracked sources; when syncing changes from upstream, sweep those tokens out first (a case-insensitive search for the upstream brand over tracked files must come back empty). The shared `nks-dev` graph still carries the upstream brand for the sibling deploy — that's the shared graph, not this repo's sources.
+- **This is a rebranded fork — keep it brand-clean.** The brand is **iskron** (`iskron@iskron`, `/iskron:<skill>`, `mcp.iskron.ru`) and the repo-bootstrap skill is **`repo-boost`**. Do not reintroduce the upstream plugin's brand or its bootstrap-skill name anywhere in tracked sources; when syncing changes from upstream, sweep those tokens out first (a case-insensitive search for the upstream brand over tracked files must come back empty). The shared `nks-dev` graph still carries the upstream brand for the sibling deploy — that's the shared graph, not this repo's sources.
 - **`SKILL.md` frontmatter**: `name:` (kebab, matches the skill dir) + `description:` carrying explicit trigger phrases — that description is what routes the skill, so keep triggers concrete.
 - **Skill names are bare** — no `nks-`/`iskron-` prefix. The `iskron` plugin namespaces them (`/iskron:<skill>`), so a prefix would only stutter. Trade-off: flat installs (`npx skills`, manual unzip) drop skills into `~/.claude/skills/<name>/` under the bare name and can collide there — the plugin is the canonical, collision-proof channel.
 - **Source of truth = `skills/<name>/SKILL.md`.** Edit it directly, then `make build` to regenerate the `<name>.skill` zip (which must contain `<name>/SKILL.md`, not a bare `SKILL.md`, or it won't install). New skill → add a `skills/<name>/` dir — it ships via plugin auto-discovery; never add component lists (`skills`, `commands`, …) to `marketplace.json`/`plugin.json` — a second copy of the truth drifts, and the format gate fails it.
@@ -94,9 +94,9 @@ The pre-commit hook (`.githooks/pre-commit`) rebuilds and stages the `.skill` bu
 - `AGENTS.md` — repo conventions, structure, or the skill set change.
 - `README.md` — the skill table, whenever the skill set changes (new/renamed/retired skill).
 - `DERIVATION.md` — the skills ← canon re-projection map (+ the four-layer language contract): walk it after any methodology-canon change; extend it when a new canon landmark gets projected into a skill.
-- `skills/align/` (`SKILL.md` + `references/agents-template.md`) — when improving the bootstrap protocol/template for all future repos.
-- `skills/align/references/superpowers-interop.md` — when superpowers renames its skills/paths/gates (re-verify checklist inside).
-- `skills/align/references/delegation.md` — when Claude Code / OpenCode agent-file surfaces change (dirs, frontmatter keys, model aliases/inheritance; re-verify checklist inside).
+- `skills/repo-boost/` (`SKILL.md` + `references/agents-template.md`) — when improving the bootstrap protocol/template for all future repos.
+- `skills/repo-boost/references/superpowers-interop.md` — when superpowers renames its skills/paths/gates (re-verify checklist inside).
+- `skills/repo-boost/references/delegation.md` — when Claude Code / OpenCode agent-file surfaces change (dirs, frontmatter keys, model aliases/inheritance; re-verify checklist inside).
 - NKS (`nks-dev`, #1506) — every push: thread repo state into holon #1506, advance delivery bianhua #1516, close resolved vimarshas.
 
 ## Git workflow

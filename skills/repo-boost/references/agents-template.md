@@ -1,0 +1,316 @@
+# `<project-name>`
+`<one line: what this project is and who it serves>`
+
+## What this project is
+- **Nature**: `<production | research | sandbox | one-off | library>`. If not
+  `production`, list which working principles are relaxed and why. No explicit
+  relaxation = full production discipline (agents lean lenient by default).
+- **NKS realm**: `<slug>` — every session starts with `iskron_orient` here.
+- **Focus holon**: `<#seq «name»>`, or `focus: realm root` if the whole realm
+  is in scope.
+- **Agent karta**: `<#seq «name»>` — adhikarin, steward of the focus holon.
+  Your inbox: `iskron_orient(focus="<seq>")` at session start (self-locate
+  fallback: `iskron_me(action="kartas")`).
+- **Owner karta**: `<#seq «name»>` (svatantra 主) — out-of-mandate questions go
+  here as `posed_to` vimarshas.
+- **Stack**: `<language + primary frameworks, one line>`.
+- **Production statement**: `<one paragraph: what ships, to whom, where, cost
+  of breakage. Sandbox/research: state that breakage is cheap, what the
+  project is for, and when it stops being cheap.>`
+
+## Persistence rules
+State lives in the **repo** or in **NKS** — nowhere else. Local agent memory
+(whatever your harness calls it — a per-project memory dir, conversation
+summaries, `/tmp`, machine-local files) is **forbidden for project state**, even
+when convenient:
+it breaks flow reproducibility and silently prevents working from a second
+machine or with another agent.
+- **Repo**: code, configs, conventions, code-level gotchas, branch state — the
+  artifact itself.
+- **NKS**: methodology, design decisions, open questions (vimarshas), plans,
+  hand-offs, lessons, hints — the thinking around it. Don't restate NKS content
+  in the repo; link to the vimarsha or holon.
+- **Fetch state; never reconstruct it from memory.** No source for a "we
+  decided…"? Stop and read NKS or the repo before acting.
+- **External design/spec files are drafts to intake**, not the record — the
+  graph holds the decisions; any such file is a view of them.
+- **Memory write-gate.** The harness's own memory instruction invites a
+  `project` memory category — overridden here: before saving any memory,
+  classify the fact. Project fact (system property, decision, constraint,
+  gotcha) → repo/NKS; memory keeps at most a one-line pointer.
+  Agent/user-scoped (working style, preferences, language) → memory, as
+  designed. Dual-nature facts are the trap: "X works only in prod" *felt* as
+  "how I should test X" is still a project fact — split it (fact → repo/NKS,
+  pointer → memory).
+- The memory index (`MEMORY.md`), loaded every session, opens with this gate
+  as its first line — the rule must meet the save-instinct at write time, not
+  sit only in this file. The gate line is permanent: memory-consolidation
+  passes never prune it. Project facts already accumulated in memory → move
+  to their real home (AGENTS.md / HANDOVER.md / NKS), leave pointers.
+
+## Session lifecycle
+NKS = the work (structure, open questions, what's next). Git = how it got here
+(SHAs, branches, PRs). **Keep git refs out of NKS** — no SHAs, branch names,
+PR numbers, or "shipped/merged" in nodes (go stale on rebase).
+- **Start of session:** orient in NKS — the realm named in *What this project
+  is*, focus holon if set; orient by the ACTIVE BIANHUA map (`lens="bianhua"`
+  for the forest) — open work lives as anga-vimarshas on transformations; a
+  `genre=hint` seed, if any, is a pointer for what the map doesn't carry. The
+  `entry` skill runs the protocol. Then open your agenda:
+  `iskron_orient(focus=<agent-karta-seq>)` — incoming `posed_to` vimarshas are
+  your inbox; pick up or explicitly defer each before starting repo work.
+- **Every push → update NKS.** Every move below is required:
+  - **Match reality.** Record what positions the change in the target system:
+    architecture, module APIs, supply/delivery, user experience, integration
+    with neighbouring code. Repo-only mechanics — lockfile churn, internal
+    refactors with no outside impact, commands, file moves — stay in git, not
+    NKS.
+  - **Advance the map.** Keep open work attached via `anga` to the bianhua it
+    drives. A thin `genre=hint` seed is left only for what the graph can't carry
+    — external-world state, chosen priorities; pointer, not payload
+    — never by default.
+  - **Close by axis, not by feeling done.** Record the answer as `addressed_by`
+    to the node that carries it — that raises confidence, it does not end the
+    question. Release (`visarjana`) is a separate, volitional act, and what it
+    takes first depends on the question: a distinction is answered by its form,
+    a behavioral claim needs the observation on its carrier (*Reality*).
+    Release it yourself when three things hold together — the answer stands in
+    the realm as a node rather than in your recollection, the repo shows it, and
+    reality shows it as far as reality is reachable; where it is not reachable,
+    the user's word stands in its place and you asked for it. Short of all
+    three, prepare the release and present it to the owner instead of assuming
+    it. Release is not the only ending — park, supersede, or crystallize what
+    the question taught.
+  - **Sweep the shipped contour.** A push that realizes designed nodes flips
+    their modes (anagata→vartamana, kalpita→pratyakshita) across the *whole*
+    designed contour — not only the nodes you happened to touch — and ends the
+    design vimarshas the ship settled, by the rule above.
+  - **Work the inbox.** The `posed_to` questions your work answered end by the
+    rule above; park or group the stale ones.
+  - **Vocabulary pass.** Re-read what you are about to land — repo text and graph
+    nodes alike — for borrowed project-management words (ticket, backlog, sprint,
+    epic, story, done, blocker, committed). Do **not** swap them yourself: name
+    each one to the user and ask what this project calls it, in the same move.
+    (why: renaming is the owner's act, and a confidently wrong replacement is
+    worse than the word it displaced — it reads as native, so nobody questions
+    it again.)
+
+  `weaving` / `design` carry the *how* (ending vimarshas, threading the holon).
+- **Design completion criterion:** a design is not *done* until its decisions,
+  risks, and lifecycle are in the realm — whichever skill elicited it.
+  Persisting to the graph is memory-work, not implementation, so design-phase
+  gates on implementation don't apply to it. A design/spec file another suite
+  writes is a draft view — intake it **in the same session** (never defer graph
+  landing to a future push). Working autonomously (owner absent): still land
+  decisions and risks now; propose the transformation (bianhua) with its telos
+  marked for owner confirmation rather than skipping it.
+- **Execution suites lead execution.** Planning, TDD, debugging, verification,
+  review and their kin belong to whatever execution suite is installed; NKS
+  carries the memory/design plane only. Decisions and risks born during
+  execution still land in the realm **before the session ends** — never gate
+  them on a future push/commit.
+- **A claim you made is not a claim you accept.** Behavioral claims — "the fix
+  works", "the endpoint answers", "the migration ran" — close on a cold
+  `verifier` subagent's verdict, never on your own re-reading. Give it the
+  claim, the carrier and the falsifier from *Reality*, and **wait for the
+  verdict** before ending anything by the rule above. (why: you cannot see your own change as it
+  is, only as you meant it.) Where this repo has no verifier role, make the
+  observation yourself against the carrier — never close a behavioral claim on
+  the source that was supposed to produce it.
+- **Hooks merge.** Where the harness has a hooks file, entries from different
+  suites coexist — add alongside, never overwrite another suite's.
+- These reminders are automated where the harness supports it: a session-start
+  hook, a post-`git push` hook, and a memory-write hook — verify all three
+  wired. Where the interop stamp below says `full`, a fourth spec-write reminder
+  rides along; otherwise it must not be wired. <!-- Fill in the harness's own
+  paths (Claude Code: `.claude/settings.json`); on a harness with no hook
+  surface, drop this bullet — the rituals above still bind, unautomated. -->
+- **Keep this file honest.** It is generated by `repo-boost` and stamped at the
+  bottom with the contract it came from. Re-run `repo-boost` when the installed
+  skill declares a newer contract, or when the sources this file derives from
+  have moved since the stamp — `git log -1 --format=%cd -- <those files>` against
+  the stamp date settles it in one command. (why: a stale AGENTS.md is read with
+  full confidence every session, so it misleads harder than no file at all.)
+- **Keep your own toolchain current.** Updates are **on by default**: take them
+  as the channel delivers them, don't pin. (why: an outdated skill drifts from
+  the tool surface it names and degrades you silently — nothing crashes, the
+  method just goes wrong.) <!-- opt-out: replace this bullet with
+  the pin + the reason, e.g. "pinned to iskron@X.Y — <why>"; a pin without a
+  recorded reason is drift with extra steps. --> Where the install channel has
+  no auto-update — a plain unpacked copy under the agent's skills dir — the
+  presumption can't hold: check the installed version before a session that will
+  lean on the skills, or move to a channel that carries updates itself.
+
+### After a green push: self-review
+Quality gate green and the iteration done → re-read your diff for: bugs,
+fragile spots, weak error handling, DRY/SOLID violations, repeated patterns,
+missing or useless tests, files over 150 lines or god-units mixing many concerns
+(split by concern; extract large inline test blocks to a sibling file). Fix in
+the **same branch** and push again, or state plainly that nothing surfaced. Don't
+fake findings.
+
+### Branch discipline
+One branch through to its merge — commit follow-ups into it, don't chain new
+branches before it merges. After the branch merges (however this project merges
+— see *Definition of done*), clean up locally:
+1. `git checkout main && git pull`.
+2. Delete the merged branch (`git branch -d <name>`); prune others now on
+   `main`.
+3. Update NKS: change is on `main`, not a branch — thread shipped state into
+   the holon, end what the merge settled by the rule above (`weaving`).
+4. Confirm cleanup is done before the next task.
+
+## Working principles
+1. **Think before coding.** State assumptions; ask when uncertain — name
+   *what's* unclear, not just "which option". Surface competing
+   interpretations; push back when a simpler approach or false premise is
+   visible. Check repo + NKS before writing; fetch, don't recall. Hit the
+   live system before trusting a type, a name, or a doc. Out-of-boundary or
+   authority-exceeding questions become vimarshas `posed_to` the owner's 主
+   karta — not silent decisions, not chat-only asks.
+2. **Simplicity first.** Minimum code for the task. No speculative features, no
+   abstractions for single-use code, no error handling for impossible cases.
+   Validate at boundaries; trust internal invariants. 200 lines that could be
+   50 → rewrite.
+3. **Stay inside the repo boundary.** Never leave this repository's working
+   directory. A change belonging to another holon — another repo, service,
+   or team's contour — is not yours to make across the border: record it as
+   a vimarsha on that holon's node in its realm, anchored where that holon's
+   owner orients, `anga` to the bianhua it serves.
+4. **The second implementation is a reportable event.** About to write something
+   that already exists elsewhere — the same component for a second consumer, the
+   same rule in a second service? Say so: name both places and propose either
+   re-joining them or a named, deliberate fork. Check *Shared surfaces* before
+   adding a consumer to anything listed there.
+5. **Surgical changes.** Touch only what the task needs. Don't reformat or
+   refactor adjacent code. Match existing style; the linter is authoritative.
+   Remove only the dead code your change created; flag the rest, don't delete.
+6. **Goal-driven execution.** Tasks → verifiable goals. Bugs: pin with a
+   failing test before patching (no ad-hoc curl/bash debugging). Multi-step:
+   state plan as `step → verify` pairs, loop until each passes. Runtimes (UI,
+   service, integration): verify in the real environment (browser, real API,
+   downstream system), not just unit tests — *Reality* names this project's
+   carriers and who can reach them. Name the falsifier before you look ("what
+   observation would refute this?"), and observe the carrier itself, not the
+   source that was meant to produce it. Ending the questions your change touched
+   follows *Session lifecycle* — by axis, not by feeling done.
+7. **Read before answering an open-ended ask.** Tasks framed as *discuss / think
+   through / figure out / research / design / plan / analyse / investigate /
+   explore / "what do you think"* — anything beyond "do X concretely" — are
+   answered from recorded thinking, not from training data: query the realm
+   first, several ways (one miss ≠ absent). The `entry` skill runs the protocol
+   and locates the realm that holds the answer.
+8. **Think in NKS, speak the project's language.** The graph's structural
+   vocabulary — kriya, phenomenon, holon, karta, vimarsha, the three mode axes —
+   is for reasoning: it carries distinctions ordinary language drops, and losing
+   it is how "release by the volitional axis" decays into "close the ticket". It
+   does not appear in what you say to the user — not once, not for precision —
+   unless they used it first. Translate into this project's own words, and the
+   glossary is at hand: the realm's holon and phenomenon names, and the
+   vocabulary of the code. The same split governs the graph itself — structural
+   terms *type* a node, the domain's words *name* it.
+   Talking *about* the work is a third register, and the one that goes wrong:
+   ticket, task, sprint, backlog, story, done are in neither glossary, because
+   they describe work rather than belong to this project. Use plain description
+   instead — a question, a change, what is open, what this settles. (why: a
+   borrowed word arrives with its method's script — a question turns into an
+   issue "to be closed", a transformation into an epic — and you then act by the
+   borrowed script instead of by what is actually in front of you.)
+
+## Shared surfaces
+<!-- Authored slot — no checkable source, so ask the user; omit the section only
+if the answer is genuinely "nothing is shared". List each component, schema,
+contract or rule with more than one consumer, and who those consumers are.
+Touching one obliges checking the others (Working principle 4). -->
+| Surface | Consumers | Note |
+|---------|-----------|------|
+| <component / schema / contract> | <system A, system B> | <shared on purpose, or a fork we accepted and why> |
+
+## Reality — what a claim is verified against
+<!-- Authored slot — ask the user, derive nothing; every project answers it
+differently (code, data, infrastructure, content). NKS is the model of the work,
+this repo part of its embodiment; this names the third thing — what the work
+becomes when it runs, and how to look at it. Ask: where does a change land? what
+effects does it produce? which of them are observable, with exactly what
+command, URL, dashboard or query? what does the agent reach alone, what needs
+the user? A row the agent can't execute is worth nothing. -->
+| Claim class | Canonical carrier | How to observe | Who can |
+|---|---|---|---|
+| <what kind of claim this row settles> | <the thing that settles it: the built artifact, the live endpoint, the migrated table, the deployed host — never the source that was supposed to produce it> | <exact command / URL / query> | <agent \| user> |
+
+**Ceiling**: `<claim classes with no reachable observation, and why — the past,
+a third-party system, a surface the agent may not touch. Their honest top is
+inference or converging independent sources; they are never closed as verified.>`
+
+**This table grows by use.** The interview only seeds it. The moment a session
+teaches you something it doesn't hold — a carrier nobody named, an observation
+that turned out reachable, one that turned out not to be (→ *Ceiling*), a command
+here that was wrong — write the row *then*, in that session, before the work that
+taught it is closed. (why: an unrecorded carrier is one the next agent doesn't
+find, so the same claim gets accepted on weaker evidence next time.)
+
+## NKS ↔ repo: where things live
+| Concern                                | Repo            | NKS                      |
+|----------------------------------------|-----------------|--------------------------|
+| Code, configs, lockfiles               | ✓               |                          |
+| Commands, conventions, gotchas, stack  | ✓ (AGENTS.md)   |                          |
+| Current branch state, how to verify    | ✓ (HANDOVER.md) |                          |
+| Gaps in external systems we depend on  | ✓ (MISSING_*.md)|                          |
+| Methodology, ontology                  |                 | ✓                        |
+| Design decisions, open questions       |                 | ✓ (vimarshas)            |
+| Plans, task lists, session hand-offs   |                 | ✓ (project realm)        |
+| Lessons, hand-offs                     |                 | ✓ (graph first; thin `genre=hint` for off-map remainder) |
+| Commit history, PRs, SHAs              | git             | (never NKS)              |
+<!-- HANDOVER.md and MISSING_*.md rows are optional — keep them only if the project uses those files; drop them otherwise. -->
+
+## Stack
+`<versions + critical libraries the one-liner in *What this project is* doesn't
+already cover; lockfiles carry the rest. Omit this section entirely if the
+one-liner says enough.>`
+
+## Commands
+`<table: build / test / lint / dev / format. Lint runs zero-warning where the
+stack supports it.>`
+
+## Project structure
+`<top-level dirs, one line each. Path aliases here too. Keep readable, not
+exhaustive.>`
+
+## Code conventions
+`<only what the linter doesn't enforce:>`
+- `<naming / import style / forbidden patterns + why-forbidden>`
+- **Test discipline**: `<unit | unit+integration | +e2e; coverage threshold
+  for production>`.
+- **Gotchas**: `<runtime traps types/linter miss — hook return shapes, async
+  races, env-specific behavior, library quirks, CI-parity gaps, shared
+  build/test state, tracked secret/env files. One paragraph each.>`
+
+## What to update when
+- `AGENTS.md` — commands, structure, conventions, or stack change; a reality
+  carrier appears, moves, or becomes reachable/unreachable.
+  <!-- Keep this row only where CLAUDE.md is a copy rather than a symlink or an
+  import (Windows checkouts): -->
+- `CLAUDE.md` — regenerate the copy whenever `AGENTS.md` changes; it is a
+  duplicate, never edit it directly.
+- `HANDOVER.md` — current branch state shifts (branch, what's runnable/blocked).
+  Not a changelog (that's commits + NKS).
+- `MISSING_*.md` — a need surfaces that an upstream/downstream system doesn't
+  satisfy yet.
+- NKS (project realm) — every push (see *Session lifecycle*).
+
+## Git workflow
+- **Conventional commits** (`feat:`/`fix:`/`chore:`/`refactor:`/`docs:`/
+  `test:`). Branches `feat/…`, `fix/…`, `chore/…`. PR titles same format.
+- **No co-author trailer** unless the user asks.
+- **Local gate**: a pre-commit hook (Husky / lefthook / pre-commit) runs linter
+  + formatter (+ typecheck) on staged files — or, if the project has none, run
+  them manually before pushing. CI enforces them regardless.
+- **Definition of done**: `<the project's merge flow + how it learns a branch
+  merged — e.g. PR into main, gh pr checks <n> --watch green, zero-conflict
+  merge; or a manual "merged" announcement. Branch discipline points here for
+  the signal, so fill this in.>`
+- **Never** `--no-verify`, `--force`, `--no-gpg-sign`, or `git reset --hard`
+  without explicit user instruction.
+
+*(repo-boost: contract `<YYYY-MM-DD>` — re-run when the installed contract is
+newer, or when the sources this file derives from have moved since.)*
