@@ -71,7 +71,7 @@ The pre-commit hook (`.githooks/pre-commit`) rebuilds and stages the `.skill` bu
 - `*.skill` — derived zip bundles (committed for manual / claude.ai install). Build output of `make build`; do not hand-edit.
 - `.claude-plugin/marketplace.json` — plugin marketplace manifest (`iskron@iskron`); `metadata.version` and the plugin entry's `version` both mirror `plugin.json` (release-please writes all three; `make validate` fails if they diverge). No component lists — the plugin's skills auto-discover from `skills/` (`strict: true`, plugin.json authoritative).
 - `.claude-plugin/plugin.json` — the `iskron` plugin manifest; its `version` is what Claude Code reads to deliver updates (bumped by release-please when the release PR merges, never by hand).
-- `.mcp.json` — the nks MCP server binding for this repo: `https://mcp.iskron.ru/`.
+- `.mcp.json` — the iskron MCP server binding for this repo: `https://mcp.iskron.ru/`.
 - `release-please-config.json` + `.release-please-manifest.json` + `.github/workflows/release-please.yml` — release-please: it maintains a release PR from the Conventional Commits on `main`; merging that PR writes the version into `plugin.json`/`marketplace.json`, tags `vX.Y.Z`, and cuts a GitHub Release with a `CHANGELOG.md` entry.
 - `Makefile`, `scripts/build-skills.sh`, `.githooks/pre-commit` — the build.
 - `scripts/validate-skills.mjs` (frontmatter contract, pure Node), `scripts/check-bundles.sh` (bundle ↔ source sync), `.github/workflows/ci.yml` — the format gate.

@@ -1,4 +1,4 @@
-# iskron/skills
+# iskron-ai/skills
 
 Agent-facing skill bundles for working with **NKS** (Nyāya Knowledge System) — a method of
 structured inquiry over a directed graph. These are Claude Code skills that teach an agent how
@@ -87,4 +87,4 @@ unzip design.skill -d ~/.claude/skills/
 - `*.skill` — committed **derived** bundles. Never hand-edit; run `make build` (or just commit
   with the hook enabled via `make hooks`, which rebuilds them on every commit).
 - `.claude-plugin/marketplace.json` — plugin marketplace manifest.
-- `.mcp.json` — the nks MCP endpoint: `https://mcp.iskron.ru/`.
+- `.mcp.json` — the iskron MCP endpoint: `https://mcp.iskron.ru/`.
