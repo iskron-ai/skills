@@ -1,69 +1,60 @@
 # iskron-ai/skills
 
-Agent-facing skill bundles for working with **NKS** (Nyāya Knowledge System) — a method of
-structured inquiry over a directed graph. These are Claude Code skills that teach an agent how
-to read, write, design, and weave an NKS graph through the `iskron_*` MCP tools, wired to
-`mcp.iskron.ru`.
+Агентские скилл-бандлы для работы с **NKS** (Nyāya Knowledge System) — методом структурного вопрошания над направленным графом. Это скиллы Claude Code, которые учат агента читать, писать, проектировать и ткать граф NKS через MCP-тулы `iskron_*`, подключённые к `mcp.iskron.ru`.
 
-## Skills
+Тексты скиллов — русские, выведенные из канона реалма методологии (не перевод: ре-деривация).
 
-| Skill | What it does |
+## Скиллы
+
+| Скилл | Что делает |
 |---|---|
-| **entry** | Orientation & reading protocol — enter a realm, search, deepen. |
-| **writing** | Node-writing discipline — naming (正名), modes, edges. |
-| **design** | Projecting systems — backward chaining, forward weaving, risk analysis. |
-| **weaving** | Semantic completion of an existing graph — close lifecycles, fix tensions. |
-| **inquiry** | The life of a vimarsha — anchor, resolve, close, park, crystallize, attach to a bianhua. |
-| **assembly** | The 時-cycle ritual — discern the bianhua a realm is undergoing and produce 形, the assembly map. |
-| **integrity** | Wrap a bianhua in integrity — propagate a transformation's impact wavefront and surface what it touches. |
-| **intake** | Bring external word (шабда) into a realm — map form→type, mode by kind (#104), dedup, anchor, verify by пратьякша. Source-independent. |
-| **on-duty** | Stand watch — the agent's autonomous duty cycle: drain the doer's inbox, wire dependencies into other doers' inboxes, weave the wake, wait consciously (webhook / bounded re-check). Scoped mode drives one bianhua to arrival. |
-| **methodology-work** | Working on the methodology realm itself. |
-| **align** | Bring a repo to this `AGENTS.md` standard — generate `AGENTS.md` (+ `CLAUDE.md` pointer), wire the NKS session rituals, set the quality gate. Idempotent: re-run to re-align after drift. |
-| **product-roadmap** | Build a product roadmap for a product you maintain on GitHub — one repo or many (an org / repo-set treated as one product) — by modelling it as a verified ground, harvesting its issues + PRs, and assembling the directions it's actually under. Composes align + intake + assembly. |
+| **entry** | Протокол ориентации и чтения — вход в реалм, опознавание мотивации, поиск, углубление. |
+| **writing** | Дисциплина записи узлов — именование (正名), модусы, given_as, стрелки. |
+| **design** | Проектирование систем — обратное выведение, прямое ткачество, анализ рисков, импульс доставки. |
+| **weaving** | Семантическое завершение существующего графа — замыкание жизненных циклов, починка натяжений. |
+| **inquiry** | Жизнь вимарши — якорение, разрешение, закрытие, парковка, кристаллизация, привязка к bianhua. |
+| **assembly** | Ритуал 時-цикла — различить превращения (bianhua) реалма и произвести 形, карту сборки. |
+| **integrity** | Целостность превращения — волновой фронт воздействия телоса и обратный claim-аудит прозы. |
+| **intake** | Впуск внешнего слова (шабды) в реалм — форма→тип, модус по виду источника, дедуп, якорение, сверка. Источник-независим. |
+| **on-duty** | Вахта — автономный цикл дежурства агента: дешёвый дежурный такт и дорогой рабочий такт от инбокса делателя. |
+| **methodology-work** | Работа над самим реалмом методологии. Живёт только в этой дистрибуции. |
+| **align** | Приведение репозитория к стандарту `AGENTS.md` — генерация конфига, ритуалы сессий, гейт качества. Идемпотентен: перезапускай после дрейфа. |
+| **product-roadmap** | Продуктовый роадмап GitHub-репозитория (или мультирепо-продукта) из issues и PR через граф рассуждений. Композирует align + intake + assembly. |
 
-## Install
+## Установка
 
-### Fastest: hand the setup to your agent
+### Быстрее всего: отдай установку своему агенту
 
-Paste this prompt into the agent you already run (Claude Code, Cursor, Codex):
+Вставь этот промпт в агента, которым уже пользуешься (Claude Code, Cursor, Codex):
 
 ```
-Set up the iskron skills for me: fetch https://raw.githubusercontent.com/iskron-ai/skills/main/SETUP.md
-and execute all steps autonomously, asking me for my token when needed.
+Установи мне скиллы iskron: скачай https://raw.githubusercontent.com/iskron-ai/skills/main/SETUP.md
+и выполни все шаги автономно, спросив мой токен, когда понадобится.
 ```
 
-[`SETUP.md`](SETUP.md) is the agent-executable installer — plain markdown, read it first
-if you like. Manual paths below.
+[`SETUP.md`](SETUP.md) — установщик, исполняемый агентом: обычный markdown, можно прочесть заранее. Ручные пути ниже.
 
-### Claude Code plugin (recommended)
+### Плагин Claude Code (рекомендуется)
 
 ```sh
 /plugin marketplace add iskron-ai/skills
 /plugin install iskron@iskron
 ```
 
-All skills install together under the `iskron` plugin (invoke explicitly as
-`/iskron:design`, etc.; model-driven invocation works automatically).
+Все скиллы ставятся вместе под плагином `iskron` (явный вызов — `/iskron:design` и т.п.; модельный вызов работает сам).
 
-**Updating.** `iskron` is a third-party marketplace, so — unlike the official Anthropic
-marketplace — it does **not** auto-update. Anything not from the official marketplace must be
-updated manually:
+**Обновление.** `iskron` — сторонний marketplace, поэтому — в отличие от официального маркетплейса Anthropic — он **не** автообновляется. Всё неофициальное обновляется вручную:
 
 ```sh
 /plugin marketplace update iskron
 /reload-plugins
 ```
 
-Or enable auto-update once: `/plugin` → **Marketplaces** → `iskron` → **Enable auto-update**
-(then it refreshes and updates the plugin at startup).
+Или один раз включи автообновление: `/plugin` → **Marketplaces** → `iskron` → **Enable auto-update** (тогда плагин освежается при старте).
 
-### Portable install (other agents, claude.ai)
+### Портируемая установка (другие агенты, claude.ai)
 
-For Claude Code, prefer the plugin above — it namespaces the skills (`/iskron:design`) and
-keeps them isolated. The methods below install **flat** into a shared skills directory under
-the bare skill names (`design`, `writing`, …), so they can clash with other skills of the same
-name — rename the target directory if that happens. They don't affect the plugin install.
+Для Claude Code предпочитай плагин выше — он неймспейсит скиллы (`/iskron:design`) и держит их изолированными. Способы ниже ставят **плоско**, в общую директорию скиллов под голыми именами (`design`, `writing`, …) — возможны коллизии с одноимёнными скиллами других паков; в этом случае переименуй целевую директорию. На установку плагина они не влияют.
 
 **npx** (Claude Code, Cursor, Codex, …):
 
@@ -71,20 +62,18 @@ name — rename the target directory if that happens. They don't affect the plug
 npx skills add iskron-ai/skills --all --agent claude
 ```
 
-`--agent claude` lands skills in `~/.claude/skills/` (what Claude Code scans), not the default
-`~/.agents/skills/`.
+`--agent claude` кладёт скиллы в `~/.claude/skills/` (то, что сканирует Claude Code), а не в дефолтную `~/.agents/skills/`.
 
-**claude.ai / manual:** each `*.skill` is a committed zip bundle (`<name>/SKILL.md`). Upload it
-as a Skill in claude.ai, or unzip into your skills directory:
+**claude.ai / вручную:** каждый `*.skill` — закоммиченный zip-бандл (`<name>/SKILL.md`). Загрузи его как Skill в claude.ai или распакуй в свою директорию скиллов:
 
 ```sh
 unzip design.skill -d ~/.claude/skills/
 ```
 
-## Layout & build
+## Устройство и сборка
 
-- `skills/<name>/SKILL.md` — **source of truth.**
-- `*.skill` — committed **derived** bundles. Never hand-edit; run `make build` (or just commit
-  with the hook enabled via `make hooks`, which rebuilds them on every commit).
-- `.claude-plugin/marketplace.json` — plugin marketplace manifest.
-- `.mcp.json` — the iskron MCP endpoint: `https://mcp.iskron.ru/`.
+- `skills/<name>/SKILL.md` — **источник истины.**
+- `*.skill` — закоммиченные **производные** бандлы. Не редактируются руками; `make build` (или просто коммить с включённым хуком `make hooks` — он пересобирает их на каждом коммите).
+- `.claude-plugin/marketplace.json` + `.claude-plugin/plugin.json` — манифесты плагина; версию пишет release-please при мерже релизного PR.
+- `.mcp.json` — MCP-эндпоинт iskron: `https://mcp.iskron.ru/`.
+- `DERIVATION.md` — карта деривации скиллов из канона методологии + языковой контракт.

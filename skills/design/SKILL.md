@@ -1,206 +1,204 @@
 ---
 name: design
-description: "Use when the user asks to design, architect, or project a system, component, or feature and NKS tools are available. Triggers: 'спроектируй', 'давай продумаем', 'архитектура', 'нужен дизайн', 'design', 'let's think through', 'plan the system', 'what should this look like', mentions of 'жц' / 'lifecycle', 'крия' / 'эстафета' / 'холон', or 'записать в NKS' / 'положить в граф' / 'зафиксировать'. Also use at decision moments — 'we chose X', 'we decided', 'persist this design' — and right after a brainstorming/elicitation session produced a design or spec: the graph is where it becomes the record. Also use when the conversation turns from reading to building ('what should we build?'). Use even for seemingly simple design tasks — the graph prevents losing decisions, questions, and risks."
+description: "Используй, когда просят спроектировать систему, компонент или фичу и доступны NKS-тулы: «спроектируй», «давай продумаем», «архитектура», «нужен дизайн», design, plan the system, «жц», «крия», «эстафета», «записать в NKS», «положить в граф». Также в моменты решений («мы решили», persist this design) и после брейнсторма — граф превращает дизайн в запись; и когда разговор поворачивает к строительству («что будем строить?»). Даже для простых задач: граф не теряет решения, вопросы, риски."
 ---
 
-# NKS Design
+# Проектирование в NKS
 
-The graph IS the spec. If it's not in the graph, it doesn't exist.
+Граф — это и есть спека. Чего нет в графе, того не существует.
 
-## Interop: elicitation suites (e.g. superpowers brainstorming)
+## Interop: наборы элиситации (например, superpowers brainstorming)
 
-If a brainstorming skill is installed, run it for elicitation — it's a welcome
-front-end. Its spec file is a draft view: intake it (`intake` skill), then wire
-it here. Persisting the result is memory-work, not implementation —
-implementation hard-gates (e.g. superpowers brainstorming's) don't apply to it.
-The design isn't done until its decisions, risks, and lifecycle are in the
-graph.
+Если установлен brainstorming-скилл — запускай его для элиситации: это желанный фронт-энд. Его spec-файл — черновой вид: пропусти через **intake** и прошей сюда. Сохранение результата — работа памяти, не имплементация: жёсткие гейты имплементации (например, у superpowers brainstorming) на неё не распространяются. Дизайн не готов, пока его решения, риски и жизненные циклы не в графе.
 
-## Principles (always active)
+## Принципы (действуют всегда)
 
-| # | Principle | What it means for you |
+| # | Принцип | Что это значит для тебя |
 |---|---|---|
-| P1 | Every ding is born and dies | Every phenomenon (given_as=ding or sachverhalt) MUST have utpatti AND ahara. No exceptions. Leaked tension = missing end-of-life kriya. Add it. Never suppress with attrs. |
-| P2 | Complex systems grow, not get built | Leave room. Use anagata+upeksha modes and vimarshas for deferred work. Deep on first pass = anti-pattern. |
-| P3 | Graph ≠ reality, graph = tension with reality | Shabda intake lowers tension. Design raises it. Every vimarsha marks a tension. System evolves by processing vimarshas. |
-| P4 | Tensions are always truthful | Never suppress. Always close structure. attrs.role='reference' = anti-pattern. If tension feels wrong → detector bug, not your cue to silence it. |
+| P1 | Каждый ding рождается и умирает | Каждый феномен (given_as=ding или sachverhalt) ОБЯЗАН иметь utpatti И ahara. Без исключений. Leaked-натяжение = нет крии конца жизни. Добавь её. Никогда не глуши attrs. |
+| P2 | Сложная система только вырастает | Оставляй место. Модусы anagata+upeksha и вимарши — для отложенного. Глубоко с первого прохода = антипаттерн. |
+| P3 | Граф ≠ реальность; граф = натяжение с реальностью | Впуск шабды понижает натяжение. Проектирование повышает — граф описывает то, чего ещё нет. Каждая вимарша метит натяжение. Система развивается переработкой вимарш. |
+| P4 | Натяжения всегда правдивы | Никогда не подавляй. Всегда замыкай структуру. attrs.role='reference' = антипаттерн. Натяжение кажется неправым → баг детектора, а не повод его заглушить. |
 
-## Starting modes for projected work
+## Стартовые модусы проектируемого
 
-A projected practice is born **planned, not done**: anumita/anagata/chanda (a settled plan you commit to — adhimoksha; deferred "needed, not now" — anagata+upeksha). Only something observed already running is Pt/Va/Up. Stamping a designed-but-nonexistent node as "ready" (`pramanita/vartamana/upeksha`) lies about both its ontic and epistemic state, and the lie cascades through sunset, succession, kriya-anga, and carrier predicates. **Transition to `vartamana` is a separate act of life**, performed when the practice actually starts. Volition graduates along `chanda → adhimoksha`; never reach for `attrs` to express urgency or priority. The full starting-triple and closure canon is the **writing** skill's — consult it at every write; don't re-derive it here.
+Проектируемая практика рождается **запланированной, не сделанной**: anumita/anagata/chanda (устоявшийся план, на который решились, — adhimoksha; отложенное «нужно, не сейчас» — anagata+upeksha). Только наблюдаемое уже работающим — Pt/Va/Up. Штамп «готово» (`pramanita/vartamana/upeksha`) на спроектированном-но-несуществующем узле лжёт и об онтике, и об эпистемике, и ложь каскадирует через закат, преемственность, kriya-anga и предикаты носителей. **Переход в `vartamana` — отдельный акт жизни**, совершаемый, когда практика реально стартует. Воля взрослеет по `chanda → adhimoksha`; никогда не тянись к `attrs` для срочности или приоритета. Полный канон стартовых троек и закрытия — у скилла **writing**: сверяйся при каждой записи, не перевыводи здесь.
 
-**A volitional kriya belongs to a transformation.** A kriya recorded from volition — the user wants it to exist (or wants something gone), rather than from shabda («I know this is so») — is part of a qualitative shift the system is undergoing. Land it on the map: its driving vimarshas attach `anga` to the bianhua (the *path*), **and the volitional kriya itself attaches `anga` too** (the *arrival* — kriya-anga shipped). Read its direction from the kriya's own triputi, not a separate field: a **возведение** is a deed entering the fabric (ontic `anagata→vartamana`, volitive `chanda`/`adhimoksha`) — attach it while still `anagata`, it resolves once `vartamana`; a **депрекация** is a deed leaving (`vartamana→atita`, `virodha`), resolved at `atita`. The full kriya-anga grammar lives in the **writing** skill. And a **ready (completed) kriya can be anga too** — a deed done doesn't leave the map: the bianhua doubles as a *reading of the field of kriyas*, where through it each deed shows which transformation it served and why it was created. Membership records purpose, not only pending movement (отдача долга — the debt repaid). Don't spawn a new bianhua for it spontaneously — existing forest first (`lens="bianhua"`); a new bianhua's name and telos are accepted by the user (assembly skill); unsure where it belongs → ask.
+**Волевая крия принадлежит превращению.** Крия, записанная из воли — пользователь хочет, чтобы она была (или чтобы чего-то не стало), а не из шабды («знаю, что так»), — часть качественного сдвига, который проходит система. Посади её на карту: её ведущие вимарши цепляются `anga` к bianhua (*путь*), **и сама волевая крия цепляется `anga` тоже** (*прибытие* — kriya-anga). Направление читай из трипути самой крии, не из отдельного поля: **возведение** — деяние, входящее в ткань (онтика `anagata→vartamana`, воля `chanda`/`adhimoksha`) — цепляй ещё в `anagata`, разрешится при `vartamana`; **депрекация** — деяние на выход (`vartamana→atita`, `virodha`), разрешается в `atita`. Полная грамматика kriya-anga — в скилле **writing**. И **завершённая крия тоже может быть anga** — сделанное деяние не сходит с карты: bianhua заодно есть *прочтение поля крий*, где каждое деяние показывает, какому превращению служило и зачем было создано. Членство записывает назначение, не только незавершённое движение (отдача долга). Не порождай для этого новое bianhua спонтанно — сначала существующий лес (`lens="bianhua"`); имя и телос нового принимает пользователь (скилл assembly); не знаешь, куда положить, — спроси.
 
-## Four phases of design
+## Четыре фазы проектирования
 
-Enter any phase based on graph maturity. Not waterfall — any phase can loop back.
+Входи в любую фазу по зрелости графа. Не водопад — любая фаза может вернуть назад.
 
-### Phase 1: Backward chaining
+### Фаза 1: обратное выведение (справа налево)
 
-```
-TRIGGER: goal exists, path does not
-DO:
-  1. Name goal as sachverhalt(anagata+chanda). The target state is the
-     owner's: name it in dialog when needed — the user accepts the goal
-     (and later the bianhua telos), the designer doesn't invent it
-  2. nks_search + nks_semantic_search — goal doesn't already exist? (keyword misses a differently-phrased duplicate; semantic catches it before you design it twice)
-  3. From goal: "what produces this?" → create kriya + ahara phenomenon
-  4. Recurse until you hit a ding that must be given (realm inlet — the edge is
-     a topological fact; no marker needed)
-OUTPUT: path of kriyas from inlet to goal
-NEXT: → Phase 2 (forward weaving)
-```
-
-Actor: the Designer role. Consumes: a posed inquiry. Produces: a built path.
-
-### Phase 2: Forward weaving
+Канон нити: **цель → путь → риски → тезис**; поток given_as: sachverhalt → bildung → grundsatz/vollzug. Lean pull — метод мышления: каждый шаг верифицируем, потому что вытянут из цели, а не придуман из воздуха.
 
 ```
-TRIGGER: path exists, not all phenomena serviced
-DO:
-  1. Walk path left to right
-  2. For each phenomenon on the path:
-     - Has utpatti? If no → relay-gap → add producing kriya
-     - Has ahara? If no → leaked → add end-of-life kriya
-     - Level of abstraction matches? Bootstrap creates config → Teardown destroys config (same level)
-  3. For each kriya:
-     - Has exactly one actor? If two → split
-     - All arrows have sense? If no → write sense
-     - ahara/utpatti point to correct phenomena? (may need reconnect after distinctions)
-  4. For each phenomenon: context → holon set? A phenomenon without a holon home
-     is invisible to holon-scoped orientation — distribute ALL of them
-  5. nks_orient(lens="trace", focus=<phenomenon>) on key phenomena → lifecycle connected?
-  6. nks_orient(lens="tensions") → new problems?
-OUTPUT: tensions discovered, lifecycles closed
-NEXT: → Phase 3 (risk analysis) or → lifecycle closure if broken
+ТРИГГЕР: цель есть, пути нет
+ДЕЛАЙ:
+  1. Назови цель как sachverhalt(anagata+chanda). Целевое состояние — владельца:
+     называй в диалоге, когда нужно, — цель принимает пользователь (и позже — телос
+     bianhua), проектировщик её не изобретает
+  2. iskron_search + iskron_semantic_search — цели ещё нет в графе? (keyword пропустит
+     иначе названный дубликат; semantic поймает до того, как спроектируешь дважды)
+  3. От цели: «что это производит?» → создай крию + ahara-феномен
+  4. Рекурсия, пока не упрёшься в ding, который должен быть дан (вход реалма — край
+     топологический факт; маркер не нужен)
+ВЫХОД: путь крий от входа к цели
+ДАЛЬШЕ: → Фаза 2 (прямое ткачество)
 ```
 
-Actor: the Weaver role. Consumes: a built path. Produces: noticed tensions, closed lifecycles.
+Актор: роль Проектирующего. Потребляет: поставленное вопрошание. Производит: построенный путь.
 
-### Phase 3: Risk analysis + mitigation
-
-**3a. Analysis:**
-```
-TRIGGER: path woven, risks not assessed
-DO: For each kriya on path, five provocation questions:
-  1. Different actor? What if unavailable?
-  2. Different context? Environment changed?
-  3. Damaged upadhi? Precondition corrupted?
-  4. Scale mismatch? Parallel/concurrent?
-  5. Adversary? Network drops, disk fills, process hangs?
-  If threat found → nks_add_vimarsha(genre="risk", vimarsha_of=<kriya>)
-OUTPUT: risk-vimarshas
-```
-
-**3b. Mitigation — separate process, per risk:**
-```
-TRIGGER: risk-vimarsha exists, unaddressed
-DO:
-  1. Read risk context: nks_look on target kriya + neighborhood
-  2. Research operational environment
-  3. Choose response type:
-     a. Compensating (mitigation) kriya or phenomenon → prevents/handles the transition failure
-     b. Grundsatz invariant → principle as upadhi
-     c. Conscious acceptance → vimarsha to upeksha with reasoning
-  4. Wire response, nks_arrow(action="link") addressed_by from vimarsha
-OUTPUT: hint-vimarshas for implementation
-NEXT: → Phase 4 or → next risk
-```
-
-### Phase 4: Delivery impulse
+### Фаза 2: прямое ткачество (слева направо)
 
 ```
-TRIGGER: graph designed, all in anagata modes, no one is working on it
-CONDITION: only for graphs projecting external systems (not methodology, not CJM)
-DO:
-  1. Create hint-vimarshas for implementors
-  2. Each hint: scope of work, acceptance criteria, a **`posed_to` arrow** (vimarsha→karta) to the doer who can answer — the **能** who stewards the contour (find via the `steward` arrow), the **主** for strategic scope; never a `pratibimba` image; volition graduates chanda→adhimoksha — never attrs.priority; blockingness is a property of the pair),
-     and an ANCHOR — vimarsha_of into the contour where the work lands (holon at minimum,
-     the precise kriya/phenomenon when known): posed_to without an anchor is a lost hint —
-     the addressee orients by holon and never sees it
-  3. Order hints: dependencies, what-blocks-what
-  4. Cross-reference with existing open vimarshas
-  5. If the work is one qualitative transformation: attach each driving hint via anga —
-     AND each volitional kriya itself as kriya-anga (the deed that arrives —
-     возведение/депрекация per its triputi, see §"A volitional kriya belongs to a
-     transformation") alongside the hints —
-     to an EXISTING bianhua first (lens="bianhua"); a new one only with user-accepted
-     name + telos (assembly skill), never per single vimarsha → the impulse becomes
-     part of 形, not a scattered list
-  6. Stage the flow: when delivery is staged (e.g. test → staging → full),
-     each stage is a sub-bianhua anga'd into the ONE delivery bianhua, ordered by
-     anantara (what can start only after what); each stage gathers its own driving
-     hints via anga. The canonical result of right-to-left design is this one bianhua
-     with an anantara-ordered flow of stages — the owner reads it as the release plan
-  7. On a newly accepted bianhua: run the integrity pass (integrity skill) — the
-     wavefront of affected-but-unattached nodes gets its «is this affected?» questions
-OUTPUT: implementor enters via orient → ACTIVE BIANHUA / nks_orient(lens="vimarshas", focus=<holon>) → knows what to do first
+ТРИГГЕР: путь есть, не все феномены обслужены
+ДЕЛАЙ:
+  1. Пройди путь слева направо
+  2. Для каждого феномена на пути:
+     - Есть utpatti? Нет → relay-gap → добавь производящую крию
+     - Есть ahara? Нет → leaked → добавь крию конца жизни
+     - Уровень абстракции совпадает? Bootstrap создаёт config → Teardown уничтожает config (тот же уровень)
+  3. Для каждой крии:
+     - Ровно один actor? Два → расщепи
+     - На всех стрелках sense? Нет → напиши
+     - ahara/utpatti указывают на верные феномены? (после различений может быть нужен reconnect)
+  4. Для каждого феномена: context → холон проставлен? Феномен без холона-дома невидим
+     холон-скоупной ориентации — распредели ВСЕ
+  5. iskron_orient(lens="trace", focus=<феномен>) на ключевых → цикл связан?
+  6. iskron_orient(lens="tensions") → новые проблемы?
+ВЫХОД: замеченные натяжения, замкнутые циклы
+ДАЛЬШЕ: → Фаза 3 (анализ рисков) или → замыкание ЖЦ, если разорван
 ```
 
-anagata kriyas alone don't call to action. Vimarshas do. When the hints form a transformation, a **bianhua** (assembly skill) gathers them into a map the navigator reads — anga inward (the driving hints and the volitional kriyas they realize), anantara between — rather than a flat list of questions.
+Актор: роль Ткача. Потребляет: построенный путь. Производит: замеченные натяжения, замкнутые циклы.
 
-## Thread vs Estafeta
+### Фаза 3: анализ рисков + митигирование
 
-| | Thread (нить) | Estafeta |
+**3a. Анализ:**
+```
+ТРИГГЕР: путь проткан, риски не оценены
+ДЕЛАЙ: для каждой крии на пути — пять провокационных вопросов:
+  1. Другой актор? Что, если недоступен?
+  2. Другой контекст? Окружение сменилось?
+  3. Повреждённый upadhi? Предусловие испорчено?
+  4. Несовпадение масштаба? Параллельность/конкурентность?
+  5. Противник? Сеть падает, диск кончается, процесс виснет?
+  Нашёл угрозу → iskron_add_vimarsha(genre="risk", vimarsha_of=<крия>)
+ВЫХОД: риск-вимарши
+```
+
+**3b. Митигирование — отдельный процесс, по каждому риску:**
+```
+ТРИГГЕР: риск-вимарша есть, не отвечена
+ДЕЛАЙ:
+  1. Прочти контекст риска: iskron_look на целевую крию + окрестность
+  2. Изучи операционное окружение
+  3. Выбери тип ответа:
+     a. Компенсирующая (митигирующая) крия или феномен → предотвращает/обрабатывает срыв перехода
+     b. Grundsatz-инвариант → принцип как upadhi
+     c. Сознательное принятие → вимарша в upeksha с reasoning
+  4. Прошей ответ, iskron_arrow(action="link") addressed_by от вимарши
+ВЫХОД: hint-вимарши для имплементации
+ДАЛЬШЕ: → Фаза 4 или → следующий риск
+```
+
+### Фаза 4: импульс доставки
+
+```
+ТРИГГЕР: граф спроектирован, всё в anagata, никто не работает
+УСЛОВИЕ: только для графов, проектирующих внешние системы (не методология, не CJM)
+ДЕЛАЙ:
+  1. Создай hint-вимарши для имплементаторов
+  2. Каждый hint: объём работы, критерии приёмки, **стрелка `posed_to`** (вимарша→карта)
+     к делателю, который может ответить — 能, стюардящий контур (ищи по стрелке `steward`),
+     主 для стратегического масштаба; никогда pratibimba-образ; воля взрослеет
+     chanda→adhimoksha — никогда attrs.priority; блокирующесть — свойство пары),
+     и ЯКОРЬ — vimarsha_of в контур, куда ляжет работа (минимум холон, точная
+     крия/феномен — когда известны): posed_to без якоря — потерянный hint:
+     адресат ориентируется по холону и его не увидит
+  3. Упорядочь hints: зависимости, что-блокирует-что
+  4. Сверь с существующими открытыми вимаршами
+  5. Если работа — одно качественное превращение: прицепи каждый ведущий hint через anga —
+     И каждую волевую крию саму как kriya-anga (деяние-прибытие — возведение/депрекация
+     по её трипути, см. §«Волевая крия принадлежит превращению») рядом с хинтами —
+     к СУЩЕСТВУЮЩЕМУ bianhua сначала (lens="bianhua"); новое — только с принятыми
+     пользователем именем + телосом (скилл assembly), никогда ради одной вимарши →
+     импульс становится частью 形, а не рассыпанным списком
+  6. Стадируй поток: когда доставка ступенчата (например, test → staging → full),
+     каждая ступень — суб-bianhua, anga в ЕДИНОЕ bianhua доставки, упорядоченное
+     anantara (что стартует только после чего); каждая ступень собирает свои ведущие
+     hints через anga. Канонический результат право-налевого проектирования — это одно
+     bianhua с anantara-упорядоченным потоком ступеней: владелец читает его как план релиза
+  7. На свежепринятом bianhua: прогон целостности (скилл integrity) — волновой фронт
+     задетых-но-не-привязанных узлов получает свои вопросы «задето ли?»
+ВЫХОД: имплементатор входит через orient → ACTIVE BIANHUA / iskron_orient(lens="vimarshas", focus=<холон>) → знает, что делать первым
+```
+
+Сами по себе anagata-крии к действию не зовут. Зовут вимарши. Когда hints складываются в превращение, **bianhua** (скилл assembly) собирает их в карту, которую читает навигатор — anga внутрь (ведущие hints и волевые крии, которые они реализуют), anantara между, — а не в плоский список вопросов.
+
+## Нить и эстафета
+
+| | Нить (thread) | Эстафета |
 |---|---|---|
-| Connects | kriyas via `next` | phenomena via `ahara`/`utpatti` |
-| Carries | praśna (question-needle) on each arrow | sachverhalt (state of affairs) between kriyas |
-| About | order of actions | lifecycle of a thing |
-| Tool | follow `next` arrows | `nks_orient(lens="trace")` on phenomenon |
+| Связывает | крии через `next` | феномены через `ahara`/`utpatti` |
+| Несёт | прашну (иглу-вопрос) на каждой стрелке | sachverhalt (положение дел) между криями |
+| О чём | порядок действий | жизненный цикл вещи |
+| Тул | иди по `next` | `iskron_orient(lens="trace")` на феномене |
 
-Never confuse. A chain of sachverhalts is an estafeta. A sequence of kriyas is a thread.
+Не путай. Цепь sachverhalt'ов — эстафета. Последовательность крий — нить.
 
-## Lifecycle closure
+## Замыкание жизненного цикла
 
-Broken lifecycles surfaced during design (lens="trace" broken, leaked, relay-gap) are repaired by the **weaving** skill, Operation 5: birth and death at the same abstraction level; deferred closure via anagata+upeksha is OK. Don't re-derive the procedure here.
+Разорванные циклы, всплывшие при проектировании (lens="trace" разрыв, leaked, relay-gap), чинит скилл **weaving**, Операция 5: рождение и смерть на одном уровне абстракции; отложенное замыкание через anagata+upeksha — можно. Не перевыводи процедуру здесь.
 
-## given_as — arrow legality
+## given_as — легальность стрелок
 
-The **writing** skill owns the given_as decision tree and the full arrow matrix. At design time remember the one that bites: vollzug/grundsatz are applied, never consumed — upadhi only; ahara/utpatti to them = API 422.
+Дерево решения given_as и полная матрица стрелок — у скилла **writing**. В момент проектирования помни ту, что кусает: vollzug/grundsatz применяются, никогда не потребляются — только upadhi; ahara/utpatti к ним = API 422.
 
-vollzug/grundsatz → API rejects ahara/utpatti (422).
+## Шпаргалка натяжений
 
-## Tension cheat-sheet
-
-| Tension | Meaning | Fix |
+| Натяжение | Значение | Починка |
 |---|---|---|
-| leaked | phenomenon has utpatti, no ahara | Add consuming kriya (end-of-life) or parked kriya (anagata+upeksha) |
-| relay-gap | phenomenon has ahara, no utpatti | Add producing kriya — or it's the realm edge (boundary_inlet, computed from thread topology; information, not work) |
-| orphan | phenomenon has no kriya arrows at all | Wire to a kriya (ahara/utpatti/upadhi) or delete if spurious |
-| no-actor | kriya without actor | Add actor arrow to karta — but apply the karta test first (writing): a machine with no motivation is a ⚙️ phenomenon (actor → upadhi), not a karta |
-| lifecycle | disconnected lifecycle segments | Thread via next, or trace to find the break |
-| unreachable | upadhi phenomenon not reachable via happens-before | Check producer is hb-before consumer |
+| leaked | у феномена utpatti, нет ahara | Добавь потребляющую крию (конец жизни) или отложенную (anagata+upeksha) |
+| relay-gap | у феномена ahara, нет utpatti | Добавь производящую крию — или это край реалма (boundary_inlet, топологический; информация, не работа) |
+| orphan | у феномена вообще нет крия-стрелок | Прошей к крие (ahara/utpatti/upadhi) или удали, если случаен |
+| no-actor | крия без актора | Добавь actor к карте — но сначала карта-тест (writing): машина без мотивации — ⚙️ феномен (actor → upadhi), не карта |
+| lifecycle | несвязные сегменты цикла | Прошей через next или трассируй до разрыва |
+| unreachable | upadhi-феномен недостижим по happens-before | Проверь: производитель hb-раньше потребителя? |
 
-## Endpoint wiring pattern
+## Паттерн прошивки endpoint'ов
 
-HTTP endpoints → kriyas, not text descriptions:
-1. Root sinn container (e.g. "API URL") — contains all endpoint phenomena
-2. Endpoint phenomenon = sachverhalt (HTTP request). attrs: method, path
-3. Kriya "Serving GET /path" — ahara ← endpoint phenomenon, utpatti → response phenomenon, actor → API client
-4. Next arrows: caller → endpoint kriya → renderer
+HTTP-endpoint'ы → крии, не текстовые описания:
+1. Корневой sinn-контейнер (например, «API URL») — содержит все endpoint-феномены
+2. Endpoint-феномен = sachverhalt (HTTP-запрос). attrs: method, path
+3. Крия «Обслуживание GET /path» — ahara ← endpoint-феномен, utpatti → феномен ответа, actor → API-клиент
+4. Next-стрелки: вызывающий → endpoint-крия → рендерер
 
-## Write mechanics → writing skill
+## Механика записи → скилл writing
 
-Naming (正名), description form (pariṇāma; Fat Node — reasoning to child vimarshas, sub-steps to contains-children, reference data to dings), modes, given_as, batch ordering — the **writing** skill owns all of it. Invoke it at every write moment of every phase; don't re-derive it here.
+Именование (正名), форма описания (паринама; толстый узел — рассуждения в дочерние вимарши, под-шаги в contains-детей, справочные данные в ding'и), модусы, given_as, порядок батча — всё это скилл **writing**. Вызывай его в каждый момент записи каждой фазы; не перевыводи здесь.
 
-## Deferred work
+## Отложенная работа
 
-Two instruments:
-- **Modes anagata+upeksha** on kriya/phenomenon: "needed, not now". Lifecycle closed formally. No tension.
-- **Vimarsha** on node: open question, calls to action when time comes.
+Два инструмента:
+- **Модусы anagata+upeksha** на крие/феномене: «нужно, не сейчас». Цикл формально замкнут. Натяжения нет.
+- **Вимарша** на узле: открытый вопрос, позовёт к действию, когда придёт время.
 
-Both simultaneously OK: kriya in anagata+upeksha + samshaya "is this even needed?"
+Оба одновременно — можно: крия в anagata+upeksha + samshaya «а нужно ли вообще?»
 
-Anti-pattern: attrs.parked=true to suppress tensions. Use modes and vimarshas.
+Антипаттерн: attrs.parked=true для глушения натяжений. Модусы и вимарши.
 
-## Realm boundary
+## Граница реалма
 
-The realm edge is a topological fact, not a marker. A kriya fed by the outside world (thread-origin) or feeding it (thread-terminus) renders as boundary_inlet / boundary_outlet — information ("this is the edge"), not work. No detector demands ahara on a kriya (the old no-ahara tension is retired); never add attrs to silence a tension. `attrs.boundary="init"` survives only as a positive inlet-consumer marker, not a waiver.
+Край реалма — топологический факт, не маркер. Крия, питаемая внешним миром (исток нити) или питающая его (завершение нити), рендерится boundary_inlet / boundary_outlet — информация («это край»), не работа. Ни один детектор не требует ahara на крие (старое no-ahara-натяжение упразднено); никогда не добавляй attrs, чтобы заглушить натяжение. `attrs.boundary="init"` живёт только как позитивная метка входа-потребителя, не как индульгенция.
 
-## Concurrency
+## Конкурентность
 
-All mutations require `basis_version` — the `v<N>` from `nks_look`. Read → write → on conflict re-read and retry.
+Все мутации требуют `basis_version` — `v<N>` из `iskron_look`. Прочитал → записал → при конфликте перечитал и повторил.
 
-## orient vimarsha caveat
+## Оговорка про вимарши в orient
 
-`nks_orient(focus=<holon>)` may show 0 vimarshas when they're attached to kriyas threading through the holon, not to phenomena inside it. The `lens="vimarshas"` view on a holon groups blocking/active/dormant across its scope — but vimarshas posed on threading kriyas still surface best via `nks_search(node_type="vimarsha", vimarsha_of=<kriya-seq>)` if numbers feel wrong.
+`iskron_orient(focus=<холон>)` может показать 0 вимарш, когда они привязаны к криям, продевающимся сквозь холон, а не к феноменам внутри. `lens="vimarshas"` на холоне группирует blocking/active/dormant по его охвату — но вимарши на продевающихся криях надёжнее всего всплывают через `iskron_search(node_type="vimarsha", vimarsha_of=<seq крии>)`, если цифры кажутся неверными.

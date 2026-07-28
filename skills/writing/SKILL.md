@@ -1,252 +1,255 @@
 ---
 name: writing
-description: "Use this skill when writing nodes into an NKS graph — creating phenomena, kriyas, vimarshas, holons, or kartas. Triggers: 'запиши', 'зафиксируй', 'добавь узел', 'создай крию', 'create phenomenon', 'create entity', 'add to graph', 'nks_add', 'положи в граф', or whenever the agent is about to call any nks_add_* tool or nks_batch with creates. Also when unsure which node type, given_as, or modes to pick. Use even for single-node writes — one wrong type propagates through the graph. Distinct from design (plans paths from goals), weaving (repairs existing structure), and methodology-work (evolves methodology itself)."
+description: "Используй при записи узлов в граф NKS — феноменов, крий, вимарш, холонов, карт. Триггеры: «запиши», «зафиксируй», «добавь узел», «создай крию», «положи в граф», create phenomenon, add to graph, iskron_add — и всегда перед вызовом любого iskron_add_* или iskron_batch с созданиями. Также когда неясно, какой тип узла, given_as или модусы выбрать. Используй даже для одиночной записи — один неверный тип расходится по всему графу. Distinct from design (пути от целей), weaving (ремонт существующей структуры), methodology-work (эволюция самой методологии)."
 ---
 
-# NKS Writing
+# Запись в NKS
 
-You are about to write a node into the graph. Every node you write will be navigated by future agents, linked to other nodes, traced through estafetas. A wrong type, a lazy name, a mechanical mode — each one degrades the graph for everyone downstream.
+Ты собираешься записать узел в граф. По каждому записанному узлу будут ходить будущие агенты: связывать, трассировать эстафеты, отвечать из него. Неверный тип, ленивое имя, механический модус — каждый портит граф всем, кто ниже по течению.
 
-Five decisions, in order. Do not skip ahead.
+Пять решений, по порядку. Не перескакивай.
 
-## Before anything: realm and cross-realm
+## Прежде всего: реалм и кросс-реалм
 
-Every NKS tool call requires `realm=<token>`. Confirm which realm you're writing into before the first call.
+Каждый вызов NKS-тула требует `realm=<токен>`. Подтверди, в какой реалм пишешь, до первого вызова.
 
-**Cross-realm arrows do not work.** `nks_arrow(action="link", source="739", target="29")` resolves both seq numbers inside the current realm. If #29 in your realm is not the node you mean — you just created a wrong arrow. For cross-realm references, use text in the sense ("see <realm> #29") — never arrows.
+**Кросс-реалмовые стрелки не работают.** `iskron_arrow(action="link", source="739", target="29")` резолвит оба seq внутри текущего реалма. Если #29 в твоём реалме — не тот узел, ты только что создал неверную стрелку. Кросс-реалмовые ссылки — текстом в описании («см. <реалм> #29»), никогда стрелками.
 
-## Decision 1: What type of node?
+## Решение 1: какой тип узла?
 
-| If it… | Type | Tool |
+| Если это… | Тип | Тул |
 |---|---|---|
-| **does something** — transforms, produces, consumes | **kriya** | `nks_add_kriya` |
-| **is acted upon** — thing, state, concept, seed, method, or rule that some kriya consumes / produces / conditions | **phenomenon** | `nks_add_phenomenon` |
-| **asks a question** — doubt, risk, counter-thesis | **vimarsha** | `nks_add_vimarsha` |
-| **draws a boundary** — separates inside from outside | **holon** | `nks_add_holon` |
-| **names a role with a motivation** | **karta** | `nks_add_karta` |
-| **transforms the system qualitatively** — a cross-holon becoming with a *telos* ("what the system becomes") | **bianhua** | `nks_add_bianhua` |
+| **делает** — преобразует, производит, потребляет | **kriya** | `iskron_add_kriya` |
+| **предстаёт деянию** — вещь, состояние, понятие, зачин, метод или правило, которое крия потребляет / производит / обусловливает | **phenomenon** | `iskron_add_phenomenon` |
+| **спрашивает** — сомнение, риск, контртезис | **vimarsha** | `iskron_add_vimarsha` |
+| **проводит границу** — отделяет внутреннее от внешнего | **holon** | `iskron_add_holon` |
+| **именует роль с мотивацией** | **karta** | `iskron_add_karta` |
+| **качественно преобразует систему** — сквозное становление с *телосом* («чем система становится») | **bianhua** | `iskron_add_bianhua` |
 
-**bianhua is an assembly-level type, not a routine write** — the **assembly** skill's work. Test: "the system will be X, which it isn't yet" — can't say it → not a bianhua. Never for a single vimarsha: locate the existing transformation first (`lens="bianhua"`, `nks_semantic_search(node_type="bianhua")`); unsure → ask the user. Vimarshas the agent writes for itself; **bianhua are the owner's interface** — the name must read for the user, the telos is verified by them. See Decision 5 for its arrows.
+**bianhua — тип уровня сборки, не рутинная запись** — это работа скилла **assembly**. Тест: «система станет X, чем она ещё не является» — не выговаривается → не bianhua. Никогда — ради одной вимарши: сначала найди существующее превращение (`lens="bianhua"`, `iskron_semantic_search(node_type="bianhua")`); неясно → спроси пользователя. Вимарши агент пишет для себя; **bianhua — интерфейс владельца**: имя должно читаться пользователем, телос принимает он. Стрелки — в Решении 5.
 
-A phenomenon does not exist on its own — it exists *for* a kriya (noema for noesis). If no kriya consumes, produces, or conditions it, you are about to write an orphan.
+Феномен не существует сам по себе — он существует *для* крии (ноэма для ноэзиса). Если ни одна крия его не потребляет, не производит и не обусловливается им — ты собираешься записать сироту.
 
-### Traps
+### Ловушки
 
-**Phenomenon in kriya disguise.** "Token creation" is the act. "⚙️ Access token" is what the act produces. Test: does the name carry a before/after? → kriya. Does it name what *stands* through that before/after? → phenomenon.
+**Феномен в маске крии.** «Создание токена» — акт. «⚙️ Токен доступа» — то, что акт производит. Тест: имя несёт до/после? → крия. Именует то, что *стоит* сквозь это до/после? → феномен.
 
-**Kriya in phenomenon disguise.** "⚙️ Authentication flow" — if it transforms state, it's a kriya. A noun on a kriya is a smell, not a license.
+**Крия в маске феномена.** «⚙️ Поток аутентификации» — если он преобразует состояние, это крия. Существительное на крие — запах, не лицензия.
 
-**Karta vs phenomenon.** Gated by the operational test — *can you address a vimarsha to it and get an answer?* No → not a karta (a machine → ding-phenomenon; a theory/method/principle → sinn/vollzug/grundsatz). The full gate and the four karta kinds live in **Decision 2b**.
+**Карта или феномен.** Решает операциональный тест — *можно ли адресовать этому вимаршу и ждать ответа?* Нет → не карта (машина → ding-феномен; теория/метод/принцип → sinn/vollzug/grundsatz). Полный гейт и четыре рода карты — в Решении 2b.
 
-**Holon vs phenomenon(sinn).** "📦 Auth contour" — what's inside, outside? Can't answer → probably phenomenon(sinn). Holons-as-folders are an anti-pattern.
+**Холон или феномен(sinn).** «📦 Контур авторизации» — что внутри, что снаружи? Не отвечается → скорее феномен(sinn). Холон-папка — антипаттерн.
 
-## Decision 2: given_as (phenomenon only)
+## Решение 2: given_as (только феномен)
 
-How does this phenomenon give itself? See `references/given_as.md` for the full decision tree.
+Как этот феномен даёт себя? Полное дерево решения — `references/given_as.md`.
 
-| Ask yourself | given_as |
+| Спроси себя | given_as |
 |---|---|
-| Can I point at it outside the graph? (file, container) | **ding** 物 |
-| State of affairs — before/after of a kriya? | **sachverhalt** 勢 |
-| Named concept — what-is-it? | **sinn** 名 |
-| Seed — something becoming? | **bildung** 理 |
-| Method — "this is how"? | **vollzug** 行 |
-| Principle — "this is how it must be"? | **grundsatz** 法 |
+| Могу показать вне графа? (файл, контейнер) | **ding** 物 |
+| Положение дел — до/после крии? | **sachverhalt** 勢 |
+| Поименованный смысл — «что это»? | **sinn** 名 |
+| Зачин — складывающееся, ещё не форма? | **bildung** 理 |
+| Метод — «так можно»? | **vollzug** 行 |
+| Принцип — «так должно»? | **grundsatz** 法 |
 
-**Critical:** vollzug/grundsatz cannot be ahara or utpatti — API 422. Applied via upadhi only.
+**Критично:** vollzug/grundsatz не бывают ahara или utpatti — API 422. Метод и правило *применяются* — только upadhi.
 
-## Decision 2b: manifested_as (karta only)
+## Решение 2b: manifested_as (только карта)
 
-`manifested_as` is **required on every karta** — the mode-of-manifestation (āvirbhāva), parallel to given_as. Run the gate first, then pick the kind.
+`manifested_as` — **обязательное поле каждой карты** — способ проявленности делателя (āvirbhāva), параллель given_as: не «как дано», а «как этот делатель присутствует как начало действия». Сначала гейт, потом род.
 
-**Gate — can you address a vimarsha to this doer and get an answer?**
-- **No — it acts but can't answer** (cron, worker, CI, process): **not a karta.** Make a ding-phenomenon, wire it to a kriya as `upadhi`.
-- **No — it doesn't act, it stands as theory / method / principle** (Erikson, Nyāya, a how-to): **not a karta.** Make a sinn / vollzug / grundsatz phenomenon (entered via **intake**).
-- **Yes → karta.** Which kind?
+**Гейт — можно ли адресовать этому делателю вимаршу и ждать ответа?**
+- **Нет — действует, но не ответит** (cron, воркер, CI, процесс): **не карта.** Сделай ding-феномен и приведи к крие как `upadhi`.
+- **Нет — не действует, а стоит как теория / метод / принцип** (Эриксон, ньяя, how-to): **не карта.** Сделай феномен sinn / vollzug / grundsatz (входит через **intake**).
+- **Да → карта.** Какого рода?
 
-| The doer… | manifested_as | Example |
+| Делатель… | manifested_as | Пример |
 |---|---|---|
-| answers, and **decides itself** whether to act (gives adhimoksha/virodha) | **svatantra** 主 | product owner, architect — stewards **root** holons |
-| answers, but takes its **impulse from another** — discriminates and acts, doesn't originate | **adhikarin** 能 | nks-api dev, a Claude-agent responsible for a holon — stewards **concrete** holons |
-| **won't answer** — needed as actor on kriyas, its path is *modelled*, not lived | **pratibimba** 象 | CJM-persona, "the becoming self" |
-| answers, but **on its own time** — its 時-cycle isn't synced with the realm | **agantuka** 客 | regulator, external counterparty, the market |
+| отвечает и **сам решает**, действовать ли (даёт adhimoksha/virodha) | **svatantra** 主 | владелец продукта, архитектор — стюард **корневых** холонов |
+| отвечает, но **импульс берёт от другого** — различает и действует, не зачинает | **adhikarin** 能 | разработчик nks-api, Claude-агент при холоне — стюард **конкретных** холонов |
+| **не ответит** — нужен как actor на криях, его путь *моделируется*, не проживается | **pratibimba** 象 | CJM-персона, «человек в становлении» |
+| отвечает, но **на своём времени** — его 時-цикл не синхронизирован с реалмом | **agantuka** 客 | регулятор, внешний контрагент, рынок |
 
-**Addressing by kind** (where a `posed_to` arrow may point): **主** — strategic questions ("do we take this?", "what's the priority?"); you don't assign it tasks, it assigns them. **能** — work questions and tasks; find the addressee by the `steward` arrow (who stewards the holon your question lives in); out of its scope → escalate to 主. **象** — **never** `posed_to`; use only as actor for path-modelling, decisions about its path go to the 主/能 who designs it. **客** — `posed_to` is allowed, but don't expect a fast answer; its actor-edges cross the boundary and tracing stops there by design.
+**Адресация по родам** (куда может указывать `posed_to`): **主** — стратегические вопросы («берём ли?», «что в приоритете?»); ему не назначают задачи — он их назначает. **能** — рабочие вопросы и задачи; адресата находи по стрелке `steward` (кто отвечает за холон, где живёт твой вопрос); вне его мандата → эскалируй к 主. **象** — **никогда** `posed_to`; только actor для моделирования пути, решения о его пути — к 主/能, который его проектирует. **客** — `posed_to` можно, но быстрого ответа не жди; его actor-рёбра пересекают границу, и трассировка там обрывается by design.
 
-**Finding the addressee.** Never pick one from orient's ROOT KARTAS line — it shows root roles only (sub-roles fold into "· N sub"), and a name that merely contains your keyword is not the role: an 象-image often carries the system's name, while the 能 who answers for its code is a sub-role of a developer archetype. List the real set — `nks_search(q="", node_type="karta")` — or follow the `steward` arrow from the holon where the work lives. Every karta row carries its род glyph (主/能/象/客); 象 is never an addressee. And roles for another repo live in the *same* realm as sub-kartas — don't go hunting for a realm named after the repo.
+**Поиск адресата.** Не выбирай из строки ROOT KARTAS в orient — там только корневые роли (суб-роли свёрнуты в «· N sub»), и имя, содержащее твоё ключевое слово, — ещё не та роль: 象-образ часто носит имя системы, а 能, отвечающий за её код, — суб-роль архетипа разработчика. Возьми действительное множество — `iskron_search(q="", node_type="karta")` — или иди по стрелке `steward` от холона, где живёт работа. Каждая строка карты несёт глиф рода (主/能/象/客); 象 — никогда не адресат. Роли другого репозитория живут в *том же* реалме как суб-карты — не ищи реалм с именем репо.
 
-Traps:
-- **A person's name is not a karta.** "Дмитрий" → "Product owner" — the role, not the person.
-- **One external entity is often two nodes**: Stripe-API (ding-phenomenon, a machine) and Stripe-account-manager (**agantuka** karta). Split by addressability.
-- **A modus (Сборщик, Ткач, Explorer) is a sub-karta via `group`, not a separate type** — `manifested_as` is inherited from the parent role.
-- Only **svatantra / adhikarin** may `steward` a holon; a `pratibimba` / `agantuka` does not answer for a boundary.
+Ловушки:
+- **Имя человека — не карта.** «Дмитрий» → «Владелец продукта» — роль, не человек.
+- **Одна внешняя сущность — часто два узла**: Stripe-API (ding-феномен, машина) и Stripe-менеджер (**agantuka**-карта). Различай по адресуемости.
+- **Модус работы (Сборщик, Ткач, Explorer) — суб-карта через `group`, не отдельный тип** — `manifested_as` наследуется от родительской роли.
+- Стюардом холона может быть только **svatantra / adhikarin**; pratibimba / agantuka за границу не отвечают.
 
-## Decision 3: Modes
+## Решение 3: модусы
 
-Three axes, each required. The tool descriptions on each factory already list enum values and contextual questions — read them. The principle here:
+Три оси, каждая обязательна. Описания тулов на каждой фабрике уже несут enum-значения и контекстные вопросы — читай их. Принцип здесь один:
 
-**Each mode is a question you answer, not a box you check.**
+**Каждый модус — вопрос, на который ты отвечаешь, а не галочка.**
 
-See `references/modes.md` for the self-check and stable triads.
+Самопроверка и устойчивые тройки — `references/modes.md`.
 
-The critical trap: **upeksha is not a default.** anagata + upeksha = "this will exist in the future and I don't care." Almost always wrong for projected nodes. anagata + chanda or adhimoksha is more honest.
+Главная ловушка: **upeksha — не дефолт.** anagata + upeksha = «это будет существовать, и нам всё равно». Для проектируемого почти всегда ложь. Честнее anagata + chanda или adhimoksha.
 
-## Decision 4: Name and description
+## Решение 4: имя и описание
 
-### Naming (正名)
+### Имя (正名)
 
-| Type | Grammar | Example | Anti-example |
+Имя узла — не ярлык, а тезис о его природе. Неверное имя — расплывчатое, коллидирующее с типом, натянутое, механически переведённое — порождает цепочку распадов: читающий путает категории, вимарши летят не туда, эстафеты рассинхронизируются. Мёртвое имя ещё и не находится поиском.
+
+| Тип | Грамматика | Пример | Антипример |
 |---|---|---|---|
-| kriya | Verbal noun | 🔄 Аутентификация | "Build the API" |
-| phenomenon | Noun | ⚙️ Токен доступа | "Token creation" |
-| holon | Boundary name | 📦 Контур авторизации | "📦 Папка auth" |
-| karta | Role name | 👤 Проектирующий | "Дмитрий" |
-| vimarsha | The question | 🕮 CXDB — холон или сущность? | "Проблема" |
+| kriya | отглагольное существительное | 🔄 Аутентификация | «Сделать API» |
+| phenomenon | существительное | ⚙️ Токен доступа | «Создание токена» |
+| holon | имя границы | 📦 Контур авторизации | «📦 Папка auth» |
+| karta | имя роли | 👤 Проектирующий | «Дмитрий» |
+| vimarsha | сам вопрос | 🕮 CXDB — холон или сущность? | «Проблема» |
 
-🔥 for sachverhalt-incidents by convention.
+🔥 — конвенция для sachverhalt-инцидентов. Эмодзи выбирает автор по смыслу, не по типу.
 
-### Description (the body)
+### Описание (тело)
 
-The body is addressed by its **per-type name** on every surface — the name you *read* is the name you *write*, on create and update. `nks_look` renders it under that heading; the factories and `nks_update` / batch-update accept it under that name. Pass the per-type name **or** `description`, never both — a guard rejects double-passing.
+Тело адресуется **типовым именем** на каждой поверхности — имя, под которым читаешь, есть имя, под которым пишешь, при создании и обновлении. `iskron_look` рендерит его под этим заголовком; фабрики и `iskron_update` / batch-update принимают его под этим именем. Передавай типовое имя **или** `description`, никогда оба — двойную передачу отвергает guard.
 
-| Type | Body param | `nks_look` heading |
+| Тип | Параметр тела | Заголовок в `iskron_look` |
 |---|---|---|
 | bianhua | `telos` | TELOS |
 | kriya | `essence` | ESSENCE |
 | karta | `motivation` | MOTIVATION |
 | phenomenon · vimarsha · holon | `description` | DESCRIPTION |
 
-What goes in it, by type:
+Что в теле, по типам:
 
-- **Kriya** (`essence`): pariṇāma — "Before: X. After: Y." If it reads like a task list, rewrite.
-- **Phenomenon** (`description`): what it IS, and which kriyas consume / produce / condition it. If you can't name any such kriya, you don't yet know what you're writing.
-- **Vimarsha** (`description`): the question. What would count as an answer?
-- **Holon** (`description`): what principle separates inside from outside. nks_add_holon enforces 4 questions — answer them.
-- **Karta** (`motivation`): what drives the role. nks_add_karta requires it.
-- **Bianhua** (`telos`): the destination quality — "the system becomes …" (see Decision 5).
+- **Kriya** (`essence`): паринама — «До: X. После: Y.» Читается как список задач — переписывай.
+- **Phenomenon** (`description`): что это ЕСТЬ и какие крии его потребляют / производят / обусловливаются им. Не можешь назвать ни одной — ты ещё не знаешь, что пишешь.
+- **Vimarsha** (`description`): сам вопрос. Что считать ответом?
+- **Holon** (`description`): какой принцип отделяет внутреннее от внешнего. `iskron_add_holon` требует ответа на четыре вопроса — ответь.
+- **Karta** (`motivation`): что движет ролью. `iskron_add_karta` требует её.
+- **Bianhua** (`telos`): качество назначения — «система становится …» (см. Решение 5).
 
-**Timelessness — a guard, not a nicety.** Every description states what IS — the resolved, the asked — never how it came to be discussed. The body is read *out of time*: a future agent meets it with no session around it, so a chronicle in the body is noise to everyone but the writer.
+**Вневременность — закон, не любезность.** Имя и описание обращены к будущему читателю: они говорят, чем узел *есть* и как им пользоваться, — не как он возник. Тело читается *вне времени*: будущий агент встречает его без сессии вокруг, и хроника в теле — шум для всех, кроме писавшего. У провенанса три законных дома: `attrs` (posed_by, source, decided_at), ребро `arose_from` (происхождение как структура) и `iskron_history` (полный audit trail с reasoning каждой дельты).
 
-- **Out of the body:** dates, session markers, people's names (attribution → `attrs.posed_by`), git refs (SHAs/branches/PRs), and DONE/changelog journals. History lives in `nks_history` and git; done work changes the graph *itself* — modes, arrows, descriptions — it is not appended as a log.
-- **Violation smells:** "now" / «теперь», "after we…" / «после того как», "in this session", a date in prose, a «✅ done» tail, any narration of what was wrong *before*.
-- **Where time is legitimate:** a `phenomenon(given_as=sachverhalt)` — an incident/state — carries its timestamp in `attrs`, not the prose; `shabda` (quoted external testimony) is dated by its nature; a closed vimarsha reads as archive (its body froze at closure). Everywhere else: tenseless.
+- **Вон из тела:** даты, маркеры сессий, имена людей (атрибуция → `attrs.posed_by`), git-ссылки (SHA/ветки/PR), журналы DONE/changelog. История живёт в `iskron_history` и git; сделанная работа меняет сам граф — модусы, стрелки, описания, — а не дописывается логом.
+- **Запахи нарушения:** «теперь», «после того как», «в этой сессии», дата в прозе, хвост «✅ сделано», любой рассказ о том, что было не так *раньше*, описание-протокол («установлено, подтверждено») вместо описания-закона.
+- **Где время законно:** `phenomenon(given_as=sachverhalt)` — инцидент/состояние — несёт метку времени в `attrs`, не в прозе; `shabda` (цитируемое внешнее слово) датировано по природе; закрытая вимарша читается как архив (тело замерло при закрытии). Всюду иначе — вне времени.
 
-## Decision 5: Arrows
+## Решение 5: стрелки
 
-Arrowless = orphan = invisible.
+Без стрелок = сирота = невидим.
 
-### Kriya (four questions)
+### Kriya (четыре вопроса)
 
-1. **Consumes?** → `ahara` to phenomenon. ahara = DESTRUCTION. Just read → upadhi.
-2. **Produces?** → `utpatti` to phenomenon. Can't name utpatti? Stop — you don't understand the kriya.
-3. **Who acts?** → `actor` to karta.
-4. **Context?** → `upadhi` to phenomenon. `attrs.mutable=true` if modified.
-5. **Belongs to what?** → search for a candidate parent kriya before writing top-level (locate-before-write). `nks_semantic_search(q=<what this kriya is part of>)`; on a real hit, pass `parent_id=<seq>` (creates a `contains` edge from parent). **No coercion** — a wrong parent is worse than none; when you can't honestly name the umbrella, stay top-level consciously. The most compressing axis is the one factories never forced — ask it yourself.
+1. **Потребляет?** → `ahara` к феномену. ahara = УНИЧТОЖЕНИЕ. Просто читает → upadhi.
+2. **Производит?** → `utpatti` к феномену. Не можешь назвать utpatti? Стой — ты не понял крию.
+3. **Кто действует?** → `actor` к карте.
+4. **Контекст?** → `upadhi` к феномену. `attrs.mutable=true`, если изменяется.
+5. **Частью чего?** → перед записью на верхний уровень поищи родительскую крию (locate-before-write): `iskron_semantic_search(q=<частью чего это является>)`; при честном попадании передай `parent_id=<seq>` (создаёт `contains` от родителя). **Без насилия** — неверный родитель хуже отсутствующего; не выговаривается зонт — оставайся на верхнем уровне сознательно. Самая сжимающая ось — та, которую фабрики не спрашивают; спроси её сам.
 
-Plus: `next` (sense = praśna — yes/no question). `contains` for sub-steps.
+Плюс: `next` (смысл = прашна — вопрос да/нет). `contains` — для под-шагов.
 
-Realm boundary is topological: a kriya at the realm edge is legal without ahara — no detector demands it, no marker waives it. `attrs.boundary="init"` survives only as a positive inlet-consumer marker, never as a tension-silencer.
+Граница реалма топологична: крия на краю реалма легальна без ahara — ни один детектор его не требует, ни один маркер не глушит. `attrs.boundary="init"` живёт только как положительная метка потребителя-с-входа, никогда как глушитель натяжений.
 
 ### Phenomenon
 
-- `context` → holon. **Only phenomenon → holon.** Kriya/karta/vimarsha → holon is forbidden.
-- `derived_from`, `specifies` → phenomenon-to-phenomenon lineage.
-- Expectations depend on given_as — see `references/given_as.md`.
+- `context` → холон. **Только phenomenon → holon.** Kriya/karta/vimarsha → holon запрещено.
+- `derived_from`, `specifies` → родословная феномен-к-феномену.
+- Ожидания зависят от given_as — см. `references/given_as.md`.
 
 ### Karta
 
-- `steward` → holon: who answers for this boundary. Only a **svatantra** (root holons) or **adhikarin** (concrete holons) karta may steward; a pratibimba / agantuka may not. An `adhikarin` acting with no `steward` edge is a warning — it works but answers for nothing.
-- `group` → senior karta (sub-role); `actor` is incoming — from every kriya this role performs.
+- `steward` → холон: кто отвечает за границу. Стюардом может быть только **svatantra** (корневые холоны) или **adhikarin** (конкретные); pratibimba / agantuka — нет. `adhikarin` без единого `steward` — предупреждение: работает, но ни за что не отвечает.
+- `group` → старшая карта (суб-роль); `actor` — входящее, от каждой крии, которую роль исполняет.
 
 ### Vimarsha
 
-- `vimarsha_of` → node(s) this question is about. **Anchor every vimarsha — one carrying an expectation (`posed_to`, anga to a bianhua) doubly so**: agents discover work by orienting on a holon, and neither anga nor posed_to scopes the vimarsha into anyone's contour — unanchored, it is invisible to the addressee and will never be done. Minimum — the holon where the expected work lives; better — the precise phenomenon/kriya within it.
-- `posed_to` → karta: the **inbox edge** — address the inquiry to a doer who can answer, so they can poll "my open questions" (`nks_search(posed_to=<karta>)`). **It is an arrow to a karta node, not a field** — create it inline (`arrows: [{arrow_type:"posed_to", target:<karta>}]`) or via `nks_arrow(action="link", arrow_type="posed_to", …)`. **Forbidden to a pratibimba** (an image can't answer). Choose the target per Decision 2b — the 能 who stewards the holon your question is in, the 主 for strategic scope. It does not replace `vimarsha_of`: the inbox edge alone places the question in no one's holon-orientation. **The mirror failure is just as real:** `vimarsha_of` without `posed_to` on a question that *expects another doer to act* is a delegation degraded to a note-into-the-void — anchored, visible in the territory, in no one's inbox. A delegating vimarsha is not finished until the inbox edge is set. **No urgency stamps:** ranking a queue is the queue owner's act, never the poser's — don't set priority attrs or fill a priority-shaped tool param (volition graduates `chanda → adhimoksha`; an affordance in a tool schema is not a mandate).
-- **`vimarsha_of` (о ЧЁМ) vs `anga` (куда двигаю) — don't collapse them.** `vimarsha_of` names the *subject*: the present, as-is node the doubt is *about*. `anga` names the *becoming* the answer drives: the bianhua, the future telos. The trap is the pull toward the answer — dropping the **actor** or the **work's destination** into `vimarsha_of` when they belong on `anga`. Meta-move: answer two questions separately — «about WHAT is the doubt?» (→ `vimarsha_of`), then «which becoming does the answer drive?» (→ `anga`). One vimarsha legitimately carries both.
-- `arose_from` → observation origin.
-- Genre determines lifecycle: risk → may `realized_as` sachverhalt. hint → read and close.
-- A **hint is a pointer, not a payload**: it carries only what orient and the lenses can't show — external-world state, chosen priorities, conventions. Work-in-flight belongs on the bianhua map via `anga`, not in a seed.
+- `vimarsha_of` → узел(ы), о которых вопрос. **Якори каждую вимаршу — несущую ожидание (`posed_to`, anga к bianhua) вдвойне**: агенты находят работу, ориентируясь на холон, а ни anga, ни posed_to не помещают вимаршу ни в чей контур — незаякоренная, она невидима адресату и не будет сделана. Минимум — холон, где живёт ожидаемая работа; лучше — точный феномен/крия внутри него.
+- `posed_to` → карта: **ребро-инбокс** — адресуй вопрошание делателю, который может ответить, чтобы он собирал «мои открытые вопросы» (`iskron_search(posed_to=<карта>)`). **Это стрелка к узлу-карте, не поле** — создавай inline (`arrows: [{arrow_type:"posed_to", target:<карта>}]`) или через `iskron_arrow(action="link", arrow_type="posed_to", …)`. **Запрещено к pratibimba** (образ не ответит). Адресата выбирай по Решению 2b — 能, стюардящий холон вопроса; 主 — для стратегического масштаба. Оно не заменяет `vimarsha_of`: одно ребро-инбокс не помещает вопрос ни в чью холон-ориентацию. **Зеркальный провал так же реален:** `vimarsha_of` без `posed_to` на вопросе, *ожидающем действий другого делателя*, — делегирование, выродившееся в записку в пустоту: заякорено, видно в территории, ни в чьём инбоксе. Делегирующая вимарша не закончена, пока не стоит ребро-инбокс. **Без штампов срочности:** ранжирование очереди — акт владельца очереди, не постановщика: не ставь priority-attrs и не заполняй priority-образный параметр тула (воля взрослеет `chanda → adhimoksha`; аффорданс в схеме тула — не мандат).
+- **`vimarsha_of` (о ЧЁМ) и `anga` (куда двигаю) — не схлопывай.** `vimarsha_of` именует *предмет*: нынешний, как-есть узел, о котором сомнение. `anga` именует *становление*, которое двигает ответ: bianhua, будущий телос. Ловушка — тяга к ответу: уронить **актора** или **назначение работы** в `vimarsha_of`, когда их место на `anga`. Мета-ход: ответь на два вопроса раздельно — «о ЧЁМ сомнение?» (→ `vimarsha_of`), «какое становление двигает ответ?» (→ `anga`). Одна вимарша законно несёт оба.
+- `arose_from` → наблюдение-исток.
+- Жанр определяет жизненный цикл: risk → может `realized_as` в sachverhalt. hint → прочитать и закрыть.
+- **hint — указатель, не payload**: несёт только то, чего orient и линзы не покажут — состояние внешнего мира, выбранные приоритеты, конвенции. Работа-в-полёте живёт на карте bianhua через `anga`, не в семени.
 
 ### Bianhua
 
-- `anga` (part→whole): a constituent → the bianhua it *drives*. Three carrier kinds — a **vimarsha**, a **sub-bianhua**, or a **kriya**. Pass `anga=<refs>` on `nks_add_bianhua`, or `nks_arrow(action="link", arrow_type="anga", source=<ref>, target=<bianhua>)` later. The carrier keeps its own anchoring (a vimarsha its `vimarsha_of`) — anga is additional. A bianhua with zero anga is an *empty transformation* — the factory warns. Acyclic tree: one anga-parent per source.
-- **kriya as anga-carrier**: a vimarsha-anga carries the *path* (a question whose resolution moves the change); a kriya-anga carries the *arrival* — the deed that itself constitutes the transformation. Two readings, **inferred from the kriya's own triputi, never a separate field** (there is no `anga_kind`): a **возведение** is a deed entering the fabric (kriya ontic `anagata→vartamana`, volitive `chanda`/`adhimoksha`); a **депрекация** is a deed leaving it (`vartamana→atita`, `virodha`). **A completed kriya still links** — finishing the deed is the debt repaid (отдача долга), not a block; no 422 on a done carrier. Each kriya-anga counts toward the bianhua's progress, its `resolved` read from the carrier's triputi.
-- `anantara` (ordering): bianhua → the bianhua that must complete first. `anantara_after=<refs>`. Acyclic; sets the critical path.
-- `telos` is the description: write the *destination quality* ("the system becomes …"), rendered as `TELOS:` in `nks_look`. No given_as, no `context`, no ahara/utpatti/upadhi on a bianhua (422). The lifecycle and field work belong to the **inquiry** and **assembly** skills.
+- `anga` (часть→целое): составляющая → bianhua, которое она *двигает*. Три рода носителей — **вимарша**, **суб-bianhua**, **крия**. Передавай `anga=<refs>` на `iskron_add_bianhua` или `iskron_arrow(action="link", arrow_type="anga", source=<ref>, target=<bianhua>)` позже. Носитель сохраняет собственное якорение (вимарша — свой `vimarsha_of`) — anga добавочен. Bianhua с нулём anga — *пустое превращение*, фабрика предупреждает. Ациклическое дерево: один anga-родитель на источник.
+- **Крия как носитель anga**: вимарша-anga несёт *путь* (вопрос, чьё разрешение двигает перемену); крия-anga несёт *прибытие* — деяние, которое само составляет превращение. Два прочтения, **выводимые из трипути самой крии, не отдельное поле** (нет `anga_kind`): **возведение** — деяние, входящее в ткань (онтика `anagata→vartamana`, воля `chanda`/`adhimoksha`); **депрекация** — деяние, покидающее её (`vartamana→atita`, `virodha`). **Завершённая крия всё равно линкуется** — оконченное деяние есть отданный долг, не блок; на завершённом носителе нет 422. Каждая крия-anga входит в прогресс bianhua; её `resolved` читается из трипути носителя.
+- `anantara` (порядок): bianhua → bianhua, которое должно завершиться раньше. `anantara_after=<refs>`. Ациклично; задаёт критический путь.
+- `telos` — это описание: пиши *качество назначения* («система становится …»), рендерится как `TELOS:` в `iskron_look`. Ни given_as, ни `context`, ни ahara/utpatti/upadhi на bianhua (422). Жизненный цикл и работа с полем — скиллы **inquiry** и **assembly**.
 
-### Sense on arrows
+### Смысл на стрелках
 
-Every arrow carries a sense explaining WHY.
+Каждая стрелка несёт смысл — ПОЧЕМУ.
 
-- `next` → praśna. ✓ "Path built — where can it break?" ✗ "Go to next step."
-- `upadhi` → why this phenomenon matters HERE.
-- `ahara` → what consumed and why.
+- `next` → прашна. ✓ «Путь построен — где он может сломаться?» ✗ «Перейти к следующему шагу.»
+- `upadhi` → почему этот феномен важен ИМЕННО ЗДЕСЬ.
+- `ahara` → что потреблено и почему.
 
-## After writing
+## После записи
 
-1. **Read the `CHECKS:` block the create response prints.** The factory self-validates — no separate call needed. Clean? Move on. Fix warnings first. Note: `not_orphan` on a fresh phenomenon is expected until a kriya picks it up (ahara/utpatti/upadhi) — a `context` arrow to a holon does NOT clear it. Wire it to a kriya. **A nudge in the response is a work item, not an FYI**: "Not attached to any transformation — check the map" means run the check it names (`lens="bianhua"`) and either attach or surface the decision to the user explicitly — never relay the line in passing and move on.
-2. **Phenomenon with ahara/utpatti**: `nks_orient(lens="trace", focus=<seq>)` — lifecycle connected?
-3. **Kriya**: actor, ahara, utpatti phenomena all exist?
-4. **Release what you replaced.** Locate-before-write looks for duplicates *before* the write; this is its mirror *after*: if the new node supersedes an existing one, draw `supersedes` new→old, migrate the old node's load (`key:true`, anchors, upadhi consumers that should move), and close it (`visarjana`). A successor that doesn't release its predecessor leaves a live duplicate canon — the forward wave updates references and strands the old node under the retired term.
+1. **Читай блок `CHECKS:`, который печатает ответ фабрики.** Фабрика самопроверяется — отдельный вызов не нужен. Чисто? Дальше. Сначала чини предупреждения. Замечание: `not_orphan` на свежем феномене ожидаем, пока его не подхватит крия (ahara/utpatti/upadhi) — `context`-стрелка к холону его НЕ снимает. Приведи к крие. **Подсказка в ответе — рабочий элемент, не FYI**: «Not attached to any transformation — check the map» значит выполнить названную проверку (`lens="bianhua"`) и либо привязать, либо явно вынести решение пользователю — не пересказывай строку мимоходом.
+2. **Феномен с ahara/utpatti**: `iskron_orient(lens="trace", focus=<seq>)` — жизненный цикл связан?
+3. **Kriya**: actor, ahara, utpatti — все существуют?
+4. **Отпусти то, что заменил.** Locate-before-write ищет дубликаты *до* записи; это его зеркало *после*: если новый узел вытесняет существующий — проведи `supersedes` новый→старый, перенеси нагрузку старого (`key:true`, якоря, upadhi-потребителей, которым пора переехать) и закрой его (`visarjana`). Преемник, не отпустивший предшественника, оставляет живой дубликат канона.
 
-## Operational reminders
+## Операционное
 
-**reasoning.** Every write tool accepts `reasoning="..."`. Use it.
+**reasoning.** Каждый пишущий тул принимает `reasoning="..."`. Используй.
 
-**basis_version.** Every `nks_update`, `nks_arrow` (delete/reconnect/update), and `nks_delete_node` requires it. Read → write → re-read on conflict.
+**basis_version.** Каждый `iskron_update`, `iskron_arrow` (delete/reconnect/update) и `iskron_delete_node` требует его. Прочитал → записал → перечитал при конфликте.
 
-**Cross-realm.** Text references in descriptions. Never arrows.
+**Кросс-реалм.** Текстовые ссылки в описаниях. Никогда стрелки.
 
-## Vimarsha genres
+## Жанры вимарши
 
-| You want to say… | Genre |
+| Хочешь сказать… | Жанр |
 |---|---|
-| "What could go wrong?" | **risk** |
-| "Is this correct?" | **samshaya** |
-| "Case the rule misses" | **vyabhichara** |
-| "I disagree" | **prati-paksha** |
-| "Reasoning is flawed" | **hetu-dosha** |
-| "Term has drifted" | **semantic-drift** |
-| "Future agent: read this" | **hint** |
+| «Что может пойти не так?» | **risk** |
+| «Верно ли это?» | **samshaya** |
+| «Случай, который правило не покрывает» | **vyabhichara** |
+| «Не согласен» | **prati-paksha** |
+| «Рассуждение дефектно» | **hetu-dosha** |
+| «Термин уплыл» | **semantic-drift** |
+| «Будущий агент: прочти» | **hint** |
 
-Can't pick one → two questions tangled. Separate.
+Не выбирается один → спутаны два вопроса. Разведи.
 
-## Starting triples & closure — carrier canon
+## Стартовые тройки и закрытие — канон носителей
 
-Each род (type × given_as × genre) has **one axis that carries liveness** (U1); the others only qualify. The `nks_add_*` factories print the **canonical STARTING TRIPUTI** for the род and `nks_look` glosses the carrier per node — **read them; don't stamp a divergent triple.** The trap the canon fixes: **`virodha` does NOT uniformly mean "closed" — it is polarized by род (U3):**
+Каждый род (тип × given_as × genre) несёт жизнь/закрытость **одной осью трипути** (U1); остальные лишь квалифицируют. Фабрики `iskron_add_*` печатают **каноническую СТАРТОВУЮ ТРИПУТИ** рода, а `iskron_look` глоссирует носитель на каждом узле — **читай их; не штампуй расходящуюся тройку.** Эпистемика никогда не закрывает (U2, кроме badhita у эпистемо-носимых родов): она квалифицирует достоверность и восходит Kl→An→Pt→Pm. Ловушка, которую канон чинит: **`virodha` НЕ означает единообразно «закрыто» — он поляризован родом (U3):**
 
-- **risk** — `virodha` is the *live* mode: an active risk *stands* in virodha. It closes only via `visarjana` ∨ `addressed_by` ∨ `realized_as`, never by virodha itself.
-- **kriya / karta / phenomenon(vollzug)** — `virodha` = **депрекация** (deprecation): a live tension "we want to retire this", not a closure. Closes at `atita` (kriya/karta also `nashta`) ∨ `visarjana`.
-- **samshaya / prati-paksha / hint** — here `virodha` *is* a closure (отказ — refusal).
+- **risk** — `virodha` и есть *живой* модус: активный риск *стоит* в virodha. Закрывается **только модусами**: `upeksha` (принят) ∨ `visarjana` (отпущен); `addressed_by`/`realized_as` — информационны, не гейт: материализация риск не закрывает (сбывшийся риск хуже открытого).
+- **vyabhichara / hetu-dosha / semantic-drift** — носитель онтический: дефект *есть*, пока `vartamana`; `virodha` конститутивен (дефекта не хотят). Закрытие — `atita` (расхождение устранено) ∨ `visarjana`.
+- **kriya / karta / phenomenon(vollzug)** — `virodha` = **депрекация**: живое напряжение «хотим это вывести», не закрытие. Закрытие — `atita` (kriya/karta также `nashta`) ∨ `visarjana`.
+- **samshaya / prati-paksha / hint** — здесь `virodha` *есть* закрытие (отказ).
 
-And projected work is born `anagata` in the *project* triad, never the "ready" `pramanita/vartamana/upeksha` (that lies the deed already runs) — the **design** skill owns those starting modes.
+И проектируемая работа рождается `anagata` в *проектной* тройке, никогда в «готовой» `pramanita/vartamana/upeksha` (та лжёт, будто деяние уже идёт) — стартовые модусы проектирования держит скилл **design**.
 
-## Batch ordering (nks_batch)
+## Порядок в батче (iskron_batch)
 
-**Load the factory schemas before a create-batch.** `nks_batch` wraps the `nks_add_*` factories but does **not** relax their discipline — every create op is validated against its factory's full schema. In a deferred-tool environment the batch loads without them, so composing a factory-create batch blind means learning each required param one `422` per round-trip. Before you batch: `tool_search` and read the schema of every `nks_add_*` you'll call. The **first** create of an unfamiliar node type is safer as a single factory call than buried in a megabatch — and don't pack heavy multi-paragraph descriptions into a megabatch.
+**Загрузи схемы фабрик до create-батча.** `iskron_batch` оборачивает фабрики `iskron_add_*`, но **не** ослабляет их дисциплину — каждый create валидируется полной схемой своей фабрики. В окружении с отложенными тулами батч грузится без них, и слепая сборка фабричного батча — это изучение обязательных параметров по одному 422 за раунд-трип. Перед батчем найди и прочти схему каждого `iskron_add_*`, который позовёшь. **Первый** create незнакомого типа безопаснее одиночным вызовом фабрики, чем в мегабатче — и не пакуй тяжёлые многоабзацные описания в мегабатч.
 
-Order within the batch:
+Порядок внутри батча:
 
-1. Phenomena first
-2. Kriyas second (referencing phenomena)
-3. Cross-cutting arrows last
+1. Сначала феномены
+2. Потом крии (ссылаются на феномены)
+3. Сквозные стрелки — последними
 
-### Inline-arrow form
+### Inline-форма стрелок
 
-Inline `arrows` on the factories take the same canonical shape as `arrow_link`, with the new node as the implicit source: `{arrow_type, target, sense?, direction?, quantifier?, attrs?, <modes>}`. Only `arrow_type` and `target` are required; `direction` flips the orientation when the new node is the *target* rather than the source. The factory **validates the form strictly**: an unknown key — e.g. the pre-rename `edge_type` — is rejected with a named error pointing at `arrow_type`, and a missing `target` says so. No silent acceptance, no raw TypeError — you learn the form before the first write, not by decoding a stack trace.
+Inline `arrows` на фабриках — та же каноническая форма, что `arrow_link`, с новым узлом как неявным источником: `{arrow_type, target, sense?, direction?, quantifier?, attrs?, <modes>}`. Обязательны только `arrow_type` и `target`; `direction` переворачивает ориентацию, когда новый узел — *цель*, а не источник. Фабрика **валидирует форму строго**: неизвестный ключ (например, дореномный `edge_type`) отвергается именованной ошибкой, указывающей на `arrow_type`; про отсутствующий `target` так и говорится. Ни молчаливого принятия, ни сырого TypeError.
 
-Two patterns, both first-class:
-- **Inline `arrows`** — for edges that *originate at the new node* (a vimarsha's `vimarsha_of`, a phenomenon's `context`). Pass them in the create op.
-- **Separate `arrow_link` with `temp:N`** — for edges *between two nodes created in the same batch*, or pointing *into* the new node. Reference each created node by its 0-based `temp:N` index; a `temp:N` must point at a lower-indexed create op.
+Два паттерна, оба первоклассные:
+- **Inline `arrows`** — для рёбер, *исходящих из нового узла* (`vimarsha_of` вимарши, `context` феномена). Передавай в create-операции.
+- **Отдельный `arrow_link` с `temp:N`** — для рёбер *между двумя узлами одного батча* или указывающих *в* новый узел. Ссылайся на созданные узлы 0-базным индексом `temp:N`; `temp:N` должен указывать на create-опа с меньшим индексом.
 
-**A kriya's constitutive `ahara`/`utpatti` must stay inline.** The factory validates each `add_kriya` against its *own* inline `arrows` at create time — a consume/produce edge deferred to a trailing `arrow_link` is not counted, and the kriya fails ("a kriya must declare ahara or utpatti"). Put `ahara`/`utpatti` in the create op's `arrows`; when the consumed/produced phenomenon is created in the same batch, order it earlier and reference it inline by `temp:N` — inline arrows resolve `temp:N` just like `arrow_link` does. Only genuinely cross-cutting edges (`next`, an `upadhi` to a pre-existing node) belong in trailing `arrow_link`s.
+**Конститутивные `ahara`/`utpatti` крии обязаны остаться inline.** Фабрика валидирует каждый `add_kriya` по его *собственным* inline `arrows` в момент создания — потребление/производство, отложенное в хвостовой `arrow_link`, не засчитывается, и крия падает («a kriya must declare ahara or utpatti»). Клади `ahara`/`utpatti` в `arrows` create-опа; когда потребляемый/производимый феномен создаётся тем же батчем — поставь его раньше и ссылайся inline через `temp:N` (inline-стрелки резолвят `temp:N` так же, как `arrow_link`). В хвостовых `arrow_link` — только действительно сквозные рёбра (`next`, `upadhi` к уже существующему узлу).
 
-`anga`/`anantara` on `nks_add_bianhua` are the exception — pass them as their own `anga=` / `anantara_after=` params, never in `arrows`.
+`anga`/`anantara` на `iskron_add_bianhua` — исключение: передавай их собственными параметрами `anga=` / `anantara_after=`, никогда в `arrows`.
 
-## Scope
+## Границы скилла
 
-This skill: the act of writing. Not covered:
-- **Design** → design
-- **Weaving** → weaving
-- **Methodology work** → methodology-work
-- **Reading** → entry
+Этот скилл — акт записи. Не покрывает:
+- **Проектирование** → design
+- **Ткачество** → weaving
+- **Работа над методологией** → methodology-work
+- **Чтение** → entry

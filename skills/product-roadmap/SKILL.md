@@ -1,391 +1,193 @@
 ---
 name: product-roadmap
-description: "Use this skill to build a product roadmap for a GitHub repository — or a multi-repo product (a whole org, or a set of repos forming one product) — derived from its issues and PRs through an NKS reasoning graph. Triggers: 'roadmap from repo', 'build a roadmap from issues', 'roadmap from github', 'roadmap for my org', 'multi-repo roadmap', 'roadmap across repos', 'quick roadmap', 'roadmap teaser', 'собери роадмап из issues/PR', 'роадмап по продукту', 'что в этом репо делать дальше', product-roadmap. Role-plays the maintainer: verified present-state ground, weighted backlog as shabda, directions underway (bianhua), rendered as graph + markdown + local HTML. Composes align, intake, and assembly. Needs the gh CLI and nks_* MCP tools."
+description: "Используй, чтобы собрать продуктовый роадмап GitHub-репозитория — или мультирепо-продукта (org или набор репо как один продукт) — выведенный из issues и PR через граф рассуждений NKS. Триггеры: «собери роадмап из issues/PR», «роадмап по продукту», «что в этом репо делать дальше», roadmap from repo/github, roadmap for my org, multi-repo roadmap, quick roadmap, product-roadmap. Отыгрывает мейнтейнера: проверенная почва настоящего, взвешенный бэклог как шабда, направления (bianhua), рендер graph+markdown+HTML. Композирует align, intake и assembly. Нужны gh CLI и тулы iskron_*."
 ---
 
-# Product Roadmap
+# Продуктовый роадмап
 
-Turn a GitHub repo **you maintain** — or a multi-repo product — into a roadmap you
-can act from. The value (the solo-dev promise): own the context scattered across
-the codebase and the issue/PR backlog, and let the graph surface *the directions
-the project is actually under* — not a flat ticket list.
+Преврати GitHub-репо, **которое ты сопровождаешь**, — или мультирепо-продукт — в роадмап, из которого можно действовать. Ценность (обещание solo-разработчику): овладеть контекстом, рассыпанным по кодовой базе и бэклогу issues/PR, и дать графу поднять *направления, под которыми проект действительно находится*, — а не плоский список тикетов.
 
-You role-play the **maintainer**. The pipeline:
+Ты отыгрываешь **мейнтейнера**. Конвейер:
 
 ```
-frame + bootstrap realm  →  model the current product (vartamana ground)  →
-harvest milestones + issues + PRs  →  weight by author  →  write to graph (shabda intake)  →
-assembly (figure-on-ground bianhua)  →  render (graph + markdown + HTML)  →  verify
+рамка + бутстрап реалма  →  моделирование текущего продукта (vartamana-почва)  →
+сбор milestones + issues + PR  →  взвешивание по автору  →  запись в граф (шабда-интейк)  →
+сборка (bianhua фигура-на-почве)  →  рендер (граф + markdown + HTML)  →  проверка
 ```
 
-This skill **composes** three others: `align` (understand the codebase, set up
-the realm/holon), `intake` (the source-independent shabda-intake discipline — the
-spine of Step 5), and `assembly` (discern the bianhua — the heart of Step 6). It
-adds the GitHub **adapter** (Steps 3–4) and the roadmap **render** (Step 7).
-`references/self-checks.md` is the full verification gate — Step 8 runs it; never
-publish without it.
+Скилл **композирует** три других: `align` (понимание кодовой базы, реалм/холон), `intake` (источник-независимая дисциплина шабда-интейка — хребет Шага 5) и `assembly` (различение bianhua — сердце Шага 6). Сам он добавляет GitHub-**адаптер** (Шаги 3–4) и **рендер** роадмапа (Шаг 7). `references/self-checks.md` — полный проверочный гейт: Шаг 8 его прогоняет; без него не публикуй.
 
-## Commitments — hold these through every step
+## Обязательства — держи их через все шаги
 
-- **Figure on ground.** Issues/PRs are the *delta* — what people want changed; on
-  their own they read as ticket triage. Model the product that exists first, as a
-  verified `vartamana` ground visibly distinct from the `kalpita`/`shabda` backlog.
-  Every direction then transforms something real.
-- **Leverage the graph, not just its text.** Actors are kartas with real edges;
-  figure-on-ground is a graph-legal link; core flows are an `ahara`/`utpatti`
-  estafeta; structural risks come from the graph's own tensions. A roadmap that
-  could have been a flat markdown list never used the graph — and any leverage the
-  prose claims must be carried by edges (the `integrity` skill's claim-audit mode
-  is the check).
-- **One product, even across many repos.** ONE focus holon; each repo a top-level
-  subsystem; the cross-repo flow as the headline. Never N stapled roadmaps. Confirm
-  with the maintainer which repos are in the product before modeling.
-- **Read-and-refresh, never re-seed (the re-run contract).** An existing realm is
-  oriented into and refreshed **in place** — locate-before-write on every write:
-  update what exists, add only the genuinely new, close what shipped. A missing
-  realm is *proposed*, never silently created. The output is a snapshot of the
-  present, not a cross-run journal.
-- **Honest before impressive.** An empty or thin backlog is stated, never padded;
-  selection caps are declared; superlatives only over sets you actually computed;
-  every cited primitive verified. The full guard list lives in
-  `references/self-checks.md`.
-- **Reference discipline.** `#N` is reserved for real GitHub issue/PR numbers.
-  Multi-repo: every ref is repo-qualified with the full repos key (`backend#1`) —
-  no ad-hoc abbreviations, no grouped or ranged refs, no bare `#N`. Internal graph
-  seqs take a non-repo prefix (`NKS#1120`). Directions are referenced as `D1`/`D2`
-  or by name.
+- **Фигура на почве.** Issues/PR — это *дельта*: что люди хотят изменить; сами по себе они читаются как триаж тикетов. Сначала смоделируй существующий продукт — проверенной `vartamana`-почвой, зримо отделённой от `kalpita`/`shabda`-бэклога. Тогда каждое направление преобразует нечто реальное.
+- **Рычаг графа, не только его текст.** Акторы — карты с реальными рёбрами; фигура-на-почве — граф-легальная связь; ключевые потоки — эстафета `ahara`/`utpatti`; структурные риски — из собственных натяжений графа. Роадмап, который мог быть плоским markdown-списком, графом не воспользовался — а всякий рычаг, заявленный прозой, должны нести рёбра (проверка — режим claim-аудита скилла `integrity`).
+- **Один продукт, даже через много репо.** ОДИН фокус-холон; каждый репо — top-level-подсистема; кросс-репо-поток — заголовок. Никогда N сшитых роадмапов. Подтверди с мейнтейнером, какие репо в продукте, до моделирования.
+- **Читай-и-освежай, никогда не пересевай (контракт повторного прогона).** В существующий реалм ориентируются и освежают его **на месте** — locate-before-write на каждой записи: обнови существующее, добавь только подлинно новое, закрой отгруженное. Отсутствующий реалм *предлагается*, не создаётся молча. Выход — снимок настоящего, не межпрогонный журнал.
+- **Честно прежде эффектно.** Пустой или тощий бэклог констатируется, не надувается; срезы объявляются; превосходные степени — только над множествами, которые ты реально вычислил; каждый процитированный примитив проверен. Полный список стражей — `references/self-checks.md`.
+- **Дисциплина ссылок.** `#N` зарезервирован за реальными номерами GitHub issue/PR. Мультирепо: каждая ссылка репо-квалифицирована полным ключом (`backend#1`) — без самодельных сокращений, группировок и диапазонов, без голых `#N`. Внутренние seq графа — с не-репо-префиксом (`NKS#1120`). Направления — `D1`/`D2` или по имени.
 
-## Prerequisites
+## Предпосылки
 
-- `gh` CLI authenticated (`gh auth status`); target repo(s) accessible.
-- **A local checkout of each in-scope repo** (`git clone --depth 1`; private:
-  `gh repo clone`). Step 2 reads real code structure — modeling from `gh` metadata
-  alone under-serves the product.
-- nks_* MCP tools; a realm per the re-run contract above.
-- Run heavy steps (product model, harvest, graph writes, assembly, render) via
-  subagents; hand results between steps as **files on disk** and return short
-  confirmations + paths — large returns drop the connection. Verify a
-  subagent's step against the artifact it produced (files, graph nodes), not
-  its report; and never run two graph-writing subagents over one realm in
-  parallel — same-named creates collide or dedup across lanes.
+- `gh` CLI аутентифицирован (`gh auth status`); целевые репо доступны.
+- **Локальный чекаут каждого репо в объёме** (`git clone --depth 1`; приватные: `gh repo clone`). Шаг 2 читает реальную структуру кода — моделирование по одним `gh`-метаданным недослуживает продукту.
+- Тулы iskron_*; реалм — по контракту повторного прогона выше.
+- Тяжёлые шаги (модель продукта, сбор, записи в граф, сборка, рендер) гоняй сабагентами; результаты между шагами передавай **файлами на диске**, возвращай короткие подтверждения + пути — большие возвраты роняют соединение. Проверяй шаг сабагента по произведённому артефакту (файлы, узлы графа), не по его отчёту; и никогда не пускай двух пишущих в граф сабагентов над одним реалмом параллельно — одноимённые создания сталкиваются или дедупятся поперёк дорожек.
 
-## Step 1 — Frame and bootstrap
+## Шаг 1 — Рамка и бутстрап
 
-- Identify the target — one `owner/repo` or the repo set (org or maintainer-named
-  list) — and the product boundary in one line. Multiple repos: confirm they are
-  one product and which are in scope.
-- Locate the realm + focus holon first (`nks_realm` list; `nks_orient` /
-  `nks_semantic_search`). Exists → orient in and treat the run as an incremental
-  refresh. Absent → propose creation, create only on the maintainer's go-ahead.
-- Exactly **one focus holon** named after the **product**, `contains`-linked from
-  root — one holon even across many repos, never one per repo.
-- An `align`-style read sets up the realm/holon, but never write `AGENTS.md`
-  into a repo you only role-play owning.
+- Определи цель — один `owner/repo` или набор (org или названный мейнтейнером список) — и границу продукта одной строкой. Несколько репо: подтверди, что это один продукт, и что в объёме.
+- Сначала найди реалм + фокус-холон (`iskron_realm` list; `iskron_orient` / `iskron_semantic_search`). Существует → ориентируйся и веди прогон как инкрементальное освежение. Отсутствует → предложи создание, создавай только по отмашке мейнтейнера.
+- Ровно **один фокус-холон**, названный по **продукту**, `contains` от корня — один холон даже через много репо, никогда по холону на репо.
+- Чтение в духе `align` настраивает реалм/холон, но никогда не пиши `AGENTS.md` в репо, владение которым только отыгрываешь.
 
-## Step 2 — Model the current product (the vartamana ground)
+## Шаг 2 — Смоделируй текущий продукт (vartamana-почва)
 
-Skip this and the graph is all `shabda` — the roadmap reads as triage on a backlog
-floating in a vacuum.
+Пропустишь — и весь граф будет `shabda`: роадмап прочтётся как триаж бэклога, висящего в вакууме.
 
-**Read what EXISTS:** README + docs (the product's own claim); CHANGELOG + releases
-(`gh release list` — what actually shipped, current version); codebase structure
-(top-level dirs/packages — the real subsystem boundaries, entry points, route
-tables); config surface (flags, env vars); API surface (endpoints, CLI commands).
+**Читай то, что ЕСТЬ:** README + доки (собственная заявка продукта); CHANGELOG + релизы (`gh release list` — что реально отгружено, текущая версия); структура кодовой базы (top-level директории/пакеты — реальные границы подсистем, точки входа, таблицы роутов); поверхность конфигурации (флаги, env); поверхность API (endpoint'ы, CLI-команды).
 
-**Seed the ground in the Observation modus (Pt/Va/Up)** — witnessed, present,
-accepted — strictly separate from the backlog:
+**Засей почву в модусе наблюдения (Pt/Va/Up)** — засвидетельствовано, действует, принято — строго отдельно от бэклога:
 
-| What you read | Node | given_as | modus |
+| Что прочитал | Узел | given_as | модус |
 |---|---|---|---|
-| a subsystem (crawler, indexer, auth, storage) | **holon** | — | (boundary) |
-| an existing capability ("full-text search") | **phenomenon** | vollzug / sachverhalt | Pt/Va/Up |
-| a domain entity (Bookmark, Library, User) | **phenomenon** | bildung / sinn | Pt/Va/Up |
-| a core flow the product performs today | **kriya** | — | Pt/Va/Up |
-| a shipped fact confirmed by a release | phenomenon | sachverhalt | **Pm**/Va/Up |
+| подсистема (crawler, indexer, auth, storage) | **holon** | — | (граница) |
+| существующая способность («полнотекстовый поиск») | **phenomenon** | vollzug / sachverhalt | Pt/Va/Up |
+| доменная сущность (Bookmark, Library, User) | **phenomenon** | bildung / sinn | Pt/Va/Up |
+| ключевой поток, который продукт исполняет сегодня | **kriya** | — | Pt/Va/Up |
+| отгруженный факт, подтверждённый релизом | phenomenon | sachverhalt | **Pm**/Va/Up |
 
-- Nest subsystems under the focus holon (`contains`); capabilities/entities live
-  inside their subsystem. **Multi-repo: the repos ARE the top-level subsystems**
-  (`attrs.repo` on each); a repo may split further inside.
-- **Grounding rules — every ground node:** cite a real primitive in
-  `attrs.source_ref` (module path, config flag, endpoint, release tag;
-  repo-qualified for multi-repo). Cite the **exact** primitive — the named symbol
-  exists at that path; cite where the behaviour is **implemented**, not where it is
-  read; prefer **executable primitives over prose docs**; read versions from the
-  **manifest**, never a doc. A `vartamana` claim with no citable primitive is a
-  guess — demote or drop it. Don't infer a capability from a feature request
-  (that's backlog, not ground).
-- **Scope:** the subsystems, the main domain entities, a handful of core flows — a
-  map the maintainer recognizes as "yes, that's the product", not a full
-  reverse-engineering.
-- **Model the actors — karta test first (writing skill): only an addressable doer
-  is a karta.** Two layers, from two different sources, never collapsed:
-  - **Runtime operators** — who acts on / is served by the *live* system. External
-    consumer → `agantuka` 客; internal operator (admin, moderator, onboarding
-    staff) → `adhikarin` 能 — an *active* doer who responds and acts, never a
-    passively-"served" party. A worker fleet / CI / cron is **not** a karta — it's
-    a ⚙️ phenomenon (`upadhi`); promoting it to silence a no-actor tension is the
-    anti-pattern that tension warns of. Modeled from the **ground** (the roles the
-    code serves), because these people mostly never file issues.
-  - **Development drivers** — who authors the *backlog*. Maintainer → `svatantra`
-    主 (a delegated dev scope → `adhikarin`); a drive-by contributor → `agantuka`.
-    This layer is all the harvest can see.
-  The narrower the contributor set (solo project = one 主), the more the real actor
-  signal hides in the runtime layer. A karta with zero edges is theater — wire it
-  to the deeds it drives or drop it; every karta carries `manifested_as`.
-- **Wire the core flows as an estafeta:** each core-flow kriya consumes (`ahara`)
-  the phenomena it reads and produces (`utpatti`) the phenomena it writes,
-  sequenced with `next` — the product's spine as a real relay (traced in Step 7),
-  and the reason structural risks become computable. **Multi-repo: the cross-repo
-  spine is the headline** — a kriya in repo A produces a *hinge phenomenon* (shared
-  DB table, API contract, published artifact) that a kriya in repo B consumes; the
-  hinge phenomena are the graph-level proof of one product.
+- Вкладывай подсистемы под фокус-холон (`contains`); способности/сущности живут в своей подсистеме. **Мультирепо: репозитории И ЕСТЬ top-level-подсистемы** (`attrs.repo` на каждой); внутри репо может делиться дальше.
+- **Правила заземления — каждый узел почвы:** цитируй реальный примитив в `attrs.source_ref` (путь модуля, конфиг-флаг, endpoint, релиз-тег; репо-квалифицированно для мультирепо). Цитируй **точный** примитив — названный символ существует по этому пути; цитируй, где поведение **реализовано**, не где читается; предпочитай **исполняемые примитивы прозе доков**; версии читай из **манифеста**, никогда из дока. `vartamana`-заявка без цитируемого примитива — догадка: понизь или выброси. Не выводи способность из feature-request'а (это бэклог, не почва).
+- **Объём:** подсистемы, главные доменные сущности, горстка ключевых потоков — карта, которую мейнтейнер узнаёт как «да, это мой продукт», не полный реверс-инжиниринг.
+- **Смоделируй акторов — сначала карта-тест (скилл writing): картой становится только адресуемый делатель.** Два слоя, из двух разных источников, никогда не схлопнутых:
+  - **Операторы рантайма** — кто действует на *живую* систему / кого она обслуживает. Внешний потребитель → `agantuka` 客; внутренний оператор (админ, модератор, онбординг-стафф) → `adhikarin` 能 — *активный* делатель, который отвечает и действует, никогда не пассивно-«обслуживаемая» сторона. Парк воркеров / CI / cron — **не** карта: это ⚙️ феномен (`upadhi`); повысить его, чтобы заглушить no-actor-натяжение, — ровно тот антипаттерн, о котором натяжение предупреждает. Моделируется из **почвы** (роли, которым служит код): эти люди почти никогда не пишут issues.
+  - **Драйверы разработки** — кто авторствует *бэклог*. Мейнтейнер → `svatantra` 主 (делегированный dev-scope → `adhikarin`); залётный контрибьютор → `agantuka`. Только этот слой виден сбору.
+  Чем уже круг контрибьюторов (solo-проект = один 主), тем сильнее реальный акторный сигнал прячется в слое рантайма. Карта с нулём рёбер — театр: прошей её к деяниям, которые она двигает, или выброси; каждая карта несёт `manifested_as`.
+- **Прошей ключевые потоки эстафетой:** каждая крия ключевого потока потребляет (`ahara`) феномены, которые читает-и-съедает, и производит (`utpatti`) те, что пишет, в последовательности `next` — хребет продукта как реальная эстафета (трассируется в Шаге 7) и причина, по которой структурные риски становятся вычислимыми. **Мультирепо: кросс-репо-хребет — заголовок**: крия в репо A производит *шарнирный феномен* (общая таблица БД, API-контракт, публикуемый артефакт), который потребляет крия в репо B; шарнирные феномены — граф-доказательство единого продукта.
 
-## Step 3 — Harvest milestones + issues + PRs
+## Шаг 3 — Собери milestones + issues + PR
 
-`gh`, JSON. **Three sources** — the maintainer's committed plan lives in
-milestones / a Projects board and is the strongest single signal.
+`gh`, JSON. **Три источника** — обязательный план мейнтейнера живёт в milestones / Projects-доске и есть сильнейший одиночный сигнал.
 
-- **Multi-repo:** harvest every in-scope repo, tag each item with its repo, treat
-  coordinated work across repos as one cross-repo theme.
-- **Milestones first:** `gh api repos/<owner>/<repo>/milestones?state=open`, then
-  each non-"Backlog" milestone's issues. **Read each milestone's own description
-  prose** — maintainers name goals there that have no issue. Also check Projects
-  boards and pinned "roadmap" issues.
-- **Issues:** `gh issue list --state open --limit <N> --json
-  number,title,body,author,authorAssociation,labels,reactionGroups,comments,milestone,createdAt,updatedAt`
-- **PRs (open + recently merged):** `gh pr list --state all --limit <N> --json
-  number,title,body,author,authorAssociation,labels,state,milestone,additions,deletions,createdAt,mergedAt`
-- **Selection = UNION, declared cap, never silent:** (a) every milestoned issue,
-  (b) every accepted/approved/roadmap-labeled issue, (c) top-reacted /
-  most-commented N, (d) recently-active N, (e) contributor PRs. Reactions alone
-  drop already-decided low-reaction work — exactly what belongs on a roadmap.
-  Don't window PRs to the newest N: a long-lived OPEN maintainer PR is high
-  signal. Log the cap and what was excluded.
-- **Empty/thin backlog is honest, not a failure:** do NOT invent items. The ground
-  plus the merged-PR trajectory (`gh pr list --state merged` — what was recently
-  built, in what direction) carry the roadmap; say so plainly in the render.
-- Capture per item: number, title, trimmed body, **verified author login +
-  authorAssociation (from the API, never inferred)**, labels, milestone,
-  engagement, linked issues, state.
+- **Мультирепо:** собирай каждый репо в объёме, помечай элемент его репо, координированную работу поперёк репо веди одной кросс-репо-темой.
+- **Сначала milestones:** `gh api repos/<owner>/<repo>/milestones?state=open`, затем issues каждого не-«Backlog»-майлстоуна. **Читай прозу описания самого майлстоуна** — мейнтейнеры называют там цели, у которых нет issue. Проверь и Projects-доски, и закреплённые «roadmap»-issues.
+- **Issues:** `gh issue list --state open --limit <N> --json number,title,body,author,authorAssociation,labels,reactionGroups,comments,milestone,createdAt,updatedAt`
+- **PR (открытые + недавно смерженные):** `gh pr list --state all --limit <N> --json number,title,body,author,authorAssociation,labels,state,milestone,additions,deletions,createdAt,mergedAt`
+- **Отбор = ОБЪЕДИНЕНИЕ, срез объявлен, никогда молча:** (a) каждый issue с майлстоуном, (b) каждый с меткой accepted/approved/roadmap, (c) топ-N по реакциям / комментариям, (d) недавно активные N, (e) контрибьюторские PR. Одни реакции роняют уже решённую малореакционную работу — ровно то, что на роадмапе и должно быть. Не оконь PR до новейших N: долго открытый мейнтейнерский PR — высокий сигнал. Залогируй срез и что исключено.
+- **Пустой/тощий бэклог честен, не провал:** элементы НЕ выдумываются. Почва плюс траектория смерженных PR (`gh pr list --state merged` — что недавно строилось, в каком направлении) несут роадмап; так и скажи в рендере.
+- Фиксируй по элементу: номер, заголовок, обрезанное тело, **проверенный логин автора + authorAssociation (из API, никогда не выведенный)**, метки, майлстоун, вовлечённость, связанные issues, состояние.
 
-## Step 4 — Weight by author role
+## Шаг 4 — Взвесь по роли автора
 
-| authorAssociation | weight | note |
+| authorAssociation | вес | заметка |
 |---|---|---|
-| OWNER / MEMBER / COLLABORATOR | high | maintainer voice |
-| CONTRIBUTOR | high | has merged work — real |
-| FIRST_TIME_CONTRIBUTOR / FIRST_TIMER | medium | judge by content + engagement |
-| NONE (issue) | medium | a user need — keep if substantive |
-| NONE (PR, no linked issue) | low | drive-by; admit only on real engagement |
+| OWNER / MEMBER / COLLABORATOR | высокий | голос мейнтейнера |
+| CONTRIBUTOR | высокий | есть смерженная работа — реален |
+| FIRST_TIME_CONTRIBUTOR / FIRST_TIMER | средний | суди по содержанию + вовлечённости |
+| NONE (issue) | средний | пользовательская нужда — держи, если содержательна |
+| NONE (PR без связанного issue) | низкий | залётный; впускай только при реальной вовлечённости |
 
-Boost on engagement and `accepted`/`roadmap` labels; demote duplicates, `wontfix`,
-bot authors, pure dependency bumps.
+Повышай за вовлечённость и метки `accepted`/`roadmap`; понижай дубликаты, `wontfix`, ботов, чистые dependency-бампы.
 
-- **Milestone membership outranks reactions** — a next-release issue is committed
-  work regardless of reaction count.
-- **Verify authorship from the API, never infer** — attributing a community
-  contribution to the maintainer corrupts the very weighting this step exists for.
+- **Членство в майлстоуне перевешивает реакции** — issue следующего релиза есть обязательная работа независимо от счёта реакций.
+- **Авторство проверяй из API, никогда не выводи** — приписать общинный вклад мейнтейнеру значит испортить само взвешивание, ради которого шаг существует.
 
-## Step 5 — Write the backlog (shabda intake + roadmap overlays)
+## Шаг 5 — Запиши бэклог (шабда-интейк + роадмап-надстройки)
 
-**Run the `intake` skill over the harvest** — Steps 3–4 are its GitHub adapter
-(they supply each item's content / form / provenance / authority). intake owns the
-spine, don't restate it: form → node type; epistemic mode by kind (`kalpita` for an
-unverified request — the maintainer's own committed volition is *not*
-kalpita-to-verify); `source_kind=shabda`; semantic dedup, locate-before-write;
-`arose_from` anchor to the source; verify by pratyaksha and graduate the mode;
-selectivity cap (Step 3's).
+**Прогони скилл `intake` над собранным** — Шаги 3–4 суть его GitHub-адаптер (они дают каждому элементу содержание / форму / провенанс / авторитет). Хребет у intake — не пересказывай: форма → тип узла; эпистемика по виду (`kalpita` для непроверенной просьбы — собственная обязательная воля мейнтейнера *не* kalpita-на-проверку); `source_kind=shabda`; семантический дедуп, locate-before-write; якорь `arose_from` к источнику; сверка и градация модуса; срез селективности (из Шага 3).
 
-**One deliberate divergence from intake's table:** a feature-request lands here as
-a **phenomenon** (a wanted capability, sinn/bildung) or a seed **kriya**
-(anagata/chanda) — **not** intake's bianhua. Directions are discerned later by
-assembly; Step 5 seeds the wanted capability, not the transformation.
+**Одно сознательное расхождение с таблицей intake:** feature-request ложится здесь **феноменом** (желаемая способность, sinn/bildung) или семенной **крией** (anagata/chanda) — **не** intake-овским bianhua. Направления различаются позже сборкой; Шаг 5 сеет желаемую способность, не превращение.
 
-GitHub PR forms intake's table doesn't name:
+GitHub-PR-формы, которых таблица intake не называет:
 
-| Source item | Node |
+| Элемент источника | Узел |
 |---|---|
-| merged contributor PR | **kriya** (deed done) or the phenomenon it produced |
-| open contributor PR | **kriya** (anagata) — work in flight |
-| low-weight drive-by PR | skip, or low-priority phenomenon flagged as such |
+| смерженный контрибьюторский PR | **kriya** (деяние сделано) или произведённый им феномен |
+| открытый контрибьюторский PR | **kriya** (anagata) — работа в полёте |
+| маловесный залётный PR | пропустить — или низкоприоритетный феномен с пометкой |
 
-**Roadmap overlays intake does not carry:**
+**Роадмап-надстройки, которых intake не несёт:**
 
-- **Anchor each item to its subsystem** (`context` / `vimarsha_of` to the Step-2
-  subsystem holon or the capability it extends) — the backlog clusters by
-  subsystem. An item with no home is a signal: under-modeled ground (go back to
-  Step 2) or genuinely new ground — say which. A cross-repo theme anchors to the
-  focus holon and links each touched subsystem.
-- **Dedup against the GROUND, not just the backlog:** a request matching a shipped
-  capability is a *delta* — frame it "enhance X", never "add X"; if a basic form
-  already ships, reframe to the real remaining gap. Naming an already-shipped
-  capability as the to-build undercuts product mastery. Carry the GitHub ref
-  (number, author, weight) in `attrs` for render traceability.
-- **Set the in-moment modus honestly:** milestone-committed → `adhimoksha`;
-  speculative request → `chanda`; projected work → `anagata`; the ground stays
-  `vartamana`/`pramanita`. Model the field as it stands now; never pre-transition.
-- **Give each backlog kriya its driving karta as `actor`** — the verified author's
-  dev-driver karta, never the runtime actor. This is what makes "who owns this
-  direction" a graph edge instead of a prose label.
+- **Якори каждый элемент к его подсистеме** (`context` / `vimarsha_of` к холону подсистемы из Шага 2 или к способности, которую он расширяет) — бэклог кластеризуется по подсистемам. Элемент без дома — сигнал: недомоделированная почва (вернись в Шаг 2) или подлинно новая почва — скажи, что именно. Кросс-репо-тема якорится к фокус-холону и линкует каждую задетую подсистему.
+- **Дедуплицируй против ПОЧВЫ, не только бэклога:** просьба, совпадающая с отгруженной способностью, — *дельта*: формулируй «улучшить X», никогда «добавить X»; если базовая форма уже отгружена — переформулируй в реальный оставшийся зазор. Назвать уже отгруженное как to-build — подорвать мастерство продукта. Неси GitHub-реф (номер, автор, вес) в `attrs` для трассируемости рендера.
+- **Ставь модус момента честно:** закоммичено майлстоуном → `adhimoksha`; спекулятивная просьба → `chanda`; проектируемая работа → `anagata`; почва остаётся `vartamana`/`pramanita`. Моделируй поле, как оно стоит сейчас; никогда не пере-переходи заранее.
+- **Дай каждой бэклог-крие её ведущую карту как `actor`** — dev-драйверскую карту проверенного автора, никогда рантайм-актора. Именно это делает «кто владеет направлением» ребром графа, а не прозаическим ярлыком.
 
-## Step 6 — Assembly (discern the directions)
+## Шаг 6 — Сборка (различи направления)
 
-Run the `assembly` skill over the seeded realm: orient the field → triage free
-vimarshas → discern **bianhua** → name + telos → anga the drivers → order with
-`anantara`. Playing the owner, accept names/teloi inline, but keep the discipline:
-a name must read for a human owner; a telos is the *destination quality*; never a
-bianhua per single vimarsha; risks stay risks.
+Прогони скилл `assembly` над засеянным реалмом: ориентация поля → триаж свободных вимарш → различение **bianhua** → имя + телос → anga драйверов → порядок `anantara`. Играя владельца, принимай имена/телосы inline, но держи дисциплину: имя читается человеком-владельцем; телос — *качество назначения*; никогда bianhua на одну вимаршу; риски остаются рисками.
 
-- **Refresh runs reconcile, never re-discern from zero:** update the telos / anga /
-  order of directions that still hold, add a direction only for a genuinely new
-  theme, close (visarjana) the ones whose work shipped. Never a twin direction.
-- **Figure-on-ground as a real arrow:** the direction's driving kriya reaches the
-  ground capability via `upadhi`/`context` — never a literal `ahara` from the
-  bianhua (the graph forbids it). A direction whose driving kriyas touch no ground
-  capability is floating: either genuinely new ground (say so explicitly) or a sign
-  Step 2 under-modeled (go seed the missing capability).
-- **Surface structural risks from the graph's own tensions**
-  (`nks_orient(lens="tensions")`): a capability with no producing flow, an estafeta
-  relay-gap, a deed with no karta — the graph's self-diagnosis, distinct from
-  backlog-derived risks; a flat ticket list structurally cannot produce these.
-  **Multi-repo: a cross-repo dead-recipe or relay-gap is the highest-value
-  finding.** Fix pure modeling artifacts in place instead of reporting them.
-- **Attribute each direction on two axes:** its **driver** (maintainer-led &
-  committed / contributor-led & needs-review / community-requested & unowned —
-  from the harvest kartas) and its **runtime target** (whom the changed system
-  serves: external consumer 客 or internal operator 能 — from the ground). Don't
-  collapse the second into the first — expect operator-facing directions (admin
-  console, staff onboarding) alongside consumer-facing ones; on a solo product the
-  driver axis flattens and the runtime target is where directions actually differ.
-  Ownership is a **graph fact**: the direction's anga kriyas carry `actor` → the
-  driver karta, or the label is downgraded to "inferred".
-- **A coherent high-signal community theme earns a direction** even with no
-  committed work — the top-reacted issues are roadmap signal; a deliberate deferral
-  is marked "deferred but real", never silently dropped.
-- **Milestones in full:** the committed near-term milestone is its own direction
-  listing **every** open milestone issue — rank a top-N as gating, but state the
-  total and that the rest remain; never a telos claiming completion off a partial
-  list. Enumerate every OPEN milestone; a catch-all "Backlog" milestone is listed
-  in full or explicitly marked sampled. A milestone-committed, maintainer-authored
-  issue never loses its place to a lower-signal item on the same theme.
-- **Every `anantara` edge needs evidence** — the issue/PR or maintainer statement
-  that establishes it; your own architectural inference is marked heuristic
-  (`kalpita`) and hedged in the render. **Don't over-call "blocked":** a direction
-  with its own work in flight is *sequenced-after*, not blocked.
-- **Name directions in the repo's audience language** — they become the roadmap
-  headings the owner reads.
+- **Освежающие прогоны сверяют, не переразличают с нуля:** обнови телос / anga / порядок направлений, которые держатся; направление добавляй только для подлинно новой темы; закрой (visarjana) те, чья работа отгружена. Никогда — направление-близнец.
+- **Фигура-на-почве как реальная стрелка:** ведущая крия направления достигает способности почвы через `upadhi`/`context` — никогда буквальным `ahara` от bianhua (граф запрещает). Направление, чьи ведущие крии не касаются никакой способности почвы, плавает: либо подлинно новая почва (скажи явно), либо знак недомоделированного Шага 2 (иди досей способность).
+- **Подними структурные риски из собственных натяжений графа** (`iskron_orient(lens="tensions")`): способность без производящего потока, relay-gap эстафеты, деяние без карты — самодиагноз графа, отличный от рисков из бэклога; плоский список тикетов структурно не может их произвести. **Мультирепо: кросс-репо dead-recipe или relay-gap — находка высшей ценности.** Чистые артефакты моделирования чини на месте, а не рапортуй.
+- **Атрибутируй каждое направление по двум осям:** его **драйвер** (ведёт мейнтейнер и закоммичено / ведёт контрибьютор и ждёт ревью / просит сообщество и без владельца — из карт сбора) и его **рантайм-цель** (кому служит изменённая система: внешний потребитель 客 или внутренний оператор 能 — из почвы). Не схлопывай вторую в первую — жди операторских направлений (админка, онбординг стаффа) рядом с потребительскими; на solo-продукте ось драйвера плоская, и направления реально различаются рантайм-целью. Владение — **факт графа**: anga-крии направления несут `actor` → карту-драйвера, иначе ярлык понижается до «выведено».
+- **Когерентная высокосигнальная тема сообщества заслуживает направления** даже без закоммиченной работы — топ-реакционные issues есть роадмап-сигнал; сознательная отсрочка помечается «отложено, но реально», никогда не роняется молча.
+- **Майлстоуны целиком:** закоммиченный ближний майлстоун — собственное направление, перечисляющее **каждый** открытый issue майлстоуна; топ-N ранжируй как гейтящие, но назови общее число и что остальное остаётся; никогда телос, заявляющий завершение по частичному списку. Перечисли каждый ОТКРЫТЫЙ майлстоун; catch-all «Backlog» — целиком или явно «сэмплировано». Закоммиченный мейнтейнерский issue из майлстоуна никогда не уступает место менее сигнальному по той же теме.
+- **Каждому ребру `anantara` — свидетельство**: issue/PR или заявление мейнтейнера, его устанавливающее; собственный архитектурный вывод помечай эвристикой (`kalpita`) и хеджируй в рендере. **Не пере-называй «blocked»:** направление со своей работой в полёте — *sequenced-after*, не заблокировано.
+- **Именуй направления на языке аудитории репо** — они станут заголовками роадмапа, которые читает владелец.
 
-## Step 7 — Render (lead with the assembled picture)
+## Шаг 7 — Рендер (веди собранной картиной)
 
-The roadmap leads with the assembled cross-repo picture and what the graph found —
-the differentiated value on the first screen, not buried. Three artifacts:
+Роадмап ведёт собранной кросс-репо-картиной и тем, что нашёл граф, — дифференцирующая ценность на первом экране, не закопана. Три артефакта:
 
-1. **Graph** — `nks_orient(lens="bianhua")`; the HTML renders it as a visual graph
-   view (spine + directions in dependency order + structural-risk flags).
-2. **`roadmap.md`**, in this order:
-   - **"The product, assembled"** — subsystems (one per repo) + the cross-repo
-     spine, one-two sentences; the real picture from ALL sources.
-   - **"What the graph found"** — the tensions-derived structural risks, each
-     tagged with the seam it crosses. Lead with these.
-   - **"Next 3 moves"** — a 3–5 line action list.
-   - **"What this product is today"** — the ground, every line cited to its
-     primitive; proves product mastery.
-   - **"How it works today"** — one core estafeta traced end-to-end
-     (`lens="trace"`): the spine in one walk.
-   - **The directions** in `anantara` order; per direction: the capability it
-     extends, telos, driving items (verbatim titles + refs + author weight), the
-     driving karta **and** the runtime target (客/能), the anga (driving
-     question), open risks, what it unblocks.
-   - **"Reading of the field"** — driving kartas (+ runtime targets), structural
-     risks, the figure-on-ground map. Written for the maintainer, not the
-     methodologist: gloss every NKS term in plain English on first use.
-   - **"Signal audit"** — the top-reacted and top-commented OPEN issues (counts +
-     query basis), each marked included / deferred / out-of-scope, with the
-     engagement cutoff stated. Thin backlog → a trajectory table (per-repo
-     merged-PR counts + themes). Exact counts, never estimates.
-3. **`roadmap.html`** — do NOT hand-write the page. Copy
-   `references/roadmap-template.html` and replace ONLY its `ROADMAP` data object
-   (schema documented at the top of the template's `<script>`); the template
-   renders design, ref links, author chips, status badges, filters, themes. All
-   text is auto-escaped — paste verbatim titles. **Multi-repo:** fill the `repos`
-   URL-map, put `repo:'<key>'` on every driver/signal ref and `directions[].repos`;
-   write free-text refs as `<key>#N`; internal seqs as `NKS#…`. Single-repo: omit
-   `repos` (template links via `repoUrl`).
+1. **Граф** — `iskron_orient(lens="bianhua")`; HTML рендерит его визуальным граф-видом (хребет + направления в порядке зависимостей + флаги структурных рисков).
+2. **`roadmap.md`**, в этом порядке:
+   - **«Продукт, собранный»** — подсистемы (по одной на репо) + кросс-репо-хребет, одно-два предложения; реальная картина из ВСЕХ источников.
+   - **«Что нашёл граф»** — структурные риски из натяжений, каждый с помеченным швом. Веди ими.
+   - **«Следующие 3 хода»** — список действий на 3–5 строк.
+   - **«Что этот продукт сегодня»** — почва, каждая строка процитирована к примитиву; доказывает мастерство продукта.
+   - **«Как это работает сегодня»** — одна ключевая эстафета, протрассированная насквозь (`lens="trace"`): хребет одним проходом.
+   - **Направления** в порядке `anantara`; по направлению: расширяемая способность, телос, ведущие элементы (дословные заголовки + рефы + вес автора), карта-драйвер **и** рантайм-цель (客/能), anga (ведущий вопрос), открытые риски, что разблокирует.
+   - **«Чтение поля»** — карты-драйверы (+ рантайм-цели), структурные риски, карта фигура-на-почве. Написано для мейнтейнера, не методолога: глоссируй каждый NKS-термин по-простому при первом употреблении.
+   - **«Аудит сигнала»** — топ по реакциям и комментариям среди ОТКРЫТЫХ issues (числа + основание запроса), каждый помечен included / deferred / out-of-scope, с названным порогом вовлечённости. Тощий бэклог → таблица траектории (счётчики смерженных PR по репо + темы). Точные числа, никогда оценки.
+3. **`roadmap.html`** — страницу НЕ пиши руками. Скопируй `references/roadmap-template.html` и замени ТОЛЬКО его data-объект `ROADMAP` (схема задокументирована в начале `<script>` шаблона); шаблон рендерит дизайн, реф-ссылки, чипы авторов, статус-бейджи, фильтры, темы. Весь текст авто-экранируется — вставляй дословные заголовки. **Мультирепо:** заполни URL-карту `repos`, ставь `repo:'<key>'` на каждый реф драйвера/сигнала и `directions[].repos`; свободные рефы пиши `<key>#N`; внутренние seq — `NKS#…`. Один репо: опусти `repos` (шаблон линкует через `repoUrl`).
 
-Render in the repo's audience language. Quote cited titles verbatim.
-**State-precision:** distinguish review / rebase / merge by draft state +
-mergeability + CI + review; report the readiness breakdown per PR and recommend
-the action that clears the *binding* constraint. `mergeable=null` → re-poll once,
-then "mergeability pending", never "clean"; `mergeable=true` ≠ ready; a mergeable
-PR is not "conflicting". Never bundle PRs of different states into one row; an
-OPEN PR is never "shipped". **No un-computed superlatives** — a scoped claim or a
-raw figure, never a global "#1" off the capped subset. **Coverage is what the
-data/code path does**, not what a config or UI surface lists.
+Рендерь на языке аудитории репо. Цитируемые заголовки — дословно. **Точность состояний:** различай review / rebase / merge по draft-состоянию + mergeability + CI + ревью; докладывай разбор готовности по каждому PR и рекомендуй действие, снимающее *связывающее* ограничение. `mergeable=null` → пере-опроси один раз, затем «mergeability pending», никогда «clean»; `mergeable=true` ≠ готов; mergeable-PR — не «конфликтующий». Никогда не сваливай PR разных состояний в одну строку; ОТКРЫТЫЙ PR никогда не «отгружен». **Никаких невычисленных превосходных степеней** — скоуп-заявка или сырое число, никогда глобальное «#1» по срезанному подмножеству. **Покрытие — то, что делает путь данных/кода**, не то, что перечисляет конфиг или UI.
 
-## Step 8 — Checkpoint and verify (fail loudly)
+## Шаг 8 — Чекпойнт и проверка (падай громко)
 
-A roadmap that's never written is worth nothing; a run that dies silently and
-ships nothing is the worst outcome.
+Ненаписанный роадмап не стоит ничего; прогон, умерший молча и не отдавший ничего, — худший исход.
 
-- **Checkpoint as you go:** write each stage's raw output (`milestones.json`,
-  `issues.json`, `prs.json`, the assembled skeleton) to the `--out` dir while
-  gathering — a late failure leaves recoverable state.
-- **Verify the write:** re-read the artifacts; assert non-empty and the required
-  sections present; missing → say so loudly and fix, never report success without
-  a verified artifact.
-- **Run `references/self-checks.md` — every check.** Each PASS is earned over the
-  full set it names; correct mismatches, re-render, re-check.
-- **Keep returns small:** files on disk + a short confirmation with paths.
+- **Чекпойнть по ходу:** пиши сырой выход каждой стадии (`milestones.json`, `issues.json`, `prs.json`, собранный скелет) в `--out`-директорию по мере сбора — поздний провал оставит восстановимое состояние.
+- **Проверь запись:** перечитай артефакты; убедись — непустые, обязательные секции на месте; нет → скажи громко и почини; никогда не рапортуй успех без проверенного артефакта.
+- **Прогони `references/self-checks.md` — каждую проверку.** Каждый PASS зарабатывается над полным названным множеством; расхождения исправь, перерендери, перепроверь.
+- **Возвраты держи маленькими:** файлы на диске + короткое подтверждение с путями.
 
-## Quick mode — the fast teaser
+## Быстрый режим — тизер
 
-Triggers: `--quick`, "quick roadmap", "give me the gist", first-time onboarding.
-Don't run the full pipeline (~tens of minutes); produce a one-screen teaser in a
-couple of minutes — "it actually understands my product" — and offer the full run.
-Same machinery, breadth-first and shallow:
+Триггеры: `--quick`, «quick roadmap», «дай суть», первое знакомство. Не гони полный конвейер (десятки минут); выдай одноэкранный тизер за пару минут — «он действительно понимает мой продукт» — и предложи полный прогон. Та же механика, вширь и мелко:
 
-1. **Frame** (Step 1) — product boundary; in-scope repos.
-2. **Light ground** — the subsystems and the cross-repo spine (enough to draw the
-   graph view) + the handful of core capabilities and entities; real primitives
-   cited, scoped to the spine; seed just enough graph for the spine + a headline
-   tension.
-3. **Trajectory glance** — top merged-PR themes / the committed milestone; skip the
-   full harvest and weighting depth.
-4. **Top 3 directions + the single headline structural risk**; no full forest.
-5. **Render the lead only** — graph view + a 3–5 line summary (*what this product
-   is · what the graph found · the next move*) + an explicit pointer: "this is a
-   teaser — run the full roadmap for the complete picture."
+1. **Рамка** (Шаг 1) — граница продукта; репо в объёме.
+2. **Лёгкая почва** — подсистемы и кросс-репо-хребет (достаточно для граф-вида) + горстка ключевых способностей и сущностей; реальные примитивы процитированы, объём — хребет; засей графа ровно на хребет + одно заголовочное натяжение.
+3. **Взгляд на траекторию** — темы смерженных PR / закоммиченный майлстоун; без полного сбора и глубины взвешивания.
+4. **Топ-3 направления + один заголовочный структурный риск**; без полного леса.
+5. **Рендер только лида** — граф-вид + резюме на 3–5 строк (*что это за продукт · что нашёл граф · следующий ход*) + явный указатель: «это тизер — прогони полный роадмап для полной картины».
 
-Discipline still holds: honest shabda/vartamana separation, no fabrication, every
-cited primitive real, refs repo-qualified, empty-backlog honesty. Shallower, not
-sloppier.
+Дисциплина держится: честное разделение shabda/vartamana, без фабрикаций, каждый процитированный примитив реален, рефы репо-квалифицированы, честность пустого бэклога. Мельче — да, небрежнее — нет.
 
-## Output contract
+## Контракт выхода
 
-- A verified `vartamana` ground sub-graph (subsystems + capabilities + core flows),
-  cited to real primitives, distinct from the `shabda` backlog.
-- The realm seeded with traceable phenomena/risks — shabda-honest, deduped, capped.
-- A bianhua map = the roadmap, sequenced, each direction anchored to the ground.
-- The graph's leverage visible: actor kartas, figure-on-ground links,
-  tensions-derived structural risks — gathered in "Reading of the field".
-- `roadmap.md` + `roadmap.html` written locally; a "next 3 moves" list.
-- All self-checks passed.
+- Проверенный `vartamana`-подграф почвы (подсистемы + способности + ключевые потоки), процитированный к реальным примитивам, отдельный от `shabda`-бэклога.
+- Реалм засеян трассируемыми феноменами/рисками — шабда-честно, дедуплицировано, со срезом.
+- Карта bianhua = роадмап, секвенированная, каждое направление заякорено в почву.
+- Рычаг графа видим: карты-акторы, связи фигура-на-почве, структурные риски из натяжений — собраны в «Чтении поля».
+- `roadmap.md` + `roadmap.html` записаны локально; список «следующие 3 хода».
+- Все self-checks пройдены.
 
-## What this is NOT
+## Чем это НЕ является
 
-- Not a dump of every issue as a node — selective, weighted, deduped.
-- Not an align that writes AGENTS.md into a repo you don't own.
-- Not a substitute for the maintainer's judgment — directions are hypotheses
-  (shabda) until they confirm them.
-- Not an all-shabda graph — directions transform a verified ground.
-- Not N single-repo roadmaps for a multi-repo product.
-- Not a graph-duplicator — re-runs refresh in place; missing realms are proposed.
+- Не свал каждого issue в узел — селективно, взвешенно, дедуплицировано.
+- Не align, пишущий AGENTS.md в чужой репо.
+- Не замена суждению мейнтейнера — направления суть гипотезы (шабда), пока он их не подтвердит.
+- Не сплошь-шабда-граф — направления преобразуют проверенную почву.
+- Не N однорепных роадмапов для мультирепо-продукта.
+- Не дупликатор графа — повторные прогоны освежают на месте; отсутствующие реалмы предлагаются.
 
-## Sibling skills
+## Скиллы-соседи
 
-- `align` — codebase understanding + realm/holon bootstrap.
-- `intake` — the shabda-intake spine of Step 5; Steps 3–4 are its GitHub adapter.
-- `assembly` — the bianhua discernment ritual (Step 6).
-- `writing` — node type/modes/arrows discipline for Steps 2 and 5.
-- `weaving` — the tensions lens behind Step 6's structural risks.
-- `integrity` — claim-audit mode: verify the rendered prose is carried by the graph.
+- `align` — понимание кодовой базы + бутстрап реалма/холона.
+- `intake` — шабда-хребет Шага 5; Шаги 3–4 — его GitHub-адаптер.
+- `assembly` — ритуал различения bianhua (Шаг 6).
+- `writing` — дисциплина типов/модусов/стрелок для Шагов 2 и 5.
+- `weaving` — линза натяжений за структурными рисками Шага 6.
+- `integrity` — режим claim-аудита: проверка, что отрендеренная проза несётся графом.
