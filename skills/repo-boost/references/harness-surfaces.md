@@ -1,37 +1,24 @@
-# Harness surfaces — where the rituals actually land
+# Поверхности харнессов — куда реально ложатся ритуалы
 
-repo-boost delivers **rituals** (orient at session start, push → update NKS,
-memory stays out of local stores). Each harness fires them differently, and the
-file paths are not interchangeable. Wire the surfaces of the harness in use;
-never write a config for a format you're guessing.
+repo-boost доставляет **ритуалы** (ориентация на старте сессии, push → обновление NKS, память вне локальных хранилищ). Каждый харнесс запускает их по-своему, и пути файлов не взаимозаменяемы. Прошивай поверхности используемого харнесса; никогда не пиши конфиг формата, о котором гадаешь.
 
-| Harness | Reads | Pointer file needed | Automation surface |
+| Харнесс | Читает | Нужен файл-указатель | Поверхность автоматизации |
 |---|---|---|---|
-| Claude Code | `CLAUDE.md` | **yes** — `CLAUDE.md` = `@AGENTS.md` | `.claude/settings.json` hooks |
-| Codex CLI | `AGENTS.md` | no | `[hooks]` in `config.toml` |
-| OpenCode | `AGENTS.md` | no | plugins in `.opencode/plugins/` |
+| Claude Code | `CLAUDE.md` | **да** — `CLAUDE.md` = `@AGENTS.md` | хуки в `.claude/settings.json` |
+| Codex CLI | `AGENTS.md` | нет | `[hooks]` в `config.toml` |
+| OpenCode | `AGENTS.md` | нет | плагины в `.opencode/plugins/` |
 
-Detect before choosing: `.claude/` or the plugin cache → Claude Code;
-`opencode.json` / `.opencode/` → OpenCode; `.codex/` or `~/.codex/` → Codex. More
-than one may be true — wire each present harness; the `AGENTS.md` body is shared.
+Определи до выбора: `.claude/` или кэш плагинов → Claude Code; `opencode.json` / `.opencode/` → OpenCode; `.codex/` или `~/.codex/` → Codex. Истинным может быть не одно — прошей каждый присутствующий харнесс; тело `AGENTS.md` общее.
 
 ## Claude Code
 
-Reads `CLAUDE.md`, not `AGENTS.md` — hence the one-line pointer (`@AGENTS.md`
-import; Step 7). Hooks live in `.claude/settings.json`, committed. Subagent role
-files: `.claude/agents/` (see `delegation.md`). Hook JSON, events and the
-memory-guard command are spelled out in Step 4 of the skill.
+Читает `CLAUDE.md`, не `AGENTS.md` — отсюда однострочный указатель (`@AGENTS.md`-импорт; Шаг 7). Хуки живут в `.claude/settings.json`, коммитятся. Ролевые файлы суб-агентов: `.claude/agents/` (см. `delegation.md`). JSON хуков, события и команда memory-guard расписаны в Шаге 4 скилла.
 
 ## Codex CLI
 
-**Reads `AGENTS.md` natively — do not create a pointer file.** Discovery walks
-from the project root down to the cwd and merges every `AGENTS.md` found, on top
-of the user-global `~/.codex/AGENTS.md`. `AGENTS.override.md` is the local
-override, taking precedence over `AGENTS.md` in the same directory — the natural
-home for machine-local notes, and it must not be committed.
+**Читает `AGENTS.md` нативно — файл-указатель не создавать.** Обнаружение идёт от корня проекта вниз до cwd и мержит каждый найденный `AGENTS.md` поверх пользовательского `~/.codex/AGENTS.md`. `AGENTS.override.md` — локальный оверрайд с приоритетом над `AGENTS.md` той же директории: естественный дом машинно-локальных заметок; коммитить его нельзя.
 
-Hooks are declared under `[hooks]` in `config.toml` (project config, with
-user-level overrides), as arrays of tables — a matcher group, then its commands:
+Хуки объявляются под `[hooks]` в `config.toml` (проектный конфиг, с пользовательскими оверрайдами) массивами таблиц — группа-матчер, затем её команды:
 
 ```toml
 [[PreToolUse]]
@@ -45,29 +32,17 @@ timeout = 10
 statusMessage = "checking"
 ```
 
-Events: `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`,
-`PermissionRequest`, `PreCompact`, `PostCompact`, `SubagentStart`,
-`SubagentStop`, `Stop`. Each command gets JSON on stdin carrying `session_id`,
-`turn_id`, `transcript_path`, `cwd`, `hook_event_name`, `model`.
+События: `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `PermissionRequest`, `PreCompact`, `PostCompact`, `SubagentStart`, `SubagentStop`, `Stop`. Каждая команда получает JSON на stdin: `session_id`, `turn_id`, `transcript_path`, `cwd`, `hook_event_name`, `model`.
 
-`SessionStart` also carries a **source** — `startup`, `resume`, `clear`,
-`compact` — and the source is what `matcher` matches against. Orient-on-start
-usually wants `startup` and `resume` only; matching all four re-fires the ritual
-after every compaction.
+`SessionStart` несёт ещё и **source** — `startup`, `resume`, `clear`, `compact` — и именно против source матчится `matcher`. Ориентации-на-старте обычно нужны только `startup` и `resume`; матч всех четырёх пере-запускает ритуал после каждой компакции.
 
-Ritual mapping: orient → `SessionStart`; memory guard → `PreToolUse` matched on
-the write tool; push → NKS → `PostToolUse` matched on the shell tool.
+Маппинг ритуалов: ориентация → `SessionStart`; memory-guard → `PreToolUse` по пишущему тулу; push → NKS → `PostToolUse` по shell-тулу.
 
 ## OpenCode
 
-**Reads `AGENTS.md` natively — no pointer file.** Additional rule files are
-listed in `instructions` in `opencode.json` (project) or
-`~/.config/opencode/opencode.json` (global), globs allowed — use it to reuse
-existing rule files instead of copying them into `AGENTS.md`.
+**Читает `AGENTS.md` нативно — без указателя.** Дополнительные файлы правил перечисляются в `instructions` в `opencode.json` (проект) или `~/.config/opencode/opencode.json` (глобально), глобы разрешены — используй это, чтобы переиспользовать существующие файлы правил, а не копировать их в `AGENTS.md`.
 
-There is no hooks file. The equivalent is a **plugin**: a JS/TS file in
-`.opencode/plugins/` (project) or `~/.config/opencode/plugins/` (global),
-auto-loaded at startup. A plugin exports an async function returning handlers:
+Файла хуков нет. Эквивалент — **плагин**: JS/TS-файл в `.opencode/plugins/` (проект) или `~/.config/opencode/plugins/` (глобально), автозагружаемый на старте. Плагин экспортирует async-функцию, возвращающую обработчики:
 
 ```js
 export const MemoryGuard = async ({ project, client, $, directory, worktree }) => {
@@ -84,23 +59,15 @@ export const MemoryGuard = async ({ project, client, $, directory, worktree }) =
 }
 ```
 
-`tool.execute.before` / `tool.execute.after` wrap tool calls — **throwing from
-`before` is how a guard blocks**, so the memory guard is a throw, not an exit
-code. Everything else arrives through `event`, including `session.created`,
-`session.idle`, `session.compacted`, `file.edited`, `permission.asked`.
+`tool.execute.before` / `tool.execute.after` оборачивают вызовы тулов — **throw из `before` и есть блокировка**: memory-guard здесь — throw, не код выхода. Остальное приходит через `event`, включая `session.created`, `session.idle`, `session.compacted`, `file.edited`, `permission.asked`.
 
-Ritual mapping: orient → `event` on `session.created`; memory guard →
-`tool.execute.before` with a throw; push → NKS → `tool.execute.after` on the
-shell tool. Subagent role files: `.opencode/agents/` (see `delegation.md`).
+Маппинг ритуалов: ориентация → `event` на `session.created`; memory-guard → `tool.execute.before` с throw; push → NKS → `tool.execute.after` по shell-тулу. Ролевые файлы суб-агентов: `.opencode/agents/` (см. `delegation.md`).
 
-## Re-verify checklist (maintainers)
+## Чек-лист перепроверки (мейнтейнерам)
 
-Re-check on harness upgrades, like the interop reference:
+Перепроверяй при апгрейдах харнессов, как interop-референс:
 
-- **Claude Code** — settings path, hook event names, `CLAUDE.md` import syntax.
-- **Codex** — the `[hooks]` event list and TOML shape, `SessionStart` sources,
-  the `AGENTS.md` / `AGENTS.override.md` filenames and their merge order.
-- **OpenCode** — plugin directory names (`.opencode/plugins/`), the event list,
-  whether `tool.execute.before` still blocks by throwing.
-- A harness that gains or loses a surface changes what repo-boost can promise —
-  update the table first, then Step 4.
+- **Claude Code** — путь settings, имена хук-событий, синтаксис импорта в `CLAUDE.md`.
+- **Codex** — список событий `[hooks]` и форма TOML, source'ы `SessionStart`, имена файлов `AGENTS.md` / `AGENTS.override.md` и порядок их мержа.
+- **OpenCode** — имена директорий плагинов (`.opencode/plugins/`), список событий, всё ли ещё `tool.execute.before` блокирует throw-ом.
+- Харнесс, обретший или потерявший поверхность, меняет то, что repo-boost может обещать: сначала обнови таблицу, затем Шаг 4.

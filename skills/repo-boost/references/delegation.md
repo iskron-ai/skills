@@ -1,168 +1,105 @@
-# Subagent delegation — doctrine + role projection
+# Делегирование суб-агентам — доктрина + проекция ролей
 
-What repo-boost projects so heavy reading and mechanical work run outside the
-main session's context window. The deployable artifacts are the **role agent
-files** below (`.claude/agents/`, `.opencode/agents/`) — not an AGENTS.md
-section: AGENTS.md addresses one agent in one session, and orchestration
-mechanics stay out of it (the skill's output contract). The agent files'
-`description` fields surface in the platform's agent/task tool list every
-session, so the routing trigger rides the tool surface and needs no skill
-load.
+То, что repo-boost проецирует, чтобы тяжёлое чтение и механическая работа бежали вне контекстного окна главной сессии. Деплоируемые артефакты — **ролевые агент-файлы** ниже (`.claude/agents/`, `.opencode/agents/`), не секция AGENTS.md: AGENTS.md обращён к одному агенту в одной сессии, механика оркестрации в него не входит (контракт выхода скилла). Поля `description` агент-файлов всплывают в списке agent/task-тулов платформы каждую сессию — триггер маршрутизации едет на тул-поверхности и не требует загрузки скилла.
 
-## Doctrine (platform-neutral)
+## Доктрина (платформо-нейтральная)
 
-Split work by **role**, not by size. Three roles, three model tiers:
+Дели работу по **роли**, не по размеру. Три роли, три тира моделей:
 
-| Role | Tier | Good for | Returns to the orchestrator (main session) |
+| Роль | Тир | Годится для | Возвращает оркестратору (главной сессии) |
 |---|---|---|---|
-| `reader` | cheap (Haiku-class) | breadth-first recon: locate, shortlist candidates, digest with error tolerance | leads + pointers (`file:line`), ≤12 lines |
-| `worker` | mid (Sonnet-class) | mechanical execution of a self-contained brief: transforms, inventories, structured writes | status + artifact paths |
-| `verifier` | top (pinned) | cold acceptance of a behavioral claim: rebuild the canonical carrier, run the named falsifier, report what happened | one verdict per claim + the evidence, ≤10 lines |
-| judgment | top / session model | design, review, synthesis — anything the orchestrator acts on directly | conclusion + reasoning |
+| `reader` | дешёвый (класс Haiku) | разведка вширь: найти, отобрать кандидатов, переварить с допуском на ошибки | зацепки + указатели (`file:line`), ≤12 строк |
+| `worker` | средний (класс Sonnet) | механическое исполнение самодостаточного брифа: трансформы, инвентари, структурные записи | статус + пути артефактов |
+| `verifier` | верхний (пришпилен) | холодная приёмка поведенческого утверждения: пересобрать канонический носитель, прогнать названный фальсификатор, доложить, что случилось | один вердикт на утверждение + свидетельство, ≤10 строк |
+| суждение | верхний / модель сессии | дизайн, ревью, синтез — всё, на чём оркестратор действует сам | вывод + рассуждение |
 
-The orchestrator keeps the user dialogue, decisions, orchestration, and edits
-that need conversation context.
+Оркестратор держит диалог с пользователем, решения, оркестрацию и правки, которым нужен контекст разговора.
 
-Rules — grounded in a 5-task benchmark across tiers, not guesswork:
+Правила — заземлены в замер на 5 задачах по тирам, не в догадки:
 
-1. **Cheap tier only where errors are cheap or the output is verified
-   downstream.** Measured failure modes: wrong exact counts, wrong extracted
-   fields. Never take a cheap-tier count, aggregate, or "final fact"
-   unverified.
-2. **Verify the artifact, not the report.** A subagent can do the work right
-   and describe it wrong — down to parroting an error from the brief. Check
-   the file / graph / diff it produced, not its summary of it.
-3. **The return contract is load-bearing.** Without it a cheap-tier agent
-   returns a 500-word wall into the orchestrator's context. Every brief
-   states: `STATUS: DONE|DONE_WITH_CONCERNS|NEEDS_CONTEXT|BLOCKED` + a line
-   cap + pointers over dumps. Artifacts go to disk; the return carries paths
-   (file handoffs) — everything a subagent prints stays resident in the
-   orchestrator's context for the rest of the session.
-4. **Briefs are self-contained** — the subagent sees no conversation history.
-   Include: the task, constraints ("do not spawn subagents", "read-only"), the
-   return contract, and the reality license: *if the brief conflicts with
-   reality, follow reality and say so in the return*.
-5. **Never parallelize writers over a shared namespace** (same files, same
-   realm, same node names) — parallel same-named writes collide or dedup into
-   cross-contamination. Parallel readers are free.
-6. **Don't delegate**: decisions the owner makes, tasks needing the full
-   conversation, exploratory debugging where the hypothesis shifts per step,
-   co-edits of files another lane is touching.
-7. **Don't pick the cheap tier for speed — it saves money, not wall-clock**
-   (it takes more calls). The scarce resource is the orchestrator's context
-   window; spend subagent tokens to protect it.
-8. **Spot-check every return.** A stopped agent sometimes returns a non-answer
-   ("waiting for background work") — resume it with a pointed message instead
-   of re-running the whole task.
-9. **Whoever made a claim does not accept it.** An author re-reading their own
-   work sees what they meant, not what is there — so behavioral claims go to a
-   cold `verifier` that never saw the conversation. Its brief carries the claim,
-   the canonical carrier and the falsifier (from AGENTS.md *Reality*), and not
-   the reasoning that produced the change. **Wait for the verdict**: a claim you
-   closed without waiting is your own opinion with extra steps. Top tier, always
-   — this is the one role where a cheap miss ships as "verified".
+1. **Дешёвый тир — только там, где ошибки дёшевы или выход проверяется ниже по течению.** Замеренные провалы: неверные точные счётчики, неверно извлечённые поля. Никогда не бери счёт, агрегат или «финальный факт» дешёвого тира непроверенным.
+2. **Проверяй артефакт, не отчёт.** Суб-агент может сделать работу верно и описать её неверно — вплоть до попугайничанья ошибки из брифа. Смотри файл / граф / дифф, который он произвёл, а не его пересказ.
+3. **Контракт возврата — несущий.** Без него дешёвый агент возвращает стену в 500 слов прямо в контекст оркестратора. Каждый бриф говорит: `STATUS: DONE|DONE_WITH_CONCERNS|NEEDS_CONTEXT|BLOCKED` + потолок строк + указатели вместо свалок. Артефакты — на диск; возврат несёт пути: всё, что суб-агент напечатал, живёт в контексте оркестратора до конца сессии.
+4. **Брифы самодостаточны** — суб-агент не видит истории разговора. Включай: задачу, ограничения («суб-агентов не порождать», «только чтение»), контракт возврата и лицензию реальности: *если бриф расходится с реальностью — следуй реальности и скажи об этом в возврате*.
+5. **Никогда не параллель писателей над общим неймспейсом** (одни файлы, один реалм, одни имена узлов) — параллельные одноимённые записи сталкиваются или дедупятся в перекрёстное заражение. Параллельные читатели свободны.
+6. **Не делегируй**: решения владельца, задачи, требующие полного разговора, исследовательскую отладку со сменой гипотезы на каждом шаге, со-правку файлов, которые трогает другая полоса.
+7. **Не бери дешёвый тир ради скорости — он экономит деньги, не время** (вызовов больше). Дефицитный ресурс — контекстное окно оркестратора; трать токены суб-агентов, чтобы его беречь.
+8. **Выборочно проверяй каждый возврат.** Остановившийся агент иногда возвращает не-ответ («жду фоновой работы») — продолжи его точечным сообщением вместо перезапуска всей задачи.
+9. **Кто сделал утверждение — тот его не принимает.** Автор, перечитывая своё, видит, что имел в виду, а не что написано, — поэтому поведенческие утверждения идут холодному `verifier`, который разговора не видел. Его бриф несёт утверждение, канонический носитель и фальсификатор (из таблицы *Reality* в AGENTS.md) — и не несёт рассуждений, породивших изменение. **Дождись вердикта**: утверждение, закрытое без ожидания, — твоё собственное мнение с лишними шагами. Верхний тир, всегда: это единственная роль, где дешёвый промах шипится как «verified».
 
-## Projection — what repo-boost generates
+## Проекция — что генерирует repo-boost
 
-Role files per platform in use: Claude Code always; OpenCode when the repo
-shows it (`opencode.json` or `.opencode/` present, or the user says so).
-Judgment gets no file — it is the primary session's model (per-call top-tier
-override where the platform supports it).
+Ролевые файлы по используемым платформам: Claude Code — всегда; OpenCode — когда репо его показывает (`opencode.json` или `.opencode/`, или пользователь говорит). Суждению файла не даётся — это модель первичной сессии (пер-вызовный верхний тир, где платформа умеет).
 
-The fenced blocks below are the deployed artifacts; surrounding prose is
-guidance. Keep every `description` trigger-shaped and under ~500 characters —
-it is the routing surface.
+Огороженные блоки ниже — деплоируемые артефакты; проза вокруг — руководство. Держи каждый `description` триггер-образным и до ~500 символов — это поверхность маршрутизации.
 
-### Claude Code — `.claude/agents/reader.md`, `.claude/agents/worker.md`
+### Claude Code — `.claude/agents/reader.md`, `worker.md`, `verifier.md`
 
-Model aliases (`haiku`, `sonnet`) are stable platform vocabulary — use them,
-not dated model ids.
+Алиасы моделей (`haiku`, `sonnet`, `opus`) — стабильный словарь платформы: используй их, не датированные id.
 
 ```markdown
 ---
 name: reader
-description: Cheap breadth-first recon — locate files and usages, shortlist candidates, digest docs and logs. Returns leads with pointers, not verified facts; anything load-bearing gets re-checked by the caller. Not for exact counts, field extraction, or facts acted on unverified.
+description: Дешёвая разведка вширь — найти файлы и использования, отобрать кандидатов, переварить доки и логи. Возвращает зацепки с указателями, не проверенные факты; всё несущее перепроверяется вызывающим. Не для точных счётчиков, извлечения полей и фактов, на которых действуют без проверки.
 model: haiku
 ---
 
-Recon agent. Your final message is your only output — the caller sees nothing else.
-- First line: `STATUS: DONE|DONE_WITH_CONCERNS|NEEDS_CONTEXT|BLOCKED`; then ≤12 lines of conclusions with `file:line` / id pointers, no file dumps.
-- Large findings go to a file on disk; return the path.
-- Do not spawn subagents — do the work yourself.
-- If the brief conflicts with reality, follow reality and flag it in the return.
+Агент разведки. Твоё финальное сообщение — единственный выход: больше вызывающий не видит ничего.
+- Первая строка: `STATUS: DONE|DONE_WITH_CONCERNS|NEEDS_CONTEXT|BLOCKED`; затем ≤12 строк выводов с указателями `file:line` / id, без свалок файлов.
+- Крупные находки — в файл на диске; верни путь.
+- Суб-агентов не порождай — делай работу сам.
+- Если бриф расходится с реальностью — следуй реальности и пометь это в возврате.
 ```
 
 ```markdown
 ---
 name: worker
-description: Mechanical execution of a self-contained brief — apply a known transform, build an inventory, write structured records. Needs an explicit brief with a return contract; returns status + artifact paths, not content. Not for judgment calls, design, review, or open-ended exploration.
+description: Механическое исполнение самодостаточного брифа — применить известный трансформ, собрать инвентарь, записать структурные записи. Нужен явный бриф с контрактом возврата; возвращает статус + пути артефактов, не содержимое. Не для суждений, дизайна, ревью и открытого исследования.
 model: sonnet
 ---
 
-Execution agent for briefs. Your final message is your only output.
-- First line: `STATUS: DONE|DONE_WITH_CONCERNS|NEEDS_CONTEXT|BLOCKED`; then artifact paths / created ids + a one-line summary each, plus concerns.
-- Before reporting, verify against the artifact you produced (file, diff, graph node) — report what is there, not what the brief asked for.
-- Do not spawn subagents — do the work yourself.
-- If the brief conflicts with reality, follow reality and flag it in the return.
+Агент исполнения брифов. Твоё финальное сообщение — единственный выход.
+- Первая строка: `STATUS: DONE|DONE_WITH_CONCERNS|NEEDS_CONTEXT|BLOCKED`; затем пути артефактов / созданные id + по строке-резюме на каждый, плюс сомнения.
+- Прежде чем докладывать, сверься с произведённым артефактом (файл, дифф, узел графа) — докладывай, что там есть, а не что просил бриф.
+- Суб-агентов не порождай — делай работу сам.
+- Если бриф расходится с реальностью — следуй реальности и пометь это в возврате.
 ```
 
 ```markdown
 ---
 name: verifier
-description: Cold acceptance of a behavioral claim — rebuilds the canonical artifact, runs the named falsifier, reports what actually happened. Give it the claim, the carrier and the falsifier; it has no conversation history by design, which is the point. Returns one verdict per claim with the evidence. Not for writing fixes, not for design review, not for judging whether the claim was worth making.
+description: Холодная приёмка поведенческого утверждения — пересобирает канонический артефакт, гоняет названный фальсификатор, докладывает, что реально произошло. Дай ему утверждение, носитель и фальсификатор; истории разговора у него нет by design — в этом и смысл. Возвращает один вердикт на утверждение со свидетельством. Не для написания фиксов, не для ревью дизайна, не для суждения, стоило ли утверждение делать.
 model: opus
 ---
 
-Acceptance agent. You did not make this change and must not defend it. Your final message is your only output.
-- First line: `STATUS: DONE|DONE_WITH_CONCERNS|NEEDS_CONTEXT|BLOCKED`; then one line per claim — `VERDICT: confirmed|refuted|unreachable`, the command you ran, and what it printed.
-- Observe the **canonical carrier** named in the brief: the built artifact, the live endpoint, the migrated table. Never the source that was supposed to produce it, never a cached or scratch derivative.
-- Rebuild before observing when the carrier is built — a stale artifact confirms nothing.
-- `unreachable` is a real verdict. If the observation can't be made, say so and why; never infer a confirmation from code that looks right.
-- Report refutations in full, including ones the brief did not anticipate.
-- Do not edit anything, do not fix what you find, do not spawn subagents.
-- If the brief conflicts with reality, follow reality and say so in the return.
+Агент приёмки. Ты не делал этого изменения и не должен его защищать. Твоё финальное сообщение — единственный выход.
+- Первая строка: `STATUS: DONE|DONE_WITH_CONCERNS|NEEDS_CONTEXT|BLOCKED`; затем по строке на утверждение — `VERDICT: confirmed|refuted|unreachable`, прогнанная команда и что она напечатала.
+- Наблюдай **канонический носитель**, названный в брифе: собранный артефакт, живой эндпоинт, мигрированную таблицу. Никогда — исходник, который должен был его произвести; никогда — кэшированную или скретч-производную.
+- Пересобери перед наблюдением, если носитель собираемый: несвежий артефакт не подтверждает ничего.
+- `unreachable` — настоящий вердикт. Если наблюдение взять нельзя — скажи это и почему; никогда не выводи подтверждение из кода, который «выглядит верно».
+- Опровержения докладывай полностью, включая не предвиденные брифом.
+- Ничего не правь, не чини найденное, суб-агентов не порождай.
+- Если бриф расходится с реальностью — следуй реальности и скажи это в возврате.
 ```
 
 ### OpenCode — `.opencode/agents/reader.md`, `worker.md`, `verifier.md`
 
-Same bodies — reuse them verbatim; only the frontmatter differs. **The model
-pin is the point**: an unpinned OpenCode subagent inherits the invoking
-primary's model — per-invocation model override does not exist there. Resolve
-the current `provider/model-id` for each tier at projection time (ask the
-user, or read the configured providers in `opencode.json` / the global
-OpenCode config); never copy ids from this reference.
+Те же тела — переиспользуй дословно; отличается только frontmatter. **Пин модели и есть смысл**: незапиненный суб-агент OpenCode наследует модель вызывающего первичного — пер-вызовного оверрайда там не существует. Актуальный `provider/model-id` каждого тира разрешай в момент проекции (спроси пользователя или прочти сконфигурированные провайдеры в `opencode.json` / глобальном конфиге OpenCode); никогда не копируй id из этого референса.
 
 ```markdown
 ---
-description: <same as the Claude Code description>
+description: <тот же, что для Claude Code>
 mode: subagent
-model: <provider/cheap-tier-id — resolve at projection time>
+model: <provider/cheap-tier-id — разрешить в момент проекции>
 ---
-<same body>
+<то же тело>
 ```
 
-`worker.md`: same shape, `model: <provider/mid-tier-id>`; `verifier.md`: same
-shape, `model: <provider/top-tier-id>` — the pin matters most here, since an
-inherited cheap model turns acceptance into guesswork. The calling agent invokes
-via the task tool; `@reader` / `@worker` / `@verifier` is the human's affordance.
+`worker.md`: та же форма, `model: <provider/mid-tier-id>`; `verifier.md`: та же форма, `model: <provider/top-tier-id>` — пин здесь важнее всего: унаследованная дешёвая модель превращает приёмку в гадание. Вызывающий агент зовёт через task-тул; `@reader` / `@worker` / `@verifier` — аффорданс человека.
 
-## Maintainer notes (not deployed)
+## Заметки мейнтейнера (не деплоятся)
 
-- Re-verify on platform upgrades, like the interop reference: Claude Code —
-  agents dir (`.claude/agents/`), frontmatter keys (`name`, `description`,
-  `model`, model aliases); OpenCode — agents dir (`.opencode/agents/`,
-  plural), keys (`description`, `mode: subagent`, `model`), the inheritance
-  rule (unpinned subagent inherits the invoking agent's model), skills
-  discovery reading `.claude/skills/` and `~/.claude/skills/`.
-- Delivery rationale: the `description` field is the only channel in context
-  every session on both platforms. Skill bodies load on demand and agents
-  don't reflexively load them — the agent files sidestep that failure mode.
-- `reader` / `worker` / `verifier` are deliberately bare, generic names and may collide
-  with same-named user-level agents — accepted trade-off (mirror of the bare
-  skill-name convention); rename per-repo if a collision bites.
-- The measured benchmark behind the rules: 5 verifiable tasks (repo search,
-  mechanical JSON extraction, graph orientation via MCP, convention review
-  with planted violations, graph writes by brief) × cheap/mid/top tiers,
-  ground truth prepared up front. Measured: review recall 3/6 → 5/6 → 6/6 by
-  tier; cheap tier correct on MCP orientation but wrong on counts, field
-  extraction, and its own write report.
+- Перепроверяй при апгрейдах платформ, как interop-референс: Claude Code — директория агентов (`.claude/agents/`), ключи frontmatter (`name`, `description`, `model`, алиасы моделей); OpenCode — директория (`.opencode/agents/`, множественное), ключи (`description`, `mode: subagent`, `model`), правило наследования (незапиненный суб-агент наследует модель вызывающего), обнаружение скиллов из `.claude/skills/` и `~/.claude/skills/`.
+- Обоснование доставки: поле `description` — единственный канал, живущий в контексте каждую сессию на обеих платформах. Тела скиллов грузятся по требованию, и агенты не тянутся к ним рефлекторно — агент-файлы обходят этот провал.
+- `reader` / `worker` / `verifier` — сознательно голые, родовые имена; могут столкнуться с одноимёнными агентами уровня пользователя — принятый трейд-офф (зеркало конвенции голых имён скиллов); переименуй по-репозиторно, если коллизия укусила.
+- Замер за правилами: 5 проверяемых задач (поиск по репо, механическое извлечение JSON, ориентация в графе через MCP, ревью конвенций с подсаженными нарушениями, записи в граф по брифу) × дешёвый/средний/верхний тиры, ground truth подготовлен заранее. Замерено: полнота ревью 3/6 → 5/6 → 6/6 по тирам; дешёвый тир верен на MCP-ориентации, но неверен на счётчиках, извлечении полей и собственном отчёте о записи.
