@@ -1,270 +1,271 @@
 ---
 name: methodology-work
-description: "Use this skill when working on the methodology realm itself — not applying methodology to a project, but evolving the methodology. Triggers: 'methodology realm', 'работа над методологией', 'обогатить методологию', 'methodology нужно дополнить', 'записать принцип', 'новая крия в methodology', 'новая нить', references to 'methodology' realm by name, or when the user brings agent feedback about methodology gaps. Distinct from design (designing external systems) and weaving (semantic repair). This is meta-work: methodology applied to itself. The stakes are highest — every node here shapes how every future agent thinks."
+description: "Используй при работе над самим реалмом methodology — не применение методологии к проекту, а её эволюция. Триггеры: methodology realm, «работа над методологией», «обогатить методологию», «methodology нужно дополнить», «записать принцип», «новая крия в methodology», «новая нить», обращения к реалму methodology по имени, фидбэк агентов о пробелах методологии. Distinct from design (проектирование внешних систем) и weaving (семантический ремонт). Это мета-работа: методология, применённая к себе. Ставки высшие — каждый узел здесь формирует мышление каждого будущего агента."
 ---
 
-# NKS Methodology Work
+# Работа над методологией в NKS
 
-You are working on the methodology realm — the graph that teaches all other agents how to work. Every node you write here will be read by hundreds of agents. Every principle you record will shape their decisions. Every kriya you define will become their path.
+Ты работаешь над реалмом methodology — графом, который учит всех остальных агентов работать. Каждый узел, записанный здесь, прочтут сотни агентов. Каждый записанный принцип будет формировать их решения. Каждая определённая крия станет их путём.
 
-This is not design. This is not weaving. This is the methodology describing itself.
+Это не проектирование. Это не ткачество. Это методология, описывающая саму себя.
 
-## Before you touch anything
+## Прежде чем что-либо трогать
 
 ```
-1. nks_orient(realm="methodology", include_schema=false)
-   → Read root holons (元意行德忠忘), entry/exit kriyas, key nodes, active vimarshas, tensions
-2. nks_search(realm="methodology", q="", attrs_filter="key:true", limit=50)
-   → Key nodes = landmarks. Start here when learning.
-3. Read the map: the ACTIVE BIANHUA section of orient (lens="bianhua" for the
-   full forest) — open work lives there as anga-vimarshas. A seed vimarsha, if
-   one exists, is only a pointer to what the map doesn't carry.
-4. Read the working principles — they are among the key:true landmarks
-   (nks_look the ones your task touches)
+1. iskron_orient(realm="methodology", include_schema=false)
+   → Прочти корневые холоны (元意行德忠忘), entry/exit-крии, ключевые узлы, живые вимарши, натяжения
+2. iskron_search(realm="methodology", q="", attrs_filter="key:true", limit=50)
+   → Ключевые узлы = ориентиры. Учась — начинай с них.
+3. Прочти карту: секция ACTIVE BIANHUA в orient (lens="bianhua" — весь лес) —
+   открытая работа живёт там anga-вимаршами. Сид-вимарша, если есть, — лишь
+   указатель на то, чего карта не несёт.
+4. Прочти рабочие принципы — они среди key:true-ориентиров
+   (iskron_look на те, которых касается твоя задача)
 ```
 
-Do NOT write from training data. The realm has its own vocabulary, its own distinctions, its own history. Orient first. Always.
+НЕ пиши из training data. У реалма свой словарь, свои различения, своя история. Сначала ориентируйся. Всегда.
 
-## What belongs in methodology
+## Что принадлежит методологии
 
-| YES — record it | NO — don't |
+| ДА — записывай | НЕТ — не записывай |
 |---|---|
-| Principle that applies across all realms | Principle specific to one project |
-| Kriya that any agent in any realm performs | Kriya specific to nks-dev or a product |
-| Distinction that prevents a class of agent errors | Fix for one agent's one-time mistake |
-| Pattern observed across 2+ realms | Pattern seen in only one context |
-| Correction from the user that reveals a general rule | Correction that's just a local fix |
+| Принцип, действующий во всех реалмах | Принцип, специфичный одному проекту |
+| Крия, которую исполняет любой агент в любом реалме | Крия, специфичная nks-dev или продукту |
+| Различение, предотвращающее класс агентских ошибок | Фикс одной разовой ошибки одного агента |
+| Узор, наблюдённый в 2+ реалмах | Узор, виденный в одном контексте |
+| Поправка пользователя, вскрывающая общее правило | Поправка — просто локальный фикс |
 
-## Types of methodology work
+## Виды методологической работы
 
-> The realm now carries a sixth node type — **bianhua** (变化), a qualitative transformation of the system. It is an *assembly-level* primitive (the **assembly** skill), not a routine methodology write: you rarely create one here, but recognise it when reading 形. The five kinds of work below remain the methodology-recording acts.
+> Реалм несёт шестой тип узла — **bianhua** (变化), качественное превращение системы. Это примитив *уровня сборки* (скилл **assembly**), не рутинная методологическая запись: здесь ты его редко создаёшь, но распознавай, читая 形. Пять видов работы ниже остаются актами записи методологии.
 
-### 1. Recording a principle (grundsatz)
+### 1. Запись принципа (grundsatz)
 
 ```
-TRIGGER: user states a rule that applies universally
-SIGNALS:
-  - "always", "never", "without exception", "все без исключения"
-  - User corrects you with a general statement, not a local fix
-  - A pattern the user has enforced multiple times
+ТРИГГЕР: пользователь формулирует правило, действующее универсально
+СИГНАЛЫ:
+  - «всегда», «никогда», «без исключений», «все без исключения»
+  - Пользователь поправляет тебя общим утверждением, не локальным фиксом
+  - Паттерн, который пользователь настаивал уже не раз
 
-DO:
-  1. Search methodology for existing coverage — both, the realm likely phrased it differently:
-     nks_search(realm="methodology", q="<key terms>")                       # keyword
-     nks_semantic_search(realm="methodology", q="<the principle as a sentence>")  # conceptual — catches differently-worded coverage
-  2. If covered → don't duplicate. Link to existing.
-  3. If not covered → create phenomenon:
+ДЕЛАЙ:
+  1. Поищи существующее покрытие — обоими способами, реалм наверняка сказал это иначе:
+     iskron_search(realm="methodology", q="<ключевые термины>")                     # keyword
+     iskron_semantic_search(realm="methodology", q="<принцип предложением>")        # концептуально
+  2. Покрыто → не дублируй. Свяжи с существующим.
+  3. Не покрыто → создай феномен:
      given_as=grundsatz, epistemic=pramanita, ontic=vartamana, volitive=adhimoksha
-     attrs.key=true if foundational
-  4. Write description: what it IS, what it PREVENTS, what the anti-pattern looks like
-  5. Wire upadhi arrows FROM kriyas that apply this principle TO the new grundsatz
-     Every arrow carries sense: "why this principle matters HERE"
-  6. Context arrow to appropriate holon (usually 行 Воплощение)
-  7. re-nks_look — CHECKS: block clean after wiring? (the create self-validated; this re-check is for the arrows you just added)
+     attrs.key=true, если фундаментален
+  4. Опиши: что он ЕСТЬ, что ПРЕДОТВРАЩАЕТ, как выглядит антипаттерн
+  5. Прошей upadhi-стрелки ОТ крий, применяющих принцип, К новому grundsatz
+     Каждая стрелка несёт sense: «почему этот принцип важен ЗДЕСЬ»
+  6. Context к подходящему холону (обычно 行 Воплощение)
+  7. Повторный iskron_look — блок CHECKS: чист после прошивки? (создание
+     самопроверилось; этот re-check — для только что добавленных стрелок)
 
-DESCRIPTION FORMAT:
-  - What the principle states (one sentence)
-  - Why (what goes wrong without it — concrete)
-  - Anti-pattern (what agents do wrong — concrete)
-  - How to apply (operational, not philosophical)
+ФОРМАТ ОПИСАНИЯ:
+  - Что принцип утверждает (одно предложение)
+  - Почему (что ломается без него — конкретно)
+  - Антипаттерн (что агенты делают не так — конкретно)
+  - Как применять (операционально, не философски)
 ```
 
-### 2. Recording a kriya (pattern of action)
+### 2. Запись крии (паттерн действия)
 
 ```
-TRIGGER: a pattern of action that any agent performs, not captured in methodology
-SIGNALS:
-  - You just did something in a realm and realized it's a general pattern
-  - User described a process that applies beyond this project
-  - Agent feedback identifies a gap: "I had to invent this idiom"
+ТРИГГЕР: паттерн действия, который исполняет любой агент, не схвачен методологией
+СИГНАЛЫ:
+  - Только что сделал нечто в реалме и понял: это общий паттерн
+  - Пользователь описал процесс, применимый за пределами проекта
+  - Фидбэк агента называет пробел: «пришлось изобретать идиому»
 
-DO:
-  1. Search methodology for existing coverage (nks_search + nks_semantic_search — keyword + conceptual)
-  2. Name as verbal noun (正名): "Замыкание жизненного цикла", not "Close lifecycle"
-  3. Identify actor: which karta performs this? (must exist in methodology)
-  4. Identify ahara: what does this kriya consume? Must be a sachverhalt or ding.
-  5. Identify utpatti: what does this kriya produce? Must be a sachverhalt or ding.
-     → If you can't name the utpatti, you don't understand the kriya yet. Stop.
-  6. Write description as pariṇāma: "Before: X. After: Y."
-     NOT procedure. NOT steps. The qualitative transition.
-  7. Wire: ahara, utpatti, actor, upadhi (principles that apply), next (praśna)
-  8. re-nks_look → CHECKS: clean? (create self-validated; this confirms the arrows you just wired)
-  9. Does this kriya belong to a thread (нить)? If yes → wire next arrows with praśna
-  10. Does this kriya participate in an estafeta? If yes → check trace
+ДЕЛАЙ:
+  1. Поищи существующее покрытие (iskron_search + iskron_semantic_search)
+  2. Назови отглагольным существительным (正名): «Замыкание жизненного цикла», не «Close lifecycle»
+  3. Определи актора: какая карта это исполняет? (должна существовать в methodology)
+  4. Определи ahara: что крия потребляет? sachverhalt или ding.
+  5. Определи utpatti: что крия производит? sachverhalt или ding.
+     → Не можешь назвать utpatti — ты ещё не понял крию. Стой.
+  6. Опиши паринамой: «До: X. После: Y.»
+     НЕ процедура. НЕ шаги. Качественный переход.
+  7. Прошей: ahara, utpatti, actor, upadhi (применимые принципы), next (прашна)
+  8. Повторный iskron_look → CHECKS: чист? (создание самопроверилось; это — про прошитые стрелки)
+  9. Принадлежит ли крия нити? Да → next-стрелки с прашной
+  10. Участвует ли в эстафете? Да → проверь trace
 
-CRITICAL: a kriya without utpatti is a kriya you don't understand.
+КРИТИЧНО: крия без utpatti — крия, которую ты не понимаешь.
 ```
 
-### 3. Recording a distinction (sinn)
+### 3. Запись различения (sinn)
 
 ```
-TRIGGER: user corrects a confusion between two concepts
-SIGNALS:
-  - "не путай X и Y"
-  - You mixed up two things and got corrected
-  - An agent's feedback reveals a systematic confusion
+ТРИГГЕР: пользователь поправляет путаницу между двумя понятиями
+СИГНАЛЫ:
+  - «не путай X и Y»
+  - Ты смешал две вещи и получил поправку
+  - Фидбэк агента вскрывает систематическую путаницу
 
-DO:
-  1. Create phenomenon: given_as=sinn, name clearly states both sides
-     ✓ "Различение: нить (next) ≠ эстафета (ahara/utpatti)"
-     ✗ "Нить и эстафета" (doesn't say what the distinction IS)
-  2. Description: what each side IS, how they DIFFER, what agents CONFUSE
-  3. Wire upadhi FROM kriyas where this distinction matters
-  4. derived_from if one concept was already recorded
-  5. re-nks_look → not orphan? Must have at least one upadhi.
+ДЕЛАЙ:
+  1. Создай феномен: given_as=sinn, имя ясно называет обе стороны
+     ✓ «Различение: нить (next) ≠ эстафета (ahara/utpatti)»
+     ✗ «Нить и эстафета» (не говорит, в чём различение)
+  2. Описание: что ЕСТЬ каждая сторона, чем РАЗЛИЧАЮТСЯ, что агенты ПУТАЮТ
+  3. Прошей upadhi ОТ крий, где различение важно
+  4. derived_from, если одно из понятий уже записано
+  5. Повторный iskron_look → не сирота? Минимум один upadhi.
 ```
 
-### 4. Recording a vollzug (method/pattern)
+### 4. Запись метода (vollzug)
 
 ```
-TRIGGER: a way of working that agents should follow
-SIGNALS:
-  - "паттерн", "рецепт", "идиома", "так делай"
-  - Repeated instruction across sessions
-  - Agent feedback: "I had to figure this out myself"
+ТРИГГЕР: способ работы, которому агентам следовать
+СИГНАЛЫ:
+  - «паттерн», «рецепт», «идиома», «так делай»
+  - Повторяющаяся инструкция от сессии к сессии
+  - Фидбэк агента: «пришлось разбираться самому»
 
-DO:
-  1. Create phenomenon: given_as=vollzug
-  2. Description: WHEN to use, HOW to apply, ANTI-PATTERN to avoid
-  3. Wire upadhi FROM kriyas that use this method
-  4. Context arrow to holon
-  5. If derived from a principle → derived_from the grundsatz
+ДЕЛАЙ:
+  1. Создай феномен: given_as=vollzug
+  2. Описание: КОГДА применять, КАК применять, какого АНТИПАТТЕРНА избегать
+  3. Прошей upadhi ОТ крий, использующих метод
+  4. Context к холону
+  5. Выведен из принципа → derived_from к grundsatz
 
-vollzug is HOW. grundsatz is WHY. Don't merge them.
+vollzug — это КАК. grundsatz — это ПОЧЕМУ. Не сливай их.
 ```
 
-### 5. Extending a thread (нить)
+### 5. Продление нити
 
 ```
-TRIGGER: existing thread is incomplete — missing kriyas, missing steps
-SIGNALS:
-  - Agent couldn't navigate: praśna didn't help choose
-  - Thread ends but work continues (missing next)
-  - Gap between two kriyas where something should happen
+ТРИГГЕР: существующая нить неполна — не хватает крий, шагов
+СИГНАЛЫ:
+  - Агент не смог сориентироваться: прашна не помогла выбрать
+  - Нить кончается, а работа продолжается (нет next)
+  - Зазор между двумя криями, где что-то должно происходить
 
-DO:
-  1. nks_orient(lens="trace", focus=<thread phenomenon>) → see current shape
-  2. Identify the gap: which transition is missing?
-  3. Create intervening kriya with ahara/utpatti/actor
-  4. Wire next arrows with praśna (question-needles)
-  5. Wire thread phenomenon as upadhi on new kriya
-  6. Re-trace → thread flows?
+ДЕЛАЙ:
+  1. iskron_orient(lens="trace", focus=<феномен нити>) → текущая форма
+  2. Найди зазор: какого перехода нет?
+  3. Создай промежуточную крию с ahara/utpatti/actor
+  4. Прошей next-стрелки с прашной (иглой-вопросом)
+  5. Прошей феномен нити как upadhi на новой крие
+  6. Перетрассируй → нить течёт?
 
-PRAŚNA QUALITY CHECK: can an agent answer yes/no from their situation?
-  ✓ "Path built — where can it break?"
-  ✗ "Continue to next step" (not a question, always yes)
+ПРОВЕРКА КАЧЕСТВА ПРАШНЫ: может ли агент ответить да/нет из своей ситуации?
+  ✓ «Путь построен — где он может сломаться?»
+  ✗ «Продолжай к следующему шагу» (не вопрос, всегда «да»)
 ```
 
-### 6. Processing agent feedback
+### 6. Переработка фидбэка агентов
 
 ```
-TRIGGER: user brings feedback from an agent that used NKS tools
-DO:
-  1. Read feedback carefully. Separate:
-     a. Real methodology gaps (agent couldn't find guidance)
-     b. Skill gaps (methodology knows, skill doesn't teach)
-     c. Agent errors (agent misunderstood, methodology is fine)
-     d. Tool bugs (nks_orient and its lenses — not methodology)
-  2. For each real gap: which type of work? (principle/kriya/distinction/vollzug/thread)
-  3. For each agent error: what did the agent get wrong? Is it a PATTERN that other agents will repeat?
-     If yes → record as distinction or anti-pattern in a grundsatz/vollzug
-  4. For skill gaps → update relevant skill, not methodology
-  5. For tool bugs → vimarsha in nks-dev, not methodology
+ТРИГГЕР: пользователь приносит фидбэк агента, работавшего NKS-тулами
+ДЕЛАЙ:
+  1. Прочти внимательно. Разведи:
+     a. Настоящие пробелы методологии (агент не нашёл руководства)
+     b. Пробелы скиллов (методология знает, скилл не учит)
+     c. Ошибки агента (агент недопонял, методология в порядке)
+     d. Баги тулов (iskron_orient и линзы — не методология)
+  2. По каждому настоящему пробелу: какой вид работы? (принцип/крия/различение/vollzug/нить)
+  3. По каждой ошибке агента: в чём ошибся? Это ПАТТЕРН, который повторят другие?
+     Да → запиши различением или антипаттерном в grundsatz/vollzug
+  4. Пробелы скиллов → обнови соответствующий скилл, не методологию
+  5. Баги тулов → вимарша в реалме разработки тулов, не в methodology
 
-CRITICAL PATTERN — agent tries to suppress tension:
-  This is THE most common agent error. The correct response is ALWAYS:
-  close the structure, never suppress the signal.
-  If you see attrs.role='reference', attrs.persistent=true, attrs.parked=true
-  used to silence tensions → it's wrong. Record the anti-pattern.
+КРИТИЧЕСКИЙ ПАТТЕРН — агент пытается заглушить натяжение:
+  Самая частая ошибка агентов. Верный ответ ВСЕГДА:
+  замкни структуру, никогда не глуши сигнал.
+  Видишь attrs.role='reference', attrs.persistent=true, attrs.parked=true
+  ради глушения натяжений → это неверно. Запиши антипаттерн.
 ```
 
-## Carrier canon — one liveness axis per род
+## Канон носителей — одна ось живости на род
 
-Modes are not free-form: for every род (type × given_as × genre) ONE axis carries liveness/closedness; the others qualify. Every surface's resolved/active predicate is a table function of that carrier — never per-genre `if`s. The canon itself lives in the realm as key landmarks: the grundsatz **«Ось живости рода»** (the carrier table + the U-universals) and the vollzug **«Грамматика переходов трипути»** (legal moves along the carrier, suspicious transitions, kind-aware forbidden states) — find them via the `key:true` search from «Before you touch anything» and read them before touching modes. Set modes by the род's carrier when recording; when you *extend* methodology, extend the carrier table, never a local exception. The agent-facing summary (starting triples, virodha polarity) lives in the **writing** skill.
+Модусы не свободная форма: у каждого рода (тип × given_as × genre) ОДНА ось несёт жизнь/закрытость; остальные квалифицируют. Предикат resolved/active любой поверхности — табличная функция носителя, никогда не per-genre `if`. Сам канон живёт в реалме key-ориентирами: grundsatz **«Ось живости рода»** (таблица носителей + U-универсалии) и vollzug **«Грамматика переходов трипути»** (законные движения по носителю, подозрительные переходы, kind-aware запреты) — найди их key:true-поиском из «Прежде чем что-либо трогать» и прочти до касания модусов. При записи ставь модусы по носителю рода; *расширяя* методологию — расширяй таблицу, никогда не локальное исключение. Агентская выжимка (стартовые тройки, полярность virodha) — в скилле **writing**.
 
-## Lessons from experience
+## Уроки опыта
 
-These are patterns observed across multiple methodology sessions:
+Паттерны, наблюдённые за много методологических сессий:
 
-### The user corrects — listen structurally
+### Пользователь поправляет — слушай структурно
 
-When the user says "нет, это не так" — they're not giving feedback, they're revealing a principle. Ask: is this correction LOCAL (fix this node) or GENERAL (this applies everywhere)? If general → record as grundsatz.
+Когда пользователь говорит «нет, это не так» — он не даёт фидбэк, он вскрывает принцип. Спроси: поправка ЛОКАЛЬНА (почини узел) или ОБЩА (действует везде)? Обща → запиши grundsatz.
 
-Examples from real sessions:
-- "All ding must be consumed" → the lifecycle-closure grundsatz (no exceptions)
-- "Don't confuse thread and estafeta" → the thread ≠ estafeta distinction
-- "Complex systems can only grow" → deferred depth is normal
-- "Tension is always truthful" → never suppress
-- "Graph is not reality, it's tension with reality" → a key grundsatz
+Примеры из реальных сессий:
+- «Каждый ding должен потребляться» → grundsatz замыкания жизненного цикла (без исключений)
+- «Не путай нить и эстафету» → различение нить ≠ эстафета
+- «Сложные системы только вырастают» → отложенная глубина нормальна
+- «Натяжение всегда правдиво» → никогда не глуши
+- «Граф — не реальность, а натяжение с реальностью» → ключевой grundsatz
 
-### The utpatti test
+### Тест utpatti
 
-If you're creating a kriya and can't name its utpatti — you don't understand it yet. Stop. Think. What does this action PRODUCE? What sachverhalt exists after that didn't exist before?
+Создаёшь крию и не можешь назвать её utpatti — ты её ещё не понял. Стой. Думай. Что это действие ПРОИЗВОДИТ? Какой sachverhalt существует после, которого не было до?
 
-If the answer is vague ("stuff gets better") — you need to distinguish further. Every kriya has a concrete qualitative transition.
+Ответ размыт («станет лучше») — различай дальше. У каждой крии конкретный качественный переход.
 
-### Ahara is destruction
+### Ahara — уничтожение
 
-ahara = the phenomenon is CONSUMED. Not "read", not "referenced" — destroyed. If a kriya only reads a phenomenon without consuming it → upadhi, not ahara. If you put ahara and the phenomenon should survive → wrong arrow type.
+ahara = феномен ПОТРЕБЛЁН. Не «прочитан», не «упомянут» — уничтожен. Крия только читает феномен, не потребляя → upadhi, не ahara. Поставил ahara, а феномен должен выжить → неверный тип стрелки.
 
-### Sachverhalts under an umbrella
+### Sachverhalt'ы под зонтом
 
-When you distinguish subtypes of a sachverhalt (risk-вопрошание vs hint-вопрошание), create children under the parent via contains. The parent remains the umbrella. Trace inherits from parent to children — lifecycle of a child is covered by the parent's consumers.
+Различая подвиды sachverhalt'а (risk-вопрошание vs hint-вопрошание), создавай детей под родителем через contains. Родитель остаётся зонтом. Trace наследуется от родителя к детям — жизненный цикл ребёнка покрыт потребителями родителя.
 
-Example: «Вопрошание поставлено» contains its genre-children (Risk, Hint, and the rest).
+Пример: «Вопрошание поставлено» содержит своих жанровых детей (Risk, Hint и остальных).
 
-### The right boundary of a realm
+### Правая граница реалма
 
-«Задача разрешена» is the right boundary of methodology. Many kriyas produce it. When a new terminal sachverhalt seems "leaked" — check if it's a contains-child of that umbrella. If yes, it inherits the umbrella's consumers and lifecycle closes.
+«Задача разрешена» — правая граница methodology. Её производят многие крии. Когда новый терминальный sachverhalt кажется «утёкшим» — проверь, не contains-ребёнок ли он этого зонта. Если да — он наследует потребителей зонта, и цикл замкнут.
 
-### Re-orient after mutations
+### Пере-ориентируйся после мутаций
 
-After creating 5+ nodes, call nks_orient again. Your mental model drifts from the graph's reality. Re-orient catches drift early.
+Создав 5+ узлов, вызови iskron_orient снова. Твоя ментальная модель дрейфует от реальности графа. Пере-ориентация ловит дрейф рано.
 
-### Close the loop on the map
+### Замкни цикл на карте
 
-At the end of a session the graph itself must carry the state forward — not a seed:
-- Completed work changes the graph: update modes, descriptions, arrows of the nodes you touched.
-- Open work lives on the map: vimarshas attached via `anga` to the bianhua they drive.
-- A seed vimarsha is the exception, not the ritual. Leave one ONLY for what the graph cannot carry — external-world state (a deploy in flight, an agreement made in chat), a chosen ordering of priorities, a convention not yet crystallized. Pointer, not payload: no restating what orient/lenses show, no DONE blocks, no dates, no names, no git refs, no context-recovery instructions. Edit an existing seed in place rather than spawning a vol2; close it (visarjana) once its content has grown into the graph.
+В конце сессии состояние вперёд несёт сам граф — не сид:
+- Сделанная работа меняет граф: обнови модусы, описания, стрелки тронутых узлов.
+- Открытая работа живёт на карте: вимарши, прицепленные `anga` к bianhua, которые они двигают.
+- Сид-вимарша — исключение, не ритуал. Оставляй ТОЛЬКО для того, чего граф не может нести — состояние внешнего мира (деплой в полёте, договорённость в чате), выбранный порядок приоритетов, некристаллизовавшаяся конвенция. Указатель, не payload: без пересказа того, что показывают orient/линзы, без DONE-блоков, дат, имён, git-ссылок, инструкций восстановления контекста. Правь существующий сид на месте, а не порождай vol2; закрой (visarjana), когда содержимое проросло в граф.
 
-## Holons of methodology
+## Холоны методологии
 
-| Holon | Chinese | Quality of time | What lives here |
+| Холон | Китайский | Качество времени | Что здесь живёт |
 |---|---|---|---|
-| 元 Пред-замысел | yuán | Chaos before distinction | Pre-differentiation |
-| 意 Замысел | yì | Distinction arises | Intentions, motivations |
-| 行 Воплощение | xíng | Bringing into form | Kriyas, principles, methods — most work here |
-| 德 Ценность | dé | Quality discovered | Established patterns, validated principles |
-| 忠 Верность | zhōng | Maintaining form | Ongoing commitments |
-| 忘 Пост-забвение | wàng | Releasing form | Retired forms, scars |
+| 元 Пред-замысел | yuán | хаос до различения | до-различённость |
+| 意 Замысел | yì | различение возникает | намерения, мотивации |
+| 行 Воплощение | xíng | приведение в форму | крии, принципы, методы — большинство работы здесь |
+| 德 Ценность | dé | качество обнаружено | устоявшиеся узоры, проверенные принципы |
+| 忠 Верность | zhōng | хранение формы | продолжающиеся обязательства |
+| 忘 Пост-забвение | wàng | отпускание формы | сложенные формы, шрамы |
 
-Most methodology work happens in 行 Воплощение. Context arrows for new phenomena usually point here.
+Большинство методологической работы — в 行 Воплощение. Context новых феноменов обычно туда.
 
-## Key nodes to know
+## Ключевые узлы
 
-The landmarks (`attrs.key=true`) carry the load-bearing canon — find them via the key:true search from «Before you touch anything», by name:
+Ориентиры (`attrs.key=true`) несут несущий канон — находи их key:true-поиском из «Прежде чем что-либо трогать», по имени:
 
-| Name | What it is |
+| Имя | Что это |
 |---|---|
-| Мыслепрактик | Root karta — encompasses all roles |
-| Эстафета | Phenomenon lifecycle concept |
-| Натяжение | Structural tension concept |
-| Working principles | Split principle nodes: utpatti учит · справочных типов нет · 理 узор · различение среды · sense на стрелках |
-| Lifecycle closure | Every ding born and dies |
-| System growth | Can only grow, not be built whole |
-| Graph = tension | Not reality — tension with reality |
-| Four phases | Backward → forward → whole → impulse |
-| Thread ≠ estafeta | Critical distinction |
+| Мыслепрактик | корневая карта — объемлет все роли |
+| Эстафета | понятие жизненного цикла феномена |
+| Натяжение | понятие структурного натяжения |
+| Рабочие принципы | раздельные узлы-принципы: utpatti учит · справочных типов нет · 理 узор · различение среды · sense на стрелках |
+| Замыкание ЖЦ | каждый ding рождается и умирает |
+| Рост системы | только вырастает, не строится целиком |
+| Граф = натяжение | не реальность — натяжение с реальностью |
+| Четыре фазы | backward → forward → целиком → импульс |
+| Нить ≠ эстафета | критическое различение |
 
-## What NOT to do
+## Чего НЕ делать
 
-- Don't write from training data. Orient the realm first.
-- Don't create nodes without arrows. Orphans are invisible.
-- Don't merge grundsatz and vollzug. WHY ≠ HOW.
-- Don't suppress tensions. Close structure.
-- Don't encode **population expectations** ("top-level kriyas should be few and essential") as tension detectors. Detector grammar is node-grained; a population pattern is invisible to it by design (the *граница рода*). Such expectations belong in the **assembly** agenda, not in counter-detectors.
-- Don't write description as procedure. pariṇāma = qualitative transition.
-- Don't ignore the CHECKS: block — it prints on every create and on re-look after edits.
-- Don't leave payload seeds at session end — the graph carries the state; a thin seed only for what the graph can't hold.
-- Don't rush. "Не спеши" — the most common correction.
+- Не пиши из training data. Сначала ориентация в реалме.
+- Не создавай узлы без стрелок. Сироты невидимы.
+- Не сливай grundsatz и vollzug. ПОЧЕМУ ≠ КАК.
+- Не глуши натяжения. Замыкай структуру.
+- Не кодируй **популяционные ожидания** («top-level крий должно быть мало и существенно») детекторами натяжений. Грамматика детекторов — узлового зерна; популяционный узор для неё невидим by design (граница рода). Место таких ожиданий — повестка **assembly**, не детекторы-счётчики.
+- Не пиши описание процедурой. Паринама = качественный переход.
+- Не игнорируй блок CHECKS: — он печатается на каждом создании и на re-look после правок.
+- Не оставляй payload-сиды на закрытии сессии — состояние несёт граф; тонкий сид только для того, чего граф не удержит.
+- Не спеши. «Не спеши» — самая частая поправка.

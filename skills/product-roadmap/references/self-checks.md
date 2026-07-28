@@ -1,108 +1,55 @@
-# Product-roadmap self-checks — the Step 8 gate
+# Self-checks продуктового роадмапа — гейт Шага 8
 
-Run every check before publishing. A PASS is **earned over the full set the check
-names** — a sampled check never earns a full-set label; scope the claim to what you
-actually verified. A failed check → fix, re-render, re-check. Never report success
-without a verified artifact.
+Прогони каждую проверку до публикации. PASS **зарабатывается над полным множеством, которое проверка называет** — сэмплированная проверка никогда не заслуживает ярлыка полного множества; скоупь заявку тем, что реально проверил. Проваленная проверка → почини, перерендери, перепроверь. Никогда не рапортуй успех без проверенного артефакта.
 
-## Artifact integrity
+## Целостность артефактов
 
-- [ ] `roadmap.md` exists, non-empty, and contains: the assembled-product lead, the
-      "what the graph found" block, next-3-moves, the cited ground section, at least
-      one core-flow trace, the directions in dependency order, the reading of the
-      field, the signal-audit table.
-- [ ] `roadmap.html` is the filled template copy — the `ROADMAP` data object replaced,
-      design untouched, no hand-written page.
-- [ ] Stage checkpoints (`milestones.json`, `issues.json`, `prs.json`, skeleton) were
-      written to `--out` as they were gathered.
+- [ ] `roadmap.md` существует, непуст и содержит: лид «продукт, собранный», блок «что нашёл граф», следующие-3-хода, процитированную секцию почвы, минимум одну трассу ключевого потока, направления в порядке зависимостей, чтение поля, таблицу аудита сигнала.
+- [ ] `roadmap.html` — заполненная копия шаблона: заменён data-объект `ROADMAP`, дизайн не тронут, страница не написана руками.
+- [ ] Чекпойнты стадий (`milestones.json`, `issues.json`, `prs.json`, скелет) писались в `--out` по мере сбора.
 
-## Ground (Step 2)
+## Почва (Шаг 2)
 
-- [ ] The roadmap opens with "what this product is today", **every line cited to a
-      real primitive** (module path, config flag, endpoint, release tag).
-- [ ] Each cited primitive **exists at its path and implements the claimed
-      behaviour** — not a read-site standing in for the enforce-site, not a symbol
-      that lives in a different file.
-- [ ] Versions/stack figures re-read from the manifest (`package.json` /
-      `Cargo.toml` / `pyproject.toml`), never from a doc; no prose doc
-      (README/ARCHITECTURE) cited as current ground where code is the source.
-- [ ] No content/data coverage claimed off a config or UI surface (UI locales ≠
-      translated-content coverage); coverage stated from the producing code path.
+- [ ] Роадмап открывается «что этот продукт сегодня», **каждая строка процитирована к реальному примитиву** (путь модуля, конфиг-флаг, endpoint, релиз-тег).
+- [ ] Каждый процитированный примитив **существует по своему пути и реализует заявленное поведение** — не место чтения вместо места принуждения, не символ из другого файла.
+- [ ] Версии/цифры стека перечитаны из манифеста (`package.json` / `Cargo.toml` / `pyproject.toml`), никогда из дока; ни один прозаический док (README/ARCHITECTURE) не процитирован как текущая почва там, где источник — код.
+- [ ] Покрытие контента/данных не заявлено по конфигу или UI-поверхности (UI-локали ≠ покрытие переведённого контента); покрытие — из производящего кодового пути.
 
-## Milestones and signal (Steps 3–4, 6)
+## Майлстоуны и сигнал (Шаги 3–4, 6)
 
-- [ ] Every open milestone title appears verbatim; the near-term milestone direction
-      lists **every** open issue (a ranked top-N states the total and that the rest
-      remain). No milestones at all → the check is N/A and the render says so
-      plainly; never fabricate one.
-- [ ] The absolute top-reacted and top-commented OPEN issues survived to the roadmap —
-      included, or explicitly deferred; the signal-audit table makes this auditable
-      and states the engagement cutoff.
-- [ ] Empty/thin backlog handled honestly: no invented items; the trajectory table
-      (per-repo merged-PR counts + themes) carries the audit; **exact counts, never
-      estimates** when the data is in hand.
+- [ ] Каждый открытый майлстоун — дословным заголовком; направление ближнего майлстоуна перечисляет **каждый** его открытый issue (ранжированный топ-N называет общее число и что остальное остаётся). Майлстоунов нет вовсе → проверка N/A, и рендер говорит это прямо; никогда не фабрикуй.
+- [ ] Абсолютный топ по реакциям и комментариям среди ОТКРЫТЫХ issues дожил до роадмапа — включён или явно отложен; таблица аудита сигнала делает это аудируемым и называет порог вовлечённости.
+- [ ] Пустой/тощий бэклог обработан честно: без выдуманных элементов; таблица траектории (счётчики смерженных PR по репо + темы) несёт аудит; **точные числа, никогда оценки**, когда данные на руках.
 
-## Live state (render time)
+## Живое состояние (в момент рендера)
 
-- [ ] **Each cited issue/PR re-verified individually** at render time — open /
-      merged / closed / draft + `mergeable` — with a per-item evidence line
-      (`<repo>#N: open, mergeable=true, author=login/ASSOC`). PASS only if itemized
-      over every cited item and every mismatch corrected.
-- [ ] Author + association re-verified in the same pass — for **every named person**,
-      including deferred/secondary/structural-risk mentions; never carry the
-      harvest's guess; when unsure, drop the name.
-- [ ] No merged/closed item shown as open work; no OPEN PR in a merged/shipped row;
-      no "merge/rebase X" where X is draft, already merged, or `mergeable=true`
-      (a mergeable PR is not "conflicting"). `mergeable=null` re-polled once, then
-      labeled "mergeability pending", never "clean".
-- [ ] Recommended action per PR clears its **binding** constraint (draft → ready;
-      conflicted → rebase; CI red → fix CI; unresolved review → address review;
-      clean+green+reviewed → merge).
+- [ ] **Каждый процитированный issue/PR перепроверен по отдельности** в момент рендера — open / merged / closed / draft + `mergeable` — со строкой свидетельства на элемент (`<repo>#N: open, mergeable=true, author=login/ASSOC`). PASS — только поэлементно над каждым процитированным и с исправленным каждым расхождением.
+- [ ] Автор + association перепроверены тем же проходом — у **каждого названного человека**, включая отложенные/вторичные/риск-упоминания; никогда не тащи догадку сбора; сомневаешься — убери имя.
+- [ ] Ни один merged/closed не показан открытой работой; ни один ОТКРЫТЫЙ PR — в строке merged/shipped; никакого «merge/rebase X», где X — draft, уже смержен или `mergeable=true` (mergeable-PR — не «конфликтующий»). `mergeable=null` пере-опрошен один раз, затем «mergeability pending», никогда «clean».
+- [ ] Рекомендованное действие по PR снимает его **связывающее** ограничение (draft → ready; conflicted → rebase; CI red → чинить CI; неразрешённое ревью → отвечать на ревью; clean+green+reviewed → merge).
 
-## Graph leverage (Steps 2, 5, 6)
+## Рычаг графа (Шаги 2, 5, 6)
 
-- [ ] **No zero-edge karta; every karta carries `manifested_as`.** Each created karta
-      has real `actor`/`steward` edges to the deeds it drives — `nks_look` each. A
-      worker/CI/cron "doer" is a ⚙️ phenomenon, not a karta.
-- [ ] **Runtime-operator layer not collapsed.** If the actors are only contributors +
-      a generic end user, the layer was flattened: check the ground for internal
-      operators (admin/moderator/staff) and model each as an active adhikarin 能 the
-      direction targets — never a passively-"served" party.
-- [ ] Every direction's figure-on-ground is a real arrow (driving kriya →
-      `upadhi`/`context` → ground capability), or the direction is explicitly marked
-      genuinely-new ground.
-- [ ] The "reading of the field" section is present: driving kartas (+ runtime
-      targets), tensions-derived structural risks, the figure-on-ground map — each
-      NKS term glossed in plain English on first use.
-- [ ] Prose claims ⊆ graph structure — run the `integrity` skill's claim-audit mode
-      over the rendered artifact when in doubt: every claimed ownership/extension/
-      flow/coverage carried by real edges, or the prose weakened.
+- [ ] **Ни одной карты с нулём рёбер; каждая карта несёт `manifested_as`.** У каждой созданной карты реальные рёбра `actor`/`steward` к деяниям, которые она двигает, — `iskron_look` на каждую. «Делатель»-воркер/CI/cron — ⚙️ феномен, не карта.
+- [ ] **Слой операторов рантайма не схлопнут.** Если акторы — только контрибьюторы + обобщённый end user, слой сплющен: проверь почву на внутренних операторов (админ/модератор/стафф) и смоделируй каждого активным adhikarin 能, в которого целит направление, — никогда пассивно-«обслуживаемой» стороной.
+- [ ] Фигура-на-почве каждого направления — реальная стрелка (ведущая крия → `upadhi`/`context` → способность почвы), либо направление явно помечено подлинно-новой почвой.
+- [ ] Секция «чтение поля» на месте: карты-драйверы (+ рантайм-цели), структурные риски из натяжений, карта фигура-на-почве — каждый NKS-термин глоссирован по-простому при первом употреблении.
+- [ ] Заявки прозы ⊆ структура графа — при сомнении прогони режим claim-аудита скилла `integrity` над отрендеренным артефактом: каждое заявленное владение/продолжение/поток/покрытие несут реальные рёбра, либо проза ослаблена.
 
-## Re-run contract (existing realm)
+## Контракт повторного прогона (существующий реалм)
 
-- [ ] Ground / backlog / directions updated **in place** (locate-before-write):
-      `nks_semantic_search` a sample of subsystems, capabilities, directions —
-      each exists exactly once; duplicates merged or deleted.
-- [ ] Realm absent → creation was *proposed* and approved, never silent.
+- [ ] Почва / бэклог / направления обновлены **на месте** (locate-before-write): `iskron_semantic_search` по выборке подсистем, способностей, направлений — каждое существует ровно один раз; дубликаты слиты или удалены.
+- [ ] Реалм отсутствовал → создание было *предложено* и одобрено, никогда молча.
 
-## Reference and language discipline
+## Дисциплина ссылок и языка
 
-- [ ] `#N` only for real GitHub numbers; graph seqs prefixed (`NKS#…`); directions
-      referenced as `D1`/`D2` or by name.
-- [ ] Multi-repo: grep the artifacts for violations — a bare or grouped `#\d+` not
-      preceded by a full repos key, ad-hoc abbreviations (`be#`/`fe#`), ranges
-      (`#\d+-\d+`), unset `directions[].repos` / driver `repo` keys. Expand every hit.
-- [ ] Multi-repo: ONE focus holon, each in-scope repo a subsystem under it, and at
-      least one cross-repo direction or the cross-repo estafeta present (else it is
-      N stapled roadmaps).
-- [ ] Label-derived facts (kind counts, label names) come from actual labels; kinds
-      inferred from titles are marked inferred.
-- [ ] Grep the artifact for "highest/most/biggest/largest": each is scoped or backed
-      by a full-set computation, never asserted off the capped subset.
-- [ ] No self-check label over-claimed: "every item re-verified" / "nothing dropped" /
-      "covers all themes" only where the full set was actually processed.
+- [ ] `#N` только для реальных GitHub-номеров; seq графа с префиксом (`NKS#…`); направления — `D1`/`D2` или по имени.
+- [ ] Мультирепо: грепни артефакты на нарушения — голый или сгруппированный `#\d+` без полного ключа репо, самодельные сокращения (`be#`/`fe#`), диапазоны (`#\d+-\d+`), незаполненные `directions[].repos` / `repo`-ключи драйверов. Разверни каждое попадание.
+- [ ] Мультирепо: ОДИН фокус-холон, каждый репо в объёме — подсистема под ним, и присутствует минимум одно кросс-репо-направление или кросс-репо-эстафета (иначе это N сшитых роадмапов).
+- [ ] Факты из меток (счётчики видов, имена меток) — из реальных меток; виды, выведенные из заголовков, помечены «выведено».
+- [ ] Грепни артефакт на «highest/most/biggest/largest» и «самый»: каждое — скоуплено или подкреплено вычислением полного множества, никогда не заявлено по срезанному подмножеству.
+- [ ] Ни один ярлык self-check не перезаявлен: «каждый элемент перепроверен» / «ничего не выброшено» / «покрывает все темы» — только где полное множество реально обработано.
 
-## Handoff
+## Передача
 
-- [ ] When run by an orchestrator: results handed off as files on disk, the return
-      value a short confirmation + paths — never the full roadmap text.
+- [ ] При запуске оркестратором: результаты передаются файлами на диске, возврат — короткое подтверждение + пути, никогда не полный текст роадмапа.
