@@ -8,7 +8,7 @@ Agent-facing NKS skill bundles (Claude Code skills) for the **iskron.ru** deploy
 - **Agent karta**: `#931 «👨‍💻 Разработчик скилл-репозиториев агента»` — adhikarin, steward of #1506 (and of the sibling upstream skill repo #844). Your inbox: `nks_orient(realm="nks-dev", focus="931")` at session start (self-locate fallback: `nks_admin(action="my_kartas")`).
 - **Owner karta**: `#1226 «👑 Владелец продукта»` (svatantra 主) — out-of-mandate questions go there as `posed_to` vimarshas.
 - **Delivery map**: this repo advances sub-bianhua `#1516 «📦 Скилл-плагин iskron доставлен агентам»` (anga of `#1092 «🚀 Продакшн на iskron.ru»`). The build→publish→install chain lives as kriyas `#1512 → #1513 → #1514` in #1506; open work is driver vimarsha `#1515`.
-- **Stack**: Markdown `SKILL.md` files under `skills/<name>/`, packaged into derived `<name>.skill` zip bundles via `make build`. Distributed as a Claude Code plugin marketplace (`iskron@iskron`), versioned by semver in `.claude-plugin/plugin.json` — bumped **automatically on every merge to `main`** (feat→minor, feat!/BREAKING→major, else patch; `.github/workflows/version-bump.yml`, never by hand). MCP endpoint is `https://mcp.iskron.ru/` (`.mcp.json`). No runtime, no dependencies; CI is a dependency-free format gate (pure Node + bash) — see `.github/workflows/ci.yml`.
+- **Stack**: Markdown `SKILL.md` files under `skills/<name>/`, packaged into derived `<name>.skill` zip bundles via `make build`. Distributed as a Claude Code plugin marketplace (`iskron@iskron`), versioned by semver in `.claude-plugin/plugin.json` — bumped by **release-please**, which maintains a release PR from the Conventional Commits on `main` (feat→minor, feat!/BREAKING→major, else patch); merging that PR writes the version, tags `vX.Y.Z`, and cuts a GitHub Release with a `CHANGELOG.md` entry (`.github/workflows/release-please.yml` + `release-please-config.json`, never by hand). MCP endpoint is `https://mcp.iskron.ru/` (`.mcp.json`). No runtime, no dependencies; CI is a dependency-free format gate (pure Node + bash) — see `.github/workflows/ci.yml`.
 - **Production statement**: skills install into agents' `~/.claude/skills/` and shape how every agent working on iskron uses NKS via `mcp.iskron.ru`. A wrong instruction — e.g. a reference to a tool that nks-mcp has dropped — silently degrades every agent that loads the skill; there is no crash, only methodology drift. The consumer is the agent, not a human user. Keeping skills in sync with the nks-mcp tool surface is the core maintenance obligation.
 
 ## Persistence rules
@@ -69,10 +69,10 @@ The pre-commit hook (`.githooks/pre-commit`) rebuilds and stages the `.skill` bu
 ## Project structure
 - `skills/<name>/SKILL.md` — **source of truth**, one dir per skill (`entry`, `writing`, `design`, `weaving`, `inquiry`, `assembly`, `integrity`, `intake`, `on-duty`, `methodology-work`, `align`, `product-roadmap`); `references/*` optional (`align`, `writing`, `product-roadmap` ship them).
 - `*.skill` — derived zip bundles (committed for manual / claude.ai install). Build output of `make build`; do not hand-edit.
-- `.claude-plugin/marketplace.json` — plugin marketplace manifest (`iskron@iskron`); `metadata.version` mirrors the plugin version. No component lists — the plugin's skills auto-discover from `skills/` (`strict: true`, plugin.json authoritative).
-- `.claude-plugin/plugin.json` — the `iskron` plugin manifest; its `version` is what Claude Code reads to deliver updates (bumped by `version-bump.yml` on every merge, never by hand).
-- `.mcp.json` — the nks MCP server binding for this repo: `https://mcp.iskron.ru/`.
-- `scripts/bump-version.mjs` + `.github/workflows/version-bump.yml` — the automatic per-merge version bump + `vX.Y.Z` tag.
+- `.claude-plugin/marketplace.json` — plugin marketplace manifest (`iskron@iskron`); `metadata.version` and the plugin entry's `version` both mirror `plugin.json` (release-please writes all three; `make validate` fails if they diverge). No component lists — the plugin's skills auto-discover from `skills/` (`strict: true`, plugin.json authoritative).
+- `.claude-plugin/plugin.json` — the `iskron` plugin manifest; its `version` is what Claude Code reads to deliver updates (bumped by release-please when the release PR merges, never by hand).
+- `.mcp.json` — the iskron MCP server binding for this repo: `https://mcp.iskron.ru/`.
+- `release-please-config.json` + `.release-please-manifest.json` + `.github/workflows/release-please.yml` — release-please: it maintains a release PR from the Conventional Commits on `main`; merging that PR writes the version into `plugin.json`/`marketplace.json`, tags `vX.Y.Z`, and cuts a GitHub Release with a `CHANGELOG.md` entry.
 - `Makefile`, `scripts/build-skills.sh`, `.githooks/pre-commit` — the build.
 - `scripts/validate-skills.mjs` (frontmatter contract, pure Node), `scripts/check-bundles.sh` (bundle ↔ source sync), `.github/workflows/ci.yml` — the format gate.
 - `README.md` — short human-facing pointer.
@@ -103,5 +103,5 @@ The pre-commit hook (`.githooks/pre-commit`) rebuilds and stages the `.skill` bu
 - **Conventional commits** (`feat:`/`fix:`/`chore:`/`docs:`…). Branches `feat/…`, `fix/…`, `chore/…`; PR titles same format.
 - **No co-author trailer.**
 - **Format gate**: run `make check` before committing (CI runs the same on every push/PR). It catches malformed frontmatter and drifted bundles, not substance — still review the `SKILL.md` diff by eye.
-- **Definition of done**: change committed and merged to `main` on `github.com/iskron/skills` (direct push or PR, per the user's call); the user signals the merge. On merge, update NKS #1506 — close resolved vimarshas, advance the bianhua they drive.
+- **Definition of done**: change committed and merged to `main` on `github.com/iskron-ai/skills` (direct push or PR, per the user's call); the user signals the merge. On merge, update NKS #1506 — close resolved vimarshas, advance the bianhua they drive.
 - **Never** `--force` or `git reset --hard` without explicit instruction.

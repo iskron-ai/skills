@@ -1,11 +1,11 @@
 {
   "permissions": {
     "allow": [
-      "mcp__nks__nks_orient",
-      "mcp__nks__nks_look",
-      "mcp__nks__nks_search",
-      "mcp__nks__nks_semantic_search",
-      "mcp__nks__nks_me",
+      "mcp__iskron__iskron_orient",
+      "mcp__iskron__iskron_look",
+      "mcp__iskron__iskron_search",
+      "mcp__iskron__iskron_semantic_search",
+      "mcp__iskron__iskron_me",
       "Bash(make:*)",
       "Bash(git status:*)",
       "Bash(git diff:*)",
@@ -24,7 +24,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "echo '{\"hookSpecificOutput\":{\"hookEventName\":\"SessionStart\",\"additionalContext\":\"iskron/skills — orient in nks-dev before acting: nks_orient(realm=nks-dev, focus_holon=1506), then your agenda nks_orient(realm=nks-dev, focus=931); the entry skill runs the protocol. Source of truth is skills/<name>/SKILL.md — run make build after edits, review the SKILL.md diff by eye.\"}}'"
+            "command": "echo '{\"hookSpecificOutput\":{\"hookEventName\":\"SessionStart\",\"additionalContext\":\"iskron-ai/skills — orient in nks-dev before acting: iskron_orient(realm=nks-dev, focus_holon=1506), then your agenda iskron_orient(realm=nks-dev, focus=931); the entry skill runs the protocol. Source of truth is skills/<name>/SKILL.md — run make build after edits, review the SKILL.md diff by eye.\"}}'"
           }
         ]
       }

@@ -1,104 +1,151 @@
-# iskron skills setup (agent-executable)
+# Установка iskron (исполняется агентом)
 
-You are a coding agent setting up the **iskron** skills for your user. Execute the steps
-below autonomously, in order — the graph server authenticates via **OAuth** (browser
-login), so on the default path you ask the user for nothing. Only the headless/no-OAuth
-fallback needs their **graph token** — never invent, guess, or reuse one. Report the
-result of each step.
+Ты — кодинг-агент, устанавливающий **iskron** для своего пользователя. Выполни шаги
+ниже автономно, по порядку, и доложи результат каждого.
 
-This is two parts:
+iskron — это две части:
 
-1. **Skills** — plain-markdown method bundles from this repo (readable before install).
-2. **Graph MCP server** — the remote NKS reasoning graph at `mcp.iskron.ru`, exposed as `nks_*` tools.
+1. **Скиллы** — методические бандлы в plain-markdown из этого репозитория (читаются до установки).
+2. **Граф-сервер MCP** — удалённый граф рассуждений NKS, доступный как тулы `iskron_*`.
 
-## 0. Detect your harness
+**Адрес сервера.** Всюду в этом файле `<MCP_URL>` означает ровно:
 
-Identify which agent you are running as — Claude Code, Cursor, Codex, or other — and
-follow that path below. If you cannot tell, ask the user.
+```
+https://mcp.iskron.ru/
+```
 
-## 1. Install the skills
+Подставляй эту буквальную строку везде, где ниже встречается `<MCP_URL>`. Сервер
+аутентифицирует двумя способами. По умолчанию — **OAuth**: браузерный логин при первом
+обращении, у пользователя ничего спрашивать не нужно. Когда OAuth недоступен или просто
+отказывается работать, есть **личный токен доступа**, который пользователь создаёт в
+веб-интерфейсе; он работает везде и является ответом на любую авторизацию, которую не
+удаётся пройти. Никогда не выдумывай, не угадывай и не переиспользуй токен.
 
-**Claude Code** (preferred — namespaced, collision-proof):
+## 0. Определи свой харнесс
+
+Пойми, каким агентом ты запущен — Claude Code в терминале, Claude Desktop, Cursor,
+Codex или другой — и иди по соответствующей ветке ниже. Если понять не можешь —
+спроси пользователя.
+
+Отличи Claude Desktop от терминального Claude Code до старта: скиллы они ставят
+одинаково, а сервер подключают по-разному, и только один из них способен сам довести
+логин до конца (шаг 2).
+
+## 1. Установи скиллы
+
+**Плагин — главный вход.** Используй его везде, где он есть — Claude Code, Claude
+Desktop, claude.ai. Он неймспейсит каждый скилл под `iskron`, так что ничего не
+конфликтует, и несёт граф-сервер с собой. Всё остальное на этой странице — для
+харнессов без плагинного канала.
 
 ```sh
-claude plugin marketplace add iskron/skills
+claude plugin marketplace add iskron-ai/skills
 claude plugin install iskron@iskron
 ```
 
-(Inside an interactive session: `/plugin marketplace add iskron/skills` then
+(В интерактивной сессии: `/plugin marketplace add iskron-ai/skills`, затем
 `/plugin install iskron@iskron`.)
 
-**Cursor / Codex / any other agent** (flat install, ~70 harnesses supported):
+**Cursor / Codex / любой другой агент** (плоская установка, ~70 харнессов):
 
 ```sh
-npx skills add iskron/skills --all
+npx skills add iskron-ai/skills --all
 ```
 
-Add `--agent codex` (or `-a cursor`, …) to target a specific harness explicitly.
+Добавь `--agent codex` (или `-a cursor`, …), чтобы явно указать харнесс.
 
-## 2. Connect the graph server
+## 2. Подключи граф-сервер
 
-The server speaks **OAuth**: an interactive harness pointed at the URL opens a browser
-login on first contact — no pre-shared token, nothing to paste. The endpoint is
-`https://mcp.iskron.ru/`.
+**Claude Code (терминал) + плагин из шага 1: настраивать нечего.** Плагин несёт сервер
+с собой (`.mcp.json` в корне плагина); первый вызов `iskron_*` — или `/mcp` — откроет
+OAuth-логин. Переходи к шагу 3.
 
-> **Claude Code + plugin (step 1): nothing to configure.** The plugin bundles this
-> server (`.mcp.json` in the plugin root); the first `nks_*` call (or `/mcp`) opens
-> the OAuth login. Skip the rest of this step.
+**Claude Desktop и claude.ai: плагин добавляет сервер, но оставляет его
+неавторизованным.** Ставить плагин всё равно правильно — он лишь останавливается за
+одно нажатие до конца. Кнопка авторизации находится не в настройках коннекторов самого
+приложения, и вставлять никуда ничего не нужно: она живёт на **вкладке Connectors на
+странице самого плагина iskron** и появляется только после установки плагина. Два
+нажатия, в этом порядке: **Install**, затем **Connect**. Здесь люди застревают чаще
+всего, поэтому проведи пользователя за руку, а не оставляй искать самому:
 
-**Claude Code without the plugin:**
+> Открой **Customize → Plugins** и найди плагин **iskron**. Нажми **Install**, если ещё
+> не ставил, затем открой его вкладку **Connectors** и нажми там кнопку авторизации —
+> **Connect** появляется только после установки.
+
+Две вещи, о которых стоит сказать заранее: на **claude.ai** этот путь надёжнее, чем в
+десктопном приложении, а плагин, установленный на claude.ai, не подхватится десктопом
+до перезапуска приложения.
+
+После этого тулы `iskron_*` приходят уже авторизованными — продолжай с шага 3.
+
+**Claude Code без плагина:**
 
 ```sh
-claude mcp add --transport http nks https://mcp.iskron.ru/
+claude mcp add --transport http iskron <MCP_URL>
 ```
 
-**Cursor** — merge into `.cursor/mcp.json` (project) or `~/.cursor/mcp.json` (global):
+**Cursor** — вмёржи в `.cursor/mcp.json` (проектный) или `~/.cursor/mcp.json`
+(глобальный):
 
 ```json
-{ "mcpServers": { "nks": { "url": "https://mcp.iskron.ru/" } } }
+{ "mcpServers": { "iskron": { "url": "<MCP_URL>" } } }
 ```
 
-OAuth login triggers on first use in both.
+В обоих случаях OAuth-логин откроется при первом обращении.
 
-**Fallback — headless agents and harnesses without MCP-OAuth support** (Codex-style
-configs, CI, autonomous VMs): use a personal access token instead. Ask the user for
-it (it comes with the early-access invite) — never invent one — and pass it as a
-Bearer header, e.g.:
+**Путь токена — когда OAuth отсутствует или не проходит.** Сюда ведут два случая, и
+второй важнее, чем кажется. Первый — структурный: headless-агенты и харнессы без
+поддержки MCP-OAuth (конфиги в духе Codex, CI, автономные VM) не могут открыть
+браузерный логин. Второй — обычная поломка: логин не открывается, не завершается, или
+каждый вызов `iskron_*` продолжает возвращать 401. Не упирайся и не перебирай
+варианты: личный токен работает на любом харнессе, включая те, где OAuth сломан, —
+переключайся и иди дальше.
+
+Токен пользователь создаёт в веб-интерфейсе и передаёт тебе — никогда не выдумывай,
+не угадывай и не переиспользуй его. Передавай токен Bearer-заголовком:
 
 ```sh
-npx add-mcp https://mcp.iskron.ru/ --header "Authorization: Bearer ${ISKRON_TOKEN}"
+npx add-mcp <MCP_URL> --header "Authorization: Bearer ${ISKRON_TOKEN}"
 ```
 
 ```toml
 # Codex ~/.codex/config.toml
-[mcp_servers.nks]
-url = "https://mcp.iskron.ru/"
+[mcp_servers.iskron]
+url = "<MCP_URL>"
 bearer_token_env_var = "ISKRON_TOKEN"
 ```
 
-Store the token where your harness expects env vars; do not hard-code it into files
-that get committed. The token never goes into the URL.
+Храни токен там, где твой харнесс ожидает переменные окружения; не зашивай его в
+файлы, попадающие в коммиты. В URL токен не попадает никогда.
 
-## 3. Restart
+## 3. Перезапуск
 
-Tell the user installation is done and ask them to restart the session so the new
-skills and connection are picked up. This is the end of what you can do here.
+Скажи пользователю, что установка закончена, и попроси перезапустить сессию, чтобы
+подхватились новые скиллы и подключение. Здесь твоя часть работы заканчивается.
 
-## 4. First session: align
+## 4. Первая сессия: align
 
-In the fresh session, the user says `align` (or `/iskron:align` with the Claude Code
-plugin). The agent then verifies the connection (`nks_orient` returns a realm list),
-brings the repo to the iskron standard (`AGENTS.md` + session rituals), and seeds the
-graph with the structure the codebase already shows.
+В свежей сессии пользователь говорит `align` (или `/iskron:align` с плагином Claude
+Code). Агент проверяет соединение (`iskron_orient` возвращает список реалмов),
+приводит репозиторий к стандарту iskron (`AGENTS.md` + ритуалы сессии) и засеивает
+граф структурой, которую кодовая база уже показывает.
 
-## Troubleshooting
+## Разбор проблем
 
-- **401 / auth error** → on the OAuth path, re-run the login (`/mcp` → authenticate,
-  or restart the session). On the token fallback the token is wrong or expired —
-  re-ask the user; do not retry
-  with variations.
-- **`nks_*` tools not visible** → the MCP config loads on session start: restart the
-  session (or reload MCP config) and verify again.
-- **Skill name collision on flat installs** → another skill pack already uses a bare
-  name like `design`. Rename that directory, or use the Claude Code plugin channel,
-  which namespaces everything under `iskron`.
+- **Claude Desktop / claude.ai: тулы `iskron_*` видны, но не авторизованы** → это
+  ожидаемо; плагин не авторизует собственный сервер. Проведи пользователя через
+  **Customize → Plugins → iskron → Connectors**, как в шаге 2 — кнопка не в настройках
+  коннекторов приложения, и никакой URL никуда не вставляется.
+- **Плагин установлен на claude.ai, но невидим в десктопном приложении** → перезапусти
+  приложение.
+- **401 / ошибка авторизации, или OAuth-логин не завершается** → попробуй логин ещё раз
+  (`/mcp` → authenticate, или перезапусти сессию); на Claude Desktop — шаг с вкладкой
+  Connectors выше. Если всё ещё не проходит — прекрати перебирать и иди путём токена из
+  шага 2: личный токен аутентифицирует там, где OAuth не может, и попросить его у
+  пользователя — короче, чем дебажить его браузер. Если токен уже используется и всё
+  равно 401 — он неверен или истёк: попроси свежий, не перебирай варианты.
+- **Тулы `iskron_*` не видны** → конфиг MCP загружается на старте сессии: перезапусти
+  сессию (или перезагрузи конфиг MCP) и проверь снова.
+- **Конфликт имён скиллов при плоской установке** → другой скилл-пак уже занял голое
+  имя вроде `design`. Переименуй ту директорию — или используй плагинный канал Claude
+  Code, который неймспейсит всё под `iskron`.
