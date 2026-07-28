@@ -1,462 +1,169 @@
 ---
 name: repo-boost
-description: "Use when the user asks to repo-boost a repo — bootstrap or refresh its AGENTS.md / CLAUDE.md to the iskron standard, apply the NKS methodology conventions, or wire the session-lifecycle rituals (orient-in-NKS on start, push→update-NKS hooks, quality gate, memory guard, CLAUDE.md pointer — @AGENTS.md import, Windows-safe). Triggers: \"repo-boost\", \"repo-boost this repo\", \"привести проект к стандарту\", \"завести/обновить AGENTS.md\", \"set up AGENTS.md\", \"bootstrap AGENTS\", \"apply the meta template\", \"наведи порядок в конфиге агента\". AGENTS.md is a derived view, not hand-written prose: each concern is audited against its source of truth and re-projected when stale, preserving authored judgment; fresh repos ask the user for the authored slots. Needs the iskron_* MCP tools for the NKS steps."
+description: "Используй, когда просят прокачать репозиторий — repo-boost: завести или освежить его AGENTS.md / CLAUDE.md по стандарту iskron, применить конвенции NKS, прошить ритуалы сессии (ориентация на старте, push→NKS-хуки, гейт качества, memory-guard, указатель CLAUDE.md). Триггеры: repo-boost, «прокачай репо», «привести проект к стандарту», «завести/обновить AGENTS.md», set up AGENTS.md, bootstrap AGENTS, «наведи порядок в конфиге агента». AGENTS.md — производный вид, не рукописная проза: каждая забота аудируется против своего источника истины и ре-проецируется при устаревании, авторское суждение сохраняется; свежий репо спрашивает у пользователя авторские слоты. Нужны тулы iskron_* для NKS-шагов."
 ---
 
 # Repo-boost
 
-Bring the **current repo** to the iskron agent standard: a dense, AI-first
-`AGENTS.md` (read every session, not by a human once) + a `CLAUDE.md` pointing
-at it, the NKS session rituals wired as hooks, and a quality gate. You **generate** the
-config from the skeleton — nothing is copied by hand and the user pastes no
-template.
+Приведи **текущий репозиторий** к агентскому стандарту iskron: плотный, AI-first `AGENTS.md` (читается каждую сессию, а не человеком однажды) + `CLAUDE.md`, указывающий на него, ритуалы NKS-сессии, прошитые хуками, и гейт качества. Конфиг ты **генерируешь** из скелета — ничего не копируется руками, пользователь не вставляет шаблонов.
 
-The real deliverable is **a trust interface**: a doc the agent can believe every
-session — not a pretty dense file. `AGENTS.md` is a *derived view*, a projection
-of sources that already hold the truth (code, `package.json`, CI config, the
-filesystem, NKS) plus a thin layer of authored judgment (gotchas, why-clauses)
-that lives nowhere else. So the contract has two co-equal halves: **density**
-(every line changes behavior) and **accuracy** (every derived line re-checked
-against its source *this run*). A dense false line is worse than a verbose one —
-short and confident, the agent swallows it without resistance. Verify with the
-same rigor you compress with.
+Настоящий деливерабл — **интерфейс доверия**: документ, которому агент может верить каждую сессию, а не просто красиво-плотный файл. `AGENTS.md` — *производный вид*, проекция источников, которые уже держат истину (код, `package.json`, конфиг CI, файловая система, NKS), плюс тонкий слой авторского суждения (готчи, why-клаузы), который больше нигде не живёт. Поэтому контракт двуглав: **плотность** (каждая строка меняет поведение) и **точность** (каждая производная строка перепроверена против источника *в этом прогоне*). Плотная ложная строка хуже многословной — короткую и уверенную агент глотает без сопротивления. Проверяй с той же строгостью, с какой сжимаешь.
 
-The body skeleton lives in `references/agents-template.md` (relative to this
-skill). Read it; it is the set of `##` sections your finished `AGENTS.md` must
-have, with `<…>` slots and a few `<!-- … -->` notes. Fill the slots, drop
-optional rows/sections that don't apply, strip every `<!-- … -->` note, never
-leave an angle bracket. The skeleton is *what to produce*; this file is *how*.
+Скелет тела живёт в `references/agents-template.md` (относительно этого скилла). Прочти его: это набор `##`-секций, которые обязан иметь готовый `AGENTS.md`, со слотами `<…>` и немногими заметками `<!-- … -->`. Заполни слоты, выброси неприменимые опциональные строки/секции, вычисти каждую заметку, не оставь ни одной угловой скобки. Скелет — *что произвести*; этот файл — *как*.
 
-**Contract: `2026-07-28`.** Step 7 stamps this date into every `AGENTS.md` it
-writes. Bump it only when a change here or in the skeleton makes an
-already-generated file *wrong* — a section added, renamed or retired, a ritual
-changed, a tool name dropped; never for wording. A repo whose stamp is older
-gets the full arc, and you name the contract its config came from.
+**Контракт: `2026-07-28`.** Шаг 7 штампует эту дату в каждый записанный `AGENTS.md`. Поднимай её только когда перемена здесь или в скелете делает уже сгенерированный файл *неверным* — секция добавлена, переименована или изъята, ритуал изменён, имя тула выпало; никогда — ради формулировок. Репо с более старым штампом получает полную дугу, и ты называешь контракт, из которого пришёл его конфиг.
 
-The skeleton deliberately *inlines* repo-agnostic agent-discipline (Working
-principles, parts of Session lifecycle) into every generated `AGENTS.md` so the
-file stands alone for agents with no NKS access. Keep it inline — don't replace
-it with a pointer to the methodology realm even though it duplicates content
-there.
+Скелет сознательно *инлайнит* реалм-агностичную агентскую дисциплину (Working principles, части Session lifecycle) в каждый сгенерированный `AGENTS.md`, чтобы файл стоял сам — для агентов без доступа к NKS. Держи её инлайн — не заменяй указателем в реалм методологии, хотя содержание там дублируется.
 
-## Audit → classify → act (not fresh-vs-existing)
+## Аудит → классификация → действие (не «свежий-или-настроенный»)
 
-A repo is never simply *fresh* or *configured* — it's a spectrum, and the trap is
-"a file exists, therefore its facts are true." Don't branch on whether
-`AGENTS.md` / `CLAUDE.md` / `.claude/` exists. Instead **audit every concern
-against its source of truth and classify it**:
+Репозиторий никогда не бывает просто *свежим* или *настроенным* — это спектр, и ловушка звучит так: «файл существует, значит, его факты верны». Не ветвись по наличию `AGENTS.md` / `CLAUDE.md` / `.claude/`. Вместо этого **аудируй каждую заботу против её источника истины и классифицируй**:
 
-- **absent** — no claim yet → derive it from the source (or, for an authored
-  slot with no checkable source, ask the user).
-- **stale** — a claim exists but disagrees with its source → re-project from the
-  source, overwriting the stale text. Do not carry it forward just because it was
-  written down.
-- **correct** — claim matches source → leave it.
+- **absent** — заявки ещё нет → выведи из источника (или, для авторского слота без проверяемого источника, спроси пользователя).
+- **stale** — заявка есть, но расходится с источником → ре-спроецируй из источника, перезаписав устаревший текст. Не тащи вперёд только потому, что было записано.
+- **correct** — заявка совпадает с источником → оставь.
 
-Run this per concern using the source map below. "Fresh repo" is just
-*everything absent*; a mature repo is a mix — and most dangerous when
-*mostly-correct*, because the few stale lines hide among trusted ones (this is
-why the verify pass is whole-artifact, Step 7). For authored slots with no
-checkable source, *absent* → ask the user; never invent.
+Прогоняй по-заботно по карте источников ниже. «Свежий репо» — просто *всё absent*; зрелый — смесь, и опаснее всего *почти-верный*: немногие устаревшие строки прячутся среди доверенных (потому проверочный проход — по всему артефакту, Шаг 7). Авторские слоты без проверяемого источника: *absent* → спроси пользователя; никогда не выдумывай.
 
-### Source of truth per concern
-Each claim class has one authority. Verify there — don't recall:
+### Источник истины по заботам
+У каждого класса заявок один авторитет. Проверяй там — не вспоминай:
 
-| Concern | Source of truth | How to check |
+| Забота | Источник истины | Как проверить |
 |---|---|---|
-| Versions, dependencies | `package.json` / `pyproject.toml` / `go.mod` / `Cargo.toml` + lockfile | read |
-| Build/test/lint/dev commands | `package.json` scripts, `Makefile`/`Justfile`, CI workflow | read; run `--help`/dry-run where cheap |
-| Quality gate (strictness, max-warnings) | linter config, `tsconfig`, CI yaml | read |
-| Project structure, path aliases | filesystem + `tsconfig`/bundler config | glob / list |
-| Nature, production statement, relaxations | the user (authored) | confirm in conversation |
-| Reality carriers + how to observe them | the user (authored) | confirm in conversation — never derive |
-| Design decisions, why-clauses, open questions | NKS | `iskron_orient` / `iskron_search` |
-| Branch state, what's runnable | git + `HANDOVER.md` | `git status` / `log` |
-| Gotchas | authored (past pain) | sanity-check only — don't auto-derive |
+| Версии, зависимости | `package.json` / `pyproject.toml` / `go.mod` / `Cargo.toml` + lockfile | прочитать |
+| Команды build/test/lint/dev | scripts в `package.json`, `Makefile`/`Justfile`, CI-workflow | прочитать; `--help`/dry-run, где дёшево |
+| Гейт качества (строгость, max-warnings) | конфиг линтера, `tsconfig`, CI-yaml | прочитать |
+| Структура проекта, path-алиасы | файловая система + `tsconfig`/конфиг бандлера | glob / list |
+| Nature, production statement, послабления | пользователь (авторское) | подтвердить в разговоре |
+| Носители Reality + как их наблюдать | пользователь (авторское) | подтвердить в разговоре — никогда не выводить |
+| Проектные решения, why-клаузы, открытые вопросы | NKS | `iskron_orient` / `iskron_search` |
+| Состояние веток, что запускается | git + `HANDOVER.md` | `git status` / `log` |
+| Готчи | авторское (прошлая боль) | только sanity-check — не автовыводить |
 
-Two kinds of line, handled differently: **derived facts** (upper rows) are
-re-projected from source every run — never preserved when stale; **authored
-judgment** (lower rows — gotchas, why-clauses, nature) lives nowhere else —
-preserve it, only sanity-check it against the code.
+Два рода строк, обрабатываемых по-разному: **производные факты** (верхние строки) ре-проецируются из источника каждый прогон — устаревшие никогда не сохраняются; **авторское суждение** (нижние — готчи, why-клаузы, nature) больше нигде не живёт — сохраняй его, лишь сверяя на здравость с кодом.
 
-## The output contract — density and accuracy
+## Контракт выхода — плотность и точность
 
-`AGENTS.md` is read *every session*, so it must be both **dense** and **true** —
-co-equal, not form-first. Accuracy is operationalized above (audit/classify each
-concern against the source map) and below (verify pass, Step 7). The density half
-is these five rules:
-1. **Imperative, addressed to the agent.** "Orient before coding," not "the
-   agent should orient."
-2. **Density rule.** Every line must change what the agent *does*. If deleting a
-   line wouldn't change behavior, delete it. Reads like a checklist, not an
-   essay — no motivation, no aphorisms, no victory laps.
-3. **No design rationale, no duplication of NKS.** The *why* behind a decision
-   lives in NKS (vimarshas) — link, don't restate. `AGENTS.md` is a `reference`
-   artifact (shabda); narrative in it sets up a second source of truth that
-   drifts from NKS and misleads future agents. Keep a terse `(why: …)` clause
-   *only* for an invariant a future agent would otherwise violate — a code-level
-   gotcha or non-obvious constraint, never a design justification.
-4. **Tables and bullets over paragraphs.** One directive per bullet.
-5. **No length target** — but a section that runs to paragraphs is almost always
-   carrying rationale that belongs in NKS. Move it there.
+`AGENTS.md` читается *каждую сессию*, поэтому он обязан быть и **плотным**, и **истинным** — на равных, не форма-прежде. Точность операционализирована выше (аудит/классификация против карты источников) и ниже (проверочный проход, Шаг 7). Половина плотности — пять правил:
+1. **Императив, адресованный агенту.** «Ориентируйся до кода», не «агенту следует ориентироваться».
+2. **Правило плотности.** Каждая строка должна менять то, что агент *делает*. Если удаление строки не изменит поведения — удали её. Читается как чек-лист, не эссе: без мотивации, афоризмов и кругов почёта.
+3. **Без проектных обоснований, без дублирования NKS.** *Почему* решения живёт в NKS (вимарши) — линкуй, не пересказывай. `AGENTS.md` — reference-артефакт (шабда); нарратив в нём заводит второй источник истины, который дрейфует от NKS и вводит будущих агентов в заблуждение. Краткая клауза `(why: …)` — *только* для инварианта, который будущий агент иначе нарушит: код-готча или неочевидное ограничение, никогда — проектное оправдание.
+4. **Таблицы и буллеты вместо абзацев.** Одна директива на буллет.
+5. **Целевой длины нет** — но секция, растёкшаяся в абзацы, почти всегда несёт обоснование, которому место в NKS. Перенеси туда.
 
-**Out of scope — orchestration mechanics.** `AGENTS.md` addresses one agent in
-one session. Build-gating chains, sub-agent push verification, model-routing,
-multi-lane coordination don't belong here — inlining them violates the density
-rule for the solo reader. Home: a dedicated orchestration/scheduler skill or the
-methodology realm — except the sub-agent delegation slice, which this skill
-projects as role files (Step 6, `references/delegation.md`), never as AGENTS.md
-prose. Link if needed, don't inline.
+**Вне объёма — механика оркестрации.** `AGENTS.md` обращён к одному агенту в одной сессии. Цепочки гейтов сборки, суб-агентная проверка пушей, model-routing, многополосная координация сюда не идут — их инлайн ломает правило плотности для одиночного читателя. Дом: выделенный скилл оркестрации/планировщика или реалм методологии — кроме среза суб-агентного делегирования, который этот скилл проецирует ролевыми файлами (Шаг 6, `references/delegation.md`), никогда прозой AGENTS.md. Линкуй при нужде, не инлайнь.
 
-Worked example — same `## Code conventions` entry, bad (narrative) vs good
-(AI-first):
-- ❌ "We try to be careful about state because this is a demo and the store is
-  the only place data lives, so it's important that components read it correctly
-  when the persona changes, otherwise the demo can look broken."
-- ✅ "Persona-scoped UI reads role via `use-acting-context`; re-check render on
-  persona switch. (why: store is the only data source — a stale read shows
-  wrong-role data.)"
+Рабочий пример — одна и та же запись `## Code conventions`, плохо (нарратив) и хорошо (AI-first):
+- ❌ «Мы стараемся аккуратно обращаться с состоянием, потому что это демо и стор — единственное место, где живут данные, поэтому важно, чтобы компоненты правильно читали его при смене персоны, иначе демо может выглядеть сломанным.»
+- ✅ «Persona-scoped UI читает роль через `use-acting-context`; перепроверь рендер при смене персоны. (why: стор — единственный источник данных, устаревшее чтение показывает данные чужой роли.)»
 
-The good version is a directive + one invariant clause. The bad version is three
-sentences of rationale that belong in an NKS vimarsha.
+Хорошая версия — директива + одна клауза-инвариант. Плохая — три предложения обоснования, которым место в вимарше NKS.
 
-## Procedure
+## Процедура
 
-Idempotent throughout: in a mature repo, run each self-check and act only on
-failures; report what's still outstanding.
+Идемпотентна насквозь: в зрелом репо прогоняй каждый self-check и действуй только по провалам; докладывай, что осталось.
 
-**Quick mode — first contact only.** The full run is a heavy first thing to meet
-after a restart, before the newcomer has seen anything worth the cost. On a repo's
-*first* repo-boost, unless the user asked for the full pass: run **Step 2** (realm,
-focus holon, agent karta) plus a **skeleton `AGENTS.md`** of the slots you can
-derive without asking, then hand over to the roadmap teaser (Step 7's baton).
-Defer Steps 1, 3, 4, 6 in one line — "gate, hooks and the interview are deferred —
-say `repo-boost` again for the full pass." Two rules keep it honest: never write a
-*derived* line you haven't checked (an unasked authored slot stays absent, never
-guessed), and always name what was deferred. Every later run is the full arc.
+**Быстрый режим — только первый контакт.** Полный прогон — тяжёлая первая встреча после рестарта, до того как новичок увидел хоть что-то стоящее её цены. На *первом* repo-boost репозитория, если пользователь не просил полного прохода: выполни **Шаг 2** (реалм, фокус-холон, карта агента) плюс **скелетный `AGENTS.md`** из слотов, которые выводятся без вопросов, и передай эстафету тизеру роадмапа (эстафетная палочка Шага 7). Отложи Шаги 1, 3, 4, 6 одной строкой — «гейт, хуки и интервью отложены — скажи `repo-boost` ещё раз для полного прохода». Два правила держат это честным: никогда не пиши *производную* строку, которую не проверил (неспрошенный авторский слот остаётся absent, не угадывается), и всегда называй отложенное. Каждый последующий прогон — полная дуга.
 
-**A deferred authored section is declared, not dropped** — *Reality* and *Shared
-surfaces* especially, because other sections point at them. Keep the heading and
-write one real line under it — *"Not settled yet: run the interview (say
-repo-boost) before accepting any behavioral claim here."* — not a slot, so the
-no-angle-brackets check still passes. An absent section reads as "nothing to
-check here", the opposite of true, and leaves the pointers in *Session lifecycle*
-and Working principles 4 and 6 aimed at nothing.
+**Отложенная авторская секция объявляется, не роняется** — особенно *Reality* и *Shared surfaces*: на них указывают другие секции. Оставь заголовок и одну настоящую строку под ним — «Ещё не устоялось: прогони интервью (скажи repo-boost), прежде чем принимать здесь любую поведенческую заявку.» — не слот, так что проверка «без угловых скобок» проходит. Отсутствующая секция читается как «проверять нечего» — противоположность правде — и оставляет указатели из *Session lifecycle* и Working principles 4 и 6 нацеленными в пустоту.
 
-### Step 1 — Settle with the user (do first)
-Don't silently pick defaults. Confirm in conversation, then write into *What this
-project is*: **Nature** (and, if not `production`, which principles are relaxed +
-why), **NKS realm name** (create if missing), **Stack**, **Quality gate**
-(propose strictest — Step 3). For an existing repo, infer these from the repo and
-the old config first, then confirm only what's ambiguous.
+### Шаг 1 — Согласуй с пользователем (сначала)
+Не выбирай дефолты молча. Подтверди в разговоре и запиши в *What this project is*: **Nature** (и, если не `production`, какие принципы ослаблены и почему), **имя NKS-реалма** (создай, если нет), **Stack**, **гейт качества** (предложи строжайший — Шаг 3). Для существующего репо сначала выведи из репо и старого конфига, подтверждай только двусмысленное.
 
-Also settle **who owns direction**: the realm's owner as a svatantra (主)
-karta — created in Step 2 if missing. Out-of-mandate questions will be posed to
-it as graph vimarshas (`posed_to`), not chat-only asks.
+Также согласуй, **кто владеет направлением**: владелец реалма как svatantra-карта (主) — создаётся в Шаге 2, если её нет. Вопросы вне мандата будут ставиться ей граф-вимаршами (`posed_to`), не только чатом.
 
-Also settle **shared mutable build/test state**: does build or test read or
-mutate a shared resource — a database, a fixed port, a dev server, a global
-cache, a cloud sandbox? If yes, capture per-lane isolation (per-branch
-DB/schema, per-lane port, per-lane temp dir) as a gotcha: agents run branches
-concurrently in separate worktrees, and a shared resource corrupts across lanes.
-Skip when build/test has no shared mutable state.
+Также согласуй **общее изменяемое состояние build/test**: читает или мутирует ли сборка/тест общий ресурс — базу, фиксированный порт, dev-сервер, глобальный кэш, облачную песочницу? Если да — зафиксируй по-полосную изоляцию (per-branch БД/схема, per-lane порт, per-lane temp) как готчу: агенты гоняют ветки конкурентно в отдельных worktree, и общий ресурс портится поперёк полос. Пропусти, если общего изменяемого состояния нет.
 
-Also settle **shared surfaces**: which components, schemas, contracts or rules
-have more than one consumer, and which consumers. Authored slot — a silently
-forked component looks like two ordinary files, so the repo can't be grepped for
-it. Fills *Shared surfaces*; omit the section only if the answer is genuinely
-nothing.
+Также согласуй **общие поверхности**: у каких компонентов, схем, контрактов и правил больше одного потребителя, и кто они. Авторский слот: молча форкнутый компонент выглядит как два обычных файла, репо по нему не грепается. Заполняет *Shared surfaces*; опусти секцию, только если ответ — действительно ничего.
 
-Also settle **reality** — what a claim here is verified *against*; fills the
-*Reality* table. A code repo, a data repo and an infrastructure repo answer this
-differently, so derive nothing, ask: where a change lands, what effects it
-produces, which of them are observable and with exactly what command / URL /
-query, and what the agent reaches alone versus what needs the user. Press for
-the *canonical carrier* of each claim class — the built artifact, not the
-sources; the live endpoint, not the handler; a clean install, not a warm cache.
-A class with no reachable observation goes under *Ceiling* with its reason,
-never left as an aspirational row.
+Также согласуй **реальность** — против чего здесь проверяется заявка; заполняет таблицу *Reality*. Кодовый репо, репо данных и инфраструктурный отвечают на это по-разному, поэтому ничего не выводи — спрашивай: куда приземляется изменение, какие эффекты производит, какие из них наблюдаемы и какой именно командой / URL / запросом, что агент достаёт сам, а что требует пользователя. Дожимай до *канонического носителя* каждого класса заявок — собранный артефакт, не исходники; живой эндпоинт, не хендлер; чистая установка, не тёплый кэш. Класс без достижимого наблюдения идёт в *Ceiling* со своей причиной, никогда — аспирационной строкой. (Как таблица работает при закрытиях — дисциплина «Сверка реальностью» скилла on-duty.)
 
-Also settle **workflow-suite coexistence** (only when a coercive workflow suite
-is detected — its skills appear in the skills list, or its dir exists in the
-plugin cache, e.g. `~/.claude/plugins/`; today that means superpowers): tell
-the user what was found and settle the mode:
-1. **Full interop** (recommended) — AGENTS.md gets the interop subsection
-   (from this skill's `references/superpowers-interop.md`) + the spec-write
-   hook (Step 4);
-2. **Prose-only** — the subsection, no spec-write hook;
-3. **Skip** — no coexistence text (not recommended; note the risk: design
-   sessions led by the suite won't persist to the realm by default).
+Также согласуй **сосуществование с workflow-набором** (только когда обнаружен коэрсивный набор — его скиллы видны в списке, или его директория есть в кэше плагинов, например `~/.claude/plugins/`; сегодня это superpowers): скажи пользователю, что найдено, и согласуй режим:
+1. **Полный interop** (рекомендуется) — AGENTS.md получает interop-подсекцию (из `references/superpowers-interop.md` этого скилла) + spec-write-хук (Шаг 4);
+2. **Только проза** — подсекция без spec-write-хука;
+3. **Пропустить** — без текста сосуществования (не рекомендуется; назови риск: дизайн-сессии, ведомые набором, по умолчанию не осядут в реалм).
 
-### Step 2 — NKS bootstrap
-- Realm exists? If not: agree a name, then `iskron_realm(action="create")`.
-- If the project has structure beyond the realm itself, a focus holon exists
-  (named after the project's boundary, `contains`-linked from the realm root),
-  and its `#seq` goes into *What this project is*. Design the boundary with the
-  `design` skill, create with `iskron_add_holon`.
-- **The doer becomes a steward.** Create the repo's agent karta
-  (`iskron_add_karta`, `manifested_as=adhikarin`, motivation distilled from the
-  Production statement) and draw its `steward` edge to the focus holon — an
-  adhikarin without a steward edge is a live warning ("acts but answers for
-  nothing"). Create the owner's svatantra karta if Step 1 found none. Record
-  both seqs in *What this project is*. An agent can always re-find its kartas
-  via `iskron_me(action="kartas")` — the doc slot is the fast path, not the
-  only one.
+### Шаг 2 — NKS-бутстрап
+- Реалм существует? Нет: согласуй имя, затем `iskron_realm(action="create")`.
+- Если у проекта есть структура сверх самого реалма — существует фокус-холон (названный по границе проекта, `contains` от корня реалма), и его `#seq` идёт в *What this project is*. Границу проектируй скиллом `design`, создавай `iskron_add_holon`.
+- **Делатель становится стюардом.** Создай карту агента репозитория (`iskron_add_karta`, `manifested_as=adhikarin`, мотивация — дистиллят Production statement) и проведи её `steward` к фокус-холону: adhikarin без steward-ребра — живое предупреждение («действует, но ни за что не отвечает»). Создай svatantra-карту владельца, если Шаг 1 её не нашёл. Запиши оба seq в *What this project is*. Агент всегда может пере-найти свои карты через `iskron_me(action="kartas")` — слот в доке — быстрый путь, не единственный.
 
-### Step 3 — Quality gate (propose strictest, user confirms)
-For each: propose the strictest sensible option for the stack, a one-line
-trade-off, await confirmation. Default strict; relaxations need an explicit ask,
-calibrated to cost-of-breakage from *What this project is* and recorded there
-per-tool.
+### Шаг 3 — Гейт качества (предложи строжайший, пользователь подтверждает)
+По каждому пункту: предложи строжайший разумный для стека вариант, трейд-офф одной строкой, дождись подтверждения. Дефолт строгий; послабления — только по явной просьбе, откалиброванной ценой поломки из *What this project is*, и записываются там по-инструментно.
 
-**Tightening an existing gate is not free.** On a mature repo whose gate is
-already relaxed, `max-warnings 0` is not a checkbox — it commits the user to a
-refactor. Before proposing to tighten, *measure*: run the linter/typechecker at
-the proposed strictness, count the failures, and show that cost. Tightening an
-already-relaxed gate needs the same explicit ask as a relaxation — and may belong
-in a follow-up branch, not the bootstrap.
-- **Linter**, max strict (e.g. `@typescript-eslint/strict`; Ruff
-  `E,F,B,I,N,UP,RUF`; `golangci-lint` broad; `clippy -- -D clippy::pedantic`).
-- **Formatter**, auto-fix on save + pre-commit (Prettier, `ruff format`,
-  `gofumpt`, `rustfmt`).
-- **Type checker**, strict, if the stack has one (`tsc --strict`, `mypy
-  --strict` / `pyright --strict`).
-- **Pre-commit hook**: linter + formatter + typecheck on staged files.
-- **Test framework + discipline** (unit for libraries; +integration for
-  services; +e2e for UI; coverage threshold for production). Record in *Code
-  conventions*.
-- **CI**: lint + typecheck + tests on every push, fails on warnings. Mandatory
-  for `production`.
-- **CI parity**: any check that can *fail* must gate PRs, not just post-merge.
-  Audit the workflows for jobs scoped to push-`main`/release only (codegen,
-  schema/API-spec/docs generation, image or bundle build, migration check) — a
-  post-merge-only check lets two individually-green PRs break `main` after merge.
-  Tighten it to also run on PRs; record any gap you can't close now as a gotcha.
+**Ужесточение существующего гейта не бесплатно.** На зрелом репо с уже ослабленным гейтом `max-warnings 0` — не галочка, а обязательство рефакторинга. Прежде чем предлагать ужесточение — *измерь*: прогони линтер/тайпчекер на предлагаемой строгости, посчитай провалы, покажи цену. Ужесточению уже-ослабленного нужна та же явная просьба, что послаблению, — и, возможно, отдельная ветка, не бутстрап.
+- **Линтер**, максимально строгий (`@typescript-eslint/strict`; Ruff `E,F,B,I,N,UP,RUF`; `golangci-lint` широкий; `clippy -- -D clippy::pedantic`).
+- **Форматтер**, auto-fix on save + pre-commit (Prettier, `ruff format`, `gofumpt`, `rustfmt`).
+- **Тайпчекер**, strict, если в стеке есть (`tsc --strict`, `mypy --strict` / `pyright --strict`).
+- **Pre-commit-хук**: линтер + форматтер + тайпчек по staged-файлам.
+- **Тест-фреймворк + дисциплина** (unit для библиотек; +integration для сервисов; +e2e для UI; порог покрытия для production). Записать в *Code conventions*.
+- **CI**: lint + typecheck + tests на каждый пуш, падает на предупреждениях. Обязателен для `production`.
+- **CI-паритет**: всякая проверка, способная *упасть*, должна гейтить PR, а не только post-merge. Проаудируй workflow на джобы, скоупленные push-`main`/release (кодоген, генерация схем/API-спек/доков, сборка образа или бандла, проверка миграций) — проверка только-после-мержа позволяет двум по отдельности зелёным PR сломать `main` после мержа. Дотяни до прогона и на PR; неустранимый сейчас зазор запиши готчей.
 
-Write commands into *Commands*, discipline into *Code conventions*.
+Команды — в *Commands*, дисциплину — в *Code conventions*.
 
-### Step 4 — Hooks
-**The deliverable is the rituals, not the file.** Detect which harness the repo
-uses and wire *its* surface — Claude Code's hooks file, Codex's `[hooks]` in
-`config.toml`, OpenCode's plugin dir — from `references/harness-surfaces.md`,
-which carries the verified paths, event names and per-ritual mapping for each.
-More than one may be present; wire each. Where a harness has no surface for a
-ritual, say which one you couldn't automate — it still binds through the AGENTS.md
-*Session lifecycle* prose, which the skeleton inlines for exactly this reason.
-Never write a config for a format you're guessing.
+### Шаг 4 — Хуки
+**Деливерабл — ритуалы, не файл.** Определи, какими харнессами репо пользуется, и прошей поверхность *каждого* — hooks-файл Claude Code, `[hooks]` в `config.toml` Codex, plugin-директорию OpenCode — по `references/harness-surfaces.md`, где лежат проверенные пути, имена событий и пер-ритуальный маппинг. Харнессов может быть несколько — прошей каждый. Где у харнесса нет поверхности для ритуала — скажи, какой не удалось автоматизировать: он всё равно связывает через прозу *Session lifecycle* в AGENTS.md, которую скелет инлайнит ровно поэтому. Никогда не пиши конфиг формата, о котором гадаешь.
 
-The rest of this step is Claude Code's shape. Three hooks in `.claude/settings.json` (committed — project-wide rituals, every
-agent on every clone needs them), plus a conditional fourth — the spec-write
-hook — **only when the Step-1 coexistence settle chose full interop** (the
-settled mode is recorded in the AGENTS.md interop stamp, Step 7; no subsection
-= no settle = three hooks). **Merge, never overwrite:** other suites may
-already own entries in this file — add yours alongside theirs in the same
-arrays; deleting another suite's hooks breaks its rituals. Generate the JSON for
-*this* project — write it yourself:
-- **`SessionStart`** → reminder to orient in NKS before acting (skill `entry`),
-  naming *this* realm slug, focus holon **and agent karta**: open the doer's
-  agenda (`iskron_orient(realm, focus="<agent-karta-seq>")`) — incoming `posed_to`
-  vimarshas are the session's inbox; pick up or explicitly defer each.
-- **`PostToolUse`** with `"matcher": "Bash"` → when the command contains `git
-  push`, reminder to update NKS (match reality + advance the bianhua map, and
-  end what the push settled by axis — `addressed_by` records the answer, release
-  is its own act), **sweep the shipped contour** (flip the modes of
-  every designed node the push realized — the whole contour, not only the nodes
-  you touched — and end the design vimarshas the ship settled), **work the
-  inbox** (the `posed_to` questions the work answered), run the
-  after-green-push self-review, **re-read the diff and the nodes for borrowed
-  project-management words** — ticket, backlog, sprint, epic, story, done,
-  blocker, committed — naming each to the user and asking what this project
-  calls it instead of swapping it yourself, and: uningested design/spec docs on
-  this branch → intake them (`intake` skill, then `design`) before closing.
-  The vocabulary re-read rides *this hook* on purpose: it is the prose ban's
-  mechanism, and a ban that lives only in AGENTS.md is the one an agent skates
-  past.
-- **`PreToolUse`** with `"matcher": "Write|Edit|MultiEdit"` → the **memory-guard
-  hook**: when the target path is inside the local project-memory dir, **block
-  the write** (exit 2, routing message on stderr) — project state lives in the
-  repo or the graph, never in local agent memory; the dir stays frozen at its
-  prohibition stub (Step 5). Blocking is safe here: the path is unambiguous and
-  legitimate writes there are zero by policy. It fires at the exact moment the
-  save-instinct does, when AGENTS.md is far behind in the context. Exact JSON
-  below.
-- **`PostToolUse`** with `"matcher": "Write|Edit"` → the **spec-write hook**
-  (full-interop mode only): when the written file path looks like a design/spec
-  doc, reminder that the file is a draft view — the graph is the design record.
-  Same envelope style, gated on `.tool_input.file_path` the way the push hook
-  gates on the command text; exact JSON below.
+Остальное в этом шаге — форма Claude Code. Три хука в `.claude/settings.json` (коммитится — ритуалы всего проекта, нужны каждому агенту на каждом клоне), плюс условный четвёртый — spec-write — **только когда согласование Шага 1 выбрало полный interop** (согласованный режим записан в interop-штампе AGENTS.md, Шаг 7; нет подсекции = не согласовано = три хука). **Мержи, никогда не перезаписывай:** в файле могут жить записи других наборов — добавляй свои рядом в тех же массивах; удаление чужих хуков ломает чужие ритуалы. JSON генерируй под *этот* проект — пиши сам:
+- **`SessionStart`** → напоминание ориентироваться в NKS до действий (скилл `entry`), с именем *этого* реалма, фокус-холона **и карты агента**: открыть повестку делателя (`iskron_orient(realm, focus="<seq карты агента>")`) — входящие `posed_to`-вимарши суть инбокс сессии; каждую взять или явно отложить.
+- **`PostToolUse`** с `"matcher": "Bash"` → когда команда содержит `git push`: напоминание обновить NKS (сверить с реальностью + продвинуть карту bianhua, и завершить то, что пуш разрешил, по осям — `addressed_by` записывает ответ, отпускание — отдельный акт), **промести отгруженный контур** (переключить модусы каждого спроектированного узла, который пуш реализовал, — весь контур, не только тронутые, — и завершить дизайн-вимарши, которые отгрузка разрешила), **отработать инбокс** (`posed_to`-вопросы, на которые работа ответила), прогнать самопроверку после зелёного пуша, **перечитать дифф и узлы на заимствованные проектно-менеджерские слова** — ticket, backlog, sprint, epic, story, done, blocker, committed — называя каждое пользователю и спрашивая, как это зовётся в проекте, а не подменяя самому; и: невпущенные design/spec-доки на этой ветке → впустить (`intake`, затем `design`) до закрытия. Словарная перечитка едет *на этом хуке* нарочно: она — механизм запрета прозы, а запрет, живущий только в AGENTS.md, агент и проскальзывает.
+- **`PreToolUse`** с `"matcher": "Write|Edit|MultiEdit"` → **memory-guard**: когда целевой путь внутри локальной директории проектной памяти — **блокируй запись** (exit 2, маршрутизирующее сообщение в stderr) — состояние проекта живёт в репо или графе, никогда в локальной памяти агента; директория остаётся замороженной на стабе-запрете (Шаг 5). Блокировать здесь безопасно: путь однозначен, легитимных записей туда ноль by policy. Хук срабатывает в момент, когда включается инстинкт «сохранить», а AGENTS.md уже далеко в контексте. Точный JSON ниже.
+- **`PostToolUse`** с `"matcher": "Write|Edit"` → **spec-write-хук** (только полный interop): когда путь записанного файла похож на design/spec-док — напоминание, что файл есть черновой вид, а запись дизайна — граф. Тот же стиль конверта, гейт по `.tool_input.file_path`, как push-хук гейтится по тексту команды; точный JSON ниже.
 
-Each hook runs a shell `command` that echoes the hook envelope to stdout. The
-nesting (`event → array → {"hooks":[{"type":"command","command":…}]}`) is the
-easy part to get wrong:
+Каждый хук запускает shell-`command`, эхающий конверт хука в stdout. Вложенность (`event → массив → {"hooks":[{"type":"command","command":…}]}`) — то, что легко перепутать:
 ```json
 { "hooks": { "SessionStart": [ { "hooks": [ { "type": "command",
   "command": "echo '{\"hookSpecificOutput\":{\"hookEventName\":\"SessionStart\",\"additionalContext\":\"<orient reminder: realm + focus holon>\"}}'" } ] } ] } }
 ```
-The `PostToolUse` entry adds `"matcher": "Bash"` and gates the echo on the
-command: `jq -r '.tool_input.command // ""' | grep -q 'git push' && echo '<envelope>' || true`.
-This matches the command *text*, so it will also fire on commands that merely
-*mention* `git push` (an `echo`, a PR-body heredoc, this very hook's own
-validation) — a known false-positive. Harmless for a non-blocking reminder, so
-ship it as-is; just never promote this text-match to anything that gates work. To
-cut the noise, also branch on `.tool_response` so the reminder fires only when
-the push actually ran.
+Запись `PostToolUse` добавляет `"matcher": "Bash"` и гейтит эхо по команде: `jq -r '.tool_input.command // ""' | grep -q 'git push' && echo '<envelope>' || true`.
+Это матчит *текст* команды, так что сработает и на командах, лишь *упоминающих* `git push` (echo, heredoc PR-тела, валидация самого этого хука) — известный ложный позитив. Для неблокирующего напоминания безвреден — шипь как есть; только никогда не повышай этот текст-матч до чего-либо, что гейтит работу. Чтобы срезать шум — ветвись ещё и по `.tool_response`, чтобы напоминание срабатывало только на реально прошедший пуш.
 
-The memory-guard hook — unlike the reminders it **blocks**: a `PreToolUse`
-command that exits 2 stops the tool call and hands Claude the stderr message.
-The path is unambiguous (`.claude/projects/<encoded>/memory/`), so false
-positives are near zero:
+Memory-guard — в отличие от напоминаний он **блокирует**: `PreToolUse`-команда с exit 2 останавливает вызов тула и отдаёт Claude сообщение из stderr. Путь однозначен (`.claude/projects/<encoded>/memory/`), ложных позитивов почти ноль:
 ```json
 { "matcher": "Write|Edit|MultiEdit", "hooks": [ { "type": "command",
   "command": "jq -r '.tool_input.file_path // \"\"' | grep -Eq '\\.claude/projects/.*/memory/' && { echo 'BLOCKED: local agent memory is forbidden for project state (AGENTS.md, Persistence rules). Route the fact to AGENTS.md (repo conventions, code/git facts) or a hint vimarsha in the project realm (graph). This dir stays frozen at its prohibition stub.' >&2; exit 2; } || exit 0" } ] }
 ```
-This entry goes under `"PreToolUse"` — its own event array, not the
-`PostToolUse` one.
-The spec-write hook (full-interop only), same gating style — a wide behavioral
-glob; false positives are harmless for a non-blocking reminder, never promote
-it to anything that gates work:
+Эта запись идёт под `"PreToolUse"` — собственный массив события, не массив `PostToolUse`.
+Spec-write-хук (только полный interop), тот же стиль гейта — широкий поведенческий glob; ложные позитивы безвредны для неблокирующего напоминания, никогда не повышай его до гейта работы:
 ```json
 { "matcher": "Write|Edit", "hooks": [ { "type": "command",
   "command": "jq -r '.tool_input.file_path // \"\"' | grep -qE '(^|/)specs/[^/]+\\.md$|(^|/)docs/.*design[^/]*\\.md$' && echo '{\"hookSpecificOutput\":{\"hookEventName\":\"PostToolUse\",\"additionalContext\":\"A design draft was written; per AGENTS.md this file is a draft view — the graph is the design record. Intake it (intake skill, then design skill) in this session — do not defer to a push.\"}}' || true" } ] }
 ```
-The spec-write entry merges into the same `PostToolUse` array as the git-push
-hook — sibling objects, not replacements; the memory guard lives in its own
-`PreToolUse` array.
+Spec-write-запись мержится в тот же массив `PostToolUse`, что и git-push-хук — соседние объекты, не замены; memory-guard живёт в собственном массиве `PreToolUse`.
 
-Self-check: all three base hooks present, and the spec-write hook present
-**iff** the AGENTS.md interop stamp says `full` (absent stamp or `prose-only` →
-it must NOT be wired — don't re-add it on refresh); `SessionStart` names the
-real realm slug, focus holon and agent-karta seq, not placeholders; no
-pre-existing hook entry from another suite was dropped by the merge.
+Self-check: все три базовых хука на месте, и spec-write присутствует **тогда и только тогда**, когда interop-штамп AGENTS.md говорит `full` (нет штампа или `prose-only` → его НЕ должно быть — не до-добавляй на рефреше); `SessionStart` называет реальный слаг реалма, фокус-холон и seq карты агента, не плейсхолдеры; ни одна чужая хук-запись не выпала при мерже.
 
-Heads-up: writing `.claude/settings.json` may be flagged by the harness as
-self-modification and require explicit approval — surface the write for
-confirmation rather than assuming it lands silently.
+Внимание: запись `.claude/settings.json` харнесс может пометить как само-модификацию и потребовать явного одобрения — вынеси запись на подтверждение, а не считай, что она легла молча.
 
-### Step 5 — Repo hygiene
-- Commit `.claude/settings.json`; ignore `.claude/settings.local.json` via
-  `.gitignore`. If `.claude/` is broadly ignored, add an explicit un-ignore:
-  `!.claude/settings.json`. Verify with `git check-ignore -v
-  .claude/settings.json .claude/settings.local.json`.
-- **Tracked secret/env files**: run `git ls-files '.env*' '*secret*' '*local*'`.
-  If a real env/secret file is tracked (not just an `.example`), warn in *Code
-  conventions*: never stage local edits — `git update-index --skip-worktree
-  <file>`, never `git add -A` / `commit -a` (an agent editing a tracked env file
-  otherwise leaks it into the PR).
-- Local project-memory dir (`~/.claude/projects/<encoded-path>/memory/`):
-  audit and **evacuate** it. Project state (decisions, constraints, branch
-  state, gotchas) → AGENTS.md / HANDOVER.md / NKS; user/agent-scoped
-  preferences (working style, language) → the user's global memory, not the
-  project dir. Then freeze the dir: `MEMORY.md` becomes a one-line
-  prohibition stub («project state lives in the repo or the graph — see
-  AGENTS.md, Persistence rules»), and the memory-guard hook (Step 4) blocks
-  any further write at the moment the save-instinct fires. Reason:
-  reproducibility + multi-machine, multi-agent work — local memory is
-  invisible to every other agent and machine.
-- *Stack*, *Commands*, *Project structure*, *Code conventions* hold real content
-  proportional to maturity. Empty is fine day one; `TBD` is not.
-- `HANDOVER.md` exists only if feature-branch work is in flight.
-- `README.md` is short, human-facing, and doesn't duplicate AGENTS.md.
+### Шаг 5 — Гигиена репозитория
+- Закоммить `.claude/settings.json`; заигнорь `.claude/settings.local.json` в `.gitignore`. Если `.claude/` игнорится широко — добавь явный un-ignore: `!.claude/settings.json`. Проверь `git check-ignore -v .claude/settings.json .claude/settings.local.json`.
+- **Трекаемые secret/env-файлы**: прогони `git ls-files '.env*' '*secret*' '*local*'`. Если трекается реальный env/secret (не `.example`) — предупреди в *Code conventions*: никогда не стейджить локальные правки — `git update-index --skip-worktree <file>`, никогда `git add -A` / `commit -a` (агент, правящий трекаемый env, иначе сливает его в PR).
+- Локальная директория проектной памяти (`~/.claude/projects/<encoded-path>/memory/`): проаудируй и **эвакуируй**. Проектное состояние (решения, ограничения, состояние веток, готчи) → AGENTS.md / HANDOVER.md / NKS; пользовательские/агентские предпочтения (стиль работы, язык) → глобальная память пользователя, не проектная директория. Затем заморозь: `MEMORY.md` становится однострочным стабом-запретом («состояние проекта живёт в репо или графе — см. AGENTS.md, Persistence rules»), а memory-guard (Шаг 4) блокирует дальнейшие записи в момент срабатывания инстинкта. Причина: воспроизводимость + мультимашинная, мультиагентная работа — локальная память невидима любому другому агенту и машине.
+- *Stack*, *Commands*, *Project structure*, *Code conventions* несут реальное содержимое пропорционально зрелости. Пусто в первый день — нормально; `TBD` — нет.
+- `HANDOVER.md` существует только при работе в полёте на фиче-ветке.
+- `README.md` короткий, человеко-обращённый, AGENTS.md не дублирует.
 
-### Step 6 — Subagent delegation roles
-Project the delegation doctrine as **named role agents**, not as AGENTS.md
-prose (orchestration mechanics stay out of AGENTS.md — the output contract
-above). Doctrine + file templates: `references/delegation.md` (relative to
-this skill).
-- Always: `.claude/agents/reader.md` (cheap-tier recon),
-  `.claude/agents/worker.md` (mid-tier brief execution) and
-  `.claude/agents/verifier.md` (top-tier cold acceptance), model aliases
-  `haiku`/`sonnet`/`opus`. The verifier is projected even where the repo has no
-  runtime yet — it is what makes the *Reality* table actionable, and a repo that
-  gains a carrier later should not need a re-run to gain its acceptor.
-- When the repo shows OpenCode use (`opencode.json` / `.opencode/` present, or
-  the user says so): `.opencode/agents/reader.md`, `worker.md` and
-  `verifier.md`, `mode: subagent`, model **pinned** per file — an unpinned
-  OpenCode subagent inherits the invoking primary's model, so the pin is the
-  point, and on the verifier it decides whether acceptance is real. Resolve
-  current `provider/model-id`s from the user's setup (ask, or read
-  `opencode.json` / the global config); never hardcode from the reference.
-- The `description` fields are the delivery channel — they sit in the
-  agent/task tool list every session, so the routing trigger fires without any
-  skill load. Keep them trigger-shaped: when to use, what comes back, what NOT
-  to trust it with.
-- Judgment work (design, review, synthesis) gets no role file — it stays with
-  the session model or a per-call top-tier override where the platform
-  supports it.
-- **Merge, never overwrite**: a same-named `reader` / `worker` / `verifier`
-  agent file from another suite may already exist — fold your body/description
-  in or rename yours (`iskron-reader`); the same rule the hooks merge follows.
-- Self-check: role files parse (frontmatter); pinned models exist in the
-  user's setup; AGENTS.md carries **no** inlined delegation doctrine (a
-  pointer at most); no pre-existing agent file was overwritten.
+### Шаг 6 — Ролевые суб-агенты делегирования
+Проецируй доктрину делегирования **именованными ролевыми агентами**, не прозой AGENTS.md (механика оркестрации — вне AGENTS.md, контракт выхода выше). Доктрина + шаблоны файлов: `references/delegation.md` (относительно этого скилла).
+- Всегда: `.claude/agents/reader.md` (дешёвый тир, разведка), `.claude/agents/worker.md` (средний тир, исполнение брифа) и `.claude/agents/verifier.md` (верхний тир, холодная приёмка), алиасы моделей `haiku`/`sonnet`/`opus`. Verifier проецируется даже там, где у репо ещё нет рантайма — именно он делает таблицу *Reality* действенной, и репо, обретший носитель позже, не должен требовать пере-прогона ради своего приёмщика.
+- Когда репо показывает использование OpenCode (`opencode.json` / `.opencode/`, или пользователь говорит): `.opencode/agents/reader.md`, `worker.md` и `verifier.md`, `mode: subagent`, модель **пришпилена** в каждом файле — незапиненный суб-агент OpenCode наследует модель вызывающего, так что пин и есть смысл, а на verifier он решает, настоящая ли приёмка. Актуальные `provider/model-id` бери из настройки пользователя (спроси или прочти `opencode.json` / глобальный конфиг); никогда не хардкодь из референса.
+- Поля `description` — канал доставки: они сидят в списке агентов каждую сессию, так что триггер маршрутизации срабатывает без загрузки скилла. Держи их триггер-образными: когда звать, что вернётся, чему НЕ доверять.
+- Суждению (дизайн, ревью, синтез) ролевого файла не даётся — оно остаётся сессионной модели или пер-вызовному топ-тиру, где платформа умеет.
+- **Мержи, никогда не перезаписывай**: одноимённый `reader` / `worker` / `verifier` другого набора может уже существовать — вложи своё тело/описание внутрь или переименуй свой (`iskron-reader`); то же правило, что у мержа хуков.
+- Self-check: ролевые файлы парсятся (frontmatter); пришпиленные модели существуют в настройке пользователя; AGENTS.md **не** несёт инлайновой доктрины делегирования (максимум указатель); ни один существующий агент-файл не перезаписан.
 
-### Step 7 — Finalize
-- Write the filled body to **`AGENTS.md`** — the vendor-neutral canonical name,
-  which Codex and OpenCode read natively. **A pointer file is Claude Code's
-  requirement alone** (it reads `CLAUDE.md`, not `AGENTS.md`); don't create one
-  for a harness that doesn't need it. Two isomorphic forms, chosen by whether
-  symlinks survive the checkout — decide by `git config core.symlinks` plus the
-  platform, don't assume:
-  - **Symlinks work (POSIX default):** `ln -s AGENTS.md CLAUDE.md`. One file,
-    two names — nothing to keep in sync, and any tool reading `CLAUDE.md`
-    literally gets the real content, not an import directive.
-  - **Symlinks don't (Windows, `core.symlinks=false`):** copy `AGENTS.md` to
-    `CLAUDE.md` byte-for-byte. A copy is a second source of truth, so it is
-    regenerated on every repo-boost run and listed in *What to update when*;
-    edits go to `AGENTS.md` and never to the copy. A third form exists — a
-    one-line `CLAUDE.md` containing `@AGENTS.md`, Claude Code's import (no
-    backticks, a code span suppresses it) — use it where a copy would be worse
-    than an import that only Claude Code understands.
-  Don't churn a pointer that already works, whichever of the three it is.
-  Per-harness specifics, including Codex's root→cwd merge and its
-  `AGENTS.override.md` local override, are in `references/harness-surfaces.md`.
-- **Legacy config already present** (the common case): use the skeleton as the
-  frame and fold existing content in *by line kind* — re-project derived facts
-  from their source (don't carry a stale version, command, or path forward just
-  because it was written down) but preserve authored judgment (gotchas,
-  why-clauses, nature) that has no checkable source, sanity-checking it against
-  the code. Project-specific content with no slot moves to *Code conventions* or a
-  new section. End with `AGENTS.md` as the one file + `CLAUDE.md` as the pointer
-  (whichever of the three forms above the checkout supports) — if a *content-bearing*
-  `CLAUDE.md` exists, fold its content into `AGENTS.md` and replace the file
-  with the pointer. One source per concern — no duplicate sections.
-- If Step 1 settled full interop or prose-only: render the
-  `### Workflow-suite interop (superpowers)` subsection at the end of
-  `## Session lifecycle`, taking the section text from this skill's
-  `references/superpowers-interop.md` (deployable part only — the maintainers'
-  re-verify checklist stays in the reference). Stamp it with the plain trailing
-  line `*(interop: <full|prose-only> — verified against superpowers@<version> —
-  re-check on suite upgrade)*` — the stamp records the settled mode; Step 4 and
-  refresh runs read it. On refresh runs, audit the subsection like any other AGENTS.md
-  concern: source of truth = the reference file + the installed suite version.
-- **Verify pass (co-equal with the density pass):** re-check every *derived* line
-  against its source from the map — **whole-artifact, not just the lines you
-  touched.** The most dangerous errors sit in untouched, settled-looking lines
-  that drift silently because nothing challenges them. A claim you can't tie to a
-  source is either authored judgment (keep it, recognize it as such) or a guess
-  (cut it).
-- **Density pass:** for every body line ask "does this change what the agent
-  does?" Cut narrative, motivation, design rationale (rationale → NKS).
-- Drift between runs is guaranteed — the doc goes stale the moment code changes.
-  repo-boost re-verifies only when re-run; an automatic "claimed vs actual" check
-  hook (e.g. doc versions vs `package.json`) is a **settled non-default** —
-  generic prose-vs-source parsing is brittle, throws false positives, and the
-  checker drifts alongside the doc it guards. Re-running repo-boost is the
-  discipline. A narrow per-repo checker on named lines is the only shape worth
-  building; never a generic one.
-- **Stamp the contract.** Trailing line of `AGENTS.md`: `*(repo-boost: contract
-  <the date from the top of this file> — re-run when the installed contract is
-  newer, or when the sources this file derives from have moved since.)*` On a
-  refresh, overwrite the old stamp; never leave two. A config carrying **no**
-  stamp predates the contract entirely — treat it as older than any date and
-  run the full arc.
-- Confirm no `<…>` slot and no `<!-- … -->` note survived into `AGENTS.md`.
-- On the bootstrap push, NKS reflects the change (vimarshas opened/closed,
-  the bianhua map advanced).
-- **Pass the baton — name the next step, never let the user guess it.** End by
-  offering the first visible value: a quick roadmap teaser (`product-roadmap`
-  skill, quick mode) over the freshly bootstrapped repo. Say its name, don't
-  allude to it. After a quick-mode run the baton is two items in order: the
-  teaser, then "say `repo-boost` again for the gate, hooks and the interview".
-  The chain from setup to first wow breaks wherever the user is expected to
-  remember a word across a session restart.
+### Шаг 7 — Финализация
+- Запиши заполненное тело в **`AGENTS.md`** — вендор-нейтральное каноническое имя, которое Codex и OpenCode читают нативно. **Файл-указатель — требование одного Claude Code** (он читает `CLAUDE.md`, не `AGENTS.md`); не создавай его харнессу, которому он не нужен. Две изоморфные формы, выбираемые по тому, переживают ли симлинки чекаут, — решай по `git config core.symlinks` плюс платформе, не предполагай:
+  - **Симлинки работают (дефолт POSIX):** `ln -s AGENTS.md CLAUDE.md`. Один файл, два имени — нечего синхронизировать, и любой тул, читающий `CLAUDE.md` буквально, получает реальное содержимое, а не директиву импорта.
+  - **Не работают (Windows, `core.symlinks=false`):** скопируй `AGENTS.md` в `CLAUDE.md` байт-в-байт. Копия — второй источник истины, поэтому она перегенерируется на каждом прогоне repo-boost и числится в *What to update when*; правки идут в `AGENTS.md` и никогда в копию. Есть третья форма — однострочный `CLAUDE.md` с `@AGENTS.md`, импорт Claude Code (без бэктиков — код-спан его глушит), — используй там, где копия хуже импорта, понятного одному Claude Code.
+  Не переделывай уже работающий указатель, какой бы из трёх форм он ни был. Пер-харнессные детали, включая merge root→cwd у Codex и его локальный оверрайд `AGENTS.override.md`, — в `references/harness-surfaces.md`.
+- **Легаси-конфиг уже есть** (обычный случай): используй скелет как раму и вложи существующее *по роду строки* — производные факты ре-спроецируй из источника (не тащи устаревшую версию, команду или путь только потому, что они записаны), авторское суждение (готчи, why-клаузы, nature) без проверяемого источника сохрани, сверив на здравость с кодом. Проектное содержимое без слота — в *Code conventions* или новую секцию. Закончи с `AGENTS.md` как единственным файлом + `CLAUDE.md` как указателем (той из трёх форм, какую несёт чекаут) — если существует *содержательный* `CLAUDE.md`, вложи его содержимое в `AGENTS.md` и замени файл указателем. Один источник на заботу — без дублирующих секций.
+- Если Шаг 1 согласовал полный interop или prose-only: отрендери подсекцию `### Workflow-suite interop (superpowers)` в конце `## Session lifecycle`, взяв текст из `references/superpowers-interop.md` (только деплоируемую часть — чек-лист перепроверки мейнтейнеров остаётся в референсе). Проштампуй её простой хвостовой строкой `*(interop: <full|prose-only> — verified against superpowers@<version> — re-check on suite upgrade)*` — штамп записывает согласованный режим; его читают Шаг 4 и рефреш-прогоны. На рефрешах аудируй подсекцию как любую заботу AGENTS.md: источник истины = файл референса + установленная версия набора.
+- **Проверочный проход (на равных с проходом плотности):** перепроверь каждую *производную* строку против её источника из карты — **весь артефакт, не только тронутые строки.** Самые опасные ошибки сидят в нетронутых, устоявшихся на вид строках, дрейфующих молча, потому что их ничто не оспаривает. Заявка, которую не привязать к источнику, — либо авторское суждение (сохрани, распознав как таковое), либо догадка (вырежи).
+- **Проход плотности:** для каждой строки тела спроси «меняет ли она то, что агент делает?» Режь нарратив, мотивацию, проектные обоснования (обоснования → NKS).
+- Дрейф между прогонами гарантирован — док устаревает в момент изменения кода. repo-boost перепроверяет только при пере-прогоне; автоматический хук «заявленное vs фактическое» (например, версии в доке vs `package.json`) — **согласованный не-дефолт**: обобщённый парсинг прозы-против-источника хрупок, сыплет ложные позитивы, и проверяльщик дрейфует вместе с охраняемым доком. Дисциплина — пере-прогон repo-boost. Узкий пер-репо чекер по именованным строкам — единственная форма, которую стоит строить; обобщённый — никогда.
+- **Проштампуй контракт.** Хвостовая строка `AGENTS.md`: `*(repo-boost: contract <дата из шапки этого файла> — re-run when the installed contract is newer, or when the sources this file derives from have moved since.)*` На рефреше перезапиши старый штамп; никогда не оставляй два. Конфиг **без** штампа предшествует контракту целиком — считай его старше любой даты и прогони полную дугу.
+- Подтверди: ни один слот `<…>` и ни одна заметка `<!-- … -->` не пережили в `AGENTS.md`.
+- На бутстрап-пуше NKS отражает перемену (вимарши открыты/закрыты, карта bianhua продвинута).
+- **Передай эстафету — назови следующий шаг, не заставляй пользователя угадывать.** Закончи предложением первой видимой ценности: быстрый тизер роадмапа (скилл `product-roadmap`, quick-режим) по свежепрокачанному репо. Назови его по имени, не намекай. После quick-прогона эстафета — два пункта по порядку: тизер, затем «скажи `repo-boost` ещё раз для гейта, хуков и интервью». Цепочка от настройки до первого «вау» рвётся там, где от пользователя ждут, что он вспомнит слово через рестарт сессии.
