@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.0](https://github.com/iskron-ai/skills/compare/v1.1.0...v1.2.0) (2026-07-28)
+
+
+### Features
+
+* **repo-boost:** русская деривация четырёх references ([#5](https://github.com/iskron-ai/skills/issues/5)) ([fee1ab8](https://github.com/iskron-ai/skills/commit/fee1ab8edb77dc863cf916a3de2d62af86cfe7ff))
+
 ## [1.1.0](https://github.com/iskron-ai/skills/compare/v1.0.0...v1.1.0) (2026-07-28)
 
 
