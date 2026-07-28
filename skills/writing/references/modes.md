@@ -1,32 +1,60 @@
-# Modes — Self-Check and Stable Triads
+# Модусы — самопроверка, образцы, грамматика переходов
 
-The tool descriptions on each factory (nks_add_phenomenon, nks_add_kriya, etc.) already list enum values and contextual questions for each mode. Read them before writing.
+Описания фабрик (`iskron_add_phenomenon`, `iskron_add_kriya`, …) уже несут enum-значения и контекстные вопросы каждого модуса. Читай их до записи.
 
-This reference covers what the tools don't: self-check and common patterns.
+Этот справочник — то, чего тулы не говорят: самопроверка, образцы, движения.
 
-## Self-check
+## Самопроверка
 
-Read your three modes back as a sentence:
+Прочитай свою тройку как предложение:
 
-"We [epistemic] this, it [ontic], and we [volitive] it."
+«Мы [эпистемика] это, оно [онтика], и мы [воля] его.»
 
-✓ "We *witnessed* this, it *exists now*, and we *accept* it." → Pt/Va/Up — observed running system.
-✗ "We *inferred* this, it *doesn't exist yet*, and we *accept* it." → An/Ag/Up — you designed something future but don't care? Probably An/Ag/Ch.
+✓ «Мы *засвидетельствовали* это, оно *действует сейчас*, и мы *принимаем* его.» → Pt/Va/Up — наблюдаемая работающая система.
+✗ «Мы *вывели* это, его *ещё нет*, и мы *принимаем* его.» → An/Ag/Up — спроектировал будущее и тебе всё равно? Скорее An/Ag/Ch.
 
-## Stable triads
+## Устойчивые тройки (образцы)
 
-| Pattern | Ep | On | Vol | Use |
+Образцы — конкретные строки таблицы носителей: носитель рода определяет, какая ось несёт жизнь и что считается закрытием.
+
+| Образец | Эп | Он | Воля | Применение |
 |---|---|---|---|---|
-| Observation | Pt | Va | Up | Describing what you see |
-| Project | An | Ag | Ch | Planning to build |
-| Committed | An | Ag | Ad | Committed plan |
-| Established | Pm | Va | Up | Verified fact |
-| Historical | Pt | At | Up | Recording what was |
-| Refuted | Ba | At | Vs | Wrong, letting go |
-| Risk (vimarsha) | Kl/An | Ag | Vi | Don't want this |
-| Incident (sachverhalt) | Pt | At | Vi | Bad thing happened |
-| Closed incident | Pt | At | Vs | Resolved |
+| наблюдение | Pt | Va | Up | видели в действии, принимаем |
+| проект | An | Ag | Ch | план к реализации |
+| зрелый проект | An | Ag | Ad | устоявшийся план |
+| удостоверенное | Pm | Va | Up | многократно подтверждено |
+| исторический слой | Pt | At | Up | было, прошло, зафиксировано |
+| опровергнутое | Ba | At | Vs | опровергнуто, отпущено |
+| теоретический конструкт | An | Vk | Ad | мысленный конструкт, удерживаемый |
+| риск-вимарша | Kl/An | Ag | Vi | возможное нежелательное |
+| инцидент (sachverhalt) | Pt | At | Vi | случившееся нежелательное, 🔥 |
+| закрытый инцидент | Pt | At | Vs | разрешён (addressed_by на вимарше), отпускаем |
+| активная проблема | Pt | Va | Vi | текущий баг |
+| депрекация (kriya/karta/vollzug) | Pt | Va | Vi | работает — хотим вывести; живое напряжение |
+| сложенная практика | Pt | At | Vs | практика/роль/метод выведены — долг отдан |
+| шабда-прошлое | Pm | Va | Up | авторитетный брифинг |
+| шабда-проект | An | Ag | Ch | проектный документ |
 
-## Forbidden
+Совет: начинай с «наблюдения» для описательного и с «проекта» для планируемого.
 
-API rejects: `badhita + vartamana`, `vikalpa + chanda`, `nashta + chanda`.
+## Движения между тройками
+
+Шаги вперёд по носителю рода (anagata→vartamana, когда практика стартует) и восхождение достоверности (Kl→An→Pt→Pm) — законные акты, не натяжения: совершай их, когда граф их подразумевает.
+
+1. **Проект → реализация**: An/Ag/Ch → Pt/Va/Up.
+2. **Проект → отказ**: An/Ag/Ch → An/Ag/Vs.
+3. **Риск → инцидент**: Kl/Ag/Vi → Pt/At/Vi — эпистемика эскалирует, онтика инвертируется; реализуется обновлением модусов либо `realized_as` → sachverhalt. Материализация риск НЕ закрывает — закрывают только модусы (upeksha принят ∨ visarjana отпущен).
+4. **Инцидент → закрытие**: Pt/At/Vi → Pt/At/Vs, через addressed_by на вимарше.
+5. **Наблюдение → удостоверенность**: Pt → Pm.
+6. **Удостоверенность → опровержение**: Pm/Va/Up → Ba/At/Vs.
+7. **Депрекация → сложение**: Pt/Va/Vi → Pt/At/Vs — деевый выход из ткани: долг отдан, практика сложена.
+
+**Подозрительные переходы** (поверхности показывают предупреждением, не чини реструктурированием — только касанием модуса): воскрешение (atita→vartamana без основания); Pm→An/Kl без reverify-события; смерть-без-бытия (anagata→atita минуя vartamana; kind-aware: для риска Ag→At — законная реализация). visarjana→chanda — законное переоткрытие, журналируется.
+
+Два закона рядом: **atita утверждает прошедшее БЫТИЕ** — несбывшееся это anagata+visarjana, не atita; nashta — безвозвратная утрата. **visarjana — универсальный волевой выход**, закрывает всегда.
+
+## Запрещённые триады
+
+API отвергает (422): `badhita + vartamana` («опровергнуто и действует»), `vikalpa + chanda` («заведомо конструкт и хотим реализации» — фантазия), `nashta + chanda` («безвозвратно утрачено и хотим» — иллюзия).
+
+`kalpita + pramanita` не блокируется жёстко (артефакт миграции возможен) — даёт предупреждение. Ожидания зависят от рода: Pm+Ag подозрительно для ding/sachverhalt, законно для grundsatz.

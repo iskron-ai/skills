@@ -1,44 +1,62 @@
-# given_as — Decision Tree
+# given_as — дерево решения и матрица стрелок
 
-How does this phenomenon present itself to the kriya that acts on it?
+Как этот феномен предстаёт крие, которая на него действует? given_as отвечает на «*что* дано» (вещь, положение дел, смысл…); модусы — на «*как* дано». Оси ортогональны.
 
 ```
-Can I point at it outside the graph? (file, container, config)
-  → ding 物
+Могу показать вне графа? (файл, контейнер, конфиг)
+  → ding 物 — вещь; граф её описывает, не конституирует
 
-State of affairs — before/after snapshot? ("VM ready", "Risk materialized")
-  → sachverhalt 勢
+Положение дел — снимок до/после? («VM готова», «Риск сбылся»)
+  → sachverhalt 勢 — существует только как «до» и «после» крии
 
-Named meaning — concept? ("Estafeta", "Tension", "given_as")
-  → sinn 名
+Поименованный смысл — понятие? («Эстафета», «Натяжение», «given_as»)
+  → sinn 名 — чтойность без вещности
 
-Seed — something becoming, not yet crystallized? (draft, aperçu)
-  → bildung 理
+Зачин — складывающееся, ещё не форма? (черновик, проблеск, семя, цель)
+  → bildung 理 — усмотренный узор; тянет к себе
 
-Method — "this is how"? (procedure, mode, instrument)
-  → vollzug 行
+Метод — «так можно»? (процедура, режим, инструмент)
+  → vollzug 行 — ход, дозволение
 
-Principle — "this is how it must be"? (rule, norm, invariant)
-  → grundsatz 法
+Принцип — «так должно»? (правило, норма, инвариант)
+  → grundsatz 法 — ограничение, без которого система разваливается
 ```
 
-## Arrow expectations
+Пары, которые путают: **ding/sachverhalt** — можно `ls`? → ding; состояние, существующее потому, что нечто случилось? → sachverhalt. **sinn/grundsatz** — sinn именует, что ЕСТЬ; grundsatz говорит, что ДОЛЖНО. **vollzug/grundsatz** — комплементарны: «так можно» и «так должно». **bildung/grundsatz** — узор живой, ещё не застыл; застыв, становится правилом (это и есть утверждение тезиса). **sachverhalt-инцидент** — тройка Pt/At/Vi, эмодзи 🔥.
 
-| given_as | Expected | Forbidden |
-|---|---|---|
-| ding 物 | ahara/utpatti ← kriya, context → holon | — |
-| sachverhalt 勢 | ahara/utpatti ← kriya, context → holon | — |
-| sinn 名 | upadhi ← kriya, vimarsha_of ← vimarsha | ahara/utpatti suspicious |
-| bildung 理 | arose_from essential, realized_as when crystallizes | ahara/utpatti suspicious |
-| vollzug 行 | upadhi ← kriya ONLY | ahara/utpatti → API 422 |
-| grundsatz 法 | upadhi ← kriya ONLY | ahara/utpatti → API 422 |
+## Матрица given_as × рёбра
 
-## Common confusions
+✓ ожидаемо · ○ допустимо · ? подозрительно · ✗ недопустимо
 
-**ding vs sachverhalt**: `ls`-able? → ding. State that exists because something happened? → sachverhalt.
+### Исходящие (phenomenon → …)
 
-**sinn vs grundsatz**: sinn names what IS. grundsatz says what MUST BE.
+| Ребро | ding 物 | sachverhalt 勢 | sinn 名 | bildung 理 | vollzug 行 | grundsatz 法 |
+|---|---|---|---|---|---|---|
+| context → holon | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| derived_from → phen. | ○ | ○ | ✓ | ✓ | ○ | ✓ |
+| arose_from → любой | ? | ○ | ○ | ✓ | ○ | ✓ |
+| specifies → phen. | ○ | ? | ✓ | ○ | ✓ | ✓ |
 
-**vollzug vs grundsatz**: vollzug = HOW. grundsatz = WHY.
+### Входящие (… → phenomenon)
 
-**sachverhalt as incident**: modes pratyakshita/atita/virodha = something bad happened. Use 🔥 emoji.
+| Ребро | ding 物 | sachverhalt 勢 | sinn 名 | bildung 理 | vollzug 行 | grundsatz 法 |
+|---|---|---|---|---|---|---|
+| ahara ← kriya | ✓ | ✓ | ? | ? | ✗ | ✗ |
+| utpatti ← kriya | ✓ | ✓ | ○ | ○ | ✗ | ✗ |
+| upadhi ← kriya | ○ | ○ | ✓ | ? | ✓ | ✓ |
+| vimarsha_of ← vim. | ○ | ○ | ✓ | ✓ | ○ | ✓ |
+| addressed_by ← любой | ✗ | ✗ | ○ | ○ | ✗ | ✗ |
+| supersedes ← phen. | ○ | ○ | ○ | ? | ○ | ○ |
+| realized_as ← vim.(risk) | ✓ | ✓ | ○ | ✓ | ○ | ✗ |
+| specifies ← phen. | ○ | ? | ✓ | ○ | ✓ | ✓ |
+
+Ключевые обоснования: **ahara/utpatti — материальные стрелки**; ding и sachverhalt естественно потребляются и производятся, vollzug и grundsatz — **никогда** (метод и правило *применяются*: upadhi; API 422). **realized_as**: риск-вимарша материализуется в sachverhalt — положение дел, которое случилось, и есть инцидент.
+
+## Диагностика по given_as
+
+- **ding без ahara ∨ utpatti** — сирота-вещь.
+- **sachverhalt без ahara ∧ utpatti** — висящее состояние.
+- **sinn без vimarsha_of ∧ upadhi ∧ context** — мёртвое понятие.
+- **bildung без arose_from ∨ vimarsha_of** — потерянный зачин.
+- **vollzug без upadhi** — мёртвый рецепт.
+- **grundsatz без upadhi** — декларативный принцип.

@@ -1,93 +1,95 @@
 ---
 name: inquiry
-description: "Use this skill for the LIFE of a vimarsha and work with the FIELD of inquiry — not posing one (that's writing), but moving it through its lifecycle: anchoring, resolving, closing, parking, superseding, crystallizing, or attaching it to a bianhua. Triggers: 'разбери вимарши', 'поле вопрошания', 'закрой вимаршу', 'запаркуй вимаршу', 'разреши вопрошание', 'триаж вимарш', 'work the field of inquiry', 'close/park this vimarsha', 'resolve the question', a high dangling-vimarsha count in orient, or session close. Distinct from writing (which poses a vimarsha — genre, name-question) and from assembly (the realm-wide field pass): this skill is the per-vimarsha and field work of carrying questions to a resolution. Needs the nks_* MCP tools."
+description: "Используй для ЖИЗНИ вимарши и работы с ПОЛЕМ вопрошания — не постановка (это writing), а жизненный цикл: якорение, разрешение, закрытие, парковка, вытеснение, кристаллизация, привязка к bianhua. Триггеры: «разбери вимарши», «поле вопрошания», «закрой/запаркуй вимаршу», «разреши вопрошание», «триаж вимарш», work the field of inquiry, resolve the question, много висящих вимарш в orient, закрытие сессии. Distinct from writing (постановка) и assembly (проход по всему реалму): здесь вопросы доводятся до разрешения. Нужны тулы iskron_*."
 ---
 
-# NKS Inquiry
+# Вопрошание в NKS
 
-A vimarsha is not a sticky note. It is a recorded *tension with reality* that must eventually be discharged — resolved, released, or crystallized into form. **writing** poses the question; **this** skill carries it through its life and works the field as a whole.
+Вимарша — не стикер. Это записанное *натяжение с реальностью*, которое должно быть рано или поздно разряжено — разрешено, отпущено или кристаллизовано в форму. **writing** ставит вопрос; **этот** скилл ведёт его по жизни и работает с полем как целым.
 
-The symptom this skill fixes: realms accumulate **dangling** vimarshas — unanchored, unresolved, invisible to the agents who could discharge them. A field of free questions that never converges to understanding is a realm that thinks but never *learns*.
+Симптом, который скилл лечит: реалмы копят **висящие** вимарши — незаякоренные, неразрешённые, невидимые агентам, которые могли бы их разрядить. Поле свободных вопросов, не сходящееся к пониманию, — реалм, который думает, но не *учится*.
 
-## 1. Anchoring is mandatory
+## 1. Якорение обязательно
 
-An unanchored vimarsha is an **invisible** vimarsha — it surfaces in no `lens="vimarshas"`, propagates to no node. Every vimarsha needs two arrows:
+Незаякоренная вимарша — **невидимая** вимарша: она не всплывает ни в одном `lens="vimarshas"`, не распространяется ни на один узел. Каждой вимарше нужны две стрелки:
 
-- **`vimarsha_of`** → the node(s) the question is *about*. Without it the question floats.
-- **`arose_from`** → the observation it was *seen from* (a node, an incident, a prior vimarsha). Without it the question has no origin to trace back to.
+- **`vimarsha_of`** → узел(ы), *о которых* вопрос. Без него вопрос плавает.
+- **`arose_from`** → наблюдение, *из которого* он увиден (узел, инцидент, прежняя вимарша). Без него у вопроса нет истока, к которому можно вернуться.
 
-A vimarsha carrying an **expectation** (a `posed_to` arrow to a karta, anga to a bianhua) needs the anchor doubly: agents discover work by orienting on a *holon*, and neither `anga` nor `posed_to` scopes a vimarsha into anyone's contour — without `vimarsha_of` into the addressee's territory it is invisible there and will never be done. Minimum anchor — the holon where the expected work lives; better — the precise phenomenon or kriya within it. (The `unanchored` detector fires post-hoc; don't rely on it — anchor at posing time.) `posed_to` is the live **inbox edge** to a karta — so an addressee can poll "my open questions"; forbidden to a `pratibimba` (an image can't answer), and it never substitutes for `vimarsha_of`.
+Вимарша, несущая **ожидание** (`posed_to` к карте, anga к bianhua), нуждается в якоре вдвойне: агенты находят работу, ориентируясь на *холон*, а ни `anga`, ни `posed_to` не помещают вимаршу ни в чей контур — без `vimarsha_of` в территорию адресата она там невидима и не будет сделана. Минимум — холон, где живёт ожидаемая работа; лучше — точный феномен или крия внутри. (Детектор `unanchored` срабатывает пост-фактум; не полагайся на него — якори при постановке.) `posed_to` — живое **ребро-инбокс** к карте, чтобы адресат мог собирать «мои открытые вопросы»; запрещено к `pratibimba` (образ не ответит) и никогда не заменяет `vimarsha_of`.
 
-The mirror failure is just as real: `vimarsha_of` **without** `posed_to` on a question that *expects another doer to act* — anchored, visible in the territory, in no one's inbox; a delegation degraded to a note-into-the-void. If you expect someone to act, name them: the 能 who stewards the holon where the work lives (**writing** Decision 2b — find it via the `steward` arrow or `nks_search(q="", node_type="karta")`, never from orient's root-kartas showcase), never a `pratibimba`.
+Зеркальный провал так же реален: `vimarsha_of` **без** `posed_to` на вопросе, *ожидающем действий другого делателя*, — заякорено, видно в территории, ни в чьём инбоксе; делегирование, выродившееся в записку в пустоту. Ждёшь чьих-то действий — назови кого: 能, стюардящий холон работы (**writing**, Решение 2b — ищи по стрелке `steward` или `iskron_search(q="", node_type="karta")`, никогда по витрине корневых карт в orient), и никогда `pratibimba`.
 
-If you find a dangling vimarsha (orient flags them), the first move is almost always to anchor it, then triage.
+Нашёл висящую вимаршу (orient их флагует) — первый ход почти всегда заякорить, потом триаж.
 
-## 2. The lifecycle — three outcomes
+## 2. Жизненный цикл — три исхода
 
-A vimarsha is *live* while it holds an open tension. It leaves the live field by exactly one of three doors:
+Вимарша *жива*, пока держит открытое натяжение. Из живого поля она выходит ровно одной из трёх дверей:
 
-| Outcome | What happens | How |
+| Исход | Что происходит | Как |
 |---|---|---|
-| **Resolution** | the question is answered; a node addresses it | `addressed_by` arrow (vimarsha → resolving node) + volitive `visarjana` |
-| **Death** | consciously dropped *without* an answer — it was wrong, moot, or superseded | volitive `visarjana`, with a reasoning line saying *why* it dies unanswered |
-| **Crystallization** | the insight becomes a standing form | a `given_as` phenomenon `arose_from` the vimarsha — the question hardens into a grundsatz / sinn / bildung |
+| **Разрешение** | на вопрос отвечено; узел его закрывает | стрелка `addressed_by` (вимарша → разрешающий узел) + волевой `visarjana` |
+| **Смерть** | сознательно отпущена *без* ответа — была неверной, снялась, вытеснена | волевой `visarjana` с reasoning-строкой, *почему* умирает без ответа |
+| **Кристаллизация** | прозрение становится стоячей формой | феномен с given_as, `arose_from` → вимарша: жидкое (сомнение, наблюдение — подвижное) застывает в твёрдое (принцип, различение, метод) |
 
-Plus two non-terminal moves:
+Кристаллизация — самый ценный исход: опыт не просто закрыт, а проткан в ткань — grundsatz/sinn применяется дальше через upadhi-рёбра к криям. Вимарша при этом закрывается (`visarjana`) и остаётся в графе как след вопроса, из которого вырос ответ.
 
-- **Supersede** — a later question subsumes this one: `supersedes` arrow on the replacement, old → `visarjana`.
-- **Park** — needed, not now: volitive `upeksha`, set **consciously**. Park is a *mode*, never `attrs.parked=true` (suppression is an anti-pattern).
+Плюс два нетерминальных хода:
 
-> All of these are **modes and arrows**, never attrs. `nks_update(... volitive_mode=...)` to move the mode; `nks_arrow(action="link", ...)` for addressed_by / supersedes / arose_from. Every mutation needs `basis_version` from a fresh `nks_look`.
+- **Вытеснение** — поздний вопрос поглощает этот: `supersedes` на замене, старая → `visarjana`.
+- **Парковка** — нужна, но не сейчас: волевой `upeksha`, поставленный **сознательно**. Парковка — *модус*, никогда не `attrs.parked=true` (подавление — антипаттерн).
 
-## 3. Genre sets the character of resolution
+> Всё это — **модусы и стрелки**, никогда не attrs. `iskron_update(... volitive_mode=...)` двигает модус; `iskron_arrow(action="link", ...)` — для addressed_by / supersedes / arose_from. Каждая мутация требует `basis_version` из свежего `iskron_look`.
 
-The genre you posed under (writing) determines what *counts* as discharging it:
+## 3. Жанр задаёт характер разрешения — и ось закрытия
 
-| Genre | Resolved by |
+Жанр, под которым вопрос поставлен (writing), определяет, что *считается* его разрядкой, и какая ось несёт закрытие:
+
+| Жанр | Разряжается чем | Ось закрытия |
+|---|---|---|
+| **samshaya** («верно ли?») | снятием неопределённости — решением, найденным узлом, проверкой | воля: `visarjana` ∨ `virodha` (отказ) ∨ addressed_by |
+| **prati-paksha** («не согласен») | оценочным решением: предложение принято, преображено или отклонено | воля: `visarjana` ∨ `virodha` (отказ) |
+| **hint** («будущий агент: прочти») | прочитано → исполнено → закрыто. Держи тонким — указатель, не payload: только то, чего orient/линзы не покажут; правь in-place, закрой, когда содержимое проросло в граф | воля: `visarjana` ∨ `virodha` |
+| **risk** («что может пойти не так?») | митигирующей крией, grundsatz-инвариантом или *сознательным принятием*. Активный риск *стоит* в `virodha` — это его живой модус. Закрывают **только модусы**: `upeksha` (принят, с reasoning) ∨ `visarjana` (отпущен). `addressed_by`/`realized_as` — информационны, не гейт: материализация риск НЕ закрывает (сбывшийся риск хуже открытого; `realized_as` → случившийся sachverhalt) | воля: `upeksha` ∨ `visarjana` |
+| **vyabhichara** («случай мимо правила») | ремонтом, снимающим дефект, или уточнённым правилом | онтика: дефект есть, пока `vartamana`; закрытие — `atita` ∨ `visarjana`; `virodha` конститутивен |
+| **hetu-dosha** («рассуждение дефектно») | исправлением или отзывом аргумента | онтика: `atita` ∨ `visarjana`; `virodha` конститутивен |
+| **semantic-drift** («термин уплыл») | пере-фиксацией термина (正名) и сведением разъехавшихся употреблений — не согласием, что вопрос снят | онтика: `atita` ∨ `visarjana`; `virodha` конститутивен |
+
+Не можешь сказать, что разрядило бы вимаршу, — возможно, неверен жанр: перепроверь его (это решение **writing**).
+
+## 4. Вопрошание и превращение (bianhua)
+
+Вимарша — либо **часть превращения**, либо **свободное вопрошание**. Реши, что именно, — сознательно:
+
+- **anga превращения** — её разрешение *двигает* качественное превращение, которое проходит система. Привяжи: `iskron_arrow(action="link", arrow_type="anga", source=<вимарша>, target=<bianhua>)`. Вимарша сохраняет свой `vimarsha_of` (реальный предмет); `anga` добавочен — «моё разрешение двигает это превращение к завершению». Жанр задаёт характер участия: samshaya снимает блокирующую неопределённость, risk защищает bianhua, vyabhichara чинит дефект в нём, оценка prati-paksha его двигает. **Привязывай к существующему лесу** (`lens="bianhua"`); одна вимарша никогда не оправдывает новое bianhua — когда ни одно превращение не подходит и ты не уверен, спроси пользователя, а не создавай (имя и телос bianhua — поверхность приёмки владельца; скилл assembly).
+- **свободное вопрошание** — подлинный открытый вопрос вне идущих превращений. Оставь свободным — но *сознательно*, не по небрежности.
+
+Anga превращения — не только вопросы: `iskron_search(anga_of=<bianhua>)` и фокус `lens="bianhua"` показывают **крии-носители** рядом с вимаршами-драйверами. Вимарша-anga — *путь* (её разрешение двигает перемену); крия-anga — *прибытие*: деяние, которое само составляет превращение. Направление читай из трипути самой крии (нет `anga_kind`): **возведение** входит в ткань (`anagata→vartamana`, `chanda`/`adhimoksha`), **депрекация** покидает её (`vartamana→atita`, `virodha`). Превращение может двигаться сделанным деянием, не только отвеченным вопросом — завершённая крия остаётся anga как прибытие (отдача долга), её `resolved` (из трипути) входит в прогресс bianhua.
+
+Строить карту *из* поля — кластеризовать вимарши в bianhua, упорядочивать превращения — скилл **assembly**. Этот скилл решает судьбу каждой вимарши; assembly делает проход по реалму.
+
+## 5. Эскалация — что твоё, что нет
+
+| Решаешь сам (рядом с ткачеством) | Выносишь на повестку (address) |
 |---|---|
-| **samshaya** ("is this correct?") | removing the uncertainty — a decision, a found node, a check. visarjana once settled. |
-| **risk** ("what could go wrong?") | mitigation kriya, or a grundsatz invariant, or *conscious acceptance* (→ upeksha with reasoning). On materialization → `realized_as` the sachverhalt that occurred. |
-| **prati-paksha** ("I disagree / counter-thesis") | an evaluation-decision: the proposal is taken, reshaped, or declined — then visarjana. |
-| **vyabhichara** ("case the rule misses") | a repair that removes the defect, or a refined rule. |
-| **hetu-dosha** ("reasoning is flawed") | the argument is corrected or withdrawn. |
-| **semantic-drift** ("term has drifted") | the term is re-fixed (正名) and the drifted usages reconciled. |
-| **hint** ("future agent: read this") | read → executed → closed. A hint that's been acted on is done. Keep it thin — pointer, not payload: only what orient/lenses can't show; edit in place, close once its content has grown into the graph. |
+| заякорить висящую вимаршу | отклонить предложение |
+| закрыть отвеченный вопрос | расставить приоритеты между вопросами |
+| запарковать с сознательным reasoning | выбрать-иначе против записанного направления |
+| привязать драйвер к bianhua | всё, что несёт **трансцендентную волю** |
 
-If you can't say what would discharge a vimarsha, its genre may be wrong — re-check it (that's a **writing** decision).
+Решения с трансцендентной волей — отказ, приоритет, выбор-иначе — **не** агентские. Выноси их; не разрешай, чтобы расчистить поле. (Та же граница, которую **assembly** проводит между Сборщиком и Мыслепрактиком.)
 
-## 4. Inquiry and transformation (bianhua)
+## 6. Сессия должна прийти к пониманию
 
-A vimarsha is either **part of a transformation** or **free inquiry** — decide which, consciously:
+Принцип, правящий всем скиллом: **сессия должна сходиться к bildung-пониманиям, а не только плодить вимарши**. Триаж поля, после которого открытых вопросов больше, чем было, и ни одного кристаллизованного прозрения, — не приземлился. Перед закрытием полевой сессии спроси: *что мы теперь понимаем, чего не понимали?* Запиши это (кристаллизуй — исход 3). Это рефинирование, не уборка: сырьё (вимарши, инциденты) → продукт (тезис, крия-паттерн, принцип); visarjana — побочный эффект, не цель. Поле, которое только растёт, — реалм, который не учится.
 
-- **anga of a bianhua** — its resolution *drives* a qualitative transformation the system is undergoing. Attach it: `nks_arrow(action="link", arrow_type="anga", source=<vimarsha>, target=<bianhua>)`. The vimarsha keeps its `vimarsha_of` (its real subject); `anga` is additional — it says "my resolution moves this transformation toward completion." Genre sets the character of involvement: samshaya removes a blocking uncertainty, risk protects the bianhua, vyabhichara fixes a defect in it, prati-paksha's evaluation moves it. **Attach to the existing forest** (`lens="bianhua"`); a single vimarsha never justifies a new bianhua — when no transformation fits and you're unsure, ask the user instead of creating one (a bianhua's name and telos are the owner's acceptance surface — assembly skill).
-- **free inquiry** — a genuine open question not part of any transformation underway. Leave it free — but *consciously*, not by neglect.
+## Приёмка
 
-A bianhua's anga are not only questions: `nks_search(anga_of=<bianhua>)` and the `lens="bianhua"` focus surface **kriya-carriers** beside the vimarsha-drivers. A vimarsha-anga is the *path* (its resolution moves the change); a kriya-anga is the *arrival* — the deed that constitutes it. Read its direction from the kriya's own triputi (no `anga_kind`): a **возведение** enters the fabric (`anagata→vartamana`, `chanda`/`adhimoksha`), a **депрекация** leaves it (`vartamana→atita`, `virodha`). So a transformation can be carried forward by a deed done, not only a question answered — a finished kriya stays anga'd as the arrival (отдача долга), and its `resolved` (from its triputi) counts toward the bianhua's progress.
+- Висящее поле реального реалма может быть растриажено насквозь *одним этим скиллом*, без обращения к тексту методологии.
+- Каждый исход триажа выражается ровно одним ходом из разделов 2–5: заякорить, разрешить, отпустить, кристаллизовать, вытеснить, запарковать, anga, эскалировать.
 
-Building the map *from* the field — clustering vimarshas into bianhua, ordering transformations — is the **assembly** skill. This skill decides each vimarsha's fate; assembly does the realm-wide pass.
+## Чем inquiry НЕ является
 
-## 5. Escalation — what is yours, what is not
-
-| You decide it yourself (weave-near) | You carry it to the agenda (address) |
-|---|---|
-| anchoring a dangling vimarsha | refusing a proposal |
-| closing an answered question | setting priority across questions |
-| parking with conscious reasoning | choosing-otherwise against the recorded direction |
-| attaching a driver to a bianhua | anything carrying **transcendent will** |
-
-Decisions with transcendent will — refusal, priority, choosing-otherwise — are **not** the agent's. Surface them; don't resolve them to clear the field. (This is the same boundary the **assembly** skill draws between Сборщик and Мыслепрактик.)
-
-## 6. The session must arrive at understanding
-
-The principle that governs the whole skill: **a session should converge to bildung-understandings, not only spawn more vimarshas**. Triaging a field that ends with more open questions than it started — and no crystallized insight — has not landed. Before you close a field-work session, ask: *what did we now understand that we didn't?* Record it (crystallize — see outcome 3). A field that only grows is a realm that never learns.
-
-## Acceptance
-
-- The dangling field of a real realm can be triaged end-to-end *by this skill alone*, without reaching for the methodology text.
-- Every triage outcome is expressible as exactly one move from sections 2–5: anchor, resolve, kill, crystallize, supersede, park, anga, or escalate.
-
-## What inquiry is NOT
-
-- **Not posing** a vimarsha — genre, name-as-question, arose_from at birth → **writing**.
-- **Not the realm-wide map** — clustering vimarshas into bianhua, ordering, producing 形 → **assembly**.
-- **Not suppression** — `visarjana`/`upeksha` are *conscious closures with reasoning*, never a way to silence a tension you don't want to see.
+- **Не постановка** вимарши — жанр, имя-вопрос, arose_from при рождении → **writing**.
+- **Не карта реалма** — кластеризация вимарш в bianhua, порядок, 形 → **assembly**.
+- **Не подавление** — `visarjana`/`upeksha` — *сознательные закрытия с reasoning*, никогда не способ заглушить натяжение, которое не хочется видеть.

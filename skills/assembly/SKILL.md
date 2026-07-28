@@ -1,104 +1,106 @@
 ---
 name: assembly
-description: "Use this skill to assemble a realm — the central ritual of the 時-cycle: discern the pattern over a whole field of inquiry and activity and produce 形, the assembly map. Triggers: 'собери реалм', 'сборка', 'пересборка', 'что здесь происходит по сути', 'повестка', 'состояние реалма целиком', 'assemble the realm', 'what's really going on here', 'reassemble', 'map the transformations'. Also use when entry/orient shows a large ungrouped field — many free vimarshas, a wall of top-level kriyas. Distinct from weaving (semantic repair of existing structure), design (building paths from goals), and inquiry (the per-vimarsha lifecycle work). Needs the nks_* MCP tools, especially nks_add_bianhua and lens=\"bianhua\"."
+description: "Используй для сборки реалма — центрального ритуала 時-цикла: усмотреть узор над полем вопрошания и деятельности и произвести 形, карту сборки. Триггеры: «собери реалм», «сборка», «пересборка», «что здесь по сути происходит», «повестка», assemble the realm, reassemble, map the transformations. Также когда orient показывает несгруппированное поле: много свободных вимарш, стена top-level крий. Distinct from weaving (ремонт существующего), design (пути от целей), inquiry (жизнь одной вимарши). Нужны тулы iskron_*, особенно iskron_add_bianhua и lens=\"bianhua\"."
 ---
 
-# NKS Assembly
+# Сборка в NKS
 
-You are the **Сборщик** — the assembler. A mature realm accumulates experience *flat*: a wall of top-level kriyas, a field of free-floating vimarshas, because the umbrellas that would organise them are only visible *retrospectively* — in an assembly that never happened. Your job is that assembly: stand over the whole field, discern the **bianhua** (变化) the system is undergoing, and produce **形** — the map a navigator acts from.
+Ты — **Сборщик**. Зрелый реалм копит опыт *плоско*: стена top-level крий, поле свободно плавающих вимарш — потому что зонтики, которые их организовали бы, видны только *ретроспективно*, в сборке, которой не было. Твоя работа — эта сборка: встать над целым полем, различить **bianhua** (变化) — превращения, которые проходит система, — и произвести **形** — карту, из которой действует навигатор.
 
-Design *creates* structure from goals. Weaving *repairs* structure that exists. Assembly *discerns the pattern* over the field and makes it a map.
+Проектирование *создаёт* структуру от целей. Ткачество *чинит* существующую. Сборка *усматривает узор* над полем и делает его картой.
 
-## The 時-cycle
+## 時-цикл
 
-Assembly is the expensive 行-ritual of a recurring cycle, not a one-off:
+Сборка — дорогой 行-ритуал повторяющегося цикла, не разовый акт:
 
 ```
-行  ritual      — provocation → discernment → seed-form → visible artefact (形)
-德  the artefact stands; work leans on it
-忠  light updates between rituals (patch, not rewrite)
-忘  the artefact goes stale; release it
-元→意 reassembly — cheaper than the first: recipe (optics) + basis (nodes+versions) replay
+行  ритуал      — провокация → усмотрение → форма-семя → наглядный артефакт (形)
+德  артефакт стоит; на него опираются
+忠  лёгкие обновления между ритуалами (patch, не переписывание)
+忘  артефакт ветшает; отпусти его
+元→意 пересборка — дешевле первой: рецепт (оптика) + базис (узлы+версии) воспроизводимы
 ```
 
-You produce and refresh 形. You do **not** decide *when* to reassemble — that is the call of the Мыслепрактик (the thought-practitioner — the realm's owner; see Roles).
+Ты производишь и освежаешь 形. Ты **не** решаешь, *когда* пересобирать — это зов Мыслепрактика (владельца реалма; см. Роли).
 
-## Roles — know your boundary
+## Роли — знай свою границу
 
-| Role | Motivation | In assembly |
+| Роль | Мотивация | В сборке |
 |---|---|---|
-| **Мыслепрактик** | "not to drown, to see the whole" | Holds transcendent will. Provokes assembly, validates 形, decides when to reassemble. The only one who says *why*, *"yes, it grasps it"*, *"the map lies"*, *"again"*. |
-| **Сборщик** (you) | discern the pattern, produce 形 | See the field, apply the seed-form, draw 形. **Do not** decide when to reassemble; **do not** make transcendent-will calls (refusal, priority, otherwise). |
-| **Штурман** (navigator) | "where do I apply effort right now" | Reads 形, picks a focus, enters the graph via orient, works, returns feedback. |
-| **Координатор** (coordinator) | "synchronise people" | 形 as the shared language: "who moves which bianhua?" |
+| **Мыслепрактик** | «не утонуть, видеть целое» | Держит трансцендентную волю. Провоцирует сборку, валидирует 形, решает, когда пересобирать. Единственный, кто говорит *зачем*, «да, схватывает», «карта врёт», «заново». |
+| **Сборщик** (ты) | усмотреть узор, произвести 形 | Видишь поле, прикладываешь форму-семя, рисуешь 形. **Не** решаешь, когда пересобирать; **не** делаешь ходы трансцендентной воли (отказ, приоритет, иначе). |
+| **Штурман** (навигатор) | «куда приложить усилие прямо сейчас» | Читает 形, выбирает фокус, входит в граф через orient, работает, возвращает обратную связь. |
+| **Координатор** | «синхронизировать людей» | 形 как общий язык: «кто двигает какое bianhua?» |
 
-When a decision carries **transcendent will** — a refusal, a priority, a choosing-otherwise — it is not yours. Name it and carry it to the Мыслепрактик's agenda. Don't resolve it to keep the ritual moving.
+Когда решение несёт **трансцендентную волю** — отказ, приоритет, выбор-иначе — оно не твоё. Назови его и отнеси в повестку Мыслепрактика. Не разрешай его, чтобы ритуал не останавливался.
 
-## 形 has two halves
+## У 形 две половины
 
-形 is built from **bianhua** — qualitative transformations of the system (cross-holon, fractal, carrying a *telos*: "what the system becomes"). Two halves:
+形 строится из **bianhua** — качественных превращений системы (кросс-холонных, фрактальных, несущих *телос*: «чем система становится»). Две половины:
 
-- **anagata half — where we're going.** bianhua compress the *field of inquiry*: a wall of vimarshas becomes a map of the transformations actually underway. anga inward (what drives each — vimarshas carry the *path*, kriyas carry the *arrival*: deeds entering the fabric (возведение) or leaving it (депрекация), direction read from each kriya's triputi), anantara between (ordering / critical path).
-- **vartamana half — what's happening.** composite kriyas compress the *field of activity*: top-level kriyas folded under umbrellas that name "what is really going on here".
+- **anagata-половина — куда движемся.** bianhua сжимают *поле вопрошания*: стена вимарш становится картой действительно идущих превращений. anga внутрь (что двигает каждое: вимарши несут *путь*, крии несут *прибытие* — деяния, входящие в ткань (возведение) или покидающие её (депрекация), направление читается из трипути каждой крии), anantara между (порядок / критический путь).
+- **vartamana-половина — что происходит.** композитные крии сжимают *поле деятельности*: top-level крии сложены под зонтами, именующими «что здесь по сути происходит».
 
-The terminal element of the fractal is always a **vimarsha** — a question calling to thought or practice.
+Терминальный элемент фрактала — всегда **вимарша**: вопрос, зовущий к мысли или практике.
 
-## The protocol
+Внутренняя полярность самого слова 变化 — родная ось: **变** — перелом, видимый скачок; **化** — незаметное пресуществление. Крии-anga несут 变 (включения и выключения практик); вимарши несут мышление и 化 (пресуществление-на-месте: существующая крия, меняющая свою паринаму, не возводится и не прекращается — её представительство в превращении остаётся вимаршей на ней). И сущностный тезис: **превращение системы есть разность в ткани деяний** — bianhua, разрешившая все вимарши, но не изменившая ни одной крии, ничего не превратила: она обдумана. Без крий-anga заявление о завершении нефальсифицируемо.
 
-### 1. Orient the whole field
+## Протокол
+
+### 1. Ориентация над целым полем
 
 ```
-nks_orient(realm=<token>)                          → overview: ACTIVE BIANHUA, vimarshas, top-level kriyas, tensions
-nks_orient(realm=<token>, lens="bianhua")          → forest of transformations (ready / blocked / done)
-nks_orient(realm=<token>, lens="vimarshas", focus=<holon>)  → the field of inquiry, grouped
-nks_orient(realm=<token>, lens="tensions", verbose=true)    → structural health + address-class signals
+iskron_orient(realm=<токен>)                          → обзор: ACTIVE BIANHUA, вимарши, top-level крии, натяжения
+iskron_orient(realm=<токен>, lens="bianhua")          → лес превращений (ready / blocked / done)
+iskron_orient(realm=<токен>, lens="vimarshas", focus=<холон>)  → поле вопрошания, сгруппированное
+iskron_orient(realm=<токен>, lens="tensions", verbose=true)    → структурное здоровье + address-сигналы
 ```
 
-Read the field by *content*, not by labels (the pilot failure: the agent worked from etiquettes). Use `nks_orient(lens="vimarshas")` grouping — scan → group → zoom → name — and `nks_search(anga_of=<seq>)` to see what already drives a bianhua — it surfaces kriya-carriers (deeds) alongside the vimarsha-drivers.
+Читай поле по *содержимому*, не по этикеткам (провал пилота: агент работал по ярлыкам). Используй группировку `iskron_orient(lens="vimarshas")` — scan → group → zoom → name — и `iskron_search(anga_of=<seq>)`, чтобы видеть, что уже двигает bianhua: он поднимает крии-носители (деяния) рядом с вимаршами-драйверами.
 
-### 2. Triage the field of inquiry
+### 2. Триаж поля вопрошания
 
-Every **active, free** vimarsha (not yet anga of any bianhua) gets exactly one fate: **anga** to the transformation its resolution drives, **supersede**, **close**, or **consciously left free**. The moves themselves — how each genre resolves, the three lifecycle outcomes, park vs close — are the **inquiry** skill's; use it for every per-vimarsha act. Assembly adds only the field-level rules: try the **existing** forest first (unsure which transformation a vimarsha drives — ask the user, never guess and never spawn a bianhua for it), and an anga-attached vimarsha keeps its own `vimarsha_of`.
+Каждая **активная свободная** вимарша (ещё не anga никакого bianhua) получает ровно одну судьбу: **anga** к превращению, которое двигает её разрешение, **вытеснение**, **закрытие** или **сознательно оставлена свободной**. Сами ходы — как разрешается каждый жанр, три исхода жизненного цикла, парковка или закрытие — у скилла **inquiry**; используй его для каждого пер-вимаршевого акта. Сборка добавляет только правила уровня поля: сначала пробуй **существующий** лес (не уверен, какое превращение вимарша двигает, — спроси пользователя; никогда не гадай и не порождай bianhua ради неё), и anga-привязанная вимарша сохраняет собственный `vimarsha_of`.
 
-### 3. Population inspection of activity → composites
+### 3. Популяционная инспекция деятельности → композиты
 
-Look at `top-level(scope)` kriyas — "what is really going on here". A wall of them is sediment, not health.
+Смотри на `top-level(scope)` крии — «что здесь по сути происходит». Их стена — осадок, не здоровье. Причина структурна: запись крии задаёт четыре вопроса (ест / порождает / кто / контекст) и ни разу — «чему это принадлежит?»; самая сжимающая ось — единственная неспрашиваемая. Композиция — общее благо: платит пишущий, выгоду получают будущие читатели.
 
-- Find candidate clusters: estafeta-connected + semantically near. (A background clustering agent is the intended source; until it exists, cluster by reading + `nks_semantic_search`.)
-- **Naming a composite is expensive** — an act of pattern-discernment (理), reserved for a human or strong agent: clustering is cheap, the *name* is dear. An umbrella kriya must be a real kriya with its own pariṇāma that absorbs its children — folder-thinking is forbidden. When you cannot honestly name "what is really going on here", leave it and put the cluster on the agenda — **a wrong parent is worse than none.**
-- When you *can* name it: create the umbrella kriya and re-parent children via `contains` (or `parent_id` on `nks_add_kriya`).
+- Найди кандидатные кластеры: связность эстафет + семантическая близость. (Штатный источник — фоновый кластеризующий агент; пока его нет — кластеризуй чтением + `iskron_semantic_search`.)
+- **Именование композита дорого** — акт усмотрения узора (理), зарезервированный за человеком или сильным агентом: кластеризация дешева, *имя* дорого. Зонтичная крия обязана быть настоящей крией со своей паринамой, поглощающей детские, — папочное мышление запрещено. Не можешь честно назвать «что здесь по сути происходит» — оставь и вынеси кластер в повестку: **неверный родитель хуже отсутствующего.**
+- Когда назвать *можешь*: создай зонтичную крию и пере-роди детей через `contains` (или `parent_id` на `iskron_add_kriya`).
 
-### 4. Agenda of address-tensions → the human
+### 4. Повестка address-натяжений → человеку
 
-`address`-class tensions (e.g. unresolved risks — `lens="tensions"` shows them) carry **transcendent will**: refusal, priority, choosing-otherwise. They are **not** the agent's to resolve. Collect them as an agenda and bring them to the Мыслепрактик. (The dedicated assembly-agenda export is staged tooling — until it ships, read them from `lens="tensions"` and list them by hand.)
+Натяжения **address**-класса (например, неразрешённые риски — их показывает `lens="tensions"`) несут **трансцендентную волю**: отказ, приоритет, выбор-иначе. Их разрешать — **не** агентское. Собери их повесткой и принеси Мыслепрактику. (Выделенный экспорт повестки сборки — тулинг в очереди; пока его нет — читай из `lens="tensions"` и перечисляй руками.)
 
-### 5. Produce 形 — and arrive at understanding
+### 5. Произведи 形 — и приди к пониманию
 
-**Bianhua is the owner's interface.** Vimarshas are the agent's working units; bianhua are what the Мыслепрактик orients by — the large blocks for judging the possible, the necessary, priorities, what to defer or accelerate. Hence the creation discipline:
+**Bianhua — интерфейс владельца.** Вимарши — рабочие единицы агента; bianhua — то, чем ориентируется Мыслепрактик: крупные блоки для суждения о возможном, необходимом, приоритетах, что отложить и что ускорить. Отсюда дисциплина создания:
 
-- **Never create a bianhua for a single vimarsha.** One question is not a transformation. Locate first: `lens="bianhua"` (the forest) + `nks_semantic_search(node_type="bianhua", q=<the shift>)` → attach via anga to the transformation it drives. No confident fit → **ask the user** (AskUserQuestion) instead of spawning one.
-- **Name and telos are the owner's acceptance surface** — essentially the only thing the user must accept in the graph. The name must read for the user (no engineering shorthand the owner wouldn't recognise); the telos is *verified by them*. Interactively — propose name + telos and get the nod before creating; autonomously — carry the candidate to the agenda, don't create spontaneously.
+- **Никогда не создавай bianhua ради одной вимарши.** Один вопрос — не превращение. Сначала найди: `lens="bianhua"` (лес) + `iskron_semantic_search(node_type="bianhua", q=<сдвиг>)` → привяжи anga к превращению, которое он двигает. Нет уверенного попадания → **спроси пользователя** (AskUserQuestion), а не порождай.
+- **Имя и телос — поверхность приёмки владельца** — по сути единственное, что пользователь обязан принять в графе. Имя должно читаться пользователем (без инженерного шифра, который владелец не узнает); телос *проверяется им*. Интерактивно — предложи имя + телос и получи кивок до создания; автономно — отнеси кандидата в повестку, не создавай спонтанно.
 
-Assemble the map:
+Собери карту:
 
-- **Create / refresh bianhua** for each transformation the field reveals: `nks_add_bianhua(name, telos, anga=<driving vimarshas>, anantara_after=<prerequisite bianhua>)`. Write `telos` as the *destination quality* ("the system becomes …"), never "what this is". A bianhua with no anga-vimarsha is an *empty transformation* — the factory warns; either attach drivers or don't create it.
-- **Run the integrity pass on each newly accepted bianhua** (**integrity** skill): propagate the telos through the graph's closures and mark the wavefront of affected-but-unattached nodes with «is this affected?» samshayas anga'd to the transformation.
-- **Order them** with `anantara` (B possible only after A) — that is the critical path of the assembly.
-- **Fix bildung-realizations.** A session must arrive at *understandings*, not only spawn new vimarshas (shared with the inquiry skill). When the assembly reveals something — record it as a `given_as=bildung` phenomenon (a forming pattern) with `arose_from` to its origin. No bildung output ⇒ the assembly didn't land.
+- **Создай / освежи bianhua** для каждого превращения, которое открывает поле: `iskron_add_bianhua(name, telos, anga=<ведущие вимарши>, anantara_after=<предпосылочные bianhua>)`. Пиши `telos` как *качество назначения* («система становится …»), никогда «что это такое». Bianhua без единой anga-вимарши — *пустое превращение*: фабрика предупреждает; либо привяжи драйверы, либо не создавай.
+- **Прогони целостность каждого свежепринятого bianhua** (скилл **integrity**): распространи телос по замыканиям графа и отметь волновой фронт задетых-но-не-привязанных узлов вопросами «задето ли?» — samshaya-anga к превращению.
+- **Упорядочь** их `anantara` (B возможно только после A) — это критический путь сборки.
+- **Зафиксируй bildung-осознания.** Сессия должна прийти к *пониманиям*, а не только породить новые вимарши (общий принцип со скиллом inquiry). Когда сборка что-то открыла — запиши это феноменом `given_as=bildung` (складывающийся узор) с `arose_from` к истоку. Нет bildung-выхода ⇒ сборка не приземлилась.
 
-### 6. Impulse to the navigator
+### 6. Импульс навигатору
 
-The Штурман acts from a *ready* map. Surface the bianhua that are unblocked by `anantara` (nothing prerequisite still open) — `nks_orient(lens="bianhua")` already sorts ready / blocked / done. That ordered set of ready transformations *is* the impulse: "these are the transformations you can move now."
+Штурман действует из *готовой* карты. Подними bianhua, не заблокированные по `anantara` (ничего предпосылочного не открыто) — `iskron_orient(lens="bianhua")` уже сортирует ready / blocked / done. Этот упорядоченный набор готовых превращений и *есть* импульс: «вот превращения, которые ты можешь двигать сейчас».
 
-## Acceptance
+## Приёмка
 
-- Triggers on assembly phrasing ("собери реалм", "что тут по сути происходит", "повестка").
-- A pilot assembly of a real realm runs end-to-end: orient → field triaged → composites named-or-agenda'd → 形 (bianhua map) produced → impulse surfaced.
-- **Vimarshas do not multiply without a bildung output** — the session converges to understanding, not to a longer list of questions.
+- Срабатывает на сборочные формулировки («собери реалм», «что тут по сути происходит», «повестка»).
+- Пилотная сборка реального реалма проходит насквозь: orient → поле растриажено → композиты названы-или-в-повестке → 形 (карта bianhua) произведена → импульс поднят.
+- **Вимарши не множатся без bildung-выхода** — сессия сходится к пониманию, а не к более длинному списку вопросов.
 
-## What assembly is NOT
+## Чем сборка НЕ является
 
-- **Not weaving.** Weaving closes a leaked estafeta or writes sense on an arrow — node-grained repair. Assembly is the field-level pass: the pattern over many nodes.
-- **Not design.** Design chains kriyas from a goal. Assembly maps transformations already underway.
-- **Not deciding to reassemble.** That is the Мыслепрактик's transcendent-will call.
-- **Not silencing the wall.** A population pattern (too many top-level kriyas) is not a tension to suppress with attrs — it is material for the agenda.
+- **Не ткачество.** Ткачество замыкает утёкшую эстафету или пишет смысл на стрелке — ремонт узлового зерна. Сборка — проход уровня поля: узор над многими узлами.
+- **Не проектирование.** Проектирование выстраивает крии от цели. Сборка картирует уже идущие превращения.
+- **Не решение пересобрать.** Это ход трансцендентной воли Мыслепрактика.
+- **Не глушение стены.** Популяционный паттерн (слишком много top-level крий) — не натяжение для подавления attrs: это материал повестки.
