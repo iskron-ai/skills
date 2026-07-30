@@ -79,7 +79,7 @@ claude mcp list    # plugin:iskron:iskron: https://mcp.iskron.ru/ (HTTP) - ✔ C
 Эта строка доказывает, что логин завершён, — не что тулы дошли до сессии: конфиг MCP
 читается на старте сессии. Попроси перезапуск (шаг 3) и подтверди сейчас из одной
 свежей неинтерактивной сессии — `iskron_me` называет тебя, `iskron_orient` возвращает
-список реалмов:
+список графов:
 
 ```sh
 claude -p "Call iskron_me and print its result." --allowedTools "mcp__plugin_iskron_iskron__iskron_me"
@@ -152,7 +152,7 @@ bearer_token_env_var = "ISKRON_TOKEN"
 ## 4. Первая сессия: repo-boost
 
 В свежей сессии пользователь говорит `repo-boost` (или `/iskron:repo-boost` с плагином
-Claude Code). Агент проверяет соединение (`iskron_orient` возвращает список реалмов),
+Claude Code). Агент проверяет соединение (`iskron_orient` возвращает список графов),
 приводит репозиторий к стандарту iskron (`AGENTS.md` + ритуалы сессии) и засеивает
 граф структурой, которую кодовая база уже показывает.
 
