@@ -206,6 +206,41 @@ try {
   fail(".claude-plugin/plugin.json", `could not read/parse: ${e.message}`);
 }
 
+// 4. Shipped-prose guards: the semantic contract of the distribution's
+//    user-facing surfaces (skills/**/*.md, README.md, SETUP.md). Each guard
+//    freezes a settled rename/brand decision so it cannot silently regress:
+//    — «реалм» was renamed to «граф» in Russian prose (the realm= param and
+//      Latin literals like "Realm not found" are untouched by design);
+//    — tool references must carry this distribution's prefix (iskron_*), a
+//      nks_* call in a skill is a dead or foreign pointer downstream;
+//    — the upstream brand must not reappear in shipped sources (AGENTS.md's
+//      brand-clean rule, mechanized).
+const proseGuards = [
+  { re: /[Рр]еалм/u, msg: "«реалм» в русской прозе — переименовано в «граф» (параметр realm= и латинские литералы не в счёт)" },
+  { re: /\bnks_[a-z_]+/u, msg: "ссылка на тул nks_* — префикс этой поставки iskron_*" },
+  { re: /verstak/iu, msg: "апстримный бренд в отгружаемом источнике — репо должно быть brand-clean" },
+];
+function walkMd(dir) {
+  const out = [];
+  for (const e of readdirSync(dir, { withFileTypes: true })) {
+    const p = join(dir, e.name);
+    if (e.isDirectory()) out.push(...walkMd(p));
+    else if (e.name.endsWith(".md")) out.push(p);
+  }
+  return out;
+}
+const shippedFiles = [...walkMd(skillsDir), join(root, "README.md"), join(root, "SETUP.md")].filter(existsSync);
+for (const file of shippedFiles) {
+  const rel = file.slice(root.length + 1);
+  const lines = readFileSync(file, "utf8").split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    for (const g of proseGuards) {
+      const m = lines[i].match(g.re);
+      if (m) fail(`${rel}:${i + 1}`, `${g.msg} (найдено: ${JSON.stringify(m[0])})`);
+    }
+  }
+}
+
 // Report.
 if (warnings.length > 0) {
   console.warn(`⚠ ${warnings.length} warning${warnings.length === 1 ? "" : "s"} (non-fatal):`);
