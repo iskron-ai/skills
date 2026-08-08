@@ -1,5 +1,16 @@
 # Changelog
 
+## [3.0.0](https://github.com/iskron-ai/skills/compare/v2.1.0...v3.0.0) (2026-08-08)
+
+
+### ⚠ BREAKING CHANGES
+
+* контракт шаблона поднят до 2 — конфиг без запрета меню неверен, репо со штампом 1 и ниже получают полную дугу.
+
+### Features
+
+* интеграция начинается с графа; начало не объявляется — совершается; вопрос — текстом ([#14](https://github.com/iskron-ai/skills/issues/14)) ([4a6def1](https://github.com/iskron-ai/skills/commit/4a6def1445b0ccbd821ef5621f44a3b509b06b3d))
+
 ## [2.1.0](https://github.com/iskron-ai/skills/compare/v2.0.0...v2.1.0) (2026-08-08)
 
 
