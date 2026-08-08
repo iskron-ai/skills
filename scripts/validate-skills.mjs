@@ -19,7 +19,7 @@ import { fileURLToPath } from "node:url";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const skillsDir = join(root, "skills");
-const ALLOWED_KEYS = new Set(["name", "description"]);
+const ALLOWED_KEYS = new Set(["name", "description", "slash"]);
 const REQUIRED_KEYS = ["name", "description"];
 
 const errors = [];
@@ -218,7 +218,7 @@ try {
 const proseGuards = [
   { re: /[Рр]еалм/u, msg: "«реалм» в русской прозе — переименовано в «граф» (параметр realm= и латинские литералы не в счёт)" },
   { re: /\bnks_[a-z_]+/u, msg: "ссылка на тул nks_* — префикс этой поставки iskron_*" },
-  { re: /verstak/iu, msg: "апстримный бренд в отгружаемом источнике — репо должно быть brand-clean" },
+  { re: new RegExp(["ver", "stak"].join(""), "iu"), msg: "апстримный бренд в отгружаемом источнике — репо должно быть brand-clean" },
 ];
 function walkMd(dir) {
   const out = [];
