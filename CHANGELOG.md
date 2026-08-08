@@ -1,5 +1,17 @@
 # Changelog
 
+## [2.1.0](https://github.com/iskron-ai/skills/compare/v2.0.0...v2.1.0) (2026-08-08)
+
+
+### Features
+
+* **vahta,collaborate:** сторож сокета — связь держится сама, делатель будится только на мёртвом токене ([#11](https://github.com/iskron-ai/skills/issues/11)) ([0f249d2](https://github.com/iskron-ai/skills/commit/0f249d2508c535bff5509325c340695860eb2b0c))
+
+
+### Bug Fixes
+
+* **collaborate,vahta:** факты сокета по коду службы — коды, вдох на 4003, поведение вместо кода, пинг из hello ([#13](https://github.com/iskron-ai/skills/issues/13)) ([d187948](https://github.com/iskron-ai/skills/commit/d187948675c67f72ee83959e09558a3f59d6a33a))
+
 ## [2.0.0](https://github.com/iskron-ai/skills/compare/v1.2.0...v2.0.0) (2026-08-08)
 
 
