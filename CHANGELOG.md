@@ -1,5 +1,22 @@
 # Changelog
 
+## [2.0.0](https://github.com/iskron-ai/skills/compare/v1.2.0...v2.0.0) (2026-08-08)
+
+
+### ⚠ BREAKING CHANGES
+
+* скилл on-duty заменён скиллом vahta.
+
+### Features
+
+* **skills:** «реалм» → «граф» в русской прозе ([#8](https://github.com/iskron-ai/skills/issues/8)) ([6f29892](https://github.com/iskron-ai/skills/commit/6f2989283a4d86ae257d0a6f11b871b96aedc50e))
+* вахта, сотрудничество, repo-boost — цикл до интеграции и канал делателей ([#10](https://github.com/iskron-ai/skills/issues/10)) ([4925d62](https://github.com/iskron-ai/skills/commit/4925d625182fa7c8638bf9c94ffb0e6a37bc7f43))
+
+
+### Bug Fixes
+
+* **repo-boost:** последний хвост карта→роль в шаблоне ([583b060](https://github.com/iskron-ai/skills/commit/583b06027c6565f529c593f83f1e25292582d882))
+
 ## [1.2.0](https://github.com/iskron-ai/skills/compare/v1.1.0...v1.2.0) (2026-07-28)
 
 
