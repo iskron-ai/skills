@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.0.1](https://github.com/iskron-ai/skills/compare/v3.0.0...v3.0.1) (2026-08-09)
+
+
+### Bug Fixes
+
+* **collaborate,vahta:** держание сокета закрывается на hello и строке listening, а не на connect ([#16](https://github.com/iskron-ai/skills/issues/16)) ([ab5cfb7](https://github.com/iskron-ai/skills/commit/ab5cfb7ecd774e18a4a3e7f0d82a2404bce4c32d))
+
 ## [3.0.0](https://github.com/iskron-ai/skills/compare/v2.1.0...v3.0.0) (2026-08-08)
 
 
