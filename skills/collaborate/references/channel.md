@@ -17,16 +17,22 @@
 
 ```js
 const NEEDS_DOER = new Set([4000, 4001, 4002]); // спроси текущий · новая чеканка · connect
-let stubborn = 0, opened = 0;
+const VERSION = WSS.replace(/^wss/, 'https').replace(/\/channel\/ws\/.*$/, '/version');
+const alive = () => fetch(VERSION).then(r => r.ok, () => false); // без авторизации
+let stubborn = 0;
 (function connect() {
+  const started = Date.now(); // отсчёт от попытки: отвергнутый апгрейд не открывается вовсе
   const ws = new WebSocket(WSS);
-  ws.onopen = () => { opened = Date.now(); };
   ws.onmessage = (e) => { stubborn = 0; console.log(e.data); };
-  ws.onclose = (e) => {
-    if (NEEDS_DOER.has(e.code)) { console.log(`нужен делатель: ${e.code}`); process.exit(0); }
-    if (Date.now() - opened < 2000 && ++stubborn === 4)
-      console.log('упорные мгновенные обрывы — вопрос о токене: возьми текущий у connect');
-    setTimeout(connect, e.code === 4003 ? 5000 : 2000); // на 4003 честнее ждать живого /version
+  ws.onerror = () => {};
+  ws.onclose = async (e) => {
+    if (NEEDS_DOER.has(e.code)) { console.log(`нужен делатель: закрытие ${e.code}`); process.exit(0); }
+    if (Date.now() - started >= 2000) stubborn = 0; // связь жила — это не мгновенный отказ
+    else if (++stubborn >= 3 && await alive()) {    // падает сразу, а служба на месте
+      console.log('служба отвечает, а сокет падает сразу — вопрос о токене: возьми текущий у connect');
+      process.exit(0);
+    }
+    setTimeout(connect, e.code === 4003 ? 5000 : 2000); // /version молчит — раскатка, держим тот же токен
   };
 })();
 ```
