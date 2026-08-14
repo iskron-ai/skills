@@ -213,12 +213,12 @@ try {
 //      Latin literals like "Realm not found" are untouched by design);
 //    — tool references must carry this distribution's prefix (iskron_*), a
 //      nks_* call in a skill is a dead or foreign pointer downstream;
-//    — the upstream brand must not reappear in shipped sources (AGENTS.md's
+//    — a foreign brand must not reappear in shipped sources (AGENTS.md's
 //      brand-clean rule, mechanized).
 const proseGuards = [
   { re: /[Рр]еалм/u, msg: "«реалм» в русской прозе — переименовано в «граф» (параметр realm= и латинские литералы не в счёт)" },
   { re: /\bnks_[a-z_]+/u, msg: "ссылка на тул nks_* — префикс этой поставки iskron_*" },
-  { re: new RegExp(["ver", "stak"].join(""), "iu"), msg: "апстримный бренд в отгружаемом источнике — репо должно быть brand-clean" },
+  { re: new RegExp(["ver", "stak"].join(""), "iu"), msg: "чужой бренд в отгружаемом источнике — репо должно быть brand-clean" },
 ];
 function walkMd(dir) {
   const out = [];
