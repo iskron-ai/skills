@@ -2,5 +2,5 @@
   "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "iskron",
   "description": "NKS methodology skills — orient, write, design, and weave an NKS graph through the iskron_* MCP tools.",
-  "version": "3.0.1"
+  "version": "3.1.0"
 }
