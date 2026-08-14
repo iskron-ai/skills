@@ -29,13 +29,34 @@
         ]
       }
     ],
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "jq -r '.tool_input.file_path // \"\"' | grep -Eq '\\.claude/projects/.*/memory/' && { echo 'BLOCKED: локальная память агента запрещена целиком, по директории (AGENTS.md, Persistence rules). Маршрутизируй факт: конвенции репо / код-факты → AGENTS.md; состояние проекта → NKS (nks-dev, #1506); пользовательский факт вне проекта → личный граф владельца (minding). Директория заморожена на стабе-запрете.' >&2; exit 2; } || exit 0"
+          }
+        ]
+      }
+    ],
     "PostToolUse": [
       {
         "matcher": "Bash",
         "hooks": [
           {
             "type": "command",
-            "command": "jq -r '.tool_input.command // \"\"' | grep -q 'git push' && echo '{\"hookSpecificOutput\":{\"hookEventName\":\"PostToolUse\",\"additionalContext\":\"Pushed — update NKS in nks-dev: thread repo state into holon #1506, advance delivery bianhua #1516, close resolved vimarshas (driver #1515 when done), then run the after-green-push self-review of your diff.\"}}' || true"
+            "command": "jq -r '.tool_input.command // \"\"' | grep -q 'git push' && echo '{\"hookSpecificOutput\":{\"hookEventName\":\"PostToolUse\",\"additionalContext\":\"Pushed — ask which kind of push this was: a push that only opens or updates a PR ships nothing; done means merged. After a merge: update NKS in nks-dev from fresh artifact evidence — thread repo state into holon #1506, advance delivery bianhua #1516, close resolved vimarshas — then run the after-green-push self-review of your diff. Also grep the commit message and branch name against the brand-clean rule (AGENTS.md, Code conventions).\"}}' || true"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR/scripts/stop-guard.sh\""
           }
         ]
       }
