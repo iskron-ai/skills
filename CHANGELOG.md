@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.1.0](https://github.com/iskron-ai/skills/compare/v3.0.1...v3.1.0) (2026-08-14)
+
+
+### Features
+
+* **entry,collaborate,writing,design,repo-boost:** редакция скилла, две половины держания, sense на ребре, ворота фабрики, док-слот ([#19](https://github.com/iskron-ai/skills/issues/19)) ([4dd41d6](https://github.com/iskron-ai/skills/commit/4dd41d60cb5904766520c99733206d01a7b552db))
+
 ## [3.0.1](https://github.com/iskron-ai/skills/compare/v3.0.0...v3.0.1) (2026-08-09)
 
 
