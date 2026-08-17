@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.1.1](https://github.com/iskron-ai/skills/compare/v3.1.0...v3.1.1) (2026-08-17)
+
+
+### Bug Fixes
+
+* **mcp:** no trailing slash ([#21](https://github.com/iskron-ai/skills/issues/21)) ([485beb1](https://github.com/iskron-ai/skills/commit/485beb1bf222a1d058f2a9383d95338ec629977e))
+
 ## [3.1.0](https://github.com/iskron-ai/skills/compare/v3.0.1...v3.1.0) (2026-08-14)
 
 
