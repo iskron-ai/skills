@@ -348,3 +348,41 @@ test("a notification is never answered", async (t) => {
     assert.equal(spoke, false, "a message with no id must get no answer");
   });
 });
+
+// --- the audience the token is issued for --------------------------------
+// The resource indicator decides the token's `aud`, and a server may validate
+// a form its own discovery does not print. So the override has to be usable at
+// the moment the operator reaches for it — which is AFTER a flow already ran
+// and produced the wrong audience, i.e. against a store that already caches
+// what discovery said.
+
+test("the resource override reaches every leg of a fresh authorization", async (t) => {
+  await withFake(t, {}, async ({ fake, dir, spawnBridge }) => {
+    const forced = "https://forced.example/mcp/";
+    const bridge = spawnBridge({ ISKRON_BRIDGE_RESOURCE: forced });
+    await authorize(bridge, dir);
+    assert.equal(fake.state.resources.authorize, forced, "the authorize leg asked for another audience");
+    assert.equal(fake.state.resources.code_exchange, forced, "the code exchange asked for another audience");
+  });
+});
+
+test("the override still applies once discovery is cached — the defect it exists for", async (t) => {
+  await withFake(t, {}, async ({ fake, dir, spawnBridge }) => {
+    // First flow with no override: the store now caches what discovery said.
+    const first = spawnBridge();
+    await authorize(first, dir);
+    await first.stop();
+    assert.equal(fake.state.resources.code_exchange, fake.mcpUrl, "precondition: discovery's value was used");
+
+    // Exactly the operator's move: the audience was wrong, so set the override
+    // and retry. Nothing clears the store first — nobody would think to.
+    const s = readStore(dir);
+    s.tokens.expires_at = Date.now() - 1000;
+    writeFileSync(storeFile(dir), JSON.stringify(s));
+    const forced = "https://forced.example/mcp/";
+    const second = spawnBridge({ ISKRON_BRIDGE_RESOURCE: forced });
+    assert.ok((await second.call("initialize", 1, INIT_PARAMS)).result, "the refreshed call should have been served");
+    assert.equal(fake.state.resources.refresh, forced,
+      "the override was ignored because discovery had already been cached in the store");
+  });
+});

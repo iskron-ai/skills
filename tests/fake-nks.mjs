@@ -27,6 +27,10 @@ export async function startFakeNks(opts = {}) {
     refreshError: null,
     mcpStatus: null,       // force an HTTP status on /mcp
     counts: { register: 0, authorize: 0, code_exchange: 0, refresh: 0, mcp: 0 },
+    // The resource indicator each leg carried. A real server turns this into
+    // the token's audience, so it is the only place a test can see what the
+    // bridge actually asked to be issued for.
+    resources: { authorize: null, code_exchange: null, refresh: null },
   };
 
   const body = (req) => new Promise((res, rej) => {
@@ -81,6 +85,7 @@ export async function startFakeNks(opts = {}) {
     if (p === "/authorize") {
       st.counts.authorize++;
       const q = u.searchParams;
+      st.resources.authorize = q.get("resource");
       if (!st.clients.has(q.get("client_id"))) return json(res, 400, { error: "unknown client" });
       const code = token("code");
       st.codes.set(code, {
@@ -99,6 +104,7 @@ export async function startFakeNks(opts = {}) {
       const f = new URLSearchParams(await body(req));
       if (f.get("grant_type") === "authorization_code") {
         st.counts.code_exchange++;
+        st.resources.code_exchange = f.get("resource");
         const c = st.codes.get(f.get("code"));
         if (!c) return json(res, 400, { error: "invalid_grant", error_description: "unknown code" });
         st.codes.delete(f.get("code"));
@@ -113,6 +119,7 @@ export async function startFakeNks(opts = {}) {
       }
       if (f.get("grant_type") === "refresh_token") {
         st.counts.refresh++;
+        st.resources.refresh = f.get("resource");
         if (st.refreshStatus) {
           return json(res, st.refreshStatus, { error: st.refreshError || "server_error" });
         }

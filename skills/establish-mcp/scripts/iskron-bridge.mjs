@@ -459,6 +459,12 @@ async function ensureAuth(wwwAuthenticate, opts = {}) {
         return s.tokens;
       }
       const meta = s.meta?.as ? s.meta : await discover(wwwAuthenticate);
+      // Discovery runs once and its result is cached in the store, so an
+      // override set later would never be seen — and the operator setting one
+      // is, by definition, doing it AFTER a flow already ran and produced the
+      // wrong audience. Apply it here, where the value is used, not only where
+      // it is discovered.
+      if (CFG.resource) meta.resource = CFG.resource;
       if (s.tokens?.refresh_token) {
         try {
           debug("refreshing access token");

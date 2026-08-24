@@ -63,7 +63,11 @@ for (const file of mdFiles) {
     // run on into the next key's name. If an `=`/`:` follows the match, that
     // trailing bareword is a key, not a value: drop it.
     const values = raw.split(",").map((x) => x.trim()).filter(Boolean);
-    if (/^\s*[=:]/.test(text.slice(m.index + m[0].length))) values.pop();
+    // Only a COMMA can have carried the match into a neighbouring key, so
+    // require one before dropping anything: with a single value, a following
+    // ":" is ordinary prose ("given_as=sinn: ...") and popping it would
+    // silently stop checking a real assignment.
+    if (values.length > 1 && /^\s*[=:]/.test(text.slice(m.index + m[0].length))) values.pop();
     for (const v of values) {
       if (!/^[a-z][a-z_-]*$/.test(v)) continue; // placeholder / prose, not a value
       if (!vocab.includes(v)) {
