@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.3.0](https://github.com/iskron-ai/skills/compare/v3.2.0...v3.3.0) (2026-08-24)
+
+
+### Features
+
+* мост держит флоу портом; поведенческие тесты, сверка поверхности, iskronify ([#27](https://github.com/iskron-ai/skills/issues/27)) ([ff6f4ac](https://github.com/iskron-ai/skills/commit/ff6f4acb6c0841388578a56fab90d62f1715acff))
+
 ## [3.2.0](https://github.com/iskron-ai/skills/compare/v3.1.1...v3.2.0) (2026-08-24)
 
 
