@@ -109,6 +109,14 @@ function validateSkill(name) {
       continue;
     }
 
+    if (key === "slash") {
+      // OpenCode decodes frontmatter `slash` as a boolean; a quoted "true"
+      // arrives as a string and fails the decode, taking the skill with it.
+      if (value !== "true" && value !== "false") {
+        fail(where, `\`slash\` must be a plain \`true\` or \`false\`, got ${JSON.stringify(value)}`);
+      }
+    }
+
     if (key === "name") {
       const unquoted = value.replace(/^["']|["']$/g, "");
       if (!/^[a-z][a-z0-9-]*$/.test(unquoted)) {
@@ -248,6 +256,41 @@ for (const file of shippedFiles) {
       if (m) fail(`${rel}:${i + 1}`, `${g.msg} (найдено: ${JSON.stringify(m[0])})`);
     }
   }
+}
+
+// 5. Manifest lists must match the tree. Hand-edited inventories beside
+//    automation drift silently — so the lists are linted against readdir, not
+//    trusted: AGENTS.md's structure line and README.md's skill table are both
+//    claims about what skills/ holds, and both are checked against it.
+try {
+  const agents = readFileSync(join(root, "AGENTS.md"), "utf8");
+  const m = /one dir per skill \(([^)]*)\)/.exec(agents);
+  if (!m) {
+    fail("AGENTS.md", "inventory line not found (\"one dir per skill (…)\" in Project structure)");
+  } else {
+    const listed = new Set([...m[1].matchAll(/`([a-z-]+)`/g)].map((x) => x[1]));
+    const onDisk = new Set(skillNames);
+    for (const name of onDisk) if (!listed.has(name)) {
+      fail("AGENTS.md", `skill \`${name}\` exists in skills/ but is missing from the inventory line`);
+    }
+    for (const name of listed) if (!onDisk.has(name)) {
+      fail("AGENTS.md", `inventory line names \`${name}\` but skills/${name}/ does not exist`);
+    }
+  }
+} catch (e) {
+  fail("AGENTS.md", `could not read: ${e.message}`);
+}
+try {
+  const readme = readFileSync(join(root, "README.md"), "utf8");
+  const rows = new Set([...readme.matchAll(/^\| \*\*([a-z-]+)\*\* \|/gm)].map((x) => x[1]));
+  for (const name of skillNames) if (!rows.has(name)) {
+    fail("README.md", `skill \`${name}\` has no row in the skill table`);
+  }
+  for (const name of rows) if (!skillNames.includes(name)) {
+    fail("README.md", `table row \`${name}\` matches no directory in skills/`);
+  }
+} catch (e) {
+  fail("README.md", `could not read: ${e.message}`);
 }
 
 // Report.
