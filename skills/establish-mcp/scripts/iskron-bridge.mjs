@@ -20,20 +20,22 @@
 // below); pass a URL (or set ISKRON_BRIDGE_URL) only for another instance or fork.
 // Env (flags win): ISKRON_BRIDGE_URL, ISKRON_BRIDGE_TIMEOUT, ISKRON_BRIDGE_AUTH_DIR,
 //                  ISKRON_BRIDGE_NO_BROWSER, ISKRON_BRIDGE_DEBUG, ISKRON_BRIDGE_SCOPE,
+//                  ISKRON_BRIDGE_RESOURCE (override the resource indicator / audience),
 //                  ISKRON_BRIDGE_CLIENT_ID
 //
 // No dependencies. Node >= 20.
 
 import { createServer } from "node:http";
+import { connect } from "node:net";
 import { createHash, randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { createInterface } from "node:readline";
 
 const VERSION = "0.1.0";
-const DEFAULT_SERVER_URL = "https://mcp.iskron.ru";
+const DEFAULT_SERVER_URL = "https://mcp.iskron.ru/";
 
 // ---------------------------------------------------------------- arguments
 
@@ -46,6 +48,7 @@ function parseArgs(argv) {
     noBrowser: !!process.env.ISKRON_BRIDGE_NO_BROWSER,
     debug: !!process.env.ISKRON_BRIDGE_DEBUG,
     scope: process.env.ISKRON_BRIDGE_SCOPE || null,
+    resource: process.env.ISKRON_BRIDGE_RESOURCE || null,
     staticClientId: process.env.ISKRON_BRIDGE_CLIENT_ID || null,
   };
   for (let i = 0; i < argv.length; i++) {
@@ -155,7 +158,12 @@ async function discover(wwwAuthenticate) {
   }
   const scope = CFG.scope
     || (prm?.scopes_supported?.length ? prm.scopes_supported.join(" ") : null);
-  const meta = { as, resource: prm?.resource || CFG.serverUrl, scope };
+  // The resource indicator decides the token's audience, so it must be the
+  // exact string the MCP server validates against — including a trailing
+  // slash. Discovery is the default because the server publishes it; the
+  // override exists because a deployment can validate a form its own metadata
+  // does not print, and then only its operator knows the right one.
+  const meta = { as, resource: CFG.resource || prm?.resource || CFG.serverUrl, scope };
   saveStore({ meta });
   return meta;
 }
@@ -204,44 +212,126 @@ function openBrowser(url) {
   }
 }
 
-// Wait for the loopback redirect carrying ?code=...&state=...
-function waitForCallback(port, expectedState, timeoutMs = 300_000) {
+// Bind the loopback listener that catches the redirect carrying ?code=…&state=…
+// Binding comes FIRST and is what claims the flow: a bound port is a fact any
+// other process can check, unlike a file that outlives the process that wrote it.
+function bindCallback(port) {
   return new Promise((resolve, reject) => {
+    let handOff = null;   // set once someone is waiting for the code
+    let received = null;  // …or hold what arrived before they asked
+    const deliver = (v) => { if (handOff) handOff(v); else received = v; };
+
     const server = createServer((req, res) => {
       const u = new URL(req.url, `http://127.0.0.1:${port}`);
       if (u.pathname !== "/callback") { res.writeHead(404); res.end(); return; }
-      const code = u.searchParams.get("code");
-      const state = u.searchParams.get("state");
       const err = u.searchParams.get("error");
       res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
       res.end(err
         ? `<h3>iskron-bridge: authorization failed (${err})</h3>`
         : "<h3>iskron-bridge: authenticated — you can close this tab.</h3>");
-      clearTimeout(timer); server.close();
-      if (err) return reject(new Error(`authorization refused: ${err}`));
-      if (!code || state !== expectedState) return reject(new Error("callback missing code or state mismatch"));
-      resolve(code);
+      deliver({ code: u.searchParams.get("code"), state: u.searchParams.get("state"), err });
     });
-    const timer = setTimeout(() => {
-      server.close();
-      reject(new Error("timed out waiting for the browser authorization"));
-    }, timeoutMs);
-    server.on("error", reject);
-    server.listen(port, "127.0.0.1");
+
+    server.once("error", reject); // EADDRINUSE: someone else owns the flow
+    server.listen(port, "127.0.0.1", () => {
+      server.removeListener("error", reject);
+      server.on("error", (e) => log(`callback server: ${e.message}`));
+      resolve({
+        port,
+        close: () => server.close(),
+        waitForCode: (expectedState, timeoutMs = 300_000) => new Promise((res, rej) => {
+          const timer = setTimeout(
+            () => rej(new Error("timed out waiting for the browser authorization")), timeoutMs);
+          const settle = (v) => {
+            clearTimeout(timer);
+            if (v.err) return rej(new Error(`authorization refused: ${v.err}`));
+            if (!v.code || v.state !== expectedState) {
+              return rej(new Error("callback missing code or state mismatch"));
+            }
+            res(v.code);
+          };
+          if (received) settle(received); else handOff = settle;
+        }),
+      });
+    });
   });
 }
 
-// If another bridge instance holds the callback port, it is probably running
-// the same flow — wait for it to finish and reuse its tokens.
-async function waitForSiblingAuth(deadlineMs = 120_000) {
-  log("callback port busy — another bridge instance seems to be authorizing; waiting for it");
-  const start = Date.now();
-  while (Date.now() - start < deadlineMs) {
-    await new Promise((r) => setTimeout(r, 2000));
-    const s = loadStore();
-    if (s.tokens?.access_token && (s.tokens.expires_at || Infinity) > Date.now()) return s.tokens;
+// --- machine-wide authorization coordination ------------------------------
+// Dozens of local agents share one grant, so at most ONE bridge instance runs
+// the browser flow; every other instance (and every call meanwhile) surfaces
+// the SAME authorize URL from the lock — whichever surface the human happens
+// to look at, one click heals the whole machine.
+//
+// What makes a standing flow joinable is the LISTENER, not the file. A bridge
+// killed mid-flow (SIGKILL, a reaped ephemeral run, a crash) leaves its lock
+// behind with nothing bound to the callback port; a joiner that trusts the file
+// alone then hands the human an authorize URL whose redirect lands on a closed
+// port — the click is spent and no one catches it. So the loopback port IS the
+// claim: whoever binds it owns the flow, and the file only carries that owner's
+// URL for the others to surface. Both errors are cheap to picture and one is
+// far worse: joining a dead flow silently burns the human's login, while taking
+// over a live one costs at most a second browser tab. When in doubt, take over.
+
+const AUTH_LOCK_FRESH_MS = 330_000; // flow timeout + margin; older is dead by the clock alone
+
+function authLockPath() { return storePath() + ".auth-pending"; }
+
+function pidAlive(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try { process.kill(pid, 0); return true; }
+  catch (e) { return e.code === "EPERM"; } // alive, merely not ours to signal
+}
+
+// Is anything accepting connections on the loopback callback port?
+function portListening(port, timeoutMs = 700) {
+  return new Promise((resolve) => {
+    if (!Number.isInteger(port)) return resolve(false);
+    const sock = connect({ host: "127.0.0.1", port });
+    const done = (v) => { sock.destroy(); resolve(v); };
+    sock.setTimeout(timeoutMs, () => done(false));
+    sock.once("connect", () => done(true));
+    sock.once("error", () => done(false));
+  });
+}
+
+// The file alone is never proof of a live flow — the caller must also see the
+// callback port listening before it surfaces this URL to anyone.
+function readAuthLock() {
+  try {
+    const l = JSON.parse(readFileSync(authLockPath(), "utf8"));
+    if (!(Date.now() - l.started_at < AUTH_LOCK_FRESH_MS)) return null;
+    if (!pidAlive(l.pid)) return null; // the winner is gone; nothing holds the port
+    return l;
+  } catch {}
+  return null;
+}
+
+// Written only by the process that holds the port, so it needs no exclusion
+// dance: the bind already settled who writes here.
+function writeAuthLock(url, port) {
+  mkdirSync(CFG.authDir, { recursive: true, mode: 0o700 });
+  writeFileSync(
+    authLockPath(),
+    JSON.stringify({ pid: process.pid, started_at: Date.now(), authorize_url: url, callback_port: port }),
+    { mode: 0o600 },
+  );
+}
+function releaseAuthLock() { try { unlinkSync(authLockPath()); } catch {} }
+// A winner that dies mid-flow must not leave the machine locked for the
+// stale-window: drop an owned lock on the way out.
+process.on("exit", () => {
+  try {
+    const l = JSON.parse(readFileSync(authLockPath(), "utf8"));
+    if (l.pid === process.pid) unlinkSync(authLockPath());
+  } catch {}
+});
+
+class AuthPending extends Error {
+  constructor(url) {
+    super(`authorization required — open in a browser: ${url}`);
+    this.authorizeUrl = url;
   }
-  throw new Error("callback port stayed busy and no tokens appeared — kill stale iskron-bridge processes and retry");
 }
 
 async function tokenRequest(meta, params) {
@@ -267,43 +357,82 @@ async function tokenRequest(meta, params) {
   return tokens;
 }
 
+// Starts (or joins) the machine-wide browser flow and throws AuthPending with
+// the authorize URL immediately — no harness call ever blocks on a human. The
+// winner completes the flow in the background and saves the tokens; every
+// instance picks them up from the store on its next call.
+let flowInBackground = null;
 async function interactiveFlow(meta) {
   const port = callbackPort();
-  const redirectUri = `http://127.0.0.1:${port}/callback`;
-  const client = await ensureClient(meta, redirectUri);
-  const verifier = b64url(randomBytes(48));
-  const state = b64url(randomBytes(24));
-  const authUrl = new URL(meta.as.authorization_endpoint);
-  authUrl.searchParams.set("response_type", "code");
-  authUrl.searchParams.set("client_id", client.client_id);
-  authUrl.searchParams.set("redirect_uri", redirectUri);
-  authUrl.searchParams.set("state", state);
-  authUrl.searchParams.set("code_challenge", b64url(sha256(verifier)));
-  authUrl.searchParams.set("code_challenge_method", "S256");
-  authUrl.searchParams.set("resource", meta.resource);
-  if (meta.scope) authUrl.searchParams.set("scope", meta.scope);
 
-  const codePromise = waitForCallback(port, state);
-  codePromise.catch(() => {}); // handled below; avoid unhandled-rejection noise
-  // Give the listener a beat to fail on EADDRINUSE before opening the browser.
-  await new Promise((r) => setTimeout(r, 50));
-  openBrowser(authUrl.toString());
-  let code;
+  // Join a standing flow only when its listener answers: URL plus open port,
+  // never the lock file on its own.
+  const standing = readAuthLock();
+  if (standing?.authorize_url && await portListening(port)) {
+    debug(`joining the flow held by pid ${standing.pid}`);
+    throw new AuthPending(standing.authorize_url);
+  }
+
+  let callback;
   try {
-    code = await codePromise;
+    callback = await bindCallback(port);
   } catch (e) {
-    if (String(e.message).includes("EADDRINUSE") || e.code === "EADDRINUSE") return waitForSiblingAuth();
+    if (e.code !== "EADDRINUSE") throw e;
+    // Someone bound the port between our probe and our bind. With a lock we
+    // can join them; without one an unknown process camps on the redirect
+    // port, and any URL we hand out would redirect into it.
+    const l = readAuthLock();
+    if (l?.authorize_url) throw new AuthPending(l.authorize_url);
+    throw new Error(`callback port ${port} is held by another process — free it, then retry`);
+  }
+
+  try {
+    const redirectUri = `http://127.0.0.1:${port}/callback`;
+    const client = await ensureClient(meta, redirectUri);
+    const verifier = b64url(randomBytes(48));
+    const authState = b64url(randomBytes(24));
+    const authUrl = new URL(meta.as.authorization_endpoint);
+    authUrl.searchParams.set("response_type", "code");
+    authUrl.searchParams.set("client_id", client.client_id);
+    authUrl.searchParams.set("redirect_uri", redirectUri);
+    authUrl.searchParams.set("state", authState);
+    authUrl.searchParams.set("code_challenge", b64url(sha256(verifier)));
+    authUrl.searchParams.set("code_challenge_method", "S256");
+    authUrl.searchParams.set("resource", meta.resource);
+    if (meta.scope) authUrl.searchParams.set("scope", meta.scope);
+    const url = authUrl.toString();
+
+    writeAuthLock(url, port); // we hold the port, so the flow is ours to publish
+    flowInBackground = (async () => {
+      try {
+        const codePromise = callback.waitForCode(authState);
+        openBrowser(url);
+        const code = await codePromise;
+        log("authorization code received — exchanging for tokens");
+        await tokenRequest(meta, {
+          grant_type: "authorization_code",
+          code,
+          redirect_uri: redirectUri,
+          client_id: client.client_id,
+          code_verifier: verifier,
+          resource: meta.resource,
+        });
+        log("authorization complete — tokens saved for every local agent");
+      } catch (e) {
+        log(`authorization flow failed: ${e.message}`);
+      } finally {
+        callback.close();
+        releaseAuthLock();
+        flowInBackground = null;
+      }
+    })();
+    throw new AuthPending(url);
+  } catch (e) {
+    // The flow owns the listener once it starts; anything failing before that
+    // must give the port back rather than camp on it.
+    if (!flowInBackground) { callback.close(); releaseAuthLock(); }
     throw e;
   }
-  log("authorization code received — exchanging for tokens");
-  return tokenRequest(meta, {
-    grant_type: "authorization_code",
-    code,
-    redirect_uri: redirectUri,
-    client_id: client.client_id,
-    code_verifier: verifier,
-    resource: meta.resource,
-  });
 }
 
 let authInFlight = null;
@@ -330,6 +459,12 @@ async function ensureAuth(wwwAuthenticate, opts = {}) {
         return s.tokens;
       }
       const meta = s.meta?.as ? s.meta : await discover(wwwAuthenticate);
+      // Discovery runs once and its result is cached in the store, so an
+      // override set later would never be seen — and the operator setting one
+      // is, by definition, doing it AFTER a flow already ran and produced the
+      // wrong audience. Apply it here, where the value is used, not only where
+      // it is discovered.
+      if (CFG.resource) meta.resource = CFG.resource;
       if (s.tokens?.refresh_token) {
         try {
           debug("refreshing access token");
@@ -349,7 +484,13 @@ async function ensureAuth(wwwAuthenticate, opts = {}) {
             debug("a sibling refreshed the tokens — reusing them");
             return fresh.tokens;
           }
-          const definitive = e instanceof TokenError && DEFINITIVE_OAUTH_ERRORS.has(e.oauthError);
+          // Definitive = the grant itself is refused: a known OAuth error code,
+          // or any 400/401 from the token endpoint (servers word these codes
+          // freely — witnessed: Rauthy answers a dead refresh with 401 "JwtToken").
+          // Only 5xx/network/temporarily_unavailable stay transient.
+          const definitive = e instanceof TokenError
+            && e.oauthError !== "temporarily_unavailable"
+            && (DEFINITIVE_OAUTH_ERRORS.has(e.oauthError) || e.status === 400 || e.status === 401);
           if (!definitive) {
             // Transient failure: keep the grant, do NOT open a browser.
             throw new Error(`token refresh failed transiently (${e.message}) — grant kept, will retry`);
@@ -552,6 +693,10 @@ async function deliver(msg) {
           await ensureAuth(e.message, { force: true });
           continue;
         } catch (authErr) {
+          if (authErr instanceof AuthPending) {
+            if (hasId) emit(syntheticError(msg.id, authErr.message));
+            return;
+          }
           log(`authorization failed: ${authErr.message}`);
           if (hasId) emit(syntheticError(msg.id, `authorization failed: ${authErr.message}`));
           return;
@@ -596,12 +741,25 @@ function main() {
     pending.add(p);
     p.finally(() => pending.delete(p));
   });
-  rl.on("close", () => {
-    debug("stdin closed — harness is gone, exiting");
-    Promise.allSettled([...pending]).then(() => process.exit(0));
-  });
-  process.on("SIGINT", () => process.exit(0));
-  process.on("SIGTERM", () => process.exit(0));
+  // A human may be mid-click on OUR authorize URL: dying now kills the callback
+  // server and silently loses their login, and the click is not repeatable —
+  // the human sees a browser error, not a retry. So a bridge asked to go away
+  // outlives a pending flow; the flow's own timeout bounds the wait. A harness
+  // that will not wait that long may kill us outright, and that is survivable:
+  // the next bridge finds no listener on the callback port and takes the flow
+  // over. Ctrl-C is the one exception — someone is at the terminal, wanting out.
+  const leave = async (why) => {
+    debug(`${why} — winding down`);
+    await Promise.allSettled([...pending]);
+    if (flowInBackground) {
+      log(`${why}, but an authorization flow is pending — staying up until the human's click lands`);
+      await flowInBackground.catch(() => {});
+    }
+    process.exit(0);
+  };
+  rl.on("close", () => leave("stdin closed, the harness is gone"));
+  process.on("SIGTERM", () => leave("SIGTERM"));
+  process.on("SIGINT", () => process.exit(0)); // at a terminal: leave at once
   process.on("uncaughtException", (e) => log(`uncaught: ${e.stack || e}`));
   process.on("unhandledRejection", (e) => log(`unhandled rejection: ${e?.stack || e}`));
 }
