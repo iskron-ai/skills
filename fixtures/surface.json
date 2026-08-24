@@ -1,6 +1,9 @@
 {
-  "server": null,
-  "protocolVersion": null,
+  "server": {
+    "name": "iskron",
+    "version": "0.24.3"
+  },
+  "protocolVersion": "2025-06-18",
   "tools": [
     "iskron_add_bianhua",
     "iskron_add_holon",

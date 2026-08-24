@@ -20,6 +20,7 @@
 // below); pass a URL (or set ISKRON_BRIDGE_URL) only for another instance or fork.
 // Env (flags win): ISKRON_BRIDGE_URL, ISKRON_BRIDGE_TIMEOUT, ISKRON_BRIDGE_AUTH_DIR,
 //                  ISKRON_BRIDGE_NO_BROWSER, ISKRON_BRIDGE_DEBUG, ISKRON_BRIDGE_SCOPE,
+//                  ISKRON_BRIDGE_RESOURCE (override the resource indicator / audience),
 //                  ISKRON_BRIDGE_CLIENT_ID
 //
 // No dependencies. Node >= 20.
@@ -34,7 +35,7 @@ import { homedir } from "node:os";
 import { createInterface } from "node:readline";
 
 const VERSION = "0.1.0";
-const DEFAULT_SERVER_URL = "https://mcp.iskron.ru";
+const DEFAULT_SERVER_URL = "https://mcp.iskron.ru/";
 
 // ---------------------------------------------------------------- arguments
 
@@ -47,6 +48,7 @@ function parseArgs(argv) {
     noBrowser: !!process.env.ISKRON_BRIDGE_NO_BROWSER,
     debug: !!process.env.ISKRON_BRIDGE_DEBUG,
     scope: process.env.ISKRON_BRIDGE_SCOPE || null,
+    resource: process.env.ISKRON_BRIDGE_RESOURCE || null,
     staticClientId: process.env.ISKRON_BRIDGE_CLIENT_ID || null,
   };
   for (let i = 0; i < argv.length; i++) {
@@ -156,7 +158,12 @@ async function discover(wwwAuthenticate) {
   }
   const scope = CFG.scope
     || (prm?.scopes_supported?.length ? prm.scopes_supported.join(" ") : null);
-  const meta = { as, resource: prm?.resource || CFG.serverUrl, scope };
+  // The resource indicator decides the token's audience, so it must be the
+  // exact string the MCP server validates against — including a trailing
+  // slash. Discovery is the default because the server publishes it; the
+  // override exists because a deployment can validate a form its own metadata
+  // does not print, and then only its operator knows the right one.
+  const meta = { as, resource: CFG.resource || prm?.resource || CFG.serverUrl, scope };
   saveStore({ meta });
   return meta;
 }
