@@ -2,7 +2,7 @@
   "mcpServers": {
     "iskron": {
       "type": "http",
-      "url": "https://mcp.iskron.ru"
+      "url": "https://mcp.iskron.ru/"
     }
   }
 }
