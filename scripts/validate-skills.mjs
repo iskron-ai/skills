@@ -246,7 +246,12 @@ function walkMd(dir) {
   }
   return out;
 }
-const shippedFiles = [...walkMd(skillsDir), join(root, "README.md"), join(root, "SETUP.md")].filter(existsSync);
+// AGENTS.md never ships, so it sat outside these guards — and that is exactly
+// where a wrong tool prefix survived unnoticed: the file instructing the agent
+// told it to call nks_* tools this delivery does not have. A config that
+// misnames the surface is worse than a skill that does, because every session
+// reads it first. Guard it on the same terms.
+const shippedFiles = [...walkMd(skillsDir), join(root, "README.md"), join(root, "SETUP.md"), join(root, "AGENTS.md")].filter(existsSync);
 for (const file of shippedFiles) {
   const rel = file.slice(root.length + 1);
   const lines = readFileSync(file, "utf8").split("\n");
