@@ -264,9 +264,9 @@ for (const file of shippedFiles) {
 //    claims about what skills/ holds, and both are checked against it.
 try {
   const agents = readFileSync(join(root, "AGENTS.md"), "utf8");
-  const m = /one dir per skill \(([^)]*)\)/.exec(agents);
+  const m = /по одной директории на скилл \(([^)]*)\)/.exec(agents);
   if (!m) {
-    fail("AGENTS.md", "inventory line not found (\"one dir per skill (…)\" in Project structure)");
+    fail("AGENTS.md", "инвентарная строка не найдена (\"по одной директории на скилл (…)\" в разделе «Структура проекта»)");
   } else {
     const listed = new Set([...m[1].matchAll(/`([a-z-]+)`/g)].map((x) => x[1]));
     const onDisk = new Set(skillNames);

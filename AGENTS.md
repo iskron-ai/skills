@@ -1,120 +1,120 @@
 # iskron/skills
-Agent-facing NKS skill bundles (Claude Code skills) for the **iskron.ru** deploy, pointing at `mcp.iskron.ru`. Includes `iskronify` — the skill that bootstraps any repo to this `AGENTS.md` standard.
+Скилл-бандлы NKS для агентов (Claude Code skills) под деплой **iskron.ru**, смотрящий на `mcp.iskron.ru`. Среди них `iskronify` — скилл, приводящий любой репозиторий к стандарту этого `AGENTS.md`.
 
-## What this project is
-- **Nature**: `library` — reusable Claude Code skill bundles consumed by agents working on iskron. Relaxed vs production: content is prose + methodology, so for the skills there are no behavioural tests. The gates are (1) human review of the `SKILL.md` diff plus the skills' own discipline and (2) a lightweight CI that validates the frontmatter contract and bundle sync (`make check`). The one shipped **code** artifact — `iskron-bridge` — is the exception and carries a real behavioural suite (`make test`): its failures are silent for the agent and land on a human whose browser login went nowhere. Breakage is otherwise silent, not loud (see Production statement) — CI catches the mechanical classes: malformed frontmatter, drifted bundles, manifest lists out of step with the tree, and tool names / enum values that the committed surface snapshot does not carry.
-- **NKS realm**: `nks-dev` — every session starts with `nks_orient` here.
-- **Focus holon**: `#1506 «📦 iskron/skills (скиллы агента для iskron)»`, under the RU deploy `#1086`.
-- **Agent karta**: `#931 «👨‍💻 Разработчик скилл-репозиториев агента»` — adhikarin, steward of #1506 (and of the sibling skill repo #844). Your inbox: `nks_orient(realm="nks-dev", focus="931")` at session start. No seq recorded here → the repo has not been through iskronify; run it before acting.
-- **Owner karta**: `#1226 «👑 Владелец продукта»` (svatantra 主) — out-of-mandate questions go there as `posed_to` vimarshas.
-- **Delivery map**: this repo advances sub-bianhua `#1516 «📦 Скилл-плагин iskron доставлен агентам»` (anga of `#1092 «🚀 Продакшн на iskron.ru»`). The build→publish→install chain lives as kriyas `#1512 → #1513 → #1514` in #1506; open work lives as anga-vimarshas on `#1516`.
-- **Stack**: Markdown `SKILL.md` files under `skills/<name>/`, packaged into derived `<name>.skill` zip bundles via `make build`. Distributed as a Claude Code plugin marketplace (`iskron@iskron`), versioned by semver in `.claude-plugin/plugin.json` — bumped by **release-please**, which maintains a release PR from the Conventional Commits on `main` (feat→minor, feat!/BREAKING→major, else patch); merging that PR writes the version, tags `vX.Y.Z`, and cuts a GitHub Release with a `CHANGELOG.md` entry (`.github/workflows/release-please.yml` + `release-please-config.json`, never by hand). MCP endpoint is `https://mcp.iskron.ru/` (`.mcp.json`). No runtime, no third-party dependencies; CI is a dependency-free gate (pure Node + bash) — format, surface-consistency and the bridge's behavioural suite; see `.github/workflows/ci.yml`.
-- **Production statement**: skills install into agents' `~/.claude/skills/` and shape how every agent working on iskron uses NKS via `mcp.iskron.ru`. A wrong instruction — e.g. a reference to a tool that nks-mcp has dropped — silently degrades every agent that loads the skill; there is no crash, only methodology drift. The consumer is the agent, not a human user. Keeping skills in sync with the nks-mcp tool surface is the core maintenance obligation.
+## Что это за проект
+- **Nature**: `library` — переиспользуемые скилл-бандлы Claude Code, которые потребляют агенты, работающие над iskron. Послабление против production: содержимое — проза и методология, поэтому у скиллов нет поведенческих тестов. Ворота здесь два: (1) человеческий обзор дифа `SKILL.md` плюс собственная дисциплина скиллов и (2) лёгкий CI, проверяющий контракт фронтматтера и синхронность бандлов (`make check`). Единственный отгружаемый артефакт-**код** — `iskron-bridge` — исключение и несёт настоящий поведенческий набор (`make test`): его отказы для агента безмолвны и приземляются на человека, чей логин в браузере ушёл в никуда. В остальном поломка тиха, а не громка (см. Production statement) — CI ловит механические классы: битый фронтматтер, разошедшиеся бандлы, инвентарные списки не в ногу с деревом и имена тулов / значения enum, которых нет в закоммиченном снимке поверхности.
+- **Граф NKS**: `nks-dev` — каждая сессия начинается с `nks_orient` здесь.
+- **Фокус-контур**: `#1506 «📦 iskron/skills (скиллы агента для iskron)»`, под RU-деплоем `#1086`.
+- **Роль агента**: `#931 «👨‍💻 Разработчик скилл-репозиториев агента»` — adhikarin, стюард #1506 (и соседнего скилл-репо #844). Твой инбокс: `nks_orient(realm="nks-dev", focus="931")` на старте сессии. Здесь не записан seq → репо не проходил iskronify; прогони его прежде, чем действовать.
+- **Роль владельца**: `#1226 «👑 Владелец продукта»` (svatantra 主) — вопросы вне мандата идут туда `posed_to`-вимаршами.
+- **Карта доставки**: этот репозиторий двигает суб-бяньхуа `#1516 «📦 Скилл-плагин iskron доставлен агентам»` (anga от `#1092 «🚀 Продакшн на iskron.ru»`). Цепочка сборка→публикация→установка живёт криями `#1512 → #1513 → #1514` в #1506; открытая работа — anga-вимаршами на `#1516`.
+- **Стек**: markdown-файлы `SKILL.md` под `skills/<name>/`, пакуемые в производные zip-бандлы `<name>.skill` через `make build`. Раздаётся маркетплейсом плагинов Claude Code (`iskron@iskron`), версионируется семвером в `.claude-plugin/plugin.json` — версию поднимает **release-please**, держащий релизный PR из Conventional Commits на `main` (feat→minor, feat!/BREAKING→major, иначе patch); мерж этого PR пишет версию, ставит тег `vX.Y.Z` и режет GitHub Release с записью в `CHANGELOG.md` (`.github/workflows/release-please.yml` + `release-please-config.json`, никогда руками). MCP-эндпоинт — `https://mcp.iskron.ru/` (`.mcp.json`). Ни рантайма, ни сторонних зависимостей; CI — гейт без зависимостей (чистый Node + bash): формат, сверка поверхности и поведенческий набор моста; см. `.github/workflows/ci.yml`.
+- **Production statement**: скиллы ставятся агентам в `~/.claude/skills/` и определяют, как каждый агент, работающий над iskron, пользуется NKS через `mcp.iskron.ru`. Неверная инструкция — например, ссылка на тул, который nks-mcp выбросил, — тихо деградирует каждого агента, загрузившего скилл; краха нет, есть только дрейф методологии. Потребитель здесь агент, а не человек. Держать скиллы в синхроне с поверхностью тулов nks-mcp — основная обязанность по сопровождению.
 
-## Persistence rules
-State lives in the **repo** or in **NKS** — nowhere else.
-- **No local agent memory.** The harness's project-memory dir is forbidden by dir, not by category — frozen at a prohibition stub; the `PreToolUse` memory-guard hook blocks any write there. Route the fact instead: repo conventions / code facts → this file; project state → NKS (`nks-dev`, #1506); a user-scoped fact no project owns → the owner's personal realm (`minding`).
-- **Repo**: `skills/<name>/SKILL.md` (source of truth), the derived `<name>.skill` bundles, `README.md`, conventions.
-- **NKS** (`nks-dev`): design decisions, open questions (vimarshas), hand-offs, hints — the thinking around the skills. Don't restate NKS in the repo; link to the vimarsha/holon.
-- **`skills/<name>/SKILL.md` is the source of truth.** The `<name>.skill` zips are derived build artifacts (committed for download/claude.ai); the installed copy in `~/.claude/skills/` is derived too. Never treat a hand-edited bundle or installed copy as canonical — edit the source dir and run `make build`.
-- Fetch state; never reconstruct it from memory.
+## Правила состояния
+Состояние живёт в **репо** или в **графе** — больше нигде.
+- **Никакой локальной памяти агента.** Директория проектной памяти харнесса запрещена по директории, а не по категории — заморожена заглушкой-запретом; хук `PreToolUse` memory-guard блокирует любую запись туда. Вместо этого разведи факт по домам: соглашения репо и факты о коде → этот файл; состояние проекта → граф (`nks-dev`, #1506); факт про пользователя, которым не владеет ни один проект → личный граф владельца (`minding`).
+- **Репо**: `skills/<name>/SKILL.md` (источник истины), производные бандлы `<name>.skill`, `README.md`, соглашения.
+- **Граф** (`nks-dev`): дизайн-решения, открытые вопросы (вимарши), передачи, подсказки — мышление вокруг скиллов. Не пересказывай граф в репо; ссылайся на вимаршу или контур.
+- **`skills/<name>/SKILL.md` — источник истины.** Зипы `<name>.skill` — производные артефакты сборки (коммитятся ради скачивания и claude.ai); установленная копия в `~/.claude/skills/` тоже производная. Никогда не считай канонической правленную руками сборку или установленную копию — правь исходную директорию и гони `make build`.
+- Состояние добывай; никогда не восстанавливай его по памяти.
 
-## Session lifecycle
-- **Start:** `nks_orient(realm="nks-dev", focus_holon="1506")`; orient by the ACTIVE BIANHUA map (`lens="bianhua"` for the forest) — open work lives as anga-vimarshas on transformations; a `genre=hint` seed, if any, is a pointer for what the map doesn't carry. The `iskronify` counterpart is the `entry` skill, which runs the protocol. Then open your agenda: `nks_orient(realm="nks-dev", focus="931")` — incoming `posed_to` vimarshas are your inbox; pick up or explicitly defer each before starting repo work.
-- **Every push → update NKS:** thread shipped repo state into holon #1506 and advance the delivery bianhua #1516 — close (visarjana) driver vimarsha #1515 (or split it) as the repo moves toward published/installed. The skill *pipeline* (kriyas #1512–#1514) is the carrier. A thin `genre=hint` is left only for what the graph can't carry (pointer, not payload — methodology #131), never by default.
-- **Shared methodology stays shared.** The skills' *substance* (kriyas «навигация», «создание узла», «приведение репо к стандарту», intake, roadmap, вахта) is common methodology modeled once under #844/methodology — do **not** duplicate it under #1506. Only when an iskron skill *diverges* from the shared version does that divergence get its own node.
-- **Keep git refs out of NKS** — no SHAs, branch names, or PR numbers in nodes.
-- **Skill ↔ tool sync is the recurring driver:** when nks-mcp (the server behind mcp.iskron.ru) renames or drops a tool, the matching skill edits land here, ideally in the same atomic unit of time.
+## Жизненный цикл сессии
+- **Старт:** `nks_orient(realm="nks-dev", focus_holon="1506")`; ориентируйся по карте АКТИВНЫХ БЯНЬХУА (`lens="bianhua"` для леса) — открытая работа живёт anga-вимаршами на превращениях; затравка `genre=hint`, если она есть, — указатель на то, чего карта не несёт. Протокол исполняет скилл `entry`. Затем открой свою повестку: `nks_orient(realm="nks-dev", focus="931")` — входящие `posed_to`-вимарши и есть твой инбокс; подними или явно отложи каждую прежде, чем браться за работу в репо.
+- **Каждый пуш → обнови граф:** протяни отгруженное состояние репо в контур #1506 и продвинь бяньхуа доставки #1516 — закрывай (visarjana) ведущую вимаршу #1515 (или дели её) по мере того, как репо движется к опубликованному и установленному. Носитель — *конвейер* скиллов (крии #1512–#1514). Тонкий `genre=hint` оставляется только для того, чего граф не несёт (указатель, не груз), и никогда по умолчанию.
+- **Общая методология остаётся общей.** *Существо* скиллов (крии «навигация», «создание узла», «приведение репо к стандарту», intake, roadmap, вахта) — общая методология, смоделированная один раз под #844/methodology; не дублируй её под #1506. Собственный узел получает только то, чем скилл iskron *расходится* с общей версией.
+- **Держи git-ссылки вне графа** — никаких SHA, имён веток и номеров PR в узлах.
+- **Синхрон «скилл ↔ тул» — постоянный двигатель:** когда nks-mcp (сервер за mcp.iskron.ru) переименовывает или выбрасывает тул, соответствующие правки скиллов ложатся сюда, желательно в тот же атомарный отрезок времени.
 
-### Branch discipline
-One branch through to its merge — commit follow-ups into it, don't chain new branches before it merges. After merge: `git checkout main && git pull`, delete the merged branch, update NKS (#1506 + close resolved vimarshas).
+### Дисциплина веток
+Одна ветка до её мержа — доделки коммить в неё, не заводи новые до того, как она слилась. После мержа: `git checkout main && git pull`, удали слитую ветку, обнови граф (#1506 + закрой разрешённые вимарши).
 
-## Working principles
-1. **Think before editing.** Orient in nks-dev; read the bianhua map. Inspect the real source in `skills/<name>/SKILL.md` — not the derived `.skill` zip, not the installed copy, not assumptions.
-2. **Surgical changes.** Touch only the skill steps the task needs. Match each bundle's existing register and terminology. Don't mass-rewrite a bundle for one fix unless asked.
-3. **Sync over invention.** A skill instruction must match the live nks-mcp tool surface — verify tool names exist before writing them into a skill.
-4. **Terminology is load-bearing.** Skills teach vocabulary to every downstream agent. Use the realm's current terms (`phenomenon`, not the retired `entity`); a typed primitive (target of given_as / ahara / upadhi / context) is a `phenomenon`, a generic graph object is a `node`.
+## Рабочие принципы
+1. **Думай прежде, чем править.** Сориентируйся в nks-dev; прочти карту бяньхуа. Смотри настоящий источник в `skills/<name>/SKILL.md` — не производный зип `.skill`, не установленную копию и не свои допущения.
+2. **Хирургические правки.** Трогай только те шаги скилла, которых требует задача. Держись существующего регистра и терминологии каждого бандла. Не переписывай бандл целиком ради одной починки, если об этом не просили.
+3. **Синхрон важнее выдумки.** Инструкция скилла обязана совпадать с живой поверхностью тулов nks-mcp — проверь, что имя тула существует, прежде чем писать его в скилл.
+4. **Терминология несущая.** Скиллы учат словарю каждого агента ниже по течению. Пользуйся нынешними терминами графа (`phenomenon`, а не отменённый `entity`); типизированный примитив (цель given_as / ahara / upadhi / context) — это `phenomenon`, произвольный объект графа — `node`.
 
-## NKS ↔ repo: where things live
-| Concern | Repo | NKS |
+## Граф ↔ репо: где что живёт
+| Забота | Репо | Граф |
 |---|---|---|
-| `skills/<name>/SKILL.md` (source of truth) + derived `.skill` bundles | ✓ | |
-| `.claude-plugin/marketplace.json`, build (`Makefile`, `scripts/`, `.githooks/`) | ✓ | |
-| README, conventions | ✓ (AGENTS.md) | |
-| Design decisions, open questions | | ✓ (vimarshas) |
-| Plans, hand-offs | | ✓ (bianhua map + anga-vimarshas on #1506/#1516; thin `genre=hint` only for off-map remainder) |
-| Commit history, SHAs, PRs | git | (never NKS) |
+| `skills/<name>/SKILL.md` (источник истины) + производные бандлы `.skill` | ✓ | |
+| `.claude-plugin/marketplace.json`, сборка (`Makefile`, `scripts/`, `.githooks/`) | ✓ | |
+| README, соглашения | ✓ (AGENTS.md) | |
+| Дизайн-решения, открытые вопросы | | ✓ (вимарши) |
+| Планы, передачи | | ✓ (карта бяньхуа + anga-вимарши на #1506/#1516; тонкий `genre=hint` только для остатка вне карты) |
+| История коммитов, SHA, PR | git | (никогда не в графе) |
 
-## The bootstrap template lives in the `iskronify` skill
-The fill-in `AGENTS.md` skeleton for future repos is `skills/iskronify/references/agents-template.md`; the bootstrap protocol is `skills/iskronify/SKILL.md`. **This** repo's own config is `AGENTS.md` (the file you are reading). Edit the template/protocol to improve bootstrapping for all future repos — don't confuse them with this file.
+## Шаблон бутстрапа живёт в скилле `iskronify`
+Заполняемый скелет `AGENTS.md` для будущих репозиториев — `skills/iskronify/references/agents-template.md`; протокол бутстрапа — `skills/iskronify/SKILL.md`. Собственный конфиг **этого** репо — `AGENTS.md` (файл, который ты читаешь). Правь шаблон и протокол, чтобы улучшить бутстрап всем будущим репозиториям, — не путай их с этим файлом.
 
-## Stack
-Markdown `skills/<name>/SKILL.md` (+ optional `skills/<name>/references/*.md`) per skill — **edit these directly, they are plain files and fully greppable.** Each is packed into a derived `<name>.skill` zip (top-level `<name>/` dir containing `SKILL.md`) by `make build`. No code, no lockfiles. The only "code" is the build + format-validation scripts (`scripts/*.sh`, `scripts/*.mjs`), run by `make` and CI.
+## Стек
+Markdown `skills/<name>/SKILL.md` (+ по желанию `skills/<name>/references/*.md`) на каждый скилл — **правь их напрямую, это обычные файлы и они полностью грепаются.** Каждый пакуется в производный зип `<name>.skill` (верхнеуровневая директория `<name>/` с `SKILL.md` внутри) командой `make build`. Ни кода, ни лок-файлов. Единственный «код» — скрипты сборки и проверки формата (`scripts/*.sh`, `scripts/*.mjs`), которые гонят `make` и CI.
 
-## Commands
-Edit the source under `skills/<name>/` directly — no unzip dance. The `<name>.skill` zips are regenerated, not hand-edited.
+## Команды
+Правь исходники под `skills/<name>/` напрямую — никаких плясок с распаковкой. Зипы `<name>.skill` перегенерируются, а не правятся руками.
 
-| Task | Command |
+| Задача | Команда |
 |---|---|
-| Find / search across skills | `grep`/`Grep` over `skills/` (it's plain text) |
-| Edit a skill | edit `skills/<name>/SKILL.md` |
-| Rebuild the `.skill` bundles | `make build` (deterministic; or auto via the pre-commit hook) |
-| Enable the auto-rebuild hook | `make hooks` (sets `core.hooksPath -> .githooks`) |
-| Verify a bundle's contents | `unzip -l <name>.skill` |
-| Run the CI gate locally | `make check` (= `make validate` + `make check-bundles` + `make check-surface` + `make test`) |
-| Validate skill frontmatter only | `make validate` (pure Node, no deps) |
-| Check committed bundles ↔ source | `make check-bundles` |
-| Lint corpus ↔ surface snapshot | `make check-surface` (offline, against `fixtures/surface.json`) |
-| Run the bridge's behavioural tests | `make test` (offline, against the local fake in `tests/fake-nks.mjs`) |
-| Refresh the surface snapshot | `make surface` (network + authorized grant; speaks through the bundled iskron-bridge) |
-| Build the claude.ai plugin archive | `make plugin` (→ `dist/iskron.zip`; CI attaches it to each release) |
+| Найти / поискать по скиллам | `grep`/`Grep` по `skills/` (это простой текст) |
+| Отредактировать скилл | правь `skills/<name>/SKILL.md` |
+| Пересобрать бандлы `.skill` | `make build` (детерминированно; или автоматически pre-commit-хуком) |
+| Включить хук автосборки | `make hooks` (ставит `core.hooksPath -> .githooks`) |
+| Проверить содержимое бандла | `unzip -l <name>.skill` |
+| Прогнать гейт CI локально | `make check` (= `make validate` + `make check-bundles` + `make check-surface` + `make test`) |
+| Проверить только фронтматтер скиллов | `make validate` (чистый Node, без зависимостей) |
+| Сверить закоммиченные бандлы с исходниками | `make check-bundles` |
+| Сверить корпус со снимком поверхности | `make check-surface` (офлайн, против `fixtures/surface.json`) |
+| Прогнать поведенческие тесты моста | `make test` (офлайн, против локального фейка в `tests/fake-nks.mjs`) |
+| Обновить снимок поверхности | `make surface` (сеть + авторизованный грант; говорит через встроенный iskron-bridge) |
+| Собрать архив плагина для claude.ai | `make plugin` (→ `dist/iskron.zip`; CI прикладывает его к каждому релизу) |
 
-The pre-commit hook (`.githooks/pre-commit`) rebuilds and stages the `.skill` bundles on every commit, so committed zips never drift from source. Run `make hooks` once per clone to enable it — **except on this owner's machine**: the `~/code/iskron/` gitconfig points `core.hooksPath` at a shared `pre-push` identity-guard (correct-user pushes), and `make hooks` would override it repo-locally and disable that guard here. On that machine, skip `make hooks` and run `make build` before committing instead (CI's `make check-bundles` catches any drift regardless). For the corpus the automated gate is **format and surface-consistency**, not behaviour: `make validate` parses each `SKILL.md` frontmatter (catching malformed YAML such as an unescaped quote in a `description`) and lints the AGENTS.md inventory line and README table against the `skills/` tree; `make check-bundles` confirms each `<name>.skill` contains a `<name>/` tree byte-identical to its source; `make check-surface` checks every `iskron_*` name and enum value in the corpus against `fixtures/surface.json` — the committed snapshot of the live tool surface, refreshed by `make surface` when nks-mcp changes. For the bridge the gate *is* behavioural: `make test` spawns `iskron-bridge` over stdio against a local fake NKS + OAuth server and drives whole flows through it. All of them run in GitHub CI on every push/PR (`.github/workflows/ci.yml`). The substance of a skill — whether its prose and tool references are right — is still gated by human review of the diff.
+Pre-commit-хук (`.githooks/pre-commit`) пересобирает и стейджит бандлы `.skill` на каждом коммите, так что закоммиченные зипы никогда не расходятся с исходником. Включи его один раз на клон через `make hooks` — **кроме машин, где `core.hooksPath` уже занят**: если gitconfig указывает его на общий `pre-push`-страж личности (пуш под правильным пользователем), `make hooks` перебьёт это на уровне репо и отключит стража. Там пропусти `make hooks` и вместо него гоняй `make build` перед коммитом (расхождение всё равно поймает `make check-bundles` в CI). Для корпуса автоматический гейт — **формат и сверка с поверхностью**, а не поведение: `make validate` разбирает фронтматтер каждого `SKILL.md` (ловя битый YAML вроде неэкранированной кавычки в `description`) и линтует инвентарную строку AGENTS.md и таблицу README против дерева `skills/`; `make check-bundles` подтверждает, что каждый `<name>.skill` содержит дерево `<name>/`, побайтово равное исходнику; `make check-surface` сверяет каждое имя `iskron_*` и значение enum в корпусе с `fixtures/surface.json` — закоммиченным снимком живой поверхности тулов, обновляемым через `make surface`, когда меняется nks-mcp. Для моста гейт *именно* поведенческий: `make test` поднимает `iskron-bridge` по stdio против локального фейкового NKS + OAuth и гоняет через него целые флоу. Всё это гоняется в GitHub CI на каждом пуше и PR (`.github/workflows/ci.yml`). Существо скилла — верна ли его проза и ссылки на тулы — по-прежнему держится человеческим обзором дифа.
 
-## Project structure
-- `skills/<name>/SKILL.md` — **source of truth**, one dir per skill (`entry`, `writing`, `design`, `weaving`, `inquiry`, `assembly`, `integrity`, `intake`, `vahta`, `collaborate`, `foreman`, `feedback`, `reality-audit`, `minding`, `methodology-work`, `iskronify`, `product-roadmap`, `establish-mcp`); `references/*` optional (`iskronify`, `writing`, `product-roadmap`, `collaborate` ship them); `establish-mcp` ships `scripts/iskron-bridge.mjs` (the stdio↔https OAuth MCP bridge — code inside a skill, kept dependency-free, Node ≥20).
-- `*.skill` — derived zip bundles (committed for manual / claude.ai install). Build output of `make build`; do not hand-edit.
-- `.claude-plugin/marketplace.json` — plugin marketplace manifest (`iskron@iskron`); `metadata.version` and the plugin entry's `version` both mirror `plugin.json` (release-please writes all three; `make validate` fails if they diverge). No component lists — the plugin's skills auto-discover from `skills/` (`strict: true`, plugin.json authoritative).
-- `.claude-plugin/plugin.json` — the `iskron` plugin manifest; its `version` is what Claude Code reads to deliver updates (bumped by release-please when the release PR merges, never by hand).
-- `.mcp.json` — the iskron MCP server binding for this repo: `https://mcp.iskron.ru/`.
-- `release-please-config.json` + `.release-please-manifest.json` + `.github/workflows/release-please.yml` — release-please: it maintains a release PR from the Conventional Commits on `main`; merging that PR writes the version into `plugin.json`/`marketplace.json`, tags `vX.Y.Z`, and cuts a GitHub Release with a `CHANGELOG.md` entry; the workflow's `plugin-asset` job then builds `dist/iskron.zip` at the tag and attaches it to the release — the claude.ai delivery channel (no marketplace auto-sync there: the repo is public by decision, consumers update by re-uploading a newer release's asset).
-- `Makefile`, `scripts/build-skills.sh`, `scripts/build-plugin.sh`, `.githooks/pre-commit` — the build.
-- `tests/bridge.test.mjs` + `tests/fake-nks.mjs` — the bridge driven over stdio against a local fake NKS + OAuth server. Offline, no deps, touches no real token store (`make test`).
-- `fixtures/surface.json` — the committed snapshot of the live nks-mcp tool surface that `make check-surface` lints the corpus against; refreshed by `make surface`.
-- `scripts/validate-skills.mjs` (frontmatter contract + shipped-prose guards + manifest-list lint, pure Node), `scripts/check-bundles.sh` (bundle ↔ source sync), `scripts/check-surface.mjs` + `fixtures/surface.json` (corpus ↔ tool-surface lint; refreshed by `scripts/export-surface.mjs` through the bundled bridge), `tests/bridge.test.mjs` + `tests/fake-nks.mjs` (the bridge's behavioural suite), `.github/workflows/ci.yml` — the gate.
-- `README.md` — short human-facing pointer.
-- `.claude/` — Claude Code settings: `settings.json` (committed — session hooks + team permissions), `settings.local.json` (gitignored, machine-local).
-- `.gitignore` — ignores `.DS_Store`, `.claude/settings.local.json` and `dist/` (the plugin archive is a release asset, never committed).
+## Структура проекта
+- `skills/<name>/SKILL.md` — **источник истины**, по одной директории на скилл (`entry`, `writing`, `design`, `weaving`, `inquiry`, `assembly`, `integrity`, `intake`, `vahta`, `collaborate`, `foreman`, `feedback`, `reality-audit`, `minding`, `methodology-work`, `iskronify`, `product-roadmap`, `establish-mcp`); `references/*` по желанию (их несут `iskronify`, `writing`, `product-roadmap`, `collaborate`); `establish-mcp` несёт `scripts/iskron-bridge.mjs` (мост stdio↔https OAuth MCP — код внутри скилла, держится без зависимостей, Node ≥20).
+- `*.skill` — производные zip-бандлы (коммитятся ради ручной установки и claude.ai). Выхлоп `make build`; руками не править.
+- `.claude-plugin/marketplace.json` — манифест маркетплейса плагинов (`iskron@iskron`); `metadata.version` и `version` самой записи плагина оба зеркалят `plugin.json` (release-please пишет все три; `make validate` падает, если они разошлись). Списков компонентов нет — скиллы плагина сами обнаруживаются из `skills/` (`strict: true`, авторитет за plugin.json).
+- `.claude-plugin/plugin.json` — манифест плагина `iskron`; его `version` — то, что Claude Code читает, чтобы доставить обновление (поднимает release-please при мерже релизного PR, никогда не руками).
+- `.mcp.json` — привязка MCP-сервера iskron для этого репо: `https://mcp.iskron.ru/`.
+- `release-please-config.json` + `.release-please-manifest.json` + `.github/workflows/release-please.yml` — release-please: держит релизный PR из Conventional Commits на `main`; мерж этого PR пишет версию в `plugin.json`/`marketplace.json`, ставит тег `vX.Y.Z` и режет GitHub Release с записью в `CHANGELOG.md`; затем джоб `plugin-asset` собирает `dist/iskron.zip` на теге и прикладывает его к релизу — это канал доставки для claude.ai (автосинхрона маркетплейса там нет: репо публичное по решению, потребители обновляются перезаливкой ассета нового релиза).
+- `Makefile`, `scripts/build-skills.sh`, `scripts/build-plugin.sh`, `.githooks/pre-commit` — сборка.
+- `tests/bridge.test.mjs` + `tests/fake-nks.mjs` — мост, гоняемый по stdio против локального фейкового NKS + OAuth. Офлайн, без зависимостей, не касается настоящего хранилища токенов (`make test`).
+- `fixtures/surface.json` — закоммиченный снимок живой поверхности тулов nks-mcp, против которого `make check-surface` линтует корпус; обновляется через `make surface`.
+- `scripts/validate-skills.mjs` (контракт фронтматтера + стражи отгружаемой прозы + линт инвентарных списков, чистый Node), `scripts/check-bundles.sh` (синхрон бандлов с исходником), `scripts/check-surface.mjs` + `fixtures/surface.json` (линт корпуса против поверхности тулов; обновляется `scripts/export-surface.mjs` через встроенный мост), `tests/bridge.test.mjs` + `tests/fake-nks.mjs` (поведенческий набор моста), `.github/workflows/ci.yml` — гейт.
+- `README.md` — короткий указатель для человека.
+- `.claude/` — настройки Claude Code: `settings.json` (в гите — хуки сессии + командные разрешения), `settings.local.json` (в gitignore, локальный для машины).
+- `.gitignore` — игнорирует `.DS_Store`, `.claude/settings.local.json` и `dist/` (архив плагина — ассет релиза, в гит не кладётся).
 
-## Code conventions
-- **Keep the repo brand-clean.** The brand is **iskron** (`iskron@iskron`, `/iskron:<skill>`, `mcp.iskron.ru`) and the repo-bootstrap skill is **`iskronify`**. No tracked file and no git surface (commit message, PR title/body, branch name) references any other skill distribution: not its brand, not its bootstrap-skill name, not the word «upstream/апстрим», not its PR numbers — describe every change on its own merit. `make validate` fails a shipped source carrying a foreign brand token; before pushing, grep the commit message and branch name the same way. Relations between distributions live in NKS only (`nks-dev`, #844/#1506) — the shared graph may carry another brand; this repo's files and git history never do.
-- **`SKILL.md` frontmatter**: `name:` (kebab, matches the skill dir) + `description:` carrying explicit trigger phrases — that description is what routes the skill, so keep triggers concrete.
-- **Skill names are bare** — no `nks-`/`iskron-` prefix. The `iskron` plugin namespaces them (`/iskron:<skill>`), so a prefix would only stutter. Trade-off: flat installs (`npx skills`, manual unzip) drop skills into `~/.claude/skills/<name>/` under the bare name and can collide there — the plugin is the canonical, collision-proof channel.
-- **Source of truth = `skills/<name>/SKILL.md`.** Edit it directly, then `make build` to regenerate the `<name>.skill` zip (which must contain `<name>/SKILL.md`, not a bare `SKILL.md`, or it won't install). New skill → add a `skills/<name>/` dir — it ships via plugin auto-discovery; never add component lists (`skills`, `commands`, …) to `marketplace.json`/`plugin.json` — a second copy of the truth drifts, and the format gate fails it.
-- **No realm seq-references in skills.** Skills ship to users who (almost certainly) have no access to `methodology`/`nks-dev`, and seq numbers are realm-instance-specific — a `#N` or `nks_look(node_id=…, realm="methodology")` in a skill is dead weight or a wrong pointer downstream. Name concepts by name; keep syntax placeholders (`#42`, `#N`, GitHub `#123`) only. Exception: `methodology-work` may reference the methodology realm operationally (name/attr-based search, not seqs) — the skill presupposes that realm. (Seq refs in **this AGENTS.md** are fine — it never ships.)
+## Соглашения о коде
+- **Держи репо чистым по бренду.** Бренд — **iskron** (`iskron@iskron`, `/iskron:<skill>`, `mcp.iskron.ru`), а скилл бутстрапа репозитория — **`iskronify`**. Ни один файл в гите и ни одна git-поверхность (сообщение коммита, заголовок и тело PR, имя ветки) не ссылается на другую скилл-дистрибуцию: ни на её бренд, ни на имя её скилла бутстрапа, ни на слово «upstream/апстрим», ни на номера её PR — описывай каждое изменение по его собственному существу. `make validate` роняет отгружаемый источник, несущий чужой бренд-токен; перед пушем прогреби так же сообщение коммита и имя ветки. Отношения между дистрибуциями живут только в графе (`nks-dev`, #844/#1506) — общий граф может нести другой бренд; файлы и история этого репо — никогда.
+- **Фронтматтер `SKILL.md`**: `name:` (kebab, совпадает с директорией скилла) + `description:`, несущий явные фразы-триггеры — именно описание маршрутизирует скилл, поэтому держи триггеры конкретными.
+- **Имена скиллов голые** — без префикса `nks-`/`iskron-`. Плагин `iskron` даёт им пространство имён (`/iskron:<skill>`), так что префикс только заикался бы. Плата: плоская установка (`npx skills`, ручная распаковка) кладёт скиллы в `~/.claude/skills/<name>/` под голым именем и может там столкнуться — канонический, защищённый от столкновений канал — плагин.
+- **Источник истины = `skills/<name>/SKILL.md`.** Правь его напрямую, затем `make build`, чтобы перегенерировать зип `<name>.skill` (внутри должен быть `<name>/SKILL.md`, а не голый `SKILL.md`, иначе не поставится). Новый скилл → заведи директорию `skills/<name>/`; он поедет автообнаружением плагина. Никогда не добавляй списки компонентов (`skills`, `commands`, …) в `marketplace.json`/`plugin.json` — вторая копия истины расходится, и гейт формата это роняет.
+- **Никаких seq-ссылок на графы в скиллах.** Скиллы едут к пользователям, у которых (почти наверняка) нет доступа к `methodology`/`nks-dev`, а seq-номера привязаны к экземпляру графа — `#N` или `nks_look(node_id=…, realm="methodology")` в скилле ниже по течению либо мёртвый груз, либо неверный указатель. Называй понятия по имени; оставляй только синтаксические плейсхолдеры (`#42`, `#N`, GitHub `#123`). Исключение: `methodology-work` может ссылаться на граф методологии операционально (поиск по имени и атрибутам, не по seq) — этот скилл его предполагает. (Seq-ссылки в **этом AGENTS.md** нормальны — он никогда не отгружается.)
 - **Размещение уроков в скилле: в теле — то, чем шаг исполняют; в справке (`references/*`) — то, чем его чинят.** Подтверждено двумя независимыми свидетельствами (держатель nks-mcp; вахта iskron): справку при подключении не открывают, поэтому исполняющий вызов (например, `Monitor` со сторожем как `command` и `persistent: true` для держания сокета) обязан стоять в теле шага, а таблицы починки (коды закрытий, повторные register) живут в справке.
-- **Tool references must be live.** Any `nks_*` tool a skill names must exist in the current nks-mcp surface behind `mcp.iskron.ru`. Dropped tools (`nks_validate`, `nks_reflect`) must not appear; shipped behavior (validate-on-create → `CHECKS:` in the create response) belongs in create-flow guidance.
-- **Terminology**: `phenomenon` for the typed primitive, `node` for the generic; `kriya`/`holon`/`karta`/`vimarsha` per the realm ontology. Don't reintroduce retired terms.
-- **Test discipline**: for the corpus, CI validates format and surface-consistency (`make check` — frontmatter parseability + shipped-prose guards + manifest lists + bundle sync + tool-name/enum lint against the surface snapshot); it does not check substance. For the bridge, a behavioural change belongs in `tests/bridge.test.mjs` in the same commit — and write the test so it **fails on the old code first** (`ISKRON_BRIDGE_PATH=<old copy> make test`); a bridge test that never went red proves only that it runs. Substance review is still manual: read the diffed `SKILL.md` — behavioural claims about tools are exactly what no lint sees. The skill set ships by auto-discovery from `skills/`; `make validate` fails if a manifest re-introduces a component list.
-- **Frontmatter must be parseable YAML.** `description` values are double-quoted; **escape any inner quote as `\"`** (an unescaped `"` terminates the scalar early — the exact bug `make validate` guards). Keep frontmatter flat and single-line — only `name` and `description` keys, plus optional `slash: true` (typed `/name` resolution in OpenCode v2).
-- **No angle brackets in `description`.** The claude.ai plugin loader rejects a description with XML-tag-shaped content, and the refusal takes down the whole plugin install. Its exact matcher is unknown, so `make validate` bans `<`/`>` outright — write placeholders as `@handle/mind`, not `@<handle>/mind` (skill *bodies* may keep angle-bracket placeholders).
+- **Ссылки на тулы должны быть живыми.** Любой тул `nks_*`, который называет скилл, обязан существовать в нынешней поверхности nks-mcp за `mcp.iskron.ru`. Выброшенные тулы (`nks_validate`, `nks_reflect`) появляться не должны; отгруженному поведению (валидация при создании → `CHECKS:` в ответе на создание) место в руководстве по флоу создания.
+- **Терминология**: `phenomenon` для типизированного примитива, `node` для произвольного; `kriya`/`holon`/`karta`/`vimarsha` по онтологии графа. Не возвращай отменённые термины.
+- **Дисциплина тестов**: для корпуса CI проверяет формат и сверку с поверхностью (`make check` — разбираемость фронтматтера + стражи отгружаемой прозы + инвентарные списки + синхрон бандлов + линт имён тулов и enum против снимка поверхности); существа он не проверяет. Для моста поведенческое изменение обязано лечь тестом в `tests/bridge.test.mjs` тем же коммитом — и пиши тест так, чтобы он **сначала краснел на старом коде** (`ISKRON_BRIDGE_PATH=<старая копия> make test`); тест моста, который никогда не был красным, доказывает только то, что он запускается. Обзор существа по-прежнему ручной: читай диф `SKILL.md` — поведенческие утверждения про тулы это ровно то, чего не видит ни один линт. Набор скиллов едет автообнаружением из `skills/`; `make validate` падает, если манифест снова заводит список компонентов.
+- **Фронтматтер обязан быть разбираемым YAML.** Значения `description` в двойных кавычках; **любую внутреннюю кавычку экранируй как `\"`** (неэкранированная `"` обрывает скаляр раньше времени — ровно тот баг, который стережёт `make validate`). Держи фронтматтер плоским и однострочным — только ключи `name` и `description` плюс необязательный `slash: true` (разрешение набранного `/name` в OpenCode v2).
+- **Никаких угловых скобок в `description`.** Загрузчик плагинов claude.ai отвергает описание с содержимым в форме XML-тега, и этот отказ роняет установку всего плагина. Его точный матчер неизвестен, поэтому `make validate` запрещает `<`/`>` начисто — пиши плейсхолдеры как `@handle/mind`, а не `@<handle>/mind` (в *телах* скиллов угловые плейсхолдеры допустимы).
 
-## What to update when
-- `AGENTS.md` — repo conventions, structure, or the skill set change.
-- `README.md` — the skill table, whenever the skill set changes (new/renamed/retired skill).
-- `fixtures/surface.json` — when the nks-mcp tool surface changes (rename/drop/new enum): `make surface`, review the diff, commit.
-- `DERIVATION.md` — the skills ← canon re-projection map (+ the four-layer language contract): walk it after any methodology-canon change; extend it when a new canon landmark gets projected into a skill.
-- `skills/iskronify/` (`SKILL.md` + `references/agents-template.md`) — when improving the bootstrap protocol/template for all future repos.
-- `skills/iskronify/references/superpowers-interop.md` — when superpowers renames its skills/paths/gates (re-verify checklist inside).
-- `skills/iskronify/references/delegation.md` — when Claude Code / OpenCode agent-file surfaces change (dirs, frontmatter keys, model aliases/inheritance; re-verify checklist inside).
-- NKS (`nks-dev`, #1506) — every push: thread repo state into holon #1506, advance delivery bianhua #1516, close resolved vimarshas.
+## Что когда обновлять
+- `AGENTS.md` — когда меняются соглашения репо, структура или набор скиллов.
+- `README.md` — таблицу скиллов, всякий раз когда набор скиллов меняется (новый / переименованный / упразднённый скилл).
+- `fixtures/surface.json` — когда меняется поверхность тулов nks-mcp (переименование, дроп, новый enum): `make surface`, посмотреть диф, закоммитить.
+- `DERIVATION.md` — карта ре-проекции скиллов из канона (+ контракт четырёх языковых слоёв): проходи её после любой перемены канона методологии; расширяй, когда новый ориентир канона проецируется в скилл.
+- `skills/iskronify/` (`SKILL.md` + `references/agents-template.md`) — когда улучшаешь протокол и шаблон бутстрапа для всех будущих репозиториев.
+- `skills/iskronify/references/superpowers-interop.md` — когда superpowers переименовывает свои скиллы, пути или гейты (чеклист пересверки внутри).
+- `skills/iskronify/references/delegation.md` — когда меняются поверхности файлов агентов Claude Code / OpenCode (директории, ключи фронтматтера, алиасы и наследование моделей; чеклист пересверки внутри).
+- Граф (`nks-dev`, #1506) — каждый пуш: протянуть состояние репо в контур #1506, продвинуть бяньхуа доставки #1516, закрыть разрешённые вимарши.
 
-## Git workflow
-- **Conventional commits** (`feat:`/`fix:`/`chore:`/`docs:`…). Branches `feat/…`, `fix/…`, `chore/…`; PR titles same format.
-- **No co-author trailer.**
-- **Format gate**: run `make check` before committing (CI runs the same on every push/PR). It catches malformed frontmatter, drifted bundles, stale manifest lists and surface drift, and it runs the bridge's behavioural suite — but not the substance of the prose; still review the `SKILL.md` diff by eye.
-- **Definition of done**: change committed and merged to `main` on `github.com/iskron-ai/skills`. **Committing, pushing and opening the PR are yours** — do all three unasked, as the ordinary end of the work; the one act that is the user's is the **merge**, and they signal it. Read "per the user's call" as choosing the route when they state one (direct push vs PR), never as licence to stop with the work unshipped: a branch left unpushed, or pushed with no PR, is not a smaller step — it is the work not delivered. Absent a stated route, open the PR. On merge, update NKS #1506 — close resolved vimarshas, advance the bianhua they drive.
-- **The GitHub CLI runs under the wrong account by default on this owner's machine.** The remote is an SSH alias, so `git push` carries the right identity — but the CLI keeps its own active account, and under the other one every API write fails with `must be a collaborator`. Switch it to the `iskron` account before creating a PR. That switch is machine-wide, so put it back afterwards if the user works under another account.
-- **Never** `--force` or `git reset --hard` without explicit instruction.
+## Git-поток
+- **Conventional commits** (`feat:`/`fix:`/`chore:`/`docs:`…). Ветки `feat/…`, `fix/…`, `chore/…`; заголовки PR в том же формате.
+- **Без трейлера соавторства.**
+- **Гейт формата**: гони `make check` перед коммитом (в CI то же самое на каждом пуше и PR). Он ловит битый фронтматтер, разошедшиеся бандлы, устаревшие инвентарные списки и дрейф поверхности и гоняет поведенческий набор моста — но не существо прозы; диф `SKILL.md` всё равно перечитай глазами.
+- **Что значит «сделано»**: изменение закоммичено и слито в `main` на `github.com/iskron-ai/skills`. **Коммит, пуш и открытие PR — твои**, делай все три без просьбы, как обычный конец работы; единственное действие пользователя — **мерж**, и о нём он сообщает сам. Ветка без пуша или пуш без PR — это не меньший шаг, а недоставленная работа. После мержа обнови граф #1506 — закрой разрешённые вимарши, продвинь бяньхуа, которую они двигают.
+- **Пуш ничего не доказывает про запись через API.** Они аутентифицируются разными путями: пуш идёт по учётке remote, а `gh` несёт собственный активный аккаунт. Поэтому работающий `git push` рядом с `gh pr create`, падающим на правах, — это не отсутствие прав, а две личности, и первым делом надо смотреть аккаунт. Никогда не читай такой отказ как «здесь я не могу открывать PR».
+- **Никогда** `--force` и `git reset --hard` без явного указания.
 
-*(iskronify: contract 2 — re-run when the installed contract is higher, or when the sources this file derives from have moved since.)*
+*(iskronify: контракт 2 — перезапусти, когда установленный контракт выше или когда источники, из которых выведен этот файл, с тех пор сдвинулись.)*
