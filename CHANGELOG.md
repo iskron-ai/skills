@@ -1,5 +1,17 @@
 # Changelog
 
+## [3.2.0](https://github.com/iskron-ai/skills/compare/v3.1.1...v3.2.0) (2026-08-24)
+
+
+### Features
+
+* бригада, фидбэк и мост MCP; постановка будит стояние; архив плагина к релизу ([#24](https://github.com/iskron-ai/skills/issues/24)) ([2065cf4](https://github.com/iskron-ai/skills/commit/2065cf45521ab20e646cbafe1609d14302f06993))
+
+
+### Bug Fixes
+
+* **repo-boost:** не заводить HANDOVER.md — дома состояния ветки названы явно ([#25](https://github.com/iskron-ai/skills/issues/25)) ([b15b28a](https://github.com/iskron-ai/skills/commit/b15b28a0a68dd3130d68edeb35f80c0154089431))
+
 ## [3.1.1](https://github.com/iskron-ai/skills/compare/v3.1.0...v3.1.1) (2026-08-17)
 
 
