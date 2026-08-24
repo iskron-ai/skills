@@ -234,7 +234,14 @@ try {
 //      brand-clean rule, mechanized).
 const proseGuards = [
   { re: /[Рр]еалм/u, msg: "«реалм» в русской прозе — переименовано в «граф» (параметр realm= и латинские литералы не в счёт)" },
-  { re: /\bnks_[a-z_]+/u, msg: "ссылка на тул nks_* — префикс этой поставки iskron_*" },
+  // Shipped-only, and the exception is load-bearing rather than a loophole:
+  // a skill runs against THIS delivery's server, where tools are iskron_*.
+  // AGENTS.md also speaks about the deployment holding this project's own
+  // state, whose tools are nks_* — banning the prefix there forbids writing
+  // the one instruction that works. Enforcing it everywhere once produced
+  // exactly that: a session-start line naming a graph its own tools cannot
+  // reach.
+  { re: /\bnks_[a-z_]+/u, shippedOnly: true, msg: "ссылка на тул nks_* — префикс этой поставки iskron_*" },
   { re: new RegExp(["ver", "stak"].join(""), "iu"), msg: "чужой бренд в отгружаемом источнике — репо должно быть brand-clean" },
 ];
 function walkMd(dir) {
@@ -246,17 +253,18 @@ function walkMd(dir) {
   }
   return out;
 }
-// AGENTS.md never ships, so it sat outside these guards — and that is exactly
-// where a wrong tool prefix survived unnoticed: the file instructing the agent
-// told it to call nks_* tools this delivery does not have. A config that
-// misnames the surface is worse than a skill that does, because every session
-// reads it first. Guard it on the same terms.
-const shippedFiles = [...walkMd(skillsDir), join(root, "README.md"), join(root, "SETUP.md"), join(root, "AGENTS.md")].filter(existsSync);
-for (const file of shippedFiles) {
+// AGENTS.md never ships, so it sat outside these guards. It is guarded too —
+// the config every session reads first is the worst place for a foreign brand
+// or a retired term — but not by the shipped-only guards above.
+const shipped = [...walkMd(skillsDir), join(root, "README.md"), join(root, "SETUP.md")].filter(existsSync);
+const guardedFiles = [...shipped, join(root, "AGENTS.md")].filter(existsSync);
+const shippedSet = new Set(shipped);
+for (const file of guardedFiles) {
   const rel = file.slice(root.length + 1);
   const lines = readFileSync(file, "utf8").split("\n");
   for (let i = 0; i < lines.length; i++) {
     for (const g of proseGuards) {
+      if (g.shippedOnly && !shippedSet.has(file)) continue;
       const m = lines[i].match(g.re);
       if (m) fail(`${rel}:${i + 1}`, `${g.msg} (найдено: ${JSON.stringify(m[0])})`);
     }
