@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.3.1](https://github.com/iskron-ai/skills/compare/v3.3.0...v3.3.1) (2026-08-25)
+
+
+### Bug Fixes
+
+* **bridge:** одно истечение — одно обновление гранта на машину ([#30](https://github.com/iskron-ai/skills/issues/30)) ([e7d26d3](https://github.com/iskron-ai/skills/commit/e7d26d3e554c0dfbfed499aa84aac4889b319cf8))
+
 ## [3.3.0](https://github.com/iskron-ai/skills/compare/v3.2.0...v3.3.0) (2026-08-24)
 
 
