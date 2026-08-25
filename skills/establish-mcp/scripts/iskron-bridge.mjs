@@ -117,8 +117,12 @@ function tokenSchedule(body, refresh) {
   const r = jwtClaims(refresh);
   const accessExp = Number.isFinite(a?.exp) ? a.exp * 1000
     : (body.expires_in ? Date.now() + body.expires_in * 1000 : null);
+  // A minute of caution is right for tokens that live for half an hour and
+  // absurd for one that lives for thirty seconds: taken whole it would declare
+  // every token stale on arrival. Never give up more than half the life.
+  const skew = accessExp ? Math.min(CLOCK_SKEW_MS, Math.max(0, (accessExp - Date.now()) / 2)) : 0;
   return {
-    expires_at: accessExp ? accessExp - CLOCK_SKEW_MS : null,
+    expires_at: accessExp ? accessExp - skew : null,
     refresh_not_before: Number.isFinite(r?.nbf) ? r.nbf * 1000 : null,
     refresh_expires_at: Number.isFinite(r?.exp) ? r.exp * 1000 : null,
   };
@@ -418,6 +422,9 @@ process.on("exit", () => {
   } catch {}
 });
 
+// Not a failure: a deliberate refusal to spend the human's attention yet.
+class LoginHeld extends Error {}
+
 class AuthPending extends Error {
   constructor(url) {
     super(`authorization required — open in a browser: ${url}`);
@@ -696,23 +703,28 @@ async function refreshShared(meta, rejected, proactive) {
 const LOGIN_GRACE_MS = 120_000;
 const LOGIN_SNOOZE_MS = 10 * 60_000;
 
-async function holdOffLogin(reason) {
+// Start (or continue) the machine's clock on a refused grant. The background
+// keepalive notes refusals too, so the grace is already warm by the time a
+// human's call arrives — a grant dead for an hour asks at once, not in two
+// more minutes.
+function noteRefusal(reason) {
+  if (!loadGrantState().refused_since) {
+    saveGrantState({ refused_since: Date.now(), reason });
+    grantLog(`grant refused, holding the login back for ${LOGIN_GRACE_MS / 1000}s: ${reason}`);
+  }
+}
+
+function holdOffLogin(reason) {
   const now = Date.now();
   const st = loadGrantState();
   if (st.snooze_until && now < st.snooze_until) {
-    const left = Math.round((st.snooze_until - now) / 1000);
-    throw new Error(`authorization was offered and not completed — not asking again for ${left}s`
-      + ` (grant refused: ${reason})`);
-  }
-  if (!st.refused_since) {
-    saveGrantState({ refused_since: now, reason });
-    grantLog(`grant refused, holding the login back for ${LOGIN_GRACE_MS / 1000}s: ${reason}`);
+    throw new LoginHeld(`authorization was offered and not completed — not asking again for `
+      + `${Math.round((st.snooze_until - now) / 1000)}s (grant refused: ${reason})`);
   }
   const since = st.refused_since || now;
   if (now - since < LOGIN_GRACE_MS) {
-    const left = Math.round((LOGIN_GRACE_MS - (now - since)) / 1000);
-    throw new Error(`grant refused (${reason}) — holding off the login for ${left}s in case it heals;`
-      + " the call can be retried");
+    throw new LoginHeld(`grant refused (${reason}) — holding off the login for `
+      + `${Math.round((LOGIN_GRACE_MS - (now - since)) / 1000)}s in case it heals; the call can be retried`);
   }
 }
 
@@ -758,8 +770,9 @@ async function ensureAuth(wwwAuthenticate, opts = {}) {
         } catch (e) {
           // Anything but a dead grant is transient: keep it, do NOT open a browser.
           if (!(e instanceof DeadGrantError)) throw e;
+          noteRefusal(e.message); // the clock runs whoever noticed, background included
           if (!interactive) throw new Error("authorization required (refresh grant dead, browser flow deferred)");
-          await holdOffLogin(e.message); // may decide the human is not to be asked yet
+          holdOffLogin(e.message); // may decide the human is not to be asked yet
           log(`refresh grant is dead (${e.message}) — starting a fresh authorization`);
           return await interactiveFlow(meta);
         }
@@ -970,7 +983,7 @@ async function deliver(msg) {
           await ensureAuth(e.message, { force: true, rejected: e.presented });
           continue;
         } catch (authErr) {
-          if (authErr instanceof AuthPending) {
+          if (authErr instanceof AuthPending || authErr instanceof LoginHeld) {
             if (hasId) emit(syntheticError(msg.id, authErr.message));
             return;
           }

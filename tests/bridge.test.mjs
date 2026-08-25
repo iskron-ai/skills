@@ -370,6 +370,20 @@ test("the access token's own exp outranks the expires_in the server advertised",
   });
 });
 
+test("a short-lived access token is not stale the moment it arrives", async (t) => {
+  // The caution taken off a token's life is a skew, not a fixed minute: a
+  // twenty-second token minus a minute is dead on arrival, and every call
+  // would then buy a refresh it does not need.
+  await withFake(t, { accessTtl: 20 }, async ({ fake, dir, spawnBridge }) => {
+    const bridge = spawnBridge();
+    await authorize(bridge, dir);
+    assert.ok(readStore(dir).tokens.expires_at > Date.now(), "a token just issued must count as usable");
+
+    assert.ok((await bridge.call("tools/list", 2)).result);
+    assert.equal(fake.state.counts.refresh, 0, "and must not be topped up before it has been used once");
+  });
+});
+
 test("a login the human declines is not offered again on the next call", async (t) => {
   await withFake(t, {}, async ({ fake, dir, spawnBridge }) => {
     const first = spawnBridge();
