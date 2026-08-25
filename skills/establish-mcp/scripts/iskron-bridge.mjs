@@ -565,6 +565,13 @@ async function refreshShared(meta, rejected) {
   for (;;) {
     const sibling = usableTokens({ rejected });
     if (sibling) { debug("a sibling refreshed the grant — reusing it"); return sibling; }
+    // Whoever holds the lock is alive and still working, or we keep losing the
+    // grant to a rotating sibling. Either way, presenting our own copy now is
+    // the one move that could burn it: we fail this call instead, and the grant
+    // stays whole for the next one.
+    if (Date.now() > deadline) {
+      throw new Error("the shared grant could not be refreshed in time — grant kept, will retry");
+    }
     if (acquireRefreshLock()) {
       try {
         const late = usableTokens({ rejected }); // re-read: the wait itself may have settled it
@@ -576,11 +583,6 @@ async function refreshShared(meta, rejected) {
       } finally {
         releaseRefreshLock();
       }
-    } else if (Date.now() > deadline) {
-      // The holder is alive and still working. Presenting our own copy of the
-      // grant now is the one thing that could burn it, so we wait no longer and
-      // fail this call instead — the grant stays whole for the next one.
-      throw new Error("another bridge has been refreshing for too long — grant kept, will retry");
     } else {
       await sleep(REFRESH_POLL_MS);
     }
@@ -602,7 +604,7 @@ async function ensureAuth(wwwAuthenticate, opts = {}) {
     await authInFlight.promise.catch(() => {});
     if (authInFlight) return authInFlight.promise; // someone else already restarted it
     const s = loadStore();
-    if (s.tokens?.access_token && (s.tokens.expires_at || Infinity) > Date.now()) return s.tokens;
+    if (tokenUsable(s.tokens)) return s.tokens;
   }
   const promise = (async () => {
     try {
