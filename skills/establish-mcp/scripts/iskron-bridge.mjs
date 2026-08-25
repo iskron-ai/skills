@@ -29,7 +29,7 @@ import { createServer } from "node:http";
 import { connect } from "node:net";
 import { createHash, randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
-import { mkdirSync, readFileSync, writeFileSync, unlinkSync, renameSync, linkSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync, appendFileSync, statSync, unlinkSync, renameSync, linkSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { createInterface } from "node:readline";
@@ -87,8 +87,41 @@ const b64url = (buf) => Buffer.from(buf).toString("base64url");
 const sha256 = (s) => createHash("sha256").update(s).digest();
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// Tokens are opaque by contract, so this only ever ASKS — a claim that is not
+// there changes nothing. What it buys is the one thing the token endpoint never
+// says out loud: when a freshly issued refresh token actually starts working.
+function jwtClaims(token) {
+  try { return JSON.parse(Buffer.from(String(token).split(".")[1], "base64url").toString()); }
+  catch { return null; }
+}
+
 class UpstreamError extends Error {
-  constructor(message, kind) { super(message); this.kind = kind; } // "auth" | "session" | "http" | "network"
+  // `presented` carries the access token the refused request actually used —
+  // knowledge only the caller has. The store may have moved on since, and a
+  // token a sibling has already replaced must not be blamed for this refusal.
+  constructor(message, kind, presented = null) { super(message); this.kind = kind; this.presented = presented; }
+}
+
+// The hours the SERVER keeps. Both tokens carry them when they are JWTs, and
+// the server judges by those, never by our arithmetic: `exp` on the access
+// token is the moment it stops being accepted; `nbf` on the refresh token is
+// the moment it STARTS being accepted — a server may hold a refresh token back
+// until the access token it came with is nearly spent (witnessed: Rauthy stamps
+// nbf at access expiry minus a minute), and asking earlier is refused in the
+// exact words of a dead grant; `exp` on the refresh token is when the grant is
+// honestly over and only a human can mend it. Opaque tokens say none of this,
+// so `expires_in` remains the fallback — a fallback, not the first source.
+const CLOCK_SKEW_MS = 60_000; // stop trusting a token this long before its exp
+function tokenSchedule(body, refresh) {
+  const a = jwtClaims(body.access_token);
+  const r = jwtClaims(refresh);
+  const accessExp = Number.isFinite(a?.exp) ? a.exp * 1000
+    : (body.expires_in ? Date.now() + body.expires_in * 1000 : null);
+  return {
+    expires_at: accessExp ? accessExp - CLOCK_SKEW_MS : null,
+    refresh_not_before: Number.isFinite(r?.nbf) ? r.nbf * 1000 : null,
+    refresh_expires_at: Number.isFinite(r?.exp) ? r.exp * 1000 : null,
+  };
 }
 
 class TokenError extends Error {
@@ -127,6 +160,39 @@ function saveStore(patch) {
   }
   return next;
 }
+
+// A short machine-wide record of what the grant has been doing. Its whole point
+// is that the next surprise login can be explained after the fact: a bridge's
+// stderr belongs to whichever harness happened to spawn it and is usually gone
+// by the time anyone asks. Tokens never go in here.
+function grantLog(msg) {
+  try {
+    mkdirSync(CFG.authDir, { recursive: true, mode: 0o700 });
+    const p = join(CFG.authDir, "grant.log");
+    let size = 0;
+    try { size = statSync(p).size; } catch {}
+    if (size > 128_000) { try { unlinkSync(p); } catch {} }
+    appendFileSync(p, `${new Date().toISOString()} pid=${process.pid} ${msg}\n`, { mode: 0o600 });
+  } catch {} // a log that cannot be written must never break the call
+}
+
+// The machine's memory of a refused grant: since when, in whose words, and
+// whether a human has already been asked and declined. Shared by every bridge,
+// so one refusal is one question to the human, not one per process.
+function grantStatePath() { return storePath() + ".grant-state"; }
+function loadGrantState() {
+  try { return JSON.parse(readFileSync(grantStatePath(), "utf8")); } catch { return {}; }
+}
+function saveGrantState(patch) {
+  try {
+    mkdirSync(CFG.authDir, { recursive: true, mode: 0o700 });
+    const next = { ...loadGrantState(), ...patch };
+    const tmp = `${grantStatePath()}.tmp-${process.pid}`;
+    writeFileSync(tmp, JSON.stringify(next), { mode: 0o600 });
+    renameSync(tmp, grantStatePath());
+  } catch {}
+}
+function clearGrantState() { try { unlinkSync(grantStatePath()); } catch {} }
 
 // The tokens on disk, judged for use here and now: present, not the very token
 // we already know is refused, and not inside `marginMs` of expiry.
@@ -373,12 +439,13 @@ async function tokenRequest(meta, params) {
       body.error, res.status,
     );
   }
-  const tokens = {
-    access_token: body.access_token,
-    refresh_token: body.refresh_token ?? loadStore().tokens?.refresh_token,
-    expires_at: body.expires_in ? Date.now() + (body.expires_in - 60) * 1000 : null,
-  };
+  const refresh = body.refresh_token ?? loadStore().tokens?.refresh_token;
+  const tokens = { access_token: body.access_token, refresh_token: refresh, ...tokenSchedule(body, refresh) };
   saveStore({ tokens });
+  clearGrantState(); // a grant in hand ends whatever the machine held against it
+  grantLog(`tokens stored (${params.grant_type}); access good for `
+    + `${tokens.expires_at ? Math.round((tokens.expires_at - Date.now()) / 1000) + "s" : "an unstated time"}`
+    + `${tokens.refresh_not_before ? `, refresh usable in ${Math.round((tokens.refresh_not_before - Date.now()) / 1000)}s` : ""}`);
   return tokens;
 }
 
@@ -428,6 +495,7 @@ async function interactiveFlow(meta) {
     const url = authUrl.toString();
 
     writeAuthLock(url, port); // we hold the port, so the flow is ours to publish
+    grantLog("authorization flow published — waiting for the human");
     flowInBackground = (async () => {
       try {
         const codePromise = callback.waitForCode(authState);
@@ -443,8 +511,13 @@ async function interactiveFlow(meta) {
           resource: meta.resource,
         });
         log("authorization complete — tokens saved for every local agent");
+        grantLog("authorization complete");
       } catch (e) {
         log(`authorization flow failed: ${e.message}`);
+        // Declined, closed, or left to time out — either way the human has
+        // answered for now, and the answer holds until the snooze runs out.
+        saveGrantState({ snooze_until: Date.now() + LOGIN_SNOOZE_MS });
+        grantLog(`authorization not completed (${e.message}); not asking again for ${LOGIN_SNOOZE_MS / 60_000}min`);
       } finally {
         callback.close();
         releaseAuthLock();
@@ -520,7 +593,16 @@ process.on("exit", releaseRefreshLock);
 // One refresh attempt, classified. Returns the new tokens, null if the attempt
 // only proves someone else already rotated, and throws either a DeadGrantError
 // (the grant itself is refused) or a plain Error (transient — keep the grant).
-async function refreshOnce(meta, cur) {
+// `proactive` marks the speculative kind: the access token still works and we
+// are only topping it up ahead of expiry.
+async function refreshOnce(meta, cur, proactive) {
+  // Asking before the token is in force spends a refusal and buys nothing:
+  // there is no answer but waiting, so say so rather than knock.
+  if (cur.refresh_not_before && Date.now() < cur.refresh_not_before) {
+    const left = Math.round((cur.refresh_not_before - Date.now()) / 1000);
+    grantLog(`refresh withheld — token not in force for another ${left}s`);
+    throw new Error(`refresh token is not in force for another ${left}s — grant kept, will retry`);
+  }
   debug("refreshing access token");
   try {
     return await tokenRequest(meta, {
@@ -540,6 +622,19 @@ async function refreshOnce(meta, cur) {
     if (!definitive) {
       throw new Error(`token refresh failed transiently (${e.message}) — grant kept, will retry`);
     }
+    // Refused, yes — but a refusal is not a verdict. The grant's own hours say
+    // more than the server's wording does: a token still short of its nbf, or
+    // one nobody needed yet, is refused in exactly the words of a dead grant.
+    // Only an expired refresh token is honest proof that a human must return.
+    const expired = cur.refresh_expires_at && Date.now() >= cur.refresh_expires_at;
+    const notYet = cur.refresh_not_before && Date.now() < cur.refresh_not_before;
+    if (!expired && (notYet || proactive)) {
+      const why = notYet
+        ? `refresh token is not in force for another ${Math.round((cur.refresh_not_before - Date.now()) / 1000)}s`
+        : "the access token in hand still works";
+      grantLog(`refresh refused early — ${why}; grant kept (${e.message})`);
+      throw new Error(`token refresh refused too early (${e.message}) — ${why}; grant kept, will retry`);
+    }
     // A rotated-away token is refused in exactly the same words as a dead one.
     // If the store moved on while we were asking, what we presented was merely
     // stale: the grant is alive, in someone else's hands.
@@ -552,15 +647,18 @@ async function refreshOnce(meta, cur) {
       // point the next browser flow at an authorize page that refuses the
       // client — a login the human cannot complete however often they try.
       log("the server no longer knows this client — dropping the registration");
+      grantLog("server no longer knows this client — registration dropped");
       saveStore({ client: null });
     }
-    throw new DeadGrantError(e.message);
+    const overdue = cur.refresh_expires_at && Date.now() >= cur.refresh_expires_at;
+    grantLog(`refresh refused${overdue ? " and the grant is past its own expiry" : ""}: ${e.message}`);
+    throw new DeadGrantError(overdue ? `${e.message} (grant expired)` : e.message);
   }
 }
 
 // Get fresh tokens for the machine, refreshing at most once across all bridges.
 // `rejected` is the access token we must not come back with.
-async function refreshShared(meta, rejected) {
+async function refreshShared(meta, rejected, proactive) {
   const deadline = Date.now() + REFRESH_WAIT_MS;
   for (;;) {
     const sibling = usableTokens({ rejected });
@@ -578,7 +676,7 @@ async function refreshShared(meta, rejected) {
         if (late) { debug("a sibling refreshed the grant — reusing it"); return late; }
         const cur = loadStore().tokens;
         if (!cur?.refresh_token) throw new DeadGrantError("no refresh grant on disk");
-        const fresh = await refreshOnce(meta, cur);
+        const fresh = await refreshOnce(meta, cur, proactive);
         if (fresh) return fresh;
       } finally {
         releaseRefreshLock();
@@ -589,13 +687,44 @@ async function refreshShared(meta, rejected) {
   }
 }
 
+// A login is the one repair that costs a human their attention, so it is spent
+// last and not twice. Two waits stand between a refused grant and the browser:
+// a refusal must PERSIST (a single one can be the server mid-restart, a clock
+// skew, a token not yet in force), and a login already offered and declined is
+// not offered again at once — a person who said no meant it for more than the
+// four seconds until the next tool call.
+const LOGIN_GRACE_MS = 120_000;
+const LOGIN_SNOOZE_MS = 10 * 60_000;
+
+async function holdOffLogin(reason) {
+  const now = Date.now();
+  const st = loadGrantState();
+  if (st.snooze_until && now < st.snooze_until) {
+    const left = Math.round((st.snooze_until - now) / 1000);
+    throw new Error(`authorization was offered and not completed — not asking again for ${left}s`
+      + ` (grant refused: ${reason})`);
+  }
+  if (!st.refused_since) {
+    saveGrantState({ refused_since: now, reason });
+    grantLog(`grant refused, holding the login back for ${LOGIN_GRACE_MS / 1000}s: ${reason}`);
+  }
+  const since = st.refused_since || now;
+  if (now - since < LOGIN_GRACE_MS) {
+    const left = Math.round((LOGIN_GRACE_MS - (now - since)) / 1000);
+    throw new Error(`grant refused (${reason}) — holding off the login for ${left}s in case it heals;`
+      + " the call can be retried");
+  }
+}
+
 let authInFlight = null;
 // Returns fresh-enough tokens. Order: cached access token -> silent refresh ->
 // (only if allowed and the grant is definitively dead) the browser flow.
 // opts.force ignores the cached access token (after an upstream 401);
-// opts.interactive=false forbids the browser (background keepalive).
+// opts.rejected names the token upstream actually refused, when the caller knows;
+// opts.interactive=false forbids the browser (background keepalive);
+// opts.proactive marks a top-up the caller does not actually need yet.
 async function ensureAuth(wwwAuthenticate, opts = {}) {
-  const { force = false, interactive = true } = opts;
+  const { force = false, interactive = true, proactive = false } = opts;
   if (authInFlight) {
     // A background (non-interactive) attempt must not stand in for a caller
     // that is allowed to open the browser: await it, and if it could not
@@ -609,10 +738,12 @@ async function ensureAuth(wwwAuthenticate, opts = {}) {
   const promise = (async () => {
     try {
       const s = loadStore();
-      // force says the token we hold is no answer — upstream refused it (401)
-      // or the keepalive found it about to expire. Remembering WHICH token that
-      // was is what makes a sibling's newer one recognisable as progress.
-      const rejected = force ? s.tokens?.access_token ?? null : null;
+      // force says the token we came with is no answer — upstream refused it
+      // (401) or the keepalive found it about to expire. WHICH token that was
+      // is what makes a sibling's newer one recognisable as progress, so a
+      // caller that knows says so; only the keepalive, replacing whatever is on
+      // disk, may take the store's word for it.
+      const rejected = opts.rejected ?? (force ? s.tokens?.access_token ?? null : null);
       if (!force && tokenUsable(s.tokens)) return s.tokens;
       const meta = s.meta?.as ? s.meta : await discover(wwwAuthenticate);
       // Discovery runs once and its result is cached in the store, so an
@@ -623,12 +754,13 @@ async function ensureAuth(wwwAuthenticate, opts = {}) {
       if (CFG.resource) meta.resource = CFG.resource;
       if (s.tokens?.refresh_token) {
         try {
-          return await refreshShared(meta, rejected);
+          return await refreshShared(meta, rejected, proactive);
         } catch (e) {
           // Anything but a dead grant is transient: keep it, do NOT open a browser.
           if (!(e instanceof DeadGrantError)) throw e;
-          log(`refresh grant is dead (${e.message})` + (interactive ? " — starting a fresh authorization" : ""));
           if (!interactive) throw new Error("authorization required (refresh grant dead, browser flow deferred)");
+          await holdOffLogin(e.message); // may decide the human is not to be asked yet
+          log(`refresh grant is dead (${e.message}) — starting a fresh authorization`);
           return await interactiveFlow(meta);
         }
       }
@@ -645,17 +777,29 @@ async function ensureAuth(wwwAuthenticate, opts = {}) {
 // Keep the grant alive even when the harness makes no MCP calls: refresh the
 // access token shortly before expiry, rotating the refresh token with it, so
 // an idle session never decays into a dead grant and a surprise browser trip.
+//
+// The margin is a wish, not a right: a refresh token held back until the access
+// token is nearly spent (nbf) cannot be used early however much time the margin
+// would like. Asking anyway buys nothing and spends a refusal, so the keepalive
+// waits for the later of the two hours.
 const REFRESH_MARGIN_MS = 3 * 60_000;
 function startTokenKeepalive() {
   const tick = () => {
     const t = loadStore().tokens;
     if (!t?.refresh_token) return;
     const expiresAt = t.expires_at || 0;
-    if (expiresAt && expiresAt - Date.now() < REFRESH_MARGIN_MS) {
-      ensureAuth(null, { force: true, interactive: false })
-        .then(() => debug("background token refresh ok"))
-        .catch((e) => log(`background token refresh: ${e.message}`));
+    if (!expiresAt || expiresAt - Date.now() >= REFRESH_MARGIN_MS) return;
+    if (t.refresh_not_before && Date.now() < t.refresh_not_before) {
+      debug(`refresh token not in force for another ${Math.round((t.refresh_not_before - Date.now()) / 1000)}s — waiting`);
+      return;
     }
+    if (t.refresh_expires_at && Date.now() >= t.refresh_expires_at) {
+      debug("the grant is past its own expiry — only a human can mend it now");
+      return; // spending refusals on a grant whose hour has passed teaches nobody anything
+    }
+    ensureAuth(null, { force: true, interactive: false, proactive: true })
+      .then(() => debug("background token refresh ok"))
+      .catch((e) => log(`background token refresh: ${e.message}`));
   };
   tick(); // an already-expired store refreshes on startup, before the first call
   setInterval(tick, 60_000).unref();
@@ -723,7 +867,8 @@ async function post(msg, onMessage) {
 
   if (res.status === 401) {
     res.body?.cancel?.();
-    throw new UpstreamError(res.headers.get("www-authenticate") || "unauthorized", "auth");
+    throw new UpstreamError(res.headers.get("www-authenticate") || "unauthorized", "auth",
+      tokens?.access_token ?? null);
   }
   if (res.status === 404 && state.sessionId) {
     res.body?.cancel?.();
@@ -822,7 +967,7 @@ async function deliver(msg) {
       if (e instanceof UpstreamError && e.kind === "auth" && !authRetried) {
         authRetried = true;
         try {
-          await ensureAuth(e.message, { force: true });
+          await ensureAuth(e.message, { force: true, rejected: e.presented });
           continue;
         } catch (authErr) {
           if (authErr instanceof AuthPending) {
