@@ -81,6 +81,10 @@ function portListening(port) {
 }
 
 const storeFile = (dir) => join(dir, readdirSync(dir).find((f) => f.endsWith(".json")));
+// The machine's memory of a refused grant. Aging it is how a test stands where
+// a refusal has already persisted, without spending the grace window in real time.
+const ageRefusal = (dir) => writeFileSync(
+  storeFile(dir) + ".grant-state", JSON.stringify({ refused_since: Date.now() - 600_000, reason: "aged by the test" }));
 const lockFile = (dir) => join(dir, readdirSync(dir).find((f) => f.endsWith(".auth-pending")));
 const readStore = (dir) => JSON.parse(readFileSync(storeFile(dir), "utf8"));
 
@@ -288,7 +292,10 @@ test("a transient refresh failure keeps the grant and never opens a browser", as
   });
 });
 
-test("a definitively dead grant starts a fresh flow with a live listener", async (t) => {
+// A login is the one repair that spends a human's attention, so the bridge is
+// slow to ask and slower to ask twice.
+
+test("a refused grant costs a login only once the refusal has stood", async (t) => {
   await withFake(t, {}, async ({ fake, dir, spawnBridge }) => {
     const first = spawnBridge();
     await authorize(first, dir);
@@ -300,10 +307,135 @@ test("a definitively dead grant starts a fresh flow with a live listener", async
     await fake.control({ refreshStatus: 400, refreshError: "invalid_grant", revoke_access: true });
 
     const second = spawnBridge();
-    const answer = await second.call("initialize", 1, INIT_PARAMS);
+    const held = await second.call("initialize", 1, INIT_PARAMS);
+    assert.ok(held.error, "a refused grant cannot serve the call");
+    assert.equal(authorizeUrlIn(held.error.message), null,
+      "one refusal can be a server mid-restart — it must not cost a login yet");
+    assert.equal(fake.state.counts.authorize, 1, "and no second flow may be started");
+    // Whatever happens next, the reason must survive the process that saw it.
+    assert.match(readFileSync(join(dir, "grant.log"), "utf8"), /invalid_grant/,
+      "the grant log must carry the server's own words");
+    await second.stop();
+
+    ageRefusal(dir);
+    const third = spawnBridge();
+    const answer = await third.call("initialize", 1, INIT_PARAMS);
     const url = authorizeUrlIn(answer.error?.message);
-    assert.ok(url, `a dead grant must lead to a new authorization: ${JSON.stringify(answer)}`);
+    assert.ok(url, `a refusal that persists must lead to a new authorization: ${JSON.stringify(answer)}`);
     assert.equal(await portListening(callbackPortOf(url)), true);
+  });
+});
+
+test("a refresh token the server holds back is waited for, not spent early", async (t) => {
+  await withFake(t, { refreshNotBeforeMs: 2000 }, async ({ fake, dir, spawnBridge }) => {
+    const first = spawnBridge();
+    await authorize(first, dir);
+    await first.stop();
+
+    // The access token is gone and the refresh token is not in force yet — the
+    // window a proactive refresh walks into on every single cycle when the
+    // server holds its refresh tokens back until the access token is spent.
+    const s = readStore(dir);
+    s.tokens.expires_at = Date.now() - 1000;
+    writeFileSync(storeFile(dir), JSON.stringify(s));
+    await fake.control({ revoke_access: true });
+
+    const early = spawnBridge();
+    const held = await early.call("initialize", 1, INIT_PARAMS);
+    assert.ok(held.error, "there is nothing to serve this call with yet");
+    assert.equal(authorizeUrlIn(held.error.message), null,
+      "a token merely not in force yet must never be read as a dead grant");
+    assert.equal(fake.state.counts.refresh, 0, "and must not be spent on a refusal either");
+    await early.stop();
+
+    await new Promise((r) => setTimeout(r, Math.max(0, fake.state.refreshValidFrom - Date.now()) + 150));
+    const late = spawnBridge();
+    const answer = await late.call("initialize", 1, INIT_PARAMS);
+    assert.ok(answer.result, `once in force the same grant must serve: ${JSON.stringify(answer.error)}`);
+    assert.equal(fake.state.counts.authorize, 1, "and no human was ever asked");
+  });
+});
+
+test("the access token's own exp outranks the expires_in the server advertised", async (t) => {
+  // A server may advertise one lifetime and stamp another; the resource server
+  // checks the stamp. Half an hour of imagined validity is half an hour of 401s.
+  await withFake(t, { accessTtl: 3600, accessExpSkewSec: 1800 }, async ({ dir, spawnBridge }) => {
+    const bridge = spawnBridge();
+    await authorize(bridge, dir);
+
+    const claimed = JSON.parse(Buffer.from(readStore(dir).tokens.access_token.split(".")[1], "base64url")).exp * 1000;
+    const held = readStore(dir).tokens.expires_at;
+    assert.ok(held <= claimed, "the bridge must not hold a token as good past its own exp");
+    assert.ok(claimed - held <= 120_000, `the margin should be a skew, not a guess: ${claimed - held}ms`);
+  });
+});
+
+test("a short-lived access token is not stale the moment it arrives", async (t) => {
+  // The caution taken off a token's life is a skew, not a fixed minute: a
+  // twenty-second token minus a minute is dead on arrival, and every call
+  // would then buy a refresh it does not need.
+  await withFake(t, { accessTtl: 20 }, async ({ fake, dir, spawnBridge }) => {
+    const bridge = spawnBridge();
+    await authorize(bridge, dir);
+    assert.ok(readStore(dir).tokens.expires_at > Date.now(), "a token just issued must count as usable");
+
+    assert.ok((await bridge.call("tools/list", 2)).result);
+    assert.equal(fake.state.counts.refresh, 0, "and must not be topped up before it has been used once");
+  });
+});
+
+test("a store written before the bridge knew about hours is still read by them", async (t) => {
+  // The machine mid-upgrade: tokens on disk from an older bridge, so none of
+  // the schedule fields are there. The hours are in the token all the same.
+  await withFake(t, { refreshNotBeforeMs: 4000 }, async ({ fake, dir, spawnBridge }) => {
+    const first = spawnBridge();
+    await authorize(first, dir);
+    await first.stop();
+
+    const s = readStore(dir);
+    delete s.tokens.refresh_not_before;
+    delete s.tokens.refresh_expires_at;
+    s.tokens.expires_at = Date.now() - 1000;
+    writeFileSync(storeFile(dir), JSON.stringify(s));
+    await fake.control({ revoke_access: true });
+
+    const bridge = spawnBridge();
+    const held = await bridge.call("initialize", 1, INIT_PARAMS);
+    assert.ok(held.error, "there is nothing to serve this call with yet");
+    assert.equal(authorizeUrlIn(held.error.message), null, "and no reason to send anyone to a browser");
+    assert.equal(fake.state.counts.refresh, 0, "the token's own nbf must be honoured with no field to help");
+  });
+});
+
+test("a login the human declines is not offered again on the next call", async (t) => {
+  await withFake(t, {}, async ({ fake, dir, spawnBridge }) => {
+    const first = spawnBridge();
+    await authorize(first, dir);
+    await first.stop();
+
+    const s = readStore(dir);
+    s.tokens.expires_at = Date.now() - 1000;
+    writeFileSync(storeFile(dir), JSON.stringify(s));
+    await fake.control({ refreshStatus: 400, refreshError: "invalid_grant", revoke_access: true });
+    ageRefusal(dir);
+
+    const bridge = spawnBridge();
+    const offered = await bridge.call("initialize", 1, INIT_PARAMS);
+    const url = authorizeUrlIn(offered.error?.message);
+    assert.ok(url, `the standing refusal should have led to a login: ${JSON.stringify(offered)}`);
+
+    // The human says no: the consent screen comes back with a refusal.
+    const back = new URL(new URL(url).searchParams.get("redirect_uri"));
+    back.searchParams.set("error", "access_denied");
+    back.searchParams.set("state", new URL(url).searchParams.get("state"));
+    await (await fetch(back)).text();
+    await waitFor(async () => !(await portListening(callbackPortOf(url))), "the declined flow to close");
+
+    const again = await bridge.call("initialize", 2, INIT_PARAMS);
+    assert.ok(again.error, "there is still nothing to serve with");
+    assert.equal(authorizeUrlIn(again.error.message), null,
+      "someone who just declined must not be asked again on the next tool call");
+    assert.match(again.error.message, /not asking again/);
   });
 });
 
@@ -378,6 +510,7 @@ test("a registration the server has forgotten is dropped, so the next login can 
     await fake.control({
       forget_clients: true, refreshStatus: 400, refreshError: "invalid_client", revoke_access: true,
     });
+    ageRefusal(dir); // the refusal has stood; the login is due
 
     // Keeping the dead client_id would publish an authorize URL that the server
     // refuses — a login the human cannot complete however often they click.

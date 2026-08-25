@@ -12,6 +12,24 @@ import { createHash, randomBytes } from "node:crypto";
 const b64url = (b) => Buffer.from(b).toString("base64url");
 const sha256 = (s) => createHash("sha256").update(s).digest();
 const token = (p) => `${p}-${b64url(randomBytes(9))}`;
+// Tokens that carry their own hours, the way a real server's JWTs do.
+const jwt = (claims) => [b64url('{"alg":"none"}'), b64url(JSON.stringify(claims)), "sig"].join(".");
+const secs = (ms) => Math.floor(ms / 1000); // a JWT keeps whole seconds, so the test does too
+
+// A refresh token the server holds back until the access token is nearly spent:
+// carried as a JWT `nbf`, refused in the words of a dead grant if used early.
+function mintRefresh(st) {
+  if (!st.refreshNotBeforeMs) { st.refreshValidFrom = 0; return token("refresh"); }
+  const nbf = secs(Date.now() + st.refreshNotBeforeMs);
+  st.refreshValidFrom = nbf * 1000; // the server keeps exactly the hour it stamped
+  return jwt({ nbf, exp: nbf + 172_800 });
+}
+// An access token whose own `exp` is the authority; accessExpSkewSec lets a test
+// make the claim disagree with the advertised expires_in, as a server may.
+function mintAccess(st) {
+  if (!st.accessExpSkewSec) return token("access");
+  return jwt({ exp: secs(Date.now()) + st.accessTtl - st.accessExpSkewSec });
+}
 
 export async function startFakeNks(opts = {}) {
   const st = {
@@ -27,12 +45,14 @@ export async function startFakeNks(opts = {}) {
     refreshError: null,
     mcpStatus: null,       // force an HTTP status on /mcp
     refreshDelayMs: opts.refreshDelayMs ?? 0, // widen the window several bridges race in
+    refreshNotBeforeMs: opts.refreshNotBeforeMs ?? 0, // hold the refresh token back this long
+    accessExpSkewSec: opts.accessExpSkewSec ?? 0,     // make the access token's own exp disagree with expires_in
     // The posture RFC 9700 recommends for rotating grants: a refresh token
     // presented after it was rotated away is treated as a stolen one, and the
     // whole family dies with it. Off by default — a test asks for it when the
     // point IS what replay costs.
     reuseDetection: opts.reuseDetection ?? false,
-    counts: { register: 0, authorize: 0, code_exchange: 0, refresh: 0, stale_refresh: 0, mcp: 0 },
+    counts: { register: 0, authorize: 0, code_exchange: 0, refresh: 0, stale_refresh: 0, early_refresh: 0, mcp: 0 },
     // The resource indicator each leg carried. A real server turns this into
     // the token's audience, so it is the only place a test can see what the
     // bridge actually asked to be issued for.
@@ -121,12 +141,16 @@ export async function startFakeNks(opts = {}) {
         if (f.get("redirect_uri") !== c.redirect_uri) {
           return json(res, 400, { error: "invalid_grant", error_description: "redirect_uri mismatch" });
         }
-        st.access = token("access"); st.refresh = token("refresh");
+        st.access = mintAccess(st); st.refresh = mintRefresh(st);
         return json(res, 200, { access_token: st.access, refresh_token: st.refresh, expires_in: st.accessTtl, token_type: "Bearer" });
       }
       if (f.get("grant_type") === "refresh_token") {
         st.counts.refresh++;
         st.resources.refresh = f.get("resource");
+        if (st.refreshValidFrom && Date.now() < st.refreshValidFrom) {
+          st.counts.early_refresh++;
+          return json(res, 400, { error: "invalid_grant", error_description: "token not yet valid" });
+        }
         if (st.refreshStatus) {
           return json(res, st.refreshStatus, { error: st.refreshError || "server_error" });
         }
@@ -141,7 +165,7 @@ export async function startFakeNks(opts = {}) {
           if (st.reuseDetection) { st.access = null; st.refresh = null; }
           return json(res, 400, { error: "invalid_grant", error_description: "stale refresh token" });
         }
-        st.access = token("access"); st.refresh = token("refresh"); // rotation
+        st.access = mintAccess(st); st.refresh = mintRefresh(st); // rotation
         return json(res, 200, { access_token: st.access, refresh_token: st.refresh, expires_in: st.accessTtl, token_type: "Bearer" });
       }
       return json(res, 400, { error: "unsupported_grant_type" });
