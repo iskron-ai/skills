@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.3.2](https://github.com/iskron-ai/skills/compare/v3.3.1...v3.3.2) (2026-08-25)
+
+
+### Bug Fixes
+
+* **bridge:** часы гранта берутся из самих токенов, логин тратится последним ([#32](https://github.com/iskron-ai/skills/issues/32)) ([421a087](https://github.com/iskron-ai/skills/commit/421a087e320424382d86b25fa35a22eeaabfd92f))
+
 ## [3.3.1](https://github.com/iskron-ai/skills/compare/v3.3.0...v3.3.1) (2026-08-25)
 
 
