@@ -128,6 +128,20 @@ function tokenSchedule(body, refresh) {
   };
 }
 
+// The stored hours are a convenience, not the source. A store written by an
+// older bridge carries none of them, and a machine mid-upgrade must not have to
+// wait for a rotation to start reading the clock right — the token itself has
+// said so all along.
+function refreshHours(t) {
+  const c = jwtClaims(t?.refresh_token);
+  return {
+    nbf: Number.isFinite(t?.refresh_not_before) ? t.refresh_not_before
+      : (Number.isFinite(c?.nbf) ? c.nbf * 1000 : null),
+    exp: Number.isFinite(t?.refresh_expires_at) ? t.refresh_expires_at
+      : (Number.isFinite(c?.exp) ? c.exp * 1000 : null),
+  };
+}
+
 class TokenError extends Error {
   constructor(message, oauthError, status) { super(message); this.oauthError = oauthError; this.status = status; }
 }
@@ -605,8 +619,9 @@ process.on("exit", releaseRefreshLock);
 async function refreshOnce(meta, cur, proactive) {
   // Asking before the token is in force spends a refusal and buys nothing:
   // there is no answer but waiting, so say so rather than knock.
-  if (cur.refresh_not_before && Date.now() < cur.refresh_not_before) {
-    const left = Math.round((cur.refresh_not_before - Date.now()) / 1000);
+  const hours = refreshHours(cur);
+  if (hours.nbf && Date.now() < hours.nbf) {
+    const left = Math.round((hours.nbf - Date.now()) / 1000);
     grantLog(`refresh withheld — token not in force for another ${left}s`);
     throw new Error(`refresh token is not in force for another ${left}s — grant kept, will retry`);
   }
@@ -633,11 +648,11 @@ async function refreshOnce(meta, cur, proactive) {
     // more than the server's wording does: a token still short of its nbf, or
     // one nobody needed yet, is refused in exactly the words of a dead grant.
     // Only an expired refresh token is honest proof that a human must return.
-    const expired = cur.refresh_expires_at && Date.now() >= cur.refresh_expires_at;
-    const notYet = cur.refresh_not_before && Date.now() < cur.refresh_not_before;
+    const expired = hours.exp && Date.now() >= hours.exp;
+    const notYet = hours.nbf && Date.now() < hours.nbf;
     if (!expired && (notYet || proactive)) {
       const why = notYet
-        ? `refresh token is not in force for another ${Math.round((cur.refresh_not_before - Date.now()) / 1000)}s`
+        ? `refresh token is not in force for another ${Math.round((hours.nbf - Date.now()) / 1000)}s`
         : "the access token in hand still works";
       grantLog(`refresh refused early — ${why}; grant kept (${e.message})`);
       throw new Error(`token refresh refused too early (${e.message}) — ${why}; grant kept, will retry`);
@@ -657,7 +672,7 @@ async function refreshOnce(meta, cur, proactive) {
       grantLog("server no longer knows this client — registration dropped");
       saveStore({ client: null });
     }
-    const overdue = cur.refresh_expires_at && Date.now() >= cur.refresh_expires_at;
+    const overdue = hours.exp && Date.now() >= hours.exp;
     grantLog(`refresh refused${overdue ? " and the grant is past its own expiry" : ""}: ${e.message}`);
     throw new DeadGrantError(overdue ? `${e.message} (grant expired)` : e.message);
   }
@@ -802,11 +817,12 @@ function startTokenKeepalive() {
     if (!t?.refresh_token) return;
     const expiresAt = t.expires_at || 0;
     if (!expiresAt || expiresAt - Date.now() >= REFRESH_MARGIN_MS) return;
-    if (t.refresh_not_before && Date.now() < t.refresh_not_before) {
-      debug(`refresh token not in force for another ${Math.round((t.refresh_not_before - Date.now()) / 1000)}s — waiting`);
+    const hours = refreshHours(t);
+    if (hours.nbf && Date.now() < hours.nbf) {
+      debug(`refresh token not in force for another ${Math.round((hours.nbf - Date.now()) / 1000)}s — waiting`);
       return;
     }
-    if (t.refresh_expires_at && Date.now() >= t.refresh_expires_at) {
+    if (hours.exp && Date.now() >= hours.exp) {
       debug("the grant is past its own expiry — only a human can mend it now");
       return; // spending refusals on a grant whose hour has passed teaches nobody anything
     }

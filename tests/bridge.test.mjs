@@ -384,6 +384,29 @@ test("a short-lived access token is not stale the moment it arrives", async (t) 
   });
 });
 
+test("a store written before the bridge knew about hours is still read by them", async (t) => {
+  // The machine mid-upgrade: tokens on disk from an older bridge, so none of
+  // the schedule fields are there. The hours are in the token all the same.
+  await withFake(t, { refreshNotBeforeMs: 4000 }, async ({ fake, dir, spawnBridge }) => {
+    const first = spawnBridge();
+    await authorize(first, dir);
+    await first.stop();
+
+    const s = readStore(dir);
+    delete s.tokens.refresh_not_before;
+    delete s.tokens.refresh_expires_at;
+    s.tokens.expires_at = Date.now() - 1000;
+    writeFileSync(storeFile(dir), JSON.stringify(s));
+    await fake.control({ revoke_access: true });
+
+    const bridge = spawnBridge();
+    const held = await bridge.call("initialize", 1, INIT_PARAMS);
+    assert.ok(held.error, "there is nothing to serve this call with yet");
+    assert.equal(authorizeUrlIn(held.error.message), null, "and no reason to send anyone to a browser");
+    assert.equal(fake.state.counts.refresh, 0, "the token's own nbf must be honoured with no field to help");
+  });
+});
+
 test("a login the human declines is not offered again on the next call", async (t) => {
   await withFake(t, {}, async ({ fake, dir, spawnBridge }) => {
     const first = spawnBridge();
