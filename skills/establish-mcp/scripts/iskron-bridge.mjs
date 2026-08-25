@@ -29,7 +29,7 @@ import { createServer } from "node:http";
 import { connect } from "node:net";
 import { createHash, randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
-import { mkdirSync, readFileSync, writeFileSync, unlinkSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync, unlinkSync, renameSync, linkSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { createInterface } from "node:readline";
@@ -85,6 +85,7 @@ function debug(msg) {
 
 const b64url = (buf) => Buffer.from(buf).toString("base64url");
 const sha256 = (s) => createHash("sha256").update(s).digest();
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 class UpstreamError extends Error {
   constructor(message, kind) { super(message); this.kind = kind; } // "auth" | "session" | "http" | "network"
@@ -109,11 +110,35 @@ function storePath() {
 function loadStore() {
   try { return JSON.parse(readFileSync(storePath(), "utf8")); } catch { return {}; }
 }
+// Written whole to a neighbouring file and renamed over the old one. Dozens of
+// local bridges read this store; a plain overwrite lets one of them read a
+// half-written file, and a store that fails to parse reads as "no grant at
+// all" — which is exactly the state that sends the human to a login screen.
 function saveStore(patch) {
   mkdirSync(CFG.authDir, { recursive: true, mode: 0o700 });
   const next = { ...loadStore(), ...patch, server_url: CFG.serverUrl, updated_at: new Date().toISOString() };
-  writeFileSync(storePath(), JSON.stringify(next, null, 2), { mode: 0o600 });
+  const tmp = `${storePath()}.tmp-${process.pid}`;
+  try {
+    writeFileSync(tmp, JSON.stringify(next, null, 2), { mode: 0o600 });
+    renameSync(tmp, storePath()); // atomic within the directory
+  } catch (e) {
+    try { unlinkSync(tmp); } catch {}
+    throw e;
+  }
   return next;
+}
+
+// The tokens on disk, judged for use here and now: present, not the very token
+// we already know is refused, and not inside `marginMs` of expiry.
+function tokenUsable(t, { rejected = null, marginMs = 0 } = {}) {
+  if (!t?.access_token) return false;
+  if (rejected && t.access_token === rejected) return false;
+  if (t.expires_at && t.expires_at - Date.now() <= marginMs) return false;
+  return true;
+}
+function usableTokens(opts) {
+  const t = loadStore().tokens;
+  return tokenUsable(t, opts) ? t : null;
 }
 
 // -------------------------------------------------------------------- OAuth
@@ -435,6 +460,135 @@ async function interactiveFlow(meta) {
   }
 }
 
+// --- machine-wide refresh coordination -------------------------------------
+// The grant is ONE shared thing on disk, and refreshing it ROTATES it: the
+// server issues a new refresh token and retires the old one. So a dozen local
+// bridges refreshing "their" copy at the same moment is not merely wasteful —
+// eleven of them present a token the server has just retired, and a server that
+// watches for replay (the recommended posture for rotating grants) reads that
+// as a stolen grant and answers by killing the whole family. Every agent on the
+// machine is then logged out at once, minutes after a perfectly good login.
+// That is the shape of the periodic surprise re-login this lock exists to end.
+//
+// So: at most one bridge on the machine refreshes at a time, and it re-reads the
+// store once it holds the lock — if a sibling already did the work there is
+// nothing left to do. One expiry, one refresh, however many bridges are up.
+const REFRESH_LOCK_STALE_MS = 45_000; // longer than the token request's own deadline
+const REFRESH_WAIT_MS = 60_000;       // a waiter gives up long before the harness does
+const REFRESH_POLL_MS = 120;
+
+class DeadGrantError extends Error {}
+
+function refreshLockPath() { return storePath() + ".refreshing"; }
+
+// The filesystem decides the winner: link() onto an existing name fails, and it
+// publishes a file that was already written whole — so a rival reading the lock
+// the instant it appears sees an owner, never a half-written one it would
+// mistake for garbage and break. A lock left behind by a bridge that died
+// mid-refresh must not stop the machine from ever refreshing again, so a lock
+// whose owner is gone (or which outlived the longest possible refresh) is
+// broken rather than obeyed.
+function acquireRefreshLock() {
+  const claim = () => {
+    const tmp = `${refreshLockPath()}.${process.pid}`;
+    writeFileSync(tmp, JSON.stringify({ pid: process.pid, started_at: Date.now() }), { mode: 0o600 });
+    try { linkSync(tmp, refreshLockPath()); return true; } // atomic; EEXIST if held
+    finally { try { unlinkSync(tmp); } catch {} }
+  };
+  // EEXIST means someone holds it; anything else means we cannot lock at all,
+  // and waiting on a lock we could never take would only hang the call.
+  const notHeld = (e) => { if (e.code !== "EEXIST") throw new Error(`cannot take the refresh lock: ${e.message}`); };
+  try { mkdirSync(CFG.authDir, { recursive: true, mode: 0o700 }); return claim(); }
+  catch (e) { notHeld(e); }
+
+  let held = null;
+  try { held = JSON.parse(readFileSync(refreshLockPath(), "utf8")); } catch {}
+  if (held && pidAlive(held.pid) && Date.now() - held.started_at < REFRESH_LOCK_STALE_MS) return false;
+  debug("breaking a refresh lock nobody is holding");
+  try { unlinkSync(refreshLockPath()); } catch {}
+  try { return claim(); } catch (e) { notHeld(e); return false; } // someone else broke it first
+}
+
+function releaseRefreshLock() {
+  try {
+    const l = JSON.parse(readFileSync(refreshLockPath(), "utf8"));
+    if (l.pid === process.pid) unlinkSync(refreshLockPath());
+  } catch {}
+}
+process.on("exit", releaseRefreshLock);
+
+// One refresh attempt, classified. Returns the new tokens, null if the attempt
+// only proves someone else already rotated, and throws either a DeadGrantError
+// (the grant itself is refused) or a plain Error (transient — keep the grant).
+async function refreshOnce(meta, cur) {
+  debug("refreshing access token");
+  try {
+    return await tokenRequest(meta, {
+      grant_type: "refresh_token",
+      refresh_token: cur.refresh_token,
+      client_id: CFG.staticClientId || loadStore().client?.client_id,
+      resource: meta.resource,
+    });
+  } catch (e) {
+    // Definitive = the grant itself is refused: a known OAuth error code, or
+    // any 400/401 from the token endpoint (servers word these codes freely —
+    // witnessed: Rauthy answers a dead refresh with 401 "JwtToken").
+    // Only 5xx/network/temporarily_unavailable stay transient.
+    const definitive = e instanceof TokenError
+      && e.oauthError !== "temporarily_unavailable"
+      && (DEFINITIVE_OAUTH_ERRORS.has(e.oauthError) || e.status === 400 || e.status === 401);
+    if (!definitive) {
+      throw new Error(`token refresh failed transiently (${e.message}) — grant kept, will retry`);
+    }
+    // A rotated-away token is refused in exactly the same words as a dead one.
+    // If the store moved on while we were asking, what we presented was merely
+    // stale: the grant is alive, in someone else's hands.
+    if (loadStore().tokens?.refresh_token !== cur.refresh_token) {
+      debug("our refresh token was already rotated by a sibling — retrying with the stored one");
+      return null;
+    }
+    if (e.oauthError === "invalid_client") {
+      // The server has forgotten our dynamic registration. Keeping it would
+      // point the next browser flow at an authorize page that refuses the
+      // client — a login the human cannot complete however often they try.
+      log("the server no longer knows this client — dropping the registration");
+      saveStore({ client: null });
+    }
+    throw new DeadGrantError(e.message);
+  }
+}
+
+// Get fresh tokens for the machine, refreshing at most once across all bridges.
+// `rejected` is the access token we must not come back with.
+async function refreshShared(meta, rejected) {
+  const deadline = Date.now() + REFRESH_WAIT_MS;
+  for (;;) {
+    const sibling = usableTokens({ rejected });
+    if (sibling) { debug("a sibling refreshed the grant — reusing it"); return sibling; }
+    // Whoever holds the lock is alive and still working, or we keep losing the
+    // grant to a rotating sibling. Either way, presenting our own copy now is
+    // the one move that could burn it: we fail this call instead, and the grant
+    // stays whole for the next one.
+    if (Date.now() > deadline) {
+      throw new Error("the shared grant could not be refreshed in time — grant kept, will retry");
+    }
+    if (acquireRefreshLock()) {
+      try {
+        const late = usableTokens({ rejected }); // re-read: the wait itself may have settled it
+        if (late) { debug("a sibling refreshed the grant — reusing it"); return late; }
+        const cur = loadStore().tokens;
+        if (!cur?.refresh_token) throw new DeadGrantError("no refresh grant on disk");
+        const fresh = await refreshOnce(meta, cur);
+        if (fresh) return fresh;
+      } finally {
+        releaseRefreshLock();
+      }
+    } else {
+      await sleep(REFRESH_POLL_MS);
+    }
+  }
+}
+
 let authInFlight = null;
 // Returns fresh-enough tokens. Order: cached access token -> silent refresh ->
 // (only if allowed and the grant is definitively dead) the browser flow.
@@ -450,14 +604,16 @@ async function ensureAuth(wwwAuthenticate, opts = {}) {
     await authInFlight.promise.catch(() => {});
     if (authInFlight) return authInFlight.promise; // someone else already restarted it
     const s = loadStore();
-    if (s.tokens?.access_token && (s.tokens.expires_at || Infinity) > Date.now()) return s.tokens;
+    if (tokenUsable(s.tokens)) return s.tokens;
   }
   const promise = (async () => {
     try {
       const s = loadStore();
-      if (!force && s.tokens?.access_token && (s.tokens.expires_at || Infinity) > Date.now()) {
-        return s.tokens;
-      }
+      // force says the token we hold is no answer — upstream refused it (401)
+      // or the keepalive found it about to expire. Remembering WHICH token that
+      // was is what makes a sibling's newer one recognisable as progress.
+      const rejected = force ? s.tokens?.access_token ?? null : null;
+      if (!force && tokenUsable(s.tokens)) return s.tokens;
       const meta = s.meta?.as ? s.meta : await discover(wwwAuthenticate);
       // Discovery runs once and its result is cached in the store, so an
       // override set later would never be seen — and the operator setting one
@@ -467,34 +623,10 @@ async function ensureAuth(wwwAuthenticate, opts = {}) {
       if (CFG.resource) meta.resource = CFG.resource;
       if (s.tokens?.refresh_token) {
         try {
-          debug("refreshing access token");
-          return await tokenRequest(meta, {
-            grant_type: "refresh_token",
-            refresh_token: s.tokens.refresh_token,
-            client_id: CFG.staticClientId || s.client?.client_id,
-            resource: meta.resource,
-          });
+          return await refreshShared(meta, rejected);
         } catch (e) {
-          // A sibling bridge process may have rotated the refresh token under
-          // us — its fresh tokens are on disk. Re-read before going further.
-          const fresh = loadStore();
-          if (fresh.tokens?.access_token
-              && fresh.tokens.access_token !== s.tokens.access_token
-              && (fresh.tokens.expires_at || Infinity) > Date.now()) {
-            debug("a sibling refreshed the tokens — reusing them");
-            return fresh.tokens;
-          }
-          // Definitive = the grant itself is refused: a known OAuth error code,
-          // or any 400/401 from the token endpoint (servers word these codes
-          // freely — witnessed: Rauthy answers a dead refresh with 401 "JwtToken").
-          // Only 5xx/network/temporarily_unavailable stay transient.
-          const definitive = e instanceof TokenError
-            && e.oauthError !== "temporarily_unavailable"
-            && (DEFINITIVE_OAUTH_ERRORS.has(e.oauthError) || e.status === 400 || e.status === 401);
-          if (!definitive) {
-            // Transient failure: keep the grant, do NOT open a browser.
-            throw new Error(`token refresh failed transiently (${e.message}) — grant kept, will retry`);
-          }
+          // Anything but a dead grant is transient: keep it, do NOT open a browser.
+          if (!(e instanceof DeadGrantError)) throw e;
           log(`refresh grant is dead (${e.message})` + (interactive ? " — starting a fresh authorization" : ""));
           if (!interactive) throw new Error("authorization required (refresh grant dead, browser flow deferred)");
           return await interactiveFlow(meta);
