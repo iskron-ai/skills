@@ -307,6 +307,86 @@ test("a definitively dead grant starts a fresh flow with a live listener", async
   });
 });
 
+// --- one machine, one grant ------------------------------------------------
+// A machine runs many agents, so many bridges, all reading one grant off one
+// file. Refreshing ROTATES that grant, so the crowd is the dangerous case, not
+// the rare one: whoever presents the rotated-away token is, to a server that
+// watches for replay, a thief. The delay on the fake's token endpoint is what
+// makes the race a fact instead of a hope — it holds the window open long
+// enough for every bridge to reach it.
+
+// Wide enough that every bridge is inside the token endpoint's window before
+// the first answer comes back: without it the crowd degenerates into a queue,
+// and a queue is exactly the case that never had a defect.
+const SLOW_TOKEN_MS = 250;
+
+// Everyone awake at once on one shared grant, with nothing left that still
+// works: the access token is past its clock AND refused upstream, so no bridge
+// can serve anything until the grant has been through the token endpoint. That
+// is the machine after an idle stretch — and the moment the crowd forms.
+async function crowdPastExpiry(fake, dir, spawnBridge, size = 3) {
+  const s = readStore(dir);
+  s.tokens.expires_at = Date.now() - 1000;
+  writeFileSync(storeFile(dir), JSON.stringify(s));
+  await fake.control({ revoke_access: true });
+  const crowd = Array.from({ length: size }, () => spawnBridge());
+  return Promise.all(crowd.map((b, i) => b.call("initialize", 10 + i, INIT_PARAMS)));
+}
+
+test("a crowd of bridges refreshes the shared grant exactly once", async (t) => {
+  await withFake(t, { refreshDelayMs: SLOW_TOKEN_MS }, async ({ fake, dir, spawnBridge }) => {
+    const first = spawnBridge();
+    await authorize(first, dir);
+    await first.stop();
+
+    const answers = await crowdPastExpiry(fake, dir, spawnBridge);
+    answers.forEach((a, i) => assert.ok(a.result, `bridge ${i} went unserved: ${JSON.stringify(a.error)}`));
+    assert.equal(fake.state.counts.stale_refresh, 0,
+      "no bridge may present a refresh token the server has already rotated away");
+    assert.equal(fake.state.counts.refresh, 1, "one grant, one expiry — one refresh");
+    assert.equal(fake.state.counts.authorize, 1, "nobody may be sent back to a login screen");
+  });
+});
+
+test("a server that reads replay as theft keeps the grant through the crowd", async (t) => {
+  await withFake(t, { refreshDelayMs: SLOW_TOKEN_MS, reuseDetection: true }, async ({ fake, dir, spawnBridge }) => {
+    const first = spawnBridge();
+    await authorize(first, dir);
+    await first.stop();
+
+    const answers = await crowdPastExpiry(fake, dir, spawnBridge);
+    answers.forEach((a, i) => assert.ok(a.result, `bridge ${i} went unserved: ${JSON.stringify(a.error)}`));
+    assert.equal(fake.state.counts.authorize, 1, "a rotation race must not cost the human a re-login");
+    assert.ok(readStore(dir).tokens.refresh_token, "the machine must still hold a grant");
+
+    const later = spawnBridge();
+    assert.ok((await later.call("initialize", 30, INIT_PARAMS)).result,
+      "and the grant it holds must still work");
+  });
+});
+
+test("a registration the server has forgotten is dropped, so the next login can land", async (t) => {
+  await withFake(t, {}, async ({ fake, dir, spawnBridge }) => {
+    const first = spawnBridge();
+    await authorize(first, dir);
+    await first.stop();
+
+    const s = readStore(dir);
+    s.tokens.expires_at = Date.now() - 1000;
+    writeFileSync(storeFile(dir), JSON.stringify(s));
+    // The server has expired the dynamic registration along with the grant.
+    await fake.control({
+      forget_clients: true, refreshStatus: 400, refreshError: "invalid_client", revoke_access: true,
+    });
+
+    // Keeping the dead client_id would publish an authorize URL that the server
+    // refuses — a login the human cannot complete however often they click.
+    const second = spawnBridge();
+    await authorize(second, dir, 5);
+    assert.equal(fake.state.counts.register, 2, "the forgotten registration must be replaced, not reused");
+  });
+});
+
 // --- never answer the harness with silence ---------------------------------
 
 test("a lost upstream session is re-established transparently", async (t) => {

@@ -26,7 +26,13 @@ export async function startFakeNks(opts = {}) {
     refreshStatus: null,   // e.g. 503 (transient) or 400 (definitive)
     refreshError: null,
     mcpStatus: null,       // force an HTTP status on /mcp
-    counts: { register: 0, authorize: 0, code_exchange: 0, refresh: 0, mcp: 0 },
+    refreshDelayMs: opts.refreshDelayMs ?? 0, // widen the window several bridges race in
+    // The posture RFC 9700 recommends for rotating grants: a refresh token
+    // presented after it was rotated away is treated as a stolen one, and the
+    // whole family dies with it. Off by default — a test asks for it when the
+    // point IS what replay costs.
+    reuseDetection: opts.reuseDetection ?? false,
+    counts: { register: 0, authorize: 0, code_exchange: 0, refresh: 0, stale_refresh: 0, mcp: 0 },
     // The resource indicator each leg carried. A real server turns this into
     // the token's audience, so it is the only place a test can see what the
     // bridge actually asked to be issued for.
@@ -49,10 +55,11 @@ export async function startFakeNks(opts = {}) {
     if (p === "/control") {
       const patch = JSON.parse((await body(req)) || "{}");
       if (patch.kill_session) { for (const s of st.sessions) st.dead.add(s); st.sessions.clear(); }
-      for (const k of ["refreshStatus", "refreshError", "mcpStatus", "accessTtl"]) {
+      for (const k of ["refreshStatus", "refreshError", "mcpStatus", "accessTtl", "refreshDelayMs", "reuseDetection"]) {
         if (k in patch) st[k] = patch[k];
       }
       if (patch.revoke_access) st.access = null;
+      if (patch.forget_clients) st.clients.clear(); // as if the server expired the dynamic registration
       return json(res, 200, { counts: st.counts });
     }
 
@@ -124,6 +131,14 @@ export async function startFakeNks(opts = {}) {
           return json(res, st.refreshStatus, { error: st.refreshError || "server_error" });
         }
         if (f.get("refresh_token") !== st.refresh) {
+          st.counts.stale_refresh++;
+          if (st.reuseDetection) { st.access = null; st.refresh = null; }
+          return json(res, 400, { error: "invalid_grant", error_description: "stale refresh token" });
+        }
+        if (st.refreshDelayMs) await new Promise((r) => setTimeout(r, st.refreshDelayMs));
+        if (f.get("refresh_token") !== st.refresh) { // rotated while we were slow
+          st.counts.stale_refresh++;
+          if (st.reuseDetection) { st.access = null; st.refresh = null; }
           return json(res, 400, { error: "invalid_grant", error_description: "stale refresh token" });
         }
         st.access = token("access"); st.refresh = token("refresh"); // rotation
