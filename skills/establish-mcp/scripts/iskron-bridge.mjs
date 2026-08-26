@@ -570,6 +570,7 @@ async function interactiveFlow(meta) {
 const REFRESH_LOCK_STALE_MS = 45_000; // longer than the token request's own deadline
 const REFRESH_WAIT_MS = 60_000;       // a waiter gives up long before the harness does
 const REFRESH_POLL_MS = 120;
+const EARLY_REFUSAL_COOLDOWN_MS = 15_000; // one knock per stretch, never one per call
 
 class DeadGrantError extends Error {}
 
@@ -617,13 +618,23 @@ process.on("exit", releaseRefreshLock);
 // `proactive` marks the speculative kind: the access token still works and we
 // are only topping it up ahead of expiry.
 async function refreshOnce(meta, cur, proactive) {
-  // Asking before the token is in force spends a refusal and buys nothing:
-  // there is no answer but waiting, so say so rather than knock.
+  // The hour is a reason to WAIT, never a reason to refuse to act. Holding back
+  // a refresh nobody needs yet is thrift (that pacing lives in the keepalive,
+  // where the speculative caller is); holding back one the caller needs now is
+  // a wall — it turns "the server might say no" into "no answer for half an
+  // hour", and the caller has no way around it. Our reading can also be stale:
+  // a sibling may have rotated the grant a moment ago, and then the nbf we are
+  // looking at belongs to a token the server has already retired. So a needed
+  // refresh knocks — ONCE per stretch. Knocking on every call would turn one
+  // rejected access token into hundreds of refused token requests, from every
+  // bridge on the machine: the lock serializes concurrency, not repetition.
   const hours = refreshHours(cur);
-  if (hours.nbf && Date.now() < hours.nbf) {
-    const left = Math.round((hours.nbf - Date.now()) / 1000);
-    grantLog(`refresh withheld — token not in force for another ${left}s`);
-    throw new Error(`refresh token is not in force for another ${left}s — grant kept, will retry`);
+  const inTheWindow = hours.nbf && Date.now() < hours.nbf;
+  const cooling = inTheWindow && loadGrantState().early_refused_until;
+  if (cooling && Date.now() < cooling) {
+    const left = Math.round((cooling - Date.now()) / 1000);
+    throw new Error(`the token endpoint refused this grant as too early moments ago`
+      + ` — not knocking again for ${left}s; grant kept, will retry`);
   }
   debug("refreshing access token");
   try {
@@ -654,7 +665,20 @@ async function refreshOnce(meta, cur, proactive) {
       const why = notYet
         ? `refresh token is not in force for another ${Math.round((hours.nbf - Date.now()) / 1000)}s`
         : "the access token in hand still works";
-      grantLog(`refresh refused early — ${why}; grant kept (${e.message})`);
+      // Remember the refusal for a breath, so the next call in this stretch
+      // waits with us instead of asking the same doomed question again — but
+      // only when it was the HOUR that refused us. A speculative refusal must
+      // never gag a caller who actually needs a token: that is the same wall,
+      // built smaller. And never past the hour itself: the moment it arrives,
+      // knocking is the right move again.
+      let until = null;
+      if (notYet) {
+        until = Math.min(Date.now() + EARLY_REFUSAL_COOLDOWN_MS, hours.nbf);
+        saveGrantState({ early_refused_until: until });
+      }
+      grantLog(`refresh refused early — ${why}; grant kept`
+        + (until ? `, not knocking again for ${Math.round((until - Date.now()) / 1000)}s` : "")
+        + ` (${e.message})`);
       throw new Error(`token refresh refused too early (${e.message}) — ${why}; grant kept, will retry`);
     }
     // A rotated-away token is refused in exactly the same words as a dead one.
@@ -847,6 +871,19 @@ function emit(msg) {
   process.stdout.write(JSON.stringify(msg) + "\n");
 }
 
+// Writing to a pipe is asynchronous, and process.exit does not wait: an answer
+// still in the buffer dies with the process. One pipe buffer is 64KB, so the
+// answers that get cut are the big ones — a whole realm read — and the harness
+// sees a truncated line, which is silence wearing an answer's clothes. Every
+// exit path goes through here first. Measured: 200KB written and exited on the
+// spot arrives as 65536 bytes; drained first, it arrives whole.
+function flushStdout() {
+  return new Promise((resolve) => {
+    if (process.stdout.writableLength === 0) return resolve();
+    process.stdout.write("", resolve); // queued behind everything already written
+  });
+}
+
 async function* sseEvents(body) {
   const reader = body.getReader();
   const decoder = new TextDecoder();
@@ -903,14 +940,13 @@ async function post(msg, onMessage) {
     res.body?.cancel?.();
     throw new UpstreamError("session expired upstream", "session");
   }
+  const sid = res.headers.get("mcp-session-id");
+  if (sid) state.sessionId = sid; // a session id may ride any answer, including an empty one
   if (res.status === 202 || res.status === 204) return;
   if (!res.ok) {
     const text = (await res.text().catch(() => "")).slice(0, 300);
     throw new UpstreamError(`upstream HTTP ${res.status}: ${text}`, "http");
   }
-
-  const sid = res.headers.get("mcp-session-id");
-  if (sid) state.sessionId = sid;
 
   const ctype = res.headers.get("content-type") || "";
   if (ctype.includes("text/event-stream")) {
@@ -1057,10 +1093,12 @@ function main() {
   const leave = async (why) => {
     debug(`${why} — winding down`);
     await Promise.allSettled([...pending]);
+    await flushStdout(); // an answer half-written is an answer not given
     if (flowInBackground) {
       log(`${why}, but an authorization flow is pending — staying up until the human's click lands`);
       await flowInBackground.catch(() => {});
     }
+    await flushStdout();
     process.exit(0);
   };
   rl.on("close", () => leave("stdin closed, the harness is gone"));

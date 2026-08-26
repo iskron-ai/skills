@@ -326,26 +326,66 @@ test("a refused grant costs a login only once the refusal has stood", async (t) 
   });
 });
 
-test("a refresh token the server holds back is waited for, not spent early", async (t) => {
+// The hour a server puts on a refresh token paces the refresh nobody needs yet.
+// It must never pace the one a caller is waiting on: a guess that turns into a
+// wall costs half an hour of blindness, and the guess can simply be stale.
+
+test("the refresh nobody needs yet waits for its hour instead of spending a refusal", async (t) => {
+  await withFake(t, { refreshNotBeforeMs: 60_000 }, async ({ fake, dir, spawnBridge }) => {
+    const first = spawnBridge();
+    await authorize(first, dir);
+    await first.stop();
+
+    // Inside the keepalive's margin, so it wants to top the token up — but the
+    // token it would present is not in force for another minute, and the access
+    // token in hand still works. Nothing to gain, one refusal to lose.
+    const s = readStore(dir);
+    s.tokens.expires_at = Date.now() + 60_000;
+    writeFileSync(storeFile(dir), JSON.stringify(s));
+
+    const bridge = spawnBridge();
+    assert.ok((await bridge.call("initialize", 1, INIT_PARAMS)).result, "the token in hand still serves");
+    assert.equal(fake.state.counts.refresh, 0, "the speculative refresh must wait for the hour");
+    assert.equal(fake.state.counts.authorize, 1, "and nobody may be sent to a browser over it");
+  });
+});
+
+test("a refresh the caller needs knocks even before the hour, and never walls the call", async (t) => {
   await withFake(t, { refreshNotBeforeMs: 2000 }, async ({ fake, dir, spawnBridge }) => {
     const first = spawnBridge();
     await authorize(first, dir);
     await first.stop();
 
-    // The access token is gone and the refresh token is not in force yet — the
-    // window a proactive refresh walks into on every single cycle when the
-    // server holds its refresh tokens back until the access token is spent.
+    // Upstream refuses the access token we hold while the refresh token is not
+    // yet in force — witnessed live, minutes after a rotation. Declining to ask
+    // would leave the harness with nothing for as long as the hour lasts.
     const s = readStore(dir);
     s.tokens.expires_at = Date.now() - 1000;
     writeFileSync(storeFile(dir), JSON.stringify(s));
+    const grant = s.tokens.refresh_token;
     await fake.control({ revoke_access: true });
 
     const early = spawnBridge();
     const held = await early.call("initialize", 1, INIT_PARAMS);
-    assert.ok(held.error, "there is nothing to serve this call with yet");
-    assert.equal(authorizeUrlIn(held.error.message), null,
-      "a token merely not in force yet must never be read as a dead grant");
-    assert.equal(fake.state.counts.refresh, 0, "and must not be spent on a refusal either");
+    assert.ok(held.error, "the server did refuse — there is nothing to serve with yet");
+    assert.ok(fake.state.counts.refresh >= 1, "but the bridge must have ASKED, not decided for the server");
+    assert.equal(authorizeUrlIn(held.error.message), null, "a refusal this early is no proof of a dead grant");
+    assert.equal(readStore(dir).tokens.refresh_token, grant, "and the grant must survive it");
+
+    // …and knocked ONCE. A harness retries; one rejected access token must not
+    // become a burst of refused token requests from every bridge on the machine.
+    for (const id of [2, 3, 4, 5]) await early.call("initialize", id, INIT_PARAMS);
+    assert.equal(fake.state.counts.refresh, 1, "one knock per stretch, not one per call");
+
+    // A refusal this early must never age into a login either: the grace window
+    // is what makes the first call quiet, and it is NOT what must keep the
+    // human out of the browser here — the reading of the hour is.
+    ageRefusal(dir);
+    const aged = spawnBridge();
+    const still = await aged.call("initialize", 1, INIT_PARAMS);
+    assert.equal(authorizeUrlIn(still.error?.message ?? ""), null,
+      "a grant merely short of its hour must not drag a human to a browser, however long it stands");
+    await aged.stop();
     await early.stop();
 
     await new Promise((r) => setTimeout(r, Math.max(0, fake.state.refreshValidFrom - Date.now()) + 150));
@@ -387,7 +427,7 @@ test("a short-lived access token is not stale the moment it arrives", async (t) 
 test("a store written before the bridge knew about hours is still read by them", async (t) => {
   // The machine mid-upgrade: tokens on disk from an older bridge, so none of
   // the schedule fields are there. The hours are in the token all the same.
-  await withFake(t, { refreshNotBeforeMs: 4000 }, async ({ fake, dir, spawnBridge }) => {
+  await withFake(t, { refreshNotBeforeMs: 60_000 }, async ({ fake, dir, spawnBridge }) => {
     const first = spawnBridge();
     await authorize(first, dir);
     await first.stop();
@@ -395,15 +435,29 @@ test("a store written before the bridge knew about hours is still read by them",
     const s = readStore(dir);
     delete s.tokens.refresh_not_before;
     delete s.tokens.refresh_expires_at;
-    s.tokens.expires_at = Date.now() - 1000;
+    s.tokens.expires_at = Date.now() + 60_000; // inside the keepalive's margin
     writeFileSync(storeFile(dir), JSON.stringify(s));
-    await fake.control({ revoke_access: true });
 
     const bridge = spawnBridge();
-    const held = await bridge.call("initialize", 1, INIT_PARAMS);
-    assert.ok(held.error, "there is nothing to serve this call with yet");
-    assert.equal(authorizeUrlIn(held.error.message), null, "and no reason to send anyone to a browser");
+    assert.ok((await bridge.call("initialize", 1, INIT_PARAMS)).result, "the token in hand still serves");
     assert.equal(fake.state.counts.refresh, 0, "the token's own nbf must be honoured with no field to help");
+    await bridge.stop();
+
+    // And the same claims must carry the OTHER half: when the refresh is needed
+    // and refused, the refusal is read as too-early from the token itself.
+    const s2 = readStore(dir);
+    delete s2.tokens.refresh_not_before;
+    delete s2.tokens.refresh_expires_at;
+    s2.tokens.expires_at = Date.now() - 1000;
+    writeFileSync(storeFile(dir), JSON.stringify(s2));
+    await fake.control({ revoke_access: true });
+
+    const needy = spawnBridge();
+    const held = await needy.call("initialize", 1, INIT_PARAMS);
+    assert.ok(held.error, "the server refuses it — nothing to serve with");
+    assert.equal(authorizeUrlIn(held.error.message), null,
+      "read from the token's own claims, this is too-early, not a dead grant");
+    assert.equal(readStore(dir).tokens.refresh_token, s2.tokens.refresh_token, "grant kept");
   });
 });
 
@@ -521,6 +575,39 @@ test("a registration the server has forgotten is dropped, so the next login can 
 });
 
 // --- never answer the harness with silence ---------------------------------
+
+test("an answer bigger than a pipe buffer survives the harness going away", async (t) => {
+  // Writing to a pipe is asynchronous and process.exit does not wait, so an
+  // answer still in the buffer dies with the process — and it is the big
+  // answers, a whole realm read, that get cut. A truncated line is silence
+  // wearing an answer's clothes.
+  await withFake(t, { padBytes: 200_000 }, async ({ dir, spawnBridge }) => {
+    const bridge = spawnBridge();
+    await authorize(bridge, dir);
+
+    bridge.proc.stdout.pause(); // the harness is busy: the pipe fills and stays full
+    const answer = new Promise((res, rej) => {
+      let out = "";
+      bridge.proc.stdout.on("data", (c) => {
+        out += c;
+        const nl = out.indexOf("\n");
+        if (nl >= 0) res(out.slice(0, nl));
+      });
+      // A lost answer must fail this test, never hang it: the whole point is
+      // that the harness is left waiting for something that will never come.
+      setTimeout(() => rej(new Error(`no whole line ever arrived — ${out.length} bytes of it did`)), 8000).unref();
+    });
+    bridge.send({ jsonrpc: "2.0", id: 7, method: "tools/call", params: { name: "big" } });
+    await new Promise((r) => setTimeout(r, 400)); // the answer is written, and stuck in the pipe
+    bridge.proc.kill("SIGTERM");                  // the harness asks the bridge to go away
+
+    bridge.proc.stdout.resume();
+    const line = await answer;
+    const parsed = JSON.parse(line); // a truncated line does not parse — that is the defect
+    assert.equal(parsed.id, 7);
+    assert.equal(parsed.result.pad.length, 200_000, "the whole answer must reach the harness");
+  });
+});
 
 test("a lost upstream session is re-established transparently", async (t) => {
   await withFake(t, {}, async ({ fake, dir, spawnBridge }) => {
