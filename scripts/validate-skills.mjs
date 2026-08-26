@@ -163,11 +163,58 @@ function validateSkill(name) {
 }
 
 // 1. Validate every skill directory.
+// --- promised files must ship -----------------------------------------------
+// A skill's prose is the only place a consumer learns that a file exists, and a
+// pointer is worth exactly as much as the file behind it. Two promises are made
+// in shipped prose and both were once broken in the wild: a `references/<file>`
+// path that resolves to nothing, and a script named as runnable — "run the file,
+// do not retype it" — that was described and never written. Neither is visible
+// to a reader of the diff; both are trivial for the gate.
+const PROMISE_PATTERNS = [
+  // `references/channel.md` — a path relative to the skill directory
+  { re: /references\/[A-Za-z0-9._-]+/g, resolve: (m) => m },
+  // `watchdog.mjs` — a runnable named on its own; scripts are what get retyped
+  { re: /`([A-Za-z0-9._-]+\.mjs)`/g, resolve: (m, g) => g },
+];
+
+function checkPromisedFiles(name) {
+  const dir = join(skillsDir, name);
+  const pages = [join(dir, "SKILL.md")];
+  const refs = join(dir, "references");
+  if (existsSync(refs)) {
+    for (const f of readdirSync(refs)) if (f.endsWith(".md")) pages.push(join(refs, f));
+  }
+  const shipped = new Set();
+  const collect = (d, prefix) => {
+    if (!existsSync(d)) return;
+    for (const e of readdirSync(d, { withFileTypes: true })) {
+      if (e.isDirectory()) collect(join(d, e.name), `${prefix}${e.name}/`);
+      else { shipped.add(`${prefix}${e.name}`); shipped.add(e.name); }
+    }
+  };
+  collect(dir, "");
+
+  for (const page of pages) {
+    const where = page.slice(root.length + 1);
+    const text = readFileSync(page, "utf8");
+    for (const { re, resolve } of PROMISE_PATTERNS) {
+      for (const m of text.matchAll(re)) {
+        const wanted = resolve(m[0], m[1]);
+        if (/[<>*]/.test(wanted)) continue; // a placeholder, not a promise
+        if (!shipped.has(wanted)) {
+          fail(where, `promises \`${wanted}\`, but no such file ships in skills/${name}/`
+            + " — a pointer is worth what the file behind it is worth");
+        }
+      }
+    }
+  }
+}
+
 const skillNames = readdirSync(skillsDir).filter((n) =>
   statSync(join(skillsDir, n)).isDirectory()
 );
 if (skillNames.length === 0) fail("skills/", "no skill directories found");
-for (const name of skillNames.sort()) validateSkill(name);
+for (const name of skillNames.sort()) { validateSkill(name); checkPromisedFiles(name); }
 
 // 2. Component-list guard: the skill set ships by plugin auto-discovery from
 //    skills/ — the tree is the single source of truth. A `skills` (or any
