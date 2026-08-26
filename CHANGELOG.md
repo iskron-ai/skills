@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.4.1](https://github.com/iskron-ai/skills/compare/v3.4.0...v3.4.1) (2026-08-26)
+
+
+### Bug Fixes
+
+* **bridge:** час токена паузит спекулятивное обновление, но не стоит стеной перед нужным ([#37](https://github.com/iskron-ai/skills/issues/37)) ([c63faac](https://github.com/iskron-ai/skills/commit/c63faacaa54a60dfd035b30a674e924d27c2d656))
+
 ## [3.4.0](https://github.com/iskron-ai/skills/compare/v3.3.2...v3.4.0) (2026-08-26)
 
 
