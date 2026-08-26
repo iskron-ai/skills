@@ -35,13 +35,13 @@ claude plugin install iskron@iskron
 (В интерактивной сессии: `/plugin marketplace add iskron-ai/skills`, затем
 `/plugin install iskron@iskron`.)
 
-**Cursor / Codex / любой другой агент** (плоская установка, ~70 харнессов):
+**Cursor / Codex / Pi / любой другой агент** (плоская установка, десятки харнессов):
 
 ```sh
-npx skills add iskron-ai/skills --all
+npx skills add iskron-ai/skills --all --global
 ```
 
-Добавь `--agent codex` (или `-a cursor`, …), чтобы явно указать харнесс.
+`--all` уже значит «все скиллы всем харнессам» (`--skill '*' --agent '*' -y`), так что сужать его через `--agent` не нужно — этим его только отменяют. `--global` обязателен: без него скиллы ставятся **в текущий репозиторий**, а не пользователю. Содержимое ляжет однажды в `~/.agents/skills/`, каталоги харнессов получат симлинки на него; обновление — `npx skills update --global`.
 
 ## 2. Подключи граф-сервер
 
