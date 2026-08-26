@@ -371,6 +371,21 @@ test("a refresh the caller needs knocks even before the hour, and never walls th
     assert.ok(fake.state.counts.refresh >= 1, "but the bridge must have ASKED, not decided for the server");
     assert.equal(authorizeUrlIn(held.error.message), null, "a refusal this early is no proof of a dead grant");
     assert.equal(readStore(dir).tokens.refresh_token, grant, "and the grant must survive it");
+
+    // …and knocked ONCE. A harness retries; one rejected access token must not
+    // become a burst of refused token requests from every bridge on the machine.
+    for (const id of [2, 3, 4, 5]) await early.call("initialize", id, INIT_PARAMS);
+    assert.equal(fake.state.counts.refresh, 1, "one knock per stretch, not one per call");
+
+    // A refusal this early must never age into a login either: the grace window
+    // is what makes the first call quiet, and it is NOT what must keep the
+    // human out of the browser here — the reading of the hour is.
+    ageRefusal(dir);
+    const aged = spawnBridge();
+    const still = await aged.call("initialize", 1, INIT_PARAMS);
+    assert.equal(authorizeUrlIn(still.error?.message ?? ""), null,
+      "a grant merely short of its hour must not drag a human to a browser, however long it stands");
+    await aged.stop();
     await early.stop();
 
     await new Promise((r) => setTimeout(r, Math.max(0, fake.state.refreshValidFrom - Date.now()) + 150));
@@ -426,6 +441,23 @@ test("a store written before the bridge knew about hours is still read by them",
     const bridge = spawnBridge();
     assert.ok((await bridge.call("initialize", 1, INIT_PARAMS)).result, "the token in hand still serves");
     assert.equal(fake.state.counts.refresh, 0, "the token's own nbf must be honoured with no field to help");
+    await bridge.stop();
+
+    // And the same claims must carry the OTHER half: when the refresh is needed
+    // and refused, the refusal is read as too-early from the token itself.
+    const s2 = readStore(dir);
+    delete s2.tokens.refresh_not_before;
+    delete s2.tokens.refresh_expires_at;
+    s2.tokens.expires_at = Date.now() - 1000;
+    writeFileSync(storeFile(dir), JSON.stringify(s2));
+    await fake.control({ revoke_access: true });
+
+    const needy = spawnBridge();
+    const held = await needy.call("initialize", 1, INIT_PARAMS);
+    assert.ok(held.error, "the server refuses it — nothing to serve with");
+    assert.equal(authorizeUrlIn(held.error.message), null,
+      "read from the token's own claims, this is too-early, not a dead grant");
+    assert.equal(readStore(dir).tokens.refresh_token, s2.tokens.refresh_token, "grant kept");
   });
 });
 
