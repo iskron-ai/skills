@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.4.2](https://github.com/iskron-ai/skills/compare/v3.4.1...v3.4.2) (2026-08-26)
+
+
+### Bug Fixes
+
+* **plugin:** архив несёт граф-сервер; установка — всем харнессам и на уровень пользователя ([#39](https://github.com/iskron-ai/skills/issues/39)) ([9502535](https://github.com/iskron-ai/skills/commit/95025350825de7c805f0a07634080d17368730ba))
+
 ## [3.4.1](https://github.com/iskron-ai/skills/compare/v3.4.0...v3.4.1) (2026-08-26)
 
 
