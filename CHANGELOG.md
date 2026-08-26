@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.4.0](https://github.com/iskron-ai/skills/compare/v3.3.2...v3.4.0) (2026-08-26)
+
+
+### Features
+
+* **collaborate:** сторож выхода-на-кадре отгружён, вход вернулся в тело, гейт стережёт обещанные файлы ([#35](https://github.com/iskron-ai/skills/issues/35)) ([46c21b1](https://github.com/iskron-ai/skills/commit/46c21b145b14520fe524d8cd2e3f75b6657c9259))
+
 ## [3.3.2](https://github.com/iskron-ai/skills/compare/v3.3.1...v3.3.2) (2026-08-25)
 
 
