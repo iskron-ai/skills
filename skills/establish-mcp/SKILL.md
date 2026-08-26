@@ -1,5 +1,6 @@
 ---
 name: establish-mcp
+slash: true
 description: "Достижение графа NKS, когда харнесс не может: тулов iskron_* нет, регистрация MCP падает, нативный OAuth подводит. Поставляет и поднимает iskron-bridge — stdio→streamable-HTTP MCP-мост с полным OAuth-флоу, никогда не отвечающий харнессу тишиной. Триггеры: «подключи граф», «подними мост», «тулы iskron недоступны», «mcp не подключается», «oauth не проходит», connect to the graph, raise the bridge, MCP tools missing, зависшие вызовы при живом сервере. Композирует entry и iskronify."
 ---
 
