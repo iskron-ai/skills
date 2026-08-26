@@ -128,8 +128,15 @@ claude mcp add --scope user --transport http iskron https://mcp.iskron.ru/
 
 ```sh
 mkdir -p ~/.iskron-bridge
-cp "$(dirname "$(find ~/.claude -path '*skills/establish-mcp/scripts/iskron-bridge.mjs' | head -1)")/iskron-bridge.mjs" ~/.iskron-bridge/
+src=$(find -L ~/.agents/skills ~/.claude -path '*establish-mcp/scripts/iskron-bridge.mjs' 2>/dev/null | head -1)
+cp "$src" ~/.iskron-bridge/ && echo "скопирован из $src"
 ```
+
+`-L` здесь несущий, а не украшение: при глобальной установке через `npx skills`
+содержимое лежит в `~/.agents/skills/`, а каталог скиллов каждого харнесса —
+симлинк на него, и `find` без `-L` внутрь симлинка не заходит и не находит ничего.
+Плагинный канал кладёт настоящие файлы под `~/.claude/plugins/cache/`, поэтому
+ищем в обоих местах и берём первое попавшееся.
 
 ```json
 { "mcpServers": { "iskron": { "command": "node", "args": ["/абс/путь/до/.iskron-bridge/iskron-bridge.mjs"] } } }
