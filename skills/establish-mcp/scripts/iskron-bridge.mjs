@@ -617,12 +617,18 @@ process.on("exit", releaseRefreshLock);
 // `proactive` marks the speculative kind: the access token still works and we
 // are only topping it up ahead of expiry.
 async function refreshOnce(meta, cur, proactive) {
-  // Asking before the token is in force spends a refusal and buys nothing:
-  // there is no answer but waiting, so say so rather than knock.
+  // The hour is a reason to WAIT, never a reason to refuse to act. Holding back
+  // a refresh nobody needs yet is thrift; holding back one the caller needs now
+  // is a wall: it turns "the server might say no" into "no answer for half an
+  // hour", and the caller has no way around it. And our reading can simply be
+  // stale — a sibling may have rotated the grant a moment ago, in which case
+  // the nbf we are looking at belongs to a token the server has already
+  // retired. So only the speculative kind waits; a needed refresh knocks, and
+  // a refusal is classified below as the transient thing it is.
   const hours = refreshHours(cur);
-  if (hours.nbf && Date.now() < hours.nbf) {
+  if (proactive && hours.nbf && Date.now() < hours.nbf) {
     const left = Math.round((hours.nbf - Date.now()) / 1000);
-    grantLog(`refresh withheld — token not in force for another ${left}s`);
+    grantLog(`refresh withheld — nobody needs it yet and the token is not in force for another ${left}s`);
     throw new Error(`refresh token is not in force for another ${left}s — grant kept, will retry`);
   }
   debug("refreshing access token");
