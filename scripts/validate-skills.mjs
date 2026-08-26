@@ -20,7 +20,7 @@ import { fileURLToPath } from "node:url";
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const skillsDir = join(root, "skills");
 const ALLOWED_KEYS = new Set(["name", "description", "slash"]);
-const REQUIRED_KEYS = ["name", "description"];
+const REQUIRED_KEYS = ["name", "description", "slash"];
 
 const errors = [];
 const fail = (where, msg) => errors.push(`${where}: ${msg}`);
@@ -110,10 +110,12 @@ function validateSkill(name) {
     }
 
     if (key === "slash") {
-      // OpenCode decodes frontmatter `slash` as a boolean; a quoted "true"
-      // arrives as a string and fails the decode, taking the skill with it.
-      if (value !== "true" && value !== "false") {
-        fail(where, `\`slash\` must be a plain \`true\` or \`false\`, got ${JSON.stringify(value)}`);
+      // Every skill in this distribution is typeable as `/name`, so the key is
+      // not a per-skill choice: it is required and it is `true`. OpenCode
+      // decodes it as a boolean, and a quoted "true" arrives as a string,
+      // fails the decode and takes the skill down with it — so `true` bare.
+      if (value !== "true") {
+        fail(where, `\`slash\` must be a plain \`true\` (every skill is typeable as /name), got ${JSON.stringify(value)}`);
       }
     }
 
