@@ -47,6 +47,7 @@ export async function startFakeNks(opts = {}) {
     refreshDelayMs: opts.refreshDelayMs ?? 0, // widen the window several bridges race in
     refreshNotBeforeMs: opts.refreshNotBeforeMs ?? 0, // hold the refresh token back this long
     accessExpSkewSec: opts.accessExpSkewSec ?? 0,     // make the access token's own exp disagree with expires_in
+    padBytes: opts.padBytes ?? 0,                     // make answers bigger than one pipe buffer
     // The posture RFC 9700 recommends for rotating grants: a refresh token
     // presented after it was rotated away is treated as a stolen one, and the
     // whole family dies with it. Off by default — a test asks for it when the
@@ -196,7 +197,8 @@ export async function startFakeNks(opts = {}) {
       if (msg.method === "tools/list") {
         return json(res, 200, { jsonrpc: "2.0", id: msg.id, result: { tools: [{ name: "nks_orient" }] } });
       }
-      return json(res, 200, { jsonrpc: "2.0", id: msg.id, result: { ok: true, method: msg.method } });
+      return json(res, 200, { jsonrpc: "2.0", id: msg.id,
+        result: { ok: true, method: msg.method, ...(st.padBytes ? { pad: "x".repeat(st.padBytes) } : {}) } });
     }
 
     res.writeHead(404); res.end();

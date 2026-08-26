@@ -544,6 +544,39 @@ test("a registration the server has forgotten is dropped, so the next login can 
 
 // --- never answer the harness with silence ---------------------------------
 
+test("an answer bigger than a pipe buffer survives the harness going away", async (t) => {
+  // Writing to a pipe is asynchronous and process.exit does not wait, so an
+  // answer still in the buffer dies with the process — and it is the big
+  // answers, a whole realm read, that get cut. A truncated line is silence
+  // wearing an answer's clothes.
+  await withFake(t, { padBytes: 200_000 }, async ({ dir, spawnBridge }) => {
+    const bridge = spawnBridge();
+    await authorize(bridge, dir);
+
+    bridge.proc.stdout.pause(); // the harness is busy: the pipe fills and stays full
+    const answer = new Promise((res, rej) => {
+      let out = "";
+      bridge.proc.stdout.on("data", (c) => {
+        out += c;
+        const nl = out.indexOf("\n");
+        if (nl >= 0) res(out.slice(0, nl));
+      });
+      // A lost answer must fail this test, never hang it: the whole point is
+      // that the harness is left waiting for something that will never come.
+      setTimeout(() => rej(new Error(`no whole line ever arrived — ${out.length} bytes of it did`)), 8000).unref();
+    });
+    bridge.send({ jsonrpc: "2.0", id: 7, method: "tools/call", params: { name: "big" } });
+    await new Promise((r) => setTimeout(r, 400)); // the answer is written, and stuck in the pipe
+    bridge.proc.kill("SIGTERM");                  // the harness asks the bridge to go away
+
+    bridge.proc.stdout.resume();
+    const line = await answer;
+    const parsed = JSON.parse(line); // a truncated line does not parse — that is the defect
+    assert.equal(parsed.id, 7);
+    assert.equal(parsed.result.pad.length, 200_000, "the whole answer must reach the harness");
+  });
+});
+
 test("a lost upstream session is re-established transparently", async (t) => {
   await withFake(t, {}, async ({ fake, dir, spawnBridge }) => {
     const bridge = spawnBridge();

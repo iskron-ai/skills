@@ -853,6 +853,19 @@ function emit(msg) {
   process.stdout.write(JSON.stringify(msg) + "\n");
 }
 
+// Writing to a pipe is asynchronous, and process.exit does not wait: an answer
+// still in the buffer dies with the process. One pipe buffer is 64KB, so the
+// answers that get cut are the big ones — a whole realm read — and the harness
+// sees a truncated line, which is silence wearing an answer's clothes. Every
+// exit path goes through here first. Measured: 200KB written and exited on the
+// spot arrives as 65536 bytes; drained first, it arrives whole.
+function flushStdout() {
+  return new Promise((resolve) => {
+    if (process.stdout.writableLength === 0) return resolve();
+    process.stdout.write("", resolve); // queued behind everything already written
+  });
+}
+
 async function* sseEvents(body) {
   const reader = body.getReader();
   const decoder = new TextDecoder();
@@ -909,14 +922,13 @@ async function post(msg, onMessage) {
     res.body?.cancel?.();
     throw new UpstreamError("session expired upstream", "session");
   }
+  const sid = res.headers.get("mcp-session-id");
+  if (sid) state.sessionId = sid; // a session id may ride any answer, including an empty one
   if (res.status === 202 || res.status === 204) return;
   if (!res.ok) {
     const text = (await res.text().catch(() => "")).slice(0, 300);
     throw new UpstreamError(`upstream HTTP ${res.status}: ${text}`, "http");
   }
-
-  const sid = res.headers.get("mcp-session-id");
-  if (sid) state.sessionId = sid;
 
   const ctype = res.headers.get("content-type") || "";
   if (ctype.includes("text/event-stream")) {
@@ -1063,10 +1075,12 @@ function main() {
   const leave = async (why) => {
     debug(`${why} — winding down`);
     await Promise.allSettled([...pending]);
+    await flushStdout(); // an answer half-written is an answer not given
     if (flowInBackground) {
       log(`${why}, but an authorization flow is pending — staying up until the human's click lands`);
       await flowInBackground.catch(() => {});
     }
+    await flushStdout();
     process.exit(0);
   };
   rl.on("close", () => leave("stdin closed, the harness is gone"));
