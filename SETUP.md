@@ -35,13 +35,13 @@ claude plugin install iskron@iskron
 (В интерактивной сессии: `/plugin marketplace add iskron-ai/skills`, затем
 `/plugin install iskron@iskron`.)
 
-**Cursor / Codex / любой другой агент** (плоская установка, ~70 харнессов):
+**Cursor / Codex / Pi / любой другой агент** (плоская установка, десятки харнессов):
 
 ```sh
-npx skills add iskron-ai/skills --all
+npx skills add iskron-ai/skills --all --global
 ```
 
-Добавь `--agent codex` (или `-a cursor`, …), чтобы явно указать харнесс.
+`--all` уже значит «все скиллы всем харнессам» (`--skill '*' --agent '*' -y`), так что сужать его через `--agent` не нужно — этим его только отменяют. `--global` обязателен: без него скиллы ставятся **в текущий репозиторий**, а не пользователю. Содержимое ляжет однажды в `~/.agents/skills/`, каталоги харнессов получат симлинки на него; обновление — `npx skills update --global`.
 
 ## 2. Подключи граф-сервер
 
@@ -128,8 +128,15 @@ claude mcp add --scope user --transport http iskron https://mcp.iskron.ru/
 
 ```sh
 mkdir -p ~/.iskron-bridge
-cp "$(dirname "$(find ~/.claude -path '*skills/establish-mcp/scripts/iskron-bridge.mjs' | head -1)")/iskron-bridge.mjs" ~/.iskron-bridge/
+src=$(find -L ~/.agents/skills ~/.claude -path '*establish-mcp/scripts/iskron-bridge.mjs' 2>/dev/null | head -1)
+cp "$src" ~/.iskron-bridge/ && echo "скопирован из $src"
 ```
+
+`-L` здесь несущий, а не украшение: при глобальной установке через `npx skills`
+содержимое лежит в `~/.agents/skills/`, а каталог скиллов каждого харнесса —
+симлинк на него, и `find` без `-L` внутрь симлинка не заходит и не находит ничего.
+Плагинный канал кладёт настоящие файлы под `~/.claude/plugins/cache/`, поэтому
+ищем в обоих местах и берём первое попавшееся.
 
 ```json
 { "mcpServers": { "iskron": { "command": "node", "args": ["/абс/путь/до/.iskron-bridge/iskron-bridge.mjs"] } } }
