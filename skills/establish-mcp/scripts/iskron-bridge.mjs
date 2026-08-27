@@ -33,8 +33,19 @@ import { mkdirSync, readFileSync, writeFileSync, appendFileSync, statSync, unlin
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { createInterface } from "node:readline";
+import { fileURLToPath } from "node:url";
 
-const VERSION = "0.1.0";
+// Bump VERSION with every behavioural change: a field report quotes the error
+// verbatim, and this string is how the report is dated. The hash makes the
+// dating exact even when a bump was forgotten or the file was patched in
+// place — it names the bytes that actually ran, not the bytes we meant to ship.
+const VERSION = "0.2.0";
+const BUILD = (() => {
+  try {
+    const src = readFileSync(fileURLToPath(import.meta.url));
+    return `v${VERSION}+${createHash("sha256").update(src).digest("hex").slice(0, 8)}`;
+  } catch { return `v${VERSION}`; }
+})();
 const DEFAULT_SERVER_URL = "https://mcp.iskron.ru/";
 
 // ---------------------------------------------------------------- arguments
@@ -58,7 +69,7 @@ function parseArgs(argv) {
     else if (a === "--client-name") cfg.clientName = argv[++i];
     else if (a === "--no-browser") cfg.noBrowser = true;
     else if (a === "--debug") cfg.debug = true;
-    else if (a === "--version") { process.stdout.write(VERSION + "\n"); process.exit(0); }
+    else if (a === "--version") { process.stdout.write(BUILD + "\n"); process.exit(0); }
     else if (!a.startsWith("--") && !cfg.serverUrl) cfg.serverUrl = a;
     else { log(`unknown argument: ${a}`); process.exit(2); }
   }
@@ -86,6 +97,43 @@ function debug(msg) {
 const b64url = (buf) => Buffer.from(buf).toString("base64url");
 const sha256 = (s) => createHash("sha256").update(s).digest();
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// --- the server's clock, not ours ------------------------------------------
+// Every hour this bridge reasons about — access exp, refresh nbf/exp — is
+// stamped by the server's clock, and a machine's own clock is allowed to lie.
+// Witnessed in the field: a clock ~28 minutes behind the server made a spent
+// access token look fresh (every call bought a 401 first) and a refresh token
+// long in force look held back — the exact arithmetic behind a recurring
+// "not in force for another 1650s" outage. So the skew is measured off the
+// Date header every upstream answer already carries, and every judgement of a
+// token's hours goes through now(), which speaks server time. The measurement
+// is persisted so a fresh process starts corrected, before its first response.
+const SKEW_NOISE_MS = 5_000;     // the Date header keeps whole seconds and rides one network leg
+const SKEW_MATERIAL_MS = 30_000; // persist and announce only a skew that could move a decision
+let clockSkewMs = null;          // server minus local; null until measured or loaded
+function skewMs() {
+  if (clockSkewMs === null) {
+    const s = Number(loadStore().clock_skew_ms);
+    clockSkewMs = Number.isFinite(s) ? s : 0;
+  }
+  return clockSkewMs;
+}
+function now() { return Date.now() + skewMs(); }
+function noteServerDate(res) {
+  const d = Date.parse(res?.headers?.get("date") || "");
+  if (!Number.isFinite(d)) return;
+  const measured = d - Date.now();
+  const skew = Math.abs(measured) < SKEW_NOISE_MS ? 0 : measured;
+  const prev = skewMs();
+  clockSkewMs = skew;
+  if (Math.abs(skew - prev) >= SKEW_MATERIAL_MS) {
+    try { saveStore({ clock_skew_ms: skew }); } catch {}
+    grantLog(skew === 0
+      ? "machine clock is back in step with the server"
+      : `machine clock is ${Math.round(Math.abs(skew) / 1000)}s ${skew > 0 ? "behind" : "ahead of"} the server`
+        + ` — token hours are judged by the server's clock (fix NTP to stop paying a 401 per rotation)`);
+  }
+}
 
 // Tokens are opaque by contract, so this only ever ASKS — a claim that is not
 // there changes nothing. What it buys is the one thing the token endpoint never
@@ -116,11 +164,11 @@ function tokenSchedule(body, refresh) {
   const a = jwtClaims(body.access_token);
   const r = jwtClaims(refresh);
   const accessExp = Number.isFinite(a?.exp) ? a.exp * 1000
-    : (body.expires_in ? Date.now() + body.expires_in * 1000 : null);
+    : (body.expires_in ? now() + body.expires_in * 1000 : null);
   // A minute of caution is right for tokens that live for half an hour and
   // absurd for one that lives for thirty seconds: taken whole it would declare
   // every token stale on arrival. Never give up more than half the life.
-  const skew = accessExp ? Math.min(CLOCK_SKEW_MS, Math.max(0, (accessExp - Date.now()) / 2)) : 0;
+  const skew = accessExp ? Math.min(CLOCK_SKEW_MS, Math.max(0, (accessExp - now()) / 2)) : 0;
   return {
     expires_at: accessExp ? accessExp - skew : null,
     refresh_not_before: Number.isFinite(r?.nbf) ? r.nbf * 1000 : null,
@@ -190,7 +238,7 @@ function grantLog(msg) {
     let size = 0;
     try { size = statSync(p).size; } catch {}
     if (size > 128_000) { try { unlinkSync(p); } catch {} }
-    appendFileSync(p, `${new Date().toISOString()} pid=${process.pid} ${msg}\n`, { mode: 0o600 });
+    appendFileSync(p, `${new Date().toISOString()} pid=${process.pid} ${BUILD} ${msg}\n`, { mode: 0o600 });
   } catch {} // a log that cannot be written must never break the call
 }
 
@@ -217,7 +265,7 @@ function clearGrantState() { try { unlinkSync(grantStatePath()); } catch {} }
 function tokenUsable(t, { rejected = null, marginMs = 0 } = {}) {
   if (!t?.access_token) return false;
   if (rejected && t.access_token === rejected) return false;
-  if (t.expires_at && t.expires_at - Date.now() <= marginMs) return false;
+  if (t.expires_at && t.expires_at - now() <= marginMs) return false;
   return true;
 }
 function usableTokens(opts) {
@@ -229,6 +277,7 @@ function usableTokens(opts) {
 
 async function fetchJson(url, opts = {}, timeoutMs = 15_000) {
   const res = await fetch(url, { ...opts, signal: AbortSignal.timeout(timeoutMs) });
+  noteServerDate(res);
   if (!res.ok) throw new Error(`${opts.method || "GET"} ${url} -> ${res.status}`);
   return res.json();
 }
@@ -453,6 +502,7 @@ async function tokenRequest(meta, params) {
     body: new URLSearchParams(params).toString(),
     signal: AbortSignal.timeout(30_000),
   });
+  noteServerDate(res);
   const body = await res.json().catch(() => ({}));
   if (!res.ok) {
     throw new TokenError(
@@ -465,8 +515,8 @@ async function tokenRequest(meta, params) {
   saveStore({ tokens });
   clearGrantState(); // a grant in hand ends whatever the machine held against it
   grantLog(`tokens stored (${params.grant_type}); access good for `
-    + `${tokens.expires_at ? Math.round((tokens.expires_at - Date.now()) / 1000) + "s" : "an unstated time"}`
-    + `${tokens.refresh_not_before ? `, refresh usable in ${Math.round((tokens.refresh_not_before - Date.now()) / 1000)}s` : ""}`);
+    + `${tokens.expires_at ? Math.round((tokens.expires_at - now()) / 1000) + "s" : "an unstated time"}`
+    + `${tokens.refresh_not_before ? `, refresh usable in ${Math.round((tokens.refresh_not_before - now()) / 1000)}s` : ""}`);
   return tokens;
 }
 
@@ -572,7 +622,11 @@ const REFRESH_WAIT_MS = 60_000;       // a waiter gives up long before the harne
 const REFRESH_POLL_MS = 120;
 const EARLY_REFUSAL_COOLDOWN_MS = 15_000; // one knock per stretch, never one per call
 
-class DeadGrantError extends Error {}
+// `expired` marks the one refusal that is proof by the grant's own hours: the
+// refresh token's exp has passed, and no server hiccup ever looks like that.
+class DeadGrantError extends Error {
+  constructor(message, expired = false) { super(message); this.expired = expired; }
+}
 
 function refreshLockPath() { return storePath() + ".refreshing"; }
 
@@ -629,10 +683,10 @@ async function refreshOnce(meta, cur, proactive) {
   // rejected access token into hundreds of refused token requests, from every
   // bridge on the machine: the lock serializes concurrency, not repetition.
   const hours = refreshHours(cur);
-  const inTheWindow = hours.nbf && Date.now() < hours.nbf;
+  const inTheWindow = hours.nbf && now() < hours.nbf;
   const cooling = inTheWindow && loadGrantState().early_refused_until;
-  if (cooling && Date.now() < cooling) {
-    const left = Math.round((cooling - Date.now()) / 1000);
+  if (cooling && now() < cooling) {
+    const left = Math.round((cooling - now()) / 1000);
     throw new Error(`the token endpoint refused this grant as too early moments ago`
       + ` — not knocking again for ${left}s; grant kept, will retry`);
   }
@@ -645,6 +699,19 @@ async function refreshOnce(meta, cur, proactive) {
       resource: meta.resource,
     });
   } catch (e) {
+    // A token endpoint that answers 404/405/410 — or whose host is not there
+    // to answer at all — is discovery gone stale: the AS moved and the store
+    // still points at where it used to live. Cached forever, that is a
+    // permanent outage every attempt walks back into; dropped, the next
+    // attempt rediscovers and heals. The grant itself was never judged.
+    const gone = e instanceof TokenError
+      ? [404, 405, 410].includes(e.status)
+      : ["ENOTFOUND", "ECONNREFUSED"].includes(e.cause?.code);
+    if (gone) {
+      saveStore({ meta: null });
+      grantLog(`token endpoint is gone (${e.message}) — cached discovery dropped, rediscovering on the next attempt`);
+      throw new Error(`the token endpoint is gone (${e.message}) — rediscovering on the next attempt; grant kept, will retry`);
+    }
     // Definitive = the grant itself is refused: a known OAuth error code, or
     // any 400/401 from the token endpoint (servers word these codes freely —
     // witnessed: Rauthy answers a dead refresh with 401 "JwtToken").
@@ -659,11 +726,11 @@ async function refreshOnce(meta, cur, proactive) {
     // more than the server's wording does: a token still short of its nbf, or
     // one nobody needed yet, is refused in exactly the words of a dead grant.
     // Only an expired refresh token is honest proof that a human must return.
-    const expired = hours.exp && Date.now() >= hours.exp;
-    const notYet = hours.nbf && Date.now() < hours.nbf;
+    const expired = hours.exp && now() >= hours.exp;
+    const notYet = hours.nbf && now() < hours.nbf;
     if (!expired && (notYet || proactive)) {
       const why = notYet
-        ? `refresh token is not in force for another ${Math.round((hours.nbf - Date.now()) / 1000)}s`
+        ? `refresh token is not in force for another ${Math.round((hours.nbf - now()) / 1000)}s`
         : "the access token in hand still works";
       // Remember the refusal for a breath, so the next call in this stretch
       // waits with us instead of asking the same doomed question again — but
@@ -673,11 +740,11 @@ async function refreshOnce(meta, cur, proactive) {
       // knocking is the right move again.
       let until = null;
       if (notYet) {
-        until = Math.min(Date.now() + EARLY_REFUSAL_COOLDOWN_MS, hours.nbf);
+        until = Math.min(now() + EARLY_REFUSAL_COOLDOWN_MS, hours.nbf);
         saveGrantState({ early_refused_until: until });
       }
       grantLog(`refresh refused early — ${why}; grant kept`
-        + (until ? `, not knocking again for ${Math.round((until - Date.now()) / 1000)}s` : "")
+        + (until ? `, not knocking again for ${Math.round((until - now()) / 1000)}s` : "")
         + ` (${e.message})`);
       throw new Error(`token refresh refused too early (${e.message}) — ${why}; grant kept, will retry`);
     }
@@ -696,9 +763,9 @@ async function refreshOnce(meta, cur, proactive) {
       grantLog("server no longer knows this client — registration dropped");
       saveStore({ client: null });
     }
-    const overdue = hours.exp && Date.now() >= hours.exp;
+    const overdue = hours.exp && now() >= hours.exp;
     grantLog(`refresh refused${overdue ? " and the grant is past its own expiry" : ""}: ${e.message}`);
-    throw new DeadGrantError(overdue ? `${e.message} (grant expired)` : e.message);
+    throw new DeadGrantError(overdue ? `${e.message} (grant expired)` : e.message, !!overdue);
   }
 }
 
@@ -753,17 +820,23 @@ function noteRefusal(reason) {
   }
 }
 
-function holdOffLogin(reason) {
-  const now = Date.now();
+function holdOffLogin(reason, expired = false) {
+  const local = Date.now(); // human pacing runs on the human's own clock
   const st = loadGrantState();
-  if (st.snooze_until && now < st.snooze_until) {
+  if (st.snooze_until && local < st.snooze_until) {
     throw new LoginHeld(`authorization was offered and not completed — not asking again for `
-      + `${Math.round((st.snooze_until - now) / 1000)}s (grant refused: ${reason})`);
+      + `${Math.round((st.snooze_until - local) / 1000)}s (grant refused: ${reason})`);
   }
-  const since = st.refused_since || now;
-  if (now - since < LOGIN_GRACE_MS) {
+  // The grace exists because a refusal can be a server mid-restart wearing a
+  // dead grant's words. A grant past its own exp is not ambiguous: its hours
+  // are proof, and the keepalive never knocks on it — so the grace would start
+  // stone-cold at the human's first call and cost them two minutes of failing
+  // calls before the login they already owe. Ask at once instead.
+  if (expired) return;
+  const since = st.refused_since || local;
+  if (local - since < LOGIN_GRACE_MS) {
     throw new LoginHeld(`grant refused (${reason}) — holding off the login for `
-      + `${Math.round((LOGIN_GRACE_MS - (now - since)) / 1000)}s in case it heals; the call can be retried`);
+      + `${Math.round((LOGIN_GRACE_MS - (local - since)) / 1000)}s in case it heals; the call can be retried`);
   }
 }
 
@@ -811,7 +884,7 @@ async function ensureAuth(wwwAuthenticate, opts = {}) {
           if (!(e instanceof DeadGrantError)) throw e;
           noteRefusal(e.message); // the clock runs whoever noticed, background included
           if (!interactive) throw new Error("authorization required (refresh grant dead, browser flow deferred)");
-          holdOffLogin(e.message); // may decide the human is not to be asked yet
+          holdOffLogin(e.message, e.expired); // may decide the human is not to be asked yet
           log(`refresh grant is dead (${e.message}) — starting a fresh authorization`);
           return await interactiveFlow(meta);
         }
@@ -840,13 +913,13 @@ function startTokenKeepalive() {
     const t = loadStore().tokens;
     if (!t?.refresh_token) return;
     const expiresAt = t.expires_at || 0;
-    if (!expiresAt || expiresAt - Date.now() >= REFRESH_MARGIN_MS) return;
+    if (!expiresAt || expiresAt - now() >= REFRESH_MARGIN_MS) return;
     const hours = refreshHours(t);
-    if (hours.nbf && Date.now() < hours.nbf) {
-      debug(`refresh token not in force for another ${Math.round((hours.nbf - Date.now()) / 1000)}s — waiting`);
+    if (hours.nbf && now() < hours.nbf) {
+      debug(`refresh token not in force for another ${Math.round((hours.nbf - now()) / 1000)}s — waiting`);
       return;
     }
-    if (hours.exp && Date.now() >= hours.exp) {
+    if (hours.exp && now() >= hours.exp) {
       debug("the grant is past its own expiry — only a human can mend it now");
       return; // spending refusals on a grant whose hour has passed teaches nobody anything
     }
@@ -930,6 +1003,7 @@ async function post(msg, onMessage) {
     const reason = e.name === "TimeoutError" ? `no answer within ${CFG.timeoutMs}ms` : e.message;
     throw new UpstreamError(`upstream unreachable: ${reason}`, "network");
   }
+  noteServerDate(res);
 
   if (res.status === 401) {
     res.body?.cancel?.();
@@ -1003,7 +1077,9 @@ function syntheticError(id, message) {
     id,
     error: {
       code: -32001,
-      message: `iskron-bridge: ${message}. The bridge stays up — retry the call; if this repeats, the server side needs attention.`,
+      // BUILD is here for the field report: the error is quoted verbatim, and
+      // the build string is what dates the code that produced it.
+      message: `iskron-bridge ${BUILD}: ${message}. The bridge stays up — retry the call; if this repeats, the server side needs attention.`,
     },
   };
 }
@@ -1054,7 +1130,17 @@ async function deliver(msg) {
           return;
         }
       }
-      const reason = e instanceof UpstreamError ? e.message : `bridge internal error: ${e.message}`;
+      // A SECOND 401 — after a refresh already replaced the token — is never
+      // an expiry: the server is refusing tokens as such, and retries cannot
+      // fix that. Name the one likely defect (audience/resource mismatch) and
+      // its lever, or the report that reaches us says only "unauthorized".
+      const reason = e instanceof UpstreamError
+        ? (e.kind === "auth" && authRetried
+          ? `upstream refuses even a freshly obtained access token (${e.message}) — not an expiry; `
+            + `the token's audience/resource may not match what the server validates `
+            + `(operator lever: ISKRON_BRIDGE_RESOURCE), or the server's token validation is off`
+          : e.message)
+        : `bridge internal error: ${e.message}`;
       log(`request ${hasId ? msg.id : `(notification ${msg?.method})`} failed: ${reason}`);
       if (hasId) emit(syntheticError(msg.id, reason));
       return;
@@ -1066,7 +1152,7 @@ async function deliver(msg) {
 
 function main() {
   CFG = parseArgs(process.argv.slice(2));
-  log(`v${VERSION} -> ${CFG.serverUrl} (timeout ${CFG.timeoutMs}ms, auth in ${storePath()})`);
+  log(`${BUILD} -> ${CFG.serverUrl} (timeout ${CFG.timeoutMs}ms, auth in ${storePath()})`);
   startTokenKeepalive();
 
   const rl = createInterface({ input: process.stdin, terminal: false });
