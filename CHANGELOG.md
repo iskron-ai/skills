@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.4.4](https://github.com/iskron-ai/skills/compare/v3.4.3...v3.4.4) (2026-08-27)
+
+
+### Bug Fixes
+
+* **bridge:** одна занятая дырка callback-порта не делает логин невозможным ([#43](https://github.com/iskron-ai/skills/issues/43)) ([b178e39](https://github.com/iskron-ai/skills/commit/b178e39413c56d42e17a6d011901820962755719))
+
 ## [3.4.3](https://github.com/iskron-ai/skills/compare/v3.4.2...v3.4.3) (2026-08-27)
 
 
