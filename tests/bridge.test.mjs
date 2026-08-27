@@ -649,6 +649,123 @@ test("a notification is never answered", async (t) => {
   });
 });
 
+// --- a field report must date itself ---------------------------------------
+// A customer quotes the error verbatim and nothing else. Without the build in
+// the quote, dating the code that produced it is forensics on wording.
+
+test("every surface a field report quotes names the exact build", async (t) => {
+  await withFake(t, {}, async ({ dir, spawnBridge }) => {
+    const bridge = spawnBridge();
+    const pending = await bridge.call("initialize", 1, INIT_PARAMS);
+    assert.match(pending.error.message, /iskron-bridge v\d+\.\d+\.\d+\+[0-9a-f]{8}:/,
+      "a synthetic error must carry the build that produced it");
+    const url = authorizeUrlIn(pending.error.message);
+    const res = await fetch(url, { redirect: "follow" });
+    assert.equal(res.status, 200);
+    await res.text();
+    await grantLanded(dir);
+    assert.match(readFileSync(join(dir, "grant.log"), "utf8"), /v\d+\.\d+\.\d+\+[0-9a-f]{8}/,
+      "the grant log must carry the build too");
+  });
+});
+
+// --- the clock a customer's machine keeps is allowed to lie ----------------
+// Witnessed: a clock ~28 minutes behind the server made every rotation decay
+// into a stretch where the access token looked fresh locally and was spent
+// upstream. The hours are the server's; the bridge must read them by the
+// server's clock, learned from the Date header every answer already carries.
+
+test("a machine whose clock lies is judged by the server's clock, not its own", async (t) => {
+  await withFake(t, { clockSkewMs: 600_000 }, async ({ fake, dir, spawnBridge }) => {
+    const first = spawnBridge();
+    await authorize(first, dir);
+    await first.stop();
+    const skew = readStore(dir).clock_skew_ms;
+    assert.ok(skew > 500_000, `the measured skew must be persisted for the next process, got ${skew}`);
+    assert.match(readFileSync(join(dir, "grant.log"), "utf8"), /machine clock is/,
+      "a lying clock must be named in the grant log — it is the diagnosis");
+
+    // By the server's clock this token died ten seconds ago; by the machine's
+    // it has most of ten minutes left. The keepalive must renew it without
+    // waiting for a call to buy a 401 first.
+    const s = readStore(dir);
+    s.tokens.expires_at = Date.now() + 590_000;
+    writeFileSync(storeFile(dir), JSON.stringify(s));
+    await fake.control({ revoke_access: true });
+    const refreshed = fake.state.counts.refresh;
+
+    const second = spawnBridge();
+    await waitFor(() => fake.state.counts.refresh > refreshed,
+      "the keepalive to renew a token the server already counts as spent", 5000);
+    assert.ok((await second.call("initialize", 1, INIT_PARAMS)).result, "and the renewed grant must serve");
+  });
+});
+
+// --- discovery gone stale is an outage with no end -------------------------
+// The store caches where the token endpoint lives; a server that moved it
+// leaves every refresh walking into the same 404 forever.
+
+test("a token endpoint that moved is rediscovered, not mourned forever", async (t) => {
+  await withFake(t, {}, async ({ fake, dir, spawnBridge }) => {
+    const first = spawnBridge();
+    await authorize(first, dir);
+    await first.stop();
+
+    await fake.control({ tokenPath: "/token-v2", revoke_access: true });
+    const s = readStore(dir);
+    s.tokens.expires_at = Date.now() - 1000;
+    writeFileSync(storeFile(dir), JSON.stringify(s));
+
+    // One attempt is allowed to walk into the cached 404 — dropping the stale
+    // discovery is what it buys. The call itself must still be served: by the
+    // time it needs tokens, the endpoint has been found where it lives now.
+    const second = spawnBridge();
+    const served = await second.call("initialize", 1, INIT_PARAMS)
+      .then((a) => a.result ? a : second.call("initialize", 2, INIT_PARAMS));
+    assert.ok(served.result, `the bridge must rediscover the moved endpoint and serve: ${JSON.stringify(served.error)}`);
+    assert.equal(fake.state.counts.authorize, 1, "a moved endpoint must never cost a login");
+  });
+});
+
+// --- a grant past its own hour owes the human a login NOW ------------------
+// The grace exists for refusals that might be a server mid-restart. A refresh
+// token past its own exp is not that: the keepalive never knocks on it, so the
+// grace starts cold at the human's first call and is two minutes of pure outage.
+
+test("a grant past its own expiry asks for the login at once, not after a grace", async (t) => {
+  await withFake(t, {}, async ({ fake, dir, spawnBridge }) => {
+    const first = spawnBridge();
+    await authorize(first, dir);
+    await first.stop();
+
+    const s = readStore(dir);
+    s.tokens.expires_at = Date.now() - 1000;
+    s.tokens.refresh_expires_at = Date.now() - 1000; // the grant's own hour has passed
+    writeFileSync(storeFile(dir), JSON.stringify(s));
+    await fake.control({ refreshStatus: 400, refreshError: "invalid_grant", revoke_access: true });
+
+    const second = spawnBridge();
+    const answer = await second.call("initialize", 1, INIT_PARAMS);
+    const url = authorizeUrlIn(answer.error?.message);
+    assert.ok(url, `an expired grant is proof enough — the login must be offered now: ${JSON.stringify(answer)}`);
+    assert.equal(await portListening(callbackPortOf(url)), true);
+  });
+});
+
+// --- a second 401 is a config defect, not an expiry ------------------------
+
+test("a fresh token refused twice is reported as a config defect, not an expiry", async (t) => {
+  await withFake(t, {}, async ({ fake, dir, spawnBridge }) => {
+    const bridge = spawnBridge();
+    await authorize(bridge, dir);
+    await fake.control({ mcpStatus: 401 });
+    const answer = await bridge.call("tools/list", 2);
+    assert.ok(answer.error, "nothing can serve while the server refuses every token");
+    assert.match(answer.error.message, /audience|ISKRON_BRIDGE_RESOURCE/,
+      "the second refusal must point at the audience — the one thing a retry cannot fix");
+  });
+});
+
 // --- the audience the token is issued for --------------------------------
 // The resource indicator decides the token's `aud`, and a server may validate
 // a form its own discovery does not print. So the override has to be usable at

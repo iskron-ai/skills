@@ -20,7 +20,7 @@ const secs = (ms) => Math.floor(ms / 1000); // a JWT keeps whole seconds, so the
 // carried as a JWT `nbf`, refused in the words of a dead grant if used early.
 function mintRefresh(st) {
   if (!st.refreshNotBeforeMs) { st.refreshValidFrom = 0; return token("refresh"); }
-  const nbf = secs(Date.now() + st.refreshNotBeforeMs);
+  const nbf = secs(st.snow() + st.refreshNotBeforeMs);
   st.refreshValidFrom = nbf * 1000; // the server keeps exactly the hour it stamped
   return jwt({ nbf, exp: nbf + 172_800 });
 }
@@ -28,7 +28,7 @@ function mintRefresh(st) {
 // make the claim disagree with the advertised expires_in, as a server may.
 function mintAccess(st) {
   if (!st.accessExpSkewSec) return token("access");
-  return jwt({ exp: secs(Date.now()) + st.accessTtl - st.accessExpSkewSec });
+  return jwt({ exp: secs(st.snow()) + st.accessTtl - st.accessExpSkewSec });
 }
 
 export async function startFakeNks(opts = {}) {
@@ -48,6 +48,12 @@ export async function startFakeNks(opts = {}) {
     refreshNotBeforeMs: opts.refreshNotBeforeMs ?? 0, // hold the refresh token back this long
     accessExpSkewSec: opts.accessExpSkewSec ?? 0,     // make the access token's own exp disagree with expires_in
     padBytes: opts.padBytes ?? 0,                     // make answers bigger than one pipe buffer
+    // The server's clock runs this far ahead of the machine's (a customer's
+    // clock running behind is the same fact seen from the other side). Every
+    // stamped hour and every judgement the fake makes uses this clock, and the
+    // Date header on each answer says so out loud, as a real server's does.
+    clockSkewMs: opts.clockSkewMs ?? 0,
+    tokenPath: opts.tokenPath ?? "/token",            // where the token endpoint lives today
     // The posture RFC 9700 recommends for rotating grants: a refresh token
     // presented after it was rotated away is treated as a stolen one, and the
     // whole family dies with it. Off by default — a test asks for it when the
@@ -63,8 +69,13 @@ export async function startFakeNks(opts = {}) {
   const body = (req) => new Promise((res, rej) => {
     let b = ""; req.on("data", (c) => (b += c)); req.on("end", () => res(b)); req.on("error", rej);
   });
+  st.snow = () => Date.now() + st.clockSkewMs;
   const json = (res, code, obj, headers = {}) => {
-    res.writeHead(code, { "content-type": "application/json", ...headers });
+    res.writeHead(code, {
+      "content-type": "application/json",
+      date: new Date(st.snow()).toUTCString(),
+      ...headers,
+    });
     res.end(JSON.stringify(obj));
   };
 
@@ -76,7 +87,7 @@ export async function startFakeNks(opts = {}) {
     if (p === "/control") {
       const patch = JSON.parse((await body(req)) || "{}");
       if (patch.kill_session) { for (const s of st.sessions) st.dead.add(s); st.sessions.clear(); }
-      for (const k of ["refreshStatus", "refreshError", "mcpStatus", "accessTtl", "refreshDelayMs", "reuseDetection"]) {
+      for (const k of ["refreshStatus", "refreshError", "mcpStatus", "accessTtl", "refreshDelayMs", "reuseDetection", "tokenPath"]) {
         if (k in patch) st[k] = patch[k];
       }
       if (patch.revoke_access) st.access = null;
@@ -95,7 +106,7 @@ export async function startFakeNks(opts = {}) {
       return json(res, 200, {
         issuer: base,
         authorization_endpoint: `${base}/authorize`,
-        token_endpoint: `${base}/token`,
+        token_endpoint: `${base}${st.tokenPath}`,
         registration_endpoint: `${base}/register`,
         code_challenge_methods_supported: ["S256"],
       });
@@ -128,7 +139,7 @@ export async function startFakeNks(opts = {}) {
       return res.end();
     }
 
-    if (p === "/token" && req.method === "POST") {
+    if (p === st.tokenPath && req.method === "POST") {
       const f = new URLSearchParams(await body(req));
       if (f.get("grant_type") === "authorization_code") {
         st.counts.code_exchange++;
@@ -148,7 +159,7 @@ export async function startFakeNks(opts = {}) {
       if (f.get("grant_type") === "refresh_token") {
         st.counts.refresh++;
         st.resources.refresh = f.get("resource");
-        if (st.refreshValidFrom && Date.now() < st.refreshValidFrom) {
+        if (st.refreshValidFrom && st.snow() < st.refreshValidFrom) {
           st.counts.early_refresh++;
           return json(res, 400, { error: "invalid_grant", error_description: "token not yet valid" });
         }
