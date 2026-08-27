@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 // node watchdog-exit.mjs <адрес-сокета>   — сторож выхода-на-кадре, без зависимостей, Node 22+.
+// Адрес — секрет: где командные строки читаемы (ps, история шелла), передай его
+// переменной окружения ISKRON_CHANNEL_SOCKET и запускай без аргумента.
 //
 // Для харнесов БЕЗ встроенного наблюдателя сокета. Там вывод фоновой задачи
 // читается только по запросу, и единственное, что харнес превращает в
@@ -26,9 +28,9 @@
 // быстрых обрыва спрашивают /version, прежде чем винить токен.
 import { writeSync } from "node:fs";
 
-const url = process.argv[2];
+const url = process.argv[2] || process.env.ISKRON_CHANNEL_SOCKET;
 if (!url) {
-  writeSync(2, "нужен адрес сокета: node watchdog-exit.mjs <wss://…>\n");
+  writeSync(2, "нужен адрес сокета: node watchdog-exit.mjs <wss://…> или ISKRON_CHANNEL_SOCKET\n");
   process.exit(2);
 }
 const version = new URL(url).origin.replace("wss:", "https:") + "/api/version";

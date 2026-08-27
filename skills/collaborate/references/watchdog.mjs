@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 // node watchdog.mjs <адрес-сокета>   — сторож канала, без зависимостей, Node 22+.
+// Адрес — секрет: где командные строки читаемы (ps, история шелла), передай его
+// переменной окружения ISKRON_CHANNEL_SOCKET и запускай без аргумента.
 //
 // Держит сокет канала делателя открытым и доставляет каждый кадр: печатает его
 // на stdout, переоткрывается по закрытию и отличает мёртвый токен от катящейся
@@ -11,7 +13,8 @@
 // Боевые заметки — в channel.md рядом с этим файлом: почему попытка считается
 // от конструкции (никогда от onopen), почему пауза не растёт и почему три
 // быстрых обрыва спрашивают /version, прежде чем винить токен.
-const url = process.argv[2], version = new URL(url).origin.replace('wss:', 'https:') + '/api/version';
+const url = process.argv[2] || process.env.ISKRON_CHANNEL_SOCKET,
+  version = new URL(url).origin.replace('wss:', 'https:') + '/api/version';
 let fastDrops = 0;
 const log = (s) => process.stdout.write(s + '\n');
 const serviceUp = () => fetch(version, { signal: AbortSignal.timeout(5000) })
