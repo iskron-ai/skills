@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.4.5](https://github.com/iskron-ai/skills/compare/v3.4.4...v3.4.5) (2026-08-27)
+
+
+### Bug Fixes
+
+* **skills:** пачка полевых фидбэков — адресация человека, глухота слушателя, секрет сокета, inline-стрелки, брифинг из графа ([#46](https://github.com/iskron-ai/skills/issues/46)) ([e992b2e](https://github.com/iskron-ai/skills/commit/e992b2e4737a2aefa3f324162d58d3215386d996))
+
 ## [3.4.4](https://github.com/iskron-ai/skills/compare/v3.4.3...v3.4.4) (2026-08-27)
 
 
