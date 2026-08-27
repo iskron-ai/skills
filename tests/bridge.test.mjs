@@ -7,7 +7,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { connect } from "node:net";
+import { connect, createServer } from "node:net";
+import { createHash } from "node:crypto";
 import { mkdtempSync, readFileSync, writeFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
@@ -646,6 +647,31 @@ test("a notification is never answered", async (t) => {
     bridge.send({ jsonrpc: "2.0", method: "notifications/initialized", params: {} });
     await new Promise((r) => setTimeout(r, 500));
     assert.equal(spoke, false, "a message with no id must get no answer");
+  });
+});
+
+// --- one busy port must not make login impossible --------------------------
+// The derived callback port sits in the OS's ephemeral range on Linux, so any
+// outbound socket on the machine can happen to hold it — witnessed on a shared
+// CI runner, where a squatted port turned every login into "free it, then
+// retry". The bridge climbs a short ladder of derived rungs instead.
+
+test("a foreign squatter on the callback port does not make login impossible", async (t) => {
+  await withFake(t, {}, async ({ fake, dir, spawnBridge }) => {
+    // Exactly the first rung the bridge will try, occupied by something that
+    // is not a bridge and never answers.
+    const d = createHash("sha256").update(new URL(fake.mcpUrl).origin).digest();
+    const squatted = 42000 + (d[0] * 256 + d[1]) % 2000;
+    const squatter = createServer(() => {});
+    await new Promise((r) => squatter.listen(squatted, "127.0.0.1", r));
+    try {
+      const bridge = spawnBridge();
+      const url = await authorize(bridge, dir);
+      assert.notEqual(callbackPortOf(url), squatted, "the bridge must have stepped off the held port");
+      assert.ok((await bridge.call("tools/list", 2)).result, "and the login must serve as usual");
+    } finally {
+      await new Promise((r) => squatter.close(r));
+    }
   });
 });
 

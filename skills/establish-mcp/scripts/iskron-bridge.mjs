@@ -39,7 +39,7 @@ import { fileURLToPath } from "node:url";
 // verbatim, and this string is how the report is dated. The hash makes the
 // dating exact even when a bump was forgotten or the file was patched in
 // place — it names the bytes that actually ran, not the bytes we meant to ship.
-const VERSION = "0.2.0";
+const VERSION = "0.3.0";
 const BUILD = (() => {
   try {
     const src = readFileSync(fileURLToPath(import.meta.url));
@@ -326,10 +326,17 @@ async function discover(wwwAuthenticate) {
   return meta;
 }
 
-// Stable per-origin loopback port, so the registered redirect_uri survives restarts.
-function callbackPort() {
+// Stable per-origin loopback port, so the registered redirect_uri survives
+// restarts. The port sits in the OS's ephemeral range on Linux, so any
+// outbound socket on the machine can happen to hold it (witnessed on a shared
+// CI runner) — hence a short ladder of derived rungs rather than one port:
+// one foreign occupant must not make login impossible. The first rung is the
+// historical port, so existing registrations keep working; a changed rung
+// merely re-registers the client.
+const CALLBACK_PORT_RUNGS = 3;
+function callbackPort(rung = 0) {
   const d = sha256(new URL(CFG.serverUrl).origin);
-  return 42000 + (d[0] * 256 + d[1]) % 2000;
+  return 42000 + (d[0] * 256 + d[1] + rung * 613) % 2000;
 }
 
 async function ensureClient(meta, redirectUri) {
@@ -526,28 +533,35 @@ async function tokenRequest(meta, params) {
 // instance picks them up from the store on its next call.
 let flowInBackground = null;
 async function interactiveFlow(meta) {
-  const port = callbackPort();
-
   // Join a standing flow only when its listener answers: URL plus open port,
-  // never the lock file on its own.
+  // never the lock file on its own. The port to probe is the one the OWNER
+  // bound and wrote into the lock — it may be a later rung than ours.
   const standing = readAuthLock();
-  if (standing?.authorize_url && await portListening(port)) {
+  if (standing?.authorize_url && await portListening(standing.callback_port)) {
     debug(`joining the flow held by pid ${standing.pid}`);
     throw new AuthPending(standing.authorize_url);
   }
 
-  let callback;
-  try {
-    callback = await bindCallback(port);
-  } catch (e) {
-    if (e.code !== "EADDRINUSE") throw e;
-    // Someone bound the port between our probe and our bind. With a lock we
-    // can join them; without one an unknown process camps on the redirect
-    // port, and any URL we hand out would redirect into it.
-    const l = readAuthLock();
-    if (l?.authorize_url) throw new AuthPending(l.authorize_url);
-    throw new Error(`callback port ${port} is held by another process — free it, then retry`);
+  let callback = null;
+  for (let rung = 0; rung < CALLBACK_PORT_RUNGS && !callback; rung++) {
+    try {
+      callback = await bindCallback(callbackPort(rung));
+    } catch (e) {
+      if (e.code !== "EADDRINUSE") throw e;
+      // Someone bound it between our probe and our bind. With a lock whose
+      // listener answers we can join them; without one an unknown process
+      // camps on this rung — step to the next one rather than declare the
+      // login impossible over a single busy port.
+      const l = readAuthLock();
+      if (l?.authorize_url && await portListening(l.callback_port)) throw new AuthPending(l.authorize_url);
+      debug(`callback port ${callbackPort(rung)} is held by a foreign process — trying the next rung`);
+    }
   }
+  if (!callback) {
+    const rungs = Array.from({ length: CALLBACK_PORT_RUNGS }, (_, k) => callbackPort(k)).join(", ");
+    throw new Error(`all candidate callback ports (${rungs}) are held by other processes — free one, then retry`);
+  }
+  const port = callback.port;
 
   try {
     const redirectUri = `http://127.0.0.1:${port}/callback`;
