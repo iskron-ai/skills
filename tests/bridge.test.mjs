@@ -679,6 +679,23 @@ test("a foreign squatter on the callback port does not make login impossible", a
 // A customer quotes the error verbatim and nothing else. Without the build in
 // the quote, dating the code that produced it is forensics on wording.
 
+test("the bridge names the plugin's version — one delivery, one number", async () => {
+  // The version in the build string is the PLUGIN version, stamped by
+  // release-please: quoting it dates the whole installed snapshot, skills
+  // included. This invariant is what makes that reading trustworthy.
+  const plugin = JSON.parse(readFileSync(
+    join(dirname(fileURLToPath(import.meta.url)), "..", ".claude-plugin", "plugin.json"), "utf8"));
+  const out = await new Promise((res, rej) => {
+    const p = spawn(process.execPath, [BRIDGE, "--version"]);
+    let o = "";
+    p.stdout.on("data", (c) => (o += c));
+    p.on("exit", () => res(o.trim()));
+    p.on("error", rej);
+  });
+  assert.match(out, new RegExp(`^v${plugin.version.replaceAll(".", "\\.")}\\+[0-9a-f]{8}$`),
+    `--version must name the delivery (plugin v${plugin.version}), got: ${out}`);
+});
+
 test("every surface a field report quotes names the exact build", async (t) => {
   await withFake(t, {}, async ({ dir, spawnBridge }) => {
     const bridge = spawnBridge();

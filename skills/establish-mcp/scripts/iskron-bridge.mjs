@@ -35,11 +35,13 @@ import { homedir } from "node:os";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 
-// Bump VERSION with every behavioural change: a field report quotes the error
-// verbatim, and this string is how the report is dated. The hash makes the
-// dating exact even when a bump was forgotten or the file was patched in
-// place — it names the bytes that actually ran, not the bytes we meant to ship.
-const VERSION = "0.3.0";
+// VERSION is the PLUGIN version — one delivery, one number: quoting it dates
+// the whole installed snapshot, skills included, not just this file. It is
+// stamped by release-please on every release (the x-release-please-version
+// annotation below); never edit it by hand. Between releases the hash is what
+// dates a report: it names the bytes that actually ran, patched copies and
+// forgotten rebuilds included.
+const VERSION = "3.4.4"; // x-release-please-version
 const BUILD = (() => {
   try {
     const src = readFileSync(fileURLToPath(import.meta.url));

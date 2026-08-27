@@ -15,12 +15,38 @@ jobs:
     outputs:
       release_created: ${{ steps.release.outputs.release_created }}
       tag_name: ${{ steps.release.outputs.tag_name }}
+      pr: ${{ steps.release.outputs.pr }}
     steps:
       - uses: googleapis/release-please-action@v4
         id: release
         with:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
+
+  # release-please stamps the bridge's VERSION (extra-files generic) inside the
+  # release PR, but it cannot rebuild the committed .skill bundles — and a
+  # bundle that lags its source is exactly what make check-bundles guards
+  # against. So the release branch gets its bundles rebuilt here, right after
+  # release-please (re)writes it; a later regeneration of the branch re-runs
+  # this job through the same main push that caused it.
+  bundle-sync:
+    needs: release-please
+    if: ${{ needs.release-please.outputs.pr }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ fromJSON(needs.release-please.outputs.pr).headBranchName }}
+      - name: Rebuild bundles for the stamped version
+        run: make build
+      - name: Commit them back to the release branch
+        run: |
+          if git diff --quiet; then exit 0; fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "chore: пересборка бандлов под проштампованную версию"
+          git push
 
   # The claude.ai delivery artifact: that channel has no marketplace and no
   # auto-delivery (org sync requires a private repo), so every release carries
