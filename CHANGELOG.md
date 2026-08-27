@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.4.3](https://github.com/iskron-ai/skills/compare/v3.4.2...v3.4.3) (2026-08-27)
+
+
+### Bug Fixes
+
+* **bridge:** сборка в каждой ошибке, часы сервера вместо машинных, три класса простоя закрыты ([#41](https://github.com/iskron-ai/skills/issues/41)) ([5547da8](https://github.com/iskron-ai/skills/commit/5547da8c2059ae0ea0a487a57be386f1ea2b04d0))
+
 ## [3.4.2](https://github.com/iskron-ai/skills/compare/v3.4.1...v3.4.2) (2026-08-26)
 
 
