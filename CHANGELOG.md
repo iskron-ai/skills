@@ -1,5 +1,20 @@
 # Changelog
 
+## [3.5.0](https://github.com/iskron-ai/skills/compare/v3.4.5...v3.5.0) (2026-08-28)
+
+
+### Features
+
+* **iskronify:** протокол входа в работу, крия против задачи, референсы из кода, reconcile-такт ([#49](https://github.com/iskron-ai/skills/issues/49)) ([bfba933](https://github.com/iskron-ai/skills/commit/bfba93347a26ee9ec4cfd72fb48018ce495f4ca3))
+* **reconcile:** скилл двусторонней сверки кода и графа ([#48](https://github.com/iskron-ai/skills/issues/48)) ([a747411](https://github.com/iskron-ai/skills/commit/a74741158113f2740a17a3f904c0947ebc43e367))
+* **skills:** слова сентинелов канала — steward/agent/me на posed_to, mine на standing, инвентарь в отказах ([#53](https://github.com/iskron-ai/skills/issues/53)) ([49c75aa](https://github.com/iskron-ai/skills/commit/49c75aa11679e841addd859d01aa0ab685daf214))
+
+
+### Bug Fixes
+
+* **collaborate:** авто-перепривязка сессии — обычный путь поверхности, ручной register — первая привязка и фолбэк ([#52](https://github.com/iskron-ai/skills/issues/52)) ([1e8ddba](https://github.com/iskron-ai/skills/commit/1e8ddba5ac6ea571b6d4dd293f5d80703a77abfe))
+* **writing:** противопарковочная развилка given_as — до записи, не из предупреждения после ([#50](https://github.com/iskron-ai/skills/issues/50)) ([ae56441](https://github.com/iskron-ai/skills/commit/ae56441db45ea14a700c28e0671c4a42aa80da89))
+
 ## [3.4.5](https://github.com/iskron-ai/skills/compare/v3.4.4...v3.4.5) (2026-08-27)
 
 
