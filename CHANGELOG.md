@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.6.0](https://github.com/iskron-ai/skills/compare/v3.5.0...v3.6.0) (2026-08-28)
+
+
+### Features
+
+* **skills:** четвёртое слово сентинелов — realm-owner, и слова на arrow-link ([#54](https://github.com/iskron-ai/skills/issues/54)) ([c600eec](https://github.com/iskron-ai/skills/commit/c600eec9a96a85a9346e885c1fdaa1a1c05a95aa))
+
 ## [3.5.0](https://github.com/iskron-ai/skills/compare/v3.4.5...v3.5.0) (2026-08-28)
 
 
