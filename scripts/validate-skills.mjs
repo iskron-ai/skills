@@ -347,6 +347,28 @@ try {
   fail("README.md", `could not read: ${e.message}`);
 }
 
+// 6. Контракт iskronify живёт в ДВУХ местах, и это нарочно: тело скилла читают
+//    после загрузки, а загружает скилл его описание — номер, стоящий только в
+//    теле, не может сработать триггером никогда, потому что сравнивать его не с
+//    чем, пока не позовут руками. В контексте сессии сходятся ровно описание
+//    скилла и штамп в AGENTS.md, так что несущая копия — та, что в описании.
+//    Две копии расходятся молча, поэтому их равенство держит гейт, а не память.
+try {
+  const p = join(skillsDir, "iskronify", "SKILL.md");
+  if (existsSync(p)) {
+    const t = readFileSync(p, "utf8");
+    const inDesc = /КОНТРАКТ AGENTS\.md: (\d+)/.exec(t);
+    const inBody = /\*\*Контракт: `(\d+)`\.\*\*/.exec(t);
+    if (!inDesc) fail("skills/iskronify/SKILL.md", "описание не называет контракт («КОНТРАКТ AGENTS.md: N») — без числа в описании скилл не сработает на протухший конфиг");
+    if (!inBody) fail("skills/iskronify/SKILL.md", "тело не называет контракт («**Контракт: `N`.**»)");
+    if (inDesc && inBody && inDesc[1] !== inBody[1]) {
+      fail("skills/iskronify/SKILL.md", `контракт разошёлся: описание говорит ${inDesc[1]}, тело — ${inBody[1]}; штампуется тело, а срабатывает описание`);
+    }
+  }
+} catch (e) {
+  fail("skills/iskronify/SKILL.md", `не удалось проверить контракт: ${e.message}`);
+}
+
 // Report.
 if (warnings.length > 0) {
   console.warn(`⚠ ${warnings.length} warning${warnings.length === 1 ? "" : "s"} (non-fatal):`);
