@@ -809,8 +809,13 @@ test("a refusal that only time repairs says so, instead of inviting a retry now"
     assert.ok(second.error, "there is still nothing to serve with");
     assert.match(second.error.message, /clears itself by waiting/,
       "a hold-off must be named as temporary, not reported as a plain failure");
-    assert.match(second.error.message, /retry after ~\d+s/,
-      "and it must say how long, or the caller cannot act on it");
+    assert.match(second.error.message, /wait out the interval named above/,
+      "the verdict names the kind and points at the interval, it does not restate it");
+    // One refusal, one number. The reason measures the wait on the server's
+    // clock; a verdict that computed its own would put a second, smaller figure
+    // beside it — and a caller believes the smaller one.
+    assert.equal((second.error.message.match(/\b\d+s\b/g) ?? []).length, 1,
+      `exactly one interval must appear in a hold-off refusal: ${second.error.message}`);
     assert.ok(!/retry freely/.test(second.error.message),
       "\"retry freely\" inside a hold-off invites the retry that cannot work");
   });
