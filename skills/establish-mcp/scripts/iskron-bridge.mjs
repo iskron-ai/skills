@@ -435,6 +435,11 @@ function bindCallback(port) {
       const u = new URL(req.url, `http://127.0.0.1:${port}`);
       if (u.pathname !== "/callback") { res.writeHead(404); res.end(); return; }
       const err = u.searchParams.get("error");
+      // A human who is not sure the first click landed clicks again — and the
+      // held response is exactly what makes them unsure. Hand the older tab a
+      // line of its own rather than silently dropping its response: an
+      // abandoned one spins until the browser gives up on it.
+      if (browser) tellBrowser("iskron-bridge: another tab is finishing this login — you can close this one.");
       browser = res;
       if (err) tellBrowser(`iskron-bridge: authorization failed (${esc(err)})`);
       else setTimeout(() => tellBrowser("iskron-bridge: the code arrived and the exchange is still running — watch the agent."), PAGE_HOLD_MS).unref();
