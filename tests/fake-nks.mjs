@@ -45,6 +45,7 @@ export async function startFakeNks(opts = {}) {
     refreshError: null,
     mcpStatus: null,       // force an HTTP status on /mcp
     refreshDelayMs: opts.refreshDelayMs ?? 0, // widen the window several bridges race in
+    codeDelayMs: opts.codeDelayMs ?? 0,       // hold the code exchange open, as a slow server does
     refreshNotBeforeMs: opts.refreshNotBeforeMs ?? 0, // hold the refresh token back this long
     accessExpSkewSec: opts.accessExpSkewSec ?? 0,     // make the access token's own exp disagree with expires_in
     padBytes: opts.padBytes ?? 0,                     // make answers bigger than one pipe buffer
@@ -145,6 +146,7 @@ export async function startFakeNks(opts = {}) {
       const f = new URLSearchParams(await body(req));
       if (f.get("grant_type") === "authorization_code") {
         st.counts.code_exchange++;
+        if (st.codeDelayMs) await new Promise((r) => setTimeout(r, st.codeDelayMs));
         st.resources.code_exchange = f.get("resource");
         const c = st.codes.get(f.get("code"));
         if (!c) return json(res, 400, { error: "invalid_grant", error_description: "unknown code" });
