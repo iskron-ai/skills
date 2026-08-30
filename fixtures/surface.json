@@ -4,6 +4,7 @@
     "version": "0.31.0"
   },
   "protocolVersion": "2025-06-18",
+  "resource": "https://mcp.iskron.ru",
   "tools": [
     "iskron_add_bianhua",
     "iskron_add_holon",

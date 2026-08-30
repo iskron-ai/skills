@@ -369,6 +369,32 @@ try {
   fail("skills/iskronify/SKILL.md", `не удалось проверить контракт: ${e.message}`);
 }
 
+// 7. Отгружаемая MCP-запись обязана целить в КАНОНИЧЕСКИЙ идентификатор
+//    ресурса — ту самую строку, что сервер печатает в своём protected-resource
+//    (снимок несёт её наблюдением, `make surface`). Совпадение здесь побайтовое
+//    не из педантизма: наивный клиент сравнивает строки, и хвостовая косая, —
+//    которую пишут по привычке, — разводит идентификаторы. Отказ приходит
+//    немым: «сервер недоступен» вместо «идентификаторы разошлись», и цену
+//    платит каждый, кто поставил отгружаемую запись. Правило принято по слову
+//    держателя поверхности; форму его сервера здесь не нормализуем.
+try {
+  const snapPath = join(root, "fixtures/surface.json");
+  const recPath = join(root, ".mcp.json");
+  if (existsSync(snapPath) && existsSync(recPath)) {
+    const canonical = JSON.parse(readFileSync(snapPath, "utf8")).resource;
+    const servers = JSON.parse(readFileSync(recPath, "utf8")).mcpServers ?? {};
+    if (canonical) {
+      for (const [name, rec] of Object.entries(servers)) {
+        if (rec?.url && rec.url !== canonical) {
+          fail(".mcp.json", `запись \`${name}\` целит в ${JSON.stringify(rec.url)}, а канонический идентификатор ресурса — ${JSON.stringify(canonical)}: наивный клиент сравнит строки и откатится на «сервер авторизации = сам ресурс», сказав «сервер недоступен»`);
+        }
+      }
+    }
+  }
+} catch (e) {
+  fail(".mcp.json", `не удалось сверить с каноническим идентификатором: ${e.message}`);
+}
+
 // Report.
 if (warnings.length > 0) {
   console.warn(`⚠ ${warnings.length} warning${warnings.length === 1 ? "" : "s"} (non-fatal):`);
