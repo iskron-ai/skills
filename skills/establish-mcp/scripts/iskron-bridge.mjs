@@ -954,7 +954,19 @@ const state = {
   protocolVersion: null,
   initParams: null, // params of the harness's initialize, for transparent replay
   reinitCounter: 0,
+  // The standing this session registered, and the session it was confirmed in.
+  // The server correlates a writer BY THE MCP SESSION ID (its holder's word):
+  // a new session is a different writer, and the surface's own self-repair has
+  // nothing to repeat there, because its memory is keyed by that same id and is
+  // collected with it. Sessions die silently in three ways — idle past the
+  // threshold, eviction by the session ceiling, transport close — and the
+  // bridge is the ONLY party that sees the change and still remembers the name
+  // the agent derived for itself. So re-registering is the bridge's duty, and
+  // it hangs on the change of id, never on a timer.
+  standing: null,        // {realm, karta, name} of the last register that succeeded
+  standingSession: null, // the session id that registration is known to hold in
 };
+let replayingStanding = false;
 
 function emit(msg) {
   process.stdout.write(JSON.stringify(msg) + "\n");
@@ -1102,6 +1114,48 @@ function syntheticError(id, message) {
 
 // Deliver one harness message upstream, with one auth retry and one session
 // retry. On final failure a request id is ALWAYS answered with an error.
+// Remember a registration the harness made, so it can be replayed into the next
+// session. Only a call the server ACCEPTED is remembered: a refused one names no
+// seat we may take.
+function noteStanding(msg, reply) {
+  const a = msg?.params?.arguments;
+  if (msg?.params?.name !== "iskron_channel" || a?.action !== "register") return;
+  if (reply?.error || reply?.result?.isError) return;
+  state.standing = { realm: a.realm, karta: a.karta, name: a.name };
+  state.standingSession = state.sessionId;
+  debug(`standing remembered: ${a.name ?? "(unnamed)"} at karta ${a.karta} in ${a.realm}`);
+}
+
+// Put the remembered standing back on the current session — before the call
+// that would otherwise land unattributed. Silent by contract: register releases
+// nothing and evicts nobody, so replaying it costs one call and no state.
+async function ensureStanding() {
+  if (replayingStanding || !state.standing || !state.sessionId) return;
+  if (state.standingSession === state.sessionId) return;
+  replayingStanding = true;
+  try {
+    const id = `iskron-bridge-restanding-${++state.reinitCounter}`;
+    let reply = null;
+    await post({ jsonrpc: "2.0", id, method: "tools/call", params: {
+      name: "iskron_channel",
+      arguments: { ...state.standing, action: "register" },
+    } }, (m) => { if (m.id === id) reply = m; });
+    if (reply && !reply.error && !reply.result?.isError) {
+      state.standingSession = state.sessionId;
+      log(`standing re-registered on the new session (${state.standing.name ?? "unnamed"})`);
+    } else {
+      // The seat may be gone (expired while we were away) — say so and let the
+      // agent take it back with connect; never guess a different name.
+      log(`could not re-register the standing on the new session: ${JSON.stringify(reply?.error ?? reply?.result ?? null).slice(0, 200)}`);
+      state.standing = null;
+    }
+  } catch (e) {
+    log(`re-registering the standing failed: ${e.message}`);
+  } finally {
+    replayingStanding = false;
+  }
+}
+
 async function deliver(msg) {
   const isInit = msg?.method === "initialize";
   if (isInit) state.initParams = msg.params;
@@ -1113,11 +1167,13 @@ async function deliver(msg) {
     if (isInit && m.id === msg.id && m.result?.protocolVersion) {
       state.protocolVersion = m.result.protocolVersion;
     }
+    if (m.id === msg.id) noteStanding(msg, m);
     emit(m);
   };
 
   for (;;) {
     try {
+      if (!isInit) await ensureStanding(); // the session may have turned over under us
       await post(msg, forward);
       return;
     } catch (e) {

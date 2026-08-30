@@ -610,6 +610,39 @@ test("an answer bigger than a pipe buffer survives the harness going away", asyn
   });
 });
 
+// --- стояние переживает смену сессии -----------------------------------
+// Слово держателя поверхности: писателя платформа узнаёт ПО ИДЕНТИФИКАТОРУ
+// СЕССИИ MCP. Новая сессия — другой писатель, и собственная само-починка
+// поверхности там бессильна: её память ключуется тем же id и собирается вместе
+// с ним. Сессии умирают молча (простой, вытеснение по потолку, закрытие
+// транспорта), и мост — единственный, кто видит смену и помнит выведенное имя.
+
+test("стояние перерегистрируется само, когда сессия сменилась под делателем", async (t) => {
+  await withFake(t, {}, async ({ fake, dir, spawnBridge }) => {
+    const bridge = spawnBridge();
+    await authorize(bridge, dir);
+    assert.ok((await bridge.call("initialize", 2, INIT_PARAMS)).result, "сессия должна существовать");
+
+    const reg = await bridge.call("tools/call", 5, {
+      name: "iskron_channel",
+      arguments: { realm: "nks-dev", action: "register", karta: 931, name: "проба" },
+    });
+    assert.match(reg.result.content[0].text, /зарегистрировано/);
+
+    await fake.control({ kill_session: true }); // простой, вытеснение, закрытие — снаружи не различить
+
+    const send = await bridge.call("tools/call", 6, {
+      name: "iskron_channel",
+      arguments: { realm: "nks-dev", action: "send", karta: 931, standing: "проба", text: "слово" },
+    });
+    assert.equal(send.result.isError, undefined,
+      `запись после смены сессии легла безавторной: ${JSON.stringify(send.result)}`);
+    assert.match(send.result.content[0].text, /принято стоянием проба/);
+    assert.equal(fake.state.counts.unattributed, 0, "ни одна запись не должна лечь безавторной");
+    assert.equal(fake.state.counts.register_standing, 2, "мост обязан перерегистрировать стояние ровно один раз");
+  });
+});
+
 test("a lost upstream session is re-established transparently", async (t) => {
   await withFake(t, {}, async ({ fake, dir, spawnBridge }) => {
     const bridge = spawnBridge();
