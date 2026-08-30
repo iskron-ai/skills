@@ -1,6 +1,6 @@
 # Поверхности харнессов — куда реально ложатся ритуалы
 
-iskronify доставляет **ритуалы** (ориентация на старте сессии, push → обновление NKS, память вне локальных хранилищ). Каждый харнесс запускает их по-своему, и пути файлов не взаимозаменяемы. Прошивай поверхности используемого харнесса; никогда не пиши конфиг формата, о котором гадаешь.
+iskronify доставляет **ритуалы** (ориентация на старте сессии, push → обновление графа, память вне локальных хранилищ). Каждый харнесс запускает их по-своему, и пути файлов не взаимозаменяемы. Прошивай поверхности используемого харнесса; никогда не пиши конфиг формата, о котором гадаешь.
 
 | Харнесс | Читает | Нужен файл-указатель | Поверхность автоматизации |
 |---|---|---|---|
@@ -36,7 +36,7 @@ statusMessage = "checking"
 
 `SessionStart` несёт ещё и **source** — `startup`, `resume`, `clear`, `compact` — и именно против source матчится `matcher`. Ориентации-на-старте обычно нужны только `startup` и `resume`; матч всех четырёх пере-запускает ритуал после каждой компакции.
 
-Маппинг ритуалов: ориентация → `SessionStart`; memory-guard → `PreToolUse` по пишущему тулу; push → NKS → `PostToolUse` по shell-тулу.
+Маппинг ритуалов: ориентация → `SessionStart`; memory-guard → `PreToolUse` по пишущему тулу; push → граф → `PostToolUse` по shell-тулу.
 
 ## OpenCode
 
@@ -61,7 +61,7 @@ export const MemoryGuard = async ({ project, client, $, directory, worktree }) =
 
 `tool.execute.before` / `tool.execute.after` оборачивают вызовы тулов — **throw из `before` и есть блокировка**: memory-guard здесь — throw, не код выхода. Остальное приходит через `event`, включая `session.created`, `session.idle`, `session.compacted`, `file.edited`, `permission.asked`.
 
-Маппинг ритуалов: ориентация → `event` на `session.created`; memory-guard → `tool.execute.before` с throw; push → NKS → `tool.execute.after` по shell-тулу. Ролевые файлы суб-агентов: `.opencode/agents/` (см. `delegation.md`).
+Маппинг ритуалов: ориентация → `event` на `session.created`; memory-guard → `tool.execute.before` с throw; push → граф → `tool.execute.after` по shell-тулу. Ролевые файлы суб-агентов: `.opencode/agents/` (см. `delegation.md`).
 
 ## Чек-лист перепроверки (мейнтейнерам)
 
