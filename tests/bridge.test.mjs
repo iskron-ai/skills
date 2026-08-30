@@ -211,6 +211,49 @@ test("a bridge told to stop mid-flow outlives it, so the human's click still lan
   });
 });
 
+test("a harness whose pipes die mid-flow still lets the human's click land", async (t) => {
+  // The SIGTERM above is the polite death. The common one is not polite: the
+  // harness process goes and the bridge's stdout and stderr become broken pipes
+  // under it while a human is mid-login. Every write fails from then on, and a
+  // bridge that answers a failed write with another write starves the exchange
+  // it stayed alive for — the click lands, the browser is told "authenticated",
+  // and no token is ever written. Witnessed in the field: two clicks, two
+  // success pages, an empty store, and a core at 100%.
+  await withFake(t, {}, async ({ dir, spawnBridge }) => {
+    const bridge = spawnBridge();
+    const url = authorizeUrlIn((await bridge.call("initialize", 1, INIT_PARAMS)).error.message);
+
+    bridge.proc.stdout.destroy(); // nothing reads these any more
+    bridge.proc.stderr.destroy();
+
+    const res = await fetch(url, { redirect: "follow" });
+    assert.equal(res.status, 200, "the redirect had nowhere to land");
+    await res.text();
+    await grantLanded(dir);
+  });
+});
+
+test("a wind-down through a pipe nobody will ever read still ends", async (t) => {
+  // Winding down flushes stdout first, so an answer half-written is not an
+  // answer lost. But a pipe whose reader is gone never drains: the drain
+  // callback never fires, and a bridge that waits on it never exits — it stays
+  // on the machine for as long as the machine is up.
+  await withFake(t, { padBytes: 200_000 }, async ({ dir, spawnBridge }) => {
+    const bridge = spawnBridge();
+    await authorize(bridge, dir);
+
+    bridge.proc.stdout.pause(); // the answer fills the pipe and stays there
+    bridge.send({ jsonrpc: "2.0", id: 7, method: "tools/call", params: { name: "big" } });
+    await new Promise((r) => setTimeout(r, 400));
+    bridge.proc.stdout.destroy(); // ...and now nobody will ever read it
+    bridge.proc.stderr.destroy();
+    bridge.proc.stdin.end();      // the harness is gone
+
+    await waitFor(() => bridge.proc.exitCode !== null || bridge.proc.signalCode !== null,
+      "the bridge to finish winding down", 12_000);
+  });
+});
+
 test("a finished flow leaves no pending lock behind", async (t) => {
   await withFake(t, {}, async ({ dir, spawnBridge }) => {
     const bridge = spawnBridge();

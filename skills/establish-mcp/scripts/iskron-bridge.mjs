@@ -49,6 +49,10 @@ const BUILD = (() => {
   } catch { return `v${VERSION}`; }
 })();
 const DEFAULT_SERVER_URL = "https://mcp.iskron.ru/";
+// The stop of last resort under a wind-down flush: long enough that a busy but
+// living harness still gets its whole answer, short enough that no wedged pipe
+// keeps a process alive on the machine.
+const FLUSH_STOP_MS = 5_000;
 
 // ---------------------------------------------------------------- arguments
 
@@ -86,8 +90,24 @@ function parseArgs(argv) {
 
 // ------------------------------------------------------------------ logging
 
+// A harness that goes away leaves BOTH our pipes broken, and a write to a
+// broken pipe fails asynchronously, as an error event on the stream. Unhandled,
+// that event reaches the uncaughtException handler below — which logs, writing
+// to the same broken pipe, which fails again. The loop that follows burns a
+// core and starves whatever else the process was doing; witnessed in the field
+// as a pending login whose click landed on a bridge too busy to exchange it,
+// twice, while the human was shown "authenticated" both times. So: note a
+// stream's death once, and never answer a failed write with another write.
+const deadStreams = new WeakSet();
+function canWrite(s) { return !!s && !deadStreams.has(s) && !s.destroyed && s.writable !== false; }
+function guardStream(s) { if (s) s.on("error", () => deadStreams.add(s)); }
+function writeTo(s, text) {
+  if (!canWrite(s)) return false;
+  try { s.write(text); return true; } catch { deadStreams.add(s); return false; }
+}
+
 function log(msg) {
-  process.stderr.write(`[iskron-bridge ${new Date().toISOString()}] ${msg}\n`);
+  writeTo(process.stderr, `[iskron-bridge ${new Date().toISOString()}] ${msg}\n`);
 }
 let CFG = null;
 function debug(msg) {
@@ -957,7 +977,7 @@ const state = {
 };
 
 function emit(msg) {
-  process.stdout.write(JSON.stringify(msg) + "\n");
+  writeTo(process.stdout, JSON.stringify(msg) + "\n");
 }
 
 // Writing to a pipe is asynchronous, and process.exit does not wait: an answer
@@ -968,8 +988,25 @@ function emit(msg) {
 // spot arrives as 65536 bytes; drained first, it arrives whole.
 function flushStdout() {
   return new Promise((resolve) => {
-    if (process.stdout.writableLength === 0) return resolve();
-    process.stdout.write("", resolve); // queued behind everything already written
+    const out = process.stdout;
+    if (!canWrite(out) || out.writableLength === 0) return resolve();
+    // A pipe whose reader is gone never drains, so the drain callback never
+    // fires — and an exit path that waits on it does not exit at all. The
+    // reader's death has its own signal: the queued bytes fail, and the stream
+    // errors. Wait for whichever comes first, and keep a long stop of last
+    // resort under both, so no harness can wedge the wind-down.
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      out.off("error", finish);
+      out.off("close", finish);
+      resolve();
+    };
+    out.once("error", finish);
+    out.once("close", finish);
+    out.write("", finish); // queued behind everything already written
+    setTimeout(finish, FLUSH_STOP_MS).unref();
   });
 }
 
@@ -1167,6 +1204,8 @@ async function deliver(msg) {
 // ---------------------------------------------------------------- main loop
 
 function main() {
+  guardStream(process.stdout); // before the first write: a broken pipe is news, not a crash
+  guardStream(process.stderr);
   CFG = parseArgs(process.argv.slice(2));
   log(`${BUILD} -> ${CFG.serverUrl} (timeout ${CFG.timeoutMs}ms, auth in ${storePath()})`);
   startTokenKeepalive();
