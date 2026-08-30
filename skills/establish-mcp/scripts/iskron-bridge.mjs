@@ -932,7 +932,7 @@ function holdOffLogin(reason, expired = false) {
   const since = st.refused_since || local;
   if (local - since < LOGIN_GRACE_MS) {
     throw new LoginHeld(`grant refused (${reason}) — holding off the login for `
-      + `${Math.round((LOGIN_GRACE_MS - (local - since)) / 1000)}s in case it heals; the call can be retried`);
+      + `${Math.round((LOGIN_GRACE_MS - (local - since)) / 1000)}s in case it heals`);
   }
 }
 
@@ -1318,7 +1318,10 @@ async function deliver(msg) {
           continue;
         } catch (authErr) {
           if (authErr instanceof AuthPending || authErr instanceof LoginHeld) {
-            if (hasId) emit(syntheticError(msg.id, authErr.message, outcome));
+            // A held login names its own wait; AuthPending names a URL. The first
+            // is repaired by time and must not be sold as "retry freely"; the
+            // second is repaired by a human's click, and no waiting shortens it.
+            if (hasId) emit(syntheticError(msg.id, authErr.message, outcome, authErr instanceof LoginHeld));
             return;
           }
           log(`authorization failed: ${authErr.message}`);

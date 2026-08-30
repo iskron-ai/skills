@@ -1,7 +1,7 @@
 ---
 name: entry
 slash: true
-description: "Используй ПЕРЕД ответом на всё, что касается методологии, Искрона или графа пользователя: вимарша, крия, контур, роль, феномен, бяньхуа, эстафета; «в графе», «по моим заметкам», «мы обсуждали», «что говорит граф», незнакомый термин из словаря пользователя. Use BEFORE answering anything touching the user's Iskron graph or methodology: vimarsha, kriya, holon, karta, phenomenon, bianhua, \"the graph\", \"my notes\", \"we discussed\", \"what does the realm say\". Сомневаешься — входи: ориентация дешева, ответ из training data по теме, которую граф проработал, дорог и часто неверен."
+description: "Используй ПЕРЕД ответом на всё, что касается методологии, Искрона или графа пользователя: вимарша, крия, контур, роль, феномен, бяньхуа, эстафета; «в графе», «по моим заметкам», «мы обсуждали», «что говорит граф», NKS, незнакомый термин из словаря пользователя. Use BEFORE answering anything touching the user's Iskron graph or methodology: vimarsha, kriya, holon, karta, phenomenon, bianhua, \"the graph\", \"my notes\", \"we discussed\", \"what does the realm say\". Сомневаешься — входи: ориентация дешева, ответ из training data по теме, которую граф проработал, дорог и часто неверен."
 ---
 
 # Вход в методологию

@@ -414,6 +414,55 @@ test("a refused grant costs a login only once the refusal has stood", async (t) 
   });
 });
 
+test("a request that left and never came back is reported as an unknown outcome", async (t) => {
+  // The two halves of the network axis mean opposite things to a caller. A call
+  // that never went out applied nothing; a call that went out and lost its answer
+  // may have applied everything. A timeout is the second, and calling it "safe"
+  // is how a write gets applied twice.
+  await withFake(t, {}, async ({ fake, dir, spawnBridge }) => {
+    const bridge = spawnBridge({ ISKRON_BRIDGE_TIMEOUT: "1200" });
+    await authorize(bridge, dir);
+    await fake.control({ mcpHangMs: 6000 });
+
+    const answer = await bridge.call("tools/list", 2);
+    assert.ok(answer.error, "a deadline that passes must still answer the harness");
+    assert.match(answer.error.message, /OUTCOME IS UNKNOWN/,
+      `a lost answer is not a call that never went out: ${answer.error.message}`);
+    assert.ok(!/retry freely/.test(answer.error.message),
+      "a blind retry after a lost answer can apply the write a second time");
+  });
+});
+
+test("a login held back for its grace period is not sold as \"retry freely\"", async (t) => {
+  // The first refusal of a grant costs no browser trip — it may be a server
+  // mid-restart. But the call still fails, and that refusal names its own wait
+  // in its own words, so the verdict beside it must read "not yet", never "now".
+  // Same axis as the nbf hold-off, a different door into it: this one is paced
+  // by the human's grace clock rather than by the token's hour.
+  await withFake(t, {}, async ({ fake, dir, spawnBridge }) => {
+    const first = spawnBridge();
+    await authorize(first, dir);
+    await first.stop();
+
+    const s = readStore(dir);
+    s.tokens.expires_at = Date.now() - 1000;
+    writeFileSync(storeFile(dir), JSON.stringify(s));
+    await fake.control({ refreshStatus: 400, refreshError: "invalid_grant", revoke_access: true });
+
+    const held = spawnBridge();
+    const answer = await held.call("initialize", 1, INIT_PARAMS);
+    assert.ok(answer.error, "a refused grant cannot serve the call");
+    assert.match(answer.error.message, /holding off the login/,
+      "the test must stand on the grace path, not on some other refusal");
+    assert.ok(!/retry freely/.test(answer.error.message),
+      `a refusal that names its own wait must not invite a retry now: ${answer.error.message}`);
+    assert.match(answer.error.message, /clears itself by waiting/,
+      "a held login is the verdict's third form: safe, and not yet");
+    assert.equal((answer.error.message.match(/\b\d+s\b/g) ?? []).length, 1,
+      `exactly one interval must appear in a hold-off refusal: ${answer.error.message}`);
+  });
+});
+
 // The hour a server puts on a refresh token paces the refresh nobody needs yet.
 // It must never pace the one a caller is waiting on: a guess that turns into a
 // wall costs half an hour of blindness, and the guess can simply be stale.
