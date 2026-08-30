@@ -1,5 +1,20 @@
 # Changelog
 
+## [3.7.0](https://github.com/iskron-ai/skills/compare/v3.6.0...v3.7.0) (2026-08-30)
+
+
+### Features
+
+* **iskronify:** внешние поверхности (пратьякша прежде шабды), контракт в описание (2→5), поверхности из графа, холодное ревью PR ([#56](https://github.com/iskron-ai/skills/issues/56)) ([a331d4a](https://github.com/iskron-ai/skills/commit/a331d4a467a55e636a1a145276063029787626f8))
+* **skills:** ликбез, карта положений, эскалация iskronify и вердикт исхода у моста ([#61](https://github.com/iskron-ai/skills/issues/61)) ([6b313f3](https://github.com/iskron-ai/skills/commit/6b313f3b5c0859a4737991998b252136f394e81d))
+* **skills:** холодный старт в collaborate и починка осиротевшего моста ([#58](https://github.com/iskron-ai/skills/issues/58)) ([48a11ac](https://github.com/iskron-ai/skills/commit/48a11ac2e370f9aa59fed1633184844ec54eb659))
+
+
+### Bug Fixes
+
+* **bridge:** второй клик человека не оставляет первую вкладку висеть ([#59](https://github.com/iskron-ai/skills/issues/59)) ([c70810e](https://github.com/iskron-ai/skills/commit/c70810e0e42d9dd4b17217c2d31a72a9fc0d146d))
+* канонический идентификатор ресурса (гейт) + мост перерегистрирует стояние на смену сессии ([#60](https://github.com/iskron-ai/skills/issues/60)) ([2f8f9bf](https://github.com/iskron-ai/skills/commit/2f8f9bf70a6553e58e9b644787a4783901e2b9ed))
+
 ## [3.6.0](https://github.com/iskron-ai/skills/compare/v3.5.0...v3.6.0) (2026-08-28)
 
 
