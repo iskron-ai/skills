@@ -347,6 +347,36 @@ try {
   fail("README.md", `could not read: ${e.message}`);
 }
 
+// 5b. The shipped map of situations. AGENTS.md and README.md are inventories
+//     for the human maintaining this repo; neither ships inside the plugin, so
+//     an agent that installed the bundle has never read either. What it does
+//     read is entry — the one skill every session passes through — and the map
+//     there is the only place a skill announces WHEN to reach for it. A skill
+//     absent from that map is, for the agent, a skill that does not exist: the
+//     harness lists its description, and a description is a routing surface,
+//     not a map. So the map is linted like the other inventories, not trusted
+//     to memory — a new skill lands in it or CI goes red.
+try {
+  const entry = readFileSync(join(skillsDir, "entry", "SKILL.md"), "utf8");
+  const section = /## Карта положений[\s\S]*?(?=\n## )/.exec(entry);
+  if (!section) {
+    fail("skills/entry/SKILL.md", "секция «## Карта положений» не найдена — карта скиллов по симптому живёт там");
+  } else {
+    const mapped = new Set([...section[0].matchAll(/→ \*\*([a-z-]+)\*\*/g)].map((x) => x[1]));
+    for (const name of skillNames) {
+      if (name === "entry") continue; // the map's own host
+      if (!mapped.has(name)) {
+        fail("skills/entry/SKILL.md", `skill \`${name}\` has no row in the map of situations — an agent will never learn when to reach for it`);
+      }
+    }
+    for (const name of mapped) if (!skillNames.includes(name)) {
+      fail("skills/entry/SKILL.md", `map row \`${name}\` matches no directory in skills/`);
+    }
+  }
+} catch (e) {
+  fail("skills/entry/SKILL.md", `could not read: ${e.message}`);
+}
+
 // 6. Контракт iskronify живёт в ДВУХ местах, и это нарочно: тело скилла читают
 //    после загрузки, а загружает скилл его описание — номер, стоящий только в
 //    теле, не может сработать триггером никогда, потому что сравнивать его не с

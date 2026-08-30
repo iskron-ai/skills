@@ -44,6 +44,7 @@ export async function startFakeNks(opts = {}) {
     refreshStatus: null,   // e.g. 503 (transient) or 400 (definitive)
     refreshError: null,
     mcpStatus: null,       // force an HTTP status on /mcp
+    mcpHangMs: 0,          // hold /mcp open past the caller's deadline: the request left, the answer never came
     refreshDelayMs: opts.refreshDelayMs ?? 0, // widen the window several bridges race in
     codeDelayMs: opts.codeDelayMs ?? 0,       // hold the code exchange open, as a slow server does
     refreshNotBeforeMs: opts.refreshNotBeforeMs ?? 0, // hold the refresh token back this long
@@ -90,7 +91,7 @@ export async function startFakeNks(opts = {}) {
     if (p === "/control") {
       const patch = JSON.parse((await body(req)) || "{}");
       if (patch.kill_session) { for (const s of st.sessions) st.dead.add(s); st.sessions.clear(); }
-      for (const k of ["refreshStatus", "refreshError", "mcpStatus", "accessTtl", "refreshDelayMs", "reuseDetection", "tokenPath"]) {
+      for (const k of ["refreshStatus", "refreshError", "mcpStatus", "mcpHangMs", "accessTtl", "refreshDelayMs", "reuseDetection", "tokenPath"]) {
         if (k in patch) st[k] = patch[k];
       }
       if (patch.revoke_access) st.access = null;
@@ -189,6 +190,7 @@ export async function startFakeNks(opts = {}) {
 
     if (p === "/mcp" && req.method === "POST") {
       st.counts.mcp++;
+      if (st.mcpHangMs) await new Promise((r) => setTimeout(r, st.mcpHangMs));
       if (st.mcpStatus) { res.writeHead(st.mcpStatus); return res.end("forced fault"); }
       const bearer = (req.headers.authorization || "").replace(/^Bearer /, "");
       if (!st.access || bearer !== st.access) {

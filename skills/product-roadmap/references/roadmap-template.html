@@ -236,7 +236,7 @@ footer .mono{ color:var(--ink-2); }
 </style>
 </head>
 <body>
-<h1 class="sr-only">Maintainer roadmap, rendered from an NKS reasoning graph.</h1>
+<h1 class="sr-only">Maintainer roadmap, rendered from an Iskron reasoning graph.</h1>
 
 <header class="bar">
   <div class="bar-in">
@@ -253,7 +253,7 @@ footer .mono{ color:var(--ink-2); }
 <main id="app"><!-- rendered from ROADMAP --></main>
 
 <footer>
-  Generated <span id="ft-date" class="mono"></span> from an NKS reasoning graph ·
+  Generated <span id="ft-date" class="mono"></span> from an Iskron reasoning graph ·
   product ground verified, backlog held as hypotheses. Live state re-verified at render time.
 </footer>
 
@@ -267,7 +267,7 @@ footer .mono{ color:var(--ink-2); }
      a product spanning several repos. Set repos to the per-repo URL map, put repo:'<key>'
      on every driver/signal ref, and write free-text refs as '<key>#45' (e.g. 'backend#45').
      repoUrl then = the org/product URL (the bar link). Single-repo runs omit repos and use repoUrl.
-     Internal graph/NKS refs must use a non-repo prefix (e.g. 'NKS#1120') so they render as
+     Internal graph refs must use a non-repo prefix (e.g. 'ISKRON#1120') so they render as
      plain text, never as a GitHub link.
    nextMoves: [string]
    product: { summary, subsystems:[{name, repo, primitive, capabilities:[{name, primitive}]}],
@@ -693,7 +693,7 @@ function dispBadge(d){
 }
 /* turn "#123" inside free text into working links (after escaping) */
 /* free-text refs: qualified 'backend#45' links if 'backend' is a known R.repos key;
-   an unknown prefix (e.g. internal 'NKS#1120') is left as plain text — it is NOT a GitHub ref;
+   an unknown prefix (e.g. internal 'ISKRON#1120') is left as plain text — it is NOT a GitHub ref;
    a bare '#45' links via R.repoUrl in single-repo mode, but is left plain in multi-repo mode (ambiguous). */
 function linkRefs(s){
   return esc(s).replace(/([A-Za-z][\w.-]*)#(\d+)|#(\d+)/g, (m, repo, qn, bare) => {

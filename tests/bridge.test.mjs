@@ -414,6 +414,55 @@ test("a refused grant costs a login only once the refusal has stood", async (t) 
   });
 });
 
+test("a request that left and never came back is reported as an unknown outcome", async (t) => {
+  // The two halves of the network axis mean opposite things to a caller. A call
+  // that never went out applied nothing; a call that went out and lost its answer
+  // may have applied everything. A timeout is the second, and calling it "safe"
+  // is how a write gets applied twice.
+  await withFake(t, {}, async ({ fake, dir, spawnBridge }) => {
+    const bridge = spawnBridge({ ISKRON_BRIDGE_TIMEOUT: "1200" });
+    await authorize(bridge, dir);
+    await fake.control({ mcpHangMs: 6000 });
+
+    const answer = await bridge.call("tools/list", 2);
+    assert.ok(answer.error, "a deadline that passes must still answer the harness");
+    assert.match(answer.error.message, /OUTCOME IS UNKNOWN/,
+      `a lost answer is not a call that never went out: ${answer.error.message}`);
+    assert.ok(!/retry freely/.test(answer.error.message),
+      "a blind retry after a lost answer can apply the write a second time");
+  });
+});
+
+test("a login held back for its grace period is not sold as \"retry freely\"", async (t) => {
+  // The first refusal of a grant costs no browser trip — it may be a server
+  // mid-restart. But the call still fails, and that refusal names its own wait
+  // in its own words, so the verdict beside it must read "not yet", never "now".
+  // Same axis as the nbf hold-off, a different door into it: this one is paced
+  // by the human's grace clock rather than by the token's hour.
+  await withFake(t, {}, async ({ fake, dir, spawnBridge }) => {
+    const first = spawnBridge();
+    await authorize(first, dir);
+    await first.stop();
+
+    const s = readStore(dir);
+    s.tokens.expires_at = Date.now() - 1000;
+    writeFileSync(storeFile(dir), JSON.stringify(s));
+    await fake.control({ refreshStatus: 400, refreshError: "invalid_grant", revoke_access: true });
+
+    const held = spawnBridge();
+    const answer = await held.call("initialize", 1, INIT_PARAMS);
+    assert.ok(answer.error, "a refused grant cannot serve the call");
+    assert.match(answer.error.message, /holding off the login/,
+      "the test must stand on the grace path, not on some other refusal");
+    assert.ok(!/retry freely/.test(answer.error.message),
+      `a refusal that names its own wait must not invite a retry now: ${answer.error.message}`);
+    assert.match(answer.error.message, /clears itself by waiting/,
+      "a held login is the verdict's third form: safe, and not yet");
+    assert.equal((answer.error.message.match(/\b\d+s\b/g) ?? []).length, 1,
+      `exactly one interval must appear in a hold-off refusal: ${answer.error.message}`);
+  });
+});
+
 // The hour a server puts on a refresh token paces the refresh nobody needs yet.
 // It must never pace the one a caller is waiting on: a guess that turns into a
 // wall costs half an hour of blindness, and the guess can simply be stale.
@@ -755,6 +804,69 @@ test("an upstream fault comes back as an error for that id, and the bridge stays
     await fake.control({ mcpStatus: null });
     const served = await bridge.call("tools/list", 3);
     assert.ok(served.result, "the bridge must keep serving after an upstream fault");
+  });
+});
+
+test("the error says whether the call may have taken effect, not just that it failed", async (t) => {
+  // "Retry the call" over every failure is advice, and for half of them it is
+  // wrong advice: a request that went out and lost its answer may already have
+  // applied, so retrying writes twice — silently, where no version guard exists.
+  // Witnessed in the field: an update reported as failed had landed, and only a
+  // version conflict on the advised retry gave it away.
+  await withFake(t, {}, async ({ fake, dir, spawnBridge }) => {
+    const bridge = spawnBridge();
+    await authorize(bridge, dir);
+
+    await fake.control({ mcpStatus: 500 }); // the server fell over — it may have fallen AFTER applying
+    const unknown = await bridge.call("tools/list", 2);
+    assert.match(unknown.error.message, /OUTCOME IS UNKNOWN/,
+      "a lost answer must not be reported as a clean failure");
+    assert.match(unknown.error.message, /re-read the target/,
+      "the caller must be told what to do before retrying");
+
+    await fake.control({ mcpStatus: 400 }); // the server judged the request and refused it
+    const refused = await bridge.call("tools/list", 3);
+    assert.match(refused.error.message, /never reached the server|nothing was applied/,
+      "a refused request is safe to retry, and saying so is the other half of the verdict");
+    assert.ok(!/OUTCOME IS UNKNOWN/.test(refused.error.message),
+      "a request that was refused outright must not be dressed as an unknown outcome");
+
+    await fake.control({ mcpStatus: null });
+    assert.ok((await bridge.call("tools/list", 4)).result, "the bridge must keep serving");
+  });
+});
+
+test("a refusal that only time repairs says so, instead of inviting a retry now", async (t) => {
+  // Safe-to-retry and safe-to-retry-NOW are different claims. Inside a hold-off
+  // the grant is whole and nothing was applied — but retrying at once walks into
+  // the same wall, and an agent told only "retry freely" goes looking for a
+  // defect in what waiting repairs by itself.
+  await withFake(t, { refreshNotBeforeMs: 4000 }, async ({ fake, dir, spawnBridge }) => {
+    const first = spawnBridge();
+    await authorize(first, dir);
+    await first.stop();
+
+    const s = readStore(dir);
+    s.tokens.expires_at = Date.now() - 1000;
+    writeFileSync(storeFile(dir), JSON.stringify(s));
+    await fake.control({ revoke_access: true });
+
+    const held = spawnBridge();
+    await held.call("initialize", 1, INIT_PARAMS); // the one knock, refused as early
+    const second = await held.call("initialize", 2, INIT_PARAMS); // now inside the hold-off
+
+    assert.ok(second.error, "there is still nothing to serve with");
+    assert.match(second.error.message, /clears itself by waiting/,
+      "a hold-off must be named as temporary, not reported as a plain failure");
+    assert.match(second.error.message, /wait out the interval named above/,
+      "the verdict names the kind and points at the interval, it does not restate it");
+    // One refusal, one number. The reason measures the wait on the server's
+    // clock; a verdict that computed its own would put a second, smaller figure
+    // beside it — and a caller believes the smaller one.
+    assert.equal((second.error.message.match(/\b\d+s\b/g) ?? []).length, 1,
+      `exactly one interval must appear in a hold-off refusal: ${second.error.message}`);
+    assert.ok(!/retry freely/.test(second.error.message),
+      "\"retry freely\" inside a hold-off invites the retry that cannot work");
   });
 });
 
