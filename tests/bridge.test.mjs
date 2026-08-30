@@ -254,6 +254,26 @@ test("a wind-down through a pipe nobody will ever read still ends", async (t) =>
   });
 });
 
+test("the browser is told what happened, not what was hoped", async (t) => {
+  // The click landing is not the grant existing: the code still has to be
+  // exchanged. A page that says "authenticated" on the redirect alone reports
+  // a success it has not witnessed — and it is the only report the human ever
+  // reads before closing the tab.
+  await withFake(t, {}, async ({ spawnBridge }) => {
+    const bridge = spawnBridge();
+    const url = authorizeUrlIn((await bridge.call("initialize", 1, INIT_PARAMS)).error.message);
+    const state = new URL(url).searchParams.get("state");
+
+    // The state is the bridge's own, so the redirect is accepted — but the code
+    // is one the server never issued, so the exchange behind it fails.
+    const res = await fetch(`http://127.0.0.1:${callbackPortOf(url)}/callback?code=never-issued&state=${state}`);
+    const page = await res.text();
+
+    assert.ok(!/authenticated/i.test(page), `the human was told success over a failed exchange: ${page}`);
+    assert.match(page, /failed/i, "the page must name the failure the human is looking at");
+  });
+});
+
 test("a finished flow leaves no pending lock behind", async (t) => {
   await withFake(t, {}, async ({ dir, spawnBridge }) => {
     const bridge = spawnBridge();

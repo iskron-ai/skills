@@ -53,6 +53,10 @@ const DEFAULT_SERVER_URL = "https://mcp.iskron.ru/";
 // living harness still gets its whole answer, short enough that no wedged pipe
 // keeps a process alive on the machine.
 const FLUSH_STOP_MS = 5_000;
+// How long the human's browser is held while the code is exchanged. Long enough
+// for a round trip to the token endpoint, short enough that a wedged exchange
+// gives them a line to read instead of a spinner.
+const PAGE_HOLD_MS = 20_000;
 
 // ---------------------------------------------------------------- arguments
 
@@ -402,20 +406,38 @@ function openBrowser(url) {
 // Bind the loopback listener that catches the redirect carrying ?code=…&state=…
 // Binding comes FIRST and is what claims the flow: a bound port is a fact any
 // other process can check, unlike a file that outlives the process that wrote it.
+// The page this server draws is the ONLY report the human gets: they clicked,
+// they read a line, they close the tab and go. So the line must say what
+// actually happened, and the code arriving is not yet the grant existing — the
+// exchange still has to run. A page that says "authenticated" the moment the
+// redirect lands sends the human away from the one screen that could have told
+// them it failed; witnessed in the field, twice in a row, with an empty store.
+// So the browser is held until the exchange answers, and `report` is what
+// answers it — under a hold short enough that a wedged exchange leaves a tab
+// with an honest "still running", never a spinner forever.
 function bindCallback(port) {
   return new Promise((resolve, reject) => {
     let handOff = null;   // set once someone is waiting for the code
     let received = null;  // …or hold what arrived before they asked
+    let browser = null;   // the redirect's response, held open for the verdict
     const deliver = (v) => { if (handOff) handOff(v); else received = v; };
+    const esc = (s) => String(s).replace(/[<>&"]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;" }[c]));
+    const tellBrowser = (line) => {
+      if (!browser) return;
+      const res = browser; browser = null;
+      try {
+        res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+        res.end(`<h3>${line}</h3>`);
+      } catch { /* the human closed the tab; the flow is unaffected */ }
+    };
 
     const server = createServer((req, res) => {
       const u = new URL(req.url, `http://127.0.0.1:${port}`);
       if (u.pathname !== "/callback") { res.writeHead(404); res.end(); return; }
       const err = u.searchParams.get("error");
-      res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-      res.end(err
-        ? `<h3>iskron-bridge: authorization failed (${err})</h3>`
-        : "<h3>iskron-bridge: authenticated — you can close this tab.</h3>");
+      browser = res;
+      if (err) tellBrowser(`iskron-bridge: authorization failed (${esc(err)})`);
+      else setTimeout(() => tellBrowser("iskron-bridge: the code arrived and the exchange is still running — watch the agent."), PAGE_HOLD_MS).unref();
       deliver({ code: u.searchParams.get("code"), state: u.searchParams.get("state"), err });
     });
 
@@ -425,7 +447,11 @@ function bindCallback(port) {
       server.on("error", (e) => log(`callback server: ${e.message}`));
       resolve({
         port,
-        close: () => server.close(),
+        // What the human is told, once the exchange has actually answered.
+        report: (failure) => tellBrowser(failure
+          ? `iskron-bridge: authorization failed (${esc(failure)}) — nothing was stored; the agent has the details.`
+          : "iskron-bridge: authenticated — you can close this tab."),
+        close: () => { tellBrowser("iskron-bridge: the login was abandoned — nothing was stored."); server.close(); },
         waitForCode: (expectedState, timeoutMs = 300_000) => new Promise((res, rej) => {
           const timer = setTimeout(
             () => rej(new Error("timed out waiting for the browser authorization")), timeoutMs);
@@ -619,7 +645,9 @@ async function interactiveFlow(meta) {
         });
         log("authorization complete — tokens saved for every local agent");
         grantLog("authorization complete");
+        callback.report(null);
       } catch (e) {
+        callback.report(e.message); // the human is still on that tab, waiting to be told
         log(`authorization flow failed: ${e.message}`);
         // Declined, closed, or left to time out — either way the human has
         // answered for now, and the answer holds until the snooze runs out.
