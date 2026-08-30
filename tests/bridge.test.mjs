@@ -758,6 +758,35 @@ test("an upstream fault comes back as an error for that id, and the bridge stays
   });
 });
 
+test("the error says whether the call may have taken effect, not just that it failed", async (t) => {
+  // "Retry the call" over every failure is advice, and for half of them it is
+  // wrong advice: a request that went out and lost its answer may already have
+  // applied, so retrying writes twice — silently, where no version guard exists.
+  // Witnessed in the field: an update reported as failed had landed, and only a
+  // version conflict on the advised retry gave it away.
+  await withFake(t, {}, async ({ fake, dir, spawnBridge }) => {
+    const bridge = spawnBridge();
+    await authorize(bridge, dir);
+
+    await fake.control({ mcpStatus: 500 }); // the server fell over — it may have fallen AFTER applying
+    const unknown = await bridge.call("tools/list", 2);
+    assert.match(unknown.error.message, /OUTCOME IS UNKNOWN/,
+      "a lost answer must not be reported as a clean failure");
+    assert.match(unknown.error.message, /re-read the target/,
+      "the caller must be told what to do before retrying");
+
+    await fake.control({ mcpStatus: 400 }); // the server judged the request and refused it
+    const refused = await bridge.call("tools/list", 3);
+    assert.match(refused.error.message, /never reached the server|nothing was applied/,
+      "a refused request is safe to retry, and saying so is the other half of the verdict");
+    assert.ok(!/OUTCOME IS UNKNOWN/.test(refused.error.message),
+      "a request that was refused outright must not be dressed as an unknown outcome");
+
+    await fake.control({ mcpStatus: null });
+    assert.ok((await bridge.call("tools/list", 4)).result, "the bridge must keep serving");
+  });
+});
+
 test("a notification is never answered", async (t) => {
   await withFake(t, {}, async ({ dir, spawnBridge }) => {
     const bridge = spawnBridge();

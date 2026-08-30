@@ -173,8 +173,25 @@ class UpstreamError extends Error {
   // `presented` carries the access token the refused request actually used —
   // knowledge only the caller has. The store may have moved on since, and a
   // token a sibling has already replaced must not be blamed for this refusal.
-  constructor(message, kind, presented = null) { super(message); this.kind = kind; this.presented = presented; }
+  //
+  // `outcome` says whether the request this error ends could ALREADY have taken
+  // effect upstream. NOT_SENT — it never reached the server, so a retry is free.
+  // UNKNOWN — it went out and the answer was lost, so a blind retry may write a
+  // second time. Nothing between those two is honest, and saying neither is what
+  // made "retry the call" dangerous: under one sentence lived both outcomes, and
+  // the caller could not tell them apart. Witnessed: an update reported as failed
+  // had applied, and the retry advised by that sentence collided with its own
+  // first write.
+  constructor(message, kind, presented = null, outcome = UpstreamError.UNKNOWN) {
+    super(message);
+    this.kind = kind;
+    this.presented = presented;
+    this.outcome = outcome;
+  }
 }
+UpstreamError.NOT_SENT = "not-sent";
+UpstreamError.UNKNOWN = "unknown";
+
 
 // The hours the SERVER keeps. Both tokens carry them when they are JWTs, and
 // the server judges by those, never by our arithmetic: `exp` on the access
@@ -1099,25 +1116,37 @@ async function post(msg, onMessage) {
     });
   } catch (e) {
     const reason = e.name === "TimeoutError" ? `no answer within ${CFG.timeoutMs}ms` : e.message;
-    throw new UpstreamError(`upstream unreachable: ${reason}`, "network");
+    // A connection that was never established carries nothing: the server never
+    // saw the call. A timeout is the opposite — the request was on the wire and
+    // only the answer is missing, so the write may well have landed.
+    const code = e.cause?.code ?? e.code;
+    const neverLeft = e.name !== "TimeoutError"
+      && ["ECONNREFUSED", "ENOTFOUND", "EAI_AGAIN", "ERR_SOCKET_BAD_PORT"].includes(code);
+    throw new UpstreamError(`upstream unreachable: ${reason}`, "network", null,
+      neverLeft ? UpstreamError.NOT_SENT : UpstreamError.UNKNOWN);
   }
   noteServerDate(res);
 
   if (res.status === 401) {
     res.body?.cancel?.();
+    // The server answered, and its answer was a refusal: nothing was applied.
     throw new UpstreamError(res.headers.get("www-authenticate") || "unauthorized", "auth",
-      tokens?.access_token ?? null);
+      tokens?.access_token ?? null, UpstreamError.NOT_SENT);
   }
   if (res.status === 404 && state.sessionId) {
     res.body?.cancel?.();
-    throw new UpstreamError("session expired upstream", "session");
+    throw new UpstreamError("session expired upstream", "session", null, UpstreamError.NOT_SENT);
   }
   const sid = res.headers.get("mcp-session-id");
   if (sid) state.sessionId = sid; // a session id may ride any answer, including an empty one
   if (res.status === 202 || res.status === 204) return;
   if (!res.ok) {
     const text = (await res.text().catch(() => "")).slice(0, 300);
-    throw new UpstreamError(`upstream HTTP ${res.status}: ${text}`, "http");
+    // A 4xx is the server judging the request and refusing it — nothing ran. A
+    // 5xx is the server falling over, and it may fall AFTER applying: for the
+    // caller that is indistinguishable from applied, so say so.
+    throw new UpstreamError(`upstream HTTP ${res.status}: ${text}`, "http", null,
+      res.status < 500 ? UpstreamError.NOT_SENT : UpstreamError.UNKNOWN);
   }
 
   const ctype = res.headers.get("content-type") || "";
@@ -1169,7 +1198,16 @@ async function reinitialize() {
   return reinitInFlight;
 }
 
-function syntheticError(id, message) {
+// The verdict a caller actually needs is not "it failed" but "may it have taken
+// effect?" — and those are different sentences. A single "retry the call" over
+// both is worse than silence: it is advice, and for a write with no version
+// guard the advice duplicates the record without a trace.
+function syntheticError(id, message, outcome = UpstreamError.UNKNOWN) {
+  const verdict = outcome === UpstreamError.NOT_SENT
+    ? "The call never reached the server, so nothing was applied — retry freely."
+    : "The call went out and its answer was lost, so THE OUTCOME IS UNKNOWN — re-read the target "
+      + "before retrying: a blind retry can apply a second time, and a write with no version guard "
+      + "duplicates silently.";
   return {
     jsonrpc: "2.0",
     id,
@@ -1177,7 +1215,7 @@ function syntheticError(id, message) {
       code: -32001,
       // BUILD is here for the field report: the error is quoted verbatim, and
       // the build string is what dates the code that produced it.
-      message: `iskron-bridge ${BUILD}: ${message}. The bridge stays up — retry the call; if this repeats, the server side needs attention.`,
+      message: `iskron-bridge ${BUILD}: ${message}. ${verdict} The bridge stays up; if this repeats, the server side needs attention.`,
     },
   };
 }
@@ -1232,6 +1270,14 @@ async function deliver(msg) {
   const hasId = msg?.id !== undefined && msg?.id !== null;
   let authRetried = false;
   let sessionRetried = false;
+  // Across retries the honest verdict is the worst one seen: an attempt that
+  // went out with a lost answer is not undone by a later attempt that never left.
+  let outcome = UpstreamError.NOT_SENT;
+  const note = (e) => {
+    if (!(e instanceof UpstreamError) || e.outcome === UpstreamError.UNKNOWN) {
+      outcome = UpstreamError.UNKNOWN;
+    }
+  };
 
   const forward = (m) => {
     if (isInit && m.id === msg.id && m.result?.protocolVersion) {
@@ -1247,6 +1293,7 @@ async function deliver(msg) {
       await post(msg, forward);
       return;
     } catch (e) {
+      note(e);
       if (e instanceof UpstreamError && e.kind === "auth" && !authRetried) {
         authRetried = true;
         try {
@@ -1254,11 +1301,11 @@ async function deliver(msg) {
           continue;
         } catch (authErr) {
           if (authErr instanceof AuthPending || authErr instanceof LoginHeld) {
-            if (hasId) emit(syntheticError(msg.id, authErr.message));
+            if (hasId) emit(syntheticError(msg.id, authErr.message, outcome));
             return;
           }
           log(`authorization failed: ${authErr.message}`);
-          if (hasId) emit(syntheticError(msg.id, `authorization failed: ${authErr.message}`));
+          if (hasId) emit(syntheticError(msg.id, `authorization failed: ${authErr.message}`, outcome));
           return;
         }
       }
@@ -1268,7 +1315,7 @@ async function deliver(msg) {
           await reinitialize();
           continue;
         } catch (reErr) {
-          if (hasId) emit(syntheticError(msg.id, `session recovery failed: ${reErr.message}`));
+          if (hasId) emit(syntheticError(msg.id, `session recovery failed: ${reErr.message}`, outcome));
           return;
         }
       }
@@ -1284,7 +1331,7 @@ async function deliver(msg) {
           : e.message)
         : `bridge internal error: ${e.message}`;
       log(`request ${hasId ? msg.id : `(notification ${msg?.method})`} failed: ${reason}`);
-      if (hasId) emit(syntheticError(msg.id, reason));
+      if (hasId) emit(syntheticError(msg.id, reason, outcome));
       return;
     }
   }
