@@ -274,6 +274,30 @@ test("the browser is told what happened, not what was hoped", async (t) => {
   });
 });
 
+test("a second click does not leave the first tab hanging", async (t) => {
+  // The held page is what makes a human click again, so the second click is the
+  // expected case, not the odd one. Both tabs must be answered: a response
+  // dropped for a newer one spins until the browser gives up on it.
+  await withFake(t, { codeDelayMs: 1500 }, async ({ spawnBridge }) => {
+    const bridge = spawnBridge();
+    const url = authorizeUrlIn((await bridge.call("initialize", 1, INIT_PARAMS)).error.message);
+    const state = new URL(url).searchParams.get("state");
+    const cb = `http://127.0.0.1:${callbackPortOf(url)}/callback?code=never-issued&state=${state}`;
+
+    const first = fetch(cb);
+    await new Promise((r) => setTimeout(r, 150)); // the first tab is being held
+    const second = await fetch(cb);
+
+    const answered = await Promise.race([
+      first.then(() => "answered"),
+      new Promise((r) => setTimeout(() => r("left hanging"), 4000)),
+    ]);
+    assert.equal(answered, "answered", "the first tab was never answered");
+    assert.equal(second.status, 200);
+    await second.text();
+  });
+});
+
 test("a finished flow leaves no pending lock behind", async (t) => {
   await withFake(t, {}, async ({ dir, spawnBridge }) => {
     const bridge = spawnBridge();
