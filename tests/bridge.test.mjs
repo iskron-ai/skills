@@ -211,6 +211,69 @@ test("a bridge told to stop mid-flow outlives it, so the human's click still lan
   });
 });
 
+test("a harness whose pipes die mid-flow still lets the human's click land", async (t) => {
+  // The SIGTERM above is the polite death. The common one is not polite: the
+  // harness process goes and the bridge's stdout and stderr become broken pipes
+  // under it while a human is mid-login. Every write fails from then on, and a
+  // bridge that answers a failed write with another write starves the exchange
+  // it stayed alive for — the click lands, the browser is told "authenticated",
+  // and no token is ever written. Witnessed in the field: two clicks, two
+  // success pages, an empty store, and a core at 100%.
+  await withFake(t, {}, async ({ dir, spawnBridge }) => {
+    const bridge = spawnBridge();
+    const url = authorizeUrlIn((await bridge.call("initialize", 1, INIT_PARAMS)).error.message);
+
+    bridge.proc.stdout.destroy(); // nothing reads these any more
+    bridge.proc.stderr.destroy();
+
+    const res = await fetch(url, { redirect: "follow" });
+    assert.equal(res.status, 200, "the redirect had nowhere to land");
+    await res.text();
+    await grantLanded(dir);
+  });
+});
+
+test("a wind-down through a pipe nobody will ever read still ends", async (t) => {
+  // Winding down flushes stdout first, so an answer half-written is not an
+  // answer lost. But a pipe whose reader is gone never drains: the drain
+  // callback never fires, and a bridge that waits on it never exits — it stays
+  // on the machine for as long as the machine is up.
+  await withFake(t, { padBytes: 200_000 }, async ({ dir, spawnBridge }) => {
+    const bridge = spawnBridge();
+    await authorize(bridge, dir);
+
+    bridge.proc.stdout.pause(); // the answer fills the pipe and stays there
+    bridge.send({ jsonrpc: "2.0", id: 7, method: "tools/call", params: { name: "big" } });
+    await new Promise((r) => setTimeout(r, 400));
+    bridge.proc.stdout.destroy(); // ...and now nobody will ever read it
+    bridge.proc.stderr.destroy();
+    bridge.proc.stdin.end();      // the harness is gone
+
+    await waitFor(() => bridge.proc.exitCode !== null || bridge.proc.signalCode !== null,
+      "the bridge to finish winding down", 12_000);
+  });
+});
+
+test("the browser is told what happened, not what was hoped", async (t) => {
+  // The click landing is not the grant existing: the code still has to be
+  // exchanged. A page that says "authenticated" on the redirect alone reports
+  // a success it has not witnessed — and it is the only report the human ever
+  // reads before closing the tab.
+  await withFake(t, {}, async ({ spawnBridge }) => {
+    const bridge = spawnBridge();
+    const url = authorizeUrlIn((await bridge.call("initialize", 1, INIT_PARAMS)).error.message);
+    const state = new URL(url).searchParams.get("state");
+
+    // The state is the bridge's own, so the redirect is accepted — but the code
+    // is one the server never issued, so the exchange behind it fails.
+    const res = await fetch(`http://127.0.0.1:${callbackPortOf(url)}/callback?code=never-issued&state=${state}`);
+    const page = await res.text();
+
+    assert.ok(!/authenticated/i.test(page), `the human was told success over a failed exchange: ${page}`);
+    assert.match(page, /failed/i, "the page must name the failure the human is looking at");
+  });
+});
+
 test("a finished flow leaves no pending lock behind", async (t) => {
   await withFake(t, {}, async ({ dir, spawnBridge }) => {
     const bridge = spawnBridge();
