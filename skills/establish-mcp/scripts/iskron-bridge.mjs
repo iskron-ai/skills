@@ -41,7 +41,7 @@ import { fileURLToPath } from "node:url";
 // annotation below); never edit it by hand. Between releases the hash is what
 // dates a report: it names the bytes that actually ran, patched copies and
 // forgotten rebuilds included.
-const VERSION = "3.6.0"; // x-release-please-version
+const VERSION = "3.7.0"; // x-release-please-version
 const BUILD = (() => {
   try {
     const src = readFileSync(fileURLToPath(import.meta.url));
