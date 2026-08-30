@@ -60,7 +60,9 @@ export async function startFakeNks(opts = {}) {
     // whole family dies with it. Off by default — a test asks for it when the
     // point IS what replay costs.
     reuseDetection: opts.reuseDetection ?? false,
-    counts: { register: 0, authorize: 0, code_exchange: 0, refresh: 0, stale_refresh: 0, early_refresh: 0, mcp: 0 },
+    counts: { register: 0, authorize: 0, code_exchange: 0, refresh: 0, stale_refresh: 0, early_refresh: 0, mcp: 0,
+              register_standing: 0, attributed_send: 0, unattributed: 0 },
+    standings: new Map(), // сессия MCP → имя стояния; убивается вместе с сессией
     // The resource indicator each leg carried. A real server turns this into
     // the token's audience, so it is the only place a test can see what the
     // bridge actually asked to be issued for.
@@ -209,6 +211,31 @@ export async function startFakeNks(opts = {}) {
       if (msg.id === undefined || msg.id === null) { res.writeHead(202); return res.end(); }
       if (msg.method === "tools/list") {
         return json(res, 200, { jsonrpc: "2.0", id: msg.id, result: { tools: [{ name: "nks_orient" }] } });
+      }
+      // Стояние делателя, смоделированное так, как его держит настоящая
+      // поверхность: коррелятор писателя — идентификатор сессии MCP. Новая
+      // сессия — другой писатель, и её память о регистрации собрана вместе со
+      // старой. Ровно поэтому перерегистрация — забота моста: он один видит
+      // смену id и один помнит выведенное имя.
+      if (msg.method === "tools/call" && msg.params?.name === "iskron_channel") {
+        const a = msg.params.arguments ?? {};
+        if (a.action === "register") {
+          st.counts.register_standing++;
+          st.standings.set(sid, a.name ?? "(unnamed)");
+          return json(res, 200, { jsonrpc: "2.0", id: msg.id,
+            result: { content: [{ type: "text", text: `зарегистрировано: ${a.name}` }] } });
+        }
+        if (a.action === "send") {
+          const bound = st.standings.get(sid);
+          if (!bound) {
+            st.counts.unattributed++;
+            return json(res, 200, { jsonrpc: "2.0", id: msg.id, result: { isError: true,
+              content: [{ type: "text", text: "Отказано (409): эта сессия не зарегистрирована ни за каким стоянием" }] } });
+          }
+          st.counts.attributed_send++;
+          return json(res, 200, { jsonrpc: "2.0", id: msg.id,
+            result: { content: [{ type: "text", text: `принято стоянием ${bound}` }] } });
+        }
       }
       return json(res, 200, { jsonrpc: "2.0", id: msg.id,
         result: { ok: true, method: msg.method, ...(st.padBytes ? { pad: "x".repeat(st.padBytes) } : {}) } });

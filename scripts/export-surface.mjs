@@ -90,9 +90,28 @@ const walk = (schema, name) => {
 };
 for (const t of tools) walk(t.inputSchema, null);
 
+// Канонический идентификатор ресурса — строка `resource` из документа
+// protected-resource, и она НЕ обязана совпадать с тем, как адрес принято
+// писать: сервер отдаёт её без хвостовой косой, а запись MCP пишут с косой по
+// привычке. Наивное сравнение строк на этом байте и расходится, а отказ
+// приходит немым — клиент говорит «сервер недоступен», не «идентификаторы
+// разошлись». Поэтому строка снимается наблюдением и кладётся в снимок: гейт
+// сверяет с ней отгружаемую запись, и «кто-то написал с косой» ловится до
+// мержа, а не живым отказом у пользователя. Документ публичный, грант не нужен.
+let resourceId = null;
+try {
+  const u = new URL(process.argv[2] || "https://mcp.iskron.ru/");
+  const prm = await fetch(`${u.origin}/.well-known/oauth-protected-resource${u.pathname === "/" ? "" : u.pathname}`,
+    { signal: AbortSignal.timeout(15_000) }).then((r) => (r.ok ? r.json() : null));
+  resourceId = prm?.resource ?? null;
+} catch (e) {
+  console.error(`# не удалось снять канонический идентификатор ресурса: ${e.message}`);
+}
+
 const surface = {
   server: init.result?.serverInfo ?? null,
   protocolVersion: init.result?.protocolVersion ?? null,
+  resource: resourceId,
   tools: tools.map((t) => t.name).sort(),
   enums,
 };
