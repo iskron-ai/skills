@@ -710,6 +710,13 @@ const EARLY_REFUSAL_COOLDOWN_MS = 15_000; // one knock per stretch, never one pe
 
 // `expired` marks the one refusal that is proof by the grant's own hours: the
 // refresh token's exp has passed, and no server hiccup ever looks like that.
+// A refusal that clears itself by waiting: the grant is whole, the move simply
+// did not happen yet. Collapsing this into "it failed" sends an agent fixing what
+// only time fixes — so the wait travels with the error all the way to the verdict.
+class HoldOffError extends Error {
+  constructor(message, retryAfterSec = null) { super(message); this.retryAfterSec = retryAfterSec; }
+}
+
 class DeadGrantError extends Error {
   constructor(message, expired = false) { super(message); this.expired = expired; }
 }
@@ -773,8 +780,8 @@ async function refreshOnce(meta, cur, proactive) {
   const cooling = inTheWindow && loadGrantState().early_refused_until;
   if (cooling && now() < cooling) {
     const left = Math.round((cooling - now()) / 1000);
-    throw new Error(`the token endpoint refused this grant as too early moments ago`
-      + ` — not knocking again for ${left}s; grant kept, will retry`);
+    throw new HoldOffError(`the token endpoint refused this grant as too early moments ago`
+      + ` — not knocking again for ${left}s; grant kept, will retry`, left);
   }
   debug("refreshing access token");
   try {
@@ -832,7 +839,8 @@ async function refreshOnce(meta, cur, proactive) {
       grantLog(`refresh refused early — ${why}; grant kept`
         + (until ? `, not knocking again for ${Math.round((until - now()) / 1000)}s` : "")
         + ` (${e.message})`);
-      throw new Error(`token refresh refused too early (${e.message}) — ${why}; grant kept, will retry`);
+      throw new HoldOffError(`token refresh refused too early (${e.message}) — ${why}; grant kept, will retry`,
+        until ? Math.max(1, Math.round((until - now()) / 1000)) : null);
     }
     // A rotated-away token is refused in exactly the same words as a dead one.
     // If the store moved on while we were asking, what we presented was merely
@@ -1202,9 +1210,15 @@ async function reinitialize() {
 // effect?" — and those are different sentences. A single "retry the call" over
 // both is worse than silence: it is advice, and for a write with no version
 // guard the advice duplicates the record without a trace.
-function syntheticError(id, message, outcome = UpstreamError.UNKNOWN) {
+function syntheticError(id, message, outcome = UpstreamError.UNKNOWN, retryAfterSec = null) {
   const verdict = outcome === UpstreamError.NOT_SENT
-    ? "The call never reached the server, so nothing was applied — retry freely."
+    ? (retryAfterSec
+      // Safe and not-yet are different axes, and an agent told only "safe" reads
+      // it as "now": it retries into the same wall, then goes looking for a
+      // defect in what only time repairs.
+      ? `Nothing was applied and the grant is whole — this clears itself by waiting, `
+        + `not by fixing: retry after ~${retryAfterSec}s.`
+      : "The call never reached the server, so nothing was applied — retry freely.")
     : "The call went out and its answer was lost, so THE OUTCOME IS UNKNOWN — re-read the target "
       + "before retrying: a blind retry can apply a second time, and a write with no version guard "
       + "duplicates silently.";
@@ -1305,7 +1319,8 @@ async function deliver(msg) {
             return;
           }
           log(`authorization failed: ${authErr.message}`);
-          if (hasId) emit(syntheticError(msg.id, `authorization failed: ${authErr.message}`, outcome));
+          if (hasId) emit(syntheticError(msg.id, `authorization failed: ${authErr.message}`, outcome,
+            authErr instanceof HoldOffError ? authErr.retryAfterSec : null));
           return;
         }
       }

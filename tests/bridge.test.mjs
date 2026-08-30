@@ -787,6 +787,35 @@ test("the error says whether the call may have taken effect, not just that it fa
   });
 });
 
+test("a refusal that only time repairs says so, instead of inviting a retry now", async (t) => {
+  // Safe-to-retry and safe-to-retry-NOW are different claims. Inside a hold-off
+  // the grant is whole and nothing was applied — but retrying at once walks into
+  // the same wall, and an agent told only "retry freely" goes looking for a
+  // defect in what waiting repairs by itself.
+  await withFake(t, { refreshNotBeforeMs: 4000 }, async ({ fake, dir, spawnBridge }) => {
+    const first = spawnBridge();
+    await authorize(first, dir);
+    await first.stop();
+
+    const s = readStore(dir);
+    s.tokens.expires_at = Date.now() - 1000;
+    writeFileSync(storeFile(dir), JSON.stringify(s));
+    await fake.control({ revoke_access: true });
+
+    const held = spawnBridge();
+    await held.call("initialize", 1, INIT_PARAMS); // the one knock, refused as early
+    const second = await held.call("initialize", 2, INIT_PARAMS); // now inside the hold-off
+
+    assert.ok(second.error, "there is still nothing to serve with");
+    assert.match(second.error.message, /clears itself by waiting/,
+      "a hold-off must be named as temporary, not reported as a plain failure");
+    assert.match(second.error.message, /retry after ~\d+s/,
+      "and it must say how long, or the caller cannot act on it");
+    assert.ok(!/retry freely/.test(second.error.message),
+      "\"retry freely\" inside a hold-off invites the retry that cannot work");
+  });
+});
+
 test("a notification is never answered", async (t) => {
   await withFake(t, {}, async ({ dir, spawnBridge }) => {
     const bridge = spawnBridge();
