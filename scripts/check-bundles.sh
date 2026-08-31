@@ -1,11 +1,15 @@
 #!/usr/bin/env bash
 # Verify every committed <name>.skill bundle is in sync with its source skills/<name>/.
 #
-# Checks bundle *contents*, not raw bytes: a bundle must contain a top-level
-# <name>/ tree byte-identical to skills/<name>/. We avoid a rebuild-and-byte-diff
-# because zip output is not reproducible across zip implementations/platforms
-# (macOS Info-ZIP vs Linux), which would make the check flaky. Content equality
-# is the actual contract: the installed ~/.claude/skills/<name>/ must match source.
+# Сверяются БАЙТЫ: бандл пересобирается во временный файл и сравнивается с
+# закоммиченным целиком. Прежде здесь стояло сравнение распакованных деревьев, и
+# стояло по честной причине — вывод системного `zip` не воспроизводился между
+# машинами. Причина снята: упаковку делает scripts/pack-skill.mjs, чей выход
+# определяется содержимым и этим кодом, а не реализацией zip на машине.
+#
+# Что байтовая сверка ловит сверх прежней: бандл, собранный ЧУЖИМ инструментом и
+# закоммиченный как наш. Для сравнения деревьев такой бандл неотличим от
+# правильного, а для потребителя — уже другой артефакт.
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -21,13 +25,10 @@ for d in skills/*/; do
     continue
   fi
   tmp="$(mktemp -d)"
-  unzip -qq "$bundle" -d "$tmp"
-  if [[ ! -d "$tmp/$name" ]]; then
-    echo "✗ $bundle: must contain a top-level '$name/' directory (won't install otherwise)"
-    fail=1
-  elif ! diff -r "skills/$name" "$tmp/$name" >/dev/null 2>&1; then
-    echo "✗ $bundle: contents differ from skills/$name/ — run 'make build' and commit:"
-    diff -r "skills/$name" "$tmp/$name" | sed 's/^/    /'
+  node "$root/scripts/pack-skill.mjs" "skills/$name" "$tmp/$name.skill"
+  if ! cmp -s "$bundle" "$tmp/$name.skill"; then
+    echo "✗ $bundle: расходится с пересборкой из skills/$name/ — прогони 'make build' и закоммить"
+    echo "    (закоммичено $(wc -c < "$bundle" | tr -d ' ') байт, пересобрано $(wc -c < "$tmp/$name.skill" | tr -d ' '))"
     fail=1
   fi
   rm -rf "$tmp"
@@ -38,4 +39,5 @@ if [[ $fail -ne 0 ]]; then
   echo "Bundles are out of sync. Run 'make build' (or enable the hook with 'make hooks') and commit."
   exit 1
 fi
-echo "✓ all .skill bundles in sync with skills/"
+
+echo "✓ all .skill bundles byte-identical to a fresh build from skills/"
