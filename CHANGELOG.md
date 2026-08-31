@@ -1,5 +1,22 @@
 # Changelog
 
+## [4.0.0](https://github.com/iskron-ai/skills/compare/v3.7.0...v4.0.0) (2026-08-31)
+
+
+### ⚠ BREAKING CHANGES
+
+* **chief-of-staff:** скилл foreman удалён; ведение бригады теперь несёт chief-of-staff.
+
+### Features
+
+* **chief-of-staff:** ярус между человеком и агентами; foreman упразднён ([#65](https://github.com/iskron-ai/skills/issues/65)) ([e9c88d2](https://github.com/iskron-ai/skills/commit/e9c88d28bcf28613622c3d2f954b6c1bc44fbb2a))
+* **collaborate:** сторож несёт строку занятости делателя наружу ([#64](https://github.com/iskron-ai/skills/issues/64)) ([988983d](https://github.com/iskron-ai/skills/commit/988983d1fb312328b5bb7ff1102b328805f06e77))
+
+
+### Bug Fixes
+
+* **build:** упаковка детерминированна поперёк машин, и гейт поднят с деревьев на байты ([#62](https://github.com/iskron-ai/skills/issues/62)) ([8d4a864](https://github.com/iskron-ai/skills/commit/8d4a8643f56e25adf24a3f9d73ea39915ffb5ec4))
+
 ## [3.7.0](https://github.com/iskron-ai/skills/compare/v3.6.0...v3.7.0) (2026-08-30)
 
 
