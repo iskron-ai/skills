@@ -26,7 +26,11 @@
 // Боевые заметки — в channel.md рядом с этим файлом: почему попытка считается
 // от конструкции (никогда от onopen), почему пауза не растёт и почему три
 // быстрых обрыва спрашивают /version, прежде чем винить токен.
-import { writeSync } from "node:fs";
+// Он же несёт строку занятости НАРУЖУ (вторая половина файла) — секрет, которым
+// она удостоверяется, есть у сторожа и нет у рабочей сессии. Здесь эта половина
+// вдобавок самопочинна: сторож живёт от кадра до кадра, а перевзведённый
+// публикует текущее содержимое файла заново, ничего не помня о прошлой жизни.
+import { readFileSync, writeSync } from "node:fs";
 
 const url = process.argv[2] || process.env.ISKRON_CHANNEL_SOCKET;
 if (!url) {
@@ -76,3 +80,34 @@ function open() {
   });
 }
 open();
+
+// ── Вторая половина: слово делателя наружу ──────────────────────────────────
+// Делатель пишет ТЕКСТ строки занятости в файл, сторож публикует его изменения:
+// секрет не касается диска, авторство держится тем, что писать в файл может лишь
+// запустивший сторожа. Без переменной половина не включается вовсе.
+const sayFile = process.env.ISKRON_CHANNEL_SAY;
+// Выданный рядом с сокетом адрес — первый; вывод из формы — фолбэк, потому что
+// сторожу вручают сокет, а не ответ connect целиком. Форма дрейфует, выданная
+// строка всегда права — задавай ISKRON_CHANNEL_STATUS, когда он у тебя есть.
+const statusUrl = process.env.ISKRON_CHANNEL_STATUS
+  || url.replace(/^wss:/, "https:").replace(/^ws:/, "http:").replace("/channel/ws/", "/channel/status/");
+let said = null, complained = null;
+
+// Опрос, а не наблюдение за файлом: файла может ещё не быть, а наблюдатель за
+// несуществующим путём бросает; пересоздание целиком опрос тоже переживает.
+async function say() {
+  let text;
+  try { text = readFileSync(sayFile, "utf8").trim(); } catch { return; } // ещё не написали — не о чем говорить
+  if (text === said) return;              // публикуют смену занятия, а не такт
+  const res = await fetch(statusUrl, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ text }), signal: AbortSignal.timeout(5000),
+  }).catch(() => null);
+  if (res?.ok) { said = text; complained = null; return; } // пустая строка — СЛОВО: ею занятость снимают
+  if (complained !== text) {              // жалоба раз на текст, а не раз в секунду
+    complained = text;                    // в лог, НЕ в stdout: там будит только кадр
+    note(`ДЕЛАТЕЛЬ: строку занятости не приняли (${res ? res.status : "нет ответа"}) — см. channel.md`);
+  }
+  if (res && res.status >= 400 && res.status < 500) said = text; // отказ по самой строке: повтор той же ничего не изменит
+}
+if (sayFile) setInterval(say, 1000).unref(); // таймер не смеет держать процесс, чья работа — выйти на кадре
