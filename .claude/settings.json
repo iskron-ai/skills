@@ -46,7 +46,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "jq -r '.tool_input.command // \"\"' | grep -q 'git push' && echo '{\"hookSpecificOutput\":{\"hookEventName\":\"PostToolUse\",\"additionalContext\":\"Pushed — ask which kind of push this was: a push that only opens or updates a PR ships nothing; done means merged. After a merge: update NKS in nks-dev from fresh artifact evidence — thread repo state into holon #1506, advance delivery bianhua #1516, close resolved vimarshas — then run the after-green-push self-review of your diff. Also grep the commit message and branch name against the brand-clean rule (AGENTS.md, Code conventions).\"}}' || true"
+            "command": "jq -r '.tool_input.command // \"\"' | grep -q 'git push' && echo '{\"hookSpecificOutput\":{\"hookEventName\":\"PostToolUse\",\"additionalContext\":\"Pushed — ask which kind of push this was: a push that only opens or updates a PR ships nothing; done means merged. After a merge: update NKS in nks-dev from fresh artifact evidence — thread repo state into holon #1506, advance the live bianhua the work moves (read the map, lens=\"bianhua\" — do not recall a number: #1516 is closed), close resolved vimarshas — then run the after-green-push self-review of your diff. Also grep the commit message and branch name against the brand-clean rule (AGENTS.md, Code conventions).\"}}' || true"
           }
         ]
       }
