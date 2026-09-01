@@ -825,8 +825,11 @@ async function refreshOnce(meta, cur, proactive) {
     const expired = hours.exp && now() >= hours.exp;
     const notYet = hours.nbf && now() < hours.nbf;
     if (!expired && (notYet || proactive)) {
+      // The figure is the refresh token's own hour on the server's clock — a
+      // fact about ITS schedule, never the length of anyone's deafness. Worded
+      // as a lockout it once read as a 27-minute sentence on the caller.
       const why = notYet
-        ? `refresh token is not in force for another ${Math.round((hours.nbf - now()) / 1000)}s`
+        ? `the refresh token's own hour is another ${Math.round((hours.nbf - now()) / 1000)}s away on the server's clock`
         : "the access token in hand still works";
       // Remember the refusal for a breath, so the next call in this stretch
       // waits with us instead of asking the same doomed question again — but
@@ -1213,18 +1216,35 @@ async function reinitialize() {
 // both is worse than silence: it is advice, and for a write with no version
 // guard the advice duplicates the record without a trace.
 function syntheticError(id, message, outcome = UpstreamError.UNKNOWN, holdOff = false) {
+  // holdOff carries the KIND of not-yet, because the two kinds prescribe
+  // opposite moves. "wait" (or true) is the grace-held login: repaired by time
+  // or by a human, and a retry buys nothing. "knock" is the token hour: the
+  // refusing answer itself recalibrated our clock off its Date header, and a
+  // sibling may have rotated the grant mid-ask — witnessed in the field: the
+  // same call succeeded seconds after this very refusal. Prescribing a wait
+  // there once cost callers a self-imposed half hour of blindness.
+  const kind = holdOff === true ? "wait" : holdOff;
   const verdict = outcome === UpstreamError.NOT_SENT
-    ? (holdOff
+    ? (kind === "wait"
       // Safe and not-yet are different axes, and an agent told only "safe" reads
       // it as "now": it retries into the same wall, then goes looking for a
       // defect in what only time repairs. The interval itself stays where it was
       // measured — in the reason above — so one refusal never carries two.
       ? "Nothing was applied and the grant is whole — this clears itself by waiting, "
         + "not by fixing: wait out the interval named above before retrying."
-      : "The call never reached the server, so nothing was applied — retry freely.")
+      : kind === "knock"
+        ? "Nothing was applied and the grant is whole — a benign transition, not a broken "
+          + "authorization: retry the call now. Only a repeated refusal means the hour is real — "
+          + "then let the interval named above pass before retrying."
+        : "The call never reached the server, so nothing was applied — retry freely.")
     : "The call went out and its answer was lost, so THE OUTCOME IS UNKNOWN — re-read the target "
       + "before retrying: a blind retry can apply a second time, and a write with no version guard "
       + "duplicates silently.";
+  // The attention clause stays off the token hour: a repeat there is the
+  // server's own schedule speaking, not a defect anyone should escalate.
+  const tail = kind === "knock"
+    ? "The bridge stays up."
+    : "The bridge stays up; if this repeats, the server side needs attention.";
   return {
     jsonrpc: "2.0",
     id,
@@ -1232,7 +1252,7 @@ function syntheticError(id, message, outcome = UpstreamError.UNKNOWN, holdOff = 
       code: -32001,
       // BUILD is here for the field report: the error is quoted verbatim, and
       // the build string is what dates the code that produced it.
-      message: `iskron-bridge ${BUILD}: ${message}. ${verdict} The bridge stays up; if this repeats, the server side needs attention.`,
+      message: `iskron-bridge ${BUILD}: ${message}. ${verdict} ${tail}`,
     },
   };
 }
@@ -1324,9 +1344,14 @@ async function deliver(msg) {
             if (hasId) emit(syntheticError(msg.id, authErr.message, outcome, authErr instanceof LoginHeld));
             return;
           }
-          log(`authorization failed: ${authErr.message}`);
-          if (hasId) emit(syntheticError(msg.id, `authorization failed: ${authErr.message}`, outcome,
-            authErr instanceof HoldOffError));
+          // A hold-off is not a failed authorization: the grant is whole and
+          // nothing was judged. Naming it "failed" sent readers off to mend a
+          // grant nobody had touched.
+          const held = authErr instanceof HoldOffError;
+          log(`${held ? "authorization holding off" : "authorization failed"}: ${authErr.message}`);
+          if (hasId) emit(syntheticError(msg.id,
+            `${held ? "authorization holding off" : "authorization failed"}: ${authErr.message}`,
+            outcome, held && "knock"));
           return;
         }
       }

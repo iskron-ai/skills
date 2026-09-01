@@ -508,6 +508,8 @@ test("a refresh the caller needs knocks even before the hour, and never walls th
     assert.ok(fake.state.counts.refresh >= 1, "but the bridge must have ASKED, not decided for the server");
     assert.equal(authorizeUrlIn(held.error.message), null, "a refusal this early is no proof of a dead grant");
     assert.equal(readStore(dir).tokens.refresh_token, grant, "and the grant must survive it");
+    assert.match(held.error.message, /own hour is another \d+s away/,
+      "the figure names the token's schedule — never the length of the caller's deafness");
 
     // …and knocked ONCE. A harness retries; one rejected access token must not
     // become a burst of refused token requests from every bridge on the machine.
@@ -836,11 +838,14 @@ test("the error says whether the call may have taken effect, not just that it fa
   });
 });
 
-test("a refusal that only time repairs says so, instead of inviting a retry now", async (t) => {
-  // Safe-to-retry and safe-to-retry-NOW are different claims. Inside a hold-off
-  // the grant is whole and nothing was applied — but retrying at once walks into
-  // the same wall, and an agent told only "retry freely" goes looking for a
-  // defect in what waiting repairs by itself.
+test("a token-hour hold-off prescribes a retry now — never a wait, never the server's attention", async (t) => {
+  // The prescription "wait out the interval" was refuted in the field: the same
+  // call succeeded seconds after the refusal, because the refusing answer had
+  // already recalibrated the bridge's clock. An agent that believed the old
+  // wording laid its watch down for a self-imposed half hour. So the verdict on
+  // the token hour reads: whole grant, benign transition, retry now — and only
+  // a repeated refusal names a real wait. It is also not a failed authorization
+  // and no reason to summon the server side.
   await withFake(t, { refreshNotBeforeMs: 4000 }, async ({ fake, dir, spawnBridge }) => {
     const first = spawnBridge();
     await authorize(first, dir);
@@ -856,17 +861,25 @@ test("a refusal that only time repairs says so, instead of inviting a retry now"
     const second = await held.call("initialize", 2, INIT_PARAMS); // now inside the hold-off
 
     assert.ok(second.error, "there is still nothing to serve with");
-    assert.match(second.error.message, /clears itself by waiting/,
-      "a hold-off must be named as temporary, not reported as a plain failure");
-    assert.match(second.error.message, /wait out the interval named above/,
-      "the verdict names the kind and points at the interval, it does not restate it");
-    // One refusal, one number. The reason measures the wait on the server's
+    assert.match(second.error.message, /authorization holding off/,
+      "a whole grant short of its hour is a hold-off, never a failed authorization");
+    assert.ok(!/authorization failed/.test(second.error.message),
+      "\"failed\" sends the reader off to mend a grant nobody touched");
+    assert.match(second.error.message, /grant is whole/,
+      "the verdict leads with what is intact, not with what refused");
+    assert.match(second.error.message, /retry the call now/,
+      "the move that was witnessed working — an immediate retry — is the prescription");
+    assert.ok(!/wait out the interval named above/.test(second.error.message),
+      "prescribing the full interval as a wait once cost a caller half an hour of blindness");
+    assert.ok(!/server side needs attention/.test(second.error.message),
+      "a hold-off is the server's own schedule speaking — not a defect to escalate");
+    // One refusal, one number. The reason measures the hour on the server's
     // clock; a verdict that computed its own would put a second, smaller figure
     // beside it — and a caller believes the smaller one.
     assert.equal((second.error.message.match(/\b\d+s\b/g) ?? []).length, 1,
       `exactly one interval must appear in a hold-off refusal: ${second.error.message}`);
     assert.ok(!/retry freely/.test(second.error.message),
-      "\"retry freely\" inside a hold-off invites the retry that cannot work");
+      "\"retry freely\" belongs to the call that never went out, not to the hour");
   });
 });
 
