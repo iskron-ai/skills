@@ -1,5 +1,18 @@
 # Changelog
 
+## [4.1.0](https://github.com/iskron-ai/skills/compare/v4.0.0...v4.1.0) (2026-09-01)
+
+
+### Features
+
+* **iskronify:** поле интеграции из графа, контракт 6, гейт имён скиллов ([#66](https://github.com/iskron-ai/skills/issues/66)) ([2bcd5be](https://github.com/iskron-ai/skills/commit/2bcd5beab14321cee65dcc53190cb6a02340ead6))
+
+
+### Bug Fixes
+
+* **agents:** карта превращений читается, а не помнится ([#68](https://github.com/iskron-ai/skills/issues/68)) ([4a4fd14](https://github.com/iskron-ai/skills/commit/4a4fd147bf24e503761400eea07d3884a92420d9))
+* **collaborate:** постановка запускает побудку, но не равна доставке ([#69](https://github.com/iskron-ai/skills/issues/69)) ([249028c](https://github.com/iskron-ai/skills/commit/249028ce64df56a1c3e0fcc5203c91573ff73b9c))
+
 ## [4.0.0](https://github.com/iskron-ai/skills/compare/v3.7.0...v4.0.0) (2026-08-31)
 
 
