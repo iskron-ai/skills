@@ -718,7 +718,12 @@ const EARLY_REFUSAL_COOLDOWN_MS = 15_000; // one knock per stretch, never one pe
 // their interval, measured on the SERVER's clock, and a verdict that recomputed
 // one would put two different numbers on one refusal — the caller would believe
 // the smaller and knock into the same wall.
-class HoldOffError extends Error {}
+class HoldOffError extends Error {
+  // retryNow marks the one flavor where an immediate retry is the honest move:
+  // the FIRST early refusal of a needed refresh. The cooldown refusal and a
+  // refusal that repeats both name waits that are real.
+  constructor(message, retryNow = false) { super(message); this.retryNow = retryNow; }
+}
 
 class DeadGrantError extends Error {
   constructor(message, expired = false) { super(message); this.expired = expired; }
@@ -825,8 +830,20 @@ async function refreshOnce(meta, cur, proactive) {
     const expired = hours.exp && now() >= hours.exp;
     const notYet = hours.nbf && now() < hours.nbf;
     if (!expired && (notYet || proactive)) {
+      // One early refusal can be a stale reading — the grant may have rotated
+      // under us moments ago, and the server's 401 need not survive a second
+      // presentation (witnessed in the field: the same call succeeded seconds
+      // later). A refusal knocked AFTER the cooldown while a fresh stamp still
+      // stands is different: that is the server's own schedule speaking, and
+      // from here the honest prescription flips from "retry now" to "wait".
+      // Read the stamp BEFORE this refusal renews it.
+      const repeated = notYet && !!loadGrantState().early_refused_until
+        && loadGrantState().early_refused_until > now() - 120_000;
+      // The figure is the refresh token's own hour on the server's clock — a
+      // fact about ITS schedule, never the length of anyone's deafness. Worded
+      // as a lockout it once read as a 27-minute sentence on the caller.
       const why = notYet
-        ? `refresh token is not in force for another ${Math.round((hours.nbf - now()) / 1000)}s`
+        ? `the refresh token's own hour is another ${Math.round((hours.nbf - now()) / 1000)}s away on the server's clock`
         : "the access token in hand still works";
       // Remember the refusal for a breath, so the next call in this stretch
       // waits with us instead of asking the same doomed question again — but
@@ -842,7 +859,12 @@ async function refreshOnce(meta, cur, proactive) {
       grantLog(`refresh refused early — ${why}; grant kept`
         + (until ? `, not knocking again for ${Math.round((until - now()) / 1000)}s` : "")
         + ` (${e.message})`);
-      throw new HoldOffError(`token refresh refused too early (${e.message}) — ${why}; grant kept, will retry`);
+      throw new HoldOffError(
+        repeated
+          ? `token refresh refused too early again (${e.message}) — the hour is real: ${why}; grant kept`
+          : `token refresh refused too early (${e.message}) — ${why}; grant kept, will retry`,
+        notYet && !repeated,
+      );
     }
     // A rotated-away token is refused in exactly the same words as a dead one.
     // If the store moved on while we were asking, what we presented was merely
@@ -1213,18 +1235,37 @@ async function reinitialize() {
 // both is worse than silence: it is advice, and for a write with no version
 // guard the advice duplicates the record without a trace.
 function syntheticError(id, message, outcome = UpstreamError.UNKNOWN, holdOff = false) {
+  // holdOff carries the KIND of not-yet, because the two kinds prescribe
+  // opposite moves. "wait" is a pause with an honest figure: the grace-held
+  // login, the knock cooldown, an hour a repeated refusal proved real — a
+  // retry there buys nothing. "knock" is the FIRST early refusal of a needed
+  // refresh: witnessed in the field, the same call succeeded seconds after
+  // that refusal (a rotated grant, a 401 that did not survive a second
+  // presentation — the cause was not pinned, the refuted prescription was),
+  // so selling the token's whole hour as a wait once cost a caller a
+  // self-imposed half hour of blindness.
+  const kind = holdOff === true ? "wait" : holdOff;
   const verdict = outcome === UpstreamError.NOT_SENT
-    ? (holdOff
+    ? (kind === "wait"
       // Safe and not-yet are different axes, and an agent told only "safe" reads
       // it as "now": it retries into the same wall, then goes looking for a
       // defect in what only time repairs. The interval itself stays where it was
       // measured — in the reason above — so one refusal never carries two.
       ? "Nothing was applied and the grant is whole — this clears itself by waiting, "
         + "not by fixing: wait out the interval named above before retrying."
-      : "The call never reached the server, so nothing was applied — retry freely.")
+      : kind === "knock"
+        ? "Nothing was applied and the grant is whole — a benign transition, not a broken "
+          + "authorization: retry the call now. Only a refusal that returns means the hour is "
+          + "real — that one names its own wait."
+        : "The call never reached the server, so nothing was applied — retry freely.")
     : "The call went out and its answer was lost, so THE OUTCOME IS UNKNOWN — re-read the target "
       + "before retrying: a blind retry can apply a second time, and a write with no version guard "
       + "duplicates silently.";
+  // The attention clause stays off every hold-off: a whole grant pausing is
+  // the server's own pacing, never a defect to escalate.
+  const tail = kind
+    ? "The bridge stays up."
+    : "The bridge stays up; if this repeats, the server side needs attention.";
   return {
     jsonrpc: "2.0",
     id,
@@ -1232,7 +1273,7 @@ function syntheticError(id, message, outcome = UpstreamError.UNKNOWN, holdOff = 
       code: -32001,
       // BUILD is here for the field report: the error is quoted verbatim, and
       // the build string is what dates the code that produced it.
-      message: `iskron-bridge ${BUILD}: ${message}. ${verdict} The bridge stays up; if this repeats, the server side needs attention.`,
+      message: `iskron-bridge ${BUILD}: ${message}. ${verdict} ${tail}`,
     },
   };
 }
@@ -1324,9 +1365,14 @@ async function deliver(msg) {
             if (hasId) emit(syntheticError(msg.id, authErr.message, outcome, authErr instanceof LoginHeld));
             return;
           }
-          log(`authorization failed: ${authErr.message}`);
-          if (hasId) emit(syntheticError(msg.id, `authorization failed: ${authErr.message}`, outcome,
-            authErr instanceof HoldOffError));
+          // A hold-off is not a failed authorization: the grant is whole and
+          // nothing was judged. Naming it "failed" sent readers off to mend a
+          // grant nobody had touched.
+          const held = authErr instanceof HoldOffError;
+          log(`${held ? "authorization holding off" : "authorization failed"}: ${authErr.message}`);
+          if (hasId) emit(syntheticError(msg.id,
+            `${held ? "authorization holding off" : "authorization failed"}: ${authErr.message}`,
+            outcome, held && (authErr.retryNow ? "knock" : "wait")));
           return;
         }
       }
