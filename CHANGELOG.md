@@ -1,5 +1,18 @@
 # Changelog
 
+## [4.2.0](https://github.com/iskron-ai/skills/compare/v4.1.0...v4.2.0) (2026-09-01)
+
+
+### Features
+
+* **skills:** скилл standing, компактный collaborate, честный холд-офф моста ([#70](https://github.com/iskron-ai/skills/issues/70)) ([63d170a](https://github.com/iskron-ai/skills/commit/63d170a970534d7b10ce5a9bb2adcf149b093adc))
+
+
+### Bug Fixes
+
+* **skills:** шаг 2 standing под-пунктами, умолчание предела зонда в collaborate ([#73](https://github.com/iskron-ai/skills/issues/73)) ([fcab90d](https://github.com/iskron-ai/skills/commit/fcab90d7393fd936ae61c14fcf87c78201638ad2))
+* **standing:** связка connect → register — занять место и привязать сессию, два вызова ([#72](https://github.com/iskron-ai/skills/issues/72)) ([280d9ed](https://github.com/iskron-ai/skills/commit/280d9ed64ad1536817f8a932055676f8065cf8dc))
+
 ## [4.1.0](https://github.com/iskron-ai/skills/compare/v4.0.0...v4.1.0) (2026-09-01)
 
 
