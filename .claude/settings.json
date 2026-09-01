@@ -46,7 +46,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "jq -r '.tool_input.command // \"\"' | grep -q 'git push' && echo '{\"hookSpecificOutput\":{\"hookEventName\":\"PostToolUse\",\"additionalContext\":\"Pushed — ask which kind of push this was: a push that only opens or updates a PR ships nothing; done means merged. After a merge: update NKS in nks-dev from fresh artifact evidence — thread repo state into holon #1506, advance delivery bianhua #1516, close resolved vimarshas — then run the after-green-push self-review of your diff. Also grep the commit message and branch name against the brand-clean rule (AGENTS.md, Code conventions).\"}}' || true"
+            "command": "jq -r '.tool_input.command // \"\"' | grep -q 'git push' && echo '{\"hookSpecificOutput\":{\"hookEventName\":\"PostToolUse\",\"additionalContext\":\"Pushed — ask which kind of push this was: a push that only opens or updates a PR ships nothing; done means merged. After a merge, update the graph from fresh artifact evidence, and it is four acts, not a status edit: weave the shipped state into holon #1506 (weaving skill); switch the modes the merge made true across the whole designed contour, never ahead of evidence; close what the merge resolved along its axis and work the karta inbox (inquiry skill); then run reconcile — the tidy-up tact that checks corpus against graph both ways. Do not look for a transformation number in AGENTS.md: it holds none by rule — orient and read the live map. Then run the after-green-push self-review of your diff, and grep the commit message and branch name against the brand-clean rule.\"}}' || true"
           }
         ]
       }
