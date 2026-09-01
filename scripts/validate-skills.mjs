@@ -210,11 +210,55 @@ function checkPromisedFiles(name) {
   }
 }
 
+// --- a named skill must resolve, in a form that can be called ---------------
+// A skill name is a pointer like any other, but it fails silently: an
+// unresolvable name raises no error, only a shrug, and the ritual that aimed at
+// the method keeps firing while the method never runs. The tool half of this is
+// mechanized by check-surface; the skill half was left to prose in the finalize
+// step, which reaches AGENTS.md but not role files or hook bodies. Two offline
+// halves, both measured clean on this corpus before being switched on:
+//   1. a skill named in shipped prose must exist in this delivery;
+//   2. a foreign family's call form (`nks-weaving`) is never ours. The
+//      namespace is a property of the HARNESS, not of the delivery — Claude
+//      Code's plugin channel namespaces, others do not — so our own bare and
+//      namespaced forms are both legitimate and neither is flagged here.
+const SKILL_MENTION = /(?:скилл|скилла|скиллом|скиллу|скилле|скиллы|skill)\s+`([A-Za-z0-9._:-]+)`/gu;
+const FOREIGN_FORM = /`(nks)[-:]([a-z0-9-]+)`/gu;
+
+function checkSkillNames(name, known) {
+  const dir = join(skillsDir, name);
+  const pages = [join(dir, "SKILL.md")];
+  const refs = join(dir, "references");
+  if (existsSync(refs)) {
+    for (const f of readdirSync(refs)) if (f.endsWith(".md")) pages.push(join(refs, f));
+  }
+  for (const page of pages) {
+    const where = page.slice(root.length + 1);
+    for (const line of readFileSync(page, "utf8").split("\n")) {
+      if (/superpowers/i.test(line)) continue; // a foreign suite names its own skills
+      for (const m of line.matchAll(SKILL_MENTION)) {
+        const wanted = m[1];
+        if (/[<>*]/.test(wanted)) continue; // a placeholder, not a name
+        const bare = wanted.includes(":") ? wanted.slice(wanted.indexOf(":") + 1) : wanted;
+        if (!known.has(bare)) {
+          fail(where, `names skill \`${wanted}\`, which does not ship in skills/ — an unresolvable name is a projection defect, not a typo (it shrugs, it does not error)`);
+        }
+      }
+      for (const m of line.matchAll(FOREIGN_FORM)) {
+        if (known.has(m[2])) {
+          fail(where, `writes \`${m[1]}-${m[2]}\` — a foreign family's call form for our own skill \`${m[2]}\``);
+        }
+      }
+    }
+  }
+}
+
 const skillNames = readdirSync(skillsDir).filter((n) =>
   statSync(join(skillsDir, n)).isDirectory()
 );
 if (skillNames.length === 0) fail("skills/", "no skill directories found");
-for (const name of skillNames.sort()) { validateSkill(name); checkPromisedFiles(name); }
+const knownSkills = new Set(skillNames);
+for (const name of skillNames.sort()) { validateSkill(name); checkPromisedFiles(name); checkSkillNames(name, knownSkills); }
 
 // 2. Component-list guard: the skill set ships by plugin auto-discovery from
 //    skills/ — the tree is the single source of truth. A `skills` (or any
