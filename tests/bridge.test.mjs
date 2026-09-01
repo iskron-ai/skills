@@ -838,15 +838,17 @@ test("the error says whether the call may have taken effect, not just that it fa
   });
 });
 
-test("a token-hour hold-off prescribes a retry now — never a wait, never the server's attention", async (t) => {
-  // The prescription "wait out the interval" was refuted in the field: the same
-  // call succeeded seconds after the refusal, because the refusing answer had
-  // already recalibrated the bridge's clock. An agent that believed the old
-  // wording laid its watch down for a self-imposed half hour. So the verdict on
-  // the token hour reads: whole grant, benign transition, retry now — and only
-  // a repeated refusal names a real wait. It is also not a failed authorization
-  // and no reason to summon the server side.
-  await withFake(t, { refreshNotBeforeMs: 4000 }, async ({ fake, dir, spawnBridge }) => {
+test("the hold-off ladder: retry now first, the cooldown waits short, a repeat names the hour real", async (t) => {
+  // The old prescription — "wait out the interval" on the FIRST early refusal —
+  // was refuted in the field: the same call succeeded seconds later (the grant
+  // may have rotated under us; the 401 did not survive a second presentation —
+  // the cause was not pinned, the prescription was refuted). An agent that
+  // believed the wording laid its watch down for a self-imposed half hour. So
+  // the ladder now reads: first refusal → whole grant, benign transition, retry
+  // now; a retry inside the cooldown → a real, short wait; an early refusal
+  // that REPEATS after the cooldown → the hour is real, and its own figure is
+  // the wait. No rung is a failed authorization or a call for the server side.
+  await withFake(t, { refreshNotBeforeMs: 60_000 }, async ({ fake, dir, spawnBridge }) => {
     const first = spawnBridge();
     await authorize(first, dir);
     await first.stop();
@@ -857,29 +859,55 @@ test("a token-hour hold-off prescribes a retry now — never a wait, never the s
     await fake.control({ revoke_access: true });
 
     const held = spawnBridge();
-    await held.call("initialize", 1, INIT_PARAMS); // the one knock, refused as early
-    const second = await held.call("initialize", 2, INIT_PARAMS); // now inside the hold-off
-
-    assert.ok(second.error, "there is still nothing to serve with");
-    assert.match(second.error.message, /authorization holding off/,
+    const knock = await held.call("initialize", 1, INIT_PARAMS); // the one knock, refused as early
+    assert.ok(knock.error, "the server did refuse — there is nothing to serve with yet");
+    assert.match(knock.error.message, /authorization holding off/,
       "a whole grant short of its hour is a hold-off, never a failed authorization");
-    assert.ok(!/authorization failed/.test(second.error.message),
+    assert.ok(!/authorization failed/.test(knock.error.message),
       "\"failed\" sends the reader off to mend a grant nobody touched");
-    assert.match(second.error.message, /grant is whole/,
+    assert.match(knock.error.message, /grant is whole/,
       "the verdict leads with what is intact, not with what refused");
-    assert.match(second.error.message, /retry the call now/,
-      "the move that was witnessed working — an immediate retry — is the prescription");
-    assert.ok(!/wait out the interval named above/.test(second.error.message),
-      "prescribing the full interval as a wait once cost a caller half an hour of blindness");
-    assert.ok(!/server side needs attention/.test(second.error.message),
-      "a hold-off is the server's own schedule speaking — not a defect to escalate");
-    // One refusal, one number. The reason measures the hour on the server's
-    // clock; a verdict that computed its own would put a second, smaller figure
-    // beside it — and a caller believes the smaller one.
-    assert.equal((second.error.message.match(/\b\d+s\b/g) ?? []).length, 1,
-      `exactly one interval must appear in a hold-off refusal: ${second.error.message}`);
-    assert.ok(!/retry freely/.test(second.error.message),
-      "\"retry freely\" belongs to the call that never went out, not to the hour");
+    assert.match(knock.error.message, /retry the call now/,
+      "the move that was witnessed working — an immediate retry — is the first rung");
+    assert.ok(!/wait out the interval named above/.test(knock.error.message),
+      "prescribing the token's whole hour as a wait once cost a caller half an hour of blindness");
+    assert.ok(!/server side needs attention/.test(knock.error.message),
+      "a pausing grant is the server's own pacing — not a defect to escalate");
+    assert.equal((knock.error.message.match(/\b\d+s\b/g) ?? []).length, 1,
+      `exactly one interval must appear in a hold-off refusal: ${knock.error.message}`);
+
+    // The prescribed retry, landing inside the cooldown: the wait it names is
+    // the cooldown's own seconds, real and short — not the retry-now door and
+    // not the token's hour. The two rungs must not quote each other's moves.
+    const cooled = await held.call("initialize", 2, INIT_PARAMS);
+    assert.match(cooled.error.message, /not knocking again for \d+s/,
+      "the cooldown refusal names its own short figure");
+    assert.match(cooled.error.message, /clears itself by waiting/,
+      "inside the cooldown the wait is honest — this rung must not say retry now");
+    assert.ok(!/retry the call now/.test(cooled.error.message),
+      "\"retry now\" inside the cooldown would send the caller in a circle");
+    assert.ok(!/server side needs attention/.test(cooled.error.message),
+      "the cooldown is the bridge's own thrift, no one's defect");
+    assert.equal((cooled.error.message.match(/\b\d+s\b/g) ?? []).length, 1,
+      `exactly one interval must appear in a cooldown refusal: ${cooled.error.message}`);
+
+    // A repeat AFTER the cooldown: age the stamp so the next call knocks again
+    // while the previous refusal is still fresh in the grant's memory.
+    const gsPath = storeFile(dir) + ".grant-state";
+    const gs = JSON.parse(readFileSync(gsPath, "utf8"));
+    gs.early_refused_until = Date.now() - 1000;
+    writeFileSync(gsPath, JSON.stringify(gs));
+
+    const repeat = await held.call("initialize", 3, INIT_PARAMS);
+    assert.match(repeat.error.message, /refused too early again/,
+      "the second knock refused is named as a repeat, not re-sold as the first");
+    assert.match(repeat.error.message, /the hour is real/,
+      "a refusal that repeats is the schedule speaking");
+    assert.match(repeat.error.message, /clears itself by waiting/,
+      "only now is the wait the honest prescription");
+    assert.ok(!/retry the call now/.test(repeat.error.message),
+      "the ladder must terminate: a proven hour never invites another immediate retry");
+    assert.equal(fake.state.counts.refresh, 2, "three calls, two knocks — the cooldown held the middle one");
   });
 });
 
