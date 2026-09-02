@@ -1387,9 +1387,17 @@ const replyText = (reply) => {
 const seatIsGone = (reply) => /no such standing|take it with connect|такого стояния|занять.*connect/i.test(replyText(reply));
 // The surface's marks for a call that ran WITHOUT its author: the channel
 // refuses (409, nothing applied), the graph factories write and warn. Either
-// way the binding this session believed in is gone.
-const UNATTRIBUTED = /write_unattributed|session_not_registered|not registered|не зарегистрирован|carried no author/i;
-const isUnattributed = (reply) => !!reply && UNATTRIBUTED.test(replyText(reply));
+// way the binding this session believed in is gone. Anchored on the surface's
+// CODES, never on prose: a node body read back may well contain the words
+// "session not registered", and a lookup must not buy a register for that.
+const UNATTRIBUTED_CODE = /write_unattributed\w*|session_not_registered/;
+const UNATTRIBUTED_REFUSAL = /\b409\b|не зарегистрирован[аоы]? ни за каким стоянием|hold no registered standing/i;
+const isUnattributed = (reply) => {
+  if (!reply) return false;
+  const text = replyText(reply);
+  if (UNATTRIBUTED_CODE.test(text)) return true;
+  return !!reply.result?.isError && UNATTRIBUTED_REFUSAL.test(text);
+};
 
 async function deliver(msg) {
   const isInit = msg?.method === "initialize";
@@ -1409,14 +1417,14 @@ async function deliver(msg) {
   // A tool call's own reply is held back until it has been read for the
   // unattributed mark; everything else the server streams passes through.
   const isToolCall = msg?.method === "tools/call";
-  let held = null;
+  let heldReply = null;
   let standingRetried = false;
   const forward = (m) => {
     if (isInit && m.id === msg.id && m.result?.protocolVersion) {
       state.protocolVersion = m.result.protocolVersion;
     }
     if (m.id === msg.id) noteStanding(msg, m);
-    if (isToolCall && hasId && m.id === msg.id) { held = m; return; }
+    if (isToolCall && hasId && m.id === msg.id) { heldReply = m; return; }
     emit(m);
   };
 
@@ -1429,17 +1437,17 @@ async function deliver(msg) {
         await reinitialize();
       }
       if (!isInit) await ensureStanding(); // the session may have turned over under us
-      held = null;
+      heldReply = null;
       await post(msg, forward);
-      if (held) {
-        if (state.standing && isUnattributed(held)) {
+      if (heldReply) {
+        if (state.standing && isUnattributed(heldReply)) {
           // The binding this session trusted is gone on the server's side — a
           // silent turnover, a platform that lost it, a header nobody honoured.
           // A refused channel call applied nothing: re-bind and say the word again,
           // once. A write that went through with a warning is already on record
           // without its author; all that can be saved is the next one.
           state.standingSession = null;
-          const refused = !!held.result?.isError;
+          const refused = !!heldReply.result?.isError;
           if (refused && !standingRetried) {
             standingRetried = true;
             log("the call ran unattributed — re-binding the standing and repeating it once");
@@ -1447,10 +1455,10 @@ async function deliver(msg) {
             if (state.standingSession !== state.sessionId) await ensureStanding(); // one passing refusal is not the hour
             if (state.standingSession === state.sessionId) continue;
           } else {
-            log(`a write went out unattributed (${replyText(held).slice(0, 120)}) — the standing is re-bound before the next call`);
+            log(`a write went out unattributed (${replyText(heldReply).slice(0, 120)}) — the standing is re-bound before the next call`);
           }
         }
-        emit(held);
+        emit(heldReply);
       }
       return;
     } catch (e) {

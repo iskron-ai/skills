@@ -270,7 +270,7 @@ export async function startFakeNks(opts = {}) {
           if (!bound) {
             st.counts.unattributed++;
             return json(res, 200, { jsonrpc: "2.0", id: msg.id, result: { isError: true,
-              content: [{ type: "text", text: "Отказано (409): эта сессия не зарегистрирована ни за каким стоянием" }] } }, extra);
+              content: [{ type: "text", text: "Отказано (409, session_not_registered): эта сессия не зарегистрирована ни за каким стоянием" }] } }, extra);
           }
           st.counts.attributed_send++;
           return json(res, 200, { jsonrpc: "2.0", id: msg.id,

@@ -778,6 +778,7 @@ test("стояние перерегистрируется само, когда �
     assert.match(send.result.content[0].text, /принято стоянием проба/);
     assert.equal(fake.state.counts.unattributed, 0, "ни одна запись не должна лечь безавторной");
     assert.equal(fake.state.counts.register_standing, 2, "мост обязан перерегистрировать стояние ровно один раз");
+    assert.equal(fake.state.counts.header_binds, 0, "кириллическое имя заголовком не едет — оно остаётся на переигрывании");
   });
 });
 
@@ -786,7 +787,7 @@ test("стояние перерегистрируется само, когда �
 // чтением кода против узлов о сессии; каждая проба моделирует одну.
 
 // Имя ASCII: заголовок автопривязки — байты, не текст, и кириллица в него не едет
-// (такое имя остаётся на переигрывании register — это проверяет проба выше).
+// (проба выше утверждает header_binds === 0 на кириллическом имени).
 const REG = { realm: "nks-dev", action: "register", karta: 931, name: "proba" };
 const SEND = { realm: "nks-dev", action: "send", karta: 931, standing: "proba", text: "слово" };
 async function standUp(bridge, dir) {
@@ -835,12 +836,13 @@ test("смена токена закрыла сессию, сервер молч
 
 test("проходящий отказ переигрывания не стирает память о стоянии", async (t) => {
   // Сегодня любой отказ переигранного register забывает стояние насовсем, и дальше
-  // мост пишет безавторно, сказав об этом только в stderr.
+  // мост пишет безавторно, сказав об этом только в stderr. Два отказа подряд
+  // достают и вторую попытку починки по пометке: одна проходящая не есть час.
   // Поверхность без автопривязки: заголовок пропускается, держит только переигрывание.
   await withFake(t, { ignoreStandingHeader: true }, async ({ fake, dir, spawnBridge }) => {
     const bridge = spawnBridge();
     await standUp(bridge, dir);
-    await fake.control({ kill_session: true, standingRefuseNext: 1 });
+    await fake.control({ kill_session: true, standingRefuseNext: 2 }); // первое переигрывание и первая попытка починки по пометке — обе отказаны
 
     const first = await bridge.call("tools/call", 6, { name: "iskron_channel", arguments: SEND });
     const second = await bridge.call("tools/call", 7, { name: "iskron_channel", arguments: { ...SEND, text: "второе" } });
