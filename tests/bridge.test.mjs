@@ -778,6 +778,122 @@ test("стояние перерегистрируется само, когда �
     assert.match(send.result.content[0].text, /принято стоянием проба/);
     assert.equal(fake.state.counts.unattributed, 0, "ни одна запись не должна лечь безавторной");
     assert.equal(fake.state.counts.register_standing, 2, "мост обязан перерегистрировать стояние ровно один раз");
+    assert.equal(fake.state.counts.header_binds, 0, "кириллическое имя заголовком не едет — оно остаётся на переигрывании");
+  });
+});
+
+// Четыре свидетельства из боя (nks-dev #3454, #3919; @nks/feedback #63) говорят,
+// что перерегистрация на смену id держит не всегда. Ниже — дыры, названные
+// чтением кода против узлов о сессии; каждая проба моделирует одну.
+
+// Имя ASCII: заголовок автопривязки — байты, не текст, и кириллица в него не едет
+// (проба выше утверждает header_binds === 0 на кириллическом имени).
+const REG = { realm: "nks-dev", action: "register", karta: 931, name: "proba" };
+const SEND = { realm: "nks-dev", action: "send", karta: 931, standing: "proba", text: "слово" };
+async function standUp(bridge, dir) {
+  await authorize(bridge, dir);
+  assert.ok((await bridge.call("initialize", 2, INIT_PARAMS)).result, "сессия должна существовать");
+  const reg = await bridge.call("tools/call", 3, { name: "iskron_channel", arguments: REG });
+  assert.match(reg.result.content[0].text, /зарегистрировано/);
+}
+
+test("параллельные вызовы после смены сессии — все несут автора, register переигран один раз", async (t) => {
+  // Доставки моста не сериализованы, а харнесс шлёт вызовы пачками. Переигрывание,
+  // защищённое флагом, пропускает второй параллельный вызов мимо себя — безавторным.
+  await withFake(t, {}, async ({ fake, dir, spawnBridge }) => {
+    const bridge = spawnBridge();
+    await standUp(bridge, dir);
+    await fake.control({ kill_session: true });
+
+    const [a, b] = await Promise.all([
+      bridge.call("tools/call", 6, { name: "iskron_channel", arguments: SEND }),
+      bridge.call("tools/call", 7, { name: "iskron_channel", arguments: { ...SEND, text: "второе" } }),
+    ]);
+    for (const r of [a, b]) {
+      assert.equal(r.result.isError, undefined, `параллельная запись легла безавторной: ${JSON.stringify(r.result)}`);
+    }
+    assert.equal(fake.state.counts.unattributed, 0, "ни одна запись не должна лечь безавторной");
+    assert.equal(fake.state.counts.register_standing, 2, "переигрывание одно на всех параллельных, не по одному на вызов");
+  });
+});
+
+test("смена токена закрыла сессию, сервер молча открыл новую — запись следом всё равно несёт автора", async (t) => {
+  // Сессия открыта credential'ом и умирает с ним (#188). Мост после 401 обновляет
+  // токен и повторяет вызов со СТАРЫМ id; сервер, открывающий на него новую сессию
+  // молча, исполняет вызов безавторным и лишь в ответе сообщает новый id.
+  // Первый случай #3919 совпал ровно с отказом обновления токена.
+  await withFake(t, { sessionFollowsToken: true, silentNewSession: true }, async ({ fake, dir, spawnBridge }) => {
+    const bridge = spawnBridge();
+    await standUp(bridge, dir);
+    await fake.control({ rotate_access: true }); // сосед провернул грант: наш bearer мёртв, сессия с ним
+
+    const send = await bridge.call("tools/call", 6, { name: "iskron_channel", arguments: SEND });
+    assert.equal(send.result?.isError, undefined, `запись после смены токена: ${JSON.stringify(send)}`);
+    assert.match(send.result.content[0].text, /принято стоянием proba/);
+    assert.equal(fake.state.counts.unattributed, 0, "ни одна запись не должна лечь безавторной");
+  });
+});
+
+test("проходящий отказ переигрывания не стирает память о стоянии", async (t) => {
+  // Сегодня любой отказ переигранного register забывает стояние насовсем, и дальше
+  // мост пишет безавторно, сказав об этом только в stderr. Два отказа подряд
+  // достают и вторую попытку починки по пометке: одна проходящая не есть час.
+  // Поверхность без автопривязки: заголовок пропускается, держит только переигрывание.
+  await withFake(t, { ignoreStandingHeader: true }, async ({ fake, dir, spawnBridge }) => {
+    const bridge = spawnBridge();
+    await standUp(bridge, dir);
+    await fake.control({ kill_session: true, standingRefuseNext: 2 }); // первое переигрывание и первая попытка починки по пометке — обе отказаны
+
+    const first = await bridge.call("tools/call", 6, { name: "iskron_channel", arguments: SEND });
+    const second = await bridge.call("tools/call", 7, { name: "iskron_channel", arguments: { ...SEND, text: "второе" } });
+    assert.equal(second.result?.isError, undefined,
+      `после проходящего отказа стояние забыто: ${JSON.stringify(second.result)}`);
+    assert.match(second.result.content[0].text, /принято стоянием proba/);
+    assert.equal(first.result?.isError, undefined,
+      `первая же запись после отказа должна дойти с автором, а не вернуть 409: ${JSON.stringify(first.result)}`);
+  });
+});
+
+test("пересобранная сессия открывается уже привязанной — заголовком, не гонкой", async (t) => {
+  // Поверхность несёт автопривязку при открытии сессии (nks-dev #3800): initialize с
+  // заголовком X-NKS-Standing «граф карта имя» открывает сессию привязанной, и первый
+  // tool-call не гонится с переигрыванием.
+  await withFake(t, {}, async ({ fake, dir, spawnBridge }) => {
+    const bridge = spawnBridge();
+    await standUp(bridge, dir);
+    await fake.control({ kill_session: true });
+
+    const send = await bridge.call("tools/call", 6, { name: "iskron_channel", arguments: SEND });
+    assert.equal(send.result?.isError, undefined, JSON.stringify(send.result));
+    assert.equal(fake.state.counts.header_binds, 1, "ре-инициализация обязана нести заголовок стояния");
+    assert.equal(fake.state.counts.unattributed, 0, "ни одна запись не должна лечь безавторной");
+    // Рукопожатие не говорит, принят ли заголовок, — register переигрывается и при нём:
+    // один идемпотентный вызов на смену сессии покупает автора на обеих поверхностях.
+    assert.equal(fake.state.counts.register_standing, 2, "переигрывание не отменяется заголовком");
+  });
+});
+
+test("платформа потеряла привязку при живой сессии — мост чинит по пометке и повторяет слово", async (t) => {
+  // Случаи «без видимого знака» (#3919, #3772): id сессии не менялся, а запись ушла
+  // безавторной. Единственный знак — пометка в самом ответе; мост, который её читает,
+  // перерегистрируется тут же и не отдаёт харнессу 409 там, где повтор безопасен.
+  await withFake(t, {}, async ({ fake, dir, spawnBridge }) => {
+    const bridge = spawnBridge();
+    await standUp(bridge, dir);
+    await fake.control({ drop_standings: true });
+
+    const send = await bridge.call("tools/call", 6, { name: "iskron_channel", arguments: SEND });
+    assert.equal(send.result?.isError, undefined, `слово отбито 409 вместо починки: ${JSON.stringify(send.result)}`);
+    assert.match(send.result.content[0].text, /принято стоянием proba/);
+    assert.equal(fake.state.counts.register_standing, 2, "мост обязан перерегистрировать стояние по пометке");
+
+    // Пишущая фабрика не отказывает, а метит: узел лёг безавторным, вернуть автора
+    // нельзя — но следующая запись обязана уже нести его.
+    await fake.control({ drop_standings: true });
+    const write = await bridge.call("tools/call", 7, { name: "iskron_update", arguments: { realm: "nks-dev", node_id: 1, basis_version: 1 } });
+    assert.match(write.result.content[0].text, /write_unattributed/);
+    const next = await bridge.call("tools/call", 8, { name: "iskron_update", arguments: { realm: "nks-dev", node_id: 1, basis_version: 2 } });
+    assert.match(next.result.content[0].text, /автор: proba/, `пометка не прочитана, следующая запись снова безавторна: ${JSON.stringify(next.result)}`);
   });
 });
 

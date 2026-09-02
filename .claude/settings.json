@@ -24,7 +24,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "echo '{\"hookSpecificOutput\":{\"hookEventName\":\"SessionStart\",\"additionalContext\":\"iskron-ai/skills — orient in nks-dev before acting: iskron_orient(realm=nks-dev, focus_holon=1506), then your agenda iskron_orient(realm=nks-dev, focus=931); the entry skill runs the protocol. Source of truth is skills/<name>/SKILL.md — run make build after edits, review the SKILL.md diff by eye.\"}}'"
+            "command": "echo '{\"hookSpecificOutput\":{\"hookEventName\":\"SessionStart\",\"additionalContext\":\"iskron-ai/skills — enter by the entry skill before acting, read it whole; addresses: graph @nks/nks-dev (r5), focus contour #1506, agent karta #931, owner karta #1226. Source of truth is skills/<name>/SKILL.md — run make build after edits, review the SKILL.md diff by eye.\"}}'"
           }
         ]
       }
