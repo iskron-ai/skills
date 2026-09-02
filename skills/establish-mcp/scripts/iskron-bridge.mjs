@@ -1057,6 +1057,9 @@ const state = {
   initParams: null, // params of the harness's initialize, for transparent replay
   reinitCounter: 0,
   // The standing this session registered, and the session it was confirmed in.
+  // Why the bridge owns re-registration, what was observed to go wrong, and the
+  // falsifier that closes it: graph @nks/nks-dev, nodes #3919 (the breakdown),
+  // #3454 (the falsifier), #3800 (the header form the surface binds with).
   // The server correlates a writer BY THE MCP SESSION ID (its holder's word):
   // a new session is a different writer, and the surface's own self-repair has
   // nothing to repeat there, because its memory is keyed by that same id and is
