@@ -1067,8 +1067,33 @@ const state = {
   // it hangs on the change of id, never on a timer.
   standing: null,        // {realm, karta, name} of the last register that succeeded
   standingSession: null, // the session id that registration is known to hold in
+  // The access token the session was opened with. A session is opened BY a
+  // credential and dies with it (the surface's own word): once the token in the
+  // store is no longer the one this session was opened with — expired, refreshed
+  // after a 401, rotated by a sibling bridge — the old id is a dead letter, and a
+  // server that opens a fresh session on it silently runs the call unattributed
+  // before we learn the new id. So a changed token means: re-open first.
+  sessionToken: null,
 };
-let replayingStanding = false;
+// One replay at a time — and every concurrent caller WAITS for it. A flag that
+// merely skipped the second caller let it through unattributed while the first
+// was still re-registering (harnesses send calls in batches).
+let standingInFlight = null;
+
+// The three-token form the surface binds a session with at initialize
+// ("realm karta name"): a session opened this way is attributed before its
+// first tool call, and re-initialising re-binds by itself. A name with spaces
+// or no name at all cannot ride the header — those keep the register replay.
+function standingHeader() {
+  const s = state.standing;
+  if (!s?.realm || s.karta == null || !s.name) return null;
+  const h = `${s.realm} ${s.karta} ${s.name}`;
+  // An HTTP header value is bytes, not text: fetch refuses anything outside
+  // printable ASCII, and a name with whitespace would not split into three.
+  if (!/^[\x21-\x7e]+ [\x21-\x7e]+ [\x21-\x7e]+$/.test(h)) return null;
+  return h;
+}
+const currentAccessToken = () => loadStore().tokens?.access_token ?? null;
 
 function emit(msg) {
   writeTo(process.stdout, JSON.stringify(msg) + "\n");
@@ -1135,8 +1160,15 @@ async function post(msg, onMessage) {
   };
   const tokens = loadStore().tokens;
   if (tokens?.access_token) headers.authorization = `Bearer ${tokens.access_token}`;
-  if (state.sessionId) headers["mcp-session-id"] = state.sessionId;
+  // The session this request is sent under, kept apart from state: a sibling
+  // call may be re-initializing while this one is in flight, and a 404 that
+  // comes back after state.sessionId was cleared is still THIS session dying.
+  const sentSession = state.sessionId;
+  if (sentSession) headers["mcp-session-id"] = sentSession;
   if (state.protocolVersion) headers["mcp-protocol-version"] = state.protocolVersion;
+  const isInit = msg?.method === "initialize";
+  const boundByHeader = isInit ? standingHeader() : null;
+  if (boundByHeader) headers["x-nks-standing"] = boundByHeader;
 
   let res;
   try {
@@ -1165,12 +1197,25 @@ async function post(msg, onMessage) {
     throw new UpstreamError(res.headers.get("www-authenticate") || "unauthorized", "auth",
       tokens?.access_token ?? null, UpstreamError.NOT_SENT);
   }
-  if (res.status === 404 && state.sessionId) {
+  if (res.status === 404 && sentSession) {
     res.body?.cancel?.();
     throw new UpstreamError("session expired upstream", "session", null, UpstreamError.NOT_SENT);
   }
   const sid = res.headers.get("mcp-session-id");
-  if (sid) state.sessionId = sid; // a session id may ride any answer, including an empty one
+  if (sid) {
+    if (sid !== state.sessionId && !isInit) {
+      // The server turned the session over UNDER this call: whatever it just did
+      // ran in a session nobody registered. The reply below carries the mark; the
+      // next call re-binds before it goes out.
+      log(`upstream replaced the session mid-call (${state.sessionId} -> ${sid}) — this call may have gone unattributed`);
+    }
+    state.sessionId = sid; // a session id may ride any answer, including an empty one
+    state.sessionToken = tokens?.access_token ?? null;
+    // A session opened with the header is bound at the handshake on a surface
+    // that honours it — and silently unbound on one that predates it, and the
+    // handshake does not say which. So the register is replayed regardless:
+    // one idempotent call per turnover buys attribution on both.
+  }
   if (res.status === 202 || res.status === 204) return;
   if (!res.ok) {
     const text = (await res.text().catch(() => "")).slice(0, 300);
@@ -1211,6 +1256,7 @@ async function reinitialize() {
       if (!state.initParams) throw new UpstreamError("session lost before initialize", "session");
       log("upstream session lost — re-initializing transparently");
       state.sessionId = null;
+      state.sessionToken = null;
       const id = `iskron-bridge-reinit-${++state.reinitCounter}`;
       let result = null;
       await post(
@@ -1295,32 +1341,55 @@ function noteStanding(msg, reply) {
 // Put the remembered standing back on the current session — before the call
 // that would otherwise land unattributed. Silent by contract: register releases
 // nothing and evicts nobody, so replaying it costs one call and no state.
-async function ensureStanding() {
-  if (replayingStanding || !state.standing || !state.sessionId) return;
-  if (state.standingSession === state.sessionId) return;
-  replayingStanding = true;
-  try {
-    const id = `iskron-bridge-restanding-${++state.reinitCounter}`;
-    let reply = null;
-    await post({ jsonrpc: "2.0", id, method: "tools/call", params: {
-      name: "iskron_channel",
-      arguments: { ...state.standing, action: "register" },
-    } }, (m) => { if (m.id === id) reply = m; });
-    if (reply && !reply.error && !reply.result?.isError) {
-      state.standingSession = state.sessionId;
-      log(`standing re-registered on the new session (${state.standing.name ?? "unnamed"})`);
-    } else {
-      // The seat may be gone (expired while we were away) — say so and let the
-      // agent take it back with connect; never guess a different name.
-      log(`could not re-register the standing on the new session: ${JSON.stringify(reply?.error ?? reply?.result ?? null).slice(0, 200)}`);
-      state.standing = null;
+function ensureStanding() {
+  if (!state.standing || !state.sessionId) return Promise.resolve();
+  if (state.standingSession === state.sessionId) return Promise.resolve();
+  if (standingInFlight) return standingInFlight; // wait for the replay already running
+  standingInFlight = (async () => {
+    try {
+      const id = `iskron-bridge-restanding-${++state.reinitCounter}`;
+      let reply = null;
+      await post({ jsonrpc: "2.0", id, method: "tools/call", params: {
+        name: "iskron_channel",
+        arguments: { ...state.standing, action: "register" },
+      } }, (m) => { if (m.id === id) reply = m; });
+      if (reply && !reply.error && !reply.result?.isError) {
+        state.standingSession = state.sessionId;
+        log(`standing re-registered on the new session (${state.standing.name ?? "unnamed"})`);
+      } else if (seatIsGone(reply)) {
+        // The seat itself is gone (expired while we were away) — say so and let
+        // the agent take it back with connect; never guess a different name.
+        log(`the standing's seat is gone, forgetting it: ${replyText(reply).slice(0, 200)}`);
+        state.standing = null;
+      } else {
+        // Any other refusal is the hour's, not the seat's: keep the memory and
+        // try again before the next call. Forgetting here is what left a bridge
+        // writing unattributed for the rest of a shift after one passing 503.
+        log(`could not re-register the standing this time, will retry before the next call: ${replyText(reply).slice(0, 200)}`);
+      }
+    } catch (e) {
+      log(`re-registering the standing failed: ${e.message}`);
+    } finally {
+      standingInFlight = null;
     }
-  } catch (e) {
-    log(`re-registering the standing failed: ${e.message}`);
-  } finally {
-    replayingStanding = false;
-  }
+  })();
+  return standingInFlight;
 }
+
+const replyText = (reply) => {
+  if (!reply) return "";
+  if (reply.error) return JSON.stringify(reply.error);
+  const content = reply.result?.content;
+  return Array.isArray(content) ? content.map((c) => c?.text ?? "").join("\n") : JSON.stringify(reply.result ?? "");
+};
+// The surface's own words for "no seat to bind to" — the one refusal that
+// means the remembered standing is no longer takeable by register.
+const seatIsGone = (reply) => /no such standing|take it with connect|такого стояния|занять.*connect/i.test(replyText(reply));
+// The surface's marks for a call that ran WITHOUT its author: the channel
+// refuses (409, nothing applied), the graph factories write and warn. Either
+// way the binding this session believed in is gone.
+const UNATTRIBUTED = /write_unattributed|session_not_registered|not registered|не зарегистрирован|carried no author/i;
+const isUnattributed = (reply) => !!reply && UNATTRIBUTED.test(replyText(reply));
 
 async function deliver(msg) {
   const isInit = msg?.method === "initialize";
@@ -1337,18 +1406,52 @@ async function deliver(msg) {
     }
   };
 
+  // A tool call's own reply is held back until it has been read for the
+  // unattributed mark; everything else the server streams passes through.
+  const isToolCall = msg?.method === "tools/call";
+  let held = null;
+  let standingRetried = false;
   const forward = (m) => {
     if (isInit && m.id === msg.id && m.result?.protocolVersion) {
       state.protocolVersion = m.result.protocolVersion;
     }
     if (m.id === msg.id) noteStanding(msg, m);
+    if (isToolCall && hasId && m.id === msg.id) { held = m; return; }
     emit(m);
   };
 
   for (;;) {
     try {
+      if (!isInit && state.sessionId && state.sessionToken && currentAccessToken() !== state.sessionToken) {
+        // The credential this session was opened with is gone; so is the session,
+        // whatever the server says next. Re-open — bound by header — before the call.
+        log("the access token changed since the session was opened — re-initializing before the call");
+        await reinitialize();
+      }
       if (!isInit) await ensureStanding(); // the session may have turned over under us
+      held = null;
       await post(msg, forward);
+      if (held) {
+        if (state.standing && isUnattributed(held)) {
+          // The binding this session trusted is gone on the server's side — a
+          // silent turnover, a platform that lost it, a header nobody honoured.
+          // A refused channel call applied nothing: re-bind and say the word again,
+          // once. A write that went through with a warning is already on record
+          // without its author; all that can be saved is the next one.
+          state.standingSession = null;
+          const refused = !!held.result?.isError;
+          if (refused && !standingRetried) {
+            standingRetried = true;
+            log("the call ran unattributed — re-binding the standing and repeating it once");
+            await ensureStanding();
+            if (state.standingSession !== state.sessionId) await ensureStanding(); // one passing refusal is not the hour
+            if (state.standingSession === state.sessionId) continue;
+          } else {
+            log(`a write went out unattributed (${replyText(held).slice(0, 120)}) — the standing is re-bound before the next call`);
+          }
+        }
+        emit(held);
+      }
       return;
     } catch (e) {
       note(e);

@@ -62,8 +62,19 @@ export async function startFakeNks(opts = {}) {
     // point IS what replay costs.
     reuseDetection: opts.reuseDetection ?? false,
     counts: { register: 0, authorize: 0, code_exchange: 0, refresh: 0, stale_refresh: 0, early_refresh: 0, mcp: 0,
-              register_standing: 0, attributed_send: 0, unattributed: 0 },
+              register_standing: 0, attributed_send: 0, unattributed: 0, header_binds: 0 },
     standings: new Map(), // сессия MCP → имя стояния; убивается вместе с сессией
+    // Сессия открыта credential'ом и умирает вместе с ним (#188 в nks-dev):
+    // сменился bearer — старая сессия закрыта. Как сервер отвечает на мёртвый
+    // или чужой id — двумя способами, и оба наблюдены в поле: 404 (клиент
+    // переинициализируется) либо молча открытая новая сессия, чей id едет в
+    // ответе на тот же вызов. Второй способ и есть тот, где запись ложится
+    // безавторной до того, как клиент узнал о смене.
+    sessionTokens: new Map(),
+    sessionFollowsToken: opts.sessionFollowsToken ?? false,
+    silentNewSession: opts.silentNewSession ?? false,
+    ignoreStandingHeader: opts.ignoreStandingHeader ?? false, // поверхность старше автопривязки: заголовок молча пропускается
+    standingRefuseNext: 0, // столько ближайших register отказать проходящим отказом
     // The resource indicator each leg carried. A real server turns this into
     // the token's audience, so it is the only place a test can see what the
     // bridge actually asked to be issued for.
@@ -91,10 +102,13 @@ export async function startFakeNks(opts = {}) {
     if (p === "/control") {
       const patch = JSON.parse((await body(req)) || "{}");
       if (patch.kill_session) { for (const s of st.sessions) st.dead.add(s); st.sessions.clear(); }
-      for (const k of ["refreshStatus", "refreshError", "mcpStatus", "mcpHangMs", "accessTtl", "refreshDelayMs", "reuseDetection", "tokenPath"]) {
+      for (const k of ["refreshStatus", "refreshError", "mcpStatus", "mcpHangMs", "accessTtl", "refreshDelayMs", "reuseDetection", "tokenPath",
+                       "sessionFollowsToken", "silentNewSession", "standingRefuseNext"]) {
         if (k in patch) st[k] = patch[k];
       }
       if (patch.revoke_access) st.access = null;
+      if (patch.rotate_access) st.access = mintAccess(st); // сосед провернул грант: старый bearer больше не принимается
+      if (patch.drop_standings) st.standings.clear();     // платформа потеряла привязки при живых сессиях mcp
       if (patch.forget_clients) st.clients.clear(); // as if the server expired the dynamic registration
       return json(res, 200, { counts: st.counts });
     }
@@ -198,21 +212,40 @@ export async function startFakeNks(opts = {}) {
           "www-authenticate": `Bearer resource_metadata="${base}/.well-known/oauth-protected-resource/mcp"`,
         });
       }
-      const sid = req.headers["mcp-session-id"];
+      let sid = req.headers["mcp-session-id"];
       const msg = JSON.parse(await body(req));
-      if (sid && st.dead.has(sid)) { res.writeHead(404); return res.end("session expired"); }
+      const extra = {};
+      if (sid && st.sessionFollowsToken && st.sessionTokens.has(sid) && st.sessionTokens.get(sid) !== bearer) {
+        st.dead.add(sid); st.sessions.delete(sid); // credential сменился — сессия закрыта
+      }
+      if (sid && st.dead.has(sid) && msg.method !== "initialize") {
+        if (!st.silentNewSession) { res.writeHead(404); return res.end("session expired"); }
+        // Молча открытая новая сессия: вызов исполняется в ней, её id едет в ответе.
+        sid = token("session");
+        st.sessions.add(sid);
+        st.sessionTokens.set(sid, bearer);
+        extra["mcp-session-id"] = sid;
+      }
 
       if (msg.method === "initialize") {
         const fresh = token("session");
         st.sessions.add(fresh);
+        st.sessionTokens.set(fresh, bearer);
+        // Автопривязка стояния при открытии сессии (#3800 в nks-dev): заголовок
+        // «граф карта имя» привязывает сессию прежде ответа на рукопожатие.
+        const hdr = req.headers["x-nks-standing"];
+        if (hdr && !st.ignoreStandingHeader) {
+          const parts = String(hdr).trim().split(/\s+/);
+          if (parts.length === 3) { st.standings.set(fresh, parts[2]); st.counts.header_binds++; }
+        }
         return json(res, 200, {
           jsonrpc: "2.0", id: msg.id,
           result: { protocolVersion: "2025-06-18", capabilities: {}, serverInfo: { name: "fake-nks", version: "0" } },
         }, { "mcp-session-id": fresh });
       }
-      if (msg.id === undefined || msg.id === null) { res.writeHead(202); return res.end(); }
+      if (msg.id === undefined || msg.id === null) { res.writeHead(202, extra); return res.end(); }
       if (msg.method === "tools/list") {
-        return json(res, 200, { jsonrpc: "2.0", id: msg.id, result: { tools: [{ name: "nks_orient" }] } });
+        return json(res, 200, { jsonrpc: "2.0", id: msg.id, result: { tools: [{ name: "nks_orient" }] } }, extra);
       }
       // Стояние делателя, смоделированное так, как его держит настоящая
       // поверхность: коррелятор писателя — идентификатор сессии MCP. Новая
@@ -222,25 +255,39 @@ export async function startFakeNks(opts = {}) {
       if (msg.method === "tools/call" && msg.params?.name === "iskron_channel") {
         const a = msg.params.arguments ?? {};
         if (a.action === "register") {
+          if (st.standingRefuseNext > 0) {
+            st.standingRefuseNext--;
+            return json(res, 200, { jsonrpc: "2.0", id: msg.id, result: { isError: true,
+              content: [{ type: "text", text: "Отказано (503): контур временно недоступен, повтори позже" }] } }, extra);
+          }
           st.counts.register_standing++;
           st.standings.set(sid, a.name ?? "(unnamed)");
           return json(res, 200, { jsonrpc: "2.0", id: msg.id,
-            result: { content: [{ type: "text", text: `зарегистрировано: ${a.name}` }] } });
+            result: { content: [{ type: "text", text: `зарегистрировано: ${a.name}` }] } }, extra);
         }
         if (a.action === "send") {
           const bound = st.standings.get(sid);
           if (!bound) {
             st.counts.unattributed++;
             return json(res, 200, { jsonrpc: "2.0", id: msg.id, result: { isError: true,
-              content: [{ type: "text", text: "Отказано (409): эта сессия не зарегистрирована ни за каким стоянием" }] } });
+              content: [{ type: "text", text: "Отказано (409): эта сессия не зарегистрирована ни за каким стоянием" }] } }, extra);
           }
           st.counts.attributed_send++;
           return json(res, 200, { jsonrpc: "2.0", id: msg.id,
-            result: { content: [{ type: "text", text: `принято стоянием ${bound}` }] } });
+            result: { content: [{ type: "text", text: `принято стоянием ${bound}` }] } }, extra);
         }
       }
+      // Пишущая фабрика графа: пишет и без привязки, но метит запись безавторной —
+      // так ведёт себя настоящая поверхность (write_unattributed_several_standings).
+      if (msg.method === "tools/call" && /^iskron_(add_|update)/.test(msg.params?.name ?? "")) {
+        const bound = st.standings.get(sid);
+        if (!bound) st.counts.unattributed++;
+        return json(res, 200, { jsonrpc: "2.0", id: msg.id, result: { content: [{ type: "text",
+          text: bound ? `Создан узел #1 (автор: ${bound})`
+            : "Создан узел #1\n⚠ write_unattributed_several_standings: This write carried no author" }] } }, extra);
+      }
       return json(res, 200, { jsonrpc: "2.0", id: msg.id,
-        result: { ok: true, method: msg.method, ...(st.padBytes ? { pad: "x".repeat(st.padBytes) } : {}) } });
+        result: { ok: true, method: msg.method, ...(st.padBytes ? { pad: "x".repeat(st.padBytes) } : {}) } }, extra);
     }
 
     res.writeHead(404); res.end();
