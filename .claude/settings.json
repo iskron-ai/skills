@@ -24,7 +24,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "echo '{\"hookSpecificOutput\":{\"hookEventName\":\"SessionStart\",\"additionalContext\":\"iskron-ai/skills — enter before acting (skill entry, it ends in signs): iskron_orient(realm=nks-dev, focus=1506); the map iskron_orient(realm=nks-dev, lens=bianhua, focus=1506) (a server older than that form refuses by type — then lens=bianhua without focus); the hint of the direction you take; your agenda iskron_orient(realm=nks-dev, focus=931). Before the first graph write or channel word take your seat (skill standing: board, then register on your live seat, or connect and register under the derived name) — an unseated session writes without an author. Source of truth is skills/<name>/SKILL.md — run make build after edits, review the SKILL.md diff by eye.\"}}'"
+            "command": "echo '{\"hookSpecificOutput\":{\"hookEventName\":\"SessionStart\",\"additionalContext\":\"iskron-ai/skills — enter before acting (skill entry, it ends in signs): iskron_orient(realm=nks-dev, focus=1506); the map iskron_orient(realm=nks-dev, lens=bianhua, focus=1506), the forest narrowed to the contour; the hint of the direction you take; your agenda iskron_orient(realm=nks-dev, focus=931). Before the first graph write or channel word take your seat (skill standing: board, then register on your live seat, or connect and register under the derived name) — an unseated session writes without an author. Source of truth is skills/<name>/SKILL.md — run make build after edits, review the SKILL.md diff by eye.\"}}'"
           }
         ]
       }
