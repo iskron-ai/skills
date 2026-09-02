@@ -1,5 +1,16 @@
 # Changelog
 
+## [5.0.0](https://github.com/iskron-ai/skills/compare/v4.2.0...v5.0.0) (2026-09-02)
+
+
+### ⚠ BREAKING CHANGES
+
+* **entry:** скилл likbez упразднён, его содержание — первая часть entry.
+
+### Features
+
+* **entry:** вход в граф — грамотность влита и читается всегда; мост держит привязку стояния; снятие стояния по слову человека ([#74](https://github.com/iskron-ai/skills/issues/74)) ([c096669](https://github.com/iskron-ai/skills/commit/c09666969b99bfdc3f8b5440e1793cf7a8c2541d))
+
 ## [4.2.0](https://github.com/iskron-ai/skills/compare/v4.1.0...v4.2.0) (2026-09-01)
 
 
