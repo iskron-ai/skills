@@ -24,7 +24,7 @@ const url = process.argv[2] || process.env.ISKRON_CHANNEL_SOCKET,
   // Обе схемы, как и у статусного адреса ниже: с одним `wss:` вопрос службе на
   // ws-адресе не уходил вовсе, и ветка «служба жива, а нас рвёт» не наступала.
   version = new URL(url).origin.replace(/^wss:/, 'https:').replace(/^ws:/, 'http:') + '/api/version';
-let fastDrops = 0;
+let fastDrops = 0, dead = false, retry = null;
 const log = (s) => process.stdout.write(s + '\n');
 // Последнее слово перед выходом: синхронно, иначе выход следом уносит саму строку.
 // Полная неблокирующая труба бросает EAGAIN — тогда обычная печать и выход по её
@@ -52,14 +52,22 @@ function open() {
   ws.addEventListener('close', (e) => dropped(e.code));
 
   async function dropped(code) {
-    if (gone) return;
-    gone = true;
-    const e = { code };
-    if ([4000, 4001, 4002].includes(e.code)) {
+    // Мёртвый токен громче любого предположения об обрыве. `error` даёт лишь
+    // предположение (1006 по отсрочке), а настоящий код приходит `close`-ом и
+    // может опоздать — прежняя ограда `gone` его глотала, и сторож молча
+    // переоткрывался на мёртвом токене: ровно тот отказ, ради которого писан
+    // громкий выход. Поэтому коды мёртвого токена проходят ограду всегда и
+    // снимают уже назначенное переоткрытие.
+    if ([4000, 4001, 4002].includes(code)) {
+      if (dead) return;
+      dead = true;
+      if (retry) clearTimeout(retry);
       // Нулевой выход был бы неотличим от чистой остановки, а молчаливый — от
       // работающего сторожа: оба конца пути отсюда громкие.
-      return loudExit(`ДЕЛАТЕЛЬ: закрытие ${e.code} — токен мёртв, зови connect (на 4001 — mint)`, 1);
+      return loudExit(`ДЕЛАТЕЛЬ: закрытие ${code} — токен мёртв, зови connect (на 4001 — mint)`, 1);
     }
+    if (gone) return;
+    gone = true;
     fastDrops = Date.now() - startedAt < 5000 ? fastDrops + 1 : 0;
     if (fastDrops >= 3) {
       const up = await serviceUp();
@@ -69,7 +77,7 @@ function open() {
       log('служба не отвечает — идёт раскатка, держу тот же токен');
       fastDrops = 1;                      // простой не должен перерасти в вопрос о токене
     }
-    setTimeout(open, e.code === 4003 ? 3000 : 2000);
+    retry = setTimeout(open, code === 4003 ? 3000 : 2000);
   }
 }
 open();
