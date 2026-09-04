@@ -42,9 +42,19 @@ const serviceUp = () => fetch(version, { signal: AbortSignal.timeout(5000) })
 function open() {
   const startedAt = Date.now();           // от конструкции, НЕ в onopen — см. channel.md
   const ws = new WebSocket(url);
+  let gone = false;                       // обрыв разбирается один раз, чем бы он ни пришёл
   ws.addEventListener('message', (e) => log(typeof e.data === 'string' ? e.data : '[двоичный кадр]'));
-  ws.addEventListener('error', () => {}); // закрытие придёт следом в любом случае
-  ws.addEventListener('close', async (e) => {
+  // Обрыв на самом апгрейде даёт на части рантаймов ТОЛЬКО error: close не
+  // приходит вовсе, и сторож, ждущий одного close, тихо умирает вместе с пустым
+  // циклом событий (замерено на Node 22). Отсрочка оставляет close шанс назвать
+  // свой код — коды мёртвого токена приходят именно им.
+  ws.addEventListener('error', () => setTimeout(() => dropped(1006), 500));
+  ws.addEventListener('close', (e) => dropped(e.code));
+
+  async function dropped(code) {
+    if (gone) return;
+    gone = true;
+    const e = { code };
     if ([4000, 4001, 4002].includes(e.code)) {
       // Нулевой выход был бы неотличим от чистой остановки, а молчаливый — от
       // работающего сторожа: оба конца пути отсюда громкие.
@@ -60,7 +70,7 @@ function open() {
       fastDrops = 1;                      // простой не должен перерасти в вопрос о токене
     }
     setTimeout(open, e.code === 4003 ? 3000 : 2000);
-  });
+  }
 }
 open();
 
