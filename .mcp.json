@@ -1,9 +1,8 @@
 {
   "mcpServers": {
     "iskron": {
-      "type": "stdio",
-      "command": "node",
-      "args": ["${CLAUDE_PLUGIN_ROOT:-.}/skills/establish-mcp/scripts/iskron-bridge.mjs"]
+      "type": "http",
+      "url": "https://mcp.iskron.ru"
     }
   }
 }

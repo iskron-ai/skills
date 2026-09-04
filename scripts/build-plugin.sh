@@ -21,21 +21,13 @@ trap 'rm -rf "$staging"' EXIT
 # manifest nested inside a plugin dir.
 #
 # .mcp.json DOES go in, at the plugin root, because it is what makes the graph
-# server arrive with the plugin — but not the repo's copy. That one runs the
-# bridge over stdio from ${CLAUDE_PLUGIN_ROOT}, and claude.ai spawns no local
-# process; the archive gets the http record instead, generated from the
-# canonical resource identifier the surface snapshot carries (the exact string
-# the server prints — a hand-written URL once diverged by a trailing slash).
-# Leaving the record out made the same plugin behave differently on claude.ai —
-# no server at all, and nothing on the Connectors tab to authorize, against a
-# SETUP.md that promises exactly that.
+# server arrive with the plugin. The marketplace channel installs the repo
+# itself and picks it up there; leaving it out here made the same plugin behave
+# differently on claude.ai — no server at all, and nothing on the Connectors tab
+# to authorize, against a SETUP.md that promises exactly that.
 mkdir -p "$staging/iskron/.claude-plugin" dist
 cp .claude-plugin/plugin.json "$staging/iskron/.claude-plugin/"
-node -e '
-  const r = JSON.parse(require("fs").readFileSync("fixtures/surface.json", "utf8")).resource;
-  if (!r) { console.error("fixtures/surface.json carries no resource identifier"); process.exit(1); }
-  process.stdout.write(JSON.stringify({ mcpServers: { iskron: { type: "http", url: r } } }, null, 2) + "\n");
-' > "$staging/iskron/.mcp.json"
+cp .mcp.json "$staging/iskron/"
 cp -R skills "$staging/iskron/"
 
 rm -f "$out"

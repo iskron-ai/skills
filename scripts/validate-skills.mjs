@@ -451,24 +451,16 @@ try {
 //    немым: «сервер недоступен» вместо «идентификаторы разошлись», и цену
 //    платит каждый, кто поставил отгружаемую запись. Правило принято по слову
 //    держателя поверхности; форму его сервера здесь не нормализуем.
-//    Запись же по умолчанию — stdio-мост из корня плагина (граф nks-dev,
-//    #4057): путь обязан идти через ${CLAUDE_PLUGIN_ROOT} к iskron-bridge.mjs,
-//    иначе установленный плагин запускает то, чего у потребителя нет, и
-//    отказ снова нем — «сервер не отвечает» вместо «файла нет».
 try {
   const snapPath = join(root, "fixtures/surface.json");
   const recPath = join(root, ".mcp.json");
   if (existsSync(snapPath) && existsSync(recPath)) {
     const canonical = JSON.parse(readFileSync(snapPath, "utf8")).resource;
     const servers = JSON.parse(readFileSync(recPath, "utf8")).mcpServers ?? {};
-    for (const [name, rec] of Object.entries(servers)) {
-      if (canonical && rec?.url && rec.url !== canonical) {
-        fail(".mcp.json", `запись \`${name}\` целит в ${JSON.stringify(rec.url)}, а канонический идентификатор ресурса — ${JSON.stringify(canonical)}: наивный клиент сравнит строки и откатится на «сервер авторизации = сам ресурс», сказав «сервер недоступен»`);
-      }
-      if (rec?.command) {
-        const args = Array.isArray(rec.args) ? rec.args.join(" ") : "";
-        if (!args.includes("${CLAUDE_PLUGIN_ROOT") || !args.includes("skills/establish-mcp/scripts/iskron-bridge.mjs")) {
-          fail(".mcp.json", `запись \`${name}\` — stdio, но гонит не мост из корня плагина: путь обязан идти через \${CLAUDE_PLUGIN_ROOT} к skills/establish-mcp/scripts/iskron-bridge.mjs, иначе установленный плагин запускает то, чего у потребителя нет`);
+    if (canonical) {
+      for (const [name, rec] of Object.entries(servers)) {
+        if (rec?.url && rec.url !== canonical) {
+          fail(".mcp.json", `запись \`${name}\` целит в ${JSON.stringify(rec.url)}, а канонический идентификатор ресурса — ${JSON.stringify(canonical)}: наивный клиент сравнит строки и откатится на «сервер авторизации = сам ресурс», сказав «сервер недоступен»`);
         }
       }
     }
