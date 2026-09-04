@@ -489,3 +489,64 @@ test("a session without UI neither prints nor throws", async () => {
     await rec.stop();
   }
 });
+
+// Обновление поставки НЕ обновляло мост: расширение предпочитает домашнюю копию,
+// потому что рядом с ней грант, — и делатель работал старым, считая, что
+// обновился. Наблюдено на штатной установке после релиза: код 6.0.0 поднял мост
+// 5.0.0. Проба держит три вещи разом, потому что дефект в любой из них
+// возвращает ту же тишину: обновляем только СТРОГО новее, говорим вслух в обе
+// стороны, и не трогаем ничего, когда путь задан человеком руками.
+test("a newer packaged bridge refreshes the home copy, aloud, and never downgrades it", async () => {
+  const { mkdirSync } = await import("node:fs");
+  const bridgeText = (v) => `#!/usr/bin/env node\nconst VERSION = "${v}"; // x-release-please-version\n`;
+
+  // Своя песочница-пакет: import.meta.url расширения должен смотреть на ../skills/…
+  const pkg = mkdtempSync(join(tmpdir(), "iskron-pkg-"));
+  const extDir = join(pkg, "extensions");
+  const pkgBridgeDir = join(pkg, "skills", "establish-mcp", "scripts");
+  const home = join(pkg, "home");
+  const homeBridgeDir = join(home, ".iskron-bridge");
+  for (const d of [extDir, pkgBridgeDir, homeBridgeDir]) mkdirSync(d, { recursive: true });
+  const extCopy = join(extDir, "iskron.ts");
+  copyFileSync(SOURCE, extCopy);
+  const packaged = join(pkgBridgeDir, "iskron-bridge.mjs");
+  const homeBridge = join(homeBridgeDir, "iskron-bridge.mjs");
+
+  const runStart = async (env) => {
+    for (const k of ENV_KEYS) delete process.env[k];
+    for (const [k, v] of Object.entries(env)) process.env[k] = String(v);
+    process.env.HOME = home;
+    sockets.length = 0;
+    const factory = (await import(`${pathToFileURL(extCopy).href}?n=${++seq}`)).default;
+    const rec = fakePi();
+    factory(rec.pi);
+    await rec.fire("session_start");
+    await rec.fire("session_shutdown");
+    return rec;
+  };
+
+  // (а) поставка новее — копия обновлена, и об этом сказано
+  writeFileSync(packaged, bridgeText("6.0.0"));
+  writeFileSync(homeBridge, bridgeText("5.0.0"));
+  let rec = await runStart({ ISKRON_MCP_READY_WAIT_MS: 1 });
+  assert.match(readFileSync(homeBridge, "utf8"), /VERSION = "6\.0\.0"/, "домашний мост не обновлён");
+  assert.ok(
+    /5\.0\.0[\s\S]*6\.0\.0/.test(rec.said()),
+    "обновление прошло молча — а тихая починка есть то же расхождение, только в нашу пользу",
+  );
+
+  // (б) домашний новее — не тронут, и об этом тоже сказано
+  writeFileSync(packaged, bridgeText("6.0.0"));
+  writeFileSync(homeBridge, bridgeText("7.1.0"));
+  rec = await runStart({ ISKRON_MCP_READY_WAIT_MS: 1 });
+  assert.match(readFileSync(homeBridge, "utf8"), /VERSION = "7\.1\.0"/, "домашний мост откачен назад");
+  assert.ok(
+    /домашний новее/.test(rec.said()),
+    "молчание оставляет человека в неведении о том, что поставка отстала",
+  );
+
+  // (в) путь задан руками — выбор человека старше нашей заботы
+  writeFileSync(homeBridge, bridgeText("5.0.0"));
+  await runStart({ ISKRON_BRIDGE_PATH: MISSING_BRIDGE, ISKRON_MCP_READY_WAIT_MS: 1 });
+  assert.match(readFileSync(homeBridge, "utf8"), /VERSION = "5\.0\.0"/, "тронули домашний мост, хотя путь задан руками");
+});

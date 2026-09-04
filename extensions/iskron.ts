@@ -28,7 +28,7 @@
 // будет вовсе. Сокет, мост, таймеры — только от session_start до
 // session_shutdown, и снятие идемпотентно.
 import { spawn, type ChildProcess } from "node:child_process";
-import { accessSync, constants, readFileSync } from "node:fs";
+import { accessSync, chmodSync, constants, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -66,6 +66,69 @@ const HANDSHAKE_MS = Number(process.env.ISKRON_MCP_HANDSHAKE_MS || 600000);
 const TICK_MS = 15000;
 
 const PROTOCOL = "2025-06-18";
+
+/** Версия моста объявлена константой в его тексте — читаем строкой, без запуска. */
+function bridgeVersion(path: string): string | null {
+  try {
+    const m = /^const VERSION = "([^"]+)"/m.exec(readFileSync(path, "utf8"));
+    return m ? m[1] : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Строгое сравнение X.Y.Z: 1 если a новее b, -1 если старее, 0 если равны или нечитаемо. */
+function newer(a: string, b: string): number {
+  const pa = a.split(".").map(Number), pb = b.split(".").map(Number);
+  if (pa.length !== 3 || pb.length !== 3 || [...pa, ...pb].some((n) => !Number.isInteger(n))) return 0;
+  for (let i = 0; i < 3; i++) if (pa[i] !== pb[i]) return pa[i] > pb[i] ? 1 : -1;
+  return 0;
+}
+
+/**
+ * Обновление поставки НЕ обновляло мост: расширение предпочитает домашнюю копию,
+ * потому что рядом с ней лежит грант, — и делатель работал старым мостом, считая,
+ * что обновился. Наблюдено на штатной установке сразу после релиза: код 6.0.0
+ * поднял мост 5.0.0. Дорого это тем, что мост штампует свою сборку в каждую
+ * ошибку и в лог гранта: полевой репорт с новой поставки приходил бы со старым
+ * числом, и расхождение читали бы как ошибку репортёра.
+ *
+ * Грант при этом НЕ в файле моста, а рядом с ним отдельными файлами, — поэтому
+ * заменить сам скрипт безопасно, вход не теряется.
+ *
+ * Две ограды. Только СТРОГО новее: иначе старая поставка на другой машине молча
+ * откатила бы мост назад. И только вслух: чинить не запрещено, чинить молча —
+ * запрещено, иначе это то же тихое расхождение, только в нашу пользу.
+ */
+function refreshHomeBridge(notify: Notify): void {
+  // Путь задан человеком руками — его выбор старше нашей заботы, не трогаем ничего.
+  if (process.env.ISKRON_BRIDGE_PATH?.trim()) return;
+  let packaged: string;
+  try {
+    packaged = resolve(dirname(fileURLToPath(import.meta.url)), "..", "skills", "establish-mcp", "scripts", "iskron-bridge.mjs");
+  } catch {
+    return; // загрузчик не дал собственного пути — сравнивать не с чем
+  }
+  const home = join(homedir(), ".iskron-bridge", "iskron-bridge.mjs");
+  const vPackaged = bridgeVersion(packaged), vHome = bridgeVersion(home);
+  if (!vPackaged || !vHome) return; // домашней копии ещё нет или версия нечитаема — это дело establish-mcp
+  const cmp = newer(vPackaged, vHome);
+  if (cmp <= 0) {
+    // Домашняя новее: её мог положить человек руками или другая поставка.
+    // Откатывать молча нельзя, и не молча тоже — но и промолчать значит оставить его в неведении.
+    if (cmp < 0) notify(`Искрон: дома мост ${vHome}, в поставке ${vPackaged} — домашний новее, не трогаю.`, "warning");
+    return;
+  }
+  try {
+    const tmp = home + ".new";
+    writeFileSync(tmp, readFileSync(packaged));
+    chmodSync(tmp, 0o755);
+    renameSync(tmp, home); // атомарно: сессия рядом не увидит полуфайла
+    notify(`Искрон: мост дома обновлён ${vHome} → ${vPackaged}. Грант не тронут, он лежит рядом отдельными файлами.`, "info");
+  } catch (e) {
+    notify(`Искрон: мост дома ${vHome}, в поставке ${vPackaged}, обновить не вышло (${(e as Error).message}). Работаю старым.`, "warning");
+  }
+}
 
 /** Путь к мосту выводится, не зашивается: расширение и мост едут одним репозиторием. */
 function findBridge(): { path: string; tried: string[] } | { path: null; tried: string[] } {
@@ -293,6 +356,10 @@ function setupBridge(pi: ExtensionAPI, offerSocket: (url: string) => void): void
   let notify: Notify = () => {};
 
   async function raise(): Promise<void> {
+    // Прежде поиска: если поставка привезла мост новее домашнего — обновить, вслух.
+    // Порядок несущий: обновляем ДО подъёма, иначе новый мост побежал бы только
+    // со следующей сессии, а эта осталась бы на старом, уже сказав, что обновилась.
+    refreshHomeBridge(notify);
     const found = findBridge();
     if (!found.path) {
       notify(
