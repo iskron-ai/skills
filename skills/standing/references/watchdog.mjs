@@ -6,9 +6,10 @@
 // — скрипт читает переменную, когда аргумента нет.
 //
 // Держит сокет канала делателя открытым и доставляет каждый кадр: печатает его
-// на stdout, переоткрывается по закрытию и отличает мёртвый токен от катящейся
-// выкатки. В Claude Code гони его под Monitor с persistent: true — каждая
-// напечатанная строка придёт событием в ход делателя. На харнесе без
+// на stdout, переоткрывается по закрытию, отличает мёртвый токен от катящейся
+// выкатки и на мёртвом токене выходит ненулевым. В Claude Code гони его под
+// Monitor с persistent: true — каждая напечатанная строка придёт событием в
+// ход делателя. На харнесе без
 // встроенного наблюдателя адаптируй по references/channel.md: выходи на первом
 // кадре-сообщении вместо печати (фоновый вывод там читается только по запросу).
 //
@@ -17,33 +18,59 @@
 // Боевые заметки — в channel.md рядом с этим файлом: почему попытка считается
 // от конструкции (никогда от onopen), почему пауза не растёт и почему три
 // быстрых обрыва спрашивают /version, прежде чем винить токен.
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeSync } from 'node:fs';
 
 const url = process.argv[2] || process.env.ISKRON_CHANNEL_SOCKET,
-  version = new URL(url).origin.replace('wss:', 'https:') + '/api/version';
+  // Обе схемы, как и у статусного адреса ниже: с одним `wss:` вопрос службе на
+  // ws-адресе не уходил вовсе, и ветка «служба жива, а нас рвёт» не наступала.
+  version = new URL(url).origin.replace(/^wss:/, 'https:').replace(/^ws:/, 'http:') + '/api/version';
 let fastDrops = 0;
 const log = (s) => process.stdout.write(s + '\n');
+// Последнее слово перед выходом: синхронно, иначе выход следом уносит саму строку.
+// Полная неблокирующая труба бросает EAGAIN — тогда обычная печать и выход по её
+// колбэку; сторожевой таймер на случай, если читатель не заберёт вовсе.
+const loudExit = (s, code) => {
+  try { writeSync(1, s + '\n'); process.exit(code); }
+  catch {
+    process.stdout.write(s + '\n', () => process.exit(code));
+    setTimeout(() => process.exit(code), 1000).unref();
+  }
+};
 const serviceUp = () => fetch(version, { signal: AbortSignal.timeout(5000) })
   .then((r) => (r.ok ? r.json() : null)).catch(() => null);
 
 function open() {
   const startedAt = Date.now();           // от конструкции, НЕ в onopen — см. channel.md
   const ws = new WebSocket(url);
+  let gone = false;                       // обрыв разбирается один раз, чем бы он ни пришёл
   ws.addEventListener('message', (e) => log(typeof e.data === 'string' ? e.data : '[двоичный кадр]'));
-  ws.addEventListener('error', () => {}); // закрытие придёт следом в любом случае
-  ws.addEventListener('close', async (e) => {
+  // Обрыв на самом апгрейде даёт на части рантаймов ТОЛЬКО error: close не
+  // приходит вовсе, и сторож, ждущий одного close, тихо умирает вместе с пустым
+  // циклом событий (замерено на Node 22). Отсрочка оставляет close шанс назвать
+  // свой код — коды мёртвого токена приходят именно им.
+  ws.addEventListener('error', () => setTimeout(() => dropped(1006), 500));
+  ws.addEventListener('close', (e) => dropped(e.code));
+
+  async function dropped(code) {
+    if (gone) return;
+    gone = true;
+    const e = { code };
     if ([4000, 4001, 4002].includes(e.code)) {
-      return log(`ДЕЛАТЕЛЬ: закрытие ${e.code} — токен мёртв, зови connect (на 4001 — mint)`); // и выход
+      // Нулевой выход был бы неотличим от чистой остановки, а молчаливый — от
+      // работающего сторожа: оба конца пути отсюда громкие.
+      return loudExit(`ДЕЛАТЕЛЬ: закрытие ${e.code} — токен мёртв, зови connect (на 4001 — mint)`, 1);
     }
     fastDrops = Date.now() - startedAt < 5000 ? fastDrops + 1 : 0;
     if (fastDrops >= 3) {
       const up = await serviceUp();
-      if (up) return log(`ДЕЛАТЕЛЬ: обрывы, а служба отвечает (${up.version}) — спроси о токене`);
+      // Служба жива, а нас рвёт: переоткрывать нечего, и уйти молча нельзя —
+      // делатель остался бы с виду слышимым.
+      if (up) return loudExit(`ДЕЛАТЕЛЬ: обрывы, а служба отвечает (${up.version}) — спроси о токене`, 1);
       log('служба не отвечает — идёт раскатка, держу тот же токен');
       fastDrops = 1;                      // простой не должен перерасти в вопрос о токене
     }
     setTimeout(open, e.code === 4003 ? 3000 : 2000);
-  });
+  }
 }
 open();
 
@@ -76,4 +103,4 @@ async function say() {
   }
   if (res && res.status >= 400 && res.status < 500) said = text; // отказ по самой строке: повтор той же ничего не изменит
 }
-if (sayFile) setInterval(say, 1000);
+if (sayFile) setInterval(say, 1000).unref(); // таймер не смеет держать процесс, чей сокет умер
