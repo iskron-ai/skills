@@ -47,7 +47,7 @@ export default function (pi: ExtensionAPI) {
       if (ctx.hasUI) {
         ctx.ui.notify(
           "Искрон: канал не открыт — нет ISKRON_CHANNEL_SOCKET. Займи стояние (скилл standing) и перезапусти сессию.",
-          "warn",
+          "warning",
         );
       }
       return;
