@@ -358,8 +358,12 @@ for (const file of shippedFiles) {
 
 // 5. Manifest lists must match the tree. Hand-edited inventories beside
 //    automation drift silently — so the lists are linted against readdir, not
-//    trusted: AGENTS.md's structure line and README.md's skill table are both
-//    claims about what skills/ holds, and both are checked against it.
+//    trusted. AGENTS.md's structure line is one such claim about what skills/
+//    holds. README.md no longer carries a second one: the README teaches the
+//    human a single door (/iskron) and names no roster, so there is nothing
+//    there left to drift. The roster it used to hold moved to a place that is
+//    load-bearing rather than decorative — the routing tree in skills/iskron,
+//    linted below beside entry's map of situations.
 try {
   const agents = readFileSync(join(root, "AGENTS.md"), "utf8");
   const m = /по одной директории на скилл \(([^)]*)\)/.exec(agents);
@@ -378,48 +382,43 @@ try {
 } catch (e) {
   fail("AGENTS.md", `could not read: ${e.message}`);
 }
-try {
-  const readme = readFileSync(join(root, "README.md"), "utf8");
-  const rows = new Set([...readme.matchAll(/^\| \*\*([a-z-]+)\*\* \|/gm)].map((x) => x[1]));
-  for (const name of skillNames) if (!rows.has(name)) {
-    fail("README.md", `skill \`${name}\` has no row in the skill table`);
-  }
-  for (const name of rows) if (!skillNames.includes(name)) {
-    fail("README.md", `table row \`${name}\` matches no directory in skills/`);
-  }
-} catch (e) {
-  fail("README.md", `could not read: ${e.message}`);
-}
-
-// 5b. The shipped map of situations. AGENTS.md and README.md are inventories
-//     for the human maintaining this repo; neither ships inside the plugin, so
-//     an agent that installed the bundle has never read either. What it does
-//     read is entry — the one skill every session passes through — and the map
-//     there is the only place a skill announces WHEN to reach for it. A skill
-//     absent from that map is, for the agent, a skill that does not exist: the
+// 5b. The shipped maps of skills. AGENTS.md is an inventory for the human
+//     maintaining this repo and never ships, so an agent that installed the
+//     bundle has never read it. What ships are two maps, and both are
+//     load-bearing routing surfaces rather than decoration:
+//       entry — read by every session, keyed by the position the AGENT
+//         recognises in itself ("собираюсь назвать крией то, у чего нет входа");
+//       iskron — the door a HUMAN types, keyed by the outcome they want.
+//     Same targets, different keys: that fork is deliberate. A skill absent
+//     from either map is, from that side, a skill that does not exist — the
 //     harness lists its description, and a description is a routing surface,
-//     not a map. So the map is linted like the other inventories, not trusted
-//     to memory — a new skill lands in it or CI goes red.
-try {
-  const entry = readFileSync(join(skillsDir, "entry", "SKILL.md"), "utf8");
-  const section = /## Карта положений[\s\S]*?(?=\n## )/.exec(entry);
-  if (!section) {
-    fail("skills/entry/SKILL.md", "секция «## Карта положений» не найдена — карта скиллов по симптому живёт там");
-  } else {
+//     not a map. So both are linted like the inventories, not trusted to
+//     memory: a new skill lands in both or CI goes red.
+function lintMap(skill, file, sectionRe, sectionHint) {
+  const path = join(skillsDir, skill, "SKILL.md");
+  try {
+    const text = readFileSync(path, "utf8");
+    const section = sectionRe.exec(text);
+    if (!section) {
+      fail(file, `секция «${sectionHint}» не найдена — карта скиллов живёт там`);
+      return;
+    }
     const mapped = new Set([...section[0].matchAll(/→ \*\*([a-z-]+)\*\*/g)].map((x) => x[1]));
     for (const name of skillNames) {
-      if (name === "entry") continue; // the map's own host
+      if (name === skill) continue; // the map's own host
       if (!mapped.has(name)) {
-        fail("skills/entry/SKILL.md", `skill \`${name}\` has no row in the map of situations — an agent will never learn when to reach for it`);
+        fail(file, `skill \`${name}\` has no row in the map — from this side an agent will never learn when to reach for it`);
       }
     }
     for (const name of mapped) if (!skillNames.includes(name)) {
-      fail("skills/entry/SKILL.md", `map row \`${name}\` matches no directory in skills/`);
+      fail(file, `map row \`${name}\` matches no directory in skills/`);
     }
+  } catch (e) {
+    fail(file, `could not read: ${e.message}`);
   }
-} catch (e) {
-  fail("skills/entry/SKILL.md", `could not read: ${e.message}`);
 }
+lintMap("entry", "skills/entry/SKILL.md", /## Карта положений[\s\S]*?(?=\n## )/, "## Карта положений");
+lintMap("iskron", "skills/iskron/SKILL.md", /## Маршруты[\s\S]*?(?=\n## )/, "## Маршруты");
 
 // 6. Контракт iskronify живёт в ДВУХ местах, и это нарочно: тело скилла читают
 //    после загрузки, а загружает скилл его описание — номер, стоящий только в
