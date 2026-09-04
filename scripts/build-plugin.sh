@@ -35,8 +35,21 @@ rm -f "$out"
 
 # What the archive must carry is a promise SETUP.md makes to a human who cannot
 # see inside a zip, so it is checked here rather than trusted: this file IS the
-# claude.ai channel, and its first real run is at release time.
-for want in iskron/.claude-plugin/plugin.json iskron/.mcp.json iskron/skills/establish-mcp/SKILL.md; do
-  unzip -Z1 "$out" | grep -qxF "$want" || { echo "archive is missing $want" >&2; exit 1; }
+# claude.ai channel, and its first real run is at release time. The executable
+# files are the js-bundle of the delivery (graph nks-dev, holon #4057): an
+# archive without them installs skills that tell the agent to run what it has not.
+# The listing is taken once: `unzip | grep -q` under pipefail is a race — grep
+# quits on the first match, unzip dies of SIGPIPE, and the pipeline reads as
+# "missing" for a file that is there.
+listing="$(unzip -Z1 "$out")"
+for want in \
+  iskron/.claude-plugin/plugin.json \
+  iskron/.mcp.json \
+  iskron/skills/establish-mcp/SKILL.md \
+  iskron/skills/establish-mcp/scripts/iskron-bridge.mjs \
+  iskron/skills/standing/references/watchdog.mjs \
+  iskron/skills/standing/references/watchdog-exit.mjs \
+  iskron/skills/product-roadmap/references/roadmap-template.html; do
+  grep -qxF "$want" <<<"$listing" || { echo "archive is missing $want" >&2; exit 1; }
 done
 echo "built dist/iskron.zip"
