@@ -4,10 +4,12 @@ name: CI
 # unescaped quote in a description) installs silently into every agent that loads
 # the skill, degrading methodology with no crash. This workflow is the loud gate:
 # it validates the frontmatter contract and proves the committed .skill bundles
-# match their source. One artifact is code — the bundled iskron-bridge — and it
-# carries a behavioural suite, because its failures (a dead callback listener, a
-# burnt refresh grant) are silent for the agent and only visible to a human whose
-# login went nowhere.
+# match their source. Some of what ships is code — the bundled iskron-bridge and
+# the two standing watchdogs — and it carries behavioural suites, because those
+# failures (a dead callback listener, a burnt refresh grant, a watchdog that
+# holds a dead token in silence) are invisible to the agent and land on a human.
+# Each suite runs on the Node version its artifact claims: the bridge on 20, the
+# watchdogs on 22, since they take the global WebSocket.
 
 on:
   push:
@@ -57,6 +59,17 @@ jobs:
           node-version: "20"
       - name: Drive the bridge over stdio against a local fake NKS + OAuth server
         run: make test
+
+  watchdog-tests:
+    name: standing watchdogs behave
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Run both watchdogs against a socket that closes with a dead-token code
+        run: make test-watchdog
 
   plugin-archive:
     name: Plugin archive builds

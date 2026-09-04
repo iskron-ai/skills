@@ -5,6 +5,10 @@
 //
 // ISKRON_WATCHDOG_DIR points the same probe at any copy (a built bundle, an
 // installed one, a previous revision) so it can be shown red before a fix.
+//
+// Node 22+, and that is why this file has its own make target and its own CI
+// job: the watchdogs take the global WebSocket, while the bridge next door
+// claims Node 20 and is held there. Run it with `make test-watchdog`.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
