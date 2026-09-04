@@ -312,6 +312,23 @@ try {
   if (manifest.metadata?.version !== plugin.version) {
     fail("marketplace.json", `metadata.version (${JSON.stringify(manifest.metadata?.version)}) must mirror plugin.json (${plugin.version})`);
   }
+  // The Codex manifest is a FOURTH copy of the same number, and it drifts the
+  // same silent way: Codex reads its own `.codex-plugin/plugin.json`, so a
+  // stale value there makes every Codex consumer see an old release forever
+  // while every other channel moves. release-please writes it from the same
+  // release (extra-files); this gate is what makes that wiring impossible to
+  // forget. Absent file is fine — the Codex delivery is optional.
+  const codexPath = join(root, ".codex-plugin", "plugin.json");
+  if (existsSync(codexPath)) {
+    try {
+      const codex = JSON.parse(readFileSync(codexPath, "utf8"));
+      if (codex.version !== plugin.version) {
+        fail(".codex-plugin/plugin.json", `\`version\` ${JSON.stringify(codex.version)} must mirror .claude-plugin/plugin.json (${plugin.version}); release-please writes both`);
+      }
+    } catch (e) {
+      fail(".codex-plugin/plugin.json", `could not read/parse: ${e.message}`);
+    }
+  }
 } catch (e) {
   fail(".claude-plugin/plugin.json", `could not read/parse: ${e.message}`);
 }
