@@ -41,7 +41,7 @@ if (!url) {
 // Обе схемы, как и у статусного адреса ниже: с одним `wss:` вопрос службе на
 // ws-адресе не уходил вовсе, и ветка «служба жива, а нас рвёт» не наступала.
 const version = new URL(url).origin.replace(/^wss:/, "https:").replace(/^ws:/, "http:") + "/api/version";
-let fastDrops = 0;
+let fastDrops = 0, dead = false, retry = null;
 
 // Синхронная запись, а не process.stdout.write: в трубу тот пишет асинхронно, и
 // выход следом теряет ровно то, ради чего файл существует, — сам кадр.
@@ -72,13 +72,21 @@ function open() {
   ws.addEventListener("close", (e) => dropped(e.code));
 
   async function dropped(code) {
-    if (gone) return;
-    gone = true;
-    const e = { code };
-    if ([4000, 4001, 4002].includes(e.code)) {
-      note(`ДЕЛАТЕЛЬ: закрытие ${e.code} — токен мёртв, зови connect (на 4001 — mint)`);
+    // Мёртвый токен громче любого предположения об обрыве. `error` даёт лишь
+    // предположение (1006 по отсрочке), а настоящий код приходит `close`-ом и
+    // может опоздать — прежняя ограда `gone` его глотала, и сторож молча
+    // переоткрывался на мёртвом токене: ровно тот отказ, ради которого писан
+    // громкий выход. Поэтому коды мёртвого токена проходят ограду всегда и
+    // снимают уже назначенное переоткрытие.
+    if ([4000, 4001, 4002].includes(code)) {
+      if (dead) return;
+      dead = true;
+      if (retry) clearTimeout(retry);
+      note(`ДЕЛАТЕЛЬ: закрытие ${code} — токен мёртв, зови connect (на 4001 — mint)`);
       process.exit(1);                    // громко: мёртвый токен не смеет выглядеть пустым инбоксом
     }
+    if (gone) return;
+    gone = true;
     fastDrops = Date.now() - startedAt < 5000 ? fastDrops + 1 : 0;
     if (fastDrops >= 3) {
       const up = await serviceUp();
@@ -89,7 +97,7 @@ function open() {
       note("служба не отвечает — идёт раскатка, держу тот же токен");
       fastDrops = 1;                      // простой не должен перерасти в вопрос о токене
     }
-    setTimeout(open, e.code === 4003 ? 3000 : 2000);
+    retry = setTimeout(open, code === 4003 ? 3000 : 2000);
   }
 }
 open();

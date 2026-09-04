@@ -1,0 +1,40 @@
+{
+  "name": "iskron",
+  "version": "5.0.0",
+  "description": "NKS methodology skills — orient, write, design, and weave an NKS graph through the iskron_* MCP tools.",
+  "author": {
+    "name": "iskron",
+    "url": "https://iskron.ru"
+  },
+  "homepage": "https://iskron.ru",
+  "repository": "https://github.com/iskron-ai/skills",
+  "license": "MIT",
+  "keywords": [
+    "iskron",
+    "nks",
+    "methodology",
+    "knowledge graph",
+    "orientation",
+    "design",
+    "weaving"
+  ],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "iskron",
+    "shortDescription": "Методические скиллы NKS и граф Искрона",
+    "longDescription": "Скилл-бандлы NKS: вход в граф, запись узлов, проектирование, ткачество, сведение кода и графа, вахта и стояние. Граф достигается тулами iskron_* через сервер mcp.iskron.ru.",
+    "developerName": "iskron",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Read",
+      "Write"
+    ],
+    "websiteURL": "https://iskron.ru",
+    "defaultPrompt": [
+      "Сориентируйся в графе Искрона",
+      "Спроектируй это изменение и запиши в граф",
+      "Сверь код с графом"
+    ]
+  }
+}
