@@ -28,7 +28,7 @@
 // будет вовсе. Сокет, мост, таймеры — только от session_start до
 // session_shutdown, и снятие идемпотентно.
 import { spawn, type ChildProcess } from "node:child_process";
-import { accessSync, chmodSync, constants, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { accessSync, chmodSync, constants, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -68,13 +68,9 @@ const TICK_MS = 15000;
 const PROTOCOL = "2025-06-18";
 
 /** Версия моста объявлена константой в его тексте — читаем строкой, без запуска. */
-function bridgeVersion(path: string): string | null {
-  try {
-    const m = /^const VERSION = "([^"]+)"/m.exec(readFileSync(path, "utf8"));
-    return m ? m[1] : null;
-  } catch {
-    return null;
-  }
+function bridgeVersion(text: string): string | null {
+  const m = /^const VERSION = "([^"]+)"/m.exec(text);
+  return m ? m[1] : null;
 }
 
 /** Строгое сравнение X.Y.Z: 1 если a новее b, -1 если старее, 0 если равны или нечитаемо. */
@@ -87,46 +83,82 @@ function newer(a: string, b: string): number {
 
 /**
  * Обновление поставки НЕ обновляло мост: расширение предпочитает домашнюю копию,
- * потому что рядом с ней лежит грант, — и делатель работал старым мостом, считая,
- * что обновился. Наблюдено на штатной установке сразу после релиза: код 6.0.0
- * поднял мост 5.0.0. Дорого это тем, что мост штампует свою сборку в каждую
- * ошибку и в лог гранта: полевой репорт с новой поставки приходил бы со старым
- * числом, и расхождение читали бы как ошибку репортёра.
+ * потому что рядом с ней лежит грант, — и делатель работал старым, считая, что
+ * обновился. Наблюдено на штатной установке сразу после релиза: код 6.0.0 поднял
+ * мост 5.0.0. Дорого это тем, что мост штампует сборку в каждую ошибку и в лог
+ * гранта: полевой репорт с новой поставки приходил бы со старым числом.
  *
- * Грант при этом НЕ в файле моста, а рядом с ним отдельными файлами, — поэтому
- * заменить сам скрипт безопасно, вход не теряется.
+ * Грант замену переживает, и это ПРОВЕРЕНО, а не предположено: всё состояние
+ * входа живёт отдельными файлами в том же каталоге, а имя хранилища выводится из
+ * адреса сервера, не из пути и не из байт скрипта. В приёмке новый мост
+ * воспользовался refresh-токеном, оставленным старым.
  *
- * Две ограды. Только СТРОГО новее: иначе старая поставка на другой машине молча
- * откатила бы мост назад. И только вслух: чинить не запрещено, чинить молча —
- * запрещено, иначе это то же тихое расхождение, только в нашу пользу.
+ * ПРАВИЛО СРАВНЕНИЯ — по байтам, а не по версии, и это исправление собственной
+ * ошибки. Версия есть номер РЕЛИЗА, а не тождество файла: при установке из
+ * git-источника едет ветка, а константа между релизами стоит на месте, — сверка
+ * по версии не сработала бы никогда именно там, где поставка обновляется чаще
+ * всего. Мост и сам различает себя хешем собственных байт, и скилл транспорта
+ * говорит это строкой выше. Поэтому: домашняя копия должна ЗЕРКАЛИТЬ ту, что
+ * приехала с поставкой, — кроме случая, когда её версия строго новее.
+ *
+ * Ограды. Строго новее дома — не трогаем, потому что это мог быть свежий мост,
+ * положенный человеком руками. Путь, заданный переменной, не трогаем вовсе:
+ * выбор человека старше нашей заботы. И НЕТ ГОЛОСА — НЕТ ПОДМЕНЫ: в сессии, где
+ * сказать нечем, копия не меняется; чинить не запрещено, чинить молча запрещено,
+ * и молчание здесь не оправдание, а условие отказа.
  */
-function refreshHomeBridge(notify: Notify): void {
-  // Путь задан человеком руками — его выбор старше нашей заботы, не трогаем ничего.
+function refreshHomeBridge(notify: Notify, canSpeak: boolean): void {
   if (process.env.ISKRON_BRIDGE_PATH?.trim()) return;
-  let packaged: string;
+  if (!canSpeak) return; // сказать нечем — значит и менять нечего: тихой подмены не бывает
+  let packagedPath: string;
   try {
-    packaged = resolve(dirname(fileURLToPath(import.meta.url)), "..", "skills", "establish-mcp", "scripts", "iskron-bridge.mjs");
+    packagedPath = resolve(dirname(fileURLToPath(import.meta.url)), "..", "skills", "establish-mcp", "scripts", "iskron-bridge.mjs");
   } catch {
     return; // загрузчик не дал собственного пути — сравнивать не с чем
   }
-  const home = join(homedir(), ".iskron-bridge", "iskron-bridge.mjs");
-  const vPackaged = bridgeVersion(packaged), vHome = bridgeVersion(home);
-  if (!vPackaged || !vHome) return; // домашней копии ещё нет или версия нечитаема — это дело establish-mcp
-  const cmp = newer(vPackaged, vHome);
-  if (cmp <= 0) {
-    // Домашняя новее: её мог положить человек руками или другая поставка.
-    // Откатывать молча нельзя, и не молча тоже — но и промолчать значит оставить его в неведении.
-    if (cmp < 0) notify(`Искрон: дома мост ${vHome}, в поставке ${vPackaged} — домашний новее, не трогаю.`, "warning");
+  const homePath = join(homedir(), ".iskron-bridge", "iskron-bridge.mjs");
+  let packaged: Buffer;
+  try {
+    packaged = readFileSync(packagedPath);
+  } catch {
+    return; // поставка моста не несёт — это дело establish-mcp, не наше
+  }
+  const vPackaged = bridgeVersion(packaged.toString("utf8"));
+  if (!vPackaged) {
+    // Сама починка мертва: файл на месте, а прочесть его версию нечем.
+    notify("Искрон: в поставке мост есть, но его версия не читается — домашнюю копию не трогаю.", "warning");
     return;
   }
+
+  let home: Buffer | null = null;
   try {
-    const tmp = home + ".new";
-    writeFileSync(tmp, readFileSync(packaged));
+    home = readFileSync(homePath);
+  } catch {
+    return; // домашней копии ещё нет — её заводит establish-mcp, не мы
+  }
+  if (home.equals(packaged)) return; // байт в байт — говорить не о чем
+
+  const vHome = bridgeVersion(home.toString("utf8"));
+  if (vHome && newer(vHome, vPackaged) > 0) {
+    notify(`Искрон: дома мост ${vHome}, в поставке ${vPackaged} — домашний новее, не трогаю.`, "warning");
+    return;
+  }
+
+  const was = vHome ?? "версия не читается";
+  const tmp = `${homePath}.tmp-${process.pid}`; // имя с pid: два старта рядом не пишут в один файл
+  try {
+    writeFileSync(tmp, packaged);
     chmodSync(tmp, 0o755);
-    renameSync(tmp, home); // атомарно: сессия рядом не увидит полуфайла
-    notify(`Искрон: мост дома обновлён ${vHome} → ${vPackaged}. Грант не тронут, он лежит рядом отдельными файлами.`, "info");
+    renameSync(tmp, homePath);
+    notify(
+      vHome === vPackaged
+        ? `Искрон: мост дома заменён на привезённый поставкой — версия та же (${vPackaged}), байты другие. Грант не тронут.`
+        : `Искрон: мост дома обновлён ${was} → ${vPackaged}. Грант не тронут, он лежит рядом отдельными файлами.`,
+      "info",
+    );
   } catch (e) {
-    notify(`Искрон: мост дома ${vHome}, в поставке ${vPackaged}, обновить не вышло (${(e as Error).message}). Работаю старым.`, "warning");
+    try { unlinkSync(tmp); } catch { /* нечего убирать */ }
+    notify(`Искрон: мост дома ${was}, в поставке ${vPackaged}, заменить не вышло (${(e as Error).message}). Работаю тем, что есть.`, "warning");
   }
 }
 
@@ -354,12 +386,15 @@ function harvestSocket(content: { type: string; [k: string]: any }[], offer: (ur
 function setupBridge(pi: ExtensionAPI, offerSocket: (url: string) => void): void {
   let bridge: Bridge | null = null;
   let notify: Notify = () => {};
+  // Голос сессии: без UI сказать некому, и это условие отказа от подмены моста,
+  // а не мелочь — см. refreshHomeBridge.
+  let canSpeak = false;
 
   async function raise(): Promise<void> {
     // Прежде поиска: если поставка привезла мост новее домашнего — обновить, вслух.
     // Порядок несущий: обновляем ДО подъёма, иначе новый мост побежал бы только
     // со следующей сессии, а эта осталась бы на старом, уже сказав, что обновилась.
-    refreshHomeBridge(notify);
+    refreshHomeBridge(notify, canSpeak);
     const found = findBridge();
     if (!found.path) {
       notify(
@@ -457,6 +492,7 @@ function setupBridge(pi: ExtensionAPI, offerSocket: (url: string) => void): void
 
   pi.on("session_start", async (_event, ctx) => {
     notify = ctx.hasUI ? (t, l) => ctx.ui.notify(t, l ?? "info") : () => {};
+    canSpeak = Boolean(ctx.hasUI);
     bridge?.stop();
     bridge = null;
 
