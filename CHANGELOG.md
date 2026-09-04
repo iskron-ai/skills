@@ -1,5 +1,22 @@
 # Changelog
 
+## [6.0.0](https://github.com/iskron-ai/skills/compare/v5.0.0...v6.0.0) (2026-09-04)
+
+
+### ⚠ BREAKING CHANGES
+
+* **feedback:** фидбэк идёт в граф работы, адресно; докс после мержа входа ([#76](https://github.com/iskron-ai/skills/issues/76))
+
+### Features
+
+* **establish-mcp:** мост первым, нативный OAuth вторым; js-bundle: граница, сторожа, проба, reconcile ([#78](https://github.com/iskron-ai/skills/issues/78)) ([5325337](https://github.com/iskron-ai/skills/commit/5325337436b39dfa47a8283cfa2b42ccf52ea754))
+* дверь человека, поставка в pi и Codex, починенные сторожа ([#79](https://github.com/iskron-ai/skills/issues/79)) ([e13aa3c](https://github.com/iskron-ai/skills/commit/e13aa3c301208f1dc06d329aec9f60f93c938405))
+
+
+### Bug Fixes
+
+* **feedback:** фидбэк идёт в граф работы, адресно; докс после мержа входа ([#76](https://github.com/iskron-ai/skills/issues/76)) ([6c6969c](https://github.com/iskron-ai/skills/commit/6c6969c5cbc6d3c226ba3c2d08ae85e5859d0b01))
+
 ## [5.0.0](https://github.com/iskron-ai/skills/compare/v4.2.0...v5.0.0) (2026-09-02)
 
 
