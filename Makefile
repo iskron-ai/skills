@@ -1,8 +1,8 @@
-.PHONY: build validate check-bundles check-surface surface check test test-watchdog hooks plugin
+.PHONY: build validate check-bundles check-surface surface check test test-watchdog test-extension test-codex hooks plugin
 
 # Run the full CI gate locally: frontmatter contract + bundle sync + surface lint
 # + the behavioural suites of the shipped code.
-check: validate check-bundles check-surface test test-watchdog
+check: validate check-bundles check-surface test test-watchdog test-extension test-codex
 
 # Validate every skill's frontmatter contract. Pure Node, no deps.
 validate:
@@ -16,12 +16,16 @@ check-bundles:
 check-surface:
 	@node scripts/check-surface.mjs
 
+# Suites that carry their own floor and their own target, and so must not be
+# swept into `test`, which runs on the bridge's Node 20.
+OWN_FLOOR := tests/watchdog.test.mjs tests/extension.test.mjs tests/codex-plugin.test.mjs
+
 # Behavioural tests for the bundled bridge, against a local fake NKS + OAuth
 # server (tests/fake-nks.mjs). Offline, no deps, touches no real token store.
 # Runs on the bridge's own floor, Node 20 — that is the version it claims, and
 # CI holds it there so the claim stays proven.
 test:
-	@node --test $(filter-out tests/watchdog.test.mjs,$(wildcard tests/*.test.mjs))
+	@node --test $(filter-out $(OWN_FLOOR),$(wildcard tests/*.test.mjs))
 
 # Behavioural probe for the shipped watchdogs. Separate target because their
 # floor is higher: they take the global WebSocket, so Node 22. Folding them into
@@ -30,6 +34,20 @@ test:
 # on the version it claims.
 test-watchdog:
 	@node --test tests/watchdog.test.mjs
+
+# Behavioural probe for the pi extension (extensions/iskron.ts). Its own target
+# for two reasons at once: it takes the global WebSocket like the watchdogs, and
+# it is TypeScript loaded by Node's own type stripping, which is unflagged only
+# from 22.18. CI should give it a job on 24.
+test-extension:
+	@node --test tests/extension.test.mjs
+
+# Probe for the Codex delivery — the plugin manifest and the repo marketplace.
+# Its heavy half runs Codex's own on-disk ingestion validator, which needs
+# python3 with pyyaml and a machine where Codex is installed; without either it
+# skips by name and the structural half still runs.
+test-codex:
+	@node --test tests/codex-plugin.test.mjs
 
 # Refresh fixtures/surface.json from the live server (network + authorized grant).
 surface:

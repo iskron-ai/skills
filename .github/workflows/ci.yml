@@ -71,6 +71,32 @@ jobs:
       - name: Run both watchdogs against a socket that closes with a dead-token code
         run: make test-watchdog
 
+  extension-tests:
+    name: pi extension behaves
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          # 24, not 20: the probe loads the shipped .ts with Node's own stripper
+          # (no flag since 22.18) and the extension takes the global WebSocket.
+          node-version: "24"
+      - name: Drive the extension against a fake bridge and a fake socket
+        run: make test-extension
+
+  codex-delivery-tests:
+    name: Codex delivery manifests hold
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Check the marketplace entry and what the manifest promises
+        # Codex's own acceptance validator lives on a developer machine, not
+        # here — that half self-skips by name, and the structural half stays.
+        run: make test-codex
+
   plugin-archive:
     name: Plugin archive builds
     runs-on: ubuntu-latest

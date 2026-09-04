@@ -102,11 +102,20 @@ class Bridge {
   private pending = new Map<number, { resolve: (v: any) => void; reject: (e: Error) => void }>();
   private tail: string[] = [];
   private dead: Error | null = null;
+  // Поля объявлены и присвоены отдельно, а не параметрами конструктора: сокра-
+  // щение TS `constructor(private bin: string)` — единственная конструкция в
+  // этом файле, которую нельзя СТЕРЕТЬ, её надо переписать. Node умеет только
+  // стирание (`--experimental-strip-types`; `--experimental-transform-types`
+  // из него убран), и на сокращении он бросает ещё до первой строки тела.
+  // Развёрнутая форма ничего не меняет в поведении и делает файл грузимым
+  // самой платформой — тем, что его и проверяет (tests/extension.test.mjs).
+  private readonly bin: string;
+  private readonly onLog: (line: string) => void;
 
-  constructor(
-    private readonly bin: string,
-    private readonly onLog: (line: string) => void,
-  ) {}
+  constructor(bin: string, onLog: (line: string) => void) {
+    this.bin = bin;
+    this.onLog = onLog;
+  }
 
   start(): void {
     const proc = spawn(process.execPath, [this.bin], { stdio: ["pipe", "pipe", "pipe"] });
