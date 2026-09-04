@@ -48,7 +48,7 @@ function startClosingServer(code) {
 
 // Runs a watchdog and waits for it to exit on its own. A watchdog still alive
 // after the timeout is the failure this probe exists for, not a skip.
-function runWatchdog(file, url, env) {
+function runWatchdog(file, url, env, timeoutMs = 5_000) {
   const proc = spawn(process.execPath, [join(DIR, file), url], {
     env: { ...process.env, ...env },
     stdio: ["ignore", "pipe", "pipe"],
@@ -57,9 +57,27 @@ function runWatchdog(file, url, env) {
   proc.stdout.on("data", (c) => { out += c; });
   proc.stderr.on("data", (c) => { err += c; });
   return new Promise((resolve) => {
-    const t = setTimeout(() => { proc.kill("SIGKILL"); resolve({ exit: null, out, err }); }, 5_000);
+    const t = setTimeout(() => { proc.kill("SIGKILL"); resolve({ exit: null, out, err }); }, timeoutMs);
     proc.once("exit", (code) => { clearTimeout(t); resolve({ exit: code, out, err }); });
   });
+}
+
+// The other end of the same rule: the socket keeps dropping while the service
+// answers. There is nothing to reopen and no code to name, so the watchdog must
+// still leave loudly — a silent exit here leaves the doer looking reachable.
+function startFlappingServer() {
+  const server = createServer((req, res) => {
+    if (req.url === "/api/version") {
+      res.writeHead(200, { "content-type": "application/json" });
+      return res.end(JSON.stringify({ version: "probe" }));
+    }
+    res.writeHead(404); res.end();
+  });
+  server.on("upgrade", (_, socket) => socket.destroy()); // accepted, then torn down at once
+  return new Promise((resolve) => server.listen(0, "127.0.0.1", () => resolve({
+    url: `ws://127.0.0.1:${server.address().port}/channel/ws/tok`,
+    close: () => { server.closeAllConnections(); return new Promise((done) => server.close(done)); },
+  })));
 }
 
 for (const file of ["watchdog.mjs", "watchdog-exit.mjs"]) {
@@ -75,6 +93,23 @@ for (const file of ["watchdog.mjs", "watchdog-exit.mjs"]) {
       assert.notEqual(r.exit, null, `${file} is still alive 5s after a 4000 close — a dead token that looks like an empty inbox`);
       assert.notEqual(r.exit, 0, `${file} exited 0 on a dead token — indistinguishable from a clean stop`);
       assert.match(r.out + r.err, /токен мёртв/, "the last line must name the dead token for the doer");
+    } finally {
+      await srv.close();
+    }
+  });
+
+  test(`${file}: drops against a live service also end loudly, never in silence`, async () => {
+    const srv = await startFlappingServer();
+    const say = join(mkdtempSync(join(tmpdir(), "iskron-wd-")), "say");
+    writeFileSync(say, "");
+    try {
+      const r = await runWatchdog(file, srv.url, {
+        ISKRON_CHANNEL_SAY: say,
+        ISKRON_CHANNEL_STATUS: `${srv.url.replace("ws:", "http:").replace("/channel/ws/", "/channel/status/")}`,
+      }, 20_000);
+      assert.notEqual(r.exit, null, `${file} kept running after three fast drops with the service up — it should have handed the question to the doer`);
+      assert.notEqual(r.exit, 0, `${file} exited 0 there: the doer reads a clean stop and keeps believing the socket is held`);
+      assert.match(r.out + r.err, /спроси о токене/, "the last line must hand the doer the question it cannot answer itself");
     } finally {
       await srv.close();
     }

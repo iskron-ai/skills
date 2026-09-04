@@ -21,7 +21,7 @@ check-surface:
 # Runs on the bridge's own floor, Node 20 — that is the version it claims, and
 # CI holds it there so the claim stays proven.
 test:
-	@node --test tests/bridge.test.mjs
+	@node --test $(filter-out tests/watchdog.test.mjs,$(wildcard tests/*.test.mjs))
 
 # Behavioural probe for the shipped watchdogs. Separate target because their
 # floor is higher: they take the global WebSocket, so Node 22. Folding them into

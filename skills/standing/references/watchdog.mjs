@@ -21,9 +21,21 @@
 import { readFileSync, writeSync } from 'node:fs';
 
 const url = process.argv[2] || process.env.ISKRON_CHANNEL_SOCKET,
-  version = new URL(url).origin.replace('wss:', 'https:') + '/api/version';
+  // Обе схемы, как и у статусного адреса ниже: с одним `wss:` вопрос службе на
+  // ws-адресе не уходил вовсе, и ветка «служба жива, а нас рвёт» не наступала.
+  version = new URL(url).origin.replace(/^wss:/, 'https:').replace(/^ws:/, 'http:') + '/api/version';
 let fastDrops = 0;
 const log = (s) => process.stdout.write(s + '\n');
+// Последнее слово перед выходом: синхронно, иначе выход следом уносит саму строку.
+// Полная неблокирующая труба бросает EAGAIN — тогда обычная печать и выход по её
+// колбэку; сторожевой таймер на случай, если читатель не заберёт вовсе.
+const loudExit = (s, code) => {
+  try { writeSync(1, s + '\n'); process.exit(code); }
+  catch {
+    process.stdout.write(s + '\n', () => process.exit(code));
+    setTimeout(() => process.exit(code), 1000).unref();
+  }
+};
 const serviceUp = () => fetch(version, { signal: AbortSignal.timeout(5000) })
   .then((r) => (r.ok ? r.json() : null)).catch(() => null);
 
@@ -34,15 +46,16 @@ function open() {
   ws.addEventListener('error', () => {}); // закрытие придёт следом в любом случае
   ws.addEventListener('close', async (e) => {
     if ([4000, 4001, 4002].includes(e.code)) {
-      // Громко и синхронно: в трубу обычная печать асинхронна, и выход следом потерял
-      // бы саму строку; нулевой выход был бы неотличим от чистой остановки.
-      writeSync(1, `ДЕЛАТЕЛЬ: закрытие ${e.code} — токен мёртв, зови connect (на 4001 — mint)\n`);
-      process.exit(1);
+      // Нулевой выход был бы неотличим от чистой остановки, а молчаливый — от
+      // работающего сторожа: оба конца пути отсюда громкие.
+      return loudExit(`ДЕЛАТЕЛЬ: закрытие ${e.code} — токен мёртв, зови connect (на 4001 — mint)`, 1);
     }
     fastDrops = Date.now() - startedAt < 5000 ? fastDrops + 1 : 0;
     if (fastDrops >= 3) {
       const up = await serviceUp();
-      if (up) return log(`ДЕЛАТЕЛЬ: обрывы, а служба отвечает (${up.version}) — спроси о токене`);
+      // Служба жива, а нас рвёт: переоткрывать нечего, и уйти молча нельзя —
+      // делатель остался бы с виду слышимым.
+      if (up) return loudExit(`ДЕЛАТЕЛЬ: обрывы, а служба отвечает (${up.version}) — спроси о токене`, 1);
       log('служба не отвечает — идёт раскатка, держу тот же токен');
       fastDrops = 1;                      // простой не должен перерасти в вопрос о токене
     }

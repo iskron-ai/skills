@@ -38,7 +38,9 @@ if (!url) {
   writeSync(2, "нужен адрес сокета: node watchdog-exit.mjs <wss://…> или ISKRON_CHANNEL_SOCKET\n");
   process.exit(2);
 }
-const version = new URL(url).origin.replace("wss:", "https:") + "/api/version";
+// Обе схемы, как и у статусного адреса ниже: с одним `wss:` вопрос службе на
+// ws-адресе не уходил вовсе, и ветка «служба жива, а нас рвёт» не наступала.
+const version = new URL(url).origin.replace(/^wss:/, "https:").replace(/^ws:/, "http:") + "/api/version";
 let fastDrops = 0;
 
 // Синхронная запись, а не process.stdout.write: в трубу тот пишет асинхронно, и
