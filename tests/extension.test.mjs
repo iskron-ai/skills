@@ -682,6 +682,14 @@ test("refreshHomeBridge: a successful replacement leaves no temp file behind", a
   await runRefresh(box, { ISKRON_MCP_READY_WAIT_MS: 1 });
   const left = readdirSync(box.homeBridgeDir);
   assert.deepEqual(left, ["iskron-bridge.mjs"], `каталог держит лишнее: ${left.join(", ")}`);
+  // Одного листинга каталога мало: он зелен и там, где подмены нет вовсе —
+  // замерено на origin/main, эта проба прошла среди 17 прошедших. Байты и есть
+  // то, ради чего проба названа, поэтому их и требуем.
+  assert.equal(
+    readFileSync(box.homeBridge, "utf8"),
+    readFileSync(box.packaged, "utf8"),
+    "домашняя копия не стала привезённой — подмены не было",
+  );
 });
 
 // Rule 9: запись не удалась — временный файл убирается, и об отказе говорят

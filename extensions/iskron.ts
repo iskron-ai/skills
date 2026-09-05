@@ -107,12 +107,22 @@ function newer(a: string, b: string): number {
  * сказать нечем, копия не меняется; чинить не запрещено, чинить молча запрещено,
  * и молчание здесь не оправдание, а условие отказа.
  */
+/**
+ * Путь к мосту, приехавшему в этом же пакете. Выводится ОДИН раз и служит обеим
+ * половинам: той, что зеркалит копию домой, и той, что мост поднимает. Разъехавшись,
+ * они зеркалили бы один файл, а запускали другой, и молча.
+ * Бросает, когда загрузчик не дал собственного пути, — звать под try.
+ */
+function packagedBridgePath(): string {
+  return resolve(dirname(fileURLToPath(import.meta.url)), "..", "skills", "establish-mcp", "scripts", "iskron-bridge.mjs");
+}
+
 function refreshHomeBridge(notify: Notify, canSpeak: boolean): void {
   if (process.env.ISKRON_BRIDGE_PATH?.trim()) return;
   if (!canSpeak) return; // сказать нечем — значит и менять нечего: тихой подмены не бывает
   let packagedPath: string;
   try {
-    packagedPath = resolve(dirname(fileURLToPath(import.meta.url)), "..", "skills", "establish-mcp", "scripts", "iskron-bridge.mjs");
+    packagedPath = packagedBridgePath();
   } catch {
     return; // загрузчик не дал собственного пути — сравнивать не с чем
   }
@@ -173,8 +183,7 @@ function findBridge(): { path: string; tried: string[] } | { path: null; tried: 
   push(join(homedir(), ".iskron-bridge", "iskron-bridge.mjs"));
   try {
     // pi install git:… кладёт расширение рядом со скиллами того же репозитория.
-    const here = dirname(fileURLToPath(import.meta.url));
-    push(resolve(here, "..", "skills", "establish-mcp", "scripts", "iskron-bridge.mjs"));
+    push(packagedBridgePath());
   } catch {
     /* загрузчик не дал собственного пути — остаются первые два кандидата */
   }

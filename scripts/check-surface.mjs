@@ -5,8 +5,10 @@
 // Two drift classes are caught offline, before merge:
 //   1. A tool name written in a skill that the surface does not carry
 //      (rename/drop on the server side — the loud half of skill↔tool sync).
-//   2. An enum value assigned in a skill (genre=..., given_as=..., modes,
-//      arrow_type, node_type) that the surface vocabulary does not contain.
+//   2. An enum value assigned in a skill (the modes, genre, given_as,
+//      manifested_as, arrow_type, node_type, lens) that the surface vocabulary
+//      does not contain. The checked list lives in ENUM_KEYS below and nowhere
+//      else — do not restate it here, that is the drift this file already had.
 //
 // Pure Node, no deps, offline — CI-safe.
 import { readFileSync, readdirSync, statSync } from "node:fs";
@@ -94,4 +96,11 @@ if (errors.length) {
   for (const e of errors) console.error(`  ✗ ${e}`);
   process.exit(1);
 }
-console.log(`✓ corpus consistent with the surface snapshot (${tools.size} tools, ${Object.keys(surface.enums).length} vocabularies)`);
+// Say what was actually checked, not what the snapshot happens to carry: the
+// line used to print all 17 vocabularies while nine were compared, claiming
+// three times the coverage it had.
+console.log(
+  `✓ corpus consistent with the surface snapshot (${tools.size} tools, ` +
+  `${ENUM_KEYS.length} of ${Object.keys(surface.enums).length} vocabularies — ` +
+  `the rest are per-tool)`,
+);
