@@ -234,7 +234,12 @@ function refreshHours(t) {
 }
 
 class TokenError extends Error {
-  constructor(message, oauthError, status) { super(message); this.oauthError = oauthError; this.status = status; }
+  constructor(message, oauthError, status, oauthMessage) {
+    super(message);
+    this.oauthError = oauthError;
+    this.status = status;
+    this.oauthMessage = oauthMessage;
+  }
 }
 // Only these OAuth errors prove the grant itself is dead; anything else
 // (network, 5xx, temporarily_unavailable) must NOT burn the refresh token
@@ -583,8 +588,8 @@ async function tokenRequest(meta, params) {
   const body = await res.json().catch(() => ({}));
   if (!res.ok) {
     throw new TokenError(
-      `token endpoint ${res.status}: ${body.error || ""} ${body.error_description || ""}`.trim(),
-      body.error, res.status,
+      `token endpoint ${res.status}: ${body.error || ""} ${body.error_description || body.message || ""}`.trim(),
+      body.error, res.status, body.message,
     );
   }
   const refresh = body.refresh_token ?? loadStore().tokens?.refresh_token;
@@ -800,13 +805,17 @@ async function refreshOnce(meta, cur, proactive) {
       resource: meta.resource,
     });
   } catch (e) {
+    const deadRefresh = e instanceof TokenError
+      && e.status === 404
+      && e.oauthError === "NotFound"
+      && e.oauthMessage === "Refresh Token does not exist";
     // A token endpoint that answers 404/405/410 — or whose host is not there
     // to answer at all — is discovery gone stale: the AS moved and the store
     // still points at where it used to live. Cached forever, that is a
     // permanent outage every attempt walks back into; dropped, the next
     // attempt rediscovers and heals. The grant itself was never judged.
     const gone = e instanceof TokenError
-      ? [404, 405, 410].includes(e.status)
+      ? !deadRefresh && [404, 405, 410].includes(e.status)
       : ["ENOTFOUND", "ECONNREFUSED"].includes(e.cause?.code);
     if (gone) {
       saveStore({ meta: null });
@@ -815,11 +824,12 @@ async function refreshOnce(meta, cur, proactive) {
     }
     // Definitive = the grant itself is refused: a known OAuth error code, or
     // any 400/401 from the token endpoint (servers word these codes freely —
-    // witnessed: Rauthy answers a dead refresh with 401 "JwtToken").
+    // witnessed: Rauthy answers a dead refresh with 401 "JwtToken" or the
+    // structured NotFound response above).
     // Only 5xx/network/temporarily_unavailable stay transient.
     const definitive = e instanceof TokenError
       && e.oauthError !== "temporarily_unavailable"
-      && (DEFINITIVE_OAUTH_ERRORS.has(e.oauthError) || e.status === 400 || e.status === 401);
+      && (deadRefresh || DEFINITIVE_OAUTH_ERRORS.has(e.oauthError) || e.status === 400 || e.status === 401);
     if (!definitive) {
       throw new Error(`token refresh failed transiently (${e.message}) — grant kept, will retry`);
     }

@@ -43,6 +43,7 @@ export async function startFakeNks(opts = {}) {
     // faults the test switches on through /control
     refreshStatus: null,   // e.g. 503 (transient) or 400 (definitive)
     refreshError: null,
+    refreshMessage: null,
     mcpStatus: null,       // force an HTTP status on /mcp
     mcpHangMs: 0,          // hold /mcp open past the caller's deadline: the request left, the answer never came
     refreshDelayMs: opts.refreshDelayMs ?? 0, // widen the window several bridges race in
@@ -102,7 +103,7 @@ export async function startFakeNks(opts = {}) {
     if (p === "/control") {
       const patch = JSON.parse((await body(req)) || "{}");
       if (patch.kill_session) { for (const s of st.sessions) st.dead.add(s); st.sessions.clear(); }
-      for (const k of ["refreshStatus", "refreshError", "mcpStatus", "mcpHangMs", "accessTtl", "refreshDelayMs", "reuseDetection", "tokenPath",
+      for (const k of ["refreshStatus", "refreshError", "refreshMessage", "mcpStatus", "mcpHangMs", "accessTtl", "refreshDelayMs", "reuseDetection", "tokenPath",
                        "sessionFollowsToken", "silentNewSession", "standingRefuseNext"]) {
         if (k in patch) st[k] = patch[k];
       }
@@ -183,7 +184,10 @@ export async function startFakeNks(opts = {}) {
           return json(res, 400, { error: "invalid_grant", error_description: "token not yet valid" });
         }
         if (st.refreshStatus) {
-          return json(res, st.refreshStatus, { error: st.refreshError || "server_error" });
+          return json(res, st.refreshStatus, {
+            error: st.refreshError || "server_error",
+            ...(st.refreshMessage ? { message: st.refreshMessage } : {}),
+          });
         }
         if (f.get("refresh_token") !== st.refresh) {
           st.counts.stale_refresh++;

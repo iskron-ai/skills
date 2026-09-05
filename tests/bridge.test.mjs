@@ -414,6 +414,62 @@ test("a refused grant costs a login only once the refusal has stood", async (t) 
   });
 });
 
+test("Rauthy's dead-refresh 404 costs exactly one new browser flow", async (t) => {
+  await withFake(t, {}, async ({ fake, dir, spawnBridge }) => {
+    const first = spawnBridge();
+    await authorize(first, dir);
+    await first.stop();
+
+    const before = readStore(dir).tokens.refresh_token;
+    const s = readStore(dir);
+    s.tokens.expires_at = Date.now() - 1000;
+    writeFileSync(storeFile(dir), JSON.stringify(s));
+    await fake.control({
+      refreshStatus: 404,
+      refreshError: "NotFound",
+      refreshMessage: "Refresh Token does not exist",
+      revoke_access: true,
+    });
+
+    const held = spawnBridge();
+    const refusal = await held.call("initialize", 1, INIT_PARAMS);
+    assert.equal(authorizeUrlIn(refusal.error?.message), null,
+      "the first dead-grant refusal must still observe the login grace");
+    assert.equal(readStore(dir).tokens.refresh_token, before,
+      "the existing DeadGrant path must keep the grant through the grace");
+    await held.stop();
+
+    ageRefusal(dir);
+    const beforeLogin = { ...fake.state.counts };
+    const retries = [spawnBridge(), spawnBridge()];
+    const pending = await Promise.all(retries.map((bridge) => bridge.call("initialize", 1, INIT_PARAMS)));
+    const urls = pending.map((answer) => authorizeUrlIn(answer.error?.message));
+    assert.ok(urls.every(Boolean), `both processes must receive an authorization URL: ${JSON.stringify(pending)}`);
+    assert.equal(urls[1], urls[0], "both processes must join the same machine-wide browser flow");
+    assert.equal(fake.state.counts.register, beforeLogin.register,
+      "the joined flow must not hide a second dynamic client registration");
+    assert.equal(fake.state.counts.authorize, beforeLogin.authorize,
+      "publishing one flow must not visit its authorize URL before the human does");
+
+    const res = await fetch(urls[0], { redirect: "follow" });
+    assert.equal(res.status, 200, "the replacement authorization must complete");
+    await res.text();
+    await waitFor(() => readStore(dir).tokens?.refresh_token !== before,
+      "the replacement grant to reach the store");
+    const served = await Promise.all(retries.map((bridge) => bridge.call("tools/list", 2)));
+    for (const answer of served) {
+      assert.deepEqual(answer.result?.tools, [{ name: "nks_orient" }],
+        `the replacement grant must serve every process: ${JSON.stringify(answer.error)}`);
+    }
+    assert.equal(fake.state.counts.register, beforeLogin.register,
+      "the dead grant must not cost another dynamic client registration");
+    assert.equal(fake.state.counts.authorize, beforeLogin.authorize + 1,
+      "the dead grant must cost exactly one visit to one new browser flow");
+    assert.equal(fake.state.counts.code_exchange, beforeLogin.code_exchange + 1,
+      "the one browser flow must exchange exactly one authorization code");
+  });
+});
+
 test("a request that left and never came back is reported as an unknown outcome", async (t) => {
   // The two halves of the network axis mean opposite things to a caller. A call
   // that never went out applied nothing; a call that went out and lost its answer
@@ -1136,6 +1192,39 @@ test("a machine whose clock lies is judged by the server's clock, not its own", 
 // --- discovery gone stale is an outage with no end -------------------------
 // The store caches where the token endpoint lives; a server that moved it
 // leaves every refresh walking into the same 404 forever.
+
+test("a generic NotFound 404 is rediscovery, not a dead refresh grant", async (t) => {
+  await withFake(t, {}, async ({ fake, dir, spawnBridge }) => {
+    const first = spawnBridge();
+    await authorize(first, dir);
+    await first.stop();
+
+    const before = readStore(dir).tokens.refresh_token;
+    const counts = { ...fake.state.counts };
+    const s = readStore(dir);
+    s.tokens.expires_at = Date.now() - 1000;
+    writeFileSync(storeFile(dir), JSON.stringify(s));
+    await fake.control({
+      refreshStatus: 404,
+      refreshError: "NotFound",
+      refreshMessage: "No results found",
+      revoke_access: true,
+    });
+
+    const second = spawnBridge();
+    const answer = await second.call("initialize", 1, INIT_PARAMS);
+    assert.ok(answer.error, "the missing cached endpoint cannot serve this attempt");
+    assert.equal(authorizeUrlIn(answer.error.message), null,
+      "a generic NotFound must not be classified as a dead refresh grant");
+    assert.match(answer.error.message, /rediscovering on the next attempt/,
+      `the caller must see the rediscovery state: ${answer.error.message}`);
+    assert.equal(readStore(dir).tokens.refresh_token, before,
+      "rediscovery must keep the grant whose validity was not judged");
+    assert.equal(readStore(dir).meta, null, "the stale discovery must be dropped");
+    assert.equal(fake.state.counts.register, counts.register, "rediscovery must not register another client");
+    assert.equal(fake.state.counts.authorize, counts.authorize, "rediscovery must not start a browser flow");
+  });
+});
 
 test("a token endpoint that moved is rediscovered, not mourned forever", async (t) => {
   await withFake(t, {}, async ({ fake, dir, spawnBridge }) => {

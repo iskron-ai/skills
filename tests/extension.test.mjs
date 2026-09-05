@@ -32,7 +32,7 @@
 // `make test-extension`.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { copyFileSync, mkdtempSync, writeFileSync, existsSync, readFileSync } from "node:fs";
+import { copyFileSync, mkdtempSync, mkdirSync, readdirSync, writeFileSync, existsSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -161,6 +161,62 @@ function bridgeEnv(name, extra = {}) {
 
 const pidOf = (log) => Number(readFileSync(log, "utf8").trim().split(/\s+/)[1]);
 const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+
+/** A bridge script text distinguishable by version and, optionally, a trailing comment. */
+const bridgeText = (v, note = "") =>
+  `#!/usr/bin/env node\nconst VERSION = "${v}"; // x-release-please-version${note}\n`;
+
+/**
+ * A package sandbox for `refreshHomeBridge()`, own to one test: `extensions/iskron.ts`
+ * (a fresh copy, so its own `import.meta.url` resolves upward into THIS sandbox's
+ * `skills/…`, never the real repo) with its own `skills/establish-mcp/scripts/
+ * iskron-bridge.mjs` ("packaged") and its own `HOME` holding `~/.iskron-bridge/
+ * iskron-bridge.mjs` ("home"). Neither bridge file is written here — a test writes
+ * only the ones its scenario needs, so "no packaged bridge" / "no home copy" are
+ * themselves expressible.
+ */
+function packageSandbox() {
+  const pkg = mkdtempSync(join(tmpdir(), "iskron-pkg-"));
+  const extDir = join(pkg, "extensions");
+  const pkgBridgeDir = join(pkg, "skills", "establish-mcp", "scripts");
+  const home = join(pkg, "home");
+  const homeBridgeDir = join(home, ".iskron-bridge");
+  for (const d of [extDir, pkgBridgeDir, homeBridgeDir]) mkdirSync(d, { recursive: true });
+  const extCopy = join(extDir, "iskron.ts");
+  copyFileSync(SOURCE, extCopy);
+  return {
+    extCopy,
+    packaged: join(pkgBridgeDir, "iskron-bridge.mjs"),
+    home,
+    homeBridgeDir,
+    homeBridge: join(homeBridgeDir, "iskron-bridge.mjs"),
+  };
+}
+
+/**
+ * One session_start + session_shutdown against a package sandbox's own extension
+ * copy — refreshHomeBridge() runs as the first line of raise(), on session_start.
+ * HOME is pointed at the sandbox for the call and put back after, win or throw:
+ * a test that left HOME on a scratch dir would make every test after it, not just
+ * the next one, silently pass or fail against the wrong home.
+ */
+async function runRefresh(box, env = {}, opts = {}) {
+  const savedHome = process.env.HOME;
+  for (const k of ENV_KEYS) delete process.env[k];
+  for (const [k, v] of Object.entries(env)) process.env[k] = String(v);
+  process.env.HOME = box.home;
+  sockets.length = 0;
+  try {
+    const factory = (await import(`${pathToFileURL(box.extCopy).href}?n=${++seq}`)).default;
+    const rec = fakePi(opts);
+    factory(rec.pi);
+    await rec.fire("session_start");
+    await rec.fire("session_shutdown");
+    return rec;
+  } finally {
+    process.env.HOME = savedHome;
+  }
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -488,4 +544,170 @@ test("a session without UI neither prints nor throws", async () => {
   } finally {
     await rec.stop();
   }
+});
+
+// ── refreshHomeBridge(): каждая ветка правила — отдельным тестом ──────────────
+//
+// Прежде здесь стоял один тест на три ограды разом: падение первой прятало две
+// другие целиком. Обновление поставки НЕ обновляло мост (наблюдено на штатной
+// установке: код 6.0.0 поднял мост 5.0.0) — вот что чинит это правило; каждый
+// тест ниже топит один его пункт и не смотрит на остальные.
+//
+// runRefresh() гонит полную session_start (refreshHomeBridge — её первая
+// строка), поэтому вниз по потоку findBridge() и raise() тоже отработают и
+// могут добавить СВОИ notice — молчащий домашний мост как файл не значит
+// молчащую сессию целиком. Поэтому тесты на «молчание» проверяют не пустоту
+// rec.said(), а отсутствие СЛОВ refreshHomeBridge в нём, и байты домашней
+// копии — то, что функция реально решает.
+
+const REFRESH_WORDS = [
+  /версия не читается — домашнюю копию не трогаю/,
+  /домашний новее, не трогаю/,
+  /заменён на привезённый поставкой/,
+  /мост дома обновлён/,
+];
+const saidNoneOf = (rec) => REFRESH_WORDS.every((re) => !re.test(rec.said()));
+
+// Rule 1: путь задан руками — выбор человека старше нашей заботы, и его не
+// проверяют версией: тронуть домашнюю копию здесь значило бы переписать то,
+// что человек мог положить сам.
+test("refreshHomeBridge: ISKRON_BRIDGE_PATH set leaves the home copy untouched", async () => {
+  const box = packageSandbox();
+  writeFileSync(box.packaged, bridgeText("6.0.0"));
+  writeFileSync(box.homeBridge, bridgeText("5.0.0"));
+  const rec = await runRefresh(box, { ISKRON_BRIDGE_PATH: MISSING_BRIDGE, ISKRON_MCP_READY_WAIT_MS: 1 });
+  assert.match(readFileSync(box.homeBridge, "utf8"), /VERSION = "5\.0\.0"/, "тронули домашний мост при заданном пути");
+  assert.ok(saidNoneOf(rec), "заговорили о домашнем мосте, хотя путь задан руками");
+});
+
+// Rule 2: нет UI — нет голоса, а голосом стоит сама ограда: подмена без права
+// сказать о ней запрещена, не только не озвучена.
+test("refreshHomeBridge: a session without UI leaves the home copy untouched", async () => {
+  const box = packageSandbox();
+  writeFileSync(box.packaged, bridgeText("6.0.0"));
+  writeFileSync(box.homeBridge, bridgeText("5.0.0"));
+  const rec = await runRefresh(box, { ISKRON_MCP_READY_WAIT_MS: 1 }, { hasUI: false });
+  assert.match(readFileSync(box.homeBridge, "utf8"), /VERSION = "5\.0\.0"/, "домашняя копия заменена без UI");
+  assert.equal(rec.notices.length, 0, "notify сказал что-то без UI");
+});
+
+// Rule 3: поставка не несёт моста вовсе — это дело establish-mcp, не расширения.
+test("refreshHomeBridge: no packaged bridge leaves silently", async () => {
+  const box = packageSandbox();
+  writeFileSync(box.homeBridge, bridgeText("5.0.0"));
+  const rec = await runRefresh(box, { ISKRON_MCP_READY_WAIT_MS: 1 });
+  assert.match(readFileSync(box.homeBridge, "utf8"), /VERSION = "5\.0\.0"/, "домашняя копия тронута без пакета");
+  assert.ok(saidNoneOf(rec), "заговорили о домашнем мосте без пакета");
+});
+
+// Rule 4: файл на месте, а версию прочесть нечем — сама починка мертва, и об
+// этом обязаны сказать, а не молча оставить старое.
+test("refreshHomeBridge: an unreadable packaged version warns and leaves the home copy untouched", async () => {
+  const box = packageSandbox();
+  writeFileSync(box.packaged, "#!/usr/bin/env node\n// версии тут нет\n");
+  writeFileSync(box.homeBridge, bridgeText("5.0.0"));
+  const rec = await runRefresh(box, { ISKRON_MCP_READY_WAIT_MS: 1 });
+  assert.match(readFileSync(box.homeBridge, "utf8"), /VERSION = "5\.0\.0"/, "домашняя копия тронута при нечитаемой версии");
+  assert.match(rec.said(), /в поставке мост есть, но его версия не читается — домашнюю копию не трогаю/);
+});
+
+// Rule 5: домашней копии ещё нет — её заводит establish-mcp, не это правило;
+// молчание здесь не отказ, а «нечего сравнивать».
+test("refreshHomeBridge: no home copy yet leaves silently and creates nothing", async () => {
+  const box = packageSandbox();
+  writeFileSync(box.packaged, bridgeText("6.0.0"));
+  const rec = await runRefresh(box, { ISKRON_MCP_READY_WAIT_MS: 1 });
+  assert.deepEqual(readdirSync(box.homeBridgeDir), [], "домашняя копия заведена, хотя её не было");
+  assert.ok(saidNoneOf(rec), "заговорили о домашнем мосте при его отсутствии");
+});
+
+// Rule 6: байт в байт — говорить не о чем, и трогать нечего.
+test("refreshHomeBridge: identical bytes leave the home copy untouched and silent", async () => {
+  const box = packageSandbox();
+  const bytes = bridgeText("6.0.0");
+  writeFileSync(box.packaged, bytes);
+  writeFileSync(box.homeBridge, bytes);
+  const rec = await runRefresh(box, { ISKRON_MCP_READY_WAIT_MS: 1 });
+  assert.equal(readFileSync(box.homeBridge, "utf8"), bytes, "байт-в-байт копия переписана");
+  assert.ok(saidNoneOf(rec), "заговорили о домашнем мосте при совпавших байтах");
+});
+
+// Rule 7: версия дома строго новее — не трогаем (мог быть свежий мост, положенный
+// человеком руками), но об этом отказе говорим, а не молчим.
+test("refreshHomeBridge: a strictly newer home copy is kept, aloud", async () => {
+  const box = packageSandbox();
+  writeFileSync(box.packaged, bridgeText("6.0.0"));
+  writeFileSync(box.homeBridge, bridgeText("7.1.0"));
+  const rec = await runRefresh(box, { ISKRON_MCP_READY_WAIT_MS: 1 });
+  assert.match(readFileSync(box.homeBridge, "utf8"), /VERSION = "7\.1\.0"/, "домашний мост откачен назад");
+  assert.match(rec.said(), /дома мост 7\.1\.0, в поставке 6\.0\.0 — домашний новее, не трогаю/);
+});
+
+// Rule 8, главный случай: версии равны, а байты нет — ровно то, что даёт
+// установка из git-источника (ветка едет, релизная константа стоит на месте).
+// Сверка по версии эту замену пропустила бы всегда; сверка по байтам — ловит.
+test("refreshHomeBridge: equal versions but different bytes replace the home copy", async () => {
+  const box = packageSandbox();
+  writeFileSync(box.packaged, bridgeText("6.0.0", " — из ветки А"));
+  writeFileSync(box.homeBridge, bridgeText("6.0.0", " — из ветки Б"));
+  const rec = await runRefresh(box, { ISKRON_MCP_READY_WAIT_MS: 1 });
+  assert.equal(
+    readFileSync(box.homeBridge, "utf8"),
+    readFileSync(box.packaged, "utf8"),
+    "домашняя копия не стала зеркалом поставки при разных байтах той же версии",
+  );
+  assert.match(rec.said(), /мост дома заменён на привезённый поставкой — версия та же \(6\.0\.0\), байты другие\. Грант не тронут\./);
+  assert.doesNotMatch(rec.said(), /мост дома обновлён/, "сказано слово случая версии-скачка, а не совпавшей версии");
+});
+
+// Rule 8, случай подъёма версии: текст РАЗНЫЙ — не «версия та же», а стрелка
+// старое→новое.
+test("refreshHomeBridge: a version bump replaces the home copy with its own wording", async () => {
+  const box = packageSandbox();
+  writeFileSync(box.packaged, bridgeText("6.0.0"));
+  writeFileSync(box.homeBridge, bridgeText("5.0.0"));
+  const rec = await runRefresh(box, { ISKRON_MCP_READY_WAIT_MS: 1 });
+  assert.match(readFileSync(box.homeBridge, "utf8"), /VERSION = "6\.0\.0"/, "домашний мост не обновлён");
+  assert.match(rec.said(), /мост дома обновлён 5\.0\.0 → 6\.0\.0\. Грант не тронут, он лежит рядом отдельными файлами\./);
+  assert.doesNotMatch(rec.said(), /версия та же/, "сказано слово случая совпавшей версии, а не версии-скачка");
+});
+
+// Rule 8, побочное условие обеих замен: временный файл — `.tmp-<pid>` — существует
+// ровно между записью и rename; после успеха в каталоге не должно остаться ничего,
+// кроме итогового iskron-bridge.mjs.
+test("refreshHomeBridge: a successful replacement leaves no temp file behind", async () => {
+  const box = packageSandbox();
+  writeFileSync(box.packaged, bridgeText("6.0.0", " — новые байты"));
+  writeFileSync(box.homeBridge, bridgeText("6.0.0", " — старые байты"));
+  await runRefresh(box, { ISKRON_MCP_READY_WAIT_MS: 1 });
+  const left = readdirSync(box.homeBridgeDir);
+  assert.deepEqual(left, ["iskron-bridge.mjs"], `каталог держит лишнее: ${left.join(", ")}`);
+  // Одного листинга каталога мало: он зелен и там, где подмены нет вовсе —
+  // замерено на origin/main, эта проба прошла среди 17 прошедших. Байты и есть
+  // то, ради чего проба названа, поэтому их и требуем.
+  assert.equal(
+    readFileSync(box.homeBridge, "utf8"),
+    readFileSync(box.packaged, "utf8"),
+    "домашняя копия не стала привезённой — подмены не было",
+  );
+});
+
+// Rule 9: запись не удалась — временный файл убирается, и об отказе говорят
+// вслух, работая тем, что было. Ограда воспроизведена правами каталога: без
+// root-байпаса writeFileSync внутрь read-only каталога бросает.
+test("refreshHomeBridge: a failed write cleans up the temp file and warns", async () => {
+  const box = packageSandbox();
+  writeFileSync(box.packaged, bridgeText("6.0.0"));
+  writeFileSync(box.homeBridge, bridgeText("5.0.0"));
+  const { chmodSync } = await import("node:fs");
+  chmodSync(box.homeBridgeDir, 0o555); // read+exec, no write
+  let rec;
+  try {
+    rec = await runRefresh(box, { ISKRON_MCP_READY_WAIT_MS: 1 });
+  } finally {
+    chmodSync(box.homeBridgeDir, 0o755); // иначе временную директорию потом не убрать
+  }
+  assert.match(readFileSync(box.homeBridge, "utf8"), /VERSION = "5\.0\.0"/, "домашний мост изменился при отказавшей записи");
+  assert.match(rec.said(), /заменить не вышло/);
+  assert.deepEqual(readdirSync(box.homeBridgeDir), ["iskron-bridge.mjs"], "временный файл остался после отказа");
 });
