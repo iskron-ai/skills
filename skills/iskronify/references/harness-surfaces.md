@@ -5,7 +5,7 @@ iskronify доставляет **ритуалы** (ориентация на с�
 | Харнесс | Читает | Нужен файл-указатель | Поверхность автоматизации |
 |---|---|---|---|
 | Claude Code | `CLAUDE.md` | **да** — `CLAUDE.md` = `@AGENTS.md` | хуки в `.claude/settings.json` |
-| Codex CLI | `AGENTS.md` | нет | `[hooks]` в `config.toml` |
+| Codex CLI | `AGENTS.md` | нет | `hooks.json` в CODEX_HOME |
 | OpenCode | `AGENTS.md` | нет | плагины в `.opencode/plugins/` |
 
 Определи до выбора: `.claude/` или кэш плагинов → Claude Code; `opencode.json` / `.opencode/` → OpenCode; `.codex/` или `~/.codex/` → Codex. Истинным может быть не одно — прошей каждый присутствующий харнесс; тело `AGENTS.md` общее.
@@ -18,23 +18,23 @@ iskronify доставляет **ритуалы** (ориентация на с�
 
 **Читает `AGENTS.md` нативно — файл-указатель не создавать.** Обнаружение идёт от корня проекта вниз до cwd и мержит каждый найденный `AGENTS.md` поверх пользовательского `~/.codex/AGENTS.md`. `AGENTS.override.md` — локальный оверрайд с приоритетом над `AGENTS.md` той же директории: естественный дом машинно-локальных заметок; коммитить его нельзя.
 
-**Формат хуков — открытый вопрос, и здесь он назван, а не замят.** Ниже стоит `[hooks]` в `config.toml`; строки самого бинаря Codex (0.149.0-alpha.4.1, наблюдены `strings` на этой машине) вместо этого показывают путь `hooks/hooks.json` и жалобы вида «failed to parse hooks config». Свидетельства расходятся, и косвенное не бьёт прямое: прежде чем писать хуки этому харнессу, **сверься с его собственной поверхностью** — `codex --help`, `codex doctor`, его доки той версии, что стоит у тебя, — и поправь эту секцию тем же ходом. Пример ниже держи указателем на форму, не свидетельством о пути.
+**Сперва найди CODEX_HOME, и не считай, что это `~/.codex`.** Замерено на 0.149.0-alpha.4.1: настоящий дом лежал в `~/Library/Application Support/orca/codex-runtime-home/home`, а `~/.codex` существовал рядом и хуков не держал вовсе. Спрашивай сам харнесс: `codex doctor` печатает CODEX_HOME строкой, вместе с путём до `config.toml`.
 
-Хуки объявляются под `[hooks]` в `config.toml` (проектный конфиг, с пользовательскими оверрайдами) массивами таблиц — группа-матчер, затем её команды:
+**Хуки объявляются в `hooks.json` в CODEX_HOME — файлом JSON, не секцией TOML.** Наблюдено чтением живого файла на той же версии. `config.toml` при этом тоже несёт слово `hooks`, и на нём легко обмануться: там стоят таблицы `[hooks.state."<путь до hooks.json>:<событие>:0:0"]` — служебное состояние, ключом которого служит путь к самому hooks.json. Это следствие хуков, а не место, где их заводят: правка `config.toml` хука не создаёт.
 
-```toml
-[[PreToolUse]]
-matcher = "^Bash$"
+Форма — событие, затем группы, в каждой список команд:
 
-[[PreToolUse.hooks]]
-type = "command"
-command = "bash ./scripts/guard.sh"
-command_windows = "powershell -File .\\scripts\\guard.ps1"
-timeout = 10
-statusMessage = "checking"
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      { "hooks": [ { "type": "command", "command": "bash ./scripts/guard.sh", "timeout": 10 } ] }
+    ]
+  }
+}
 ```
 
-События: `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `PermissionRequest`, `PreCompact`, `PostCompact`, `SubagentStart`, `SubagentStop`, `Stop`. Каждая команда получает JSON на stdin: `session_id`, `turn_id`, `transcript_path`, `cwd`, `hook_event_name`, `model`.
+События, прочитанные в живом файле, — восемь и в CamelCase: `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PermissionRequest`, `PostToolUse`, `SubagentStart`, `SubagentStop`, `Stop`. (В ключах `[hooks.state]` те же события пишутся snake_case — `pre_tool_use`; не перепутай регистры, объявление берёт CamelCase.) У команды наблюдены три поля: `type`, `command`, `timeout`. Ключа `matcher` в этом файле не было — из чего следует, что он необязателен, а не то, что его не бывает: сузить хук по тулу проверяй на своей версии, прежде чем на это опираться. Каждая команда получает JSON на stdin: `session_id`, `turn_id`, `transcript_path`, `cwd`, `hook_event_name`, `model`.
 
 `SessionStart` несёт ещё и **source** — `startup`, `resume`, `clear`, `compact` — и именно против source матчится `matcher`. Ориентации-на-старте обычно нужны только `startup` и `resume`; матч всех четырёх пере-запускает ритуал после каждой компакции.
 
