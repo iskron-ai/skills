@@ -1,5 +1,12 @@
 # Changelog
 
+## [6.1.0](https://github.com/iskron-ai/skills/compare/v6.0.0...v6.1.0) (2026-09-05)
+
+
+### Features
+
+* **pi:** мост обновляется сам; сведён набор скиллов, честный гейт, Codex через cli, мёртвый refresh ([#80](https://github.com/iskron-ai/skills/issues/80)) ([d9a5afa](https://github.com/iskron-ai/skills/commit/d9a5afaaf5c39c09452b064195c8a357cae86e7f))
+
 ## [6.0.0](https://github.com/iskron-ai/skills/compare/v5.0.0...v6.0.0) (2026-09-04)
 
 
