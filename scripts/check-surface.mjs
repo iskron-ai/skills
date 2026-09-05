@@ -22,10 +22,23 @@ const tools = new Set(surface.tools);
 // not meant to resolve as a tool.
 const NON_TOOL_TOKENS = new Set([]);
 
-const ENUM_KEYS = new Set([
+// Vocabularies that mean the same thing wherever they appear. Deliberately NOT
+// every dictionary the surface publishes: `action`, `direction`, `role` and their
+// kin are per-tool, so `direction` is from/to on an arrow and forward/backward on
+// orient. Checking those globally would fail correct prose, so the gate declines
+// them and says so rather than pretending to cover them.
+const ENUM_KEYS = [
   "epistemic_mode", "ontic_mode", "volitive_mode",
   "genre", "given_as", "manifested_as", "arrow_type", "node_type",
-]);
+  "lens",
+];
+// One truth, one place: the scan pattern is built from the list above, so adding a
+// vocabulary here is enough. Kept apart once, the two drifted — the list grew and
+// the pattern did not, and the extra names were checked nowhere.
+const ENUM_RE = new RegExp(
+  String.raw`\b(${ENUM_KEYS.join("|")})\s*[=:]\s*["']?([a-z][a-z_,\- ]*)`,
+  "g",
+);
 
 const errors = [];
 const mdFiles = [];
@@ -53,9 +66,8 @@ for (const file of mdFiles) {
   }
 
   // 2. Enum assignments in code-ish spans: key="value" / key=value / key: value.
-  for (const m of text.matchAll(/\b(epistemic_mode|ontic_mode|volitive_mode|genre|given_as|manifested_as|arrow_type|node_type)\s*[=:]\s*["']?([a-z][a-z_,\- ]*)/g)) {
+  for (const m of text.matchAll(ENUM_RE)) {
     const [, key, raw] = m;
-    if (!ENUM_KEYS.has(key)) continue;
     const vocab = surface.enums[key];
     if (!vocab) continue;
     // The value class accepts commas (multi-value fields), so a comma-separated
