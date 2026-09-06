@@ -577,7 +577,7 @@ class AuthPending extends Error {
   }
 }
 
-async function tokenRequest(meta, params) {
+async function tokenRequestOnce(meta, params) {
   const res = await fetch(meta.as.token_endpoint, {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
@@ -600,6 +600,20 @@ async function tokenRequest(meta, params) {
     + `${tokens.expires_at ? Math.round((tokens.expires_at - now()) / 1000) + "s" : "an unstated time"}`
     + `${tokens.refresh_not_before ? `, refresh usable in ${Math.round((tokens.refresh_not_before - now()) / 1000)}s` : ""}`);
   return tokens;
+}
+
+// Token requests in flight. A rotation the server has performed and this
+// process has not yet written down is the one thing a bridge must not die
+// holding: the old refresh token is retired upstream, the new one exists
+// nowhere but in an answer still on the wire, and every sibling on the machine
+// presents the retired one next — witnessed as a whole night of dead-grant
+// refusals after one successful rotation (graph @nks/nks-dev, node #4170). The
+// request's own deadline bounds the wait.
+const tokenRequestsInFlight = new Set();
+async function tokenRequest(meta, params) {
+  const p = tokenRequestOnce(meta, params);
+  tokenRequestsInFlight.add(p);
+  try { return await p; } finally { tokenRequestsInFlight.delete(p); }
 }
 
 // Starts (or joins) the machine-wide browser flow and throws AuthPending with
@@ -712,6 +726,12 @@ const REFRESH_LOCK_STALE_MS = 45_000; // longer than the token request's own dea
 const REFRESH_WAIT_MS = 60_000;       // a waiter gives up long before the harness does
 const REFRESH_POLL_MS = 120;
 const EARLY_REFUSAL_COOLDOWN_MS = 15_000; // one knock per stretch, never one per call
+// A background knock on a refused grant does not serve a call; it only notices
+// healing after a server restart or database hiccup. One machine-wide control
+// knock per interval is enough, rather than one per minute from every process —
+// the field loop was five processes making about five knocks/minute, 2896 in one
+// night (graph @nks/nks-dev, node #4168).
+const REFUSED_KNOCK_MS = 5 * 60_000; // one background control knock per stretch, machine-wide, on a grant the machine holds refused
 
 // `expired` marks the one refusal that is proof by the grant's own hours: the
 // refresh token's exp has passed, and no server hiccup ever looks like that.
@@ -775,8 +795,8 @@ process.on("exit", releaseRefreshLock);
 // One refresh attempt, classified. Returns the new tokens, null if the attempt
 // only proves someone else already rotated, and throws either a DeadGrantError
 // (the grant itself is refused) or a plain Error (transient — keep the grant).
-// `proactive` marks the speculative kind: the access token still works and we
-// are only topping it up ahead of expiry.
+// `proactive` is the caller's claim that this is a speculative top-up; the
+// current token decides whether that claim still holds when it is spent.
 async function refreshOnce(meta, cur, proactive) {
   // The hour is a reason to WAIT, never a reason to refuse to act. Holding back
   // a refresh nobody needs yet is thrift (that pacing lives in the keepalive,
@@ -839,7 +859,15 @@ async function refreshOnce(meta, cur, proactive) {
     // Only an expired refresh token is honest proof that a human must return.
     const expired = hours.exp && now() >= hours.exp;
     const notYet = hours.nbf && now() < hours.nbf;
-    if (!expired && (notYet || proactive)) {
+    // `proactive` is the keepalive's CLAIM that the access token in hand still
+    // works — checked here, where it is spent. A keepalive that woke up to an
+    // already-expired store is topping nothing up: nobody on the machine can
+    // serve a call until this refresh lands, and refusing it in the words of a
+    // speculative one hides a dead grant behind a false "still works". And the
+    // server's own verdict on the refresh token's existence is about the token,
+    // not about hours — no hold-off applies to it (graph @nks/nks-dev, node #4168).
+    const speculative = proactive && tokenUsable(cur);
+    if (!expired && !deadRefresh && (notYet || speculative)) {
       // One early refusal can be a stale reading — the grant may have rotated
       // under us moments ago, and the server's 401 need not survive a second
       // presentation (witnessed in the field: the same call succeeded seconds
@@ -899,7 +927,7 @@ async function refreshOnce(meta, cur, proactive) {
 
 // Get fresh tokens for the machine, refreshing at most once across all bridges.
 // `rejected` is the access token we must not come back with.
-async function refreshShared(meta, rejected, proactive) {
+async function refreshShared(meta, rejected, proactive, interactive) {
   const deadline = Date.now() + REFRESH_WAIT_MS;
   for (;;) {
     const sibling = usableTokens({ rejected });
@@ -915,10 +943,22 @@ async function refreshShared(meta, rejected, proactive) {
       try {
         const late = usableTokens({ rejected }); // re-read: the wait itself may have settled it
         if (late) { debug("a sibling refreshed the grant — reusing it"); return late; }
-        const cur = loadStore().tokens;
-        if (!cur?.refresh_token) throw new DeadGrantError("no refresh grant on disk");
-        const fresh = await refreshOnce(meta, cur, proactive);
-        if (fresh) return fresh;
+        if (!interactive && refusalStands()) {
+          // Not a new refusal — the machine's standing one; noting it again would
+          // stretch the stretch. The human's call still knocks on its own.
+          throw new DeadGrantError("the grant stands refused on this machine — the background knock waits for the next stretch or a human's call");
+        }
+        try {
+          const cur = loadStore().tokens;
+          if (!cur?.refresh_token) throw new DeadGrantError("no refresh grant on disk");
+          const fresh = await refreshOnce(meta, cur, proactive);
+          if (fresh) return fresh;
+        } catch (e) {
+          // Record the verdict under the lock: a sibling waiting on that lock
+          // reads the refusal rather than emptiness and does not knock next.
+          if (e instanceof DeadGrantError) noteRefusal(e.message);
+          throw e;
+        }
       } finally {
         releaseRefreshLock();
       }
@@ -937,15 +977,23 @@ async function refreshShared(meta, rejected, proactive) {
 const LOGIN_GRACE_MS = 120_000;
 const LOGIN_SNOOZE_MS = 10 * 60_000;
 
-// Start (or continue) the machine's clock on a refused grant. The background
-// keepalive notes refusals too, so the grace is already warm by the time a
-// human's call arrives — a grant dead for an hour asks at once, not in two
-// more minutes.
+// Start the human's grace on the first refusal. `refused_at` is the latest
+// refusal by any caller; the background uses it to decide whether another
+// control knock is due.
 function noteRefusal(reason) {
-  if (!loadGrantState().refused_since) {
-    saveGrantState({ refused_since: Date.now(), reason });
+  const local = Date.now();
+  const first = !loadGrantState().refused_since;
+  saveGrantState({ refused_at: local, ...(first ? { refused_since: local, reason } : {}) });
+  if (first) {
     grantLog(`grant refused, holding the login back for ${LOGIN_GRACE_MS / 1000}s: ${reason}`);
   }
+}
+
+// The machine already holds a verdict on this grant, recorded moments ago by
+// whoever knocked last; a background knock inside this stretch buys nothing.
+function refusalStands() {
+  const at = loadGrantState().refused_at;
+  return !!at && Date.now() - at < REFUSED_KNOCK_MS;
 }
 
 function holdOffLogin(reason, expired = false) {
@@ -1006,11 +1054,11 @@ async function ensureAuth(wwwAuthenticate, opts = {}) {
       if (CFG.resource) meta.resource = CFG.resource;
       if (s.tokens?.refresh_token) {
         try {
-          return await refreshShared(meta, rejected, proactive);
+          return await refreshShared(meta, rejected, proactive, interactive);
         } catch (e) {
-          // Anything but a dead grant is transient: keep it, do NOT open a browser.
+          // Anything but a dead grant is transient. Dead grants were recorded
+          // while holding the refresh lock, before a sibling can follow them.
           if (!(e instanceof DeadGrantError)) throw e;
-          noteRefusal(e.message); // the clock runs whoever noticed, background included
           if (!interactive) throw new Error("authorization required (refresh grant dead, browser flow deferred)");
           holdOffLogin(e.message, e.expired); // may decide the human is not to be asked yet
           log(`refresh grant is dead (${e.message}) — starting a fresh authorization`);
@@ -1050,6 +1098,10 @@ function startTokenKeepalive() {
     if (hours.exp && now() >= hours.exp) {
       debug("the grant is past its own expiry — only a human can mend it now");
       return; // spending refusals on a grant whose hour has passed teaches nobody anything
+    }
+    if (refusalStands()) {
+      debug("the grant stands refused — the machine's control knock is not due yet");
+      return;
     }
     ensureAuth(null, { force: true, interactive: false, proactive: true })
       .then(() => debug("background token refresh ok"))
@@ -1554,24 +1606,38 @@ function main() {
   // A human may be mid-click on OUR authorize URL: dying now kills the callback
   // server and silently loses their login, and the click is not repeatable —
   // the human sees a browser error, not a retry. So a bridge asked to go away
-  // outlives a pending flow; the flow's own timeout bounds the wait. A harness
-  // that will not wait that long may kill us outright, and that is survivable:
-  // the next bridge finds no listener on the callback port and takes the flow
-  // over. Ctrl-C is the one exception — someone is at the terminal, wanting out.
+  // outlives a pending flow, and a token rotation already in flight must land
+  // on disk before exit; each request's own timeout bounds the wait. A harness
+  // that will not wait that long may kill us outright. That is survivable for
+  // the browser flow: the next bridge finds no listener on the callback port
+  // and takes the flow over. It is NOT survivable for an in-flight rotation:
+  // the killed bridge leaves the machine holding a retired refresh token. That
+  // is the price SIGKILL always pays; SIGTERM, stdin-close, and SIGINT no longer do.
   const leave = async (why) => {
     debug(`${why} — winding down`);
-    await Promise.allSettled([...pending]);
+    await Promise.allSettled([...pending, ...tokenRequestsInFlight]);
     await flushStdout(); // an answer half-written is an answer not given
     if (flowInBackground) {
       log(`${why}, but an authorization flow is pending — staying up until the human's click lands`);
       await flowInBackground.catch(() => {});
     }
+    await Promise.allSettled([...tokenRequestsInFlight]); // a tick may have started one while we waited
     await flushStdout();
     process.exit(0);
   };
   rl.on("close", () => leave("stdin closed, the harness is gone"));
   process.on("SIGTERM", () => leave("SIGTERM"));
-  process.on("SIGINT", () => process.exit(0)); // at a terminal: leave at once
+  // Ctrl-C is the one exception — someone is at the terminal, wanting out. Even
+  // so, a rotation already in flight is written down first: the wait is bounded
+  // by the request's own deadline and is usually well under a second, while
+  // leaving without it costs the whole machine its grant (graph @nks/nks-dev,
+  // node #4170). A second Ctrl-C leaves at once — the human has said it twice.
+  let interrupted = false;
+  process.on("SIGINT", () => {
+    if (interrupted || tokenRequestsInFlight.size === 0) process.exit(0);
+    interrupted = true;
+    Promise.allSettled([...tokenRequestsInFlight]).then(() => process.exit(0));
+  });
   process.on("uncaughtException", (e) => log(`uncaught: ${e.stack || e}`));
   process.on("unhandledRejection", (e) => log(`unhandled rejection: ${e?.stack || e}`));
 }
