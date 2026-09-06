@@ -1,5 +1,12 @@
 # Changelog
 
+## [6.1.1](https://github.com/iskron-ai/skills/compare/v6.1.0...v6.1.1) (2026-09-06)
+
+
+### Bug Fixes
+
+* **bridge:** мёртвый грант признаётся фоном, стук ограничен, свёртка ждёт ротацию; чистка корпуса под первого читателя ([#83](https://github.com/iskron-ai/skills/issues/83)) ([a4da925](https://github.com/iskron-ai/skills/commit/a4da92540c49611cfd600b80134feb956b162776))
+
 ## [6.1.0](https://github.com/iskron-ai/skills/compare/v6.0.0...v6.1.0) (2026-09-05)
 
 
