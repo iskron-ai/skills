@@ -68,6 +68,7 @@ function startBridge(serverUrl, authDir, extraEnv = {}) {
 }
 
 const authorizeUrlIn = (text) => /(https?:\/\/\S*\/authorize\?\S+)/.exec(text || "")?.[1] ?? null;
+const exited = (b) => new Promise((r) => b.proc.once("exit", r));
 const callbackPortOf = (authorizeUrl) =>
   Number(new URL(new URL(authorizeUrl).searchParams.get("redirect_uri")).port);
 
@@ -470,6 +471,71 @@ test("Rauthy's dead-refresh 404 costs exactly one new browser flow", async (t) =
   });
 });
 
+// --- the keepalive on a dead grant -----------------------------------------
+
+test("a keepalive that meets a dead refresh records the refusal, so the human's grace is already warm", async (t) => {
+  await withFake(t, {}, async ({ fake, dir, spawnBridge }) => {
+    const first = spawnBridge();
+    await authorize(first, dir);
+    await first.stop();
+
+    const before = readStore(dir).tokens.refresh_token;
+    const s = readStore(dir);
+    s.tokens.expires_at = Date.now() - 1000;
+    writeFileSync(storeFile(dir), JSON.stringify(s));
+    await fake.control({
+      refreshStatus: 404,
+      refreshError: "NotFound",
+      refreshMessage: "Refresh Token does not exist",
+      revoke_access: true,
+    });
+
+    const bridge = spawnBridge();
+    const stateFile = storeFile(dir) + ".grant-state";
+    await waitFor(() => !!JSON.parse(readFileSync(stateFile, "utf8")).refused_since,
+      "the keepalive refusal to warm the human's grace", 5000);
+    assert.equal(fake.state.counts.refresh, 1, "the keepalive must knock exactly once");
+    assert.equal(fake.state.counts.authorize, 1, "the background must not open a browser");
+    const log = readFileSync(join(dir, "grant.log"), "utf8");
+    assert.match(log, /grant refused/, "the background refusal must reach the machine log");
+    assert.doesNotMatch(log, /too early/, "a dead refresh is not an early speculative refusal");
+    assert.equal(readStore(dir).tokens.refresh_token, before, "the refused refresh must remain on disk");
+
+    const refusal = JSON.parse(readFileSync(stateFile, "utf8"));
+    refusal.refused_since = Date.now() - 600_000;
+    writeFileSync(stateFile, JSON.stringify(refusal));
+    const answer = await bridge.call("initialize", 1, INIT_PARAMS);
+    assert.ok(authorizeUrlIn(answer.error?.message),
+      `the already-warm grace must offer login immediately: ${JSON.stringify(answer)}`);
+  });
+});
+
+test("idle bridges knock once on a refused grant, not once per process", async (t) => {
+  await withFake(t, {}, async ({ fake, dir, spawnBridge }) => {
+    const first = spawnBridge();
+    await authorize(first, dir);
+    await first.stop();
+
+    const s = readStore(dir);
+    s.tokens.expires_at = Date.now() - 1000;
+    writeFileSync(storeFile(dir), JSON.stringify(s));
+    await fake.control({
+      refreshStatus: 404,
+      refreshError: "NotFound",
+      refreshMessage: "Refresh Token does not exist",
+      revoke_access: true,
+    });
+
+    const bridges = [spawnBridge(), spawnBridge(), spawnBridge()];
+    await waitFor(() => fake.state.counts.refresh >= 1, "one background control knock");
+    await new Promise((r) => setTimeout(r, 1500));
+    assert.equal(fake.state.counts.refresh, 1, "the refused grant gets one machine-wide control knock");
+    assert.ok(bridges.every((b) => b.proc.exitCode === null), "every idle bridge must remain alive");
+    assert.ok(JSON.parse(readFileSync(storeFile(dir) + ".grant-state", "utf8")).refused_since,
+      "the machine must retain the refusal");
+  });
+});
+
 test("a request that left and never came back is reported as an unknown outcome", async (t) => {
   // The two halves of the network axis mean opposite things to a caller. A call
   // that never went out applied nothing; a call that went out and lost its answer
@@ -745,6 +811,45 @@ test("a server that reads replay as theft keeps the grant through the crowd", as
       "and the grant it holds must still work");
   });
 });
+
+for (const [way, go] of [
+  ["stdin closed", (b) => b.proc.stdin.end()],
+  ["SIGTERM", (b) => b.proc.kill("SIGTERM")],
+  ["SIGINT", (b) => b.proc.kill("SIGINT")],
+]) {
+  test(`a bridge wound down mid-refresh (${way}) writes the rotation down before it leaves`, async (t) => {
+    await withFake(t, { refreshDelayMs: 1500 }, async ({ fake, dir, spawnBridge }) => {
+      const first = spawnBridge();
+      await authorize(first, dir);
+      await first.stop();
+
+      const old = readStore(dir).tokens.refresh_token;
+      const s = readStore(dir);
+      s.tokens.expires_at = Date.now() - 1000;
+      writeFileSync(storeFile(dir), JSON.stringify(s));
+
+      const bridge = spawnBridge();
+      await waitFor(() => fake.state.counts.refresh >= 1, "the startup refresh to be in flight");
+      const exit = exited(bridge);
+      go(bridge);
+      const code = await Promise.race([
+        exit,
+        new Promise((_, reject) => {
+          setTimeout(() => reject(new Error("bridge did not wind down within 10s")), 10_000).unref();
+        }),
+      ]);
+      assert.equal(code, 0, "the bridge must leave cleanly after preserving the rotation");
+      assert.notEqual(readStore(dir).tokens.refresh_token, old, "the old refresh token must be retired on disk");
+      assert.equal(readStore(dir).tokens.refresh_token, fake.state.refresh,
+        "the store must hold the refresh token the server rotated to");
+
+      const next = spawnBridge();
+      assert.ok((await next.call("initialize", 1, INIT_PARAMS)).result,
+        "the next bridge must serve from the preserved rotation");
+      assert.equal(fake.state.counts.stale_refresh, 0, "no bridge may present the retired refresh token");
+    });
+  });
+}
 
 test("a registration the server has forgotten is dropped, so the next login can land", async (t) => {
   await withFake(t, {}, async ({ fake, dir, spawnBridge }) => {
