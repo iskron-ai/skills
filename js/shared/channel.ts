@@ -51,12 +51,37 @@ export function deadTokenAdvice(code: number): string {
   return `закрытие ${code} — токен мёртв, зови ${code === 4001 ? "mint" : "connect"}`;
 }
 
+export type FrameOrigin = "platform" | "human" | "sibling" | "peer";
+
+/**
+ * Кто говорит — по провенансу, как платформа его наблюдала. Побудка платформы
+ * идёт без удостоверения; человек говорит от собственной роли (стояние его роли
+ * — бот, телеграм) либо от себя; брат — другое стояние ТОЙ ЖЕ роли, что у
+ * читающего; остальное — делатель другой роли. myKarta — роль читающего.
+ */
+export function classifyOrigin(frame: Frame, myKarta?: string | number | null): FrameOrigin {
+  const p = frame.provenance ?? {};
+  if (p.via === "platform" || p.auth === "none") return "platform";
+  if (p.as_person === true) return "human";
+  if (p.from_karta_seq != null && p.user_karta_seq != null && p.from_karta_seq === p.user_karta_seq)
+    return "human";
+  if (myKarta != null && p.from_karta_seq != null && String(p.from_karta_seq) === String(myKarta))
+    return "sibling";
+  return "peer";
+}
+
 export interface Frame {
   type?: string;
   body?: unknown;
   id?: string;
   received_at?: string;
   stale?: boolean;
+  content_type?: string;
+  body_chars?: number;
+  /** Как получено тело: "history" — мост дочитал обрезанный кадр; "truncated: …" — не вышло. */
+  body_read?: string;
+  /** Кто говорит, по провенансу: платформа, человек, брат по роли, делатель другой роли. Ставит мост. */
+  origin?: FrameOrigin;
   provenance?: {
     from_standing?: string;
     from_karta_seq?: number;
@@ -65,6 +90,7 @@ export interface Frame {
     user?: string;
     user_karta_seq?: number;
     in_reply_to?: string;
+    as_person?: boolean;
     [k: string]: unknown;
   };
   [k: string]: unknown;

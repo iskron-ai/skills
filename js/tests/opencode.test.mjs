@@ -282,8 +282,8 @@ test("each root session gets its own bridge, and a frame goes to the session who
     assert.match(to["s-b"], /для второй/);
     assert.match(
       to["s-a"],
-      /от @alari:telegram-bot \[роль #1226 · auth pat · via hook · id msg-1\]/,
-      "provenance must reach the agent whole",
+      /^Кадр канала Искрона от делателя роли #1226 — стояние @alari:telegram-bot\nprovenance: \{"from_standing":"@alari:telegram-bot","from_karta_seq":1226,"auth":"pat","via":"hook"\}\nframe: \{"id":"msg-1"\}\n\nдля первой$/,
+      "provenance must reach the agent as the platform saw it",
     );
   } finally {
     await rec.stop();

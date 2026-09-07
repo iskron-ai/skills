@@ -1,3 +1,15 @@
+// js/shared/channel.ts
+function classifyOrigin(frame, myKarta) {
+  const p = frame.provenance ?? {};
+  if (p.via === "platform" || p.auth === "none") return "platform";
+  if (p.as_person === true) return "human";
+  if (p.from_karta_seq != null && p.user_karta_seq != null && p.from_karta_seq === p.user_karta_seq)
+    return "human";
+  if (myKarta != null && p.from_karta_seq != null && String(p.from_karta_seq) === String(myKarta))
+    return "sibling";
+  return "peer";
+}
+
 // js/shared/version.ts
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -16,24 +28,22 @@ function buildOf(selfUrl) {
 var BUILD = buildOf(import.meta.url);
 
 // js/shared/frame-text.ts
+var ENVELOPE_KEYS = ["id", "received_at", "stale", "content_type", "body_chars", "body_read"];
 function frameToText(frame, raw) {
   if (!frame) return `Кадр канала Искрона:
 ${raw}`;
   const p = frame.provenance ?? {};
-  const from = p.from_standing || (p.from_karta_seq != null ? `#${p.from_karta_seq}` : null);
-  const head = from ? `Кадр канала Искрона от ${from}` : "Кадр канала Искрона";
-  const facts = [];
-  if (p.from_karta_seq != null) facts.push(`роль #${p.from_karta_seq}`);
-  if (p.user)
-    facts.push(`человек @${p.user}` + (p.user_karta_seq != null ? ` (#${p.user_karta_seq})` : ""));
-  if (p.auth) facts.push(`auth ${p.auth}`);
-  if (p.via) facts.push(`via ${p.via}`);
-  if (p.in_reply_to) facts.push(`ответ на ${p.in_reply_to}`);
-  if (frame.id) facts.push(`id ${frame.id}`);
-  if (frame.received_at) facts.push(`принят ${frame.received_at}`);
-  if (frame.stale) facts.push("stale: унаследован от другого места");
+  const origin = frame.origin ?? classifyOrigin(frame);
+  const standing = p.from_standing ? ` — стояние ${p.from_standing}` : "";
+  const role = p.from_karta_seq != null ? `роли #${p.from_karta_seq}` : "роли неизвестной";
+  const who = origin === "platform" ? "от ПЛАТФОРМЫ — побудка, не человек и не делатель" : origin === "human" ? `от ЧЕЛОВЕКА${p.user ? ` @${p.user}` : ""} (${role})${standing}` : origin === "sibling" ? `от БРАТА по твоей роли (#${p.from_karta_seq})${standing} — другое стояние той же роли` : `от делателя ${role}${standing}`;
+  const lines = [`Кадр канала Искрона ${who}`];
+  if (frame.provenance) lines.push(`provenance: ${JSON.stringify(frame.provenance)}`);
+  const envelope = {};
+  for (const k of ENVELOPE_KEYS) if (frame[k] !== void 0) envelope[k] = frame[k];
+  if (Object.keys(envelope).length) lines.push(`frame: ${JSON.stringify(envelope)}`);
   const body = typeof frame.body === "string" ? frame.body : raw;
-  return `${head}${facts.length ? ` [${facts.join(" · ")}]` : ""}:
+  return `${lines.join("\n")}
 
 ${body}`;
 }

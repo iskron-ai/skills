@@ -1118,6 +1118,16 @@ async function serviceUp(socketUrl) {
 function deadTokenAdvice(code) {
   return `закрытие ${code} — токен мёртв, зови ${code === 4001 ? "mint" : "connect"}`;
 }
+function classifyOrigin(frame2, myKarta) {
+  const p = frame2.provenance ?? {};
+  if (p.via === "platform" || p.auth === "none") return "platform";
+  if (p.as_person === true) return "human";
+  if (p.from_karta_seq != null && p.user_karta_seq != null && p.from_karta_seq === p.user_karta_seq)
+    return "human";
+  if (myKarta != null && p.from_karta_seq != null && String(p.from_karta_seq) === String(myKarta))
+    return "sibling";
+  return "peer";
+}
 function holdSocket(o) {
   let fastDrops = 0;
   let dead = false;
@@ -1603,11 +1613,14 @@ function holdStanding(url, statusUrl2) {
   holder = holdSocket({
     url,
     onFrame: (raw, frame2) => {
-      ring.push({ raw, frame: frame2 });
-      if (ring.length > RING) ring.shift();
-      const ev = { kind: "frame", raw, frame: frame2 };
-      broadcast(ev);
-      if (frame2?.type !== "status") notify("info", ev);
+      void completeFrame(stampOrigin(frame2)).then((full) => {
+        const text = full === frame2 ? raw : JSON.stringify(full);
+        ring.push({ raw: text, frame: full });
+        if (ring.length > RING) ring.shift();
+        const ev = { kind: "frame", raw: text, frame: full };
+        broadcast(ev);
+        if (full?.type !== "status") notify("info", ev);
+      });
     },
     onDeadToken: (code) => {
       const text = `ДЕЛАТЕЛЬ: ${deadTokenAdvice(code)}`;
@@ -1701,6 +1714,47 @@ function localStatus(msg) {
     }
     return reply(`занятость ${currentKey}: ${text || "(снята)"}`);
   })();
+}
+var readCounter = 0;
+async function completeFrame(frame2) {
+  if (!frame2 || typeof frame2.body !== "string" || typeof frame2.body_chars !== "number")
+    return frame2;
+  if (!frame2.id || [...frame2.body].length >= frame2.body_chars) return frame2;
+  const realm = state.standing?.realm;
+  if (!realm) return { ...frame2, body_read: "truncated: стояние без realm, дочитать нечем" };
+  const id = `iskron-bridge-read-${++readCounter}`;
+  let reply = null;
+  try {
+    await post(
+      {
+        jsonrpc: "2.0",
+        id,
+        method: "tools/call",
+        params: {
+          name: "iskron_channel",
+          arguments: { realm, action: "history", view: "message", message: frame2.id }
+        }
+      },
+      (m) => {
+        if (m.id === id) reply = m;
+      }
+    );
+  } catch (e) {
+    log(`кадр ${frame2.id} обрезан, дочитать не вышло: ${e.message}`);
+    return { ...frame2, body_read: `truncated: ${e.message}` };
+  }
+  const text = replyText(reply);
+  const nl = text.indexOf("\n");
+  const tail = text.indexOf("\nПровенанс, как платформа");
+  if (nl < 0 || reply?.result?.isError) {
+    return { ...frame2, body_read: `truncated: ${text.slice(0, 160)}` };
+  }
+  const body = (tail > nl ? text.slice(nl + 1, tail) : text.slice(nl + 1)).trim();
+  return { ...frame2, body, body_read: "history" };
+}
+function stampOrigin(frame2) {
+  if (!frame2 || frame2.type !== "message") return frame2;
+  return { ...frame2, origin: classifyOrigin(frame2, state.standing?.karta) };
 }
 
 // js/bridge/moment.ts
@@ -2014,24 +2068,22 @@ function openDoor(socketPath, onMessage, onClose) {
 }
 
 // js/shared/frame-text.ts
+var ENVELOPE_KEYS = ["id", "received_at", "stale", "content_type", "body_chars", "body_read"];
 function frameToText(frame2, raw) {
   if (!frame2) return `Кадр канала Искрона:
 ${raw}`;
   const p = frame2.provenance ?? {};
-  const from = p.from_standing || (p.from_karta_seq != null ? `#${p.from_karta_seq}` : null);
-  const head = from ? `Кадр канала Искрона от ${from}` : "Кадр канала Искрона";
-  const facts = [];
-  if (p.from_karta_seq != null) facts.push(`роль #${p.from_karta_seq}`);
-  if (p.user)
-    facts.push(`человек @${p.user}` + (p.user_karta_seq != null ? ` (#${p.user_karta_seq})` : ""));
-  if (p.auth) facts.push(`auth ${p.auth}`);
-  if (p.via) facts.push(`via ${p.via}`);
-  if (p.in_reply_to) facts.push(`ответ на ${p.in_reply_to}`);
-  if (frame2.id) facts.push(`id ${frame2.id}`);
-  if (frame2.received_at) facts.push(`принят ${frame2.received_at}`);
-  if (frame2.stale) facts.push("stale: унаследован от другого места");
+  const origin = frame2.origin ?? classifyOrigin(frame2);
+  const standing = p.from_standing ? ` — стояние ${p.from_standing}` : "";
+  const role = p.from_karta_seq != null ? `роли #${p.from_karta_seq}` : "роли неизвестной";
+  const who = origin === "platform" ? "от ПЛАТФОРМЫ — побудка, не человек и не делатель" : origin === "human" ? `от ЧЕЛОВЕКА${p.user ? ` @${p.user}` : ""} (${role})${standing}` : origin === "sibling" ? `от БРАТА по твоей роли (#${p.from_karta_seq})${standing} — другое стояние той же роли` : `от делателя ${role}${standing}`;
+  const lines = [`Кадр канала Искрона ${who}`];
+  if (frame2.provenance) lines.push(`provenance: ${JSON.stringify(frame2.provenance)}`);
+  const envelope = {};
+  for (const k of ENVELOPE_KEYS) if (frame2[k] !== void 0) envelope[k] = frame2[k];
+  if (Object.keys(envelope).length) lines.push(`frame: ${JSON.stringify(envelope)}`);
   const body = typeof frame2.body === "string" ? frame2.body : raw;
-  return `${head}${facts.length ? ` [${facts.join(" · ")}]` : ""}:
+  return `${lines.join("\n")}
 
 ${body}`;
 }

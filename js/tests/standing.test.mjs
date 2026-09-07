@@ -301,7 +301,7 @@ test("watchdog-codex puts a message frame into the Codex thread through the app-
   const turn = calls.find((c) => c.method === "turn/start");
   assert.equal(turn.params.threadId, "thread-42", "the frame goes to THIS thread");
   assert.match(turn.params.input[0].text, /Слово соседа/);
-  assert.match(turn.params.input[0].text, /от @alari:sosед/);
+  assert.match(turn.params.input[0].text, /стояние @alari:sosед/);
   assert.equal(
     calls.filter((c) => c.method === "turn/start").length,
     1,
@@ -323,6 +323,34 @@ test("watchdog-codex refuses to guess: no thread id or no door is a code-2 exit 
     CODEX_HOME: mkdtempSync("/tmp/cxn-"),
   }).done;
   assert.equal(noDoor.exit, 2);
+});
+
+test("a truncated frame is read to the end by the bridge before anyone sees it", async (t) => {
+  const { fake, dir, bridge, key } = await connected(t);
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog", dir, key);
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
+  const full = "Длинное слово соседа, ".repeat(20).trim();
+  await fake.control({ message_full: { id: "m-long", text: full } });
+  await fake.control({
+    ws_send: JSON.stringify({
+      type: "message",
+      id: "m-long",
+      body: full.slice(0, 40) + "...(truncated)",
+      body_chars: [...full].length,
+      provenance: { from_standing: "@alari:sosед", auth: "oidc" },
+    }),
+  });
+  await waitFor(() => wd.out.includes("m-long"), "the frame to reach the watchdog");
+  const line = wd.out.split("\n").find((l) => l.includes("m-long"));
+  const frame = JSON.parse(line);
+  assert.equal(frame.body, full, "the doer must get the whole body, not the cut");
+  assert.equal(frame.body_read, "history");
+  assert.equal(frame.origin, "peer", "the bridge stamps who speaks");
+  assert.ok(
+    bridge.notifications.some((n) => n.params?.data?.frame?.body === full),
+    "the plugin-side notification carries the whole body too",
+  );
 });
 
 test("watchdog-exit exits 0 on the first message and lets service frames pass", async (t) => {

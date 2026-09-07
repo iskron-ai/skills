@@ -214,5 +214,3 @@ export function resultToContent(result: any): Content[] {
     { type: "text" as const, text: structured ? JSON.stringify(structured) : "(пустой ответ)" },
   ];
 }
-
-/* eslint-enable @typescript-eslint/no-explicit-any */

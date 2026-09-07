@@ -1,27 +1,34 @@
-import { type Frame } from "./channel.ts";
+import { classifyOrigin, type Frame } from "./channel.ts";
+
+const ENVELOPE_KEYS = ["id", "received_at", "stale", "content_type", "body_chars", "body_read"];
 
 /**
  * Кадр стояния — текстом в ход агента; одинаково в pi, OpenCode и Codex.
- * Провенанс идёт первой строкой и ЦЕЛИКОМ: по нему кадр судят — кто говорит
- * (стояние, роль, человек), чем удостоверен (auth), каким путём пришёл (via),
- * ответ ли это (in_reply_to), лежалый ли (stale). Тело следом, как есть:
- * телу любой держатель адреса придаст любой вид, происхождению — нет.
+ * Первая строка говорит, КТО это, словами, которые агент различает без разбора
+ * JSON: платформа (побудка, не человек), человек, брат по роли, делатель другой
+ * роли. Дальше шапка ТЕХНИЧЕСКАЯ и без перевода: провенанс — тем JSON, каким
+ * платформа его наблюдала, конверт кадра — своими ключами; по ним кадр судят.
+ * Тело следом, как есть.
  */
 export function frameToText(frame: Frame | null | undefined, raw: string): string {
   if (!frame) return `Кадр канала Искрона:\n${raw}`;
-  const p = (frame.provenance ?? {}) as Record<string, unknown>;
-  const from = p.from_standing || (p.from_karta_seq != null ? `#${p.from_karta_seq}` : null);
-  const head = from ? `Кадр канала Искрона от ${from}` : "Кадр канала Искрона";
-  const facts: string[] = [];
-  if (p.from_karta_seq != null) facts.push(`роль #${p.from_karta_seq}`);
-  if (p.user)
-    facts.push(`человек @${p.user}` + (p.user_karta_seq != null ? ` (#${p.user_karta_seq})` : ""));
-  if (p.auth) facts.push(`auth ${p.auth}`);
-  if (p.via) facts.push(`via ${p.via}`);
-  if (p.in_reply_to) facts.push(`ответ на ${p.in_reply_to}`);
-  if (frame.id) facts.push(`id ${frame.id}`);
-  if (frame.received_at) facts.push(`принят ${frame.received_at}`);
-  if (frame.stale) facts.push("stale: унаследован от другого места");
+  const p = frame.provenance ?? {};
+  const origin = frame.origin ?? classifyOrigin(frame);
+  const standing = p.from_standing ? ` — стояние ${p.from_standing}` : "";
+  const role = p.from_karta_seq != null ? `роли #${p.from_karta_seq}` : "роли неизвестной";
+  const who =
+    origin === "platform"
+      ? "от ПЛАТФОРМЫ — побудка, не человек и не делатель"
+      : origin === "human"
+        ? `от ЧЕЛОВЕКА${p.user ? ` @${p.user}` : ""} (${role})${standing}`
+        : origin === "sibling"
+          ? `от БРАТА по твоей роли (#${p.from_karta_seq})${standing} — другое стояние той же роли`
+          : `от делателя ${role}${standing}`;
+  const lines = [`Кадр канала Искрона ${who}`];
+  if (frame.provenance) lines.push(`provenance: ${JSON.stringify(frame.provenance)}`);
+  const envelope: Record<string, unknown> = {};
+  for (const k of ENVELOPE_KEYS) if (frame[k] !== undefined) envelope[k] = frame[k];
+  if (Object.keys(envelope).length) lines.push(`frame: ${JSON.stringify(envelope)}`);
   const body = typeof frame.body === "string" ? frame.body : raw;
-  return `${head}${facts.length ? ` [${facts.join(" · ")}]` : ""}:\n\n${body}`;
+  return `${lines.join("\n")}\n\n${body}`;
 }

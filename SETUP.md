@@ -145,10 +145,15 @@ approval, but approval policy is never`: тулы видны и не зовут�
 
 ```sh
 mkdir -p ~/.iskron-bridge ~/.config/opencode/plugins
-src=$(dirname "$(find -L ~/.agents/skills ~/.claude -path '*establish-mcp/scripts/iskron.mjs' 2>/dev/null | head -1)")
+src=$(dirname "$(find -L ~/.agents/skills ~/.claude -path '*establish-mcp/scripts/opencode-plugin.js' 2>/dev/null | head -1)")
+[ -n "$src" ] && [ -f "$src/iskron.mjs" ] || { echo "в установленных скиллах нет плагина OpenCode — обнови поставку (npx skills update --global или плагин) и повтори"; false; }
 cp "$src/iskron.mjs" ~/.iskron-bridge/iskron-bridge.mjs
 cp "$src/opencode-plugin.js" ~/.config/opencode/plugins/iskron.js
 ```
+
+Ищем именно `opencode-plugin.js`: у поставок до него мост звался `iskron-bridge.mjs`,
+и поиск по одному мосту нашёл бы старую копию без плагина — а пустой `src` без
+проверки заставил бы `cp` тихо копировать из текущего каталога.
 
 Плагин лежит именно в `~/.config/opencode/plugins/`: там, и только там, OpenCode сам
 держит зависимость `@opencode-ai/plugin`, которую файл импортирует. Мост плагин берёт
