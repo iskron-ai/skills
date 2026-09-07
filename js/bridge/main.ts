@@ -20,7 +20,9 @@
 // Env (flags win): ISKRON_BRIDGE_URL, ISKRON_BRIDGE_TIMEOUT, ISKRON_BRIDGE_AUTH_DIR,
 //                  ISKRON_BRIDGE_NO_BROWSER, ISKRON_BRIDGE_DEBUG, ISKRON_BRIDGE_SCOPE,
 //                  ISKRON_BRIDGE_RESOURCE (override the resource indicator / audience),
-//                  ISKRON_BRIDGE_CLIENT_ID
+//                  ISKRON_BRIDGE_CLIENT_ID,
+//                  ISKRON_BRIDGE_TOKEN (a personal access token: no OAuth at all; the
+//                  file <auth-dir>/token is read when the variable is absent)
 //
 // No dependencies. Node >= 22.
 import { createInterface } from "node:readline";
@@ -45,7 +47,11 @@ export function bridgeMain(argv: string[]): void {
   setConfig(parseArgs(argv));
   installAuthLockExitHook();
   installRefreshLockExitHook();
-  log(`${BUILD} -> ${CFG.serverUrl} (timeout ${CFG.timeoutMs}ms, auth in ${storePath()})`);
+  log(
+    `${BUILD} -> ${CFG.serverUrl} (timeout ${CFG.timeoutMs}ms, ${
+      CFG.pat ? `personal access token from ${CFG.patSource}` : `auth in ${storePath()}`
+    })`,
+  );
   startTokenKeepalive();
   holdFromEnv(); // отладочный путь: сокет из окружения, без connect
 

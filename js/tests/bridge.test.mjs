@@ -1906,3 +1906,56 @@ test("the override still applies once discovery is cached — the defect it exis
     );
   });
 });
+
+// --- the second entrance: a personal access token ----------------------------
+// A PAT is the whole grant: no discovery, no browser, nothing to refresh. The
+// bridge presents it and nothing else, and a refusal is final — a human with a
+// new token is the only repair, so the verdict must say so, never "retry" or
+// "open this URL".
+
+test("a personal access token serves the call with no discovery, no browser and no store", async (t) => {
+  await withFake(t, { pat: "nks_pat_probe" }, async ({ fake, dir, spawnBridge }) => {
+    const bridge = spawnBridge({ ISKRON_BRIDGE_TOKEN: "nks_pat_probe" });
+    const init = await bridge.call("initialize", 1, INIT_PARAMS);
+    assert.ok(
+      init.result,
+      `the token should have opened the session: ${JSON.stringify(init.error)}`,
+    );
+    const list = await bridge.call("tools/list", 2);
+    assert.ok(Array.isArray(list.result?.tools), "tools/list must be served under the token");
+    assert.equal(fake.state.counts.register, 0, "no client registration may happen");
+    assert.equal(fake.state.counts.authorize, 0, "no browser flow may be started");
+    assert.equal(
+      readdirSync(dir).filter((f) => f.endsWith(".json")).length,
+      0,
+      "a token given from outside must not be copied into the grant store",
+    );
+    assert.match(bridge.stderr, /personal access token from ISKRON_BRIDGE_TOKEN/);
+  });
+});
+
+test("the token file next to the grant is read when the variable is absent", async (t) => {
+  await withFake(t, { pat: "nks_pat_file" }, async ({ dir, spawnBridge }) => {
+    writeFileSync(join(dir, "token"), "nks_pat_file\n");
+    const bridge = spawnBridge();
+    const init = await bridge.call("initialize", 1, INIT_PARAMS);
+    assert.ok(
+      init.result,
+      `the token file should have opened the session: ${JSON.stringify(init.error)}`,
+    );
+    assert.match(bridge.stderr, new RegExp(`personal access token from ${join(dir, "token")}`));
+  });
+});
+
+test("a refused personal token is reported as dead — no URL, no wait, no retry", async (t) => {
+  await withFake(t, { pat: "nks_pat_good" }, async ({ fake, spawnBridge }) => {
+    const bridge = spawnBridge({ ISKRON_BRIDGE_TOKEN: "nks_pat_stale" });
+    const answer = await bridge.call("initialize", 1, INIT_PARAMS);
+    assert.ok(answer.error, "a refused token cannot serve the call");
+    assert.match(answer.error.message, /personal access token from ISKRON_BRIDGE_TOKEN/);
+    assert.match(answer.error.message, /only a human with a new token/);
+    assert.equal(authorizeUrlIn(answer.error.message), null, "no browser URL may be offered");
+    assert.doesNotMatch(answer.error.message, /retry freely|clears itself by waiting/);
+    assert.equal(fake.state.counts.authorize, 0);
+  });
+});

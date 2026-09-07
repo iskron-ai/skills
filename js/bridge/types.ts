@@ -63,4 +63,8 @@ export interface Config {
   scope: string | null;
   resource: string | null;
   staticClientId: string | null;
+  /** Личный токен доступа (PAT): с ним мост не ходит в OAuth вовсе. */
+  pat: string | null;
+  /** Откуда взят PAT — имя переменной или путь файла; для человека в отказе и в doctor. */
+  patSource: string | null;
 }

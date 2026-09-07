@@ -6,6 +6,7 @@ import {
   HoldOffError,
   LoginHeld,
   type Outcome,
+  TokenRefused,
   UpstreamError,
 } from "./errors.ts";
 import { absorbChannelReply } from "./hold.ts";
@@ -23,7 +24,7 @@ export function syntheticError(
   id: JsonRpcMessage["id"],
   message: string,
   outcome: Outcome = UpstreamError.UNKNOWN,
-  holdOff: boolean | "wait" | "knock" = false,
+  holdOff: boolean | "wait" | "knock" | "dead" = false,
 ): JsonRpcMessage {
   // holdOff carries the KIND of not-yet, because the two kinds prescribe
   // opposite moves. "wait" is a pause with an honest figure: the grace-held
@@ -48,7 +49,10 @@ export function syntheticError(
           ? "Nothing was applied and the grant is whole — a benign transition, not a broken " +
             "authorization: retry the call now. Only a refusal that returns means the hour is " +
             "real — that one names its own wait."
-          : "The call never reached the server, so nothing was applied — retry freely."
+          : kind === "dead"
+            ? "Nothing was applied, and no retry and no wait will change that — only a human " +
+              "with a new token can."
+            : "The call never reached the server, so nothing was applied — retry freely."
       : "The call went out and its answer was lost, so THE OUTCOME IS UNKNOWN — re-read the target " +
         "before retrying: a blind retry can apply a second time, and a write with no version guard " +
         "duplicates silently.";
@@ -156,6 +160,10 @@ export async function deliver(msg: JsonRpcMessage): Promise<void> {
           await ensureAuth(e.message, { force: true, rejected: e.presented });
           continue;
         } catch (authErr) {
+          if (authErr instanceof TokenRefused) {
+            if (hasId) emit(syntheticError(msg.id, authErr.message, outcome, "dead"));
+            return;
+          }
           if (authErr instanceof AuthPending || authErr instanceof LoginHeld) {
             // A held login names its own wait; AuthPending names a URL. The first
             // is repaired by time and must not be sold as "retry freely"; the

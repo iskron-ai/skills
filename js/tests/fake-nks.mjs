@@ -60,6 +60,9 @@ export async function startFakeNks(opts = {}) {
     codes: new Map(),
     access: null,
     refresh: null,
+    // A personal access token the server also honours (the bridge's second
+    // entrance, no OAuth at all): /mcp takes it as a bearer like any access token.
+    pat: opts.pat ?? null,
     sessions: new Set(),
     dead: new Set(),
     // faults the test switches on through /control
@@ -326,7 +329,8 @@ export async function startFakeNks(opts = {}) {
         return res.end("forced fault");
       }
       const bearer = (req.headers.authorization || "").replace(/^Bearer /, "");
-      if (!st.access || bearer !== st.access) {
+      const byPat = !!st.pat && bearer === st.pat;
+      if (!byPat && (!st.access || bearer !== st.access)) {
         return json(
           res,
           401,

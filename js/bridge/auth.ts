@@ -1,6 +1,6 @@
 import { now } from "./clock.ts";
 import { CFG } from "./config.ts";
-import { DeadGrantError, errorMessage } from "./errors.ts";
+import { DeadGrantError, errorMessage, TokenRefused } from "./errors.ts";
 import { discover } from "./oauth/discovery.ts";
 import { interactiveFlow } from "./oauth/flow.ts";
 import { holdOffLogin, refreshShared, refusalStands } from "./oauth/refresh.ts";
@@ -29,6 +29,15 @@ export async function ensureAuth(
   opts: AuthOptions = {},
 ): Promise<Tokens> {
   const { force = false, interactive = true, proactive = false } = opts;
+  if (CFG.pat) {
+    // A PAT is the whole grant: there is nothing to refresh and nobody to send
+    // to a browser. Being here at all means the server refused it.
+    throw new TokenRefused(
+      `the personal access token from ${CFG.patSource} is refused by the server — revoked, ` +
+        `expired or without rights to this graph; mint a new one on the graph's token page and ` +
+        `put it in ${CFG.patSource}`,
+    );
+  }
   if (authInFlight) {
     // A background (non-interactive) attempt must not stand in for a caller
     // that is allowed to open the browser: await it, and if it could not
@@ -95,6 +104,7 @@ export async function ensureAuth(
 const REFRESH_MARGIN_MS = 3 * 60_000;
 
 export function startTokenKeepalive(): void {
+  if (CFG.pat) return; // a PAT has no hour to keep
   const tick = () => {
     const t = loadStore().tokens;
     if (!t?.refresh_token) return;

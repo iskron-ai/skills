@@ -55,7 +55,8 @@ export function standingHeader(): string | null {
   return h;
 }
 
-export const currentAccessToken = (): string | null => loadStore().tokens?.access_token ?? null;
+export const currentAccessToken = (): string | null =>
+  CFG.pat ?? loadStore().tokens?.access_token ?? null;
 
 async function* sseEvents(body: ReadableStream<Uint8Array>): AsyncGenerator<string> {
   const reader = body.getReader();
@@ -89,8 +90,9 @@ export async function post(
     "content-type": "application/json",
     accept: "application/json, text/event-stream",
   };
-  const tokens = loadStore().tokens;
-  if (tokens?.access_token) headers.authorization = `Bearer ${tokens.access_token}`;
+  // PAT старше хранилища: с ним грант на диске не читается вовсе (#4267).
+  const token = CFG.pat ?? loadStore().tokens?.access_token ?? null;
+  if (token) headers.authorization = `Bearer ${token}`;
   // The session this request is sent under, kept apart from state: a sibling
   // call may be re-initializing while this one is in flight, and a 404 that
   // comes back after state.sessionId was cleared is still THIS session dying.
@@ -135,7 +137,7 @@ export async function post(
     throw new UpstreamError(
       res.headers.get("www-authenticate") || "unauthorized",
       "auth",
-      tokens?.access_token ?? null,
+      token,
       UpstreamError.NOT_SENT,
     );
   }
@@ -154,7 +156,7 @@ export async function post(
       );
     }
     state.sessionId = sid; // a session id may ride any answer, including an empty one
-    state.sessionToken = tokens?.access_token ?? null;
+    state.sessionToken = token;
     // A session opened with the header is bound at the handshake on a surface
     // that honours it — and silently unbound on one that predates it, and the
     // handshake does not say which. So the register is replayed regardless:

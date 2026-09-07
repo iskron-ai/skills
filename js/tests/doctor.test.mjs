@@ -169,3 +169,23 @@ test("doctor: reads an existing grant without touching it, and sees the home cop
     await fake.stop();
   }
 });
+
+test("doctor with a personal access token names its source and judges it by a live handshake", async () => {
+  const fake = await startFakeNks({ pat: "nks_pat_doc" });
+  const dir = mkdtempSync(join(tmpdir(), "iskron-doctor-pat-"));
+  try {
+    const good = await run(["doctor", fake.mcpUrl, "--auth-dir", dir], {
+      ISKRON_BRIDGE_TOKEN: "nks_pat_doc",
+    });
+    assert.equal(good.code, 0, good.err);
+    assert.match(good.out, /грант: личный токен \(PAT\) из ISKRON_BRIDGE_TOKEN/);
+    assert.match(good.out, /токен принят сервером/);
+    assert.equal(readdirSync(dir).length, 0, "doctor must write nothing");
+    const bad = await run(["doctor", fake.mcpUrl, "--auth-dir", dir], {
+      ISKRON_BRIDGE_TOKEN: "nks_pat_wrong",
+    });
+    assert.match(bad.out, /ТОКЕН ОТВЕРГНУТ/);
+  } finally {
+    await fake.stop();
+  }
+});

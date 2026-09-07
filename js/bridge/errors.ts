@@ -64,6 +64,10 @@ export const DEFINITIVE_OAUTH_ERRORS = new Set([
 // Not a failure: a deliberate refusal to spend the human's attention yet.
 export class LoginHeld extends Error {}
 
+// The personal access token the bridge was given is refused by the server. No
+// refresh, no browser, no wait repairs this: only a human with a new token.
+export class TokenRefused extends Error {}
+
 export class AuthPending extends Error {
   authorizeUrl: string;
   constructor(url: string) {
