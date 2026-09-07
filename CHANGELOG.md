@@ -1,5 +1,12 @@
 # Changelog
 
+## [6.2.1](https://github.com/iskron-ai/skills/compare/v6.2.0...v6.2.1) (2026-09-07)
+
+
+### Bug Fixes
+
+* **opencode:** мост на каждую сессию; занятость — вызовом к своему стоянию ([#91](https://github.com/iskron-ai/skills/issues/91)) ([f810f09](https://github.com/iskron-ai/skills/commit/f810f09bba99768f42aa8b32d1faef5b14edab39))
+
 ## [6.2.0](https://github.com/iskron-ai/skills/compare/v6.1.2...v6.2.0) (2026-09-07)
 
 
