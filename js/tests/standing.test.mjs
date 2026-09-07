@@ -336,16 +336,22 @@ test("watchdog-exit exits 0 on the first message and lets service frames pass", 
   assert.ok(wd.out.includes("будильник"), "the frame must be printed before the exit");
 });
 
-test("the busy line is a call to one's own standing, proxied as is; no file is involved", async (t) => {
+test("the busy line is a call to one's own standing, answered by the bridge itself: it holds the socket", async (t) => {
   const { fake, bridge, standings } = await connected(t);
   await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const before = fake.state.counts.mcp;
   const ok = await bridge.call("tools/call", 6, {
     name: "iskron_channel",
     arguments: { realm: "nks-dev", action: "status", text: "чиню мост" },
   });
   assert.ok(!ok.result?.isError, JSON.stringify(ok));
-  assert.equal(fake.state.status, "чиню мост");
+  assert.equal(fake.state.status, "чиню мост", "the line reaches the service's status address");
   assert.equal(fake.state.counts.status_posts, 1);
+  assert.equal(
+    fake.state.counts.mcp,
+    before,
+    "the call never goes to the MCP server — it is the bridge's own word",
+  );
   // The bridge does not judge the line: the surface's refusal comes back whole.
   const long = await bridge.call("tools/call", 7, {
     name: "iskron_channel",
@@ -353,11 +359,33 @@ test("the busy line is a call to one's own standing, proxied as is; no file is i
   });
   assert.ok(long.result?.isError, "an over-long line is the surface's refusal, passed through");
   assert.match(long.result.content[0].text, /422/);
+  assert.match(
+    long.result.content[0].text,
+    /too long/,
+    "the body of the refusal must reach the doer",
+  );
   assert.equal(fake.state.status, "чиню мост", "a refused line must not replace the published one");
   assert.ok(
     !readdirSync(standings).some((f) => f.endsWith(".say")),
     "no busy-line file may exist any more",
   );
+});
+
+test("status before connect is a teaching refusal from the bridge, not a server call", async (t) => {
+  const fake = await startFakeNks();
+  const dir = mkdtempSync(join(tmpdir(), "iskron-standing-"));
+  const bridge = startBridge(fake.mcpUrl, dir);
+  t.after(async () => {
+    await bridge.stop();
+    await fake.stop();
+  });
+  const r = await bridge.call("tools/call", 1, {
+    name: "iskron_channel",
+    arguments: { realm: "nks-dev", action: "status", text: "рано" },
+  });
+  assert.ok(r.result?.isError);
+  assert.match(r.result.content[0].text, /connect/);
+  assert.equal(fake.state.counts.mcp, 0);
 });
 
 test("tools/list carries the writing-moment line on write tools only", async (t) => {
@@ -371,6 +399,10 @@ test("tools/list carries the writing-moment line on write tools only", async (t)
   );
   assert.ok(byName.iskron_batch?.includes("[мост] Момент скилла writing"), "batch lacks the line");
   assert.ok(!byName.iskron_orient?.includes("[мост]"), "a read tool must stay untouched");
+  assert.ok(
+    byName.iskron_channel?.includes('action="status"'),
+    "the channel tool must announce the bridge's own status action",
+  );
 });
 
 test("watchdog with nothing held tells the doer to connect first", async () => {

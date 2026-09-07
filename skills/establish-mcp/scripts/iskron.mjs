@@ -1109,6 +1109,9 @@ function httpOrigin(socketUrl) {
 function versionUrl(socketUrl) {
   return httpOrigin(socketUrl) + "/api/version";
 }
+function statusUrl(socketUrl) {
+  return socketUrl.replace(/^wss:/, "https:").replace(/^ws:/, "http:").replace("/channel/ws/", "/channel/status/");
+}
 async function serviceUp(socketUrl) {
   return fetch(versionUrl(socketUrl), { signal: AbortSignal.timeout(5e3) }).then((r) => r.ok ? r.json() : null).catch(() => null);
 }
@@ -1464,6 +1467,7 @@ var holder = null;
 var server = null;
 var currentKey = null;
 var currentUrl = null;
+var currentStatusUrl = null;
 var clients = /* @__PURE__ */ new Set();
 var ring = [];
 function broadcast(ev) {
@@ -1586,13 +1590,15 @@ function releaseStanding(reason) {
   ring.length = 0;
   currentKey = null;
   currentUrl = null;
+  currentStatusUrl = null;
 }
-function holdStanding(url, statusUrl) {
+function holdStanding(url, statusUrl2) {
   const key = keyFor();
   if (url === currentUrl && key === currentKey && holder?.alive) return key;
   releaseStanding("новый сокет");
   currentKey = key;
   currentUrl = url;
+  currentStatusUrl = statusUrl2 || statusUrl(url);
   openLocalServer(key);
   holder = holdSocket({
     url,
@@ -1661,15 +1667,58 @@ function holdFromEnv() {
   if (!url) return;
   holdStanding(url, process.env.ISKRON_CHANNEL_STATUS?.trim() || null);
 }
+function localStatus(msg) {
+  if (msg?.method !== "tools/call" || msg?.params?.name !== "iskron_channel") return null;
+  const a = msg.params?.arguments;
+  if (a?.action !== "status") return null;
+  const text = typeof a.text === "string" ? a.text : "";
+  const reply = (body, isError = false) => ({
+    jsonrpc: "2.0",
+    id: msg.id,
+    result: { ...isError ? { isError: true } : {}, content: [{ type: "text", text: body }] }
+  });
+  return (async () => {
+    if (!currentStatusUrl || !currentKey) {
+      return reply(
+        'Отказано (мост): стояния мост не держит — сперва iskron_channel(action="connect") (и register на живом месте), затем status',
+        true
+      );
+    }
+    let res;
+    try {
+      res = await fetch(currentStatusUrl, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ text }),
+        signal: AbortSignal.timeout(5e3)
+      });
+    } catch (e) {
+      return reply(`Отказано (мост): статусный адрес не ответил — ${e.message}`, true);
+    }
+    const body = (await res.text().catch(() => "")).trim();
+    if (!res.ok) {
+      return reply(`Отказано (${res.status}) поверхностью: ${body || "без тела"}`, true);
+    }
+    return reply(`занятость ${currentKey}: ${text || "(снята)"}`);
+  })();
+}
 
 // js/bridge/moment.ts
 var WRITE_TOOL = /^iskron_(add_[a-z_]+|batch)$/;
 var JSON_LINE = "Момент скилла writing: перед вызовом по каждому узлу назови читателя, что изменит извлечение и что здесь ново; тип и given_as, три модуса как утверждения, имя-тезис, стрелки со смыслом; hint — указатель на то, чего не покажет карта, не план; строки CHECKS в ответе — работа этого такта.";
 var MOMENT_LINE = "[мост] " + JSON_LINE;
+var STATUS_LINE = '[мост] action="status" (realm, text) — занятость ЭТОГО стояния: исполняет мост, держатель сокета, на сервер вызов не уходит; пустой text снимает; отказ поверхности приходит целиком.';
 function annotateToolList(reply) {
   const tools = reply?.result?.tools;
   if (!Array.isArray(tools)) return;
   for (const t of tools) {
+    if (t && t.name === "iskron_channel" && typeof t.description === "string") {
+      if (!t.description.includes(STATUS_LINE))
+        t.description = `${t.description}
+
+${STATUS_LINE}`;
+      continue;
+    }
     if (!t || typeof t.name !== "string" || !WRITE_TOOL.test(t.name)) continue;
     const d = typeof t.description === "string" ? t.description : "";
     if (d.includes(MOMENT_LINE)) continue;
@@ -1702,6 +1751,11 @@ function syntheticError(id, message, outcome = UpstreamError.UNKNOWN, holdOff = 
   };
 }
 async function deliver(msg) {
+  const local = localStatus(msg);
+  if (local) {
+    emit(await local);
+    return;
+  }
   const isInit = msg?.method === "initialize";
   if (isInit) state.initParams = msg.params;
   const hasId = msg?.id !== void 0 && msg?.id !== null;

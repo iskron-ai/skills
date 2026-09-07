@@ -17,10 +17,19 @@ const JSON_LINE =
 export const MOMENT_LINE = "[мост] " + JSON_LINE;
 
 /** Ответ на tools/list: к описанию каждого пишущего тула приписана строка момента. Идемпотентно. */
+/** Действие моста на тул канала: занятость стояния ставит держатель сокета — мост. */
+export const STATUS_LINE =
+  '[мост] action="status" (realm, text) — занятость ЭТОГО стояния: исполняет мост, держатель сокета, на сервер вызов не уходит; пустой text снимает; отказ поверхности приходит целиком.';
+
 export function annotateToolList(reply: JsonRpcMessage): void {
   const tools = reply?.result?.tools;
   if (!Array.isArray(tools)) return;
   for (const t of tools) {
+    if (t && t.name === "iskron_channel" && typeof t.description === "string") {
+      if (!t.description.includes(STATUS_LINE))
+        t.description = `${t.description}\n\n${STATUS_LINE}`;
+      continue;
+    }
     if (!t || typeof t.name !== "string" || !WRITE_TOOL.test(t.name)) continue;
     const d = typeof t.description === "string" ? t.description : "";
     if (d.includes(MOMENT_LINE)) continue;

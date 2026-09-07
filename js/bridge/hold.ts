@@ -23,7 +23,13 @@ import { connect as connectLocal, createServer, type Server, type Socket } from 
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { deadTokenAdvice, type Frame, type Holder, holdSocket } from "../shared/channel.ts";
+import {
+  deadTokenAdvice,
+  type Frame,
+  type Holder,
+  holdSocket,
+  statusUrl as deriveStatusUrl,
+} from "../shared/channel.ts";
 import {
   defaultAuthDir,
   keyFilePathOf,
@@ -67,6 +73,7 @@ let holder: Holder | null = null;
 let server: Server | null = null;
 let currentKey: string | null = null;
 let currentUrl: string | null = null;
+let currentStatusUrl: string | null = null;
 const clients = new Set<Socket>();
 const ring: { raw: string; frame: Frame | null }[] = [];
 
@@ -195,6 +202,7 @@ export function releaseStanding(reason: string): void {
   ring.length = 0;
   currentKey = null;
   currentUrl = null;
+  currentStatusUrl = null;
 }
 
 /** Взять этот адрес и держать его, чем бы ни был занят прежний. */
@@ -204,6 +212,7 @@ function holdStanding(url: string, statusUrl?: string | null): string {
   releaseStanding("новый сокет");
   currentKey = key;
   currentUrl = url;
+  currentStatusUrl = statusUrl || deriveStatusUrl(url);
   openLocalServer(key);
   holder = holdSocket({
     url,
@@ -288,4 +297,47 @@ export function holdFromEnv(): void {
   const url = process.env.ISKRON_CHANNEL_SOCKET?.trim();
   if (!url) return;
   holdStanding(url, process.env.ISKRON_CHANNEL_STATUS?.trim() || null);
+}
+
+/**
+ * Занятость — слово держателя сокета, а держит его мост: action="status" у
+ * iskron_channel исполняется здесь, на сервер не уходит (решение владельца,
+ * граф nks-dev: #4284 отвергнут). POST на статусный адрес из ответа connect;
+ * ответ поверхности — успех или ProblemDetail — доносится целиком, длину мост
+ * не судит. Возвращает null для всякого другого вызова.
+ */
+export function localStatus(msg: JsonRpcMessage): Promise<JsonRpcMessage> | null {
+  if (msg?.method !== "tools/call" || msg?.params?.name !== "iskron_channel") return null;
+  const a = msg.params?.arguments;
+  if (a?.action !== "status") return null;
+  const text = typeof a.text === "string" ? a.text : "";
+  const reply = (body: string, isError = false): JsonRpcMessage => ({
+    jsonrpc: "2.0",
+    id: msg.id,
+    result: { ...(isError ? { isError: true } : {}), content: [{ type: "text", text: body }] },
+  });
+  return (async () => {
+    if (!currentStatusUrl || !currentKey) {
+      return reply(
+        'Отказано (мост): стояния мост не держит — сперва iskron_channel(action="connect") (и register на живом месте), затем status',
+        true,
+      );
+    }
+    let res: Response;
+    try {
+      res = await fetch(currentStatusUrl, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ text }),
+        signal: AbortSignal.timeout(5000),
+      });
+    } catch (e) {
+      return reply(`Отказано (мост): статусный адрес не ответил — ${(e as Error).message}`, true);
+    }
+    const body = (await res.text().catch(() => "")).trim();
+    if (!res.ok) {
+      return reply(`Отказано (${res.status}) поверхностью: ${body || "без тела"}`, true);
+    }
+    return reply(`занятость ${currentKey}: ${text || "(снята)"}`);
+  })();
 }

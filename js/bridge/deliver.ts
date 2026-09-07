@@ -9,7 +9,7 @@ import {
   TokenRefused,
   UpstreamError,
 } from "./errors.ts";
-import { absorbChannelReply } from "./hold.ts";
+import { absorbChannelReply, localStatus } from "./hold.ts";
 import { annotateToolList } from "./moment.ts";
 import { ensureStanding, isUnattributed, noteStanding, replyText } from "./standing.ts";
 import { emit, log } from "./streams.ts";
@@ -76,6 +76,12 @@ export function syntheticError(
 // Deliver one harness message upstream, with one auth retry and one session
 // retry. On final failure a request id is ALWAYS answered with an error.
 export async function deliver(msg: JsonRpcMessage): Promise<void> {
+  // Слово о занятости не покидает моста: держатель сокета говорит его сам.
+  const local = localStatus(msg);
+  if (local) {
+    emit(await local);
+    return;
+  }
   const isInit = msg?.method === "initialize";
   if (isInit) state.initParams = msg.params;
   const hasId = msg?.id !== undefined && msg?.id !== null;
