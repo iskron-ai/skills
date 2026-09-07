@@ -104,10 +104,13 @@ import { tool as tool2 } from "@opencode-ai/plugin";
 // js/shared/bridge-client.ts
 import { spawn } from "node:child_process";
 import { basename } from "node:path";
-function nodeBinary() {
-  if (process.env.ISKRON_NODE?.trim()) return process.env.ISKRON_NODE.trim();
-  if (process.versions?.bun || !/^node/i.test(basename(process.execPath))) return "node";
-  return process.execPath;
+function bridgeRuntime() {
+  const own = process.env.ISKRON_NODE?.trim();
+  if (own) return { bin: own, env: process.env };
+  if (process.versions?.bun)
+    return { bin: process.execPath, env: { ...process.env, BUN_BE_BUN: "1" } };
+  if (!/^node/i.test(basename(process.execPath))) return { bin: "node", env: process.env };
+  return { bin: process.execPath, env: process.env };
 }
 var Bridge = class {
   proc = null;
@@ -126,7 +129,8 @@ var Bridge = class {
     this.onNotification = onNotification;
   }
   start() {
-    const proc = spawn(nodeBinary(), [this.bin], { stdio: ["pipe", "pipe", "pipe"] });
+    const rt = bridgeRuntime();
+    const proc = spawn(rt.bin, [this.bin], { stdio: ["pipe", "pipe", "pipe"], env: rt.env });
     this.proc = proc;
     proc.stdout?.setEncoding("utf8");
     proc.stdout?.on("data", (chunk) => this.feed(chunk));

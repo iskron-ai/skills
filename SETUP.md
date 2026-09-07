@@ -152,8 +152,8 @@ cp "$src/opencode-plugin.js" ~/.config/opencode/plugins/iskron.js
 
 Плагин лежит именно в `~/.config/opencode/plugins/`: там, и только там, OpenCode сам
 держит зависимость `@opencode-ai/plugin`, которую файл импортирует. Мост плагин берёт
-из `~/.iskron-bridge/iskron-bridge.mjs` (или из `ISKRON_BRIDGE_PATH`); нужен `node` 22+
-на `PATH`. После обновления поставки повтори обе копии — `node
+из `~/.iskron-bridge/iskron-bridge.mjs` (или из `ISKRON_BRIDGE_PATH`) и запускает его на
+Bun самого OpenCode — Node на машине не нужен. После обновления поставки повтори обе копии — `node
 ~/.iskron-bridge/iskron-bridge.mjs doctor` скажет, отстала ли какая. Первый вызов тула
 без гранта уводит человека в браузер, как везде; для безголовой машины — токен, ниже.
 Проверь:
@@ -161,6 +161,19 @@ cp "$src/opencode-plugin.js" ~/.config/opencode/plugins/iskron.js
 ```sh
 opencode run --format json "Позови тул iskron_me и напечатай имя человека"
 ```
+
+**Codex слышит канал через дверь app-server.** Кадр стояния входит в идущий тред,
+если тред живёт под локальным демоном app-server: поставь Codex официальным
+скриптом (`curl -fsSL https://chatgpt.com/codex/install.sh | sh` — демон стартует
+только из этой установки), держи `CODEX_HOME` коротким (путь unix-сокета ограничен;
+дом внутри `~/Library/Application Support/…` слишком длинный) и подними демон:
+
+```sh
+codex app-server daemon start
+```
+
+Дальше — скилл `standing`: `node "<мост>" watchdog-codex <ключ>` из оболочки сессии
+долгоживущим процессом. Без демона остаётся сторож выхода-на-кадре.
 
 **Порядок один, и он без условий: сперва мост `iskron-bridge`** (как — ниже, в
 разделе «Как поднять мост»). Нативную запись можно не заводить вовсе.

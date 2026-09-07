@@ -10,13 +10,18 @@
 // appears — the red this probe exists to show.
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtempSync, readdirSync, readFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
+import { startFakeCodex } from "./fake-codex.mjs";
 import { startFakeNks } from "./fake-nks.mjs";
+
+// Чем запускать поставку: node по умолчанию; ISKRON_NODE подставляет другой рантайм
+// (например, `opencode` под BUN_BE_BUN=1 — Bun, встроенный в OpenCode).
+const NODE = process.env.ISKRON_NODE || process.execPath;
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const FILE =
@@ -31,7 +36,7 @@ const CONNECT = { realm: "nks-dev", action: "connect", karta: 931, name: "proba"
 
 // --- a harness that also keeps the bridge's notifications ------------------
 function startBridge(serverUrl, authDir) {
-  const proc = spawn(process.execPath, [FILE, serverUrl, "--no-browser", "--auth-dir", authDir], {
+  const proc = spawn(NODE, [FILE, serverUrl, "--no-browser", "--auth-dir", authDir], {
     env: { ...process.env, ISKRON_BRIDGE_NO_BROWSER: "1" },
     stdio: ["pipe", "pipe", "pipe"],
   });
@@ -128,9 +133,9 @@ async function connected(t) {
 // The watchdog is given the auth dir the way the bridge's own block names it —
 // the `--auth-dir` flag, never a variable the bridge was not started with. One
 // lever for both halves, or a drift between their roots would pass green here.
-function runClient(sub, dir, key, timeoutMs = 8000) {
-  const proc = spawn(process.execPath, [FILE, sub, ...(key ? [key] : []), "--auth-dir", dir], {
-    env: { ...process.env },
+function runClient(sub, dir, key, timeoutMs = 8000, extraEnv = {}) {
+  const proc = spawn(NODE, [FILE, sub, ...(key ? [key] : []), "--auth-dir", dir], {
+    env: { ...process.env, ...extraEnv },
     stdio: ["ignore", "pipe", "pipe"],
   });
   let out = "";
@@ -256,6 +261,68 @@ test("connect under a new name re-keys the hold: the block and the key file foll
         .every((f) => readFileSync(join(standings, f), "utf8").trim() === key2),
     "the key file to carry the new name only",
   );
+});
+
+test("watchdog-codex puts a message frame into the Codex thread through the app-server door", async (t) => {
+  const { fake, dir, key } = await connected(t);
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  // The door lives under a short home: a unix socket path is limited to ~104 bytes.
+  const home = mkdtempSync("/tmp/cxd-");
+  const sock = join(home, "app-server-control", "app-server-control.sock");
+  const log = join(home, "door.log");
+  writeFileSync(log, "");
+  const door = await startFakeCodex(sock, log);
+  t.after(() => door.stop());
+  const wd = runClient("watchdog-codex", dir, key, 15000, {
+    CODEX_HOME: home,
+    CODEX_THREAD_ID: "thread-42",
+  });
+  await waitFor(() => wd.err.includes("слушаю стояние"), "the watchdog to attach");
+  await fake.control({ ws_send: JSON.stringify({ type: "hello", pending: 0 }) });
+  await fake.control({
+    ws_send: JSON.stringify({
+      type: "message",
+      body: "Слово соседа",
+      provenance: { from_standing: "@alari:sosед" },
+    }),
+  });
+  await waitFor(
+    () => readFileSync(log, "utf8").includes("turn/start"),
+    "the frame to reach the door",
+  );
+  const calls = readFileSync(log, "utf8")
+    .trim()
+    .split("\n")
+    .map((l) => JSON.parse(l));
+  assert.ok(
+    calls.some((c) => c.method === "initialize"),
+    "the door is initialized first",
+  );
+  const turn = calls.find((c) => c.method === "turn/start");
+  assert.equal(turn.params.threadId, "thread-42", "the frame goes to THIS thread");
+  assert.match(turn.params.input[0].text, /Слово соседа/);
+  assert.match(turn.params.input[0].text, /от @alari:sosед/);
+  assert.equal(
+    calls.filter((c) => c.method === "turn/start").length,
+    1,
+    "hello must not wake the thread",
+  );
+  // A dead token is loud through the same door, and the watchdog leaves non-zero.
+  await fake.control({ ws_close: 4001 });
+  const r = await wd.done;
+  assert.notEqual(r.exit, 0, "the watchdog must leave non-zero on a dead token");
+  assert.match(wd.err, /токен мёртв/);
+});
+
+test("watchdog-codex refuses to guess: no thread id or no door is a code-2 exit that names the move", async (t) => {
+  const { dir, key } = await connected(t);
+  const noThread = await runClient("watchdog-codex", dir, key, 5000, { CODEX_THREAD_ID: "" }).done;
+  assert.equal(noThread.exit, 2);
+  const noDoor = await runClient("watchdog-codex", dir, key, 5000, {
+    CODEX_THREAD_ID: "thread-42",
+    CODEX_HOME: mkdtempSync("/tmp/cxn-"),
+  }).done;
+  assert.equal(noDoor.exit, 2);
 });
 
 test("watchdog-exit exits 0 on the first message and lets service frames pass", async (t) => {

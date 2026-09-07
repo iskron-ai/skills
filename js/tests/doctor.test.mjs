@@ -18,6 +18,10 @@ import { fileURLToPath } from "node:url";
 
 import { startFakeNks } from "./fake-nks.mjs";
 
+// Чем запускать поставку: node по умолчанию; ISKRON_NODE подставляет другой рантайм
+// (например, `opencode` под BUN_BE_BUN=1 — Bun, встроенный в OpenCode).
+const NODE = process.env.ISKRON_NODE || process.execPath;
+
 const HERE = dirname(fileURLToPath(import.meta.url));
 const FILE =
   process.env.ISKRON_BRIDGE_PATH ||
@@ -28,7 +32,7 @@ const PLUGIN = JSON.parse(
 
 function run(args, env = {}) {
   return new Promise((resolve) => {
-    const proc = spawn(process.execPath, [FILE, ...args], {
+    const proc = spawn(NODE, [FILE, ...args], {
       env: { ...process.env, ...env },
       stdio: ["ignore", "pipe", "pipe"],
     });

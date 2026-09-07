@@ -3,6 +3,7 @@
 //   node iskron.mjs [bridge] [server-url] [flags]   мост stdio↔https (по умолчанию)
 //   node iskron.mjs watchdog [ключ] [--auth-dir <dir>]        сторож сокета под наблюдателем харнеса
 //   node iskron.mjs watchdog-exit [ключ] [--auth-dir <dir>]   сторож выхода-на-кадре
+//   node iskron.mjs watchdog-codex [ключ] [--auth-dir <dir>]  сторож Codex: кадр в идущий тред через app-server
 //   node iskron.mjs doctor [server-url] [flags]     какая сборка стоит и работает ли она
 //   node iskron.mjs --version                       сборка vX.Y.Z+хеш
 //
@@ -11,6 +12,7 @@
 // каким бы именем ни лежала копия.
 import { BUILD } from "../bridge/build.ts";
 import { bridgeMain } from "../bridge/main.ts";
+import { runWatchdogCodex } from "../watchdog/codex.ts";
 import { runWatchdog } from "../watchdog/watchdog.ts";
 import { runWatchdogExit } from "../watchdog/watchdog-exit.ts";
 import { runDoctor } from "./doctor.ts";
@@ -19,6 +21,7 @@ const USAGE = `iskron ${BUILD}
   node iskron.mjs [bridge] [server-url] [--timeout <ms>] [--auth-dir <dir>] [--no-browser] [--debug]
   node iskron.mjs watchdog [ключ] [--auth-dir <dir>]
   node iskron.mjs watchdog-exit [ключ] [--auth-dir <dir>]
+  node iskron.mjs watchdog-codex [ключ] [--auth-dir <dir>]   (из оболочки Codex: CODEX_THREAD_ID, CODEX_HOME)
   node iskron.mjs doctor [server-url] [--auth-dir <dir>]
   node iskron.mjs --version
   env: ISKRON_BRIDGE_TOKEN — личный токен вместо OAuth (или файл <auth-dir>/token);
@@ -34,6 +37,9 @@ switch (first) {
     break;
   case "watchdog-exit":
     runWatchdogExit(rest);
+    break;
+  case "watchdog-codex":
+    runWatchdogCodex(rest);
     break;
   case "doctor":
     void runDoctor(rest);

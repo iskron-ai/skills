@@ -51,10 +51,15 @@ function canWrite(s) {
 function guardStream(s) {
   if (s) s.on("error", () => deadStreams.add(s));
 }
+var stdoutBacklog = false;
 function writeTo(s, text) {
   if (!canWrite(s)) return false;
   try {
-    s.write(text);
+    const fit = s.write(text);
+    if (s === process.stdout) {
+      if (!fit && !stdoutBacklog) s.once("drain", () => stdoutBacklog = false);
+      stdoutBacklog = !fit;
+    }
     return true;
   } catch {
     deadStreams.add(s);
@@ -74,7 +79,7 @@ function emit(msg) {
 function flushStdout() {
   return new Promise((resolve) => {
     const out2 = process.stdout;
-    if (!canWrite(out2) || out2.writableLength === 0) return resolve();
+    if (!canWrite(out2)) return resolve();
     let done = false;
     const finish = () => {
       if (done) return;
@@ -85,7 +90,8 @@ function flushStdout() {
     };
     out2.once("error", finish);
     out2.once("close", finish);
-    out2.write("", finish);
+    if (stdoutBacklog) out2.once("drain", finish);
+    else out2.write("", finish);
     setTimeout(finish, FLUSH_STOP_MS).unref();
   });
 }
@@ -661,7 +667,7 @@ async function tokenRequestOnce(meta, params) {
     signal: AbortSignal.timeout(3e4)
   });
   noteServerDate(res);
-  const body = await res.json().catch(() => ({}));
+  const body = await res.json().catch(() => null) ?? {};
   if (!res.ok) {
     throw new TokenError(
       `token endpoint ${res.status}: ${body.error || ""} ${body.error_description || body.message || ""}`.trim(),
@@ -1124,14 +1130,14 @@ function holdSocket(o) {
     sock.addEventListener("message", (e) => {
       if (stopped || ws !== sock) return;
       const raw = typeof e.data === "string" ? e.data : "[двоичный кадр]";
-      let frame = null;
+      let frame2 = null;
       if (typeof e.data === "string") {
         try {
-          frame = JSON.parse(raw);
+          frame2 = JSON.parse(raw);
         } catch {
         }
       }
-      o.onFrame(raw, frame && typeof frame === "object" ? frame : null);
+      o.onFrame(raw, frame2 && typeof frame2 === "object" ? frame2 : null);
     });
     sock.addEventListener(
       "error",
@@ -1525,8 +1531,8 @@ function openLocalServer(key) {
     sock.write(
       JSON.stringify({ kind: "attached", key, buffered: ring.length }) + "\n"
     );
-    for (const { raw, frame } of ring) {
-      sock.write(JSON.stringify({ kind: "frame", raw, frame }) + "\n");
+    for (const { raw, frame: frame2 } of ring) {
+      sock.write(JSON.stringify({ kind: "frame", raw, frame: frame2 }) + "\n");
     }
   });
   srv.on("error", (e) => {
@@ -1590,12 +1596,12 @@ function holdStanding(url, statusUrl) {
   openLocalServer(key);
   holder = holdSocket({
     url,
-    onFrame: (raw, frame) => {
-      ring.push({ raw, frame });
+    onFrame: (raw, frame2) => {
+      ring.push({ raw, frame: frame2 });
       if (ring.length > RING) ring.shift();
-      const ev = { kind: "frame", raw, frame };
+      const ev = { kind: "frame", raw, frame: frame2 };
       broadcast(ev);
-      if (frame?.type !== "status") notify("info", ev);
+      if (frame2?.type !== "status") notify("info", ev);
     },
     onDeadToken: (code) => {
       const text = `ДЕЛАТЕЛЬ: ${deadTokenAdvice(code)}`;
@@ -1641,7 +1647,7 @@ function absorbChannelReply(msg, reply) {
   const block = `
 
 [iskron-bridge] Сокет этого стояния держит мост — вручать его никому не нужно (строка выше о том, что никто не слушает, описывает миг до этого держания).
-Слушать: node "${self}" watchdog ${key}${where} — под Monitor с persistent: true (Claude Code); фоновой задачей — node "${self}" watchdog-exit ${key}${where} (выходит нулём на первом сообщении).
+Слушать: node "${self}" watchdog ${key}${where} — под Monitor с persistent: true (Claude Code); фоновой задачей — node "${self}" watchdog-exit ${key}${where} (выходит нулём на первом сообщении); в Codex из своей оболочки фоном — node "${self}" watchdog-codex ${key}${where} (кадр входит в идущий тред через app-server).
 Занятость: iskron_channel(action="status", realm, text) — пустой text снимает.
 Кадры приходят и уведомлениями MCP (logger iskron-channel).`;
   const content = reply.result?.content;
@@ -1702,7 +1708,7 @@ async function deliver(msg) {
   let authRetried = false;
   let sessionRetried = false;
   let outcome = UpstreamError.NOT_SENT;
-  const note2 = (e) => {
+  const note3 = (e) => {
     if (!(e instanceof UpstreamError) || e.outcome === UpstreamError.UNKNOWN) {
       outcome = UpstreamError.UNKNOWN;
     }
@@ -1754,7 +1760,7 @@ async function deliver(msg) {
       }
       return;
     } catch (e) {
-      note2(e);
+      note3(e);
       if (e instanceof UpstreamError && e.kind === "auth" && !authRetried) {
         authRetried = true;
         try {
@@ -1872,8 +1878,98 @@ function bridgeMain(argv2) {
   );
 }
 
-// js/watchdog/watchdog.ts
-import { writeSync } from "node:fs";
+// js/watchdog/codex.ts
+import { existsSync as existsSync3 } from "node:fs";
+import { homedir as homedir3 } from "node:os";
+import { join as join6 } from "node:path";
+
+// js/shared/appserver.ts
+import { randomBytes as randomBytes2 } from "node:crypto";
+import { request } from "node:http";
+function frame(data) {
+  const mask = randomBytes2(4);
+  let head;
+  if (data.length < 126) head = Buffer.from([129, 128 | data.length]);
+  else if (data.length < 65536) {
+    head = Buffer.alloc(4);
+    head[0] = 129;
+    head[1] = 128 | 126;
+    head.writeUInt16BE(data.length, 2);
+  } else {
+    head = Buffer.alloc(10);
+    head[0] = 129;
+    head[1] = 128 | 127;
+    head.writeBigUInt64BE(BigInt(data.length), 2);
+  }
+  const masked = Buffer.from(data.map((b, i) => b ^ mask[i % 4]));
+  return Buffer.concat([head, mask, masked]);
+}
+function openDoor(socketPath, onMessage, onClose) {
+  return new Promise((resolve, reject) => {
+    const req = request({
+      socketPath,
+      path: "/",
+      method: "GET",
+      headers: {
+        Connection: "Upgrade",
+        Upgrade: "websocket",
+        "Sec-WebSocket-Version": "13",
+        "Sec-WebSocket-Key": randomBytes2(16).toString("base64")
+      }
+    });
+    req.on("upgrade", (_res, socket) => {
+      let buf = Buffer.alloc(0);
+      socket.on("data", (c) => {
+        buf = Buffer.concat([buf, c]);
+        for (; ; ) {
+          if (buf.length < 2) return;
+          const op = buf[0] & 15;
+          let len = buf[1] & 127;
+          let off = 2;
+          if (len === 126) {
+            if (buf.length < 4) return;
+            len = buf.readUInt16BE(2);
+            off = 4;
+          } else if (len === 127) {
+            if (buf.length < 10) return;
+            len = Number(buf.readBigUInt64BE(2));
+            off = 10;
+          }
+          if (buf.length < off + len) return;
+          const payload = buf.subarray(off, off + len);
+          buf = buf.subarray(off + len);
+          if (op === 1) {
+            try {
+              onMessage(JSON.parse(payload.toString("utf8")));
+            } catch {
+            }
+          } else if (op === 8) socket.end();
+        }
+      });
+      socket.on("close", () => onClose("сокет закрыт"));
+      socket.on("error", (e) => onClose(e.message));
+      resolve({
+        send: (msg) => socket.write(frame(Buffer.from(JSON.stringify(msg)))),
+        close: () => socket.end()
+      });
+    });
+    req.on("response", (res) => reject(new Error(`дверь не открылась: HTTP ${res.statusCode}`)));
+    req.on("error", reject);
+    req.end();
+  });
+}
+
+// js/shared/frame-text.ts
+function frameToText(frame2, raw) {
+  if (!frame2) return `Кадр канала Искрона:
+${raw}`;
+  const from = frame2.provenance?.from_standing || frame2.provenance?.from_karta_seq;
+  const head = from ? `Кадр канала Искрона от ${from}` : "Кадр канала Искрона";
+  const body = typeof frame2.body === "string" ? frame2.body : raw;
+  return `${head}:
+
+${body}`;
+}
 
 // js/watchdog/client.ts
 import { existsSync as existsSync2, readdirSync as readdirSync2, readFileSync as readFileSync7 } from "node:fs";
@@ -1957,7 +2053,116 @@ function attach(path, o) {
   tryOnce();
 }
 
+// js/watchdog/codex.ts
+var note = (s) => {
+  process.stderr.write(s + "\n");
+};
+function codexDoorPath() {
+  const home = process.env.CODEX_HOME?.trim() || join6(homedir3(), ".codex");
+  return join6(home, "app-server-control", "app-server-control.sock");
+}
+function runWatchdogCodex(argv2) {
+  const threadId = process.env.CODEX_THREAD_ID?.trim();
+  if (!threadId) {
+    note(
+      "ДЕЛАТЕЛЬ: нет CODEX_THREAD_ID — запускай этого сторожа из оболочки сессии Codex: там Codex кладёт id треда в окружение"
+    );
+    process.exit(2);
+  }
+  const socketPath = codexDoorPath();
+  if (!existsSync3(socketPath)) {
+    note(
+      `ДЕЛАТЕЛЬ: двери нет (${socketPath}) — тред не под демоном app-server. Подними демон (codex app-server daemon start, CODEX_HOME короткий: путь сокета ограничен) или слушай watchdog-exit`
+    );
+    process.exit(2);
+  }
+  const target = resolveStanding(argv2);
+  if ("error" in target) {
+    note(`ДЕЛАТЕЛЬ: ${target.error}`);
+    process.exit(2);
+  }
+  parseWatchdogArgs(argv2);
+  let door = null;
+  let ready = null;
+  let nextId = 1;
+  function open() {
+    if (ready) return ready;
+    ready = openDoor(
+      socketPath,
+      () => {
+      },
+      (why) => {
+        note(`дверь закрылась: ${why} — открою заново на следующем кадре`);
+        door = null;
+        ready = null;
+      }
+    ).then((d) => {
+      door = d;
+      d.send({
+        method: "initialize",
+        id: nextId++,
+        params: { clientInfo: { name: "iskron-watchdog", title: "iskron", version: "1" } }
+      });
+      d.send({ method: "initialized" });
+      return d;
+    });
+    ready.catch((e) => {
+      note(`дверь не открылась: ${e.message}`);
+      ready = null;
+    });
+    return ready;
+  }
+  async function deliver2(text) {
+    try {
+      const d = door ?? await open();
+      d.send({
+        method: "turn/start",
+        id: nextId++,
+        params: { threadId, input: [{ type: "text", text }], turnTrigger: "iskron-channel" }
+      });
+      note(`кадр вложен в тред ${threadId}`);
+    } catch (e) {
+      note(`ДЕЛАТЕЛЬ: кадр не вложился — ${e.message}`);
+    }
+  }
+  let replay = 0;
+  attach(target.path, {
+    onEvent: (ev) => {
+      switch (ev.kind) {
+        case "frame": {
+          if (replay > 0) {
+            replay--;
+            return note("кадр из кольца моста — уже был, в тред не кладу");
+          }
+          const type = ev.frame?.type;
+          if (type !== "message") return note(`кадр ${type ?? "не разобран"} — не повод будить`);
+          void deliver2(frameToText(ev.frame, ev.raw ?? ""));
+          break;
+        }
+        case "dead":
+        case "alive":
+          note(ev.text ?? "ДЕЛАТЕЛЬ: стояние потеряно");
+          void deliver2(
+            ev.text ?? 'Искрон: стояние потеряно — зови iskron_channel(action="connect")'
+          ).then(() => process.exit(1));
+          break;
+        case "attached":
+          replay = ev.buffered ?? 0;
+          note(`слушаю стояние ${ev.key}; кадры кладу в тред ${threadId}`);
+          break;
+        default:
+          note(ev.text ?? ev.kind);
+      }
+    },
+    onGone: (why) => {
+      note(`ДЕЛАТЕЛЬ: ${why}`);
+      process.exit(1);
+    }
+  });
+}
+
 // js/watchdog/watchdog.ts
+import { writeSync } from "node:fs";
 var plural = (n) => {
   const m10 = n % 10;
   const m100 = n % 100;
@@ -2015,13 +2220,13 @@ import { writeSync as writeSync2 } from "node:fs";
 var wake = (s) => {
   writeSync2(1, s + "\n");
 };
-var note = (s) => {
+var note2 = (s) => {
   writeSync2(2, s + "\n");
 };
 function runWatchdogExit(argv2) {
   const target = resolveStanding(argv2);
   if ("error" in target) {
-    note(`ДЕЛАТЕЛЬ: ${target.error}`);
+    note2(`ДЕЛАТЕЛЬ: ${target.error}`);
     process.exit(2);
   }
   attach(target.path, {
@@ -2029,25 +2234,25 @@ function runWatchdogExit(argv2) {
       switch (ev.kind) {
         case "frame": {
           const type = ev.frame?.type;
-          if (type !== "message") return note(`кадр ${type ?? "не разобран"} — не повод будить`);
+          if (type !== "message") return note2(`кадр ${type ?? "не разобран"} — не повод будить`);
           wake(ev.raw ?? "");
           process.exit(0);
           break;
         }
         case "dead":
         case "alive":
-          note(ev.text ?? "ДЕЛАТЕЛЬ: стояние потеряно");
+          note2(ev.text ?? "ДЕЛАТЕЛЬ: стояние потеряно");
           process.exit(1);
           break;
         case "attached":
-          note(`слушаю стояние ${ev.key}`);
+          note2(`слушаю стояние ${ev.key}`);
           break;
         default:
-          note(ev.text ?? ev.kind);
+          note2(ev.text ?? ev.kind);
       }
     },
     onGone: (why) => {
-      note(`ДЕЛАТЕЛЬ: ${why}`);
+      note2(`ДЕЛАТЕЛЬ: ${why}`);
       process.exit(1);
     }
   });
@@ -2055,15 +2260,15 @@ function runWatchdogExit(argv2) {
 
 // js/cli/doctor.ts
 import { createHash as createHash4 } from "node:crypto";
-import { existsSync as existsSync3, readFileSync as readFileSync8 } from "node:fs";
-import { homedir as homedir4 } from "node:os";
-import { dirname, join as join7 } from "node:path";
+import { existsSync as existsSync4, readFileSync as readFileSync8 } from "node:fs";
+import { homedir as homedir5 } from "node:os";
+import { dirname, join as join8 } from "node:path";
 import { fileURLToPath as fileURLToPath3 } from "node:url";
 
 // js/shared/home.ts
-import { homedir as homedir3 } from "node:os";
-import { join as join6 } from "node:path";
-var homeBridgePath = () => join6(homedir3(), ".iskron-bridge", "iskron-bridge.mjs");
+import { homedir as homedir4 } from "node:os";
+import { join as join7 } from "node:path";
+var homeBridgePath = () => join7(homedir4(), ".iskron-bridge", "iskron-bridge.mjs");
 
 // js/cli/doctor.ts
 var out = (s) => {
@@ -2078,7 +2283,7 @@ function homeCopyReport() {
     self = readFileSync8(fileURLToPath3(import.meta.url));
   } catch {
   }
-  if (!existsSync3(home)) {
+  if (!existsSync4(home)) {
     out(`домашняя копия: нет (${home}) — её кладёт establish-mcp при подключении`);
     return;
   }
@@ -2111,8 +2316,8 @@ async function serverReport() {
   }
   res.body?.cancel?.();
   const www = res.headers.get("www-authenticate");
-  const note2 = www ? " (просит OAuth)" : res.status >= 400 && res.status < 500 ? " (пробник без токена — отказ ожидаем)" : "";
-  out(`  отвечает: HTTP ${res.status}${note2}`);
+  const note3 = www ? " (просит OAuth)" : res.status >= 400 && res.status < 500 ? " (пробник без токена — отказ ожидаем)" : "";
+  out(`  отвечает: HTTP ${res.status}${note3}`);
   try {
     const meta = await discoverMeta(www);
     out(`  OAuth: token endpoint ${meta.as.token_endpoint}`);
@@ -2156,12 +2361,12 @@ async function patReport() {
   } else if (res.ok) out(`  токен принят сервером (HTTP ${res.status})`);
   else out(`  сервер ответил HTTP ${res.status} — не отказ токена, смотри строку «сервер»`);
   const path = storePath();
-  if (existsSync3(path)) out(`  хранилище OAuth ${path} есть, но не читается, пока стоит PAT`);
+  if (existsSync4(path)) out(`  хранилище OAuth ${path} есть, но не читается, пока стоит PAT`);
 }
 function grantReport() {
   const path = storePath();
   out(`грант: ${path}`);
-  if (!existsSync3(path)) {
+  if (!existsSync4(path)) {
     out("  хранилища нет — мост ещё ни разу не входил на этот сервер");
     return;
   }
@@ -2196,18 +2401,18 @@ function grantReport() {
     out(`  вход отложен ещё на ${seconds(st.snooze_until - Date.now())} (человек не завершил)`);
   }
   for (const suffix of [".auth-pending", ".refreshing"]) {
-    if (existsSync3(path + suffix)) out(`  замок: ${path + suffix}`);
+    if (existsSync4(path + suffix)) out(`  замок: ${path + suffix}`);
   }
   const logPath = grantLogPath();
-  if (existsSync3(logPath)) {
+  if (existsSync4(logPath)) {
     const lines = readFileSync8(logPath, "utf8").trim().split("\n").slice(-3);
     out(`  grant.log, последнее:`);
     for (const l of lines) out(`    ${l}`);
   }
 }
 function harnessReport() {
-  const claude = join7(homedir4(), ".claude.json");
-  if (existsSync3(claude)) {
+  const claude = join8(homedir5(), ".claude.json");
+  if (existsSync4(claude)) {
     try {
       const cfg = JSON.parse(readFileSync8(claude, "utf8"));
       const entries = Object.entries(cfg.mcpServers ?? {}).filter(
@@ -2222,13 +2427,13 @@ function harnessReport() {
       out(`Claude Code: ${claude} не читается`);
     }
   }
-  const opencodeDir = join7(homedir4(), ".config", "opencode");
-  if (existsSync3(opencodeDir)) {
-    const copy = join7(opencodeDir, "plugins", "iskron.js");
-    const packaged = join7(dirname(fileURLToPath3(import.meta.url)), "opencode-plugin.js");
-    if (!existsSync3(copy)) {
+  const opencodeDir = join8(homedir5(), ".config", "opencode");
+  if (existsSync4(opencodeDir)) {
+    const copy = join8(opencodeDir, "plugins", "iskron.js");
+    const packaged = join8(dirname(fileURLToPath3(import.meta.url)), "opencode-plugin.js");
+    if (!existsSync4(copy)) {
       out(`OpenCode: плагина нет (${copy}) — его кладёт establish-mcp при подключении`);
-    } else if (!existsSync3(packaged)) {
+    } else if (!existsSync4(packaged)) {
       out(
         `OpenCode: плагин ${copy} стоит; рядом с этим файлом поставки плагина нет, сверить не с чем`
       );
@@ -2238,8 +2443,8 @@ function harnessReport() {
       out(`OpenCode: плагин ${copy} — ДРУГИЕ байты, обнови из поставки: cp "${packaged}" ${copy}`);
     }
   }
-  const codex = join7(homedir4(), ".codex", "config.toml");
-  if (existsSync3(codex)) {
+  const codex = join8(homedir5(), ".codex", "config.toml");
+  if (existsSync4(codex)) {
     const text = readFileSync8(codex, "utf8");
     out(`Codex: ${/iskron/.test(text) ? "запись моста есть" : "записи моста нет"} (${codex})`);
   }
@@ -2261,6 +2466,7 @@ var USAGE = `iskron ${BUILD}
   node iskron.mjs [bridge] [server-url] [--timeout <ms>] [--auth-dir <dir>] [--no-browser] [--debug]
   node iskron.mjs watchdog [ключ] [--auth-dir <dir>]
   node iskron.mjs watchdog-exit [ключ] [--auth-dir <dir>]
+  node iskron.mjs watchdog-codex [ключ] [--auth-dir <dir>]   (из оболочки Codex: CODEX_THREAD_ID, CODEX_HOME)
   node iskron.mjs doctor [server-url] [--auth-dir <dir>]
   node iskron.mjs --version
   env: ISKRON_BRIDGE_TOKEN — личный токен вместо OAuth (или файл <auth-dir>/token);
@@ -2274,6 +2480,9 @@ switch (first) {
     break;
   case "watchdog-exit":
     runWatchdogExit(rest);
+    break;
+  case "watchdog-codex":
+    runWatchdogCodex(rest);
     break;
   case "doctor":
     void runDoctor(rest);

@@ -272,7 +272,8 @@ export function absorbChannelReply(msg: JsonRpcMessage, reply: JsonRpcMessage): 
     `\n\n[iskron-bridge] Сокет этого стояния держит мост — вручать его никому не нужно` +
     ` (строка выше о том, что никто не слушает, описывает миг до этого держания).` +
     `\nСлушать: node "${self}" watchdog ${key}${where} — под Monitor с persistent: true (Claude Code);` +
-    ` фоновой задачей — node "${self}" watchdog-exit ${key}${where} (выходит нулём на первом сообщении).` +
+    ` фоновой задачей — node "${self}" watchdog-exit ${key}${where} (выходит нулём на первом сообщении);` +
+    ` в Codex из своей оболочки фоном — node "${self}" watchdog-codex ${key}${where} (кадр входит в идущий тред через app-server).` +
     `\nЗанятость: iskron_channel(action="status", realm, text) — пустой text снимает.` +
     `\nКадры приходят и уведомлениями MCP (logger iskron-channel).`;
   const content = reply.result?.content;
