@@ -1,5 +1,12 @@
 # Changelog
 
+## [6.1.2](https://github.com/iskron-ai/skills/compare/v6.1.1...v6.1.2) (2026-09-07)
+
+
+### Bug Fixes
+
+* **agents:** правило красной пробы — по классу, а не по списку имён ([#85](https://github.com/iskron-ai/skills/issues/85)) ([ba04a4d](https://github.com/iskron-ai/skills/commit/ba04a4d70e29c5500bc68ee428efa8653b75dcfa))
+
 ## [6.1.1](https://github.com/iskron-ai/skills/compare/v6.1.0...v6.1.1) (2026-09-06)
 
 
