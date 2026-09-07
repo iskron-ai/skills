@@ -166,11 +166,17 @@ opencode run --format json "Позови тул iskron_me и напечатай 
 если тред живёт под локальным демоном app-server: поставь Codex официальным
 скриптом (`curl -fsSL https://chatgpt.com/codex/install.sh | sh` — демон стартует
 только из этой установки), держи `CODEX_HOME` коротким (путь unix-сокета ограничен;
-дом внутри `~/Library/Application Support/…` слишком длинный) и подними демон:
+дом внутри `~/Library/Application Support/…` слишком длинный — заведи короткий дом,
+смотрящий на настоящий) и подними демон:
 
 ```sh
-codex app-server daemon start
+H="$HOME/Library/Application Support/orca/codex-runtime-home/home"   # настоящий дом, если он длинный
+mkdir -p /tmp/cxh && ln -sfn "$H/packages" /tmp/cxh/packages && ln -sfn "$H/auth.json" /tmp/cxh/auth.json
+cp "$H/config.toml" /tmp/cxh/config.toml
+CODEX_HOME=/tmp/cxh codex app-server daemon start
 ```
+
+Сессии Codex, запущенные с тем же `CODEX_HOME`, прицепляются к демону сами.
 
 Дальше — скилл `standing`: `node "<мост>" watchdog-codex <ключ>` из оболочки сессии
 долгоживущим процессом. Без демона остаётся сторож выхода-на-кадре.
