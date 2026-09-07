@@ -1,4 +1,4 @@
-// Behavioural probe for the pi extension shipped in extensions/iskron.ts — the
+// Behavioural probe for the pi extension shipped in extensions/iskron.js — the
 // door that gives a pi session both halves of Iskron: the iskron_* tools (raised
 // over a child iskron-bridge) and the live channel socket. Until this file it
 // had no automated cover at all: it stood on one lucky run that would not repeat
@@ -15,35 +15,42 @@
 //     carries no test seam for this: it looks the global up when it opens.
 //   • the module is loaded from a COPY in a temp dir, and HOME points there too.
 //     That is not tidiness. findBridge() has three candidates, and the last one
-//     is `<extension dir>/../skills/establish-mcp/scripts/iskron-bridge.mjs` —
+//     is `<extension dir>/../skills/establish-mcp/scripts/iskron.mjs` —
 //     from the repo that resolves to the REAL bridge, which would take the probe
 //     to the network and a browser. Away from extensions/, and with HOME moved,
 //     every candidate is the probe's to choose.
 //
-// TypeScript is loaded by Node itself (v22.18+ strips types with no flag; this
-// repo runs it on v26). Strip-only is all Node has left — --experimental-
-// transform-types is gone — which is why the shipped Bridge class declares its
-// fields instead of using constructor parameter properties.
+// The shipped file is the esbuild output of js/extension/iskron.ts — plain ESM,
+// loaded by Node as is; the TypeScript source is checked against the real pi
+// types by `npm run typecheck`, not here.
 //
 // ISKRON_EXTENSION points the same probe at any copy (a past revision, a
 // deliberately broken one) so it can be shown red before a fix.
 //
 // Node 22+ (the global WebSocket, same floor as the watchdogs). Run it with
 // `make test-extension`.
-import { test } from "node:test";
 import assert from "node:assert/strict";
-import { copyFileSync, mkdtempSync, mkdirSync, readdirSync, writeFileSync, existsSync, readFileSync } from "node:fs";
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { join, dirname } from "node:path";
+import { dirname, join } from "node:path";
+import { test } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const SOURCE = process.env.ISKRON_EXTENSION || join(HERE, "..", "extensions", "iskron.ts");
+const SOURCE = process.env.ISKRON_EXTENSION || join(HERE, "..", "..", "extensions", "iskron.js");
 const FAKE_BRIDGE = join(HERE, "fake-bridge.mjs");
 const MISSING_BRIDGE = join(HERE, "no-such-bridge.mjs");
 
 const SANDBOX = mkdtempSync(join(tmpdir(), "iskron-ext-"));
-const COPY = join(SANDBOX, "iskron.ts");
+const COPY = join(SANDBOX, "iskron.mjs");
 copyFileSync(SOURCE, COPY);
 // homedir() is the second bridge candidate. Moving HOME both frees the probe to
 // decide that candidate and guarantees a real ~/.iskron-bridge is never touched.
@@ -66,17 +73,30 @@ class FakeWebSocket {
     if (!this._l.has(type)) this._l.set(type, []);
     this._l.get(type).push(fn);
   }
-  emit(type, ev) { for (const fn of [...(this._l.get(type) ?? [])]) fn(ev); }
-  deliver(data) { this.readyState = 1; this.emit("message", { data }); }
-  drop(code) { this.readyState = 3; this.emit("close", { code }); }
-  close(code, reason) { this.closed = { code, reason }; this.readyState = 3; }
+  emit(type, ev) {
+    for (const fn of [...(this._l.get(type) ?? [])]) fn(ev);
+  }
+  deliver(data) {
+    this.readyState = 1;
+    this.emit("message", { data });
+  }
+  drop(code) {
+    this.readyState = 3;
+    this.emit("close", { code });
+  }
+  close(code, reason) {
+    this.closed = { code, reason };
+    this.readyState = 3;
+  }
 }
 globalThis.WebSocket = FakeWebSocket;
 
 // Every fetch is recorded and, unless a test says otherwise, refused: a probe
 // that quietly reached the network would be worth nothing.
 const fetches = [];
-let fetchImpl = async () => { throw new Error("сеть в пробе закрыта"); };
+let fetchImpl = async () => {
+  throw new Error("сеть в пробе закрыта");
+};
 globalThis.fetch = (url, init) => {
   fetches.push({ url: String(url), init });
   return fetchImpl(url, init);
@@ -106,7 +126,13 @@ function fakePi({ hasUI = true } = {}) {
     sendMessage: (msg, opts) => messages.push({ msg, opts }),
   };
   return {
-    pi, ctx, tools, messages, notices, statuses, handlers,
+    pi,
+    ctx,
+    tools,
+    messages,
+    notices,
+    statuses,
+    handlers,
     async fire(name, event = {}) {
       for (const fn of handlers.get(name) ?? []) await fn(event, ctx);
     },
@@ -115,9 +141,18 @@ function fakePi({ hasUI = true } = {}) {
 }
 
 const ENV_KEYS = [
-  "ISKRON_BRIDGE_PATH", "ISKRON_CHANNEL_SOCKET", "ISKRON_CHANNEL_SOCKET_FILE",
-  "ISKRON_CHANNEL_SAY", "ISKRON_CHANNEL_STATUS", "ISKRON_MCP_READY_WAIT_MS",
-  "ISKRON_MCP_HANDSHAKE_MS", "FB_LOG", "FB_MODE", "FB_TOOLS", "FB_PAGINATE", "FB_REPLY",
+  "ISKRON_BRIDGE_PATH",
+  "ISKRON_CHANNEL_SOCKET",
+  "ISKRON_CHANNEL_SOCKET_FILE",
+  "ISKRON_CHANNEL_SAY",
+  "ISKRON_CHANNEL_STATUS",
+  "ISKRON_MCP_READY_WAIT_MS",
+  "ISKRON_MCP_HANDSHAKE_MS",
+  "FB_LOG",
+  "FB_MODE",
+  "FB_TOOLS",
+  "FB_PAGINATE",
+  "FB_REPLY",
 ];
 
 let seq = 0;
@@ -131,7 +166,9 @@ async function loadFactory(env = {}) {
   for (const [k, v] of Object.entries(env)) process.env[k] = String(v);
   sockets.length = 0;
   fetches.length = 0;
-  fetchImpl = async () => { throw new Error("сеть в пробе закрыта"); };
+  fetchImpl = async () => {
+    throw new Error("сеть в пробе закрыта");
+  };
   return (await import(`${pathToFileURL(COPY).href}?n=${++seq}`)).default;
 }
 
@@ -151,26 +188,37 @@ function bridgeEnv(name, extra = {}) {
   const reply = join(SANDBOX, `${name}.reply`);
   writeFileSync(reply, "");
   return {
-    log, reply,
+    log,
+    reply,
     env: {
-      ISKRON_BRIDGE_PATH: FAKE_BRIDGE, FB_LOG: log, FB_REPLY: reply,
-      ISKRON_MCP_READY_WAIT_MS: 15000, ...extra,
+      ISKRON_BRIDGE_PATH: FAKE_BRIDGE,
+      FB_LOG: log,
+      FB_REPLY: reply,
+      ISKRON_MCP_READY_WAIT_MS: 15000,
+      ...extra,
     },
   };
 }
 
 const pidOf = (log) => Number(readFileSync(log, "utf8").trim().split(/\s+/)[1]);
-const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+const alive = (pid) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+};
 
 /** A bridge script text distinguishable by version and, optionally, a trailing comment. */
 const bridgeText = (v, note = "") =>
   `#!/usr/bin/env node\nconst VERSION = "${v}"; // x-release-please-version${note}\n`;
 
 /**
- * A package sandbox for `refreshHomeBridge()`, own to one test: `extensions/iskron.ts`
+ * A package sandbox for `refreshHomeBridge()`, own to one test: `extensions/iskron.mjs`
  * (a fresh copy, so its own `import.meta.url` resolves upward into THIS sandbox's
  * `skills/…`, never the real repo) with its own `skills/establish-mcp/scripts/
- * iskron-bridge.mjs` ("packaged") and its own `HOME` holding `~/.iskron-bridge/
+ * iskron.mjs` ("packaged") and its own `HOME` holding `~/.iskron-bridge/
  * iskron-bridge.mjs` ("home"). Neither bridge file is written here — a test writes
  * only the ones its scenario needs, so "no packaged bridge" / "no home copy" are
  * themselves expressible.
@@ -182,11 +230,11 @@ function packageSandbox() {
   const home = join(pkg, "home");
   const homeBridgeDir = join(home, ".iskron-bridge");
   for (const d of [extDir, pkgBridgeDir, homeBridgeDir]) mkdirSync(d, { recursive: true });
-  const extCopy = join(extDir, "iskron.ts");
+  const extCopy = join(extDir, "iskron.mjs");
   copyFileSync(SOURCE, extCopy);
   return {
     extCopy,
-    packaged: join(pkgBridgeDir, "iskron-bridge.mjs"),
+    packaged: join(pkgBridgeDir, "iskron.mjs"),
     home,
     homeBridgeDir,
     homeBridge: join(homeBridgeDir, "iskron-bridge.mjs"),
@@ -224,7 +272,9 @@ async function runRefresh(box, env = {}, opts = {}) {
 // follows, so the factory must be inert. A socket, a child process or a timer
 // created here would outlive a call that was never a session.
 test("factory alone raises nothing live", async () => {
-  const { log, env } = bridgeEnv("inert", { ISKRON_CHANNEL_SOCKET: "ws://127.0.0.1:9/channel/ws/t" });
+  const { log, env } = bridgeEnv("inert", {
+    ISKRON_CHANNEL_SOCKET: "ws://127.0.0.1:9/channel/ws/t",
+  });
   const factory = await loadFactory(env);
   const rec = fakePi();
 
@@ -289,7 +339,10 @@ test("socket harvest: a connect answer with an address starts the listening, one
     return rec.tools.get(name).execute("id", { action: "connect" }, undefined, () => {}, {});
   };
   try {
-    const out = await call("iskron_channel", "Стояние занято. Сокет: wss://iskron.example/channel/ws/tok-1");
+    const out = await call(
+      "iskron_channel",
+      "Стояние занято. Сокет: wss://iskron.example/channel/ws/tok-1",
+    );
     assert.match(out.content[0].text, /Стояние занято/);
     assert.equal(sockets.length, 1, "адрес из ответа не поднял слушание");
     assert.equal(sockets[0].url, "wss://iskron.example/channel/ws/tok-1");
@@ -313,7 +366,10 @@ test("socket harvest: a connect answer with an address starts the listening, one
     assert.deepEqual(sockets[0].closed, { code: 1000, reason: "новый сокет" });
 
     // A tool refusal is a throw, and the refusal text is what the doer reads.
-    await assert.rejects(() => call("iskron_channel", "__ERROR__место занято другим"), /место занято другим/);
+    await assert.rejects(
+      () => call("iskron_channel", "__ERROR__место занято другим"),
+      /место занято другим/,
+    );
   } finally {
     await rec.stop();
   }
@@ -335,7 +391,9 @@ test("service frames raise no turn, a work frame does", async () => {
     ws.deliver(JSON.stringify({ type: "status", text: "сосед занят" }));
     assert.equal(rec.messages.length, 0, "status поднял ход");
 
-    ws.deliver(JSON.stringify({ body: "посмотри ветку", provenance: { from_standing: "svatantra" } }));
+    ws.deliver(
+      JSON.stringify({ body: "посмотри ветку", provenance: { from_standing: "svatantra" } }),
+    );
     assert.equal(rec.messages.length, 1, "рабочий кадр не поднял ход");
     const { msg, opts } = rec.messages[0];
     assert.equal(opts.triggerTurn, true);
@@ -358,7 +416,9 @@ test("service frames raise no turn, a work frame does", async () => {
 test("dead-token codes complain loudly and stop, other drops reconnect", async () => {
   const live = [];
   for (const code of [4000, 4001, 4002]) {
-    const rec = await session({ ISKRON_CHANNEL_SOCKET: `wss://iskron.example/channel/ws/t${code}` });
+    const rec = await session({
+      ISKRON_CHANNEL_SOCKET: `wss://iskron.example/channel/ws/t${code}`,
+    });
     const before = sockets.length;
     sockets[0].drop(code);
     assert.equal(rec.messages.length, 1, `код ${code} прошёл молча`);
@@ -445,7 +505,12 @@ test("session_shutdown is idempotent and quiets both halves", async () => {
   } finally {
     // A build that fails this test leaves a live child holding the event loop
     // open; reaped here so the run ends in a verdict rather than in a hang.
-    if (alive(pid)) try { process.kill(pid, "SIGKILL"); } catch { /* already gone */ }
+    if (alive(pid))
+      try {
+        process.kill(pid, "SIGKILL");
+      } catch {
+        /* already gone */
+      }
   }
 
   await rec.stop(); // second time: nothing to close, and no throw
@@ -459,7 +524,10 @@ test("session_shutdown is idempotent and quiets both halves", async () => {
 // missing bridge is the ordinary case of that: no tools, a named complaint, and
 // the channel half standing as if nothing happened.
 test("a missing bridge does not bring down the session", async () => {
-  const rec = await session({ ISKRON_BRIDGE_PATH: MISSING_BRIDGE, ISKRON_MCP_READY_WAIT_MS: 15000 });
+  const rec = await session({
+    ISKRON_BRIDGE_PATH: MISSING_BRIDGE,
+    ISKRON_MCP_READY_WAIT_MS: 15000,
+  });
   try {
     assert.equal(rec.tools.size, 0);
     const complaint = rec.notices.find((n) => n.level === "error");
@@ -468,7 +536,10 @@ test("a missing bridge does not bring down the session", async () => {
     assert.ok(complaint.text.includes(MISSING_BRIDGE), "не назван путь, который просили");
     // Every candidate is named — and this is also the probe's own proof that it
     // looked in its sandbox home, never in the real ~/.iskron-bridge.
-    assert.ok(complaint.text.includes(join(SANDBOX, ".iskron-bridge")), "не назван кандидат из HOME");
+    assert.ok(
+      complaint.text.includes(join(SANDBOX, ".iskron-bridge")),
+      "не назван кандидат из HOME",
+    );
     assert.match(complaint.text, /establish-mcp/);
     // The other half stood: it says the place is not taken yet, which is not a failure.
     assert.match(rec.said(), /места ещё нет/);
@@ -515,7 +586,10 @@ test("busy line is published on a change, not on a tick", async () => {
     ISKRON_CHANNEL_SOCKET: "wss://iskron.example/channel/ws/tok",
     ISKRON_CHANNEL_SAY: say,
   });
-  fetchImpl = async (_url, init) => { posts.push(JSON.parse(init.body)); return { ok: true, status: 200 }; };
+  fetchImpl = async (_url, init) => {
+    posts.push(JSON.parse(init.body));
+    return { ok: true, status: 200 };
+  };
   try {
     await delay(1400);
     assert.deepEqual(posts, [{ text: "читаю дифф" }]);
@@ -525,7 +599,7 @@ test("busy line is published on a change, not on a tick", async () => {
     await delay(1100);
     assert.equal(posts.length, 1, "та же строка опубликована повторно");
 
-    writeFileSync(say, "");  // an empty line is a WORD: it takes the busy line down
+    writeFileSync(say, ""); // an empty line is a WORD: it takes the busy line down
     await delay(1100);
     assert.deepEqual(posts, [{ text: "читаю дифф" }, { text: "" }]);
   } finally {
@@ -575,8 +649,15 @@ test("refreshHomeBridge: ISKRON_BRIDGE_PATH set leaves the home copy untouched",
   const box = packageSandbox();
   writeFileSync(box.packaged, bridgeText("6.0.0"));
   writeFileSync(box.homeBridge, bridgeText("5.0.0"));
-  const rec = await runRefresh(box, { ISKRON_BRIDGE_PATH: MISSING_BRIDGE, ISKRON_MCP_READY_WAIT_MS: 1 });
-  assert.match(readFileSync(box.homeBridge, "utf8"), /VERSION = "5\.0\.0"/, "тронули домашний мост при заданном пути");
+  const rec = await runRefresh(box, {
+    ISKRON_BRIDGE_PATH: MISSING_BRIDGE,
+    ISKRON_MCP_READY_WAIT_MS: 1,
+  });
+  assert.match(
+    readFileSync(box.homeBridge, "utf8"),
+    /VERSION = "5\.0\.0"/,
+    "тронули домашний мост при заданном пути",
+  );
   assert.ok(saidNoneOf(rec), "заговорили о домашнем мосте, хотя путь задан руками");
 });
 
@@ -587,7 +668,11 @@ test("refreshHomeBridge: a session without UI leaves the home copy untouched", a
   writeFileSync(box.packaged, bridgeText("6.0.0"));
   writeFileSync(box.homeBridge, bridgeText("5.0.0"));
   const rec = await runRefresh(box, { ISKRON_MCP_READY_WAIT_MS: 1 }, { hasUI: false });
-  assert.match(readFileSync(box.homeBridge, "utf8"), /VERSION = "5\.0\.0"/, "домашняя копия заменена без UI");
+  assert.match(
+    readFileSync(box.homeBridge, "utf8"),
+    /VERSION = "5\.0\.0"/,
+    "домашняя копия заменена без UI",
+  );
   assert.equal(rec.notices.length, 0, "notify сказал что-то без UI");
 });
 
@@ -596,7 +681,11 @@ test("refreshHomeBridge: no packaged bridge leaves silently", async () => {
   const box = packageSandbox();
   writeFileSync(box.homeBridge, bridgeText("5.0.0"));
   const rec = await runRefresh(box, { ISKRON_MCP_READY_WAIT_MS: 1 });
-  assert.match(readFileSync(box.homeBridge, "utf8"), /VERSION = "5\.0\.0"/, "домашняя копия тронута без пакета");
+  assert.match(
+    readFileSync(box.homeBridge, "utf8"),
+    /VERSION = "5\.0\.0"/,
+    "домашняя копия тронута без пакета",
+  );
   assert.ok(saidNoneOf(rec), "заговорили о домашнем мосте без пакета");
 });
 
@@ -607,8 +696,15 @@ test("refreshHomeBridge: an unreadable packaged version warns and leaves the hom
   writeFileSync(box.packaged, "#!/usr/bin/env node\n// версии тут нет\n");
   writeFileSync(box.homeBridge, bridgeText("5.0.0"));
   const rec = await runRefresh(box, { ISKRON_MCP_READY_WAIT_MS: 1 });
-  assert.match(readFileSync(box.homeBridge, "utf8"), /VERSION = "5\.0\.0"/, "домашняя копия тронута при нечитаемой версии");
-  assert.match(rec.said(), /в поставке мост есть, но его версия не читается — домашнюю копию не трогаю/);
+  assert.match(
+    readFileSync(box.homeBridge, "utf8"),
+    /VERSION = "5\.0\.0"/,
+    "домашняя копия тронута при нечитаемой версии",
+  );
+  assert.match(
+    rec.said(),
+    /в поставке мост есть, но его версия не читается — домашнюю копию не трогаю/,
+  );
 });
 
 // Rule 5: домашней копии ещё нет — её заводит establish-mcp, не это правило;
@@ -639,7 +735,11 @@ test("refreshHomeBridge: a strictly newer home copy is kept, aloud", async () =>
   writeFileSync(box.packaged, bridgeText("6.0.0"));
   writeFileSync(box.homeBridge, bridgeText("7.1.0"));
   const rec = await runRefresh(box, { ISKRON_MCP_READY_WAIT_MS: 1 });
-  assert.match(readFileSync(box.homeBridge, "utf8"), /VERSION = "7\.1\.0"/, "домашний мост откачен назад");
+  assert.match(
+    readFileSync(box.homeBridge, "utf8"),
+    /VERSION = "7\.1\.0"/,
+    "домашний мост откачен назад",
+  );
   assert.match(rec.said(), /дома мост 7\.1\.0, в поставке 6\.0\.0 — домашний новее, не трогаю/);
 });
 
@@ -656,8 +756,15 @@ test("refreshHomeBridge: equal versions but different bytes replace the home cop
     readFileSync(box.packaged, "utf8"),
     "домашняя копия не стала зеркалом поставки при разных байтах той же версии",
   );
-  assert.match(rec.said(), /мост дома заменён на привезённый поставкой — версия та же \(6\.0\.0\), байты другие\. Грант не тронут\./);
-  assert.doesNotMatch(rec.said(), /мост дома обновлён/, "сказано слово случая версии-скачка, а не совпавшей версии");
+  assert.match(
+    rec.said(),
+    /мост дома заменён на привезённый поставкой — версия та же \(6\.0\.0\), байты другие\. Грант не тронут\./,
+  );
+  assert.doesNotMatch(
+    rec.said(),
+    /мост дома обновлён/,
+    "сказано слово случая версии-скачка, а не совпавшей версии",
+  );
 });
 
 // Rule 8, случай подъёма версии: текст РАЗНЫЙ — не «версия та же», а стрелка
@@ -667,9 +774,20 @@ test("refreshHomeBridge: a version bump replaces the home copy with its own word
   writeFileSync(box.packaged, bridgeText("6.0.0"));
   writeFileSync(box.homeBridge, bridgeText("5.0.0"));
   const rec = await runRefresh(box, { ISKRON_MCP_READY_WAIT_MS: 1 });
-  assert.match(readFileSync(box.homeBridge, "utf8"), /VERSION = "6\.0\.0"/, "домашний мост не обновлён");
-  assert.match(rec.said(), /мост дома обновлён 5\.0\.0 → 6\.0\.0\. Грант не тронут, он лежит рядом отдельными файлами\./);
-  assert.doesNotMatch(rec.said(), /версия та же/, "сказано слово случая совпавшей версии, а не версии-скачка");
+  assert.match(
+    readFileSync(box.homeBridge, "utf8"),
+    /VERSION = "6\.0\.0"/,
+    "домашний мост не обновлён",
+  );
+  assert.match(
+    rec.said(),
+    /мост дома обновлён 5\.0\.0 → 6\.0\.0\. Грант не тронут, он лежит рядом отдельными файлами\./,
+  );
+  assert.doesNotMatch(
+    rec.said(),
+    /версия та же/,
+    "сказано слово случая совпавшей версии, а не версии-скачка",
+  );
 });
 
 // Rule 8, побочное условие обеих замен: временный файл — `.tmp-<pid>` — существует
@@ -707,7 +825,15 @@ test("refreshHomeBridge: a failed write cleans up the temp file and warns", asyn
   } finally {
     chmodSync(box.homeBridgeDir, 0o755); // иначе временную директорию потом не убрать
   }
-  assert.match(readFileSync(box.homeBridge, "utf8"), /VERSION = "5\.0\.0"/, "домашний мост изменился при отказавшей записи");
+  assert.match(
+    readFileSync(box.homeBridge, "utf8"),
+    /VERSION = "5\.0\.0"/,
+    "домашний мост изменился при отказавшей записи",
+  );
   assert.match(rec.said(), /заменить не вышло/);
-  assert.deepEqual(readdirSync(box.homeBridgeDir), ["iskron-bridge.mjs"], "временный файл остался после отказа");
+  assert.deepEqual(
+    readdirSync(box.homeBridgeDir),
+    ["iskron-bridge.mjs"],
+    "временный файл остался после отказа",
+  );
 });

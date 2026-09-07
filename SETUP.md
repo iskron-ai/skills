@@ -184,8 +184,8 @@ https+OAuth MCP он вообще единственный путь — конф
 
 ```sh
 mkdir -p ~/.iskron-bridge
-src=$(find -L ~/.agents/skills ~/.claude -path '*establish-mcp/scripts/iskron-bridge.mjs' 2>/dev/null | head -1)
-cp "$src" ~/.iskron-bridge/ && echo "скопирован из $src"
+src=$(find -L ~/.agents/skills ~/.claude -path '*establish-mcp/scripts/iskron.mjs' 2>/dev/null | head -1)
+cp "$src" ~/.iskron-bridge/iskron-bridge.mjs && echo "скопирован из $src"
 ```
 
 `-L` здесь несущий, а не украшение: при глобальной установке через `npx skills`
@@ -211,7 +211,7 @@ cp "$src" ~/.iskron-bridge/ && echo "скопирован из $src"
 Агентов на машине может быть много — хранилище токенов у них одно, браузерный флоу
 ведёт ровно один мост, и остальные тем временем показывают тот же самый authorize-URL:
 один клик лечит всю машину, и ни один вызов не висит в ожидании человека.
-Нужен Node 20+. Подробности и лестница выбора — в скилле `establish-mcp`; там же сказано,
+Нужен Node 22+. Подробности и лестница выбора — в скилле `establish-mcp`; там же сказано,
 что делать, когда в сессии оказались оба подключения разом: пишущие вызовы ведут через мост.
 
 **Путь токена — когда OAuth отсутствует, не может до тебя дотянуться или не

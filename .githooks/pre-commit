@@ -1,8 +1,20 @@
 #!/usr/bin/env bash
-# Keep the committed .skill bundles in sync with skills/<name>/ on every commit.
-# Enable once with: make hooks   (sets core.hooksPath -> .githooks)
+# На каждом коммите: линт и формат застейдженных исходников js/, пересборка
+# выходов отгружаемого JS и бандлов .skill — так закоммиченные производные
+# никогда не расходятся с исходником. Включается один раз: make hooks.
 set -euo pipefail
 
 root="$(git rev-parse --show-toplevel)"
+cd "$root"
+
+if [[ ! -d node_modules ]]; then
+  echo "pre-commit: нет node_modules — прогони 'npm ci' (тулчейн js/ нужен для линта и сборки)" >&2
+  exit 1
+fi
+
+npx --no-install lint-staged
+node scripts/build-js.mjs >/dev/null
+git add -- skills/establish-mcp/scripts/iskron.mjs skills/standing/scripts/iskron.mjs \
+  extensions/iskron.js skills/product-roadmap/references/roadmap-template.html
 bash "$root/scripts/build-skills.sh" >/dev/null
 git add -- "$root"/*.skill

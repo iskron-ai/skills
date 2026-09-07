@@ -6,8 +6,8 @@
 // The one leg it cannot stand in for is a human deciding to consent; here the
 // test plays that part by fetching the authorize URL itself.
 
-import { createServer } from "node:http";
 import { createHash, randomBytes } from "node:crypto";
+import { createServer } from "node:http";
 
 const b64url = (b) => Buffer.from(b).toString("base64url");
 const sha256 = (s) => createHash("sha256").update(s).digest();
@@ -19,7 +19,10 @@ const secs = (ms) => Math.floor(ms / 1000); // a JWT keeps whole seconds, so the
 // A refresh token the server holds back until the access token is nearly spent:
 // carried as a JWT `nbf`, refused in the words of a dead grant if used early.
 function mintRefresh(st) {
-  if (!st.refreshNotBeforeMs) { st.refreshValidFrom = 0; return token("refresh"); }
+  if (!st.refreshNotBeforeMs) {
+    st.refreshValidFrom = 0;
+    return token("refresh");
+  }
   const nbf = secs(st.snow() + st.refreshNotBeforeMs);
   st.refreshValidFrom = nbf * 1000; // the server keeps exactly the hour it stamped
   return jwt({ nbf, exp: nbf + 172_800 });
@@ -41,29 +44,40 @@ export async function startFakeNks(opts = {}) {
     sessions: new Set(),
     dead: new Set(),
     // faults the test switches on through /control
-    refreshStatus: null,   // e.g. 503 (transient) or 400 (definitive)
+    refreshStatus: null, // e.g. 503 (transient) or 400 (definitive)
     refreshError: null,
     refreshMessage: null,
-    mcpStatus: null,       // force an HTTP status on /mcp
-    mcpHangMs: 0,          // hold /mcp open past the caller's deadline: the request left, the answer never came
+    mcpStatus: null, // force an HTTP status on /mcp
+    mcpHangMs: 0, // hold /mcp open past the caller's deadline: the request left, the answer never came
     refreshDelayMs: opts.refreshDelayMs ?? 0, // widen the window several bridges race in
-    codeDelayMs: opts.codeDelayMs ?? 0,       // hold the code exchange open, as a slow server does
+    codeDelayMs: opts.codeDelayMs ?? 0, // hold the code exchange open, as a slow server does
     refreshNotBeforeMs: opts.refreshNotBeforeMs ?? 0, // hold the refresh token back this long
-    accessExpSkewSec: opts.accessExpSkewSec ?? 0,     // make the access token's own exp disagree with expires_in
-    padBytes: opts.padBytes ?? 0,                     // make answers bigger than one pipe buffer
+    accessExpSkewSec: opts.accessExpSkewSec ?? 0, // make the access token's own exp disagree with expires_in
+    padBytes: opts.padBytes ?? 0, // make answers bigger than one pipe buffer
     // The server's clock runs this far ahead of the machine's (a customer's
     // clock running behind is the same fact seen from the other side). Every
     // stamped hour and every judgement the fake makes uses this clock, and the
     // Date header on each answer says so out loud, as a real server's does.
     clockSkewMs: opts.clockSkewMs ?? 0,
-    tokenPath: opts.tokenPath ?? "/token",            // where the token endpoint lives today
+    tokenPath: opts.tokenPath ?? "/token", // where the token endpoint lives today
     // The posture RFC 9700 recommends for rotating grants: a refresh token
     // presented after it was rotated away is treated as a stolen one, and the
     // whole family dies with it. Off by default — a test asks for it when the
     // point IS what replay costs.
     reuseDetection: opts.reuseDetection ?? false,
-    counts: { register: 0, authorize: 0, code_exchange: 0, refresh: 0, stale_refresh: 0, early_refresh: 0, mcp: 0,
-              register_standing: 0, attributed_send: 0, unattributed: 0, header_binds: 0 },
+    counts: {
+      register: 0,
+      authorize: 0,
+      code_exchange: 0,
+      refresh: 0,
+      stale_refresh: 0,
+      early_refresh: 0,
+      mcp: 0,
+      register_standing: 0,
+      attributed_send: 0,
+      unattributed: 0,
+      header_binds: 0,
+    },
     standings: new Map(), // сессия MCP → имя стояния; убивается вместе с сессией
     // Сессия открыта credential'ом и умирает вместе с ним (#188 в nks-dev):
     // сменился bearer — старая сессия закрыта. Как сервер отвечает на мёртвый
@@ -82,9 +96,13 @@ export async function startFakeNks(opts = {}) {
     resources: { authorize: null, code_exchange: null, refresh: null },
   };
 
-  const body = (req) => new Promise((res, rej) => {
-    let b = ""; req.on("data", (c) => (b += c)); req.on("end", () => res(b)); req.on("error", rej);
-  });
+  const body = (req) =>
+    new Promise((res, rej) => {
+      let b = "";
+      req.on("data", (c) => (b += c));
+      req.on("end", () => res(b));
+      req.on("error", rej);
+    });
   st.snow = () => Date.now() + st.clockSkewMs;
   const json = (res, code, obj, headers = {}) => {
     res.writeHead(code, {
@@ -102,14 +120,29 @@ export async function startFakeNks(opts = {}) {
 
     if (p === "/control") {
       const patch = JSON.parse((await body(req)) || "{}");
-      if (patch.kill_session) { for (const s of st.sessions) st.dead.add(s); st.sessions.clear(); }
-      for (const k of ["refreshStatus", "refreshError", "refreshMessage", "mcpStatus", "mcpHangMs", "accessTtl", "refreshDelayMs", "reuseDetection", "tokenPath",
-                       "sessionFollowsToken", "silentNewSession", "standingRefuseNext"]) {
+      if (patch.kill_session) {
+        for (const s of st.sessions) st.dead.add(s);
+        st.sessions.clear();
+      }
+      for (const k of [
+        "refreshStatus",
+        "refreshError",
+        "refreshMessage",
+        "mcpStatus",
+        "mcpHangMs",
+        "accessTtl",
+        "refreshDelayMs",
+        "reuseDetection",
+        "tokenPath",
+        "sessionFollowsToken",
+        "silentNewSession",
+        "standingRefuseNext",
+      ]) {
         if (k in patch) st[k] = patch[k];
       }
       if (patch.revoke_access) st.access = null;
       if (patch.rotate_access) st.access = mintAccess(st); // сосед провернул грант: старый bearer больше не принимается
-      if (patch.drop_standings) st.standings.clear();     // платформа потеряла привязки при живых сессиях mcp
+      if (patch.drop_standings) st.standings.clear(); // платформа потеряла привязки при живых сессиях mcp
       if (patch.forget_clients) st.clients.clear(); // as if the server expired the dynamic registration
       return json(res, 200, { counts: st.counts });
     }
@@ -165,23 +198,36 @@ export async function startFakeNks(opts = {}) {
         if (st.codeDelayMs) await new Promise((r) => setTimeout(r, st.codeDelayMs));
         st.resources.code_exchange = f.get("resource");
         const c = st.codes.get(f.get("code"));
-        if (!c) return json(res, 400, { error: "invalid_grant", error_description: "unknown code" });
+        if (!c)
+          return json(res, 400, { error: "invalid_grant", error_description: "unknown code" });
         st.codes.delete(f.get("code"));
         if (b64url(sha256(f.get("code_verifier") || "")) !== c.challenge) {
           return json(res, 400, { error: "invalid_grant", error_description: "PKCE mismatch" });
         }
         if (f.get("redirect_uri") !== c.redirect_uri) {
-          return json(res, 400, { error: "invalid_grant", error_description: "redirect_uri mismatch" });
+          return json(res, 400, {
+            error: "invalid_grant",
+            error_description: "redirect_uri mismatch",
+          });
         }
-        st.access = mintAccess(st); st.refresh = mintRefresh(st);
-        return json(res, 200, { access_token: st.access, refresh_token: st.refresh, expires_in: st.accessTtl, token_type: "Bearer" });
+        st.access = mintAccess(st);
+        st.refresh = mintRefresh(st);
+        return json(res, 200, {
+          access_token: st.access,
+          refresh_token: st.refresh,
+          expires_in: st.accessTtl,
+          token_type: "Bearer",
+        });
       }
       if (f.get("grant_type") === "refresh_token") {
         st.counts.refresh++;
         st.resources.refresh = f.get("resource");
         if (st.refreshValidFrom && st.snow() < st.refreshValidFrom) {
           st.counts.early_refresh++;
-          return json(res, 400, { error: "invalid_grant", error_description: "token not yet valid" });
+          return json(res, 400, {
+            error: "invalid_grant",
+            error_description: "token not yet valid",
+          });
         }
         if (st.refreshStatus) {
           return json(res, st.refreshStatus, {
@@ -191,17 +237,36 @@ export async function startFakeNks(opts = {}) {
         }
         if (f.get("refresh_token") !== st.refresh) {
           st.counts.stale_refresh++;
-          if (st.reuseDetection) { st.access = null; st.refresh = null; }
-          return json(res, 400, { error: "invalid_grant", error_description: "stale refresh token" });
+          if (st.reuseDetection) {
+            st.access = null;
+            st.refresh = null;
+          }
+          return json(res, 400, {
+            error: "invalid_grant",
+            error_description: "stale refresh token",
+          });
         }
         if (st.refreshDelayMs) await new Promise((r) => setTimeout(r, st.refreshDelayMs));
-        if (f.get("refresh_token") !== st.refresh) { // rotated while we were slow
+        if (f.get("refresh_token") !== st.refresh) {
+          // rotated while we were slow
           st.counts.stale_refresh++;
-          if (st.reuseDetection) { st.access = null; st.refresh = null; }
-          return json(res, 400, { error: "invalid_grant", error_description: "stale refresh token" });
+          if (st.reuseDetection) {
+            st.access = null;
+            st.refresh = null;
+          }
+          return json(res, 400, {
+            error: "invalid_grant",
+            error_description: "stale refresh token",
+          });
         }
-        st.access = mintAccess(st); st.refresh = mintRefresh(st); // rotation
-        return json(res, 200, { access_token: st.access, refresh_token: st.refresh, expires_in: st.accessTtl, token_type: "Bearer" });
+        st.access = mintAccess(st);
+        st.refresh = mintRefresh(st); // rotation
+        return json(res, 200, {
+          access_token: st.access,
+          refresh_token: st.refresh,
+          expires_in: st.accessTtl,
+          token_type: "Bearer",
+        });
       }
       return json(res, 400, { error: "unsupported_grant_type" });
     }
@@ -209,21 +274,38 @@ export async function startFakeNks(opts = {}) {
     if (p === "/mcp" && req.method === "POST") {
       st.counts.mcp++;
       if (st.mcpHangMs) await new Promise((r) => setTimeout(r, st.mcpHangMs));
-      if (st.mcpStatus) { res.writeHead(st.mcpStatus); return res.end("forced fault"); }
+      if (st.mcpStatus) {
+        res.writeHead(st.mcpStatus);
+        return res.end("forced fault");
+      }
       const bearer = (req.headers.authorization || "").replace(/^Bearer /, "");
       if (!st.access || bearer !== st.access) {
-        return json(res, 401, { error: "unauthorized" }, {
-          "www-authenticate": `Bearer resource_metadata="${base}/.well-known/oauth-protected-resource/mcp"`,
-        });
+        return json(
+          res,
+          401,
+          { error: "unauthorized" },
+          {
+            "www-authenticate": `Bearer resource_metadata="${base}/.well-known/oauth-protected-resource/mcp"`,
+          },
+        );
       }
       let sid = req.headers["mcp-session-id"];
       const msg = JSON.parse(await body(req));
       const extra = {};
-      if (sid && st.sessionFollowsToken && st.sessionTokens.has(sid) && st.sessionTokens.get(sid) !== bearer) {
-        st.dead.add(sid); st.sessions.delete(sid); // credential сменился — сессия закрыта
+      if (
+        sid &&
+        st.sessionFollowsToken &&
+        st.sessionTokens.has(sid) &&
+        st.sessionTokens.get(sid) !== bearer
+      ) {
+        st.dead.add(sid);
+        st.sessions.delete(sid); // credential сменился — сессия закрыта
       }
       if (sid && st.dead.has(sid) && msg.method !== "initialize") {
-        if (!st.silentNewSession) { res.writeHead(404); return res.end("session expired"); }
+        if (!st.silentNewSession) {
+          res.writeHead(404);
+          return res.end("session expired");
+        }
         // Молча открытая новая сессия: вызов исполняется в ней, её id едет в ответе.
         sid = token("session");
         st.sessions.add(sid);
@@ -240,16 +322,37 @@ export async function startFakeNks(opts = {}) {
         const hdr = req.headers["x-nks-standing"];
         if (hdr && !st.ignoreStandingHeader) {
           const parts = String(hdr).trim().split(/\s+/);
-          if (parts.length === 3) { st.standings.set(fresh, parts[2]); st.counts.header_binds++; }
+          if (parts.length === 3) {
+            st.standings.set(fresh, parts[2]);
+            st.counts.header_binds++;
+          }
         }
-        return json(res, 200, {
-          jsonrpc: "2.0", id: msg.id,
-          result: { protocolVersion: "2025-06-18", capabilities: {}, serverInfo: { name: "fake-nks", version: "0" } },
-        }, { "mcp-session-id": fresh });
+        return json(
+          res,
+          200,
+          {
+            jsonrpc: "2.0",
+            id: msg.id,
+            result: {
+              protocolVersion: "2025-06-18",
+              capabilities: {},
+              serverInfo: { name: "fake-nks", version: "0" },
+            },
+          },
+          { "mcp-session-id": fresh },
+        );
       }
-      if (msg.id === undefined || msg.id === null) { res.writeHead(202, extra); return res.end(); }
+      if (msg.id === undefined || msg.id === null) {
+        res.writeHead(202, extra);
+        return res.end();
+      }
       if (msg.method === "tools/list") {
-        return json(res, 200, { jsonrpc: "2.0", id: msg.id, result: { tools: [{ name: "nks_orient" }] } }, extra);
+        return json(
+          res,
+          200,
+          { jsonrpc: "2.0", id: msg.id, result: { tools: [{ name: "nks_orient" }] } },
+          extra,
+        );
       }
       // Стояние делателя, смоделированное так, как его держит настоящая
       // поверхность: коррелятор писателя — идентификатор сессии MCP. Новая
@@ -261,24 +364,72 @@ export async function startFakeNks(opts = {}) {
         if (a.action === "register") {
           if (st.standingRefuseNext > 0) {
             st.standingRefuseNext--;
-            return json(res, 200, { jsonrpc: "2.0", id: msg.id, result: { isError: true,
-              content: [{ type: "text", text: "Отказано (503): контур временно недоступен, повтори позже" }] } }, extra);
+            return json(
+              res,
+              200,
+              {
+                jsonrpc: "2.0",
+                id: msg.id,
+                result: {
+                  isError: true,
+                  content: [
+                    {
+                      type: "text",
+                      text: "Отказано (503): контур временно недоступен, повтори позже",
+                    },
+                  ],
+                },
+              },
+              extra,
+            );
           }
           st.counts.register_standing++;
           st.standings.set(sid, a.name ?? "(unnamed)");
-          return json(res, 200, { jsonrpc: "2.0", id: msg.id,
-            result: { content: [{ type: "text", text: `зарегистрировано: ${a.name}` }] } }, extra);
+          return json(
+            res,
+            200,
+            {
+              jsonrpc: "2.0",
+              id: msg.id,
+              result: { content: [{ type: "text", text: `зарегистрировано: ${a.name}` }] },
+            },
+            extra,
+          );
         }
         if (a.action === "send") {
           const bound = st.standings.get(sid);
           if (!bound) {
             st.counts.unattributed++;
-            return json(res, 200, { jsonrpc: "2.0", id: msg.id, result: { isError: true,
-              content: [{ type: "text", text: "Отказано (409, session_not_registered): эта сессия не зарегистрирована ни за каким стоянием" }] } }, extra);
+            return json(
+              res,
+              200,
+              {
+                jsonrpc: "2.0",
+                id: msg.id,
+                result: {
+                  isError: true,
+                  content: [
+                    {
+                      type: "text",
+                      text: "Отказано (409, session_not_registered): эта сессия не зарегистрирована ни за каким стоянием",
+                    },
+                  ],
+                },
+              },
+              extra,
+            );
           }
           st.counts.attributed_send++;
-          return json(res, 200, { jsonrpc: "2.0", id: msg.id,
-            result: { content: [{ type: "text", text: `принято стоянием ${bound}` }] } }, extra);
+          return json(
+            res,
+            200,
+            {
+              jsonrpc: "2.0",
+              id: msg.id,
+              result: { content: [{ type: "text", text: `принято стоянием ${bound}` }] },
+            },
+            extra,
+          );
         }
       }
       // Пишущая фабрика графа: пишет и без привязки, но метит запись безавторной —
@@ -286,15 +437,44 @@ export async function startFakeNks(opts = {}) {
       if (msg.method === "tools/call" && /^iskron_(add_|update)/.test(msg.params?.name ?? "")) {
         const bound = st.standings.get(sid);
         if (!bound) st.counts.unattributed++;
-        return json(res, 200, { jsonrpc: "2.0", id: msg.id, result: { content: [{ type: "text",
-          text: bound ? `Создан узел #1 (автор: ${bound})`
-            : "Создан узел #1\n⚠ write_unattributed_several_standings: This write carried no author" }] } }, extra);
+        return json(
+          res,
+          200,
+          {
+            jsonrpc: "2.0",
+            id: msg.id,
+            result: {
+              content: [
+                {
+                  type: "text",
+                  text: bound
+                    ? `Создан узел #1 (автор: ${bound})`
+                    : "Создан узел #1\n⚠ write_unattributed_several_standings: This write carried no author",
+                },
+              ],
+            },
+          },
+          extra,
+        );
       }
-      return json(res, 200, { jsonrpc: "2.0", id: msg.id,
-        result: { ok: true, method: msg.method, ...(st.padBytes ? { pad: "x".repeat(st.padBytes) } : {}) } }, extra);
+      return json(
+        res,
+        200,
+        {
+          jsonrpc: "2.0",
+          id: msg.id,
+          result: {
+            ok: true,
+            method: msg.method,
+            ...(st.padBytes ? { pad: "x".repeat(st.padBytes) } : {}),
+          },
+        },
+        extra,
+      );
     }
 
-    res.writeHead(404); res.end();
+    res.writeHead(404);
+    res.end();
   });
 
   await new Promise((r) => server.listen(0, "127.0.0.1", r));
@@ -303,7 +483,10 @@ export async function startFakeNks(opts = {}) {
     base,
     mcpUrl: `${base}/mcp`,
     state: st,
-    control: (patch) => fetch(`${base}/control`, { method: "POST", body: JSON.stringify(patch) }).then((r) => r.json()),
+    control: (patch) =>
+      fetch(`${base}/control`, { method: "POST", body: JSON.stringify(patch) }).then((r) =>
+        r.json(),
+      ),
     stop: () => new Promise((r) => server.close(r)),
   };
 }

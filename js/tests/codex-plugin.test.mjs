@@ -16,17 +16,25 @@
 //
 // ISKRON_PLUGIN_ROOT points the probe at any copy, so a defect can be shown red.
 // Offline; reads ~/.codex only to run the validator, and writes nothing there.
-import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, dirname, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const ROOT = process.env.ISKRON_PLUGIN_ROOT || join(HERE, "..");
-const VALIDATOR = join(homedir(), ".codex", "skills", ".system", "plugin-creator", "scripts", "validate_plugin.py");
+const ROOT = process.env.ISKRON_PLUGIN_ROOT || join(HERE, "..", "..");
+const VALIDATOR = join(
+  homedir(),
+  ".codex",
+  "skills",
+  ".system",
+  "plugin-creator",
+  "scripts",
+  "validate_plugin.py",
+);
 
 const readJson = (p) => JSON.parse(readFileSync(p, "utf8"));
 
@@ -38,7 +46,8 @@ const MARKETPLACE_NAME = /^[A-Za-z0-9_-]+$/;
 test("Codex's own ingestion validator accepts the plugin root", (t) => {
   if (!existsSync(VALIDATOR)) return t.skip(`валидатора Codex нет на этой машине: ${VALIDATOR}`);
   const py = spawnSync("python3", ["-c", "import yaml"], { encoding: "utf8" });
-  if (py.error || py.status !== 0) return t.skip("python3 с модулем yaml недоступен — валидатор Codex не запустить");
+  if (py.error || py.status !== 0)
+    return t.skip("python3 с модулем yaml недоступен — валидатор Codex не запустить");
 
   const run = spawnSync("python3", [VALIDATOR, ROOT], { encoding: "utf8" });
   // The validator prints every error it found; a bare exit code would hide which.
@@ -56,7 +65,10 @@ test("the marketplace names a plugin that is really here", () => {
   assert.match(marketplace.name, MARKETPLACE_NAME, "имя маркетплейса Codex не примет");
   assert.equal(typeof marketplace.interface, "object");
   assert.ok(marketplace.interface, "у маркетплейса нет interface");
-  assert.ok(Array.isArray(marketplace.plugins) && marketplace.plugins.length, "маркетплейс не называет ни одного плагина");
+  assert.ok(
+    Array.isArray(marketplace.plugins) && marketplace.plugins.length,
+    "маркетплейс не называет ни одного плагина",
+  );
 
   for (const entry of marketplace.plugins) {
     assert.match(entry.name, PLUGIN_NAME, `имя плагина Codex не примет: ${entry.name}`);
@@ -70,8 +82,15 @@ test("the marketplace names a plugin that is really here", () => {
     // itself, not the .agents/plugins/ directory the file sits in.
     const pluginRoot = resolve(ROOT, entry.source.path);
     const manifestPath = join(pluginRoot, ".codex-plugin", "plugin.json");
-    assert.ok(existsSync(manifestPath), `запись «${entry.name}» указывает туда, где нет плагина: ${manifestPath}`);
-    assert.equal(readJson(manifestPath).name, entry.name, "имя в записи маркетплейса и в манифесте разошлись");
+    assert.ok(
+      existsSync(manifestPath),
+      `запись «${entry.name}» указывает туда, где нет плагина: ${manifestPath}`,
+    );
+    assert.equal(
+      readJson(manifestPath).name,
+      entry.name,
+      "имя в записи маркетплейса и в манифесте разошлись",
+    );
   }
 });
 
@@ -84,13 +103,21 @@ test("what the manifest promises is on disk", () => {
   const skillsDir = resolve(ROOT, manifest.skills);
   assert.ok(existsSync(skillsDir), `манифест обещает ${manifest.skills}, а директории нет`);
   assert.ok(statSync(skillsDir).isDirectory(), `${manifest.skills} — не директория`);
-  const skills = readdirSync(skillsDir, { withFileTypes: true })
-    .filter((d) => d.isDirectory() && !d.name.startsWith("."));
+  const skills = readdirSync(skillsDir, { withFileTypes: true }).filter(
+    (d) => d.isDirectory() && !d.name.startsWith("."),
+  );
   assert.ok(skills.length, "обещанная директория скиллов пуста");
   for (const s of skills) {
     assert.ok(existsSync(join(skillsDir, s.name, "SKILL.md")), `у скилла ${s.name} нет SKILL.md`);
   }
 
-  assert.equal(typeof manifest.mcpServers, "string", "запись MCP-серверов должна быть путём к .mcp.json");
-  assert.ok(existsSync(resolve(ROOT, manifest.mcpServers)), `манифест обещает ${manifest.mcpServers}, а файла нет`);
+  assert.equal(
+    typeof manifest.mcpServers,
+    "string",
+    "запись MCP-серверов должна быть путём к .mcp.json",
+  );
+  assert.ok(
+    existsSync(resolve(ROOT, manifest.mcpServers)),
+    `манифест обещает ${manifest.mcpServers}, а файла нет`,
+  );
 });

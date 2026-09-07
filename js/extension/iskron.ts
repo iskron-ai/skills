@@ -1,7 +1,7 @@
 // Дверь Искрона в сессию pi — ОДНО расширение, две независимые половины.
 //
-//   • тулы     — расширение поднимает `iskron-bridge` дочерним процессом и
-//                регистрирует каждый тул сервера под его собственным именем;
+//   • тулы     — расширение поднимает мост дочерним процессом и регистрирует
+//                каждый тул сервера под его собственным именем;
 //   • канал    — расширение само держит сокет живого канала и вкладывает
 //                пришедший кадр в идущий ход.
 //
@@ -16,23 +16,33 @@
 // тулами.
 //
 // Почему один файл, а не два. Каталог `extensions/` — конвенционный: pi считает
-// отдельным расширением КАЖДЫЙ .ts/.js в нём (см. `collectAutoExtensionEntries`
-// в package-manager.js — обход на один уровень, без рекурсии). Значит «одно
-// расширение» здесь буквально значит «один файл»; всякий сосед рядом стал бы
-// вторым расширением, а подкаталог с `index.ts` — тоже вторым. Половины при
-// этом остаются независимыми: каждая вешает СВОИ обработчики, и pi изолирует
-// каждый обработчик своим try/catch, так что отказ одной не гасит другую и не
-// роняет сессию.
+// отдельным расширением КАЖДЫЙ .ts/.js в нём (обход на один уровень, без
+// рекурсии). Значит «одно расширение» здесь буквально значит «один файл»;
+// всякий сосед рядом стал бы вторым расширением. Исходник при этом не обязан
+// быть одним файлом: этот собирается esbuild-ом в extensions/iskron.js вместе с
+// общим модулем канала, и один файл — свойство выхода, не исходника.
 //
 // Фабрика не поднимает ничего живого: pi зовёт её и в вызовах, где сессии не
 // будет вовсе. Сокет, мост, таймеры — только от session_start до
 // session_shutdown, и снятие идемпотентно.
-import { spawn, type ChildProcess } from "node:child_process";
-import { accessSync, chmodSync, constants, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { type ChildProcess, spawn } from "node:child_process";
+import {
+  accessSync,
+  chmodSync,
+  constants,
+  readFileSync,
+  renameSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+
+import { type Frame, type Holder, holdSocket, startSaying, statusUrl } from "../shared/channel.ts";
+import { versionIn } from "../shared/version.ts";
 
 type Notify = (text: string, level?: "info" | "warning" | "error") => void;
 
@@ -40,8 +50,8 @@ type Notify = (text: string, level?: "info" | "warning" | "error") => void;
 // Половина I — тулы Искрона через мост
 // ═══════════════════════════════════════════════════════════════════════════
 //
-// Расширение само говорит с `iskron-bridge` по MCP stdio и регистрирует КАЖДЫЙ
-// тул сервера под его собственным именем.
+// Расширение само говорит с мостом по MCP stdio и регистрирует КАЖДЫЙ тул
+// сервера под его собственным именем.
 //
 // Почему не прокси-тул. Корпус скиллов написан императивами вида «позови
 // iskron_orient», «передай action="?"». Поставка, прячущая тулы сервера за одним
@@ -67,16 +77,12 @@ const TICK_MS = 15000;
 
 const PROTOCOL = "2025-06-18";
 
-/** Версия моста объявлена константой в его тексте — читаем строкой, без запуска. */
-function bridgeVersion(text: string): string | null {
-  const m = /^const VERSION = "([^"]+)"/m.exec(text);
-  return m ? m[1] : null;
-}
-
 /** Строгое сравнение X.Y.Z: 1 если a новее b, -1 если старее, 0 если равны или нечитаемо. */
 function newer(a: string, b: string): number {
-  const pa = a.split(".").map(Number), pb = b.split(".").map(Number);
-  if (pa.length !== 3 || pb.length !== 3 || [...pa, ...pb].some((n) => !Number.isInteger(n))) return 0;
+  const pa = a.split(".").map(Number),
+    pb = b.split(".").map(Number);
+  if (pa.length !== 3 || pb.length !== 3 || [...pa, ...pb].some((n) => !Number.isInteger(n)))
+    return 0;
   for (let i = 0; i < 3; i++) if (pa[i] !== pb[i]) return pa[i] > pb[i] ? 1 : -1;
   return 0;
 }
@@ -114,8 +120,18 @@ function newer(a: string, b: string): number {
  * Бросает, когда загрузчик не дал собственного пути, — звать под try.
  */
 function packagedBridgePath(): string {
-  return resolve(dirname(fileURLToPath(import.meta.url)), "..", "skills", "establish-mcp", "scripts", "iskron-bridge.mjs");
+  return resolve(
+    dirname(fileURLToPath(import.meta.url)),
+    "..",
+    "skills",
+    "establish-mcp",
+    "scripts",
+    "iskron.mjs",
+  );
 }
+
+/** Имя домашней копии — контракт с конфигами харнесов, и оно не меняется с именем файла в поставке. */
+const HOME_BRIDGE = () => join(homedir(), ".iskron-bridge", "iskron-bridge.mjs");
 
 function refreshHomeBridge(notify: Notify, canSpeak: boolean): void {
   if (process.env.ISKRON_BRIDGE_PATH?.trim()) return;
@@ -126,21 +142,24 @@ function refreshHomeBridge(notify: Notify, canSpeak: boolean): void {
   } catch {
     return; // загрузчик не дал собственного пути — сравнивать не с чем
   }
-  const homePath = join(homedir(), ".iskron-bridge", "iskron-bridge.mjs");
+  const homePath = HOME_BRIDGE();
   let packaged: Buffer;
   try {
     packaged = readFileSync(packagedPath);
   } catch {
     return; // поставка моста не несёт — это дело establish-mcp, не наше
   }
-  const vPackaged = bridgeVersion(packaged.toString("utf8"));
+  const vPackaged = versionIn(packaged.toString("utf8"));
   if (!vPackaged) {
     // Сама починка мертва: файл на месте, а прочесть его версию нечем.
-    notify("Искрон: в поставке мост есть, но его версия не читается — домашнюю копию не трогаю.", "warning");
+    notify(
+      "Искрон: в поставке мост есть, но его версия не читается — домашнюю копию не трогаю.",
+      "warning",
+    );
     return;
   }
 
-  let home: Buffer | null = null;
+  let home: Buffer;
   try {
     home = readFileSync(homePath);
   } catch {
@@ -148,9 +167,12 @@ function refreshHomeBridge(notify: Notify, canSpeak: boolean): void {
   }
   if (home.equals(packaged)) return; // байт в байт — говорить не о чем
 
-  const vHome = bridgeVersion(home.toString("utf8"));
+  const vHome = versionIn(home.toString("utf8"));
   if (vHome && newer(vHome, vPackaged) > 0) {
-    notify(`Искрон: дома мост ${vHome}, в поставке ${vPackaged} — домашний новее, не трогаю.`, "warning");
+    notify(
+      `Искрон: дома мост ${vHome}, в поставке ${vPackaged} — домашний новее, не трогаю.`,
+      "warning",
+    );
     return;
   }
 
@@ -167,8 +189,15 @@ function refreshHomeBridge(notify: Notify, canSpeak: boolean): void {
       "info",
     );
   } catch (e) {
-    try { unlinkSync(tmp); } catch { /* нечего убирать */ }
-    notify(`Искрон: мост дома ${was}, в поставке ${vPackaged}, заменить не вышло (${(e as Error).message}). Работаю тем, что есть.`, "warning");
+    try {
+      unlinkSync(tmp);
+    } catch {
+      /* нечего убирать */
+    }
+    notify(
+      `Искрон: мост дома ${was}, в поставке ${vPackaged}, заменить не вышло (${(e as Error).message}). Работаю тем, что есть.`,
+      "warning",
+    );
   }
 }
 
@@ -179,8 +208,10 @@ function findBridge(): { path: string; tried: string[] } | { path: null; tried: 
     if (!p) return;
     tried.push(p);
   };
-  push(process.env.ISKRON_BRIDGE_PATH?.trim() ? resolve(process.env.ISKRON_BRIDGE_PATH.trim()) : null);
-  push(join(homedir(), ".iskron-bridge", "iskron-bridge.mjs"));
+  push(
+    process.env.ISKRON_BRIDGE_PATH?.trim() ? resolve(process.env.ISKRON_BRIDGE_PATH.trim()) : null,
+  );
+  push(HOME_BRIDGE());
   try {
     // pi install git:… кладёт расширение рядом со скиллами того же репозитория.
     push(packagedBridgePath());
@@ -198,6 +229,8 @@ function findBridge(): { path: string; tried: string[] } | { path: null; tried: 
   return { path: null, tried };
 }
 
+/* eslint-disable @typescript-eslint/no-explicit-any -- JSON-RPC-полезная нагрузка приходит без схемы */
+
 /** Клиент MCP по stdio. Кадрирование — NDJSON в обе стороны, как у моста. */
 class Bridge {
   private proc: ChildProcess | null = null;
@@ -206,13 +239,6 @@ class Bridge {
   private pending = new Map<number, { resolve: (v: any) => void; reject: (e: Error) => void }>();
   private tail: string[] = [];
   private dead: Error | null = null;
-  // Поля объявлены и присвоены отдельно, а не параметрами конструктора: сокра-
-  // щение TS `constructor(private bin: string)` — единственная конструкция в
-  // этом файле, которую нельзя СТЕРЕТЬ, её надо переписать. Node умеет только
-  // стирание (`--experimental-strip-types`; `--experimental-transform-types`
-  // из него убран), и на сокращении он бросает ещё до первой строки тела.
-  // Развёрнутая форма ничего не меняет в поведении и делает файл грузимым
-  // самой платформой — тем, что его и проверяет (tests/extension.test.mjs).
   private readonly bin: string;
   private readonly onLog: (line: string) => void;
 
@@ -287,7 +313,11 @@ class Bridge {
     this.proc.stdin.write(JSON.stringify({ jsonrpc: "2.0", method, params }) + "\n");
   }
 
-  request(method: string, params: unknown, opts: { timeoutMs?: number; signal?: AbortSignal } = {}): Promise<any> {
+  request(
+    method: string,
+    params: unknown,
+    opts: { timeoutMs?: number; signal?: AbortSignal } = {},
+  ): Promise<any> {
     if (this.dead) return Promise.reject(this.dead);
     const id = this.nextId++;
     return new Promise((res, rej) => {
@@ -346,7 +376,9 @@ class Bridge {
 /** Схема тула для pi. Конверсии нет — только отбрасывается мета-ключ. */
 function toParameters(inputSchema: any): any {
   const schema =
-    inputSchema && typeof inputSchema === "object" ? { ...inputSchema } : { type: "object", properties: {} };
+    inputSchema && typeof inputSchema === "object"
+      ? { ...inputSchema }
+      : { type: "object", properties: {} };
   delete schema.$schema; // не часть контракта параметров, а паспорт диалекта
   if (!schema.type) schema.type = "object";
   if (schema.type === "object" && !schema.properties) schema.properties = {};
@@ -360,18 +392,26 @@ function snippet(description: string): string {
   return cut.length > 160 ? cut.slice(0, 157) + "…" : cut;
 }
 
-function resultToContent(result: any): { type: "text" | "image"; [k: string]: any }[] {
+type Content = { type: "text"; text: string } | { type: "image"; data: string; mimeType: string };
+
+function resultToContent(result: any): Content[] {
   const blocks = Array.isArray(result?.content) ? result.content : [];
-  const out = blocks.map((b: any) => {
+  const out: Content[] = blocks.map((b: any): Content => {
     if (b?.type === "text") return { type: "text" as const, text: String(b.text ?? "") };
     if (b?.type === "image" && b.data) {
-      return { type: "image" as const, data: b.data, mimeType: b.mimeType ?? "image/png" };
+      return {
+        type: "image" as const,
+        data: String(b.data),
+        mimeType: String(b.mimeType ?? "image/png"),
+      };
     }
     return { type: "text" as const, text: JSON.stringify(b) };
   });
   if (out.length) return out;
   const structured = result?.structuredContent;
-  return [{ type: "text" as const, text: structured ? JSON.stringify(structured) : "(пустой ответ)" }];
+  return [
+    { type: "text" as const, text: structured ? JSON.stringify(structured) : "(пустой ответ)" },
+  ];
 }
 
 /**
@@ -379,8 +419,8 @@ function resultToContent(result: any): { type: "text" | "image"; [k: string]: an
  * Форму адреса не пересказываем дальше необходимого: берём первое, что
  * выглядит адресом сокета, и отдаём — судит о нём принимающая сторона.
  */
-function harvestSocket(content: { type: string; [k: string]: any }[], offer: (url: string) => void): void {
-  const text = content.map((c) => (c.type === "text" ? String(c.text ?? "") : "")).join("\n");
+function harvestSocket(content: Content[], offer: (url: string) => void): void {
+  const text = content.map((c) => (c.type === "text" ? c.text : "")).join("\n");
   const found = /wss?:\/\/[^\s"'`<>)\]]+/.exec(text)?.[0];
   if (!found) return;
   offer(found.replace(/[.,;:!?»"')\]]+$/, ""));
@@ -435,7 +475,9 @@ function setupBridge(pi: ExtensionAPI, offerSocket: (url: string) => void): void
     const tools: any[] = [];
     let cursor: string | undefined;
     do {
-      const page = await b.request("tools/list", cursor ? { cursor } : {}, { timeoutMs: HANDSHAKE_MS });
+      const page = await b.request("tools/list", cursor ? { cursor } : {}, {
+        timeoutMs: HANDSHAKE_MS,
+      });
       for (const t of page?.tools ?? []) tools.push(t);
       cursor = page?.nextCursor;
     } while (cursor);
@@ -484,7 +526,10 @@ function setupBridge(pi: ExtensionAPI, offerSocket: (url: string) => void): void
             // здесь и есть то, ради чего половины живут одним файлом: адрес
             // уходит слушателю, не покидая сессии.
             if (name === "iskron_channel") harvestSocket(content, offerSocket);
-            return { content, details: { tool: name, structuredContent: result?.structuredContent } };
+            return {
+              content,
+              details: { tool: name, structuredContent: result?.structuredContent },
+            };
           } finally {
             clearInterval(tick);
           }
@@ -522,7 +567,12 @@ function setupBridge(pi: ExtensionAPI, offerSocket: (url: string) => void): void
       work,
       new Promise<void>((r) => {
         const t = setTimeout(() => {
-          if (!done) notify("Искрон: мост ещё поднимается — тулы iskron_* появятся, как только ответит.", "info");
+          if (!done) {
+            notify(
+              "Искрон: мост ещё поднимается — тулы iskron_* появятся, как только ответит.",
+              "info",
+            );
+          }
           r();
         }, READY_WAIT_MS);
         t.unref?.();
@@ -547,9 +597,9 @@ function setupBridge(pi: ExtensionAPI, offerSocket: (url: string) => void): void
 // `pi.sendMessage(..., { triggerTurn: true })`. Поэтому здесь сторож не отдельный
 // процесс, а часть сессии, и посредник между сокетом и делателем не нужен.
 //
-// Дисциплина обрывов, коды мёртвого токена и публикация занятости перенесены из
-// skills/standing/references/watchdog.mjs — они выведены полем, а не выдуманы
-// здесь; боевые заметки к ним лежат в skills/standing/references/channel.md.
+// Дисциплина обрывов, коды мёртвого токена и публикация занятости — общий
+// модуль ../shared/channel.ts, тот же, что у сторожей; боевые заметки к ним
+// лежат в skills/standing/references/channel.md.
 //
 // Штатный путь адреса сюда — перехват из ответа `iskron_channel` половиной
 // «тулы» (см. `offerSocket` там же): сокет так и не покидает сессию. Окружение
@@ -557,9 +607,6 @@ function setupBridge(pi: ExtensionAPI, offerSocket: (url: string) => void): void
 // строка его не прячет (ps печатает и аргумент, и присваивание перед
 // командой), поэтому в отладке он кладётся в файл с правами 0600, путь к
 // которому назван переменной.
-
-const DEAD_TOKEN = [4000, 4001, 4002];
-const ROLLOUT = 4003;
 
 function socketAddress(): string | null {
   const direct = process.env.ISKRON_CHANNEL_SOCKET?.trim();
@@ -573,7 +620,7 @@ function socketAddress(): string | null {
   }
 }
 
-function frameToText(frame: any, raw: string): string {
+function frameToText(frame: Frame | null, raw: string): string {
   if (!frame) return `Кадр канала Искрона:\n${raw}`;
   const from = frame.provenance?.from_standing || frame.provenance?.from_karta_seq;
   const head = from ? `Кадр канала Искрона от ${from}` : "Кадр канала Искрона";
@@ -583,34 +630,18 @@ function frameToText(frame: any, raw: string): string {
   return `${head}:\n\n${body}`;
 }
 
-async function serviceUp(url: string): Promise<{ version?: string } | null> {
-  const version =
-    new URL(url).origin.replace(/^wss:/, "https:").replace(/^ws:/, "http:") + "/api/version";
-  return fetch(version, { signal: AbortSignal.timeout(5000) })
-    .then((r) => (r.ok ? r.json() : null))
-    .catch(() => null);
-}
-
 /**
  * Половина «канал»: свои обработчики, своё состояние, свой отказ.
  * Возвращает дверь, которой половина «тулы» подаёт сюда увиденный адрес сокета.
  */
 function setupChannel(pi: ExtensionAPI): (url: string) => void {
-  let socket: WebSocket | null = null;
-  let timer: ReturnType<typeof setTimeout> | null = null;
-  let sayTimer: ReturnType<typeof setInterval> | null = null;
-  let stopped = false;
-  let fastDrops = 0;
+  let holder: Holder | null = null;
+  let saying: { stop(): void } | null = null;
   let ctxRef: any = null;
   let current: string | null = null;
-  // Поколение: всё, что открыл прошлый адрес, перестаёт быть нашим в тот миг,
-  // когда пришёл новый. Без этого закрытие старого сокета читается обрывом и
-  // уводит переподключение на адрес, которого уже нет.
-  let gen = 0;
 
   pi.on("session_start", async (_event, ctx) => {
     ctxRef = ctx;
-    stopped = false;
     const url = socketAddress();
     if (!url) {
       // Места ещё нет — и это НЕ отказ. Занять его может только тот, кто будет
@@ -627,118 +658,66 @@ function setupChannel(pi: ExtensionAPI): (url: string) => void {
     hold(url); // запасной путь через окружение — отладочный
   });
 
+  function release(reason: string): void {
+    holder?.close(reason); // всё, что открыл прежний адрес, перестаёт быть нашим
+    holder = null;
+    saying?.stop();
+    saying = null;
+  }
+
   /** Взять этот адрес и слушать его, чем бы ни был занят прежний. */
   function hold(url: string) {
-    if (url === current && socket && (socket.readyState === 0 || socket.readyState === 1)) return;
+    if (url === current && holder?.alive) return;
     current = url;
-    stopped = false;
-    fastDrops = 0;
-    gen++; // прежнее поколение с этой строки уже не наше
-    if (timer) clearTimeout(timer);
-    if (sayTimer) clearInterval(sayTimer);
-    timer = sayTimer = null;
-    try {
-      socket?.close(1000, "новый сокет");
-    } catch {
-      /* закрывать нечего */
-    }
-    socket = null;
-    open(url, ctxRef);
-    startSaying(url, ctxRef);
-    if (ctxRef?.hasUI) ctxRef.ui.setStatus?.("iskron", "Искрон: канал прицепляется");
+    release("новый сокет");
+    const ctx = ctxRef;
+    holder = holdSocket({
+      url,
+      onFrame: (raw, frame) => {
+        // Служебные кадры не будят: hello доказывает, что сокет держат, и только.
+        if (frame?.type === "hello") {
+          // setStatus — пара (ключ, текст); один аргумент кладёт строку в ключ
+          // и оставляет её без текста, то есть невидимой.
+          if (ctx?.hasUI) ctx.ui.setStatus?.("iskron", "Искрон: канал слушает");
+          return;
+        }
+        if (frame?.type === "status") return;
+
+        // Вот ради чего всё: кадр входит в идущий ход, а простаивающего агента
+        // поднимает. Это и есть то, чего у сторожа-процесса быть не может.
+        pi.sendMessage(
+          {
+            customType: "iskron-channel",
+            content: frameToText(frame, raw),
+            display: true,
+            details: frame ?? { raw },
+          },
+          { triggerTurn: true, deliverAs: "steer" },
+        );
+      },
+      // Процессу здесь выйти некуда, поэтому громкость — это сказать делателю
+      // так, чтобы он это увидел в ходе, а не в логе, которого никто не читает.
+      onDeadToken: (code) =>
+        loud(
+          ctx,
+          `Искрон: канал закрыт кодом ${code} — токен мёртв. Зови iskron_channel(action="connect")` +
+            (code === 4001 ? ' или action="mint"' : "") +
+            ", затем register тем же именем: новый сокет расширение возьмёт из ответа само, перезапуск не нужен.",
+        ),
+      onServiceAlive: (version) =>
+        loud(ctx, `Искрон: обрывы, а служба отвечает (${version}) — спроси о токене.`),
+    });
+    startSayingFor(url);
+    if (ctx?.hasUI) ctx.ui.setStatus?.("iskron", "Искрон: канал прицепляется");
   }
 
   pi.on("session_shutdown", async () => {
     // Идемпотентно: pi зовёт это и на путях, где ничего не поднималось.
-    stopped = true;
-    gen++;
     current = null;
-    if (timer) clearTimeout(timer);
-    if (sayTimer) clearInterval(sayTimer);
-    timer = sayTimer = null;
-    try {
-      socket?.close(1000, "session shutdown");
-    } catch {
-      /* закрывать нечего */
-    }
-    socket = null;
+    release("session shutdown");
   });
 
-  function open(url: string, ctx: any) {
-    if (stopped) return;
-    const myGen = gen;
-    const startedAt = Date.now(); // от конструкции, НЕ в onopen — см. channel.md
-    const ws = new WebSocket(url);
-    socket = ws;
-    let gone = false; // обрыв разбирается один раз, чем бы он ни пришёл
-
-    ws.addEventListener("message", (e: MessageEvent) => {
-      const body = typeof e.data === "string" ? e.data : "[двоичный кадр]";
-      let frame: any = null;
-      try {
-        frame = JSON.parse(body);
-      } catch {
-        /* неJSON — донесём как есть */
-      }
-      // Служебные кадры не будят: hello доказывает, что сокет держат, и только.
-      if (frame?.type === "hello") {
-        // setStatus — пара (ключ, текст); один аргумент кладёт строку в ключ
-        // и оставляет её без текста, то есть невидимой.
-        if (ctx.hasUI) ctx.ui.setStatus?.("iskron", "Искрон: канал слушает");
-        return;
-      }
-      if (frame?.type === "status") return;
-
-      // Вот ради чего всё: кадр входит в идущий ход, а простаивающего агента
-      // поднимает. Это и есть то, чего у сторожа-процесса быть не может.
-      pi.sendMessage(
-        {
-          customType: "iskron-channel",
-          content: frameToText(frame, body),
-          display: true,
-          details: frame ?? { raw: body },
-        },
-        { triggerTurn: true, deliverAs: "steer" },
-      );
-    });
-
-    // Обрыв на самом апгрейде даёт на части рантаймов ТОЛЬКО error: close не
-    // приходит вовсе. Отсрочка оставляет close шанс назвать свой код — коды
-    // мёртвого токена приходят именно им.
-    ws.addEventListener("error", () => setTimeout(() => dropped(1006, url, ctx), 500));
-    ws.addEventListener("close", (e: CloseEvent) => dropped(e.code, url, ctx));
-
-    async function dropped(code: number, u: string, c: any) {
-      if (gone || stopped || myGen !== gen) return;
-      gone = true;
-
-      if (DEAD_TOKEN.includes(code)) {
-        // Процессу здесь выйти некуда, поэтому громкость — это сказать делателю
-        // так, чтобы он это увидел в ходе, а не в логе, которого никто не читает.
-        loud(
-          c,
-          `Искрон: канал закрыт кодом ${code} — токен мёртв. Зови iskron_channel(action="connect")` +
-            (code === 4001 ? ' или action="mint"' : "") +
-            ", затем register тем же именем: новый сокет расширение возьмёт из ответа само, перезапуск не нужен.",
-        );
-        return;
-      }
-
-      fastDrops = Date.now() - startedAt < 5000 ? fastDrops + 1 : 0;
-      if (fastDrops >= 3) {
-        const up = await serviceUp(u);
-        if (up) {
-          loud(c, `Искрон: обрывы, а служба отвечает (${up.version}) — спроси о токене.`);
-          return;
-        }
-        fastDrops = 1; // простой не должен перерасти в вопрос о токене
-      }
-      timer = setTimeout(() => open(u, c), code === ROLLOUT ? 3000 : 2000);
-    }
-  }
-
   function loud(ctx: any, text: string) {
-    stopped = true;
     if (ctx?.hasUI) ctx.ui.notify(text, "error");
     pi.sendMessage(
       { customType: "iskron-channel", content: text, display: true, details: { fatal: true } },
@@ -748,34 +727,14 @@ function setupChannel(pi: ExtensionAPI): (url: string) => void {
 
   // ── Слово делателя наружу: строка занятости ───────────────────────────────
   // Строку удостоверяет слушающий секрет, а он здесь. Делатель пишет ТЕКСТ в
-  // файл, публикует расширение. Опрос, а не наблюдение: файла может ещё не быть,
-  // а наблюдатель за несуществующим путём бросает.
-  function startSaying(url: string, _ctx: any) {
+  // файл, публикует расширение.
+  function startSayingFor(url: string) {
     const sayFile = process.env.ISKRON_CHANNEL_SAY;
     if (!sayFile) return; // без переменной половина не включается
-    const statusUrl =
-      process.env.ISKRON_CHANNEL_STATUS ||
-      url.replace(/^wss:/, "https:").replace(/^ws:/, "http:").replace("/channel/ws/", "/channel/status/");
-    let said: string | null = null;
-    sayTimer = setInterval(async () => {
-      let text: string;
-      try {
-        text = readFileSync(sayFile, "utf8").trim();
-      } catch {
-        return; // ещё не написали — не о чем говорить
-      }
-      if (text === said) return; // публикуют смену занятия, а не такт
-      const res = await fetch(statusUrl, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ text }),
-        signal: AbortSignal.timeout(5000),
-      }).catch(() => null);
-      // Пустая строка — СЛОВО: ею занятость снимают.
-      if (res?.ok) said = text;
-      else if (res && res.status >= 400 && res.status < 500) said = text; // повтор той же ничего не изменит
-    }, 1000);
-    sayTimer.unref?.();
+    saying = startSaying(
+      { sayFile, statusUrl: process.env.ISKRON_CHANNEL_STATUS || statusUrl(url) },
+      (file) => readFileSync(file, "utf8"),
+    );
   }
 
   // Дверь наружу. Половина «тулы» подаёт сюда всё, что увидела; здесь решают,
@@ -790,6 +749,8 @@ function setupChannel(pi: ExtensionAPI): (url: string) => void {
     hold(u);
   };
 }
+
+/* eslint-enable @typescript-eslint/no-explicit-any */
 
 // ═══════════════════════════════════════════════════════════════════════════
 

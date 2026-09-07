@@ -19,15 +19,17 @@
 // and the module — which constructs its socket at import time — takes the fake
 // without knowing it. Nothing test-shaped is added to the shipped file.
 //
-// Contract, in env: WD_FILE (watchdog to probe), WD_URL (its argv[2]),
+// Contract, in env: WD_FILE (the shipped iskron.mjs), WD_SUB (which watchdog:
+// its subcommand), WD_URL (the socket address),
 // WD_LATE_MS (how much later than the error the close lands), WD_LATE_CODE.
 // The watchdog's own loud exit is the harness's exit. If instead it swallows
 // the late code and reopens, the fake sees a SECOND construction — the harness
 // says so and leaves with 0, which is what the probe reads as failure.
-import { pathToFileURL } from "node:url";
 import { writeSync } from "node:fs";
+import { pathToFileURL } from "node:url";
 
 const FILE = process.env.WD_FILE;
+const SUB = process.env.WD_SUB || "watchdog";
 const URL_ = process.env.WD_URL;
 const LATE_MS = Number(process.env.WD_LATE_MS ?? 800);
 const LATE_CODE = Number(process.env.WD_LATE_CODE ?? 4000);
@@ -48,7 +50,11 @@ class FakeWebSocket {
   }
   removeEventListener(type, fn) {
     const l = this.listeners.get(type);
-    if (l) this.listeners.set(type, l.filter((f) => f !== fn));
+    if (l)
+      this.listeners.set(
+        type,
+        l.filter((f) => f !== fn),
+      );
   }
   send() {}
   close() {}
@@ -61,7 +67,9 @@ class FakeWebSocket {
 // no-op against a getter. This probe must land the fake on Node 22 — the floor
 // the watchdogs declare and the version CI runs them on — as surely as here.
 Object.defineProperty(globalThis, "WebSocket", {
-  value: FakeWebSocket, writable: true, configurable: true, // non-enumerable, as Node ships it
+  value: FakeWebSocket,
+  writable: true,
+  configurable: true, // non-enumerable, as Node ships it
 });
 if (globalThis.WebSocket !== FakeWebSocket) {
   writeSync(2, "ПРОБА: подменить globalThis.WebSocket не удалось — пробе не за что взяться\n");
@@ -73,11 +81,14 @@ if (globalThis.WebSocket !== FakeWebSocket) {
 // to prevent. Say it in words the probe can match, and leave with 0: a zero
 // exit is exactly the "clean stop" a doer must never be handed here.
 function reopened() {
-  writeSync(2, `ПРОБА: сторож ПЕРЕОТКРЫЛСЯ на мёртвом токене (сокетов: ${sockets.length}) — опоздавший ${LATE_CODE} проглочен\n`);
+  writeSync(
+    2,
+    `ПРОБА: сторож ПЕРЕОТКРЫЛСЯ на мёртвом токене (сокетов: ${sockets.length}) — опоздавший ${LATE_CODE} проглочен\n`,
+  );
   process.exit(0);
 }
 
-process.argv = [process.argv[0], FILE, URL_];
+process.argv = [process.argv[0], FILE, SUB, URL_];
 await import(pathToFileURL(FILE).href);
 
 const first = sockets[0];
@@ -93,6 +104,9 @@ setTimeout(() => first.fire("close", { code: LATE_CODE, reason: "", wasClean: fa
 
 // Neither loud exit nor reopen inside the window is its own kind of silence.
 setTimeout(() => {
-  writeSync(2, `ПРОБА: сторож молчит спустя ${WINDOW_MS} мс — ни громкого выхода, ни переоткрытия\n`);
+  writeSync(
+    2,
+    `ПРОБА: сторож молчит спустя ${WINDOW_MS} мс — ни громкого выхода, ни переоткрытия\n`,
+  );
   process.exit(0);
 }, WINDOW_MS);
