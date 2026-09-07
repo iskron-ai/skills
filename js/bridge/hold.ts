@@ -11,8 +11,16 @@
 //     читает расширение pi и вкладывает кадр в ход.
 // Занятость делатель пишет в файл рядом с сокетом (#4231); публикует мост.
 import { createHash } from "node:crypto";
-import { chmodSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
-import { createServer, type Server, type Socket } from "node:net";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { connect as connectLocal, createServer, type Server, type Socket } from "node:net";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -101,9 +109,46 @@ function notify(level: "info" | "warning" | "error", data: ChannelEvent): void {
   });
 }
 
+/**
+ * Мост, убитый без прощания, оставляет `.key` и `.sock`: сторож без аргумента
+ * перечисляет ключи, и мёртвая запись либо уводит его на сокет, где никого нет,
+ * либо заставляет отказать «стояний несколько». Перед тем как положить свой
+ * ключ, каждый чужой проверяется одним подключением; неотвечающий — убирается.
+ */
+function sweepStale(dir: string, mine: string): void {
+  if (process.platform === "win32" || !existsSync(dir)) return;
+  for (const f of readdirSync(dir).filter((x) => x.endsWith(".key"))) {
+    const keyFile = join(dir, f);
+    let key = "";
+    try {
+      key = readFileSync(keyFile, "utf8").trim();
+    } catch {
+      continue;
+    }
+    if (!key || key === mine) continue;
+    const sock = socketPathFor(key);
+    const drop = (): void => {
+      for (const p of [keyFile, sock, sayPathFor(key)]) {
+        try {
+          unlinkSync(p);
+        } catch {}
+      }
+    };
+    if (!existsSync(sock)) {
+      drop();
+      continue;
+    }
+    const probe = connectLocal(sock);
+    probe.once("connect", () => probe.destroy());
+    probe.once("error", drop);
+    probe.setTimeout(1000, () => probe.destroy());
+  }
+}
+
 function openLocalServer(key: string): void {
   const path = socketPathFor(key);
   mkdirSync(standingsDir(), { recursive: true, mode: 0o700 });
+  sweepStale(standingsDir(), key);
   writeFileSync(keyFilePathFor(key), key + "\n", { mode: 0o600 });
   if (process.platform !== "win32") {
     try {
@@ -168,6 +213,9 @@ export function releaseStanding(reason: string): void {
         unlinkSync(socketPathFor(currentKey));
       } catch {}
     }
+    try {
+      unlinkSync(sayPathFor(currentKey)); // занятость умирает со стоянием, не переживает его
+    } catch {}
   }
   ring.length = 0;
   currentKey = null;
@@ -249,8 +297,9 @@ export function absorbChannelReply(msg: JsonRpcMessage, reply: JsonRpcMessage): 
   const socket = SOCKET_RE.exec(text)?.[0];
   if (!socket) return reply;
   const status = STATUS_RE.exec(text)?.[0];
-  if (!state.standing && a.realm && a.karta != null) {
-    // connect уже назвал место — держим под ним, пока register не подтвердит.
+  if (a.realm && a.karta != null) {
+    // connect назвал место — ключ, сокет и файл занятости идут под ЭТИМ именем,
+    // даже если прежде мост держал другое: ярлык врать не должен.
     state.standing = { realm: a.realm, karta: a.karta, name: a.name };
   }
   const key = holdStanding(trim(socket), status ? trim(status) : null);

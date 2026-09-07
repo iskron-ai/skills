@@ -48,7 +48,7 @@ export async function serviceUp(socketUrl: string): Promise<{ version?: string }
 
 /** Слово делателю на мёртвом токене — одно на всех держателей. */
 export function deadTokenAdvice(code: number): string {
-  return `закрытие ${code} — токен мёртв, зови connect${code === 4001 ? " (на 4001 — mint)" : ""}`;
+  return `закрытие ${code} — токен мёртв, зови ${code === 4001 ? "mint" : "connect"}`;
 }
 
 export interface Frame {

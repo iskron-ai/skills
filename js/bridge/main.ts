@@ -102,6 +102,7 @@ export function bridgeMain(argv: string[]): void {
   // node #4170). A second Ctrl-C leaves at once — the human has said it twice.
   let interrupted = false;
   process.on("SIGINT", () => {
+    releaseStanding("SIGINT"); // иначе .key переживает мост и уводит сторожа без ключа на мёртвый сокет
     if (interrupted || tokenRequestsInFlight.size === 0) process.exit(0);
     interrupted = true;
     Promise.allSettled([...tokenRequestsInFlight]).then(() => process.exit(0));

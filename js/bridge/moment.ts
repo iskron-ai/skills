@@ -10,10 +10,11 @@ import { type JsonRpcMessage } from "./types.ts";
 
 const WRITE_TOOL = /^iskron_(add_[a-z_]+|batch)$/;
 
-export const MOMENT_LINE =
-  "[мост] Момент скилла writing: прежде вызова — тип узла и given_as, три модуса как утверждения, " +
-  "имя-тезис, стрелки со смыслом; вопрошание hint — указатель на то, чего не покажет карта, никогда план или задача; " +
-  "строки CHECKS в ответе — работа, не сведение.";
+// Та же строка стоит в хуке PreToolUse (.claude/settings.json, шаблон iskronify) и в двери iskron.
+const JSON_LINE =
+  "Момент скилла writing: перед вызовом по каждому узлу назови читателя, что изменит извлечение и что здесь ново; тип и given_as, три модуса как утверждения, имя-тезис, стрелки со смыслом; hint — указатель на то, чего не покажет карта, не план; строки CHECKS в ответе — работа этого такта.";
+
+export const MOMENT_LINE = "[мост] " + JSON_LINE;
 
 /** Ответ на tools/list: к описанию каждого пишущего тула приписана строка момента. Идемпотентно. */
 export function annotateToolList(reply: JsonRpcMessage): void {

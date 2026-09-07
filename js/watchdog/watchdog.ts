@@ -10,6 +10,18 @@ import { writeSync } from "node:fs";
 
 import { attach, resolveStanding } from "./client.ts";
 
+const plural = (n: number): string => {
+  const m10 = n % 10;
+  const m100 = n % 100;
+  const word =
+    m10 === 1 && m100 !== 11
+      ? "кадр"
+      : m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14)
+        ? "кадра"
+        : "кадров";
+  return `${n} ${word}`;
+};
+
 const log = (s: string): void => {
   process.stdout.write(s + "\n");
 };
@@ -36,7 +48,7 @@ export function runWatchdog(argv: string[]): void {
       switch (ev.kind) {
         case "attached":
           log(
-            `слушаю стояние ${ev.key}${ev.buffered ? ` (${ev.buffered} кадров задним числом)` : ""}`,
+            `слушаю стояние ${ev.key}${ev.buffered ? ` (${plural(ev.buffered)} задним числом)` : ""}`,
           );
           break;
         case "frame":

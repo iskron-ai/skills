@@ -89,7 +89,7 @@ export function attach(path: string, o: AttachOptions): void {
         } catch {
           continue; // не наша строка
         }
-        // Кадр без разбора (старый мост, или разбор не доехал) разбираем здесь:
+        // Кадр, пришедший без разбора (мост отдал только raw), разбираем здесь:
         // клиент судит по type, и судить должен по кадру, а не по его отсутствию.
         if (ev.kind === "frame" && ev.frame === undefined && typeof ev.raw === "string") {
           try {

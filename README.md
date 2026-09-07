@@ -93,5 +93,5 @@ unzip design.skill -d ~/.claude/skills/
 - `*.skill` — закоммиченные **производные** бандлы. Не редактируются руками; `make build` (или просто коммить с включённым хуком `make hooks` — он пересобирает их на каждом коммите).
 - `make plugin` — архив плагина для claude.ai (`dist/iskron.zip`); CI прикладывает его к каждому релизу.
 - `.claude-plugin/marketplace.json` + `.claude-plugin/plugin.json` — манифесты плагина; версию пишет release-please при мерже релизного PR.
-- `.mcp.json` — MCP-эндпоинт iskron: `https://mcp.iskron.ru/`.
+- `.mcp.json` — запись MCP плагина: stdio-мост из поставки (`skills/establish-mcp/scripts/iskron.mjs`), говорящий с `https://mcp.iskron.ru/`.
 - `DERIVATION.md` — карта деривации скиллов из канона методологии + языковой контракт.

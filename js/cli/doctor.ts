@@ -43,7 +43,7 @@ function homeCopyReport(): void {
   out(
     `домашняя копия: ${home} — v${v ?? "?"}+${hashOf(bytes)}, ДРУГИЕ байты: ${
       self
-        ? "обнови её из поставки (cp scripts/iskron.mjs ~/.iskron-bridge/iskron-bridge.mjs)"
+        ? `обнови её из поставки: cp "${fileURLToPath(import.meta.url)}" ${home}`
         : "этот файл не читается"
     }`,
   );
@@ -68,7 +68,12 @@ async function serverReport(): Promise<void> {
   }
   res.body?.cancel?.();
   const www = res.headers.get("www-authenticate");
-  out(`  отвечает: HTTP ${res.status}${www ? " (просит OAuth)" : ""}`);
+  const note = www
+    ? " (просит OAuth)"
+    : res.status >= 400 && res.status < 500
+      ? " (пробник без токена — отказ ожидаем)"
+      : "";
+  out(`  отвечает: HTTP ${res.status}${note}`);
   try {
     const meta = await discoverMeta(www);
     out(`  OAuth: token endpoint ${meta.as.token_endpoint}`);
