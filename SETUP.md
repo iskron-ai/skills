@@ -158,8 +158,9 @@ cp "$src/opencode-plugin.js" ~/.config/opencode/plugins/iskron.js
 Плагин лежит именно в `~/.config/opencode/plugins/`: там, и только там, OpenCode сам
 держит зависимость `@opencode-ai/plugin`, которую файл импортирует. Мост плагин берёт
 из `~/.iskron-bridge/iskron-bridge.mjs` (или из `ISKRON_BRIDGE_PATH`) и запускает его на
-Bun самого OpenCode — Node на машине не нужен. После обновления поставки повтори обе копии — `node
-~/.iskron-bridge/iskron-bridge.mjs doctor` скажет, отстала ли какая. Первый вызов тула
+Bun самого OpenCode — Node на машине не нужен. После обновления поставки повтори обе копии — `node "$src/iskron.mjs" doctor`
+(из поставки, не из домашней копии: сверять копии может только файл, рядом с которым
+лежит эталон) скажет, отстала ли какая. Первый вызов тула
 без гранта уводит человека в браузер, как везде; для безголовой машины — токен, ниже.
 Проверь:
 
@@ -168,9 +169,10 @@ opencode run --format json "Позови тул iskron_me и напечатай 
 ```
 
 **Codex слышит канал через дверь app-server.** Кадр стояния входит в идущий тред,
-если тред живёт под локальным демоном app-server: поставь Codex официальным
-скриптом (`curl -fsSL https://chatgpt.com/codex/install.sh | sh` — демон стартует
-только из этой установки), держи `CODEX_HOME` коротким (путь unix-сокета ограничен;
+если тред живёт под локальным демоном app-server. Демон стартует из managed-установки
+Codex — `$CODEX_HOME/packages/standalone/current/codex`, её кладут установщик
+(`curl -fsSL https://chatgpt.com/codex/install.sh | sh`) и приложение ChatGPT; голый
+бинарь внутри ChatGPT.app без неё отказывает. Держи `CODEX_HOME` коротким (путь unix-сокета ограничен;
 дом внутри `~/Library/Application Support/…` слишком длинный — заведи короткий дом,
 смотрящий на настоящий) и подними демон:
 
@@ -178,9 +180,14 @@ opencode run --format json "Позови тул iskron_me и напечатай 
 H="$HOME/Library/Application Support/orca/codex-runtime-home/home"   # настоящий дом, если он длинный
 mkdir -p /tmp/cxh && ln -sfn "$H/packages" /tmp/cxh/packages && ln -sfn "$H/auth.json" /tmp/cxh/auth.json
 cp "$H/config.toml" /tmp/cxh/config.toml
+CODEX_HOME=/tmp/cxh codex plugin marketplace add https://github.com/iskron-ai/skills
+CODEX_HOME=/tmp/cxh codex plugin add iskron@iskron
 CODEX_HOME=/tmp/cxh codex app-server daemon start
 ```
 
+Плагин ставится в короткий дом отдельно: `config.toml` записи моста не несёт (её
+приносит плагин), а каталог `plugins` настоящего дома в рецепт не входит — без этого
+шага сессии под демоном придут без тулов `iskron_*` (поймано холодным прогоном).
 Сессии Codex, запущенные с тем же `CODEX_HOME`, прицепляются к демону сами; сессия,
 запущенная с другим домом, двери не имеет — агент изнутри этого не поправит, это
 делаешь ты до запуска. `node ~/.iskron-bridge/iskron-bridge.mjs doctor` под тем же
