@@ -38,6 +38,15 @@
             "command": "jq -r '.tool_input.file_path // \"\"' | grep -Eq '\\.claude/projects/.*/memory/' && { echo 'BLOCKED: локальная память агента запрещена целиком, по директории (AGENTS.md, Persistence rules). Маршрутизируй факт: конвенции репо / код-факты → AGENTS.md; состояние проекта → NKS (nks-dev, #1506); пользовательский факт вне проекта → личный граф владельца (minding). Директория заморожена на стабе-запрете.' >&2; exit 2; } || exit 0"
           }
         ]
+      },
+      {
+        "matcher": "mcp__.*iskron_(add_.*|batch)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "jq -r '.tool_name // \"\"' | grep -Eq 'iskron_(add_[a-z_]+|batch)$' && echo '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"additionalContext\":\"Момент скилла writing: по каждому узлу — тип и given_as, три модуса как утверждения, имя-тезис, стрелки со смыслом; hint — указатель на то, чего не покажет карта, никогда план или задача; строки CHECKS в ответе — работа этого такта.\"}}' || true"
+          }
+        ]
       }
     ],
     "PostToolUse": [

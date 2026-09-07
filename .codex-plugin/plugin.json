@@ -19,7 +19,12 @@
     "weaving"
   ],
   "skills": "./skills/",
-  "mcpServers": "./.mcp.json",
+  "mcpServers": {
+    "iskron": {
+      "type": "http",
+      "url": "https://mcp.iskron.ru"
+    }
+  },
   "interface": {
     "displayName": "iskron",
     "shortDescription": "Методические скиллы NKS и граф Искрона",
