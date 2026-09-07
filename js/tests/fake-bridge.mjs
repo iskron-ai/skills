@@ -46,6 +46,31 @@ const TOOLS = JSON.parse(
 );
 
 const send = (msg) => process.stdout.write(JSON.stringify(msg) + "\n");
+
+// FB_EVENTS: файл, каждая новая строка которого — событие стояния, которое
+// настоящий мост шлёт уведомлением notifications/message с logger
+// iskron-channel (см. js/bridge/hold.ts). Проба дописывает строки, фейк их
+// эмитит — так половина «канал» расширения проверяется без сокета вовсе.
+if (process.env.FB_EVENTS) {
+  let seen = 0;
+  setInterval(() => {
+    let text;
+    try {
+      text = readFileSync(process.env.FB_EVENTS, "utf8");
+    } catch {
+      return;
+    }
+    const lines = text.split("\n").filter((l) => l.trim());
+    for (const line of lines.slice(seen)) {
+      send({
+        jsonrpc: "2.0",
+        method: "notifications/message",
+        params: { level: "info", logger: "iskron-channel", data: JSON.parse(line) },
+      });
+    }
+    seen = lines.length;
+  }, 40).unref();
+}
 const ok = (id, result) => send({ jsonrpc: "2.0", id, result });
 
 function callResult(name) {

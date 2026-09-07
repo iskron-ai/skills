@@ -30,6 +30,7 @@ import { BUILD } from "./build.ts";
 import { CFG, parseArgs, setConfig } from "./config.ts";
 import { deliver } from "./deliver.ts";
 import { errorMessage } from "./errors.ts";
+import { holdFromEnv, releaseStanding } from "./hold.ts";
 import { installAuthLockExitHook } from "./oauth/authlock.ts";
 import { pendingFlow } from "./oauth/flow.ts";
 import { installRefreshLockExitHook } from "./oauth/refreshlock.ts";
@@ -46,6 +47,7 @@ export function bridgeMain(argv: string[]): void {
   installRefreshLockExitHook();
   log(`${BUILD} -> ${CFG.serverUrl} (timeout ${CFG.timeoutMs}ms, auth in ${storePath()})`);
   startTokenKeepalive();
+  holdFromEnv(); // отладочный путь: сокет из окружения, без connect
 
   const rl = createInterface({ input: process.stdin, terminal: false });
   const pending = new Set<Promise<void>>();
@@ -77,6 +79,7 @@ export function bridgeMain(argv: string[]): void {
   // is the price SIGKILL always pays; SIGTERM, stdin-close, and SIGINT no longer do.
   const leave = async (why: string) => {
     debug(`${why} — winding down`);
+    releaseStanding(why); // сокет стояния живёт ровно столько, сколько сессия
     await Promise.allSettled([...pending, ...tokenRequestsInFlight]);
     await flushStdout(); // an answer half-written is an answer not given
     const flow = pendingFlow();

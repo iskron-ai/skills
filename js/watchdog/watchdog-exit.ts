@@ -1,30 +1,15 @@
-// iskron.mjs watchdog-exit <адрес-сокета> — сторож выхода-на-кадре.
+// iskron.mjs watchdog-exit [ключ] — сторож выхода-на-кадре.
 //
-// Для харнесов БЕЗ встроенного наблюдателя сокета. Там вывод фоновой задачи
+// Для харнесов БЕЗ встроенного наблюдателя сокета: там вывод фоновой задачи
 // читается только по запросу, и единственное, что харнес превращает в
-// прерывание, — конец процесса. Поэтому этот сторож не печатает кадр в надежде,
-// что кто-то заглянет: он печатает его и ВЫХОДИТ нулём на первом рабочем кадре.
-// Делатель просыпается концом процесса — и ПЕРВЫМ ходом запускает сторожа снова,
-// до того как возьмётся за кадр: взведённый после работы опаздывает ровно на её
-// длину, а такт, не доживший до конца, не взводит его никогда.
-//
-// Три правила делают паттерн безопасным, и каждое здесь — строчка кода:
-//   служебные кадры (hello, пинги) — не выход: служба говорит первой, и наивный
-//     слушатель ушёл бы в вахту на её приветствии;
-//   мёртвый токен — выход ГРОМКИЙ, ненулевой: иначе протухший грант неотличим
-//     от пустого инбокса;
-//   выкатка и сетевой обрыв — не выход вовсе: их переоткрывают, иначе делателя
-//     будят на событии, которое его не касается.
-//
-// Он же несёт строку занятости НАРУЖУ — вторая половина. Здесь она вдобавок
-// самопочинна: сторож живёт от кадра до кадра, а перевзведённый публикует
-// текущее содержимое файла заново, ничего не помня о прошлой жизни.
-import { readFileSync, writeSync } from "node:fs";
+// прерывание, — конец процесса. Сокет держит мост; этот клиент печатает
+// первое настоящее сообщение синхронной записью и ВЫХОДИТ нулём — конец
+// процесса и есть доставка. Служебные кадры (hello, пинги) уводит в stderr;
+// мёртвый токен и обрывы при живой службе объявляет ненулевым выходом.
+import { writeSync } from "node:fs";
 
-import { deadTokenAdvice, holdSocket, startSaying, statusUrl } from "../shared/channel.ts";
+import { attach, resolveStanding } from "./client.ts";
 
-// Синхронная запись, а не process.stdout.write: в трубу тот пишет асинхронно, и
-// выход следом теряет ровно то, ради чего файл существует, — сам кадр.
 const wake = (s: string): void => {
   writeSync(1, s + "\n"); // делателю: то, что его будит
 };
@@ -33,45 +18,36 @@ const note = (s: string): void => {
 };
 
 export function runWatchdogExit(argv: string[]): void {
-  const url = argv[0] || process.env.ISKRON_CHANNEL_SOCKET;
-  if (!url) {
-    note("нужен адрес сокета: iskron.mjs watchdog-exit <wss://…> или ISKRON_CHANNEL_SOCKET");
+  const target = resolveStanding(argv[0]);
+  if ("error" in target) {
+    note(`ДЕЛАТЕЛЬ: ${target.error}`);
     process.exit(2);
   }
-
-  holdSocket({
-    url,
-    onFrame: (raw, frame) => {
-      const type = frame?.type;
-      if (type !== "message") return note(`кадр ${type ?? "не разобран"} — не повод будить`);
-      wake(raw);
-      process.exit(0); // конец процесса И ЕСТЬ доставка
+  attach(target.path, {
+    onEvent: (ev) => {
+      switch (ev.kind) {
+        case "frame": {
+          const type = ev.frame?.type;
+          if (type !== "message") return note(`кадр ${type ?? "не разобран"} — не повод будить`);
+          wake(ev.raw ?? "");
+          process.exit(0); // конец процесса И ЕСТЬ доставка
+          break;
+        }
+        case "dead":
+        case "alive":
+          note(ev.text ?? "ДЕЛАТЕЛЬ: стояние потеряно");
+          process.exit(1);
+          break;
+        case "attached":
+          note(`слушаю стояние ${ev.key}`);
+          break;
+        default:
+          note(ev.text ?? ev.kind);
+      }
     },
-    onDeadToken: (code) => {
-      note(`ДЕЛАТЕЛЬ: ${deadTokenAdvice(code)}`);
-      process.exit(1); // громко: мёртвый токен не смеет выглядеть пустым инбоксом
-    },
-    onServiceAlive: (version) => {
-      note(`ДЕЛАТЕЛЬ: обрывы, а служба отвечает (${version}) — спроси о токене`);
+    onGone: (why) => {
+      note(`ДЕЛАТЕЛЬ: ${why}`);
       process.exit(1);
     },
-    onNote: note,
   });
-
-  // ── Вторая половина: слово делателя наружу ─────────────────────────────────
-  const sayFile = process.env.ISKRON_CHANNEL_SAY;
-  if (sayFile) {
-    startSaying(
-      {
-        sayFile,
-        statusUrl: process.env.ISKRON_CHANNEL_STATUS || statusUrl(url),
-        // В лог, НЕ в stdout: там будит только кадр.
-        onRefused: (_text, status) =>
-          note(
-            `ДЕЛАТЕЛЬ: строку занятости не приняли (${status ?? "нет ответа"}) — см. channel.md`,
-          ),
-      },
-      (file) => readFileSync(file, "utf8"),
-    );
-  }
 }

@@ -8,6 +8,8 @@ import {
   type Outcome,
   UpstreamError,
 } from "./errors.ts";
+import { absorbChannelReply } from "./hold.ts";
+import { annotateToolList } from "./moment.ts";
 import { ensureStanding, isUnattributed, noteStanding, replyText } from "./standing.ts";
 import { emit, log } from "./streams.ts";
 import { currentAccessToken, post, reinitialize, state } from "./transport.ts";
@@ -94,6 +96,7 @@ export async function deliver(msg: JsonRpcMessage): Promise<void> {
       state.protocolVersion = m.result.protocolVersion;
     }
     if (m.id === msg.id) noteStanding(msg, m);
+    if (m.id === msg.id && msg.method === "tools/list") annotateToolList(m);
     if (isToolCall && hasId && m.id === msg.id) {
       heldReply = m;
       return;
@@ -141,7 +144,8 @@ export async function deliver(msg: JsonRpcMessage): Promise<void> {
             );
           }
         }
-        emit(held);
+        // Ответ connect/mint: мост берёт сокет себе и дописывает, как слушать.
+        emit(absorbChannelReply(msg, held));
       }
       return;
     } catch (e) {

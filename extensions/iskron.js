@@ -1,146 +1,25 @@
-// js/extension/channel.ts
+// js/shared/version.ts
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+var VERSION = "6.1.2";
+function buildOf(selfUrl) {
+  try {
+    const src = readFileSync(fileURLToPath(selfUrl));
+    return `v${VERSION}+${createHash("sha256").update(src).digest("hex").slice(0, 8)}`;
+  } catch {
+    return `v${VERSION}`;
+  }
+}
+function versionIn(text) {
+  const m = /^(?:const|let|var)\s+VERSION\s*=\s*"([^"]+)"/m.exec(text);
+  return m ? m[1] : null;
+}
 
-// js/shared/channel.ts
-var DEAD_TOKEN_CODES = [4e3, 4001, 4002];
-var ROLLOUT_CODE = 4003;
-var FAST_DROP_MS = 5e3;
-var ERROR_GUESS_DELAY_MS = 500;
-function httpOrigin(socketUrl) {
-  return new URL(socketUrl).origin.replace(/^wss:/, "https:").replace(/^ws:/, "http:");
-}
-function versionUrl(socketUrl) {
-  return httpOrigin(socketUrl) + "/api/version";
-}
-function statusUrl(socketUrl) {
-  return socketUrl.replace(/^wss:/, "https:").replace(/^ws:/, "http:").replace("/channel/ws/", "/channel/status/");
-}
-async function serviceUp(socketUrl) {
-  return fetch(versionUrl(socketUrl), { signal: AbortSignal.timeout(5e3) }).then((r) => r.ok ? r.json() : null).catch(() => null);
-}
-function holdSocket(o) {
-  let fastDrops = 0;
-  let dead = false;
-  let stopped = false;
-  let retry = null;
-  let ws = null;
-  function open() {
-    if (stopped) return;
-    const startedAt = Date.now();
-    const sock = new WebSocket(o.url);
-    ws = sock;
-    let gone = false;
-    sock.addEventListener("message", (e) => {
-      if (stopped || ws !== sock) return;
-      const raw = typeof e.data === "string" ? e.data : "[двоичный кадр]";
-      let frame = null;
-      if (typeof e.data === "string") {
-        try {
-          frame = JSON.parse(raw);
-        } catch {
-        }
-      }
-      o.onFrame(raw, frame && typeof frame === "object" ? frame : null);
-    });
-    sock.addEventListener(
-      "error",
-      () => setTimeout(() => void dropped(1006), ERROR_GUESS_DELAY_MS)
-    );
-    sock.addEventListener("close", (e) => void dropped(e.code));
-    async function dropped(code) {
-      if (stopped || ws !== sock) return;
-      if (DEAD_TOKEN_CODES.includes(code)) {
-        if (dead) return;
-        dead = true;
-        stopped = true;
-        if (retry) clearTimeout(retry);
-        o.onDeadToken(code);
-        return;
-      }
-      if (gone) return;
-      gone = true;
-      fastDrops = Date.now() - startedAt < FAST_DROP_MS ? fastDrops + 1 : 0;
-      if (fastDrops >= 3) {
-        const up = await serviceUp(o.url);
-        if (stopped || ws !== sock) return;
-        if (up) {
-          stopped = true;
-          o.onServiceAlive(String(up.version ?? ""));
-          return;
-        }
-        o.onNote?.("служба не отвечает — идёт раскатка, держу тот же токен");
-        fastDrops = 1;
-      }
-      retry = setTimeout(open, code === ROLLOUT_CODE ? 3e3 : 2e3);
-    }
-  }
-  open();
-  return {
-    close(reason = "held no more") {
-      stopped = true;
-      if (retry) clearTimeout(retry);
-      retry = null;
-      const sock = ws;
-      ws = null;
-      try {
-        sock?.close(1e3, reason);
-      } catch {
-      }
-    },
-    get alive() {
-      return !stopped && !!ws && (ws.readyState === 0 || ws.readyState === 1);
-    }
-  };
-}
-function startSaying(o, readText) {
-  let said = null;
-  let complained = null;
-  async function say() {
-    let text;
-    try {
-      text = readText(o.sayFile).trim();
-    } catch {
-      return;
-    }
-    if (text === said) return;
-    const res = await fetch(o.statusUrl, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ text }),
-      signal: AbortSignal.timeout(5e3)
-    }).catch(() => null);
-    if (res?.ok) {
-      said = text;
-      complained = null;
-      return;
-    }
-    if (complained !== text) {
-      complained = text;
-      o.onRefused?.(text, res ? res.status : null);
-    }
-    if (res && res.status >= 400 && res.status < 500) said = text;
-  }
-  const timer = setInterval(() => void say(), o.intervalMs ?? 1e3);
-  timer.unref?.();
-  return {
-    stop() {
-      clearInterval(timer);
-    }
-  };
-}
+// js/bridge/build.ts
+var BUILD = buildOf(import.meta.url);
 
 // js/extension/channel.ts
-function socketAddress() {
-  const direct = process.env.ISKRON_CHANNEL_SOCKET?.trim();
-  if (direct) return direct;
-  const file = process.env.ISKRON_CHANNEL_SOCKET_FILE?.trim();
-  if (!file) return null;
-  try {
-    return readFileSync(file, "utf8").trim() || null;
-  } catch {
-    return null;
-  }
-}
 function frameToText(frame, raw) {
   if (!frame) return `Кадр канала Искрона:
 ${raw}`;
@@ -152,40 +31,29 @@ ${raw}`;
 ${body}`;
 }
 function setupChannel(pi) {
-  let holder = null;
-  let saying = null;
   let ctxRef = null;
-  let current = null;
   pi.on("session_start", async (_event, ctx) => {
     ctxRef = ctx;
-    const url = socketAddress();
-    if (!url) {
-      if (ctx.hasUI) {
-        ctx.ui.notify(
-          'Искрон: места ещё нет. Займи стояние сам — iskron_channel(action="connect"), сразу за ним register тем же именем: слушание включится без отдельного действия.',
-          "info"
-        );
-      }
-      return;
-    }
-    hold(url);
   });
-  function release(reason) {
-    holder?.close(reason);
-    holder = null;
-    saying?.stop();
-    saying = null;
+  pi.on("session_shutdown", async () => {
+    ctxRef = null;
+  });
+  function loud(text) {
+    if (ctxRef?.hasUI) ctxRef.ui.notify(text, "error");
+    pi.sendMessage(
+      { customType: "iskron-channel", content: text, display: true, details: { fatal: true } },
+      { triggerTurn: true, deliverAs: "steer" }
+    );
   }
-  function hold(url) {
-    if (url === current && holder?.alive) return;
-    current = url;
-    release("новый сокет");
-    const ctx = ctxRef;
-    holder = holdSocket({
-      url,
-      onFrame: (raw, frame) => {
+  return (params) => {
+    const ev = params?.data;
+    if (!ev || typeof ev !== "object") return;
+    switch (ev.kind) {
+      case "frame": {
+        const frame = ev.frame ?? null;
+        const raw = ev.raw ?? "";
         if (frame?.type === "hello") {
-          if (ctx?.hasUI) ctx.ui.setStatus?.("iskron", "Искрон: канал слушает");
+          if (ctxRef?.hasUI) ctxRef.ui.setStatus?.("iskron", "Искрон: канал слушает");
           return;
         }
         if (frame?.type === "status") return;
@@ -198,43 +66,23 @@ function setupChannel(pi) {
           },
           { triggerTurn: true, deliverAs: "steer" }
         );
-      },
-      // Процессу здесь выйти некуда, поэтому громкость — это сказать делателю
-      // так, чтобы он это увидел в ходе, а не в логе, которого никто не читает.
-      onDeadToken: (code) => loud(
-        ctx,
-        `Искрон: канал закрыт кодом ${code} — токен мёртв. Зови iskron_channel(action="connect")` + (code === 4001 ? ' или action="mint"' : "") + ", затем register тем же именем: новый сокет расширение возьмёт из ответа само, перезапуск не нужен."
-      ),
-      onServiceAlive: (version) => loud(ctx, `Искрон: обрывы, а служба отвечает (${version}) — спроси о токене.`)
-    });
-    startSayingFor(url);
-    if (ctx?.hasUI) ctx.ui.setStatus?.("iskron", "Искрон: канал прицепляется");
-  }
-  pi.on("session_shutdown", async () => {
-    current = null;
-    release("session shutdown");
-  });
-  function loud(ctx, text) {
-    if (ctx?.hasUI) ctx.ui.notify(text, "error");
-    pi.sendMessage(
-      { customType: "iskron-channel", content: text, display: true, details: { fatal: true } },
-      { triggerTurn: true, deliverAs: "steer" }
-    );
-  }
-  function startSayingFor(url) {
-    const sayFile = process.env.ISKRON_CHANNEL_SAY;
-    if (!sayFile) return;
-    saying = startSaying(
-      { sayFile, statusUrl: process.env.ISKRON_CHANNEL_STATUS || statusUrl(url) },
-      (file) => readFileSync(file, "utf8")
-    );
-  }
-  return (url) => {
-    const u = url?.trim();
-    if (!u) return;
-    const loopback = /^ws:\/\/(127\.0\.0\.1|\[?::1\]?|localhost)(:|\/)/.test(u);
-    if (!u.startsWith("wss://") && !loopback) return;
-    hold(u);
+        return;
+      }
+      case "dead":
+        loud(
+          `Искрон: канал закрыт кодом ${ev.code} — токен мёртв. Зови iskron_channel(action="connect")` + (ev.code === 4001 ? ' или action="mint"' : "") + ", затем register тем же именем: новый сокет мост возьмёт из ответа сам, перезапуск не нужен."
+        );
+        return;
+      case "alive":
+        loud(`Искрон: обрывы, а служба отвечает (${ev.version ?? ""}) — спроси о токене.`);
+        return;
+      case "note":
+        if (ctxRef?.hasUI && ev.text) ctxRef.ui.notify(`Искрон: ${ev.text}`, "warning");
+        return;
+      case "attached":
+      case "released":
+        return;
+    }
   };
 }
 
@@ -249,9 +97,12 @@ var Bridge = class {
   dead = null;
   bin;
   onLog;
-  constructor(bin, onLog) {
+  onNotification;
+  constructor(bin, onLog, onNotification = () => {
+  }) {
     this.bin = bin;
     this.onLog = onLog;
+    this.onNotification = onNotification;
   }
   start() {
     const proc = spawn(process.execPath, [this.bin], { stdio: ["pipe", "pipe", "pipe"] });
@@ -299,7 +150,10 @@ var Bridge = class {
       } catch {
         continue;
       }
-      if (typeof msg?.id !== "number") continue;
+      if (typeof msg?.id !== "number") {
+        if (typeof msg?.method === "string") this.onNotification(msg.method, msg.params);
+        continue;
+      }
       const waiter = this.pending.get(msg.id);
       if (!waiter) continue;
       this.pending.delete(msg.id);
@@ -393,12 +247,6 @@ function resultToContent(result) {
     { type: "text", text: structured ? JSON.stringify(structured) : "(пустой ответ)" }
   ];
 }
-function harvestSocket(content, offer) {
-  const text = content.map((c) => c.type === "text" ? c.text : "").join("\n");
-  const found = /wss?:\/\/[^\s"'`<>)\]]+/.exec(text)?.[0];
-  if (!found) return;
-  offer(found.replace(/[.,;:!?»"')\]]+$/, ""));
-}
 
 // js/extension/home-copy.ts
 import {
@@ -412,15 +260,7 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
-
-// js/shared/version.ts
-function versionIn(text) {
-  const m = /^(?:const|let|var)\s+VERSION\s*=\s*"([^"]+)"/m.exec(text);
-  return m ? m[1] : null;
-}
-
-// js/extension/home-copy.ts
+import { fileURLToPath as fileURLToPath2 } from "node:url";
 function newer(a, b) {
   const pa = a.split(".").map(Number), pb = b.split(".").map(Number);
   if (pa.length !== 3 || pb.length !== 3 || [...pa, ...pb].some((n) => !Number.isInteger(n)))
@@ -430,7 +270,7 @@ function newer(a, b) {
 }
 function packagedBridgePath() {
   return resolve(
-    dirname(fileURLToPath(import.meta.url)),
+    dirname(fileURLToPath2(import.meta.url)),
     "..",
     "skills",
     "establish-mcp",
@@ -528,7 +368,7 @@ var READY_WAIT_MS = Number(process.env.ISKRON_MCP_READY_WAIT_MS || 2e4);
 var HANDSHAKE_MS = Number(process.env.ISKRON_MCP_HANDSHAKE_MS || 6e5);
 var TICK_MS = 15e3;
 var PROTOCOL = "2025-06-18";
-function setupBridge(pi, offerSocket) {
+function setupBridge(pi, onChannel) {
   let bridge = null;
   let notify = () => {
   };
@@ -543,7 +383,14 @@ function setupBridge(pi, offerSocket) {
       );
       return;
     }
-    const b = new Bridge(found.path, (line) => notify(`Искрон/мост: ${line}`, "info"));
+    const b = new Bridge(
+      found.path,
+      (line) => notify(`Искрон/мост: ${line}`, "info"),
+      (method, params) => {
+        if (method === "notifications/message" && params?.logger === "iskron-channel")
+          onChannel(params);
+      }
+    );
     bridge = b;
     b.start();
     const init = await b.request(
@@ -604,7 +451,6 @@ function setupBridge(pi, offerSocket) {
               throw new Error(text || `${name}: отказ без текста`);
             }
             const content = resultToContent(result);
-            if (name === "iskron_channel") harvestSocket(content, offerSocket);
             return {
               content,
               details: { tool: name, structuredContent: result?.structuredContent }
@@ -665,15 +511,15 @@ function iskron_default(pi) {
     if (!broken.length || !ctx.hasUI) return;
     ctx.ui.notify(`Искрон: не встало — ${broken.join("; ")}`, "error");
   });
-  let offerSocket = () => {
+  let onChannel = () => {
   };
   try {
-    offerSocket = setupChannel(pi);
+    onChannel = setupChannel(pi);
   } catch (e) {
     broken.push(`канал: ${e instanceof Error ? e.message : String(e)}`);
   }
   try {
-    setupBridge(pi, (url) => offerSocket(url));
+    setupBridge(pi, (params) => onChannel(params));
   } catch (e) {
     broken.push(`тулы: ${e instanceof Error ? e.message : String(e)}`);
   }

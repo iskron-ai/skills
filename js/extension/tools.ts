@@ -19,8 +19,10 @@
 // исполнена сама собой, и конвертировать нечего.
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-import { Bridge, harvestSocket, resultToContent, snippet, toParameters } from "./bridge-client.ts";
+import { Bridge, resultToContent, snippet, toParameters } from "./bridge-client.ts";
 import { findBridge, type Notify, refreshHomeBridge } from "./home-copy.ts";
+
+export type ChannelEventSink = (params: any) => void;
 
 /** Сколько ждать поднятия моста, ПРЕЖДЕ чем отпустить старт сессии. */
 const READY_WAIT_MS = Number(process.env.ISKRON_MCP_READY_WAIT_MS || 20000);
@@ -35,11 +37,10 @@ const PROTOCOL = "2025-06-18";
 
 /**
  * Половина «тулы»: свои обработчики, своё состояние, свой отказ.
- * `offerSocket` — дверь половины «канал»: сюда уходит адрес, увиденный в ответе
- * `iskron_channel`. Это единственный путь сокета к слушателю, и он не выходит
- * за границу сессии.
+ * `onChannel` — дверь половины «канал»: сюда уходят уведомления дочернего моста
+ * о кадрах стояния. Сокет держит мост; расширение видит только события.
  */
-export function setupBridge(pi: ExtensionAPI, offerSocket: (url: string) => void): void {
+export function setupBridge(pi: ExtensionAPI, onChannel: ChannelEventSink): void {
   let bridge: Bridge | null = null;
   let notify: Notify = () => {};
   // Голос сессии: без UI сказать некому, и это условие отказа от подмены моста,
@@ -62,7 +63,15 @@ export function setupBridge(pi: ExtensionAPI, offerSocket: (url: string) => void
       return;
     }
 
-    const b = new Bridge(found.path, (line) => notify(`Искрон/мост: ${line}`, "info"));
+    const b = new Bridge(
+      found.path,
+      (line) => notify(`Искрон/мост: ${line}`, "info"),
+      (method, params) => {
+        // Кадры стояния мост шлёт стандартным уведомлением с logger iskron-channel.
+        if (method === "notifications/message" && params?.logger === "iskron-channel")
+          onChannel(params);
+      },
+    );
     bridge = b;
     b.start();
 
@@ -129,10 +138,6 @@ export function setupBridge(pi: ExtensionAPI, offerSocket: (url: string) => void
               throw new Error(text || `${name}: отказ без текста`);
             }
             const content = resultToContent(result);
-            // Сокет показывают ОДИН раз — в ответе на connect/mint. Перехват
-            // здесь и есть то, ради чего половины живут одним файлом: адрес
-            // уходит слушателю, не покидая сессии.
-            if (name === "iskron_channel") harvestSocket(content, offerSocket);
             return {
               content,
               details: { tool: name, structuredContent: result?.structuredContent },

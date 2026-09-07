@@ -45,10 +45,10 @@ typecheck:
 # proven. Suites run against the BUILT outputs — run `make build-js` first, or
 # `make check-js` to be told they are stale.
 test:
-	@node --test js/tests/*.test.mjs
+	@node --test --test-timeout=120000 js/tests/*.test.mjs
 
 test-coverage:
-	@node --test --experimental-test-coverage js/tests/*.test.mjs
+	@node --test --test-timeout=120000 --experimental-test-coverage js/tests/*.test.mjs
 
 # One suite at a time, for the red-probe discipline (see AGENTS.md).
 test-watchdog:

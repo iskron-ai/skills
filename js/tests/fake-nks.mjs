@@ -34,6 +34,25 @@ function mintAccess(st) {
   return jwt({ exp: secs(st.snow()) + st.accessTtl - st.accessExpSkewSec });
 }
 
+// Один ws-кадр сервера клиенту (без маски): FIN + opcode, длина в одной из трёх форм.
+function wsFrame(opcode, payload) {
+  const data = Buffer.isBuffer(payload) ? payload : Buffer.from(payload, "utf8");
+  let head;
+  if (data.length < 126) head = Buffer.from([0x80 | opcode, data.length]);
+  else if (data.length < 65536) {
+    head = Buffer.alloc(4);
+    head[0] = 0x80 | opcode;
+    head[1] = 126;
+    head.writeUInt16BE(data.length, 2);
+  } else {
+    head = Buffer.alloc(10);
+    head[0] = 0x80 | opcode;
+    head[1] = 127;
+    head.writeBigUInt64BE(BigInt(data.length), 2);
+  }
+  return Buffer.concat([head, data]);
+}
+
 export async function startFakeNks(opts = {}) {
   const st = {
     accessTtl: opts.accessTtl ?? 3600,
@@ -74,11 +93,19 @@ export async function startFakeNks(opts = {}) {
       early_refresh: 0,
       mcp: 0,
       register_standing: 0,
+      connect: 0,
+      status_posts: 0,
       attributed_send: 0,
       unattributed: 0,
       header_binds: 0,
     },
     standings: new Map(), // сессия MCP → имя стояния; убивается вместе с сессией
+    // Сокет стояния: connect выдаёт адрес ws на этом же сервере, апгрейд принимается,
+    // hello уходит первым кадром; /control {ws_send, ws_close} гонит кадры и закрытия.
+    ws: new Set(),
+    status: null, // последняя принятая строка занятости
+    wsToken: "tok",
+    richTools: false, // /control {richTools:true}: tools/list с пишущими тулами — для проверки приписки момента
     // Сессия открыта credential'ом и умирает вместе с ним (#188 в nks-dev):
     // сменился bearer — старая сессия закрыта. Как сервер отвечает на мёртвый
     // или чужой id — двумя способами, и оба наблюдены в поле: 404 (клиент
@@ -118,13 +145,33 @@ export async function startFakeNks(opts = {}) {
     const u = new URL(req.url, base);
     const p = u.pathname;
 
+    if (p.startsWith("/channel/status/") && req.method === "POST") {
+      const { text } = JSON.parse((await body(req)) || "{}");
+      if (typeof text !== "string" || [...text].length > 70) {
+        return json(res, 422, { error: "busy line too long" });
+      }
+      st.status = text;
+      st.counts.status_posts++;
+      return json(res, 200, { ok: true });
+    }
+
     if (p === "/control") {
       const patch = JSON.parse((await body(req)) || "{}");
+      if (typeof patch.ws_send === "string") {
+        for (const sock of st.ws) sock.write(wsFrame(0x1, patch.ws_send));
+      }
+      if (Number.isInteger(patch.ws_close)) {
+        for (const sock of st.ws) {
+          sock.write(wsFrame(0x8, Buffer.from([patch.ws_close >> 8, patch.ws_close & 0xff])));
+          setTimeout(() => sock.end(), 200).unref();
+        }
+      }
       if (patch.kill_session) {
         for (const s of st.sessions) st.dead.add(s);
         st.sessions.clear();
       }
       for (const k of [
+        "richTools",
         "refreshStatus",
         "refreshError",
         "refreshMessage",
@@ -350,7 +397,31 @@ export async function startFakeNks(opts = {}) {
         return json(
           res,
           200,
-          { jsonrpc: "2.0", id: msg.id, result: { tools: [{ name: "nks_orient" }] } },
+          {
+            jsonrpc: "2.0",
+            id: msg.id,
+            result: {
+              tools: st.richTools
+                ? [
+                    {
+                      name: "iskron_orient",
+                      description: "Войдите в граф.",
+                      inputSchema: { type: "object" },
+                    },
+                    {
+                      name: "iskron_add_vimarsha",
+                      description: "Создай вопрошание.",
+                      inputSchema: { type: "object" },
+                    },
+                    {
+                      name: "iskron_batch",
+                      description: "Атомарная дельта.",
+                      inputSchema: { type: "object" },
+                    },
+                  ]
+                : [{ name: "nks_orient" }],
+            },
+          },
           extra,
         );
       }
@@ -392,6 +463,32 @@ export async function startFakeNks(opts = {}) {
               jsonrpc: "2.0",
               id: msg.id,
               result: { content: [{ type: "text", text: `зарегистрировано: ${a.name}` }] },
+            },
+            extra,
+          );
+        }
+        if (a.action === "connect" || a.action === "mint") {
+          st.counts.connect++;
+          st.standings.set(sid, a.name ?? "(unnamed)");
+          const wsUrl = `${base.replace(/^http:/, "ws:")}/channel/ws/${st.wsToken}`;
+          return json(
+            res,
+            200,
+            {
+              jsonrpc: "2.0",
+              id: msg.id,
+              result: {
+                content: [
+                  {
+                    type: "text",
+                    text:
+                      `Место занято: ${a.name ?? "(unnamed)"}.\n` +
+                      `входящий: ${base}/api/channel/in/mailbox\n` +
+                      `сокет (показан один раз): ${wsUrl}\n` +
+                      `статус: ${base}/channel/status/${st.wsToken}`,
+                  },
+                ],
+              },
             },
             extra,
           );
@@ -477,6 +574,25 @@ export async function startFakeNks(opts = {}) {
     res.end();
   });
 
+  // Минимальный ws-сервер: апгрейд по адресу сокета стояния, hello первым кадром,
+  // дальше кадры и закрытия по /control. Входящее от клиента не разбирается —
+  // сторона моста ничего не шлёт, кроме ответов на закрытие.
+  server.on("upgrade", (req, socket) => {
+    const u = new URL(req.url, base);
+    if (!u.pathname.startsWith("/channel/ws/")) return socket.destroy();
+    const accept = createHash("sha1")
+      .update(req.headers["sec-websocket-key"] + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")
+      .digest("base64");
+    socket.write(
+      "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n" +
+        `Sec-WebSocket-Accept: ${accept}\r\n\r\n`,
+    );
+    st.ws.add(socket);
+    socket.on("close", () => st.ws.delete(socket));
+    socket.on("error", () => st.ws.delete(socket));
+    socket.write(wsFrame(0x1, JSON.stringify({ type: "hello", pending: 0, ping: 30 })));
+  });
+
   await new Promise((r) => server.listen(0, "127.0.0.1", r));
   base = `http://127.0.0.1:${server.address().port}`;
   return {
@@ -487,6 +603,13 @@ export async function startFakeNks(opts = {}) {
       fetch(`${base}/control`, { method: "POST", body: JSON.stringify(patch) }).then((r) =>
         r.json(),
       ),
-    stop: () => new Promise((r) => server.close(r)),
+    // Открытый ws держит сервер живым: сперва рвём захваченные сокеты, иначе
+    // close() ждёт их вечно, а с ним и проба.
+    stop: () => {
+      for (const s of st.ws) s.destroy();
+      st.ws.clear();
+      server.closeAllConnections?.();
+      return new Promise((r) => server.close(r));
+    },
   };
 }

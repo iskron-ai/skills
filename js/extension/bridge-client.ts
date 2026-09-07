@@ -16,10 +16,16 @@ export class Bridge {
   private dead: Error | null = null;
   private readonly bin: string;
   private readonly onLog: (line: string) => void;
+  private readonly onNotification: (method: string, params: any) => void;
 
-  constructor(bin: string, onLog: (line: string) => void) {
+  constructor(
+    bin: string,
+    onLog: (line: string) => void,
+    onNotification: (method: string, params: any) => void = () => {},
+  ) {
     this.bin = bin;
     this.onLog = onLog;
+    this.onNotification = onNotification;
   }
 
   start(): void {
@@ -74,7 +80,11 @@ export class Bridge {
       } catch {
         continue; // не наш кадр — мост говорит по stderr, а не сюда
       }
-      if (typeof msg?.id !== "number") continue; // уведомления сервера здесь не нужны
+      if (typeof msg?.id !== "number") {
+        // Уведомление без id — слово моста: кадры стояния приходят так.
+        if (typeof msg?.method === "string") this.onNotification(msg.method, msg.params);
+        continue;
+      }
       const waiter = this.pending.get(msg.id);
       if (!waiter) continue;
       this.pending.delete(msg.id);
@@ -185,18 +195,6 @@ export function resultToContent(result: any): Content[] {
   return [
     { type: "text" as const, text: structured ? JSON.stringify(structured) : "(пустой ответ)" },
   ];
-}
-
-/**
- * Достать адрес сокета из ответа `iskron_channel` и подать его слушателю.
- * Форму адреса не пересказываем дальше необходимого: берём первое, что
- * выглядит адресом сокета, и отдаём — судит о нём принимающая сторона.
- */
-export function harvestSocket(content: Content[], offer: (url: string) => void): void {
-  const text = content.map((c) => (c.type === "text" ? c.text : "")).join("\n");
-  const found = /wss?:\/\/[^\s"'`<>)\]]+/.exec(text)?.[0];
-  if (!found) return;
-  offer(found.replace(/[.,;:!?»"')\]]+$/, ""));
 }
 
 /* eslint-enable @typescript-eslint/no-explicit-any */

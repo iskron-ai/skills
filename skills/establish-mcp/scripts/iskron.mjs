@@ -528,7 +528,7 @@ function bindCallback(port) {
       } catch {
       }
     };
-    const server = createServer((req, res) => {
+    const server2 = createServer((req, res) => {
       const u = new URL(req.url ?? "/", `http://127.0.0.1:${port}`);
       if (u.pathname !== "/callback") {
         res.writeHead(404);
@@ -551,10 +551,10 @@ function bindCallback(port) {
       }
       deliver2({ code: u.searchParams.get("code"), state: u.searchParams.get("state"), err });
     });
-    server.once("error", reject);
-    server.listen(port, "127.0.0.1", () => {
-      server.removeListener("error", reject);
-      server.on("error", (e) => log(`callback server: ${e.message}`));
+    server2.once("error", reject);
+    server2.listen(port, "127.0.0.1", () => {
+      server2.removeListener("error", reject);
+      server2.on("error", (e) => log(`callback server: ${e.message}`));
       resolve({
         port,
         report: (failure) => tellBrowser(
@@ -562,7 +562,7 @@ function bindCallback(port) {
         ),
         close: () => {
           tellBrowser("iskron-bridge: the login was abandoned — nothing was stored.");
-          server.close();
+          server2.close();
         },
         waitForCode: (expectedState, timeoutMs = 3e5) => new Promise((res, rej) => {
           const timer = setTimeout(
@@ -1045,6 +1045,144 @@ function startTokenKeepalive() {
   setInterval(tick, 6e4).unref();
 }
 
+// js/bridge/hold.ts
+import { createHash as createHash3 } from "node:crypto";
+import { chmodSync, mkdirSync as mkdirSync4, readFileSync as readFileSync5, unlinkSync as unlinkSync4, writeFileSync as writeFileSync4 } from "node:fs";
+import { createServer as createServer2 } from "node:net";
+import { join as join3 } from "node:path";
+import { fileURLToPath as fileURLToPath2 } from "node:url";
+
+// js/shared/channel.ts
+var DEAD_TOKEN_CODES = [4e3, 4001, 4002];
+var ROLLOUT_CODE = 4003;
+var FAST_DROP_MS = 5e3;
+var ERROR_GUESS_DELAY_MS = 500;
+function httpOrigin(socketUrl) {
+  return new URL(socketUrl).origin.replace(/^wss:/, "https:").replace(/^ws:/, "http:");
+}
+function versionUrl(socketUrl) {
+  return httpOrigin(socketUrl) + "/api/version";
+}
+function statusUrl(socketUrl) {
+  return socketUrl.replace(/^wss:/, "https:").replace(/^ws:/, "http:").replace("/channel/ws/", "/channel/status/");
+}
+async function serviceUp(socketUrl) {
+  return fetch(versionUrl(socketUrl), { signal: AbortSignal.timeout(5e3) }).then((r) => r.ok ? r.json() : null).catch(() => null);
+}
+function deadTokenAdvice(code) {
+  return `закрытие ${code} — токен мёртв, зови connect${code === 4001 ? " (на 4001 — mint)" : ""}`;
+}
+function holdSocket(o) {
+  let fastDrops = 0;
+  let dead = false;
+  let stopped = false;
+  let retry = null;
+  let ws = null;
+  function open() {
+    if (stopped) return;
+    const startedAt = Date.now();
+    const sock = new WebSocket(o.url);
+    ws = sock;
+    let gone = false;
+    sock.addEventListener("message", (e) => {
+      if (stopped || ws !== sock) return;
+      const raw = typeof e.data === "string" ? e.data : "[двоичный кадр]";
+      let frame = null;
+      if (typeof e.data === "string") {
+        try {
+          frame = JSON.parse(raw);
+        } catch {
+        }
+      }
+      o.onFrame(raw, frame && typeof frame === "object" ? frame : null);
+    });
+    sock.addEventListener(
+      "error",
+      () => setTimeout(() => void dropped(1006), ERROR_GUESS_DELAY_MS)
+    );
+    sock.addEventListener("close", (e) => void dropped(e.code));
+    async function dropped(code) {
+      if (stopped || ws !== sock) return;
+      if (DEAD_TOKEN_CODES.includes(code)) {
+        if (dead) return;
+        dead = true;
+        stopped = true;
+        if (retry) clearTimeout(retry);
+        o.onDeadToken(code);
+        return;
+      }
+      if (gone) return;
+      gone = true;
+      fastDrops = Date.now() - startedAt < FAST_DROP_MS ? fastDrops + 1 : 0;
+      if (fastDrops >= 3) {
+        const up = await serviceUp(o.url);
+        if (stopped || ws !== sock) return;
+        if (up) {
+          stopped = true;
+          o.onServiceAlive(String(up.version ?? ""));
+          return;
+        }
+        o.onNote?.("служба не отвечает — идёт раскатка, держу тот же токен");
+        fastDrops = 1;
+      }
+      retry = setTimeout(open, code === ROLLOUT_CODE ? 3e3 : 2e3);
+    }
+  }
+  open();
+  return {
+    close(reason = "held no more") {
+      stopped = true;
+      if (retry) clearTimeout(retry);
+      retry = null;
+      const sock = ws;
+      ws = null;
+      try {
+        sock?.close(1e3, reason);
+      } catch {
+      }
+    },
+    get alive() {
+      return !stopped && !!ws && (ws.readyState === 0 || ws.readyState === 1);
+    }
+  };
+}
+function startSaying(o, readText) {
+  let said = null;
+  let complained = null;
+  async function say() {
+    let text;
+    try {
+      text = readText(o.sayFile).trim();
+    } catch {
+      return;
+    }
+    if (text === said) return;
+    const res = await fetch(o.statusUrl, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ text }),
+      signal: AbortSignal.timeout(5e3)
+    }).catch(() => null);
+    if (res?.ok) {
+      said = text;
+      complained = null;
+      return;
+    }
+    if (complained !== text) {
+      complained = text;
+      o.onRefused?.(text, res ? res.status : null);
+    }
+    if (res && res.status >= 400 && res.status < 500) said = text;
+  }
+  const timer = setInterval(() => void say(), o.intervalMs ?? 1e3);
+  timer.unref?.();
+  return {
+    stop() {
+      clearInterval(timer);
+    }
+  };
+}
+
 // js/bridge/transport.ts
 var state = {
   sessionId: null,
@@ -1289,6 +1427,230 @@ var isUnattributed = (reply) => {
   return !!reply.result?.isError && UNATTRIBUTED_REFUSAL.test(text);
 };
 
+// js/bridge/hold.ts
+var RING = 20;
+function standingsDir() {
+  return join3(CFG.authDir, "standings");
+}
+function keyFor() {
+  const s = state.standing;
+  const raw = s ? `${s.name ?? "_"}--${s.karta}--${s.realm}` : "env";
+  return raw.replace(/[^A-Za-z0-9._-]+/g, "_").slice(0, 120);
+}
+function socketPathFor(key) {
+  const h = createHash3("sha256").update(key).digest("hex").slice(0, 16);
+  if (process.platform === "win32") return `\\\\.\\pipe\\iskron-${h}`;
+  return join3(standingsDir(), `${h}.sock`);
+}
+function keyFilePathFor(key) {
+  const h = createHash3("sha256").update(key).digest("hex").slice(0, 16);
+  return join3(standingsDir(), `${h}.key`);
+}
+function sayPathFor(key) {
+  return join3(standingsDir(), `${key}.say`);
+}
+var holder = null;
+var server = null;
+var saying = null;
+var currentKey = null;
+var currentUrl = null;
+var clients = /* @__PURE__ */ new Set();
+var ring = [];
+function broadcast(ev) {
+  const line = JSON.stringify(ev) + "\n";
+  for (const c of clients) {
+    try {
+      c.write(line);
+    } catch {
+      clients.delete(c);
+    }
+  }
+}
+function notify(level, data) {
+  emit({
+    jsonrpc: "2.0",
+    method: "notifications/message",
+    params: { level, logger: "iskron-channel", data }
+  });
+}
+function openLocalServer(key) {
+  const path = socketPathFor(key);
+  mkdirSync4(standingsDir(), { recursive: true, mode: 448 });
+  writeFileSync4(keyFilePathFor(key), key + "\n", { mode: 384 });
+  if (process.platform !== "win32") {
+    try {
+      unlinkSync4(path);
+    } catch {
+    }
+  }
+  const srv = createServer2((sock) => {
+    clients.add(sock);
+    sock.on("close", () => clients.delete(sock));
+    sock.on("error", () => clients.delete(sock));
+    sock.write(
+      JSON.stringify({ kind: "attached", key, buffered: ring.length }) + "\n"
+    );
+    for (const { raw, frame } of ring) {
+      sock.write(JSON.stringify({ kind: "frame", raw, frame }) + "\n");
+    }
+  });
+  srv.on("error", (e) => {
+    const text = `ДЕЛАТЕЛЬ: локальный сокет стояния не поднялся (${e.message}) — сторожу не к чему цепляться`;
+    log(text);
+    notify("error", { kind: "note", text });
+  });
+  srv.listen(path, () => {
+    if (process.platform !== "win32") {
+      try {
+        chmodSync(path, 384);
+      } catch {
+      }
+    }
+    log(`standing socket held; local listeners attach at ${path}`);
+  });
+  server = srv;
+}
+function releaseStanding(reason) {
+  if (!holder && !server) return;
+  broadcast({ kind: "released", text: reason });
+  holder?.close(reason);
+  holder = null;
+  saying?.stop();
+  saying = null;
+  for (const c of clients) {
+    try {
+      c.end();
+    } catch {
+    }
+  }
+  clients.clear();
+  const srv = server;
+  server = null;
+  if (srv) {
+    try {
+      srv.close();
+    } catch {
+    }
+  }
+  if (currentKey) {
+    try {
+      unlinkSync4(keyFilePathFor(currentKey));
+    } catch {
+    }
+    if (process.platform !== "win32") {
+      try {
+        unlinkSync4(socketPathFor(currentKey));
+      } catch {
+      }
+    }
+  }
+  ring.length = 0;
+  currentKey = null;
+  currentUrl = null;
+}
+function holdStanding(url, statusUrl2) {
+  const key = keyFor();
+  if (url === currentUrl && key === currentKey && holder?.alive) return key;
+  releaseStanding("новый сокет");
+  currentKey = key;
+  currentUrl = url;
+  openLocalServer(key);
+  holder = holdSocket({
+    url,
+    onFrame: (raw, frame) => {
+      ring.push({ raw, frame });
+      if (ring.length > RING) ring.shift();
+      const ev = { kind: "frame", raw, frame };
+      broadcast(ev);
+      if (frame?.type !== "status") notify("info", ev);
+    },
+    onDeadToken: (code) => {
+      const text = `ДЕЛАТЕЛЬ: ${deadTokenAdvice(code)}`;
+      log(text);
+      const ev = { kind: "dead", code, text };
+      broadcast(ev);
+      notify("error", ev);
+      releaseStanding("токен мёртв");
+    },
+    onServiceAlive: (version) => {
+      const text = `ДЕЛАТЕЛЬ: обрывы, а служба отвечает (${version}) — спроси о токене`;
+      log(text);
+      const ev = { kind: "alive", version, text };
+      broadcast(ev);
+      notify("error", ev);
+      releaseStanding("обрывы при живой службе");
+    },
+    onNote: (text) => {
+      log(text);
+      broadcast({ kind: "note", text });
+    }
+  });
+  saying = startSaying(
+    {
+      sayFile: sayPathFor(key),
+      statusUrl: statusUrl2 || statusUrl(url),
+      onRefused: (_text, status) => {
+        const text = `ДЕЛАТЕЛЬ: строку занятости не приняли (${status ?? "нет ответа"}) — укороти её`;
+        log(text);
+        broadcast({ kind: "note", text });
+        notify("warning", { kind: "note", text });
+      }
+    },
+    (file) => readFileSync5(file, "utf8")
+  );
+  return key;
+}
+var SOCKET_RE = /wss:\/\/[^\s"'`<>)\]]+|ws:\/\/(?:127\.0\.0\.1|\[?::1\]?|localhost)(?::\d+)?\/[^\s"'`<>)\]]+/;
+var STATUS_RE = /https?:\/\/[^\s"'`<>)\]]+\/channel\/status\/[^\s"'`<>)\]]+/;
+var trim = (s) => s.replace(/[.,;:!?»"')\]]+$/, "");
+function absorbChannelReply(msg, reply) {
+  const a = msg?.params?.arguments;
+  if (msg?.params?.name !== "iskron_channel") return reply;
+  if (a?.action !== "connect" && a?.action !== "mint") return reply;
+  if (reply?.error || reply?.result?.isError) return reply;
+  const text = replyText(reply);
+  const socket = SOCKET_RE.exec(text)?.[0];
+  if (!socket) return reply;
+  const status = STATUS_RE.exec(text)?.[0];
+  if (!state.standing && a.realm && a.karta != null) {
+    state.standing = { realm: a.realm, karta: a.karta, name: a.name };
+  }
+  const key = holdStanding(trim(socket), status ? trim(status) : null);
+  const self = fileURLToPath2(import.meta.url);
+  const block = `
+
+[iskron-bridge] Сокет этого стояния держит мост — вручать его никому не нужно.
+Слушать: node "${self}" watchdog ${key} — под Monitor с persistent: true (Claude Code); фоновой задачей — node "${self}" watchdog-exit ${key} (выходит нулём на первом сообщении).
+Занятость: пиши текст в ${sayPathFor(key)}; пустой текст снимает.
+Кадры приходят и уведомлениями MCP (logger iskron-channel).`;
+  const content = reply.result?.content;
+  if (Array.isArray(content)) {
+    content.push({ type: "text", text: block.trim() });
+  }
+  return reply;
+}
+function holdFromEnv() {
+  const url = process.env.ISKRON_CHANNEL_SOCKET?.trim();
+  if (!url) return;
+  holdStanding(url, process.env.ISKRON_CHANNEL_STATUS?.trim() || null);
+}
+
+// js/bridge/moment.ts
+var WRITE_TOOL = /^iskron_(add_[a-z_]+|batch)$/;
+var MOMENT_LINE = "[мост] Момент скилла writing: прежде вызова — тип узла и given_as, три модуса как утверждения, имя-тезис, стрелки со смыслом; вопрошание hint — указатель на то, чего не покажет карта, никогда план или задача; строки CHECKS в ответе — работа, не сведение.";
+function annotateToolList(reply) {
+  const tools = reply?.result?.tools;
+  if (!Array.isArray(tools)) return;
+  for (const t of tools) {
+    if (!t || typeof t.name !== "string" || !WRITE_TOOL.test(t.name)) continue;
+    const d = typeof t.description === "string" ? t.description : "";
+    if (d.includes(MOMENT_LINE)) continue;
+    t.description = d ? `${d}
+
+${MOMENT_LINE}` : MOMENT_LINE;
+  }
+}
+
 // js/bridge/deliver.ts
 function syntheticError(id, message, outcome = UpstreamError.UNKNOWN, holdOff = false) {
   const kind = holdOff === true ? "wait" : holdOff;
@@ -1331,6 +1693,7 @@ async function deliver(msg) {
       state.protocolVersion = m.result.protocolVersion;
     }
     if (m.id === msg.id) noteStanding(msg, m);
+    if (m.id === msg.id && msg.method === "tools/list") annotateToolList(m);
     if (isToolCall && hasId && m.id === msg.id) {
       heldReply = m;
       return;
@@ -1365,7 +1728,7 @@ async function deliver(msg) {
             );
           }
         }
-        emit(held);
+        emit(absorbChannelReply(msg, held));
       }
       return;
     } catch (e) {
@@ -1429,6 +1792,7 @@ function bridgeMain(argv2) {
   installRefreshLockExitHook();
   log(`${BUILD} -> ${CFG.serverUrl} (timeout ${CFG.timeoutMs}ms, auth in ${storePath()})`);
   startTokenKeepalive();
+  holdFromEnv();
   const rl = createInterface({ input: process.stdin, terminal: false });
   const pending = /* @__PURE__ */ new Set();
   rl.on("line", (line) => {
@@ -1449,6 +1813,7 @@ function bridgeMain(argv2) {
   });
   const leave = async (why) => {
     debug(`${why} — winding down`);
+    releaseStanding(why);
     await Promise.allSettled([...pending, ...tokenRequestsInFlight]);
     await flushStdout();
     const flow = pendingFlow();
@@ -1479,137 +1844,88 @@ function bridgeMain(argv2) {
 }
 
 // js/watchdog/watchdog.ts
-import { readFileSync as readFileSync5, writeSync } from "node:fs";
+import { writeSync } from "node:fs";
 
-// js/shared/channel.ts
-var DEAD_TOKEN_CODES = [4e3, 4001, 4002];
-var ROLLOUT_CODE = 4003;
-var FAST_DROP_MS = 5e3;
-var ERROR_GUESS_DELAY_MS = 500;
-function httpOrigin(socketUrl) {
-  return new URL(socketUrl).origin.replace(/^wss:/, "https:").replace(/^ws:/, "http:");
+// js/watchdog/client.ts
+import { createHash as createHash4 } from "node:crypto";
+import { existsSync, readdirSync, readFileSync as readFileSync6 } from "node:fs";
+import { connect as connect2 } from "node:net";
+import { homedir as homedir2 } from "node:os";
+import { join as join4 } from "node:path";
+var ATTACH_WINDOW_MS = 6e4;
+var RETRY_MS = 1e3;
+function standingsDir2() {
+  const auth = process.env.ISKRON_BRIDGE_AUTH_DIR || join4(homedir2(), ".iskron-bridge");
+  return join4(auth, "standings");
 }
-function versionUrl(socketUrl) {
-  return httpOrigin(socketUrl) + "/api/version";
+var hashOf = (key) => createHash4("sha256").update(key).digest("hex").slice(0, 16);
+function pathFor(key) {
+  if (process.platform === "win32") return `\\\\.\\pipe\\iskron-${hashOf(key)}`;
+  return join4(standingsDir2(), `${hashOf(key)}.sock`);
 }
-function statusUrl(socketUrl) {
-  return socketUrl.replace(/^wss:/, "https:").replace(/^ws:/, "http:").replace("/channel/ws/", "/channel/status/");
-}
-async function serviceUp(socketUrl) {
-  return fetch(versionUrl(socketUrl), { signal: AbortSignal.timeout(5e3) }).then((r) => r.ok ? r.json() : null).catch(() => null);
-}
-function deadTokenAdvice(code) {
-  return `закрытие ${code} — токен мёртв, зови connect${code === 4001 ? " (на 4001 — mint)" : ""}`;
-}
-function holdSocket(o) {
-  let fastDrops = 0;
-  let dead = false;
-  let stopped = false;
-  let retry = null;
-  let ws = null;
-  function open() {
-    if (stopped) return;
-    const startedAt = Date.now();
-    const sock = new WebSocket(o.url);
-    ws = sock;
-    let gone = false;
-    sock.addEventListener("message", (e) => {
-      if (stopped || ws !== sock) return;
-      const raw = typeof e.data === "string" ? e.data : "[двоичный кадр]";
-      let frame = null;
-      if (typeof e.data === "string") {
-        try {
-          frame = JSON.parse(raw);
-        } catch {
-        }
-      }
-      o.onFrame(raw, frame && typeof frame === "object" ? frame : null);
-    });
-    sock.addEventListener(
-      "error",
-      () => setTimeout(() => void dropped(1006), ERROR_GUESS_DELAY_MS)
-    );
-    sock.addEventListener("close", (e) => void dropped(e.code));
-    async function dropped(code) {
-      if (stopped || ws !== sock) return;
-      if (DEAD_TOKEN_CODES.includes(code)) {
-        if (dead) return;
-        dead = true;
-        stopped = true;
-        if (retry) clearTimeout(retry);
-        o.onDeadToken(code);
-        return;
-      }
-      if (gone) return;
-      gone = true;
-      fastDrops = Date.now() - startedAt < FAST_DROP_MS ? fastDrops + 1 : 0;
-      if (fastDrops >= 3) {
-        const up = await serviceUp(o.url);
-        if (stopped || ws !== sock) return;
-        if (up) {
-          stopped = true;
-          o.onServiceAlive(String(up.version ?? ""));
-          return;
-        }
-        o.onNote?.("служба не отвечает — идёт раскатка, держу тот же токен");
-        fastDrops = 1;
-      }
-      retry = setTimeout(open, code === ROLLOUT_CODE ? 3e3 : 2e3);
-    }
-  }
-  open();
-  return {
-    close(reason = "held no more") {
-      stopped = true;
-      if (retry) clearTimeout(retry);
-      retry = null;
-      const sock = ws;
-      ws = null;
-      try {
-        sock?.close(1e3, reason);
-      } catch {
-      }
-    },
-    get alive() {
-      return !stopped && !!ws && (ws.readyState === 0 || ws.readyState === 1);
-    }
-  };
-}
-function startSaying(o, readText) {
-  let said = null;
-  let complained = null;
-  async function say() {
-    let text;
+function resolveStanding(key) {
+  const dir = standingsDir2();
+  if (key) return { key, path: pathFor(key) };
+  const held = existsSync(dir) ? readdirSync(dir).filter((f) => f.endsWith(".key")).map((f) => {
     try {
-      text = readText(o.sayFile).trim();
+      return readFileSync6(join4(dir, f), "utf8").trim();
     } catch {
-      return;
+      return "";
     }
-    if (text === said) return;
-    const res = await fetch(o.statusUrl, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ text }),
-      signal: AbortSignal.timeout(5e3)
-    }).catch(() => null);
-    if (res?.ok) {
-      said = text;
-      complained = null;
-      return;
-    }
-    if (complained !== text) {
-      complained = text;
-      o.onRefused?.(text, res ? res.status : null);
-    }
-    if (res && res.status >= 400 && res.status < 500) said = text;
+  }).filter(Boolean) : [];
+  if (held.length === 1) return { key: held[0], path: pathFor(held[0]) };
+  if (held.length === 0) {
+    return {
+      error: 'мост не держит ни одного стояния — сперва iskron_channel(action="connect") (и register): ответ connect назовёт команду слушания'
+    };
   }
-  const timer = setInterval(() => void say(), o.intervalMs ?? 1e3);
-  timer.unref?.();
   return {
-    stop() {
-      clearInterval(timer);
-    }
+    error: `мост держит несколько стояний — назови нужное: ` + held.join(", ")
   };
+}
+function attach(path, o) {
+  const startedAt = Date.now();
+  let attached = false;
+  function tryOnce() {
+    const sock = connect2(path);
+    let buf = "";
+    sock.setEncoding("utf8");
+    sock.on("connect", () => {
+      attached = true;
+    });
+    sock.on("data", (chunk) => {
+      buf += chunk;
+      const lines = buf.split("\n");
+      buf = lines.pop() ?? "";
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        let ev;
+        try {
+          ev = JSON.parse(line);
+        } catch {
+          continue;
+        }
+        if (ev.kind === "frame" && ev.frame === void 0 && typeof ev.raw === "string") {
+          try {
+            ev.frame = JSON.parse(ev.raw);
+          } catch {
+            ev.frame = null;
+          }
+        }
+        o.onEvent(ev);
+      }
+    });
+    sock.on("error", () => {
+    });
+    sock.on("close", () => {
+      if (attached) return o.onGone("мост отпустил стояние или ушёл — сессия кончилась?");
+      if (Date.now() - startedAt > ATTACH_WINDOW_MS) {
+        return o.onGone(`мост не поднял локальный сокет ${path} за ${ATTACH_WINDOW_MS / 1e3}s`);
+      }
+      setTimeout(tryOnce, RETRY_MS);
+    });
+  }
+  tryOnce();
 }
 
 // js/watchdog/watchdog.ts
@@ -1626,36 +1942,41 @@ var loudExit = (s, code) => {
   }
 };
 function runWatchdog(argv2) {
-  const url = argv2[0] || process.env.ISKRON_CHANNEL_SOCKET;
-  if (!url) {
-    writeSync(2, "нужен адрес сокета: iskron.mjs watchdog <wss://…> или ISKRON_CHANNEL_SOCKET\n");
+  const target = resolveStanding(argv2[0]);
+  if ("error" in target) {
+    writeSync(2, `ДЕЛАТЕЛЬ: ${target.error}
+`);
     process.exit(2);
   }
-  holdSocket({
-    url,
-    onFrame: (raw) => log2(raw),
-    // Нулевой выход был бы неотличим от чистой остановки, а молчаливый — от
-    // работающего сторожа: оба конца пути отсюда громкие.
-    onDeadToken: (code) => loudExit(`ДЕЛАТЕЛЬ: ${deadTokenAdvice(code)}`, 1),
-    onServiceAlive: (version) => loudExit(`ДЕЛАТЕЛЬ: обрывы, а служба отвечает (${version}) — спроси о токене`, 1),
-    onNote: log2
+  attach(target.path, {
+    onEvent: (ev) => {
+      switch (ev.kind) {
+        case "attached":
+          log2(
+            `слушаю стояние ${ev.key}${ev.buffered ? ` (${ev.buffered} кадров задним числом)` : ""}`
+          );
+          break;
+        case "frame":
+          log2(ev.raw ?? "");
+          break;
+        case "note":
+          log2(ev.text ?? "");
+          break;
+        case "dead":
+        case "alive":
+          loudExit(ev.text ?? "ДЕЛАТЕЛЬ: стояние потеряно", 1);
+          break;
+        case "released":
+          log2(`мост отпустил сокет: ${ev.text ?? ""}`);
+          break;
+      }
+    },
+    onGone: (why) => loudExit(`ДЕЛАТЕЛЬ: ${why}`, 1)
   });
-  const sayFile = process.env.ISKRON_CHANNEL_SAY;
-  if (sayFile) {
-    startSaying(
-      {
-        sayFile,
-        // Выданный рядом с сокетом адрес — первый; вывод из формы — фолбэк.
-        statusUrl: process.env.ISKRON_CHANNEL_STATUS || statusUrl(url),
-        onRefused: (_text, status) => log2(`ДЕЛАТЕЛЬ: строку занятости не приняли (${status ?? "нет ответа"}) — см. channel.md`)
-      },
-      (file) => readFileSync5(file, "utf8")
-    );
-  }
 }
 
 // js/watchdog/watchdog-exit.ts
-import { readFileSync as readFileSync6, writeSync as writeSync2 } from "node:fs";
+import { writeSync as writeSync2 } from "node:fs";
 var wake = (s) => {
   writeSync2(1, s + "\n");
 };
@@ -1663,64 +1984,59 @@ var note = (s) => {
   writeSync2(2, s + "\n");
 };
 function runWatchdogExit(argv2) {
-  const url = argv2[0] || process.env.ISKRON_CHANNEL_SOCKET;
-  if (!url) {
-    note("нужен адрес сокета: iskron.mjs watchdog-exit <wss://…> или ISKRON_CHANNEL_SOCKET");
+  const target = resolveStanding(argv2[0]);
+  if ("error" in target) {
+    note(`ДЕЛАТЕЛЬ: ${target.error}`);
     process.exit(2);
   }
-  holdSocket({
-    url,
-    onFrame: (raw, frame) => {
-      const type = frame?.type;
-      if (type !== "message") return note(`кадр ${type ?? "не разобран"} — не повод будить`);
-      wake(raw);
-      process.exit(0);
+  attach(target.path, {
+    onEvent: (ev) => {
+      switch (ev.kind) {
+        case "frame": {
+          const type = ev.frame?.type;
+          if (type !== "message") return note(`кадр ${type ?? "не разобран"} — не повод будить`);
+          wake(ev.raw ?? "");
+          process.exit(0);
+          break;
+        }
+        case "dead":
+        case "alive":
+          note(ev.text ?? "ДЕЛАТЕЛЬ: стояние потеряно");
+          process.exit(1);
+          break;
+        case "attached":
+          note(`слушаю стояние ${ev.key}`);
+          break;
+        default:
+          note(ev.text ?? ev.kind);
+      }
     },
-    onDeadToken: (code) => {
-      note(`ДЕЛАТЕЛЬ: ${deadTokenAdvice(code)}`);
+    onGone: (why) => {
+      note(`ДЕЛАТЕЛЬ: ${why}`);
       process.exit(1);
-    },
-    onServiceAlive: (version) => {
-      note(`ДЕЛАТЕЛЬ: обрывы, а служба отвечает (${version}) — спроси о токене`);
-      process.exit(1);
-    },
-    onNote: note
+    }
   });
-  const sayFile = process.env.ISKRON_CHANNEL_SAY;
-  if (sayFile) {
-    startSaying(
-      {
-        sayFile,
-        statusUrl: process.env.ISKRON_CHANNEL_STATUS || statusUrl(url),
-        // В лог, НЕ в stdout: там будит только кадр.
-        onRefused: (_text, status) => note(
-          `ДЕЛАТЕЛЬ: строку занятости не приняли (${status ?? "нет ответа"}) — см. channel.md`
-        )
-      },
-      (file) => readFileSync6(file, "utf8")
-    );
-  }
 }
 
 // js/cli/doctor.ts
-import { createHash as createHash3 } from "node:crypto";
-import { existsSync, readFileSync as readFileSync7 } from "node:fs";
-import { homedir as homedir2 } from "node:os";
-import { join as join3 } from "node:path";
-import { fileURLToPath as fileURLToPath2 } from "node:url";
+import { createHash as createHash5 } from "node:crypto";
+import { existsSync as existsSync2, readFileSync as readFileSync7 } from "node:fs";
+import { homedir as homedir3 } from "node:os";
+import { join as join5 } from "node:path";
+import { fileURLToPath as fileURLToPath3 } from "node:url";
 var out = (s) => {
   process.stdout.write(s + "\n");
 };
-var hashOf = (buf) => createHash3("sha256").update(buf).digest("hex").slice(0, 8);
+var hashOf2 = (buf) => createHash5("sha256").update(buf).digest("hex").slice(0, 8);
 var seconds = (ms) => `${Math.round(ms / 1e3)}s`;
 function homeCopyReport() {
-  const home = join3(homedir2(), ".iskron-bridge", "iskron-bridge.mjs");
+  const home = join5(homedir3(), ".iskron-bridge", "iskron-bridge.mjs");
   let self = null;
   try {
-    self = readFileSync7(fileURLToPath2(import.meta.url));
+    self = readFileSync7(fileURLToPath3(import.meta.url));
   } catch {
   }
-  if (!existsSync(home)) {
+  if (!existsSync2(home)) {
     out(`домашняя копия: нет (${home}) — её кладёт establish-mcp при подключении`);
     return;
   }
@@ -1731,7 +2047,7 @@ function homeCopyReport() {
   }
   const v = versionIn(bytes.toString("utf8"));
   out(
-    `домашняя копия: ${home} — v${v ?? "?"}+${hashOf(bytes)}, ДРУГИЕ байты: ${self ? "обнови её из поставки (cp scripts/iskron.mjs ~/.iskron-bridge/iskron-bridge.mjs)" : "этот файл не читается"}`
+    `домашняя копия: ${home} — v${v ?? "?"}+${hashOf2(bytes)}, ДРУГИЕ байты: ${self ? "обнови её из поставки (cp scripts/iskron.mjs ~/.iskron-bridge/iskron-bridge.mjs)" : "этот файл не читается"}`
   );
 }
 async function serverReport() {
@@ -1765,7 +2081,7 @@ async function serverReport() {
 function grantReport() {
   const path = storePath();
   out(`грант: ${path}`);
-  if (!existsSync(path)) {
+  if (!existsSync2(path)) {
     out("  хранилища нет — мост ещё ни разу не входил на этот сервер");
     return;
   }
@@ -1800,18 +2116,18 @@ function grantReport() {
     out(`  вход отложен ещё на ${seconds(st.snooze_until - Date.now())} (человек не завершил)`);
   }
   for (const suffix of [".auth-pending", ".refreshing"]) {
-    if (existsSync(path + suffix)) out(`  замок: ${path + suffix}`);
+    if (existsSync2(path + suffix)) out(`  замок: ${path + suffix}`);
   }
   const logPath = grantLogPath();
-  if (existsSync(logPath)) {
+  if (existsSync2(logPath)) {
     const lines = readFileSync7(logPath, "utf8").trim().split("\n").slice(-3);
     out(`  grant.log, последнее:`);
     for (const l of lines) out(`    ${l}`);
   }
 }
 function harnessReport() {
-  const claude = join3(homedir2(), ".claude.json");
-  if (existsSync(claude)) {
+  const claude = join5(homedir3(), ".claude.json");
+  if (existsSync2(claude)) {
     try {
       const cfg = JSON.parse(readFileSync7(claude, "utf8"));
       const entries = Object.entries(cfg.mcpServers ?? {}).filter(
@@ -1826,8 +2142,8 @@ function harnessReport() {
       out(`Claude Code: ${claude} не читается`);
     }
   }
-  const codex = join3(homedir2(), ".codex", "config.toml");
-  if (existsSync(codex)) {
+  const codex = join5(homedir3(), ".codex", "config.toml");
+  if (existsSync2(codex)) {
     const text = readFileSync7(codex, "utf8");
     out(`Codex: ${/iskron/.test(text) ? "запись моста есть" : "записи моста нет"} (${codex})`);
   }
@@ -1835,7 +2151,7 @@ function harnessReport() {
 async function runDoctor(argv2) {
   setConfig(parseArgs(argv2));
   out(`iskron doctor — ${BUILD}`);
-  out(`этот файл: ${fileURLToPath2(import.meta.url)}`);
+  out(`этот файл: ${fileURLToPath3(import.meta.url)}`);
   out(`node: ${process.version}`);
   homeCopyReport();
   await serverReport();

@@ -136,7 +136,10 @@ test("doctor: reads an existing grant without touching it, and sees the home cop
       }) + "\n",
     );
     await firstReply;
-    bridge.stdin.end();
+    // The bridge outlives a pending login on purpose (the human may be mid-click),
+    // so a polite stdin close would wait for that flow; the store is already
+    // written by discovery, and the probe only needs the store.
+    bridge.kill("SIGKILL");
     await new Promise((res) => bridge.on("exit", res));
     const files = readdirSync(authDir);
     const storeFile = files.find((f) => f.endsWith(".json"));
