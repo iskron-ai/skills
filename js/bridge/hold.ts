@@ -305,7 +305,8 @@ export function absorbChannelReply(msg: JsonRpcMessage, reply: JsonRpcMessage): 
   const key = holdStanding(trim(socket), status ? trim(status) : null);
   const self = fileURLToPath(import.meta.url);
   const block =
-    `\n\n[iskron-bridge] Сокет этого стояния держит мост — вручать его никому не нужно.` +
+    `\n\n[iskron-bridge] Сокет этого стояния держит мост — вручать его никому не нужно` +
+    ` (строка выше о том, что никто не слушает, описывает миг до этого держания).` +
     `\nСлушать: node "${self}" watchdog ${key} — под Monitor с persistent: true (Claude Code);` +
     ` фоновой задачей — node "${self}" watchdog-exit ${key} (выходит нулём на первом сообщении).` +
     `\nЗанятость: пиши текст в ${sayPathFor(key)}; пустой текст снимает.` +

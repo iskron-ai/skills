@@ -140,7 +140,16 @@ export function refreshHomeBridge(notify: Notify, canSpeak: boolean): void {
   }
 }
 
-/** Путь к мосту выводится, не зашивается: расширение и мост едут одним репозиторием. */
+/**
+ * Путь к мосту выводится, не зашивается: расширение и мост едут одним репозиторием.
+ * ПОРЯДОК НЕСУЩИЙ: сперва привезённый поставкой, домашняя копия — только когда
+ * поставка моста не несёт. Расширение и мост говорят одним протоколом уведомлений
+ * (кадры стояния), и версия у них одна на двоих; домашняя копия — контракт с
+ * конфигами ДРУГИХ харнесов, и она отстаёт всякий раз, когда сессия без голоса
+ * (headless) не вправе её обновить. Наблюдено живьём: с домашней копией впереди
+ * headless-сессия pi молча подняла мост прежней версии — тулы работали, а
+ * стояние не держалось, и ни одной строки об этом не было.
+ */
 export function findBridge(): { path: string; tried: string[] } | { path: null; tried: string[] } {
   const tried: string[] = [];
   const push = (p: string | null | undefined) => {
@@ -150,13 +159,13 @@ export function findBridge(): { path: string; tried: string[] } | { path: null; 
   push(
     process.env.ISKRON_BRIDGE_PATH?.trim() ? resolve(process.env.ISKRON_BRIDGE_PATH.trim()) : null,
   );
-  push(homeBridgePath());
   try {
     // pi install git:… кладёт расширение рядом со скиллами того же репозитория.
     push(packagedBridgePath());
   } catch {
-    /* загрузчик не дал собственного пути — остаются первые два кандидата */
+    /* загрузчик не дал собственного пути — остаются переменная и домашняя копия */
   }
+  push(homeBridgePath());
   for (const candidate of tried) {
     try {
       accessSync(candidate, constants.R_OK);

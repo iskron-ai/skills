@@ -23,18 +23,19 @@ trap 'rm -rf "$staging"' EXIT
 # .mcp.json DOES go in, at the plugin root, because it is what makes the graph
 # server arrive with the plugin — but NOT the repo's own .mcp.json: that one is
 # the stdio bridge for Claude Code (a ${CLAUDE_PLUGIN_ROOT} path), and claude.ai
-# cannot run a local process. This channel gets the native http record, and it
-# has one source: the `mcpServers` object inline in the Codex manifest (its
-# validator takes either that object or a file named exactly .mcp.json at the
-# root — the name the stdio record already holds). Leaving the record out made
-# the same plugin behave differently on claude.ai — no server at all, and
-# nothing on the Connectors tab to authorize, against a SETUP.md that promises it.
+# cannot run a local process (the Codex manifest carries the same stdio bridge
+# relative to its plugin root). This channel is the only one with a native http
+# record, and the record is not stored anywhere: it is derived here from the
+# canonical resource identifier in fixtures/surface.json, the one string the
+# server itself declares. Leaving the record out made the same plugin behave
+# differently on claude.ai — no server at all, and nothing on the Connectors
+# tab to authorize, against a SETUP.md that promises it.
 mkdir -p "$staging/iskron/.claude-plugin" dist
 cp .claude-plugin/plugin.json "$staging/iskron/.claude-plugin/"
 node -e '
-  const m = JSON.parse(require("fs").readFileSync(".codex-plugin/plugin.json", "utf8"));
-  if (!m.mcpServers || typeof m.mcpServers !== "object") throw new Error("Codex manifest carries no inline mcpServers object");
-  process.stdout.write(JSON.stringify({ mcpServers: m.mcpServers }, null, 2) + "\n");
+  const url = JSON.parse(require("fs").readFileSync("fixtures/surface.json", "utf8")).resource;
+  if (typeof url !== "string" || !/^https:\/\//.test(url)) throw new Error("fixtures/surface.json names no canonical resource");
+  process.stdout.write(JSON.stringify({ mcpServers: { iskron: { type: "http", url } } }, null, 2) + "\n");
 ' > "$staging/iskron/.mcp.json"
 cp -R skills "$staging/iskron/"
 

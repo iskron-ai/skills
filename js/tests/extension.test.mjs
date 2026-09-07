@@ -494,6 +494,25 @@ const saidNoneOf = (rec) => REFRESH_WORDS.every((re) => !re.test(rec.said()));
 // Rule 1: путь задан руками — выбор человека старше нашей заботы, и его не
 // проверяют версией: тронуть домашнюю копию здесь значило бы переписать то,
 // что человек мог положить сам.
+// The bridge that came with the package is the one this extension speaks the
+// notification protocol with; the home copy serves other harnesses' configs and
+// lags whenever a voiceless session may not refresh it. Seen live: home first,
+// headless pi raised the previous bridge in silence — tools up, standing dead.
+test("the packaged bridge is preferred over a stale home copy, also without UI", async () => {
+  const box = packageSandbox();
+  copyFileSync(FAKE_BRIDGE, box.packaged);
+  writeFileSync(box.homeBridge, "#!/usr/bin/env node\nprocess.exit(3);\n");
+  const log = join(SANDBOX, "prefer.log");
+  const reply = join(SANDBOX, "prefer.reply");
+  writeFileSync(reply, "");
+  const rec = await runRefresh(
+    box,
+    { FB_LOG: log, FB_REPLY: reply, ISKRON_MCP_READY_WAIT_MS: 15000 },
+    { hasUI: false },
+  );
+  assert.equal(rec.tools.size, 2, "расширение подняло домашнюю копию, а не привезённый мост");
+});
+
 test("refreshHomeBridge: ISKRON_BRIDGE_PATH set leaves the home copy untouched", async () => {
   const box = packageSandbox();
   writeFileSync(box.packaged, bridgeText("6.0.0"));

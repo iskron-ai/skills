@@ -348,11 +348,11 @@ function findBridge() {
   push(
     process.env.ISKRON_BRIDGE_PATH?.trim() ? resolve(process.env.ISKRON_BRIDGE_PATH.trim()) : null
   );
-  push(homeBridgePath());
   try {
     push(packagedBridgePath());
   } catch {
   }
+  push(homeBridgePath());
   for (const candidate of tried) {
     try {
       accessSync(candidate, constants.R_OK);

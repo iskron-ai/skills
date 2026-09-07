@@ -1662,7 +1662,7 @@ function absorbChannelReply(msg, reply) {
   const self = fileURLToPath2(import.meta.url);
   const block = `
 
-[iskron-bridge] Сокет этого стояния держит мост — вручать его никому не нужно.
+[iskron-bridge] Сокет этого стояния держит мост — вручать его никому не нужно (строка выше о том, что никто не слушает, описывает миг до этого держания).
 Слушать: node "${self}" watchdog ${key} — под Monitor с persistent: true (Claude Code); фоновой задачей — node "${self}" watchdog-exit ${key} (выходит нулём на первом сообщении).
 Занятость: пиши текст в ${sayPathFor(key)}; пустой текст снимает.
 Кадры приходят и уведомлениями MCP (logger iskron-channel).`;

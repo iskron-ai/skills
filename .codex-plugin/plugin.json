@@ -21,8 +21,12 @@
   "skills": "./skills/",
   "mcpServers": {
     "iskron": {
-      "type": "http",
-      "url": "https://mcp.iskron.ru"
+      "command": "node",
+      "args": [
+        "./skills/establish-mcp/scripts/iskron.mjs"
+      ],
+      "cwd": ".",
+      "startup_timeout_sec": 60
     }
   },
   "interface": {

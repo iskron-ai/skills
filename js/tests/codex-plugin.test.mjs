@@ -111,14 +111,20 @@ test("what the manifest promises is on disk", () => {
     assert.ok(existsSync(join(skillsDir, s.name, "SKILL.md")), `у скилла ${s.name} нет SKILL.md`);
   }
 
-  // The graph server rides inline: the Codex validator takes either an object
-  // here or a file named exactly .mcp.json at the plugin root, and that name is
-  // taken by the Claude Code stdio record, which Codex cannot run.
+  // The bridge rides inline as a stdio server relative to the plugin root: the
+  // Codex validator takes either an object here or a file named exactly
+  // .mcp.json at the plugin root, and that name is taken by the Claude Code
+  // record, whose ${CLAUDE_PLUGIN_ROOT} Codex does not resolve.
   assert.equal(
     typeof manifest.mcpServers,
     "object",
     "запись MCP-серверов должна стоять объектом в манифесте",
   );
-  assert.equal(manifest.mcpServers.iskron?.type, "http");
-  assert.equal(manifest.mcpServers.iskron?.url, "https://mcp.iskron.ru");
+  const rec = manifest.mcpServers.iskron;
+  assert.equal(rec?.command, "node", "запись Codex должна поднимать мост, не удалённый сервер");
+  assert.equal(rec?.cwd, ".", "cwd — корень установленной копии плагина");
+  assert.ok(
+    existsSync(resolve(ROOT, rec?.args?.[0] ?? "")),
+    `манифест зовёт ${rec?.args?.[0]}, а файла нет`,
+  );
 });
