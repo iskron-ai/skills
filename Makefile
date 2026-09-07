@@ -1,4 +1,4 @@
-.PHONY: check deps validate check-bundles check-surface lint format format-check typecheck test test-coverage test-watchdog test-extension test-codex build build-js check-js surface hooks plugin
+.PHONY: check deps validate check-bundles check-surface lint format format-check typecheck test test-coverage test-watchdog test-extension test-opencode test-codex build build-js check-js surface hooks plugin
 
 # Run the full CI gate locally: frontmatter contract + bundle sync + surface lint
 # + the JS ladder (lint → format → types → shipped outputs in sync → the
@@ -56,6 +56,9 @@ test-watchdog:
 
 test-extension:
 	@node --test js/tests/extension.test.mjs
+
+test-opencode:
+	@node --test js/tests/opencode.test.mjs
 
 # Probe for the Codex delivery — the plugin manifest and the repo marketplace.
 # Its heavy half runs Codex's own on-disk ingestion validator, which needs

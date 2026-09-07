@@ -19,7 +19,7 @@
 // исполнена сама собой, и конвертировать нечего.
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-import { Bridge, resultToContent, snippet, toParameters } from "./bridge-client.ts";
+import { Bridge, resultToContent, snippet, toParameters } from "../shared/bridge-client.ts";
 import { findBridge, type Notify, refreshHomeBridge } from "./home-copy.ts";
 
 export type ChannelEventSink = (params: any) => void;

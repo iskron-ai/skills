@@ -30,7 +30,7 @@ const common = {
   logLevel: "silent",
 };
 
-async function bundleNode(entry, banner) {
+async function bundleNode(entry, banner, external = []) {
   const r = await esbuild.build({
     ...common,
     entryPoints: [entry],
@@ -38,7 +38,7 @@ async function bundleNode(entry, banner) {
     format: "esm",
     target: "node22",
     banner: banner ? { js: banner } : undefined,
-    external: ["@earendil-works/pi-coding-agent"],
+    external: ["@earendil-works/pi-coding-agent", ...external],
     outfile: "out.mjs",
   });
   return r.outputFiles[0].text;
@@ -61,14 +61,23 @@ const RENDER_MARK = "/*@@RENDER@@*/";
 async function produce() {
   const outputs = new Map();
 
-  // Один исполняемый файл на три node-процесса и doctor — в оба скилла, которым
-  // он нужен: каждый скилл ставится и порознь, и тем же файлом.
-  const cli = await bundleNode("js/cli/iskron.ts", "#!/usr/bin/env node");
-  outputs.set("skills/establish-mcp/scripts/iskron.mjs", cli);
-  outputs.set("skills/standing/scripts/iskron.mjs", cli);
+  // Один исполняемый файл на три node-процесса и doctor, в одном месте: путь
+  // к нему печатает сам мост в ответе connect, и второй копии никто не называет.
+  outputs.set(
+    "skills/establish-mcp/scripts/iskron.mjs",
+    await bundleNode("js/cli/iskron.ts", "#!/usr/bin/env node"),
+  );
 
   // Расширение pi — ESM-модуль с default-экспортом; pi грузит .js из extensions/.
   outputs.set("extensions/iskron.js", await bundleNode("js/extension/iskron.ts"));
+
+  // Плагин OpenCode — ESM-модуль; единственный внешний импорт — @opencode-ai/plugin,
+  // который OpenCode сам держит рядом со своим каталогом плагинов. Едет в
+  // establish-mcp, потому что ставится тем же шагом, что и мост.
+  outputs.set(
+    "skills/establish-mcp/scripts/opencode-plugin.js",
+    await bundleNode("js/opencode/plugin.ts", undefined, ["@opencode-ai/plugin"]),
+  );
 
   // Рендер роадмапа инлайнится в html-шаблон на месте метки; data-объект
   // ROADMAP остаётся отдельным <script> — его и только его заменяет скилл.

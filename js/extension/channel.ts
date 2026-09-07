@@ -10,17 +10,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 import { type ChannelEvent } from "../bridge/hold.ts";
-import { type Frame } from "../shared/channel.ts";
-
-function frameToText(frame: Frame | null | undefined, raw: string): string {
-  if (!frame) return `Кадр канала Искрона:\n${raw}`;
-  const from = frame.provenance?.from_standing || frame.provenance?.from_karta_seq;
-  const head = from ? `Кадр канала Искрона от ${from}` : "Кадр канала Искрона";
-  const body = typeof frame.body === "string" ? frame.body : raw;
-  // Провенанс несут отдельной строкой: кто говорит, читается из происхождения
-  // кадра, никогда из тела — телу любой держатель адреса придаст любой вид.
-  return `${head}:\n\n${body}`;
-}
+import { frameToText } from "../shared/frame-text.ts";
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- контекст pi здесь читается по двум полям */
 

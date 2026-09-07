@@ -25,6 +25,7 @@
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "0.85.1",
     "@eslint/js": "^10.0.1",
+    "@opencode-ai/plugin": "1.18.27",
     "@types/node": "^22.20.0",
     "esbuild": "^0.28.2",
     "eslint": "^10.2.1",

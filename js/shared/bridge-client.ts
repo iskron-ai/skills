@@ -1,5 +1,18 @@
 // Клиент MCP по stdio к дочернему мосту и перевод его ответов в форму pi.
 import { type ChildProcess, spawn } from "node:child_process";
+import { basename } from "node:path";
+
+/**
+ * Чем запускать мост. Под pi это сам node (`process.execPath`); под OpenCode
+ * процесс — Bun внутри бинаря opencode, и его execPath запустил бы opencode с
+ * путём моста как каталогом проекта (наблюдено: «Failed to change directory
+ * to …/iskron.mjs»). Мост — файл под Node 22, значит нужен node с PATH.
+ */
+export function nodeBinary(): string {
+  if (process.env.ISKRON_NODE?.trim()) return process.env.ISKRON_NODE.trim();
+  if (process.versions?.bun || !/^node/i.test(basename(process.execPath))) return "node";
+  return process.execPath;
+}
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- JSON-RPC-полезная нагрузка приходит без схемы */
 
@@ -29,7 +42,7 @@ export class Bridge {
   }
 
   start(): void {
-    const proc = spawn(process.execPath, [this.bin], { stdio: ["pipe", "pipe", "pipe"] });
+    const proc = spawn(nodeBinary(), [this.bin], { stdio: ["pipe", "pipe", "pipe"] });
     this.proc = proc;
     proc.stdout?.setEncoding("utf8");
     proc.stdout?.on("data", (chunk: string) => this.feed(chunk));

@@ -29,7 +29,7 @@ import { createHash as createHash2 } from "node:crypto";
 import {
   appendFileSync,
   mkdirSync,
-  readFileSync as readFileSync2,
+  readFileSync as readFileSync3,
   renameSync,
   statSync,
   unlinkSync,
@@ -38,6 +38,7 @@ import {
 import { join as join2 } from "node:path";
 
 // js/bridge/config.ts
+import { readFileSync as readFileSync2 } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -105,7 +106,9 @@ function parseArgs(argv2) {
     debug: !!process.env.ISKRON_BRIDGE_DEBUG,
     scope: process.env.ISKRON_BRIDGE_SCOPE || null,
     resource: process.env.ISKRON_BRIDGE_RESOURCE || null,
-    staticClientId: process.env.ISKRON_BRIDGE_CLIENT_ID || null
+    staticClientId: process.env.ISKRON_BRIDGE_CLIENT_ID || null,
+    pat: null,
+    patSource: null
   };
   for (let i = 0; i < argv2.length; i++) {
     const a = argv2[i];
@@ -131,7 +134,25 @@ function parseArgs(argv2) {
     process.exit(2);
   }
   if (!Number.isFinite(cfg.timeoutMs) || cfg.timeoutMs < 1e3) cfg.timeoutMs = 12e4;
+  readPat(cfg);
   return cfg;
+}
+function readPat(cfg) {
+  const fromEnv = process.env.ISKRON_BRIDGE_TOKEN?.trim();
+  if (fromEnv) {
+    cfg.pat = fromEnv;
+    cfg.patSource = "ISKRON_BRIDGE_TOKEN";
+    return;
+  }
+  const file = join(cfg.authDir, "token");
+  try {
+    const text = readFileSync2(file, "utf8").trim();
+    if (text) {
+      cfg.pat = text;
+      cfg.patSource = file;
+    }
+  } catch {
+  }
 }
 
 // js/bridge/store.ts
@@ -145,7 +166,7 @@ function storePath() {
 }
 function loadStore() {
   try {
-    return JSON.parse(readFileSync2(storePath(), "utf8"));
+    return JSON.parse(readFileSync3(storePath(), "utf8"));
   } catch {
     return {};
   }
@@ -201,7 +222,7 @@ function grantStatePath() {
 }
 function loadGrantState() {
   try {
-    return JSON.parse(readFileSync2(grantStatePath(), "utf8"));
+    return JSON.parse(readFileSync3(grantStatePath(), "utf8"));
   } catch {
     return {};
   }
@@ -300,6 +321,8 @@ var DEFINITIVE_OAUTH_ERRORS = /* @__PURE__ */ new Set([
   "unauthorized_client"
 ]);
 var LoginHeld = class extends Error {
+};
+var TokenRefused = class extends Error {
 };
 var AuthPending = class extends Error {
   authorizeUrl;
@@ -435,7 +458,7 @@ function openBrowser(url) {
 import { randomBytes } from "node:crypto";
 
 // js/bridge/oauth/authlock.ts
-import { mkdirSync as mkdirSync2, readFileSync as readFileSync3, unlinkSync as unlinkSync2, writeFileSync as writeFileSync2 } from "node:fs";
+import { mkdirSync as mkdirSync2, readFileSync as readFileSync4, unlinkSync as unlinkSync2, writeFileSync as writeFileSync2 } from "node:fs";
 import { connect } from "node:net";
 var AUTH_LOCK_FRESH_MS = 33e4;
 function authLockPath() {
@@ -465,7 +488,7 @@ function portListening(port, timeoutMs = 700) {
 }
 function readAuthLock() {
   try {
-    const l = JSON.parse(readFileSync3(authLockPath(), "utf8"));
+    const l = JSON.parse(readFileSync4(authLockPath(), "utf8"));
     if (!(Date.now() - l.started_at < AUTH_LOCK_FRESH_MS)) return null;
     if (!pidAlive(l.pid)) return null;
     return l;
@@ -495,7 +518,7 @@ function releaseAuthLock() {
 function installAuthLockExitHook() {
   process.on("exit", () => {
     try {
-      const l = JSON.parse(readFileSync3(authLockPath(), "utf8"));
+      const l = JSON.parse(readFileSync4(authLockPath(), "utf8"));
       if (l.pid === process.pid) unlinkSync2(authLockPath());
     } catch {
     }
@@ -762,7 +785,7 @@ async function interactiveFlow(meta) {
 }
 
 // js/bridge/oauth/refreshlock.ts
-import { linkSync, mkdirSync as mkdirSync3, readFileSync as readFileSync4, unlinkSync as unlinkSync3, writeFileSync as writeFileSync3 } from "node:fs";
+import { linkSync, mkdirSync as mkdirSync3, readFileSync as readFileSync5, unlinkSync as unlinkSync3, writeFileSync as writeFileSync3 } from "node:fs";
 var REFRESH_LOCK_STALE_MS = 45e3;
 function refreshLockPath() {
   return storePath() + ".refreshing";
@@ -796,7 +819,7 @@ function acquireRefreshLock() {
   }
   let held = null;
   try {
-    held = JSON.parse(readFileSync4(refreshLockPath(), "utf8"));
+    held = JSON.parse(readFileSync5(refreshLockPath(), "utf8"));
   } catch {
   }
   if (held && pidAlive(held.pid) && Date.now() - held.started_at < REFRESH_LOCK_STALE_MS) {
@@ -816,7 +839,7 @@ function acquireRefreshLock() {
 }
 function releaseRefreshLock() {
   try {
-    const l = JSON.parse(readFileSync4(refreshLockPath(), "utf8"));
+    const l = JSON.parse(readFileSync5(refreshLockPath(), "utf8"));
     if (l.pid === process.pid) unlinkSync3(refreshLockPath());
   } catch {
   }
@@ -977,6 +1000,11 @@ function holdOffLogin(reason, expired = false) {
 var authInFlight = null;
 async function ensureAuth(wwwAuthenticate, opts = {}) {
   const { force = false, interactive = true, proactive = false } = opts;
+  if (CFG.pat) {
+    throw new TokenRefused(
+      `the personal access token from ${CFG.patSource} is refused by the server — revoked, expired or without rights to this graph; mint a new one on the graph's token page and put it in ${CFG.patSource}`
+    );
+  }
   if (authInFlight) {
     if (!interactive || authInFlight.interactive) return authInFlight.promise;
     await authInFlight.promise.catch(() => {
@@ -1019,6 +1047,7 @@ async function ensureAuth(wwwAuthenticate, opts = {}) {
 }
 var REFRESH_MARGIN_MS = 3 * 6e4;
 function startTokenKeepalive() {
+  if (CFG.pat) return;
   const tick = () => {
     const t = loadStore().tokens;
     if (!t?.refresh_token) return;
@@ -1046,18 +1075,17 @@ function startTokenKeepalive() {
 }
 
 // js/bridge/hold.ts
-import { createHash as createHash3 } from "node:crypto";
 import {
   chmodSync,
   existsSync,
   mkdirSync as mkdirSync4,
   readdirSync,
-  readFileSync as readFileSync5,
+  readFileSync as readFileSync6,
   unlinkSync as unlinkSync4,
   writeFileSync as writeFileSync4
 } from "node:fs";
 import { connect as connectLocal, createServer as createServer2 } from "node:net";
-import { join as join3 } from "node:path";
+import { join as join4 } from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 
 // js/shared/channel.ts
@@ -1191,6 +1219,21 @@ function startSaying(o, readText) {
   };
 }
 
+// js/shared/standings.ts
+import { createHash as createHash3 } from "node:crypto";
+import { homedir as homedir2 } from "node:os";
+import { join as join3 } from "node:path";
+var defaultAuthDir = () => join3(homedir2(), ".iskron-bridge");
+var authDirFromEnv = () => process.env.ISKRON_BRIDGE_AUTH_DIR?.trim() || defaultAuthDir();
+var standingsDirOf = (authDir) => join3(authDir, "standings");
+var hashOf = (key) => createHash3("sha256").update(key).digest("hex").slice(0, 16);
+function socketPathOf(authDir, key) {
+  if (process.platform === "win32") return `\\\\.\\pipe\\iskron-${hashOf(key)}`;
+  return join3(standingsDirOf(authDir), `${hashOf(key)}.sock`);
+}
+var keyFilePathOf = (authDir, key) => join3(standingsDirOf(authDir), `${hashOf(key)}.key`);
+var sayPathOf = (authDir, key) => join3(standingsDirOf(authDir), `${key}.say`);
+
 // js/bridge/transport.ts
 var state = {
   sessionId: null,
@@ -1229,7 +1272,7 @@ function standingHeader() {
   if (!/^[\x21-\x7e]+ [\x21-\x7e]+ [\x21-\x7e]+$/.test(h)) return null;
   return h;
 }
-var currentAccessToken = () => loadStore().tokens?.access_token ?? null;
+var currentAccessToken = () => CFG.pat ?? loadStore().tokens?.access_token ?? null;
 async function* sseEvents(body) {
   const reader = body.getReader();
   const decoder = new TextDecoder();
@@ -1252,8 +1295,8 @@ async function post(msg, onMessage) {
     "content-type": "application/json",
     accept: "application/json, text/event-stream"
   };
-  const tokens = loadStore().tokens;
-  if (tokens?.access_token) headers.authorization = `Bearer ${tokens.access_token}`;
+  const token = CFG.pat ?? loadStore().tokens?.access_token ?? null;
+  if (token) headers.authorization = `Bearer ${token}`;
   const sentSession = state.sessionId;
   if (sentSession) headers["mcp-session-id"] = sentSession;
   if (state.protocolVersion) headers["mcp-protocol-version"] = state.protocolVersion;
@@ -1286,7 +1329,7 @@ async function post(msg, onMessage) {
     throw new UpstreamError(
       res.headers.get("www-authenticate") || "unauthorized",
       "auth",
-      tokens?.access_token ?? null,
+      token,
       UpstreamError.NOT_SENT
     );
   }
@@ -1302,7 +1345,7 @@ async function post(msg, onMessage) {
       );
     }
     state.sessionId = sid;
-    state.sessionToken = tokens?.access_token ?? null;
+    state.sessionToken = token;
   }
   if (res.status === 202 || res.status === 204) return;
   if (!res.ok) {
@@ -1438,25 +1481,16 @@ var isUnattributed = (reply) => {
 // js/bridge/hold.ts
 var RING = 20;
 function standingsDir() {
-  return join3(CFG.authDir, "standings");
+  return standingsDirOf(CFG.authDir);
 }
 function keyFor() {
   const s = state.standing;
   const raw = s ? `${s.name ?? "_"}--${s.karta}--${s.realm}` : "env";
   return raw.replace(/[^A-Za-z0-9._-]+/g, "_").slice(0, 120);
 }
-function socketPathFor(key) {
-  const h = createHash3("sha256").update(key).digest("hex").slice(0, 16);
-  if (process.platform === "win32") return `\\\\.\\pipe\\iskron-${h}`;
-  return join3(standingsDir(), `${h}.sock`);
-}
-function keyFilePathFor(key) {
-  const h = createHash3("sha256").update(key).digest("hex").slice(0, 16);
-  return join3(standingsDir(), `${h}.key`);
-}
-function sayPathFor(key) {
-  return join3(standingsDir(), `${key}.say`);
-}
+var socketPathFor = (key) => socketPathOf(CFG.authDir, key);
+var keyFilePathFor = (key) => keyFilePathOf(CFG.authDir, key);
+var sayPathFor = (key) => sayPathOf(CFG.authDir, key);
 var holder = null;
 var server = null;
 var saying = null;
@@ -1484,10 +1518,10 @@ function notify(level, data) {
 function sweepStale(dir, mine) {
   if (process.platform === "win32" || !existsSync(dir)) return;
   for (const f of readdirSync(dir).filter((x) => x.endsWith(".key"))) {
-    const keyFile = join3(dir, f);
+    const keyFile = join4(dir, f);
     let key = "";
     try {
-      key = readFileSync5(keyFile, "utf8").trim();
+      key = readFileSync6(keyFile, "utf8").trim();
     } catch {
       continue;
     }
@@ -1639,7 +1673,7 @@ function holdStanding(url, statusUrl2) {
         notify("warning", { kind: "note", text });
       }
     },
-    (file) => readFileSync5(file, "utf8")
+    (file) => readFileSync6(file, "utf8")
   );
   return key;
 }
@@ -1660,10 +1694,11 @@ function absorbChannelReply(msg, reply) {
   }
   const key = holdStanding(trim(socket), status ? trim(status) : null);
   const self = fileURLToPath2(import.meta.url);
+  const where = CFG.authDir === defaultAuthDir() ? "" : ` --auth-dir "${CFG.authDir}"`;
   const block = `
 
 [iskron-bridge] Сокет этого стояния держит мост — вручать его никому не нужно (строка выше о том, что никто не слушает, описывает миг до этого держания).
-Слушать: node "${self}" watchdog ${key} — под Monitor с persistent: true (Claude Code); фоновой задачей — node "${self}" watchdog-exit ${key} (выходит нулём на первом сообщении).
+Слушать: node "${self}" watchdog ${key}${where} — под Monitor с persistent: true (Claude Code); фоновой задачей — node "${self}" watchdog-exit ${key}${where} (выходит нулём на первом сообщении).
 Занятость: пиши текст в ${sayPathFor(key)}; пустой текст снимает.
 Кадры приходят и уведомлениями MCP (logger iskron-channel).`;
   const content = reply.result?.content;
@@ -1704,7 +1739,7 @@ function syntheticError(id, message, outcome = UpstreamError.UNKNOWN, holdOff = 
     // defect in what only time repairs. The interval itself stays where it was
     // measured — in the reason above — so one refusal never carries two.
     "Nothing was applied and the grant is whole — this clears itself by waiting, not by fixing: wait out the interval named above before retrying."
-  ) : kind === "knock" ? "Nothing was applied and the grant is whole — a benign transition, not a broken authorization: retry the call now. Only a refusal that returns means the hour is real — that one names its own wait." : "The call never reached the server, so nothing was applied — retry freely." : "The call went out and its answer was lost, so THE OUTCOME IS UNKNOWN — re-read the target before retrying: a blind retry can apply a second time, and a write with no version guard duplicates silently.";
+  ) : kind === "knock" ? "Nothing was applied and the grant is whole — a benign transition, not a broken authorization: retry the call now. Only a refusal that returns means the hour is real — that one names its own wait." : kind === "dead" ? "Nothing was applied, and no retry and no wait will change that — only a human with a new token can." : "The call never reached the server, so nothing was applied — retry freely." : "The call went out and its answer was lost, so THE OUTCOME IS UNKNOWN — re-read the target before retrying: a blind retry can apply a second time, and a write with no version guard duplicates silently.";
   const tail = kind ? "The bridge stays up." : "The bridge stays up; if this repeats, the server side needs attention.";
   return {
     jsonrpc: "2.0",
@@ -1783,6 +1818,10 @@ async function deliver(msg) {
           await ensureAuth(e.message, { force: true, rejected: e.presented });
           continue;
         } catch (authErr) {
+          if (authErr instanceof TokenRefused) {
+            if (hasId) emit(syntheticError(msg.id, authErr.message, outcome, "dead"));
+            return;
+          }
           if (authErr instanceof AuthPending || authErr instanceof LoginHeld) {
             if (hasId) {
               emit(syntheticError(msg.id, authErr.message, outcome, authErr instanceof LoginHeld));
@@ -1834,7 +1873,9 @@ function bridgeMain(argv2) {
   setConfig(parseArgs(argv2));
   installAuthLockExitHook();
   installRefreshLockExitHook();
-  log(`${BUILD} -> ${CFG.serverUrl} (timeout ${CFG.timeoutMs}ms, auth in ${storePath()})`);
+  log(
+    `${BUILD} -> ${CFG.serverUrl} (timeout ${CFG.timeoutMs}ms, ${CFG.pat ? `personal access token from ${CFG.patSource}` : `auth in ${storePath()}`})`
+  );
   startTokenKeepalive();
   holdFromEnv();
   const rl = createInterface({ input: process.stdin, terminal: false });
@@ -1892,28 +1933,28 @@ function bridgeMain(argv2) {
 import { writeSync } from "node:fs";
 
 // js/watchdog/client.ts
-import { createHash as createHash4 } from "node:crypto";
-import { existsSync as existsSync2, readdirSync as readdirSync2, readFileSync as readFileSync6 } from "node:fs";
+import { existsSync as existsSync2, readdirSync as readdirSync2, readFileSync as readFileSync7 } from "node:fs";
 import { connect as connect2 } from "node:net";
-import { homedir as homedir2 } from "node:os";
-import { join as join4 } from "node:path";
+import { join as join5 } from "node:path";
 var ATTACH_WINDOW_MS = 6e4;
 var RETRY_MS = 1e3;
-function standingsDir2() {
-  const auth = process.env.ISKRON_BRIDGE_AUTH_DIR || join4(homedir2(), ".iskron-bridge");
-  return join4(auth, "standings");
+function parseWatchdogArgs(argv2) {
+  const out2 = { authDir: authDirFromEnv() };
+  for (let i = 0; i < argv2.length; i++) {
+    const a = argv2[i];
+    if (a === "--auth-dir") out2.authDir = argv2[++i] ?? out2.authDir;
+    else if (!a.startsWith("--") && !out2.key) out2.key = a;
+  }
+  return out2;
 }
-var hashOf = (key) => createHash4("sha256").update(key).digest("hex").slice(0, 16);
-function pathFor(key) {
-  if (process.platform === "win32") return `\\\\.\\pipe\\iskron-${hashOf(key)}`;
-  return join4(standingsDir2(), `${hashOf(key)}.sock`);
-}
-function resolveStanding(key) {
-  const dir = standingsDir2();
+function resolveStanding(argv2) {
+  const { key, authDir } = parseWatchdogArgs(argv2);
+  const dir = standingsDirOf(authDir);
+  const pathFor = (k) => socketPathOf(authDir, k);
   if (key) return { key, path: pathFor(key) };
   const held = existsSync2(dir) ? readdirSync2(dir).filter((f) => f.endsWith(".key")).map((f) => {
     try {
-      return readFileSync6(join4(dir, f), "utf8").trim();
+      return readFileSync7(join5(dir, f), "utf8").trim();
     } catch {
       return "";
     }
@@ -1993,7 +2034,7 @@ var loudExit = (s, code) => {
   }
 };
 function runWatchdog(argv2) {
-  const target = resolveStanding(argv2[0]);
+  const target = resolveStanding(argv2);
   if ("error" in target) {
     writeSync(2, `ДЕЛАТЕЛЬ: ${target.error}
 `);
@@ -2035,7 +2076,7 @@ var note = (s) => {
   writeSync2(2, s + "\n");
 };
 function runWatchdogExit(argv2) {
-  const target = resolveStanding(argv2[0]);
+  const target = resolveStanding(argv2);
   if ("error" in target) {
     note(`ДЕЛАТЕЛЬ: ${target.error}`);
     process.exit(2);
@@ -2070,28 +2111,35 @@ function runWatchdogExit(argv2) {
 }
 
 // js/cli/doctor.ts
-import { createHash as createHash5 } from "node:crypto";
-import { existsSync as existsSync3, readFileSync as readFileSync7 } from "node:fs";
-import { homedir as homedir3 } from "node:os";
-import { join as join5 } from "node:path";
+import { createHash as createHash4 } from "node:crypto";
+import { existsSync as existsSync3, readFileSync as readFileSync8 } from "node:fs";
+import { homedir as homedir4 } from "node:os";
+import { dirname, join as join7 } from "node:path";
 import { fileURLToPath as fileURLToPath3 } from "node:url";
+
+// js/shared/home.ts
+import { homedir as homedir3 } from "node:os";
+import { join as join6 } from "node:path";
+var homeBridgePath = () => join6(homedir3(), ".iskron-bridge", "iskron-bridge.mjs");
+
+// js/cli/doctor.ts
 var out = (s) => {
   process.stdout.write(s + "\n");
 };
-var hashOf2 = (buf) => createHash5("sha256").update(buf).digest("hex").slice(0, 8);
+var hashOf2 = (buf) => createHash4("sha256").update(buf).digest("hex").slice(0, 8);
 var seconds = (ms) => `${Math.round(ms / 1e3)}s`;
 function homeCopyReport() {
-  const home = join5(homedir3(), ".iskron-bridge", "iskron-bridge.mjs");
+  const home = homeBridgePath();
   let self = null;
   try {
-    self = readFileSync7(fileURLToPath3(import.meta.url));
+    self = readFileSync8(fileURLToPath3(import.meta.url));
   } catch {
   }
   if (!existsSync3(home)) {
     out(`домашняя копия: нет (${home}) — её кладёт establish-mcp при подключении`);
     return;
   }
-  const bytes = readFileSync7(home);
+  const bytes = readFileSync8(home);
   if (self && bytes.equals(self)) {
     out(`домашняя копия: ${home} — та же сборка, что и этот файл`);
     return;
@@ -2129,6 +2177,43 @@ async function serverReport() {
   } catch (e) {
     out(`  OAuth discovery: ${errorMessage(e)}`);
   }
+}
+async function patReport() {
+  out(`грант: личный токен (PAT) из ${CFG.patSource} — OAuth не используется`);
+  let res;
+  try {
+    res = await fetch(CFG.serverUrl, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+        authorization: `Bearer ${CFG.pat}`
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: "doctor",
+        method: "initialize",
+        params: {
+          protocolVersion: "2025-06-18",
+          capabilities: {},
+          clientInfo: { name: "iskron-doctor", version: "1" }
+        }
+      }),
+      signal: AbortSignal.timeout(1e4)
+    });
+  } catch (e) {
+    out(`  проверить не вышло: ${errorMessage(e)}`);
+    return;
+  }
+  res.body?.cancel?.();
+  if (res.status === 401) {
+    out(
+      "  ТОКЕН ОТВЕРГНУТ (HTTP 401) — отозван, истёк или без прав на этот граф: выпусти новый на странице токенов графа"
+    );
+  } else if (res.ok) out(`  токен принят сервером (HTTP ${res.status})`);
+  else out(`  сервер ответил HTTP ${res.status} — не отказ токена, смотри строку «сервер»`);
+  const path = storePath();
+  if (existsSync3(path)) out(`  хранилище OAuth ${path} есть, но не читается, пока стоит PAT`);
 }
 function grantReport() {
   const path = storePath();
@@ -2172,16 +2257,16 @@ function grantReport() {
   }
   const logPath = grantLogPath();
   if (existsSync3(logPath)) {
-    const lines = readFileSync7(logPath, "utf8").trim().split("\n").slice(-3);
+    const lines = readFileSync8(logPath, "utf8").trim().split("\n").slice(-3);
     out(`  grant.log, последнее:`);
     for (const l of lines) out(`    ${l}`);
   }
 }
 function harnessReport() {
-  const claude = join5(homedir3(), ".claude.json");
+  const claude = join7(homedir4(), ".claude.json");
   if (existsSync3(claude)) {
     try {
-      const cfg = JSON.parse(readFileSync7(claude, "utf8"));
+      const cfg = JSON.parse(readFileSync8(claude, "utf8"));
       const entries = Object.entries(cfg.mcpServers ?? {}).filter(
         ([, v]) => (v.args ?? []).some((a) => /iskron/.test(a))
       );
@@ -2194,9 +2279,25 @@ function harnessReport() {
       out(`Claude Code: ${claude} не читается`);
     }
   }
-  const codex = join5(homedir3(), ".codex", "config.toml");
+  const opencodeDir = join7(homedir4(), ".config", "opencode");
+  if (existsSync3(opencodeDir)) {
+    const copy = join7(opencodeDir, "plugins", "iskron.js");
+    const packaged = join7(dirname(fileURLToPath3(import.meta.url)), "opencode-plugin.js");
+    if (!existsSync3(copy)) {
+      out(`OpenCode: плагина нет (${copy}) — его кладёт establish-mcp при подключении`);
+    } else if (!existsSync3(packaged)) {
+      out(
+        `OpenCode: плагин ${copy} стоит; рядом с этим файлом поставки плагина нет, сверить не с чем`
+      );
+    } else if (readFileSync8(copy).equals(readFileSync8(packaged))) {
+      out(`OpenCode: плагин ${copy} — та же сборка, что в поставке`);
+    } else {
+      out(`OpenCode: плагин ${copy} — ДРУГИЕ байты, обнови из поставки: cp "${packaged}" ${copy}`);
+    }
+  }
+  const codex = join7(homedir4(), ".codex", "config.toml");
   if (existsSync3(codex)) {
-    const text = readFileSync7(codex, "utf8");
+    const text = readFileSync8(codex, "utf8");
     out(`Codex: ${/iskron/.test(text) ? "запись моста есть" : "записи моста нет"} (${codex})`);
   }
 }
@@ -2207,15 +2308,16 @@ async function runDoctor(argv2) {
   out(`node: ${process.version}`);
   homeCopyReport();
   await serverReport();
-  grantReport();
+  if (CFG.pat) await patReport();
+  else grantReport();
   harnessReport();
 }
 
 // js/cli/iskron.ts
 var USAGE = `iskron ${BUILD}
   node iskron.mjs [bridge] [server-url] [--timeout <ms>] [--auth-dir <dir>] [--no-browser] [--debug]
-  node iskron.mjs watchdog [wss://…]
-  node iskron.mjs watchdog-exit [wss://…]
+  node iskron.mjs watchdog [ключ] [--auth-dir <dir>]
+  node iskron.mjs watchdog-exit [ключ] [--auth-dir <dir>]
   node iskron.mjs doctor [server-url] [--auth-dir <dir>]
   node iskron.mjs --version
 `;

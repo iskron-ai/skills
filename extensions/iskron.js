@@ -19,7 +19,7 @@ function versionIn(text) {
 // js/bridge/build.ts
 var BUILD = buildOf(import.meta.url);
 
-// js/extension/channel.ts
+// js/shared/frame-text.ts
 function frameToText(frame, raw) {
   if (!frame) return `Кадр канала Искрона:
 ${raw}`;
@@ -30,6 +30,8 @@ ${raw}`;
 
 ${body}`;
 }
+
+// js/extension/channel.ts
 function setupChannel(pi) {
   let ctxRef = null;
   pi.on("session_start", async (_event, ctx) => {
@@ -86,8 +88,14 @@ function setupChannel(pi) {
   };
 }
 
-// js/extension/bridge-client.ts
+// js/shared/bridge-client.ts
 import { spawn } from "node:child_process";
+import { basename } from "node:path";
+function nodeBinary() {
+  if (process.env.ISKRON_NODE?.trim()) return process.env.ISKRON_NODE.trim();
+  if (process.versions?.bun || !/^node/i.test(basename(process.execPath))) return "node";
+  return process.execPath;
+}
 var Bridge = class {
   proc = null;
   buf = "";
@@ -105,7 +113,7 @@ var Bridge = class {
     this.onNotification = onNotification;
   }
   start() {
-    const proc = spawn(process.execPath, [this.bin], { stdio: ["pipe", "pipe", "pipe"] });
+    const proc = spawn(nodeBinary(), [this.bin], { stdio: ["pipe", "pipe", "pipe"] });
     this.proc = proc;
     proc.stdout?.setEncoding("utf8");
     proc.stdout?.on("data", (chunk) => this.feed(chunk));
@@ -258,9 +266,15 @@ import {
   unlinkSync,
   writeFileSync
 } from "node:fs";
-import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
+
+// js/shared/home.ts
+import { homedir } from "node:os";
+import { join } from "node:path";
+var homeBridgePath = () => join(homedir(), ".iskron-bridge", "iskron-bridge.mjs");
+
+// js/extension/home-copy.ts
 function newer(a, b) {
   const pa = a.split(".").map(Number), pb = b.split(".").map(Number);
   if (pa.length !== 3 || pb.length !== 3 || [...pa, ...pb].some((n) => !Number.isInteger(n)))
@@ -278,7 +292,6 @@ function packagedBridgePath() {
     "iskron.mjs"
   );
 }
-var homeBridgePath = () => join(homedir(), ".iskron-bridge", "iskron-bridge.mjs");
 function refreshHomeBridge(notify, canSpeak) {
   if (process.env.ISKRON_BRIDGE_PATH?.trim()) return;
   if (!canSpeak) return;

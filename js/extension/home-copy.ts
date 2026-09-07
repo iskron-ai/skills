@@ -8,11 +8,13 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
-import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { homeBridgePath } from "../shared/home.ts";
 import { versionIn } from "../shared/version.ts";
+
+export { homeBridgePath };
 
 export type Notify = (text: string, level?: "info" | "warning" | "error") => void;
 
@@ -42,9 +44,6 @@ export function packagedBridgePath(): string {
     "iskron.mjs",
   );
 }
-
-/** Имя домашней копии — контракт с конфигами харнесов, и оно не меняется с именем файла в поставке. */
-export const homeBridgePath = (): string => join(homedir(), ".iskron-bridge", "iskron-bridge.mjs");
 
 /**
  * Обновление поставки НЕ обновляло мост: расширение предпочитает домашнюю копию,
