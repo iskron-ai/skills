@@ -23,18 +23,10 @@ import { connect as connectLocal, createServer, type Server, type Socket } from 
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import {
-  deadTokenAdvice,
-  type Frame,
-  type Holder,
-  holdSocket,
-  startSaying,
-  statusUrl as deriveStatusUrl,
-} from "../shared/channel.ts";
+import { deadTokenAdvice, type Frame, type Holder, holdSocket } from "../shared/channel.ts";
 import {
   defaultAuthDir,
   keyFilePathOf,
-  sayPathOf,
   socketPathOf,
   standingsDirOf,
 } from "../shared/standings.ts";
@@ -70,11 +62,9 @@ function keyFor(): string {
 
 const socketPathFor = (key: string): string => socketPathOf(CFG.authDir, key);
 const keyFilePathFor = (key: string): string => keyFilePathOf(CFG.authDir, key);
-const sayPathFor = (key: string): string => sayPathOf(CFG.authDir, key);
 
 let holder: Holder | null = null;
 let server: Server | null = null;
-let saying: { stop(): void } | null = null;
 let currentKey: string | null = null;
 let currentUrl: string | null = null;
 const clients = new Set<Socket>();
@@ -109,7 +99,7 @@ function sweepStale(dir: string, mine: string): void {
   if (process.platform === "win32" || !existsSync(dir)) return;
   for (const f of readdirSync(dir).filter((x) => x.endsWith(".key"))) {
     const keyFile = join(dir, f);
-    let key = "";
+    let key: string;
     try {
       key = readFileSync(keyFile, "utf8").trim();
     } catch {
@@ -118,7 +108,7 @@ function sweepStale(dir: string, mine: string): void {
     if (!key || key === mine) continue;
     const sock = socketPathFor(key);
     const drop = (): void => {
-      for (const p of [keyFile, sock, sayPathFor(key)]) {
+      for (const p of [keyFile, sock]) {
         try {
           unlinkSync(p);
         } catch {}
@@ -179,8 +169,6 @@ export function releaseStanding(reason: string): void {
   broadcast({ kind: "released", text: reason });
   holder?.close(reason);
   holder = null;
-  saying?.stop();
-  saying = null;
   for (const c of clients) {
     try {
       c.end();
@@ -203,9 +191,6 @@ export function releaseStanding(reason: string): void {
         unlinkSync(socketPathFor(currentKey));
       } catch {}
     }
-    try {
-      unlinkSync(sayPathFor(currentKey)); // занятость умирает со стоянием, не переживает его
-    } catch {}
   }
   ring.length = 0;
   currentKey = null;
@@ -252,19 +237,6 @@ function holdStanding(url: string, statusUrl?: string | null): string {
       broadcast({ kind: "note", text });
     },
   });
-  saying = startSaying(
-    {
-      sayFile: sayPathFor(key),
-      statusUrl: statusUrl || deriveStatusUrl(url),
-      onRefused: (_text, status) => {
-        const text = `ДЕЛАТЕЛЬ: строку занятости не приняли (${status ?? "нет ответа"}) — укороти её`;
-        log(text);
-        broadcast({ kind: "note", text });
-        notify("warning", { kind: "note", text });
-      },
-    },
-    (file) => readFileSync(file, "utf8"),
-  );
   return key;
 }
 
@@ -301,7 +273,7 @@ export function absorbChannelReply(msg: JsonRpcMessage, reply: JsonRpcMessage): 
     ` (строка выше о том, что никто не слушает, описывает миг до этого держания).` +
     `\nСлушать: node "${self}" watchdog ${key}${where} — под Monitor с persistent: true (Claude Code);` +
     ` фоновой задачей — node "${self}" watchdog-exit ${key}${where} (выходит нулём на первом сообщении).` +
-    `\nЗанятость: пиши текст в ${sayPathFor(key)}; пустой текст снимает.` +
+    `\nЗанятость: iskron_channel(action="status", realm, text) — пустой text снимает.` +
     `\nКадры приходят и уведомлениями MCP (logger iskron-channel).`;
   const content = reply.result?.content;
   if (Array.isArray(content)) {

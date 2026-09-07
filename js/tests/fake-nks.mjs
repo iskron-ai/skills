@@ -497,6 +497,41 @@ export async function startFakeNks(opts = {}) {
             extra,
           );
         }
+        if (a.action === "status") {
+          const bound = st.standings.get(sid);
+          const text = typeof a.text === "string" ? a.text : "";
+          const refuse = (t) =>
+            json(
+              res,
+              200,
+              {
+                jsonrpc: "2.0",
+                id: msg.id,
+                result: { isError: true, content: [{ type: "text", text: t }] },
+              },
+              extra,
+            );
+          if (!bound)
+            return refuse(
+              "Отказано (409, session_not_registered): эта сессия не зарегистрирована ни за каким стоянием",
+            );
+          if ([...text].length > 70)
+            return refuse("Отказано (422): строка занятости длиннее предела — укороти её");
+          st.status = text;
+          st.counts.status_posts++;
+          return json(
+            res,
+            200,
+            {
+              jsonrpc: "2.0",
+              id: msg.id,
+              result: {
+                content: [{ type: "text", text: `занятость ${bound}: ${text || "(снята)"}` }],
+              },
+            },
+            extra,
+          );
+        }
         if (a.action === "send") {
           const bound = st.standings.get(sid);
           if (!bound) {

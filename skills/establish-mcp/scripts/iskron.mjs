@@ -1103,9 +1103,6 @@ function httpOrigin(socketUrl) {
 function versionUrl(socketUrl) {
   return httpOrigin(socketUrl) + "/api/version";
 }
-function statusUrl(socketUrl) {
-  return socketUrl.replace(/^wss:/, "https:").replace(/^ws:/, "http:").replace("/channel/ws/", "/channel/status/");
-}
 async function serviceUp(socketUrl) {
   return fetch(versionUrl(socketUrl), { signal: AbortSignal.timeout(5e3) }).then((r) => r.ok ? r.json() : null).catch(() => null);
 }
@@ -1186,42 +1183,6 @@ function holdSocket(o) {
     }
   };
 }
-function startSaying(o, readText) {
-  let said = null;
-  let complained = null;
-  async function say() {
-    let text;
-    try {
-      text = readText(o.sayFile).trim();
-    } catch {
-      return;
-    }
-    if (text === said) return;
-    const res = await fetch(o.statusUrl, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ text }),
-      signal: AbortSignal.timeout(5e3)
-    }).catch(() => null);
-    if (res?.ok) {
-      said = text;
-      complained = null;
-      return;
-    }
-    if (complained !== text) {
-      complained = text;
-      o.onRefused?.(text, res ? res.status : null);
-    }
-    if (res && res.status >= 400 && res.status < 500) said = text;
-  }
-  const timer = setInterval(() => void say(), o.intervalMs ?? 1e3);
-  timer.unref?.();
-  return {
-    stop() {
-      clearInterval(timer);
-    }
-  };
-}
 
 // js/shared/standings.ts
 import { createHash as createHash3 } from "node:crypto";
@@ -1236,7 +1197,6 @@ function socketPathOf(authDir, key) {
   return join3(standingsDirOf(authDir), `${hashOf(key)}.sock`);
 }
 var keyFilePathOf = (authDir, key) => join3(standingsDirOf(authDir), `${hashOf(key)}.key`);
-var sayPathOf = (authDir, key) => join3(standingsDirOf(authDir), `${key}.say`);
 
 // js/bridge/transport.ts
 var state = {
@@ -1494,10 +1454,8 @@ function keyFor() {
 }
 var socketPathFor = (key) => socketPathOf(CFG.authDir, key);
 var keyFilePathFor = (key) => keyFilePathOf(CFG.authDir, key);
-var sayPathFor = (key) => sayPathOf(CFG.authDir, key);
 var holder = null;
 var server = null;
-var saying = null;
 var currentKey = null;
 var currentUrl = null;
 var clients = /* @__PURE__ */ new Set();
@@ -1523,7 +1481,7 @@ function sweepStale(dir, mine) {
   if (process.platform === "win32" || !existsSync(dir)) return;
   for (const f of readdirSync(dir).filter((x) => x.endsWith(".key"))) {
     const keyFile = join4(dir, f);
-    let key = "";
+    let key;
     try {
       key = readFileSync6(keyFile, "utf8").trim();
     } catch {
@@ -1532,7 +1490,7 @@ function sweepStale(dir, mine) {
     if (!key || key === mine) continue;
     const sock = socketPathFor(key);
     const drop = () => {
-      for (const p of [keyFile, sock, sayPathFor(key)]) {
+      for (const p of [keyFile, sock]) {
         try {
           unlinkSync4(p);
         } catch {
@@ -1592,8 +1550,6 @@ function releaseStanding(reason) {
   broadcast({ kind: "released", text: reason });
   holder?.close(reason);
   holder = null;
-  saying?.stop();
-  saying = null;
   for (const c of clients) {
     try {
       c.end();
@@ -1620,16 +1576,12 @@ function releaseStanding(reason) {
       } catch {
       }
     }
-    try {
-      unlinkSync4(sayPathFor(currentKey));
-    } catch {
-    }
   }
   ring.length = 0;
   currentKey = null;
   currentUrl = null;
 }
-function holdStanding(url, statusUrl2) {
+function holdStanding(url, statusUrl) {
   const key = keyFor();
   if (url === currentUrl && key === currentKey && holder?.alive) return key;
   releaseStanding("новый сокет");
@@ -1666,19 +1618,6 @@ function holdStanding(url, statusUrl2) {
       broadcast({ kind: "note", text });
     }
   });
-  saying = startSaying(
-    {
-      sayFile: sayPathFor(key),
-      statusUrl: statusUrl2 || statusUrl(url),
-      onRefused: (_text, status) => {
-        const text = `ДЕЛАТЕЛЬ: строку занятости не приняли (${status ?? "нет ответа"}) — укороти её`;
-        log(text);
-        broadcast({ kind: "note", text });
-        notify("warning", { kind: "note", text });
-      }
-    },
-    (file) => readFileSync6(file, "utf8")
-  );
   return key;
 }
 var SOCKET_RE = /wss:\/\/[^\s"'`<>)\]]+|ws:\/\/(?:127\.0\.0\.1|\[?::1\]?|localhost)(?::\d+)?\/[^\s"'`<>)\]]+/;
@@ -1703,7 +1642,7 @@ function absorbChannelReply(msg, reply) {
 
 [iskron-bridge] Сокет этого стояния держит мост — вручать его никому не нужно (строка выше о том, что никто не слушает, описывает миг до этого держания).
 Слушать: node "${self}" watchdog ${key}${where} — под Monitor с persistent: true (Claude Code); фоновой задачей — node "${self}" watchdog-exit ${key}${where} (выходит нулём на первом сообщении).
-Занятость: пиши текст в ${sayPathFor(key)}; пустой текст снимает.
+Занятость: iskron_channel(action="status", realm, text) — пустой text снимает.
 Кадры приходят и уведомлениями MCP (logger iskron-channel).`;
   const content = reply.result?.content;
   if (Array.isArray(content)) {

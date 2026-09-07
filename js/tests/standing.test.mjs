@@ -10,7 +10,7 @@
 // appears — the red this probe exists to show.
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
@@ -171,7 +171,10 @@ test("connect through the bridge: the bridge holds the socket and the answer nam
     text.includes(`watchdog ${key} --auth-dir "${dir}"`),
     `a bridge off the default auth dir must tell the watchdog where to look:\n${text}`,
   );
-  assert.ok(text.includes(join(standings, `${key}.say`)), "the busy-line file path must be named");
+  assert.ok(
+    text.includes('iskron_channel(action="status"'),
+    "the block must name the status call, not a file",
+  );
   await waitFor(() => fake.state.ws.size === 1, "the bridge to open the standing socket");
   const held = readdirSync(standings);
   assert.ok(
@@ -230,16 +233,11 @@ test("a dead-token close leaves the watchdog loudly and reaches the harness as a
     () => !readdirSync(standings).some((f) => f.endsWith(".sock")),
     "the local socket to be withdrawn",
   );
-  assert.ok(
-    !readdirSync(standings).some((f) => f.endsWith(".say")),
-    "the busy-line file must die with the standing, not outlive it",
-  );
 });
 
-test("connect under a new name re-keys the hold: the block, the key file and the say path follow the name", async (t) => {
-  const { fake, bridge, key, standings } = await connected(t);
+test("connect under a new name re-keys the hold: the block and the key file follow the name", async (t) => {
+  const { fake, bridge, standings } = await connected(t);
   await waitFor(() => fake.state.ws.size === 1, "the first socket");
-  writeFileSync(join(standings, `${key}.say`), "старое имя");
   const reply = await bridge.call("tools/call", 5, {
     name: "iskron_channel",
     arguments: { ...CONNECT, name: "vtoraya" },
@@ -250,7 +248,6 @@ test("connect under a new name re-keys the hold: the block, the key file and the
     key2 && key2.startsWith("vtoraya--"),
     `the block still names the old standing:\n${text}`,
   );
-  assert.ok(text.includes(join(standings, `${key2}.say`)), "the say path must follow the new name");
   await waitFor(
     () =>
       readdirSync(standings).some((f) => f.endsWith(".key")) &&
@@ -259,7 +256,6 @@ test("connect under a new name re-keys the hold: the block, the key file and the
         .every((f) => readFileSync(join(standings, f), "utf8").trim() === key2),
     "the key file to carry the new name only",
   );
-  assert.ok(!existsSync(join(standings, `${key}.say`)), "the old busy-line file must be gone");
 });
 
 test("watchdog-exit exits 0 on the first message and lets service frames pass", async (t) => {
@@ -273,17 +269,28 @@ test("watchdog-exit exits 0 on the first message and lets service frames pass", 
   assert.ok(wd.out.includes("будильник"), "the frame must be printed before the exit");
 });
 
-test("the busy line written to the file reaches the service; an over-long line is refused once", async (t) => {
-  const { fake, key, standings, bridge } = await connected(t);
+test("the busy line is a call to one's own standing, proxied as is; no file is involved", async (t) => {
+  const { fake, bridge, standings } = await connected(t);
   await waitFor(() => fake.state.ws.size === 1, "the socket");
-  writeFileSync(join(standings, `${key}.say`), "чиню мост");
-  await waitFor(() => fake.state.status === "чиню мост", "the busy line to be published");
+  const ok = await bridge.call("tools/call", 6, {
+    name: "iskron_channel",
+    arguments: { realm: "nks-dev", action: "status", text: "чиню мост" },
+  });
+  assert.ok(!ok.result?.isError, JSON.stringify(ok));
+  assert.equal(fake.state.status, "чиню мост");
   assert.equal(fake.state.counts.status_posts, 1);
-  writeFileSync(join(standings, `${key}.say`), "x".repeat(80));
-  await waitFor(() => bridge.stderr.includes("не приняли (422)"), "the refusal to be named");
-  await new Promise((r) => setTimeout(r, 1500));
+  // The bridge does not judge the line: the surface's refusal comes back whole.
+  const long = await bridge.call("tools/call", 7, {
+    name: "iskron_channel",
+    arguments: { realm: "nks-dev", action: "status", text: "x".repeat(80) },
+  });
+  assert.ok(long.result?.isError, "an over-long line is the surface's refusal, passed through");
+  assert.match(long.result.content[0].text, /422/);
   assert.equal(fake.state.status, "чиню мост", "a refused line must not replace the published one");
-  assert.equal(fake.state.counts.status_posts, 1, "a refused line must not be retried");
+  assert.ok(
+    !readdirSync(standings).some((f) => f.endsWith(".say")),
+    "no busy-line file may exist any more",
+  );
 });
 
 test("tools/list carries the writing-moment line on write tools only", async (t) => {
