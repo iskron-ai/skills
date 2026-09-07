@@ -2017,10 +2017,21 @@ function openDoor(socketPath, onMessage, onClose) {
 function frameToText(frame2, raw) {
   if (!frame2) return `Кадр канала Искрона:
 ${raw}`;
-  const from = frame2.provenance?.from_standing || frame2.provenance?.from_karta_seq;
+  const p = frame2.provenance ?? {};
+  const from = p.from_standing || (p.from_karta_seq != null ? `#${p.from_karta_seq}` : null);
   const head = from ? `Кадр канала Искрона от ${from}` : "Кадр канала Искрона";
+  const facts = [];
+  if (p.from_karta_seq != null) facts.push(`роль #${p.from_karta_seq}`);
+  if (p.user)
+    facts.push(`человек @${p.user}` + (p.user_karta_seq != null ? ` (#${p.user_karta_seq})` : ""));
+  if (p.auth) facts.push(`auth ${p.auth}`);
+  if (p.via) facts.push(`via ${p.via}`);
+  if (p.in_reply_to) facts.push(`ответ на ${p.in_reply_to}`);
+  if (frame2.id) facts.push(`id ${frame2.id}`);
+  if (frame2.received_at) facts.push(`принят ${frame2.received_at}`);
+  if (frame2.stale) facts.push("stale: унаследован от другого места");
   const body = typeof frame2.body === "string" ? frame2.body : raw;
-  return `${head}:
+  return `${head}${facts.length ? ` [${facts.join(" · ")}]` : ""}:
 
 ${body}`;
 }
@@ -2126,7 +2137,7 @@ function runWatchdogCodex(argv2) {
   const socketPath = codexDoorPath();
   if (!existsSync3(socketPath)) {
     note(
-      `ДЕЛАТЕЛЬ: двери нет (${socketPath}) — тред не под демоном app-server. Подними демон (codex app-server daemon start, CODEX_HOME короткий: путь сокета ограничен) или слушай watchdog-exit`
+      `ДЕЛАТЕЛЬ: двери нет (${socketPath}) — этот тред не под демоном app-server. Это ход ЧЕЛОВЕКА до запуска сессии, не твой: демон и сессия Codex должны стартовать с одним коротким CODEX_HOME (рецепт в SETUP, раздел Codex). Скажи ему это; пока двери нет — слушай watchdog-exit`
     );
     process.exit(2);
   }
@@ -2496,6 +2507,19 @@ function harnessReport() {
     } else {
       out(`OpenCode: плагин ${copy} — ДРУГИЕ байты, обнови из поставки: cp "${packaged}" ${copy}`);
     }
+  }
+  const codexHome = process.env.CODEX_HOME?.trim() || join8(homedir5(), ".codex");
+  const door = join8(codexHome, "app-server-control", "app-server-control.sock");
+  if (existsSync4(codexHome)) {
+    if (existsSync4(door)) out(`Codex: дверь app-server открыта (${door})`);
+    else if (Buffer.byteLength(door) > 100)
+      out(
+        `Codex: двери нет и не будет — CODEX_HOME длиннее предела unix-сокета (${codexHome}); нужен короткий дом для демона и сессий`
+      );
+    else
+      out(
+        `Codex: двери нет (${door}) — демон app-server не поднят; без неё кадр доставляет watchdog-exit`
+      );
   }
   const codex = join8(homedir5(), ".codex", "config.toml");
   if (existsSync4(codex)) {

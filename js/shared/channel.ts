@@ -54,7 +54,19 @@ export function deadTokenAdvice(code: number): string {
 export interface Frame {
   type?: string;
   body?: unknown;
-  provenance?: { from_standing?: string; from_karta_seq?: number };
+  id?: string;
+  received_at?: string;
+  stale?: boolean;
+  provenance?: {
+    from_standing?: string;
+    from_karta_seq?: number;
+    auth?: string;
+    via?: string;
+    user?: string;
+    user_karta_seq?: number;
+    in_reply_to?: string;
+    [k: string]: unknown;
+  };
   [k: string]: unknown;
 }
 

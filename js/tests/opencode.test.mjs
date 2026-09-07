@@ -259,8 +259,14 @@ test("each root session gets its own bridge, and a frame goes to the session who
     assert.equal(rec.prompts.length, 0, "hello must not wake the agent");
     const frame = (body) => ({
       type: "message",
+      id: "msg-1",
       body,
-      provenance: { from_standing: "@alari:telegram-bot" },
+      provenance: {
+        from_standing: "@alari:telegram-bot",
+        from_karta_seq: 1226,
+        auth: "pat",
+        via: "hook",
+      },
     });
     appendFileSync(
       `${b.events}.${pidB}`,
@@ -274,7 +280,11 @@ test("each root session gets its own bridge, and a frame goes to the session who
     const to = Object.fromEntries(rec.prompts.map((p) => [p.path.id, p.body.parts[0].text]));
     assert.match(to["s-a"], /для первой/);
     assert.match(to["s-b"], /для второй/);
-    assert.match(to["s-a"], /от @alari:telegram-bot/);
+    assert.match(
+      to["s-a"],
+      /от @alari:telegram-bot \[роль #1226 · auth pat · via hook · id msg-1\]/,
+      "provenance must reach the agent whole",
+    );
   } finally {
     await rec.stop();
   }

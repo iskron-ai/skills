@@ -19,10 +19,21 @@ var BUILD = buildOf(import.meta.url);
 function frameToText(frame, raw) {
   if (!frame) return `Кадр канала Искрона:
 ${raw}`;
-  const from = frame.provenance?.from_standing || frame.provenance?.from_karta_seq;
+  const p = frame.provenance ?? {};
+  const from = p.from_standing || (p.from_karta_seq != null ? `#${p.from_karta_seq}` : null);
   const head = from ? `Кадр канала Искрона от ${from}` : "Кадр канала Искрона";
+  const facts = [];
+  if (p.from_karta_seq != null) facts.push(`роль #${p.from_karta_seq}`);
+  if (p.user)
+    facts.push(`человек @${p.user}` + (p.user_karta_seq != null ? ` (#${p.user_karta_seq})` : ""));
+  if (p.auth) facts.push(`auth ${p.auth}`);
+  if (p.via) facts.push(`via ${p.via}`);
+  if (p.in_reply_to) facts.push(`ответ на ${p.in_reply_to}`);
+  if (frame.id) facts.push(`id ${frame.id}`);
+  if (frame.received_at) facts.push(`принят ${frame.received_at}`);
+  if (frame.stale) facts.push("stale: унаследован от другого места");
   const body = typeof frame.body === "string" ? frame.body : raw;
-  return `${head}:
+  return `${head}${facts.length ? ` [${facts.join(" · ")}]` : ""}:
 
 ${body}`;
 }

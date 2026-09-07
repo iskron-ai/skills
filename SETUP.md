@@ -176,7 +176,10 @@ cp "$H/config.toml" /tmp/cxh/config.toml
 CODEX_HOME=/tmp/cxh codex app-server daemon start
 ```
 
-Сессии Codex, запущенные с тем же `CODEX_HOME`, прицепляются к демону сами.
+Сессии Codex, запущенные с тем же `CODEX_HOME`, прицепляются к демону сами; сессия,
+запущенная с другим домом, двери не имеет — агент изнутри этого не поправит, это
+делаешь ты до запуска. `node ~/.iskron-bridge/iskron-bridge.mjs doctor` под тем же
+`CODEX_HOME` говорит, открыта ли дверь.
 
 Дальше — скилл `standing`: `node "<мост>" watchdog-codex <ключ>` из оболочки сессии
 долгоживущим процессом. Без демона остаётся сторож выхода-на-кадре.

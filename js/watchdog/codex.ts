@@ -37,7 +37,7 @@ export function runWatchdogCodex(argv: string[]): void {
   const socketPath = codexDoorPath();
   if (!existsSync(socketPath)) {
     note(
-      `ДЕЛАТЕЛЬ: двери нет (${socketPath}) — тред не под демоном app-server. Подними демон (codex app-server daemon start, CODEX_HOME короткий: путь сокета ограничен) или слушай watchdog-exit`,
+      `ДЕЛАТЕЛЬ: двери нет (${socketPath}) — этот тред не под демоном app-server. Это ход ЧЕЛОВЕКА до запуска сессии, не твой: демон и сессия Codex должны стартовать с одним коротким CODEX_HOME (рецепт в SETUP, раздел Codex). Скажи ему это; пока двери нет — слушай watchdog-exit`,
     );
     process.exit(2);
   }
