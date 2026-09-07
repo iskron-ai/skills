@@ -480,14 +480,21 @@ try {
 //    держателя поверхности; форму его сервера здесь не нормализуем.
 try {
   const snapPath = join(root, "fixtures/surface.json");
-  const recPath = join(root, ".mcp.json");
-  if (existsSync(snapPath) && existsSync(recPath)) {
+  // Две отгружаемые записи: stdio-мост в .mcp.json (url там нет) и http-объект
+  // в манифесте Codex, который едет и в архив claude.ai.
+  const records = [
+    [".mcp.json", () => JSON.parse(readFileSync(join(root, ".mcp.json"), "utf8")).mcpServers],
+    [".codex-plugin/plugin.json", () => JSON.parse(readFileSync(join(root, ".codex-plugin/plugin.json"), "utf8")).mcpServers],
+  ];
+  if (existsSync(snapPath)) {
     const canonical = JSON.parse(readFileSync(snapPath, "utf8")).resource;
-    const servers = JSON.parse(readFileSync(recPath, "utf8")).mcpServers ?? {};
-    if (canonical) {
+    for (const [label, read] of records) {
+      if (!canonical || !existsSync(join(root, label))) continue;
+      const servers = read();
+      if (!servers || typeof servers !== "object") continue;
       for (const [name, rec] of Object.entries(servers)) {
         if (rec?.url && rec.url !== canonical) {
-          fail(".mcp.json", `запись \`${name}\` целит в ${JSON.stringify(rec.url)}, а канонический идентификатор ресурса — ${JSON.stringify(canonical)}: наивный клиент сравнит строки и откатится на «сервер авторизации = сам ресурс», сказав «сервер недоступен»`);
+          fail(label, `запись \`${name}\` целит в ${JSON.stringify(rec.url)}, а канонический идентификатор ресурса — ${JSON.stringify(canonical)}: наивный клиент сравнит строки и откатится на «сервер авторизации = сам ресурс», сказав «сервер недоступен»`);
         }
       }
     }

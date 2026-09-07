@@ -23,12 +23,13 @@ jobs:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
 
-  # release-please stamps the bridge's VERSION (extra-files generic) inside the
-  # release PR, but it cannot rebuild the committed .skill bundles — and a
-  # bundle that lags its source is exactly what make check-bundles guards
-  # against. So the release branch gets its bundles rebuilt here, right after
-  # release-please (re)writes it; a later regeneration of the branch re-runs
-  # this job through the same main push that caused it.
+  # release-please stamps VERSION in js/shared/version.ts (extra-files generic)
+  # inside the release PR, but it cannot rebuild the derived artifacts — the
+  # shipped JS outputs built from that source and the committed .skill bundles
+  # that carry them — and a derived file that lags its source is exactly what
+  # make check-js / check-bundles guard against. So the release branch gets
+  # everything rebuilt here, right after release-please (re)writes it; a later
+  # regeneration of the branch re-runs this job through the same main push.
   bundle-sync:
     needs: release-please
     if: ${{ needs.release-please.outputs.pr }}
@@ -37,7 +38,13 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ fromJSON(needs.release-please.outputs.pr).headBranchName }}
-      - name: Rebuild bundles for the stamped version
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: js/package-lock.json
+      - run: make deps
+      - name: Rebuild the shipped JS and the bundles for the stamped version
         run: make build
       - name: Commit them back to the release branch
         run: |
@@ -45,7 +52,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
-          git commit -m "chore: пересборка бандлов под проштампованную версию"
+          git commit -m "chore: пересборка отгружаемого JS и бандлов под проштампованную версию"
           git push
 
   # The claude.ai delivery artifact: that channel has no marketplace and no

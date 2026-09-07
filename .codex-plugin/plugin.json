@@ -19,7 +19,16 @@
     "weaving"
   ],
   "skills": "./skills/",
-  "mcpServers": "./.mcp.json",
+  "mcpServers": {
+    "iskron": {
+      "command": "node",
+      "args": [
+        "./skills/establish-mcp/scripts/iskron.mjs"
+      ],
+      "cwd": ".",
+      "startup_timeout_sec": 60
+    }
+  },
   "interface": {
     "displayName": "iskron",
     "shortDescription": "Методические скиллы NKS и граф Искрона",

@@ -4,12 +4,13 @@ name: CI
 # unescaped quote in a description) installs silently into every agent that loads
 # the skill, degrading methodology with no crash. This workflow is the loud gate:
 # it validates the frontmatter contract and proves the committed .skill bundles
-# match their source. Some of what ships is code — the bundled iskron-bridge and
-# the two standing watchdogs — and it carries behavioural suites, because those
-# failures (a dead callback listener, a burnt refresh grant, a watchdog that
-# holds a dead token in silence) are invisible to the agent and land on a human.
-# Each suite runs on the Node version its artifact claims: the bridge on 20, the
-# watchdogs on 22, since they take the global WebSocket.
+# match their source. Some of what ships is code — one file carrying the bridge,
+# both standing watchdogs and doctor, the pi extension, the roadmap renderer —
+# built from js/ and held to a production ladder: lint, format, strict types
+# (the extension against pi's real types), shipped outputs byte-identical to a
+# fresh build, and the behavioural suites. Those failures (a dead callback
+# listener, a burnt refresh grant, a watchdog that holds a dead token in
+# silence) are invisible to the agent and land on a human.
 
 on:
   push:
@@ -27,7 +28,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version-file: .nvmrc
       - run: make validate
 
   bundles-in-sync:
@@ -35,7 +36,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Verify committed bundles match skills/ (content, not raw bytes)
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+      - name: Verify committed bundles match skills/ (bytes)
         run: make check-bundles
 
   surface-lint:
@@ -45,57 +49,30 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version-file: .nvmrc
       - name: Lint tool names and enum values against fixtures/surface.json
         run: make check-surface
 
-  bridge-tests:
-    name: iskron-bridge behaves
+  js:
+    name: Shipped JS — lint, types, outputs, behaviour
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
-      - name: Drive the bridge over stdio against a local fake NKS + OAuth server
-        run: make test
-
-  watchdog-tests:
-    name: standing watchdogs behave
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-      - name: Run both watchdogs against a socket that closes with a dead-token code
-        run: make test-watchdog
-
-  extension-tests:
-    name: pi extension behaves
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          # 24, not 20: the probe loads the shipped .ts with Node's own stripper
-          # (no flag since 22.18) and the extension takes the global WebSocket.
-          node-version: "24"
-      - name: Drive the extension against a fake bridge and a fake socket
-        run: make test-extension
-
-  codex-delivery-tests:
-    name: Codex delivery manifests hold
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-      - name: Check the marketplace entry and what the manifest promises
-        # Codex's own acceptance validator lives on a developer machine, not
-        # here — that half self-skips by name, and the structural half stays.
-        run: make test-codex
+          # The floor the shipped file claims (global WebSocket): the suites run
+          # here so the claim stays proven, not on whatever is newest.
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: js/package-lock.json
+      - run: make deps
+      - run: make lint
+      - run: make format-check
+      - run: make typecheck
+      - name: Committed outputs are byte-identical to a fresh build from js/
+        run: make check-js
+      - name: Behavioural suites against the built outputs (fake NKS + OAuth, fake bridge, fake socket)
+        run: make test-coverage
 
   plugin-archive:
     name: Plugin archive builds

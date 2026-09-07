@@ -21,13 +21,22 @@ trap 'rm -rf "$staging"' EXIT
 # manifest nested inside a plugin dir.
 #
 # .mcp.json DOES go in, at the plugin root, because it is what makes the graph
-# server arrive with the plugin. The marketplace channel installs the repo
-# itself and picks it up there; leaving it out here made the same plugin behave
-# differently on claude.ai — no server at all, and nothing on the Connectors tab
-# to authorize, against a SETUP.md that promises exactly that.
+# server arrive with the plugin — but NOT the repo's own .mcp.json: that one is
+# the stdio bridge for Claude Code (a ${CLAUDE_PLUGIN_ROOT} path), and claude.ai
+# cannot run a local process (the Codex manifest carries the same stdio bridge
+# relative to its plugin root). This channel is the only one with a native http
+# record, and the record is not stored anywhere: it is derived here from the
+# canonical resource identifier in fixtures/surface.json, the one string the
+# server itself declares. Leaving the record out made the same plugin behave
+# differently on claude.ai — no server at all, and nothing on the Connectors
+# tab to authorize, against a SETUP.md that promises it.
 mkdir -p "$staging/iskron/.claude-plugin" dist
 cp .claude-plugin/plugin.json "$staging/iskron/.claude-plugin/"
-cp .mcp.json "$staging/iskron/"
+node -e '
+  const url = JSON.parse(require("fs").readFileSync("fixtures/surface.json", "utf8")).resource;
+  if (typeof url !== "string" || !/^https:\/\//.test(url)) throw new Error("fixtures/surface.json names no canonical resource");
+  process.stdout.write(JSON.stringify({ mcpServers: { iskron: { type: "http", url } } }, null, 2) + "\n");
+' > "$staging/iskron/.mcp.json"
 cp -R skills "$staging/iskron/"
 
 rm -f "$out"
@@ -46,9 +55,8 @@ for want in \
   iskron/.claude-plugin/plugin.json \
   iskron/.mcp.json \
   iskron/skills/establish-mcp/SKILL.md \
-  iskron/skills/establish-mcp/scripts/iskron-bridge.mjs \
-  iskron/skills/standing/references/watchdog.mjs \
-  iskron/skills/standing/references/watchdog-exit.mjs \
+  iskron/skills/establish-mcp/scripts/iskron.mjs \
+  iskron/skills/establish-mcp/scripts/opencode-plugin.js \
   iskron/skills/product-roadmap/references/roadmap-template.html; do
   grep -qxF "$want" <<<"$listing" || { echo "archive is missing $want" >&2; exit 1; }
 done

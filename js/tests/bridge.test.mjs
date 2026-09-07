@@ -4,23 +4,37 @@
 // harness or a browser would actually see — a JSON-RPC answer, an open port,
 // the token store on disk. Nothing here reaches the network or the real store.
 
-import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { connect, createServer } from "node:net";
 import { createHash } from "node:crypto";
-import { mkdtempSync, readFileSync, writeFileSync, readdirSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { connect, createServer } from "node:net";
 import { tmpdir } from "node:os";
-import { join, dirname } from "node:path";
+import { dirname, join } from "node:path";
+import { test } from "node:test";
 import { fileURLToPath } from "node:url";
+
 import { startFakeNks } from "./fake-nks.mjs";
 
 // Defaults to the source of truth; ISKRON_BRIDGE_PATH points the same suite at
 // another copy — a built bundle, an installed one, or a past revision when you
 // want to see a test fail on the defect it was written for.
-const BRIDGE = process.env.ISKRON_BRIDGE_PATH
-  || join(dirname(fileURLToPath(import.meta.url)), "..", "skills", "establish-mcp", "scripts", "iskron-bridge.mjs");
-const INIT_PARAMS = { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "test-harness", version: "0" } };
+const BRIDGE =
+  process.env.ISKRON_BRIDGE_PATH ||
+  join(
+    dirname(fileURLToPath(import.meta.url)),
+    "..",
+    "..",
+    "skills",
+    "establish-mcp",
+    "scripts",
+    "iskron.mjs",
+  );
+const INIT_PARAMS = {
+  protocolVersion: "2025-06-18",
+  capabilities: {},
+  clientInfo: { name: "test-harness", version: "0" },
+};
 
 // --- driving the bridge the way a harness does -----------------------------
 
@@ -41,29 +55,43 @@ function startBridge(serverUrl, authDir, extraEnv = {}) {
       if (!line) continue;
       const msg = JSON.parse(line);
       const w = waiters.get(msg.id);
-      if (w) { waiters.delete(msg.id); w(msg); }
+      if (w) {
+        waiters.delete(msg.id);
+        w(msg);
+      }
     }
   });
-  proc.stderr.on("data", (c) => { stderr += c; });
+  proc.stderr.on("data", (c) => {
+    stderr += c;
+  });
 
   return {
     proc,
-    get stderr() { return stderr; },
+    get stderr() {
+      return stderr;
+    },
     send: (msg) => proc.stdin.write(JSON.stringify(msg) + "\n"),
     // Every request must be answered — that is the bridge's core promise, so
     // the timeout here is a failure, never a skip.
     call(method, id, params = {}) {
       const p = new Promise((res, rej) => {
         waiters.set(id, res);
-        setTimeout(() => rej(new Error(`no answer for ${method} (id ${id}) — the bridge went silent`)), 15_000).unref();
+        setTimeout(
+          () => rej(new Error(`no answer for ${method} (id ${id}) — the bridge went silent`)),
+          15_000,
+        ).unref();
       });
       this.send({ jsonrpc: "2.0", id, method, params });
       return p;
     },
     // Idempotent: a bridge the test already killed must not be waited on again.
-    stop: () => (proc.exitCode !== null || proc.signalCode !== null)
-      ? Promise.resolve()
-      : new Promise((r) => { proc.once("exit", r); proc.kill("SIGKILL"); }),
+    stop: () =>
+      proc.exitCode !== null || proc.signalCode !== null
+        ? Promise.resolve()
+        : new Promise((r) => {
+            proc.once("exit", r);
+            proc.kill("SIGKILL");
+          }),
   };
 }
 
@@ -75,19 +103,33 @@ const callbackPortOf = (authorizeUrl) =>
 function portListening(port) {
   return new Promise((resolve) => {
     const s = connect({ host: "127.0.0.1", port });
-    const done = (v) => { s.destroy(); resolve(v); };
+    const done = (v) => {
+      s.destroy();
+      resolve(v);
+    };
     s.setTimeout(1000, () => done(false));
     s.once("connect", () => done(true));
     s.once("error", () => done(false));
   });
 }
 
-const storeFile = (dir) => join(dir, readdirSync(dir).find((f) => f.endsWith(".json")));
+const storeFile = (dir) =>
+  join(
+    dir,
+    readdirSync(dir).find((f) => f.endsWith(".json")),
+  );
 // The machine's memory of a refused grant. Aging it is how a test stands where
 // a refusal has already persisted, without spending the grace window in real time.
-const ageRefusal = (dir) => writeFileSync(
-  storeFile(dir) + ".grant-state", JSON.stringify({ refused_since: Date.now() - 600_000, reason: "aged by the test" }));
-const lockFile = (dir) => join(dir, readdirSync(dir).find((f) => f.endsWith(".auth-pending")));
+const ageRefusal = (dir) =>
+  writeFileSync(
+    storeFile(dir) + ".grant-state",
+    JSON.stringify({ refused_since: Date.now() - 600_000, reason: "aged by the test" }),
+  );
+const lockFile = (dir) =>
+  join(
+    dir,
+    readdirSync(dir).find((f) => f.endsWith(".auth-pending")),
+  );
 const readStore = (dir) => JSON.parse(readFileSync(storeFile(dir), "utf8"));
 
 // The bridge answers the harness at once and finishes the flow in the
@@ -96,13 +138,17 @@ const readStore = (dir) => JSON.parse(readFileSync(storeFile(dir), "utf8"));
 async function waitFor(check, what, timeoutMs = 10_000) {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
-    try { if (await check()) return; } catch { /* not there yet */ }
+    try {
+      if (await check()) return;
+    } catch {
+      /* not there yet */
+    }
     if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
     await new Promise((r) => setTimeout(r, 50));
   }
 }
-const grantLanded = (dir) => waitFor(
-  () => !!readStore(dir).tokens?.access_token, "the exchanged tokens to reach the store");
+const grantLanded = (dir) =>
+  waitFor(() => !!readStore(dir).tokens?.access_token, "the exchanged tokens to reach the store");
 
 // A whole authorization: ask, take the URL the bridge published, and play the
 // human's click on it. The redirect lands on the bridge's own loopback listener.
@@ -121,7 +167,11 @@ async function withFake(t, opts, fn) {
   const fake = await startFakeNks(opts);
   const dir = mkdtempSync(join(tmpdir(), "iskron-bridge-test-"));
   const bridges = [];
-  const spawnBridge = (env) => { const b = startBridge(fake.mcpUrl, dir, env); bridges.push(b); return b; };
+  const spawnBridge = (env) => {
+    const b = startBridge(fake.mcpUrl, dir, env);
+    bridges.push(b);
+    return b;
+  };
   try {
     await fn({ fake, dir, spawnBridge });
   } finally {
@@ -138,7 +188,10 @@ test("a call made with no tokens is answered, not swallowed, and carries the aut
     const answer = await bridge.call("initialize", 1, INIT_PARAMS);
     assert.equal(answer.id, 1);
     assert.ok(answer.error, "a call that cannot be served must come back as an error for its id");
-    assert.ok(authorizeUrlIn(answer.error.message), "the error must carry the URL the human has to open");
+    assert.ok(
+      authorizeUrlIn(answer.error.message),
+      "the error must carry the URL the human has to open",
+    );
   });
 });
 
@@ -147,8 +200,11 @@ test("the callback listener is up BEFORE the authorize URL is published", async 
     const bridge = spawnBridge();
     const answer = await bridge.call("initialize", 1, INIT_PARAMS);
     const url = authorizeUrlIn(answer.error.message);
-    assert.equal(await portListening(callbackPortOf(url)), true,
-      "the URL was handed out while nothing was listening on its redirect port");
+    assert.equal(
+      await portListening(callbackPortOf(url)),
+      true,
+      "the URL was handed out while nothing was listening on its redirect port",
+    );
   });
 });
 
@@ -159,7 +215,10 @@ test("the full flow authenticates and the next call goes through", async (t) => 
     const answer = await bridge.call("tools/list", 2);
     assert.deepEqual(answer.result.tools, [{ name: "nks_orient" }]);
     assert.equal(fake.state.counts.code_exchange, 1);
-    assert.ok(readStore(dir).tokens.refresh_token, "the grant must be persisted for the next process");
+    assert.ok(
+      readStore(dir).tokens.refresh_token,
+      "the grant must be persisted for the next process",
+    );
   });
 });
 
@@ -178,14 +237,21 @@ test("a pending flow whose listener is gone is taken over, not re-published", as
     const held = JSON.parse(readFileSync(lock, "utf8"));
     await first.stop(); // SIGKILL: no exit handler, the file survives its owner
     writeFileSync(lock, JSON.stringify({ ...held, pid: process.pid, started_at: Date.now() }));
-    assert.equal(await portListening(stalePort), false, "precondition: the dead owner's port is closed");
+    assert.equal(
+      await portListening(stalePort),
+      false,
+      "precondition: the dead owner's port is closed",
+    );
 
     const second = spawnBridge();
     const answer = await second.call("initialize", 2, INIT_PARAMS);
     const url = authorizeUrlIn(answer.error.message);
     assert.ok(url, "the fresh bridge must publish a URL of its own");
-    assert.equal(await portListening(callbackPortOf(url)), true,
-      "the fresh bridge re-published a URL with no listener behind it");
+    assert.equal(
+      await portListening(callbackPortOf(url)),
+      true,
+      "the fresh bridge re-published a URL with no listener behind it",
+    );
     // And the taken-over flow really completes.
     const res = await fetch(url, { redirect: "follow" });
     assert.equal(res.status, 200);
@@ -202,7 +268,11 @@ test("a bridge told to stop mid-flow outlives it, so the human's click still lan
     bridge.proc.kill("SIGTERM"); // what a harness does when its session ends
     await new Promise((r) => setTimeout(r, 400));
     assert.equal(bridge.proc.exitCode, null, "the bridge left while a human was mid-login");
-    assert.equal(await portListening(callbackPortOf(url)), true, "the redirect had nowhere to land");
+    assert.equal(
+      await portListening(callbackPortOf(url)),
+      true,
+      "the redirect had nowhere to land",
+    );
 
     const res = await fetch(url, { redirect: "follow" });
     assert.equal(res.status, 200);
@@ -248,10 +318,13 @@ test("a wind-down through a pipe nobody will ever read still ends", async (t) =>
     await new Promise((r) => setTimeout(r, 400));
     bridge.proc.stdout.destroy(); // ...and now nobody will ever read it
     bridge.proc.stderr.destroy();
-    bridge.proc.stdin.end();      // the harness is gone
+    bridge.proc.stdin.end(); // the harness is gone
 
-    await waitFor(() => bridge.proc.exitCode !== null || bridge.proc.signalCode !== null,
-      "the bridge to finish winding down", 12_000);
+    await waitFor(
+      () => bridge.proc.exitCode !== null || bridge.proc.signalCode !== null,
+      "the bridge to finish winding down",
+      12_000,
+    );
   });
 });
 
@@ -267,10 +340,15 @@ test("the browser is told what happened, not what was hoped", async (t) => {
 
     // The state is the bridge's own, so the redirect is accepted — but the code
     // is one the server never issued, so the exchange behind it fails.
-    const res = await fetch(`http://127.0.0.1:${callbackPortOf(url)}/callback?code=never-issued&state=${state}`);
+    const res = await fetch(
+      `http://127.0.0.1:${callbackPortOf(url)}/callback?code=never-issued&state=${state}`,
+    );
     const page = await res.text();
 
-    assert.ok(!/authenticated/i.test(page), `the human was told success over a failed exchange: ${page}`);
+    assert.ok(
+      !/authenticated/i.test(page),
+      `the human was told success over a failed exchange: ${page}`,
+    );
     assert.match(page, /failed/i, "the page must name the failure the human is looking at");
   });
 });
@@ -303,8 +381,10 @@ test("a finished flow leaves no pending lock behind", async (t) => {
   await withFake(t, {}, async ({ dir, spawnBridge }) => {
     const bridge = spawnBridge();
     await authorize(bridge, dir);
-    await waitFor(() => !readdirSync(dir).some((f) => f.endsWith(".auth-pending")),
-      "the pending lock to be dropped");
+    await waitFor(
+      () => !readdirSync(dir).some((f) => f.endsWith(".auth-pending")),
+      "the pending lock to be dropped",
+    );
   });
 });
 
@@ -312,9 +392,17 @@ test("a live flow is joined: every instance shows the same URL, one click serves
   await withFake(t, {}, async ({ dir, spawnBridge }) => {
     const winner = spawnBridge();
     const joiner = spawnBridge();
-    const winnerUrl = authorizeUrlIn((await winner.call("initialize", 1, INIT_PARAMS)).error.message);
-    const joinerUrl = authorizeUrlIn((await joiner.call("initialize", 1, INIT_PARAMS)).error.message);
-    assert.equal(joinerUrl, winnerUrl, "a second bridge must surface the standing flow, not start a rival one");
+    const winnerUrl = authorizeUrlIn(
+      (await winner.call("initialize", 1, INIT_PARAMS)).error.message,
+    );
+    const joinerUrl = authorizeUrlIn(
+      (await joiner.call("initialize", 1, INIT_PARAMS)).error.message,
+    );
+    assert.equal(
+      joinerUrl,
+      winnerUrl,
+      "a second bridge must surface the standing flow, not start a rival one",
+    );
 
     const res = await fetch(winnerUrl, { redirect: "follow" });
     assert.equal(res.status, 200);
@@ -334,7 +422,10 @@ test("a fresh process reuses the stored grant with no browser trip at all", asyn
 
     const second = spawnBridge();
     const answer = await second.call("initialize", 1, INIT_PARAMS);
-    assert.ok(answer.result, `the second process should have been served straight away: ${JSON.stringify(answer.error)}`);
+    assert.ok(
+      answer.result,
+      `the second process should have been served straight away: ${JSON.stringify(answer.error)}`,
+    );
     assert.equal(fake.state.counts.authorize, 1, "no second browser flow may be started");
   });
 });
@@ -355,8 +446,16 @@ test("an expired access token is refreshed silently, without touching the browse
     const answer = await second.call("initialize", 1, INIT_PARAMS);
     assert.ok(answer.result, `expected a served call, got ${JSON.stringify(answer.error)}`);
     assert.ok(fake.state.counts.refresh >= 1, "the bridge should have refreshed");
-    assert.equal(fake.state.counts.authorize, 1, "a refresh must not drag the user into the browser");
-    assert.notEqual(readStore(dir).tokens.refresh_token, s.tokens.refresh_token, "the rotated refresh token must be stored");
+    assert.equal(
+      fake.state.counts.authorize,
+      1,
+      "a refresh must not drag the user into the browser",
+    );
+    assert.notEqual(
+      readStore(dir).tokens.refresh_token,
+      s.tokens.refresh_token,
+      "the rotated refresh token must be stored",
+    );
   });
 });
 
@@ -370,13 +469,25 @@ test("a transient refresh failure keeps the grant and never opens a browser", as
     const s = readStore(dir);
     s.tokens.expires_at = Date.now() - 1000;
     writeFileSync(storeFile(dir), JSON.stringify(s));
-    await fake.control({ refreshStatus: 503, refreshError: "temporarily_unavailable", revoke_access: true });
+    await fake.control({
+      refreshStatus: 503,
+      refreshError: "temporarily_unavailable",
+      revoke_access: true,
+    });
 
     const second = spawnBridge();
     const answer = await second.call("initialize", 1, INIT_PARAMS);
     assert.ok(answer.error, "the call cannot be served while the token endpoint is down");
-    assert.equal(authorizeUrlIn(answer.error.message), null, "a 503 must not send the human to a login screen");
-    assert.equal(readStore(dir).tokens.refresh_token, before, "the grant must survive a transient failure");
+    assert.equal(
+      authorizeUrlIn(answer.error.message),
+      null,
+      "a 503 must not send the human to a login screen",
+    );
+    assert.equal(
+      readStore(dir).tokens.refresh_token,
+      before,
+      "the grant must survive a transient failure",
+    );
     assert.equal(fake.state.counts.authorize, 1);
   });
 });
@@ -398,19 +509,28 @@ test("a refused grant costs a login only once the refusal has stood", async (t) 
     const second = spawnBridge();
     const held = await second.call("initialize", 1, INIT_PARAMS);
     assert.ok(held.error, "a refused grant cannot serve the call");
-    assert.equal(authorizeUrlIn(held.error.message), null,
-      "one refusal can be a server mid-restart — it must not cost a login yet");
+    assert.equal(
+      authorizeUrlIn(held.error.message),
+      null,
+      "one refusal can be a server mid-restart — it must not cost a login yet",
+    );
     assert.equal(fake.state.counts.authorize, 1, "and no second flow may be started");
     // Whatever happens next, the reason must survive the process that saw it.
-    assert.match(readFileSync(join(dir, "grant.log"), "utf8"), /invalid_grant/,
-      "the grant log must carry the server's own words");
+    assert.match(
+      readFileSync(join(dir, "grant.log"), "utf8"),
+      /invalid_grant/,
+      "the grant log must carry the server's own words",
+    );
     await second.stop();
 
     ageRefusal(dir);
     const third = spawnBridge();
     const answer = await third.call("initialize", 1, INIT_PARAMS);
     const url = authorizeUrlIn(answer.error?.message);
-    assert.ok(url, `a refusal that persists must lead to a new authorization: ${JSON.stringify(answer)}`);
+    assert.ok(
+      url,
+      `a refusal that persists must lead to a new authorization: ${JSON.stringify(answer)}`,
+    );
     assert.equal(await portListening(callbackPortOf(url)), true);
   });
 });
@@ -434,40 +554,71 @@ test("Rauthy's dead-refresh 404 costs exactly one new browser flow", async (t) =
 
     const held = spawnBridge();
     const refusal = await held.call("initialize", 1, INIT_PARAMS);
-    assert.equal(authorizeUrlIn(refusal.error?.message), null,
-      "the first dead-grant refusal must still observe the login grace");
-    assert.equal(readStore(dir).tokens.refresh_token, before,
-      "the existing DeadGrant path must keep the grant through the grace");
+    assert.equal(
+      authorizeUrlIn(refusal.error?.message),
+      null,
+      "the first dead-grant refusal must still observe the login grace",
+    );
+    assert.equal(
+      readStore(dir).tokens.refresh_token,
+      before,
+      "the existing DeadGrant path must keep the grant through the grace",
+    );
     await held.stop();
 
     ageRefusal(dir);
     const beforeLogin = { ...fake.state.counts };
     const retries = [spawnBridge(), spawnBridge()];
-    const pending = await Promise.all(retries.map((bridge) => bridge.call("initialize", 1, INIT_PARAMS)));
+    const pending = await Promise.all(
+      retries.map((bridge) => bridge.call("initialize", 1, INIT_PARAMS)),
+    );
     const urls = pending.map((answer) => authorizeUrlIn(answer.error?.message));
-    assert.ok(urls.every(Boolean), `both processes must receive an authorization URL: ${JSON.stringify(pending)}`);
+    assert.ok(
+      urls.every(Boolean),
+      `both processes must receive an authorization URL: ${JSON.stringify(pending)}`,
+    );
     assert.equal(urls[1], urls[0], "both processes must join the same machine-wide browser flow");
-    assert.equal(fake.state.counts.register, beforeLogin.register,
-      "the joined flow must not hide a second dynamic client registration");
-    assert.equal(fake.state.counts.authorize, beforeLogin.authorize,
-      "publishing one flow must not visit its authorize URL before the human does");
+    assert.equal(
+      fake.state.counts.register,
+      beforeLogin.register,
+      "the joined flow must not hide a second dynamic client registration",
+    );
+    assert.equal(
+      fake.state.counts.authorize,
+      beforeLogin.authorize,
+      "publishing one flow must not visit its authorize URL before the human does",
+    );
 
     const res = await fetch(urls[0], { redirect: "follow" });
     assert.equal(res.status, 200, "the replacement authorization must complete");
     await res.text();
-    await waitFor(() => readStore(dir).tokens?.refresh_token !== before,
-      "the replacement grant to reach the store");
+    await waitFor(
+      () => readStore(dir).tokens?.refresh_token !== before,
+      "the replacement grant to reach the store",
+    );
     const served = await Promise.all(retries.map((bridge) => bridge.call("tools/list", 2)));
     for (const answer of served) {
-      assert.deepEqual(answer.result?.tools, [{ name: "nks_orient" }],
-        `the replacement grant must serve every process: ${JSON.stringify(answer.error)}`);
+      assert.deepEqual(
+        answer.result?.tools,
+        [{ name: "nks_orient" }],
+        `the replacement grant must serve every process: ${JSON.stringify(answer.error)}`,
+      );
     }
-    assert.equal(fake.state.counts.register, beforeLogin.register,
-      "the dead grant must not cost another dynamic client registration");
-    assert.equal(fake.state.counts.authorize, beforeLogin.authorize + 1,
-      "the dead grant must cost exactly one visit to one new browser flow");
-    assert.equal(fake.state.counts.code_exchange, beforeLogin.code_exchange + 1,
-      "the one browser flow must exchange exactly one authorization code");
+    assert.equal(
+      fake.state.counts.register,
+      beforeLogin.register,
+      "the dead grant must not cost another dynamic client registration",
+    );
+    assert.equal(
+      fake.state.counts.authorize,
+      beforeLogin.authorize + 1,
+      "the dead grant must cost exactly one visit to one new browser flow",
+    );
+    assert.equal(
+      fake.state.counts.code_exchange,
+      beforeLogin.code_exchange + 1,
+      "the one browser flow must exchange exactly one authorization code",
+    );
   });
 });
 
@@ -492,21 +643,30 @@ test("a keepalive that meets a dead refresh records the refusal, so the human's 
 
     const bridge = spawnBridge();
     const stateFile = storeFile(dir) + ".grant-state";
-    await waitFor(() => !!JSON.parse(readFileSync(stateFile, "utf8")).refused_since,
-      "the keepalive refusal to warm the human's grace", 5000);
+    await waitFor(
+      () => !!JSON.parse(readFileSync(stateFile, "utf8")).refused_since,
+      "the keepalive refusal to warm the human's grace",
+      5000,
+    );
     assert.equal(fake.state.counts.refresh, 1, "the keepalive must knock exactly once");
     assert.equal(fake.state.counts.authorize, 1, "the background must not open a browser");
     const log = readFileSync(join(dir, "grant.log"), "utf8");
     assert.match(log, /grant refused/, "the background refusal must reach the machine log");
     assert.doesNotMatch(log, /too early/, "a dead refresh is not an early speculative refusal");
-    assert.equal(readStore(dir).tokens.refresh_token, before, "the refused refresh must remain on disk");
+    assert.equal(
+      readStore(dir).tokens.refresh_token,
+      before,
+      "the refused refresh must remain on disk",
+    );
 
     const refusal = JSON.parse(readFileSync(stateFile, "utf8"));
     refusal.refused_since = Date.now() - 600_000;
     writeFileSync(stateFile, JSON.stringify(refusal));
     const answer = await bridge.call("initialize", 1, INIT_PARAMS);
-    assert.ok(authorizeUrlIn(answer.error?.message),
-      `the already-warm grace must offer login immediately: ${JSON.stringify(answer)}`);
+    assert.ok(
+      authorizeUrlIn(answer.error?.message),
+      `the already-warm grace must offer login immediately: ${JSON.stringify(answer)}`,
+    );
   });
 });
 
@@ -529,10 +689,19 @@ test("idle bridges knock once on a refused grant, not once per process", async (
     const bridges = [spawnBridge(), spawnBridge(), spawnBridge()];
     await waitFor(() => fake.state.counts.refresh >= 1, "one background control knock");
     await new Promise((r) => setTimeout(r, 1500));
-    assert.equal(fake.state.counts.refresh, 1, "the refused grant gets one machine-wide control knock");
-    assert.ok(bridges.every((b) => b.proc.exitCode === null), "every idle bridge must remain alive");
-    assert.ok(JSON.parse(readFileSync(storeFile(dir) + ".grant-state", "utf8")).refused_since,
-      "the machine must retain the refusal");
+    assert.equal(
+      fake.state.counts.refresh,
+      1,
+      "the refused grant gets one machine-wide control knock",
+    );
+    assert.ok(
+      bridges.every((b) => b.proc.exitCode === null),
+      "every idle bridge must remain alive",
+    );
+    assert.ok(
+      JSON.parse(readFileSync(storeFile(dir) + ".grant-state", "utf8")).refused_since,
+      "the machine must retain the refusal",
+    );
   });
 });
 
@@ -548,14 +717,19 @@ test("a request that left and never came back is reported as an unknown outcome"
 
     const answer = await bridge.call("tools/list", 2);
     assert.ok(answer.error, "a deadline that passes must still answer the harness");
-    assert.match(answer.error.message, /OUTCOME IS UNKNOWN/,
-      `a lost answer is not a call that never went out: ${answer.error.message}`);
-    assert.ok(!/retry freely/.test(answer.error.message),
-      "a blind retry after a lost answer can apply the write a second time");
+    assert.match(
+      answer.error.message,
+      /OUTCOME IS UNKNOWN/,
+      `a lost answer is not a call that never went out: ${answer.error.message}`,
+    );
+    assert.ok(
+      !/retry freely/.test(answer.error.message),
+      "a blind retry after a lost answer can apply the write a second time",
+    );
   });
 });
 
-test("a login held back for its grace period is not sold as \"retry freely\"", async (t) => {
+test('a login held back for its grace period is not sold as "retry freely"', async (t) => {
   // The first refusal of a grant costs no browser trip — it may be a server
   // mid-restart. But the call still fails, and that refusal names its own wait
   // in its own words, so the verdict beside it must read "not yet", never "now".
@@ -574,14 +748,25 @@ test("a login held back for its grace period is not sold as \"retry freely\"", a
     const held = spawnBridge();
     const answer = await held.call("initialize", 1, INIT_PARAMS);
     assert.ok(answer.error, "a refused grant cannot serve the call");
-    assert.match(answer.error.message, /holding off the login/,
-      "the test must stand on the grace path, not on some other refusal");
-    assert.ok(!/retry freely/.test(answer.error.message),
-      `a refusal that names its own wait must not invite a retry now: ${answer.error.message}`);
-    assert.match(answer.error.message, /clears itself by waiting/,
-      "a held login is the verdict's third form: safe, and not yet");
-    assert.equal((answer.error.message.match(/\b\d+s\b/g) ?? []).length, 1,
-      `exactly one interval must appear in a hold-off refusal: ${answer.error.message}`);
+    assert.match(
+      answer.error.message,
+      /holding off the login/,
+      "the test must stand on the grace path, not on some other refusal",
+    );
+    assert.ok(
+      !/retry freely/.test(answer.error.message),
+      `a refusal that names its own wait must not invite a retry now: ${answer.error.message}`,
+    );
+    assert.match(
+      answer.error.message,
+      /clears itself by waiting/,
+      "a held login is the verdict's third form: safe, and not yet",
+    );
+    assert.equal(
+      (answer.error.message.match(/\b\d+s\b/g) ?? []).length,
+      1,
+      `exactly one interval must appear in a hold-off refusal: ${answer.error.message}`,
+    );
   });
 });
 
@@ -603,7 +788,10 @@ test("the refresh nobody needs yet waits for its hour instead of spending a refu
     writeFileSync(storeFile(dir), JSON.stringify(s));
 
     const bridge = spawnBridge();
-    assert.ok((await bridge.call("initialize", 1, INIT_PARAMS)).result, "the token in hand still serves");
+    assert.ok(
+      (await bridge.call("initialize", 1, INIT_PARAMS)).result,
+      "the token in hand still serves",
+    );
     assert.equal(fake.state.counts.refresh, 0, "the speculative refresh must wait for the hour");
     assert.equal(fake.state.counts.authorize, 1, "and nobody may be sent to a browser over it");
   });
@@ -627,11 +815,21 @@ test("a refresh the caller needs knocks even before the hour, and never walls th
     const early = spawnBridge();
     const held = await early.call("initialize", 1, INIT_PARAMS);
     assert.ok(held.error, "the server did refuse — there is nothing to serve with yet");
-    assert.ok(fake.state.counts.refresh >= 1, "but the bridge must have ASKED, not decided for the server");
-    assert.equal(authorizeUrlIn(held.error.message), null, "a refusal this early is no proof of a dead grant");
+    assert.ok(
+      fake.state.counts.refresh >= 1,
+      "but the bridge must have ASKED, not decided for the server",
+    );
+    assert.equal(
+      authorizeUrlIn(held.error.message),
+      null,
+      "a refusal this early is no proof of a dead grant",
+    );
     assert.equal(readStore(dir).tokens.refresh_token, grant, "and the grant must survive it");
-    assert.match(held.error.message, /own hour is another \d+s away/,
-      "the figure names the token's schedule — never the length of the caller's deafness");
+    assert.match(
+      held.error.message,
+      /own hour is another \d+s away/,
+      "the figure names the token's schedule — never the length of the caller's deafness",
+    );
 
     // …and knocked ONCE. A harness retries; one rejected access token must not
     // become a burst of refused token requests from every bridge on the machine.
@@ -644,15 +842,23 @@ test("a refresh the caller needs knocks even before the hour, and never walls th
     ageRefusal(dir);
     const aged = spawnBridge();
     const still = await aged.call("initialize", 1, INIT_PARAMS);
-    assert.equal(authorizeUrlIn(still.error?.message ?? ""), null,
-      "a grant merely short of its hour must not drag a human to a browser, however long it stands");
+    assert.equal(
+      authorizeUrlIn(still.error?.message ?? ""),
+      null,
+      "a grant merely short of its hour must not drag a human to a browser, however long it stands",
+    );
     await aged.stop();
     await early.stop();
 
-    await new Promise((r) => setTimeout(r, Math.max(0, fake.state.refreshValidFrom - Date.now()) + 150));
+    await new Promise((r) =>
+      setTimeout(r, Math.max(0, fake.state.refreshValidFrom - Date.now()) + 150),
+    );
     const late = spawnBridge();
     const answer = await late.call("initialize", 1, INIT_PARAMS);
-    assert.ok(answer.result, `once in force the same grant must serve: ${JSON.stringify(answer.error)}`);
+    assert.ok(
+      answer.result,
+      `once in force the same grant must serve: ${JSON.stringify(answer.error)}`,
+    );
     assert.equal(fake.state.counts.authorize, 1, "and no human was ever asked");
   });
 });
@@ -664,10 +870,15 @@ test("the access token's own exp outranks the expires_in the server advertised",
     const bridge = spawnBridge();
     await authorize(bridge, dir);
 
-    const claimed = JSON.parse(Buffer.from(readStore(dir).tokens.access_token.split(".")[1], "base64url")).exp * 1000;
+    const claimed =
+      JSON.parse(Buffer.from(readStore(dir).tokens.access_token.split(".")[1], "base64url")).exp *
+      1000;
     const held = readStore(dir).tokens.expires_at;
     assert.ok(held <= claimed, "the bridge must not hold a token as good past its own exp");
-    assert.ok(claimed - held <= 120_000, `the margin should be a skew, not a guess: ${claimed - held}ms`);
+    assert.ok(
+      claimed - held <= 120_000,
+      `the margin should be a skew, not a guess: ${claimed - held}ms`,
+    );
   });
 });
 
@@ -678,10 +889,17 @@ test("a short-lived access token is not stale the moment it arrives", async (t) 
   await withFake(t, { accessTtl: 20 }, async ({ fake, dir, spawnBridge }) => {
     const bridge = spawnBridge();
     await authorize(bridge, dir);
-    assert.ok(readStore(dir).tokens.expires_at > Date.now(), "a token just issued must count as usable");
+    assert.ok(
+      readStore(dir).tokens.expires_at > Date.now(),
+      "a token just issued must count as usable",
+    );
 
     assert.ok((await bridge.call("tools/list", 2)).result);
-    assert.equal(fake.state.counts.refresh, 0, "and must not be topped up before it has been used once");
+    assert.equal(
+      fake.state.counts.refresh,
+      0,
+      "and must not be topped up before it has been used once",
+    );
   });
 });
 
@@ -700,8 +918,15 @@ test("a store written before the bridge knew about hours is still read by them",
     writeFileSync(storeFile(dir), JSON.stringify(s));
 
     const bridge = spawnBridge();
-    assert.ok((await bridge.call("initialize", 1, INIT_PARAMS)).result, "the token in hand still serves");
-    assert.equal(fake.state.counts.refresh, 0, "the token's own nbf must be honoured with no field to help");
+    assert.ok(
+      (await bridge.call("initialize", 1, INIT_PARAMS)).result,
+      "the token in hand still serves",
+    );
+    assert.equal(
+      fake.state.counts.refresh,
+      0,
+      "the token's own nbf must be honoured with no field to help",
+    );
     await bridge.stop();
 
     // And the same claims must carry the OTHER half: when the refresh is needed
@@ -716,8 +941,11 @@ test("a store written before the bridge knew about hours is still read by them",
     const needy = spawnBridge();
     const held = await needy.call("initialize", 1, INIT_PARAMS);
     assert.ok(held.error, "the server refuses it — nothing to serve with");
-    assert.equal(authorizeUrlIn(held.error.message), null,
-      "read from the token's own claims, this is too-early, not a dead grant");
+    assert.equal(
+      authorizeUrlIn(held.error.message),
+      null,
+      "read from the token's own claims, this is too-early, not a dead grant",
+    );
     assert.equal(readStore(dir).tokens.refresh_token, s2.tokens.refresh_token, "grant kept");
   });
 });
@@ -744,12 +972,18 @@ test("a login the human declines is not offered again on the next call", async (
     back.searchParams.set("error", "access_denied");
     back.searchParams.set("state", new URL(url).searchParams.get("state"));
     await (await fetch(back)).text();
-    await waitFor(async () => !(await portListening(callbackPortOf(url))), "the declined flow to close");
+    await waitFor(
+      async () => !(await portListening(callbackPortOf(url))),
+      "the declined flow to close",
+    );
 
     const again = await bridge.call("initialize", 2, INIT_PARAMS);
     assert.ok(again.error, "there is still nothing to serve with");
-    assert.equal(authorizeUrlIn(again.error.message), null,
-      "someone who just declined must not be asked again on the next tool call");
+    assert.equal(
+      authorizeUrlIn(again.error.message),
+      null,
+      "someone who just declined must not be asked again on the next tool call",
+    );
     assert.match(again.error.message, /not asking again/);
   });
 });
@@ -787,29 +1021,46 @@ test("a crowd of bridges refreshes the shared grant exactly once", async (t) => 
     await first.stop();
 
     const answers = await crowdPastExpiry(fake, dir, spawnBridge);
-    answers.forEach((a, i) => assert.ok(a.result, `bridge ${i} went unserved: ${JSON.stringify(a.error)}`));
-    assert.equal(fake.state.counts.stale_refresh, 0,
-      "no bridge may present a refresh token the server has already rotated away");
+    answers.forEach((a, i) =>
+      assert.ok(a.result, `bridge ${i} went unserved: ${JSON.stringify(a.error)}`),
+    );
+    assert.equal(
+      fake.state.counts.stale_refresh,
+      0,
+      "no bridge may present a refresh token the server has already rotated away",
+    );
     assert.equal(fake.state.counts.refresh, 1, "one grant, one expiry — one refresh");
     assert.equal(fake.state.counts.authorize, 1, "nobody may be sent back to a login screen");
   });
 });
 
 test("a server that reads replay as theft keeps the grant through the crowd", async (t) => {
-  await withFake(t, { refreshDelayMs: SLOW_TOKEN_MS, reuseDetection: true }, async ({ fake, dir, spawnBridge }) => {
-    const first = spawnBridge();
-    await authorize(first, dir);
-    await first.stop();
+  await withFake(
+    t,
+    { refreshDelayMs: SLOW_TOKEN_MS, reuseDetection: true },
+    async ({ fake, dir, spawnBridge }) => {
+      const first = spawnBridge();
+      await authorize(first, dir);
+      await first.stop();
 
-    const answers = await crowdPastExpiry(fake, dir, spawnBridge);
-    answers.forEach((a, i) => assert.ok(a.result, `bridge ${i} went unserved: ${JSON.stringify(a.error)}`));
-    assert.equal(fake.state.counts.authorize, 1, "a rotation race must not cost the human a re-login");
-    assert.ok(readStore(dir).tokens.refresh_token, "the machine must still hold a grant");
+      const answers = await crowdPastExpiry(fake, dir, spawnBridge);
+      answers.forEach((a, i) =>
+        assert.ok(a.result, `bridge ${i} went unserved: ${JSON.stringify(a.error)}`),
+      );
+      assert.equal(
+        fake.state.counts.authorize,
+        1,
+        "a rotation race must not cost the human a re-login",
+      );
+      assert.ok(readStore(dir).tokens.refresh_token, "the machine must still hold a grant");
 
-    const later = spawnBridge();
-    assert.ok((await later.call("initialize", 30, INIT_PARAMS)).result,
-      "and the grant it holds must still work");
-  });
+      const later = spawnBridge();
+      assert.ok(
+        (await later.call("initialize", 30, INIT_PARAMS)).result,
+        "and the grant it holds must still work",
+      );
+    },
+  );
 });
 
 for (const [way, go] of [
@@ -835,18 +1086,34 @@ for (const [way, go] of [
       const code = await Promise.race([
         exit,
         new Promise((_, reject) => {
-          setTimeout(() => reject(new Error("bridge did not wind down within 10s")), 10_000).unref();
+          setTimeout(
+            () => reject(new Error("bridge did not wind down within 10s")),
+            10_000,
+          ).unref();
         }),
       ]);
       assert.equal(code, 0, "the bridge must leave cleanly after preserving the rotation");
-      assert.notEqual(readStore(dir).tokens.refresh_token, old, "the old refresh token must be retired on disk");
-      assert.equal(readStore(dir).tokens.refresh_token, fake.state.refresh,
-        "the store must hold the refresh token the server rotated to");
+      assert.notEqual(
+        readStore(dir).tokens.refresh_token,
+        old,
+        "the old refresh token must be retired on disk",
+      );
+      assert.equal(
+        readStore(dir).tokens.refresh_token,
+        fake.state.refresh,
+        "the store must hold the refresh token the server rotated to",
+      );
 
       const next = spawnBridge();
-      assert.ok((await next.call("initialize", 1, INIT_PARAMS)).result,
-        "the next bridge must serve from the preserved rotation");
-      assert.equal(fake.state.counts.stale_refresh, 0, "no bridge may present the retired refresh token");
+      assert.ok(
+        (await next.call("initialize", 1, INIT_PARAMS)).result,
+        "the next bridge must serve from the preserved rotation",
+      );
+      assert.equal(
+        fake.state.counts.stale_refresh,
+        0,
+        "no bridge may present the retired refresh token",
+      );
     });
   });
 }
@@ -862,7 +1129,10 @@ test("a registration the server has forgotten is dropped, so the next login can 
     writeFileSync(storeFile(dir), JSON.stringify(s));
     // The server has expired the dynamic registration along with the grant.
     await fake.control({
-      forget_clients: true, refreshStatus: 400, refreshError: "invalid_client", revoke_access: true,
+      forget_clients: true,
+      refreshStatus: 400,
+      refreshError: "invalid_client",
+      revoke_access: true,
     });
     ageRefusal(dir); // the refusal has stood; the login is due
 
@@ -870,7 +1140,11 @@ test("a registration the server has forgotten is dropped, so the next login can 
     // refuses — a login the human cannot complete however often they click.
     const second = spawnBridge();
     await authorize(second, dir, 5);
-    assert.equal(fake.state.counts.register, 2, "the forgotten registration must be replaced, not reused");
+    assert.equal(
+      fake.state.counts.register,
+      2,
+      "the forgotten registration must be replaced, not reused",
+    );
   });
 });
 
@@ -895,11 +1169,14 @@ test("an answer bigger than a pipe buffer survives the harness going away", asyn
       });
       // A lost answer must fail this test, never hang it: the whole point is
       // that the harness is left waiting for something that will never come.
-      setTimeout(() => rej(new Error(`no whole line ever arrived — ${out.length} bytes of it did`)), 8000).unref();
+      setTimeout(
+        () => rej(new Error(`no whole line ever arrived — ${out.length} bytes of it did`)),
+        8000,
+      ).unref();
     });
     bridge.send({ jsonrpc: "2.0", id: 7, method: "tools/call", params: { name: "big" } });
     await new Promise((r) => setTimeout(r, 400)); // the answer is written, and stuck in the pipe
-    bridge.proc.kill("SIGTERM");                  // the harness asks the bridge to go away
+    bridge.proc.kill("SIGTERM"); // the harness asks the bridge to go away
 
     bridge.proc.stdout.resume();
     const line = await answer;
@@ -920,7 +1197,10 @@ test("стояние перерегистрируется само, когда �
   await withFake(t, {}, async ({ fake, dir, spawnBridge }) => {
     const bridge = spawnBridge();
     await authorize(bridge, dir);
-    assert.ok((await bridge.call("initialize", 2, INIT_PARAMS)).result, "сессия должна существовать");
+    assert.ok(
+      (await bridge.call("initialize", 2, INIT_PARAMS)).result,
+      "сессия должна существовать",
+    );
 
     const reg = await bridge.call("tools/call", 5, {
       name: "iskron_channel",
@@ -934,12 +1214,23 @@ test("стояние перерегистрируется само, когда �
       name: "iskron_channel",
       arguments: { realm: "nks-dev", action: "send", karta: 931, standing: "проба", text: "слово" },
     });
-    assert.equal(send.result.isError, undefined,
-      `запись после смены сессии легла безавторной: ${JSON.stringify(send.result)}`);
+    assert.equal(
+      send.result.isError,
+      undefined,
+      `запись после смены сессии легла безавторной: ${JSON.stringify(send.result)}`,
+    );
     assert.match(send.result.content[0].text, /принято стоянием проба/);
     assert.equal(fake.state.counts.unattributed, 0, "ни одна запись не должна лечь безавторной");
-    assert.equal(fake.state.counts.register_standing, 2, "мост обязан перерегистрировать стояние ровно один раз");
-    assert.equal(fake.state.counts.header_binds, 0, "кириллическое имя заголовком не едет — оно остаётся на переигрывании");
+    assert.equal(
+      fake.state.counts.register_standing,
+      2,
+      "мост обязан перерегистрировать стояние ровно один раз",
+    );
+    assert.equal(
+      fake.state.counts.header_binds,
+      0,
+      "кириллическое имя заголовком не едет — оно остаётся на переигрывании",
+    );
   });
 });
 
@@ -968,13 +1259,24 @@ test("параллельные вызовы после смены сессии �
 
     const [a, b] = await Promise.all([
       bridge.call("tools/call", 6, { name: "iskron_channel", arguments: SEND }),
-      bridge.call("tools/call", 7, { name: "iskron_channel", arguments: { ...SEND, text: "второе" } }),
+      bridge.call("tools/call", 7, {
+        name: "iskron_channel",
+        arguments: { ...SEND, text: "второе" },
+      }),
     ]);
     for (const r of [a, b]) {
-      assert.equal(r.result.isError, undefined, `параллельная запись легла безавторной: ${JSON.stringify(r.result)}`);
+      assert.equal(
+        r.result.isError,
+        undefined,
+        `параллельная запись легла безавторной: ${JSON.stringify(r.result)}`,
+      );
     }
     assert.equal(fake.state.counts.unattributed, 0, "ни одна запись не должна лечь безавторной");
-    assert.equal(fake.state.counts.register_standing, 2, "переигрывание одно на всех параллельных, не по одному на вызов");
+    assert.equal(
+      fake.state.counts.register_standing,
+      2,
+      "переигрывание одно на всех параллельных, не по одному на вызов",
+    );
   });
 });
 
@@ -983,16 +1285,24 @@ test("смена токена закрыла сессию, сервер молч
   // токен и повторяет вызов со СТАРЫМ id; сервер, открывающий на него новую сессию
   // молча, исполняет вызов безавторным и лишь в ответе сообщает новый id.
   // Первый случай #3919 совпал ровно с отказом обновления токена.
-  await withFake(t, { sessionFollowsToken: true, silentNewSession: true }, async ({ fake, dir, spawnBridge }) => {
-    const bridge = spawnBridge();
-    await standUp(bridge, dir);
-    await fake.control({ rotate_access: true }); // сосед провернул грант: наш bearer мёртв, сессия с ним
+  await withFake(
+    t,
+    { sessionFollowsToken: true, silentNewSession: true },
+    async ({ fake, dir, spawnBridge }) => {
+      const bridge = spawnBridge();
+      await standUp(bridge, dir);
+      await fake.control({ rotate_access: true }); // сосед провернул грант: наш bearer мёртв, сессия с ним
 
-    const send = await bridge.call("tools/call", 6, { name: "iskron_channel", arguments: SEND });
-    assert.equal(send.result?.isError, undefined, `запись после смены токена: ${JSON.stringify(send)}`);
-    assert.match(send.result.content[0].text, /принято стоянием proba/);
-    assert.equal(fake.state.counts.unattributed, 0, "ни одна запись не должна лечь безавторной");
-  });
+      const send = await bridge.call("tools/call", 6, { name: "iskron_channel", arguments: SEND });
+      assert.equal(
+        send.result?.isError,
+        undefined,
+        `запись после смены токена: ${JSON.stringify(send)}`,
+      );
+      assert.match(send.result.content[0].text, /принято стоянием proba/);
+      assert.equal(fake.state.counts.unattributed, 0, "ни одна запись не должна лечь безавторной");
+    },
+  );
 });
 
 test("проходящий отказ переигрывания не стирает память о стоянии", async (t) => {
@@ -1006,12 +1316,21 @@ test("проходящий отказ переигрывания не стира
     await fake.control({ kill_session: true, standingRefuseNext: 2 }); // первое переигрывание и первая попытка починки по пометке — обе отказаны
 
     const first = await bridge.call("tools/call", 6, { name: "iskron_channel", arguments: SEND });
-    const second = await bridge.call("tools/call", 7, { name: "iskron_channel", arguments: { ...SEND, text: "второе" } });
-    assert.equal(second.result?.isError, undefined,
-      `после проходящего отказа стояние забыто: ${JSON.stringify(second.result)}`);
+    const second = await bridge.call("tools/call", 7, {
+      name: "iskron_channel",
+      arguments: { ...SEND, text: "второе" },
+    });
+    assert.equal(
+      second.result?.isError,
+      undefined,
+      `после проходящего отказа стояние забыто: ${JSON.stringify(second.result)}`,
+    );
     assert.match(second.result.content[0].text, /принято стоянием proba/);
-    assert.equal(first.result?.isError, undefined,
-      `первая же запись после отказа должна дойти с автором, а не вернуть 409: ${JSON.stringify(first.result)}`);
+    assert.equal(
+      first.result?.isError,
+      undefined,
+      `первая же запись после отказа должна дойти с автором, а не вернуть 409: ${JSON.stringify(first.result)}`,
+    );
   });
 });
 
@@ -1026,7 +1345,11 @@ test("пересобранная сессия открывается уже пр
 
     const send = await bridge.call("tools/call", 6, { name: "iskron_channel", arguments: SEND });
     assert.equal(send.result?.isError, undefined, JSON.stringify(send.result));
-    assert.equal(fake.state.counts.header_binds, 1, "ре-инициализация обязана нести заголовок стояния");
+    assert.equal(
+      fake.state.counts.header_binds,
+      1,
+      "ре-инициализация обязана нести заголовок стояния",
+    );
     assert.equal(fake.state.counts.unattributed, 0, "ни одна запись не должна лечь безавторной");
     // Рукопожатие не говорит, принят ли заголовок, — register переигрывается и при нём:
     // один идемпотентный вызов на смену сессии покупает автора на обеих поверхностях.
@@ -1044,17 +1367,35 @@ test("платформа потеряла привязку при живой с�
     await fake.control({ drop_standings: true });
 
     const send = await bridge.call("tools/call", 6, { name: "iskron_channel", arguments: SEND });
-    assert.equal(send.result?.isError, undefined, `слово отбито 409 вместо починки: ${JSON.stringify(send.result)}`);
+    assert.equal(
+      send.result?.isError,
+      undefined,
+      `слово отбито 409 вместо починки: ${JSON.stringify(send.result)}`,
+    );
     assert.match(send.result.content[0].text, /принято стоянием proba/);
-    assert.equal(fake.state.counts.register_standing, 2, "мост обязан перерегистрировать стояние по пометке");
+    assert.equal(
+      fake.state.counts.register_standing,
+      2,
+      "мост обязан перерегистрировать стояние по пометке",
+    );
 
     // Пишущая фабрика не отказывает, а метит: узел лёг безавторным, вернуть автора
     // нельзя — но следующая запись обязана уже нести его.
     await fake.control({ drop_standings: true });
-    const write = await bridge.call("tools/call", 7, { name: "iskron_update", arguments: { realm: "nks-dev", node_id: 1, basis_version: 1 } });
+    const write = await bridge.call("tools/call", 7, {
+      name: "iskron_update",
+      arguments: { realm: "nks-dev", node_id: 1, basis_version: 1 },
+    });
     assert.match(write.result.content[0].text, /write_unattributed/);
-    const next = await bridge.call("tools/call", 8, { name: "iskron_update", arguments: { realm: "nks-dev", node_id: 1, basis_version: 2 } });
-    assert.match(next.result.content[0].text, /автор: proba/, `пометка не прочитана, следующая запись снова безавторна: ${JSON.stringify(next.result)}`);
+    const next = await bridge.call("tools/call", 8, {
+      name: "iskron_update",
+      arguments: { realm: "nks-dev", node_id: 1, basis_version: 2 },
+    });
+    assert.match(
+      next.result.content[0].text,
+      /автор: proba/,
+      `пометка не прочитана, следующая запись снова безавторна: ${JSON.stringify(next.result)}`,
+    );
   });
 });
 
@@ -1066,7 +1407,10 @@ test("a lost upstream session is re-established transparently", async (t) => {
     await fake.control({ kill_session: true });
 
     const answer = await bridge.call("tools/list", 3);
-    assert.ok(answer.result, `the bridge should have re-initialized and retried: ${JSON.stringify(answer.error)}`);
+    assert.ok(
+      answer.result,
+      `the bridge should have re-initialized and retried: ${JSON.stringify(answer.error)}`,
+    );
     assert.deepEqual(answer.result.tools, [{ name: "nks_orient" }]);
   });
 });
@@ -1098,17 +1442,28 @@ test("the error says whether the call may have taken effect, not just that it fa
 
     await fake.control({ mcpStatus: 500 }); // the server fell over — it may have fallen AFTER applying
     const unknown = await bridge.call("tools/list", 2);
-    assert.match(unknown.error.message, /OUTCOME IS UNKNOWN/,
-      "a lost answer must not be reported as a clean failure");
-    assert.match(unknown.error.message, /re-read the target/,
-      "the caller must be told what to do before retrying");
+    assert.match(
+      unknown.error.message,
+      /OUTCOME IS UNKNOWN/,
+      "a lost answer must not be reported as a clean failure",
+    );
+    assert.match(
+      unknown.error.message,
+      /re-read the target/,
+      "the caller must be told what to do before retrying",
+    );
 
     await fake.control({ mcpStatus: 400 }); // the server judged the request and refused it
     const refused = await bridge.call("tools/list", 3);
-    assert.match(refused.error.message, /never reached the server|nothing was applied/,
-      "a refused request is safe to retry, and saying so is the other half of the verdict");
-    assert.ok(!/OUTCOME IS UNKNOWN/.test(refused.error.message),
-      "a request that was refused outright must not be dressed as an unknown outcome");
+    assert.match(
+      refused.error.message,
+      /never reached the server|nothing was applied/,
+      "a refused request is safe to retry, and saying so is the other half of the verdict",
+    );
+    assert.ok(
+      !/OUTCOME IS UNKNOWN/.test(refused.error.message),
+      "a request that was refused outright must not be dressed as an unknown outcome",
+    );
 
     await fake.control({ mcpStatus: null });
     assert.ok((await bridge.call("tools/list", 4)).result, "the bridge must keep serving");
@@ -1138,35 +1493,66 @@ test("the hold-off ladder: retry now first, the cooldown waits short, a repeat n
     const held = spawnBridge();
     const knock = await held.call("initialize", 1, INIT_PARAMS); // the one knock, refused as early
     assert.ok(knock.error, "the server did refuse — there is nothing to serve with yet");
-    assert.match(knock.error.message, /authorization holding off/,
-      "a whole grant short of its hour is a hold-off, never a failed authorization");
-    assert.ok(!/authorization failed/.test(knock.error.message),
-      "\"failed\" sends the reader off to mend a grant nobody touched");
-    assert.match(knock.error.message, /grant is whole/,
-      "the verdict leads with what is intact, not with what refused");
-    assert.match(knock.error.message, /retry the call now/,
-      "the move that was witnessed working — an immediate retry — is the first rung");
-    assert.ok(!/wait out the interval named above/.test(knock.error.message),
-      "prescribing the token's whole hour as a wait once cost a caller half an hour of blindness");
-    assert.ok(!/server side needs attention/.test(knock.error.message),
-      "a pausing grant is the server's own pacing — not a defect to escalate");
-    assert.equal((knock.error.message.match(/\b\d+s\b/g) ?? []).length, 1,
-      `exactly one interval must appear in a hold-off refusal: ${knock.error.message}`);
+    assert.match(
+      knock.error.message,
+      /authorization holding off/,
+      "a whole grant short of its hour is a hold-off, never a failed authorization",
+    );
+    assert.ok(
+      !/authorization failed/.test(knock.error.message),
+      '"failed" sends the reader off to mend a grant nobody touched',
+    );
+    assert.match(
+      knock.error.message,
+      /grant is whole/,
+      "the verdict leads with what is intact, not with what refused",
+    );
+    assert.match(
+      knock.error.message,
+      /retry the call now/,
+      "the move that was witnessed working — an immediate retry — is the first rung",
+    );
+    assert.ok(
+      !/wait out the interval named above/.test(knock.error.message),
+      "prescribing the token's whole hour as a wait once cost a caller half an hour of blindness",
+    );
+    assert.ok(
+      !/server side needs attention/.test(knock.error.message),
+      "a pausing grant is the server's own pacing — not a defect to escalate",
+    );
+    assert.equal(
+      (knock.error.message.match(/\b\d+s\b/g) ?? []).length,
+      1,
+      `exactly one interval must appear in a hold-off refusal: ${knock.error.message}`,
+    );
 
     // The prescribed retry, landing inside the cooldown: the wait it names is
     // the cooldown's own seconds, real and short — not the retry-now door and
     // not the token's hour. The two rungs must not quote each other's moves.
     const cooled = await held.call("initialize", 2, INIT_PARAMS);
-    assert.match(cooled.error.message, /not knocking again for \d+s/,
-      "the cooldown refusal names its own short figure");
-    assert.match(cooled.error.message, /clears itself by waiting/,
-      "inside the cooldown the wait is honest — this rung must not say retry now");
-    assert.ok(!/retry the call now/.test(cooled.error.message),
-      "\"retry now\" inside the cooldown would send the caller in a circle");
-    assert.ok(!/server side needs attention/.test(cooled.error.message),
-      "the cooldown is the bridge's own thrift, no one's defect");
-    assert.equal((cooled.error.message.match(/\b\d+s\b/g) ?? []).length, 1,
-      `exactly one interval must appear in a cooldown refusal: ${cooled.error.message}`);
+    assert.match(
+      cooled.error.message,
+      /not knocking again for \d+s/,
+      "the cooldown refusal names its own short figure",
+    );
+    assert.match(
+      cooled.error.message,
+      /clears itself by waiting/,
+      "inside the cooldown the wait is honest — this rung must not say retry now",
+    );
+    assert.ok(
+      !/retry the call now/.test(cooled.error.message),
+      '"retry now" inside the cooldown would send the caller in a circle',
+    );
+    assert.ok(
+      !/server side needs attention/.test(cooled.error.message),
+      "the cooldown is the bridge's own thrift, no one's defect",
+    );
+    assert.equal(
+      (cooled.error.message.match(/\b\d+s\b/g) ?? []).length,
+      1,
+      `exactly one interval must appear in a cooldown refusal: ${cooled.error.message}`,
+    );
 
     // A repeat AFTER the cooldown: age the stamp so the next call knocks again
     // while the previous refusal is still fresh in the grant's memory.
@@ -1176,15 +1562,30 @@ test("the hold-off ladder: retry now first, the cooldown waits short, a repeat n
     writeFileSync(gsPath, JSON.stringify(gs));
 
     const repeat = await held.call("initialize", 3, INIT_PARAMS);
-    assert.match(repeat.error.message, /refused too early again/,
-      "the second knock refused is named as a repeat, not re-sold as the first");
-    assert.match(repeat.error.message, /the hour is real/,
-      "a refusal that repeats is the schedule speaking");
-    assert.match(repeat.error.message, /clears itself by waiting/,
-      "only now is the wait the honest prescription");
-    assert.ok(!/retry the call now/.test(repeat.error.message),
-      "the ladder must terminate: a proven hour never invites another immediate retry");
-    assert.equal(fake.state.counts.refresh, 2, "three calls, two knocks — the cooldown held the middle one");
+    assert.match(
+      repeat.error.message,
+      /refused too early again/,
+      "the second knock refused is named as a repeat, not re-sold as the first",
+    );
+    assert.match(
+      repeat.error.message,
+      /the hour is real/,
+      "a refusal that repeats is the schedule speaking",
+    );
+    assert.match(
+      repeat.error.message,
+      /clears itself by waiting/,
+      "only now is the wait the honest prescription",
+    );
+    assert.ok(
+      !/retry the call now/.test(repeat.error.message),
+      "the ladder must terminate: a proven hour never invites another immediate retry",
+    );
+    assert.equal(
+      fake.state.counts.refresh,
+      2,
+      "three calls, two knocks — the cooldown held the middle one",
+    );
   });
 });
 
@@ -1193,7 +1594,9 @@ test("a notification is never answered", async (t) => {
     const bridge = spawnBridge();
     await authorize(bridge, dir);
     let spoke = false;
-    bridge.proc.stdout.on("data", () => { spoke = true; });
+    bridge.proc.stdout.on("data", () => {
+      spoke = true;
+    });
     bridge.send({ jsonrpc: "2.0", method: "notifications/initialized", params: {} });
     await new Promise((r) => setTimeout(r, 500));
     assert.equal(spoke, false, "a message with no id must get no answer");
@@ -1211,13 +1614,17 @@ test("a foreign squatter on the callback port does not make login impossible", a
     // Exactly the first rung the bridge will try, occupied by something that
     // is not a bridge and never answers.
     const d = createHash("sha256").update(new URL(fake.mcpUrl).origin).digest();
-    const squatted = 42000 + (d[0] * 256 + d[1]) % 2000;
+    const squatted = 42000 + ((d[0] * 256 + d[1]) % 2000);
     const squatter = createServer(() => {});
     await new Promise((r) => squatter.listen(squatted, "127.0.0.1", r));
     try {
       const bridge = spawnBridge();
       const url = await authorize(bridge, dir);
-      assert.notEqual(callbackPortOf(url), squatted, "the bridge must have stepped off the held port");
+      assert.notEqual(
+        callbackPortOf(url),
+        squatted,
+        "the bridge must have stepped off the held port",
+      );
       assert.ok((await bridge.call("tools/list", 2)).result, "and the login must serve as usual");
     } finally {
       await new Promise((r) => squatter.close(r));
@@ -1233,8 +1640,12 @@ test("the bridge names the plugin's version — one delivery, one number", async
   // The version in the build string is the PLUGIN version, stamped by
   // release-please: quoting it dates the whole installed snapshot, skills
   // included. This invariant is what makes that reading trustworthy.
-  const plugin = JSON.parse(readFileSync(
-    join(dirname(fileURLToPath(import.meta.url)), "..", ".claude-plugin", "plugin.json"), "utf8"));
+  const plugin = JSON.parse(
+    readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), "..", "..", ".claude-plugin", "plugin.json"),
+      "utf8",
+    ),
+  );
   const out = await new Promise((res, rej) => {
     const p = spawn(process.execPath, [BRIDGE, "--version"]);
     let o = "";
@@ -1242,23 +1653,32 @@ test("the bridge names the plugin's version — one delivery, one number", async
     p.on("exit", () => res(o.trim()));
     p.on("error", rej);
   });
-  assert.match(out, new RegExp(`^v${plugin.version.replaceAll(".", "\\.")}\\+[0-9a-f]{8}$`),
-    `--version must name the delivery (plugin v${plugin.version}), got: ${out}`);
+  assert.match(
+    out,
+    new RegExp(`^v${plugin.version.replaceAll(".", "\\.")}\\+[0-9a-f]{8}$`),
+    `--version must name the delivery (plugin v${plugin.version}), got: ${out}`,
+  );
 });
 
 test("every surface a field report quotes names the exact build", async (t) => {
   await withFake(t, {}, async ({ dir, spawnBridge }) => {
     const bridge = spawnBridge();
     const pending = await bridge.call("initialize", 1, INIT_PARAMS);
-    assert.match(pending.error.message, /iskron-bridge v\d+\.\d+\.\d+\+[0-9a-f]{8}:/,
-      "a synthetic error must carry the build that produced it");
+    assert.match(
+      pending.error.message,
+      /iskron-bridge v\d+\.\d+\.\d+\+[0-9a-f]{8}:/,
+      "a synthetic error must carry the build that produced it",
+    );
     const url = authorizeUrlIn(pending.error.message);
     const res = await fetch(url, { redirect: "follow" });
     assert.equal(res.status, 200);
     await res.text();
     await grantLanded(dir);
-    assert.match(readFileSync(join(dir, "grant.log"), "utf8"), /v\d+\.\d+\.\d+\+[0-9a-f]{8}/,
-      "the grant log must carry the build too");
+    assert.match(
+      readFileSync(join(dir, "grant.log"), "utf8"),
+      /v\d+\.\d+\.\d+\+[0-9a-f]{8}/,
+      "the grant log must carry the build too",
+    );
   });
 });
 
@@ -1274,9 +1694,15 @@ test("a machine whose clock lies is judged by the server's clock, not its own", 
     await authorize(first, dir);
     await first.stop();
     const skew = readStore(dir).clock_skew_ms;
-    assert.ok(skew > 500_000, `the measured skew must be persisted for the next process, got ${skew}`);
-    assert.match(readFileSync(join(dir, "grant.log"), "utf8"), /machine clock is/,
-      "a lying clock must be named in the grant log — it is the diagnosis");
+    assert.ok(
+      skew > 500_000,
+      `the measured skew must be persisted for the next process, got ${skew}`,
+    );
+    assert.match(
+      readFileSync(join(dir, "grant.log"), "utf8"),
+      /machine clock is/,
+      "a lying clock must be named in the grant log — it is the diagnosis",
+    );
 
     // By the server's clock this token died ten seconds ago; by the machine's
     // it has most of ten minutes left. The keepalive must renew it without
@@ -1288,9 +1714,15 @@ test("a machine whose clock lies is judged by the server's clock, not its own", 
     const refreshed = fake.state.counts.refresh;
 
     const second = spawnBridge();
-    await waitFor(() => fake.state.counts.refresh > refreshed,
-      "the keepalive to renew a token the server already counts as spent", 5000);
-    assert.ok((await second.call("initialize", 1, INIT_PARAMS)).result, "and the renewed grant must serve");
+    await waitFor(
+      () => fake.state.counts.refresh > refreshed,
+      "the keepalive to renew a token the server already counts as spent",
+      5000,
+    );
+    assert.ok(
+      (await second.call("initialize", 1, INIT_PARAMS)).result,
+      "and the renewed grant must serve",
+    );
   });
 });
 
@@ -1319,15 +1751,32 @@ test("a generic NotFound 404 is rediscovery, not a dead refresh grant", async (t
     const second = spawnBridge();
     const answer = await second.call("initialize", 1, INIT_PARAMS);
     assert.ok(answer.error, "the missing cached endpoint cannot serve this attempt");
-    assert.equal(authorizeUrlIn(answer.error.message), null,
-      "a generic NotFound must not be classified as a dead refresh grant");
-    assert.match(answer.error.message, /rediscovering on the next attempt/,
-      `the caller must see the rediscovery state: ${answer.error.message}`);
-    assert.equal(readStore(dir).tokens.refresh_token, before,
-      "rediscovery must keep the grant whose validity was not judged");
+    assert.equal(
+      authorizeUrlIn(answer.error.message),
+      null,
+      "a generic NotFound must not be classified as a dead refresh grant",
+    );
+    assert.match(
+      answer.error.message,
+      /rediscovering on the next attempt/,
+      `the caller must see the rediscovery state: ${answer.error.message}`,
+    );
+    assert.equal(
+      readStore(dir).tokens.refresh_token,
+      before,
+      "rediscovery must keep the grant whose validity was not judged",
+    );
     assert.equal(readStore(dir).meta, null, "the stale discovery must be dropped");
-    assert.equal(fake.state.counts.register, counts.register, "rediscovery must not register another client");
-    assert.equal(fake.state.counts.authorize, counts.authorize, "rediscovery must not start a browser flow");
+    assert.equal(
+      fake.state.counts.register,
+      counts.register,
+      "rediscovery must not register another client",
+    );
+    assert.equal(
+      fake.state.counts.authorize,
+      counts.authorize,
+      "rediscovery must not start a browser flow",
+    );
   });
 });
 
@@ -1346,9 +1795,13 @@ test("a token endpoint that moved is rediscovered, not mourned forever", async (
     // discovery is what it buys. The call itself must still be served: by the
     // time it needs tokens, the endpoint has been found where it lives now.
     const second = spawnBridge();
-    const served = await second.call("initialize", 1, INIT_PARAMS)
-      .then((a) => a.result ? a : second.call("initialize", 2, INIT_PARAMS));
-    assert.ok(served.result, `the bridge must rediscover the moved endpoint and serve: ${JSON.stringify(served.error)}`);
+    const served = await second
+      .call("initialize", 1, INIT_PARAMS)
+      .then((a) => (a.result ? a : second.call("initialize", 2, INIT_PARAMS)));
+    assert.ok(
+      served.result,
+      `the bridge must rediscover the moved endpoint and serve: ${JSON.stringify(served.error)}`,
+    );
     assert.equal(fake.state.counts.authorize, 1, "a moved endpoint must never cost a login");
   });
 });
@@ -1373,7 +1826,10 @@ test("a grant past its own expiry asks for the login at once, not after a grace"
     const second = spawnBridge();
     const answer = await second.call("initialize", 1, INIT_PARAMS);
     const url = authorizeUrlIn(answer.error?.message);
-    assert.ok(url, `an expired grant is proof enough — the login must be offered now: ${JSON.stringify(answer)}`);
+    assert.ok(
+      url,
+      `an expired grant is proof enough — the login must be offered now: ${JSON.stringify(answer)}`,
+    );
     assert.equal(await portListening(callbackPortOf(url)), true);
   });
 });
@@ -1387,8 +1843,11 @@ test("a fresh token refused twice is reported as a config defect, not an expiry"
     await fake.control({ mcpStatus: 401 });
     const answer = await bridge.call("tools/list", 2);
     assert.ok(answer.error, "nothing can serve while the server refuses every token");
-    assert.match(answer.error.message, /audience|ISKRON_BRIDGE_RESOURCE/,
-      "the second refusal must point at the audience — the one thing a retry cannot fix");
+    assert.match(
+      answer.error.message,
+      /audience|ISKRON_BRIDGE_RESOURCE/,
+      "the second refusal must point at the audience — the one thing a retry cannot fix",
+    );
   });
 });
 
@@ -1404,8 +1863,16 @@ test("the resource override reaches every leg of a fresh authorization", async (
     const forced = "https://forced.example/mcp/";
     const bridge = spawnBridge({ ISKRON_BRIDGE_RESOURCE: forced });
     await authorize(bridge, dir);
-    assert.equal(fake.state.resources.authorize, forced, "the authorize leg asked for another audience");
-    assert.equal(fake.state.resources.code_exchange, forced, "the code exchange asked for another audience");
+    assert.equal(
+      fake.state.resources.authorize,
+      forced,
+      "the authorize leg asked for another audience",
+    );
+    assert.equal(
+      fake.state.resources.code_exchange,
+      forced,
+      "the code exchange asked for another audience",
+    );
   });
 });
 
@@ -1415,7 +1882,11 @@ test("the override still applies once discovery is cached — the defect it exis
     const first = spawnBridge();
     await authorize(first, dir);
     await first.stop();
-    assert.equal(fake.state.resources.code_exchange, fake.mcpUrl, "precondition: discovery's value was used");
+    assert.equal(
+      fake.state.resources.code_exchange,
+      fake.mcpUrl,
+      "precondition: discovery's value was used",
+    );
 
     // Exactly the operator's move: the audience was wrong, so set the override
     // and retry. Nothing clears the store first — nobody would think to.
@@ -1424,8 +1895,67 @@ test("the override still applies once discovery is cached — the defect it exis
     writeFileSync(storeFile(dir), JSON.stringify(s));
     const forced = "https://forced.example/mcp/";
     const second = spawnBridge({ ISKRON_BRIDGE_RESOURCE: forced });
-    assert.ok((await second.call("initialize", 1, INIT_PARAMS)).result, "the refreshed call should have been served");
-    assert.equal(fake.state.resources.refresh, forced,
-      "the override was ignored because discovery had already been cached in the store");
+    assert.ok(
+      (await second.call("initialize", 1, INIT_PARAMS)).result,
+      "the refreshed call should have been served",
+    );
+    assert.equal(
+      fake.state.resources.refresh,
+      forced,
+      "the override was ignored because discovery had already been cached in the store",
+    );
+  });
+});
+
+// --- the second entrance: a personal access token ----------------------------
+// A PAT is the whole grant: no discovery, no browser, nothing to refresh. The
+// bridge presents it and nothing else, and a refusal is final — a human with a
+// new token is the only repair, so the verdict must say so, never "retry" or
+// "open this URL".
+
+test("a personal access token serves the call with no discovery, no browser and no store", async (t) => {
+  await withFake(t, { pat: "nks_pat_probe" }, async ({ fake, dir, spawnBridge }) => {
+    const bridge = spawnBridge({ ISKRON_BRIDGE_TOKEN: "nks_pat_probe" });
+    const init = await bridge.call("initialize", 1, INIT_PARAMS);
+    assert.ok(
+      init.result,
+      `the token should have opened the session: ${JSON.stringify(init.error)}`,
+    );
+    const list = await bridge.call("tools/list", 2);
+    assert.ok(Array.isArray(list.result?.tools), "tools/list must be served under the token");
+    assert.equal(fake.state.counts.register, 0, "no client registration may happen");
+    assert.equal(fake.state.counts.authorize, 0, "no browser flow may be started");
+    assert.equal(
+      readdirSync(dir).filter((f) => f.endsWith(".json")).length,
+      0,
+      "a token given from outside must not be copied into the grant store",
+    );
+    assert.match(bridge.stderr, /personal access token from ISKRON_BRIDGE_TOKEN/);
+  });
+});
+
+test("the token file next to the grant is read when the variable is absent", async (t) => {
+  await withFake(t, { pat: "nks_pat_file" }, async ({ dir, spawnBridge }) => {
+    writeFileSync(join(dir, "token"), "nks_pat_file\n");
+    const bridge = spawnBridge();
+    const init = await bridge.call("initialize", 1, INIT_PARAMS);
+    assert.ok(
+      init.result,
+      `the token file should have opened the session: ${JSON.stringify(init.error)}`,
+    );
+    assert.match(bridge.stderr, new RegExp(`personal access token from ${join(dir, "token")}`));
+  });
+});
+
+test("a refused personal token is reported as dead — no URL, no wait, no retry", async (t) => {
+  await withFake(t, { pat: "nks_pat_good" }, async ({ fake, spawnBridge }) => {
+    const bridge = spawnBridge({ ISKRON_BRIDGE_TOKEN: "nks_pat_stale" });
+    const answer = await bridge.call("initialize", 1, INIT_PARAMS);
+    assert.ok(answer.error, "a refused token cannot serve the call");
+    assert.match(answer.error.message, /personal access token from ISKRON_BRIDGE_TOKEN/);
+    assert.match(answer.error.message, /only a human with a new token/);
+    assert.equal(authorizeUrlIn(answer.error.message), null, "no browser URL may be offered");
+    assert.doesNotMatch(answer.error.message, /retry freely|clears itself by waiting/);
+    assert.equal(fake.state.counts.authorize, 0);
   });
 });

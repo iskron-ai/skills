@@ -24,27 +24,63 @@ const MODE = process.env.FB_MODE || "ok";
 if (process.env.FB_LOG) appendFileSync(process.env.FB_LOG, `start ${process.pid}\n`);
 if (MODE === "die") process.exit(3);
 
-const TOOLS = JSON.parse(process.env.FB_TOOLS || JSON.stringify([
-  {
-    name: "iskron_channel",
-    description: "Живой канал делателя.\nВторая строка описания.",
-    inputSchema: {
-      $schema: "https://json-schema.org/draft/2020-12/schema",
-      type: "object",
-      properties: { action: { type: "string", enum: ["connect", "mint", "register"] } },
-      required: ["action"],
-    },
-  },
-  { name: "iskron_orient", description: "Ориентация в графе.", inputSchema: { type: "object", properties: {} } },
-]));
+const TOOLS = JSON.parse(
+  process.env.FB_TOOLS ||
+    JSON.stringify([
+      {
+        name: "iskron_channel",
+        description: "Живой канал делателя.\nВторая строка описания.",
+        inputSchema: {
+          $schema: "https://json-schema.org/draft/2020-12/schema",
+          type: "object",
+          properties: { action: { type: "string", enum: ["connect", "mint", "register"] } },
+          required: ["action"],
+        },
+      },
+      {
+        name: "iskron_orient",
+        description: "Ориентация в графе.",
+        inputSchema: { type: "object", properties: {} },
+      },
+    ]),
+);
 
 const send = (msg) => process.stdout.write(JSON.stringify(msg) + "\n");
+
+// FB_EVENTS: файл, каждая новая строка которого — событие стояния, которое
+// настоящий мост шлёт уведомлением notifications/message с logger
+// iskron-channel (см. js/bridge/hold.ts). Проба дописывает строки, фейк их
+// эмитит — так половина «канал» расширения проверяется без сокета вовсе.
+if (process.env.FB_EVENTS) {
+  let seen = 0;
+  setInterval(() => {
+    let text;
+    try {
+      text = readFileSync(process.env.FB_EVENTS, "utf8");
+    } catch {
+      return;
+    }
+    const lines = text.split("\n").filter((l) => l.trim());
+    for (const line of lines.slice(seen)) {
+      send({
+        jsonrpc: "2.0",
+        method: "notifications/message",
+        params: { level: "info", logger: "iskron-channel", data: JSON.parse(line) },
+      });
+    }
+    seen = lines.length;
+  }, 40).unref();
+}
 const ok = (id, result) => send({ jsonrpc: "2.0", id, result });
 
 function callResult(name) {
   let text = `ok:${name}`;
   if (process.env.FB_REPLY) {
-    try { text = readFileSync(process.env.FB_REPLY, "utf8"); } catch { /* keep the default */ }
+    try {
+      text = readFileSync(process.env.FB_REPLY, "utf8");
+    } catch {
+      /* keep the default */
+    }
   }
   if (text.startsWith("__ERROR__")) {
     return { isError: true, content: [{ type: "text", text: text.slice("__ERROR__".length) }] };
@@ -61,11 +97,19 @@ process.stdin.on("data", (chunk) => {
   for (const line of lines) {
     if (!line.trim()) continue;
     let msg;
-    try { msg = JSON.parse(line); } catch { continue; }
+    try {
+      msg = JSON.parse(line);
+    } catch {
+      continue;
+    }
     if (typeof msg.id !== "number") continue; // notifications need no answer
-    if (MODE === "mute") continue;            // ...and neither does anything, in this mode
+    if (MODE === "mute") continue; // ...and neither does anything, in this mode
     if (msg.method === "initialize") {
-      ok(msg.id, { protocolVersion: "2025-06-18", capabilities: {}, serverInfo: { name: "fake-nks", version: "0" } });
+      ok(msg.id, {
+        protocolVersion: "2025-06-18",
+        capabilities: {},
+        serverInfo: { name: "fake-nks", version: "0" },
+      });
     } else if (msg.method === "tools/list") {
       if (process.env.FB_PAGINATE === "1") {
         // The second page is only reachable through the cursor loop; a client
@@ -76,7 +120,11 @@ process.stdin.on("data", (chunk) => {
     } else if (msg.method === "tools/call") {
       ok(msg.id, callResult(msg.params?.name));
     } else {
-      send({ jsonrpc: "2.0", id: msg.id, error: { code: -32601, message: `нет метода ${msg.method}` } });
+      send({
+        jsonrpc: "2.0",
+        id: msg.id,
+        error: { code: -32601, message: `нет метода ${msg.method}` },
+      });
     }
   }
 });
