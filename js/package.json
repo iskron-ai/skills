@@ -1,0 +1,40 @@
+{
+  "name": "iskron-skills",
+  "private": true,
+  "description": "Тулчейн разработки отгружаемого JS поставки iskron (мост, сторожа, расширение pi, рендер роадмапа). Ничего отсюда не отгружается: выходы под skills/ и extensions/ — однофайловые и без зависимостей. Лежит в js/, а не в корне, нарочно: корневой lock-файл заставил бы Claude Code ставить эти dev-зависимости каждому пользователю плагина.",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "lint": "eslint \"**/*.{ts,mjs}\"",
+    "format": "prettier --write \"**/*.{ts,mjs}\"",
+    "format:check": "prettier --check \"**/*.{ts,mjs}\"",
+    "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.browser.json",
+    "test": "node --test tests/*.test.mjs",
+    "test:coverage": "node --test --experimental-test-coverage tests/*.test.mjs",
+    "build": "node build.mjs",
+    "check": "node build.mjs --check"
+  },
+  "lint-staged": {
+    "**/*.{ts,mjs}": [
+      "eslint --fix --max-warnings=9999",
+      "prettier --write"
+    ]
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "0.85.1",
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^22.20.0",
+    "esbuild": "^0.28.2",
+    "eslint": "^10.2.1",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-simple-import-sort": "^13.0.0",
+    "eslint-plugin-unused-imports": "^4.4.1",
+    "globals": "^17.5.0",
+    "lint-staged": "^16.4.0",
+    "prettier": "^3.8.3",
+    "typescript": "^5.9.0",
+    "typescript-eslint": "^8.58.2"
+  }
+}

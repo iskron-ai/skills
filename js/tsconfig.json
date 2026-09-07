@@ -14,5 +14,5 @@
     "forceConsistentCasingInFileNames": true,
     "noUncheckedIndexedAccess": false
   },
-  "include": ["js/shared/**/*.ts", "js/bridge/**/*.ts", "js/watchdog/**/*.ts", "js/cli/**/*.ts", "js/extension/**/*.ts"]
+  "include": ["shared/**/*.ts", "bridge/**/*.ts", "watchdog/**/*.ts", "cli/**/*.ts", "extension/**/*.ts"]
 }

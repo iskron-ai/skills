@@ -64,6 +64,7 @@ jobs:
           # here so the claim stays proven, not on whatever is newest.
           node-version-file: .nvmrc
           cache: npm
+          cache-dependency-path: js/package-lock.json
       - run: make deps
       - run: make lint
       - run: make format-check

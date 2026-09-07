@@ -42,6 +42,7 @@ jobs:
         with:
           node-version-file: .nvmrc
           cache: npm
+          cache-dependency-path: js/package-lock.json
       - run: make deps
       - name: Rebuild the shipped JS and the bundles for the stamped version
         run: make build

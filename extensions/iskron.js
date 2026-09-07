@@ -1,17 +1,5 @@
-// js/extension/iskron.ts
-import { spawn } from "node:child_process";
-import {
-  accessSync,
-  chmodSync,
-  constants,
-  readFileSync,
-  renameSync,
-  unlinkSync,
-  writeFileSync
-} from "node:fs";
-import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+// js/extension/channel.ts
+import { readFileSync } from "node:fs";
 
 // js/shared/channel.ts
 var DEAD_TOKEN_CODES = [4e3, 4001, 4002];
@@ -141,118 +129,117 @@ function startSaying(o, readText) {
   };
 }
 
-// js/shared/version.ts
-function versionIn(text) {
-  const m = /^(?:const|let|var)\s+VERSION\s*=\s*"([^"]+)"/m.exec(text);
-  return m ? m[1] : null;
+// js/extension/channel.ts
+function socketAddress() {
+  const direct = process.env.ISKRON_CHANNEL_SOCKET?.trim();
+  if (direct) return direct;
+  const file = process.env.ISKRON_CHANNEL_SOCKET_FILE?.trim();
+  if (!file) return null;
+  try {
+    return readFileSync(file, "utf8").trim() || null;
+  } catch {
+    return null;
+  }
+}
+function frameToText(frame, raw) {
+  if (!frame) return `Кадр канала Искрона:
+${raw}`;
+  const from = frame.provenance?.from_standing || frame.provenance?.from_karta_seq;
+  const head = from ? `Кадр канала Искрона от ${from}` : "Кадр канала Искрона";
+  const body = typeof frame.body === "string" ? frame.body : raw;
+  return `${head}:
+
+${body}`;
+}
+function setupChannel(pi) {
+  let holder = null;
+  let saying = null;
+  let ctxRef = null;
+  let current = null;
+  pi.on("session_start", async (_event, ctx) => {
+    ctxRef = ctx;
+    const url = socketAddress();
+    if (!url) {
+      if (ctx.hasUI) {
+        ctx.ui.notify(
+          'Искрон: места ещё нет. Займи стояние сам — iskron_channel(action="connect"), сразу за ним register тем же именем: слушание включится без отдельного действия.',
+          "info"
+        );
+      }
+      return;
+    }
+    hold(url);
+  });
+  function release(reason) {
+    holder?.close(reason);
+    holder = null;
+    saying?.stop();
+    saying = null;
+  }
+  function hold(url) {
+    if (url === current && holder?.alive) return;
+    current = url;
+    release("новый сокет");
+    const ctx = ctxRef;
+    holder = holdSocket({
+      url,
+      onFrame: (raw, frame) => {
+        if (frame?.type === "hello") {
+          if (ctx?.hasUI) ctx.ui.setStatus?.("iskron", "Искрон: канал слушает");
+          return;
+        }
+        if (frame?.type === "status") return;
+        pi.sendMessage(
+          {
+            customType: "iskron-channel",
+            content: frameToText(frame, raw),
+            display: true,
+            details: frame ?? { raw }
+          },
+          { triggerTurn: true, deliverAs: "steer" }
+        );
+      },
+      // Процессу здесь выйти некуда, поэтому громкость — это сказать делателю
+      // так, чтобы он это увидел в ходе, а не в логе, которого никто не читает.
+      onDeadToken: (code) => loud(
+        ctx,
+        `Искрон: канал закрыт кодом ${code} — токен мёртв. Зови iskron_channel(action="connect")` + (code === 4001 ? ' или action="mint"' : "") + ", затем register тем же именем: новый сокет расширение возьмёт из ответа само, перезапуск не нужен."
+      ),
+      onServiceAlive: (version) => loud(ctx, `Искрон: обрывы, а служба отвечает (${version}) — спроси о токене.`)
+    });
+    startSayingFor(url);
+    if (ctx?.hasUI) ctx.ui.setStatus?.("iskron", "Искрон: канал прицепляется");
+  }
+  pi.on("session_shutdown", async () => {
+    current = null;
+    release("session shutdown");
+  });
+  function loud(ctx, text) {
+    if (ctx?.hasUI) ctx.ui.notify(text, "error");
+    pi.sendMessage(
+      { customType: "iskron-channel", content: text, display: true, details: { fatal: true } },
+      { triggerTurn: true, deliverAs: "steer" }
+    );
+  }
+  function startSayingFor(url) {
+    const sayFile = process.env.ISKRON_CHANNEL_SAY;
+    if (!sayFile) return;
+    saying = startSaying(
+      { sayFile, statusUrl: process.env.ISKRON_CHANNEL_STATUS || statusUrl(url) },
+      (file) => readFileSync(file, "utf8")
+    );
+  }
+  return (url) => {
+    const u = url?.trim();
+    if (!u) return;
+    const loopback = /^ws:\/\/(127\.0\.0\.1|\[?::1\]?|localhost)(:|\/)/.test(u);
+    if (!u.startsWith("wss://") && !loopback) return;
+    hold(u);
+  };
 }
 
-// js/extension/iskron.ts
-var READY_WAIT_MS = Number(process.env.ISKRON_MCP_READY_WAIT_MS || 2e4);
-var HANDSHAKE_MS = Number(process.env.ISKRON_MCP_HANDSHAKE_MS || 6e5);
-var TICK_MS = 15e3;
-var PROTOCOL = "2025-06-18";
-function newer(a, b) {
-  const pa = a.split(".").map(Number), pb = b.split(".").map(Number);
-  if (pa.length !== 3 || pb.length !== 3 || [...pa, ...pb].some((n) => !Number.isInteger(n)))
-    return 0;
-  for (let i = 0; i < 3; i++) if (pa[i] !== pb[i]) return pa[i] > pb[i] ? 1 : -1;
-  return 0;
-}
-function packagedBridgePath() {
-  return resolve(
-    dirname(fileURLToPath(import.meta.url)),
-    "..",
-    "skills",
-    "establish-mcp",
-    "scripts",
-    "iskron.mjs"
-  );
-}
-var HOME_BRIDGE = () => join(homedir(), ".iskron-bridge", "iskron-bridge.mjs");
-function refreshHomeBridge(notify, canSpeak) {
-  if (process.env.ISKRON_BRIDGE_PATH?.trim()) return;
-  if (!canSpeak) return;
-  let packagedPath;
-  try {
-    packagedPath = packagedBridgePath();
-  } catch {
-    return;
-  }
-  const homePath = HOME_BRIDGE();
-  let packaged;
-  try {
-    packaged = readFileSync(packagedPath);
-  } catch {
-    return;
-  }
-  const vPackaged = versionIn(packaged.toString("utf8"));
-  if (!vPackaged) {
-    notify(
-      "Искрон: в поставке мост есть, но его версия не читается — домашнюю копию не трогаю.",
-      "warning"
-    );
-    return;
-  }
-  let home;
-  try {
-    home = readFileSync(homePath);
-  } catch {
-    return;
-  }
-  if (home.equals(packaged)) return;
-  const vHome = versionIn(home.toString("utf8"));
-  if (vHome && newer(vHome, vPackaged) > 0) {
-    notify(
-      `Искрон: дома мост ${vHome}, в поставке ${vPackaged} — домашний новее, не трогаю.`,
-      "warning"
-    );
-    return;
-  }
-  const was = vHome ?? "версия не читается";
-  const tmp = `${homePath}.tmp-${process.pid}`;
-  try {
-    writeFileSync(tmp, packaged);
-    chmodSync(tmp, 493);
-    renameSync(tmp, homePath);
-    notify(
-      vHome === vPackaged ? `Искрон: мост дома заменён на привезённый поставкой — версия та же (${vPackaged}), байты другие. Грант не тронут.` : `Искрон: мост дома обновлён ${was} → ${vPackaged}. Грант не тронут, он лежит рядом отдельными файлами.`,
-      "info"
-    );
-  } catch (e) {
-    try {
-      unlinkSync(tmp);
-    } catch {
-    }
-    notify(
-      `Искрон: мост дома ${was}, в поставке ${vPackaged}, заменить не вышло (${e.message}). Работаю тем, что есть.`,
-      "warning"
-    );
-  }
-}
-function findBridge() {
-  const tried = [];
-  const push = (p) => {
-    if (!p) return;
-    tried.push(p);
-  };
-  push(
-    process.env.ISKRON_BRIDGE_PATH?.trim() ? resolve(process.env.ISKRON_BRIDGE_PATH.trim()) : null
-  );
-  push(HOME_BRIDGE());
-  try {
-    push(packagedBridgePath());
-  } catch {
-  }
-  for (const candidate of tried) {
-    try {
-      accessSync(candidate, constants.R_OK);
-      return { path: candidate, tried };
-    } catch {
-    }
-  }
-  return { path: null, tried };
-}
+// js/extension/bridge-client.ts
+import { spawn } from "node:child_process";
 var Bridge = class {
   proc = null;
   buf = "";
@@ -412,6 +399,135 @@ function harvestSocket(content, offer) {
   if (!found) return;
   offer(found.replace(/[.,;:!?»"')\]]+$/, ""));
 }
+
+// js/extension/home-copy.ts
+import {
+  accessSync,
+  chmodSync,
+  constants,
+  readFileSync as readFileSync2,
+  renameSync,
+  unlinkSync,
+  writeFileSync
+} from "node:fs";
+import { homedir } from "node:os";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
+// js/shared/version.ts
+function versionIn(text) {
+  const m = /^(?:const|let|var)\s+VERSION\s*=\s*"([^"]+)"/m.exec(text);
+  return m ? m[1] : null;
+}
+
+// js/extension/home-copy.ts
+function newer(a, b) {
+  const pa = a.split(".").map(Number), pb = b.split(".").map(Number);
+  if (pa.length !== 3 || pb.length !== 3 || [...pa, ...pb].some((n) => !Number.isInteger(n)))
+    return 0;
+  for (let i = 0; i < 3; i++) if (pa[i] !== pb[i]) return pa[i] > pb[i] ? 1 : -1;
+  return 0;
+}
+function packagedBridgePath() {
+  return resolve(
+    dirname(fileURLToPath(import.meta.url)),
+    "..",
+    "skills",
+    "establish-mcp",
+    "scripts",
+    "iskron.mjs"
+  );
+}
+var homeBridgePath = () => join(homedir(), ".iskron-bridge", "iskron-bridge.mjs");
+function refreshHomeBridge(notify, canSpeak) {
+  if (process.env.ISKRON_BRIDGE_PATH?.trim()) return;
+  if (!canSpeak) return;
+  let packagedPath;
+  try {
+    packagedPath = packagedBridgePath();
+  } catch {
+    return;
+  }
+  const homePath = homeBridgePath();
+  let packaged;
+  try {
+    packaged = readFileSync2(packagedPath);
+  } catch {
+    return;
+  }
+  const vPackaged = versionIn(packaged.toString("utf8"));
+  if (!vPackaged) {
+    notify(
+      "Искрон: в поставке мост есть, но его версия не читается — домашнюю копию не трогаю.",
+      "warning"
+    );
+    return;
+  }
+  let home;
+  try {
+    home = readFileSync2(homePath);
+  } catch {
+    return;
+  }
+  if (home.equals(packaged)) return;
+  const vHome = versionIn(home.toString("utf8"));
+  if (vHome && newer(vHome, vPackaged) > 0) {
+    notify(
+      `Искрон: дома мост ${vHome}, в поставке ${vPackaged} — домашний новее, не трогаю.`,
+      "warning"
+    );
+    return;
+  }
+  const was = vHome ?? "версия не читается";
+  const tmp = `${homePath}.tmp-${process.pid}`;
+  try {
+    writeFileSync(tmp, packaged);
+    chmodSync(tmp, 493);
+    renameSync(tmp, homePath);
+    notify(
+      vHome === vPackaged ? `Искрон: мост дома заменён на привезённый поставкой — версия та же (${vPackaged}), байты другие. Грант не тронут.` : `Искрон: мост дома обновлён ${was} → ${vPackaged}. Грант не тронут, он лежит рядом отдельными файлами.`,
+      "info"
+    );
+  } catch (e) {
+    try {
+      unlinkSync(tmp);
+    } catch {
+    }
+    notify(
+      `Искрон: мост дома ${was}, в поставке ${vPackaged}, заменить не вышло (${e.message}). Работаю тем, что есть.`,
+      "warning"
+    );
+  }
+}
+function findBridge() {
+  const tried = [];
+  const push = (p) => {
+    if (!p) return;
+    tried.push(p);
+  };
+  push(
+    process.env.ISKRON_BRIDGE_PATH?.trim() ? resolve(process.env.ISKRON_BRIDGE_PATH.trim()) : null
+  );
+  push(homeBridgePath());
+  try {
+    push(packagedBridgePath());
+  } catch {
+  }
+  for (const candidate of tried) {
+    try {
+      accessSync(candidate, constants.R_OK);
+      return { path: candidate, tried };
+    } catch {
+    }
+  }
+  return { path: null, tried };
+}
+
+// js/extension/tools.ts
+var READY_WAIT_MS = Number(process.env.ISKRON_MCP_READY_WAIT_MS || 2e4);
+var HANDSHAKE_MS = Number(process.env.ISKRON_MCP_HANDSHAKE_MS || 6e5);
+var TICK_MS = 15e3;
+var PROTOCOL = "2025-06-18";
 function setupBridge(pi, offerSocket) {
   let bridge = null;
   let notify = () => {
@@ -541,113 +657,8 @@ function setupBridge(pi, offerSocket) {
     bridge = null;
   });
 }
-function socketAddress() {
-  const direct = process.env.ISKRON_CHANNEL_SOCKET?.trim();
-  if (direct) return direct;
-  const file = process.env.ISKRON_CHANNEL_SOCKET_FILE?.trim();
-  if (!file) return null;
-  try {
-    return readFileSync(file, "utf8").trim() || null;
-  } catch {
-    return null;
-  }
-}
-function frameToText(frame, raw) {
-  if (!frame) return `Кадр канала Искрона:
-${raw}`;
-  const from = frame.provenance?.from_standing || frame.provenance?.from_karta_seq;
-  const head = from ? `Кадр канала Искрона от ${from}` : "Кадр канала Искрона";
-  const body = typeof frame.body === "string" ? frame.body : raw;
-  return `${head}:
 
-${body}`;
-}
-function setupChannel(pi) {
-  let holder = null;
-  let saying = null;
-  let ctxRef = null;
-  let current = null;
-  pi.on("session_start", async (_event, ctx) => {
-    ctxRef = ctx;
-    const url = socketAddress();
-    if (!url) {
-      if (ctx.hasUI) {
-        ctx.ui.notify(
-          'Искрон: места ещё нет. Займи стояние сам — iskron_channel(action="connect"), сразу за ним register тем же именем: слушание включится без отдельного действия.',
-          "info"
-        );
-      }
-      return;
-    }
-    hold(url);
-  });
-  function release(reason) {
-    holder?.close(reason);
-    holder = null;
-    saying?.stop();
-    saying = null;
-  }
-  function hold(url) {
-    if (url === current && holder?.alive) return;
-    current = url;
-    release("новый сокет");
-    const ctx = ctxRef;
-    holder = holdSocket({
-      url,
-      onFrame: (raw, frame) => {
-        if (frame?.type === "hello") {
-          if (ctx?.hasUI) ctx.ui.setStatus?.("iskron", "Искрон: канал слушает");
-          return;
-        }
-        if (frame?.type === "status") return;
-        pi.sendMessage(
-          {
-            customType: "iskron-channel",
-            content: frameToText(frame, raw),
-            display: true,
-            details: frame ?? { raw }
-          },
-          { triggerTurn: true, deliverAs: "steer" }
-        );
-      },
-      // Процессу здесь выйти некуда, поэтому громкость — это сказать делателю
-      // так, чтобы он это увидел в ходе, а не в логе, которого никто не читает.
-      onDeadToken: (code) => loud(
-        ctx,
-        `Искрон: канал закрыт кодом ${code} — токен мёртв. Зови iskron_channel(action="connect")` + (code === 4001 ? ' или action="mint"' : "") + ", затем register тем же именем: новый сокет расширение возьмёт из ответа само, перезапуск не нужен."
-      ),
-      onServiceAlive: (version) => loud(ctx, `Искрон: обрывы, а служба отвечает (${version}) — спроси о токене.`)
-    });
-    startSayingFor(url);
-    if (ctx?.hasUI) ctx.ui.setStatus?.("iskron", "Искрон: канал прицепляется");
-  }
-  pi.on("session_shutdown", async () => {
-    current = null;
-    release("session shutdown");
-  });
-  function loud(ctx, text) {
-    if (ctx?.hasUI) ctx.ui.notify(text, "error");
-    pi.sendMessage(
-      { customType: "iskron-channel", content: text, display: true, details: { fatal: true } },
-      { triggerTurn: true, deliverAs: "steer" }
-    );
-  }
-  function startSayingFor(url) {
-    const sayFile = process.env.ISKRON_CHANNEL_SAY;
-    if (!sayFile) return;
-    saying = startSaying(
-      { sayFile, statusUrl: process.env.ISKRON_CHANNEL_STATUS || statusUrl(url) },
-      (file) => readFileSync(file, "utf8")
-    );
-  }
-  return (url) => {
-    const u = url?.trim();
-    if (!u) return;
-    const loopback = /^ws:\/\/(127\.0\.0\.1|\[?::1\]?|localhost)(:|\/)/.test(u);
-    if (!u.startsWith("wss://") && !loopback) return;
-    hold(u);
-  };
-}
+// js/extension/iskron.ts
 function iskron_default(pi) {
   const broken = [];
   pi.on("session_start", async (_event, ctx) => {

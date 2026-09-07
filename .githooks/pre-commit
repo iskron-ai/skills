@@ -7,13 +7,13 @@ set -euo pipefail
 root="$(git rev-parse --show-toplevel)"
 cd "$root"
 
-if [[ ! -d node_modules ]]; then
-  echo "pre-commit: нет node_modules — прогони 'npm ci' (тулчейн js/ нужен для линта и сборки)" >&2
+if [[ ! -d js/node_modules ]]; then
+  echo "pre-commit: нет js/node_modules — прогони 'make deps' (тулчейн js/ нужен для линта и сборки)" >&2
   exit 1
 fi
 
-npx --no-install lint-staged
-node scripts/build-js.mjs >/dev/null
+(cd js && npx --no-install lint-staged)
+node js/build.mjs >/dev/null
 git add -- skills/establish-mcp/scripts/iskron.mjs skills/standing/scripts/iskron.mjs \
   extensions/iskron.js skills/product-roadmap/references/roadmap-template.html
 bash "$root/scripts/build-skills.sh" >/dev/null

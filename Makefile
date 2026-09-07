@@ -7,9 +7,12 @@ check: validate check-bundles check-surface lint format-check typecheck check-js
 
 # The dev toolchain for js/ — typescript, esbuild, eslint, prettier, and pi's
 # own types, which the extension is checked against. Nothing here ships: the
-# outputs under skills/ and extensions/ are dependency-free single files.
+# outputs under skills/ and extensions/ are dependency-free single files. It
+# lives in js/, never at the root: Claude Code runs `npm ci` on any plugin
+# whose root carries a lockfile, and that would install all of this into every
+# user's plugin cache.
 deps:
-	@npm ci --no-fund --no-audit
+	@cd js && npm ci --no-fund --no-audit
 
 # Validate every skill's frontmatter contract. Pure Node, no deps.
 validate:
@@ -25,17 +28,17 @@ check-surface:
 
 # --- the JS ladder, over js/ (the single source of every shipped executable) ---
 lint:
-	@npm run -s lint
+	@cd js && npm run -s lint
 
 format:
-	@npm run -s format
+	@cd js && npm run -s format
 
 format-check:
-	@npm run -s format:check
+	@cd js && npm run -s format:check
 
 # Strict TypeScript over every source, the pi extension against pi's real types.
 typecheck:
-	@npm run -s typecheck
+	@cd js && npm run -s typecheck
 
 # Every behavioural suite, on one floor: the shipped file claims Node 22 (it
 # takes the global WebSocket), and CI holds the run there so the claim stays
@@ -65,11 +68,11 @@ test-codex:
 # doctor (into both skills that carry it), the pi extension, and the roadmap
 # template with its renderer inlined. Outputs are committed derived artifacts.
 build-js:
-	@node scripts/build-js.mjs
+	@node js/build.mjs
 
 # Verify the committed outputs are byte-identical to a fresh build from js/.
 check-js:
-	@node scripts/build-js.mjs --check
+	@node js/build.mjs --check
 
 # Refresh fixtures/surface.json from the live server (network + authorized grant).
 surface:
