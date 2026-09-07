@@ -1,5 +1,12 @@
 # Changelog
 
+## [6.2.0](https://github.com/iskron-ai/skills/compare/v6.1.2...v6.2.0) (2026-09-07)
+
+
+### Features
+
+* **js:** отгружаемый JS на полном релиз-цикле — единый исходник, один файл iskron.mjs с doctor, гейт lint→types→check-js→пробы ([#88](https://github.com/iskron-ai/skills/issues/88)) ([d19d6e8](https://github.com/iskron-ai/skills/commit/d19d6e8b5bf4ae5f938a637df7aa058df381928a))
+
 ## [6.1.2](https://github.com/iskron-ai/skills/compare/v6.1.1...v6.1.2) (2026-09-07)
 
 
