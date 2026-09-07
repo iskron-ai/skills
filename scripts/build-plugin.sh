@@ -56,7 +56,7 @@ for want in \
   iskron/.mcp.json \
   iskron/skills/establish-mcp/SKILL.md \
   iskron/skills/establish-mcp/scripts/iskron.mjs \
-  iskron/skills/standing/scripts/iskron.mjs \
+  iskron/skills/establish-mcp/scripts/opencode-plugin.js \
   iskron/skills/product-roadmap/references/roadmap-template.html; do
   grep -qxF "$want" <<<"$listing" || { echo "archive is missing $want" >&2; exit 1; }
 done

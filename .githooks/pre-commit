@@ -14,7 +14,7 @@ fi
 
 (cd js && npx --no-install lint-staged)
 node js/build.mjs >/dev/null
-git add -- skills/establish-mcp/scripts/iskron.mjs skills/standing/scripts/iskron.mjs \
+git add -- skills/establish-mcp/scripts/iskron.mjs skills/establish-mcp/scripts/opencode-plugin.js \
   extensions/iskron.js skills/product-roadmap/references/roadmap-template.html
 bash "$root/scripts/build-skills.sh" >/dev/null
 git add -- "$root"/*.skill

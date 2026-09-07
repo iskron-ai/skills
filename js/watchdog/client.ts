@@ -1,37 +1,42 @@
 // Клиент локального сокета стояния, который держит мост (граф nks-dev: #4234).
 // Сторож больше ничего не держит и не переоткрывает: он читает события моста и
 // превращает их в то, что понимает харнес — строку под Monitor или выход процесса.
-import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { connect } from "node:net";
-import { homedir } from "node:os";
 import { join } from "node:path";
 
 import { type ChannelEvent } from "../bridge/hold.ts";
+import { authDirFromEnv, socketPathOf, standingsDirOf } from "../shared/standings.ts";
 
 const ATTACH_WINDOW_MS = 60_000; // мост может подняться чуть позже сторожа
 const RETRY_MS = 1000;
-
-export function standingsDir(): string {
-  const auth = process.env.ISKRON_BRIDGE_AUTH_DIR || join(homedir(), ".iskron-bridge");
-  return join(auth, "standings");
-}
 
 export interface Resolved {
   key: string;
   path: string;
 }
 
-const hashOf = (key: string): string => createHash("sha256").update(key).digest("hex").slice(0, 16);
+export interface WatchdogArgs {
+  key?: string;
+  authDir: string;
+}
 
-function pathFor(key: string): string {
-  if (process.platform === "win32") return `\\\\.\\pipe\\iskron-${hashOf(key)}`;
-  return join(standingsDir(), `${hashOf(key)}.sock`);
+/** `[ключ] [--auth-dir <dir>]` — тот же каталог, что у моста, иначе сторож ищет не там. */
+export function parseWatchdogArgs(argv: string[]): WatchdogArgs {
+  const out: WatchdogArgs = { authDir: authDirFromEnv() };
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === "--auth-dir") out.authDir = argv[++i] ?? out.authDir;
+    else if (!a.startsWith("--") && !out.key) out.key = a;
+  }
+  return out;
 }
 
 /** Какое стояние слушать: названное, либо единственное, которое держит мост. */
-export function resolveStanding(key?: string): Resolved | { error: string } {
-  const dir = standingsDir();
+export function resolveStanding(argv: string[]): Resolved | { error: string } {
+  const { key, authDir } = parseWatchdogArgs(argv);
+  const dir = standingsDirOf(authDir);
+  const pathFor = (k: string) => socketPathOf(authDir, k);
   if (key) return { key, path: pathFor(key) };
   // Читаемые ключи лежат рядом с сокетами файлами <хеш>.key — их и перечисляем.
   const held = existsSync(dir)

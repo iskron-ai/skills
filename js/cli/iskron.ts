@@ -1,8 +1,8 @@
 // Один исполняемый файл поставки iskron на все три процесса и диагностику:
 //
 //   node iskron.mjs [bridge] [server-url] [flags]   мост stdio↔https (по умолчанию)
-//   node iskron.mjs watchdog [wss://…]              сторож сокета под наблюдателем харнеса
-//   node iskron.mjs watchdog-exit [wss://…]         сторож выхода-на-кадре
+//   node iskron.mjs watchdog [ключ] [--auth-dir <dir>]        сторож сокета под наблюдателем харнеса
+//   node iskron.mjs watchdog-exit [ключ] [--auth-dir <dir>]   сторож выхода-на-кадре
 //   node iskron.mjs doctor [server-url] [flags]     какая сборка стоит и работает ли она
 //   node iskron.mjs --version                       сборка vX.Y.Z+хеш
 //
@@ -17,8 +17,8 @@ import { runDoctor } from "./doctor.ts";
 
 const USAGE = `iskron ${BUILD}
   node iskron.mjs [bridge] [server-url] [--timeout <ms>] [--auth-dir <dir>] [--no-browser] [--debug]
-  node iskron.mjs watchdog [wss://…]
-  node iskron.mjs watchdog-exit [wss://…]
+  node iskron.mjs watchdog [ключ] [--auth-dir <dir>]
+  node iskron.mjs watchdog-exit [ключ] [--auth-dir <dir>]
   node iskron.mjs doctor [server-url] [--auth-dir <dir>]
   node iskron.mjs --version
 `;

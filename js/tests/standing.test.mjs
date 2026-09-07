@@ -125,9 +125,12 @@ async function connected(t) {
   return { fake, dir, bridge, reply, text, key, standings: join(dir, "standings") };
 }
 
+// The watchdog is given the auth dir the way the bridge's own block names it —
+// the `--auth-dir` flag, never a variable the bridge was not started with. One
+// lever for both halves, or a drift between their roots would pass green here.
 function runClient(sub, dir, key, timeoutMs = 8000) {
-  const proc = spawn(process.execPath, [FILE, sub, ...(key ? [key] : [])], {
-    env: { ...process.env, ISKRON_BRIDGE_AUTH_DIR: dir },
+  const proc = spawn(process.execPath, [FILE, sub, ...(key ? [key] : []), "--auth-dir", dir], {
+    env: { ...process.env },
     stdio: ["ignore", "pipe", "pipe"],
   });
   let out = "";
@@ -157,13 +160,17 @@ function runClient(sub, dir, key, timeoutMs = 8000) {
 }
 
 test("connect through the bridge: the bridge holds the socket and the answer names the listener", async (t) => {
-  const { fake, bridge, text, key, standings } = await connected(t);
+  const { fake, dir, bridge, text, key, standings } = await connected(t);
   assert.ok(
     text.includes("[iskron-bridge]"),
     `the connect answer carries no bridge block:\n${text}`,
   );
   assert.ok(key, "the block must name the key the watchdog is called with");
   assert.ok(text.includes(`watchdog ${key}`) && text.includes(`watchdog-exit ${key}`));
+  assert.ok(
+    text.includes(`watchdog ${key} --auth-dir "${dir}"`),
+    `a bridge off the default auth dir must tell the watchdog where to look:\n${text}`,
+  );
   assert.ok(text.includes(join(standings, `${key}.say`)), "the busy-line file path must be named");
   await waitFor(() => fake.state.ws.size === 1, "the bridge to open the standing socket");
   const held = readdirSync(standings);

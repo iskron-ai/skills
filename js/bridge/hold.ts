@@ -10,7 +10,6 @@
 //   • уведомления MCP `notifications/message` с logger «iskron-channel» — их
 //     читает расширение pi и вкладывает кадр в ход.
 // Занятость делатель пишет в файл рядом с сокетом (#4231); публикует мост.
-import { createHash } from "node:crypto";
 import {
   chmodSync,
   existsSync,
@@ -32,6 +31,13 @@ import {
   startSaying,
   statusUrl as deriveStatusUrl,
 } from "../shared/channel.ts";
+import {
+  defaultAuthDir,
+  keyFilePathOf,
+  sayPathOf,
+  socketPathOf,
+  standingsDirOf,
+} from "../shared/standings.ts";
 import { CFG } from "./config.ts";
 import { replyText } from "./standing.ts";
 import { emit, log } from "./streams.ts";
@@ -51,36 +57,20 @@ export interface ChannelEvent {
   buffered?: number;
 }
 
-export function standingsDir(): string {
-  return join(CFG.authDir, "standings");
+function standingsDir(): string {
+  return standingsDirOf(CFG.authDir);
 }
 
 /** Имя стояния → безопасная часть пути: буквы, цифры, точка, дефис; прочее — подчёркивание. */
-export function keyFor(): string {
+function keyFor(): string {
   const s = state.standing;
   const raw = s ? `${s.name ?? "_"}--${s.karta}--${s.realm}` : "env";
   return raw.replace(/[^A-Za-z0-9._-]+/g, "_").slice(0, 120);
 }
 
-/**
- * Путь сокета — по хешу ключа, не по самому ключу: у unix-сокета на macOS и BSD
- * предел пути 104 байта, и читаемое имя стояния его выбирает. Читаемое имя
- * лежит рядом файлом `<хеш>.key`, по нему сторож без аргумента находит стояние.
- */
-export function socketPathFor(key: string): string {
-  const h = createHash("sha256").update(key).digest("hex").slice(0, 16);
-  if (process.platform === "win32") return `\\\\.\\pipe\\iskron-${h}`;
-  return join(standingsDir(), `${h}.sock`);
-}
-
-export function keyFilePathFor(key: string): string {
-  const h = createHash("sha256").update(key).digest("hex").slice(0, 16);
-  return join(standingsDir(), `${h}.key`);
-}
-
-export function sayPathFor(key: string): string {
-  return join(standingsDir(), `${key}.say`);
-}
+const socketPathFor = (key: string): string => socketPathOf(CFG.authDir, key);
+const keyFilePathFor = (key: string): string => keyFilePathOf(CFG.authDir, key);
+const sayPathFor = (key: string): string => sayPathOf(CFG.authDir, key);
 
 let holder: Holder | null = null;
 let server: Server | null = null;
@@ -223,7 +213,7 @@ export function releaseStanding(reason: string): void {
 }
 
 /** Взять этот адрес и держать его, чем бы ни был занят прежний. */
-export function holdStanding(url: string, statusUrl?: string | null): string {
+function holdStanding(url: string, statusUrl?: string | null): string {
   const key = keyFor();
   if (url === currentUrl && key === currentKey && holder?.alive) return key;
   releaseStanding("новый сокет");
@@ -304,11 +294,13 @@ export function absorbChannelReply(msg: JsonRpcMessage, reply: JsonRpcMessage): 
   }
   const key = holdStanding(trim(socket), status ? trim(status) : null);
   const self = fileURLToPath(import.meta.url);
+  // Сторож выводит каталог сокетов так же, как мост: не по умолчанию — скажи ему где.
+  const where = CFG.authDir === defaultAuthDir() ? "" : ` --auth-dir "${CFG.authDir}"`;
   const block =
     `\n\n[iskron-bridge] Сокет этого стояния держит мост — вручать его никому не нужно` +
     ` (строка выше о том, что никто не слушает, описывает миг до этого держания).` +
-    `\nСлушать: node "${self}" watchdog ${key} — под Monitor с persistent: true (Claude Code);` +
-    ` фоновой задачей — node "${self}" watchdog-exit ${key} (выходит нулём на первом сообщении).` +
+    `\nСлушать: node "${self}" watchdog ${key}${where} — под Monitor с persistent: true (Claude Code);` +
+    ` фоновой задачей — node "${self}" watchdog-exit ${key}${where} (выходит нулём на первом сообщении).` +
     `\nЗанятость: пиши текст в ${sayPathFor(key)}; пустой текст снимает.` +
     `\nКадры приходят и уведомлениями MCP (logger iskron-channel).`;
   const content = reply.result?.content;

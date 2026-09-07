@@ -18,7 +18,7 @@ const note = (s: string): void => {
 };
 
 export function runWatchdogExit(argv: string[]): void {
-  const target = resolveStanding(argv[0]);
+  const target = resolveStanding(argv);
   if ("error" in target) {
     note(`ДЕЛАТЕЛЬ: ${target.error}`);
     process.exit(2);

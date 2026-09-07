@@ -38,7 +38,7 @@ const loudExit = (s: string, code: number): void => {
 };
 
 export function runWatchdog(argv: string[]): void {
-  const target = resolveStanding(argv[0]);
+  const target = resolveStanding(argv);
   if ("error" in target) {
     writeSync(2, `ДЕЛАТЕЛЬ: ${target.error}\n`);
     process.exit(2);
