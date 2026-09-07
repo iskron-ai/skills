@@ -1,5 +1,12 @@
 # Changelog
 
+## [6.2.2](https://github.com/iskron-ai/skills/compare/v6.2.1...v6.2.2) (2026-09-07)
+
+
+### Bug Fixes
+
+* **plugin:** запись моста Claude Code — ровно токен ${CLAUDE_PLUGIN_ROOT}, форма с умолчанием не раскрывается ([#93](https://github.com/iskron-ai/skills/issues/93)) ([364b3d8](https://github.com/iskron-ai/skills/commit/364b3d8f932858f94ea83595d386929f315c06bd))
+
 ## [6.2.1](https://github.com/iskron-ai/skills/compare/v6.2.0...v6.2.1) (2026-09-07)
 
 
