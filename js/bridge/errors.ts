@@ -71,7 +71,10 @@ export class TokenRefused extends Error {}
 export class AuthPending extends Error {
   authorizeUrl: string;
   constructor(url: string) {
-    super(`authorization required — open in a browser: ${url}`);
+    super(
+      `authorization required — open in a browser: ${url} — or give the bridge a personal ` +
+        `access token instead (ISKRON_BRIDGE_TOKEN, or the file <auth-dir>/token)`,
+    );
     this.authorizeUrl = url;
   }
 }

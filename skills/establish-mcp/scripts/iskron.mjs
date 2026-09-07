@@ -327,7 +327,9 @@ var TokenRefused = class extends Error {
 var AuthPending = class extends Error {
   authorizeUrl;
   constructor(url) {
-    super(`authorization required — open in a browser: ${url}`);
+    super(
+      `authorization required — open in a browser: ${url} — or give the bridge a personal access token instead (ISKRON_BRIDGE_TOKEN, or the file <auth-dir>/token)`
+    );
     this.authorizeUrl = url;
   }
 };
@@ -1036,7 +1038,9 @@ async function ensureAuth(wwwAuthenticate, opts = {}) {
         }
       }
       if (!interactive)
-        throw new Error("authorization required (no tokens, browser flow deferred)");
+        throw new Error(
+          "authorization required (no tokens, browser flow deferred) — or give the bridge a personal access token (ISKRON_BRIDGE_TOKEN, or the file <auth-dir>/token)"
+        );
       return await interactiveFlow(meta);
     } finally {
       authInFlight = null;
@@ -2320,6 +2324,8 @@ var USAGE = `iskron ${BUILD}
   node iskron.mjs watchdog-exit [ключ] [--auth-dir <dir>]
   node iskron.mjs doctor [server-url] [--auth-dir <dir>]
   node iskron.mjs --version
+  env: ISKRON_BRIDGE_TOKEN — личный токен вместо OAuth (или файл <auth-dir>/token);
+       ISKRON_BRIDGE_URL, ISKRON_BRIDGE_AUTH_DIR, ISKRON_BRIDGE_NO_BROWSER, ISKRON_BRIDGE_DEBUG
 `;
 var argv = process.argv.slice(2);
 var [first, ...rest] = argv;

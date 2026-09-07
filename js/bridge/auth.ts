@@ -83,7 +83,9 @@ export async function ensureAuth(
         }
       }
       if (!interactive)
-        throw new Error("authorization required (no tokens, browser flow deferred)");
+        throw new Error(
+          "authorization required (no tokens, browser flow deferred) — or give the bridge a personal access token (ISKRON_BRIDGE_TOKEN, or the file <auth-dir>/token)",
+        );
       return await interactiveFlow(meta);
     } finally {
       authInFlight = null;

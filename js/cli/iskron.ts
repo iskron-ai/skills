@@ -21,6 +21,8 @@ const USAGE = `iskron ${BUILD}
   node iskron.mjs watchdog-exit [ключ] [--auth-dir <dir>]
   node iskron.mjs doctor [server-url] [--auth-dir <dir>]
   node iskron.mjs --version
+  env: ISKRON_BRIDGE_TOKEN — личный токен вместо OAuth (или файл <auth-dir>/token);
+       ISKRON_BRIDGE_URL, ISKRON_BRIDGE_AUTH_DIR, ISKRON_BRIDGE_NO_BROWSER, ISKRON_BRIDGE_DEBUG
 `;
 
 const argv = process.argv.slice(2);
