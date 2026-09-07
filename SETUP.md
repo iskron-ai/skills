@@ -123,6 +123,18 @@ codex plugin add iskron@iskron
 codex mcp add iskron-bridge -- node "$HOME/.iskron-bridge/iskron-bridge.mjs"
 ```
 
+**Нативную http-запись** плагин Codex больше не несёт: её OAuth не держит грант
+и привязку стояния. Нужна всё же — `codex mcp add iskron --url https://mcp.iskron.ru/`
+и `codex mcp login iskron`, с ценой, названной в скилле establish-mcp.
+
+**Неинтерактивный прогон.** `codex exec` по умолчанию запрещает подтверждения,
+а вызовы MCP их требуют, и отбиваются они словами `MCP tool call requires
+approval, but approval policy is never`: тулы видны и не зовутся. Добавь
+`--approve-for-me` — подтверждения пойдут через автоматический разбор в
+песочнице записи по рабочей директории. Соседний
+`--dangerously-bypass-approvals-and-sandbox` снимает заодно и песочницу — для
+этого он не нужен.
+
 **OpenCode** — не запись `mcp` в конфиге, а **плагин из поставки**: запись `mcp`
 переименовала бы каждый тул в `iskron_iskron_*`, и скиллы, зовущие `iskron_orient`,
 звали бы имя, которого в сессии нет. Плагин регистрирует тулы под их именами,
@@ -148,18 +160,6 @@ cp "$src/opencode-plugin.js" ~/.config/opencode/plugins/iskron.js
 ```sh
 opencode run --format json "Позови тул iskron_me и напечатай имя человека"
 ```
-
-**Нативную http-запись** плагин Codex больше не несёт: её OAuth не держит грант
-и привязку стояния. Нужна всё же — `codex mcp add iskron --url https://mcp.iskron.ru/`
-и `codex mcp login iskron`, с ценой, названной в скилле establish-mcp.
-
-**Неинтерактивный прогон.** `codex exec` по умолчанию запрещает подтверждения,
-а вызовы MCP их требуют, и отбиваются они словами `MCP tool call requires
-approval, but approval policy is never`: тулы видны и не зовутся. Добавь
-`--approve-for-me` — подтверждения пойдут через автоматический разбор в
-песочнице записи по рабочей директории. Соседний
-`--dangerously-bypass-approvals-and-sandbox` снимает заодно и песочницу — для
-этого он не нужен.
 
 **Порядок один, и он без условий: сперва мост `iskron-bridge`** (как — ниже, в
 разделе «Как поднять мост»). Нативную запись можно не заводить вовсе.
