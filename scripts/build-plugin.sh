@@ -46,7 +46,7 @@ for want in \
   iskron/.claude-plugin/plugin.json \
   iskron/.mcp.json \
   iskron/skills/establish-mcp/SKILL.md \
-  iskron/skills/establish-mcp/scripts/iskron-bridge.mjs \
+  iskron/skills/establish-mcp/scripts/iskron.mjs \
   iskron/skills/standing/references/watchdog.mjs \
   iskron/skills/standing/references/watchdog-exit.mjs \
   iskron/skills/product-roadmap/references/roadmap-template.html; do
