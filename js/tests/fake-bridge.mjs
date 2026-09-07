@@ -51,24 +51,29 @@ const send = (msg) => process.stdout.write(JSON.stringify(msg) + "\n");
 // настоящий мост шлёт уведомлением notifications/message с logger
 // iskron-channel (см. js/bridge/hold.ts). Проба дописывает строки, фейк их
 // эмитит — так половина «канал» расширения проверяется без сокета вовсе.
+// Файлов два: общий (FB_EVENTS) и свой у процесса (FB_EVENTS.<pid>) — так проба
+// адресует событие одному из нескольких мостов, поднятых одним плагином.
 if (process.env.FB_EVENTS) {
-  let seen = 0;
+  const seen = new Map();
+  const files = [process.env.FB_EVENTS, `${process.env.FB_EVENTS}.${process.pid}`];
   setInterval(() => {
-    let text;
-    try {
-      text = readFileSync(process.env.FB_EVENTS, "utf8");
-    } catch {
-      return;
+    for (const file of files) {
+      let text;
+      try {
+        text = readFileSync(file, "utf8");
+      } catch {
+        continue;
+      }
+      const lines = text.split("\n").filter((l) => l.trim());
+      for (const line of lines.slice(seen.get(file) ?? 0)) {
+        send({
+          jsonrpc: "2.0",
+          method: "notifications/message",
+          params: { level: "info", logger: "iskron-channel", data: JSON.parse(line) },
+        });
+      }
+      seen.set(file, lines.length);
     }
-    const lines = text.split("\n").filter((l) => l.trim());
-    for (const line of lines.slice(seen)) {
-      send({
-        jsonrpc: "2.0",
-        method: "notifications/message",
-        params: { level: "info", logger: "iskron-channel", data: JSON.parse(line) },
-      });
-    }
-    seen = lines.length;
   }, 40).unref();
 }
 const ok = (id, result) => send({ jsonrpc: "2.0", id, result });

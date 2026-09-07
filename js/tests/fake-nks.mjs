@@ -106,6 +106,7 @@ export async function startFakeNks(opts = {}) {
     // Сокет стояния: connect выдаёт адрес ws на этом же сервере, апгрейд принимается,
     // hello уходит первым кадром; /control {ws_send, ws_close} гонит кадры и закрытия.
     ws: new Set(),
+    messages: new Map(), // id → полный текст: то, что history view=message отдаёт мосту при дочитывании
     status: null, // последняя принятая строка занятости
     wsToken: "tok",
     richTools: false, // /control {richTools:true}: tools/list с пишущими тулами — для проверки приписки момента
@@ -190,6 +191,7 @@ export async function startFakeNks(opts = {}) {
       ]) {
         if (k in patch) st[k] = patch[k];
       }
+      if (patch.message_full) st.messages.set(patch.message_full.id, patch.message_full.text);
       if (patch.revoke_access) st.access = null;
       if (patch.rotate_access) st.access = mintAccess(st); // сосед провернул грант: старый bearer больше не принимается
       if (patch.drop_standings) st.standings.clear(); // платформа потеряла привязки при живых сессиях mcp
@@ -422,6 +424,11 @@ export async function startFakeNks(opts = {}) {
                       description: "Атомарная дельта.",
                       inputSchema: { type: "object" },
                     },
+                    {
+                      name: "iskron_channel",
+                      description: "Живой канал роли.",
+                      inputSchema: { type: "object" },
+                    },
                   ]
                 : [{ name: "nks_orient" }],
             },
@@ -493,6 +500,22 @@ export async function startFakeNks(opts = {}) {
                   },
                 ],
               },
+            },
+            extra,
+          );
+        }
+        if (a.action === "history" && a.view === "message") {
+          const full = st.messages.get(a.message);
+          const text = full
+            ? `СООБЩЕНИЕ ЦЕЛИКОМ (text/plain)\n${full}\nПровенанс, как платформа наблюдала его ТОГДА, — судят по нему, читают по именам выше:\n{"auth":"oidc"}`
+            : "Отказано (404): такого слова нет";
+          return json(
+            res,
+            200,
+            {
+              jsonrpc: "2.0",
+              id: msg.id,
+              result: { ...(full ? {} : { isError: true }), content: [{ type: "text", text }] },
             },
             extra,
           );

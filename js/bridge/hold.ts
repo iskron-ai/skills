@@ -24,24 +24,23 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
+  classifyOrigin,
   deadTokenAdvice,
   type Frame,
   type Holder,
   holdSocket,
-  startSaying,
   statusUrl as deriveStatusUrl,
 } from "../shared/channel.ts";
 import {
   defaultAuthDir,
   keyFilePathOf,
-  sayPathOf,
   socketPathOf,
   standingsDirOf,
 } from "../shared/standings.ts";
 import { CFG } from "./config.ts";
 import { replyText } from "./standing.ts";
 import { emit, log } from "./streams.ts";
-import { state } from "./transport.ts";
+import { post, state } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
 
 const RING = 20; // кадров, которые прицепившийся позже клиент получит задним числом
@@ -70,13 +69,12 @@ function keyFor(): string {
 
 const socketPathFor = (key: string): string => socketPathOf(CFG.authDir, key);
 const keyFilePathFor = (key: string): string => keyFilePathOf(CFG.authDir, key);
-const sayPathFor = (key: string): string => sayPathOf(CFG.authDir, key);
 
 let holder: Holder | null = null;
 let server: Server | null = null;
-let saying: { stop(): void } | null = null;
 let currentKey: string | null = null;
 let currentUrl: string | null = null;
+let currentStatusUrl: string | null = null;
 const clients = new Set<Socket>();
 const ring: { raw: string; frame: Frame | null }[] = [];
 
@@ -109,7 +107,7 @@ function sweepStale(dir: string, mine: string): void {
   if (process.platform === "win32" || !existsSync(dir)) return;
   for (const f of readdirSync(dir).filter((x) => x.endsWith(".key"))) {
     const keyFile = join(dir, f);
-    let key = "";
+    let key: string;
     try {
       key = readFileSync(keyFile, "utf8").trim();
     } catch {
@@ -118,7 +116,7 @@ function sweepStale(dir: string, mine: string): void {
     if (!key || key === mine) continue;
     const sock = socketPathFor(key);
     const drop = (): void => {
-      for (const p of [keyFile, sock, sayPathFor(key)]) {
+      for (const p of [keyFile, sock]) {
         try {
           unlinkSync(p);
         } catch {}
@@ -179,8 +177,6 @@ export function releaseStanding(reason: string): void {
   broadcast({ kind: "released", text: reason });
   holder?.close(reason);
   holder = null;
-  saying?.stop();
-  saying = null;
   for (const c of clients) {
     try {
       c.end();
@@ -203,13 +199,11 @@ export function releaseStanding(reason: string): void {
         unlinkSync(socketPathFor(currentKey));
       } catch {}
     }
-    try {
-      unlinkSync(sayPathFor(currentKey)); // занятость умирает со стоянием, не переживает его
-    } catch {}
   }
   ring.length = 0;
   currentKey = null;
   currentUrl = null;
+  currentStatusUrl = null;
 }
 
 /** Взять этот адрес и держать его, чем бы ни был занят прежний. */
@@ -219,17 +213,21 @@ function holdStanding(url: string, statusUrl?: string | null): string {
   releaseStanding("новый сокет");
   currentKey = key;
   currentUrl = url;
+  currentStatusUrl = statusUrl || deriveStatusUrl(url);
   openLocalServer(key);
   holder = holdSocket({
     url,
     onFrame: (raw, frame) => {
-      // В кольцо идёт и hello: сторож, прицепившийся позже, должен увидеть
-      // доказательство держания, а не только рабочие кадры.
-      ring.push({ raw, frame });
-      if (ring.length > RING) ring.shift();
-      const ev: ChannelEvent = { kind: "frame", raw, frame };
-      broadcast(ev);
-      if (frame?.type !== "status") notify("info", ev);
+      void completeFrame(stampOrigin(frame)).then((full) => {
+        const text = full === frame ? raw : JSON.stringify(full);
+        // В кольцо идёт и hello: сторож, прицепившийся позже, должен увидеть
+        // доказательство держания, а не только рабочие кадры.
+        ring.push({ raw: text, frame: full });
+        if (ring.length > RING) ring.shift();
+        const ev: ChannelEvent = { kind: "frame", raw: text, frame: full };
+        broadcast(ev);
+        if (full?.type !== "status") notify("info", ev);
+      });
     },
     onDeadToken: (code) => {
       const text = `ДЕЛАТЕЛЬ: ${deadTokenAdvice(code)}`;
@@ -252,19 +250,6 @@ function holdStanding(url: string, statusUrl?: string | null): string {
       broadcast({ kind: "note", text });
     },
   });
-  saying = startSaying(
-    {
-      sayFile: sayPathFor(key),
-      statusUrl: statusUrl || deriveStatusUrl(url),
-      onRefused: (_text, status) => {
-        const text = `ДЕЛАТЕЛЬ: строку занятости не приняли (${status ?? "нет ответа"}) — укороти её`;
-        log(text);
-        broadcast({ kind: "note", text });
-        notify("warning", { kind: "note", text });
-      },
-    },
-    (file) => readFileSync(file, "utf8"),
-  );
   return key;
 }
 
@@ -300,8 +285,9 @@ export function absorbChannelReply(msg: JsonRpcMessage, reply: JsonRpcMessage): 
     `\n\n[iskron-bridge] Сокет этого стояния держит мост — вручать его никому не нужно` +
     ` (строка выше о том, что никто не слушает, описывает миг до этого держания).` +
     `\nСлушать: node "${self}" watchdog ${key}${where} — под Monitor с persistent: true (Claude Code);` +
-    ` фоновой задачей — node "${self}" watchdog-exit ${key}${where} (выходит нулём на первом сообщении).` +
-    `\nЗанятость: пиши текст в ${sayPathFor(key)}; пустой текст снимает.` +
+    ` фоновой задачей — node "${self}" watchdog-exit ${key}${where} (выходит нулём на первом сообщении);` +
+    ` в Codex из своей оболочки фоном — node "${self}" watchdog-codex ${key}${where} (кадр входит в идущий тред через app-server).` +
+    `\nЗанятость: iskron_channel(action="status", realm, text) — пустой text снимает.` +
     `\nКадры приходят и уведомлениями MCP (logger iskron-channel).`;
   const content = reply.result?.content;
   if (Array.isArray(content)) {
@@ -315,4 +301,100 @@ export function holdFromEnv(): void {
   const url = process.env.ISKRON_CHANNEL_SOCKET?.trim();
   if (!url) return;
   holdStanding(url, process.env.ISKRON_CHANNEL_STATUS?.trim() || null);
+}
+
+/**
+ * Занятость — слово держателя сокета, а держит его мост: action="status" у
+ * iskron_channel исполняется здесь, на сервер не уходит (решение владельца,
+ * граф nks-dev: #4284 отвергнут). POST на статусный адрес из ответа connect;
+ * ответ поверхности — успех или ProblemDetail — доносится целиком, длину мост
+ * не судит. Возвращает null для всякого другого вызова.
+ */
+export function localStatus(msg: JsonRpcMessage): Promise<JsonRpcMessage> | null {
+  if (msg?.method !== "tools/call" || msg?.params?.name !== "iskron_channel") return null;
+  const a = msg.params?.arguments;
+  if (a?.action !== "status") return null;
+  const text = typeof a.text === "string" ? a.text : "";
+  const reply = (body: string, isError = false): JsonRpcMessage => ({
+    jsonrpc: "2.0",
+    id: msg.id,
+    result: { ...(isError ? { isError: true } : {}), content: [{ type: "text", text: body }] },
+  });
+  return (async () => {
+    if (!currentStatusUrl || !currentKey) {
+      return reply(
+        'Отказано (мост): стояния мост не держит — сперва iskron_channel(action="connect") (и register на живом месте), затем status',
+        true,
+      );
+    }
+    let res: Response;
+    try {
+      res = await fetch(currentStatusUrl, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ text }),
+        signal: AbortSignal.timeout(5000),
+      });
+    } catch (e) {
+      return reply(`Отказано (мост): статусный адрес не ответил — ${(e as Error).message}`, true);
+    }
+    const body = (await res.text().catch(() => "")).trim();
+    if (!res.ok) {
+      return reply(`Отказано (${res.status}) поверхностью: ${body || "без тела"}`, true);
+    }
+    return reply(`занятость ${currentKey}: ${text || "(снята)"}`);
+  })();
+}
+
+let readCounter = 0;
+
+/**
+ * Дочитывание кадра — обязанность моста (слово владельца): платформа режет
+ * длинное тело в кадре сокета и называет полную длину в body_chars; до делателя
+ * кадр доходит целым, потому что мост, держатель сессии, дочитывает его сам
+ * через историю канала, прежде чем отдать сторожу или плагину. Не дочиталось —
+ * кадр идёт как есть, с пометкой, что он обрезан: лучше честный обрез, чем
+ * молчание.
+ */
+async function completeFrame(frame: Frame | null): Promise<Frame | null> {
+  if (!frame || typeof frame.body !== "string" || typeof frame.body_chars !== "number")
+    return frame;
+  if (!frame.id || [...frame.body].length >= frame.body_chars) return frame;
+  const realm = state.standing?.realm;
+  if (!realm) return { ...frame, body_read: "truncated: стояние без realm, дочитать нечем" };
+  const id = `iskron-bridge-read-${++readCounter}`;
+  let reply: JsonRpcMessage | null = null;
+  try {
+    await post(
+      {
+        jsonrpc: "2.0",
+        id,
+        method: "tools/call",
+        params: {
+          name: "iskron_channel",
+          arguments: { realm, action: "history", view: "message", message: frame.id },
+        },
+      },
+      (m) => {
+        if (m.id === id) reply = m;
+      },
+    );
+  } catch (e) {
+    log(`кадр ${frame.id} обрезан, дочитать не вышло: ${(e as Error).message}`);
+    return { ...frame, body_read: `truncated: ${(e as Error).message}` };
+  }
+  const text = replyText(reply);
+  const nl = text.indexOf("\n");
+  const tail = text.indexOf("\nПровенанс, как платформа");
+  if (nl < 0 || (reply as JsonRpcMessage | null)?.result?.isError) {
+    return { ...frame, body_read: `truncated: ${text.slice(0, 160)}` };
+  }
+  const body = (tail > nl ? text.slice(nl + 1, tail) : text.slice(nl + 1)).trim();
+  return { ...frame, body, body_read: "history" };
+}
+
+/** Кто говорит — штампует мост: он один знает роль своего стояния. */
+function stampOrigin(frame: Frame | null): Frame | null {
+  if (!frame || frame.type !== "message") return frame;
+  return { ...frame, origin: classifyOrigin(frame, state.standing?.karta) };
 }

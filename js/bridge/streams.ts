@@ -25,10 +25,21 @@ export function guardStream(s: Stream | null | undefined): void {
   if (s) s.on("error", () => deadStreams.add(s));
 }
 
+// Последняя запись в stdout не влезла в буфер: перед выходом ждать надо drain,
+// а не колбэк пустой записи — под Bun он приходит прежде, чем байты дошли до
+// читателя (замерено: 300 КБ при остановленном читателе — колбэк сразу, drain
+// через 0.7 с, когда читатель проснулся). Флаг честен и под Node: write()
+// возвращает false ровно тогда, когда буфер перерос highWaterMark.
+let stdoutBacklog = false;
+
 export function writeTo(s: Stream | null | undefined, text: string): boolean {
   if (!canWrite(s)) return false;
   try {
-    s.write(text);
+    const fit = s.write(text);
+    if (s === process.stdout) {
+      if (!fit && !stdoutBacklog) s.once("drain", () => (stdoutBacklog = false));
+      stdoutBacklog = !fit;
+    }
     return true;
   } catch {
     deadStreams.add(s);
@@ -57,7 +68,8 @@ export function emit(msg: JsonRpcMessage): void {
 export function flushStdout(): Promise<void> {
   return new Promise((resolve) => {
     const out = process.stdout;
-    if (!canWrite(out) || out.writableLength === 0) return resolve();
+    // Не по writableLength: под Bun он не ведётся, и слив кончался бы до записи.
+    if (!canWrite(out)) return resolve();
     // A pipe whose reader is gone never drains, so the drain callback never
     // fires — and an exit path that waits on it does not exit at all. The
     // reader's death has its own signal: the queued bytes fail, and the stream
@@ -73,7 +85,8 @@ export function flushStdout(): Promise<void> {
     };
     out.once("error", finish);
     out.once("close", finish);
-    out.write("", finish); // queued behind everything already written
+    if (stdoutBacklog) out.once("drain", finish);
+    else out.write("", finish); // queued behind everything already written
     setTimeout(finish, FLUSH_STOP_MS).unref();
   });
 }

@@ -316,7 +316,10 @@ test("service frames raise no turn, a work frame does", async () => {
     assert.equal(opts.deliverAs, "steer");
     assert.equal(msg.customType, "iskron-channel");
     // Who speaks is read off provenance, never off the body.
-    assert.match(msg.content, /^Кадр канала Искрона от svatantra:\n\nпосмотри ветку$/);
+    assert.match(
+      msg.content,
+      /^Кадр канала Искрона от делателя роли неизвестной — стояние svatantra\nprovenance: \{"from_standing":"svatantra"\}\n\nпосмотри ветку$/,
+    );
 
     push(events, { kind: "frame", raw: "не JSON вовсе", frame: null });
     await delay(250);

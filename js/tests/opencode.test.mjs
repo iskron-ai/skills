@@ -64,6 +64,9 @@ function fakeClient({ sessions = [] } = {}) {
         return { data: {} };
       },
       list: async () => ({ data: sessions }),
+      get: async ({ path }) => ({
+        data: sessions.find((x) => x.id === path.id) ?? { id: path.id },
+      }),
     },
     tui: {
       showToast: async (o) => {
@@ -125,7 +128,13 @@ function bridgeEnv(name, extra = {}) {
 }
 
 const ctx = (sessionID) => ({ sessionID, abort: new AbortController().signal });
-const pidOf = (log) => Number(readFileSync(log, "utf8").trim().split(/\s+/)[1]);
+const pidsOf = (log) =>
+  readFileSync(log, "utf8")
+    .trim()
+    .split("\n")
+    .filter(Boolean)
+    .map((l) => Number(l.split(/\s+/)[1]));
+const pidOf = (log) => pidsOf(log)[0];
 const alive = (pid) => {
   try {
     process.kill(pid, 0);
@@ -185,13 +194,16 @@ test("a call is proxied to the bridge and its text comes back as the tool's outp
   }
 });
 
-test("dispose kills the bridge the plugin spawned", async () => {
+test("dispose kills every bridge the plugin spawned", async () => {
   const b = bridgeEnv("dispose");
   const rec = await plugin(b.env);
-  const pid = pidOf(b.log);
-  assert.ok(alive(pid), "the bridge must be running while the plugin lives");
+  await rec.hooks.tool.iskron_orient.execute({}, ctx("s-1"));
+  await rec.hooks.tool.iskron_orient.execute({}, ctx("s-2"));
+  const pids = pidsOf(b.log);
+  assert.equal(pids.length, 2, "two root sessions, two bridges");
+  assert.ok(pids.every(alive), "the bridges must be running while the plugin lives");
   await rec.stop();
-  await until(() => !alive(pid), "the bridge to die after dispose");
+  await until(() => pids.every((p) => !alive(p)), "every bridge to die after dispose");
 });
 
 test("no bridge on the machine: no tools, and the plugin says where it looked", async () => {
@@ -231,42 +243,77 @@ test("a bridge stuck in someone's browser: tools come from the last list, calls 
 
 // ── channel ──────────────────────────────────────────────────────────────────
 
-test("a frame goes as a prompt into the session that called iskron_channel; hello only toasts", async () => {
+test("each root session gets its own bridge, and a frame goes to the session whose bridge brought it", async () => {
   const b = bridgeEnv("frame");
   const rec = await plugin(b.env);
   try {
-    await rec.hooks.tool.iskron_orient.execute({}, ctx("s-other"));
-    await rec.hooks.tool.iskron_channel.execute({ action: "connect" }, ctx("s-holder"));
+    await rec.hooks.tool.iskron_channel.execute({ action: "connect" }, ctx("s-a"));
+    await rec.hooks.tool.iskron_channel.execute({ action: "connect" }, ctx("s-b"));
+    const [pidA, pidB] = pidsOf(b.log);
+    assert.ok(pidA && pidB && pidA !== pidB, "two sessions must stand on two bridges");
     appendFileSync(
-      b.events,
+      `${b.events}.${pidA}`,
       JSON.stringify({ kind: "frame", frame: { type: "hello", pending: 0 }, raw: "{}" }) + "\n",
     );
     await until(() => /канал слушает/.test(rec.said()), "the hello toast");
     assert.equal(rec.prompts.length, 0, "hello must not wake the agent");
-    const frame = {
+    const frame = (body) => ({
       type: "message",
-      body: "Привет с той стороны",
-      provenance: { from_standing: "@alari:telegram-bot" },
-    };
+      id: "msg-1",
+      body,
+      provenance: {
+        from_standing: "@alari:telegram-bot",
+        from_karta_seq: 1226,
+        auth: "pat",
+        via: "hook",
+      },
+    });
     appendFileSync(
-      b.events,
-      JSON.stringify({ kind: "frame", frame, raw: JSON.stringify(frame) }) + "\n",
+      `${b.events}.${pidB}`,
+      JSON.stringify({ kind: "frame", frame: frame("для второй"), raw: "" }) + "\n",
     );
-    await until(() => rec.prompts.length === 1, "the frame to be prompted");
-    const p = rec.prompts[0];
-    assert.equal(
-      p.path.id,
-      "s-holder",
-      "the holder of the standing gets the frame, not the last caller",
+    appendFileSync(
+      `${b.events}.${pidA}`,
+      JSON.stringify({ kind: "frame", frame: frame("для первой"), raw: "" }) + "\n",
     );
-    assert.match(p.body.parts[0].text, /от @alari:telegram-bot/);
-    assert.match(p.body.parts[0].text, /Привет с той стороны/);
+    await until(() => rec.prompts.length === 2, "both frames to be prompted");
+    const to = Object.fromEntries(rec.prompts.map((p) => [p.path.id, p.body.parts[0].text]));
+    assert.match(to["s-a"], /для первой/);
+    assert.match(to["s-b"], /для второй/);
+    assert.match(
+      to["s-a"],
+      /^Кадр канала Искрона от делателя роли #1226 — стояние @alari:telegram-bot\nprovenance: \{"from_standing":"@alari:telegram-bot","from_karta_seq":1226,"auth":"pat","via":"hook"\}\nframe: \{"id":"msg-1"\}\n\nдля первой$/,
+      "provenance must reach the agent as the platform saw it",
+    );
   } finally {
     await rec.stop();
   }
 });
 
-test("with no caller on record the freshest root session gets the frame", async () => {
+test("a subagent session works through its root's bridge", async () => {
+  const b = bridgeEnv("subagent");
+  const rec = await plugin(b.env, {
+    sessions: [
+      { id: "root", time: { updated: 1 } },
+      { id: "child", parentID: "root", time: { updated: 2 } },
+    ],
+  });
+  try {
+    await rec.hooks.tool.iskron_channel.execute({ action: "connect" }, ctx("root"));
+    await rec.hooks.tool.iskron_orient.execute({}, ctx("child"));
+    assert.equal(pidsOf(b.log).length, 1, "the child must not raise a bridge of its own");
+    appendFileSync(
+      `${b.events}.${pidOf(b.log)}`,
+      JSON.stringify({ kind: "frame", frame: { type: "message", body: "x" }, raw: "" }) + "\n",
+    );
+    await until(() => rec.prompts.length === 1, "the frame to be prompted");
+    assert.equal(rec.prompts[0].path.id, "root", "the frame goes to the root, never the subagent");
+  } finally {
+    await rec.stop();
+  }
+});
+
+test("a frame from a bridge nobody owns yet goes to the freshest root session", async () => {
   const b = bridgeEnv("root");
   const rec = await plugin(b.env, {
     sessions: [
@@ -292,8 +339,12 @@ test("a dead token is loud: an error toast and a prompt that names the move", as
   const rec = await plugin(b.env);
   try {
     await rec.hooks.tool.iskron_channel.execute({ action: "connect" }, ctx("s-holder"));
-    appendFileSync(b.events, JSON.stringify({ kind: "dead", code: 4001 }) + "\n");
+    appendFileSync(
+      `${b.events}.${pidOf(b.log)}`,
+      JSON.stringify({ kind: "dead", code: 4001 }) + "\n",
+    );
     await until(() => rec.prompts.length === 1, "the dead-token prompt");
+    assert.equal(rec.prompts[0].path.id, "s-holder");
     assert.match(rec.prompts[0].body.parts[0].text, /токен мёртв/);
     assert.match(rec.prompts[0].body.parts[0].text, /mint/);
     assert.ok(
@@ -305,20 +356,20 @@ test("a dead token is loud: an error toast and a prompt that names the move", as
   }
 });
 
-test("a deleted session is forgotten as the addressee", async () => {
+test("a deleted session takes its bridge — and so its standing — down with it", async () => {
   const b = bridgeEnv("forget");
-  const rec = await plugin(b.env, { sessions: [{ id: "root", time: { updated: 1 } }] });
+  const rec = await plugin(b.env);
   try {
     await rec.hooks.tool.iskron_channel.execute({ action: "connect" }, ctx("gone"));
+    const pid = pidOf(b.log);
+    assert.ok(alive(pid));
     await rec.hooks.event({
       event: { type: "session.deleted", properties: { info: { id: "gone" } } },
     });
-    appendFileSync(
-      b.events,
-      JSON.stringify({ kind: "frame", frame: { type: "message", body: "x" }, raw: "" }) + "\n",
-    );
-    await until(() => rec.prompts.length === 1, "the frame to be prompted");
-    assert.equal(rec.prompts[0].path.id, "root");
+    await until(() => !alive(pid), "the session's bridge to die");
+    // The next call from a new session gets a fresh bridge, not the dead one.
+    await rec.hooks.tool.iskron_orient.execute({}, ctx("next"));
+    assert.equal(pidsOf(b.log).length, 2);
   } finally {
     await rec.stop();
   }

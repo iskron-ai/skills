@@ -10,13 +10,18 @@
 // appears — the red this probe exists to show.
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
+import { startFakeCodex } from "./fake-codex.mjs";
 import { startFakeNks } from "./fake-nks.mjs";
+
+// Чем запускать поставку: node по умолчанию; ISKRON_NODE подставляет другой рантайм
+// (например, `opencode` под BUN_BE_BUN=1 — Bun, встроенный в OpenCode).
+const NODE = process.env.ISKRON_NODE || process.execPath;
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const FILE =
@@ -31,7 +36,7 @@ const CONNECT = { realm: "nks-dev", action: "connect", karta: 931, name: "proba"
 
 // --- a harness that also keeps the bridge's notifications ------------------
 function startBridge(serverUrl, authDir) {
-  const proc = spawn(process.execPath, [FILE, serverUrl, "--no-browser", "--auth-dir", authDir], {
+  const proc = spawn(NODE, [FILE, serverUrl, "--no-browser", "--auth-dir", authDir], {
     env: { ...process.env, ISKRON_BRIDGE_NO_BROWSER: "1" },
     stdio: ["pipe", "pipe", "pipe"],
   });
@@ -128,9 +133,9 @@ async function connected(t) {
 // The watchdog is given the auth dir the way the bridge's own block names it —
 // the `--auth-dir` flag, never a variable the bridge was not started with. One
 // lever for both halves, or a drift between their roots would pass green here.
-function runClient(sub, dir, key, timeoutMs = 8000) {
-  const proc = spawn(process.execPath, [FILE, sub, ...(key ? [key] : []), "--auth-dir", dir], {
-    env: { ...process.env },
+function runClient(sub, dir, key, timeoutMs = 8000, extraEnv = {}) {
+  const proc = spawn(NODE, [FILE, sub, ...(key ? [key] : []), "--auth-dir", dir], {
+    env: { ...process.env, ...extraEnv },
     stdio: ["ignore", "pipe", "pipe"],
   });
   let out = "";
@@ -171,7 +176,10 @@ test("connect through the bridge: the bridge holds the socket and the answer nam
     text.includes(`watchdog ${key} --auth-dir "${dir}"`),
     `a bridge off the default auth dir must tell the watchdog where to look:\n${text}`,
   );
-  assert.ok(text.includes(join(standings, `${key}.say`)), "the busy-line file path must be named");
+  assert.ok(
+    text.includes('iskron_channel(action="status"'),
+    "the block must name the status call, not a file",
+  );
   await waitFor(() => fake.state.ws.size === 1, "the bridge to open the standing socket");
   const held = readdirSync(standings);
   assert.ok(
@@ -230,16 +238,11 @@ test("a dead-token close leaves the watchdog loudly and reaches the harness as a
     () => !readdirSync(standings).some((f) => f.endsWith(".sock")),
     "the local socket to be withdrawn",
   );
-  assert.ok(
-    !readdirSync(standings).some((f) => f.endsWith(".say")),
-    "the busy-line file must die with the standing, not outlive it",
-  );
 });
 
-test("connect under a new name re-keys the hold: the block, the key file and the say path follow the name", async (t) => {
-  const { fake, bridge, key, standings } = await connected(t);
+test("connect under a new name re-keys the hold: the block and the key file follow the name", async (t) => {
+  const { fake, bridge, standings } = await connected(t);
   await waitFor(() => fake.state.ws.size === 1, "the first socket");
-  writeFileSync(join(standings, `${key}.say`), "старое имя");
   const reply = await bridge.call("tools/call", 5, {
     name: "iskron_channel",
     arguments: { ...CONNECT, name: "vtoraya" },
@@ -250,7 +253,6 @@ test("connect under a new name re-keys the hold: the block, the key file and the
     key2 && key2.startsWith("vtoraya--"),
     `the block still names the old standing:\n${text}`,
   );
-  assert.ok(text.includes(join(standings, `${key2}.say`)), "the say path must follow the new name");
   await waitFor(
     () =>
       readdirSync(standings).some((f) => f.endsWith(".key")) &&
@@ -259,7 +261,96 @@ test("connect under a new name re-keys the hold: the block, the key file and the
         .every((f) => readFileSync(join(standings, f), "utf8").trim() === key2),
     "the key file to carry the new name only",
   );
-  assert.ok(!existsSync(join(standings, `${key}.say`)), "the old busy-line file must be gone");
+});
+
+test("watchdog-codex puts a message frame into the Codex thread through the app-server door", async (t) => {
+  const { fake, dir, key } = await connected(t);
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  // The door lives under a short home: a unix socket path is limited to ~104 bytes.
+  const home = mkdtempSync("/tmp/cxd-");
+  const sock = join(home, "app-server-control", "app-server-control.sock");
+  const log = join(home, "door.log");
+  writeFileSync(log, "");
+  const door = await startFakeCodex(sock, log);
+  t.after(() => door.stop());
+  const wd = runClient("watchdog-codex", dir, key, 15000, {
+    CODEX_HOME: home,
+    CODEX_THREAD_ID: "thread-42",
+  });
+  await waitFor(() => wd.err.includes("слушаю стояние"), "the watchdog to attach");
+  await fake.control({ ws_send: JSON.stringify({ type: "hello", pending: 0 }) });
+  await fake.control({
+    ws_send: JSON.stringify({
+      type: "message",
+      body: "Слово соседа",
+      provenance: { from_standing: "@alari:sosед" },
+    }),
+  });
+  await waitFor(
+    () => readFileSync(log, "utf8").includes("turn/start"),
+    "the frame to reach the door",
+  );
+  const calls = readFileSync(log, "utf8")
+    .trim()
+    .split("\n")
+    .map((l) => JSON.parse(l));
+  assert.ok(
+    calls.some((c) => c.method === "initialize"),
+    "the door is initialized first",
+  );
+  const turn = calls.find((c) => c.method === "turn/start");
+  assert.equal(turn.params.threadId, "thread-42", "the frame goes to THIS thread");
+  assert.match(turn.params.input[0].text, /Слово соседа/);
+  assert.match(turn.params.input[0].text, /стояние @alari:sosед/);
+  assert.equal(
+    calls.filter((c) => c.method === "turn/start").length,
+    1,
+    "hello must not wake the thread",
+  );
+  // A dead token is loud through the same door, and the watchdog leaves non-zero.
+  await fake.control({ ws_close: 4001 });
+  const r = await wd.done;
+  assert.notEqual(r.exit, 0, "the watchdog must leave non-zero on a dead token");
+  assert.match(wd.err, /токен мёртв/);
+});
+
+test("watchdog-codex refuses to guess: no thread id or no door is a code-2 exit that names the move", async (t) => {
+  const { dir, key } = await connected(t);
+  const noThread = await runClient("watchdog-codex", dir, key, 5000, { CODEX_THREAD_ID: "" }).done;
+  assert.equal(noThread.exit, 2);
+  const noDoor = await runClient("watchdog-codex", dir, key, 5000, {
+    CODEX_THREAD_ID: "thread-42",
+    CODEX_HOME: mkdtempSync("/tmp/cxn-"),
+  }).done;
+  assert.equal(noDoor.exit, 2);
+});
+
+test("a truncated frame is read to the end by the bridge before anyone sees it", async (t) => {
+  const { fake, dir, bridge, key } = await connected(t);
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog", dir, key);
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
+  const full = "Длинное слово соседа, ".repeat(20).trim();
+  await fake.control({ message_full: { id: "m-long", text: full } });
+  await fake.control({
+    ws_send: JSON.stringify({
+      type: "message",
+      id: "m-long",
+      body: full.slice(0, 40) + "...(truncated)",
+      body_chars: [...full].length,
+      provenance: { from_standing: "@alari:sosед", auth: "oidc" },
+    }),
+  });
+  await waitFor(() => wd.out.includes("m-long"), "the frame to reach the watchdog");
+  const line = wd.out.split("\n").find((l) => l.includes("m-long"));
+  const frame = JSON.parse(line);
+  assert.equal(frame.body, full, "the doer must get the whole body, not the cut");
+  assert.equal(frame.body_read, "history");
+  assert.equal(frame.origin, "peer", "the bridge stamps who speaks");
+  assert.ok(
+    bridge.notifications.some((n) => n.params?.data?.frame?.body === full),
+    "the plugin-side notification carries the whole body too",
+  );
 });
 
 test("watchdog-exit exits 0 on the first message and lets service frames pass", async (t) => {
@@ -273,17 +364,56 @@ test("watchdog-exit exits 0 on the first message and lets service frames pass", 
   assert.ok(wd.out.includes("будильник"), "the frame must be printed before the exit");
 });
 
-test("the busy line written to the file reaches the service; an over-long line is refused once", async (t) => {
-  const { fake, key, standings, bridge } = await connected(t);
+test("the busy line is a call to one's own standing, answered by the bridge itself: it holds the socket", async (t) => {
+  const { fake, bridge, standings } = await connected(t);
   await waitFor(() => fake.state.ws.size === 1, "the socket");
-  writeFileSync(join(standings, `${key}.say`), "чиню мост");
-  await waitFor(() => fake.state.status === "чиню мост", "the busy line to be published");
+  const before = fake.state.counts.mcp;
+  const ok = await bridge.call("tools/call", 6, {
+    name: "iskron_channel",
+    arguments: { realm: "nks-dev", action: "status", text: "чиню мост" },
+  });
+  assert.ok(!ok.result?.isError, JSON.stringify(ok));
+  assert.equal(fake.state.status, "чиню мост", "the line reaches the service's status address");
   assert.equal(fake.state.counts.status_posts, 1);
-  writeFileSync(join(standings, `${key}.say`), "x".repeat(80));
-  await waitFor(() => bridge.stderr.includes("не приняли (422)"), "the refusal to be named");
-  await new Promise((r) => setTimeout(r, 1500));
+  assert.equal(
+    fake.state.counts.mcp,
+    before,
+    "the call never goes to the MCP server — it is the bridge's own word",
+  );
+  // The bridge does not judge the line: the surface's refusal comes back whole.
+  const long = await bridge.call("tools/call", 7, {
+    name: "iskron_channel",
+    arguments: { realm: "nks-dev", action: "status", text: "x".repeat(80) },
+  });
+  assert.ok(long.result?.isError, "an over-long line is the surface's refusal, passed through");
+  assert.match(long.result.content[0].text, /422/);
+  assert.match(
+    long.result.content[0].text,
+    /too long/,
+    "the body of the refusal must reach the doer",
+  );
   assert.equal(fake.state.status, "чиню мост", "a refused line must not replace the published one");
-  assert.equal(fake.state.counts.status_posts, 1, "a refused line must not be retried");
+  assert.ok(
+    !readdirSync(standings).some((f) => f.endsWith(".say")),
+    "no busy-line file may exist any more",
+  );
+});
+
+test("status before connect is a teaching refusal from the bridge, not a server call", async (t) => {
+  const fake = await startFakeNks();
+  const dir = mkdtempSync(join(tmpdir(), "iskron-standing-"));
+  const bridge = startBridge(fake.mcpUrl, dir);
+  t.after(async () => {
+    await bridge.stop();
+    await fake.stop();
+  });
+  const r = await bridge.call("tools/call", 1, {
+    name: "iskron_channel",
+    arguments: { realm: "nks-dev", action: "status", text: "рано" },
+  });
+  assert.ok(r.result?.isError);
+  assert.match(r.result.content[0].text, /connect/);
+  assert.equal(fake.state.counts.mcp, 0);
 });
 
 test("tools/list carries the writing-moment line on write tools only", async (t) => {
@@ -297,6 +427,10 @@ test("tools/list carries the writing-moment line on write tools only", async (t)
   );
   assert.ok(byName.iskron_batch?.includes("[мост] Момент скилла writing"), "batch lacks the line");
   assert.ok(!byName.iskron_orient?.includes("[мост]"), "a read tool must stay untouched");
+  assert.ok(
+    byName.iskron_channel?.includes('action="status"'),
+    "the channel tool must announce the bridge's own status action",
+  );
 });
 
 test("watchdog with nothing held tells the doer to connect first", async () => {

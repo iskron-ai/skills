@@ -51,10 +51,48 @@ export function deadTokenAdvice(code: number): string {
   return `закрытие ${code} — токен мёртв, зови ${code === 4001 ? "mint" : "connect"}`;
 }
 
+export type FrameOrigin = "platform" | "human" | "sibling" | "peer";
+
+/**
+ * Кто говорит — по провенансу, как платформа его наблюдала. Побудка платформы
+ * идёт без удостоверения; человек говорит от собственной роли (стояние его роли
+ * — бот, телеграм) либо от себя; брат — другое стояние ТОЙ ЖЕ роли, что у
+ * читающего; остальное — делатель другой роли. myKarta — роль читающего.
+ */
+export function classifyOrigin(frame: Frame, myKarta?: string | number | null): FrameOrigin {
+  const p = frame.provenance ?? {};
+  if (p.via === "platform" || p.auth === "none") return "platform";
+  if (p.as_person === true) return "human";
+  if (p.from_karta_seq != null && p.user_karta_seq != null && p.from_karta_seq === p.user_karta_seq)
+    return "human";
+  if (myKarta != null && p.from_karta_seq != null && String(p.from_karta_seq) === String(myKarta))
+    return "sibling";
+  return "peer";
+}
+
 export interface Frame {
   type?: string;
   body?: unknown;
-  provenance?: { from_standing?: string; from_karta_seq?: number };
+  id?: string;
+  received_at?: string;
+  stale?: boolean;
+  content_type?: string;
+  body_chars?: number;
+  /** Как получено тело: "history" — мост дочитал обрезанный кадр; "truncated: …" — не вышло. */
+  body_read?: string;
+  /** Кто говорит, по провенансу: платформа, человек, брат по роли, делатель другой роли. Ставит мост. */
+  origin?: FrameOrigin;
+  provenance?: {
+    from_standing?: string;
+    from_karta_seq?: number;
+    auth?: string;
+    via?: string;
+    user?: string;
+    user_karta_seq?: number;
+    in_reply_to?: string;
+    as_person?: boolean;
+    [k: string]: unknown;
+  };
   [k: string]: unknown;
 }
 
@@ -167,58 +205,6 @@ export function holdSocket(o: HoldOptions): Holder {
     },
     get alive() {
       return !stopped && !!ws && (ws.readyState === 0 || ws.readyState === 1);
-    },
-  };
-}
-
-export interface SayOptions {
-  /** Файл, в который делатель пишет ТЕКСТ строки занятости. */
-  sayFile: string;
-  statusUrl: string;
-  /** Строку не приняли: раз на текст, не раз в секунду. */
-  onRefused?: (text: string, status: number | null) => void;
-  intervalMs?: number;
-}
-
-/**
- * Слово делателя наружу: строку занятости удостоверяет слушающий секрет, а он у
- * держателя сокета, не у рабочей сессии. Делатель пишет текст в файл, публикует
- * держатель. Опрос, а не наблюдение: файла может ещё не быть, а наблюдатель за
- * несуществующим путём бросает; пересоздание целиком опрос тоже переживает.
- */
-export function startSaying(o: SayOptions, readText: (file: string) => string): { stop(): void } {
-  let said: string | null = null;
-  let complained: string | null = null;
-  async function say(): Promise<void> {
-    let text: string;
-    try {
-      text = readText(o.sayFile).trim();
-    } catch {
-      return; // ещё не написали — не о чем говорить
-    }
-    if (text === said) return; // публикуют смену занятия, а не такт
-    const res = await fetch(o.statusUrl, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ text }),
-      signal: AbortSignal.timeout(5000),
-    }).catch(() => null);
-    if (res?.ok) {
-      said = text; // пустая строка — СЛОВО: ею занятость снимают
-      complained = null;
-      return;
-    }
-    if (complained !== text) {
-      complained = text;
-      o.onRefused?.(text, res ? res.status : null);
-    }
-    if (res && res.status >= 400 && res.status < 500) said = text; // отказ по самой строке: повтор той же ничего не изменит
-  }
-  const timer = setInterval(() => void say(), o.intervalMs ?? 1000);
-  timer.unref?.(); // таймер не смеет держать процесс, чей сокет умер
-  return {
-    stop() {
-      clearInterval(timer);
     },
   };
 }

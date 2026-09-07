@@ -16,6 +16,10 @@ import { fileURLToPath } from "node:url";
 
 import { startFakeNks } from "./fake-nks.mjs";
 
+// Чем запускать поставку: node по умолчанию; ISKRON_NODE подставляет другой рантайм
+// (например, `opencode` под BUN_BE_BUN=1 — Bun, встроенный в OpenCode).
+const NODE = process.env.ISKRON_NODE || process.execPath;
+
 // Defaults to the source of truth; ISKRON_BRIDGE_PATH points the same suite at
 // another copy — a built bundle, an installed one, or a past revision when you
 // want to see a test fail on the defect it was written for.
@@ -39,7 +43,7 @@ const INIT_PARAMS = {
 // --- driving the bridge the way a harness does -----------------------------
 
 function startBridge(serverUrl, authDir, extraEnv = {}) {
-  const proc = spawn(process.execPath, [BRIDGE, serverUrl, "--no-browser", "--auth-dir", authDir], {
+  const proc = spawn(NODE, [BRIDGE, serverUrl, "--no-browser", "--auth-dir", authDir], {
     env: { ...process.env, ISKRON_BRIDGE_NO_BROWSER: "1", ...extraEnv },
     stdio: ["pipe", "pipe", "pipe"],
   });
@@ -1647,7 +1651,7 @@ test("the bridge names the plugin's version — one delivery, one number", async
     ),
   );
   const out = await new Promise((res, rej) => {
-    const p = spawn(process.execPath, [BRIDGE, "--version"]);
+    const p = spawn(NODE, [BRIDGE, "--version"]);
     let o = "";
     p.stdout.on("data", (c) => (o += c));
     p.on("exit", () => res(o.trim()));

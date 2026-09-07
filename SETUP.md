@@ -123,32 +123,6 @@ codex plugin add iskron@iskron
 codex mcp add iskron-bridge -- node "$HOME/.iskron-bridge/iskron-bridge.mjs"
 ```
 
-**OpenCode** — не запись `mcp` в конфиге, а **плагин из поставки**: запись `mcp`
-переименовала бы каждый тул в `iskron_iskron_*`, и скиллы, зовущие `iskron_orient`,
-звали бы имя, которого в сессии нет. Плагин регистрирует тулы под их именами,
-поднимает мост дочерним процессом и вкладывает кадры живого канала в сессию
-промптом — стояние держит мост, сторож не нужен. Два файла, оба из установленного
-скилла `establish-mcp` (шаг «Как поднять мост» кладёт первый):
-
-```sh
-mkdir -p ~/.iskron-bridge ~/.config/opencode/plugins
-src=$(dirname "$(find -L ~/.agents/skills ~/.claude -path '*establish-mcp/scripts/iskron.mjs' 2>/dev/null | head -1)")
-cp "$src/iskron.mjs" ~/.iskron-bridge/iskron-bridge.mjs
-cp "$src/opencode-plugin.js" ~/.config/opencode/plugins/iskron.js
-```
-
-Плагин лежит именно в `~/.config/opencode/plugins/`: там, и только там, OpenCode сам
-держит зависимость `@opencode-ai/plugin`, которую файл импортирует. Мост плагин берёт
-из `~/.iskron-bridge/iskron-bridge.mjs` (или из `ISKRON_BRIDGE_PATH`); нужен `node` 22+
-на `PATH`. После обновления поставки повтори обе копии — `node
-~/.iskron-bridge/iskron-bridge.mjs doctor` скажет, отстала ли какая. Первый вызов тула
-без гранта уводит человека в браузер, как везде; для безголовой машины — токен, ниже.
-Проверь:
-
-```sh
-opencode run --format json "Позови тул iskron_me и напечатай имя человека"
-```
-
 **Нативную http-запись** плагин Codex больше не несёт: её OAuth не держит грант
 и привязку стояния. Нужна всё же — `codex mcp add iskron --url https://mcp.iskron.ru/`
 и `codex mcp login iskron`, с ценой, названной в скилле establish-mcp.
@@ -160,6 +134,67 @@ approval, but approval policy is never`: тулы видны и не зовут�
 песочнице записи по рабочей директории. Соседний
 `--dangerously-bypass-approvals-and-sandbox` снимает заодно и песочницу — для
 этого он не нужен.
+
+**OpenCode** — не запись `mcp` в конфиге, а **плагин из поставки**: запись `mcp`
+переименовала бы каждый тул в `iskron_iskron_*`, и скиллы, зовущие `iskron_orient`,
+звали бы имя, которого в сессии нет. Плагин регистрирует тулы под их именами,
+поднимает мост дочерним процессом на каждую сессию и вкладывает кадры живого
+канала в ту сессию, чей мост их принёс, — стояние у каждой сессии своё, держит его
+мост, сторож не нужен. Два файла, оба из установленного
+скилла `establish-mcp` (шаг «Как поднять мост» кладёт первый):
+
+```sh
+mkdir -p ~/.iskron-bridge ~/.config/opencode/plugins
+src=$(dirname "$(find -L ~/.agents/skills ~/.claude -path '*establish-mcp/scripts/opencode-plugin.js' 2>/dev/null | head -1)")
+[ -n "$src" ] && [ -f "$src/iskron.mjs" ] || { echo "в установленных скиллах нет плагина OpenCode — обнови поставку (npx skills update --global или плагин) и повтори"; false; }
+cp "$src/iskron.mjs" ~/.iskron-bridge/iskron-bridge.mjs
+cp "$src/opencode-plugin.js" ~/.config/opencode/plugins/iskron.js
+```
+
+Ищем именно `opencode-plugin.js`: у поставок до него мост звался `iskron-bridge.mjs`,
+и поиск по одному мосту нашёл бы старую копию без плагина — а пустой `src` без
+проверки заставил бы `cp` тихо копировать из текущего каталога.
+
+Плагин лежит именно в `~/.config/opencode/plugins/`: там, и только там, OpenCode сам
+держит зависимость `@opencode-ai/plugin`, которую файл импортирует. Мост плагин берёт
+из `~/.iskron-bridge/iskron-bridge.mjs` (или из `ISKRON_BRIDGE_PATH`) и запускает его на
+Bun самого OpenCode — Node на машине не нужен. После обновления поставки повтори обе копии — `node "$src/iskron.mjs" doctor`
+(из поставки, не из домашней копии: сверять копии может только файл, рядом с которым
+лежит эталон) скажет, отстала ли какая. Первый вызов тула
+без гранта уводит человека в браузер, как везде; для безголовой машины — токен, ниже.
+Проверь:
+
+```sh
+opencode run --format json "Позови тул iskron_me и напечатай имя человека"
+```
+
+**Codex слышит канал через дверь app-server.** Кадр стояния входит в идущий тред,
+если тред живёт под локальным демоном app-server. Демон стартует из managed-установки
+Codex — `$CODEX_HOME/packages/standalone/current/codex`, её кладут установщик
+(`curl -fsSL https://chatgpt.com/codex/install.sh | sh`) и приложение ChatGPT; голый
+бинарь внутри ChatGPT.app без неё отказывает. Держи `CODEX_HOME` коротким (путь unix-сокета ограничен;
+дом внутри `~/Library/Application Support/…` слишком длинный — заведи короткий дом,
+смотрящий на настоящий) и подними демон:
+
+```sh
+H="$HOME/Library/Application Support/orca/codex-runtime-home/home"   # настоящий дом, если он длинный
+mkdir -p /tmp/cxh && ln -sfn "$H/packages" /tmp/cxh/packages && ln -sfn "$H/auth.json" /tmp/cxh/auth.json
+cp "$H/config.toml" /tmp/cxh/config.toml
+CODEX_HOME=/tmp/cxh codex plugin marketplace add https://github.com/iskron-ai/skills
+CODEX_HOME=/tmp/cxh codex plugin add iskron@iskron
+CODEX_HOME=/tmp/cxh codex app-server daemon start
+```
+
+Плагин ставится в короткий дом отдельно: `config.toml` записи моста не несёт (её
+приносит плагин), а каталог `plugins` настоящего дома в рецепт не входит — без этого
+шага сессии под демоном придут без тулов `iskron_*` (поймано холодным прогоном).
+Сессии Codex, запущенные с тем же `CODEX_HOME`, прицепляются к демону сами; сессия,
+запущенная с другим домом, двери не имеет — агент изнутри этого не поправит, это
+делаешь ты до запуска. `node ~/.iskron-bridge/iskron-bridge.mjs doctor` под тем же
+`CODEX_HOME` говорит, открыта ли дверь.
+
+Дальше — скилл `standing`: `node "<мост>" watchdog-codex <ключ>` из оболочки сессии
+долгоживущим процессом. Без демона остаётся сторож выхода-на-кадре.
 
 **Порядок один, и он без условий: сперва мост `iskron-bridge`** (как — ниже, в
 разделе «Как поднять мост»). Нативную запись можно не заводить вовсе.

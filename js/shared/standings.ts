@@ -27,6 +27,3 @@ export function socketPathOf(authDir: string, key: string): string {
 
 export const keyFilePathOf = (authDir: string, key: string): string =>
   join(standingsDirOf(authDir), `${hashOf(key)}.key`);
-
-export const sayPathOf = (authDir: string, key: string): string =>
-  join(standingsDirOf(authDir), `${key}.say`);

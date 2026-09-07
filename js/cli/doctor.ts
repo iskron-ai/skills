@@ -208,6 +208,19 @@ function harnessReport(): void {
       out(`OpenCode: плагин ${copy} — ДРУГИЕ байты, обнови из поставки: cp "${packaged}" ${copy}`);
     }
   }
+  const codexHome = process.env.CODEX_HOME?.trim() || join(homedir(), ".codex");
+  const door = join(codexHome, "app-server-control", "app-server-control.sock");
+  if (existsSync(codexHome)) {
+    if (existsSync(door)) out(`Codex: дверь app-server открыта (${door})`);
+    else if (Buffer.byteLength(door) > 100)
+      out(
+        `Codex: двери нет и не будет — CODEX_HOME длиннее предела unix-сокета (${codexHome}); нужен короткий дом для демона и сессий`,
+      );
+    else
+      out(
+        `Codex: двери нет (${door}) — демон app-server не поднят; без неё кадр доставляет watchdog-exit`,
+      );
+  }
   const codex = join(homedir(), ".codex", "config.toml");
   if (existsSync(codex)) {
     const text = readFileSync(codex, "utf8");

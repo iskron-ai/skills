@@ -3,18 +3,22 @@ import { type ChildProcess, spawn } from "node:child_process";
 import { basename } from "node:path";
 
 /**
- * Чем запускать мост. Под pi это сам node (`process.execPath`); под OpenCode
- * процесс — Bun внутри бинаря opencode, и его execPath запустил бы opencode с
- * путём моста как каталогом проекта (наблюдено: «Failed to change directory
- * to …/iskron.mjs»). Мост — файл под Node 22, значит нужен node с PATH.
+ * Чем запускать мост. Под pi это сам node (`process.execPath`). Под OpenCode
+ * процесс — Bun, встроенный в бинарь opencode; голый execPath запустил бы
+ * opencode с путём моста как каталогом проекта (наблюдено: «Failed to change
+ * directory to …/iskron.mjs»), но тот же бинарь под BUN_BE_BUN=1 ведёт себя как
+ * обычный bun и гоняет мост целиком (все пробы моста зелёные под ним). Так у
+ * OpenCode нет требования Node: мост бежит на рантайме самого харнеса.
+ * ISKRON_NODE — рычаг человека и проб: явный рантайм старше вывода.
  */
-export function nodeBinary(): string {
-  if (process.env.ISKRON_NODE?.trim()) return process.env.ISKRON_NODE.trim();
-  if (process.versions?.bun || !/^node/i.test(basename(process.execPath))) return "node";
-  return process.execPath;
+export function bridgeRuntime(): { bin: string; env: NodeJS.ProcessEnv } {
+  const own = process.env.ISKRON_NODE?.trim();
+  if (own) return { bin: own, env: process.env };
+  if (process.versions?.bun)
+    return { bin: process.execPath, env: { ...process.env, BUN_BE_BUN: "1" } };
+  if (!/^node/i.test(basename(process.execPath))) return { bin: "node", env: process.env };
+  return { bin: process.execPath, env: process.env };
 }
-
-/* eslint-disable @typescript-eslint/no-explicit-any -- JSON-RPC-полезная нагрузка приходит без схемы */
 
 export type Content =
   { type: "text"; text: string } | { type: "image"; data: string; mimeType: string };
@@ -42,7 +46,8 @@ export class Bridge {
   }
 
   start(): void {
-    const proc = spawn(nodeBinary(), [this.bin], { stdio: ["pipe", "pipe", "pipe"] });
+    const rt = bridgeRuntime();
+    const proc = spawn(rt.bin, [this.bin], { stdio: ["pipe", "pipe", "pipe"], env: rt.env });
     this.proc = proc;
     proc.stdout?.setEncoding("utf8");
     proc.stdout?.on("data", (chunk: string) => this.feed(chunk));
@@ -209,5 +214,3 @@ export function resultToContent(result: any): Content[] {
     { type: "text" as const, text: structured ? JSON.stringify(structured) : "(пустой ответ)" },
   ];
 }
-
-/* eslint-enable @typescript-eslint/no-explicit-any */
