@@ -128,3 +128,23 @@ test("what the manifest promises is on disk", () => {
     `манифест зовёт ${rec?.args?.[0]}, а файла нет`,
   );
 });
+
+// The Claude Code plugin record. Claude Code substitutes the EXACT token
+// `${CLAUDE_PLUGIN_ROOT}` in a plugin's .mcp.json; a shell-style default
+// (`${CLAUDE_PLUGIN_ROOT:-.}`) is not that token and falls through to generic
+// expansion, which resolves to "." — witnessed on the installed 6.2.1: the record
+// read `node ./skills/establish-mcp/scripts/iskron.mjs` and never connected,
+// while the exact token connected at once (graph nks-dev: #4280).
+test("the Claude Code plugin record names the bridge through the exact ${CLAUDE_PLUGIN_ROOT} token", () => {
+  const rec = JSON.parse(readFileSync(resolve(ROOT, ".mcp.json"), "utf8")).mcpServers.iskron;
+  assert.equal(rec.command, "node");
+  assert.equal(rec.args.length, 1);
+  assert.ok(
+    rec.args[0].startsWith("${CLAUDE_PLUGIN_ROOT}/"),
+    `the path must start with the exact token, got ${rec.args[0]}`,
+  );
+  assert.ok(
+    existsSync(resolve(ROOT, rec.args[0].slice("${CLAUDE_PLUGIN_ROOT}/".length))),
+    "the file must ship",
+  );
+});
