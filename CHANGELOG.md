@@ -1,5 +1,12 @@
 # Changelog
 
+## [6.4.0](https://github.com/iskron-ai/skills/compare/v6.3.0...v6.4.0) (2026-09-08)
+
+
+### Features
+
+* **vahta:** гроссбух в семени превращения, разделённая ответственность за граф, вахта без повода предлагает ([#99](https://github.com/iskron-ai/skills/issues/99)) ([323ca4e](https://github.com/iskron-ai/skills/commit/323ca4eaf7e218117a8d68ada859f603e858b4c1))
+
 ## [6.3.0](https://github.com/iskron-ai/skills/compare/v6.2.3...v6.3.0) (2026-09-08)
 
 
