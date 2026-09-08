@@ -231,7 +231,8 @@ export function staleNotice(latest: Latest | null, authDir: string): string | nu
       ? `Скачать свежий мост не вышло (${latest.error}); повтори: node ~/.iskron-bridge/iskron-bridge.mjs update.`
       : isSymlink(homeBridgePath())
         ? "Свежий мост в дом не положен: дом — симлинк на чужую копию, его не трогаю; обнови эту копию сам."
-        : compareVersions(versionOf(homeBridgePath()), latest.version) >= 0
+        : versionOf(homeBridgePath()) &&
+            compareVersions(versionOf(homeBridgePath()), latest.version) >= 0
           ? "Свежий мост уже лежит в ~/.iskron-bridge и поднимется новой сессией."
           : "Свежий мост в дом не положен; повтори: node ~/.iskron-bridge/iskron-bridge.mjs update.";
   return (

@@ -18,7 +18,6 @@ import {
   holdsStanding,
   listenBlock,
   publishStatus,
-  releaseStanding,
 } from "./hold.ts";
 import { noteStanding, replyText } from "./standing.ts";
 import { post } from "./transport.ts";
@@ -197,19 +196,28 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   // идут только по распознанной однозначной форме; иначе честный отказ.
   const header = /^\s*Каналы(?:\s*\((\d+)\))?(?:\s|:|$)/m.exec(board.text);
   const declared = header?.[1] != null ? Number(header[1]) : null;
-  const recognized = !!header || entries.length > 0;
-  const truncated = declared != null && declared !== entries.length;
+  // Пустой граф сервер печатает без заголовка: «Ни одна роль этого графа не держит канала» — законная пустота.
+  const empty = /не держит канала|нет ни одного канала|Каналов нет/i.test(board.text);
+  const recognized = !!header || empty || entries.length > 0;
   const own = entries.filter((e) => e.karta === karta && e.address.endsWith(`:${name}`));
-  if (!recognized || truncated || own.length > 1) {
+  // Счёт в заголовке не сошёлся с разобранным — где-то строка, которой парсер не
+  // понял; она могла быть твоим живым местом. Ротировать вслепую нельзя, а
+  // явный take=true — слово делателя, что он это понимает.
+  const unread = declared != null && declared !== entries.length;
+  if (!recognized || own.length > 1 || (unread && own.length === 0 && a.take !== true)) {
     lines.push(
       !recognized
-        ? `Отказано: форма доски не распознана — ни заголовка «Каналы», ни строк мест; управляющих действий (connect, стук, хук) по догадке не делаю. Начало ответа: ${short(board.text, 160)}`
-        : truncated
-          ? `Отказано: доска объявляет ${declared} мест, разобрано ${entries.length} — список усечён или форма сменилась; без полной доски чужой сокет ротировать нельзя.`
-          : `Отказано: на доске ${own.length} места с именем ${name} у роли #${karta} — форма неоднозначна, состояние не определить.`,
+        ? `Отказано: форма доски не распознана — ни заголовка «Каналы», ни слова о пустом графе, ни строк мест; управляющих действий (connect, стук, хук) по догадке не делаю. Начало ответа: ${short(board.text, 160)}`
+        : own.length > 1
+          ? `Отказано: на доске ${own.length} места с именем ${name} у роли #${karta} — форма неоднозначна, состояние не определить.`
+          : `Отказано: доска объявляет ${declared} мест, разобрано ${entries.length}, и своего места среди разобранных нет — нераспознанная строка могла быть им; connect ротировал бы его вслепую. Уверен, что места нет, — повтори с take=true.`,
     );
     return done(true);
   }
+  if (unread)
+    lines.push(
+      `Доска объявляет ${declared} мест, разобрано ${entries.length} — одну строку парсер не понял; своё место найдено, иду дальше.`,
+    );
   const mine = own[0];
   let incoming = mine?.incoming ?? null;
 
@@ -235,8 +243,7 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   } else {
     const args: Record<string, unknown> = { action: "connect", realm, karta, name };
     if (typeof a.mute_siblings === "boolean") args.mute_siblings = a.mute_siblings;
-    releaseStanding("новый вход"); // свежий сокет и свежий hello — доказательство за ЭТОТ вызов, не за прошлый
-    const c = await call("iskron_channel", args);
+    const c = await call("iskron_channel", args); // новый сокет держатель берёт сам и заново: кольцо кадров чистое
     if (c.isError) {
       lines.push(`Отказано: connect — ${short(c.text)}`);
       return done(true);

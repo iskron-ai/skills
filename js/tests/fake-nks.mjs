@@ -204,6 +204,17 @@ export async function startFakeNks(opts = {}) {
       }
       if (patch.message_full) st.messages.set(patch.message_full.id, patch.message_full.text);
       // Чужое живое место на доске — как если бы его держал мост другой сессии.
+      if (Array.isArray(patch.webhooks)) {
+        for (const w of patch.webhooks) {
+          const wakes = [...st.places.values()].find((pl) => pl.name === w.wakes);
+          st.webhooks.push({
+            id: 100 + st.webhooks.length,
+            karta: String(w.karta),
+            url: wakes?.incoming ?? "http://x/none",
+            active: true,
+          });
+        }
+      }
       if (Array.isArray(patch.places)) {
         for (const pl of patch.places) {
           st.places.set(`${pl.karta}:${pl.name}`, {

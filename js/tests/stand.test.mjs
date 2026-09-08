@@ -376,6 +376,10 @@ test("iskron_stand: take=true on the bridge's own place re-enters with a fresh s
   });
   assert.match(textOf(again), /connect по take — новый цикл входа/, textOf(again));
   assert.match(textOf(again), /hello получен/, "a fresh hello after re-entry");
+  const hellos = bridge.notifications.filter(
+    (n) => n.params?.logger === "iskron-channel" && n.params?.data?.frame?.type === "hello",
+  );
+  assert.equal(hellos.length, 2, "the second entry brought its own hello, not the ring's old one");
   assert.notEqual(fake.state.wsToken, tokenBefore, "the surface rotated the socket on connect");
   assert.equal(
     /watchdog (\S+)/.exec(textOf(again))?.[1],
@@ -417,4 +421,59 @@ test("revoking one's own standing through the bridge is quiet: no dead-token ala
     "the forgotten binding is not replayed onto a revoked seat",
   );
   assert.equal((await fake.control({})).counts.register_standing, 1, "no re-register after revoke");
+});
+
+test("iskron_stand takes the first place in an empty graph: the server's «no channels» phrase is a recognized board", async (t) => {
+  const { fake, bridge } = await ready(t);
+  await fake.control({
+    boardText:
+      'Ни одна роль этого графа не держит канала. Открой его: iskron_channel(action="connect", karta=…).',
+  });
+  const reply = await bridge.call("tools/call", {
+    name: "iskron_stand",
+    arguments: { realm: "nks-dev", karta: 931, name: "proba" },
+  });
+  assert.ok(!reply.result?.isError, textOf(reply));
+  assert.match(textOf(reply), /connect и register/, textOf(reply));
+  assert.equal(
+    (await fake.control({})).counts.connect,
+    1,
+    "the first agent in a fresh graph can stand",
+  );
+});
+
+test("iskron_stand: a header count that does not match the parsed lines blocks a blind connect, but not when the own place is visible or take=true", async (t) => {
+  const { fake, bridge } = await ready(t);
+  const line = (name) =>
+    `  #931 👨‍💻 Роль 能 · @tester:${name} — живой · простой 6h · слушает · сокет был сейчас · открыл @tester\n     📥 http://x/api/channel/in/${name}`;
+  await fake.control({ boardText: `Каналы (2):\n${line("other")}\n  ??? строка иной формы` });
+  const blind = await bridge.call("tools/call", {
+    name: "iskron_stand",
+    arguments: { realm: "nks-dev", karta: 931, name: "proba" },
+  });
+  assert.equal(blind.result?.isError, true, textOf(blind));
+  assert.match(textOf(blind), /своего места среди разобранных нет/, textOf(blind));
+  assert.equal((await fake.control({})).counts.connect, 0);
+  const forced = await bridge.call("tools/call", {
+    name: "iskron_stand",
+    arguments: { realm: "nks-dev", karta: 931, name: "proba", take: true },
+  });
+  assert.ok(!forced.result?.isError, textOf(forced));
+  assert.equal((await fake.control({})).counts.connect, 1, "take=true is the doer's word to go on");
+});
+
+test("iskron_stand: a hook waking a longer-named sibling does not count as one's own", async (t) => {
+  const { fake, bridge } = await ready(t);
+  await fake.control({ places: [{ karta: "931", name: "proba2", listening: false }] });
+  await fake.control({ webhooks: [{ karta: "931", wakes: "proba2" }] });
+  const reply = await bridge.call("tools/call", {
+    name: "iskron_stand",
+    arguments: { realm: "nks-dev", karta: 931, name: "proba" },
+  });
+  assert.match(textOf(reply), /Хук инбокса роли: взведён/, textOf(reply));
+  assert.equal(
+    (await fake.control({})).counts.webhooks_added,
+    1,
+    "a hook for proba2 is not a hook for proba",
+  );
 });
