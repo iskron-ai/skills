@@ -201,6 +201,17 @@ export async function startFakeNks(opts = {}) {
         if (k in patch) st[k] = patch[k];
       }
       if (patch.message_full) st.messages.set(patch.message_full.id, patch.message_full.text);
+      // Чужое живое место на доске — как если бы его держал мост другой сессии.
+      if (Array.isArray(patch.places)) {
+        for (const pl of patch.places) {
+          st.places.set(`${pl.karta}:${pl.name}`, {
+            karta: String(pl.karta),
+            name: pl.name,
+            incoming: `${base}/api/channel/in/mailbox-${pl.name}`,
+            listening: pl.listening !== false,
+          });
+        }
+      }
       if (patch.revoke_access) st.access = null;
       if (patch.rotate_access) st.access = mintAccess(st); // сосед провернул грант: старый bearer больше не принимается
       if (patch.drop_standings) st.standings.clear(); // платформа потеряла привязки при живых сессиях mcp
@@ -496,9 +507,12 @@ export async function startFakeNks(opts = {}) {
           st.counts.list++;
           const lines = ["Каналы:"];
           for (const p of st.places.values()) {
+            // Форма живой доски (iskron_channel list, сервер 0.43): строка места,
+            // строка занятости «💬 «…»» и строка входящего адреса «📥».
             lines.push(
-              `  #${p.karta} 👨‍💻 Роль 能 · @tester:${p.name} — живой · простой 6h · слушает · сокет был сейчас · открыл @tester`,
+              `  #${p.karta} 👨‍💻 Роль 能 · @tester:${p.name} — живой · простой 6h · ${p.listening ? "слушает" : "не слушает"} · сокет был 2026-09-08T16:43:28.211106Z · открыл @tester`,
             );
+            lines.push(`     💬 «${p.status ?? "на вахте"}» · 2026-09-08T16:08:56.121391Z`);
             lines.push(`     📥 ${p.incoming}`);
           }
           for (const r of st.rooms) {
@@ -525,6 +539,7 @@ export async function startFakeNks(opts = {}) {
             karta: String(a.karta),
             name: a.name ?? "",
             incoming: `${base}/api/channel/in/mailbox-${a.name ?? "unnamed"}`,
+            listening: true,
           });
           const wsUrl = `${base.replace(/^http:/, "ws:")}/channel/ws/${st.wsToken}`;
           return json(

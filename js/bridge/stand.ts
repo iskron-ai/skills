@@ -47,6 +47,16 @@ export const STAND_TOOL = {
           "Полный адрес стояния комнаты @handle:name из строки приглашения; мост шлёт ему join.",
       },
       mute_siblings: { type: "boolean", description: "Не слышать эхо других стояний той же роли." },
+      take: {
+        type: "boolean",
+        description:
+          "Забрать сокет места, которое слушает другой мост этой машины (обычно прежняя сессия той же рабочей копии): без take такое место только регистрируется, слух остаётся у держателя.",
+      },
+      room_karta: {
+        type: "string",
+        description:
+          "Роль, чьё стояние — комната (#N), если комнаты нет на доске; обычно роль человека, приславшего приглашение.",
+      },
       repeat_knock: {
         type: "boolean",
         description:
@@ -121,7 +131,8 @@ let seq = 0;
  * — на один заход, не пожизненный запрет.
  */
 const knocks = new Map<string, { at: number; count: number }>();
-const KNOCK_REPEAT_AFTER_MS = 120_000;
+// Окно повтора — 2 минуты по #4342; переменная — шов для проб, не ручка человека.
+const KNOCK_REPEAT_AFTER_MS = Number(process.env.ISKRON_STAND_KNOCK_REPEAT_MS) || 120_000;
 const KNOCK_LIMIT = 2;
 
 interface Answer {
@@ -184,15 +195,24 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   const mine = entries.find((e) => e.karta === karta && e.address.endsWith(`:${name}`));
   let incoming = mine?.incoming ?? null;
 
-  // 2. Место: register на своём, которое держит этот же мост; иначе connect и register.
+  // 2. Место. Свой сокет держит этот мост — register. Место слушает ДРУГОЙ мост
+  // (та же рабочая копия в другой сессии) — тоже register: живое стояние не
+  // ротируется без причины (#4342), а причина называется явно — take=true.
+  // Иначе connect и register; новый сокет — новый цикл входа, счёт стуков сброшен.
   let how: string;
-  if (holdsStanding(realm, karta, name)) {
+  let heardHere: boolean;
+  const listensElsewhere =
+    !!mine && /(^|·)\s*слушает/.test(mine.rest) && !holdsStanding(realm, karta, name);
+  if (holdsStanding(realm, karta, name) || (listensElsewhere && a.take !== true)) {
     const r = await call("iskron_channel", { action: "register", realm, karta, name });
     if (r.isError) {
       lines.push(`Отказано: register — ${short(r.text)}`);
       return done(true);
     }
-    how = "сокет уже держит этот мост — register";
+    heardHere = !listensElsewhere;
+    how = listensElsewhere
+      ? "место уже слушает другой мост этой машины — только register (атрибуция есть, слух — у него); нужен слух здесь — повтори с take=true или возьми другое имя (name)"
+      : "сокет уже держит этот мост — register";
   } else {
     const args: Record<string, unknown> = { action: "connect", realm, karta, name };
     if (typeof a.mute_siblings === "boolean") args.mute_siblings = a.mute_siblings;
@@ -207,8 +227,13 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
       lines.push(`Место занято, но register отказал — ${short(r.text)}`);
       return done(true);
     }
+    for (const k of [...knocks.keys()])
+      if (k.startsWith(`${realm}|${karta}|${name}|`)) knocks.delete(k);
+    heardHere = true;
     how = mine
-      ? "место было — connect (сокет теперь у этого моста) и register"
+      ? listensElsewhere
+        ? "место слушал другой мост — connect по take (сокет теперь у этого моста) и register"
+        : "место было — connect (сокет теперь у этого моста) и register"
       : "connect и register";
   }
   lines.push(
@@ -218,13 +243,18 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   if (block) lines.push(block);
   else lines.push("Сокета у моста нет — слушать нечем; проверь ответ connect.");
 
-  // 3. hello — доказательство держания и число ожидавших кадров.
-  const hello = await awaitHello(4000);
-  if (hello) lines.push(`hello получен: ожидало кадров — ${hello.pending ?? 0}.`);
-  else
-    lines.push(
-      "hello за 4 с не пришёл — сокет мост держит, но доказательства слуха ещё нет: проверь доску.",
-    );
+  // 3. hello — доказательство держания; свежий он только за connect этого вызова.
+  if (!heardHere) lines.push("Слух — у другого моста; здесь только атрибуция записей.");
+  else if (how.startsWith("сокет уже держит"))
+    lines.push("Сокет держит этот мост (hello был получен при занятии места).");
+  else {
+    const hello = await awaitHello(4000);
+    if (hello) lines.push(`hello получен: ожидало кадров — ${hello.pending ?? 0}.`);
+    else
+      lines.push(
+        "hello за 4 с не пришёл — сокет мост держит, но доказательства слуха ещё нет: проверь доску.",
+      );
+  }
 
   // 4. Хук инбокса роли — чтобы вимарша posed_to приходила тем же сокетом.
   const hooks = await call("iskron_admin", { action: "list_webhooks", realm, node_id: karta });
@@ -252,14 +282,19 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   // 5. Стук в комнату — по полному адресу с провода. Правило #4342: один стук,
   // повтор один раз не раньше чем через две минуты, дальше — слово человеку.
   if (room) {
-    const target = entries.find((e) => e.address === room);
+    const onBoard = entries.find((e) => e.address === room);
+    const roomKarta =
+      onBoard?.karta ??
+      (typeof a.room_karta === "string" && a.room_karta.trim()
+        ? a.room_karta.trim().replace(/^#/, "")
+        : null);
     const key = `${realm}|${karta}|${name}|${room}`;
     const prior = knocks.get(key);
     const waited = prior ? Date.now() - prior.at : Infinity;
     const again = a.repeat_knock === true;
     if (prior && prior.count >= KNOCK_LIMIT) {
       lines.push(
-        `Комната ${room}: стучал дважды, приглашения нет — больше не стучу; скажи человеку, что комната не ответила, и попроси открыть чат.`,
+        `Комната ${room}: стучал дважды, приглашения нет — больше не стучу в этом заходе; скажи человеку, что комната не ответила, и попроси открыть чат (счёт сбрасывает новый вход: take=true или новая сессия).`,
       );
     } else if (prior && !again) {
       lines.push(
@@ -269,15 +304,15 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
       lines.push(
         `Комната ${room}: повтор рано — с первого стука прошло ${Math.round(waited / 1000)} с, правило ждёт 2 минуты; повтори через ${Math.ceil((KNOCK_REPEAT_AFTER_MS - waited) / 1000)} с.`,
       );
-    } else if (!target) {
+    } else if (!roomKarta) {
       lines.push(
-        `Комната ${room}: адреса нет на доске графа ${realm} — стук не отправлен; сверь строку приглашения с человеком.`,
+        `Комната ${room}: на доске графа ${realm} этого стояния нет, а send требует роль его держателя — стук не отправлен. Стояние комнаты живёт присутствием человека: либо он ушёл дольше порога (попроси открыть чат и повтори), либо передай room_karta=<роль человека комнаты>.`,
       );
     } else {
       const s = await call("iskron_channel", {
         action: "send",
         realm,
-        karta: target.karta,
+        karta: roomKarta,
         standing: room,
         text: "join",
       });

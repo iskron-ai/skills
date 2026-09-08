@@ -77,13 +77,10 @@ export function syntheticError(
 
 /** Строка отставания поставки — один раз за сессию, в первый же ответ тула: агент передаст её человеку. */
 function withNotice(reply: JsonRpcMessage): JsonRpcMessage {
-  const notice = takeNotice();
   const content = reply?.result?.content;
-  if (
-    notice &&
-    Array.isArray(content) &&
-    !content.some((c) => c?.text?.includes("ПОСТАВКА ОТСТАЛА"))
-  ) {
+  if (!Array.isArray(content)) return reply; // ошибка без тела — строка ждёт следующего ответа
+  const notice = takeNotice();
+  if (notice && !content.some((c) => c?.text?.includes("ПОСТАВКА ОТСТАЛА"))) {
     content.push({ type: "text", text: notice });
   }
   return reply;

@@ -35,6 +35,7 @@ function startBridge(serverUrl, authDir) {
       ISKRON_BRIDGE_NO_BROWSER: "1",
       ISKRON_BRIDGE_TOKEN: PAT,
       ISKRON_BRIDGE_NO_UPDATE: "1",
+      ISKRON_STAND_KNOCK_REPEAT_MS: "300", // шов проб: окно повтора 300 мс вместо 2 минут
     },
     stdio: ["pipe", "pipe", "pipe"],
   });
@@ -180,8 +181,22 @@ test("iskron_stand: one call takes the place, arms the inbox hook and knocks; a 
     name: "iskron_stand",
     arguments: { ...args, room: "@tester:thread-none" },
   });
-  assert.match(textOf(unknown), /адреса нет на доске/, textOf(unknown));
+  assert.match(
+    textOf(unknown),
+    /этого стояния нет, а send требует роль его держателя/,
+    textOf(unknown),
+  );
   assert.equal(fake.state.sends.length, 2, "an address absent from the board is never guessed at");
+  const byKarta = await bridge.call("tools/call", {
+    name: "iskron_stand",
+    arguments: { ...args, room: "@tester:thread-none", room_karta: "#77" },
+  });
+  assert.match(textOf(byKarta), /Комната @tester:thread-none: стук отправлен/, textOf(byKarta));
+  assert.equal(
+    fake.state.sends.at(-1).karta,
+    "77",
+    "room_karta names the room's holder when the board does not",
+  );
 });
 
 test("iskron_stand derives the name from machine, repository and branch when none is given", async (t) => {
@@ -212,4 +227,61 @@ test("iskron_stand refuses without realm and karta, naming what it needs", async
   });
   assert.equal(reply.result?.isError, true);
   assert.match(textOf(reply), /требует realm и karta/);
+});
+
+test("iskron_stand: a deliberate repeat after the window, one only; a new entry cycle resets the count", async (t) => {
+  const { fake, bridge } = await ready(t);
+  await fake.control({ rooms: [{ karta: "3505", address: "@tester:thread-k2" }] });
+  const args = { realm: "nks-dev", karta: 931, name: "proba", room: "@tester:thread-k2" };
+  await bridge.call("tools/call", { name: "iskron_stand", arguments: args });
+  assert.equal(fake.state.sends.length, 1);
+  await new Promise((r) => setTimeout(r, 350));
+  const repeat = await bridge.call("tools/call", {
+    name: "iskron_stand",
+    arguments: { ...args, repeat_knock: true },
+  });
+  assert.match(textOf(repeat), /повторный стук отправлен/, textOf(repeat));
+  assert.equal(fake.state.sends.length, 2, "the deliberate repeat after the window goes out");
+  await new Promise((r) => setTimeout(r, 350));
+  const third = await bridge.call("tools/call", {
+    name: "iskron_stand",
+    arguments: { ...args, repeat_knock: true },
+  });
+  assert.match(textOf(third), /стучал дважды, приглашения нет — больше не стучу/, textOf(third));
+  assert.equal(fake.state.sends.length, 2, "the limit holds within one entry cycle");
+  const taken = await bridge.call("tools/call", {
+    name: "iskron_stand",
+    arguments: { ...args, take: true },
+  });
+  assert.match(
+    textOf(taken),
+    /стук отправлен/,
+    `a new connect resets the count:\n${textOf(taken)}`,
+  );
+  assert.equal(fake.state.sends.length, 3);
+  assert.equal(
+    (await fake.control({})).counts.connect,
+    2,
+    "take=true is the one cause for a second connect",
+  );
+});
+
+test("iskron_stand: a place listening under another bridge is registered, never rotated, unless take=true", async (t) => {
+  const { fake, bridge } = await ready(t);
+  await fake.control({ places: [{ karta: "931", name: "proba", listening: true }] });
+  const args = { realm: "nks-dev", karta: 931, name: "proba" };
+  const first = await bridge.call("tools/call", { name: "iskron_stand", arguments: args });
+  const text = textOf(first);
+  assert.match(text, /место уже слушает другой мост этой машины — только register/, text);
+  assert.match(text, /Слух — у другого моста/, text);
+  let counts = (await fake.control({})).counts;
+  assert.equal(counts.connect, 0, "no connect: the live socket stays with its holder");
+  assert.equal(counts.register_standing, 1);
+  const taken = await bridge.call("tools/call", {
+    name: "iskron_stand",
+    arguments: { ...args, take: true },
+  });
+  assert.match(textOf(taken), /connect по take/, textOf(taken));
+  counts = (await fake.control({})).counts;
+  assert.equal(counts.connect, 1, "take=true is the named cause for rotation");
 });

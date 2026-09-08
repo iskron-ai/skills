@@ -1792,7 +1792,7 @@ import { basename } from "node:path";
 
 // js/bridge/update.ts
 import { spawn as spawn2 } from "node:child_process";
-import { existsSync as existsSync2, mkdirSync as mkdirSync5, readFileSync as readFileSync7, renameSync as renameSync2, writeFileSync as writeFileSync5 } from "node:fs";
+import { existsSync as existsSync2, lstatSync, mkdirSync as mkdirSync5, readFileSync as readFileSync7, renameSync as renameSync2, writeFileSync as writeFileSync5 } from "node:fs";
 import { homedir as homedir4 } from "node:os";
 import { dirname, join as join6 } from "node:path";
 import { fileURLToPath as fileURLToPath3 } from "node:url";
@@ -1830,6 +1830,13 @@ function writeAtomic(path, bytes) {
   writeFileSync5(tmp, bytes, { mode: 420 });
   renameSync2(tmp, path);
 }
+var isSymlink = (path) => {
+  try {
+    return lstatSync(path).isSymbolicLink();
+  } catch {
+    return false;
+  }
+};
 var versionOf = (path) => {
   try {
     return versionIn(readFileSync7(path, "utf8"));
@@ -1848,6 +1855,7 @@ function syncHome(self = selfPath()) {
   }
   if (!versionIn(mine.toString("utf8"))) return out3;
   if (self === home) return out3;
+  if (isSymlink(home)) return out3;
   const homeVersion = versionOf(home);
   const cmp = homeVersion ? compareVersions(VERSION, homeVersion) : 1;
   if (cmp > 0) {
@@ -1911,7 +1919,7 @@ async function downloadRelease(tag, version, authDir) {
     throw new Error(`скачанный мост называет v${got ?? "?"}, релиз — v${version}`);
   const home = homeBridgePath();
   const current = versionOf(home);
-  if (!current || compareVersions(version, current) > 0) {
+  if (!isSymlink(home) && (!current || compareVersions(version, current) > 0)) {
     writeAtomic(home, bridge);
     written.push(home);
   }
@@ -2002,6 +2010,14 @@ var STAND_TOOL = {
         description: "Полный адрес стояния комнаты @handle:name из строки приглашения; мост шлёт ему join."
       },
       mute_siblings: { type: "boolean", description: "Не слышать эхо других стояний той же роли." },
+      take: {
+        type: "boolean",
+        description: "Забрать сокет места, которое слушает другой мост этой машины (обычно прежняя сессия той же рабочей копии): без take такое место только регистрируется, слух остаётся у держателя."
+      },
+      room_karta: {
+        type: "string",
+        description: "Роль, чьё стояние — комната (#N), если комнаты нет на доске; обычно роль человека, приславшего приглашение."
+      },
       repeat_knock: {
         type: "boolean",
         description: "Осознанный повтор стука в ту же комнату: разрешён один раз и не раньше чем через 2 минуты после первого; без него повторный вызов второго join не шлёт."
@@ -2046,7 +2062,7 @@ function parseBoard(text) {
 }
 var seq = 0;
 var knocks = /* @__PURE__ */ new Map();
-var KNOCK_REPEAT_AFTER_MS = 12e4;
+var KNOCK_REPEAT_AFTER_MS = Number(process.env.ISKRON_STAND_KNOCK_REPEAT_MS) || 12e4;
 var KNOCK_LIMIT = 2;
 async function call(name, args) {
   const id = `iskron-bridge-stand-${++seq}`;
@@ -2099,13 +2115,16 @@ async function runStand(msg) {
   const mine = entries.find((e) => e.karta === karta && e.address.endsWith(`:${name}`));
   let incoming = mine?.incoming ?? null;
   let how;
-  if (holdsStanding(realm, karta, name)) {
+  let heardHere;
+  const listensElsewhere = !!mine && /(^|·)\s*слушает/.test(mine.rest) && !holdsStanding(realm, karta, name);
+  if (holdsStanding(realm, karta, name) || listensElsewhere && a.take !== true) {
     const r = await call("iskron_channel", { action: "register", realm, karta, name });
     if (r.isError) {
       lines.push(`Отказано: register — ${short(r.text)}`);
       return done(true);
     }
-    how = "сокет уже держит этот мост — register";
+    heardHere = !listensElsewhere;
+    how = listensElsewhere ? "место уже слушает другой мост этой машины — только register (атрибуция есть, слух — у него); нужен слух здесь — повтори с take=true или возьми другое имя (name)" : "сокет уже держит этот мост — register";
   } else {
     const args = { action: "connect", realm, karta, name };
     if (typeof a.mute_siblings === "boolean") args.mute_siblings = a.mute_siblings;
@@ -2120,7 +2139,10 @@ async function runStand(msg) {
       lines.push(`Место занято, но register отказал — ${short(r.text)}`);
       return done(true);
     }
-    how = mine ? "место было — connect (сокет теперь у этого моста) и register" : "connect и register";
+    for (const k of [...knocks.keys()])
+      if (k.startsWith(`${realm}|${karta}|${name}|`)) knocks.delete(k);
+    heardHere = true;
+    how = mine ? listensElsewhere ? "место слушал другой мост — connect по take (сокет теперь у этого моста) и register" : "место было — connect (сокет теперь у этого моста) и register" : "connect и register";
   }
   lines.push(
     `[iskron_stand] стояние ${mine?.address ?? name} — роль #${karta}, граф ${realm}: ${how}.`
@@ -2128,12 +2150,17 @@ async function runStand(msg) {
   const block = listenBlock();
   if (block) lines.push(block);
   else lines.push("Сокета у моста нет — слушать нечем; проверь ответ connect.");
-  const hello = await awaitHello(4e3);
-  if (hello) lines.push(`hello получен: ожидало кадров — ${hello.pending ?? 0}.`);
-  else
-    lines.push(
-      "hello за 4 с не пришёл — сокет мост держит, но доказательства слуха ещё нет: проверь доску."
-    );
+  if (!heardHere) lines.push("Слух — у другого моста; здесь только атрибуция записей.");
+  else if (how.startsWith("сокет уже держит"))
+    lines.push("Сокет держит этот мост (hello был получен при занятии места).");
+  else {
+    const hello = await awaitHello(4e3);
+    if (hello) lines.push(`hello получен: ожидало кадров — ${hello.pending ?? 0}.`);
+    else
+      lines.push(
+        "hello за 4 с не пришёл — сокет мост держит, но доказательства слуха ещё нет: проверь доску."
+      );
+  }
   const hooks = await call("iskron_admin", { action: "list_webhooks", realm, node_id: karta });
   const wakesMe = !hooks.isError && hooks.text.split(/\n(?=\s*#\d+\s*→)/).some((b) => /активен/.test(b) && b.includes(`:${name}`));
   if (wakesMe) lines.push("Хук инбокса роли: стоит и будит это стояние.");
@@ -2152,14 +2179,15 @@ async function runStand(msg) {
     );
   }
   if (room) {
-    const target = entries.find((e) => e.address === room);
+    const onBoard = entries.find((e) => e.address === room);
+    const roomKarta = onBoard?.karta ?? (typeof a.room_karta === "string" && a.room_karta.trim() ? a.room_karta.trim().replace(/^#/, "") : null);
     const key = `${realm}|${karta}|${name}|${room}`;
     const prior = knocks.get(key);
     const waited = prior ? Date.now() - prior.at : Infinity;
     const again = a.repeat_knock === true;
     if (prior && prior.count >= KNOCK_LIMIT) {
       lines.push(
-        `Комната ${room}: стучал дважды, приглашения нет — больше не стучу; скажи человеку, что комната не ответила, и попроси открыть чат.`
+        `Комната ${room}: стучал дважды, приглашения нет — больше не стучу в этом заходе; скажи человеку, что комната не ответила, и попроси открыть чат (счёт сбрасывает новый вход: take=true или новая сессия).`
       );
     } else if (prior && !again) {
       lines.push(
@@ -2169,15 +2197,15 @@ async function runStand(msg) {
       lines.push(
         `Комната ${room}: повтор рано — с первого стука прошло ${Math.round(waited / 1e3)} с, правило ждёт 2 минуты; повтори через ${Math.ceil((KNOCK_REPEAT_AFTER_MS - waited) / 1e3)} с.`
       );
-    } else if (!target) {
+    } else if (!roomKarta) {
       lines.push(
-        `Комната ${room}: адреса нет на доске графа ${realm} — стук не отправлен; сверь строку приглашения с человеком.`
+        `Комната ${room}: на доске графа ${realm} этого стояния нет, а send требует роль его держателя — стук не отправлен. Стояние комнаты живёт присутствием человека: либо он ушёл дольше порога (попроси открыть чат и повтори), либо передай room_karta=<роль человека комнаты>.`
       );
     } else {
       const s = await call("iskron_channel", {
         action: "send",
         realm,
-        karta: target.karta,
+        karta: roomKarta,
         standing: room,
         text: "join"
       });
@@ -2248,9 +2276,10 @@ function syntheticError(id, message, outcome = UpstreamError.UNKNOWN, holdOff = 
   };
 }
 function withNotice(reply) {
-  const notice = takeNotice();
   const content = reply?.result?.content;
-  if (notice && Array.isArray(content) && !content.some((c) => c?.text?.includes("ПОСТАВКА ОТСТАЛА"))) {
+  if (!Array.isArray(content)) return reply;
+  const notice = takeNotice();
+  if (notice && !content.some((c) => c?.text?.includes("ПОСТАВКА ОТСТАЛА"))) {
     content.push({ type: "text", text: notice });
   }
   return reply;

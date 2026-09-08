@@ -12,7 +12,7 @@
 // Источник свежести — только релизы репозитория поставки, не сервер графа:
 // другой инстанс или форк сервера обновлений отсюда не получает.
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -44,6 +44,14 @@ function writeAtomic(path: string, bytes: Buffer | string): void {
   writeFileSync(tmp, bytes, { mode: 0o644 });
   renameSync(tmp, path);
 }
+
+const isSymlink = (path: string): boolean => {
+  try {
+    return lstatSync(path).isSymbolicLink();
+  } catch {
+    return false;
+  }
+};
 
 const versionOf = (path: string): string | null => {
   try {
@@ -77,6 +85,7 @@ export function syncHome(self = selfPath()): HomeSync {
   }
   if (!versionIn(mine.toString("utf8"))) return out; // не сборка поставки — не выравниваем
   if (self === home) return out;
+  if (isSymlink(home)) return out; // дом, наведённый руками на рабочую копию, — не наш
   const homeVersion = versionOf(home);
   const cmp = homeVersion ? compareVersions(VERSION, homeVersion) : 1;
   if (cmp > 0) {
@@ -163,7 +172,7 @@ export async function downloadRelease(
     throw new Error(`скачанный мост называет v${got ?? "?"}, релиз — v${version}`);
   const home = homeBridgePath();
   const current = versionOf(home);
-  if (!current || compareVersions(version, current) > 0) {
+  if (!isSymlink(home) && (!current || compareVersions(version, current) > 0)) {
     writeAtomic(home, bridge);
     written.push(home);
   }
