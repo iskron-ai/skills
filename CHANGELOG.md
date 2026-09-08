@@ -1,5 +1,12 @@
 # Changelog
 
+## [6.5.0](https://github.com/iskron-ai/skills/compare/v6.4.0...v6.5.0) (2026-09-08)
+
+
+### Features
+
+* **bridge,skills:** старт агента одним скиллом — iskron_stand, самообновление моста, раздел «Старт» в двери ([#102](https://github.com/iskron-ai/skills/issues/102)) ([cd26b46](https://github.com/iskron-ai/skills/commit/cd26b46f0e69911ebe1b7e700cedb1e82326b494))
+
 ## [6.4.0](https://github.com/iskron-ai/skills/compare/v6.3.0...v6.4.0) (2026-09-08)
 
 
