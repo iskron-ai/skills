@@ -313,7 +313,7 @@ node ~/.iskron-bridge/iskron-bridge.mjs update
 Скиллы мост не обновляет — их кладёт канал харнесса, и после `update` пройди шаг 1
 своей ветки заново (`/plugin marketplace update iskron` и `/reload-plugins` в Claude
 Code; `npx skills update --global`; `pi update git:github.com/iskron-ai/skills`;
-`codex plugin update`), затем перезапусти сессию: мост прежней сборки живёт до её
+`codex plugin marketplace upgrade iskron`, затем `codex plugin remove iskron@iskron` и `codex plugin add iskron@iskron`), затем перезапусти сессию: мост прежней сборки живёт до её
 конца. Человеку достаточно сказать агенту «обнови» — дверь `iskron` исполняет этот
 раздел из свежей копии файла, которую `update` кладёт рядом с грантом.
 
