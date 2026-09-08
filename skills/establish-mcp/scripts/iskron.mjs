@@ -2131,7 +2131,7 @@ async function runStand(msg) {
   const entries = parseBoard(board.text);
   const header = /^\s*Каналы(?:\s*\((\d+)\))?(?:\s|:|$)/m.exec(board.text);
   const declared = header?.[1] != null ? Number(header[1]) : null;
-  const empty = /не держит канала|нет ни одного канала|Каналов нет/i.test(board.text);
+  const empty = /не держит канала/i.test(board.text);
   const recognized = !!header || empty || entries.length > 0;
   const own = entries.filter((e) => e.karta === karta && e.address.endsWith(`:${name}`));
   const unread = declared != null && declared !== entries.length;

@@ -197,7 +197,7 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   const header = /^\s*Каналы(?:\s*\((\d+)\))?(?:\s|:|$)/m.exec(board.text);
   const declared = header?.[1] != null ? Number(header[1]) : null;
   // Пустой граф сервер печатает без заголовка: «Ни одна роль этого графа не держит канала» — законная пустота.
-  const empty = /не держит канала|нет ни одного канала|Каналов нет/i.test(board.text);
+  const empty = /не держит канала/i.test(board.text); // ровно наблюдённая фраза сервера 0.43
   const recognized = !!header || empty || entries.length > 0;
   const own = entries.filter((e) => e.karta === karta && e.address.endsWith(`:${name}`));
   // Счёт в заголовке не сошёлся с разобранным — где-то строка, которой парсер не
