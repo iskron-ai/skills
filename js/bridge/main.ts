@@ -57,6 +57,7 @@ export function bridgeMain(argv: string[]): void {
 
   const rl = createInterface({ input: process.stdin, terminal: false });
   const pending = new Set<Promise<void>>();
+  let handshake: Promise<void> | null = null;
   rl.on("line", (line) => {
     const trimmed = line.trim();
     if (!trimmed) return;
@@ -67,9 +68,24 @@ export function bridgeMain(argv: string[]): void {
       log(`unparseable line from harness: ${trimmed.slice(0, 120)}`);
       return;
     }
-    const p = deliver(msg).catch((e) =>
-      log(`unexpected: ${(e as Error)?.stack || errorMessage(e)}`),
-    );
+    // Конвейерный клиент (скрипт, сторож, отправитель из оболочки) шлёт
+    // initialized и первый вызов, не дождавшись ответа на initialize; сервер без
+    // Mcp-Session-Id отвечает 400 (граф nks-dev: #4308). Настоящие клиенты ждут —
+    // мост ждёт за тех, кто не ждёт: всё, что пришло, пока рукопожатие в полёте,
+    // уходит после него, в порядке прихода.
+    const run = () =>
+      deliver(msg).catch((e) => log(`unexpected: ${(e as Error)?.stack || errorMessage(e)}`));
+    let p: Promise<void>;
+    if (msg.method === "initialize") {
+      p = run();
+      handshake = p;
+      p.finally(() => {
+        if (handshake === p) handshake = null;
+      });
+    } else if (handshake) {
+      const gate = handshake;
+      p = gate.then(run, run);
+    } else p = run();
     pending.add(p);
     p.finally(() => pending.delete(p));
   });

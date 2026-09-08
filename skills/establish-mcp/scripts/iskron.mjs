@@ -4,7 +4,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-var VERSION = "6.2.2";
+var VERSION = "6.2.3";
 function buildOf(selfUrl) {
   try {
     const src = readFileSync(fileURLToPath(selfUrl));
@@ -1844,6 +1844,10 @@ async function deliver(msg) {
         );
         await reinitialize();
       }
+      if (!isInit && !state.sessionId && state.initParams) {
+        log("no upstream session yet — initializing before the call");
+        await reinitialize();
+      }
       if (!isInit) await ensureStanding();
       heldReply = null;
       await post(msg, forward);
@@ -1937,6 +1941,7 @@ function bridgeMain(argv2) {
   holdFromEnv();
   const rl = createInterface({ input: process.stdin, terminal: false });
   const pending = /* @__PURE__ */ new Set();
+  let handshake = null;
   rl.on("line", (line) => {
     const trimmed = line.trim();
     if (!trimmed) return;
@@ -1947,9 +1952,18 @@ function bridgeMain(argv2) {
       log(`unparseable line from harness: ${trimmed.slice(0, 120)}`);
       return;
     }
-    const p = deliver(msg).catch(
-      (e) => log(`unexpected: ${e?.stack || errorMessage(e)}`)
-    );
+    const run = () => deliver(msg).catch((e) => log(`unexpected: ${e?.stack || errorMessage(e)}`));
+    let p;
+    if (msg.method === "initialize") {
+      p = run();
+      handshake = p;
+      p.finally(() => {
+        if (handshake === p) handshake = null;
+      });
+    } else if (handshake) {
+      const gate = handshake;
+      p = gate.then(run, run);
+    } else p = run();
     pending.add(p);
     p.finally(() => pending.delete(p));
   });

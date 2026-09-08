@@ -129,6 +129,14 @@ export async function deliver(msg: JsonRpcMessage): Promise<void> {
         );
         await reinitialize();
       }
+      if (!isInit && !state.sessionId && state.initParams) {
+        // The harness's own initialize was answered by us, not the server (a
+        // deferred login, a refused token): upstream has no session for this
+        // call, and a call without Mcp-Session-Id is refused outright. Open the
+        // session now, with the params the harness gave — it will not ask again.
+        log("no upstream session yet — initializing before the call");
+        await reinitialize();
+      }
       if (!isInit) await ensureStanding(); // the session may have turned over under us
       heldReply = null;
       await post(msg, forward);

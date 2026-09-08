@@ -366,6 +366,11 @@ export async function startFakeNks(opts = {}) {
         extra["mcp-session-id"] = sid;
       }
 
+      if (!sid && msg.method !== "initialize") {
+        // Как настоящая поверхность: вызов вне рукопожатия без сессии — 400.
+        return json(res, 400, { error: "no Mcp-Session-Id on this request" });
+      }
+
       if (msg.method === "initialize") {
         const fresh = token("session");
         st.sessions.add(fresh);

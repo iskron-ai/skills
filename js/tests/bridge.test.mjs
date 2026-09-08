@@ -1963,3 +1963,28 @@ test("a refused personal token is reported as dead — no URL, no wait, no retry
     assert.equal(fake.state.counts.authorize, 0);
   });
 });
+
+// --- a client that does not wait for initialize -----------------------------
+// Real MCP clients wait for the initialize answer; a script piping three lines
+// at once does not. The server refuses anything outside the handshake without
+// a session id, so the bridge waits on behalf of the client that would not.
+
+test("a pipelining client that does not wait for initialize is still served, in order", async (t) => {
+  await withFake(t, {}, async ({ dir, spawnBridge }) => {
+    const bridge = spawnBridge();
+    await authorize(bridge, dir);
+    await bridge.stop();
+    const b2 = spawnBridge();
+    // Three lines, no waiting in between — exactly what a shell pipe does.
+    const answers = Promise.all([
+      b2.call("initialize", 1, INIT_PARAMS),
+      (b2.send({ jsonrpc: "2.0", method: "notifications/initialized" }), b2.call("tools/list", 2)),
+    ]);
+    const [initReply, list] = await answers;
+    assert.ok(initReply.result, `initialize must succeed: ${JSON.stringify(initReply.error)}`);
+    assert.ok(
+      Array.isArray(list.result?.tools),
+      `tools/list must be served after the handshake, not refused: ${JSON.stringify(list.error)}`,
+    );
+  });
+});
