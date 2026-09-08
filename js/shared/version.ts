@@ -7,7 +7,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-export const VERSION = "6.2.2"; // x-release-please-version
+export const VERSION = "6.2.3"; // x-release-please-version
 
 /** Строка сборки `vX.Y.Z+хеш` для файла, чей `import.meta.url` передан. */
 export function buildOf(selfUrl: string): string {

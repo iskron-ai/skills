@@ -1,5 +1,12 @@
 # Changelog
 
+## [6.2.3](https://github.com/iskron-ai/skills/compare/v6.2.2...v6.2.3) (2026-09-08)
+
+
+### Bug Fixes
+
+* **standing:** устаревшие сторожа нативного транспорта возвращены в поставку — обновление не роняет живых вахт ([#95](https://github.com/iskron-ai/skills/issues/95)) ([60f6ee0](https://github.com/iskron-ai/skills/commit/60f6ee087cbf14fc17bb8ea3574cade5374a35e2))
+
 ## [6.2.2](https://github.com/iskron-ai/skills/compare/v6.2.1...v6.2.2) (2026-09-07)
 
 
