@@ -203,7 +203,8 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   let heardHere: boolean;
   const listensElsewhere =
     !!mine && /(^|·)\s*слушает/.test(mine.rest) && !holdsStanding(realm, karta, name);
-  if (holdsStanding(realm, karta, name) || (listensElsewhere && a.take !== true)) {
+  // take=true — явный новый цикл входа: connect и тогда, когда сокет уже наш.
+  if (a.take !== true && (holdsStanding(realm, karta, name) || listensElsewhere)) {
     const r = await call("iskron_channel", { action: "register", realm, karta, name });
     if (r.isError) {
       lines.push(`Отказано: register — ${short(r.text)}`);
@@ -233,7 +234,9 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
     how = mine
       ? listensElsewhere
         ? "место слушал другой мост — connect по take (сокет теперь у этого моста) и register"
-        : "место было — connect (сокет теперь у этого моста) и register"
+        : a.take === true
+          ? "connect по take — новый цикл входа, счёт стуков сброшен — и register"
+          : "место было — connect (сокет теперь у этого моста) и register"
       : "connect и register";
   }
   lines.push(

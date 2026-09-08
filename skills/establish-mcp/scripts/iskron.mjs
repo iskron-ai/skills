@@ -2117,7 +2117,7 @@ async function runStand(msg) {
   let how;
   let heardHere;
   const listensElsewhere = !!mine && /(^|·)\s*слушает/.test(mine.rest) && !holdsStanding(realm, karta, name);
-  if (holdsStanding(realm, karta, name) || listensElsewhere && a.take !== true) {
+  if (a.take !== true && (holdsStanding(realm, karta, name) || listensElsewhere)) {
     const r = await call("iskron_channel", { action: "register", realm, karta, name });
     if (r.isError) {
       lines.push(`Отказано: register — ${short(r.text)}`);
@@ -2142,7 +2142,7 @@ async function runStand(msg) {
     for (const k of [...knocks.keys()])
       if (k.startsWith(`${realm}|${karta}|${name}|`)) knocks.delete(k);
     heardHere = true;
-    how = mine ? listensElsewhere ? "место слушал другой мост — connect по take (сокет теперь у этого моста) и register" : "место было — connect (сокет теперь у этого моста) и register" : "connect и register";
+    how = mine ? listensElsewhere ? "место слушал другой мост — connect по take (сокет теперь у этого моста) и register" : a.take === true ? "connect по take — новый цикл входа, счёт стуков сброшен — и register" : "место было — connect (сокет теперь у этого моста) и register" : "connect и register";
   }
   lines.push(
     `[iskron_stand] стояние ${mine?.address ?? name} — роль #${karta}, граф ${realm}: ${how}.`
