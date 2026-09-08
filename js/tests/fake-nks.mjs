@@ -579,6 +579,42 @@ export async function startFakeNks(opts = {}) {
             extra,
           );
         }
+        if (a.action === "revoke") {
+          const name = String(a.standing ?? "").replace(/^.*:/, "");
+          const had = st.places.delete(`${a.karta}:${name}`);
+          for (const sock of st.ws) {
+            sock.write(wsFrame(0x8, Buffer.from([4001 >> 8, 4001 & 0xff])));
+            setTimeout(() => sock.end(), 100).unref();
+          }
+          for (const [sid2, bound] of st.standings) if (bound === name) st.standings.delete(sid2);
+          return json(
+            res,
+            200,
+            {
+              jsonrpc: "2.0",
+              id: msg.id,
+              result: had
+                ? {
+                    content: [
+                      {
+                        type: "text",
+                        text: `Канал #${a.karta} · @tester:${name} закрыт — место «${name}». Оба его адреса теперь отвечают 404.`,
+                      },
+                    ],
+                  }
+                : {
+                    isError: true,
+                    content: [
+                      {
+                        type: "text",
+                        text: `Отказано: у #${a.karta} нет стояния с именем «${name}»`,
+                      },
+                    ],
+                  },
+            },
+            extra,
+          );
+        }
         if (a.action === "history" && a.view === "message") {
           const full = st.messages.get(a.message);
           const text = full

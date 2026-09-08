@@ -9,7 +9,7 @@ import {
   TokenRefused,
   UpstreamError,
 } from "./errors.ts";
-import { absorbChannelReply, localStatus } from "./hold.ts";
+import { absorbChannelReply, absorbRevokeReply, localStatus } from "./hold.ts";
 import { annotateToolList } from "./moment.ts";
 import { isStandCall, runStand } from "./stand.ts";
 import { ensureStanding, isUnattributed, noteStanding, replyText } from "./standing.ts";
@@ -182,7 +182,7 @@ export async function deliver(msg: JsonRpcMessage): Promise<void> {
           }
         }
         // Ответ connect/mint: мост берёт сокет себе и дописывает, как слушать.
-        emit(withNotice(absorbChannelReply(msg, held)));
+        emit(withNotice(absorbRevokeReply(msg, absorbChannelReply(msg, held))));
       }
       return;
     } catch (e) {

@@ -1696,6 +1696,23 @@ function absorbChannelReply(msg, reply) {
   }
   return reply;
 }
+function absorbRevokeReply(msg, reply) {
+  const a = msg?.params?.arguments;
+  if (msg?.params?.name !== "iskron_channel" || a?.action !== "revoke") return reply;
+  if (reply?.error || reply?.result?.isError) return reply;
+  const s = state.standing;
+  if (!s) return reply;
+  const asked = typeof a.standing === "string" ? a.standing.trim() : "";
+  const own = asked === "" || asked === "mine" || asked === (s.name ?? "") || asked.endsWith(`:${s.name ?? ""}`);
+  if (!own || String(a.karta ?? s.karta) !== String(s.karta)) return reply;
+  releaseStanding("снято своим revoke");
+  state.standing = null;
+  state.standingSession = null;
+  log(
+    `standing revoked by this session — released quietly, binding forgotten (${s.name ?? "unnamed"})`
+  );
+  return reply;
+}
 function holdFromEnv() {
   const url = process.env.ISKRON_CHANNEL_SOCKET?.trim();
   if (!url) return;
@@ -2382,7 +2399,7 @@ async function deliver(msg) {
             );
           }
         }
-        emit(withNotice(absorbChannelReply(msg, held)));
+        emit(withNotice(absorbRevokeReply(msg, absorbChannelReply(msg, held))));
       }
       return;
     } catch (e) {

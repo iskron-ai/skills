@@ -333,6 +333,34 @@ export function absorbChannelReply(msg: JsonRpcMessage, reply: JsonRpcMessage): 
   return reply;
 }
 
+/**
+ * Своё снятие (revoke того стояния, что держит мост) — не смерть токена: сокет
+ * отпускается прежде, чем придёт закрытие 4001, и привязка забывается, иначе
+ * держатель объявляет «токен мёртв, зови connect», а послушный агент тут же
+ * пересоздаёт снятое место (наблюдено в pi и OpenCode). Ответ сервера едет как есть.
+ */
+export function absorbRevokeReply(msg: JsonRpcMessage, reply: JsonRpcMessage): JsonRpcMessage {
+  const a = msg?.params?.arguments;
+  if (msg?.params?.name !== "iskron_channel" || a?.action !== "revoke") return reply;
+  if (reply?.error || reply?.result?.isError) return reply;
+  const s = state.standing;
+  if (!s) return reply;
+  const asked = typeof a.standing === "string" ? a.standing.trim() : "";
+  const own =
+    asked === "" ||
+    asked === "mine" ||
+    asked === (s.name ?? "") ||
+    asked.endsWith(`:${s.name ?? ""}`);
+  if (!own || String(a.karta ?? s.karta) !== String(s.karta)) return reply;
+  releaseStanding("снято своим revoke");
+  state.standing = null;
+  state.standingSession = null;
+  log(
+    `standing revoked by this session — released quietly, binding forgotten (${s.name ?? "unnamed"})`,
+  );
+  return reply;
+}
+
 /** Отладочный путь: сокет из окружения, без connect. */
 export function holdFromEnv(): void {
   const url = process.env.ISKRON_CHANNEL_SOCKET?.trim();

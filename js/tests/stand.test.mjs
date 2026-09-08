@@ -29,6 +29,7 @@ const INIT = {
 const PAT = "nks_pat_stand";
 
 function startBridge(serverUrl, authDir) {
+  const notifications = [];
   const proc = spawn(NODE, [FILE, serverUrl, "--no-browser", "--auth-dir", authDir], {
     env: {
       ...process.env,
@@ -50,6 +51,10 @@ function startBridge(serverUrl, authDir) {
       out = out.slice(nl + 1);
       if (!line) continue;
       const msg = JSON.parse(line);
+      if (msg.id === undefined && msg.method) {
+        notifications.push(msg);
+        continue;
+      }
       const w = waiters.get(msg.id);
       if (w) {
         waiters.delete(msg.id);
@@ -61,6 +66,7 @@ function startBridge(serverUrl, authDir) {
   let id = 0;
   return {
     proc,
+    notifications,
     get stderr() {
       return stderr;
     },
@@ -376,4 +382,39 @@ test("iskron_stand: take=true on the bridge's own place re-enters with a fresh s
     firstSocket,
     "the local key is the same place",
   );
+});
+
+test("revoking one's own standing through the bridge is quiet: no dead-token alarm, no re-registration", async (t) => {
+  const { fake, bridge } = await ready(t);
+  const args = { realm: "nks-dev", karta: 931, name: "proba" };
+  assert.ok(
+    !(await bridge.call("tools/call", { name: "iskron_stand", arguments: args })).result?.isError,
+  );
+  const revoked = await bridge.call("tools/call", {
+    name: "iskron_channel",
+    arguments: { action: "revoke", realm: "nks-dev", karta: 931, standing: "proba" },
+  });
+  assert.match(textOf(revoked), /закрыт — место «proba»/, textOf(revoked));
+  await new Promise((r) => setTimeout(r, 800));
+  assert.ok(
+    !bridge.notifications.some((n) => n.params?.data?.kind === "dead"),
+    `a self-revoke must not be announced as a dead token:\n${JSON.stringify(bridge.notifications.map((n) => n.params?.data?.kind))}`,
+  );
+  assert.match(bridge.stderr, /revoked by this session — released quietly/, bridge.stderr);
+  const send = await bridge.call("tools/call", {
+    name: "iskron_channel",
+    arguments: {
+      action: "send",
+      realm: "nks-dev",
+      karta: 3505,
+      standing: "@tester:thread-k2",
+      text: "x",
+    },
+  });
+  assert.match(
+    textOf(send),
+    /не зарегистрирована/,
+    "the forgotten binding is not replayed onto a revoked seat",
+  );
+  assert.equal((await fake.control({})).counts.register_standing, 1, "no re-register after revoke");
 });
