@@ -1,7 +1,7 @@
 {
   "server": {
     "name": "iskron",
-    "version": "0.31.0"
+    "version": "0.43.2"
   },
   "protocolVersion": "2025-06-18",
   "resource": "https://mcp.iskron.ru",
@@ -25,6 +25,7 @@
     "iskron_realm",
     "iskron_search",
     "iskron_semantic_search",
+    "iskron_stand",
     "iskron_update"
   ],
   "enums": {

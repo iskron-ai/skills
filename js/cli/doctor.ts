@@ -14,8 +14,10 @@ import { errorMessage } from "../bridge/errors.ts";
 import { discoverMeta } from "../bridge/oauth/discovery.ts";
 import { grantLogPath, loadGrantState, loadStore, storePath } from "../bridge/store.ts";
 import { refreshHours, tokenUsable } from "../bridge/tokens.ts";
+import { readLatest } from "../bridge/update.ts";
 import { homeBridgePath } from "../shared/home.ts";
-import { versionIn } from "../shared/version.ts";
+import { compareVersions } from "../shared/semver.ts";
+import { VERSION, versionIn } from "../shared/version.ts";
 
 const out = (s: string): void => {
   process.stdout.write(s + "\n");
@@ -172,7 +174,26 @@ function grantReport(): void {
   }
 }
 
-function harnessReport(): void {
+/** Что мост знает о свежем релизе — по кэшу сверки, без похода в сеть. */
+function latestReport(): void {
+  const latest = readLatest(CFG.authDir);
+  if (!latest) {
+    out(
+      "свежий релиз: мост ещё не спрашивал релизы (спросит через пару секунд после старта сессии; руками — подкоманда update)",
+    );
+    return;
+  }
+  const ago = Math.round((Date.now() - latest.checked_at) / 60_000);
+  if (!latest.version)
+    out(`свежий релиз: не узнан (${latest.error ?? "без причины"}), спрашивал ${ago} мин назад`);
+  else if (compareVersions(latest.version, VERSION) > 0)
+    out(
+      `свежий релиз: v${latest.version} — ЭТОТ ФАЙЛ ОТСТАЛ (v${VERSION}); в дом скачано: ${latest.downloaded.join(", ") || "ничего"}; спрашивал ${ago} мин назад`,
+    );
+  else out(`свежий релиз: v${latest.version}, этот файл не отстал; спрашивал ${ago} мин назад`);
+}
+
+export function harnessReport(): void {
   const claude = join(homedir(), ".claude.json");
   if (existsSync(claude)) {
     try {
@@ -234,6 +255,7 @@ export async function runDoctor(argv: string[]): Promise<void> {
   out(`этот файл: ${fileURLToPath(import.meta.url)}`);
   out(`node: ${process.version}`);
   homeCopyReport();
+  latestReport();
   await serverReport();
   if (CFG.pat) await patReport();
   else grantReport();

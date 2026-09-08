@@ -1,4 +1,4 @@
-.PHONY: check deps validate check-bundles check-surface lint format format-check typecheck test test-coverage test-watchdog test-extension test-opencode test-codex build build-js check-js surface hooks plugin
+.PHONY: check deps validate check-bundles check-surface lint format format-check typecheck test test-coverage test-watchdog test-extension test-opencode test-codex test-stand test-update build build-js check-js surface hooks plugin
 
 # Run the full CI gate locally: frontmatter contract + bundle sync + surface lint
 # + the JS ladder (lint → format → types → shipped outputs in sync → the
@@ -44,28 +44,38 @@ typecheck:
 # takes the global WebSocket), and CI holds the run there so the claim stays
 # proven. Suites run against the BUILT outputs — run `make build-js` first, or
 # `make check-js` to be told they are stale.
+# ISKRON_BRIDGE_NO_UPDATE: под пробами мост не выравнивает настоящий дом и не
+# ходит к релизам; проба самообновления снимает выключатель сама, на подставном
+# доме и подставных релизах.
 test:
-	@node --test --test-timeout=120000 js/tests/*.test.mjs
+	@ISKRON_BRIDGE_NO_UPDATE=1 node --test --test-timeout=120000 js/tests/*.test.mjs
 
 test-coverage:
-	@node --test --test-timeout=120000 --experimental-test-coverage js/tests/*.test.mjs
+	@ISKRON_BRIDGE_NO_UPDATE=1 node --test --test-timeout=120000 --experimental-test-coverage js/tests/*.test.mjs
 
 # One suite at a time, for the red-probe discipline (see AGENTS.md).
 test-watchdog:
-	@node --test --test-timeout=120000 js/tests/standing.test.mjs
+	@ISKRON_BRIDGE_NO_UPDATE=1 node --test --test-timeout=120000 js/tests/standing.test.mjs
 
 test-extension:
-	@node --test js/tests/extension.test.mjs
+	@ISKRON_BRIDGE_NO_UPDATE=1 node --test js/tests/extension.test.mjs
 
 test-opencode:
-	@node --test js/tests/opencode.test.mjs
+	@ISKRON_BRIDGE_NO_UPDATE=1 node --test js/tests/opencode.test.mjs
+
+# Probes for the bridge's own tool iskron_stand and for the self-update.
+test-stand:
+	@ISKRON_BRIDGE_NO_UPDATE=1 node --test --test-timeout=120000 js/tests/stand.test.mjs
+
+test-update:
+	@ISKRON_BRIDGE_NO_UPDATE=1 node --test --test-timeout=120000 js/tests/update.test.mjs
 
 # Probe for the Codex delivery — the plugin manifest and the repo marketplace.
 # Its heavy half runs Codex's own on-disk ingestion validator, which needs
 # python3 with pyyaml and a machine where Codex is installed; without either it
 # skips by name and the structural half still runs.
 test-codex:
-	@node --test js/tests/codex-plugin.test.mjs
+	@ISKRON_BRIDGE_NO_UPDATE=1 node --test js/tests/codex-plugin.test.mjs
 
 # Build the shipped JS from js/: one file for the bridge, both watchdogs and
 # doctor (into both skills that carry it), the pi extension, and the roadmap

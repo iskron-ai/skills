@@ -99,6 +99,8 @@ function startBridge(serverUrl, authDir, extraEnv = {}) {
   };
 }
 
+// Список тулов сервера едет как есть; мост дописывает в хвост свой iskron_stand.
+const toolNames = (tools) => (tools ?? []).map((t) => t.name);
 const authorizeUrlIn = (text) => /(https?:\/\/\S*\/authorize\?\S+)/.exec(text || "")?.[1] ?? null;
 const exited = (b) => new Promise((r) => b.proc.once("exit", r));
 const callbackPortOf = (authorizeUrl) =>
@@ -217,7 +219,7 @@ test("the full flow authenticates and the next call goes through", async (t) => 
     const bridge = spawnBridge();
     await authorize(bridge, dir);
     const answer = await bridge.call("tools/list", 2);
-    assert.deepEqual(answer.result.tools, [{ name: "nks_orient" }]);
+    assert.deepEqual(toolNames(answer.result.tools), ["nks_orient", "iskron_stand"]);
     assert.equal(fake.state.counts.code_exchange, 1);
     assert.ok(
       readStore(dir).tokens.refresh_token,
@@ -261,7 +263,10 @@ test("a pending flow whose listener is gone is taken over, not re-published", as
     assert.equal(res.status, 200);
     await res.text();
     await grantLanded(dir);
-    assert.deepEqual((await second.call("tools/list", 3)).result.tools, [{ name: "nks_orient" }]);
+    assert.deepEqual(toolNames((await second.call("tools/list", 3)).result.tools), [
+      "nks_orient",
+      "iskron_stand",
+    ]);
   });
 });
 
@@ -414,7 +419,11 @@ test("a live flow is joined: every instance shows the same URL, one click serves
     await grantLanded(dir);
     // The joiner never ran a flow of its own; it reads the grant off disk.
     const answer = await joiner.call("tools/list", 2);
-    assert.deepEqual(answer.result.tools, [{ name: "nks_orient" }]);
+    // Список сервера едет как есть, плюс тул самого моста в хвосте.
+    assert.deepEqual(
+      answer.result.tools.map((t) => t.name),
+      ["nks_orient", "iskron_stand"],
+    );
   });
 });
 
@@ -603,8 +612,8 @@ test("Rauthy's dead-refresh 404 costs exactly one new browser flow", async (t) =
     const served = await Promise.all(retries.map((bridge) => bridge.call("tools/list", 2)));
     for (const answer of served) {
       assert.deepEqual(
-        answer.result?.tools,
-        [{ name: "nks_orient" }],
+        toolNames(answer.result?.tools),
+        ["nks_orient", "iskron_stand"],
         `the replacement grant must serve every process: ${JSON.stringify(answer.error)}`,
       );
     }
@@ -1415,7 +1424,11 @@ test("a lost upstream session is re-established transparently", async (t) => {
       answer.result,
       `the bridge should have re-initialized and retried: ${JSON.stringify(answer.error)}`,
     );
-    assert.deepEqual(answer.result.tools, [{ name: "nks_orient" }]);
+    // Список сервера едет как есть, плюс тул самого моста в хвосте.
+    assert.deepEqual(
+      answer.result.tools.map((t) => t.name),
+      ["nks_orient", "iskron_stand"],
+    );
   });
 });
 
