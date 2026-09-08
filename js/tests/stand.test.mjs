@@ -274,14 +274,46 @@ test("iskron_stand: a place listening under another bridge is registered, never 
   const text = textOf(first);
   assert.match(text, /место уже слушает другой мост этой машины — только register/, text);
   assert.match(text, /Слух — у другого моста/, text);
+  assert.ok(
+    !/Слушать: node/.test(text),
+    "no watchdog command is handed out without a local holder",
+  );
+  assert.match(text, /Команда сторожа не выдаётся/, text);
+  const knock = await bridge.call("tools/call", {
+    name: "iskron_stand",
+    arguments: { ...args, room: "@tester:thread-k2" },
+  });
+  assert.match(textOf(knock), /стук не отправлен — ответ комнаты ушёл бы в сессию/, textOf(knock));
+  assert.equal(fake.state.sends.length, 0, "no join while the socket is elsewhere");
   let counts = (await fake.control({})).counts;
   assert.equal(counts.connect, 0, "no connect: the live socket stays with its holder");
-  assert.equal(counts.register_standing, 1);
+  assert.equal(
+    counts.register_standing,
+    2,
+    "both only-register calls registered, neither connected",
+  );
   const taken = await bridge.call("tools/call", {
     name: "iskron_stand",
     arguments: { ...args, take: true },
   });
   assert.match(textOf(taken), /connect по take/, textOf(taken));
+  assert.match(textOf(taken), /hello получен/, "a fresh hello after the explicit take");
+  assert.match(textOf(taken), /Слушать: node/, "the watchdog command comes with the local holder");
   counts = (await fake.control({})).counts;
   assert.equal(counts.connect, 1, "take=true is the named cause for rotation");
+});
+
+test("iskron_stand refuses control actions on a board it does not recognize", async (t) => {
+  const { fake, bridge } = await ready(t);
+  await fake.control({ boardText: "Something entirely different came back from the server." });
+  const reply = await bridge.call("tools/call", {
+    name: "iskron_stand",
+    arguments: { realm: "nks-dev", karta: 931, name: "proba", room: "@tester:thread-k2" },
+  });
+  assert.equal(reply.result?.isError, true);
+  assert.match(textOf(reply), /форма доски не распознана/, textOf(reply));
+  const counts = (await fake.control({})).counts;
+  assert.equal(counts.connect, 0, "no connect on an unrecognized board");
+  assert.equal(counts.webhooks_added, 0, "no hook on an unrecognized board");
+  assert.equal(fake.state.sends.length, 0, "no join on an unrecognized board");
 });

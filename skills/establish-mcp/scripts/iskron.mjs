@@ -2112,7 +2112,15 @@ async function runStand(msg) {
     return done(true);
   }
   const entries = parseBoard(board.text);
-  const mine = entries.find((e) => e.karta === karta && e.address.endsWith(`:${name}`));
+  const recognized = /^\s*Каналы(?:\s|:|\(|$)/m.test(board.text) || entries.length > 0;
+  const own = entries.filter((e) => e.karta === karta && e.address.endsWith(`:${name}`));
+  if (!recognized || own.length > 1) {
+    lines.push(
+      !recognized ? `Отказано: форма доски не распознана — ни заголовка «Каналы», ни строк мест; управляющих действий (connect, стук, хук) по догадке не делаю. Начало ответа: ${short(board.text, 160)}` : `Отказано: на доске ${own.length} места с именем ${name} у роли #${karta} — форма неоднозначна, состояние не определить.`
+    );
+    return done(true);
+  }
+  const mine = own[0];
   let incoming = mine?.incoming ?? null;
   let how;
   let heardHere;
@@ -2147,8 +2155,12 @@ async function runStand(msg) {
   lines.push(
     `[iskron_stand] стояние ${mine?.address ?? name} — роль #${karta}, граф ${realm}: ${how}.`
   );
-  const block = listenBlock();
+  const block = heardHere ? listenBlock() : null;
   if (block) lines.push(block);
+  else if (!heardHere)
+    lines.push(
+      "Команда сторожа не выдаётся: сокет у другого моста, местного держателя нет — эта сессия кадры и приглашения не принимает."
+    );
   else lines.push("Сокета у моста нет — слушать нечем; проверь ответ connect.");
   if (!heardHere) lines.push("Слух — у другого моста; здесь только атрибуция записей.");
   else if (how.startsWith("сокет уже держит"))
@@ -2162,8 +2174,14 @@ async function runStand(msg) {
       );
   }
   const hooks = await call("iskron_admin", { action: "list_webhooks", realm, node_id: karta });
-  const wakesMe = !hooks.isError && hooks.text.split(/\n(?=\s*#\d+\s*→)/).some((b) => /активен/.test(b) && b.includes(`:${name}`));
+  const hooksRecognized = !hooks.isError && /^\s*Вебхуки(?:\s|:|\(|$)/m.test(hooks.text);
+  const wakesMe = hooksRecognized && hooks.text.split(/\n(?=\s*#\d+\s*→)/).some((b) => /активен/.test(b) && b.includes(`:${name}`));
   if (wakesMe) lines.push("Хук инбокса роли: стоит и будит это стояние.");
+  else if (!hooksRecognized)
+    lines.push(
+      `Хук инбокса роли: список хуков не распознан — не трогаю (${short(hooks.text, 120)}).`
+    );
+  else if (!heardHere) lines.push("Хук инбокса роли: не взвожу — слух у другого моста.");
   else if (!incoming)
     lines.push("Хук инбокса роли: не взведён — входящий адрес стояния не прочитался.");
   else {
@@ -2178,7 +2196,11 @@ async function runStand(msg) {
       h.isError ? `Хук инбокса роли: не взвёлся — ${short(h.text)}` : `Хук инбокса роли: взведён (${short(h.text, 120)}).`
     );
   }
-  if (room) {
+  if (room && !heardHere) {
+    lines.push(
+      `Комната ${room}: стук не отправлен — ответ комнаты ушёл бы в сессию, которая держит сокет; нужен вход здесь — повтори с take=true или с другим name.`
+    );
+  } else if (room) {
     const onBoard = entries.find((e) => e.address === room);
     const roomKarta = onBoard?.karta ?? (typeof a.room_karta === "string" && a.room_karta.trim() ? a.room_karta.trim().replace(/^#/, "") : null);
     const key = `${realm}|${karta}|${name}|${room}`;

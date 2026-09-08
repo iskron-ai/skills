@@ -197,6 +197,7 @@ export async function startFakeNks(opts = {}) {
         "silentNewSession",
         "standingRefuseNext",
         "rooms",
+        "boardText",
       ]) {
         if (k in patch) st[k] = patch[k];
       }
@@ -505,6 +506,18 @@ export async function startFakeNks(opts = {}) {
         }
         if (a.action === "list") {
           st.counts.list++;
+          if (typeof st.boardText === "string") {
+            return json(
+              res,
+              200,
+              {
+                jsonrpc: "2.0",
+                id: msg.id,
+                result: { content: [{ type: "text", text: st.boardText }] },
+              },
+              extra,
+            );
+          }
           const lines = ["Каналы:"];
           for (const p of st.places.values()) {
             // Форма живой доски (iskron_channel list, сервер 0.43): строка места,

@@ -192,7 +192,19 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
     return done(true);
   }
   const entries = parseBoard(board.text);
-  const mine = entries.find((e) => e.karta === karta && e.address.endsWith(`:${name}`));
+  // Доска — проза сервера (#4514). Управляющие действия — ротация, стук, хук —
+  // идут только по распознанной однозначной форме; иначе честный отказ.
+  const recognized = /^\s*Каналы(?:\s|:|\(|$)/m.test(board.text) || entries.length > 0;
+  const own = entries.filter((e) => e.karta === karta && e.address.endsWith(`:${name}`));
+  if (!recognized || own.length > 1) {
+    lines.push(
+      !recognized
+        ? `Отказано: форма доски не распознана — ни заголовка «Каналы», ни строк мест; управляющих действий (connect, стук, хук) по догадке не делаю. Начало ответа: ${short(board.text, 160)}`
+        : `Отказано: на доске ${own.length} места с именем ${name} у роли #${karta} — форма неоднозначна, состояние не определить.`,
+    );
+    return done(true);
+  }
+  const mine = own[0];
   let incoming = mine?.incoming ?? null;
 
   // 2. Место. Свой сокет держит этот мост — register. Место слушает ДРУГОЙ мост
@@ -242,8 +254,12 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   lines.push(
     `[iskron_stand] стояние ${mine?.address ?? name} — роль #${karta}, граф ${realm}: ${how}.`,
   );
-  const block = listenBlock();
+  const block = heardHere ? listenBlock() : null;
   if (block) lines.push(block);
+  else if (!heardHere)
+    lines.push(
+      "Команда сторожа не выдаётся: сокет у другого моста, местного держателя нет — эта сессия кадры и приглашения не принимает.",
+    );
   else lines.push("Сокета у моста нет — слушать нечем; проверь ответ connect.");
 
   // 3. hello — доказательство держания; свежий он только за connect этого вызова.
@@ -261,10 +277,16 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
 
   // 4. Хук инбокса роли — чтобы вимарша posed_to приходила тем же сокетом.
   const hooks = await call("iskron_admin", { action: "list_webhooks", realm, node_id: karta });
+  const hooksRecognized = !hooks.isError && /^\s*Вебхуки(?:\s|:|\(|$)/m.test(hooks.text);
   const wakesMe =
-    !hooks.isError &&
+    hooksRecognized &&
     hooks.text.split(/\n(?=\s*#\d+\s*→)/).some((b) => /активен/.test(b) && b.includes(`:${name}`));
   if (wakesMe) lines.push("Хук инбокса роли: стоит и будит это стояние.");
+  else if (!hooksRecognized)
+    lines.push(
+      `Хук инбокса роли: список хуков не распознан — не трогаю (${short(hooks.text, 120)}).`,
+    );
+  else if (!heardHere) lines.push("Хук инбокса роли: не взвожу — слух у другого моста.");
   else if (!incoming)
     lines.push("Хук инбокса роли: не взведён — входящий адрес стояния не прочитался.");
   else {
@@ -284,7 +306,11 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
 
   // 5. Стук в комнату — по полному адресу с провода. Правило #4342: один стук,
   // повтор один раз не раньше чем через две минуты, дальше — слово человеку.
-  if (room) {
+  if (room && !heardHere) {
+    lines.push(
+      `Комната ${room}: стук не отправлен — ответ комнаты ушёл бы в сессию, которая держит сокет; нужен вход здесь — повтори с take=true или с другим name.`,
+    );
+  } else if (room) {
     const onBoard = entries.find((e) => e.address === room);
     const roomKarta =
       onBoard?.karta ??
