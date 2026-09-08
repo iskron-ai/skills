@@ -1844,6 +1844,10 @@ async function deliver(msg) {
         );
         await reinitialize();
       }
+      if (!isInit && !state.sessionId && state.initParams) {
+        log("no upstream session yet — initializing before the call");
+        await reinitialize();
+      }
       if (!isInit) await ensureStanding();
       heldReply = null;
       await post(msg, forward);
