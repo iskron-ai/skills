@@ -198,6 +198,7 @@ export async function startFakeNks(opts = {}) {
         "standingRefuseNext",
         "rooms",
         "boardText",
+        "hooksText",
       ]) {
         if (k in patch) st[k] = patch[k];
       }
@@ -518,7 +519,7 @@ export async function startFakeNks(opts = {}) {
               extra,
             );
           }
-          const lines = ["Каналы:"];
+          const lines = [`Каналы (${st.places.size + st.rooms.length}):`];
           for (const p of st.places.values()) {
             // Форма живой доски (iskron_channel list, сервер 0.43): строка места,
             // строка занятости «💬 «…»» и строка входящего адреса «📥».
@@ -547,6 +548,7 @@ export async function startFakeNks(opts = {}) {
         }
         if (a.action === "connect" || a.action === "mint") {
           st.counts.connect++;
+          st.wsToken = token("ws"); // как у настоящей поверхности: сокет показан один раз и всякий раз новый
           st.standings.set(sid, a.name ?? "(unnamed)");
           st.places.set(`${a.karta}:${a.name}`, {
             karta: String(a.karta),
@@ -640,6 +642,18 @@ export async function startFakeNks(opts = {}) {
       if (msg.method === "tools/call" && msg.params?.name === "iskron_admin") {
         const a = msg.params.arguments ?? {};
         if (a.action === "list_webhooks") {
+          if (typeof st.hooksText === "string") {
+            return json(
+              res,
+              200,
+              {
+                jsonrpc: "2.0",
+                id: msg.id,
+                result: { content: [{ type: "text", text: st.hooksText }] },
+              },
+              extra,
+            );
+          }
           const mine = st.webhooks.filter((w) => String(w.karta) === String(a.node_id));
           const lines = [`Вебхуки для #${a.node_id} (${mine.length}):`];
           for (const w of mine) {

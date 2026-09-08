@@ -272,8 +272,8 @@ test("iskron_stand: a place listening under another bridge is registered, never 
   const args = { realm: "nks-dev", karta: 931, name: "proba" };
   const first = await bridge.call("tools/call", { name: "iskron_stand", arguments: args });
   const text = textOf(first);
-  assert.match(text, /место уже слушает другой мост этой машины — только register/, text);
-  assert.match(text, /Слух — у другого моста/, text);
+  assert.match(text, /место уже слушает другой держатель .* — только register/, text);
+  assert.match(text, /Слух — у другого держателя/, text);
   assert.ok(
     !/Слушать: node/.test(text),
     "no watchdog command is handed out without a local holder",
@@ -283,7 +283,11 @@ test("iskron_stand: a place listening under another bridge is registered, never 
     name: "iskron_stand",
     arguments: { ...args, room: "@tester:thread-k2" },
   });
-  assert.match(textOf(knock), /стук не отправлен — ответ комнаты ушёл бы в сессию/, textOf(knock));
+  assert.match(
+    textOf(knock),
+    /стук не отправлен — ответ комнаты ушёл бы держателю сокета/,
+    textOf(knock),
+  );
   assert.equal(fake.state.sends.length, 0, "no join while the socket is elsewhere");
   let counts = (await fake.control({})).counts;
   assert.equal(counts.connect, 0, "no connect: the live socket stays with its holder");
@@ -316,4 +320,60 @@ test("iskron_stand refuses control actions on a board it does not recognize", as
   assert.equal(counts.connect, 0, "no connect on an unrecognized board");
   assert.equal(counts.webhooks_added, 0, "no hook on an unrecognized board");
   assert.equal(fake.state.sends.length, 0, "no join on an unrecognized board");
+});
+
+test("iskron_stand refuses a truncated or ambiguous board and leaves a hook list it does not recognize alone", async (t) => {
+  const { fake, bridge } = await ready(t);
+  const line = (name) =>
+    `  #931 👨‍💻 Роль 能 · @tester:${name} — живой · простой 6h · слушает · сокет был сейчас · открыл @tester\n     📥 http://x/api/channel/in/${name}`;
+  await fake.control({ boardText: `Каналы (3):\n${line("other")}` });
+  const short = await bridge.call("tools/call", {
+    name: "iskron_stand",
+    arguments: { realm: "nks-dev", karta: 931, name: "proba" },
+  });
+  assert.equal(short.result?.isError, true);
+  assert.match(textOf(short), /объявляет 3 мест, разобрано 1/, textOf(short));
+  await fake.control({ boardText: `Каналы (2):\n${line("proba")}\n${line("proba")}` });
+  const twice = await bridge.call("tools/call", {
+    name: "iskron_stand",
+    arguments: { realm: "nks-dev", karta: 931, name: "proba" },
+  });
+  assert.equal(twice.result?.isError, true);
+  assert.match(textOf(twice), /2 места с именем proba/, textOf(twice));
+  assert.equal(
+    (await fake.control({})).counts.connect,
+    0,
+    "no connect on a truncated or ambiguous board",
+  );
+  await fake.control({ boardText: null, hooksText: "Хуков тут не бывает" });
+  const hooks = await bridge.call("tools/call", {
+    name: "iskron_stand",
+    arguments: { realm: "nks-dev", karta: 931, name: "proba" },
+  });
+  assert.match(textOf(hooks), /список хуков не распознан — не трогаю/, textOf(hooks));
+  assert.equal(
+    (await fake.control({})).counts.webhooks_added,
+    0,
+    "no hook on an unrecognized list",
+  );
+});
+
+test("iskron_stand: take=true on the bridge's own place re-enters with a fresh socket and a fresh hello", async (t) => {
+  const { fake, bridge } = await ready(t);
+  const args = { realm: "nks-dev", karta: 931, name: "proba" };
+  const first = await bridge.call("tools/call", { name: "iskron_stand", arguments: args });
+  const firstSocket = /watchdog (\S+)/.exec(textOf(first))?.[1];
+  const tokenBefore = fake.state.wsToken;
+  const again = await bridge.call("tools/call", {
+    name: "iskron_stand",
+    arguments: { ...args, take: true },
+  });
+  assert.match(textOf(again), /connect по take — новый цикл входа/, textOf(again));
+  assert.match(textOf(again), /hello получен/, "a fresh hello after re-entry");
+  assert.notEqual(fake.state.wsToken, tokenBefore, "the surface rotated the socket on connect");
+  assert.equal(
+    /watchdog (\S+)/.exec(textOf(again))?.[1],
+    firstSocket,
+    "the local key is the same place",
+  );
 });

@@ -1962,7 +1962,7 @@ async function checkLatest(authDir, force = false) {
 }
 function staleNotice(latest, authDir) {
   if (!latest?.version || compareVersions(latest.version, VERSION) <= 0) return null;
-  const bridgeWord = latest.downloaded.some((p) => p === homeBridgePath()) ? "Свежий мост уже скачан в ~/.iskron-bridge и поднимется новой сессией." : latest.error ? `Скачать свежий мост не вышло (${latest.error}); повтори: node ~/.iskron-bridge/iskron-bridge.mjs update.` : "Свежий мост уже лежит в ~/.iskron-bridge и поднимется новой сессией.";
+  const bridgeWord = latest.downloaded.some((p) => p === homeBridgePath()) ? "Свежий мост уже скачан в ~/.iskron-bridge и поднимется новой сессией." : latest.error ? `Скачать свежий мост не вышло (${latest.error}); повтори: node ~/.iskron-bridge/iskron-bridge.mjs update.` : isSymlink(homeBridgePath()) ? "Свежий мост в дом не положен: дом — симлинк на чужую копию, его не трогаю; обнови эту копию сам." : compareVersions(versionOf(homeBridgePath()), latest.version) >= 0 ? "Свежий мост уже лежит в ~/.iskron-bridge и поднимется новой сессией." : "Свежий мост в дом не положен; повтори: node ~/.iskron-bridge/iskron-bridge.mjs update.";
   return `[iskron-bridge] ПОСТАВКА ОТСТАЛА: этот мост v${VERSION}, свежий релиз v${latest.version}. ${bridgeWord} Скиллы обновляет канал харнеса, и об этом надо СКАЗАТЬ ЧЕЛОВЕКУ: Claude Code — /plugin marketplace update iskron, затем /reload-plugins; плоская установка — npx skills update --global; pi — pi update git:github.com/iskron-ai/skills; Codex — codex plugin update. Полный порядок — свежий установщик ${setupPathOf(authDir)} (кладёт update); по слову человека «обнови» исполни его.`;
 }
 var pendingNotice = null;
@@ -2112,11 +2112,14 @@ async function runStand(msg) {
     return done(true);
   }
   const entries = parseBoard(board.text);
-  const recognized = /^\s*Каналы(?:\s|:|\(|$)/m.test(board.text) || entries.length > 0;
+  const header = /^\s*Каналы(?:\s*\((\d+)\))?(?:\s|:|$)/m.exec(board.text);
+  const declared = header?.[1] != null ? Number(header[1]) : null;
+  const recognized = !!header || entries.length > 0;
+  const truncated = declared != null && declared !== entries.length;
   const own = entries.filter((e) => e.karta === karta && e.address.endsWith(`:${name}`));
-  if (!recognized || own.length > 1) {
+  if (!recognized || truncated || own.length > 1) {
     lines.push(
-      !recognized ? `Отказано: форма доски не распознана — ни заголовка «Каналы», ни строк мест; управляющих действий (connect, стук, хук) по догадке не делаю. Начало ответа: ${short(board.text, 160)}` : `Отказано: на доске ${own.length} места с именем ${name} у роли #${karta} — форма неоднозначна, состояние не определить.`
+      !recognized ? `Отказано: форма доски не распознана — ни заголовка «Каналы», ни строк мест; управляющих действий (connect, стук, хук) по догадке не делаю. Начало ответа: ${short(board.text, 160)}` : truncated ? `Отказано: доска объявляет ${declared} мест, разобрано ${entries.length} — список усечён или форма сменилась; без полной доски чужой сокет ротировать нельзя.` : `Отказано: на доске ${own.length} места с именем ${name} у роли #${karta} — форма неоднозначна, состояние не определить.`
     );
     return done(true);
   }
@@ -2132,10 +2135,11 @@ async function runStand(msg) {
       return done(true);
     }
     heardHere = !listensElsewhere;
-    how = listensElsewhere ? "место уже слушает другой мост этой машины — только register (атрибуция есть, слух — у него); нужен слух здесь — повтори с take=true или возьми другое имя (name)" : "сокет уже держит этот мост — register";
+    how = listensElsewhere ? "место уже слушает другой держатель (обычно прежняя сессия этой рабочей копии; при явном name — возможно, другая машина или человек) — только register: атрибуция есть, слух — у него; нужен слух здесь — повтори с take=true, сознавая, что снимешь слух с того держателя, или возьми другое имя (name)" : "сокет уже держит этот мост — register";
   } else {
     const args = { action: "connect", realm, karta, name };
     if (typeof a.mute_siblings === "boolean") args.mute_siblings = a.mute_siblings;
+    releaseStanding("новый вход");
     const c = await call("iskron_channel", args);
     if (c.isError) {
       lines.push(`Отказано: connect — ${short(c.text)}`);
@@ -2150,7 +2154,7 @@ async function runStand(msg) {
     for (const k of [...knocks.keys()])
       if (k.startsWith(`${realm}|${karta}|${name}|`)) knocks.delete(k);
     heardHere = true;
-    how = mine ? listensElsewhere ? "место слушал другой мост — connect по take (сокет теперь у этого моста) и register" : a.take === true ? "connect по take — новый цикл входа, счёт стуков сброшен — и register" : "место было — connect (сокет теперь у этого моста) и register" : "connect и register";
+    how = mine ? listensElsewhere ? "место слушал другой держатель — connect по take (сокет теперь у этого моста, прежний держатель получил 4000) и register" : a.take === true ? "connect по take — новый цикл входа, счёт стуков сброшен — и register" : "место было — connect (сокет теперь у этого моста) и register" : "connect и register";
   }
   lines.push(
     `[iskron_stand] стояние ${mine?.address ?? name} — роль #${karta}, граф ${realm}: ${how}.`
@@ -2159,10 +2163,10 @@ async function runStand(msg) {
   if (block) lines.push(block);
   else if (!heardHere)
     lines.push(
-      "Команда сторожа не выдаётся: сокет у другого моста, местного держателя нет — эта сессия кадры и приглашения не принимает."
+      "Команда сторожа не выдаётся: сокет у другого держателя, местного нет — эта сессия кадры и приглашения не принимает."
     );
   else lines.push("Сокета у моста нет — слушать нечем; проверь ответ connect.");
-  if (!heardHere) lines.push("Слух — у другого моста; здесь только атрибуция записей.");
+  if (!heardHere) lines.push("Слух — у другого держателя; здесь только атрибуция записей.");
   else if (how.startsWith("сокет уже держит"))
     lines.push("Сокет держит этот мост (hello был получен при занятии места).");
   else {
@@ -2175,13 +2179,14 @@ async function runStand(msg) {
   }
   const hooks = await call("iskron_admin", { action: "list_webhooks", realm, node_id: karta });
   const hooksRecognized = !hooks.isError && /^\s*Вебхуки(?:\s|:|\(|$)/m.test(hooks.text);
-  const wakesMe = hooksRecognized && hooks.text.split(/\n(?=\s*#\d+\s*→)/).some((b) => /активен/.test(b) && b.includes(`:${name}`));
+  const nameRe = new RegExp(`:${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![A-Za-z0-9._-])`);
+  const wakesMe = hooksRecognized && hooks.text.split(/\n(?=\s*#\d+\s*→)/).some((b) => /активен/.test(b) && nameRe.test(b));
   if (wakesMe) lines.push("Хук инбокса роли: стоит и будит это стояние.");
   else if (!hooksRecognized)
     lines.push(
       `Хук инбокса роли: список хуков не распознан — не трогаю (${short(hooks.text, 120)}).`
     );
-  else if (!heardHere) lines.push("Хук инбокса роли: не взвожу — слух у другого моста.");
+  else if (!heardHere) lines.push("Хук инбокса роли: не взвожу — слух у другого держателя.");
   else if (!incoming)
     lines.push("Хук инбокса роли: не взведён — входящий адрес стояния не прочитался.");
   else {
@@ -2198,7 +2203,7 @@ async function runStand(msg) {
   }
   if (room && !heardHere) {
     lines.push(
-      `Комната ${room}: стук не отправлен — ответ комнаты ушёл бы в сессию, которая держит сокет; нужен вход здесь — повтори с take=true или с другим name.`
+      `Комната ${room}: стук не отправлен — ответ комнаты ушёл бы держателю сокета, не сюда; нужен вход здесь — повтори с take=true или с другим name.`
     );
   } else if (room) {
     const onBoard = entries.find((e) => e.address === room);
@@ -2213,11 +2218,11 @@ async function runStand(msg) {
       );
     } else if (prior && !again) {
       lines.push(
-        `Комната ${room}: стук уже отправлен ${Math.round(waited / 1e3)} с назад — жди приглашения; осознанный повтор — тем же вызовом с repeat_knock=true, не раньше чем через 2 минуты.`
+        `Комната ${room}: стук уже отправлен ${Math.round(waited / 1e3)} с назад — жди приглашения; осознанный повтор — тем же вызовом с repeat_knock=true, не раньше чем через ${Math.round(KNOCK_REPEAT_AFTER_MS / 1e3)} с.`
       );
     } else if (prior && waited < KNOCK_REPEAT_AFTER_MS) {
       lines.push(
-        `Комната ${room}: повтор рано — с первого стука прошло ${Math.round(waited / 1e3)} с, правило ждёт 2 минуты; повтори через ${Math.ceil((KNOCK_REPEAT_AFTER_MS - waited) / 1e3)} с.`
+        `Комната ${room}: повтор рано — с первого стука прошло ${Math.round(waited / 1e3)} с, правило ждёт ${Math.round(KNOCK_REPEAT_AFTER_MS / 1e3)} с; повтори через ${Math.ceil((KNOCK_REPEAT_AFTER_MS - waited) / 1e3)} с.`
       );
     } else if (!roomKarta) {
       lines.push(
@@ -2240,7 +2245,9 @@ async function runStand(msg) {
       }
     }
   }
-  if (typeof a.status === "string" && a.status.trim()) {
+  if (typeof a.status === "string" && a.status.trim() && !heardHere) {
+    lines.push("Занятость не публикуется: статусный адрес у держателя сокета.");
+  } else if (typeof a.status === "string" && a.status.trim()) {
     const st = await publishStatus(a.status.trim());
     lines.push(st.ok ? `Занятость: ${a.status.trim()}` : `Занятость не принята: ${short(st.body)}`);
   }

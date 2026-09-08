@@ -229,7 +229,11 @@ export function staleNotice(latest: Latest | null, authDir: string): string | nu
     ? "Свежий мост уже скачан в ~/.iskron-bridge и поднимется новой сессией."
     : latest.error
       ? `Скачать свежий мост не вышло (${latest.error}); повтори: node ~/.iskron-bridge/iskron-bridge.mjs update.`
-      : "Свежий мост уже лежит в ~/.iskron-bridge и поднимется новой сессией.";
+      : isSymlink(homeBridgePath())
+        ? "Свежий мост в дом не положен: дом — симлинк на чужую копию, его не трогаю; обнови эту копию сам."
+        : compareVersions(versionOf(homeBridgePath()), latest.version) >= 0
+          ? "Свежий мост уже лежит в ~/.iskron-bridge и поднимется новой сессией."
+          : "Свежий мост в дом не положен; повтори: node ~/.iskron-bridge/iskron-bridge.mjs update.";
   return (
     `[iskron-bridge] ПОСТАВКА ОТСТАЛА: этот мост v${VERSION}, свежий релиз v${latest.version}. ${bridgeWord} ` +
     `Скиллы обновляет канал харнеса, и об этом надо СКАЗАТЬ ЧЕЛОВЕКУ: Claude Code — /plugin marketplace update iskron, затем /reload-plugins; ` +

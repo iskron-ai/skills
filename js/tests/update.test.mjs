@@ -7,7 +7,15 @@
 // дом и не знает подкоманды update — краснота, ради которой проба написана.
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -273,4 +281,63 @@ test("ISKRON_BRIDGE_NO_UPDATE: neither the home nor the releases are touched", a
   await new Promise((r) => setTimeout(r, 500));
   assert.ok(!existsSync(h.bridgePath), "no home copy is written under the switch");
   assert.equal(rel.hits.length, 0, "no question to the releases under the switch");
+});
+
+test("a symlinked home is never replaced, and the stale notice says so instead of claiming a download", async (t) => {
+  const fake = await startFakeNks({ pat: PAT });
+  const h = home(t);
+  const rel = await releases(t);
+  const target = join(h.root, "working-copy.mjs");
+  writeFileSync(target, '#!/usr/bin/env node\nconst VERSION = "0.0.1";\n');
+  symlinkSync(target, h.bridgePath);
+  const authDir = join(h.root, "auth");
+  const bridge = startBridge(fake.mcpUrl, authDir, { HOME: h.root, ...rel.env });
+  t.after(async () => {
+    await bridge.stop();
+    await fake.stop();
+  });
+  assert.ok((await bridge.call("initialize", INIT)).result);
+  await waitFor(
+    () => bridge.notifications.some((n) => n.params?.data?.kind === "stale"),
+    "the stale notice",
+  );
+  assert.ok(lstatSync(h.bridgePath).isSymbolicLink(), "the symlink survives");
+  assert.equal(
+    versionIn(readFileSync(target, "utf8")),
+    "0.0.1",
+    "the symlink's target is untouched",
+  );
+  const notice = bridge.notifications.find((n) => n.params?.data?.kind === "stale").params.data
+    .text;
+  assert.match(notice, /дом — симлинк/, notice);
+  assert.ok(!/уже лежит в/.test(notice), "no claim that a fresh bridge was laid down");
+});
+
+test("the stale notice survives an errored first tool answer and rides the next one with a body", async (t) => {
+  const fake = await startFakeNks({ pat: PAT });
+  const h = home(t);
+  const rel = await releases(t);
+  const bridge = startBridge(fake.mcpUrl, join(h.root, "auth"), { HOME: h.root, ...rel.env });
+  t.after(async () => {
+    await bridge.stop();
+    await fake.stop();
+  });
+  assert.ok((await bridge.call("initialize", INIT)).result);
+  await waitFor(
+    () => bridge.notifications.some((n) => n.params?.data?.kind === "stale"),
+    "the stale notice",
+  );
+  await fake.control({ mcpStatus: 503 });
+  const failed = await bridge.call("tools/call", {
+    name: "iskron_channel",
+    arguments: { action: "list", realm: "nks-dev" },
+  });
+  assert.ok(failed.error, "the faulted call must come back as an error");
+  await fake.control({ mcpStatus: null });
+  const next = await bridge.call("tools/call", {
+    name: "iskron_channel",
+    arguments: { action: "list", realm: "nks-dev" },
+  });
+  const text = (next.result?.content ?? []).map((c) => c.text ?? "").join("\n");
+  assert.match(text, /ПОСТАВКА ОТСТАЛА/, "the notice was kept for the first answer with a body");
 });
