@@ -44,7 +44,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "jq -r '.tool_name // \"\"' | grep -Eq 'iskron_(add_[a-z_]+|batch)$' && echo '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"additionalContext\":\"Момент скилла writing: перед вызовом по каждому узлу назови читателя, что изменит извлечение и что здесь ново; тип и given_as, три модуса как утверждения, имя-тезис, стрелки со смыслом; hint — указатель на то, чего не покажет карта, не план; строки CHECKS в ответе — работа этого такта.\"}}' || true"
+            "command": "jq -r '.tool_name // \"\"' | grep -Eq 'iskron_(add_[a-z_]+|batch)$' && echo '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"additionalContext\":\"Момент скилла writing: перед вызовом по каждому узлу назови читателя, что изменит извлечение и что здесь ново; тип и given_as, три модуса как утверждения, имя-тезис, стрелки со смыслом; hint — гроссбух превращения: исходы с вердиктами и что дальше, не пересказ карты; строки CHECKS в ответе — работа этого такта.\"}}' || true"
           }
         ]
       }
