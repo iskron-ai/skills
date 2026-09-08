@@ -1,5 +1,12 @@
 # Changelog
 
+## [6.3.0](https://github.com/iskron-ai/skills/compare/v6.2.3...v6.3.0) (2026-09-08)
+
+
+### Features
+
+* **skills:** вход в комнату по строке, инвентарь клиента в reconcile; fix(bridge): рукопожатие за конвейерного клиента ([#97](https://github.com/iskron-ai/skills/issues/97)) ([cd290e5](https://github.com/iskron-ai/skills/commit/cd290e5edbf48333861b16a9405184dafe85b820))
+
 ## [6.2.3](https://github.com/iskron-ai/skills/compare/v6.2.2...v6.2.3) (2026-09-08)
 
 
