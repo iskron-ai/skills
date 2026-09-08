@@ -77,6 +77,52 @@ let currentUrl: string | null = null;
 let currentStatusUrl: string | null = null;
 const clients = new Set<Socket>();
 const ring: { raw: string; frame: Frame | null }[] = [];
+const helloWaiters = new Set<(f: Frame | null) => void>();
+
+/** Держит ли этот мост сокет ИМЕННО этого стояния — тогда register довольно, connect ротировал бы живое место без причины. */
+export function holdsStanding(realm: string, karta: string | number, name: string): boolean {
+  const s = state.standing;
+  return (
+    !!holder?.alive &&
+    !!s &&
+    s.realm === realm &&
+    String(s.karta) === String(karta) &&
+    (s.name ?? "") === name &&
+    currentKey === keyFor()
+  );
+}
+
+/** Кадр hello — доказательство держания; из кольца, если уже пришёл, иначе ожидание под пределом. */
+export function awaitHello(timeoutMs: number): Promise<Frame | null> {
+  const seen = ring.find((r) => r.frame?.type === "hello")?.frame ?? null;
+  if (seen) return Promise.resolve(seen);
+  return new Promise((resolve) => {
+    const done = (f: Frame | null): void => {
+      helloWaiters.delete(done);
+      resolve(f);
+    };
+    helloWaiters.add(done);
+    setTimeout(() => done(null), timeoutMs).unref();
+  });
+}
+
+/** Блок `[iskron-bridge]` с командой слушания — для ответа connect и для iskron_stand. */
+export function listenBlock(): string | null {
+  if (!currentKey) return null;
+  const key = currentKey;
+  const self = fileURLToPath(import.meta.url);
+  // Сторож выводит каталог сокетов так же, как мост: не по умолчанию — скажи ему где.
+  const where = CFG.authDir === defaultAuthDir() ? "" : ` --auth-dir "${CFG.authDir}"`;
+  return (
+    `[iskron-bridge] Сокет этого стояния держит мост — вручать его никому не нужно` +
+    ` (строка выше о том, что никто не слушает, описывает миг до этого держания).` +
+    `\nСлушать: node "${self}" watchdog ${key}${where} — под Monitor с persistent: true (Claude Code);` +
+    ` фоновой задачей — node "${self}" watchdog-exit ${key}${where} (выходит нулём на первом сообщении);` +
+    ` в Codex из своей оболочки фоном — node "${self}" watchdog-codex ${key}${where} (кадр входит в идущий тред через app-server).` +
+    `\nЗанятость: iskron_channel(action="status", realm, text) — пустой text снимает.` +
+    `\nКадры приходят и уведомлениями MCP (logger iskron-channel).`
+  );
+}
 
 function broadcast(ev: ChannelEvent): void {
   const line = JSON.stringify(ev) + "\n";
@@ -224,6 +270,7 @@ function holdStanding(url: string, statusUrl?: string | null): string {
         // доказательство держания, а не только рабочие кадры.
         ring.push({ raw: text, frame: full });
         if (ring.length > RING) ring.shift();
+        if (full?.type === "hello") for (const w of [...helloWaiters]) w(full);
         const ev: ChannelEvent = { kind: "frame", raw: text, frame: full };
         broadcast(ev);
         if (full?.type !== "status") notify("info", ev);
@@ -277,18 +324,8 @@ export function absorbChannelReply(msg: JsonRpcMessage, reply: JsonRpcMessage): 
     // даже если прежде мост держал другое: ярлык врать не должен.
     state.standing = { realm: a.realm, karta: a.karta, name: a.name };
   }
-  const key = holdStanding(trim(socket), status ? trim(status) : null);
-  const self = fileURLToPath(import.meta.url);
-  // Сторож выводит каталог сокетов так же, как мост: не по умолчанию — скажи ему где.
-  const where = CFG.authDir === defaultAuthDir() ? "" : ` --auth-dir "${CFG.authDir}"`;
-  const block =
-    `\n\n[iskron-bridge] Сокет этого стояния держит мост — вручать его никому не нужно` +
-    ` (строка выше о том, что никто не слушает, описывает миг до этого держания).` +
-    `\nСлушать: node "${self}" watchdog ${key}${where} — под Monitor с persistent: true (Claude Code);` +
-    ` фоновой задачей — node "${self}" watchdog-exit ${key}${where} (выходит нулём на первом сообщении);` +
-    ` в Codex из своей оболочки фоном — node "${self}" watchdog-codex ${key}${where} (кадр входит в идущий тред через app-server).` +
-    `\nЗанятость: iskron_channel(action="status", realm, text) — пустой text снимает.` +
-    `\nКадры приходят и уведомлениями MCP (logger iskron-channel).`;
+  holdStanding(trim(socket), status ? trim(status) : null);
+  const block = listenBlock() ?? "";
   const content = reply.result?.content;
   if (Array.isArray(content)) {
     content.push({ type: "text", text: block.trim() });
@@ -321,29 +358,38 @@ export function localStatus(msg: JsonRpcMessage): Promise<JsonRpcMessage> | null
     result: { ...(isError ? { isError: true } : {}), content: [{ type: "text", text: body }] },
   });
   return (async () => {
-    if (!currentStatusUrl || !currentKey) {
-      return reply(
-        'Отказано (мост): стояния мост не держит — сперва iskron_channel(action="connect") (и register на живом месте), затем status',
-        true,
-      );
-    }
-    let res: Response;
-    try {
-      res = await fetch(currentStatusUrl, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ text }),
-        signal: AbortSignal.timeout(5000),
-      });
-    } catch (e) {
-      return reply(`Отказано (мост): статусный адрес не ответил — ${(e as Error).message}`, true);
-    }
-    const body = (await res.text().catch(() => "")).trim();
-    if (!res.ok) {
-      return reply(`Отказано (${res.status}) поверхностью: ${body || "без тела"}`, true);
-    }
-    return reply(`занятость ${currentKey}: ${text || "(снята)"}`);
+    const st = await publishStatus(text);
+    if (st.ok) return reply(`занятость ${currentKey}: ${text || "(снята)"}`);
+    return reply(st.body, true);
   })();
+}
+
+/** POST строки занятости на статусный адрес стояния, которое держит мост. */
+export async function publishStatus(text: string): Promise<{ ok: boolean; body: string }> {
+  if (!currentStatusUrl || !currentKey) {
+    return {
+      ok: false,
+      body: 'Отказано (мост): стояния мост не держит — сперва iskron_stand или iskron_channel(action="connect") (и register на живом месте), затем status',
+    };
+  }
+  let res: Response;
+  try {
+    res = await fetch(currentStatusUrl, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ text }),
+      signal: AbortSignal.timeout(5000),
+    });
+  } catch (e) {
+    return {
+      ok: false,
+      body: `Отказано (мост): статусный адрес не ответил — ${(e as Error).message}`,
+    };
+  }
+  const body = (await res.text().catch(() => "")).trim();
+  if (!res.ok)
+    return { ok: false, body: `Отказано (${res.status}) поверхностью: ${body || "без тела"}` };
+  return { ok: true, body };
 }
 
 let readCounter = 0;

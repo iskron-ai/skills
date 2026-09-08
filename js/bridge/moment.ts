@@ -6,6 +6,7 @@
 // пишущим тулам строку момента. Строка не пересказывает метод: она называет
 // скилл и три вещи, которые чаще всего теряются. Без ссылок на узлы графа —
 // у читающего харнеса графа может не быть.
+import { STAND_TOOL } from "./stand.ts";
 import { type JsonRpcMessage } from "./types.ts";
 
 const WRITE_TOOL = /^iskron_(add_[a-z_]+|batch)$/;
@@ -24,6 +25,8 @@ export const STATUS_LINE =
 export function annotateToolList(reply: JsonRpcMessage): void {
   const tools = reply?.result?.tools;
   if (!Array.isArray(tools)) return;
+  // Тул моста — в списке той же сессии: его нет без моста, и это знак транспорта.
+  if (!tools.some((t) => t?.name === STAND_TOOL.name)) tools.push(STAND_TOOL);
   for (const t of tools) {
     if (t && t.name === "iskron_channel" && typeof t.description === "string") {
       if (!t.description.includes(STATUS_LINE))

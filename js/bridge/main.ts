@@ -40,6 +40,7 @@ import { tokenRequestsInFlight } from "./oauth/tokenrequest.ts";
 import { storePath } from "./store.ts";
 import { debug, flushStdout, guardStream, log } from "./streams.ts";
 import { type JsonRpcMessage } from "./types.ts";
+import { startFreshnessWatch } from "./update.ts";
 
 export function bridgeMain(argv: string[]): void {
   guardStream(process.stdout); // before the first write: a broken pipe is news, not a crash
@@ -53,6 +54,7 @@ export function bridgeMain(argv: string[]): void {
     })`,
   );
   startTokenKeepalive();
+  startFreshnessWatch(CFG.authDir, CFG.serverUrl); // отставание поставки — слово моста, не память человека
   holdFromEnv(); // отладочный путь: сокет из окружения, без connect
 
   const rl = createInterface({ input: process.stdin, terminal: false });

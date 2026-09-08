@@ -11,10 +11,12 @@ import {
 } from "./errors.ts";
 import { absorbChannelReply, localStatus } from "./hold.ts";
 import { annotateToolList } from "./moment.ts";
+import { isStandCall, runStand } from "./stand.ts";
 import { ensureStanding, isUnattributed, noteStanding, replyText } from "./standing.ts";
 import { emit, log } from "./streams.ts";
 import { currentAccessToken, post, reinitialize, state } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
+import { takeNotice } from "./update.ts";
 
 // The verdict a caller actually needs is not "it failed" but "may it have taken
 // effect?" — and those are different sentences. A single "retry the call" over
@@ -73,6 +75,20 @@ export function syntheticError(
   };
 }
 
+/** Строка отставания поставки — один раз за сессию, в первый же ответ тула: агент передаст её человеку. */
+function withNotice(reply: JsonRpcMessage): JsonRpcMessage {
+  const notice = takeNotice();
+  const content = reply?.result?.content;
+  if (
+    notice &&
+    Array.isArray(content) &&
+    !content.some((c) => c?.text?.includes("ПОСТАВКА ОТСТАЛА"))
+  ) {
+    content.push({ type: "text", text: notice });
+  }
+  return reply;
+}
+
 // Deliver one harness message upstream, with one auth retry and one session
 // retry. On final failure a request id is ALWAYS answered with an error.
 export async function deliver(msg: JsonRpcMessage): Promise<void> {
@@ -99,6 +115,7 @@ export async function deliver(msg: JsonRpcMessage): Promise<void> {
   // A tool call's own reply is held back until it has been read for the
   // unattributed mark; everything else the server streams passes through.
   const isToolCall = msg?.method === "tools/call";
+  const isStand = isStandCall(msg);
   let heldReply: JsonRpcMessage | null;
   let standingRetried = false;
   const forward = (m: JsonRpcMessage) => {
@@ -138,6 +155,11 @@ export async function deliver(msg: JsonRpcMessage): Promise<void> {
         await reinitialize();
       }
       if (!isInit) await ensureStanding(); // the session may have turned over under us
+      if (isStand) {
+        // Тул моста: доска, место, хук, стук — теми же вызовами, что и агент, одним ходом.
+        emit(withNotice(await runStand(msg)));
+        return;
+      }
       heldReply = null;
       await post(msg, forward);
       const held = heldReply as JsonRpcMessage | null;
@@ -163,7 +185,7 @@ export async function deliver(msg: JsonRpcMessage): Promise<void> {
           }
         }
         // Ответ connect/mint: мост берёт сокет себе и дописывает, как слушать.
-        emit(absorbChannelReply(msg, held));
+        emit(withNotice(absorbChannelReply(msg, held)));
       }
       return;
     } catch (e) {

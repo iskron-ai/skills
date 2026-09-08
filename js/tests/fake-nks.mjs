@@ -97,12 +97,20 @@ export async function startFakeNks(opts = {}) {
       mcp: 0,
       register_standing: 0,
       connect: 0,
+      list: 0,
+      webhooks_added: 0,
       status_posts: 0,
       attributed_send: 0,
       unattributed: 0,
       header_binds: 0,
     },
     standings: new Map(), // сессия MCP → имя стояния; убивается вместе с сессией
+    // Доска: занятые места по ролям (connect кладёт), комнаты — стояния человека,
+    // которые тест объявляет через /control {rooms:[{karta,address}]}.
+    places: new Map(), // "karta:name" → { karta, name, incoming }
+    rooms: [],
+    webhooks: [], // { id, karta, url, active }
+    sends: [], // { karta, standing, text, bound }
     // Сокет стояния: connect выдаёт адрес ws на этом же сервере, апгрейд принимается,
     // hello уходит первым кадром; /control {ws_send, ws_close} гонит кадры и закрытия.
     ws: new Set(),
@@ -188,6 +196,7 @@ export async function startFakeNks(opts = {}) {
         "sessionFollowsToken",
         "silentNewSession",
         "standingRefuseNext",
+        "rooms",
       ]) {
         if (k in patch) st[k] = patch[k];
       }
@@ -483,9 +492,40 @@ export async function startFakeNks(opts = {}) {
             extra,
           );
         }
+        if (a.action === "list") {
+          st.counts.list++;
+          const lines = ["Каналы:"];
+          for (const p of st.places.values()) {
+            lines.push(
+              `  #${p.karta} 👨‍💻 Роль 能 · @tester:${p.name} — живой · простой 6h · слушает · сокет был сейчас · открыл @tester`,
+            );
+            lines.push(`     📥 ${p.incoming}`);
+          }
+          for (const r of st.rooms) {
+            lines.push(
+              `  #${r.karta} 👑 Человек 主 · ${r.address} — живой · простой 6h · слушает · открыл @tester`,
+            );
+            lines.push(`     📥 ${base}/api/channel/in/room-${r.karta}`);
+          }
+          return json(
+            res,
+            200,
+            {
+              jsonrpc: "2.0",
+              id: msg.id,
+              result: { content: [{ type: "text", text: lines.join("\n") }] },
+            },
+            extra,
+          );
+        }
         if (a.action === "connect" || a.action === "mint") {
           st.counts.connect++;
           st.standings.set(sid, a.name ?? "(unnamed)");
+          st.places.set(`${a.karta}:${a.name}`, {
+            karta: String(a.karta),
+            name: a.name ?? "",
+            incoming: `${base}/api/channel/in/mailbox-${a.name ?? "unnamed"}`,
+          });
           const wsUrl = `${base.replace(/^http:/, "ws:")}/channel/ws/${st.wsToken}`;
           return json(
             res,
@@ -499,7 +539,7 @@ export async function startFakeNks(opts = {}) {
                     type: "text",
                     text:
                       `Место занято: ${a.name ?? "(unnamed)"}.\n` +
-                      `входящий: ${base}/api/channel/in/mailbox\n` +
+                      `📥 входящий: ${base}/api/channel/in/mailbox-${a.name ?? "unnamed"}\n` +
                       `сокет (показан один раз): ${wsUrl}\n` +
                       `статус: ${base}/channel/status/${st.wsToken}`,
                   },
@@ -549,6 +589,12 @@ export async function startFakeNks(opts = {}) {
             );
           }
           st.counts.attributed_send++;
+          st.sends.push({
+            karta: String(a.karta),
+            standing: a.standing ?? null,
+            text: a.text ?? "",
+            bound,
+          });
           return json(
             res,
             200,
@@ -556,6 +602,49 @@ export async function startFakeNks(opts = {}) {
               jsonrpc: "2.0",
               id: msg.id,
               result: { content: [{ type: "text", text: `принято стоянием ${bound}` }] },
+            },
+            extra,
+          );
+        }
+      }
+      // Хуки роли: list_webhooks печатает по строке на хук с тем, кого он будит;
+      // add_webhook кладёт новый — так мост видит, стоит ли уже хук на его стояние.
+      if (msg.method === "tools/call" && msg.params?.name === "iskron_admin") {
+        const a = msg.params.arguments ?? {};
+        if (a.action === "list_webhooks") {
+          const mine = st.webhooks.filter((w) => String(w.karta) === String(a.node_id));
+          const lines = [`Вебхуки для #${a.node_id} (${mine.length}):`];
+          for (const w of mine) {
+            const wakes = [...st.places.values()].find((p) => p.incoming === w.url);
+            lines.push(
+              `  #${w.id} → doer:#${w.karta} — ${w.active ? "активен" : "пауза"} [minimal]`,
+            );
+            lines.push(
+              `     будит сейчас (${wakes ? 1 : 0}): ${wakes ? `@tester:${wakes.name}` : "никого"}`,
+            );
+          }
+          return json(
+            res,
+            200,
+            {
+              jsonrpc: "2.0",
+              id: msg.id,
+              result: { content: [{ type: "text", text: lines.join("\n") }] },
+            },
+            extra,
+          );
+        }
+        if (a.action === "add_webhook") {
+          st.counts.webhooks_added++;
+          const id = 100 + st.webhooks.length;
+          st.webhooks.push({ id, karta: String(a.node_id), url: a.url, active: true });
+          return json(
+            res,
+            200,
+            {
+              jsonrpc: "2.0",
+              id: msg.id,
+              result: { content: [{ type: "text", text: `Вебхук #${id} создан → ${a.url}` }] },
             },
             extra,
           );

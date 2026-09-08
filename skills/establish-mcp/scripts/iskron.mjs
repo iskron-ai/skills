@@ -78,20 +78,20 @@ function emit(msg) {
 }
 function flushStdout() {
   return new Promise((resolve) => {
-    const out2 = process.stdout;
-    if (!canWrite(out2)) return resolve();
+    const out3 = process.stdout;
+    if (!canWrite(out3)) return resolve();
     let done = false;
     const finish = () => {
       if (done) return;
       done = true;
-      out2.off("error", finish);
-      out2.off("close", finish);
+      out3.off("error", finish);
+      out3.off("close", finish);
       resolve();
     };
-    out2.once("error", finish);
-    out2.once("close", finish);
-    if (stdoutBacklog) out2.once("drain", finish);
-    else out2.write("", finish);
+    out3.once("error", finish);
+    out3.once("close", finish);
+    if (stdoutBacklog) out3.once("drain", finish);
+    else out3.write("", finish);
     setTimeout(finish, FLUSH_STOP_MS).unref();
   });
 }
@@ -1480,6 +1480,33 @@ var currentUrl = null;
 var currentStatusUrl = null;
 var clients = /* @__PURE__ */ new Set();
 var ring = [];
+var helloWaiters = /* @__PURE__ */ new Set();
+function holdsStanding(realm, karta, name) {
+  const s = state.standing;
+  return !!holder?.alive && !!s && s.realm === realm && String(s.karta) === String(karta) && (s.name ?? "") === name && currentKey === keyFor();
+}
+function awaitHello(timeoutMs) {
+  const seen = ring.find((r) => r.frame?.type === "hello")?.frame ?? null;
+  if (seen) return Promise.resolve(seen);
+  return new Promise((resolve) => {
+    const done = (f) => {
+      helloWaiters.delete(done);
+      resolve(f);
+    };
+    helloWaiters.add(done);
+    setTimeout(() => done(null), timeoutMs).unref();
+  });
+}
+function listenBlock() {
+  if (!currentKey) return null;
+  const key = currentKey;
+  const self = fileURLToPath2(import.meta.url);
+  const where = CFG.authDir === defaultAuthDir() ? "" : ` --auth-dir "${CFG.authDir}"`;
+  return `[iskron-bridge] Сокет этого стояния держит мост — вручать его никому не нужно (строка выше о том, что никто не слушает, описывает миг до этого держания).
+Слушать: node "${self}" watchdog ${key}${where} — под Monitor с persistent: true (Claude Code); фоновой задачей — node "${self}" watchdog-exit ${key}${where} (выходит нулём на первом сообщении); в Codex из своей оболочки фоном — node "${self}" watchdog-codex ${key}${where} (кадр входит в идущий тред через app-server).
+Занятость: iskron_channel(action="status", realm, text) — пустой text снимает.
+Кадры приходят и уведомлениями MCP (logger iskron-channel).`;
+}
 function broadcast(ev) {
   const line = JSON.stringify(ev) + "\n";
   for (const c of clients) {
@@ -1617,6 +1644,7 @@ function holdStanding(url, statusUrl2) {
         const text = full === frame2 ? raw : JSON.stringify(full);
         ring.push({ raw: text, frame: full });
         if (ring.length > RING) ring.shift();
+        if (full?.type === "hello") for (const w of [...helloWaiters]) w(full);
         const ev = { kind: "frame", raw: text, frame: full };
         broadcast(ev);
         if (full?.type !== "status") notify("info", ev);
@@ -1660,15 +1688,8 @@ function absorbChannelReply(msg, reply) {
   if (a.realm && a.karta != null) {
     state.standing = { realm: a.realm, karta: a.karta, name: a.name };
   }
-  const key = holdStanding(trim(socket), status ? trim(status) : null);
-  const self = fileURLToPath2(import.meta.url);
-  const where = CFG.authDir === defaultAuthDir() ? "" : ` --auth-dir "${CFG.authDir}"`;
-  const block = `
-
-[iskron-bridge] Сокет этого стояния держит мост — вручать его никому не нужно (строка выше о том, что никто не слушает, описывает миг до этого держания).
-Слушать: node "${self}" watchdog ${key}${where} — под Monitor с persistent: true (Claude Code); фоновой задачей — node "${self}" watchdog-exit ${key}${where} (выходит нулём на первом сообщении); в Codex из своей оболочки фоном — node "${self}" watchdog-codex ${key}${where} (кадр входит в идущий тред через app-server).
-Занятость: iskron_channel(action="status", realm, text) — пустой text снимает.
-Кадры приходят и уведомлениями MCP (logger iskron-channel).`;
+  holdStanding(trim(socket), status ? trim(status) : null);
+  const block = listenBlock() ?? "";
   const content = reply.result?.content;
   if (Array.isArray(content)) {
     content.push({ type: "text", text: block.trim() });
@@ -1691,29 +1712,36 @@ function localStatus(msg) {
     result: { ...isError ? { isError: true } : {}, content: [{ type: "text", text: body }] }
   });
   return (async () => {
-    if (!currentStatusUrl || !currentKey) {
-      return reply(
-        'Отказано (мост): стояния мост не держит — сперва iskron_channel(action="connect") (и register на живом месте), затем status',
-        true
-      );
-    }
-    let res;
-    try {
-      res = await fetch(currentStatusUrl, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ text }),
-        signal: AbortSignal.timeout(5e3)
-      });
-    } catch (e) {
-      return reply(`Отказано (мост): статусный адрес не ответил — ${e.message}`, true);
-    }
-    const body = (await res.text().catch(() => "")).trim();
-    if (!res.ok) {
-      return reply(`Отказано (${res.status}) поверхностью: ${body || "без тела"}`, true);
-    }
-    return reply(`занятость ${currentKey}: ${text || "(снята)"}`);
+    const st = await publishStatus(text);
+    if (st.ok) return reply(`занятость ${currentKey}: ${text || "(снята)"}`);
+    return reply(st.body, true);
   })();
+}
+async function publishStatus(text) {
+  if (!currentStatusUrl || !currentKey) {
+    return {
+      ok: false,
+      body: 'Отказано (мост): стояния мост не держит — сперва iskron_stand или iskron_channel(action="connect") (и register на живом месте), затем status'
+    };
+  }
+  let res;
+  try {
+    res = await fetch(currentStatusUrl, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ text }),
+      signal: AbortSignal.timeout(5e3)
+    });
+  } catch (e) {
+    return {
+      ok: false,
+      body: `Отказано (мост): статусный адрес не ответил — ${e.message}`
+    };
+  }
+  const body = (await res.text().catch(() => "")).trim();
+  if (!res.ok)
+    return { ok: false, body: `Отказано (${res.status}) поверхностью: ${body || "без тела"}` };
+  return { ok: true, body };
 }
 var readCounter = 0;
 async function completeFrame(frame2) {
@@ -1757,6 +1785,420 @@ function stampOrigin(frame2) {
   return { ...frame2, origin: classifyOrigin(frame2, state.standing?.karta) };
 }
 
+// js/bridge/stand.ts
+import { execFileSync } from "node:child_process";
+import { hostname } from "node:os";
+import { basename } from "node:path";
+
+// js/bridge/update.ts
+import { spawn as spawn2 } from "node:child_process";
+import { existsSync as existsSync2, mkdirSync as mkdirSync5, readFileSync as readFileSync7, renameSync as renameSync2, writeFileSync as writeFileSync5 } from "node:fs";
+import { homedir as homedir4 } from "node:os";
+import { dirname, join as join6 } from "node:path";
+import { fileURLToPath as fileURLToPath3 } from "node:url";
+
+// js/shared/home.ts
+import { homedir as homedir3 } from "node:os";
+import { join as join5 } from "node:path";
+var homeBridgePath = () => join5(homedir3(), ".iskron-bridge", "iskron-bridge.mjs");
+
+// js/shared/semver.ts
+function parseVersion(v) {
+  const m = /^v?(\d+)\.(\d+)\.(\d+)/.exec((v ?? "").trim());
+  return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
+}
+function compareVersions(a, b) {
+  const pa = parseVersion(a);
+  const pb = parseVersion(b);
+  if (!pa || !pb) return 0;
+  for (let i = 0; i < 3; i++) if (pa[i] !== pb[i]) return pa[i] - pb[i];
+  return 0;
+}
+
+// js/bridge/update.ts
+var RELEASES_URL = process.env.ISKRON_BRIDGE_RELEASES_URL?.trim() || "https://api.github.com/repos/iskron-ai/skills/releases/latest";
+var RAW_URL = process.env.ISKRON_BRIDGE_RAW_URL?.trim() || "https://raw.githubusercontent.com/iskron-ai/skills";
+var CHECK_INTERVAL_MS = 6 * 60 * 60 * 1e3;
+var updatesDisabled = () => !!process.env.ISKRON_BRIDGE_NO_UPDATE;
+var selfPath = () => fileURLToPath3(import.meta.url);
+var opencodePluginPath = () => join6(homedir4(), ".config", "opencode", "plugins", "iskron.js");
+var setupPathOf = (authDir) => join6(authDir, "SETUP.md");
+var latestPathOf = (authDir) => join6(authDir, "latest.json");
+function writeAtomic(path, bytes) {
+  mkdirSync5(dirname(path), { recursive: true, mode: 448 });
+  const tmp = `${path}.tmp-${process.pid}`;
+  writeFileSync5(tmp, bytes, { mode: 420 });
+  renameSync2(tmp, path);
+}
+var versionOf = (path) => {
+  try {
+    return versionIn(readFileSync7(path, "utf8"));
+  } catch {
+    return null;
+  }
+};
+function syncHome(self = selfPath()) {
+  const out3 = { copied: [] };
+  const home = homeBridgePath();
+  let mine;
+  try {
+    mine = readFileSync7(self);
+  } catch {
+    return out3;
+  }
+  if (!versionIn(mine.toString("utf8"))) return out3;
+  if (self === home) return out3;
+  const homeVersion = versionOf(home);
+  const cmp = homeVersion ? compareVersions(VERSION, homeVersion) : 1;
+  if (cmp > 0) {
+    writeAtomic(home, mine);
+    out3.copied.push(home);
+    const plugin = opencodePluginPath();
+    const packaged = join6(dirname(self), "opencode-plugin.js");
+    if (existsSync2(plugin) && existsSync2(packaged)) {
+      const fresh = readFileSync7(packaged);
+      if (!readFileSync7(plugin).equals(fresh)) {
+        writeAtomic(plugin, fresh);
+        out3.copied.push(plugin);
+      }
+    }
+  } else if (cmp < 0 && homeVersion) {
+    out3.reexec = home;
+  }
+  return out3;
+}
+function reexec(path, argv2) {
+  log(
+    `домашняя копия новее этой сборки (v${versionOf(path) ?? "?"} > v${VERSION}) — запускаюсь ею: ${path}`
+  );
+  const child = spawn2(process.execPath, [path, ...argv2], {
+    stdio: "inherit",
+    env: { ...process.env, ISKRON_BRIDGE_REEXEC: "1" }
+  });
+  for (const sig of ["SIGTERM", "SIGINT", "SIGHUP"]) {
+    process.on(sig, () => child.kill(sig));
+  }
+  child.on("exit", (code, signal) => process.exit(code ?? (signal ? 1 : 0)));
+  child.on("error", (e) => {
+    log(`перезапуск не удался: ${e.message}`);
+    process.exit(1);
+  });
+}
+function readLatest(authDir) {
+  try {
+    return JSON.parse(readFileSync7(latestPathOf(authDir), "utf8"));
+  } catch {
+    return null;
+  }
+}
+async function fetchText(url) {
+  const res = await fetch(url, {
+    headers: {
+      accept: "application/vnd.github+json, text/plain, */*",
+      "user-agent": `iskron-bridge/${VERSION}`
+    },
+    signal: AbortSignal.timeout(15e3)
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status} от ${url}`);
+  return res.text();
+}
+async function downloadRelease(tag, version, authDir) {
+  const written = [];
+  const base = `${RAW_URL}/${tag}`;
+  const bridge = await fetchText(`${base}/skills/establish-mcp/scripts/iskron.mjs`);
+  const got = versionIn(bridge);
+  if (got !== version)
+    throw new Error(`скачанный мост называет v${got ?? "?"}, релиз — v${version}`);
+  const home = homeBridgePath();
+  const current = versionOf(home);
+  if (!current || compareVersions(version, current) > 0) {
+    writeAtomic(home, bridge);
+    written.push(home);
+  }
+  const plugin = opencodePluginPath();
+  if (existsSync2(plugin)) {
+    const fresh = await fetchText(`${base}/skills/establish-mcp/scripts/opencode-plugin.js`);
+    if (readFileSync7(plugin, "utf8") !== fresh) {
+      writeAtomic(plugin, fresh);
+      written.push(plugin);
+    }
+  }
+  const setup = await fetchText(`${base}/SETUP.md`);
+  writeAtomic(setupPathOf(authDir), setup);
+  written.push(setupPathOf(authDir));
+  return written;
+}
+async function checkLatest(authDir, force = false) {
+  const cached = readLatest(authDir);
+  if (!force && cached && Date.now() - cached.checked_at < CHECK_INTERVAL_MS) return cached;
+  const latest = { checked_at: Date.now(), version: null, tag: null, downloaded: [] };
+  try {
+    const body = JSON.parse(await fetchText(RELEASES_URL));
+    const tag = body.tag_name?.trim() || null;
+    latest.tag = tag;
+    latest.version = tag ? tag.replace(/^v/, "") : null;
+    if (latest.version && compareVersions(latest.version, VERSION) > 0) {
+      latest.downloaded = await downloadRelease(tag, latest.version, authDir);
+    } else if (force && tag) {
+      writeAtomic(setupPathOf(authDir), await fetchText(`${RAW_URL}/${tag}/SETUP.md`));
+      latest.downloaded = [setupPathOf(authDir)];
+    }
+  } catch (e) {
+    latest.error = e.message;
+  }
+  try {
+    writeAtomic(latestPathOf(authDir), JSON.stringify(latest, null, 2));
+  } catch {
+  }
+  return latest;
+}
+function staleNotice(latest, authDir) {
+  if (!latest?.version || compareVersions(latest.version, VERSION) <= 0) return null;
+  const bridgeWord = latest.downloaded.some((p) => p === homeBridgePath()) ? "Свежий мост уже скачан в ~/.iskron-bridge и поднимется новой сессией." : latest.error ? `Скачать свежий мост не вышло (${latest.error}); повтори: node ~/.iskron-bridge/iskron-bridge.mjs update.` : "Свежий мост уже лежит в ~/.iskron-bridge и поднимется новой сессией.";
+  return `[iskron-bridge] ПОСТАВКА ОТСТАЛА: этот мост v${VERSION}, свежий релиз v${latest.version}. ${bridgeWord} Скиллы обновляет канал харнеса, и об этом надо СКАЗАТЬ ЧЕЛОВЕКУ: Claude Code — /plugin marketplace update iskron, затем /reload-plugins; плоская установка — npx skills update --global; pi — pi update git:github.com/iskron-ai/skills; Codex — codex plugin update. Полный порядок — свежий установщик ${setupPathOf(authDir)} (кладёт update); по слову человека «обнови» исполни его.`;
+}
+var pendingNotice = null;
+function takeNotice() {
+  const n = pendingNotice;
+  pendingNotice = null;
+  return n;
+}
+function startFreshnessWatch(authDir, serverUrl) {
+  if (updatesDisabled()) return;
+  const explicit = !!process.env.ISKRON_BRIDGE_RELEASES_URL?.trim();
+  if (!explicit && serverUrl.replace(/\/+$/, "") !== DEFAULT_SERVER_URL.replace(/\/+$/, "")) return;
+  const tick = async () => {
+    const latest = await checkLatest(authDir);
+    const notice = staleNotice(latest, authDir);
+    if (!notice) return;
+    pendingNotice = notice;
+    log(notice);
+    emit({
+      jsonrpc: "2.0",
+      method: "notifications/message",
+      params: { level: "warning", logger: "iskron-bridge", data: { kind: "stale", text: notice } }
+    });
+  };
+  const delay = Number(process.env.ISKRON_BRIDGE_UPDATE_DELAY_MS ?? 2e3);
+  setTimeout(() => void tick(), Number.isFinite(delay) ? delay : 2e3).unref();
+  setInterval(() => void tick(), CHECK_INTERVAL_MS).unref();
+}
+
+// js/bridge/stand.ts
+var STAND_TOOL = {
+  name: "iskron_stand",
+  description: "[мост] Занять стояние одним вызовом: мост читает доску, выводит имя (машина.репо.ветка), занимает место (connect и register; только register, если сокет уже держит этот мост), взводит хук инбокса роли своим входящим адресом, при room шлёт кадр join стоянию комнаты по полному адресу с провода (повтор — только repeat_knock=true, один раз, не раньше чем через 2 минуты) и возвращает имя, команду сторожа, число ожидавших кадров, состояние хука и расписку стука. Дальше — запустить сторожа командой из ответа и ждать. Тул исполняет мост; нет его в сессии — тулы идут мимо моста либо мост старой сборки (doctor скажет), стой по скиллу standing.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      realm: { type: "string", description: "Адрес графа: @owner/slug или rN." },
+      karta: { type: "string", description: "Роль агента (#N из AGENTS.md или строки запуска)." },
+      name: {
+        type: "string",
+        description: "Своя половина имени стояния; без неё выводится машина.репо.ветка."
+      },
+      room: {
+        type: "string",
+        description: "Полный адрес стояния комнаты @handle:name из строки приглашения; мост шлёт ему join."
+      },
+      mute_siblings: { type: "boolean", description: "Не слышать эхо других стояний той же роли." },
+      repeat_knock: {
+        type: "boolean",
+        description: "Осознанный повтор стука в ту же комнату: разрешён один раз и не раньше чем через 2 минуты после первого; без него повторный вызов второго join не шлёт."
+      },
+      status: { type: "string", description: "Первая строка занятости (до 64 символов)." }
+    },
+    required: ["realm", "karta"]
+  }
+};
+var isStandCall = (msg) => msg?.method === "tools/call" && msg?.params?.name === "iskron_stand";
+var sanitize = (s) => s.toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^[-.]+|[-.]+$/g, "").slice(0, 32);
+var git = (args) => {
+  try {
+    return execFileSync("git", args, {
+      cwd: process.cwd(),
+      timeout: 2e3,
+      stdio: ["ignore", "pipe", "ignore"]
+    }).toString().trim();
+  } catch {
+    return "";
+  }
+};
+function deriveName() {
+  const host = hostname().split(".")[0];
+  const top = git(["rev-parse", "--show-toplevel"]);
+  const repo = basename(top || process.cwd());
+  const branch = top ? git(["rev-parse", "--abbrev-ref", "HEAD"]) : "";
+  return [host, repo, branch].map(sanitize).filter(Boolean).join(".");
+}
+function parseBoard(text) {
+  const out3 = [];
+  for (const line of text.split("\n")) {
+    const m = /^\s*#(\d+)\s.*?·\s(@\S+)\s—\s(.*)$/.exec(line);
+    if (m) {
+      out3.push({ karta: m[1], address: m[2], rest: m[3], incoming: null });
+      continue;
+    }
+    const inc = /📥\s*(https?:\/\/\S+)/.exec(line);
+    if (inc && out3.length) out3[out3.length - 1].incoming = inc[1];
+  }
+  return out3;
+}
+var seq = 0;
+var knocks = /* @__PURE__ */ new Map();
+var KNOCK_REPEAT_AFTER_MS = 12e4;
+var KNOCK_LIMIT = 2;
+async function call(name, args) {
+  const id = `iskron-bridge-stand-${++seq}`;
+  const msg = {
+    jsonrpc: "2.0",
+    id,
+    method: "tools/call",
+    params: { name, arguments: args }
+  };
+  let reply = null;
+  await post(msg, (m) => {
+    if (m.id === id) reply = m;
+  });
+  let got = reply;
+  if (!got) return { text: "ответа нет", isError: true };
+  if (name === "iskron_channel") {
+    if (args.action === "register") noteStanding(msg, got);
+    if (args.action === "connect") got = absorbChannelReply(msg, got);
+  }
+  return { text: replyText(got), isError: !!got.error || !!got.result?.isError };
+}
+var short = (s, n = 300) => s.length > n ? `${s.slice(0, n)}…` : s;
+async function runStand(msg) {
+  const a = msg.params?.arguments ?? {};
+  const realm = typeof a.realm === "string" ? a.realm.trim() : "";
+  const karta = a.karta != null ? String(a.karta).trim().replace(/^#/, "") : "";
+  const lines = [];
+  const done = (isError = false) => ({
+    jsonrpc: "2.0",
+    id: msg.id,
+    result: {
+      ...isError ? { isError: true } : {},
+      content: [{ type: "text", text: lines.join("\n") }]
+    }
+  });
+  if (!realm || !karta) {
+    lines.push(
+      "Отказано (мост): iskron_stand требует realm и karta — граф и роль из AGENTS.md или строки запуска."
+    );
+    return done(true);
+  }
+  const name = typeof a.name === "string" && a.name.trim() ? sanitize(a.name.trim()) : deriveName();
+  const room = typeof a.room === "string" && a.room.trim() ? a.room.trim() : null;
+  const board = await call("iskron_channel", { action: "list", realm });
+  if (board.isError) {
+    lines.push(`Отказано: доска не прочиталась — ${short(board.text)}`);
+    return done(true);
+  }
+  const entries = parseBoard(board.text);
+  const mine = entries.find((e) => e.karta === karta && e.address.endsWith(`:${name}`));
+  let incoming = mine?.incoming ?? null;
+  let how;
+  if (holdsStanding(realm, karta, name)) {
+    const r = await call("iskron_channel", { action: "register", realm, karta, name });
+    if (r.isError) {
+      lines.push(`Отказано: register — ${short(r.text)}`);
+      return done(true);
+    }
+    how = "сокет уже держит этот мост — register";
+  } else {
+    const args = { action: "connect", realm, karta, name };
+    if (typeof a.mute_siblings === "boolean") args.mute_siblings = a.mute_siblings;
+    const c = await call("iskron_channel", args);
+    if (c.isError) {
+      lines.push(`Отказано: connect — ${short(c.text)}`);
+      return done(true);
+    }
+    incoming = /https?:\/\/\S+\/channel\/in\/\S+/.exec(c.text)?.[0] ?? incoming;
+    const r = await call("iskron_channel", { action: "register", realm, karta, name });
+    if (r.isError) {
+      lines.push(`Место занято, но register отказал — ${short(r.text)}`);
+      return done(true);
+    }
+    how = mine ? "место было — connect (сокет теперь у этого моста) и register" : "connect и register";
+  }
+  lines.push(
+    `[iskron_stand] стояние ${mine?.address ?? name} — роль #${karta}, граф ${realm}: ${how}.`
+  );
+  const block = listenBlock();
+  if (block) lines.push(block);
+  else lines.push("Сокета у моста нет — слушать нечем; проверь ответ connect.");
+  const hello = await awaitHello(4e3);
+  if (hello) lines.push(`hello получен: ожидало кадров — ${hello.pending ?? 0}.`);
+  else
+    lines.push(
+      "hello за 4 с не пришёл — сокет мост держит, но доказательства слуха ещё нет: проверь доску."
+    );
+  const hooks = await call("iskron_admin", { action: "list_webhooks", realm, node_id: karta });
+  const wakesMe = !hooks.isError && hooks.text.split(/\n(?=\s*#\d+\s*→)/).some((b) => /активен/.test(b) && b.includes(`:${name}`));
+  if (wakesMe) lines.push("Хук инбокса роли: стоит и будит это стояние.");
+  else if (!incoming)
+    lines.push("Хук инбокса роли: не взведён — входящий адрес стояния не прочитался.");
+  else {
+    const h = await call("iskron_admin", {
+      action: "add_webhook",
+      realm,
+      node_id: karta,
+      url: incoming,
+      ttl_seconds: 0
+    });
+    lines.push(
+      h.isError ? `Хук инбокса роли: не взвёлся — ${short(h.text)}` : `Хук инбокса роли: взведён (${short(h.text, 120)}).`
+    );
+  }
+  if (room) {
+    const target = entries.find((e) => e.address === room);
+    const key = `${realm}|${karta}|${name}|${room}`;
+    const prior = knocks.get(key);
+    const waited = prior ? Date.now() - prior.at : Infinity;
+    const again = a.repeat_knock === true;
+    if (prior && prior.count >= KNOCK_LIMIT) {
+      lines.push(
+        `Комната ${room}: стучал дважды, приглашения нет — больше не стучу; скажи человеку, что комната не ответила, и попроси открыть чат.`
+      );
+    } else if (prior && !again) {
+      lines.push(
+        `Комната ${room}: стук уже отправлен ${Math.round(waited / 1e3)} с назад — жди приглашения; осознанный повтор — тем же вызовом с repeat_knock=true, не раньше чем через 2 минуты.`
+      );
+    } else if (prior && waited < KNOCK_REPEAT_AFTER_MS) {
+      lines.push(
+        `Комната ${room}: повтор рано — с первого стука прошло ${Math.round(waited / 1e3)} с, правило ждёт 2 минуты; повтори через ${Math.ceil((KNOCK_REPEAT_AFTER_MS - waited) / 1e3)} с.`
+      );
+    } else if (!target) {
+      lines.push(
+        `Комната ${room}: адреса нет на доске графа ${realm} — стук не отправлен; сверь строку приглашения с человеком.`
+      );
+    } else {
+      const s = await call("iskron_channel", {
+        action: "send",
+        realm,
+        karta: target.karta,
+        standing: room,
+        text: "join"
+      });
+      if (s.isError) lines.push(`Комната ${room}: стук отказан — ${short(s.text)}`);
+      else {
+        knocks.set(key, { at: Date.now(), count: (prior?.count ?? 0) + 1 });
+        lines.push(
+          `Комната ${room}: ${prior ? "повторный " : ""}стук отправлен — ${short(s.text, 200)} Жди первого слова комнаты с шапкой; до него в комнату не пиши.`
+        );
+      }
+    }
+  }
+  if (typeof a.status === "string" && a.status.trim()) {
+    const st = await publishStatus(a.status.trim());
+    lines.push(st.ok ? `Занятость: ${a.status.trim()}` : `Занятость не принята: ${short(st.body)}`);
+  }
+  const stale = staleNotice(readLatest(CFG.authDir), CFG.authDir);
+  if (stale) lines.push(stale);
+  return done();
+}
+
 // js/bridge/moment.ts
 var WRITE_TOOL = /^iskron_(add_[a-z_]+|batch)$/;
 var JSON_LINE = "Момент скилла writing: перед вызовом по каждому узлу назови читателя, что изменит извлечение и что здесь ново; тип и given_as, три модуса как утверждения, имя-тезис, стрелки со смыслом; hint — гроссбух превращения: исходы с вердиктами и что дальше, не пересказ карты; строки CHECKS в ответе — работа этого такта.";
@@ -1765,6 +2207,7 @@ var STATUS_LINE = '[мост] action="status" (realm, text) — занятост
 function annotateToolList(reply) {
   const tools = reply?.result?.tools;
   if (!Array.isArray(tools)) return;
+  if (!tools.some((t) => t?.name === STAND_TOOL.name)) tools.push(STAND_TOOL);
   for (const t of tools) {
     if (t && t.name === "iskron_channel" && typeof t.description === "string") {
       if (!t.description.includes(STATUS_LINE))
@@ -1804,6 +2247,14 @@ function syntheticError(id, message, outcome = UpstreamError.UNKNOWN, holdOff = 
     }
   };
 }
+function withNotice(reply) {
+  const notice = takeNotice();
+  const content = reply?.result?.content;
+  if (notice && Array.isArray(content) && !content.some((c) => c?.text?.includes("ПОСТАВКА ОТСТАЛА"))) {
+    content.push({ type: "text", text: notice });
+  }
+  return reply;
+}
 async function deliver(msg) {
   const local = localStatus(msg);
   if (local) {
@@ -1822,6 +2273,7 @@ async function deliver(msg) {
     }
   };
   const isToolCall = msg?.method === "tools/call";
+  const isStand = isStandCall(msg);
   let heldReply;
   let standingRetried = false;
   const forward = (m) => {
@@ -1849,6 +2301,10 @@ async function deliver(msg) {
         await reinitialize();
       }
       if (!isInit) await ensureStanding();
+      if (isStand) {
+        emit(withNotice(await runStand(msg)));
+        return;
+      }
       heldReply = null;
       await post(msg, forward);
       const held = heldReply;
@@ -1868,7 +2324,7 @@ async function deliver(msg) {
             );
           }
         }
-        emit(absorbChannelReply(msg, held));
+        emit(withNotice(absorbChannelReply(msg, held)));
       }
       return;
     } catch (e) {
@@ -1938,6 +2394,7 @@ function bridgeMain(argv2) {
     `${BUILD} -> ${CFG.serverUrl} (timeout ${CFG.timeoutMs}ms, ${CFG.pat ? `personal access token from ${CFG.patSource}` : `auth in ${storePath()}`})`
   );
   startTokenKeepalive();
+  startFreshnessWatch(CFG.authDir, CFG.serverUrl);
   holdFromEnv();
   const rl = createInterface({ input: process.stdin, terminal: false });
   const pending = /* @__PURE__ */ new Set();
@@ -2001,9 +2458,9 @@ function bridgeMain(argv2) {
 }
 
 // js/watchdog/codex.ts
-import { existsSync as existsSync3 } from "node:fs";
-import { homedir as homedir3 } from "node:os";
-import { join as join6 } from "node:path";
+import { existsSync as existsSync4 } from "node:fs";
+import { homedir as homedir5 } from "node:os";
+import { join as join8 } from "node:path";
 
 // js/shared/appserver.ts
 import { randomBytes as randomBytes2 } from "node:crypto";
@@ -2103,28 +2560,28 @@ ${body}`;
 }
 
 // js/watchdog/client.ts
-import { existsSync as existsSync2, readdirSync as readdirSync2, readFileSync as readFileSync7 } from "node:fs";
+import { existsSync as existsSync3, readdirSync as readdirSync2, readFileSync as readFileSync8 } from "node:fs";
 import { connect as connect2 } from "node:net";
-import { join as join5 } from "node:path";
+import { join as join7 } from "node:path";
 var ATTACH_WINDOW_MS = 6e4;
 var RETRY_MS = 1e3;
 function parseWatchdogArgs(argv2) {
-  const out2 = { authDir: authDirFromEnv() };
+  const out3 = { authDir: authDirFromEnv() };
   for (let i = 0; i < argv2.length; i++) {
     const a = argv2[i];
-    if (a === "--auth-dir") out2.authDir = argv2[++i] ?? out2.authDir;
-    else if (!a.startsWith("--") && !out2.key) out2.key = a;
+    if (a === "--auth-dir") out3.authDir = argv2[++i] ?? out3.authDir;
+    else if (!a.startsWith("--") && !out3.key) out3.key = a;
   }
-  return out2;
+  return out3;
 }
 function resolveStanding(argv2) {
   const { key, authDir } = parseWatchdogArgs(argv2);
   const dir = standingsDirOf(authDir);
   const pathFor = (k) => socketPathOf(authDir, k);
   if (key) return { key, path: pathFor(key) };
-  const held = existsSync2(dir) ? readdirSync2(dir).filter((f) => f.endsWith(".key")).map((f) => {
+  const held = existsSync3(dir) ? readdirSync2(dir).filter((f) => f.endsWith(".key")).map((f) => {
     try {
-      return readFileSync7(join5(dir, f), "utf8").trim();
+      return readFileSync8(join7(dir, f), "utf8").trim();
     } catch {
       return "";
     }
@@ -2189,8 +2646,8 @@ var note = (s) => {
   process.stderr.write(s + "\n");
 };
 function codexDoorPath() {
-  const home = process.env.CODEX_HOME?.trim() || join6(homedir3(), ".codex");
-  return join6(home, "app-server-control", "app-server-control.sock");
+  const home = process.env.CODEX_HOME?.trim() || join8(homedir5(), ".codex");
+  return join8(home, "app-server-control", "app-server-control.sock");
 }
 function runWatchdogCodex(argv2) {
   const threadId = process.env.CODEX_THREAD_ID?.trim();
@@ -2201,7 +2658,7 @@ function runWatchdogCodex(argv2) {
     process.exit(2);
   }
   const socketPath = codexDoorPath();
-  if (!existsSync3(socketPath)) {
+  if (!existsSync4(socketPath)) {
     note(
       `ДЕЛАТЕЛЬ: двери нет (${socketPath}) — этот тред не под демоном app-server. Это ход ЧЕЛОВЕКА до запуска сессии, не твой: демон и сессия Codex должны стартовать с одним коротким CODEX_HOME (рецепт в SETUP, раздел Codex). Скажи ему это; пока двери нет — слушай watchdog-exit`
     );
@@ -2391,17 +2848,10 @@ function runWatchdogExit(argv2) {
 
 // js/cli/doctor.ts
 import { createHash as createHash4 } from "node:crypto";
-import { existsSync as existsSync4, readFileSync as readFileSync8 } from "node:fs";
-import { homedir as homedir5 } from "node:os";
-import { dirname, join as join8 } from "node:path";
-import { fileURLToPath as fileURLToPath3 } from "node:url";
-
-// js/shared/home.ts
-import { homedir as homedir4 } from "node:os";
-import { join as join7 } from "node:path";
-var homeBridgePath = () => join7(homedir4(), ".iskron-bridge", "iskron-bridge.mjs");
-
-// js/cli/doctor.ts
+import { existsSync as existsSync5, readFileSync as readFileSync9 } from "node:fs";
+import { homedir as homedir6 } from "node:os";
+import { dirname as dirname2, join as join9 } from "node:path";
+import { fileURLToPath as fileURLToPath4 } from "node:url";
 var out = (s) => {
   process.stdout.write(s + "\n");
 };
@@ -2411,21 +2861,21 @@ function homeCopyReport() {
   const home = homeBridgePath();
   let self = null;
   try {
-    self = readFileSync8(fileURLToPath3(import.meta.url));
+    self = readFileSync9(fileURLToPath4(import.meta.url));
   } catch {
   }
-  if (!existsSync4(home)) {
+  if (!existsSync5(home)) {
     out(`домашняя копия: нет (${home}) — её кладёт establish-mcp при подключении`);
     return;
   }
-  const bytes = readFileSync8(home);
+  const bytes = readFileSync9(home);
   if (self && bytes.equals(self)) {
     out(`домашняя копия: ${home} — та же сборка, что и этот файл`);
     return;
   }
   const v = versionIn(bytes.toString("utf8"));
   out(
-    `домашняя копия: ${home} — v${v ?? "?"}+${hashOf2(bytes)}, ДРУГИЕ байты: ${self ? `обнови её из поставки: cp "${fileURLToPath3(import.meta.url)}" ${home}` : "этот файл не читается"}`
+    `домашняя копия: ${home} — v${v ?? "?"}+${hashOf2(bytes)}, ДРУГИЕ байты: ${self ? `обнови её из поставки: cp "${fileURLToPath4(import.meta.url)}" ${home}` : "этот файл не читается"}`
   );
 }
 async function serverReport() {
@@ -2492,12 +2942,12 @@ async function patReport() {
   } else if (res.ok) out(`  токен принят сервером (HTTP ${res.status})`);
   else out(`  сервер ответил HTTP ${res.status} — не отказ токена, смотри строку «сервер»`);
   const path = storePath();
-  if (existsSync4(path)) out(`  хранилище OAuth ${path} есть, но не читается, пока стоит PAT`);
+  if (existsSync5(path)) out(`  хранилище OAuth ${path} есть, но не читается, пока стоит PAT`);
 }
 function grantReport() {
   const path = storePath();
   out(`грант: ${path}`);
-  if (!existsSync4(path)) {
+  if (!existsSync5(path)) {
     out("  хранилища нет — мост ещё ни разу не входил на этот сервер");
     return;
   }
@@ -2532,20 +2982,37 @@ function grantReport() {
     out(`  вход отложен ещё на ${seconds(st.snooze_until - Date.now())} (человек не завершил)`);
   }
   for (const suffix of [".auth-pending", ".refreshing"]) {
-    if (existsSync4(path + suffix)) out(`  замок: ${path + suffix}`);
+    if (existsSync5(path + suffix)) out(`  замок: ${path + suffix}`);
   }
   const logPath = grantLogPath();
-  if (existsSync4(logPath)) {
-    const lines = readFileSync8(logPath, "utf8").trim().split("\n").slice(-3);
+  if (existsSync5(logPath)) {
+    const lines = readFileSync9(logPath, "utf8").trim().split("\n").slice(-3);
     out(`  grant.log, последнее:`);
     for (const l of lines) out(`    ${l}`);
   }
 }
+function latestReport() {
+  const latest = readLatest(CFG.authDir);
+  if (!latest) {
+    out(
+      "свежий релиз: мост ещё не спрашивал релизы (спросит через пару секунд после старта сессии; руками — подкоманда update)"
+    );
+    return;
+  }
+  const ago = Math.round((Date.now() - latest.checked_at) / 6e4);
+  if (!latest.version)
+    out(`свежий релиз: не узнан (${latest.error ?? "без причины"}), спрашивал ${ago} мин назад`);
+  else if (compareVersions(latest.version, VERSION) > 0)
+    out(
+      `свежий релиз: v${latest.version} — ЭТОТ ФАЙЛ ОТСТАЛ (v${VERSION}); в дом скачано: ${latest.downloaded.join(", ") || "ничего"}; спрашивал ${ago} мин назад`
+    );
+  else out(`свежий релиз: v${latest.version}, этот файл не отстал; спрашивал ${ago} мин назад`);
+}
 function harnessReport() {
-  const claude = join8(homedir5(), ".claude.json");
-  if (existsSync4(claude)) {
+  const claude = join9(homedir6(), ".claude.json");
+  if (existsSync5(claude)) {
     try {
-      const cfg = JSON.parse(readFileSync8(claude, "utf8"));
+      const cfg = JSON.parse(readFileSync9(claude, "utf8"));
       const entries = Object.entries(cfg.mcpServers ?? {}).filter(
         ([, v]) => (v.args ?? []).some((a) => /iskron/.test(a))
       );
@@ -2558,26 +3025,26 @@ function harnessReport() {
       out(`Claude Code: ${claude} не читается`);
     }
   }
-  const opencodeDir = join8(homedir5(), ".config", "opencode");
-  if (existsSync4(opencodeDir)) {
-    const copy = join8(opencodeDir, "plugins", "iskron.js");
-    const packaged = join8(dirname(fileURLToPath3(import.meta.url)), "opencode-plugin.js");
-    if (!existsSync4(copy)) {
+  const opencodeDir = join9(homedir6(), ".config", "opencode");
+  if (existsSync5(opencodeDir)) {
+    const copy = join9(opencodeDir, "plugins", "iskron.js");
+    const packaged = join9(dirname2(fileURLToPath4(import.meta.url)), "opencode-plugin.js");
+    if (!existsSync5(copy)) {
       out(`OpenCode: плагина нет (${copy}) — его кладёт establish-mcp при подключении`);
-    } else if (!existsSync4(packaged)) {
+    } else if (!existsSync5(packaged)) {
       out(
         `OpenCode: плагин ${copy} стоит; рядом с этим файлом поставки плагина нет, сверить не с чем`
       );
-    } else if (readFileSync8(copy).equals(readFileSync8(packaged))) {
+    } else if (readFileSync9(copy).equals(readFileSync9(packaged))) {
       out(`OpenCode: плагин ${copy} — та же сборка, что в поставке`);
     } else {
       out(`OpenCode: плагин ${copy} — ДРУГИЕ байты, обнови из поставки: cp "${packaged}" ${copy}`);
     }
   }
-  const codexHome = process.env.CODEX_HOME?.trim() || join8(homedir5(), ".codex");
-  const door = join8(codexHome, "app-server-control", "app-server-control.sock");
-  if (existsSync4(codexHome)) {
-    if (existsSync4(door)) out(`Codex: дверь app-server открыта (${door})`);
+  const codexHome = process.env.CODEX_HOME?.trim() || join9(homedir6(), ".codex");
+  const door = join9(codexHome, "app-server-control", "app-server-control.sock");
+  if (existsSync5(codexHome)) {
+    if (existsSync5(door)) out(`Codex: дверь app-server открыта (${door})`);
     else if (Buffer.byteLength(door) > 100)
       out(
         `Codex: двери нет и не будет — CODEX_HOME длиннее предела unix-сокета (${codexHome}); нужен короткий дом для демона и сессий`
@@ -2587,22 +3054,55 @@ function harnessReport() {
         `Codex: двери нет (${door}) — демон app-server не поднят; без неё кадр доставляет watchdog-exit`
       );
   }
-  const codex = join8(homedir5(), ".codex", "config.toml");
-  if (existsSync4(codex)) {
-    const text = readFileSync8(codex, "utf8");
+  const codex = join9(homedir6(), ".codex", "config.toml");
+  if (existsSync5(codex)) {
+    const text = readFileSync9(codex, "utf8");
     out(`Codex: ${/iskron/.test(text) ? "запись моста есть" : "записи моста нет"} (${codex})`);
   }
 }
 async function runDoctor(argv2) {
   setConfig(parseArgs(argv2));
   out(`iskron doctor — ${BUILD}`);
-  out(`этот файл: ${fileURLToPath3(import.meta.url)}`);
+  out(`этот файл: ${fileURLToPath4(import.meta.url)}`);
   out(`node: ${process.version}`);
   homeCopyReport();
+  latestReport();
   await serverReport();
   if (CFG.pat) await patReport();
   else grantReport();
   harnessReport();
+}
+
+// js/cli/update.ts
+var out2 = (s) => {
+  process.stdout.write(s + "\n");
+};
+async function runUpdate(argv2) {
+  setConfig(parseArgs(argv2));
+  out2(`iskron update — ${BUILD}`);
+  const latest = await checkLatest(CFG.authDir, true);
+  if (!latest || !latest.version) {
+    out2(`свежий релиз не узнан: ${latest?.error ?? "нет ответа"} — сеть или GitHub; повтори позже`);
+    process.exitCode = 1;
+    return;
+  }
+  const cmp = compareVersions(latest.version, VERSION);
+  out2(
+    `свежий релиз: v${latest.version} (${latest.tag}); этот файл: v${VERSION}${cmp > 0 ? " — отстал" : cmp < 0 ? " — новее релиза (сборка из ветки)" : " — не отстал"}`
+  );
+  if (latest.error) out2(`скачать не вышло: ${latest.error}`);
+  if (latest.downloaded.length) for (const p of latest.downloaded) out2(`положено: ${p}`);
+  else out2(`в дом ничего не клалось: ${homeBridgePath()} не старше релиза`);
+  harnessReport();
+  out2("");
+  out2("Дальше:");
+  out2(
+    `  1. Скиллы обновляет канал харнеса — порядок в свежем установщике ${setupPathOf(CFG.authDir)}${latest.downloaded.includes(setupPathOf(CFG.authDir)) ? "" : " (не скачан — возьми из релиза)"}: прочти его и исполни шаги обновления для этого харнеса.`
+  );
+  out2(
+    "  2. Перезапусти сессии харнеса: мост, поднятый прежней сборкой, живёт до конца своей сессии."
+  );
+  out2("  3. node ~/.iskron-bridge/iskron-bridge.mjs doctor — сверка, что стоит и работает.");
 }
 
 // js/cli/iskron.ts
@@ -2612,35 +3112,51 @@ var USAGE = `iskron ${BUILD}
   node iskron.mjs watchdog-exit [ключ] [--auth-dir <dir>]
   node iskron.mjs watchdog-codex [ключ] [--auth-dir <dir>]   (из оболочки Codex: CODEX_THREAD_ID, CODEX_HOME)
   node iskron.mjs doctor [server-url] [--auth-dir <dir>]
+  node iskron.mjs update [--auth-dir <dir>]
   node iskron.mjs --version
   env: ISKRON_BRIDGE_TOKEN — личный токен вместо OAuth (или файл <auth-dir>/token);
        ISKRON_BRIDGE_URL, ISKRON_BRIDGE_AUTH_DIR, ISKRON_BRIDGE_NO_BROWSER, ISKRON_BRIDGE_DEBUG
 `;
 var argv = process.argv.slice(2);
 var [first, ...rest] = argv;
-switch (first) {
-  case "watchdog":
-    runWatchdog(rest);
-    break;
-  case "watchdog-exit":
-    runWatchdogExit(rest);
-    break;
-  case "watchdog-codex":
-    runWatchdogCodex(rest);
-    break;
-  case "doctor":
-    void runDoctor(rest);
-    break;
-  case "bridge":
-    bridgeMain(rest);
-    break;
-  case "--version":
-    process.stdout.write(BUILD + "\n");
-    break;
-  case "--help":
-  case "-h":
-    process.stdout.write(USAGE);
-    break;
-  default:
-    bridgeMain(argv);
+var LONG_LIVED = /* @__PURE__ */ new Set([void 0, "bridge", "watchdog", "watchdog-exit", "watchdog-codex"]);
+var longLived = LONG_LIVED.has(first) || first !== void 0 && !first.startsWith("--") && !["doctor", "update", "-h"].includes(first);
+if (longLived && !updatesDisabled() && !process.env.ISKRON_BRIDGE_REEXEC) {
+  const sync = syncHome();
+  for (const p of sync.copied)
+    process.stderr.write(`[iskron-bridge] дом обновлён этой сборкой: ${p}
+`);
+  if (sync.reexec) reexec(sync.reexec, argv);
+  else dispatch();
+} else dispatch();
+function dispatch() {
+  switch (first) {
+    case "watchdog":
+      runWatchdog(rest);
+      break;
+    case "watchdog-exit":
+      runWatchdogExit(rest);
+      break;
+    case "watchdog-codex":
+      runWatchdogCodex(rest);
+      break;
+    case "doctor":
+      void runDoctor(rest);
+      break;
+    case "update":
+      void runUpdate(rest);
+      break;
+    case "bridge":
+      bridgeMain(rest);
+      break;
+    case "--version":
+      process.stdout.write(BUILD + "\n");
+      break;
+    case "--help":
+    case "-h":
+      process.stdout.write(USAGE);
+      break;
+    default:
+      bridgeMain(argv);
+  }
 }
