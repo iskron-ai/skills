@@ -2,7 +2,7 @@
 // и работает ли она». Читает и не пишет: ни в хранилище гранта, ни в лог.
 // Каждая строка — факт, наблюдённый здесь и сейчас, с названным путём.
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -193,7 +193,101 @@ function latestReport(): void {
   else out(`свежий релиз: v${latest.version}, этот файл не отстал; спрашивал ${ago} мин назад`);
 }
 
+// A regular install of this delivery carries the bridge entry inside the
+// plugin manifests — Claude Code's plugin .mcp.json, the mcpServers object of
+// the Codex manifest — not in the user's own config; and the Codex home is not
+// always ~/.codex. Reading only the user configs reported "no entry" on a
+// healthy install (graph @nks/nks-dev, node #4279).
+function claudePluginReport(): void {
+  const registry = join(homedir(), ".claude", "plugins", "installed_plugins.json");
+  if (!existsSync(registry)) return;
+  try {
+    const reg = JSON.parse(readFileSync(registry, "utf8")) as {
+      plugins?: Record<string, { installPath?: string; version?: string; scope?: string }[]>;
+    };
+    const mine = Object.entries(reg.plugins ?? {}).filter(([k]) => /^iskron@/.test(k));
+    if (!mine.length) {
+      out(`Claude Code: плагин iskron не установлен (${registry})`);
+      return;
+    }
+    for (const [key, installs] of mine) {
+      for (const inst of installs) {
+        const manifest = inst.installPath ? join(inst.installPath, ".mcp.json") : "";
+        let entry = "запись моста в манифесте не найдена";
+        if (manifest && existsSync(manifest)) {
+          try {
+            const m = JSON.parse(readFileSync(manifest, "utf8")) as {
+              mcpServers?: Record<string, { args?: string[] }>;
+            };
+            const hit = Object.entries(m.mcpServers ?? {}).find(([, v]) =>
+              (v.args ?? []).some((a) => /iskron\.mjs/.test(a)),
+            );
+            if (hit) entry = `запись «${hit[0]}» → мост из плагина`;
+          } catch {
+            entry = `${manifest} не читается`;
+          }
+        }
+        out(
+          `Claude Code: плагин ${key} v${inst.version ?? "?"} (${inst.scope ?? "?"}) — ${entry}; ${inst.installPath ?? ""}`,
+        );
+      }
+    }
+  } catch {
+    out(`Claude Code: ${registry} не читается`);
+  }
+}
+
+function codexHomes(): string[] {
+  const homes = [
+    process.env.CODEX_HOME?.trim() || "",
+    join(homedir(), ".codex"),
+    ...(process.platform === "darwin"
+      ? [join(homedir(), "Library", "Application Support", "orca", "codex-runtime-home", "home")]
+      : []),
+  ].filter(Boolean);
+  return [...new Set(homes)].filter((h) => existsSync(h));
+}
+
+function codexPluginReport(home: string): void {
+  const cache = join(home, "plugins", "cache");
+  if (!existsSync(cache)) return;
+  let found = 0;
+  for (const market of readdirSync(cache)) {
+    const marketDir = join(cache, market);
+    let plugins: string[];
+    try {
+      plugins = readdirSync(marketDir);
+    } catch {
+      continue;
+    }
+    for (const plugin of plugins) {
+      if (!/iskron/.test(plugin)) continue;
+      const dir = join(marketDir, plugin);
+      const manifest = join(dir, ".codex-plugin", "plugin.json");
+      let word = "манифеста нет";
+      if (existsSync(manifest)) {
+        try {
+          const m = JSON.parse(readFileSync(manifest, "utf8")) as {
+            version?: string;
+            mcpServers?: Record<string, { args?: string[] }>;
+          };
+          const hit = Object.values(m.mcpServers ?? {}).some((v) =>
+            (v.args ?? []).some((a) => /iskron\.mjs/.test(a)),
+          );
+          word = `v${m.version ?? "?"}, ${hit ? "запись моста в манифесте есть" : "записи моста в манифесте нет"}`;
+        } catch {
+          word = `${manifest} не читается`;
+        }
+      }
+      found++;
+      out(`Codex: плагин ${plugin}@${market} — ${word}; ${dir}`);
+    }
+  }
+  if (!found) out(`Codex: плагина iskron в кэше нет (${cache})`);
+}
+
 export function harnessReport(): void {
+  claudePluginReport();
   const claude = join(homedir(), ".claude.json");
   if (existsSync(claude)) {
     try {
@@ -207,7 +301,10 @@ export function harnessReport(): void {
         for (const [name, v] of entries) {
           out(`Claude Code: запись «${name}» → ${v.command ?? ""} ${(v.args ?? []).join(" ")}`);
         }
-      } else out("Claude Code: в пользовательском конфиге записи моста нет");
+      } else
+        out(
+          "Claude Code: ручной записи моста в пользовательском конфиге нет (штатная — в плагине)",
+        );
     } catch {
       out(`Claude Code: ${claude} не читается`);
     }
@@ -229,23 +326,26 @@ export function harnessReport(): void {
       out(`OpenCode: плагин ${copy} — ДРУГИЕ байты, обнови из поставки: cp "${packaged}" ${copy}`);
     }
   }
-  const codexHome = process.env.CODEX_HOME?.trim() || join(homedir(), ".codex");
-  const door = join(codexHome, "app-server-control", "app-server-control.sock");
-  if (existsSync(codexHome)) {
+  for (const codexHome of codexHomes()) {
+    out(`Codex: дом ${codexHome}`);
+    codexPluginReport(codexHome);
+    const door = join(codexHome, "app-server-control", "app-server-control.sock");
     if (existsSync(door)) out(`Codex: дверь app-server открыта (${door})`);
     else if (Buffer.byteLength(door) > 100)
       out(
-        `Codex: двери нет и не будет — CODEX_HOME длиннее предела unix-сокета (${codexHome}); нужен короткий дом для демона и сессий`,
+        `Codex: двери нет и не будет — дом длиннее предела unix-сокета; нужен короткий дом для демона и сессий`,
       );
     else
       out(
         `Codex: двери нет (${door}) — демон app-server не поднят; без неё кадр доставляет watchdog-exit`,
       );
-  }
-  const codex = join(homedir(), ".codex", "config.toml");
-  if (existsSync(codex)) {
-    const text = readFileSync(codex, "utf8");
-    out(`Codex: ${/iskron/.test(text) ? "запись моста есть" : "записи моста нет"} (${codex})`);
+    const codex = join(codexHome, "config.toml");
+    if (existsSync(codex)) {
+      const text = readFileSync(codex, "utf8");
+      out(
+        `Codex: ${/^\s*\[mcp_servers\."?iskron"?\]|^\s*mcp_servers\."?iskron"?\s*=/m.test(text) ? "ручная запись моста в config.toml есть" : "ручной записи моста в config.toml нет (штатная — в плагине)"}`,
+      );
+    }
   }
 }
 

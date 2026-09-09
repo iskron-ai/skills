@@ -1279,6 +1279,7 @@ function socketPathOf(authDir, key) {
   return join4(standingsDirOf(authDir), `${hashOf(key)}.sock`);
 }
 var keyFilePathOf = (authDir, key) => join4(standingsDirOf(authDir), `${hashOf(key)}.key`);
+var seenFilePathOf = (authDir, key) => join4(standingsDirOf(authDir), `${hashOf(key)}.seen`);
 
 // js/bridge/transport.ts
 var state = {
@@ -1600,7 +1601,7 @@ function sweepStale(dir, mine) {
     if (!key || key === mine) continue;
     const sock = socketPathFor(key);
     const drop = () => {
-      for (const p of [keyFile, sock]) {
+      for (const p of [keyFile, sock, seenFilePathOf(CFG.authDir, key)]) {
         try {
           unlinkSync4(p);
         } catch {
@@ -1676,9 +1677,11 @@ function releaseStanding(reason) {
     }
   }
   if (currentKey) {
-    try {
-      unlinkSync4(keyFilePathFor(currentKey));
-    } catch {
+    for (const p of [keyFilePathFor(currentKey), seenFilePathOf(CFG.authDir, currentKey)]) {
+      try {
+        unlinkSync4(p);
+      } catch {
+      }
     }
     if (process.platform !== "win32") {
       try {
@@ -2075,7 +2078,7 @@ function startFreshnessWatch(authDir, serverUrl) {
 // js/bridge/stand.ts
 var STAND_TOOL = {
   name: "iskron_stand",
-  description: "[мост] Занять стояние одним вызовом: мост читает доску, выводит имя (машина.репо.ветка), занимает место (connect и register; только register, если сокет уже держит этот мост), взводит хук инбокса роли своим входящим адресом, при room шлёт кадр join стоянию комнаты по полному адресу с провода (повтор — только repeat_knock=true, один раз, не раньше чем через 2 минуты) и возвращает имя, команду сторожа, число ожидавших кадров, состояние хука и расписку стука. Дальше — запустить сторожа командой из ответа и ждать. Тул исполняет мост; нет его в сессии — тулы идут мимо моста либо мост старой сборки (doctor скажет), стой по скиллу standing.",
+  description: "[мост] Занять стояние одним вызовом: мост читает доску, выводит имя (машина.репо.модель), занимает место (connect и register; только register, если сокет уже держит этот мост), взводит хук инбокса роли своим входящим адресом, при room шлёт кадр join стоянию комнаты по полному адресу с провода (повтор — только repeat_knock=true, один раз, не раньше чем через 2 минуты) и возвращает имя, команду сторожа, число ожидавших кадров, состояние хука и расписку стука. Дальше — запустить сторожа командой из ответа и ждать. Тул исполняет мост; нет его в сессии — тулы идут мимо моста либо мост старой сборки (doctor скажет), стой по скиллу standing.",
   inputSchema: {
     type: "object",
     properties: {
@@ -2083,11 +2086,15 @@ var STAND_TOOL = {
       karta: { type: "string", description: "Роль агента (#N из AGENTS.md или строки запуска)." },
       name: {
         type: "string",
-        description: "Своя половина имени стояния; без неё выводится машина.репо.ветка."
+        description: "Своя половина имени стояния; без неё выводится машина.репо.модель — модель из параметра model."
       },
       room: {
         type: "string",
         description: "Полный адрес стояния комнаты @handle:name из строки приглашения; мост шлёт ему join."
+      },
+      model: {
+        type: "string",
+        description: "Модель, которой бежит агент (id или имя, например claude-opus-5 или opus-5) — третья часть выведенного имени; без неё имя — машина.репо."
       },
       mute_siblings: { type: "boolean", description: "Не слышать эхо других стояний той же роли." },
       take: {
@@ -2120,12 +2127,12 @@ var git = (args) => {
     return "";
   }
 };
-function deriveName() {
+function deriveName(model) {
   const host = hostname().split(".")[0];
   const top = git(["rev-parse", "--show-toplevel"]);
   const repo = basename(top || process.cwd());
-  const branch = top ? git(["rev-parse", "--abbrev-ref", "HEAD"]) : "";
-  return [host, repo, branch].map(sanitize).filter(Boolean).join(".");
+  const short2 = (model ?? "").trim().toLowerCase().replace(/^claude[-_]/, "");
+  return [host, repo, short2].map(sanitize).filter(Boolean).join(".");
 }
 function parseBoard(text) {
   const out3 = [];
@@ -2184,7 +2191,14 @@ async function runStand(msg) {
     );
     return done(true);
   }
-  const name = typeof a.name === "string" && a.name.trim() ? sanitize(a.name.trim()) : deriveName();
+  const model = typeof a.model === "string" && a.model.trim() ? a.model : void 0;
+  const name = typeof a.name === "string" && a.name.trim() ? sanitize(a.name.trim()) : deriveName(model);
+  const nameNotes = [];
+  if (!(typeof a.name === "string" && a.name.trim()) && !model) {
+    nameNotes.push(
+      "model не передан — имя без третьей части (машина.репо): вторая сессия этой машины над этим репозиторием сойдётся на то же место; передай model, чтобы различать"
+    );
+  }
   const room = typeof a.room === "string" && a.room.trim() ? a.room.trim() : null;
   const board = await call("iskron_channel", { action: "list", realm });
   if (board.isError) {
@@ -2197,6 +2211,22 @@ async function runStand(msg) {
   const empty = /не держит канала/i.test(board.text);
   const recognized = !!header || empty || entries.length > 0;
   const own = entries.filter((e) => e.karta === karta && e.address.endsWith(`:${name}`));
+  const stem = name.split(".").slice(0, 2).join(".");
+  const branches = new Set(
+    git(["branch", "--format=%(refname:short)"]).split("\n").map((x) => sanitize(x.trim())).filter(Boolean)
+  );
+  const legacy = entries.filter((e) => {
+    if (e.karta !== karta || e.address.endsWith(`:${name}`)) return false;
+    const own2 = e.address.slice(e.address.indexOf(":") + 1);
+    if (!own2.startsWith(`${stem}.`)) return false;
+    const third = own2.slice(stem.length + 1);
+    return branches.has(third) && /живой|слушает/.test(e.rest);
+  });
+  for (const e of legacy) {
+    nameNotes.push(
+      `на доске живо место прежнего имени ${e.address} — его адрес могут держать комнаты и хуки; сними его: iskron_channel(action="revoke", realm="${realm}", karta="${karta}", standing="${e.address}")`
+    );
+  }
   const unread = declared != null && declared !== entries.length;
   if (!recognized || own.length > 1 || unread && own.length === 0 && a.take !== true) {
     lines.push(
@@ -2241,7 +2271,8 @@ async function runStand(msg) {
     how = mine ? listensElsewhere ? "место слушал другой держатель — connect по take (сокет теперь у этого моста, прежний держатель получил 4000) и register" : a.take === true ? "connect по take — новый цикл входа, счёт стуков сброшен — и register" : "место было — connect (сокет теперь у этого моста) и register" : "connect и register";
   }
   lines.push(
-    `[iskron_stand] стояние ${mine?.address ?? name} — роль #${karta}, граф ${realm}: ${how}.`
+    `[iskron_stand] стояние ${mine?.address ?? name} — роль #${karta}, граф ${realm}: ${how}.`,
+    ...nameNotes.map((n) => `[iskron_stand] ${n}`)
   );
   const block = heardHere ? listenBlock() : null;
   if (block) lines.push(block);
@@ -2720,7 +2751,7 @@ function resolveStanding(argv2) {
   const { key, authDir } = parseWatchdogArgs(argv2);
   const dir = standingsDirOf(authDir);
   const pathFor = (k) => socketPathOf(authDir, k);
-  if (key) return { key, path: pathFor(key) };
+  if (key) return { key, path: pathFor(key), authDir };
   const held = existsSync3(dir) ? readdirSync2(dir).filter((f) => f.endsWith(".key")).map((f) => {
     try {
       return readFileSync8(join8(dir, f), "utf8").trim();
@@ -2728,7 +2759,7 @@ function resolveStanding(argv2) {
       return "";
     }
   }).filter(Boolean) : [];
-  if (held.length === 1) return { key: held[0], path: pathFor(held[0]) };
+  if (held.length === 1) return { key: held[0], path: pathFor(held[0]), authDir };
   if (held.length === 0) {
     return {
       error: 'мост не держит ни одного стояния — сперва iskron_channel(action="connect") (и register): ответ connect назовёт команду слушания'
@@ -2946,7 +2977,29 @@ function runWatchdog(argv2) {
 }
 
 // js/watchdog/watchdog-exit.ts
-import { writeSync as writeSync2 } from "node:fs";
+import { createHash as createHash4 } from "node:crypto";
+import { appendFileSync as appendFileSync2, readFileSync as readFileSync9, writeFileSync as writeFileSync6, writeSync as writeSync2 } from "node:fs";
+var SEEN_KEEP = 200;
+function frameId(ev) {
+  const id = ev.frame?.id;
+  return typeof id === "string" && id ? id : `raw:${createHash4("sha256").update(ev.raw ?? "").digest("hex").slice(0, 16)}`;
+}
+function seenIds(seenPath) {
+  try {
+    return new Set(readFileSync9(seenPath, "utf8").split("\n").filter(Boolean));
+  } catch {
+    return /* @__PURE__ */ new Set();
+  }
+}
+function noteSeen(seenPath, id, seen) {
+  seen.add(id);
+  try {
+    if (seen.size > SEEN_KEEP) {
+      writeFileSync6(seenPath, [...seen].slice(-SEEN_KEEP).join("\n") + "\n");
+    } else appendFileSync2(seenPath, id + "\n");
+  } catch {
+  }
+}
 var wake = (s) => {
   writeSync2(1, s + "\n");
 };
@@ -2959,13 +3012,18 @@ function runWatchdogExit(argv2) {
     note2(`ДЕЛАТЕЛЬ: ${target.error}`);
     process.exit(2);
   }
+  const seenPath = seenFilePathOf(target.authDir, target.key);
+  const seen = seenIds(seenPath);
   attach(target.path, {
     onEvent: (ev) => {
       switch (ev.kind) {
         case "frame": {
           const type = ev.frame?.type;
           if (type !== "message") return note2(`кадр ${type ?? "не разобран"} — не повод будить`);
+          const id = frameId(ev);
+          if (seen.has(id)) return note2(`кадр ${id} уже отдан прежним взводом — не повод будить`);
           wake(ev.raw ?? "");
+          noteSeen(seenPath, id, seen);
           process.exit(0);
           break;
         }
@@ -2989,28 +3047,28 @@ function runWatchdogExit(argv2) {
 }
 
 // js/cli/doctor.ts
-import { createHash as createHash4 } from "node:crypto";
-import { existsSync as existsSync5, readFileSync as readFileSync9 } from "node:fs";
+import { createHash as createHash5 } from "node:crypto";
+import { existsSync as existsSync5, readdirSync as readdirSync3, readFileSync as readFileSync10 } from "node:fs";
 import { homedir as homedir6 } from "node:os";
 import { dirname as dirname2, join as join10 } from "node:path";
 import { fileURLToPath as fileURLToPath4 } from "node:url";
 var out = (s) => {
   process.stdout.write(s + "\n");
 };
-var hashOf2 = (buf) => createHash4("sha256").update(buf).digest("hex").slice(0, 8);
+var hashOf2 = (buf) => createHash5("sha256").update(buf).digest("hex").slice(0, 8);
 var seconds = (ms) => `${Math.round(ms / 1e3)}s`;
 function homeCopyReport() {
   const home = homeBridgePath();
   let self = null;
   try {
-    self = readFileSync9(fileURLToPath4(import.meta.url));
+    self = readFileSync10(fileURLToPath4(import.meta.url));
   } catch {
   }
   if (!existsSync5(home)) {
     out(`домашняя копия: нет (${home}) — её кладёт establish-mcp при подключении`);
     return;
   }
-  const bytes = readFileSync9(home);
+  const bytes = readFileSync10(home);
   if (self && bytes.equals(self)) {
     out(`домашняя копия: ${home} — та же сборка, что и этот файл`);
     return;
@@ -3128,7 +3186,7 @@ function grantReport() {
   }
   const logPath = grantLogPath();
   if (existsSync5(logPath)) {
-    const lines = readFileSync9(logPath, "utf8").trim().split("\n").slice(-3);
+    const lines = readFileSync10(logPath, "utf8").trim().split("\n").slice(-3);
     out(`  grant.log, последнее:`);
     for (const l of lines) out(`    ${l}`);
   }
@@ -3150,11 +3208,88 @@ function latestReport() {
     );
   else out(`свежий релиз: v${latest.version}, этот файл не отстал; спрашивал ${ago} мин назад`);
 }
+function claudePluginReport() {
+  const registry = join10(homedir6(), ".claude", "plugins", "installed_plugins.json");
+  if (!existsSync5(registry)) return;
+  try {
+    const reg = JSON.parse(readFileSync10(registry, "utf8"));
+    const mine = Object.entries(reg.plugins ?? {}).filter(([k]) => /^iskron@/.test(k));
+    if (!mine.length) {
+      out(`Claude Code: плагин iskron не установлен (${registry})`);
+      return;
+    }
+    for (const [key, installs] of mine) {
+      for (const inst of installs) {
+        const manifest = inst.installPath ? join10(inst.installPath, ".mcp.json") : "";
+        let entry = "запись моста в манифесте не найдена";
+        if (manifest && existsSync5(manifest)) {
+          try {
+            const m = JSON.parse(readFileSync10(manifest, "utf8"));
+            const hit = Object.entries(m.mcpServers ?? {}).find(
+              ([, v]) => (v.args ?? []).some((a) => /iskron\.mjs/.test(a))
+            );
+            if (hit) entry = `запись «${hit[0]}» → мост из плагина`;
+          } catch {
+            entry = `${manifest} не читается`;
+          }
+        }
+        out(
+          `Claude Code: плагин ${key} v${inst.version ?? "?"} (${inst.scope ?? "?"}) — ${entry}; ${inst.installPath ?? ""}`
+        );
+      }
+    }
+  } catch {
+    out(`Claude Code: ${registry} не читается`);
+  }
+}
+function codexHomes() {
+  const homes = [
+    process.env.CODEX_HOME?.trim() || "",
+    join10(homedir6(), ".codex"),
+    ...process.platform === "darwin" ? [join10(homedir6(), "Library", "Application Support", "orca", "codex-runtime-home", "home")] : []
+  ].filter(Boolean);
+  return [...new Set(homes)].filter((h) => existsSync5(h));
+}
+function codexPluginReport(home) {
+  const cache = join10(home, "plugins", "cache");
+  if (!existsSync5(cache)) return;
+  let found = 0;
+  for (const market of readdirSync3(cache)) {
+    const marketDir = join10(cache, market);
+    let plugins;
+    try {
+      plugins = readdirSync3(marketDir);
+    } catch {
+      continue;
+    }
+    for (const plugin of plugins) {
+      if (!/iskron/.test(plugin)) continue;
+      const dir = join10(marketDir, plugin);
+      const manifest = join10(dir, ".codex-plugin", "plugin.json");
+      let word = "манифеста нет";
+      if (existsSync5(manifest)) {
+        try {
+          const m = JSON.parse(readFileSync10(manifest, "utf8"));
+          const hit = Object.values(m.mcpServers ?? {}).some(
+            (v) => (v.args ?? []).some((a) => /iskron\.mjs/.test(a))
+          );
+          word = `v${m.version ?? "?"}, ${hit ? "запись моста в манифесте есть" : "записи моста в манифесте нет"}`;
+        } catch {
+          word = `${manifest} не читается`;
+        }
+      }
+      found++;
+      out(`Codex: плагин ${plugin}@${market} — ${word}; ${dir}`);
+    }
+  }
+  if (!found) out(`Codex: плагина iskron в кэше нет (${cache})`);
+}
 function harnessReport() {
+  claudePluginReport();
   const claude = join10(homedir6(), ".claude.json");
   if (existsSync5(claude)) {
     try {
-      const cfg = JSON.parse(readFileSync9(claude, "utf8"));
+      const cfg = JSON.parse(readFileSync10(claude, "utf8"));
       const entries = Object.entries(cfg.mcpServers ?? {}).filter(
         ([, v]) => (v.args ?? []).some((a) => /iskron/.test(a))
       );
@@ -3162,7 +3297,10 @@ function harnessReport() {
         for (const [name, v] of entries) {
           out(`Claude Code: запись «${name}» → ${v.command ?? ""} ${(v.args ?? []).join(" ")}`);
         }
-      } else out("Claude Code: в пользовательском конфиге записи моста нет");
+      } else
+        out(
+          "Claude Code: ручной записи моста в пользовательском конфиге нет (штатная — в плагине)"
+        );
     } catch {
       out(`Claude Code: ${claude} не читается`);
     }
@@ -3177,29 +3315,32 @@ function harnessReport() {
       out(
         `OpenCode: плагин ${copy} стоит; рядом с этим файлом поставки плагина нет, сверить не с чем`
       );
-    } else if (readFileSync9(copy).equals(readFileSync9(packaged))) {
+    } else if (readFileSync10(copy).equals(readFileSync10(packaged))) {
       out(`OpenCode: плагин ${copy} — та же сборка, что в поставке`);
     } else {
       out(`OpenCode: плагин ${copy} — ДРУГИЕ байты, обнови из поставки: cp "${packaged}" ${copy}`);
     }
   }
-  const codexHome = process.env.CODEX_HOME?.trim() || join10(homedir6(), ".codex");
-  const door = join10(codexHome, "app-server-control", "app-server-control.sock");
-  if (existsSync5(codexHome)) {
+  for (const codexHome of codexHomes()) {
+    out(`Codex: дом ${codexHome}`);
+    codexPluginReport(codexHome);
+    const door = join10(codexHome, "app-server-control", "app-server-control.sock");
     if (existsSync5(door)) out(`Codex: дверь app-server открыта (${door})`);
     else if (Buffer.byteLength(door) > 100)
       out(
-        `Codex: двери нет и не будет — CODEX_HOME длиннее предела unix-сокета (${codexHome}); нужен короткий дом для демона и сессий`
+        `Codex: двери нет и не будет — дом длиннее предела unix-сокета; нужен короткий дом для демона и сессий`
       );
     else
       out(
         `Codex: двери нет (${door}) — демон app-server не поднят; без неё кадр доставляет watchdog-exit`
       );
-  }
-  const codex = join10(homedir6(), ".codex", "config.toml");
-  if (existsSync5(codex)) {
-    const text = readFileSync9(codex, "utf8");
-    out(`Codex: ${/iskron/.test(text) ? "запись моста есть" : "записи моста нет"} (${codex})`);
+    const codex = join10(codexHome, "config.toml");
+    if (existsSync5(codex)) {
+      const text = readFileSync10(codex, "utf8");
+      out(
+        `Codex: ${/^\s*\[mcp_servers\."?iskron"?\]|^\s*mcp_servers\."?iskron"?\s*=/m.test(text) ? "ручная запись моста в config.toml есть" : "ручной записи моста в config.toml нет (штатная — в плагине)"}`
+      );
+    }
   }
 }
 async function runDoctor(argv2) {

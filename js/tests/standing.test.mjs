@@ -364,6 +364,51 @@ test("watchdog-exit exits 0 on the first message and lets service frames pass", 
   assert.ok(wd.out.includes("будильник"), "the frame must be printed before the exit");
 });
 
+// The bridge replays its ring to every client that attaches; an exit-mode
+// watchdog re-armed after a wake met its own frame again and left at once —
+// three arms, one wake each, no new frame (graph @nks/nks-dev, node #4469).
+// The claim: a frame the doer was already woken on never wakes it again; a
+// frame that arrived while nobody was attached still does.
+test("watchdog-exit re-armed after a wake does not leave on the frame it already delivered", async (t) => {
+  const { fake, dir, key } = await connected(t);
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const first = runClient("watchdog-exit", dir, key);
+  await waitFor(() => first.err.includes("hello"), "hello to be noted");
+  await fake.control({ ws_send: JSON.stringify({ id: "f-1", type: "message", body: "первый" }) });
+  assert.equal(
+    (await first.done).exit,
+    0,
+    `the first arm must leave on the first frame: ${first.err}`,
+  );
+  assert.ok(first.out.includes("первый"));
+
+  // Re-armed: the ring replays f-1, and that must not be a wake.
+  const second = runClient("watchdog-exit", dir, key, 4000);
+  await waitFor(() => second.err.includes("слушаю стояние"), "the second arm to attach");
+  await new Promise((r) => setTimeout(r, 1500));
+  assert.equal(
+    second.proc.exitCode,
+    null,
+    `the second arm left on a frame already delivered: ${second.out}`,
+  );
+  // A frame that arrived while nobody was attached is not "already delivered".
+  second.proc.kill("SIGKILL");
+  await second.done;
+  await fake.control({ ws_send: JSON.stringify({ id: "f-2", type: "message", body: "второй" }) });
+  await new Promise((r) => setTimeout(r, 300));
+  const third = runClient("watchdog-exit", dir, key);
+  const r = await third.done;
+  assert.equal(
+    r.exit,
+    0,
+    `the third arm must leave on the frame that arrived in the gap: ${third.err}`,
+  );
+  assert.ok(
+    third.out.includes("второй") && !third.out.includes("первый"),
+    `only the new frame wakes: ${third.out}`,
+  );
+});
+
 test("the busy line is a call to one's own standing, answered by the bridge itself: it holds the socket", async (t) => {
   const { fake, bridge, standings } = await connected(t);
   await waitFor(() => fake.state.ws.size === 1, "the socket");

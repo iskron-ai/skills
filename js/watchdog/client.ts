@@ -14,6 +14,7 @@ const RETRY_MS = 1000;
 export interface Resolved {
   key: string;
   path: string;
+  authDir: string;
 }
 
 export interface WatchdogArgs {
@@ -37,7 +38,7 @@ export function resolveStanding(argv: string[]): Resolved | { error: string } {
   const { key, authDir } = parseWatchdogArgs(argv);
   const dir = standingsDirOf(authDir);
   const pathFor = (k: string) => socketPathOf(authDir, k);
-  if (key) return { key, path: pathFor(key) };
+  if (key) return { key, path: pathFor(key), authDir };
   // Читаемые ключи лежат рядом с сокетами файлами <хеш>.key — их и перечисляем.
   const held = existsSync(dir)
     ? readdirSync(dir)
@@ -51,7 +52,7 @@ export function resolveStanding(argv: string[]): Resolved | { error: string } {
         })
         .filter(Boolean)
     : [];
-  if (held.length === 1) return { key: held[0], path: pathFor(held[0]) };
+  if (held.length === 1) return { key: held[0], path: pathFor(held[0]), authDir };
   if (held.length === 0) {
     return {
       error:

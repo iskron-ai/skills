@@ -205,11 +205,14 @@ test("iskron_stand: one call takes the place, arms the inbox hook and knocks; a 
   );
 });
 
-test("iskron_stand derives the name from machine, repository and branch when none is given", async (t) => {
+// The third part of a derived name is the model the agent runs on, never the
+// branch: at session start the branch is almost always main and tells two
+// sessions of one machine over one repository apart from nothing.
+test("iskron_stand derives the name from machine, repository and the model given — not the branch", async (t) => {
   const { fake, bridge } = await ready(t);
   const reply = await bridge.call("tools/call", {
     name: "iskron_stand",
-    arguments: { realm: "nks-dev", karta: "#931" },
+    arguments: { realm: "nks-dev", karta: "#931", model: "claude-opus-5" },
   });
   const text = textOf(reply);
   assert.ok(!reply.result?.isError, text);
@@ -219,6 +222,11 @@ test("iskron_stand derives the name from machine, repository and branch when non
     name && name.startsWith(`${host}.`),
     `the derived name must start with the machine: ${text}`,
   );
+  assert.ok(
+    name.endsWith(".opus-5"),
+    `the model, without the vendor prefix, must be the last part: ${name}`,
+  );
+  assert.equal(name.split(".").length, 3, `machine.repo.model, nothing else: ${name}`);
   assert.ok(
     [...fake.state.places.keys()].includes(`931:${name}`),
     "the place is taken under the derived name",
