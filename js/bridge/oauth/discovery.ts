@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
+import { join } from "node:path";
 
-import { noteServerDate } from "../clock.ts";
+import { noteServerDate, now } from "../clock.ts";
 import { CFG } from "../config.ts";
 import { errorMessage } from "../errors.ts";
 import { loadStore, saveStore, sha256 } from "../store.ts";
@@ -99,10 +100,36 @@ export function callbackPort(rung = 0): number {
   return 42000 + ((d[0] * 256 + d[1] + rung * 613) % 2000);
 }
 
+// Rauthy deletes a dynamic client that made no login within its cleanup
+// horizon — 60 minutes by default for unauthenticated registration — and the
+// NotFound that meets a kept client_id happens in the human's browser, where
+// the bridge never sees it (graph @nks/nks-dev, node #4539). A browser flow
+// starts only when the grant is dead or absent, so an old registration has
+// nothing left to offer it: the flow reuses a registration only while it is
+// young (a retry of a login just offered), and otherwise makes one anew —
+// cheap, and the server discards the leftovers itself. The clock is the
+// server-corrected one, like every other hour the bridge judges by.
+export const REGISTRATION_REUSE_MS = 45 * 60_000;
+
+export function registrationReusable(
+  client: Client | null | undefined,
+  redirectUri: string,
+): boolean {
+  if (!client?.client_id || client.redirect_uri !== redirectUri) return false;
+  return !!client.registered_at && now() - client.registered_at < REGISTRATION_REUSE_MS;
+}
+
 export async function ensureClient(meta: Meta, redirectUri: string): Promise<Client> {
   if (CFG.staticClientId) return { client_id: CFG.staticClientId };
   const stored = loadStore().client;
-  if (stored?.client_id && stored?.redirect_uri === redirectUri) return stored;
+  if (registrationReusable(stored, redirectUri)) return stored as Client;
+  if (stored?.client_id && stored.redirect_uri === redirectUri) {
+    log(
+      stored.registered_at
+        ? "the dynamic client registration is older than the server's cleanup horizon — registering anew for this login"
+        : "the dynamic client registration carries no timestamp (an earlier build wrote it) — registering anew for this login",
+    );
+  }
   if (!meta.as.registration_endpoint) {
     throw new Error("server offers no dynamic client registration; pass ISKRON_BRIDGE_CLIENT_ID");
   }
@@ -117,7 +144,11 @@ export async function ensureClient(meta: Meta, redirectUri: string): Promise<Cli
       token_endpoint_auth_method: "none",
     }),
   });
-  const client: Client = { client_id: reg.client_id, redirect_uri: redirectUri };
+  const client: Client = {
+    client_id: reg.client_id,
+    redirect_uri: redirectUri,
+    registered_at: now(),
+  };
   saveStore({ client });
   log(`registered OAuth client ${reg.client_id}`);
   return client;
@@ -130,11 +161,44 @@ export function openBrowser(url: string): void {
     process.platform === "darwin"
       ? ["open", [url]]
       : process.platform === "win32"
-        ? ["cmd", ["/c", "start", "", url]]
+        ? windowsOpener(url)
         : ["xdg-open", [url]];
-  try {
-    spawn(cmd, args, { stdio: "ignore", detached: true }).unref();
-  } catch (e) {
+  const manually = (e: unknown) =>
     log(`could not open a browser (${errorMessage(e)}) — open the URL above manually`);
+  try {
+    // A missing opener surfaces as an 'error' event, not a throw; unhandled, it
+    // would take the bridge down under the human's login.
+    const child = spawn(cmd, args, { stdio: "ignore", detached: true });
+    child.on("error", manually);
+    child.unref();
+  } catch (e) {
+    manually(e);
   }
+}
+
+// cmd.exe reads `&` as a command separator, so `cmd /c start "" <url>` opened
+// the authorize URL cut at its first parameter (graph @nks/nks-dev, node
+// #4538). PowerShell takes the whole command base64-encoded — no shell ever
+// parses the URL — and its single-quoted string is literal; the window is
+// hidden by PowerShell itself (`detached` cancels Node's windowsHide).
+function windowsOpener(url: string): [string, string[]] {
+  const powershell = join(
+    process.env.SystemRoot || "C:\\Windows",
+    "System32",
+    "WindowsPowerShell",
+    "v1.0",
+    "powershell.exe",
+  );
+  const command = `Start-Process -FilePath '${url.replace(/'/g, "''")}'`;
+  return [
+    powershell,
+    [
+      "-NoProfile",
+      "-NonInteractive",
+      "-WindowStyle",
+      "Hidden",
+      "-EncodedCommand",
+      Buffer.from(command, "utf16le").toString("base64"),
+    ],
+  ];
 }
