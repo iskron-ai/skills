@@ -1,5 +1,12 @@
 # Changelog
 
+## [6.6.1](https://github.com/iskron-ai/skills/compare/v6.6.0...v6.6.1) (2026-09-09)
+
+
+### Bug Fixes
+
+* **bridge:** сторож выхода не будит на отданном кадре, doctor видит плагинные записи, имя стояния — машина.репо.модель ([#110](https://github.com/iskron-ai/skills/issues/110)) ([3dbbe8f](https://github.com/iskron-ai/skills/commit/3dbbe8f49d7b2f917a74efb8c19578483502e461))
+
 ## [6.6.0](https://github.com/iskron-ai/skills/compare/v6.5.0...v6.6.0) (2026-09-09)
 
 
