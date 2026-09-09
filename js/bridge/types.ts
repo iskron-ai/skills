@@ -9,6 +9,10 @@ export interface Tokens {
 export interface Client {
   client_id: string;
   redirect_uri?: string;
+  /** when this dynamic registration was made (local clock) */
+  registered_at?: number;
+  /** when a grant was first issued to it — a used registration outlives the server's cleanup of unused ones */
+  granted_at?: number;
 }
 
 export interface AsMetadata {

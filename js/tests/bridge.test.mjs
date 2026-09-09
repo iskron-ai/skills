@@ -7,14 +7,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readdirSync,
-  readFileSync,
-  writeFileSync,
-} from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { connect, createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -202,11 +195,10 @@ async function withFake(t, opts, fn) {
 // --- the browser the bridge opens itself -----------------------------------
 
 // On Windows the bridge used to hand the URL to `cmd /c start "" <url>`, and
-// cmd.exe reads `&` as a command separator: the browser landed on
-// `authorize?response_type=code`, the login page still rendered, and the
-// human's password met "the sign-in link lacks required parameters" (graph
-// @nks/nks-dev, node #4538). The claim: on win32 the whole URL reaches the OS
-// opener through PowerShell's encoded command, which no shell parses.
+// cmd.exe reads `&` as a command separator (graph @nks/nks-dev, node #4538).
+// The claim: on win32 the whole URL reaches the OS opener through PowerShell's
+// encoded command, which no shell parses. This is the imitation rung: the
+// carrier is a Windows machine, named in AGENTS.md (Reality).
 test("on Windows the authorize URL reaches the browser whole — PowerShell, not cmd", async (t) => {
   if (process.env.ISKRON_NODE) {
     t.skip("the platform override rides NODE_OPTIONS, which only node itself reads");
@@ -235,7 +227,8 @@ test("on Windows the authorize URL reaches the browser whole — PowerShell, not
     const url = authorizeUrlIn(answer.error?.message);
     assert.ok(url, `expected an authorize URL in the answer, got ${JSON.stringify(answer)}`);
     assert.ok(url.includes("&"), "the URL under test must carry the character cmd.exe cuts at");
-    await waitFor(() => existsSync(record), "the OS opener to be called");
+    // The redirect creates the file before printf fills it: wait for content.
+    await waitFor(() => readFileSync(record, "utf8").includes("\n"), "the OS opener to be called");
     const argv = readFileSync(record, "utf8").trim().split("\n");
     assert.match(
       argv[0],
@@ -1813,17 +1806,19 @@ test("a machine whose clock lies is judged by the server's clock, not its own", 
   });
 });
 
-// --- discovery gone stale is an outage with no end -------------------------
-// The store caches where the token endpoint lives; a server that moved it
-// leaves every refresh walking into the same 404 forever.
+// --- a NotFound from an endpoint that did not move is the server's verdict --
+// Rauthy answers a client it no longer knows with 404 NotFound "No results
+// found" — the status of a path that is not there. Read as a moved endpoint,
+// that 404 was rediscovered and walked into again on every call, forever
+// (graph @nks/nks-dev, node #4540). Discovery still naming the endpoint is
+// what settles it: nothing moved, the registration is gone, one new login.
 
-test("a generic NotFound 404 is rediscovery, not a dead refresh grant", async (t) => {
+test("a NotFound from a token endpoint discovery still names drops the registration, not the discovery", async (t) => {
   await withFake(t, {}, async ({ fake, dir, spawnBridge }) => {
     const first = spawnBridge();
     await authorize(first, dir);
     await first.stop();
 
-    const before = readStore(dir).tokens.refresh_token;
     const counts = { ...fake.state.counts };
     const s = readStore(dir);
     s.tokens.expires_at = Date.now() - 1000;
@@ -1837,33 +1832,81 @@ test("a generic NotFound 404 is rediscovery, not a dead refresh grant", async (t
 
     const second = spawnBridge();
     const answer = await second.call("initialize", 1, INIT_PARAMS);
-    assert.ok(answer.error, "the missing cached endpoint cannot serve this attempt");
-    assert.equal(
-      authorizeUrlIn(answer.error.message),
-      null,
-      "a generic NotFound must not be classified as a dead refresh grant",
-    );
-    assert.match(
+    assert.ok(answer.error, "a registration the server no longer knows cannot serve this attempt");
+    assert.doesNotMatch(
       answer.error.message,
       /rediscovering on the next attempt/,
-      `the caller must see the rediscovery state: ${answer.error.message}`,
+      `an endpoint discovery still names did not move: ${answer.error.message}`,
     );
+    assert.ok(readStore(dir).meta, "the discovery, confirmed unchanged, must be kept");
     assert.equal(
-      readStore(dir).tokens.refresh_token,
-      before,
-      "rediscovery must keep the grant whose validity was not judged",
-    );
-    assert.equal(readStore(dir).meta, null, "the stale discovery must be dropped");
-    assert.equal(
-      fake.state.counts.register,
-      counts.register,
-      "rediscovery must not register another client",
+      readStore(dir).client,
+      null,
+      "the registration the server no longer knows must be dropped",
     );
     assert.equal(
       fake.state.counts.authorize,
       counts.authorize,
-      "rediscovery must not start a browser flow",
+      "the verdict itself must not visit a browser flow",
     );
+    await second.stop();
+
+    ageRefusal(dir);
+    const third = spawnBridge();
+    const url = authorizeUrlIn((await third.call("initialize", 1, INIT_PARAMS)).error?.message);
+    assert.ok(url, "after the grace the human must be offered a new login");
+    assert.equal(
+      fake.state.counts.register,
+      counts.register + 1,
+      "the new login must run on a fresh registration",
+    );
+    const res = await fetch(url, { redirect: "follow" });
+    assert.equal(res.status, 200, "the new login must complete on the fresh registration");
+    await res.text();
+    await grantLanded(dir);
+  });
+});
+
+// --- a registration the server has already forgotten -----------------------
+// Rauthy deletes a dynamic client that made no login within its cleanup
+// horizon (60 minutes by default). The bridge registered at the first
+// authorize URL and kept that client_id for ever: a human who did not finish
+// the login within the hour was sent, on every later attempt, to a client the
+// server no longer knew — NotFound on authorize however whole the link
+// (graph @nks/nks-dev, node #4539).
+
+test("a registration that never produced a grant is renewed past the cleanup horizon", async (t) => {
+  await withFake(t, {}, async ({ fake, dir, spawnBridge }) => {
+    const first = spawnBridge();
+    const url1 = authorizeUrlIn((await first.call("initialize", 1, INIT_PARAMS)).error?.message);
+    assert.ok(url1);
+    await first.stop();
+    assert.equal(fake.state.counts.register, 1);
+
+    const s = readStore(dir);
+    assert.ok(s.client?.client_id, "the registration must be on disk");
+    s.client.registered_at = Date.now() - 2 * 3_600_000; // older than any cleanup horizon
+    writeFileSync(storeFile(dir), JSON.stringify(s));
+    fake.state.clients.delete(s.client.client_id); // the server has cleaned it up
+
+    const second = spawnBridge();
+    const url2 = authorizeUrlIn((await second.call("initialize", 1, INIT_PARAMS)).error?.message);
+    assert.ok(url2);
+    assert.equal(
+      fake.state.counts.register,
+      2,
+      "an unused registration older than the horizon must be made anew",
+    );
+    assert.notEqual(
+      new URL(url2).searchParams.get("client_id"),
+      new URL(url1).searchParams.get("client_id"),
+      "the new flow must carry the new client_id",
+    );
+    const res = await fetch(url2, { redirect: "follow" });
+    assert.equal(res.status, 200, "the login must complete on the renewed registration");
+    await res.text();
+    await grantLanded(dir);
+    assert.ok(readStore(dir).client?.granted_at, "a used registration must be marked as such");
   });
 });
 

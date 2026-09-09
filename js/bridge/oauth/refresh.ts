@@ -13,6 +13,7 @@ import { grantLog, loadGrantState, loadStore, saveGrantState, saveStore, sleep }
 import { debug, log } from "../streams.ts";
 import { refreshHours, tokenUsable, usableTokens } from "../tokens.ts";
 import { type Meta, type Tokens } from "../types.ts";
+import { discoverMeta } from "./discovery.ts";
 import { LOGIN_GRACE_MS } from "./pacing.ts";
 import { acquireRefreshLock, releaseRefreshLock } from "./refreshlock.ts";
 import { tokenRequest } from "./tokenrequest.ts";
@@ -77,6 +78,22 @@ async function refreshOnce(meta: Meta, cur: Tokens, proactive: boolean): Promise
       e instanceof TokenError
         ? !deadRefresh && [404, 405, 410].includes(e.status)
         : ["ENOTFOUND", "ECONNREFUSED"].includes(errorCode(e) ?? "");
+    if (gone && e instanceof TokenError && !(await tokenEndpointMoved(meta))) {
+      // Rauthy words its verdict on a client it no longer knows — cleaned up
+      // as unused, or presented empty — as 404 NotFound "No results found",
+      // the status of a path that is not there. Discovery still naming this
+      // very endpoint is what tells them apart: nothing moved, the refusal is
+      // the server's own, and rediscovering would only walk into it again,
+      // forever (graph @nks/nks-dev, node #4540).
+      log(
+        "the token endpoint answers NotFound while discovery still names it — the server no longer knows this client; dropping the registration",
+      );
+      grantLog(
+        `refresh refused by an endpoint discovery still names (${message}) — registration dropped`,
+      );
+      saveStore({ client: null });
+      throw new DeadGrantError(message);
+    }
     if (gone) {
       saveStore({ meta: null });
       grantLog(
@@ -177,6 +194,18 @@ async function refreshOnce(meta: Meta, cur: Tokens, proactive: boolean): Promise
       `refresh refused${overdue ? " and the grant is past its own expiry" : ""}: ${message}`,
     );
     throw new DeadGrantError(overdue ? `${message} (grant expired)` : message, !!overdue);
+  }
+}
+
+// Did the token endpoint move since the store last saw it? Discovery
+// unreachable counts as moved: that keeps the old prescription (rediscover
+// next time) where nothing can be told apart.
+async function tokenEndpointMoved(meta: Meta): Promise<boolean> {
+  try {
+    const fresh = await discoverMeta(null);
+    return fresh.as.token_endpoint !== meta.as.token_endpoint;
+  } catch {
+    return true;
   }
 }
 

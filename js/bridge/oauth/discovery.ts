@@ -100,10 +100,33 @@ export function callbackPort(rung = 0): number {
   return 42000 + ((d[0] * 256 + d[1] + rung * 613) % 2000);
 }
 
+// Rauthy deletes a dynamic client that made no login within its cleanup
+// horizon — 60 minutes by default for unauthenticated registration. A
+// registration kept past that is a client_id the server no longer knows, and
+// every later authorize meets NotFound however whole the link (graph
+// @nks/nks-dev, node #4539). So a registration is trusted while it is young
+// or once it has produced a grant; older and never used, it is made anew —
+// cheap, and the server discards the leftovers itself.
+export const UNUSED_REGISTRATION_MS = 45 * 60_000;
+
+export function registrationTrusted(
+  client: Client | null | undefined,
+  redirectUri: string,
+): boolean {
+  if (!client?.client_id || client.redirect_uri !== redirectUri) return false;
+  if (client.granted_at) return true;
+  return !!client.registered_at && Date.now() - client.registered_at < UNUSED_REGISTRATION_MS;
+}
+
 export async function ensureClient(meta: Meta, redirectUri: string): Promise<Client> {
   if (CFG.staticClientId) return { client_id: CFG.staticClientId };
   const stored = loadStore().client;
-  if (stored?.client_id && stored?.redirect_uri === redirectUri) return stored;
+  if (registrationTrusted(stored, redirectUri)) return stored as Client;
+  if (stored?.client_id && stored.redirect_uri === redirectUri) {
+    log(
+      "the dynamic client registration is older than the server's cleanup horizon and never produced a grant — registering anew",
+    );
+  }
   if (!meta.as.registration_endpoint) {
     throw new Error("server offers no dynamic client registration; pass ISKRON_BRIDGE_CLIENT_ID");
   }
@@ -118,7 +141,11 @@ export async function ensureClient(meta: Meta, redirectUri: string): Promise<Cli
       token_endpoint_auth_method: "none",
     }),
   });
-  const client: Client = { client_id: reg.client_id, redirect_uri: redirectUri };
+  const client: Client = {
+    client_id: reg.client_id,
+    redirect_uri: redirectUri,
+    registered_at: Date.now(),
+  };
   saveStore({ client });
   log(`registered OAuth client ${reg.client_id}`);
   return client;
@@ -138,7 +165,7 @@ export function openBrowser(url: string): void {
   try {
     // A missing opener surfaces as an 'error' event, not a throw; unhandled, it
     // would take the bridge down under the human's login.
-    const child = spawn(cmd, args, { stdio: "ignore", detached: true, windowsHide: true });
+    const child = spawn(cmd, args, { stdio: "ignore", detached: true });
     child.on("error", manually);
     child.unref();
   } catch (e) {
@@ -147,11 +174,10 @@ export function openBrowser(url: string): void {
 }
 
 // cmd.exe reads `&` as a command separator, so `cmd /c start "" <url>` opened
-// the authorize URL cut at its first parameter: the login page still rendered,
-// and the human's password met "the sign-in link lacks required parameters"
-// (graph @nks/nks-dev, node #4538). PowerShell takes the whole command
-// base64-encoded — no shell ever parses the URL — and its single-quoted string
-// is literal.
+// the authorize URL cut at its first parameter (graph @nks/nks-dev, node
+// #4538). PowerShell takes the whole command base64-encoded — no shell ever
+// parses the URL — and its single-quoted string is literal; the window is
+// hidden by PowerShell itself (`detached` cancels Node's windowsHide).
 function windowsOpener(url: string): [string, string[]] {
   const powershell = join(
     process.env.SystemRoot || "C:\\Windows",
@@ -166,8 +192,6 @@ function windowsOpener(url: string): [string, string[]] {
     [
       "-NoProfile",
       "-NonInteractive",
-      "-ExecutionPolicy",
-      "Bypass",
       "-WindowStyle",
       "Hidden",
       "-EncodedCommand",

@@ -428,10 +428,21 @@ function callbackPort(rung = 0) {
   const d = sha256(new URL(CFG.serverUrl).origin);
   return 42e3 + (d[0] * 256 + d[1] + rung * 613) % 2e3;
 }
+var UNUSED_REGISTRATION_MS = 45 * 6e4;
+function registrationTrusted(client, redirectUri) {
+  if (!client?.client_id || client.redirect_uri !== redirectUri) return false;
+  if (client.granted_at) return true;
+  return !!client.registered_at && Date.now() - client.registered_at < UNUSED_REGISTRATION_MS;
+}
 async function ensureClient(meta, redirectUri) {
   if (CFG.staticClientId) return { client_id: CFG.staticClientId };
   const stored = loadStore().client;
-  if (stored?.client_id && stored?.redirect_uri === redirectUri) return stored;
+  if (registrationTrusted(stored, redirectUri)) return stored;
+  if (stored?.client_id && stored.redirect_uri === redirectUri) {
+    log(
+      "the dynamic client registration is older than the server's cleanup horizon and never produced a grant — registering anew"
+    );
+  }
   if (!meta.as.registration_endpoint) {
     throw new Error("server offers no dynamic client registration; pass ISKRON_BRIDGE_CLIENT_ID");
   }
@@ -446,7 +457,11 @@ async function ensureClient(meta, redirectUri) {
       token_endpoint_auth_method: "none"
     })
   });
-  const client = { client_id: reg.client_id, redirect_uri: redirectUri };
+  const client = {
+    client_id: reg.client_id,
+    redirect_uri: redirectUri,
+    registered_at: Date.now()
+  };
   saveStore({ client });
   log(`registered OAuth client ${reg.client_id}`);
   return client;
@@ -458,7 +473,7 @@ function openBrowser(url) {
   const [cmd, args] = process.platform === "darwin" ? ["open", [url]] : process.platform === "win32" ? windowsOpener(url) : ["xdg-open", [url]];
   const manually = (e) => log(`could not open a browser (${errorMessage(e)}) — open the URL above manually`);
   try {
-    const child = spawn(cmd, args, { stdio: "ignore", detached: true, windowsHide: true });
+    const child = spawn(cmd, args, { stdio: "ignore", detached: true });
     child.on("error", manually);
     child.unref();
   } catch (e) {
@@ -479,8 +494,6 @@ function windowsOpener(url) {
     [
       "-NoProfile",
       "-NonInteractive",
-      "-ExecutionPolicy",
-      "Bypass",
       "-WindowStyle",
       "Hidden",
       "-EncodedCommand",
@@ -792,6 +805,7 @@ async function interactiveFlow(meta) {
           code_verifier: verifier,
           resource: meta.resource
         });
+        if (client.redirect_uri) saveStore({ client: { ...client, granted_at: Date.now() } });
         log("authorization complete — tokens saved for every local agent");
         grantLog("authorization complete");
         cb.report(null);
@@ -910,6 +924,16 @@ async function refreshOnce(meta, cur, proactive) {
     const message = errorMessage(e);
     const deadRefresh = e instanceof TokenError && e.status === 404 && e.oauthError === "NotFound" && e.oauthMessage === "Refresh Token does not exist";
     const gone = e instanceof TokenError ? !deadRefresh && [404, 405, 410].includes(e.status) : ["ENOTFOUND", "ECONNREFUSED"].includes(errorCode(e) ?? "");
+    if (gone && e instanceof TokenError && !await tokenEndpointMoved(meta)) {
+      log(
+        "the token endpoint answers NotFound while discovery still names it — the server no longer knows this client; dropping the registration"
+      );
+      grantLog(
+        `refresh refused by an endpoint discovery still names (${message}) — registration dropped`
+      );
+      saveStore({ client: null });
+      throw new DeadGrantError(message);
+    }
     if (gone) {
       saveStore({ meta: null });
       grantLog(
@@ -960,6 +984,14 @@ async function refreshOnce(meta, cur, proactive) {
       `refresh refused${overdue ? " and the grant is past its own expiry" : ""}: ${message}`
     );
     throw new DeadGrantError(overdue ? `${message} (grant expired)` : message, !!overdue);
+  }
+}
+async function tokenEndpointMoved(meta) {
+  try {
+    const fresh = await discoverMeta(null);
+    return fresh.as.token_endpoint !== meta.as.token_endpoint;
+  } catch {
+    return true;
   }
 }
 async function refreshShared(meta, rejected, proactive, interactive) {

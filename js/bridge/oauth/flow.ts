@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 
 import { AuthPending, errorCode, errorMessage } from "../errors.ts";
-import { b64url, grantLog, saveGrantState, sha256 } from "../store.ts";
+import { b64url, grantLog, saveGrantState, saveStore, sha256 } from "../store.ts";
 import { debug, log } from "../streams.ts";
 import { type Meta, type Tokens } from "../types.ts";
 import { portListening, readAuthLock, releaseAuthLock, writeAuthLock } from "./authlock.ts";
@@ -91,6 +91,9 @@ export async function interactiveFlow(meta: Meta): Promise<Tokens> {
           code_verifier: verifier,
           resource: meta.resource,
         });
+        // A grant was issued to this registration: from here the server keeps
+        // it as a used client, and so does the store (see registrationTrusted).
+        if (client.redirect_uri) saveStore({ client: { ...client, granted_at: Date.now() } });
         log("authorization complete — tokens saved for every local agent");
         grantLog("authorization complete");
         cb.report(null);
