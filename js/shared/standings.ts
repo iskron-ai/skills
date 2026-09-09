@@ -27,3 +27,7 @@ export function socketPathOf(authDir: string, key: string): string {
 
 export const keyFilePathOf = (authDir: string, key: string): string =>
   join(standingsDirOf(authDir), `${hashOf(key)}.key`);
+
+/** Память сторожа выхода — id уже отданных кадров; файл рядом с ключом, не с сокетом: на Windows сокет — именованный канал, не путь. */
+export const seenFilePathOf = (authDir: string, key: string): string =>
+  join(standingsDirOf(authDir), `${hashOf(key)}.seen`);

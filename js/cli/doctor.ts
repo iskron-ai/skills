@@ -261,7 +261,7 @@ function codexPluginReport(home: string): void {
       continue;
     }
     for (const plugin of plugins) {
-      if (!/iskron/.test(plugin) && !/iskron/.test(market)) continue;
+      if (!/iskron/.test(plugin)) continue;
       const dir = join(marketDir, plugin);
       const manifest = join(dir, ".codex-plugin", "plugin.json");
       let word = "манифеста нет";
@@ -343,7 +343,7 @@ export function harnessReport(): void {
     if (existsSync(codex)) {
       const text = readFileSync(codex, "utf8");
       out(
-        `Codex: ${/\[mcp_servers\.iskron\]/.test(text) ? "ручная запись моста в config.toml есть" : "ручной записи моста в config.toml нет (штатная — в плагине)"}`,
+        `Codex: ${/^\s*\[mcp_servers\."?iskron"?\]|^\s*mcp_servers\."?iskron"?\s*=|^\s*\[mcp_servers\]/m.test(text) && /iskron/.test(text) ? "ручная запись моста в config.toml есть" : "ручной записи моста в config.toml нет (штатная — в плагине)"}`,
       );
     }
   }

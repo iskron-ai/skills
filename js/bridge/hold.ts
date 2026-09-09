@@ -34,6 +34,7 @@ import {
 import {
   defaultAuthDir,
   keyFilePathOf,
+  seenFilePathOf,
   socketPathOf,
   standingsDirOf,
 } from "../shared/standings.ts";
@@ -162,7 +163,7 @@ function sweepStale(dir: string, mine: string): void {
     if (!key || key === mine) continue;
     const sock = socketPathFor(key);
     const drop = (): void => {
-      for (const p of [keyFile, sock]) {
+      for (const p of [keyFile, sock, seenFilePathOf(CFG.authDir, key)]) {
         try {
           unlinkSync(p);
         } catch {}
@@ -237,9 +238,11 @@ export function releaseStanding(reason: string): void {
     } catch {}
   }
   if (currentKey) {
-    try {
-      unlinkSync(keyFilePathFor(currentKey));
-    } catch {}
+    for (const p of [keyFilePathFor(currentKey), seenFilePathOf(CFG.authDir, currentKey)]) {
+      try {
+        unlinkSync(p);
+      } catch {}
+    }
     if (process.platform !== "win32") {
       try {
         unlinkSync(socketPathFor(currentKey));

@@ -1279,6 +1279,7 @@ function socketPathOf(authDir, key) {
   return join4(standingsDirOf(authDir), `${hashOf(key)}.sock`);
 }
 var keyFilePathOf = (authDir, key) => join4(standingsDirOf(authDir), `${hashOf(key)}.key`);
+var seenFilePathOf = (authDir, key) => join4(standingsDirOf(authDir), `${hashOf(key)}.seen`);
 
 // js/bridge/transport.ts
 var state = {
@@ -1600,7 +1601,7 @@ function sweepStale(dir, mine) {
     if (!key || key === mine) continue;
     const sock = socketPathFor(key);
     const drop = () => {
-      for (const p of [keyFile, sock]) {
+      for (const p of [keyFile, sock, seenFilePathOf(CFG.authDir, key)]) {
         try {
           unlinkSync4(p);
         } catch {
@@ -1676,9 +1677,11 @@ function releaseStanding(reason) {
     }
   }
   if (currentKey) {
-    try {
-      unlinkSync4(keyFilePathFor(currentKey));
-    } catch {
+    for (const p of [keyFilePathFor(currentKey), seenFilePathOf(CFG.authDir, currentKey)]) {
+      try {
+        unlinkSync4(p);
+      } catch {
+      }
     }
     if (process.platform !== "win32") {
       try {
@@ -2188,7 +2191,14 @@ async function runStand(msg) {
     );
     return done(true);
   }
-  const name = typeof a.name === "string" && a.name.trim() ? sanitize(a.name.trim()) : deriveName(typeof a.model === "string" ? a.model : void 0);
+  const model = typeof a.model === "string" && a.model.trim() ? a.model : void 0;
+  const name = typeof a.name === "string" && a.name.trim() ? sanitize(a.name.trim()) : deriveName(model);
+  const nameNotes = [];
+  if (!(typeof a.name === "string" && a.name.trim()) && !model) {
+    nameNotes.push(
+      "model не передан — имя без третьей части (машина.репо): вторая сессия этой машины над этим репозиторием сойдётся на то же место; передай model, чтобы различать"
+    );
+  }
   const room = typeof a.room === "string" && a.room.trim() ? a.room.trim() : null;
   const board = await call("iskron_channel", { action: "list", realm });
   if (board.isError) {
@@ -2201,6 +2211,17 @@ async function runStand(msg) {
   const empty = /не держит канала/i.test(board.text);
   const recognized = !!header || empty || entries.length > 0;
   const own = entries.filter((e) => e.karta === karta && e.address.endsWith(`:${name}`));
+  const stem = name.split(".").slice(0, 2).join(".");
+  const legacy = entries.filter(
+    (e) => e.karta === karta && !e.address.endsWith(`:${name}`) && new RegExp(`:${stem.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(\\.[^.\\s]+)?$`).test(
+      e.address
+    ) && /живой|слушает/.test(e.rest)
+  );
+  for (const e of legacy) {
+    nameNotes.push(
+      `на доске живо место прежнего имени ${e.address} — его адрес могут держать комнаты и хуки; сними его: iskron_channel(action="revoke", realm="${realm}", karta="${karta}", standing="${e.address}")`
+    );
+  }
   const unread = declared != null && declared !== entries.length;
   if (!recognized || own.length > 1 || unread && own.length === 0 && a.take !== true) {
     lines.push(
@@ -2245,7 +2266,8 @@ async function runStand(msg) {
     how = mine ? listensElsewhere ? "место слушал другой держатель — connect по take (сокет теперь у этого моста, прежний держатель получил 4000) и register" : a.take === true ? "connect по take — новый цикл входа, счёт стуков сброшен — и register" : "место было — connect (сокет теперь у этого моста) и register" : "connect и register";
   }
   lines.push(
-    `[iskron_stand] стояние ${mine?.address ?? name} — роль #${karta}, граф ${realm}: ${how}.`
+    `[iskron_stand] стояние ${mine?.address ?? name} — роль #${karta}, граф ${realm}: ${how}.`,
+    ...nameNotes.map((n) => `[iskron_stand] ${n}`)
   );
   const block = heardHere ? listenBlock() : null;
   if (block) lines.push(block);
@@ -2724,7 +2746,7 @@ function resolveStanding(argv2) {
   const { key, authDir } = parseWatchdogArgs(argv2);
   const dir = standingsDirOf(authDir);
   const pathFor = (k) => socketPathOf(authDir, k);
-  if (key) return { key, path: pathFor(key) };
+  if (key) return { key, path: pathFor(key), authDir };
   const held = existsSync3(dir) ? readdirSync2(dir).filter((f) => f.endsWith(".key")).map((f) => {
     try {
       return readFileSync8(join8(dir, f), "utf8").trim();
@@ -2732,7 +2754,7 @@ function resolveStanding(argv2) {
       return "";
     }
   }).filter(Boolean) : [];
-  if (held.length === 1) return { key: held[0], path: pathFor(held[0]) };
+  if (held.length === 1) return { key: held[0], path: pathFor(held[0]), authDir };
   if (held.length === 0) {
     return {
       error: 'мост не держит ни одного стояния — сперва iskron_channel(action="connect") (и register): ответ connect назовёт команду слушания'
@@ -2953,24 +2975,23 @@ function runWatchdog(argv2) {
 import { createHash as createHash4 } from "node:crypto";
 import { appendFileSync as appendFileSync2, readFileSync as readFileSync9, writeFileSync as writeFileSync6, writeSync as writeSync2 } from "node:fs";
 var SEEN_KEEP = 200;
-var seenPathOf = (socketPath) => `${socketPath}.seen`;
 function frameId(ev) {
   const id = ev.frame?.id;
   return typeof id === "string" && id ? id : `raw:${createHash4("sha256").update(ev.raw ?? "").digest("hex").slice(0, 16)}`;
 }
-function seenIds(socketPath) {
+function seenIds(seenPath) {
   try {
-    return new Set(readFileSync9(seenPathOf(socketPath), "utf8").split("\n").filter(Boolean));
+    return new Set(readFileSync9(seenPath, "utf8").split("\n").filter(Boolean));
   } catch {
     return /* @__PURE__ */ new Set();
   }
 }
-function noteSeen(socketPath, id, seen) {
+function noteSeen(seenPath, id, seen) {
   seen.add(id);
   try {
     if (seen.size > SEEN_KEEP) {
-      writeFileSync6(seenPathOf(socketPath), [...seen].slice(-SEEN_KEEP).join("\n") + "\n");
-    } else appendFileSync2(seenPathOf(socketPath), id + "\n");
+      writeFileSync6(seenPath, [...seen].slice(-SEEN_KEEP).join("\n") + "\n");
+    } else appendFileSync2(seenPath, id + "\n");
   } catch {
   }
 }
@@ -2986,7 +3007,8 @@ function runWatchdogExit(argv2) {
     note2(`ДЕЛАТЕЛЬ: ${target.error}`);
     process.exit(2);
   }
-  const seen = seenIds(target.path);
+  const seenPath = seenFilePathOf(target.authDir, target.key);
+  const seen = seenIds(seenPath);
   attach(target.path, {
     onEvent: (ev) => {
       switch (ev.kind) {
@@ -2995,8 +3017,8 @@ function runWatchdogExit(argv2) {
           if (type !== "message") return note2(`кадр ${type ?? "не разобран"} — не повод будить`);
           const id = frameId(ev);
           if (seen.has(id)) return note2(`кадр ${id} уже отдан прежним взводом — не повод будить`);
-          noteSeen(target.path, id, seen);
           wake(ev.raw ?? "");
+          noteSeen(seenPath, id, seen);
           process.exit(0);
           break;
         }
@@ -3236,7 +3258,7 @@ function codexPluginReport(home) {
       continue;
     }
     for (const plugin of plugins) {
-      if (!/iskron/.test(plugin) && !/iskron/.test(market)) continue;
+      if (!/iskron/.test(plugin)) continue;
       const dir = join10(marketDir, plugin);
       const manifest = join10(dir, ".codex-plugin", "plugin.json");
       let word = "манифеста нет";
@@ -3311,7 +3333,7 @@ function harnessReport() {
     if (existsSync5(codex)) {
       const text = readFileSync10(codex, "utf8");
       out(
-        `Codex: ${/\[mcp_servers\.iskron\]/.test(text) ? "ручная запись моста в config.toml есть" : "ручной записи моста в config.toml нет (штатная — в плагине)"}`
+        `Codex: ${/^\s*\[mcp_servers\."?iskron"?\]|^\s*mcp_servers\."?iskron"?\s*=|^\s*\[mcp_servers\]/m.test(text) && /iskron/.test(text) ? "ручная запись моста в config.toml есть" : "ручной записи моста в config.toml нет (штатная — в плагине)"}`
       );
     }
   }

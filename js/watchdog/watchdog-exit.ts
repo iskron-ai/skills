@@ -10,6 +10,7 @@ import { createHash } from "node:crypto";
 import { appendFileSync, readFileSync, writeFileSync, writeSync } from "node:fs";
 
 import { type ChannelEvent } from "../bridge/hold.ts";
+import { seenFilePathOf } from "../shared/standings.ts";
 import { attach, resolveStanding } from "./client.ts";
 
 // The bridge replays its ring to every client that attaches, so a watchdog
@@ -19,7 +20,6 @@ import { attach, resolveStanding } from "./client.ts";
 // its socket: the ids this mode has left on. A frame the ring replays that is
 // not in it — one that arrived while nobody was attached — still wakes.
 const SEEN_KEEP = 200;
-const seenPathOf = (socketPath: string): string => `${socketPath}.seen`;
 
 function frameId(ev: ChannelEvent): string {
   const id = ev.frame?.id;
@@ -31,21 +31,21 @@ function frameId(ev: ChannelEvent): string {
         .slice(0, 16)}`;
 }
 
-export function seenIds(socketPath: string): Set<string> {
+export function seenIds(seenPath: string): Set<string> {
   try {
-    return new Set(readFileSync(seenPathOf(socketPath), "utf8").split("\n").filter(Boolean));
+    return new Set(readFileSync(seenPath, "utf8").split("\n").filter(Boolean));
   } catch {
     return new Set();
   }
 }
 
-export function noteSeen(socketPath: string, id: string, seen: Set<string>): void {
+export function noteSeen(seenPath: string, id: string, seen: Set<string>): void {
   seen.add(id);
   try {
     if (seen.size > SEEN_KEEP) {
       // Rewrite with the tail; the ring is far shorter than this anyway.
-      writeFileSync(seenPathOf(socketPath), [...seen].slice(-SEEN_KEEP).join("\n") + "\n");
-    } else appendFileSync(seenPathOf(socketPath), id + "\n");
+      writeFileSync(seenPath, [...seen].slice(-SEEN_KEEP).join("\n") + "\n");
+    } else appendFileSync(seenPath, id + "\n");
   } catch {
     /* memory is best effort: a lost note costs one extra wake, never a lost one */
   }
@@ -64,7 +64,8 @@ export function runWatchdogExit(argv: string[]): void {
     note(`ДЕЛАТЕЛЬ: ${target.error}`);
     process.exit(2);
   }
-  const seen = seenIds(target.path);
+  const seenPath = seenFilePathOf(target.authDir, target.key);
+  const seen = seenIds(seenPath);
   attach(target.path, {
     onEvent: (ev) => {
       switch (ev.kind) {
@@ -73,8 +74,8 @@ export function runWatchdogExit(argv: string[]): void {
           if (type !== "message") return note(`кадр ${type ?? "не разобран"} — не повод будить`);
           const id = frameId(ev);
           if (seen.has(id)) return note(`кадр ${id} уже отдан прежним взводом — не повод будить`);
-          noteSeen(target.path, id, seen);
-          wake(ev.raw ?? "");
+          wake(ev.raw ?? ""); // сперва отдать: запись до побудки при смерти между ними потеряла бы кадр насовсем
+          noteSeen(seenPath, id, seen);
           process.exit(0); // конец процесса И ЕСТЬ доставка
           break;
         }
