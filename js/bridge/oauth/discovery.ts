@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { join } from "node:path";
 
 import { noteServerDate } from "../clock.ts";
 import { CFG } from "../config.ts";
@@ -130,11 +131,47 @@ export function openBrowser(url: string): void {
     process.platform === "darwin"
       ? ["open", [url]]
       : process.platform === "win32"
-        ? ["cmd", ["/c", "start", "", url]]
+        ? windowsOpener(url)
         : ["xdg-open", [url]];
-  try {
-    spawn(cmd, args, { stdio: "ignore", detached: true }).unref();
-  } catch (e) {
+  const manually = (e: unknown) =>
     log(`could not open a browser (${errorMessage(e)}) — open the URL above manually`);
+  try {
+    // A missing opener surfaces as an 'error' event, not a throw; unhandled, it
+    // would take the bridge down under the human's login.
+    const child = spawn(cmd, args, { stdio: "ignore", detached: true, windowsHide: true });
+    child.on("error", manually);
+    child.unref();
+  } catch (e) {
+    manually(e);
   }
+}
+
+// cmd.exe reads `&` as a command separator, so `cmd /c start "" <url>` opened
+// the authorize URL cut at its first parameter: the login page still rendered,
+// and the human's password met "the sign-in link lacks required parameters"
+// (graph @nks/nks-dev, node #4538). PowerShell takes the whole command
+// base64-encoded — no shell ever parses the URL — and its single-quoted string
+// is literal.
+function windowsOpener(url: string): [string, string[]] {
+  const powershell = join(
+    process.env.SystemRoot || "C:\\Windows",
+    "System32",
+    "WindowsPowerShell",
+    "v1.0",
+    "powershell.exe",
+  );
+  const command = `Start-Process -FilePath '${url.replace(/'/g, "''")}'`;
+  return [
+    powershell,
+    [
+      "-NoProfile",
+      "-NonInteractive",
+      "-ExecutionPolicy",
+      "Bypass",
+      "-WindowStyle",
+      "Hidden",
+      "-EncodedCommand",
+      Buffer.from(command, "utf16le").toString("base64"),
+    ],
+  ];
 }

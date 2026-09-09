@@ -366,6 +366,7 @@ function errorMessage(e) {
 
 // js/bridge/oauth/discovery.ts
 import { spawn } from "node:child_process";
+import { join as join3 } from "node:path";
 async function fetchJson(url, opts = {}, timeoutMs = 15e3) {
   const res = await fetch(url, { ...opts, signal: AbortSignal.timeout(timeoutMs) });
   noteServerDate(res);
@@ -454,12 +455,38 @@ function openBrowser(url) {
   log(`authorize in the browser:
   ${url}`);
   if (CFG.noBrowser) return;
-  const [cmd, args] = process.platform === "darwin" ? ["open", [url]] : process.platform === "win32" ? ["cmd", ["/c", "start", "", url]] : ["xdg-open", [url]];
+  const [cmd, args] = process.platform === "darwin" ? ["open", [url]] : process.platform === "win32" ? windowsOpener(url) : ["xdg-open", [url]];
+  const manually = (e) => log(`could not open a browser (${errorMessage(e)}) — open the URL above manually`);
   try {
-    spawn(cmd, args, { stdio: "ignore", detached: true }).unref();
+    const child = spawn(cmd, args, { stdio: "ignore", detached: true, windowsHide: true });
+    child.on("error", manually);
+    child.unref();
   } catch (e) {
-    log(`could not open a browser (${errorMessage(e)}) — open the URL above manually`);
+    manually(e);
   }
+}
+function windowsOpener(url) {
+  const powershell = join3(
+    process.env.SystemRoot || "C:\\Windows",
+    "System32",
+    "WindowsPowerShell",
+    "v1.0",
+    "powershell.exe"
+  );
+  const command = `Start-Process -FilePath '${url.replace(/'/g, "''")}'`;
+  return [
+    powershell,
+    [
+      "-NoProfile",
+      "-NonInteractive",
+      "-ExecutionPolicy",
+      "Bypass",
+      "-WindowStyle",
+      "Hidden",
+      "-EncodedCommand",
+      Buffer.from(command, "utf16le").toString("base64")
+    ]
+  ];
 }
 
 // js/bridge/oauth/flow.ts
@@ -1095,7 +1122,7 @@ import {
   writeFileSync as writeFileSync4
 } from "node:fs";
 import { connect as connectLocal, createServer as createServer2 } from "node:net";
-import { join as join4 } from "node:path";
+import { join as join5 } from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 
 // js/shared/channel.ts
@@ -1206,16 +1233,16 @@ function holdSocket(o) {
 // js/shared/standings.ts
 import { createHash as createHash3 } from "node:crypto";
 import { homedir as homedir2 } from "node:os";
-import { join as join3 } from "node:path";
-var defaultAuthDir = () => join3(homedir2(), ".iskron-bridge");
+import { join as join4 } from "node:path";
+var defaultAuthDir = () => join4(homedir2(), ".iskron-bridge");
 var authDirFromEnv = () => process.env.ISKRON_BRIDGE_AUTH_DIR?.trim() || defaultAuthDir();
-var standingsDirOf = (authDir) => join3(authDir, "standings");
+var standingsDirOf = (authDir) => join4(authDir, "standings");
 var hashOf = (key) => createHash3("sha256").update(key).digest("hex").slice(0, 16);
 function socketPathOf(authDir, key) {
   if (process.platform === "win32") return `\\\\.\\pipe\\iskron-${hashOf(key)}`;
-  return join3(standingsDirOf(authDir), `${hashOf(key)}.sock`);
+  return join4(standingsDirOf(authDir), `${hashOf(key)}.sock`);
 }
-var keyFilePathOf = (authDir, key) => join3(standingsDirOf(authDir), `${hashOf(key)}.key`);
+var keyFilePathOf = (authDir, key) => join4(standingsDirOf(authDir), `${hashOf(key)}.key`);
 
 // js/bridge/transport.ts
 var state = {
@@ -1527,7 +1554,7 @@ function notify(level, data) {
 function sweepStale(dir, mine) {
   if (process.platform === "win32" || !existsSync(dir)) return;
   for (const f of readdirSync(dir).filter((x) => x.endsWith(".key"))) {
-    const keyFile = join4(dir, f);
+    const keyFile = join5(dir, f);
     let key;
     try {
       key = readFileSync6(keyFile, "utf8").trim();
@@ -1811,13 +1838,13 @@ import { basename } from "node:path";
 import { spawn as spawn2 } from "node:child_process";
 import { existsSync as existsSync2, lstatSync, mkdirSync as mkdirSync5, readFileSync as readFileSync7, renameSync as renameSync2, writeFileSync as writeFileSync5 } from "node:fs";
 import { homedir as homedir4 } from "node:os";
-import { dirname, join as join6 } from "node:path";
+import { dirname, join as join7 } from "node:path";
 import { fileURLToPath as fileURLToPath3 } from "node:url";
 
 // js/shared/home.ts
 import { homedir as homedir3 } from "node:os";
-import { join as join5 } from "node:path";
-var homeBridgePath = () => join5(homedir3(), ".iskron-bridge", "iskron-bridge.mjs");
+import { join as join6 } from "node:path";
+var homeBridgePath = () => join6(homedir3(), ".iskron-bridge", "iskron-bridge.mjs");
 
 // js/shared/semver.ts
 function parseVersion(v) {
@@ -1838,9 +1865,9 @@ var RAW_URL = process.env.ISKRON_BRIDGE_RAW_URL?.trim() || "https://raw.githubus
 var CHECK_INTERVAL_MS = 6 * 60 * 60 * 1e3;
 var updatesDisabled = () => !!process.env.ISKRON_BRIDGE_NO_UPDATE;
 var selfPath = () => fileURLToPath3(import.meta.url);
-var opencodePluginPath = () => join6(homedir4(), ".config", "opencode", "plugins", "iskron.js");
-var setupPathOf = (authDir) => join6(authDir, "SETUP.md");
-var latestPathOf = (authDir) => join6(authDir, "latest.json");
+var opencodePluginPath = () => join7(homedir4(), ".config", "opencode", "plugins", "iskron.js");
+var setupPathOf = (authDir) => join7(authDir, "SETUP.md");
+var latestPathOf = (authDir) => join7(authDir, "latest.json");
 function writeAtomic(path, bytes) {
   mkdirSync5(dirname(path), { recursive: true, mode: 448 });
   const tmp = `${path}.tmp-${process.pid}`;
@@ -1879,7 +1906,7 @@ function syncHome(self = selfPath()) {
     writeAtomic(home, mine);
     out3.copied.push(home);
     const plugin = opencodePluginPath();
-    const packaged = join6(dirname(self), "opencode-plugin.js");
+    const packaged = join7(dirname(self), "opencode-plugin.js");
     if (existsSync2(plugin) && existsSync2(packaged)) {
       const fresh = readFileSync7(packaged);
       if (!readFileSync7(plugin).equals(fresh)) {
@@ -2539,7 +2566,7 @@ function bridgeMain(argv2) {
 // js/watchdog/codex.ts
 import { existsSync as existsSync4 } from "node:fs";
 import { homedir as homedir5 } from "node:os";
-import { join as join8 } from "node:path";
+import { join as join9 } from "node:path";
 
 // js/shared/appserver.ts
 import { randomBytes as randomBytes2 } from "node:crypto";
@@ -2641,7 +2668,7 @@ ${body}`;
 // js/watchdog/client.ts
 import { existsSync as existsSync3, readdirSync as readdirSync2, readFileSync as readFileSync8 } from "node:fs";
 import { connect as connect2 } from "node:net";
-import { join as join7 } from "node:path";
+import { join as join8 } from "node:path";
 var ATTACH_WINDOW_MS = 6e4;
 var RETRY_MS = 1e3;
 function parseWatchdogArgs(argv2) {
@@ -2660,7 +2687,7 @@ function resolveStanding(argv2) {
   if (key) return { key, path: pathFor(key) };
   const held = existsSync3(dir) ? readdirSync2(dir).filter((f) => f.endsWith(".key")).map((f) => {
     try {
-      return readFileSync8(join7(dir, f), "utf8").trim();
+      return readFileSync8(join8(dir, f), "utf8").trim();
     } catch {
       return "";
     }
@@ -2725,8 +2752,8 @@ var note = (s) => {
   process.stderr.write(s + "\n");
 };
 function codexDoorPath() {
-  const home = process.env.CODEX_HOME?.trim() || join8(homedir5(), ".codex");
-  return join8(home, "app-server-control", "app-server-control.sock");
+  const home = process.env.CODEX_HOME?.trim() || join9(homedir5(), ".codex");
+  return join9(home, "app-server-control", "app-server-control.sock");
 }
 function runWatchdogCodex(argv2) {
   const threadId = process.env.CODEX_THREAD_ID?.trim();
@@ -2929,7 +2956,7 @@ function runWatchdogExit(argv2) {
 import { createHash as createHash4 } from "node:crypto";
 import { existsSync as existsSync5, readFileSync as readFileSync9 } from "node:fs";
 import { homedir as homedir6 } from "node:os";
-import { dirname as dirname2, join as join9 } from "node:path";
+import { dirname as dirname2, join as join10 } from "node:path";
 import { fileURLToPath as fileURLToPath4 } from "node:url";
 var out = (s) => {
   process.stdout.write(s + "\n");
@@ -3088,7 +3115,7 @@ function latestReport() {
   else out(`свежий релиз: v${latest.version}, этот файл не отстал; спрашивал ${ago} мин назад`);
 }
 function harnessReport() {
-  const claude = join9(homedir6(), ".claude.json");
+  const claude = join10(homedir6(), ".claude.json");
   if (existsSync5(claude)) {
     try {
       const cfg = JSON.parse(readFileSync9(claude, "utf8"));
@@ -3104,10 +3131,10 @@ function harnessReport() {
       out(`Claude Code: ${claude} не читается`);
     }
   }
-  const opencodeDir = join9(homedir6(), ".config", "opencode");
+  const opencodeDir = join10(homedir6(), ".config", "opencode");
   if (existsSync5(opencodeDir)) {
-    const copy = join9(opencodeDir, "plugins", "iskron.js");
-    const packaged = join9(dirname2(fileURLToPath4(import.meta.url)), "opencode-plugin.js");
+    const copy = join10(opencodeDir, "plugins", "iskron.js");
+    const packaged = join10(dirname2(fileURLToPath4(import.meta.url)), "opencode-plugin.js");
     if (!existsSync5(copy)) {
       out(`OpenCode: плагина нет (${copy}) — его кладёт establish-mcp при подключении`);
     } else if (!existsSync5(packaged)) {
@@ -3120,8 +3147,8 @@ function harnessReport() {
       out(`OpenCode: плагин ${copy} — ДРУГИЕ байты, обнови из поставки: cp "${packaged}" ${copy}`);
     }
   }
-  const codexHome = process.env.CODEX_HOME?.trim() || join9(homedir6(), ".codex");
-  const door = join9(codexHome, "app-server-control", "app-server-control.sock");
+  const codexHome = process.env.CODEX_HOME?.trim() || join10(homedir6(), ".codex");
+  const door = join10(codexHome, "app-server-control", "app-server-control.sock");
   if (existsSync5(codexHome)) {
     if (existsSync5(door)) out(`Codex: дверь app-server открыта (${door})`);
     else if (Buffer.byteLength(door) > 100)
@@ -3133,7 +3160,7 @@ function harnessReport() {
         `Codex: двери нет (${door}) — демон app-server не поднят; без неё кадр доставляет watchdog-exit`
       );
   }
-  const codex = join9(homedir6(), ".codex", "config.toml");
+  const codex = join10(homedir6(), ".codex", "config.toml");
   if (existsSync5(codex)) {
     const text = readFileSync9(codex, "utf8");
     out(`Codex: ${/iskron/.test(text) ? "запись моста есть" : "записи моста нет"} (${codex})`);

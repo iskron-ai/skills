@@ -7,7 +7,14 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import { connect, createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -42,11 +49,17 @@ const INIT_PARAMS = {
 
 // --- driving the bridge the way a harness does -----------------------------
 
-function startBridge(serverUrl, authDir, extraEnv = {}) {
-  const proc = spawn(NODE, [BRIDGE, serverUrl, "--no-browser", "--auth-dir", authDir], {
-    env: { ...process.env, ISKRON_BRIDGE_NO_BROWSER: "1", ...extraEnv },
-    stdio: ["pipe", "pipe", "pipe"],
-  });
+// `browser: true` lets the bridge reach for the OS opener, which the test then
+// impersonates; every other test keeps the browser shut.
+function startBridge(serverUrl, authDir, extraEnv = {}, { browser = false } = {}) {
+  const proc = spawn(
+    NODE,
+    [BRIDGE, serverUrl, ...(browser ? [] : ["--no-browser"]), "--auth-dir", authDir],
+    {
+      env: { ...process.env, ...(browser ? {} : { ISKRON_BRIDGE_NO_BROWSER: "1" }), ...extraEnv },
+      stdio: ["pipe", "pipe", "pipe"],
+    },
+  );
   const waiters = new Map();
   let out = "";
   let stderr = "";
@@ -173,8 +186,8 @@ async function withFake(t, opts, fn) {
   const fake = await startFakeNks(opts);
   const dir = mkdtempSync(join(tmpdir(), "iskron-bridge-test-"));
   const bridges = [];
-  const spawnBridge = (env) => {
-    const b = startBridge(fake.mcpUrl, dir, env);
+  const spawnBridge = (env, opts) => {
+    const b = startBridge(fake.mcpUrl, dir, env, opts);
     bridges.push(b);
     return b;
   };
@@ -185,6 +198,63 @@ async function withFake(t, opts, fn) {
     await fake.stop();
   }
 }
+
+// --- the browser the bridge opens itself -----------------------------------
+
+// On Windows the bridge used to hand the URL to `cmd /c start "" <url>`, and
+// cmd.exe reads `&` as a command separator: the browser landed on
+// `authorize?response_type=code`, the login page still rendered, and the
+// human's password met "the sign-in link lacks required parameters" (graph
+// @nks/nks-dev, node #4538). The claim: on win32 the whole URL reaches the OS
+// opener through PowerShell's encoded command, which no shell parses.
+test("on Windows the authorize URL reaches the browser whole — PowerShell, not cmd", async (t) => {
+  if (process.env.ISKRON_NODE) {
+    t.skip("the platform override rides NODE_OPTIONS, which only node itself reads");
+    return;
+  }
+  await withFake(t, {}, async ({ spawnBridge }) => {
+    const root = mkdtempSync(join(tmpdir(), "iskron-win-"));
+    const psDir = join(root, "System32", "WindowsPowerShell", "v1.0");
+    mkdirSync(psDir, { recursive: true });
+    const record = join(root, "argv.txt");
+    // Both openers record what they were handed: whichever the bridge reaches for.
+    for (const exe of [join(psDir, "powershell.exe"), join(root, "cmd")]) {
+      writeFileSync(exe, `#!/bin/sh\nprintf '%s\\n' "$0" "$@" > "${record}"\n`, { mode: 0o755 });
+    }
+    const preload = join(root, "win32.cjs");
+    writeFileSync(preload, 'Object.defineProperty(process, "platform", { value: "win32" });\n');
+    const bridge = spawnBridge(
+      {
+        NODE_OPTIONS: `--require ${preload}`,
+        SystemRoot: root,
+        PATH: `${root}:${process.env.PATH}`,
+      },
+      { browser: true },
+    );
+    const answer = await bridge.call("initialize", 1, INIT_PARAMS);
+    const url = authorizeUrlIn(answer.error?.message);
+    assert.ok(url, `expected an authorize URL in the answer, got ${JSON.stringify(answer)}`);
+    assert.ok(url.includes("&"), "the URL under test must carry the character cmd.exe cuts at");
+    await waitFor(() => existsSync(record), "the OS opener to be called");
+    const argv = readFileSync(record, "utf8").trim().split("\n");
+    assert.match(
+      argv[0],
+      /powershell\.exe$/,
+      `the URL must travel inside PowerShell's encoded command, never through cmd.exe, which cuts it at the first &; the bridge ran ${argv[0]}`,
+    );
+    const i = argv.indexOf("-EncodedCommand");
+    assert.ok(
+      i > 0 && argv[i + 1],
+      `PowerShell must receive the command encoded; argv: ${argv.join(" ")}`,
+    );
+    const command = Buffer.from(argv[i + 1], "base64").toString("utf16le");
+    assert.ok(
+      command.includes(`'${url}'`),
+      `the whole URL, as a literal single-quoted string, must be inside the command; got: ${command}`,
+    );
+    await bridge.stop();
+  });
+});
 
 // --- the promise the bridge is built on ------------------------------------
 
