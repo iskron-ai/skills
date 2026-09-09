@@ -343,7 +343,7 @@ export function harnessReport(): void {
     if (existsSync(codex)) {
       const text = readFileSync(codex, "utf8");
       out(
-        `Codex: ${/^\s*\[mcp_servers\."?iskron"?\]|^\s*mcp_servers\."?iskron"?\s*=|^\s*\[mcp_servers\]/m.test(text) && /iskron/.test(text) ? "ручная запись моста в config.toml есть" : "ручной записи моста в config.toml нет (штатная — в плагине)"}`,
+        `Codex: ${/^\s*\[mcp_servers\."?iskron"?\]|^\s*mcp_servers\."?iskron"?\s*=/m.test(text) ? "ручная запись моста в config.toml есть" : "ручной записи моста в config.toml нет (штатная — в плагине)"}`,
       );
     }
   }

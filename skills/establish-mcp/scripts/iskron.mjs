@@ -2212,11 +2212,16 @@ async function runStand(msg) {
   const recognized = !!header || empty || entries.length > 0;
   const own = entries.filter((e) => e.karta === karta && e.address.endsWith(`:${name}`));
   const stem = name.split(".").slice(0, 2).join(".");
-  const legacy = entries.filter(
-    (e) => e.karta === karta && !e.address.endsWith(`:${name}`) && new RegExp(`:${stem.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(\\.[^.\\s]+)?$`).test(
-      e.address
-    ) && /живой|слушает/.test(e.rest)
+  const branches = new Set(
+    git(["branch", "--format=%(refname:short)"]).split("\n").map((x) => sanitize(x.trim())).filter(Boolean)
   );
+  const legacy = entries.filter((e) => {
+    if (e.karta !== karta || e.address.endsWith(`:${name}`)) return false;
+    const own2 = e.address.slice(e.address.indexOf(":") + 1);
+    if (!own2.startsWith(`${stem}.`)) return false;
+    const third = own2.slice(stem.length + 1);
+    return branches.has(third) && /живой|слушает/.test(e.rest);
+  });
   for (const e of legacy) {
     nameNotes.push(
       `на доске живо место прежнего имени ${e.address} — его адрес могут держать комнаты и хуки; сними его: iskron_channel(action="revoke", realm="${realm}", karta="${karta}", standing="${e.address}")`
@@ -3333,7 +3338,7 @@ function harnessReport() {
     if (existsSync5(codex)) {
       const text = readFileSync10(codex, "utf8");
       out(
-        `Codex: ${/^\s*\[mcp_servers\."?iskron"?\]|^\s*mcp_servers\."?iskron"?\s*=|^\s*\[mcp_servers\]/m.test(text) && /iskron/.test(text) ? "ручная запись моста в config.toml есть" : "ручной записи моста в config.toml нет (штатная — в плагине)"}`
+        `Codex: ${/^\s*\[mcp_servers\."?iskron"?\]|^\s*mcp_servers\."?iskron"?\s*=/m.test(text) ? "ручная запись моста в config.toml есть" : "ручной записи моста в config.toml нет (штатная — в плагине)"}`
       );
     }
   }

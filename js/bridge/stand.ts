@@ -225,17 +225,23 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   const own = entries.filter((e) => e.karta === karta && e.address.endsWith(`:${name}`));
   // Места прежнего стандарта имени (машина.репо.ветка) той же машины и репо —
   // сироты после перехода на машина.репо.модель: их адрес держат ростеры комнат
-  // и хуки инбокса, а слушает их никто. Назови их, чтобы держатель снял.
+  // и хуки инбокса, а слушает их никто. Прежнее имя узнаётся по третьей части,
+  // равной имени локальной ветки, — иначе это сосед на другой модели, и его
+  // место трогать нельзя.
   const stem = name.split(".").slice(0, 2).join(".");
-  const legacy = entries.filter(
-    (e) =>
-      e.karta === karta &&
-      !e.address.endsWith(`:${name}`) &&
-      new RegExp(`:${stem.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(\\.[^.\\s]+)?$`).test(
-        e.address,
-      ) &&
-      /живой|слушает/.test(e.rest),
+  const branches = new Set(
+    git(["branch", "--format=%(refname:short)"])
+      .split("\n")
+      .map((x) => sanitize(x.trim()))
+      .filter(Boolean),
   );
+  const legacy = entries.filter((e) => {
+    if (e.karta !== karta || e.address.endsWith(`:${name}`)) return false;
+    const own = e.address.slice(e.address.indexOf(":") + 1);
+    if (!own.startsWith(`${stem}.`)) return false;
+    const third = own.slice(stem.length + 1);
+    return branches.has(third) && /живой|слушает/.test(e.rest);
+  });
   for (const e of legacy) {
     nameNotes.push(
       `на доске живо место прежнего имени ${e.address} — его адрес могут держать комнаты и хуки; сними его: iskron_channel(action="revoke", realm="${realm}", karta="${karta}", standing="${e.address}")`,
