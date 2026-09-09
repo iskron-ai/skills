@@ -1869,13 +1869,10 @@ test("a NotFound from a token endpoint discovery still names drops the registrat
 
 // --- a registration the server has already forgotten -----------------------
 // Rauthy deletes a dynamic client that made no login within its cleanup
-// horizon (60 minutes by default). The bridge registered at the first
-// authorize URL and kept that client_id for ever: a human who did not finish
-// the login within the hour was sent, on every later attempt, to a client the
-// server no longer knew — NotFound on authorize however whole the link
-// (graph @nks/nks-dev, node #4539).
+// horizon, and the bridge kept its client_id for ever (graph @nks/nks-dev,
+// node #4539). A browser flow reuses a registration only while it is young.
 
-test("a registration that never produced a grant is renewed past the cleanup horizon", async (t) => {
+test("a browser flow renews a registration older than the reuse horizon", async (t) => {
   await withFake(t, {}, async ({ fake, dir, spawnBridge }) => {
     const first = spawnBridge();
     const url1 = authorizeUrlIn((await first.call("initialize", 1, INIT_PARAMS)).error?.message);
@@ -1895,7 +1892,7 @@ test("a registration that never produced a grant is renewed past the cleanup hor
     assert.equal(
       fake.state.counts.register,
       2,
-      "an unused registration older than the horizon must be made anew",
+      "a registration older than the reuse horizon must be made anew",
     );
     assert.notEqual(
       new URL(url2).searchParams.get("client_id"),
@@ -1906,7 +1903,6 @@ test("a registration that never produced a grant is renewed past the cleanup hor
     assert.equal(res.status, 200, "the login must complete on the renewed registration");
     await res.text();
     await grantLanded(dir);
-    assert.ok(readStore(dir).client?.granted_at, "a used registration must be marked as such");
   });
 });
 

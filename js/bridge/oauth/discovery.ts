@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { join } from "node:path";
 
-import { noteServerDate } from "../clock.ts";
+import { noteServerDate, now } from "../clock.ts";
 import { CFG } from "../config.ts";
 import { errorMessage } from "../errors.ts";
 import { loadStore, saveStore, sha256 } from "../store.ts";
@@ -101,30 +101,33 @@ export function callbackPort(rung = 0): number {
 }
 
 // Rauthy deletes a dynamic client that made no login within its cleanup
-// horizon — 60 minutes by default for unauthenticated registration. A
-// registration kept past that is a client_id the server no longer knows, and
-// every later authorize meets NotFound however whole the link (graph
-// @nks/nks-dev, node #4539). So a registration is trusted while it is young
-// or once it has produced a grant; older and never used, it is made anew —
-// cheap, and the server discards the leftovers itself.
-export const UNUSED_REGISTRATION_MS = 45 * 60_000;
+// horizon — 60 minutes by default for unauthenticated registration — and the
+// NotFound that meets a kept client_id happens in the human's browser, where
+// the bridge never sees it (graph @nks/nks-dev, node #4539). A browser flow
+// starts only when the grant is dead or absent, so an old registration has
+// nothing left to offer it: the flow reuses a registration only while it is
+// young (a retry of a login just offered), and otherwise makes one anew —
+// cheap, and the server discards the leftovers itself. The clock is the
+// server-corrected one, like every other hour the bridge judges by.
+export const REGISTRATION_REUSE_MS = 45 * 60_000;
 
-export function registrationTrusted(
+export function registrationReusable(
   client: Client | null | undefined,
   redirectUri: string,
 ): boolean {
   if (!client?.client_id || client.redirect_uri !== redirectUri) return false;
-  if (client.granted_at) return true;
-  return !!client.registered_at && Date.now() - client.registered_at < UNUSED_REGISTRATION_MS;
+  return !!client.registered_at && now() - client.registered_at < REGISTRATION_REUSE_MS;
 }
 
 export async function ensureClient(meta: Meta, redirectUri: string): Promise<Client> {
   if (CFG.staticClientId) return { client_id: CFG.staticClientId };
   const stored = loadStore().client;
-  if (registrationTrusted(stored, redirectUri)) return stored as Client;
+  if (registrationReusable(stored, redirectUri)) return stored as Client;
   if (stored?.client_id && stored.redirect_uri === redirectUri) {
     log(
-      "the dynamic client registration is older than the server's cleanup horizon and never produced a grant — registering anew",
+      stored.registered_at
+        ? "the dynamic client registration is older than the server's cleanup horizon — registering anew for this login"
+        : "the dynamic client registration carries no timestamp (an earlier build wrote it) — registering anew for this login",
     );
   }
   if (!meta.as.registration_endpoint) {
@@ -144,7 +147,7 @@ export async function ensureClient(meta: Meta, redirectUri: string): Promise<Cli
   const client: Client = {
     client_id: reg.client_id,
     redirect_uri: redirectUri,
-    registered_at: Date.now(),
+    registered_at: now(),
   };
   saveStore({ client });
   log(`registered OAuth client ${reg.client_id}`);

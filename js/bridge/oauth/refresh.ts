@@ -78,7 +78,7 @@ async function refreshOnce(meta: Meta, cur: Tokens, proactive: boolean): Promise
       e instanceof TokenError
         ? !deadRefresh && [404, 405, 410].includes(e.status)
         : ["ENOTFOUND", "ECONNREFUSED"].includes(errorCode(e) ?? "");
-    if (gone && e instanceof TokenError && !(await tokenEndpointMoved(meta))) {
+    if (gone && e instanceof TokenError && e.status === 404 && !(await tokenEndpointMoved(meta))) {
       // Rauthy words its verdict on a client it no longer knows — cleaned up
       // as unused, or presented empty — as 404 NotFound "No results found",
       // the status of a path that is not there. Discovery still naming this
@@ -198,11 +198,20 @@ async function refreshOnce(meta: Meta, cur: Tokens, proactive: boolean): Promise
 }
 
 // Did the token endpoint move since the store last saw it? Discovery
-// unreachable counts as moved: that keeps the old prescription (rediscover
-// next time) where nothing can be told apart.
+// unreachable — or slower than this budget, since the walk runs inside a
+// harness call and under the machine's refresh lock — counts as moved: that
+// keeps the old prescription (rediscover next time) where nothing can be
+// told apart.
+const ENDPOINT_CHECK_BUDGET_MS = 10_000;
+
 async function tokenEndpointMoved(meta: Meta): Promise<boolean> {
   try {
-    const fresh = await discoverMeta(null);
+    const fresh = await Promise.race([
+      discoverMeta(null),
+      sleep(ENDPOINT_CHECK_BUDGET_MS).then(() => {
+        throw new Error("discovery did not answer within the budget");
+      }),
+    ]);
     return fresh.as.token_endpoint !== meta.as.token_endpoint;
   } catch {
     return true;
