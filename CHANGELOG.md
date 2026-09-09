@@ -1,5 +1,12 @@
 # Changelog
 
+## [6.6.2](https://github.com/iskron-ai/skills/compare/v6.6.1...v6.6.2) (2026-09-09)
+
+
+### Bug Fixes
+
+* **standing:** грамматику имени стояния держит держатель ([#112](https://github.com/iskron-ai/skills/issues/112)) ([225d5c7](https://github.com/iskron-ai/skills/commit/225d5c740c5a996fcdc1f78fdd672bceaf6d2bfd))
+
 ## [6.6.1](https://github.com/iskron-ai/skills/compare/v6.6.0...v6.6.1) (2026-09-09)
 
 
