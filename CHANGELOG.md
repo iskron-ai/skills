@@ -1,5 +1,20 @@
 # Changelog
 
+## [6.6.0](https://github.com/iskron-ai/skills/compare/v6.5.0...v6.6.0) (2026-09-09)
+
+
+### Features
+
+* **iskronify:** два такта, обложка AGENTS.md, collaborate влит в standing ([#106](https://github.com/iskron-ai/skills/issues/106)) ([c61f3a3](https://github.com/iskron-ai/skills/commit/c61f3a37a72dcf83e521f14761ba5f23b623ee2e))
+* **writing:** различитель волевой оси на феноменах и деяниях — «держится намерением или устройством?» ([#108](https://github.com/iskron-ai/skills/issues/108)) ([0f0b005](https://github.com/iskron-ai/skills/commit/0f0b005fcc4369d66d7dd36532681a98f5386277))
+
+
+### Bug Fixes
+
+* **bridge:** вход через браузер — Windows-опенер, регистрация DCR, 404 от token-эндпоинта ([#109](https://github.com/iskron-ai/skills/issues/109)) ([9d1d2c6](https://github.com/iskron-ai/skills/commit/9d1d2c69ddb420fbad8b82903847a0cd7d90c110))
+* **bridge:** глаголы обновления Codex в строке отставания и SETUP.md ([#104](https://github.com/iskron-ai/skills/issues/104)) ([ff0893d](https://github.com/iskron-ai/skills/commit/ff0893d2d40a5d0a1ebf96793b96bd64f4b465cd))
+* **iskron:** различение алиаса хоста в старте, бриф ревьюера без переключения чекаута, контракт 9 ([#107](https://github.com/iskron-ai/skills/issues/107)) ([959af0b](https://github.com/iskron-ai/skills/commit/959af0b3960968f384ce52b807f19b882d481825))
+
 ## [6.5.0](https://github.com/iskron-ai/skills/compare/v6.4.0...v6.5.0) (2026-09-08)
 
 
