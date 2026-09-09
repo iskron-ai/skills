@@ -27,7 +27,7 @@ import { readLatest, staleNotice } from "./update.ts";
 export const STAND_TOOL = {
   name: "iskron_stand",
   description:
-    "[мост] Занять стояние одним вызовом: мост читает доску, выводит имя (машина.репо.ветка), занимает место " +
+    "[мост] Занять стояние одним вызовом: мост читает доску, выводит имя (машина.репо.модель), занимает место " +
     "(connect и register; только register, если сокет уже держит этот мост), взводит хук инбокса роли своим входящим " +
     "адресом, при room шлёт кадр join стоянию комнаты по полному адресу с провода (повтор — только repeat_knock=true, один раз, не раньше чем через 2 минуты) и возвращает " +
     "имя, команду сторожа, число ожидавших кадров, состояние хука и расписку стука. Дальше — запустить сторожа " +
@@ -39,12 +39,18 @@ export const STAND_TOOL = {
       karta: { type: "string", description: "Роль агента (#N из AGENTS.md или строки запуска)." },
       name: {
         type: "string",
-        description: "Своя половина имени стояния; без неё выводится машина.репо.ветка.",
+        description:
+          "Своя половина имени стояния; без неё выводится машина.репо.модель — модель из параметра model.",
       },
       room: {
         type: "string",
         description:
           "Полный адрес стояния комнаты @handle:name из строки приглашения; мост шлёт ему join.",
+      },
+      model: {
+        type: "string",
+        description:
+          "Модель, которой бежит агент (id или имя, например claude-opus-5 или opus-5) — третья часть выведенного имени; без неё имя — машина.репо.",
       },
       mute_siblings: { type: "boolean", description: "Не слышать эхо других стояний той же роли." },
       take: {
@@ -92,13 +98,22 @@ const git = (args: string[]): string => {
   }
 };
 
-/** машина.репо.ветка — из того, что свежая сессия восстановит без памяти. */
-export function deriveName(): string {
+/**
+ * машина.репо.модель — из того, что свежая сессия восстановит без памяти. Третья
+ * часть — модель, которой бежит агент (её знает только он, потому она идёт
+ * параметром): в момент запуска ветка почти всегда main и не различает
+ * ничего, а модель различает сессии одной машины над одним репозиторием.
+ * Префикс поставщика (`claude-`) отбрасывается: `claude-opus-5` → `opus-5`.
+ */
+export function deriveName(model?: string): string {
   const host = hostname().split(".")[0];
   const top = git(["rev-parse", "--show-toplevel"]);
   const repo = basename(top || process.cwd());
-  const branch = top ? git(["rev-parse", "--abbrev-ref", "HEAD"]) : "";
-  return [host, repo, branch].map(sanitize).filter(Boolean).join(".");
+  const short = (model ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/^claude[-_]/, "");
+  return [host, repo, short].map(sanitize).filter(Boolean).join(".");
 }
 
 interface BoardEntry {
@@ -182,7 +197,10 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
     );
     return done(true);
   }
-  const name = typeof a.name === "string" && a.name.trim() ? sanitize(a.name.trim()) : deriveName();
+  const name =
+    typeof a.name === "string" && a.name.trim()
+      ? sanitize(a.name.trim())
+      : deriveName(typeof a.model === "string" ? a.model : undefined);
   const room = typeof a.room === "string" && a.room.trim() ? a.room.trim() : null;
 
   // 1. Доска — до любой перемены.

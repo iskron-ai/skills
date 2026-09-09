@@ -10,7 +10,7 @@
 // read as a server URL and refused, which is exactly the red this probe wants.
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
@@ -168,6 +168,76 @@ test("doctor: reads an existing grant without touching it, and sees the home cop
       readFileSync(join(authDir, storeFile), "utf8"),
       before,
       "doctor must leave the store byte-identical",
+    );
+  } finally {
+    await fake.stop();
+  }
+});
+
+// A regular install keeps the bridge entry in the plugin manifests, not in the
+// user's config, and the Codex home is wherever CODEX_HOME points (graph
+// @nks/nks-dev, node #4279). doctor must see the plugins, not report "no entry".
+test("doctor: sees the bridge entry inside the Claude Code and Codex plugins, not only the user configs", async () => {
+  const fake = await startFakeNks();
+  const home = mkdtempSync(join(tmpdir(), "iskron-doctor-"));
+  try {
+    const install = join(home, ".claude", "plugins", "cache", "iskron", "iskron", "9.9.9");
+    mkdirSync(install, { recursive: true });
+    writeFileSync(
+      join(install, ".mcp.json"),
+      JSON.stringify({
+        mcpServers: {
+          iskron: {
+            command: "node",
+            args: ["${CLAUDE_PLUGIN_ROOT}/skills/establish-mcp/scripts/iskron.mjs"],
+          },
+        },
+      }),
+    );
+    writeFileSync(
+      join(home, ".claude", "plugins", "installed_plugins.json"),
+      JSON.stringify({
+        version: 2,
+        plugins: { "iskron@iskron": [{ scope: "user", installPath: install, version: "9.9.9" }] },
+      }),
+    );
+    const codexHome = join(home, "cxh");
+    const codexPlugin = join(codexHome, "plugins", "cache", "iskron", "iskron", ".codex-plugin");
+    mkdirSync(codexPlugin, { recursive: true });
+    writeFileSync(
+      join(codexPlugin, "plugin.json"),
+      JSON.stringify({
+        name: "iskron",
+        version: "9.9.9",
+        mcpServers: {
+          iskron: {
+            command: "node",
+            args: ["./skills/establish-mcp/scripts/iskron.mjs"],
+            cwd: ".",
+          },
+        },
+      }),
+    );
+
+    const r = await run(["doctor", fake.mcpUrl, "--auth-dir", join(home, ".iskron-bridge")], {
+      HOME: home,
+      CODEX_HOME: codexHome,
+    });
+    assert.equal(r.code, 0, r.err);
+    assert.match(
+      r.out,
+      /Claude Code: плагин iskron@iskron v9\.9\.9 \(user\) — запись «iskron» → мост из плагина/,
+      `the plugin-scoped entry must be reported: ${r.out}`,
+    );
+    assert.match(
+      r.out,
+      /Codex: плагин iskron@iskron — v9\.9\.9, запись моста в манифесте есть/,
+      `the Codex plugin under CODEX_HOME must be reported: ${r.out}`,
+    );
+    assert.doesNotMatch(
+      r.out,
+      /Claude Code: в пользовательском конфиге записи моста нет/,
+      "a healthy install must not be reported as having no entry",
     );
   } finally {
     await fake.stop();
