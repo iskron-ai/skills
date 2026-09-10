@@ -335,6 +335,8 @@ function argsFrom(inputSchema, z = tool.schema) {
 // js/opencode/tools.ts
 var READY_WAIT_MS = Number(process.env.ISKRON_MCP_READY_WAIT_MS || 2e4);
 var HANDSHAKE_MS = Number(process.env.ISKRON_MCP_HANDSHAKE_MS || 6e5);
+var AUTH_POLL_MS = Number(process.env.ISKRON_MCP_AUTH_POLL_MS || 2e3);
+var AUTH_PENDING = /authorization required/i;
 var IDLE_MS = Number(process.env.ISKRON_BRIDGE_IDLE_MS || 30 * 6e4);
 var PROTOCOL = "2025-06-18";
 function findBridge() {
@@ -370,16 +372,30 @@ function writeCache(tools) {
   } catch {
   }
 }
-async function handshake(b) {
-  await b.request(
-    "initialize",
-    {
-      protocolVersion: PROTOCOL,
-      capabilities: {},
-      clientInfo: { name: "opencode-iskron", version: "1" }
-    },
-    { timeoutMs: HANDSHAKE_MS }
-  );
+function loginUrlOf(message) {
+  return /open in a browser: (\S+)/.exec(message)?.[1] ?? null;
+}
+async function handshake(b, onLogin) {
+  const deadline = Date.now() + HANDSHAKE_MS;
+  for (; ; ) {
+    try {
+      await b.request(
+        "initialize",
+        {
+          protocolVersion: PROTOCOL,
+          capabilities: {},
+          clientInfo: { name: "opencode-iskron", version: "1" }
+        },
+        { timeoutMs: Math.max(1, deadline - Date.now()) }
+      );
+      break;
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      if (!AUTH_PENDING.test(message) || Date.now() + AUTH_POLL_MS > deadline) throw e;
+      onLogin(loginUrlOf(message));
+      await new Promise((r) => setTimeout(r, AUTH_POLL_MS));
+    }
+  }
   b.notify("notifications/initialized");
 }
 async function listTools(b) {
@@ -411,6 +427,19 @@ async function setupTools(say, onChannel, rootOf) {
   const path = found.path;
   const slots = /* @__PURE__ */ new Map();
   let spare = null;
+  let loginPending = false;
+  let loginSeen = () => {
+  };
+  const loginStarted = new Promise((r) => loginSeen = r);
+  function onLogin(url) {
+    loginSeen();
+    if (loginPending) return;
+    loginPending = true;
+    say(
+      `Искрон: нужен вход — ${url ? `открой ${url} и заверши его` : "заверши его в браузере"}; мост ждёт до ${Math.round(HANDSHAKE_MS / 6e4)} мин, тулы iskron_* поднимутся после.`,
+      "warning"
+    );
+  }
   function spawn2() {
     const slot = {
       bridge: null,
@@ -431,7 +460,7 @@ async function setupTools(say, onChannel, rootOf) {
       }
     );
     slot.bridge.start();
-    slot.ready = handshake(slot.bridge);
+    slot.ready = handshake(slot.bridge, onLogin);
     slot.ready.catch(() => {
     });
     return slot;
@@ -465,15 +494,20 @@ async function setupTools(say, onChannel, rootOf) {
       () => {
       }
     ),
+    loginStarted,
     new Promise((r) => setTimeout(r, READY_WAIT_MS).unref?.())
   ]);
   let source = "с сервера";
   if (!listed) {
     listed = readCache();
     source = "из прошлого списка";
+    if (!listed && loginPending) {
+      listed = await listing.catch(() => null);
+      source = "с сервера, после входа";
+    }
     if (!listed) {
       say(
-        `Искрон: мост не ответил за ${Math.round(READY_WAIT_MS / 1e3)} с и прошлого списка тулов нет — тулов iskron_* не будет до перезапуска OpenCode. Проверь \`node ~/.iskron-bridge/iskron-bridge.mjs doctor\`.`,
+        (loginPending ? `Искрон: вход не завершён за ${Math.round(HANDSHAKE_MS / 6e4)} мин и прошлого списка тулов нет — ` : `Искрон: мост не ответил за ${Math.round(READY_WAIT_MS / 1e3)} с и прошлого списка тулов нет — `) + "тулов iskron_* не будет до перезапуска OpenCode. Проверь `node ~/.iskron-bridge/iskron-bridge.mjs doctor`.",
         "error"
       );
       first.bridge.stop();

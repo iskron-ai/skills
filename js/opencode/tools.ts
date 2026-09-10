@@ -33,6 +33,14 @@ import { argsFrom } from "./schema.ts";
 const READY_WAIT_MS = Number(process.env.ISKRON_MCP_READY_WAIT_MS || 20000);
 /** Потолок самого рукопожатия. Щедрый: первый запуск может увести человека в браузер. */
 const HANDSHAKE_MS = Number(process.env.ISKRON_MCP_HANDSHAKE_MS || 600000);
+/** Как часто переспрашивать мост, пока человек входит в браузере. */
+const AUTH_POLL_MS = Number(process.env.ISKRON_MCP_AUTH_POLL_MS || 2000);
+/**
+ * Отказ моста без гранта. Это не поломка, а вход в процессе: мост открыл
+ * браузер и слушает колбэк на loopback, погасить его — убить вход человека
+ * (граф nks-dev: #4712).
+ */
+const AUTH_PENDING = /authorization required/i;
 /** Мост сессии, которая давно молчит и ничего не держит, отпускается. */
 const IDLE_MS = Number(process.env.ISKRON_BRIDGE_IDLE_MS || 30 * 60_000);
 const PROTOCOL = "2025-06-18";
@@ -101,16 +109,37 @@ function writeCache(tools: any[]): void {
   }
 }
 
-async function handshake(b: Bridge): Promise<void> {
-  await b.request(
-    "initialize",
-    {
-      protocolVersion: PROTOCOL,
-      capabilities: {},
-      clientInfo: { name: "opencode-iskron", version: "1" },
-    },
-    { timeoutMs: HANDSHAKE_MS },
-  );
+/** Ссылка входа из отказа моста, если он её назвал. */
+function loginUrlOf(message: string): string | null {
+  return /open in a browser: (\S+)/.exec(message)?.[1] ?? null;
+}
+
+/**
+ * Рукопожатие. Отказ «нужен вход» переспрашивается, пока грант не ляжет в
+ * хранилище: мост отвечает на каждый такой вопрос сразу, а вход ждёт его
+ * фоном. Потолок — HANDSHAKE_MS на всё.
+ */
+async function handshake(b: Bridge, onLogin: (url: string | null) => void): Promise<void> {
+  const deadline = Date.now() + HANDSHAKE_MS;
+  for (;;) {
+    try {
+      await b.request(
+        "initialize",
+        {
+          protocolVersion: PROTOCOL,
+          capabilities: {},
+          clientInfo: { name: "opencode-iskron", version: "1" },
+        },
+        { timeoutMs: Math.max(1, deadline - Date.now()) },
+      );
+      break;
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      if (!AUTH_PENDING.test(message) || Date.now() + AUTH_POLL_MS > deadline) throw e;
+      onLogin(loginUrlOf(message));
+      await new Promise((r) => setTimeout(r, AUTH_POLL_MS));
+    }
+  }
   b.notify("notifications/initialized");
 }
 
@@ -153,6 +182,21 @@ export async function setupTools(
   const slots = new Map<string, Slot>();
   let spare: Slot | null = null;
 
+  // Человек в браузере: сказать один раз, и загрузка перестаёт гадать по часам.
+  let loginPending = false;
+  let loginSeen: () => void = () => {};
+  const loginStarted = new Promise<void>((r) => (loginSeen = r));
+  function onLogin(url: string | null): void {
+    loginSeen();
+    if (loginPending) return;
+    loginPending = true;
+    say(
+      `Искрон: нужен вход — ${url ? `открой ${url} и заверши его` : "заверши его в браузере"}; ` +
+        `мост ждёт до ${Math.round(HANDSHAKE_MS / 60_000)} мин, тулы iskron_* поднимутся после.`,
+      "warning",
+    );
+  }
+
   function spawn(): Slot {
     const slot: Slot = {
       bridge: null as unknown as Bridge,
@@ -173,7 +217,7 @@ export async function setupTools(
       },
     );
     slot.bridge.start();
-    slot.ready = handshake(slot.bridge);
+    slot.ready = handshake(slot.bridge, onLogin);
     slot.ready.catch(() => {});
     return slot;
   }
@@ -210,6 +254,7 @@ export async function setupTools(
       },
       () => {},
     ),
+    loginStarted,
     new Promise<void>((r) => setTimeout(r, READY_WAIT_MS).unref?.()),
   ]);
 
@@ -217,9 +262,17 @@ export async function setupTools(
   if (!listed) {
     listed = readCache();
     source = "из прошлого списка";
+    if (!listed && loginPending) {
+      // Прошлого списка нет, а человек в браузере: погасить мост сейчас — убить
+      // колбэк его входа. Загрузка ждёт вход (потолок — само рукопожатие).
+      listed = await listing.catch(() => null);
+      source = "с сервера, после входа";
+    }
     if (!listed) {
       say(
-        `Искрон: мост не ответил за ${Math.round(READY_WAIT_MS / 1000)} с и прошлого списка тулов нет — ` +
+        (loginPending
+          ? `Искрон: вход не завершён за ${Math.round(HANDSHAKE_MS / 60_000)} мин и прошлого списка тулов нет — `
+          : `Искрон: мост не ответил за ${Math.round(READY_WAIT_MS / 1000)} с и прошлого списка тулов нет — `) +
           "тулов iskron_* не будет до перезапуска OpenCode. Проверь `node ~/.iskron-bridge/iskron-bridge.mjs doctor`.",
         "error",
       );

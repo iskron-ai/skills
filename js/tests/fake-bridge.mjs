@@ -12,13 +12,18 @@
 //                 probe can see BOTH that a bridge was spawned at all and, by the
 //                 pid, that session_shutdown really killed it.
 //   FB_MODE       ok (default) · mute (reads, never answers — a bridge stuck in
-//                 someone's browser) · die (exits at once — a broken install)
+//                 someone's browser) · die (exits at once — a broken install) ·
+//                 auth (no grant yet: every request is refused -32001
+//                 «authorization required», as the real bridge refuses it while
+//                 its browser flow waits for the human, until FB_AUTHED exists)
+//   FB_AUTHED     with FB_MODE=auth: the file whose existence means the human has
+//                 finished the login in the browser.
 //   FB_TOOLS      JSON array for tools/list; default is two tools, one of them
 //                 iskron_channel, since that is the name the extension watches.
 //   FB_PAGINATE   "1" splits tools/list across two pages with a cursor.
 //   FB_REPLY      file holding the text of the NEXT tools/call answer; the probe
 //                 rewrites it between calls. "__ERROR__<text>" answers isError.
-import { appendFileSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync } from "node:fs";
 
 const MODE = process.env.FB_MODE || "ok";
 if (process.env.FB_LOG) appendFileSync(process.env.FB_LOG, `start ${process.pid}\n`);
@@ -109,6 +114,22 @@ process.stdin.on("data", (chunk) => {
     }
     if (typeof msg.id !== "number") continue; // notifications need no answer
     if (MODE === "mute") continue; // ...and neither does anything, in this mode
+    if (MODE === "auth" && !existsSync(process.env.FB_AUTHED || "")) {
+      send({
+        jsonrpc: "2.0",
+        id: msg.id,
+        error: {
+          code: -32001,
+          message:
+            "iskron-bridge v0+fake: authorization required — open in a browser: " +
+            "http://127.0.0.1:43265/authorize?fake=1 — or give the bridge a personal access " +
+            "token instead (ISKRON_BRIDGE_TOKEN, or the file <auth-dir>/token). " +
+            "The call never reached the server, so nothing was applied — retry freely. " +
+            "The bridge stays up.",
+        },
+      });
+      continue;
+    }
     if (msg.method === "initialize") {
       ok(msg.id, {
         protocolVersion: "2025-06-18",

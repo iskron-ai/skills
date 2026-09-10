@@ -82,8 +82,10 @@ const ENV_KEYS = [
   "ISKRON_BRIDGE_PATH",
   "ISKRON_MCP_READY_WAIT_MS",
   "ISKRON_MCP_HANDSHAKE_MS",
+  "ISKRON_MCP_AUTH_POLL_MS",
   "FB_LOG",
   "FB_MODE",
+  "FB_AUTHED",
   "FB_TOOLS",
   "FB_PAGINATE",
   "FB_REPLY",
@@ -237,6 +239,77 @@ test("a bridge stuck in someone's browser: tools come from the last list, calls 
     await delay(300);
     assert.equal(settled, false, "a call over a mute bridge must keep waiting, not answer");
   } finally {
+    await rec.stop();
+  }
+});
+
+// A bridge with no grant answers every request -32001 «authorization required»
+// and keeps its browser flow listening on loopback until the human finishes.
+// Stopping it then kills the callback: the login goes through at the server and
+// the redirect lands on a refused connection.
+
+test("first run without a grant and without a last list: the bridge waits for the login, then the tools come", async () => {
+  const authDir = mkdtempSync(join(SANDBOX, "auth-fresh-"));
+  const prevAuth = process.env.ISKRON_BRIDGE_AUTH_DIR;
+  process.env.ISKRON_BRIDGE_AUTH_DIR = authDir; // no opencode-tools.json there
+  const authed = join(SANDBOX, "first-login.authed");
+  const b = bridgeEnv("first-login", {
+    FB_MODE: "auth",
+    FB_AUTHED: authed,
+    ISKRON_MCP_AUTH_POLL_MS: 50,
+  });
+  const factory = await loadPlugin(b.env);
+  const rec = fakeClient();
+  let loaded = null;
+  const loading = factory({ client: rec.client, directory: SANDBOX, worktree: SANDBOX }).then(
+    (h) => (loaded = h),
+  );
+  try {
+    await until(() => /нужен вход/.test(rec.said()), "the login toast");
+    assert.match(rec.said(), /127\.0\.0\.1:43265\/authorize/, "the toast names the login link");
+    await delay(400);
+    const pid = pidOf(b.log);
+    assert.ok(alive(pid), "the bridge holding the browser flow must not be stopped");
+    assert.equal(pidsOf(b.log).length, 1, "the login is waited for, not restarted");
+    writeFileSync(authed, "");
+    await loading;
+    assert.deepEqual(Object.keys(loaded.tool).sort(), ["iskron_channel", "iskron_orient"]);
+    assert.match(rec.said(), /после входа/);
+    writeFileSync(b.reply, "ответ после входа");
+    const out = await loaded.tool.iskron_orient.execute({}, ctx("s-login"));
+    assert.equal(out.output, "ответ после входа");
+    assert.equal(pidsOf(b.log).length, 1, "the first session takes the bridge that saw the login");
+  } finally {
+    writeFileSync(authed, "");
+    await loading.catch(() => {});
+    await loaded?.dispose?.();
+    process.env.ISKRON_BRIDGE_AUTH_DIR = prevAuth;
+  }
+});
+
+test("a last list and no grant: tools come from the list, and a call waits for the login instead of failing", async () => {
+  const authed = join(SANDBOX, "cached-login.authed");
+  const b = bridgeEnv("cached-login", {
+    FB_MODE: "auth",
+    FB_AUTHED: authed,
+    ISKRON_MCP_AUTH_POLL_MS: 50,
+  });
+  const rec = await plugin(b.env);
+  try {
+    assert.match(rec.said(), /из прошлого списка/);
+    writeFileSync(b.reply, "ответ после входа");
+    const call = rec.hooks.tool.iskron_orient.execute({}, ctx("s-cached"));
+    let settled = false;
+    call.then(
+      () => (settled = true),
+      () => (settled = true),
+    );
+    await delay(300);
+    assert.equal(settled, false, "a call before the login must wait for it, not fail");
+    writeFileSync(authed, "");
+    assert.equal((await call).output, "ответ после входа");
+  } finally {
+    writeFileSync(authed, "");
     await rec.stop();
   }
 });
