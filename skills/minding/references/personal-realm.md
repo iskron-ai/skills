@@ -6,7 +6,7 @@
 
 ## 1 · Граф
 
-`iskron_realm(action="create", slug="mind", name=<собственными словами человека>)`.
+`iskron_realm(action="create", slug="mind", name=<собственными словами человека; без них — его handle>)`. Имя, данное по handle, человек меняет: `iskron_realm(action="update", name=…)`.
 
 Владелец — пользователь, всегда лично — никогда не передаётся организации. У организации нет личного контура; командный вариант — сознательно вне объёма.
 
@@ -20,6 +20,8 @@ iskron_add_karta(realm=…, name="👤 <имя роли словами поль�
   manifested_as="svatantra", user="me",
   epistemic_mode="pratyakshita", ontic_mode="vartamana", volitive_mode="upeksha")
 ```
+
+Без вопросов (дверь **iskron**, «Realm not found» у minding): имя роли — `👤 <handle>`, мотивация — «память человека поперёк всех его контуров»; уточняются при наполнении §3.
 
 `user="me"` и есть смысл: это то, что делает человека находимым извне этого графа. Дай ей `steward` к каждому контуру, за который она отвечает.
 
