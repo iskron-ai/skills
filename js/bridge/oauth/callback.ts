@@ -104,14 +104,20 @@ export function bindCallback(port: number): Promise<Callback> {
           tellBrowser("iskron-bridge: the login was abandoned — nothing was stored.");
           server.close();
         },
-        waitForCode: (expectedState, timeoutMs = 300_000) =>
+        // No deadline by default: the login lives as long as the bridge holding
+        // it, so a human who comes back to the tab late still lands it (graph
+        // nks-dev: #4721). A bridge left by its harness bounds the wait itself.
+        waitForCode: (expectedState, timeoutMs = 0) =>
           new Promise<string>((res, rej) => {
-            const timer = setTimeout(
-              () => rej(new Error("timed out waiting for the browser authorization")),
-              timeoutMs,
-            );
+            const timer =
+              timeoutMs > 0
+                ? setTimeout(
+                    () => rej(new Error("timed out waiting for the browser authorization")),
+                    timeoutMs,
+                  )
+                : null;
             const settle = (v: Arrival) => {
-              clearTimeout(timer);
+              if (timer) clearTimeout(timer);
               if (v.err) return rej(new Error(`authorization refused: ${v.err}`));
               if (!v.code || v.state !== expectedState) {
                 return rej(new Error("callback missing code or state mismatch"));

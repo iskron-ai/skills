@@ -658,13 +658,16 @@ function bindCallback(port) {
           tellBrowser("iskron-bridge: the login was abandoned — nothing was stored.");
           server2.close();
         },
-        waitForCode: (expectedState, timeoutMs = 3e5) => new Promise((res, rej) => {
-          const timer = setTimeout(
+        // No deadline by default: the login lives as long as the bridge holding
+        // it, so a human who comes back to the tab late still lands it (graph
+        // nks-dev: #4721). A bridge left by its harness bounds the wait itself.
+        waitForCode: (expectedState, timeoutMs = 0) => new Promise((res, rej) => {
+          const timer = timeoutMs > 0 ? setTimeout(
             () => rej(new Error("timed out waiting for the browser authorization")),
             timeoutMs
-          );
+          ) : null;
           const settle = (v) => {
-            clearTimeout(timer);
+            if (timer) clearTimeout(timer);
             if (v.err) return rej(new Error(`authorization refused: ${v.err}`));
             if (!v.code || v.state !== expectedState) {
               return rej(new Error("callback missing code or state mismatch"));
@@ -2638,6 +2641,7 @@ async function deliver(msg) {
 }
 
 // js/bridge/main.ts
+var ORPHAN_FLOW_MS = Number(process.env.ISKRON_BRIDGE_ORPHAN_FLOW_MS) || 5 * 6e4;
 function proxyWord() {
   const env = process.env;
   const proxy = env.HTTPS_PROXY || env.https_proxy || env.HTTP_PROXY || env.http_proxy;
@@ -2698,10 +2702,10 @@ function bridgeMain(argv2) {
     const flow = pendingFlow();
     if (flow) {
       log(
-        `${why}, but an authorization flow is pending — staying up until the human's click lands`
+        `${why}, but an authorization flow is pending — staying up for the human's click, at most ${Math.round(ORPHAN_FLOW_MS / 1e3)}s`
       );
-      await flow.catch(() => {
-      });
+      await Promise.race([flow.catch(() => {
+      }), sleep(ORPHAN_FLOW_MS)]);
     }
     await Promise.allSettled([...tokenRequestsInFlight]);
     await flushStdout();

@@ -2338,3 +2338,52 @@ test("a proxy the runtime will not read is named at start, with its lever", asyn
     await bridge.stop();
   }
 });
+
+// --- a login that does not expire under the human ---------------------------
+// A login used to expire five minutes after it was published: the next call
+// opened a second tab, and the first tab — where the human came back — led to a
+// refused connection (graph @nks/nks-dev, node #4721). Now the login lives as
+// long as the bridge holding it; only a bridge its harness has left bounds the
+// wait, so nothing hangs forever.
+
+test("a bridge left by its harness mid-login waits for the click only so long, then goes", async (t) => {
+  await withFake(t, {}, async ({ spawnBridge }) => {
+    const bridge = spawnBridge({ ISKRON_BRIDGE_ORPHAN_FLOW_MS: "800" });
+    const pending = await bridge.call("initialize", 1, INIT_PARAMS);
+    assert.ok(authorizeUrlIn(pending.error?.message), "a login must be pending");
+    const gone = exited(bridge);
+    bridge.proc.stdin.end(); // the harness is gone
+    await Promise.race([gone, pause(4000)]);
+    assert.notEqual(
+      bridge.proc.exitCode,
+      null,
+      "an orphaned bridge must not hang on a login nobody is waiting for",
+    );
+  });
+});
+
+// Five real minutes: run with ISKRON_SLOW_PROBES=1 (against a past bridge too,
+// through ISKRON_BRIDGE_PATH, to see it red).
+test(
+  "a login is not taken back after five minutes: a later call joins it, and the old link lands",
+  { skip: !process.env.ISKRON_SLOW_PROBES && "five real minutes — set ISKRON_SLOW_PROBES=1" },
+  async (t) => {
+    await withFake(t, {}, async ({ dir, spawnBridge }) => {
+      const bridge = spawnBridge();
+      const first = authorizeUrlIn(
+        (await bridge.call("initialize", 1, INIT_PARAMS)).error?.message,
+      );
+      assert.ok(first, "a login must be pending");
+      await pause(310_000);
+      const again = authorizeUrlIn(
+        (await bridge.call("initialize", 2, INIT_PARAMS)).error?.message,
+      );
+      // A second login carries a new state, so a different link is a second tab.
+      assert.equal(again, first, "past five minutes a call must join the standing login");
+      const res = await fetch(first, { redirect: "follow" });
+      await res.text();
+      assert.equal(res.status, 200, "the first link, clicked late, must still land");
+      await grantLanded(dir);
+    });
+  },
+);
