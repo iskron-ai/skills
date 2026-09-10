@@ -375,8 +375,9 @@ function writeCache(tools) {
 function loginUrlOf(message) {
   return /open in a browser: (\S+)/.exec(message)?.[1] ?? null;
 }
-async function handshake(b, onLogin) {
+async function handshake(b, onLogin, onLoggedIn) {
   const deadline = Date.now() + HANDSHAKE_MS;
+  let waited = false;
   for (; ; ) {
     try {
       await b.request(
@@ -392,10 +393,12 @@ async function handshake(b, onLogin) {
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       if (!AUTH_PENDING.test(message) || Date.now() + AUTH_POLL_MS > deadline) throw e;
+      waited = true;
       onLogin(loginUrlOf(message));
       await new Promise((r) => setTimeout(r, AUTH_POLL_MS));
     }
   }
+  if (waited) onLoggedIn();
   b.notify("notifications/initialized");
 }
 async function listTools(b) {
@@ -460,7 +463,7 @@ async function setupTools(say, onChannel, rootOf) {
       }
     );
     slot.bridge.start();
-    slot.ready = handshake(slot.bridge, onLogin);
+    slot.ready = handshake(slot.bridge, onLogin, () => loginPending = false);
     slot.ready.catch(() => {
     });
     return slot;

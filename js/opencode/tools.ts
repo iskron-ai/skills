@@ -119,8 +119,13 @@ function loginUrlOf(message: string): string | null {
  * хранилище: мост отвечает на каждый такой вопрос сразу, а вход ждёт его
  * фоном. Потолок — HANDSHAKE_MS на всё.
  */
-async function handshake(b: Bridge, onLogin: (url: string | null) => void): Promise<void> {
+async function handshake(
+  b: Bridge,
+  onLogin: (url: string | null) => void,
+  onLoggedIn: () => void,
+): Promise<void> {
   const deadline = Date.now() + HANDSHAKE_MS;
+  let waited = false;
   for (;;) {
     try {
       await b.request(
@@ -136,10 +141,12 @@ async function handshake(b: Bridge, onLogin: (url: string | null) => void): Prom
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       if (!AUTH_PENDING.test(message) || Date.now() + AUTH_POLL_MS > deadline) throw e;
+      waited = true;
       onLogin(loginUrlOf(message));
       await new Promise((r) => setTimeout(r, AUTH_POLL_MS));
     }
   }
+  if (waited) onLoggedIn();
   b.notify("notifications/initialized");
 }
 
@@ -182,7 +189,8 @@ export async function setupTools(
   const slots = new Map<string, Slot>();
   let spare: Slot | null = null;
 
-  // Человек в браузере: сказать один раз, и загрузка перестаёт гадать по часам.
+  // Человек в браузере: сказать один раз на вход, и загрузка перестаёт гадать
+  // по часам. Вход кончился — следующий (грант умер посреди работы) скажется снова.
   let loginPending = false;
   let loginSeen: () => void = () => {};
   const loginStarted = new Promise<void>((r) => (loginSeen = r));
@@ -217,7 +225,7 @@ export async function setupTools(
       },
     );
     slot.bridge.start();
-    slot.ready = handshake(slot.bridge, onLogin);
+    slot.ready = handshake(slot.bridge, onLogin, () => (loginPending = false));
     slot.ready.catch(() => {});
     return slot;
   }
