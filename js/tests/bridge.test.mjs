@@ -8,6 +8,7 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { createServer as createHttpsServer } from "node:https";
 import { connect, createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -2387,3 +2388,68 @@ test(
     });
   },
 );
+
+// --- a certificate the machine does not trust --------------------------------
+// A corporate TLS inspection shows the bridge a certificate the machine does
+// not trust. The handshake fails before the request leaves, and it fails the
+// same way every time: «not sent», no knock again, and the lever named
+// (graph @nks/nks-dev, node #4716). The pair in fixtures/ is test-only.
+
+const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), "fixtures");
+
+test("a certificate the machine does not trust is «not sent», is not knocked again, and names the lever", async () => {
+  const srv = createHttpsServer(
+    {
+      key: readFileSync(join(FIXTURES, "test-only-self-signed.key")),
+      cert: readFileSync(join(FIXTURES, "test-only-self-signed.crt")),
+    },
+    (_q, s) => s.end("{}"),
+  );
+  let handshakes = 0;
+  srv.on("tlsClientError", () => handshakes++);
+  await new Promise((r) => srv.listen(0, "127.0.0.1", r));
+  const dir = mkdtempSync(join(tmpdir(), "iskron-bridge-test-"));
+  const bridge = startBridge(`https://127.0.0.1:${srv.address().port}/mcp`, dir, {
+    ISKRON_BRIDGE_NET_BACKOFF_MS: "50,50,50",
+  });
+  try {
+    const text = (await bridge.call("initialize", 1, INIT_PARAMS)).error?.message ?? "";
+    assert.match(text, /DEPTH_ZERO_SELF_SIGNED_CERT/, `the cause must ride the text: ${text}`);
+    assert.match(text, /never reached the server/, "a refused handshake applied nothing");
+    assert.match(text, /NODE_EXTRA_CA_CERTS/, "the text must name the lever");
+    await pause(400);
+    assert.equal(
+      handshakes,
+      1,
+      "a certificate refusal is the same every time — no knock repeats it",
+    );
+  } finally {
+    await bridge.stop();
+    srv.close();
+  }
+});
+
+test("a proxy switched on through NODE_OPTIONS is not reported as ignored", async (t) => {
+  const [major, minor] = process.versions.node.split(".").map(Number);
+  if (process.env.ISKRON_NODE || major < 24 || (major === 24 && minor < 5)) {
+    return t.skip("NODE_OPTIONS=--use-env-proxy needs Node 24.5+");
+  }
+  const port = await freePort();
+  const dir = mkdtempSync(join(tmpdir(), "iskron-bridge-test-"));
+  const bridge = startBridge(`http://127.0.0.1:${port}/mcp`, dir, {
+    HTTPS_PROXY: "http://127.0.0.1:9",
+    NODE_USE_ENV_PROXY: "",
+    NODE_OPTIONS: "--use-env-proxy",
+  });
+  try {
+    await waitFor(() => / -> http:\/\/127\.0\.0\.1/.test(bridge.stderr), "the start line", 5000);
+    await pause(300);
+    assert.doesNotMatch(
+      bridge.stderr,
+      /proxy is set/,
+      "the runtime reads the proxy — warning that it does not is a lie the human acts on",
+    );
+  } finally {
+    await bridge.stop();
+  }
+});

@@ -55,7 +55,8 @@ export function proxyWord(): string | null {
   if (!proxy || process.versions.bun) return null;
   const [major = 0, minor = 0] = process.versions.node.split(".").map(Number);
   const reads = major > 24 || (major === 24 && minor >= 5);
-  const on = env.NODE_USE_ENV_PROXY === "1" || process.execArgv.includes("--use-env-proxy");
+  const flags = [...process.execArgv, ...(env.NODE_OPTIONS ?? "").split(/\s+/)]; // NODE_OPTIONS flags are not in execArgv
+  const on = env.NODE_USE_ENV_PROXY === "1" || flags.includes("--use-env-proxy");
   if (reads && on) return null;
   return reads
     ? "a proxy is set (HTTP(S)_PROXY), but Node reads it only under NODE_USE_ENV_PROXY=1 — " +

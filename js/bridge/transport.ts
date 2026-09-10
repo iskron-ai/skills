@@ -80,6 +80,23 @@ async function* sseEvents(body: ReadableStream<Uint8Array>): AsyncGenerator<stri
   }
 }
 
+// A certificate the machine does not trust fails the TLS handshake before the
+// request leaves. Node puts the code in cause.code, Bun in code (both observed
+// for DEPTH_ZERO_SELF_SIGNED_CERT; the rest are Node's documented certificate
+// codes — graph @nks/nks-dev, node #4716).
+const TLS_REFUSALS = new Set([
+  "DEPTH_ZERO_SELF_SIGNED_CERT",
+  "SELF_SIGNED_CERT_IN_CHAIN",
+  "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+  "UNABLE_TO_GET_ISSUER_CERT",
+  "UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
+  "CERT_HAS_EXPIRED",
+  "CERT_NOT_YET_VALID",
+  "CERT_UNTRUSTED",
+  "CERT_REVOKED",
+  "ERR_TLS_CERT_ALTNAME_INVALID",
+]);
+
 // One POST to the server for one JSON-RPC message. Forwards every message the
 // server answers with (JSON body or a per-request SSE stream) via onMessage.
 export async function post(
@@ -118,11 +135,14 @@ export async function post(
     // is what tells a dead DNS from a refused port from a reset, so it rides the text.
     const code = errorCode(e);
     const message = errorMessage(e);
+    const tls = TLS_REFUSALS.has(code ?? "");
     const reason = timedOut
       ? `no answer within ${CFG.timeoutMs}ms`
-      : code && !message.includes(code)
-        ? `${message} (${code})`
-        : message;
+      : (code && !message.includes(code) ? `${message} (${code})` : message) +
+        (tls
+          ? " — the server's certificate is not trusted on this machine (a corporate TLS " +
+            "inspection?); give the bridge the organisation's CA in NODE_EXTRA_CA_CERTS"
+          : "");
     // A connection that was never established carries nothing: the server never
     // saw the call. A timeout is the opposite — the request was on the wire and
     // only the answer is missing, so the write may well have landed. Bun (the
@@ -130,21 +150,23 @@ export async function post(
     // unknown host ConnectionRefused.
     const neverLeft =
       !timedOut &&
-      [
-        "ECONNREFUSED",
-        "ENOTFOUND",
-        "EAI_AGAIN",
-        "ERR_SOCKET_BAD_PORT",
-        "ConnectionRefused",
-      ].includes(code ?? "");
+      (tls ||
+        [
+          "ECONNREFUSED",
+          "ENOTFOUND",
+          "EAI_AGAIN",
+          "ERR_SOCKET_BAD_PORT",
+          "ConnectionRefused",
+        ].includes(code ?? ""));
     // A timeout already spent the whole deadline: repeating it multiplies the
-    // wait, so only a connection that failed outright is worth another knock.
+    // wait, so only a connection that failed outright is worth another knock —
+    // and not a certificate refusal, which fails the same way every time.
     throw new UpstreamError(
       `upstream unreachable: ${reason}`,
       "network",
       null,
       neverLeft ? UpstreamError.NOT_SENT : UpstreamError.UNKNOWN,
-      !timedOut,
+      !timedOut && !tls,
     );
   }
   noteServerDate(res);

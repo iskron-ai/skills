@@ -1371,6 +1371,18 @@ async function* sseEvents(body) {
     }
   }
 }
+var TLS_REFUSALS = /* @__PURE__ */ new Set([
+  "DEPTH_ZERO_SELF_SIGNED_CERT",
+  "SELF_SIGNED_CERT_IN_CHAIN",
+  "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+  "UNABLE_TO_GET_ISSUER_CERT",
+  "UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
+  "CERT_HAS_EXPIRED",
+  "CERT_NOT_YET_VALID",
+  "CERT_UNTRUSTED",
+  "CERT_REVOKED",
+  "ERR_TLS_CERT_ALTNAME_INVALID"
+]);
 async function post(msg, onMessage) {
   const headers = {
     "content-type": "application/json",
@@ -1397,20 +1409,21 @@ async function post(msg, onMessage) {
     const timedOut = err.name === "TimeoutError";
     const code = errorCode(e);
     const message = errorMessage(e);
-    const reason = timedOut ? `no answer within ${CFG.timeoutMs}ms` : code && !message.includes(code) ? `${message} (${code})` : message;
-    const neverLeft = !timedOut && [
+    const tls = TLS_REFUSALS.has(code ?? "");
+    const reason = timedOut ? `no answer within ${CFG.timeoutMs}ms` : (code && !message.includes(code) ? `${message} (${code})` : message) + (tls ? " — the server's certificate is not trusted on this machine (a corporate TLS inspection?); give the bridge the organisation's CA in NODE_EXTRA_CA_CERTS" : "");
+    const neverLeft = !timedOut && (tls || [
       "ECONNREFUSED",
       "ENOTFOUND",
       "EAI_AGAIN",
       "ERR_SOCKET_BAD_PORT",
       "ConnectionRefused"
-    ].includes(code ?? "");
+    ].includes(code ?? ""));
     throw new UpstreamError(
       `upstream unreachable: ${reason}`,
       "network",
       null,
       neverLeft ? UpstreamError.NOT_SENT : UpstreamError.UNKNOWN,
-      !timedOut
+      !timedOut && !tls
     );
   }
   noteServerDate(res);
@@ -2648,7 +2661,8 @@ function proxyWord() {
   if (!proxy || process.versions.bun) return null;
   const [major = 0, minor = 0] = process.versions.node.split(".").map(Number);
   const reads = major > 24 || major === 24 && minor >= 5;
-  const on = env.NODE_USE_ENV_PROXY === "1" || process.execArgv.includes("--use-env-proxy");
+  const flags = [...process.execArgv, ...(env.NODE_OPTIONS ?? "").split(/\s+/)];
+  const on = env.NODE_USE_ENV_PROXY === "1" || flags.includes("--use-env-proxy");
   if (reads && on) return null;
   return reads ? "a proxy is set (HTTP(S)_PROXY), but Node reads it only under NODE_USE_ENV_PROXY=1 — add that variable to the bridge's env in the harness config; until then calls go around the proxy" : `a proxy is set (HTTP(S)_PROXY), but Node ${process.versions.node} does not read it at all — Node 24.5+ with NODE_USE_ENV_PROXY=1 or the Bun runtime does; until then calls go around the proxy`;
 }
