@@ -28,6 +28,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  rmSync,
   writeFileSync,
 } from "node:fs";
 import { register } from "node:module";
@@ -272,6 +273,7 @@ test("first run without a grant and without a last list: the bridge waits for th
     assert.ok(alive(pid), "the bridge holding the browser flow must not be stopped");
     assert.equal(pidsOf(b.log).length, 1, "the login is waited for, not restarted");
     writeFileSync(authed, "");
+    writeFileSync(join(authDir, "fake_grant.json"), "{}"); // the grant lands next to the tools cache
     await loading;
     assert.deepEqual(Object.keys(loaded.tool).sort(), ["iskron_channel", "iskron_orient"]);
     assert.match(rec.said(), /после входа/);
@@ -307,10 +309,46 @@ test("a last list and no grant: tools come from the list, and a call waits for t
     await delay(300);
     assert.equal(settled, false, "a call before the login must wait for it, not fail");
     writeFileSync(authed, "");
+    writeFileSync(join(process.env.ISKRON_BRIDGE_AUTH_DIR, "fake_grant.json"), "{}");
     assert.equal((await call).output, "ответ после входа");
   } finally {
     writeFileSync(authed, "");
     await rec.stop();
+  }
+});
+
+test("a login met again later in the same process is announced again, not swallowed", async () => {
+  const authDir = mkdtempSync(join(SANDBOX, "auth-again-"));
+  const prevAuth = process.env.ISKRON_BRIDGE_AUTH_DIR;
+  process.env.ISKRON_BRIDGE_AUTH_DIR = authDir;
+  const authed = join(SANDBOX, "again.authed");
+  const grant = join(authDir, "fake_grant.json");
+  const b = bridgeEnv("again", { FB_MODE: "auth", FB_AUTHED: authed, ISKRON_MCP_AUTH_POLL_MS: 50 });
+  const factory = await loadPlugin(b.env);
+  const rec = fakeClient();
+  const loading = factory({ client: rec.client, directory: SANDBOX, worktree: SANDBOX });
+  let hooks = null;
+  const toasts = () => (rec.said().match(/нужен вход/g) ?? []).length;
+  try {
+    await until(() => toasts() === 1, "the first login toast");
+    writeFileSync(authed, "");
+    writeFileSync(grant, "{}");
+    hooks = await loading;
+    writeFileSync(b.reply, "ответ");
+    await hooks.tool.iskron_orient.execute({}, ctx("s-first"));
+    // The grant dies mid-work: the next root session's bridge meets the login again.
+    rmSync(authed);
+    rmSync(grant);
+    const call = hooks.tool.iskron_orient.execute({}, ctx("s-second"));
+    await until(() => toasts() === 2, "the second login toast");
+    writeFileSync(authed, "");
+    writeFileSync(grant, "{}");
+    assert.equal((await call).output, "ответ");
+  } finally {
+    writeFileSync(authed, "");
+    await loading.catch(() => {});
+    await hooks?.dispose?.();
+    process.env.ISKRON_BRIDGE_AUTH_DIR = prevAuth;
   }
 });
 

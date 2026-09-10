@@ -113,20 +113,38 @@ export async function post(
     });
   } catch (e) {
     const err = e as { name?: string };
-    const reason =
-      err.name === "TimeoutError" ? `no answer within ${CFG.timeoutMs}ms` : errorMessage(e);
+    const timedOut = err.name === "TimeoutError";
+    // Node says only «fetch failed» and keeps the cause in cause.code; the code
+    // is what tells a dead DNS from a refused port from a reset, so it rides the text.
+    const code = errorCode(e);
+    const message = errorMessage(e);
+    const reason = timedOut
+      ? `no answer within ${CFG.timeoutMs}ms`
+      : code && !message.includes(code)
+        ? `${message} (${code})`
+        : message;
     // A connection that was never established carries nothing: the server never
     // saw the call. A timeout is the opposite — the request was on the wire and
-    // only the answer is missing, so the write may well have landed.
-    const code = errorCode(e);
+    // only the answer is missing, so the write may well have landed. Bun (the
+    // runtime OpenCode runs the bridge on) names both a refused port and an
+    // unknown host ConnectionRefused.
     const neverLeft =
-      err.name !== "TimeoutError" &&
-      ["ECONNREFUSED", "ENOTFOUND", "EAI_AGAIN", "ERR_SOCKET_BAD_PORT"].includes(code ?? "");
+      !timedOut &&
+      [
+        "ECONNREFUSED",
+        "ENOTFOUND",
+        "EAI_AGAIN",
+        "ERR_SOCKET_BAD_PORT",
+        "ConnectionRefused",
+      ].includes(code ?? "");
+    // A timeout already spent the whole deadline: repeating it multiplies the
+    // wait, so only a connection that failed outright is worth another knock.
     throw new UpstreamError(
       `upstream unreachable: ${reason}`,
       "network",
       null,
       neverLeft ? UpstreamError.NOT_SENT : UpstreamError.UNKNOWN,
+      !timedOut,
     );
   }
   noteServerDate(res);
@@ -188,7 +206,13 @@ export async function post(
         }
       }
     } catch (e) {
-      throw new UpstreamError(`upstream stream broke mid-response: ${errorMessage(e)}`, "network");
+      throw new UpstreamError(
+        `upstream stream broke mid-response: ${errorMessage(e)}`,
+        "network",
+        null,
+        UpstreamError.UNKNOWN,
+        true,
+      );
     }
     return;
   }

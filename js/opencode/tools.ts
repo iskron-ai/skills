@@ -18,7 +18,15 @@
 // тулов нужен ДО того, как сессия начнётся. Первый мост поднимается тут же и
 // отдаёт список (ограниченное ожидание; не успел — список из кэша рядом с
 // грантом), а затем достаётся первой сессии, которая позовёт тул.
-import { accessSync, constants, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  accessSync,
+  constants,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -86,9 +94,52 @@ export function findBridge(): { path: string | null; tried: string[] } {
   return { path: null, tried };
 }
 
+function authDir(): string {
+  return process.env.ISKRON_BRIDGE_AUTH_DIR || join(homedir(), ".iskron-bridge");
+}
+
 function cachePath(): string {
-  const auth = process.env.ISKRON_BRIDGE_AUTH_DIR || join(homedir(), ".iskron-bridge");
-  return join(auth, "opencode-tools.json");
+  return join(authDir(), "opencode-tools.json");
+}
+
+/**
+ * Отпечаток гранта — хранилища моста рядом с кэшем тулов. Сменился — человек
+ * вошёл, и рукопожатие стоит повторить. Раньше не повторяется: вопрос к мосту
+ * без гранта после конца его входа открыл бы человеку браузер заново.
+ */
+function grantStamp(): string {
+  const dir = authDir();
+  try {
+    return readdirSync(dir)
+      .filter((f) => f.endsWith(".json") && f !== "opencode-tools.json")
+      .map((f) => `${f}:${statSync(join(dir, f)).mtimeMs}`)
+      .sort()
+      .join("|");
+  } catch {
+    return "";
+  }
+}
+
+const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
+/** Ожидание, которое отмена вызова обрывает. */
+function abortable<T>(p: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return p;
+  if (signal.aborted) return Promise.reject(new Error("вызов отменён"));
+  return new Promise<T>((res, rej) => {
+    const onAbort = () => rej(new Error("вызов отменён"));
+    signal.addEventListener("abort", onAbort, { once: true });
+    p.then(
+      (v) => {
+        signal.removeEventListener("abort", onAbort);
+        res(v);
+      },
+      (e: unknown) => {
+        signal.removeEventListener("abort", onAbort);
+        rej(e instanceof Error ? e : new Error(String(e)));
+      },
+    );
+  });
 }
 
 function readCache(): any[] | null {
@@ -115,9 +166,8 @@ function loginUrlOf(message: string): string | null {
 }
 
 /**
- * Рукопожатие. Отказ «нужен вход» переспрашивается, пока грант не ляжет в
- * хранилище: мост отвечает на каждый такой вопрос сразу, а вход ждёт его
- * фоном. Потолок — HANDSHAKE_MS на всё.
+ * Рукопожатие. На отказ «нужен вход» мост отвечает сразу, а вход ждёт фоном;
+ * рукопожатие повторяется, когда грант ляжет в хранилище. Потолок — HANDSHAKE_MS.
  */
 async function handshake(
   b: Bridge,
@@ -127,6 +177,7 @@ async function handshake(
   const deadline = Date.now() + HANDSHAKE_MS;
   let waited = false;
   for (;;) {
+    const stamp = grantStamp();
     try {
       await b.request(
         "initialize",
@@ -140,10 +191,13 @@ async function handshake(
       break;
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
-      if (!AUTH_PENDING.test(message) || Date.now() + AUTH_POLL_MS > deadline) throw e;
+      if (!AUTH_PENDING.test(message)) throw e;
       waited = true;
       onLogin(loginUrlOf(message));
-      await new Promise((r) => setTimeout(r, AUTH_POLL_MS));
+      while (grantStamp() === stamp) {
+        if (Date.now() + AUTH_POLL_MS > deadline) throw e;
+        await sleep(AUTH_POLL_MS);
+      }
     }
   }
   if (waited) onLoggedIn();
@@ -190,14 +244,16 @@ export async function setupTools(
   let spare: Slot | null = null;
 
   // Человек в браузере: сказать один раз на вход, и загрузка перестаёт гадать
-  // по часам. Вход кончился — следующий (грант умер посреди работы) скажется снова.
+  // по часам. Вход кончился или мост открыл новый (другая ссылка) — скажется снова.
   let loginPending = false;
+  let loginUrl: string | null = null;
   let loginSeen: () => void = () => {};
   const loginStarted = new Promise<void>((r) => (loginSeen = r));
   function onLogin(url: string | null): void {
     loginSeen();
-    if (loginPending) return;
+    if (loginPending && url === loginUrl) return;
     loginPending = true;
+    loginUrl = url;
     say(
       `Искрон: нужен вход — ${url ? `открой ${url} и заверши его` : "заверши его в браузере"}; ` +
         `мост ждёт до ${Math.round(HANDSHAKE_MS / 60_000)} мин, тулы iskron_* поднимутся после.`,
@@ -225,9 +281,27 @@ export async function setupTools(
       },
     );
     slot.bridge.start();
-    slot.ready = handshake(slot.bridge, onLogin, () => (loginPending = false));
-    slot.ready.catch(() => {});
+    shake(slot);
     return slot;
+  }
+
+  function shake(slot: Slot): void {
+    slot.ready = handshake(slot.bridge, onLogin, () => {
+      loginPending = false;
+      loginUrl = null;
+    });
+    slot.ready.catch(() => {});
+  }
+
+  /** Рукопожатие слота. Упавшее повторяется на следующем вызове; отмена вызова его не ждёт. */
+  async function readyFor(slot: Slot, signal?: AbortSignal): Promise<void> {
+    try {
+      await abortable(slot.ready, signal);
+    } catch (e) {
+      if (signal?.aborted) throw e;
+      shake(slot);
+      await abortable(slot.ready, signal);
+    }
   }
 
   /** Мост корневой сессии: первый раз — запасной с загрузки, дальше свой. */
@@ -308,7 +382,7 @@ export async function setupTools(
       args: argsFrom(t.inputSchema),
       async execute(args, ctx) {
         const slot = await slotFor(ctx.sessionID);
-        await slot.ready; // тулы из кэша ждут, пока мост ответит на рукопожатие
+        await readyFor(slot, ctx.abort); // тулы из кэша ждут, пока мост ответит на рукопожатие
         const result = await slot.bridge.request(
           "tools/call",
           { name, arguments: args ?? {} },

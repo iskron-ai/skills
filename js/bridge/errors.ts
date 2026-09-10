@@ -21,16 +21,22 @@ export class UpstreamError extends Error {
   // had applied, and the retry advised by that sentence collided with its own
   // first write.
   outcome: Outcome;
+  // `retryable` marks a network failure worth another knock from the bridge
+  // itself: a connection that failed outright. A timeout is not — it already
+  // spent the whole deadline, and repeating it multiplies the wait.
+  retryable: boolean;
   constructor(
     message: string,
     kind: UpstreamKind,
     presented: string | null = null,
     outcome: Outcome = UNKNOWN,
+    retryable = false,
   ) {
     super(message);
     this.kind = kind;
     this.presented = presented;
     this.outcome = outcome;
+    this.retryable = retryable;
   }
 }
 

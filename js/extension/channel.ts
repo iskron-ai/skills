@@ -28,10 +28,11 @@ export function setupChannel(pi: ExtensionAPI): (params: any) => void {
     ctxRef = null;
   });
 
-  function loud(text: string) {
-    if (ctxRef?.hasUI) ctxRef.ui.notify(text, "error");
+  // fatal — держание кончилось (мёртвый токен); без него — слово в ход, держание идёт.
+  function loud(text: string, fatal = true) {
+    if (ctxRef?.hasUI) ctxRef.ui.notify(text, fatal ? "error" : "warning");
     pi.sendMessage(
-      { customType: "iskron-channel", content: text, display: true, details: { fatal: true } },
+      { customType: "iskron-channel", content: text, display: true, details: { fatal } },
       { triggerTurn: true, deliverAs: "steer" },
     );
   }
@@ -74,7 +75,11 @@ export function setupChannel(pi: ExtensionAPI): (params: any) => void {
         );
         return;
       case "alive":
-        loud(`Искрон: обрывы, а служба отвечает (${ev.version ?? ""}) — спроси о токене.`);
+        loud(
+          `Искрон: сокет рвут, а служба отвечает (${ev.version ?? ""}) — мост держит место и переоткрывает реже; ` +
+            "не пройдёт — спроси о токене.",
+          false,
+        );
         return;
       case "note":
         if (ctxRef?.hasUI && ev.text) ctxRef.ui.notify(`Искрон: ${ev.text}`, "warning");

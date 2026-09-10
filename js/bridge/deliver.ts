@@ -13,6 +13,7 @@ import { absorbChannelReply, absorbRevokeReply, localStatus } from "./hold.ts";
 import { annotateToolList } from "./moment.ts";
 import { isStandCall, runStand } from "./stand.ts";
 import { ensureStanding, isUnattributed, noteStanding, replyText } from "./standing.ts";
+import { loadServerCache, saveServerCache } from "./store.ts";
 import { emit, log } from "./streams.ts";
 import { currentAccessToken, post, reinitialize, state } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
@@ -75,6 +76,41 @@ export function syntheticError(
   };
 }
 
+// Сеть моргнула — мост стучит ещё раз сам, с растущей паузой, прежде чем
+// отдать сбой агенту (граф nks-dev: #4664). Не дошедший вызов повторяется
+// всегда; дошедший и потерявший ответ — только чтение: запись без ограды
+// версии легла бы второй раз.
+const NET_BACKOFF_MS = (process.env.ISKRON_BRIDGE_NET_BACKOFF_MS || "1000,2000,4000")
+  .split(",")
+  .map(Number)
+  .filter((n) => Number.isFinite(n) && n >= 0);
+const READ_TOOLS = new Set([
+  "iskron_look",
+  "iskron_orient",
+  "iskron_search",
+  "iskron_semantic_search",
+]);
+
+function isRead(msg: JsonRpcMessage): boolean {
+  if (msg?.method === "initialize" || msg?.method === "tools/list") return true;
+  return msg?.method === "tools/call" && READ_TOOLS.has(String(msg.params?.name ?? ""));
+}
+
+// Сеть легла на рукопожатии или на списке тулов: харнес, получивший здесь
+// отказ, считает сервер упавшим до перезапуска. Последний ответ сервера лежит
+// рядом с грантом — мост отвечает им, а сессия откроется, когда сеть вернётся:
+// следующий вызов без сессии переинициализируется сам.
+function offlineAnswer(msg: JsonRpcMessage): JsonRpcMessage | null {
+  const cache = loadServerCache();
+  const result =
+    msg?.method === "initialize"
+      ? cache.init
+      : msg?.method === "tools/list" && !msg.params?.cursor
+        ? cache.tools
+        : null;
+  return result ? { jsonrpc: "2.0", id: msg.id, result } : null;
+}
+
 /** Строка отставания поставки — один раз за сессию, в первый же ответ тула: агент передаст её человеку. */
 function withNotice(reply: JsonRpcMessage): JsonRpcMessage {
   const content = reply?.result?.content;
@@ -100,6 +136,7 @@ export async function deliver(msg: JsonRpcMessage): Promise<void> {
   const hasId = msg?.id !== undefined && msg?.id !== null;
   let authRetried = false;
   let sessionRetried = false;
+  let netTries = 0;
   // Across retries the honest verdict is the worst one seen: an attempt that
   // went out with a lost answer is not undone by a later attempt that never left.
   let outcome: Outcome = UpstreamError.NOT_SENT;
@@ -121,6 +158,11 @@ export async function deliver(msg: JsonRpcMessage): Promise<void> {
     }
     if (m.id === msg.id) noteStanding(msg, m);
     if (m.id === msg.id && msg.method === "tools/list") annotateToolList(m);
+    if (m.id === msg.id && m.result) {
+      if (isInit) saveServerCache({ init: m.result });
+      else if (msg.method === "tools/list" && !msg.params?.cursor)
+        saveServerCache({ tools: m.result });
+    }
     if (isToolCall && hasId && m.id === msg.id) {
       heldReply = m;
       return;
@@ -187,6 +229,18 @@ export async function deliver(msg: JsonRpcMessage): Promise<void> {
       return;
     } catch (e) {
       note(e);
+      if (
+        e instanceof UpstreamError &&
+        e.kind === "network" &&
+        e.retryable &&
+        netTries < NET_BACKOFF_MS.length &&
+        (e.outcome === UpstreamError.NOT_SENT || isRead(msg))
+      ) {
+        const pause = NET_BACKOFF_MS[netTries++];
+        log(`${e.message} — knocking again in ${pause}ms (${netTries}/${NET_BACKOFF_MS.length})`);
+        await new Promise((r) => setTimeout(r, pause));
+        continue;
+      }
       if (e instanceof UpstreamError && e.kind === "auth" && !authRetried) {
         authRetried = true;
         try {
@@ -236,6 +290,14 @@ export async function deliver(msg: JsonRpcMessage): Promise<void> {
               syntheticError(msg.id, `session recovery failed: ${errorMessage(reErr)}`, outcome),
             );
           }
+          return;
+        }
+      }
+      if (e instanceof UpstreamError && e.kind === "network" && hasId) {
+        const cached = offlineAnswer(msg);
+        if (cached) {
+          log(`${e.message} — ${msg.method} answered from the last server answer`);
+          emit(cached);
           return;
         }
       }

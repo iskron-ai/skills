@@ -1,4 +1,5 @@
 // js/shared/channel.ts
+var FLAP_PAUSES_MS = (process.env.ISKRON_CHANNEL_FLAP_MS || "5000,10000,20000,40000,60000").split(",").map(Number).filter((n) => Number.isFinite(n) && n > 0);
 function classifyOrigin(frame, myKarta) {
   const p = frame.provenance ?? {};
   if (p.via === "platform" || p.auth === "none") return "platform";
@@ -103,7 +104,7 @@ function setupChannel(client, say) {
         case "alive":
           loud(
             session,
-            `Искрон: обрывы, а служба отвечает (${ev.version ?? ""}) — спроси о токене.`
+            `Искрон: сокет рвут, а служба отвечает (${ev.version ?? ""}) — мост держит место и переоткрывает реже; не пройдёт — спроси о токене.`
           );
           return;
         case "note":
@@ -117,7 +118,15 @@ function setupChannel(client, say) {
 }
 
 // js/opencode/tools.ts
-import { accessSync, constants, mkdirSync, readFileSync as readFileSync2, writeFileSync } from "node:fs";
+import {
+  accessSync,
+  constants,
+  mkdirSync,
+  readdirSync,
+  readFileSync as readFileSync2,
+  statSync,
+  writeFileSync
+} from "node:fs";
 import { homedir as homedir2 } from "node:os";
 import { join as join2, resolve } from "node:path";
 import { tool as tool2 } from "@opencode-ai/plugin";
@@ -353,9 +362,38 @@ function findBridge() {
   }
   return { path: null, tried };
 }
+function authDir() {
+  return process.env.ISKRON_BRIDGE_AUTH_DIR || join2(homedir2(), ".iskron-bridge");
+}
 function cachePath() {
-  const auth = process.env.ISKRON_BRIDGE_AUTH_DIR || join2(homedir2(), ".iskron-bridge");
-  return join2(auth, "opencode-tools.json");
+  return join2(authDir(), "opencode-tools.json");
+}
+function grantStamp() {
+  const dir = authDir();
+  try {
+    return readdirSync(dir).filter((f) => f.endsWith(".json") && f !== "opencode-tools.json").map((f) => `${f}:${statSync(join2(dir, f)).mtimeMs}`).sort().join("|");
+  } catch {
+    return "";
+  }
+}
+var sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+function abortable(p, signal) {
+  if (!signal) return p;
+  if (signal.aborted) return Promise.reject(new Error("вызов отменён"));
+  return new Promise((res, rej) => {
+    const onAbort = () => rej(new Error("вызов отменён"));
+    signal.addEventListener("abort", onAbort, { once: true });
+    p.then(
+      (v) => {
+        signal.removeEventListener("abort", onAbort);
+        res(v);
+      },
+      (e) => {
+        signal.removeEventListener("abort", onAbort);
+        rej(e instanceof Error ? e : new Error(String(e)));
+      }
+    );
+  });
 }
 function readCache() {
   try {
@@ -379,6 +417,7 @@ async function handshake(b, onLogin, onLoggedIn) {
   const deadline = Date.now() + HANDSHAKE_MS;
   let waited = false;
   for (; ; ) {
+    const stamp = grantStamp();
     try {
       await b.request(
         "initialize",
@@ -392,10 +431,13 @@ async function handshake(b, onLogin, onLoggedIn) {
       break;
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
-      if (!AUTH_PENDING.test(message) || Date.now() + AUTH_POLL_MS > deadline) throw e;
+      if (!AUTH_PENDING.test(message)) throw e;
       waited = true;
       onLogin(loginUrlOf(message));
-      await new Promise((r) => setTimeout(r, AUTH_POLL_MS));
+      while (grantStamp() === stamp) {
+        if (Date.now() + AUTH_POLL_MS > deadline) throw e;
+        await sleep(AUTH_POLL_MS);
+      }
     }
   }
   if (waited) onLoggedIn();
@@ -431,13 +473,15 @@ async function setupTools(say, onChannel, rootOf) {
   const slots = /* @__PURE__ */ new Map();
   let spare = null;
   let loginPending = false;
+  let loginUrl = null;
   let loginSeen = () => {
   };
   const loginStarted = new Promise((r) => loginSeen = r);
   function onLogin(url) {
     loginSeen();
-    if (loginPending) return;
+    if (loginPending && url === loginUrl) return;
     loginPending = true;
+    loginUrl = url;
     say(
       `Искрон: нужен вход — ${url ? `открой ${url} и заверши его` : "заверши его в браузере"}; мост ждёт до ${Math.round(HANDSHAKE_MS / 6e4)} мин, тулы iskron_* поднимутся после.`,
       "warning"
@@ -463,10 +507,25 @@ async function setupTools(say, onChannel, rootOf) {
       }
     );
     slot.bridge.start();
-    slot.ready = handshake(slot.bridge, onLogin, () => loginPending = false);
+    shake(slot);
+    return slot;
+  }
+  function shake(slot) {
+    slot.ready = handshake(slot.bridge, onLogin, () => {
+      loginPending = false;
+      loginUrl = null;
+    });
     slot.ready.catch(() => {
     });
-    return slot;
+  }
+  async function readyFor(slot, signal) {
+    try {
+      await abortable(slot.ready, signal);
+    } catch (e) {
+      if (signal?.aborted) throw e;
+      shake(slot);
+      await abortable(slot.ready, signal);
+    }
   }
   async function slotFor(sessionID) {
     const root = await rootOf(sessionID);
@@ -536,7 +595,7 @@ async function setupTools(say, onChannel, rootOf) {
       args: argsFrom(t.inputSchema),
       async execute(args, ctx) {
         const slot = await slotFor(ctx.sessionID);
-        await slot.ready;
+        await readyFor(slot, ctx.abort);
         const result = await slot.bridge.request(
           "tools/call",
           { name, arguments: args ?? {} },

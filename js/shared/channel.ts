@@ -10,7 +10,8 @@
 //     переоткрытие: настоящий код приходит close-ом и может опоздать за
 //     догадкой 1006, которую даёт error;
 //   три быстрых обрыва спрашивают /version прежде, чем винить токен: служба
-//     жива, а нас рвёт — вопрос делателю; служба молчит — выкатка, держим токен.
+//     жива, а нас рвёт — слово делателю и переоткрытие реже, место не бросаем;
+//     служба молчит — выкатка, держим токен.
 
 /** Закрытия, после которых тем же токеном не переоткрываются. */
 export const DEAD_TOKEN_CODES = [4000, 4001, 4002];
@@ -19,6 +20,14 @@ export const ROLLOUT_CODE = 4003;
 
 const FAST_DROP_MS = 5000;
 const ERROR_GUESS_DELAY_MS = 500;
+/**
+ * Паузы переоткрытия, когда служба жива, а сокет рвут: растут до потолка и
+ * сбрасываются сокетом, прожившим дольше быстрого обрыва (граф nks-dev: #4664).
+ */
+const FLAP_PAUSES_MS = (process.env.ISKRON_CHANNEL_FLAP_MS || "5000,10000,20000,40000,60000")
+  .split(",")
+  .map(Number)
+  .filter((n) => Number.isFinite(n) && n > 0);
 
 /** Обе схемы: с одним `wss:` вопрос службе на ws-адресе не уходил вовсе. */
 function httpOrigin(socketUrl: string): string {
@@ -102,7 +111,7 @@ export interface HoldOptions {
   onFrame: (raw: string, frame: Frame | null) => void;
   /** Мёртвый токен: держание кончилось, тем же токеном не вернуться. Зовётся один раз. */
   onDeadToken: (code: number) => void;
-  /** Обрывы при живой службе: держание кончилось, вопрос о токене — делателю. Один раз. */
+  /** Обрывы при живой службе: держание идёт реже, вопрос о токене — делателю. Раз на полосу обрывов. */
   onServiceAlive: (version: string) => void;
   /** Служебные слова, которые будить не должны. */
   onNote?: (text: string) => void;
@@ -123,6 +132,7 @@ export interface Holder {
  */
 export function holdSocket(o: HoldOptions): Holder {
   let fastDrops = 0;
+  let slowdown = 0; // сколько пауз подряд служба жива, а сокет рвут
   let dead = false;
   let stopped = false;
   let retry: ReturnType<typeof setTimeout> | null = null;
@@ -171,15 +181,21 @@ export function holdSocket(o: HoldOptions): Holder {
       }
       if (gone) return;
       gone = true;
-      fastDrops = Date.now() - startedAt < FAST_DROP_MS ? fastDrops + 1 : 0;
+      const fast = Date.now() - startedAt < FAST_DROP_MS;
+      fastDrops = fast ? fastDrops + 1 : 0;
+      if (!fast) slowdown = 0; // сокет прожил — полоса обрывов кончилась
       if (fastDrops >= 3) {
         const up = await serviceUp(o.url);
         if (stopped || ws !== sock) return;
         if (up) {
-          // Служба жива, а нас рвёт: переоткрывать нечего, и уйти молча нельзя —
-          // делатель остался бы с виду слышимым.
-          stopped = true;
-          o.onServiceAlive(String(up.version ?? ""));
+          // Служба жива, а нас рвёт. Бросить место нельзя — грант жив, и сеть
+          // может вернуться; молчать тоже — делатель остался бы с виду слышимым.
+          // Слово — один раз на полосу обрывов, переоткрытие — всё реже.
+          if (slowdown === 0) o.onServiceAlive(String(up.version ?? ""));
+          const wait = FLAP_PAUSES_MS[Math.min(slowdown, FLAP_PAUSES_MS.length - 1)] ?? 60_000;
+          slowdown++;
+          fastDrops = 2; // следующий быстрый обрыв снова спросит службу, но не делателя
+          retry = setTimeout(open, wait);
           return;
         }
         o.onNote?.("служба не отвечает — идёт раскатка, держу тот же токен");

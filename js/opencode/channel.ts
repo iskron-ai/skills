@@ -87,7 +87,8 @@ export function setupChannel(client: Client, say: Say): Channel {
         case "alive":
           loud(
             session,
-            `Искрон: обрывы, а служба отвечает (${ev.version ?? ""}) — спроси о токене.`,
+            `Искрон: сокет рвут, а служба отвечает (${ev.version ?? ""}) — мост держит место и переоткрывает реже; ` +
+              "не пройдёт — спроси о токене.",
           );
           return;
         case "note":

@@ -60,6 +60,40 @@ export function saveStore(patch: Partial<Store>): Store {
   return next;
 }
 
+// The server's last answers to the handshake and to the tools list, next to the
+// grant: a bridge started with the network down answers the harness with them
+// instead of failing the handshake. Tokens never go in here.
+export interface ServerCache {
+  init?: unknown;
+  tools?: unknown;
+}
+
+// Not a *.json name: the grant store is the one .json per server in the auth
+// dir, and whoever looks for it (a probe, a doctor, a plugin watching for the
+// grant) must not find the answers cache instead.
+export function serverCachePath(): string {
+  return storePath() + ".server-answers";
+}
+
+export function loadServerCache(): ServerCache {
+  try {
+    return JSON.parse(readFileSync(serverCachePath(), "utf8")) as ServerCache;
+  } catch {
+    return {};
+  }
+}
+
+export function saveServerCache(patch: ServerCache): void {
+  try {
+    mkdirSync(CFG.authDir, { recursive: true, mode: 0o700 });
+    const tmp = `${serverCachePath()}.tmp-${process.pid}`;
+    writeFileSync(tmp, JSON.stringify({ ...loadServerCache(), ...patch }), { mode: 0o600 });
+    renameSync(tmp, serverCachePath());
+  } catch {
+    /* кэш — удобство, не обязательство */
+  }
+}
+
 // A short machine-wide record of what the grant has been doing. Its whole point
 // is that the next surprise login can be explained after the fact: a bridge's
 // stderr belongs to whichever harness happened to spawn it and is usually gone

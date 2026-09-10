@@ -157,6 +157,12 @@ export async function startFakeNks(opts = {}) {
     const u = new URL(req.url, base);
     const p = u.pathname;
 
+    // Службу спрашивают о версии, когда сокет рвут: отвечает — служба жива.
+    // Молчит по умолчанию (404), как на выкатке; /control {versionUp:true} её поднимает.
+    if (p === "/api/version") {
+      return st.versionUp ? json(res, 200, { version: "fake-9" }) : json(res, 404, {});
+    }
+
     if (p.startsWith("/channel/status/") && req.method === "POST") {
       const { text } = JSON.parse((await body(req)) || "{}");
       if (typeof text !== "string" || [...text].length > 70) {
@@ -184,6 +190,7 @@ export async function startFakeNks(opts = {}) {
       }
       for (const k of [
         "richTools",
+        "versionUp",
         "refreshStatus",
         "refreshError",
         "refreshMessage",

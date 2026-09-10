@@ -42,6 +42,25 @@ import { debug, flushStdout, guardStream, log } from "./streams.ts";
 import { type JsonRpcMessage } from "./types.ts";
 import { startFreshnessWatch } from "./update.ts";
 
+// Прокси корпоративной сети: Bun читает HTTP(S)_PROXY сам, Node — только с
+// 24.5 и под NODE_USE_ENV_PROXY=1 (граф nks-dev: #4717, развилка для Node 22 —
+// #4718). Идти мимо заданного прокси молча — значит упираться в сетевой отказ
+// без причины, поэтому мост говорит рычаг на старте.
+export function proxyWord(): string | null {
+  const env = process.env;
+  const proxy = env.HTTPS_PROXY || env.https_proxy || env.HTTP_PROXY || env.http_proxy;
+  if (!proxy || process.versions.bun) return null;
+  const [major = 0, minor = 0] = process.versions.node.split(".").map(Number);
+  const reads = major > 24 || (major === 24 && minor >= 5);
+  const on = env.NODE_USE_ENV_PROXY === "1" || process.execArgv.includes("--use-env-proxy");
+  if (reads && on) return null;
+  return reads
+    ? "a proxy is set (HTTP(S)_PROXY), but Node reads it only under NODE_USE_ENV_PROXY=1 — " +
+        "add that variable to the bridge's env in the harness config; until then calls go around the proxy"
+    : `a proxy is set (HTTP(S)_PROXY), but Node ${process.versions.node} does not read it at all — ` +
+        "Node 24.5+ with NODE_USE_ENV_PROXY=1 or the Bun runtime does; until then calls go around the proxy";
+}
+
 export function bridgeMain(argv: string[]): void {
   guardStream(process.stdout); // before the first write: a broken pipe is news, not a crash
   guardStream(process.stderr);
@@ -53,6 +72,8 @@ export function bridgeMain(argv: string[]): void {
       CFG.pat ? `personal access token from ${CFG.patSource}` : `auth in ${storePath()}`
     })`,
   );
+  const proxy = proxyWord();
+  if (proxy) log(proxy);
   startTokenKeepalive();
   startFreshnessWatch(CFG.authDir, CFG.serverUrl); // отставание поставки — слово моста, не память человека
   holdFromEnv(); // отладочный путь: сокет из окружения, без connect

@@ -58,8 +58,10 @@ export function runWatchdog(argv: string[]): void {
           log(ev.text ?? "");
           break;
         case "dead":
-        case "alive":
           loudExit(ev.text ?? "ДЕЛАТЕЛЬ: стояние потеряно", 1);
+          break;
+        case "alive":
+          log(ev.text ?? "ДЕЛАТЕЛЬ: сокет рвут, а служба отвечает — мост держит место"); // держание идёт, сторож слушает дальше
           break;
         case "released":
           log(`мост отпустил сокет: ${ev.text ?? ""}`);
