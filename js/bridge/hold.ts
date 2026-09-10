@@ -288,12 +288,13 @@ function holdStanding(url: string, statusUrl?: string | null): string {
       releaseStanding("токен мёртв");
     },
     onServiceAlive: (version) => {
-      const text = `ДЕЛАТЕЛЬ: обрывы, а служба отвечает (${version}) — спроси о токене`;
+      const text =
+        `ДЕЛАТЕЛЬ: сокет рвут, а служба отвечает (${version}) — место держу, переоткрываю реже; ` +
+        "не пройдёт — спроси о токене";
       log(text);
       const ev: ChannelEvent = { kind: "alive", version, text };
       broadcast(ev);
-      notify("error", ev);
-      releaseStanding("обрывы при живой службе");
+      notify("warning", ev);
     },
     onNote: (text) => {
       log(text);

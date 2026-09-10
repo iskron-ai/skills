@@ -240,6 +240,42 @@ test("a dead-token close leaves the watchdog loudly and reaches the harness as a
   );
 });
 
+// Drops against a live service used to end the holding: the place was thrown
+// away while the grant was alive (graph nks-dev: #4664). Now the bridge keeps
+// it, reopens slower, and says so once; the Monitor watchdog stays attached.
+test("drops against a live service keep the place: the bridge reopens, the watchdog stays and prints the word", async (t) => {
+  process.env.ISKRON_CHANNEL_FLAP_MS = "300,600";
+  t.after(() => delete process.env.ISKRON_CHANNEL_FLAP_MS);
+  const { fake, dir, bridge, key, standings } = await connected(t);
+  await fake.control({ versionUp: true });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog", dir, key, 30_000);
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
+  const told = () => bridge.notifications.some((n) => n.params?.data?.kind === "alive");
+  const current = () => [...fake.state.ws].at(-1) ?? null;
+  // The first socket may already be older than a fast drop; up to five closes.
+  // Each round closes the newest socket and waits for the bridge to open another.
+  let prev = current();
+  for (let i = 0; i < 5 && !told(); i++) {
+    await fake.control({ ws_close: 1011 });
+    await waitFor(
+      () => told() || (current() && current() !== prev),
+      `the bridge to reopen after close ${i + 1}`,
+    );
+    prev = current();
+  }
+  await waitFor(told, "the word to the doer");
+  await waitFor(() => current() && current() !== prev, "the bridge to reopen after the pause");
+  assert.ok(
+    readdirSync(standings).some((f) => f.endsWith(".sock")),
+    "the local socket must stay: the place is kept",
+  );
+  await waitFor(() => /служба отвечает/.test(wd.out), "the watchdog to print the word");
+  assert.equal(wd.proc.exitCode, null, "the watchdog must stay attached — the holding goes on");
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
 test("connect under a new name re-keys the hold: the block and the key file follow the name", async (t) => {
   const { fake, bridge, standings } = await connected(t);
   await waitFor(() => fake.state.ws.size === 1, "the first socket");

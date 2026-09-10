@@ -18,7 +18,15 @@
 // тулов нужен ДО того, как сессия начнётся. Первый мост поднимается тут же и
 // отдаёт список (ограниченное ожидание; не успел — список из кэша рядом с
 // грантом), а затем достаётся первой сессии, которая позовёт тул.
-import { accessSync, constants, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  accessSync,
+  constants,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -33,6 +41,14 @@ import { argsFrom } from "./schema.ts";
 const READY_WAIT_MS = Number(process.env.ISKRON_MCP_READY_WAIT_MS || 20000);
 /** Потолок самого рукопожатия. Щедрый: первый запуск может увести человека в браузер. */
 const HANDSHAKE_MS = Number(process.env.ISKRON_MCP_HANDSHAKE_MS || 600000);
+/** Как часто переспрашивать мост, пока человек входит в браузере. */
+const AUTH_POLL_MS = Number(process.env.ISKRON_MCP_AUTH_POLL_MS || 2000);
+/**
+ * Отказ моста без гранта. Это не поломка, а вход в процессе: мост открыл
+ * браузер и слушает колбэк на loopback, погасить его — убить вход человека
+ * (граф nks-dev: #4712).
+ */
+const AUTH_PENDING = /authorization required/i;
 /** Мост сессии, которая давно молчит и ничего не держит, отпускается. */
 const IDLE_MS = Number(process.env.ISKRON_BRIDGE_IDLE_MS || 30 * 60_000);
 const PROTOCOL = "2025-06-18";
@@ -78,9 +94,52 @@ export function findBridge(): { path: string | null; tried: string[] } {
   return { path: null, tried };
 }
 
+function authDir(): string {
+  return process.env.ISKRON_BRIDGE_AUTH_DIR || join(homedir(), ".iskron-bridge");
+}
+
 function cachePath(): string {
-  const auth = process.env.ISKRON_BRIDGE_AUTH_DIR || join(homedir(), ".iskron-bridge");
-  return join(auth, "opencode-tools.json");
+  return join(authDir(), "opencode-tools.json");
+}
+
+/**
+ * Отпечаток гранта — хранилища моста рядом с кэшем тулов. Сменился — человек
+ * вошёл, и рукопожатие стоит повторить. Раньше не повторяется: вопрос к мосту
+ * без гранта после конца его входа открыл бы человеку браузер заново.
+ */
+function grantStamp(): string {
+  const dir = authDir();
+  try {
+    return readdirSync(dir)
+      .filter((f) => f.endsWith(".json") && f !== "opencode-tools.json")
+      .map((f) => `${f}:${statSync(join(dir, f)).mtimeMs}`)
+      .sort()
+      .join("|");
+  } catch {
+    return "";
+  }
+}
+
+const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
+/** Ожидание, которое отмена вызова обрывает. */
+function abortable<T>(p: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return p;
+  if (signal.aborted) return Promise.reject(new Error("вызов отменён"));
+  return new Promise<T>((res, rej) => {
+    const onAbort = () => rej(new Error("вызов отменён"));
+    signal.addEventListener("abort", onAbort, { once: true });
+    p.then(
+      (v) => {
+        signal.removeEventListener("abort", onAbort);
+        res(v);
+      },
+      (e: unknown) => {
+        signal.removeEventListener("abort", onAbort);
+        rej(e instanceof Error ? e : new Error(String(e)));
+      },
+    );
+  });
 }
 
 function readCache(): any[] | null {
@@ -101,16 +160,47 @@ function writeCache(tools: any[]): void {
   }
 }
 
-async function handshake(b: Bridge): Promise<void> {
-  await b.request(
-    "initialize",
-    {
-      protocolVersion: PROTOCOL,
-      capabilities: {},
-      clientInfo: { name: "opencode-iskron", version: "1" },
-    },
-    { timeoutMs: HANDSHAKE_MS },
-  );
+/** Ссылка входа из отказа моста, если он её назвал. */
+function loginUrlOf(message: string): string | null {
+  return /open in a browser: (\S+)/.exec(message)?.[1] ?? null;
+}
+
+/**
+ * Рукопожатие. На отказ «нужен вход» мост отвечает сразу, а вход ждёт фоном;
+ * рукопожатие повторяется, когда грант ляжет в хранилище. Потолок — HANDSHAKE_MS.
+ */
+async function handshake(
+  b: Bridge,
+  onLogin: (url: string | null) => void,
+  onLoggedIn: () => void,
+): Promise<void> {
+  const deadline = Date.now() + HANDSHAKE_MS;
+  let waited = false;
+  for (;;) {
+    const stamp = grantStamp();
+    try {
+      await b.request(
+        "initialize",
+        {
+          protocolVersion: PROTOCOL,
+          capabilities: {},
+          clientInfo: { name: "opencode-iskron", version: "1" },
+        },
+        { timeoutMs: Math.max(1, deadline - Date.now()) },
+      );
+      break;
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      if (!AUTH_PENDING.test(message)) throw e;
+      waited = true;
+      onLogin(loginUrlOf(message));
+      while (grantStamp() === stamp) {
+        if (Date.now() + AUTH_POLL_MS > deadline) throw e;
+        await sleep(AUTH_POLL_MS);
+      }
+    }
+  }
+  if (waited) onLoggedIn();
   b.notify("notifications/initialized");
 }
 
@@ -153,6 +243,24 @@ export async function setupTools(
   const slots = new Map<string, Slot>();
   let spare: Slot | null = null;
 
+  // Человек в браузере: сказать один раз на вход, и загрузка перестаёт гадать
+  // по часам. Вход кончился или мост открыл новый (другая ссылка) — скажется снова.
+  let loginPending = false;
+  let loginUrl: string | null = null;
+  let loginSeen: () => void = () => {};
+  const loginStarted = new Promise<void>((r) => (loginSeen = r));
+  function onLogin(url: string | null): void {
+    loginSeen();
+    if (loginPending && url === loginUrl) return;
+    loginPending = true;
+    loginUrl = url;
+    say(
+      `Искрон: нужен вход — ${url ? `открой ${url} и заверши его` : "заверши его в браузере"}; ` +
+        `мост ждёт до ${Math.round(HANDSHAKE_MS / 60_000)} мин, тулы iskron_* поднимутся после.`,
+      "warning",
+    );
+  }
+
   function spawn(): Slot {
     const slot: Slot = {
       bridge: null as unknown as Bridge,
@@ -173,9 +281,27 @@ export async function setupTools(
       },
     );
     slot.bridge.start();
-    slot.ready = handshake(slot.bridge);
-    slot.ready.catch(() => {});
+    shake(slot);
     return slot;
+  }
+
+  function shake(slot: Slot): void {
+    slot.ready = handshake(slot.bridge, onLogin, () => {
+      loginPending = false;
+      loginUrl = null;
+    });
+    slot.ready.catch(() => {});
+  }
+
+  /** Рукопожатие слота. Упавшее повторяется на следующем вызове; отмена вызова его не ждёт. */
+  async function readyFor(slot: Slot, signal?: AbortSignal): Promise<void> {
+    try {
+      await abortable(slot.ready, signal);
+    } catch (e) {
+      if (signal?.aborted) throw e;
+      shake(slot);
+      await abortable(slot.ready, signal);
+    }
   }
 
   /** Мост корневой сессии: первый раз — запасной с загрузки, дальше свой. */
@@ -210,6 +336,7 @@ export async function setupTools(
       },
       () => {},
     ),
+    loginStarted,
     new Promise<void>((r) => setTimeout(r, READY_WAIT_MS).unref?.()),
   ]);
 
@@ -217,9 +344,17 @@ export async function setupTools(
   if (!listed) {
     listed = readCache();
     source = "из прошлого списка";
+    if (!listed && loginPending) {
+      // Прошлого списка нет, а человек в браузере: погасить мост сейчас — убить
+      // колбэк его входа. Загрузка ждёт вход (потолок — само рукопожатие).
+      listed = await listing.catch(() => null);
+      source = "с сервера, после входа";
+    }
     if (!listed) {
       say(
-        `Искрон: мост не ответил за ${Math.round(READY_WAIT_MS / 1000)} с и прошлого списка тулов нет — ` +
+        (loginPending
+          ? `Искрон: вход не завершён за ${Math.round(HANDSHAKE_MS / 60_000)} мин и прошлого списка тулов нет — `
+          : `Искрон: мост не ответил за ${Math.round(READY_WAIT_MS / 1000)} с и прошлого списка тулов нет — `) +
           "тулов iskron_* не будет до перезапуска OpenCode. Проверь `node ~/.iskron-bridge/iskron-bridge.mjs doctor`.",
         "error",
       );
@@ -247,7 +382,7 @@ export async function setupTools(
       args: argsFrom(t.inputSchema),
       async execute(args, ctx) {
         const slot = await slotFor(ctx.sessionID);
-        await slot.ready; // тулы из кэша ждут, пока мост ответит на рукопожатие
+        await readyFor(slot, ctx.abort); // тулы из кэша ждут, пока мост ответит на рукопожатие
         const result = await slot.bridge.request(
           "tools/call",
           { name, arguments: args ?? {} },

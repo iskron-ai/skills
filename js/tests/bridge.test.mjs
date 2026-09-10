@@ -8,6 +8,7 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { createServer as createHttpsServer } from "node:https";
 import { connect, createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -2109,4 +2110,346 @@ test("a pipelining client that does not wait for initialize is still served, in 
       `tools/list must be served after the handshake, not refused: ${JSON.stringify(list.error)}`,
     );
   });
+});
+
+// --- a network that blinks ----------------------------------------------------
+// The bridge used to hand every network failure straight to the agent, and the
+// failure said only «fetch failed» (graph @nks/nks-dev, node #4664). A front
+// door on a port of its own stands between the bridge and the fake and plays
+// the network: shut (nothing listens — refused, the call never left), open
+// (bytes forwarded), reset (the request is read and the socket torn down — the
+// call left and its answer is lost).
+
+const pause = (ms) => new Promise((r) => setTimeout(r, ms));
+
+function freePort() {
+  return new Promise((resolve) => {
+    const s = createServer();
+    s.listen(0, "127.0.0.1", () => {
+      const { port } = s.address();
+      s.close(() => resolve(port));
+    });
+  });
+}
+
+async function frontDoor(targetUrl) {
+  const target = new URL(targetUrl);
+  const port = await freePort();
+  const socks = new Set();
+  const track = (s) => {
+    socks.add(s);
+    s.on("close", () => socks.delete(s));
+    s.on("error", () => {});
+  };
+  let server = null;
+  let mode = "shut";
+  const door = {
+    url: `http://127.0.0.1:${port}${target.pathname}`,
+    requests: 0,
+    async set(next) {
+      mode = next;
+      await door.close();
+      if (mode === "shut") return;
+      server = createServer((c) => {
+        track(c);
+        if (mode === "reset") {
+          c.once("data", () => {
+            door.requests++;
+            c.destroy();
+          });
+          return;
+        }
+        const up = connect(Number(target.port), target.hostname);
+        track(up);
+        up.on("error", () => c.destroy());
+        c.on("error", () => up.destroy());
+        c.pipe(up).pipe(c);
+      });
+      await new Promise((r) => server.listen(port, "127.0.0.1", r));
+    },
+    close() {
+      for (const s of socks) s.destroy();
+      socks.clear();
+      const srv = server;
+      server = null;
+      return srv ? new Promise((r) => srv.close(() => r())) : Promise.resolve();
+    },
+  };
+  return door;
+}
+
+test("an unreachable server is named by its cause, not by a bare «fetch failed»", async () => {
+  const port = await freePort();
+  const dir = mkdtempSync(join(tmpdir(), "iskron-bridge-test-"));
+  const bridge = startBridge(`http://127.0.0.1:${port}/mcp`, dir, {
+    ISKRON_BRIDGE_NET_BACKOFF_MS: "20,20,20",
+  });
+  try {
+    const answer = await bridge.call("initialize", 1, INIT_PARAMS);
+    assert.ok(answer.error, "nobody listens — the handshake must still be answered");
+    assert.match(
+      answer.error.message,
+      /ECONNREFUSED|ConnectionRefused/,
+      `the cause must ride the text: ${answer.error.message}`,
+    );
+    assert.match(
+      answer.error.message,
+      /never reached the server/,
+      "a refused connection applied nothing, on every runtime",
+    );
+  } finally {
+    await bridge.stop();
+  }
+});
+
+test("a server gone for a moment is knocked again by the bridge, and the call is served", async (t) => {
+  await withFake(t, { pat: "nks_pat_probe" }, async ({ fake, dir }) => {
+    const door = await frontDoor(fake.mcpUrl);
+    const bridge = startBridge(door.url, dir, {
+      ISKRON_BRIDGE_TOKEN: "nks_pat_probe",
+      ISKRON_BRIDGE_NET_BACKOFF_MS: "300,600,1200",
+    });
+    try {
+      const init = bridge.call("initialize", 1, INIT_PARAMS);
+      await pause(150);
+      await door.set("open");
+      const got = await init;
+      assert.ok(
+        got.result,
+        `a refused handshake must be knocked again, not handed back: ${JSON.stringify(got.error)}`,
+      );
+      bridge.send({ jsonrpc: "2.0", method: "notifications/initialized" });
+      await door.set("shut");
+      const list = bridge.call("tools/list", 2);
+      await pause(150);
+      await door.set("open");
+      const served = await list;
+      assert.ok(
+        Array.isArray(served.result?.tools),
+        `a read over a blinking network must be served: ${JSON.stringify(served.error)}`,
+      );
+    } finally {
+      await bridge.stop();
+      await door.close();
+    }
+  });
+});
+
+test("an answer lost on the wire: a read is asked again, a write goes out once", async (t) => {
+  await withFake(t, { pat: "nks_pat_probe" }, async ({ fake, dir }) => {
+    const door = await frontDoor(fake.mcpUrl);
+    await door.set("open");
+    const bridge = startBridge(door.url, dir, {
+      ISKRON_BRIDGE_TOKEN: "nks_pat_probe",
+      ISKRON_BRIDGE_NET_BACKOFF_MS: "300,600,1200",
+    });
+    try {
+      assert.ok((await bridge.call("initialize", 1, INIT_PARAMS)).result);
+      bridge.send({ jsonrpc: "2.0", method: "notifications/initialized" });
+      await pause(200); // the notification lands on the open door, not on the one below
+      await door.set("reset");
+      door.requests = 0;
+      const write = await bridge.call("tools/call", 2, {
+        name: "iskron_add_phenomenon",
+        arguments: { name: "probe" },
+      });
+      assert.match(
+        write.error?.message ?? "",
+        /OUTCOME IS UNKNOWN/,
+        "a write whose answer was lost must not be sent a second time",
+      );
+      assert.equal(door.requests, 1, "the write went out once and only once");
+      const read = bridge.call("tools/call", 3, { name: "iskron_orient", arguments: {} });
+      await pause(150);
+      await door.set("open");
+      const got = await read;
+      assert.ok(
+        !/upstream (unreachable|stream broke)/.test(JSON.stringify(got)),
+        `a read whose answer was lost is safe to ask again: ${JSON.stringify(got)}`,
+      );
+    } finally {
+      await bridge.stop();
+      await door.close();
+    }
+  });
+});
+
+test("a handshake with the network down is answered from the last server answer, and calls go through once it returns", async (t) => {
+  await withFake(t, { pat: "nks_pat_probe" }, async ({ fake, dir }) => {
+    const door = await frontDoor(fake.mcpUrl);
+    await door.set("open");
+    const env = { ISKRON_BRIDGE_TOKEN: "nks_pat_probe", ISKRON_BRIDGE_NET_BACKOFF_MS: "20,20,20" };
+    const first = startBridge(door.url, dir, env);
+    try {
+      assert.ok((await first.call("initialize", 1, INIT_PARAMS)).result);
+      first.send({ jsonrpc: "2.0", method: "notifications/initialized" });
+      assert.ok(Array.isArray((await first.call("tools/list", 2)).result?.tools));
+    } finally {
+      await first.stop();
+    }
+    await door.set("shut");
+    const second = startBridge(door.url, dir, env);
+    try {
+      const init = await second.call("initialize", 1, INIT_PARAMS);
+      assert.ok(
+        init.result?.protocolVersion,
+        `no network at the start must not fail the handshake: ${JSON.stringify(init.error)}`,
+      );
+      second.send({ jsonrpc: "2.0", method: "notifications/initialized" });
+      const list = await second.call("tools/list", 2);
+      assert.ok(
+        toolNames(list.result?.tools).length > 0,
+        `the last list must stand in for the server: ${JSON.stringify(list.error)}`,
+      );
+      const offline = await second.call("tools/call", 3, { name: "iskron_orient", arguments: {} });
+      assert.match(
+        offline.error?.message ?? "",
+        /never reached the server/,
+        "a call before the network returns is an honest «not sent»",
+      );
+      await door.set("open");
+      const online = await second.call("tools/call", 4, { name: "iskron_orient", arguments: {} });
+      assert.ok(
+        !/upstream unreachable/.test(JSON.stringify(online)),
+        `once the network returns the call goes through: ${JSON.stringify(online)}`,
+      );
+    } finally {
+      await second.stop();
+      await door.close();
+    }
+  });
+});
+
+// A corporate proxy the runtime will not read sends every call around it, and
+// the failure then says nothing about why (graph @nks/nks-dev, nodes #4717,
+// #4718). Node reads HTTP(S)_PROXY only from 24.5 and only under
+// NODE_USE_ENV_PROXY=1; Bun reads it itself, so under Bun there is nothing to say.
+test("a proxy the runtime will not read is named at start, with its lever", async (t) => {
+  if (process.env.ISKRON_NODE) return t.skip("the runtime under test may read the proxy itself");
+  const port = await freePort();
+  const dir = mkdtempSync(join(tmpdir(), "iskron-bridge-test-"));
+  const bridge = startBridge(`http://127.0.0.1:${port}/mcp`, dir, {
+    HTTPS_PROXY: "http://127.0.0.1:9",
+    NODE_USE_ENV_PROXY: "",
+  });
+  try {
+    await waitFor(() => /proxy is set/.test(bridge.stderr), "the proxy word on stderr", 5000);
+    assert.match(bridge.stderr, /NODE_USE_ENV_PROXY=1/, "the word must name the lever");
+  } finally {
+    await bridge.stop();
+  }
+});
+
+// --- a login that does not expire under the human ---------------------------
+// A login used to expire five minutes after it was published: the next call
+// opened a second tab, and the first tab — where the human came back — led to a
+// refused connection (graph @nks/nks-dev, node #4721). Now the login lives as
+// long as the bridge holding it; only a bridge its harness has left bounds the
+// wait, so nothing hangs forever.
+
+test("a bridge left by its harness mid-login waits for the click only so long, then goes", async (t) => {
+  await withFake(t, {}, async ({ spawnBridge }) => {
+    const bridge = spawnBridge({ ISKRON_BRIDGE_ORPHAN_FLOW_MS: "800" });
+    const pending = await bridge.call("initialize", 1, INIT_PARAMS);
+    assert.ok(authorizeUrlIn(pending.error?.message), "a login must be pending");
+    const gone = exited(bridge);
+    bridge.proc.stdin.end(); // the harness is gone
+    await Promise.race([gone, pause(4000)]);
+    assert.notEqual(
+      bridge.proc.exitCode,
+      null,
+      "an orphaned bridge must not hang on a login nobody is waiting for",
+    );
+  });
+});
+
+// Five real minutes: run with ISKRON_SLOW_PROBES=1 (against a past bridge too,
+// through ISKRON_BRIDGE_PATH, to see it red).
+test(
+  "a login is not taken back after five minutes: a later call joins it, and the old link lands",
+  { skip: !process.env.ISKRON_SLOW_PROBES && "five real minutes — set ISKRON_SLOW_PROBES=1" },
+  async (t) => {
+    await withFake(t, {}, async ({ dir, spawnBridge }) => {
+      const bridge = spawnBridge();
+      const first = authorizeUrlIn(
+        (await bridge.call("initialize", 1, INIT_PARAMS)).error?.message,
+      );
+      assert.ok(first, "a login must be pending");
+      await pause(310_000);
+      const again = authorizeUrlIn(
+        (await bridge.call("initialize", 2, INIT_PARAMS)).error?.message,
+      );
+      // A second login carries a new state, so a different link is a second tab.
+      assert.equal(again, first, "past five minutes a call must join the standing login");
+      const res = await fetch(first, { redirect: "follow" });
+      await res.text();
+      assert.equal(res.status, 200, "the first link, clicked late, must still land");
+      await grantLanded(dir);
+    });
+  },
+);
+
+// --- a certificate the machine does not trust --------------------------------
+// A corporate TLS inspection shows the bridge a certificate the machine does
+// not trust. The handshake fails before the request leaves, and it fails the
+// same way every time: «not sent», no knock again, and the lever named
+// (graph @nks/nks-dev, node #4716). The pair in fixtures/ is test-only.
+
+const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), "fixtures");
+
+test("a certificate the machine does not trust is «not sent», is not knocked again, and names the lever", async () => {
+  const srv = createHttpsServer(
+    {
+      key: readFileSync(join(FIXTURES, "test-only-self-signed.key")),
+      cert: readFileSync(join(FIXTURES, "test-only-self-signed.crt")),
+    },
+    (_q, s) => s.end("{}"),
+  );
+  let handshakes = 0;
+  srv.on("tlsClientError", () => handshakes++);
+  await new Promise((r) => srv.listen(0, "127.0.0.1", r));
+  const dir = mkdtempSync(join(tmpdir(), "iskron-bridge-test-"));
+  const bridge = startBridge(`https://127.0.0.1:${srv.address().port}/mcp`, dir, {
+    ISKRON_BRIDGE_NET_BACKOFF_MS: "50,50,50",
+  });
+  try {
+    const text = (await bridge.call("initialize", 1, INIT_PARAMS)).error?.message ?? "";
+    assert.match(text, /DEPTH_ZERO_SELF_SIGNED_CERT/, `the cause must ride the text: ${text}`);
+    assert.match(text, /never reached the server/, "a refused handshake applied nothing");
+    assert.match(text, /NODE_EXTRA_CA_CERTS/, "the text must name the lever");
+    await pause(400);
+    assert.equal(
+      handshakes,
+      1,
+      "a certificate refusal is the same every time — no knock repeats it",
+    );
+  } finally {
+    await bridge.stop();
+    srv.close();
+  }
+});
+
+test("a proxy switched on through NODE_OPTIONS is not reported as ignored", async (t) => {
+  const [major, minor] = process.versions.node.split(".").map(Number);
+  if (process.env.ISKRON_NODE || major < 24 || (major === 24 && minor < 5)) {
+    return t.skip("NODE_OPTIONS=--use-env-proxy needs Node 24.5+");
+  }
+  const port = await freePort();
+  const dir = mkdtempSync(join(tmpdir(), "iskron-bridge-test-"));
+  const bridge = startBridge(`http://127.0.0.1:${port}/mcp`, dir, {
+    HTTPS_PROXY: "http://127.0.0.1:9",
+    NODE_USE_ENV_PROXY: "",
+    NODE_OPTIONS: "--use-env-proxy",
+  });
+  try {
+    await waitFor(() => / -> http:\/\/127\.0\.0\.1/.test(bridge.stderr), "the start line", 5000);
+    await pause(300);
+    assert.doesNotMatch(
+      bridge.stderr,
+      /proxy is set/,
+      "the runtime reads the proxy — warning that it does not is a lie the human acts on",
+    );
+  } finally {
+    await bridge.stop();
+  }
 });

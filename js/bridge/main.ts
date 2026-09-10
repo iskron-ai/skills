@@ -37,10 +37,33 @@ import { installAuthLockExitHook } from "./oauth/authlock.ts";
 import { pendingFlow } from "./oauth/flow.ts";
 import { installRefreshLockExitHook } from "./oauth/refreshlock.ts";
 import { tokenRequestsInFlight } from "./oauth/tokenrequest.ts";
-import { storePath } from "./store.ts";
+import { sleep, storePath } from "./store.ts";
 import { debug, flushStdout, guardStream, log } from "./streams.ts";
 import { type JsonRpcMessage } from "./types.ts";
 import { startFreshnessWatch } from "./update.ts";
+
+/** How long a bridge left by its harness still waits for a pending login's click. */
+const ORPHAN_FLOW_MS = Number(process.env.ISKRON_BRIDGE_ORPHAN_FLOW_MS) || 5 * 60_000;
+
+// Прокси корпоративной сети: Bun читает HTTP(S)_PROXY сам, Node — только с
+// 24.5 и под NODE_USE_ENV_PROXY=1 (граф nks-dev: #4717, развилка для Node 22 —
+// #4718). Идти мимо заданного прокси молча — значит упираться в сетевой отказ
+// без причины, поэтому мост говорит рычаг на старте.
+export function proxyWord(): string | null {
+  const env = process.env;
+  const proxy = env.HTTPS_PROXY || env.https_proxy || env.HTTP_PROXY || env.http_proxy;
+  if (!proxy || process.versions.bun) return null;
+  const [major = 0, minor = 0] = process.versions.node.split(".").map(Number);
+  const reads = major > 24 || (major === 24 && minor >= 5);
+  const flags = [...process.execArgv, ...(env.NODE_OPTIONS ?? "").split(/\s+/)]; // NODE_OPTIONS flags are not in execArgv
+  const on = env.NODE_USE_ENV_PROXY === "1" || flags.includes("--use-env-proxy");
+  if (reads && on) return null;
+  return reads
+    ? "a proxy is set (HTTP(S)_PROXY), but Node reads it only under NODE_USE_ENV_PROXY=1 — " +
+        "add that variable to the bridge's env in the harness config; until then calls go around the proxy"
+    : `a proxy is set (HTTP(S)_PROXY), but Node ${process.versions.node} does not read it at all — ` +
+        "Node 24.5+ with NODE_USE_ENV_PROXY=1 or the Bun runtime does; until then calls go around the proxy";
+}
 
 export function bridgeMain(argv: string[]): void {
   guardStream(process.stdout); // before the first write: a broken pipe is news, not a crash
@@ -53,6 +76,8 @@ export function bridgeMain(argv: string[]): void {
       CFG.pat ? `personal access token from ${CFG.patSource}` : `auth in ${storePath()}`
     })`,
   );
+  const proxy = proxyWord();
+  if (proxy) log(proxy);
   startTokenKeepalive();
   startFreshnessWatch(CFG.authDir, CFG.serverUrl); // отставание поставки — слово моста, не память человека
   holdFromEnv(); // отладочный путь: сокет из окружения, без connect
@@ -108,10 +133,13 @@ export function bridgeMain(argv: string[]): void {
     await flushStdout(); // an answer half-written is an answer not given
     const flow = pendingFlow();
     if (flow) {
+      // The login has no deadline while a harness holds us; once it is gone,
+      // the click is waited for only so long — nothing is left hanging forever.
       log(
-        `${why}, but an authorization flow is pending — staying up until the human's click lands`,
+        `${why}, but an authorization flow is pending — staying up for the human's click, ` +
+          `at most ${Math.round(ORPHAN_FLOW_MS / 1000)}s`,
       );
-      await flow.catch(() => {});
+      await Promise.race([flow.catch(() => {}), sleep(ORPHAN_FLOW_MS)]);
     }
     await Promise.allSettled([...tokenRequestsInFlight]); // a tick may have started one while we waited
     await flushStdout();

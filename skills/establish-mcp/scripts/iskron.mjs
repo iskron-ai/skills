@@ -198,6 +198,25 @@ function saveStore(patch) {
   }
   return next;
 }
+function serverCachePath() {
+  return storePath() + ".server-answers";
+}
+function loadServerCache() {
+  try {
+    return JSON.parse(readFileSync3(serverCachePath(), "utf8"));
+  } catch {
+    return {};
+  }
+}
+function saveServerCache(patch) {
+  try {
+    mkdirSync(CFG.authDir, { recursive: true, mode: 448 });
+    const tmp = `${serverCachePath()}.tmp-${process.pid}`;
+    writeFileSync(tmp, JSON.stringify({ ...loadServerCache(), ...patch }), { mode: 384 });
+    renameSync(tmp, serverCachePath());
+  } catch {
+  }
+}
 function grantLogPath() {
   return join2(CFG.authDir, "grant.log");
 }
@@ -302,11 +321,16 @@ var UpstreamError = class extends Error {
   // had applied, and the retry advised by that sentence collided with its own
   // first write.
   outcome;
-  constructor(message, kind, presented = null, outcome = UNKNOWN) {
+  // `retryable` marks a network failure worth another knock from the bridge
+  // itself: a connection that failed outright. A timeout is not — it already
+  // spent the whole deadline, and repeating it multiplies the wait.
+  retryable;
+  constructor(message, kind, presented = null, outcome = UNKNOWN, retryable = false) {
     super(message);
     this.kind = kind;
     this.presented = presented;
     this.outcome = outcome;
+    this.retryable = retryable;
   }
 };
 var TokenError = class extends Error {
@@ -634,13 +658,16 @@ function bindCallback(port) {
           tellBrowser("iskron-bridge: the login was abandoned — nothing was stored.");
           server2.close();
         },
-        waitForCode: (expectedState, timeoutMs = 3e5) => new Promise((res, rej) => {
-          const timer = setTimeout(
+        // No deadline by default: the login lives as long as the bridge holding
+        // it, so a human who comes back to the tab late still lands it (graph
+        // nks-dev: #4721). A bridge left by its harness bounds the wait itself.
+        waitForCode: (expectedState, timeoutMs = 0) => new Promise((res, rej) => {
+          const timer = timeoutMs > 0 ? setTimeout(
             () => rej(new Error("timed out waiting for the browser authorization")),
             timeoutMs
-          );
+          ) : null;
           const settle = (v) => {
-            clearTimeout(timer);
+            if (timer) clearTimeout(timer);
             if (v.err) return rej(new Error(`authorization refused: ${v.err}`));
             if (!v.code || v.state !== expectedState) {
               return rej(new Error("callback missing code or state mismatch"));
@@ -1166,6 +1193,7 @@ var DEAD_TOKEN_CODES = [4e3, 4001, 4002];
 var ROLLOUT_CODE = 4003;
 var FAST_DROP_MS = 5e3;
 var ERROR_GUESS_DELAY_MS = 500;
+var FLAP_PAUSES_MS = (process.env.ISKRON_CHANNEL_FLAP_MS || "5000,10000,20000,40000,60000").split(",").map(Number).filter((n) => Number.isFinite(n) && n > 0);
 function httpOrigin(socketUrl) {
   return new URL(socketUrl).origin.replace(/^wss:/, "https:").replace(/^ws:/, "http:");
 }
@@ -1193,6 +1221,7 @@ function classifyOrigin(frame2, myKarta) {
 }
 function holdSocket(o) {
   let fastDrops = 0;
+  let slowdown = 0;
   let dead = false;
   let stopped = false;
   let retry = null;
@@ -1232,13 +1261,18 @@ function holdSocket(o) {
       }
       if (gone) return;
       gone = true;
-      fastDrops = Date.now() - startedAt < FAST_DROP_MS ? fastDrops + 1 : 0;
+      const fast = Date.now() - startedAt < FAST_DROP_MS;
+      fastDrops = fast ? fastDrops + 1 : 0;
+      if (!fast) slowdown = 0;
       if (fastDrops >= 3) {
         const up = await serviceUp(o.url);
         if (stopped || ws !== sock) return;
         if (up) {
-          stopped = true;
-          o.onServiceAlive(String(up.version ?? ""));
+          if (slowdown === 0) o.onServiceAlive(String(up.version ?? ""));
+          const wait = FLAP_PAUSES_MS[Math.min(slowdown, FLAP_PAUSES_MS.length - 1)] ?? 6e4;
+          slowdown++;
+          fastDrops = 2;
+          retry = setTimeout(open, wait);
           return;
         }
         o.onNote?.("служба не отвечает — идёт раскатка, держу тот же токен");
@@ -1337,6 +1371,18 @@ async function* sseEvents(body) {
     }
   }
 }
+var TLS_REFUSALS = /* @__PURE__ */ new Set([
+  "DEPTH_ZERO_SELF_SIGNED_CERT",
+  "SELF_SIGNED_CERT_IN_CHAIN",
+  "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+  "UNABLE_TO_GET_ISSUER_CERT",
+  "UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
+  "CERT_HAS_EXPIRED",
+  "CERT_NOT_YET_VALID",
+  "CERT_UNTRUSTED",
+  "CERT_REVOKED",
+  "ERR_TLS_CERT_ALTNAME_INVALID"
+]);
 async function post(msg, onMessage) {
   const headers = {
     "content-type": "application/json",
@@ -1360,14 +1406,24 @@ async function post(msg, onMessage) {
     });
   } catch (e) {
     const err = e;
-    const reason = err.name === "TimeoutError" ? `no answer within ${CFG.timeoutMs}ms` : errorMessage(e);
+    const timedOut = err.name === "TimeoutError";
     const code = errorCode(e);
-    const neverLeft = err.name !== "TimeoutError" && ["ECONNREFUSED", "ENOTFOUND", "EAI_AGAIN", "ERR_SOCKET_BAD_PORT"].includes(code ?? "");
+    const message = errorMessage(e);
+    const tls = TLS_REFUSALS.has(code ?? "");
+    const reason = timedOut ? `no answer within ${CFG.timeoutMs}ms` : (code && !message.includes(code) ? `${message} (${code})` : message) + (tls ? " — the server's certificate is not trusted on this machine (a corporate TLS inspection?); give the bridge the organisation's CA in NODE_EXTRA_CA_CERTS" : "");
+    const neverLeft = !timedOut && (tls || [
+      "ECONNREFUSED",
+      "ENOTFOUND",
+      "EAI_AGAIN",
+      "ERR_SOCKET_BAD_PORT",
+      "ConnectionRefused"
+    ].includes(code ?? ""));
     throw new UpstreamError(
       `upstream unreachable: ${reason}`,
       "network",
       null,
-      neverLeft ? UpstreamError.NOT_SENT : UpstreamError.UNKNOWN
+      neverLeft ? UpstreamError.NOT_SENT : UpstreamError.UNKNOWN,
+      !timedOut && !tls
     );
   }
   noteServerDate(res);
@@ -1416,7 +1472,13 @@ async function post(msg, onMessage) {
         }
       }
     } catch (e) {
-      throw new UpstreamError(`upstream stream broke mid-response: ${errorMessage(e)}`, "network");
+      throw new UpstreamError(
+        `upstream stream broke mid-response: ${errorMessage(e)}`,
+        "network",
+        null,
+        UpstreamError.UNKNOWN,
+        true
+      );
     }
     return;
   }
@@ -1725,12 +1787,11 @@ function holdStanding(url, statusUrl2) {
       releaseStanding("токен мёртв");
     },
     onServiceAlive: (version) => {
-      const text = `ДЕЛАТЕЛЬ: обрывы, а служба отвечает (${version}) — спроси о токене`;
+      const text = `ДЕЛАТЕЛЬ: сокет рвут, а служба отвечает (${version}) — место держу, переоткрываю реже; не пройдёт — спроси о токене`;
       log(text);
       const ev = { kind: "alive", version, text };
       broadcast(ev);
-      notify("error", ev);
-      releaseStanding("обрывы при живой службе");
+      notify("warning", ev);
     },
     onNote: (text) => {
       log(text);
@@ -2419,6 +2480,22 @@ function syntheticError(id, message, outcome = UpstreamError.UNKNOWN, holdOff = 
     }
   };
 }
+var NET_BACKOFF_MS = (process.env.ISKRON_BRIDGE_NET_BACKOFF_MS || "1000,2000,4000").split(",").map(Number).filter((n) => Number.isFinite(n) && n >= 0);
+var READ_TOOLS = /* @__PURE__ */ new Set([
+  "iskron_look",
+  "iskron_orient",
+  "iskron_search",
+  "iskron_semantic_search"
+]);
+function isRead(msg) {
+  if (msg?.method === "initialize" || msg?.method === "tools/list") return true;
+  return msg?.method === "tools/call" && READ_TOOLS.has(String(msg.params?.name ?? ""));
+}
+function offlineAnswer(msg) {
+  const cache = loadServerCache();
+  const result = msg?.method === "initialize" ? cache.init : msg?.method === "tools/list" && !msg.params?.cursor ? cache.tools : null;
+  return result ? { jsonrpc: "2.0", id: msg.id, result } : null;
+}
 function withNotice(reply) {
   const content = reply?.result?.content;
   if (!Array.isArray(content)) return reply;
@@ -2439,6 +2516,7 @@ async function deliver(msg) {
   const hasId = msg?.id !== void 0 && msg?.id !== null;
   let authRetried = false;
   let sessionRetried = false;
+  let netTries = 0;
   let outcome = UpstreamError.NOT_SENT;
   const note3 = (e) => {
     if (!(e instanceof UpstreamError) || e.outcome === UpstreamError.UNKNOWN) {
@@ -2455,6 +2533,11 @@ async function deliver(msg) {
     }
     if (m.id === msg.id) noteStanding(msg, m);
     if (m.id === msg.id && msg.method === "tools/list") annotateToolList(m);
+    if (m.id === msg.id && m.result) {
+      if (isInit) saveServerCache({ init: m.result });
+      else if (msg.method === "tools/list" && !msg.params?.cursor)
+        saveServerCache({ tools: m.result });
+    }
     if (isToolCall && hasId && m.id === msg.id) {
       heldReply = m;
       return;
@@ -2502,6 +2585,12 @@ async function deliver(msg) {
       return;
     } catch (e) {
       note3(e);
+      if (e instanceof UpstreamError && e.kind === "network" && e.retryable && netTries < NET_BACKOFF_MS.length && (e.outcome === UpstreamError.NOT_SENT || isRead(msg))) {
+        const pause = NET_BACKOFF_MS[netTries++];
+        log(`${e.message} — knocking again in ${pause}ms (${netTries}/${NET_BACKOFF_MS.length})`);
+        await new Promise((r) => setTimeout(r, pause));
+        continue;
+      }
       if (e instanceof UpstreamError && e.kind === "auth" && !authRetried) {
         authRetried = true;
         try {
@@ -2548,6 +2637,14 @@ async function deliver(msg) {
           return;
         }
       }
+      if (e instanceof UpstreamError && e.kind === "network" && hasId) {
+        const cached = offlineAnswer(msg);
+        if (cached) {
+          log(`${e.message} — ${msg.method} answered from the last server answer`);
+          emit(cached);
+          return;
+        }
+      }
       const reason = e instanceof UpstreamError ? e.kind === "auth" && authRetried ? `upstream refuses even a freshly obtained access token (${e.message}) — not an expiry; the token's audience/resource may not match what the server validates (operator lever: ISKRON_BRIDGE_RESOURCE), or the server's token validation is off` : e.message : `bridge internal error: ${errorMessage(e)}`;
       log(`request ${hasId ? msg.id : `(notification ${msg?.method})`} failed: ${reason}`);
       if (hasId) emit(syntheticError(msg.id, reason, outcome));
@@ -2557,6 +2654,18 @@ async function deliver(msg) {
 }
 
 // js/bridge/main.ts
+var ORPHAN_FLOW_MS = Number(process.env.ISKRON_BRIDGE_ORPHAN_FLOW_MS) || 5 * 6e4;
+function proxyWord() {
+  const env = process.env;
+  const proxy = env.HTTPS_PROXY || env.https_proxy || env.HTTP_PROXY || env.http_proxy;
+  if (!proxy || process.versions.bun) return null;
+  const [major = 0, minor = 0] = process.versions.node.split(".").map(Number);
+  const reads = major > 24 || major === 24 && minor >= 5;
+  const flags = [...process.execArgv, ...(env.NODE_OPTIONS ?? "").split(/\s+/)];
+  const on = env.NODE_USE_ENV_PROXY === "1" || flags.includes("--use-env-proxy");
+  if (reads && on) return null;
+  return reads ? "a proxy is set (HTTP(S)_PROXY), but Node reads it only under NODE_USE_ENV_PROXY=1 — add that variable to the bridge's env in the harness config; until then calls go around the proxy" : `a proxy is set (HTTP(S)_PROXY), but Node ${process.versions.node} does not read it at all — Node 24.5+ with NODE_USE_ENV_PROXY=1 or the Bun runtime does; until then calls go around the proxy`;
+}
 function bridgeMain(argv2) {
   guardStream(process.stdout);
   guardStream(process.stderr);
@@ -2566,6 +2675,8 @@ function bridgeMain(argv2) {
   log(
     `${BUILD} -> ${CFG.serverUrl} (timeout ${CFG.timeoutMs}ms, ${CFG.pat ? `personal access token from ${CFG.patSource}` : `auth in ${storePath()}`})`
   );
+  const proxy = proxyWord();
+  if (proxy) log(proxy);
   startTokenKeepalive();
   startFreshnessWatch(CFG.authDir, CFG.serverUrl);
   holdFromEnv();
@@ -2605,10 +2716,10 @@ function bridgeMain(argv2) {
     const flow = pendingFlow();
     if (flow) {
       log(
-        `${why}, but an authorization flow is pending — staying up until the human's click lands`
+        `${why}, but an authorization flow is pending — staying up for the human's click, at most ${Math.round(ORPHAN_FLOW_MS / 1e3)}s`
       );
-      await flow.catch(() => {
-      });
+      await Promise.race([flow.catch(() => {
+      }), sleep(ORPHAN_FLOW_MS)]);
     }
     await Promise.allSettled([...tokenRequestsInFlight]);
     await flushStdout();
@@ -2901,11 +3012,14 @@ function runWatchdogCodex(argv2) {
           break;
         }
         case "dead":
-        case "alive":
           note(ev.text ?? "ДЕЛАТЕЛЬ: стояние потеряно");
           void deliver2(
             ev.text ?? 'Искрон: стояние потеряно — зови iskron_channel(action="connect")'
           ).then(() => process.exit(1));
+          break;
+        case "alive":
+          note(ev.text ?? "ДЕЛАТЕЛЬ: сокет рвут, а служба отвечает — мост держит место");
+          void deliver2(ev.text ?? "Искрон: сокет рвут, а служба отвечает — мост держит место");
           break;
         case "attached":
           replay = ev.buffered ?? 0;
@@ -2964,8 +3078,10 @@ function runWatchdog(argv2) {
           log2(ev.text ?? "");
           break;
         case "dead":
-        case "alive":
           loudExit(ev.text ?? "ДЕЛАТЕЛЬ: стояние потеряно", 1);
+          break;
+        case "alive":
+          log2(ev.text ?? "ДЕЛАТЕЛЬ: сокет рвут, а служба отвечает — мост держит место");
           break;
         case "released":
           log2(`мост отпустил сокет: ${ev.text ?? ""}`);

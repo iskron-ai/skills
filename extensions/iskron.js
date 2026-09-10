@@ -1,4 +1,5 @@
 // js/shared/channel.ts
+var FLAP_PAUSES_MS = (process.env.ISKRON_CHANNEL_FLAP_MS || "5000,10000,20000,40000,60000").split(",").map(Number).filter((n) => Number.isFinite(n) && n > 0);
 function classifyOrigin(frame, myKarta) {
   const p = frame.provenance ?? {};
   if (p.via === "platform" || p.auth === "none") return "platform";
@@ -61,10 +62,10 @@ function setupChannel(pi) {
   pi.on("session_shutdown", async () => {
     ctxRef = null;
   });
-  function loud(text) {
-    if (ctxRef?.hasUI) ctxRef.ui.notify(text, "error");
+  function loud(text, fatal = true) {
+    if (ctxRef?.hasUI) ctxRef.ui.notify(text, fatal ? "error" : "warning");
     pi.sendMessage(
-      { customType: "iskron-channel", content: text, display: true, details: { fatal: true } },
+      { customType: "iskron-channel", content: text, display: true, details: { fatal } },
       { triggerTurn: true, deliverAs: "steer" }
     );
   }
@@ -97,7 +98,10 @@ function setupChannel(pi) {
         );
         return;
       case "alive":
-        loud(`Искрон: обрывы, а служба отвечает (${ev.version ?? ""}) — спроси о токене.`);
+        loud(
+          `Искрон: сокет рвут, а служба отвечает (${ev.version ?? ""}) — мост держит место и переоткрывает реже; не пройдёт — спроси о токене.`,
+          false
+        );
         return;
       case "note":
         if (ctxRef?.hasUI && ev.text) ctxRef.ui.notify(`Искрон: ${ev.text}`, "warning");

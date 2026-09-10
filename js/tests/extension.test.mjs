@@ -353,17 +353,19 @@ test("a dead-token event complains loudly; 4001 alone offers mint", async () => 
   }
 });
 
-// Drops that keep coming while the service answers are a question only a
-// person can settle; the bridge asks it by an event, and the doer must see it.
-test("flapping against a live service becomes a question in the turn", async () => {
+// Drops that keep coming while the service answers: the bridge keeps the place
+// and reopens slower, and the doer must see it in the turn — as a word, not as
+// the end of the holding.
+test("flapping against a live service becomes a word in the turn, not the end of the holding", async () => {
   const { events, env } = eventsEnv("alive");
   const rec = await session(env);
   try {
     push(events, { kind: "alive", version: "9.9.9", text: "обрывы" });
     await delay(250);
-    assert.equal(rec.messages.length, 1, "служба отвечает, а делателя не спросили");
-    assert.match(rec.messages[0].msg.content, /служба отвечает \(9\.9\.9\) — спроси о токене/);
-    assert.equal(rec.messages[0].msg.details.fatal, true);
+    assert.equal(rec.messages.length, 1, "служба отвечает, а делателю не сказали");
+    assert.match(rec.messages[0].msg.content, /служба отвечает \(9\.9\.9\) — мост держит место/);
+    assert.match(rec.messages[0].msg.content, /спроси о токене/);
+    assert.equal(rec.messages[0].msg.details.fatal, false, "the holding goes on — not fatal");
   } finally {
     await rec.stop();
   }

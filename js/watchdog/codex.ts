@@ -111,11 +111,14 @@ export function runWatchdogCodex(argv: string[]): void {
           break;
         }
         case "dead":
-        case "alive":
           note(ev.text ?? "ДЕЛАТЕЛЬ: стояние потеряно");
           void deliver(
             ev.text ?? 'Искрон: стояние потеряно — зови iskron_channel(action="connect")',
           ).then(() => process.exit(1));
+          break;
+        case "alive":
+          note(ev.text ?? "ДЕЛАТЕЛЬ: сокет рвут, а служба отвечает — мост держит место");
+          void deliver(ev.text ?? "Искрон: сокет рвут, а служба отвечает — мост держит место"); // держание идёт, сторож слушает дальше
           break;
         case "attached":
           replay = ev.buffered ?? 0;

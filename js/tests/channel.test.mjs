@@ -7,8 +7,12 @@
 //     then the real `close` code landing after that guess. A holder that
 //     parses the drop once, first-come, throws away the one code it must never
 //     miss and reopens on a token the service has already refused — silently.
-//   • three fast drops against a live service: nothing to reopen, and leaving
-//     silently would keep the doer looking reachable.
+//   • three fast drops against a live service: the grant is alive, so the place
+//     is kept and reopened slower, and the doer is told once — leaving would
+//     throw a live standing away, silence would keep the doer looking reachable.
+//
+// ISKRON_CHANNEL_SOURCE points the probe at another copy of the source (a past
+// revision) to show it red.
 //
 // The source is imported directly (Node strips the types); the bundle carries
 // the same code, and check-js holds the two together.
@@ -40,7 +44,10 @@ Object.defineProperty(globalThis, "WebSocket", {
   configurable: true,
 });
 
-const { holdSocket, DEAD_TOKEN_CODES } = await import("../shared/channel.ts");
+process.env.ISKRON_CHANNEL_FLAP_MS = "400,1600"; // read at import: short flap pauses for the probe
+const { holdSocket, DEAD_TOKEN_CODES } = await import(
+  process.env.ISKRON_CHANNEL_SOURCE || "../shared/channel.ts"
+);
 
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -66,32 +73,41 @@ for (const code of DEAD_TOKEN_CODES) {
   });
 }
 
-test("three fast drops against a live service end in a question, never a loop", async () => {
+test("three fast drops against a live service: the doer is told once, and the holder keeps the place, reopening slower", async () => {
+  // ISKRON_CHANNEL_FLAP_MS is set to 400,1600 before the import (top of file).
   sockets.length = 0;
   const realFetch = globalThis.fetch;
   globalThis.fetch = async () => ({ ok: true, json: async () => ({ version: "probe" }) });
   try {
     const alive = [];
-    holdSocket({
+    const holder = holdSocket({
       url: "ws://127.0.0.1:9/channel/ws/tok",
       onFrame: () => {},
       onDeadToken: () => assert.fail("no dead token here"),
       onServiceAlive: (v) => alive.push(v),
     });
-    for (let i = 0; i < 3; i++) {
-      const s = sockets[sockets.length - 1];
-      s.fire("close", { code: 1006 });
+    for (let i = 0; i < 2; i++) {
+      sockets[sockets.length - 1].fire("close", { code: 1006 });
       await delay(2100); // the reopen delay, then the next socket is up
     }
+    sockets[sockets.length - 1].fire("close", { code: 1006 }); // the third fast drop
     await delay(100);
     assert.deepEqual(
       alive,
       ["probe"],
-      "the third fast drop must ask the doer, naming the live version",
+      "the third fast drop must tell the doer, naming the version",
     );
     const n = sockets.length;
-    await delay(2500);
-    assert.equal(sockets.length, n, "after the question the holder must stop reopening");
+    await delay(500); // past the first flap pause
+    assert.equal(sockets.length, n + 1, "the live grant keeps its place: the holder reopens");
+    assert.equal(holder.alive, true);
+    sockets[sockets.length - 1].fire("close", { code: 1006 }); // the band of drops goes on
+    await delay(700);
+    assert.equal(sockets.length, n + 1, "the next pause is longer, not the same");
+    assert.deepEqual(alive, ["probe"], "one band of drops, one word to the doer");
+    await delay(1100);
+    assert.equal(sockets.length, n + 2, "and after the longer pause it reopens again");
+    holder.close();
   } finally {
     globalThis.fetch = realFetch;
   }
