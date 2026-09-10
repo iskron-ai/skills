@@ -1,5 +1,14 @@
 # Changelog
 
+## [6.6.3](https://github.com/iskron-ai/skills/compare/v6.6.2...v6.6.3) (2026-09-10)
+
+
+### Bug Fixes
+
+* **iskron,entry,standing,vahta,writing,minding:** первая запись новичка; гроссбух — строгий формат; mind каждому ([#116](https://github.com/iskron-ai/skills/issues/116)) ([a1c80f1](https://github.com/iskron-ai/skills/commit/a1c80f1f4c89b6fc60b9b2318a1b1d71a1ce6647))
+* **iskron,iskronify,vahta:** одно правило на штамп ниже контракта ([#114](https://github.com/iskron-ai/skills/issues/114)) ([3a7b414](https://github.com/iskron-ai/skills/commit/3a7b414983f69429de6d9f6c8ccb5b0840bdcfca))
+* **opencode,bridge,standing,iskron,entry,iskronify:** первый вход в OpenCode ждёт человека; мост держит сеть; правки ревью двери ([#117](https://github.com/iskron-ai/skills/issues/117)) ([8dce75a](https://github.com/iskron-ai/skills/commit/8dce75a1fd0fab22508b3415954ff0492d366c38))
+
 ## [6.6.2](https://github.com/iskron-ai/skills/compare/v6.6.1...v6.6.2) (2026-09-09)
 
 
