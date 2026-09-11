@@ -1,5 +1,13 @@
-import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { connect } from "node:net";
+import { basename, dirname, join } from "node:path";
 
 import { CFG } from "../config.ts";
 import { storePath } from "../store.ts";
@@ -14,15 +22,18 @@ import { storePath } from "../store.ts";
 // or is refused, longer than the bridge that published it, and it carries what
 // any bridge needs to catch this very login's redirect (state, PKCE verifier,
 // the client its sign-in page was minted under). Its link is the loopback
-// address of whoever listens on the port, never the sign-in server's page. So the tab the human already has stays good whichever
-// bridge is alive when they click: a later bridge that finds nobody listening
-// listens on the same link itself (graph nks-dev: #4721, #4794). Whether anyone
-// listens right now is the LISTENER's word, never the file's — a caller probes
-// the port before it hands the link to anyone.
+// address of whoever listens on the port, never the sign-in server's page. So
+// the tab the human already has stays good whichever bridge is alive when they
+// click: a later bridge that finds nobody listening listens on the same link
+// itself (graph nks-dev: #4721, #4794). Whether anyone listens right now is the
+// LISTENER's word, never the file's — a caller probes the port before it hands
+// the link to anyone.
 //
-// Before its link exists the file is a bare claim: the bridge that bound the
-// port writes it at once, so a sibling that meets the bound port waits for this
-// login's link instead of registering a second client for a second tab (#4793).
+// Publishing needs no network — the sign-in page is minted only when the link is
+// opened — so the record goes down, link included, the moment the port is
+// bound: a sibling meeting the bound port finds the login to join at once
+// (#4793). A record with no link is a bare claim an earlier build wrote while it
+// registered its client; it is waited on briefly, never trusted for long.
 
 export interface AuthLock {
   pid: number;
@@ -35,8 +46,6 @@ export interface AuthLock {
   client_id?: string;
   /** a fingerprint of the grant the login was published over — another grant makes it moot */
   grant?: string;
-  /** whether the login's one browser tab has been opened */
-  tab?: boolean;
 }
 
 export function authLockPath(): string {
@@ -76,18 +85,17 @@ export function readAuthLock(): AuthLock | null {
   }
 }
 
-// Written by the process that holds the port — the bind settled who writes
-// here. The one exception is the mark of the login's tab, added by the bridge
-// that opened it — which first won the tab's marker file, one no two processes
-// can both create, so bridges joining in the same instant open it once. (The
-// same read-modify-write can drop a client minted that instant; the exchange
-// then falls back to the machine's registration.)
+// Written only by the process that holds the port — the bind settled who writes
+// here — and atomically, through a rename: a reader never meets a half-written
+// record and takes a live login for a closed one. The login's tab is not in the
+// record at all: it goes to whoever creates the tab's marker (claimTab).
 export function writeAuthLock(
   fields: Omit<AuthLock, "pid" | "started_at"> & Partial<Pick<AuthLock, "pid" | "started_at">>,
 ): void {
   mkdirSync(CFG.authDir, { recursive: true, mode: 0o700 });
+  const tmp = `${authLockPath()}.tmp-${process.pid}`;
   writeFileSync(
-    authLockPath(),
+    tmp,
     JSON.stringify({
       ...fields,
       pid: fields.pid ?? process.pid,
@@ -95,6 +103,7 @@ export function writeAuthLock(
     }),
     { mode: 0o600 },
   );
+  renameSync(tmp, authLockPath());
 }
 
 // Only the login's own listener clears it: a record a newer login or a taker
@@ -110,9 +119,9 @@ export function releaseAuthLock(owns?: (l: AuthLock) => boolean): void {
 
 const tabMarkPath = (state: string): string => `${authLockPath()}.tab-${state}`;
 
-// The one tab of a login goes to whoever creates its marker: exclusive create
-// is atomic across processes, where reading the record and then writing it is
-// not — bridges joining in the same instant each read "no tab yet" (#4794).
+// The one tab of a login goes to whoever creates its marker — publishing,
+// taking it over or joining it: exclusive create is atomic across processes,
+// where reading a record and then writing it is not (#4794).
 export function claimTab(state: string): boolean {
   try {
     mkdirSync(CFG.authDir, { recursive: true, mode: 0o700 });
@@ -121,6 +130,18 @@ export function claimTab(state: string): boolean {
   } catch {
     return false;
   }
+}
+
+// Markers of logins that closed without their record being released (a killed
+// bridge, a login replaced) are swept when a new login is published: by then no
+// other login is out on this machine.
+export function sweepTabMarks(): void {
+  const prefix = `${basename(authLockPath())}.tab-`;
+  try {
+    for (const f of readdirSync(dirname(authLockPath()))) {
+      if (f.startsWith(prefix)) unlinkSync(join(dirname(authLockPath()), f));
+    }
+  } catch {}
 }
 
 // A published login outlives its bridge on purpose. A bare claim does not: a

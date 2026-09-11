@@ -532,8 +532,16 @@ function windowsOpener(url) {
 import { randomBytes } from "node:crypto";
 
 // js/bridge/oauth/authlock.ts
-import { mkdirSync as mkdirSync2, readFileSync as readFileSync4, unlinkSync as unlinkSync2, writeFileSync as writeFileSync2 } from "node:fs";
+import {
+  mkdirSync as mkdirSync2,
+  readdirSync,
+  readFileSync as readFileSync4,
+  renameSync as renameSync2,
+  unlinkSync as unlinkSync2,
+  writeFileSync as writeFileSync2
+} from "node:fs";
 import { connect } from "node:net";
+import { basename, dirname, join as join4 } from "node:path";
 function authLockPath() {
   return storePath() + ".auth-pending";
 }
@@ -568,8 +576,9 @@ function readAuthLock() {
 }
 function writeAuthLock(fields) {
   mkdirSync2(CFG.authDir, { recursive: true, mode: 448 });
+  const tmp = `${authLockPath()}.tmp-${process.pid}`;
   writeFileSync2(
-    authLockPath(),
+    tmp,
     JSON.stringify({
       ...fields,
       pid: fields.pid ?? process.pid,
@@ -577,6 +586,7 @@ function writeAuthLock(fields) {
     }),
     { mode: 384 }
   );
+  renameSync2(tmp, authLockPath());
 }
 function releaseAuthLock(owns) {
   try {
@@ -595,6 +605,15 @@ function claimTab(state2) {
     return true;
   } catch {
     return false;
+  }
+}
+function sweepTabMarks() {
+  const prefix = `${basename(authLockPath())}.tab-`;
+  try {
+    for (const f of readdirSync(dirname(authLockPath()))) {
+      if (f.startsWith(prefix)) unlinkSync2(join4(dirname(authLockPath()), f));
+    }
+  } catch {
   }
 }
 function installAuthLockExitHook() {
@@ -829,13 +848,13 @@ function older(l) {
 function loginPublished() {
   return published(readAuthLock());
 }
+function openTabOnce(l) {
+  if (!CFG.noBrowser && claimTab(l.state)) openBrowser(l.authorize_url);
+}
 function showTab(l) {
   const current = readAuthLock();
   if (!published(current)) return l;
-  if (CFG.noBrowser || current.tab) return current;
-  if (!claimTab(current.state)) return current;
-  writeAuthLock({ ...current, tab: true });
-  openBrowser(current.authorize_url);
+  openTabOnce(current);
   return current;
 }
 function handOut(l, wantTab) {
@@ -876,17 +895,12 @@ async function interactiveFlow(meta, note3, wantTab = true) {
   if (published(standing)) {
     const cb = await bindOrNull(standing.callback_port);
     if (cb) {
-      writeAuthLock({
-        ...standing,
-        pid: process.pid,
-        tab: !!standing.tab || wantTab && !CFG.noBrowser
-        // the fact, not the wish
-      });
+      writeAuthLock({ ...standing, pid: process.pid });
       log(
         "the bridge that published this login is gone — listening on its link, so the tab the human has still lands"
       );
       grantLog("authorization flow taken over on the same link — waiting for the human");
-      runFlow(meta, cb, standing, wantTab && !standing.tab);
+      runFlow(meta, cb, standing, wantTab);
       throw new AuthPending(standing.authorize_url, note3);
     }
     const taken = readAuthLock();
@@ -928,10 +942,9 @@ async function interactiveFlow(meta, note3, wantTab = true) {
       authorize_url: loginLink(callback.port, b64url(randomBytes(18))),
       state: b64url(randomBytes(24)),
       verifier: b64url(randomBytes(48)),
-      grant: grantPrint(loadStore().tokens),
-      tab: wantTab && !CFG.noBrowser
-      // the fact, not the wish: a headless bridge opens nothing
+      grant: grantPrint(loadStore().tokens)
     };
+    sweepTabMarks();
     writeAuthLock(login);
     grantLog("authorization flow published — waiting for the human");
     runFlow(meta, callback, login, wantTab);
@@ -979,7 +992,7 @@ function runFlow(meta, cb, login, openTab) {
   flow = (async () => {
     try {
       const codePromise = cb.waitForCode(login.state);
-      if (openTab) openBrowser(login.authorize_url);
+      if (openTab) openTabOnce(login);
       const code = await Promise.race([codePromise, cameBack]);
       const record = readAuthLock();
       const clientId = (record?.state === login.state ? record.client_id : void 0) || CFG.staticClientId || loadStore().client?.client_id || "";
@@ -1371,13 +1384,13 @@ import {
   chmodSync,
   existsSync,
   mkdirSync as mkdirSync4,
-  readdirSync,
+  readdirSync as readdirSync2,
   readFileSync as readFileSync6,
   unlinkSync as unlinkSync4,
   writeFileSync as writeFileSync4
 } from "node:fs";
 import { connect as connectLocal, createServer as createServer2 } from "node:net";
-import { join as join5 } from "node:path";
+import { join as join6 } from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 
 // js/shared/channel.ts
@@ -1495,17 +1508,17 @@ function holdSocket(o) {
 // js/shared/standings.ts
 import { createHash as createHash3 } from "node:crypto";
 import { homedir as homedir2 } from "node:os";
-import { join as join4 } from "node:path";
-var defaultAuthDir = () => join4(homedir2(), ".iskron-bridge");
+import { join as join5 } from "node:path";
+var defaultAuthDir = () => join5(homedir2(), ".iskron-bridge");
 var authDirFromEnv = () => process.env.ISKRON_BRIDGE_AUTH_DIR?.trim() || defaultAuthDir();
-var standingsDirOf = (authDir) => join4(authDir, "standings");
+var standingsDirOf = (authDir) => join5(authDir, "standings");
 var hashOf = (key) => createHash3("sha256").update(key).digest("hex").slice(0, 16);
 function socketPathOf(authDir, key) {
   if (process.platform === "win32") return `\\\\.\\pipe\\iskron-${hashOf(key)}`;
-  return join4(standingsDirOf(authDir), `${hashOf(key)}.sock`);
+  return join5(standingsDirOf(authDir), `${hashOf(key)}.sock`);
 }
-var keyFilePathOf = (authDir, key) => join4(standingsDirOf(authDir), `${hashOf(key)}.key`);
-var seenFilePathOf = (authDir, key) => join4(standingsDirOf(authDir), `${hashOf(key)}.seen`);
+var keyFilePathOf = (authDir, key) => join5(standingsDirOf(authDir), `${hashOf(key)}.key`);
+var seenFilePathOf = (authDir, key) => join5(standingsDirOf(authDir), `${hashOf(key)}.seen`);
 
 // js/bridge/transport.ts
 var state = {
@@ -1844,8 +1857,8 @@ function notify(level, data) {
 }
 function sweepStale(dir, mine) {
   if (process.platform === "win32" || !existsSync(dir)) return;
-  for (const f of readdirSync(dir).filter((x) => x.endsWith(".key"))) {
-    const keyFile = join5(dir, f);
+  for (const f of readdirSync2(dir).filter((x) => x.endsWith(".key"))) {
+    const keyFile = join6(dir, f);
     let key;
     try {
       key = readFileSync6(keyFile, "utf8").trim();
@@ -2124,19 +2137,19 @@ function stampOrigin(frame2) {
 // js/bridge/stand.ts
 import { execFileSync } from "node:child_process";
 import { hostname } from "node:os";
-import { basename } from "node:path";
+import { basename as basename2 } from "node:path";
 
 // js/bridge/update.ts
 import { spawn as spawn2 } from "node:child_process";
-import { existsSync as existsSync2, lstatSync, mkdirSync as mkdirSync5, readFileSync as readFileSync7, renameSync as renameSync2, writeFileSync as writeFileSync5 } from "node:fs";
+import { existsSync as existsSync2, lstatSync, mkdirSync as mkdirSync5, readFileSync as readFileSync7, renameSync as renameSync3, writeFileSync as writeFileSync5 } from "node:fs";
 import { homedir as homedir4 } from "node:os";
-import { dirname, join as join7 } from "node:path";
+import { dirname as dirname2, join as join8 } from "node:path";
 import { fileURLToPath as fileURLToPath3 } from "node:url";
 
 // js/shared/home.ts
 import { homedir as homedir3 } from "node:os";
-import { join as join6 } from "node:path";
-var homeBridgePath = () => join6(homedir3(), ".iskron-bridge", "iskron-bridge.mjs");
+import { join as join7 } from "node:path";
+var homeBridgePath = () => join7(homedir3(), ".iskron-bridge", "iskron-bridge.mjs");
 
 // js/shared/semver.ts
 function parseVersion(v) {
@@ -2157,14 +2170,14 @@ var RAW_URL = process.env.ISKRON_BRIDGE_RAW_URL?.trim() || "https://raw.githubus
 var CHECK_INTERVAL_MS = 6 * 60 * 60 * 1e3;
 var updatesDisabled = () => !!process.env.ISKRON_BRIDGE_NO_UPDATE;
 var selfPath = () => fileURLToPath3(import.meta.url);
-var opencodePluginPath = () => join7(homedir4(), ".config", "opencode", "plugins", "iskron.js");
-var setupPathOf = (authDir) => join7(authDir, "SETUP.md");
-var latestPathOf = (authDir) => join7(authDir, "latest.json");
+var opencodePluginPath = () => join8(homedir4(), ".config", "opencode", "plugins", "iskron.js");
+var setupPathOf = (authDir) => join8(authDir, "SETUP.md");
+var latestPathOf = (authDir) => join8(authDir, "latest.json");
 function writeAtomic(path, bytes) {
-  mkdirSync5(dirname(path), { recursive: true, mode: 448 });
+  mkdirSync5(dirname2(path), { recursive: true, mode: 448 });
   const tmp = `${path}.tmp-${process.pid}`;
   writeFileSync5(tmp, bytes, { mode: 420 });
-  renameSync2(tmp, path);
+  renameSync3(tmp, path);
 }
 var isSymlink = (path) => {
   try {
@@ -2198,7 +2211,7 @@ function syncHome(self = selfPath()) {
     writeAtomic(home, mine);
     out3.copied.push(home);
     const plugin = opencodePluginPath();
-    const packaged = join7(dirname(self), "opencode-plugin.js");
+    const packaged = join8(dirname2(self), "opencode-plugin.js");
     if (existsSync2(plugin) && existsSync2(packaged)) {
       const fresh = readFileSync7(packaged);
       if (!readFileSync7(plugin).equals(fresh)) {
@@ -2383,7 +2396,7 @@ var git = (args) => {
 function deriveName(model) {
   const host = hostname().split(".")[0];
   const top = git(["rev-parse", "--show-toplevel"]);
-  const repo = basename(top || process.cwd());
+  const repo = basename2(top || process.cwd());
   const short2 = (model ?? "").trim().toLowerCase().replace(/^claude[-_]/, "");
   return [host, repo, short2].map(sanitize).filter(Boolean).join(".");
 }
@@ -2957,7 +2970,7 @@ function bridgeMain(argv2) {
 // js/watchdog/codex.ts
 import { existsSync as existsSync4 } from "node:fs";
 import { homedir as homedir5 } from "node:os";
-import { join as join9 } from "node:path";
+import { join as join10 } from "node:path";
 
 // js/shared/appserver.ts
 import { randomBytes as randomBytes2 } from "node:crypto";
@@ -3057,9 +3070,9 @@ ${body}`;
 }
 
 // js/watchdog/client.ts
-import { existsSync as existsSync3, readdirSync as readdirSync2, readFileSync as readFileSync8 } from "node:fs";
+import { existsSync as existsSync3, readdirSync as readdirSync3, readFileSync as readFileSync8 } from "node:fs";
 import { connect as connect2 } from "node:net";
-import { join as join8 } from "node:path";
+import { join as join9 } from "node:path";
 var ATTACH_WINDOW_MS = 6e4;
 var RETRY_MS = 1e3;
 function parseWatchdogArgs(argv2) {
@@ -3076,9 +3089,9 @@ function resolveStanding(argv2) {
   const dir = standingsDirOf(authDir);
   const pathFor = (k) => socketPathOf(authDir, k);
   if (key) return { key, path: pathFor(key), authDir };
-  const held = existsSync3(dir) ? readdirSync2(dir).filter((f) => f.endsWith(".key")).map((f) => {
+  const held = existsSync3(dir) ? readdirSync3(dir).filter((f) => f.endsWith(".key")).map((f) => {
     try {
-      return readFileSync8(join8(dir, f), "utf8").trim();
+      return readFileSync8(join9(dir, f), "utf8").trim();
     } catch {
       return "";
     }
@@ -3143,8 +3156,8 @@ var note = (s) => {
   process.stderr.write(s + "\n");
 };
 function codexDoorPath() {
-  const home = process.env.CODEX_HOME?.trim() || join9(homedir5(), ".codex");
-  return join9(home, "app-server-control", "app-server-control.sock");
+  const home = process.env.CODEX_HOME?.trim() || join10(homedir5(), ".codex");
+  return join10(home, "app-server-control", "app-server-control.sock");
 }
 function runWatchdogCodex(argv2) {
   const threadId = process.env.CODEX_THREAD_ID?.trim();
@@ -3377,9 +3390,9 @@ function runWatchdogExit(argv2) {
 
 // js/cli/doctor.ts
 import { createHash as createHash5 } from "node:crypto";
-import { existsSync as existsSync5, readdirSync as readdirSync3, readFileSync as readFileSync10 } from "node:fs";
+import { existsSync as existsSync5, readdirSync as readdirSync4, readFileSync as readFileSync10 } from "node:fs";
 import { homedir as homedir6 } from "node:os";
-import { dirname as dirname2, join as join10 } from "node:path";
+import { dirname as dirname3, join as join11 } from "node:path";
 import { fileURLToPath as fileURLToPath4 } from "node:url";
 var out = (s) => {
   process.stdout.write(s + "\n");
@@ -3535,7 +3548,7 @@ function latestReport() {
   else out(`свежий релиз: v${latest.version}, этот файл не отстал; спрашивал ${ago} мин назад`);
 }
 function claudePluginReport() {
-  const registry = join10(homedir6(), ".claude", "plugins", "installed_plugins.json");
+  const registry = join11(homedir6(), ".claude", "plugins", "installed_plugins.json");
   if (!existsSync5(registry)) return;
   try {
     const reg = JSON.parse(readFileSync10(registry, "utf8"));
@@ -3546,7 +3559,7 @@ function claudePluginReport() {
     }
     for (const [key, installs] of mine) {
       for (const inst of installs) {
-        const manifest = inst.installPath ? join10(inst.installPath, ".mcp.json") : "";
+        const manifest = inst.installPath ? join11(inst.installPath, ".mcp.json") : "";
         let entry = "запись моста в манифесте не найдена";
         if (manifest && existsSync5(manifest)) {
           try {
@@ -3571,27 +3584,27 @@ function claudePluginReport() {
 function codexHomes() {
   const homes = [
     process.env.CODEX_HOME?.trim() || "",
-    join10(homedir6(), ".codex"),
-    ...process.platform === "darwin" ? [join10(homedir6(), "Library", "Application Support", "orca", "codex-runtime-home", "home")] : []
+    join11(homedir6(), ".codex"),
+    ...process.platform === "darwin" ? [join11(homedir6(), "Library", "Application Support", "orca", "codex-runtime-home", "home")] : []
   ].filter(Boolean);
   return [...new Set(homes)].filter((h) => existsSync5(h));
 }
 function codexPluginReport(home) {
-  const cache = join10(home, "plugins", "cache");
+  const cache = join11(home, "plugins", "cache");
   if (!existsSync5(cache)) return;
   let found = 0;
-  for (const market of readdirSync3(cache)) {
-    const marketDir = join10(cache, market);
+  for (const market of readdirSync4(cache)) {
+    const marketDir = join11(cache, market);
     let plugins;
     try {
-      plugins = readdirSync3(marketDir);
+      plugins = readdirSync4(marketDir);
     } catch {
       continue;
     }
     for (const plugin of plugins) {
       if (!/iskron/.test(plugin)) continue;
-      const dir = join10(marketDir, plugin);
-      const manifest = join10(dir, ".codex-plugin", "plugin.json");
+      const dir = join11(marketDir, plugin);
+      const manifest = join11(dir, ".codex-plugin", "plugin.json");
       let word = "манифеста нет";
       if (existsSync5(manifest)) {
         try {
@@ -3612,7 +3625,7 @@ function codexPluginReport(home) {
 }
 function harnessReport() {
   claudePluginReport();
-  const claude = join10(homedir6(), ".claude.json");
+  const claude = join11(homedir6(), ".claude.json");
   if (existsSync5(claude)) {
     try {
       const cfg = JSON.parse(readFileSync10(claude, "utf8"));
@@ -3631,10 +3644,10 @@ function harnessReport() {
       out(`Claude Code: ${claude} не читается`);
     }
   }
-  const opencodeDir = join10(homedir6(), ".config", "opencode");
+  const opencodeDir = join11(homedir6(), ".config", "opencode");
   if (existsSync5(opencodeDir)) {
-    const copy = join10(opencodeDir, "plugins", "iskron.js");
-    const packaged = join10(dirname2(fileURLToPath4(import.meta.url)), "opencode-plugin.js");
+    const copy = join11(opencodeDir, "plugins", "iskron.js");
+    const packaged = join11(dirname3(fileURLToPath4(import.meta.url)), "opencode-plugin.js");
     if (!existsSync5(copy)) {
       out(`OpenCode: плагина нет (${copy}) — его кладёт establish-mcp при подключении`);
     } else if (!existsSync5(packaged)) {
@@ -3650,7 +3663,7 @@ function harnessReport() {
   for (const codexHome of codexHomes()) {
     out(`Codex: дом ${codexHome}`);
     codexPluginReport(codexHome);
-    const door = join10(codexHome, "app-server-control", "app-server-control.sock");
+    const door = join11(codexHome, "app-server-control", "app-server-control.sock");
     if (existsSync5(door)) out(`Codex: дверь app-server открыта (${door})`);
     else if (Buffer.byteLength(door) > 100)
       out(
@@ -3660,7 +3673,7 @@ function harnessReport() {
       out(
         `Codex: двери нет (${door}) — демон app-server не поднят; без неё кадр доставляет watchdog-exit`
       );
-    const codex = join10(codexHome, "config.toml");
+    const codex = join11(codexHome, "config.toml");
     if (existsSync5(codex)) {
       const text = readFileSync10(codex, "utf8");
       out(

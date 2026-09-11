@@ -12,6 +12,7 @@ import {
   portListening,
   readAuthLock,
   releaseAuthLock,
+  sweepTabMarks,
   writeAuthLock,
 } from "./authlock.ts";
 import { bindCallback, type Callback } from "./callback.ts";
@@ -80,19 +81,19 @@ export function loginPublished(): boolean {
   return published(readAuthLock());
 }
 
-// The login's one tab, opened by the first bridge that needs a human for it —
-// and marked, so no other opens a second. It acts on the login that is out
-// right now — if `l` was replaced a moment ago, on the new one — and returns
-// that login, whose link the caller hands out.
+// A login's one tab: opened by whichever bridge needs a human for it and wins
+// its marker; a bridge that cannot open a browser claims nothing, leaving the
+// tab to one that can.
+function openTabOnce(l: Published): void {
+  if (!CFG.noBrowser && claimTab(l.state)) openBrowser(l.authorize_url);
+}
+
+// It acts on the login that is out right now — if `l` was replaced a moment
+// ago, on the new one — and returns that login, whose link the caller hands out.
 function showTab(l: Published): Published {
   const current = readAuthLock();
   if (!published(current)) return l; // landed or closed a moment ago: nothing to open
-  // A bridge that cannot open a browser leaves the tab to one that can; a tab
-  // another bridge opened a moment ago is the one tab.
-  if (CFG.noBrowser || current.tab) return current;
-  if (!claimTab(current.state)) return current; // another bridge won the tab this very instant
-  writeAuthLock({ ...current, tab: true });
-  openBrowser(current.authorize_url);
+  openTabOnce(current);
   return current;
 }
 
@@ -167,16 +168,12 @@ export async function interactiveFlow(meta: Meta, note?: string, wantTab = true)
   if (published(standing)) {
     const cb = await bindOrNull(standing.callback_port);
     if (cb) {
-      writeAuthLock({
-        ...standing,
-        pid: process.pid,
-        tab: !!standing.tab || (wantTab && !CFG.noBrowser), // the fact, not the wish
-      });
+      writeAuthLock({ ...standing, pid: process.pid });
       log(
         "the bridge that published this login is gone — listening on its link, so the tab the human has still lands",
       );
       grantLog("authorization flow taken over on the same link — waiting for the human");
-      runFlow(meta, cb, standing, wantTab && !standing.tab);
+      runFlow(meta, cb, standing, wantTab);
       throw new AuthPending(standing.authorize_url, note);
     }
     const taken = readAuthLock(); // a sibling may have taken it over first
@@ -231,8 +228,8 @@ export async function interactiveFlow(meta: Meta, note?: string, wantTab = true)
       state: b64url(randomBytes(24)),
       verifier: b64url(randomBytes(48)),
       grant: grantPrint(loadStore().tokens),
-      tab: wantTab && !CFG.noBrowser, // the fact, not the wish: a headless bridge opens nothing
     };
+    sweepTabMarks(); // no other login is out now: leftovers of closed ones go
     writeAuthLock(login); // we hold the port, so the login is ours to publish
     grantLog("authorization flow published — waiting for the human");
     runFlow(meta, callback, login, wantTab);
@@ -289,7 +286,7 @@ function runFlow(meta: Meta, cb: Callback, login: Published, openTab: boolean): 
   flow = (async () => {
     try {
       const codePromise = cb.waitForCode(login.state);
-      if (openTab) openBrowser(login.authorize_url);
+      if (openTab) openTabOnce(login); // publishing or taking over: the tab only if no one has opened it
       const code = await Promise.race([codePromise, cameBack]);
       const record = readAuthLock();
       const clientId =
