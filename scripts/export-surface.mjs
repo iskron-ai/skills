@@ -41,7 +41,10 @@ const wait = async (id, ms = 120_000) => {
 // On a cold token store the bridge answers at once with the authorize URL
 // instead of blocking on a human — that is its whole promise. So this script
 // must do what a harness does: surface the URL and keep calling until the click
-// lands, rather than treating the first answer as a verdict.
+// lands, rather than treating the first answer as a verdict. The client name
+// below stands in OWN_CLIENTS (js/shared/clients.ts): the bridge refuses this
+// handshake over a login instead of answering it from its cache — a snapshot
+// written from a stale answer would pass for the live surface.
 let id = 1;
 async function initialize() {
   let announced = false;

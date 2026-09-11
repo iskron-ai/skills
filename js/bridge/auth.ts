@@ -2,7 +2,7 @@ import { now } from "./clock.ts";
 import { CFG } from "./config.ts";
 import { DeadGrantError, errorMessage, TokenRefused } from "./errors.ts";
 import { discover } from "./oauth/discovery.ts";
-import { interactiveFlow } from "./oauth/flow.ts";
+import { interactiveFlow, joinPublishedFlow } from "./oauth/flow.ts";
 import { holdOffLogin, refreshShared, refusalStands } from "./oauth/refresh.ts";
 import { loadStore } from "./store.ts";
 import { debug, log } from "./streams.ts";
@@ -18,6 +18,8 @@ export interface AuthOptions {
   interactive?: boolean;
   /** a top-up the caller does not actually need yet */
   proactive?: boolean;
+  /** the harness is connecting (initialize): a human at the keyboard, no pause applies */
+  handshake?: boolean;
 }
 
 let authInFlight: { promise: Promise<Tokens>; interactive: boolean } | null = null;
@@ -28,7 +30,7 @@ export async function ensureAuth(
   wwwAuthenticate: string | null,
   opts: AuthOptions = {},
 ): Promise<Tokens> {
-  const { force = false, interactive = true, proactive = false } = opts;
+  const { force = false, interactive = true, proactive = false, handshake = false } = opts;
   if (CFG.pat) {
     // A PAT is the whole grant: there is nothing to refresh and nobody to send
     // to a browser. Being here at all means the server refused it.
@@ -77,7 +79,8 @@ export async function ensureAuth(
               cause: e,
             });
           }
-          holdOffLogin(e.message, e.expired); // may decide the human is not to be asked yet
+          await joinPublishedFlow(); // a login already waiting is the answer, held or not
+          holdOffLogin(e.message, e.expired, handshake); // may decide the human is not to be asked yet
           log(`refresh grant is dead (${e.message}) — starting a fresh authorization`);
           return await interactiveFlow(meta);
         }

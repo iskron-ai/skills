@@ -40,6 +40,10 @@ const INIT_PARAMS = {
   capabilities: {},
   clientInfo: { name: "test-harness", version: "0" },
 };
+// Our own client — the OpenCode plugin: it reads a refused handshake itself and
+// waits out the login, so its handshake is paced like any call (#4790). The name
+// mirrors OWN_CLIENTS in js/shared/clients.ts; a probe cannot import TypeScript.
+const OWN_INIT_PARAMS = { ...INIT_PARAMS, clientInfo: { name: "opencode-iskron", version: "1" } };
 
 // --- driving the bridge the way a harness does -----------------------------
 
@@ -570,7 +574,8 @@ test("a transient refresh failure keeps the grant and never opens a browser", as
 });
 
 // A login is the one repair that spends a human's attention, so the bridge is
-// slow to ask and slower to ask twice.
+// slow to ask and slower to ask twice — while a session runs. A handshake is
+// the human at the keyboard, and it is not paced (the handshake probe, #4790).
 
 test("a refused grant costs a login only once the refusal has stood", async (t) => {
   await withFake(t, {}, async ({ fake, dir, spawnBridge }) => {
@@ -578,13 +583,17 @@ test("a refused grant costs a login only once the refusal has stood", async (t) 
     await authorize(first, dir);
     await first.stop();
 
+    const second = spawnBridge();
+    assert.ok(
+      (await second.call("initialize", 1, INIT_PARAMS)).result,
+      "precondition: a live session",
+    );
     const s = readStore(dir);
     s.tokens.expires_at = Date.now() - 1000;
     writeFileSync(storeFile(dir), JSON.stringify(s));
     await fake.control({ refreshStatus: 400, refreshError: "invalid_grant", revoke_access: true });
 
-    const second = spawnBridge();
-    const held = await second.call("initialize", 1, INIT_PARAMS);
+    const held = await second.call("tools/call", 2, { name: "nks_orient", arguments: {} });
     assert.ok(held.error, "a refused grant cannot serve the call");
     assert.equal(
       authorizeUrlIn(held.error.message),
@@ -598,11 +607,8 @@ test("a refused grant costs a login only once the refusal has stood", async (t) 
       /invalid_grant/,
       "the grant log must carry the server's own words",
     );
-    await second.stop();
-
     ageRefusal(dir);
-    const third = spawnBridge();
-    const answer = await third.call("initialize", 1, INIT_PARAMS);
+    const answer = await second.call("tools/call", 3, { name: "nks_orient", arguments: {} });
     const url = authorizeUrlIn(answer.error?.message);
     assert.ok(
       url,
@@ -629,8 +635,9 @@ test("Rauthy's dead-refresh 404 costs exactly one new browser flow", async (t) =
       revoke_access: true,
     });
 
+    // A paced handshake — our own client's — still observes the grace on the first 404.
     const held = spawnBridge();
-    const refusal = await held.call("initialize", 1, INIT_PARAMS);
+    const refusal = await held.call("initialize", 1, OWN_INIT_PARAMS);
     assert.equal(
       authorizeUrlIn(refusal.error?.message),
       null,
@@ -643,7 +650,8 @@ test("Rauthy's dead-refresh 404 costs exactly one new browser flow", async (t) =
     );
     await held.stop();
 
-    ageRefusal(dir);
+    // Two harnesses connecting on the dead grant: a handshake is not paced, and
+    // the second joins the login the first published.
     const beforeLogin = { ...fake.state.counts };
     const retries = [spawnBridge(), spawnBridge()];
     const pending = await Promise.all(
@@ -739,7 +747,8 @@ test("a keepalive that meets a dead refresh records the refusal, so the human's 
     const refusal = JSON.parse(readFileSync(stateFile, "utf8"));
     refusal.refused_since = Date.now() - 600_000;
     writeFileSync(stateFile, JSON.stringify(refusal));
-    const answer = await bridge.call("initialize", 1, INIT_PARAMS);
+    // Our own client's handshake is paced — the one the warm grace governs.
+    const answer = await bridge.call("initialize", 1, OWN_INIT_PARAMS);
     assert.ok(
       authorizeUrlIn(answer.error?.message),
       `the already-warm grace must offer login immediately: ${JSON.stringify(answer)}`,
@@ -811,19 +820,24 @@ test('a login held back for its grace period is not sold as "retry freely"', asy
   // mid-restart. But the call still fails, and that refusal names its own wait
   // in its own words, so the verdict beside it must read "not yet", never "now".
   // Same axis as the nbf hold-off, a different door into it: this one is paced
-  // by the human's grace clock rather than by the token's hour.
+  // by the human's grace clock rather than by the token's hour — a clock that
+  // runs for a grant dying under a live session, never for a handshake.
   await withFake(t, {}, async ({ fake, dir, spawnBridge }) => {
     const first = spawnBridge();
     await authorize(first, dir);
     await first.stop();
 
+    const held = spawnBridge();
+    assert.ok(
+      (await held.call("initialize", 1, INIT_PARAMS)).result,
+      "precondition: a live session",
+    );
     const s = readStore(dir);
     s.tokens.expires_at = Date.now() - 1000;
     writeFileSync(storeFile(dir), JSON.stringify(s));
     await fake.control({ refreshStatus: 400, refreshError: "invalid_grant", revoke_access: true });
 
-    const held = spawnBridge();
-    const answer = await held.call("initialize", 1, INIT_PARAMS);
+    const answer = await held.call("tools/call", 2, { name: "nks_orient", arguments: {} });
     assert.ok(answer.error, "a refused grant cannot serve the call");
     assert.match(
       answer.error.message,
@@ -1016,7 +1030,11 @@ test("a store written before the bridge knew about hours is still read by them",
     await fake.control({ revoke_access: true });
 
     const needy = spawnBridge();
-    const held = await needy.call("initialize", 1, INIT_PARAMS);
+    assert.ok(
+      (await needy.call("initialize", 1, INIT_PARAMS)).result,
+      "the handshake stands on the last server answer, whatever the grant says",
+    );
+    const held = await needy.call("tools/call", 2, { name: "nks_orient", arguments: {} });
     assert.ok(held.error, "the server refuses it — nothing to serve with");
     assert.equal(
       authorizeUrlIn(held.error.message),
@@ -1054,7 +1072,7 @@ test("a login the human declines is not offered again on the next call", async (
       "the declined flow to close",
     );
 
-    const again = await bridge.call("initialize", 2, INIT_PARAMS);
+    const again = await bridge.call("tools/call", 2, { name: "nks_orient", arguments: {} });
     assert.ok(again.error, "there is still nothing to serve with");
     assert.equal(
       authorizeUrlIn(again.error.message),
@@ -1062,6 +1080,26 @@ test("a login the human declines is not offered again on the next call", async (
       "someone who just declined must not be asked again on the next tool call",
     );
     assert.match(again.error.message, /not asking again/);
+
+    // Our own client raising the bridge by itself — lazily, after idle — is no
+    // human asking, and must not reopen a declined login.
+    const respawn = spawnBridge();
+    const quiet = await respawn.call("initialize", 1, OWN_INIT_PARAMS);
+    assert.equal(
+      authorizeUrlIn(quiet.error?.message),
+      null,
+      `a bridge our own client raised by itself reopened a declined login: ${JSON.stringify(quiet)}`,
+    );
+    assert.match(quiet.error?.message ?? "", /not asking again/);
+    await respawn.stop();
+
+    // A reconnect is the human asking again, in so many words (#4790).
+    const reconnect = spawnBridge();
+    const asked = await reconnect.call("initialize", 1, INIT_PARAMS);
+    assert.ok(
+      authorizeUrlIn(asked.error?.message),
+      `a handshake after a decline must offer the login again: ${JSON.stringify(asked)}`,
+    );
   });
 });
 
@@ -1831,9 +1869,11 @@ test("a NotFound from a token endpoint discovery still names drops the registrat
       revoke_access: true,
     });
 
+    // A handshake is not paced, so the verdict and the new login come in one answer.
     const second = spawnBridge();
     const answer = await second.call("initialize", 1, INIT_PARAMS);
-    assert.ok(answer.error, "a registration the server no longer knows cannot serve this attempt");
+    const url = authorizeUrlIn(answer.error?.message);
+    assert.ok(url, `the human must be offered a new login: ${JSON.stringify(answer)}`);
     assert.doesNotMatch(
       answer.error.message,
       /rediscovering on the next attempt/,
@@ -1841,25 +1881,14 @@ test("a NotFound from a token endpoint discovery still names drops the registrat
     );
     assert.ok(readStore(dir).meta, "the discovery, confirmed unchanged, must be kept");
     assert.equal(
-      readStore(dir).client,
-      null,
-      "the registration the server no longer knows must be dropped",
+      fake.state.counts.register,
+      counts.register + 1,
+      "the registration the server no longer knows must be dropped — the new login runs on a fresh one",
     );
     assert.equal(
       fake.state.counts.authorize,
       counts.authorize,
       "the verdict itself must not visit a browser flow",
-    );
-    await second.stop();
-
-    ageRefusal(dir);
-    const third = spawnBridge();
-    const url = authorizeUrlIn((await third.call("initialize", 1, INIT_PARAMS)).error?.message);
-    assert.ok(url, "after the grace the human must be offered a new login");
-    assert.equal(
-      fake.state.counts.register,
-      counts.register + 1,
-      "the new login must run on a fresh registration",
     );
     const res = await fetch(url, { redirect: "follow" });
     assert.equal(res.status, 200, "the new login must complete on the fresh registration");
@@ -1951,7 +1980,8 @@ test("a grant past its own expiry asks for the login at once, not after a grace"
     await fake.control({ refreshStatus: 400, refreshError: "invalid_grant", revoke_access: true });
 
     const second = spawnBridge();
-    const answer = await second.call("initialize", 1, INIT_PARAMS);
+    // Our own client's handshake is paced, so only the grant's own hour lets it through at once.
+    const answer = await second.call("initialize", 1, OWN_INIT_PARAMS);
     const url = authorizeUrlIn(answer.error?.message);
     assert.ok(
       url,
@@ -2317,6 +2347,149 @@ test("a handshake with the network down is answered from the last server answer,
       await second.stop();
       await door.close();
     }
+  });
+});
+
+// Claude Code shows a stdio server's refused handshake as a bare code and drops
+// its text, and a stdio entry has no login button at all: a handshake refused
+// over a dead grant hides the login from the human and the agent alike, and
+// the server is left marked failed, with no tools to say it through (graph
+// @nks/nks-dev, node #4790). So the handshake stands on the last server answer,
+// the login is published at once — a handshake is a human at the keyboard —
+// and the first call carries the link to them.
+test("a handshake over a dead grant stands on the last server answer, publishes the login at once, and the first call carries it", async (t) => {
+  await withFake(t, {}, async ({ fake, dir, spawnBridge }) => {
+    const first = spawnBridge();
+    await authorize(first, dir);
+    assert.ok((await first.call("initialize", 2, INIT_PARAMS)).result);
+    first.send({ jsonrpc: "2.0", method: "notifications/initialized" });
+    const known = toolNames((await first.call("tools/list", 3)).result?.tools);
+    assert.ok(known.length > 0, "precondition: the server's list was seen once");
+    await first.stop();
+
+    const s = readStore(dir);
+    const deadToken = s.tokens.access_token;
+    s.tokens.expires_at = Date.now() - 1000;
+    writeFileSync(storeFile(dir), JSON.stringify(s));
+    await fake.control({ refreshStatus: 400, refreshError: "invalid_grant", revoke_access: true });
+
+    const second = spawnBridge(); // what /mcp reconnect does
+    const init = await second.call("initialize", 1, INIT_PARAMS);
+    assert.ok(
+      init.result?.protocolVersion,
+      `a dead grant must not fail the handshake: ${JSON.stringify(init.error)}`,
+    );
+    second.send({ jsonrpc: "2.0", method: "notifications/initialized" });
+    const list = await second.call("tools/list", 2);
+    assert.deepEqual(
+      toolNames(list.result?.tools),
+      known,
+      `the last list must stand in for the server: ${JSON.stringify(list.error)}`,
+    );
+    const published = JSON.parse(readFileSync(lockFile(dir), "utf8"));
+    assert.equal(
+      await portListening(published.callback_port),
+      true,
+      "the login must be published at the handshake, not held back for a grace",
+    );
+
+    const call = await second.call("tools/call", 3, { name: "nks_orient", arguments: {} });
+    const url = authorizeUrlIn(call.error?.message);
+    assert.equal(
+      url,
+      published.authorize_url,
+      `the first call must carry the login: ${JSON.stringify(call)}`,
+    );
+    assert.doesNotMatch(
+      call.error.message,
+      /retry freely|server side needs attention|clears itself by waiting/,
+      "a login waiting for a click is neither a retry nor a wait nor a server defect",
+    );
+    assert.match(call.error.message, /human/i, "the verdict must send the link to the human");
+
+    const res = await fetch(url, { redirect: "follow" });
+    assert.equal(res.status, 200);
+    await res.text();
+    await waitFor(
+      () => readStore(dir).tokens?.access_token !== deadToken,
+      "the new grant to reach the store",
+    );
+    const after = await second.call("tools/call", 4, { name: "nks_orient", arguments: {} });
+    assert.ok(
+      after.result && !after.error,
+      `after the click the call goes through without a second handshake: ${JSON.stringify(after)}`,
+    );
+  });
+});
+
+// Our own clients read a refused handshake themselves and wait out the login:
+// the OpenCode plugin shows the human the link in its own window, make surface
+// prints it and must not write a snapshot from a stale answer. Answering them
+// from the last server answer would take that away (#4790), so theirs is refused.
+test("our own clients' handshake over a dead grant is still refused with the link, so they can show it", async (t) => {
+  await withFake(t, {}, async ({ fake, dir, spawnBridge }) => {
+    const first = spawnBridge();
+    await authorize(first, dir);
+    assert.ok((await first.call("initialize", 2, INIT_PARAMS)).result);
+    first.send({ jsonrpc: "2.0", method: "notifications/initialized" });
+    assert.ok(toolNames((await first.call("tools/list", 3)).result?.tools).length > 0);
+    await first.stop();
+
+    const s = readStore(dir);
+    s.tokens.expires_at = Date.now() - 1000;
+    writeFileSync(storeFile(dir), JSON.stringify(s));
+    await fake.control({ refreshStatus: 400, refreshError: "invalid_grant", revoke_access: true });
+    ageRefusal(dir);
+
+    const plugin = spawnBridge();
+    const init = await plugin.call("initialize", 1, OWN_INIT_PARAMS);
+    assert.ok(
+      init.error,
+      `our own client must see the refusal, not the last answer: ${JSON.stringify(init.result)}`,
+    );
+    assert.match(
+      init.error.message,
+      /authorization required/,
+      "the plugin knows a login in progress by these words",
+    );
+    assert.ok(authorizeUrlIn(init.error.message), "the refusal must carry the link it shows");
+
+    // make surface is ours too: a snapshot written from a stale answer would pass for the live one.
+    // The name mirrors SURFACE_CLIENT in js/shared/clients.ts.
+    const surface = spawnBridge();
+    const exported = await surface.call("initialize", 1, {
+      ...INIT_PARAMS,
+      clientInfo: { name: "export-surface", version: "0" },
+    });
+    assert.ok(
+      authorizeUrlIn(exported.error?.message),
+      `the surface export must see the login, not the last answer: ${JSON.stringify(exported)}`,
+    );
+  });
+});
+
+test("our own client's handshake keeps the audience diagnosis rather than the last answer", async (t) => {
+  await withFake(t, {}, async ({ fake, dir, spawnBridge }) => {
+    const first = spawnBridge();
+    await authorize(first, dir);
+    assert.ok(
+      (await first.call("initialize", 2, INIT_PARAMS)).result,
+      "precondition: an answer to keep",
+    );
+    await first.stop();
+
+    await fake.control({ mcpStatus: 401 }); // every token refused, a fresh one included
+    const plugin = spawnBridge();
+    const answer = await plugin.call("initialize", 1, OWN_INIT_PARAMS);
+    assert.ok(
+      answer.error,
+      `the last answer hid a server that refuses every token: ${JSON.stringify(answer)}`,
+    );
+    assert.match(
+      answer.error.message,
+      /audience|ISKRON_BRIDGE_RESOURCE/,
+      "the second refusal must still point at the audience",
+    );
   });
 });
 
