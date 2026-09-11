@@ -293,7 +293,13 @@ export function refusalStands(): boolean {
   return !!at && Date.now() - at < REFUSED_KNOCK_MS;
 }
 
-export function holdOffLogin(reason: string, expired = false): void {
+// `asked` is the harness connecting — a session starting, a /mcp reconnect: a
+// human at the keyboard, now. Neither pause below is theirs to sit through. The
+// harness does not connect again by itself, so a login held past this moment
+// opens for nobody, and the human who just asked sees no login at all (graph
+// @nks/nks-dev, node #4790).
+export function holdOffLogin(reason: string, expired = false, asked = false): void {
+  if (asked) return;
   const local = Date.now(); // human pacing runs on the human's own clock
   const st = loadGrantState();
   if (st.snooze_until && local < st.snooze_until) {

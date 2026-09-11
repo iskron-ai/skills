@@ -17,19 +17,25 @@ export function pendingFlow(): Promise<void> | null {
   return flowInBackground;
 }
 
-// Starts (or joins) the machine-wide browser flow and throws AuthPending with
-// the authorize URL immediately — no harness call ever blocks on a human. The
-// winner completes the flow in the background and saves the tokens; every
-// instance picks them up from the store on its next call.
-export async function interactiveFlow(meta: Meta): Promise<Tokens> {
-  // Join a standing flow only when its listener answers: URL plus open port,
-  // never the lock file on its own. The port to probe is the one the OWNER
-  // bound and wrote into the lock — it may be a later rung than ours.
+// A login already published is the answer to every caller without a grant:
+// one login, one tab (graph nks-dev: #4721). Throws AuthPending with its URL.
+// Join a standing flow only when its listener answers: URL plus open port,
+// never the lock file on its own. The port to probe is the one the OWNER
+// bound and wrote into the lock — it may be a later rung than ours.
+export async function joinPublishedFlow(): Promise<void> {
   const standing = readAuthLock();
   if (standing?.authorize_url && (await portListening(standing.callback_port))) {
     debug(`joining the flow held by pid ${standing.pid}`);
     throw new AuthPending(standing.authorize_url);
   }
+}
+
+// Starts (or joins) the machine-wide browser flow and throws AuthPending with
+// the authorize URL immediately — no harness call ever blocks on a human. The
+// winner completes the flow in the background and saves the tokens; every
+// instance picks them up from the store on its next call.
+export async function interactiveFlow(meta: Meta): Promise<Tokens> {
+  await joinPublishedFlow();
 
   let callback: Callback | null = null;
   for (let rung = 0; rung < CALLBACK_PORT_RUNGS && !callback; rung++) {

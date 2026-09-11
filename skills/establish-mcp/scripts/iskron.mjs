@@ -771,12 +771,15 @@ var flowInBackground = null;
 function pendingFlow() {
   return flowInBackground;
 }
-async function interactiveFlow(meta) {
+async function joinPublishedFlow() {
   const standing = readAuthLock();
   if (standing?.authorize_url && await portListening(standing.callback_port)) {
     debug(`joining the flow held by pid ${standing.pid}`);
     throw new AuthPending(standing.authorize_url);
   }
+}
+async function interactiveFlow(meta) {
+  await joinPublishedFlow();
   let callback = null;
   for (let rung = 0; rung < CALLBACK_PORT_RUNGS && !callback; rung++) {
     try {
@@ -1077,7 +1080,8 @@ function refusalStands() {
   const at = loadGrantState().refused_at;
   return !!at && Date.now() - at < REFUSED_KNOCK_MS;
 }
-function holdOffLogin(reason, expired = false) {
+function holdOffLogin(reason, expired = false, asked = false) {
+  if (asked) return;
   const local = Date.now();
   const st = loadGrantState();
   if (st.snooze_until && local < st.snooze_until) {
@@ -1097,7 +1101,7 @@ function holdOffLogin(reason, expired = false) {
 // js/bridge/auth.ts
 var authInFlight = null;
 async function ensureAuth(wwwAuthenticate, opts = {}) {
-  const { force = false, interactive = true, proactive = false } = opts;
+  const { force = false, interactive = true, proactive = false, handshake = false } = opts;
   if (CFG.pat) {
     throw new TokenRefused(
       `the personal access token from ${CFG.patSource} is refused by the server — revoked, expired or without rights to this graph; mint a new one on the graph's token page and put it in ${CFG.patSource}`
@@ -1128,7 +1132,8 @@ async function ensureAuth(wwwAuthenticate, opts = {}) {
               cause: e
             });
           }
-          holdOffLogin(e.message, e.expired);
+          await joinPublishedFlow();
+          holdOffLogin(e.message, e.expired, handshake);
           log(`refresh grant is dead (${e.message}) — starting a fresh authorization`);
           return await interactiveFlow(meta);
         }
@@ -2467,7 +2472,11 @@ function syntheticError(id, message, outcome = UpstreamError.UNKNOWN, holdOff = 
     // defect in what only time repairs. The interval itself stays where it was
     // measured — in the reason above — so one refusal never carries two.
     "Nothing was applied and the grant is whole — this clears itself by waiting, not by fixing: wait out the interval named above before retrying."
-  ) : kind === "knock" ? "Nothing was applied and the grant is whole — a benign transition, not a broken authorization: retry the call now. Only a refusal that returns means the hour is real — that one names its own wait." : kind === "dead" ? "Nothing was applied, and no retry and no wait will change that — only a human with a new token can." : "The call never reached the server, so nothing was applied — retry freely." : "The call went out and its answer was lost, so THE OUTCOME IS UNKNOWN — re-read the target before retrying: a blind retry can apply a second time, and a write with no version guard duplicates silently.";
+  ) : kind === "knock" ? "Nothing was applied and the grant is whole — a benign transition, not a broken authorization: retry the call now. Only a refusal that returns means the hour is real — that one names its own wait." : kind === "dead" ? "Nothing was applied, and no retry and no wait will change that — only a human with a new token can." : kind === "human" ? (
+    // The agent reads this; the human does not. A retry buys nothing
+    // and a wait shortens nothing — only handing the link over does.
+    "Nothing was applied, and only the human can move this: hand them the link above — the login is already waiting for their click. Once they finish, retry the call."
+  ) : "The call never reached the server, so nothing was applied — retry freely." : "The call went out and its answer was lost, so THE OUTCOME IS UNKNOWN — re-read the target before retrying: a blind retry can apply a second time, and a write with no version guard duplicates silently.";
   const tail = kind ? "The bridge stays up." : "The bridge stays up; if this repeats, the server side needs attention.";
   return {
     jsonrpc: "2.0",
@@ -2491,7 +2500,7 @@ function isRead(msg) {
   if (msg?.method === "initialize" || msg?.method === "tools/list") return true;
   return msg?.method === "tools/call" && READ_TOOLS.has(String(msg.params?.name ?? ""));
 }
-function offlineAnswer(msg) {
+function lastServerAnswer(msg) {
   const cache = loadServerCache();
   const result = msg?.method === "initialize" ? cache.init : msg?.method === "tools/list" && !msg.params?.cursor ? cache.tools : null;
   return result ? { jsonrpc: "2.0", id: msg.id, result } : null;
@@ -2594,16 +2603,29 @@ async function deliver(msg) {
       if (e instanceof UpstreamError && e.kind === "auth" && !authRetried) {
         authRetried = true;
         try {
-          await ensureAuth(e.message, { force: true, rejected: e.presented });
+          await ensureAuth(e.message, { force: true, rejected: e.presented, handshake: isInit });
           continue;
         } catch (authErr) {
+          const standIn = hasId ? lastServerAnswer(msg) : null;
+          if (standIn) {
+            log(`${msg.method} answered from the last server answer — ${errorMessage(authErr)}`);
+            emit(standIn);
+            return;
+          }
           if (authErr instanceof TokenRefused) {
             if (hasId) emit(syntheticError(msg.id, authErr.message, outcome, "dead"));
             return;
           }
           if (authErr instanceof AuthPending || authErr instanceof LoginHeld) {
             if (hasId) {
-              emit(syntheticError(msg.id, authErr.message, outcome, authErr instanceof LoginHeld));
+              emit(
+                syntheticError(
+                  msg.id,
+                  authErr.message,
+                  outcome,
+                  authErr instanceof LoginHeld ? "wait" : "human"
+                )
+              );
             }
             return;
           }
@@ -2637,8 +2659,8 @@ async function deliver(msg) {
           return;
         }
       }
-      if (e instanceof UpstreamError && e.kind === "network" && hasId) {
-        const cached = offlineAnswer(msg);
+      if (e instanceof UpstreamError && (e.kind === "network" || e.kind === "auth") && hasId) {
+        const cached = lastServerAnswer(msg);
         if (cached) {
           log(`${e.message} — ${msg.method} answered from the last server answer`);
           emit(cached);

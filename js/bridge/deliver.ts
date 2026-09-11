@@ -27,7 +27,7 @@ export function syntheticError(
   id: JsonRpcMessage["id"],
   message: string,
   outcome: Outcome = UpstreamError.UNKNOWN,
-  holdOff: boolean | "wait" | "knock" | "dead" = false,
+  holdOff: boolean | "wait" | "knock" | "dead" | "human" = false,
 ): JsonRpcMessage {
   // holdOff carries the KIND of not-yet, because the two kinds prescribe
   // opposite moves. "wait" is a pause with an honest figure: the grace-held
@@ -55,7 +55,12 @@ export function syntheticError(
           : kind === "dead"
             ? "Nothing was applied, and no retry and no wait will change that — only a human " +
               "with a new token can."
-            : "The call never reached the server, so nothing was applied — retry freely."
+            : kind === "human"
+              ? // The agent reads this; the human does not. A retry buys nothing
+                // and a wait shortens nothing — only handing the link over does.
+                "Nothing was applied, and only the human can move this: hand them the link above — " +
+                "the login is already waiting for their click. Once they finish, retry the call."
+              : "The call never reached the server, so nothing was applied — retry freely."
       : "The call went out and its answer was lost, so THE OUTCOME IS UNKNOWN — re-read the target " +
         "before retrying: a blind retry can apply a second time, and a write with no version guard " +
         "duplicates silently.";
@@ -96,11 +101,13 @@ function isRead(msg: JsonRpcMessage): boolean {
   return msg?.method === "tools/call" && READ_TOOLS.has(String(msg.params?.name ?? ""));
 }
 
-// Сеть легла на рукопожатии или на списке тулов: харнес, получивший здесь
-// отказ, считает сервер упавшим до перезапуска. Последний ответ сервера лежит
-// рядом с грантом — мост отвечает им, а сессия откроется, когда сеть вернётся:
-// следующий вызов без сессии переинициализируется сам.
-function offlineAnswer(msg: JsonRpcMessage): JsonRpcMessage | null {
+// Рукопожатие или список тулов упёрлись в сеть или во вход: харнес, получивший
+// здесь отказ, считает сервер упавшим до перезапуска, а текст отказа не видит
+// ни человек, ни агент (граф nks-dev: #4790). Последний ответ сервера лежит
+// рядом с грантом — мост отвечает им, а сессия откроется, когда вернётся сеть
+// или ляжет грант: следующий вызов без сессии переинициализируется сам и
+// несёт агенту то, что мешает, — ссылку входа в том числе.
+function lastServerAnswer(msg: JsonRpcMessage): JsonRpcMessage | null {
   const cache = loadServerCache();
   const result =
     msg?.method === "initialize"
@@ -244,9 +251,15 @@ export async function deliver(msg: JsonRpcMessage): Promise<void> {
       if (e instanceof UpstreamError && e.kind === "auth" && !authRetried) {
         authRetried = true;
         try {
-          await ensureAuth(e.message, { force: true, rejected: e.presented });
+          await ensureAuth(e.message, { force: true, rejected: e.presented, handshake: isInit });
           continue;
         } catch (authErr) {
+          const standIn = hasId ? lastServerAnswer(msg) : null;
+          if (standIn) {
+            log(`${msg.method} answered from the last server answer — ${errorMessage(authErr)}`);
+            emit(standIn);
+            return;
+          }
           if (authErr instanceof TokenRefused) {
             if (hasId) emit(syntheticError(msg.id, authErr.message, outcome, "dead"));
             return;
@@ -256,7 +269,14 @@ export async function deliver(msg: JsonRpcMessage): Promise<void> {
             // is repaired by time and must not be sold as "retry freely"; the
             // second is repaired by a human's click, and no waiting shortens it.
             if (hasId) {
-              emit(syntheticError(msg.id, authErr.message, outcome, authErr instanceof LoginHeld));
+              emit(
+                syntheticError(
+                  msg.id,
+                  authErr.message,
+                  outcome,
+                  authErr instanceof LoginHeld ? "wait" : "human",
+                ),
+              );
             }
             return;
           }
@@ -293,8 +313,8 @@ export async function deliver(msg: JsonRpcMessage): Promise<void> {
           return;
         }
       }
-      if (e instanceof UpstreamError && e.kind === "network" && hasId) {
-        const cached = offlineAnswer(msg);
+      if (e instanceof UpstreamError && (e.kind === "network" || e.kind === "auth") && hasId) {
+        const cached = lastServerAnswer(msg);
         if (cached) {
           log(`${e.message} — ${msg.method} answered from the last server answer`);
           emit(cached);
