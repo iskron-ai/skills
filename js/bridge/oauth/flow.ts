@@ -80,14 +80,28 @@ export function loginPublished(): boolean {
 }
 
 // The login's one tab, opened by the first bridge that needs a human for it —
-// and marked, so no other opens a second.
-function showTab(l: Published): void {
-  if (CFG.noBrowser) return; // a bridge that cannot open a browser leaves the tab to one that can
+// and marked, so no other opens a second. It acts on the login that is out
+// right now — if `l` was replaced a moment ago, on the new one — and returns
+// that login, whose link the caller hands out.
+function showTab(l: Published): Published {
   const current = readAuthLock();
-  // Gone, replaced, or opened by another bridge a moment ago: nothing to open.
-  if (!current || current.state !== l.state || current.tab) return;
+  if (!published(current)) return l; // landed or closed a moment ago: nothing to open
+  // A bridge that cannot open a browser leaves the tab to one that can; a tab
+  // another bridge opened a moment ago is the one tab.
+  if (CFG.noBrowser || current.tab) return current;
   writeAuthLock({ ...current, tab: true });
-  openBrowser(l.authorize_url);
+  openBrowser(current.authorize_url);
+  return current;
+}
+
+// The login a joining caller hands out: when a human is needed, the one the
+// tab opens on — every way of joining goes through here, so none of them
+// leaves a human who is needed without a tab.
+function handOut<L extends AuthLock & { authorize_url: string }>(
+  l: L,
+  wantTab: boolean,
+): L | Published {
+  return wantTab && published(l) ? showTab(l) : l;
 }
 
 // A living bridge's login made moot a moment ago still holds its port until its
@@ -112,13 +126,13 @@ async function bindOrNull(port: number): Promise<Callback | null> {
 // Someone holds this port. A live bridge's login on it — or its claim, a moment
 // before the link — is waited for and joined; nothing of a living bridge's
 // after a glance is a foreign process, stepped past.
-async function linkOn(port: number): Promise<string | null> {
+async function linkOn(port: number): Promise<(AuthLock & { authorize_url: string }) | null> {
   const glance = Date.now() + CLAIM_GLANCE_MS;
   const deadline = Date.now() + CLAIM_WAIT_MS;
   for (;;) {
     const l = readAuthLock();
     const ours = !!l && l.callback_port === port && pidAlive(l.pid);
-    if (ours && (published(l) || older(l))) return l.authorize_url ?? null;
+    if (ours && (published(l) || older(l))) return l;
     const claimed = ours && !l?.authorize_url;
     if ((!claimed && Date.now() > glance) || Date.now() > deadline) return null;
     await sleep(100);
@@ -146,8 +160,7 @@ export async function interactiveFlow(meta: Meta, note?: string, wantTab = true)
     (await portListening(standing.callback_port))
   ) {
     debug(`joining the login held by pid ${standing.pid}`);
-    if (wantTab && published(standing) && !standing.tab) showTab(standing);
-    throw new AuthPending(standing.authorize_url, note);
+    throw new AuthPending(handOut(standing, wantTab).authorize_url, note);
   }
   if (published(standing)) {
     const cb = await bindOrNull(standing.callback_port);
@@ -171,7 +184,7 @@ export async function interactiveFlow(meta: Meta, note?: string, wantTab = true)
       pidAlive(taken.pid) &&
       (await portListening(taken.callback_port))
     ) {
-      throw new AuthPending(taken.authorize_url, note);
+      throw new AuthPending(handOut(taken, wantTab).authorize_url, note);
     }
     debug(
       `the published login's port ${standing.callback_port} is held by a foreign process — its link can land nowhere; publishing a new login`,
@@ -182,16 +195,16 @@ export async function interactiveFlow(meta: Meta, note?: string, wantTab = true)
     pidAlive(standing.pid) &&
     (await portListening(standing.callback_port))
   ) {
-    const link = await linkOn(standing.callback_port);
-    if (link) throw new AuthPending(link, note);
+    const found = await linkOn(standing.callback_port);
+    if (found) throw new AuthPending(handOut(found, wantTab).authorize_url, note);
   }
 
   let callback: Callback | null = null;
   for (let rung = 0; rung < CALLBACK_PORT_RUNGS && !callback; rung++) {
     callback = await bindOrNull(callbackPort(rung));
     if (callback) break;
-    const link = await linkOn(callbackPort(rung));
-    if (link) throw new AuthPending(link, note);
+    const found = await linkOn(callbackPort(rung));
+    if (found) throw new AuthPending(handOut(found, wantTab).authorize_url, note);
     await mootFreed(callbackPort(rung)); // a moot login of a living bridge closing: wait for it
     callback = await bindOrNull(callbackPort(rung)); // freed meanwhile, whoever held it
     if (callback) break;

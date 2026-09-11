@@ -821,11 +821,15 @@ function loginPublished() {
   return published(readAuthLock());
 }
 function showTab(l) {
-  if (CFG.noBrowser) return;
   const current = readAuthLock();
-  if (!current || current.state !== l.state || current.tab) return;
+  if (!published(current)) return l;
+  if (CFG.noBrowser || current.tab) return current;
   writeAuthLock({ ...current, tab: true });
-  openBrowser(l.authorize_url);
+  openBrowser(current.authorize_url);
+  return current;
+}
+function handOut(l, wantTab) {
+  return wantTab && published(l) ? showTab(l) : l;
 }
 async function mootFreed(port) {
   const l = readAuthLock();
@@ -847,7 +851,7 @@ async function linkOn(port) {
   for (; ; ) {
     const l = readAuthLock();
     const ours = !!l && l.callback_port === port && pidAlive(l.pid);
-    if (ours && (published(l) || older(l))) return l.authorize_url ?? null;
+    if (ours && (published(l) || older(l))) return l;
     const claimed = ours && !l?.authorize_url;
     if (!claimed && Date.now() > glance || Date.now() > deadline) return null;
     await sleep(100);
@@ -857,8 +861,7 @@ async function interactiveFlow(meta, note3, wantTab = true) {
   const standing = readAuthLock();
   if ((published(standing) || older(standing)) && pidAlive(standing.pid) && await portListening(standing.callback_port)) {
     debug(`joining the login held by pid ${standing.pid}`);
-    if (wantTab && published(standing) && !standing.tab) showTab(standing);
-    throw new AuthPending(standing.authorize_url, note3);
+    throw new AuthPending(handOut(standing, wantTab).authorize_url, note3);
   }
   if (published(standing)) {
     const cb = await bindOrNull(standing.callback_port);
@@ -878,21 +881,21 @@ async function interactiveFlow(meta, note3, wantTab = true) {
     }
     const taken = readAuthLock();
     if (published(taken) && taken.state === standing.state && pidAlive(taken.pid) && await portListening(taken.callback_port)) {
-      throw new AuthPending(taken.authorize_url, note3);
+      throw new AuthPending(handOut(taken, wantTab).authorize_url, note3);
     }
     debug(
       `the published login's port ${standing.callback_port} is held by a foreign process — its link can land nowhere; publishing a new login`
     );
   } else if (standing && !standing.authorize_url && pidAlive(standing.pid) && await portListening(standing.callback_port)) {
-    const link = await linkOn(standing.callback_port);
-    if (link) throw new AuthPending(link, note3);
+    const found = await linkOn(standing.callback_port);
+    if (found) throw new AuthPending(handOut(found, wantTab).authorize_url, note3);
   }
   let callback = null;
   for (let rung = 0; rung < CALLBACK_PORT_RUNGS && !callback; rung++) {
     callback = await bindOrNull(callbackPort(rung));
     if (callback) break;
-    const link = await linkOn(callbackPort(rung));
-    if (link) throw new AuthPending(link, note3);
+    const found = await linkOn(callbackPort(rung));
+    if (found) throw new AuthPending(handOut(found, wantTab).authorize_url, note3);
     await mootFreed(callbackPort(rung));
     callback = await bindOrNull(callbackPort(rung));
     if (callback) break;

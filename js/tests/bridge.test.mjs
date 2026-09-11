@@ -2627,6 +2627,50 @@ test("headless bridges that join or take over a login mark no tab they never ope
   });
 });
 
+// Several bridges that need a human join the same tab-less login in the same
+// moment: the tab opens once — whichever reaches it first marks it, and every
+// other re-reads the mark before it opens anything.
+test("bridges joining a login at the same moment open its one tab once", async (t) => {
+  if (process.platform === "win32") return t.skip("the opener is PowerShell there");
+  await withFake(t, {}, async ({ fake, dir, spawnBridge }) => {
+    const first = spawnBridge();
+    await authorize(first, dir);
+    await first.stop();
+    const s = readStore(dir);
+    s.tokens.expires_at = Date.now() - 1000;
+    writeFileSync(storeFile(dir), JSON.stringify(s));
+    await fake.control({ refreshStatus: 400, refreshError: "invalid_grant", revoke_access: true });
+
+    const quick = { ISKRON_BRIDGE_DEAD_RECHECK_MS: "50" };
+    const publisher = spawnBridge(quick); // headless: the login goes out without a tab
+    const url = authorizeUrlIn((await publisher.call("initialize", 1, INIT_PARAMS)).error?.message);
+    assert.ok(url, "a dead grant publishes a login");
+
+    const root = mkdtempSync(join(tmpdir(), "iskron-opener-"));
+    const record = join(root, "opened.txt");
+    for (const name of ["open", "xdg-open"]) {
+      writeFileSync(join(root, name), `#!/bin/sh\nprintf '%s\\n' "$@" >> "${record}"\n`, {
+        mode: 0o755,
+      });
+    }
+    const opened = () => {
+      try {
+        return readFileSync(record, "utf8").trim().split("\n").filter(Boolean);
+      } catch {
+        return [];
+      }
+    };
+    const crowd = Array.from({ length: 4 }, () =>
+      spawnBridge({ ...quick, PATH: `${root}:${process.env.PATH}` }, { browser: true }),
+    );
+    const answers = await Promise.all(crowd.map((b) => b.call("initialize", 1, INIT_PARAMS)));
+    for (const a of answers) assert.equal(authorizeUrlIn(a.error?.message), url, "the same login");
+    await waitFor(() => opened().length >= 1, "the one tab");
+    await pause(500);
+    assert.equal(opened().length, 1, "one tab, however many joined at once");
+  });
+});
+
 // A server may keep its refresh token and issue only a new access token. The
 // grant still came back, and the login beside it is still moot.
 test("a server that keeps its refresh token still makes the moot login close", async (t) => {
