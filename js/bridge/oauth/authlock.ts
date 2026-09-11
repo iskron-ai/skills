@@ -33,6 +33,10 @@ export interface AuthLock {
   verifier?: string;
   /** the client the sign-in page was last minted under — the code is exchanged under it */
   client_id?: string;
+  /** a fingerprint of the grant the login was published over — another grant makes it moot */
+  grant?: string;
+  /** whether the login's one browser tab has been opened */
+  tab?: boolean;
 }
 
 export function authLockPath(): string {

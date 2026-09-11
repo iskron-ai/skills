@@ -33,7 +33,6 @@ async function tokenRequestOnce(meta: Meta, params: Record<string, string>): Pro
     access_token: body.access_token,
     refresh_token: refresh,
     ...tokenSchedule(body, refresh),
-    stored_at: Date.now(),
     ...(params.client_id ? { client_id: params.client_id } : {}),
   };
   saveStore({ tokens });

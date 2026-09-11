@@ -773,7 +773,6 @@ async function tokenRequestOnce(meta, params) {
     access_token: body.access_token,
     refresh_token: refresh,
     ...tokenSchedule(body, refresh),
-    stored_at: Date.now(),
     ...params.client_id ? { client_id: params.client_id } : {}
   };
   saveStore({ tokens });
@@ -806,16 +805,31 @@ function pendingFlow() {
 var loginLink = (port, key) => `http://127.0.0.1:${port}/login?k=${key}`;
 var linkPrefix = (port) => `http://127.0.0.1:${port}/login?k=`;
 var redirectFor = (port) => `http://127.0.0.1:${port}/callback`;
+var grantPrint = (t) => {
+  const token = t?.refresh_token || t?.access_token;
+  return token ? b64url(sha256(token)).slice(0, 16) : "";
+};
 function published(l) {
   if (!l?.authorize_url || !l.state || !l.verifier) return false;
   if (!l.authorize_url.startsWith(linkPrefix(l.callback_port))) return false;
-  return (loadStore().tokens?.stored_at ?? 0) < l.started_at;
+  return l.grant === void 0 || grantPrint(loadStore().tokens) === l.grant;
 }
 function older(l) {
   return !!l?.authorize_url && !l.state;
 }
 function loginPublished() {
   return published(readAuthLock());
+}
+function showTab(l) {
+  const current = readAuthLock();
+  if (current?.state === l.state) writeAuthLock({ ...current, tab: true });
+  openBrowser(l.authorize_url);
+}
+async function mootFreed(port) {
+  const l = readAuthLock();
+  if (!l || l.callback_port !== port || !l.state || published(l) || !pidAlive(l.pid)) return;
+  const deadline = Date.now() + LANDED_POLL_MS * 2 + 1e3;
+  while (Date.now() < deadline && await portListening(port)) await sleep(100);
 }
 async function bindOrNull(port) {
   try {
@@ -837,21 +851,22 @@ async function linkOn(port) {
     await sleep(100);
   }
 }
-async function interactiveFlow(meta, note3) {
+async function interactiveFlow(meta, note3, wantTab = true) {
   const standing = readAuthLock();
   if ((published(standing) || older(standing)) && pidAlive(standing.pid) && await portListening(standing.callback_port)) {
     debug(`joining the login held by pid ${standing.pid}`);
+    if (wantTab && published(standing) && !standing.tab) showTab(standing);
     throw new AuthPending(standing.authorize_url, note3);
   }
   if (published(standing)) {
     const cb = await bindOrNull(standing.callback_port);
     if (cb) {
-      writeAuthLock({ ...standing, pid: process.pid });
+      writeAuthLock({ ...standing, pid: process.pid, tab: !!standing.tab || wantTab });
       log(
         "the bridge that published this login is gone — listening on its link, so the tab the human has still lands"
       );
       grantLog("authorization flow taken over on the same link — waiting for the human");
-      runFlow(meta, cb, standing, false);
+      runFlow(meta, cb, standing, wantTab && !standing.tab);
       throw new AuthPending(standing.authorize_url, note3);
     }
     const taken = readAuthLock();
@@ -871,6 +886,9 @@ async function interactiveFlow(meta, note3) {
     if (callback) break;
     const link = await linkOn(callbackPort(rung));
     if (link) throw new AuthPending(link, note3);
+    await mootFreed(callbackPort(rung));
+    callback = await bindOrNull(callbackPort(rung));
+    if (callback) break;
     debug(
       `callback port ${callbackPort(rung)} is held by a foreign process — trying the next rung`
     );
@@ -889,11 +907,13 @@ async function interactiveFlow(meta, note3) {
       callback_port: callback.port,
       authorize_url: loginLink(callback.port, b64url(randomBytes(18))),
       state: b64url(randomBytes(24)),
-      verifier: b64url(randomBytes(48))
+      verifier: b64url(randomBytes(48)),
+      grant: grantPrint(loadStore().tokens),
+      tab: wantTab
     };
     writeAuthLock(login);
     grantLog("authorization flow published — waiting for the human");
-    runFlow(meta, callback, login, true);
+    runFlow(meta, callback, login, wantTab);
     started = true;
     throw new AuthPending(login.authorize_url, note3);
   } catch (e) {
@@ -926,7 +946,7 @@ function runFlow(meta, cb, login, openTab) {
   let watch;
   const cameBack = new Promise((_, reject) => {
     watch = setInterval(() => {
-      if ((loadStore().tokens?.stored_at ?? 0) > login.started_at) {
+      if (login.grant !== void 0 && grantPrint(loadStore().tokens) !== login.grant) {
         reject(new Error("the grant came back by itself — this login is no longer needed"));
       }
     }, LANDED_POLL_MS);
@@ -1263,7 +1283,7 @@ async function ensureAuth(wwwAuthenticate, opts = {}) {
                 continue;
               }
               log(`${e.message} — offering the login beside the wait`);
-              return await interactiveFlow(meta, heldNote(e.until));
+              return await interactiveFlow(meta, heldNote(e.until), false);
             }
             if (e instanceof DeadGrantError) {
               if (!e.expired && rechecks < DEAD_RECHECK_MS.length && !loginPublished()) {

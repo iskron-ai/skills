@@ -44,6 +44,13 @@ export function pendingFlow(): Promise<void> | null {
 const loginLink = (port: number, key: string): string => `http://127.0.0.1:${port}/login?k=${key}`;
 const linkPrefix = (port: number): string => `http://127.0.0.1:${port}/login?k=`;
 const redirectFor = (port: number): string => `http://127.0.0.1:${port}/callback`;
+// Which grant the machine holds, as a short fingerprint of its tokens: a login
+// published over one grant is moot once another is there — whichever bridge,
+// of whatever build, wrote it down.
+const grantPrint = (t: Tokens | null | undefined): string => {
+  const token = t?.refresh_token || t?.access_token;
+  return token ? b64url(sha256(token)).slice(0, 16) : "";
+};
 
 type Published = AuthLock & Required<Pick<AuthLock, "authorize_url" | "state" | "verifier">>;
 
@@ -55,7 +62,7 @@ type Published = AuthLock & Required<Pick<AuthLock, "authorize_url" | "state" | 
 function published(l: AuthLock | null): l is Published {
   if (!l?.authorize_url || !l.state || !l.verifier) return false;
   if (!l.authorize_url.startsWith(linkPrefix(l.callback_port))) return false;
-  return (loadStore().tokens?.stored_at ?? 0) < l.started_at;
+  return l.grant === undefined || grantPrint(loadStore().tokens) === l.grant;
 }
 
 // A login an older bridge still running on this machine published: its link is
@@ -68,6 +75,24 @@ function older(l: AuthLock | null): l is AuthLock & { authorize_url: string } {
 /** Is a login out for this machine — one the next caller would join? */
 export function loginPublished(): boolean {
   return published(readAuthLock());
+}
+
+// The login's one tab, opened by the first bridge that needs a human for it —
+// and marked, so no other opens a second.
+function showTab(l: Published): void {
+  const current = readAuthLock();
+  if (current?.state === l.state) writeAuthLock({ ...current, tab: true });
+  openBrowser(l.authorize_url);
+}
+
+// A living bridge's login made moot a moment ago still holds its port until its
+// next look at the grant. Waited for, not stepped past: stepping to the next
+// rung would be a second login on a second port for nothing.
+async function mootFreed(port: number): Promise<void> {
+  const l = readAuthLock();
+  if (!l || l.callback_port !== port || !l.state || published(l) || !pidAlive(l.pid)) return;
+  const deadline = Date.now() + LANDED_POLL_MS * 2 + 1_000;
+  while (Date.now() < deadline && (await portListening(port))) await sleep(100);
 }
 
 async function bindOrNull(port: number): Promise<Callback | null> {
@@ -101,7 +126,11 @@ async function linkOn(port: number): Promise<string | null> {
 // tokens; every instance picks them up from the store on its next call.
 // One login, one tab (#4794): only the bridge that publishes a login opens the
 // browser; one that joins or takes it over never does — the human has that tab.
-export async function interactiveFlow(meta: Meta, note?: string): Promise<Tokens> {
+// `wantTab` says a human is needed — the grant is dead or absent. A login
+// offered beside a grant merely blind until its hour comes as a link alone:
+// the grant comes back by itself, and a tab every such window is a tab nobody
+// asked for (#4794). The login's one tab opens when a human is first needed.
+export async function interactiveFlow(meta: Meta, note?: string, wantTab = true): Promise<Tokens> {
   const standing = readAuthLock();
   // Joined only while its bridge lives: a port listening under a dead
   // publisher is a stranger's, and a click on that link lands nowhere.
@@ -111,17 +140,18 @@ export async function interactiveFlow(meta: Meta, note?: string): Promise<Tokens
     (await portListening(standing.callback_port))
   ) {
     debug(`joining the login held by pid ${standing.pid}`);
+    if (wantTab && published(standing) && !standing.tab) showTab(standing);
     throw new AuthPending(standing.authorize_url, note);
   }
   if (published(standing)) {
     const cb = await bindOrNull(standing.callback_port);
     if (cb) {
-      writeAuthLock({ ...standing, pid: process.pid });
+      writeAuthLock({ ...standing, pid: process.pid, tab: !!standing.tab || wantTab });
       log(
         "the bridge that published this login is gone — listening on its link, so the tab the human has still lands",
       );
       grantLog("authorization flow taken over on the same link — waiting for the human");
-      runFlow(meta, cb, standing, false);
+      runFlow(meta, cb, standing, wantTab && !standing.tab);
       throw new AuthPending(standing.authorize_url, note);
     }
     const taken = readAuthLock(); // a sibling may have taken it over first
@@ -152,6 +182,9 @@ export async function interactiveFlow(meta: Meta, note?: string): Promise<Tokens
     if (callback) break;
     const link = await linkOn(callbackPort(rung));
     if (link) throw new AuthPending(link, note);
+    await mootFreed(callbackPort(rung)); // a moot login of a living bridge closing: wait for it
+    callback = await bindOrNull(callbackPort(rung)); // freed meanwhile, whoever held it
+    if (callback) break;
     debug(
       `callback port ${callbackPort(rung)} is held by a foreign process — trying the next rung`,
     );
@@ -172,10 +205,12 @@ export async function interactiveFlow(meta: Meta, note?: string): Promise<Tokens
       authorize_url: loginLink(callback.port, b64url(randomBytes(18))),
       state: b64url(randomBytes(24)),
       verifier: b64url(randomBytes(48)),
+      grant: grantPrint(loadStore().tokens),
+      tab: wantTab,
     };
     writeAuthLock(login); // we hold the port, so the login is ours to publish
     grantLog("authorization flow published — waiting for the human");
-    runFlow(meta, callback, login, true);
+    runFlow(meta, callback, login, wantTab);
     started = true;
     throw new AuthPending(login.authorize_url, note);
   } catch (e) {
@@ -218,7 +253,7 @@ function runFlow(meta: Meta, cb: Callback, login: Published, openTab: boolean): 
   let watch: ReturnType<typeof setInterval> | undefined;
   const cameBack = new Promise<never>((_, reject) => {
     watch = setInterval(() => {
-      if ((loadStore().tokens?.stored_at ?? 0) > login.started_at) {
+      if (login.grant !== undefined && grantPrint(loadStore().tokens) !== login.grant) {
         reject(new Error("the grant came back by itself — this login is no longer needed"));
       }
     }, LANDED_POLL_MS);

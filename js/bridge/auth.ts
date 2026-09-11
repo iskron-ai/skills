@@ -117,7 +117,8 @@ export async function ensureAuth(
                 continue;
               }
               log(`${e.message} — offering the login beside the wait`);
-              return await interactiveFlow(meta, heldNote(e.until));
+              // A link, not a tab: the grant comes back by itself.
+              return await interactiveFlow(meta, heldNote(e.until), false);
             }
             if (e instanceof DeadGrantError) {
               // A server mid-restart words a live grant's death the same way, so

@@ -2454,6 +2454,122 @@ test("a live port under a dead publisher is a stranger's — its link is not han
   });
 });
 
+// A tab is for a human who is needed. Beside a grant merely blind until its
+// hour the login comes as a link: the grant comes back by itself, and a tab each
+// such window — every twenty-five minutes in the field — is a tab nobody asked
+// for. When the grant is then gone for real, the login's one tab opens once.
+test("beside a blind grant the login comes as a link, not a tab — a tab only once a human is needed", async (t) => {
+  if (process.platform === "win32") return t.skip("the opener is PowerShell there");
+  await withFake(t, { refreshNotBeforeMs: 60_000 }, async ({ fake, dir, spawnBridge }) => {
+    const first = spawnBridge();
+    await authorize(first, dir);
+    await first.stop();
+    const s = readStore(dir);
+    s.tokens.expires_at = Date.now() - 1000;
+    writeFileSync(storeFile(dir), JSON.stringify(s));
+    await fake.control({ revoke_access: true });
+
+    const root = mkdtempSync(join(tmpdir(), "iskron-opener-"));
+    const record = join(root, "opened.txt");
+    for (const name of ["open", "xdg-open"]) {
+      writeFileSync(join(root, name), `#!/bin/sh\nprintf '%s\\n' "$@" >> "${record}"\n`, {
+        mode: 0o755,
+      });
+    }
+    const opened = () => {
+      try {
+        return readFileSync(record, "utf8").trim().split("\n").filter(Boolean);
+      } catch {
+        return [];
+      }
+    };
+    const a = spawnBridge({ PATH: `${root}:${process.env.PATH}` }, { browser: true });
+    const url = authorizeUrlIn((await a.call("initialize", 1, INIT_PARAMS)).error?.message);
+    assert.ok(url, "a blind grant is offered a login beside its hour");
+    await pause(500);
+    assert.deepEqual(opened(), [], "no tab for a grant that comes back by itself");
+
+    const gone = readStore(dir); // now there is no grant to come back
+    delete gone.tokens.refresh_token;
+    writeFileSync(storeFile(dir), JSON.stringify(gone));
+    await a.call("tools/call", 2, { name: "nks_orient", arguments: {} });
+    await waitFor(() => opened().length === 1, "the tab a human is now needed for");
+    await a.call("tools/call", 3, { name: "nks_orient", arguments: {} });
+    await pause(300);
+    assert.equal(opened().length, 1, "one tab, however many calls");
+  });
+});
+
+// The grant a moot login is judged against is the grant itself, not a stamp
+// only this build writes: a bridge of an earlier build rotating it counts too.
+test("a grant another bridge wrote — of any build — makes the moot login close", async (t) => {
+  await withFake(t, { refreshNotBeforeMs: 60_000 }, async ({ fake, dir, spawnBridge }) => {
+    const first = spawnBridge();
+    await authorize(first, dir);
+    await first.stop();
+    const s = readStore(dir);
+    s.tokens.expires_at = Date.now() - 1000;
+    writeFileSync(storeFile(dir), JSON.stringify(s));
+    await fake.control({ revoke_access: true });
+
+    const a = spawnBridge({
+      ISKRON_BRIDGE_IN_CALL_WAIT_MS: "100",
+      ISKRON_BRIDGE_LANDED_POLL_MS: "100",
+    });
+    const url = authorizeUrlIn((await a.call("initialize", 1, INIT_PARAMS)).error?.message);
+    assert.ok(url, "a blind grant is offered a login beside its hour");
+    const older = readStore(dir); // an earlier build rotates the grant, writing no stamp of ours
+    older.tokens = {
+      access_token: "access-from-an-older-bridge",
+      refresh_token: "refresh-from-an-older-bridge",
+      expires_at: Date.now() + 3_600_000,
+    };
+    writeFileSync(storeFile(dir), JSON.stringify(older));
+    await waitFor(
+      async () => !(await portListening(callbackPortOf(url))),
+      "the moot login to close",
+    );
+  });
+});
+
+// Between the grant coming back and the moot login's next look at it, the port
+// is still held. A blind window in that gap waits for it, not a second port.
+test("a blind window right after the grant came back waits for the moot login, not a second port", async (t) => {
+  await withFake(t, { refreshNotBeforeMs: 3000 }, async ({ fake, dir, spawnBridge }) => {
+    const first = spawnBridge();
+    await authorize(first, dir);
+    await first.stop();
+    const blind = async () => {
+      const s = readStore(dir);
+      s.tokens.expires_at = Date.now() - 1000;
+      writeFileSync(storeFile(dir), JSON.stringify(s));
+      await fake.control({ revoke_access: true });
+    };
+    await blind();
+
+    const a = spawnBridge({
+      ISKRON_BRIDGE_IN_CALL_WAIT_MS: "100",
+      ISKRON_BRIDGE_LANDED_POLL_MS: "2500",
+    });
+    const offered = authorizeUrlIn((await a.call("initialize", 1, INIT_PARAMS)).error?.message);
+    assert.ok(offered, "a blind grant is offered a login beside its hour");
+    await pause(Math.max(0, fake.state.refreshValidFrom - Date.now()) + 200); // the hour comes
+    const served = await a.call("tools/call", 2, { name: "nks_orient", arguments: {} });
+    assert.ok(served.result && !served.error, `the grant is back: ${JSON.stringify(served.error)}`);
+
+    await blind(); // at once — before the moot login has looked again
+    const next = authorizeUrlIn(
+      (await a.call("tools/call", 3, { name: "nks_orient", arguments: {} })).error?.message,
+    );
+    assert.ok(next, "the next blind window is offered a login too");
+    assert.equal(
+      callbackPortOf(next),
+      callbackPortOf(offered),
+      "on the same port, not a second one",
+    );
+  });
+});
+
 // A login offered beside a grant blind until its hour is moot once the grant
 // comes back by itself. Left listening, it held the port, and the next blind
 // window stepped to another rung — a new tab each time, until no port was left.

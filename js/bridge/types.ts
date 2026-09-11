@@ -4,8 +4,6 @@ export interface Tokens {
   expires_at?: number | null;
   refresh_not_before?: number | null;
   refresh_expires_at?: number | null;
-  /** when this grant was written down (machine clock) — dates it against a published login */
-  stored_at?: number;
   /** the client this grant was issued to — the one its refresh must present */
   client_id?: string;
 }

@@ -144,8 +144,8 @@ export function bindCallback(port: number): Promise<Callback> {
                 : null;
             // An arrival that is not this login's — a leftover tab of a login
             // that is over, or any page poking the port — is answered in its own
-            // browser and does not end the login: a new tab is owed only to a
-            // real refusal (#4794).
+            // browser and does not end the login: only a refusal with the
+            // login's own state does (#4794).
             const settle = (v: Arrival): boolean => {
               if (v.state !== expectedState) {
                 tellBrowser(
