@@ -140,6 +140,11 @@ test("doctor: reads an existing grant without touching it, and sees the home cop
       }) + "\n",
     );
     await firstReply;
+    // Open the login link as a human would: the sign-in page is minted then, and
+    // the client registration with it (#4794) — the client doctor must report.
+    const link = /(http:\/\/127\.0\.0\.1:\d+\/login\?k=[\w-]+)/.exec(first)?.[1];
+    assert.ok(link, `the bridge must hand out a login link: ${first}`);
+    await (await fetch(link, { redirect: "manual" })).text();
     // The bridge outlives a pending login on purpose (the human may be mid-click),
     // so a polite stdin close would wait for that flow; the store is already
     // written by discovery, and the probe only needs the store.

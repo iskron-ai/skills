@@ -73,7 +73,9 @@ export async function startFakeNks(opts = {}) {
     mcpHangMs: 0, // hold /mcp open past the caller's deadline: the request left, the answer never came
     refreshDelayMs: opts.refreshDelayMs ?? 0, // widen the window several bridges race in
     codeDelayMs: opts.codeDelayMs ?? 0, // hold the code exchange open, as a slow server does
+    registerDelayMs: opts.registerDelayMs ?? 0, // hold dynamic registration open: the window two bridges race in
     refreshNotBeforeMs: opts.refreshNotBeforeMs ?? 0, // hold the refresh token back this long
+    keepRefresh: opts.keepRefresh ?? false, // keep the refresh token across a refresh, issuing only a new access token
     accessExpSkewSec: opts.accessExpSkewSec ?? 0, // make the access token's own exp disagree with expires_in
     padBytes: opts.padBytes ?? 0, // make answers bigger than one pipe buffer
     // The server's clock runs this far ahead of the machine's (a customer's
@@ -258,6 +260,7 @@ export async function startFakeNks(opts = {}) {
 
     if (p === "/register" && req.method === "POST") {
       st.counts.register++;
+      if (st.registerDelayMs) await new Promise((r) => setTimeout(r, st.registerDelayMs));
       const reg = JSON.parse(await body(req));
       const id = token("client");
       st.clients.set(id, reg);
@@ -300,6 +303,13 @@ export async function startFakeNks(opts = {}) {
           return json(res, 400, {
             error: "invalid_grant",
             error_description: "redirect_uri mismatch",
+          });
+        }
+        // A code is bound to the client it was issued to (RFC 6749 §4.1.3).
+        if (f.get("client_id") !== c.client_id) {
+          return json(res, 400, {
+            error: "invalid_grant",
+            error_description: "client_id mismatch",
           });
         }
         st.access = mintAccess(st);
@@ -352,7 +362,7 @@ export async function startFakeNks(opts = {}) {
           });
         }
         st.access = mintAccess(st);
-        st.refresh = mintRefresh(st); // rotation
+        if (!st.keepRefresh) st.refresh = mintRefresh(st); // rotation — unless this server keeps it
         return json(res, 200, {
           access_token: st.access,
           refresh_token: st.refresh,

@@ -4,6 +4,8 @@ export interface Tokens {
   expires_at?: number | null;
   refresh_not_before?: number | null;
   refresh_expires_at?: number | null;
+  /** the client this grant was issued to — the one its refresh must present */
+  client_id?: string;
 }
 
 export interface Client {
@@ -35,12 +37,11 @@ export interface Store {
   updated_at?: string;
 }
 
-/** Память машины о гранте, которому отказали: с каких пор, чьими словами, спрашивали ли человека. */
+/** Память машины о гранте, которому отказали: с каких пор, чьими словами, когда стучать снова. */
 export interface GrantState {
   refused_since?: number;
   refused_at?: number;
   reason?: string;
-  snooze_until?: number;
   early_refused_until?: number;
 }
 

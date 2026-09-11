@@ -350,15 +350,13 @@ var DEFINITIVE_OAUTH_ERRORS = /* @__PURE__ */ new Set([
   "invalid_client",
   "unauthorized_client"
 ]);
-var LoginHeld = class extends Error {
-};
 var TokenRefused = class extends Error {
 };
 var AuthPending = class extends Error {
   authorizeUrl;
-  constructor(url) {
+  constructor(url, note3) {
     super(
-      `authorization required — open in a browser: ${url} — or give the bridge a personal access token instead (ISKRON_BRIDGE_TOKEN, or the file <auth-dir>/token)`
+      `authorization required — open in a browser: ${url}${note3 ? ` (${note3})` : ""} — or give the bridge a personal access token instead (ISKRON_BRIDGE_TOKEN, or the file <auth-dir>/token)`
     );
     this.authorizeUrl = url;
   }
@@ -368,9 +366,14 @@ var HoldOffError = class extends Error {
   // the FIRST early refusal of a needed refresh. The cooldown refusal and a
   // refusal that repeats both name waits that are real.
   retryNow;
-  constructor(message, retryNow = false) {
+  // When the hold ends, on the server-corrected clock — the refresh token's own
+  // hour; null when nobody knows. A caller sits out a short one inside the call
+  // and answers a long one with the login.
+  until;
+  constructor(message, retryNow = false, until = null) {
     super(message);
     this.retryNow = retryNow;
+    this.until = until;
   }
 };
 var DeadGrantError = class extends Error {
@@ -529,9 +532,16 @@ function windowsOpener(url) {
 import { randomBytes } from "node:crypto";
 
 // js/bridge/oauth/authlock.ts
-import { mkdirSync as mkdirSync2, readFileSync as readFileSync4, unlinkSync as unlinkSync2, writeFileSync as writeFileSync2 } from "node:fs";
+import {
+  mkdirSync as mkdirSync2,
+  readdirSync,
+  readFileSync as readFileSync4,
+  renameSync as renameSync2,
+  unlinkSync as unlinkSync2,
+  writeFileSync as writeFileSync2
+} from "node:fs";
 import { connect } from "node:net";
-var AUTH_LOCK_FRESH_MS = 33e4;
+import { basename, dirname, join as join4 } from "node:path";
 function authLockPath() {
   return storePath() + ".auth-pending";
 }
@@ -559,30 +569,54 @@ function portListening(port, timeoutMs = 700) {
 }
 function readAuthLock() {
   try {
-    const l = JSON.parse(readFileSync4(authLockPath(), "utf8"));
-    if (!(Date.now() - l.started_at < AUTH_LOCK_FRESH_MS)) return null;
-    if (!pidAlive(l.pid)) return null;
-    return l;
+    return JSON.parse(readFileSync4(authLockPath(), "utf8"));
+  } catch {
+    return null;
+  }
+}
+function writeAuthLock(fields) {
+  mkdirSync2(CFG.authDir, { recursive: true, mode: 448 });
+  const tmp = `${authLockPath()}.tmp-${process.pid}`;
+  const body = JSON.stringify({
+    ...fields,
+    pid: fields.pid ?? process.pid,
+    started_at: fields.started_at ?? Date.now()
+  });
+  try {
+    writeFileSync2(tmp, body, { mode: 384 });
+    renameSync2(tmp, authLockPath());
+  } catch {
+    try {
+      unlinkSync2(tmp);
+    } catch {
+    }
+    writeFileSync2(authLockPath(), body, { mode: 384 });
+  }
+}
+function releaseAuthLock(owns) {
+  try {
+    const l = readAuthLock();
+    if (owns && (!l || !owns(l))) return;
+    unlinkSync2(authLockPath());
   } catch {
   }
-  return null;
 }
-function writeAuthLock(url, port) {
-  mkdirSync2(CFG.authDir, { recursive: true, mode: 448 });
-  writeFileSync2(
-    authLockPath(),
-    JSON.stringify({
-      pid: process.pid,
-      started_at: Date.now(),
-      authorize_url: url,
-      callback_port: port
-    }),
-    { mode: 384 }
-  );
-}
-function releaseAuthLock() {
+var tabMarkPath = (state2) => `${authLockPath()}.tab-${state2}`;
+function claimTab(state2) {
   try {
-    unlinkSync2(authLockPath());
+    mkdirSync2(CFG.authDir, { recursive: true, mode: 448 });
+    writeFileSync2(tabMarkPath(state2), "", { flag: "wx", mode: 384 });
+    return true;
+  } catch {
+    return false;
+  }
+}
+function sweepTabMarks() {
+  const prefix = `${basename(authLockPath())}.tab-`;
+  try {
+    for (const f of readdirSync(dirname(authLockPath()))) {
+      if (f.startsWith(prefix)) unlinkSync2(join4(dirname(authLockPath()), f));
+    }
   } catch {
   }
 }
@@ -590,7 +624,7 @@ function installAuthLockExitHook() {
   process.on("exit", () => {
     try {
       const l = JSON.parse(readFileSync4(authLockPath(), "utf8"));
-      if (l.pid === process.pid) unlinkSync2(authLockPath());
+      if (l.pid === process.pid && !l.authorize_url) unlinkSync2(authLockPath());
     } catch {
     }
   });
@@ -604,6 +638,8 @@ function bindCallback(port) {
     let handOff = null;
     let received = null;
     let browser = null;
+    let mint = null;
+    let loginKey = "";
     const deliver2 = (v) => {
       if (handOff) handOff(v);
       else received = v;
@@ -624,6 +660,21 @@ function bindCallback(port) {
     };
     const server2 = createServer((req, res) => {
       const u = new URL(req.url ?? "/", `http://127.0.0.1:${port}`);
+      if (u.pathname === "/login" && mint && loginKey && u.searchParams.get("k") === loginKey) {
+        mint().then(
+          (to) => {
+            res.writeHead(302, { location: to, "cache-control": "no-store" });
+            res.end();
+          },
+          (e) => {
+            res.writeHead(502, { "content-type": "text/html; charset=utf-8" });
+            res.end(
+              `<h3>iskron-bridge: the sign-in page could not be reached (${esc(errorMessage(e))}) — reload this page.</h3>`
+            );
+          }
+        );
+        return;
+      }
       if (u.pathname !== "/callback") {
         res.writeHead(404);
         res.end();
@@ -658,6 +709,10 @@ function bindCallback(port) {
           tellBrowser("iskron-bridge: the login was abandoned — nothing was stored.");
           server2.close();
         },
+        serveLogin: (key, fn) => {
+          loginKey = key;
+          mint = fn;
+        },
         // No deadline by default: the login lives as long as the bridge holding
         // it, so a human who comes back to the tab late still lands it (graph
         // nks-dev: #4721). A bridge left by its harness bounds the wait itself.
@@ -667,24 +722,27 @@ function bindCallback(port) {
             timeoutMs
           ) : null;
           const settle = (v) => {
-            if (timer) clearTimeout(timer);
-            if (v.err) return rej(new Error(`authorization refused: ${v.err}`));
-            if (!v.code || v.state !== expectedState) {
-              return rej(new Error("callback missing code or state mismatch"));
+            if (v.state !== expectedState) {
+              tellBrowser(
+                "iskron-bridge: this page belongs to a login that is over — open the link the agent gave you."
+              );
+              return false;
             }
-            res(v.code);
+            if (timer) clearTimeout(timer);
+            handOff = null;
+            if (v.err) rej(new Error(`authorization refused: ${v.err}`));
+            else if (!v.code) rej(new Error("callback missing code"));
+            else res(v.code);
+            return true;
           };
-          if (received) settle(received);
-          else handOff = settle;
+          if (received && settle(received)) return;
+          received = null;
+          handOff = settle;
         })
       });
     });
   });
 }
-
-// js/bridge/oauth/pacing.ts
-var LOGIN_GRACE_MS = 12e4;
-var LOGIN_SNOOZE_MS = 10 * 6e4;
 
 // js/bridge/tokens.ts
 function jwtClaims(token) {
@@ -746,7 +804,8 @@ async function tokenRequestOnce(meta, params) {
   const tokens = {
     access_token: body.access_token,
     refresh_token: refresh,
-    ...tokenSchedule(body, refresh)
+    ...tokenSchedule(body, refresh),
+    ...params.client_id ? { client_id: params.client_id } : {}
   };
   saveStore({ tokens });
   clearGrantState();
@@ -767,33 +826,131 @@ async function tokenRequest(meta, params) {
 }
 
 // js/bridge/oauth/flow.ts
-var flowInBackground = null;
+var CLAIM_WAIT_MS = Number(process.env.ISKRON_BRIDGE_CLAIM_WAIT_MS) || 15e3;
+var CLAIM_GLANCE_MS = 1e3;
+var LANDED_POLL_MS = Number(process.env.ISKRON_BRIDGE_LANDED_POLL_MS) || 2e3;
+var RELEASE_GAP_MS = Number(process.env.ISKRON_BRIDGE_RELEASE_GAP_MS) || 0;
+var flows = /* @__PURE__ */ new Set();
 function pendingFlow() {
-  return flowInBackground;
+  return flows.size ? Promise.allSettled([...flows]).then(() => {
+  }) : null;
 }
-async function joinPublishedFlow() {
-  const standing = readAuthLock();
-  if (standing?.authorize_url && await portListening(standing.callback_port)) {
-    debug(`joining the flow held by pid ${standing.pid}`);
-    throw new AuthPending(standing.authorize_url);
+var loginLink = (port, key) => `http://127.0.0.1:${port}/login?k=${key}`;
+var linkPrefix = (port) => `http://127.0.0.1:${port}/login?k=`;
+var redirectFor = (port) => `http://127.0.0.1:${port}/callback`;
+var grantPrint = (t) => {
+  const both = [t?.refresh_token, t?.access_token].filter(Boolean).join("|");
+  return both ? b64url(sha256(both)).slice(0, 16) : "";
+};
+var grantBack = (judged) => {
+  const now2 = loadStore().tokens;
+  return now2?.access_token && grantPrint(now2) !== judged ? now2 : null;
+};
+function published(l) {
+  if (!l?.authorize_url || !l.state || !l.verifier) return false;
+  if (!l.authorize_url.startsWith(linkPrefix(l.callback_port))) return false;
+  return l.grant === void 0 || grantPrint(loadStore().tokens) === l.grant;
+}
+function older(l) {
+  return !!l?.authorize_url && !l.state;
+}
+function loginPublished() {
+  return published(readAuthLock());
+}
+function openTabOnce(l) {
+  if (!CFG.noBrowser && claimTab(l.state)) openBrowser(l.authorize_url);
+}
+function showTab(l) {
+  const current = readAuthLock();
+  if (!published(current)) return l;
+  openTabOnce(current);
+  return current;
+}
+function handOut(l, wantTab) {
+  return wantTab && published(l) ? showTab(l) : l;
+}
+async function mootFreed(port) {
+  const l = readAuthLock();
+  if (!l || l.callback_port !== port || !l.state || published(l) || !pidAlive(l.pid)) return;
+  const deadline = Date.now() + LANDED_POLL_MS * 2 + 1e3;
+  while (Date.now() < deadline && await portListening(port)) await sleep(100);
+}
+async function bindOrNull(port) {
+  try {
+    return await bindCallback(port);
+  } catch (e) {
+    if (errorCode(e) !== "EADDRINUSE") throw e;
+    return null;
   }
 }
-async function interactiveFlow(meta) {
-  await joinPublishedFlow();
+async function linkOn(port) {
+  const glance = Date.now() + CLAIM_GLANCE_MS;
+  const deadline = Date.now() + CLAIM_WAIT_MS;
+  for (; ; ) {
+    const l = readAuthLock();
+    const ours = !!l && l.callback_port === port && pidAlive(l.pid);
+    if (ours && (published(l) || older(l))) return l;
+    const claimed = ours && !l?.authorize_url;
+    if (!claimed && Date.now() > glance || Date.now() > deadline) return null;
+    await sleep(100);
+  }
+}
+async function interactiveFlow(meta, judged, note3, wantTab = true) {
+  const over = grantPrint(judged);
+  const back = grantBack(over);
+  if (back) return back;
+  const standing = readAuthLock();
+  if ((published(standing) || older(standing)) && pidAlive(standing.pid) && await portListening(standing.callback_port)) {
+    debug(`joining the login held by pid ${standing.pid}`);
+    throw new AuthPending(handOut(standing, wantTab).authorize_url, note3);
+  }
   let callback = null;
-  for (let rung = 0; rung < CALLBACK_PORT_RUNGS && !callback; rung++) {
-    try {
-      callback = await bindCallback(callbackPort(rung));
-    } catch (e) {
-      if (errorCode(e) !== "EADDRINUSE") throw e;
-      const l = readAuthLock();
-      if (l?.authorize_url && await portListening(l.callback_port)) {
-        throw new AuthPending(l.authorize_url);
+  if (published(standing)) {
+    const cb = await bindOrNull(standing.callback_port);
+    const still = cb ? readAuthLock() : null;
+    if (cb && published(still) && still.state === standing.state) {
+      try {
+        writeAuthLock({ ...still, pid: process.pid });
+      } catch (e) {
+        cb.close();
+        throw e;
       }
-      debug(
-        `callback port ${callbackPort(rung)} is held by a foreign process — trying the next rung`
+      log(
+        "the bridge that published this login is gone — listening on its link, so the tab the human has still lands"
       );
+      grantLog("authorization flow taken over on the same link — waiting for the human");
+      runFlow(meta, cb, still, wantTab);
+      throw new AuthPending(still.authorize_url, note3);
     }
+    if (cb && published(still)) {
+      cb.close();
+      return interactiveFlow(meta, judged, note3, wantTab);
+    }
+    callback = cb;
+  }
+  if (published(standing) && !callback) {
+    const taken = readAuthLock();
+    if (published(taken) && taken.state === standing.state && pidAlive(taken.pid) && await portListening(taken.callback_port)) {
+      throw new AuthPending(handOut(taken, wantTab).authorize_url, note3);
+    }
+    debug(
+      `the published login's port ${standing.callback_port} is held by a foreign process — its link can land nowhere; publishing a new login`
+    );
+  } else if (standing && !standing.authorize_url && pidAlive(standing.pid) && await portListening(standing.callback_port)) {
+    const found = await linkOn(standing.callback_port);
+    if (found) throw new AuthPending(handOut(found, wantTab).authorize_url, note3);
+  }
+  for (let rung = 0; rung < CALLBACK_PORT_RUNGS && !callback; rung++) {
+    callback = await bindOrNull(callbackPort(rung));
+    if (callback) break;
+    const found = await linkOn(callbackPort(rung));
+    if (found) throw new AuthPending(handOut(found, wantTab).authorize_url, note3);
+    await mootFreed(callbackPort(rung));
+    callback = await bindOrNull(callbackPort(rung));
+    if (callback) break;
+    debug(
+      `callback port ${callbackPort(rung)} is held by a foreign process — trying the next rung`
+    );
   }
   if (!callback) {
     const rungs = Array.from({ length: CALLBACK_PORT_RUNGS }, (_, k) => callbackPort(k)).join(", ");
@@ -801,65 +958,109 @@ async function interactiveFlow(meta) {
       `all candidate callback ports (${rungs}) are held by other processes — free one, then retry`
     );
   }
-  const port = callback.port;
+  const landed = grantBack(over);
+  if (landed) {
+    callback.close();
+    return landed;
+  }
+  let started = false;
   try {
-    const redirectUri = `http://127.0.0.1:${port}/callback`;
-    const client = await ensureClient(meta, redirectUri);
-    const verifier = b64url(randomBytes(48));
-    const authState = b64url(randomBytes(24));
-    const authUrl = new URL(meta.as.authorization_endpoint);
-    authUrl.searchParams.set("response_type", "code");
-    authUrl.searchParams.set("client_id", client.client_id);
-    authUrl.searchParams.set("redirect_uri", redirectUri);
-    authUrl.searchParams.set("state", authState);
-    authUrl.searchParams.set("code_challenge", b64url(sha256(verifier)));
-    authUrl.searchParams.set("code_challenge_method", "S256");
-    authUrl.searchParams.set("resource", meta.resource);
-    if (meta.scope) authUrl.searchParams.set("scope", meta.scope);
-    const url = authUrl.toString();
-    writeAuthLock(url, port);
+    const login = {
+      pid: process.pid,
+      started_at: Date.now(),
+      callback_port: callback.port,
+      authorize_url: loginLink(callback.port, b64url(randomBytes(18))),
+      state: b64url(randomBytes(24)),
+      verifier: b64url(randomBytes(48)),
+      grant: over
+    };
+    sweepTabMarks();
+    writeAuthLock(login);
     grantLog("authorization flow published — waiting for the human");
-    const cb = callback;
-    flowInBackground = (async () => {
-      try {
-        const codePromise = cb.waitForCode(authState);
-        openBrowser(url);
-        const code = await codePromise;
-        log("authorization code received — exchanging for tokens");
-        await tokenRequest(meta, {
-          grant_type: "authorization_code",
-          code,
-          redirect_uri: redirectUri,
-          client_id: client.client_id,
-          code_verifier: verifier,
-          resource: meta.resource
-        });
-        log("authorization complete — tokens saved for every local agent");
-        grantLog("authorization complete");
-        cb.report(null);
-      } catch (e) {
-        const message = errorMessage(e);
-        cb.report(message);
-        log(`authorization flow failed: ${message}`);
-        saveGrantState({ snooze_until: Date.now() + LOGIN_SNOOZE_MS });
-        grantLog(
-          `authorization not completed (${message}); not asking again for ${LOGIN_SNOOZE_MS / 6e4}min`
-        );
-      } finally {
-        cb.close();
-        releaseAuthLock();
-        flowInBackground = null;
-      }
-    })();
-    throw new AuthPending(url);
+    runFlow(meta, callback, login, wantTab);
+    started = true;
+    throw new AuthPending(login.authorize_url, note3);
   } catch (e) {
-    if (!flowInBackground) {
+    if (!started) {
       callback.close();
-      releaseAuthLock();
+      releaseAuthLock((l) => l.pid === process.pid);
     }
     throw e;
   }
 }
+function runFlow(meta, cb, login, openTab) {
+  const ours = (l) => l.pid === process.pid && l.state === login.state;
+  const redirectUri = redirectFor(login.callback_port);
+  const key = login.authorize_url.slice(linkPrefix(login.callback_port).length);
+  cb.serveLogin(key, async () => {
+    const client = await ensureClient(meta, redirectUri);
+    const current = readAuthLock();
+    if (current && ours(current)) writeAuthLock({ ...current, client_id: client.client_id });
+    const u = new URL(meta.as.authorization_endpoint);
+    u.searchParams.set("response_type", "code");
+    u.searchParams.set("client_id", client.client_id);
+    u.searchParams.set("redirect_uri", redirectUri);
+    u.searchParams.set("state", login.state);
+    u.searchParams.set("code_challenge", b64url(sha256(login.verifier)));
+    u.searchParams.set("code_challenge_method", "S256");
+    u.searchParams.set("resource", meta.resource);
+    if (meta.scope) u.searchParams.set("scope", meta.scope);
+    return u.toString();
+  });
+  let watch;
+  const cameBack = new Promise((_, reject) => {
+    watch = setInterval(() => {
+      if (login.grant !== void 0 && grantPrint(loadStore().tokens) !== login.grant) {
+        reject(new Error("the grant came back by itself — this login is no longer needed"));
+      }
+    }, LANDED_POLL_MS);
+    watch.unref?.();
+  });
+  cameBack.catch(() => {
+  });
+  let flow = null;
+  flow = (async () => {
+    try {
+      const codePromise = cb.waitForCode(login.state);
+      if (openTab) openTabOnce(login);
+      const code = await Promise.race([codePromise, cameBack]);
+      const record = readAuthLock();
+      const clientId = (record?.state === login.state ? record.client_id : void 0) || CFG.staticClientId || loadStore().client?.client_id || "";
+      log("authorization code received — exchanging for tokens");
+      await tokenRequest(meta, {
+        grant_type: "authorization_code",
+        code,
+        redirect_uri: redirectUri,
+        client_id: clientId,
+        code_verifier: login.verifier,
+        resource: meta.resource
+      });
+      releaseAuthLock(ours);
+      log("authorization complete — tokens saved for every local agent");
+      grantLog("authorization complete");
+      cb.report(null);
+    } catch (e) {
+      const message = errorMessage(e);
+      cb.report(message);
+      log(`authorization flow failed: ${message}`);
+      grantLog(
+        `authorization not completed (${message}) — the next call that needs the graph offers a new login`
+      );
+    } finally {
+      clearInterval(watch);
+      releaseAuthLock(ours);
+      if (RELEASE_GAP_MS) await sleep(RELEASE_GAP_MS);
+      cb.close();
+      if (flow) flows.delete(flow);
+    }
+  })();
+  flows.add(flow);
+}
+
+// js/bridge/oauth/pacing.ts
+var pauses = (v, fallback) => (v || fallback).split(",").map(Number).filter((n) => Number.isFinite(n) && n >= 0);
+var DEAD_RECHECK_MS = pauses(process.env.ISKRON_BRIDGE_DEAD_RECHECK_MS, "1000,2000");
+var IN_CALL_WAIT_MS = Number(process.env.ISKRON_BRIDGE_IN_CALL_WAIT_MS) || 1e4;
 
 // js/bridge/oauth/refreshlock.ts
 import { linkSync, mkdirSync as mkdirSync3, readFileSync as readFileSync5, unlinkSync as unlinkSync3, writeFileSync as writeFileSync3 } from "node:fs";
@@ -937,15 +1138,18 @@ async function refreshOnce(meta, cur, proactive) {
   if (cooling && now() < cooling) {
     const left = Math.round((cooling - now()) / 1e3);
     throw new HoldOffError(
-      `the token endpoint refused this grant as too early moments ago — not knocking again for ${left}s; grant kept, will retry`
+      `the token endpoint refused this grant as too early moments ago — not knocking again for ${left}s; grant kept, will retry`,
+      false,
+      hours.nbf
     );
   }
+  const clientId = CFG.staticClientId || cur.client_id || loadStore().client?.client_id || "";
   debug("refreshing access token");
   try {
     return await tokenRequest(meta, {
       grant_type: "refresh_token",
       refresh_token: cur.refresh_token ?? "",
-      client_id: CFG.staticClientId || loadStore().client?.client_id || "",
+      client_id: clientId,
       resource: meta.resource
     });
   } catch (e) {
@@ -959,7 +1163,7 @@ async function refreshOnce(meta, cur, proactive) {
       grantLog(
         `refresh refused by an endpoint discovery still names (${message}) — registration dropped`
       );
-      saveStore({ client: null });
+      dropRegistration(clientId);
       throw new DeadGrantError(message);
     }
     if (gone) {
@@ -995,7 +1199,8 @@ async function refreshOnce(meta, cur, proactive) {
       );
       throw new HoldOffError(
         repeated ? `token refresh refused too early again (${message}) — the hour is real: ${why}; grant kept` : `token refresh refused too early (${message}) — ${why}; grant kept, will retry`,
-        !!notYet && !repeated
+        !!notYet && !repeated,
+        notYet ? hours.nbf : null
       );
     }
     if (loadStore().tokens?.refresh_token !== cur.refresh_token) {
@@ -1005,7 +1210,7 @@ async function refreshOnce(meta, cur, proactive) {
     if (e instanceof TokenError && e.oauthError === "invalid_client") {
       log("the server no longer knows this client — dropping the registration");
       grantLog("server no longer knows this client — registration dropped");
-      saveStore({ client: null });
+      dropRegistration(clientId);
     }
     const overdue = hours.exp && now() >= hours.exp;
     grantLog(
@@ -1068,40 +1273,29 @@ async function refreshShared(meta, rejected, proactive, interactive) {
     }
   }
 }
+function dropRegistration(clientId) {
+  if (clientId && loadStore().client?.client_id === clientId) saveStore({ client: null });
+}
 function noteRefusal(reason) {
   const local = Date.now();
   const first2 = !loadGrantState().refused_since;
   saveGrantState({ refused_at: local, ...first2 ? { refused_since: local, reason } : {} });
-  if (first2) {
-    grantLog(`grant refused, holding the login back for ${LOGIN_GRACE_MS / 1e3}s: ${reason}`);
-  }
+  if (first2) grantLog(`grant refused: ${reason}`);
 }
 function refusalStands() {
   const at = loadGrantState().refused_at;
   return !!at && Date.now() - at < REFUSED_KNOCK_MS;
 }
-function holdOffLogin(reason, expired = false, asked = false) {
-  if (asked) return;
-  const local = Date.now();
-  const st = loadGrantState();
-  if (st.snooze_until && local < st.snooze_until) {
-    throw new LoginHeld(
-      `authorization was offered and not completed — not asking again for ${Math.round((st.snooze_until - local) / 1e3)}s (grant refused: ${reason})`
-    );
-  }
-  if (expired) return;
-  const since = st.refused_since || local;
-  if (local - since < LOGIN_GRACE_MS) {
-    throw new LoginHeld(
-      `grant refused (${reason}) — holding off the login for ${Math.round((LOGIN_GRACE_MS - (local - since)) / 1e3)}s in case it heals`
-    );
-  }
-}
 
 // js/bridge/auth.ts
 var authInFlight = null;
+function heldNote(until) {
+  if (until === null) return "the grant itself is whole";
+  const minutes = Math.max(1, Math.round((until - now()) / 6e4));
+  return `the grant itself is whole and comes back on its own in about ${minutes} min`;
+}
 async function ensureAuth(wwwAuthenticate, opts = {}) {
-  const { force = false, interactive = true, proactive = false, handshake = false } = opts;
+  const { force = false, interactive = true, proactive = false } = opts;
   if (CFG.pat) {
     throw new TokenRefused(
       `the personal access token from ${CFG.patSource} is refused by the server — revoked, expired or without rights to this graph; mint a new one on the graph's token page and put it in ${CFG.patSource}`
@@ -1122,27 +1316,59 @@ async function ensureAuth(wwwAuthenticate, opts = {}) {
       if (!force && tokenUsable(s.tokens)) return s.tokens;
       const meta = s.meta?.as ? s.meta : await discover(wwwAuthenticate);
       if (CFG.resource) meta.resource = CFG.resource;
+      if (interactive && s.tokens?.refresh_token && loginPublished() && refusalStands()) {
+        const landed = usableTokens({ rejected });
+        if (landed) return landed;
+        return await interactiveFlow(meta, s.tokens);
+      }
       if (s.tokens?.refresh_token) {
-        try {
-          return await refreshShared(meta, rejected, proactive, interactive);
-        } catch (e) {
-          if (!(e instanceof DeadGrantError)) throw e;
-          if (!interactive) {
-            throw new Error("authorization required (refresh grant dead, browser flow deferred)", {
-              cause: e
-            });
+        let rechecks = 0;
+        let waited = 0;
+        for (; ; ) {
+          try {
+            return await refreshShared(meta, rejected, proactive, interactive);
+          } catch (e) {
+            if (!interactive) {
+              if (e instanceof DeadGrantError) {
+                throw new Error(
+                  "authorization required (refresh grant dead, browser flow deferred)",
+                  { cause: e }
+                );
+              }
+              throw e;
+            }
+            if (e instanceof HoldOffError) {
+              if (e.retryNow) throw e;
+              const left = e.until === null ? Infinity : e.until - now();
+              if (left + waited <= IN_CALL_WAIT_MS) {
+                const pause = Math.max(left, 0) + 100;
+                waited += pause;
+                debug(`${e.message} — sitting it out inside the call (${pause}ms)`);
+                await sleep(pause);
+                continue;
+              }
+              log(`${e.message} — offering the login beside the wait`);
+              return await interactiveFlow(meta, s.tokens, heldNote(e.until), false);
+            }
+            if (e instanceof DeadGrantError) {
+              if (!e.expired && rechecks < DEAD_RECHECK_MS.length && !loginPublished()) {
+                const pause = DEAD_RECHECK_MS[rechecks++] ?? 0;
+                debug(`refresh refused (${e.message}) — knocking again in ${pause}ms`);
+                await sleep(pause);
+                continue;
+              }
+              log(`refresh grant is dead (${e.message}) — starting a fresh authorization`);
+              return await interactiveFlow(meta, s.tokens);
+            }
+            throw e;
           }
-          await joinPublishedFlow();
-          holdOffLogin(e.message, e.expired, handshake);
-          log(`refresh grant is dead (${e.message}) — starting a fresh authorization`);
-          return await interactiveFlow(meta);
         }
       }
       if (!interactive)
         throw new Error(
           "authorization required (no tokens, browser flow deferred) — or give the bridge a personal access token (ISKRON_BRIDGE_TOKEN, or the file <auth-dir>/token)"
         );
-      return await interactiveFlow(meta);
+      return await interactiveFlow(meta, s.tokens);
     } finally {
       authInFlight = null;
     }
@@ -1189,13 +1415,13 @@ import {
   chmodSync,
   existsSync,
   mkdirSync as mkdirSync4,
-  readdirSync,
+  readdirSync as readdirSync2,
   readFileSync as readFileSync6,
   unlinkSync as unlinkSync4,
   writeFileSync as writeFileSync4
 } from "node:fs";
 import { connect as connectLocal, createServer as createServer2 } from "node:net";
-import { join as join5 } from "node:path";
+import { join as join6 } from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 
 // js/shared/channel.ts
@@ -1313,17 +1539,17 @@ function holdSocket(o) {
 // js/shared/standings.ts
 import { createHash as createHash3 } from "node:crypto";
 import { homedir as homedir2 } from "node:os";
-import { join as join4 } from "node:path";
-var defaultAuthDir = () => join4(homedir2(), ".iskron-bridge");
+import { join as join5 } from "node:path";
+var defaultAuthDir = () => join5(homedir2(), ".iskron-bridge");
 var authDirFromEnv = () => process.env.ISKRON_BRIDGE_AUTH_DIR?.trim() || defaultAuthDir();
-var standingsDirOf = (authDir) => join4(authDir, "standings");
+var standingsDirOf = (authDir) => join5(authDir, "standings");
 var hashOf = (key) => createHash3("sha256").update(key).digest("hex").slice(0, 16);
 function socketPathOf(authDir, key) {
   if (process.platform === "win32") return `\\\\.\\pipe\\iskron-${hashOf(key)}`;
-  return join4(standingsDirOf(authDir), `${hashOf(key)}.sock`);
+  return join5(standingsDirOf(authDir), `${hashOf(key)}.sock`);
 }
-var keyFilePathOf = (authDir, key) => join4(standingsDirOf(authDir), `${hashOf(key)}.key`);
-var seenFilePathOf = (authDir, key) => join4(standingsDirOf(authDir), `${hashOf(key)}.seen`);
+var keyFilePathOf = (authDir, key) => join5(standingsDirOf(authDir), `${hashOf(key)}.key`);
+var seenFilePathOf = (authDir, key) => join5(standingsDirOf(authDir), `${hashOf(key)}.seen`);
 
 // js/bridge/transport.ts
 var state = {
@@ -1662,8 +1888,8 @@ function notify(level, data) {
 }
 function sweepStale(dir, mine) {
   if (process.platform === "win32" || !existsSync(dir)) return;
-  for (const f of readdirSync(dir).filter((x) => x.endsWith(".key"))) {
-    const keyFile = join5(dir, f);
+  for (const f of readdirSync2(dir).filter((x) => x.endsWith(".key"))) {
+    const keyFile = join6(dir, f);
     let key;
     try {
       key = readFileSync6(keyFile, "utf8").trim();
@@ -1942,19 +2168,19 @@ function stampOrigin(frame2) {
 // js/bridge/stand.ts
 import { execFileSync } from "node:child_process";
 import { hostname } from "node:os";
-import { basename } from "node:path";
+import { basename as basename2 } from "node:path";
 
 // js/bridge/update.ts
 import { spawn as spawn2 } from "node:child_process";
-import { existsSync as existsSync2, lstatSync, mkdirSync as mkdirSync5, readFileSync as readFileSync7, renameSync as renameSync2, writeFileSync as writeFileSync5 } from "node:fs";
+import { existsSync as existsSync2, lstatSync, mkdirSync as mkdirSync5, readFileSync as readFileSync7, renameSync as renameSync3, writeFileSync as writeFileSync5 } from "node:fs";
 import { homedir as homedir4 } from "node:os";
-import { dirname, join as join7 } from "node:path";
+import { dirname as dirname2, join as join8 } from "node:path";
 import { fileURLToPath as fileURLToPath3 } from "node:url";
 
 // js/shared/home.ts
 import { homedir as homedir3 } from "node:os";
-import { join as join6 } from "node:path";
-var homeBridgePath = () => join6(homedir3(), ".iskron-bridge", "iskron-bridge.mjs");
+import { join as join7 } from "node:path";
+var homeBridgePath = () => join7(homedir3(), ".iskron-bridge", "iskron-bridge.mjs");
 
 // js/shared/semver.ts
 function parseVersion(v) {
@@ -1975,14 +2201,14 @@ var RAW_URL = process.env.ISKRON_BRIDGE_RAW_URL?.trim() || "https://raw.githubus
 var CHECK_INTERVAL_MS = 6 * 60 * 60 * 1e3;
 var updatesDisabled = () => !!process.env.ISKRON_BRIDGE_NO_UPDATE;
 var selfPath = () => fileURLToPath3(import.meta.url);
-var opencodePluginPath = () => join7(homedir4(), ".config", "opencode", "plugins", "iskron.js");
-var setupPathOf = (authDir) => join7(authDir, "SETUP.md");
-var latestPathOf = (authDir) => join7(authDir, "latest.json");
+var opencodePluginPath = () => join8(homedir4(), ".config", "opencode", "plugins", "iskron.js");
+var setupPathOf = (authDir) => join8(authDir, "SETUP.md");
+var latestPathOf = (authDir) => join8(authDir, "latest.json");
 function writeAtomic(path, bytes) {
-  mkdirSync5(dirname(path), { recursive: true, mode: 448 });
+  mkdirSync5(dirname2(path), { recursive: true, mode: 448 });
   const tmp = `${path}.tmp-${process.pid}`;
   writeFileSync5(tmp, bytes, { mode: 420 });
-  renameSync2(tmp, path);
+  renameSync3(tmp, path);
 }
 var isSymlink = (path) => {
   try {
@@ -2016,7 +2242,7 @@ function syncHome(self = selfPath()) {
     writeAtomic(home, mine);
     out3.copied.push(home);
     const plugin = opencodePluginPath();
-    const packaged = join7(dirname(self), "opencode-plugin.js");
+    const packaged = join8(dirname2(self), "opencode-plugin.js");
     if (existsSync2(plugin) && existsSync2(packaged)) {
       const fresh = readFileSync7(packaged);
       if (!readFileSync7(plugin).equals(fresh)) {
@@ -2201,7 +2427,7 @@ var git = (args) => {
 function deriveName(model) {
   const host = hostname().split(".")[0];
   const top = git(["rev-parse", "--show-toplevel"]);
-  const repo = basename(top || process.cwd());
+  const repo = basename2(top || process.cwd());
   const short2 = (model ?? "").trim().toLowerCase().replace(/^claude[-_]/, "");
   return [host, repo, short2].map(sanitize).filter(Boolean).join(".");
 }
@@ -2534,6 +2760,7 @@ async function deliver(msg) {
   const harness = !ownClient();
   const hasId = msg?.id !== void 0 && msg?.id !== null;
   let authRetried = false;
+  let heldRetried = false;
   let sessionRetried = false;
   let netTries = 0;
   let outcome = UpstreamError.NOT_SENT;
@@ -2613,13 +2840,16 @@ async function deliver(msg) {
       if (e instanceof UpstreamError && e.kind === "auth" && !authRetried) {
         authRetried = true;
         try {
-          await ensureAuth(e.message, {
-            force: true,
-            rejected: e.presented,
-            handshake: isInit && harness
-          });
+          await ensureAuth(e.message, { force: true, rejected: e.presented });
           continue;
         } catch (authErr) {
+          if (authErr instanceof HoldOffError && authErr.retryNow && !heldRetried) {
+            heldRetried = true;
+            authRetried = false;
+            log(`${authErr.message} — repeating the call once`);
+            await sleep(300);
+            continue;
+          }
           const standIn = hasId && harness ? lastServerAnswer(msg) : null;
           if (standIn) {
             log(`${msg.method} answered from the last server answer — ${errorMessage(authErr)}`);
@@ -2630,17 +2860,8 @@ async function deliver(msg) {
             if (hasId) emit(syntheticError(msg.id, authErr.message, outcome, "dead"));
             return;
           }
-          if (authErr instanceof AuthPending || authErr instanceof LoginHeld) {
-            if (hasId) {
-              emit(
-                syntheticError(
-                  msg.id,
-                  authErr.message,
-                  outcome,
-                  authErr instanceof LoginHeld ? "wait" : "human"
-                )
-              );
-            }
+          if (authErr instanceof AuthPending) {
+            if (hasId) emit(syntheticError(msg.id, authErr.message, outcome, "human"));
             return;
           }
           const held = authErr instanceof HoldOffError;
@@ -2780,7 +3001,7 @@ function bridgeMain(argv2) {
 // js/watchdog/codex.ts
 import { existsSync as existsSync4 } from "node:fs";
 import { homedir as homedir5 } from "node:os";
-import { join as join9 } from "node:path";
+import { join as join10 } from "node:path";
 
 // js/shared/appserver.ts
 import { randomBytes as randomBytes2 } from "node:crypto";
@@ -2880,9 +3101,9 @@ ${body}`;
 }
 
 // js/watchdog/client.ts
-import { existsSync as existsSync3, readdirSync as readdirSync2, readFileSync as readFileSync8 } from "node:fs";
+import { existsSync as existsSync3, readdirSync as readdirSync3, readFileSync as readFileSync8 } from "node:fs";
 import { connect as connect2 } from "node:net";
-import { join as join8 } from "node:path";
+import { join as join9 } from "node:path";
 var ATTACH_WINDOW_MS = 6e4;
 var RETRY_MS = 1e3;
 function parseWatchdogArgs(argv2) {
@@ -2899,9 +3120,9 @@ function resolveStanding(argv2) {
   const dir = standingsDirOf(authDir);
   const pathFor = (k) => socketPathOf(authDir, k);
   if (key) return { key, path: pathFor(key), authDir };
-  const held = existsSync3(dir) ? readdirSync2(dir).filter((f) => f.endsWith(".key")).map((f) => {
+  const held = existsSync3(dir) ? readdirSync3(dir).filter((f) => f.endsWith(".key")).map((f) => {
     try {
-      return readFileSync8(join8(dir, f), "utf8").trim();
+      return readFileSync8(join9(dir, f), "utf8").trim();
     } catch {
       return "";
     }
@@ -2966,8 +3187,8 @@ var note = (s) => {
   process.stderr.write(s + "\n");
 };
 function codexDoorPath() {
-  const home = process.env.CODEX_HOME?.trim() || join9(homedir5(), ".codex");
-  return join9(home, "app-server-control", "app-server-control.sock");
+  const home = process.env.CODEX_HOME?.trim() || join10(homedir5(), ".codex");
+  return join10(home, "app-server-control", "app-server-control.sock");
 }
 function runWatchdogCodex(argv2) {
   const threadId = process.env.CODEX_THREAD_ID?.trim();
@@ -3200,9 +3421,9 @@ function runWatchdogExit(argv2) {
 
 // js/cli/doctor.ts
 import { createHash as createHash5 } from "node:crypto";
-import { existsSync as existsSync5, readdirSync as readdirSync3, readFileSync as readFileSync10 } from "node:fs";
+import { existsSync as existsSync5, readdirSync as readdirSync4, readFileSync as readFileSync10 } from "node:fs";
 import { homedir as homedir6 } from "node:os";
-import { dirname as dirname2, join as join10 } from "node:path";
+import { dirname as dirname3, join as join11 } from "node:path";
 import { fileURLToPath as fileURLToPath4 } from "node:url";
 var out = (s) => {
   process.stdout.write(s + "\n");
@@ -3330,9 +3551,6 @@ function grantReport() {
   const st = loadGrantState();
   if (st.refused_since)
     out(`  отказ стоит с ${new Date(st.refused_since).toISOString()}: ${st.reason ?? ""}`);
-  if (st.snooze_until && Date.now() < st.snooze_until) {
-    out(`  вход отложен ещё на ${seconds(st.snooze_until - Date.now())} (человек не завершил)`);
-  }
   for (const suffix of [".auth-pending", ".refreshing"]) {
     if (existsSync5(path + suffix)) out(`  замок: ${path + suffix}`);
   }
@@ -3361,7 +3579,7 @@ function latestReport() {
   else out(`свежий релиз: v${latest.version}, этот файл не отстал; спрашивал ${ago} мин назад`);
 }
 function claudePluginReport() {
-  const registry = join10(homedir6(), ".claude", "plugins", "installed_plugins.json");
+  const registry = join11(homedir6(), ".claude", "plugins", "installed_plugins.json");
   if (!existsSync5(registry)) return;
   try {
     const reg = JSON.parse(readFileSync10(registry, "utf8"));
@@ -3372,7 +3590,7 @@ function claudePluginReport() {
     }
     for (const [key, installs] of mine) {
       for (const inst of installs) {
-        const manifest = inst.installPath ? join10(inst.installPath, ".mcp.json") : "";
+        const manifest = inst.installPath ? join11(inst.installPath, ".mcp.json") : "";
         let entry = "запись моста в манифесте не найдена";
         if (manifest && existsSync5(manifest)) {
           try {
@@ -3397,27 +3615,27 @@ function claudePluginReport() {
 function codexHomes() {
   const homes = [
     process.env.CODEX_HOME?.trim() || "",
-    join10(homedir6(), ".codex"),
-    ...process.platform === "darwin" ? [join10(homedir6(), "Library", "Application Support", "orca", "codex-runtime-home", "home")] : []
+    join11(homedir6(), ".codex"),
+    ...process.platform === "darwin" ? [join11(homedir6(), "Library", "Application Support", "orca", "codex-runtime-home", "home")] : []
   ].filter(Boolean);
   return [...new Set(homes)].filter((h) => existsSync5(h));
 }
 function codexPluginReport(home) {
-  const cache = join10(home, "plugins", "cache");
+  const cache = join11(home, "plugins", "cache");
   if (!existsSync5(cache)) return;
   let found = 0;
-  for (const market of readdirSync3(cache)) {
-    const marketDir = join10(cache, market);
+  for (const market of readdirSync4(cache)) {
+    const marketDir = join11(cache, market);
     let plugins;
     try {
-      plugins = readdirSync3(marketDir);
+      plugins = readdirSync4(marketDir);
     } catch {
       continue;
     }
     for (const plugin of plugins) {
       if (!/iskron/.test(plugin)) continue;
-      const dir = join10(marketDir, plugin);
-      const manifest = join10(dir, ".codex-plugin", "plugin.json");
+      const dir = join11(marketDir, plugin);
+      const manifest = join11(dir, ".codex-plugin", "plugin.json");
       let word = "манифеста нет";
       if (existsSync5(manifest)) {
         try {
@@ -3438,7 +3656,7 @@ function codexPluginReport(home) {
 }
 function harnessReport() {
   claudePluginReport();
-  const claude = join10(homedir6(), ".claude.json");
+  const claude = join11(homedir6(), ".claude.json");
   if (existsSync5(claude)) {
     try {
       const cfg = JSON.parse(readFileSync10(claude, "utf8"));
@@ -3457,10 +3675,10 @@ function harnessReport() {
       out(`Claude Code: ${claude} не читается`);
     }
   }
-  const opencodeDir = join10(homedir6(), ".config", "opencode");
+  const opencodeDir = join11(homedir6(), ".config", "opencode");
   if (existsSync5(opencodeDir)) {
-    const copy = join10(opencodeDir, "plugins", "iskron.js");
-    const packaged = join10(dirname2(fileURLToPath4(import.meta.url)), "opencode-plugin.js");
+    const copy = join11(opencodeDir, "plugins", "iskron.js");
+    const packaged = join11(dirname3(fileURLToPath4(import.meta.url)), "opencode-plugin.js");
     if (!existsSync5(copy)) {
       out(`OpenCode: плагина нет (${copy}) — его кладёт establish-mcp при подключении`);
     } else if (!existsSync5(packaged)) {
@@ -3476,7 +3694,7 @@ function harnessReport() {
   for (const codexHome of codexHomes()) {
     out(`Codex: дом ${codexHome}`);
     codexPluginReport(codexHome);
-    const door = join10(codexHome, "app-server-control", "app-server-control.sock");
+    const door = join11(codexHome, "app-server-control", "app-server-control.sock");
     if (existsSync5(door)) out(`Codex: дверь app-server открыта (${door})`);
     else if (Buffer.byteLength(door) > 100)
       out(
@@ -3486,7 +3704,7 @@ function harnessReport() {
       out(
         `Codex: двери нет (${door}) — демон app-server не поднят; без неё кадр доставляет watchdog-exit`
       );
-    const codex = join10(codexHome, "config.toml");
+    const codex = join11(codexHome, "config.toml");
     if (existsSync5(codex)) {
       const text = readFileSync10(codex, "utf8");
       out(

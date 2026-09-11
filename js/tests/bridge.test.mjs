@@ -7,7 +7,15 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { createServer as createHttpsServer } from "node:https";
 import { connect, createServer } from "node:net";
 import { tmpdir } from "node:os";
@@ -112,10 +120,22 @@ function startBridge(serverUrl, authDir, extraEnv = {}, { browser = false } = {}
 
 // Список тулов сервера едет как есть; мост дописывает в хвост свой iskron_stand.
 const toolNames = (tools) => (tools ?? []).map((t) => t.name);
-const authorizeUrlIn = (text) => /(https?:\/\/\S*\/authorize\?\S+)/.exec(text || "")?.[1] ?? null;
+// The login link the bridge hands out is its own loopback address; opening it
+// mints the sign-in server's authorize URL at that moment (#4794). A past
+// bridge handed out the authorize URL itself — read too, so a probe run
+// against it (ISKRON_BRIDGE_PATH) fails on its defect, not on the link's shape.
+const authorizeUrlIn = (text) =>
+  /(http:\/\/127\.0\.0\.1:\d+\/login(?:\?k=[\w-]+)?|https?:\/\/\S*\/authorize\?\S+)/.exec(
+    text || "",
+  )?.[1] ?? null;
 const exited = (b) => new Promise((r) => b.proc.once("exit", r));
-const callbackPortOf = (authorizeUrl) =>
-  Number(new URL(new URL(authorizeUrl).searchParams.get("redirect_uri")).port);
+const callbackPortOf = (link) => Number(new URL(link).port);
+// The sign-in page a login link sends the human to, minted as it is opened.
+async function mintedFrom(link) {
+  const res = await fetch(link, { redirect: "manual" });
+  await res.text();
+  return res.headers.get("location");
+}
 
 function portListening(port) {
   return new Promise((resolve) => {
@@ -148,6 +168,15 @@ const lockFile = (dir) =>
     readdirSync(dir).find((f) => f.endsWith(".auth-pending")),
   );
 const readStore = (dir) => JSON.parse(readFileSync(storeFile(dir), "utf8"));
+// Which login the machine has out. The link is the same for every login on a
+// port, so the login's own state is what tells two logins apart.
+const loginState = (dir) => {
+  try {
+    return JSON.parse(readFileSync(lockFile(dir), "utf8")).state ?? null;
+  } catch {
+    return null;
+  }
+};
 
 // The bridge answers the harness at once and finishes the flow in the
 // background, so the click landing is not yet the grant being on disk. Tests
@@ -231,7 +260,6 @@ test("on Windows the authorize URL reaches the browser whole — PowerShell, not
     const answer = await bridge.call("initialize", 1, INIT_PARAMS);
     const url = authorizeUrlIn(answer.error?.message);
     assert.ok(url, `expected an authorize URL in the answer, got ${JSON.stringify(answer)}`);
-    assert.ok(url.includes("&"), "the URL under test must carry the character cmd.exe cuts at");
     // The redirect creates the file before printf fills it: wait for content.
     await waitFor(() => readFileSync(record, "utf8").includes("\n"), "the OS opener to be called");
     const argv = readFileSync(record, "utf8").trim().split("\n");
@@ -320,14 +348,15 @@ test("a pending flow whose listener is gone is taken over, not re-published", as
     const second = spawnBridge();
     const answer = await second.call("initialize", 2, INIT_PARAMS);
     const url = authorizeUrlIn(answer.error.message);
-    assert.ok(url, "the fresh bridge must publish a URL of its own");
+    // The tab the human already has must stay good: one login, one tab (#4794).
+    assert.equal(url, staleUrl, "the next bridge takes the login over on the same link");
     assert.equal(
-      await portListening(callbackPortOf(url)),
+      await portListening(stalePort),
       true,
-      "the fresh bridge re-published a URL with no listener behind it",
+      "the next bridge must listen on the published link, or the tab leads nowhere",
     );
-    // And the taken-over flow really completes.
-    const res = await fetch(url, { redirect: "follow" });
+    // And the taken-over login really completes — through the old tab's link.
+    const res = await fetch(staleUrl, { redirect: "follow" });
     assert.equal(res.status, 200);
     await res.text();
     await grantLanded(dir);
@@ -413,7 +442,7 @@ test("the browser is told what happened, not what was hoped", async (t) => {
   await withFake(t, {}, async ({ spawnBridge }) => {
     const bridge = spawnBridge();
     const url = authorizeUrlIn((await bridge.call("initialize", 1, INIT_PARAMS)).error.message);
-    const state = new URL(url).searchParams.get("state");
+    const state = new URL(await mintedFrom(url)).searchParams.get("state");
 
     // The state is the bridge's own, so the redirect is accepted — but the code
     // is one the server never issued, so the exchange behind it fails.
@@ -437,7 +466,7 @@ test("a second click does not leave the first tab hanging", async (t) => {
   await withFake(t, { codeDelayMs: 1500 }, async ({ spawnBridge }) => {
     const bridge = spawnBridge();
     const url = authorizeUrlIn((await bridge.call("initialize", 1, INIT_PARAMS)).error.message);
-    const state = new URL(url).searchParams.get("state");
+    const state = new URL(await mintedFrom(url)).searchParams.get("state");
     const cb = `http://127.0.0.1:${callbackPortOf(url)}/callback?code=never-issued&state=${state}`;
 
     const first = fetch(cb);
@@ -577,15 +606,19 @@ test("a transient refresh failure keeps the grant and never opens a browser", as
 // slow to ask and slower to ask twice — while a session runs. A handshake is
 // the human at the keyboard, and it is not paced (the handshake probe, #4790).
 
-test("a refused grant costs a login only once the refusal has stood", async (t) => {
+// No answer of the bridge ever tells a human to come back in N minutes (graph
+// @nks/nks-dev, node #4794). A server mid-restart can word a live grant's death
+// the same way, so the bridge knocks again itself, inside the call — and then
+// the call carries the login, not a wait.
+test("a grant dying under a live session hands the call a login — no wait, no pause", async (t) => {
   await withFake(t, {}, async ({ fake, dir, spawnBridge }) => {
     const first = spawnBridge();
     await authorize(first, dir);
     await first.stop();
 
-    const second = spawnBridge();
+    const live = spawnBridge({ ISKRON_BRIDGE_DEAD_RECHECK_MS: "50,50" });
     assert.ok(
-      (await second.call("initialize", 1, INIT_PARAMS)).result,
+      (await live.call("initialize", 1, INIT_PARAMS)).result,
       "precondition: a live session",
     );
     const s = readStore(dir);
@@ -593,28 +626,24 @@ test("a refused grant costs a login only once the refusal has stood", async (t) 
     writeFileSync(storeFile(dir), JSON.stringify(s));
     await fake.control({ refreshStatus: 400, refreshError: "invalid_grant", revoke_access: true });
 
-    const held = await second.call("tools/call", 2, { name: "nks_orient", arguments: {} });
-    assert.ok(held.error, "a refused grant cannot serve the call");
-    assert.equal(
-      authorizeUrlIn(held.error.message),
-      null,
-      "one refusal can be a server mid-restart — it must not cost a login yet",
+    const answer = await live.call("tools/call", 2, { name: "nks_orient", arguments: {} });
+    const url = authorizeUrlIn(answer.error?.message);
+    assert.ok(url, `the call must carry the login at once: ${answer.error?.message}`);
+    assert.equal(await portListening(callbackPortOf(url)), true);
+    assert.doesNotMatch(
+      answer.error.message,
+      /holding off|not asking again|clears itself by waiting|wait out/,
+      "no answer tells the human to come back later",
     );
-    assert.equal(fake.state.counts.authorize, 1, "and no second flow may be started");
-    // Whatever happens next, the reason must survive the process that saw it.
+    assert.ok(
+      fake.state.counts.refresh >= 2,
+      "the bridge knocks again itself before it calls a human in",
+    );
     assert.match(
       readFileSync(join(dir, "grant.log"), "utf8"),
       /invalid_grant/,
       "the grant log must carry the server's own words",
     );
-    ageRefusal(dir);
-    const answer = await second.call("tools/call", 3, { name: "nks_orient", arguments: {} });
-    const url = authorizeUrlIn(answer.error?.message);
-    assert.ok(
-      url,
-      `a refusal that persists must lead to a new authorization: ${JSON.stringify(answer)}`,
-    );
-    assert.equal(await portListening(callbackPortOf(url)), true);
   });
 });
 
@@ -634,21 +663,6 @@ test("Rauthy's dead-refresh 404 costs exactly one new browser flow", async (t) =
       refreshMessage: "Refresh Token does not exist",
       revoke_access: true,
     });
-
-    // A paced handshake — our own client's — still observes the grace on the first 404.
-    const held = spawnBridge();
-    const refusal = await held.call("initialize", 1, OWN_INIT_PARAMS);
-    assert.equal(
-      authorizeUrlIn(refusal.error?.message),
-      null,
-      "the first dead-grant refusal must still observe the login grace",
-    );
-    assert.equal(
-      readStore(dir).tokens.refresh_token,
-      before,
-      "the existing DeadGrant path must keep the grant through the grace",
-    );
-    await held.stop();
 
     // Two harnesses connecting on the dead grant: a handshake is not paced, and
     // the second joins the login the first published.
@@ -815,52 +829,6 @@ test("a request that left and never came back is reported as an unknown outcome"
   });
 });
 
-test('a login held back for its grace period is not sold as "retry freely"', async (t) => {
-  // The first refusal of a grant costs no browser trip — it may be a server
-  // mid-restart. But the call still fails, and that refusal names its own wait
-  // in its own words, so the verdict beside it must read "not yet", never "now".
-  // Same axis as the nbf hold-off, a different door into it: this one is paced
-  // by the human's grace clock rather than by the token's hour — a clock that
-  // runs for a grant dying under a live session, never for a handshake.
-  await withFake(t, {}, async ({ fake, dir, spawnBridge }) => {
-    const first = spawnBridge();
-    await authorize(first, dir);
-    await first.stop();
-
-    const held = spawnBridge();
-    assert.ok(
-      (await held.call("initialize", 1, INIT_PARAMS)).result,
-      "precondition: a live session",
-    );
-    const s = readStore(dir);
-    s.tokens.expires_at = Date.now() - 1000;
-    writeFileSync(storeFile(dir), JSON.stringify(s));
-    await fake.control({ refreshStatus: 400, refreshError: "invalid_grant", revoke_access: true });
-
-    const answer = await held.call("tools/call", 2, { name: "nks_orient", arguments: {} });
-    assert.ok(answer.error, "a refused grant cannot serve the call");
-    assert.match(
-      answer.error.message,
-      /holding off the login/,
-      "the test must stand on the grace path, not on some other refusal",
-    );
-    assert.ok(
-      !/retry freely/.test(answer.error.message),
-      `a refusal that names its own wait must not invite a retry now: ${answer.error.message}`,
-    );
-    assert.match(
-      answer.error.message,
-      /clears itself by waiting/,
-      "a held login is the verdict's third form: safe, and not yet",
-    );
-    assert.equal(
-      (answer.error.message.match(/\b\d+s\b/g) ?? []).length,
-      1,
-      `exactly one interval must appear in a hold-off refusal: ${answer.error.message}`,
-    );
-  });
-});
-
 // The hour a server puts on a refresh token paces the refresh nobody needs yet.
 // It must never pace the one a caller is waiting on: a guess that turns into a
 // wall costs half an hour of blindness, and the guess can simply be stale.
@@ -888,15 +856,15 @@ test("the refresh nobody needs yet waits for its hour instead of spending a refu
   });
 });
 
-test("a refresh the caller needs knocks even before the hour, and never walls the call", async (t) => {
+test("a refresh the caller needs, moments short of its hour, is waited out inside the call and served", async (t) => {
   await withFake(t, { refreshNotBeforeMs: 2000 }, async ({ fake, dir, spawnBridge }) => {
     const first = spawnBridge();
     await authorize(first, dir);
     await first.stop();
 
     // Upstream refuses the access token we hold while the refresh token is not
-    // yet in force — witnessed live, minutes after a rotation. Declining to ask
-    // would leave the harness with nothing for as long as the hour lasts.
+    // yet in force — witnessed live, minutes after a rotation. Seconds short of
+    // its hour, the wait is shorter than the call: the bridge's to sit out.
     const s = readStore(dir);
     s.tokens.expires_at = Date.now() - 1000;
     writeFileSync(storeFile(dir), JSON.stringify(s));
@@ -904,52 +872,16 @@ test("a refresh the caller needs knocks even before the hour, and never walls th
     await fake.control({ revoke_access: true });
 
     const early = spawnBridge();
-    const held = await early.call("initialize", 1, INIT_PARAMS);
-    assert.ok(held.error, "the server did refuse — there is nothing to serve with yet");
-    assert.ok(
-      fake.state.counts.refresh >= 1,
-      "but the bridge must have ASKED, not decided for the server",
-    );
-    assert.equal(
-      authorizeUrlIn(held.error.message),
-      null,
-      "a refusal this early is no proof of a dead grant",
-    );
-    assert.equal(readStore(dir).tokens.refresh_token, grant, "and the grant must survive it");
-    assert.match(
-      held.error.message,
-      /own hour is another \d+s away/,
-      "the figure names the token's schedule — never the length of the caller's deafness",
-    );
-
-    // …and knocked ONCE. A harness retries; one rejected access token must not
-    // become a burst of refused token requests from every bridge on the machine.
-    for (const id of [2, 3, 4, 5]) await early.call("initialize", id, INIT_PARAMS);
-    assert.equal(fake.state.counts.refresh, 1, "one knock per stretch, not one per call");
-
-    // A refusal this early must never age into a login either: the grace window
-    // is what makes the first call quiet, and it is NOT what must keep the
-    // human out of the browser here — the reading of the hour is.
-    ageRefusal(dir);
-    const aged = spawnBridge();
-    const still = await aged.call("initialize", 1, INIT_PARAMS);
-    assert.equal(
-      authorizeUrlIn(still.error?.message ?? ""),
-      null,
-      "a grant merely short of its hour must not drag a human to a browser, however long it stands",
-    );
-    await aged.stop();
-    await early.stop();
-
-    await new Promise((r) =>
-      setTimeout(r, Math.max(0, fake.state.refreshValidFrom - Date.now()) + 150),
-    );
-    const late = spawnBridge();
-    const answer = await late.call("initialize", 1, INIT_PARAMS);
+    const answer = await early.call("initialize", 1, INIT_PARAMS);
     assert.ok(
       answer.result,
-      `once in force the same grant must serve: ${JSON.stringify(answer.error)}`,
+      `a wait shorter than a call is the bridge's, not the caller's: ${JSON.stringify(answer.error)}`,
     );
+    assert.ok(
+      fake.state.counts.refresh >= 2,
+      "the bridge asked, heard «not yet», and asked again once the hour came",
+    );
+    assert.notEqual(readStore(dir).tokens.refresh_token, grant, "the same grant rotated on");
     assert.equal(fake.state.counts.authorize, 1, "and no human was ever asked");
   });
 });
@@ -1036,16 +968,18 @@ test("a store written before the bridge knew about hours is still read by them",
     );
     const held = await needy.call("tools/call", 2, { name: "nks_orient", arguments: {} });
     assert.ok(held.error, "the server refuses it — nothing to serve with");
-    assert.equal(
-      authorizeUrlIn(held.error.message),
-      null,
-      "read from the token's own claims, this is too-early, not a dead grant",
+    assert.match(
+      held.error.message,
+      /whole/,
+      "read from the token's own claims, this is too-early, not a dead grant — the login only rides beside it",
     );
     assert.equal(readStore(dir).tokens.refresh_token, s2.tokens.refresh_token, "grant kept");
   });
 });
 
-test("a login the human declines is not offered again on the next call", async (t) => {
+// A «no» closes that login; the next need opens one new one — never «not now,
+// come back in ten minutes» (#4794).
+test("a declined login is followed by one new login on the next need — no pause", async (t) => {
   await withFake(t, {}, async ({ fake, dir, spawnBridge }) => {
     const first = spawnBridge();
     await authorize(first, dir);
@@ -1055,17 +989,18 @@ test("a login the human declines is not offered again on the next call", async (
     s.tokens.expires_at = Date.now() - 1000;
     writeFileSync(storeFile(dir), JSON.stringify(s));
     await fake.control({ refreshStatus: 400, refreshError: "invalid_grant", revoke_access: true });
-    ageRefusal(dir);
 
-    const bridge = spawnBridge();
+    const bridge = spawnBridge({ ISKRON_BRIDGE_DEAD_RECHECK_MS: "50" });
     const offered = await bridge.call("initialize", 1, INIT_PARAMS);
     const url = authorizeUrlIn(offered.error?.message);
-    assert.ok(url, `the standing refusal should have led to a login: ${JSON.stringify(offered)}`);
+    assert.ok(url, `a dead grant should have led to a login: ${JSON.stringify(offered)}`);
 
     // The human says no: the consent screen comes back with a refusal.
-    const back = new URL(new URL(url).searchParams.get("redirect_uri"));
+    const declined = loginState(dir);
+    const signIn = new URL(await mintedFrom(url));
+    const back = new URL(signIn.searchParams.get("redirect_uri"));
     back.searchParams.set("error", "access_denied");
-    back.searchParams.set("state", new URL(url).searchParams.get("state"));
+    back.searchParams.set("state", signIn.searchParams.get("state"));
     await (await fetch(back)).text();
     await waitFor(
       async () => !(await portListening(callbackPortOf(url))),
@@ -1073,33 +1008,10 @@ test("a login the human declines is not offered again on the next call", async (
     );
 
     const again = await bridge.call("tools/call", 2, { name: "nks_orient", arguments: {} });
-    assert.ok(again.error, "there is still nothing to serve with");
-    assert.equal(
-      authorizeUrlIn(again.error.message),
-      null,
-      "someone who just declined must not be asked again on the next tool call",
-    );
-    assert.match(again.error.message, /not asking again/);
-
-    // Our own client raising the bridge by itself — lazily, after idle — is no
-    // human asking, and must not reopen a declined login.
-    const respawn = spawnBridge();
-    const quiet = await respawn.call("initialize", 1, OWN_INIT_PARAMS);
-    assert.equal(
-      authorizeUrlIn(quiet.error?.message),
-      null,
-      `a bridge our own client raised by itself reopened a declined login: ${JSON.stringify(quiet)}`,
-    );
-    assert.match(quiet.error?.message ?? "", /not asking again/);
-    await respawn.stop();
-
-    // A reconnect is the human asking again, in so many words (#4790).
-    const reconnect = spawnBridge();
-    const asked = await reconnect.call("initialize", 1, INIT_PARAMS);
-    assert.ok(
-      authorizeUrlIn(asked.error?.message),
-      `a handshake after a decline must offer the login again: ${JSON.stringify(asked)}`,
-    );
+    const next = authorizeUrlIn(again.error?.message);
+    assert.ok(next, `the next need must be offered a login at once: ${again.error?.message}`);
+    assert.notEqual(loginState(dir), declined, "the declined login is closed — this is a new one");
+    assert.doesNotMatch(again.error.message, /not asking again|clears itself by waiting/);
   });
 });
 
@@ -1589,16 +1501,12 @@ test("the error says whether the call may have taken effect, not just that it fa
   });
 });
 
-test("the hold-off ladder: retry now first, the cooldown waits short, a repeat names the hour real", async (t) => {
-  // The old prescription — "wait out the interval" on the FIRST early refusal —
-  // was refuted in the field: the same call succeeded seconds later (the grant
-  // may have rotated under us; the 401 did not survive a second presentation —
-  // the cause was not pinned, the prescription was refuted). An agent that
-  // believed the wording laid its watch down for a self-imposed half hour. So
-  // the ladder now reads: first refusal → whole grant, benign transition, retry
-  // now; a retry inside the cooldown → a real, short wait; an early refusal
-  // that REPEATS after the cooldown → the hour is real, and its own figure is
-  // the wait. No rung is a failed authorization or a call for the server side.
+test("a grant blind until its own hour offers the login beside it — never a bare wait", async (t) => {
+  // The token endpoint may hold a refresh token back until the access token is
+  // nearly spent: in that window the grant is whole and the bridge blind — in
+  // the field, twenty-five minutes at a stretch. A wait that long is neither
+  // the bridge's to sit out nor the human's to be told (graph @nks/nks-dev,
+  // node #4794): the call carries the login, and says the grant is intact.
   await withFake(t, { refreshNotBeforeMs: 60_000 }, async ({ fake, dir, spawnBridge }) => {
     const first = spawnBridge();
     await authorize(first, dir);
@@ -1607,104 +1515,21 @@ test("the hold-off ladder: retry now first, the cooldown waits short, a repeat n
     const s = readStore(dir);
     s.tokens.expires_at = Date.now() - 1000;
     writeFileSync(storeFile(dir), JSON.stringify(s));
+    const grant = s.tokens.refresh_token;
     await fake.control({ revoke_access: true });
 
     const held = spawnBridge();
-    const knock = await held.call("initialize", 1, INIT_PARAMS); // the one knock, refused as early
-    assert.ok(knock.error, "the server did refuse — there is nothing to serve with yet");
-    assert.match(
-      knock.error.message,
-      /authorization holding off/,
-      "a whole grant short of its hour is a hold-off, never a failed authorization",
+    const answer = await held.call("initialize", 1, INIT_PARAMS);
+    const url = authorizeUrlIn(answer.error?.message);
+    assert.ok(url, `the call must carry the login: ${JSON.stringify(answer)}`);
+    assert.match(answer.error.message, /whole/, "and say the grant itself is intact");
+    assert.doesNotMatch(
+      answer.error.message,
+      /clears itself by waiting|wait out|retry the call now|not knocking again/,
+      "no rung of the old ladder survives: nothing tells the caller to wait",
     );
-    assert.ok(
-      !/authorization failed/.test(knock.error.message),
-      '"failed" sends the reader off to mend a grant nobody touched',
-    );
-    assert.match(
-      knock.error.message,
-      /grant is whole/,
-      "the verdict leads with what is intact, not with what refused",
-    );
-    assert.match(
-      knock.error.message,
-      /retry the call now/,
-      "the move that was witnessed working — an immediate retry — is the first rung",
-    );
-    assert.ok(
-      !/wait out the interval named above/.test(knock.error.message),
-      "prescribing the token's whole hour as a wait once cost a caller half an hour of blindness",
-    );
-    assert.ok(
-      !/server side needs attention/.test(knock.error.message),
-      "a pausing grant is the server's own pacing — not a defect to escalate",
-    );
-    assert.equal(
-      (knock.error.message.match(/\b\d+s\b/g) ?? []).length,
-      1,
-      `exactly one interval must appear in a hold-off refusal: ${knock.error.message}`,
-    );
-
-    // The prescribed retry, landing inside the cooldown: the wait it names is
-    // the cooldown's own seconds, real and short — not the retry-now door and
-    // not the token's hour. The two rungs must not quote each other's moves.
-    const cooled = await held.call("initialize", 2, INIT_PARAMS);
-    assert.match(
-      cooled.error.message,
-      /not knocking again for \d+s/,
-      "the cooldown refusal names its own short figure",
-    );
-    assert.match(
-      cooled.error.message,
-      /clears itself by waiting/,
-      "inside the cooldown the wait is honest — this rung must not say retry now",
-    );
-    assert.ok(
-      !/retry the call now/.test(cooled.error.message),
-      '"retry now" inside the cooldown would send the caller in a circle',
-    );
-    assert.ok(
-      !/server side needs attention/.test(cooled.error.message),
-      "the cooldown is the bridge's own thrift, no one's defect",
-    );
-    assert.equal(
-      (cooled.error.message.match(/\b\d+s\b/g) ?? []).length,
-      1,
-      `exactly one interval must appear in a cooldown refusal: ${cooled.error.message}`,
-    );
-
-    // A repeat AFTER the cooldown: age the stamp so the next call knocks again
-    // while the previous refusal is still fresh in the grant's memory.
-    const gsPath = storeFile(dir) + ".grant-state";
-    const gs = JSON.parse(readFileSync(gsPath, "utf8"));
-    gs.early_refused_until = Date.now() - 1000;
-    writeFileSync(gsPath, JSON.stringify(gs));
-
-    const repeat = await held.call("initialize", 3, INIT_PARAMS);
-    assert.match(
-      repeat.error.message,
-      /refused too early again/,
-      "the second knock refused is named as a repeat, not re-sold as the first",
-    );
-    assert.match(
-      repeat.error.message,
-      /the hour is real/,
-      "a refusal that repeats is the schedule speaking",
-    );
-    assert.match(
-      repeat.error.message,
-      /clears itself by waiting/,
-      "only now is the wait the honest prescription",
-    );
-    assert.ok(
-      !/retry the call now/.test(repeat.error.message),
-      "the ladder must terminate: a proven hour never invites another immediate retry",
-    );
-    assert.equal(
-      fake.state.counts.refresh,
-      2,
-      "three calls, two knocks — the cooldown held the middle one",
-    );
+    assert.equal(fake.state.counts.refresh, 1, "one knock, then the login");
+    assert.equal(readStore(dir).tokens.refresh_token, grant, "the grant is kept");
   });
 });
 
@@ -1880,6 +1705,7 @@ test("a NotFound from a token endpoint discovery still names drops the registrat
       `an endpoint discovery still names did not move: ${answer.error.message}`,
     );
     assert.ok(readStore(dir).meta, "the discovery, confirmed unchanged, must be kept");
+    await mintedFrom(url); // the registration is made as the link is opened
     assert.equal(
       fake.state.counts.register,
       counts.register + 1,
@@ -1907,6 +1733,7 @@ test("a browser flow renews a registration older than the reuse horizon", async 
     const first = spawnBridge();
     const url1 = authorizeUrlIn((await first.call("initialize", 1, INIT_PARAMS)).error?.message);
     assert.ok(url1);
+    const signIn1 = await mintedFrom(url1); // the registration is made as the link is opened
     await first.stop();
     assert.equal(fake.state.counts.register, 1);
 
@@ -1918,16 +1745,17 @@ test("a browser flow renews a registration older than the reuse horizon", async 
 
     const second = spawnBridge();
     const url2 = authorizeUrlIn((await second.call("initialize", 1, INIT_PARAMS)).error?.message);
-    assert.ok(url2);
+    assert.equal(url2, url1, "the same login, taken over — its link stays good");
+    const signIn2 = await mintedFrom(url2);
     assert.equal(
       fake.state.counts.register,
       2,
       "a registration older than the reuse horizon must be made anew",
     );
     assert.notEqual(
-      new URL(url2).searchParams.get("client_id"),
-      new URL(url1).searchParams.get("client_id"),
-      "the new flow must carry the new client_id",
+      new URL(signIn2).searchParams.get("client_id"),
+      new URL(signIn1).searchParams.get("client_id"),
+      "the sign-in page must carry the new client_id",
     );
     const res = await fetch(url2, { redirect: "follow" });
     assert.equal(res.status, 200, "the login must complete on the renewed registration");
@@ -2493,6 +2321,973 @@ test("our own client's handshake keeps the audience diagnosis rather than the la
   });
 });
 
+// --- one login, one tab, alive to the end (graph @nks/nks-dev, node #4794) ---
+// Many windows are a nuisance and none is a dead end: a login gets exactly one
+// tab, and that tab stays good whichever bridge happens to be alive when the
+// human clicks it.
+
+// A dead grant with an old registration: the login gets a registration young
+// enough to outlive it, so its link is not declared dead under the human
+// minutes later — a second login, a second tab.
+test("a login published over an old registration keeps its link — no second login minutes later", async (t) => {
+  await withFake(t, {}, async ({ fake, dir, spawnBridge }) => {
+    const first = spawnBridge();
+    await authorize(first, dir);
+    await first.stop();
+    const s = readStore(dir);
+    s.tokens.expires_at = Date.now() - 1000;
+    s.client.registered_at = Date.now() - 40 * 60_000; // still reusable, for five more minutes
+    writeFileSync(storeFile(dir), JSON.stringify(s));
+    await fake.control({ refreshStatus: 400, refreshError: "invalid_grant", revoke_access: true });
+
+    const a = spawnBridge({ ISKRON_BRIDGE_DEAD_RECHECK_MS: "50" });
+    const url = authorizeUrlIn((await a.call("initialize", 1, INIT_PARAMS)).error?.message);
+    assert.ok(url, "a login must be pending");
+    const standing = loginState(dir);
+
+    const later = readStore(dir); // six minutes on
+    later.client.registered_at -= 6 * 60_000;
+    writeFileSync(storeFile(dir), JSON.stringify(later));
+    const b = spawnBridge({ ISKRON_BRIDGE_DEAD_RECHECK_MS: "50" });
+    const again = authorizeUrlIn((await b.call("initialize", 1, INIT_PARAMS)).error?.message);
+    assert.equal(again, url, "the standing login must be joined, not replaced");
+    assert.equal(loginState(dir), standing, "and it is the same login, not a new one on that link");
+  });
+});
+
+// A refresh refused as invalid_client drops the registration it presented. It
+// must present the grant's own client, and drop only that one — never the
+// registration a login was just published on, which would make the next call
+// publish a second login, and the one after a third.
+test("a refusal that drops a client does not make the bridge publish a second login", async (t) => {
+  await withFake(t, {}, async ({ fake, dir, spawnBridge }) => {
+    const first = spawnBridge();
+    await authorize(first, dir);
+    await first.stop();
+    const s = readStore(dir);
+    s.tokens.expires_at = Date.now() - 1000;
+    writeFileSync(storeFile(dir), JSON.stringify(s));
+    await fake.control({ refreshStatus: 400, refreshError: "invalid_client", revoke_access: true });
+
+    const a = spawnBridge({ ISKRON_BRIDGE_DEAD_RECHECK_MS: "50" });
+    const url = authorizeUrlIn((await a.call("initialize", 1, INIT_PARAMS)).error?.message);
+    assert.ok(url, "a login must be pending");
+    const standing = loginState(dir);
+    const second = await a.call("tools/call", 2, { name: "nks_orient", arguments: {} });
+    assert.equal(authorizeUrlIn(second.error?.message), url, "the next call joins the same login");
+
+    // Five minutes on the machine knocks the grant again — and hears the same refusal.
+    const gsPath = storeFile(dir) + ".grant-state";
+    const gs = JSON.parse(readFileSync(gsPath, "utf8"));
+    gs.refused_at = Date.now() - 6 * 60_000;
+    writeFileSync(gsPath, JSON.stringify(gs));
+    const third = await a.call("tools/call", 3, { name: "nks_orient", arguments: {} });
+    assert.equal(
+      authorizeUrlIn(third.error?.message),
+      url,
+      "a later knock must not unseat the login",
+    );
+    assert.equal(loginState(dir), standing, "the same login, not a new one on the same link");
+  });
+});
+
+test("while a login is out, a grant already judged dead is not knocked on every call", async (t) => {
+  await withFake(t, {}, async ({ fake, dir, spawnBridge }) => {
+    const first = spawnBridge();
+    await authorize(first, dir);
+    await first.stop();
+    const s = readStore(dir);
+    s.tokens.expires_at = Date.now() - 1000;
+    writeFileSync(storeFile(dir), JSON.stringify(s));
+    await fake.control({ refreshStatus: 400, refreshError: "invalid_grant", revoke_access: true });
+
+    const a = spawnBridge({ ISKRON_BRIDGE_DEAD_RECHECK_MS: "50,50" });
+    const url = authorizeUrlIn((await a.call("initialize", 1, INIT_PARAMS)).error?.message);
+    assert.ok(url, "a login must be pending");
+    const knocks = fake.state.counts.refresh;
+    for (const id of [2, 3, 4]) {
+      const answer = await a.call("tools/call", id, { name: "nks_orient", arguments: {} });
+      assert.equal(authorizeUrlIn(answer.error?.message), url);
+    }
+    assert.equal(
+      fake.state.counts.refresh,
+      knocks,
+      "one verdict per stretch, not one knock per call",
+    );
+  });
+});
+
+test("a login that closes clears only its own record, never a newer login's", async (t) => {
+  await withFake(t, {}, async ({ dir, spawnBridge }) => {
+    const a = spawnBridge();
+    const url = authorizeUrlIn((await a.call("initialize", 1, INIT_PARAMS)).error?.message);
+    assert.ok(url, "a login must be pending");
+    const lockPath = lockFile(dir);
+    const newer = {
+      ...JSON.parse(readFileSync(lockPath, "utf8")),
+      pid: process.pid,
+      state: "a-newer-login",
+      authorize_url: "http://127.0.0.1:9/authorize?state=a-newer-login",
+    };
+    writeFileSync(lockPath, JSON.stringify(newer));
+    const res = await fetch(url, { redirect: "follow" });
+    await res.text();
+    await grantLanded(dir);
+    await pause(300);
+    assert.deepEqual(
+      JSON.parse(readFileSync(lockPath, "utf8")),
+      newer,
+      "the landed login erased another login's record",
+    );
+  });
+});
+
+test("a live port under a dead publisher is a stranger's — its link is not handed out", async (t) => {
+  await withFake(t, {}, async ({ spawnBridge }) => {
+    const a = spawnBridge();
+    const url = authorizeUrlIn((await a.call("initialize", 1, INIT_PARAMS)).error?.message);
+    assert.ok(url, "a login must be pending");
+    const port = callbackPortOf(url);
+    await a.stop(); // SIGKILL: the record survives, the port frees
+    const stranger = createServer(() => {});
+    await new Promise((r) => stranger.listen(port, "127.0.0.1", r));
+    try {
+      const b = spawnBridge();
+      const again = authorizeUrlIn((await b.call("initialize", 1, INIT_PARAMS)).error?.message);
+      assert.ok(again, "a login must be offered");
+      assert.notEqual(again, url, "a link a stranger listens on must not be handed out");
+    } finally {
+      stranger.close();
+    }
+  });
+});
+
+// A tab is for a human who is needed. Beside a grant merely blind until its
+// hour the login comes as a link: the grant comes back by itself, and a tab each
+// such window — every twenty-five minutes in the field — is a tab nobody asked
+// for. When the grant is then gone for real, the login's one tab opens once.
+test("beside a blind grant the login comes as a link, not a tab — a tab only once a human is needed", async (t) => {
+  if (process.platform === "win32") return t.skip("the opener is PowerShell there");
+  await withFake(t, { refreshNotBeforeMs: 2000 }, async ({ fake, dir, spawnBridge }) => {
+    const first = spawnBridge();
+    await authorize(first, dir);
+    await first.stop();
+    const s = readStore(dir);
+    s.tokens.expires_at = Date.now() - 1000;
+    writeFileSync(storeFile(dir), JSON.stringify(s));
+    await fake.control({ revoke_access: true });
+
+    const root = mkdtempSync(join(tmpdir(), "iskron-opener-"));
+    const record = join(root, "opened.txt");
+    for (const name of ["open", "xdg-open"]) {
+      writeFileSync(join(root, name), `#!/bin/sh\nprintf '%s\\n' "$@" >> "${record}"\n`, {
+        mode: 0o755,
+      });
+    }
+    const opened = () => {
+      try {
+        return readFileSync(record, "utf8").trim().split("\n").filter(Boolean);
+      } catch {
+        return [];
+      }
+    };
+    const a = spawnBridge(
+      {
+        PATH: `${root}:${process.env.PATH}`,
+        ISKRON_BRIDGE_IN_CALL_WAIT_MS: "100",
+        ISKRON_BRIDGE_DEAD_RECHECK_MS: "50",
+      },
+      { browser: true },
+    );
+    const url = authorizeUrlIn((await a.call("initialize", 1, INIT_PARAMS)).error?.message);
+    assert.ok(url, "a blind grant is offered a login beside its hour");
+    await pause(500);
+    assert.deepEqual(opened(), [], "no tab for a grant that comes back by itself");
+
+    // Its hour comes and the grant is refused for real: now a human is needed,
+    // and the caller joining the login that is out opens its one tab.
+    await fake.control({ refreshStatus: 400, refreshError: "invalid_grant" });
+    await pause(Math.max(0, fake.state.refreshValidFrom - Date.now()) + 200);
+    const dead = await a.call("tools/call", 2, { name: "nks_orient", arguments: {} });
+    assert.equal(authorizeUrlIn(dead.error?.message), url, "the same login, joined");
+    await waitFor(() => opened().length === 1, "the tab a human is now needed for");
+    await a.call("tools/call", 3, { name: "nks_orient", arguments: {} });
+    await pause(300);
+    assert.equal(opened().length, 1, "one tab, however many calls");
+  });
+});
+
+// The bridge that takes over a login out as a link — its publisher gone — opens
+// the tab when a human is needed for it; and a bridge that cannot open a
+// browser marks no tab it never opened, leaving it to one that can.
+test("a login out as a link gets its one tab from the bridge that takes it over", async (t) => {
+  if (process.platform === "win32") return t.skip("the opener is PowerShell there");
+  await withFake(t, { refreshNotBeforeMs: 2000 }, async ({ fake, dir, spawnBridge }) => {
+    const first = spawnBridge();
+    await authorize(first, dir);
+    await first.stop();
+    const s = readStore(dir);
+    s.tokens.expires_at = Date.now() - 1000;
+    writeFileSync(storeFile(dir), JSON.stringify(s));
+    await fake.control({ revoke_access: true });
+
+    const quick = { ISKRON_BRIDGE_IN_CALL_WAIT_MS: "100", ISKRON_BRIDGE_DEAD_RECHECK_MS: "50" };
+    const a = spawnBridge(quick);
+    const url = authorizeUrlIn((await a.call("initialize", 1, INIT_PARAMS)).error?.message);
+    assert.ok(url, "a blind grant is offered a login beside its hour");
+    await a.stop(); // its publisher gone, the login stays
+
+    await fake.control({ refreshStatus: 400, refreshError: "invalid_grant" });
+    await pause(Math.max(0, fake.state.refreshValidFrom - Date.now()) + 200);
+    const root = mkdtempSync(join(tmpdir(), "iskron-opener-"));
+    const record = join(root, "opened.txt");
+    for (const name of ["open", "xdg-open"]) {
+      writeFileSync(join(root, name), `#!/bin/sh\nprintf '%s\\n' "$@" >> "${record}"\n`, {
+        mode: 0o755,
+      });
+    }
+    const b = spawnBridge({ ...quick, PATH: `${root}:${process.env.PATH}` }, { browser: true });
+    const taken = authorizeUrlIn((await b.call("initialize", 1, INIT_PARAMS)).error?.message);
+    assert.equal(taken, url, "the same login, taken over");
+    await waitFor(
+      () => readFileSync(record, "utf8").includes(url),
+      "the tab a human is needed for",
+    );
+    assert.equal(readFileSync(record, "utf8").trim().split("\n").length, 1, "exactly one");
+  });
+});
+
+test("a bridge that cannot open a browser leaves the login's tab to one that can", async (t) => {
+  if (process.platform === "win32") return t.skip("the opener is PowerShell there");
+  await withFake(t, {}, async ({ fake, dir, spawnBridge }) => {
+    const first = spawnBridge();
+    await authorize(first, dir);
+    await first.stop();
+    const s = readStore(dir);
+    s.tokens.expires_at = Date.now() - 1000;
+    writeFileSync(storeFile(dir), JSON.stringify(s));
+    await fake.control({ refreshStatus: 400, refreshError: "invalid_grant", revoke_access: true });
+
+    const headless = spawnBridge({ ISKRON_BRIDGE_DEAD_RECHECK_MS: "50" }); // --no-browser
+    const url = authorizeUrlIn((await headless.call("initialize", 1, INIT_PARAMS)).error?.message);
+    assert.ok(url, "a dead grant publishes a login");
+
+    const root = mkdtempSync(join(tmpdir(), "iskron-opener-"));
+    const record = join(root, "opened.txt");
+    for (const name of ["open", "xdg-open"]) {
+      writeFileSync(join(root, name), `#!/bin/sh\nprintf '%s\\n' "$@" >> "${record}"\n`, {
+        mode: 0o755,
+      });
+    }
+    const human = spawnBridge(
+      { ISKRON_BRIDGE_DEAD_RECHECK_MS: "50", PATH: `${root}:${process.env.PATH}` },
+      { browser: true },
+    );
+    const joined = authorizeUrlIn((await human.call("initialize", 1, INIT_PARAMS)).error?.message);
+    assert.equal(joined, url, "the same login, joined");
+    await waitFor(
+      () => readFileSync(record, "utf8").includes(url),
+      "the tab the headless bridge could not open",
+    );
+  });
+});
+
+// Headless bridges pass through a login too — one joins it, one takes it over
+// when its publisher dies — and mark no tab they never opened: the first bridge
+// that can open a browser still does.
+test("headless bridges that join or take over a login mark no tab they never opened", async (t) => {
+  if (process.platform === "win32") return t.skip("the opener is PowerShell there");
+  await withFake(t, {}, async ({ fake, dir, spawnBridge }) => {
+    const first = spawnBridge();
+    await authorize(first, dir);
+    await first.stop();
+    const s = readStore(dir);
+    s.tokens.expires_at = Date.now() - 1000;
+    writeFileSync(storeFile(dir), JSON.stringify(s));
+    await fake.control({ refreshStatus: 400, refreshError: "invalid_grant", revoke_access: true });
+
+    const quick = { ISKRON_BRIDGE_DEAD_RECHECK_MS: "50" };
+    const publisher = spawnBridge(quick); // --no-browser, as all but the last here
+    const url = authorizeUrlIn((await publisher.call("initialize", 1, INIT_PARAMS)).error?.message);
+    assert.ok(url, "a dead grant publishes a login");
+    const joiner = spawnBridge(quick);
+    const joined = authorizeUrlIn((await joiner.call("initialize", 1, INIT_PARAMS)).error?.message);
+    assert.equal(joined, url, "joined");
+    await publisher.stop(); // its publisher gone
+    const taker = spawnBridge(quick);
+    const taken = authorizeUrlIn((await taker.call("initialize", 1, INIT_PARAMS)).error?.message);
+    assert.equal(taken, url, "taken over");
+
+    const root = mkdtempSync(join(tmpdir(), "iskron-opener-"));
+    const record = join(root, "opened.txt");
+    for (const name of ["open", "xdg-open"]) {
+      writeFileSync(join(root, name), `#!/bin/sh\nprintf '%s\\n' "$@" >> "${record}"\n`, {
+        mode: 0o755,
+      });
+    }
+    const human = spawnBridge({ ...quick, PATH: `${root}:${process.env.PATH}` }, { browser: true });
+    const seen = authorizeUrlIn((await human.call("initialize", 1, INIT_PARAMS)).error?.message);
+    assert.equal(seen, url, "the same login, joined by a bridge that can open a browser");
+    await waitFor(
+      () => readFileSync(record, "utf8").includes(url),
+      "the tab no headless bridge could open",
+    );
+  });
+});
+
+// Who has opened a login's tab is told by its marker, not by the record: a
+// bridge taking the login over honours a tab another bridge already opened,
+// even when the record says nothing of it.
+test("a bridge taking over a login honours the tab another bridge already opened for it", async (t) => {
+  if (process.platform === "win32") return t.skip("the opener is PowerShell there");
+  await withFake(t, {}, async ({ dir, spawnBridge }) => {
+    const a = spawnBridge(); // --no-browser: publishes without opening anything
+    const url = authorizeUrlIn((await a.call("initialize", 1, INIT_PARAMS)).error?.message);
+    assert.ok(url, "a login must be pending");
+    const lock = lockFile(dir);
+    const { state } = JSON.parse(readFileSync(lock, "utf8"));
+    writeFileSync(`${lock}.tab-${state}`, ""); // a joiner opened its tab; the record says nothing
+    await a.stop(); // its publisher gone
+
+    const root = mkdtempSync(join(tmpdir(), "iskron-opener-"));
+    const record = join(root, "opened.txt");
+    for (const name of ["open", "xdg-open"]) {
+      writeFileSync(join(root, name), `#!/bin/sh\nprintf '%s\\n' "$@" >> "${record}"\n`, {
+        mode: 0o755,
+      });
+    }
+    const b = spawnBridge({ PATH: `${root}:${process.env.PATH}` }, { browser: true });
+    const taken = authorizeUrlIn((await b.call("initialize", 1, INIT_PARAMS)).error?.message);
+    assert.equal(taken, url, "taken over");
+    await pause(500);
+    let opened = [];
+    try {
+      opened = readFileSync(record, "utf8").trim().split("\n").filter(Boolean);
+    } catch {}
+    assert.deepEqual(opened, [], "the human already has that tab — no second one");
+  });
+});
+
+test("markers of logins that are over are swept when a new login is published", async (t) => {
+  await withFake(t, {}, async ({ dir, spawnBridge }) => {
+    const a = spawnBridge();
+    await a.call("initialize", 1, INIT_PARAMS); // lays the store and a login down
+    const lock = lockFile(dir);
+    await a.stop();
+    writeFileSync(`${lock}.tab-a-login-that-is-over`, "");
+    writeFileSync(lock, "{}"); // nothing joinable or to take over: the next need publishes anew
+    const b = spawnBridge();
+    assert.ok(authorizeUrlIn((await b.call("initialize", 1, INIT_PARAMS)).error?.message));
+    assert.equal(
+      readdirSync(dir).some((f) => f.endsWith(".tab-a-login-that-is-over")),
+      false,
+      "the marker of a login that is over must not pile up",
+    );
+  });
+});
+
+// A declined login's marker outlives its record: a bridge that read the record
+// a moment before the decline finds the tab taken, and opens none onto a port
+// that is closing.
+test("a declined login keeps its tab marker after its record is gone", async (t) => {
+  await withFake(t, {}, async ({ dir, spawnBridge }) => {
+    const a = spawnBridge();
+    const url = authorizeUrlIn((await a.call("initialize", 1, INIT_PARAMS)).error?.message);
+    assert.ok(url, "a login must be pending");
+    const lock = lockFile(dir);
+    const { state } = JSON.parse(readFileSync(lock, "utf8"));
+    writeFileSync(`${lock}.tab-${state}`, ""); // its tab is open
+    const back = `http://127.0.0.1:${callbackPortOf(url)}/callback?error=access_denied&state=${state}`;
+    await (await fetch(back)).text();
+    await waitFor(
+      () => !readdirSync(dir).some((f) => f.endsWith(".auth-pending")),
+      "the declined login to drop its record",
+    );
+    assert.ok(
+      readdirSync(dir).some((f) => f.endsWith(`.tab-${state}`)),
+      "the marker of the declined login must stay until a new login is published",
+    );
+  });
+});
+
+// A login that is over drops its record before its port. A bridge that meets
+// the port free in between must not take the declined login over and hand it
+// out again: the next need gets a new login (#4794). The probe holds that gap
+// open; a login closing port-first shows its record over a free port there.
+test("a bridge meeting a declined login's port free publishes a new login, not the declined one", async (t) => {
+  await withFake(t, {}, async ({ dir, spawnBridge }) => {
+    const a = spawnBridge({ ISKRON_BRIDGE_RELEASE_GAP_MS: "3000" });
+    const url = authorizeUrlIn((await a.call("initialize", 1, INIT_PARAMS)).error?.message);
+    assert.ok(url, "a login must be pending");
+    const declined = loginState(dir);
+    const back = `http://127.0.0.1:${callbackPortOf(url)}/callback?error=access_denied&state=${declined}`;
+    await (await fetch(back)).text();
+    const b = spawnBridge();
+    const offered = authorizeUrlIn((await b.call("initialize", 1, INIT_PARAMS)).error?.message);
+    assert.ok(offered, "the next need is offered a login");
+    const now = loginState(dir);
+    assert.ok(now, "a login is out");
+    assert.notEqual(now, declined, "the declined login is over — this must be a new one");
+  });
+});
+
+// A login goes out over the grant its caller judged dead, never over whatever
+// the store holds by then: a grant that lands while the caller is on its way to
+// a login is handed back, and no login goes out (#4794).
+test("a grant that lands while a caller is on its way to a login is taken, not logged in over", async (t) => {
+  await withFake(t, {}, async ({ fake, dir, spawnBridge }) => {
+    const first = spawnBridge();
+    await authorize(first, dir);
+    await first.stop();
+    const s = readStore(dir);
+    s.tokens.expires_at = Date.now() - 1000;
+    writeFileSync(storeFile(dir), JSON.stringify(s));
+    await fake.control({ refreshStatus: 400, refreshError: "invalid_grant", revoke_access: true });
+    // The grant a human won elsewhere a moment ago — the one about to land.
+    const other = mkdtempSync(join(tmpdir(), "iskron-bridge-test-"));
+    const winner = startBridge(fake.mcpUrl, other);
+    try {
+      await authorize(winner, other);
+    } finally {
+      await winner.stop();
+    }
+    const fresh = readStore(other).tokens;
+    // Two rungs held by a stranger: the caller's way to a login takes a while.
+    const d = createHash("sha256").update(new URL(fake.mcpUrl).origin).digest();
+    const squatters = [0, 1].map(() => createServer(() => {}));
+    for (const [rung, sq] of squatters.entries()) {
+      const port = 42000 + ((d[0] * 256 + d[1] + rung * 613) % 2000);
+      await new Promise((r) => sq.listen(port, "127.0.0.1", r));
+    }
+    try {
+      const bridge = spawnBridge({ ISKRON_BRIDGE_DEAD_RECHECK_MS: "50" });
+      const answer = bridge.call("initialize", 1, INIT_PARAMS);
+      await pause(800); // the grant is judged dead; the caller is stepping over held rungs
+      const cur = readStore(dir);
+      cur.tokens = fresh;
+      writeFileSync(storeFile(dir), JSON.stringify(cur));
+      const r = await answer;
+      assert.equal(
+        authorizeUrlIn(r.error?.message),
+        null,
+        `no login over a grant that has landed: ${JSON.stringify(r)}`,
+      );
+      assert.equal(loginState(dir), null, "no login went out");
+      const list = await bridge.call("tools/list", 2);
+      assert.ok(
+        list.result?.tools?.length,
+        `the grant that landed serves: ${JSON.stringify(list)}`,
+      );
+    } finally {
+      await Promise.all(squatters.map((sq) => new Promise((r) => sq.close(r))));
+    }
+  });
+});
+
+// A record the bridge cannot lay down leaves no copy of it behind: the
+// temporary file carries the login's verifier.
+test("a login record that cannot be written leaves no temporary copy behind", async (t) => {
+  await withFake(t, {}, async ({ dir, spawnBridge }) => {
+    const a = spawnBridge();
+    assert.ok(authorizeUrlIn((await a.call("initialize", 1, INIT_PARAMS)).error?.message));
+    const lock = lockFile(dir);
+    await a.stop();
+    rmSync(lock);
+    mkdirSync(lock); // a non-empty directory where the record goes: no write lands
+    writeFileSync(join(lock, "x"), "");
+    const b = spawnBridge();
+    const answer = await b.call("initialize", 1, INIT_PARAMS);
+    assert.ok(answer.error, "the call is answered, with an error");
+    assert.deepEqual(
+      readdirSync(dir).filter((f) => f.includes(".tmp-")),
+      [],
+      "no temporary copy of the record may stay",
+    );
+  });
+});
+
+// A bridge taking over a login it cannot write down lets its port go: a
+// listener with no record behind it is a login nobody can join.
+test("a takeover that cannot write the login record lets the port go", async (t) => {
+  if (process.platform === "win32") return t.skip("permission bits do not bind there");
+  if (process.getuid?.() === 0) return t.skip("root writes through permission bits");
+  await withFake(t, {}, async ({ dir, spawnBridge }) => {
+    const a = spawnBridge();
+    const url = authorizeUrlIn((await a.call("initialize", 1, INIT_PARAMS)).error?.message);
+    assert.ok(url, "a login must be pending");
+    const lock = lockFile(dir);
+    await a.stop(); // its publisher gone: the next bridge takes it over
+    chmodSync(lock, 0o400);
+    chmodSync(dir, 0o500);
+    try {
+      const b = spawnBridge();
+      const answer = await b.call("initialize", 1, INIT_PARAMS);
+      assert.ok(answer.error, "the call is answered, with an error");
+      await pause(300);
+      assert.equal(
+        await portListening(callbackPortOf(url)),
+        false,
+        "the taker must not keep listening on a login it could not write down",
+      );
+    } finally {
+      chmodSync(dir, 0o700);
+      chmodSync(lock, 0o600);
+    }
+  });
+});
+
+// Several bridges that need a human join the same tab-less login in the same
+// moment: the tab opens once — whichever reaches it first marks it, and every
+// other re-reads the mark before it opens anything.
+test("bridges joining a login at the same moment open its one tab once", async (t) => {
+  if (process.platform === "win32") return t.skip("the opener is PowerShell there");
+  await withFake(t, {}, async ({ fake, dir, spawnBridge }) => {
+    const first = spawnBridge();
+    await authorize(first, dir);
+    await first.stop();
+    const s = readStore(dir);
+    s.tokens.expires_at = Date.now() - 1000;
+    writeFileSync(storeFile(dir), JSON.stringify(s));
+    await fake.control({ refreshStatus: 400, refreshError: "invalid_grant", revoke_access: true });
+
+    const quick = { ISKRON_BRIDGE_DEAD_RECHECK_MS: "50" };
+    const publisher = spawnBridge(quick); // headless: the login goes out without a tab
+    const url = authorizeUrlIn((await publisher.call("initialize", 1, INIT_PARAMS)).error?.message);
+    assert.ok(url, "a dead grant publishes a login");
+
+    const root = mkdtempSync(join(tmpdir(), "iskron-opener-"));
+    const record = join(root, "opened.txt");
+    for (const name of ["open", "xdg-open"]) {
+      writeFileSync(join(root, name), `#!/bin/sh\nprintf '%s\\n' "$@" >> "${record}"\n`, {
+        mode: 0o755,
+      });
+    }
+    const opened = () => {
+      try {
+        return readFileSync(record, "utf8").trim().split("\n").filter(Boolean);
+      } catch {
+        return [];
+      }
+    };
+    const crowd = Array.from({ length: 4 }, () =>
+      spawnBridge({ ...quick, PATH: `${root}:${process.env.PATH}` }, { browser: true }),
+    );
+    const answers = await Promise.all(crowd.map((b) => b.call("initialize", 1, INIT_PARAMS)));
+    for (const a of answers) assert.equal(authorizeUrlIn(a.error?.message), url, "the same login");
+    await waitFor(() => opened().length >= 1, "the one tab");
+    await pause(500);
+    assert.equal(opened().length, 1, "one tab, however many joined at once");
+  });
+});
+
+// A server may keep its refresh token and issue only a new access token. The
+// grant still came back, and the login beside it is still moot.
+test("a server that keeps its refresh token still makes the moot login close", async (t) => {
+  await withFake(
+    t,
+    { refreshNotBeforeMs: 2000, keepRefresh: true },
+    async ({ fake, dir, spawnBridge }) => {
+      const first = spawnBridge();
+      await authorize(first, dir);
+      await first.stop();
+      const s = readStore(dir);
+      s.tokens.expires_at = Date.now() - 1000;
+      writeFileSync(storeFile(dir), JSON.stringify(s));
+      await fake.control({ revoke_access: true });
+
+      const a = spawnBridge({
+        ISKRON_BRIDGE_IN_CALL_WAIT_MS: "100",
+        ISKRON_BRIDGE_LANDED_POLL_MS: "100",
+      });
+      const url = authorizeUrlIn((await a.call("initialize", 1, INIT_PARAMS)).error?.message);
+      assert.ok(url, "a blind grant is offered a login beside its hour");
+      await pause(Math.max(0, fake.state.refreshValidFrom - Date.now()) + 200); // the hour comes
+      const served = await a.call("tools/call", 2, { name: "nks_orient", arguments: {} });
+      assert.ok(
+        served.result && !served.error,
+        `the grant is back: ${JSON.stringify(served.error)}`,
+      );
+      assert.equal(
+        readStore(dir).tokens.refresh_token,
+        s.tokens.refresh_token,
+        "precondition: the server kept its refresh token",
+      );
+      await waitFor(
+        async () => !(await portListening(callbackPortOf(url))),
+        "the moot login to close",
+      );
+    },
+  );
+});
+
+// The grant a moot login is judged against is the grant itself, not a stamp
+// only this build writes: a bridge of an earlier build rotating it counts too.
+test("a grant another bridge wrote — of any build — makes the moot login close", async (t) => {
+  await withFake(t, { refreshNotBeforeMs: 60_000 }, async ({ fake, dir, spawnBridge }) => {
+    const first = spawnBridge();
+    await authorize(first, dir);
+    await first.stop();
+    const s = readStore(dir);
+    s.tokens.expires_at = Date.now() - 1000;
+    writeFileSync(storeFile(dir), JSON.stringify(s));
+    await fake.control({ revoke_access: true });
+
+    const a = spawnBridge({
+      ISKRON_BRIDGE_IN_CALL_WAIT_MS: "100",
+      ISKRON_BRIDGE_LANDED_POLL_MS: "100",
+    });
+    const url = authorizeUrlIn((await a.call("initialize", 1, INIT_PARAMS)).error?.message);
+    assert.ok(url, "a blind grant is offered a login beside its hour");
+    const older = readStore(dir); // an earlier build rotates the grant, writing no stamp of ours
+    older.tokens = {
+      access_token: "access-from-an-older-bridge",
+      refresh_token: "refresh-from-an-older-bridge",
+      expires_at: Date.now() + 3_600_000,
+    };
+    writeFileSync(storeFile(dir), JSON.stringify(older));
+    await waitFor(
+      async () => !(await portListening(callbackPortOf(url))),
+      "the moot login to close",
+    );
+  });
+});
+
+// Between the grant coming back and the moot login's next look at it, the port
+// is still held. A blind window in that gap waits for it, not a second port.
+test("a blind window right after the grant came back waits for the moot login, not a second port", async (t) => {
+  await withFake(t, { refreshNotBeforeMs: 3000 }, async ({ fake, dir, spawnBridge }) => {
+    const first = spawnBridge();
+    await authorize(first, dir);
+    await first.stop();
+    const blind = async () => {
+      const s = readStore(dir);
+      s.tokens.expires_at = Date.now() - 1000;
+      writeFileSync(storeFile(dir), JSON.stringify(s));
+      await fake.control({ revoke_access: true });
+    };
+    await blind();
+
+    const a = spawnBridge({
+      ISKRON_BRIDGE_IN_CALL_WAIT_MS: "100",
+      ISKRON_BRIDGE_LANDED_POLL_MS: "2500",
+    });
+    const offered = authorizeUrlIn((await a.call("initialize", 1, INIT_PARAMS)).error?.message);
+    assert.ok(offered, "a blind grant is offered a login beside its hour");
+    await pause(Math.max(0, fake.state.refreshValidFrom - Date.now()) + 200); // the hour comes
+    const served = await a.call("tools/call", 2, { name: "nks_orient", arguments: {} });
+    assert.ok(served.result && !served.error, `the grant is back: ${JSON.stringify(served.error)}`);
+
+    await blind(); // at once — before the moot login has looked again
+    const next = authorizeUrlIn(
+      (await a.call("tools/call", 3, { name: "nks_orient", arguments: {} })).error?.message,
+    );
+    assert.ok(next, "the next blind window is offered a login too");
+    assert.equal(
+      callbackPortOf(next),
+      callbackPortOf(offered),
+      "on the same port, not a second one",
+    );
+  });
+});
+
+// A login offered beside a grant blind until its hour is moot once the grant
+// comes back by itself. Left listening, it held the port, and the next blind
+// window stepped to another rung — a new tab each time, until no port was left.
+test("a login offered beside a blind grant closes once the grant comes back — the next window reuses its port", async (t) => {
+  await withFake(t, { refreshNotBeforeMs: 3000 }, async ({ fake, dir, spawnBridge }) => {
+    const first = spawnBridge();
+    await authorize(first, dir);
+    await first.stop();
+    const blind = async () => {
+      const s = readStore(dir);
+      s.tokens.expires_at = Date.now() - 1000;
+      writeFileSync(storeFile(dir), JSON.stringify(s));
+      await fake.control({ revoke_access: true });
+    };
+    await blind();
+
+    const a = spawnBridge({
+      ISKRON_BRIDGE_IN_CALL_WAIT_MS: "100",
+      ISKRON_BRIDGE_LANDED_POLL_MS: "100",
+    });
+    const offered = authorizeUrlIn((await a.call("initialize", 1, INIT_PARAMS)).error?.message);
+    assert.ok(offered, "a blind grant is offered a login beside its hour");
+
+    await pause(Math.max(0, fake.state.refreshValidFrom - Date.now()) + 200); // the hour comes
+    const served = await a.call("tools/call", 2, { name: "nks_orient", arguments: {} });
+    assert.ok(served.result && !served.error, `the grant is back: ${JSON.stringify(served.error)}`);
+    await waitFor(
+      async () => !(await portListening(callbackPortOf(offered))),
+      "the moot login's listener to close",
+    );
+
+    await blind(); // another blind window
+    const next = authorizeUrlIn(
+      (await a.call("tools/call", 3, { name: "nks_orient", arguments: {} })).error?.message,
+    );
+    assert.ok(next, "the next blind window is offered a login too");
+    assert.equal(
+      callbackPortOf(next),
+      callbackPortOf(offered),
+      "on the same port — nothing piled up",
+    );
+  });
+});
+
+test("a stray visit to the callback does not end the login — only a refusal does", async (t) => {
+  // A leftover tab of a login that is over, or any page poking the port: told in
+  // its own browser, while the login it stumbled on keeps waiting for the human.
+  await withFake(t, {}, async ({ dir, spawnBridge }) => {
+    const a = spawnBridge();
+    const url = authorizeUrlIn((await a.call("initialize", 1, INIT_PARAMS)).error?.message);
+    assert.ok(url, "a login must be pending");
+    const standing = loginState(dir);
+    const stray = await fetch(
+      `http://127.0.0.1:${callbackPortOf(url)}/callback?code=x&state=not-this-login`,
+    );
+    assert.match(
+      await stray.text(),
+      /login that is over/,
+      "the stray tab is told, in its own browser",
+    );
+    await pause(300);
+    assert.equal(await portListening(callbackPortOf(url)), true, "the login still listens");
+    assert.equal(loginState(dir), standing, "and it is the same login");
+    const res = await fetch(url, { redirect: "follow" }); // the human's own click still lands
+    await res.text();
+    assert.equal(res.status, 200);
+    await grantLanded(dir);
+  });
+});
+
+test("a live login of an older bridge on the machine is joined, not doubled", async (t) => {
+  // A bridge of an earlier build still running publishes the sign-in server's own
+  // link and nothing to take it over with. While it listens, a new bridge hands
+  // out its link rather than a second login and a second tab (#4809).
+  await withFake(t, {}, async ({ dir, spawnBridge }) => {
+    const a = spawnBridge(); // lays the store down, so the record has its home
+    await a.call("initialize", 1, INIT_PARAMS);
+    const lockPath = lockFile(dir);
+    await a.stop();
+    const older = createServer(() => {});
+    await new Promise((r) => older.listen(0, "127.0.0.1", r));
+    const port = older.address().port;
+    const oldLink = `http://127.0.0.1:${port}/authorize?client_id=old&state=an-older-bridge`;
+    writeFileSync(
+      lockPath,
+      JSON.stringify({
+        pid: process.pid,
+        started_at: Date.now(),
+        authorize_url: oldLink,
+        callback_port: port,
+      }),
+    );
+    try {
+      const b = spawnBridge();
+      const answer = await b.call("initialize", 1, INIT_PARAMS);
+      assert.ok(
+        answer.error?.message.includes(oldLink),
+        `the older bridge's link must be handed out: ${answer.error?.message}`,
+      );
+    } finally {
+      older.close();
+    }
+  });
+});
+
+// The loopback port is open to every local user. The sign-in page carries the
+// login's state, and a stranger holding it could slip the bridge a code for an
+// account that is not the human's — so only the link itself, with its key, mints.
+test("the login link opens only with its own key — the bare port mints nothing", async (t) => {
+  await withFake(t, {}, async ({ spawnBridge }) => {
+    const a = spawnBridge();
+    const url = authorizeUrlIn((await a.call("initialize", 1, INIT_PARAMS)).error?.message);
+    assert.ok(url, "a login must be pending");
+    const res = await fetch(`http://127.0.0.1:${callbackPortOf(url)}/login`, {
+      redirect: "manual",
+    });
+    await res.text();
+    assert.equal(
+      res.headers.get("location"),
+      null,
+      "a link without the key must not be sent on to the sign-in page",
+    );
+    assert.ok(await mintedFrom(url), "the link itself does mint the sign-in page");
+  });
+});
+
+// The link is the bridge's own address and mints the sign-in page as it is
+// opened, so no registration ageing out under an unattended login makes a new
+// login: the same one stands for as long as nobody clicks it (#4794). Declared
+// dead every forty-five minutes, it used to pile logins, tabs and listeners up
+// until the ports ran out and no link was left at all.
+test("a login nobody opens for hours stays the one login — ageing registrations make no new ones", async (t) => {
+  await withFake(t, {}, async ({ fake, dir, spawnBridge }) => {
+    const first = spawnBridge();
+    await authorize(first, dir);
+    await first.stop();
+    const s = readStore(dir);
+    const dead = s.tokens.access_token;
+    s.tokens.expires_at = Date.now() - 1000;
+    writeFileSync(storeFile(dir), JSON.stringify(s));
+    await fake.control({ refreshStatus: 400, refreshError: "invalid_grant", revoke_access: true });
+
+    const a = spawnBridge({ ISKRON_BRIDGE_DEAD_RECHECK_MS: "50" });
+    const url = authorizeUrlIn((await a.call("initialize", 1, INIT_PARAMS)).error?.message);
+    assert.ok(url, "a login must be pending");
+    const standing = loginState(dir);
+    for (const id of [2, 3, 4]) {
+      const aged = readStore(dir); // another forty-six minutes on
+      if (aged.client?.registered_at) aged.client.registered_at -= 46 * 60_000;
+      writeFileSync(storeFile(dir), JSON.stringify(aged));
+      const answer = await a.call("tools/call", id, { name: "nks_orient", arguments: {} });
+      assert.equal(authorizeUrlIn(answer.error?.message), url, "the same link, however late");
+      assert.equal(loginState(dir), standing, "the same login — no new one beside it");
+    }
+    const res = await fetch(url, { redirect: "follow" }); // opened at last: minted now, and it lands
+    await res.text();
+    assert.equal(res.status, 200);
+    await waitFor(() => readStore(dir).tokens?.access_token !== dead, "the new grant to land");
+  });
+});
+
+// A grant written by an older bridge carries no client of its own; its refusal
+// must not cost the login the machine has out a second login (#4809).
+test("a grant with no client of its own, refused, does not unseat the login that is out", async (t) => {
+  await withFake(t, {}, async ({ fake, dir, spawnBridge }) => {
+    const first = spawnBridge();
+    await authorize(first, dir);
+    await first.stop();
+    const s = readStore(dir);
+    s.tokens.expires_at = Date.now() - 1000;
+    delete s.tokens.client_id; // written by a bridge that did not record it
+    writeFileSync(storeFile(dir), JSON.stringify(s));
+    await fake.control({ refreshStatus: 400, refreshError: "invalid_client", revoke_access: true });
+
+    const a = spawnBridge({ ISKRON_BRIDGE_DEAD_RECHECK_MS: "50" });
+    const url = authorizeUrlIn((await a.call("initialize", 1, INIT_PARAMS)).error?.message);
+    assert.ok(url, "a login must be pending");
+    const standing = loginState(dir);
+    await mintedFrom(url); // the human opened it: a registration is made for the login
+    const gsPath = storeFile(dir) + ".grant-state";
+    const gs = JSON.parse(readFileSync(gsPath, "utf8"));
+    gs.refused_at = Date.now() - 6 * 60_000; // five minutes on, the grant is knocked again
+    writeFileSync(gsPath, JSON.stringify(gs));
+    const again = await a.call("tools/call", 2, { name: "nks_orient", arguments: {} });
+    assert.equal(authorizeUrlIn(again.error?.message), url);
+    assert.equal(loginState(dir), standing, "the refusal must not make a second login");
+  });
+});
+
+test("a login that already landed is never taken over later — the next need publishes a new one", async (t) => {
+  // A bridge killed between saving the tokens and dropping the login's record
+  // leaves the record of a login that has landed. Taken over later, it would
+  // hand the human a link and no tab — the one they had is long closed —
+  // and it would skip the bridge's own second knock on a refused grant.
+  await withFake(t, {}, async ({ fake, dir, spawnBridge }) => {
+    const first = spawnBridge();
+    const url = authorizeUrlIn((await first.call("initialize", 1, INIT_PARAMS)).error?.message);
+    assert.ok(url, "a login must be pending");
+    const lockPath = lockFile(dir);
+    const leftover = readFileSync(lockPath, "utf8");
+    const res = await fetch(url, { redirect: "follow" });
+    await res.text();
+    await grantLanded(dir);
+    await first.stop();
+    writeFileSync(lockPath, leftover); // killed before the record was dropped
+
+    const s = readStore(dir);
+    s.tokens.expires_at = Date.now() - 1000;
+    writeFileSync(storeFile(dir), JSON.stringify(s));
+    await fake.control({ refreshStatus: 400, refreshError: "invalid_grant", revoke_access: true });
+
+    const next = spawnBridge({ ISKRON_BRIDGE_DEAD_RECHECK_MS: "50,50" });
+    const again = authorizeUrlIn((await next.call("initialize", 1, INIT_PARAMS)).error?.message);
+    assert.ok(again, "a login must be offered");
+    assert.notEqual(
+      loginState(dir),
+      JSON.parse(leftover).state,
+      "a login that landed is not handed out again",
+    );
+    assert.ok(fake.state.counts.refresh >= 2, "and its leftover does not skip the second knock");
+  });
+});
+
+test("a login waiting longer than five and a half minutes is still joined, not published again", async (t) => {
+  // The published login once carried a clock of its own — the old five-minute
+  // flow timeout. The flow no longer times out, and a clock-dead lock sent the
+  // next call to publish a second login, a second tab, while the first listened.
+  await withFake(t, {}, async ({ dir, spawnBridge }) => {
+    const first = spawnBridge();
+    const url = authorizeUrlIn((await first.call("initialize", 1, INIT_PARAMS)).error?.message);
+    assert.ok(url, "a login must be pending");
+    const lock = lockFile(dir);
+    const held = JSON.parse(readFileSync(lock, "utf8"));
+    writeFileSync(lock, JSON.stringify({ ...held, started_at: Date.now() - 400_000 }));
+
+    const other = spawnBridge();
+    const again = authorizeUrlIn((await other.call("initialize", 1, INIT_PARAMS)).error?.message);
+    assert.equal(again, url, "a later call must join the standing login");
+  });
+});
+
+test("however many bridges need the login, the browser opens once", async (t) => {
+  if (process.platform === "win32") return t.skip("the opener is PowerShell there");
+  await withFake(t, {}, async ({ dir, spawnBridge }) => {
+    const root = mkdtempSync(join(tmpdir(), "iskron-opener-"));
+    const record = join(root, "opened.txt");
+    for (const name of ["open", "xdg-open"]) {
+      writeFileSync(join(root, name), `#!/bin/sh\nprintf '%s\\n' "$@" >> "${record}"\n`, {
+        mode: 0o755,
+      });
+    }
+    const env = { PATH: `${root}:${process.env.PATH}` };
+    const opened = () => {
+      try {
+        return readFileSync(record, "utf8").trim().split("\n").filter(Boolean);
+      } catch {
+        return [];
+      }
+    };
+
+    const a = spawnBridge(env, { browser: true });
+    const url = authorizeUrlIn((await a.call("initialize", 1, INIT_PARAMS)).error?.message);
+    assert.ok(url, "a login must be pending");
+    await waitFor(() => opened().length === 1, "the first bridge to open the browser");
+    await a.stop(); // killed under the login, as an ephemeral run is
+
+    const b = spawnBridge(env, { browser: true });
+    assert.equal(authorizeUrlIn((await b.call("initialize", 1, INIT_PARAMS)).error?.message), url);
+    const c = spawnBridge(env, { browser: true });
+    assert.equal(authorizeUrlIn((await c.call("initialize", 1, INIT_PARAMS)).error?.message), url);
+    await pause(500);
+    assert.deepEqual(opened(), [url], "one login, one tab — however many bridges asked");
+
+    const res = await fetch(url, { redirect: "follow" });
+    await res.text();
+    assert.equal(res.status, 200);
+    await grantLanded(dir);
+  });
+});
+
+test("two bridges starting a login at once share one registration and one link", async (t) => {
+  // The first bridge publishes its login the moment it holds the port — the
+  // registration waits for the click — so the second finds it and joins rather
+  // than registering a second client for a second tab (graph @nks/nks-dev, node #4793).
+  await withFake(t, { registerDelayMs: 1000 }, async ({ fake, spawnBridge }) => {
+    const [a, b] = [spawnBridge(), spawnBridge()];
+    const answers = await Promise.all([
+      a.call("initialize", 1, INIT_PARAMS),
+      b.call("initialize", 1, INIT_PARAMS),
+    ]);
+    const urls = answers.map((x) => authorizeUrlIn(x.error?.message));
+    assert.ok(urls[0] && urls[1], `both must be offered a login: ${JSON.stringify(answers)}`);
+    assert.equal(urls[1], urls[0], "one login for both");
+    await mintedFrom(urls[0]);
+    assert.equal(fake.state.counts.register, 1, "one client registration for one login");
+  });
+});
+
 // A corporate proxy the runtime will not read sends every call around it, and
 // the failure then says nothing about why (graph @nks/nks-dev, nodes #4717,
 // #4718). Node reads HTTP(S)_PROXY only from 24.5 and only under
@@ -2521,10 +3316,11 @@ test("a proxy the runtime will not read is named at start, with its lever", asyn
 // wait, so nothing hangs forever.
 
 test("a bridge left by its harness mid-login waits for the click only so long, then goes", async (t) => {
-  await withFake(t, {}, async ({ spawnBridge }) => {
+  await withFake(t, {}, async ({ dir, spawnBridge }) => {
     const bridge = spawnBridge({ ISKRON_BRIDGE_ORPHAN_FLOW_MS: "800" });
     const pending = await bridge.call("initialize", 1, INIT_PARAMS);
-    assert.ok(authorizeUrlIn(pending.error?.message), "a login must be pending");
+    const first = authorizeUrlIn(pending.error?.message);
+    assert.ok(first, "a login must be pending");
     const gone = exited(bridge);
     bridge.proc.stdin.end(); // the harness is gone
     await Promise.race([gone, pause(4000)]);
@@ -2533,6 +3329,16 @@ test("a bridge left by its harness mid-login waits for the click only so long, t
       null,
       "an orphaned bridge must not hang on a login nobody is waiting for",
     );
+
+    // The login outlives the bridge that published it: the next one listens on
+    // the same link, so the tab the human already has still lands (#4794).
+    const next = spawnBridge();
+    const again = authorizeUrlIn((await next.call("initialize", 1, INIT_PARAMS)).error?.message);
+    assert.equal(again, first, "the next bridge must take the login over, not publish a new one");
+    const res = await fetch(first, { redirect: "follow" });
+    await res.text();
+    assert.equal(res.status, 200, "the old tab's link must land");
+    await grantLanded(dir);
   });
 });
 

@@ -6,7 +6,6 @@ import {
   errorCode,
   errorMessage,
   HoldOffError,
-  LoginHeld,
   TokenError,
 } from "../errors.ts";
 import { grantLog, loadGrantState, loadStore, saveGrantState, saveStore, sleep } from "../store.ts";
@@ -14,7 +13,6 @@ import { debug, log } from "../streams.ts";
 import { refreshHours, tokenUsable, usableTokens } from "../tokens.ts";
 import { type Meta, type Tokens } from "../types.ts";
 import { discoverMeta } from "./discovery.ts";
-import { LOGIN_GRACE_MS } from "./pacing.ts";
 import { acquireRefreshLock, releaseRefreshLock } from "./refreshlock.ts";
 import { tokenRequest } from "./tokenrequest.ts";
 
@@ -52,14 +50,20 @@ async function refreshOnce(meta: Meta, cur: Tokens, proactive: boolean): Promise
     throw new HoldOffError(
       `the token endpoint refused this grant as too early moments ago` +
         ` — not knocking again for ${left}s; grant kept, will retry`,
+      false,
+      hours.nbf as number,
     );
   }
+  // The grant is presented with the client it was issued to. The machine's
+  // registration may have moved on under it — a login just published on a
+  // fresh one — and that one is not this grant's to spend or to lose.
+  const clientId = CFG.staticClientId || cur.client_id || loadStore().client?.client_id || "";
   debug("refreshing access token");
   try {
     return await tokenRequest(meta, {
       grant_type: "refresh_token",
       refresh_token: cur.refresh_token ?? "",
-      client_id: CFG.staticClientId || loadStore().client?.client_id || "",
+      client_id: clientId,
       resource: meta.resource,
     });
   } catch (e) {
@@ -91,7 +95,7 @@ async function refreshOnce(meta: Meta, cur: Tokens, proactive: boolean): Promise
       grantLog(
         `refresh refused by an endpoint discovery still names (${message}) — registration dropped`,
       );
-      saveStore({ client: null });
+      dropRegistration(clientId);
       throw new DeadGrantError(message);
     }
     if (gone) {
@@ -172,6 +176,7 @@ async function refreshOnce(meta: Meta, cur: Tokens, proactive: boolean): Promise
           ? `token refresh refused too early again (${message}) — the hour is real: ${why}; grant kept`
           : `token refresh refused too early (${message}) — ${why}; grant kept, will retry`,
         !!notYet && !repeated,
+        notYet ? (hours.nbf as number) : null,
       );
     }
     // A rotated-away token is refused in exactly the same words as a dead one.
@@ -187,7 +192,7 @@ async function refreshOnce(meta: Meta, cur: Tokens, proactive: boolean): Promise
       // client — a login the human cannot complete however often they try.
       log("the server no longer knows this client — dropping the registration");
       grantLog("server no longer knows this client — registration dropped");
-      saveStore({ client: null });
+      dropRegistration(clientId);
     }
     const overdue = hours.exp && now() >= hours.exp;
     grantLog(
@@ -274,16 +279,21 @@ export async function refreshShared(
   }
 }
 
-// Start the human's grace on the first refusal. `refused_at` is the latest
-// refusal by any caller; the background uses it to decide whether another
-// control knock is due.
+// A refusal names the client the grant presented. Drop that registration only
+// while it is still the machine's: a login may have just been published on a
+// newer one, and dropping that would unseat the login under the human (#4794).
+function dropRegistration(clientId: string): void {
+  if (clientId && loadStore().client?.client_id === clientId) saveStore({ client: null });
+}
+
+// The machine's memory of a refused grant. `refused_at` is the latest refusal
+// by any caller — the background uses it to decide whether another control
+// knock is due; `refused_since` dates the first, for doctor to show.
 function noteRefusal(reason: string): void {
   const local = Date.now();
   const first = !loadGrantState().refused_since;
   saveGrantState({ refused_at: local, ...(first ? { refused_since: local, reason } : {}) });
-  if (first) {
-    grantLog(`grant refused, holding the login back for ${LOGIN_GRACE_MS / 1000}s: ${reason}`);
-  }
+  if (first) grantLog(`grant refused: ${reason}`);
 }
 
 // The machine already holds a verdict on this grant, recorded moments ago by
@@ -291,34 +301,4 @@ function noteRefusal(reason: string): void {
 export function refusalStands(): boolean {
   const at = loadGrantState().refused_at;
   return !!at && Date.now() - at < REFUSED_KNOCK_MS;
-}
-
-// `asked` is the harness connecting — a session starting, a /mcp reconnect: a
-// human at the keyboard, now. Neither pause below is theirs to sit through. The
-// harness does not connect again by itself, so a login held past this moment
-// opens for nobody, and the human who just asked sees no login at all (graph
-// @nks/nks-dev, node #4790).
-export function holdOffLogin(reason: string, expired = false, asked = false): void {
-  if (asked) return;
-  const local = Date.now(); // human pacing runs on the human's own clock
-  const st = loadGrantState();
-  if (st.snooze_until && local < st.snooze_until) {
-    throw new LoginHeld(
-      `authorization was offered and not completed — not asking again for ` +
-        `${Math.round((st.snooze_until - local) / 1000)}s (grant refused: ${reason})`,
-    );
-  }
-  // The grace exists because a refusal can be a server mid-restart wearing a
-  // dead grant's words. A grant past its own exp is not ambiguous: its hours
-  // are proof, and the keepalive never knocks on it — so the grace would start
-  // stone-cold at the human's first call and cost them two minutes of failing
-  // calls before the login they already owe. Ask at once instead.
-  if (expired) return;
-  const since = st.refused_since || local;
-  if (local - since < LOGIN_GRACE_MS) {
-    throw new LoginHeld(
-      `grant refused (${reason}) — holding off the login for ` +
-        `${Math.round((LOGIN_GRACE_MS - (local - since)) / 1000)}s in case it heals`,
-    );
-  }
 }

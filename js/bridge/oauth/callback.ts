@@ -1,5 +1,6 @@
 import { createServer, type ServerResponse } from "node:http";
 
+import { errorMessage } from "../errors.ts";
 import { log } from "../streams.ts";
 
 // How long the human's browser is held while the code is exchanged. Long enough
@@ -13,6 +14,8 @@ export interface Callback {
   report: (failure: string | null) => void;
   close: () => void;
   waitForCode: (expectedState: string, timeoutMs?: number) => Promise<string>;
+  /** What /login answers to the holder of `key`: the sign-in page, minted as the link is opened. */
+  serveLogin: (key: string, mint: () => Promise<string>) => void;
 }
 
 interface Arrival {
@@ -38,6 +41,8 @@ export function bindCallback(port: number): Promise<Callback> {
     let handOff: ((v: Arrival) => void) | null = null; // set once someone is waiting for the code
     let received: Arrival | null = null; // …or hold what arrived before they asked
     let browser: ServerResponse | null = null; // the redirect's response, held open for the verdict
+    let mint: (() => Promise<string>) | null = null; // what the login link sends the human to
+    let loginKey = ""; // the link's own key: the port is open to every local user
     const deliver = (v: Arrival) => {
       if (handOff) handOff(v);
       else received = v;
@@ -61,6 +66,23 @@ export function bindCallback(port: number): Promise<Callback> {
 
     const server = createServer((req, res) => {
       const u = new URL(req.url ?? "/", `http://127.0.0.1:${port}`);
+      if (u.pathname === "/login" && mint && loginKey && u.searchParams.get("k") === loginKey) {
+        // The link the human was given: the sign-in page is minted now, under a
+        // registration the server knows at this very moment (#4794).
+        mint().then(
+          (to) => {
+            res.writeHead(302, { location: to, "cache-control": "no-store" });
+            res.end();
+          },
+          (e: unknown) => {
+            res.writeHead(502, { "content-type": "text/html; charset=utf-8" });
+            res.end(
+              `<h3>iskron-bridge: the sign-in page could not be reached (${esc(errorMessage(e))}) — reload this page.</h3>`,
+            );
+          },
+        );
+        return;
+      }
       if (u.pathname !== "/callback") {
         res.writeHead(404);
         res.end();
@@ -104,6 +126,10 @@ export function bindCallback(port: number): Promise<Callback> {
           tellBrowser("iskron-bridge: the login was abandoned — nothing was stored.");
           server.close();
         },
+        serveLogin: (key, fn) => {
+          loginKey = key;
+          mint = fn;
+        },
         // No deadline by default: the login lives as long as the bridge holding
         // it, so a human who comes back to the tab late still lands it (graph
         // nks-dev: #4721). A bridge left by its harness bounds the wait itself.
@@ -116,16 +142,27 @@ export function bindCallback(port: number): Promise<Callback> {
                     timeoutMs,
                   )
                 : null;
-            const settle = (v: Arrival) => {
-              if (timer) clearTimeout(timer);
-              if (v.err) return rej(new Error(`authorization refused: ${v.err}`));
-              if (!v.code || v.state !== expectedState) {
-                return rej(new Error("callback missing code or state mismatch"));
+            // An arrival that is not this login's — a leftover tab of a login
+            // that is over, or any page poking the port — is answered in its own
+            // browser and does not end the login: only a refusal with the
+            // login's own state does (#4794).
+            const settle = (v: Arrival): boolean => {
+              if (v.state !== expectedState) {
+                tellBrowser(
+                  "iskron-bridge: this page belongs to a login that is over — open the link the agent gave you.",
+                );
+                return false;
               }
-              res(v.code);
+              if (timer) clearTimeout(timer);
+              handOff = null;
+              if (v.err) rej(new Error(`authorization refused: ${v.err}`));
+              else if (!v.code) rej(new Error("callback missing code"));
+              else res(v.code);
+              return true;
             };
-            if (received) settle(received);
-            else handOff = settle;
+            if (received && settle(received)) return;
+            received = null;
+            handOff = settle;
           }),
       });
     });
