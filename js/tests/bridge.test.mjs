@@ -40,6 +40,9 @@ const INIT_PARAMS = {
   capabilities: {},
   clientInfo: { name: "test-harness", version: "0" },
 };
+// Our own client — the OpenCode plugin: it raises the bridge by itself and reads
+// a refused handshake itself, so its handshake is paced like any call (#4790).
+const OWN_INIT_PARAMS = { ...INIT_PARAMS, clientInfo: { name: "opencode-iskron", version: "1" } };
 
 // --- driving the bridge the way a harness does -----------------------------
 
@@ -631,6 +634,21 @@ test("Rauthy's dead-refresh 404 costs exactly one new browser flow", async (t) =
       revoke_access: true,
     });
 
+    // A paced handshake — our own client's — still observes the grace on the first 404.
+    const held = spawnBridge();
+    const refusal = await held.call("initialize", 1, OWN_INIT_PARAMS);
+    assert.equal(
+      authorizeUrlIn(refusal.error?.message),
+      null,
+      "the first dead-grant refusal must still observe the login grace",
+    );
+    assert.equal(
+      readStore(dir).tokens.refresh_token,
+      before,
+      "the existing DeadGrant path must keep the grant through the grace",
+    );
+    await held.stop();
+
     // Two harnesses connecting on the dead grant: a handshake is not paced, and
     // the second joins the login the first published.
     const beforeLogin = { ...fake.state.counts };
@@ -728,7 +746,8 @@ test("a keepalive that meets a dead refresh records the refusal, so the human's 
     const refusal = JSON.parse(readFileSync(stateFile, "utf8"));
     refusal.refused_since = Date.now() - 600_000;
     writeFileSync(stateFile, JSON.stringify(refusal));
-    const answer = await bridge.call("initialize", 1, INIT_PARAMS);
+    // Our own client's handshake is paced — the one the warm grace governs.
+    const answer = await bridge.call("initialize", 1, OWN_INIT_PARAMS);
     assert.ok(
       authorizeUrlIn(answer.error?.message),
       `the already-warm grace must offer login immediately: ${JSON.stringify(answer)}`,
@@ -1060,6 +1079,18 @@ test("a login the human declines is not offered again on the next call", async (
       "someone who just declined must not be asked again on the next tool call",
     );
     assert.match(again.error.message, /not asking again/);
+
+    // Our own client raising the bridge by itself — lazily, after idle — is no
+    // human asking, and must not reopen a declined login.
+    const respawn = spawnBridge();
+    const quiet = await respawn.call("initialize", 1, OWN_INIT_PARAMS);
+    assert.equal(
+      authorizeUrlIn(quiet.error?.message),
+      null,
+      `a bridge our own client raised by itself reopened a declined login: ${JSON.stringify(quiet)}`,
+    );
+    assert.match(quiet.error?.message ?? "", /not asking again/);
+    await respawn.stop();
 
     // A reconnect is the human asking again, in so many words (#4790).
     const reconnect = spawnBridge();
@@ -1948,7 +1979,8 @@ test("a grant past its own expiry asks for the login at once, not after a grace"
     await fake.control({ refreshStatus: 400, refreshError: "invalid_grant", revoke_access: true });
 
     const second = spawnBridge();
-    const answer = await second.call("initialize", 1, INIT_PARAMS);
+    // Our own client's handshake is paced, so only the grant's own hour lets it through at once.
+    const answer = await second.call("initialize", 1, OWN_INIT_PARAMS);
     const url = authorizeUrlIn(answer.error?.message);
     assert.ok(
       url,
@@ -2386,6 +2418,40 @@ test("a handshake over a dead grant stands on the last server answer, publishes 
       after.result && !after.error,
       `after the click the call goes through without a second handshake: ${JSON.stringify(after)}`,
     );
+  });
+});
+
+// Our own clients raise the bridge by themselves and read a refused handshake
+// themselves: the OpenCode plugin waits out the login and shows the human the
+// link in its own window, pi says it in a notice. Answering them from the last
+// server answer would take that line away (#4790), so theirs is still refused.
+test("our own clients' handshake over a dead grant is still refused with the link, so they can show it", async (t) => {
+  await withFake(t, {}, async ({ fake, dir, spawnBridge }) => {
+    const first = spawnBridge();
+    await authorize(first, dir);
+    assert.ok((await first.call("initialize", 2, INIT_PARAMS)).result);
+    first.send({ jsonrpc: "2.0", method: "notifications/initialized" });
+    assert.ok(toolNames((await first.call("tools/list", 3)).result?.tools).length > 0);
+    await first.stop();
+
+    const s = readStore(dir);
+    s.tokens.expires_at = Date.now() - 1000;
+    writeFileSync(storeFile(dir), JSON.stringify(s));
+    await fake.control({ refreshStatus: 400, refreshError: "invalid_grant", revoke_access: true });
+    ageRefusal(dir);
+
+    const plugin = spawnBridge();
+    const init = await plugin.call("initialize", 1, OWN_INIT_PARAMS);
+    assert.ok(
+      init.error,
+      `our own client must see the refusal, not the last answer: ${JSON.stringify(init.result)}`,
+    );
+    assert.match(
+      init.error.message,
+      /authorization required/,
+      "the plugin knows a login in progress by these words",
+    );
+    assert.ok(authorizeUrlIn(init.error.message), "the refusal must carry the link it shows");
   });
 });
 

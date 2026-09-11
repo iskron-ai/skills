@@ -285,6 +285,9 @@ function resultToContent(result) {
   ];
 }
 
+// js/shared/clients.ts
+var PI_CLIENT = "pi-iskron";
+
 // js/extension/home-copy.ts
 import {
   accessSync,
@@ -440,7 +443,7 @@ function setupBridge(pi, onChannel) {
       {
         protocolVersion: PROTOCOL,
         capabilities: {},
-        clientInfo: { name: "pi-iskron", version: "1" }
+        clientInfo: { name: PI_CLIENT, version: "1" }
       },
       { timeoutMs: HANDSHAKE_MS }
     );

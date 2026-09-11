@@ -1179,6 +1179,11 @@ function startTokenKeepalive() {
   setInterval(tick, 6e4).unref();
 }
 
+// js/shared/clients.ts
+var OPENCODE_CLIENT = "opencode-iskron";
+var PI_CLIENT = "pi-iskron";
+var OWN_CLIENTS = /* @__PURE__ */ new Set([OPENCODE_CLIENT, PI_CLIENT]);
+
 // js/bridge/hold.ts
 import {
   chmodSync,
@@ -2505,6 +2510,10 @@ function lastServerAnswer(msg) {
   const result = msg?.method === "initialize" ? cache.init : msg?.method === "tools/list" && !msg.params?.cursor ? cache.tools : null;
   return result ? { jsonrpc: "2.0", id: msg.id, result } : null;
 }
+function ownClient() {
+  const info = state.initParams?.clientInfo;
+  return typeof info?.name === "string" && OWN_CLIENTS.has(info.name);
+}
 function withNotice(reply) {
   const content = reply?.result?.content;
   if (!Array.isArray(content)) return reply;
@@ -2522,6 +2531,7 @@ async function deliver(msg) {
   }
   const isInit = msg?.method === "initialize";
   if (isInit) state.initParams = msg.params;
+  const harness = !ownClient();
   const hasId = msg?.id !== void 0 && msg?.id !== null;
   let authRetried = false;
   let sessionRetried = false;
@@ -2603,10 +2613,14 @@ async function deliver(msg) {
       if (e instanceof UpstreamError && e.kind === "auth" && !authRetried) {
         authRetried = true;
         try {
-          await ensureAuth(e.message, { force: true, rejected: e.presented, handshake: isInit });
+          await ensureAuth(e.message, {
+            force: true,
+            rejected: e.presented,
+            handshake: isInit && harness
+          });
           continue;
         } catch (authErr) {
-          const standIn = hasId ? lastServerAnswer(msg) : null;
+          const standIn = hasId && harness ? lastServerAnswer(msg) : null;
           if (standIn) {
             log(`${msg.method} answered from the last server answer — ${errorMessage(authErr)}`);
             emit(standIn);
@@ -2659,7 +2673,7 @@ async function deliver(msg) {
           return;
         }
       }
-      if (e instanceof UpstreamError && (e.kind === "network" || e.kind === "auth") && hasId) {
+      if (e instanceof UpstreamError && (e.kind === "network" || e.kind === "auth" && harness) && hasId) {
         const cached = lastServerAnswer(msg);
         if (cached) {
           log(`${e.message} — ${msg.method} answered from the last server answer`);

@@ -33,6 +33,7 @@ import { join, resolve } from "node:path";
 import { tool, type ToolDefinition } from "@opencode-ai/plugin";
 
 import { Bridge, resultToContent } from "../shared/bridge-client.ts";
+import { OPENCODE_CLIENT } from "../shared/clients.ts";
 import { homeBridgePath } from "../shared/home.ts";
 import { type Say } from "./channel.ts";
 import { argsFrom } from "./schema.ts";
@@ -184,7 +185,7 @@ async function handshake(
         {
           protocolVersion: PROTOCOL,
           capabilities: {},
-          clientInfo: { name: "opencode-iskron", version: "1" },
+          clientInfo: { name: OPENCODE_CLIENT, version: "1" },
         },
         { timeoutMs: Math.max(1, deadline - Date.now()) },
       );

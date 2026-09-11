@@ -1,3 +1,4 @@
+import { OWN_CLIENTS } from "../shared/clients.ts";
 import { ensureAuth } from "./auth.ts";
 import { BUILD } from "./build.ts";
 import {
@@ -118,6 +119,15 @@ function lastServerAnswer(msg: JsonRpcMessage): JsonRpcMessage | null {
   return result ? { jsonrpc: "2.0", id: msg.id, result } : null;
 }
 
+// Наш собственный клиент (плагин OpenCode, расширение pi) поднимает мост сам —
+// лениво, повторно после простоя — и отказ рукопожатия читает сам, показывая
+// человеку строку входа в своём окне: ему прежний отказ со ссылкой и прежний
+// темп входа. Остальное рукопожатие — харнеса, то есть человека (#4790).
+function ownClient(): boolean {
+  const info = (state.initParams as { clientInfo?: { name?: unknown } } | null)?.clientInfo;
+  return typeof info?.name === "string" && OWN_CLIENTS.has(info.name);
+}
+
 /** Строка отставания поставки — один раз за сессию, в первый же ответ тула: агент передаст её человеку. */
 function withNotice(reply: JsonRpcMessage): JsonRpcMessage {
   const content = reply?.result?.content;
@@ -140,6 +150,7 @@ export async function deliver(msg: JsonRpcMessage): Promise<void> {
   }
   const isInit = msg?.method === "initialize";
   if (isInit) state.initParams = msg.params;
+  const harness = !ownClient();
   const hasId = msg?.id !== undefined && msg?.id !== null;
   let authRetried = false;
   let sessionRetried = false;
@@ -251,10 +262,14 @@ export async function deliver(msg: JsonRpcMessage): Promise<void> {
       if (e instanceof UpstreamError && e.kind === "auth" && !authRetried) {
         authRetried = true;
         try {
-          await ensureAuth(e.message, { force: true, rejected: e.presented, handshake: isInit });
+          await ensureAuth(e.message, {
+            force: true,
+            rejected: e.presented,
+            handshake: isInit && harness,
+          });
           continue;
         } catch (authErr) {
-          const standIn = hasId ? lastServerAnswer(msg) : null;
+          const standIn = hasId && harness ? lastServerAnswer(msg) : null;
           if (standIn) {
             log(`${msg.method} answered from the last server answer — ${errorMessage(authErr)}`);
             emit(standIn);
@@ -313,7 +328,11 @@ export async function deliver(msg: JsonRpcMessage): Promise<void> {
           return;
         }
       }
-      if (e instanceof UpstreamError && (e.kind === "network" || e.kind === "auth") && hasId) {
+      if (
+        e instanceof UpstreamError &&
+        (e.kind === "network" || (e.kind === "auth" && harness)) &&
+        hasId
+      ) {
         const cached = lastServerAnswer(msg);
         if (cached) {
           log(`${e.message} — ${msg.method} answered from the last server answer`);

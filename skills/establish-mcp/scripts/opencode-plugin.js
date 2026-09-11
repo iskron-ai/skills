@@ -291,6 +291,9 @@ function resultToContent(result) {
   ];
 }
 
+// js/shared/clients.ts
+var OPENCODE_CLIENT = "opencode-iskron";
+
 // js/shared/home.ts
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -424,7 +427,7 @@ async function handshake(b, onLogin, onLoggedIn) {
         {
           protocolVersion: PROTOCOL,
           capabilities: {},
-          clientInfo: { name: "opencode-iskron", version: "1" }
+          clientInfo: { name: OPENCODE_CLIENT, version: "1" }
         },
         { timeoutMs: Math.max(1, deadline - Date.now()) }
       );
