@@ -2422,10 +2422,10 @@ test("a handshake over a dead grant stands on the last server answer, publishes 
   });
 });
 
-// Our own clients raise the bridge by themselves and read a refused handshake
-// themselves: the OpenCode plugin waits out the login and shows the human the
-// link in its own window, pi says it in a notice. Answering them from the last
-// server answer would take that line away (#4790), so theirs is still refused.
+// Our own clients read a refused handshake themselves and wait out the login:
+// the OpenCode plugin shows the human the link in its own window, make surface
+// prints it and must not write a snapshot from a stale answer. Answering them
+// from the last server answer would take that away (#4790), so theirs is refused.
 test("our own clients' handshake over a dead grant is still refused with the link, so they can show it", async (t) => {
   await withFake(t, {}, async ({ fake, dir, spawnBridge }) => {
     const first = spawnBridge();
@@ -2455,6 +2455,7 @@ test("our own clients' handshake over a dead grant is still refused with the lin
     assert.ok(authorizeUrlIn(init.error.message), "the refusal must carry the link it shows");
 
     // make surface is ours too: a snapshot written from a stale answer would pass for the live one.
+    // The name mirrors SURFACE_CLIENT in js/shared/clients.ts.
     const surface = spawnBridge();
     const exported = await surface.call("initialize", 1, {
       ...INIT_PARAMS,
