@@ -86,8 +86,10 @@ export function readAuthLock(): AuthLock | null {
 }
 
 // Written only by the process that holds the port — the bind settled who writes
-// here — and atomically, through a rename: a reader never meets a half-written
-// record and takes a live login for a closed one. The login's tab is not in the
+// here — and atomically, through a rename, wherever the rename goes through: a
+// reader never meets a half-written record and takes a live login for a closed
+// one. Where it does not (below), the write is plain, and a caller whose write
+// fails hands out no login at all. The login's tab is not in the
 // record at all: it goes to whoever creates the tab's marker (claimTab).
 export function writeAuthLock(
   fields: Omit<AuthLock, "pid" | "started_at"> & Partial<Pick<AuthLock, "pid" | "started_at">>,

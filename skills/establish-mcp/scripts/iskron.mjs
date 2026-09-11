@@ -896,11 +896,13 @@ async function interactiveFlow(meta, note3, wantTab = true) {
     debug(`joining the login held by pid ${standing.pid}`);
     throw new AuthPending(handOut(standing, wantTab).authorize_url, note3);
   }
+  let callback = null;
   if (published(standing)) {
     const cb = await bindOrNull(standing.callback_port);
-    if (cb) {
+    const still = cb ? readAuthLock() : null;
+    if (cb && published(still) && still.state === standing.state) {
       try {
-        writeAuthLock({ ...standing, pid: process.pid });
+        writeAuthLock({ ...still, pid: process.pid });
       } catch (e) {
         cb.close();
         throw e;
@@ -909,9 +911,16 @@ async function interactiveFlow(meta, note3, wantTab = true) {
         "the bridge that published this login is gone — listening on its link, so the tab the human has still lands"
       );
       grantLog("authorization flow taken over on the same link — waiting for the human");
-      runFlow(meta, cb, standing, wantTab);
-      throw new AuthPending(standing.authorize_url, note3);
+      runFlow(meta, cb, still, wantTab);
+      throw new AuthPending(still.authorize_url, note3);
     }
+    if (cb && published(still)) {
+      cb.close();
+      return interactiveFlow(meta, note3, wantTab);
+    }
+    callback = cb;
+  }
+  if (published(standing) && !callback) {
     const taken = readAuthLock();
     if (published(taken) && taken.state === standing.state && pidAlive(taken.pid) && await portListening(taken.callback_port)) {
       throw new AuthPending(handOut(taken, wantTab).authorize_url, note3);
@@ -923,7 +932,6 @@ async function interactiveFlow(meta, note3, wantTab = true) {
     const found = await linkOn(standing.callback_port);
     if (found) throw new AuthPending(handOut(found, wantTab).authorize_url, note3);
   }
-  let callback = null;
   for (let rung = 0; rung < CALLBACK_PORT_RUNGS && !callback; rung++) {
     callback = await bindOrNull(callbackPort(rung));
     if (callback) break;
@@ -1027,8 +1035,8 @@ function runFlow(meta, cb, login, openTab) {
       );
     } finally {
       clearInterval(watch);
-      cb.close();
       releaseAuthLock(ours);
+      cb.close();
       if (flow) flows.delete(flow);
     }
   })();

@@ -165,11 +165,16 @@ export async function interactiveFlow(meta: Meta, note?: string, wantTab = true)
     debug(`joining the login held by pid ${standing.pid}`);
     throw new AuthPending(handOut(standing, wantTab).authorize_url, note);
   }
+  let callback: Callback | null = null;
   if (published(standing)) {
     const cb = await bindOrNull(standing.callback_port);
-    if (cb) {
+    // A login that is over drops its record before its port, so a record still
+    // standing once the port is ours is a publisher gone, not a login declined
+    // a moment ago — that one is not published again (#4794).
+    const still = cb ? readAuthLock() : null;
+    if (cb && published(still) && still.state === standing.state) {
       try {
-        writeAuthLock({ ...standing, pid: process.pid });
+        writeAuthLock({ ...still, pid: process.pid });
       } catch (e) {
         cb.close(); // never leave a listener with no login behind it
         throw e;
@@ -178,9 +183,16 @@ export async function interactiveFlow(meta: Meta, note?: string, wantTab = true)
         "the bridge that published this login is gone — listening on its link, so the tab the human has still lands",
       );
       grantLog("authorization flow taken over on the same link — waiting for the human");
-      runFlow(meta, cb, standing, wantTab);
-      throw new AuthPending(standing.authorize_url, note);
+      runFlow(meta, cb, still, wantTab);
+      throw new AuthPending(still.authorize_url, note);
     }
+    if (cb && published(still)) {
+      cb.close(); // another login went out meanwhile: that one is joined, not a second
+      return interactiveFlow(meta, note, wantTab);
+    }
+    callback = cb; // the login ended meanwhile: the port serves a new one
+  }
+  if (published(standing) && !callback) {
     const taken = readAuthLock(); // a sibling may have taken it over first
     if (
       published(taken) &&
@@ -203,7 +215,6 @@ export async function interactiveFlow(meta: Meta, note?: string, wantTab = true)
     if (found) throw new AuthPending(handOut(found, wantTab).authorize_url, note);
   }
 
-  let callback: Callback | null = null;
   for (let rung = 0; rung < CALLBACK_PORT_RUNGS && !callback; rung++) {
     callback = await bindOrNull(callbackPort(rung));
     if (callback) break;
@@ -323,8 +334,8 @@ function runFlow(meta: Meta, cb: Callback, login: Published, openTab: boolean): 
       );
     } finally {
       clearInterval(watch);
+      releaseAuthLock(ours); // the record before the port: see the takeover in interactiveFlow
       cb.close();
-      releaseAuthLock(ours);
       if (flow) flows.delete(flow);
     }
   })();

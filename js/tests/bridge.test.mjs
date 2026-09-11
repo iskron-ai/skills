@@ -7,7 +7,15 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { createServer as createHttpsServer } from "node:https";
 import { connect, createServer } from "node:net";
 import { tmpdir } from "node:os";
@@ -2675,6 +2683,82 @@ test("markers of logins that are over are swept when a new login is published", 
       false,
       "the marker of a login that is over must not pile up",
     );
+  });
+});
+
+// A declined login's marker outlives its record: a bridge that read the record
+// a moment before the decline finds the tab taken, and opens none onto a port
+// that is closing.
+test("a declined login keeps its tab marker after its record is gone", async (t) => {
+  await withFake(t, {}, async ({ dir, spawnBridge }) => {
+    const a = spawnBridge();
+    const url = authorizeUrlIn((await a.call("initialize", 1, INIT_PARAMS)).error?.message);
+    assert.ok(url, "a login must be pending");
+    const lock = lockFile(dir);
+    const { state } = JSON.parse(readFileSync(lock, "utf8"));
+    writeFileSync(`${lock}.tab-${state}`, ""); // its tab is open
+    const back = `http://127.0.0.1:${callbackPortOf(url)}/callback?error=access_denied&state=${state}`;
+    await (await fetch(back)).text();
+    await waitFor(
+      () => !readdirSync(dir).some((f) => f.endsWith(".auth-pending")),
+      "the declined login to drop its record",
+    );
+    assert.ok(
+      readdirSync(dir).some((f) => f.endsWith(`.tab-${state}`)),
+      "the marker of the declined login must stay until a new login is published",
+    );
+  });
+});
+
+// A record the bridge cannot lay down leaves no copy of it behind: the
+// temporary file carries the login's verifier.
+test("a login record that cannot be written leaves no temporary copy behind", async (t) => {
+  await withFake(t, {}, async ({ dir, spawnBridge }) => {
+    const a = spawnBridge();
+    assert.ok(authorizeUrlIn((await a.call("initialize", 1, INIT_PARAMS)).error?.message));
+    const lock = lockFile(dir);
+    await a.stop();
+    rmSync(lock);
+    mkdirSync(lock); // a non-empty directory where the record goes: no write lands
+    writeFileSync(join(lock, "x"), "");
+    const b = spawnBridge();
+    const answer = await b.call("initialize", 1, INIT_PARAMS);
+    assert.ok(answer.error, "the call is answered, with an error");
+    assert.deepEqual(
+      readdirSync(dir).filter((f) => f.includes(".tmp-")),
+      [],
+      "no temporary copy of the record may stay",
+    );
+  });
+});
+
+// A bridge taking over a login it cannot write down lets its port go: a
+// listener with no record behind it is a login nobody can join.
+test("a takeover that cannot write the login record lets the port go", async (t) => {
+  if (process.platform === "win32") return t.skip("permission bits do not bind there");
+  if (process.getuid?.() === 0) return t.skip("root writes through permission bits");
+  await withFake(t, {}, async ({ dir, spawnBridge }) => {
+    const a = spawnBridge();
+    const url = authorizeUrlIn((await a.call("initialize", 1, INIT_PARAMS)).error?.message);
+    assert.ok(url, "a login must be pending");
+    const lock = lockFile(dir);
+    await a.stop(); // its publisher gone: the next bridge takes it over
+    chmodSync(lock, 0o400);
+    chmodSync(dir, 0o500);
+    try {
+      const b = spawnBridge();
+      const answer = await b.call("initialize", 1, INIT_PARAMS);
+      assert.ok(answer.error, "the call is answered, with an error");
+      await pause(300);
+      assert.equal(
+        await portListening(callbackPortOf(url)),
+        false,
+        "the taker must not keep listening on a login it could not write down",
+      );
+    } finally {
+      chmodSync(dir, 0o700);
+      chmodSync(lock, 0o600);
+    }
   });
 });
 
