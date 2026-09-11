@@ -84,7 +84,9 @@ export function loginPublished(): boolean {
 function showTab(l: Published): void {
   if (CFG.noBrowser) return; // a bridge that cannot open a browser leaves the tab to one that can
   const current = readAuthLock();
-  if (current?.state === l.state) writeAuthLock({ ...current, tab: true });
+  // Gone, replaced, or opened by another bridge a moment ago: nothing to open.
+  if (!current || current.state !== l.state || current.tab) return;
+  writeAuthLock({ ...current, tab: true });
   openBrowser(l.authorize_url);
 }
 

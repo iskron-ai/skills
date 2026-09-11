@@ -823,7 +823,8 @@ function loginPublished() {
 function showTab(l) {
   if (CFG.noBrowser) return;
   const current = readAuthLock();
-  if (current?.state === l.state) writeAuthLock({ ...current, tab: true });
+  if (!current || current.state !== l.state || current.tab) return;
+  writeAuthLock({ ...current, tab: true });
   openBrowser(l.authorize_url);
 }
 async function mootFreed(port) {

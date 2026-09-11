@@ -2584,6 +2584,49 @@ test("a bridge that cannot open a browser leaves the login's tab to one that can
   });
 });
 
+// Headless bridges pass through a login too — one joins it, one takes it over
+// when its publisher dies — and mark no tab they never opened: the first bridge
+// that can open a browser still does.
+test("headless bridges that join or take over a login mark no tab they never opened", async (t) => {
+  if (process.platform === "win32") return t.skip("the opener is PowerShell there");
+  await withFake(t, {}, async ({ fake, dir, spawnBridge }) => {
+    const first = spawnBridge();
+    await authorize(first, dir);
+    await first.stop();
+    const s = readStore(dir);
+    s.tokens.expires_at = Date.now() - 1000;
+    writeFileSync(storeFile(dir), JSON.stringify(s));
+    await fake.control({ refreshStatus: 400, refreshError: "invalid_grant", revoke_access: true });
+
+    const quick = { ISKRON_BRIDGE_DEAD_RECHECK_MS: "50" };
+    const publisher = spawnBridge(quick); // --no-browser, as all but the last here
+    const url = authorizeUrlIn((await publisher.call("initialize", 1, INIT_PARAMS)).error?.message);
+    assert.ok(url, "a dead grant publishes a login");
+    const joiner = spawnBridge(quick);
+    const joined = authorizeUrlIn((await joiner.call("initialize", 1, INIT_PARAMS)).error?.message);
+    assert.equal(joined, url, "joined");
+    await publisher.stop(); // its publisher gone
+    const taker = spawnBridge(quick);
+    const taken = authorizeUrlIn((await taker.call("initialize", 1, INIT_PARAMS)).error?.message);
+    assert.equal(taken, url, "taken over");
+
+    const root = mkdtempSync(join(tmpdir(), "iskron-opener-"));
+    const record = join(root, "opened.txt");
+    for (const name of ["open", "xdg-open"]) {
+      writeFileSync(join(root, name), `#!/bin/sh\nprintf '%s\\n' "$@" >> "${record}"\n`, {
+        mode: 0o755,
+      });
+    }
+    const human = spawnBridge({ ...quick, PATH: `${root}:${process.env.PATH}` }, { browser: true });
+    const seen = authorizeUrlIn((await human.call("initialize", 1, INIT_PARAMS)).error?.message);
+    assert.equal(seen, url, "the same login, joined by a bridge that can open a browser");
+    await waitFor(
+      () => readFileSync(record, "utf8").includes(url),
+      "the tab no headless bridge could open",
+    );
+  });
+});
+
 // A server may keep its refresh token and issue only a new access token. The
 // grant still came back, and the login beside it is still moot.
 test("a server that keeps its refresh token still makes the moot login close", async (t) => {
