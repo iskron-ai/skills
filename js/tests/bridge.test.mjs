@@ -117,8 +117,9 @@ const toolNames = (tools) => (tools ?? []).map((t) => t.name);
 // bridge handed out the authorize URL itself — read too, so a probe run
 // against it (ISKRON_BRIDGE_PATH) fails on its defect, not on the link's shape.
 const authorizeUrlIn = (text) =>
-  /(http:\/\/127\.0\.0\.1:\d+\/login\b|https?:\/\/\S*\/authorize\?\S+)/.exec(text || "")?.[1] ??
-  null;
+  /(http:\/\/127\.0\.0\.1:\d+\/login(?:\?k=[\w-]+)?|https?:\/\/\S*\/authorize\?\S+)/.exec(
+    text || "",
+  )?.[1] ?? null;
 const exited = (b) => new Promise((r) => b.proc.once("exit", r));
 const callbackPortOf = (link) => Number(new URL(link).port);
 // The sign-in page a login link sends the human to, minted as it is opened.
@@ -2450,6 +2451,27 @@ test("a live port under a dead publisher is a stranger's — its link is not han
     } finally {
       stranger.close();
     }
+  });
+});
+
+// The loopback port is open to every local user. The sign-in page carries the
+// login's state, and a stranger holding it could slip the bridge a code for an
+// account that is not the human's — so only the link itself, with its key, mints.
+test("the login link opens only with its own key — the bare port mints nothing", async (t) => {
+  await withFake(t, {}, async ({ spawnBridge }) => {
+    const a = spawnBridge();
+    const url = authorizeUrlIn((await a.call("initialize", 1, INIT_PARAMS)).error?.message);
+    assert.ok(url, "a login must be pending");
+    const res = await fetch(`http://127.0.0.1:${callbackPortOf(url)}/login`, {
+      redirect: "manual",
+    });
+    await res.text();
+    assert.equal(
+      res.headers.get("location"),
+      null,
+      "a link without the key must not be sent on to the sign-in page",
+    );
+    assert.ok(await mintedFrom(url), "the link itself does mint the sign-in page");
   });
 });
 

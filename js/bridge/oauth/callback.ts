@@ -14,8 +14,8 @@ export interface Callback {
   report: (failure: string | null) => void;
   close: () => void;
   waitForCode: (expectedState: string, timeoutMs?: number) => Promise<string>;
-  /** What /login answers: the sign-in page, minted at the moment the human opens the link. */
-  serveLogin: (mint: () => Promise<string>) => void;
+  /** What /login answers to the holder of `key`: the sign-in page, minted as the link is opened. */
+  serveLogin: (key: string, mint: () => Promise<string>) => void;
 }
 
 interface Arrival {
@@ -42,6 +42,7 @@ export function bindCallback(port: number): Promise<Callback> {
     let received: Arrival | null = null; // …or hold what arrived before they asked
     let browser: ServerResponse | null = null; // the redirect's response, held open for the verdict
     let mint: (() => Promise<string>) | null = null; // what the login link sends the human to
+    let loginKey = ""; // the link's own key: the port is open to every local user
     const deliver = (v: Arrival) => {
       if (handOff) handOff(v);
       else received = v;
@@ -65,7 +66,7 @@ export function bindCallback(port: number): Promise<Callback> {
 
     const server = createServer((req, res) => {
       const u = new URL(req.url ?? "/", `http://127.0.0.1:${port}`);
-      if (u.pathname === "/login" && mint) {
+      if (u.pathname === "/login" && mint && loginKey && u.searchParams.get("k") === loginKey) {
         // The link the human was given: the sign-in page is minted now, under a
         // registration the server knows at this very moment (#4794).
         mint().then(
@@ -125,7 +126,8 @@ export function bindCallback(port: number): Promise<Callback> {
           tellBrowser("iskron-bridge: the login was abandoned — nothing was stored.");
           server.close();
         },
-        serveLogin: (fn) => {
+        serveLogin: (key, fn) => {
+          loginKey = key;
           mint = fn;
         },
         // No deadline by default: the login lives as long as the bridge holding

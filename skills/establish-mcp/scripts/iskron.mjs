@@ -607,6 +607,7 @@ function bindCallback(port) {
     let received = null;
     let browser = null;
     let mint = null;
+    let loginKey = "";
     const deliver2 = (v) => {
       if (handOff) handOff(v);
       else received = v;
@@ -627,7 +628,7 @@ function bindCallback(port) {
     };
     const server2 = createServer((req, res) => {
       const u = new URL(req.url ?? "/", `http://127.0.0.1:${port}`);
-      if (u.pathname === "/login" && mint) {
+      if (u.pathname === "/login" && mint && loginKey && u.searchParams.get("k") === loginKey) {
         mint().then(
           (to) => {
             res.writeHead(302, { location: to, "cache-control": "no-store" });
@@ -676,7 +677,8 @@ function bindCallback(port) {
           tellBrowser("iskron-bridge: the login was abandoned — nothing was stored.");
           server2.close();
         },
-        serveLogin: (fn) => {
+        serveLogin: (key, fn) => {
+          loginKey = key;
           mint = fn;
         },
         // No deadline by default: the login lives as long as the bridge holding
@@ -792,11 +794,12 @@ var flowInBackground = null;
 function pendingFlow() {
   return flowInBackground;
 }
-var loginLink = (port) => `http://127.0.0.1:${port}/login`;
+var loginLink = (port, key) => `http://127.0.0.1:${port}/login?k=${key}`;
+var linkPrefix = (port) => `http://127.0.0.1:${port}/login?k=`;
 var redirectFor = (port) => `http://127.0.0.1:${port}/callback`;
 function published(l) {
   if (!l?.authorize_url || !l.state || !l.verifier) return false;
-  if (l.authorize_url !== loginLink(l.callback_port)) return false;
+  if (!l.authorize_url.startsWith(linkPrefix(l.callback_port))) return false;
   return (loadStore().tokens?.stored_at ?? 0) < l.started_at;
 }
 function older(l) {
@@ -874,7 +877,7 @@ async function interactiveFlow(meta, note3) {
       pid: process.pid,
       started_at: Date.now(),
       callback_port: callback.port,
-      authorize_url: loginLink(callback.port),
+      authorize_url: loginLink(callback.port, b64url(randomBytes(18))),
       state: b64url(randomBytes(24)),
       verifier: b64url(randomBytes(48))
     };
@@ -893,7 +896,8 @@ async function interactiveFlow(meta, note3) {
 function runFlow(meta, cb, login, openTab) {
   const ours = (l) => l.pid === process.pid && l.state === login.state;
   const redirectUri = redirectFor(login.callback_port);
-  cb.serveLogin(async () => {
+  const key = login.authorize_url.slice(linkPrefix(login.callback_port).length);
+  cb.serveLogin(key, async () => {
     const client = await ensureClient(meta, redirectUri);
     const current = readAuthLock();
     if (current && ours(current)) writeAuthLock({ ...current, client_id: client.client_id });

@@ -104,7 +104,7 @@ async function waitFor(check, what, timeoutMs = 10_000) {
 
 // The login link is the bridge's own loopback address (it mints the sign-in page as it is opened).
 const authorizeUrlIn = (text) =>
-  /(http:\/\/127\.0\.0\.1:\d+\/login)\b/.exec(text || "")?.[1] ?? null;
+  /(http:\/\/127\.0\.0\.1:\d+\/login\?k=[\w-]+)/.exec(text || "")?.[1] ?? null;
 
 /** A bridge that has authorized and connected a standing; returns everything the tests read. */
 async function connected(t) {

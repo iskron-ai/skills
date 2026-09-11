@@ -35,7 +35,11 @@ export function pendingFlow(): Promise<void> | null {
 // the tab, stay good for as long as any bridge listens on the port, however
 // long the human is away, and no registration ageing out ever makes a second
 // login (graph nks-dev: #4794).
-const loginLink = (port: number): string => `http://127.0.0.1:${port}/login`;
+// The key keeps the link the human's: the port is open to every local user, and
+// the sign-in page it mints carries the login's state — a stranger holding that
+// could slip the bridge a code for an account that is not the human's.
+const loginLink = (port: number, key: string): string => `http://127.0.0.1:${port}/login?k=${key}`;
+const linkPrefix = (port: number): string => `http://127.0.0.1:${port}/login?k=`;
 const redirectFor = (port: number): string => `http://127.0.0.1:${port}/callback`;
 
 type Published = AuthLock & Required<Pick<AuthLock, "authorize_url" | "state" | "verifier">>;
@@ -47,7 +51,7 @@ type Published = AuthLock & Required<Pick<AuthLock, "authorize_url" | "state" | 
 // to a login that is over).
 function published(l: AuthLock | null): l is Published {
   if (!l?.authorize_url || !l.state || !l.verifier) return false;
-  if (l.authorize_url !== loginLink(l.callback_port)) return false;
+  if (!l.authorize_url.startsWith(linkPrefix(l.callback_port))) return false;
   return (loadStore().tokens?.stored_at ?? 0) < l.started_at;
 }
 
@@ -161,7 +165,7 @@ export async function interactiveFlow(meta: Meta, note?: string): Promise<Tokens
       pid: process.pid,
       started_at: Date.now(),
       callback_port: callback.port,
-      authorize_url: loginLink(callback.port),
+      authorize_url: loginLink(callback.port, b64url(randomBytes(18))),
       state: b64url(randomBytes(24)),
       verifier: b64url(randomBytes(48)),
     };
@@ -186,7 +190,8 @@ function runFlow(meta: Meta, cb: Callback, login: Published, openTab: boolean): 
   // The sign-in page is minted when the human opens the link. The client it is
   // minted under goes into the record, so whichever bridge catches the
   // redirect exchanges the code under that same client.
-  cb.serveLogin(async () => {
+  const key = login.authorize_url.slice(linkPrefix(login.callback_port).length);
+  cb.serveLogin(key, async () => {
     const client = await ensureClient(meta, redirectUri);
     const current = readAuthLock();
     if (current && ours(current)) writeAuthLock({ ...current, client_id: client.client_id });
