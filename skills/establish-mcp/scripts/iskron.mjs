@@ -842,6 +842,10 @@ var grantPrint = (t) => {
   const both = [t?.refresh_token, t?.access_token].filter(Boolean).join("|");
   return both ? b64url(sha256(both)).slice(0, 16) : "";
 };
+var grantBack = (judged) => {
+  const now2 = loadStore().tokens;
+  return now2?.access_token && grantPrint(now2) !== judged ? now2 : null;
+};
 function published(l) {
   if (!l?.authorize_url || !l.state || !l.verifier) return false;
   if (!l.authorize_url.startsWith(linkPrefix(l.callback_port))) return false;
@@ -891,7 +895,10 @@ async function linkOn(port) {
     await sleep(100);
   }
 }
-async function interactiveFlow(meta, note3, wantTab = true) {
+async function interactiveFlow(meta, judged, note3, wantTab = true) {
+  const over = grantPrint(judged);
+  const back = grantBack(over);
+  if (back) return back;
   const standing = readAuthLock();
   if ((published(standing) || older(standing)) && pidAlive(standing.pid) && await portListening(standing.callback_port)) {
     debug(`joining the login held by pid ${standing.pid}`);
@@ -917,12 +924,7 @@ async function interactiveFlow(meta, note3, wantTab = true) {
     }
     if (cb && published(still)) {
       cb.close();
-      return interactiveFlow(meta, note3, wantTab);
-    }
-    const now2 = loadStore().tokens;
-    if (cb && standing.grant !== void 0 && grantPrint(now2) !== standing.grant && now2) {
-      cb.close();
-      return now2;
+      return interactiveFlow(meta, judged, note3, wantTab);
     }
     callback = cb;
   }
@@ -956,6 +958,11 @@ async function interactiveFlow(meta, note3, wantTab = true) {
       `all candidate callback ports (${rungs}) are held by other processes — free one, then retry`
     );
   }
+  const landed = grantBack(over);
+  if (landed) {
+    callback.close();
+    return landed;
+  }
   let started = false;
   try {
     const login = {
@@ -965,7 +972,7 @@ async function interactiveFlow(meta, note3, wantTab = true) {
       authorize_url: loginLink(callback.port, b64url(randomBytes(18))),
       state: b64url(randomBytes(24)),
       verifier: b64url(randomBytes(48)),
-      grant: grantPrint(loadStore().tokens)
+      grant: over
     };
     sweepTabMarks();
     writeAuthLock(login);
@@ -1312,7 +1319,7 @@ async function ensureAuth(wwwAuthenticate, opts = {}) {
       if (interactive && s.tokens?.refresh_token && loginPublished() && refusalStands()) {
         const landed = usableTokens({ rejected });
         if (landed) return landed;
-        return await interactiveFlow(meta);
+        return await interactiveFlow(meta, s.tokens);
       }
       if (s.tokens?.refresh_token) {
         let rechecks = 0;
@@ -1341,7 +1348,7 @@ async function ensureAuth(wwwAuthenticate, opts = {}) {
                 continue;
               }
               log(`${e.message} — offering the login beside the wait`);
-              return await interactiveFlow(meta, heldNote(e.until), false);
+              return await interactiveFlow(meta, s.tokens, heldNote(e.until), false);
             }
             if (e instanceof DeadGrantError) {
               if (!e.expired && rechecks < DEAD_RECHECK_MS.length && !loginPublished()) {
@@ -1351,7 +1358,7 @@ async function ensureAuth(wwwAuthenticate, opts = {}) {
                 continue;
               }
               log(`refresh grant is dead (${e.message}) — starting a fresh authorization`);
-              return await interactiveFlow(meta);
+              return await interactiveFlow(meta, s.tokens);
             }
             throw e;
           }
@@ -1361,7 +1368,7 @@ async function ensureAuth(wwwAuthenticate, opts = {}) {
         throw new Error(
           "authorization required (no tokens, browser flow deferred) — or give the bridge a personal access token (ISKRON_BRIDGE_TOKEN, or the file <auth-dir>/token)"
         );
-      return await interactiveFlow(meta);
+      return await interactiveFlow(meta, s.tokens);
     } finally {
       authInFlight = null;
     }

@@ -59,6 +59,12 @@ const grantPrint = (t: Tokens | null | undefined): string => {
   return both ? b64url(sha256(both)).slice(0, 16) : "";
 };
 
+// A grant in the store other than the one a caller judged no answer.
+const grantBack = (judged: string): Tokens | null => {
+  const now = loadStore().tokens;
+  return now?.access_token && grantPrint(now) !== judged ? now : null;
+};
+
 type Published = AuthLock & Required<Pick<AuthLock, "authorize_url" | "state" | "verifier">>;
 
 // A login this build published: its link and what catches its redirect. Good
@@ -156,7 +162,19 @@ async function linkOn(port: number): Promise<(AuthLock & { authorize_url: string
 // offered beside a grant merely blind until its hour comes as a link alone:
 // the grant comes back by itself, and a tab every such window is a tab nobody
 // asked for (#4794). The login's one tab opens when a human is first needed.
-export async function interactiveFlow(meta: Meta, note?: string, wantTab = true): Promise<Tokens> {
+// `judged` is the grant the caller found no answer. A login goes out over THAT
+// grant: any other one in the store — a login that landed, a grant that came
+// back — is handed back instead of a login while none is out yet, and once one
+// is, makes it moot, however narrow the moment it appeared in.
+export async function interactiveFlow(
+  meta: Meta,
+  judged: Tokens | null | undefined,
+  note?: string,
+  wantTab = true,
+): Promise<Tokens> {
+  const over = grantPrint(judged);
+  const back = grantBack(over);
+  if (back) return back;
   const standing = readAuthLock();
   // Joined only while its bridge lives: a port listening under a dead
   // publisher is a stranger's, and a click on that link lands nowhere.
@@ -191,16 +209,9 @@ export async function interactiveFlow(meta: Meta, note?: string, wantTab = true)
     }
     if (cb && published(still)) {
       cb.close(); // another login went out meanwhile: that one is joined, not a second
-      return interactiveFlow(meta, note, wantTab);
+      return interactiveFlow(meta, judged, note, wantTab);
     }
-    // Over with a grant other than the one it was published over: it landed a
-    // moment ago, and that grant is what the caller came for — no new login.
-    const now = loadStore().tokens;
-    if (cb && standing.grant !== undefined && grantPrint(now) !== standing.grant && now) {
-      cb.close();
-      return now;
-    }
-    callback = cb; // the login was declined meanwhile: the port serves a new one
+    callback = cb; // the login ended meanwhile: the port serves a new one
   }
   if (published(standing) && !callback) {
     const taken = readAuthLock(); // a sibling may have taken it over first
@@ -244,6 +255,11 @@ export async function interactiveFlow(meta: Meta, note?: string, wantTab = true)
     );
   }
 
+  const landed = grantBack(over); // the last look before a login goes out
+  if (landed) {
+    callback.close();
+    return landed;
+  }
   let started = false;
   try {
     const login: Published = {
@@ -253,7 +269,7 @@ export async function interactiveFlow(meta: Meta, note?: string, wantTab = true)
       authorize_url: loginLink(callback.port, b64url(randomBytes(18))),
       state: b64url(randomBytes(24)),
       verifier: b64url(randomBytes(48)),
-      grant: grantPrint(loadStore().tokens),
+      grant: over,
     };
     sweepTabMarks(); // no other login is out now: leftovers of closed ones go
     writeAuthLock(login); // we hold the port, so the login is ours to publish

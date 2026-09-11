@@ -2731,6 +2731,54 @@ test("a bridge meeting a declined login's port free publishes a new login, not t
   });
 });
 
+// A login goes out over the grant its caller judged dead, never over whatever
+// the store holds by then: a grant that lands while the caller is on its way to
+// a login is handed back, and no login goes out (#4794).
+test("a grant that lands while a caller is on its way to a login is taken, not logged in over", async (t) => {
+  await withFake(t, {}, async ({ fake, dir, spawnBridge }) => {
+    const first = spawnBridge();
+    await authorize(first, dir);
+    await first.stop();
+    const s = readStore(dir);
+    s.tokens.expires_at = Date.now() - 1000;
+    writeFileSync(storeFile(dir), JSON.stringify(s));
+    await fake.control({ refreshStatus: 400, refreshError: "invalid_grant", revoke_access: true });
+    // The grant a human won elsewhere a moment ago — the one about to land.
+    const other = mkdtempSync(join(tmpdir(), "iskron-bridge-test-"));
+    const winner = startBridge(fake.mcpUrl, other);
+    try {
+      await authorize(winner, other);
+    } finally {
+      await winner.stop();
+    }
+    const fresh = readStore(other).tokens;
+    // Two rungs held by a stranger: the caller's way to a login takes a while.
+    const d = createHash("sha256").update(new URL(fake.mcpUrl).origin).digest();
+    const squatters = [0, 1].map(() => createServer(() => {}));
+    for (const [rung, sq] of squatters.entries()) {
+      const port = 42000 + ((d[0] * 256 + d[1] + rung * 613) % 2000);
+      await new Promise((r) => sq.listen(port, "127.0.0.1", r));
+    }
+    try {
+      const bridge = spawnBridge({ ISKRON_BRIDGE_DEAD_RECHECK_MS: "50" });
+      const answer = bridge.call("tools/call", 1, { name: "nks_orient", arguments: {} });
+      await pause(800); // the grant is judged dead; the caller is stepping over held rungs
+      const cur = readStore(dir);
+      cur.tokens = fresh;
+      writeFileSync(storeFile(dir), JSON.stringify(cur));
+      const r = await answer;
+      assert.equal(
+        authorizeUrlIn(r.error?.message),
+        null,
+        `no login over a grant that has landed: ${JSON.stringify(r)}`,
+      );
+      assert.equal(loginState(dir), null, "no login went out");
+    } finally {
+      await Promise.all(squatters.map((sq) => new Promise((r) => sq.close(r))));
+    }
+  });
+});
+
 // A record the bridge cannot lay down leaves no copy of it behind: the
 // temporary file carries the login's verifier.
 test("a login record that cannot be written leaves no temporary copy behind", async (t) => {

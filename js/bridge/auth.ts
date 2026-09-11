@@ -83,7 +83,7 @@ export async function ensureAuth(
         // the grant again — one knock per stretch, not one per call.
         const landed = usableTokens({ rejected });
         if (landed) return landed;
-        return await interactiveFlow(meta);
+        return await interactiveFlow(meta, s.tokens);
       }
       if (s.tokens?.refresh_token) {
         let rechecks = 0;
@@ -118,7 +118,7 @@ export async function ensureAuth(
               }
               log(`${e.message} — offering the login beside the wait`);
               // A link, not a tab: the grant comes back by itself.
-              return await interactiveFlow(meta, heldNote(e.until), false);
+              return await interactiveFlow(meta, s.tokens, heldNote(e.until), false);
             }
             if (e instanceof DeadGrantError) {
               // A server mid-restart words a live grant's death the same way, so
@@ -132,7 +132,7 @@ export async function ensureAuth(
                 continue;
               }
               log(`refresh grant is dead (${e.message}) — starting a fresh authorization`);
-              return await interactiveFlow(meta);
+              return await interactiveFlow(meta, s.tokens);
             }
             throw e;
           }
@@ -142,7 +142,7 @@ export async function ensureAuth(
         throw new Error(
           "authorization required (no tokens, browser flow deferred) — or give the bridge a personal access token (ISKRON_BRIDGE_TOKEN, or the file <auth-dir>/token)",
         );
-      return await interactiveFlow(meta);
+      return await interactiveFlow(meta, s.tokens);
     } finally {
       authInFlight = null;
     }
