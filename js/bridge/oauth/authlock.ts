@@ -94,16 +94,23 @@ export function writeAuthLock(
 ): void {
   mkdirSync(CFG.authDir, { recursive: true, mode: 0o700 });
   const tmp = `${authLockPath()}.tmp-${process.pid}`;
-  writeFileSync(
-    tmp,
-    JSON.stringify({
-      ...fields,
-      pid: fields.pid ?? process.pid,
-      started_at: fields.started_at ?? Date.now(),
-    }),
-    { mode: 0o600 },
-  );
-  renameSync(tmp, authLockPath());
+  const body = JSON.stringify({
+    ...fields,
+    pid: fields.pid ?? process.pid,
+    started_at: fields.started_at ?? Date.now(),
+  });
+  try {
+    writeFileSync(tmp, body, { mode: 0o600 });
+    renameSync(tmp, authLockPath());
+  } catch {
+    // A rename can fail for a moment on Windows while something holds the
+    // target; the record still goes down — unatomically — rather than not at
+    // all, and the temporary copy, with its verifier, does not stay behind.
+    try {
+      unlinkSync(tmp);
+    } catch {}
+    writeFileSync(authLockPath(), body, { mode: 0o600 });
+  }
 }
 
 // Only the login's own listener clears it: a record a newer login or a taker
@@ -113,7 +120,6 @@ export function releaseAuthLock(owns?: (l: AuthLock) => boolean): void {
     const l = readAuthLock();
     if (owns && (!l || !owns(l))) return;
     unlinkSync(authLockPath());
-    if (l?.state) unlinkSync(tabMarkPath(l.state));
   } catch {}
 }
 
@@ -132,9 +138,10 @@ export function claimTab(state: string): boolean {
   }
 }
 
-// Markers of logins that closed without their record being released (a killed
-// bridge, a login replaced) are swept when a new login is published: by then no
-// other login is out on this machine.
+// Markers of logins that are over are swept when a new login is published — by
+// then no other login is out on this machine — and only then: dropped together
+// with the record, a marker could be claimed afresh by a bridge that read the
+// record a moment before, a tab onto a closed port.
 export function sweepTabMarks(): void {
   const prefix = `${basename(authLockPath())}.tab-`;
   try {

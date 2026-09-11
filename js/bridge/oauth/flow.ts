@@ -147,8 +147,8 @@ async function linkOn(port: number): Promise<(AuthLock & { authorize_url: string
 // listening on the link finishes the login in the background and saves the
 // tokens; every instance picks them up from the store on its next call.
 // One login, one tab (#4794): the first bridge that needs a human for a login —
-// publishing, taking it over or joining it — opens its tab and marks it in the
-// record; no other opens a second.
+// publishing, taking it over or joining it — opens its tab by winning its
+// marker; no other opens a second.
 // `wantTab` says a human is needed — the grant is dead or absent. A login
 // offered beside a grant merely blind until its hour comes as a link alone:
 // the grant comes back by itself, and a tab every such window is a tab nobody
@@ -168,7 +168,12 @@ export async function interactiveFlow(meta: Meta, note?: string, wantTab = true)
   if (published(standing)) {
     const cb = await bindOrNull(standing.callback_port);
     if (cb) {
-      writeAuthLock({ ...standing, pid: process.pid });
+      try {
+        writeAuthLock({ ...standing, pid: process.pid });
+      } catch (e) {
+        cb.close(); // never leave a listener with no login behind it
+        throw e;
+      }
       log(
         "the bridge that published this login is gone — listening on its link, so the tab the human has still lands",
       );

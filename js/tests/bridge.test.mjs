@@ -2627,6 +2627,57 @@ test("headless bridges that join or take over a login mark no tab they never ope
   });
 });
 
+// Who has opened a login's tab is told by its marker, not by the record: a
+// bridge taking the login over honours a tab another bridge already opened,
+// even when the record says nothing of it.
+test("a bridge taking over a login honours the tab another bridge already opened for it", async (t) => {
+  if (process.platform === "win32") return t.skip("the opener is PowerShell there");
+  await withFake(t, {}, async ({ dir, spawnBridge }) => {
+    const a = spawnBridge(); // --no-browser: publishes without opening anything
+    const url = authorizeUrlIn((await a.call("initialize", 1, INIT_PARAMS)).error?.message);
+    assert.ok(url, "a login must be pending");
+    const lock = lockFile(dir);
+    const { state } = JSON.parse(readFileSync(lock, "utf8"));
+    writeFileSync(`${lock}.tab-${state}`, ""); // a joiner opened its tab; the record says nothing
+    await a.stop(); // its publisher gone
+
+    const root = mkdtempSync(join(tmpdir(), "iskron-opener-"));
+    const record = join(root, "opened.txt");
+    for (const name of ["open", "xdg-open"]) {
+      writeFileSync(join(root, name), `#!/bin/sh\nprintf '%s\\n' "$@" >> "${record}"\n`, {
+        mode: 0o755,
+      });
+    }
+    const b = spawnBridge({ PATH: `${root}:${process.env.PATH}` }, { browser: true });
+    const taken = authorizeUrlIn((await b.call("initialize", 1, INIT_PARAMS)).error?.message);
+    assert.equal(taken, url, "taken over");
+    await pause(500);
+    let opened = [];
+    try {
+      opened = readFileSync(record, "utf8").trim().split("\n").filter(Boolean);
+    } catch {}
+    assert.deepEqual(opened, [], "the human already has that tab — no second one");
+  });
+});
+
+test("markers of logins that are over are swept when a new login is published", async (t) => {
+  await withFake(t, {}, async ({ dir, spawnBridge }) => {
+    const a = spawnBridge();
+    await a.call("initialize", 1, INIT_PARAMS); // lays the store and a login down
+    const lock = lockFile(dir);
+    await a.stop();
+    writeFileSync(`${lock}.tab-a-login-that-is-over`, "");
+    writeFileSync(lock, "{}"); // nothing joinable or to take over: the next need publishes anew
+    const b = spawnBridge();
+    assert.ok(authorizeUrlIn((await b.call("initialize", 1, INIT_PARAMS)).error?.message));
+    assert.equal(
+      readdirSync(dir).some((f) => f.endsWith(".tab-a-login-that-is-over")),
+      false,
+      "the marker of a login that is over must not pile up",
+    );
+  });
+});
+
 // Several bridges that need a human join the same tab-less login in the same
 // moment: the tab opens once — whichever reaches it first marks it, and every
 // other re-reads the mark before it opens anything.

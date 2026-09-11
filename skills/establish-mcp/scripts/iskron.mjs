@@ -577,23 +577,27 @@ function readAuthLock() {
 function writeAuthLock(fields) {
   mkdirSync2(CFG.authDir, { recursive: true, mode: 448 });
   const tmp = `${authLockPath()}.tmp-${process.pid}`;
-  writeFileSync2(
-    tmp,
-    JSON.stringify({
-      ...fields,
-      pid: fields.pid ?? process.pid,
-      started_at: fields.started_at ?? Date.now()
-    }),
-    { mode: 384 }
-  );
-  renameSync2(tmp, authLockPath());
+  const body = JSON.stringify({
+    ...fields,
+    pid: fields.pid ?? process.pid,
+    started_at: fields.started_at ?? Date.now()
+  });
+  try {
+    writeFileSync2(tmp, body, { mode: 384 });
+    renameSync2(tmp, authLockPath());
+  } catch {
+    try {
+      unlinkSync2(tmp);
+    } catch {
+    }
+    writeFileSync2(authLockPath(), body, { mode: 384 });
+  }
 }
 function releaseAuthLock(owns) {
   try {
     const l = readAuthLock();
     if (owns && (!l || !owns(l))) return;
     unlinkSync2(authLockPath());
-    if (l?.state) unlinkSync2(tabMarkPath(l.state));
   } catch {
   }
 }
@@ -895,7 +899,12 @@ async function interactiveFlow(meta, note3, wantTab = true) {
   if (published(standing)) {
     const cb = await bindOrNull(standing.callback_port);
     if (cb) {
-      writeAuthLock({ ...standing, pid: process.pid });
+      try {
+        writeAuthLock({ ...standing, pid: process.pid });
+      } catch (e) {
+        cb.close();
+        throw e;
+      }
       log(
         "the bridge that published this login is gone — listening on its link, so the tab the human has still lands"
       );
