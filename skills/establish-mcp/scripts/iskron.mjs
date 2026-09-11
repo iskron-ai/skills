@@ -740,7 +740,8 @@ async function tokenRequestOnce(meta, params) {
   const tokens = {
     access_token: body.access_token,
     refresh_token: refresh,
-    ...tokenSchedule(body, refresh)
+    ...tokenSchedule(body, refresh),
+    stored_at: Date.now()
   };
   saveStore({ tokens });
   clearGrantState();
@@ -769,9 +770,10 @@ function pendingFlow() {
 }
 function published(l) {
   if (!l?.authorize_url || !l.state || !l.verifier || !l.client_id || !l.redirect_uri) return false;
+  const store = loadStore();
+  if ((store.tokens?.stored_at ?? 0) >= l.started_at) return false;
   if (CFG.staticClientId) return l.client_id === CFG.staticClientId;
-  const client = loadStore().client;
-  return client?.client_id === l.client_id && registrationReusable(client, l.redirect_uri);
+  return store.client?.client_id === l.client_id && registrationReusable(store.client, l.redirect_uri);
 }
 function loginPublished() {
   return published(readAuthLock());
@@ -892,6 +894,7 @@ function runFlow(meta, cb, login, openTab) {
         code_verifier: login.verifier,
         resource: login.resource ?? meta.resource
       });
+      releaseAuthLock();
       log("authorization complete — tokens saved for every local agent");
       grantLog("authorization complete");
       cb.report(null);

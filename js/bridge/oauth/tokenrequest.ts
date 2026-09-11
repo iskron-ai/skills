@@ -33,6 +33,7 @@ async function tokenRequestOnce(meta: Meta, params: Record<string, string>): Pro
     access_token: body.access_token,
     refresh_token: refresh,
     ...tokenSchedule(body, refresh),
+    stored_at: Date.now(),
   };
   saveStore({ tokens });
   clearGrantState(); // a grant in hand ends whatever the machine held against it

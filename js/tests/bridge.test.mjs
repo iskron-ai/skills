@@ -2293,6 +2293,36 @@ test("our own client's handshake keeps the audience diagnosis rather than the la
 // tab, and that tab stays good whichever bridge happens to be alive when the
 // human clicks it.
 
+test("a login that already landed is never taken over later — the next need publishes a new one", async (t) => {
+  // A bridge killed between saving the tokens and dropping the login's record
+  // leaves the record of a login that has landed. Taken over later, it would
+  // hand the human a link and no tab — the one they had is long closed —
+  // and it would skip the bridge's own second knock on a refused grant.
+  await withFake(t, {}, async ({ fake, dir, spawnBridge }) => {
+    const first = spawnBridge();
+    const url = authorizeUrlIn((await first.call("initialize", 1, INIT_PARAMS)).error?.message);
+    assert.ok(url, "a login must be pending");
+    const lockPath = lockFile(dir);
+    const leftover = readFileSync(lockPath, "utf8");
+    const res = await fetch(url, { redirect: "follow" });
+    await res.text();
+    await grantLanded(dir);
+    await first.stop();
+    writeFileSync(lockPath, leftover); // killed before the record was dropped
+
+    const s = readStore(dir);
+    s.tokens.expires_at = Date.now() - 1000;
+    writeFileSync(storeFile(dir), JSON.stringify(s));
+    await fake.control({ refreshStatus: 400, refreshError: "invalid_grant", revoke_access: true });
+
+    const next = spawnBridge({ ISKRON_BRIDGE_DEAD_RECHECK_MS: "50,50" });
+    const again = authorizeUrlIn((await next.call("initialize", 1, INIT_PARAMS)).error?.message);
+    assert.ok(again, "a login must be offered");
+    assert.notEqual(again, url, "a login that landed is not handed out again");
+    assert.ok(fake.state.counts.refresh >= 2, "and its leftover does not skip the second knock");
+  });
+});
+
 test("a login waiting longer than five and a half minutes is still joined, not published again", async (t) => {
   // The published login once carried a clock of its own — the old five-minute
   // flow timeout. The flow no longer times out, and a clock-dead lock sent the

@@ -45,9 +45,17 @@ type Published = AuthLock &
 // link, and a new login is the honest move.
 function published(l: AuthLock | null): l is Published {
   if (!l?.authorize_url || !l.state || !l.verifier || !l.client_id || !l.redirect_uri) return false;
+  const store = loadStore();
+  // A grant written down after the login was published means the login landed
+  // (or the grant came back by itself): what is left is a record, not a login
+  // anyone is clicking — a bridge killed between saving the tokens and dropping
+  // the record leaves exactly that, and taking it over would hand the human a
+  // link with no tab, the one they had long closed.
+  if ((store.tokens?.stored_at ?? 0) >= l.started_at) return false;
   if (CFG.staticClientId) return l.client_id === CFG.staticClientId;
-  const client = loadStore().client;
-  return client?.client_id === l.client_id && registrationReusable(client, l.redirect_uri);
+  return (
+    store.client?.client_id === l.client_id && registrationReusable(store.client, l.redirect_uri)
+  );
 }
 
 /** Is a login out for this machine — one the next caller would join? */
@@ -194,6 +202,7 @@ function runFlow(meta: Meta, cb: Callback, login: Published, openTab: boolean): 
         code_verifier: login.verifier,
         resource: login.resource ?? meta.resource,
       });
+      releaseAuthLock(); // the login has landed: no one is to join it from here on
       log("authorization complete — tokens saved for every local agent");
       grantLog("authorization complete");
       cb.report(null);
