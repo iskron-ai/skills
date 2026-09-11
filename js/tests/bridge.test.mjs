@@ -2761,7 +2761,7 @@ test("a grant that lands while a caller is on its way to a login is taken, not l
     }
     try {
       const bridge = spawnBridge({ ISKRON_BRIDGE_DEAD_RECHECK_MS: "50" });
-      const answer = bridge.call("tools/call", 1, { name: "nks_orient", arguments: {} });
+      const answer = bridge.call("initialize", 1, INIT_PARAMS);
       await pause(800); // the grant is judged dead; the caller is stepping over held rungs
       const cur = readStore(dir);
       cur.tokens = fresh;
@@ -2773,6 +2773,11 @@ test("a grant that lands while a caller is on its way to a login is taken, not l
         `no login over a grant that has landed: ${JSON.stringify(r)}`,
       );
       assert.equal(loginState(dir), null, "no login went out");
+      const list = await bridge.call("tools/list", 2);
+      assert.ok(
+        list.result?.tools?.length,
+        `the grant that landed serves: ${JSON.stringify(list)}`,
+      );
     } finally {
       await Promise.all(squatters.map((sq) => new Promise((r) => sq.close(r))));
     }
