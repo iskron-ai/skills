@@ -14,27 +14,13 @@ import {
   writeAuthLock,
 } from "./authlock.ts";
 import { bindCallback, type Callback } from "./callback.ts";
-import {
-  CALLBACK_PORT_RUNGS,
-  callbackPort,
-  ensureClient,
-  openBrowser,
-  registrationReusable,
-} from "./discovery.ts";
+import { CALLBACK_PORT_RUNGS, callbackPort, ensureClient, openBrowser } from "./discovery.ts";
 import { tokenRequest } from "./tokenrequest.ts";
 
 /** How long a bridge waits for a sibling that claimed a login to publish its link. */
 const CLAIM_WAIT_MS = Number(process.env.ISKRON_BRIDGE_CLAIM_WAIT_MS) || 15_000;
 /** How long a bound port with no claim yet is given to show one: the claim follows the bind at once. */
 const CLAIM_GLANCE_MS = 1_000;
-/**
- * A login gets a registration young enough to outlive it: one reused only if
- * made in the last few minutes, else a fresh one. The server forgets an unused
- * registration within the hour, and the login's link must stay good for the
- * whole reuse horizon — not die under the human because the registration was
- * already old when the login went out (#4794).
- */
-const LOGIN_REGISTRATION_FRESH_MS = 5 * 60_000;
 
 // The flow this process is finishing in the background, if any: the harness
 // must not kill it under the human's click (see main).
@@ -43,27 +29,33 @@ export function pendingFlow(): Promise<void> | null {
   return flowInBackground;
 }
 
-type Published = AuthLock &
-  Required<Pick<AuthLock, "authorize_url" | "state" | "verifier" | "client_id" | "redirect_uri">>;
+// The link a human is given is the bridge's own loopback address, not the
+// sign-in server's page. Opening it mints the authorize URL at that moment,
+// under a client registration the server knows right then — so the link, and
+// the tab, stay good for as long as any bridge listens on the port, however
+// long the human is away, and no registration ageing out ever makes a second
+// login (graph nks-dev: #4794).
+const loginLink = (port: number): string => `http://127.0.0.1:${port}/login`;
+const redirectFor = (port: number): string => `http://127.0.0.1:${port}/callback`;
 
-// A published login is good until it lands or is refused — and while the
-// client its link names is one the server still knows: the machine's own
-// registration, young enough to reuse. The store is the one word on that; a
-// registration dropped or aged out means the authorize page would refuse the
-// link, and a new login is the honest move.
+type Published = AuthLock & Required<Pick<AuthLock, "authorize_url" | "state" | "verifier">>;
+
+// A login this build published: its link and what catches its redirect. Good
+// until it lands or is refused — a grant written down after it was published
+// means it landed (a bridge killed between saving the tokens and dropping the
+// record leaves exactly that, and taking it over would hand the human a link
+// to a login that is over).
 function published(l: AuthLock | null): l is Published {
-  if (!l?.authorize_url || !l.state || !l.verifier || !l.client_id || !l.redirect_uri) return false;
-  const store = loadStore();
-  // A grant written down after the login was published means the login landed
-  // (or the grant came back by itself): what is left is a record, not a login
-  // anyone is clicking — a bridge killed between saving the tokens and dropping
-  // the record leaves exactly that, and taking it over would hand the human a
-  // link with no tab, the one they had long closed.
-  if ((store.tokens?.stored_at ?? 0) >= l.started_at) return false;
-  if (CFG.staticClientId) return l.client_id === CFG.staticClientId;
-  return (
-    store.client?.client_id === l.client_id && registrationReusable(store.client, l.redirect_uri)
-  );
+  if (!l?.authorize_url || !l.state || !l.verifier) return false;
+  if (l.authorize_url !== loginLink(l.callback_port)) return false;
+  return (loadStore().tokens?.stored_at ?? 0) < l.started_at;
+}
+
+// A login an older bridge still running on this machine published: its link is
+// the server's own page and nothing in the record takes it over. Joined while
+// that bridge lives and listens — never a second login beside it (#4809).
+function older(l: AuthLock | null): l is AuthLock & { authorize_url: string } {
+  return !!l?.authorize_url && !l.state;
 }
 
 /** Is a login out for this machine — one the next caller would join? */
@@ -80,16 +72,17 @@ async function bindOrNull(port: number): Promise<Callback | null> {
   }
 }
 
-// Someone holds this port. A sibling mid-login has claimed it (or already
-// published on it): wait for that login's link. Nothing claiming it after a
-// glance is a foreign process — step past it.
-async function linkOn(port: number): Promise<Published | null> {
+// Someone holds this port. A live bridge's login on it — or its claim, a moment
+// before the link — is waited for and joined; nothing of a living bridge's
+// after a glance is a foreign process, stepped past.
+async function linkOn(port: number): Promise<string | null> {
   const glance = Date.now() + CLAIM_GLANCE_MS;
   const deadline = Date.now() + CLAIM_WAIT_MS;
   for (;;) {
     const l = readAuthLock();
-    if (published(l) && l.callback_port === port && pidAlive(l.pid)) return l;
-    const claimed = !!l && !l.authorize_url && l.callback_port === port && pidAlive(l.pid);
+    const ours = !!l && l.callback_port === port && pidAlive(l.pid);
+    if (ours && (published(l) || older(l))) return l.authorize_url ?? null;
+    const claimed = ours && !l?.authorize_url;
     if ((!claimed && Date.now() > glance) || Date.now() > deadline) return null;
     await sleep(100);
   }
@@ -99,18 +92,21 @@ async function linkOn(port: number): Promise<Published | null> {
 // with its link at once — no harness call ever blocks on a human. The bridge
 // listening on the link finishes the login in the background and saves the
 // tokens; every instance picks them up from the store on its next call.
-// One login, one tab (graph nks-dev: #4794): only the bridge that publishes a
-// login opens the browser; one that joins or takes it over never does — the
-// human already has that tab.
+// One login, one tab (#4794): only the bridge that publishes a login opens the
+// browser; one that joins or takes it over never does — the human has that tab.
 export async function interactiveFlow(meta: Meta, note?: string): Promise<Tokens> {
   const standing = readAuthLock();
+  // Joined only while its bridge lives: a port listening under a dead
+  // publisher is a stranger's, and a click on that link lands nowhere.
+  if (
+    (published(standing) || older(standing)) &&
+    pidAlive(standing.pid) &&
+    (await portListening(standing.callback_port))
+  ) {
+    debug(`joining the login held by pid ${standing.pid}`);
+    throw new AuthPending(standing.authorize_url, note);
+  }
   if (published(standing)) {
-    // Joined only while its bridge lives: a port listening under a dead
-    // publisher is a stranger's, and a click on that link lands nowhere.
-    if (pidAlive(standing.pid) && (await portListening(standing.callback_port))) {
-      debug(`joining the login held by pid ${standing.pid}`);
-      throw new AuthPending(standing.authorize_url, note);
-    }
     const cb = await bindOrNull(standing.callback_port);
     if (cb) {
       writeAuthLock({ ...standing, pid: process.pid });
@@ -139,16 +135,16 @@ export async function interactiveFlow(meta: Meta, note?: string): Promise<Tokens
     pidAlive(standing.pid) &&
     (await portListening(standing.callback_port))
   ) {
-    const claimed = await linkOn(standing.callback_port);
-    if (claimed) throw new AuthPending(claimed.authorize_url, note);
+    const link = await linkOn(standing.callback_port);
+    if (link) throw new AuthPending(link, note);
   }
 
   let callback: Callback | null = null;
   for (let rung = 0; rung < CALLBACK_PORT_RUNGS && !callback; rung++) {
     callback = await bindOrNull(callbackPort(rung));
     if (callback) break;
-    const claimed = await linkOn(callbackPort(rung));
-    if (claimed) throw new AuthPending(claimed.authorize_url, note);
+    const link = await linkOn(callbackPort(rung));
+    if (link) throw new AuthPending(link, note);
     debug(
       `callback port ${callbackPort(rung)} is held by a foreign process — trying the next rung`,
     );
@@ -159,34 +155,15 @@ export async function interactiveFlow(meta: Meta, note?: string): Promise<Tokens
       `all candidate callback ports (${rungs}) are held by other processes — free one, then retry`,
     );
   }
-  const port = callback.port;
-  writeAuthLock({ callback_port: port }); // the claim, before the registration's round trip
 
   try {
-    const redirectUri = `http://127.0.0.1:${port}/callback`;
-    const client = await ensureClient(meta, redirectUri, LOGIN_REGISTRATION_FRESH_MS);
-    const verifier = b64url(randomBytes(48));
-    const state = b64url(randomBytes(24));
-    const authUrl = new URL(meta.as.authorization_endpoint);
-    authUrl.searchParams.set("response_type", "code");
-    authUrl.searchParams.set("client_id", client.client_id);
-    authUrl.searchParams.set("redirect_uri", redirectUri);
-    authUrl.searchParams.set("state", state);
-    authUrl.searchParams.set("code_challenge", b64url(sha256(verifier)));
-    authUrl.searchParams.set("code_challenge_method", "S256");
-    authUrl.searchParams.set("resource", meta.resource);
-    if (meta.scope) authUrl.searchParams.set("scope", meta.scope);
-
     const login: Published = {
       pid: process.pid,
       started_at: Date.now(),
-      callback_port: port,
-      authorize_url: authUrl.toString(),
-      state,
-      verifier,
-      client_id: client.client_id,
-      redirect_uri: redirectUri,
-      resource: meta.resource,
+      callback_port: callback.port,
+      authorize_url: loginLink(callback.port),
+      state: b64url(randomBytes(24)),
+      verifier: b64url(randomBytes(48)),
     };
     writeAuthLock(login); // we hold the port, so the login is ours to publish
     grantLog("authorization flow published — waiting for the human");
@@ -194,7 +171,7 @@ export async function interactiveFlow(meta: Meta, note?: string): Promise<Tokens
     throw new AuthPending(login.authorize_url, note);
   } catch (e) {
     // The flow owns the listener once it starts; anything failing before that
-    // must give the port and the claim back rather than camp on them.
+    // must give the port and the record back rather than camp on them.
     if (!flowInBackground) {
       callback.close();
       releaseAuthLock((l) => l.pid === process.pid);
@@ -205,19 +182,44 @@ export async function interactiveFlow(meta: Meta, note?: string): Promise<Tokens
 
 function runFlow(meta: Meta, cb: Callback, login: Published, openTab: boolean): void {
   const ours = (l: AuthLock) => l.pid === process.pid && l.state === login.state;
+  const redirectUri = redirectFor(login.callback_port);
+  // The sign-in page is minted when the human opens the link. The client it is
+  // minted under goes into the record, so whichever bridge catches the
+  // redirect exchanges the code under that same client.
+  cb.serveLogin(async () => {
+    const client = await ensureClient(meta, redirectUri);
+    const current = readAuthLock();
+    if (current && ours(current)) writeAuthLock({ ...current, client_id: client.client_id });
+    const u = new URL(meta.as.authorization_endpoint);
+    u.searchParams.set("response_type", "code");
+    u.searchParams.set("client_id", client.client_id);
+    u.searchParams.set("redirect_uri", redirectUri);
+    u.searchParams.set("state", login.state);
+    u.searchParams.set("code_challenge", b64url(sha256(login.verifier)));
+    u.searchParams.set("code_challenge_method", "S256");
+    u.searchParams.set("resource", meta.resource);
+    if (meta.scope) u.searchParams.set("scope", meta.scope);
+    return u.toString();
+  });
   flowInBackground = (async () => {
     try {
       const codePromise = cb.waitForCode(login.state);
       if (openTab) openBrowser(login.authorize_url);
       const code = await codePromise;
+      const record = readAuthLock();
+      const clientId =
+        (record?.state === login.state ? record.client_id : undefined) ||
+        CFG.staticClientId ||
+        loadStore().client?.client_id ||
+        "";
       log("authorization code received — exchanging for tokens");
       await tokenRequest(meta, {
         grant_type: "authorization_code",
         code,
-        redirect_uri: login.redirect_uri,
-        client_id: login.client_id,
+        redirect_uri: redirectUri,
+        client_id: clientId,
         code_verifier: login.verifier,
-        resource: login.resource ?? meta.resource,
+        resource: meta.resource,
       });
       releaseAuthLock(ours); // the login has landed: no one is to join it from here on
       log("authorization complete — tokens saved for every local agent");

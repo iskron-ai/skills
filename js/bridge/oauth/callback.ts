@@ -1,5 +1,6 @@
 import { createServer, type ServerResponse } from "node:http";
 
+import { errorMessage } from "../errors.ts";
 import { log } from "../streams.ts";
 
 // How long the human's browser is held while the code is exchanged. Long enough
@@ -13,6 +14,8 @@ export interface Callback {
   report: (failure: string | null) => void;
   close: () => void;
   waitForCode: (expectedState: string, timeoutMs?: number) => Promise<string>;
+  /** What /login answers: the sign-in page, minted at the moment the human opens the link. */
+  serveLogin: (mint: () => Promise<string>) => void;
 }
 
 interface Arrival {
@@ -38,6 +41,7 @@ export function bindCallback(port: number): Promise<Callback> {
     let handOff: ((v: Arrival) => void) | null = null; // set once someone is waiting for the code
     let received: Arrival | null = null; // …or hold what arrived before they asked
     let browser: ServerResponse | null = null; // the redirect's response, held open for the verdict
+    let mint: (() => Promise<string>) | null = null; // what the login link sends the human to
     const deliver = (v: Arrival) => {
       if (handOff) handOff(v);
       else received = v;
@@ -61,6 +65,23 @@ export function bindCallback(port: number): Promise<Callback> {
 
     const server = createServer((req, res) => {
       const u = new URL(req.url ?? "/", `http://127.0.0.1:${port}`);
+      if (u.pathname === "/login" && mint) {
+        // The link the human was given: the sign-in page is minted now, under a
+        // registration the server knows at this very moment (#4794).
+        mint().then(
+          (to) => {
+            res.writeHead(302, { location: to, "cache-control": "no-store" });
+            res.end();
+          },
+          (e: unknown) => {
+            res.writeHead(502, { "content-type": "text/html; charset=utf-8" });
+            res.end(
+              `<h3>iskron-bridge: the sign-in page could not be reached (${esc(errorMessage(e))}) — reload this page.</h3>`,
+            );
+          },
+        );
+        return;
+      }
       if (u.pathname !== "/callback") {
         res.writeHead(404);
         res.end();
@@ -103,6 +124,9 @@ export function bindCallback(port: number): Promise<Callback> {
         close: () => {
           tellBrowser("iskron-bridge: the login was abandoned — nothing was stored.");
           server.close();
+        },
+        serveLogin: (fn) => {
+          mint = fn;
         },
         // No deadline by default: the login lives as long as the bridge holding
         // it, so a human who comes back to the tab late still lands it (graph

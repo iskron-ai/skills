@@ -13,7 +13,8 @@ import { storePath } from "../store.ts";
 // The file IS that login. It is published once and lives until the login lands
 // or is refused, longer than the bridge that published it, and it carries what
 // any bridge needs to catch this very login's redirect (state, PKCE verifier,
-// client, redirect URI). So the tab the human already has stays good whichever
+// the client its sign-in page was minted under). Its link is the loopback
+// address of whoever listens on the port, never the sign-in server's page. So the tab the human already has stays good whichever
 // bridge is alive when they click: a later bridge that finds nobody listening
 // listens on the same link itself (graph nks-dev: #4721, #4794). Whether anyone
 // listens right now is the LISTENER's word, never the file's — a caller probes
@@ -30,9 +31,8 @@ export interface AuthLock {
   authorize_url?: string;
   state?: string;
   verifier?: string;
+  /** the client the sign-in page was last minted under — the code is exchanged under it */
   client_id?: string;
-  redirect_uri?: string;
-  resource?: string;
 }
 
 export function authLockPath(): string {

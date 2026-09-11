@@ -456,17 +456,17 @@ function callbackPort(rung = 0) {
   return 42e3 + (d[0] * 256 + d[1] + rung * 613) % 2e3;
 }
 var REGISTRATION_REUSE_MS = 45 * 6e4;
-function registrationReusable(client, redirectUri, reuseMs = REGISTRATION_REUSE_MS) {
+function registrationReusable(client, redirectUri) {
   if (!client?.client_id || client.redirect_uri !== redirectUri) return false;
-  return !!client.registered_at && now() - client.registered_at < reuseMs;
+  return !!client.registered_at && now() - client.registered_at < REGISTRATION_REUSE_MS;
 }
-async function ensureClient(meta, redirectUri, reuseMs = REGISTRATION_REUSE_MS) {
+async function ensureClient(meta, redirectUri) {
   if (CFG.staticClientId) return { client_id: CFG.staticClientId };
   const stored = loadStore().client;
-  if (registrationReusable(stored, redirectUri, reuseMs)) return stored;
+  if (registrationReusable(stored, redirectUri)) return stored;
   if (stored?.client_id && stored.redirect_uri === redirectUri) {
     log(
-      !stored.registered_at ? "the dynamic client registration carries no timestamp (an earlier build wrote it) — registering anew for this login" : registrationReusable(stored, redirectUri) ? "the dynamic client registration would not outlive a new login — registering anew for it" : "the dynamic client registration is older than the server's cleanup horizon — registering anew for this login"
+      stored.registered_at ? "the dynamic client registration is older than the server's cleanup horizon — registering anew for this login" : "the dynamic client registration carries no timestamp (an earlier build wrote it) — registering anew for this login"
     );
   }
   if (!meta.as.registration_endpoint) {
@@ -606,6 +606,7 @@ function bindCallback(port) {
     let handOff = null;
     let received = null;
     let browser = null;
+    let mint = null;
     const deliver2 = (v) => {
       if (handOff) handOff(v);
       else received = v;
@@ -626,6 +627,21 @@ function bindCallback(port) {
     };
     const server2 = createServer((req, res) => {
       const u = new URL(req.url ?? "/", `http://127.0.0.1:${port}`);
+      if (u.pathname === "/login" && mint) {
+        mint().then(
+          (to) => {
+            res.writeHead(302, { location: to, "cache-control": "no-store" });
+            res.end();
+          },
+          (e) => {
+            res.writeHead(502, { "content-type": "text/html; charset=utf-8" });
+            res.end(
+              `<h3>iskron-bridge: the sign-in page could not be reached (${esc(errorMessage(e))}) — reload this page.</h3>`
+            );
+          }
+        );
+        return;
+      }
       if (u.pathname !== "/callback") {
         res.writeHead(404);
         res.end();
@@ -659,6 +675,9 @@ function bindCallback(port) {
         close: () => {
           tellBrowser("iskron-bridge: the login was abandoned — nothing was stored.");
           server2.close();
+        },
+        serveLogin: (fn) => {
+          mint = fn;
         },
         // No deadline by default: the login lives as long as the bridge holding
         // it, so a human who comes back to the tab late still lands it (graph
@@ -769,17 +788,19 @@ async function tokenRequest(meta, params) {
 // js/bridge/oauth/flow.ts
 var CLAIM_WAIT_MS = Number(process.env.ISKRON_BRIDGE_CLAIM_WAIT_MS) || 15e3;
 var CLAIM_GLANCE_MS = 1e3;
-var LOGIN_REGISTRATION_FRESH_MS = 5 * 6e4;
 var flowInBackground = null;
 function pendingFlow() {
   return flowInBackground;
 }
+var loginLink = (port) => `http://127.0.0.1:${port}/login`;
+var redirectFor = (port) => `http://127.0.0.1:${port}/callback`;
 function published(l) {
-  if (!l?.authorize_url || !l.state || !l.verifier || !l.client_id || !l.redirect_uri) return false;
-  const store = loadStore();
-  if ((store.tokens?.stored_at ?? 0) >= l.started_at) return false;
-  if (CFG.staticClientId) return l.client_id === CFG.staticClientId;
-  return store.client?.client_id === l.client_id && registrationReusable(store.client, l.redirect_uri);
+  if (!l?.authorize_url || !l.state || !l.verifier) return false;
+  if (l.authorize_url !== loginLink(l.callback_port)) return false;
+  return (loadStore().tokens?.stored_at ?? 0) < l.started_at;
+}
+function older(l) {
+  return !!l?.authorize_url && !l.state;
 }
 function loginPublished() {
   return published(readAuthLock());
@@ -797,19 +818,20 @@ async function linkOn(port) {
   const deadline = Date.now() + CLAIM_WAIT_MS;
   for (; ; ) {
     const l = readAuthLock();
-    if (published(l) && l.callback_port === port && pidAlive(l.pid)) return l;
-    const claimed = !!l && !l.authorize_url && l.callback_port === port && pidAlive(l.pid);
+    const ours = !!l && l.callback_port === port && pidAlive(l.pid);
+    if (ours && (published(l) || older(l))) return l.authorize_url ?? null;
+    const claimed = ours && !l?.authorize_url;
     if (!claimed && Date.now() > glance || Date.now() > deadline) return null;
     await sleep(100);
   }
 }
 async function interactiveFlow(meta, note3) {
   const standing = readAuthLock();
+  if ((published(standing) || older(standing)) && pidAlive(standing.pid) && await portListening(standing.callback_port)) {
+    debug(`joining the login held by pid ${standing.pid}`);
+    throw new AuthPending(standing.authorize_url, note3);
+  }
   if (published(standing)) {
-    if (pidAlive(standing.pid) && await portListening(standing.callback_port)) {
-      debug(`joining the login held by pid ${standing.pid}`);
-      throw new AuthPending(standing.authorize_url, note3);
-    }
     const cb = await bindOrNull(standing.callback_port);
     if (cb) {
       writeAuthLock({ ...standing, pid: process.pid });
@@ -828,15 +850,15 @@ async function interactiveFlow(meta, note3) {
       `the published login's port ${standing.callback_port} is held by a foreign process — its link can land nowhere; publishing a new login`
     );
   } else if (standing && !standing.authorize_url && pidAlive(standing.pid) && await portListening(standing.callback_port)) {
-    const claimed = await linkOn(standing.callback_port);
-    if (claimed) throw new AuthPending(claimed.authorize_url, note3);
+    const link = await linkOn(standing.callback_port);
+    if (link) throw new AuthPending(link, note3);
   }
   let callback = null;
   for (let rung = 0; rung < CALLBACK_PORT_RUNGS && !callback; rung++) {
     callback = await bindOrNull(callbackPort(rung));
     if (callback) break;
-    const claimed = await linkOn(callbackPort(rung));
-    if (claimed) throw new AuthPending(claimed.authorize_url, note3);
+    const link = await linkOn(callbackPort(rung));
+    if (link) throw new AuthPending(link, note3);
     debug(
       `callback port ${callbackPort(rung)} is held by a foreign process — trying the next rung`
     );
@@ -847,32 +869,14 @@ async function interactiveFlow(meta, note3) {
       `all candidate callback ports (${rungs}) are held by other processes — free one, then retry`
     );
   }
-  const port = callback.port;
-  writeAuthLock({ callback_port: port });
   try {
-    const redirectUri = `http://127.0.0.1:${port}/callback`;
-    const client = await ensureClient(meta, redirectUri, LOGIN_REGISTRATION_FRESH_MS);
-    const verifier = b64url(randomBytes(48));
-    const state2 = b64url(randomBytes(24));
-    const authUrl = new URL(meta.as.authorization_endpoint);
-    authUrl.searchParams.set("response_type", "code");
-    authUrl.searchParams.set("client_id", client.client_id);
-    authUrl.searchParams.set("redirect_uri", redirectUri);
-    authUrl.searchParams.set("state", state2);
-    authUrl.searchParams.set("code_challenge", b64url(sha256(verifier)));
-    authUrl.searchParams.set("code_challenge_method", "S256");
-    authUrl.searchParams.set("resource", meta.resource);
-    if (meta.scope) authUrl.searchParams.set("scope", meta.scope);
     const login = {
       pid: process.pid,
       started_at: Date.now(),
-      callback_port: port,
-      authorize_url: authUrl.toString(),
-      state: state2,
-      verifier,
-      client_id: client.client_id,
-      redirect_uri: redirectUri,
-      resource: meta.resource
+      callback_port: callback.port,
+      authorize_url: loginLink(callback.port),
+      state: b64url(randomBytes(24)),
+      verifier: b64url(randomBytes(48))
     };
     writeAuthLock(login);
     grantLog("authorization flow published — waiting for the human");
@@ -888,19 +892,37 @@ async function interactiveFlow(meta, note3) {
 }
 function runFlow(meta, cb, login, openTab) {
   const ours = (l) => l.pid === process.pid && l.state === login.state;
+  const redirectUri = redirectFor(login.callback_port);
+  cb.serveLogin(async () => {
+    const client = await ensureClient(meta, redirectUri);
+    const current = readAuthLock();
+    if (current && ours(current)) writeAuthLock({ ...current, client_id: client.client_id });
+    const u = new URL(meta.as.authorization_endpoint);
+    u.searchParams.set("response_type", "code");
+    u.searchParams.set("client_id", client.client_id);
+    u.searchParams.set("redirect_uri", redirectUri);
+    u.searchParams.set("state", login.state);
+    u.searchParams.set("code_challenge", b64url(sha256(login.verifier)));
+    u.searchParams.set("code_challenge_method", "S256");
+    u.searchParams.set("resource", meta.resource);
+    if (meta.scope) u.searchParams.set("scope", meta.scope);
+    return u.toString();
+  });
   flowInBackground = (async () => {
     try {
       const codePromise = cb.waitForCode(login.state);
       if (openTab) openBrowser(login.authorize_url);
       const code = await codePromise;
+      const record = readAuthLock();
+      const clientId = (record?.state === login.state ? record.client_id : void 0) || CFG.staticClientId || loadStore().client?.client_id || "";
       log("authorization code received — exchanging for tokens");
       await tokenRequest(meta, {
         grant_type: "authorization_code",
         code,
-        redirect_uri: login.redirect_uri,
-        client_id: login.client_id,
+        redirect_uri: redirectUri,
+        client_id: clientId,
         code_verifier: login.verifier,
-        resource: login.resource ?? meta.resource
+        resource: meta.resource
       });
       releaseAuthLock(ours);
       log("authorization complete — tokens saved for every local agent");
