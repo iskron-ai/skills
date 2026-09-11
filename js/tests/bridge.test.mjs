@@ -2293,6 +2293,138 @@ test("our own client's handshake keeps the audience diagnosis rather than the la
 // tab, and that tab stays good whichever bridge happens to be alive when the
 // human clicks it.
 
+// A dead grant with an old registration: the login gets a registration young
+// enough to outlive it, so its link is not declared dead under the human
+// minutes later — a second login, a second tab.
+test("a login published over an old registration keeps its link — no second login minutes later", async (t) => {
+  await withFake(t, {}, async ({ fake, dir, spawnBridge }) => {
+    const first = spawnBridge();
+    await authorize(first, dir);
+    await first.stop();
+    const s = readStore(dir);
+    s.tokens.expires_at = Date.now() - 1000;
+    s.client.registered_at = Date.now() - 40 * 60_000; // still reusable, for five more minutes
+    writeFileSync(storeFile(dir), JSON.stringify(s));
+    await fake.control({ refreshStatus: 400, refreshError: "invalid_grant", revoke_access: true });
+
+    const a = spawnBridge({ ISKRON_BRIDGE_DEAD_RECHECK_MS: "50" });
+    const url = authorizeUrlIn((await a.call("initialize", 1, INIT_PARAMS)).error?.message);
+    assert.ok(url, "a login must be pending");
+
+    const later = readStore(dir); // six minutes on
+    later.client.registered_at -= 6 * 60_000;
+    writeFileSync(storeFile(dir), JSON.stringify(later));
+    const b = spawnBridge({ ISKRON_BRIDGE_DEAD_RECHECK_MS: "50" });
+    const again = authorizeUrlIn((await b.call("initialize", 1, INIT_PARAMS)).error?.message);
+    assert.equal(again, url, "the standing login must be joined, not replaced");
+  });
+});
+
+// A refresh refused as invalid_client drops the registration it presented. It
+// must present the grant's own client, and drop only that one — never the
+// registration a login was just published on, which would make the next call
+// publish a second login, and the one after a third.
+test("a refusal that drops a client does not make the bridge publish a second login", async (t) => {
+  await withFake(t, {}, async ({ fake, dir, spawnBridge }) => {
+    const first = spawnBridge();
+    await authorize(first, dir);
+    await first.stop();
+    const s = readStore(dir);
+    s.tokens.expires_at = Date.now() - 1000;
+    writeFileSync(storeFile(dir), JSON.stringify(s));
+    await fake.control({ refreshStatus: 400, refreshError: "invalid_client", revoke_access: true });
+
+    const a = spawnBridge({ ISKRON_BRIDGE_DEAD_RECHECK_MS: "50" });
+    const url = authorizeUrlIn((await a.call("initialize", 1, INIT_PARAMS)).error?.message);
+    assert.ok(url, "a login must be pending");
+    const second = await a.call("tools/call", 2, { name: "nks_orient", arguments: {} });
+    assert.equal(authorizeUrlIn(second.error?.message), url, "the next call joins the same login");
+
+    // Five minutes on the machine knocks the grant again — and hears the same refusal.
+    const gsPath = storeFile(dir) + ".grant-state";
+    const gs = JSON.parse(readFileSync(gsPath, "utf8"));
+    gs.refused_at = Date.now() - 6 * 60_000;
+    writeFileSync(gsPath, JSON.stringify(gs));
+    const third = await a.call("tools/call", 3, { name: "nks_orient", arguments: {} });
+    assert.equal(
+      authorizeUrlIn(third.error?.message),
+      url,
+      "a later knock must not unseat the login",
+    );
+  });
+});
+
+test("while a login is out, a grant already judged dead is not knocked on every call", async (t) => {
+  await withFake(t, {}, async ({ fake, dir, spawnBridge }) => {
+    const first = spawnBridge();
+    await authorize(first, dir);
+    await first.stop();
+    const s = readStore(dir);
+    s.tokens.expires_at = Date.now() - 1000;
+    writeFileSync(storeFile(dir), JSON.stringify(s));
+    await fake.control({ refreshStatus: 400, refreshError: "invalid_grant", revoke_access: true });
+
+    const a = spawnBridge({ ISKRON_BRIDGE_DEAD_RECHECK_MS: "50,50" });
+    const url = authorizeUrlIn((await a.call("initialize", 1, INIT_PARAMS)).error?.message);
+    assert.ok(url, "a login must be pending");
+    const knocks = fake.state.counts.refresh;
+    for (const id of [2, 3, 4]) {
+      const answer = await a.call("tools/call", id, { name: "nks_orient", arguments: {} });
+      assert.equal(authorizeUrlIn(answer.error?.message), url);
+    }
+    assert.equal(
+      fake.state.counts.refresh,
+      knocks,
+      "one verdict per stretch, not one knock per call",
+    );
+  });
+});
+
+test("a login that closes clears only its own record, never a newer login's", async (t) => {
+  await withFake(t, {}, async ({ dir, spawnBridge }) => {
+    const a = spawnBridge();
+    const url = authorizeUrlIn((await a.call("initialize", 1, INIT_PARAMS)).error?.message);
+    assert.ok(url, "a login must be pending");
+    const lockPath = lockFile(dir);
+    const newer = {
+      ...JSON.parse(readFileSync(lockPath, "utf8")),
+      pid: process.pid,
+      state: "a-newer-login",
+      authorize_url: "http://127.0.0.1:9/authorize?state=a-newer-login",
+    };
+    writeFileSync(lockPath, JSON.stringify(newer));
+    const res = await fetch(url, { redirect: "follow" });
+    await res.text();
+    await grantLanded(dir);
+    await pause(300);
+    assert.deepEqual(
+      JSON.parse(readFileSync(lockPath, "utf8")),
+      newer,
+      "the landed login erased another login's record",
+    );
+  });
+});
+
+test("a live port under a dead publisher is a stranger's — its link is not handed out", async (t) => {
+  await withFake(t, {}, async ({ dir, spawnBridge }) => {
+    const a = spawnBridge();
+    const url = authorizeUrlIn((await a.call("initialize", 1, INIT_PARAMS)).error?.message);
+    assert.ok(url, "a login must be pending");
+    const port = callbackPortOf(url);
+    await a.stop(); // SIGKILL: the record survives, the port frees
+    const stranger = createServer(() => {});
+    await new Promise((r) => stranger.listen(port, "127.0.0.1", r));
+    try {
+      const b = spawnBridge();
+      const again = authorizeUrlIn((await b.call("initialize", 1, INIT_PARAMS)).error?.message);
+      assert.ok(again, "a login must be offered");
+      assert.notEqual(again, url, "a link a stranger listens on must not be handed out");
+    } finally {
+      stranger.close();
+    }
+  });
+});
+
 test("a login that already landed is never taken over later — the next need publishes a new one", async (t) => {
   // A bridge killed between saving the tokens and dropping the login's record
   // leaves the record of a login that has landed. Taken over later, it would

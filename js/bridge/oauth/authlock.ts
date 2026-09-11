@@ -89,8 +89,14 @@ export function writeAuthLock(
   );
 }
 
-export function releaseAuthLock(): void {
+// Only the login's own listener clears it: a record a newer login or a taker
+// has rewritten is not ours to drop, so a caller names what it owns.
+export function releaseAuthLock(owns?: (l: AuthLock) => boolean): void {
   try {
+    if (owns) {
+      const l = readAuthLock();
+      if (!l || !owns(l)) return;
+    }
     unlinkSync(authLockPath());
   } catch {}
 }

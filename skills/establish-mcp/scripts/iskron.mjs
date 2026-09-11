@@ -456,17 +456,17 @@ function callbackPort(rung = 0) {
   return 42e3 + (d[0] * 256 + d[1] + rung * 613) % 2e3;
 }
 var REGISTRATION_REUSE_MS = 45 * 6e4;
-function registrationReusable(client, redirectUri) {
+function registrationReusable(client, redirectUri, reuseMs = REGISTRATION_REUSE_MS) {
   if (!client?.client_id || client.redirect_uri !== redirectUri) return false;
-  return !!client.registered_at && now() - client.registered_at < REGISTRATION_REUSE_MS;
+  return !!client.registered_at && now() - client.registered_at < reuseMs;
 }
-async function ensureClient(meta, redirectUri) {
+async function ensureClient(meta, redirectUri, reuseMs = REGISTRATION_REUSE_MS) {
   if (CFG.staticClientId) return { client_id: CFG.staticClientId };
   const stored = loadStore().client;
-  if (registrationReusable(stored, redirectUri)) return stored;
+  if (registrationReusable(stored, redirectUri, reuseMs)) return stored;
   if (stored?.client_id && stored.redirect_uri === redirectUri) {
     log(
-      stored.registered_at ? "the dynamic client registration is older than the server's cleanup horizon — registering anew for this login" : "the dynamic client registration carries no timestamp (an earlier build wrote it) — registering anew for this login"
+      !stored.registered_at ? "the dynamic client registration carries no timestamp (an earlier build wrote it) — registering anew for this login" : registrationReusable(stored, redirectUri) ? "the dynamic client registration would not outlive a new login — registering anew for it" : "the dynamic client registration is older than the server's cleanup horizon — registering anew for this login"
     );
   }
   if (!meta.as.registration_endpoint) {
@@ -578,8 +578,12 @@ function writeAuthLock(fields) {
     { mode: 384 }
   );
 }
-function releaseAuthLock() {
+function releaseAuthLock(owns) {
   try {
+    if (owns) {
+      const l = readAuthLock();
+      if (!l || !owns(l)) return;
+    }
     unlinkSync2(authLockPath());
   } catch {
   }
@@ -741,7 +745,8 @@ async function tokenRequestOnce(meta, params) {
     access_token: body.access_token,
     refresh_token: refresh,
     ...tokenSchedule(body, refresh),
-    stored_at: Date.now()
+    stored_at: Date.now(),
+    ...params.client_id ? { client_id: params.client_id } : {}
   };
   saveStore({ tokens });
   clearGrantState();
@@ -764,6 +769,7 @@ async function tokenRequest(meta, params) {
 // js/bridge/oauth/flow.ts
 var CLAIM_WAIT_MS = Number(process.env.ISKRON_BRIDGE_CLAIM_WAIT_MS) || 15e3;
 var CLAIM_GLANCE_MS = 1e3;
+var LOGIN_REGISTRATION_FRESH_MS = 5 * 6e4;
 var flowInBackground = null;
 function pendingFlow() {
   return flowInBackground;
@@ -791,7 +797,7 @@ async function linkOn(port) {
   const deadline = Date.now() + CLAIM_WAIT_MS;
   for (; ; ) {
     const l = readAuthLock();
-    if (published(l) && l.callback_port === port) return l;
+    if (published(l) && l.callback_port === port && pidAlive(l.pid)) return l;
     const claimed = !!l && !l.authorize_url && l.callback_port === port && pidAlive(l.pid);
     if (!claimed && Date.now() > glance || Date.now() > deadline) return null;
     await sleep(100);
@@ -800,7 +806,7 @@ async function linkOn(port) {
 async function interactiveFlow(meta, note3) {
   const standing = readAuthLock();
   if (published(standing)) {
-    if (await portListening(standing.callback_port)) {
+    if (pidAlive(standing.pid) && await portListening(standing.callback_port)) {
       debug(`joining the login held by pid ${standing.pid}`);
       throw new AuthPending(standing.authorize_url, note3);
     }
@@ -814,8 +820,9 @@ async function interactiveFlow(meta, note3) {
       runFlow(meta, cb, standing, false);
       throw new AuthPending(standing.authorize_url, note3);
     }
-    if (await portListening(standing.callback_port)) {
-      throw new AuthPending(standing.authorize_url, note3);
+    const taken = readAuthLock();
+    if (published(taken) && taken.state === standing.state && pidAlive(taken.pid) && await portListening(taken.callback_port)) {
+      throw new AuthPending(taken.authorize_url, note3);
     }
     debug(
       `the published login's port ${standing.callback_port} is held by a foreign process — its link can land nowhere; publishing a new login`
@@ -844,7 +851,7 @@ async function interactiveFlow(meta, note3) {
   writeAuthLock({ callback_port: port });
   try {
     const redirectUri = `http://127.0.0.1:${port}/callback`;
-    const client = await ensureClient(meta, redirectUri);
+    const client = await ensureClient(meta, redirectUri, LOGIN_REGISTRATION_FRESH_MS);
     const verifier = b64url(randomBytes(48));
     const state2 = b64url(randomBytes(24));
     const authUrl = new URL(meta.as.authorization_endpoint);
@@ -874,12 +881,13 @@ async function interactiveFlow(meta, note3) {
   } catch (e) {
     if (!flowInBackground) {
       callback.close();
-      releaseAuthLock();
+      releaseAuthLock((l) => l.pid === process.pid);
     }
     throw e;
   }
 }
 function runFlow(meta, cb, login, openTab) {
+  const ours = (l) => l.pid === process.pid && l.state === login.state;
   flowInBackground = (async () => {
     try {
       const codePromise = cb.waitForCode(login.state);
@@ -894,7 +902,7 @@ function runFlow(meta, cb, login, openTab) {
         code_verifier: login.verifier,
         resource: login.resource ?? meta.resource
       });
-      releaseAuthLock();
+      releaseAuthLock(ours);
       log("authorization complete — tokens saved for every local agent");
       grantLog("authorization complete");
       cb.report(null);
@@ -907,7 +915,7 @@ function runFlow(meta, cb, login, openTab) {
       );
     } finally {
       cb.close();
-      releaseAuthLock();
+      releaseAuthLock(ours);
       flowInBackground = null;
     }
   })();
@@ -999,12 +1007,13 @@ async function refreshOnce(meta, cur, proactive) {
       hours.nbf
     );
   }
+  const clientId = CFG.staticClientId || cur.client_id || loadStore().client?.client_id || "";
   debug("refreshing access token");
   try {
     return await tokenRequest(meta, {
       grant_type: "refresh_token",
       refresh_token: cur.refresh_token ?? "",
-      client_id: CFG.staticClientId || loadStore().client?.client_id || "",
+      client_id: clientId,
       resource: meta.resource
     });
   } catch (e) {
@@ -1018,7 +1027,7 @@ async function refreshOnce(meta, cur, proactive) {
       grantLog(
         `refresh refused by an endpoint discovery still names (${message}) — registration dropped`
       );
-      saveStore({ client: null });
+      dropRegistration(clientId);
       throw new DeadGrantError(message);
     }
     if (gone) {
@@ -1065,7 +1074,7 @@ async function refreshOnce(meta, cur, proactive) {
     if (e instanceof TokenError && e.oauthError === "invalid_client") {
       log("the server no longer knows this client — dropping the registration");
       grantLog("server no longer knows this client — registration dropped");
-      saveStore({ client: null });
+      dropRegistration(clientId);
     }
     const overdue = hours.exp && now() >= hours.exp;
     grantLog(
@@ -1128,6 +1137,9 @@ async function refreshShared(meta, rejected, proactive, interactive) {
     }
   }
 }
+function dropRegistration(clientId) {
+  if (clientId && loadStore().client?.client_id === clientId) saveStore({ client: null });
+}
 function noteRefusal(reason) {
   const local = Date.now();
   const first2 = !loadGrantState().refused_since;
@@ -1168,6 +1180,11 @@ async function ensureAuth(wwwAuthenticate, opts = {}) {
       if (!force && tokenUsable(s.tokens)) return s.tokens;
       const meta = s.meta?.as ? s.meta : await discover(wwwAuthenticate);
       if (CFG.resource) meta.resource = CFG.resource;
+      if (interactive && s.tokens?.refresh_token && loginPublished() && refusalStands()) {
+        const landed = usableTokens({ rejected });
+        if (landed) return landed;
+        return await interactiveFlow(meta);
+      }
       if (s.tokens?.refresh_token) {
         let rechecks = 0;
         let waited = 0;

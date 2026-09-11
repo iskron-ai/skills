@@ -7,7 +7,7 @@ import { DEAD_RECHECK_MS, IN_CALL_WAIT_MS } from "./oauth/pacing.ts";
 import { refreshShared, refusalStands } from "./oauth/refresh.ts";
 import { loadStore, sleep } from "./store.ts";
 import { debug, log } from "./streams.ts";
-import { refreshHours, tokenUsable } from "./tokens.ts";
+import { refreshHours, tokenUsable, usableTokens } from "./tokens.ts";
 import { type Tokens } from "./types.ts";
 
 export interface AuthOptions {
@@ -77,6 +77,14 @@ export async function ensureAuth(
       // wrong audience. Apply it here, where the value is used, not only where
       // it is discovered.
       if (CFG.resource) meta.resource = CFG.resource;
+      if (interactive && s.tokens?.refresh_token && loginPublished() && refusalStands()) {
+        // A login is out and the machine judged the grant dead moments ago:
+        // the verdict is in, so the call joins the login rather than knock on
+        // the grant again — one knock per stretch, not one per call.
+        const landed = usableTokens({ rejected });
+        if (landed) return landed;
+        return await interactiveFlow(meta);
+      }
       if (s.tokens?.refresh_token) {
         let rechecks = 0;
         let waited = 0;

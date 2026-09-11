@@ -54,12 +54,16 @@ async function refreshOnce(meta: Meta, cur: Tokens, proactive: boolean): Promise
       hours.nbf as number,
     );
   }
+  // The grant is presented with the client it was issued to. The machine's
+  // registration may have moved on under it — a login just published on a
+  // fresh one — and that one is not this grant's to spend or to lose.
+  const clientId = CFG.staticClientId || cur.client_id || loadStore().client?.client_id || "";
   debug("refreshing access token");
   try {
     return await tokenRequest(meta, {
       grant_type: "refresh_token",
       refresh_token: cur.refresh_token ?? "",
-      client_id: CFG.staticClientId || loadStore().client?.client_id || "",
+      client_id: clientId,
       resource: meta.resource,
     });
   } catch (e) {
@@ -91,7 +95,7 @@ async function refreshOnce(meta: Meta, cur: Tokens, proactive: boolean): Promise
       grantLog(
         `refresh refused by an endpoint discovery still names (${message}) — registration dropped`,
       );
-      saveStore({ client: null });
+      dropRegistration(clientId);
       throw new DeadGrantError(message);
     }
     if (gone) {
@@ -188,7 +192,7 @@ async function refreshOnce(meta: Meta, cur: Tokens, proactive: boolean): Promise
       // client — a login the human cannot complete however often they try.
       log("the server no longer knows this client — dropping the registration");
       grantLog("server no longer knows this client — registration dropped");
-      saveStore({ client: null });
+      dropRegistration(clientId);
     }
     const overdue = hours.exp && now() >= hours.exp;
     grantLog(
@@ -273,6 +277,13 @@ export async function refreshShared(
       await sleep(REFRESH_POLL_MS);
     }
   }
+}
+
+// A refusal names the client the grant presented. Drop that registration only
+// while it is still the machine's: a login may have just been published on a
+// newer one, and dropping that would unseat the login under the human (#4794).
+function dropRegistration(clientId: string): void {
+  if (clientId && loadStore().client?.client_id === clientId) saveStore({ client: null });
 }
 
 // The machine's memory of a refused grant. `refused_at` is the latest refusal

@@ -27,6 +27,14 @@ import { tokenRequest } from "./tokenrequest.ts";
 const CLAIM_WAIT_MS = Number(process.env.ISKRON_BRIDGE_CLAIM_WAIT_MS) || 15_000;
 /** How long a bound port with no claim yet is given to show one: the claim follows the bind at once. */
 const CLAIM_GLANCE_MS = 1_000;
+/**
+ * A login gets a registration young enough to outlive it: one reused only if
+ * made in the last few minutes, else a fresh one. The server forgets an unused
+ * registration within the hour, and the login's link must stay good for the
+ * whole reuse horizon — not die under the human because the registration was
+ * already old when the login went out (#4794).
+ */
+const LOGIN_REGISTRATION_FRESH_MS = 5 * 60_000;
 
 // The flow this process is finishing in the background, if any: the harness
 // must not kill it under the human's click (see main).
@@ -80,7 +88,7 @@ async function linkOn(port: number): Promise<Published | null> {
   const deadline = Date.now() + CLAIM_WAIT_MS;
   for (;;) {
     const l = readAuthLock();
-    if (published(l) && l.callback_port === port) return l;
+    if (published(l) && l.callback_port === port && pidAlive(l.pid)) return l;
     const claimed = !!l && !l.authorize_url && l.callback_port === port && pidAlive(l.pid);
     if ((!claimed && Date.now() > glance) || Date.now() > deadline) return null;
     await sleep(100);
@@ -97,7 +105,9 @@ async function linkOn(port: number): Promise<Published | null> {
 export async function interactiveFlow(meta: Meta, note?: string): Promise<Tokens> {
   const standing = readAuthLock();
   if (published(standing)) {
-    if (await portListening(standing.callback_port)) {
+    // Joined only while its bridge lives: a port listening under a dead
+    // publisher is a stranger's, and a click on that link lands nowhere.
+    if (pidAlive(standing.pid) && (await portListening(standing.callback_port))) {
       debug(`joining the login held by pid ${standing.pid}`);
       throw new AuthPending(standing.authorize_url, note);
     }
@@ -111,8 +121,14 @@ export async function interactiveFlow(meta: Meta, note?: string): Promise<Tokens
       runFlow(meta, cb, standing, false);
       throw new AuthPending(standing.authorize_url, note);
     }
-    if (await portListening(standing.callback_port)) {
-      throw new AuthPending(standing.authorize_url, note); // a sibling took it over first
+    const taken = readAuthLock(); // a sibling may have taken it over first
+    if (
+      published(taken) &&
+      taken.state === standing.state &&
+      pidAlive(taken.pid) &&
+      (await portListening(taken.callback_port))
+    ) {
+      throw new AuthPending(taken.authorize_url, note);
     }
     debug(
       `the published login's port ${standing.callback_port} is held by a foreign process — its link can land nowhere; publishing a new login`,
@@ -148,7 +164,7 @@ export async function interactiveFlow(meta: Meta, note?: string): Promise<Tokens
 
   try {
     const redirectUri = `http://127.0.0.1:${port}/callback`;
-    const client = await ensureClient(meta, redirectUri);
+    const client = await ensureClient(meta, redirectUri, LOGIN_REGISTRATION_FRESH_MS);
     const verifier = b64url(randomBytes(48));
     const state = b64url(randomBytes(24));
     const authUrl = new URL(meta.as.authorization_endpoint);
@@ -181,13 +197,14 @@ export async function interactiveFlow(meta: Meta, note?: string): Promise<Tokens
     // must give the port and the claim back rather than camp on them.
     if (!flowInBackground) {
       callback.close();
-      releaseAuthLock();
+      releaseAuthLock((l) => l.pid === process.pid);
     }
     throw e;
   }
 }
 
 function runFlow(meta: Meta, cb: Callback, login: Published, openTab: boolean): void {
+  const ours = (l: AuthLock) => l.pid === process.pid && l.state === login.state;
   flowInBackground = (async () => {
     try {
       const codePromise = cb.waitForCode(login.state);
@@ -202,7 +219,7 @@ function runFlow(meta: Meta, cb: Callback, login: Published, openTab: boolean): 
         code_verifier: login.verifier,
         resource: login.resource ?? meta.resource,
       });
-      releaseAuthLock(); // the login has landed: no one is to join it from here on
+      releaseAuthLock(ours); // the login has landed: no one is to join it from here on
       log("authorization complete — tokens saved for every local agent");
       grantLog("authorization complete");
       cb.report(null);
@@ -217,7 +234,7 @@ function runFlow(meta: Meta, cb: Callback, login: Published, openTab: boolean): 
       );
     } finally {
       cb.close();
-      releaseAuthLock();
+      releaseAuthLock(ours);
       flowInBackground = null;
     }
   })();

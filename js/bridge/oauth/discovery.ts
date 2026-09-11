@@ -114,20 +114,29 @@ export const REGISTRATION_REUSE_MS = 45 * 60_000;
 export function registrationReusable(
   client: Client | null | undefined,
   redirectUri: string,
+  reuseMs = REGISTRATION_REUSE_MS,
 ): boolean {
   if (!client?.client_id || client.redirect_uri !== redirectUri) return false;
-  return !!client.registered_at && now() - client.registered_at < REGISTRATION_REUSE_MS;
+  return !!client.registered_at && now() - client.registered_at < reuseMs;
 }
 
-export async function ensureClient(meta: Meta, redirectUri: string): Promise<Client> {
+// `reuseMs` narrows reuse for a caller that needs the registration to last:
+// a login's link must live as long as the server remembers its client.
+export async function ensureClient(
+  meta: Meta,
+  redirectUri: string,
+  reuseMs = REGISTRATION_REUSE_MS,
+): Promise<Client> {
   if (CFG.staticClientId) return { client_id: CFG.staticClientId };
   const stored = loadStore().client;
-  if (registrationReusable(stored, redirectUri)) return stored as Client;
+  if (registrationReusable(stored, redirectUri, reuseMs)) return stored as Client;
   if (stored?.client_id && stored.redirect_uri === redirectUri) {
     log(
-      stored.registered_at
-        ? "the dynamic client registration is older than the server's cleanup horizon — registering anew for this login"
-        : "the dynamic client registration carries no timestamp (an earlier build wrote it) — registering anew for this login",
+      !stored.registered_at
+        ? "the dynamic client registration carries no timestamp (an earlier build wrote it) — registering anew for this login"
+        : registrationReusable(stored, redirectUri)
+          ? "the dynamic client registration would not outlive a new login — registering anew for it"
+          : "the dynamic client registration is older than the server's cleanup horizon — registering anew for this login",
     );
   }
   if (!meta.as.registration_endpoint) {
