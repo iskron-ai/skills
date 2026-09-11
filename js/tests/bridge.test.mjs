@@ -2454,6 +2454,111 @@ test("a live port under a dead publisher is a stranger's — its link is not han
   });
 });
 
+// A login offered beside a grant blind until its hour is moot once the grant
+// comes back by itself. Left listening, it held the port, and the next blind
+// window stepped to another rung — a new tab each time, until no port was left.
+test("a login offered beside a blind grant closes once the grant comes back — the next window reuses its port", async (t) => {
+  await withFake(t, { refreshNotBeforeMs: 3000 }, async ({ fake, dir, spawnBridge }) => {
+    const first = spawnBridge();
+    await authorize(first, dir);
+    await first.stop();
+    const blind = async () => {
+      const s = readStore(dir);
+      s.tokens.expires_at = Date.now() - 1000;
+      writeFileSync(storeFile(dir), JSON.stringify(s));
+      await fake.control({ revoke_access: true });
+    };
+    await blind();
+
+    const a = spawnBridge({
+      ISKRON_BRIDGE_IN_CALL_WAIT_MS: "100",
+      ISKRON_BRIDGE_LANDED_POLL_MS: "100",
+    });
+    const offered = authorizeUrlIn((await a.call("initialize", 1, INIT_PARAMS)).error?.message);
+    assert.ok(offered, "a blind grant is offered a login beside its hour");
+
+    await pause(Math.max(0, fake.state.refreshValidFrom - Date.now()) + 200); // the hour comes
+    const served = await a.call("tools/call", 2, { name: "nks_orient", arguments: {} });
+    assert.ok(served.result && !served.error, `the grant is back: ${JSON.stringify(served.error)}`);
+    await waitFor(
+      async () => !(await portListening(callbackPortOf(offered))),
+      "the moot login's listener to close",
+    );
+
+    await blind(); // another blind window
+    const next = authorizeUrlIn(
+      (await a.call("tools/call", 3, { name: "nks_orient", arguments: {} })).error?.message,
+    );
+    assert.ok(next, "the next blind window is offered a login too");
+    assert.equal(
+      callbackPortOf(next),
+      callbackPortOf(offered),
+      "on the same port — nothing piled up",
+    );
+  });
+});
+
+test("a stray visit to the callback does not end the login — only a refusal does", async (t) => {
+  // A leftover tab of a login that is over, or any page poking the port: told in
+  // its own browser, while the login it stumbled on keeps waiting for the human.
+  await withFake(t, {}, async ({ dir, spawnBridge }) => {
+    const a = spawnBridge();
+    const url = authorizeUrlIn((await a.call("initialize", 1, INIT_PARAMS)).error?.message);
+    assert.ok(url, "a login must be pending");
+    const standing = loginState(dir);
+    const stray = await fetch(
+      `http://127.0.0.1:${callbackPortOf(url)}/callback?code=x&state=not-this-login`,
+    );
+    assert.match(
+      await stray.text(),
+      /login that is over/,
+      "the stray tab is told, in its own browser",
+    );
+    await pause(300);
+    assert.equal(await portListening(callbackPortOf(url)), true, "the login still listens");
+    assert.equal(loginState(dir), standing, "and it is the same login");
+    const res = await fetch(url, { redirect: "follow" }); // the human's own click still lands
+    await res.text();
+    assert.equal(res.status, 200);
+    await grantLanded(dir);
+  });
+});
+
+test("a live login of an older bridge on the machine is joined, not doubled", async (t) => {
+  // A bridge of an earlier build still running publishes the sign-in server's own
+  // link and nothing to take it over with. While it listens, a new bridge hands
+  // out its link rather than a second login and a second tab (#4809).
+  await withFake(t, {}, async ({ dir, spawnBridge }) => {
+    const a = spawnBridge(); // lays the store down, so the record has its home
+    await a.call("initialize", 1, INIT_PARAMS);
+    const lockPath = lockFile(dir);
+    await a.stop();
+    const older = createServer(() => {});
+    await new Promise((r) => older.listen(0, "127.0.0.1", r));
+    const port = older.address().port;
+    const oldLink = `http://127.0.0.1:${port}/authorize?client_id=old&state=an-older-bridge`;
+    writeFileSync(
+      lockPath,
+      JSON.stringify({
+        pid: process.pid,
+        started_at: Date.now(),
+        authorize_url: oldLink,
+        callback_port: port,
+      }),
+    );
+    try {
+      const b = spawnBridge();
+      const answer = await b.call("initialize", 1, INIT_PARAMS);
+      assert.ok(
+        answer.error?.message.includes(oldLink),
+        `the older bridge's link must be handed out: ${answer.error?.message}`,
+      );
+    } finally {
+      older.close();
+    }
+  });
+});
+
 // The loopback port is open to every local user. The sign-in page carries the
 // login's state, and a stranger holding it could slip the bridge a code for an
 // account that is not the human's — so only the link itself, with its key, mints.
@@ -2630,9 +2735,9 @@ test("however many bridges need the login, the browser opens once", async (t) =>
 });
 
 test("two bridges starting a login at once share one registration and one link", async (t) => {
-  // The first bridge claims the login before it registers the client, so the
-  // second finds the claim and waits for its link rather than registering a
-  // second client for a second tab (graph @nks/nks-dev, node #4793).
+  // The first bridge publishes its login the moment it holds the port — the
+  // registration waits for the click — so the second finds it and joins rather
+  // than registering a second client for a second tab (graph @nks/nks-dev, node #4793).
   await withFake(t, { registerDelayMs: 1000 }, async ({ fake, spawnBridge }) => {
     const [a, b] = [spawnBridge(), spawnBridge()];
     const answers = await Promise.all([

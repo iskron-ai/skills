@@ -690,15 +690,22 @@ function bindCallback(port) {
             timeoutMs
           ) : null;
           const settle = (v) => {
-            if (timer) clearTimeout(timer);
-            if (v.err) return rej(new Error(`authorization refused: ${v.err}`));
-            if (!v.code || v.state !== expectedState) {
-              return rej(new Error("callback missing code or state mismatch"));
+            if (v.state !== expectedState) {
+              tellBrowser(
+                "iskron-bridge: this page belongs to a login that is over — open the link the agent gave you."
+              );
+              return false;
             }
-            res(v.code);
+            if (timer) clearTimeout(timer);
+            handOff = null;
+            if (v.err) rej(new Error(`authorization refused: ${v.err}`));
+            else if (!v.code) rej(new Error("callback missing code"));
+            else res(v.code);
+            return true;
           };
-          if (received) settle(received);
-          else handOff = settle;
+          if (received && settle(received)) return;
+          received = null;
+          handOff = settle;
         })
       });
     });
@@ -790,9 +797,11 @@ async function tokenRequest(meta, params) {
 // js/bridge/oauth/flow.ts
 var CLAIM_WAIT_MS = Number(process.env.ISKRON_BRIDGE_CLAIM_WAIT_MS) || 15e3;
 var CLAIM_GLANCE_MS = 1e3;
-var flowInBackground = null;
+var LANDED_POLL_MS = Number(process.env.ISKRON_BRIDGE_LANDED_POLL_MS) || 2e3;
+var flows = /* @__PURE__ */ new Set();
 function pendingFlow() {
-  return flowInBackground;
+  return flows.size ? Promise.allSettled([...flows]).then(() => {
+  }) : null;
 }
 var loginLink = (port, key) => `http://127.0.0.1:${port}/login?k=${key}`;
 var linkPrefix = (port) => `http://127.0.0.1:${port}/login?k=`;
@@ -872,6 +881,7 @@ async function interactiveFlow(meta, note3) {
       `all candidate callback ports (${rungs}) are held by other processes — free one, then retry`
     );
   }
+  let started = false;
   try {
     const login = {
       pid: process.pid,
@@ -884,9 +894,10 @@ async function interactiveFlow(meta, note3) {
     writeAuthLock(login);
     grantLog("authorization flow published — waiting for the human");
     runFlow(meta, callback, login, true);
+    started = true;
     throw new AuthPending(login.authorize_url, note3);
   } catch (e) {
-    if (!flowInBackground) {
+    if (!started) {
       callback.close();
       releaseAuthLock((l) => l.pid === process.pid);
     }
@@ -912,11 +923,23 @@ function runFlow(meta, cb, login, openTab) {
     if (meta.scope) u.searchParams.set("scope", meta.scope);
     return u.toString();
   });
-  flowInBackground = (async () => {
+  let watch;
+  const cameBack = new Promise((_, reject) => {
+    watch = setInterval(() => {
+      if ((loadStore().tokens?.stored_at ?? 0) > login.started_at) {
+        reject(new Error("the grant came back by itself — this login is no longer needed"));
+      }
+    }, LANDED_POLL_MS);
+    watch.unref?.();
+  });
+  cameBack.catch(() => {
+  });
+  let flow = null;
+  flow = (async () => {
     try {
       const codePromise = cb.waitForCode(login.state);
       if (openTab) openBrowser(login.authorize_url);
-      const code = await codePromise;
+      const code = await Promise.race([codePromise, cameBack]);
       const record = readAuthLock();
       const clientId = (record?.state === login.state ? record.client_id : void 0) || CFG.staticClientId || loadStore().client?.client_id || "";
       log("authorization code received — exchanging for tokens");
@@ -940,11 +963,13 @@ function runFlow(meta, cb, login, openTab) {
         `authorization not completed (${message}) — the next call that needs the graph offers a new login`
       );
     } finally {
+      clearInterval(watch);
       cb.close();
       releaseAuthLock(ours);
-      flowInBackground = null;
+      if (flow) flows.delete(flow);
     }
   })();
+  flows.add(flow);
 }
 
 // js/bridge/oauth/pacing.ts

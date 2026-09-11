@@ -304,6 +304,13 @@ export async function startFakeNks(opts = {}) {
             error_description: "redirect_uri mismatch",
           });
         }
+        // A code is bound to the client it was issued to (RFC 6749 §4.1.3).
+        if (f.get("client_id") !== c.client_id) {
+          return json(res, 400, {
+            error: "invalid_grant",
+            error_description: "client_id mismatch",
+          });
+        }
         st.access = mintAccess(st);
         st.refresh = mintRefresh(st);
         return json(res, 200, {

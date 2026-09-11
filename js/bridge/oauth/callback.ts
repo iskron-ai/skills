@@ -142,16 +142,27 @@ export function bindCallback(port: number): Promise<Callback> {
                     timeoutMs,
                   )
                 : null;
-            const settle = (v: Arrival) => {
-              if (timer) clearTimeout(timer);
-              if (v.err) return rej(new Error(`authorization refused: ${v.err}`));
-              if (!v.code || v.state !== expectedState) {
-                return rej(new Error("callback missing code or state mismatch"));
+            // An arrival that is not this login's — a leftover tab of a login
+            // that is over, or any page poking the port — is answered in its own
+            // browser and does not end the login: a new tab is owed only to a
+            // real refusal (#4794).
+            const settle = (v: Arrival): boolean => {
+              if (v.state !== expectedState) {
+                tellBrowser(
+                  "iskron-bridge: this page belongs to a login that is over — open the link the agent gave you.",
+                );
+                return false;
               }
-              res(v.code);
+              if (timer) clearTimeout(timer);
+              handOff = null;
+              if (v.err) rej(new Error(`authorization refused: ${v.err}`));
+              else if (!v.code) rej(new Error("callback missing code"));
+              else res(v.code);
+              return true;
             };
-            if (received) settle(received);
-            else handOff = settle;
+            if (received && settle(received)) return;
+            received = null;
+            handOff = settle;
           }),
       });
     });

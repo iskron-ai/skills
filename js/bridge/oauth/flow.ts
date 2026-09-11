@@ -22,11 +22,14 @@ const CLAIM_WAIT_MS = Number(process.env.ISKRON_BRIDGE_CLAIM_WAIT_MS) || 15_000;
 /** How long a bound port with no claim yet is given to show one: the claim follows the bind at once. */
 const CLAIM_GLANCE_MS = 1_000;
 
-// The flow this process is finishing in the background, if any: the harness
-// must not kill it under the human's click (see main).
-let flowInBackground: Promise<void> | null = null;
+/** How often a waiting login checks whether the grant came back without it. */
+const LANDED_POLL_MS = Number(process.env.ISKRON_BRIDGE_LANDED_POLL_MS) || 2_000;
+
+// The logins this process is listening for in the background: the harness
+// must not kill them under the human's click (see main).
+const flows = new Set<Promise<void>>();
 export function pendingFlow(): Promise<void> | null {
-  return flowInBackground;
+  return flows.size ? Promise.allSettled([...flows]).then(() => {}) : null;
 }
 
 // The link a human is given is the bridge's own loopback address, not the
@@ -160,6 +163,7 @@ export async function interactiveFlow(meta: Meta, note?: string): Promise<Tokens
     );
   }
 
+  let started = false;
   try {
     const login: Published = {
       pid: process.pid,
@@ -172,11 +176,12 @@ export async function interactiveFlow(meta: Meta, note?: string): Promise<Tokens
     writeAuthLock(login); // we hold the port, so the login is ours to publish
     grantLog("authorization flow published — waiting for the human");
     runFlow(meta, callback, login, true);
+    started = true;
     throw new AuthPending(login.authorize_url, note);
   } catch (e) {
     // The flow owns the listener once it starts; anything failing before that
     // must give the port and the record back rather than camp on them.
-    if (!flowInBackground) {
+    if (!started) {
       callback.close();
       releaseAuthLock((l) => l.pid === process.pid);
     }
@@ -206,11 +211,26 @@ function runFlow(meta: Meta, cb: Callback, login: Published, openTab: boolean): 
     if (meta.scope) u.searchParams.set("scope", meta.scope);
     return u.toString();
   });
-  flowInBackground = (async () => {
+  // A login offered beside a grant blind until its own hour is moot once the
+  // grant comes back by itself. Its listener then closes: left waiting, it holds
+  // the port, and the next such window steps to another rung — a new tab each
+  // time, until no port and no link are left at all (#4794).
+  let watch: ReturnType<typeof setInterval> | undefined;
+  const cameBack = new Promise<never>((_, reject) => {
+    watch = setInterval(() => {
+      if ((loadStore().tokens?.stored_at ?? 0) > login.started_at) {
+        reject(new Error("the grant came back by itself — this login is no longer needed"));
+      }
+    }, LANDED_POLL_MS);
+    watch.unref?.();
+  });
+  cameBack.catch(() => {});
+  let flow: Promise<void> | null = null;
+  flow = (async () => {
     try {
       const codePromise = cb.waitForCode(login.state);
       if (openTab) openBrowser(login.authorize_url);
-      const code = await codePromise;
+      const code = await Promise.race([codePromise, cameBack]);
       const record = readAuthLock();
       const clientId =
         (record?.state === login.state ? record.client_id : undefined) ||
@@ -240,9 +260,11 @@ function runFlow(meta: Meta, cb: Callback, login: Published, openTab: boolean): 
         `authorization not completed (${message}) — the next call that needs the graph offers a new login`,
       );
     } finally {
+      clearInterval(watch);
       cb.close();
       releaseAuthLock(ours);
-      flowInBackground = null;
+      if (flow) flows.delete(flow);
     }
   })();
+  flows.add(flow);
 }

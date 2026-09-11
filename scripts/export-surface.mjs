@@ -55,7 +55,11 @@ async function initialize() {
       clientInfo: { name: "export-surface", version: "0" } } });
     const res = await wait(id++);
     if (!res.error) return res;
-    const url = /(https?:\/\/\S*\/authorize\?\S+)/.exec(res.error.message || "")?.[1];
+    // The login link is the bridge's own loopback address (a past bridge handed
+    // out the sign-in server's authorize URL itself): either is the link to open.
+    const url = /(http:\/\/127\.0\.0\.1:\d+\/login\?k=[\w-]+|https?:\/\/\S*\/authorize\?\S+)/.exec(
+      res.error.message || "",
+    )?.[1];
     if (!url) throw new Error(`initialize failed: ${JSON.stringify(res.error)}`);
     if (!announced) {
       console.error(`authorization needed — open this, then this script continues on its own:\n  ${url}`);
