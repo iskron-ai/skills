@@ -350,15 +350,13 @@ var DEFINITIVE_OAUTH_ERRORS = /* @__PURE__ */ new Set([
   "invalid_client",
   "unauthorized_client"
 ]);
-var LoginHeld = class extends Error {
-};
 var TokenRefused = class extends Error {
 };
 var AuthPending = class extends Error {
   authorizeUrl;
-  constructor(url) {
+  constructor(url, note3) {
     super(
-      `authorization required — open in a browser: ${url} — or give the bridge a personal access token instead (ISKRON_BRIDGE_TOKEN, or the file <auth-dir>/token)`
+      `authorization required — open in a browser: ${url}${note3 ? ` (${note3})` : ""} — or give the bridge a personal access token instead (ISKRON_BRIDGE_TOKEN, or the file <auth-dir>/token)`
     );
     this.authorizeUrl = url;
   }
@@ -368,9 +366,14 @@ var HoldOffError = class extends Error {
   // the FIRST early refusal of a needed refresh. The cooldown refusal and a
   // refusal that repeats both name waits that are real.
   retryNow;
-  constructor(message, retryNow = false) {
+  // When the hold ends, on the server-corrected clock — the refresh token's own
+  // hour; null when nobody knows. A caller sits out a short one inside the call
+  // and answers a long one with the login.
+  until;
+  constructor(message, retryNow = false, until = null) {
     super(message);
     this.retryNow = retryNow;
+    this.until = until;
   }
 };
 var DeadGrantError = class extends Error {
@@ -531,7 +534,6 @@ import { randomBytes } from "node:crypto";
 // js/bridge/oauth/authlock.ts
 import { mkdirSync as mkdirSync2, readFileSync as readFileSync4, unlinkSync as unlinkSync2, writeFileSync as writeFileSync2 } from "node:fs";
 import { connect } from "node:net";
-var AUTH_LOCK_FRESH_MS = 33e4;
 function authLockPath() {
   return storePath() + ".auth-pending";
 }
@@ -559,23 +561,19 @@ function portListening(port, timeoutMs = 700) {
 }
 function readAuthLock() {
   try {
-    const l = JSON.parse(readFileSync4(authLockPath(), "utf8"));
-    if (!(Date.now() - l.started_at < AUTH_LOCK_FRESH_MS)) return null;
-    if (!pidAlive(l.pid)) return null;
-    return l;
+    return JSON.parse(readFileSync4(authLockPath(), "utf8"));
   } catch {
+    return null;
   }
-  return null;
 }
-function writeAuthLock(url, port) {
+function writeAuthLock(fields) {
   mkdirSync2(CFG.authDir, { recursive: true, mode: 448 });
   writeFileSync2(
     authLockPath(),
     JSON.stringify({
-      pid: process.pid,
-      started_at: Date.now(),
-      authorize_url: url,
-      callback_port: port
+      ...fields,
+      pid: fields.pid ?? process.pid,
+      started_at: fields.started_at ?? Date.now()
     }),
     { mode: 384 }
   );
@@ -590,7 +588,7 @@ function installAuthLockExitHook() {
   process.on("exit", () => {
     try {
       const l = JSON.parse(readFileSync4(authLockPath(), "utf8"));
-      if (l.pid === process.pid) unlinkSync2(authLockPath());
+      if (l.pid === process.pid && !l.authorize_url) unlinkSync2(authLockPath());
     } catch {
     }
   });
@@ -682,10 +680,6 @@ function bindCallback(port) {
   });
 }
 
-// js/bridge/oauth/pacing.ts
-var LOGIN_GRACE_MS = 12e4;
-var LOGIN_SNOOZE_MS = 10 * 6e4;
-
 // js/bridge/tokens.ts
 function jwtClaims(token) {
   try {
@@ -767,33 +761,76 @@ async function tokenRequest(meta, params) {
 }
 
 // js/bridge/oauth/flow.ts
+var CLAIM_WAIT_MS = Number(process.env.ISKRON_BRIDGE_CLAIM_WAIT_MS) || 15e3;
+var CLAIM_GLANCE_MS = 1e3;
 var flowInBackground = null;
 function pendingFlow() {
   return flowInBackground;
 }
-async function joinPublishedFlow() {
-  const standing = readAuthLock();
-  if (standing?.authorize_url && await portListening(standing.callback_port)) {
-    debug(`joining the flow held by pid ${standing.pid}`);
-    throw new AuthPending(standing.authorize_url);
+function published(l) {
+  if (!l?.authorize_url || !l.state || !l.verifier || !l.client_id || !l.redirect_uri) return false;
+  if (CFG.staticClientId) return l.client_id === CFG.staticClientId;
+  const client = loadStore().client;
+  return client?.client_id === l.client_id && registrationReusable(client, l.redirect_uri);
+}
+function loginPublished() {
+  return published(readAuthLock());
+}
+async function bindOrNull(port) {
+  try {
+    return await bindCallback(port);
+  } catch (e) {
+    if (errorCode(e) !== "EADDRINUSE") throw e;
+    return null;
   }
 }
-async function interactiveFlow(meta) {
-  await joinPublishedFlow();
+async function linkOn(port) {
+  const glance = Date.now() + CLAIM_GLANCE_MS;
+  const deadline = Date.now() + CLAIM_WAIT_MS;
+  for (; ; ) {
+    const l = readAuthLock();
+    if (published(l) && l.callback_port === port) return l;
+    const claimed = !!l && !l.authorize_url && l.callback_port === port && pidAlive(l.pid);
+    if (!claimed && Date.now() > glance || Date.now() > deadline) return null;
+    await sleep(100);
+  }
+}
+async function interactiveFlow(meta, note3) {
+  const standing = readAuthLock();
+  if (published(standing)) {
+    if (await portListening(standing.callback_port)) {
+      debug(`joining the login held by pid ${standing.pid}`);
+      throw new AuthPending(standing.authorize_url, note3);
+    }
+    const cb = await bindOrNull(standing.callback_port);
+    if (cb) {
+      writeAuthLock({ ...standing, pid: process.pid });
+      log(
+        "the bridge that published this login is gone — listening on its link, so the tab the human has still lands"
+      );
+      grantLog("authorization flow taken over on the same link — waiting for the human");
+      runFlow(meta, cb, standing, false);
+      throw new AuthPending(standing.authorize_url, note3);
+    }
+    if (await portListening(standing.callback_port)) {
+      throw new AuthPending(standing.authorize_url, note3);
+    }
+    debug(
+      `the published login's port ${standing.callback_port} is held by a foreign process — its link can land nowhere; publishing a new login`
+    );
+  } else if (standing && !standing.authorize_url && pidAlive(standing.pid) && await portListening(standing.callback_port)) {
+    const claimed = await linkOn(standing.callback_port);
+    if (claimed) throw new AuthPending(claimed.authorize_url, note3);
+  }
   let callback = null;
   for (let rung = 0; rung < CALLBACK_PORT_RUNGS && !callback; rung++) {
-    try {
-      callback = await bindCallback(callbackPort(rung));
-    } catch (e) {
-      if (errorCode(e) !== "EADDRINUSE") throw e;
-      const l = readAuthLock();
-      if (l?.authorize_url && await portListening(l.callback_port)) {
-        throw new AuthPending(l.authorize_url);
-      }
-      debug(
-        `callback port ${callbackPort(rung)} is held by a foreign process — trying the next rung`
-      );
-    }
+    callback = await bindOrNull(callbackPort(rung));
+    if (callback) break;
+    const claimed = await linkOn(callbackPort(rung));
+    if (claimed) throw new AuthPending(claimed.authorize_url, note3);
+    debug(
+      `callback port ${callbackPort(rung)} is held by a foreign process — trying the next rung`
+    );
   }
   if (!callback) {
     const rungs = Array.from({ length: CALLBACK_PORT_RUNGS }, (_, k) => callbackPort(k)).join(", ");
@@ -802,56 +839,36 @@ async function interactiveFlow(meta) {
     );
   }
   const port = callback.port;
+  writeAuthLock({ callback_port: port });
   try {
     const redirectUri = `http://127.0.0.1:${port}/callback`;
     const client = await ensureClient(meta, redirectUri);
     const verifier = b64url(randomBytes(48));
-    const authState = b64url(randomBytes(24));
+    const state2 = b64url(randomBytes(24));
     const authUrl = new URL(meta.as.authorization_endpoint);
     authUrl.searchParams.set("response_type", "code");
     authUrl.searchParams.set("client_id", client.client_id);
     authUrl.searchParams.set("redirect_uri", redirectUri);
-    authUrl.searchParams.set("state", authState);
+    authUrl.searchParams.set("state", state2);
     authUrl.searchParams.set("code_challenge", b64url(sha256(verifier)));
     authUrl.searchParams.set("code_challenge_method", "S256");
     authUrl.searchParams.set("resource", meta.resource);
     if (meta.scope) authUrl.searchParams.set("scope", meta.scope);
-    const url = authUrl.toString();
-    writeAuthLock(url, port);
+    const login = {
+      pid: process.pid,
+      started_at: Date.now(),
+      callback_port: port,
+      authorize_url: authUrl.toString(),
+      state: state2,
+      verifier,
+      client_id: client.client_id,
+      redirect_uri: redirectUri,
+      resource: meta.resource
+    };
+    writeAuthLock(login);
     grantLog("authorization flow published — waiting for the human");
-    const cb = callback;
-    flowInBackground = (async () => {
-      try {
-        const codePromise = cb.waitForCode(authState);
-        openBrowser(url);
-        const code = await codePromise;
-        log("authorization code received — exchanging for tokens");
-        await tokenRequest(meta, {
-          grant_type: "authorization_code",
-          code,
-          redirect_uri: redirectUri,
-          client_id: client.client_id,
-          code_verifier: verifier,
-          resource: meta.resource
-        });
-        log("authorization complete — tokens saved for every local agent");
-        grantLog("authorization complete");
-        cb.report(null);
-      } catch (e) {
-        const message = errorMessage(e);
-        cb.report(message);
-        log(`authorization flow failed: ${message}`);
-        saveGrantState({ snooze_until: Date.now() + LOGIN_SNOOZE_MS });
-        grantLog(
-          `authorization not completed (${message}); not asking again for ${LOGIN_SNOOZE_MS / 6e4}min`
-        );
-      } finally {
-        cb.close();
-        releaseAuthLock();
-        flowInBackground = null;
-      }
-    })();
-    throw new AuthPending(url);
+    runFlow(meta, callback, login, true);
+    throw new AuthPending(login.authorize_url, note3);
   } catch (e) {
     if (!flowInBackground) {
       callback.close();
@@ -860,6 +877,43 @@ async function interactiveFlow(meta) {
     throw e;
   }
 }
+function runFlow(meta, cb, login, openTab) {
+  flowInBackground = (async () => {
+    try {
+      const codePromise = cb.waitForCode(login.state);
+      if (openTab) openBrowser(login.authorize_url);
+      const code = await codePromise;
+      log("authorization code received — exchanging for tokens");
+      await tokenRequest(meta, {
+        grant_type: "authorization_code",
+        code,
+        redirect_uri: login.redirect_uri,
+        client_id: login.client_id,
+        code_verifier: login.verifier,
+        resource: login.resource ?? meta.resource
+      });
+      log("authorization complete — tokens saved for every local agent");
+      grantLog("authorization complete");
+      cb.report(null);
+    } catch (e) {
+      const message = errorMessage(e);
+      cb.report(message);
+      log(`authorization flow failed: ${message}`);
+      grantLog(
+        `authorization not completed (${message}) — the next call that needs the graph offers a new login`
+      );
+    } finally {
+      cb.close();
+      releaseAuthLock();
+      flowInBackground = null;
+    }
+  })();
+}
+
+// js/bridge/oauth/pacing.ts
+var pauses = (v, fallback) => (v || fallback).split(",").map(Number).filter((n) => Number.isFinite(n) && n >= 0);
+var DEAD_RECHECK_MS = pauses(process.env.ISKRON_BRIDGE_DEAD_RECHECK_MS, "1000,2000");
+var IN_CALL_WAIT_MS = Number(process.env.ISKRON_BRIDGE_IN_CALL_WAIT_MS) || 1e4;
 
 // js/bridge/oauth/refreshlock.ts
 import { linkSync, mkdirSync as mkdirSync3, readFileSync as readFileSync5, unlinkSync as unlinkSync3, writeFileSync as writeFileSync3 } from "node:fs";
@@ -937,7 +991,9 @@ async function refreshOnce(meta, cur, proactive) {
   if (cooling && now() < cooling) {
     const left = Math.round((cooling - now()) / 1e3);
     throw new HoldOffError(
-      `the token endpoint refused this grant as too early moments ago — not knocking again for ${left}s; grant kept, will retry`
+      `the token endpoint refused this grant as too early moments ago — not knocking again for ${left}s; grant kept, will retry`,
+      false,
+      hours.nbf
     );
   }
   debug("refreshing access token");
@@ -995,7 +1051,8 @@ async function refreshOnce(meta, cur, proactive) {
       );
       throw new HoldOffError(
         repeated ? `token refresh refused too early again (${message}) — the hour is real: ${why}; grant kept` : `token refresh refused too early (${message}) — ${why}; grant kept, will retry`,
-        !!notYet && !repeated
+        !!notYet && !repeated,
+        notYet ? hours.nbf : null
       );
     }
     if (loadStore().tokens?.refresh_token !== cur.refresh_token) {
@@ -1072,36 +1129,22 @@ function noteRefusal(reason) {
   const local = Date.now();
   const first2 = !loadGrantState().refused_since;
   saveGrantState({ refused_at: local, ...first2 ? { refused_since: local, reason } : {} });
-  if (first2) {
-    grantLog(`grant refused, holding the login back for ${LOGIN_GRACE_MS / 1e3}s: ${reason}`);
-  }
+  if (first2) grantLog(`grant refused: ${reason}`);
 }
 function refusalStands() {
   const at = loadGrantState().refused_at;
   return !!at && Date.now() - at < REFUSED_KNOCK_MS;
 }
-function holdOffLogin(reason, expired = false, asked = false) {
-  if (asked) return;
-  const local = Date.now();
-  const st = loadGrantState();
-  if (st.snooze_until && local < st.snooze_until) {
-    throw new LoginHeld(
-      `authorization was offered and not completed — not asking again for ${Math.round((st.snooze_until - local) / 1e3)}s (grant refused: ${reason})`
-    );
-  }
-  if (expired) return;
-  const since = st.refused_since || local;
-  if (local - since < LOGIN_GRACE_MS) {
-    throw new LoginHeld(
-      `grant refused (${reason}) — holding off the login for ${Math.round((LOGIN_GRACE_MS - (local - since)) / 1e3)}s in case it heals`
-    );
-  }
-}
 
 // js/bridge/auth.ts
 var authInFlight = null;
+function heldNote(until) {
+  if (until === null) return "the grant itself is whole";
+  const minutes = Math.max(1, Math.round((until - now()) / 6e4));
+  return `the grant itself is whole and comes back on its own in about ${minutes} min`;
+}
 async function ensureAuth(wwwAuthenticate, opts = {}) {
-  const { force = false, interactive = true, proactive = false, handshake = false } = opts;
+  const { force = false, interactive = true, proactive = false } = opts;
   if (CFG.pat) {
     throw new TokenRefused(
       `the personal access token from ${CFG.patSource} is refused by the server — revoked, expired or without rights to this graph; mint a new one on the graph's token page and put it in ${CFG.patSource}`
@@ -1123,19 +1166,46 @@ async function ensureAuth(wwwAuthenticate, opts = {}) {
       const meta = s.meta?.as ? s.meta : await discover(wwwAuthenticate);
       if (CFG.resource) meta.resource = CFG.resource;
       if (s.tokens?.refresh_token) {
-        try {
-          return await refreshShared(meta, rejected, proactive, interactive);
-        } catch (e) {
-          if (!(e instanceof DeadGrantError)) throw e;
-          if (!interactive) {
-            throw new Error("authorization required (refresh grant dead, browser flow deferred)", {
-              cause: e
-            });
+        let rechecks = 0;
+        let waited = 0;
+        for (; ; ) {
+          try {
+            return await refreshShared(meta, rejected, proactive, interactive);
+          } catch (e) {
+            if (!interactive) {
+              if (e instanceof DeadGrantError) {
+                throw new Error(
+                  "authorization required (refresh grant dead, browser flow deferred)",
+                  { cause: e }
+                );
+              }
+              throw e;
+            }
+            if (e instanceof HoldOffError) {
+              if (e.retryNow) throw e;
+              const left = e.until === null ? Infinity : e.until - now();
+              if (left + waited <= IN_CALL_WAIT_MS) {
+                const pause = Math.max(left, 0) + 100;
+                waited += pause;
+                debug(`${e.message} — sitting it out inside the call (${pause}ms)`);
+                await sleep(pause);
+                continue;
+              }
+              log(`${e.message} — offering the login beside the wait`);
+              return await interactiveFlow(meta, heldNote(e.until));
+            }
+            if (e instanceof DeadGrantError) {
+              if (!e.expired && rechecks < DEAD_RECHECK_MS.length && !loginPublished()) {
+                const pause = DEAD_RECHECK_MS[rechecks++] ?? 0;
+                debug(`refresh refused (${e.message}) — knocking again in ${pause}ms`);
+                await sleep(pause);
+                continue;
+              }
+              log(`refresh grant is dead (${e.message}) — starting a fresh authorization`);
+              return await interactiveFlow(meta);
+            }
+            throw e;
           }
-          await joinPublishedFlow();
-          holdOffLogin(e.message, e.expired, handshake);
-          log(`refresh grant is dead (${e.message}) — starting a fresh authorization`);
-          return await interactiveFlow(meta);
         }
       }
       if (!interactive)
@@ -2534,6 +2604,7 @@ async function deliver(msg) {
   const harness = !ownClient();
   const hasId = msg?.id !== void 0 && msg?.id !== null;
   let authRetried = false;
+  let heldRetried = false;
   let sessionRetried = false;
   let netTries = 0;
   let outcome = UpstreamError.NOT_SENT;
@@ -2613,13 +2684,16 @@ async function deliver(msg) {
       if (e instanceof UpstreamError && e.kind === "auth" && !authRetried) {
         authRetried = true;
         try {
-          await ensureAuth(e.message, {
-            force: true,
-            rejected: e.presented,
-            handshake: isInit && harness
-          });
+          await ensureAuth(e.message, { force: true, rejected: e.presented });
           continue;
         } catch (authErr) {
+          if (authErr instanceof HoldOffError && authErr.retryNow && !heldRetried) {
+            heldRetried = true;
+            authRetried = false;
+            log(`${authErr.message} — repeating the call once`);
+            await sleep(300);
+            continue;
+          }
           const standIn = hasId && harness ? lastServerAnswer(msg) : null;
           if (standIn) {
             log(`${msg.method} answered from the last server answer — ${errorMessage(authErr)}`);
@@ -2630,17 +2704,8 @@ async function deliver(msg) {
             if (hasId) emit(syntheticError(msg.id, authErr.message, outcome, "dead"));
             return;
           }
-          if (authErr instanceof AuthPending || authErr instanceof LoginHeld) {
-            if (hasId) {
-              emit(
-                syntheticError(
-                  msg.id,
-                  authErr.message,
-                  outcome,
-                  authErr instanceof LoginHeld ? "wait" : "human"
-                )
-              );
-            }
+          if (authErr instanceof AuthPending) {
+            if (hasId) emit(syntheticError(msg.id, authErr.message, outcome, "human"));
             return;
           }
           const held = authErr instanceof HoldOffError;
@@ -3330,9 +3395,6 @@ function grantReport() {
   const st = loadGrantState();
   if (st.refused_since)
     out(`  отказ стоит с ${new Date(st.refused_since).toISOString()}: ${st.reason ?? ""}`);
-  if (st.snooze_until && Date.now() < st.snooze_until) {
-    out(`  вход отложен ещё на ${seconds(st.snooze_until - Date.now())} (человек не завершил)`);
-  }
   for (const suffix of [".auth-pending", ".refreshing"]) {
     if (existsSync5(path + suffix)) out(`  замок: ${path + suffix}`);
   }

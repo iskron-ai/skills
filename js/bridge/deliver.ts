@@ -5,7 +5,6 @@ import {
   AuthPending,
   errorMessage,
   HoldOffError,
-  LoginHeld,
   type Outcome,
   TokenRefused,
   UpstreamError,
@@ -14,7 +13,7 @@ import { absorbChannelReply, absorbRevokeReply, localStatus } from "./hold.ts";
 import { annotateToolList } from "./moment.ts";
 import { isStandCall, runStand } from "./stand.ts";
 import { ensureStanding, isUnattributed, noteStanding, replyText } from "./standing.ts";
-import { loadServerCache, saveServerCache } from "./store.ts";
+import { loadServerCache, saveServerCache, sleep } from "./store.ts";
 import { emit, log } from "./streams.ts";
 import { currentAccessToken, post, reinitialize, state } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
@@ -31,9 +30,10 @@ export function syntheticError(
   holdOff: boolean | "wait" | "knock" | "dead" | "human" = false,
 ): JsonRpcMessage {
   // holdOff carries the KIND of not-yet, because the two kinds prescribe
-  // opposite moves. "wait" is a pause with an honest figure: the grace-held
-  // login, the knock cooldown, an hour a repeated refusal proved real — a
-  // retry there buys nothing. "knock" is the FIRST early refusal of a needed
+  // opposite moves. "wait" is a pause with an honest figure — the knock
+  // cooldown, an hour a repeated refusal proved real — when one reaches a
+  // caller at all: calls sit short holds out and answer long ones with the
+  // login (#4794); a retry there buys nothing. "knock" is the FIRST early refusal of a needed
   // refresh: witnessed in the field, the same call succeeded seconds after
   // that refusal (a rotated grant, a 401 that did not survive a second
   // presentation — the cause was not pinned, the refuted prescription was),
@@ -120,9 +120,9 @@ function lastServerAnswer(msg: JsonRpcMessage): JsonRpcMessage | null {
 }
 
 // Наш собственный клиент (плагин OpenCode, `make surface`) отказ рукопожатия
-// читает сам и ждёт входа, повторяя рукопожатие: ему прежний отказ и прежний
-// темп входа. Остальное рукопожатие — харнеса, то есть человека (#4790); кто
-// в списке и почему, сказано у самого списка.
+// читает сам и ждёт входа, повторяя рукопожатие: ему прежний отказ. Остальное
+// рукопожатие — харнеса, то есть человека (#4790); кто в списке и почему,
+// сказано у самого списка.
 function ownClient(): boolean {
   const info = (state.initParams as { clientInfo?: { name?: unknown } } | null)?.clientInfo;
   return typeof info?.name === "string" && OWN_CLIENTS.has(info.name);
@@ -153,6 +153,7 @@ export async function deliver(msg: JsonRpcMessage): Promise<void> {
   const harness = !ownClient();
   const hasId = msg?.id !== undefined && msg?.id !== null;
   let authRetried = false;
+  let heldRetried = false;
   let sessionRetried = false;
   let netTries = 0;
   // Across retries the honest verdict is the worst one seen: an attempt that
@@ -262,13 +263,19 @@ export async function deliver(msg: JsonRpcMessage): Promise<void> {
       if (e instanceof UpstreamError && e.kind === "auth" && !authRetried) {
         authRetried = true;
         try {
-          await ensureAuth(e.message, {
-            force: true,
-            rejected: e.presented,
-            handshake: isInit && harness,
-          });
+          await ensureAuth(e.message, { force: true, rejected: e.presented });
           continue;
         } catch (authErr) {
+          if (authErr instanceof HoldOffError && authErr.retryNow && !heldRetried) {
+            // The first early refusal of a needed refresh: the same call was
+            // witnessed succeeding a moment later, so the bridge repeats it
+            // once itself instead of telling anyone to (#4794).
+            heldRetried = true;
+            authRetried = false;
+            log(`${authErr.message} — repeating the call once`);
+            await sleep(300);
+            continue;
+          }
           const standIn = hasId && harness ? lastServerAnswer(msg) : null;
           if (standIn) {
             log(`${msg.method} answered from the last server answer — ${errorMessage(authErr)}`);
@@ -279,20 +286,10 @@ export async function deliver(msg: JsonRpcMessage): Promise<void> {
             if (hasId) emit(syntheticError(msg.id, authErr.message, outcome, "dead"));
             return;
           }
-          if (authErr instanceof AuthPending || authErr instanceof LoginHeld) {
-            // A held login names its own wait; AuthPending names a URL. The first
-            // is repaired by time and must not be sold as "retry freely"; the
-            // second is repaired by a human's click, and no waiting shortens it.
-            if (hasId) {
-              emit(
-                syntheticError(
-                  msg.id,
-                  authErr.message,
-                  outcome,
-                  authErr instanceof LoginHeld ? "wait" : "human",
-                ),
-              );
-            }
+          if (authErr instanceof AuthPending) {
+            // A login waiting for a click is repaired by the human alone: no
+            // retry and no waiting shortens it, so the verdict sends the link on.
+            if (hasId) emit(syntheticError(msg.id, authErr.message, outcome, "human"));
             return;
           }
           // A hold-off is not a failed authorization: the grant is whole and

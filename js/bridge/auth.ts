@@ -1,10 +1,11 @@
 import { now } from "./clock.ts";
 import { CFG } from "./config.ts";
-import { DeadGrantError, errorMessage, TokenRefused } from "./errors.ts";
+import { DeadGrantError, errorMessage, HoldOffError, TokenRefused } from "./errors.ts";
 import { discover } from "./oauth/discovery.ts";
-import { interactiveFlow, joinPublishedFlow } from "./oauth/flow.ts";
-import { holdOffLogin, refreshShared, refusalStands } from "./oauth/refresh.ts";
-import { loadStore } from "./store.ts";
+import { interactiveFlow, loginPublished } from "./oauth/flow.ts";
+import { DEAD_RECHECK_MS, IN_CALL_WAIT_MS } from "./oauth/pacing.ts";
+import { refreshShared, refusalStands } from "./oauth/refresh.ts";
+import { loadStore, sleep } from "./store.ts";
 import { debug, log } from "./streams.ts";
 import { refreshHours, tokenUsable } from "./tokens.ts";
 import { type Tokens } from "./types.ts";
@@ -18,19 +19,28 @@ export interface AuthOptions {
   interactive?: boolean;
   /** a top-up the caller does not actually need yet */
   proactive?: boolean;
-  /** the harness is connecting (initialize): a human at the keyboard, no pause applies */
-  handshake?: boolean;
 }
 
 let authInFlight: { promise: Promise<Tokens>; interactive: boolean } | null = null;
 
+// What a long hold says beside the login: the grant is intact and would come
+// back by itself — information, never an instruction to wait (#4794).
+function heldNote(until: number | null): string {
+  if (until === null) return "the grant itself is whole";
+  const minutes = Math.max(1, Math.round((until - now()) / 60_000));
+  return `the grant itself is whole and comes back on its own in about ${minutes} min`;
+}
+
 // Returns fresh-enough tokens. Order: cached access token -> silent refresh ->
-// (only if allowed and the grant is definitively dead) the browser flow.
+// (only if allowed) the browser flow. No answer ever tells a human to come back
+// later (graph nks-dev: #4794): a hold shorter than a call is slept through
+// here and a longer one is answered with the login; a refused grant is knocked
+// again, briefly, before a human is called in.
 export async function ensureAuth(
   wwwAuthenticate: string | null,
   opts: AuthOptions = {},
 ): Promise<Tokens> {
-  const { force = false, interactive = true, proactive = false, handshake = false } = opts;
+  const { force = false, interactive = true, proactive = false } = opts;
   if (CFG.pat) {
     // A PAT is the whole grant: there is nothing to refresh and nobody to send
     // to a browser. Being here at all means the server refused it.
@@ -68,21 +78,55 @@ export async function ensureAuth(
       // it is discovered.
       if (CFG.resource) meta.resource = CFG.resource;
       if (s.tokens?.refresh_token) {
-        try {
-          return await refreshShared(meta, rejected, proactive, interactive);
-        } catch (e) {
-          // Anything but a dead grant is transient. Dead grants were recorded
-          // while holding the refresh lock, before a sibling can follow them.
-          if (!(e instanceof DeadGrantError)) throw e;
-          if (!interactive) {
-            throw new Error("authorization required (refresh grant dead, browser flow deferred)", {
-              cause: e,
-            });
+        let rechecks = 0;
+        let waited = 0;
+        for (;;) {
+          try {
+            return await refreshShared(meta, rejected, proactive, interactive);
+          } catch (e) {
+            if (!interactive) {
+              // The background opens no browser and sits out nothing: its knock
+              // did not land, and the next tick or a caller's own call tries again.
+              if (e instanceof DeadGrantError) {
+                throw new Error(
+                  "authorization required (refresh grant dead, browser flow deferred)",
+                  { cause: e },
+                );
+              }
+              throw e;
+            }
+            if (e instanceof HoldOffError) {
+              // The first early refusal goes back to the caller, which repeats
+              // the whole call once itself: that repeat is what was witnessed
+              // succeeding in the field.
+              if (e.retryNow) throw e;
+              const left = e.until === null ? Infinity : e.until - now();
+              if (left + waited <= IN_CALL_WAIT_MS) {
+                const pause = Math.max(left, 0) + 100;
+                waited += pause;
+                debug(`${e.message} — sitting it out inside the call (${pause}ms)`);
+                await sleep(pause);
+                continue;
+              }
+              log(`${e.message} — offering the login beside the wait`);
+              return await interactiveFlow(meta, heldNote(e.until));
+            }
+            if (e instanceof DeadGrantError) {
+              // A server mid-restart words a live grant's death the same way, so
+              // knock again ourselves before a human is called in — unless the
+              // grant's own hour has passed, or a login is already out: then the
+              // verdict is already in.
+              if (!e.expired && rechecks < DEAD_RECHECK_MS.length && !loginPublished()) {
+                const pause = DEAD_RECHECK_MS[rechecks++] ?? 0;
+                debug(`refresh refused (${e.message}) — knocking again in ${pause}ms`);
+                await sleep(pause);
+                continue;
+              }
+              log(`refresh grant is dead (${e.message}) — starting a fresh authorization`);
+              return await interactiveFlow(meta);
+            }
+            throw e;
           }
-          await joinPublishedFlow(); // a login already waiting is the answer, held or not
-          holdOffLogin(e.message, e.expired, handshake); // may decide the human is not to be asked yet
-          log(`refresh grant is dead (${e.message}) — starting a fresh authorization`);
-          return await interactiveFlow(meta);
         }
       }
       if (!interactive)

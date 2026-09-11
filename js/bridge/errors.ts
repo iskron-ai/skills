@@ -67,19 +67,18 @@ export const DEFINITIVE_OAUTH_ERRORS = new Set([
   "unauthorized_client",
 ]);
 
-// Not a failure: a deliberate refusal to spend the human's attention yet.
-export class LoginHeld extends Error {}
-
 // The personal access token the bridge was given is refused by the server. No
 // refresh, no browser, no wait repairs this: only a human with a new token.
 export class TokenRefused extends Error {}
 
+// `note` rides beside the link when the grant is whole and would come back by
+// itself — the login offered instead of a wait, never a wait itself (#4794).
 export class AuthPending extends Error {
   authorizeUrl: string;
-  constructor(url: string) {
+  constructor(url: string, note?: string) {
     super(
-      `authorization required — open in a browser: ${url} — or give the bridge a personal ` +
-        `access token instead (ISKRON_BRIDGE_TOKEN, or the file <auth-dir>/token)`,
+      `authorization required — open in a browser: ${url}${note ? ` (${note})` : ""} — or give ` +
+        `the bridge a personal access token instead (ISKRON_BRIDGE_TOKEN, or the file <auth-dir>/token)`,
     );
     this.authorizeUrl = url;
   }
@@ -98,9 +97,14 @@ export class HoldOffError extends Error {
   // the FIRST early refusal of a needed refresh. The cooldown refusal and a
   // refusal that repeats both name waits that are real.
   retryNow: boolean;
-  constructor(message: string, retryNow = false) {
+  // When the hold ends, on the server-corrected clock — the refresh token's own
+  // hour; null when nobody knows. A caller sits out a short one inside the call
+  // and answers a long one with the login.
+  until: number | null;
+  constructor(message: string, retryNow = false, until: number | null = null) {
     super(message);
     this.retryNow = retryNow;
+    this.until = until;
   }
 }
 

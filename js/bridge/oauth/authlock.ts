@@ -5,28 +5,34 @@ import { CFG } from "../config.ts";
 import { storePath } from "../store.ts";
 
 // --- machine-wide authorization coordination ------------------------------
-// Dozens of local agents share one grant, so at most ONE bridge instance runs
-// the browser flow; every other instance (and every call meanwhile) surfaces
-// the SAME authorize URL from the lock — whichever surface the human happens
-// to look at, one click heals the whole machine.
+// Dozens of local agents share one grant, so a machine has at most ONE login in
+// flight; every bridge (and every call meanwhile) surfaces the SAME authorize
+// URL — whichever surface the human happens to look at, one click heals the
+// whole machine.
 //
-// What makes a standing flow joinable is the LISTENER, not the file. A bridge
-// killed mid-flow (SIGKILL, a reaped ephemeral run, a crash) leaves its lock
-// behind with nothing bound to the callback port; a joiner that trusts the file
-// alone then hands the human an authorize URL whose redirect lands on a closed
-// port — the click is spent and no one catches it. So the loopback port IS the
-// claim: whoever binds it owns the flow, and the file only carries that owner's
-// URL for the others to surface. Both errors are cheap to picture and one is
-// far worse: joining a dead flow silently burns the human's login, while taking
-// over a live one costs at most a second browser tab. When in doubt, take over.
-
-const AUTH_LOCK_FRESH_MS = 330_000; // flow timeout + margin; older is dead by the clock alone
+// The file IS that login. It is published once and lives until the login lands
+// or is refused, longer than the bridge that published it, and it carries what
+// any bridge needs to catch this very login's redirect (state, PKCE verifier,
+// client, redirect URI). So the tab the human already has stays good whichever
+// bridge is alive when they click: a later bridge that finds nobody listening
+// listens on the same link itself (graph nks-dev: #4721, #4794). Whether anyone
+// listens right now is the LISTENER's word, never the file's — a caller probes
+// the port before it hands the link to anyone.
+//
+// Before its link exists the file is a bare claim: the bridge that bound the
+// port writes it at once, so a sibling that meets the bound port waits for this
+// login's link instead of registering a second client for a second tab (#4793).
 
 export interface AuthLock {
   pid: number;
   started_at: number;
-  authorize_url: string;
   callback_port: number;
+  authorize_url?: string;
+  state?: string;
+  verifier?: string;
+  client_id?: string;
+  redirect_uri?: string;
+  resource?: string;
 }
 
 export function authLockPath(): string {
@@ -58,29 +64,26 @@ export function portListening(port: unknown, timeoutMs = 700): Promise<boolean> 
   });
 }
 
-// The file alone is never proof of a live flow — the caller must also see the
-// callback port listening before it surfaces this URL to anyone.
 export function readAuthLock(): AuthLock | null {
   try {
-    const l = JSON.parse(readFileSync(authLockPath(), "utf8")) as AuthLock;
-    if (!(Date.now() - l.started_at < AUTH_LOCK_FRESH_MS)) return null;
-    if (!pidAlive(l.pid)) return null; // the winner is gone; nothing holds the port
-    return l;
-  } catch {}
-  return null;
+    return JSON.parse(readFileSync(authLockPath(), "utf8")) as AuthLock;
+  } catch {
+    return null;
+  }
 }
 
-// Written only by the process that holds the port, so it needs no exclusion
-// dance: the bind already settled who writes here.
-export function writeAuthLock(url: string, port: number): void {
+// Written by the process that holds the port — the bind already settled who
+// writes here, so no exclusion dance is needed.
+export function writeAuthLock(
+  fields: Omit<AuthLock, "pid" | "started_at"> & Partial<Pick<AuthLock, "pid" | "started_at">>,
+): void {
   mkdirSync(CFG.authDir, { recursive: true, mode: 0o700 });
   writeFileSync(
     authLockPath(),
     JSON.stringify({
-      pid: process.pid,
-      started_at: Date.now(),
-      authorize_url: url,
-      callback_port: port,
+      ...fields,
+      pid: fields.pid ?? process.pid,
+      started_at: fields.started_at ?? Date.now(),
     }),
     { mode: 0o600 },
   );
@@ -92,13 +95,13 @@ export function releaseAuthLock(): void {
   } catch {}
 }
 
-// A winner that dies mid-flow must not leave the machine locked for the
-// stale-window: drop an owned lock on the way out.
+// A published login outlives its bridge on purpose. A bare claim does not: a
+// claimer that dies before publishing must not keep siblings waiting on it.
 export function installAuthLockExitHook(): void {
   process.on("exit", () => {
     try {
       const l = JSON.parse(readFileSync(authLockPath(), "utf8")) as AuthLock;
-      if (l.pid === process.pid) unlinkSync(authLockPath());
+      if (l.pid === process.pid && !l.authorize_url) unlinkSync(authLockPath());
     } catch {}
   });
 }

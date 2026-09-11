@@ -73,6 +73,7 @@ export async function startFakeNks(opts = {}) {
     mcpHangMs: 0, // hold /mcp open past the caller's deadline: the request left, the answer never came
     refreshDelayMs: opts.refreshDelayMs ?? 0, // widen the window several bridges race in
     codeDelayMs: opts.codeDelayMs ?? 0, // hold the code exchange open, as a slow server does
+    registerDelayMs: opts.registerDelayMs ?? 0, // hold dynamic registration open: the window two bridges race in
     refreshNotBeforeMs: opts.refreshNotBeforeMs ?? 0, // hold the refresh token back this long
     accessExpSkewSec: opts.accessExpSkewSec ?? 0, // make the access token's own exp disagree with expires_in
     padBytes: opts.padBytes ?? 0, // make answers bigger than one pipe buffer
@@ -258,6 +259,7 @@ export async function startFakeNks(opts = {}) {
 
     if (p === "/register" && req.method === "POST") {
       st.counts.register++;
+      if (st.registerDelayMs) await new Promise((r) => setTimeout(r, st.registerDelayMs));
       const reg = JSON.parse(await body(req));
       const id = token("client");
       st.clients.set(id, reg);

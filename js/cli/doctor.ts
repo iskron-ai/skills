@@ -160,9 +160,6 @@ function grantReport(): void {
   const st = loadGrantState();
   if (st.refused_since)
     out(`  отказ стоит с ${new Date(st.refused_since).toISOString()}: ${st.reason ?? ""}`);
-  if (st.snooze_until && Date.now() < st.snooze_until) {
-    out(`  вход отложен ещё на ${seconds(st.snooze_until - Date.now())} (человек не завершил)`);
-  }
   for (const suffix of [".auth-pending", ".refreshing"]) {
     if (existsSync(path + suffix)) out(`  замок: ${path + suffix}`);
   }

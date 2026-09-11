@@ -6,7 +6,6 @@ import {
   errorCode,
   errorMessage,
   HoldOffError,
-  LoginHeld,
   TokenError,
 } from "../errors.ts";
 import { grantLog, loadGrantState, loadStore, saveGrantState, saveStore, sleep } from "../store.ts";
@@ -14,7 +13,6 @@ import { debug, log } from "../streams.ts";
 import { refreshHours, tokenUsable, usableTokens } from "../tokens.ts";
 import { type Meta, type Tokens } from "../types.ts";
 import { discoverMeta } from "./discovery.ts";
-import { LOGIN_GRACE_MS } from "./pacing.ts";
 import { acquireRefreshLock, releaseRefreshLock } from "./refreshlock.ts";
 import { tokenRequest } from "./tokenrequest.ts";
 
@@ -52,6 +50,8 @@ async function refreshOnce(meta: Meta, cur: Tokens, proactive: boolean): Promise
     throw new HoldOffError(
       `the token endpoint refused this grant as too early moments ago` +
         ` — not knocking again for ${left}s; grant kept, will retry`,
+      false,
+      hours.nbf as number,
     );
   }
   debug("refreshing access token");
@@ -172,6 +172,7 @@ async function refreshOnce(meta: Meta, cur: Tokens, proactive: boolean): Promise
           ? `token refresh refused too early again (${message}) — the hour is real: ${why}; grant kept`
           : `token refresh refused too early (${message}) — ${why}; grant kept, will retry`,
         !!notYet && !repeated,
+        notYet ? (hours.nbf as number) : null,
       );
     }
     // A rotated-away token is refused in exactly the same words as a dead one.
@@ -274,16 +275,14 @@ export async function refreshShared(
   }
 }
 
-// Start the human's grace on the first refusal. `refused_at` is the latest
-// refusal by any caller; the background uses it to decide whether another
-// control knock is due.
+// The machine's memory of a refused grant. `refused_at` is the latest refusal
+// by any caller — the background uses it to decide whether another control
+// knock is due; `refused_since` dates the first, for doctor to show.
 function noteRefusal(reason: string): void {
   const local = Date.now();
   const first = !loadGrantState().refused_since;
   saveGrantState({ refused_at: local, ...(first ? { refused_since: local, reason } : {}) });
-  if (first) {
-    grantLog(`grant refused, holding the login back for ${LOGIN_GRACE_MS / 1000}s: ${reason}`);
-  }
+  if (first) grantLog(`grant refused: ${reason}`);
 }
 
 // The machine already holds a verdict on this grant, recorded moments ago by
@@ -291,34 +290,4 @@ function noteRefusal(reason: string): void {
 export function refusalStands(): boolean {
   const at = loadGrantState().refused_at;
   return !!at && Date.now() - at < REFUSED_KNOCK_MS;
-}
-
-// `asked` is the harness connecting — a session starting, a /mcp reconnect: a
-// human at the keyboard, now. Neither pause below is theirs to sit through. The
-// harness does not connect again by itself, so a login held past this moment
-// opens for nobody, and the human who just asked sees no login at all (graph
-// @nks/nks-dev, node #4790).
-export function holdOffLogin(reason: string, expired = false, asked = false): void {
-  if (asked) return;
-  const local = Date.now(); // human pacing runs on the human's own clock
-  const st = loadGrantState();
-  if (st.snooze_until && local < st.snooze_until) {
-    throw new LoginHeld(
-      `authorization was offered and not completed — not asking again for ` +
-        `${Math.round((st.snooze_until - local) / 1000)}s (grant refused: ${reason})`,
-    );
-  }
-  // The grace exists because a refusal can be a server mid-restart wearing a
-  // dead grant's words. A grant past its own exp is not ambiguous: its hours
-  // are proof, and the keepalive never knocks on it — so the grace would start
-  // stone-cold at the human's first call and cost them two minutes of failing
-  // calls before the login they already owe. Ask at once instead.
-  if (expired) return;
-  const since = st.refused_since || local;
-  if (local - since < LOGIN_GRACE_MS) {
-    throw new LoginHeld(
-      `grant refused (${reason}) — holding off the login for ` +
-        `${Math.round((LOGIN_GRACE_MS - (local - since)) / 1000)}s in case it heals`,
-    );
-  }
 }
