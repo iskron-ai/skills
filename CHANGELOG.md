@@ -1,5 +1,13 @@
 # Changelog
 
+## [6.6.4](https://github.com/iskron-ai/skills/compare/v6.6.3...v6.6.4) (2026-09-11)
+
+
+### Bug Fixes
+
+* **bridge,establish-mcp:** вход без «подожди N минут» — одна вкладка на вход, рабочая до конца ([#121](https://github.com/iskron-ai/skills/issues/121)) ([d427ce3](https://github.com/iskron-ai/skills/commit/d427ce363a0619018eb3ee5ff3403dfd7cfecc8f))
+* **bridge,establish-mcp:** мёртвый грант не роняет рукопожатие — вход доходит до человека первым вызовом ([#119](https://github.com/iskron-ai/skills/issues/119)) ([da51668](https://github.com/iskron-ai/skills/commit/da51668f3351f807137fe31de30cde3df7dd8340))
+
 ## [6.6.3](https://github.com/iskron-ai/skills/compare/v6.6.2...v6.6.3) (2026-09-10)
 
 

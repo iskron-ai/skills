@@ -15,7 +15,7 @@ function classifyOrigin(frame, myKarta) {
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-var VERSION = "6.6.3";
+var VERSION = "6.6.4";
 function buildOf(selfUrl) {
   try {
     const src = readFileSync(fileURLToPath(selfUrl));
