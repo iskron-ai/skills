@@ -75,6 +75,7 @@ export async function startFakeNks(opts = {}) {
     codeDelayMs: opts.codeDelayMs ?? 0, // hold the code exchange open, as a slow server does
     registerDelayMs: opts.registerDelayMs ?? 0, // hold dynamic registration open: the window two bridges race in
     refreshNotBeforeMs: opts.refreshNotBeforeMs ?? 0, // hold the refresh token back this long
+    keepRefresh: opts.keepRefresh ?? false, // keep the refresh token across a refresh, issuing only a new access token
     accessExpSkewSec: opts.accessExpSkewSec ?? 0, // make the access token's own exp disagree with expires_in
     padBytes: opts.padBytes ?? 0, // make answers bigger than one pipe buffer
     // The server's clock runs this far ahead of the machine's (a customer's
@@ -361,7 +362,7 @@ export async function startFakeNks(opts = {}) {
           });
         }
         st.access = mintAccess(st);
-        st.refresh = mintRefresh(st); // rotation
+        if (!st.keepRefresh) st.refresh = mintRefresh(st); // rotation — unless this server keeps it
         return json(res, 200, {
           access_token: st.access,
           refresh_token: st.refresh,

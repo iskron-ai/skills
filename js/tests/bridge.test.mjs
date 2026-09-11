@@ -2460,7 +2460,7 @@ test("a live port under a dead publisher is a stranger's — its link is not han
 // for. When the grant is then gone for real, the login's one tab opens once.
 test("beside a blind grant the login comes as a link, not a tab — a tab only once a human is needed", async (t) => {
   if (process.platform === "win32") return t.skip("the opener is PowerShell there");
-  await withFake(t, { refreshNotBeforeMs: 60_000 }, async ({ fake, dir, spawnBridge }) => {
+  await withFake(t, { refreshNotBeforeMs: 2000 }, async ({ fake, dir, spawnBridge }) => {
     const first = spawnBridge();
     await authorize(first, dir);
     await first.stop();
@@ -2483,21 +2483,145 @@ test("beside a blind grant the login comes as a link, not a tab — a tab only o
         return [];
       }
     };
-    const a = spawnBridge({ PATH: `${root}:${process.env.PATH}` }, { browser: true });
+    const a = spawnBridge(
+      {
+        PATH: `${root}:${process.env.PATH}`,
+        ISKRON_BRIDGE_IN_CALL_WAIT_MS: "100",
+        ISKRON_BRIDGE_DEAD_RECHECK_MS: "50",
+      },
+      { browser: true },
+    );
     const url = authorizeUrlIn((await a.call("initialize", 1, INIT_PARAMS)).error?.message);
     assert.ok(url, "a blind grant is offered a login beside its hour");
     await pause(500);
     assert.deepEqual(opened(), [], "no tab for a grant that comes back by itself");
 
-    const gone = readStore(dir); // now there is no grant to come back
-    delete gone.tokens.refresh_token;
-    writeFileSync(storeFile(dir), JSON.stringify(gone));
-    await a.call("tools/call", 2, { name: "nks_orient", arguments: {} });
+    // Its hour comes and the grant is refused for real: now a human is needed,
+    // and the caller joining the login that is out opens its one tab.
+    await fake.control({ refreshStatus: 400, refreshError: "invalid_grant" });
+    await pause(Math.max(0, fake.state.refreshValidFrom - Date.now()) + 200);
+    const dead = await a.call("tools/call", 2, { name: "nks_orient", arguments: {} });
+    assert.equal(authorizeUrlIn(dead.error?.message), url, "the same login, joined");
     await waitFor(() => opened().length === 1, "the tab a human is now needed for");
     await a.call("tools/call", 3, { name: "nks_orient", arguments: {} });
     await pause(300);
     assert.equal(opened().length, 1, "one tab, however many calls");
   });
+});
+
+// The bridge that takes over a login out as a link — its publisher gone — opens
+// the tab when a human is needed for it; and a bridge that cannot open a
+// browser marks no tab it never opened, leaving it to one that can.
+test("a login out as a link gets its one tab from the bridge that takes it over", async (t) => {
+  if (process.platform === "win32") return t.skip("the opener is PowerShell there");
+  await withFake(t, { refreshNotBeforeMs: 2000 }, async ({ fake, dir, spawnBridge }) => {
+    const first = spawnBridge();
+    await authorize(first, dir);
+    await first.stop();
+    const s = readStore(dir);
+    s.tokens.expires_at = Date.now() - 1000;
+    writeFileSync(storeFile(dir), JSON.stringify(s));
+    await fake.control({ revoke_access: true });
+
+    const quick = { ISKRON_BRIDGE_IN_CALL_WAIT_MS: "100", ISKRON_BRIDGE_DEAD_RECHECK_MS: "50" };
+    const a = spawnBridge(quick);
+    const url = authorizeUrlIn((await a.call("initialize", 1, INIT_PARAMS)).error?.message);
+    assert.ok(url, "a blind grant is offered a login beside its hour");
+    await a.stop(); // its publisher gone, the login stays
+
+    await fake.control({ refreshStatus: 400, refreshError: "invalid_grant" });
+    await pause(Math.max(0, fake.state.refreshValidFrom - Date.now()) + 200);
+    const root = mkdtempSync(join(tmpdir(), "iskron-opener-"));
+    const record = join(root, "opened.txt");
+    for (const name of ["open", "xdg-open"]) {
+      writeFileSync(join(root, name), `#!/bin/sh\nprintf '%s\\n' "$@" >> "${record}"\n`, {
+        mode: 0o755,
+      });
+    }
+    const b = spawnBridge({ ...quick, PATH: `${root}:${process.env.PATH}` }, { browser: true });
+    const taken = authorizeUrlIn((await b.call("initialize", 1, INIT_PARAMS)).error?.message);
+    assert.equal(taken, url, "the same login, taken over");
+    await waitFor(
+      () => readFileSync(record, "utf8").includes(url),
+      "the tab a human is needed for",
+    );
+    assert.equal(readFileSync(record, "utf8").trim().split("\n").length, 1, "exactly one");
+  });
+});
+
+test("a bridge that cannot open a browser leaves the login's tab to one that can", async (t) => {
+  if (process.platform === "win32") return t.skip("the opener is PowerShell there");
+  await withFake(t, {}, async ({ fake, dir, spawnBridge }) => {
+    const first = spawnBridge();
+    await authorize(first, dir);
+    await first.stop();
+    const s = readStore(dir);
+    s.tokens.expires_at = Date.now() - 1000;
+    writeFileSync(storeFile(dir), JSON.stringify(s));
+    await fake.control({ refreshStatus: 400, refreshError: "invalid_grant", revoke_access: true });
+
+    const headless = spawnBridge({ ISKRON_BRIDGE_DEAD_RECHECK_MS: "50" }); // --no-browser
+    const url = authorizeUrlIn((await headless.call("initialize", 1, INIT_PARAMS)).error?.message);
+    assert.ok(url, "a dead grant publishes a login");
+
+    const root = mkdtempSync(join(tmpdir(), "iskron-opener-"));
+    const record = join(root, "opened.txt");
+    for (const name of ["open", "xdg-open"]) {
+      writeFileSync(join(root, name), `#!/bin/sh\nprintf '%s\\n' "$@" >> "${record}"\n`, {
+        mode: 0o755,
+      });
+    }
+    const human = spawnBridge(
+      { ISKRON_BRIDGE_DEAD_RECHECK_MS: "50", PATH: `${root}:${process.env.PATH}` },
+      { browser: true },
+    );
+    const joined = authorizeUrlIn((await human.call("initialize", 1, INIT_PARAMS)).error?.message);
+    assert.equal(joined, url, "the same login, joined");
+    await waitFor(
+      () => readFileSync(record, "utf8").includes(url),
+      "the tab the headless bridge could not open",
+    );
+  });
+});
+
+// A server may keep its refresh token and issue only a new access token. The
+// grant still came back, and the login beside it is still moot.
+test("a server that keeps its refresh token still makes the moot login close", async (t) => {
+  await withFake(
+    t,
+    { refreshNotBeforeMs: 2000, keepRefresh: true },
+    async ({ fake, dir, spawnBridge }) => {
+      const first = spawnBridge();
+      await authorize(first, dir);
+      await first.stop();
+      const s = readStore(dir);
+      s.tokens.expires_at = Date.now() - 1000;
+      writeFileSync(storeFile(dir), JSON.stringify(s));
+      await fake.control({ revoke_access: true });
+
+      const a = spawnBridge({
+        ISKRON_BRIDGE_IN_CALL_WAIT_MS: "100",
+        ISKRON_BRIDGE_LANDED_POLL_MS: "100",
+      });
+      const url = authorizeUrlIn((await a.call("initialize", 1, INIT_PARAMS)).error?.message);
+      assert.ok(url, "a blind grant is offered a login beside its hour");
+      await pause(Math.max(0, fake.state.refreshValidFrom - Date.now()) + 200); // the hour comes
+      const served = await a.call("tools/call", 2, { name: "nks_orient", arguments: {} });
+      assert.ok(
+        served.result && !served.error,
+        `the grant is back: ${JSON.stringify(served.error)}`,
+      );
+      assert.equal(
+        readStore(dir).tokens.refresh_token,
+        s.tokens.refresh_token,
+        "precondition: the server kept its refresh token",
+      );
+      await waitFor(
+        async () => !(await portListening(callbackPortOf(url))),
+        "the moot login to close",
+      );
+    },
+  );
 });
 
 // The grant a moot login is judged against is the grant itself, not a stamp

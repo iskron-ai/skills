@@ -806,8 +806,8 @@ var loginLink = (port, key) => `http://127.0.0.1:${port}/login?k=${key}`;
 var linkPrefix = (port) => `http://127.0.0.1:${port}/login?k=`;
 var redirectFor = (port) => `http://127.0.0.1:${port}/callback`;
 var grantPrint = (t) => {
-  const token = t?.refresh_token || t?.access_token;
-  return token ? b64url(sha256(token)).slice(0, 16) : "";
+  const both = [t?.refresh_token, t?.access_token].filter(Boolean).join("|");
+  return both ? b64url(sha256(both)).slice(0, 16) : "";
 };
 function published(l) {
   if (!l?.authorize_url || !l.state || !l.verifier) return false;
@@ -821,6 +821,7 @@ function loginPublished() {
   return published(readAuthLock());
 }
 function showTab(l) {
+  if (CFG.noBrowser) return;
   const current = readAuthLock();
   if (current?.state === l.state) writeAuthLock({ ...current, tab: true });
   openBrowser(l.authorize_url);
@@ -861,7 +862,12 @@ async function interactiveFlow(meta, note3, wantTab = true) {
   if (published(standing)) {
     const cb = await bindOrNull(standing.callback_port);
     if (cb) {
-      writeAuthLock({ ...standing, pid: process.pid, tab: !!standing.tab || wantTab });
+      writeAuthLock({
+        ...standing,
+        pid: process.pid,
+        tab: !!standing.tab || wantTab && !CFG.noBrowser
+        // the fact, not the wish
+      });
       log(
         "the bridge that published this login is gone — listening on its link, so the tab the human has still lands"
       );
@@ -909,7 +915,8 @@ async function interactiveFlow(meta, note3, wantTab = true) {
       state: b64url(randomBytes(24)),
       verifier: b64url(randomBytes(48)),
       grant: grantPrint(loadStore().tokens),
-      tab: wantTab
+      tab: wantTab && !CFG.noBrowser
+      // the fact, not the wish: a headless bridge opens nothing
     };
     writeAuthLock(login);
     grantLog("authorization flow published — waiting for the human");

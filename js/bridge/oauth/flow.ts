@@ -47,18 +47,20 @@ const redirectFor = (port: number): string => `http://127.0.0.1:${port}/callback
 // Which grant the machine holds, as a short fingerprint of its tokens: a login
 // published over one grant is moot once another is there — whichever bridge,
 // of whatever build, wrote it down.
+// Both tokens: a server that does not rotate its refresh tokens still issues a
+// new access token with every grant it hands out.
 const grantPrint = (t: Tokens | null | undefined): string => {
-  const token = t?.refresh_token || t?.access_token;
-  return token ? b64url(sha256(token)).slice(0, 16) : "";
+  const both = [t?.refresh_token, t?.access_token].filter(Boolean).join("|");
+  return both ? b64url(sha256(both)).slice(0, 16) : "";
 };
 
 type Published = AuthLock & Required<Pick<AuthLock, "authorize_url" | "state" | "verifier">>;
 
 // A login this build published: its link and what catches its redirect. Good
-// until it lands or is refused — a grant written down after it was published
-// means it landed (a bridge killed between saving the tokens and dropping the
-// record leaves exactly that, and taking it over would hand the human a link
-// to a login that is over).
+// until it lands or is refused — a grant other than the one it was published
+// over means it landed or the grant came back by itself (a bridge killed
+// between saving the tokens and dropping the record leaves exactly that, and
+// taking it over would hand the human a link to a login that is over).
 function published(l: AuthLock | null): l is Published {
   if (!l?.authorize_url || !l.state || !l.verifier) return false;
   if (!l.authorize_url.startsWith(linkPrefix(l.callback_port))) return false;
@@ -80,6 +82,7 @@ export function loginPublished(): boolean {
 // The login's one tab, opened by the first bridge that needs a human for it —
 // and marked, so no other opens a second.
 function showTab(l: Published): void {
+  if (CFG.noBrowser) return; // a bridge that cannot open a browser leaves the tab to one that can
   const current = readAuthLock();
   if (current?.state === l.state) writeAuthLock({ ...current, tab: true });
   openBrowser(l.authorize_url);
@@ -124,8 +127,9 @@ async function linkOn(port: number): Promise<string | null> {
 // with its link at once — no harness call ever blocks on a human. The bridge
 // listening on the link finishes the login in the background and saves the
 // tokens; every instance picks them up from the store on its next call.
-// One login, one tab (#4794): only the bridge that publishes a login opens the
-// browser; one that joins or takes it over never does — the human has that tab.
+// One login, one tab (#4794): the first bridge that needs a human for a login —
+// publishing, taking it over or joining it — opens its tab and marks it in the
+// record; no other opens a second.
 // `wantTab` says a human is needed — the grant is dead or absent. A login
 // offered beside a grant merely blind until its hour comes as a link alone:
 // the grant comes back by itself, and a tab every such window is a tab nobody
@@ -146,7 +150,11 @@ export async function interactiveFlow(meta: Meta, note?: string, wantTab = true)
   if (published(standing)) {
     const cb = await bindOrNull(standing.callback_port);
     if (cb) {
-      writeAuthLock({ ...standing, pid: process.pid, tab: !!standing.tab || wantTab });
+      writeAuthLock({
+        ...standing,
+        pid: process.pid,
+        tab: !!standing.tab || (wantTab && !CFG.noBrowser), // the fact, not the wish
+      });
       log(
         "the bridge that published this login is gone — listening on its link, so the tab the human has still lands",
       );
@@ -206,7 +214,7 @@ export async function interactiveFlow(meta: Meta, note?: string, wantTab = true)
       state: b64url(randomBytes(24)),
       verifier: b64url(randomBytes(48)),
       grant: grantPrint(loadStore().tokens),
-      tab: wantTab,
+      tab: wantTab && !CFG.noBrowser, // the fact, not the wish: a headless bridge opens nothing
     };
     writeAuthLock(login); // we hold the port, so the login is ours to publish
     grantLog("authorization flow published — waiting for the human");

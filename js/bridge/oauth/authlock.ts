@@ -76,8 +76,11 @@ export function readAuthLock(): AuthLock | null {
   }
 }
 
-// Written by the process that holds the port — the bind already settled who
-// writes here, so no exclusion dance is needed.
+// Written by the process that holds the port — the bind settled who writes
+// here. The one exception is the mark of the login's tab, which the bridge that
+// opened it adds by read-modify-write: a narrow race the record tolerates (a lost
+// mark costs one more tab at most; a lost minted client falls back to the
+// machine's registration at the exchange).
 export function writeAuthLock(
   fields: Omit<AuthLock, "pid" | "started_at"> & Partial<Pick<AuthLock, "pid" | "started_at">>,
 ): void {
