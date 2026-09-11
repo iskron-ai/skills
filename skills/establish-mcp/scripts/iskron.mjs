@@ -829,6 +829,7 @@ async function tokenRequest(meta, params) {
 var CLAIM_WAIT_MS = Number(process.env.ISKRON_BRIDGE_CLAIM_WAIT_MS) || 15e3;
 var CLAIM_GLANCE_MS = 1e3;
 var LANDED_POLL_MS = Number(process.env.ISKRON_BRIDGE_LANDED_POLL_MS) || 2e3;
+var RELEASE_GAP_MS = Number(process.env.ISKRON_BRIDGE_RELEASE_GAP_MS) || 0;
 var flows = /* @__PURE__ */ new Set();
 function pendingFlow() {
   return flows.size ? Promise.allSettled([...flows]).then(() => {
@@ -917,6 +918,11 @@ async function interactiveFlow(meta, note3, wantTab = true) {
     if (cb && published(still)) {
       cb.close();
       return interactiveFlow(meta, note3, wantTab);
+    }
+    const now2 = loadStore().tokens;
+    if (cb && standing.grant !== void 0 && grantPrint(now2) !== standing.grant && now2) {
+      cb.close();
+      return now2;
     }
     callback = cb;
   }
@@ -1036,6 +1042,7 @@ function runFlow(meta, cb, login, openTab) {
     } finally {
       clearInterval(watch);
       releaseAuthLock(ours);
+      if (RELEASE_GAP_MS) await sleep(RELEASE_GAP_MS);
       cb.close();
       if (flow) flows.delete(flow);
     }

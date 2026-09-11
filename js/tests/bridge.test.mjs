@@ -2710,6 +2710,27 @@ test("a declined login keeps its tab marker after its record is gone", async (t)
   });
 });
 
+// A login that is over drops its record before its port. A bridge that meets
+// the port free in between must not take the declined login over and hand it
+// out again: the next need gets a new login (#4794). The probe holds that gap
+// open; a login closing port-first shows its record over a free port there.
+test("a bridge meeting a declined login's port free publishes a new login, not the declined one", async (t) => {
+  await withFake(t, {}, async ({ dir, spawnBridge }) => {
+    const a = spawnBridge({ ISKRON_BRIDGE_RELEASE_GAP_MS: "3000" });
+    const url = authorizeUrlIn((await a.call("initialize", 1, INIT_PARAMS)).error?.message);
+    assert.ok(url, "a login must be pending");
+    const declined = loginState(dir);
+    const back = `http://127.0.0.1:${callbackPortOf(url)}/callback?error=access_denied&state=${declined}`;
+    await (await fetch(back)).text();
+    const b = spawnBridge();
+    const offered = authorizeUrlIn((await b.call("initialize", 1, INIT_PARAMS)).error?.message);
+    assert.ok(offered, "the next need is offered a login");
+    const now = loginState(dir);
+    assert.ok(now, "a login is out");
+    assert.notEqual(now, declined, "the declined login is over — this must be a new one");
+  });
+});
+
 // A record the bridge cannot lay down leaves no copy of it behind: the
 // temporary file carries the login's verifier.
 test("a login record that cannot be written leaves no temporary copy behind", async (t) => {

@@ -27,6 +27,9 @@ const CLAIM_GLANCE_MS = 1_000;
 /** How often a waiting login checks whether the grant came back without it. */
 const LANDED_POLL_MS = Number(process.env.ISKRON_BRIDGE_LANDED_POLL_MS) || 2_000;
 
+/** A probe's handle only: holds a closing login's port open after its record is dropped. */
+const RELEASE_GAP_MS = Number(process.env.ISKRON_BRIDGE_RELEASE_GAP_MS) || 0;
+
 // The logins this process is listening for in the background: the harness
 // must not kill them under the human's click (see main).
 const flows = new Set<Promise<void>>();
@@ -190,7 +193,14 @@ export async function interactiveFlow(meta: Meta, note?: string, wantTab = true)
       cb.close(); // another login went out meanwhile: that one is joined, not a second
       return interactiveFlow(meta, note, wantTab);
     }
-    callback = cb; // the login ended meanwhile: the port serves a new one
+    // Over with a grant other than the one it was published over: it landed a
+    // moment ago, and that grant is what the caller came for — no new login.
+    const now = loadStore().tokens;
+    if (cb && standing.grant !== undefined && grantPrint(now) !== standing.grant && now) {
+      cb.close();
+      return now;
+    }
+    callback = cb; // the login was declined meanwhile: the port serves a new one
   }
   if (published(standing) && !callback) {
     const taken = readAuthLock(); // a sibling may have taken it over first
@@ -335,6 +345,7 @@ function runFlow(meta: Meta, cb: Callback, login: Published, openTab: boolean): 
     } finally {
       clearInterval(watch);
       releaseAuthLock(ours); // the record before the port: see the takeover in interactiveFlow
+      if (RELEASE_GAP_MS) await sleep(RELEASE_GAP_MS);
       cb.close();
       if (flow) flows.delete(flow);
     }
