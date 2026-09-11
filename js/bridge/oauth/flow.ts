@@ -7,6 +7,7 @@ import { debug, log } from "../streams.ts";
 import { type Meta, type Tokens } from "../types.ts";
 import {
   type AuthLock,
+  claimTab,
   pidAlive,
   portListening,
   readAuthLock,
@@ -89,6 +90,7 @@ function showTab(l: Published): Published {
   // A bridge that cannot open a browser leaves the tab to one that can; a tab
   // another bridge opened a moment ago is the one tab.
   if (CFG.noBrowser || current.tab) return current;
+  if (!claimTab(current.state)) return current; // another bridge won the tab this very instant
   writeAuthLock({ ...current, tab: true });
   openBrowser(current.authorize_url);
   return current;

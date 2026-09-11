@@ -580,12 +580,21 @@ function writeAuthLock(fields) {
 }
 function releaseAuthLock(owns) {
   try {
-    if (owns) {
-      const l = readAuthLock();
-      if (!l || !owns(l)) return;
-    }
+    const l = readAuthLock();
+    if (owns && (!l || !owns(l))) return;
     unlinkSync2(authLockPath());
+    if (l?.state) unlinkSync2(tabMarkPath(l.state));
   } catch {
+  }
+}
+var tabMarkPath = (state2) => `${authLockPath()}.tab-${state2}`;
+function claimTab(state2) {
+  try {
+    mkdirSync2(CFG.authDir, { recursive: true, mode: 448 });
+    writeFileSync2(tabMarkPath(state2), "", { flag: "wx", mode: 384 });
+    return true;
+  } catch {
+    return false;
   }
 }
 function installAuthLockExitHook() {
@@ -824,6 +833,7 @@ function showTab(l) {
   const current = readAuthLock();
   if (!published(current)) return l;
   if (CFG.noBrowser || current.tab) return current;
+  if (!claimTab(current.state)) return current;
   writeAuthLock({ ...current, tab: true });
   openBrowser(current.authorize_url);
   return current;

@@ -77,11 +77,11 @@ export function readAuthLock(): AuthLock | null {
 }
 
 // Written by the process that holds the port — the bind settled who writes
-// here. The one exception is the mark of the login's tab, which the bridge that
-// opened it adds by read-modify-write, checking first that no one has: a narrow
-// race the record tolerates (bridges marking in the very same instant could
-// each open a tab; a lost minted client falls back to the machine's
-// registration at the exchange).
+// here. The one exception is the mark of the login's tab, added by the bridge
+// that opened it — which first won the tab's marker file, one no two processes
+// can both create, so bridges joining in the same instant open it once. (The
+// same read-modify-write can drop a client minted that instant; the exchange
+// then falls back to the machine's registration.)
 export function writeAuthLock(
   fields: Omit<AuthLock, "pid" | "started_at"> & Partial<Pick<AuthLock, "pid" | "started_at">>,
 ): void {
@@ -101,12 +101,26 @@ export function writeAuthLock(
 // has rewritten is not ours to drop, so a caller names what it owns.
 export function releaseAuthLock(owns?: (l: AuthLock) => boolean): void {
   try {
-    if (owns) {
-      const l = readAuthLock();
-      if (!l || !owns(l)) return;
-    }
+    const l = readAuthLock();
+    if (owns && (!l || !owns(l))) return;
     unlinkSync(authLockPath());
+    if (l?.state) unlinkSync(tabMarkPath(l.state));
   } catch {}
+}
+
+const tabMarkPath = (state: string): string => `${authLockPath()}.tab-${state}`;
+
+// The one tab of a login goes to whoever creates its marker: exclusive create
+// is atomic across processes, where reading the record and then writing it is
+// not — bridges joining in the same instant each read "no tab yet" (#4794).
+export function claimTab(state: string): boolean {
+  try {
+    mkdirSync(CFG.authDir, { recursive: true, mode: 0o700 });
+    writeFileSync(tabMarkPath(state), "", { flag: "wx", mode: 0o600 });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 // A published login outlives its bridge on purpose. A bare claim does not: a
