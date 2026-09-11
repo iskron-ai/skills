@@ -20,7 +20,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 import { Bridge, resultToContent, snippet, toParameters } from "../shared/bridge-client.ts";
-import { PI_CLIENT } from "../shared/clients.ts";
 import { findBridge, type Notify, refreshHomeBridge } from "./home-copy.ts";
 
 export type ChannelEventSink = (params: any) => void;
@@ -81,7 +80,7 @@ export function setupBridge(pi: ExtensionAPI, onChannel: ChannelEventSink): void
       {
         protocolVersion: PROTOCOL,
         capabilities: {},
-        clientInfo: { name: PI_CLIENT, version: "1" },
+        clientInfo: { name: "pi-iskron", version: "1" },
       },
       { timeoutMs: HANDSHAKE_MS },
     );

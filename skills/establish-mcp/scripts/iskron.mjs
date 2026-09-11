@@ -1181,8 +1181,8 @@ function startTokenKeepalive() {
 
 // js/shared/clients.ts
 var OPENCODE_CLIENT = "opencode-iskron";
-var PI_CLIENT = "pi-iskron";
-var OWN_CLIENTS = /* @__PURE__ */ new Set([OPENCODE_CLIENT, PI_CLIENT]);
+var SURFACE_CLIENT = "export-surface";
+var OWN_CLIENTS = /* @__PURE__ */ new Set([OPENCODE_CLIENT, SURFACE_CLIENT]);
 
 // js/bridge/hold.ts
 import {

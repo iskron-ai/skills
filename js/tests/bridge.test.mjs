@@ -40,8 +40,9 @@ const INIT_PARAMS = {
   capabilities: {},
   clientInfo: { name: "test-harness", version: "0" },
 };
-// Our own client — the OpenCode plugin: it raises the bridge by itself and reads
-// a refused handshake itself, so its handshake is paced like any call (#4790).
+// Our own client — the OpenCode plugin: it reads a refused handshake itself and
+// waits out the login, so its handshake is paced like any call (#4790). The name
+// mirrors OWN_CLIENTS in js/shared/clients.ts; a probe cannot import TypeScript.
 const OWN_INIT_PARAMS = { ...INIT_PARAMS, clientInfo: { name: "opencode-iskron", version: "1" } };
 
 // --- driving the bridge the way a harness does -----------------------------
@@ -2452,6 +2453,42 @@ test("our own clients' handshake over a dead grant is still refused with the lin
       "the plugin knows a login in progress by these words",
     );
     assert.ok(authorizeUrlIn(init.error.message), "the refusal must carry the link it shows");
+
+    // make surface is ours too: a snapshot written from a stale answer would pass for the live one.
+    const surface = spawnBridge();
+    const exported = await surface.call("initialize", 1, {
+      ...INIT_PARAMS,
+      clientInfo: { name: "export-surface", version: "0" },
+    });
+    assert.ok(
+      authorizeUrlIn(exported.error?.message),
+      `the surface export must see the login, not the last answer: ${JSON.stringify(exported)}`,
+    );
+  });
+});
+
+test("our own client's handshake keeps the audience diagnosis rather than the last answer", async (t) => {
+  await withFake(t, {}, async ({ fake, dir, spawnBridge }) => {
+    const first = spawnBridge();
+    await authorize(first, dir);
+    assert.ok(
+      (await first.call("initialize", 2, INIT_PARAMS)).result,
+      "precondition: an answer to keep",
+    );
+    await first.stop();
+
+    await fake.control({ mcpStatus: 401 }); // every token refused, a fresh one included
+    const plugin = spawnBridge();
+    const answer = await plugin.call("initialize", 1, OWN_INIT_PARAMS);
+    assert.ok(
+      answer.error,
+      `the last answer hid a server that refuses every token: ${JSON.stringify(answer)}`,
+    );
+    assert.match(
+      answer.error.message,
+      /audience|ISKRON_BRIDGE_RESOURCE/,
+      "the second refusal must still point at the audience",
+    );
   });
 });
 

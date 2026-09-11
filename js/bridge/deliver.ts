@@ -119,10 +119,10 @@ function lastServerAnswer(msg: JsonRpcMessage): JsonRpcMessage | null {
   return result ? { jsonrpc: "2.0", id: msg.id, result } : null;
 }
 
-// Наш собственный клиент (плагин OpenCode, расширение pi) поднимает мост сам —
-// лениво, повторно после простоя — и отказ рукопожатия читает сам, показывая
-// человеку строку входа в своём окне: ему прежний отказ со ссылкой и прежний
-// темп входа. Остальное рукопожатие — харнеса, то есть человека (#4790).
+// Наш собственный клиент (плагин OpenCode, `make surface`) отказ рукопожатия
+// читает сам и ждёт входа, повторяя рукопожатие: ему прежний отказ и прежний
+// темп входа. Остальное рукопожатие — харнеса, то есть человека (#4790); кто
+// в списке и почему, сказано у самого списка.
 function ownClient(): boolean {
   const info = (state.initParams as { clientInfo?: { name?: unknown } } | null)?.clientInfo;
   return typeof info?.name === "string" && OWN_CLIENTS.has(info.name);
