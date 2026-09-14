@@ -3421,34 +3421,54 @@ function runWatchdogExit(argv2) {
 
 // js/cli/doctor.ts
 import { createHash as createHash5 } from "node:crypto";
-import { existsSync as existsSync5, readdirSync as readdirSync4, readFileSync as readFileSync10 } from "node:fs";
+import { existsSync as existsSync5, readdirSync as readdirSync4, readFileSync as readFileSync11 } from "node:fs";
 import { homedir as homedir6 } from "node:os";
-import { dirname as dirname3, join as join11 } from "node:path";
+import { dirname as dirname3, join as join12 } from "node:path";
+import { fileURLToPath as fileURLToPath5 } from "node:url";
+
+// js/shared/npm-package.ts
+import { readFileSync as readFileSync10 } from "node:fs";
+import { join as join11 } from "node:path";
 import { fileURLToPath as fileURLToPath4 } from "node:url";
+function packageRoot() {
+  const root = fileURLToPath4(new URL("../../../", import.meta.url));
+  try {
+    const manifest = JSON.parse(readFileSync10(join11(root, "package.json"), "utf8"));
+    return manifest.name === "@iskron/opencode" ? root : null;
+  } catch {
+    return null;
+  }
+}
+
+// js/cli/doctor.ts
 var out = (s) => {
   process.stdout.write(s + "\n");
 };
 var hashOf2 = (buf) => createHash5("sha256").update(buf).digest("hex").slice(0, 8);
 var seconds = (ms) => `${Math.round(ms / 1e3)}s`;
 function homeCopyReport() {
+  if (packageRoot()) {
+    out("домашняя копия: не используется npm-поставкой; версия управляется plugin specifier");
+    return;
+  }
   const home = homeBridgePath();
   let self = null;
   try {
-    self = readFileSync10(fileURLToPath4(import.meta.url));
+    self = readFileSync11(fileURLToPath5(import.meta.url));
   } catch {
   }
   if (!existsSync5(home)) {
     out(`домашняя копия: нет (${home}) — её кладёт establish-mcp при подключении`);
     return;
   }
-  const bytes = readFileSync10(home);
+  const bytes = readFileSync11(home);
   if (self && bytes.equals(self)) {
     out(`домашняя копия: ${home} — та же сборка, что и этот файл`);
     return;
   }
   const v = versionIn(bytes.toString("utf8"));
   out(
-    `домашняя копия: ${home} — v${v ?? "?"}+${hashOf2(bytes)}, ДРУГИЕ байты: ${self ? `обнови её из поставки: cp "${fileURLToPath4(import.meta.url)}" ${home}` : "этот файл не читается"}`
+    `домашняя копия: ${home} — v${v ?? "?"}+${hashOf2(bytes)}, ДРУГИЕ байты: ${self ? `обнови её из поставки: cp "${fileURLToPath5(import.meta.url)}" ${home}` : "этот файл не читается"}`
   );
 }
 async function serverReport() {
@@ -3556,7 +3576,7 @@ function grantReport() {
   }
   const logPath = grantLogPath();
   if (existsSync5(logPath)) {
-    const lines = readFileSync10(logPath, "utf8").trim().split("\n").slice(-3);
+    const lines = readFileSync11(logPath, "utf8").trim().split("\n").slice(-3);
     out(`  grant.log, последнее:`);
     for (const l of lines) out(`    ${l}`);
   }
@@ -3579,10 +3599,10 @@ function latestReport() {
   else out(`свежий релиз: v${latest.version}, этот файл не отстал; спрашивал ${ago} мин назад`);
 }
 function claudePluginReport() {
-  const registry = join11(homedir6(), ".claude", "plugins", "installed_plugins.json");
+  const registry = join12(homedir6(), ".claude", "plugins", "installed_plugins.json");
   if (!existsSync5(registry)) return;
   try {
-    const reg = JSON.parse(readFileSync10(registry, "utf8"));
+    const reg = JSON.parse(readFileSync11(registry, "utf8"));
     const mine = Object.entries(reg.plugins ?? {}).filter(([k]) => /^iskron@/.test(k));
     if (!mine.length) {
       out(`Claude Code: плагин iskron не установлен (${registry})`);
@@ -3590,11 +3610,11 @@ function claudePluginReport() {
     }
     for (const [key, installs] of mine) {
       for (const inst of installs) {
-        const manifest = inst.installPath ? join11(inst.installPath, ".mcp.json") : "";
+        const manifest = inst.installPath ? join12(inst.installPath, ".mcp.json") : "";
         let entry = "запись моста в манифесте не найдена";
         if (manifest && existsSync5(manifest)) {
           try {
-            const m = JSON.parse(readFileSync10(manifest, "utf8"));
+            const m = JSON.parse(readFileSync11(manifest, "utf8"));
             const hit = Object.entries(m.mcpServers ?? {}).find(
               ([, v]) => (v.args ?? []).some((a) => /iskron\.mjs/.test(a))
             );
@@ -3615,17 +3635,17 @@ function claudePluginReport() {
 function codexHomes() {
   const homes = [
     process.env.CODEX_HOME?.trim() || "",
-    join11(homedir6(), ".codex"),
-    ...process.platform === "darwin" ? [join11(homedir6(), "Library", "Application Support", "orca", "codex-runtime-home", "home")] : []
+    join12(homedir6(), ".codex"),
+    ...process.platform === "darwin" ? [join12(homedir6(), "Library", "Application Support", "orca", "codex-runtime-home", "home")] : []
   ].filter(Boolean);
   return [...new Set(homes)].filter((h) => existsSync5(h));
 }
 function codexPluginReport(home) {
-  const cache = join11(home, "plugins", "cache");
+  const cache = join12(home, "plugins", "cache");
   if (!existsSync5(cache)) return;
   let found = 0;
   for (const market of readdirSync4(cache)) {
-    const marketDir = join11(cache, market);
+    const marketDir = join12(cache, market);
     let plugins;
     try {
       plugins = readdirSync4(marketDir);
@@ -3634,12 +3654,12 @@ function codexPluginReport(home) {
     }
     for (const plugin of plugins) {
       if (!/iskron/.test(plugin)) continue;
-      const dir = join11(marketDir, plugin);
-      const manifest = join11(dir, ".codex-plugin", "plugin.json");
+      const dir = join12(marketDir, plugin);
+      const manifest = join12(dir, ".codex-plugin", "plugin.json");
       let word = "манифеста нет";
       if (existsSync5(manifest)) {
         try {
-          const m = JSON.parse(readFileSync10(manifest, "utf8"));
+          const m = JSON.parse(readFileSync11(manifest, "utf8"));
           const hit = Object.values(m.mcpServers ?? {}).some(
             (v) => (v.args ?? []).some((a) => /iskron\.mjs/.test(a))
           );
@@ -3656,10 +3676,10 @@ function codexPluginReport(home) {
 }
 function harnessReport() {
   claudePluginReport();
-  const claude = join11(homedir6(), ".claude.json");
+  const claude = join12(homedir6(), ".claude.json");
   if (existsSync5(claude)) {
     try {
-      const cfg = JSON.parse(readFileSync10(claude, "utf8"));
+      const cfg = JSON.parse(readFileSync11(claude, "utf8"));
       const entries = Object.entries(cfg.mcpServers ?? {}).filter(
         ([, v]) => (v.args ?? []).some((a) => /iskron/.test(a))
       );
@@ -3675,17 +3695,26 @@ function harnessReport() {
       out(`Claude Code: ${claude} не читается`);
     }
   }
-  const opencodeDir = join11(homedir6(), ".config", "opencode");
-  if (existsSync5(opencodeDir)) {
-    const copy = join11(opencodeDir, "plugins", "iskron.js");
-    const packaged = join11(dirname3(fileURLToPath4(import.meta.url)), "opencode-plugin.js");
+  const opencodeDir = join12(homedir6(), ".config", "opencode");
+  const npmRoot = packageRoot();
+  if (npmRoot) {
+    out(
+      `OpenCode: npm-пакет @iskron/opencode в ${npmRoot}; наличие пакета не доказывает загрузку в сессии`
+    );
+    if (existsSync5(join12(opencodeDir, "plugins", "iskron.js")))
+      out(
+        "OpenCode: есть и standalone-копия iskron.js — проверь двойную загрузку, не копируй пакет поверх неё"
+      );
+  } else if (existsSync5(opencodeDir)) {
+    const copy = join12(opencodeDir, "plugins", "iskron.js");
+    const packaged = join12(dirname3(fileURLToPath5(import.meta.url)), "opencode-plugin.js");
     if (!existsSync5(copy)) {
       out(`OpenCode: плагина нет (${copy}) — его кладёт establish-mcp при подключении`);
     } else if (!existsSync5(packaged)) {
       out(
         `OpenCode: плагин ${copy} стоит; рядом с этим файлом поставки плагина нет, сверить не с чем`
       );
-    } else if (readFileSync10(copy).equals(readFileSync10(packaged))) {
+    } else if (readFileSync11(copy).equals(readFileSync11(packaged))) {
       out(`OpenCode: плагин ${copy} — та же сборка, что в поставке`);
     } else {
       out(`OpenCode: плагин ${copy} — ДРУГИЕ байты, обнови из поставки: cp "${packaged}" ${copy}`);
@@ -3694,7 +3723,7 @@ function harnessReport() {
   for (const codexHome of codexHomes()) {
     out(`Codex: дом ${codexHome}`);
     codexPluginReport(codexHome);
-    const door = join11(codexHome, "app-server-control", "app-server-control.sock");
+    const door = join12(codexHome, "app-server-control", "app-server-control.sock");
     if (existsSync5(door)) out(`Codex: дверь app-server открыта (${door})`);
     else if (Buffer.byteLength(door) > 100)
       out(
@@ -3704,9 +3733,9 @@ function harnessReport() {
       out(
         `Codex: двери нет (${door}) — демон app-server не поднят; без неё кадр доставляет watchdog-exit`
       );
-    const codex = join11(codexHome, "config.toml");
+    const codex = join12(codexHome, "config.toml");
     if (existsSync5(codex)) {
-      const text = readFileSync10(codex, "utf8");
+      const text = readFileSync11(codex, "utf8");
       out(
         `Codex: ${/^\s*\[mcp_servers\."?iskron"?\]|^\s*mcp_servers\."?iskron"?\s*=/m.test(text) ? "ручная запись моста в config.toml есть" : "ручной записи моста в config.toml нет (штатная — в плагине)"}`
       );
@@ -3716,10 +3745,11 @@ function harnessReport() {
 async function runDoctor(argv2) {
   setConfig(parseArgs(argv2));
   out(`iskron doctor — ${BUILD}`);
-  out(`этот файл: ${fileURLToPath4(import.meta.url)}`);
+  out(`этот файл: ${fileURLToPath5(import.meta.url)}`);
   out(`node: ${process.version}`);
   homeCopyReport();
-  latestReport();
+  if (packageRoot()) out("обновление npm-поставки: замени plugin specifier и перезапусти OpenCode");
+  else latestReport();
   await serverReport();
   if (CFG.pat) await patReport();
   else grantReport();

@@ -9,14 +9,17 @@
 //   • канал  — кадры стояния, которое держит мост сессии, входят в неё
 //              промптом (channel.ts).
 //
-// Файл лежит копией в ~/.config/opencode/plugins/iskron.js: там, и только там,
-// OpenCode сам держит node_modules с @opencode-ai/plugin, единственным внешним
-// импортом этого модуля. Копию кладёт establish-mcp; doctor сличает её с поставкой.
+// Файл загружается из npm-пакета @iskron/opencode либо отдельной копией в
+// ~/.config/opencode/plugins/iskron.js. Пакет несёт мост и скиллы рядом;
+// standalone-копию кладёт establish-mcp, её мост стоит в домашнем каталоге.
 //
 // Экспорт — только функции: загрузчик OpenCode перебирает все экспорты модуля и
 // падает на любом не-функции.
+import { join } from "node:path";
+
 import type { Hooks, Plugin } from "@opencode-ai/plugin";
 
+import { packageRoot } from "../shared/npm-package.ts";
 import { type Say, setupChannel } from "./channel.ts";
 import { setupTools } from "./tools.ts";
 
@@ -71,6 +74,14 @@ const IskronPlugin: Plugin = async ({ client }) => {
   }
 
   const hooks: Hooks = {
+    config: async (config) => {
+      const root = packageRoot();
+      if (!root) return;
+      // The V1 SDK's Config predates skills.paths; OpenCode's runtime schema carries it.
+      const cfg = config as typeof config & { skills?: { paths?: string[] } };
+      cfg.skills ??= {};
+      cfg.skills.paths = [...new Set([...(cfg.skills.paths ?? []), join(root, "skills")])];
+    },
     tool: half.tools,
     event: async ({ event }) => {
       if (event.type === "session.deleted") {

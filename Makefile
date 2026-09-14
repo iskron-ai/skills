@@ -1,4 +1,4 @@
-.PHONY: check deps validate check-bundles check-surface lint format format-check typecheck test test-coverage test-watchdog test-extension test-opencode test-codex test-stand test-update build build-js check-js surface hooks plugin
+.PHONY: check deps validate check-bundles check-surface lint format format-check typecheck test test-coverage test-watchdog test-extension test-opencode test-codex test-stand test-update build build-js check-js surface hooks plugin npm-package
 
 # Run the full CI gate locally: frontmatter contract + bundle sync + surface lint
 # + the JS ladder (lint → format → types → shipped outputs in sync → the
@@ -99,6 +99,9 @@ build: build-js
 # Build the claude.ai plugin archive (dist/iskron.zip). CI attaches it to each GitHub Release.
 plugin:
 	@bash scripts/build-plugin.sh
+
+npm-package:
+	@node js/pack-opencode.mjs
 
 # Enable the repo's pre-commit hook (lint-staged + rebuild of every derived artifact).
 hooks:

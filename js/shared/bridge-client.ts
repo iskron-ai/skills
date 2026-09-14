@@ -34,20 +34,26 @@ export class Bridge {
   private readonly bin: string;
   private readonly onLog: (line: string) => void;
   private readonly onNotification: (method: string, params: any) => void;
+  private readonly environment: NodeJS.ProcessEnv;
 
   constructor(
     bin: string,
     onLog: (line: string) => void,
     onNotification: (method: string, params: any) => void = () => {},
+    environment: NodeJS.ProcessEnv = {},
   ) {
     this.bin = bin;
     this.onLog = onLog;
     this.onNotification = onNotification;
+    this.environment = environment;
   }
 
   start(): void {
     const rt = bridgeRuntime();
-    const proc = spawn(rt.bin, [this.bin], { stdio: ["pipe", "pipe", "pipe"], env: rt.env });
+    const proc = spawn(rt.bin, [this.bin], {
+      stdio: ["pipe", "pipe", "pipe"],
+      env: { ...rt.env, ...this.environment },
+    });
     this.proc = proc;
     proc.stdout?.setEncoding("utf8");
     proc.stdout?.on("data", (chunk: string) => this.feed(chunk));

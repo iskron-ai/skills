@@ -1,3 +1,20 @@
+// js/opencode/plugin.ts
+import { join as join4 } from "node:path";
+
+// js/shared/npm-package.ts
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+function packageRoot() {
+  const root = fileURLToPath(new URL("../../../", import.meta.url));
+  try {
+    const manifest = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
+    return manifest.name === "@iskron/opencode" ? root : null;
+  } catch {
+    return null;
+  }
+}
+
 // js/shared/channel.ts
 var FLAP_PAUSES_MS = (process.env.ISKRON_CHANNEL_FLAP_MS || "5000,10000,20000,40000,60000").split(",").map(Number).filter((n) => Number.isFinite(n) && n > 0);
 function classifyOrigin(frame, myKarta) {
@@ -13,12 +30,12 @@ function classifyOrigin(frame, myKarta) {
 
 // js/shared/version.ts
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
+import { readFileSync as readFileSync2 } from "node:fs";
+import { fileURLToPath as fileURLToPath2 } from "node:url";
 var VERSION = "6.6.4";
 function buildOf(selfUrl) {
   try {
-    const src = readFileSync(fileURLToPath(selfUrl));
+    const src = readFileSync2(fileURLToPath2(selfUrl));
     return `v${VERSION}+${createHash("sha256").update(src).digest("hex").slice(0, 8)}`;
   } catch {
     return `v${VERSION}`;
@@ -123,12 +140,12 @@ import {
   constants,
   mkdirSync,
   readdirSync,
-  readFileSync as readFileSync2,
+  readFileSync as readFileSync3,
   statSync,
   writeFileSync
 } from "node:fs";
 import { homedir as homedir2 } from "node:os";
-import { join as join2, resolve } from "node:path";
+import { join as join3, resolve } from "node:path";
 import { tool as tool2 } from "@opencode-ai/plugin";
 
 // js/shared/bridge-client.ts
@@ -152,15 +169,20 @@ var Bridge = class {
   bin;
   onLog;
   onNotification;
+  environment;
   constructor(bin, onLog, onNotification = () => {
-  }) {
+  }, environment = {}) {
     this.bin = bin;
     this.onLog = onLog;
     this.onNotification = onNotification;
+    this.environment = environment;
   }
   start() {
     const rt = bridgeRuntime();
-    const proc = spawn(rt.bin, [this.bin], { stdio: ["pipe", "pipe", "pipe"], env: rt.env });
+    const proc = spawn(rt.bin, [this.bin], {
+      stdio: ["pipe", "pipe", "pipe"],
+      env: { ...rt.env, ...this.environment }
+    });
     this.proc = proc;
     proc.stdout?.setEncoding("utf8");
     proc.stdout?.on("data", (chunk) => this.feed(chunk));
@@ -296,8 +318,8 @@ var OPENCODE_CLIENT = "opencode-iskron";
 
 // js/shared/home.ts
 import { homedir } from "node:os";
-import { join } from "node:path";
-var homeBridgePath = () => join(homedir(), ".iskron-bridge", "iskron-bridge.mjs");
+import { join as join2 } from "node:path";
+var homeBridgePath = () => join2(homedir(), ".iskron-bridge", "iskron-bridge.mjs");
 
 // js/opencode/schema.ts
 import { tool } from "@opencode-ai/plugin";
@@ -353,28 +375,29 @@ var IDLE_MS = Number(process.env.ISKRON_BRIDGE_IDLE_MS || 30 * 6e4);
 var PROTOCOL = "2025-06-18";
 function findBridge() {
   const tried = [];
+  const root = packageRoot();
   const env = process.env.ISKRON_BRIDGE_PATH?.trim();
   if (env) tried.push(resolve(env));
-  tried.push(homeBridgePath());
+  tried.push(root ? join3(root, "skills/establish-mcp/scripts/iskron.mjs") : homeBridgePath());
   for (const candidate of tried) {
     try {
       accessSync(candidate, constants.R_OK);
-      return { path: candidate, tried };
+      return { path: candidate, tried, managed: root !== null };
     } catch {
     }
   }
-  return { path: null, tried };
+  return { path: null, tried, managed: root !== null };
 }
 function authDir() {
-  return process.env.ISKRON_BRIDGE_AUTH_DIR || join2(homedir2(), ".iskron-bridge");
+  return process.env.ISKRON_BRIDGE_AUTH_DIR || join3(homedir2(), ".iskron-bridge");
 }
 function cachePath() {
-  return join2(authDir(), "opencode-tools.json");
+  return join3(authDir(), "opencode-tools.json");
 }
 function grantStamp() {
   const dir = authDir();
   try {
-    return readdirSync(dir).filter((f) => f.endsWith(".json") && f !== "opencode-tools.json").map((f) => `${f}:${statSync(join2(dir, f)).mtimeMs}`).sort().join("|");
+    return readdirSync(dir).filter((f) => f.endsWith(".json") && f !== "opencode-tools.json").map((f) => `${f}:${statSync(join3(dir, f)).mtimeMs}`).sort().join("|");
   } catch {
     return "";
   }
@@ -400,7 +423,7 @@ function abortable(p, signal) {
 }
 function readCache() {
   try {
-    const list = JSON.parse(readFileSync2(cachePath(), "utf8"));
+    const list = JSON.parse(readFileSync3(cachePath(), "utf8"));
     return Array.isArray(list) && list.length ? list : null;
   } catch {
     return null;
@@ -408,7 +431,7 @@ function readCache() {
 }
 function writeCache(tools) {
   try {
-    mkdirSync(join2(cachePath(), ".."), { recursive: true, mode: 448 });
+    mkdirSync(join3(cachePath(), ".."), { recursive: true, mode: 448 });
     writeFileSync(cachePath(), JSON.stringify(tools), { mode: 384 });
   } catch {
   }
@@ -507,7 +530,8 @@ async function setupTools(say, onChannel, rootOf) {
         if (kind === "attached") slot.holding = true;
         if (kind === "released" || kind === "dead") slot.holding = false;
         onChannel(slot.session, params);
-      }
+      },
+      found.managed ? { ISKRON_BRIDGE_NO_UPDATE: "1" } : {}
     );
     slot.bridge.start();
     shake(slot);
@@ -677,6 +701,13 @@ var IskronPlugin = async ({ client }) => {
     say(`Искрон: мост не поднялся — ${e.message}`, "error");
   }
   const hooks = {
+    config: async (config) => {
+      const root = packageRoot();
+      if (!root) return;
+      const cfg = config;
+      cfg.skills ??= {};
+      cfg.skills.paths = [.../* @__PURE__ */ new Set([...cfg.skills.paths ?? [], join4(root, "skills")])];
+    },
     tool: half.tools,
     event: async ({ event }) => {
       if (event.type === "session.deleted") {

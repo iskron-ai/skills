@@ -66,6 +66,10 @@ codex plugin add iskron@iskron
 
 ### OpenCode
 
+Для npm-установки плагин, мост и скиллы упаковываются вместе: `make npm-package`.
+Закреплённый пакет или выданный `.tgz` подключается через `plugin` без клонирования
+и копирования; рецепт — [scripts/opencode-npm.md](scripts/opencode-npm.md).
+
 Плагин из той же поставки: тулы `iskron_*` под своими именами, кадры живого канала промптом в сессию, стояние держит мост. После плоской установки скиллов (npx, ниже) скопируй два файла из скилла `establish-mcp` — мост в `~/.iskron-bridge/iskron-bridge.mjs` и `scripts/opencode-plugin.js` в `~/.config/opencode/plugins/iskron.js`; команды — в `SETUP.md`, ветка OpenCode. Мост принимает и личный токен доступа вместо OAuth (`~/.iskron-bridge/token` или `ISKRON_BRIDGE_TOKEN`) — для безголовых машин и харнессов, чей OAuth не доходит.
 
 ### Pi

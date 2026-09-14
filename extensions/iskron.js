@@ -134,15 +134,20 @@ var Bridge = class {
   bin;
   onLog;
   onNotification;
+  environment;
   constructor(bin, onLog, onNotification = () => {
-  }) {
+  }, environment = {}) {
     this.bin = bin;
     this.onLog = onLog;
     this.onNotification = onNotification;
+    this.environment = environment;
   }
   start() {
     const rt = bridgeRuntime();
-    const proc = spawn(rt.bin, [this.bin], { stdio: ["pipe", "pipe", "pipe"], env: rt.env });
+    const proc = spawn(rt.bin, [this.bin], {
+      stdio: ["pipe", "pipe", "pipe"],
+      env: { ...rt.env, ...this.environment }
+    });
     this.proc = proc;
     proc.stdout?.setEncoding("utf8");
     proc.stdout?.on("data", (chunk) => this.feed(chunk));

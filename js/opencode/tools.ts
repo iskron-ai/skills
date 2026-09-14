@@ -35,6 +35,7 @@ import { tool, type ToolDefinition } from "@opencode-ai/plugin";
 import { Bridge, resultToContent } from "../shared/bridge-client.ts";
 import { OPENCODE_CLIENT } from "../shared/clients.ts";
 import { homeBridgePath } from "../shared/home.ts";
+import { packageRoot } from "../shared/npm-package.ts";
 import { type Say } from "./channel.ts";
 import { argsFrom } from "./schema.ts";
 
@@ -76,23 +77,23 @@ export interface ToolsHalf {
 }
 
 /**
- * Где мост: переменная, затем домашняя копия. Привезённой поставкой рядом нет —
- * плагин лежит копией в каталоге плагинов OpenCode, а не в пакете.
+ * Явный путь, затем пакетный мост; домашняя копия — только у standalone-плагина.
  */
-export function findBridge(): { path: string | null; tried: string[] } {
+export function findBridge(): { path: string | null; tried: string[]; managed: boolean } {
   const tried: string[] = [];
+  const root = packageRoot();
   const env = process.env.ISKRON_BRIDGE_PATH?.trim();
   if (env) tried.push(resolve(env));
-  tried.push(homeBridgePath());
+  tried.push(root ? join(root, "skills/establish-mcp/scripts/iskron.mjs") : homeBridgePath());
   for (const candidate of tried) {
     try {
       accessSync(candidate, constants.R_OK);
-      return { path: candidate, tried };
+      return { path: candidate, tried, managed: root !== null };
     } catch {
       /* следующий */
     }
   }
-  return { path: null, tried };
+  return { path: null, tried, managed: root !== null };
 }
 
 function authDir(): string {
@@ -280,6 +281,7 @@ export async function setupTools(
         if (kind === "released" || kind === "dead") slot.holding = false;
         onChannel(slot.session, params);
       },
+      found.managed ? { ISKRON_BRIDGE_NO_UPDATE: "1" } : {},
     );
     slot.bridge.start();
     shake(slot);

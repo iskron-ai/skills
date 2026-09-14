@@ -16,6 +16,7 @@ import { grantLogPath, loadGrantState, loadStore, storePath } from "../bridge/st
 import { refreshHours, tokenUsable } from "../bridge/tokens.ts";
 import { readLatest } from "../bridge/update.ts";
 import { homeBridgePath } from "../shared/home.ts";
+import { packageRoot } from "../shared/npm-package.ts";
 import { compareVersions } from "../shared/semver.ts";
 import { VERSION, versionIn } from "../shared/version.ts";
 
@@ -28,6 +29,10 @@ const hashOf = (buf: Buffer): string => createHash("sha256").update(buf).digest(
 const seconds = (ms: number): string => `${Math.round(ms / 1000)}s`;
 
 function homeCopyReport(): void {
+  if (packageRoot()) {
+    out("домашняя копия: не используется npm-поставкой; версия управляется plugin specifier");
+    return;
+  }
   const home = homeBridgePath();
   let self: Buffer | null = null;
   try {
@@ -308,7 +313,16 @@ export function harnessReport(): void {
   }
   // OpenCode: плагин из поставки лежит копией в каталоге плагинов; та же сверка, что и у моста.
   const opencodeDir = join(homedir(), ".config", "opencode");
-  if (existsSync(opencodeDir)) {
+  const npmRoot = packageRoot();
+  if (npmRoot) {
+    out(
+      `OpenCode: npm-пакет @iskron/opencode в ${npmRoot}; наличие пакета не доказывает загрузку в сессии`,
+    );
+    if (existsSync(join(opencodeDir, "plugins", "iskron.js")))
+      out(
+        "OpenCode: есть и standalone-копия iskron.js — проверь двойную загрузку, не копируй пакет поверх неё",
+      );
+  } else if (existsSync(opencodeDir)) {
     const copy = join(opencodeDir, "plugins", "iskron.js");
     const packaged = join(dirname(fileURLToPath(import.meta.url)), "opencode-plugin.js");
     if (!existsSync(copy)) {
@@ -352,7 +366,8 @@ export async function runDoctor(argv: string[]): Promise<void> {
   out(`этот файл: ${fileURLToPath(import.meta.url)}`);
   out(`node: ${process.version}`);
   homeCopyReport();
-  latestReport();
+  if (packageRoot()) out("обновление npm-поставки: замени plugin specifier и перезапусти OpenCode");
+  else latestReport();
   await serverReport();
   if (CFG.pat) await patReport();
   else grantReport();
