@@ -28,9 +28,10 @@ const INIT = {
 };
 const PAT = "nks_pat_stand";
 
-function startBridge(serverUrl, authDir) {
+function startBridge(serverUrl, authDir, cwd = process.cwd()) {
   const notifications = [];
   const proc = spawn(NODE, [FILE, serverUrl, "--no-browser", "--auth-dir", authDir], {
+    cwd,
     env: {
       ...process.env,
       ISKRON_BRIDGE_NO_BROWSER: "1",
@@ -208,6 +209,68 @@ test("iskron_stand: one call takes the place, arms the inbox hook and knocks; a 
 // The third part of a derived name is the model the agent runs on, never the
 // branch: at session start the branch is almost always main and tells two
 // sessions of one machine over one repository apart from nothing.
+// A name is the place's address: an explicit one is taken exactly or refused
+// aloud — never shortened in silence to a name that addresses another place; a
+// derived one is cut to the server's limit with a note (graph nks-dev: #5068).
+test("an explicit name past the server's rule is refused aloud, not truncated; a long derived name is cut to the limit and said so", async (t) => {
+  const { fake, bridge } = await ready(t);
+  const long = "alekseis-macbook-pro.some-very-long-repository-name.fable-5-1";
+  const refused = await bridge.call("tools/call", {
+    name: "iskron_stand",
+    arguments: { realm: "nks-dev", karta: 931, name: long },
+  });
+  const said = textOf(refused);
+  assert.ok(refused.result?.isError, said);
+  assert.match(said, /длиннее предела: \d+ знаков/, said);
+  assert.match(said, /не укорачивается молча/, said);
+  assert.equal(
+    fake.state.counts.connect,
+    0,
+    "no place is taken under a name the doer did not ask for",
+  );
+  const upper = await bridge.call("tools/call", {
+    name: "iskron_stand",
+    arguments: { realm: "nks-dev", karta: 931, name: "Proba" },
+  });
+  assert.match(textOf(upper), /заглавные буквы/, textOf(upper));
+  assert.equal(fake.state.counts.connect, 0);
+  const exact = await bridge.call("tools/call", {
+    name: "iskron_stand",
+    arguments: { realm: "nks-dev", karta: 931, name: "alekseis-macbook-pro.rauthy.fable-5-1" },
+  });
+  assert.match(
+    textOf(exact),
+    /стояние alekseis-macbook-pro\.rauthy\.fable-5-1 — роль #931/,
+    "a 37-char explicit name is taken exactly, not cut at 32",
+  );
+});
+
+test("a derived name longer than the limit is cut on the repository part and announced first", async (t) => {
+  const fake = await startFakeNks({ pat: PAT });
+  const dir = mkdtempSync(join(tmpdir(), "iskron-stand-"));
+  const cwd = mkdtempSync(join(tmpdir(), "a-very-long-repository-directory-name-for-the-probe-"));
+  const bridge = startBridge(fake.mcpUrl, dir, cwd);
+  t.after(async () => {
+    await bridge.stop();
+    await fake.stop();
+  });
+  assert.ok((await bridge.call("initialize", INIT)).result);
+  const reply = await bridge.call("tools/call", {
+    name: "iskron_stand",
+    arguments: { realm: "nks-dev", karta: "#931", model: "claude-opus-5" },
+  });
+  const text = textOf(reply);
+  assert.ok(!reply.result?.isError, text);
+  const name = /стояние (\S+) — роль #931/.exec(text)?.[1];
+  assert.ok(name && name.length <= 48, `the derived name must fit the limit: ${name}`);
+  assert.ok(name.endsWith(".opus-5"), `the model part survives the cut: ${name}`);
+  assert.match(text, /выведенное имя \S+ длиннее предела 48 знаков — укорочено до/, text);
+  assert.ok(
+    [...fake.state.places.keys()].includes(`931:${name}`),
+    "the place is taken under the cut name",
+  );
+});
+
 test("iskron_stand derives the name from machine, repository and the model given — not the branch", async (t) => {
   const { fake, bridge } = await ready(t);
   const reply = await bridge.call("tools/call", {
