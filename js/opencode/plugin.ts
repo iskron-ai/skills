@@ -56,7 +56,11 @@ async function setup(ctx: Context): Promise<() => void> {
         root = parent;
       }
     } catch {
-      /* сессия не читается — она сама себе корень */
+      // Сессия не читается (например, ещё не легла на диск в миг session.created):
+      // сейчас она сама себе корень, но не навсегда — иначе дочерняя сессия,
+      // чей get упал однажды, поднимала бы свой мост и своё стояние (#4283).
+      seen.set(root, Date.now());
+      return root;
     }
     roots.set(sessionID, root);
     seen.set(root, Date.now());
@@ -102,7 +106,7 @@ async function setup(ctx: Context): Promise<() => void> {
     try {
       for await (const event of ctx.event.subscribe({ signal: controller.signal })) {
         const ev: any = event;
-        const id: string | undefined = ev?.data?.sessionID ?? ev?.properties?.info?.id;
+        const id: string | undefined = ev?.data?.sessionID;
         switch (ev?.type) {
           case "session.deleted":
             if (!id) break;
@@ -111,8 +115,10 @@ async function setup(ctx: Context): Promise<() => void> {
             half.forget(id);
             break;
           case "session.created":
-          case "session.updated":
-            if (id) void rootOf(id);
+            // data.parentID есть в самом событии: корень дочерней известен без чтения.
+            if (!id) break;
+            if (typeof ev.data?.parentID === "string") roots.set(id, ev.data.parentID);
+            void rootOf(id);
             break;
           case "skill.updated":
             void commands.refresh();

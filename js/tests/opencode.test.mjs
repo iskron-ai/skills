@@ -82,7 +82,7 @@ function registry() {
   };
 }
 
-function fakeCtx({ sessions = [], skills = [] } = {}) {
+function fakeCtx({ sessions = [], skills = [], gone = new Set() } = {}) {
   const prompts = [];
   const tools = registry();
   const commands = registry();
@@ -93,7 +93,12 @@ function fakeCtx({ sessions = [], skills = [] } = {}) {
     tool: { transform: tools.transform, reload: tools.reload },
     command: { transform: commands.transform, reload: commands.reload },
     session: {
-      get: async ({ sessionID }) => sessions.find((x) => x.id === sessionID) ?? { id: sessionID },
+      // A deleted session is a thrown NotFound in OpenCode; an unlisted one is
+      // simply a root the probe never described.
+      get: async ({ sessionID }) => {
+        if (gone.has(sessionID)) throw new Error(`Session not found: ${sessionID}`);
+        return sessions.find((x) => x.id === sessionID) ?? { id: sessionID };
+      },
       prompt: async (o) => {
         prompts.push(o);
         return {};
@@ -132,6 +137,8 @@ const ENV_KEYS = [
   "ISKRON_BRIDGE_PATH",
   "ISKRON_MCP_HANDSHAKE_MS",
   "ISKRON_MCP_AUTH_POLL_MS",
+  "ISKRON_BRIDGE_IDLE_MS",
+  "ISKRON_BRIDGE_REAP_MS",
   "FB_LOG",
   "FB_MODE",
   "FB_AUTHED",
@@ -280,6 +287,22 @@ test("cleanup kills every bridge the plugin spawned", async () => {
   assert.ok(pids.every(alive), "the bridges must be running while the plugin lives");
   await rec.stop();
   await until(() => pids.every((p) => !alive(p)), "every bridge to die after cleanup");
+});
+
+test("the spare bridge of an idle location is released once the server's list is in, and a later call raises a fresh one", async () => {
+  const b = bridgeEnv("spare-idle", { ISKRON_BRIDGE_IDLE_MS: 200, ISKRON_BRIDGE_REAP_MS: 100 });
+  const rec = await plugin(b.env);
+  try {
+    await until(() => /\(с сервера\)/.test(rec.said()), "the server's list");
+    const pid = pidOf(b.log);
+    await until(() => !alive(pid), "the idle spare to be released", 3000);
+    assert.match((await rec.call("iskron_bridge", {}, "s-idle")).content, /мостов живых: 0/);
+    writeFileSync(b.reply, "после простоя");
+    assert.equal((await rec.call("iskron_orient", {}, "s-idle")).content, "после простоя");
+    assert.equal(pidsOf(b.log).length, 2, "a fresh bridge for the session, not the released one");
+  } finally {
+    await rec.stop();
+  }
 });
 
 test("no bridge on the machine: no tools, and the plugin says where it looked", async () => {
@@ -516,11 +539,12 @@ test("a frame from a bridge nobody owns yet goes to the freshest root session th
   });
   try {
     await serverTools(rec);
-    // No session list in OpenCode 2: the plugin learns sessions from events.
+    // No session list in OpenCode 2: the plugin learns sessions from session.created.
     rec.emit({ type: "session.created", data: { sessionID: "old" } });
     rec.emit({ type: "session.created", data: { sessionID: "fresh" } });
     await delay(50);
-    rec.emit({ type: "session.updated", data: { sessionID: "child" } }); // a subagent refreshes its root
+    // A subagent's birth names its parent in the event itself and refreshes that root.
+    rec.emit({ type: "session.created", data: { sessionID: "child", parentID: "old" } });
     await delay(50);
     appendFileSync(b.events, event("frame", { frame: { type: "message", body: "x" }, raw: "" }));
     await until(() => rec.prompts.length === 1, "the frame to be prompted");
@@ -540,7 +564,8 @@ test("a frame for a session that is gone or archived is re-addressed to a live r
     { id: "holder", time: { updated: 1 } },
     { id: "other", time: { updated: 2 } },
   ];
-  const rec = await plugin(b.env, { sessions });
+  const gone = new Set();
+  const rec = await plugin(b.env, { sessions, gone });
   try {
     await serverTools(rec);
     await rec.call("iskron_channel", { action: "connect" }, "holder");
@@ -562,8 +587,8 @@ test("a frame for a session that is gone or archived is re-addressed to a live r
     await until(() => rec.prompts.length === 2, "the re-addressed frame");
     assert.equal(rec.prompts[1].sessionID, "other", "a frame never goes into an archived session");
     assert.match(rec.said(), /сессия holder закрыта или в архиве/);
-    // Nothing live at all: loud, not silent.
-    sessions[1].time.archived = Date.now();
+    // Nothing live at all — the other session is deleted (get throws): loud, not silent.
+    gone.add("other");
     appendFileSync(
       `${b.events}.${pidOf(b.log)}`,
       event("frame", { frame: frame("некуда"), raw: "" }),

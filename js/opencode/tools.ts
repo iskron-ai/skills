@@ -30,7 +30,7 @@ import {
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
-import { Bridge, resultToContent } from "../shared/bridge-client.ts";
+import { Bridge, resultToContent, toParameters } from "../shared/bridge-client.ts";
 import { OPENCODE_CLIENT } from "../shared/clients.ts";
 import { homeBridgePath } from "../shared/home.ts";
 import type { Context } from "./plugin.ts";
@@ -49,6 +49,8 @@ const AUTH_POLL_MS = Number(process.env.ISKRON_MCP_AUTH_POLL_MS || 2000);
 const AUTH_PENDING = /authorization required/i;
 /** Мост сессии, которая давно молчит и ничего не держит, отпускается. */
 const IDLE_MS = Number(process.env.ISKRON_BRIDGE_IDLE_MS || 30 * 60_000);
+/** Шаг жнеца простоя; переменная — для проб. */
+const REAP_MS = Number(process.env.ISKRON_BRIDGE_REAP_MS || 60_000);
 const PROTOCOL = "2025-06-18";
 /** Служебный тул плагина: состояние моста, когда тулов iskron_* ещё нет. */
 export const STATUS_TOOL = "iskron_bridge";
@@ -202,12 +204,6 @@ function textOf(result: any): string {
     .join("\n");
 }
 
-/** JSON Schema тула с сервера идёт в OpenCode как есть — v2 берёт JSON Schema. */
-function inputSchemaOf(t: any): any {
-  const s = t?.inputSchema && typeof t.inputSchema === "object" ? t.inputSchema : {};
-  return { type: "object", properties: {}, ...s };
-}
-
 export async function setupTools(
   ctx: Context,
   say: Say,
@@ -236,15 +232,18 @@ export async function setupTools(
   let loginUrl: string | null = null;
   // Вызов, ждущий рукопожатия, отпускается в миг, когда мост запросил вход:
   // человека внутри вызова не ждут, адрес уходит ответом.
-  let loginWaiters: Array<() => void> = [];
-  function loginStarted(): Promise<void> {
-    if (loginPending) return Promise.resolve();
-    return new Promise((r) => loginWaiters.push(r));
+  const loginWaiters = new Set<() => void>();
+  /** Обещание входа и его снятие — вызов, кончившийся иначе, ждуна за собой не оставляет. */
+  function loginStarted(): { promise: Promise<void>; cancel: () => void } {
+    if (loginPending) return { promise: Promise.resolve(), cancel() {} };
+    let waiter: () => void = () => {};
+    const promise = new Promise<void>((r) => (waiter = r));
+    loginWaiters.add(waiter);
+    return { promise, cancel: () => loginWaiters.delete(waiter) };
   }
   function onLogin(url: string | null): void {
-    const waiters = loginWaiters;
-    loginWaiters = [];
-    for (const w of waiters) w();
+    for (const w of loginWaiters) w();
+    loginWaiters.clear();
     if (loginPending && url === loginUrl) return;
     loginPending = true;
     loginUrl = url;
@@ -332,7 +331,7 @@ export async function setupTools(
       spare.bridge.stop();
       spare = null;
     }
-  }, 60_000);
+  }, REAP_MS);
   reaper.unref?.();
 
   const state = {
@@ -371,17 +370,23 @@ export async function setupTools(
       editor.add({
         name,
         description: String(t.description ?? ""),
-        input: inputSchemaOf(t),
+        // JSON Schema сервера без паспорта диалекта — той же срезкой, что у pi.
+        input: toParameters(t.inputSchema),
         async execute(input, tool) {
           const slot = await slotFor(String(tool.sessionID));
           // Без гранта человека внутри вызова не ждут: адрес входа уходит ответом.
           if (loginPending) throw loginError();
-          await Promise.race([
-            readyFor(slot),
-            loginStarted().then(() => {
-              throw loginError();
-            }),
-          ]);
+          const login = loginStarted();
+          try {
+            await Promise.race([
+              readyFor(slot),
+              login.promise.then(() => {
+                throw loginError();
+              }),
+            ]);
+          } finally {
+            login.cancel();
+          }
           // Потолка нет: контекст execute в v2 сигнала отмены не несёт.
           const result = await slot.bridge.request("tools/call", {
             name,
@@ -418,12 +423,11 @@ export async function setupTools(
       } catch (e) {
         if (stopped) return;
         if (first.bridge.failure) {
-          say(`Искрон: мост умер (${(e as Error).message}) — поднимаю новый.`, "warning");
+          // Мост списка умер — или был отдан сессии и отпущен ею (тогда молча):
+          // список берёт новый запас.
+          if (first.session === null)
+            say(`Искрон: мост умер (${(e as Error).message}) — поднимаю новый.`, "warning");
           if (spare === first) spare = null;
-          first = spare ?? spawn();
-          spare = first;
-        } else if (first.session === null && spare !== first) {
-          // Запас уже отдан сессии и отпущен ею — список берёт новый запас.
           first = spare ?? spawn();
           spare = first;
         } else {

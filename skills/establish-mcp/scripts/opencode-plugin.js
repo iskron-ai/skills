@@ -206,6 +206,18 @@ var Bridge = class {
     }
   }
 };
+function toParameters(inputSchema) {
+  const schema = inputSchema && typeof inputSchema === "object" ? { ...inputSchema } : { type: "object", properties: {} };
+  delete schema.$schema;
+  if (!schema.type) schema.type = "object";
+  if (schema.type === "object" && !schema.properties) schema.properties = {};
+  return schema;
+}
+function snippet(description) {
+  const first = (description || "").split("\n").find((l) => l.trim()) ?? "";
+  const cut = first.trim().split(/(?<=[.。!?])\s/)[0] ?? first.trim();
+  return cut.length > 160 ? cut.slice(0, 157) + "…" : cut;
+}
 function resultToContent(result) {
   const blocks = Array.isArray(result?.content) ? result.content : [];
   const out = blocks.map((b) => {
@@ -239,6 +251,7 @@ var HANDSHAKE_MS = Number(process.env.ISKRON_MCP_HANDSHAKE_MS || 6e5);
 var AUTH_POLL_MS = Number(process.env.ISKRON_MCP_AUTH_POLL_MS || 2e3);
 var AUTH_PENDING = /authorization required/i;
 var IDLE_MS = Number(process.env.ISKRON_BRIDGE_IDLE_MS || 30 * 6e4);
+var REAP_MS = Number(process.env.ISKRON_BRIDGE_REAP_MS || 6e4);
 var PROTOCOL = "2025-06-18";
 var STATUS_TOOL = "iskron_bridge";
 function findBridge() {
@@ -331,10 +344,6 @@ async function listTools(b) {
 function textOf(result) {
   return resultToContent(result).map((c) => c.type === "text" ? c.text : "[image]").join("\n");
 }
-function inputSchemaOf(t) {
-  const s = t?.inputSchema && typeof t.inputSchema === "object" ? t.inputSchema : {};
-  return { type: "object", properties: {}, ...s };
-}
 async function setupTools(ctx, say, onChannel, rootOf) {
   const found = findBridge();
   if (!found.path) {
@@ -352,15 +361,19 @@ async function setupTools(ctx, say, onChannel, rootOf) {
   let stopped = false;
   let loginPending = false;
   let loginUrl = null;
-  let loginWaiters = [];
+  const loginWaiters = /* @__PURE__ */ new Set();
   function loginStarted() {
-    if (loginPending) return Promise.resolve();
-    return new Promise((r) => loginWaiters.push(r));
+    if (loginPending) return { promise: Promise.resolve(), cancel() {
+    } };
+    let waiter = () => {
+    };
+    const promise = new Promise((r) => waiter = r);
+    loginWaiters.add(waiter);
+    return { promise, cancel: () => loginWaiters.delete(waiter) };
   }
   function onLogin(url) {
-    const waiters = loginWaiters;
-    loginWaiters = [];
-    for (const w of waiters) w();
+    for (const w of loginWaiters) w();
+    loginWaiters.clear();
     if (loginPending && url === loginUrl) return;
     loginPending = true;
     loginUrl = url;
@@ -436,7 +449,7 @@ async function setupTools(ctx, say, onChannel, rootOf) {
       spare.bridge.stop();
       spare = null;
     }
-  }, 6e4);
+  }, REAP_MS);
   reaper.unref?.();
   const state2 = {
     listed: readCache() ?? [],
@@ -465,16 +478,22 @@ async function setupTools(ctx, say, onChannel, rootOf) {
       editor.add({
         name,
         description: String(t.description ?? ""),
-        input: inputSchemaOf(t),
+        // JSON Schema сервера без паспорта диалекта — той же срезкой, что у pi.
+        input: toParameters(t.inputSchema),
         async execute(input, tool) {
           const slot = await slotFor(String(tool.sessionID));
           if (loginPending) throw loginError();
-          await Promise.race([
-            readyFor(slot),
-            loginStarted().then(() => {
-              throw loginError();
-            })
-          ]);
+          const login = loginStarted();
+          try {
+            await Promise.race([
+              readyFor(slot),
+              login.promise.then(() => {
+                throw loginError();
+              })
+            ]);
+          } finally {
+            login.cancel();
+          }
           const result = await slot.bridge.request("tools/call", {
             name,
             arguments: input ?? {}
@@ -506,11 +525,9 @@ async function setupTools(ctx, say, onChannel, rootOf) {
       } catch (e) {
         if (stopped) return;
         if (first.bridge.failure) {
-          say(`Искрон: мост умер (${e.message}) — поднимаю новый.`, "warning");
+          if (first.session === null)
+            say(`Искрон: мост умер (${e.message}) — поднимаю новый.`, "warning");
           if (spare === first) spare = null;
-          first = spare ?? spawn2();
-          spare = first;
-        } else if (first.session === null && spare !== first) {
           first = spare ?? spawn2();
           spare = first;
         } else {
@@ -649,8 +666,7 @@ async function listSkills(ctx) {
       continue;
     }
     if (!slashOf(text)) continue;
-    const description = String(s?.description ?? "").split(/(?<=[.!?])\s|\n/)[0].slice(0, 140);
-    out.push({ id, description });
+    out.push({ id, description: snippet(String(s?.description ?? "")) });
   }
   return out.sort((a, b) => a.id.localeCompare(b.id));
 }
@@ -709,6 +725,8 @@ async function setup(ctx) {
         root = parent;
       }
     } catch {
+      seen.set(root, Date.now());
+      return root;
     }
     roots.set(sessionID, root);
     seen.set(root, Date.now());
@@ -752,7 +770,7 @@ async function setup(ctx) {
     try {
       for await (const event of ctx.event.subscribe({ signal: controller.signal })) {
         const ev = event;
-        const id = ev?.data?.sessionID ?? ev?.properties?.info?.id;
+        const id = ev?.data?.sessionID;
         switch (ev?.type) {
           case "session.deleted":
             if (!id) break;
@@ -761,8 +779,9 @@ async function setup(ctx) {
             half.forget(id);
             break;
           case "session.created":
-          case "session.updated":
-            if (id) void rootOf(id);
+            if (!id) break;
+            if (typeof ev.data?.parentID === "string") roots.set(id, ev.data.parentID);
+            void rootOf(id);
             break;
           case "skill.updated":
             void commands.refresh();

@@ -10,6 +10,7 @@
 // поставки, а не списку в коде.
 import { readFileSync } from "node:fs";
 
+import { snippet } from "../shared/bridge-client.ts";
 import type { Context } from "./plugin.ts";
 import { type Say } from "./tools.ts";
 
@@ -58,10 +59,7 @@ async function listSkills(ctx: Context): Promise<SkillCommand[]> {
       continue;
     }
     if (!slashOf(text)) continue;
-    const description = String(s?.description ?? "")
-      .split(/(?<=[.!?])\s|\n/)[0]
-      .slice(0, 140);
-    out.push({ id, description });
+    out.push({ id, description: snippet(String(s?.description ?? "")) });
   }
   return out.sort((a, b) => a.id.localeCompare(b.id));
 }
