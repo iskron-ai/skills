@@ -40,6 +40,9 @@ function strip(url) {
   return url.replace(/\/+$/, "");
 }
 
+// js/bridge/holdrecord.ts
+var HOLD_RECORD_MAX_AGE_MS = 6 * 60 * 60 * 1e3;
+
 // js/shared/frame-text.ts
 var ENVELOPE_KEYS = ["id", "received_at", "stale", "content_type", "body_chars", "body_read"];
 function frameToText(frame, raw) {

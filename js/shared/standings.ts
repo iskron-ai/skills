@@ -28,6 +28,10 @@ export function socketPathOf(authDir: string, key: string): string {
 export const keyFilePathOf = (authDir: string, key: string): string =>
   join(standingsDirOf(authDir), `${hashOf(key)}.key`);
 
+/** Запись держания — адреса сокета и занятости (0600): мост, поднятый заново, возвращает место с диска (граф nks-dev: #5061). */
+export const holdFilePathOf = (authDir: string, key: string): string =>
+  join(standingsDirOf(authDir), `${hashOf(key)}.hold`);
+
 /** Память сторожа выхода — id уже отданных кадров; файл рядом с ключом, не с сокетом: на Windows сокет — именованный канал, не путь. */
 export const seenFilePathOf = (authDir: string, key: string): string =>
   join(standingsDirOf(authDir), `${hashOf(key)}.seen`);

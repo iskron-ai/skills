@@ -1,4 +1,5 @@
 import { OWN_CLIENTS } from "../shared/clients.ts";
+import { absorbChannelReply, absorbRevokeReply, expectOwnRevoke } from "./absorb.ts";
 import { ensureAuth } from "./auth.ts";
 import { BUILD } from "./build.ts";
 import {
@@ -9,7 +10,6 @@ import {
   TokenRefused,
   UpstreamError,
 } from "./errors.ts";
-import { absorbChannelReply, absorbRevokeReply, expectOwnRevoke } from "./hold.ts";
 import { localLeave } from "./leave.ts";
 import { annotateToolList } from "./moment.ts";
 import { isStandCall, runStand } from "./stand.ts";
