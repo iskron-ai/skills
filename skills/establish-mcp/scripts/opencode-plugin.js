@@ -28,6 +28,14 @@ function buildOf(selfUrl) {
 // js/bridge/build.ts
 var BUILD = buildOf(import.meta.url);
 
+// js/bridge/config.ts
+var DEFAULT_SERVER_URL = "https://mcp.iskron.ru/";
+var ENGLISH_SERVER_URL = "https://mcp.iskron.ai/";
+var PRODUCTION_URLS = new Set([DEFAULT_SERVER_URL, ENGLISH_SERVER_URL].map(strip));
+function strip(url) {
+  return url.replace(/\/+$/, "");
+}
+
 // js/shared/frame-text.ts
 var ENVELOPE_KEYS = ["id", "received_at", "stale", "content_type", "body_chars", "body_read"];
 function frameToText(frame, raw) {
@@ -221,7 +229,12 @@ var Bridge = class {
       const waiter = this.pending.get(msg.id);
       if (!waiter) continue;
       this.pending.delete(msg.id);
-      if (msg.error) waiter.reject(new Error(msg.error.message || JSON.stringify(msg.error)));
+      if (msg.error)
+        waiter.reject(
+          Object.assign(new Error(msg.error.message || JSON.stringify(msg.error)), {
+            code: msg.error.code
+          })
+        );
       else waiter.resolve(msg.result);
     }
   }

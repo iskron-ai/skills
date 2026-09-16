@@ -35,9 +35,9 @@ const INIT = {
 const CONNECT = { realm: "nks-dev", action: "connect", karta: 931, name: "proba" };
 
 // --- a harness that also keeps the bridge's notifications ------------------
-function startBridge(serverUrl, authDir) {
+function startBridge(serverUrl, authDir, extraEnv = {}) {
   const proc = spawn(NODE, [FILE, serverUrl, "--no-browser", "--auth-dir", authDir], {
-    env: { ...process.env, ISKRON_BRIDGE_NO_BROWSER: "1" },
+    env: { ...process.env, ISKRON_BRIDGE_NO_BROWSER: "1", ...extraEnv },
     stdio: ["pipe", "pipe", "pipe"],
   });
   const waiters = new Map();
@@ -107,15 +107,15 @@ const authorizeUrlIn = (text) =>
   /(http:\/\/127\.0\.0\.1:\d+\/login\?k=[\w-]+)/.exec(text || "")?.[1] ?? null;
 
 /** A bridge that has authorized and connected a standing; returns everything the tests read. */
-async function connected(t) {
+async function connected(t, { env = {}, init = INIT } = {}) {
   const fake = await startFakeNks();
   const dir = mkdtempSync(join(tmpdir(), "iskron-standing-"));
-  const bridge = startBridge(fake.mcpUrl, dir);
+  const bridge = startBridge(fake.mcpUrl, dir, env);
   t.after(async () => {
     await bridge.stop();
     await fake.stop();
   });
-  const pending = await bridge.call("initialize", 1, INIT);
+  const pending = await bridge.call("initialize", 1, init);
   const url = authorizeUrlIn(pending.error?.message);
   assert.ok(url, `expected an authorize URL, got ${JSON.stringify(pending)}`);
   const res = await fetch(url, { redirect: "follow" });
@@ -124,8 +124,8 @@ async function connected(t) {
     () => readdirSync(dir).some((f) => f.endsWith(".json")),
     "the exchanged tokens to reach the store",
   );
-  const init = await bridge.call("initialize", 2, INIT);
-  assert.ok(init.result, `initialize after the grant: ${JSON.stringify(init)}`);
+  const initReply = await bridge.call("initialize", 2, init);
+  assert.ok(initReply.result, `initialize after the grant: ${JSON.stringify(initReply)}`);
   const reply = await bridge.call("tools/call", 3, { name: "iskron_channel", arguments: CONNECT });
   const text = (reply.result?.content ?? []).map((c) => c.text ?? "").join("\n");
   const key = /watchdog (\S+)/.exec(text)?.[1];
@@ -705,4 +705,163 @@ test("watchdog with nothing held tells the doer to name itself with iskron_stand
   const r = await wd.done;
   assert.equal(r.exit, 2);
   assert.match(wd.err, /iskron_stand/);
+});
+
+// Leaving the place — the move between an absence and a revoke (graph nks-dev:
+// #4895): the socket is closed and the busy line cleared, while the address,
+// the queue and the hooks stay; coming back reopens the same address.
+test("leave by the doer's word: socket closed, busy line cleared, place kept; iskron_stand comes back without a connect", async (t) => {
+  const { fake, bridge, standings } = await connected(t);
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  // The fake keeps a closed socket in its set until both ends finish: count
+  // sockets the bridge OPENED, not those the fake still holds.
+  const known = new Set(fake.state.ws);
+  const fresh = () => [...fake.state.ws].filter((x) => !known.has(x));
+  await fake.control({ richTools: true });
+  const list = await bridge.call("tools/list", 4);
+  const channel = list.result.tools.find((x) => x.name === "iskron_channel");
+  assert.match(channel.description, /action="leave"/, "the move is announced on the tool");
+  const st = await bridge.call("tools/call", 5, {
+    name: "iskron_channel",
+    arguments: { realm: "nks-dev", action: "status", text: "работаю" },
+  });
+  assert.ok(!st.result?.isError, JSON.stringify(st));
+  const before = fake.state.counts.mcp;
+  const left = await bridge.call("tools/call", 6, {
+    name: "iskron_channel",
+    arguments: { realm: "nks-dev", action: "leave" },
+  });
+  const text = left.result?.content?.[0]?.text ?? "";
+  assert.ok(!left.result?.isError, text);
+  assert.match(text, /ушёл с места/, text);
+  assert.match(text, /занятость снята/, text);
+  assert.equal(fake.state.counts.mcp, before, "leave is the bridge's own move — no server call");
+  assert.match(bridge.stderr, /left the standing: по слову делателя/);
+  assert.equal(fake.state.status, "", "the busy line is cleared");
+  assert.ok(
+    readdirSync(standings).some((f) => f.endsWith(".key")),
+    "the place is kept: the key file stays",
+  );
+  assert.ok(
+    !bridge.notifications.some((n) => ["dead", "evicted"].includes(n.params?.data?.kind)),
+    "leaving is neither a dead token nor an eviction",
+  );
+  const back = await bridge.call("tools/call", 7, {
+    name: "iskron_stand",
+    arguments: { realm: "nks-dev", karta: 931, name: "proba", status: "вернулся" },
+  });
+  const said = (back.result?.content ?? []).map((c) => c.text ?? "").join("\n");
+  assert.ok(!back.result?.isError, said);
+  assert.match(said, /возврат на место/, said);
+  assert.equal(fake.state.counts.connect, 1, "coming back reopens the same address — no connect");
+  await waitFor(() => fresh().length === 1, "the socket to reopen on the same address");
+  assert.match(said, /hello получен/, said);
+  assert.equal(fake.state.status, "вернулся");
+});
+
+test("a harness that hears only through a watchdog: nobody listening past the threshold, the bridge leaves by itself; a watchdog attaching brings it back", async (t) => {
+  const { fake, dir, bridge, key } = await connected(t, { env: { ISKRON_BRIDGE_DEAF_MS: "1500" } });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const known = new Set(fake.state.ws);
+  const fresh = () => [...fake.state.ws].filter((x) => !known.has(x));
+  const st = await bridge.call("tools/call", 4, {
+    name: "iskron_channel",
+    arguments: { realm: "nks-dev", action: "status", text: "работаю" },
+  });
+  assert.ok(!st.result?.isError, JSON.stringify(st));
+  await waitFor(
+    () => /left the standing: никто не слушает/.test(bridge.stderr),
+    "the bridge to leave on deafness",
+    6000,
+  );
+  await waitFor(() => fake.state.status === "", "the busy line to be cleared");
+  const wd = runClient("watchdog", dir, key, 8000);
+  await waitFor(() => fresh().length === 1, "a listener to bring the standing back");
+  await waitFor(() => /мост вернулся на место/.test(bridge.stderr), "the return to be logged");
+  await waitFor(
+    () => fake.state.status === "работаю",
+    "the busy line cleared by the leave to come back with the place",
+  );
+  assert.ok(
+    bridge.notifications.some(
+      (n) => n.params?.data?.kind === "note" && /вернулся на место/.test(n.params.data.text),
+    ),
+    "the return is announced to the harness",
+  );
+  await new Promise((r) => setTimeout(r, 2500));
+  assert.equal(
+    fresh().length,
+    1,
+    "with a listener attached the bridge stays and does not leave again",
+  );
+  assert.equal((bridge.stderr.match(/left the standing/g) ?? []).length, 1);
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
+test("pi and OpenCode hear by notification: their bridge never leaves for want of a watchdog", async (t) => {
+  const { fake, bridge } = await connected(t, {
+    env: { ISKRON_BRIDGE_DEAF_MS: "800" },
+    init: { ...INIT, clientInfo: { name: "pi-iskron", version: "1" } },
+  });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  await new Promise((r) => setTimeout(r, 2500));
+  assert.ok(!/left the standing/.test(bridge.stderr), "the socket is still held");
+});
+
+for (const way of ["stdin", "SIGINT"]) {
+  test(`the end of the session (${way}) clears the busy line, the key file first`, async (t) => {
+    const { fake, bridge, standings } = await connected(t);
+    await waitFor(() => fake.state.ws.size === 1, "the socket");
+    const st = await bridge.call("tools/call", 4, {
+      name: "iskron_channel",
+      arguments: { realm: "nks-dev", action: "status", text: "работаю" },
+    });
+    assert.ok(!st.result?.isError, JSON.stringify(st));
+    if (way === "stdin") await bridge.stop();
+    else bridge.proc.kill("SIGINT");
+    await waitFor(() => fake.state.status === "", "the busy line to be cleared at exit");
+    await waitFor(() => bridge.proc.exitCode !== null, "the bridge to exit");
+    assert.ok(
+      !readdirSync(standings).some((f) => f.endsWith(".key")),
+      "the key file must not outlive the bridge",
+    );
+  });
+}
+
+// A watchdog re-armed after a Monitor expiry must not carry the same frames a
+// second time: the bridge remembers what a local client already received.
+test("a re-armed watchdog gets hello and only the frames no local client has seen", async (t) => {
+  const { fake, dir, key } = await connected(t);
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const first = runClient("watchdog", dir, key, 20_000);
+  await waitFor(() => first.out.includes("слушаю стояние"), "the first watchdog to attach");
+  await fake.control({
+    ws_send: JSON.stringify({ type: "message", id: "m-1", body: "первое слово" }),
+  });
+  await waitFor(() => first.out.includes("первое слово"), "the frame to reach the first watchdog");
+  first.proc.kill("SIGKILL");
+  await first.done;
+  await fake.control({
+    ws_send: JSON.stringify({
+      type: "message",
+      id: "m-2",
+      body: "второе слово, пока никто не слушал",
+    }),
+  });
+  await new Promise((r) => setTimeout(r, 300));
+  const again = runClient("watchdog", dir, key, 6000);
+  await waitFor(
+    () => again.out.includes("второе слово"),
+    "the unseen frame to reach the re-armed watchdog",
+  );
+  await new Promise((r) => setTimeout(r, 300));
+  assert.match(again.out, /"type":"hello"/, "hello is replayed: proof of holding");
+  assert.ok(
+    !again.out.includes("первое слово"),
+    `a delivered frame must not come a second time:\n${again.out}`,
+  );
+  assert.match(again.out, /слушаю стояние \S+ \(2 кадра задним числом\)/, again.out);
+  again.proc.kill("SIGKILL");
+  await again.done;
 });

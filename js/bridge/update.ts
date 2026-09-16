@@ -20,7 +20,7 @@ import { fileURLToPath } from "node:url";
 import { homeBridgePath } from "../shared/home.ts";
 import { compareVersions } from "../shared/semver.ts";
 import { VERSION, versionIn } from "../shared/version.ts";
-import { DEFAULT_SERVER_URL } from "./config.ts";
+import { isProductionServer } from "./config.ts";
 import { emit, log } from "./streams.ts";
 
 export const RELEASES_URL =
@@ -261,7 +261,12 @@ export function takeNotice(): string | null {
 export function startFreshnessWatch(authDir: string, serverUrl: string): void {
   if (updatesDisabled()) return;
   const explicit = !!process.env.ISKRON_BRIDGE_RELEASES_URL?.trim();
-  if (!explicit && serverUrl.replace(/\/+$/, "") !== DEFAULT_SERVER_URL.replace(/\/+$/, "")) return;
+  if (!explicit && !isProductionServer(serverUrl)) {
+    log(
+      `releases not watched: ${serverUrl} is not a production address — another instance is another delivery`,
+    );
+    return;
+  }
   const tick = async (): Promise<void> => {
     const latest = await checkLatest(authDir);
     const notice = staleNotice(latest, authDir);

@@ -9,7 +9,7 @@ import { checkLatest, setupPathOf } from "../bridge/update.ts";
 import { homeBridgePath } from "../shared/home.ts";
 import { compareVersions } from "../shared/semver.ts";
 import { VERSION } from "../shared/version.ts";
-import { harnessReport } from "./doctor.ts";
+import { freshnessWord, harnessReport, serverSourceWord } from "./doctor.ts";
 
 const out = (s: string): void => {
   process.stdout.write(s + "\n");
@@ -18,6 +18,7 @@ const out = (s: string): void => {
 export async function runUpdate(argv: string[]): Promise<void> {
   setConfig(parseArgs(argv));
   out(`iskron update — ${BUILD}`);
+  out(`сервер: ${CFG.serverUrl} (${serverSourceWord()}) — ${freshnessWord(CFG.serverUrl)}`);
   const latest = await checkLatest(CFG.authDir, true);
   if (!latest || !latest.version) {
     out(`свежий релиз не узнан: ${latest?.error ?? "нет ответа"} — сеть или GitHub; повтори позже`);

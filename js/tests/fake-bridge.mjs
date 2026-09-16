@@ -16,6 +16,9 @@
 //                 auth (no grant yet: every request is refused -32001
 //                 «authorization required», as the real bridge refuses it while
 //                 its browser flow waits for the human, until FB_AUTHED exists)
+//                 · net (every request refused -32001 «upstream unreachable» — the
+//                 same code as the login refusal, a different word: the extension
+//                 must not mistake it for a login to wait for)
 //   FB_AUTHED     with FB_MODE=auth: the file whose existence means the human has
 //                 finished the login in the browser.
 //   FB_TOOLS      JSON array for tools/list; default is two tools, one of them
@@ -114,6 +117,19 @@ process.stdin.on("data", (chunk) => {
     }
     if (typeof msg.id !== "number") continue; // notifications need no answer
     if (MODE === "mute") continue; // ...and neither does anything, in this mode
+    if (MODE === "net") {
+      send({
+        jsonrpc: "2.0",
+        id: msg.id,
+        error: {
+          code: -32001,
+          message:
+            "iskron-bridge v0+fake: upstream unreachable: fetch failed (ECONNREFUSED). " +
+            "The call never reached the server, so nothing was applied — retry freely. The bridge stays up.",
+        },
+      });
+      continue;
+    }
     if (MODE === "auth" && !existsSync(process.env.FB_AUTHED || "")) {
       send({
         jsonrpc: "2.0",

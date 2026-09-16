@@ -17,11 +17,13 @@ import {
   awaitHello,
   hasStatusAddressFor,
   holdsStanding,
+  isParked,
   listenBlock,
-  publishStatus,
   wasEvicted,
 } from "./hold.ts";
+import { returnToStanding } from "./leave.ts";
 import { noteStanding, replyText } from "./standing.ts";
+import { publishStatus } from "./status.ts";
 import { post } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
 import { readLatest, staleNotice } from "./update.ts";
@@ -279,7 +281,17 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   const listensElsewhere =
     !!mine && /(^|·)\s*слушает/.test(mine.rest) && !holdsStanding(realm, karta, name);
   // take=true — явный новый цикл входа: connect и тогда, когда сокет уже наш.
-  if (a.take !== true && (holdsStanding(realm, karta, name) || listensElsewhere)) {
+  if (a.take !== true && isParked(realm, karta, name) && returnToStanding("iskron_stand")) {
+    // Ушёл с места и вернулся: тот же адрес, сокет открыт заново, register — атрибуция.
+    const r = await call("iskron_channel", { action: "register", realm, karta, name });
+    if (r.isError) {
+      lines.push(`Отказано: register — ${short(r.text)}`);
+      return done(true);
+    }
+    heardHere = true;
+    how =
+      "возврат на место, с которого мост уходил, — сокет открыт заново тем же адресом, register";
+  } else if (a.take !== true && (holdsStanding(realm, karta, name) || listensElsewhere)) {
     const r = await call("iskron_channel", { action: "register", realm, karta, name });
     if (r.isError) {
       lines.push(`Отказано: register — ${short(r.text)}`);

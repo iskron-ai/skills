@@ -268,3 +268,35 @@ test("doctor with a personal access token names its source and judges it by a li
     await fake.stop();
   }
 });
+
+// `use` — the standing choice of the server on this machine (graph nks-dev:
+// #5040): `en` is the English production address, `ru` the Russian one, a full
+// URL another instance; doctor and update say what the bridge looks at and why.
+test("use en writes the English production address next to the grant; doctor names the file and the choice", async () => {
+  const fake = await startFakeNks();
+  const home = mkdtempSync(join(tmpdir(), "iskron-doctor-"));
+  const authDir = join(home, ".iskron-bridge");
+  try {
+    const en = await run(["use", "en", "--auth-dir", authDir], { HOME: home });
+    assert.equal(en.code, 0, `use exited ${en.code}: ${en.err}`);
+    assert.equal(readFileSync(join(authDir, "server"), "utf8"), "https://mcp.iskron.ai/\n");
+    assert.match(en.out, /мост смотрит на https:\/\/mcp\.iskron\.ai\//);
+    assert.match(en.out, /продовый адрес: самообновление с релизов поставки включено/);
+    const other = await run(["use", fake.mcpUrl, "--auth-dir", authDir], { HOME: home });
+    assert.equal(other.code, 0, other.err);
+    assert.match(other.out, /другой инстанс: обновлений с релизов поставки нет/);
+    const bad = await run(["use", "nowhere", "--auth-dir", authDir], { HOME: home });
+    assert.equal(bad.code, 2, "a word that is neither en, ru nor a URL is refused");
+    const r = await run(["doctor", "--auth-dir", authDir], { HOME: home });
+    assert.equal(r.code, 0, `doctor exited ${r.code}: ${r.err}`);
+    assert.ok(
+      r.out.includes(`сервер: ${fake.mcpUrl} (файл выбора ${join(authDir, "server")})`),
+      `doctor must name the server from the file and the file itself:\n${r.out}`,
+    );
+    assert.match(r.out, /другой инстанс: обновлений с релизов поставки нет/);
+    const ru = await run(["use", "ru", "--auth-dir", authDir], { HOME: home });
+    assert.equal(readFileSync(join(authDir, "server"), "utf8"), "https://mcp.iskron.ru/\n", ru.out);
+  } finally {
+    await fake.stop();
+  }
+});

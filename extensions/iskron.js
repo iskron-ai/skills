@@ -32,6 +32,14 @@ function versionIn(text) {
 // js/bridge/build.ts
 var BUILD = buildOf(import.meta.url);
 
+// js/bridge/config.ts
+var DEFAULT_SERVER_URL = "https://mcp.iskron.ru/";
+var ENGLISH_SERVER_URL = "https://mcp.iskron.ai/";
+var PRODUCTION_URLS = new Set([DEFAULT_SERVER_URL, ENGLISH_SERVER_URL].map(strip));
+function strip(url) {
+  return url.replace(/\/+$/, "");
+}
+
 // js/shared/frame-text.ts
 var ENVELOPE_KEYS = ["id", "received_at", "stale", "content_type", "body_chars", "body_read"];
 function frameToText(frame, raw) {
@@ -211,7 +219,12 @@ var Bridge = class {
       const waiter = this.pending.get(msg.id);
       if (!waiter) continue;
       this.pending.delete(msg.id);
-      if (msg.error) waiter.reject(new Error(msg.error.message || JSON.stringify(msg.error)));
+      if (msg.error)
+        waiter.reject(
+          Object.assign(new Error(msg.error.message || JSON.stringify(msg.error)), {
+            code: msg.error.code
+          })
+        );
       else waiter.resolve(msg.result);
     }
   }
@@ -301,6 +314,9 @@ function resultToContent(result) {
     { type: "text", text: structured ? JSON.stringify(structured) : "(пустой ответ)" }
   ];
 }
+
+// js/shared/clients.ts
+var PI_CLIENT = "pi-iskron";
 
 // js/extension/home-copy.ts
 import {
@@ -426,6 +442,8 @@ function findBridge() {
 var READY_WAIT_MS = Number(process.env.ISKRON_MCP_READY_WAIT_MS || 2e4);
 var HANDSHAKE_MS = Number(process.env.ISKRON_MCP_HANDSHAKE_MS || 6e5);
 var TICK_MS = 15e3;
+var AUTH_POLL_MS = Number(process.env.ISKRON_MCP_AUTH_POLL_MS || 3e3);
+var AUTH_PENDING = /authorization required/i;
 var PROTOCOL = "2025-06-18";
 function setupBridge(pi, onChannel) {
   let bridge = null;
@@ -452,23 +470,45 @@ function setupBridge(pi, onChannel) {
     );
     bridge = b;
     b.start();
-    const init = await b.request(
-      "initialize",
-      {
-        protocolVersion: PROTOCOL,
-        capabilities: {},
-        clientInfo: { name: "pi-iskron", version: "1" }
-      },
-      { timeoutMs: HANDSHAKE_MS }
+    let toldLogin = false;
+    const deadline = Date.now() + HANDSHAKE_MS;
+    const untilAuthed = async (ask) => {
+      for (; ; ) {
+        try {
+          return await ask();
+        } catch (e) {
+          const message = e instanceof Error ? e.message : String(e);
+          if (!AUTH_PENDING.test(message) || bridge !== b || Date.now() + AUTH_POLL_MS > deadline)
+            throw e;
+          if (!toldLogin) {
+            toldLogin = true;
+            notify(`Искрон: нужен вход — ${message}`, "warning");
+          }
+          await new Promise((r) => setTimeout(r, AUTH_POLL_MS));
+        }
+      }
+    };
+    const init = await untilAuthed(
+      () => b.request(
+        "initialize",
+        {
+          protocolVersion: PROTOCOL,
+          capabilities: {},
+          clientInfo: { name: PI_CLIENT, version: "1" }
+        },
+        { timeoutMs: HANDSHAKE_MS }
+      )
     );
     if (bridge !== b) return b.stop();
     b.notify("notifications/initialized");
     const tools = [];
     let cursor;
     do {
-      const page = await b.request("tools/list", cursor ? { cursor } : {}, {
-        timeoutMs: HANDSHAKE_MS
-      });
+      const page = await untilAuthed(
+        () => b.request("tools/list", cursor ? { cursor } : {}, {
+          timeoutMs: HANDSHAKE_MS
+        })
+      );
       for (const t of page?.tools ?? []) tools.push(t);
       cursor = page?.nextCursor;
     } while (cursor);
@@ -522,7 +562,7 @@ function setupBridge(pi, onChannel) {
     }
     const server = init?.serverInfo;
     notify(
-      `Искрон: мост поднят (${server?.name ?? "сервер"} ${server?.version ?? ""}), тулов в сессии: ${tools.length}.`,
+      `Искрон: мост поднят (${server?.name ?? "сервер"} ${server?.version ?? ""}), тулов в сессии: ${tools.length}${toldLogin ? " — вход состоялся" : ""}.`,
       "info"
     );
   }

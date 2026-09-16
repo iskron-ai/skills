@@ -106,7 +106,12 @@ export class Bridge {
       const waiter = this.pending.get(msg.id);
       if (!waiter) continue;
       this.pending.delete(msg.id);
-      if (msg.error) waiter.reject(new Error(msg.error.message || JSON.stringify(msg.error)));
+      if (msg.error)
+        waiter.reject(
+          Object.assign(new Error(msg.error.message || JSON.stringify(msg.error)), {
+            code: msg.error.code,
+          }),
+        );
       else waiter.resolve(msg.result);
     }
   }
