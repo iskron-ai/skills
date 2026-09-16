@@ -1411,17 +1411,8 @@ var SURFACE_CLIENT = "export-surface";
 var OWN_CLIENTS = /* @__PURE__ */ new Set([OPENCODE_CLIENT, SURFACE_CLIENT]);
 
 // js/bridge/hold.ts
-import {
-  chmodSync,
-  existsSync,
-  mkdirSync as mkdirSync4,
-  readdirSync as readdirSync2,
-  readFileSync as readFileSync7,
-  unlinkSync as unlinkSync4,
-  writeFileSync as writeFileSync5
-} from "node:fs";
-import { connect as connectLocal, createServer as createServer2 } from "node:net";
-import { join as join6 } from "node:path";
+import { chmodSync, mkdirSync as mkdirSync4, unlinkSync as unlinkSync5, writeFileSync as writeFileSync5 } from "node:fs";
+import { createServer as createServer2 } from "node:net";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 
 // js/shared/channel.ts
@@ -1908,6 +1899,42 @@ function stampOrigin(frame2) {
   return { ...frame2, origin: classifyOrigin(frame2, state.standing?.karta) };
 }
 
+// js/bridge/sweep.ts
+import { existsSync, readdirSync as readdirSync2, readFileSync as readFileSync7, unlinkSync as unlinkSync4 } from "node:fs";
+import { connect as connectLocal } from "node:net";
+import { join as join6 } from "node:path";
+function sweepStale(authDir, mine) {
+  const dir = standingsDirOf(authDir);
+  if (process.platform === "win32" || !existsSync(dir)) return;
+  for (const f of readdirSync2(dir).filter((x) => x.endsWith(".key"))) {
+    const keyFile = join6(dir, f);
+    let key;
+    try {
+      key = readFileSync7(keyFile, "utf8").trim();
+    } catch {
+      continue;
+    }
+    if (!key || key === mine) continue;
+    const sock = socketPathOf(authDir, key);
+    const drop = () => {
+      for (const p of [keyFile, sock, seenFilePathOf(authDir, key)]) {
+        try {
+          unlinkSync4(p);
+        } catch {
+        }
+      }
+    };
+    if (!existsSync(sock)) {
+      drop();
+      continue;
+    }
+    const probe = connectLocal(sock);
+    probe.once("connect", () => probe.destroy());
+    probe.once("error", drop);
+    probe.setTimeout(1e3, () => probe.destroy());
+  }
+}
+
 // js/bridge/hold.ts
 var RING = 20;
 function standingsDir() {
@@ -1982,44 +2009,14 @@ function notify(level, data) {
     params: { level, logger: "iskron-channel", data }
   });
 }
-function sweepStale(dir, mine) {
-  if (process.platform === "win32" || !existsSync(dir)) return;
-  for (const f of readdirSync2(dir).filter((x) => x.endsWith(".key"))) {
-    const keyFile = join6(dir, f);
-    let key;
-    try {
-      key = readFileSync7(keyFile, "utf8").trim();
-    } catch {
-      continue;
-    }
-    if (!key || key === mine) continue;
-    const sock = socketPathFor(key);
-    const drop = () => {
-      for (const p of [keyFile, sock, seenFilePathOf(CFG.authDir, key)]) {
-        try {
-          unlinkSync4(p);
-        } catch {
-        }
-      }
-    };
-    if (!existsSync(sock)) {
-      drop();
-      continue;
-    }
-    const probe = connectLocal(sock);
-    probe.once("connect", () => probe.destroy());
-    probe.once("error", drop);
-    probe.setTimeout(1e3, () => probe.destroy());
-  }
-}
 function openLocalServer(key) {
   const path = socketPathFor(key);
   mkdirSync4(standingsDir(), { recursive: true, mode: 448 });
-  sweepStale(standingsDir(), key);
+  sweepStale(CFG.authDir, key);
   writeFileSync5(keyFilePathFor(key), key + "\n", { mode: 384 });
   if (process.platform !== "win32") {
     try {
-      unlinkSync4(path);
+      unlinkSync5(path);
     } catch {
     }
   }
@@ -2073,13 +2070,13 @@ function releaseStanding(reason) {
   if (currentKey) {
     for (const p of [keyFilePathFor(currentKey), seenFilePathOf(CFG.authDir, currentKey)]) {
       try {
-        unlinkSync4(p);
+        unlinkSync5(p);
       } catch {
       }
     }
     if (process.platform !== "win32") {
       try {
-        unlinkSync4(socketPathFor(currentKey));
+        unlinkSync5(socketPathFor(currentKey));
       } catch {
       }
     }

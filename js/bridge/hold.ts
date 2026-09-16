@@ -10,17 +10,8 @@
 //   • уведомления MCP `notifications/message` с logger «iskron-channel» — их
 //     читает расширение pi и вкладывает кадр в ход.
 // Занятость делатель пишет в файл рядом с сокетом (#4231); публикует мост.
-import {
-  chmodSync,
-  existsSync,
-  mkdirSync,
-  readdirSync,
-  readFileSync,
-  unlinkSync,
-  writeFileSync,
-} from "node:fs";
-import { connect as connectLocal, createServer, type Server, type Socket } from "node:net";
-import { join } from "node:path";
+import { chmodSync, mkdirSync, unlinkSync, writeFileSync } from "node:fs";
+import { createServer, type Server, type Socket } from "node:net";
 import { fileURLToPath } from "node:url";
 
 import {
@@ -42,6 +33,7 @@ import { completeFrame, stampOrigin } from "./complete.ts";
 import { CFG } from "./config.ts";
 import { replyText } from "./standing.ts";
 import { emit, log } from "./streams.ts";
+import { sweepStale } from "./sweep.ts";
 import { state } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
 
@@ -163,46 +155,10 @@ function notify(level: "info" | "warning" | "error", data: ChannelEvent): void {
   });
 }
 
-/**
- * Мост, убитый без прощания, оставляет `.key` и `.sock`: сторож без аргумента
- * перечисляет ключи, и мёртвая запись либо уводит его на сокет, где никого нет,
- * либо заставляет отказать «стояний несколько». Перед тем как положить свой
- * ключ, каждый чужой проверяется одним подключением; неотвечающий — убирается.
- */
-function sweepStale(dir: string, mine: string): void {
-  if (process.platform === "win32" || !existsSync(dir)) return;
-  for (const f of readdirSync(dir).filter((x) => x.endsWith(".key"))) {
-    const keyFile = join(dir, f);
-    let key: string;
-    try {
-      key = readFileSync(keyFile, "utf8").trim();
-    } catch {
-      continue;
-    }
-    if (!key || key === mine) continue;
-    const sock = socketPathFor(key);
-    const drop = (): void => {
-      for (const p of [keyFile, sock, seenFilePathOf(CFG.authDir, key)]) {
-        try {
-          unlinkSync(p);
-        } catch {}
-      }
-    };
-    if (!existsSync(sock)) {
-      drop();
-      continue;
-    }
-    const probe = connectLocal(sock);
-    probe.once("connect", () => probe.destroy());
-    probe.once("error", drop);
-    probe.setTimeout(1000, () => probe.destroy());
-  }
-}
-
 function openLocalServer(key: string): void {
   const path = socketPathFor(key);
   mkdirSync(standingsDir(), { recursive: true, mode: 0o700 });
-  sweepStale(standingsDir(), key);
+  sweepStale(CFG.authDir, key);
   writeFileSync(keyFilePathFor(key), key + "\n", { mode: 0o600 });
   if (process.platform !== "win32") {
     try {
