@@ -32,7 +32,14 @@ import { BUILD } from "./build.ts";
 import { CFG, parseArgs, setConfig } from "./config.ts";
 import { deliver } from "./deliver.ts";
 import { errorMessage } from "./errors.ts";
-import { holdFromEnv, releaseStanding, statusAddress } from "./hold.ts";
+import {
+  holdFromEnv,
+  keyOf,
+  readHoldRecord,
+  releaseStanding,
+  resumeFromDisk,
+  statusAddress,
+} from "./hold.ts";
 import { startDeafnessWatch } from "./leave.ts";
 import { installAuthLockExitHook } from "./oauth/authlock.ts";
 import { pendingFlow } from "./oauth/flow.ts";
@@ -67,6 +74,28 @@ export function proxyWord(): string | null {
         "Node 24.5+ with NODE_USE_ENV_PROXY=1 or the Bun runtime does; until then calls go around the proxy";
 }
 
+/**
+ * ISKRON_RESUME_STANDING=<ключ стояния>: мост, который плагин поднимает заново
+ * для сессии, державшей место, возвращает его с диска до первого вызова —
+ * сессия не теряет ни слуха, ни привязки записей (register переигрывается
+ * на первом вызове, как после пересборки сессии).
+ */
+function resumeFromEnv(): void {
+  const key = process.env.ISKRON_RESUME_STANDING?.trim();
+  if (!key) return;
+  const rec = readHoldRecord(key);
+  if (!rec || keyOf(rec.realm, rec.karta, rec.name) !== key) {
+    log(
+      `ISKRON_RESUME_STANDING=${key}: no hold record for it — the place is taken by iskron_stand`,
+    );
+    return;
+  }
+  void resumeFromDisk(rec.realm, rec.karta, rec.name).then((word) => {
+    if (!word)
+      log(`ISKRON_RESUME_STANDING=${key}: could not resume — the place is taken by iskron_stand`);
+  });
+}
+
 export function bridgeMain(argv: string[]): void {
   guardStream(process.stdout); // before the first write: a broken pipe is news, not a crash
   guardStream(process.stderr);
@@ -83,6 +112,7 @@ export function bridgeMain(argv: string[]): void {
   startTokenKeepalive();
   startFreshnessWatch(CFG.authDir, CFG.serverUrl); // отставание поставки — слово моста, не память человека
   holdFromEnv(); // отладочный путь: сокет из окружения, без connect
+  resumeFromEnv(); // плагин поднял мост заново для сессии-держателя — место с диска (#5061)
   startDeafnessWatch(); // никто не слушает — мост уходит с места сам (#4895)
 
   const rl = createInterface({ input: process.stdin, terminal: false });

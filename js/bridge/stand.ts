@@ -11,14 +11,15 @@ import { execFileSync } from "node:child_process";
 import { hostname } from "node:os";
 import { basename } from "node:path";
 
+import { absorbChannelReply } from "./absorb.ts";
 import { CFG } from "./config.ts";
 import {
-  absorbChannelReply,
   awaitHello,
   hasStatusAddressFor,
   holdsStanding,
   isParked,
   listenBlock,
+  resumeFromDisk,
   wasEvicted,
 } from "./hold.ts";
 import { returnToStanding } from "./leave.ts";
@@ -280,8 +281,23 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   let heardHere: boolean;
   const listensElsewhere =
     !!mine && /(^|·)\s*слушает/.test(mine.rest) && !holdsStanding(realm, karta, name);
+  // Мост поднят заново под местом, которое держал прежний мост этого каталога
+  // (перезапуск плагина, /mcp reconnect): место возвращается с диска, не
+  // ротируется — адрес, хуки и очередь те же (#5061).
+  const resumed =
+    a.take !== true && !holdsStanding(realm, karta, name) && !isParked(realm, karta, name)
+      ? await resumeFromDisk(realm, karta, name)
+      : null;
   // take=true — явный новый цикл входа: connect и тогда, когда сокет уже наш.
-  if (a.take !== true && isParked(realm, karta, name) && returnToStanding("iskron_stand")) {
+  if (resumed) {
+    const r = await call("iskron_channel", { action: "register", realm, karta, name });
+    if (r.isError) {
+      lines.push(`Отказано: register — ${short(r.text)}`);
+      return done(true);
+    }
+    heardHere = true;
+    how = `${resumed}, register`;
+  } else if (a.take !== true && isParked(realm, karta, name) && returnToStanding("iskron_stand")) {
     // Ушёл с места и вернулся: тот же адрес, сокет открыт заново, register — атрибуция.
     const r = await call("iskron_channel", { action: "register", realm, karta, name });
     if (r.isError) {
@@ -342,8 +358,8 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
 
   // 3. hello — доказательство держания; свежий он только за connect этого вызова.
   if (!heardHere) lines.push("Слух — у другого держателя; здесь только атрибуция записей.");
-  else if (how.startsWith("сокет уже держит"))
-    lines.push("Сокет держит этот мост (hello был получен при занятии места).");
+  else if (how.startsWith("сокет уже держит") || how.startsWith("возврат места с диска"))
+    lines.push("Сокет держит этот мост (hello получен при открытии сокета).");
   else {
     const hello = await awaitHello(4000);
     if (hello) lines.push(`hello получен: ожидало кадров — ${hello.pending ?? 0}.`);

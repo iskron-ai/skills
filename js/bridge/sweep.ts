@@ -11,6 +11,21 @@ import { seenFilePathOf, socketPathOf, standingsDirOf } from "../shared/standing
  * либо заставляет отказать «стояний несколько». Перед тем как положить свой
  * ключ, каждый чужой проверяется одним подключением; неотвечающий — убирается.
  */
+/** Слушает ли кто-то локальный сокет стояния — живой мост держит его, мёртвый оставил файл. */
+export function localSocketAlive(sock: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    if (process.platform !== "win32" && !existsSync(sock)) return resolve(false);
+    const probe = connectLocal(sock);
+    const done = (v: boolean): void => {
+      probe.destroy();
+      resolve(v);
+    };
+    probe.once("connect", () => done(true));
+    probe.once("error", () => done(false));
+    probe.setTimeout(1000, () => done(false));
+  });
+}
+
 export function sweepStale(authDir: string, mine: string): void {
   const dir = standingsDirOf(authDir);
   if (process.platform === "win32" || !existsSync(dir)) return;

@@ -1451,11 +1451,6 @@ var OWN_CLIENTS = /* @__PURE__ */ new Set([OPENCODE_CLIENT, SURFACE_CLIENT]);
 var PI_CLIENT = "pi-iskron";
 var NOTIFIED_CLIENTS = /* @__PURE__ */ new Set([PI_CLIENT, OPENCODE_CLIENT]);
 
-// js/bridge/hold.ts
-import { chmodSync, mkdirSync as mkdirSync5, unlinkSync as unlinkSync5, writeFileSync as writeFileSync6 } from "node:fs";
-import { createServer as createServer2 } from "node:net";
-import { fileURLToPath as fileURLToPath2 } from "node:url";
-
 // js/shared/channel.ts
 var DEAD_TOKEN_CODES = [4001, 4002];
 var EVICTED_CODE = 4e3;
@@ -1595,6 +1590,11 @@ function holdSocket(o) {
   };
 }
 
+// js/bridge/hold.ts
+import { chmodSync, mkdirSync as mkdirSync5, unlinkSync as unlinkSync6, writeFileSync as writeFileSync7 } from "node:fs";
+import { createServer as createServer2 } from "node:net";
+import { fileURLToPath as fileURLToPath2 } from "node:url";
+
 // js/shared/seen.ts
 import { appendFileSync as appendFileSync2, readFileSync as readFileSync6, writeFileSync as writeFileSync5 } from "node:fs";
 var SEEN_KEEP = 200;
@@ -1629,6 +1629,7 @@ function socketPathOf(authDir, key) {
   return join5(standingsDirOf(authDir), `${hashOf(key)}.sock`);
 }
 var keyFilePathOf = (authDir, key) => join5(standingsDirOf(authDir), `${hashOf(key)}.key`);
+var holdFilePathOf = (authDir, key) => join5(standingsDirOf(authDir), `${hashOf(key)}.hold`);
 var seenFilePathOf = (authDir, key) => join5(standingsDirOf(authDir), `${hashOf(key)}.seen`);
 
 // js/bridge/transport.ts
@@ -1946,6 +1947,34 @@ function stampOrigin(frame2) {
   return { ...frame2, origin: classifyOrigin(frame2, state.standing?.karta) };
 }
 
+// js/bridge/holdrecord.ts
+import { readFileSync as readFileSync7, unlinkSync as unlinkSync4, writeFileSync as writeFileSync6 } from "node:fs";
+var holdFilePathFor = (key) => holdFilePathOf(CFG.authDir, key);
+function keyOf(realm, karta, name) {
+  return `${name || "_"}--${karta}--${realm}`.replace(/[^A-Za-z0-9._-]+/g, "_").slice(0, 120);
+}
+function writeHoldRecord(key, rec) {
+  try {
+    writeFileSync6(holdFilePathFor(key), JSON.stringify(rec) + "\n", { mode: 384 });
+  } catch (e) {
+    log(`hold record not written: ${e.message}`);
+  }
+}
+function readHoldRecord(key) {
+  try {
+    const r = JSON.parse(readFileSync7(holdFilePathFor(key), "utf8"));
+    return r && typeof r.url === "string" && r.realm && r.karta != null ? r : null;
+  } catch {
+    return null;
+  }
+}
+function dropHoldRecord(key) {
+  try {
+    unlinkSync4(holdFilePathFor(key));
+  } catch {
+  }
+}
+
 // js/shared/frame-text.ts
 var ENVELOPE_KEYS = ["id", "received_at", "stale", "content_type", "body_chars", "body_read"];
 function frameToText(frame2, raw) {
@@ -1997,9 +2026,22 @@ function dropStale() {
 }
 
 // js/bridge/sweep.ts
-import { existsSync, readdirSync as readdirSync2, readFileSync as readFileSync7, unlinkSync as unlinkSync4 } from "node:fs";
+import { existsSync, readdirSync as readdirSync2, readFileSync as readFileSync8, unlinkSync as unlinkSync5 } from "node:fs";
 import { connect as connectLocal } from "node:net";
 import { join as join6 } from "node:path";
+function localSocketAlive(sock) {
+  return new Promise((resolve) => {
+    if (process.platform !== "win32" && !existsSync(sock)) return resolve(false);
+    const probe = connectLocal(sock);
+    const done = (v) => {
+      probe.destroy();
+      resolve(v);
+    };
+    probe.once("connect", () => done(true));
+    probe.once("error", () => done(false));
+    probe.setTimeout(1e3, () => done(false));
+  });
+}
 function sweepStale(authDir, mine) {
   const dir = standingsDirOf(authDir);
   if (process.platform === "win32" || !existsSync(dir)) return;
@@ -2007,7 +2049,7 @@ function sweepStale(authDir, mine) {
     const keyFile = join6(dir, f);
     let key;
     try {
-      key = readFileSync7(keyFile, "utf8").trim();
+      key = readFileSync8(keyFile, "utf8").trim();
     } catch {
       continue;
     }
@@ -2016,7 +2058,7 @@ function sweepStale(authDir, mine) {
     const drop = () => {
       for (const p of [keyFile, sock, seenFilePathOf(authDir, key)]) {
         try {
-          unlinkSync4(p);
+          unlinkSync5(p);
         } catch {
         }
       }
@@ -2044,6 +2086,24 @@ function keyFor() {
 }
 var socketPathFor = (key) => socketPathOf(CFG.authDir, key);
 var keyFilePathFor = (key) => keyFilePathOf(CFG.authDir, key);
+async function resumeFromDisk(realm, karta, name) {
+  const key = keyOf(realm, karta, name);
+  const rec = readHoldRecord(key);
+  if (!rec) return null;
+  if (holder?.alive && currentKey === key) return null;
+  if (await localSocketAlive(socketPathFor(key))) return null;
+  state.standing = { realm, karta, name };
+  holdStanding(rec.url, rec.statusUrl);
+  const hello = await awaitHello(4e3);
+  if (hello && holder?.alive) {
+    log(`standing resumed from disk (${key})`);
+    return `возврат места с диска после перезапуска моста — сокет открыт заново тем же адресом (ожидало кадров — ${hello.pending ?? 0})`;
+  }
+  log(`hold record for ${key} is stale — dropping it, the place is taken anew`);
+  releaseStanding("возврат с диска не удался", true);
+  state.standing = null;
+  return null;
+}
 var holder = null;
 var server = null;
 var currentKey = null;
@@ -2087,13 +2147,22 @@ function awaitHello(timeoutMs) {
     setTimeout(() => done(null), timeoutMs).unref();
   });
 }
+function clientName() {
+  const info = state.initParams?.clientInfo;
+  return typeof info?.name === "string" ? info.name : "";
+}
 function listenBlock() {
   if (!currentKey) return null;
   const key = currentKey;
   const self = fileURLToPath2(import.meta.url);
   const where = CFG.authDir === defaultAuthDir() ? "" : ` --auth-dir "${CFG.authDir}"`;
+  const client = clientName();
+  const monitor = `под Monitor — node "${self}" watchdog ${key}${where} с наибольшим timeout_ms, перевзводить по истечении (Claude Code)`;
+  const exit = `фоновой задачей — node "${self}" watchdog-exit ${key}${where} (выходит нулём на первом сообщении)`;
+  const codex = `в Codex внутри одной длинной команды своей оболочки — node "${self}" watchdog-codex ${key}${where} & …; kill %1 (кадр входит в идущий тред через app-server; отдельной командой с nohup сторож умирает вместе с ней)`;
+  const listen = NOTIFIED_CLIENTS.has(client) ? `Слушает ${client === PI_CLIENT ? "расширение pi" : client === OPENCODE_CLIENT ? "плагин OpenCode" : "харнес"} само — сторож не нужен, кадры входят в ход.` : client === "claude-code" ? `Слушать: ${monitor}.` : /codex/i.test(client) ? `Слушать: ${codex}.` : `Слушать: ${monitor}; ${exit}; ${codex}.`;
   return `[iskron-bridge] Сокет этого стояния держит мост — вручать его никому не нужно (строка выше о том, что никто не слушает, описывает миг до этого держания).
-Слушать: node "${self}" watchdog ${key}${where} — под Monitor с наибольшим timeout_ms, перевзводить по истечении (Claude Code); фоновой задачей — node "${self}" watchdog-exit ${key}${where} (выходит нулём на первом сообщении); в Codex из своей оболочки фоном — node "${self}" watchdog-codex ${key}${where} (кадр входит в идущий тред через app-server).
+${listen}
 Занятость: iskron_channel(action="status", realm, text) — пустой text снимает.
 Кадры приходят и уведомлениями MCP (logger iskron-channel).`;
 }
@@ -2118,10 +2187,10 @@ function openLocalServer(key) {
   const path = socketPathFor(key);
   mkdirSync5(standingsDir(), { recursive: true, mode: 448 });
   sweepStale(CFG.authDir, key);
-  writeFileSync6(keyFilePathFor(key), key + "\n", { mode: 384 });
+  writeFileSync7(keyFilePathFor(key), key + "\n", { mode: 384 });
   if (process.platform !== "win32") {
     try {
-      unlinkSync5(path);
+      unlinkSync6(path);
     } catch {
     }
   }
@@ -2162,7 +2231,8 @@ function openLocalServer(key) {
   });
   server = srv;
 }
-function releaseStanding(reason) {
+function releaseStanding(reason, forget = false) {
+  if (forget && currentKey) dropHoldRecord(currentKey);
   if (!holder && !server) return;
   broadcast({ kind: "released", text: reason });
   holder?.close(reason);
@@ -2185,13 +2255,13 @@ function releaseStanding(reason) {
   if (currentKey) {
     for (const p of [keyFilePathFor(currentKey), seenFilePathOf(CFG.authDir, currentKey)]) {
       try {
-        unlinkSync5(p);
+        unlinkSync6(p);
       } catch {
       }
     }
     if (process.platform !== "win32") {
       try {
-        unlinkSync5(socketPathFor(currentKey));
+        unlinkSync6(socketPathFor(currentKey));
       } catch {
       }
     }
@@ -2215,6 +2285,15 @@ function holdStanding(url, statusUrl2) {
   currentUrl = url;
   currentStatusUrl = statusUrl2 || statusUrl(url);
   openLocalServer(key);
+  const s = state.standing;
+  if (s)
+    writeHoldRecord(key, {
+      realm: s.realm,
+      karta: s.karta,
+      name: s.name ?? "",
+      url,
+      statusUrl: currentStatusUrl
+    });
   listenerIdleAt = Date.now();
   seen = seenIds(seenFilePathOf(CFG.authDir, key));
   openHolder(url, key);
@@ -2273,7 +2352,7 @@ function openHolder(url, key) {
         log(
           `standing revoked by this session — released quietly, binding forgotten (${state.standing?.name ?? "unnamed"}; close ${code} arrived before the answer)`
         );
-        releaseStanding("снято своим revoke");
+        releaseStanding("снято своим revoke", true);
         state.standing = null;
         state.standingSession = null;
         return;
@@ -2283,7 +2362,7 @@ function openHolder(url, key) {
       const ev = { kind: "dead", code, text };
       broadcast(ev);
       notify("error", ev);
-      releaseStanding("токен мёртв");
+      releaseStanding("токен мёртв", true);
     },
     onServiceAlive: (version) => {
       const text = `ДЕЛАТЕЛЬ: сокет рвут, а служба отвечает (${version}) — место держу, переоткрываю реже; не пройдёт — спроси о токене`;
@@ -2298,6 +2377,17 @@ function openHolder(url, key) {
     }
   });
 }
+var revokingOwn = false;
+function setRevokingOwn(v) {
+  revokingOwn = v;
+}
+function holdFromEnv() {
+  const url = process.env.ISKRON_CHANNEL_SOCKET?.trim();
+  if (!url) return;
+  holdStanding(url, process.env.ISKRON_CHANNEL_STATUS?.trim() || null);
+}
+
+// js/bridge/absorb.ts
 var SOCKET_RE = /wss:\/\/[^\s"'`<>)\]]+|ws:\/\/(?:127\.0\.0\.1|\[?::1\]?|localhost)(?::\d+)?\/[^\s"'`<>)\]]+/;
 var STATUS_RE = /https?:\/\/[^\s"'`<>)\]]+\/channel\/status\/[^\s"'`<>)\]]+/;
 var trim = (s) => s.replace(/[.,;:!?»"')\]]+$/, "");
@@ -2317,7 +2407,7 @@ function absorbChannelReply(msg, reply) {
   if (a.realm && a.karta != null) {
     state.standing = { realm: a.realm, karta: a.karta, name: a.name };
   }
-  holdStanding(trim(socket), status ? trim(status) : null);
+  holdStanding(trim(socket), status ? trim(status) : statusUrl(trim(socket)));
   const block = listenBlock() ?? "";
   const content = reply.result?.content;
   if (Array.isArray(content)) {
@@ -2326,7 +2416,6 @@ function absorbChannelReply(msg, reply) {
   }
   return reply;
 }
-var revokingOwn = false;
 function revokesOwn(msg) {
   const a = msg?.params?.arguments;
   if (msg?.params?.name !== "iskron_channel" || a?.action !== "revoke") return false;
@@ -2337,25 +2426,20 @@ function revokesOwn(msg) {
   return own && String(a.karta ?? s.karta) === String(s.karta);
 }
 function expectOwnRevoke(msg) {
-  if (revokesOwn(msg)) revokingOwn = true;
+  if (revokesOwn(msg)) setRevokingOwn(true);
 }
 function absorbRevokeReply(msg, reply) {
   if (msg?.params?.name !== "iskron_channel" || msg?.params?.arguments?.action !== "revoke")
     return reply;
-  revokingOwn = false;
+  setRevokingOwn(false);
   if (reply?.error || reply?.result?.isError) return reply;
   if (!revokesOwn(msg)) return reply;
   const name = state.standing?.name ?? "unnamed";
-  releaseStanding("снято своим revoke");
+  releaseStanding("снято своим revoke", true);
   state.standing = null;
   state.standingSession = null;
   log(`standing revoked by this session — released quietly, binding forgotten (${name})`);
   return reply;
-}
-function holdFromEnv() {
-  const url = process.env.ISKRON_CHANNEL_SOCKET?.trim();
-  if (!url) return;
-  holdStanding(url, process.env.ISKRON_CHANNEL_STATUS?.trim() || null);
 }
 
 // js/bridge/status.ts
@@ -2478,7 +2562,7 @@ import { basename as basename2 } from "node:path";
 
 // js/bridge/update.ts
 import { spawn as spawn2 } from "node:child_process";
-import { existsSync as existsSync2, lstatSync, mkdirSync as mkdirSync6, readFileSync as readFileSync8, renameSync as renameSync4, writeFileSync as writeFileSync7 } from "node:fs";
+import { existsSync as existsSync2, lstatSync, mkdirSync as mkdirSync6, readFileSync as readFileSync9, renameSync as renameSync4, writeFileSync as writeFileSync8 } from "node:fs";
 import { homedir as homedir4 } from "node:os";
 import { dirname as dirname2, join as join8 } from "node:path";
 import { fileURLToPath as fileURLToPath3 } from "node:url";
@@ -2513,7 +2597,7 @@ var latestPathOf = (authDir) => join8(authDir, "latest.json");
 function writeAtomic(path, bytes) {
   mkdirSync6(dirname2(path), { recursive: true, mode: 448 });
   const tmp = `${path}.tmp-${process.pid}`;
-  writeFileSync7(tmp, bytes, { mode: 420 });
+  writeFileSync8(tmp, bytes, { mode: 420 });
   renameSync4(tmp, path);
 }
 var isSymlink = (path) => {
@@ -2525,7 +2609,7 @@ var isSymlink = (path) => {
 };
 var versionOf = (path) => {
   try {
-    return versionIn(readFileSync8(path, "utf8"));
+    return versionIn(readFileSync9(path, "utf8"));
   } catch {
     return null;
   }
@@ -2535,7 +2619,7 @@ function syncHome(self = selfPath()) {
   const home = homeBridgePath();
   let mine;
   try {
-    mine = readFileSync8(self);
+    mine = readFileSync9(self);
   } catch {
     return out4;
   }
@@ -2550,8 +2634,8 @@ function syncHome(self = selfPath()) {
     const plugin = opencodePluginPath();
     const packaged = join8(dirname2(self), "opencode-plugin.js");
     if (existsSync2(plugin) && existsSync2(packaged)) {
-      const fresh = readFileSync8(packaged);
-      if (!readFileSync8(plugin).equals(fresh)) {
+      const fresh = readFileSync9(packaged);
+      if (!readFileSync9(plugin).equals(fresh)) {
         writeAtomic(plugin, fresh);
         out4.copied.push(plugin);
       }
@@ -2580,7 +2664,7 @@ function reexec(path, argv2) {
 }
 function readLatest(authDir) {
   try {
-    return JSON.parse(readFileSync8(latestPathOf(authDir), "utf8"));
+    return JSON.parse(readFileSync9(latestPathOf(authDir), "utf8"));
   } catch {
     return null;
   }
@@ -2612,7 +2696,7 @@ async function downloadRelease(tag, version, authDir) {
   const plugin = opencodePluginPath();
   if (existsSync2(plugin)) {
     const fresh = await fetchText(`${base}/skills/establish-mcp/scripts/opencode-plugin.js`);
-    if (readFileSync8(plugin, "utf8") !== fresh) {
+    if (readFileSync9(plugin, "utf8") !== fresh) {
       writeAtomic(plugin, fresh);
       written.push(plugin);
     }
@@ -2851,7 +2935,16 @@ async function runStand(msg) {
   let how;
   let heardHere;
   const listensElsewhere = !!mine && /(^|·)\s*слушает/.test(mine.rest) && !holdsStanding(realm, karta, name);
-  if (a.take !== true && isParked(realm, karta, name) && returnToStanding("iskron_stand")) {
+  const resumed = a.take !== true && !holdsStanding(realm, karta, name) && !isParked(realm, karta, name) ? await resumeFromDisk(realm, karta, name) : null;
+  if (resumed) {
+    const r = await call("iskron_channel", { action: "register", realm, karta, name });
+    if (r.isError) {
+      lines.push(`Отказано: register — ${short(r.text)}`);
+      return done(true);
+    }
+    heardHere = true;
+    how = `${resumed}, register`;
+  } else if (a.take !== true && isParked(realm, karta, name) && returnToStanding("iskron_stand")) {
     const r = await call("iskron_channel", { action: "register", realm, karta, name });
     if (r.isError) {
       lines.push(`Отказано: register — ${short(r.text)}`);
@@ -2898,8 +2991,8 @@ async function runStand(msg) {
     );
   else lines.push("Сокета у моста нет — слушать нечем; проверь ответ connect.");
   if (!heardHere) lines.push("Слух — у другого держателя; здесь только атрибуция записей.");
-  else if (how.startsWith("сокет уже держит"))
-    lines.push("Сокет держит этот мост (hello был получен при занятии места).");
+  else if (how.startsWith("сокет уже держит") || how.startsWith("возврат места с диска"))
+    lines.push("Сокет держит этот мост (hello получен при открытии сокета).");
   else {
     const hello = await awaitHello(4e3);
     if (hello) lines.push(`hello получен: ожидало кадров — ${hello.pending ?? 0}.`);
@@ -3248,6 +3341,21 @@ function proxyWord() {
   if (reads && on) return null;
   return reads ? "a proxy is set (HTTP(S)_PROXY), but Node reads it only under NODE_USE_ENV_PROXY=1 — add that variable to the bridge's env in the harness config; until then calls go around the proxy" : `a proxy is set (HTTP(S)_PROXY), but Node ${process.versions.node} does not read it at all — Node 24.5+ with NODE_USE_ENV_PROXY=1 or the Bun runtime does; until then calls go around the proxy`;
 }
+function resumeFromEnv() {
+  const key = process.env.ISKRON_RESUME_STANDING?.trim();
+  if (!key) return;
+  const rec = readHoldRecord(key);
+  if (!rec || keyOf(rec.realm, rec.karta, rec.name) !== key) {
+    log(
+      `ISKRON_RESUME_STANDING=${key}: no hold record for it — the place is taken by iskron_stand`
+    );
+    return;
+  }
+  void resumeFromDisk(rec.realm, rec.karta, rec.name).then((word) => {
+    if (!word)
+      log(`ISKRON_RESUME_STANDING=${key}: could not resume — the place is taken by iskron_stand`);
+  });
+}
 function bridgeMain(argv2) {
   guardStream(process.stdout);
   guardStream(process.stderr);
@@ -3262,6 +3370,7 @@ function bridgeMain(argv2) {
   startTokenKeepalive();
   startFreshnessWatch(CFG.authDir, CFG.serverUrl);
   holdFromEnv();
+  resumeFromEnv();
   startDeafnessWatch();
   const rl = createInterface({ input: process.stdin, terminal: false });
   const pending = /* @__PURE__ */ new Set();
@@ -3415,7 +3524,7 @@ function openDoor(socketPath, onMessage, onClose) {
 }
 
 // js/watchdog/client.ts
-import { existsSync as existsSync3, readdirSync as readdirSync3, readFileSync as readFileSync9 } from "node:fs";
+import { existsSync as existsSync3, readdirSync as readdirSync3, readFileSync as readFileSync10 } from "node:fs";
 import { connect as connect2 } from "node:net";
 import { join as join9 } from "node:path";
 var ATTACH_WINDOW_MS = 6e4;
@@ -3436,7 +3545,7 @@ function resolveStanding(argv2) {
   if (key) return { key, path: pathFor(key), authDir };
   const held = existsSync3(dir) ? readdirSync3(dir).filter((f) => f.endsWith(".key")).map((f) => {
     try {
-      return readFileSync9(join9(dir, f), "utf8").trim();
+      return readFileSync10(join9(dir, f), "utf8").trim();
     } catch {
       return "";
     }
@@ -3754,7 +3863,7 @@ function runWatchdogExit(argv2) {
 
 // js/cli/doctor.ts
 import { createHash as createHash5 } from "node:crypto";
-import { existsSync as existsSync5, readdirSync as readdirSync4, readFileSync as readFileSync10 } from "node:fs";
+import { existsSync as existsSync5, readdirSync as readdirSync4, readFileSync as readFileSync11 } from "node:fs";
 import { homedir as homedir6 } from "node:os";
 import { dirname as dirname3, join as join11 } from "node:path";
 import { fileURLToPath as fileURLToPath4 } from "node:url";
@@ -3767,14 +3876,14 @@ function homeCopyReport() {
   const home = homeBridgePath();
   let self = null;
   try {
-    self = readFileSync10(fileURLToPath4(import.meta.url));
+    self = readFileSync11(fileURLToPath4(import.meta.url));
   } catch {
   }
   if (!existsSync5(home)) {
     out(`домашняя копия: нет (${home}) — её кладёт establish-mcp при подключении`);
     return;
   }
-  const bytes = readFileSync10(home);
+  const bytes = readFileSync11(home);
   if (self && bytes.equals(self)) {
     out(`домашняя копия: ${home} — та же сборка, что и этот файл`);
     return;
@@ -3903,7 +4012,7 @@ function grantReport() {
   }
   const logPath = grantLogPath();
   if (existsSync5(logPath)) {
-    const lines = readFileSync10(logPath, "utf8").trim().split("\n").slice(-3);
+    const lines = readFileSync11(logPath, "utf8").trim().split("\n").slice(-3);
     out(`  grant.log, последнее:`);
     for (const l of lines) out(`    ${l}`);
   }
@@ -3929,7 +4038,7 @@ function claudePluginReport() {
   const registry = join11(homedir6(), ".claude", "plugins", "installed_plugins.json");
   if (!existsSync5(registry)) return;
   try {
-    const reg = JSON.parse(readFileSync10(registry, "utf8"));
+    const reg = JSON.parse(readFileSync11(registry, "utf8"));
     const mine = Object.entries(reg.plugins ?? {}).filter(([k]) => /^iskron@/.test(k));
     if (!mine.length) {
       out(`Claude Code: плагин iskron не установлен (${registry})`);
@@ -3941,7 +4050,7 @@ function claudePluginReport() {
         let entry = "запись моста в манифесте не найдена";
         if (manifest && existsSync5(manifest)) {
           try {
-            const m = JSON.parse(readFileSync10(manifest, "utf8"));
+            const m = JSON.parse(readFileSync11(manifest, "utf8"));
             const hit = Object.entries(m.mcpServers ?? {}).find(
               ([, v]) => (v.args ?? []).some((a) => /iskron\.mjs/.test(a))
             );
@@ -3986,7 +4095,7 @@ function codexPluginReport(home) {
       let word = "манифеста нет";
       if (existsSync5(manifest)) {
         try {
-          const m = JSON.parse(readFileSync10(manifest, "utf8"));
+          const m = JSON.parse(readFileSync11(manifest, "utf8"));
           const hit = Object.values(m.mcpServers ?? {}).some(
             (v) => (v.args ?? []).some((a) => /iskron\.mjs/.test(a))
           );
@@ -4006,7 +4115,7 @@ function harnessReport() {
   const claude = join11(homedir6(), ".claude.json");
   if (existsSync5(claude)) {
     try {
-      const cfg = JSON.parse(readFileSync10(claude, "utf8"));
+      const cfg = JSON.parse(readFileSync11(claude, "utf8"));
       const entries = Object.entries(cfg.mcpServers ?? {}).filter(
         ([, v]) => (v.args ?? []).some((a) => /iskron/.test(a))
       );
@@ -4032,7 +4141,7 @@ function harnessReport() {
       out(
         `OpenCode: плагин ${copy} стоит; рядом с этим файлом поставки плагина нет, сверить не с чем`
       );
-    } else if (readFileSync10(copy).equals(readFileSync10(packaged))) {
+    } else if (readFileSync11(copy).equals(readFileSync11(packaged))) {
       out(`OpenCode: плагин ${copy} — та же сборка, что в поставке`);
     } else {
       out(`OpenCode: плагин ${copy} — ДРУГИЕ байты, обнови из поставки: cp "${packaged}" ${copy}`);
@@ -4053,7 +4162,7 @@ function harnessReport() {
       );
     const codex = join11(codexHome, "config.toml");
     if (existsSync5(codex)) {
-      const text = readFileSync10(codex, "utf8");
+      const text = readFileSync11(codex, "utf8");
       out(
         `Codex: ${/^\s*\[mcp_servers\."?iskron"?\]|^\s*mcp_servers\."?iskron"?\s*=/m.test(text) ? "ручная запись моста в config.toml есть" : "ручной записи моста в config.toml нет (штатная — в плагине)"}`
       );
