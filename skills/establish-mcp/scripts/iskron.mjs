@@ -2619,10 +2619,57 @@ function localLeave(msg) {
   }));
 }
 
-// js/bridge/stand.ts
+// js/bridge/names.ts
 import { execFileSync } from "node:child_process";
 import { hostname } from "node:os";
 import { basename as basename2 } from "node:path";
+var NAME_MAX = 48;
+var NAME_RE = /^[a-z0-9][a-z0-9._-]*$/;
+var sanitize = (s) => s.toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^[-.]+|[-.]+$/g, "").slice(0, NAME_MAX);
+function nameFault(name) {
+  if (name.length > NAME_MAX) return `длиннее предела: ${name.length} знаков`;
+  if (!NAME_RE.test(name))
+    return /[A-Z]/.test(name) ? "заглавные буквы не допускаются" : "недопустимые знаки или первый знак не буква и не цифра";
+  return null;
+}
+var PART_MIN = 3;
+var CUT_ORDER = ["repo", "host", "model"];
+function fitName(parts) {
+  const p = { ...parts };
+  const join12 = () => [p.host, p.repo, p.model].filter(Boolean).join(".").replace(/[-.]+$/, "");
+  const cut = [];
+  for (const k of CUT_ORDER) {
+    const over = join12().length - NAME_MAX;
+    if (over <= 0) break;
+    const keep = Math.max(k === "model" ? 1 : PART_MIN, p[k].length - over);
+    if (keep >= p[k].length) continue;
+    p[k] = p[k].slice(0, keep).replace(/[-.]+$/, "");
+    cut.push(k);
+  }
+  return {
+    name: join12().slice(0, NAME_MAX).replace(/[-.]+$/, ""),
+    cut
+  };
+}
+var git = (args) => {
+  try {
+    return execFileSync("git", args, {
+      cwd: process.cwd(),
+      timeout: 2e3,
+      stdio: ["ignore", "pipe", "ignore"]
+    }).toString().trim();
+  } catch {
+    return "";
+  }
+};
+function deriveParts(model) {
+  const host = hostname().split(".")[0];
+  const top = git(["rev-parse", "--show-toplevel"]);
+  const repo = basename2(top || process.cwd());
+  const short2 = (model ?? "").trim().toLowerCase().replace(/^claude[-_]/, "");
+  return { host: sanitize(host ?? ""), repo: sanitize(repo), model: sanitize(short2) };
+}
+var joinName = (p) => [p.host, p.repo, p.model].filter(Boolean).join(".");
 
 // js/bridge/update.ts
 import { spawn as spawn2 } from "node:child_process";
@@ -2871,25 +2918,6 @@ var STAND_TOOL = {
   }
 };
 var isStandCall = (msg) => msg?.method === "tools/call" && msg?.params?.name === "iskron_stand";
-var sanitize = (s) => s.toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^[-.]+|[-.]+$/g, "").slice(0, 32);
-var git = (args) => {
-  try {
-    return execFileSync("git", args, {
-      cwd: process.cwd(),
-      timeout: 2e3,
-      stdio: ["ignore", "pipe", "ignore"]
-    }).toString().trim();
-  } catch {
-    return "";
-  }
-};
-function deriveName(model) {
-  const host = hostname().split(".")[0];
-  const top = git(["rev-parse", "--show-toplevel"]);
-  const repo = basename2(top || process.cwd());
-  const short2 = (model ?? "").trim().toLowerCase().replace(/^claude[-_]/, "");
-  return [host, repo, short2].map(sanitize).filter(Boolean).join(".");
-}
 function parseBoard(text) {
   const out4 = [];
   for (const line of text.split("\n")) {
@@ -2948,9 +2976,27 @@ async function runStand(msg) {
     return done(true);
   }
   const model = typeof a.model === "string" && a.model.trim() ? a.model : void 0;
-  const name = typeof a.name === "string" && a.name.trim() ? sanitize(a.name.trim()) : deriveName(model);
   const nameNotes = [];
-  if (!(typeof a.name === "string" && a.name.trim()) && !model) {
+  const asked = typeof a.name === "string" ? a.name.trim() : "";
+  if (asked) {
+    const fault = nameFault(asked);
+    if (fault) {
+      lines.push(
+        `Отказано (мост): name «${asked}» — ${fault}; правило имени: строчные латинские буквы, цифры, точка, подчёркивание, дефис, первый знак — буква или цифра, не длиннее ${NAME_MAX} знаков. Имя не укорачивается молча: короткое имя адресовало бы другое место.`
+      );
+      return done(true);
+    }
+  }
+  const parts = asked ? null : deriveParts(model);
+  const fitted = parts ? fitName(parts) : null;
+  const name = asked || (fitted?.name ?? "");
+  if (parts && fitted && fitted.cut.length) {
+    const what = fitted.cut.map((k) => k === "repo" ? "репо" : k === "host" ? "машина" : "модель").join(", ");
+    nameNotes.push(
+      `выведенное имя ${joinName(parts)} длиннее предела ${NAME_MAX} знаков — укорочено до ${name} (срезано: ${what}); нужно другое — передай name`
+    );
+  }
+  if (!asked && !model) {
     nameNotes.push(
       "model не передан — имя без третьей части (машина.репо): вторая сессия этой машины над этим репозиторием сойдётся на то же место; передай model, чтобы различать"
     );
