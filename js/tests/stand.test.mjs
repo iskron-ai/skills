@@ -288,10 +288,7 @@ test("iskron_stand: a place listening under another bridge is registered, never 
   const text = textOf(first);
   assert.match(text, /место уже слушает другой держатель .* — только register/, text);
   assert.match(text, /Слух — у другого держателя/, text);
-  assert.ok(
-    !/Слушать:/.test(text),
-    "no watchdog command is handed out without a local holder",
-  );
+  assert.ok(!/Слушать:/.test(text), "no watchdog command is handed out without a local holder");
   assert.match(text, /Команда сторожа не выдаётся/, text);
   const knock = await bridge.call("tools/call", {
     name: "iskron_stand",
