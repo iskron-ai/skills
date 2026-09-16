@@ -43,7 +43,7 @@ ${raw}`;
   const envelope = {};
   for (const k of ENVELOPE_KEYS) if (frame[k] !== void 0) envelope[k] = frame[k];
   if (Object.keys(envelope).length) lines.push(`frame: ${JSON.stringify(envelope)}`);
-  const body = typeof frame.body === "string" ? frame.body : raw;
+  const body = typeof frame.body === "string" ? frame.body : frame.body === void 0 ? raw : JSON.stringify(frame.body, null, 1).replace(/\n\s*/g, " ");
   return `${lines.join("\n")}
 
 ${body}`;
@@ -99,6 +99,15 @@ function setupChannel(client, say) {
           loud(
             session,
             `Искрон: канал закрыт кодом ${ev.code} — токен мёртв. Зови iskron_channel(action="connect")` + (ev.code === 4001 ? ' или action="mint"' : "") + ", затем register тем же именем: новый сокет мост возьмёт из ответа сам, перезапуск не нужен."
+          );
+          return;
+        case "stale":
+          if (ev.text) void deliver(session, ev.text);
+          return;
+        case "evicted":
+          loud(
+            session,
+            `Искрон: канал закрыт кодом ${ev.code} — место отняли, слушает другой держатель. Привязка записей цела; вернуть слух сюда — iskron_stand с take=true.`
           );
           return;
         case "alive":

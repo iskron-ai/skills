@@ -10,27 +10,18 @@
 //   • уведомления MCP `notifications/message` с logger «iskron-channel» — их
 //     читает расширение pi и вкладывает кадр в ход.
 // Занятость делатель пишет в файл рядом с сокетом (#4231); публикует мост.
-import {
-  chmodSync,
-  existsSync,
-  mkdirSync,
-  readdirSync,
-  readFileSync,
-  unlinkSync,
-  writeFileSync,
-} from "node:fs";
-import { connect as connectLocal, createServer, type Server, type Socket } from "node:net";
-import { join } from "node:path";
+import { chmodSync, mkdirSync, unlinkSync, writeFileSync } from "node:fs";
+import { createServer, type Server, type Socket } from "node:net";
 import { fileURLToPath } from "node:url";
 
 import {
-  classifyOrigin,
   deadTokenAdvice,
   type Frame,
   type Holder,
   holdSocket,
   statusUrl as deriveStatusUrl,
 } from "../shared/channel.ts";
+import { noteSeen, seenIds } from "../shared/seen.ts";
 import {
   defaultAuthDir,
   keyFilePathOf,
@@ -38,16 +29,19 @@ import {
   socketPathOf,
   standingsDirOf,
 } from "../shared/standings.ts";
+import { completeFrame, stampOrigin } from "./complete.ts";
 import { CFG } from "./config.ts";
+import { dropStale, noteStale } from "./stale.ts";
 import { replyText } from "./standing.ts";
 import { emit, log } from "./streams.ts";
-import { post, state } from "./transport.ts";
+import { sweepStale } from "./sweep.ts";
+import { state } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
 
 const RING = 20; // кадров, которые прицепившийся позже клиент получит задним числом
 
 export interface ChannelEvent {
-  kind: "attached" | "frame" | "note" | "dead" | "alive" | "released";
+  kind: "attached" | "frame" | "note" | "dead" | "alive" | "evicted" | "stale" | "released";
   key?: string;
   raw?: string;
   frame?: Frame | null;
@@ -55,6 +49,8 @@ export interface ChannelEvent {
   code?: number;
   version?: string;
   buffered?: number;
+  /** kind="stale": лежалые кадры полосы — принятое, пока место не слушали, или повтор службы. */
+  frames?: Frame[];
 }
 
 function standingsDir(): string {
@@ -76,15 +72,19 @@ let server: Server | null = null;
 let currentKey: string | null = null;
 let currentUrl: string | null = null;
 let currentStatusUrl: string | null = null;
+let evictedKey: string | null = null; // ключ места, отнятого у этого моста закрытием 4000
+let evictedEvent: ChannelEvent | null = null; // прицепившийся после — узнаёт, а не молчит
 const clients = new Set<Socket>();
 const ring: { raw: string; frame: Frame | null }[] = [];
 const helloWaiters = new Set<(f: Frame | null) => void>();
+// Память доставленных кадров — та же, что читает сторож выхода (../shared/seen.ts).
+let seen: Set<string> = new Set();
+// Лежалые повторы службы после пересборки сессии копятся в одно слово, а не
+// будят pi и OpenCode по одному (граф nks-dev: #4881, #5033).
 
-/** Держит ли этот мост сокет ИМЕННО этого стояния — тогда register довольно, connect ротировал бы живое место без причины. */
-export function holdsStanding(realm: string, karta: string | number, name: string): boolean {
+function isOwn(realm: string, karta: string | number, name: string): boolean {
   const s = state.standing;
   return (
-    !!holder?.alive &&
     !!s &&
     s.realm === realm &&
     String(s.karta) === String(karta) &&
@@ -92,6 +92,20 @@ export function holdsStanding(realm: string, karta: string | number, name: strin
     currentKey === keyFor()
   );
 }
+
+/** Держит ли этот мост сокет ИМЕННО этого стояния — тогда register довольно, connect ротировал бы живое место без причины. */
+export function holdsStanding(realm: string, karta: string | number, name: string): boolean {
+  return !!holder?.alive && isOwn(realm, karta, name);
+}
+
+/** Отняли ли у этого моста сокет ИМЕННО этого стояния (закрытие 4000): привязка цела, слух — у другого; статусный адрес — пока его не повернул чужой connect. */
+export function wasEvicted(realm: string, karta: string | number, name: string): boolean {
+  return !!evictedKey && evictedKey === currentKey && isOwn(realm, karta, name);
+}
+
+/** Есть ли у моста статусный адрес ИМЕННО этого стояния — занятость идёт от стояния, не от живого сокета, но только от своего. */
+export const hasStatusAddressFor = (realm: string, karta: string | number, name: string): boolean =>
+  !!currentStatusUrl && !!currentKey && isOwn(realm, karta, name);
 
 /** Кадр hello — доказательство держания; из кольца, если уже пришёл, иначе ожидание под пределом. */
 export function awaitHello(timeoutMs: number): Promise<Frame | null> {
@@ -117,7 +131,7 @@ export function listenBlock(): string | null {
   return (
     `[iskron-bridge] Сокет этого стояния держит мост — вручать его никому не нужно` +
     ` (строка выше о том, что никто не слушает, описывает миг до этого держания).` +
-    `\nСлушать: node "${self}" watchdog ${key}${where} — под Monitor с persistent: true (Claude Code);` +
+    `\nСлушать: node "${self}" watchdog ${key}${where} — под Monitor с наибольшим timeout_ms, перевзводить по истечении (Claude Code);` +
     ` фоновой задачей — node "${self}" watchdog-exit ${key}${where} (выходит нулём на первом сообщении);` +
     ` в Codex из своей оболочки фоном — node "${self}" watchdog-codex ${key}${where} (кадр входит в идущий тред через app-server).` +
     `\nЗанятость: iskron_channel(action="status", realm, text) — пустой text снимает.` +
@@ -144,46 +158,10 @@ function notify(level: "info" | "warning" | "error", data: ChannelEvent): void {
   });
 }
 
-/**
- * Мост, убитый без прощания, оставляет `.key` и `.sock`: сторож без аргумента
- * перечисляет ключи, и мёртвая запись либо уводит его на сокет, где никого нет,
- * либо заставляет отказать «стояний несколько». Перед тем как положить свой
- * ключ, каждый чужой проверяется одним подключением; неотвечающий — убирается.
- */
-function sweepStale(dir: string, mine: string): void {
-  if (process.platform === "win32" || !existsSync(dir)) return;
-  for (const f of readdirSync(dir).filter((x) => x.endsWith(".key"))) {
-    const keyFile = join(dir, f);
-    let key: string;
-    try {
-      key = readFileSync(keyFile, "utf8").trim();
-    } catch {
-      continue;
-    }
-    if (!key || key === mine) continue;
-    const sock = socketPathFor(key);
-    const drop = (): void => {
-      for (const p of [keyFile, sock, seenFilePathOf(CFG.authDir, key)]) {
-        try {
-          unlinkSync(p);
-        } catch {}
-      }
-    };
-    if (!existsSync(sock)) {
-      drop();
-      continue;
-    }
-    const probe = connectLocal(sock);
-    probe.once("connect", () => probe.destroy());
-    probe.once("error", drop);
-    probe.setTimeout(1000, () => probe.destroy());
-  }
-}
-
 function openLocalServer(key: string): void {
   const path = socketPathFor(key);
   mkdirSync(standingsDir(), { recursive: true, mode: 0o700 });
-  sweepStale(standingsDir(), key);
+  sweepStale(CFG.authDir, key);
   writeFileSync(keyFilePathFor(key), key + "\n", { mode: 0o600 });
   if (process.platform !== "win32") {
     try {
@@ -201,6 +179,8 @@ function openLocalServer(key: string): void {
     for (const { raw, frame } of ring) {
       sock.write(JSON.stringify({ kind: "frame", raw, frame } satisfies ChannelEvent) + "\n");
     }
+    // Место отняли, а сторож перевзвёлся: молчание читалось бы как слух.
+    if (evictedEvent && evictedKey === key) sock.write(JSON.stringify(evictedEvent) + "\n");
   });
   srv.on("error", (e) => {
     const text = `ДЕЛАТЕЛЬ: локальный сокет стояния не поднялся (${e.message}) — сторожу не к чему цепляться`;
@@ -253,6 +233,10 @@ export function releaseStanding(reason: string): void {
   currentKey = null;
   currentUrl = null;
   currentStatusUrl = null;
+  evictedKey = null;
+  evictedEvent = null;
+  seen = new Set();
+  dropStale();
 }
 
 /** Взять этот адрес и держать его, чем бы ни был занят прежний. */
@@ -264,10 +248,19 @@ function holdStanding(url: string, statusUrl?: string | null): string {
   currentUrl = url;
   currentStatusUrl = statusUrl || deriveStatusUrl(url);
   openLocalServer(key);
+  seen = seenIds(seenFilePathOf(CFG.authDir, key));
   holder = holdSocket({
     url,
     onFrame: (raw, frame) => {
       void completeFrame(stampOrigin(frame)).then((full) => {
+        // Лежалый кадр — принятое, пока место не слушали (после revoke — почта
+        // предшественника), либо повтор службы после пересборки сессии: хода не
+        // стоит, но и не теряется — уходит одной пачкой на полосу, не по одному.
+        if (full?.type === "message" && full.stale === true)
+          return noteStale(full, (ev) => {
+            broadcast(ev);
+            notify("info", ev);
+          });
         const text = full === frame ? raw : JSON.stringify(full);
         // В кольцо идёт и hello: сторож, прицепившийся позже, должен увидеть
         // доказательство держания, а не только рабочие кадры.
@@ -276,10 +269,42 @@ function holdStanding(url: string, statusUrl?: string | null): string {
         if (full?.type === "hello") for (const w of [...helloWaiters]) w(full);
         const ev: ChannelEvent = { kind: "frame", raw: text, frame: full };
         broadcast(ev);
-        if (full?.type !== "status") notify("info", ev);
+        // Кадр, отданный локальному клиенту (двери Claude Code и Codex), — отдан:
+        // сторож выхода, взведённый после, на нём не выходит; перевзведённый
+        // постоянный сторож всё равно получит его из кольца. Без клиентов не
+        // отмечается: в pi и OpenCode доставка — уведомление, и память сторожа
+        // выхода там не читается. Запись идёт до печати клиентом — умерший между
+        // ними сторож стоит одного кадра для сторожа выхода, не для кольца.
+        if (clients.size > 0 && full?.type === "message" && typeof full.id === "string" && full.id)
+          noteSeen(seenFilePathOf(CFG.authDir, key), full.id, seen);
+        if (full?.type === "status") return;
+        notify("info", ev);
       });
     },
+    onEvicted: (code) => {
+      const text =
+        `ДЕЛАТЕЛЬ: закрытие ${code} — место отняли, слушает другой держатель; ` +
+        "привязка записей цела, занятость — пока адрес не повернули connect-ом; вернуть слух сюда — iskron_stand с take=true";
+      log(text);
+      evictedKey = key;
+      const ev: ChannelEvent = { kind: "evicted", code, text };
+      evictedEvent = ev;
+      broadcast(ev);
+      notify("warning", ev);
+    },
     onDeadToken: (code) => {
+      if (revokingOwn) {
+        // Своё снятие в полёте: 4001 пришёл раньше ответа revoke — это не
+        // смерть токена, а его закрытие; отпускаем тихо, иначе послушный агент
+        // пересоздаст только что снятое место (наблюдено в OpenCode и Codex).
+        log(
+          `standing revoked by this session — released quietly, binding forgotten (${state.standing?.name ?? "unnamed"}; close ${code} arrived before the answer)`,
+        );
+        releaseStanding("снято своим revoke");
+        state.standing = null;
+        state.standingSession = null;
+        return;
+      }
       const text = `ДЕЛАТЕЛЬ: ${deadTokenAdvice(code)}`;
       log(text);
       const ev: ChannelEvent = { kind: "dead", code, text };
@@ -308,6 +333,18 @@ const SOCKET_RE =
   /wss:\/\/[^\s"'`<>)\]]+|ws:\/\/(?:127\.0\.0\.1|\[?::1\]?|localhost)(?::\d+)?\/[^\s"'`<>)\]]+/;
 const STATUS_RE = /https?:\/\/[^\s"'`<>)\]]+\/channel\/status\/[^\s"'`<>)\]]+/;
 const trim = (s: string): string => s.replace(/[.,;:!?»"')\]]+$/, "");
+/**
+ * Секрет не покидает моста (граф nks-dev: #4233, #5033): адреса сокета и
+ * статуса из ответа вырезаются — слушать снаружи нечем, и никакая дверь
+ * харнеса не отнимет сокет у самого агента.
+ */
+const hideAddresses = (text: string): string =>
+  text
+    .replace(
+      new RegExp(SOCKET_RE.source, "g"),
+      "(адрес сокета держит мост — агенту не показывается)",
+    )
+    .replace(new RegExp(STATUS_RE.source, "g"), "(статусный адрес держит мост)");
 
 /**
  * Ответ connect/mint прошёл через мост: взять из него сокет и держать, а сам
@@ -332,6 +369,7 @@ export function absorbChannelReply(msg: JsonRpcMessage, reply: JsonRpcMessage): 
   const block = listenBlock() ?? "";
   const content = reply.result?.content;
   if (Array.isArray(content)) {
+    for (const c of content) if (typeof c?.text === "string") c.text = hideAddresses(c.text);
     content.push({ type: "text", text: block.trim() });
   }
   return reply;
@@ -343,25 +381,43 @@ export function absorbChannelReply(msg: JsonRpcMessage, reply: JsonRpcMessage): 
  * держатель объявляет «токен мёртв, зови connect», а послушный агент тут же
  * пересоздаёт снятое место (наблюдено в pi и OpenCode). Ответ сервера едет как есть.
  */
-export function absorbRevokeReply(msg: JsonRpcMessage, reply: JsonRpcMessage): JsonRpcMessage {
+let revokingOwn = false;
+
+/** Зовёт ли этот вызов revoke то стояние, которое ведёт мост. */
+function revokesOwn(msg: JsonRpcMessage): boolean {
   const a = msg?.params?.arguments;
-  if (msg?.params?.name !== "iskron_channel" || a?.action !== "revoke") return reply;
-  if (reply?.error || reply?.result?.isError) return reply;
+  if (msg?.params?.name !== "iskron_channel" || a?.action !== "revoke") return false;
   const s = state.standing;
-  if (!s) return reply;
+  if (!s) return false;
   const asked = typeof a.standing === "string" ? a.standing.trim() : "";
   const own =
     asked === "" ||
     asked === "mine" ||
     asked === (s.name ?? "") ||
     asked.endsWith(`:${s.name ?? ""}`);
-  if (!own || String(a.karta ?? s.karta) !== String(s.karta)) return reply;
+  return own && String(a.karta ?? s.karta) === String(s.karta);
+}
+
+/**
+ * Перед отправкой своего revoke: закрытие 4001 приходит по сокету раньше, чем
+ * ответ по HTTP, и без этой пометки мост объявил бы «токен мёртв, зови
+ * connect» на месте, которое сам агент только что снял.
+ */
+export function expectOwnRevoke(msg: JsonRpcMessage): void {
+  if (revokesOwn(msg)) revokingOwn = true;
+}
+
+export function absorbRevokeReply(msg: JsonRpcMessage, reply: JsonRpcMessage): JsonRpcMessage {
+  if (msg?.params?.name !== "iskron_channel" || msg?.params?.arguments?.action !== "revoke")
+    return reply;
+  revokingOwn = false;
+  if (reply?.error || reply?.result?.isError) return reply;
+  if (!revokesOwn(msg)) return reply;
+  const name = state.standing?.name ?? "unnamed";
   releaseStanding("снято своим revoke");
   state.standing = null;
   state.standingSession = null;
-  log(
-    `standing revoked by this session — released quietly, binding forgotten (${s.name ?? "unnamed"})`,
-  );
+  log(`standing revoked by this session — released quietly, binding forgotten (${name})`);
   return reply;
 }
 
@@ -401,7 +457,9 @@ export async function publishStatus(text: string): Promise<{ ok: boolean; body: 
   if (!currentStatusUrl || !currentKey) {
     return {
       ok: false,
-      body: 'Отказано (мост): стояния мост не держит — сперва iskron_stand или iskron_channel(action="connect") (и register на живом месте), затем status',
+      body:
+        "Отказано (мост): у моста нет стояния этого агента — назовись одним вызовом iskron_stand(realm, karta, model, status) " +
+        "(занятость можно передать прямо в нём); место слушает другой держатель — take=true берёт слух и статусный адрес сюда",
     };
   }
   let res: Response;
@@ -419,60 +477,14 @@ export async function publishStatus(text: string): Promise<{ ok: boolean; body: 
     };
   }
   const body = (await res.text().catch(() => "")).trim();
+  if (res.status === 404)
+    return {
+      ok: false,
+      body:
+        `Отказано (404) поверхностью: ${body || "без тела"} — статусный адрес повернули connect-ом другого держателя; ` +
+        "занятость теперь его; вернуть слух и адрес сюда — iskron_stand с take=true",
+    };
   if (!res.ok)
     return { ok: false, body: `Отказано (${res.status}) поверхностью: ${body || "без тела"}` };
   return { ok: true, body };
-}
-
-let readCounter = 0;
-
-/**
- * Дочитывание кадра — обязанность моста (слово владельца): платформа режет
- * длинное тело в кадре сокета и называет полную длину в body_chars; до делателя
- * кадр доходит целым, потому что мост, держатель сессии, дочитывает его сам
- * через историю канала, прежде чем отдать сторожу или плагину. Не дочиталось —
- * кадр идёт как есть, с пометкой, что он обрезан: лучше честный обрез, чем
- * молчание.
- */
-async function completeFrame(frame: Frame | null): Promise<Frame | null> {
-  if (!frame || typeof frame.body !== "string" || typeof frame.body_chars !== "number")
-    return frame;
-  if (!frame.id || [...frame.body].length >= frame.body_chars) return frame;
-  const realm = state.standing?.realm;
-  if (!realm) return { ...frame, body_read: "truncated: стояние без realm, дочитать нечем" };
-  const id = `iskron-bridge-read-${++readCounter}`;
-  let reply: JsonRpcMessage | null = null;
-  try {
-    await post(
-      {
-        jsonrpc: "2.0",
-        id,
-        method: "tools/call",
-        params: {
-          name: "iskron_channel",
-          arguments: { realm, action: "history", view: "message", message: frame.id },
-        },
-      },
-      (m) => {
-        if (m.id === id) reply = m;
-      },
-    );
-  } catch (e) {
-    log(`кадр ${frame.id} обрезан, дочитать не вышло: ${(e as Error).message}`);
-    return { ...frame, body_read: `truncated: ${(e as Error).message}` };
-  }
-  const text = replyText(reply);
-  const nl = text.indexOf("\n");
-  const tail = text.indexOf("\nПровенанс, как платформа");
-  if (nl < 0 || (reply as JsonRpcMessage | null)?.result?.isError) {
-    return { ...frame, body_read: `truncated: ${text.slice(0, 160)}` };
-  }
-  const body = (tail > nl ? text.slice(nl + 1, tail) : text.slice(nl + 1)).trim();
-  return { ...frame, body, body_read: "history" };
-}
-
-/** Кто говорит — штампует мост: он один знает роль своего стояния. */
-function stampOrigin(frame: Frame | null): Frame | null {
-  if (!frame || frame.type !== "message") return frame;
-  return { ...frame, origin: classifyOrigin(frame, state.standing?.karta) };
 }

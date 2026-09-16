@@ -228,13 +228,13 @@ export function staleNotice(latest: Latest | null, authDir: string): string | nu
   const bridgeWord = latest.downloaded.some((p) => p === homeBridgePath())
     ? "Свежий мост уже скачан в ~/.iskron-bridge и поднимется новой сессией."
     : latest.error
-      ? `Скачать свежий мост не вышло (${latest.error}); повтори: node ~/.iskron-bridge/iskron-bridge.mjs update.`
+      ? `Скачать свежий мост не вышло (${latest.error}); повтори: node "${process.argv[1]}" update.`
       : isSymlink(homeBridgePath())
         ? "Свежий мост в дом не положен: дом — симлинк на чужую копию, его не трогаю; обнови эту копию сам."
         : versionOf(homeBridgePath()) &&
             compareVersions(versionOf(homeBridgePath()), latest.version) >= 0
           ? "Свежий мост уже лежит в ~/.iskron-bridge и поднимется новой сессией."
-          : "Свежий мост в дом не положен; повтори: node ~/.iskron-bridge/iskron-bridge.mjs update.";
+          : `Свежий мост в дом не положен; повтори: node "${process.argv[1]}" update (мост, который отвечает, — тот и обновляет дом; в пакетной поставке OpenCode мост живёт в пакете и обновляется с ним).`;
   return (
     `[iskron-bridge] ПОСТАВКА ОТСТАЛА: этот мост v${VERSION}, свежий релиз v${latest.version}. ${bridgeWord} ` +
     `Скиллы обновляет канал харнеса, и об этом надо СКАЗАТЬ ЧЕЛОВЕКУ: Claude Code — /plugin marketplace update iskron, затем /reload-plugins; ` +

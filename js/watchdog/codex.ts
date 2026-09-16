@@ -110,11 +110,15 @@ export function runWatchdogCodex(argv: string[]): void {
           void deliver(frameToText(ev.frame, ev.raw ?? ""));
           break;
         }
+        case "stale":
+          void deliver(ev.text ?? "Искрон: лежалые кадры"); // одна пачка — один ход
+          break;
         case "dead":
+        case "evicted":
           note(ev.text ?? "ДЕЛАТЕЛЬ: стояние потеряно");
-          void deliver(
-            ev.text ?? 'Искрон: стояние потеряно — зови iskron_channel(action="connect")',
-          ).then(() => process.exit(1));
+          void deliver(ev.text ?? "Искрон: стояние потеряно — назовись заново: iskron_stand").then(
+            () => process.exit(1),
+          );
           break;
         case "alive":
           note(ev.text ?? "ДЕЛАТЕЛЬ: сокет рвут, а служба отвечает — мост держит место");

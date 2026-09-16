@@ -15,9 +15,11 @@ import { CFG } from "./config.ts";
 import {
   absorbChannelReply,
   awaitHello,
+  hasStatusAddressFor,
   holdsStanding,
   listenBlock,
   publishStatus,
+  wasEvicted,
 } from "./hold.ts";
 import { noteStanding, replyText } from "./standing.ts";
 import { post } from "./transport.ts";
@@ -285,7 +287,9 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
     }
     heardHere = !listensElsewhere;
     how = listensElsewhere
-      ? "место уже слушает другой держатель (обычно прежняя сессия этой рабочей копии; при явном name — возможно, другая машина или человек) — только register: атрибуция есть, слух — у него; нужен слух здесь — повтори с take=true, сознавая, что снимешь слух с того держателя, или возьми другое имя (name)"
+      ? wasEvicted(realm, karta, name)
+        ? "место отняли у этого моста (закрытие 4000) — слушает другой держатель; только register: привязка цела, слух — у него; вернуть слух сюда — повтори с take=true, сознавая, что снимешь слух с того держателя"
+        : "место уже слушает другой держатель (обычно прежняя сессия этой рабочей копии; при явном name — возможно, другая машина или человек) — только register: атрибуция есть, слух — у него; нужен слух здесь — повтори с take=true, сознавая, что снимешь слух с того держателя, или возьми другое имя (name)"
       : "сокет уже держит этот мост — register";
   } else {
     const args: Record<string, unknown> = { action: "connect", realm, karta, name };
@@ -418,9 +422,12 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
     }
   }
 
-  // 6. Занятость.
-  if (typeof a.status === "string" && a.status.trim() && !heardHere) {
-    lines.push("Занятость не публикуется: статусный адрес у держателя сокета.");
+  // 6. Занятость — от стояния, которое ведёт мост, не от живого сокета (#5033):
+  // и при «только register», и после вытеснения, пока статусный адрес у моста.
+  if (typeof a.status === "string" && a.status.trim() && !hasStatusAddressFor(realm, karta, name)) {
+    lines.push(
+      "Занятость не публикуется: статусного адреса этого стояния у моста нет — он у держателя сокета; take=true берёт слух и адрес сюда.",
+    );
   } else if (typeof a.status === "string" && a.status.trim()) {
     const st = await publishStatus(a.status.trim());
     lines.push(st.ok ? `Занятость: ${a.status.trim()}` : `Занятость не принята: ${short(st.body)}`);

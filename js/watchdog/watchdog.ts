@@ -1,14 +1,37 @@
 // iskron.mjs watchdog [ключ] — сторож под наблюдателем харнеса.
 //
 // Сокет стояния держит мост (см. ../bridge/hold.ts); этот процесс — его
-// локальный клиент: печатает каждый кадр на stdout (под Monitor с
-// persistent: true каждая строка приходит событием в ход делателя), а на
+// локальный клиент: печатает каждый кадр на stdout (под Monitor каждая
+// строка приходит событием в ход делателя), а на
 // мёртвом токене и на обрывах при живой службе выходит ненулевым — громко,
 // как и прежде. Секрета у него нет и аргумент ему не нужен, когда мост держит
 // одно стояние; ключ из ответа connect различает несколько.
 import { writeSync } from "node:fs";
 
+import { frameToText } from "../shared/frame-text.ts";
 import { attach, resolveStanding } from "./client.ts";
+
+// Monitor Claude Code режет строку события длиннее ~500 знаков (наблюдено:
+// «...(truncated)»), а строки в одном залпе склеивает в одно событие целиком.
+// Кадр-сообщение идёт тем же текстом, что в pi и OpenCode (кто говорит,
+// провенанс, конверт, тело), телом построчно (граф nks-dev: #5011, #5033).
+const LINE_MAX = 400;
+
+export function wrapLines(text: string, max = LINE_MAX): string[] {
+  const out: string[] = [];
+  for (const line of text.split("\n")) {
+    let rest = line;
+    while ([...rest].length > max) {
+      const head = [...rest].slice(0, max).join("");
+      const cut = head.lastIndexOf(" ");
+      const at = cut > max / 2 ? cut : head.length;
+      out.push(rest.slice(0, at).trimEnd());
+      rest = rest.slice(at).trimStart();
+    }
+    out.push(rest);
+  }
+  return out;
+}
 
 const plural = (n: number): string => {
   const m10 = n % 10;
@@ -51,13 +74,23 @@ export function runWatchdog(argv: string[]): void {
             `слушаю стояние ${ev.key}${ev.buffered ? ` (${plural(ev.buffered)} задним числом)` : ""}`,
           );
           break;
-        case "frame":
-          log(ev.raw ?? "");
+        case "frame": {
+          const f = ev.frame;
+          if (f?.type !== "message") {
+            log(ev.raw ?? ""); // служебный кадр (hello, статус) короток и печатается как есть
+            break;
+          }
+          for (const line of wrapLines(frameToText(f, ev.raw ?? ""))) log(line);
           break;
+        }
         case "note":
           log(ev.text ?? "");
           break;
+        case "stale":
+          for (const line of wrapLines(ev.text ?? "")) log(line); // одна пачка — одно событие
+          break;
         case "dead":
+        case "evicted":
           loudExit(ev.text ?? "ДЕЛАТЕЛЬ: стояние потеряно", 1);
           break;
         case "alive":

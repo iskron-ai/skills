@@ -321,6 +321,65 @@ test("iskron_stand: a place listening under another bridge is registered, never 
   assert.equal(counts.connect, 1, "take=true is the named cause for rotation");
 });
 
+// After an eviction the bridge keeps the standing (#5033): a repeated stand is
+// register only and says the place was taken; the busy line still goes out from
+// the standing, and take=true brings the hearing back.
+test("iskron_stand after an eviction: register only, the busy line still published, take=true re-enters", async (t) => {
+  const { fake, bridge } = await ready(t);
+  const args = { realm: "nks-dev", karta: 931, name: "proba" };
+  const first = await bridge.call("tools/call", { name: "iskron_stand", arguments: args });
+  assert.match(textOf(first), /connect и register/, textOf(first));
+  const waitFor = async (check, what) => {
+    const deadline = Date.now() + 10_000;
+    while (!check()) {
+      if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
+      await new Promise((r) => setTimeout(r, 50));
+    }
+  };
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const known = new Set(fake.state.ws);
+  await fake.control({ ws_close: 4000 });
+  await waitFor(() => [...fake.state.ws].some((s) => !known.has(s)), "the reopen");
+  await fake.control({ ws_close: 4000 });
+  await waitFor(
+    () => bridge.notifications.some((n) => n.params?.data?.kind === "evicted"),
+    "the eviction",
+  );
+  const again = await bridge.call("tools/call", {
+    name: "iskron_stand",
+    arguments: { ...args, status: "после отъёма" },
+  });
+  const text = textOf(again);
+  assert.match(text, /место отняли у этого моста/, text);
+  assert.match(text, /только register/, text);
+  assert.match(text, /^Занятость: после отъёма$/m, "the busy line is the standing's word");
+  assert.equal(fake.state.status, "после отъёма");
+  const taken = await bridge.call("tools/call", {
+    name: "iskron_stand",
+    arguments: { ...args, take: true },
+  });
+  assert.match(textOf(taken), /connect по take/, textOf(taken));
+  assert.match(textOf(taken), /hello получен/, "a fresh hello after the explicit take");
+});
+
+// The busy line is the standing's word — of THIS standing: a call for another
+// name must not post onto the address the bridge holds for the first one.
+test("iskron_stand with status for another standing does not post onto the held one's address", async (t) => {
+  const { fake, bridge } = await ready(t);
+  await fake.control({ places: [{ karta: "931", name: "chuzhoe", listening: true }] });
+  const mine = await bridge.call("tools/call", {
+    name: "iskron_stand",
+    arguments: { realm: "nks-dev", karta: 931, name: "svoe", status: "своё дело" },
+  });
+  assert.match(textOf(mine), /^Занятость: своё дело$/m, textOf(mine));
+  const other = await bridge.call("tools/call", {
+    name: "iskron_stand",
+    arguments: { realm: "nks-dev", karta: 931, name: "chuzhoe", status: "чужое дело" },
+  });
+  assert.match(textOf(other), /Занятость не публикуется/, textOf(other));
+  assert.equal(fake.state.status, "своё дело", "the held standing's line must stay untouched");
+});
+
 test("iskron_stand refuses control actions on a board it does not recognize", async (t) => {
   const { fake, bridge } = await ready(t);
   await fake.control({ boardText: "Something entirely different came back from the server." });
@@ -393,6 +452,37 @@ test("iskron_stand: take=true on the bridge's own place re-enters with a fresh s
     /watchdog (\S+)/.exec(textOf(again))?.[1],
     firstSocket,
     "the local key is the same place",
+  );
+});
+
+// On the real surface the 4001 close reaches the socket before the HTTP answer
+// to revoke does; read as a dead token, it sent obedient agents straight back
+// into connect+register on the seat they had just closed (seen live in
+// OpenCode and Codex). The bridge knows it is revoking its own seat before it
+// asks, and the early close is then a quiet release.
+test("a 4001 that arrives before the revoke answer is still a quiet self-revoke, not a dead token", async (t) => {
+  const { fake, bridge } = await ready(t);
+  const args = { realm: "nks-dev", karta: 931, name: "proba" };
+  assert.ok(
+    !(await bridge.call("tools/call", { name: "iskron_stand", arguments: args })).result?.isError,
+  );
+  await fake.control({ revokeReplyDelayMs: 600 });
+  const revoked = await bridge.call("tools/call", {
+    name: "iskron_channel",
+    arguments: { action: "revoke", realm: "nks-dev", karta: 931, standing: "proba" },
+  });
+  assert.match(textOf(revoked), /закрыт — место «proba»/, textOf(revoked));
+  await new Promise((r) => setTimeout(r, 500));
+  assert.ok(
+    !bridge.notifications.some((n) => n.params?.data?.kind === "dead"),
+    `an early 4001 on one's own revoke must not be announced as a dead token:\n${bridge.stderr}`,
+  );
+  assert.match(bridge.stderr, /revoked by this session — released quietly/, bridge.stderr);
+  const again = await bridge.call("tools/call", { name: "iskron_stand", arguments: args });
+  assert.match(
+    textOf(again),
+    /connect и register/,
+    "the seat is gone and forgotten: a fresh entry, no replay",
   );
 });
 
