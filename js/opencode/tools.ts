@@ -2,8 +2,8 @@
 // и МОСТ НА КАЖДУЮ СЕССИЮ (граф nks-dev: #4283).
 //
 // Плагин сам говорит с мостом по MCP stdio и регистрирует КАЖДЫЙ тул сервера
-// хуком `tool` под его собственным именем. Нативная запись `mcp` в конфиге
-// OpenCode для этого не годится: тулы MCP-сервера OpenCode именует
+// через ctx.tool.transform под его собственным именем. Нативная запись `mcp`
+// в конфиге OpenCode для этого не годится: тулы MCP-сервера OpenCode именует
 // <сервер>_<тул>, и весь корпус, зовущий iskron_orient, получил бы
 // iskron_iskron_orient — каждая фраза скилла стала бы ложной.
 //
@@ -14,10 +14,10 @@
 // (субагенты) идут через мост родителя — как в Claude Code, где субагент
 // делит MCP-сервер с сессией, что его породила.
 //
-// Хук `tool` — карта, отданная один раз при загрузке плагина, поэтому список
-// тулов нужен ДО того, как сессия начнётся. Первый мост поднимается тут же и
-// отдаёт список (ограниченное ожидание; не успел — список из кэша рядом с
-// грантом), а затем достаётся первой сессии, которая позовёт тул.
+// Список тулов — состояние трансформа, а не карта, отданная раз при загрузке:
+// setup входа не ждёт (тулы из прошлого списка сразу, служебный iskron_bridge
+// всегда), а список с сервера приходит фоном и подменяется через
+// ctx.tool.reload() — сколько бы ни длился вход человека.
 import {
   accessSync,
   constants,
@@ -30,17 +30,14 @@ import {
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
-import { tool, type ToolDefinition } from "@opencode-ai/plugin";
-
 import { Bridge, resultToContent } from "../shared/bridge-client.ts";
 import { OPENCODE_CLIENT } from "../shared/clients.ts";
 import { homeBridgePath } from "../shared/home.ts";
-import { type Say } from "./channel.ts";
-import { argsFrom } from "./schema.ts";
+import type { Context } from "./plugin.ts";
 
-/** Сколько ждать список тулов, ПРЕЖДЕ чем отпустить загрузку плагина. */
-const READY_WAIT_MS = Number(process.env.ISKRON_MCP_READY_WAIT_MS || 20000);
-/** Потолок самого рукопожатия. Щедрый: первый запуск может увести человека в браузер. */
+export type Say = (text: string, level: "info" | "warning" | "error") => void;
+
+/** Потолок самого рукопожатия; истёк — рукопожатие повторяется, не сдаётся. */
 const HANDSHAKE_MS = Number(process.env.ISKRON_MCP_HANDSHAKE_MS || 600000);
 /** Как часто переспрашивать мост, пока человек входит в браузере. */
 const AUTH_POLL_MS = Number(process.env.ISKRON_MCP_AUTH_POLL_MS || 2000);
@@ -53,6 +50,8 @@ const AUTH_PENDING = /authorization required/i;
 /** Мост сессии, которая давно молчит и ничего не держит, отпускается. */
 const IDLE_MS = Number(process.env.ISKRON_BRIDGE_IDLE_MS || 30 * 60_000);
 const PROTOCOL = "2025-06-18";
+/** Служебный тул плагина: состояние моста, когда тулов iskron_* ещё нет. */
+export const STATUS_TOOL = "iskron_bridge";
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- ответы моста приходят без схемы */
 
@@ -69,7 +68,6 @@ export interface Slot {
 }
 
 export interface ToolsHalf {
-  tools: Record<string, ToolDefinition>;
   /** Сессия умерла — её мост отпускается вместе со стоянием. */
   forget(session: string): void;
   stop(): void;
@@ -123,26 +121,6 @@ function grantStamp(): string {
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
-/** Ожидание, которое отмена вызова обрывает. */
-function abortable<T>(p: Promise<T>, signal?: AbortSignal): Promise<T> {
-  if (!signal) return p;
-  if (signal.aborted) return Promise.reject(new Error("вызов отменён"));
-  return new Promise<T>((res, rej) => {
-    const onAbort = () => rej(new Error("вызов отменён"));
-    signal.addEventListener("abort", onAbort, { once: true });
-    p.then(
-      (v) => {
-        signal.removeEventListener("abort", onAbort);
-        res(v);
-      },
-      (e: unknown) => {
-        signal.removeEventListener("abort", onAbort);
-        rej(e instanceof Error ? e : new Error(String(e)));
-      },
-    );
-  });
-}
-
 function readCache(): any[] | null {
   try {
     const list = JSON.parse(readFileSync(cachePath(), "utf8"));
@@ -169,14 +147,15 @@ function loginUrlOf(message: string): string | null {
 /**
  * Рукопожатие. На отказ «нужен вход» мост отвечает сразу, а вход ждёт фоном;
  * рукопожатие повторяется, когда грант ляжет в хранилище. Потолок — HANDSHAKE_MS.
+ * Успех снимает флаг входа всегда: грант мог лечь извне (токен в
+ * ~/.iskron-bridge/token, вход из другого моста), не через этот слот.
  */
 async function handshake(
   b: Bridge,
   onLogin: (url: string | null) => void,
-  onLoggedIn: () => void,
+  onReady: () => void,
 ): Promise<void> {
   const deadline = Date.now() + HANDSHAKE_MS;
-  let waited = false;
   for (;;) {
     const stamp = grantStamp();
     try {
@@ -193,7 +172,6 @@ async function handshake(
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       if (!AUTH_PENDING.test(message)) throw e;
-      waited = true;
       onLogin(loginUrlOf(message));
       while (grantStamp() === stamp) {
         if (Date.now() + AUTH_POLL_MS > deadline) throw e;
@@ -201,7 +179,7 @@ async function handshake(
       }
     }
   }
-  if (waited) onLoggedIn();
+  onReady();
   b.notify("notifications/initialized");
 }
 
@@ -224,7 +202,14 @@ function textOf(result: any): string {
     .join("\n");
 }
 
+/** JSON Schema тула с сервера идёт в OpenCode как есть — v2 берёт JSON Schema. */
+function inputSchemaOf(t: any): any {
+  const s = t?.inputSchema && typeof t.inputSchema === "object" ? t.inputSchema : {};
+  return { type: "object", properties: {}, ...s };
+}
+
 export async function setupTools(
+  ctx: Context,
   say: Say,
   onChannel: (session: string | null, params: any) => void,
   rootOf: (sessionID: string) => Promise<string>,
@@ -237,28 +222,44 @@ export async function setupTools(
         ". Задай ISKRON_BRIDGE_PATH или поставь мост скиллом establish-mcp.",
       "error",
     );
-    return { tools: {}, forget() {}, stop() {} };
+    return { forget() {}, stop() {} };
   }
   const path = found.path;
 
   const slots = new Map<string, Slot>();
   let spare: Slot | null = null;
+  let stopped = false;
 
-  // Человек в браузере: сказать один раз на вход, и загрузка перестаёт гадать
-  // по часам. Вход кончился или мост открыл новый (другая ссылка) — скажется снова.
+  // Человек в браузере: сказать один раз на вход. Вход кончился или мост
+  // открыл новый (другая ссылка) — скажется снова.
   let loginPending = false;
   let loginUrl: string | null = null;
-  let loginSeen: () => void = () => {};
-  const loginStarted = new Promise<void>((r) => (loginSeen = r));
+  // Вызов, ждущий рукопожатия, отпускается в миг, когда мост запросил вход:
+  // человека внутри вызова не ждут, адрес уходит ответом.
+  let loginWaiters: Array<() => void> = [];
+  function loginStarted(): Promise<void> {
+    if (loginPending) return Promise.resolve();
+    return new Promise((r) => loginWaiters.push(r));
+  }
   function onLogin(url: string | null): void {
-    loginSeen();
+    const waiters = loginWaiters;
+    loginWaiters = [];
+    for (const w of waiters) w();
     if (loginPending && url === loginUrl) return;
     loginPending = true;
     loginUrl = url;
     say(
       `Искрон: нужен вход — ${url ? `открой ${url} и заверши его` : "заверши его в браузере"}; ` +
-        `мост ждёт до ${Math.round(HANDSHAKE_MS / 60_000)} мин, тулы iskron_* поднимутся после.`,
+        "адрес локальный: с другой машины — ssh -L <порт>:127.0.0.1:<порт>, либо личный токен в ~/.iskron-bridge/token. " +
+        "Тулы iskron_* поднимутся после входа сами.",
       "warning",
+    );
+  }
+  function loginError(): Error {
+    return new Error(
+      `Искрон: нужен вход в граф — ${loginUrl ? `открой в браузере ${loginUrl}` : "заверши вход в браузере"} и повтори вызов. ` +
+        "Адрес локальный для машины OpenCode: с другой — ssh -L <порт>:127.0.0.1:<порт>; " +
+        "на безголовой машине положи личный токен в ~/.iskron-bridge/token (скилл establish-mcp).",
     );
   }
 
@@ -294,14 +295,13 @@ export async function setupTools(
     slot.ready.catch(() => {});
   }
 
-  /** Рукопожатие слота. Упавшее повторяется на следующем вызове; отмена вызова его не ждёт. */
-  async function readyFor(slot: Slot, signal?: AbortSignal): Promise<void> {
+  /** Рукопожатие слота; упавшее повторяется тут же, один раз. */
+  async function readyFor(slot: Slot): Promise<void> {
     try {
-      await abortable(slot.ready, signal);
-    } catch (e) {
-      if (signal?.aborted) throw e;
+      await slot.ready;
+    } catch {
       shake(slot);
-      await abortable(slot.ready, signal);
+      await slot.ready;
     }
   }
 
@@ -319,52 +319,8 @@ export async function setupTools(
     return slot;
   }
 
-  // Первый мост — ради списка тулов; загрузка плагина ждёт его ограниченно.
-  spare = spawn();
-  const first = spare;
-  const listing = first.ready
-    .then(() => listTools(first.bridge))
-    .then((list) => {
-      writeCache(list);
-      return list;
-    });
-  listing.catch(() => {});
-  let listed: any[] | null = null;
-  await Promise.race([
-    listing.then(
-      (l) => {
-        listed = l;
-      },
-      () => {},
-    ),
-    loginStarted,
-    new Promise<void>((r) => setTimeout(r, READY_WAIT_MS).unref?.()),
-  ]);
-
-  let source = "с сервера";
-  if (!listed) {
-    listed = readCache();
-    source = "из прошлого списка";
-    if (!listed && loginPending) {
-      // Прошлого списка нет, а человек в браузере: погасить мост сейчас — убить
-      // колбэк его входа. Загрузка ждёт вход (потолок — само рукопожатие).
-      listed = await listing.catch(() => null);
-      source = "с сервера, после входа";
-    }
-    if (!listed) {
-      say(
-        (loginPending
-          ? `Искрон: вход не завершён за ${Math.round(HANDSHAKE_MS / 60_000)} мин и прошлого списка тулов нет — `
-          : `Искрон: мост не ответил за ${Math.round(READY_WAIT_MS / 1000)} с и прошлого списка тулов нет — `) +
-          "тулов iskron_* не будет до перезапуска OpenCode. Проверь `node ~/.iskron-bridge/iskron-bridge.mjs doctor`.",
-        "error",
-      );
-      first.bridge.stop();
-      return { tools: {}, forget() {}, stop() {} };
-    }
-  }
-
-  // Мост молчащей сессии без стояния не живёт вечно: opencode run плодит сессии.
+  // Мост молчащей сессии без стояния не живёт вечно: opencode run плодит
+  // сессии, а запас без сессии — каждая локация сервиса.
   const reaper = setInterval(() => {
     const now = Date.now();
     for (const [session, slot] of slots) {
@@ -372,39 +328,113 @@ export async function setupTools(
       slot.bridge.stop();
       slots.delete(session);
     }
+    if (spare && !spare.holding && now - spare.lastCall >= IDLE_MS && state.serverSeen) {
+      spare.bridge.stop();
+      spare = null;
+    }
   }, 60_000);
   reaper.unref?.();
 
-  const tools: Record<string, ToolDefinition> = {};
-  for (const t of listed) {
-    const name = String(t.name);
-    tools[name] = tool({
-      description: String(t.description ?? ""),
-      args: argsFrom(t.inputSchema),
-      async execute(args, ctx) {
-        const slot = await slotFor(ctx.sessionID);
-        await readyFor(slot, ctx.abort); // тулы из кэша ждут, пока мост ответит на рукопожатие
-        const result = await slot.bridge.request(
-          "tools/call",
-          { name, arguments: args ?? {} },
-          { signal: ctx.abort }, // потолка нет: первый вызов может уйти в браузер к человеку
-        );
-        // Отказ тула сигналится броском — так OpenCode показывает его отказом.
-        if (result?.isError) throw new Error(textOf(result) || `${name}: отказ без текста`);
-        return {
-          title: name,
-          output: textOf(result),
-          metadata: result?.structuredContent
-            ? { structuredContent: result.structuredContent }
-            : {},
-        };
+  const state = {
+    listed: readCache() ?? ([] as any[]),
+    source: "из прошлого списка",
+    serverSeen: false,
+  };
+
+  function statusText(): string {
+    return [
+      `мост: ${path}`,
+      loginPending
+        ? `вход: НЕ ВЫПОЛНЕН — ${loginUrl ? `открой в браузере ${loginUrl}` : "заверши вход в браузере"}. ` +
+          "Адрес локальный: с другой машины — ssh -L <порт>:127.0.0.1:<порт>, либо личный токен в ~/.iskron-bridge/token (скилл establish-mcp)."
+        : state.serverSeen
+          ? "вход: есть, сервер отвечает"
+          : "вход: мост ещё не ответил (рукопожатие идёт)",
+      `тулов iskron_*: ${state.listed.length} (${state.source})`,
+      `мостов живых: ${slots.size + (spare ? 1 : 0)}, сессий с мостом: ${slots.size}`,
+    ].join("\n");
+  }
+
+  await ctx.tool.transform((editor) => {
+    editor.add({
+      name: STATUS_TOOL,
+      description:
+        "Состояние моста Искрона в этой сессии OpenCode: выполнен ли вход, адрес авторизации, сколько тулов iskron_* поднято. " +
+        "Зови, когда тулов iskron_* нет или они отвечают отказом входа.",
+      input: { type: "object", properties: {}, additionalProperties: false } as any,
+      async execute() {
+        return { content: statusText() };
       },
     });
-  }
-  say(`Искрон: мост поднят, тулов в сессии: ${Object.keys(tools).length} (${source}).`, "info");
+    for (const t of state.listed) {
+      const name = String(t.name);
+      editor.add({
+        name,
+        description: String(t.description ?? ""),
+        input: inputSchemaOf(t),
+        async execute(input, tool) {
+          const slot = await slotFor(String(tool.sessionID));
+          // Без гранта человека внутри вызова не ждут: адрес входа уходит ответом.
+          if (loginPending) throw loginError();
+          await Promise.race([
+            readyFor(slot),
+            loginStarted().then(() => {
+              throw loginError();
+            }),
+          ]);
+          // Потолка нет: контекст execute в v2 сигнала отмены не несёт.
+          const result = await slot.bridge.request("tools/call", {
+            name,
+            arguments: input ?? {},
+          });
+          // Отказ тула сигналится броском — так OpenCode показывает его отказом.
+          if (result?.isError) throw new Error(textOf(result) || `${name}: отказ без текста`);
+          return { content: textOf(result) };
+        },
+      });
+    }
+  });
+  if (state.listed.length)
+    say(`Искрон: тулов из прошлого списка: ${state.listed.length}; сверю с сервером.`, "info");
+
+  // Первый мост — ради списка тулов, фоном и без потолка: истёкшее ожидание
+  // входа или умерший мост — новое рукопожатие или новый мост, пока плагин жив.
+  spare = spawn();
+  let first = spare;
+  void (async () => {
+    for (;;) {
+      if (stopped) return;
+      try {
+        await first.ready;
+        const list = await listTools(first.bridge);
+        state.serverSeen = true;
+        const same = JSON.stringify(list) === JSON.stringify(state.listed);
+        state.listed = list;
+        state.source = "с сервера";
+        writeCache(list);
+        if (!same) await ctx.tool.reload();
+        say(`Искрон: мост поднят, тулов в сессии: ${list.length} (с сервера).`, "info");
+        return;
+      } catch (e) {
+        if (stopped) return;
+        if (first.bridge.failure) {
+          say(`Искрон: мост умер (${(e as Error).message}) — поднимаю новый.`, "warning");
+          if (spare === first) spare = null;
+          first = spare ?? spawn();
+          spare = first;
+        } else if (first.session === null && spare !== first) {
+          // Запас уже отдан сессии и отпущен ею — список берёт новый запас.
+          first = spare ?? spawn();
+          spare = first;
+        } else {
+          shake(first);
+        }
+        await sleep(AUTH_POLL_MS);
+      }
+    }
+  })();
 
   return {
-    tools,
     forget(session) {
       const slot = slots.get(session);
       if (!slot) return;
@@ -412,6 +442,7 @@ export async function setupTools(
       slot.bridge.stop(); // свёртка моста отпускает стояние: ключ, сокет, занятость
     },
     stop() {
+      stopped = true;
       clearInterval(reaper);
       spare?.bridge.stop();
       spare = null;

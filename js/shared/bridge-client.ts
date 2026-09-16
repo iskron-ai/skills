@@ -45,6 +45,11 @@ export class Bridge {
     this.onNotification = onNotification;
   }
 
+  /** Мост вышел или не запустился — вызовы к нему отвергаются этим отказом. */
+  get failure(): Error | null {
+    return this.dead;
+  }
+
   start(): void {
     const rt = bridgeRuntime();
     const proc = spawn(rt.bin, [this.bin], { stdio: ["pipe", "pipe", "pipe"], env: rt.env });

@@ -157,6 +157,10 @@ var Bridge = class {
     this.onLog = onLog;
     this.onNotification = onNotification;
   }
+  /** Мост вышел или не запустился — вызовы к нему отвергаются этим отказом. */
+  get failure() {
+    return this.dead;
+  }
   start() {
     const rt = bridgeRuntime();
     const proc = spawn(rt.bin, [this.bin], { stdio: ["pipe", "pipe", "pipe"], env: rt.env });

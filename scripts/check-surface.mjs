@@ -22,7 +22,11 @@ const tools = new Set(surface.tools);
 // iskron_-prefixed tokens that are NOT tool names (credential/hook prefixes shown
 // in examples). Extend deliberately; every entry is a claim that the token is
 // not meant to resolve as a tool.
-const NON_TOOL_TOKENS = new Set([]);
+const NON_TOOL_TOKENS = new Set([
+  // The OpenCode plugin's own status tool (js/opencode/tools.ts), raised beside
+  // the server's tools: it never reaches the server, so the snapshot never lists it.
+  "iskron_bridge",
+]);
 
 // Vocabularies that mean the same thing wherever they appear. Deliberately NOT
 // every dictionary the surface publishes: `action`, `direction`, `role` and their

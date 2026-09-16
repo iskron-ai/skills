@@ -1,11 +1,13 @@
 // Behavioural probe for the OpenCode plugin shipped in
 // skills/establish-mcp/scripts/opencode-plugin.js — the door that gives an
-// OpenCode session both halves of Iskron: the iskron_* tools under their own
-// names (raised over a child iskron-bridge) and the live channel, delivered as
-// a prompt into the session that holds the standing.
+// OpenCode 2 session three halves of Iskron: the iskron_* tools under their own
+// names (raised over a child iskron-bridge), the live channel, delivered as a
+// prompt into the session that holds the standing, and a «/» command for every
+// installed skill of the delivery.
 //
-// The plugin is an ordinary module: the probe calls its factory with a stand-in
-// `client` and reads the hooks it returns. Three seams keep that honest:
+// The plugin is an ordinary module with a default export {id, setup(ctx)}: the
+// probe calls setup with a stand-in context and reads what it registered.
+// Three seams keep that honest:
 //
 //   • the bridge is a REAL child process — tests/fake-bridge.mjs, aimed at by
 //     ISKRON_BRIDGE_PATH; the spawn/NDJSON/pagination path is not imitated.
@@ -15,9 +17,9 @@
 //   • the module is loaded from a COPY in a temp dir, HOME points there too,
 //     so the home-copy candidate for the bridge is the probe's to decide.
 //
-// `@opencode-ai/plugin` is the one import the shipped file keeps external; in
-// OpenCode it resolves next to the plugins directory, here a loader hook points
-// it at js/node_modules — the real package, the real zod.
+// The shipped file imports nothing: the stand-in context is the whole surface.
+// Transforms are replayed the way OpenCode replays them — a reload rebuilds the
+// registry from the registered callbacks.
 //
 // ISKRON_OPENCODE_PLUGIN points the probe at any copy (a past revision, a
 // broken one) so it can be shown red before a fix. Run with `make test-opencode`.
@@ -31,13 +33,10 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { register } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
-
-register("./opencode-loader.mjs", import.meta.url);
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SOURCE =
@@ -53,35 +52,84 @@ process.env.ISKRON_BRIDGE_AUTH_DIR = join(SANDBOX, "auth");
 
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// ── the client the plugin is handed ──────────────────────────────────────────
+// ── the context the plugin is handed ─────────────────────────────────────────
 
-function fakeClient({ sessions = [] } = {}) {
-  const prompts = [];
-  const toasts = [];
-  const client = {
-    session: {
-      promptAsync: async (o) => {
-        prompts.push(o);
-        return { data: {} };
-      },
-      list: async () => ({ data: sessions }),
-      get: async ({ path }) => ({
-        data: sessions.find((x) => x.id === path.id) ?? { id: path.id },
-      }),
+/** A replayable registry: every transform callback re-runs on reload, as in OpenCode. */
+function registry() {
+  const transforms = [];
+  let current = new Map();
+  const replay = () => {
+    const m = new Map();
+    const editor = {
+      add: (d) => m.set(d.name, d),
+      remove: (id) => m.delete(id),
+      get: (id) => m.get(id),
+      list: () => [...m.values()],
+      update() {},
+      namespace() {},
+    };
+    for (const t of transforms) t(editor);
+    current = m;
+  };
+  return {
+    transform: async (cb) => {
+      transforms.push(cb);
+      replay();
+      return { dispose: async () => {} };
     },
-    tui: {
-      showToast: async (o) => {
-        toasts.push(o.body);
-        return { data: true };
+    reload: async () => replay(),
+    get: () => current,
+  };
+}
+
+function fakeCtx({ sessions = [], skills = [] } = {}) {
+  const prompts = [];
+  const tools = registry();
+  const commands = registry();
+  const queue = [];
+  let wake = null;
+  const stderr = [];
+  const ctx = {
+    tool: { transform: tools.transform, reload: tools.reload },
+    command: { transform: commands.transform, reload: commands.reload },
+    session: {
+      get: async ({ sessionID }) => sessions.find((x) => x.id === sessionID) ?? { id: sessionID },
+      prompt: async (o) => {
+        prompts.push(o);
+        return {};
+      },
+    },
+    skill: { list: async () => ({ location: { directory: SANDBOX }, data: skills }) },
+    event: {
+      subscribe: async function* ({ signal } = {}) {
+        while (!signal?.aborted) {
+          if (queue.length) {
+            yield queue.shift();
+            continue;
+          }
+          await new Promise((r) => {
+            wake = r;
+            signal?.addEventListener("abort", r, { once: true });
+          });
+        }
       },
     },
   };
-  return { client, prompts, toasts, said: () => toasts.map((t) => t.message).join("\n") };
+  return {
+    ctx,
+    prompts,
+    tools: () => tools.get(),
+    commands: () => commands.get(),
+    emit: (ev) => {
+      queue.push(ev);
+      wake?.();
+    },
+    stderr,
+  };
 }
 
 const ENV_KEYS = [
   "ISKRON_BRIDGE_PATH",
-  "ISKRON_MCP_READY_WAIT_MS",
   "ISKRON_MCP_HANDSHAKE_MS",
   "ISKRON_MCP_AUTH_POLL_MS",
   "FB_LOG",
@@ -100,12 +148,34 @@ async function loadPlugin(env = {}) {
   return (await import(`${pathToFileURL(COPY).href}?n=${++seq}`)).default;
 }
 
-/** A loaded plugin: hooks in hand, dispose at hand. */
-async function plugin(env = {}, clientOpts = {}) {
-  const factory = await loadPlugin(env);
-  const rec = fakeClient(clientOpts);
-  rec.hooks = await factory({ client: rec.client, directory: SANDBOX, worktree: SANDBOX });
-  rec.stop = () => rec.hooks.dispose?.();
+// The plugin speaks to the human through the service's stderr: the probe
+// listens there instead of a TUI toast.
+function captureStderr(into) {
+  const write = process.stderr.write.bind(process.stderr);
+  process.stderr.write = (chunk, ...rest) => {
+    into.push(String(chunk));
+    return write(chunk, ...rest);
+  };
+  return () => (process.stderr.write = write);
+}
+
+/** A loaded plugin: registries in hand, cleanup at hand. */
+async function plugin(env = {}, ctxOpts = {}) {
+  const def = await loadPlugin(env);
+  assert.equal(def.id, "iskron", "the default export must be a definition with an id");
+  const rec = fakeCtx(ctxOpts);
+  const restore = captureStderr(rec.stderr);
+  rec.cleanup = await def.setup(rec.ctx);
+  rec.said = () => rec.stderr.join("");
+  rec.stop = async () => {
+    await rec.cleanup?.();
+    restore();
+  };
+  rec.call = (name, input, sessionID) => {
+    const t = rec.tools().get(name);
+    assert.ok(t, `tool ${name} must be registered`);
+    return t.execute(input, { sessionID, agent: "build", messageID: "m", id: "c" });
+  };
   return rec;
 }
 
@@ -124,13 +194,11 @@ function bridgeEnv(name, extra = {}) {
       FB_LOG: log,
       FB_REPLY: reply,
       FB_EVENTS: events,
-      ISKRON_MCP_READY_WAIT_MS: 15000,
       ...extra,
     },
   };
 }
 
-const ctx = (sessionID) => ({ sessionID, abort: new AbortController().signal });
 const pidsOf = (log) =>
   readFileSync(log, "utf8")
     .trim()
@@ -156,39 +224,43 @@ async function until(check, what, ms = 5000) {
   assert.fail(`timed out waiting for ${what}`);
 }
 
+const BRIDGE_TOOLS = ["iskron_bridge", "iskron_channel", "iskron_orient"];
+const names = (rec) => [...rec.tools().keys()].sort();
+const serverTools = (rec) => until(() => names(rec).length === 3, "the server's tools", 8000);
+
 // ── tools ────────────────────────────────────────────────────────────────────
 
-test("every bridge tool stands under its own name, with zod args cut from the server's schema", async () => {
+test("every bridge tool stands under its own name, with the server's JSON Schema as its input", async () => {
   const b = bridgeEnv("own-names", { FB_PAGINATE: "1" });
   const rec = await plugin(b.env);
   try {
-    const names = Object.keys(rec.hooks.tool);
-    assert.deepEqual(names.sort(), ["iskron_channel", "iskron_orient"]);
-    const channel = rec.hooks.tool.iskron_channel;
+    await serverTools(rec);
+    assert.deepEqual(names(rec), BRIDGE_TOOLS);
+    const channel = rec.tools().get("iskron_channel");
     assert.equal(channel.description.split("\n")[0], "Живой канал делателя.");
-    // The enum survives the cut, and so does required-ness.
-    const action = channel.args.action;
-    assert.ok(action, "the `action` argument must be cut from the schema");
-    assert.equal(action.safeParse("connect").success, true);
-    assert.equal(action.safeParse("dance").success, false, "the enum must be enforced");
-    assert.equal(action.safeParse(undefined).success, false, "a required arg is not optional");
+    assert.deepEqual(channel.input.properties.action.enum, ["connect", "mint", "register"]);
+    assert.deepEqual(channel.input.required, ["action"]);
     assert.match(rec.said(), /тулов в сессии: 2 \(с сервера\)/);
+    assert.match(
+      await rec.call("iskron_bridge", {}, "s-0").then((r) => r.content),
+      /тулов iskron_\*: 2/,
+    );
   } finally {
     await rec.stop();
   }
 });
 
-test("a call is proxied to the bridge and its text comes back as the tool's output", async () => {
+test("a call is proxied to the bridge and its text comes back as the tool's content", async () => {
   const b = bridgeEnv("proxy");
   const rec = await plugin(b.env);
   try {
+    await serverTools(rec);
     writeFileSync(b.reply, "Живой ответ графа");
-    const out = await rec.hooks.tool.iskron_orient.execute({}, ctx("s-1"));
-    assert.equal(out.output, "Живой ответ графа");
-    assert.equal(out.title, "iskron_orient");
+    const out = await rec.call("iskron_orient", {}, "s-1");
+    assert.equal(out.content, "Живой ответ графа");
     writeFileSync(b.reply, "__ERROR__ключ не тот");
     await assert.rejects(
-      () => rec.hooks.tool.iskron_channel.execute({ action: "connect" }, ctx("s-1")),
+      () => rec.call("iskron_channel", { action: "connect" }, "s-1"),
       /ключ не тот/,
       "a refused tool must surface as a thrown error, not as text",
     );
@@ -197,22 +269,23 @@ test("a call is proxied to the bridge and its text comes back as the tool's outp
   }
 });
 
-test("dispose kills every bridge the plugin spawned", async () => {
+test("cleanup kills every bridge the plugin spawned", async () => {
   const b = bridgeEnv("dispose");
   const rec = await plugin(b.env);
-  await rec.hooks.tool.iskron_orient.execute({}, ctx("s-1"));
-  await rec.hooks.tool.iskron_orient.execute({}, ctx("s-2"));
+  await serverTools(rec);
+  await rec.call("iskron_orient", {}, "s-1");
+  await rec.call("iskron_orient", {}, "s-2");
   const pids = pidsOf(b.log);
   assert.equal(pids.length, 2, "two root sessions, two bridges");
   assert.ok(pids.every(alive), "the bridges must be running while the plugin lives");
   await rec.stop();
-  await until(() => pids.every((p) => !alive(p)), "every bridge to die after dispose");
+  await until(() => pids.every((p) => !alive(p)), "every bridge to die after cleanup");
 });
 
 test("no bridge on the machine: no tools, and the plugin says where it looked", async () => {
   const rec = await plugin({ ISKRON_BRIDGE_PATH: join(SANDBOX, "no-such-bridge.mjs") });
   try {
-    assert.deepEqual(rec.hooks.tool, {});
+    assert.equal(rec.tools().size, 0);
     assert.match(rec.said(), /мост не найден/);
     assert.match(rec.said(), /no-such-bridge\.mjs/);
     assert.match(rec.said(), /iskron-bridge\.mjs/, "the home copy must be among the candidates");
@@ -221,17 +294,19 @@ test("no bridge on the machine: no tools, and the plugin says where it looked", 
   }
 });
 
-test("a bridge stuck in someone's browser: tools come from the last list, calls wait for it", async () => {
+test("a bridge stuck in someone's browser: tools come from the last list at once, a call waits for it", async () => {
   // First a good run to leave a tools list behind.
   const ok = bridgeEnv("cache-fill");
-  await (await plugin(ok.env)).stop();
-  const b = bridgeEnv("cache-use", { FB_MODE: "mute", ISKRON_MCP_READY_WAIT_MS: 300 });
+  const filled = await plugin(ok.env);
+  await serverTools(filled);
+  await filled.stop();
+  const b = bridgeEnv("cache-use", { FB_MODE: "mute" });
   const rec = await plugin(b.env);
   try {
-    assert.deepEqual(Object.keys(rec.hooks.tool).sort(), ["iskron_channel", "iskron_orient"]);
+    assert.deepEqual(names(rec), BRIDGE_TOOLS, "setup must not wait for the bridge");
     assert.match(rec.said(), /из прошлого списка/);
     // The call must not answer before the bridge does — here, never.
-    const call = rec.hooks.tool.iskron_orient.execute({}, ctx("s-2"));
+    const call = rec.call("iskron_orient", {}, "s-2");
     let settled = false;
     call.then(
       () => (settled = true),
@@ -249,7 +324,7 @@ test("a bridge stuck in someone's browser: tools come from the last list, calls 
 // Stopping it then kills the callback: the login goes through at the server and
 // the redirect lands on a refused connection.
 
-test("first run without a grant and without a last list: the bridge waits for the login, then the tools come", async () => {
+test("first run without a grant and without a last list: setup returns at once, iskron_bridge names the login, the tools come after it", async () => {
   const authDir = mkdtempSync(join(SANDBOX, "auth-fresh-"));
   const prevAuth = process.env.ISKRON_BRIDGE_AUTH_DIR;
   process.env.ISKRON_BRIDGE_AUTH_DIR = authDir; // no opencode-tools.json there
@@ -259,37 +334,39 @@ test("first run without a grant and without a last list: the bridge waits for th
     FB_AUTHED: authed,
     ISKRON_MCP_AUTH_POLL_MS: 50,
   });
-  const factory = await loadPlugin(b.env);
-  const rec = fakeClient();
-  let loaded = null;
-  const loading = factory({ client: rec.client, directory: SANDBOX, worktree: SANDBOX }).then(
-    (h) => (loaded = h),
-  );
+  const rec = await plugin(b.env);
   try {
-    await until(() => /нужен вход/.test(rec.said()), "the login toast");
-    assert.match(rec.said(), /127\.0\.0\.1:43265\/authorize/, "the toast names the login link");
+    assert.deepEqual(names(rec), ["iskron_bridge"], "the status tool is there before the login");
+    await until(() => /нужен вход/.test(rec.said()), "the login line");
+    assert.match(rec.said(), /127\.0\.0\.1:43265\/authorize/, "the line names the login link");
+    const status = (await rec.call("iskron_bridge", {}, "s-login")).content;
+    assert.match(status, /вход: НЕ ВЫПОЛНЕН/);
+    assert.match(
+      status,
+      /127\.0\.0\.1:43265\/authorize/,
+      "the session can learn the address itself",
+    );
+    assert.match(status, /ssh -L/, "a headless machine is told the way in");
     await delay(400);
     const pid = pidOf(b.log);
     assert.ok(alive(pid), "the bridge holding the browser flow must not be stopped");
     assert.equal(pidsOf(b.log).length, 1, "the login is waited for, not restarted");
     writeFileSync(authed, "");
     writeFileSync(join(authDir, "fake_grant.json"), "{}"); // the grant lands next to the tools cache
-    await loading;
-    assert.deepEqual(Object.keys(loaded.tool).sort(), ["iskron_channel", "iskron_orient"]);
-    assert.match(rec.said(), /после входа/);
+    await serverTools(rec);
     writeFileSync(b.reply, "ответ после входа");
-    const out = await loaded.tool.iskron_orient.execute({}, ctx("s-login"));
-    assert.equal(out.output, "ответ после входа");
+    const out = await rec.call("iskron_orient", {}, "s-login");
+    assert.equal(out.content, "ответ после входа");
     assert.equal(pidsOf(b.log).length, 1, "the first session takes the bridge that saw the login");
+    assert.match((await rec.call("iskron_bridge", {}, "s-login")).content, /вход: есть/);
   } finally {
     writeFileSync(authed, "");
-    await loading.catch(() => {});
-    await loaded?.dispose?.();
+    await rec.stop();
     process.env.ISKRON_BRIDGE_AUTH_DIR = prevAuth;
   }
 });
 
-test("a last list and no grant: tools come from the list, and a call waits for the login instead of failing", async () => {
+test("a last list and no grant: tools come from the list, a call refuses with the address instead of hanging, and passes after the login", async () => {
   const authed = join(SANDBOX, "cached-login.authed");
   const b = bridgeEnv("cached-login", {
     FB_MODE: "auth",
@@ -299,18 +376,17 @@ test("a last list and no grant: tools come from the list, and a call waits for t
   const rec = await plugin(b.env);
   try {
     assert.match(rec.said(), /из прошлого списка/);
-    writeFileSync(b.reply, "ответ после входа");
-    const call = rec.hooks.tool.iskron_orient.execute({}, ctx("s-cached"));
-    let settled = false;
-    call.then(
-      () => (settled = true),
-      () => (settled = true),
+    await until(() => /нужен вход/.test(rec.said()), "the login line");
+    await assert.rejects(
+      () => rec.call("iskron_orient", {}, "s-cached"),
+      /127\.0\.0\.1:43265\/authorize/,
+      "a call before the login must hand the agent the address, not wait for a human it cannot reach",
     );
-    await delay(300);
-    assert.equal(settled, false, "a call before the login must wait for it, not fail");
     writeFileSync(authed, "");
     writeFileSync(join(process.env.ISKRON_BRIDGE_AUTH_DIR, "fake_grant.json"), "{}");
-    assert.equal((await call).output, "ответ после входа");
+    await until(() => /с сервера/.test(rec.said()), "the server's list after the login", 8000);
+    writeFileSync(b.reply, "ответ после входа");
+    assert.equal((await rec.call("iskron_orient", {}, "s-cached")).content, "ответ после входа");
   } finally {
     writeFileSync(authed, "");
     await rec.stop();
@@ -324,73 +400,73 @@ test("a login met again later in the same process is announced again, not swallo
   const authed = join(SANDBOX, "again.authed");
   const grant = join(authDir, "fake_grant.json");
   const b = bridgeEnv("again", { FB_MODE: "auth", FB_AUTHED: authed, ISKRON_MCP_AUTH_POLL_MS: 50 });
-  const factory = await loadPlugin(b.env);
-  const rec = fakeClient();
-  const loading = factory({ client: rec.client, directory: SANDBOX, worktree: SANDBOX });
-  let hooks = null;
-  const toasts = () => (rec.said().match(/нужен вход/g) ?? []).length;
+  const rec = await plugin(b.env);
+  const lines = () => (rec.said().match(/нужен вход/g) ?? []).length;
   try {
-    await until(() => toasts() === 1, "the first login toast");
+    await until(() => lines() === 1, "the first login line");
     writeFileSync(authed, "");
     writeFileSync(grant, "{}");
-    hooks = await loading;
+    await serverTools(rec);
     writeFileSync(b.reply, "ответ");
-    await hooks.tool.iskron_orient.execute({}, ctx("s-first"));
+    await rec.call("iskron_orient", {}, "s-first");
     // The grant dies mid-work: the next root session's bridge meets the login again.
     rmSync(authed);
     rmSync(grant);
-    const call = hooks.tool.iskron_orient.execute({}, ctx("s-second"));
-    await until(() => toasts() === 2, "the second login toast");
+    await assert.rejects(() => rec.call("iskron_orient", {}, "s-second"), /нужен вход/);
+    await until(() => lines() === 2, "the second login line");
     writeFileSync(authed, "");
     writeFileSync(grant, "{}");
-    assert.equal((await call).output, "ответ");
+    let out = null;
+    for (const deadline = Date.now() + 5000; out === null && Date.now() < deadline;) {
+      out = await rec.call("iskron_orient", {}, "s-second").catch(() => null);
+      if (out === null) await delay(50);
+    }
+    assert.ok(out, "the second session's call must pass after the login");
+    assert.equal(out.content, "ответ");
   } finally {
     writeFileSync(authed, "");
-    await loading.catch(() => {});
-    await hooks?.dispose?.();
+    await rec.stop();
     process.env.ISKRON_BRIDGE_AUTH_DIR = prevAuth;
   }
 });
 
 // ── channel ──────────────────────────────────────────────────────────────────
 
+const frame = (body) => ({
+  type: "message",
+  id: "msg-1",
+  body,
+  provenance: {
+    from_standing: "@alari:telegram-bot",
+    from_karta_seq: 1226,
+    auth: "pat",
+    via: "hook",
+  },
+});
+const event = (kind, extra) => JSON.stringify({ kind, ...extra }) + "\n";
+
 test("each root session gets its own bridge, and a frame goes to the session whose bridge brought it", async () => {
   const b = bridgeEnv("frame");
   const rec = await plugin(b.env);
   try {
-    await rec.hooks.tool.iskron_channel.execute({ action: "connect" }, ctx("s-a"));
-    await rec.hooks.tool.iskron_channel.execute({ action: "connect" }, ctx("s-b"));
+    await serverTools(rec);
+    await rec.call("iskron_channel", { action: "connect" }, "s-a");
+    await rec.call("iskron_channel", { action: "connect" }, "s-b");
     const [pidA, pidB] = pidsOf(b.log);
     assert.ok(pidA && pidB && pidA !== pidB, "two sessions must stand on two bridges");
     appendFileSync(
       `${b.events}.${pidA}`,
-      JSON.stringify({ kind: "frame", frame: { type: "hello", pending: 0 }, raw: "{}" }) + "\n",
+      event("frame", { frame: { type: "hello", pending: 0 }, raw: "{}" }),
     );
-    await until(() => /канал слушает/.test(rec.said()), "the hello toast");
+    await until(() => /канал слушает/.test(rec.said()), "the hello line");
     assert.equal(rec.prompts.length, 0, "hello must not wake the agent");
-    const frame = (body) => ({
-      type: "message",
-      id: "msg-1",
-      body,
-      provenance: {
-        from_standing: "@alari:telegram-bot",
-        from_karta_seq: 1226,
-        auth: "pat",
-        via: "hook",
-      },
-    });
-    appendFileSync(
-      `${b.events}.${pidB}`,
-      JSON.stringify({ kind: "frame", frame: frame("для второй"), raw: "" }) + "\n",
-    );
-    appendFileSync(
-      `${b.events}.${pidA}`,
-      JSON.stringify({ kind: "frame", frame: frame("для первой"), raw: "" }) + "\n",
-    );
+    appendFileSync(`${b.events}.${pidB}`, event("frame", { frame: frame("для второй"), raw: "" }));
+    appendFileSync(`${b.events}.${pidA}`, event("frame", { frame: frame("для первой"), raw: "" }));
     await until(() => rec.prompts.length === 2, "both frames to be prompted");
-    const to = Object.fromEntries(rec.prompts.map((p) => [p.path.id, p.body.parts[0].text]));
+    const to = Object.fromEntries(rec.prompts.map((p) => [p.sessionID, p.text]));
     assert.match(to["s-a"], /для первой/);
     assert.match(to["s-b"], /для второй/);
+    assert.equal(rec.prompts[0].delivery, "queue", "a frame joins the turn, it does not cut it");
     assert.match(
       to["s-a"],
       /^Кадр канала Искрона от делателя роли #1226 — стояние @alari:telegram-bot\nprovenance: \{"from_standing":"@alari:telegram-bot","from_karta_seq":1226,"auth":"pat","via":"hook"\}\nframe: \{"id":"msg-1"\}\n\nдля первой$/,
@@ -410,21 +486,26 @@ test("a subagent session works through its root's bridge", async () => {
     ],
   });
   try {
-    await rec.hooks.tool.iskron_channel.execute({ action: "connect" }, ctx("root"));
-    await rec.hooks.tool.iskron_orient.execute({}, ctx("child"));
+    await serverTools(rec);
+    await rec.call("iskron_channel", { action: "connect" }, "root");
+    await rec.call("iskron_orient", {}, "child");
     assert.equal(pidsOf(b.log).length, 1, "the child must not raise a bridge of its own");
     appendFileSync(
       `${b.events}.${pidOf(b.log)}`,
-      JSON.stringify({ kind: "frame", frame: { type: "message", body: "x" }, raw: "" }) + "\n",
+      event("frame", { frame: { type: "message", body: "x" }, raw: "" }),
     );
     await until(() => rec.prompts.length === 1, "the frame to be prompted");
-    assert.equal(rec.prompts[0].path.id, "root", "the frame goes to the root, never the subagent");
+    assert.equal(
+      rec.prompts[0].sessionID,
+      "root",
+      "the frame goes to the root, never the subagent",
+    );
   } finally {
     await rec.stop();
   }
 });
 
-test("a frame from a bridge nobody owns yet goes to the freshest root session", async () => {
+test("a frame from a bridge nobody owns yet goes to the freshest root session the plugin has seen", async () => {
   const b = bridgeEnv("root");
   const rec = await plugin(b.env, {
     sessions: [
@@ -434,34 +515,91 @@ test("a frame from a bridge nobody owns yet goes to the freshest root session", 
     ],
   });
   try {
-    appendFileSync(
-      b.events,
-      JSON.stringify({ kind: "frame", frame: { type: "message", body: "x" }, raw: "" }) + "\n",
-    );
+    await serverTools(rec);
+    // No session list in OpenCode 2: the plugin learns sessions from events.
+    rec.emit({ type: "session.created", data: { sessionID: "old" } });
+    rec.emit({ type: "session.created", data: { sessionID: "fresh" } });
+    await delay(50);
+    rec.emit({ type: "session.updated", data: { sessionID: "child" } }); // a subagent refreshes its root
+    await delay(50);
+    appendFileSync(b.events, event("frame", { frame: { type: "message", body: "x" }, raw: "" }));
     await until(() => rec.prompts.length === 1, "the frame to be prompted");
-    assert.equal(rec.prompts[0].path.id, "fresh", "a subagent session is never the addressee");
+    assert.equal(
+      rec.prompts[0].sessionID,
+      "old",
+      "the freshest ROOT seen — a subagent is never the addressee",
+    );
   } finally {
     await rec.stop();
   }
 });
 
-test("a dead token is loud: an error toast and a prompt that names the move", async () => {
+test("a frame for a session that is gone or archived is re-addressed to a live root, and every delivery is logged by frame and session", async () => {
+  const b = bridgeEnv("archived");
+  const sessions = [
+    { id: "holder", time: { updated: 1 } },
+    { id: "other", time: { updated: 2 } },
+  ];
+  const rec = await plugin(b.env, { sessions });
+  try {
+    await serverTools(rec);
+    await rec.call("iskron_channel", { action: "connect" }, "holder");
+    rec.emit({ type: "session.created", data: { sessionID: "other" } });
+    await delay(50);
+    appendFileSync(
+      `${b.events}.${pidOf(b.log)}`,
+      event("frame", { frame: frame("живому"), raw: "" }),
+    );
+    await until(() => rec.prompts.length === 1, "the first frame");
+    assert.equal(rec.prompts[0].sessionID, "holder");
+    assert.match(rec.said(), /кадр msg-1 вложен в сессию holder/, "delivery is visible in the log");
+    // The holder's session goes to the archive behind the agent's back.
+    sessions[0].time.archived = Date.now();
+    appendFileSync(
+      `${b.events}.${pidOf(b.log)}`,
+      event("frame", { frame: frame("после архива"), raw: "" }),
+    );
+    await until(() => rec.prompts.length === 2, "the re-addressed frame");
+    assert.equal(rec.prompts[1].sessionID, "other", "a frame never goes into an archived session");
+    assert.match(rec.said(), /сессия holder закрыта или в архиве/);
+    // Nothing live at all: loud, not silent.
+    sessions[1].time.archived = Date.now();
+    appendFileSync(
+      `${b.events}.${pidOf(b.log)}`,
+      event("frame", { frame: frame("некуда"), raw: "" }),
+    );
+    await until(() => /ВЛОЖИТЬ НЕКУДА/.test(rec.said()), "the loud refusal");
+    assert.equal(rec.prompts.length, 2);
+  } finally {
+    await rec.stop();
+  }
+});
+
+test("a frame with no session seen at all is said aloud, not lost silently", async () => {
+  const b = bridgeEnv("nobody");
+  const rec = await plugin(b.env);
+  try {
+    await serverTools(rec);
+    appendFileSync(b.events, event("frame", { frame: { type: "message", body: "x" }, raw: "" }));
+    await until(() => /ВЛОЖИТЬ НЕКУДА/.test(rec.said()), "the loud refusal");
+    assert.equal(rec.prompts.length, 0);
+  } finally {
+    await rec.stop();
+  }
+});
+
+test("a dead token is loud: an error line and a prompt that names the move", async () => {
   const b = bridgeEnv("dead");
   const rec = await plugin(b.env);
   try {
-    await rec.hooks.tool.iskron_channel.execute({ action: "connect" }, ctx("s-holder"));
-    appendFileSync(
-      `${b.events}.${pidOf(b.log)}`,
-      JSON.stringify({ kind: "dead", code: 4001 }) + "\n",
-    );
+    await serverTools(rec);
+    await rec.call("iskron_channel", { action: "connect" }, "s-holder");
+    appendFileSync(`${b.events}.${pidOf(b.log)}`, event("dead", { code: 4001 }));
     await until(() => rec.prompts.length === 1, "the dead-token prompt");
-    assert.equal(rec.prompts[0].path.id, "s-holder");
-    assert.match(rec.prompts[0].body.parts[0].text, /токен мёртв/);
-    assert.match(rec.prompts[0].body.parts[0].text, /mint/);
-    assert.ok(
-      rec.toasts.some((t) => t.variant === "error" && /токен мёртв/.test(t.message)),
-      "the human must see it too",
-    );
+    assert.equal(rec.prompts[0].sessionID, "s-holder");
+    assert.match(rec.prompts[0].text, /токен мёртв/);
+    assert.match(rec.prompts[0].text, /mint/);
+    assert.match(rec.said(), /\[iskron\/error\] .*токен мёртв/, "the human must see it too");
   } finally {
     await rec.stop();
   }
@@ -471,18 +609,18 @@ test("a stale burst is one prompt into the holder's session, bodies included", a
   const b = bridgeEnv("stale");
   const rec = await plugin(b.env);
   try {
-    await rec.hooks.tool.iskron_channel.execute({ action: "connect" }, ctx("s-stale"));
+    await serverTools(rec);
+    await rec.call("iskron_channel", { action: "connect" }, "s-stale");
     appendFileSync(
       `${b.events}.${pidOf(b.log)}`,
-      JSON.stringify({
-        kind: "stale",
+      event("stale", {
         frames: [{ id: "s1" }],
         text: "Лежалых кадров: 1\n\nпочта предшественника",
-      }) + "\n",
+      }),
     );
     await until(() => rec.prompts.length === 1, "the stale prompt");
-    assert.equal(rec.prompts[0].path.id, "s-stale");
-    assert.match(rec.prompts[0].body.parts[0].text, /почта предшественника/);
+    assert.equal(rec.prompts[0].sessionID, "s-stale");
+    assert.match(rec.prompts[0].text, /почта предшественника/);
   } finally {
     await rec.stop();
   }
@@ -492,15 +630,16 @@ test("an eviction is loud in OpenCode: a prompt into the holder's session naming
   const b = bridgeEnv("evicted");
   const rec = await plugin(b.env);
   try {
-    await rec.hooks.tool.iskron_channel.execute({ action: "connect" }, ctx("s-evicted"));
+    await serverTools(rec);
+    await rec.call("iskron_channel", { action: "connect" }, "s-evicted");
     appendFileSync(
       `${b.events}.${pidOf(b.log)}`,
-      JSON.stringify({ kind: "evicted", code: 4000, text: "ДЕЛАТЕЛЬ: место отняли" }) + "\n",
+      event("evicted", { code: 4000, text: "ДЕЛАТЕЛЬ: место отняли" }),
     );
     await until(() => rec.prompts.length === 1, "the eviction prompt");
-    assert.equal(rec.prompts[0].path.id, "s-evicted");
-    assert.match(rec.prompts[0].body.parts[0].text, /место отняли/);
-    assert.match(rec.prompts[0].body.parts[0].text, /iskron_stand с take=true/);
+    assert.equal(rec.prompts[0].sessionID, "s-evicted");
+    assert.match(rec.prompts[0].text, /место отняли/);
+    assert.match(rec.prompts[0].text, /iskron_stand с take=true/);
   } finally {
     await rec.stop();
   }
@@ -510,16 +649,61 @@ test("a deleted session takes its bridge — and so its standing — down with i
   const b = bridgeEnv("forget");
   const rec = await plugin(b.env);
   try {
-    await rec.hooks.tool.iskron_channel.execute({ action: "connect" }, ctx("gone"));
+    await serverTools(rec);
+    await rec.call("iskron_channel", { action: "connect" }, "gone");
     const pid = pidOf(b.log);
     assert.ok(alive(pid));
-    await rec.hooks.event({
-      event: { type: "session.deleted", properties: { info: { id: "gone" } } },
-    });
+    rec.emit({ type: "session.deleted", data: { sessionID: "gone" } });
     await until(() => !alive(pid), "the session's bridge to die");
     // The next call from a new session gets a fresh bridge, not the dead one.
-    await rec.hooks.tool.iskron_orient.execute({}, ctx("next"));
+    await rec.call("iskron_orient", {}, "next");
     assert.equal(pidsOf(b.log).length, 2);
+  } finally {
+    await rec.stop();
+  }
+});
+
+// ── commands ─────────────────────────────────────────────────────────────────
+
+test("every installed skill with `slash: true` becomes a «/» command that loads the skill and hands over the human's words", async () => {
+  const dir = mkdtempSync(join(SANDBOX, "skills-"));
+  const skill = (id, head) => {
+    mkdirSync(join(dir, id));
+    const path = join(dir, id, "SKILL.md");
+    writeFileSync(path, `---\n${head}\n---\n# ${id}\n`);
+    return { id, name: id, description: `Дверь ${id}. Вторая фраза.`, path, content: "" };
+  };
+  const skills = [
+    skill("iskron", 'name: iskron\nslash: true\ndescription: "Дверь"'),
+    skill("plain", 'name: plain\ndescription: "Без слеша"'),
+    {
+      id: "opencode",
+      name: "opencode",
+      description: "builtin",
+      path: "/builtin/opencode.md",
+      content: "",
+    },
+  ];
+  const rec = await plugin({ ISKRON_BRIDGE_PATH: join(SANDBOX, "no-such-bridge.mjs") }, { skills });
+  try {
+    assert.deepEqual([...rec.commands().keys()], ["iskron"]);
+    const cmd = rec.commands().get("iskron");
+    assert.equal(cmd.description, "Дверь iskron.");
+    await cmd.execute({
+      sessionID: "s-h",
+      prompt: { text: "  что висит?  ", files: [] },
+      delivery: "steer",
+    });
+    assert.equal(rec.prompts.length, 1);
+    assert.equal(rec.prompts[0].sessionID, "s-h");
+    assert.equal(rec.prompts[0].delivery, "steer");
+    assert.deepEqual(rec.prompts[0].files, [], "the prompt's attachments travel along");
+    assert.match(rec.prompts[0].text, /Загрузи скилл `iskron` инструментом `skill`/);
+    assert.match(rec.prompts[0].text, /\n\nчто висит\?$/);
+    // A skill installed later shows up after skill.updated.
+    skills.push(skill("design", 'name: design\nslash: true\ndescription: "Проектирование"'));
+    rec.emit({ type: "skill.updated", data: {} });
+    await until(() => rec.commands().has("design"), "the new command");
   } finally {
     await rec.stop();
   }

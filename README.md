@@ -66,7 +66,7 @@ codex plugin add iskron@iskron
 
 ### OpenCode
 
-Плагин из той же поставки: тулы `iskron_*` под своими именами, кадры живого канала промптом в сессию, стояние держит мост. После плоской установки скиллов (npx, ниже) скопируй два файла из скилла `establish-mcp` — мост в `~/.iskron-bridge/iskron-bridge.mjs` и `scripts/opencode-plugin.js` в `~/.config/opencode/plugins/iskron.js`; команды — в `SETUP.md`, ветка OpenCode. Мост принимает и личный токен доступа вместо OAuth (`~/.iskron-bridge/token` или `ISKRON_BRIDGE_TOKEN`) — для безголовых машин и харнессов, чей OAuth не доходит.
+Плагин из той же поставки (форма OpenCode 2 — `default export {id, setup(ctx)}`, без импортов): тулы `iskron_*` под своими именами, кадры живого канала промптом в сессию, стояние держит мост, каждый скилл — команда палитры `/`. После плоской установки скиллов (npx, ниже) скопируй два файла из скилла `establish-mcp` — мост в `~/.iskron-bridge/iskron-bridge.mjs` и `scripts/opencode-plugin.js` в `~/.config/opencode/plugins/iskron.js`; команды — в `SETUP.md`, ветка OpenCode. Мост принимает и личный токен доступа вместо OAuth (`~/.iskron-bridge/token` или `ISKRON_BRIDGE_TOKEN`) — для безголовых машин и харнессов, чей OAuth не доходит; адрес входа OAuth локальный для машины OpenCode, с другой — `ssh -L`.
 
 ### Pi
 
