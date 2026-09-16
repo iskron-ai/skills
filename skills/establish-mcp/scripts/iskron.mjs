@@ -2229,6 +2229,8 @@ function parkStanding(reason) {
 function resumeStanding() {
   if (!parked || !currentUrl || !currentKey) return false;
   parked = false;
+  for (let i = ring.length - 1; i >= 0; i--)
+    if (ring[i]?.frame?.type === "hello") ring.splice(i, 1);
   openHolder(currentUrl, currentKey);
   return true;
 }
@@ -2370,6 +2372,8 @@ function localStatus(msg) {
     return reply(st.body, true);
   })();
 }
+var lastPublished = "";
+var publishedStatus = () => lastPublished;
 async function publishStatus(text) {
   const addr = statusAddress();
   if (!addr) {
@@ -2378,13 +2382,18 @@ async function publishStatus(text) {
       body: "Отказано (мост): у моста нет стояния этого агента — назовись одним вызовом iskron_stand(realm, karta, model, status) (занятость можно передать прямо в нём); место слушает другой держатель — take=true берёт слух и статусный адрес сюда"
     };
   }
+  const st = await publishStatusTo(addr.url, text);
+  if (st.ok) lastPublished = text;
+  return st;
+}
+async function publishStatusTo(url, text, timeoutMs = 5e3) {
   let res;
   try {
-    res = await fetch(addr.url, {
+    res = await fetch(url, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ text }),
-      signal: AbortSignal.timeout(5e3)
+      signal: AbortSignal.timeout(timeoutMs)
     });
   } catch (e) {
     return {
@@ -2410,18 +2419,36 @@ function deafWithoutListener() {
   const info = state.initParams?.clientInfo;
   return !(typeof info?.name === "string" && NOTIFIED_CLIENTS.has(info.name));
 }
+var keptStatus = "";
 async function leaveStanding(reason) {
   const parked2 = parkStanding(reason);
   if (!parked2) return "мост места не держит — уходить неоткуда";
+  keptStatus = publishedStatus();
   const st = await publishStatus("");
   const line = st.ok ? "занятость снята" : `занятость не снята (${st.body})`;
   log(`left the standing: ${reason}; ${line}`);
   return `ушёл с места ${parked2}: сокет закрыт, ${line}; адрес, очередь и хуки целы — почта копится и придёт при возвращении (сторож или iskron_stand)`;
 }
-function startDeafnessWatch() {
-  onListenerAttached(() => {
-    if (resumeStanding()) log("a listener attached — the standing is held again");
+function returnToStanding(how) {
+  if (!resumeStanding()) return false;
+  const text = `мост вернулся на место (${how}) — сокет открыт заново тем же адресом${keptStatus ? `, занятость «${keptStatus}» возвращена` : ""}`;
+  log(text);
+  if (keptStatus) {
+    const line = keptStatus;
+    keptStatus = "";
+    void publishStatus(line).then((st) => {
+      if (!st.ok) log(`busy line not restored after the return: ${st.body}`);
+    });
+  }
+  emit({
+    jsonrpc: "2.0",
+    method: "notifications/message",
+    params: { level: "info", logger: "iskron-channel", data: { kind: "note", text } }
   });
+  return true;
+}
+function startDeafnessWatch() {
+  onListenerAttached(() => returnToStanding("прицепился сторож"));
   setInterval(() => {
     const since = listenerIdleSince();
     if (since == null || !deafWithoutListener()) return;
@@ -2821,7 +2848,7 @@ async function runStand(msg) {
   let how;
   let heardHere;
   const listensElsewhere = !!mine && /(^|·)\s*слушает/.test(mine.rest) && !holdsStanding(realm, karta, name);
-  if (a.take !== true && isParked(realm, karta, name) && resumeStanding()) {
+  if (a.take !== true && isParked(realm, karta, name) && returnToStanding("iskron_stand")) {
     const r = await call("iskron_channel", { action: "register", realm, karta, name });
     if (r.isError) {
       lines.push(`Отказано: register — ${short(r.text)}`);
@@ -3263,9 +3290,10 @@ function bridgeMain(argv2) {
   });
   const leave = async (why) => {
     debug(`${why} — winding down`);
-    if (statusAddress()) await publishStatus("").catch(() => {
-    });
+    const addr = statusAddress();
     releaseStanding(why);
+    if (addr) await publishStatusTo(addr.url, "", 3e3).catch(() => {
+    });
     await Promise.allSettled([...pending, ...tokenRequestsInFlight]);
     await flushStdout();
     const flow = pendingFlow();
@@ -3284,10 +3312,16 @@ function bridgeMain(argv2) {
   process.on("SIGTERM", () => void leave("SIGTERM"));
   let interrupted = false;
   process.on("SIGINT", () => {
+    const addr = statusAddress();
     releaseStanding("SIGINT");
-    if (interrupted || tokenRequestsInFlight.size === 0) process.exit(0);
+    if (interrupted) process.exit(0);
     interrupted = true;
-    Promise.allSettled([...tokenRequestsInFlight]).then(() => process.exit(0));
+    const clearing = addr ? publishStatusTo(addr.url, "", 2e3).catch(() => {
+    }) : null;
+    if (!clearing && tokenRequestsInFlight.size === 0) process.exit(0);
+    Promise.allSettled([...tokenRequestsInFlight, ...clearing ? [clearing] : []]).then(
+      () => process.exit(0)
+    );
   });
   process.on("uncaughtException", (e) => log(`uncaught: ${e?.stack || e}`));
   process.on(

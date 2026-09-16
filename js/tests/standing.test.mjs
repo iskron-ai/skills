@@ -777,9 +777,16 @@ test("a harness that hears only through a watchdog: nobody listening past the th
   await waitFor(() => fake.state.status === "", "the busy line to be cleared");
   const wd = runClient("watchdog", dir, key, 8000);
   await waitFor(() => fresh().length === 1, "a listener to bring the standing back");
+  await waitFor(() => /мост вернулся на место/.test(bridge.stderr), "the return to be logged");
   await waitFor(
-    () => wd.out.includes("the standing is held again") || /held again/.test(bridge.stderr),
-    "the return to be logged",
+    () => fake.state.status === "работаю",
+    "the busy line cleared by the leave to come back with the place",
+  );
+  assert.ok(
+    bridge.notifications.some(
+      (n) => n.params?.data?.kind === "note" && /вернулся на место/.test(n.params.data.text),
+    ),
+    "the return is announced to the harness",
   );
   await new Promise((r) => setTimeout(r, 2500));
   assert.equal(
@@ -802,14 +809,22 @@ test("pi and OpenCode hear by notification: their bridge never leaves for want o
   assert.ok(!/left the standing/.test(bridge.stderr), "the socket is still held");
 });
 
-test("the end of the session clears the busy line", async (t) => {
-  const { fake, bridge } = await connected(t);
-  await waitFor(() => fake.state.ws.size === 1, "the socket");
-  const st = await bridge.call("tools/call", 4, {
-    name: "iskron_channel",
-    arguments: { realm: "nks-dev", action: "status", text: "работаю" },
+for (const way of ["stdin", "SIGINT"]) {
+  test(`the end of the session (${way}) clears the busy line, the key file first`, async (t) => {
+    const { fake, bridge, standings } = await connected(t);
+    await waitFor(() => fake.state.ws.size === 1, "the socket");
+    const st = await bridge.call("tools/call", 4, {
+      name: "iskron_channel",
+      arguments: { realm: "nks-dev", action: "status", text: "работаю" },
+    });
+    assert.ok(!st.result?.isError, JSON.stringify(st));
+    if (way === "stdin") await bridge.stop();
+    else bridge.proc.kill("SIGINT");
+    await waitFor(() => fake.state.status === "", "the busy line to be cleared at exit");
+    await waitFor(() => bridge.proc.exitCode !== null, "the bridge to exit");
+    assert.ok(
+      !readdirSync(standings).some((f) => f.endsWith(".key")),
+      "the key file must not outlive the bridge",
+    );
   });
-  assert.ok(!st.result?.isError, JSON.stringify(st));
-  await bridge.stop();
-  await waitFor(() => fake.state.status === "", "the busy line to be cleared at exit");
-});
+}

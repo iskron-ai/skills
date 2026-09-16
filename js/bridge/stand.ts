@@ -19,9 +19,9 @@ import {
   holdsStanding,
   isParked,
   listenBlock,
-  resumeStanding,
   wasEvicted,
 } from "./hold.ts";
+import { returnToStanding } from "./leave.ts";
 import { noteStanding, replyText } from "./standing.ts";
 import { publishStatus } from "./status.ts";
 import { post } from "./transport.ts";
@@ -281,7 +281,7 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   const listensElsewhere =
     !!mine && /(^|·)\s*слушает/.test(mine.rest) && !holdsStanding(realm, karta, name);
   // take=true — явный новый цикл входа: connect и тогда, когда сокет уже наш.
-  if (a.take !== true && isParked(realm, karta, name) && resumeStanding()) {
+  if (a.take !== true && isParked(realm, karta, name) && returnToStanding("iskron_stand")) {
     // Ушёл с места и вернулся: тот же адрес, сокет открыт заново, register — атрибуция.
     const r = await call("iskron_channel", { action: "register", realm, karta, name });
     if (r.isError) {

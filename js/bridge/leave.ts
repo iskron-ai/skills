@@ -22,8 +22,8 @@ import {
   parkStanding,
   resumeStanding,
 } from "./hold.ts";
-import { publishStatus } from "./status.ts";
-import { log } from "./streams.ts";
+import { publishedStatus, publishStatus } from "./status.ts";
+import { emit, log } from "./streams.ts";
 import { state } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
 
@@ -37,10 +37,14 @@ function deafWithoutListener(): boolean {
   return !(typeof info?.name === "string" && NOTIFIED_CLIENTS.has(info.name));
 }
 
+/** Строка занятости, снятая уходом, — возвращается вместе с местом. */
+let keptStatus = "";
+
 /** Уйти с места: занятость снята, сокет закрыт, место цело. Возвращает слово о сделанном. */
 export async function leaveStanding(reason: string): Promise<string> {
   const parked = parkStanding(reason);
   if (!parked) return "мост места не держит — уходить неоткуда";
+  keptStatus = publishedStatus();
   const st = await publishStatus("");
   const line = st.ok ? "занятость снята" : `занятость не снята (${st.body})`;
   log(`left the standing: ${reason}; ${line}`);
@@ -52,10 +56,31 @@ export async function leaveStanding(reason: string): Promise<string> {
  * порога при харнесе, которому кадры доходят только сторожем, — уходит с места.
  * Возвращение — прицепившийся сторож: место открывается заново тем же адресом.
  */
-export function startDeafnessWatch(): void {
-  onListenerAttached(() => {
-    if (resumeStanding()) log("a listener attached — the standing is held again");
+/**
+ * Вернуться на место, с которого уходили: сокет заново, снятая занятость — обратно
+ * (её сменит только новое слово делателя). Возвращает false, если уходить не уходили.
+ */
+export function returnToStanding(how: string): boolean {
+  if (!resumeStanding()) return false;
+  const text = `мост вернулся на место (${how}) — сокет открыт заново тем же адресом${keptStatus ? `, занятость «${keptStatus}» возвращена` : ""}`;
+  log(text);
+  if (keptStatus) {
+    const line = keptStatus;
+    keptStatus = "";
+    void publishStatus(line).then((st) => {
+      if (!st.ok) log(`busy line not restored after the return: ${st.body}`);
+    });
+  }
+  emit({
+    jsonrpc: "2.0",
+    method: "notifications/message",
+    params: { level: "info", logger: "iskron-channel", data: { kind: "note", text } },
   });
+  return true;
+}
+
+export function startDeafnessWatch(): void {
+  onListenerAttached(() => returnToStanding("прицепился сторож"));
   setInterval(() => {
     const since = listenerIdleSince();
     if (since == null || !deafWithoutListener()) return;

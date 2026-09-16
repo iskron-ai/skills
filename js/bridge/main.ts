@@ -38,7 +38,7 @@ import { installAuthLockExitHook } from "./oauth/authlock.ts";
 import { pendingFlow } from "./oauth/flow.ts";
 import { installRefreshLockExitHook } from "./oauth/refreshlock.ts";
 import { tokenRequestsInFlight } from "./oauth/tokenrequest.ts";
-import { publishStatus } from "./status.ts";
+import { publishStatusTo } from "./status.ts";
 import { sleep, storePath } from "./store.ts";
 import { debug, flushStdout, guardStream, log } from "./streams.ts";
 import { type JsonRpcMessage } from "./types.ts";
@@ -132,9 +132,12 @@ export function bridgeMain(argv: string[]): void {
   const leave = async (why: string) => {
     debug(`${why} — winding down`);
     // Занятость — слово ушедшего делателя: с концом сессии она снимается, иначе
-    // доска показывает занятого там, где никого нет (#4895).
-    if (statusAddress()) await publishStatus("").catch(() => {});
+    // доска показывает занятого там, где никого нет (#4895). Сокет и .key
+    // отпускаются ПЕРВЫМИ: харнес, убивающий мост по короткой отсрочке, не должен
+    // застать его в сетевом вызове с живым ключом — сторож ушёл бы на мёртвый сокет.
+    const addr = statusAddress();
     releaseStanding(why); // сокет стояния живёт ровно столько, сколько сессия
+    if (addr) await publishStatusTo(addr.url, "", 3000).catch(() => {});
     await Promise.allSettled([...pending, ...tokenRequestsInFlight]);
     await flushStdout(); // an answer half-written is an answer not given
     const flow = pendingFlow();
@@ -160,10 +163,16 @@ export function bridgeMain(argv: string[]): void {
   // node #4170). A second Ctrl-C leaves at once — the human has said it twice.
   let interrupted = false;
   process.on("SIGINT", () => {
+    const addr = statusAddress();
     releaseStanding("SIGINT"); // иначе .key переживает мост и уводит сторожа без ключа на мёртвый сокет
-    if (interrupted || tokenRequestsInFlight.size === 0) process.exit(0);
+    if (interrupted) process.exit(0);
     interrupted = true;
-    Promise.allSettled([...tokenRequestsInFlight]).then(() => process.exit(0));
+    // Занятость снимается и здесь — коротко, второй Ctrl-C выходит сразу.
+    const clearing = addr ? publishStatusTo(addr.url, "", 2000).catch(() => {}) : null;
+    if (!clearing && tokenRequestsInFlight.size === 0) process.exit(0);
+    Promise.allSettled([...tokenRequestsInFlight, ...(clearing ? [clearing] : [])]).then(() =>
+      process.exit(0),
+    );
   });
   process.on("uncaughtException", (e) => log(`uncaught: ${e?.stack || e}`));
   process.on("unhandledRejection", (e) =>

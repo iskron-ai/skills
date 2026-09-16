@@ -443,7 +443,7 @@ var READY_WAIT_MS = Number(process.env.ISKRON_MCP_READY_WAIT_MS || 2e4);
 var HANDSHAKE_MS = Number(process.env.ISKRON_MCP_HANDSHAKE_MS || 6e5);
 var TICK_MS = 15e3;
 var AUTH_POLL_MS = Number(process.env.ISKRON_MCP_AUTH_POLL_MS || 3e3);
-var AUTH_REQUIRED = -32001;
+var AUTH_PENDING = /authorization required/i;
 var PROTOCOL = "2025-06-18";
 function setupBridge(pi, onChannel) {
   let bridge = null;
@@ -471,15 +471,18 @@ function setupBridge(pi, onChannel) {
     bridge = b;
     b.start();
     let toldLogin = false;
+    const deadline = Date.now() + HANDSHAKE_MS;
     const untilAuthed = async (ask) => {
       for (; ; ) {
         try {
           return await ask();
         } catch (e) {
-          if (e?.code !== AUTH_REQUIRED || bridge !== b) throw e;
+          const message = e instanceof Error ? e.message : String(e);
+          if (!AUTH_PENDING.test(message) || bridge !== b || Date.now() + AUTH_POLL_MS > deadline)
+            throw e;
           if (!toldLogin) {
             toldLogin = true;
-            notify(`Искрон: нужен вход — ${e.message}`, "warning");
+            notify(`Искрон: нужен вход — ${message}`, "warning");
           }
           await new Promise((r) => setTimeout(r, AUTH_POLL_MS));
         }

@@ -33,8 +33,8 @@ const HANDSHAKE_MS = Number(process.env.ISKRON_MCP_HANDSHAKE_MS || 600000);
 const TICK_MS = 15000;
 /** Такт повтора рукопожатия, пока мост ждёт входа человека. */
 const AUTH_POLL_MS = Number(process.env.ISKRON_MCP_AUTH_POLL_MS || 3000);
-/** Код отказа моста «нужен вход»: вход опубликован, мост держит его — гасить мост нельзя (#4795). */
-const AUTH_REQUIRED = -32001;
+/** Отказ моста «нужен вход»: вход опубликован, мост держит его — гасить мост нельзя (#4795). Форма — та же, что читает плагин OpenCode. */
+const AUTH_PENDING = /authorization required/i;
 
 const PROTOCOL = "2025-06-18";
 
@@ -84,16 +84,22 @@ export function setupBridge(pi: ExtensionAPI, onChannel: ChannelEventSink): void
     // слушателем на своём порту; погасить мост значило бы увести клик человека в
     // отказ соединения (граф nks-dev: #4795, тот же класс — #4712). Расширение
     // говорит человеку ссылку и повторяет рукопожатие, пока грант не ляжет.
+    // Ждётся ровно отказ входа — по его слову, не по коду: код -32001 у моста
+    // носит и сеть, и мёртвый токен, а они — «мост не поднялся», как прежде.
+    // Ожидание ограничено потолком рукопожатия и кончается со сменой сессии.
     let toldLogin = false;
+    const deadline = Date.now() + HANDSHAKE_MS;
     const untilAuthed = async <T>(ask: () => Promise<T>): Promise<T> => {
       for (;;) {
         try {
           return await ask();
         } catch (e) {
-          if ((e as { code?: number })?.code !== AUTH_REQUIRED || bridge !== b) throw e;
+          const message = e instanceof Error ? e.message : String(e);
+          if (!AUTH_PENDING.test(message) || bridge !== b || Date.now() + AUTH_POLL_MS > deadline)
+            throw e;
           if (!toldLogin) {
             toldLogin = true;
-            notify(`Искрон: нужен вход — ${(e as Error).message}`, "warning");
+            notify(`Искрон: нужен вход — ${message}`, "warning");
           }
           await new Promise((r) => setTimeout(r, AUTH_POLL_MS));
         }

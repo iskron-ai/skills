@@ -490,6 +490,24 @@ test("a login refusal at the handshake keeps the bridge alive, names the link, a
   }
 });
 
+// The same -32001 carries every synthetic refusal of the bridge; only the word
+// «authorization required» is a login to wait for — the rest is still a bridge
+// that did not come up, said once and aloud.
+test("a network refusal at the handshake is not a login: the session hears «мост не поднялся», not a silent wait", async () => {
+  const { env } = bridgeEnv("net-refusal", {
+    FB_MODE: "net",
+    ISKRON_MCP_AUTH_POLL_MS: 50,
+    ISKRON_MCP_READY_WAIT_MS: 2000,
+  });
+  const rec = await session(env);
+  try {
+    assert.match(rec.said(), /мост не поднялся — .*ECONNREFUSED/, rec.said());
+    assert.ok(!/нужен вход/.test(rec.said()), "a network refusal must not be announced as a login");
+  } finally {
+    await rec.stop();
+  }
+});
+
 test("a missing bridge does not bring down the session", async () => {
   const rec = await session({
     ISKRON_BRIDGE_PATH: MISSING_BRIDGE,

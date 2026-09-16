@@ -23,6 +23,10 @@ export function localStatus(msg: JsonRpcMessage): Promise<JsonRpcMessage> | null
   })();
 }
 
+let lastPublished = "";
+/** Последняя строка занятости, которую доска приняла от этого моста; пустая — снята. */
+export const publishedStatus = (): string => lastPublished;
+
 /** POST строки занятости на статусный адрес стояния, которое держит мост. */
 export async function publishStatus(text: string): Promise<{ ok: boolean; body: string }> {
   const addr = statusAddress();
@@ -34,13 +38,24 @@ export async function publishStatus(text: string): Promise<{ ok: boolean; body: 
         "(занятость можно передать прямо в нём); место слушает другой держатель — take=true берёт слух и статусный адрес сюда",
     };
   }
+  const st = await publishStatusTo(addr.url, text);
+  if (st.ok) lastPublished = text;
+  return st;
+}
+
+/** Тот же POST на названный адрес — для выхода, когда стояние уже отпущено, а адрес снят до этого. */
+export async function publishStatusTo(
+  url: string,
+  text: string,
+  timeoutMs = 5000,
+): Promise<{ ok: boolean; body: string }> {
   let res: Response;
   try {
-    res = await fetch(addr.url, {
+    res = await fetch(url, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ text }),
-      signal: AbortSignal.timeout(5000),
+      signal: AbortSignal.timeout(timeoutMs),
     });
   } catch (e) {
     return {

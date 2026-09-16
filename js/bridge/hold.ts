@@ -297,6 +297,9 @@ export function parkStanding(reason: string): string | null {
 export function resumeStanding(): boolean {
   if (!parked || !currentUrl || !currentKey) return false;
   parked = false;
+  // Доказательство слуха — свежий hello за этим открытием, не прежний из кольца (#5036 §4).
+  for (let i = ring.length - 1; i >= 0; i--)
+    if (ring[i]?.frame?.type === "hello") ring.splice(i, 1);
   openHolder(currentUrl, currentKey);
   return true;
 }
