@@ -198,11 +198,19 @@ function openLocalServer(key: string): void {
     sock.on("close", () => gone(sock));
     sock.on("error", () => gone(sock));
     for (const fn of attachHooks) fn();
+    // Задним числом — доказательство держания (hello) и кадры, которых ни один
+    // местный клиент ещё не получал: перевзведённый сторож не должен нести
+    // делателю то же кольцо второй раз — память доставленного у моста есть.
+    const backlog = ring.filter(
+      ({ frame }) =>
+        frame?.type === "hello" ||
+        !(frame?.type === "message" && typeof frame.id === "string" && seen.has(frame.id)),
+    );
     sock.write(
-      JSON.stringify({ kind: "attached", key, buffered: ring.length } satisfies ChannelEvent) +
+      JSON.stringify({ kind: "attached", key, buffered: backlog.length } satisfies ChannelEvent) +
         "\n",
     );
-    for (const { raw, frame } of ring) {
+    for (const { raw, frame } of backlog) {
       sock.write(JSON.stringify({ kind: "frame", raw, frame } satisfies ChannelEvent) + "\n");
     }
     // Место отняли, а сторож перевзвёлся: молчание читалось бы как слух.

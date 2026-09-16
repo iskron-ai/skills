@@ -828,3 +828,40 @@ for (const way of ["stdin", "SIGINT"]) {
     );
   });
 }
+
+// A watchdog re-armed after a Monitor expiry must not carry the same frames a
+// second time: the bridge remembers what a local client already received.
+test("a re-armed watchdog gets hello and only the frames no local client has seen", async (t) => {
+  const { fake, dir, key } = await connected(t);
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const first = runClient("watchdog", dir, key, 20_000);
+  await waitFor(() => first.out.includes("слушаю стояние"), "the first watchdog to attach");
+  await fake.control({
+    ws_send: JSON.stringify({ type: "message", id: "m-1", body: "первое слово" }),
+  });
+  await waitFor(() => first.out.includes("первое слово"), "the frame to reach the first watchdog");
+  first.proc.kill("SIGKILL");
+  await first.done;
+  await fake.control({
+    ws_send: JSON.stringify({
+      type: "message",
+      id: "m-2",
+      body: "второе слово, пока никто не слушал",
+    }),
+  });
+  await new Promise((r) => setTimeout(r, 300));
+  const again = runClient("watchdog", dir, key, 6000);
+  await waitFor(
+    () => again.out.includes("второе слово"),
+    "the unseen frame to reach the re-armed watchdog",
+  );
+  await new Promise((r) => setTimeout(r, 300));
+  assert.match(again.out, /"type":"hello"/, "hello is replayed: proof of holding");
+  assert.ok(
+    !again.out.includes("первое слово"),
+    `a delivered frame must not come a second time:\n${again.out}`,
+  );
+  assert.match(again.out, /слушаю стояние \S+ \(2 кадра задним числом\)/, again.out);
+  again.proc.kill("SIGKILL");
+  await again.done;
+});

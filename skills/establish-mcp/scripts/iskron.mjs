@@ -2135,10 +2135,13 @@ function openLocalServer(key) {
     sock.on("close", () => gone(sock));
     sock.on("error", () => gone(sock));
     for (const fn of attachHooks) fn();
-    sock.write(
-      JSON.stringify({ kind: "attached", key, buffered: ring.length }) + "\n"
+    const backlog = ring.filter(
+      ({ frame: frame2 }) => frame2?.type === "hello" || !(frame2?.type === "message" && typeof frame2.id === "string" && seen.has(frame2.id))
     );
-    for (const { raw, frame: frame2 } of ring) {
+    sock.write(
+      JSON.stringify({ kind: "attached", key, buffered: backlog.length }) + "\n"
+    );
+    for (const { raw, frame: frame2 } of backlog) {
       sock.write(JSON.stringify({ kind: "frame", raw, frame: frame2 }) + "\n");
     }
     if (evictedEvent && evictedKey === key) sock.write(JSON.stringify(evictedEvent) + "\n");
