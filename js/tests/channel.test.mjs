@@ -45,7 +45,7 @@ Object.defineProperty(globalThis, "WebSocket", {
 });
 
 process.env.ISKRON_CHANNEL_FLAP_MS = "400,1600"; // read at import: short flap pauses for the probe
-const { holdSocket, DEAD_TOKEN_CODES } = await import(
+const { holdSocket, DEAD_TOKEN_CODES, EVICTED_CODE } = await import(
   process.env.ISKRON_CHANNEL_SOURCE || "../shared/channel.ts"
 );
 
@@ -72,6 +72,58 @@ for (const code of DEAD_TOKEN_CODES) {
     assert.equal(holder.alive, false);
   });
 }
+
+// 4000 is superseded, not dead: the platform says "try the same address once —
+// it works, you were merely evicted". A second eviction inside the window is
+// another holder who keeps winning: the holder yields to onEvicted, never to
+// onDeadToken, and never fights for the socket in a loop (#5033).
+test("a 4000 close reopens once; a second one inside the window yields to onEvicted, not onDeadToken", async () => {
+  sockets.length = 0;
+  const dead = [];
+  const evicted = [];
+  const holder = holdSocket({
+    url: "ws://127.0.0.1:9/channel/ws/tok",
+    onFrame: () => {},
+    onDeadToken: (c) => dead.push(c),
+    onEvicted: (c) => evicted.push(c),
+    onServiceAlive: () => assert.fail("an eviction is not flapping"),
+  });
+  sockets[0].fire("close", { code: EVICTED_CODE });
+  await delay(2200); // past the 2 s reopen delay
+  assert.equal(sockets.length, 2, "the first eviction reopens once");
+  assert.deepEqual(dead, []);
+  assert.deepEqual(evicted, []);
+  sockets[1].fire("close", { code: EVICTED_CODE });
+  await delay(2500);
+  assert.equal(sockets.length, 2, "the second eviction must not reopen");
+  assert.deepEqual(evicted, [EVICTED_CODE], "the holder yields aloud, once");
+  assert.deepEqual(dead, [], "an eviction is never a dead token");
+  assert.equal(holder.alive, false);
+});
+
+// The other holder took the place with connect: the address is rotated, and
+// the one reopen after 4000 fails fast (a 404 on the upgrade, seen as an
+// error) — that fast drop is the same verdict as a second 4000.
+test("a fast drop of the reopen after a 4000 is an eviction too: the address was rotated", async () => {
+  sockets.length = 0;
+  const dead = [];
+  const evicted = [];
+  holdSocket({
+    url: "ws://127.0.0.1:9/channel/ws/tok",
+    onFrame: () => {},
+    onDeadToken: (c) => dead.push(c),
+    onEvicted: (c) => evicted.push(c),
+    onServiceAlive: () => assert.fail("a rotated address is not flapping"),
+  });
+  sockets[0].fire("close", { code: EVICTED_CODE });
+  await delay(2200);
+  assert.equal(sockets.length, 2, "the first eviction reopens once");
+  sockets[1].fire("error"); // the upgrade is refused: the guess lands as 1006 after 500 ms
+  await delay(3000);
+  assert.equal(sockets.length, 2, "a rotated address must not be reopened again");
+  assert.deepEqual(evicted, [EVICTED_CODE]);
+  assert.deepEqual(dead, []);
+});
 
 test("three fast drops against a live service: the doer is told once, and the holder keeps the place, reopening slower", async () => {
   // ISKRON_CHANNEL_FLAP_MS is set to 400,1600 before the import (top of file).

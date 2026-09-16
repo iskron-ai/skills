@@ -321,6 +321,47 @@ test("iskron_stand: a place listening under another bridge is registered, never 
   assert.equal(counts.connect, 1, "take=true is the named cause for rotation");
 });
 
+// After an eviction the bridge keeps the standing (#5033): a repeated stand is
+// register only and says the place was taken; the busy line still goes out from
+// the standing, and take=true brings the hearing back.
+test("iskron_stand after an eviction: register only, the busy line still published, take=true re-enters", async (t) => {
+  const { fake, bridge } = await ready(t);
+  const args = { realm: "nks-dev", karta: 931, name: "proba" };
+  const first = await bridge.call("tools/call", { name: "iskron_stand", arguments: args });
+  assert.match(textOf(first), /connect и register/, textOf(first));
+  const waitFor = async (check, what) => {
+    const deadline = Date.now() + 10_000;
+    while (!check()) {
+      if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
+      await new Promise((r) => setTimeout(r, 50));
+    }
+  };
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const known = new Set(fake.state.ws);
+  await fake.control({ ws_close: 4000 });
+  await waitFor(() => [...fake.state.ws].some((s) => !known.has(s)), "the reopen");
+  await fake.control({ ws_close: 4000 });
+  await waitFor(
+    () => bridge.notifications.some((n) => n.params?.data?.kind === "evicted"),
+    "the eviction",
+  );
+  const again = await bridge.call("tools/call", {
+    name: "iskron_stand",
+    arguments: { ...args, status: "после отъёма" },
+  });
+  const text = textOf(again);
+  assert.match(text, /место отняли у этого моста/, text);
+  assert.match(text, /только register/, text);
+  assert.match(text, /^Занятость: после отъёма$/m, "the busy line is the standing's word");
+  assert.equal(fake.state.status, "после отъёма");
+  const taken = await bridge.call("tools/call", {
+    name: "iskron_stand",
+    arguments: { ...args, take: true },
+  });
+  assert.match(textOf(taken), /connect по take/, textOf(taken));
+  assert.match(textOf(taken), /hello получен/, "a fresh hello after the explicit take");
+});
+
 test("iskron_stand refuses control actions on a board it does not recognize", async (t) => {
   const { fake, bridge } = await ready(t);
   await fake.control({ boardText: "Something entirely different came back from the server." });

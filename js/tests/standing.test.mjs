@@ -380,11 +380,20 @@ test("a truncated frame is read to the end by the bridge before anyone sees it",
     }),
   });
   await waitFor(() => wd.out.includes("m-long"), "the frame to reach the watchdog");
-  const line = wd.out.split("\n").find((l) => l.includes("m-long"));
-  const frame = JSON.parse(line);
-  assert.equal(frame.body, full, "the doer must get the whole body, not the cut");
+  // The watchdog prints the frame as text — the envelope line carries body_read.
+  const envelope = wd.out.split("\n").find((l) => l.startsWith("frame: "));
+  assert.ok(envelope, `no envelope line in:\n${wd.out}`);
+  const frame = JSON.parse(envelope.slice("frame: ".length));
   assert.equal(frame.body_read, "history");
-  assert.equal(frame.origin, "peer", "the bridge stamps who speaks");
+  assert.ok(
+    wd.out.replace(/\n/g, " ").includes(full),
+    "the doer must get the whole body, not the cut",
+  );
+  assert.match(
+    wd.out,
+    /от делателя роли неизвестной — стояние @alari:sosед/,
+    "the bridge stamps who speaks",
+  );
   assert.ok(
     bridge.notifications.some((n) => n.params?.data?.frame?.body === full),
     "the plugin-side notification carries the whole body too",
@@ -495,8 +504,168 @@ test("status before connect is a teaching refusal from the bridge, not a server 
     arguments: { realm: "nks-dev", action: "status", text: "рано" },
   });
   assert.ok(r.result?.isError);
-  assert.match(r.result.content[0].text, /connect/);
+  assert.match(r.result.content[0].text, /iskron_stand/, "the refusal names the re-identification");
   assert.equal(fake.state.counts.mcp, 0);
+});
+
+// The secret never leaves the bridge (graph nks-dev: #4233, #5033): the connect
+// answer the agent reads carries neither the socket nor the status address, so
+// no harness door can open the socket itself and evict the bridge.
+test("the connect answer hides the socket and status addresses; the listener block stays", async (t) => {
+  const { text } = await connected(t);
+  assert.ok(text.includes("[iskron-bridge]"), text);
+  assert.ok(!/wss?:\/\//.test(text), `the socket address leaked to the agent:\n${text}`);
+  assert.ok(!/\/channel\/status\//.test(text), `the status address leaked to the agent:\n${text}`);
+  assert.match(text, /адрес сокета держит мост/);
+});
+
+// 4000 is an eviction, not a dead token (the platform's own word): the bridge
+// reopens once; a second eviction within the window means another holder has
+// the place — the bridge yields aloud, keeps the binding and the status address,
+// and the busy line is still the standing's word (#5012, #5033).
+test("an eviction reopens once; the second yields aloud, and the busy line still goes out", async (t) => {
+  const { fake, dir, bridge, key, standings } = await connected(t);
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog", dir, key, 20_000);
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
+  // The fake keeps a closed socket in its set until both ends finish: count
+  // sockets the bridge OPENED, not those the fake still holds.
+  const known = new Set(fake.state.ws);
+  const fresh = () => [...fake.state.ws].filter((s) => !known.has(s));
+  await fake.control({ ws_close: 4000 });
+  await waitFor(() => fresh().length === 1, "the bridge to reopen once after the eviction");
+  for (const s of fresh()) known.add(s);
+  assert.ok(
+    !bridge.notifications.some((n) => n.params?.data?.kind === "dead"),
+    "an eviction must not be announced as a dead token",
+  );
+  await fake.control({ ws_close: 4000 });
+  await waitFor(
+    () => bridge.notifications.some((n) => n.params?.data?.kind === "evicted"),
+    "the eviction to reach the harness",
+  );
+  const ev = bridge.notifications.find((n) => n.params?.data?.kind === "evicted");
+  assert.equal(ev.params.level, "warning");
+  assert.match(ev.params.data.text, /место отняли/);
+  assert.match(ev.params.data.text, /take=true/);
+  const r = await wd.done;
+  assert.notEqual(r.exit, 0, "the Monitor watchdog leaves loudly on an eviction");
+  assert.match(wd.out, /место отняли/);
+  await new Promise((r) => setTimeout(r, 2500));
+  assert.equal(fresh().length, 0, "after yielding the bridge must not keep reopening");
+  assert.ok(
+    readdirSync(standings).some((f) => f.endsWith(".key")),
+    "the standing is kept: the key file stays",
+  );
+  const st = await bridge.call("tools/call", 8, {
+    name: "iskron_channel",
+    arguments: { realm: "nks-dev", action: "status", text: "после вытеснения" },
+  });
+  assert.ok(
+    !st.result?.isError,
+    `the busy line is the standing's word, socket or not: ${JSON.stringify(st)}`,
+  );
+  assert.equal(fake.state.status, "после вытеснения");
+});
+
+// The Monitor of Claude Code cuts a single line past ~500 characters and joins
+// lines of one burst into one event: a message frame is printed as the same
+// text pi and OpenCode get, the body in lines (#5011, #5033).
+test("the Monitor watchdog prints a message frame as text in lines, none longer than the Monitor cut", async (t) => {
+  const { fake, dir, key } = await connected(t);
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog", dir, key);
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
+  const body = "слово соседа ".repeat(60).trim();
+  await fake.control({
+    ws_send: JSON.stringify({
+      type: "message",
+      id: "m-wide",
+      body,
+      provenance: { from_standing: "@alari:sosед", from_karta_seq: 48, auth: "oidc" },
+    }),
+  });
+  await waitFor(() => wd.out.includes("m-wide"), "the frame to reach the watchdog");
+  const lines = wd.out.split("\n");
+  assert.ok(
+    lines.some((l) => l.startsWith("Кадр канала Искрона от делателя роли #48")),
+    wd.out,
+  );
+  assert.ok(
+    lines.every((l) => [...l].length <= 500),
+    `a line longer than the Monitor cut: ${lines.find((l) => [...l].length > 500)}`,
+  );
+  assert.ok(wd.out.replace(/\n/g, " ").includes(body), "the whole body reaches the doer");
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
+// A replay the service makes after a session rebuild comes with stale: true
+// under new ids (#4881): it wakes nobody — the exit watchdog waits past it and
+// the harness gets one note per burst, not a prompt per frame.
+test("stale frames wake nobody: the exit watchdog waits past them, the harness gets one note", async (t) => {
+  const { fake, dir, bridge, key } = await connected(t);
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog-exit", dir, key, 12_000);
+  await waitFor(() => wd.err.includes("hello"), "hello to be noted");
+  for (const i of [1, 2, 3]) {
+    await fake.control({
+      ws_send: JSON.stringify({
+        id: `st-${i}`,
+        type: "message",
+        stale: true,
+        body: `лежалый ${i}`,
+      }),
+    });
+  }
+  await new Promise((r) => setTimeout(r, 2000));
+  assert.equal(wd.proc.exitCode, null, `the exit watchdog left on a stale frame: ${wd.out}`);
+  assert.ok(
+    !bridge.notifications.some((n) => /лежалый/.test(n.params?.data?.frame?.body ?? "")),
+    "a stale frame must not ride to the harness as a prompt of its own",
+  );
+  await waitFor(
+    () => bridge.notifications.some((n) => /лежалых кадров: 3/.test(n.params?.data?.text ?? "")),
+    "one note for the burst",
+  );
+  await fake.control({ ws_send: JSON.stringify({ id: "live-1", type: "message", body: "живое" }) });
+  const r = await wd.done;
+  assert.equal(r.exit, 0, `a live frame after the stale ones must wake: ${wd.err}`);
+  assert.ok(wd.out.includes("живое") && !wd.out.includes("лежалый"), wd.out);
+});
+
+// The bridge keeps the memory of delivered frames for every mode: a frame the
+// Monitor watchdog already printed does not wake an exit watchdog armed later,
+// while a frame nobody was attached for still does.
+test("a frame delivered under the Monitor watchdog does not wake an exit watchdog armed later", async (t) => {
+  const { fake, dir, key } = await connected(t);
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const mon = runClient("watchdog", dir, key);
+  await waitFor(() => mon.out.includes("слушаю стояние"), "the Monitor watchdog to attach");
+  await fake.control({
+    ws_send: JSON.stringify({ id: "seen-1", type: "message", body: "первый" }),
+  });
+  await waitFor(() => mon.out.includes("первый"), "the frame to be printed");
+  mon.proc.kill("SIGKILL");
+  await mon.done;
+  const exit = runClient("watchdog-exit", dir, key, 4000);
+  await waitFor(() => exit.err.includes("слушаю стояние"), "the exit watchdog to attach");
+  await new Promise((r) => setTimeout(r, 1500));
+  assert.equal(
+    exit.proc.exitCode,
+    null,
+    `the exit watchdog left on a frame already delivered: ${exit.out}`,
+  );
+  exit.proc.kill("SIGKILL");
+  await exit.done;
+  await fake.control({
+    ws_send: JSON.stringify({ id: "seen-2", type: "message", body: "второй" }),
+  });
+  await new Promise((r) => setTimeout(r, 300));
+  const again = runClient("watchdog-exit", dir, key);
+  const r = await again.done;
+  assert.equal(r.exit, 0, `the frame that arrived in the gap must wake: ${again.err}`);
+  assert.ok(again.out.includes("второй") && !again.out.includes("первый"), again.out);
 });
 
 test("tools/list carries the writing-moment line on write tools only", async (t) => {

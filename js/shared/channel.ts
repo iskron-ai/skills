@@ -14,7 +14,17 @@
 //     служба молчит — выкатка, держим токен.
 
 /** Закрытия, после которых тем же токеном не переоткрываются. */
-export const DEAD_TOKEN_CODES = [4000, 4001, 4002];
+export const DEAD_TOKEN_CODES = [4001, 4002];
+/**
+ * Вытеснение: каналом владеет другой держатель — новое подключение либо
+ * переизданный секрет. Не смерть токена: тем же адресом открываются заново
+ * один раз (вытеснили — вернулись; 404 — адрес повернули connect-ом другого).
+ * Второе вытеснение в окне — либо тот же код, либо быстрый обрыв переоткрытия
+ * (повёрнутый адрес не открывается) — место держит другой, и держатель
+ * уступает вслух, не отбирая сокет по кругу (граф nks-dev: #5033).
+ */
+export const EVICTED_CODE = 4000;
+const EVICTION_WINDOW_MS = 60_000;
 /** Выкатка: инстанс уходит, вдох длиннее обычного. */
 export const ROLLOUT_CODE = 4003;
 
@@ -111,6 +121,8 @@ export interface HoldOptions {
   onFrame: (raw: string, frame: Frame | null) => void;
   /** Мёртвый токен: держание кончилось, тем же токеном не вернуться. Зовётся один раз. */
   onDeadToken: (code: number) => void;
+  /** Вытеснение повторилось: место слушает другой держатель, держание кончилось, привязка цела. Зовётся один раз; без него — как мёртвый токен. */
+  onEvicted?: (code: number) => void;
   /** Обрывы при живой службе: держание идёт реже, вопрос о токене — делателю. Раз на полосу обрывов. */
   onServiceAlive: (version: string) => void;
   /** Служебные слова, которые будить не должны. */
@@ -135,6 +147,7 @@ export function holdSocket(o: HoldOptions): Holder {
   let slowdown = 0; // сколько пауз подряд служба жива, а сокет рвут
   let dead = false;
   let stopped = false;
+  let lastEviction: number | null = null;
   let retry: ReturnType<typeof setTimeout> | null = null;
   let ws: WebSocket | null = null;
 
@@ -169,6 +182,26 @@ export function holdSocket(o: HoldOptions): Holder {
 
     async function dropped(code: number): Promise<void> {
       if (stopped || ws !== sock) return;
+      const now = Date.now();
+      const afterEviction = lastEviction !== null && now - lastEviction < EVICTION_WINDOW_MS;
+      // Вытеснение проходит ограду `gone` так же, как мёртвый токен: настоящий
+      // код приходит close-ом и может опоздать за догадкой 1006.
+      if (afterEviction && (code === EVICTED_CODE || now - startedAt < FAST_DROP_MS)) {
+        if (dead) return;
+        dead = true;
+        stopped = true;
+        if (retry) clearTimeout(retry);
+        (o.onEvicted ?? o.onDeadToken)(EVICTED_CODE);
+        return;
+      }
+      if (code === EVICTED_CODE) {
+        lastEviction = now;
+        if (gone) return; // переоткрытие уже назначено догадкой
+        gone = true;
+        o.onNote?.("закрытие 4000 — место у другого держателя; открываю заново один раз");
+        retry = setTimeout(open, 2000);
+        return;
+      }
       // Мёртвый токен громче любого предположения об обрыве: он проходит ограду
       // `gone` всегда и снимает уже назначенное переоткрытие.
       if (DEAD_TOKEN_CODES.includes(code)) {

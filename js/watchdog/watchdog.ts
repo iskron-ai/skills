@@ -8,7 +8,30 @@
 // одно стояние; ключ из ответа connect различает несколько.
 import { writeSync } from "node:fs";
 
+import { frameToText } from "../shared/frame-text.ts";
 import { attach, resolveStanding } from "./client.ts";
+
+// Monitor Claude Code режет строку события длиннее ~500 знаков (наблюдено:
+// «...(truncated)»), а строки в одном залпе склеивает в одно событие целиком.
+// Кадр-сообщение идёт тем же текстом, что в pi и OpenCode (кто говорит,
+// провенанс, конверт, тело), телом построчно (граф nks-dev: #5011, #5033).
+const LINE_MAX = 400;
+
+export function wrapLines(text: string, max = LINE_MAX): string[] {
+  const out: string[] = [];
+  for (const line of text.split("\n")) {
+    let rest = line;
+    while ([...rest].length > max) {
+      const head = [...rest].slice(0, max).join("");
+      const cut = head.lastIndexOf(" ");
+      const at = cut > max / 2 ? cut : head.length;
+      out.push(rest.slice(0, at).trimEnd());
+      rest = rest.slice(at).trimStart();
+    }
+    out.push(rest);
+  }
+  return out;
+}
 
 const plural = (n: number): string => {
   const m10 = n % 10;
@@ -51,13 +74,20 @@ export function runWatchdog(argv: string[]): void {
             `слушаю стояние ${ev.key}${ev.buffered ? ` (${plural(ev.buffered)} задним числом)` : ""}`,
           );
           break;
-        case "frame":
-          log(ev.raw ?? "");
+        case "frame": {
+          const f = ev.frame;
+          if (f?.type !== "message") {
+            log(ev.raw ?? ""); // служебный кадр (hello, статус) короток и печатается как есть
+            break;
+          }
+          for (const line of wrapLines(frameToText(f, ev.raw ?? ""))) log(line);
           break;
+        }
         case "note":
           log(ev.text ?? "");
           break;
         case "dead":
+        case "evicted":
           loudExit(ev.text ?? "ДЕЛАТЕЛЬ: стояние потеряно", 1);
           break;
         case "alive":

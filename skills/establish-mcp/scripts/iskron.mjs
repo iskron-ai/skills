@@ -1416,16 +1416,18 @@ import {
   existsSync,
   mkdirSync as mkdirSync4,
   readdirSync as readdirSync2,
-  readFileSync as readFileSync6,
+  readFileSync as readFileSync7,
   unlinkSync as unlinkSync4,
-  writeFileSync as writeFileSync4
+  writeFileSync as writeFileSync5
 } from "node:fs";
 import { connect as connectLocal, createServer as createServer2 } from "node:net";
 import { join as join6 } from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 
 // js/shared/channel.ts
-var DEAD_TOKEN_CODES = [4e3, 4001, 4002];
+var DEAD_TOKEN_CODES = [4001, 4002];
+var EVICTED_CODE = 4e3;
+var EVICTION_WINDOW_MS = 6e4;
 var ROLLOUT_CODE = 4003;
 var FAST_DROP_MS = 5e3;
 var ERROR_GUESS_DELAY_MS = 500;
@@ -1460,6 +1462,7 @@ function holdSocket(o) {
   let slowdown = 0;
   let dead = false;
   let stopped = false;
+  let lastEviction = null;
   let retry = null;
   let ws = null;
   function open() {
@@ -1487,6 +1490,24 @@ function holdSocket(o) {
     sock.addEventListener("close", (e) => void dropped(e.code));
     async function dropped(code) {
       if (stopped || ws !== sock) return;
+      const now2 = Date.now();
+      const afterEviction = lastEviction !== null && now2 - lastEviction < EVICTION_WINDOW_MS;
+      if (afterEviction && (code === EVICTED_CODE || now2 - startedAt < FAST_DROP_MS)) {
+        if (dead) return;
+        dead = true;
+        stopped = true;
+        if (retry) clearTimeout(retry);
+        (o.onEvicted ?? o.onDeadToken)(EVICTED_CODE);
+        return;
+      }
+      if (code === EVICTED_CODE) {
+        lastEviction = now2;
+        if (gone) return;
+        gone = true;
+        o.onNote?.("закрытие 4000 — место у другого держателя; открываю заново один раз");
+        retry = setTimeout(open, 2e3);
+        return;
+      }
       if (DEAD_TOKEN_CODES.includes(code)) {
         if (dead) return;
         dead = true;
@@ -1534,6 +1555,27 @@ function holdSocket(o) {
       return !stopped && !!ws && (ws.readyState === 0 || ws.readyState === 1);
     }
   };
+}
+
+// js/shared/seen.ts
+import { appendFileSync as appendFileSync2, readFileSync as readFileSync6, writeFileSync as writeFileSync4 } from "node:fs";
+var SEEN_KEEP = 200;
+function seenIds(seenPath) {
+  try {
+    return new Set(readFileSync6(seenPath, "utf8").split("\n").filter(Boolean));
+  } catch {
+    return /* @__PURE__ */ new Set();
+  }
+}
+function noteSeen(seenPath, id, seen2) {
+  if (seen2.has(id)) return;
+  seen2.add(id);
+  try {
+    if (seen2.size > SEEN_KEEP) {
+      writeFileSync4(seenPath, [...seen2].slice(-SEEN_KEEP).join("\n") + "\n");
+    } else appendFileSync2(seenPath, id + "\n");
+  } catch {
+  }
 }
 
 // js/shared/standings.ts
@@ -1823,6 +1865,49 @@ var isUnattributed = (reply) => {
   return !!reply.result?.isError && UNATTRIBUTED_REFUSAL.test(text);
 };
 
+// js/bridge/complete.ts
+var readCounter = 0;
+async function completeFrame(frame2) {
+  if (!frame2 || typeof frame2.body !== "string" || typeof frame2.body_chars !== "number")
+    return frame2;
+  if (!frame2.id || [...frame2.body].length >= frame2.body_chars) return frame2;
+  const realm = state.standing?.realm;
+  if (!realm) return { ...frame2, body_read: "truncated: стояние без realm, дочитать нечем" };
+  const id = `iskron-bridge-read-${++readCounter}`;
+  let reply = null;
+  try {
+    await post(
+      {
+        jsonrpc: "2.0",
+        id,
+        method: "tools/call",
+        params: {
+          name: "iskron_channel",
+          arguments: { realm, action: "history", view: "message", message: frame2.id }
+        }
+      },
+      (m) => {
+        if (m.id === id) reply = m;
+      }
+    );
+  } catch (e) {
+    log(`кадр ${frame2.id} обрезан, дочитать не вышло: ${e.message}`);
+    return { ...frame2, body_read: `truncated: ${e.message}` };
+  }
+  const text = replyText(reply);
+  const nl = text.indexOf("\n");
+  const tail = text.indexOf("\nПровенанс, как платформа");
+  if (nl < 0 || reply?.result?.isError) {
+    return { ...frame2, body_read: `truncated: ${text.slice(0, 160)}` };
+  }
+  const body = (tail > nl ? text.slice(nl + 1, tail) : text.slice(nl + 1)).trim();
+  return { ...frame2, body, body_read: "history" };
+}
+function stampOrigin(frame2) {
+  if (!frame2 || frame2.type !== "message") return frame2;
+  return { ...frame2, origin: classifyOrigin(frame2, state.standing?.karta) };
+}
+
 // js/bridge/hold.ts
 var RING = 20;
 function standingsDir() {
@@ -1840,16 +1925,27 @@ var server = null;
 var currentKey = null;
 var currentUrl = null;
 var currentStatusUrl = null;
+var evictedKey = null;
 var clients = /* @__PURE__ */ new Set();
 var ring = [];
 var helloWaiters = /* @__PURE__ */ new Set();
-function holdsStanding(realm, karta, name) {
+var seen = /* @__PURE__ */ new Set();
+var staleCount = 0;
+var staleTimer = null;
+function isOwn(realm, karta, name) {
   const s = state.standing;
-  return !!holder?.alive && !!s && s.realm === realm && String(s.karta) === String(karta) && (s.name ?? "") === name && currentKey === keyFor();
+  return !!s && s.realm === realm && String(s.karta) === String(karta) && (s.name ?? "") === name && currentKey === keyFor();
 }
+function holdsStanding(realm, karta, name) {
+  return !!holder?.alive && isOwn(realm, karta, name);
+}
+function wasEvicted(realm, karta, name) {
+  return !!evictedKey && evictedKey === currentKey && isOwn(realm, karta, name);
+}
+var hasStatusAddress = () => !!currentStatusUrl && !!currentKey;
 function awaitHello(timeoutMs) {
-  const seen = ring.find((r) => r.frame?.type === "hello")?.frame ?? null;
-  if (seen) return Promise.resolve(seen);
+  const seen2 = ring.find((r) => r.frame?.type === "hello")?.frame ?? null;
+  if (seen2) return Promise.resolve(seen2);
   return new Promise((resolve) => {
     const done = (f) => {
       helloWaiters.delete(done);
@@ -1892,7 +1988,7 @@ function sweepStale(dir, mine) {
     const keyFile = join6(dir, f);
     let key;
     try {
-      key = readFileSync6(keyFile, "utf8").trim();
+      key = readFileSync7(keyFile, "utf8").trim();
     } catch {
       continue;
     }
@@ -1920,7 +2016,7 @@ function openLocalServer(key) {
   const path = socketPathFor(key);
   mkdirSync4(standingsDir(), { recursive: true, mode: 448 });
   sweepStale(standingsDir(), key);
-  writeFileSync4(keyFilePathFor(key), key + "\n", { mode: 384 });
+  writeFileSync5(keyFilePathFor(key), key + "\n", { mode: 384 });
   if (process.platform !== "win32") {
     try {
       unlinkSync4(path);
@@ -1992,6 +2088,9 @@ function releaseStanding(reason) {
   currentKey = null;
   currentUrl = null;
   currentStatusUrl = null;
+  evictedKey = null;
+  seen = /* @__PURE__ */ new Set();
+  staleCount = 0;
 }
 function holdStanding(url, statusUrl2) {
   const key = keyFor();
@@ -2001,6 +2100,7 @@ function holdStanding(url, statusUrl2) {
   currentUrl = url;
   currentStatusUrl = statusUrl2 || statusUrl(url);
   openLocalServer(key);
+  seen = seenIds(seenFilePathOf(CFG.authDir, key));
   holder = holdSocket({
     url,
     onFrame: (raw, frame2) => {
@@ -2011,8 +2111,20 @@ function holdStanding(url, statusUrl2) {
         if (full?.type === "hello") for (const w of [...helloWaiters]) w(full);
         const ev = { kind: "frame", raw: text, frame: full };
         broadcast(ev);
-        if (full?.type !== "status") notify("info", ev);
+        if (clients.size > 0 && full?.type === "message" && typeof full.id === "string" && full.id)
+          noteSeen(seenFilePathOf(CFG.authDir, key), full.id, seen);
+        if (full?.type === "status") return;
+        if (full?.stale === true) return noteStale();
+        notify("info", ev);
       });
+    },
+    onEvicted: (code) => {
+      const text = `ДЕЛАТЕЛЬ: закрытие ${code} — место отняли, слушает другой держатель; привязка записей цела, занятость — пока адрес не повернули connect-ом; вернуть слух сюда — iskron_stand с take=true`;
+      log(text);
+      evictedKey = key;
+      const ev = { kind: "evicted", code, text };
+      broadcast(ev);
+      notify("warning", ev);
     },
     onDeadToken: (code) => {
       const text = `ДЕЛАТЕЛЬ: ${deadTokenAdvice(code)}`;
@@ -2036,9 +2148,26 @@ function holdStanding(url, statusUrl2) {
   });
   return key;
 }
+function noteStale() {
+  staleCount++;
+  if (staleTimer) return;
+  staleTimer = setTimeout(() => {
+    staleTimer = null;
+    const n = staleCount;
+    staleCount = 0;
+    notify("info", {
+      kind: "note",
+      text: `лежалых кадров: ${n} — повтор службы после пересборки сессии, хода не стоят; что было — iskron_channel(action="history")`
+    });
+  }, 1500).unref();
+}
 var SOCKET_RE = /wss:\/\/[^\s"'`<>)\]]+|ws:\/\/(?:127\.0\.0\.1|\[?::1\]?|localhost)(?::\d+)?\/[^\s"'`<>)\]]+/;
 var STATUS_RE = /https?:\/\/[^\s"'`<>)\]]+\/channel\/status\/[^\s"'`<>)\]]+/;
 var trim = (s) => s.replace(/[.,;:!?»"')\]]+$/, "");
+var hideAddresses = (text) => text.replace(
+  new RegExp(SOCKET_RE.source, "g"),
+  "(адрес сокета держит мост — агенту не показывается)"
+).replace(new RegExp(STATUS_RE.source, "g"), "(статусный адрес держит мост)");
 function absorbChannelReply(msg, reply) {
   const a = msg?.params?.arguments;
   if (msg?.params?.name !== "iskron_channel") return reply;
@@ -2055,6 +2184,7 @@ function absorbChannelReply(msg, reply) {
   const block = listenBlock() ?? "";
   const content = reply.result?.content;
   if (Array.isArray(content)) {
+    for (const c of content) if (typeof c?.text === "string") c.text = hideAddresses(c.text);
     content.push({ type: "text", text: block.trim() });
   }
   return reply;
@@ -2101,7 +2231,7 @@ async function publishStatus(text) {
   if (!currentStatusUrl || !currentKey) {
     return {
       ok: false,
-      body: 'Отказано (мост): стояния мост не держит — сперва iskron_stand или iskron_channel(action="connect") (и register на живом месте), затем status'
+      body: "Отказано (мост): у моста нет стояния этого агента — назовись одним вызовом iskron_stand(realm, karta, model, status) (занятость можно передать прямо в нём); место слушает другой держатель — take=true берёт слух и статусный адрес сюда"
     };
   }
   let res;
@@ -2119,50 +2249,14 @@ async function publishStatus(text) {
     };
   }
   const body = (await res.text().catch(() => "")).trim();
+  if (res.status === 404)
+    return {
+      ok: false,
+      body: `Отказано (404) поверхностью: ${body || "без тела"} — статусный адрес повернули connect-ом другого держателя; занятость теперь его; вернуть слух и адрес сюда — iskron_stand с take=true`
+    };
   if (!res.ok)
     return { ok: false, body: `Отказано (${res.status}) поверхностью: ${body || "без тела"}` };
   return { ok: true, body };
-}
-var readCounter = 0;
-async function completeFrame(frame2) {
-  if (!frame2 || typeof frame2.body !== "string" || typeof frame2.body_chars !== "number")
-    return frame2;
-  if (!frame2.id || [...frame2.body].length >= frame2.body_chars) return frame2;
-  const realm = state.standing?.realm;
-  if (!realm) return { ...frame2, body_read: "truncated: стояние без realm, дочитать нечем" };
-  const id = `iskron-bridge-read-${++readCounter}`;
-  let reply = null;
-  try {
-    await post(
-      {
-        jsonrpc: "2.0",
-        id,
-        method: "tools/call",
-        params: {
-          name: "iskron_channel",
-          arguments: { realm, action: "history", view: "message", message: frame2.id }
-        }
-      },
-      (m) => {
-        if (m.id === id) reply = m;
-      }
-    );
-  } catch (e) {
-    log(`кадр ${frame2.id} обрезан, дочитать не вышло: ${e.message}`);
-    return { ...frame2, body_read: `truncated: ${e.message}` };
-  }
-  const text = replyText(reply);
-  const nl = text.indexOf("\n");
-  const tail = text.indexOf("\nПровенанс, как платформа");
-  if (nl < 0 || reply?.result?.isError) {
-    return { ...frame2, body_read: `truncated: ${text.slice(0, 160)}` };
-  }
-  const body = (tail > nl ? text.slice(nl + 1, tail) : text.slice(nl + 1)).trim();
-  return { ...frame2, body, body_read: "history" };
-}
-function stampOrigin(frame2) {
-  if (!frame2 || frame2.type !== "message") return frame2;
-  return { ...frame2, origin: classifyOrigin(frame2, state.standing?.karta) };
 }
 
 // js/bridge/stand.ts
@@ -2172,7 +2266,7 @@ import { basename as basename2 } from "node:path";
 
 // js/bridge/update.ts
 import { spawn as spawn2 } from "node:child_process";
-import { existsSync as existsSync2, lstatSync, mkdirSync as mkdirSync5, readFileSync as readFileSync7, renameSync as renameSync3, writeFileSync as writeFileSync5 } from "node:fs";
+import { existsSync as existsSync2, lstatSync, mkdirSync as mkdirSync5, readFileSync as readFileSync8, renameSync as renameSync3, writeFileSync as writeFileSync6 } from "node:fs";
 import { homedir as homedir4 } from "node:os";
 import { dirname as dirname2, join as join8 } from "node:path";
 import { fileURLToPath as fileURLToPath3 } from "node:url";
@@ -2207,7 +2301,7 @@ var latestPathOf = (authDir) => join8(authDir, "latest.json");
 function writeAtomic(path, bytes) {
   mkdirSync5(dirname2(path), { recursive: true, mode: 448 });
   const tmp = `${path}.tmp-${process.pid}`;
-  writeFileSync5(tmp, bytes, { mode: 420 });
+  writeFileSync6(tmp, bytes, { mode: 420 });
   renameSync3(tmp, path);
 }
 var isSymlink = (path) => {
@@ -2219,7 +2313,7 @@ var isSymlink = (path) => {
 };
 var versionOf = (path) => {
   try {
-    return versionIn(readFileSync7(path, "utf8"));
+    return versionIn(readFileSync8(path, "utf8"));
   } catch {
     return null;
   }
@@ -2229,7 +2323,7 @@ function syncHome(self = selfPath()) {
   const home = homeBridgePath();
   let mine;
   try {
-    mine = readFileSync7(self);
+    mine = readFileSync8(self);
   } catch {
     return out3;
   }
@@ -2244,8 +2338,8 @@ function syncHome(self = selfPath()) {
     const plugin = opencodePluginPath();
     const packaged = join8(dirname2(self), "opencode-plugin.js");
     if (existsSync2(plugin) && existsSync2(packaged)) {
-      const fresh = readFileSync7(packaged);
-      if (!readFileSync7(plugin).equals(fresh)) {
+      const fresh = readFileSync8(packaged);
+      if (!readFileSync8(plugin).equals(fresh)) {
         writeAtomic(plugin, fresh);
         out3.copied.push(plugin);
       }
@@ -2274,7 +2368,7 @@ function reexec(path, argv2) {
 }
 function readLatest(authDir) {
   try {
-    return JSON.parse(readFileSync7(latestPathOf(authDir), "utf8"));
+    return JSON.parse(readFileSync8(latestPathOf(authDir), "utf8"));
   } catch {
     return null;
   }
@@ -2306,7 +2400,7 @@ async function downloadRelease(tag, version, authDir) {
   const plugin = opencodePluginPath();
   if (existsSync2(plugin)) {
     const fresh = await fetchText(`${base}/skills/establish-mcp/scripts/opencode-plugin.js`);
-    if (readFileSync7(plugin, "utf8") !== fresh) {
+    if (readFileSync8(plugin, "utf8") !== fresh) {
       writeAtomic(plugin, fresh);
       written.push(plugin);
     }
@@ -2547,7 +2641,7 @@ async function runStand(msg) {
       return done(true);
     }
     heardHere = !listensElsewhere;
-    how = listensElsewhere ? "место уже слушает другой держатель (обычно прежняя сессия этой рабочей копии; при явном name — возможно, другая машина или человек) — только register: атрибуция есть, слух — у него; нужен слух здесь — повтори с take=true, сознавая, что снимешь слух с того держателя, или возьми другое имя (name)" : "сокет уже держит этот мост — register";
+    how = listensElsewhere ? wasEvicted(realm, karta, name) ? "место отняли у этого моста (закрытие 4000) — слушает другой держатель; только register: привязка цела, слух — у него; вернуть слух сюда — повтори с take=true, сознавая, что снимешь слух с того держателя" : "место уже слушает другой держатель (обычно прежняя сессия этой рабочей копии; при явном name — возможно, другая машина или человек) — только register: атрибуция есть, слух — у него; нужен слух здесь — повтори с take=true, сознавая, что снимешь слух с того держателя, или возьми другое имя (name)" : "сокет уже держит этот мост — register";
   } else {
     const args = { action: "connect", realm, karta, name };
     if (typeof a.mute_siblings === "boolean") args.mute_siblings = a.mute_siblings;
@@ -2657,8 +2751,10 @@ async function runStand(msg) {
       }
     }
   }
-  if (typeof a.status === "string" && a.status.trim() && !heardHere) {
-    lines.push("Занятость не публикуется: статусный адрес у держателя сокета.");
+  if (typeof a.status === "string" && a.status.trim() && !hasStatusAddress()) {
+    lines.push(
+      "Занятость не публикуется: статусного адреса этого стояния у моста нет — он у держателя сокета; take=true берёт слух и адрес сюда."
+    );
   } else if (typeof a.status === "string" && a.status.trim()) {
     const st = await publishStatus(a.status.trim());
     lines.push(st.ok ? `Занятость: ${a.status.trim()}` : `Занятость не принята: ${short(st.body)}`);
@@ -3101,7 +3197,7 @@ ${body}`;
 }
 
 // js/watchdog/client.ts
-import { existsSync as existsSync3, readdirSync as readdirSync3, readFileSync as readFileSync8 } from "node:fs";
+import { existsSync as existsSync3, readdirSync as readdirSync3, readFileSync as readFileSync9 } from "node:fs";
 import { connect as connect2 } from "node:net";
 import { join as join9 } from "node:path";
 var ATTACH_WINDOW_MS = 6e4;
@@ -3122,7 +3218,7 @@ function resolveStanding(argv2) {
   if (key) return { key, path: pathFor(key), authDir };
   const held = existsSync3(dir) ? readdirSync3(dir).filter((f) => f.endsWith(".key")).map((f) => {
     try {
-      return readFileSync8(join9(dir, f), "utf8").trim();
+      return readFileSync9(join9(dir, f), "utf8").trim();
     } catch {
       return "";
     }
@@ -3269,10 +3365,11 @@ function runWatchdogCodex(argv2) {
           break;
         }
         case "dead":
+        case "evicted":
           note(ev.text ?? "ДЕЛАТЕЛЬ: стояние потеряно");
-          void deliver2(
-            ev.text ?? 'Искрон: стояние потеряно — зови iskron_channel(action="connect")'
-          ).then(() => process.exit(1));
+          void deliver2(ev.text ?? "Искрон: стояние потеряно — назовись заново: iskron_stand").then(
+            () => process.exit(1)
+          );
           break;
         case "alive":
           note(ev.text ?? "ДЕЛАТЕЛЬ: сокет рвут, а служба отвечает — мост держит место");
@@ -3295,6 +3392,22 @@ function runWatchdogCodex(argv2) {
 
 // js/watchdog/watchdog.ts
 import { writeSync } from "node:fs";
+var LINE_MAX = 400;
+function wrapLines(text, max = LINE_MAX) {
+  const out3 = [];
+  for (const line of text.split("\n")) {
+    let rest2 = line;
+    while ([...rest2].length > max) {
+      const head = [...rest2].slice(0, max).join("");
+      const cut = head.lastIndexOf(" ");
+      const at = cut > max / 2 ? cut : head.length;
+      out3.push(rest2.slice(0, at).trimEnd());
+      rest2 = rest2.slice(at).trimStart();
+    }
+    out3.push(rest2);
+  }
+  return out3;
+}
 var plural = (n) => {
   const m10 = n % 10;
   const m100 = n % 100;
@@ -3328,13 +3441,20 @@ function runWatchdog(argv2) {
             `слушаю стояние ${ev.key}${ev.buffered ? ` (${plural(ev.buffered)} задним числом)` : ""}`
           );
           break;
-        case "frame":
-          log2(ev.raw ?? "");
+        case "frame": {
+          const f = ev.frame;
+          if (f?.type !== "message") {
+            log2(ev.raw ?? "");
+            break;
+          }
+          for (const line of wrapLines(frameToText(f, ev.raw ?? ""))) log2(line);
           break;
+        }
         case "note":
           log2(ev.text ?? "");
           break;
         case "dead":
+        case "evicted":
           loudExit(ev.text ?? "ДЕЛАТЕЛЬ: стояние потеряно", 1);
           break;
         case "alive":
@@ -3351,27 +3471,10 @@ function runWatchdog(argv2) {
 
 // js/watchdog/watchdog-exit.ts
 import { createHash as createHash4 } from "node:crypto";
-import { appendFileSync as appendFileSync2, readFileSync as readFileSync9, writeFileSync as writeFileSync6, writeSync as writeSync2 } from "node:fs";
-var SEEN_KEEP = 200;
+import { writeSync as writeSync2 } from "node:fs";
 function frameId(ev) {
   const id = ev.frame?.id;
   return typeof id === "string" && id ? id : `raw:${createHash4("sha256").update(ev.raw ?? "").digest("hex").slice(0, 16)}`;
-}
-function seenIds(seenPath) {
-  try {
-    return new Set(readFileSync9(seenPath, "utf8").split("\n").filter(Boolean));
-  } catch {
-    return /* @__PURE__ */ new Set();
-  }
-}
-function noteSeen(seenPath, id, seen) {
-  seen.add(id);
-  try {
-    if (seen.size > SEEN_KEEP) {
-      writeFileSync6(seenPath, [...seen].slice(-SEEN_KEEP).join("\n") + "\n");
-    } else appendFileSync2(seenPath, id + "\n");
-  } catch {
-  }
 }
 var wake = (s) => {
   writeSync2(1, s + "\n");
@@ -3386,7 +3489,7 @@ function runWatchdogExit(argv2) {
     process.exit(2);
   }
   const seenPath = seenFilePathOf(target.authDir, target.key);
-  const seen = seenIds(seenPath);
+  const seen2 = seenIds(seenPath);
   attach(target.path, {
     onEvent: (ev) => {
       switch (ev.kind) {
@@ -3394,14 +3497,19 @@ function runWatchdogExit(argv2) {
           const type = ev.frame?.type;
           if (type !== "message") return note2(`кадр ${type ?? "не разобран"} — не повод будить`);
           const id = frameId(ev);
-          if (seen.has(id)) return note2(`кадр ${id} уже отдан прежним взводом — не повод будить`);
+          if (seen2.has(id)) return note2(`кадр ${id} уже отдан прежним взводом — не повод будить`);
+          if (ev.frame?.stale === true) {
+            noteSeen(seenPath, id, seen2);
+            return note2(`кадр ${id} лежалый (stale) — повтор службы, не повод будить`);
+          }
           wake(ev.raw ?? "");
-          noteSeen(seenPath, id, seen);
+          noteSeen(seenPath, id, seen2);
           process.exit(0);
           break;
         }
         case "dead":
         case "alive":
+        case "evicted":
           note2(ev.text ?? "ДЕЛАТЕЛЬ: стояние потеряно");
           process.exit(1);
           break;

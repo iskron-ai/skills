@@ -74,6 +74,12 @@ export function setupChannel(pi: ExtensionAPI): (params: any) => void {
             ", затем register тем же именем: новый сокет мост возьмёт из ответа сам, перезапуск не нужен.",
         );
         return;
+      case "evicted":
+        loud(
+          `Искрон: канал закрыт кодом ${ev.code} — место отняли, слушает другой держатель. ` +
+            "Привязка записей цела; вернуть слух сюда — iskron_stand с take=true.",
+        );
+        return;
       case "alive":
         loud(
           `Искрон: сокет рвут, а служба отвечает (${ev.version ?? ""}) — мост держит место и переоткрывает реже; ` +

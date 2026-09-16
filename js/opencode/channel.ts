@@ -84,6 +84,13 @@ export function setupChannel(client: Client, say: Say): Channel {
               ", затем register тем же именем: новый сокет мост возьмёт из ответа сам, перезапуск не нужен.",
           );
           return;
+        case "evicted":
+          loud(
+            session,
+            `Искрон: канал закрыт кодом ${ev.code} — место отняли, слушает другой держатель. ` +
+              "Привязка записей цела; вернуть слух сюда — iskron_stand с take=true.",
+          );
+          return;
         case "alive":
           loud(
             session,

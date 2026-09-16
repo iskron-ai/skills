@@ -467,6 +467,24 @@ test("a dead token is loud: an error toast and a prompt that names the move", as
   }
 });
 
+test("an eviction is loud in OpenCode: a prompt into the holder's session naming take=true", async () => {
+  const b = bridgeEnv("evicted");
+  const rec = await plugin(b.env);
+  try {
+    await rec.hooks.tool.iskron_channel.execute({ action: "connect" }, ctx("s-evicted"));
+    appendFileSync(
+      `${b.events}.${pidOf(b.log)}`,
+      JSON.stringify({ kind: "evicted", code: 4000, text: "ДЕЛАТЕЛЬ: место отняли" }) + "\n",
+    );
+    await until(() => rec.prompts.length === 1, "the eviction prompt");
+    assert.equal(rec.prompts[0].path.id, "s-evicted");
+    assert.match(rec.prompts[0].body.parts[0].text, /место отняли/);
+    assert.match(rec.prompts[0].body.parts[0].text, /iskron_stand с take=true/);
+  } finally {
+    await rec.stop();
+  }
+});
+
 test("a deleted session takes its bridge — and so its standing — down with it", async () => {
   const b = bridgeEnv("forget");
   const rec = await plugin(b.env);
