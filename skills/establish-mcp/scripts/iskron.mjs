@@ -717,7 +717,7 @@ function bindCallback(port) {
         // it, so a human who comes back to the tab late still lands it (graph
         // nks-dev: #4721). A bridge left by its harness bounds the wait itself.
         waitForCode: (expectedState, timeoutMs = 0) => new Promise((res, rej) => {
-          const timer = timeoutMs > 0 ? setTimeout(
+          const timer2 = timeoutMs > 0 ? setTimeout(
             () => rej(new Error("timed out waiting for the browser authorization")),
             timeoutMs
           ) : null;
@@ -728,7 +728,7 @@ function bindCallback(port) {
               );
               return false;
             }
-            if (timer) clearTimeout(timer);
+            if (timer2) clearTimeout(timer2);
             handOff = null;
             if (v.err) rej(new Error(`authorization refused: ${v.err}`));
             else if (!v.code) rej(new Error("callback missing code"));
@@ -1554,27 +1554,6 @@ function holdSocket(o) {
   };
 }
 
-// js/shared/frame-text.ts
-var ENVELOPE_KEYS = ["id", "received_at", "stale", "content_type", "body_chars", "body_read"];
-function frameToText(frame2, raw) {
-  if (!frame2) return `Кадр канала Искрона:
-${raw}`;
-  const p = frame2.provenance ?? {};
-  const origin = frame2.origin ?? classifyOrigin(frame2);
-  const standing = p.from_standing ? ` — стояние ${p.from_standing}` : "";
-  const role = p.from_karta_seq != null ? `роли #${p.from_karta_seq}` : "роли неизвестной";
-  const who = origin === "platform" ? "от ПЛАТФОРМЫ — побудка, не человек и не делатель" : origin === "human" ? `от ЧЕЛОВЕКА${p.user ? ` @${p.user}` : ""} (${role})${standing}` : origin === "sibling" ? `от БРАТА по твоей роли (#${p.from_karta_seq})${standing} — другое стояние той же роли` : `от делателя ${role}${standing}`;
-  const lines = [`Кадр канала Искрона ${who}`];
-  if (frame2.provenance) lines.push(`provenance: ${JSON.stringify(frame2.provenance)}`);
-  const envelope = {};
-  for (const k of ENVELOPE_KEYS) if (frame2[k] !== void 0) envelope[k] = frame2[k];
-  if (Object.keys(envelope).length) lines.push(`frame: ${JSON.stringify(envelope)}`);
-  const body = typeof frame2.body === "string" ? frame2.body : raw;
-  return `${lines.join("\n")}
-
-${body}`;
-}
-
 // js/shared/seen.ts
 import { appendFileSync as appendFileSync2, readFileSync as readFileSync6, writeFileSync as writeFileSync4 } from "node:fs";
 var SEEN_KEEP = 200;
@@ -1926,6 +1905,56 @@ function stampOrigin(frame2) {
   return { ...frame2, origin: classifyOrigin(frame2, state.standing?.karta) };
 }
 
+// js/shared/frame-text.ts
+var ENVELOPE_KEYS = ["id", "received_at", "stale", "content_type", "body_chars", "body_read"];
+function frameToText(frame2, raw) {
+  if (!frame2) return `Кадр канала Искрона:
+${raw}`;
+  const p = frame2.provenance ?? {};
+  const origin = frame2.origin ?? classifyOrigin(frame2);
+  const standing = p.from_standing ? ` — стояние ${p.from_standing}` : "";
+  const role = p.from_karta_seq != null ? `роли #${p.from_karta_seq}` : "роли неизвестной";
+  const who = origin === "platform" ? "от ПЛАТФОРМЫ — побудка, не человек и не делатель" : origin === "human" ? `от ЧЕЛОВЕКА${p.user ? ` @${p.user}` : ""} (${role})${standing}` : origin === "sibling" ? `от БРАТА по твоей роли (#${p.from_karta_seq})${standing} — другое стояние той же роли` : `от делателя ${role}${standing}`;
+  const lines = [`Кадр канала Искрона ${who}`];
+  if (frame2.provenance) lines.push(`provenance: ${JSON.stringify(frame2.provenance)}`);
+  const envelope = {};
+  for (const k of ENVELOPE_KEYS) if (frame2[k] !== void 0) envelope[k] = frame2[k];
+  if (Object.keys(envelope).length) lines.push(`frame: ${JSON.stringify(envelope)}`);
+  const body = typeof frame2.body === "string" ? frame2.body : frame2.body === void 0 ? raw : JSON.stringify(frame2.body, null, 1).replace(/\n\s*/g, " ");
+  return `${lines.join("\n")}
+
+${body}`;
+}
+
+// js/bridge/stale.ts
+var STALE_BURST_KEEP = 20;
+var STALE_BURST_MS = 1500;
+var BODY_CAP = 800;
+var burst = [];
+var timer = null;
+function noteStale(frame2, flush) {
+  if (burst.length < STALE_BURST_KEEP) burst.push(frame2);
+  if (timer) return;
+  timer = setTimeout(() => {
+    timer = null;
+    const frames = burst.splice(0);
+    const bodies = frames.map((f) => {
+      const t = frameToText(f, JSON.stringify(f));
+      return [...t].length > BODY_CAP ? [...t].slice(0, BODY_CAP).join("") + "…" : t;
+    });
+    flush({
+      kind: "stale",
+      frames,
+      text: `Лежалых кадров: ${frames.length} — принятое, пока место не слушали, или повтор службы после пересборки сессии; хода не стоят, но прочти; полностью — iskron_channel(action="history").
+
+` + bodies.join("\n\n")
+    });
+  }, STALE_BURST_MS).unref();
+}
+function dropStale() {
+  burst.length = 0;
+}
+
 // js/bridge/sweep.ts
 import { existsSync, readdirSync as readdirSync2, readFileSync as readFileSync7, unlinkSync as unlinkSync4 } from "node:fs";
 import { connect as connectLocal } from "node:net";
@@ -1985,9 +2014,6 @@ var clients = /* @__PURE__ */ new Set();
 var ring = [];
 var helloWaiters = /* @__PURE__ */ new Set();
 var seen = /* @__PURE__ */ new Set();
-var staleBurst = [];
-var STALE_BURST_KEEP = 20;
-var staleTimer = null;
 function isOwn(realm, karta, name) {
   const s = state.standing;
   return !!s && s.realm === realm && String(s.karta) === String(karta) && (s.name ?? "") === name && currentKey === keyFor();
@@ -2118,7 +2144,7 @@ function releaseStanding(reason) {
   evictedKey = null;
   evictedEvent = null;
   seen = /* @__PURE__ */ new Set();
-  staleBurst.length = 0;
+  dropStale();
 }
 function holdStanding(url, statusUrl2) {
   const key = keyFor();
@@ -2133,7 +2159,11 @@ function holdStanding(url, statusUrl2) {
     url,
     onFrame: (raw, frame2) => {
       void completeFrame(stampOrigin(frame2)).then((full) => {
-        if (full?.type === "message" && full.stale === true) return noteStale(full);
+        if (full?.type === "message" && full.stale === true)
+          return noteStale(full, (ev2) => {
+            broadcast(ev2);
+            notify("info", ev2);
+          });
         const text = full === frame2 ? raw : JSON.stringify(full);
         ring.push({ raw: text, frame: full });
         if (ring.length > RING) ring.shift();
@@ -2156,6 +2186,15 @@ function holdStanding(url, statusUrl2) {
       notify("warning", ev);
     },
     onDeadToken: (code) => {
+      if (revokingOwn) {
+        log(
+          `standing revoked by this session — released quietly, binding forgotten (${state.standing?.name ?? "unnamed"}; close ${code} arrived before the answer)`
+        );
+        releaseStanding("снято своим revoke");
+        state.standing = null;
+        state.standingSession = null;
+        return;
+      }
       const text = `ДЕЛАТЕЛЬ: ${deadTokenAdvice(code)}`;
       log(text);
       const ev = { kind: "dead", code, text };
@@ -2176,27 +2215,6 @@ function holdStanding(url, statusUrl2) {
     }
   });
   return key;
-}
-function noteStale(frame2) {
-  if (staleBurst.length < STALE_BURST_KEEP) staleBurst.push(frame2);
-  if (staleTimer) return;
-  staleTimer = setTimeout(() => {
-    staleTimer = null;
-    const frames = staleBurst.splice(0);
-    const bodies = frames.map((f) => {
-      const t = frameToText(f, JSON.stringify(f));
-      return [...t].length > 800 ? [...t].slice(0, 800).join("") + "…" : t;
-    });
-    const ev = {
-      kind: "stale",
-      frames,
-      text: `Лежалых кадров: ${frames.length} — принятое, пока место не слушали, или повтор службы после пересборки сессии; хода не стоят, но прочти; полностью — iskron_channel(action="history").
-
-` + bodies.join("\n\n")
-    };
-    broadcast(ev);
-    notify("info", ev);
-  }, 1500).unref();
 }
 var SOCKET_RE = /wss:\/\/[^\s"'`<>)\]]+|ws:\/\/(?:127\.0\.0\.1|\[?::1\]?|localhost)(?::\d+)?\/[^\s"'`<>)\]]+/;
 var STATUS_RE = /https?:\/\/[^\s"'`<>)\]]+\/channel\/status\/[^\s"'`<>)\]]+/;
@@ -2226,21 +2244,30 @@ function absorbChannelReply(msg, reply) {
   }
   return reply;
 }
-function absorbRevokeReply(msg, reply) {
+var revokingOwn = false;
+function revokesOwn(msg) {
   const a = msg?.params?.arguments;
-  if (msg?.params?.name !== "iskron_channel" || a?.action !== "revoke") return reply;
-  if (reply?.error || reply?.result?.isError) return reply;
+  if (msg?.params?.name !== "iskron_channel" || a?.action !== "revoke") return false;
   const s = state.standing;
-  if (!s) return reply;
+  if (!s) return false;
   const asked = typeof a.standing === "string" ? a.standing.trim() : "";
   const own = asked === "" || asked === "mine" || asked === (s.name ?? "") || asked.endsWith(`:${s.name ?? ""}`);
-  if (!own || String(a.karta ?? s.karta) !== String(s.karta)) return reply;
+  return own && String(a.karta ?? s.karta) === String(s.karta);
+}
+function expectOwnRevoke(msg) {
+  if (revokesOwn(msg)) revokingOwn = true;
+}
+function absorbRevokeReply(msg, reply) {
+  if (msg?.params?.name !== "iskron_channel" || msg?.params?.arguments?.action !== "revoke")
+    return reply;
+  revokingOwn = false;
+  if (reply?.error || reply?.result?.isError) return reply;
+  if (!revokesOwn(msg)) return reply;
+  const name = state.standing?.name ?? "unnamed";
   releaseStanding("снято своим revoke");
   state.standing = null;
   state.standingSession = null;
-  log(
-    `standing revoked by this session — released quietly, binding forgotten (${s.name ?? "unnamed"})`
-  );
+  log(`standing revoked by this session — released quietly, binding forgotten (${name})`);
   return reply;
 }
 function holdFromEnv() {
@@ -2473,7 +2500,7 @@ async function checkLatest(authDir, force = false) {
 }
 function staleNotice(latest, authDir) {
   if (!latest?.version || compareVersions(latest.version, VERSION) <= 0) return null;
-  const bridgeWord = latest.downloaded.some((p) => p === homeBridgePath()) ? "Свежий мост уже скачан в ~/.iskron-bridge и поднимется новой сессией." : latest.error ? `Скачать свежий мост не вышло (${latest.error}); повтори: node ~/.iskron-bridge/iskron-bridge.mjs update.` : isSymlink(homeBridgePath()) ? "Свежий мост в дом не положен: дом — симлинк на чужую копию, его не трогаю; обнови эту копию сам." : versionOf(homeBridgePath()) && compareVersions(versionOf(homeBridgePath()), latest.version) >= 0 ? "Свежий мост уже лежит в ~/.iskron-bridge и поднимется новой сессией." : "Свежий мост в дом не положен; повтори: node ~/.iskron-bridge/iskron-bridge.mjs update.";
+  const bridgeWord = latest.downloaded.some((p) => p === homeBridgePath()) ? "Свежий мост уже скачан в ~/.iskron-bridge и поднимется новой сессией." : latest.error ? `Скачать свежий мост не вышло (${latest.error}); повтори: node "${process.argv[1]}" update.` : isSymlink(homeBridgePath()) ? "Свежий мост в дом не положен: дом — симлинк на чужую копию, его не трогаю; обнови эту копию сам." : versionOf(homeBridgePath()) && compareVersions(versionOf(homeBridgePath()), latest.version) >= 0 ? "Свежий мост уже лежит в ~/.iskron-bridge и поднимется новой сессией." : `Свежий мост в дом не положен; повтори: node "${process.argv[1]}" update (мост, который отвечает, — тот и обновляет дом; в пакетной поставке OpenCode мост живёт в пакете и обновляется с ним).`;
   return `[iskron-bridge] ПОСТАВКА ОТСТАЛА: этот мост v${VERSION}, свежий релиз v${latest.version}. ${bridgeWord} Скиллы обновляет канал харнеса, и об этом надо СКАЗАТЬ ЧЕЛОВЕКУ: Claude Code — /plugin marketplace update iskron, затем /reload-plugins; плоская установка — npx skills update --global; pi — pi update git:github.com/iskron-ai/skills; Codex — codex plugin marketplace upgrade iskron, затем codex plugin remove iskron@iskron и codex plugin add iskron@iskron. Полный порядок — свежий установщик ${setupPathOf(authDir)} (кладёт update); по слову человека «обнови» исполни его.`;
 }
 var pendingNotice = null;
@@ -2941,6 +2968,7 @@ async function deliver(msg) {
         return;
       }
       heldReply = null;
+      expectOwnRevoke(msg);
       await post(msg, forward);
       const held = heldReply;
       if (held) {

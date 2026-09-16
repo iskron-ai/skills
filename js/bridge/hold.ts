@@ -21,7 +21,6 @@ import {
   holdSocket,
   statusUrl as deriveStatusUrl,
 } from "../shared/channel.ts";
-import { frameToText } from "../shared/frame-text.ts";
 import { noteSeen, seenIds } from "../shared/seen.ts";
 import {
   defaultAuthDir,
@@ -32,6 +31,7 @@ import {
 } from "../shared/standings.ts";
 import { completeFrame, stampOrigin } from "./complete.ts";
 import { CFG } from "./config.ts";
+import { dropStale, noteStale } from "./stale.ts";
 import { replyText } from "./standing.ts";
 import { emit, log } from "./streams.ts";
 import { sweepStale } from "./sweep.ts";
@@ -81,9 +81,6 @@ const helloWaiters = new Set<(f: Frame | null) => void>();
 let seen: Set<string> = new Set();
 // Лежалые повторы службы после пересборки сессии копятся в одно слово, а не
 // будят pi и OpenCode по одному (граф nks-dev: #4881, #5033).
-const staleBurst: Frame[] = [];
-const STALE_BURST_KEEP = 20;
-let staleTimer: ReturnType<typeof setTimeout> | null = null;
 
 function isOwn(realm: string, karta: string | number, name: string): boolean {
   const s = state.standing;
@@ -239,7 +236,7 @@ export function releaseStanding(reason: string): void {
   evictedKey = null;
   evictedEvent = null;
   seen = new Set();
-  staleBurst.length = 0;
+  dropStale();
 }
 
 /** Взять этот адрес и держать его, чем бы ни был занят прежний. */
@@ -259,7 +256,11 @@ function holdStanding(url: string, statusUrl?: string | null): string {
         // Лежалый кадр — принятое, пока место не слушали (после revoke — почта
         // предшественника), либо повтор службы после пересборки сессии: хода не
         // стоит, но и не теряется — уходит одной пачкой на полосу, не по одному.
-        if (full?.type === "message" && full.stale === true) return noteStale(full);
+        if (full?.type === "message" && full.stale === true)
+          return noteStale(full, (ev) => {
+            broadcast(ev);
+            notify("info", ev);
+          });
         const text = full === frame ? raw : JSON.stringify(full);
         // В кольцо идёт и hello: сторож, прицепившийся позже, должен увидеть
         // доказательство держания, а не только рабочие кадры.
@@ -292,6 +293,18 @@ function holdStanding(url: string, statusUrl?: string | null): string {
       notify("warning", ev);
     },
     onDeadToken: (code) => {
+      if (revokingOwn) {
+        // Своё снятие в полёте: 4001 пришёл раньше ответа revoke — это не
+        // смерть токена, а его закрытие; отпускаем тихо, иначе послушный агент
+        // пересоздаст только что снятое место (наблюдено в OpenCode и Codex).
+        log(
+          `standing revoked by this session — released quietly, binding forgotten (${state.standing?.name ?? "unnamed"}; close ${code} arrived before the answer)`,
+        );
+        releaseStanding("снято своим revoke");
+        state.standing = null;
+        state.standingSession = null;
+        return;
+      }
       const text = `ДЕЛАТЕЛЬ: ${deadTokenAdvice(code)}`;
       log(text);
       const ev: ChannelEvent = { kind: "dead", code, text };
@@ -314,30 +327,6 @@ function holdStanding(url: string, statusUrl?: string | null): string {
     },
   });
   return key;
-}
-
-/** Лежалые кадры — одной пачкой на полосу, с телами: почта не теряется, побудка одна. */
-function noteStale(frame: Frame): void {
-  if (staleBurst.length < STALE_BURST_KEEP) staleBurst.push(frame);
-  if (staleTimer) return;
-  staleTimer = setTimeout(() => {
-    staleTimer = null;
-    const frames = staleBurst.splice(0);
-    const bodies = frames.map((f) => {
-      const t = frameToText(f, JSON.stringify(f));
-      return [...t].length > 800 ? [...t].slice(0, 800).join("") + "…" : t;
-    });
-    const ev: ChannelEvent = {
-      kind: "stale",
-      frames,
-      text:
-        `Лежалых кадров: ${frames.length} — принятое, пока место не слушали, или повтор службы после пересборки сессии; ` +
-        'хода не стоят, но прочти; полностью — iskron_channel(action="history").\n\n' +
-        bodies.join("\n\n"),
-    };
-    broadcast(ev);
-    notify("info", ev);
-  }, 1500).unref();
 }
 
 const SOCKET_RE =
@@ -392,25 +381,43 @@ export function absorbChannelReply(msg: JsonRpcMessage, reply: JsonRpcMessage): 
  * держатель объявляет «токен мёртв, зови connect», а послушный агент тут же
  * пересоздаёт снятое место (наблюдено в pi и OpenCode). Ответ сервера едет как есть.
  */
-export function absorbRevokeReply(msg: JsonRpcMessage, reply: JsonRpcMessage): JsonRpcMessage {
+let revokingOwn = false;
+
+/** Зовёт ли этот вызов revoke то стояние, которое ведёт мост. */
+function revokesOwn(msg: JsonRpcMessage): boolean {
   const a = msg?.params?.arguments;
-  if (msg?.params?.name !== "iskron_channel" || a?.action !== "revoke") return reply;
-  if (reply?.error || reply?.result?.isError) return reply;
+  if (msg?.params?.name !== "iskron_channel" || a?.action !== "revoke") return false;
   const s = state.standing;
-  if (!s) return reply;
+  if (!s) return false;
   const asked = typeof a.standing === "string" ? a.standing.trim() : "";
   const own =
     asked === "" ||
     asked === "mine" ||
     asked === (s.name ?? "") ||
     asked.endsWith(`:${s.name ?? ""}`);
-  if (!own || String(a.karta ?? s.karta) !== String(s.karta)) return reply;
+  return own && String(a.karta ?? s.karta) === String(s.karta);
+}
+
+/**
+ * Перед отправкой своего revoke: закрытие 4001 приходит по сокету раньше, чем
+ * ответ по HTTP, и без этой пометки мост объявил бы «токен мёртв, зови
+ * connect» на месте, которое сам агент только что снял.
+ */
+export function expectOwnRevoke(msg: JsonRpcMessage): void {
+  if (revokesOwn(msg)) revokingOwn = true;
+}
+
+export function absorbRevokeReply(msg: JsonRpcMessage, reply: JsonRpcMessage): JsonRpcMessage {
+  if (msg?.params?.name !== "iskron_channel" || msg?.params?.arguments?.action !== "revoke")
+    return reply;
+  revokingOwn = false;
+  if (reply?.error || reply?.result?.isError) return reply;
+  if (!revokesOwn(msg)) return reply;
+  const name = state.standing?.name ?? "unnamed";
   releaseStanding("снято своим revoke");
   state.standing = null;
   state.standingSession = null;
-  log(
-    `standing revoked by this session — released quietly, binding forgotten (${s.name ?? "unnamed"})`,
-  );
+  log(`standing revoked by this session — released quietly, binding forgotten (${name})`);
   return reply;
 }
 

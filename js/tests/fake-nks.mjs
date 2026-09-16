@@ -71,6 +71,7 @@ export async function startFakeNks(opts = {}) {
     refreshMessage: null,
     mcpStatus: null, // force an HTTP status on /mcp
     mcpHangMs: 0, // hold /mcp open past the caller's deadline: the request left, the answer never came
+    revokeReplyDelayMs: 0, // revoke: the 4001 close goes out first, the HTTP answer this much later
     refreshDelayMs: opts.refreshDelayMs ?? 0, // widen the window several bridges race in
     codeDelayMs: opts.codeDelayMs ?? 0, // hold the code exchange open, as a slow server does
     registerDelayMs: opts.registerDelayMs ?? 0, // hold dynamic registration open: the window two bridges race in
@@ -198,6 +199,7 @@ export async function startFakeNks(opts = {}) {
         "refreshMessage",
         "mcpStatus",
         "mcpHangMs",
+        "revokeReplyDelayMs",
         "accessTtl",
         "refreshDelayMs",
         "reuseDetection",
@@ -615,6 +617,8 @@ export async function startFakeNks(opts = {}) {
             setTimeout(() => sock.end(), 100).unref();
           }
           for (const [sid2, bound] of st.standings) if (bound === name) st.standings.delete(sid2);
+          // Как у настоящей поверхности: закрытие сокета уходит раньше ответа по HTTP.
+          if (st.revokeReplyDelayMs) await new Promise((r) => setTimeout(r, st.revokeReplyDelayMs));
           return json(
             res,
             200,

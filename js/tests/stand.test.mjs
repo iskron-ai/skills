@@ -455,6 +455,37 @@ test("iskron_stand: take=true on the bridge's own place re-enters with a fresh s
   );
 });
 
+// On the real surface the 4001 close reaches the socket before the HTTP answer
+// to revoke does; read as a dead token, it sent obedient agents straight back
+// into connect+register on the seat they had just closed (seen live in
+// OpenCode and Codex). The bridge knows it is revoking its own seat before it
+// asks, and the early close is then a quiet release.
+test("a 4001 that arrives before the revoke answer is still a quiet self-revoke, not a dead token", async (t) => {
+  const { fake, bridge } = await ready(t);
+  const args = { realm: "nks-dev", karta: 931, name: "proba" };
+  assert.ok(
+    !(await bridge.call("tools/call", { name: "iskron_stand", arguments: args })).result?.isError,
+  );
+  await fake.control({ revokeReplyDelayMs: 600 });
+  const revoked = await bridge.call("tools/call", {
+    name: "iskron_channel",
+    arguments: { action: "revoke", realm: "nks-dev", karta: 931, standing: "proba" },
+  });
+  assert.match(textOf(revoked), /закрыт — место «proba»/, textOf(revoked));
+  await new Promise((r) => setTimeout(r, 500));
+  assert.ok(
+    !bridge.notifications.some((n) => n.params?.data?.kind === "dead"),
+    `an early 4001 on one's own revoke must not be announced as a dead token:\n${bridge.stderr}`,
+  );
+  assert.match(bridge.stderr, /revoked by this session — released quietly/, bridge.stderr);
+  const again = await bridge.call("tools/call", { name: "iskron_stand", arguments: args });
+  assert.match(
+    textOf(again),
+    /connect и register/,
+    "the seat is gone and forgotten: a fresh entry, no replay",
+  );
+});
+
 test("revoking one's own standing through the bridge is quiet: no dead-token alarm, no re-registration", async (t) => {
   const { fake, bridge } = await ready(t);
   const args = { realm: "nks-dev", karta: 931, name: "proba" };

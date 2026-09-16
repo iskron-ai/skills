@@ -9,7 +9,7 @@ import {
   TokenRefused,
   UpstreamError,
 } from "./errors.ts";
-import { absorbChannelReply, absorbRevokeReply, localStatus } from "./hold.ts";
+import { absorbChannelReply, absorbRevokeReply, expectOwnRevoke, localStatus } from "./hold.ts";
 import { annotateToolList } from "./moment.ts";
 import { isStandCall, runStand } from "./stand.ts";
 import { ensureStanding, isUnattributed, noteStanding, replyText } from "./standing.ts";
@@ -219,6 +219,7 @@ export async function deliver(msg: JsonRpcMessage): Promise<void> {
         return;
       }
       heldReply = null;
+      expectOwnRevoke(msg); // закрытие 4001 обгонит ответ — мост должен знать, что снимает сам
       await post(msg, forward);
       const held = heldReply as JsonRpcMessage | null;
       if (held) {

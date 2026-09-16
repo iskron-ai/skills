@@ -29,6 +29,13 @@ export function frameToText(frame: Frame | null | undefined, raw: string): strin
   const envelope: Record<string, unknown> = {};
   for (const k of ENVELOPE_KEYS) if (frame[k] !== undefined) envelope[k] = frame[k];
   if (Object.keys(envelope).length) lines.push(`frame: ${JSON.stringify(envelope)}`);
-  const body = typeof frame.body === "string" ? frame.body : raw;
+  // Тело не-строка (событие графа через хук — JSON): печатается само тело, не
+  // весь кадр заново; конверт и провенанс уже стоят строками выше.
+  const body =
+    typeof frame.body === "string"
+      ? frame.body
+      : frame.body === undefined
+        ? raw
+        : JSON.stringify(frame.body, null, 1).replace(/\n\s*/g, " ");
   return `${lines.join("\n")}\n\n${body}`;
 }
