@@ -245,31 +245,42 @@ test("an explicit name past the server's rule is refused aloud, not truncated; a
   );
 });
 
-test("a derived name longer than the limit is cut on the repository part and announced first", async (t) => {
-  const fake = await startFakeNks({ pat: PAT });
-  const dir = mkdtempSync(join(tmpdir(), "iskron-stand-"));
-  const cwd = mkdtempSync(join(tmpdir(), "a-very-long-repository-directory-name-for-the-probe-"));
-  const bridge = startBridge(fake.mcpUrl, dir, cwd);
-  t.after(async () => {
-    await bridge.stop();
-    await fake.stop();
+// The model id may carry dots (glm-5.3 — the very model of the field case), so
+// the name is cut by parts, never split on dots; the repo part goes first, the
+// model survives whole, and the note names what was cut.
+for (const model of ["claude-opus-5", "glm-5.3"]) {
+  test(`a derived name longer than the limit is cut on the repository part, the model (${model}) survives, and the note says what was cut`, async (t) => {
+    const fake = await startFakeNks({ pat: PAT });
+    const dir = mkdtempSync(join(tmpdir(), "iskron-stand-"));
+    const cwd = mkdtempSync(join(tmpdir(), "a-very-long-repository-directory-name-for-the-probe-"));
+    const bridge = startBridge(fake.mcpUrl, dir, cwd);
+    t.after(async () => {
+      await bridge.stop();
+      await fake.stop();
+    });
+    assert.ok((await bridge.call("initialize", INIT)).result);
+    const reply = await bridge.call("tools/call", {
+      name: "iskron_stand",
+      arguments: { realm: "nks-dev", karta: "#931", model },
+    });
+    const text = textOf(reply);
+    assert.ok(!reply.result?.isError, text);
+    const name = /стояние (\S+) — роль #931/.exec(text)?.[1];
+    assert.ok(name && name.length <= 48, `the derived name must fit the limit: ${name}`);
+    const short = model.replace(/^claude-/, "");
+    assert.ok(name.endsWith(`.${short}`), `the model part survives the cut whole: ${name}`);
+    const host = hostname().split(".")[0].toLowerCase();
+    assert.ok(
+      name.startsWith(`${host}.`),
+      `the machine part is kept when the repo alone suffices: ${name}`,
+    );
+    assert.match(text, /укорочено до \S+ \(срезано: репо\)/, text);
+    assert.ok(
+      [...fake.state.places.keys()].includes(`931:${name}`),
+      "the place is taken under the cut name",
+    );
   });
-  assert.ok((await bridge.call("initialize", INIT)).result);
-  const reply = await bridge.call("tools/call", {
-    name: "iskron_stand",
-    arguments: { realm: "nks-dev", karta: "#931", model: "claude-opus-5" },
-  });
-  const text = textOf(reply);
-  assert.ok(!reply.result?.isError, text);
-  const name = /стояние (\S+) — роль #931/.exec(text)?.[1];
-  assert.ok(name && name.length <= 48, `the derived name must fit the limit: ${name}`);
-  assert.ok(name.endsWith(".opus-5"), `the model part survives the cut: ${name}`);
-  assert.match(text, /выведенное имя \S+ длиннее предела 48 знаков — укорочено до/, text);
-  assert.ok(
-    [...fake.state.places.keys()].includes(`931:${name}`),
-    "the place is taken under the cut name",
-  );
-});
+}
 
 test("iskron_stand derives the name from machine, repository and the model given — not the branch", async (t) => {
   const { fake, bridge } = await ready(t);

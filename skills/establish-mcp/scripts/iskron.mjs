@@ -2632,15 +2632,24 @@ function nameFault(name) {
     return /[A-Z]/.test(name) ? "заглавные буквы не допускаются" : "недопустимые знаки или первый знак не буква и не цифра";
   return null;
 }
-function fitName(derived) {
-  if (derived.length <= NAME_MAX) return derived;
-  const parts = derived.split(".");
-  for (const i of parts.length === 3 ? [1, 0] : [0]) {
-    const over = parts.join(".").length - NAME_MAX;
+var PART_MIN = 3;
+var CUT_ORDER = ["repo", "host", "model"];
+function fitName(parts) {
+  const p = { ...parts };
+  const join12 = () => [p.host, p.repo, p.model].filter(Boolean).join(".").replace(/[-.]+$/, "");
+  const cut = [];
+  for (const k of CUT_ORDER) {
+    const over = join12().length - NAME_MAX;
     if (over <= 0) break;
-    parts[i] = (parts[i] ?? "").slice(0, Math.max(3, (parts[i]?.length ?? 0) - over));
+    const keep = Math.max(k === "model" ? 1 : PART_MIN, p[k].length - over);
+    if (keep >= p[k].length) continue;
+    p[k] = p[k].slice(0, keep).replace(/[-.]+$/, "");
+    cut.push(k);
   }
-  return parts.join(".").slice(0, NAME_MAX).replace(/[-.]+$/, "");
+  return {
+    name: join12().slice(0, NAME_MAX).replace(/[-.]+$/, ""),
+    cut
+  };
 }
 var git = (args) => {
   try {
@@ -2653,13 +2662,14 @@ var git = (args) => {
     return "";
   }
 };
-function deriveName(model) {
+function deriveParts(model) {
   const host = hostname().split(".")[0];
   const top = git(["rev-parse", "--show-toplevel"]);
   const repo = basename2(top || process.cwd());
   const short2 = (model ?? "").trim().toLowerCase().replace(/^claude[-_]/, "");
-  return [host, repo, short2].map(sanitize).filter(Boolean).join(".");
+  return { host: sanitize(host ?? ""), repo: sanitize(repo), model: sanitize(short2) };
 }
+var joinName = (p) => [p.host, p.repo, p.model].filter(Boolean).join(".");
 
 // js/bridge/update.ts
 import { spawn as spawn2 } from "node:child_process";
@@ -2977,12 +2987,15 @@ async function runStand(msg) {
       return done(true);
     }
   }
-  const derived = asked ? null : deriveName(model);
-  const name = asked || fitName(derived ?? "");
-  if (derived && name !== derived)
+  const parts = asked ? null : deriveParts(model);
+  const fitted = parts ? fitName(parts) : null;
+  const name = asked || (fitted?.name ?? "");
+  if (parts && fitted && fitted.cut.length) {
+    const what = fitted.cut.map((k) => k === "repo" ? "репо" : k === "host" ? "машина" : "модель").join(", ");
     nameNotes.push(
-      `выведенное имя ${derived} длиннее предела ${NAME_MAX} знаков — укорочено до ${name} (репо-часть срезана); нужно другое — передай name`
+      `выведенное имя ${joinName(parts)} длиннее предела ${NAME_MAX} знаков — укорочено до ${name} (срезано: ${what}); нужно другое — передай name`
     );
+  }
   if (!asked && !model) {
     nameNotes.push(
       "model не передан — имя без третьей части (машина.репо): вторая сессия этой машины над этим репозиторием сойдётся на то же место; передай model, чтобы различать"

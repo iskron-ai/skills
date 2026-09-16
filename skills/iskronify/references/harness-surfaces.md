@@ -57,26 +57,33 @@ export default {
       if (["write", "edit"].includes(input.tool) && isLocalMemoryPath(path))
         throw new Error("local agent memory is forbidden for project state");
     });
-    // push → граф: после shell-вызова с git push дописать напоминание в результат
+    // push → граф: после shell-вызова с git push дописать напоминание в результат.
+    // Поля result только для чтения — заменяется сам result; content — строка или массив частей.
     await ctx.tool.hook("execute.after", (input) => {
       if (input.tool !== "bash" || input.status !== "completed") return;
       if (!/git push/.test(String(input.input?.command ?? ""))) return;
-      input.result.content = `${input.result.content}\n\n[iskron] пуш — не мерж; после мержа: ткачество, модусы, закрытие по оси, reconcile.`;
+      const note = "[iskron] пуш — не мерж; после мержа: ткачество, модусы, закрытие по оси, reconcile.";
+      const c = input.result.content;
+      input.result = {
+        ...input.result,
+        content: typeof c === "string" ? `${c}\n\n${note}` : [...(c ?? []), { type: "text", text: note }],
+      };
     });
-    // ориентация: слово в новую сессию — ctx.event.subscribe даёт async-итерируемое событий
+    // ориентация: слово в новую сессию — ctx.event.subscribe даёт async-итерируемое событий;
+    // отказ цикла пишется в stderr сервиса, а не глотается: молчащий ритуал хуже отсутствующего.
     const ac = new AbortController();
     (async () => {
       for await (const ev of await ctx.event.subscribe({ signal: ac.signal })) {
         if (ev.type === "session.created")
-          await ctx.session.prompt({ sessionID: ev.properties.info.id, text: "Прочти раздел «Старт» скилла-двери iskron…", delivery: "queue" });
+          await ctx.session.prompt({ sessionID: ev.data.sessionID, text: "Прочти раздел «Старт» скилла-двери iskron…", delivery: "queue" });
       }
-    })().catch(() => {});
+    })().catch((e) => console.error("[iskron-rituals] ориентация остановилась:", e));
     return () => ac.abort(); // cleanup при выгрузке плагина
   },
 };
 ```
 
-`ctx.tool.hook("execute.before", …)` / `("execute.after", …)` оборачивают вызовы тулов — **throw из `execute.before` и есть блокировка**: memory-guard здесь — throw, не код выхода; в `execute.after` у завершившегося вызова (`status: "completed"`) поле `result` изменяемо. Форма события `session.created` и его `properties` — сверяй по типам пакета при апгрейде (`@opencode/schema/event`): названо по типам 2.0.4, живой прогон ритуалов на 2.x в этой поставке не делался. TUI у серверного плагина нет: слово человеку идёт промптом в сессию или в stderr сервиса. Ключ фронтматтера `slash: true` парсер 2.x отбрасывает: команды палитры «/» регистрирует плагин через `ctx.command.transform`.
+`ctx.tool.hook("execute.before", …)` / `("execute.after", …)` оборачивают вызовы тулов — **throw из `execute.before` и есть блокировка**: memory-guard здесь — throw, не код выхода; в `execute.after` у завершившегося вызова (`status: "completed"`) заменяется поле `result` целиком (его собственные поля только для чтения). Формы сверены с типами пакета 2.0.4 (`@opencode/plugin` → `dist/promise/tool.d.ts`, `plugin.d.ts`; событие `session.created` — `@opencode/schema`, `session-event.d.ts`: `data.sessionID`, `data.projectID`, `data.location`); живой прогон ритуалов на 2.x в этой поставке не делался — сверяй по типам при апгрейде. TUI у серверного плагина нет: слово человеку идёт промптом в сессию или в stderr сервиса. Ключ фронтматтера `slash: true` парсер 2.x отбрасывает: команды палитры «/» регистрирует плагин через `ctx.command.transform`.
 
 Маппинг ритуалов: ориентация → `ctx.event.subscribe` на `session.created`; memory-guard → `ctx.tool.hook("execute.before")` с throw; push → граф → `ctx.tool.hook("execute.after")` по shell-тулу. Ролевые файлы суб-агентов: `.opencode/agents/` (см. `delegation.md`).
 
@@ -86,5 +93,5 @@ export default {
 
 - **Claude Code** — путь settings, имена хук-событий, синтаксис импорта в `CLAUDE.md`.
 - **Codex** — список событий `[hooks]` и форма TOML, source'ы `SessionStart`, имена файлов `AGENTS.md` / `AGENTS.override.md` и порядок их мержа.
-- **OpenCode** — имена директорий плагинов (`.opencode/plugins/`), список событий, всё ли ещё `tool.execute.before` блокирует throw-ом.
+- **OpenCode** — имена директорий плагинов (`.opencode/plugins/`), форма плагина (`{ id, setup(ctx) }`), имена хуков `ctx.tool.hook("execute.before" | "execute.after")` и что throw из `execute.before` всё ещё блокирует, форма события `session.created` в `@opencode/schema`.
 - Харнесс, обретший или потерявший поверхность, меняет то, что iskronify может обещать: сначала обнови таблицу, затем Шаг 4.

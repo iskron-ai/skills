@@ -2,7 +2,7 @@
 // ровно таким, либо отвергается вслух с названной причиной: молча укороченное
 // имя адресует ДРУГОЕ место. Выведенное имя — машина.репо.модель — из того,
 // что свежая сессия восстановит без памяти; длиннее предела сервера оно
-// укорачивается с пометкой в ответе.
+// укорачивается с пометкой сразу после шапки ответа.
 import { execFileSync } from "node:child_process";
 import { hostname } from "node:os";
 import { basename } from "node:path";
@@ -29,19 +29,42 @@ export function nameFault(name: string): string | null {
   return null;
 }
 
-/** Выведенное имя длиннее предела — срезать репо-часть (средняя), затем машину; модель различает сессии и остаётся. */
-export function fitName(derived: string): string {
-  if (derived.length <= NAME_MAX) return derived;
-  const parts = derived.split(".");
-  for (const i of parts.length === 3 ? [1, 0] : [0]) {
-    const over = parts.join(".").length - NAME_MAX;
+/** Части выведенного имени по местам: машина, репо, модель (модель может нести точки — `glm-5.3`, — потому имя не режется по точкам). */
+export interface NameParts {
+  host: string;
+  repo: string;
+  model: string;
+}
+const PART_MIN = 3;
+const CUT_ORDER: (keyof NameParts)[] = ["repo", "host", "model"];
+
+/**
+ * Выведенное имя длиннее предела — срезать репо-часть, затем машину, модель
+ * последней и только когда иначе не уложиться: модель различает сессии одной
+ * машины. Возвращает имя и какие части срезаны — для пометки в ответе.
+ */
+export function fitName(parts: NameParts): { name: string; cut: (keyof NameParts)[] } {
+  const p = { ...parts };
+  const join = (): string =>
+    [p.host, p.repo, p.model]
+      .filter(Boolean)
+      .join(".")
+      .replace(/[-.]+$/, "");
+  const cut: (keyof NameParts)[] = [];
+  for (const k of CUT_ORDER) {
+    const over = join().length - NAME_MAX;
     if (over <= 0) break;
-    parts[i] = (parts[i] ?? "").slice(0, Math.max(3, (parts[i]?.length ?? 0) - over));
+    const keep = Math.max(k === "model" ? 1 : PART_MIN, p[k].length - over);
+    if (keep >= p[k].length) continue;
+    p[k] = p[k].slice(0, keep).replace(/[-.]+$/, "");
+    cut.push(k);
   }
-  return parts
-    .join(".")
-    .slice(0, NAME_MAX)
-    .replace(/[-.]+$/, "");
+  return {
+    name: join()
+      .slice(0, NAME_MAX)
+      .replace(/[-.]+$/, ""),
+    cut,
+  };
 }
 
 export const git = (args: string[]): string => {
@@ -65,7 +88,7 @@ export const git = (args: string[]): string => {
  * ничего, а модель различает сессии одной машины над одним репозиторием.
  * Префикс поставщика (`claude-`) отбрасывается: `claude-opus-5` → `opus-5`.
  */
-export function deriveName(model?: string): string {
+export function deriveParts(model?: string): NameParts {
   const host = hostname().split(".")[0];
   const top = git(["rev-parse", "--show-toplevel"]);
   const repo = basename(top || process.cwd());
@@ -73,5 +96,12 @@ export function deriveName(model?: string): string {
     .trim()
     .toLowerCase()
     .replace(/^claude[-_]/, "");
-  return [host, repo, short].map(sanitize).filter(Boolean).join(".");
+  return { host: sanitize(host ?? ""), repo: sanitize(repo), model: sanitize(short) };
+}
+
+export const joinName = (p: NameParts): string =>
+  [p.host, p.repo, p.model].filter(Boolean).join(".");
+
+export function deriveName(model?: string): string {
+  return joinName(deriveParts(model));
 }

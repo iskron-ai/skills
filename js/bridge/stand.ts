@@ -20,7 +20,7 @@ import {
 } from "./hold.ts";
 import { returnToStanding } from "./leave.ts";
 import { listenBlock } from "./listen.ts";
-import { deriveName, fitName, git, NAME_MAX, nameFault, sanitize } from "./names.ts";
+import { deriveParts, fitName, git, joinName, NAME_MAX, nameFault, sanitize } from "./names.ts";
 import { noteStanding, replyText } from "./standing.ts";
 import { publishStatus } from "./status.ts";
 import { post } from "./transport.ts";
@@ -166,7 +166,7 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   // Имя — адрес места: явное имя либо принимается ровно таким, либо отвергается
   // вслух с названной причиной; молча укороченное имя адресует ДРУГОЕ место
   // (граф nks-dev: #5068). Выведенное имя укорачивается до предела сервера с
-  // пометкой первой строкой.
+  // пометкой сразу после шапки ответа.
   const asked = typeof a.name === "string" ? a.name.trim() : "";
   if (asked) {
     const fault = nameFault(asked);
@@ -177,12 +177,17 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
       return done(true);
     }
   }
-  const derived = asked ? null : deriveName(model);
-  const name = asked || fitName(derived ?? "");
-  if (derived && name !== derived)
+  const parts = asked ? null : deriveParts(model);
+  const fitted = parts ? fitName(parts) : null;
+  const name = asked || (fitted?.name ?? "");
+  if (parts && fitted && fitted.cut.length) {
+    const what = fitted.cut
+      .map((k) => (k === "repo" ? "репо" : k === "host" ? "машина" : "модель"))
+      .join(", ");
     nameNotes.push(
-      `выведенное имя ${derived} длиннее предела ${NAME_MAX} знаков — укорочено до ${name} (репо-часть срезана); нужно другое — передай name`,
+      `выведенное имя ${joinName(parts)} длиннее предела ${NAME_MAX} знаков — укорочено до ${name} (срезано: ${what}); нужно другое — передай name`,
     );
+  }
   if (!asked && !model) {
     nameNotes.push(
       "model не передан — имя без третьей части (машина.репо): вторая сессия этой машины над этим репозиторием сойдётся на то же место; передай model, чтобы различать",
