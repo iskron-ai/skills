@@ -75,6 +75,9 @@ let currentStatusUrl: string | null = null;
 let evictedKey: string | null = null; // ключ места, отнятого у этого моста закрытием 4000
 let evictedEvent: ChannelEvent | null = null; // прицепившийся после — узнаёт, а не молчит
 const clients = new Set<Socket>();
+let parked = false; // ушёл с места: сокет службы закрыт, ключ и адреса целы (leave.ts)
+let listenerIdleAt: number | null = null; // с какого мига ни один локальный клиент не слушает
+const attachHooks: (() => void)[] = [];
 const ring: { raw: string; frame: Frame | null }[] = [];
 const helloWaiters = new Set<(f: Frame | null) => void>();
 // Память доставленных кадров — та же, что читает сторож выхода (../shared/seen.ts).
@@ -106,6 +109,23 @@ export function wasEvicted(realm: string, karta: string | number, name: string):
 /** Есть ли у моста статусный адрес ИМЕННО этого стояния — занятость идёт от стояния, не от живого сокета, но только от своего. */
 export const hasStatusAddressFor = (realm: string, karta: string | number, name: string): boolean =>
   !!currentStatusUrl && !!currentKey && isOwn(realm, karta, name);
+
+/** Статусный адрес и ключ стояния, которое ведёт мост, — для занятости (status.ts). */
+export const statusAddress = (): { url: string; key: string } | null =>
+  currentStatusUrl && currentKey ? { url: currentStatusUrl, key: currentKey } : null;
+
+/** Ушёл ли мост с ИМЕННО этого места (leave.ts): адрес помнит, сокет закрыт — вернуться можно без connect. */
+export const isParked = (realm: string, karta: string | number, name: string): boolean =>
+  parked && isOwn(realm, karta, name);
+
+/** С какого мига мост никто не слушает локально; null — слушают или держать нечего. */
+export const listenerIdleSince = (): number | null =>
+  holder?.alive && clients.size === 0 ? listenerIdleAt : null;
+
+/** Позвать, когда прицепился локальный клиент — сторож вернулся к месту. */
+export function onListenerAttached(fn: () => void): void {
+  attachHooks.push(fn);
+}
 
 /** Кадр hello — доказательство держания; из кольца, если уже пришёл, иначе ожидание под пределом. */
 export function awaitHello(timeoutMs: number): Promise<Frame | null> {
@@ -168,10 +188,16 @@ function openLocalServer(key: string): void {
       unlinkSync(path);
     } catch {}
   }
+  const gone = (sock: Socket): void => {
+    clients.delete(sock);
+    if (clients.size === 0) listenerIdleAt = Date.now();
+  };
   const srv = createServer((sock) => {
     clients.add(sock);
-    sock.on("close", () => clients.delete(sock));
-    sock.on("error", () => clients.delete(sock));
+    listenerIdleAt = null;
+    sock.on("close", () => gone(sock));
+    sock.on("error", () => gone(sock));
+    for (const fn of attachHooks) fn();
     sock.write(
       JSON.stringify({ kind: "attached", key, buffered: ring.length } satisfies ChannelEvent) +
         "\n",
@@ -230,6 +256,8 @@ export function releaseStanding(reason: string): void {
     }
   }
   ring.length = 0;
+  parked = false;
+  listenerIdleAt = null;
   currentKey = null;
   currentUrl = null;
   currentStatusUrl = null;
@@ -248,7 +276,32 @@ function holdStanding(url: string, statusUrl?: string | null): string {
   currentUrl = url;
   currentStatusUrl = statusUrl || deriveStatusUrl(url);
   openLocalServer(key);
+  listenerIdleAt = Date.now();
   seen = seenIds(seenFilePathOf(CFG.authDir, key));
+  openHolder(url, key);
+  return key;
+}
+
+/** Уйти с места (leave.ts): сокет службы закрыт, ключ, адреса и локальный сокет целы. Возвращает ключ или null. */
+export function parkStanding(reason: string): string | null {
+  if (!holder?.alive || !currentKey) return null;
+  holder.close(reason);
+  holder = null;
+  parked = true;
+  const text = `мост ушёл с места (${reason}) — сокет закрыт, место цело; возврат — сторож или iskron_stand`;
+  broadcast({ kind: "note", text });
+  return currentKey;
+}
+
+/** Вернуться на место, с которого ушёл: тот же адрес, сокет открыт заново. */
+export function resumeStanding(): boolean {
+  if (!parked || !currentUrl || !currentKey) return false;
+  parked = false;
+  openHolder(currentUrl, currentKey);
+  return true;
+}
+
+function openHolder(url: string, key: string): void {
   holder = holdSocket({
     url,
     onFrame: (raw, frame) => {
@@ -326,7 +379,6 @@ function holdStanding(url: string, statusUrl?: string | null): string {
       broadcast({ kind: "note", text });
     },
   });
-  return key;
 }
 
 const SOCKET_RE =
@@ -426,65 +478,4 @@ export function holdFromEnv(): void {
   const url = process.env.ISKRON_CHANNEL_SOCKET?.trim();
   if (!url) return;
   holdStanding(url, process.env.ISKRON_CHANNEL_STATUS?.trim() || null);
-}
-
-/**
- * Занятость — слово держателя сокета, а держит его мост: action="status" у
- * iskron_channel исполняется здесь, на сервер не уходит (решение владельца,
- * граф nks-dev: #4284 отвергнут). POST на статусный адрес из ответа connect;
- * ответ поверхности — успех или ProblemDetail — доносится целиком, длину мост
- * не судит. Возвращает null для всякого другого вызова.
- */
-export function localStatus(msg: JsonRpcMessage): Promise<JsonRpcMessage> | null {
-  if (msg?.method !== "tools/call" || msg?.params?.name !== "iskron_channel") return null;
-  const a = msg.params?.arguments;
-  if (a?.action !== "status") return null;
-  const text = typeof a.text === "string" ? a.text : "";
-  const reply = (body: string, isError = false): JsonRpcMessage => ({
-    jsonrpc: "2.0",
-    id: msg.id,
-    result: { ...(isError ? { isError: true } : {}), content: [{ type: "text", text: body }] },
-  });
-  return (async () => {
-    const st = await publishStatus(text);
-    if (st.ok) return reply(`занятость ${currentKey}: ${text || "(снята)"}`);
-    return reply(st.body, true);
-  })();
-}
-
-/** POST строки занятости на статусный адрес стояния, которое держит мост. */
-export async function publishStatus(text: string): Promise<{ ok: boolean; body: string }> {
-  if (!currentStatusUrl || !currentKey) {
-    return {
-      ok: false,
-      body:
-        "Отказано (мост): у моста нет стояния этого агента — назовись одним вызовом iskron_stand(realm, karta, model, status) " +
-        "(занятость можно передать прямо в нём); место слушает другой держатель — take=true берёт слух и статусный адрес сюда",
-    };
-  }
-  let res: Response;
-  try {
-    res = await fetch(currentStatusUrl, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ text }),
-      signal: AbortSignal.timeout(5000),
-    });
-  } catch (e) {
-    return {
-      ok: false,
-      body: `Отказано (мост): статусный адрес не ответил — ${(e as Error).message}`,
-    };
-  }
-  const body = (await res.text().catch(() => "")).trim();
-  if (res.status === 404)
-    return {
-      ok: false,
-      body:
-        `Отказано (404) поверхностью: ${body || "без тела"} — статусный адрес повернули connect-ом другого держателя; ` +
-        "занятость теперь его; вернуть слух и адрес сюда — iskron_stand с take=true",
-    };
-  if (!res.ok)
-    return { ok: false, body: `Отказано (${res.status}) поверхностью: ${body || "без тела"}` };
-  return { ok: true, body };
 }

@@ -22,6 +22,10 @@ export const MOMENT_LINE = "[мост] " + JSON_LINE;
 export const STATUS_LINE =
   '[мост] action="status" (realm, text) — занятость ЭТОГО стояния: исполняет мост, держатель сокета, на сервер вызов не уходит; пустой text снимает; отказ поверхности приходит целиком.';
 
+/** Уход с места — тоже ход моста: сокет закрыт, занятость снята, место цело. */
+export const LEAVE_LINE =
+  '[мост] action="leave" (realm) — уйти с места: исполняет мост — сокет закрыт, занятость снята, адрес, очередь и хуки целы; почта копится и придёт при возвращении (сторож или iskron_stand). Мост уходит и сам, когда его 15 минут никто не слушает (Claude Code, Codex: сторож не взведён), и снимает занятость на конце сессии.';
+
 export function annotateToolList(reply: JsonRpcMessage): void {
   const tools = reply?.result?.tools;
   if (!Array.isArray(tools)) return;
@@ -31,6 +35,7 @@ export function annotateToolList(reply: JsonRpcMessage): void {
     if (t && t.name === "iskron_channel" && typeof t.description === "string") {
       if (!t.description.includes(STATUS_LINE))
         t.description = `${t.description}\n\n${STATUS_LINE}`;
+      if (!t.description.includes(LEAVE_LINE)) t.description = `${t.description}\n${LEAVE_LINE}`;
       continue;
     }
     if (!t || typeof t.name !== "string" || !WRITE_TOOL.test(t.name)) continue;

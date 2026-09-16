@@ -12,3 +12,10 @@
 export const OPENCODE_CLIENT = "opencode-iskron";
 export const SURFACE_CLIENT = "export-surface"; // scripts/export-surface.mjs, литералом: .mjs не берёт TS
 export const OWN_CLIENTS: ReadonlySet<string> = new Set([OPENCODE_CLIENT, SURFACE_CLIENT]);
+
+// Клиенты, которым кадр стояния доходит уведомлением MCP, а не локальным
+// сторожем: расширение pi и плагин OpenCode. Остальным (Claude Code, Codex)
+// кадр доходит только через сторожа — без него мост глух, и уходит с места
+// сам (bridge/leave.ts, граф nks-dev: #4895).
+export const PI_CLIENT = "pi-iskron";
+export const NOTIFIED_CLIENTS: ReadonlySet<string> = new Set([PI_CLIENT, OPENCODE_CLIENT]);

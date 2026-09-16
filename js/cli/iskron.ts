@@ -6,6 +6,7 @@
 //   node iskron.mjs watchdog-codex [ключ] [--auth-dir <dir>]  сторож Codex: кадр в идущий тред через app-server
 //   node iskron.mjs doctor [server-url] [flags]     какая сборка стоит и работает ли она
 //   node iskron.mjs update [--auth-dir <dir>]       свежий релиз в дом: мост, плагин OpenCode, SETUP.md
+//   node iskron.mjs use <en|ru|url> [--auth-dir <dir>]  постоянный выбор адреса сервера на этой машине
 //   node iskron.mjs --version                       сборка vX.Y.Z+хеш
 //
 // Каждый долгоживущий запуск (мост, сторожа) сперва выравнивает дом: своя
@@ -24,6 +25,7 @@ import { runWatchdog } from "../watchdog/watchdog.ts";
 import { runWatchdogExit } from "../watchdog/watchdog-exit.ts";
 import { runDoctor } from "./doctor.ts";
 import { runUpdate } from "./update.ts";
+import { runUse } from "./use.ts";
 
 const USAGE = `iskron ${BUILD}
   node iskron.mjs [bridge] [server-url] [--timeout <ms>] [--auth-dir <dir>] [--no-browser] [--debug]
@@ -32,6 +34,7 @@ const USAGE = `iskron ${BUILD}
   node iskron.mjs watchdog-codex [ключ] [--auth-dir <dir>]   (из оболочки Codex: CODEX_THREAD_ID, CODEX_HOME)
   node iskron.mjs doctor [server-url] [--auth-dir <dir>]
   node iskron.mjs update [--auth-dir <dir>]
+  node iskron.mjs use <en|ru|url> [--auth-dir <dir>]   (en — mcp.iskron.ai, ru — mcp.iskron.ru)
   node iskron.mjs --version
   env: ISKRON_BRIDGE_TOKEN — личный токен вместо OAuth (или файл <auth-dir>/token);
        ISKRON_BRIDGE_URL, ISKRON_BRIDGE_AUTH_DIR, ISKRON_BRIDGE_NO_BROWSER, ISKRON_BRIDGE_DEBUG
@@ -45,7 +48,9 @@ const [first, ...rest] = argv;
 const LONG_LIVED = new Set([undefined, "bridge", "watchdog", "watchdog-exit", "watchdog-codex"]);
 const longLived =
   LONG_LIVED.has(first) ||
-  (first !== undefined && !first.startsWith("--") && !["doctor", "update", "-h"].includes(first));
+  (first !== undefined &&
+    !first.startsWith("--") &&
+    !["doctor", "update", "use", "-h"].includes(first));
 if (longLived && !updatesDisabled() && !process.env.ISKRON_BRIDGE_REEXEC) {
   const sync = syncHome();
   for (const p of sync.copied)
@@ -70,6 +75,9 @@ function dispatch(): void {
       break;
     case "update":
       void runUpdate(rest);
+      break;
+    case "use":
+      runUse(rest);
       break;
     case "bridge":
       bridgeMain(rest);

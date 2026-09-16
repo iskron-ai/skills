@@ -3432,3 +3432,43 @@ test("a proxy switched on through NODE_OPTIONS is not reported as ignored", asyn
     await bridge.stop();
   }
 });
+
+// The English Iskron (graph nks-dev: #5040): the address is a standing choice on
+// the machine — a file next to the grant, read when neither the argument nor
+// the environment names a server; a plugin entry carries no arguments, so the
+// file is the only way the choice reaches it.
+test("the server choice file next to the grant names the server when neither the argument nor the environment does", async (t) => {
+  await withFake(t, { pat: "nks_pat_probe" }, async ({ fake, dir }) => {
+    writeFileSync(join(dir, "server"), fake.mcpUrl + "\n");
+    const bridge = startBridge("", dir, { ISKRON_BRIDGE_TOKEN: "nks_pat_probe" });
+    try {
+      const init = await bridge.call("initialize", 1, INIT_PARAMS);
+      assert.ok(
+        init.result,
+        `the bridge must reach the server named by the file: ${JSON.stringify(init)}`,
+      );
+      assert.match(
+        bridge.stderr,
+        new RegExp(`-> ${fake.mcpUrl.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&")}`),
+      );
+    } finally {
+      await bridge.stop();
+    }
+    // The environment outranks the file; the argument outranks both.
+    const byEnv = startBridge("", dir, {
+      ISKRON_BRIDGE_TOKEN: "nks_pat_probe",
+      ISKRON_BRIDGE_URL: "http://127.0.0.1:9/env",
+    });
+    try {
+      await new Promise((r) => setTimeout(r, 300));
+      assert.match(bridge.stderr, /-> http:\/\/127\.0\.0\.1:\d+\/mcp/);
+      assert.match(
+        byEnv.stderr,
+        /-> http:\/\/127\.0\.0\.1:9\/env/,
+        "the environment must win over the file",
+      );
+    } finally {
+      await byEnv.stop();
+    }
+  });
+});

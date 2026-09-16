@@ -32,11 +32,13 @@ import { BUILD } from "./build.ts";
 import { CFG, parseArgs, setConfig } from "./config.ts";
 import { deliver } from "./deliver.ts";
 import { errorMessage } from "./errors.ts";
-import { holdFromEnv, releaseStanding } from "./hold.ts";
+import { holdFromEnv, releaseStanding, statusAddress } from "./hold.ts";
+import { startDeafnessWatch } from "./leave.ts";
 import { installAuthLockExitHook } from "./oauth/authlock.ts";
 import { pendingFlow } from "./oauth/flow.ts";
 import { installRefreshLockExitHook } from "./oauth/refreshlock.ts";
 import { tokenRequestsInFlight } from "./oauth/tokenrequest.ts";
+import { publishStatus } from "./status.ts";
 import { sleep, storePath } from "./store.ts";
 import { debug, flushStdout, guardStream, log } from "./streams.ts";
 import { type JsonRpcMessage } from "./types.ts";
@@ -81,6 +83,7 @@ export function bridgeMain(argv: string[]): void {
   startTokenKeepalive();
   startFreshnessWatch(CFG.authDir, CFG.serverUrl); // отставание поставки — слово моста, не память человека
   holdFromEnv(); // отладочный путь: сокет из окружения, без connect
+  startDeafnessWatch(); // никто не слушает — мост уходит с места сам (#4895)
 
   const rl = createInterface({ input: process.stdin, terminal: false });
   const pending = new Set<Promise<void>>();
@@ -128,6 +131,9 @@ export function bridgeMain(argv: string[]): void {
   // is the price SIGKILL always pays; SIGTERM, stdin-close, and SIGINT no longer do.
   const leave = async (why: string) => {
     debug(`${why} — winding down`);
+    // Занятость — слово ушедшего делателя: с концом сессии она снимается, иначе
+    // доска показывает занятого там, где никого нет (#4895).
+    if (statusAddress()) await publishStatus("").catch(() => {});
     releaseStanding(why); // сокет стояния живёт ровно столько, сколько сессия
     await Promise.allSettled([...pending, ...tokenRequestsInFlight]);
     await flushStdout(); // an answer half-written is an answer not given
