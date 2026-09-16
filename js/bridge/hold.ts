@@ -91,6 +91,17 @@ export { keyOf, readHoldRecord } from "./holdrecord.ts";
  * тихо, и место занимается заново connect-ом. Возвращает слово об исходе или
  * null, когда возвращать нечего.
  */
+/** Слушающим доска читает прежний мост этого каталога, а он мёртв: запись держания цела, локальный сокет не отвечает. */
+export async function deadPredecessor(
+  realm: string,
+  karta: string | number,
+  name: string,
+): Promise<boolean> {
+  const key = keyOf(realm, karta, name);
+  if (!readHoldRecord(key)) return false;
+  return !(await localSocketAlive(socketPathFor(key)));
+}
+
 export async function resumeFromDisk(
   realm: string,
   karta: string | number,
@@ -102,7 +113,7 @@ export async function resumeFromDisk(
   if (holder?.alive && currentKey === key) return null;
   if (await localSocketAlive(socketPathFor(key))) return null; // держит живой мост — не наше
   state.standing = { realm, karta, name };
-  resuming = true;
+  resuming++;
   try {
     holdStanding(rec.url, rec.statusUrl);
     const hello = await awaitHello(4000);
@@ -114,7 +125,7 @@ export async function resumeFromDisk(
       };
     }
   } finally {
-    resuming = false;
+    resuming--;
   }
   log(`hold record for ${key} is stale — dropped, the place is taken anew`);
   releaseStanding("возврат с диска не удался", true);
@@ -182,7 +193,7 @@ export function onListenerAttached(fn: () => void): void {
   attachHooks.push(fn);
 }
 
-let resuming = false; // возврат с диска в полёте: мёртвый токен — протухшая запись, не тревога
+let resuming = 0; // возвратов с диска в полёте: мёртвый токен при них — протухшая запись, не тревога
 
 /** Кадр hello — доказательство держания; из кольца, если уже пришёл, иначе ожидание под пределом. */
 export function awaitHello(timeoutMs: number): Promise<Frame | null> {
@@ -424,7 +435,7 @@ function openHolder(url: string, key: string): void {
         state.standingSession = null;
         return;
       }
-      if (resuming) {
+      if (resuming > 0) {
         // Протухшая запись держания: место у платформы уже мертво — не тревога,
         // а тихий откат; iskron_stand займёт место заново connect-ом.
         log(`hold record for ${key} is dead at the platform (close ${code}) — dropped`);

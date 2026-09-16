@@ -15,6 +15,7 @@ import { absorbChannelReply } from "./absorb.ts";
 import { CFG } from "./config.ts";
 import {
   awaitHello,
+  deadPredecessor,
   hasStatusAddressFor,
   holdsStanding,
   isParked,
@@ -283,18 +284,14 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
     !!mine && /(^|·)\s*слушает/.test(mine.rest) && !holdsStanding(realm, karta, name);
   // Мост поднят заново под местом, которое держал прежний мост этого каталога
   // (перезапуск плагина, /mcp reconnect): место возвращается с диска, не
-  // ротируется — адрес, хуки и очередь те же (#5061).
-  // Доска не читает место слушающим, а прежний мост этого каталога его держал:
-  // место возвращается с диска, не ротируется (#5061). Доска ещё читает
+  // ротируется — адрес, хуки и очередь те же (#5061). Доска ещё читает
   // «слушает» (окно платформы после смерти прежнего моста) — только register,
-  // как велит канон; возврат — следующим вызовом.
-  const resumed =
-    a.take !== true &&
-    !listensElsewhere &&
-    !holdsStanding(realm, karta, name) &&
-    !isParked(realm, karta, name)
-      ? await resumeFromDisk(realm, karta, name)
-      : null;
+  // как велит канон, и ответ говорит, что слушающий — мёртвый предшественник.
+  const fresh =
+    a.take !== true && !holdsStanding(realm, karta, name) && !isParked(realm, karta, name);
+  const predecessorDead = fresh && listensElsewhere && (await deadPredecessor(realm, karta, name));
+  const resumed = fresh && !listensElsewhere ? await resumeFromDisk(realm, karta, name) : null;
+  const extra: string[] = []; // строки после шапки ответа
   // take=true — явный новый цикл входа: connect и тогда, когда сокет уже наш.
   if (resumed) {
     const r = await call("iskron_channel", { action: "register", realm, karta, name });
@@ -304,9 +301,10 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
     }
     heardHere = true;
     how = `${resumed.word}, register`;
-    if (resumed.status && typeof a.status !== "string") {
+    const newStatus = typeof a.status === "string" && a.status.trim();
+    if (resumed.status && !newStatus) {
       const st = await publishStatus(resumed.status);
-      lines.push(
+      extra.push(
         st.ok
           ? `Занятость возвращена с местом: ${resumed.status}`
           : `Занятость с места не возвращена: ${short(st.body)}`,
@@ -332,7 +330,9 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
     how = listensElsewhere
       ? wasEvicted(realm, karta, name)
         ? "место отняли у этого моста (закрытие 4000) — слушает другой держатель; только register: привязка цела, слух — у него; вернуть слух сюда — повтори с take=true, сознавая, что снимешь слух с того держателя"
-        : "место уже слушает другой держатель (обычно прежняя сессия этой рабочей копии; при явном name — возможно, другая машина или человек) — только register: атрибуция есть, слух — у него; нужен слух здесь — повтори с take=true, сознавая, что снимешь слух с того держателя, или возьми другое имя (name); если это прежний мост этого каталога, только что умерший, — доска отпустит его через минуту, и тот же вызов вернёт место с диска"
+        : predecessorDead
+          ? "слушающим доска ещё читает прежний мост этого каталога, а он мёртв (его сокет не отвечает, запись держания цела) — только register; доска отпустит его в течение минуты, и тот же вызов вернёт место с диска тем же адресом — повтори"
+          : "место уже слушает другой держатель (обычно прежняя сессия этой рабочей копии; при явном name — возможно, другая машина или человек) — только register: атрибуция есть, слух — у него; нужен слух здесь — повтори с take=true, сознавая, что снимешь слух с того держателя, или возьми другое имя (name)"
       : "сокет уже держит этот мост — register";
   } else {
     const args: Record<string, unknown> = { action: "connect", realm, karta, name };
@@ -362,6 +362,7 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   lines.push(
     `[iskron_stand] стояние ${mine?.address ?? name} — роль #${karta}, граф ${realm}: ${how}.`,
     ...nameNotes.map((n) => `[iskron_stand] ${n}`),
+    ...extra,
   );
   const block = heardHere ? listenBlock() : null;
   if (block) lines.push(block);

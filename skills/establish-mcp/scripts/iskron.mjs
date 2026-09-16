@@ -1966,7 +1966,7 @@ function readHoldRecord(key) {
   try {
     const r = JSON.parse(readFileSync7(holdFilePathFor(key), "utf8"));
     if (!r || typeof r.url !== "string" || !r.realm || r.karta == null) return null;
-    if (typeof r.at === "number" && Date.now() - r.at > HOLD_RECORD_MAX_AGE_MS) {
+    if (typeof r.at !== "number" || Date.now() - r.at > HOLD_RECORD_MAX_AGE_MS) {
       dropHoldRecord(key);
       return null;
     }
@@ -2120,6 +2120,11 @@ function rememberStatus(text) {
     status: text || void 0
   });
 }
+async function deadPredecessor(realm, karta, name) {
+  const key = keyOf(realm, karta, name);
+  if (!readHoldRecord(key)) return false;
+  return !await localSocketAlive(socketPathFor(key));
+}
 async function resumeFromDisk(realm, karta, name) {
   const key = keyOf(realm, karta, name);
   const rec = readHoldRecord(key);
@@ -2127,7 +2132,7 @@ async function resumeFromDisk(realm, karta, name) {
   if (holder?.alive && currentKey === key) return null;
   if (await localSocketAlive(socketPathFor(key))) return null;
   state.standing = { realm, karta, name };
-  resuming = true;
+  resuming++;
   try {
     holdStanding(rec.url, rec.statusUrl);
     const hello = await awaitHello(4e3);
@@ -2139,7 +2144,7 @@ async function resumeFromDisk(realm, karta, name) {
       };
     }
   } finally {
-    resuming = false;
+    resuming--;
   }
   log(`hold record for ${key} is stale — dropped, the place is taken anew`);
   releaseStanding("возврат с диска не удался", true);
@@ -2177,7 +2182,7 @@ var listenerIdleSince = () => holder?.alive && clients.size === 0 ? listenerIdle
 function onListenerAttached(fn) {
   attachHooks.push(fn);
 }
-var resuming = false;
+var resuming = 0;
 function awaitHello(timeoutMs) {
   const seen2 = ring.find((r) => r.frame?.type === "hello")?.frame ?? null;
   if (seen2) return Promise.resolve(seen2);
@@ -2385,7 +2390,7 @@ function openHolder(url, key) {
         state.standingSession = null;
         return;
       }
-      if (resuming) {
+      if (resuming > 0) {
         log(`hold record for ${key} is dead at the platform (close ${code}) — dropped`);
         releaseStanding("возврат с диска не удался", true);
         return;
@@ -2570,6 +2575,7 @@ async function leaveStanding(reason) {
   if (!parked2) return "мост места не держит — уходить неоткуда";
   keptStatus = publishedStatus();
   const st = await publishStatus("");
+  if (st.ok && keptStatus) rememberStatus(keptStatus);
   const line = st.ok ? "занятость снята" : `занятость не снята (${st.body})`;
   log(`left the standing: ${reason}; ${line}`);
   return `ушёл с места ${parked2}: сокет закрыт, ${line}; адрес, очередь и хуки целы — почта копится и придёт при возвращении (сторож или iskron_stand)`;
@@ -2993,7 +2999,10 @@ async function runStand(msg) {
   let how;
   let heardHere;
   const listensElsewhere = !!mine && /(^|·)\s*слушает/.test(mine.rest) && !holdsStanding(realm, karta, name);
-  const resumed = a.take !== true && !listensElsewhere && !holdsStanding(realm, karta, name) && !isParked(realm, karta, name) ? await resumeFromDisk(realm, karta, name) : null;
+  const fresh = a.take !== true && !holdsStanding(realm, karta, name) && !isParked(realm, karta, name);
+  const predecessorDead = fresh && listensElsewhere && await deadPredecessor(realm, karta, name);
+  const resumed = fresh && !listensElsewhere ? await resumeFromDisk(realm, karta, name) : null;
+  const extra = [];
   if (resumed) {
     const r = await call("iskron_channel", { action: "register", realm, karta, name });
     if (r.isError) {
@@ -3002,9 +3011,10 @@ async function runStand(msg) {
     }
     heardHere = true;
     how = `${resumed.word}, register`;
-    if (resumed.status && typeof a.status !== "string") {
+    const newStatus = typeof a.status === "string" && a.status.trim();
+    if (resumed.status && !newStatus) {
       const st = await publishStatus(resumed.status);
-      lines.push(
+      extra.push(
         st.ok ? `Занятость возвращена с местом: ${resumed.status}` : `Занятость с места не возвращена: ${short(st.body)}`
       );
     }
@@ -3023,7 +3033,7 @@ async function runStand(msg) {
       return done(true);
     }
     heardHere = !listensElsewhere;
-    how = listensElsewhere ? wasEvicted(realm, karta, name) ? "место отняли у этого моста (закрытие 4000) — слушает другой держатель; только register: привязка цела, слух — у него; вернуть слух сюда — повтори с take=true, сознавая, что снимешь слух с того держателя" : "место уже слушает другой держатель (обычно прежняя сессия этой рабочей копии; при явном name — возможно, другая машина или человек) — только register: атрибуция есть, слух — у него; нужен слух здесь — повтори с take=true, сознавая, что снимешь слух с того держателя, или возьми другое имя (name); если это прежний мост этого каталога, только что умерший, — доска отпустит его через минуту, и тот же вызов вернёт место с диска" : "сокет уже держит этот мост — register";
+    how = listensElsewhere ? wasEvicted(realm, karta, name) ? "место отняли у этого моста (закрытие 4000) — слушает другой держатель; только register: привязка цела, слух — у него; вернуть слух сюда — повтори с take=true, сознавая, что снимешь слух с того держателя" : predecessorDead ? "слушающим доска ещё читает прежний мост этого каталога, а он мёртв (его сокет не отвечает, запись держания цела) — только register; доска отпустит его в течение минуты, и тот же вызов вернёт место с диска тем же адресом — повтори" : "место уже слушает другой держатель (обычно прежняя сессия этой рабочей копии; при явном name — возможно, другая машина или человек) — только register: атрибуция есть, слух — у него; нужен слух здесь — повтори с take=true, сознавая, что снимешь слух с того держателя, или возьми другое имя (name)" : "сокет уже держит этот мост — register";
   } else {
     const args = { action: "connect", realm, karta, name };
     if (typeof a.mute_siblings === "boolean") args.mute_siblings = a.mute_siblings;
@@ -3045,7 +3055,8 @@ async function runStand(msg) {
   }
   lines.push(
     `[iskron_stand] стояние ${mine?.address ?? name} — роль #${karta}, граф ${realm}: ${how}.`,
-    ...nameNotes.map((n) => `[iskron_stand] ${n}`)
+    ...nameNotes.map((n) => `[iskron_stand] ${n}`),
+    ...extra
   );
   const block = heardHere ? listenBlock() : null;
   if (block) lines.push(block);

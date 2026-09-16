@@ -20,6 +20,7 @@ import {
   listenerIdleSince,
   onListenerAttached,
   parkStanding,
+  rememberStatus,
   resumeStanding,
 } from "./hold.ts";
 import { publishedStatus, publishStatus } from "./status.ts";
@@ -46,6 +47,9 @@ export async function leaveStanding(reason: string): Promise<string> {
   if (!parked) return "мост места не держит — уходить неоткуда";
   keptStatus = publishedStatus();
   const st = await publishStatus("");
+  // Снятая занятость остаётся в записи держания: мост, поднятый заново над
+  // оставленным местом, вернёт её вместе с местом (канон п. 3).
+  if (st.ok && keptStatus) rememberStatus(keptStatus);
   const line = st.ok ? "занятость снята" : `занятость не снята (${st.body})`;
   log(`left the standing: ${reason}; ${line}`);
   return `ушёл с места ${parked}: сокет закрыт, ${line}; адрес, очередь и хуки целы — почта копится и придёт при возвращении (сторож или iskron_stand)`;

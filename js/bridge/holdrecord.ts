@@ -45,7 +45,8 @@ export function readHoldRecord(key: string): HoldRecord | null {
   try {
     const r = JSON.parse(readFileSync(holdFilePathFor(key), "utf8")) as HoldRecord;
     if (!r || typeof r.url !== "string" || !r.realm || r.karta == null) return null;
-    if (typeof r.at === "number" && Date.now() - r.at > HOLD_RECORD_MAX_AGE_MS) {
+    // Запись без метки времени — не свежая, а неведомая: как и уборка, считаем просроченной.
+    if (typeof r.at !== "number" || Date.now() - r.at > HOLD_RECORD_MAX_AGE_MS) {
       dropHoldRecord(key);
       return null;
     }

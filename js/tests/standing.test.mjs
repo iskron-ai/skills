@@ -902,7 +902,7 @@ test("a bridge restarted under a held place resumes it from disk: same address, 
     arguments: { realm: "nks-dev", karta: 931, name: "proba" },
   });
   const saidEarly = (early.result?.content ?? []).map((c) => c.text ?? "").join("\n");
-  assert.match(saidEarly, /слушает другой держатель/, saidEarly);
+  assert.match(saidEarly, /прежний мост этого каталога, а он мёртв/, saidEarly);
   assert.match(saidEarly, /вернёт место с диска/, "the answer names the way back");
   assert.equal(fresh().length, 0, "no socket is opened while the board reads «слушает»");
   assert.equal(fake.state.counts.connect, 1);
