@@ -362,6 +362,24 @@ test("iskron_stand after an eviction: register only, the busy line still publish
   assert.match(textOf(taken), /hello получен/, "a fresh hello after the explicit take");
 });
 
+// The busy line is the standing's word — of THIS standing: a call for another
+// name must not post onto the address the bridge holds for the first one.
+test("iskron_stand with status for another standing does not post onto the held one's address", async (t) => {
+  const { fake, bridge } = await ready(t);
+  await fake.control({ places: [{ karta: "931", name: "chuzhoe", listening: true }] });
+  const mine = await bridge.call("tools/call", {
+    name: "iskron_stand",
+    arguments: { realm: "nks-dev", karta: 931, name: "svoe", status: "своё дело" },
+  });
+  assert.match(textOf(mine), /^Занятость: своё дело$/m, textOf(mine));
+  const other = await bridge.call("tools/call", {
+    name: "iskron_stand",
+    arguments: { realm: "nks-dev", karta: 931, name: "chuzhoe", status: "чужое дело" },
+  });
+  assert.match(textOf(other), /Занятость не публикуется/, textOf(other));
+  assert.equal(fake.state.status, "своё дело", "the held standing's line must stay untouched");
+});
+
 test("iskron_stand refuses control actions on a board it does not recognize", async (t) => {
   const { fake, bridge } = await ready(t);
   await fake.control({ boardText: "Something entirely different came back from the server." });

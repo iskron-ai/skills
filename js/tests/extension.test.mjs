@@ -353,6 +353,26 @@ test("a dead-token event complains loudly; 4001 alone offers mint", async () => 
   }
 });
 
+// A burst of stale frames is one message into the turn, bodies included.
+test("a stale burst enters the turn once, with its bodies", async () => {
+  const { events, env } = eventsEnv("stale");
+  const rec = await session(env);
+  try {
+    push(events, {
+      kind: "stale",
+      frames: [{ id: "s1" }, { id: "s2" }],
+      text: "Лежалых кадров: 2\n\nпервое\n\nвторое",
+    });
+    await delay(250);
+    assert.equal(rec.messages.length, 1, "one burst, one message");
+    assert.equal(rec.messages[0].opts.triggerTurn, true);
+    assert.match(rec.messages[0].msg.content, /Лежалых кадров: 2/);
+    assert.match(rec.messages[0].msg.content, /второе/);
+  } finally {
+    await rec.stop();
+  }
+});
+
 // An eviction ends the holding but not the standing: the doer is told in the
 // turn what happened and what brings the hearing back (#5033).
 test("an eviction is loud and names iskron_stand with take=true", async () => {

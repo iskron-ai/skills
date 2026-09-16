@@ -1462,6 +1462,10 @@ function holdSocket(o) {
     const sock = new WebSocket(o.url);
     ws = sock;
     let gone = false;
+    let opened = false;
+    sock.addEventListener("open", () => {
+      opened = true;
+    });
     sock.addEventListener("message", (e) => {
       if (stopped || ws !== sock) return;
       const raw = typeof e.data === "string" ? e.data : "[двоичный кадр]";
@@ -1479,18 +1483,20 @@ function holdSocket(o) {
       () => setTimeout(() => void dropped(1006), ERROR_GUESS_DELAY_MS)
     );
     sock.addEventListener("close", (e) => void dropped(e.code));
+    function yieldTo(cb, code) {
+      if (dead) return;
+      dead = true;
+      stopped = true;
+      if (retry) clearTimeout(retry);
+      cb(code);
+    }
     async function dropped(code) {
       if (stopped || ws !== sock) return;
+      if (DEAD_TOKEN_CODES.includes(code)) return yieldTo(o.onDeadToken, code);
       const now2 = Date.now();
       const afterEviction = lastEviction !== null && now2 - lastEviction < EVICTION_WINDOW_MS;
-      if (afterEviction && (code === EVICTED_CODE || now2 - startedAt < FAST_DROP_MS)) {
-        if (dead) return;
-        dead = true;
-        stopped = true;
-        if (retry) clearTimeout(retry);
-        (o.onEvicted ?? o.onDeadToken)(EVICTED_CODE);
-        return;
-      }
+      if (afterEviction && code === EVICTED_CODE)
+        return yieldTo(o.onEvicted ?? o.onDeadToken, code);
       if (code === EVICTED_CODE) {
         lastEviction = now2;
         if (gone) return;
@@ -1499,15 +1505,15 @@ function holdSocket(o) {
         retry = setTimeout(open, 2e3);
         return;
       }
-      if (DEAD_TOKEN_CODES.includes(code)) {
-        if (dead) return;
-        dead = true;
-        stopped = true;
-        if (retry) clearTimeout(retry);
-        o.onDeadToken(code);
+      if (gone) return;
+      if (afterEviction && !opened && code !== ROLLOUT_CODE && now2 - startedAt < FAST_DROP_MS) {
+        gone = true;
+        const up = await serviceUp(o.url);
+        if (stopped || ws !== sock) return;
+        if (up) return yieldTo(o.onEvicted ?? o.onDeadToken, EVICTED_CODE);
+        retry = setTimeout(open, 2e3);
         return;
       }
-      if (gone) return;
       gone = true;
       const fast = Date.now() - startedAt < FAST_DROP_MS;
       fastDrops = fast ? fastDrops + 1 : 0;
@@ -1546,6 +1552,27 @@ function holdSocket(o) {
       return !stopped && !!ws && (ws.readyState === 0 || ws.readyState === 1);
     }
   };
+}
+
+// js/shared/frame-text.ts
+var ENVELOPE_KEYS = ["id", "received_at", "stale", "content_type", "body_chars", "body_read"];
+function frameToText(frame2, raw) {
+  if (!frame2) return `Кадр канала Искрона:
+${raw}`;
+  const p = frame2.provenance ?? {};
+  const origin = frame2.origin ?? classifyOrigin(frame2);
+  const standing = p.from_standing ? ` — стояние ${p.from_standing}` : "";
+  const role = p.from_karta_seq != null ? `роли #${p.from_karta_seq}` : "роли неизвестной";
+  const who = origin === "platform" ? "от ПЛАТФОРМЫ — побудка, не человек и не делатель" : origin === "human" ? `от ЧЕЛОВЕКА${p.user ? ` @${p.user}` : ""} (${role})${standing}` : origin === "sibling" ? `от БРАТА по твоей роли (#${p.from_karta_seq})${standing} — другое стояние той же роли` : `от делателя ${role}${standing}`;
+  const lines = [`Кадр канала Искрона ${who}`];
+  if (frame2.provenance) lines.push(`provenance: ${JSON.stringify(frame2.provenance)}`);
+  const envelope = {};
+  for (const k of ENVELOPE_KEYS) if (frame2[k] !== void 0) envelope[k] = frame2[k];
+  if (Object.keys(envelope).length) lines.push(`frame: ${JSON.stringify(envelope)}`);
+  const body = typeof frame2.body === "string" ? frame2.body : raw;
+  return `${lines.join("\n")}
+
+${body}`;
 }
 
 // js/shared/seen.ts
@@ -1953,11 +1980,13 @@ var currentKey = null;
 var currentUrl = null;
 var currentStatusUrl = null;
 var evictedKey = null;
+var evictedEvent = null;
 var clients = /* @__PURE__ */ new Set();
 var ring = [];
 var helloWaiters = /* @__PURE__ */ new Set();
 var seen = /* @__PURE__ */ new Set();
-var staleCount = 0;
+var staleBurst = [];
+var STALE_BURST_KEEP = 20;
 var staleTimer = null;
 function isOwn(realm, karta, name) {
   const s = state.standing;
@@ -1969,7 +1998,7 @@ function holdsStanding(realm, karta, name) {
 function wasEvicted(realm, karta, name) {
   return !!evictedKey && evictedKey === currentKey && isOwn(realm, karta, name);
 }
-var hasStatusAddress = () => !!currentStatusUrl && !!currentKey;
+var hasStatusAddressFor = (realm, karta, name) => !!currentStatusUrl && !!currentKey && isOwn(realm, karta, name);
 function awaitHello(timeoutMs) {
   const seen2 = ring.find((r) => r.frame?.type === "hello")?.frame ?? null;
   if (seen2) return Promise.resolve(seen2);
@@ -2030,6 +2059,7 @@ function openLocalServer(key) {
     for (const { raw, frame: frame2 } of ring) {
       sock.write(JSON.stringify({ kind: "frame", raw, frame: frame2 }) + "\n");
     }
+    if (evictedEvent && evictedKey === key) sock.write(JSON.stringify(evictedEvent) + "\n");
   });
   srv.on("error", (e) => {
     const text = `ДЕЛАТЕЛЬ: локальный сокет стояния не поднялся (${e.message}) — сторожу не к чему цепляться`;
@@ -2086,8 +2116,9 @@ function releaseStanding(reason) {
   currentUrl = null;
   currentStatusUrl = null;
   evictedKey = null;
+  evictedEvent = null;
   seen = /* @__PURE__ */ new Set();
-  staleCount = 0;
+  staleBurst.length = 0;
 }
 function holdStanding(url, statusUrl2) {
   const key = keyFor();
@@ -2102,7 +2133,7 @@ function holdStanding(url, statusUrl2) {
     url,
     onFrame: (raw, frame2) => {
       void completeFrame(stampOrigin(frame2)).then((full) => {
-        if (full?.type === "message" && full.stale === true) return noteStale();
+        if (full?.type === "message" && full.stale === true) return noteStale(full);
         const text = full === frame2 ? raw : JSON.stringify(full);
         ring.push({ raw: text, frame: full });
         if (ring.length > RING) ring.shift();
@@ -2120,6 +2151,7 @@ function holdStanding(url, statusUrl2) {
       log(text);
       evictedKey = key;
       const ev = { kind: "evicted", code, text };
+      evictedEvent = ev;
       broadcast(ev);
       notify("warning", ev);
     },
@@ -2145,16 +2177,22 @@ function holdStanding(url, statusUrl2) {
   });
   return key;
 }
-function noteStale() {
-  staleCount++;
+function noteStale(frame2) {
+  if (staleBurst.length < STALE_BURST_KEEP) staleBurst.push(frame2);
   if (staleTimer) return;
   staleTimer = setTimeout(() => {
     staleTimer = null;
-    const n = staleCount;
-    staleCount = 0;
+    const frames = staleBurst.splice(0);
+    const bodies = frames.map((f) => {
+      const t = frameToText(f, JSON.stringify(f));
+      return [...t].length > 800 ? [...t].slice(0, 800).join("") + "…" : t;
+    });
     const ev = {
-      kind: "note",
-      text: `лежалых кадров: ${n} — повтор службы после пересборки сессии, хода не стоят; что было — iskron_channel(action="history")`
+      kind: "stale",
+      frames,
+      text: `Лежалых кадров: ${frames.length} — принятое, пока место не слушали, или повтор службы после пересборки сессии; хода не стоят, но прочти; полностью — iskron_channel(action="history").
+
+` + bodies.join("\n\n")
     };
     broadcast(ev);
     notify("info", ev);
@@ -2750,7 +2788,7 @@ async function runStand(msg) {
       }
     }
   }
-  if (typeof a.status === "string" && a.status.trim() && !hasStatusAddress()) {
+  if (typeof a.status === "string" && a.status.trim() && !hasStatusAddressFor(realm, karta, name)) {
     lines.push(
       "Занятость не публикуется: статусного адреса этого стояния у моста нет — он у держателя сокета; take=true берёт слух и адрес сюда."
     );
@@ -3174,27 +3212,6 @@ function openDoor(socketPath, onMessage, onClose) {
   });
 }
 
-// js/shared/frame-text.ts
-var ENVELOPE_KEYS = ["id", "received_at", "stale", "content_type", "body_chars", "body_read"];
-function frameToText(frame2, raw) {
-  if (!frame2) return `Кадр канала Искрона:
-${raw}`;
-  const p = frame2.provenance ?? {};
-  const origin = frame2.origin ?? classifyOrigin(frame2);
-  const standing = p.from_standing ? ` — стояние ${p.from_standing}` : "";
-  const role = p.from_karta_seq != null ? `роли #${p.from_karta_seq}` : "роли неизвестной";
-  const who = origin === "platform" ? "от ПЛАТФОРМЫ — побудка, не человек и не делатель" : origin === "human" ? `от ЧЕЛОВЕКА${p.user ? ` @${p.user}` : ""} (${role})${standing}` : origin === "sibling" ? `от БРАТА по твоей роли (#${p.from_karta_seq})${standing} — другое стояние той же роли` : `от делателя ${role}${standing}`;
-  const lines = [`Кадр канала Искрона ${who}`];
-  if (frame2.provenance) lines.push(`provenance: ${JSON.stringify(frame2.provenance)}`);
-  const envelope = {};
-  for (const k of ENVELOPE_KEYS) if (frame2[k] !== void 0) envelope[k] = frame2[k];
-  if (Object.keys(envelope).length) lines.push(`frame: ${JSON.stringify(envelope)}`);
-  const body = typeof frame2.body === "string" ? frame2.body : raw;
-  return `${lines.join("\n")}
-
-${body}`;
-}
-
 // js/watchdog/client.ts
 import { existsSync as existsSync3, readdirSync as readdirSync3, readFileSync as readFileSync9 } from "node:fs";
 import { connect as connect2 } from "node:net";
@@ -3225,7 +3242,7 @@ function resolveStanding(argv2) {
   if (held.length === 1) return { key: held[0], path: pathFor(held[0]), authDir };
   if (held.length === 0) {
     return {
-      error: 'мост не держит ни одного стояния — сперва iskron_channel(action="connect") (и register): ответ connect назовёт команду слушания'
+      error: "мост не держит ни одного стояния — назовись одним вызовом iskron_stand(realm, karta, model): его ответ назовёт команду слушания"
     };
   }
   return {
@@ -3363,6 +3380,9 @@ function runWatchdogCodex(argv2) {
           void deliver2(frameToText(ev.frame, ev.raw ?? ""));
           break;
         }
+        case "stale":
+          void deliver2(ev.text ?? "Искрон: лежалые кадры");
+          break;
         case "dead":
         case "evicted":
           note(ev.text ?? "ДЕЛАТЕЛЬ: стояние потеряно");
@@ -3452,6 +3472,9 @@ function runWatchdog(argv2) {
         case "note":
           log2(ev.text ?? "");
           break;
+        case "stale":
+          for (const line of wrapLines(ev.text ?? "")) log2(line);
+          break;
         case "dead":
         case "evicted":
           loudExit(ev.text ?? "ДЕЛАТЕЛЬ: стояние потеряно", 1);
@@ -3497,15 +3520,16 @@ function runWatchdogExit(argv2) {
           if (type !== "message") return note2(`кадр ${type ?? "не разобран"} — не повод будить`);
           const id = frameId(ev);
           if (seen2.has(id)) return note2(`кадр ${id} уже отдан прежним взводом — не повод будить`);
-          if (ev.frame?.stale === true) {
-            noteSeen(seenPath, id, seen2);
-            return note2(`кадр ${id} лежалый (stale) — повтор службы, не повод будить`);
-          }
           wake(ev.raw ?? "");
           noteSeen(seenPath, id, seen2);
           process.exit(0);
           break;
         }
+        case "stale":
+          for (const f of ev.frames ?? [])
+            if (typeof f.id === "string" && f.id) noteSeen(seenPath, f.id, seen2);
+          note2(ev.text ?? "лежалые кадры");
+          break;
         case "dead":
         case "alive":
         case "evicted":

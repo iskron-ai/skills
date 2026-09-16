@@ -551,6 +551,15 @@ test("an eviction reopens once; the second yields aloud, and the busy line still
   const r = await wd.done;
   assert.notEqual(r.exit, 0, "the Monitor watchdog leaves loudly on an eviction");
   assert.match(wd.out, /место отняли/);
+  // A watchdog re-armed after that must not sit silent on a place the bridge no longer hears.
+  const again = runClient("watchdog", dir, key, 6000);
+  const r2 = await again.done;
+  assert.notEqual(
+    r2.exit,
+    0,
+    `a re-armed watchdog must leave loudly, not listen to nothing: ${again.out}`,
+  );
+  assert.match(again.out, /место отняли/);
   await new Promise((r) => setTimeout(r, 2500));
   assert.equal(fresh().length, 0, "after yielding the bridge must not keep reopening");
   assert.ok(
@@ -620,19 +629,19 @@ test("stale frames wake nobody: the exit watchdog waits past them, the harness g
   }
   await new Promise((r) => setTimeout(r, 2000));
   assert.equal(wd.proc.exitCode, null, `the exit watchdog left on a stale frame: ${wd.out}`);
-  assert.ok(!wd.err.includes("лежалый 1"), "a stale frame never reaches a local client at all");
   await waitFor(
-    () => wd.err.includes("лежалых кадров: 3"),
-    "the burst note to reach the client too",
+    () => wd.err.includes("Лежалых кадров: 3"),
+    "the burst to reach the client as one event",
   );
+  assert.ok(wd.err.includes("лежалый 2"), "the bodies ride in the burst — stale mail is not lost");
   assert.ok(
     !bridge.notifications.some((n) => /лежалый/.test(n.params?.data?.frame?.body ?? "")),
     "a stale frame must not ride to the harness as a prompt of its own",
   );
-  await waitFor(
-    () => bridge.notifications.some((n) => /лежалых кадров: 3/.test(n.params?.data?.text ?? "")),
-    "one note for the burst",
-  );
+  const burst = bridge.notifications.find((n) => n.params?.data?.kind === "stale");
+  assert.ok(burst, "one stale event for the burst");
+  assert.equal(burst.params.data.frames.length, 3);
+  assert.match(burst.params.data.text, /лежалый 3/);
   await fake.control({ ws_send: JSON.stringify({ id: "live-1", type: "message", body: "живое" }) });
   const r = await wd.done;
   assert.equal(r.exit, 0, `a live frame after the stale ones must wake: ${wd.err}`);
@@ -690,10 +699,10 @@ test("tools/list carries the writing-moment line on write tools only", async (t)
   );
 });
 
-test("watchdog with nothing held tells the doer to connect first", async () => {
+test("watchdog with nothing held tells the doer to name itself with iskron_stand", async () => {
   const dir = mkdtempSync(join(tmpdir(), "iskron-empty-"));
   const wd = runClient("watchdog", dir, undefined, 5000);
   const r = await wd.done;
   assert.equal(r.exit, 2);
-  assert.match(wd.err, /connect/);
+  assert.match(wd.err, /iskron_stand/);
 });

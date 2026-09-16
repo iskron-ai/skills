@@ -86,6 +86,9 @@ export function runWatchdog(argv: string[]): void {
         case "note":
           log(ev.text ?? "");
           break;
+        case "stale":
+          for (const line of wrapLines(ev.text ?? "")) log(line); // одна пачка — одно событие
+          break;
         case "dead":
         case "evicted":
           loudExit(ev.text ?? "ДЕЛАТЕЛЬ: стояние потеряно", 1);

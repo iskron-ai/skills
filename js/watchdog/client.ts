@@ -56,8 +56,8 @@ export function resolveStanding(argv: string[]): Resolved | { error: string } {
   if (held.length === 0) {
     return {
       error:
-        'мост не держит ни одного стояния — сперва iskron_channel(action="connect") (и register): ' +
-        "ответ connect назовёт команду слушания",
+        "мост не держит ни одного стояния — назовись одним вызовом iskron_stand(realm, karta, model): " +
+        "его ответ назовёт команду слушания",
     };
   }
   return {

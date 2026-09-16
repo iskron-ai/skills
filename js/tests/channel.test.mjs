@@ -102,9 +102,67 @@ test("a 4000 close reopens once; a second one inside the window yields to onEvic
 });
 
 // The other holder took the place with connect: the address is rotated, and
-// the one reopen after 4000 fails fast (a 404 on the upgrade, seen as an
-// error) — that fast drop is the same verdict as a second 4000.
-test("a fast drop of the reopen after a 4000 is an eviction too: the address was rotated", async () => {
+// the one reopen after 4000 never opens (a 404 on the upgrade). With the
+// service answering, that is the same verdict as a second 4000; with the
+// service silent it is a rollout or the network, and the place is kept.
+test("a reopen after a 4000 that never opens while the service answers is an eviction: the address was rotated", async () => {
+  sockets.length = 0;
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({ ok: true, json: async () => ({ version: "probe" }) });
+  try {
+    const dead = [];
+    const evicted = [];
+    holdSocket({
+      url: "ws://127.0.0.1:9/channel/ws/tok",
+      onFrame: () => {},
+      onDeadToken: (c) => dead.push(c),
+      onEvicted: (c) => evicted.push(c),
+      onServiceAlive: () => assert.fail("a rotated address is not flapping"),
+    });
+    sockets[0].fire("close", { code: EVICTED_CODE });
+    await delay(2200);
+    assert.equal(sockets.length, 2, "the first eviction reopens once");
+    sockets[1].fire("error"); // the upgrade is refused: the guess lands as 1006 after 500 ms
+    await delay(3000);
+    assert.equal(sockets.length, 2, "a rotated address must not be reopened again");
+    assert.deepEqual(evicted, [EVICTED_CODE]);
+    assert.deepEqual(dead, []);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+test("a reopen after a 4000 that never opens while the service is silent is a rollout, not an eviction", async () => {
+  sockets.length = 0;
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({ ok: false, json: async () => ({}) });
+  try {
+    const evicted = [];
+    const holder = holdSocket({
+      url: "ws://127.0.0.1:9/channel/ws/tok",
+      onFrame: () => {},
+      onDeadToken: () => assert.fail("no dead token here"),
+      onEvicted: (c) => evicted.push(c),
+      onServiceAlive: () => {},
+    });
+    sockets[0].fire("close", { code: EVICTED_CODE });
+    await delay(2200);
+    sockets[1].fire("error");
+    await delay(3000);
+    assert.equal(
+      sockets.length,
+      3,
+      "a silent service is a rollout or the network: the holder reopens",
+    );
+    assert.deepEqual(evicted, []);
+    assert.equal(holder.alive, true);
+    holder.close();
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+test("a dead-token close right after the reopen from a 4000 is still a dead token, not an eviction", async () => {
   sockets.length = 0;
   const dead = [];
   const evicted = [];
@@ -113,16 +171,14 @@ test("a fast drop of the reopen after a 4000 is an eviction too: the address was
     onFrame: () => {},
     onDeadToken: (c) => dead.push(c),
     onEvicted: (c) => evicted.push(c),
-    onServiceAlive: () => assert.fail("a rotated address is not flapping"),
+    onServiceAlive: () => {},
   });
   sockets[0].fire("close", { code: EVICTED_CODE });
   await delay(2200);
-  assert.equal(sockets.length, 2, "the first eviction reopens once");
-  sockets[1].fire("error"); // the upgrade is refused: the guess lands as 1006 after 500 ms
-  await delay(3000);
-  assert.equal(sockets.length, 2, "a rotated address must not be reopened again");
-  assert.deepEqual(evicted, [EVICTED_CODE]);
-  assert.deepEqual(dead, []);
+  sockets[1].fire("close", { code: 4001 });
+  await delay(300);
+  assert.deepEqual(dead, [4001], "4001 inside the eviction window is revoked, and says so");
+  assert.deepEqual(evicted, []);
 });
 
 test("three fast drops against a live service: the doer is told once, and the holder keeps the place, reopening slower", async () => {

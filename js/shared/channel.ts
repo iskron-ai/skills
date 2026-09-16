@@ -157,6 +157,10 @@ export function holdSocket(o: HoldOptions): Holder {
     const sock = new WebSocket(o.url);
     ws = sock;
     let gone = false; // обрыв разбирается один раз, чем бы он ни пришёл
+    let opened = false; // апгрейд прошёл: повёрнутый адрес не открывается вовсе
+    sock.addEventListener("open", () => {
+      opened = true;
+    });
 
     sock.addEventListener("message", (e: MessageEvent) => {
       if (stopped || ws !== sock) return;
@@ -180,20 +184,24 @@ export function holdSocket(o: HoldOptions): Holder {
     );
     sock.addEventListener("close", (e) => void dropped((e as unknown as { code: number }).code));
 
+    function yieldTo(cb: (code: number) => void, code: number): void {
+      if (dead) return;
+      dead = true;
+      stopped = true;
+      if (retry) clearTimeout(retry);
+      cb(code);
+    }
+
     async function dropped(code: number): Promise<void> {
       if (stopped || ws !== sock) return;
+      // Мёртвый токен громче любого предположения об обрыве и старше вытеснения:
+      // он проходит ограду `gone` всегда и снимает уже назначенное переоткрытие.
+      if (DEAD_TOKEN_CODES.includes(code)) return yieldTo(o.onDeadToken, code);
       const now = Date.now();
       const afterEviction = lastEviction !== null && now - lastEviction < EVICTION_WINDOW_MS;
-      // Вытеснение проходит ограду `gone` так же, как мёртвый токен: настоящий
-      // код приходит close-ом и может опоздать за догадкой 1006.
-      if (afterEviction && (code === EVICTED_CODE || now - startedAt < FAST_DROP_MS)) {
-        if (dead) return;
-        dead = true;
-        stopped = true;
-        if (retry) clearTimeout(retry);
-        (o.onEvicted ?? o.onDeadToken)(EVICTED_CODE);
-        return;
-      }
+      // Повторное вытеснение проходит ограду `gone` так же, как мёртвый токен.
+      if (afterEviction && code === EVICTED_CODE)
+        return yieldTo(o.onEvicted ?? o.onDeadToken, code);
       if (code === EVICTED_CODE) {
         lastEviction = now;
         if (gone) return; // переоткрытие уже назначено догадкой
@@ -202,17 +210,18 @@ export function holdSocket(o: HoldOptions): Holder {
         retry = setTimeout(open, 2000);
         return;
       }
-      // Мёртвый токен громче любого предположения об обрыве: он проходит ограду
-      // `gone` всегда и снимает уже назначенное переоткрытие.
-      if (DEAD_TOKEN_CODES.includes(code)) {
-        if (dead) return;
-        dead = true;
-        stopped = true;
-        if (retry) clearTimeout(retry);
-        o.onDeadToken(code);
+      if (gone) return;
+      // Переоткрытие после вытеснения не открылось вовсе: адрес повернул чужой
+      // connect (404 на апгрейде) — или это сеть. Различает служба: жива —
+      // адрес повернули, уступаем; молчит — выкатка или сеть, держим как обычно.
+      if (afterEviction && !opened && code !== ROLLOUT_CODE && now - startedAt < FAST_DROP_MS) {
+        gone = true;
+        const up = await serviceUp(o.url);
+        if (stopped || ws !== sock) return;
+        if (up) return yieldTo(o.onEvicted ?? o.onDeadToken, EVICTED_CODE);
+        retry = setTimeout(open, 2000);
         return;
       }
-      if (gone) return;
       gone = true;
       const fast = Date.now() - startedAt < FAST_DROP_MS;
       fastDrops = fast ? fastDrops + 1 : 0;

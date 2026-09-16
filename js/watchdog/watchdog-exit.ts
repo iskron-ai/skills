@@ -20,8 +20,8 @@ import { attach, resolveStanding } from "./client.ts";
 // What "already delivered" means is a fact about THIS standing, kept next to
 // its socket: the ids this mode has left on. A frame the ring replays that is
 // not in it — one that arrived while nobody was attached — still wakes.
-// A replay the SERVICE makes after a session rebuild comes under new ids with
-// `stale: true` (#4881): stale is not a wake either — noted and waited past.
+// Stale frames never arrive here one by one: the bridge gathers a burst into one
+// `stale` event (#4881) — noted as seen and waited past, bodies in the log.
 
 export function frameId(ev: ChannelEvent): string {
   const id = ev.frame?.id;
@@ -56,15 +56,17 @@ export function runWatchdogExit(argv: string[]): void {
           if (type !== "message") return note(`кадр ${type ?? "не разобран"} — не повод будить`);
           const id = frameId(ev);
           if (seen.has(id)) return note(`кадр ${id} уже отдан прежним взводом — не повод будить`);
-          if (ev.frame?.stale === true) {
-            noteSeen(seenPath, id, seen);
-            return note(`кадр ${id} лежалый (stale) — повтор службы, не повод будить`);
-          }
           wake(ev.raw ?? ""); // сперва отдать: запись до побудки при смерти между ними потеряла бы кадр насовсем
           noteSeen(seenPath, id, seen);
           process.exit(0); // конец процесса И ЕСТЬ доставка
           break;
         }
+        case "stale":
+          // Пачка лежалых: не повод будить, но и не потеря — тела в логе, id помечены.
+          for (const f of ev.frames ?? [])
+            if (typeof f.id === "string" && f.id) noteSeen(seenPath, f.id, seen);
+          note(ev.text ?? "лежалые кадры");
+          break;
         case "dead":
         case "alive":
         case "evicted":

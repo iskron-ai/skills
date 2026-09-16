@@ -15,7 +15,7 @@ import { CFG } from "./config.ts";
 import {
   absorbChannelReply,
   awaitHello,
-  hasStatusAddress,
+  hasStatusAddressFor,
   holdsStanding,
   listenBlock,
   publishStatus,
@@ -424,7 +424,7 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
 
   // 6. Занятость — от стояния, которое ведёт мост, не от живого сокета (#5033):
   // и при «только register», и после вытеснения, пока статусный адрес у моста.
-  if (typeof a.status === "string" && a.status.trim() && !hasStatusAddress()) {
+  if (typeof a.status === "string" && a.status.trim() && !hasStatusAddressFor(realm, karta, name)) {
     lines.push(
       "Занятость не публикуется: статусного адреса этого стояния у моста нет — он у держателя сокета; take=true берёт слух и адрес сюда.",
     );

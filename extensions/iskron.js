@@ -11,27 +11,6 @@ function classifyOrigin(frame, myKarta) {
   return "peer";
 }
 
-// js/shared/version.ts
-import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-var VERSION = "6.6.4";
-function buildOf(selfUrl) {
-  try {
-    const src = readFileSync(fileURLToPath(selfUrl));
-    return `v${VERSION}+${createHash("sha256").update(src).digest("hex").slice(0, 8)}`;
-  } catch {
-    return `v${VERSION}`;
-  }
-}
-function versionIn(text) {
-  const m = /^(?:const|let|var)\s+VERSION\s*=\s*"([^"]+)"/m.exec(text);
-  return m ? m[1] : null;
-}
-
-// js/bridge/build.ts
-var BUILD = buildOf(import.meta.url);
-
 // js/shared/frame-text.ts
 var ENVELOPE_KEYS = ["id", "received_at", "stale", "content_type", "body_chars", "body_read"];
 function frameToText(frame, raw) {
@@ -52,6 +31,27 @@ ${raw}`;
 
 ${body}`;
 }
+
+// js/shared/version.ts
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+var VERSION = "6.6.4";
+function buildOf(selfUrl) {
+  try {
+    const src = readFileSync(fileURLToPath(selfUrl));
+    return `v${VERSION}+${createHash("sha256").update(src).digest("hex").slice(0, 8)}`;
+  } catch {
+    return `v${VERSION}`;
+  }
+}
+function versionIn(text) {
+  const m = /^(?:const|let|var)\s+VERSION\s*=\s*"([^"]+)"/m.exec(text);
+  return m ? m[1] : null;
+}
+
+// js/bridge/build.ts
+var BUILD = buildOf(import.meta.url);
 
 // js/extension/channel.ts
 function setupChannel(pi) {
@@ -96,6 +96,18 @@ function setupChannel(pi) {
         loud(
           `Искрон: канал закрыт кодом ${ev.code} — токен мёртв. Зови iskron_channel(action="connect")` + (ev.code === 4001 ? ' или action="mint"' : "") + ", затем register тем же именем: новый сокет мост возьмёт из ответа сам, перезапуск не нужен."
         );
+        return;
+      case "stale":
+        if (ev.text)
+          pi.sendMessage(
+            {
+              customType: "iskron-channel",
+              content: ev.text,
+              display: true,
+              details: { stale: true }
+            },
+            { triggerTurn: true, deliverAs: "steer" }
+          );
         return;
       case "evicted":
         loud(

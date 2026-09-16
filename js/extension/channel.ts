@@ -74,6 +74,18 @@ export function setupChannel(pi: ExtensionAPI): (params: any) => void {
             ", затем register тем же именем: новый сокет мост возьмёт из ответа сам, перезапуск не нужен.",
         );
         return;
+      case "stale":
+        if (ev.text)
+          pi.sendMessage(
+            {
+              customType: "iskron-channel",
+              content: ev.text,
+              display: true,
+              details: { stale: true },
+            },
+            { triggerTurn: true, deliverAs: "steer" },
+          );
+        return;
       case "evicted":
         loud(
           `Искрон: канал закрыт кодом ${ev.code} — место отняли, слушает другой держатель. ` +

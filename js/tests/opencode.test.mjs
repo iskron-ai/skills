@@ -467,6 +467,27 @@ test("a dead token is loud: an error toast and a prompt that names the move", as
   }
 });
 
+test("a stale burst is one prompt into the holder's session, bodies included", async () => {
+  const b = bridgeEnv("stale");
+  const rec = await plugin(b.env);
+  try {
+    await rec.hooks.tool.iskron_channel.execute({ action: "connect" }, ctx("s-stale"));
+    appendFileSync(
+      `${b.events}.${pidOf(b.log)}`,
+      JSON.stringify({
+        kind: "stale",
+        frames: [{ id: "s1" }],
+        text: "Лежалых кадров: 1\n\nпочта предшественника",
+      }) + "\n",
+    );
+    await until(() => rec.prompts.length === 1, "the stale prompt");
+    assert.equal(rec.prompts[0].path.id, "s-stale");
+    assert.match(rec.prompts[0].body.parts[0].text, /почта предшественника/);
+  } finally {
+    await rec.stop();
+  }
+});
+
 test("an eviction is loud in OpenCode: a prompt into the holder's session naming take=true", async () => {
   const b = bridgeEnv("evicted");
   const rec = await plugin(b.env);

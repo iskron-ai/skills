@@ -21,6 +21,7 @@ import {
   holdSocket,
   statusUrl as deriveStatusUrl,
 } from "../shared/channel.ts";
+import { frameToText } from "../shared/frame-text.ts";
 import { noteSeen, seenIds } from "../shared/seen.ts";
 import {
   defaultAuthDir,
@@ -40,7 +41,7 @@ import { type JsonRpcMessage } from "./types.ts";
 const RING = 20; // кадров, которые прицепившийся позже клиент получит задним числом
 
 export interface ChannelEvent {
-  kind: "attached" | "frame" | "note" | "dead" | "alive" | "evicted" | "released";
+  kind: "attached" | "frame" | "note" | "dead" | "alive" | "evicted" | "stale" | "released";
   key?: string;
   raw?: string;
   frame?: Frame | null;
@@ -48,6 +49,8 @@ export interface ChannelEvent {
   code?: number;
   version?: string;
   buffered?: number;
+  /** kind="stale": лежалые кадры полосы — принятое, пока место не слушали, или повтор службы. */
+  frames?: Frame[];
 }
 
 function standingsDir(): string {
@@ -70,6 +73,7 @@ let currentKey: string | null = null;
 let currentUrl: string | null = null;
 let currentStatusUrl: string | null = null;
 let evictedKey: string | null = null; // ключ места, отнятого у этого моста закрытием 4000
+let evictedEvent: ChannelEvent | null = null; // прицепившийся после — узнаёт, а не молчит
 const clients = new Set<Socket>();
 const ring: { raw: string; frame: Frame | null }[] = [];
 const helloWaiters = new Set<(f: Frame | null) => void>();
@@ -77,7 +81,8 @@ const helloWaiters = new Set<(f: Frame | null) => void>();
 let seen: Set<string> = new Set();
 // Лежалые повторы службы после пересборки сессии копятся в одно слово, а не
 // будят pi и OpenCode по одному (граф nks-dev: #4881, #5033).
-let staleCount = 0;
+const staleBurst: Frame[] = [];
+const STALE_BURST_KEEP = 20;
 let staleTimer: ReturnType<typeof setTimeout> | null = null;
 
 function isOwn(realm: string, karta: string | number, name: string): boolean {
@@ -101,8 +106,9 @@ export function wasEvicted(realm: string, karta: string | number, name: string):
   return !!evictedKey && evictedKey === currentKey && isOwn(realm, karta, name);
 }
 
-/** Есть ли у моста статусный адрес стояния — занятость идёт от стояния, не от живого сокета. */
-export const hasStatusAddress = (): boolean => !!currentStatusUrl && !!currentKey;
+/** Есть ли у моста статусный адрес ИМЕННО этого стояния — занятость идёт от стояния, не от живого сокета, но только от своего. */
+export const hasStatusAddressFor = (realm: string, karta: string | number, name: string): boolean =>
+  !!currentStatusUrl && !!currentKey && isOwn(realm, karta, name);
 
 /** Кадр hello — доказательство держания; из кольца, если уже пришёл, иначе ожидание под пределом. */
 export function awaitHello(timeoutMs: number): Promise<Frame | null> {
@@ -176,6 +182,8 @@ function openLocalServer(key: string): void {
     for (const { raw, frame } of ring) {
       sock.write(JSON.stringify({ kind: "frame", raw, frame } satisfies ChannelEvent) + "\n");
     }
+    // Место отняли, а сторож перевзвёлся: молчание читалось бы как слух.
+    if (evictedEvent && evictedKey === key) sock.write(JSON.stringify(evictedEvent) + "\n");
   });
   srv.on("error", (e) => {
     const text = `ДЕЛАТЕЛЬ: локальный сокет стояния не поднялся (${e.message}) — сторожу не к чему цепляться`;
@@ -229,8 +237,9 @@ export function releaseStanding(reason: string): void {
   currentUrl = null;
   currentStatusUrl = null;
   evictedKey = null;
+  evictedEvent = null;
   seen = new Set();
-  staleCount = 0;
+  staleBurst.length = 0;
 }
 
 /** Взять этот адрес и держать его, чем бы ни был занят прежний. */
@@ -247,9 +256,10 @@ function holdStanding(url: string, statusUrl?: string | null): string {
     url,
     onFrame: (raw, frame) => {
       void completeFrame(stampOrigin(frame)).then((full) => {
-        // Лежалый повтор службы не стоит хода: ни в кольцо, ни клиентам (под
-        // Monitor каждая строка — побудка), ни уведомлением — одно слово на полосу.
-        if (full?.type === "message" && full.stale === true) return noteStale();
+        // Лежалый кадр — принятое, пока место не слушали (после revoke — почта
+        // предшественника), либо повтор службы после пересборки сессии: хода не
+        // стоит, но и не теряется — уходит одной пачкой на полосу, не по одному.
+        if (full?.type === "message" && full.stale === true) return noteStale(full);
         const text = full === frame ? raw : JSON.stringify(full);
         // В кольцо идёт и hello: сторож, прицепившийся позже, должен увидеть
         // доказательство держания, а не только рабочие кадры.
@@ -258,9 +268,12 @@ function holdStanding(url: string, statusUrl?: string | null): string {
         if (full?.type === "hello") for (const w of [...helloWaiters]) w(full);
         const ev: ChannelEvent = { kind: "frame", raw: text, frame: full };
         broadcast(ev);
-        // Кадр, отданный двери харнеса (локальному клиенту), — отдан: сторож
-        // выхода, взведённый после, на нём не выходит. Кадр при пустом сокете
-        // отданным не считается — его ещё никто не видел.
+        // Кадр, отданный локальному клиенту (двери Claude Code и Codex), — отдан:
+        // сторож выхода, взведённый после, на нём не выходит; перевзведённый
+        // постоянный сторож всё равно получит его из кольца. Без клиентов не
+        // отмечается: в pi и OpenCode доставка — уведомление, и память сторожа
+        // выхода там не читается. Запись идёт до печати клиентом — умерший между
+        // ними сторож стоит одного кадра для сторожа выхода, не для кольца.
         if (clients.size > 0 && full?.type === "message" && typeof full.id === "string" && full.id)
           noteSeen(seenFilePathOf(CFG.authDir, key), full.id, seen);
         if (full?.type === "status") return;
@@ -274,6 +287,7 @@ function holdStanding(url: string, statusUrl?: string | null): string {
       log(text);
       evictedKey = key;
       const ev: ChannelEvent = { kind: "evicted", code, text };
+      evictedEvent = ev;
       broadcast(ev);
       notify("warning", ev);
     },
@@ -302,19 +316,24 @@ function holdStanding(url: string, statusUrl?: string | null): string {
   return key;
 }
 
-/** Лежалые повторы — одним словом на полосу, не побудкой на каждый. */
-function noteStale(): void {
-  staleCount++;
+/** Лежалые кадры — одной пачкой на полосу, с телами: почта не теряется, побудка одна. */
+function noteStale(frame: Frame): void {
+  if (staleBurst.length < STALE_BURST_KEEP) staleBurst.push(frame);
   if (staleTimer) return;
   staleTimer = setTimeout(() => {
     staleTimer = null;
-    const n = staleCount;
-    staleCount = 0;
+    const frames = staleBurst.splice(0);
+    const bodies = frames.map((f) => {
+      const t = frameToText(f, JSON.stringify(f));
+      return [...t].length > 800 ? [...t].slice(0, 800).join("") + "…" : t;
+    });
     const ev: ChannelEvent = {
-      kind: "note",
+      kind: "stale",
+      frames,
       text:
-        `лежалых кадров: ${n} — повтор службы после пересборки сессии, хода не стоят; ` +
-        'что было — iskron_channel(action="history")',
+        `Лежалых кадров: ${frames.length} — принятое, пока место не слушали, или повтор службы после пересборки сессии; ` +
+        'хода не стоят, но прочти; полностью — iskron_channel(action="history").\n\n' +
+        bodies.join("\n\n"),
     };
     broadcast(ev);
     notify("info", ev);
