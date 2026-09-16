@@ -620,6 +620,11 @@ test("stale frames wake nobody: the exit watchdog waits past them, the harness g
   }
   await new Promise((r) => setTimeout(r, 2000));
   assert.equal(wd.proc.exitCode, null, `the exit watchdog left on a stale frame: ${wd.out}`);
+  assert.ok(!wd.err.includes("лежалый 1"), "a stale frame never reaches a local client at all");
+  await waitFor(
+    () => wd.err.includes("лежалых кадров: 3"),
+    "the burst note to reach the client too",
+  );
   assert.ok(
     !bridge.notifications.some((n) => /лежалый/.test(n.params?.data?.frame?.body ?? "")),
     "a stale frame must not ride to the harness as a prompt of its own",

@@ -2102,6 +2102,7 @@ function holdStanding(url, statusUrl2) {
     url,
     onFrame: (raw, frame2) => {
       void completeFrame(stampOrigin(frame2)).then((full) => {
+        if (full?.type === "message" && full.stale === true) return noteStale();
         const text = full === frame2 ? raw : JSON.stringify(full);
         ring.push({ raw: text, frame: full });
         if (ring.length > RING) ring.shift();
@@ -2111,7 +2112,6 @@ function holdStanding(url, statusUrl2) {
         if (clients.size > 0 && full?.type === "message" && typeof full.id === "string" && full.id)
           noteSeen(seenFilePathOf(CFG.authDir, key), full.id, seen);
         if (full?.type === "status") return;
-        if (full?.stale === true) return noteStale();
         notify("info", ev);
       });
     },
@@ -2152,10 +2152,12 @@ function noteStale() {
     staleTimer = null;
     const n = staleCount;
     staleCount = 0;
-    notify("info", {
+    const ev = {
       kind: "note",
       text: `лежалых кадров: ${n} — повтор службы после пересборки сессии, хода не стоят; что было — iskron_channel(action="history")`
-    });
+    };
+    broadcast(ev);
+    notify("info", ev);
   }, 1500).unref();
 }
 var SOCKET_RE = /wss:\/\/[^\s"'`<>)\]]+|ws:\/\/(?:127\.0\.0\.1|\[?::1\]?|localhost)(?::\d+)?\/[^\s"'`<>)\]]+/;

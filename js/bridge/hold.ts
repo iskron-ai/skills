@@ -96,7 +96,7 @@ export function holdsStanding(realm: string, karta: string | number, name: strin
   return !!holder?.alive && isOwn(realm, karta, name);
 }
 
-/** Отняли ли у этого моста сокет ИМЕННО этого стояния (закрытие 4000): привязка и статусный адрес целы, слух — у другого. */
+/** Отняли ли у этого моста сокет ИМЕННО этого стояния (закрытие 4000): привязка цела, слух — у другого; статусный адрес — пока его не повернул чужой connect. */
 export function wasEvicted(realm: string, karta: string | number, name: string): boolean {
   return !!evictedKey && evictedKey === currentKey && isOwn(realm, karta, name);
 }
@@ -247,6 +247,9 @@ function holdStanding(url: string, statusUrl?: string | null): string {
     url,
     onFrame: (raw, frame) => {
       void completeFrame(stampOrigin(frame)).then((full) => {
+        // Лежалый повтор службы не стоит хода: ни в кольцо, ни клиентам (под
+        // Monitor каждая строка — побудка), ни уведомлением — одно слово на полосу.
+        if (full?.type === "message" && full.stale === true) return noteStale();
         const text = full === frame ? raw : JSON.stringify(full);
         // В кольцо идёт и hello: сторож, прицепившийся позже, должен увидеть
         // доказательство держания, а не только рабочие кадры.
@@ -261,7 +264,6 @@ function holdStanding(url: string, statusUrl?: string | null): string {
         if (clients.size > 0 && full?.type === "message" && typeof full.id === "string" && full.id)
           noteSeen(seenFilePathOf(CFG.authDir, key), full.id, seen);
         if (full?.type === "status") return;
-        if (full?.stale === true) return noteStale();
         notify("info", ev);
       });
     },
@@ -308,12 +310,14 @@ function noteStale(): void {
     staleTimer = null;
     const n = staleCount;
     staleCount = 0;
-    notify("info", {
+    const ev: ChannelEvent = {
       kind: "note",
       text:
         `лежалых кадров: ${n} — повтор службы после пересборки сессии, хода не стоят; ` +
         'что было — iskron_channel(action="history")',
-    });
+    };
+    broadcast(ev);
+    notify("info", ev);
   }, 1500).unref();
 }
 
