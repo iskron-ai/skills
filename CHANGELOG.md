@@ -1,5 +1,19 @@
 # Changelog
 
+## [6.7.0](https://github.com/iskron-ai/skills/compare/v6.6.4...v6.7.0) (2026-09-16)
+
+
+### Features
+
+* **bridge,standing,establish-mcp,pi:** уход с места, английский адрес mcp.iskron.ai, pi ждёт вход ([#125](https://github.com/iskron-ai/skills/issues/125)) ([5a5d00e](https://github.com/iskron-ai/skills/commit/5a5d00efe298d804d3deaa02703b8fc38950596e))
+* **bridge,standing:** мост возвращает место с диска после перезапуска, блок слушателя — своего харнеса ([#126](https://github.com/iskron-ai/skills/issues/126)) ([ca1e5b5](https://github.com/iskron-ai/skills/commit/ca1e5b52badc68197cddde9cdcbad2d715263977))
+
+
+### Bug Fixes
+
+* **bridge,standing,vahta,iskronify:** имя стояния — адрес; revoke и хук роли; плагин ритуалов OpenCode 2 ([#127](https://github.com/iskron-ai/skills/issues/127)) ([3bdb6f4](https://github.com/iskron-ai/skills/commit/3bdb6f43b321896bc9310b7be1f34e658f586c04))
+* **bridge,standing:** мост ведёт стояние агента — адреса скрыты, 4000 не смерть, занятость от стояния, кадр под Monitor текстом, stale не будит ([#123](https://github.com/iskron-ai/skills/issues/123)) ([1578612](https://github.com/iskron-ai/skills/commit/157861209f01b27ba746825ba6e86feb0555fe19))
+
 ## [6.6.4](https://github.com/iskron-ai/skills/compare/v6.6.3...v6.6.4) (2026-09-11)
 
 
