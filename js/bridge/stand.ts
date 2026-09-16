@@ -18,11 +18,11 @@ import {
   hasStatusAddressFor,
   holdsStanding,
   isParked,
-  listenBlock,
   resumeFromDisk,
   wasEvicted,
 } from "./hold.ts";
 import { returnToStanding } from "./leave.ts";
+import { listenBlock } from "./listen.ts";
 import { noteStanding, replyText } from "./standing.ts";
 import { publishStatus } from "./status.ts";
 import { post } from "./transport.ts";
@@ -284,8 +284,15 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   // Мост поднят заново под местом, которое держал прежний мост этого каталога
   // (перезапуск плагина, /mcp reconnect): место возвращается с диска, не
   // ротируется — адрес, хуки и очередь те же (#5061).
+  // Доска не читает место слушающим, а прежний мост этого каталога его держал:
+  // место возвращается с диска, не ротируется (#5061). Доска ещё читает
+  // «слушает» (окно платформы после смерти прежнего моста) — только register,
+  // как велит канон; возврат — следующим вызовом.
   const resumed =
-    a.take !== true && !holdsStanding(realm, karta, name) && !isParked(realm, karta, name)
+    a.take !== true &&
+    !listensElsewhere &&
+    !holdsStanding(realm, karta, name) &&
+    !isParked(realm, karta, name)
       ? await resumeFromDisk(realm, karta, name)
       : null;
   // take=true — явный новый цикл входа: connect и тогда, когда сокет уже наш.
@@ -296,7 +303,15 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
       return done(true);
     }
     heardHere = true;
-    how = `${resumed}, register`;
+    how = `${resumed.word}, register`;
+    if (resumed.status && typeof a.status !== "string") {
+      const st = await publishStatus(resumed.status);
+      lines.push(
+        st.ok
+          ? `Занятость возвращена с местом: ${resumed.status}`
+          : `Занятость с места не возвращена: ${short(st.body)}`,
+      );
+    }
   } else if (a.take !== true && isParked(realm, karta, name) && returnToStanding("iskron_stand")) {
     // Ушёл с места и вернулся: тот же адрес, сокет открыт заново, register — атрибуция.
     const r = await call("iskron_channel", { action: "register", realm, karta, name });
@@ -317,7 +332,7 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
     how = listensElsewhere
       ? wasEvicted(realm, karta, name)
         ? "место отняли у этого моста (закрытие 4000) — слушает другой держатель; только register: привязка цела, слух — у него; вернуть слух сюда — повтори с take=true, сознавая, что снимешь слух с того держателя"
-        : "место уже слушает другой держатель (обычно прежняя сессия этой рабочей копии; при явном name — возможно, другая машина или человек) — только register: атрибуция есть, слух — у него; нужен слух здесь — повтори с take=true, сознавая, что снимешь слух с того держателя, или возьми другое имя (name)"
+        : "место уже слушает другой держатель (обычно прежняя сессия этой рабочей копии; при явном name — возможно, другая машина или человек) — только register: атрибуция есть, слух — у него; нужен слух здесь — повтори с take=true, сознавая, что снимешь слух с того держателя, или возьми другое имя (name); если это прежний мост этого каталога, только что умерший, — доска отпустит его через минуту, и тот же вызов вернёт место с диска"
       : "сокет уже держит этот мост — register";
   } else {
     const args: Record<string, unknown> = { action: "connect", realm, karta, name };

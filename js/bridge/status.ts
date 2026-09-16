@@ -2,7 +2,7 @@
 // владельца, граф nks-dev: #4284 отвергнут): action="status" у iskron_channel
 // исполняется здесь, на сервер не уходит. POST на статусный адрес из ответа
 // connect; ответ поверхности — успех или ProblemDetail — доносится целиком.
-import { statusAddress } from "./hold.ts";
+import { rememberStatus, statusAddress } from "./hold.ts";
 import { type JsonRpcMessage } from "./types.ts";
 
 /** action="status" — занятость ЭТОГО стояния. Возвращает null для всякого другого вызова. */
@@ -39,7 +39,10 @@ export async function publishStatus(text: string): Promise<{ ok: boolean; body: 
     };
   }
   const st = await publishStatusTo(addr.url, text);
-  if (st.ok) lastPublished = text;
+  if (st.ok) {
+    lastPublished = text;
+    rememberStatus(text);
+  }
   return st;
 }
 

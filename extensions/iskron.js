@@ -11,9 +11,6 @@ function classifyOrigin(frame, myKarta) {
   return "peer";
 }
 
-// js/shared/clients.ts
-var PI_CLIENT = "pi-iskron";
-
 // js/shared/version.ts
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -42,6 +39,9 @@ var PRODUCTION_URLS = new Set([DEFAULT_SERVER_URL, ENGLISH_SERVER_URL].map(strip
 function strip(url) {
   return url.replace(/\/+$/, "");
 }
+
+// js/bridge/holdrecord.ts
+var HOLD_RECORD_MAX_AGE_MS = 6 * 60 * 60 * 1e3;
 
 // js/shared/frame-text.ts
 var ENVELOPE_KEYS = ["id", "received_at", "stale", "content_type", "body_chars", "body_read"];
@@ -317,6 +317,9 @@ function resultToContent(result) {
     { type: "text", text: structured ? JSON.stringify(structured) : "(пустой ответ)" }
   ];
 }
+
+// js/shared/clients.ts
+var PI_CLIENT = "pi-iskron";
 
 // js/extension/home-copy.ts
 import {

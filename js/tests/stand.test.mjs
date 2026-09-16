@@ -581,8 +581,8 @@ test("iskron_stand: a hook waking a longer-named sibling does not count as one's
 // agent in pi launched the Claude Code watchdog from a block that offered all
 // of them (#5047). The bridge knows the harness from clientInfo.name.
 for (const [client, expect, forbid] of [
-  ["claude-code", /Слушать: под Monitor/, /watchdog-codex|watchdog-exit/],
-  ["codex-mcp-client", /Слушать: в Codex внутри одной длинной команды/, /Monitor|watchdog-exit/],
+  ["claude-code", /Слушать: под Monitor.*без Monitor — фоновой задачей/, /watchdog-codex/],
+  ["codex-probe", /Слушать: в Codex внутри одной длинной команды.*без двери app-server/, /Monitor/],
   ["pi-iskron", /Слушает расширение pi само — сторож не нужен/, /watchdog/],
   ["opencode-iskron", /Слушает плагин OpenCode само — сторож не нужен/, /watchdog/],
   ["stand-probe", /Monitor.*watchdog-exit.*watchdog-codex/s, /никогда/],

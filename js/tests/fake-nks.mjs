@@ -181,6 +181,7 @@ export async function startFakeNks(opts = {}) {
       if (typeof patch.ws_send === "string") {
         for (const sock of st.ws) sock.write(wsFrame(0x1, patch.ws_send));
       }
+      if (Number.isInteger(patch.ws_refuse)) st.wsRefuse = patch.ws_refuse; // один раз: следующий апгрейд закрывается этим кодом, дальнейшие принимаются
       if (Number.isInteger(patch.ws_close)) {
         for (const sock of st.ws) {
           sock.write(wsFrame(0x8, Buffer.from([patch.ws_close >> 8, patch.ws_close & 0xff])));
@@ -818,8 +819,23 @@ export async function startFakeNks(opts = {}) {
       "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n" +
         `Sec-WebSocket-Accept: ${accept}\r\n\r\n`,
     );
+    if (st.wsRefuse) {
+      // Платформа больше не знает токена (протухшая запись держания): апгрейд
+      // принят, и первым кадром идёт закрытие кодом мёртвого токена.
+      socket.end(wsFrame(0x8, Buffer.from([st.wsRefuse >> 8, st.wsRefuse & 0xff])));
+      setTimeout(() => socket.destroy(), 200).unref(); // не держать сервер полуоткрытым сокетом
+      st.wsRefuse = 0;
+      return;
+    }
     st.ws.add(socket);
-    socket.on("close", () => st.ws.delete(socket));
+    for (const pl of st.places.values()) pl.listening = true; // доска читает по сокету: открыт — слушает
+    socket.on("end", () => socket.destroy()); // сокет апгрейда полуоткрыт: без этого «close» после смерти моста не приходит
+    socket.on("close", () => {
+      st.ws.delete(socket);
+      // Последний сокет закрыт — «не слушает» сразу; окно платформы («слушает» ещё ~40 с)
+      // проба ставит сама через /control {places: [{…, listening: true}]}.
+      if (st.ws.size === 0) for (const pl of st.places.values()) pl.listening = false;
+    });
     socket.on("error", () => st.ws.delete(socket));
     socket.write(wsFrame(0x1, JSON.stringify({ type: "hello", pending: 0, ping: 30 })));
   });

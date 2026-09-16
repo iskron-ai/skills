@@ -22,19 +22,34 @@ export interface HoldRecord {
   name: string;
   url: string;
   statusUrl: string | null;
+  /** строка занятости, опубликованная от этого места, — возвращается вместе с ним */
+  status?: string;
+  /** когда записано (мс эпохи): место без сокета живёт у платформы шесть часов, дольше запись мертва */
+  at?: number;
 }
+
+/** Срок записи — время простоя, которое платформа даёт месту без сокета. */
+export const HOLD_RECORD_MAX_AGE_MS = 6 * 60 * 60 * 1000;
 
 export function writeHoldRecord(key: string, rec: HoldRecord): void {
   try {
-    writeFileSync(holdFilePathFor(key), JSON.stringify(rec) + "\n", { mode: 0o600 });
+    writeFileSync(holdFilePathFor(key), JSON.stringify({ ...rec, at: Date.now() }) + "\n", {
+      mode: 0o600,
+    });
   } catch (e) {
     log(`hold record not written: ${(e as Error).message}`);
   }
 }
+/** Запись места; просроченная стирается и не читается. */
 export function readHoldRecord(key: string): HoldRecord | null {
   try {
     const r = JSON.parse(readFileSync(holdFilePathFor(key), "utf8")) as HoldRecord;
-    return r && typeof r.url === "string" && r.realm && r.karta != null ? r : null;
+    if (!r || typeof r.url !== "string" || !r.realm || r.karta == null) return null;
+    if (typeof r.at === "number" && Date.now() - r.at > HOLD_RECORD_MAX_AGE_MS) {
+      dropHoldRecord(key);
+      return null;
+    }
+    return r;
   } catch {
     return null;
   }

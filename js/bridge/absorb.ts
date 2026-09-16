@@ -2,7 +2,8 @@
 // канала (граф nks-dev: #4233, #5033). Секрет сокета вырезается, держание
 // уходит в hold.ts; своё revoke отпускает место тихо (#5012).
 import { statusUrl as deriveStatusUrl } from "../shared/channel.ts";
-import { holdStanding, listenBlock, releaseStanding, setRevokingOwn } from "./hold.ts";
+import { holdStanding, releaseStanding, setRevokingOwn } from "./hold.ts";
+import { listenBlock } from "./listen.ts";
 import { replyText } from "./standing.ts";
 import { log } from "./streams.ts";
 import { state } from "./transport.ts";

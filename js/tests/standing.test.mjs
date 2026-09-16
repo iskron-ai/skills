@@ -79,7 +79,7 @@ function startBridge(serverUrl, authDir, extraEnv = {}) {
       return p;
     },
     stop: () =>
-      proc.exitCode !== null
+      proc.exitCode !== null || proc.signalCode !== null
         ? Promise.resolve()
         : new Promise((r) => {
             proc.once("exit", r);
@@ -869,17 +869,23 @@ test("a re-armed watchdog gets hello and only the frames no local client has see
 // A bridge raised anew under a place a previous bridge of this auth dir held
 // (plugin restart, /mcp reconnect) takes the place back from disk — the same
 // address, no connect; a revoke or a dead token forgets the record (#5061).
-test("a bridge restarted under a held place resumes it from disk: same address, no connect — by name and by ISKRON_RESUME_STANDING", async (t) => {
-  const { fake, dir, bridge, key, standings } = await connected(t);
+test("a bridge restarted under a held place resumes it from disk: same address, no connect, the busy line back; while the board still reads «слушает» — only register", async (t) => {
+  const { fake, dir, bridge, standings } = await connected(t);
   await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const st0 = await bridge.call("tools/call", 4, {
+    name: "iskron_channel",
+    arguments: { realm: "nks-dev", action: "status", text: "до перезапуска" },
+  });
+  assert.ok(!st0.result?.isError, JSON.stringify(st0));
   assert.ok(
     readdirSync(standings).some((f) => f.endsWith(".hold")),
     "the hold record is written",
   );
   const known = new Set(fake.state.ws);
   const fresh = () => [...fake.state.ws].filter((x) => !known.has(x));
-  bridge.proc.kill("SIGTERM"); // the plugin restarts: its bridges go down without a revoke
-  await waitFor(() => bridge.proc.exitCode !== null, "the first bridge to exit");
+  bridge.proc.kill("SIGKILL"); // the plugin restarts: its bridges go down without a revoke
+  await waitFor(() => bridge.proc.signalCode !== null, "the first bridge to exit");
+  await waitFor(() => fake.state.ws.size === 0, "the fake to see the socket close");
   assert.ok(
     readdirSync(standings).some((f) => f.endsWith(".hold")),
     "the record outlives the bridge",
@@ -888,7 +894,21 @@ test("a bridge restarted under a held place resumes it from disk: same address, 
   const second = startBridge(fake.mcpUrl, dir);
   t.after(() => second.stop());
   assert.ok((await second.call("initialize", 1, INIT)).result);
-  const st = await second.call("tools/call", 2, {
+  // The platform's grace window: the board still reads «слушает» for a while after the
+  // predecessor died — the canon says only register then; the record waits.
+  await fake.control({ places: [{ karta: "931", name: "proba", listening: true }] });
+  const early = await second.call("tools/call", 2, {
+    name: "iskron_stand",
+    arguments: { realm: "nks-dev", karta: 931, name: "proba" },
+  });
+  const saidEarly = (early.result?.content ?? []).map((c) => c.text ?? "").join("\n");
+  assert.match(saidEarly, /слушает другой держатель/, saidEarly);
+  assert.match(saidEarly, /вернёт место с диска/, "the answer names the way back");
+  assert.equal(fresh().length, 0, "no socket is opened while the board reads «слушает»");
+  assert.equal(fake.state.counts.connect, 1);
+  await fake.control({ places: [{ karta: "931", name: "proba", listening: false }] });
+
+  const st = await second.call("tools/call", 3, {
     name: "iskron_stand",
     arguments: { realm: "nks-dev", karta: 931, name: "proba" },
   });
@@ -898,27 +918,16 @@ test("a bridge restarted under a held place resumes it from disk: same address, 
   assert.equal(fake.state.counts.connect, 1, "the place is resumed, not rotated");
   assert.equal(fresh().length, 1, "one socket reopened on the saved address");
   assert.match(said, /Сокет держит этот мост/, said);
-  for (const x of fresh()) known.add(x);
-  second.proc.kill("SIGTERM");
-  await waitFor(() => second.proc.exitCode !== null, "the second bridge to exit");
-
-  const third = startBridge(fake.mcpUrl, dir, { ISKRON_RESUME_STANDING: key });
-  t.after(() => third.stop());
-  assert.ok((await third.call("initialize", 1, INIT)).result);
-  await waitFor(() => /standing resumed from disk/.test(third.stderr), "the env resume");
-  assert.equal(fresh().length, 1, "the env resume reopens the saved address");
-  const write = await third.call("tools/call", 2, {
+  assert.match(said, /Занятость возвращена с местом: до перезапуска/, said);
+  await waitFor(() => fake.state.status === "до перезапуска", "the busy line to come back");
+  const write = await second.call("tools/call", 4, {
     name: "iskron_add_phenomenon",
     arguments: { name: "после перезапуска" },
   });
   const text = (write.result?.content ?? []).map((c) => c.text ?? "").join("\n");
-  assert.ok(
-    !/unattributed/.test(text),
-    `a write after the env resume must carry the author:\n${text}`,
-  );
-  assert.equal(fake.state.counts.connect, 1);
+  assert.ok(!/unattributed/.test(text), `a write after the resume must carry the author:\n${text}`);
 
-  const rv = await third.call("tools/call", 3, {
+  const rv = await second.call("tools/call", 5, {
     name: "iskron_channel",
     arguments: { realm: "nks-dev", action: "revoke", karta: 931, standing: "proba" },
   });
@@ -927,6 +936,51 @@ test("a bridge restarted under a held place resumes it from disk: same address, 
     !readdirSync(standings).some((f) => f.endsWith(".hold")),
     "a revoke forgets the record",
   );
+});
+
+test("a stale hold record is dropped quietly: no dead-token alarm, the place is taken anew; an expired record is never read", async (t) => {
+  const { fake, dir, bridge, standings } = await connected(t);
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const hold = readdirSync(standings).find((f) => f.endsWith(".hold"));
+  const path = join(standings, hold);
+  bridge.proc.kill("SIGKILL");
+  await waitFor(() => fake.state.ws.size === 0, "the socket to close");
+  // The platform no longer knows the token: the socket is refused with 4001 on open.
+  await fake.control({ ws_refuse: 4001 }); // one refusal: the resume dies, the connect after it is served
+  const second = startBridge(fake.mcpUrl, dir);
+  t.after(() => second.stop());
+  assert.ok((await second.call("initialize", 1, INIT)).result);
+  const st = await second.call("tools/call", 2, {
+    name: "iskron_stand",
+    arguments: { realm: "nks-dev", karta: 931, name: "proba" },
+  });
+  const said = (st.result?.content ?? []).map((c) => c.text ?? "").join("\n");
+  assert.ok(!st.result?.isError, said);
+  assert.match(said, /connect и register|connect \(сокет теперь у этого моста\)/, said);
+  assert.ok(
+    !second.notifications.some((n) => n.params?.data?.kind === "dead"),
+    "a stale record must not sound the dead-token alarm",
+  );
+  assert.equal(fake.state.counts.connect, 2, "the place is taken anew by connect");
+  assert.match(said, /hello получен/, "the fresh place is heard");
+  // An expired record (older than the place's idle life) is dropped unread.
+  const rec = JSON.parse(readFileSync(path, "utf8"));
+  writeFileSync(path, JSON.stringify({ ...rec, at: Date.now() - 7 * 3600 * 1000 }));
+  second.proc.kill("SIGKILL");
+  await waitFor(() => fake.state.ws.size === 0, "the socket to close");
+  const third = startBridge(fake.mcpUrl, dir);
+  t.after(() => third.stop());
+  assert.ok((await third.call("initialize", 1, INIT)).result);
+  const st3 = await third.call("tools/call", 2, {
+    name: "iskron_stand",
+    arguments: { realm: "nks-dev", karta: 931, name: "proba" },
+  });
+  const said3 = (st3.result?.content ?? []).map((c) => c.text ?? "").join("\n");
+  assert.ok(
+    !/возврат места с диска/.test(said3),
+    `an expired record must not be resumed:\n${said3}`,
+  );
+  assert.equal(fake.state.counts.connect, 3);
 });
 
 test("a dead token forgets the hold record; a live holder's place is not taken from disk", async (t) => {

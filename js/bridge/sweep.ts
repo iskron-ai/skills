@@ -4,6 +4,7 @@ import { connect as connectLocal } from "node:net";
 import { join } from "node:path";
 
 import { seenFilePathOf, socketPathOf, standingsDirOf } from "../shared/standings.ts";
+import { HOLD_RECORD_MAX_AGE_MS } from "./holdrecord.ts";
 
 /**
  * Мост, убитый без прощания, оставляет `.key` и `.sock`: сторож без аргумента
@@ -28,7 +29,20 @@ export function localSocketAlive(sock: string): Promise<boolean> {
 
 export function sweepStale(authDir: string, mine: string): void {
   const dir = standingsDirOf(authDir);
-  if (process.platform === "win32" || !existsSync(dir)) return;
+  if (!existsSync(dir)) return;
+  // Записи держания старше срока простоя места — мертвы у платформы, стираются здесь.
+  for (const f of readdirSync(dir).filter((x) => x.endsWith(".hold"))) {
+    try {
+      const rec = JSON.parse(readFileSync(join(dir, f), "utf8")) as { at?: number };
+      if (typeof rec.at !== "number" || Date.now() - rec.at > HOLD_RECORD_MAX_AGE_MS)
+        unlinkSync(join(dir, f));
+    } catch {
+      try {
+        unlinkSync(join(dir, f));
+      } catch {}
+    }
+  }
+  if (process.platform === "win32") return;
   for (const f of readdirSync(dir).filter((x) => x.endsWith(".key"))) {
     const keyFile = join(dir, f);
     let key: string;

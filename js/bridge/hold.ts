@@ -12,7 +12,6 @@
 // Занятость делатель пишет в файл рядом с сокетом (#4231); публикует мост.
 import { chmodSync, mkdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { createServer, type Server, type Socket } from "node:net";
-import { fileURLToPath } from "node:url";
 
 import {
   deadTokenAdvice,
@@ -21,10 +20,8 @@ import {
   holdSocket,
   statusUrl as deriveStatusUrl,
 } from "../shared/channel.ts";
-import { NOTIFIED_CLIENTS, OPENCODE_CLIENT, PI_CLIENT } from "../shared/clients.ts";
 import { noteSeen, seenIds } from "../shared/seen.ts";
 import {
-  defaultAuthDir,
   keyFilePathOf,
   seenFilePathOf,
   socketPathOf,
@@ -60,38 +57,66 @@ function standingsDir(): string {
 /** Имя стояния → безопасная часть пути: буквы, цифры, точка, дефис; прочее — подчёркивание. */
 function keyFor(): string {
   const s = state.standing;
-  const raw = s ? `${s.name ?? "_"}--${s.karta}--${s.realm}` : "env";
-  return raw.replace(/[^A-Za-z0-9._-]+/g, "_").slice(0, 120);
+  return s ? keyOf(s.realm, s.karta, s.name ?? "") : "env";
 }
 
 const socketPathFor = (key: string): string => socketPathOf(CFG.authDir, key);
 const keyFilePathFor = (key: string): string => keyFilePathOf(CFG.authDir, key);
-/**
- * Вернуть с диска место, которое держал прежний мост этого каталога: только
- * если его локальный сокет мёртв (живой держатель — не наше место). Слух
- * доказывается свежим hello; без него запись стирается и место занимается
- * заново connect-ом. Возвращает слово об исходе или null, когда возвращать нечего.
- */
+/** Занятость этого места, записанная в держании, — для возврата с диска. */
+function keptRecordStatus(key: string): string | undefined {
+  return readHoldRecord(key)?.status;
+}
+
+/** Занятость принята доской — запомнить её в записи держания (status.ts). */
+export function rememberStatus(text: string): void {
+  const s = state.standing;
+  if (!s || !currentKey || !currentUrl) return;
+  writeHoldRecord(currentKey, {
+    realm: s.realm,
+    karta: s.karta,
+    name: s.name ?? "",
+    url: currentUrl,
+    statusUrl: currentStatusUrl,
+    status: text || undefined,
+  });
+}
+
 export { keyOf, readHoldRecord } from "./holdrecord.ts";
 
+/**
+ * Вернуть с диска место, которое держал прежний мост этого каталога (#5061):
+ * только когда доска не читает его слушающим (иначе — только register, как
+ * велит канон) и его локальный сокет мёртв (живой держатель — не наше место).
+ * Слух доказывается свежим hello; мёртвый токен — протухшая запись, стирается
+ * тихо, и место занимается заново connect-ом. Возвращает слово об исходе или
+ * null, когда возвращать нечего.
+ */
 export async function resumeFromDisk(
   realm: string,
   karta: string | number,
   name: string,
-): Promise<string | null> {
+): Promise<{ word: string; status?: string } | null> {
   const key = keyOf(realm, karta, name);
   const rec = readHoldRecord(key);
   if (!rec) return null;
   if (holder?.alive && currentKey === key) return null;
   if (await localSocketAlive(socketPathFor(key))) return null; // держит живой мост — не наше
   state.standing = { realm, karta, name };
-  holdStanding(rec.url, rec.statusUrl);
-  const hello = await awaitHello(4000);
-  if (hello && holder?.alive) {
-    log(`standing resumed from disk (${key})`);
-    return `возврат места с диска после перезапуска моста — сокет открыт заново тем же адресом (ожидало кадров — ${hello.pending ?? 0})`;
+  resuming = true;
+  try {
+    holdStanding(rec.url, rec.statusUrl);
+    const hello = await awaitHello(4000);
+    if (hello && holder?.alive) {
+      log(`standing resumed from disk (${key})`);
+      return {
+        word: `возврат места с диска после перезапуска моста — сокет открыт заново тем же адресом (ожидало кадров — ${hello.pending ?? 0})`,
+        status: rec.status,
+      };
+    }
+  } finally {
+    resuming = false;
   }
-  log(`hold record for ${key} is stale — dropping it, the place is taken anew`);
+  log(`hold record for ${key} is stale — dropped, the place is taken anew`);
   releaseStanding("возврат с диска не удался", true);
   state.standing = null;
   return null;
@@ -157,6 +182,8 @@ export function onListenerAttached(fn: () => void): void {
   attachHooks.push(fn);
 }
 
+let resuming = false; // возврат с диска в полёте: мёртвый токен — протухшая запись, не тревога
+
 /** Кадр hello — доказательство держания; из кольца, если уже пришёл, иначе ожидание под пределом. */
 export function awaitHello(timeoutMs: number): Promise<Frame | null> {
   const seen = ring.find((r) => r.frame?.type === "hello")?.frame ?? null;
@@ -171,42 +198,8 @@ export function awaitHello(timeoutMs: number): Promise<Frame | null> {
   });
 }
 
-/** Имя клиента рукопожатия — по нему мост знает харнес (граф nks-dev: #5047). */
-function clientName(): string {
-  const info = (state.initParams as { clientInfo?: { name?: unknown } } | null)?.clientInfo;
-  return typeof info?.name === "string" ? info.name : "";
-}
-
-/**
- * Блок `[iskron-bridge]` с командой слушания — для ответа connect и для
- * iskron_stand. Строка слушания — одна, своего харнеса: агент pi, получивший
- * три команды, запускал сторож Claude Code (#5047); незнакомому клиенту — все.
- */
-export function listenBlock(): string | null {
-  if (!currentKey) return null;
-  const key = currentKey;
-  const self = fileURLToPath(import.meta.url);
-  // Сторож выводит каталог сокетов так же, как мост: не по умолчанию — скажи ему где.
-  const where = CFG.authDir === defaultAuthDir() ? "" : ` --auth-dir "${CFG.authDir}"`;
-  const client = clientName();
-  const monitor = `под Monitor — node "${self}" watchdog ${key}${where} с наибольшим timeout_ms, перевзводить по истечении (Claude Code)`;
-  const exit = `фоновой задачей — node "${self}" watchdog-exit ${key}${where} (выходит нулём на первом сообщении)`;
-  const codex = `в Codex внутри одной длинной команды своей оболочки — node "${self}" watchdog-codex ${key}${where} & …; kill %1 (кадр входит в идущий тред через app-server; отдельной командой с nohup сторож умирает вместе с ней)`;
-  const listen = NOTIFIED_CLIENTS.has(client)
-    ? `Слушает ${client === PI_CLIENT ? "расширение pi" : client === OPENCODE_CLIENT ? "плагин OpenCode" : "харнес"} само — сторож не нужен, кадры входят в ход.`
-    : client === "claude-code"
-      ? `Слушать: ${monitor}.`
-      : /codex/i.test(client)
-        ? `Слушать: ${codex}.`
-        : `Слушать: ${monitor}; ${exit}; ${codex}.`;
-  return (
-    `[iskron-bridge] Сокет этого стояния держит мост — вручать его никому не нужно` +
-    ` (строка выше о том, что никто не слушает, описывает миг до этого держания).` +
-    `\n${listen}` +
-    `\nЗанятость: iskron_channel(action="status", realm, text) — пустой text снимает.` +
-    `\nКадры приходят и уведомлениями MCP (logger iskron-channel).`
-  );
-}
+/** Ключ стояния, которое держит мост, — для блока слушания (listen.ts). */
+export const heldKey = (): string | null => currentKey;
 
 function broadcast(ev: ChannelEvent): void {
   const line = JSON.stringify(ev) + "\n";
@@ -294,6 +287,7 @@ export function releaseStanding(reason: string, forget = false): void {
     } catch {}
   }
   clients.clear();
+  for (const w of [...helloWaiters]) w(null); // ждать hello от отпущенного сокета незачем
   const srv = server;
   server = null;
   if (srv) {
@@ -337,6 +331,7 @@ export function holdStanding(url: string, statusUrl?: string | null): string {
   const s = state.standing;
   if (s)
     writeHoldRecord(key, {
+      status: keptRecordStatus(key),
       realm: s.realm,
       karta: s.karta,
       name: s.name ?? "",
@@ -410,6 +405,7 @@ function openHolder(url: string, key: string): void {
         "привязка записей цела, занятость — пока адрес не повернули connect-ом; вернуть слух сюда — iskron_stand с take=true";
       log(text);
       evictedKey = key;
+      dropHoldRecord(key); // адрес повернули — запись мертва
       const ev: ChannelEvent = { kind: "evicted", code, text };
       evictedEvent = ev;
       broadcast(ev);
@@ -426,6 +422,13 @@ function openHolder(url: string, key: string): void {
         releaseStanding("снято своим revoke", true);
         state.standing = null;
         state.standingSession = null;
+        return;
+      }
+      if (resuming) {
+        // Протухшая запись держания: место у платформы уже мертво — не тревога,
+        // а тихий откат; iskron_stand займёт место заново connect-ом.
+        log(`hold record for ${key} is dead at the platform (close ${code}) — dropped`);
+        releaseStanding("возврат с диска не удался", true);
         return;
       }
       const text = `ДЕЛАТЕЛЬ: ${deadTokenAdvice(code)}`;
