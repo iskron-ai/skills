@@ -101,7 +101,3 @@ export function deriveParts(model?: string): NameParts {
 
 export const joinName = (p: NameParts): string =>
   [p.host, p.repo, p.model].filter(Boolean).join(".");
-
-export function deriveName(model?: string): string {
-  return joinName(deriveParts(model));
-}
