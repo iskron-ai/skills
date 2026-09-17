@@ -2619,6 +2619,10 @@ function localLeave(msg) {
   }));
 }
 
+// js/bridge/stand.ts
+import { statSync as statSync2 } from "node:fs";
+import { isAbsolute } from "node:path";
+
 // js/bridge/names.ts
 import { execFileSync } from "node:child_process";
 import { hostname } from "node:os";
@@ -2915,10 +2919,17 @@ var STAND_TOOL = {
       status: { type: "string", description: "Первая строка занятости (до 64 символов)." },
       cwd: {
         type: "string",
-        description: "Директория сессии харнесса — из неё выводится репо для имени (git toplevel, иначе её basename), когда мост запущен не из рабочей копии; плагин OpenCode подставляет её сам. Без неё — cwd моста."
+        description: "Директория сессии харнесса, существующий абсолютный каталог — из неё выводится репо для имени (git toplevel, иначе её basename) и читаются ветки при поиске мест прежнего имени, когда мост запущен не из рабочей копии; плагин OpenCode подставляет её сам. Без неё — cwd моста; несуществующая или относительная — отказ вслух."
       }
     },
     required: ["realm", "karta"]
+  }
+};
+var isDirectory = (p) => {
+  try {
+    return isAbsolute(p) && statSync2(p).isDirectory();
+  } catch {
+    return false;
   }
 };
 var isStandCall = (msg) => msg?.method === "tools/call" && msg?.params?.name === "iskron_stand";
@@ -2981,6 +2992,12 @@ async function runStand(msg) {
   }
   const model = typeof a.model === "string" && a.model.trim() ? a.model : void 0;
   const cwd = typeof a.cwd === "string" && a.cwd.trim() ? a.cwd.trim() : process.cwd();
+  if (cwd !== process.cwd() && !isDirectory(cwd)) {
+    lines.push(
+      `Отказано (мост): cwd должен быть существующим абсолютным каталогом — получено «${cwd}»${isAbsolute(cwd) ? "" : " (относительный путь резолвился бы от cwd моста, не сессии)"}.`
+    );
+    return done(true);
+  }
   const nameNotes = [];
   const asked = typeof a.name === "string" ? a.name.trim() : "";
   if (asked) {
