@@ -30,13 +30,21 @@ import {
   textOf,
   writeCache,
 } from "./bridge-io.ts";
-import { createKeeper, type KeptSlot, takeLostMarker, writeLostMarker } from "./keep.ts";
+import { createKeeper, type KeptSlot, takeLostMarker, WATCH_MS, writeLostMarker } from "./keep.ts";
 import type { Context } from "./plugin.ts";
 
 export type Say = (text: string, level: "info" | "warning" | "error") => void;
 
-/** Мост сессии, которая давно молчит и ничего не держит, отпускается. */
+/**
+ * Мост сессии, которая давно молчит и ничего не держит, отпускается. Инвариант:
+ * IDLE_MS > WATCH_MS — сторож слуха (keep.ts) смотрит за стоявшим слотом чаще,
+ * чем жнец его сжимает, иначе мост, потерявший место, ушёл бы прежде возврата.
+ */
 const IDLE_MS = Number(process.env.ISKRON_BRIDGE_IDLE_MS || 30 * 60_000);
+if (IDLE_MS <= WATCH_MS)
+  process.stderr.write(
+    `[iskron/warning] ISKRON_BRIDGE_IDLE_MS (${IDLE_MS}) не длиннее такта сторожа слуха (${WATCH_MS}): слот может быть сжат прежде возврата места\n`,
+  );
 /** Шаг жнеца простоя; переменная — для проб. */
 const REAP_MS = Number(process.env.ISKRON_BRIDGE_REAP_MS || 60_000);
 /** Служебный тул плагина: состояние моста, когда тулов iskron_* ещё нет. */
@@ -363,6 +371,11 @@ export async function setupTools(
     own.dir = have?.dir ?? null;
     own.key = have?.key ?? null;
     slots.set(sessionID, own);
+    // Замена умершего детского моста возвращает его место сразу, по ключу из
+    // «held», а не ждёт такта сторожа: записи ребёнка в этом окне шли бы
+    // безавторными. Без ключа возвращать нечем — ребёнок встанет заново.
+    if (have?.stood && own.key)
+      own.resume = keeper.resume(own, sessionID).finally(() => (own.resume = null));
     return own;
   }
 

@@ -17,8 +17,8 @@ import { join } from "node:path";
 import type { Bridge } from "../shared/bridge-client.ts";
 import type { Say } from "./tools.ts";
 
-/** Такт сторожа слуха; переменная — шов для проб, не ручка человека. */
-const WATCH_MS = Number(process.env.ISKRON_BRIDGE_WATCH_MS || 5 * 60_000);
+/** Такт сторожа слуха; переменная — шов для проб, не ручка человека. Инвариант: короче простоя жнеца (tools.ts). */
+export const WATCH_MS = Number(process.env.ISKRON_BRIDGE_WATCH_MS || 5 * 60_000);
 
 export interface KeptSlot {
   bridge: Bridge;
@@ -142,6 +142,9 @@ export function createKeeper<S extends KeptSlot>(doors: KeeperDoors<S>): Keeper<
   let stopped = false;
 
   function selector(slot: S): { key?: string; cwd?: string } {
+    // Детский мост возвращает место только по ключу: по каталогу он поднял бы
+    // запись корня, стоящего в том же каталоге.
+    if (slot.child) return slot.key ? { key: slot.key } : {};
     const key = slot.key ?? (slot.dir ? hints.get(slot.dir) : undefined);
     return { ...(key ? { key } : {}), ...(slot.dir ? { cwd: slot.dir } : {}) };
   }
@@ -150,7 +153,7 @@ export function createKeeper<S extends KeptSlot>(doors: KeeperDoors<S>): Keeper<
     try {
       await doors.ready(slot);
       slot.dir ??= await doors.directoryOf(root);
-      if ((!slot.dir && !slot.key) || stopped) return;
+      if ((!slot.dir && !slot.key) || (slot.child && !slot.key) || stopped) return;
       const r: any = await slot.bridge.request("iskron/resume", selector(slot), {
         timeoutMs: 30_000,
       });

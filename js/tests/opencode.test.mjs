@@ -1406,3 +1406,76 @@ test("a child's held place in the loss marker is flagged and never hints the roo
     await second.stop();
   }
 });
+
+// A child bridge that dies is replaced by a child bridge — never by the root's:
+// the child's next call must be served by a new child pid, and the replacement
+// asks to resume the child's place by its key at once, not on the watch's tick.
+test("a dead child bridge is replaced by a fresh child bridge that resumes the child's place by key, and never by the root's bridge", async () => {
+  const calls = join(SANDBOX, "child-dead.calls");
+  const resume = join(SANDBOX, "child-dead.answer");
+  writeFileSync(calls, "");
+  writeFileSync(
+    resume,
+    JSON.stringify({
+      resumed: true,
+      key: "child--931--nks-dev",
+      pending: 0,
+      word: "возврат места с диска",
+    }),
+  );
+  const b = bridgeEnv("child-dead", {
+    FB_CALLS: calls,
+    FB_RESUME: resume,
+    FB_TOOLS: JSON.stringify([
+      { name: "iskron_stand", description: "Стояние.", inputSchema: { type: "object" } },
+      { name: "iskron_orient", description: "Ориентация.", inputSchema: { type: "object" } },
+    ]),
+  });
+  const rec = await plugin(b.env, {
+    sessions: [
+      { id: "root", location: { directory: "/work/dead" } },
+      { id: "child", parentID: "root", location: { directory: "/work/dead" } },
+    ],
+  });
+  try {
+    await until(() => rec.tools().has("iskron_stand"), "the stand tool", 8000);
+    await rec.call("iskron_stand", { realm: "nks-dev", karta: "#2816" }, "root");
+    await rec.call("iskron_stand", { realm: "nks-dev", karta: "#931" }, "child");
+    const [rootPid, childPid] = pidsOf(b.log);
+    appendFileSync(`${b.events}.${childPid}`, event("held", { key: "child--931--nks-dev" }));
+    await until(
+      () => /мост держит стояние child--931--nks-dev/.test(rec.said()),
+      "the child's held line",
+    );
+    process.kill(childPid, "SIGKILL"); // the child's bridge dies — not the plugin's doing
+    await until(() => !alive(childPid), "the child's bridge to die");
+    writeFileSync(calls, "");
+    await rec.call("iskron_orient", {}, "child");
+    const sent = readFileSync(calls, "utf8")
+      .trim()
+      .split("\n")
+      .map((l) => JSON.parse(l));
+    const fresh = pidsOf(b.log)[2];
+    assert.ok(
+      fresh && fresh !== rootPid && fresh !== childPid,
+      "a third bridge, the child's replacement",
+    );
+    assert.deepEqual(
+      sent.map((c) => [c.name, c.pid === rootPid ? "root" : c.pid === fresh ? "child'" : "?"]),
+      [
+        ["iskron/resume", "child'"],
+        ["iskron_orient", "child'"],
+      ],
+      "the replacement resumes the child's place first, then serves the read — the root's bridge sees nothing",
+    );
+    assert.deepEqual(
+      sent[0].arguments,
+      { key: "child--931--nks-dev" },
+      "a child resumes by key only, never by the shared directory",
+    );
+    assert.match(rec.said(), /сессия child — возврат места с диска/);
+    assert.ok(alive(rootPid), "the root's bridge is untouched");
+  } finally {
+    await rec.stop();
+  }
+});
