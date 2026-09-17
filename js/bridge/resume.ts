@@ -36,7 +36,7 @@ import { type HoldRecord, keyOf, readHoldRecord } from "./holdrecord.ts";
 import { returnToStanding } from "./leave.ts";
 import { publishStatus } from "./status.ts";
 import { standingLog } from "./store.ts";
-import { log } from "./streams.ts";
+import { emit, log } from "./streams.ts";
 import { localSocketAlive } from "./sweep.ts";
 import { state } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
@@ -73,7 +73,7 @@ export async function resumeFromDisk(
   if (await localSocketAlive(localSocketPathOf(key))) return null; // держит живой мост — не наше
   const prev = state.standing;
   state.standing = { realm, karta, name };
-  if (rec.cwd) noteStandCwd(rec.cwd);
+  const prevCwd = rec.cwd ? noteStandCwd(rec.cwd) : null;
   noteResuming(1);
   try {
     holdStanding(rec.url, rec.statusUrl);
@@ -94,36 +94,44 @@ export async function resumeFromDisk(
   log(`hold record for ${key} is stale — dropped, the place is taken anew`);
   releaseStanding("возврат с диска не удался", true);
   state.standing = prev; // память о прежнем имени цела: ничего вместо неё не занято
+  if (rec.cwd) noteStandCwd(prevCwd); // иначе следующий голый connect вписал бы чужой каталог в запись другого места
   return null;
 }
 
 export interface ResumeSelector {
-  /** ключ стояния — точный адрес записи */
+  /** ключ стояния — предпочтение: точный адрес записи */
   key?: string;
-  /** каталог сессии — записи этого харнесса из этого каталога, свежайшая первой */
+  /** каталог сессии — откат: записи этого харнесса из этого каталога, свежайшая первой */
   cwd?: string;
 }
 
-/** Свои записи держания под выбором: тот же харнесс, ключ либо каталог; свежайшая первой. */
+/**
+ * Свои записи держания под выбором — тот же харнесс; по ключу первой, затем по
+ * каталогу, свежайшая первой. Ключ — предпочтение, каталог — откат, не «или»:
+ * устаревший ключ (мост убит между released и held, подсказка из маркера) не
+ * должен глушить живую запись того же каталога.
+ */
 function recordsFor(sel: ResumeSelector): HoldRecord[] {
   const dir = standingsDirOf(CFG.authDir);
   if (!existsSync(dir)) return [];
   const mine = harnessName();
-  const out: HoldRecord[] = [];
+  const byKey: HoldRecord[] = [];
+  const byCwd: HoldRecord[] = [];
   for (const f of readdirSync(dir).filter((x) => x.endsWith(".hold"))) {
     try {
       const rec = JSON.parse(readFileSync(join(dir, f), "utf8")) as HoldRecord;
       if (!rec || rec.client !== mine) continue; // чужой харнесс — не наше место
       const key = keyOf(rec.realm, rec.karta, rec.name);
-      if (sel.key ? key !== sel.key : !sel.cwd || rec.cwd !== sel.cwd) continue;
+      const keyed = !!sel.key && key === sel.key;
+      if (!keyed && (!sel.cwd || rec.cwd !== sel.cwd)) continue;
       // Чтение по ключу — то же, что у stand: просроченная запись стирается и не читается.
       const fresh = readHoldRecord(key);
-      if (fresh) out.push(fresh);
+      if (fresh) (keyed ? byKey : byCwd).push(fresh);
     } catch {
       /* чужой или битый файл — не наш */
     }
   }
-  return out.sort((a, b) => (b.at ?? 0) - (a.at ?? 0));
+  return [...byKey, ...byCwd.sort((a, b) => (b.at ?? 0) - (a.at ?? 0))];
 }
 
 export interface ResumeOutcome {
@@ -267,9 +275,38 @@ export async function runCheck(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   if (!mine) return reply(msg, { holding: true, key, word: "своего места на доске нет" });
   const pending = undelivered(mine);
   const listening = listens(mine);
-  if (listening) return reply(msg, { holding: true, key, listening, pending, word: "слушаю" });
+  if (listening) {
+    deafReopens = 0; // слух вернулся — счёт переоткрытий с начала
+    return reply(msg, { holding: true, key, listening, pending, word: "слушаю" });
+  }
   // Сокет у моста жив, а доска нас не слышит: переоткрыть тем же адресом. Счётчик
-  // «не доставлено N» — только слово в ответе, решает признак слуха.
+  // «не доставлено N» — только слово в ответе, решает признак слуха. Тормоз:
+  // два переоткрытия подряд не вернули слух — третьего нет, слово вслух вместо
+  // него (иначе каждый такт сторожа рвал бы живой сокет бесконечно).
+  if (deafReopens >= REOPEN_LIMIT) {
+    const text =
+      `Искрон: доска читает место ${key} не слушающим и после ${REOPEN_LIMIT} переоткрытий сокета — ` +
+      "больше не рву; проверь доску и сервер, вернуть слух — iskron_stand с take=true.";
+    if (!deafSaid) {
+      deafSaid = true;
+      standingLog(`reopen ${key}: gave up after ${REOPEN_LIMIT} — board still reads deaf`);
+      emit({
+        jsonrpc: "2.0",
+        method: "notifications/message",
+        params: { level: "warning", logger: "iskron-channel", data: { kind: "lost", text } },
+      });
+    }
+    return reply(msg, {
+      holding: true,
+      key,
+      listening,
+      pending,
+      reopened: false,
+      stuck: true,
+      word: text,
+    });
+  }
+  deafReopens++;
   standingLog(`reopen ${key}: board reads deaf${pending ? ` with ${pending} pending` : ""}`);
   parkStanding("доска не читает слушающим");
   resumeStanding();
@@ -285,3 +322,8 @@ export async function runCheck(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
       : "сокет переоткрыт, hello за 4 с не пришёл",
   });
 }
+
+/** Переоткрытий подряд при доске, читающей место глухим; предел — REOPEN_LIMIT, дальше слово вслух. */
+let deafReopens = 0;
+let deafSaid = false;
+const REOPEN_LIMIT = 2;

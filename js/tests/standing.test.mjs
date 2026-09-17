@@ -1240,6 +1240,50 @@ test("iskron/check: a held place the board reads deaf with waiting frames gets i
   );
 });
 
+// A board that keeps reading the place deaf after a reopen must not have its
+// socket torn every tick forever: two fruitless reopens in a row, and the third
+// tick says so aloud (once, into the session) instead of reopening.
+test("iskron/check stops reopening after two fruitless reopens and says so aloud once; hearing back resets the count", async (t) => {
+  const { fake, dir, bridge } = await connected(t);
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const known = new Set(fake.state.ws);
+  const fresh = () => [...fake.state.ws].filter((x) => !known.has(x));
+  const deaf = () => fake.control({ places: [{ karta: 931, name: "proba", listening: false }] });
+  // The fake reads the board off the socket: each reopen makes it «слушает» again,
+  // so the probe re-deafens the board after each one, as a stuck server would.
+  await deaf();
+  const first = await bridge.call("iskron/check", 5, {});
+  assert.equal(first.result?.reopened, true, JSON.stringify(first));
+  await waitFor(() => fresh().length === 1, "the first reopen");
+  await deaf();
+  const second = await bridge.call("iskron/check", 6, {});
+  assert.equal(second.result?.reopened, true, JSON.stringify(second));
+  await waitFor(() => fresh().length === 2, "the second reopen");
+  await deaf();
+  const third = await bridge.call("iskron/check", 7, {});
+  assert.equal(third.result?.reopened, false, JSON.stringify(third));
+  assert.equal(third.result.stuck, true, "the third tick gives up instead of reopening");
+  assert.match(third.result.word, /не рву/);
+  assert.match(third.result.word, /take=true/);
+  await new Promise((r) => setTimeout(r, 300));
+  assert.equal(fresh().length, 2, "no third socket");
+  const lost = () => bridge.notifications.filter((n) => n.params?.data?.kind === "lost");
+  assert.equal(lost().length, 1, "the word goes to the session once");
+  assert.match(lost()[0].params.data.text, /не слушающим и после 2 переоткрытий/);
+  const fourth = await bridge.call("iskron/check", 8, {});
+  assert.equal(fourth.result.stuck, true);
+  assert.equal(lost().length, 1, "said once, not every tick");
+  assert.match(readFileSync(join(dir, "standings.log"), "utf8"), /gave up after 2/);
+  // Hearing back resets the count: the next deafness is reopened again.
+  await fake.control({ places: [{ karta: 931, name: "proba", listening: true }] });
+  const back = await bridge.call("iskron/check", 9, {});
+  assert.equal(back.result.word, "слушаю");
+  await deaf();
+  const again = await bridge.call("iskron/check", 10, {});
+  assert.equal(again.result?.reopened, true, "after hearing came back, deafness is reopened anew");
+  await waitFor(() => fresh().length === 3, "the reopen after the reset");
+});
+
 // ── cold review of the fix (r5 #5140): what it left open ─────────────────────
 
 // A hold record keyed by the directory alone would let the OpenCode plugin take
@@ -1292,14 +1336,18 @@ test("a hold record names its harness and key: another harness's record is not r
   const mine = startBridge(fake.mcpUrl, dir);
   t.after(() => mine.stop());
   assert.ok((await mine.call("initialize", 1, own)).result);
-  const wrongKey = await mine.call("iskron/resume", 2, { key: "drugoe--931--nks-dev", cwd });
+  // The key is a preference, the directory the fallback — never an «or»: a stale
+  // key alone resumes nothing, a stale key beside the directory falls back to it.
+  const keyOnly = await mine.call("iskron/resume", 2, { key: "drugoe--931--nks-dev" });
+  assert.equal(keyOnly.result?.resumed, false, "a wrong key without a directory resumes nothing");
+  assert.equal(fresh().length, 0);
+  const staleKey = await mine.call("iskron/resume", 3, { key: "drugoe--931--nks-dev", cwd });
+  assert.equal(staleKey.result?.resumed, true, JSON.stringify(staleKey));
   assert.equal(
-    wrongKey.result?.resumed,
-    false,
-    "a key names one record — a wrong key resumes nothing",
+    staleKey.result.key,
+    "proba--931--nks-dev",
+    "a stale key must not silence the directory's live record",
   );
-  const byKey = await mine.call("iskron/resume", 3, { key: "proba--931--nks-dev" });
-  assert.equal(byKey.result?.resumed, true, JSON.stringify(byKey));
   await waitFor(() => fresh().length === 1, "the socket reopened on the saved address");
   assert.equal(fake.state.counts.connect, 1);
 

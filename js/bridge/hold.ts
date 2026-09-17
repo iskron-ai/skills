@@ -41,20 +41,9 @@ import { state } from "./transport.ts";
 const RING = 20; // кадров, которые прицепившийся позже клиент получит задним числом
 
 export interface ChannelEvent {
-  kind:
-    | "attached"
-    | "frame"
-    | "note"
-    | "dead"
-    | "alive"
-    | "evicted"
-    | "stale"
-    | "released"
-    // held — мост взял сокет (питает holding плагина OpenCode, #5140); backlog —
-    // пачка побудки одним событием; lost — только у плагина: держащий мост вышел.
-    | "held"
-    | "backlog"
-    | "lost";
+  // held — мост взял сокет (питает holding плагина OpenCode, #5140); backlog — пачка побудки; lost — слух потерян (плагин)
+  // prettier-ignore
+  kind: "attached" | "frame" | "note" | "dead" | "alive" | "evicted" | "stale" | "released" | "held" | "backlog" | "lost";
   key?: string;
   raw?: string;
   frame?: Frame | null;
@@ -87,10 +76,13 @@ function keptRecordStatus(key: string): string | undefined {
 
 /** Каталог сессии, из которого занимается место (cwd в iskron_stand), — в запись держания, для возврата по каталогу (resume.ts). */
 let standCwd: string | null = null;
-export function noteStandCwd(cwd: string | null): void {
+/** Возвращает прежний каталог — неудачный возврат с диска откатывает его (resume.ts). */
+export function noteStandCwd(cwd: string | null): string | null {
+  const prev = standCwd;
   standCwd = cwd;
   // Место уже держится (connect был раньше stand) — каталог дописывается в запись сейчас.
   if (cwd && currentKey && currentUrl) rememberStatus(readHoldRecord(currentKey)?.status ?? "");
+  return prev;
 }
 
 /** Занятость принята доской — запомнить её в записи держания (status.ts). */
