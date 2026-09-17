@@ -1,5 +1,13 @@
 # Changelog
 
+## [6.8.0](https://github.com/iskron-ai/skills/compare/v6.7.0...v6.8.0) (2026-09-17)
+
+
+### Features
+
+* **architect:** скилл архитектора — штаб при владельце ([#130](https://github.com/iskron-ai/skills/issues/130)) ([1d4783f](https://github.com/iskron-ai/skills/commit/1d4783f1c48fbb1fd7a6b80bb669a33c4fb323c3))
+* **writing:** пере-вывод скилла из канона — ядро в пять решений, случаи в references ([#128](https://github.com/iskron-ai/skills/issues/128)) ([2055968](https://github.com/iskron-ai/skills/commit/2055968cac2ab4b27b4e7cee66bca5ec6e8f0b6e))
+
 ## [6.7.0](https://github.com/iskron-ai/skills/compare/v6.6.4...v6.7.0) (2026-09-16)
 
 
