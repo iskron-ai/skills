@@ -11,6 +11,33 @@ function classifyOrigin(frame, myKarta) {
   return "peer";
 }
 
+// js/shared/clients.ts
+var PI_CLIENT = "pi-iskron";
+
+// js/shared/frame-text.ts
+var ENVELOPE_KEYS = ["id", "received_at", "stale", "content_type", "body_chars", "body_read"];
+function frameToText(frame, raw) {
+  if (!frame) return `Кадр канала Искрона:
+${raw}`;
+  const p = frame.provenance ?? {};
+  const origin = frame.origin ?? classifyOrigin(frame);
+  const standing = p.from_standing ? ` — стояние ${p.from_standing}` : "";
+  const role = p.from_karta_seq != null ? `роли #${p.from_karta_seq}` : "роли неизвестной";
+  const who = origin === "platform" ? "от ПЛАТФОРМЫ — побудка, не человек и не делатель" : origin === "human" ? `от ЧЕЛОВЕКА${p.user ? ` @${p.user}` : ""} (${role})${standing}` : origin === "sibling" ? `от БРАТА по твоей роли (#${p.from_karta_seq})${standing} — другое стояние той же роли` : `от делателя ${role}${standing}`;
+  const lines = [`Кадр канала Искрона ${who}`];
+  if (frame.provenance) lines.push(`provenance: ${JSON.stringify(frame.provenance)}`);
+  const envelope = {};
+  for (const k of ENVELOPE_KEYS) if (frame[k] !== void 0) envelope[k] = frame[k];
+  if (Object.keys(envelope).length) lines.push(`frame: ${JSON.stringify(envelope)}`);
+  const body = typeof frame.body === "string" ? frame.body : frame.body === void 0 ? raw : JSON.stringify(frame.body, null, 1).replace(/\n\s*/g, " ");
+  return `${lines.join("\n")}
+
+${body}`;
+}
+
+// js/bridge/backlog.ts
+var BACKLOG_MS = Number(process.env.ISKRON_BRIDGE_BACKLOG_MS) || 1500;
+
 // js/shared/version.ts
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -42,27 +69,6 @@ function strip(url) {
 
 // js/bridge/holdrecord.ts
 var HOLD_RECORD_MAX_AGE_MS = 6 * 60 * 60 * 1e3;
-
-// js/shared/frame-text.ts
-var ENVELOPE_KEYS = ["id", "received_at", "stale", "content_type", "body_chars", "body_read"];
-function frameToText(frame, raw) {
-  if (!frame) return `Кадр канала Искрона:
-${raw}`;
-  const p = frame.provenance ?? {};
-  const origin = frame.origin ?? classifyOrigin(frame);
-  const standing = p.from_standing ? ` — стояние ${p.from_standing}` : "";
-  const role = p.from_karta_seq != null ? `роли #${p.from_karta_seq}` : "роли неизвестной";
-  const who = origin === "platform" ? "от ПЛАТФОРМЫ — побудка, не человек и не делатель" : origin === "human" ? `от ЧЕЛОВЕКА${p.user ? ` @${p.user}` : ""} (${role})${standing}` : origin === "sibling" ? `от БРАТА по твоей роли (#${p.from_karta_seq})${standing} — другое стояние той же роли` : `от делателя ${role}${standing}`;
-  const lines = [`Кадр канала Искрона ${who}`];
-  if (frame.provenance) lines.push(`provenance: ${JSON.stringify(frame.provenance)}`);
-  const envelope = {};
-  for (const k of ENVELOPE_KEYS) if (frame[k] !== void 0) envelope[k] = frame[k];
-  if (Object.keys(envelope).length) lines.push(`frame: ${JSON.stringify(envelope)}`);
-  const body = typeof frame.body === "string" ? frame.body : frame.body === void 0 ? raw : JSON.stringify(frame.body, null, 1).replace(/\n\s*/g, " ");
-  return `${lines.join("\n")}
-
-${body}`;
-}
 
 // js/extension/channel.ts
 function setupChannel(pi) {
@@ -109,13 +115,14 @@ function setupChannel(pi) {
         );
         return;
       case "stale":
+      case "backlog":
         if (ev.text)
           pi.sendMessage(
             {
               customType: "iskron-channel",
               content: ev.text,
               display: true,
-              details: { stale: true }
+              details: ev.kind === "stale" ? { stale: true } : { backlog: true }
             },
             { triggerTurn: true, deliverAs: "steer" }
           );
@@ -135,7 +142,9 @@ function setupChannel(pi) {
         if (ctxRef?.hasUI && ev.text) ctxRef.ui.notify(`Искрон: ${ev.text}`, "warning");
         return;
       case "attached":
+      case "held":
       case "released":
+      case "lost":
         return;
     }
   };
@@ -152,6 +161,7 @@ function bridgeRuntime() {
   if (!/^node/i.test(basename(process.execPath))) return { bin: "node", env: process.env };
   return { bin: process.execPath, env: process.env };
 }
+var STOP_GRACE_MS = 5e3;
 var Bridge = class {
   proc = null;
   buf = "";
@@ -162,11 +172,14 @@ var Bridge = class {
   bin;
   onLog;
   onNotification;
+  onDie;
   constructor(bin, onLog, onNotification = () => {
+  }, onDie = () => {
   }) {
     this.bin = bin;
     this.onLog = onLog;
     this.onNotification = onNotification;
+    this.onDie = onDie;
   }
   /** Мост вышел или не запустился — вызовы к нему отвергаются этим отказом. */
   get failure() {
@@ -205,6 +218,10 @@ var Bridge = class {
     this.dead = e;
     for (const [, p] of this.pending) p.reject(e);
     this.pending.clear();
+    try {
+      this.onDie(e);
+    } catch {
+    }
   }
   feed(chunk) {
     this.buf += chunk;
@@ -283,7 +300,7 @@ var Bridge = class {
           proc.kill("SIGKILL");
         } catch {
         }
-      }, 2e3);
+      }, STOP_GRACE_MS);
       hard.unref?.();
       proc.on("exit", () => clearTimeout(hard));
     } catch {
@@ -321,9 +338,6 @@ function resultToContent(result) {
     { type: "text", text: structured ? JSON.stringify(structured) : "(пустой ответ)" }
   ];
 }
-
-// js/shared/clients.ts
-var PI_CLIENT = "pi-iskron";
 
 // js/extension/home-copy.ts
 import {
