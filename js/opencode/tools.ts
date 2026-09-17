@@ -139,6 +139,7 @@ export async function setupTools(
       holding: false,
       stood: false,
       dir: null,
+      key: null,
       resume: null,
       lastCall: Date.now(),
       busy: 0,
@@ -154,6 +155,8 @@ export async function setupTools(
         // а не attached локального сокета, которого у плагина нет (#5140).
         if (kind === "held" || kind === "attached" || params?.data?.frame?.type === "hello")
           keeper.stood(slot);
+        if ((kind === "held" || kind === "released") && typeof params?.data?.key === "string")
+          slot.key = params.data.key; // ключ места — точный адрес записи для возврата
         if (kind === "released" || kind === "dead" || kind === "evicted") slot.holding = false;
         onChannel(slot.session, params);
       },
@@ -180,13 +183,18 @@ export async function setupTools(
 
   const keeper = createKeeper({
     say,
-    slotFor: (root) => slotFor(root),
+    slotFor: (root, touch) => slotFor(root, touch),
     ready: readyFor,
     directoryOf,
   });
-  // Прежний экземпляр остановили с держащим мостом: слово о том — в первую живую сессию.
-  let lostWord = takeLostMarker(authDir());
-  if (lostWord) say(lostWord, "warning");
+  // Прежний экземпляр остановили с держащим мостом: слово о том — в первую живую
+  // сессию, ключи его мест — сторожу, чтобы возврат шёл по ключу, не по каталогу.
+  const lost = takeLostMarker(authDir());
+  let lostWord = lost?.text ?? null;
+  if (lost) {
+    say(lost.text, "warning");
+    keeper.hint(lost.entries);
+  }
 
   function shake(slot: Slot): void {
     slot.ready = handshake(slot.bridge, onLogin, () => {
@@ -221,11 +229,17 @@ export async function setupTools(
     }
   }
 
-  /** Мост корневой сессии: первый раз — запасной с загрузки, дальше свой; умерший — заменяется. */
-  async function slotFor(sessionID: string): Promise<Slot> {
+  /**
+   * Мост корневой сессии: первый раз — запасной с загрузки, дальше свой; умерший
+   * — заменяется. touch=false — взгляд сторожа, не вызов: простой не освежается,
+   * иначе слот под сторожем не сжался бы никогда.
+   */
+  async function slotFor(sessionID: string, touch = true): Promise<Slot> {
     const root = await rootOf(sessionID);
     let slot = slots.get(root);
+    let dead: Slot | undefined;
     if (slot?.bridge.failure) {
+      dead = slot;
       slots.delete(root);
       slot = undefined;
     }
@@ -233,6 +247,10 @@ export async function setupTools(
       slot = spare ?? spawn();
       spare = null;
       slot.session = root;
+      // Память умершего моста — каталог и ключ места — переходит к его замене:
+      // возврат идёт по ключу, а не по одному каталогу.
+      slot.dir = dead?.dir ?? slot.dir;
+      slot.key = dead?.key ?? slot.key;
       slots.set(root, slot);
       if (lostWord) {
         onChannel(root, { logger: "iskron-channel", data: { kind: "lost", text: lostWord } });
@@ -243,7 +261,7 @@ export async function setupTools(
       const s = slot;
       s.resume = keeper.resume(s, root).finally(() => (s.resume = null));
     }
-    slot.lastCall = Date.now();
+    if (touch) slot.lastCall = Date.now();
     return slot;
   }
 
