@@ -7,6 +7,9 @@
 // (один раз за сессию: второй join — повтор, не разговор), занятость. Ответ
 // один: имя, команда сторожа, ожидавшие кадры, хук, расписка стука.
 // Отсутствие тула в сессии — тулы идут мимо моста либо мост старой сборки.
+import { statSync } from "node:fs";
+import { isAbsolute } from "node:path";
+
 import { absorbChannelReply } from "./absorb.ts";
 import { CFG } from "./config.ts";
 import {
@@ -75,11 +78,19 @@ export const STAND_TOOL = {
       cwd: {
         type: "string",
         description:
-          "Директория сессии харнесса — из неё выводится репо для имени (git toplevel, иначе её basename), когда мост запущен не из рабочей копии; плагин OpenCode подставляет её сам. Без неё — cwd моста.",
+          "Директория сессии харнесса, существующий абсолютный каталог — из неё выводится репо для имени (git toplevel, иначе её basename) и читаются ветки при поиске мест прежнего имени, когда мост запущен не из рабочей копии; плагин OpenCode подставляет её сам. Без неё — cwd моста; несуществующая или относительная — отказ вслух.",
       },
     },
     required: ["realm", "karta"],
   },
+};
+
+const isDirectory = (p: string): boolean => {
+  try {
+    return isAbsolute(p) && statSync(p).isDirectory();
+  } catch {
+    return false;
+  }
 };
 
 export const isStandCall = (msg: JsonRpcMessage): boolean =>
@@ -168,6 +179,14 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   }
   const model = typeof a.model === "string" && a.model.trim() ? a.model : undefined;
   const cwd = typeof a.cwd === "string" && a.cwd.trim() ? a.cwd.trim() : process.cwd();
+  // Кривой cwd адресовал бы другое место (репо из несуществующего или чужого
+  // каталога) — отказ вслух, как у явного имени (#5068).
+  if (cwd !== process.cwd() && !isDirectory(cwd)) {
+    lines.push(
+      `Отказано (мост): cwd должен быть существующим абсолютным каталогом — получено «${cwd}»${isAbsolute(cwd) ? "" : " (относительный путь резолвился бы от cwd моста, не сессии)"}.`,
+    );
+    return done(true);
+  }
   const nameNotes: string[] = [];
   // Имя — адрес места: явное имя либо принимается ровно таким, либо отвергается
   // вслух с названной причиной; молча укороченное имя адресует ДРУГОЕ место

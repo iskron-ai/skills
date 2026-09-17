@@ -8,7 +8,7 @@
 // краснота, ради которой проба написана.
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { hostname, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
@@ -313,7 +313,9 @@ test("iskron_stand derives the name from machine, repository and the model given
 test("iskron_stand names the repository of the session directory given as cwd, not the bridge's own", async (t) => {
   const { fake, bridge } = await ready(t);
   const host = hostname().split(".")[0].toLowerCase();
-  const repo = join(mkdtempSync(join(tmpdir(), "stand-cwd-")), "harness-repo");
+  const scratch = mkdtempSync(join(tmpdir(), "stand-cwd-"));
+  t.after(() => rmSync(scratch, { recursive: true, force: true }));
+  const repo = join(scratch, "harness-repo");
   mkdirSync(repo);
   execFileSync("git", ["init", "-q", repo]);
   const inside = join(repo, "src");
@@ -334,7 +336,7 @@ test("iskron_stand names the repository of the session directory given as cwd, n
     "the place is taken under that name",
   );
 
-  const plain = join(mkdtempSync(join(tmpdir(), "stand-cwd-")), "no-repo-here");
+  const plain = join(scratch, "no-repo-here");
   mkdirSync(plain);
   reply = await bridge.call("tools/call", {
     name: "iskron_stand",
@@ -347,6 +349,20 @@ test("iskron_stand names the repository of the session directory given as cwd, n
     `${host}.no-repo-here.opus-5`,
     `outside any git repository the directory's own name stands in: ${text}`,
   );
+
+  // A cwd that is not an existing absolute directory would name a place out of
+  // nowhere, or out of the bridge's own repository: refused aloud, nothing taken.
+  const taken = fake.state.places.size;
+  for (const bad of [join(scratch, "gone"), "relative/path"]) {
+    reply = await bridge.call("tools/call", {
+      name: "iskron_stand",
+      arguments: { realm: "nks-dev", karta: "#931", model: "opus-5", cwd: bad },
+    });
+    text = textOf(reply);
+    assert.ok(reply.result?.isError, `a bad cwd is refused: ${text}`);
+    assert.match(text, /cwd должен быть существующим абсолютным каталогом/, text);
+    assert.equal(fake.state.places.size, taken, "a refused call takes no place");
+  }
 });
 
 test("iskron_stand refuses without realm and karta, naming what it needs", async (t) => {
