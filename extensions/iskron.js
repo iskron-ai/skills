@@ -11,9 +11,6 @@ function classifyOrigin(frame, myKarta) {
   return "peer";
 }
 
-// js/shared/clients.ts
-var PI_CLIENT = "pi-iskron";
-
 // js/shared/frame-text.ts
 var ENVELOPE_KEYS = ["id", "received_at", "stale", "content_type", "body_chars", "body_read"];
 function frameToText(frame, raw) {
@@ -37,6 +34,9 @@ ${body}`;
 
 // js/bridge/backlog.ts
 var BACKLOG_MS = Number(process.env.ISKRON_BRIDGE_BACKLOG_MS) || 1500;
+
+// js/shared/clients.ts
+var PI_CLIENT = "pi-iskron";
 
 // js/shared/version.ts
 import { createHash } from "node:crypto";

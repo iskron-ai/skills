@@ -11,9 +11,6 @@ function classifyOrigin(frame, myKarta) {
   return "peer";
 }
 
-// js/shared/clients.ts
-var OPENCODE_CLIENT = "opencode-iskron";
-
 // js/shared/frame-text.ts
 var ENVELOPE_KEYS = ["id", "received_at", "stale", "content_type", "body_chars", "body_read"];
 function frameToText(frame, raw) {
@@ -37,6 +34,9 @@ ${body}`;
 
 // js/bridge/backlog.ts
 var BACKLOG_MS = Number(process.env.ISKRON_BRIDGE_BACKLOG_MS) || 1500;
+
+// js/shared/clients.ts
+var OPENCODE_CLIENT = "opencode-iskron";
 
 // js/shared/version.ts
 import { createHash } from "node:crypto";
@@ -370,50 +370,69 @@ function textOf(result) {
 }
 
 // js/opencode/keep.ts
-import { mkdirSync as mkdirSync2, readFileSync as readFileSync3, unlinkSync, writeFileSync as writeFileSync2 } from "node:fs";
+import { mkdirSync as mkdirSync2, readdirSync as readdirSync2, readFileSync as readFileSync3, unlinkSync, writeFileSync as writeFileSync2 } from "node:fs";
 import { join as join3 } from "node:path";
 var WATCH_MS = Number(process.env.ISKRON_BRIDGE_WATCH_MS || 5 * 6e4);
-var markerPath = (authDir2) => join3(authDir2, "opencode-lost.json");
+var MARKER_PREFIX = "opencode-lost";
 function writeLostMarker(authDir2, slots) {
-  const entries = [...slots].filter((s) => s.holding && s.session).map((s) => ({ session: s.session, dir: s.dir }));
+  const entries = [...slots].filter((s) => s.holding && s.session).map((s) => ({ session: s.session, dir: s.dir, key: s.key }));
   if (!entries.length) return;
   try {
     mkdirSync2(authDir2, { recursive: true, mode: 448 });
     const lost = { at: (/* @__PURE__ */ new Date()).toISOString(), entries };
-    writeFileSync2(markerPath(authDir2), JSON.stringify(lost), { mode: 384 });
+    const name = `${MARKER_PREFIX}.${process.pid}.${Math.random().toString(36).slice(2, 8)}.json`;
+    writeFileSync2(join3(authDir2, name), JSON.stringify(lost), { mode: 384 });
   } catch {
   }
 }
 function takeLostMarker(authDir2) {
-  let lost;
+  const entries = [];
+  let at = "";
+  let files;
   try {
-    lost = JSON.parse(readFileSync3(markerPath(authDir2), "utf8"));
-    unlinkSync(markerPath(authDir2));
+    files = readdirSync2(authDir2).filter((f) => f.startsWith(MARKER_PREFIX) && f.endsWith(".json"));
   } catch {
     return null;
   }
-  if (!lost?.entries?.length) return null;
-  const when = new Date(lost.at);
-  const hhmm2 = Number.isNaN(when.getTime()) ? lost.at : `${String(when.getHours()).padStart(2, "0")}:${String(when.getMinutes()).padStart(2, "0")}`;
-  const where = lost.entries.map((e) => e.dir ?? e.session).join(", ");
-  return `Искрон: слух был потерян в ${hhmm2} — плагин остановили (перезапуск, вытеснение каталога) с держащим мостом: ${where}. Место возвращается с диска само; ожидавшие кадры придут пачкой. Не вернулось — iskron_stand.`;
+  for (const f of files) {
+    try {
+      const lost = JSON.parse(readFileSync3(join3(authDir2, f), "utf8"));
+      unlinkSync(join3(authDir2, f));
+      if (lost?.at > at) at = lost.at;
+      for (const e of lost?.entries ?? [])
+        entries.push({ session: e.session, dir: e.dir ?? null, key: e.key ?? null });
+    } catch {
+    }
+  }
+  if (!entries.length) return null;
+  const when = new Date(at);
+  const hhmm2 = Number.isNaN(when.getTime()) ? at : `${String(when.getHours()).padStart(2, "0")}:${String(when.getMinutes()).padStart(2, "0")}`;
+  const where = entries.map((e) => e.key ?? e.dir ?? e.session).join(", ");
+  return {
+    text: `Искрон: слух был потерян в ${hhmm2} — плагин остановили (перезапуск, вытеснение каталога) с держащим мостом: ${where}. Место возвращается с диска само; ожидавшие кадры придут пачкой. Не вернулось — iskron_stand.`,
+    entries
+  };
 }
 function createKeeper(doors) {
   const roots = /* @__PURE__ */ new Set();
+  const hints = /* @__PURE__ */ new Map();
   let stopped = false;
+  function selector(slot) {
+    const key = slot.key ?? (slot.dir ? hints.get(slot.dir) : void 0);
+    return { ...key ? { key } : {}, ...slot.dir ? { cwd: slot.dir } : {} };
+  }
   async function resume(slot, root) {
     try {
       await doors.ready(slot);
       slot.dir ??= await doors.directoryOf(root);
-      if (!slot.dir || stopped) return;
-      const r = await slot.bridge.request(
-        "iskron/resume",
-        { cwd: slot.dir },
-        { timeoutMs: 3e4 }
-      );
+      if (!slot.dir && !slot.key || stopped) return;
+      const r = await slot.bridge.request("iskron/resume", selector(slot), {
+        timeoutMs: 3e4
+      });
       if (!r?.resumed) return;
       slot.holding = true;
       slot.stood = true;
+      if (typeof r.key === "string") slot.key = r.key;
       roots.add(root);
       doors.say(`Искрон: сессия ${root} — ${r.word}`, "info");
     } catch (e) {
@@ -424,16 +443,19 @@ function createKeeper(doors) {
     }
   }
   async function check(root) {
-    const slot = await doors.slotFor(root);
+    const slot = await doors.slotFor(root, false);
     if (slot.resume) await slot.resume;
     if (!slot.dir) slot.dir = await doors.directoryOf(root);
     await doors.ready(slot);
-    const r = await slot.bridge.request(
-      "iskron/check",
-      { cwd: slot.dir ?? "" },
-      { timeoutMs: 3e4 }
-    );
+    const r = await slot.bridge.request("iskron/check", selector(slot), {
+      timeoutMs: 3e4
+    });
+    if (typeof r?.key === "string") slot.key = r.key;
     if (r?.holding) slot.holding = true;
+    else if (r?.holding === false) {
+      slot.holding = false;
+      if (!r.resumed) roots.delete(root);
+    }
     if (r?.resumed)
       doors.say(`Искрон: сторож слуха вернул место сессии ${root} — ${r.word}`, "info");
     else if (r?.reopened)
@@ -448,6 +470,9 @@ function createKeeper(doors) {
   }, WATCH_MS);
   timer.unref?.();
   return {
+    hint(entries) {
+      for (const e of entries) if (e.dir && e.key) hints.set(e.dir, e.key);
+    },
     resume,
     stood(slot) {
       slot.holding = true;
@@ -525,6 +550,7 @@ async function setupTools(ctx, say, onChannel, rootOf) {
       holding: false,
       stood: false,
       dir: null,
+      key: null,
       resume: null,
       lastCall: Date.now(),
       busy: 0,
@@ -538,6 +564,8 @@ async function setupTools(ctx, say, onChannel, rootOf) {
         const kind = params?.data?.kind;
         if (kind === "held" || kind === "attached" || params?.data?.frame?.type === "hello")
           keeper.stood(slot);
+        if ((kind === "held" || kind === "released") && typeof params?.data?.key === "string")
+          slot.key = params.data.key;
         if (kind === "released" || kind === "dead" || kind === "evicted") slot.holding = false;
         onChannel(slot.session, params);
       },
@@ -559,12 +587,16 @@ async function setupTools(ctx, say, onChannel, rootOf) {
   }
   const keeper = createKeeper({
     say,
-    slotFor: (root) => slotFor(root),
+    slotFor: (root, touch) => slotFor(root, touch),
     ready: readyFor,
     directoryOf
   });
-  let lostWord = takeLostMarker(authDir());
-  if (lostWord) say(lostWord, "warning");
+  const lost = takeLostMarker(authDir());
+  let lostWord = lost?.text ?? null;
+  if (lost) {
+    say(lost.text, "warning");
+    keeper.hint(lost.entries);
+  }
   function shake(slot) {
     slot.ready = handshake(slot.bridge, onLogin, () => {
       loginPending = false;
@@ -590,10 +622,12 @@ async function setupTools(ctx, say, onChannel, rootOf) {
       return null;
     }
   }
-  async function slotFor(sessionID) {
+  async function slotFor(sessionID, touch = true) {
     const root = await rootOf(sessionID);
     let slot = slots.get(root);
+    let dead;
     if (slot?.bridge.failure) {
+      dead = slot;
       slots.delete(root);
       slot = void 0;
     }
@@ -601,6 +635,8 @@ async function setupTools(ctx, say, onChannel, rootOf) {
       slot = spare ?? spawn2();
       spare = null;
       slot.session = root;
+      slot.dir = dead?.dir ?? slot.dir;
+      slot.key = dead?.key ?? slot.key;
       slots.set(root, slot);
       if (lostWord) {
         onChannel(root, { logger: "iskron-channel", data: { kind: "lost", text: lostWord } });
@@ -609,7 +645,7 @@ async function setupTools(ctx, say, onChannel, rootOf) {
       const s = slot;
       s.resume = keeper.resume(s, root).finally(() => s.resume = null);
     }
-    slot.lastCall = Date.now();
+    if (touch) slot.lastCall = Date.now();
     return slot;
   }
   const reaper = setInterval(() => {
