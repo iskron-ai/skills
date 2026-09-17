@@ -120,6 +120,8 @@ export async function startFakeNks(opts = {}) {
     messages: new Map(), // id → полный текст: то, что history view=message отдаёт мосту при дочитывании
     status: null, // последняя принятая строка занятости
     wsToken: "tok",
+    wsTokens: new Map(), // адрес сокета → имя места; wsNames: открытый сокет → имя места (несколько мостов на одном фейке)
+    wsNames: new Map(),
     richTools: false, // /control {richTools:true}: tools/list с пишущими тулами — для проверки приписки момента
     // Сессия открыта credential'ом и умирает вместе с ним (#188 в nks-dev):
     // сменился bearer — старая сессия закрыта. Как сервер отвечает на мёртвый
@@ -590,7 +592,7 @@ export async function startFakeNks(opts = {}) {
         if (a.action === "connect" || a.action === "mint") {
           st.counts.connect++;
           st.wsToken = token("ws"); // как у настоящей поверхности: сокет показан один раз и всякий раз новый
-          st.wsName = a.name ?? ""; // чьё место держит открытый сокет — revoke другого места его не рвёт
+          st.wsTokens.set(st.wsToken, a.name ?? ""); // чьё место откроет этот адрес — доска и revoke судят по месту, не по мосту
           st.standings.set(sid, a.name ?? "(unnamed)");
           // The real surface prints the role as a bare number whatever the caller wrote («#931» is lawful).
           const karta = String(a.karta).replace(/^#/, "");
@@ -628,11 +630,11 @@ export async function startFakeNks(opts = {}) {
           const had = st.places.delete(`${String(a.karta).replace(/^#/, "")}:${name}`);
           // As the real surface: only the revoked place's socket is closed — the
           // socket of another place the same bridge holds stays up (#5154).
-          if (name === st.wsName)
-            for (const sock of st.ws) {
-              sock.write(wsFrame(0x8, Buffer.from([4001 >> 8, 4001 & 0xff])));
-              setTimeout(() => sock.end(), 100).unref();
-            }
+          for (const sock of st.ws) {
+            if ((st.wsNames.get(sock) ?? name) !== name) continue;
+            sock.write(wsFrame(0x8, Buffer.from([4001 >> 8, 4001 & 0xff])));
+            setTimeout(() => sock.end(), 100).unref();
+          }
           for (const [sid2, bound] of st.standings) if (bound === name) st.standings.delete(sid2);
           // Как у настоящей поверхности: закрытие сокета уходит раньше ответа по HTTP.
           if (st.revokeReplyDelayMs) await new Promise((r) => setTimeout(r, st.revokeReplyDelayMs));
@@ -844,13 +846,23 @@ export async function startFakeNks(opts = {}) {
       return;
     }
     st.ws.add(socket);
-    for (const pl of st.places.values()) pl.listening = true; // доска читает по сокету: открыт — слушает
+    // Доска читает по сокету МЕСТА: открыт — его место слушает; адрес без места
+    // (сокет из окружения) — по-старому, все места разом.
+    const placeName = st.wsTokens.get(u.pathname.slice("/channel/ws/".length));
+    const ofPlace = (pl) => placeName === undefined || pl.name === placeName;
+    if (placeName !== undefined) st.wsNames.set(socket, placeName);
+    for (const pl of st.places.values()) if (ofPlace(pl)) pl.listening = true;
     socket.on("end", () => socket.destroy()); // сокет апгрейда полуоткрыт: без этого «close» после смерти моста не приходит
     socket.on("close", () => {
       st.ws.delete(socket);
-      // Последний сокет закрыт — «не слушает» сразу; окно платформы («слушает» ещё ~40 с)
+      st.wsNames.delete(socket);
+      // Последний сокет места закрыт — «не слушает» сразу; окно платформы («слушает» ещё ~40 с)
       // проба ставит сама через /control {places: [{…, listening: true}]}.
-      if (st.ws.size === 0) for (const pl of st.places.values()) pl.listening = false;
+      const stillHeld =
+        placeName === undefined
+          ? st.ws.size > 0
+          : [...st.ws].some((s) => st.wsNames.get(s) === placeName);
+      if (!stillHeld) for (const pl of st.places.values()) if (ofPlace(pl)) pl.listening = false;
     });
     socket.on("error", () => st.ws.delete(socket));
     socket.write(

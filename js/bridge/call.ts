@@ -3,6 +3,7 @@
 // же, как проксируемый (absorb.ts), а принятый register запоминается стоянием.
 import { absorbChannelReply } from "./absorb.ts";
 import { ledKey } from "./hold.ts";
+import { keyOf } from "./holdrecord.ts";
 import { noteStanding, replyText } from "./standing.ts";
 import { post, state } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
@@ -15,18 +16,32 @@ import { type JsonRpcMessage } from "./types.ts";
  * ключ ведомого места, когда просят другое, иначе null. Граф не сравнивается:
  * одно место пишут и «nks-dev», и «@nks/nks-dev», а роль с именем — один адрес.
  */
-export function leadsOtherPlace(karta: string | number, name: string): string | null {
+/** Роль как печатает доска — голые цифры либо сентинел; имя — без полей. Одна нормализация на iskron_stand и проксируемый канал. */
+export const normKarta = (k: unknown): string =>
+  String(k ?? "")
+    .trim()
+    .replace(/^#/, "");
+export const normName = (n: unknown): string => (typeof n === "string" ? n.trim() : "");
+
+export function leadsOtherPlace(karta: unknown, name: unknown): string | null {
   const led = ledKey();
   const s = state.standing;
   if (!led || !s) return null;
-  const k = String(karta).replace(/^#/, "");
-  if (!/^\d+$/.test(k)) return null; // сентинел (me, agent) — своя роль, не чужая
-  return k === String(s.karta) && name === (s.name ?? "") ? null : led;
+  const k = normKarta(karta);
+  const n = normName(name);
+  // Роль: число сравнивается; «agent» — своя по слову поверхности; иной сентинел
+  // (me — человек, realm-owner — владелец графа) роли не называет, и место
+  // различается хотя бы именем: connect(karta="me", name=…) — не своя роль.
+  const numeric = (x: string): boolean => /^\d+$/.test(x);
+  const sameKarta =
+    k === "agent" || !numeric(k) || !numeric(String(s.karta)) || k === String(s.karta);
+  return sameKarta && n === (s.name ?? "") ? null : led;
 }
 
 export const otherPlaceWord = (led: string, asked: string): string =>
   `Отказано (мост): этот мост уже ведёт место ${led} — стояние одно на мост, и место ${asked} его сняло бы с сокета молча. ` +
   "Занять другое место вместо этого — iskron_stand с take=true (прежнее останется на доске без слуха; ненужное сними revoke); " +
+  "то же имя вывелось из того же каталога — передай другое name; " +
   "держать оба разом — второй мост, то есть другая сессия харнесса.";
 
 /** Проксируемый connect/mint/register под другое место, когда мост ведёт своё, — отказ вслух вместо тихой подмены. */
@@ -34,11 +49,11 @@ export function crossPlaceRefusal(msg: JsonRpcMessage): JsonRpcMessage | null {
   if (msg?.method !== "tools/call" || msg.params?.name !== "iskron_channel") return null;
   const a = msg.params.arguments ?? {};
   if (!["connect", "mint", "register"].includes(String(a.action))) return null;
-  const karta = a.karta ?? state.standing?.karta ?? "";
-  const name = typeof a.name === "string" ? a.name : "";
+  const karta = normKarta(a.karta ?? state.standing?.karta ?? "");
+  const name = normName(a.name);
   const led = leadsOtherPlace(karta, name);
   if (!led) return null;
-  const asked = `${name || "_"}--${String(karta).replace(/^#/, "")}`;
+  const asked = keyOf(typeof a.realm === "string" ? a.realm.trim() : "", karta, name);
   return {
     jsonrpc: "2.0",
     id: msg.id,

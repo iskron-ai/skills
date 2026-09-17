@@ -11,7 +11,14 @@ import { statSync } from "node:fs";
 import { isAbsolute } from "node:path";
 
 import { nameOf, parseBoard } from "./board.ts";
-import { callTool as call, leadsOtherPlace, otherPlaceWord, short } from "./call.ts";
+import {
+  callTool as call,
+  leadsOtherPlace,
+  normKarta,
+  normName,
+  otherPlaceWord,
+  short,
+} from "./call.ts";
 import { CFG } from "./config.ts";
 import {
   awaitHello,
@@ -21,6 +28,7 @@ import {
   noteStandCwd,
   wasEvicted,
 } from "./hold.ts";
+import { keyOf } from "./holdrecord.ts";
 import { returnToStanding } from "./leave.ts";
 import { listenBlock } from "./listen.ts";
 import { deriveParts, fitName, git, joinName, NAME_MAX, nameFault, sanitize } from "./names.ts";
@@ -61,7 +69,7 @@ export const STAND_TOOL = {
       take: {
         type: "boolean",
         description:
-          "Забрать сокет места, которое слушает другой мост этой машины (обычно прежняя сессия той же рабочей копии): без take такое место только регистрируется, слух остаётся у держателя.",
+          "Сознательный переход: забрать сокет места, которое слушает другой мост этой машины (обычно прежняя сессия той же рабочей копии) — без take такое место только регистрируется, слух остаётся у держателя; либо сменить место этого моста (стояние одно на мост: другая роль или другое имя без take — отказ вслух, прежнее место остаётся на доске без слуха).",
       },
       room_karta: {
         type: "string",
@@ -109,7 +117,7 @@ const KNOCK_LIMIT = 2;
 export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   const a = msg.params?.arguments ?? {};
   const realm = typeof a.realm === "string" ? a.realm.trim() : "";
-  const karta = a.karta != null ? String(a.karta).trim().replace(/^#/, "") : "";
+  const karta = a.karta != null ? normKarta(a.karta) : "";
   const lines: string[] = [];
   const done = (isError = false): JsonRpcMessage => ({
     jsonrpc: "2.0",
@@ -140,7 +148,7 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   // вслух с названной причиной; молча укороченное имя адресует ДРУГОЕ место
   // (граф nks-dev: #5068). Выведенное имя укорачивается до предела сервера с
   // пометкой сразу после шапки ответа.
-  const asked = typeof a.name === "string" ? a.name.trim() : "";
+  const asked = normName(a.name);
   if (asked) {
     const fault = nameFault(asked);
     if (fault) {
@@ -171,7 +179,7 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   // явному take=true; иначе отказ вслух, и ничего не тронуто.
   const led = leadsOtherPlace(karta, name);
   if (led && a.take !== true) {
-    lines.push(otherPlaceWord(led, `${name}--${karta}`));
+    lines.push(otherPlaceWord(led, keyOf(realm, karta, name)));
     return done(true);
   }
   // Каталог сессии — в запись держания: мост, поднятый заново (вытеснение

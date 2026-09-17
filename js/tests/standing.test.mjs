@@ -1617,3 +1617,100 @@ test("a bridge leading a place refuses another role or name without take=true, k
   assert.match(said(moved), /watchdog vtoraya--931--nks-dev/);
   assert.equal(fake.state.counts.connect, 3);
 });
+
+// Sentinel roles and sloppy spelling must not slip past the one-standing rule:
+// `agent` is one's own role by the surface's word, `me` is the human's — a
+// connect as `me` under another name is another place; a karta with spaces or
+// «#» and a name with a trailing space are the same place, not another.
+test("one standing per bridge sees through sentinels and spelling: «me» under another name is refused, «agent»/«me» under the same name and a padded karta or name pass", async (t) => {
+  const { fake, bridge } = await connected(t);
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const known = new Set(fake.state.ws);
+  const said = (r) => (r.result?.content ?? []).map((c) => c.text ?? "").join("\n");
+  const channel = (id, args) =>
+    bridge.call("tools/call", id, {
+      name: "iskron_channel",
+      arguments: { realm: "nks-dev", ...args },
+    });
+  const asMe = await channel(5, { action: "connect", karta: "me", name: "vtoraya" });
+  assert.ok(
+    asMe.result?.isError,
+    `connect as «me» under another name must be refused: ${said(asMe)}`,
+  );
+  assert.match(said(asMe), /уже ведёт место proba--931--nks-dev/);
+  const padded = await channel(6, { action: "connect", karta: " 931", name: "vtoraya" });
+  assert.ok(padded.result?.isError, `a padded karta must not slip past: ${said(padded)}`);
+  assert.equal(fake.state.counts.connect, 1, "no place was taken");
+  assert.equal(
+    [...fake.state.ws].filter((x) => !known.has(x)).length,
+    0,
+    "the socket is untouched",
+  );
+  for (const args of [
+    { action: "register", karta: "agent", name: "proba" },
+    { action: "register", karta: "me", name: "proba" },
+    { action: "register", karta: "#931 ", name: "proba " },
+  ]) {
+    const r = await channel(7, args);
+    assert.ok(!r.result?.isError, `${JSON.stringify(args)} names the same place: ${said(r)}`);
+  }
+});
+
+// Two real bridges of one auth dir on two places against one fake: the board
+// reads both listening, and a revoke of one place closes only its socket — the
+// other bridge keeps its place, its socket and its key file.
+test("two bridges on two places: the board reads both listening, and revoking one leaves the other's socket and place alone", async (t) => {
+  const { fake, dir, bridge, standings } = await connected(t);
+  await waitFor(() => fake.state.ws.size === 1, "the first socket");
+  const said = (r) => (r.result?.content ?? []).map((c) => c.text ?? "").join("\n");
+  const second = startBridge(fake.mcpUrl, dir);
+  t.after(() => second.stop());
+  assert.ok((await second.call("initialize", 1, INIT)).result);
+  const st = await second.call("tools/call", 2, {
+    name: "iskron_stand",
+    arguments: { realm: "nks-dev", karta: 931, name: "vtoraya" },
+  });
+  assert.ok(!st.result?.isError, `a fresh bridge leads no place — no take needed: ${said(st)}`);
+  await waitFor(() => fake.state.ws.size === 2, "two sockets, one per place");
+  const board = said(
+    await bridge.call("tools/call", 5, {
+      name: "iskron_channel",
+      arguments: { realm: "nks-dev", action: "list" },
+    }),
+  );
+  assert.match(board, /@tester:proba — [^\n]*слушает/, board);
+  assert.match(board, /@tester:vtoraya — [^\n]*слушает/, board);
+  assert.equal(readdirSync(standings).filter((f) => f.endsWith(".key")).length, 2);
+  const rv = await second.call("tools/call", 3, {
+    name: "iskron_channel",
+    arguments: { realm: "nks-dev", action: "revoke", karta: 931, standing: "vtoraya" },
+  });
+  assert.ok(!rv.result?.isError, said(rv));
+  // The fake keeps a closed socket in its set until both ends finish: the
+  // socket is judged by the board (the fake reads it off the socket per place)
+  // and by what the first bridge was told, not by the set's size.
+  await waitFor(
+    () =>
+      !readdirSync(standings)
+        .filter((f) => f.endsWith(".key"))
+        .some((f) => readFileSync(join(standings, f), "utf8").trim() === "vtoraya--931--nks-dev"),
+    "the revoked place's key to go",
+  );
+  await new Promise((r) => setTimeout(r, 400));
+  assert.ok(
+    !bridge.notifications.some((n) => ["dead", "released"].includes(n.params?.data?.kind)),
+    "the first bridge is neither dead nor released by a neighbour's revoke",
+  );
+  const keys = readdirSync(standings)
+    .filter((f) => f.endsWith(".key"))
+    .map((f) => readFileSync(join(standings, f), "utf8").trim());
+  assert.deepEqual(keys, ["proba--931--nks-dev"], "only the revoked place's key is gone");
+  const after = said(
+    await bridge.call("tools/call", 6, {
+      name: "iskron_channel",
+      arguments: { realm: "nks-dev", action: "list" },
+    }),
+  );
+  assert.match(after, /@tester:proba — [^\n]*слушает/, after);
+  assert.ok(!/@tester:vtoraya/.test(after), "the revoked place is off the board");
+});

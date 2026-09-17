@@ -11,8 +11,13 @@ export function noteStanding(msg: JsonRpcMessage, reply: JsonRpcMessage): void {
   if (msg?.params?.name !== "iskron_channel" || a?.action !== "register") return;
   if (reply?.error || reply?.result?.isError) return;
   // Роль — голыми цифрами, как печатает доска: «#931» законно по скиллу, но
-  // ключ и поиск своего места на доске сравнивают строку (#5140, B2).
-  state.standing = { realm: a.realm, karta: String(a.karta).replace(/^#/, ""), name: a.name };
+  // ключ и поиск своего места на доске сравнивают строку (#5140, B2). Register
+  // как «agent» — своя роль по слову поверхности: число, которое мост уже
+  // помнит за этим именем, не подменяется сентинелом (#5154).
+  const karta = String(a.karta).trim().replace(/^#/, "");
+  const prev = state.standing;
+  const own = karta === "agent" && prev && (prev.name ?? "") === (a.name ?? "");
+  state.standing = { realm: a.realm, karta: own ? prev.karta : karta, name: a.name };
   state.standingSession = state.sessionId;
   debug(`standing remembered: ${a.name ?? "(unnamed)"} at karta ${a.karta} in ${a.realm}`);
 }
