@@ -1082,6 +1082,7 @@ test("stopping the plugin lets the real bridge clear the busy line before the ha
     ISKRON_BRIDGE_TOKEN: "nks_pat_plugin",
     ISKRON_BRIDGE_NO_BROWSER: "1",
   });
+  let stopped = false;
   try {
     await until(() => rec.tools().has("iskron_stand"), "the bridge's own tool", 15000);
     const out = await rec.call(
@@ -1092,6 +1093,7 @@ test("stopping the plugin lets the real bridge clear the busy line before the ha
     assert.match(out.content, /Занятость: работаю/, out.content);
     assert.equal(fake.state.status, "работаю");
     await fake.control({ statusDelayMs: 2500 }); // slower than the old 2 s kill, faster than the bridge's 3 s ceiling
+    stopped = true;
     await rec.stop();
     await until(
       () => fake.state.status === "",
@@ -1099,7 +1101,7 @@ test("stopping the plugin lets the real bridge clear the busy line before the ha
       8000,
     );
   } finally {
-    await rec.stop();
+    if (!stopped) await rec.stop();
     await fake.stop();
   }
 });

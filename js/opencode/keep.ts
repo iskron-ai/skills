@@ -75,9 +75,16 @@ export function takeLostMarker(authDir: string): { text: string; entries: LostEn
     return null;
   }
   for (const f of files) {
+    // Сперва снять, потом разбирать: битый маркер иначе лежал бы вечно.
+    let text: string;
     try {
-      const lost = JSON.parse(readFileSync(join(authDir, f), "utf8")) as Lost;
+      text = readFileSync(join(authDir, f), "utf8");
       unlinkSync(join(authDir, f));
+    } catch {
+      continue;
+    }
+    try {
+      const lost = JSON.parse(text) as Lost;
       if (lost?.at > at) at = lost.at;
       for (const e of lost?.entries ?? [])
         entries.push({ session: e.session, dir: e.dir ?? null, key: e.key ?? null });
@@ -165,15 +172,17 @@ export function createKeeper<S extends KeptSlot>(doors: KeeperDoors<S>): Keeper<
     if (typeof r?.key === "string") slot.key = r.key;
     if (r?.holding) slot.holding = true;
     else if (r?.holding === false) {
-      // Места мост не ведёт и вернуть нечего: сторожу здесь делать нечего, жнец
-      // снова считает простой; новое стояние вернёт сессию под сторож через stood.
+      // Места мост не ведёт и вернуть нечего (holding=false приходит только без
+      // возврата): сторожу здесь делать нечего, жнец снова считает простой; новое
+      // стояние вернёт сессию под сторож через stood.
       slot.holding = false;
-      if (!r.resumed) roots.delete(root);
+      roots.delete(root);
     }
     if (r?.resumed)
       doors.say(`Искрон: сторож слуха вернул место сессии ${root} — ${r.word}`, "info");
     else if (r?.reopened)
       doors.say(`Искрон: сторож слуха переоткрыл сокет сессии ${root} — ${r.word}`, "warning");
+    else if (r?.stuck) doors.say(r.word, "error"); // слово в сессию мост шлёт сам (kind=lost), один раз
   }
 
   const timer = setInterval(() => {
