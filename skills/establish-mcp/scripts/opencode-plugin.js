@@ -631,6 +631,12 @@ async function setupTools(ctx, say, onChannel, rootOf) {
   }
   async function slotFor(sessionID, touch = true) {
     const root = await rootOf(sessionID);
+    const own = root !== sessionID ? slots.get(sessionID) : void 0;
+    if (own && !own.bridge.failure) {
+      if (touch) own.lastCall = Date.now();
+      return own;
+    }
+    if (own) slots.delete(sessionID);
     let slot = slots.get(root);
     let dead;
     if (slot?.bridge.failure) {
@@ -712,6 +718,12 @@ async function setupTools(ctx, say, onChannel, rootOf) {
       });
     }
   });
+  function childSlot(sessionID) {
+    const own = spawn2();
+    own.session = sessionID;
+    slots.set(sessionID, own);
+    return own;
+  }
   async function callThrough(slot, name, input, sessionID) {
     if (loginPending) throw loginError();
     const login = loginStarted();
@@ -727,6 +739,10 @@ async function setupTools(ctx, say, onChannel, rootOf) {
     }
     if (slot.resume) await slot.resume;
     const args = { ...input ?? {} };
+    if (standsBy(name, args) && slot.session !== sessionID) {
+      slot = childSlot(sessionID);
+      await readyFor(slot);
+    }
     if (name === STAND_TOOL && !args.cwd) {
       const dir = slot.dir ??= await directoryOf(slot.session ?? sessionID);
       if (dir) args.cwd = dir;

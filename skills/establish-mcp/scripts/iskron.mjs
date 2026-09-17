@@ -2583,6 +2583,30 @@ function absorbRevokeReply(msg, reply2) {
 }
 
 // js/bridge/call.ts
+function leadsOtherPlace(karta, name) {
+  const led = ledKey();
+  const s = state.standing;
+  if (!led || !s) return null;
+  const k = String(karta).replace(/^#/, "");
+  if (!/^\d+$/.test(k)) return null;
+  return k === String(s.karta) && name === (s.name ?? "") ? null : led;
+}
+var otherPlaceWord = (led, asked) => `Отказано (мост): этот мост уже ведёт место ${led} — стояние одно на мост, и место ${asked} его сняло бы с сокета молча. Занять другое место вместо этого — iskron_stand с take=true (прежнее останется на доске без слуха; ненужное сними revoke); держать оба разом — второй мост, то есть другая сессия харнесса.`;
+function crossPlaceRefusal(msg) {
+  if (msg?.method !== "tools/call" || msg.params?.name !== "iskron_channel") return null;
+  const a = msg.params.arguments ?? {};
+  if (!["connect", "mint", "register"].includes(String(a.action))) return null;
+  const karta = a.karta ?? state.standing?.karta ?? "";
+  const name = typeof a.name === "string" ? a.name : "";
+  const led = leadsOtherPlace(karta, name);
+  if (!led) return null;
+  const asked = `${name || "_"}--${String(karta).replace(/^#/, "")}`;
+  return {
+    jsonrpc: "2.0",
+    id: msg.id,
+    result: { isError: true, content: [{ type: "text", text: otherPlaceWord(led, asked) }] }
+  };
+}
 var seq = 0;
 async function callTool(name, args) {
   const id = `iskron-bridge-call-${++seq}`;
@@ -3333,6 +3357,11 @@ async function runStand(msg) {
     );
   }
   const room = typeof a.room === "string" && a.room.trim() ? a.room.trim() : null;
+  const led = leadsOtherPlace(karta, name);
+  if (led && a.take !== true) {
+    lines.push(otherPlaceWord(led, `${name}--${karta}`));
+    return done(true);
+  }
   noteStandCwd(cwd);
   const board = await callTool("iskron_channel", { action: "list", realm });
   if (board.isError) {
@@ -3682,6 +3711,11 @@ async function deliver(msg) {
         return;
       }
       heldReply = null;
+      const cross = hasId ? crossPlaceRefusal(msg) : null;
+      if (cross) {
+        emit(cross);
+        return;
+      }
       expectOwnRevoke(msg);
       await post(msg, forward);
       const held = heldReply;
