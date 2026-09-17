@@ -130,7 +130,12 @@ export function bridgeMain(argv: string[]): void {
   // and takes the flow over. It is NOT survivable for an in-flight rotation:
   // the killed bridge leaves the machine holding a retired refresh token. That
   // is the price SIGKILL always pays; SIGTERM, stdin-close, and SIGINT no longer do.
-  const leave = async (why: string) => {
+  // Уход один на процесс: харнес, гася мост, закрывает stdin И шлёт SIGTERM, и
+  // второй уход выходил из процесса, не дождавшись, пока первый снимет
+  // занятость с доски (#5140, D1). Кто пришёл вторым — ждёт первого.
+  let leaving: Promise<void> | null = null;
+  const leave = (why: string): Promise<void> => (leaving ??= windDown(why));
+  const windDown = async (why: string) => {
     debug(`${why} — winding down`);
     // Занятость — слово ушедшего делателя: с концом сессии она снимается, иначе
     // доска показывает занятого там, где никого нет (#4895). Сокет и .key

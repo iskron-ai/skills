@@ -2,22 +2,29 @@
 // перезапуск плагина, вытеснение каталога OpenCode, /mcp reconnect — берёт
 // место по записи держания, а не ротирует его connect-ом. Две двери:
 //   • по имени — iskron_stand (stand.ts) зовёт resumeFromDisk;
-//   • по каталогу сессии — запрос плагина `iskron/resume {cwd}` или окружение
-//     ISKRON_BRIDGE_RESUME_CWD на старте: мост сам находит запись с этим cwd,
-//     открывает сокет, регистрируется и отвечает, сколько кадров ожидало.
-// `iskron/check {cwd}` — сторож плагина: держим — доска не читает нас
-// слушающими при ожидающих кадрах → сокет переоткрывается; не держим — возврат.
+//   • по ключу или каталогу сессии — запрос плагина `iskron/resume {key?, cwd?}`:
+//     мост находит СВОЮ запись (тот же харнесс, тот же ключ либо тот же
+//     каталог), открывает сокет, регистрируется и отвечает, сколько кадров
+//     ожидало. Чужого харнесса запись не трогается: Claude Code, вставший в
+//     той же копии, не теряет места от плагина OpenCode.
+// `iskron/check {key?, cwd?}` — сторож плагина: держим — доска; не слушает →
+// сокет переоткрывается; запарковано → возврат на место; не ведём — возврат.
+// Мост, ведущий другое место (держит или запарковал), чужой записью не
+// занимается: holdStanding иного ключа убил бы ведомое.
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { standingsDirOf } from "../shared/standings.ts";
-import { listens, parseBoard, undelivered } from "./board.ts";
+import { listens, nameOf, parseBoard, undelivered } from "./board.ts";
 import { callTool, short } from "./call.ts";
+import { harnessName } from "./client.ts";
 import { CFG } from "./config.ts";
 import {
   awaitHello,
   holdsKey,
   holdStanding,
+  isParked,
+  ledKey,
   localSocketPathOf,
   noteResuming,
   noteStandCwd,
@@ -26,6 +33,7 @@ import {
   resumeStanding,
 } from "./hold.ts";
 import { type HoldRecord, keyOf, readHoldRecord } from "./holdrecord.ts";
+import { returnToStanding } from "./leave.ts";
 import { publishStatus } from "./status.ts";
 import { standingLog } from "./store.ts";
 import { log } from "./streams.ts";
@@ -46,10 +54,10 @@ export async function deadPredecessor(
 
 /**
  * Вернуть с диска место, которое держал прежний мост этого каталога (#5061):
- * только когда его локальный сокет мёртв (живой держатель — не наше место).
- * Слух доказывается свежим hello; мёртвый токен — протухшая запись, стирается
- * тихо, и место занимается заново connect-ом. Возвращает слово об исходе или
- * null, когда возвращать нечего.
+ * только когда его локальный сокет мёртв (живой держатель — не наше место) и
+ * мост не ведёт другого места. Слух доказывается свежим hello; мёртвый токен —
+ * протухшая запись, стирается тихо, и место занимается заново connect-ом.
+ * Возвращает слово об исходе или null, когда возвращать нечего.
  */
 export async function resumeFromDisk(
   realm: string,
@@ -60,7 +68,10 @@ export async function resumeFromDisk(
   const rec = readHoldRecord(key);
   if (!rec) return null;
   if (holdsKey(key)) return null;
+  const led = ledKey();
+  if (led && led !== key) return null; // ведём другое место — его сокет и ключ не наша жертва
   if (await localSocketAlive(localSocketPathOf(key))) return null; // держит живой мост — не наше
+  const prev = state.standing;
   state.standing = { realm, karta, name };
   if (rec.cwd) noteStandCwd(rec.cwd);
   noteResuming(1);
@@ -82,21 +93,31 @@ export async function resumeFromDisk(
   }
   log(`hold record for ${key} is stale — dropped, the place is taken anew`);
   releaseStanding("возврат с диска не удался", true);
-  state.standing = null;
+  state.standing = prev; // память о прежнем имени цела: ничего вместо неё не занято
   return null;
 }
 
-/** Записи держания этого каталога сессии, свежие, свежайшая первой. */
-function recordsFor(cwd: string): HoldRecord[] {
+export interface ResumeSelector {
+  /** ключ стояния — точный адрес записи */
+  key?: string;
+  /** каталог сессии — записи этого харнесса из этого каталога, свежайшая первой */
+  cwd?: string;
+}
+
+/** Свои записи держания под выбором: тот же харнесс, ключ либо каталог; свежайшая первой. */
+function recordsFor(sel: ResumeSelector): HoldRecord[] {
   const dir = standingsDirOf(CFG.authDir);
   if (!existsSync(dir)) return [];
+  const mine = harnessName();
   const out: HoldRecord[] = [];
   for (const f of readdirSync(dir).filter((x) => x.endsWith(".hold"))) {
     try {
       const rec = JSON.parse(readFileSync(join(dir, f), "utf8")) as HoldRecord;
-      if (rec?.cwd !== cwd) continue;
+      if (!rec || rec.client !== mine) continue; // чужой харнесс — не наше место
+      const key = keyOf(rec.realm, rec.karta, rec.name);
+      if (sel.key ? key !== sel.key : !sel.cwd || rec.cwd !== sel.cwd) continue;
       // Чтение по ключу — то же, что у stand: просроченная запись стирается и не читается.
-      const fresh = readHoldRecord(keyOf(rec.realm, rec.karta, rec.name));
+      const fresh = readHoldRecord(key);
       if (fresh) out.push(fresh);
     } catch {
       /* чужой или битый файл — не наш */
@@ -112,61 +133,78 @@ export interface ResumeOutcome {
   word: string;
 }
 
-/**
- * Возврат места по каталогу сессии: запись с этим cwd → сокет заново тем же
- * адресом, register (атрибуция записей), занятость обратно. Нет записи — слово
- * об этом, ничего не занято.
- */
-export async function resumeByCwd(cwd: string, register = true): Promise<ResumeOutcome> {
-  if (
-    state.standing &&
-    holdsKey(keyOf(state.standing.realm, state.standing.karta, state.standing.name ?? ""))
-  )
-    return { resumed: false, word: "мост уже держит место — возвращать нечего" };
-  const recs = recordsFor(cwd);
-  if (!recs.length) return { resumed: false, word: `записи держания для каталога ${cwd} нет` };
-  const rec = recs[0];
-  const key = keyOf(rec.realm, rec.karta, rec.name);
-  if (await localSocketAlive(localSocketPathOf(key)))
-    return {
-      resumed: false,
-      key,
-      word: `место ${key} держит живой мост этого каталога — не трогаю`,
-    };
-  const back = await resumeFromDisk(rec.realm, rec.karta, rec.name);
-  if (!back)
-    return { resumed: false, key, word: `запись ${key} протухла — место займёт iskron_stand` };
-  const lines = [back.word];
-  if (register) {
-    const r = await callTool("iskron_channel", {
-      action: "register",
-      realm: rec.realm,
-      karta: rec.karta,
-      name: rec.name,
-    });
-    lines.push(r.isError ? `register отказал — ${short(r.text)}` : "register");
-  }
-  if (back.status) {
-    const st = await publishStatus(back.status);
-    lines.push(
-      st.ok ? `занятость возвращена: ${back.status}` : `занятость не возвращена: ${short(st.body)}`,
-    );
-  }
-  return { resumed: true, key, pending: back.pending, word: lines.join("; ") };
+/** Обратно на запаркованное место (leave, переоткрытие): сокет заново, hello — доказательство. */
+async function backToParked(key: string, how: string): Promise<ResumeOutcome> {
+  if (!returnToStanding(how)) return { resumed: false, key, word: "возврат на место не удался" };
+  const hello = await awaitHello(4000);
+  return {
+    resumed: true,
+    key,
+    pending: Number(hello?.pending) || 0,
+    word: hello
+      ? `возврат на место, с которого мост уходил (ожидало кадров — ${Number(hello.pending) || 0})`
+      : "возврат на место, с которого мост уходил; hello за 4 с не пришёл",
+  };
 }
 
-/** Старт моста: сокет из окружения без connect (отладка) либо возврат места по каталогу сессии. */
+/**
+ * Возврат места по ключу или каталогу сессии: своя запись → сокет заново тем же
+ * адресом, register (атрибуция записей), занятость обратно. Уже держим —
+ * «держу»; запарковано — обратно на место; чужое или ведём другое — не трогаем.
+ */
+export async function resumeBy(sel: ResumeSelector, register = true): Promise<ResumeOutcome> {
+  const recs = recordsFor(sel);
+  if (!recs.length)
+    return {
+      resumed: false,
+      word: `своей записи держания ${sel.key ? `с ключом ${sel.key}` : `для каталога ${sel.cwd ?? "?"}`} нет`,
+    };
+  const led = ledKey();
+  const skipped: string[] = [];
+  for (const rec of recs) {
+    const key = keyOf(rec.realm, rec.karta, rec.name);
+    if (holdsKey(key)) return { resumed: true, key, pending: 0, word: "мост уже держит это место" };
+    if (isParked(rec.realm, rec.karta, rec.name)) return backToParked(key, "возврат по записи");
+    if (led && led !== key) {
+      skipped.push(`${key}: мост ведёт другое место ${led}`);
+      continue;
+    }
+    if (await localSocketAlive(localSocketPathOf(key))) {
+      skipped.push(`${key}: держит живой мост`);
+      continue;
+    }
+    const back = await resumeFromDisk(rec.realm, rec.karta, rec.name);
+    if (!back) {
+      skipped.push(`${key}: запись протухла — место займёт iskron_stand`);
+      continue;
+    }
+    const lines = [back.word];
+    if (register) {
+      const r = await callTool("iskron_channel", {
+        action: "register",
+        realm: rec.realm,
+        karta: rec.karta,
+        name: rec.name,
+      });
+      lines.push(r.isError ? `register отказал — ${short(r.text)}` : "register");
+    }
+    if (back.status) {
+      const st = await publishStatus(back.status);
+      lines.push(
+        st.ok
+          ? `занятость возвращена: ${back.status}`
+          : `занятость не возвращена: ${short(st.body)}`,
+      );
+    }
+    return { resumed: true, key, pending: back.pending, word: lines.join("; ") };
+  }
+  return { resumed: false, word: `возвращать нечего — ${skipped.join("; ")}` };
+}
+
+/** Старт моста: сокет из окружения без connect — отладочный путь. */
 export function holdFromEnv(): void {
   const url = process.env.ISKRON_CHANNEL_SOCKET?.trim();
-  if (url) {
-    holdStanding(url, process.env.ISKRON_CHANNEL_STATUS?.trim() || null);
-    return;
-  }
-  const cwd = process.env.ISKRON_BRIDGE_RESUME_CWD?.trim();
-  if (!cwd) return;
-  // Сессии к серверу ещё нет: только сокет; register доделает ensureStanding
-  // перед первым вызовом — стояние после возврата помнится, а сессии за ним нет.
-  void resumeByCwd(cwd, false).then((r) => log(`resume by cwd at start: ${r.word}`));
+  if (url) holdStanding(url, process.env.ISKRON_CHANNEL_STATUS?.trim() || null);
 }
 
 const reply = (msg: JsonRpcMessage, result: unknown): JsonRpcMessage => ({
@@ -175,51 +213,70 @@ const reply = (msg: JsonRpcMessage, result: unknown): JsonRpcMessage => ({
   result,
 });
 
+const selectorOf = (msg: JsonRpcMessage): ResumeSelector => ({
+  key:
+    typeof msg.params?.key === "string" && msg.params.key.trim()
+      ? msg.params.key.trim()
+      : undefined,
+  cwd:
+    typeof msg.params?.cwd === "string" && msg.params.cwd.trim()
+      ? msg.params.cwd.trim()
+      : undefined,
+});
+
 export const isResumeCall = (msg: JsonRpcMessage): boolean => msg?.method === "iskron/resume";
 export const isCheckCall = (msg: JsonRpcMessage): boolean => msg?.method === "iskron/check";
 
-/** `iskron/resume {cwd}` — запрос плагина: вернуть место этого каталога с диска. */
+/** `iskron/resume {key?, cwd?}` — запрос плагина: вернуть своё место с диска. */
 export async function runResume(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
-  const cwd = typeof msg.params?.cwd === "string" ? msg.params.cwd.trim() : "";
-  if (!cwd) return reply(msg, { resumed: false, word: "cwd не передан" });
-  return reply(msg, await resumeByCwd(cwd));
+  const sel = selectorOf(msg);
+  if (!sel.key && !sel.cwd)
+    return reply(msg, { resumed: false, word: "ни key, ни cwd не передан" });
+  return reply(msg, await resumeBy(sel));
 }
 
 /**
- * `iskron/check {cwd}` — сторож плагина раз в N минут: держим место — доска;
- * не слушает при ожидающих кадрах — сокет переоткрывается (hello с pending
- * откроет пачку побудки); не держим — возврат по каталогу.
+ * `iskron/check {key?, cwd?}` — сторож плагина раз в N минут: держим место —
+ * доска; не слушает — сокет переоткрывается (hello с pending откроет пачку
+ * побудки); запарковано — обратно; не ведём — возврат по записи.
  */
 export async function runCheck(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
-  const cwd = typeof msg.params?.cwd === "string" ? msg.params.cwd.trim() : "";
+  const sel = selectorOf(msg);
   const s = state.standing;
-  const held = !!s && holdsKey(keyOf(s.realm, s.karta, s.name ?? ""));
-  if (!held) {
-    if (!cwd)
-      return reply(msg, { holding: false, resumed: false, word: "места нет, cwd не передан" });
-    const r = await resumeByCwd(cwd);
+  const key = s ? keyOf(s.realm, s.karta, s.name ?? "") : null;
+  if (!s || !key || !holdsKey(key)) {
+    if (s && key && isParked(s.realm, s.karta, s.name ?? "")) {
+      const r = await backToParked(key, "сторож слуха");
+      return reply(msg, { holding: r.resumed, ...r });
+    }
+    if (!sel.key && !sel.cwd)
+      return reply(msg, {
+        holding: false,
+        resumed: false,
+        word: "места нет, ни key, ни cwd не передан",
+      });
+    const r = await resumeBy(sel);
     return reply(msg, { holding: r.resumed, ...r });
   }
   const board = await callTool("iskron_channel", { action: "list", realm: s.realm });
   if (board.isError)
-    return reply(msg, { holding: true, word: `доска не прочиталась — ${short(board.text)}` });
+    return reply(msg, { holding: true, key, word: `доска не прочиталась — ${short(board.text)}` });
   const mine = parseBoard(board.text).find(
-    (e) => e.karta === String(s.karta) && e.address.endsWith(`:${s.name ?? ""}`),
+    (e) => e.karta === String(s.karta) && nameOf(e.address) === (s.name ?? ""),
   );
-  if (!mine) return reply(msg, { holding: true, word: "своего места на доске нет" });
+  if (!mine) return reply(msg, { holding: true, key, word: "своего места на доске нет" });
   const pending = undelivered(mine);
   const listening = listens(mine);
-  if (listening || !pending)
-    return reply(msg, { holding: true, listening, pending, word: "слушаю" });
-  // Сокет у моста жив, а доска нас не слышит и держит кадры: переоткрыть тем же адресом.
-  standingLog(
-    `reopen ${keyOf(s.realm, s.karta, s.name ?? "")}: board reads deaf with ${pending} pending`,
-  );
-  parkStanding("доска не читает слушающим при ожидающих кадрах");
+  if (listening) return reply(msg, { holding: true, key, listening, pending, word: "слушаю" });
+  // Сокет у моста жив, а доска нас не слышит: переоткрыть тем же адресом. Счётчик
+  // «не доставлено N» — только слово в ответе, решает признак слуха.
+  standingLog(`reopen ${key}: board reads deaf${pending ? ` with ${pending} pending` : ""}`);
+  parkStanding("доска не читает слушающим");
   resumeStanding();
   const hello = await awaitHello(4000);
   return reply(msg, {
     holding: true,
+    key,
     listening,
     pending,
     reopened: !!hello,

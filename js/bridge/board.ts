@@ -24,6 +24,9 @@ export function parseBoard(text: string): BoardEntry[] {
   return out;
 }
 
+/** Своя половина имени из адреса `@handle:name` — сравнивать её целиком: `endsWith(":proba")` совпало бы и на соседе `x.proba`. */
+export const nameOf = (address: string): string => address.slice(address.indexOf(":") + 1);
+
 /** Слушает ли место по доске — признак присутствия, не трафика. */
 export const listens = (e: BoardEntry): boolean => /(^|·)\s*слушает/.test(e.rest);
 

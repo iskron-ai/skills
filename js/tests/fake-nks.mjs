@@ -168,6 +168,13 @@ export async function startFakeNks(opts = {}) {
 
     if (p.startsWith("/channel/status/") && req.method === "POST") {
       const { text } = JSON.parse((await body(req)) || "{}");
+      if (st.statusDelayMs) {
+        // A slow status surface, whose write lands with its answer: a client
+        // killed before the answer has published nothing — this is what the
+        // harness's stop grace is measured against (r5 #5140, D1).
+        await new Promise((r) => setTimeout(r, st.statusDelayMs));
+        if (req.socket.destroyed) return;
+      }
       if (typeof text !== "string" || [...text].length > 70) {
         return json(res, 422, { error: "busy line too long" });
       }
@@ -212,6 +219,7 @@ export async function startFakeNks(opts = {}) {
         "boardText",
         "hooksText",
         "helloPending", // what the next hello says was waiting in the queue
+        "statusDelayMs", // hold the status POST open this long before answering
       ]) {
         if (k in patch) st[k] = patch[k];
       }
@@ -583,8 +591,10 @@ export async function startFakeNks(opts = {}) {
           st.counts.connect++;
           st.wsToken = token("ws"); // как у настоящей поверхности: сокет показан один раз и всякий раз новый
           st.standings.set(sid, a.name ?? "(unnamed)");
-          st.places.set(`${a.karta}:${a.name}`, {
-            karta: String(a.karta),
+          // The real surface prints the role as a bare number whatever the caller wrote («#931» is lawful).
+          const karta = String(a.karta).replace(/^#/, "");
+          st.places.set(`${karta}:${a.name}`, {
+            karta,
             name: a.name ?? "",
             incoming: `${base}/api/channel/in/mailbox-${a.name ?? "unnamed"}`,
             listening: true,

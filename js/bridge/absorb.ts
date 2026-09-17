@@ -43,7 +43,7 @@ export function absorbChannelReply(msg: JsonRpcMessage, reply: JsonRpcMessage): 
   if (a.realm && a.karta != null) {
     // connect назвал место — ключ, сокет и файл занятости идут под ЭТИМ именем,
     // даже если прежде мост держал другое: ярлык врать не должен.
-    state.standing = { realm: a.realm, karta: a.karta, name: a.name };
+    state.standing = { realm: a.realm, karta: String(a.karta).replace(/^#/, ""), name: a.name };
   }
   holdStanding(trim(socket), status ? trim(status) : deriveStatusUrl(trim(socket)));
   const block = listenBlock() ?? "";

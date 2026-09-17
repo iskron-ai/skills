@@ -2,6 +2,7 @@ import { OWN_CLIENTS } from "../shared/clients.ts";
 import { absorbChannelReply, absorbRevokeReply, expectOwnRevoke } from "./absorb.ts";
 import { ensureAuth } from "./auth.ts";
 import { BUILD } from "./build.ts";
+import { serialized } from "./call.ts";
 import {
   AuthPending,
   errorMessage,
@@ -218,14 +219,14 @@ export async function deliver(msg: JsonRpcMessage): Promise<void> {
       if (!isInit) await ensureStanding(); // the session may have turned over under us
       if (isStand) {
         // Тул моста: доска, место, хук, стук — теми же вызовами, что и агент, одним ходом.
-        emit(withNotice(await runStand(msg)));
+        emit(withNotice(await serialized(() => runStand(msg))));
         return;
       }
       if (isResumeCall(msg) || isCheckCall(msg)) {
         // Запросы плагина к самому мосту: возврат места по каталогу сессии и
         // сторож слуха (resume.ts, #5140). Сессия к серверу уже открыта выше —
         // register и доска идут по ней.
-        emit(isResumeCall(msg) ? await runResume(msg) : await runCheck(msg));
+        emit(await serialized(() => (isResumeCall(msg) ? runResume(msg) : runCheck(msg))));
         return;
       }
       heldReply = null;

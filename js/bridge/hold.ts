@@ -20,7 +20,6 @@ import {
   holdSocket,
   statusUrl as deriveStatusUrl,
 } from "../shared/channel.ts";
-import { NOTIFIED_CLIENTS } from "../shared/clients.ts";
 import { noteSeen, seenIds } from "../shared/seen.ts";
 import {
   keyFilePathOf,
@@ -28,7 +27,8 @@ import {
   socketPathOf,
   standingsDirOf,
 } from "../shared/standings.ts";
-import { dropBacklog, noteBacklog, openBacklog } from "./backlog.ts";
+import { flushBacklogNow, noteBacklog, openBacklog } from "./backlog.ts";
+import { harnessName, notifiedClient } from "./client.ts";
 import { completeFrame, stampOrigin } from "./complete.ts";
 import { CFG } from "./config.ts";
 import { dropHoldRecord, keyOf, readHoldRecord, writeHoldRecord } from "./holdrecord.ts";
@@ -50,11 +50,10 @@ export interface ChannelEvent {
     | "evicted"
     | "stale"
     | "released"
-    /** мост взял сокет стояния — плагину OpenCode это питает флаг holding (#5140) */
+    // held — мост взял сокет (питает holding плагина OpenCode, #5140); backlog —
+    // пачка побудки одним событием; lost — только у плагина: держащий мост вышел.
     | "held"
-    /** пачка побудки: накопленное после hello с pending или вокруг кадра платформы, одним событием */
     | "backlog"
-    /** только у плагина OpenCode: держащий мост вышел — слух потерян, в сессию вслух */
     | "lost";
   key?: string;
   raw?: string;
@@ -67,12 +66,6 @@ export interface ChannelEvent {
   frames?: Frame[];
   /** kind="backlog": сколько кадров ожидало по hello. */
   pending?: number;
-}
-
-/** Кадр этому харнесу доходит уведомлением MCP (pi, OpenCode), а не локальным сторожем. */
-function notifiedClient(): boolean {
-  const info = (state.initParams as { clientInfo?: { name?: unknown } } | null)?.clientInfo;
-  return typeof info?.name === "string" && NOTIFIED_CLIENTS.has(info.name);
 }
 
 function standingsDir(): string {
@@ -112,6 +105,8 @@ export function rememberStatus(text: string): void {
     statusUrl: currentStatusUrl,
     status: text || undefined,
     cwd: standCwd ?? readHoldRecord(currentKey)?.cwd,
+    client: harnessName(),
+    key: currentKey,
   });
 }
 
@@ -119,6 +114,8 @@ export { keyOf, readHoldRecord } from "./holdrecord.ts";
 
 /** Держит ли мост живой сокет ИМЕННО этого ключа (resume.ts). */
 export const holdsKey = (key: string): boolean => !!holder?.alive && currentKey === key;
+/** Ключ места, которое ведёт мост — держит или запарковал; null — не ведёт никакого (resume.ts). */
+export const ledKey = (): string | null => currentKey;
 /** Путь локального сокета ключа — для проверки живого держателя (resume.ts). */
 export const localSocketPathOf = (key: string): string => socketPathFor(key);
 /** Возврат с диска в полёте (+1) или кончился (−1): мёртвый токен при нём — протухшая запись, не тревога. */
@@ -185,6 +182,8 @@ export const listenerIdleSince = (): number | null =>
 export function onListenerAttached(fn: () => void): void {
   attachHooks.push(fn);
 }
+/** Локальных клиентов сейчас (проба живости из sweep.ts отпадает тут же — она не сторож). */
+export const localListeners = (): number => clients.size;
 
 let resuming = 0; // возвратов с диска в полёте: мёртвый токен при них — протухшая запись, не тревога
 
@@ -282,6 +281,8 @@ function openLocalServer(key: string): void {
 export function releaseStanding(reason: string, forget = false): void {
   if (forget && currentKey) dropHoldRecord(currentKey);
   if (!holder && !server) return;
+  // Пачка, ещё не отданная, уходит сейчас, а не теряется молча (backlog.ts).
+  flushBacklogNow();
   standingLog(`released ${currentKey ?? "?"}: ${reason}${forget ? " (record dropped)" : ""}`);
   const released: ChannelEvent = { kind: "released", key: currentKey ?? undefined, text: reason };
   broadcast(released);
@@ -324,14 +325,14 @@ export function releaseStanding(reason: string, forget = false): void {
   evictedEvent = null;
   seen = new Set();
   dropStale();
-  dropBacklog();
 }
 
 /** Взять этот адрес и держать его, чем бы ни был занят прежний. */
 export function holdStanding(url: string, statusUrl?: string | null): string {
   const key = keyFor();
   if (url === currentUrl && key === currentKey && holder?.alive) return key;
-  releaseStanding("новый сокет");
+  // Иное имя — прежнее место мост бросает сам: его запись стирается, иначе возврат по каталогу поднимал бы брошенное (#5140).
+  releaseStanding("новый сокет", !!currentKey && currentKey !== key);
   currentKey = key;
   currentUrl = url;
   currentStatusUrl = statusUrl || deriveStatusUrl(url);
@@ -346,6 +347,8 @@ export function holdStanding(url: string, statusUrl?: string | null): string {
       url,
       statusUrl: currentStatusUrl,
       cwd: standCwd ?? readHoldRecord(key)?.cwd,
+      client: harnessName(),
+      key,
     });
   listenerIdleAt = Date.now();
   seen = seenIds(seenFilePathOf(CFG.authDir, key));
@@ -404,28 +407,31 @@ function openHolder(url: string, key: string): void {
         const ev: ChannelEvent = { kind: "frame", raw: text, frame: full };
         broadcast(ev);
         const id = full?.type === "message" && typeof full.id === "string" ? full.id : "";
+        const seenPath = seenFilePathOf(CFG.authDir, key);
         // Повтор уже отданного кадра (тот же id — платформа отдала его снова после
         // возврата места) не будит второй раз: память доставленного пережила мост.
         const again = !!id && seen.has(id);
-        // Кадр, отданный локальному клиенту (двери Claude Code и Codex) или
-        // уведомлением (pi, OpenCode: там уведомление и есть доставка), — отдан:
-        // сторож выхода, взведённый после, на нём не выходит; перевзведённый
-        // постоянный сторож всё равно получит его из кольца. Запись идёт до печати
-        // клиентом — умерший между ними сторож стоит одного кадра для сторожа
-        // выхода, не для кольца. Харнесу со сторожем без клиента не отмечается:
-        // кадр, принятый в пустоту, должен будить взведённого позже сторожа выхода.
-        if (id && (clients.size > 0 || notifiedClient()))
-          noteSeen(seenFilePathOf(CFG.authDir, key), id, seen);
+        // Кадр, отданный локальному клиенту (Claude Code, Codex), — отдан: сторож выхода, взведённый
+        // после, на нём не выходит. Без клиента не отмечается: принятое в пустоту должно будить его.
+        if (id && clients.size > 0) noteSeen(seenPath, id, seen);
         if (full?.type === "status") return;
         if (again) return log(`frame ${id} came again — already delivered, not raised`);
-        // Побудка: hello с ожидавшими кадрами и кадр самой платформы открывают
-        // окно, и всё живое в нём уходит одной пачкой (backlog.ts, #5140).
-        const flushBacklog = (b: ChannelEvent): void => notify("info", b);
-        if (full?.type === "hello" && Number(full.pending) > 0)
-          openBacklog(Number(full.pending), flushBacklog);
-        if (full?.type === "message") {
-          if (full.origin === "platform") openBacklog(0, flushBacklog);
-          if (noteBacklog(full)) return;
+        if (notifiedClient()) {
+          // pi и OpenCode: уведомление и есть доставка, и .seen пишется в миг
+          // уведомления — кадр в окне пачки (backlog.ts, #5140) ещё не отдан, и
+          // умерший в окне мост его не потеряет: платформа отдаст снова.
+          const flushBacklog = (b: ChannelEvent): void => {
+            for (const f of b.frames ?? [])
+              if (typeof f.id === "string" && f.id) noteSeen(seenPath, f.id, seen);
+            notify("info", b);
+          };
+          if (full?.type === "hello" && Number(full.pending) > 0)
+            openBacklog(Number(full.pending), flushBacklog);
+          if (full?.type === "message") {
+            if (full.origin === "platform") openBacklog(0, flushBacklog);
+            if (noteBacklog(full)) return;
+          }
+          if (id) noteSeen(seenPath, id, seen);
         }
         notify("info", ev);
       });

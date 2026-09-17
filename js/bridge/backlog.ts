@@ -15,7 +15,7 @@ const BACKLOG_MS = Number(process.env.ISKRON_BRIDGE_BACKLOG_MS) || 1500;
 const BACKLOG_KEEP = 20;
 const BODY_CAP = 800;
 
-let frames: Frame[] = [];
+const frames: Frame[] = [];
 let total = 0;
 let pending = 0;
 let timer: ReturnType<typeof setTimeout> | null = null;
@@ -24,12 +24,19 @@ let flush: ((ev: ChannelEvent) => void) | null = null;
 /** Открыто ли окно — кадр, пришедший сейчас, пойдёт в пачку. */
 export const backlogOpen = (): boolean => timer !== null;
 
-/** Открыть окно (или продлить открытое) — по hello с pending либо по кадру платформы. */
+/** Открыть окно — по hello с pending либо по кадру платформы; открытое не продлевается, только пополняется. */
 export function openBacklog(expected: number, emit: (ev: ChannelEvent) => void): void {
   pending = Math.max(pending, expected);
   flush = emit;
   if (timer) return;
   timer = setTimeout(close, BACKLOG_MS).unref();
+}
+
+/** Отдать накопленное сейчас — при отпускании стояния: неотданное не теряется молча. */
+export function flushBacklogNow(): void {
+  if (!timer) return;
+  clearTimeout(timer);
+  close();
 }
 
 /** Положить живой кадр в пачку; false — окна нет, кадр идёт своим путём. */
@@ -68,14 +75,4 @@ function close(): void {
     pending: expected,
     text: `${head}\n\n${bodies.join("\n\n")}`,
   });
-}
-
-/** Забыть накопленное — при отпускании стояния. */
-export function dropBacklog(): void {
-  if (timer) clearTimeout(timer);
-  timer = null;
-  frames = [];
-  total = 0;
-  pending = 0;
-  flush = null;
 }

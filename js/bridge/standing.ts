@@ -10,7 +10,9 @@ export function noteStanding(msg: JsonRpcMessage, reply: JsonRpcMessage): void {
   const a = msg?.params?.arguments;
   if (msg?.params?.name !== "iskron_channel" || a?.action !== "register") return;
   if (reply?.error || reply?.result?.isError) return;
-  state.standing = { realm: a.realm, karta: a.karta, name: a.name };
+  // Роль — голыми цифрами, как печатает доска: «#931» законно по скиллу, но
+  // ключ и поиск своего места на доске сравнивают строку (#5140, B2).
+  state.standing = { realm: a.realm, karta: String(a.karta).replace(/^#/, ""), name: a.name };
   state.standingSession = state.sessionId;
   debug(`standing remembered: ${a.name ?? "(unnamed)"} at karta ${a.karta} in ${a.realm}`);
 }

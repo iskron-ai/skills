@@ -10,7 +10,7 @@
 import { statSync } from "node:fs";
 import { isAbsolute } from "node:path";
 
-import { parseBoard } from "./board.ts";
+import { nameOf, parseBoard } from "./board.ts";
 import { callTool as call, short } from "./call.ts";
 import { CFG } from "./config.ts";
 import {
@@ -185,7 +185,7 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   // Пустой граф сервер печатает без заголовка: «Ни одна роль этого графа не держит канала» — законная пустота.
   const empty = /не держит канала/i.test(board.text); // ровно наблюдённая фраза сервера 0.43
   const recognized = !!header || empty || entries.length > 0;
-  const own = entries.filter((e) => e.karta === karta && e.address.endsWith(`:${name}`));
+  const own = entries.filter((e) => e.karta === karta && nameOf(e.address) === name);
   // Места прежнего стандарта имени (машина.репо.ветка) той же машины и репо —
   // сироты после перехода на машина.репо.модель: их адрес держат ростеры комнат
   // и хуки инбокса, а слушает их никто. Прежнее имя узнаётся по третьей части,
@@ -199,8 +199,8 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
       .filter(Boolean),
   );
   const legacy = entries.filter((e) => {
-    if (e.karta !== karta || e.address.endsWith(`:${name}`)) return false;
-    const own = e.address.slice(e.address.indexOf(":") + 1);
+    if (e.karta !== karta || nameOf(e.address) === name) return false;
+    const own = nameOf(e.address);
     if (!own.startsWith(`${stem}.`)) return false;
     const third = own.slice(stem.length + 1);
     return branches.has(third) && /живой|слушает/.test(e.rest);

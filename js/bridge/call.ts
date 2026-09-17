@@ -35,3 +35,16 @@ export async function callTool(name: string, args: Record<string, unknown>): Pro
 }
 
 export const short = (s: string, n = 300): string => (s.length > n ? `${s.slice(0, n)}…` : s);
+
+// Ходы моста над местом — iskron_stand, iskron/resume, iskron/check — идут по
+// одному: столкновение стояния с тиком сторожа дало бы два holdStanding и
+// лишний released, по которому плагин снял бы holding (#5140).
+let chain: Promise<unknown> = Promise.resolve();
+export function serialized<T>(fn: () => Promise<T>): Promise<T> {
+  const p = chain.then(fn, fn);
+  chain = p.then(
+    () => undefined,
+    () => undefined,
+  );
+  return p;
+}
