@@ -211,6 +211,7 @@ export async function startFakeNks(opts = {}) {
         "rooms",
         "boardText",
         "hooksText",
+        "helloPending", // what the next hello says was waiting in the queue
       ]) {
         if (k in patch) st[k] = patch[k];
       }
@@ -234,6 +235,7 @@ export async function startFakeNks(opts = {}) {
             name: pl.name,
             incoming: `${base}/api/channel/in/mailbox-${pl.name}`,
             listening: pl.listening !== false,
+            pending: pl.pending ?? 0, // «не доставлено N» on the board
           });
         }
       }
@@ -555,7 +557,7 @@ export async function startFakeNks(opts = {}) {
             // Форма живой доски (iskron_channel list, сервер 0.43): строка места,
             // строка занятости «💬 «…»» и строка входящего адреса «📥».
             lines.push(
-              `  #${p.karta} 👨‍💻 Роль 能 · @tester:${p.name} — живой · простой 6h · ${p.listening ? "слушает" : "не слушает"} · сокет был 2026-09-08T16:43:28.211106Z · открыл @tester`,
+              `  #${p.karta} 👨‍💻 Роль 能 · @tester:${p.name} — живой · простой 6h · ${p.pending ? `не доставлено ${p.pending} · ` : ""}${p.listening ? "слушает" : "не слушает"} · сокет был 2026-09-08T16:43:28.211106Z · открыл @tester`,
             );
             lines.push(`     💬 «${p.status ?? "на вахте"}» · 2026-09-08T16:08:56.121391Z`);
             lines.push(`     📥 ${p.incoming}`);
@@ -837,7 +839,9 @@ export async function startFakeNks(opts = {}) {
       if (st.ws.size === 0) for (const pl of st.places.values()) pl.listening = false;
     });
     socket.on("error", () => st.ws.delete(socket));
-    socket.write(wsFrame(0x1, JSON.stringify({ type: "hello", pending: 0, ping: 30 })));
+    socket.write(
+      wsFrame(0x1, JSON.stringify({ type: "hello", pending: st.helloPending ?? 0, ping: 30 })),
+    );
   });
 
   await new Promise((r) => server.listen(0, "127.0.0.1", r));

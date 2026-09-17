@@ -75,13 +75,15 @@ export function setupChannel(pi: ExtensionAPI): (params: any) => void {
         );
         return;
       case "stale":
+      case "backlog":
+        // Одна пачка — одно слово в ход: лежалые кадры или побудка с накопленным.
         if (ev.text)
           pi.sendMessage(
             {
               customType: "iskron-channel",
               content: ev.text,
               display: true,
-              details: { stale: true },
+              details: ev.kind === "stale" ? { stale: true } : { backlog: true },
             },
             { triggerTurn: true, deliverAs: "steer" },
           );
@@ -103,7 +105,9 @@ export function setupChannel(pi: ExtensionAPI): (params: any) => void {
         if (ctxRef?.hasUI && ev.text) ctxRef.ui.notify(`Искрон: ${ev.text}`, "warning");
         return;
       case "attached":
+      case "held":
       case "released":
+      case "lost":
         return;
     }
   };

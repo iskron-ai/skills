@@ -32,12 +32,13 @@ import { BUILD } from "./build.ts";
 import { CFG, parseArgs, setConfig } from "./config.ts";
 import { deliver } from "./deliver.ts";
 import { errorMessage } from "./errors.ts";
-import { holdFromEnv, releaseStanding, statusAddress } from "./hold.ts";
+import { releaseStanding, statusAddress } from "./hold.ts";
 import { startDeafnessWatch } from "./leave.ts";
 import { installAuthLockExitHook } from "./oauth/authlock.ts";
 import { pendingFlow } from "./oauth/flow.ts";
 import { installRefreshLockExitHook } from "./oauth/refreshlock.ts";
 import { tokenRequestsInFlight } from "./oauth/tokenrequest.ts";
+import { holdFromEnv } from "./resume.ts";
 import { publishStatusTo } from "./status.ts";
 import { sleep, storePath } from "./store.ts";
 import { debug, flushStdout, guardStream, log } from "./streams.ts";
@@ -82,7 +83,7 @@ export function bridgeMain(argv: string[]): void {
   if (proxy) log(proxy);
   startTokenKeepalive();
   startFreshnessWatch(CFG.authDir, CFG.serverUrl); // отставание поставки — слово моста, не память человека
-  holdFromEnv(); // отладочный путь: сокет из окружения, без connect
+  holdFromEnv(); // сокет из окружения без connect (отладка) либо возврат места по каталогу сессии (#5140)
   startDeafnessWatch(); // никто не слушает — мост уходит с места сам (#4895)
 
   const rl = createInterface({ input: process.stdin, terminal: false });

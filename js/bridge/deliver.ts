@@ -12,6 +12,7 @@ import {
 } from "./errors.ts";
 import { localLeave } from "./leave.ts";
 import { annotateToolList } from "./moment.ts";
+import { isCheckCall, isResumeCall, runCheck, runResume } from "./resume.ts";
 import { isStandCall, runStand } from "./stand.ts";
 import { ensureStanding, isUnattributed, noteStanding, replyText } from "./standing.ts";
 import { localStatus } from "./status.ts";
@@ -218,6 +219,13 @@ export async function deliver(msg: JsonRpcMessage): Promise<void> {
       if (isStand) {
         // Тул моста: доска, место, хук, стук — теми же вызовами, что и агент, одним ходом.
         emit(withNotice(await runStand(msg)));
+        return;
+      }
+      if (isResumeCall(msg) || isCheckCall(msg)) {
+        // Запросы плагина к самому мосту: возврат места по каталогу сессии и
+        // сторож слуха (resume.ts, #5140). Сессия к серверу уже открыта выше —
+        // register и доска идут по ней.
+        emit(isResumeCall(msg) ? await runResume(msg) : await runCheck(msg));
         return;
       }
       heldReply = null;

@@ -10,23 +10,22 @@
 import { statSync } from "node:fs";
 import { isAbsolute } from "node:path";
 
-import { absorbChannelReply } from "./absorb.ts";
+import { parseBoard } from "./board.ts";
+import { callTool as call, short } from "./call.ts";
 import { CFG } from "./config.ts";
 import {
   awaitHello,
-  deadPredecessor,
   hasStatusAddressFor,
   holdsStanding,
   isParked,
-  resumeFromDisk,
+  noteStandCwd,
   wasEvicted,
 } from "./hold.ts";
 import { returnToStanding } from "./leave.ts";
 import { listenBlock } from "./listen.ts";
 import { deriveParts, fitName, git, joinName, NAME_MAX, nameFault, sanitize } from "./names.ts";
-import { noteStanding, replyText } from "./standing.ts";
+import { deadPredecessor, resumeFromDisk } from "./resume.ts";
 import { publishStatus } from "./status.ts";
-import { post } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
 import { readLatest, staleNotice } from "./update.ts";
 
@@ -96,29 +95,6 @@ const isDirectory = (p: string): boolean => {
 export const isStandCall = (msg: JsonRpcMessage): boolean =>
   msg?.method === "tools/call" && msg?.params?.name === "iskron_stand";
 
-interface BoardEntry {
-  karta: string;
-  address: string;
-  rest: string;
-  incoming: string | null;
-}
-
-/** Строки доски: `#N … · @handle:name — …`, за ними `📥 https://…`. */
-export function parseBoard(text: string): BoardEntry[] {
-  const out: BoardEntry[] = [];
-  for (const line of text.split("\n")) {
-    const m = /^\s*#(\d+)\s.*?·\s(@\S+)\s—\s(.*)$/.exec(line);
-    if (m) {
-      out.push({ karta: m[1], address: m[2], rest: m[3], incoming: null });
-      continue;
-    }
-    const inc = /📥\s*(https?:\/\/\S+)/.exec(line);
-    if (inc && out.length) out[out.length - 1].incoming = inc[1];
-  }
-  return out;
-}
-
-let seq = 0;
 /**
  * Стуки по комнатам — когда и сколько, ключ (граф, роль, имя, комната). Правило
  * ожидания — #4342. Запись живёт в процессе моста и умирает с ним; новый цикл
@@ -129,34 +105,6 @@ const knocks = new Map<string, { at: number; count: number }>();
 // Окно повтора — 2 минуты по #4342; переменная — шов для проб, не ручка человека.
 const KNOCK_REPEAT_AFTER_MS = Number(process.env.ISKRON_STAND_KNOCK_REPEAT_MS) || 120_000;
 const KNOCK_LIMIT = 2;
-
-interface Answer {
-  text: string;
-  isError: boolean;
-}
-
-async function call(name: string, args: Record<string, unknown>): Promise<Answer> {
-  const id = `iskron-bridge-stand-${++seq}`;
-  const msg: JsonRpcMessage = {
-    jsonrpc: "2.0",
-    id,
-    method: "tools/call",
-    params: { name, arguments: args },
-  };
-  let reply: JsonRpcMessage | null = null;
-  await post(msg, (m) => {
-    if (m.id === id) reply = m;
-  });
-  let got = reply as JsonRpcMessage | null;
-  if (!got) return { text: "ответа нет", isError: true };
-  if (name === "iskron_channel") {
-    if (args.action === "register") noteStanding(msg, got);
-    if (args.action === "connect") got = absorbChannelReply(msg, got);
-  }
-  return { text: replyText(got), isError: !!got.error || !!got.result?.isError };
-}
-
-const short = (s: string, n = 300): string => (s.length > n ? `${s.slice(0, n)}…` : s);
 
 export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   const a = msg.params?.arguments ?? {};
@@ -219,6 +167,9 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
     );
   }
   const room = typeof a.room === "string" && a.room.trim() ? a.room.trim() : null;
+  // Каталог сессии — в запись держания: мост, поднятый заново (вытеснение
+  // каталога OpenCode, перезапуск плагина), вернёт место по нему сам (#5140).
+  noteStandCwd(cwd);
 
   // 1. Доска — до любой перемены.
   const board = await call("iskron_channel", { action: "list", realm });

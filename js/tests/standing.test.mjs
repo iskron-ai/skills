@@ -721,6 +721,11 @@ test("leave by the doer's word: socket closed, busy line cleared, place kept; is
   const list = await bridge.call("tools/list", 4);
   const channel = list.result.tools.find((x) => x.name === "iskron_channel");
   assert.match(channel.description, /action="leave"/, "the move is announced on the tool");
+  assert.match(
+    channel.description,
+    /в pi и OpenCode кадр приходит уведомлением, и мост места не бросает/,
+    "the line must not promise a self-leave to a harness whose bridge never leaves (#5140)",
+  );
   const st = await bridge.call("tools/call", 5, {
     name: "iskron_channel",
     arguments: { realm: "nks-dev", action: "status", text: "работаю" },
@@ -1005,5 +1010,223 @@ test("a dead token forgets the hold record; a live holder's place is not taken f
   await waitFor(
     () => !readdirSync(standings).some((f) => f.endsWith(".hold")),
     "a dead token to forget the record",
+  );
+});
+
+// ── keeping the hearing (graph nks-dev: #5140) ───────────────────────────────
+
+// The OpenCode plugin has no local socket client, so «attached» never reached
+// it and a holding bridge looked idle. The bridge now says «held» and
+// «released» as notifications — the plugin's flag is fed by the bridge's word.
+test("the bridge says «held» and «released» as notifications, and journals the standing's life next to grant.log", async (t) => {
+  const { fake, dir, bridge } = await connected(t);
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  await waitFor(
+    () => bridge.notifications.some((n) => n.params?.data?.kind === "held"),
+    "the «held» notification",
+  );
+  const held = bridge.notifications.find((n) => n.params?.data?.kind === "held");
+  assert.match(held.params.data.key, /^proba--931--nks-dev$/);
+  const rv = await bridge.call("tools/call", 5, {
+    name: "iskron_channel",
+    arguments: { realm: "nks-dev", action: "revoke", karta: 931, standing: "proba" },
+  });
+  assert.ok(!rv.result?.isError, JSON.stringify(rv));
+  await waitFor(
+    () => bridge.notifications.some((n) => n.params?.data?.kind === "released"),
+    "the «released» notification",
+  );
+  const journal = readFileSync(join(dir, "standings.log"), "utf8");
+  assert.match(journal, /held proba--931--nks-dev/, journal);
+  assert.match(journal, /released proba--931--nks-dev/, journal);
+  assert.match(journal, /pid=\d+ v\d/, "every line carries pid and build, like grant.log");
+});
+
+// After hello with pending > 0 the platform hands over everything that waited
+// at once; a frame of the platform itself (a wake) is the other trigger. Either
+// opens a short window, and what arrives in it rides as ONE backlog
+// notification — frames by received_at, bodies included — not a prompt per frame.
+test("hello with pending and a platform wake each open a backlog window: the frames in it ride as one notification by received_at, a lone frame still rides alone", async (t) => {
+  const { fake, bridge } = await connected(t, { env: { ISKRON_BRIDGE_BACKLOG_MS: "600" } });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const backlogs = () => bridge.notifications.filter((n) => n.params?.data?.kind === "backlog");
+  const frames = () =>
+    bridge.notifications
+      .filter((n) => n.params?.data?.kind === "frame")
+      .map((n) => n.params.data.frame?.id);
+  await fake.control({ ws_send: JSON.stringify({ type: "hello", pending: 2 }) });
+  await fake.control({
+    ws_send: JSON.stringify({
+      id: "q2",
+      type: "message",
+      body: "второе в очереди",
+      received_at: "2026-09-17T15:30:00Z",
+    }),
+  });
+  await fake.control({
+    ws_send: JSON.stringify({
+      id: "q1",
+      type: "message",
+      body: "первое в очереди",
+      received_at: "2026-09-17T15:15:00Z",
+    }),
+  });
+  await waitFor(() => backlogs().length === 1, "the backlog notification");
+  const burst = backlogs()[0].params.data;
+  assert.deepEqual(
+    burst.frames.map((f) => f.id),
+    ["q1", "q2"],
+    "the queue is handed over in the order it was received, not the order it came",
+  );
+  assert.equal(burst.pending, 2);
+  assert.match(burst.text, /Побудка: кадров 2 \(ожидало в очереди: 2\)/);
+  assert.match(burst.text, /первое в очереди[\s\S]*второе в очереди/);
+  assert.match(burst.text, /action="history"/, "the rest is pointed at, not dropped");
+  assert.ok(
+    !frames().includes("q1") && !frames().includes("q2"),
+    "no prompt per frame for a queued frame",
+  );
+  // A platform wake opens a window of its own; the neighbour's word next to it rides along.
+  await fake.control({
+    ws_send: JSON.stringify({
+      id: "wake",
+      type: "message",
+      body: "Час на одном и том же — подними голову",
+      provenance: { auth: "none", via: "platform" },
+    }),
+  });
+  await fake.control({
+    ws_send: JSON.stringify({
+      id: "peer",
+      type: "message",
+      body: "слово соседа",
+      provenance: { from_karta_seq: 48 },
+    }),
+  });
+  await waitFor(() => backlogs().length === 2, "the wake's backlog");
+  assert.deepEqual(
+    backlogs()[1].params.data.frames.map((f) => f.id),
+    ["wake", "peer"],
+  );
+  assert.match(backlogs()[1].params.data.text, /от ПЛАТФОРМЫ — побудка/);
+  // Outside a window a frame rides alone, as before.
+  await new Promise((r) => setTimeout(r, 800));
+  await fake.control({ ws_send: JSON.stringify({ id: "alone", type: "message", body: "одно" }) });
+  await waitFor(() => frames().includes("alone"), "the lone frame as its own notification");
+  assert.equal(backlogs().length, 2);
+});
+
+// pi and OpenCode hear by notification: the notification IS the delivery, so a
+// delivered frame is remembered in .seen without a local client, and the same
+// id handed over again (after a resume from disk) wakes nobody twice.
+test("for a client that hears by notification a delivered frame is remembered in .seen, and a repeat by id is not raised again", async (t) => {
+  const { fake, bridge, standings } = await connected(t, {
+    init: { ...INIT, clientInfo: { name: "opencode-iskron", version: "1" } },
+  });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const sent = JSON.stringify({ id: "r-1", type: "message", body: "раз" });
+  await fake.control({ ws_send: sent });
+  await waitFor(
+    () => bridge.notifications.some((n) => n.params?.data?.frame?.id === "r-1"),
+    "the frame",
+  );
+  await waitFor(
+    () =>
+      readdirSync(standings).some(
+        (f) => f.endsWith(".seen") && readFileSync(join(standings, f), "utf8").includes("r-1"),
+      ),
+    "the id to be remembered without a local client",
+  );
+  await fake.control({ ws_send: sent });
+  await new Promise((r) => setTimeout(r, 500));
+  assert.equal(
+    bridge.notifications.filter((n) => n.params?.data?.frame?.id === "r-1").length,
+    1,
+    "the same frame must not wake the agent twice",
+  );
+  assert.match(bridge.stderr, /frame r-1 came again/);
+});
+
+// The plugin cannot pass anything to a bridge it spawned before the session
+// existed; instead it asks the bridge to resume by the session's directory,
+// which iskron_stand wrote into the hold record.
+test("iskron/resume by the session's directory: a bridge restarted after the plugin's death takes the place back, registers, and only for the right directory", async (t) => {
+  const { fake, dir, bridge, standings } = await connected(t);
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const cwd = mkdtempSync(join(tmpdir(), "iskron-session-dir-"));
+  const stand = await bridge.call("tools/call", 5, {
+    name: "iskron_stand",
+    arguments: { realm: "nks-dev", karta: 931, name: "proba", cwd, status: "на вахте" },
+  });
+  const said = (stand.result?.content ?? []).map((c) => c.text ?? "").join("\n");
+  assert.match(said, /сокет уже держит этот мост — register/, said);
+  const hold = readdirSync(standings).find((f) => f.endsWith(".hold"));
+  assert.equal(
+    JSON.parse(readFileSync(join(standings, hold), "utf8")).cwd,
+    cwd,
+    "the record names the directory",
+  );
+  const known = new Set(fake.state.ws);
+  const fresh = () => [...fake.state.ws].filter((x) => !known.has(x));
+  bridge.proc.kill("SIGKILL");
+  await waitFor(() => fake.state.ws.size === 0, "the socket to close");
+  await fake.control({ helloPending: 2 });
+  const second = startBridge(fake.mcpUrl, dir);
+  t.after(() => second.stop());
+  assert.ok((await second.call("initialize", 1, INIT)).result);
+  const wrong = await second.call("iskron/resume", 2, { cwd: "/nowhere/else" });
+  assert.equal(wrong.result?.resumed, false, JSON.stringify(wrong));
+  assert.equal(fresh().length, 0, "another directory's place is not touched");
+  const registers = fake.state.counts.register_standing;
+  const back = await second.call("iskron/resume", 3, { cwd });
+  assert.equal(back.result?.resumed, true, JSON.stringify(back));
+  assert.equal(back.result.pending, 2, "the answer says how many frames waited");
+  assert.match(back.result.word, /возврат места с диска/);
+  assert.match(back.result.word, /register/);
+  assert.match(back.result.word, /занятость возвращена: на вахте/);
+  assert.equal(fake.state.counts.connect, 1, "the place is resumed, not rotated");
+  assert.equal(fresh().length, 1, "one socket reopened on the saved address");
+  assert.equal(
+    fake.state.counts.register_standing,
+    registers + 1,
+    "the session is attributed by register",
+  );
+  await waitFor(() => fake.state.status === "на вахте", "the busy line to come back");
+  assert.ok(
+    second.notifications.some((n) => n.params?.data?.kind === "held"),
+    "the resumed place is said as «held»",
+  );
+  const again = await second.call("iskron/resume", 4, { cwd });
+  assert.equal(again.result?.resumed, false, "a held place is not resumed twice");
+  assert.match(
+    readFileSync(join(dir, "standings.log"), "utf8"),
+    /resumed-from-disk proba--931--nks-dev: pending 2/,
+  );
+});
+
+// The plugin's watch: every N minutes a session that stood asks its bridge
+// `iskron/check` — a held place the board reads deaf with frames waiting has
+// its socket reopened on the same address; a listening one is left alone.
+test("iskron/check: a held place the board reads deaf with waiting frames gets its socket reopened; a listening one is left alone", async (t) => {
+  const { fake, dir, bridge } = await connected(t);
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const known = new Set(fake.state.ws);
+  const fresh = () => [...fake.state.ws].filter((x) => !known.has(x));
+  const fine = await bridge.call("iskron/check", 5, { cwd: "" });
+  assert.equal(fine.result?.holding, true, JSON.stringify(fine));
+  assert.equal(fine.result.listening, true);
+  assert.equal(fresh().length, 0, "a listening place is not reopened");
+  await fake.control({
+    places: [{ karta: 931, name: "proba", listening: false, pending: 2 }],
+    helloPending: 2,
+  });
+  const deaf = await bridge.call("iskron/check", 6, { cwd: "" });
+  assert.equal(deaf.result?.reopened, true, JSON.stringify(deaf));
+  assert.equal(deaf.result.pending, 2);
+  await waitFor(() => fresh().length === 1, "the socket to be reopened on the same address");
+  assert.equal(fake.state.counts.connect, 1, "no connect — the same address");
+  assert.match(
+    readFileSync(join(dir, "standings.log"), "utf8"),
+    /reopen proba--931--nks-dev: board reads deaf with 2 pending/,
   );
 });

@@ -20,6 +20,9 @@ export function bridgeRuntime(): { bin: string; env: NodeJS.ProcessEnv } {
   return { bin: process.execPath, env: process.env };
 }
 
+/** Сколько мосту дают уйти самому после SIGTERM — дольше потолка публикации снятой занятости (3 с). */
+const STOP_GRACE_MS = 5000;
+
 export type Content =
   { type: "text"; text: string } | { type: "image"; data: string; mimeType: string };
 
@@ -34,15 +37,19 @@ export class Bridge {
   private readonly bin: string;
   private readonly onLog: (line: string) => void;
   private readonly onNotification: (method: string, params: any) => void;
+  private readonly onDie: (e: Error) => void;
 
   constructor(
     bin: string,
     onLog: (line: string) => void,
     onNotification: (method: string, params: any) => void = () => {},
+    /** Мост умер или остановлен — один раз, с причиной; плагин OpenCode объявляет по нему потерю слуха. */
+    onDie: (e: Error) => void = () => {},
   ) {
     this.bin = bin;
     this.onLog = onLog;
     this.onNotification = onNotification;
+    this.onDie = onDie;
   }
 
   /** Мост вышел или не запустился — вызовы к нему отвергаются этим отказом. */
@@ -86,6 +93,11 @@ export class Bridge {
     this.dead = e;
     for (const [, p] of this.pending) p.reject(e);
     this.pending.clear();
+    try {
+      this.onDie(e);
+    } catch {
+      /* слово о смерти не должно уронить читателя */
+    }
   }
 
   private feed(chunk: string): void {
@@ -171,13 +183,16 @@ export class Bridge {
       proc.stdin?.end();
       proc.kill("SIGTERM");
       // Мост держится до конца висящего OAuth — не даём ему пережить сессию.
+      // Но и не раньше, чем он снимет занятость с доски: уход публикует пустой
+      // статус с потолком 3 с, и SIGKILL через 2 с оставлял занятого там, где
+      // никого нет (#5140).
       const hard = setTimeout(() => {
         try {
           proc.kill("SIGKILL");
         } catch {
           /* уже умер */
         }
-      }, 2000);
+      }, STOP_GRACE_MS);
       hard.unref?.();
       proc.on("exit", () => clearTimeout(hard));
     } catch {

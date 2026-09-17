@@ -20,6 +20,7 @@ import {
   holdSocket,
   statusUrl as deriveStatusUrl,
 } from "../shared/channel.ts";
+import { NOTIFIED_CLIENTS } from "../shared/clients.ts";
 import { noteSeen, seenIds } from "../shared/seen.ts";
 import {
   keyFilePathOf,
@@ -27,18 +28,34 @@ import {
   socketPathOf,
   standingsDirOf,
 } from "../shared/standings.ts";
+import { dropBacklog, noteBacklog, openBacklog } from "./backlog.ts";
 import { completeFrame, stampOrigin } from "./complete.ts";
 import { CFG } from "./config.ts";
 import { dropHoldRecord, keyOf, readHoldRecord, writeHoldRecord } from "./holdrecord.ts";
 import { dropStale, noteStale } from "./stale.ts";
+import { standingLog } from "./store.ts";
 import { emit, log } from "./streams.ts";
-import { localSocketAlive, sweepStale } from "./sweep.ts";
+import { sweepStale } from "./sweep.ts";
 import { state } from "./transport.ts";
 
 const RING = 20; // кадров, которые прицепившийся позже клиент получит задним числом
 
 export interface ChannelEvent {
-  kind: "attached" | "frame" | "note" | "dead" | "alive" | "evicted" | "stale" | "released";
+  kind:
+    | "attached"
+    | "frame"
+    | "note"
+    | "dead"
+    | "alive"
+    | "evicted"
+    | "stale"
+    | "released"
+    /** мост взял сокет стояния — плагину OpenCode это питает флаг holding (#5140) */
+    | "held"
+    /** пачка побудки: накопленное после hello с pending или вокруг кадра платформы, одним событием */
+    | "backlog"
+    /** только у плагина OpenCode: держащий мост вышел — слух потерян, в сессию вслух */
+    | "lost";
   key?: string;
   raw?: string;
   frame?: Frame | null;
@@ -46,8 +63,16 @@ export interface ChannelEvent {
   code?: number;
   version?: string;
   buffered?: number;
-  /** kind="stale": лежалые кадры полосы — принятое, пока место не слушали, или повтор службы. */
+  /** kind="stale": лежалые кадры полосы — принятое, пока место не слушали, или повтор службы; kind="backlog": кадры пачки по received_at. */
   frames?: Frame[];
+  /** kind="backlog": сколько кадров ожидало по hello. */
+  pending?: number;
+}
+
+/** Кадр этому харнесу доходит уведомлением MCP (pi, OpenCode), а не локальным сторожем. */
+function notifiedClient(): boolean {
+  const info = (state.initParams as { clientInfo?: { name?: unknown } } | null)?.clientInfo;
+  return typeof info?.name === "string" && NOTIFIED_CLIENTS.has(info.name);
 }
 
 function standingsDir(): string {
@@ -67,6 +92,14 @@ function keptRecordStatus(key: string): string | undefined {
   return readHoldRecord(key)?.status;
 }
 
+/** Каталог сессии, из которого занимается место (cwd в iskron_stand), — в запись держания, для возврата по каталогу (resume.ts). */
+let standCwd: string | null = null;
+export function noteStandCwd(cwd: string | null): void {
+  standCwd = cwd;
+  // Место уже держится (connect был раньше stand) — каталог дописывается в запись сейчас.
+  if (cwd && currentKey && currentUrl) rememberStatus(readHoldRecord(currentKey)?.status ?? "");
+}
+
 /** Занятость принята доской — запомнить её в записи держания (status.ts). */
 export function rememberStatus(text: string): void {
   const s = state.standing;
@@ -78,59 +111,19 @@ export function rememberStatus(text: string): void {
     url: currentUrl,
     statusUrl: currentStatusUrl,
     status: text || undefined,
+    cwd: standCwd ?? readHoldRecord(currentKey)?.cwd,
   });
 }
 
 export { keyOf, readHoldRecord } from "./holdrecord.ts";
 
-/**
- * Вернуть с диска место, которое держал прежний мост этого каталога (#5061):
- * только когда доска не читает его слушающим (иначе — только register, как
- * велит канон) и его локальный сокет мёртв (живой держатель — не наше место).
- * Слух доказывается свежим hello; мёртвый токен — протухшая запись, стирается
- * тихо, и место занимается заново connect-ом. Возвращает слово об исходе или
- * null, когда возвращать нечего.
- */
-/** Слушающим доска читает прежний мост этого каталога, а он мёртв: запись держания цела, локальный сокет не отвечает. */
-export async function deadPredecessor(
-  realm: string,
-  karta: string | number,
-  name: string,
-): Promise<boolean> {
-  const key = keyOf(realm, karta, name);
-  if (!readHoldRecord(key)) return false;
-  return !(await localSocketAlive(socketPathFor(key)));
-}
-
-export async function resumeFromDisk(
-  realm: string,
-  karta: string | number,
-  name: string,
-): Promise<{ word: string; status?: string } | null> {
-  const key = keyOf(realm, karta, name);
-  const rec = readHoldRecord(key);
-  if (!rec) return null;
-  if (holder?.alive && currentKey === key) return null;
-  if (await localSocketAlive(socketPathFor(key))) return null; // держит живой мост — не наше
-  state.standing = { realm, karta, name };
-  resuming++;
-  try {
-    holdStanding(rec.url, rec.statusUrl);
-    const hello = await awaitHello(4000);
-    if (hello && holder?.alive) {
-      log(`standing resumed from disk (${key})`);
-      return {
-        word: `возврат места с диска после перезапуска моста — сокет открыт заново тем же адресом (ожидало кадров — ${hello.pending ?? 0})`,
-        status: rec.status,
-      };
-    }
-  } finally {
-    resuming--;
-  }
-  log(`hold record for ${key} is stale — dropped, the place is taken anew`);
-  releaseStanding("возврат с диска не удался", true);
-  state.standing = null;
-  return null;
+/** Держит ли мост живой сокет ИМЕННО этого ключа (resume.ts). */
+export const holdsKey = (key: string): boolean => !!holder?.alive && currentKey === key;
+/** Путь локального сокета ключа — для проверки живого держателя (resume.ts). */
+export const localSocketPathOf = (key: string): string => socketPathFor(key);
+/** Возврат с диска в полёте (+1) или кончился (−1): мёртвый токен при нём — протухшая запись, не тревога. */
+export function noteResuming(delta: number): void {
+  resuming += delta;
 }
 
 let holder: Holder | null = null;
@@ -289,7 +282,10 @@ function openLocalServer(key: string): void {
 export function releaseStanding(reason: string, forget = false): void {
   if (forget && currentKey) dropHoldRecord(currentKey);
   if (!holder && !server) return;
-  broadcast({ kind: "released", text: reason });
+  standingLog(`released ${currentKey ?? "?"}: ${reason}${forget ? " (record dropped)" : ""}`);
+  const released: ChannelEvent = { kind: "released", key: currentKey ?? undefined, text: reason };
+  broadcast(released);
+  notify("info", released); // плагин OpenCode снимает holding по этому слову, не по догадке (#5140)
   holder?.close(reason);
   holder = null;
   for (const c of clients) {
@@ -328,6 +324,7 @@ export function releaseStanding(reason: string, forget = false): void {
   evictedEvent = null;
   seen = new Set();
   dropStale();
+  dropBacklog();
 }
 
 /** Взять этот адрес и держать его, чем бы ни был занят прежний. */
@@ -348,10 +345,16 @@ export function holdStanding(url: string, statusUrl?: string | null): string {
       name: s.name ?? "",
       url,
       statusUrl: currentStatusUrl,
+      cwd: standCwd ?? readHoldRecord(key)?.cwd,
     });
   listenerIdleAt = Date.now();
   seen = seenIds(seenFilePathOf(CFG.authDir, key));
   openHolder(url, key);
+  standingLog(`held ${key}${standCwd ? ` cwd=${standCwd}` : ""}`);
+  // Слово «держу» уходит и уведомлением: плагин OpenCode не жнёт держащий мост
+  // по простою, а прежде узнавал о держании лишь из attached локального сокета,
+  // которого у него нет (#5140).
+  notify("info", { kind: "held", key });
   return key;
 }
 
@@ -361,6 +364,7 @@ export function parkStanding(reason: string): string | null {
   holder.close(reason);
   holder = null;
   parked = true;
+  standingLog(`parked ${currentKey}: ${reason}`);
   const text = `мост ушёл с места (${reason}) — сокет закрыт, место цело; возврат — сторож или iskron_stand`;
   broadcast({ kind: "note", text });
   return currentKey;
@@ -374,6 +378,7 @@ export function resumeStanding(): boolean {
   for (let i = ring.length - 1; i >= 0; i--)
     if (ring[i]?.frame?.type === "hello") ring.splice(i, 1);
   openHolder(currentUrl, currentKey);
+  standingLog(`resumed ${currentKey}: socket reopened on the same address`);
   return true;
 }
 
@@ -398,15 +403,30 @@ function openHolder(url: string, key: string): void {
         if (full?.type === "hello") for (const w of [...helloWaiters]) w(full);
         const ev: ChannelEvent = { kind: "frame", raw: text, frame: full };
         broadcast(ev);
-        // Кадр, отданный локальному клиенту (двери Claude Code и Codex), — отдан:
+        const id = full?.type === "message" && typeof full.id === "string" ? full.id : "";
+        // Повтор уже отданного кадра (тот же id — платформа отдала его снова после
+        // возврата места) не будит второй раз: память доставленного пережила мост.
+        const again = !!id && seen.has(id);
+        // Кадр, отданный локальному клиенту (двери Claude Code и Codex) или
+        // уведомлением (pi, OpenCode: там уведомление и есть доставка), — отдан:
         // сторож выхода, взведённый после, на нём не выходит; перевзведённый
-        // постоянный сторож всё равно получит его из кольца. Без клиентов не
-        // отмечается: в pi и OpenCode доставка — уведомление, и память сторожа
-        // выхода там не читается. Запись идёт до печати клиентом — умерший между
-        // ними сторож стоит одного кадра для сторожа выхода, не для кольца.
-        if (clients.size > 0 && full?.type === "message" && typeof full.id === "string" && full.id)
-          noteSeen(seenFilePathOf(CFG.authDir, key), full.id, seen);
+        // постоянный сторож всё равно получит его из кольца. Запись идёт до печати
+        // клиентом — умерший между ними сторож стоит одного кадра для сторожа
+        // выхода, не для кольца. Харнесу со сторожем без клиента не отмечается:
+        // кадр, принятый в пустоту, должен будить взведённого позже сторожа выхода.
+        if (id && (clients.size > 0 || notifiedClient()))
+          noteSeen(seenFilePathOf(CFG.authDir, key), id, seen);
         if (full?.type === "status") return;
+        if (again) return log(`frame ${id} came again — already delivered, not raised`);
+        // Побудка: hello с ожидавшими кадрами и кадр самой платформы открывают
+        // окно, и всё живое в нём уходит одной пачкой (backlog.ts, #5140).
+        const flushBacklog = (b: ChannelEvent): void => notify("info", b);
+        if (full?.type === "hello" && Number(full.pending) > 0)
+          openBacklog(Number(full.pending), flushBacklog);
+        if (full?.type === "message") {
+          if (full.origin === "platform") openBacklog(0, flushBacklog);
+          if (noteBacklog(full)) return;
+        }
         notify("info", ev);
       });
     },
@@ -415,6 +435,7 @@ function openHolder(url: string, key: string): void {
         `ДЕЛАТЕЛЬ: закрытие ${code} — место отняли, слушает другой держатель; ` +
         "привязка записей цела, занятость — пока адрес не повернули connect-ом; вернуть слух сюда — iskron_stand с take=true";
       log(text);
+      standingLog(`evicted ${key}: close ${code}`);
       evictedKey = key;
       dropHoldRecord(key); // адрес повернули — запись мертва
       const ev: ChannelEvent = { kind: "evicted", code, text };
@@ -444,6 +465,7 @@ function openHolder(url: string, key: string): void {
       }
       const text = `ДЕЛАТЕЛЬ: ${deadTokenAdvice(code)}`;
       log(text);
+      standingLog(`dead ${key}: close ${code}`);
       const ev: ChannelEvent = { kind: "dead", code, text };
       broadcast(ev);
       notify("error", ev);
@@ -469,11 +491,4 @@ let revokingOwn = false;
 /** absorb.ts: своё снятие в полёте — закрытие 4001 обгонит ответ revoke, и это не смерть токена. */
 export function setRevokingOwn(v: boolean): void {
   revokingOwn = v;
-}
-
-/** Отладочный путь: сокет из окружения, без connect. */
-export function holdFromEnv(): void {
-  const url = process.env.ISKRON_CHANNEL_SOCKET?.trim();
-  if (!url) return;
-  holdStanding(url, process.env.ISKRON_CHANNEL_STATUS?.trim() || null);
 }
