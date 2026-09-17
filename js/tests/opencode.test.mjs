@@ -942,8 +942,8 @@ test("a holding bridge that dies is announced into its session as lost hearing, 
   }
 });
 
-test("a bridge stopped by the plugin itself is not a lost hearing", async () => {
-  const b = bridgeEnv("own-stop");
+test("a bridge stopped by the plugin itself is not a lost hearing, and the watch forgets a deleted session", async () => {
+  const b = bridgeEnv("own-stop", { ISKRON_BRIDGE_WATCH_MS: 200 });
   const rec = await plugin(b.env);
   try {
     await serverTools(rec);
@@ -951,9 +951,14 @@ test("a bridge stopped by the plugin itself is not a lost hearing", async () => 
     const pid = pidOf(b.log);
     rec.emit({ type: "session.deleted", data: { sessionID: "s-own" } });
     await until(() => !alive(pid), "the session's bridge to die");
-    await delay(200);
+    await delay(700);
     assert.ok(!/слух потерян/.test(rec.said()), "the plugin's own stop is silent");
     assert.equal(rec.prompts.length, 0);
+    assert.equal(
+      pidsOf(b.log).length,
+      1,
+      "the watch must not raise a bridge for a deleted session",
+    );
   } finally {
     await rec.stop();
   }

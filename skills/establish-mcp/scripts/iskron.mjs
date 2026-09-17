@@ -2842,6 +2842,12 @@ async function resumeByCwd(cwd, register = true) {
   if (!recs.length) return { resumed: false, word: `записи держания для каталога ${cwd} нет` };
   const rec = recs[0];
   const key = keyOf(rec.realm, rec.karta, rec.name);
+  if (await localSocketAlive(localSocketPathOf(key)))
+    return {
+      resumed: false,
+      key,
+      word: `место ${key} держит живой мост этого каталога — не трогаю`
+    };
   const back = await resumeFromDisk(rec.realm, rec.karta, rec.name);
   if (!back)
     return { resumed: false, key, word: `запись ${key} протухла — место займёт iskron_stand` };

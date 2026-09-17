@@ -454,6 +454,9 @@ function createKeeper(doors) {
       slot.stood = true;
       if (slot.session) roots.add(slot.session);
     },
+    forget(root) {
+      roots.delete(root);
+    },
     stop() {
       stopped = true;
       clearInterval(timer);
@@ -524,6 +527,7 @@ async function setupTools(ctx, say, onChannel, rootOf) {
       dir: null,
       resume: null,
       lastCall: Date.now(),
+      busy: 0,
       ownStop: false
     };
     slot.bridge = new Bridge(
@@ -611,7 +615,7 @@ async function setupTools(ctx, say, onChannel, rootOf) {
   const reaper = setInterval(() => {
     const now = Date.now();
     for (const [session, slot] of slots) {
-      if (slot.holding || now - slot.lastCall < IDLE_MS) continue;
+      if (slot.holding || slot.busy > 0 || now - slot.lastCall < IDLE_MS) continue;
       slot.ownStop = true;
       slot.bridge.stop();
       slots.delete(session);
@@ -654,32 +658,41 @@ async function setupTools(ctx, say, onChannel, rootOf) {
         input: toParameters(t.inputSchema),
         async execute(input, tool) {
           const slot = await slotFor(String(tool.sessionID));
-          if (loginPending) throw loginError();
-          const login = loginStarted();
+          slot.busy++;
           try {
-            await Promise.race([
-              readyFor(slot),
-              login.promise.then(() => {
-                throw loginError();
-              })
-            ]);
+            return await callThrough(slot, name, input, String(tool.sessionID));
           } finally {
-            login.cancel();
+            slot.busy--;
+            slot.lastCall = Date.now();
           }
-          if (slot.resume) await slot.resume;
-          const args = { ...input ?? {} };
-          if (name === STAND_TOOL && !args.cwd) {
-            const dir = slot.dir ??= await directoryOf(slot.session ?? String(tool.sessionID));
-            if (dir) args.cwd = dir;
-          }
-          const result = await slot.bridge.request("tools/call", { name, arguments: args });
-          if (result?.isError) throw new Error(textOf(result) || `${name}: отказ без текста`);
-          if (standsBy(name, args)) keeper.stood(slot);
-          return { content: textOf(result) };
         }
       });
     }
   });
+  async function callThrough(slot, name, input, sessionID) {
+    if (loginPending) throw loginError();
+    const login = loginStarted();
+    try {
+      await Promise.race([
+        readyFor(slot),
+        login.promise.then(() => {
+          throw loginError();
+        })
+      ]);
+    } finally {
+      login.cancel();
+    }
+    if (slot.resume) await slot.resume;
+    const args = { ...input ?? {} };
+    if (name === STAND_TOOL && !args.cwd) {
+      const dir = slot.dir ??= await directoryOf(slot.session ?? sessionID);
+      if (dir) args.cwd = dir;
+    }
+    const result = await slot.bridge.request("tools/call", { name, arguments: args });
+    if (result?.isError) throw new Error(textOf(result) || `${name}: отказ без текста`);
+    if (standsBy(name, args)) keeper.stood(slot);
+    return { content: textOf(result) };
+  }
   if (state2.listed.length)
     say(`Искрон: тулов из прошлого списка: ${state2.listed.length}; сверю с сервером.`, "info");
   spare = spawn2();
@@ -715,6 +728,7 @@ async function setupTools(ctx, say, onChannel, rootOf) {
   })();
   return {
     forget(session) {
+      keeper.forget(session);
       const slot = slots.get(session);
       if (!slot) return;
       slots.delete(session);

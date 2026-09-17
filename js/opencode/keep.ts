@@ -87,6 +87,8 @@ export interface Keeper<S extends KeptSlot> {
   resume(slot: S, root: string): Promise<void>;
   /** Успешный stand/connect/register — сессия стоит: держащий мост не жнётся, сторож смотрит. */
   stood(slot: S): void;
+  /** Сессия удалена — сторожу за ней не смотреть: иначе он поднимал бы ей мост каждый такт. */
+  forget(root: string): void;
   stop(): void;
 }
 
@@ -152,6 +154,9 @@ export function createKeeper<S extends KeptSlot>(doors: KeeperDoors<S>): Keeper<
       slot.holding = true;
       slot.stood = true;
       if (slot.session) roots.add(slot.session);
+    },
+    forget(root) {
+      roots.delete(root);
     },
     stop() {
       stopped = true;

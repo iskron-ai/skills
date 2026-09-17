@@ -53,6 +53,8 @@ export interface Slot extends KeptSlot {
   /** Корневая сессия, которой принадлежит мост; null — ещё никому не отдан. */
   session: string | null;
   lastCall: number;
+  /** Вызовов в полёте — мост посреди вызова жнецу не отдаётся. */
+  busy: number;
   /** Мост остановлен самим плагином — его выход не потеря слуха. */
   ownStop: boolean;
 }
@@ -139,6 +141,7 @@ export async function setupTools(
       dir: null,
       resume: null,
       lastCall: Date.now(),
+      busy: 0,
       ownStop: false,
     };
     slot.bridge = new Bridge(
@@ -249,7 +252,7 @@ export async function setupTools(
   const reaper = setInterval(() => {
     const now = Date.now();
     for (const [session, slot] of slots) {
-      if (slot.holding || now - slot.lastCall < IDLE_MS) continue;
+      if (slot.holding || slot.busy > 0 || now - slot.lastCall < IDLE_MS) continue;
       slot.ownStop = true;
       slot.bridge.stop();
       slots.delete(session);
@@ -302,39 +305,57 @@ export async function setupTools(
         input: toParameters(t.inputSchema),
         async execute(input, tool) {
           const slot = await slotFor(String(tool.sessionID));
-          // Без гранта человека внутри вызова не ждут: адрес входа уходит ответом.
-          if (loginPending) throw loginError();
-          const login = loginStarted();
+          // Вызов в полёте — занятость: мост посреди вызова жнецу не отдаётся,
+          // а простой считается от конца вызова, не от его начала.
+          slot.busy++;
           try {
-            await Promise.race([
-              readyFor(slot),
-              login.promise.then(() => {
-                throw loginError();
-              }),
-            ]);
+            return await callThrough(slot, name, input, String(tool.sessionID));
           } finally {
-            login.cancel();
+            slot.busy--;
+            slot.lastCall = Date.now();
           }
-          if (slot.resume) await slot.resume; // место возвращается с диска — не занимать его дважды
-          // Потолка нет: контекст execute в v2 сигнала отмены не несёт.
-          const args: Record<string, unknown> = { ...(input ?? {}) };
-          // Мост бежит из cwd сервера OpenCode, не из рабочей копии сессии:
-          // репо для имени стояния он выводит из директории сессии (r5 #5108).
-          // Директория — КОРНЕВОЙ сессии, чей это мост: субагент в своём
-          // worktree иначе увёл бы стояние корня под другое имя.
-          if (name === STAND_TOOL && !args.cwd) {
-            const dir = (slot.dir ??= await directoryOf(slot.session ?? String(tool.sessionID)));
-            if (dir) args.cwd = dir;
-          }
-          const result = await slot.bridge.request("tools/call", { name, arguments: args });
-          // Отказ тула сигналится броском — так OpenCode показывает его отказом.
-          if (result?.isError) throw new Error(textOf(result) || `${name}: отказ без текста`);
-          if (standsBy(name, args)) keeper.stood(slot); // ответ тула — наблюдаемое событие держания
-          return { content: textOf(result) };
         },
       });
     }
   });
+
+  /** Один вызов тула через мост слота. */
+  async function callThrough(
+    slot: Slot,
+    name: string,
+    input: any,
+    sessionID: string,
+  ): Promise<{ content: string }> {
+    // Без гранта человека внутри вызова не ждут: адрес входа уходит ответом.
+    if (loginPending) throw loginError();
+    const login = loginStarted();
+    try {
+      await Promise.race([
+        readyFor(slot),
+        login.promise.then(() => {
+          throw loginError();
+        }),
+      ]);
+    } finally {
+      login.cancel();
+    }
+    if (slot.resume) await slot.resume; // место возвращается с диска — не занимать его дважды
+    // Потолка нет: контекст execute в v2 сигнала отмены не несёт.
+    const args: Record<string, unknown> = { ...(input ?? {}) };
+    // Мост бежит из cwd сервера OpenCode, не из рабочей копии сессии:
+    // репо для имени стояния он выводит из директории сессии (r5 #5108).
+    // Директория — КОРНЕВОЙ сессии, чей это мост: субагент в своём
+    // worktree иначе увёл бы стояние корня под другое имя.
+    if (name === STAND_TOOL && !args.cwd) {
+      const dir = (slot.dir ??= await directoryOf(slot.session ?? sessionID));
+      if (dir) args.cwd = dir;
+    }
+    const result = await slot.bridge.request("tools/call", { name, arguments: args });
+    // Отказ тула сигналится броском — так OpenCode показывает его отказом.
+    if (result?.isError) throw new Error(textOf(result) || `${name}: отказ без текста`);
+    if (standsBy(name, args)) keeper.stood(slot); // ответ тула — наблюдаемое событие держания
+    return { content: textOf(result) };
+  }
   if (state.listed.length)
     say(`Искрон: тулов из прошлого списка: ${state.listed.length}; сверю с сервером.`, "info");
 
@@ -376,6 +397,7 @@ export async function setupTools(
 
   return {
     forget(session) {
+      keeper.forget(session);
       const slot = slots.get(session);
       if (!slot) return;
       slots.delete(session);
