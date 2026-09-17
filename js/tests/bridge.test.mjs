@@ -3460,7 +3460,12 @@ test("the server choice file next to the grant names the server when neither the
       ISKRON_BRIDGE_URL: "http://127.0.0.1:9/env",
     });
     try {
-      await new Promise((r) => setTimeout(r, 300));
+      // The banner is the bridge's first line; under a loaded suite it can take
+      // longer than a fixed pause — wait for the line itself, not for a clock.
+      await waitFor(
+        () => /-> http:\/\/127\.0\.0\.1:9\/env/.test(byEnv.stderr),
+        "the banner of the env bridge",
+      );
       assert.match(bridge.stderr, /-> http:\/\/127\.0\.0\.1:\d+\/mcp/);
       assert.match(
         byEnv.stderr,
