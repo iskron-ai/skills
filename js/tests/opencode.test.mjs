@@ -311,8 +311,9 @@ test("iskron_stand is given the session's directory as cwd; an explicit cwd is l
   const rec = await plugin(b.env, {
     sessions: [
       { id: "s-dir", location: { directory: "/work/of/the-session" } },
-      // A subagent in its own worktree shares the root's bridge — and so the
-      // root's name: its own directory must not rename the root's standing.
+      // A subagent in its own worktree that stands gets a bridge of its own
+      // (#5154) — and so its own name from its own directory; the root's
+      // standing is never renamed by it, because it never touches the root's bridge.
       { id: "s-child", parentID: "s-dir", location: { directory: "/tmp/worktree-of-child" } },
     ],
   });
@@ -350,8 +351,8 @@ test("iskron_stand is given the session's directory as cwd; an explicit cwd is l
     );
     assert.equal(
       sent[4].arguments.cwd,
-      "/work/of/the-session",
-      "a child session stands under its root's directory — the bridge, and so the name, is the root's",
+      "/tmp/worktree-of-child",
+      "a child session that stands does so through a bridge of its own, under its own directory (#5154)",
     );
   } finally {
     await rec.stop();
@@ -1154,3 +1155,82 @@ test("every installed skill with `slash: true` becomes a «/» command that load
 
 // Keep the sandbox's auth dir existing for the cache tests that run first.
 mkdirSync(process.env.ISKRON_BRIDGE_AUTH_DIR, { recursive: true });
+
+// ── one standing per bridge (graph nks-dev: #5154) ───────────────────────────
+
+// A subagent runs in a CHILD session of the root that stands; through the
+// root's bridge its own iskron_stand replaced the parent's place. Now a child's
+// standing call raises a bridge of its own: the root's bridge keeps its place,
+// the child's frames go to the child, its revoke and its death touch only its
+// own bridge; a child that only reads still goes through the root's bridge.
+test("a child session that stands gets a bridge of its own: the root keeps its place, frames and revoke stay with the child, a reading child inherits the root's bridge", async () => {
+  const calls = join(SANDBOX, "child.calls");
+  writeFileSync(calls, "");
+  const b = bridgeEnv("child", {
+    FB_CALLS: calls,
+    FB_TOOLS: JSON.stringify([
+      {
+        name: "iskron_stand",
+        description: "Занять стояние одним вызовом.",
+        inputSchema: { type: "object", properties: {} },
+      },
+      {
+        name: "iskron_channel",
+        description: "Живой канал делателя.",
+        inputSchema: { type: "object", properties: { action: { type: "string" } } },
+      },
+      { name: "iskron_orient", description: "Ориентация.", inputSchema: { type: "object" } },
+    ]),
+  });
+  const rec = await plugin(b.env, {
+    sessions: [
+      { id: "root", location: { directory: "/work/root" } },
+      { id: "child", parentID: "root", location: { directory: "/work/child-worktree" } },
+      { id: "reader", parentID: "root", location: { directory: "/work/reader" } },
+    ],
+  });
+  try {
+    await until(() => rec.tools().has("iskron_stand"), "the stand tool", 8000);
+    await rec.call("iskron_stand", { realm: "nks-dev", karta: "#2816" }, "root");
+    const rootPid = pidOf(b.log);
+    await rec.call("iskron_stand", { realm: "nks-dev", karta: "#931" }, "child");
+    assert.equal(pidsOf(b.log).length, 2, "the child's standing raises a bridge of its own");
+    const childPid = pidsOf(b.log)[1];
+    await rec.call("iskron_orient", {}, "child");
+    await rec.call("iskron_orient", {}, "reader");
+    await rec.call("iskron_channel", { action: "revoke", karta: "#931" }, "child");
+    assert.equal(pidsOf(b.log).length, 2, "a reading child raises nothing");
+    const sent = readFileSync(calls, "utf8")
+      .trim()
+      .split("\n")
+      .map((l) => JSON.parse(l))
+      .filter((c) => !c.name.startsWith("iskron/"));
+    assert.deepEqual(
+      sent.map((c) => [c.name, c.arguments.action ?? c.arguments.karta ?? "", c.arguments.cwd]),
+      [
+        ["iskron_stand", "#2816", "/work/root"],
+        ["iskron_stand", "#931", "/work/child-worktree"],
+        ["iskron_orient", "", undefined],
+        ["iskron_orient", "", undefined],
+        ["iskron_channel", "revoke", undefined],
+      ],
+      "the child stands under its own directory; the log is shared, the bridges are not",
+    );
+    // Which bridge got what: the fake logs per process only through events, so
+    // judge by the frames — a frame on the child's bridge lands in the child.
+    appendFileSync(`${b.events}.${childPid}`, event("frame", { frame: frame("ребёнку"), raw: "" }));
+    appendFileSync(`${b.events}.${rootPid}`, event("frame", { frame: frame("корню"), raw: "" }));
+    await until(() => rec.prompts.length === 2, "both frames");
+    const to = Object.fromEntries(rec.prompts.map((p) => [p.sessionID, p.text]));
+    assert.match(to.child, /ребёнку/);
+    assert.match(to.root, /корню/);
+    // The child's end takes its own bridge down and only its own.
+    rec.emit({ type: "session.deleted", data: { sessionID: "child" } });
+    await until(() => !alive(childPid), "the child's bridge to die");
+    assert.ok(alive(rootPid), "the root's bridge — and so its place — survives the child");
+    await rec.call("iskron_orient", {}, "reader");
+    assert.equal(pidsOf(b.log).length, 2, "the reader still inherits the root's bridge");
+  } finally {
+    await rec.stop();
+  }
+});

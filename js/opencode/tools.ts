@@ -236,6 +236,14 @@ export async function setupTools(
    */
   async function slotFor(sessionID: string, touch = true): Promise<Slot> {
     const root = await rootOf(sessionID);
+    // Дочерняя сессия, вставшая своим вызовом, ходит своим мостом (#5154);
+    // чтение без стояния наследует мост корня.
+    const own = root !== sessionID ? slots.get(sessionID) : undefined;
+    if (own && !own.bridge.failure) {
+      if (touch) own.lastCall = Date.now();
+      return own;
+    }
+    if (own) slots.delete(sessionID);
     let slot = slots.get(root);
     let dead: Slot | undefined;
     if (slot?.bridge.failure) {
@@ -337,6 +345,14 @@ export async function setupTools(
     }
   });
 
+  /** Свой мост дочерней сессии — для её собственного стояния; место с диска ей не возвращается: она встаёт сейчас. */
+  function childSlot(sessionID: string): Slot {
+    const own = spawn();
+    own.session = sessionID;
+    slots.set(sessionID, own);
+    return own;
+  }
+
   /** Один вызов тула через мост слота. */
   async function callThrough(
     slot: Slot,
@@ -360,10 +376,16 @@ export async function setupTools(
     if (slot.resume) await slot.resume; // место возвращается с диска — не занимать его дважды
     // Потолка нет: контекст execute в v2 сигнала отмены не несёт.
     const args: Record<string, unknown> = { ...(input ?? {}) };
+    // Стояние — одно на мост: дочерняя сессия (субагент), встающая своим вызовом,
+    // получает свой мост, а не мост корня, — иначе её место снимало бы
+    // родительское с сокета, а её register переписывал бы привязку корня (#5154).
+    if (standsBy(name, args) && slot.session !== sessionID) {
+      slot = childSlot(sessionID);
+      await readyFor(slot);
+    }
     // Мост бежит из cwd сервера OpenCode, не из рабочей копии сессии:
-    // репо для имени стояния он выводит из директории сессии (r5 #5108).
-    // Директория — КОРНЕВОЙ сессии, чей это мост: субагент в своём
-    // worktree иначе увёл бы стояние корня под другое имя.
+    // репо для имени стояния он выводит из директории сессии (r5 #5108) —
+    // той, чей это мост: корня для корня, дочерней для её собственного.
     if (name === STAND_TOOL && !args.cwd) {
       const dir = (slot.dir ??= await directoryOf(slot.session ?? sessionID));
       if (dir) args.cwd = dir;
