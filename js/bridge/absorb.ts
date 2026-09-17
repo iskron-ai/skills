@@ -4,7 +4,7 @@
 import { statusUrl as deriveStatusUrl } from "../shared/channel.ts";
 import { holdStanding, releaseStanding, setRevokingOwn } from "./hold.ts";
 import { listenBlock } from "./listen.ts";
-import { replyText } from "./standing.ts";
+import { rememberedPlace, replyText } from "./standing.ts";
 import { log } from "./streams.ts";
 import { state } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
@@ -43,7 +43,7 @@ export function absorbChannelReply(msg: JsonRpcMessage, reply: JsonRpcMessage): 
   if (a.realm && a.karta != null) {
     // connect назвал место — ключ, сокет и файл занятости идут под ЭТИМ именем,
     // даже если прежде мост держал другое: ярлык врать не должен.
-    state.standing = { realm: a.realm, karta: String(a.karta).replace(/^#/, ""), name: a.name };
+    state.standing = rememberedPlace(a.realm, a.karta, a.name); // нормализованно, как и register
   }
   holdStanding(trim(socket), status ? trim(status) : deriveStatusUrl(trim(socket)));
   const block = listenBlock() ?? "";

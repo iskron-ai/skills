@@ -592,13 +592,15 @@ export async function startFakeNks(opts = {}) {
         if (a.action === "connect" || a.action === "mint") {
           st.counts.connect++;
           st.wsToken = token("ws"); // как у настоящей поверхности: сокет показан один раз и всякий раз новый
-          st.wsTokens.set(st.wsToken, a.name ?? ""); // чьё место откроет этот адрес — доска и revoke судят по месту, не по мосту
+          // wsTokens: чьё место откроет этот адрес — доска и revoke судят по месту, не по мосту (ниже, именем без полей)
           st.standings.set(sid, a.name ?? "(unnamed)");
           // The real surface prints the role as a bare number whatever the caller wrote («#931» is lawful).
-          const karta = String(a.karta).replace(/^#/, "");
-          st.places.set(`${karta}:${a.name}`, {
+          const karta = String(a.karta).trim().replace(/^#/, "");
+          const name = String(a.name ?? "").trim();
+          st.wsTokens.set(st.wsToken, name);
+          st.places.set(`${karta}:${name}`, {
             karta,
-            name: a.name ?? "",
+            name,
             incoming: `${base}/api/channel/in/mailbox-${a.name ?? "unnamed"}`,
             listening: true,
           });

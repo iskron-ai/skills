@@ -1,4 +1,5 @@
 import { errorMessage } from "./errors.ts";
+import { normKarta, normName } from "./names.ts";
 import { debug, log } from "./streams.ts";
 import { post, state } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
@@ -10,16 +11,30 @@ export function noteStanding(msg: JsonRpcMessage, reply: JsonRpcMessage): void {
   const a = msg?.params?.arguments;
   if (msg?.params?.name !== "iskron_channel" || a?.action !== "register") return;
   if (reply?.error || reply?.result?.isError) return;
-  // Роль — голыми цифрами, как печатает доска: «#931» законно по скиллу, но
-  // ключ и поиск своего места на доске сравнивают строку (#5140, B2). Register
-  // как «agent» — своя роль по слову поверхности: число, которое мост уже
-  // помнит за этим именем, не подменяется сентинелом (#5154).
-  const karta = String(a.karta).trim().replace(/^#/, "");
-  const prev = state.standing;
-  const own = karta === "agent" && prev && (prev.name ?? "") === (a.name ?? "");
-  state.standing = { realm: a.realm, karta: own ? prev.karta : karta, name: a.name };
+  state.standing = rememberedPlace(a.realm, a.karta, a.name);
   state.standingSession = state.sessionId;
   debug(`standing remembered: ${a.name ?? "(unnamed)"} at karta ${a.karta} in ${a.realm}`);
+}
+
+/**
+ * Привязка записывается НОРМАЛИЗОВАННОЙ — той же формой, которой её сравнивают
+ * ключ, доска и правило «стояние одно на мост» (#5140 B2, #5154 N1): роль без
+ * «#» и полей, имя без полей. Сентинел «agent» — своя роль по слову поверхности:
+ * число, которое мост уже помнит, он не подменяет; без памяти остаётся сентинел.
+ */
+export function rememberedPlace(
+  realm: unknown,
+  karta: unknown,
+  name: unknown,
+): { realm: string; karta: string; name?: string } {
+  const k = normKarta(karta);
+  const prev = state.standing;
+  const n = typeof name === "string" ? normName(name) : undefined;
+  return {
+    realm: String(realm ?? ""),
+    karta: k === "agent" && prev ? String(prev.karta) : k,
+    ...(n !== undefined ? { name: n } : {}),
+  };
 }
 
 // One replay at a time — and every concurrent caller WAITS for it. A flag that

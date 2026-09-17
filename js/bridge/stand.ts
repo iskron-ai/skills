@@ -11,14 +11,7 @@ import { statSync } from "node:fs";
 import { isAbsolute } from "node:path";
 
 import { nameOf, parseBoard } from "./board.ts";
-import {
-  callTool as call,
-  leadsOtherPlace,
-  normKarta,
-  normName,
-  otherPlaceWord,
-  short,
-} from "./call.ts";
+import { callTool as call, leadsOtherPlace, otherPlaceWord, short } from "./call.ts";
 import { CFG } from "./config.ts";
 import {
   awaitHello,
@@ -31,11 +24,25 @@ import {
 import { keyOf } from "./holdrecord.ts";
 import { returnToStanding } from "./leave.ts";
 import { listenBlock } from "./listen.ts";
-import { deriveParts, fitName, git, joinName, NAME_MAX, nameFault, sanitize } from "./names.ts";
+import {
+  deriveParts,
+  fitName,
+  git,
+  joinName,
+  NAME_MAX,
+  nameFault,
+  normKarta,
+  normName,
+  sanitize,
+} from "./names.ts";
 import { deadPredecessor, resumeFromDisk } from "./resume.ts";
 import { publishStatus } from "./status.ts";
+import { state } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
 import { readLatest, staleNotice } from "./update.ts";
+
+/** Имя места, которое ведёт мост, — для совета в отказе «стояние одно на мост». */
+const ledName = (): string => state.standing?.name ?? "";
 
 export const STAND_TOOL = {
   name: "iskron_stand",
@@ -179,7 +186,7 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   // явному take=true; иначе отказ вслух, и ничего не тронуто.
   const led = leadsOtherPlace(karta, name);
   if (led && a.take !== true) {
-    lines.push(otherPlaceWord(led, keyOf(realm, karta, name)));
+    lines.push(otherPlaceWord(led, keyOf(realm, karta, name), name === ledName()));
     return done(true);
   }
   // Каталог сессии — в запись держания: мост, поднятый заново (вытеснение

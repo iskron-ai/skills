@@ -1622,7 +1622,7 @@ test("a bridge leading a place refuses another role or name without take=true, k
 // `agent` is one's own role by the surface's word, `me` is the human's — a
 // connect as `me` under another name is another place; a karta with spaces or
 // «#» and a name with a trailing space are the same place, not another.
-test("one standing per bridge sees through sentinels and spelling: «me» under another name is refused, «agent»/«me» under the same name and a padded karta or name pass", async (t) => {
+test("one standing per bridge sees through sentinels and spelling: «me» is another role even under the same name, «agent» and a padded karta or name are the same place — and after each the bridge still knows its own socket", async (t) => {
   const { fake, bridge } = await connected(t);
   await waitFor(() => fake.state.ws.size === 1, "the socket");
   const known = new Set(fake.state.ws);
@@ -1632,28 +1632,120 @@ test("one standing per bridge sees through sentinels and spelling: «me» under 
       name: "iskron_channel",
       arguments: { realm: "nks-dev", ...args },
     });
-  const asMe = await channel(5, { action: "connect", karta: "me", name: "vtoraya" });
+  let id = 4;
+  // The falsifier of the whole rule: after any call the rule let through, the
+  // bridge must still recognize its own socket — «register», with the block.
+  const stillOwn = async (after) => {
+    const st = await bridge.call("tools/call", ++id, {
+      name: "iskron_stand",
+      arguments: { realm: "nks-dev", karta: 931, name: "proba" },
+    });
+    assert.ok(!st.result?.isError, `${after}: ${said(st)}`);
+    assert.match(said(st), /сокет уже держит этот мост — register/, `${after}: ${said(st)}`);
+    assert.match(said(st), /\[iskron-bridge\]/, `${after}: the block is lost`);
+    assert.equal(fake.state.counts.connect, 1, `${after}: the place must not be rotated`);
+  };
+  const asMe = await channel(++id, { action: "connect", karta: "me", name: "vtoraya" });
   assert.ok(
     asMe.result?.isError,
     `connect as «me» under another name must be refused: ${said(asMe)}`,
   );
   assert.match(said(asMe), /уже ведёт место proba--931--nks-dev/);
-  const padded = await channel(6, { action: "connect", karta: " 931", name: "vtoraya" });
+  // «me» is the human's role, not the standing's: the same name under it is another place.
+  const meSame = await channel(++id, { action: "register", karta: "me", name: "proba" });
+  assert.ok(meSame.result?.isError, `register as «me» under the same name: ${said(meSame)}`);
+  assert.match(said(meSame), /то же имя под другой ролью/i, "the advice names the difference");
+  const padded = await channel(++id, { action: "connect", karta: " 931", name: "vtoraya" });
   assert.ok(padded.result?.isError, `a padded karta must not slip past: ${said(padded)}`);
+  assert.doesNotMatch(said(padded), /то же имя/i, "a different name gets no «same name» advice");
   assert.equal(fake.state.counts.connect, 1, "no place was taken");
   assert.equal(
     [...fake.state.ws].filter((x) => !known.has(x)).length,
     0,
     "the socket is untouched",
   );
+  await stillOwn("after the refusals");
   for (const args of [
     { action: "register", karta: "agent", name: "proba" },
-    { action: "register", karta: "me", name: "proba" },
     { action: "register", karta: "#931 ", name: "proba " },
   ]) {
-    const r = await channel(7, args);
+    const r = await channel(++id, args);
     assert.ok(!r.result?.isError, `${JSON.stringify(args)} names the same place: ${said(r)}`);
+    await stillOwn(`after ${JSON.stringify(args)}`);
   }
+});
+
+// The binding is written normalized, the same form the key and the rule compare
+// by: a bridge that stood through a padded connect keys its place as the board
+// prints it, and a bridge that stood as «me» treats the numeric role as another.
+test("a padded connect keys the place as the board prints it; a bridge standing as «me» refuses the numeric role and keeps «me» after a register as «agent»", async (t) => {
+  const fake = await startFakeNks();
+  const dir = mkdtempSync(join(tmpdir(), "iskron-standing-"));
+  const bridge = startBridge(fake.mcpUrl, dir);
+  t.after(async () => {
+    await bridge.stop();
+    await fake.stop();
+  });
+  const said = (r) => (r.result?.content ?? []).map((c) => c.text ?? "").join("\n");
+  const pending = await bridge.call("initialize", 1, INIT);
+  await (await fetch(authorizeUrlIn(pending.error?.message), { redirect: "follow" })).text();
+  await waitFor(() => readdirSync(dir).some((f) => f.endsWith(".json")), "the grant");
+  assert.ok((await bridge.call("initialize", 2, INIT)).result);
+  const standings = join(dir, "standings");
+  const keys = () =>
+    readdirSync(standings)
+      .filter((f) => f.endsWith(".key"))
+      .map((f) => readFileSync(join(standings, f), "utf8").trim());
+  const c = await bridge.call("tools/call", 3, {
+    name: "iskron_channel",
+    arguments: { realm: "nks-dev", action: "connect", karta: " #931 ", name: "proba " },
+  });
+  assert.ok(!c.result?.isError, said(c));
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  assert.deepEqual(keys(), ["proba--931--nks-dev"], "the key carries the normalized place");
+  const own = await bridge.call("tools/call", 4, {
+    name: "iskron_stand",
+    arguments: { realm: "nks-dev", karta: 931, name: "proba" },
+  });
+  assert.match(said(own), /сокет уже держит этот мост — register/, said(own));
+  assert.match(said(own), /\[iskron-bridge\]/);
+  assert.equal(fake.state.counts.connect, 1);
+  // Now as «me»: revoke frees the bridge, a connect as the human's role leads a
+  // place keyed by the sentinel, and the numeric role is another place.
+  await bridge.call("tools/call", 5, {
+    name: "iskron_channel",
+    arguments: { realm: "nks-dev", action: "revoke", karta: 931, standing: "proba" },
+  });
+  await waitFor(() => keys().length === 0, "the place to be released");
+  const me = await bridge.call("tools/call", 6, {
+    name: "iskron_channel",
+    arguments: { realm: "nks-dev", action: "connect", karta: "me", name: "mine" },
+  });
+  assert.ok(!me.result?.isError, said(me));
+  await waitFor(() => keys().length === 1, "the socket as «me»");
+  assert.deepEqual(keys(), ["mine--me--nks-dev"]);
+  const numeric = await bridge.call("tools/call", 7, {
+    name: "iskron_stand",
+    arguments: { realm: "nks-dev", karta: 931, name: "mine" },
+  });
+  assert.ok(numeric.result?.isError, `a numeric role is not «me»: ${said(numeric)}`);
+  assert.match(said(numeric), /уже ведёт место mine--me--nks-dev/);
+  const agent = await bridge.call("tools/call", 8, {
+    name: "iskron_channel",
+    arguments: { realm: "nks-dev", action: "register", karta: "agent", name: "mine" },
+  });
+  assert.ok(!agent.result?.isError, `«agent» is one's own role: ${said(agent)}`);
+  assert.deepEqual(
+    keys(),
+    ["mine--me--nks-dev"],
+    "the sentinel «agent» does not rewrite the remembered role",
+  );
+  const again = await bridge.call("tools/call", 9, {
+    name: "iskron_stand",
+    arguments: { realm: "nks-dev", karta: 931, name: "mine" },
+  });
+  assert.ok(again.result?.isError, `still refused after the «agent» register: ${said(again)}`);
+  assert.equal(fake.state.counts.connect, 2, "nothing was rotated");
 });
 
 // Two real bridges of one auth dir on two places against one fake: the board
@@ -1696,7 +1788,12 @@ test("two bridges on two places: the board reads both listening, and revoking on
         .some((f) => readFileSync(join(standings, f), "utf8").trim() === "vtoraya--931--nks-dev"),
     "the revoked place's key to go",
   );
-  await new Promise((r) => setTimeout(r, 400));
+  // The sign that the revoke has run its course: the revoking bridge logs its
+  // own quiet release — only then is the neighbour's silence evidence.
+  await waitFor(
+    () => /standing revoked by this session/.test(second.stderr),
+    "the revoke to settle",
+  );
   assert.ok(
     !bridge.notifications.some((n) => ["dead", "released"].includes(n.params?.data?.kind)),
     "the first bridge is neither dead nor released by a neighbour's revoke",

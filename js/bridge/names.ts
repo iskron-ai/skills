@@ -9,6 +9,18 @@ import { basename } from "node:path";
 
 /** Правило имени стояния у сервера (наблюдено отказом 400). */
 export const NAME_MAX = 48;
+
+/**
+ * Роль как печатает доска — голые цифры либо сентинел (agent, me, realm-owner);
+ * имя — без полей. Одна нормализация на запись привязки (register, connect) и
+ * на сравнение (iskron_stand, правило «стояние одно на мост»): записанное
+ * сырым расходилось с нормализованным, и мост не узнавал свой же сокет (#5154).
+ */
+export const normKarta = (k: unknown): string =>
+  String(k ?? "")
+    .trim()
+    .replace(/^#/, "");
+export const normName = (n: unknown): string => (typeof n === "string" ? n.trim() : "");
 const NAME_RE = /^[a-z0-9][a-z0-9._-]*$/;
 
 /** Одна часть выведенного имени — к правилу: строчные, допустимые знаки, без краевых точек и дефисов. */

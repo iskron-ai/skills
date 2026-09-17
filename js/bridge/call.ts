@@ -4,6 +4,7 @@
 import { absorbChannelReply } from "./absorb.ts";
 import { ledKey } from "./hold.ts";
 import { keyOf } from "./holdrecord.ts";
+import { normKarta, normName } from "./names.ts";
 import { noteStanding, replyText } from "./standing.ts";
 import { post, state } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
@@ -16,33 +17,33 @@ import { type JsonRpcMessage } from "./types.ts";
  * ключ ведомого места, когда просят другое, иначе null. Граф не сравнивается:
  * одно место пишут и «nks-dev», и «@nks/nks-dev», а роль с именем — один адрес.
  */
-/** Роль как печатает доска — голые цифры либо сентинел; имя — без полей. Одна нормализация на iskron_stand и проксируемый канал. */
-export const normKarta = (k: unknown): string =>
-  String(k ?? "")
-    .trim()
-    .replace(/^#/, "");
-export const normName = (n: unknown): string => (typeof n === "string" ? n.trim() : "");
-
 export function leadsOtherPlace(karta: unknown, name: unknown): string | null {
   const led = ledKey();
   const s = state.standing;
   if (!led || !s) return null;
   const k = normKarta(karta);
   const n = normName(name);
-  // Роль: число сравнивается; «agent» — своя по слову поверхности; иной сентинел
-  // (me — человек, realm-owner — владелец графа) роли не называет, и место
-  // различается хотя бы именем: connect(karta="me", name=…) — не своя роль.
-  const numeric = (x: string): boolean => /^\d+$/.test(x);
-  const sameKarta =
-    k === "agent" || !numeric(k) || !numeric(String(s.karta)) || k === String(s.karta);
+  // Роль: «agent» — своя по слову поверхности, что бы ни было записано; всё
+  // прочее сравнивается буквально, сентинел на любой стороне проверку не
+  // выключает: «me» — роль человека, не роль стояния, и с числом не совпадает;
+  // мост, вставший как «me», числовой роли своим местом не считает (#5154).
+  const sameKarta = k === "agent" || k === String(s.karta);
   return sameKarta && n === (s.name ?? "") ? null : led;
 }
 
-export const otherPlaceWord = (led: string, asked: string): string =>
-  `Отказано (мост): этот мост уже ведёт место ${led} — стояние одно на мост, и место ${asked} его сняло бы с сокета молча. ` +
-  "Занять другое место вместо этого — iskron_stand с take=true (прежнее останется на доске без слуха; ненужное сними revoke); " +
-  "то же имя вывелось из того же каталога — передай другое name; " +
-  "держать оба разом — второй мост, то есть другая сессия харнесса.";
+/** Слово отказа: совет по тому, ЧЕМ просимое место отличается от ведомого. */
+export function otherPlaceWord(led: string, asked: string, sameName = false): string {
+  const advice =
+    led === asked
+      ? "ключи совпали — это то же место: повтори iskron_stand с take=true, чтобы переоткрыть его сознательно"
+      : sameName
+        ? "то же имя под другой ролью (оно вывелось из того же каталога) — передай другое name, либо iskron_stand с take=true, чтобы сменить место этого моста"
+        : "занять другое место вместо этого — iskron_stand с take=true (прежнее останется на доске без слуха; ненужное сними revoke)";
+  return (
+    `Отказано (мост): этот мост уже ведёт место ${led} — стояние одно на мост, и место ${asked} его сняло бы с сокета молча. ` +
+    `${advice.charAt(0).toUpperCase()}${advice.slice(1)}; держать оба разом — второй мост, то есть другая сессия харнесса.`
+  );
+}
 
 /** Проксируемый connect/mint/register под другое место, когда мост ведёт своё, — отказ вслух вместо тихой подмены. */
 export function crossPlaceRefusal(msg: JsonRpcMessage): JsonRpcMessage | null {
@@ -54,10 +55,14 @@ export function crossPlaceRefusal(msg: JsonRpcMessage): JsonRpcMessage | null {
   const led = leadsOtherPlace(karta, name);
   if (!led) return null;
   const asked = keyOf(typeof a.realm === "string" ? a.realm.trim() : "", karta, name);
+  const sameName = name === (state.standing?.name ?? "");
   return {
     jsonrpc: "2.0",
     id: msg.id,
-    result: { isError: true, content: [{ type: "text", text: otherPlaceWord(led, asked) }] },
+    result: {
+      isError: true,
+      content: [{ type: "text", text: otherPlaceWord(led, asked, sameName) }],
+    },
   };
 }
 
