@@ -94,6 +94,20 @@ export function setupChannel(ctx: Context, say: Say, freshestRoot: () => string 
         case "stale":
           if (ev.text) void deliver(session, ev.text, "пачка лежалых кадров"); // одна пачка — один промпт
           return;
+        case "backlog":
+          // Побудка с накопленным — один промпт на пачку, не ход на кадр (#5140).
+          if (ev.text) void deliver(session, ev.text, `пачка побудки (${ev.frames?.length ?? 0})`);
+          return;
+        case "lost":
+          // Держащий мост вышел или прежний плагин остановили: громко, в сессию.
+          if (ev.text) loud(session, ev.text);
+          return;
+        case "held":
+          say(`Искрон: мост держит стояние ${ev.key ?? ""}`, "info");
+          return;
+        case "released":
+          say(`Искрон: мост отпустил стояние ${ev.key ?? ""} — ${ev.text ?? ""}`, "warning");
+          return;
         case "evicted":
           loud(
             session,

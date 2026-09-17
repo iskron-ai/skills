@@ -27,6 +27,7 @@ import assert from "node:assert/strict";
 import {
   appendFileSync,
   copyFileSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -51,6 +52,8 @@ process.env.HOME = SANDBOX;
 process.env.ISKRON_BRIDGE_AUTH_DIR = join(SANDBOX, "auth");
 
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
+/** The marker keep.ts leaves next to the grant when a plugin stops with a holding bridge. */
+const LOST_MARKER = "opencode-lost.json";
 
 // ── the context the plugin is handed ─────────────────────────────────────────
 
@@ -146,6 +149,9 @@ const ENV_KEYS = [
   "FB_PAGINATE",
   "FB_REPLY",
   "FB_EVENTS",
+  "FB_CALLS",
+  "FB_RESUME",
+  "ISKRON_BRIDGE_WATCH_MS",
 ];
 
 let seq = 0;
@@ -168,6 +174,11 @@ function captureStderr(into) {
 
 /** A loaded plugin: registries in hand, cleanup at hand. */
 async function plugin(env = {}, ctxOpts = {}) {
+  // A plugin stopped with a holding bridge leaves a marker for the next instance
+  // (keep.ts); the probes share one auth dir, so each starts clean unless it is
+  // the marker itself that is under test.
+  if (!ctxOpts.keepMarker)
+    rmSync(join(process.env.ISKRON_BRIDGE_AUTH_DIR, LOST_MARKER), { force: true });
   const def = await loadPlugin(env);
   assert.equal(def.id, "iskron", "the default export must be a definition with an id");
   const rec = fakeCtx(ctxOpts);
@@ -299,10 +310,13 @@ test("iskron_stand is given the session's directory as cwd; an explicit cwd is l
     );
     await rec.call("iskron_stand", { realm: "nks-dev", karta: "#931" }, "s-unknown");
     await rec.call("iskron_stand", { realm: "nks-dev", karta: "#931" }, "s-child");
+    // The bridge's own requests (iskron/resume for a session with a directory)
+    // ride the same log; here only the tool calls are judged.
     const sent = readFileSync(calls, "utf8")
       .trim()
       .split("\n")
-      .map((l) => JSON.parse(l));
+      .map((l) => JSON.parse(l))
+      .filter((c) => !c.name.startsWith("iskron/"));
     assert.equal(sent[0].name, "iskron_stand");
     assert.equal(
       sent[0].arguments.cwd,
@@ -756,6 +770,225 @@ test("a deleted session takes its bridge — and so its standing — down with i
   } finally {
     await rec.stop();
   }
+});
+
+// ── keeping the hearing (graph nks-dev: #5140) ───────────────────────────────
+
+// The field case: the reaper stopped a bridge that held a standing, because the
+// plugin learnt of holding only from the local socket's «attached», which the
+// bridge never sends it. Now holding is fed by observable events — the answer
+// of stand/connect/register, the bridge's own «held», the hello frame — and a
+// holding bridge is never reaped for idleness.
+test("a bridge that stands is never reaped for idleness: holding comes from the tool's answer, from «held» and from hello — not from a local attach", async () => {
+  // Every call below raises a bridge with a handshake (~150 ms): the idle
+  // threshold must outlast that, or the word would land on a reaped bridge.
+  const b = bridgeEnv("hold-keep", { ISKRON_BRIDGE_IDLE_MS: 1000, ISKRON_BRIDGE_REAP_MS: 100 });
+  const rec = await plugin(b.env);
+  try {
+    await serverTools(rec);
+    await rec.call("iskron_channel", { action: "connect" }, "s-answer");
+    await rec.call("iskron_orient", {}, "s-word");
+    const byWord = pidsOf(b.log).at(-1);
+    appendFileSync(`${b.events}.${byWord}`, event("held", { key: "proba--931--nks-dev" }));
+    await rec.call("iskron_orient", {}, "s-hello");
+    const byHello = pidsOf(b.log).at(-1);
+    appendFileSync(
+      `${b.events}.${byHello}`,
+      event("frame", { frame: { type: "hello", pending: 0 }, raw: "{}" }),
+    );
+    await rec.call("iskron_orient", {}, "s-idle");
+    const [byAnswer, , , idle] = pidsOf(b.log);
+    await until(() => /мост держит стояние proba--931--nks-dev/.test(rec.said()), "the held line");
+    await until(() => /канал слушает/.test(rec.said()), "the hello line");
+    await until(() => !alive(idle), "the idle bridge to be reaped", 4000);
+    await delay(300);
+    assert.ok(alive(byAnswer), "the bridge whose connect succeeded must survive the idle reaper");
+    assert.ok(alive(byWord), "the bridge that said «held» must survive the idle reaper");
+    assert.ok(alive(byHello), "the bridge whose hello arrived must survive the idle reaper");
+    // «released» hands the bridge back to the reaper.
+    appendFileSync(`${b.events}.${byWord}`, event("released", { text: "снято" }));
+    await until(() => !alive(byWord), "a released bridge to be reaped again", 4000);
+  } finally {
+    await rec.stop();
+  }
+});
+
+test("a backlog burst — the wake with everything that waited — is one prompt into the holder's session", async () => {
+  const b = bridgeEnv("backlog");
+  const rec = await plugin(b.env);
+  try {
+    await serverTools(rec);
+    await rec.call("iskron_channel", { action: "connect" }, "s-backlog");
+    appendFileSync(
+      `${b.events}.${pidOf(b.log)}`,
+      event("backlog", {
+        pending: 2,
+        frames: [{ id: "w1" }, { id: "w2" }],
+        text: "Побудка: кадров 2 (ожидало в очереди: 2)\n\nпервое\n\nвторое",
+      }),
+    );
+    await until(() => rec.prompts.length === 1, "the backlog prompt");
+    assert.equal(rec.prompts[0].sessionID, "s-backlog");
+    assert.match(rec.prompts[0].text, /Побудка: кадров 2/);
+    assert.match(rec.prompts[0].text, /второе/);
+    assert.equal(rec.prompts[0].delivery, "queue");
+    assert.match(rec.said(), /пачка побудки \(2\) вложен/);
+    await delay(200);
+    assert.equal(rec.prompts.length, 1, "one burst, one prompt — never one per frame");
+  } finally {
+    await rec.stop();
+  }
+});
+
+// A new root session asks its bridge to take back the place of its directory
+// before the first call: the record a previous plugin instance left on disk
+// (an evicted location, a restart) names the directory, and the bridge finds it.
+test("a new root session with a directory asks its bridge to resume that directory's place before the first call, and stands by the answer", async () => {
+  const calls = join(SANDBOX, "resume.calls");
+  const resume = join(SANDBOX, "resume.answer");
+  writeFileSync(calls, "");
+  writeFileSync(
+    resume,
+    JSON.stringify({
+      resumed: true,
+      key: "k--931--nks-dev",
+      pending: 3,
+      word: "возврат места с диска",
+    }),
+  );
+  const b = bridgeEnv("resume", {
+    FB_CALLS: calls,
+    FB_RESUME: resume,
+    ISKRON_BRIDGE_IDLE_MS: 200,
+    ISKRON_BRIDGE_REAP_MS: 100,
+  });
+  const rec = await plugin(b.env, {
+    sessions: [{ id: "s-dir", location: { directory: "/work/of/the-session" } }],
+  });
+  try {
+    await serverTools(rec);
+    await rec.call("iskron_orient", {}, "s-dir");
+    const sent = readFileSync(calls, "utf8")
+      .trim()
+      .split("\n")
+      .map((l) => JSON.parse(l));
+    assert.equal(sent[0].name, "iskron/resume", "the resume goes first");
+    assert.equal(sent[0].arguments.cwd, "/work/of/the-session");
+    assert.equal(sent[1].name, "iskron_orient", "the tool call waits for the resume");
+    assert.match(rec.said(), /сессия s-dir — возврат места с диска/);
+    const pid = pidOf(b.log);
+    await delay(600);
+    assert.ok(alive(pid), "a resumed place is a held place: the reaper leaves the bridge alone");
+    // A session without a directory has nothing to resume by: no request.
+    writeFileSync(calls, "");
+    await rec.call("iskron_orient", {}, "s-nodir");
+    const again = readFileSync(calls, "utf8")
+      .trim()
+      .split("\n")
+      .map((l) => JSON.parse(l));
+    assert.deepEqual(
+      again.map((c) => c.name),
+      ["iskron_orient"],
+      "no directory — no resume request",
+    );
+  } finally {
+    await rec.stop();
+  }
+});
+
+// The loss of hearing is said into the session, and the keeper brings the
+// bridge back: a holding bridge that dies is announced at once, and the next
+// tick of the watch raises a fresh bridge that asks to resume the place.
+test("a holding bridge that dies is announced into its session as lost hearing, and the watch raises a fresh bridge that resumes the place", async () => {
+  const calls = join(SANDBOX, "lost.calls");
+  const resume = join(SANDBOX, "lost.answer");
+  writeFileSync(calls, "");
+  writeFileSync(
+    resume,
+    JSON.stringify({ holding: true, resumed: true, pending: 1, word: "возврат места с диска" }),
+  );
+  const b = bridgeEnv("lost", { FB_CALLS: calls, FB_RESUME: resume, ISKRON_BRIDGE_WATCH_MS: 300 });
+  const rec = await plugin(b.env, {
+    sessions: [{ id: "s-lost", location: { directory: "/work/lost" } }],
+  });
+  try {
+    await serverTools(rec);
+    await rec.call("iskron_channel", { action: "connect" }, "s-lost");
+    const pid = pidOf(b.log);
+    process.kill(pid, "SIGKILL"); // the harness, the OS, an update — not the plugin
+    await until(() => rec.prompts.some((p) => /слух потерян/.test(p.text)), "the loss prompt");
+    const loss = rec.prompts.find((p) => /слух потерян/.test(p.text));
+    assert.equal(loss.sessionID, "s-lost");
+    assert.match(loss.text, /слух потерян в \d\d:\d\d/);
+    assert.match(loss.text, /iskron_stand/);
+    assert.match(rec.said(), /\[iskron\/error\] .*слух потерян/, "the human sees it too");
+    await until(() => pidsOf(b.log).length === 2, "the watch to raise a fresh bridge", 5000);
+    await until(
+      () =>
+        readFileSync(calls, "utf8")
+          .split("\n")
+          .filter(Boolean)
+          .map((l) => JSON.parse(l))
+          .some((c) => c.name === "iskron/check" && c.arguments.cwd === "/work/lost"),
+      "the fresh bridge to be asked to check and resume the place",
+      5000,
+    );
+    await until(
+      () => /сторож слуха вернул место сессии s-lost/.test(rec.said()),
+      "the return line",
+    );
+  } finally {
+    await rec.stop();
+  }
+});
+
+test("a bridge stopped by the plugin itself is not a lost hearing", async () => {
+  const b = bridgeEnv("own-stop");
+  const rec = await plugin(b.env);
+  try {
+    await serverTools(rec);
+    await rec.call("iskron_channel", { action: "connect" }, "s-own");
+    const pid = pidOf(b.log);
+    rec.emit({ type: "session.deleted", data: { sessionID: "s-own" } });
+    await until(() => !alive(pid), "the session's bridge to die");
+    await delay(200);
+    assert.ok(!/слух потерян/.test(rec.said()), "the plugin's own stop is silent");
+    assert.equal(rec.prompts.length, 0);
+  } finally {
+    await rec.stop();
+  }
+});
+
+// A plugin stopped with a holding bridge (a restart, an evicted location) leaves
+// a marker next to the grant; the next instance says the loss aloud into the
+// first live session instead of standing silent over an empty board.
+test("stopping the plugin with a holding bridge leaves a marker, and the next instance says the loss into the first session", async () => {
+  const b = bridgeEnv("marker");
+  const first = await plugin(b.env, {
+    sessions: [{ id: "s-held", location: { directory: "/work/held" } }],
+  });
+  await serverTools(first);
+  await first.call("iskron_channel", { action: "connect" }, "s-held");
+  await first.stop();
+  const marker = join(process.env.ISKRON_BRIDGE_AUTH_DIR, LOST_MARKER);
+  const written = JSON.parse(readFileSync(marker, "utf8"));
+  assert.deepEqual(written.entries, [{ session: "s-held", dir: "/work/held" }]);
+  const second = await plugin(b.env, { keepMarker: true });
+  try {
+    assert.match(second.said(), /слух был потерян в \d\d:\d\d/);
+    assert.match(second.said(), /\/work\/held/);
+    assert.ok(!existsSync(marker), "the marker is said once and gone");
+    await serverTools(second);
+    await second.call("iskron_orient", {}, "s-next");
+    await until(() => second.prompts.length === 1, "the loss to be said into the first session");
+    assert.equal(second.prompts[0].sessionID, "s-next");
+    assert.match(second.prompts[0].text, /слух был потерян/);
+    assert.match(second.prompts[0].text, /iskron_stand/);
+  } finally {
+    await second.stop();
+  }
+  // A plugin with nothing held leaves no marker.
+  assert.ok(!existsSync(marker));
 });
 
 // ── commands ─────────────────────────────────────────────────────────────────

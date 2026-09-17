@@ -165,6 +165,22 @@ process.stdin.on("data", (chunk) => {
       if (process.env.FB_CALLS)
         appendFileSync(process.env.FB_CALLS, JSON.stringify(msg.params) + "\n");
       ok(msg.id, callResult(msg.params?.name));
+    } else if (msg.method === "iskron/resume" || msg.method === "iskron/check") {
+      // The bridge's own requests from the OpenCode plugin (js/bridge/resume.ts):
+      // logged in the same shape as a tool call; FB_RESUME names a file whose
+      // JSON is the answer — without it the bridge has nothing to resume.
+      if (process.env.FB_CALLS)
+        appendFileSync(
+          process.env.FB_CALLS,
+          JSON.stringify({ name: msg.method, arguments: msg.params }) + "\n",
+        );
+      let result = { resumed: false, holding: false, word: "записи держания нет" };
+      try {
+        if (process.env.FB_RESUME) result = JSON.parse(readFileSync(process.env.FB_RESUME, "utf8"));
+      } catch {
+        /* no answer prepared — nothing to resume */
+      }
+      ok(msg.id, result);
     } else {
       send({
         jsonrpc: "2.0",

@@ -18,40 +18,27 @@
 // setup входа не ждёт (тулы из прошлого списка сразу, служебный iskron_bridge
 // всегда), а список с сервера приходит фоном и подменяется через
 // ctx.tool.reload() — сколько бы ни длился вход человека.
+import { Bridge, toParameters } from "../shared/bridge-client.ts";
 import {
-  accessSync,
-  constants,
-  mkdirSync,
-  readdirSync,
-  readFileSync,
-  statSync,
-  writeFileSync,
-} from "node:fs";
-import { homedir } from "node:os";
-import { join, resolve } from "node:path";
-
-import { Bridge, resultToContent, toParameters } from "../shared/bridge-client.ts";
-import { OPENCODE_CLIENT } from "../shared/clients.ts";
-import { homeBridgePath } from "../shared/home.ts";
+  AUTH_POLL_MS,
+  authDir,
+  findBridge,
+  handshake,
+  listTools,
+  readCache,
+  sleep,
+  textOf,
+  writeCache,
+} from "./bridge-io.ts";
+import { createKeeper, type KeptSlot, takeLostMarker, writeLostMarker } from "./keep.ts";
 import type { Context } from "./plugin.ts";
 
 export type Say = (text: string, level: "info" | "warning" | "error") => void;
 
-/** Потолок самого рукопожатия; истёк — рукопожатие повторяется, не сдаётся. */
-const HANDSHAKE_MS = Number(process.env.ISKRON_MCP_HANDSHAKE_MS || 600000);
-/** Как часто переспрашивать мост, пока человек входит в браузере. */
-const AUTH_POLL_MS = Number(process.env.ISKRON_MCP_AUTH_POLL_MS || 2000);
-/**
- * Отказ моста без гранта. Это не поломка, а вход в процессе: мост открыл
- * браузер и слушает колбэк на loopback, погасить его — убить вход человека
- * (граф nks-dev: #4712).
- */
-const AUTH_PENDING = /authorization required/i;
 /** Мост сессии, которая давно молчит и ничего не держит, отпускается. */
 const IDLE_MS = Number(process.env.ISKRON_BRIDGE_IDLE_MS || 30 * 60_000);
 /** Шаг жнеца простоя; переменная — для проб. */
 const REAP_MS = Number(process.env.ISKRON_BRIDGE_REAP_MS || 60_000);
-const PROTOCOL = "2025-06-18";
 /** Служебный тул плагина: состояние моста, когда тулов iskron_* ещё нет. */
 export const STATUS_TOOL = "iskron_bridge";
 /** Тул моста, которому плагин подставляет директорию сессии (cwd) для вывода имени. */
@@ -60,150 +47,28 @@ const STAND_TOOL = "iskron_stand";
 /* eslint-disable @typescript-eslint/no-explicit-any -- ответы моста приходят без схемы */
 
 /** Мост одной сессии. */
-export interface Slot {
-  bridge: Bridge;
+export interface Slot extends KeptSlot {
   /** Рукопожатие прошло — можно звать тулы. */
   ready: Promise<unknown>;
   /** Корневая сессия, которой принадлежит мост; null — ещё никому не отдан. */
   session: string | null;
-  /** Мост держит стояние (attached без released) — такой не отпускают по простою. */
-  holding: boolean;
   lastCall: number;
+  /** Мост остановлен самим плагином — его выход не потеря слуха. */
+  ownStop: boolean;
 }
+
+/** Вызов, чей успех означает: сессия стоит (мост держит место либо привязан к нему). */
+function standsBy(name: string, args: Record<string, unknown>): boolean {
+  if (name === STAND_TOOL) return true;
+  return name === "iskron_channel" && ["connect", "mint", "register"].includes(String(args.action));
+}
+
+const hhmm = (): string => new Date().toTimeString().slice(0, 5);
 
 export interface ToolsHalf {
   /** Сессия умерла — её мост отпускается вместе со стоянием. */
   forget(session: string): void;
   stop(): void;
-}
-
-/**
- * Где мост: переменная, затем домашняя копия. Привезённой поставкой рядом нет —
- * плагин лежит копией в каталоге плагинов OpenCode, а не в пакете.
- */
-export function findBridge(): { path: string | null; tried: string[] } {
-  const tried: string[] = [];
-  const env = process.env.ISKRON_BRIDGE_PATH?.trim();
-  if (env) tried.push(resolve(env));
-  tried.push(homeBridgePath());
-  for (const candidate of tried) {
-    try {
-      accessSync(candidate, constants.R_OK);
-      return { path: candidate, tried };
-    } catch {
-      /* следующий */
-    }
-  }
-  return { path: null, tried };
-}
-
-function authDir(): string {
-  return process.env.ISKRON_BRIDGE_AUTH_DIR || join(homedir(), ".iskron-bridge");
-}
-
-function cachePath(): string {
-  return join(authDir(), "opencode-tools.json");
-}
-
-/**
- * Отпечаток гранта — хранилища моста рядом с кэшем тулов. Сменился — человек
- * вошёл, и рукопожатие стоит повторить. Раньше не повторяется: вопрос к мосту
- * без гранта после конца его входа открыл бы человеку браузер заново.
- */
-function grantStamp(): string {
-  const dir = authDir();
-  try {
-    return readdirSync(dir)
-      .filter((f) => f.endsWith(".json") && f !== "opencode-tools.json")
-      .map((f) => `${f}:${statSync(join(dir, f)).mtimeMs}`)
-      .sort()
-      .join("|");
-  } catch {
-    return "";
-  }
-}
-
-const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
-
-function readCache(): any[] | null {
-  try {
-    const list = JSON.parse(readFileSync(cachePath(), "utf8"));
-    return Array.isArray(list) && list.length ? list : null;
-  } catch {
-    return null;
-  }
-}
-
-function writeCache(tools: any[]): void {
-  try {
-    mkdirSync(join(cachePath(), ".."), { recursive: true, mode: 0o700 });
-    writeFileSync(cachePath(), JSON.stringify(tools), { mode: 0o600 });
-  } catch {
-    /* кэш — удобство, не обязательство */
-  }
-}
-
-/** Ссылка входа из отказа моста, если он её назвал. */
-function loginUrlOf(message: string): string | null {
-  return /open in a browser: (\S+)/.exec(message)?.[1] ?? null;
-}
-
-/**
- * Рукопожатие. На отказ «нужен вход» мост отвечает сразу, а вход ждёт фоном;
- * рукопожатие повторяется, когда грант ляжет в хранилище. Потолок — HANDSHAKE_MS.
- * Успех снимает флаг входа всегда: грант мог лечь извне (токен в
- * ~/.iskron-bridge/token, вход из другого моста), не через этот слот.
- */
-async function handshake(
-  b: Bridge,
-  onLogin: (url: string | null) => void,
-  onReady: () => void,
-): Promise<void> {
-  const deadline = Date.now() + HANDSHAKE_MS;
-  for (;;) {
-    const stamp = grantStamp();
-    try {
-      await b.request(
-        "initialize",
-        {
-          protocolVersion: PROTOCOL,
-          capabilities: {},
-          clientInfo: { name: OPENCODE_CLIENT, version: "1" },
-        },
-        { timeoutMs: Math.max(1, deadline - Date.now()) },
-      );
-      break;
-    } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
-      if (!AUTH_PENDING.test(message)) throw e;
-      onLogin(loginUrlOf(message));
-      while (grantStamp() === stamp) {
-        if (Date.now() + AUTH_POLL_MS > deadline) throw e;
-        await sleep(AUTH_POLL_MS);
-      }
-    }
-  }
-  onReady();
-  b.notify("notifications/initialized");
-}
-
-async function listTools(b: Bridge): Promise<any[]> {
-  const tools: any[] = [];
-  let cursor: string | undefined;
-  do {
-    const page = await b.request("tools/list", cursor ? { cursor } : {}, {
-      timeoutMs: HANDSHAKE_MS,
-    });
-    for (const t of page?.tools ?? []) tools.push(t);
-    cursor = page?.nextCursor;
-  } while (cursor);
-  return tools;
-}
-
-function textOf(result: any): string {
-  return resultToContent(result)
-    .map((c) => (c.type === "text" ? c.text : "[image]"))
-    .join("\n");
 }
 
 export async function setupTools(
@@ -270,7 +135,11 @@ export async function setupTools(
       ready: Promise.resolve(),
       session: null,
       holding: false,
+      stood: false,
+      dir: null,
+      resume: null,
       lastCall: Date.now(),
+      ownStop: false,
     };
     slot.bridge = new Bridge(
       path,
@@ -278,15 +147,43 @@ export async function setupTools(
       (method, params) => {
         if (method !== "notifications/message" || params?.logger !== "iskron-channel") return;
         const kind = params?.data?.kind;
-        if (kind === "attached") slot.holding = true;
-        if (kind === "released" || kind === "dead") slot.holding = false;
+        // holding питается наблюдаемым событием — словом моста «держу» и hello,
+        // а не attached локального сокета, которого у плагина нет (#5140).
+        if (kind === "held" || kind === "attached" || params?.data?.frame?.type === "hello")
+          keeper.stood(slot);
+        if (kind === "released" || kind === "dead" || kind === "evicted") slot.holding = false;
         onChannel(slot.session, params);
+      },
+      (e) => {
+        // Держащий мост вышел не по нашей воле — слух потерян, и это слово в
+        // сессию, а не строка в лог, которого никто не читает (#5140).
+        if (slot.ownStop || stopped || !slot.holding) return;
+        slot.holding = false;
+        onChannel(slot.session, {
+          logger: "iskron-channel",
+          data: {
+            kind: "lost",
+            text:
+              `Искрон: слух потерян в ${hhmm()} — мост стояния вышел (${e.message}). ` +
+              "Сторож слуха поднимет мост и вернёт место с диска; не ждёшь — iskron_stand.",
+          },
+        });
       },
     );
     slot.bridge.start();
     shake(slot);
     return slot;
   }
+
+  const keeper = createKeeper({
+    say,
+    slotFor: (root) => slotFor(root),
+    ready: readyFor,
+    directoryOf,
+  });
+  // Прежний экземпляр остановили с держащим мостом: слово о том — в первую живую сессию.
+  let lostWord = takeLostMarker(authDir());
+  if (lostWord) say(lostWord, "warning");
 
   function shake(slot: Slot): void {
     slot.ready = handshake(slot.bridge, onLogin, () => {
@@ -321,15 +218,27 @@ export async function setupTools(
     }
   }
 
-  /** Мост корневой сессии: первый раз — запасной с загрузки, дальше свой. */
+  /** Мост корневой сессии: первый раз — запасной с загрузки, дальше свой; умерший — заменяется. */
   async function slotFor(sessionID: string): Promise<Slot> {
     const root = await rootOf(sessionID);
     let slot = slots.get(root);
+    if (slot?.bridge.failure) {
+      slots.delete(root);
+      slot = undefined;
+    }
     if (!slot) {
       slot = spare ?? spawn();
       spare = null;
       slot.session = root;
       slots.set(root, slot);
+      if (lostWord) {
+        onChannel(root, { logger: "iskron-channel", data: { kind: "lost", text: lostWord } });
+        lostWord = null;
+      }
+      // Место прежнего экземпляра плагина (вытеснение каталога, перезапуск)
+      // возвращается с диска по каталогу сессии — до первого вызова тула.
+      const s = slot;
+      s.resume = keeper.resume(s, root).finally(() => (s.resume = null));
     }
     slot.lastCall = Date.now();
     return slot;
@@ -341,10 +250,12 @@ export async function setupTools(
     const now = Date.now();
     for (const [session, slot] of slots) {
       if (slot.holding || now - slot.lastCall < IDLE_MS) continue;
+      slot.ownStop = true;
       slot.bridge.stop();
       slots.delete(session);
     }
     if (spare && !spare.holding && now - spare.lastCall >= IDLE_MS && state.serverSeen) {
+      spare.ownStop = true;
       spare.bridge.stop();
       spare = null;
     }
@@ -404,6 +315,7 @@ export async function setupTools(
           } finally {
             login.cancel();
           }
+          if (slot.resume) await slot.resume; // место возвращается с диска — не занимать его дважды
           // Потолка нет: контекст execute в v2 сигнала отмены не несёт.
           const args: Record<string, unknown> = { ...(input ?? {}) };
           // Мост бежит из cwd сервера OpenCode, не из рабочей копии сессии:
@@ -411,12 +323,13 @@ export async function setupTools(
           // Директория — КОРНЕВОЙ сессии, чей это мост: субагент в своём
           // worktree иначе увёл бы стояние корня под другое имя.
           if (name === STAND_TOOL && !args.cwd) {
-            const dir = await directoryOf(slot.session ?? String(tool.sessionID));
+            const dir = (slot.dir ??= await directoryOf(slot.session ?? String(tool.sessionID)));
             if (dir) args.cwd = dir;
           }
           const result = await slot.bridge.request("tools/call", { name, arguments: args });
           // Отказ тула сигналится броском — так OpenCode показывает его отказом.
           if (result?.isError) throw new Error(textOf(result) || `${name}: отказ без текста`);
+          if (standsBy(name, args)) keeper.stood(slot); // ответ тула — наблюдаемое событие держания
           return { content: textOf(result) };
         },
       });
@@ -466,14 +379,22 @@ export async function setupTools(
       const slot = slots.get(session);
       if (!slot) return;
       slots.delete(session);
+      slot.ownStop = true;
       slot.bridge.stop(); // свёртка моста отпускает стояние: ключ, сокет, занятость
     },
     stop() {
       stopped = true;
       clearInterval(reaper);
+      keeper.stop();
+      // Остановка с держащими мостами — на диск: следующий экземпляр скажет о потере.
+      writeLostMarker(authDir(), slots.values());
+      if (spare) spare.ownStop = true;
       spare?.bridge.stop();
       spare = null;
-      for (const slot of slots.values()) slot.bridge.stop();
+      for (const slot of slots.values()) {
+        slot.ownStop = true;
+        slot.bridge.stop();
+      }
       slots.clear();
     },
   };
