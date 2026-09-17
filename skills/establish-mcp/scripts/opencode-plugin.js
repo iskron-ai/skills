@@ -429,6 +429,7 @@ function createKeeper(doors) {
   const hints = /* @__PURE__ */ new Map();
   let stopped = false;
   function selector(slot) {
+    if (slot.child) return slot.key ? { key: slot.key } : {};
     const key = slot.key ?? (slot.dir ? hints.get(slot.dir) : void 0);
     return { ...key ? { key } : {}, ...slot.dir ? { cwd: slot.dir } : {} };
   }
@@ -436,7 +437,7 @@ function createKeeper(doors) {
     try {
       await doors.ready(slot);
       slot.dir ??= await doors.directoryOf(root);
-      if (!slot.dir && !slot.key || stopped) return;
+      if (!slot.dir && !slot.key || slot.child && !slot.key || stopped) return;
       const r = await slot.bridge.request("iskron/resume", selector(slot), {
         timeoutMs: 3e4
       });
@@ -503,6 +504,11 @@ function createKeeper(doors) {
 
 // js/opencode/tools.ts
 var IDLE_MS = Number(process.env.ISKRON_BRIDGE_IDLE_MS || 30 * 6e4);
+if (IDLE_MS <= WATCH_MS)
+  process.stderr.write(
+    `[iskron/warning] ISKRON_BRIDGE_IDLE_MS (${IDLE_MS}) не длиннее такта сторожа слуха (${WATCH_MS}): слот может быть сжат прежде возврата места
+`
+  );
 var REAP_MS = Number(process.env.ISKRON_BRIDGE_REAP_MS || 6e4);
 var STATUS_TOOL = "iskron_bridge";
 var STAND_TOOL = "iskron_stand";
@@ -732,6 +738,8 @@ async function setupTools(ctx, say, onChannel, rootOf) {
     own.dir = have?.dir ?? null;
     own.key = have?.key ?? null;
     slots.set(sessionID, own);
+    if (have?.stood && own.key)
+      own.resume = keeper.resume(own, sessionID).finally(() => own.resume = null);
     return own;
   }
   async function awaitReady(slot) {

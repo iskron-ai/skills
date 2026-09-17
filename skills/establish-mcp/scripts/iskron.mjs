@@ -1926,17 +1926,78 @@ function harnessName() {
 }
 var notifiedClient = () => NOTIFIED_CLIENTS.has(harnessName());
 
+// js/bridge/names.ts
+import { execFileSync } from "node:child_process";
+import { hostname } from "node:os";
+import { basename as basename2 } from "node:path";
+var NAME_MAX = 48;
+var normKarta = (k) => String(k ?? "").trim().replace(/^#/, "");
+var normName = (n) => typeof n === "string" ? n.trim() : "";
+var NAME_RE = /^[a-z0-9][a-z0-9._-]*$/;
+var sanitize = (s) => s.toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^[-.]+|[-.]+$/g, "").slice(0, NAME_MAX);
+function nameFault(name) {
+  if (name.length > NAME_MAX) return `длиннее предела: ${name.length} знаков`;
+  if (!NAME_RE.test(name))
+    return /[A-Z]/.test(name) ? "заглавные буквы не допускаются" : "недопустимые знаки или первый знак не буква и не цифра";
+  return null;
+}
+var PART_MIN = 3;
+var CUT_ORDER = ["repo", "host", "model"];
+function fitName(parts) {
+  const p = { ...parts };
+  const join13 = () => [p.host, p.repo, p.model].filter(Boolean).join(".").replace(/[-.]+$/, "");
+  const cut = [];
+  for (const k of CUT_ORDER) {
+    const over = join13().length - NAME_MAX;
+    if (over <= 0) break;
+    const keep = Math.max(k === "model" ? 1 : PART_MIN, p[k].length - over);
+    if (keep >= p[k].length) continue;
+    p[k] = p[k].slice(0, keep).replace(/[-.]+$/, "");
+    cut.push(k);
+  }
+  return {
+    name: join13().slice(0, NAME_MAX).replace(/[-.]+$/, ""),
+    cut
+  };
+}
+var git = (args, cwd = process.cwd()) => {
+  try {
+    return execFileSync("git", args, {
+      cwd,
+      timeout: 2e3,
+      stdio: ["ignore", "pipe", "ignore"]
+    }).toString().trim();
+  } catch {
+    return "";
+  }
+};
+function deriveParts(model, cwd = process.cwd()) {
+  const host = hostname().split(".")[0];
+  const top = git(["rev-parse", "--show-toplevel"], cwd);
+  const repo = basename2(top || cwd);
+  const short2 = (model ?? "").trim().toLowerCase().replace(/^claude[-_]/, "");
+  return { host: sanitize(host ?? ""), repo: sanitize(repo), model: sanitize(short2) };
+}
+var joinName = (p) => [p.host, p.repo, p.model].filter(Boolean).join(".");
+
 // js/bridge/standing.ts
 function noteStanding(msg, reply2) {
   const a = msg?.params?.arguments;
   if (msg?.params?.name !== "iskron_channel" || a?.action !== "register") return;
   if (reply2?.error || reply2?.result?.isError) return;
-  const karta = String(a.karta).trim().replace(/^#/, "");
-  const prev = state.standing;
-  const own = karta === "agent" && prev && (prev.name ?? "") === (a.name ?? "");
-  state.standing = { realm: a.realm, karta: own ? prev.karta : karta, name: a.name };
+  state.standing = rememberedPlace(a.realm, a.karta, a.name);
   state.standingSession = state.sessionId;
   debug(`standing remembered: ${a.name ?? "(unnamed)"} at karta ${a.karta} in ${a.realm}`);
+}
+function rememberedPlace(realm, karta, name) {
+  const k = normKarta(karta);
+  const prev = state.standing;
+  const n = typeof name === "string" ? normName(name) : void 0;
+  return {
+    realm: String(realm ?? ""),
+    karta: k === "agent" && prev ? String(prev.karta) : k,
+    ...n !== void 0 ? { name: n } : {}
+  };
 }
 var standingInFlight = null;
 function ensureStanding() {
@@ -2548,7 +2609,7 @@ function absorbChannelReply(msg, reply2) {
   if (!socket) return reply2;
   const status = STATUS_RE.exec(text)?.[0];
   if (a.realm && a.karta != null) {
-    state.standing = { realm: a.realm, karta: String(a.karta).replace(/^#/, ""), name: a.name };
+    state.standing = rememberedPlace(a.realm, a.karta, a.name);
   }
   holdStanding(trim(socket), status ? trim(status) : statusUrl(trim(socket)));
   const block = listenBlock() ?? "";
@@ -2586,19 +2647,19 @@ function absorbRevokeReply(msg, reply2) {
 }
 
 // js/bridge/call.ts
-var normKarta = (k) => String(k ?? "").trim().replace(/^#/, "");
-var normName = (n) => typeof n === "string" ? n.trim() : "";
 function leadsOtherPlace(karta, name) {
   const led = ledKey();
   const s = state.standing;
   if (!led || !s) return null;
   const k = normKarta(karta);
   const n = normName(name);
-  const numeric = (x) => /^\d+$/.test(x);
-  const sameKarta = k === "agent" || !numeric(k) || !numeric(String(s.karta)) || k === String(s.karta);
+  const sameKarta = k === "agent" || k === String(s.karta);
   return sameKarta && n === (s.name ?? "") ? null : led;
 }
-var otherPlaceWord = (led, asked) => `Отказано (мост): этот мост уже ведёт место ${led} — стояние одно на мост, и место ${asked} его сняло бы с сокета молча. Занять другое место вместо этого — iskron_stand с take=true (прежнее останется на доске без слуха; ненужное сними revoke); то же имя вывелось из того же каталога — передай другое name; держать оба разом — второй мост, то есть другая сессия харнесса.`;
+function otherPlaceWord(led, asked, sameName = false) {
+  const advice = led === asked ? "ключи совпали — это то же место: повтори iskron_stand с take=true, чтобы переоткрыть его сознательно" : sameName ? "то же имя под другой ролью (оно вывелось из того же каталога) — передай другое name, либо iskron_stand с take=true, чтобы сменить место этого моста" : "занять другое место вместо этого — iskron_stand с take=true (прежнее останется на доске без слуха; ненужное сними revoke)";
+  return `Отказано (мост): этот мост уже ведёт место ${led} — стояние одно на мост, и место ${asked} его сняло бы с сокета молча. ${advice.charAt(0).toUpperCase()}${advice.slice(1)}; держать оба разом — второй мост, то есть другая сессия харнесса.`;
+}
 function crossPlaceRefusal(msg) {
   if (msg?.method !== "tools/call" || msg.params?.name !== "iskron_channel") return null;
   const a = msg.params.arguments ?? {};
@@ -2608,10 +2669,14 @@ function crossPlaceRefusal(msg) {
   const led = leadsOtherPlace(karta, name);
   if (!led) return null;
   const asked = keyOf(typeof a.realm === "string" ? a.realm.trim() : "", karta, name);
+  const sameName = name === (state.standing?.name ?? "");
   return {
     jsonrpc: "2.0",
     id: msg.id,
-    result: { isError: true, content: [{ type: "text", text: otherPlaceWord(led, asked) }] }
+    result: {
+      isError: true,
+      content: [{ type: "text", text: otherPlaceWord(led, asked, sameName) }]
+    }
   };
 }
 var seq = 0;
@@ -2788,58 +2853,6 @@ function undelivered(e) {
   const m = /не доставлено\s+(\d+)/.exec(e.rest);
   return m ? Number(m[1]) : 0;
 }
-
-// js/bridge/names.ts
-import { execFileSync } from "node:child_process";
-import { hostname } from "node:os";
-import { basename as basename2 } from "node:path";
-var NAME_MAX = 48;
-var NAME_RE = /^[a-z0-9][a-z0-9._-]*$/;
-var sanitize = (s) => s.toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^[-.]+|[-.]+$/g, "").slice(0, NAME_MAX);
-function nameFault(name) {
-  if (name.length > NAME_MAX) return `длиннее предела: ${name.length} знаков`;
-  if (!NAME_RE.test(name))
-    return /[A-Z]/.test(name) ? "заглавные буквы не допускаются" : "недопустимые знаки или первый знак не буква и не цифра";
-  return null;
-}
-var PART_MIN = 3;
-var CUT_ORDER = ["repo", "host", "model"];
-function fitName(parts) {
-  const p = { ...parts };
-  const join13 = () => [p.host, p.repo, p.model].filter(Boolean).join(".").replace(/[-.]+$/, "");
-  const cut = [];
-  for (const k of CUT_ORDER) {
-    const over = join13().length - NAME_MAX;
-    if (over <= 0) break;
-    const keep = Math.max(k === "model" ? 1 : PART_MIN, p[k].length - over);
-    if (keep >= p[k].length) continue;
-    p[k] = p[k].slice(0, keep).replace(/[-.]+$/, "");
-    cut.push(k);
-  }
-  return {
-    name: join13().slice(0, NAME_MAX).replace(/[-.]+$/, ""),
-    cut
-  };
-}
-var git = (args, cwd = process.cwd()) => {
-  try {
-    return execFileSync("git", args, {
-      cwd,
-      timeout: 2e3,
-      stdio: ["ignore", "pipe", "ignore"]
-    }).toString().trim();
-  } catch {
-    return "";
-  }
-};
-function deriveParts(model, cwd = process.cwd()) {
-  const host = hostname().split(".")[0];
-  const top = git(["rev-parse", "--show-toplevel"], cwd);
-  const repo = basename2(top || cwd);
-  const short2 = (model ?? "").trim().toLowerCase().replace(/^claude[-_]/, "");
-  return { host: sanitize(host ?? ""), repo: sanitize(repo), model: sanitize(short2) };
-}
-var joinName = (p) => [p.host, p.repo, p.model].filter(Boolean).join(".");
 
 // js/bridge/resume.ts
 import { existsSync as existsSync2, readdirSync as readdirSync3, readFileSync as readFileSync9 } from "node:fs";
@@ -3258,6 +3271,7 @@ function startFreshnessWatch(authDir, serverUrl) {
 }
 
 // js/bridge/stand.ts
+var ledName = () => state.standing?.name ?? "";
 var STAND_TOOL = {
   name: "iskron_stand",
   description: "[мост] Занять стояние одним вызовом: мост читает доску, выводит имя (машина.репо.модель), занимает место (connect и register; только register, если сокет уже держит этот мост), взводит хук инбокса роли своим входящим адресом, при room шлёт кадр join стоянию комнаты по полному адресу с провода (повтор — только repeat_knock=true, один раз, не раньше чем через 2 минуты) и возвращает имя, команду сторожа, число ожидавших кадров, состояние хука и расписку стука. Дальше — запустить сторожа командой из ответа и ждать. Тул исполняет мост; нет его в сессии — тулы идут мимо моста либо мост старой сборки (doctor скажет), стой по скиллу standing.",
@@ -3366,7 +3380,7 @@ async function runStand(msg) {
   const room = typeof a.room === "string" && a.room.trim() ? a.room.trim() : null;
   const led = leadsOtherPlace(karta, name);
   if (led && a.take !== true) {
-    lines.push(otherPlaceWord(led, keyOf(realm, karta, name)));
+    lines.push(otherPlaceWord(led, keyOf(realm, karta, name), name === ledName()));
     return done(true);
   }
   noteStandCwd(cwd);
