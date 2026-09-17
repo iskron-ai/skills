@@ -1008,7 +1008,7 @@ test("stopping the plugin with a holding bridge leaves a marker, and the next in
   assert.equal(lostMarkers().length, 1, "one marker file for this instance");
   const written = JSON.parse(readFileSync(lostMarkers()[0], "utf8"));
   assert.deepEqual(written.entries, [
-    { session: "s-held", dir: "/work/held", key: "proba--931--nks-dev" },
+    { session: "s-held", dir: "/work/held", key: "proba--931--nks-dev", child: false },
   ]);
   const second = await plugin(b.env, {
     keepMarker: true,
@@ -1205,16 +1205,23 @@ test("a child session that stands gets a bridge of its own: the root keeps its p
       .split("\n")
       .map((l) => JSON.parse(l))
       .filter((c) => !c.name.startsWith("iskron/"));
+    // Which bridge served what is judged by the pid each fake bridge stamps on the call.
+    const who = (pid) => (pid === rootPid ? "root" : pid === childPid ? "child" : "?");
     assert.deepEqual(
-      sent.map((c) => [c.name, c.arguments.action ?? c.arguments.karta ?? "", c.arguments.cwd]),
+      sent.map((c) => [
+        c.name,
+        c.arguments.action ?? c.arguments.karta ?? "",
+        c.arguments.cwd,
+        who(c.pid),
+      ]),
       [
-        ["iskron_stand", "#2816", "/work/root"],
-        ["iskron_stand", "#931", "/work/child-worktree"],
-        ["iskron_orient", "", undefined],
-        ["iskron_orient", "", undefined],
-        ["iskron_channel", "revoke", undefined],
+        ["iskron_stand", "#2816", "/work/root", "root"],
+        ["iskron_stand", "#931", "/work/child-worktree", "child"],
+        ["iskron_orient", "", undefined, "child"],
+        ["iskron_orient", "", undefined, "root"],
+        ["iskron_channel", "revoke", undefined, "child"],
       ],
-      "the child stands under its own directory; the log is shared, the bridges are not",
+      "the child stands under its own directory through its own bridge; the reader's read is served by the root's",
     );
     // Which bridge got what: the fake logs per process only through events, so
     // judge by the frames — a frame on the child's bridge lands in the child.
@@ -1232,5 +1239,170 @@ test("a child session that stands gets a bridge of its own: the root keeps its p
     assert.equal(pidsOf(b.log).length, 2, "the reader still inherits the root's bridge");
   } finally {
     await rec.stop();
+  }
+});
+
+// Two standing calls of one child in one batch of tools (iskron_stand and a
+// register at once) must share ONE child bridge: a second bridge overwritten
+// in the map would be seen by no reaper, no stop() and no marker, yet hold a
+// place on the board.
+test("two simultaneous standing calls of one child session share one child bridge", async () => {
+  const calls = join(SANDBOX, "child-race.calls");
+  writeFileSync(calls, "");
+  const b = bridgeEnv("child-race", {
+    FB_CALLS: calls,
+    FB_TOOLS: JSON.stringify([
+      { name: "iskron_stand", description: "Стояние.", inputSchema: { type: "object" } },
+      {
+        name: "iskron_channel",
+        description: "Канал.",
+        inputSchema: { type: "object", properties: { action: { type: "string" } } },
+      },
+    ]),
+  });
+  const rec = await plugin(b.env, {
+    sessions: [
+      { id: "root", location: { directory: "/work/race" } },
+      { id: "child", parentID: "root", location: { directory: "/work/race" } },
+    ],
+  });
+  try {
+    await until(() => rec.tools().has("iskron_stand"), "the stand tool", 8000);
+    await rec.call("iskron_stand", { realm: "nks-dev", karta: "#2816" }, "root");
+    await Promise.all([
+      rec.call("iskron_stand", { realm: "nks-dev", karta: "#931" }, "child"),
+      rec.call("iskron_channel", { action: "register", karta: "#931" }, "child"),
+    ]);
+    assert.equal(pidsOf(b.log).length, 2, "one bridge for the child, however many calls at once");
+    const childPid = pidsOf(b.log)[1];
+    const served = readFileSync(calls, "utf8")
+      .trim()
+      .split("\n")
+      .map((l) => JSON.parse(l))
+      .filter((c) => c.arguments?.karta === "#931")
+      .map((c) => c.pid);
+    assert.deepEqual(
+      served,
+      [childPid, childPid],
+      "both calls were served by the same child bridge",
+    );
+  } finally {
+    await rec.stop();
+  }
+});
+
+// A fresh child bridge may meet the login: the call must hand the address
+// back at once, as the root's path does, never hang on a human it cannot reach.
+test("a child bridge raised into a pending login answers with the login address instead of hanging", async () => {
+  const authDir = mkdtempSync(join(SANDBOX, "auth-child-"));
+  const prevAuth = process.env.ISKRON_BRIDGE_AUTH_DIR;
+  process.env.ISKRON_BRIDGE_AUTH_DIR = authDir;
+  const authed = join(SANDBOX, "child-login.authed");
+  writeFileSync(authed, "");
+  writeFileSync(join(authDir, "fake_grant.json"), "{}");
+  const b = bridgeEnv("child-login", {
+    FB_MODE: "auth",
+    FB_AUTHED: authed,
+    ISKRON_MCP_AUTH_POLL_MS: 50,
+    FB_TOOLS: JSON.stringify([
+      { name: "iskron_stand", description: "Стояние.", inputSchema: { type: "object" } },
+    ]),
+  });
+  const rec = await plugin(b.env, {
+    sessions: [
+      { id: "root", location: { directory: "/work/login" } },
+      { id: "child", parentID: "root", location: { directory: "/work/login" } },
+    ],
+  });
+  try {
+    await until(() => rec.tools().has("iskron_stand"), "the stand tool", 8000);
+    await rec.call("iskron_stand", { realm: "nks-dev", karta: "#2816" }, "root");
+    rmSync(authed); // the grant dies before the child stands
+    await assert.rejects(
+      () => rec.call("iskron_stand", { realm: "nks-dev", karta: "#931" }, "child"),
+      /нужен вход/,
+      "the child's call must refuse with the address, not wait",
+    );
+    assert.equal(pidsOf(b.log).length, 2, "the child bridge is raised and kept for the login");
+    writeFileSync(authed, "");
+    writeFileSync(join(authDir, "fake_grant.json"), "{ }");
+    let out = null;
+    for (const deadline = Date.now() + 5000; out === null && Date.now() < deadline;) {
+      out = await rec
+        .call("iskron_stand", { realm: "nks-dev", karta: "#931" }, "child")
+        .catch(() => null);
+      if (out === null) await delay(50);
+    }
+    assert.ok(out, "the child's call passes after the login");
+    assert.equal(
+      pidsOf(b.log).length,
+      2,
+      "the same child bridge served it — the login was waited for, not restarted",
+    );
+  } finally {
+    writeFileSync(authed, "");
+    await rec.stop();
+    process.env.ISKRON_BRIDGE_AUTH_DIR = prevAuth;
+  }
+});
+
+// The loss marker of an instance whose root AND child both held places in one
+// directory: the child's record must not become the root's hint, or the root
+// would come back onto the child's place after a restart.
+test("a child's held place in the loss marker is flagged and never hints the root's return", async () => {
+  const calls = join(SANDBOX, "marker-child.calls");
+  writeFileSync(calls, "");
+  const b = bridgeEnv("marker-child", {
+    FB_CALLS: calls,
+    FB_TOOLS: JSON.stringify([
+      { name: "iskron_stand", description: "Стояние.", inputSchema: { type: "object" } },
+      { name: "iskron_orient", description: "Ориентация.", inputSchema: { type: "object" } },
+    ]),
+  });
+  const sessions = [
+    { id: "root", location: { directory: "/work/same" } },
+    { id: "child", parentID: "root", location: { directory: "/work/same" } },
+  ];
+  const first = await plugin(b.env, { sessions });
+  await until(() => first.tools().has("iskron_stand"), "the stand tool", 8000);
+  await first.call("iskron_stand", { realm: "nks-dev", karta: "#2816" }, "root");
+  await first.call("iskron_stand", { realm: "nks-dev", karta: "#931" }, "child");
+  const [rootPid, childPid] = pidsOf(b.log);
+  appendFileSync(`${b.events}.${rootPid}`, event("held", { key: "root--2816--nks-dev" }));
+  appendFileSync(`${b.events}.${childPid}`, event("held", { key: "child--931--nks-dev" }));
+  await until(
+    () => /мост держит стояние child--931--nks-dev/.test(first.said()),
+    "the child's held line",
+  );
+  await until(
+    () => /мост держит стояние root--2816--nks-dev/.test(first.said()),
+    "the root's held line",
+  );
+  await first.stop();
+  const written = JSON.parse(readFileSync(lostMarkers()[0], "utf8"));
+  assert.deepEqual(
+    written.entries.sort((x, y) => x.session.localeCompare(y.session)),
+    [
+      { session: "child", dir: "/work/same", key: "child--931--nks-dev", child: true },
+      { session: "root", dir: "/work/same", key: "root--2816--nks-dev", child: false },
+    ],
+  );
+  const second = await plugin(b.env, { keepMarker: true, sessions });
+  try {
+    await until(() => second.tools().has("iskron_orient"), "the tools", 8000);
+    writeFileSync(calls, "");
+    await second.call("iskron_orient", {}, "root");
+    const sent = readFileSync(calls, "utf8")
+      .trim()
+      .split("\n")
+      .map((l) => JSON.parse(l));
+    assert.equal(sent[0].name, "iskron/resume");
+    assert.deepEqual(
+      sent[0].arguments,
+      { key: "root--2816--nks-dev", cwd: "/work/same" },
+      "the root resumes by ITS key — the child's record of the same directory is no hint",
+    );
+  } finally {
+    await second.stop();
   }
 });

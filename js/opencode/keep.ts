@@ -33,12 +33,15 @@ export interface KeptSlot {
   key: string | null;
   /** Возврат места в полёте: вызов тула ждёт его, чтобы не занимать место дважды. */
   resume: Promise<void> | null;
+  /** Мост дочерней сессии (её собственное стояние, #5154): в подсказки возврата корня его запись не идёт. */
+  child?: boolean;
 }
 
 export interface LostEntry {
   session: string;
   dir: string | null;
   key: string | null;
+  child?: boolean;
 }
 interface Lost {
   at: string;
@@ -51,7 +54,7 @@ const MARKER_PREFIX = "opencode-lost";
 export function writeLostMarker(authDir: string, slots: Iterable<KeptSlot>): void {
   const entries = [...slots]
     .filter((s) => s.holding && s.session)
-    .map((s) => ({ session: s.session as string, dir: s.dir, key: s.key }));
+    .map((s) => ({ session: s.session as string, dir: s.dir, key: s.key, child: !!s.child }));
   if (!entries.length) return;
   try {
     mkdirSync(authDir, { recursive: true, mode: 0o700 });
@@ -87,7 +90,12 @@ export function takeLostMarker(authDir: string): { text: string; entries: LostEn
       const lost = JSON.parse(text) as Lost;
       if (lost?.at > at) at = lost.at;
       for (const e of lost?.entries ?? [])
-        entries.push({ session: e.session, dir: e.dir ?? null, key: e.key ?? null });
+        entries.push({
+          session: e.session,
+          dir: e.dir ?? null,
+          key: e.key ?? null,
+          child: !!e.child,
+        });
     } catch {
       /* битый маркер — не слово */
     }
@@ -196,7 +204,9 @@ export function createKeeper<S extends KeptSlot>(doors: KeeperDoors<S>): Keeper<
 
   return {
     hint(entries) {
-      for (const e of entries) if (e.dir && e.key) hints.set(e.dir, e.key);
+      // Подсказка ключуется каталогом, а корень и его ребёнок стоят в одном:
+      // детская запись корню не подсказка — иначе корень вернул бы детское место.
+      for (const e of entries) if (e.dir && e.key && !e.child) hints.set(e.dir, e.key);
     },
     resume,
     stood(slot) {

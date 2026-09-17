@@ -10,9 +10,9 @@
 // Сервер OpenCode держит много сессий, и каждая — отдельный агент со своим
 // стоянием; мост же держит одно стояние и одну MCP-сессию к графу. Поэтому
 // у каждой корневой сессии свой процесс моста: её connect держит её сокет, её
-// register привязывает её MCP-сессию, её кадры приходят ей. Дочерние сессии
-// (субагенты) идут через мост родителя — как в Claude Code, где субагент
-// делит MCP-сервер с сессией, что его породила.
+// register привязывает её MCP-сессию, её кадры приходят ей. Дочерняя сессия
+// (субагент) читает мостом родителя, а встав своим вызовом — получает свой
+// мост: стояние одно на мост, и её место иначе снимало бы родительское (#5154).
 //
 // Список тулов — состояние трансформа, а не карта, отданная раз при загрузке:
 // setup входа не ждёт (тулы из прошлого списка сразу, служебный iskron_bridge
@@ -239,11 +239,13 @@ export async function setupTools(
     // Дочерняя сессия, вставшая своим вызовом, ходит своим мостом (#5154);
     // чтение без стояния наследует мост корня.
     const own = root !== sessionID ? slots.get(sessionID) : undefined;
-    if (own && !own.bridge.failure) {
-      if (touch) own.lastCall = Date.now();
-      return own;
+    if (own) {
+      // Умерший детский мост заменяется своим же, не мостом корня: чтения и
+      // записи ребёнка не уходят под привязку корня, сторож возвращает его место.
+      const live = own.bridge.failure ? childSlot(sessionID) : own;
+      if (touch) live.lastCall = Date.now();
+      return live;
     }
-    if (own) slots.delete(sessionID);
     let slot = slots.get(root);
     let dead: Slot | undefined;
     if (slot?.bridge.failure) {
@@ -345,22 +347,27 @@ export async function setupTools(
     }
   });
 
-  /** Свой мост дочерней сессии — для её собственного стояния; место с диска ей не возвращается: она встаёт сейчас. */
+  /**
+   * Мост дочерней сессии для её собственного стояния — один на сессию: живой
+   * возвращается, умерший заменяется с его памятью о месте; участок get→set
+   * синхронен, и два стоячих вызова одной пачки берут один мост, не два.
+   * Место с диска по каталогу ребёнку не возвращается (он встаёт сейчас);
+   * возврат по имени внутри iskron_stand — как у всякого моста.
+   */
   function childSlot(sessionID: string): Slot {
+    const have = slots.get(sessionID);
+    if (have && !have.bridge.failure) return have;
     const own = spawn();
     own.session = sessionID;
+    own.child = true;
+    own.dir = have?.dir ?? null;
+    own.key = have?.key ?? null;
     slots.set(sessionID, own);
     return own;
   }
 
-  /** Один вызов тула через мост слота. */
-  async function callThrough(
-    slot: Slot,
-    name: string,
-    input: any,
-    sessionID: string,
-  ): Promise<{ content: string }> {
-    // Без гранта человека внутри вызова не ждут: адрес входа уходит ответом.
+  /** Рукопожатие слота под гонкой со входом: человека внутри вызова не ждут, адрес входа уходит ответом. */
+  async function awaitReady(slot: Slot): Promise<void> {
     if (loginPending) throw loginError();
     const login = loginStarted();
     try {
@@ -373,6 +380,16 @@ export async function setupTools(
     } finally {
       login.cancel();
     }
+  }
+
+  /** Один вызов тула через мост слота. */
+  async function callThrough(
+    slot: Slot,
+    name: string,
+    input: any,
+    sessionID: string,
+  ): Promise<{ content: string }> {
+    await awaitReady(slot);
     if (slot.resume) await slot.resume; // место возвращается с диска — не занимать его дважды
     // Потолка нет: контекст execute в v2 сигнала отмены не несёт.
     const args: Record<string, unknown> = { ...(input ?? {}) };
@@ -381,7 +398,7 @@ export async function setupTools(
     // родительское с сокета, а её register переписывал бы привязку корня (#5154).
     if (standsBy(name, args) && slot.session !== sessionID) {
       slot = childSlot(sessionID);
-      await readyFor(slot);
+      await awaitReady(slot); // свежий детский мост может запросить вход — та же гонка, что у корня
     }
     // Мост бежит из cwd сервера OpenCode, не из рабочей копии сессии:
     // репо для имени стояния он выводит из директории сессии (r5 #5108) —

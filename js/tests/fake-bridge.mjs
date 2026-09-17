@@ -162,8 +162,12 @@ process.stdin.on("data", (chunk) => {
     } else if (msg.method === "tools/call") {
       // FB_CALLS: file to append each tools/call's params to, one JSON per line —
       // the probe reads what the plugin actually sent, not only what it got back.
+      // …with this process's pid, so a probe can tell WHICH bridge served a call.
       if (process.env.FB_CALLS)
-        appendFileSync(process.env.FB_CALLS, JSON.stringify(msg.params) + "\n");
+        appendFileSync(
+          process.env.FB_CALLS,
+          JSON.stringify({ ...msg.params, pid: process.pid }) + "\n",
+        );
       ok(msg.id, callResult(msg.params?.name));
     } else if (msg.method === "iskron/resume" || msg.method === "iskron/check") {
       // The bridge's own requests from the OpenCode plugin (js/bridge/resume.ts):
@@ -172,7 +176,7 @@ process.stdin.on("data", (chunk) => {
       if (process.env.FB_CALLS)
         appendFileSync(
           process.env.FB_CALLS,
-          JSON.stringify({ name: msg.method, arguments: msg.params }) + "\n",
+          JSON.stringify({ name: msg.method, arguments: msg.params, pid: process.pid }) + "\n",
         );
       let result = { resumed: false, holding: false, word: "записи держания нет" };
       try {
