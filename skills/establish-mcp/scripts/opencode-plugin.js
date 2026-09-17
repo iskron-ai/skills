@@ -395,9 +395,15 @@ function takeLostMarker(authDir2) {
     return null;
   }
   for (const f of files) {
+    let text;
     try {
-      const lost = JSON.parse(readFileSync3(join3(authDir2, f), "utf8"));
+      text = readFileSync3(join3(authDir2, f), "utf8");
       unlinkSync(join3(authDir2, f));
+    } catch {
+      continue;
+    }
+    try {
+      const lost = JSON.parse(text);
       if (lost?.at > at) at = lost.at;
       for (const e of lost?.entries ?? [])
         entries.push({ session: e.session, dir: e.dir ?? null, key: e.key ?? null });
@@ -454,12 +460,13 @@ function createKeeper(doors) {
     if (r?.holding) slot.holding = true;
     else if (r?.holding === false) {
       slot.holding = false;
-      if (!r.resumed) roots.delete(root);
+      roots.delete(root);
     }
     if (r?.resumed)
       doors.say(`Искрон: сторож слуха вернул место сессии ${root} — ${r.word}`, "info");
     else if (r?.reopened)
       doors.say(`Искрон: сторож слуха переоткрыл сокет сессии ${root} — ${r.word}`, "warning");
+    else if (r?.stuck) doors.say(r.word, "error");
   }
   const timer = setInterval(() => {
     if (stopped) return;

@@ -2179,8 +2179,10 @@ function keptRecordStatus(key) {
 }
 var standCwd = null;
 function noteStandCwd(cwd) {
+  const prev = standCwd;
   standCwd = cwd;
   if (cwd && currentKey && currentUrl) rememberStatus(readHoldRecord(currentKey)?.status ?? "");
+  return prev;
 }
 function rememberStatus(text) {
   const s = state.standing;
@@ -2826,7 +2828,7 @@ async function resumeFromDisk(realm, karta, name) {
   if (await localSocketAlive(localSocketPathOf(key))) return null;
   const prev = state.standing;
   state.standing = { realm, karta, name };
-  if (rec.cwd) noteStandCwd(rec.cwd);
+  const prevCwd = rec.cwd ? noteStandCwd(rec.cwd) : null;
   noteResuming(1);
   try {
     holdStanding(rec.url, rec.statusUrl);
@@ -2847,25 +2849,28 @@ async function resumeFromDisk(realm, karta, name) {
   log(`hold record for ${key} is stale — dropped, the place is taken anew`);
   releaseStanding("возврат с диска не удался", true);
   state.standing = prev;
+  if (rec.cwd) noteStandCwd(prevCwd);
   return null;
 }
 function recordsFor(sel) {
   const dir = standingsDirOf(CFG.authDir);
   if (!existsSync2(dir)) return [];
   const mine = harnessName();
-  const out4 = [];
+  const byKey = [];
+  const byCwd = [];
   for (const f of readdirSync3(dir).filter((x) => x.endsWith(".hold"))) {
     try {
       const rec = JSON.parse(readFileSync9(join7(dir, f), "utf8"));
       if (!rec || rec.client !== mine) continue;
       const key = keyOf(rec.realm, rec.karta, rec.name);
-      if (sel.key ? key !== sel.key : !sel.cwd || rec.cwd !== sel.cwd) continue;
+      const keyed = !!sel.key && key === sel.key;
+      if (!keyed && (!sel.cwd || rec.cwd !== sel.cwd)) continue;
       const fresh = readHoldRecord(key);
-      if (fresh) out4.push(fresh);
+      if (fresh) (keyed ? byKey : byCwd).push(fresh);
     } catch {
     }
   }
-  return out4.sort((a, b) => (b.at ?? 0) - (a.at ?? 0));
+  return [...byKey, ...byCwd.sort((a, b) => (b.at ?? 0) - (a.at ?? 0))];
 }
 async function backToParked(key, how) {
   if (!returnToStanding(how)) return { resumed: false, key, word: "возврат на место не удался" };
@@ -2971,7 +2976,32 @@ async function runCheck(msg) {
   if (!mine) return reply(msg, { holding: true, key, word: "своего места на доске нет" });
   const pending2 = undelivered(mine);
   const listening = listens(mine);
-  if (listening) return reply(msg, { holding: true, key, listening, pending: pending2, word: "слушаю" });
+  if (listening) {
+    deafReopens = 0;
+    return reply(msg, { holding: true, key, listening, pending: pending2, word: "слушаю" });
+  }
+  if (deafReopens >= REOPEN_LIMIT) {
+    const text = `Искрон: доска читает место ${key} не слушающим и после ${REOPEN_LIMIT} переоткрытий сокета — больше не рву; проверь доску и сервер, вернуть слух — iskron_stand с take=true.`;
+    if (!deafSaid) {
+      deafSaid = true;
+      standingLog(`reopen ${key}: gave up after ${REOPEN_LIMIT} — board still reads deaf`);
+      emit({
+        jsonrpc: "2.0",
+        method: "notifications/message",
+        params: { level: "warning", logger: "iskron-channel", data: { kind: "lost", text } }
+      });
+    }
+    return reply(msg, {
+      holding: true,
+      key,
+      listening,
+      pending: pending2,
+      reopened: false,
+      stuck: true,
+      word: text
+    });
+  }
+  deafReopens++;
   standingLog(`reopen ${key}: board reads deaf${pending2 ? ` with ${pending2} pending` : ""}`);
   parkStanding("доска не читает слушающим");
   resumeStanding();
@@ -2985,6 +3015,9 @@ async function runCheck(msg) {
     word: hello ? `сокет переоткрыт: ожидало кадров — ${Number(hello.pending) || 0}` : "сокет переоткрыт, hello за 4 с не пришёл"
   });
 }
+var deafReopens = 0;
+var deafSaid = false;
+var REOPEN_LIMIT = 2;
 
 // js/bridge/update.ts
 import { spawn as spawn2 } from "node:child_process";
