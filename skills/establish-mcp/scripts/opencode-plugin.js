@@ -430,7 +430,7 @@ async function setupTools(ctx, say, onChannel, rootOf) {
   async function directoryOf(sessionID) {
     try {
       const res = await ctx.session.get({ sessionID });
-      const dir = res?.directory ?? res?.data?.directory;
+      const dir = res?.location?.directory ?? res?.data?.location?.directory;
       return typeof dir === "string" && dir.trim() ? dir : null;
     } catch {
       return null;
@@ -506,7 +506,7 @@ async function setupTools(ctx, say, onChannel, rootOf) {
           }
           const args = { ...input ?? {} };
           if (name === STAND_TOOL && !args.cwd) {
-            const dir = await directoryOf(String(tool.sessionID));
+            const dir = await directoryOf(slot.session ?? String(tool.sessionID));
             if (dir) args.cwd = dir;
           }
           const result = await slot.bridge.request("tools/call", { name, arguments: args });

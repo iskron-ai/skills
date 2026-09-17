@@ -278,8 +278,15 @@ test("iskron_stand is given the session's directory as cwd; an explicit cwd is l
       },
     ]),
   });
+  // SessionInfo of OpenCode 2 carries the directory under location, not at the
+  // top (@opencode/plugin 2.0.4) — the shape skill.list mirrors above.
   const rec = await plugin(b.env, {
-    sessions: [{ id: "s-dir", directory: "/work/of/the-session" }],
+    sessions: [
+      { id: "s-dir", location: { directory: "/work/of/the-session" } },
+      // A subagent in its own worktree shares the root's bridge — and so the
+      // root's name: its own directory must not rename the root's standing.
+      { id: "s-child", parentID: "s-dir", location: { directory: "/tmp/worktree-of-child" } },
+    ],
   });
   try {
     await until(() => rec.tools().has("iskron_stand"), "the stand tool", 8000);
@@ -291,6 +298,7 @@ test("iskron_stand is given the session's directory as cwd; an explicit cwd is l
       "s-dir",
     );
     await rec.call("iskron_stand", { realm: "nks-dev", karta: "#931" }, "s-unknown");
+    await rec.call("iskron_stand", { realm: "nks-dev", karta: "#931" }, "s-child");
     const sent = readFileSync(calls, "utf8")
       .trim()
       .split("\n")
@@ -308,6 +316,11 @@ test("iskron_stand is given the session's directory as cwd; an explicit cwd is l
       sent[3].arguments.cwd,
       undefined,
       "a session without a directory sends none — the bridge falls back to its cwd",
+    );
+    assert.equal(
+      sent[4].arguments.cwd,
+      "/work/of/the-session",
+      "a child session stands under its root's directory — the bridge, and so the name, is the root's",
     );
   } finally {
     await rec.stop();

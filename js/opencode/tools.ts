@@ -306,11 +306,15 @@ export async function setupTools(
     }
   }
 
-  /** Директория сессии — рабочая копия, над которой идёт ход; нет её — пусто, мост выведет из своего cwd. */
+  /**
+   * Директория сессии — рабочая копия, над которой идёт ход: у SessionInfo
+   * OpenCode 2 она в location.directory (@opencode/plugin 2.0.4). Нет её —
+   * пусто, мост выведет из своего cwd.
+   */
   async function directoryOf(sessionID: string): Promise<string | null> {
     try {
       const res: any = await ctx.session.get({ sessionID } as any);
-      const dir = res?.directory ?? res?.data?.directory;
+      const dir = res?.location?.directory ?? res?.data?.location?.directory;
       return typeof dir === "string" && dir.trim() ? dir : null;
     } catch {
       return null;
@@ -404,8 +408,10 @@ export async function setupTools(
           const args: Record<string, unknown> = { ...(input ?? {}) };
           // Мост бежит из cwd сервера OpenCode, не из рабочей копии сессии:
           // репо для имени стояния он выводит из директории сессии (r5 #5108).
+          // Директория — КОРНЕВОЙ сессии, чей это мост: субагент в своём
+          // worktree иначе увёл бы стояние корня под другое имя.
           if (name === STAND_TOOL && !args.cwd) {
-            const dir = await directoryOf(String(tool.sessionID));
+            const dir = await directoryOf(slot.session ?? String(tool.sessionID));
             if (dir) args.cwd = dir;
           }
           const result = await slot.bridge.request("tools/call", { name, arguments: args });
