@@ -71,11 +71,6 @@ export const STAND_TOOL = {
           "Осознанный повтор стука в ту же комнату: разрешён один раз и не раньше чем через 2 минуты после первого; без него повторный вызов второго join не шлёт.",
       },
       status: { type: "string", description: "Первая строка занятости (до 64 символов)." },
-      cwd: {
-        type: "string",
-        description:
-          "Директория сессии харнесса — из неё выводится репо для имени (git toplevel, иначе её basename), когда мост запущен не из рабочей копии; плагин OpenCode подставляет её сам. Без неё — cwd моста.",
-      },
     },
     required: ["realm", "karta"],
   },
@@ -91,10 +86,10 @@ const sanitize = (s: string): string =>
     .replace(/^[-.]+|[-.]+$/g, "")
     .slice(0, 32);
 
-const git = (args: string[], cwd: string = process.cwd()): string => {
+const git = (args: string[]): string => {
   try {
     return execFileSync("git", args, {
-      cwd,
+      cwd: process.cwd(),
       timeout: 2000,
       stdio: ["ignore", "pipe", "ignore"],
     })
@@ -111,14 +106,11 @@ const git = (args: string[], cwd: string = process.cwd()): string => {
  * параметром): в момент запуска ветка почти всегда main и не различает
  * ничего, а модель различает сессии одной машины над одним репозиторием.
  * Префикс поставщика (`claude-`) отбрасывается: `claude-opus-5` → `opus-5`.
- * Репо — по директории сессии харнесса (cwd), когда мост запущен не из неё:
- * плагин OpenCode поднимает мост из cwd сервера, и без этого репо выводилось
- * бы из чужого каталога (r5 #5108).
  */
-export function deriveName(model?: string, cwd: string = process.cwd()): string {
+export function deriveName(model?: string): string {
   const host = hostname().split(".")[0];
-  const top = git(["rev-parse", "--show-toplevel"], cwd);
-  const repo = basename(top || cwd);
+  const top = git(["rev-parse", "--show-toplevel"]);
+  const repo = basename(top || process.cwd());
   const short = (model ?? "")
     .trim()
     .toLowerCase()
@@ -208,9 +200,8 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
     return done(true);
   }
   const model = typeof a.model === "string" && a.model.trim() ? a.model : undefined;
-  const cwd = typeof a.cwd === "string" && a.cwd.trim() ? a.cwd.trim() : process.cwd();
   const name =
-    typeof a.name === "string" && a.name.trim() ? sanitize(a.name.trim()) : deriveName(model, cwd);
+    typeof a.name === "string" && a.name.trim() ? sanitize(a.name.trim()) : deriveName(model);
   const nameNotes: string[] = [];
   if (!(typeof a.name === "string" && a.name.trim()) && !model) {
     nameNotes.push(
@@ -241,7 +232,7 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   // место трогать нельзя.
   const stem = name.split(".").slice(0, 2).join(".");
   const branches = new Set(
-    git(["branch", "--format=%(refname:short)"], cwd)
+    git(["branch", "--format=%(refname:short)"])
       .split("\n")
       .map((x) => sanitize(x.trim()))
       .filter(Boolean),
