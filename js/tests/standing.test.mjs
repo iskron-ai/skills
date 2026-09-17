@@ -278,12 +278,14 @@ test("drops against a live service keep the place: the bridge reopens, the watch
   await wd.done;
 });
 
-test("connect under a new name re-keys the hold: the block and the key file follow the name", async (t) => {
+// One standing per bridge (#5154): a new name is a deliberate move — iskron_stand
+// with take=true; a bare connect under another name is refused, see below.
+test("standing under a new name with take=true re-keys the hold: the block and the key file follow the name", async (t) => {
   const { fake, bridge, standings } = await connected(t);
   await waitFor(() => fake.state.ws.size === 1, "the first socket");
   const reply = await bridge.call("tools/call", 5, {
-    name: "iskron_channel",
-    arguments: { ...CONNECT, name: "vtoraya" },
+    name: "iskron_stand",
+    arguments: { realm: "nks-dev", karta: 931, name: "vtoraya", take: true },
   });
   const text = (reply.result?.content ?? []).map((c) => c.text ?? "").join("\n");
   const key2 = /watchdog (\S+)/.exec(text)?.[1];
@@ -1355,7 +1357,7 @@ test("a hold record names its harness and key: another harness's record is not r
   // record must not survive to be resumed by the next session.
   const renamed = await mine.call("tools/call", 4, {
     name: "iskron_stand",
-    arguments: { realm: "nks-dev", karta: 931, name: "vtoraya", cwd },
+    arguments: { realm: "nks-dev", karta: 931, name: "vtoraya", cwd, take: true },
   });
   assert.ok(!renamed.result?.isError, JSON.stringify(renamed));
   assert.equal(fake.state.counts.connect, 2);
@@ -1392,7 +1394,7 @@ test("a bridge leading a parked place returns to it on iskron/resume and leaves 
   const st = await other.call("tools/call", 2, {
     name: "iskron_stand",
     arguments: { realm: "nks-dev", karta: 931, name: "svezhee", cwd },
-  });
+  }); // a fresh bridge leads no place yet — no take needed
   assert.ok(!st.result?.isError, JSON.stringify(st));
   await waitFor(() => [...fake.state.ws].some((x) => !before.has(x)), "the fresher place's socket");
   // The other bridge's liveness probes touched the parked bridge's local socket;
@@ -1513,4 +1515,105 @@ test("iskron/check finds its own place with karta «#931», and a neighbour x.pr
   assert.equal(check.result.word, "слушаю");
   await new Promise((r) => setTimeout(r, 300));
   assert.equal(fresh().length, 0, "no reopen on the neighbour's deafness");
+});
+
+// ── one standing per bridge (graph nks-dev: #5154) ───────────────────────────
+
+// A subagent in a child session of the same bridge stood under another role,
+// and the bridge dropped the parent's socket and rewrote its binding in silence.
+// Now a bridge that leads a place refuses another place aloud — iskron_stand and
+// bare connect/mint/register alike — unless the move is deliberate (take=true);
+// the same place with take=true works as before, and a revoke of another place
+// never touches the one the bridge holds.
+test("a bridge leading a place refuses another role or name without take=true, keeps its socket and binding; take=true on the same place still works; revoke of another place leaves it alone", async (t) => {
+  const { fake, bridge, standings } = await connected(t);
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const known = new Set(fake.state.ws);
+  const fresh = () => [...fake.state.ws].filter((x) => !known.has(x));
+  const said = (r) => (r.result?.content ?? []).map((c) => c.text ?? "").join("\n");
+  const refused = (r, what) => {
+    assert.ok(r.result?.isError, `${what} must be refused: ${said(r)}`);
+    assert.match(said(r), /уже ведёт место proba--931--nks-dev/, what);
+    assert.match(said(r), /take=true/, what);
+  };
+  // Another name, another role, a bare connect and a bare register under another place.
+  refused(
+    await bridge.call("tools/call", 5, {
+      name: "iskron_stand",
+      arguments: { realm: "nks-dev", karta: 931, name: "vtoraya" },
+    }),
+    "iskron_stand under another name",
+  );
+  refused(
+    await bridge.call("tools/call", 6, {
+      name: "iskron_stand",
+      arguments: { realm: "@nks/nks-dev", karta: "#48", name: "proba" },
+    }),
+    "iskron_stand under another role",
+  );
+  const mcpBefore = fake.state.counts.mcp;
+  refused(
+    await bridge.call("tools/call", 7, {
+      name: "iskron_channel",
+      arguments: { ...CONNECT, name: "vtoraya" },
+    }),
+    "a bare connect under another name",
+  );
+  refused(
+    await bridge.call("tools/call", 8, {
+      name: "iskron_channel",
+      arguments: { realm: "nks-dev", action: "register", karta: 48, name: "proba" },
+    }),
+    "a bare register under another role",
+  );
+  assert.equal(fake.state.counts.mcp, mcpBefore, "a refused call never reaches the server");
+  assert.equal(fake.state.counts.connect, 1, "no new place was taken");
+  assert.equal(fresh().length, 0, "the parent's socket is untouched");
+  assert.ok(
+    readdirSync(standings).some((f) => f.endsWith(".key")),
+    "the parent's key file stays",
+  );
+  // The binding is still the parent's: the busy line goes to proba.
+  const st = await bridge.call("tools/call", 9, {
+    name: "iskron_channel",
+    arguments: { realm: "nks-dev", action: "status", text: "родитель" },
+  });
+  assert.match(said(st), /занятость proba--931--nks-dev/, said(st));
+  // The same place — register and stand with take=true — as before.
+  const same = await bridge.call("tools/call", 10, {
+    name: "iskron_channel",
+    arguments: { realm: "@nks/nks-dev", action: "register", karta: "#931", name: "proba" },
+  });
+  assert.ok(
+    !same.result?.isError,
+    `the same place spelled differently is not another place: ${said(same)}`,
+  );
+  const take = await bridge.call("tools/call", 11, {
+    name: "iskron_stand",
+    arguments: { realm: "nks-dev", karta: 931, name: "proba", take: true },
+  });
+  assert.ok(!take.result?.isError, said(take));
+  assert.match(said(take), /connect по take/, said(take));
+  assert.equal(fake.state.counts.connect, 2);
+  await waitFor(() => fresh().length === 1, "the socket rotated by take on the same place");
+  // A revoke of ANOTHER place passes through and leaves ours alone.
+  await fake.control({ places: [{ karta: 931, name: "chuzhoe" }] });
+  const rv = await bridge.call("tools/call", 12, {
+    name: "iskron_channel",
+    arguments: { realm: "nks-dev", action: "revoke", karta: 931, standing: "chuzhoe" },
+  });
+  assert.ok(!rv.result?.isError, said(rv));
+  await new Promise((r) => setTimeout(r, 300));
+  assert.ok(
+    readdirSync(standings).some((f) => f.endsWith(".key")),
+    "revoking another place must not release ours",
+  );
+  // A deliberate move to another name: take=true — the old place is left, the new one held.
+  const moved = await bridge.call("tools/call", 13, {
+    name: "iskron_stand",
+    arguments: { realm: "nks-dev", karta: 931, name: "vtoraya", take: true },
+  });
+  assert.ok(!moved.result?.isError, said(moved));
+  assert.match(said(moved), /watchdog vtoraya--931--nks-dev/);
+  assert.equal(fake.state.counts.connect, 3);
 });

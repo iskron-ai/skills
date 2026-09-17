@@ -2,7 +2,7 @@ import { OWN_CLIENTS } from "../shared/clients.ts";
 import { absorbChannelReply, absorbRevokeReply, expectOwnRevoke } from "./absorb.ts";
 import { ensureAuth } from "./auth.ts";
 import { BUILD } from "./build.ts";
-import { serialized } from "./call.ts";
+import { crossPlaceRefusal, serialized } from "./call.ts";
 import {
   AuthPending,
   errorMessage,
@@ -230,6 +230,13 @@ export async function deliver(msg: JsonRpcMessage): Promise<void> {
         return;
       }
       heldReply = null;
+      // Стояние одно на мост: connect/mint/register под другое место при ведомом
+      // своём — отказ вслух, на сервер не уходит (#5154).
+      const cross = hasId ? crossPlaceRefusal(msg) : null;
+      if (cross) {
+        emit(cross);
+        return;
+      }
       expectOwnRevoke(msg); // закрытие 4001 обгонит ответ — мост должен знать, что снимает сам
       await post(msg, forward);
       const held = heldReply as JsonRpcMessage | null;

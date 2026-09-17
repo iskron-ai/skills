@@ -590,6 +590,7 @@ export async function startFakeNks(opts = {}) {
         if (a.action === "connect" || a.action === "mint") {
           st.counts.connect++;
           st.wsToken = token("ws"); // как у настоящей поверхности: сокет показан один раз и всякий раз новый
+          st.wsName = a.name ?? ""; // чьё место держит открытый сокет — revoke другого места его не рвёт
           st.standings.set(sid, a.name ?? "(unnamed)");
           // The real surface prints the role as a bare number whatever the caller wrote («#931» is lawful).
           const karta = String(a.karta).replace(/^#/, "");
@@ -624,11 +625,14 @@ export async function startFakeNks(opts = {}) {
         }
         if (a.action === "revoke") {
           const name = String(a.standing ?? "").replace(/^.*:/, "");
-          const had = st.places.delete(`${a.karta}:${name}`);
-          for (const sock of st.ws) {
-            sock.write(wsFrame(0x8, Buffer.from([4001 >> 8, 4001 & 0xff])));
-            setTimeout(() => sock.end(), 100).unref();
-          }
+          const had = st.places.delete(`${String(a.karta).replace(/^#/, "")}:${name}`);
+          // As the real surface: only the revoked place's socket is closed — the
+          // socket of another place the same bridge holds stays up (#5154).
+          if (name === st.wsName)
+            for (const sock of st.ws) {
+              sock.write(wsFrame(0x8, Buffer.from([4001 >> 8, 4001 & 0xff])));
+              setTimeout(() => sock.end(), 100).unref();
+            }
           for (const [sid2, bound] of st.standings) if (bound === name) st.standings.delete(sid2);
           // Как у настоящей поверхности: закрытие сокета уходит раньше ответа по HTTP.
           if (st.revokeReplyDelayMs) await new Promise((r) => setTimeout(r, st.revokeReplyDelayMs));

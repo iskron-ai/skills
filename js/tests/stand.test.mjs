@@ -340,7 +340,8 @@ test("iskron_stand names the repository of the session directory given as cwd, n
   mkdirSync(plain);
   reply = await bridge.call("tools/call", {
     name: "iskron_stand",
-    arguments: { realm: "nks-dev", karta: "#931", model: "opus-5", cwd: plain },
+    // The bridge already leads the first place: another derived name is a deliberate move (take, #5154).
+    arguments: { realm: "nks-dev", karta: "#931", model: "opus-5", cwd: plain, take: true },
   });
   text = textOf(reply);
   assert.ok(!reply.result?.isError, text);
@@ -497,7 +498,7 @@ test("iskron_stand after an eviction: register only, the busy line still publish
 
 // The busy line is the standing's word — of THIS standing: a call for another
 // name must not post onto the address the bridge holds for the first one.
-test("iskron_stand with status for another standing does not post onto the held one's address", async (t) => {
+test("iskron_stand with status for another standing is refused outright — one standing per bridge — and the held one's line stays untouched", async (t) => {
   const { fake, bridge } = await ready(t);
   await fake.control({ places: [{ karta: "931", name: "chuzhoe", listening: true }] });
   const mine = await bridge.call("tools/call", {
@@ -505,12 +506,15 @@ test("iskron_stand with status for another standing does not post onto the held 
     arguments: { realm: "nks-dev", karta: 931, name: "svoe", status: "своё дело" },
   });
   assert.match(textOf(mine), /^Занятость: своё дело$/m, textOf(mine));
+  const posts = fake.state.counts.status_posts;
   const other = await bridge.call("tools/call", {
     name: "iskron_stand",
     arguments: { realm: "nks-dev", karta: 931, name: "chuzhoe", status: "чужое дело" },
   });
-  assert.match(textOf(other), /Занятость не публикуется/, textOf(other));
+  assert.equal(other.result?.isError, true, textOf(other));
+  assert.match(textOf(other), /уже ведёт место svoe--931--nks-dev/, textOf(other)); // #5154
   assert.equal(fake.state.status, "своё дело", "the held standing's line must stay untouched");
+  assert.equal(fake.state.counts.status_posts, posts, "nothing is posted anywhere");
 });
 
 test("iskron_stand refuses control actions on a board it does not recognize", async (t) => {

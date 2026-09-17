@@ -11,7 +11,7 @@ import { statSync } from "node:fs";
 import { isAbsolute } from "node:path";
 
 import { nameOf, parseBoard } from "./board.ts";
-import { callTool as call, short } from "./call.ts";
+import { callTool as call, leadsOtherPlace, otherPlaceWord, short } from "./call.ts";
 import { CFG } from "./config.ts";
 import {
   awaitHello,
@@ -167,6 +167,13 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
     );
   }
   const room = typeof a.room === "string" && a.room.trim() ? a.room.trim() : null;
+  // Стояние одно на мост (#5154): другое место при ведомом своём — только по
+  // явному take=true; иначе отказ вслух, и ничего не тронуто.
+  const led = leadsOtherPlace(karta, name);
+  if (led && a.take !== true) {
+    lines.push(otherPlaceWord(led, `${name}--${karta}`));
+    return done(true);
+  }
   // Каталог сессии — в запись держания: мост, поднятый заново (вытеснение
   // каталога OpenCode, перезапуск плагина), вернёт место по нему сам (#5140).
   noteStandCwd(cwd);
