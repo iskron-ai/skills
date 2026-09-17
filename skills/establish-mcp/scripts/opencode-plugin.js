@@ -375,7 +375,7 @@ import { join as join3 } from "node:path";
 var WATCH_MS = Number(process.env.ISKRON_BRIDGE_WATCH_MS || 5 * 6e4);
 var MARKER_PREFIX = "opencode-lost";
 function writeLostMarker(authDir2, slots) {
-  const entries = [...slots].filter((s) => s.holding && s.session).map((s) => ({ session: s.session, dir: s.dir, key: s.key }));
+  const entries = [...slots].filter((s) => s.holding && s.session).map((s) => ({ session: s.session, dir: s.dir, key: s.key, child: !!s.child }));
   if (!entries.length) return;
   try {
     mkdirSync2(authDir2, { recursive: true, mode: 448 });
@@ -406,7 +406,12 @@ function takeLostMarker(authDir2) {
       const lost = JSON.parse(text);
       if (lost?.at > at) at = lost.at;
       for (const e of lost?.entries ?? [])
-        entries.push({ session: e.session, dir: e.dir ?? null, key: e.key ?? null });
+        entries.push({
+          session: e.session,
+          dir: e.dir ?? null,
+          key: e.key ?? null,
+          child: !!e.child
+        });
     } catch {
     }
   }
@@ -478,7 +483,7 @@ function createKeeper(doors) {
   timer.unref?.();
   return {
     hint(entries) {
-      for (const e of entries) if (e.dir && e.key) hints.set(e.dir, e.key);
+      for (const e of entries) if (e.dir && e.key && !e.child) hints.set(e.dir, e.key);
     },
     resume,
     stood(slot) {
@@ -632,11 +637,11 @@ async function setupTools(ctx, say, onChannel, rootOf) {
   async function slotFor(sessionID, touch = true) {
     const root = await rootOf(sessionID);
     const own = root !== sessionID ? slots.get(sessionID) : void 0;
-    if (own && !own.bridge.failure) {
-      if (touch) own.lastCall = Date.now();
-      return own;
+    if (own) {
+      const live = own.bridge.failure ? childSlot(sessionID) : own;
+      if (touch) live.lastCall = Date.now();
+      return live;
     }
-    if (own) slots.delete(sessionID);
     let slot = slots.get(root);
     let dead;
     if (slot?.bridge.failure) {
@@ -719,12 +724,17 @@ async function setupTools(ctx, say, onChannel, rootOf) {
     }
   });
   function childSlot(sessionID) {
+    const have = slots.get(sessionID);
+    if (have && !have.bridge.failure) return have;
     const own = spawn2();
     own.session = sessionID;
+    own.child = true;
+    own.dir = have?.dir ?? null;
+    own.key = have?.key ?? null;
     slots.set(sessionID, own);
     return own;
   }
-  async function callThrough(slot, name, input, sessionID) {
+  async function awaitReady(slot) {
     if (loginPending) throw loginError();
     const login = loginStarted();
     try {
@@ -737,11 +747,14 @@ async function setupTools(ctx, say, onChannel, rootOf) {
     } finally {
       login.cancel();
     }
+  }
+  async function callThrough(slot, name, input, sessionID) {
+    await awaitReady(slot);
     if (slot.resume) await slot.resume;
     const args = { ...input ?? {} };
     if (standsBy(name, args) && slot.session !== sessionID) {
       slot = childSlot(sessionID);
-      await readyFor(slot);
+      await awaitReady(slot);
     }
     if (name === STAND_TOOL && !args.cwd) {
       const dir = slot.dir ??= await directoryOf(slot.session ?? sessionID);

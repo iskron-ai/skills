@@ -1931,7 +1931,10 @@ function noteStanding(msg, reply2) {
   const a = msg?.params?.arguments;
   if (msg?.params?.name !== "iskron_channel" || a?.action !== "register") return;
   if (reply2?.error || reply2?.result?.isError) return;
-  state.standing = { realm: a.realm, karta: String(a.karta).replace(/^#/, ""), name: a.name };
+  const karta = String(a.karta).trim().replace(/^#/, "");
+  const prev = state.standing;
+  const own = karta === "agent" && prev && (prev.name ?? "") === (a.name ?? "");
+  state.standing = { realm: a.realm, karta: own ? prev.karta : karta, name: a.name };
   state.standingSession = state.sessionId;
   debug(`standing remembered: ${a.name ?? "(unnamed)"} at karta ${a.karta} in ${a.realm}`);
 }
@@ -2583,24 +2586,28 @@ function absorbRevokeReply(msg, reply2) {
 }
 
 // js/bridge/call.ts
+var normKarta = (k) => String(k ?? "").trim().replace(/^#/, "");
+var normName = (n) => typeof n === "string" ? n.trim() : "";
 function leadsOtherPlace(karta, name) {
   const led = ledKey();
   const s = state.standing;
   if (!led || !s) return null;
-  const k = String(karta).replace(/^#/, "");
-  if (!/^\d+$/.test(k)) return null;
-  return k === String(s.karta) && name === (s.name ?? "") ? null : led;
+  const k = normKarta(karta);
+  const n = normName(name);
+  const numeric = (x) => /^\d+$/.test(x);
+  const sameKarta = k === "agent" || !numeric(k) || !numeric(String(s.karta)) || k === String(s.karta);
+  return sameKarta && n === (s.name ?? "") ? null : led;
 }
-var otherPlaceWord = (led, asked) => `Отказано (мост): этот мост уже ведёт место ${led} — стояние одно на мост, и место ${asked} его сняло бы с сокета молча. Занять другое место вместо этого — iskron_stand с take=true (прежнее останется на доске без слуха; ненужное сними revoke); держать оба разом — второй мост, то есть другая сессия харнесса.`;
+var otherPlaceWord = (led, asked) => `Отказано (мост): этот мост уже ведёт место ${led} — стояние одно на мост, и место ${asked} его сняло бы с сокета молча. Занять другое место вместо этого — iskron_stand с take=true (прежнее останется на доске без слуха; ненужное сними revoke); то же имя вывелось из того же каталога — передай другое name; держать оба разом — второй мост, то есть другая сессия харнесса.`;
 function crossPlaceRefusal(msg) {
   if (msg?.method !== "tools/call" || msg.params?.name !== "iskron_channel") return null;
   const a = msg.params.arguments ?? {};
   if (!["connect", "mint", "register"].includes(String(a.action))) return null;
-  const karta = a.karta ?? state.standing?.karta ?? "";
-  const name = typeof a.name === "string" ? a.name : "";
+  const karta = normKarta(a.karta ?? state.standing?.karta ?? "");
+  const name = normName(a.name);
   const led = leadsOtherPlace(karta, name);
   if (!led) return null;
-  const asked = `${name || "_"}--${String(karta).replace(/^#/, "")}`;
+  const asked = keyOf(typeof a.realm === "string" ? a.realm.trim() : "", karta, name);
   return {
     jsonrpc: "2.0",
     id: msg.id,
@@ -3274,7 +3281,7 @@ var STAND_TOOL = {
       mute_siblings: { type: "boolean", description: "Не слышать эхо других стояний той же роли." },
       take: {
         type: "boolean",
-        description: "Забрать сокет места, которое слушает другой мост этой машины (обычно прежняя сессия той же рабочей копии): без take такое место только регистрируется, слух остаётся у держателя."
+        description: "Сознательный переход: забрать сокет места, которое слушает другой мост этой машины (обычно прежняя сессия той же рабочей копии) — без take такое место только регистрируется, слух остаётся у держателя; либо сменить место этого моста (стояние одно на мост: другая роль или другое имя без take — отказ вслух, прежнее место остаётся на доске без слуха)."
       },
       room_karta: {
         type: "string",
@@ -3307,7 +3314,7 @@ var KNOCK_LIMIT = 2;
 async function runStand(msg) {
   const a = msg.params?.arguments ?? {};
   const realm = typeof a.realm === "string" ? a.realm.trim() : "";
-  const karta = a.karta != null ? String(a.karta).trim().replace(/^#/, "") : "";
+  const karta = a.karta != null ? normKarta(a.karta) : "";
   const lines = [];
   const done = (isError = false) => ({
     jsonrpc: "2.0",
@@ -3332,7 +3339,7 @@ async function runStand(msg) {
     return done(true);
   }
   const nameNotes = [];
-  const asked = typeof a.name === "string" ? a.name.trim() : "";
+  const asked = normName(a.name);
   if (asked) {
     const fault = nameFault(asked);
     if (fault) {
@@ -3359,7 +3366,7 @@ async function runStand(msg) {
   const room = typeof a.room === "string" && a.room.trim() ? a.room.trim() : null;
   const led = leadsOtherPlace(karta, name);
   if (led && a.take !== true) {
-    lines.push(otherPlaceWord(led, `${name}--${karta}`));
+    lines.push(otherPlaceWord(led, keyOf(realm, karta, name)));
     return done(true);
   }
   noteStandCwd(cwd);
