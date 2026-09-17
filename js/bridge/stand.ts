@@ -72,6 +72,11 @@ export const STAND_TOOL = {
           "Осознанный повтор стука в ту же комнату: разрешён один раз и не раньше чем через 2 минуты после первого; без него повторный вызов второго join не шлёт.",
       },
       status: { type: "string", description: "Первая строка занятости (до 64 символов)." },
+      cwd: {
+        type: "string",
+        description:
+          "Директория сессии харнесса — из неё выводится репо для имени (git toplevel, иначе её basename), когда мост запущен не из рабочей копии; плагин OpenCode подставляет её сам. Без неё — cwd моста.",
+      },
     },
     required: ["realm", "karta"],
   },
@@ -162,6 +167,7 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
     return done(true);
   }
   const model = typeof a.model === "string" && a.model.trim() ? a.model : undefined;
+  const cwd = typeof a.cwd === "string" && a.cwd.trim() ? a.cwd.trim() : process.cwd();
   const nameNotes: string[] = [];
   // Имя — адрес места: явное имя либо принимается ровно таким, либо отвергается
   // вслух с названной причиной; молча укороченное имя адресует ДРУГОЕ место
@@ -177,7 +183,7 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
       return done(true);
     }
   }
-  const parts = asked ? null : deriveParts(model);
+  const parts = asked ? null : deriveParts(model, cwd);
   const fitted = parts ? fitName(parts) : null;
   const name = asked || (fitted?.name ?? "");
   if (parts && fitted && fitted.cut.length) {
@@ -217,7 +223,7 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   // место трогать нельзя.
   const stem = name.split(".").slice(0, 2).join(".");
   const branches = new Set(
-    git(["branch", "--format=%(refname:short)"])
+    git(["branch", "--format=%(refname:short)"], cwd)
       .split("\n")
       .map((x) => sanitize(x.trim()))
       .filter(Boolean),

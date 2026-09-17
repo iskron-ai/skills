@@ -67,10 +67,10 @@ export function fitName(parts: NameParts): { name: string; cut: (keyof NameParts
   };
 }
 
-export const git = (args: string[]): string => {
+export const git = (args: string[], cwd: string = process.cwd()): string => {
   try {
     return execFileSync("git", args, {
-      cwd: process.cwd(),
+      cwd,
       timeout: 2000,
       stdio: ["ignore", "pipe", "ignore"],
     })
@@ -87,11 +87,14 @@ export const git = (args: string[]): string => {
  * параметром): в момент запуска ветка почти всегда main и не различает
  * ничего, а модель различает сессии одной машины над одним репозиторием.
  * Префикс поставщика (`claude-`) отбрасывается: `claude-opus-5` → `opus-5`.
+ * Репо — по директории сессии харнесса (cwd), когда мост запущен не из неё:
+ * плагин OpenCode поднимает мост из cwd сервера, и без этого репо выводилось
+ * бы из чужого каталога (r5 #5108).
  */
-export function deriveParts(model?: string): NameParts {
+export function deriveParts(model?: string, cwd: string = process.cwd()): NameParts {
   const host = hostname().split(".")[0];
-  const top = git(["rev-parse", "--show-toplevel"]);
-  const repo = basename(top || process.cwd());
+  const top = git(["rev-parse", "--show-toplevel"], cwd);
+  const repo = basename(top || cwd);
   const short = (model ?? "")
     .trim()
     .toLowerCase()
