@@ -270,6 +270,7 @@ var IDLE_MS = Number(process.env.ISKRON_BRIDGE_IDLE_MS || 30 * 6e4);
 var REAP_MS = Number(process.env.ISKRON_BRIDGE_REAP_MS || 6e4);
 var PROTOCOL = "2025-06-18";
 var STATUS_TOOL = "iskron_bridge";
+var STAND_TOOL = "iskron_stand";
 function findBridge() {
   const tried = [];
   const env = process.env.ISKRON_BRIDGE_PATH?.trim();
@@ -442,6 +443,15 @@ async function setupTools(ctx, say, onChannel, rootOf) {
       await slot.ready;
     }
   }
+  async function directoryOf(sessionID) {
+    try {
+      const res = await ctx.session.get({ sessionID });
+      const dir = res?.location?.directory ?? res?.data?.location?.directory;
+      return typeof dir === "string" && dir.trim() ? dir : null;
+    } catch {
+      return null;
+    }
+  }
   async function slotFor(sessionID) {
     const root = await rootOf(sessionID);
     let slot = slots.get(root);
@@ -510,10 +520,12 @@ async function setupTools(ctx, say, onChannel, rootOf) {
           } finally {
             login.cancel();
           }
-          const result = await slot.bridge.request("tools/call", {
-            name,
-            arguments: input ?? {}
-          });
+          const args = { ...input ?? {} };
+          if (name === STAND_TOOL && !args.cwd) {
+            const dir = await directoryOf(slot.session ?? String(tool.sessionID));
+            if (dir) args.cwd = dir;
+          }
+          const result = await slot.bridge.request("tools/call", { name, arguments: args });
           if (result?.isError) throw new Error(textOf(result) || `${name}: отказ без текста`);
           return { content: textOf(result) };
         }

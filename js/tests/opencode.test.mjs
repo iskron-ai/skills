@@ -257,6 +257,76 @@ test("every bridge tool stands under its own name, with the server's JSON Schema
   }
 });
 
+// The bridge runs from the OpenCode server's cwd, not from the session's working
+// copy: the plugin hands iskron_stand the session's directory as cwd, and the
+// bridge derives the repository part of the name from it (r5 #5108).
+test("iskron_stand is given the session's directory as cwd; an explicit cwd is left alone", async () => {
+  const calls = join(SANDBOX, "stand-cwd.calls");
+  writeFileSync(calls, "");
+  const b = bridgeEnv("stand-cwd", {
+    FB_CALLS: calls,
+    FB_TOOLS: JSON.stringify([
+      {
+        name: "iskron_stand",
+        description: "Занять стояние одним вызовом.",
+        inputSchema: { type: "object", properties: { realm: { type: "string" } } },
+      },
+      {
+        name: "iskron_orient",
+        description: "Ориентация.",
+        inputSchema: { type: "object", properties: {} },
+      },
+    ]),
+  });
+  // SessionInfo of OpenCode 2 carries the directory under location, not at the
+  // top (@opencode/plugin 2.0.4) — the shape skill.list mirrors above.
+  const rec = await plugin(b.env, {
+    sessions: [
+      { id: "s-dir", location: { directory: "/work/of/the-session" } },
+      // A subagent in its own worktree shares the root's bridge — and so the
+      // root's name: its own directory must not rename the root's standing.
+      { id: "s-child", parentID: "s-dir", location: { directory: "/tmp/worktree-of-child" } },
+    ],
+  });
+  try {
+    await until(() => rec.tools().has("iskron_stand"), "the stand tool", 8000);
+    await rec.call("iskron_stand", { realm: "nks-dev", karta: "#931" }, "s-dir");
+    await rec.call("iskron_orient", {}, "s-dir");
+    await rec.call(
+      "iskron_stand",
+      { realm: "nks-dev", karta: "#931", cwd: "/said/by/agent" },
+      "s-dir",
+    );
+    await rec.call("iskron_stand", { realm: "nks-dev", karta: "#931" }, "s-unknown");
+    await rec.call("iskron_stand", { realm: "nks-dev", karta: "#931" }, "s-child");
+    const sent = readFileSync(calls, "utf8")
+      .trim()
+      .split("\n")
+      .map((l) => JSON.parse(l));
+    assert.equal(sent[0].name, "iskron_stand");
+    assert.equal(
+      sent[0].arguments.cwd,
+      "/work/of/the-session",
+      "the session's directory rides as cwd — the bridge's own cwd is the server's",
+    );
+    assert.equal(sent[1].name, "iskron_orient");
+    assert.equal(sent[1].arguments.cwd, undefined, "other tools get no cwd");
+    assert.equal(sent[2].arguments.cwd, "/said/by/agent", "an explicit cwd is not overridden");
+    assert.equal(
+      sent[3].arguments.cwd,
+      undefined,
+      "a session without a directory sends none — the bridge falls back to its cwd",
+    );
+    assert.equal(
+      sent[4].arguments.cwd,
+      "/work/of/the-session",
+      "a child session stands under its root's directory — the bridge, and so the name, is the root's",
+    );
+  } finally {
+    await rec.stop();
+  }
+});
+
 test("a call is proxied to the bridge and its text comes back as the tool's content", async () => {
   const b = bridgeEnv("proxy");
   const rec = await plugin(b.env);
