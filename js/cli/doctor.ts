@@ -9,7 +9,13 @@ import { fileURLToPath } from "node:url";
 
 import { BUILD } from "../bridge/build.ts";
 import { now } from "../bridge/clock.ts";
-import { CFG, parseArgs, setConfig } from "../bridge/config.ts";
+import {
+  CFG,
+  isProductionServer,
+  parseArgs,
+  serverChoicePath,
+  setConfig,
+} from "../bridge/config.ts";
 import { errorMessage } from "../bridge/errors.ts";
 import { discoverMeta } from "../bridge/oauth/discovery.ts";
 import { grantLogPath, loadGrantState, loadStore, storePath } from "../bridge/store.ts";
@@ -52,8 +58,29 @@ function homeCopyReport(): void {
   );
 }
 
+/** Откуда мост взял адрес — человеку, который спрашивает «на что он смотрит». */
+export function serverSourceWord(): string {
+  switch (CFG.serverSource) {
+    case "argument":
+      return "аргумент запуска";
+    case "ISKRON_BRIDGE_URL":
+      return "переменная ISKRON_BRIDGE_URL";
+    case "file":
+      return `файл выбора ${serverChoicePath(CFG.authDir)}`;
+    default:
+      return `по умолчанию; сменить — node <мост> use en | ru | <url>, файл ${serverChoicePath(CFG.authDir)}`;
+  }
+}
+
+/** Следит ли мост за релизами поставки на этом адресе. */
+export const freshnessWord = (url: string): string =>
+  isProductionServer(url)
+    ? "продовый адрес: самообновление с релизов поставки включено"
+    : "другой инстанс: обновлений с релизов поставки нет";
+
 async function serverReport(): Promise<void> {
-  out(`сервер: ${CFG.serverUrl}`);
+  out(`сервер: ${CFG.serverUrl} (${serverSourceWord()})`);
+  out(`  ${freshnessWord(CFG.serverUrl)}`);
   let res: Response;
   try {
     res = await fetch(CFG.serverUrl, {

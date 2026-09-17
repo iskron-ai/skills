@@ -70,4 +70,6 @@ export interface Config {
   pat: string | null;
   /** Откуда взят PAT — имя переменной или путь файла; для человека в отказе и в doctor. */
   patSource: string | null;
+  /** Откуда взят адрес сервера: аргумент, окружение, файл выбора рядом с грантом или умолчание. */
+  serverSource: "argument" | "ISKRON_BRIDGE_URL" | "file" | "default";
 }

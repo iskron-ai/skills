@@ -1,4 +1,5 @@
 import { OWN_CLIENTS } from "../shared/clients.ts";
+import { absorbChannelReply, absorbRevokeReply, expectOwnRevoke } from "./absorb.ts";
 import { ensureAuth } from "./auth.ts";
 import { BUILD } from "./build.ts";
 import {
@@ -9,10 +10,11 @@ import {
   TokenRefused,
   UpstreamError,
 } from "./errors.ts";
-import { absorbChannelReply, absorbRevokeReply, expectOwnRevoke, localStatus } from "./hold.ts";
+import { localLeave } from "./leave.ts";
 import { annotateToolList } from "./moment.ts";
 import { isStandCall, runStand } from "./stand.ts";
 import { ensureStanding, isUnattributed, noteStanding, replyText } from "./standing.ts";
+import { localStatus } from "./status.ts";
 import { loadServerCache, saveServerCache, sleep } from "./store.ts";
 import { emit, log } from "./streams.ts";
 import { currentAccessToken, post, reinitialize, state } from "./transport.ts";
@@ -143,7 +145,7 @@ function withNotice(reply: JsonRpcMessage): JsonRpcMessage {
 // retry. On final failure a request id is ALWAYS answered with an error.
 export async function deliver(msg: JsonRpcMessage): Promise<void> {
   // Слово о занятости не покидает моста: держатель сокета говорит его сам.
-  const local = localStatus(msg);
+  const local = localStatus(msg) ?? localLeave(msg);
   if (local) {
     emit(await local);
     return;

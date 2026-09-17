@@ -15,7 +15,7 @@ function classifyOrigin(frame, myKarta) {
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-var VERSION = "6.6.4";
+var VERSION = "6.7.0";
 function buildOf(selfUrl) {
   try {
     const src = readFileSync(fileURLToPath(selfUrl));
@@ -27,6 +27,17 @@ function buildOf(selfUrl) {
 
 // js/bridge/build.ts
 var BUILD = buildOf(import.meta.url);
+
+// js/bridge/config.ts
+var DEFAULT_SERVER_URL = "https://mcp.iskron.ru/";
+var ENGLISH_SERVER_URL = "https://mcp.iskron.ai/";
+var PRODUCTION_URLS = new Set([DEFAULT_SERVER_URL, ENGLISH_SERVER_URL].map(strip));
+function strip(url) {
+  return url.replace(/\/+$/, "");
+}
+
+// js/bridge/holdrecord.ts
+var HOLD_RECORD_MAX_AGE_MS = 6 * 60 * 60 * 1e3;
 
 // js/shared/frame-text.ts
 var ENVELOPE_KEYS = ["id", "received_at", "stale", "content_type", "body_chars", "body_read"];
@@ -147,7 +158,12 @@ var Bridge = class {
       const waiter = this.pending.get(msg.id);
       if (!waiter) continue;
       this.pending.delete(msg.id);
-      if (msg.error) waiter.reject(new Error(msg.error.message || JSON.stringify(msg.error)));
+      if (msg.error)
+        waiter.reject(
+          Object.assign(new Error(msg.error.message || JSON.stringify(msg.error)), {
+            code: msg.error.code
+          })
+        );
       else waiter.resolve(msg.result);
     }
   }

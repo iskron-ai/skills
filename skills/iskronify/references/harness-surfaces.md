@@ -44,26 +44,48 @@ iskronify доставляет **ритуалы** (ориентация на с�
 
 **Читает `AGENTS.md` нативно — без указателя.** Дополнительные файлы правил перечисляются в `instructions` в `opencode.json` (проект) или `~/.config/opencode/opencode.json` (глобально), глобы разрешены — используй это, чтобы переиспользовать существующие файлы правил, а не копировать их в `AGENTS.md`.
 
-Файла хуков нет. Эквивалент — **плагин**: JS/TS-файл в `.opencode/plugins/` (проект) или `~/.config/opencode/plugins/` (глобально), автозагружаемый на старте. Плагин экспортирует async-функцию, возвращающую обработчики:
+Файла хуков нет. Эквивалент — **плагин**: JS/TS-файл в `.opencode/plugins/` (проект) или `~/.config/opencode/plugins/` (глобально), автозагружаемый на старте — по разу на каждую локацию сервиса. **Форма — OpenCode 2 (`@opencode/plugin` 2.0.4): default-экспорт объекта `{ id, setup(ctx) }`.** Прежняя форма 1.x — экспорт async-функции, возвращающей карту хуков `"tool.execute.before"` — загрузчиком 2.x отвергается (`Plugin must export a default definition with an id and an effect or setup function`; в логе сервиса — `failed to load plugin … SchemaError(Missing key at ["default"])`), и ритуалы молча не действуют. Импортов плагину не нужно: всё приходит в `ctx`.
 
 ```js
-export const MemoryGuard = async ({ project, client, $, directory, worktree }) => {
-  return {
-    "tool.execute.before": async (input, output) => {
-      // throwing blocks the call — this is the guard mechanism
-      if (input.tool === "write" && isLocalMemoryPath(output.args.filePath))
-        throw new Error("local agent memory is forbidden for project state")
-    },
-    event: async ({ event }) => {
-      if (event.type === "session.created") { /* orient reminder */ }
-    },
-  }
-}
+// .opencode/plugins/iskron-rituals.js — OpenCode 2
+export default {
+  id: "iskron-rituals",
+  async setup(ctx) {
+    // memory-guard: бросок из execute.before блокирует вызов
+    await ctx.tool.hook("execute.before", (input) => {
+      const path = input.input?.filePath ?? input.input?.path ?? "";
+      if (["write", "edit"].includes(input.tool) && isLocalMemoryPath(path))
+        throw new Error("local agent memory is forbidden for project state");
+    });
+    // push → граф: после shell-вызова с git push дописать напоминание в результат.
+    // Поля result только для чтения — заменяется сам result; content — строка или массив частей.
+    await ctx.tool.hook("execute.after", (input) => {
+      if (input.tool !== "bash" || input.status !== "completed") return;
+      if (!/git push/.test(String(input.input?.command ?? ""))) return;
+      const note = "[iskron] пуш — не мерж; после мержа: ткачество, модусы, закрытие по оси, reconcile.";
+      const c = input.result.content;
+      input.result = {
+        ...input.result,
+        content: typeof c === "string" ? `${c}\n\n${note}` : [...(c ?? []), { type: "text", text: note }],
+      };
+    });
+    // ориентация: слово в новую сессию — ctx.event.subscribe даёт async-итерируемое событий;
+    // отказ цикла пишется в stderr сервиса, а не глотается: молчащий ритуал хуже отсутствующего.
+    const ac = new AbortController();
+    (async () => {
+      for await (const ev of await ctx.event.subscribe({ signal: ac.signal })) {
+        if (ev.type === "session.created")
+          await ctx.session.prompt({ sessionID: ev.data.sessionID, text: "Прочти раздел «Старт» скилла-двери iskron…", delivery: "queue" });
+      }
+    })().catch((e) => console.error("[iskron-rituals] ориентация остановилась:", e));
+    return () => ac.abort(); // cleanup при выгрузке плагина
+  },
+};
 ```
 
-`tool.execute.before` / `tool.execute.after` оборачивают вызовы тулов — **throw из `before` и есть блокировка**: memory-guard здесь — throw, не код выхода. Остальное приходит через `event`, включая `session.created`, `session.idle`, `session.compacted`, `file.edited`, `permission.asked`.
+`ctx.tool.hook("execute.before", …)` / `("execute.after", …)` оборачивают вызовы тулов — **throw из `execute.before` и есть блокировка**: memory-guard здесь — throw, не код выхода; в `execute.after` у завершившегося вызова (`status: "completed"`) заменяется поле `result` целиком (его собственные поля только для чтения). Формы сверены с типами пакета 2.0.4 (`@opencode/plugin` → `dist/promise/tool.d.ts`, `plugin.d.ts`; событие `session.created` — `@opencode/schema`, `session-event.d.ts`: `data.sessionID`, `data.projectID`, `data.location`); живой прогон ритуалов на 2.x в этой поставке не делался — сверяй по типам при апгрейде. TUI у серверного плагина нет: слово человеку идёт промптом в сессию или в stderr сервиса. Ключ фронтматтера `slash: true` парсер 2.x отбрасывает: команды палитры «/» регистрирует плагин через `ctx.command.transform`.
 
-Маппинг ритуалов: ориентация → `event` на `session.created`; memory-guard → `tool.execute.before` с throw; push → граф → `tool.execute.after` по shell-тулу. Ролевые файлы суб-агентов: `.opencode/agents/` (см. `delegation.md`).
+Маппинг ритуалов: ориентация → `ctx.event.subscribe` на `session.created`; memory-guard → `ctx.tool.hook("execute.before")` с throw; push → граф → `ctx.tool.hook("execute.after")` по shell-тулу. Ролевые файлы суб-агентов: `.opencode/agents/` (см. `delegation.md`).
 
 ## Чек-лист перепроверки (мейнтейнерам)
 
@@ -71,5 +93,5 @@ export const MemoryGuard = async ({ project, client, $, directory, worktree }) =
 
 - **Claude Code** — путь settings, имена хук-событий, синтаксис импорта в `CLAUDE.md`.
 - **Codex** — список событий `[hooks]` и форма TOML, source'ы `SessionStart`, имена файлов `AGENTS.md` / `AGENTS.override.md` и порядок их мержа.
-- **OpenCode** — имена директорий плагинов (`.opencode/plugins/`), список событий, всё ли ещё `tool.execute.before` блокирует throw-ом.
+- **OpenCode** — имена директорий плагинов (`.opencode/plugins/`), форма плагина (`{ id, setup(ctx) }`), имена хуков `ctx.tool.hook("execute.before" | "execute.after")` и что throw из `execute.before` всё ещё блокирует, форма события `session.created` в `@opencode/schema`.
 - Харнесс, обретший или потерявший поверхность, меняет то, что iskronify может обещать: сначала обнови таблицу, затем Шаг 4.

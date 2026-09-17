@@ -28,9 +28,10 @@ const INIT = {
 };
 const PAT = "nks_pat_stand";
 
-function startBridge(serverUrl, authDir) {
+function startBridge(serverUrl, authDir, cwd = process.cwd()) {
   const notifications = [];
   const proc = spawn(NODE, [FILE, serverUrl, "--no-browser", "--auth-dir", authDir], {
+    cwd,
     env: {
       ...process.env,
       ISKRON_BRIDGE_NO_BROWSER: "1",
@@ -92,7 +93,7 @@ function startBridge(serverUrl, authDir) {
 
 const textOf = (reply) => (reply.result?.content ?? []).map((c) => c.text ?? "").join("\n");
 
-async function ready(t) {
+async function ready(t, init = INIT) {
   const fake = await startFakeNks({ pat: PAT });
   const dir = mkdtempSync(join(tmpdir(), "iskron-stand-"));
   const bridge = startBridge(fake.mcpUrl, dir);
@@ -100,8 +101,8 @@ async function ready(t) {
     await bridge.stop();
     await fake.stop();
   });
-  const init = await bridge.call("initialize", INIT);
-  assert.ok(init.result, `initialize: ${JSON.stringify(init)}`);
+  const reply = await bridge.call("initialize", init);
+  assert.ok(reply.result, `initialize: ${JSON.stringify(reply)}`);
   return { fake, dir, bridge };
 }
 
@@ -138,7 +139,7 @@ test("iskron_stand: one call takes the place, arms the inbox hook and knocks; a 
   assert.match(text, /стояние proba — роль #931, граф nks-dev: connect и register/, text);
   assert.match(
     text,
-    /Слушать: node ".*" watchdog \S+/,
+    /Слушать: .*node ".*" watchdog \S+/,
     "the answer must carry the watchdog command",
   );
   assert.match(text, /hello получен: ожидало кадров — 0/, text);
@@ -208,6 +209,79 @@ test("iskron_stand: one call takes the place, arms the inbox hook and knocks; a 
 // The third part of a derived name is the model the agent runs on, never the
 // branch: at session start the branch is almost always main and tells two
 // sessions of one machine over one repository apart from nothing.
+// A name is the place's address: an explicit one is taken exactly or refused
+// aloud — never shortened in silence to a name that addresses another place; a
+// derived one is cut to the server's limit with a note (graph nks-dev: #5068).
+test("an explicit name past the server's rule is refused aloud, not truncated; a long derived name is cut to the limit and said so", async (t) => {
+  const { fake, bridge } = await ready(t);
+  const long = "alekseis-macbook-pro.some-very-long-repository-name.fable-5-1";
+  const refused = await bridge.call("tools/call", {
+    name: "iskron_stand",
+    arguments: { realm: "nks-dev", karta: 931, name: long },
+  });
+  const said = textOf(refused);
+  assert.ok(refused.result?.isError, said);
+  assert.match(said, /длиннее предела: \d+ знаков/, said);
+  assert.match(said, /не укорачивается молча/, said);
+  assert.equal(
+    fake.state.counts.connect,
+    0,
+    "no place is taken under a name the doer did not ask for",
+  );
+  const upper = await bridge.call("tools/call", {
+    name: "iskron_stand",
+    arguments: { realm: "nks-dev", karta: 931, name: "Proba" },
+  });
+  assert.match(textOf(upper), /заглавные буквы/, textOf(upper));
+  assert.equal(fake.state.counts.connect, 0);
+  const exact = await bridge.call("tools/call", {
+    name: "iskron_stand",
+    arguments: { realm: "nks-dev", karta: 931, name: "alekseis-macbook-pro.rauthy.fable-5-1" },
+  });
+  assert.match(
+    textOf(exact),
+    /стояние alekseis-macbook-pro\.rauthy\.fable-5-1 — роль #931/,
+    "a 37-char explicit name is taken exactly, not cut at 32",
+  );
+});
+
+// The model id may carry dots (glm-5.3 — the very model of the field case), so
+// the name is cut by parts, never split on dots; the repo part goes first, the
+// model survives whole, and the note names what was cut.
+for (const model of ["claude-opus-5", "glm-5.3"]) {
+  test(`a derived name longer than the limit is cut on the repository part, the model (${model}) survives, and the note says what was cut`, async (t) => {
+    const fake = await startFakeNks({ pat: PAT });
+    const dir = mkdtempSync(join(tmpdir(), "iskron-stand-"));
+    const cwd = mkdtempSync(join(tmpdir(), "a-very-long-repository-directory-name-for-the-probe-"));
+    const bridge = startBridge(fake.mcpUrl, dir, cwd);
+    t.after(async () => {
+      await bridge.stop();
+      await fake.stop();
+    });
+    assert.ok((await bridge.call("initialize", INIT)).result);
+    const reply = await bridge.call("tools/call", {
+      name: "iskron_stand",
+      arguments: { realm: "nks-dev", karta: "#931", model },
+    });
+    const text = textOf(reply);
+    assert.ok(!reply.result?.isError, text);
+    const name = /стояние (\S+) — роль #931/.exec(text)?.[1];
+    assert.ok(name && name.length <= 48, `the derived name must fit the limit: ${name}`);
+    const short = model.replace(/^claude-/, "");
+    assert.ok(name.endsWith(`.${short}`), `the model part survives the cut whole: ${name}`);
+    const host = hostname().split(".")[0].toLowerCase();
+    assert.ok(
+      name.startsWith(`${host}.`),
+      `the machine part is kept when the repo alone suffices: ${name}`,
+    );
+    assert.match(text, /укорочено до \S+ \(срезано: репо\)/, text);
+    assert.ok(
+      [...fake.state.places.keys()].includes(`931:${name}`),
+      "the place is taken under the cut name",
+    );
+  });
+}
+
 test("iskron_stand derives the name from machine, repository and the model given — not the branch", async (t) => {
   const { fake, bridge } = await ready(t);
   const reply = await bridge.call("tools/call", {
@@ -288,10 +362,7 @@ test("iskron_stand: a place listening under another bridge is registered, never 
   const text = textOf(first);
   assert.match(text, /место уже слушает другой держатель .* — только register/, text);
   assert.match(text, /Слух — у другого держателя/, text);
-  assert.ok(
-    !/Слушать: node/.test(text),
-    "no watchdog command is handed out without a local holder",
-  );
+  assert.ok(!/Слушать:/.test(text), "no watchdog command is handed out without a local holder");
   assert.match(text, /Команда сторожа не выдаётся/, text);
   const knock = await bridge.call("tools/call", {
     name: "iskron_stand",
@@ -316,7 +387,11 @@ test("iskron_stand: a place listening under another bridge is registered, never 
   });
   assert.match(textOf(taken), /connect по take/, textOf(taken));
   assert.match(textOf(taken), /hello получен/, "a fresh hello after the explicit take");
-  assert.match(textOf(taken), /Слушать: node/, "the watchdog command comes with the local holder");
+  assert.match(
+    textOf(taken),
+    /Слушать: .*node "/,
+    "the watchdog command comes with the local holder",
+  );
   counts = (await fake.control({})).counts;
   assert.equal(counts.connect, 1, "take=true is the named cause for rotation");
 });
@@ -575,3 +650,26 @@ test("iskron_stand: a hook waking a longer-named sibling does not count as one's
     "a hook for proba2 is not a hook for proba",
   );
 });
+
+// The listener block names the doer's own harness — one line, not three: an
+// agent in pi launched the Claude Code watchdog from a block that offered all
+// of them (#5047). The bridge knows the harness from clientInfo.name.
+for (const [client, expect, forbid] of [
+  ["claude-code", /Слушать: под Monitor.*без Monitor — фоновой задачей/, /watchdog-codex/],
+  ["codex-probe", /Слушать: в Codex внутри одной длинной команды.*без двери app-server/, /Monitor/],
+  ["pi-iskron", /Слушает расширение pi само — сторож не нужен/, /watchdog/],
+  ["opencode-iskron", /Слушает плагин OpenCode само — сторож не нужен/, /watchdog/],
+  ["stand-probe", /Monitor.*watchdog-exit.*watchdog-codex/s, /никогда/],
+]) {
+  test(`the listener block speaks to its harness: ${client}`, async (t) => {
+    const { bridge } = await ready(t, { ...INIT, clientInfo: { name: client, version: "0" } });
+    const reply = await bridge.call("tools/call", {
+      name: "iskron_stand",
+      arguments: { realm: "nks-dev", karta: 931, name: "proba" },
+    });
+    const text = textOf(reply);
+    assert.ok(!reply.result?.isError, text);
+    assert.match(text, expect, text);
+    assert.ok(!forbid.test(text), `a foreign harness's command must not be offered:\n${text}`);
+  });
+}

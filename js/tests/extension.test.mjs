@@ -450,6 +450,64 @@ test("session_shutdown is idempotent and quiets both halves", async () => {
 // One half failing must not take the other, and must not take the session. A
 // missing bridge is the ordinary case of that: no tools, a named complaint, and
 // the channel half standing as if nothing happened.
+// A bridge with no grant refuses the handshake -32001 «authorization required»
+// and keeps the login it published listening on loopback until the human clicks.
+// Stopping it then kills that listener: the login goes through at the server and
+// the redirect lands on a refused connection (graph nks-dev: #4795, the class
+// closed for the OpenCode plugin as #4712). The extension must wait it out.
+test("a login refusal at the handshake keeps the bridge alive, names the link, and the tools come after the login", async () => {
+  const authed = join(SANDBOX, "pi-first-login.authed");
+  const { log, env } = bridgeEnv("first-login", {
+    FB_MODE: "auth",
+    FB_AUTHED: authed,
+    ISKRON_MCP_AUTH_POLL_MS: 50,
+    ISKRON_MCP_READY_WAIT_MS: 300,
+  });
+  const rec = await session(env);
+  try {
+    await delay(300);
+    assert.match(rec.said(), /нужен вход/, "the human is told a login is needed");
+    assert.match(rec.said(), /127\.0\.0\.1:43265\/authorize/, "the notice names the login link");
+    assert.ok(!/мост не поднялся/.test(rec.said()), "a login refusal is not a broken bridge");
+    const pid = pidOf(log);
+    assert.ok(alive(pid), "the bridge holding the login must not be killed");
+    assert.equal(rec.tools.size, 0, "no tools before the login");
+    writeFileSync(authed, "");
+    await (async () => {
+      const deadline = Date.now() + 5000;
+      while (rec.tools.size < 2 && Date.now() < deadline) await delay(50);
+    })();
+    assert.deepEqual([...rec.tools.keys()].sort(), ["iskron_channel", "iskron_orient"]);
+    assert.match(rec.said(), /мост поднят .* — вход состоялся/);
+    assert.equal(
+      readFileSync(log, "utf8").trim().split("\n").length,
+      1,
+      "one bridge for the whole login — never restarted",
+    );
+  } finally {
+    writeFileSync(authed, "");
+    await rec.stop();
+  }
+});
+
+// The same -32001 carries every synthetic refusal of the bridge; only the word
+// «authorization required» is a login to wait for — the rest is still a bridge
+// that did not come up, said once and aloud.
+test("a network refusal at the handshake is not a login: the session hears «мост не поднялся», not a silent wait", async () => {
+  const { env } = bridgeEnv("net-refusal", {
+    FB_MODE: "net",
+    ISKRON_MCP_AUTH_POLL_MS: 50,
+    ISKRON_MCP_READY_WAIT_MS: 2000,
+  });
+  const rec = await session(env);
+  try {
+    assert.match(rec.said(), /мост не поднялся — .*ECONNREFUSED/, rec.said());
+    assert.ok(!/нужен вход/.test(rec.said()), "a network refusal must not be announced as a login");
+  } finally {
+    await rec.stop();
+  }
+});
+
 test("a missing bridge does not bring down the session", async () => {
   const rec = await session({
     ISKRON_BRIDGE_PATH: MISSING_BRIDGE,

@@ -7,21 +7,22 @@
 // (один раз за сессию: второй join — повтор, не разговор), занятость. Ответ
 // один: имя, команда сторожа, ожидавшие кадры, хук, расписка стука.
 // Отсутствие тула в сессии — тулы идут мимо моста либо мост старой сборки.
-import { execFileSync } from "node:child_process";
-import { hostname } from "node:os";
-import { basename } from "node:path";
-
+import { absorbChannelReply } from "./absorb.ts";
 import { CFG } from "./config.ts";
 import {
-  absorbChannelReply,
   awaitHello,
+  deadPredecessor,
   hasStatusAddressFor,
   holdsStanding,
-  listenBlock,
-  publishStatus,
+  isParked,
+  resumeFromDisk,
   wasEvicted,
 } from "./hold.ts";
+import { returnToStanding } from "./leave.ts";
+import { listenBlock } from "./listen.ts";
+import { deriveParts, fitName, git, joinName, NAME_MAX, nameFault, sanitize } from "./names.ts";
 import { noteStanding, replyText } from "./standing.ts";
+import { publishStatus } from "./status.ts";
 import { post } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
 import { readLatest, staleNotice } from "./update.ts";
@@ -78,45 +79,6 @@ export const STAND_TOOL = {
 
 export const isStandCall = (msg: JsonRpcMessage): boolean =>
   msg?.method === "tools/call" && msg?.params?.name === "iskron_stand";
-
-const sanitize = (s: string): string =>
-  s
-    .toLowerCase()
-    .replace(/[^a-z0-9._-]+/g, "-")
-    .replace(/^[-.]+|[-.]+$/g, "")
-    .slice(0, 32);
-
-const git = (args: string[]): string => {
-  try {
-    return execFileSync("git", args, {
-      cwd: process.cwd(),
-      timeout: 2000,
-      stdio: ["ignore", "pipe", "ignore"],
-    })
-      .toString()
-      .trim();
-  } catch {
-    return "";
-  }
-};
-
-/**
- * машина.репо.модель — из того, что свежая сессия восстановит без памяти. Третья
- * часть — модель, которой бежит агент (её знает только он, потому она идёт
- * параметром): в момент запуска ветка почти всегда main и не различает
- * ничего, а модель различает сессии одной машины над одним репозиторием.
- * Префикс поставщика (`claude-`) отбрасывается: `claude-opus-5` → `opus-5`.
- */
-export function deriveName(model?: string): string {
-  const host = hostname().split(".")[0];
-  const top = git(["rev-parse", "--show-toplevel"]);
-  const repo = basename(top || process.cwd());
-  const short = (model ?? "")
-    .trim()
-    .toLowerCase()
-    .replace(/^claude[-_]/, "");
-  return [host, repo, short].map(sanitize).filter(Boolean).join(".");
-}
 
 interface BoardEntry {
   karta: string;
@@ -200,10 +162,33 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
     return done(true);
   }
   const model = typeof a.model === "string" && a.model.trim() ? a.model : undefined;
-  const name =
-    typeof a.name === "string" && a.name.trim() ? sanitize(a.name.trim()) : deriveName(model);
   const nameNotes: string[] = [];
-  if (!(typeof a.name === "string" && a.name.trim()) && !model) {
+  // Имя — адрес места: явное имя либо принимается ровно таким, либо отвергается
+  // вслух с названной причиной; молча укороченное имя адресует ДРУГОЕ место
+  // (граф nks-dev: #5068). Выведенное имя укорачивается до предела сервера с
+  // пометкой сразу после шапки ответа.
+  const asked = typeof a.name === "string" ? a.name.trim() : "";
+  if (asked) {
+    const fault = nameFault(asked);
+    if (fault) {
+      lines.push(
+        `Отказано (мост): name «${asked}» — ${fault}; правило имени: строчные латинские буквы, цифры, точка, подчёркивание, дефис, первый знак — буква или цифра, не длиннее ${NAME_MAX} знаков. Имя не укорачивается молча: короткое имя адресовало бы другое место.`,
+      );
+      return done(true);
+    }
+  }
+  const parts = asked ? null : deriveParts(model);
+  const fitted = parts ? fitName(parts) : null;
+  const name = asked || (fitted?.name ?? "");
+  if (parts && fitted && fitted.cut.length) {
+    const what = fitted.cut
+      .map((k) => (k === "repo" ? "репо" : k === "host" ? "машина" : "модель"))
+      .join(", ");
+    nameNotes.push(
+      `выведенное имя ${joinName(parts)} длиннее предела ${NAME_MAX} знаков — укорочено до ${name} (срезано: ${what}); нужно другое — передай name`,
+    );
+  }
+  if (!asked && !model) {
     nameNotes.push(
       "model не передан — имя без третьей части (машина.репо): вторая сессия этой машины над этим репозиторием сойдётся на то же место; передай model, чтобы различать",
     );
@@ -278,8 +263,45 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   let heardHere: boolean;
   const listensElsewhere =
     !!mine && /(^|·)\s*слушает/.test(mine.rest) && !holdsStanding(realm, karta, name);
+  // Мост поднят заново под местом, которое держал прежний мост этого каталога
+  // (перезапуск плагина, /mcp reconnect): место возвращается с диска, не
+  // ротируется — адрес, хуки и очередь те же (#5061). Доска ещё читает
+  // «слушает» (окно платформы после смерти прежнего моста) — только register,
+  // как велит канон, и ответ говорит, что слушающий — мёртвый предшественник.
+  const fresh =
+    a.take !== true && !holdsStanding(realm, karta, name) && !isParked(realm, karta, name);
+  const predecessorDead = fresh && listensElsewhere && (await deadPredecessor(realm, karta, name));
+  const resumed = fresh && !listensElsewhere ? await resumeFromDisk(realm, karta, name) : null;
+  const extra: string[] = []; // строки после шапки ответа
   // take=true — явный новый цикл входа: connect и тогда, когда сокет уже наш.
-  if (a.take !== true && (holdsStanding(realm, karta, name) || listensElsewhere)) {
+  if (resumed) {
+    const r = await call("iskron_channel", { action: "register", realm, karta, name });
+    if (r.isError) {
+      lines.push(`Отказано: register — ${short(r.text)}`);
+      return done(true);
+    }
+    heardHere = true;
+    how = `${resumed.word}, register`;
+    const newStatus = typeof a.status === "string" && a.status.trim();
+    if (resumed.status && !newStatus) {
+      const st = await publishStatus(resumed.status);
+      extra.push(
+        st.ok
+          ? `Занятость возвращена с местом: ${resumed.status}`
+          : `Занятость с места не возвращена: ${short(st.body)}`,
+      );
+    }
+  } else if (a.take !== true && isParked(realm, karta, name) && returnToStanding("iskron_stand")) {
+    // Ушёл с места и вернулся: тот же адрес, сокет открыт заново, register — атрибуция.
+    const r = await call("iskron_channel", { action: "register", realm, karta, name });
+    if (r.isError) {
+      lines.push(`Отказано: register — ${short(r.text)}`);
+      return done(true);
+    }
+    heardHere = true;
+    how =
+      "возврат на место, с которого мост уходил, — сокет открыт заново тем же адресом, register";
+  } else if (a.take !== true && (holdsStanding(realm, karta, name) || listensElsewhere)) {
     const r = await call("iskron_channel", { action: "register", realm, karta, name });
     if (r.isError) {
       lines.push(`Отказано: register — ${short(r.text)}`);
@@ -289,7 +311,9 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
     how = listensElsewhere
       ? wasEvicted(realm, karta, name)
         ? "место отняли у этого моста (закрытие 4000) — слушает другой держатель; только register: привязка цела, слух — у него; вернуть слух сюда — повтори с take=true, сознавая, что снимешь слух с того держателя"
-        : "место уже слушает другой держатель (обычно прежняя сессия этой рабочей копии; при явном name — возможно, другая машина или человек) — только register: атрибуция есть, слух — у него; нужен слух здесь — повтори с take=true, сознавая, что снимешь слух с того держателя, или возьми другое имя (name)"
+        : predecessorDead
+          ? "слушающим доска ещё читает прежний мост этого каталога, а он мёртв (его сокет не отвечает, запись держания цела) — только register; доска отпустит его в течение минуты, и тот же вызов вернёт место с диска тем же адресом — повтори"
+          : "место уже слушает другой держатель (обычно прежняя сессия этой рабочей копии; при явном name — возможно, другая машина или человек) — только register: атрибуция есть, слух — у него; нужен слух здесь — повтори с take=true, сознавая, что снимешь слух с того держателя, или возьми другое имя (name)"
       : "сокет уже держит этот мост — register";
   } else {
     const args: Record<string, unknown> = { action: "connect", realm, karta, name };
@@ -319,6 +343,7 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   lines.push(
     `[iskron_stand] стояние ${mine?.address ?? name} — роль #${karta}, граф ${realm}: ${how}.`,
     ...nameNotes.map((n) => `[iskron_stand] ${n}`),
+    ...extra,
   );
   const block = heardHere ? listenBlock() : null;
   if (block) lines.push(block);
@@ -330,8 +355,8 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
 
   // 3. hello — доказательство держания; свежий он только за connect этого вызова.
   if (!heardHere) lines.push("Слух — у другого держателя; здесь только атрибуция записей.");
-  else if (how.startsWith("сокет уже держит"))
-    lines.push("Сокет держит этот мост (hello был получен при занятии места).");
+  else if (how.startsWith("сокет уже держит") || how.startsWith("возврат места с диска"))
+    lines.push("Сокет держит этот мост (hello получен при открытии сокета).");
   else {
     const hello = await awaitHello(4000);
     if (hello) lines.push(`hello получен: ожидало кадров — ${hello.pending ?? 0}.`);
