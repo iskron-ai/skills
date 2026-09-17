@@ -144,6 +144,10 @@ process.stdin.on("data", (chunk) => {
         else ok(msg.id, { tools: TOOLS.slice(1) });
       } else ok(msg.id, { tools: TOOLS });
     } else if (msg.method === "tools/call") {
+      // FB_CALLS: file to append each tools/call's params to, one JSON per line —
+      // the probe reads what the plugin actually sent, not only what it got back.
+      if (process.env.FB_CALLS)
+        appendFileSync(process.env.FB_CALLS, JSON.stringify(msg.params) + "\n");
       ok(msg.id, callResult(msg.params?.name));
     } else {
       send({

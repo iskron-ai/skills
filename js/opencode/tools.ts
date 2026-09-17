@@ -54,6 +54,8 @@ const REAP_MS = Number(process.env.ISKRON_BRIDGE_REAP_MS || 60_000);
 const PROTOCOL = "2025-06-18";
 /** Служебный тул плагина: состояние моста, когда тулов iskron_* ещё нет. */
 export const STATUS_TOOL = "iskron_bridge";
+/** Тул моста, которому плагин подставляет директорию сессии (cwd) для вывода имени. */
+const STAND_TOOL = "iskron_stand";
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- ответы моста приходят без схемы */
 
@@ -304,6 +306,17 @@ export async function setupTools(
     }
   }
 
+  /** Директория сессии — рабочая копия, над которой идёт ход; нет её — пусто, мост выведет из своего cwd. */
+  async function directoryOf(sessionID: string): Promise<string | null> {
+    try {
+      const res: any = await ctx.session.get({ sessionID } as any);
+      const dir = res?.directory ?? res?.data?.directory;
+      return typeof dir === "string" && dir.trim() ? dir : null;
+    } catch {
+      return null;
+    }
+  }
+
   /** Мост корневой сессии: первый раз — запасной с загрузки, дальше свой. */
   async function slotFor(sessionID: string): Promise<Slot> {
     const root = await rootOf(sessionID);
@@ -388,10 +401,14 @@ export async function setupTools(
             login.cancel();
           }
           // Потолка нет: контекст execute в v2 сигнала отмены не несёт.
-          const result = await slot.bridge.request("tools/call", {
-            name,
-            arguments: input ?? {},
-          });
+          const args: Record<string, unknown> = { ...(input ?? {}) };
+          // Мост бежит из cwd сервера OpenCode, не из рабочей копии сессии:
+          // репо для имени стояния он выводит из директории сессии (r5 #5108).
+          if (name === STAND_TOOL && !args.cwd) {
+            const dir = await directoryOf(String(tool.sessionID));
+            if (dir) args.cwd = dir;
+          }
+          const result = await slot.bridge.request("tools/call", { name, arguments: args });
           // Отказ тула сигналится броском — так OpenCode показывает его отказом.
           if (result?.isError) throw new Error(textOf(result) || `${name}: отказ без текста`);
           return { content: textOf(result) };

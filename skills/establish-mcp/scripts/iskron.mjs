@@ -2564,17 +2564,21 @@ var STAND_TOOL = {
         type: "boolean",
         description: "Осознанный повтор стука в ту же комнату: разрешён один раз и не раньше чем через 2 минуты после первого; без него повторный вызов второго join не шлёт."
       },
-      status: { type: "string", description: "Первая строка занятости (до 64 символов)." }
+      status: { type: "string", description: "Первая строка занятости (до 64 символов)." },
+      cwd: {
+        type: "string",
+        description: "Директория сессии харнесса — из неё выводится репо для имени (git toplevel, иначе её basename), когда мост запущен не из рабочей копии; плагин OpenCode подставляет её сам. Без неё — cwd моста."
+      }
     },
     required: ["realm", "karta"]
   }
 };
 var isStandCall = (msg) => msg?.method === "tools/call" && msg?.params?.name === "iskron_stand";
 var sanitize = (s) => s.toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^[-.]+|[-.]+$/g, "").slice(0, 32);
-var git = (args) => {
+var git = (args, cwd = process.cwd()) => {
   try {
     return execFileSync("git", args, {
-      cwd: process.cwd(),
+      cwd,
       timeout: 2e3,
       stdio: ["ignore", "pipe", "ignore"]
     }).toString().trim();
@@ -2582,10 +2586,10 @@ var git = (args) => {
     return "";
   }
 };
-function deriveName(model) {
+function deriveName(model, cwd = process.cwd()) {
   const host = hostname().split(".")[0];
-  const top = git(["rev-parse", "--show-toplevel"]);
-  const repo = basename2(top || process.cwd());
+  const top = git(["rev-parse", "--show-toplevel"], cwd);
+  const repo = basename2(top || cwd);
   const short2 = (model ?? "").trim().toLowerCase().replace(/^claude[-_]/, "");
   return [host, repo, short2].map(sanitize).filter(Boolean).join(".");
 }
@@ -2647,7 +2651,8 @@ async function runStand(msg) {
     return done(true);
   }
   const model = typeof a.model === "string" && a.model.trim() ? a.model : void 0;
-  const name = typeof a.name === "string" && a.name.trim() ? sanitize(a.name.trim()) : deriveName(model);
+  const cwd = typeof a.cwd === "string" && a.cwd.trim() ? a.cwd.trim() : process.cwd();
+  const name = typeof a.name === "string" && a.name.trim() ? sanitize(a.name.trim()) : deriveName(model, cwd);
   const nameNotes = [];
   if (!(typeof a.name === "string" && a.name.trim()) && !model) {
     nameNotes.push(
@@ -2668,7 +2673,7 @@ async function runStand(msg) {
   const own = entries.filter((e) => e.karta === karta && e.address.endsWith(`:${name}`));
   const stem = name.split(".").slice(0, 2).join(".");
   const branches = new Set(
-    git(["branch", "--format=%(refname:short)"]).split("\n").map((x) => sanitize(x.trim())).filter(Boolean)
+    git(["branch", "--format=%(refname:short)"], cwd).split("\n").map((x) => sanitize(x.trim())).filter(Boolean)
   );
   const legacy = entries.filter((e) => {
     if (e.karta !== karta || e.address.endsWith(`:${name}`)) return false;

@@ -7,8 +7,8 @@
 // tools/list его не несёт и вызов уходит на сервер как чужое имя — та
 // краснота, ради которой проба написана.
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
-import { mkdtempSync } from "node:fs";
+import { execFileSync, spawn } from "node:child_process";
+import { mkdirSync, mkdtempSync } from "node:fs";
 import { hostname, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
@@ -230,6 +230,48 @@ test("iskron_stand derives the name from machine, repository and the model given
   assert.ok(
     [...fake.state.places.keys()].includes(`931:${name}`),
     "the place is taken under the derived name",
+  );
+});
+
+// The bridge is not always started from the working copy: the OpenCode plugin
+// spawns it from the server's cwd, so the repository part of the name comes from
+// the harness session's directory when the call names one (r5 #5108).
+test("iskron_stand names the repository of the session directory given as cwd, not the bridge's own", async (t) => {
+  const { fake, bridge } = await ready(t);
+  const host = hostname().split(".")[0].toLowerCase();
+  const repo = join(mkdtempSync(join(tmpdir(), "stand-cwd-")), "harness-repo");
+  mkdirSync(repo);
+  execFileSync("git", ["init", "-q", repo]);
+  const inside = join(repo, "src");
+  mkdirSync(inside);
+  let reply = await bridge.call("tools/call", {
+    name: "iskron_stand",
+    arguments: { realm: "nks-dev", karta: "#931", model: "opus-5", cwd: inside },
+  });
+  let text = textOf(reply);
+  assert.ok(!reply.result?.isError, text);
+  assert.equal(
+    /стояние (\S+) — роль #931/.exec(text)?.[1],
+    `${host}.harness-repo.opus-5`,
+    `the repository is the git toplevel of cwd, not of the bridge's cwd: ${text}`,
+  );
+  assert.ok(
+    [...fake.state.places.keys()].includes(`931:${host}.harness-repo.opus-5`),
+    "the place is taken under that name",
+  );
+
+  const plain = join(mkdtempSync(join(tmpdir(), "stand-cwd-")), "no-repo-here");
+  mkdirSync(plain);
+  reply = await bridge.call("tools/call", {
+    name: "iskron_stand",
+    arguments: { realm: "nks-dev", karta: "#931", model: "opus-5", cwd: plain },
+  });
+  text = textOf(reply);
+  assert.ok(!reply.result?.isError, text);
+  assert.equal(
+    /стояние (\S+) — роль #931/.exec(text)?.[1],
+    `${host}.no-repo-here.opus-5`,
+    `outside any git repository the directory's own name stands in: ${text}`,
   );
 });
 
