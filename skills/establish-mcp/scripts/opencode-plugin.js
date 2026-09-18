@@ -456,6 +456,10 @@ function takeLostMarker(authDir2) {
     entries
   };
 }
+function resumedWord(key, others) {
+  const rest = Array.isArray(others) ? others.filter((k) => typeof k === "string") : [];
+  return `Искрон: мост поднялся и сам вернул место ${key} — по записи держания каталога сессии, без твоего хода. ` + (rest.length ? `В том же каталоге записи и других мест: ${rest.join(", ")} — каталог их не различает, возврат взял свежайшую. ` : "") + "Сверь имя с выведенным для этой сессии до первой записи: чужое — займи своё одним iskron_stand; слово под чужим именем ляжет соседу по роли, а мост ответит успехом.";
+}
 function createKeeper(doors) {
   const roots = /* @__PURE__ */ new Set();
   const hints = /* @__PURE__ */ new Map();
@@ -479,6 +483,7 @@ function createKeeper(doors) {
       if (typeof r.key === "string") slot.key = r.key;
       roots.add(root);
       doors.say(`Искрон: сессия ${root} — ${r.word}`, "info");
+      if (typeof r.key === "string") doors.tell(root, resumedWord(r.key, r.others));
     } catch (e) {
       doors.say(
         `Искрон: возврат места сессии ${root} не удался — ${e.message}`,
@@ -638,6 +643,7 @@ async function setupTools(ctx, say, onChannel, rootOf) {
   }
   const keeper = createKeeper({
     say,
+    tell: (root, text) => onChannel(root, { logger: "iskron-channel", data: { kind: "resumed", text } }),
     slotFor: (root, touch) => slotFor(root, touch),
     ready: readyFor,
     directoryOf
@@ -946,6 +952,12 @@ function setupChannel(ctx, say, freshestRoot) {
           return;
         case "lost":
           if (ev.text) loud(session, ev.text);
+          return;
+        case "resumed":
+          if (ev.text) {
+            say(ev.text, "warning");
+            void deliver(session, ev.text, "слово о возвращённом месте");
+          }
           return;
         case "held":
           say(`Искрон: мост держит стояние ${ev.key ?? ""}`, "info");

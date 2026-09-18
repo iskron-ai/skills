@@ -161,6 +161,7 @@ function setupChannel(pi) {
       case "held":
       case "released":
       case "lost":
+      case "resumed":
         return;
     }
   };

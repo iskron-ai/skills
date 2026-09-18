@@ -2948,7 +2948,9 @@ async function resumeBy(sel, register = true) {
         st.ok ? `занятость возвращена: ${back.status}` : `занятость не возвращена: ${short(st.body)}`
       );
     }
-    return { resumed: true, key, pending: back.pending, word: lines.join("; ") };
+    const others = recs.map((r) => keyOf(r.realm, r.karta, r.name)).filter((k) => k !== key);
+    if (others.length) lines.push(`в том же каталоге записи и других мест: ${others.join(", ")}`);
+    return { resumed: true, key, pending: back.pending, word: lines.join("; "), others };
   }
   return { resumed: false, word: `возвращать нечего — ${skipped.join("; ")}` };
 }

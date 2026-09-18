@@ -1261,6 +1261,46 @@ test("iskron/resume by the session's directory: a bridge restarted after the plu
   );
 });
 
+// Two standings of one role from one working copy (a brother and me, all day):
+// the directory does not tell them apart, and the resume by directory takes the
+// freshest record — so the answer must name the other records of that directory,
+// for the agent to check the taken name against its own before the first write
+// (graph nks-dev: #5366).
+test("iskron/resume by a directory shared by two places of one role: the freshest is resumed and the answer names the other", async (t) => {
+  const { fake, dir, bridge } = await connected(t);
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const cwd = mkdtempSync(join(tmpdir(), "iskron-shared-dir-"));
+  await bridge.call("tools/call", 5, {
+    name: "iskron_stand",
+    arguments: { realm: "nks-dev", karta: 931, name: "proba", cwd },
+  });
+  const brother = startBridge(fake.mcpUrl, dir);
+  t.after(() => brother.stop());
+  assert.ok((await brother.call("initialize", 1, INIT)).result);
+  await new Promise((r) => setTimeout(r, 20)); // the brother's record is the fresher one
+  const stood = await brother.call("tools/call", 2, {
+    name: "iskron_stand",
+    arguments: { realm: "nks-dev", karta: 931, name: "brat", cwd },
+  });
+  assert.match((stood.result?.content ?? []).map((c) => c.text ?? "").join("\n"), /brat/);
+  await waitFor(() => fake.state.ws.size === 2, "both sockets");
+  bridge.proc.kill("SIGKILL");
+  brother.proc.kill("SIGKILL");
+  await waitFor(() => fake.state.ws.size === 0, "the sockets to close");
+  const third = startBridge(fake.mcpUrl, dir);
+  t.after(() => third.stop());
+  assert.ok((await third.call("initialize", 1, INIT)).result);
+  const back = await third.call("iskron/resume", 2, { cwd });
+  assert.equal(back.result?.resumed, true, JSON.stringify(back));
+  assert.equal(back.result.key, "brat--931--nks-dev", "the freshest record of the directory");
+  assert.deepEqual(
+    back.result.others,
+    ["proba--931--nks-dev"],
+    "the answer names the other place of the same directory",
+  );
+  assert.match(back.result.word, /в том же каталоге записи и других мест: proba--931--nks-dev/);
+});
+
 // The plugin's watch: every N minutes a session that stood asks its bridge
 // `iskron/check` — a held place the board reads deaf with frames waiting has
 // its socket reopened on the same address; a listening one is left alone.

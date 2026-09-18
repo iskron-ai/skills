@@ -114,8 +114,23 @@ export function takeLostMarker(authDir: string): { text: string; entries: LostEn
   };
 }
 
+/** Слово агенту о месте, которое мост вернул сам: какое имя занято и с кем оно делит каталог. */
+export function resumedWord(key: string, others?: unknown): string {
+  const rest = Array.isArray(others) ? others.filter((k) => typeof k === "string") : [];
+  return (
+    `Искрон: мост поднялся и сам вернул место ${key} — по записи держания каталога сессии, без твоего хода. ` +
+    (rest.length
+      ? `В том же каталоге записи и других мест: ${rest.join(", ")} — каталог их не различает, возврат взял свежайшую. `
+      : "") +
+    "Сверь имя с выведенным для этой сессии до первой записи: чужое — займи своё одним iskron_stand; " +
+    "слово под чужим именем ляжет соседу по роли, а мост ответит успехом."
+  );
+}
+
 export interface KeeperDoors<S extends KeptSlot> {
   say: Say;
+  /** Слово в сессию корня — ходом агента, не строкой лога (возврат места без его хода, #5366). */
+  tell: (root: string, text: string) => void;
   /** Слот корневой сессии: живой или поднятый заново; touch=false — простой не освежать (сторож — не вызов). */
   slotFor: (root: string, touch: boolean) => Promise<S>;
   ready: (slot: S) => Promise<void>;
@@ -162,8 +177,11 @@ export function createKeeper<S extends KeptSlot>(doors: KeeperDoors<S>): Keeper<
       slot.stood = true;
       if (typeof r.key === "string") slot.key = r.key;
       roots.add(root);
-      // Ожидавшие кадры придут пачкой побудки и разбудят сессию сами; слово о возврате — в лог.
       doors.say(`Искрон: сессия ${root} — ${r.word}`, "info");
+      // Место занято без хода агента, и имя взято из записи каталога: каталог не
+      // различает стояний одной роли в одной рабочей копии, а слово под чужим
+      // именем ляжет брату при успешном ответе (#5366). Занятое имя — в сессию.
+      if (typeof r.key === "string") doors.tell(root, resumedWord(r.key, r.others));
     } catch (e) {
       doors.say(
         `Искрон: возврат места сессии ${root} не удался — ${(e as Error).message}`,

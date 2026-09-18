@@ -41,9 +41,9 @@ import { state } from "./transport.ts";
 const RING = 20; // кадров, которые прицепившийся позже клиент получит задним числом
 
 export interface ChannelEvent {
-  // held — мост взял сокет (питает holding плагина OpenCode, #5140); backlog — пачка побудки; lost — слух потерян (плагин)
+  // held — мост взял сокет (питает holding плагина OpenCode, #5140); backlog — пачка побудки; lost — слух потерян, resumed — место возвращено без хода агента (оба синтезирует плагин, #5366)
   // prettier-ignore
-  kind: "attached" | "frame" | "note" | "dead" | "alive" | "evicted" | "stale" | "released" | "held" | "backlog" | "lost";
+  kind: "attached" | "frame" | "note" | "dead" | "alive" | "evicted" | "stale" | "released" | "held" | "backlog" | "lost" | "resumed";
   key?: string;
   raw?: string;
   frame?: Frame | null;
