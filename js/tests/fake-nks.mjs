@@ -120,6 +120,8 @@ export async function startFakeNks(opts = {}) {
     messages: new Map(), // id → полный текст: то, что history view=message отдаёт мосту при дочитывании
     status: null, // последняя принятая строка занятости
     wsToken: "tok",
+    wsTokens: new Map(), // адрес сокета → имя места; wsNames: открытый сокет → имя места (несколько мостов на одном фейке)
+    wsNames: new Map(),
     richTools: false, // /control {richTools:true}: tools/list с пишущими тулами — для проверки приписки момента
     // Сессия открыта credential'ом и умирает вместе с ним (#188 в nks-dev):
     // сменился bearer — старая сессия закрыта. Как сервер отвечает на мёртвый
@@ -132,6 +134,7 @@ export async function startFakeNks(opts = {}) {
     silentNewSession: opts.silentNewSession ?? false,
     ignoreStandingHeader: opts.ignoreStandingHeader ?? false, // поверхность старше автопривязки: заголовок молча пропускается
     standingRefuseNext: 0, // столько ближайших register отказать проходящим отказом
+    standingSeatGoneNext: 0, // столько ближайших register отказать словами «места нет» — сиденье истекло
     // The resource indicator each leg carried. A real server turns this into
     // the token's audience, so it is the only place a test can see what the
     // bridge actually asked to be issued for.
@@ -168,6 +171,13 @@ export async function startFakeNks(opts = {}) {
 
     if (p.startsWith("/channel/status/") && req.method === "POST") {
       const { text } = JSON.parse((await body(req)) || "{}");
+      if (st.statusDelayMs) {
+        // A slow status surface, whose write lands with its answer: a client
+        // killed before the answer has published nothing — this is what the
+        // harness's stop grace is measured against (r5 #5140, D1).
+        await new Promise((r) => setTimeout(r, st.statusDelayMs));
+        if (req.socket.destroyed) return;
+      }
       if (typeof text !== "string" || [...text].length > 70) {
         return json(res, 422, { error: "busy line too long" });
       }
@@ -208,9 +218,12 @@ export async function startFakeNks(opts = {}) {
         "sessionFollowsToken",
         "silentNewSession",
         "standingRefuseNext",
+        "standingSeatGoneNext",
         "rooms",
         "boardText",
         "hooksText",
+        "helloPending", // what the next hello says was waiting in the queue
+        "statusDelayMs", // hold the status POST open this long before answering
       ]) {
         if (k in patch) st[k] = patch[k];
       }
@@ -234,6 +247,7 @@ export async function startFakeNks(opts = {}) {
             name: pl.name,
             incoming: `${base}/api/channel/in/mailbox-${pl.name}`,
             listening: pl.listening !== false,
+            pending: pl.pending ?? 0, // «не доставлено N» on the board
           });
         }
       }
@@ -502,6 +516,27 @@ export async function startFakeNks(opts = {}) {
       if (msg.method === "tools/call" && msg.params?.name === "iskron_channel") {
         const a = msg.params.arguments ?? {};
         if (a.action === "register") {
+          if (st.standingSeatGoneNext > 0) {
+            st.standingSeatGoneNext--;
+            return json(
+              res,
+              200,
+              {
+                jsonrpc: "2.0",
+                id: msg.id,
+                result: {
+                  isError: true,
+                  content: [
+                    {
+                      type: "text",
+                      text: `Отказано (404): no such standing «${a.name ?? ""}» — take it with connect`,
+                    },
+                  ],
+                },
+              },
+              extra,
+            );
+          }
           if (st.standingRefuseNext > 0) {
             st.standingRefuseNext--;
             return json(
@@ -555,7 +590,7 @@ export async function startFakeNks(opts = {}) {
             // Форма живой доски (iskron_channel list, сервер 0.43): строка места,
             // строка занятости «💬 «…»» и строка входящего адреса «📥».
             lines.push(
-              `  #${p.karta} 👨‍💻 Роль 能 · @tester:${p.name} — живой · простой 6h · ${p.listening ? "слушает" : "не слушает"} · сокет был 2026-09-08T16:43:28.211106Z · открыл @tester`,
+              `  #${p.karta} 👨‍💻 Роль 能 · @tester:${p.name} — живой · простой 6h · ${p.pending ? `не доставлено ${p.pending} · ` : ""}${p.listening ? "слушает" : "не слушает"} · сокет был 2026-09-08T16:43:28.211106Z · открыл @tester`,
             );
             lines.push(`     💬 «${p.status ?? "на вахте"}» · 2026-09-08T16:08:56.121391Z`);
             lines.push(`     📥 ${p.incoming}`);
@@ -580,10 +615,15 @@ export async function startFakeNks(opts = {}) {
         if (a.action === "connect" || a.action === "mint") {
           st.counts.connect++;
           st.wsToken = token("ws"); // как у настоящей поверхности: сокет показан один раз и всякий раз новый
+          // wsTokens: чьё место откроет этот адрес — доска и revoke судят по месту, не по мосту (ниже, именем без полей)
           st.standings.set(sid, a.name ?? "(unnamed)");
-          st.places.set(`${a.karta}:${a.name}`, {
-            karta: String(a.karta),
-            name: a.name ?? "",
+          // The real surface prints the role as a bare number whatever the caller wrote («#931» is lawful).
+          const karta = String(a.karta).trim().replace(/^#/, "");
+          const name = String(a.name ?? "").trim();
+          st.wsTokens.set(st.wsToken, name);
+          st.places.set(`${karta}:${name}`, {
+            karta,
+            name,
             incoming: `${base}/api/channel/in/mailbox-${a.name ?? "unnamed"}`,
             listening: true,
           });
@@ -612,8 +652,11 @@ export async function startFakeNks(opts = {}) {
         }
         if (a.action === "revoke") {
           const name = String(a.standing ?? "").replace(/^.*:/, "");
-          const had = st.places.delete(`${a.karta}:${name}`);
+          const had = st.places.delete(`${String(a.karta).replace(/^#/, "")}:${name}`);
+          // As the real surface: only the revoked place's socket is closed — the
+          // socket of another place the same bridge holds stays up (#5154).
           for (const sock of st.ws) {
+            if ((st.wsNames.get(sock) ?? name) !== name) continue;
             sock.write(wsFrame(0x8, Buffer.from([4001 >> 8, 4001 & 0xff])));
             setTimeout(() => sock.end(), 100).unref();
           }
@@ -828,16 +871,28 @@ export async function startFakeNks(opts = {}) {
       return;
     }
     st.ws.add(socket);
-    for (const pl of st.places.values()) pl.listening = true; // доска читает по сокету: открыт — слушает
+    // Доска читает по сокету МЕСТА: открыт — его место слушает; адрес без места
+    // (сокет из окружения) — по-старому, все места разом.
+    const placeName = st.wsTokens.get(u.pathname.slice("/channel/ws/".length));
+    const ofPlace = (pl) => placeName === undefined || pl.name === placeName;
+    if (placeName !== undefined) st.wsNames.set(socket, placeName);
+    for (const pl of st.places.values()) if (ofPlace(pl)) pl.listening = true;
     socket.on("end", () => socket.destroy()); // сокет апгрейда полуоткрыт: без этого «close» после смерти моста не приходит
     socket.on("close", () => {
       st.ws.delete(socket);
-      // Последний сокет закрыт — «не слушает» сразу; окно платформы («слушает» ещё ~40 с)
+      st.wsNames.delete(socket);
+      // Последний сокет места закрыт — «не слушает» сразу; окно платформы («слушает» ещё ~40 с)
       // проба ставит сама через /control {places: [{…, listening: true}]}.
-      if (st.ws.size === 0) for (const pl of st.places.values()) pl.listening = false;
+      const stillHeld =
+        placeName === undefined
+          ? st.ws.size > 0
+          : [...st.ws].some((s) => st.wsNames.get(s) === placeName);
+      if (!stillHeld) for (const pl of st.places.values()) if (ofPlace(pl)) pl.listening = false;
     });
     socket.on("error", () => st.ws.delete(socket));
-    socket.write(wsFrame(0x1, JSON.stringify({ type: "hello", pending: 0, ping: 30 })));
+    socket.write(
+      wsFrame(0x1, JSON.stringify({ type: "hello", pending: st.helloPending ?? 0, ping: 30 })),
+    );
   });
 
   await new Promise((r) => server.listen(0, "127.0.0.1", r));

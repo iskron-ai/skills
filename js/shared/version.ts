@@ -19,6 +19,17 @@ export function buildOf(selfUrl: string): string {
   }
 }
 
+/** Строка сборки другой копии по её файлу: версия из её текста, хеш по её байтам; null — файл не читается. */
+export function buildOfFile(path: string): string | null {
+  try {
+    const src = readFileSync(path);
+    const v = versionIn(src.toString("utf8")) ?? "?";
+    return `v${v}+${createHash("sha256").update(src).digest("hex").slice(0, 8)}`;
+  } catch {
+    return null;
+  }
+}
+
 /** Версия, объявленная в тексте другой копии, — читается строкой, без запуска. */
 export function versionIn(text: string): string | null {
   const m = /^(?:const|let|var)\s+VERSION\s*=\s*"([^"]+)"/m.exec(text);

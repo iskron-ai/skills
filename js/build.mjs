@@ -71,12 +71,12 @@ async function produce() {
   // Расширение pi — ESM-модуль с default-экспортом; pi грузит .js из extensions/.
   outputs.set("extensions/iskron.js", await bundleNode("js/extension/iskron.ts"));
 
-  // Плагин OpenCode — ESM-модуль; единственный внешний импорт — @opencode-ai/plugin,
-  // который OpenCode сам держит рядом со своим каталогом плагинов. Едет в
-  // establish-mcp, потому что ставится тем же шагом, что и мост.
+  // Плагин OpenCode — ESM-модуль формы OpenCode 2 без единого импорта: типы
+  // @opencode/plugin стираются сборкой. Едет в establish-mcp, потому что
+  // ставится тем же шагом, что и мост.
   outputs.set(
     "skills/establish-mcp/scripts/opencode-plugin.js",
-    await bundleNode("js/opencode/plugin.ts", undefined, ["@opencode-ai/plugin"]),
+    await bundleNode("js/opencode/plugin.ts"),
   );
 
   // Рендер роадмапа инлайнится в html-шаблон на месте метки; data-объект
