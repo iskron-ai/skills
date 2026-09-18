@@ -1,7 +1,7 @@
 {
   "server": {
     "name": "iskron",
-    "version": "0.43.2"
+    "version": "0.47.0"
   },
   "protocolVersion": "2025-06-18",
   "resource": "https://mcp.iskron.ru",
