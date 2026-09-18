@@ -77,10 +77,19 @@ export type FrameOrigin = "platform" | "human" | "sibling" | "peer";
  * идёт без удостоверения; человек говорит от собственной роли (стояние его роли
  * — бот, телеграм) либо от себя; брат — другое стояние ТОЙ ЖЕ роли, что у
  * читающего; остальное — делатель другой роли. myKarta — роль читающего.
+ * Платформенность решает пара путь плюс удостоверение, а устойчивый признак —
+ * ОТСУТСТВИЕ АВТОРА: запись, которую пишет сама платформа (побудка, left при
+ * отзыве стояния в комнате), не несёт ни роли, ни стояния; литерал
+ * удостоверения (none, platform) — второй признак того же, не первый.
  */
 export function classifyOrigin(frame: Frame, myKarta?: string | number | null): FrameOrigin {
   const p = frame.provenance ?? {};
-  if (p.via === "platform" || p.auth === "none") return "platform";
+  // Запись комнаты без автора пишет сама платформа (left при отзыве стояния):
+  // только там отсутствие автора — её слово. Вне комнаты молчание from_standing —
+  // честное молчание, не заявка (граф nks-dev: #2287).
+  const noAuthor = p.via === "room" && p.from_karta_seq == null && !p.from_standing;
+  if (p.via === "platform" || p.auth === "none" || p.auth === "platform" || noAuthor)
+    return "platform";
   if (p.as_person === true) return "human";
   if (p.from_karta_seq != null && p.user_karta_seq != null && p.from_karta_seq === p.user_karta_seq)
     return "human";

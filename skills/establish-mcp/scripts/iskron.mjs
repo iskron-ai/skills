@@ -1484,7 +1484,9 @@ function deadTokenAdvice(code) {
 }
 function classifyOrigin(frame2, myKarta) {
   const p = frame2.provenance ?? {};
-  if (p.via === "platform" || p.auth === "none") return "platform";
+  const noAuthor = p.via === "room" && p.from_karta_seq == null && !p.from_standing;
+  if (p.via === "platform" || p.auth === "none" || p.auth === "platform" || noAuthor)
+    return "platform";
   if (p.as_person === true) return "human";
   if (p.from_karta_seq != null && p.user_karta_seq != null && p.from_karta_seq === p.user_karta_seq)
     return "human";
@@ -1640,7 +1642,8 @@ var holdFilePathOf = (authDir, key) => join5(standingsDirOf(authDir), `${hashOf(
 var seenFilePathOf = (authDir, key) => join5(standingsDirOf(authDir), `${hashOf(key)}.seen`);
 
 // js/shared/frame-text.ts
-var ENVELOPE_KEYS = ["id", "received_at", "stale", "content_type", "body_chars", "body_read"];
+var NOT_ENVELOPE = /* @__PURE__ */ new Set(["body", "provenance", "type", "origin"]);
+var ENVELOPE_FIRST = ["id", "received_at", "stale", "content_type", "body_chars", "body_read"];
 function frameToText(frame2, raw) {
   if (!frame2) return `Кадр канала Искрона:
 ${raw}`;
@@ -1650,9 +1653,22 @@ ${raw}`;
   const role = p.from_karta_seq != null ? `роли #${p.from_karta_seq}` : "роли неизвестной";
   const who = origin === "platform" ? "от ПЛАТФОРМЫ — побудка, не человек и не делатель" : origin === "human" ? `от ЧЕЛОВЕКА${p.user ? ` @${p.user}` : ""} (${role})${standing}` : origin === "sibling" ? `от БРАТА по твоей роли (#${p.from_karta_seq})${standing} — другое стояние той же роли` : `от делателя ${role}${standing}`;
   const lines = [`Кадр канала Искрона ${who}`];
+  const room = frame2.room;
+  if (room && typeof room === "object") {
+    const f = frame2;
+    const zachin = typeof room.zachin === "string" ? ` «${room.zachin}»` : "";
+    const kind = typeof f.kind === "string" ? `, род ${f.kind}` : "";
+    const stack = typeof f.stack === "string" ? `, стопка ${f.stack}` : "";
+    lines.push(
+      origin === "platform" ? `запись КОМНАТЫ${zachin}${kind}${stack}` : `слово КОМНАТЫ${zachin}${kind}${stack} — ответ идёт записью в ту же комнату с in_reply_to по id слова (ход для комнат — в списке тулов сессии), не send стоянию`
+    );
+  }
   if (frame2.provenance) lines.push(`provenance: ${JSON.stringify(frame2.provenance)}`);
   const envelope = {};
-  for (const k of ENVELOPE_KEYS) if (frame2[k] !== void 0) envelope[k] = frame2[k];
+  const rec = frame2;
+  for (const k of ENVELOPE_FIRST) if (rec[k] !== void 0) envelope[k] = rec[k];
+  for (const k of Object.keys(rec))
+    if (!(k in envelope) && !NOT_ENVELOPE.has(k) && rec[k] !== void 0) envelope[k] = rec[k];
   if (Object.keys(envelope).length) lines.push(`frame: ${JSON.stringify(envelope)}`);
   const body = typeof frame2.body === "string" ? frame2.body : frame2.body === void 0 ? raw : JSON.stringify(frame2.body, null, 1).replace(/\n\s*/g, " ");
   return `${lines.join("\n")}
@@ -1926,174 +1942,7 @@ function harnessName() {
 }
 var notifiedClient = () => NOTIFIED_CLIENTS.has(harnessName());
 
-// js/bridge/names.ts
-import { execFileSync } from "node:child_process";
-import { hostname } from "node:os";
-import { basename as basename2 } from "node:path";
-var NAME_MAX = 48;
-var normKarta = (k) => String(k ?? "").trim().replace(/^#/, "");
-var normName = (n) => typeof n === "string" ? n.trim() : "";
-var NAME_RE = /^[a-z0-9][a-z0-9._-]*$/;
-var sanitize = (s) => s.toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^[-.]+|[-.]+$/g, "").slice(0, NAME_MAX);
-function nameFault(name) {
-  if (name.length > NAME_MAX) return `длиннее предела: ${name.length} знаков`;
-  if (!NAME_RE.test(name))
-    return /[A-Z]/.test(name) ? "заглавные буквы не допускаются" : "недопустимые знаки или первый знак не буква и не цифра";
-  return null;
-}
-var PART_MIN = 3;
-var CUT_ORDER = ["repo", "host", "model"];
-function fitName(parts) {
-  const p = { ...parts };
-  const join13 = () => [p.host, p.repo, p.model].filter(Boolean).join(".").replace(/[-.]+$/, "");
-  const cut = [];
-  for (const k of CUT_ORDER) {
-    const over = join13().length - NAME_MAX;
-    if (over <= 0) break;
-    const keep = Math.max(k === "model" ? 1 : PART_MIN, p[k].length - over);
-    if (keep >= p[k].length) continue;
-    p[k] = p[k].slice(0, keep).replace(/[-.]+$/, "");
-    cut.push(k);
-  }
-  return {
-    name: join13().slice(0, NAME_MAX).replace(/[-.]+$/, ""),
-    cut
-  };
-}
-var git = (args, cwd = process.cwd()) => {
-  try {
-    return execFileSync("git", args, {
-      cwd,
-      timeout: 2e3,
-      stdio: ["ignore", "pipe", "ignore"]
-    }).toString().trim();
-  } catch {
-    return "";
-  }
-};
-function deriveParts(model, cwd = process.cwd()) {
-  const host = hostname().split(".")[0];
-  const top = git(["rev-parse", "--show-toplevel"], cwd);
-  const repo = basename2(top || cwd);
-  const short2 = (model ?? "").trim().toLowerCase().replace(/^claude[-_]/, "");
-  return { host: sanitize(host ?? ""), repo: sanitize(repo), model: sanitize(short2) };
-}
-var joinName = (p) => [p.host, p.repo, p.model].filter(Boolean).join(".");
-
-// js/bridge/standing.ts
-function noteStanding(msg, reply2) {
-  const a = msg?.params?.arguments;
-  if (msg?.params?.name !== "iskron_channel" || a?.action !== "register") return;
-  if (reply2?.error || reply2?.result?.isError) return;
-  state.standing = rememberedPlace(a.realm, a.karta, a.name);
-  state.standingSession = state.sessionId;
-  debug(`standing remembered: ${a.name ?? "(unnamed)"} at karta ${a.karta} in ${a.realm}`);
-}
-function rememberedPlace(realm, karta, name) {
-  const k = normKarta(karta);
-  const prev = state.standing;
-  const n = typeof name === "string" ? normName(name) : void 0;
-  return {
-    realm: String(realm ?? ""),
-    karta: k === "agent" && prev ? String(prev.karta) : k,
-    ...n !== void 0 ? { name: n } : {}
-  };
-}
-var standingInFlight = null;
-function ensureStanding() {
-  if (!state.standing || !state.sessionId) return Promise.resolve();
-  if (state.standingSession === state.sessionId) return Promise.resolve();
-  if (standingInFlight) return standingInFlight;
-  standingInFlight = (async () => {
-    try {
-      const id = `iskron-bridge-restanding-${++state.reinitCounter}`;
-      let reply2 = null;
-      await post(
-        {
-          jsonrpc: "2.0",
-          id,
-          method: "tools/call",
-          params: { name: "iskron_channel", arguments: { ...state.standing, action: "register" } }
-        },
-        (m) => {
-          if (m.id === id) reply2 = m;
-        }
-      );
-      const got = reply2;
-      if (got && !got.error && !got.result?.isError) {
-        state.standingSession = state.sessionId;
-        log(`standing re-registered on the new session (${state.standing?.name ?? "unnamed"})`);
-      } else if (seatIsGone(got)) {
-        log(`the standing's seat is gone, forgetting it: ${replyText(got).slice(0, 200)}`);
-        state.standing = null;
-        releaseStanding("место у платформы истекло — register: места нет", true);
-      } else {
-        log(
-          `could not re-register the standing this time, will retry before the next call: ${replyText(got).slice(0, 200)}`
-        );
-      }
-    } catch (e) {
-      log(`re-registering the standing failed: ${errorMessage(e)}`);
-    } finally {
-      standingInFlight = null;
-    }
-  })();
-  return standingInFlight;
-}
-var replyText = (reply2) => {
-  if (!reply2) return "";
-  if (reply2.error) return JSON.stringify(reply2.error);
-  const content = reply2.result?.content;
-  return Array.isArray(content) ? content.map((c) => c?.text ?? "").join("\n") : JSON.stringify(reply2.result ?? "");
-};
-var seatIsGone = (reply2) => /no such standing|take it with connect|такого стояния|занять.*connect/i.test(replyText(reply2));
-var UNATTRIBUTED_CODE = /write_unattributed\w*|session_not_registered/;
-var UNATTRIBUTED_REFUSAL = /\b409\b|не зарегистрирован[аоы]? ни за каким стоянием|hold no registered standing/i;
-var isUnattributed = (reply2) => {
-  if (!reply2) return false;
-  const text = replyText(reply2);
-  if (UNATTRIBUTED_CODE.test(text)) return true;
-  return !!reply2.result?.isError && UNATTRIBUTED_REFUSAL.test(text);
-};
-
 // js/bridge/complete.ts
-var readCounter = 0;
-async function completeFrame(frame2) {
-  if (!frame2 || typeof frame2.body !== "string" || typeof frame2.body_chars !== "number")
-    return frame2;
-  if (!frame2.id || [...frame2.body].length >= frame2.body_chars) return frame2;
-  const realm = state.standing?.realm;
-  if (!realm) return { ...frame2, body_read: "truncated: стояние без realm, дочитать нечем" };
-  const id = `iskron-bridge-read-${++readCounter}`;
-  let reply2 = null;
-  try {
-    await post(
-      {
-        jsonrpc: "2.0",
-        id,
-        method: "tools/call",
-        params: {
-          name: "iskron_channel",
-          arguments: { realm, action: "history", view: "message", message: frame2.id }
-        }
-      },
-      (m) => {
-        if (m.id === id) reply2 = m;
-      }
-    );
-  } catch (e) {
-    log(`кадр ${frame2.id} обрезан, дочитать не вышло: ${e.message}`);
-    return { ...frame2, body_read: `truncated: ${e.message}` };
-  }
-  const text = replyText(reply2);
-  const nl = text.indexOf("\n");
-  const tail = text.indexOf("\nПровенанс, как платформа");
-  if (nl < 0 || reply2?.result?.isError) {
-    return { ...frame2, body_read: `truncated: ${text.slice(0, 160)}` };
-  }
-  const body = (tail > nl ? text.slice(nl + 1, tail) : text.slice(nl + 1)).trim();
-  return { ...frame2, body, body_read: "history" };
-}
 function stampOrigin(frame2) {
   if (!frame2 || frame2.type !== "message") return frame2;
   return { ...frame2, origin: classifyOrigin(frame2, state.standing?.karta) };
@@ -2483,7 +2332,7 @@ function openHolder(url, key) {
   holder = holdSocket({
     url,
     onFrame: (raw, frame2) => {
-      void completeFrame(stampOrigin(frame2)).then((full) => {
+      void Promise.resolve(stampOrigin(frame2)).then((full) => {
         if (full?.type === "message" && full.stale === true)
           return noteStale(full, (ev2) => {
             broadcast(ev2);
@@ -2591,6 +2440,136 @@ ${listen}
 Занятость: iskron_channel(action="status", realm, text) — пустой text снимает.
 Кадры приходят и уведомлениями MCP (logger iskron-channel).`;
 }
+
+// js/bridge/names.ts
+import { execFileSync } from "node:child_process";
+import { hostname } from "node:os";
+import { basename as basename2 } from "node:path";
+var NAME_MAX = 48;
+var normKarta = (k) => String(k ?? "").trim().replace(/^#/, "");
+var normName = (n) => typeof n === "string" ? n.trim() : "";
+var NAME_RE = /^[a-z0-9][a-z0-9._-]*$/;
+var sanitize = (s) => s.toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^[-.]+|[-.]+$/g, "").slice(0, NAME_MAX);
+function nameFault(name) {
+  if (name.length > NAME_MAX) return `длиннее предела: ${name.length} знаков`;
+  if (!NAME_RE.test(name))
+    return /[A-Z]/.test(name) ? "заглавные буквы не допускаются" : "недопустимые знаки или первый знак не буква и не цифра";
+  return null;
+}
+var PART_MIN = 3;
+var CUT_ORDER = ["repo", "host", "model"];
+function fitName(parts) {
+  const p = { ...parts };
+  const join13 = () => [p.host, p.repo, p.model].filter(Boolean).join(".").replace(/[-.]+$/, "");
+  const cut = [];
+  for (const k of CUT_ORDER) {
+    const over = join13().length - NAME_MAX;
+    if (over <= 0) break;
+    const keep = Math.max(k === "model" ? 1 : PART_MIN, p[k].length - over);
+    if (keep >= p[k].length) continue;
+    p[k] = p[k].slice(0, keep).replace(/[-.]+$/, "");
+    cut.push(k);
+  }
+  return {
+    name: join13().slice(0, NAME_MAX).replace(/[-.]+$/, ""),
+    cut
+  };
+}
+var git = (args, cwd = process.cwd()) => {
+  try {
+    return execFileSync("git", args, {
+      cwd,
+      timeout: 2e3,
+      stdio: ["ignore", "pipe", "ignore"]
+    }).toString().trim();
+  } catch {
+    return "";
+  }
+};
+function deriveParts(model, cwd = process.cwd()) {
+  const host = hostname().split(".")[0];
+  const top = git(["rev-parse", "--show-toplevel"], cwd);
+  const repo = basename2(top || cwd);
+  const short2 = (model ?? "").trim().toLowerCase().replace(/^claude[-_]/, "");
+  return { host: sanitize(host ?? ""), repo: sanitize(repo), model: sanitize(short2) };
+}
+var joinName = (p) => [p.host, p.repo, p.model].filter(Boolean).join(".");
+
+// js/bridge/standing.ts
+function noteStanding(msg, reply2) {
+  const a = msg?.params?.arguments;
+  if (msg?.params?.name !== "iskron_channel" || a?.action !== "register") return;
+  if (reply2?.error || reply2?.result?.isError) return;
+  state.standing = rememberedPlace(a.realm, a.karta, a.name);
+  state.standingSession = state.sessionId;
+  debug(`standing remembered: ${a.name ?? "(unnamed)"} at karta ${a.karta} in ${a.realm}`);
+}
+function rememberedPlace(realm, karta, name) {
+  const k = normKarta(karta);
+  const prev = state.standing;
+  const n = typeof name === "string" ? normName(name) : void 0;
+  return {
+    realm: String(realm ?? ""),
+    karta: k === "agent" && prev ? String(prev.karta) : k,
+    ...n !== void 0 ? { name: n } : {}
+  };
+}
+var standingInFlight = null;
+function ensureStanding() {
+  if (!state.standing || !state.sessionId) return Promise.resolve();
+  if (state.standingSession === state.sessionId) return Promise.resolve();
+  if (standingInFlight) return standingInFlight;
+  standingInFlight = (async () => {
+    try {
+      const id = `iskron-bridge-restanding-${++state.reinitCounter}`;
+      let reply2 = null;
+      await post(
+        {
+          jsonrpc: "2.0",
+          id,
+          method: "tools/call",
+          params: { name: "iskron_channel", arguments: { ...state.standing, action: "register" } }
+        },
+        (m) => {
+          if (m.id === id) reply2 = m;
+        }
+      );
+      const got = reply2;
+      if (got && !got.error && !got.result?.isError) {
+        state.standingSession = state.sessionId;
+        log(`standing re-registered on the new session (${state.standing?.name ?? "unnamed"})`);
+      } else if (seatIsGone(got)) {
+        log(`the standing's seat is gone, forgetting it: ${replyText(got).slice(0, 200)}`);
+        state.standing = null;
+        releaseStanding("место у платформы истекло — register: места нет", true);
+      } else {
+        log(
+          `could not re-register the standing this time, will retry before the next call: ${replyText(got).slice(0, 200)}`
+        );
+      }
+    } catch (e) {
+      log(`re-registering the standing failed: ${errorMessage(e)}`);
+    } finally {
+      standingInFlight = null;
+    }
+  })();
+  return standingInFlight;
+}
+var replyText = (reply2) => {
+  if (!reply2) return "";
+  if (reply2.error) return JSON.stringify(reply2.error);
+  const content = reply2.result?.content;
+  return Array.isArray(content) ? content.map((c) => c?.text ?? "").join("\n") : JSON.stringify(reply2.result ?? "");
+};
+var seatIsGone = (reply2) => /no such standing|take it with connect|такого стояния|занять.*connect/i.test(replyText(reply2));
+var UNATTRIBUTED_CODE = /write_unattributed\w*|session_not_registered/;
+var UNATTRIBUTED_REFUSAL = /\b409\b|не зарегистрирован[аоы]? ни за каким стоянием|hold no registered standing/i;
+var isUnattributed = (reply2) => {
+  if (!reply2) return false;
+  const text = replyText(reply2);
+  if (UNATTRIBUTED_CODE.test(text)) return true;
+  return !!reply2.result?.isError && UNATTRIBUTED_REFUSAL.test(text);
+};
 
 // js/bridge/absorb.ts
 var SOCKET_RE = /wss:\/\/[^\s"'`<>)\]]+|ws:\/\/(?:127\.0\.0\.1|\[?::1\]?|localhost)(?::\d+)?\/[^\s"'`<>)\]]+/;

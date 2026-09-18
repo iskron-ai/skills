@@ -2,7 +2,9 @@
 var FLAP_PAUSES_MS = (process.env.ISKRON_CHANNEL_FLAP_MS || "5000,10000,20000,40000,60000").split(",").map(Number).filter((n) => Number.isFinite(n) && n > 0);
 function classifyOrigin(frame, myKarta) {
   const p = frame.provenance ?? {};
-  if (p.via === "platform" || p.auth === "none") return "platform";
+  const noAuthor = p.via === "room" && p.from_karta_seq == null && !p.from_standing;
+  if (p.via === "platform" || p.auth === "none" || p.auth === "platform" || noAuthor)
+    return "platform";
   if (p.as_person === true) return "human";
   if (p.from_karta_seq != null && p.user_karta_seq != null && p.from_karta_seq === p.user_karta_seq)
     return "human";
@@ -12,7 +14,8 @@ function classifyOrigin(frame, myKarta) {
 }
 
 // js/shared/frame-text.ts
-var ENVELOPE_KEYS = ["id", "received_at", "stale", "content_type", "body_chars", "body_read"];
+var NOT_ENVELOPE = /* @__PURE__ */ new Set(["body", "provenance", "type", "origin"]);
+var ENVELOPE_FIRST = ["id", "received_at", "stale", "content_type", "body_chars", "body_read"];
 function frameToText(frame, raw) {
   if (!frame) return `Кадр канала Искрона:
 ${raw}`;
@@ -22,9 +25,22 @@ ${raw}`;
   const role = p.from_karta_seq != null ? `роли #${p.from_karta_seq}` : "роли неизвестной";
   const who = origin === "platform" ? "от ПЛАТФОРМЫ — побудка, не человек и не делатель" : origin === "human" ? `от ЧЕЛОВЕКА${p.user ? ` @${p.user}` : ""} (${role})${standing}` : origin === "sibling" ? `от БРАТА по твоей роли (#${p.from_karta_seq})${standing} — другое стояние той же роли` : `от делателя ${role}${standing}`;
   const lines = [`Кадр канала Искрона ${who}`];
+  const room = frame.room;
+  if (room && typeof room === "object") {
+    const f = frame;
+    const zachin = typeof room.zachin === "string" ? ` «${room.zachin}»` : "";
+    const kind = typeof f.kind === "string" ? `, род ${f.kind}` : "";
+    const stack = typeof f.stack === "string" ? `, стопка ${f.stack}` : "";
+    lines.push(
+      origin === "platform" ? `запись КОМНАТЫ${zachin}${kind}${stack}` : `слово КОМНАТЫ${zachin}${kind}${stack} — ответ идёт записью в ту же комнату с in_reply_to по id слова (ход для комнат — в списке тулов сессии), не send стоянию`
+    );
+  }
   if (frame.provenance) lines.push(`provenance: ${JSON.stringify(frame.provenance)}`);
   const envelope = {};
-  for (const k of ENVELOPE_KEYS) if (frame[k] !== void 0) envelope[k] = frame[k];
+  const rec = frame;
+  for (const k of ENVELOPE_FIRST) if (rec[k] !== void 0) envelope[k] = rec[k];
+  for (const k of Object.keys(rec))
+    if (!(k in envelope) && !NOT_ENVELOPE.has(k) && rec[k] !== void 0) envelope[k] = rec[k];
   if (Object.keys(envelope).length) lines.push(`frame: ${JSON.stringify(envelope)}`);
   const body = typeof frame.body === "string" ? frame.body : frame.body === void 0 ? raw : JSON.stringify(frame.body, null, 1).replace(/\n\s*/g, " ");
   return `${lines.join("\n")}
@@ -864,7 +880,7 @@ function setupChannel(ctx, say, freshestRoot) {
     let id = session;
     if (child && (!id || !await accepting(id))) {
       say(
-        `Искрон: ${frame} на место дочерней сессии ${id ?? "?"}, которой больше нет, — корню не переадресую; кадр остаётся в истории стояния (iskron_channel history), место сними revoke — ${text.slice(0, 120)}`,
+        `Искрон: ${frame} на место дочерней сессии ${id ?? "?"}, которой больше нет, — корню не переадресую; кадр остаётся в истории стояния (iskron_channel history); место дочерней сессии — лишнее на канале, где корень стоит дальше: снимать ли его revoke, решай, зная цену (standing) —${text.slice(0, 120)}`,
         "error"
       );
       return;
@@ -905,11 +921,12 @@ function setupChannel(ctx, say, freshestRoot) {
           const frame = ev.frame ?? null;
           if (frame?.type === "hello") return say("Искрон: канал слушает", "info");
           if (frame?.type === "status") return;
+          const stack = frame?.stack;
           void deliver(
             session,
             frameToText(frame, ev.raw ?? ""),
             `кадр ${frame?.id ?? "без id"}`,
-            "steer",
+            stack === "defer" ? "queue" : "steer",
             child
           );
           return;
