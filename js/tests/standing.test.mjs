@@ -1506,12 +1506,21 @@ test("a bridge leading a parked place returns to it on iskron/resume and leaves 
   await waitFor(() => fresh().length === 1, "the parked place's socket reopened");
   assert.equal(fake.state.counts.connect, 2, "no connect");
   await waitFor(() => fake.state.status === "парковка", "the parked place's busy line back");
-  assert.ok(
-    readdirSync(standings)
-      .filter((f) => f.endsWith(".hold"))
-      .some(
-        (f) => JSON.parse(readFileSync(join(standings, f), "utf8")).key === "svezhee--931--nks-dev",
-      ),
+  // A record the bridge is rewriting at this very moment is not yet valid JSON —
+  // the bridge's own reader skips such a file (resume.ts), the probe waits instead.
+  await waitFor(
+    () =>
+      readdirSync(standings)
+        .filter((f) => f.endsWith(".hold"))
+        .some((f) => {
+          try {
+            return (
+              JSON.parse(readFileSync(join(standings, f), "utf8")).key === "svezhee--931--nks-dev"
+            );
+          } catch {
+            return false;
+          }
+        }),
     "the fresher record is left for iskron_stand",
   );
   const status = await bridge.call("tools/call", 8, {

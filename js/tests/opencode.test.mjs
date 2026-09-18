@@ -987,7 +987,13 @@ test("a holding bridge that dies is announced into its session as lost hearing, 
   writeFileSync(calls, "");
   writeFileSync(
     resume,
-    JSON.stringify({ holding: true, resumed: true, pending: 1, word: "возврат места с диска" }),
+    JSON.stringify({
+      holding: true,
+      resumed: true,
+      key: "lost--931--nks-dev",
+      pending: 1,
+      word: "возврат места с диска",
+    }),
   );
   const b = bridgeEnv("lost", { FB_CALLS: calls, FB_RESUME: resume, ISKRON_BRIDGE_WATCH_MS: 300 });
   const rec = await plugin(b.env, {
@@ -1025,6 +1031,12 @@ test("a holding bridge that dies is announced into its session as lost hearing, 
     await until(
       () => /сторож слуха вернул место сессии s-lost/.test(rec.said()),
       "the return line",
+    );
+    // The watch's return is the same return without a move of the agent (#5366):
+    // the taken name goes into the session, not only into the log.
+    await until(
+      () => rec.prompts.some((p) => /сам вернул место/.test(p.text) && p.sessionID === "s-lost"),
+      "the watch's resumed prompt",
     );
   } finally {
     await rec.stop();

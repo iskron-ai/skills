@@ -193,8 +193,8 @@ export async function setupTools(
 
   const keeper = createKeeper({
     say,
-    tell: (root, text) =>
-      onChannel(root, { logger: "iskron-channel", data: { kind: "resumed", text } }),
+    tell: (root, text, child) =>
+      onChannel(root, { logger: "iskron-channel", data: { kind: "resumed", text } }, !!child),
     slotFor: (root, touch) => slotFor(root, touch),
     ready: readyFor,
     directoryOf,

@@ -114,23 +114,28 @@ export function takeLostMarker(authDir: string): { text: string; entries: LostEn
   };
 }
 
-/** Слово агенту о месте, которое мост вернул сам: какое имя занято и с кем оно делит каталог. */
+/**
+ * Слово агенту о месте, которое мост вернул сам: какое имя занято и с кем оно
+ * делит каталог. Промпт входит следующим шагом хода, а первый вызов сессии
+ * ждёт возврата и уходит раньше слова: запись, сделанную им, слово не упреждает —
+ * оно зовёт проверить её автора.
+ */
 export function resumedWord(key: string, others?: unknown): string {
   const rest = Array.isArray(others) ? others.filter((k) => typeof k === "string") : [];
   return (
-    `Искрон: мост поднялся и сам вернул место ${key} — по записи держания каталога сессии, без твоего хода. ` +
+    `Искрон: мост поднялся и сам вернул место ${key} — по своей записи держания (каталог сессии либо ключ прежнего места), без твоего хода. ` +
     (rest.length
       ? `В том же каталоге записи и других мест: ${rest.join(", ")} — каталог их не различает, возврат взял свежайшую. `
       : "") +
-    "Сверь имя с выведенным для этой сессии до первой записи: чужое — займи своё одним iskron_stand; " +
-    "слово под чужим именем ляжет соседу по роли, а мост ответит успехом."
+    "Сверь имя с выведенным для этой сессии: чужое — займи своё одним iskron_stand; " +
+    "запись, уже ушедшую этим ходом, проверь по автору в истории узла — слово под чужим именем ляжет другому месту, а мост ответит успехом."
   );
 }
 
 export interface KeeperDoors<S extends KeptSlot> {
   say: Say;
-  /** Слово в сессию корня — ходом агента, не строкой лога (возврат места без его хода, #5366). */
-  tell: (root: string, text: string) => void;
+  /** Слово в сессию — ходом агента, не строкой лога (возврат места без его хода, #5366); child — адресат только своя дочерняя сессия. */
+  tell: (root: string, text: string, child?: boolean) => void;
   /** Слот корневой сессии: живой или поднятый заново; touch=false — простой не освежать (сторож — не вызов). */
   slotFor: (root: string, touch: boolean) => Promise<S>;
   ready: (slot: S) => Promise<void>;
@@ -181,7 +186,7 @@ export function createKeeper<S extends KeptSlot>(doors: KeeperDoors<S>): Keeper<
       // Место занято без хода агента, и имя взято из записи каталога: каталог не
       // различает стояний одной роли в одной рабочей копии, а слово под чужим
       // именем ляжет брату при успешном ответе (#5366). Занятое имя — в сессию.
-      if (typeof r.key === "string") doors.tell(root, resumedWord(r.key, r.others));
+      if (typeof r.key === "string") doors.tell(root, resumedWord(r.key, r.others), slot.child);
     } catch (e) {
       doors.say(
         `Искрон: возврат места сессии ${root} не удался — ${(e as Error).message}`,
@@ -207,9 +212,11 @@ export function createKeeper<S extends KeptSlot>(doors: KeeperDoors<S>): Keeper<
       slot.holding = false;
       roots.delete(root);
     }
-    if (r?.resumed)
+    if (r?.resumed) {
       doors.say(`Искрон: сторож слуха вернул место сессии ${root} — ${r.word}`, "info");
-    else if (r?.reopened)
+      // Тот же возврат без хода агента, тем же выбором свежайшей записи (#5366).
+      if (typeof r.key === "string") doors.tell(root, resumedWord(r.key, r.others), slot.child);
+    } else if (r?.reopened)
       doors.say(`Искрон: сторож слуха переоткрыл сокет сессии ${root} — ${r.word}`, "warning");
     else if (r?.stuck) doors.say(r.word, "error"); // слово в сессию мост шлёт сам (kind=lost), один раз
   }

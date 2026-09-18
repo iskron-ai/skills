@@ -210,7 +210,10 @@ export async function resumeBy(sel: ResumeSelector, register = true): Promise<Re
           : `занятость не возвращена: ${short(st.body)}`,
       );
     }
-    const others = recs.map((r) => keyOf(r.realm, r.karta, r.name)).filter((k) => k !== key);
+    // Записи, которые цикл выше признал протухшими, уже стёрты — их не называть.
+    const others = recs
+      .map((r) => keyOf(r.realm, r.karta, r.name))
+      .filter((k) => k !== key && readHoldRecord(k) !== null);
     if (others.length) lines.push(`в том же каталоге записи и других мест: ${others.join(", ")}`);
     return { resumed: true, key, pending: back.pending, word: lines.join("; "), others };
   }
