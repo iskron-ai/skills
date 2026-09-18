@@ -276,9 +276,12 @@ test("every bridge tool stands under its own name, with the server's JSON Schema
     assert.deepEqual(channel.input.properties.action.enum, ["connect", "mint", "register"]);
     assert.deepEqual(channel.input.required, ["action"]);
     assert.match(rec.said(), /тулов в сессии: 2 \(с сервера\)/);
+    const status = await rec.call("iskron_bridge", {}, "s-0").then((r) => r.content);
+    assert.match(status, /тулов iskron_\*: 2/);
     assert.match(
-      await rec.call("iskron_bridge", {}, "s-0").then((r) => r.content),
-      /тулов iskron_\*: 2/,
+      status,
+      /сборка: мост v\S+\+[0-9a-f]{8}, плагин v\S+/,
+      "the status names both builds — the doer answers which build holds without reading files",
     );
   } finally {
     await rec.stop();
@@ -591,7 +594,11 @@ test("each root session gets its own bridge, and a frame goes to the session who
     const to = Object.fromEntries(rec.prompts.map((p) => [p.sessionID, p.text]));
     assert.match(to["s-a"], /для первой/);
     assert.match(to["s-b"], /для второй/);
-    assert.equal(rec.prompts[0].delivery, "queue", "a frame joins the turn, it does not cut it");
+    assert.equal(
+      rec.prompts[0].delivery,
+      "steer",
+      "a live frame steers into the running turn; queue would surface one frame per turn (#5233)",
+    );
     assert.match(
       to["s-a"],
       /^Кадр канала Искрона от делателя роли #1226 — стояние @alari:telegram-bot\nprovenance: \{"from_standing":"@alari:telegram-bot","from_karta_seq":1226,"auth":"pat","via":"hook"\}\nframe: \{"id":"msg-1"\}\n\nдля первой$/,
@@ -748,6 +755,11 @@ test("a stale burst is one prompt into the holder's session, bodies included", a
     await until(() => rec.prompts.length === 1, "the stale prompt");
     assert.equal(rec.prompts[0].sessionID, "s-stale");
     assert.match(rec.prompts[0].text, /почта предшественника/);
+    assert.equal(
+      rec.prompts[0].delivery,
+      "queue",
+      "a stale burst is not urgent: it waits for the turn to end",
+    );
   } finally {
     await rec.stop();
   }

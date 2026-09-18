@@ -19,9 +19,11 @@
 // всегда), а список с сервера приходит фоном и подменяется через
 // ctx.tool.reload() — сколько бы ни длился вход человека.
 import { Bridge, toParameters } from "../shared/bridge-client.ts";
+import { buildOf } from "../shared/version.ts";
 import {
   AUTH_POLL_MS,
   authDir,
+  bridgeBuild,
   findBridge,
   handshake,
   listTools,
@@ -308,8 +310,11 @@ export async function setupTools(
   };
 
   function statusText(): string {
+    // Сборки — обе: делатель на вахте отвечает, какой сборкой держится,
+    // не заглядывая в файлы (опрос стояний по плагину OpenCode, #5233).
     return [
       `мост: ${path}`,
+      `сборка: мост ${bridgeBuild(path)}, плагин ${buildOf(import.meta.url)}`,
       loginPending
         ? `вход: НЕ ВЫПОЛНЕН — ${loginUrl ? `открой в браузере ${loginUrl}` : "заверши вход в браузере"}. ` +
           "Адрес локальный: с другой машины — ssh -L <порт>:127.0.0.1:<порт>, либо личный токен в ~/.iskron-bridge/token (скилл establish-mcp)."

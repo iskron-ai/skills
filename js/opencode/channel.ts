@@ -3,10 +3,16 @@
 // Сокет стояния держит мост сессии (дочерний процесс плагина, свой у каждой
 // корневой сессии): переоткрывает, различает мёртвый токен, публикует
 // занятость. Плагину остаётся то, чего у моста нет, — вложить кадр в сессию
-// агента промптом (ctx.session.prompt): очередью, так кадр входит в идущий ход
-// после текущего шага или поднимает простаивающего. Доставка есть возврат
-// управления агенту; кадр, ушедший в лог, — глушитель (урок контура
-// opencode-плагина канала: делатель стоит глухим, считая себя слушающим).
+// агента промптом (ctx.session.prompt). У промпта OpenCode 2 два способа
+// вложения (поверхность харнеса: «Enter steers the active session, Alt+Enter
+// queues the prompt for later»): steer входит в идущий ход следующим шагом,
+// queue ждёт конца хода — и очередь харнес отдаёт по одному промпту на ход.
+// Живой кадр и громкое слово о слухе идут steer: с queue у делателя с длинными
+// ходами кадры всплывали по одному за ход и отставали часами (граф nks-dev:
+// #5233). Пачка побудки и лежалых — queue: она не срочна и ход не режет.
+// Доставка есть возврат управления агенту; кадр, ушедший в лог, — глушитель
+// (урок контура opencode-плагина канала: делатель стоит глухим, считая себя
+// слушающим).
 //
 // Адресат — сессия, чей мост принёс кадр: адрес приходит вместе с событием,
 // угадывать нечего. Кадр от моста, ещё никому не отданного, идёт в свежайшую
@@ -39,7 +45,12 @@ export function setupChannel(ctx: Context, say: Say, freshestRoot: () => string 
   // Каждое вложение — строкой в лог с адресом и кадром, отказ — громко: кадр,
   // прочитанный мостом и не дошедший до хода, снаружи неотличим от глухоты,
   // а доска при этом говорит «слушает» (граф nks-dev: #4355).
-  async function deliver(session: string | null, text: string, frame = "кадр"): Promise<void> {
+  async function deliver(
+    session: string | null,
+    text: string,
+    frame = "кадр",
+    delivery: "steer" | "queue" = "steer",
+  ): Promise<void> {
     let id = session;
     if (id && !(await accepting(id))) {
       say(
@@ -59,7 +70,7 @@ export function setupChannel(ctx: Context, say: Say, freshestRoot: () => string 
       return;
     }
     try {
-      await ctx.session.prompt({ sessionID: id, text, delivery: "queue" } as any);
+      await ctx.session.prompt({ sessionID: id, text, delivery } as any);
       say(`Искрон: ${frame} вложен в сессию ${id}`, "info");
     } catch (e) {
       say(`Искрон: ${frame} не вложился в сессию ${id}: ${(e as Error).message}`, "error");
@@ -93,11 +104,12 @@ export function setupChannel(ctx: Context, say: Say, freshestRoot: () => string 
           );
           return;
         case "stale":
-          if (ev.text) void deliver(session, ev.text, "пачка лежалых кадров"); // одна пачка — один промпт
+          if (ev.text) void deliver(session, ev.text, "пачка лежалых кадров", "queue"); // одна пачка — один промпт
           return;
         case "backlog":
           // Побудка с накопленным — один промпт на пачку, не ход на кадр (#5140).
-          if (ev.text) void deliver(session, ev.text, `пачка побудки (${ev.frames?.length ?? 0})`);
+          if (ev.text)
+            void deliver(session, ev.text, `пачка побудки (${ev.frames?.length ?? 0})`, "queue");
           return;
         case "lost":
           // Держащий мост вышел или прежний плагин остановили: громко, в сессию.

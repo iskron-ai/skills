@@ -51,6 +51,10 @@ function buildOf(selfUrl) {
     return `v${VERSION}`;
   }
 }
+function versionIn(text) {
+  const m = /^(?:const|let|var)\s+VERSION\s*=\s*"([^"]+)"/m.exec(text);
+  return m ? m[1] : null;
+}
 
 // js/bridge/build.ts
 var BUILD = buildOf(import.meta.url);
@@ -256,6 +260,7 @@ function resultToContent(result) {
 }
 
 // js/opencode/bridge-io.ts
+import { createHash as createHash2 } from "node:crypto";
 import {
   accessSync,
   constants,
@@ -291,6 +296,15 @@ function findBridge() {
     }
   }
   return { path: null, tried };
+}
+function bridgeBuild(path) {
+  try {
+    const src = readFileSync2(path);
+    const v = versionIn(src.toString("utf8")) ?? "?";
+    return `v${v}+${createHash2("sha256").update(src).digest("hex").slice(0, 8)}`;
+  } catch {
+    return "не читается";
+  }
 }
 function authDir() {
   return process.env.ISKRON_BRIDGE_AUTH_DIR || join2(homedir2(), ".iskron-bridge");
@@ -695,6 +709,7 @@ async function setupTools(ctx, say, onChannel, rootOf) {
   function statusText() {
     return [
       `мост: ${path}`,
+      `сборка: мост ${bridgeBuild(path)}, плагин ${buildOf(import.meta.url)}`,
       loginPending ? `вход: НЕ ВЫПОЛНЕН — ${loginUrl ? `открой в браузере ${loginUrl}` : "заверши вход в браузере"}. Адрес локальный: с другой машины — ssh -L <порт>:127.0.0.1:<порт>, либо личный токен в ~/.iskron-bridge/token (скилл establish-mcp).` : state2.serverSeen ? "вход: есть, сервер отвечает" : "вход: мост ещё не ответил (рукопожатие идёт)",
       `тулов iskron_*: ${state2.listed.length} (${state2.source})`,
       `мостов живых: ${slots.size + (spare ? 1 : 0)}, сессий с мостом: ${slots.size}`
@@ -842,7 +857,7 @@ function setupChannel(ctx, say, freshestRoot) {
       return false;
     }
   }
-  async function deliver(session, text, frame = "кадр") {
+  async function deliver(session, text, frame = "кадр", delivery = "steer") {
     let id = session;
     if (id && !await accepting(id)) {
       say(
@@ -861,7 +876,7 @@ function setupChannel(ctx, say, freshestRoot) {
       return;
     }
     try {
-      await ctx.session.prompt({ sessionID: id, text, delivery: "queue" });
+      await ctx.session.prompt({ sessionID: id, text, delivery });
       say(`Искрон: ${frame} вложен в сессию ${id}`, "info");
     } catch (e) {
       say(`Искрон: ${frame} не вложился в сессию ${id}: ${e.message}`, "error");
@@ -890,10 +905,11 @@ function setupChannel(ctx, say, freshestRoot) {
           );
           return;
         case "stale":
-          if (ev.text) void deliver(session, ev.text, "пачка лежалых кадров");
+          if (ev.text) void deliver(session, ev.text, "пачка лежалых кадров", "queue");
           return;
         case "backlog":
-          if (ev.text) void deliver(session, ev.text, `пачка побудки (${ev.frames?.length ?? 0})`);
+          if (ev.text)
+            void deliver(session, ev.text, `пачка побудки (${ev.frames?.length ?? 0})`, "queue");
           return;
         case "lost":
           if (ev.text) loud(session, ev.text);
