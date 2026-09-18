@@ -57,6 +57,8 @@
 - **ding без ahara ∨ utpatti** — сирота-вещь.
 - **sachverhalt без ahara ∧ utpatti** — висящее состояние.
 - **sinn без vimarsha_of ∧ upadhi ∧ context** — мёртвое понятие.
-- **bildung без arose_from ∨ vimarsha_of** — потерянный зачин.
+- **bildung без arose_from ∨ vimarsha_of** — потерянный зачин. Семя живёт эпистемикой: пока kalpita/anumita/pratyakshita — проступает; **pramanita у семени — не состояние, а сигнал**: удостоверенное семя уже форма, кристаллизуй (смена given_as на sinn или grundsatz). Закрывают его кристаллизация, badhita (узор не проступил), virodha (отказ усматривать) и visarjana.
 - **vollzug без upadhi** — мёртвый рецепт.
-- **grundsatz без upadhi** — декларативный принцип.
+- **grundsatz без upadhi** — декларативный принцип; предложенный (chanda) без upadhi — работа, данность (upeksha) без upadhi и без вопрошания — «учтён, но не применяется и не рассматривается».
+- **grundsatz без derived_from ∧ arose_from** — принцип без записанного основания: назови, из чего он следует или из чего вырос. Основание — стрелка, не атрибут.
+- **sinn или grundsatz в atita** — историческое: квалификатор, не закрытие; применяться не обязан.
