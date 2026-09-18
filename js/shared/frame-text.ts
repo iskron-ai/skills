@@ -37,8 +37,12 @@ export function frameToText(frame: Frame | null | undefined, raw: string): strin
     const zachin = typeof room.zachin === "string" ? ` «${room.zachin}»` : "";
     const kind = typeof f.kind === "string" ? `, род ${f.kind}` : "";
     const stack = typeof f.stack === "string" ? `, стопка ${f.stack}` : "";
+    // Обратного адреса у кадра комнаты нет: send стоянию туда не доходит; ход
+    // для комнат — в списке тулов сессии. Платформенная запись ответа не ждёт.
     lines.push(
-      `слово КОМНАТЫ${zachin}${kind}${stack} — ответ идёт записью в комнату (in_reply_to по id слова), не send стоянию`,
+      origin === "platform"
+        ? `запись КОМНАТЫ${zachin}${kind}${stack}`
+        : `слово КОМНАТЫ${zachin}${kind}${stack} — ответ идёт записью в ту же комнату с in_reply_to по id слова (ход для комнат — в списке тулов сессии), не send стоянию`,
     );
   }
   if (frame.provenance) lines.push(`provenance: ${JSON.stringify(frame.provenance)}`);

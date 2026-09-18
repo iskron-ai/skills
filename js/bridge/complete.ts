@@ -1,63 +1,17 @@
-// Дочитывание и штамп кадра — прежде, чем кадр покинет мост (граф nks-dev: #4234).
+// Штамп кадра — прежде, чем кадр покинет мост (граф nks-dev: #4234).
 import { classifyOrigin, type Frame } from "../shared/channel.ts";
-import { replyText } from "./standing.ts";
-import { log } from "./streams.ts";
-import { post, state } from "./transport.ts";
-import { type JsonRpcMessage } from "./types.ts";
-
-let readCounter = 0;
+import { state } from "./transport.ts";
 
 /**
- * Дочитывание кадра — обязанность моста (слово владельца): платформа режет
- * длинное тело в кадре сокета и называет полную длину в body_chars; до делателя
- * кадр доходит целым, потому что мост, держатель сессии, дочитывает его сам
- * через историю канала, прежде чем отдать сторожу или плагину. Не дочиталось —
- * кадр идёт как есть, с пометкой, что он обрезан: лучше честный обрез, чем
- * молчание.
- *
- * body_chars — длина тела, КАКИМ ОНО ЕХАЛО: сериализованного, с кавычками и
- * экранированием (так говорит справка канала и так замерено на живых кадрах);
- * сравнение с распакованным текстом объявляло целое тело началом и гнало мост
- * дочитывать то, что уже есть, — на всяком теле с кавычками или переводами
- * строк и на пустом теле записи комнаты (граф nks-dev: #5207).
+ * Дочитывания у моста нет — и не потому, что его сняли, а потому что тела
+ * никто не режет: сокет отдаёт сообщение целым или никак, а настоящий обрыв
+ * приходит невалидным JSON и до разбора тела не доживает (слово держателя
+ * платформы, граф nks-dev: #5207). body_chars в кадре — размер сериализованного
+ * тела, не контрольная сумма; сравнивать его с распакованным текстом значило
+ * объявлять целое тело началом и гнать мост дочитывать то, что уже есть.
+ * Чтение слова по адресу (history view=message) остаётся дверью для того слоя
+ * чтения, который сам сказал, что строку укоротил, — у моста такого слоя нет.
  */
-export async function completeFrame(frame: Frame | null): Promise<Frame | null> {
-  if (!frame || typeof frame.body !== "string" || typeof frame.body_chars !== "number")
-    return frame;
-  if (!frame.id || [...JSON.stringify(frame.body)].length >= frame.body_chars) return frame;
-  const realm = state.standing?.realm;
-  if (!realm) return { ...frame, body_read: "truncated: стояние без realm, дочитать нечем" };
-  const id = `iskron-bridge-read-${++readCounter}`;
-  let reply: JsonRpcMessage | null = null;
-  try {
-    await post(
-      {
-        jsonrpc: "2.0",
-        id,
-        method: "tools/call",
-        params: {
-          name: "iskron_channel",
-          arguments: { realm, action: "history", view: "message", message: frame.id },
-        },
-      },
-      (m) => {
-        if (m.id === id) reply = m;
-      },
-    );
-  } catch (e) {
-    log(`кадр ${frame.id} обрезан, дочитать не вышло: ${(e as Error).message}`);
-    return { ...frame, body_read: `truncated: ${(e as Error).message}` };
-  }
-  const text = replyText(reply);
-  const nl = text.indexOf("\n");
-  const tail = text.indexOf("\nПровенанс, как платформа");
-  if (nl < 0 || (reply as JsonRpcMessage | null)?.result?.isError) {
-    return { ...frame, body_read: `truncated: ${text.slice(0, 160)}` };
-  }
-  const body = (tail > nl ? text.slice(nl + 1, tail) : text.slice(nl + 1)).trim();
-  return { ...frame, body, body_read: "history" };
-}
-
 /** Кто говорит — штампует мост: он один знает роль своего стояния. */
 export function stampOrigin(frame: Frame | null): Frame | null {
   if (!frame || frame.type !== "message") return frame;

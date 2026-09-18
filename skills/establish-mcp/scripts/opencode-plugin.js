@@ -2,8 +2,7 @@
 var FLAP_PAUSES_MS = (process.env.ISKRON_CHANNEL_FLAP_MS || "5000,10000,20000,40000,60000").split(",").map(Number).filter((n) => Number.isFinite(n) && n > 0);
 function classifyOrigin(frame, myKarta) {
   const p = frame.provenance ?? {};
-  const observed = p.auth !== void 0 || p.via !== void 0;
-  const noAuthor = observed && p.from_karta_seq == null && !p.from_standing && p.as_person !== true;
+  const noAuthor = p.via === "room" && p.from_karta_seq == null && !p.from_standing;
   if (p.via === "platform" || p.auth === "none" || p.auth === "platform" || noAuthor)
     return "platform";
   if (p.as_person === true) return "human";
@@ -33,7 +32,7 @@ ${raw}`;
     const kind = typeof f.kind === "string" ? `, род ${f.kind}` : "";
     const stack = typeof f.stack === "string" ? `, стопка ${f.stack}` : "";
     lines.push(
-      `слово КОМНАТЫ${zachin}${kind}${stack} — ответ идёт записью в комнату (in_reply_to по id слова), не send стоянию`
+      origin === "platform" ? `запись КОМНАТЫ${zachin}${kind}${stack}` : `слово КОМНАТЫ${zachin}${kind}${stack} — ответ идёт записью в ту же комнату с in_reply_to по id слова (ход для комнат — в списке тулов сессии), не send стоянию`
     );
   }
   if (frame.provenance) lines.push(`provenance: ${JSON.stringify(frame.provenance)}`);

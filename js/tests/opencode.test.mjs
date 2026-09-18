@@ -1616,9 +1616,35 @@ test("a room frame reaches the agent with its whole envelope; defer queues, a pl
     assert.equal(rec.prompts[1].delivery, "steer", "interrupt steers into the running turn");
     assert.match(
       rec.prompts[1].text,
-      /^Кадр канала Искрона от ПЛАТФОРМЫ — побудка/,
+      /^Кадр канала Искрона от ПЛАТФОРМЫ — побудка, не человек и не делатель\nзапись КОМНАТЫ «Стенд комнат», род auto, стопка interrupt\n/,
       "a room record without an author is the platform speaking, not an unknown doer",
     );
+  } finally {
+    await rec.stop();
+  }
+});
+
+test("a doer's word without a standing is still a doer's word: silence of from_standing is not the platform (#2287)", async () => {
+  const b = bridgeEnv("origin-guard");
+  const rec = await plugin(b.env);
+  try {
+    await until(() => rec.tools().has("iskron_channel"), "the channel tool");
+    await rec.call("iskron_channel", { action: "connect" }, "s-og");
+    const [pid] = pidsOf(b.log);
+    const human = {
+      type: "message",
+      id: "og-1",
+      body: "слово человека без стояния",
+      provenance: { auth: "oidc", user: "dmitry", user_karta_seq: 1226 },
+    };
+    appendFileSync(`${b.events}.${pid}`, event("frame", { frame: human, raw: "" }));
+    await until(() => rec.prompts.length === 1, "the frame to be prompted");
+    assert.doesNotMatch(
+      rec.prompts[0].text,
+      /от ПЛАТФОРМЫ/,
+      "no from_standing outside a room is honest silence, not the platform",
+    );
+    assert.equal(rec.prompts[0].delivery, "steer");
   } finally {
     await rec.stop();
   }

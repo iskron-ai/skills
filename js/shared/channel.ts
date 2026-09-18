@@ -84,10 +84,10 @@ export type FrameOrigin = "platform" | "human" | "sibling" | "peer";
  */
 export function classifyOrigin(frame: Frame, myKarta?: string | number | null): FrameOrigin {
   const p = frame.provenance ?? {};
-  // Без автора — только у кадра, который платформа наблюдала (auth или via стоят);
-  // кадр вовсе без провенанса — не её слово, а чьё-то ещё.
-  const observed = p.auth !== undefined || p.via !== undefined;
-  const noAuthor = observed && p.from_karta_seq == null && !p.from_standing && p.as_person !== true;
+  // Запись комнаты без автора пишет сама платформа (left при отзыве стояния):
+  // только там отсутствие автора — её слово. Вне комнаты молчание from_standing —
+  // честное молчание, не заявка (граф nks-dev: #2287).
+  const noAuthor = p.via === "room" && p.from_karta_seq == null && !p.from_standing;
   if (p.via === "platform" || p.auth === "none" || p.auth === "platform" || noAuthor)
     return "platform";
   if (p.as_person === true) return "human";

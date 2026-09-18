@@ -29,7 +29,7 @@ import {
 } from "../shared/standings.ts";
 import { flushBacklogNow, noteBacklog, openBacklog } from "./backlog.ts";
 import { harnessName, notifiedClient } from "./client.ts";
-import { completeFrame, stampOrigin } from "./complete.ts";
+import { stampOrigin } from "./complete.ts";
 import { CFG } from "./config.ts";
 import { dropHoldRecord, keyOf, readHoldRecord, writeHoldRecord } from "./holdrecord.ts";
 import { dropStale, noteStale } from "./stale.ts";
@@ -381,7 +381,7 @@ function openHolder(url: string, key: string): void {
   holder = holdSocket({
     url,
     onFrame: (raw, frame) => {
-      void completeFrame(stampOrigin(frame)).then((full) => {
+      void Promise.resolve(stampOrigin(frame)).then((full) => {
         // Лежалый кадр — принятое, пока место не слушали (после revoke — почта
         // предшественника), либо повтор службы после пересборки сессии: хода не
         // стоит, но и не теряется — уходит одной пачкой на полосу, не по одному.

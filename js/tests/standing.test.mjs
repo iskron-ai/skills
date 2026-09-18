@@ -365,51 +365,13 @@ test("watchdog-codex refuses to guess: no thread id or no door is a code-2 exit 
   assert.equal(noDoor.exit, 2);
 });
 
-test("a truncated frame is read to the end by the bridge before anyone sees it", async (t) => {
-  const { fake, dir, bridge, key } = await connected(t);
-  await waitFor(() => fake.state.ws.size === 1, "the socket");
-  const wd = runClient("watchdog", dir, key);
-  await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
-  const full = "Длинное слово соседа, ".repeat(20).trim();
-  await fake.control({ message_full: { id: "m-long", text: full } });
-  await fake.control({
-    ws_send: JSON.stringify({
-      type: "message",
-      id: "m-long",
-      body: full.slice(0, 40) + "...(truncated)",
-      // Platform counts the SERIALISED body — quotes and escapes included (#5207).
-      body_chars: [...JSON.stringify(full)].length,
-      provenance: { from_standing: "@alari:sosед", auth: "oidc" },
-    }),
-  });
-  await waitFor(() => wd.out.includes("m-long"), "the frame to reach the watchdog");
-  // The watchdog prints the frame as text — the envelope line carries body_read.
-  const envelope = wd.out.split("\n").find((l) => l.startsWith("frame: "));
-  assert.ok(envelope, `no envelope line in:\n${wd.out}`);
-  const frame = JSON.parse(envelope.slice("frame: ".length));
-  assert.equal(frame.body_read, "history");
-  assert.ok(
-    wd.out.replace(/\n/g, " ").includes(full),
-    "the doer must get the whole body, not the cut",
-  );
-  assert.match(
-    wd.out,
-    /от делателя роли неизвестной — стояние @alari:sosед/,
-    "the bridge stamps who speaks",
-  );
-  assert.ok(
-    bridge.notifications.some((n) => n.params?.data?.frame?.body === full),
-    "the plugin-side notification carries the whole body too",
-  );
-});
-
-test("a whole body with quotes and newlines is not read again: body_chars counts the serialised body (#5207)", async (t) => {
+test("the bridge never re-reads a body: body_chars is a size of the serialised body, not a checksum (#5207)", async (t) => {
   const { fake, dir, key } = await connected(t);
   await waitFor(() => fake.state.ws.size === 1, "the socket");
   const wd = runClient("watchdog", dir, key);
   await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
   const body = 'сказал: "да"\nи ещё строка';
-  // No message_full on the fake: a history call would fail loudly and mark the frame truncated.
+  // No message_full on the fake: any re-read would fail loudly and mark the frame truncated.
   await fake.control({
     ws_send: JSON.stringify({
       type: "message",
