@@ -615,6 +615,7 @@ test("a subagent session works through its root's bridge", async () => {
     sessions: [
       { id: "root", time: { updated: 1 } },
       { id: "child", parentID: "root", time: { updated: 2 } },
+      { id: "grandchild", parentID: "child", time: { updated: 3 } },
     ],
   });
   try {
@@ -622,6 +623,13 @@ test("a subagent session works through its root's bridge", async () => {
     await rec.call("iskron_channel", { action: "connect" }, "root");
     await rec.call("iskron_orient", {}, "child");
     assert.equal(pidsOf(b.log).length, 1, "the child must not raise a bridge of its own");
+    // The birth event names the PARENT, not the root: a grandchild announced
+    // this way must still resolve to the root's bridge (#5294, finding 4).
+    rec.emit({ type: "session.created", data: { sessionID: "child", parentID: "root" } });
+    rec.emit({ type: "session.created", data: { sessionID: "grandchild", parentID: "child" } });
+    await delay(100);
+    await rec.call("iskron_orient", {}, "grandchild");
+    assert.equal(pidsOf(b.log).length, 1, "a grandchild must not raise a bridge of its own either");
     appendFileSync(
       `${b.events}.${pidOf(b.log)}`,
       event("frame", { frame: { type: "message", body: "x" }, raw: "" }),
@@ -1105,6 +1113,13 @@ test("stopping the plugin lets the real bridge clear the busy line before the ha
     );
     assert.match(out.content, /Занятость: работаю/, out.content);
     assert.equal(fake.state.status, "работаю");
+    // Against the real bridge the status names a real version on both sides;
+    // the fake bridge carries no VERSION and only proves the shape (v?+hash).
+    assert.match(
+      (await rec.call("iskron_bridge", {}, "s-real")).content,
+      /сборка: мост v\d+\.\d+\.\d+\+[0-9a-f]{8}, плагин v\d+\.\d+\.\d+/,
+      "both builds carry a real version when the bridge is the real one",
+    );
     await fake.control({ statusDelayMs: 2500 }); // slower than the old 2 s kill, faster than the bridge's 3 s ceiling
     stopped = true;
     await rec.stop();
@@ -1249,6 +1264,44 @@ test("a child session that stands gets a bridge of its own: the root keeps its p
     assert.ok(alive(rootPid), "the root's bridge — and so its place — survives the child");
     await rec.call("iskron_orient", {}, "reader");
     assert.equal(pidsOf(b.log).length, 2, "the reader still inherits the root's bridge");
+  } finally {
+    await rec.stop();
+  }
+});
+
+// A child's place can outlive the child: OpenCode sends no «subagent finished»
+// event, so the child's bridge keeps holding. A frame on that place must not be
+// re-addressed to the root — there stands another standing (#5167): it is said
+// aloud and stays in the place's history instead.
+test("a frame on the place of a child session that is gone is not re-addressed to the root: loud, and left in the history", async () => {
+  const gone = new Set();
+  const b = bridgeEnv("child-gone", {
+    FB_TOOLS: JSON.stringify([
+      { name: "iskron_stand", description: "Стояние.", inputSchema: { type: "object" } },
+    ]),
+  });
+  const rec = await plugin(b.env, {
+    sessions: [
+      { id: "root", location: { directory: "/work/root" } },
+      { id: "child", parentID: "root", location: { directory: "/work/child" } },
+    ],
+    gone,
+  });
+  try {
+    await until(() => rec.tools().has("iskron_stand"), "the stand tool", 8000);
+    await rec.call("iskron_stand", { realm: "nks-dev", karta: "#2816" }, "root");
+    await rec.call("iskron_stand", { realm: "nks-dev", karta: "#931" }, "child");
+    const [rootPid, childPid] = pidsOf(b.log);
+    assert.ok(rootPid && childPid, "two bridges");
+    gone.add("child"); // the subagent's session is no more; its bridge still holds
+    appendFileSync(`${b.events}.${childPid}`, event("frame", { frame: frame("ребёнку"), raw: "" }));
+    await until(() => /корню не переадресую/.test(rec.said()), "the loud line");
+    await delay(200);
+    assert.equal(rec.prompts.length, 0, "the root must not receive the child's frame");
+    // The root's own frames still reach the root.
+    appendFileSync(`${b.events}.${rootPid}`, event("frame", { frame: frame("корню"), raw: "" }));
+    await until(() => rec.prompts.length === 1, "the root's frame");
+    assert.equal(rec.prompts[0].sessionID, "root");
   } finally {
     await rec.stop();
   }

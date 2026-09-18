@@ -51,6 +51,15 @@ function buildOf(selfUrl) {
     return `v${VERSION}`;
   }
 }
+function buildOfFile(path) {
+  try {
+    const src = readFileSync(path);
+    const v = versionIn(src.toString("utf8")) ?? "?";
+    return `v${v}+${createHash("sha256").update(src).digest("hex").slice(0, 8)}`;
+  } catch {
+    return null;
+  }
+}
 function versionIn(text) {
   const m = /^(?:const|let|var)\s+VERSION\s*=\s*"([^"]+)"/m.exec(text);
   return m ? m[1] : null;
@@ -260,7 +269,6 @@ function resultToContent(result) {
 }
 
 // js/opencode/bridge-io.ts
-import { createHash as createHash2 } from "node:crypto";
 import {
   accessSync,
   constants,
@@ -297,14 +305,8 @@ function findBridge() {
   }
   return { path: null, tried };
 }
-function bridgeBuild(path) {
-  try {
-    const src = readFileSync2(path);
-    const v = versionIn(src.toString("utf8")) ?? "?";
-    return `v${v}+${createHash2("sha256").update(src).digest("hex").slice(0, 8)}`;
-  } catch {
-    return "не читается";
-  }
+function buildsLine(bridgePath, pluginUrl) {
+  return `сборка: мост ${buildOfFile(bridgePath) ?? "не читается"}, плагин ${buildOf(pluginUrl)}`;
 }
 function authDir() {
   return process.env.ISKRON_BRIDGE_AUTH_DIR || join2(homedir2(), ".iskron-bridge");
@@ -543,6 +545,7 @@ async function setupTools(ctx, say, onChannel, rootOf) {
     } };
   }
   const path = found.path;
+  const builds = buildsLine(path, import.meta.url);
   const slots = /* @__PURE__ */ new Map();
   let spare = null;
   let stopped = false;
@@ -599,7 +602,7 @@ async function setupTools(ctx, say, onChannel, rootOf) {
         if ((kind === "held" || kind === "released") && typeof params?.data?.key === "string")
           slot.key = params.data.key;
         if (kind === "released" || kind === "dead" || kind === "evicted") slot.holding = false;
-        onChannel(slot.session, params);
+        onChannel(slot.session, params, !!slot.child);
       },
       (e) => {
         if (slot.ownStop || stopped || !slot.holding) return;
@@ -709,7 +712,7 @@ async function setupTools(ctx, say, onChannel, rootOf) {
   function statusText() {
     return [
       `мост: ${path}`,
-      `сборка: мост ${bridgeBuild(path)}, плагин ${buildOf(import.meta.url)}`,
+      builds,
       loginPending ? `вход: НЕ ВЫПОЛНЕН — ${loginUrl ? `открой в браузере ${loginUrl}` : "заверши вход в браузере"}. Адрес локальный: с другой машины — ssh -L <порт>:127.0.0.1:<порт>, либо личный токен в ~/.iskron-bridge/token (скилл establish-mcp).` : state2.serverSeen ? "вход: есть, сервер отвечает" : "вход: мост ещё не ответил (рукопожатие идёт)",
       `тулов iskron_*: ${state2.listed.length} (${state2.source})`,
       `мостов живых: ${slots.size + (spare ? 1 : 0)}, сессий с мостом: ${slots.size}`
@@ -857,8 +860,15 @@ function setupChannel(ctx, say, freshestRoot) {
       return false;
     }
   }
-  async function deliver(session, text, frame = "кадр", delivery = "steer") {
+  async function deliver(session, text, frame = "кадр", delivery = "steer", child = false) {
     let id = session;
+    if (child && (!id || !await accepting(id))) {
+      say(
+        `Искрон: ${frame} на место дочерней сессии ${id ?? "?"}, которой больше нет, — корню не переадресую; кадр остаётся в истории стояния (iskron_channel history), место сними revoke — ${text.slice(0, 120)}`,
+        "error"
+      );
+      return;
+    }
     if (id && !await accepting(id)) {
       say(
         `Искрон: сессия ${id} закрыта или в архиве — ${frame} идёт в свежайшую виденную`,
@@ -887,7 +897,7 @@ function setupChannel(ctx, say, freshestRoot) {
     void deliver(session, text);
   }
   return {
-    onEvent(session, params) {
+    onEvent(session, params, child = false) {
       const ev = params?.data;
       if (!ev || typeof ev !== "object") return;
       switch (ev.kind) {
@@ -895,7 +905,13 @@ function setupChannel(ctx, say, freshestRoot) {
           const frame = ev.frame ?? null;
           if (frame?.type === "hello") return say("Искрон: канал слушает", "info");
           if (frame?.type === "status") return;
-          void deliver(session, frameToText(frame, ev.raw ?? ""), `кадр ${frame?.id ?? "без id"}`);
+          void deliver(
+            session,
+            frameToText(frame, ev.raw ?? ""),
+            `кадр ${frame?.id ?? "без id"}`,
+            "steer",
+            child
+          );
           return;
         }
         case "dead":
@@ -1051,7 +1067,7 @@ async function setup(ctx) {
   };
   try {
     const ch = setupChannel(ctx, say, freshestRoot);
-    onChannel = (s, p) => ch.onEvent(s, p);
+    onChannel = (s, p, c) => ch.onEvent(s, p, c);
   } catch (e) {
     say(`Искрон: канал не встал — ${e.message}`, "error");
   }
@@ -1083,11 +1099,17 @@ async function setup(ctx) {
             seen.delete(id);
             half.forget(id);
             break;
-          case "session.created":
+          case "session.created": {
             if (!id) break;
-            if (typeof ev.data?.parentID === "string") roots.set(id, ev.data.parentID);
-            void rootOf(id);
+            const parent = ev.data?.parentID;
+            if (typeof parent === "string")
+              void rootOf(parent).then((root) => {
+                roots.set(id, root);
+                seen.set(root, Date.now());
+              });
+            else void rootOf(id);
             break;
+          }
           case "skill.updated":
             void commands.refresh();
             break;

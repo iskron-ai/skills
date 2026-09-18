@@ -1,6 +1,5 @@
 // Чистые помощники половины «тулы» (tools.ts): где мост, кэш списка тулов
 // рядом с грантом, рукопожатие, ждущее вход человека, страничный tools/list.
-import { createHash } from "node:crypto";
 import {
   accessSync,
   constants,
@@ -16,7 +15,7 @@ import { join, resolve } from "node:path";
 import { type Bridge, resultToContent } from "../shared/bridge-client.ts";
 import { OPENCODE_CLIENT } from "../shared/clients.ts";
 import { homeBridgePath } from "../shared/home.ts";
-import { versionIn } from "../shared/version.ts";
+import { buildOf, buildOfFile } from "../shared/version.ts";
 
 /** Потолок самого рукопожатия; истёк — рукопожатие повторяется, не сдаётся. */
 export const HANDSHAKE_MS = Number(process.env.ISKRON_MCP_HANDSHAKE_MS || 600000);
@@ -52,15 +51,14 @@ export function findBridge(): { path: string | null; tried: string[] } {
   return { path: null, tried };
 }
 
-/** Сборка моста по его файлу — `vX.Y.Z+хеш`, как он сам себя называет: версия из текста, хеш по байтам. */
-export function bridgeBuild(path: string): string {
-  try {
-    const src = readFileSync(path);
-    const v = versionIn(src.toString("utf8")) ?? "?";
-    return `v${v}+${createHash("sha256").update(src).digest("hex").slice(0, 8)}`;
-  } catch {
-    return "не читается";
-  }
+/**
+ * Строка обеих сборок для ответа iskron_bridge — моста по его файлу и плагина
+ * по своему. Обе печатаются: домашние копии бывают из разных источников.
+ * Снимается один раз при подъёме: самообновление переписывает оба файла на
+ * месте, а бежит по-прежнему прежняя сборка.
+ */
+export function buildsLine(bridgePath: string, pluginUrl: string): string {
+  return `сборка: мост ${buildOfFile(bridgePath) ?? "не читается"}, плагин ${buildOf(pluginUrl)}`;
 }
 
 export function authDir(): string {

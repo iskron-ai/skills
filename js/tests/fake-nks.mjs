@@ -134,6 +134,7 @@ export async function startFakeNks(opts = {}) {
     silentNewSession: opts.silentNewSession ?? false,
     ignoreStandingHeader: opts.ignoreStandingHeader ?? false, // поверхность старше автопривязки: заголовок молча пропускается
     standingRefuseNext: 0, // столько ближайших register отказать проходящим отказом
+    standingSeatGoneNext: 0, // столько ближайших register отказать словами «места нет» — сиденье истекло
     // The resource indicator each leg carried. A real server turns this into
     // the token's audience, so it is the only place a test can see what the
     // bridge actually asked to be issued for.
@@ -217,6 +218,7 @@ export async function startFakeNks(opts = {}) {
         "sessionFollowsToken",
         "silentNewSession",
         "standingRefuseNext",
+        "standingSeatGoneNext",
         "rooms",
         "boardText",
         "hooksText",
@@ -514,6 +516,27 @@ export async function startFakeNks(opts = {}) {
       if (msg.method === "tools/call" && msg.params?.name === "iskron_channel") {
         const a = msg.params.arguments ?? {};
         if (a.action === "register") {
+          if (st.standingSeatGoneNext > 0) {
+            st.standingSeatGoneNext--;
+            return json(
+              res,
+              200,
+              {
+                jsonrpc: "2.0",
+                id: msg.id,
+                result: {
+                  isError: true,
+                  content: [
+                    {
+                      type: "text",
+                      text: `Отказано (404): no such standing «${a.name ?? ""}» — take it with connect`,
+                    },
+                  ],
+                },
+              },
+              extra,
+            );
+          }
           if (st.standingRefuseNext > 0) {
             st.standingRefuseNext--;
             return json(

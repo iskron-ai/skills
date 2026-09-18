@@ -80,10 +80,10 @@ async function setup(ctx: Context): Promise<() => void> {
 
   // Половины ставятся порознь и каждая под своим try: сорвавшаяся одна не
   // должна унести другую — и не должна унести загрузку плагина.
-  let onChannel: (session: string | null, params: unknown) => void = () => {};
+  let onChannel: (session: string | null, params: unknown, child?: boolean) => void = () => {};
   try {
     const ch = setupChannel(ctx, say, freshestRoot);
-    onChannel = (s, p) => ch.onEvent(s, p);
+    onChannel = (s, p, c) => ch.onEvent(s, p, c);
   } catch (e) {
     say(`Искрон: канал не встал — ${(e as Error).message}`, "error");
   }
@@ -115,12 +115,20 @@ async function setup(ctx: Context): Promise<() => void> {
             seen.delete(id);
             half.forget(id);
             break;
-          case "session.created":
-            // data.parentID есть в самом событии: корень дочерней известен без чтения.
+          case "session.created": {
+            // data.parentID есть в самом событии, но это родитель, не корень:
+            // на вложенности два и глубже корень — корень родителя, иначе
+            // внук получил бы отдельный мост вместо родительского.
             if (!id) break;
-            if (typeof ev.data?.parentID === "string") roots.set(id, ev.data.parentID);
-            void rootOf(id);
+            const parent = ev.data?.parentID;
+            if (typeof parent === "string")
+              void rootOf(parent).then((root) => {
+                roots.set(id, root);
+                seen.set(root, Date.now());
+              });
+            else void rootOf(id);
             break;
+          }
           case "skill.updated":
             void commands.refresh();
             break;

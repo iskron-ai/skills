@@ -2026,6 +2026,7 @@ function ensureStanding() {
       } else if (seatIsGone(got)) {
         log(`the standing's seat is gone, forgetting it: ${replyText(got).slice(0, 200)}`);
         state.standing = null;
+        releaseStanding("место у платформы истекло — register: места нет", true);
       } else {
         log(
           `could not re-register the standing this time, will retry before the next call: ${replyText(got).slice(0, 200)}`

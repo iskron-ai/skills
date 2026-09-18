@@ -21,11 +21,13 @@ const tools = new Set(surface.tools);
 
 // iskron_-prefixed tokens that are NOT tool names (credential/hook prefixes shown
 // in examples). Extend deliberately; every entry is a claim that the token is
-// not meant to resolve as a tool.
-const NON_TOOL_TOKENS = new Set([
+// not meant to resolve as a tool — and the claim is scoped: a token that exists
+// only inside one harness is exempt only in prose that speaks of that harness.
+const NON_TOOL_TOKENS = new Map([
   // The OpenCode plugin's own status tool (js/opencode/tools.ts), raised beside
-  // the server's tools: it never reaches the server, so the snapshot never lists it.
-  "iskron_bridge",
+  // the server's tools: it never reaches the server, so the snapshot never lists
+  // it. Named anywhere else it is a dead pointer, and the gate must say so.
+  ["iskron_bridge", (text) => /OpenCode/.test(text)],
 ]);
 
 // Vocabularies that mean the same thing wherever they appear. Deliberately NOT
@@ -67,7 +69,7 @@ for (const file of mdFiles) {
     const bare = tok.replace(/_+$/, "");
     if (tools.has(bare)) continue;
     if ([...tools].some((t) => t.startsWith(tok.endsWith("_") ? tok : tok + "_"))) continue; // family shorthand (iskron_add, iskron_add_*)
-    if (NON_TOOL_TOKENS.has(bare)) continue;
+    if (NON_TOOL_TOKENS.get(bare)?.(text)) continue;
     errors.push(`${rel}: tool name "${tok}" not in the surface snapshot`);
   }
 

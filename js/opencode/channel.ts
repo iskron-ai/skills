@@ -25,8 +25,11 @@ import type { Context } from "./plugin.ts";
 import { type Say } from "./tools.ts";
 
 export interface Channel {
-  /** Дверь половины «тулы»: событие моста сессии `session` (null — мост ещё ничей). */
-  onEvent(session: string | null, params: unknown): void;
+  /**
+   * Дверь половины «тулы»: событие моста сессии `session` (null — мост ещё
+   * ничей); `child` — мост дочерней сессии, вставшей своим вызовом.
+   */
+  onEvent(session: string | null, params: unknown, child?: boolean): void;
 }
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- уведомления моста без схемы */
@@ -50,8 +53,19 @@ export function setupChannel(ctx: Context, say: Say, freshestRoot: () => string 
     text: string,
     frame = "кадр",
     delivery: "steer" | "queue" = "steer",
+    child = false,
   ): Promise<void> {
     let id = session;
+    if (child && (!id || !(await accepting(id)))) {
+      // Место дочерней сессии пережило её: корню этот кадр не адресован — там
+      // стоит другое стояние (#5167). Громко, и кадр остаётся в истории места.
+      say(
+        `Искрон: ${frame} на место дочерней сессии ${id ?? "?"}, которой больше нет, — корню не переадресую; ` +
+          `кадр остаётся в истории стояния (iskron_channel history), место сними revoke — ${text.slice(0, 120)}`,
+        "error",
+      );
+      return;
+    }
     if (id && !(await accepting(id))) {
       say(
         `Искрон: сессия ${id} закрыта или в архиве — ${frame} идёт в свежайшую виденную`,
@@ -70,7 +84,7 @@ export function setupChannel(ctx: Context, say: Say, freshestRoot: () => string 
       return;
     }
     try {
-      await ctx.session.prompt({ sessionID: id, text, delivery } as any);
+      await ctx.session.prompt({ sessionID: id, text, delivery });
       say(`Искрон: ${frame} вложен в сессию ${id}`, "info");
     } catch (e) {
       say(`Искрон: ${frame} не вложился в сессию ${id}: ${(e as Error).message}`, "error");
@@ -83,7 +97,7 @@ export function setupChannel(ctx: Context, say: Say, freshestRoot: () => string 
   }
 
   return {
-    onEvent(session, params: any) {
+    onEvent(session, params: any, child = false) {
       const ev = params?.data as ChannelEvent | undefined;
       if (!ev || typeof ev !== "object") return;
       switch (ev.kind) {
@@ -92,7 +106,13 @@ export function setupChannel(ctx: Context, say: Say, freshestRoot: () => string 
           // Служебные кадры не будят: hello доказывает, что сокет держат, и только.
           if (frame?.type === "hello") return say("Искрон: канал слушает", "info");
           if (frame?.type === "status") return;
-          void deliver(session, frameToText(frame, ev.raw ?? ""), `кадр ${frame?.id ?? "без id"}`);
+          void deliver(
+            session,
+            frameToText(frame, ev.raw ?? ""),
+            `кадр ${frame?.id ?? "без id"}`,
+            "steer",
+            child,
+          );
           return;
         }
         case "dead":
@@ -108,6 +128,9 @@ export function setupChannel(ctx: Context, say: Say, freshestRoot: () => string 
           return;
         case "backlog":
           // Побудка с накопленным — один промпт на пачку, не ход на кадр (#5140).
+          // Очередью — сознательная развилка: пачка в полтора десятка кадров,
+          // вставленная посреди хода, режет работу делателя; одним промптом она
+          // по одному за ход не всплывёт, а ждёт лишь конца текущего хода.
           if (ev.text)
             void deliver(session, ev.text, `пачка побудки (${ev.frames?.length ?? 0})`, "queue");
           return;

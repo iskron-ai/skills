@@ -1,4 +1,5 @@
 import { errorMessage } from "./errors.ts";
+import { releaseStanding } from "./hold.ts";
 import { normKarta, normName } from "./names.ts";
 import { debug, log } from "./streams.ts";
 import { post, state } from "./transport.ts";
@@ -71,8 +72,12 @@ export function ensureStanding(): Promise<void> {
       } else if (seatIsGone(got)) {
         // The seat itself is gone (expired while we were away) — say so and let
         // the agent take it back with connect; never guess a different name.
+        // The hold goes with the binding: a socket kept for a seat the platform
+        // no longer knows would make the bridge «lead» a place it cannot name,
+        // and the next connect would replace it silently (#5168).
         log(`the standing's seat is gone, forgetting it: ${replyText(got).slice(0, 200)}`);
         state.standing = null;
+        releaseStanding("место у платформы истекло — register: места нет", true);
       } else {
         // Any other refusal is the hour's, not the seat's: keep the memory and
         // try again before the next call. Forgetting here is what left a bridge

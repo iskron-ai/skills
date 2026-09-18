@@ -1015,6 +1015,65 @@ test("a dead token forgets the hold record; a live holder's place is not taken f
   );
 });
 
+// A seat the platform no longer knows («no such standing — take it with
+// connect») used to drop only the binding: the socket and the hold record
+// stayed, the bridge still «led» a place it could not name, and the next
+// connect under any place replaced the held socket silently (#5168).
+test("a seat gone at the platform releases the hold too: socket closed aloud, record dropped, the next connect is a fresh start", async (t) => {
+  const { fake, dir, bridge, standings } = await connected(t);
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  // The fake keeps a closed socket in its set until both ends finish: count
+  // sockets the bridge OPENED, not those the fake still holds.
+  const known = new Set(fake.state.ws);
+  const fresh = () => [...fake.state.ws].filter((x) => !known.has(x));
+  const reg = await bridge.call("tools/call", 4, {
+    name: "iskron_channel",
+    arguments: { ...CONNECT, action: "register" },
+  });
+  assert.match(reg.result.content[0].text, /зарегистрировано/);
+  assert.ok(
+    readdirSync(standings).some((f) => f.endsWith(".hold")),
+    "the place is held before the seat expires",
+  );
+  // The session turns over and the replayed register is refused as «seat gone».
+  await fake.control({ kill_session: true, standingSeatGoneNext: 1 });
+  await bridge.call("tools/call", 5, {
+    name: "iskron_channel",
+    arguments: { realm: "nks-dev", action: "list" },
+  });
+  await waitFor(
+    () => bridge.notifications.some((n) => n.params?.data?.kind === "released"),
+    "the release to be said aloud, not done silently",
+  );
+  await waitFor(
+    () =>
+      /released .*места нет.*\(record dropped\)/.test(
+        readFileSync(join(dir, "standings.log"), "utf8"),
+      ),
+    "the standing's journal to name the seat gone and the record dropped",
+  );
+  assert.ok(
+    !readdirSync(standings).some((f) => f.endsWith(".hold")),
+    "a seat the platform forgot is not kept on disk",
+  );
+  // The bridge leads nothing now: a connect under another name is a fresh
+  // place, not a silent replacement of a held one.
+  const connects = fake.state.counts.connect;
+  const again = await bridge.call("tools/call", 6, {
+    name: "iskron_channel",
+    arguments: { ...CONNECT, name: "proba-2" },
+  });
+  const said = (again.result?.content ?? []).map((c) => c.text ?? "").join("\n");
+  assert.ok(!again.result?.isError, `a fresh connect after a gone seat must pass:\n${said}`);
+  assert.ok(!/уже ведёт место/.test(said), said);
+  assert.equal(fake.state.counts.connect, connects + 1, "a fresh connect, not a resume");
+  await waitFor(() => fresh().length === 1, "the new place's socket");
+  assert.ok(
+    readdirSync(standings).some((f) => f.endsWith(".hold")),
+    "the new place is held on disk",
+  );
+});
+
 // ── keeping the hearing (graph nks-dev: #5140) ───────────────────────────────
 
 // The OpenCode plugin has no local socket client, so «attached» never reached

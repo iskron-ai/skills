@@ -19,11 +19,10 @@
 // всегда), а список с сервера приходит фоном и подменяется через
 // ctx.tool.reload() — сколько бы ни длился вход человека.
 import { Bridge, toParameters } from "../shared/bridge-client.ts";
-import { buildOf } from "../shared/version.ts";
 import {
   AUTH_POLL_MS,
   authDir,
-  bridgeBuild,
+  buildsLine,
   findBridge,
   handshake,
   listTools,
@@ -86,7 +85,7 @@ export interface ToolsHalf {
 export async function setupTools(
   ctx: Context,
   say: Say,
-  onChannel: (session: string | null, params: any) => void,
+  onChannel: (session: string | null, params: any, child?: boolean) => void,
   rootOf: (sessionID: string) => Promise<string>,
 ): Promise<ToolsHalf> {
   const found = findBridge();
@@ -100,6 +99,7 @@ export async function setupTools(
     return { forget() {}, stop() {} };
   }
   const path = found.path;
+  const builds = buildsLine(path, import.meta.url);
 
   const slots = new Map<string, Slot>();
   let spare: Slot | null = null;
@@ -168,7 +168,7 @@ export async function setupTools(
         if ((kind === "held" || kind === "released") && typeof params?.data?.key === "string")
           slot.key = params.data.key; // ключ места — точный адрес записи для возврата
         if (kind === "released" || kind === "dead" || kind === "evicted") slot.holding = false;
-        onChannel(slot.session, params);
+        onChannel(slot.session, params, !!slot.child);
       },
       (e) => {
         // Держащий мост вышел не по нашей воле — слух потерян, и это слово в
@@ -310,11 +310,9 @@ export async function setupTools(
   };
 
   function statusText(): string {
-    // Сборки — обе: делатель на вахте отвечает, какой сборкой держится,
-    // не заглядывая в файлы (опрос стояний по плагину OpenCode, #5233).
     return [
       `мост: ${path}`,
-      `сборка: мост ${bridgeBuild(path)}, плагин ${buildOf(import.meta.url)}`,
+      builds,
       loginPending
         ? `вход: НЕ ВЫПОЛНЕН — ${loginUrl ? `открой в браузере ${loginUrl}` : "заверши вход в браузере"}. ` +
           "Адрес локальный: с другой машины — ssh -L <порт>:127.0.0.1:<порт>, либо личный токен в ~/.iskron-bridge/token (скилл establish-mcp)."
