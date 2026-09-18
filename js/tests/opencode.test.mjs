@@ -1544,3 +1544,82 @@ test("a dead child bridge is replaced by a fresh child bridge that resumes the c
     await rec.stop();
   }
 });
+
+// ── room frames (api 0.71.0: envelope flattened ahead of provenance and body) ──
+
+test("a room frame reaches the agent with its whole envelope; defer queues, a platform record with no author is a wake-up", async () => {
+  const b = bridgeEnv("room");
+  const rec = await plugin(b.env);
+  try {
+    await serverTools(rec);
+    await until(() => rec.tools().has("iskron_channel"), "the channel tool");
+    await rec.call("iskron_channel", { action: "connect" }, "s-room");
+    const [pid] = pidsOf(b.log);
+    const said = {
+      type: "message",
+      id: "room-msg-1",
+      room: { id: "r-1", zachin: "Стенд комнат", realm: "nks-dev", status: "open" },
+      entry_id: 41,
+      kind: "text",
+      stack: "defer",
+      stack_by: "platform",
+      body: "слово участника",
+      body_chars: 17,
+      provenance: { from_standing: "@aleksei:probe", from_karta_seq: 48, auth: "pat", via: "room" },
+    };
+    appendFileSync(`${b.events}.${pid}`, event("frame", { frame: said, raw: "" }));
+    await until(() => rec.prompts.length === 1, "the room frame to be prompted");
+    assert.equal(
+      rec.prompts[0].delivery,
+      "queue",
+      "stack=defer must not interrupt the running turn (#4957)",
+    );
+    const text = rec.prompts[0].text;
+    assert.match(
+      text,
+      /^Кадр канала Искрона от делателя роли #48/,
+      "a participant's word is a doer's word, by via+auth",
+    );
+    assert.match(
+      text,
+      /слово КОМНАТЫ «Стенд комнат», род text, стопка defer/,
+      "the room line names zachin, kind and stack",
+    );
+    const envelope = JSON.parse(
+      text
+        .split("\n")
+        .find((l) => l.startsWith("frame: "))
+        .slice(7),
+    );
+    assert.deepEqual(
+      envelope.room,
+      said.room,
+      "the room envelope must reach the agent, not be dropped by a key whitelist",
+    );
+    assert.equal(envelope.kind, "text");
+    assert.equal(envelope.stack, "defer");
+    assert.equal(envelope.entry_id, 41);
+
+    const left = {
+      type: "message",
+      id: "room-msg-2",
+      room: said.room,
+      entry_id: 42,
+      kind: "auto",
+      stack: "interrupt",
+      body: "",
+      body_chars: 2,
+      provenance: { auth: "platform", via: "room" },
+    };
+    appendFileSync(`${b.events}.${pid}`, event("frame", { frame: left, raw: "" }));
+    await until(() => rec.prompts.length === 2, "the platform record to be prompted");
+    assert.equal(rec.prompts[1].delivery, "steer", "interrupt steers into the running turn");
+    assert.match(
+      rec.prompts[1].text,
+      /^Кадр канала Искрона от ПЛАТФОРМЫ — побудка/,
+      "a room record without an author is the platform speaking, not an unknown doer",
+    );
+  } finally {
+    await rec.stop();
+  }
+});

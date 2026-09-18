@@ -377,7 +377,8 @@ test("a truncated frame is read to the end by the bridge before anyone sees it",
       type: "message",
       id: "m-long",
       body: full.slice(0, 40) + "...(truncated)",
-      body_chars: [...full].length,
+      // Platform counts the SERIALISED body — quotes and escapes included (#5207).
+      body_chars: [...JSON.stringify(full)].length,
       provenance: { from_standing: "@alari:sosед", auth: "oidc" },
     }),
   });
@@ -400,6 +401,32 @@ test("a truncated frame is read to the end by the bridge before anyone sees it",
     bridge.notifications.some((n) => n.params?.data?.frame?.body === full),
     "the plugin-side notification carries the whole body too",
   );
+});
+
+test("a whole body with quotes and newlines is not read again: body_chars counts the serialised body (#5207)", async (t) => {
+  const { fake, dir, key } = await connected(t);
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog", dir, key);
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
+  const body = 'сказал: "да"\nи ещё строка';
+  // No message_full on the fake: a history call would fail loudly and mark the frame truncated.
+  await fake.control({
+    ws_send: JSON.stringify({
+      type: "message",
+      id: "m-whole",
+      body,
+      body_chars: [...JSON.stringify(body)].length,
+      provenance: { from_standing: "@alari:sosед", auth: "oidc" },
+    }),
+  });
+  await waitFor(() => wd.out.includes("m-whole"), "the frame to reach the watchdog");
+  const envelope = wd.out.split("\n").find((l) => l.startsWith("frame: "));
+  assert.ok(envelope, `no envelope line in:\n${wd.out}`);
+  const frame = JSON.parse(envelope.slice("frame: ".length));
+  assert.equal(frame.body_read, undefined, "a whole body must not be re-read nor marked truncated");
+  assert.ok(wd.out.includes("и ещё строка"), "the doer gets the body as it came");
+  await fake.control({ ws_close: 4001 });
+  await wd.done;
 });
 
 test("watchdog-exit exits 0 on the first message and lets service frames pass", async (t) => {

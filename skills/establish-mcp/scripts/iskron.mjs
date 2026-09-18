@@ -1484,7 +1484,10 @@ function deadTokenAdvice(code) {
 }
 function classifyOrigin(frame2, myKarta) {
   const p = frame2.provenance ?? {};
-  if (p.via === "platform" || p.auth === "none") return "platform";
+  const observed = p.auth !== void 0 || p.via !== void 0;
+  const noAuthor = observed && p.from_karta_seq == null && !p.from_standing && p.as_person !== true;
+  if (p.via === "platform" || p.auth === "none" || p.auth === "platform" || noAuthor)
+    return "platform";
   if (p.as_person === true) return "human";
   if (p.from_karta_seq != null && p.user_karta_seq != null && p.from_karta_seq === p.user_karta_seq)
     return "human";
@@ -1640,7 +1643,8 @@ var holdFilePathOf = (authDir, key) => join5(standingsDirOf(authDir), `${hashOf(
 var seenFilePathOf = (authDir, key) => join5(standingsDirOf(authDir), `${hashOf(key)}.seen`);
 
 // js/shared/frame-text.ts
-var ENVELOPE_KEYS = ["id", "received_at", "stale", "content_type", "body_chars", "body_read"];
+var NOT_ENVELOPE = /* @__PURE__ */ new Set(["body", "provenance", "type", "origin"]);
+var ENVELOPE_FIRST = ["id", "received_at", "stale", "content_type", "body_chars", "body_read"];
 function frameToText(frame2, raw) {
   if (!frame2) return `Кадр канала Искрона:
 ${raw}`;
@@ -1650,9 +1654,22 @@ ${raw}`;
   const role = p.from_karta_seq != null ? `роли #${p.from_karta_seq}` : "роли неизвестной";
   const who = origin === "platform" ? "от ПЛАТФОРМЫ — побудка, не человек и не делатель" : origin === "human" ? `от ЧЕЛОВЕКА${p.user ? ` @${p.user}` : ""} (${role})${standing}` : origin === "sibling" ? `от БРАТА по твоей роли (#${p.from_karta_seq})${standing} — другое стояние той же роли` : `от делателя ${role}${standing}`;
   const lines = [`Кадр канала Искрона ${who}`];
+  const room = frame2.room;
+  if (room && typeof room === "object") {
+    const f = frame2;
+    const zachin = typeof room.zachin === "string" ? ` «${room.zachin}»` : "";
+    const kind = typeof f.kind === "string" ? `, род ${f.kind}` : "";
+    const stack = typeof f.stack === "string" ? `, стопка ${f.stack}` : "";
+    lines.push(
+      `слово КОМНАТЫ${zachin}${kind}${stack} — ответ идёт записью в комнату (in_reply_to по id слова), не send стоянию`
+    );
+  }
   if (frame2.provenance) lines.push(`provenance: ${JSON.stringify(frame2.provenance)}`);
   const envelope = {};
-  for (const k of ENVELOPE_KEYS) if (frame2[k] !== void 0) envelope[k] = frame2[k];
+  const rec = frame2;
+  for (const k of ENVELOPE_FIRST) if (rec[k] !== void 0) envelope[k] = rec[k];
+  for (const k of Object.keys(rec))
+    if (!(k in envelope) && !NOT_ENVELOPE.has(k) && rec[k] !== void 0) envelope[k] = rec[k];
   if (Object.keys(envelope).length) lines.push(`frame: ${JSON.stringify(envelope)}`);
   const body = typeof frame2.body === "string" ? frame2.body : frame2.body === void 0 ? raw : JSON.stringify(frame2.body, null, 1).replace(/\n\s*/g, " ");
   return `${lines.join("\n")}
@@ -2061,7 +2078,7 @@ var readCounter = 0;
 async function completeFrame(frame2) {
   if (!frame2 || typeof frame2.body !== "string" || typeof frame2.body_chars !== "number")
     return frame2;
-  if (!frame2.id || [...frame2.body].length >= frame2.body_chars) return frame2;
+  if (!frame2.id || [...JSON.stringify(frame2.body)].length >= frame2.body_chars) return frame2;
   const realm = state.standing?.realm;
   if (!realm) return { ...frame2, body_read: "truncated: стояние без realm, дочитать нечем" };
   const id = `iskron-bridge-read-${++readCounter}`;

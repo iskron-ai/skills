@@ -61,7 +61,7 @@ export function setupChannel(ctx: Context, say: Say, freshestRoot: () => string 
       // стоит другое стояние (#5167). Громко, и кадр остаётся в истории места.
       say(
         `Искрон: ${frame} на место дочерней сессии ${id ?? "?"}, которой больше нет, — корню не переадресую; ` +
-          `кадр остаётся в истории стояния (iskron_channel history), место сними revoke — ${text.slice(0, 120)}`,
+          `кадр остаётся в истории стояния (iskron_channel history); место дочерней сессии — лишнее на канале, где корень стоит дальше: снимать ли его revoke, решай, зная цену (standing) —${text.slice(0, 120)}`,
         "error",
       );
       return;
@@ -106,11 +106,14 @@ export function setupChannel(ctx: Context, say: Say, freshestRoot: () => string 
           // Служебные кадры не будят: hello доказывает, что сокет держат, и только.
           if (frame?.type === "hello") return say("Искрон: канал слушает", "info");
           if (frame?.type === "status") return;
+          // Стопка слова комнаты (#4957, дешёвая ступень): defer — не прерывать,
+          // очередью до конца хода; interrupt и кадр без стопки — вставкой в идущий ход.
+          const stack = (frame as Record<string, unknown> | null)?.stack;
           void deliver(
             session,
             frameToText(frame, ev.raw ?? ""),
             `кадр ${frame?.id ?? "без id"}`,
-            "steer",
+            stack === "defer" ? "queue" : "steer",
             child,
           );
           return;

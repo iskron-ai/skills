@@ -14,11 +14,17 @@ let readCounter = 0;
  * через историю канала, прежде чем отдать сторожу или плагину. Не дочиталось —
  * кадр идёт как есть, с пометкой, что он обрезан: лучше честный обрез, чем
  * молчание.
+ *
+ * body_chars — длина тела, КАКИМ ОНО ЕХАЛО: сериализованного, с кавычками и
+ * экранированием (так говорит справка канала и так замерено на живых кадрах);
+ * сравнение с распакованным текстом объявляло целое тело началом и гнало мост
+ * дочитывать то, что уже есть, — на всяком теле с кавычками или переводами
+ * строк и на пустом теле записи комнаты (граф nks-dev: #5207).
  */
 export async function completeFrame(frame: Frame | null): Promise<Frame | null> {
   if (!frame || typeof frame.body !== "string" || typeof frame.body_chars !== "number")
     return frame;
-  if (!frame.id || [...frame.body].length >= frame.body_chars) return frame;
+  if (!frame.id || [...JSON.stringify(frame.body)].length >= frame.body_chars) return frame;
   const realm = state.standing?.realm;
   if (!realm) return { ...frame, body_read: "truncated: стояние без realm, дочитать нечем" };
   const id = `iskron-bridge-read-${++readCounter}`;
