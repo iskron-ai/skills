@@ -7,25 +7,42 @@
 // (один раз за сессию: второй join — повтор, не разговор), занятость. Ответ
 // один: имя, команда сторожа, ожидавшие кадры, хук, расписка стука.
 // Отсутствие тула в сессии — тулы идут мимо моста либо мост старой сборки.
-import { absorbChannelReply } from "./absorb.ts";
+import { statSync } from "node:fs";
+import { isAbsolute } from "node:path";
+
+import { nameOf, parseBoard } from "./board.ts";
+import { callTool as call, leadsOtherPlace, otherPlaceWord, short } from "./call.ts";
 import { CFG } from "./config.ts";
 import {
   awaitHello,
-  deadPredecessor,
   hasStatusAddressFor,
   holdsStanding,
   isParked,
-  resumeFromDisk,
+  noteStandCwd,
   wasEvicted,
 } from "./hold.ts";
+import { keyOf } from "./holdrecord.ts";
 import { returnToStanding } from "./leave.ts";
 import { listenBlock } from "./listen.ts";
-import { deriveParts, fitName, git, joinName, NAME_MAX, nameFault, sanitize } from "./names.ts";
-import { noteStanding, replyText } from "./standing.ts";
+import {
+  deriveParts,
+  fitName,
+  git,
+  joinName,
+  NAME_MAX,
+  nameFault,
+  normKarta,
+  normName,
+  sanitize,
+} from "./names.ts";
+import { deadPredecessor, resumeFromDisk } from "./resume.ts";
 import { publishStatus } from "./status.ts";
-import { post } from "./transport.ts";
+import { state } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
 import { readLatest, staleNotice } from "./update.ts";
+
+/** Имя места, которое ведёт мост, — для совета в отказе «стояние одно на мост». */
+const ledName = (): string => state.standing?.name ?? "";
 
 export const STAND_TOOL = {
   name: "iskron_stand",
@@ -59,7 +76,7 @@ export const STAND_TOOL = {
       take: {
         type: "boolean",
         description:
-          "Забрать сокет места, которое слушает другой мост этой машины (обычно прежняя сессия той же рабочей копии): без take такое место только регистрируется, слух остаётся у держателя.",
+          "Сознательный переход: забрать сокет места, которое слушает другой мост этой машины (обычно прежняя сессия той же рабочей копии) — без take такое место только регистрируется, слух остаётся у держателя; либо сменить место этого моста (стояние одно на мост: другая роль или другое имя без take — отказ вслух, прежнее место остаётся на доске без слуха).",
       },
       room_karta: {
         type: "string",
@@ -72,37 +89,27 @@ export const STAND_TOOL = {
           "Осознанный повтор стука в ту же комнату: разрешён один раз и не раньше чем через 2 минуты после первого; без него повторный вызов второго join не шлёт.",
       },
       status: { type: "string", description: "Первая строка занятости (до 64 символов)." },
+      cwd: {
+        type: "string",
+        description:
+          "Директория сессии харнесса, существующий абсолютный каталог — из неё выводится репо для имени (git toplevel, иначе её basename) и читаются ветки при поиске мест прежнего имени, когда мост запущен не из рабочей копии; плагин OpenCode подставляет её сам. Без неё — cwd моста; несуществующая или относительная — отказ вслух.",
+      },
     },
     required: ["realm", "karta"],
   },
 };
 
+const isDirectory = (p: string): boolean => {
+  try {
+    return isAbsolute(p) && statSync(p).isDirectory();
+  } catch {
+    return false;
+  }
+};
+
 export const isStandCall = (msg: JsonRpcMessage): boolean =>
   msg?.method === "tools/call" && msg?.params?.name === "iskron_stand";
 
-interface BoardEntry {
-  karta: string;
-  address: string;
-  rest: string;
-  incoming: string | null;
-}
-
-/** Строки доски: `#N … · @handle:name — …`, за ними `📥 https://…`. */
-export function parseBoard(text: string): BoardEntry[] {
-  const out: BoardEntry[] = [];
-  for (const line of text.split("\n")) {
-    const m = /^\s*#(\d+)\s.*?·\s(@\S+)\s—\s(.*)$/.exec(line);
-    if (m) {
-      out.push({ karta: m[1], address: m[2], rest: m[3], incoming: null });
-      continue;
-    }
-    const inc = /📥\s*(https?:\/\/\S+)/.exec(line);
-    if (inc && out.length) out[out.length - 1].incoming = inc[1];
-  }
-  return out;
-}
-
-let seq = 0;
 /**
  * Стуки по комнатам — когда и сколько, ключ (граф, роль, имя, комната). Правило
  * ожидания — #4342. Запись живёт в процессе моста и умирает с ним; новый цикл
@@ -114,38 +121,10 @@ const knocks = new Map<string, { at: number; count: number }>();
 const KNOCK_REPEAT_AFTER_MS = Number(process.env.ISKRON_STAND_KNOCK_REPEAT_MS) || 120_000;
 const KNOCK_LIMIT = 2;
 
-interface Answer {
-  text: string;
-  isError: boolean;
-}
-
-async function call(name: string, args: Record<string, unknown>): Promise<Answer> {
-  const id = `iskron-bridge-stand-${++seq}`;
-  const msg: JsonRpcMessage = {
-    jsonrpc: "2.0",
-    id,
-    method: "tools/call",
-    params: { name, arguments: args },
-  };
-  let reply: JsonRpcMessage | null = null;
-  await post(msg, (m) => {
-    if (m.id === id) reply = m;
-  });
-  let got = reply as JsonRpcMessage | null;
-  if (!got) return { text: "ответа нет", isError: true };
-  if (name === "iskron_channel") {
-    if (args.action === "register") noteStanding(msg, got);
-    if (args.action === "connect") got = absorbChannelReply(msg, got);
-  }
-  return { text: replyText(got), isError: !!got.error || !!got.result?.isError };
-}
-
-const short = (s: string, n = 300): string => (s.length > n ? `${s.slice(0, n)}…` : s);
-
 export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   const a = msg.params?.arguments ?? {};
   const realm = typeof a.realm === "string" ? a.realm.trim() : "";
-  const karta = a.karta != null ? String(a.karta).trim().replace(/^#/, "") : "";
+  const karta = a.karta != null ? normKarta(a.karta) : "";
   const lines: string[] = [];
   const done = (isError = false): JsonRpcMessage => ({
     jsonrpc: "2.0",
@@ -162,12 +141,21 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
     return done(true);
   }
   const model = typeof a.model === "string" && a.model.trim() ? a.model : undefined;
+  const cwd = typeof a.cwd === "string" && a.cwd.trim() ? a.cwd.trim() : process.cwd();
+  // Кривой cwd адресовал бы другое место (репо из несуществующего или чужого
+  // каталога) — отказ вслух, как у явного имени (#5068).
+  if (cwd !== process.cwd() && !isDirectory(cwd)) {
+    lines.push(
+      `Отказано (мост): cwd должен быть существующим абсолютным каталогом — получено «${cwd}»${isAbsolute(cwd) ? "" : " (относительный путь резолвился бы от cwd моста, не сессии)"}.`,
+    );
+    return done(true);
+  }
   const nameNotes: string[] = [];
   // Имя — адрес места: явное имя либо принимается ровно таким, либо отвергается
   // вслух с названной причиной; молча укороченное имя адресует ДРУГОЕ место
   // (граф nks-dev: #5068). Выведенное имя укорачивается до предела сервера с
   // пометкой сразу после шапки ответа.
-  const asked = typeof a.name === "string" ? a.name.trim() : "";
+  const asked = normName(a.name);
   if (asked) {
     const fault = nameFault(asked);
     if (fault) {
@@ -177,7 +165,7 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
       return done(true);
     }
   }
-  const parts = asked ? null : deriveParts(model);
+  const parts = asked ? null : deriveParts(model, cwd);
   const fitted = parts ? fitName(parts) : null;
   const name = asked || (fitted?.name ?? "");
   if (parts && fitted && fitted.cut.length) {
@@ -194,6 +182,16 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
     );
   }
   const room = typeof a.room === "string" && a.room.trim() ? a.room.trim() : null;
+  // Стояние одно на мост (#5154): другое место при ведомом своём — только по
+  // явному take=true; иначе отказ вслух, и ничего не тронуто.
+  const led = leadsOtherPlace(karta, name);
+  if (led && a.take !== true) {
+    lines.push(otherPlaceWord(led, keyOf(realm, karta, name), name === ledName()));
+    return done(true);
+  }
+  // Каталог сессии — в запись держания: мост, поднятый заново (вытеснение
+  // каталога OpenCode, перезапуск плагина), вернёт место по нему сам (#5140).
+  noteStandCwd(cwd);
 
   // 1. Доска — до любой перемены.
   const board = await call("iskron_channel", { action: "list", realm });
@@ -209,7 +207,7 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   // Пустой граф сервер печатает без заголовка: «Ни одна роль этого графа не держит канала» — законная пустота.
   const empty = /не держит канала/i.test(board.text); // ровно наблюдённая фраза сервера 0.43
   const recognized = !!header || empty || entries.length > 0;
-  const own = entries.filter((e) => e.karta === karta && e.address.endsWith(`:${name}`));
+  const own = entries.filter((e) => e.karta === karta && nameOf(e.address) === name);
   // Места прежнего стандарта имени (машина.репо.ветка) той же машины и репо —
   // сироты после перехода на машина.репо.модель: их адрес держат ростеры комнат
   // и хуки инбокса, а слушает их никто. Прежнее имя узнаётся по третьей части,
@@ -217,14 +215,14 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   // место трогать нельзя.
   const stem = name.split(".").slice(0, 2).join(".");
   const branches = new Set(
-    git(["branch", "--format=%(refname:short)"])
+    git(["branch", "--format=%(refname:short)"], cwd)
       .split("\n")
       .map((x) => sanitize(x.trim()))
       .filter(Boolean),
   );
   const legacy = entries.filter((e) => {
-    if (e.karta !== karta || e.address.endsWith(`:${name}`)) return false;
-    const own = e.address.slice(e.address.indexOf(":") + 1);
+    if (e.karta !== karta || nameOf(e.address) === name) return false;
+    const own = nameOf(e.address);
     if (!own.startsWith(`${stem}.`)) return false;
     const third = own.slice(stem.length + 1);
     return branches.has(third) && /живой|слушает/.test(e.rest);

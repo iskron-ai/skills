@@ -103,22 +103,35 @@ export function grantLogPath(): string {
 }
 
 export function grantLog(msg: string): void {
+  appendJournal(grantLogPath(), msg);
+}
+
+/** Строка в машинный журнал рядом с грантом: время, pid, сборка; журнал длиннее 128 КБ начинается заново. */
+export function appendJournal(path: string, msg: string): void {
   try {
     mkdirSync(CFG.authDir, { recursive: true, mode: 0o700 });
-    const p = grantLogPath();
     let size = 0;
     try {
-      size = statSync(p).size;
+      size = statSync(path).size;
     } catch {}
     if (size > 128_000) {
       try {
-        unlinkSync(p);
+        unlinkSync(path);
       } catch {}
     }
-    appendFileSync(p, `${new Date().toISOString()} pid=${process.pid} ${BUILD} ${msg}\n`, {
+    appendFileSync(path, `${new Date().toISOString()} pid=${process.pid} ${BUILD} ${msg}\n`, {
       mode: 0o600,
     });
   } catch {} // a log that cannot be written must never break the call
+}
+
+/** Журнал жизни стояний — held/released/parked/resumed/evicted/dead, рядом с grant.log (граф nks-dev: #5140). */
+export function standingsLogPath(): string {
+  return join(CFG.authDir, "standings.log");
+}
+
+export function standingLog(msg: string): void {
+  appendJournal(standingsLogPath(), msg);
 }
 
 // The machine's memory of a refused grant: since when, in whose words, and

@@ -14,10 +14,11 @@
 //     место читалось бы слушающим при делателе, которого не разбудить;
 //     pi и OpenCode кадр получают уведомлением и глухими не бывают;
 //   • конец сессии: занятость снимается перед выходом (main.ts).
-import { NOTIFIED_CLIENTS } from "../shared/clients.ts";
+import { notifiedClient } from "./client.ts";
 import {
   holdsStanding,
   listenerIdleSince,
+  localListeners,
   onListenerAttached,
   parkStanding,
   rememberStatus,
@@ -33,10 +34,7 @@ const DEAF_MS = Number(process.env.ISKRON_BRIDGE_DEAF_MS) || 15 * 60_000;
 const TICK_MS = Math.min(60_000, Math.max(200, Math.floor(DEAF_MS / 5)));
 
 /** Кадры этому харнесу доходят только через локального клиента моста. */
-function deafWithoutListener(): boolean {
-  const info = (state.initParams as { clientInfo?: { name?: unknown } } | null)?.clientInfo;
-  return !(typeof info?.name === "string" && NOTIFIED_CLIENTS.has(info.name));
-}
+const deafWithoutListener = (): boolean => !notifiedClient();
 
 /** Строка занятости, снятая уходом, — возвращается вместе с местом. */
 let keptStatus = "";
@@ -84,7 +82,14 @@ export function returnToStanding(how: string): boolean {
 }
 
 export function startDeafnessWatch(): void {
-  onListenerAttached(() => returnToStanding("прицепился сторож"));
+  // Проба живости соседнего моста (sweepStale, deadPredecessor) цепляется к
+  // локальному сокету и тут же отпадает — вернуть с места она не должна:
+  // сторож остаётся прицепленным, проба — нет (#5140).
+  onListenerAttached(() =>
+    setTimeout(() => {
+      if (localListeners() > 0) returnToStanding("прицепился сторож");
+    }, 300).unref(),
+  );
   setInterval(() => {
     const since = listenerIdleSince();
     if (since == null || !deafWithoutListener()) return;

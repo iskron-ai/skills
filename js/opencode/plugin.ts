@@ -1,89 +1,150 @@
-// Дверь Искрона в сессию OpenCode — ОДИН плагин, две независимые половины
-// (граф nks-dev: #4266; тот же замысел, что у расширения pi, с одной поправкой
-// на устройство OpenCode — #4283: сервер держит много сессий, и у каждой
-// корневой сессии свой мост, а значит своё стояние).
+// Дверь Искрона в сессию OpenCode 2 — ОДИН плагин, три половины
+// (граф nks-dev: #4266; устройство OpenCode — #4283: сервер держит много
+// сессий, и у каждой корневой сессии свой мост, а значит своё стояние).
 //
-//   • тулы   — плагин поднимает мост дочерним процессом на каждую корневую
-//              сессию и регистрирует каждый тул сервера под его собственным
-//              именем (tools.ts);
-//   • канал  — кадры стояния, которое держит мост сессии, входят в неё
-//              промптом (channel.ts).
+//   • тулы    — плагин поднимает мост дочерним процессом на каждую корневую
+//               сессию (и на дочернюю, вставшую своим вызовом: стояние одно
+//               на мост, #5154) и регистрирует каждый тул сервера под его
+//               собственным именем (tools.ts);
+//   • канал   — кадры стояния, которое держит мост сессии, входят в неё
+//               промптом (channel.ts);
+//   • команды — каждый установленный скилл поставки с `slash: true` становится
+//               командой палитры «/» (commands.ts): OpenCode 2 сам ключ не
+//               читает.
 //
-// Файл лежит копией в ~/.config/opencode/plugins/iskron.js: там, и только там,
-// OpenCode сам держит node_modules с @opencode-ai/plugin, единственным внешним
-// импортом этого модуля. Копию кладёт establish-mcp; doctor сличает её с поставкой.
-//
-// Экспорт — только функции: загрузчик OpenCode перебирает все экспорты модуля и
-// падает на любом не-функции.
-import type { Hooks, Plugin } from "@opencode-ai/plugin";
+// Плагинная поверхность OpenCode 2 (граф nks-dev: поверхность v2): модуль с
+// default-экспортом ОБЪЕКТА {id, setup(ctx)}; импортов ему не нужно — типы
+// @opencode/plugin стираются сборкой. Файл лежит копией в
+// ~/.config/opencode/plugins/iskron.js: оттуда OpenCode грузит файловые плагины,
+// по разу на каждую локацию сервиса. Копию кладёт establish-mcp; doctor
+// сличает её с поставкой.
+import type { Plugin } from "@opencode/plugin";
 
-import { type Say, setupChannel } from "./channel.ts";
-import { setupTools } from "./tools.ts";
+import { setupChannel } from "./channel.ts";
+import { setupCommands } from "./commands.ts";
+import { type Say, setupTools } from "./tools.ts";
 
-/* eslint-disable @typescript-eslint/no-explicit-any -- ответы SDK без схемы */
+export type Context = Plugin.Context;
 
-const IskronPlugin: Plugin = async ({ client }) => {
+/* eslint-disable @typescript-eslint/no-explicit-any -- события и ответы SDK без схемы */
+
+async function setup(ctx: Context): Promise<() => void> {
+  // Тоста у серверного плагина OpenCode 2 нет: слово человеку — stderr сервиса,
+  // а то, что должно дойти до агента, идёт промптом в его сессию (channel.ts).
   const say: Say = (text, level) => {
-    process.stderr.write(`[iskron] ${text}\n`);
-    // Тост — для человека в TUI; без TUI вызов отказывает, и это не событие.
-    void client.tui
-      .showToast({ body: { message: text, variant: level === "warning" ? "warning" : level } })
-      .catch(() => {});
+    process.stderr.write(`[iskron${level === "info" ? "" : "/" + level}] ${text}\n`);
   };
 
-  // Субагент делит мост родителя: корень сессии — по цепочке parentID.
+  // Корневые сессии, которые плагин видел, и когда: субагент делит мост
+  // родителя (корень — по цепочке parentID), а кадр ничейного моста идёт в
+  // свежайшую из виденных — списка сессий у контекста v2 нет.
   const roots = new Map<string, string>();
+  const seen = new Map<string, number>();
   async function rootOf(sessionID: string): Promise<string> {
     const known = roots.get(sessionID);
-    if (known) return known;
+    if (known) {
+      seen.set(known, Date.now());
+      return known;
+    }
     let root = sessionID;
     try {
-      const seen = new Set<string>();
+      const visited = new Set<string>();
       for (;;) {
-        seen.add(root);
-        const res: any = await client.session.get({ path: { id: root } } as any);
-        const parent: string | undefined = res?.data?.parentID;
-        if (!parent || seen.has(parent)) break;
+        visited.add(root);
+        const res: any = await ctx.session.get({ sessionID: root } as any);
+        const parent: string | undefined = res?.parentID ?? res?.data?.parentID;
+        if (!parent || visited.has(parent)) break;
         root = parent;
       }
     } catch {
-      /* сессия не читается — она сама себе корень */
+      // Сессия не читается (например, ещё не легла на диск в миг session.created):
+      // сейчас она сама себе корень, но не навсегда — иначе дочерняя сессия,
+      // чей get упал однажды, поднимала бы свой мост и своё стояние (#4283).
+      seen.set(root, Date.now());
+      return root;
     }
     roots.set(sessionID, root);
+    seen.set(root, Date.now());
     return root;
+  }
+  function freshestRoot(): string | null {
+    let best: string | null = null;
+    let at = -1;
+    for (const [id, t] of seen) {
+      if (t <= at) continue;
+      best = id;
+      at = t;
+    }
+    return best;
   }
 
   // Половины ставятся порознь и каждая под своим try: сорвавшаяся одна не
   // должна унести другую — и не должна унести загрузку плагина.
-  let onChannel: (session: string | null, params: unknown) => void = () => {};
+  let onChannel: (session: string | null, params: unknown, child?: boolean) => void = () => {};
   try {
-    const ch = setupChannel(client, say);
-    onChannel = (s, p) => ch.onEvent(s, p);
+    const ch = setupChannel(ctx, say, freshestRoot);
+    onChannel = (s, p, c) => ch.onEvent(s, p, c);
   } catch (e) {
     say(`Искрон: канал не встал — ${(e as Error).message}`, "error");
   }
 
-  let half: Awaited<ReturnType<typeof setupTools>> = { tools: {}, forget() {}, stop() {} };
+  let half: Awaited<ReturnType<typeof setupTools>> = { forget() {}, stop() {} };
   try {
-    half = await setupTools(say, onChannel, rootOf);
+    half = await setupTools(ctx, say, onChannel, rootOf);
   } catch (e) {
     say(`Искрон: мост не поднялся — ${(e as Error).message}`, "error");
   }
 
-  const hooks: Hooks = {
-    tool: half.tools,
-    event: async ({ event }) => {
-      if (event.type === "session.deleted") {
-        const id = (event.properties as { info: { id: string } }).info.id;
-        roots.delete(id);
-        half.forget(id);
+  let commands: Awaited<ReturnType<typeof setupCommands>> = { refresh: async () => {} };
+  try {
+    commands = await setupCommands(ctx, say);
+  } catch (e) {
+    say(`Искрон: команды скиллов не встали — ${(e as Error).message}`, "error");
+  }
+
+  const controller = new AbortController();
+  void (async () => {
+    try {
+      for await (const event of ctx.event.subscribe({ signal: controller.signal })) {
+        const ev: any = event;
+        const id: string | undefined = ev?.data?.sessionID;
+        switch (ev?.type) {
+          case "session.deleted":
+            if (!id) break;
+            roots.delete(id);
+            seen.delete(id);
+            half.forget(id);
+            break;
+          case "session.created": {
+            // data.parentID есть в самом событии, но это родитель, не корень:
+            // на вложенности два и глубже корень — корень родителя, иначе
+            // внук получил бы отдельный мост вместо родительского.
+            if (!id) break;
+            const parent = ev.data?.parentID;
+            if (typeof parent === "string")
+              void rootOf(parent).then((root) => {
+                roots.set(id, root);
+                seen.set(root, Date.now());
+              });
+            else void rootOf(id);
+            break;
+          }
+          case "skill.updated":
+            void commands.refresh();
+            break;
+        }
       }
-    },
-    dispose: async () => half.stop(),
+    } catch {
+      /* поток событий закрыт вместе с плагином */
+    }
+  })();
+
+  return () => {
+    controller.abort();
+    half.stop();
   };
-  return hooks;
-};
+}
 
 /* eslint-enable @typescript-eslint/no-explicit-any */
 
-export default IskronPlugin;
+export default { id: "iskron", setup };

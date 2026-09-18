@@ -1,4 +1,6 @@
 import { errorMessage } from "./errors.ts";
+import { releaseStanding } from "./hold.ts";
+import { normKarta, normName } from "./names.ts";
 import { debug, log } from "./streams.ts";
 import { post, state } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
@@ -10,9 +12,30 @@ export function noteStanding(msg: JsonRpcMessage, reply: JsonRpcMessage): void {
   const a = msg?.params?.arguments;
   if (msg?.params?.name !== "iskron_channel" || a?.action !== "register") return;
   if (reply?.error || reply?.result?.isError) return;
-  state.standing = { realm: a.realm, karta: a.karta, name: a.name };
+  state.standing = rememberedPlace(a.realm, a.karta, a.name);
   state.standingSession = state.sessionId;
   debug(`standing remembered: ${a.name ?? "(unnamed)"} at karta ${a.karta} in ${a.realm}`);
+}
+
+/**
+ * Привязка записывается НОРМАЛИЗОВАННОЙ — той же формой, которой её сравнивают
+ * ключ, доска и правило «стояние одно на мост» (#5140 B2, #5154 N1): роль без
+ * «#» и полей, имя без полей. Сентинел «agent» — своя роль по слову поверхности:
+ * число, которое мост уже помнит, он не подменяет; без памяти остаётся сентинел.
+ */
+export function rememberedPlace(
+  realm: unknown,
+  karta: unknown,
+  name: unknown,
+): { realm: string; karta: string; name?: string } {
+  const k = normKarta(karta);
+  const prev = state.standing;
+  const n = typeof name === "string" ? normName(name) : undefined;
+  return {
+    realm: String(realm ?? ""),
+    karta: k === "agent" && prev ? String(prev.karta) : k,
+    ...(n !== undefined ? { name: n } : {}),
+  };
 }
 
 // One replay at a time — and every concurrent caller WAITS for it. A flag that
@@ -49,8 +72,12 @@ export function ensureStanding(): Promise<void> {
       } else if (seatIsGone(got)) {
         // The seat itself is gone (expired while we were away) — say so and let
         // the agent take it back with connect; never guess a different name.
+        // The hold goes with the binding: a socket kept for a seat the platform
+        // no longer knows would make the bridge «lead» a place it cannot name,
+        // and the next connect would replace it silently (#5168).
         log(`the standing's seat is gone, forgetting it: ${replyText(got).slice(0, 200)}`);
         state.standing = null;
+        releaseStanding("место у платформы истекло — register: места нет", true);
       } else {
         // Any other refusal is the hour's, not the seat's: keep the memory and
         // try again before the next call. Forgetting here is what left a bridge

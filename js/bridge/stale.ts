@@ -39,4 +39,6 @@ export function noteStale(frame: Frame, flush: (ev: ChannelEvent) => void): void
 /** Забыть накопленное — при отпускании стояния. */
 export function dropStale(): void {
   burst.length = 0;
+  if (timer) clearTimeout(timer); // иначе пустая пачка ушла бы промптом «Лежалых кадров: 0»
+  timer = null;
 }

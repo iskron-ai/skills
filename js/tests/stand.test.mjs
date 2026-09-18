@@ -7,8 +7,8 @@
 // tools/list его не несёт и вызов уходит на сервер как чужое имя — та
 // краснота, ради которой проба написана.
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
-import { mkdtempSync } from "node:fs";
+import { execFileSync, spawn } from "node:child_process";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { hostname, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
@@ -307,6 +307,65 @@ test("iskron_stand derives the name from machine, repository and the model given
   );
 });
 
+// The bridge is not always started from the working copy: the OpenCode plugin
+// spawns it from the server's cwd, so the repository part of the name comes from
+// the harness session's directory when the call names one (r5 #5108).
+test("iskron_stand names the repository of the session directory given as cwd, not the bridge's own", async (t) => {
+  const { fake, bridge } = await ready(t);
+  const host = hostname().split(".")[0].toLowerCase();
+  const scratch = mkdtempSync(join(tmpdir(), "stand-cwd-"));
+  t.after(() => rmSync(scratch, { recursive: true, force: true }));
+  const repo = join(scratch, "harness-repo");
+  mkdirSync(repo);
+  execFileSync("git", ["init", "-q", repo]);
+  const inside = join(repo, "src");
+  mkdirSync(inside);
+  let reply = await bridge.call("tools/call", {
+    name: "iskron_stand",
+    arguments: { realm: "nks-dev", karta: "#931", model: "opus-5", cwd: inside },
+  });
+  let text = textOf(reply);
+  assert.ok(!reply.result?.isError, text);
+  assert.equal(
+    /стояние (\S+) — роль #931/.exec(text)?.[1],
+    `${host}.harness-repo.opus-5`,
+    `the repository is the git toplevel of cwd, not of the bridge's cwd: ${text}`,
+  );
+  assert.ok(
+    [...fake.state.places.keys()].includes(`931:${host}.harness-repo.opus-5`),
+    "the place is taken under that name",
+  );
+
+  const plain = join(scratch, "no-repo-here");
+  mkdirSync(plain);
+  reply = await bridge.call("tools/call", {
+    name: "iskron_stand",
+    // The bridge already leads the first place: another derived name is a deliberate move (take, #5154).
+    arguments: { realm: "nks-dev", karta: "#931", model: "opus-5", cwd: plain, take: true },
+  });
+  text = textOf(reply);
+  assert.ok(!reply.result?.isError, text);
+  assert.equal(
+    /стояние (\S+) — роль #931/.exec(text)?.[1],
+    `${host}.no-repo-here.opus-5`,
+    `outside any git repository the directory's own name stands in: ${text}`,
+  );
+
+  // A cwd that is not an existing absolute directory would name a place out of
+  // nowhere, or out of the bridge's own repository: refused aloud, nothing taken.
+  const taken = fake.state.places.size;
+  for (const bad of [join(scratch, "gone"), "relative/path"]) {
+    reply = await bridge.call("tools/call", {
+      name: "iskron_stand",
+      arguments: { realm: "nks-dev", karta: "#931", model: "opus-5", cwd: bad },
+    });
+    text = textOf(reply);
+    assert.ok(reply.result?.isError, `a bad cwd is refused: ${text}`);
+    assert.match(text, /cwd должен быть существующим абсолютным каталогом/, text);
+    assert.equal(fake.state.places.size, taken, "a refused call takes no place");
+  }
+});
+
 test("iskron_stand refuses without realm and karta, naming what it needs", async (t) => {
   const { bridge } = await ready(t);
   const reply = await bridge.call("tools/call", {
@@ -439,7 +498,7 @@ test("iskron_stand after an eviction: register only, the busy line still publish
 
 // The busy line is the standing's word — of THIS standing: a call for another
 // name must not post onto the address the bridge holds for the first one.
-test("iskron_stand with status for another standing does not post onto the held one's address", async (t) => {
+test("iskron_stand with status for another standing is refused outright — one standing per bridge — and the held one's line stays untouched", async (t) => {
   const { fake, bridge } = await ready(t);
   await fake.control({ places: [{ karta: "931", name: "chuzhoe", listening: true }] });
   const mine = await bridge.call("tools/call", {
@@ -447,12 +506,15 @@ test("iskron_stand with status for another standing does not post onto the held 
     arguments: { realm: "nks-dev", karta: 931, name: "svoe", status: "своё дело" },
   });
   assert.match(textOf(mine), /^Занятость: своё дело$/m, textOf(mine));
+  const posts = fake.state.counts.status_posts;
   const other = await bridge.call("tools/call", {
     name: "iskron_stand",
     arguments: { realm: "nks-dev", karta: 931, name: "chuzhoe", status: "чужое дело" },
   });
-  assert.match(textOf(other), /Занятость не публикуется/, textOf(other));
+  assert.equal(other.result?.isError, true, textOf(other));
+  assert.match(textOf(other), /уже ведёт место svoe--931--nks-dev/, textOf(other)); // #5154
   assert.equal(fake.state.status, "своё дело", "the held standing's line must stay untouched");
+  assert.equal(fake.state.counts.status_posts, posts, "nothing is posted anywhere");
 });
 
 test("iskron_stand refuses control actions on a board it does not recognize", async (t) => {
