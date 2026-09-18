@@ -3,58 +3,91 @@
 // Сокет стояния держит мост сессии (дочерний процесс плагина, свой у каждой
 // корневой сессии): переоткрывает, различает мёртвый токен, публикует
 // занятость. Плагину остаётся то, чего у моста нет, — вложить кадр в сессию
-// агента промптом (client.session.promptAsync): так кадр входит в идущий ход
-// или поднимает простаивающего. Доставка есть возврат управления агенту;
-// кадр, ушедший в лог или тост, — глушитель (урок контура opencode-плагина
-// канала: делатель стоит глухим, считая себя слушающим).
+// агента промптом (ctx.session.prompt). У промпта OpenCode 2 два способа
+// вложения (поверхность харнеса: «Enter steers the active session, Alt+Enter
+// queues the prompt for later»): steer входит в идущий ход следующим шагом,
+// queue ждёт конца хода — и очередь харнес отдаёт по одному промпту на ход.
+// Живой кадр и громкое слово о слухе идут steer: с queue у делателя с длинными
+// ходами кадры всплывали по одному за ход и отставали часами (граф nks-dev:
+// #5233). Пачка побудки и лежалых — queue: она не срочна и ход не режет.
+// Доставка есть возврат управления агенту; кадр, ушедший в лог, — глушитель
+// (урок контура opencode-плагина канала: делатель стоит глухим, считая себя
+// слушающим).
 //
 // Адресат — сессия, чей мост принёс кадр: адрес приходит вместе с событием,
 // угадывать нечего. Кадр от моста, ещё никому не отданного, идёт в свежайшую
-// корневую сессию сервера; дочерние сессии (субагенты) адресатами не бывают.
-import type { PluginInput } from "@opencode-ai/plugin";
-
+// корневую сессию, которую плагин видел (списка сессий у контекста OpenCode 2
+// нет); дочерняя сессия (субагент) — адресат только своего моста, поднятого её
+// собственным стоянием (#5154), угадыванием она не выбирается.
 import { type ChannelEvent } from "../bridge/hold.ts";
 import { frameToText } from "../shared/frame-text.ts";
-
-export type Say = (text: string, level: "info" | "warning" | "error") => void;
-
-type Client = PluginInput["client"];
+import type { Context } from "./plugin.ts";
+import { type Say } from "./tools.ts";
 
 export interface Channel {
-  /** Дверь половины «тулы»: событие моста сессии `session` (null — мост ещё ничей). */
-  onEvent(session: string | null, params: unknown): void;
+  /**
+   * Дверь половины «тулы»: событие моста сессии `session` (null — мост ещё
+   * ничей); `child` — мост дочерней сессии, вставшей своим вызовом.
+   */
+  onEvent(session: string | null, params: unknown, child?: boolean): void;
 }
 
-/* eslint-disable @typescript-eslint/no-explicit-any -- уведомления моста и ответы SDK без схемы */
+/* eslint-disable @typescript-eslint/no-explicit-any -- уведомления моста без схемы */
 
-export function setupChannel(client: Client, say: Say): Channel {
-  async function freshestRoot(): Promise<string | null> {
+export function setupChannel(ctx: Context, say: Say, freshestRoot: () => string | null): Channel {
+  /** Сессия ещё принимает слово: существует и не в архиве. */
+  async function accepting(id: string): Promise<boolean> {
     try {
-      const res: any = await client.session.list();
-      const roots = (res?.data ?? []).filter((s: any) => !s.parentID);
-      roots.sort((a: any, b: any) => (b.time?.updated ?? 0) - (a.time?.updated ?? 0));
-      return roots[0]?.id ?? null;
+      const info: any = await ctx.session.get({ sessionID: id } as any);
+      return !(info?.time?.archived ?? info?.data?.time?.archived);
     } catch {
-      return null;
+      return false;
     }
   }
 
-  async function deliver(session: string | null, text: string): Promise<void> {
-    const id = session ?? (await freshestRoot());
+  // Каждое вложение — строкой в лог с адресом и кадром, отказ — громко: кадр,
+  // прочитанный мостом и не дошедший до хода, снаружи неотличим от глухоты,
+  // а доска при этом говорит «слушает» (граф nks-dev: #4355).
+  async function deliver(
+    session: string | null,
+    text: string,
+    frame = "кадр",
+    delivery: "steer" | "queue" = "steer",
+    child = false,
+  ): Promise<void> {
+    let id = session;
+    if (child && (!id || !(await accepting(id)))) {
+      // Место дочерней сессии пережило её: корню этот кадр не адресован — там
+      // стоит другое стояние (#5167). Громко, и кадр остаётся в истории места.
+      say(
+        `Искрон: ${frame} на место дочерней сессии ${id ?? "?"}, которой больше нет, — корню не переадресую; ` +
+          `кадр остаётся в истории стояния (iskron_channel history), место сними revoke — ${text.slice(0, 120)}`,
+        "error",
+      );
+      return;
+    }
+    if (id && !(await accepting(id))) {
+      say(
+        `Искрон: сессия ${id} закрыта или в архиве — ${frame} идёт в свежайшую виденную`,
+        "warning",
+      );
+      id = null;
+    }
+    id ??= freshestRoot();
+    if (id && id !== session && !(await accepting(id))) id = null;
     if (!id) {
       say(
-        "Искрон: кадр пришёл, а сессии, куда его вложить, нет — " + text.slice(0, 120),
-        "warning",
+        `Искрон: ${frame} ВЛОЖИТЬ НЕКУДА — плагин не видел живой корневой сессии; кадр остаётся в истории стояния — ` +
+          text.slice(0, 120),
+        "error",
       );
       return;
     }
     try {
-      await client.session.promptAsync({
-        path: { id },
-        body: { parts: [{ type: "text", text }] },
-      } as any);
+      await ctx.session.prompt({ sessionID: id, text, delivery });
+      say(`Искрон: ${frame} вложен в сессию ${id}`, "info");
     } catch (e) {
-      say(`Искрон: кадр не вложился в сессию ${id}: ${(e as Error).message}`, "error");
+      say(`Искрон: ${frame} не вложился в сессию ${id}: ${(e as Error).message}`, "error");
     }
   }
 
@@ -64,7 +97,7 @@ export function setupChannel(client: Client, say: Say): Channel {
   }
 
   return {
-    onEvent(session, params: any) {
+    onEvent(session, params: any, child = false) {
       const ev = params?.data as ChannelEvent | undefined;
       if (!ev || typeof ev !== "object") return;
       switch (ev.kind) {
@@ -73,7 +106,13 @@ export function setupChannel(client: Client, say: Say): Channel {
           // Служебные кадры не будят: hello доказывает, что сокет держат, и только.
           if (frame?.type === "hello") return say("Искрон: канал слушает", "info");
           if (frame?.type === "status") return;
-          void deliver(session, frameToText(frame, ev.raw ?? ""));
+          void deliver(
+            session,
+            frameToText(frame, ev.raw ?? ""),
+            `кадр ${frame?.id ?? "без id"}`,
+            "steer",
+            child,
+          );
           return;
         }
         case "dead":
@@ -85,7 +124,25 @@ export function setupChannel(client: Client, say: Say): Channel {
           );
           return;
         case "stale":
-          if (ev.text) void deliver(session, ev.text); // одна пачка — один промпт
+          if (ev.text) void deliver(session, ev.text, "пачка лежалых кадров", "queue"); // одна пачка — один промпт
+          return;
+        case "backlog":
+          // Побудка с накопленным — один промпт на пачку, не ход на кадр (#5140).
+          // Очередью — сознательная развилка: пачка в полтора десятка кадров,
+          // вставленная посреди хода, режет работу делателя; одним промптом она
+          // по одному за ход не всплывёт, а ждёт лишь конца текущего хода.
+          if (ev.text)
+            void deliver(session, ev.text, `пачка побудки (${ev.frames?.length ?? 0})`, "queue");
+          return;
+        case "lost":
+          // Держащий мост вышел или прежний плагин остановили: громко, в сессию.
+          if (ev.text) loud(session, ev.text);
+          return;
+        case "held":
+          say(`Искрон: мост держит стояние ${ev.key ?? ""}`, "info");
+          return;
+        case "released":
+          say(`Искрон: мост отпустил стояние ${ev.key ?? ""} — ${ev.text ?? ""}`, "warning");
           return;
         case "evicted":
           loud(

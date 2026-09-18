@@ -9,6 +9,18 @@ import { basename } from "node:path";
 
 /** Правило имени стояния у сервера (наблюдено отказом 400). */
 export const NAME_MAX = 48;
+
+/**
+ * Роль как печатает доска — голые цифры либо сентинел (agent, me, realm-owner);
+ * имя — без полей. Одна нормализация на запись привязки (register, connect) и
+ * на сравнение (iskron_stand, правило «стояние одно на мост»): записанное
+ * сырым расходилось с нормализованным, и мост не узнавал свой же сокет (#5154).
+ */
+export const normKarta = (k: unknown): string =>
+  String(k ?? "")
+    .trim()
+    .replace(/^#/, "");
+export const normName = (n: unknown): string => (typeof n === "string" ? n.trim() : "");
 const NAME_RE = /^[a-z0-9][a-z0-9._-]*$/;
 
 /** Одна часть выведенного имени — к правилу: строчные, допустимые знаки, без краевых точек и дефисов. */
@@ -67,10 +79,10 @@ export function fitName(parts: NameParts): { name: string; cut: (keyof NameParts
   };
 }
 
-export const git = (args: string[]): string => {
+export const git = (args: string[], cwd: string = process.cwd()): string => {
   try {
     return execFileSync("git", args, {
-      cwd: process.cwd(),
+      cwd,
       timeout: 2000,
       stdio: ["ignore", "pipe", "ignore"],
     })
@@ -87,11 +99,14 @@ export const git = (args: string[]): string => {
  * параметром): в момент запуска ветка почти всегда main и не различает
  * ничего, а модель различает сессии одной машины над одним репозиторием.
  * Префикс поставщика (`claude-`) отбрасывается: `claude-opus-5` → `opus-5`.
+ * Репо — по директории сессии харнесса (cwd), когда мост запущен не из неё:
+ * плагин OpenCode поднимает мост из cwd сервера, и без этого репо выводилось
+ * бы из чужого каталога (r5 #5108).
  */
-export function deriveParts(model?: string): NameParts {
+export function deriveParts(model?: string, cwd: string = process.cwd()): NameParts {
   const host = hostname().split(".")[0];
-  const top = git(["rev-parse", "--show-toplevel"]);
-  const repo = basename(top || process.cwd());
+  const top = git(["rev-parse", "--show-toplevel"], cwd);
+  const repo = basename(top || cwd);
   const short = (model ?? "")
     .trim()
     .toLowerCase()
