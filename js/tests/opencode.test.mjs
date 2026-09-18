@@ -937,13 +937,63 @@ test("a new root session with a directory asks its bridge to resume that directo
 // The loss of hearing is said into the session, and the keeper brings the
 // bridge back: a holding bridge that dies is announced at once, and the next
 // tick of the watch raises a fresh bridge that asks to resume the place.
+// A place the bridge returns by itself is taken without any move of the agent,
+// under a name read from the directory's record — and the directory does not
+// tell two places of one role apart (#5366). The taken name goes into the
+// session as a prompt, like the loss of hearing; the log line alone is deaf.
+test("a place resumed by the bridge itself is announced into the session with its name and the directory's other places", async () => {
+  const calls = join(SANDBOX, "resumed.calls");
+  const resume = join(SANDBOX, "resumed.answer");
+  writeFileSync(calls, "");
+  writeFileSync(
+    resume,
+    JSON.stringify({
+      resumed: true,
+      key: "brat--931--nks-dev",
+      pending: 0,
+      word: "возврат места с диска; в том же каталоге записи и других мест: proba--931--nks-dev",
+      others: ["proba--931--nks-dev"],
+    }),
+  );
+  const b = bridgeEnv("resumed", { FB_CALLS: calls, FB_RESUME: resume });
+  const rec = await plugin(b.env, {
+    sessions: [{ id: "s-shared", location: { directory: "/work/shared" } }],
+  });
+  try {
+    await serverTools(rec);
+    await rec.call("iskron_orient", {}, "s-shared");
+    await until(
+      () => rec.prompts.some((p) => /сам вернул место/.test(p.text)),
+      "the resumed prompt",
+    );
+    const word = rec.prompts.find((p) => /сам вернул место/.test(p.text));
+    assert.equal(word.sessionID, "s-shared");
+    assert.match(word.text, /место brat--931--nks-dev/, "the taken name is said");
+    assert.match(
+      word.text,
+      /других мест: proba--931--nks-dev/,
+      "the directory's other place is said",
+    );
+    assert.match(word.text, /iskron_stand/, "the way to take one's own place is said");
+    assert.equal(word.delivery, "steer", "into the going turn, not after it");
+  } finally {
+    await rec.stop();
+  }
+});
+
 test("a holding bridge that dies is announced into its session as lost hearing, and the watch raises a fresh bridge that resumes the place", async () => {
   const calls = join(SANDBOX, "lost.calls");
   const resume = join(SANDBOX, "lost.answer");
   writeFileSync(calls, "");
   writeFileSync(
     resume,
-    JSON.stringify({ holding: true, resumed: true, pending: 1, word: "возврат места с диска" }),
+    JSON.stringify({
+      holding: true,
+      resumed: true,
+      key: "lost--931--nks-dev",
+      pending: 1,
+      word: "возврат места с диска",
+    }),
   );
   const b = bridgeEnv("lost", { FB_CALLS: calls, FB_RESUME: resume, ISKRON_BRIDGE_WATCH_MS: 300 });
   const rec = await plugin(b.env, {
@@ -981,6 +1031,12 @@ test("a holding bridge that dies is announced into its session as lost hearing, 
     await until(
       () => /сторож слуха вернул место сессии s-lost/.test(rec.said()),
       "the return line",
+    );
+    // The watch's return is the same return without a move of the agent (#5366):
+    // the taken name goes into the session, not only into the log.
+    await until(
+      () => rec.prompts.some((p) => /сам вернул место/.test(p.text) && p.sessionID === "s-lost"),
+      "the watch's resumed prompt",
     );
   } finally {
     await rec.stop();

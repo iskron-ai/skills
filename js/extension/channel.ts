@@ -108,6 +108,7 @@ export function setupChannel(pi: ExtensionAPI): (params: any) => void {
       case "held":
       case "released":
       case "lost":
+      case "resumed":
         return;
     }
   };

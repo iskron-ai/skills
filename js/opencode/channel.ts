@@ -141,6 +141,13 @@ export function setupChannel(ctx: Context, say: Say, freshestRoot: () => string 
           // Держащий мост вышел или прежний плагин остановили: громко, в сессию.
           if (ev.text) loud(session, ev.text);
           return;
+        case "resumed":
+          // Мост вернул место сам (#5366): занятое имя — в сессию, как и потеря слуха.
+          if (ev.text) {
+            say(ev.text, "warning");
+            void deliver(session, ev.text, "слово о возвращённом месте");
+          }
+          return;
         case "held":
           say(`Искрон: мост держит стояние ${ev.key ?? ""}`, "info");
           return;

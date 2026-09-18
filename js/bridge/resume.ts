@@ -139,6 +139,12 @@ export interface ResumeOutcome {
   key?: string;
   pending?: number;
   word: string;
+  /**
+   * Другие записи держания того же каталога (ключи): каталог не различает
+   * стояний одной роли в одной рабочей копии, и возврат по нему берёт свежайшую —
+   * агент сверяет занятое имя с выведенным для своей сессии (граф nks-dev: #5366).
+   */
+  others?: string[];
 }
 
 /** Обратно на запаркованное место (leave, переоткрытие): сокет заново, hello — доказательство. */
@@ -204,7 +210,12 @@ export async function resumeBy(sel: ResumeSelector, register = true): Promise<Re
           : `занятость не возвращена: ${short(st.body)}`,
       );
     }
-    return { resumed: true, key, pending: back.pending, word: lines.join("; ") };
+    // Записи, которые цикл выше признал протухшими, уже стёрты — их не называть.
+    const others = recs
+      .map((r) => keyOf(r.realm, r.karta, r.name))
+      .filter((k) => k !== key && readHoldRecord(k) !== null);
+    if (others.length) lines.push(`в том же каталоге записи и других мест: ${others.join(", ")}`);
+    return { resumed: true, key, pending: back.pending, word: lines.join("; "), others };
   }
   return { resumed: false, word: `возвращать нечего — ${skipped.join("; ")}` };
 }

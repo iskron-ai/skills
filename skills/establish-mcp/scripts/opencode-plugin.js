@@ -456,6 +456,10 @@ function takeLostMarker(authDir2) {
     entries
   };
 }
+function resumedWord(key, others) {
+  const rest = Array.isArray(others) ? others.filter((k) => typeof k === "string") : [];
+  return `Искрон: мост поднялся и сам вернул место ${key} — по своей записи держания (каталог сессии либо ключ прежнего места), без твоего хода. ` + (rest.length ? `В том же каталоге записи и других мест: ${rest.join(", ")} — каталог их не различает, возврат взял свежайшую. ` : "") + "Сверь имя с выведенным для этой сессии: чужое — займи своё одним iskron_stand; запись, уже ушедшую этим ходом, проверь по автору в истории узла — слово под чужим именем ляжет другому месту, а мост ответит успехом.";
+}
 function createKeeper(doors) {
   const roots = /* @__PURE__ */ new Set();
   const hints = /* @__PURE__ */ new Map();
@@ -479,6 +483,7 @@ function createKeeper(doors) {
       if (typeof r.key === "string") slot.key = r.key;
       roots.add(root);
       doors.say(`Искрон: сессия ${root} — ${r.word}`, "info");
+      if (typeof r.key === "string") doors.tell(root, resumedWord(r.key, r.others), slot.child);
     } catch (e) {
       doors.say(
         `Искрон: возврат места сессии ${root} не удался — ${e.message}`,
@@ -500,9 +505,10 @@ function createKeeper(doors) {
       slot.holding = false;
       roots.delete(root);
     }
-    if (r?.resumed)
+    if (r?.resumed) {
       doors.say(`Искрон: сторож слуха вернул место сессии ${root} — ${r.word}`, "info");
-    else if (r?.reopened)
+      if (typeof r.key === "string") doors.tell(root, resumedWord(r.key, r.others), slot.child);
+    } else if (r?.reopened)
       doors.say(`Искрон: сторож слуха переоткрыл сокет сессии ${root} — ${r.word}`, "warning");
     else if (r?.stuck) doors.say(r.word, "error");
   }
@@ -638,6 +644,7 @@ async function setupTools(ctx, say, onChannel, rootOf) {
   }
   const keeper = createKeeper({
     say,
+    tell: (root, text, child) => onChannel(root, { logger: "iskron-channel", data: { kind: "resumed", text } }, !!child),
     slotFor: (root, touch) => slotFor(root, touch),
     ready: readyFor,
     directoryOf
@@ -946,6 +953,12 @@ function setupChannel(ctx, say, freshestRoot) {
           return;
         case "lost":
           if (ev.text) loud(session, ev.text);
+          return;
+        case "resumed":
+          if (ev.text) {
+            say(ev.text, "warning");
+            void deliver(session, ev.text, "слово о возвращённом месте");
+          }
           return;
         case "held":
           say(`Искрон: мост держит стояние ${ev.key ?? ""}`, "info");
