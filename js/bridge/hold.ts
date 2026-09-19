@@ -238,19 +238,19 @@ function openLocalServer(key: string): void {
     // Задним числом — доказательство держания (hello) и кадры, которых ни один
     // местный клиент ещё не получал: перевзведённый сторож не должен нести
     // делателю то же кольцо второй раз — память доставленного у моста есть.
-    const backlog = ring.filter(
-      ({ frame }) =>
-        frame?.type === "hello" ||
-        !(frame?.type === "message" && typeof frame.id === "string" && seen.has(frame.id)),
-    );
+    // Доставленным кадр помечает отдавший его клиент (печатью, выходом) — файл читается заново.
+    const given = seenIds(seenFilePathOf(CFG.authDir, key));
+    const backlog = ring.filter(({ frame }) => {
+      if (frame?.type === "hello") return true;
+      const id = frame?.type === "message" && typeof frame.id === "string" ? frame.id : "";
+      return !id || !(seen.has(id) || given.has(id));
+    });
     sock.write(
       JSON.stringify({ kind: "attached", key, buffered: backlog.length } satisfies ChannelEvent) +
         "\n",
     );
     for (const { raw, frame } of backlog) {
       sock.write(JSON.stringify({ kind: "frame", raw, frame } satisfies ChannelEvent) + "\n");
-      if (frame?.type === "message" && typeof frame.id === "string")
-        noteSeen(seenFilePathOf(CFG.authDir, key), frame.id, seen);
     }
     // Место отняли, а сторож перевзвёлся: молчание читалось бы как слух.
     if (evictedEvent && evictedKey === key) sock.write(JSON.stringify(evictedEvent) + "\n");

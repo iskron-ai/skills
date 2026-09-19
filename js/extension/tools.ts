@@ -136,8 +136,9 @@ export function setupBridge(pi: ExtensionAPI, onChannel: ChannelEventSink): void
     if (bridge !== b) return b.stop();
 
     // Регистрация тулов списка: первая — на старте, повторная — по слову моста
-    // list_changed после выкатки сервера (#5406). pi снять тул не даёт: выброшенный
-    // сервером остаётся до перезапуска, новые и изменённые регистрируются заново.
+    // list_changed после выкатки сервера (#5406): новые и изменённые регистрируются
+    // заново (pi кладёт тул по имени — повтор заменяет), выброшенный сервером
+    // снимается из активных — снять регистрацию pi не даёт.
     function registerAll(list: any[]): void {
       for (const tool of list) {
         const name = String(tool.name);
@@ -203,9 +204,15 @@ export function setupBridge(pi: ExtensionAPI, onChannel: ChannelEventSink): void
           next = page?.nextCursor;
         } while (next);
         if (bridge !== from) return;
+        const kept = new Set(fresh.map((t) => String(t.name)));
+        const dropped = tools.map((t) => String(t.name)).filter((n) => !kept.has(n));
         registerAll(fresh);
+        if (dropped.length)
+          pi.setActiveTools(pi.getActiveTools().filter((n) => !dropped.includes(n)));
+        tools.splice(0, tools.length, ...fresh);
         notify(`Искрон: сервер сменил тулы — в сессии зарегистрировано ${fresh.length}.`, "info");
       } catch (e) {
+        if (bridge !== from) return; // мост уже сменился — его отказ не слово новой сессии
         notify(
           `Искрон: список тулов после смены на сервере не перечитан — ${(e as Error).message}`,
           "warning",

@@ -2270,16 +2270,17 @@ function openLocalServer(key) {
     sock.on("close", () => gone(sock));
     sock.on("error", () => gone(sock));
     for (const fn of attachHooks) fn();
-    const backlog = ring.filter(
-      ({ frame: frame2 }) => frame2?.type === "hello" || !(frame2?.type === "message" && typeof frame2.id === "string" && seen.has(frame2.id))
-    );
+    const given = seenIds(seenFilePathOf(CFG.authDir, key));
+    const backlog = ring.filter(({ frame: frame2 }) => {
+      if (frame2?.type === "hello") return true;
+      const id = frame2?.type === "message" && typeof frame2.id === "string" ? frame2.id : "";
+      return !id || !(seen.has(id) || given.has(id));
+    });
     sock.write(
       JSON.stringify({ kind: "attached", key, buffered: backlog.length }) + "\n"
     );
     for (const { raw, frame: frame2 } of backlog) {
       sock.write(JSON.stringify({ kind: "frame", raw, frame: frame2 }) + "\n");
-      if (frame2?.type === "message" && typeof frame2.id === "string")
-        noteSeen(seenFilePathOf(CFG.authDir, key), frame2.id, seen);
     }
     if (evictedEvent && evictedKey === key) sock.write(JSON.stringify(evictedEvent) + "\n");
   });
@@ -2572,6 +2573,7 @@ var joinName = (p) => [p.host, p.repo, p.model].filter(Boolean).join(".");
 
 // js/bridge/placefields.ts
 var model = "";
+var extra = {};
 function rememberModel(m) {
   if (typeof m === "string" && m.trim()) model = m.trim().replace(/^[^/]*\//, "");
 }
@@ -2580,10 +2582,19 @@ function placeFields() {
   return {
     ...model ? { model } : {},
     attrs: {
+      ...extra,
       build: { name: "iskron-bridge", version: VERSION, stamp: BUILD.split("+")[1] ?? "" },
       ...harness ? { harness } : {}
     }
   };
+}
+var PLACE_ACTIONS = /* @__PURE__ */ new Set(["connect", "mint", "register"]);
+function withPlaceFields(args) {
+  if (!PLACE_ACTIONS.has(String(args.action))) return args;
+  rememberModel(args.model);
+  if (args.attrs && typeof args.attrs === "object" && !Array.isArray(args.attrs))
+    extra = { ...args.attrs };
+  return { ...args, ...placeFields() };
 }
 
 // js/bridge/standing.ts
@@ -3206,7 +3217,7 @@ async function separatePlace(realm, karta, derived) {
   if (!name) return null;
   return {
     name,
-    note: `место ${derived} держит живая сессия другого моста — встаю рядом на ${name}, её не трогаю; если ${derived} — твоё место (мост этой же сессии перезапущен), вернись: iskron_stand(name="${derived}", take=true); вытеснять чужую сессию — только словом человека`
+    note: `место ${derived} держит живая сессия другого моста — встаю рядом на ${name}, её не трогаю; если ${derived} — твоё место по памяти этой сессии (её мост перезапущен; субагенту основное место не своё), вернись: iskron_stand(name="${derived}", take=true); вытеснять чужую сессию — только словом человека`
   };
 }
 
@@ -3545,7 +3556,9 @@ async function runStand(msg) {
   const entries = parseBoard(board.text);
   const header = /^\s*Каналы(?:\s*\((\d+)\))?(?:\s|:|$)/m.exec(board.text);
   const declared = header?.[1] != null ? Number(header[1]) : null;
-  const empty = /не держит канала|нигде не стоит/i.test(board.text);
+  const empty = /^\s*Ни одна роль этого графа (?:не держит канала|нигде не стоит)/m.test(
+    board.text
+  );
   const recognized = !!header || empty || entries.length > 0;
   let own = entries.filter((e) => e.karta === karta && nameOf(e.address) === name);
   const separate = derived && a.take !== true && name === derived ? await separatePlace(realm, karta, derived) : null;
@@ -3590,7 +3603,7 @@ async function runStand(msg) {
   const fresh = a.take !== true && !holdsStanding(realm, karta, name) && !isParked(realm, karta, name);
   const predecessorDead = fresh && listensElsewhere && await deadPredecessor(realm, karta, name);
   const resumed = fresh && !listensElsewhere ? await resumeFromDisk(realm, karta, name) : null;
-  const extra = [];
+  const extra2 = [];
   if (resumed) {
     const r = await register();
     if (r.isError) {
@@ -3602,7 +3615,7 @@ async function runStand(msg) {
     const newStatus = typeof a.status === "string" && a.status.trim();
     if (resumed.status && !newStatus) {
       const st = await publishStatus(resumed.status);
-      extra.push(
+      extra2.push(
         st.ok ? `Занятость возвращена с местом: ${resumed.status}` : `Занятость с места не возвращена: ${short(st.body)}`
       );
     }
@@ -3645,7 +3658,7 @@ async function runStand(msg) {
   lines.push(
     `[iskron_stand] стояние ${mine?.address ?? name} — роль #${karta}, граф ${realm}: ${how}.`,
     ...nameNotes.map((n) => `[iskron_stand] ${n}`),
-    ...extra
+    ...extra2
   );
   const block = heardHere ? listenBlock() : null;
   if (block) lines.push(block);
@@ -3761,7 +3774,9 @@ var LEAVE_LINE = '[мост] action="leave" (realm) — уйти с места: 
 function annotateToolList(reply2) {
   const tools = reply2?.result?.tools;
   if (!Array.isArray(tools)) return;
-  if (!tools.some((t) => t?.name === STAND_TOOL.name)) tools.push(STAND_TOOL);
+  const at2 = tools.findIndex((t) => t?.name === STAND_TOOL.name);
+  if (at2 >= 0) tools[at2] = STAND_TOOL;
+  else tools.push(STAND_TOOL);
   for (const t of tools) {
     if (t && t.name === "iskron_channel" && typeof t.description === "string") {
       if (!t.description.includes(STATUS_LINE))
@@ -3962,6 +3977,8 @@ async function deliverOne(msg) {
         return;
       }
       expectOwnRevoke(msg);
+      if (msg.method === "tools/call" && msg.params?.name === "iskron_channel" && msg.params.arguments)
+        msg.params.arguments = withPlaceFields(msg.params.arguments);
       await post(msg, forward);
       const held = heldReply;
       if (held) {
@@ -4485,6 +4502,8 @@ function runWatchdog(argv2) {
 `);
     process.exit(2);
   }
+  const seenPath = seenFilePathOf(target.authDir, target.key);
+  const seen2 = seenIds(seenPath);
   attach(target.path, {
     onEvent: (ev) => {
       switch (ev.kind) {
@@ -4500,6 +4519,7 @@ function runWatchdog(argv2) {
             break;
           }
           for (const line of wrapLines(frameToText(f, ev.raw ?? ""))) log2(line);
+          if (typeof f.id === "string" && f.id) noteSeen(seenPath, f.id, seen2);
           break;
         }
         case "note":

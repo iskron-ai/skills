@@ -662,6 +662,8 @@ test("iskron_stand: a place whose bridge died is taken back, not skipped to name
   assert.ok((await third.call("initialize", INIT)).result);
   const t3 = await third.call("tools/call", { name: "iskron_stand", arguments: args });
   assert.equal(placeOf(t3), `${base}.2`, standText(t3));
+  const last = fake.state.placeArgs.filter((x) => x.action === "register").at(-1);
+  assert.equal(last?.attrs?.build?.name, "iskron-bridge", "the taken-back place is named too");
 });
 
 // A live session away from its place (leave, or deafness) keeps its local

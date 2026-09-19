@@ -181,16 +181,18 @@ export async function refreshToolList(
   state: { listed: any[]; source: string },
   reload: () => Promise<void>,
   say: (text: string, level: "info" | "warning") => void,
+  live: () => boolean, // плагин не остановлен: после остановки — ни подмены, ни слова
 ): Promise<void> {
   try {
     const list = await listTools(b);
-    if (JSON.stringify(list) === JSON.stringify(state.listed)) return;
+    if (!live() || JSON.stringify(list) === JSON.stringify(state.listed)) return;
     state.listed = list;
     state.source = "с сервера";
     writeCache(list);
     await reload();
     say(`Искрон: сервер сменил тулы — в сессии теперь ${list.length}.`, "info");
   } catch (e) {
+    if (!live()) return;
     say(
       `Искрон: список тулов после смены на сервере не перечитан — ${(e as Error).message}`,
       "warning",

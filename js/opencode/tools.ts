@@ -314,7 +314,15 @@ export async function setupTools(
     serverSeen: false,
   };
 
-  const relist = (b: Bridge | null) => b && refreshToolList(b, state, () => ctx.tool.reload(), say);
+  const relist = (b: Bridge | null) =>
+    b &&
+    refreshToolList(
+      b,
+      state,
+      () => ctx.tool.reload(),
+      say,
+      () => !stopped,
+    );
   const statusText = (): string =>
     statusLines(path, builds, { loginPending, loginUrl }, state, slots.size, spare ? 1 : 0);
 

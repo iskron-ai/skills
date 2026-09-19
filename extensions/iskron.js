@@ -615,9 +615,15 @@ function setupBridge(pi, onChannel) {
           next = page?.nextCursor;
         } while (next);
         if (bridge !== from) return;
+        const kept = new Set(fresh.map((t) => String(t.name)));
+        const dropped = tools.map((t) => String(t.name)).filter((n) => !kept.has(n));
         registerAll(fresh);
+        if (dropped.length)
+          pi.setActiveTools(pi.getActiveTools().filter((n) => !dropped.includes(n)));
+        tools.splice(0, tools.length, ...fresh);
         notify(`Искрон: сервер сменил тулы — в сессии зарегистрировано ${fresh.length}.`, "info");
       } catch (e) {
+        if (bridge !== from) return;
         notify(
           `Искрон: список тулов после смены на сервере не перечитан — ${e.message}`,
           "warning"

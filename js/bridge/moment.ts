@@ -30,7 +30,10 @@ export function annotateToolList(reply: JsonRpcMessage): void {
   const tools = reply?.result?.tools;
   if (!Array.isArray(tools)) return;
   // Тул моста — в списке той же сессии: его нет без моста, и это знак транспорта.
-  if (!tools.some((t) => t?.name === STAND_TOOL.name)) tools.push(STAND_TOOL);
+  // Всегда определение ЭТОЙ сборки: список из общего кэша мог записать мост другой.
+  const at = tools.findIndex((t) => t?.name === STAND_TOOL.name);
+  if (at >= 0) tools[at] = STAND_TOOL;
+  else tools.push(STAND_TOOL);
   for (const t of tools) {
     if (t && t.name === "iskron_channel" && typeof t.description === "string") {
       if (!t.description.includes(STATUS_LINE))

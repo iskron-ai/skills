@@ -13,6 +13,7 @@ import {
 } from "./errors.ts";
 import { localLeave } from "./leave.ts";
 import { annotateToolList } from "./moment.ts";
+import { withPlaceFields } from "./placefields.ts";
 import { isCheckCall, isResumeCall, runCheck, runResume } from "./resume.ts";
 import { isStandCall, runStand } from "./stand.ts";
 import { ensureStanding, isUnattributed, noteStanding, replyText } from "./standing.ts";
@@ -278,6 +279,12 @@ async function deliverOne(msg: JsonRpcMessage): Promise<void> {
         return;
       }
       expectOwnRevoke(msg); // закрытие 4001 обгонит ответ — мост должен знать, что снимает сам
+      if (
+        msg.method === "tools/call" &&
+        msg.params?.name === "iskron_channel" &&
+        msg.params.arguments
+      )
+        msg.params.arguments = withPlaceFields(msg.params.arguments); // поля места и в пяти вызовах (#5174)
       await post(msg, forward);
       const held = heldReply as JsonRpcMessage | null;
       if (held) {

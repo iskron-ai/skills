@@ -241,6 +241,29 @@ test("a frame handed to a watchdog from the ring is not handed to the next one a
   await second.done;
 });
 
+// The exit watchdog leaves on the first frame: the rest of a batch that
+// waited without a listener is NOT delivered yet, so the next arm must get it.
+test("a batch from the ring is not lost to a watchdog that exits on the first frame", async (t) => {
+  const { fake, dir } = await connected(t);
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  for (const [id, body] of [
+    ["m-a", "первое без сторожа"],
+    ["m-b", "второе без сторожа"],
+  ])
+    await fake.control({ ws_send: JSON.stringify({ type: "message", id, body }) });
+  await new Promise((r) => setTimeout(r, 300));
+  const first = runClient("watchdog-exit", dir, undefined);
+  const r1 = await first.done;
+  assert.equal(r1.exit, 0, first.err);
+  const second = runClient("watchdog-exit", dir, undefined);
+  const r2 = await second.done;
+  assert.equal(r2.exit, 0, `the second arm must get the frame the first did not: ${second.err}`);
+  assert.ok(
+    (first.out + second.out).includes("первое") && (first.out + second.out).includes("второе"),
+    `both frames delivered, one per arm:\n${first.out}\n---\n${second.out}`,
+  );
+});
+
 test("a dead-token close leaves the watchdog loudly and reaches the harness as an error", async (t) => {
   const { fake, dir, bridge, key, standings } = await connected(t);
   await waitFor(() => fake.state.ws.size === 1, "the socket");
@@ -599,6 +622,27 @@ test("a tool list changed under a re-opened session is announced as list_changed
   );
 });
 
+// The shared cache may carry iskron_stand written by another build of the
+// bridge; a list served from it must carry THIS build's definition.
+test("a cached list serves this build's iskron_stand, not the one another build cached", async (t) => {
+  const { fake, dir, bridge } = await connected(t);
+  await bridge.call("tools/list", 20, {});
+  const cacheFile = readdirSync(dir).find((f) => f.endsWith(".server-answers"));
+  const cache = JSON.parse(readFileSync(join(dir, cacheFile), "utf8"));
+  for (const tool of cache.tools.tools)
+    if (tool.name === "iskron_stand") tool.description = "ПРЕЖНЯЯ СБОРКА";
+  writeFileSync(join(dir, cacheFile), JSON.stringify(cache));
+  await bridge.stop();
+  await fake.stop(); // no network: the second bridge answers from the cache
+  const second = startBridge(fake.mcpUrl, dir);
+  t.after(() => second.stop());
+  await second.call("initialize", 1, INIT);
+  const listed = await second.call("tools/list", 2, {});
+  assert.ok(listed.result?.tools, `served from the cache: ${JSON.stringify(listed)}`);
+  const stand = listed.result.tools.find((x) => x.name === "iskron_stand");
+  assert.ok(stand && !stand.description.includes("ПРЕЖНЯЯ СБОРКА"), JSON.stringify(stand));
+});
+
 // The shared answers cache keeps the form the harness gets — with the bridge's
 // own tool — or the next start without network serves a list without it, and a
 // cached list must not read as a changed one once the session opens (#5405).
@@ -675,6 +719,47 @@ test("the silence window has a floor of its own: a short ping does not shorten i
   assert.equal(fake.state.counts.ws_upgrades, 1, "three short intervals are not yet silence");
   assert.ok(!/подвисло/.test(bridge.stderr), bridge.stderr);
   await waitFor(() => fake.state.counts.ws_upgrades >= 2, "the reopen past the floor", 8000);
+});
+
+// The five-call path names the place too (#5174): an agent's own connect and
+// register carry the bridge's build sign next to the agent's attrs, and the
+// re-bind after a rebuilt session carries both — attrs replace whole.
+test("proxied connect and the re-bind after a rebuilt session carry model and attrs whole", async (t) => {
+  const fake = await startFakeNks();
+  const dir = mkdtempSync(join(tmpdir(), "iskron-standing-"));
+  const bridge = startBridge(fake.mcpUrl, dir);
+  t.after(async () => {
+    await bridge.stop();
+    await fake.stop();
+  });
+  const pending = await bridge.call("initialize", 1, INIT);
+  await fetch(authorizeUrlIn(pending.error?.message), { redirect: "follow" }).then((r) => r.text());
+  await waitFor(() => readdirSync(dir).some((f) => f.endsWith(".json")), "the grant");
+  await bridge.call("initialize", 2, INIT);
+  const own = { worktree: "w1" };
+  await bridge.call("tools/call", 3, {
+    name: "iskron_channel",
+    arguments: { ...CONNECT, model: "opus-5", attrs: own },
+  });
+  await bridge.call("tools/call", 4, {
+    name: "iskron_channel",
+    arguments: { realm: "nks-dev", action: "register", karta: 931, name: "proba" },
+  });
+  const connect = fake.state.placeArgs.find((x) => x.action === "connect");
+  assert.equal(connect?.model, "opus-5", JSON.stringify(fake.state.placeArgs));
+  assert.equal(connect?.attrs?.worktree, "w1", "the agent's own attrs ride");
+  assert.equal(connect?.attrs?.build?.name, "iskron-bridge", "the build sign rides next to them");
+  const before = fake.state.placeArgs.length;
+  await fake.control({ kill_session: true });
+  await bridge.call("tools/call", 5, {
+    name: "iskron_channel",
+    arguments: { realm: "nks-dev", action: "send", karta: 931, text: "после пересборки" },
+  });
+  const rebind = fake.state.placeArgs.slice(before).find((x) => x.action === "register");
+  assert.ok(rebind, `a re-bind happened: ${JSON.stringify(fake.state.placeArgs.slice(before))}`);
+  assert.equal(rebind.attrs?.build?.name, "iskron-bridge", "the re-bind keeps the build sign");
+  assert.equal(rebind.attrs?.worktree, "w1", "the re-bind keeps the agent's attrs");
+  assert.equal(rebind.model, "opus-5");
 });
 
 // Two bridges under one grant — a session with both the plugin's and the user's

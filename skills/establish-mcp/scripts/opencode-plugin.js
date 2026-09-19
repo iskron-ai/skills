@@ -401,16 +401,17 @@ async function listTools(b) {
 function textOf(result) {
   return resultToContent(result).map((c) => c.type === "text" ? c.text : "[image]").join("\n");
 }
-async function refreshToolList(b, state2, reload, say) {
+async function refreshToolList(b, state2, reload, say, live) {
   try {
     const list = await listTools(b);
-    if (JSON.stringify(list) === JSON.stringify(state2.listed)) return;
+    if (!live() || JSON.stringify(list) === JSON.stringify(state2.listed)) return;
     state2.listed = list;
     state2.source = "с сервера";
     writeCache(list);
     await reload();
     say(`Искрон: сервер сменил тулы — в сессии теперь ${list.length}.`, "info");
   } catch (e) {
+    if (!live()) return;
     say(
       `Искрон: список тулов после смены на сервере не перечитан — ${e.message}`,
       "warning"
@@ -761,7 +762,13 @@ async function setupTools(ctx, say, onChannel, rootOf) {
     source: "из прошлого списка",
     serverSeen: false
   };
-  const relist = (b) => b && refreshToolList(b, state2, () => ctx.tool.reload(), say);
+  const relist = (b) => b && refreshToolList(
+    b,
+    state2,
+    () => ctx.tool.reload(),
+    say,
+    () => !stopped
+  );
   const statusText = () => statusLines(path, builds, { loginPending, loginUrl }, state2, slots.size, spare ? 1 : 0);
   await ctx.tool.transform((editor) => {
     editor.add({

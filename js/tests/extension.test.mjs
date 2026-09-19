@@ -64,6 +64,7 @@ const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 function fakePi({ hasUI = true } = {}) {
   const handlers = new Map();
   const tools = new Map();
+  const active = new Set(); // имена активных тулов, как их держит pi (getActiveTools/setActiveTools)
   const messages = [];
   const notices = [];
   const statuses = [];
@@ -79,13 +80,22 @@ function fakePi({ hasUI = true } = {}) {
       if (!handlers.has(name)) handlers.set(name, []);
       handlers.get(name).push(fn);
     },
-    registerTool: (t) => tools.set(t.name, t),
+    registerTool: (t) => {
+      tools.set(t.name, t);
+      active.add(t.name);
+    },
+    getActiveTools: () => [...active],
+    setActiveTools: (names) => {
+      active.clear();
+      for (const n of names) active.add(n);
+    },
     sendMessage: (msg, opts) => messages.push({ msg, opts }),
   };
   return {
     pi,
     ctx,
     tools,
+    active,
     messages,
     notices,
     statuses,
@@ -256,8 +266,8 @@ test("factory alone raises nothing live", async () => {
 
 // A rollout changed the server's tools under a live bridge, and the bridge says
 // notifications/tools/list_changed (#5406): the extension re-reads the list and
-// registers the new and changed tools; pi has no way to drop a tool, so a tool
-// the server removed stays until restart — the probe asserts only what pi can do.
+// registers the new and changed tools, and a tool the server removed leaves the
+// active set (pi.setActiveTools) — registered tools cannot be unregistered.
 test("list_changed from the bridge re-registers the tools with the new list", async () => {
   const dir = mkdtempSync(join(tmpdir(), "iskron-ext-lc-"));
   const toolsFile = join(dir, "tools.json");
@@ -281,6 +291,11 @@ test("list_changed from the bridge re-registers the tools with the new list", as
     const deadline = Date.now() + 5000;
     while (!rec.tools.has("iskron_new") && Date.now() < deadline) await delay(50);
     assert.ok(rec.tools.has("iskron_new"), "the new tool is registered");
+    assert.ok(
+      !rec.active.has("iskron_orient"),
+      "a tool the server dropped is taken out of the active set",
+    );
+    assert.ok(rec.active.has("iskron_new") && rec.active.has("iskron_channel"));
     assert.equal(rec.tools.get("iskron_channel").description, "Канал, новое описание.");
     assert.match(rec.said(), /сервер сменил тулы/);
   } finally {
