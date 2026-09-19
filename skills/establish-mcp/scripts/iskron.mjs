@@ -2707,6 +2707,7 @@ function localStatus(msg) {
   return (async () => {
     const st = await publishStatus(text);
     if (!st.ok && !statusAddress()) return reply2(await notHeldHere(), true);
+    if (st.code === 404) return reply2(`${st.body} ${await holderGuidance()}`, true);
     if (st.ok) return reply2(`занятость ${statusAddress()?.key}: ${text || "(снята)"}`);
     return reply2(st.body, true);
   })();
@@ -2737,6 +2738,7 @@ async function heldElsewhere() {
     try {
       const raw = JSON.parse(readFileSync9(join7(dir, f), "utf8"));
       const key = keyOf(raw.realm, raw.karta, raw.name);
+      if (key === statusAddress()?.key) continue;
       const rec = readHoldRecord(key);
       if (rec && await localSocketAlive(socketPathOf(CFG.authDir, key)))
         out4.push({ ...rec, key });
@@ -2745,18 +2747,23 @@ async function heldElsewhere() {
   }
   return out4;
 }
-async function notHeldHere() {
+async function holderGuidance() {
   const others = await heldElsewhere();
-  const head = "Отказано (мост): этот мост места не держит, статусного адреса у него нет.";
   if (!others.length)
-    return `${head} Назовись одним вызовом iskron_stand(realm, karta, model, status) — занятость можно передать прямо в нём. Если место слушает другой держатель, stand скажет это; тогда ${TAKE_PATH}.`;
+    return `Если место слушает другой держатель, iskron_stand скажет это; тогда ${TAKE_PATH}.`;
   const list = others.map((r) => {
     const where = [r.cwd && `каталог ${r.cwd}`, r.client && `харнесс ${r.client}`].filter(
       Boolean
     );
     return where.length ? `${r.key} (${where.join(", ")})` : r.key;
   }).join("; ");
-  return `${head} Места на этой машине держат другие живые мосты: ${list}. Если среди них твоё место — в сессии две записи iskron (плагинная и пользовательская): зови status тем же набором тулов, которым звал iskron_stand, передача не нужна. Иначе ${TAKE_PATH}.`;
+  return `Места на этой машине держат другие живые мосты: ${list}. Если среди них твоё место — в сессии две записи iskron (плагинная и пользовательская): зови status тем же набором тулов, которым звал iskron_stand, передача не нужна. Иначе ${TAKE_PATH}.`;
+}
+async function notHeldHere() {
+  const head = "Отказано (мост): этот мост места не держит, статусного адреса у него нет.";
+  const guide = await holderGuidance();
+  if (guide.startsWith("Места")) return `${head} ${guide}`;
+  return `${head} Назовись одним вызовом iskron_stand(realm, karta, model, status) — занятость можно передать прямо в нём. ${guide}`;
 }
 async function publishStatusTo(url, text, timeoutMs = 5e3) {
   let res;
@@ -2777,10 +2784,15 @@ async function publishStatusTo(url, text, timeoutMs = 5e3) {
   if (res.status === 404)
     return {
       ok: false,
-      body: `Отказано (404) поверхностью: ${body || "без тела"} — статусный адрес повернули connect-ом другого держателя; занятость теперь его; вернуть слух и адрес сюда — iskron_stand с take=true`
+      code: 404,
+      body: `Отказано (404) поверхностью: ${body || "без тела"} — статусный адрес повернули connect-ом другого держателя, занятость теперь его.`
     };
   if (!res.ok)
-    return { ok: false, body: `Отказано (${res.status}) поверхностью: ${body || "без тела"}` };
+    return {
+      ok: false,
+      code: res.status,
+      body: `Отказано (${res.status}) поверхностью: ${body || "без тела"}`
+    };
   return { ok: true, body };
 }
 

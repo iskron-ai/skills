@@ -530,6 +530,23 @@ test("status on a second bridge names the live holder and the whole handover pat
   assert.equal(fake.state.ws.size, 1, "the refusal takes no socket");
 });
 
+// The status address answering 404 means another connect turned it (#5395):
+// the refusal carries the same whole path, not a bare take=true.
+test("a turned status address is refused with the whole handover path", async (t) => {
+  const { fake, bridge } = await connected(t);
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  await fake.control({ statusGone: true });
+  const r = await bridge.call("tools/call", 6, {
+    name: "iskron_channel",
+    arguments: { realm: "nks-dev", action: "status", text: "после поворота" },
+  });
+  assert.ok(r.result?.isError, JSON.stringify(r));
+  const said = r.result.content[0].text;
+  assert.match(said, /404/, said);
+  assert.match(said, /обратим/, said);
+  assert.match(said, /переживают/, said);
+});
+
 // The secret never leaves the bridge (graph nks-dev: #4233, #5033): the connect
 // answer the agent reads carries neither the socket nor the status address, so
 // no harness door can open the socket itself and evict the bridge.

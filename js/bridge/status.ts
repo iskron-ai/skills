@@ -26,9 +26,17 @@ export function localStatus(msg: JsonRpcMessage): Promise<JsonRpcMessage> | null
   return (async () => {
     const st = await publishStatus(text);
     if (!st.ok && !statusAddress()) return reply(await notHeldHere(), true);
+    if (st.code === 404) return reply(`${st.body} ${await holderGuidance()}`, true);
     if (st.ok) return reply(`занятость ${statusAddress()?.key}: ${text || "(снята)"}`);
     return reply(st.body, true);
   })();
+}
+
+/** Исход POST занятости; code — HTTP-код отказа поверхности, когда он был. */
+export interface StatusOutcome {
+  ok: boolean;
+  body: string;
+  code?: number;
 }
 
 let lastPublished = "";
@@ -36,7 +44,7 @@ let lastPublished = "";
 export const publishedStatus = (): string => lastPublished;
 
 /** POST строки занятости на статусный адрес стояния, которое держит мост. */
-export async function publishStatus(text: string): Promise<{ ok: boolean; body: string }> {
+export async function publishStatus(text: string): Promise<StatusOutcome> {
   const addr = statusAddress();
   if (!addr) {
     return {
@@ -70,6 +78,7 @@ async function heldElsewhere(): Promise<HoldRecord[]> {
     try {
       const raw = JSON.parse(readFileSync(join(dir, f), "utf8")) as HoldRecord;
       const key = keyOf(raw.realm, raw.karta, raw.name);
+      if (key === statusAddress()?.key) continue; // своё место — не «другой мост»
       const rec = readHoldRecord(key);
       if (rec && (await localSocketAlive(socketPathOf(CFG.authDir, key))))
         out.push({ ...rec, key });
@@ -80,15 +89,11 @@ async function heldElsewhere(): Promise<HoldRecord[]> {
   return out;
 }
 
-/** Отказ моста без стояния: называет живого держателя этой машины, если он есть, и путь передачи целиком. */
-export async function notHeldHere(): Promise<string> {
+/** Кто держит место и как быть: живые мосты этой машины, случай двух записей и путь take целиком. */
+export async function holderGuidance(): Promise<string> {
   const others = await heldElsewhere();
-  const head = "Отказано (мост): этот мост места не держит, статусного адреса у него нет.";
   if (!others.length)
-    return (
-      `${head} Назовись одним вызовом iskron_stand(realm, karta, model, status) — занятость можно передать прямо в нём. ` +
-      `Если место слушает другой держатель, stand скажет это; тогда ${TAKE_PATH}.`
-    );
+    return `Если место слушает другой держатель, iskron_stand скажет это; тогда ${TAKE_PATH}.`;
   const list = others
     .map((r) => {
       const where = [r.cwd && `каталог ${r.cwd}`, r.client && `харнесс ${r.client}`].filter(
@@ -98,10 +103,18 @@ export async function notHeldHere(): Promise<string> {
     })
     .join("; ");
   return (
-    `${head} Места на этой машине держат другие живые мосты: ${list}. ` +
+    `Места на этой машине держат другие живые мосты: ${list}. ` +
     "Если среди них твоё место — в сессии две записи iskron (плагинная и пользовательская): зови status тем же набором тулов, которым звал iskron_stand, передача не нужна. " +
     `Иначе ${TAKE_PATH}.`
   );
+}
+
+/** Отказ моста без стояния: называет живого держателя этой машины, если он есть, и путь передачи целиком. */
+export async function notHeldHere(): Promise<string> {
+  const head = "Отказано (мост): этот мост места не держит, статусного адреса у него нет.";
+  const guide = await holderGuidance();
+  if (guide.startsWith("Места")) return `${head} ${guide}`;
+  return `${head} Назовись одним вызовом iskron_stand(realm, karta, model, status) — занятость можно передать прямо в нём. ${guide}`;
 }
 
 /** Тот же POST на названный адрес — для выхода, когда стояние уже отпущено, а адрес снят до этого. */
@@ -109,7 +122,7 @@ export async function publishStatusTo(
   url: string,
   text: string,
   timeoutMs = 5000,
-): Promise<{ ok: boolean; body: string }> {
+): Promise<StatusOutcome> {
   let res: Response;
   try {
     res = await fetch(url, {
@@ -128,11 +141,14 @@ export async function publishStatusTo(
   if (res.status === 404)
     return {
       ok: false,
-      body:
-        `Отказано (404) поверхностью: ${body || "без тела"} — статусный адрес повернули connect-ом другого держателя; ` +
-        "занятость теперь его; вернуть слух и адрес сюда — iskron_stand с take=true",
+      code: 404,
+      body: `Отказано (404) поверхностью: ${body || "без тела"} — статусный адрес повернули connect-ом другого держателя, занятость теперь его.`,
     };
   if (!res.ok)
-    return { ok: false, body: `Отказано (${res.status}) поверхностью: ${body || "без тела"}` };
+    return {
+      ok: false,
+      code: res.status,
+      body: `Отказано (${res.status}) поверхностью: ${body || "без тела"}`,
+    };
   return { ok: true, body };
 }
