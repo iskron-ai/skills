@@ -576,6 +576,51 @@ test("a tool list changed under a re-opened session is announced as list_changed
   );
 });
 
+// The shared answers cache keeps the form the harness gets — with the bridge's
+// own tool — or the next start without network serves a list without it, and a
+// cached list must not read as a changed one once the session opens (#5405).
+test("the re-check keeps the bridge's own tool in the cache and a cached list is not a change", async (t) => {
+  const { fake, dir, bridge } = await connected(t);
+  await bridge.call("tools/list", 20, {});
+  await fake.control({ kill_session: true });
+  await bridge.call("tools/call", 21, {
+    name: "iskron_channel",
+    arguments: { realm: "nks-dev", action: "list" },
+  });
+  await new Promise((r) => setTimeout(r, 800));
+  const cacheFile = readdirSync(dir).find((f) => f.endsWith(".server-answers"));
+  assert.ok(cacheFile, readdirSync(dir).join(","));
+  assert.match(
+    readFileSync(join(dir, cacheFile), "utf8"),
+    /iskron_stand/,
+    "the cache keeps iskron_stand",
+  );
+  // A second bridge serves the list from that cache before its session opens,
+  // then opens it: the server did not change, so the harness hears nothing.
+  const second = startBridge(fake.mcpUrl, dir);
+  t.after(() => second.stop());
+  await fake.control({ kill_session: true });
+  await second.call("initialize", 1, INIT);
+  const listed = await second.call("tools/list", 2, {});
+  assert.ok(
+    listed.result.tools.some((x) => x.name === "iskron_stand"),
+    JSON.stringify(listed),
+  );
+  await second.call("tools/call", 3, {
+    name: "iskron_channel",
+    arguments: { realm: "nks-dev", action: "list" },
+  });
+  await new Promise((r) => setTimeout(r, 800));
+  assert.ok(
+    !second.notifications.some((n) => n.method === "notifications/tools/list_changed"),
+    "a list served from the cache is not a change",
+  );
+  assert.ok(
+    !bridge.notifications.some((n) => n.method === "notifications/tools/list_changed"),
+    "an unchanged list says nothing",
+  );
+});
+
 test("a re-opened session with the same tool list says nothing", async (t) => {
   const { fake, bridge } = await connected(t);
   await bridge.call("tools/list", 20, {});

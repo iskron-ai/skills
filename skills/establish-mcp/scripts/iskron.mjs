@@ -3769,18 +3769,23 @@ var READ_TOOLS = /* @__PURE__ */ new Set([
   "iskron_search",
   "iskron_semantic_search"
 ]);
-onReinitialized(
-  () => recheckTools(async () => {
+var harnessListing = 0;
+onReinitialized(() => {
+  if (harnessListing > 0) return;
+  return recheckTools(async () => {
     const id = `iskron-bridge-tools-${++state.reinitCounter}`;
     let got = null;
     await post({ jsonrpc: "2.0", id, method: "tools/list", params: {} }, (m) => {
       if (m.id === id) got = m;
     });
     const reply2 = got;
-    if (reply2?.result) saveServerCache({ tools: reply2.result });
+    if (reply2?.result) {
+      annotateToolList(reply2);
+      saveServerCache({ tools: reply2.result });
+    }
     return reply2;
-  }, emit)
-);
+  }, emit);
+});
 function isRead(msg) {
   if (msg?.method === "initialize" || msg?.method === "tools/list") return true;
   return msg?.method === "tools/call" && READ_TOOLS.has(String(msg.params?.name ?? ""));
@@ -3788,8 +3793,13 @@ function isRead(msg) {
 function lastServerAnswer(msg) {
   const cache = loadServerCache();
   const result = msg?.method === "initialize" ? cache.init : msg?.method === "tools/list" && !msg.params?.cursor ? cache.tools : null;
-  if (result && msg?.method === "tools/list") noteServedTools(result);
-  return result ? { jsonrpc: "2.0", id: msg.id, result } : null;
+  if (!result) return null;
+  const reply2 = { jsonrpc: "2.0", id: msg.id, result };
+  if (msg?.method === "tools/list") {
+    annotateToolList(reply2);
+    noteServedTools(reply2.result);
+  }
+  return reply2;
 }
 function ownClient() {
   const info = state.initParams?.clientInfo;
@@ -3805,6 +3815,15 @@ function withNotice(reply2) {
   return reply2;
 }
 async function deliver(msg) {
+  const listing = msg?.method === "tools/list";
+  if (listing) harnessListing++;
+  try {
+    await deliverOne(msg);
+  } finally {
+    if (listing) harnessListing--;
+  }
+}
+async function deliverOne(msg) {
   const local = localStatus(msg) ?? localLeave(msg);
   if (local) {
     emit(await local);
@@ -3834,8 +3853,8 @@ async function deliver(msg) {
     }
     if (m.id === msg.id) noteStanding(msg, m);
     if (m.id === msg.id && msg.method === "tools/list") {
-      if (!msg.params?.cursor) noteServedTools(m.result);
       annotateToolList(m);
+      if (!msg.params?.cursor) noteServedTools(m.result);
     }
     if (m.id === msg.id && m.result) {
       if (isInit) saveServerCache({ init: m.result });
