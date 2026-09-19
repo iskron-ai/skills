@@ -132,6 +132,17 @@ async function connected(t, { env = {}, init = INIT, fakeOpts = {} } = {}) {
   return { fake, dir, bridge, reply, text, key, standings: join(dir, "standings") };
 }
 
+// Сторож метит кадр в .seen сразу после печати; убить его в этот зазор — законная
+// повторная доставка «хотя бы раз», а не то, что проверяют пробы памяти доставленного (#5516).
+const waitSeen = (standings, id) =>
+  waitFor(
+    () =>
+      readdirSync(standings).some(
+        (f) => f.endsWith(".seen") && readFileSync(join(standings, f), "utf8").includes(id),
+      ),
+    `the watchdog to mark ${id} delivered`,
+  );
+
 // The watchdog is given the auth dir the way the bridge's own block names it —
 // the `--auth-dir` flag, never a variable the bridge was not started with. One
 // lever for both halves, or a drift between their roots would pass green here.
@@ -231,15 +242,7 @@ test("a frame handed to a watchdog from the ring is not handed to the next one a
   await new Promise((r) => setTimeout(r, 300));
   const first = runClient("watchdog", dir, undefined);
   await waitFor(() => first.out.includes("пришло без сторожа"), "the first watchdog to get it");
-  // Сторож метит кадр сразу после печати; убить его в этот зазор — законная
-  // повторная доставка «хотя бы раз», а не то, что проверяет эта проба (#5516).
-  await waitFor(
-    () =>
-      readdirSync(standings).some(
-        (f) => f.endsWith(".seen") && readFileSync(join(standings, f), "utf8").includes("m-ring-1"),
-      ),
-    "the first watchdog to mark the frame delivered",
-  );
+  await waitSeen(standings, "m-ring-1");
   first.proc.kill("SIGKILL");
   await first.done;
   const second = runClient("watchdog", dir, undefined);
@@ -1106,7 +1109,7 @@ test("stale frames wake nobody: the exit watchdog waits past them, the harness g
 // Monitor watchdog already printed does not wake an exit watchdog armed later,
 // while a frame nobody was attached for still does.
 test("a frame delivered under the Monitor watchdog does not wake an exit watchdog armed later", async (t) => {
-  const { fake, dir, key } = await connected(t);
+  const { fake, dir, key, standings } = await connected(t);
   await waitFor(() => fake.state.ws.size === 1, "the socket");
   const mon = runClient("watchdog", dir, key);
   await waitFor(() => mon.out.includes("слушаю стояние"), "the Monitor watchdog to attach");
@@ -1114,6 +1117,7 @@ test("a frame delivered under the Monitor watchdog does not wake an exit watchdo
     ws_send: JSON.stringify({ id: "seen-1", type: "message", body: "первый" }),
   });
   await waitFor(() => mon.out.includes("первый"), "the frame to be printed");
+  await waitSeen(standings, "seen-1");
   mon.proc.kill("SIGKILL");
   await mon.done;
   const exit = runClient("watchdog-exit", dir, key, 4000);
@@ -1291,7 +1295,7 @@ for (const way of ["stdin", "SIGINT"]) {
 // A watchdog re-armed after a Monitor expiry must not carry the same frames a
 // second time: the bridge remembers what a local client already received.
 test("a re-armed watchdog gets hello and only the frames no local client has seen", async (t) => {
-  const { fake, dir, key } = await connected(t);
+  const { fake, dir, key, standings } = await connected(t);
   await waitFor(() => fake.state.ws.size === 1, "the socket");
   const first = runClient("watchdog", dir, key, 20_000);
   await waitFor(() => first.out.includes("слушаю стояние"), "the first watchdog to attach");
@@ -1299,6 +1303,7 @@ test("a re-armed watchdog gets hello and only the frames no local client has see
     ws_send: JSON.stringify({ type: "message", id: "m-1", body: "первое слово" }),
   });
   await waitFor(() => first.out.includes("первое слово"), "the frame to reach the first watchdog");
+  await waitSeen(standings, "m-1");
   first.proc.kill("SIGKILL");
   await first.done;
   await fake.control({
