@@ -482,6 +482,12 @@ function openHolder(url: string, key: string): void {
       log(text);
       broadcast({ kind: "note", text });
     },
+    // Подвисание громко во всех харнесах: сторожу строкой, pi и OpenCode — уведомлением (#5380).
+    onHung: (text) => {
+      log(text);
+      broadcast({ kind: "note", text });
+      notify("warning", { kind: "note", text });
+    },
   });
 }
 

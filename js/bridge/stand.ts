@@ -412,7 +412,7 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
       action: "add_webhook",
       realm,
       node_id: karta,
-      url: incoming, // без ttl_seconds — постоянный: 0 снимает срок только в update_webhook, на добавлении контур его отвергает
+      url: incoming, // без ttl_seconds: 0 снимает срок только в update_webhook; на добавлении его отвергает контур (слово архитектора, #5380)
     });
     lines.push(
       h.isError

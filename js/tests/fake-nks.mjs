@@ -826,7 +826,7 @@ export async function startFakeNks(opts = {}) {
           );
         }
         if (a.action === "add_webhook") {
-          // Нулевой срок — ход update_webhook («0 снимает срок»); на добавлении контур его отвергает (#5380).
+          // Нулевой срок — ход update_webhook («0 снимает срок»); на добавлении контур его отвергает — слово архитектора в #5380, текст отказа здесь условный.
           if (a.ttl_seconds === 0)
             return json(
               res,

@@ -1574,7 +1574,7 @@ function holdSocket(o) {
         const silent = now2 - lastLife;
         if (silent <= SILENT_INTERVALS * pingMs + 1e3) return;
         stopWatch();
-        o.onNote?.(
+        (o.onHung ?? o.onNote)?.(
           `соединение молчит ${Math.round(silent / 1e3)} с при пинге раз в ${pingMs / 1e3} с — подвисло без закрытия; переоткрываю тем же адресом. Кадры, пришедшие за время молчания, могли пропасть — сверь iskron_channel(action="history")`
         );
         try {
@@ -2472,6 +2472,12 @@ function openHolder(url, key) {
     onNote: (text) => {
       log(text);
       broadcast({ kind: "note", text });
+    },
+    // Подвисание громко во всех харнесах: сторожу строкой, pi и OpenCode — уведомлением (#5380).
+    onHung: (text) => {
+      log(text);
+      broadcast({ kind: "note", text });
+      notify("warning", { kind: "note", text });
     }
   });
 }
@@ -3637,7 +3643,7 @@ async function runStand(msg) {
       realm,
       node_id: karta,
       url: incoming
-      // без ttl_seconds — постоянный: 0 снимает срок только в update_webhook, на добавлении контур его отвергает
+      // без ttl_seconds: 0 снимает срок только в update_webhook; на добавлении его отвергает контур (слово архитектора, #5380)
     });
     lines.push(
       h.isError ? `Хук инбокса роли: не взвёлся — ${short(h.text)}` : `Хук инбокса роли: взведён (${short(h.text, 120)}).`

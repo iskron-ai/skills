@@ -148,6 +148,8 @@ export interface HoldOptions {
   onServiceAlive: (version: string) => void;
   /** Служебные слова, которые будить не должны. */
   onNote?: (text: string) => void;
+  /** Соединение подвисло и переоткрывается: кадры могли пропасть — это слово будит. Без него — как onNote. */
+  onHung?: (text: string) => void;
 }
 
 export interface Holder {
@@ -259,7 +261,7 @@ export function holdSocket(o: HoldOptions): Holder {
         stopWatch();
         // «Прочитано» у контура значит «записано в сокет», не «взято» (#5380):
         // кадры, ушедшие в подвисшее соединение, в hello не вернутся.
-        o.onNote?.(
+        (o.onHung ?? o.onNote)?.(
           `соединение молчит ${Math.round(silent / 1000)} с при пинге раз в ${pingMs / 1000} с — подвисло без закрытия; переоткрываю тем же адресом. Кадры, пришедшие за время молчания, могли пропасть — сверь iskron_channel(action="history")`,
         );
         try {

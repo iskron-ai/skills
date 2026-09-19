@@ -507,12 +507,17 @@ test("status before connect is a teaching refusal from the bridge, not a server 
 test("a connection silent past three ping intervals is reopened aloud; unseen pings arm nothing", async (t) => {
   const { fake, bridge } = await connected(t, { fakeOpts: { pingMs: 200 } });
   await waitFor(() => fake.state.ws.size === 1, "the socket");
-  await new Promise((r) => setTimeout(r, 700));
+  // Longer than the 1.6 s window: a timer that ignored the pings would have fired.
+  await new Promise((r) => setTimeout(r, 2500));
   assert.equal(fake.state.counts.ws_upgrades, 1, "a pinging connection is left alone");
   await fake.control({ ws_hang: true });
   await waitFor(() => fake.state.counts.ws_upgrades >= 2, "the hung socket to be reopened", 8000);
   assert.match(bridge.stderr, /подвисло без закрытия/, "the reopen is said aloud");
   assert.match(bridge.stderr, /могли пропасть/, "a hung socket's frames are not promised back");
+  assert.ok(
+    bridge.notifications.some((n) => JSON.stringify(n).includes("подвисло")),
+    "the harness is told too — pi and OpenCode hear no watchdog",
+  );
 
   // hello promises a ping every 0.2 s, and none ever comes (Bun has no channel to see it by)
   const quiet = await connected(t, { fakeOpts: { helloPingS: 0.2 } });
