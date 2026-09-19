@@ -68,7 +68,7 @@ export default {
       const push = /(^|[;&|(] *)(env +)?([A-Za-z_]+=\S+ +)*git( -C \S+)* push([ ;&|)]|$)/;
       const merge = /(^|[;&|(] *)gh pr merge|(checkout|switch) (main|master)[^;|]*&& *git( -C \S+)* pull([ ;&|)]|$)/;
       const note = push.test(cmd)
-        ? "[iskron] пуш — не отгрузка: самопроверка и холодное ревью этапа."
+        ? "[iskron] пуш — не отгрузка: самопроверка, словарный проход по тексту PR, холодное ревью этапа."
         : merge.test(cmd)
           ? "[iskron] мерж — четыре акта AGENTS.md: проткать, модусы, закрыть по оси, reconcile."
           : "";

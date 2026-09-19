@@ -46,11 +46,11 @@
         "hooks": [
           {
             "type": "command",
-            "command": "jq -r '.tool_input.command // \"\"' | grep -Eq '(^|[;&|(] *)(env +)?([A-Za-z_]+=[^ ]+ +)*git( -C [^ ]+)* push([ ;&|)]|$)' && echo '{\"hookSpecificOutput\": {\"hookEventName\": \"PostToolUse\", \"additionalContext\": \"Пуш не отгрузил ничего: открыл или обновил PR — самопроверка диффа и холодное ревью этапа (AGENTS.md, «Холодное ревью этапа»). Отгрузка — мерж.\"}}' || true"
+            "command": "jq -r '.tool_input.command // \"\"' | grep -Eq '(^|[;&|(] *)(env +)?([A-Za-z_]+=[^ ]+ +)*git( -C [^ ]+)* push([ ;&|)]|$)' && echo '{\"hookSpecificOutput\": {\"hookEventName\": \"PostToolUse\", \"additionalContext\": \"Пуш не отгрузил ничего: открыл или обновил PR — самопроверка диффа, словарный проход по тексту PR и холодное ревью этапа (AGENTS.md, «Холодное ревью этапа»). Отгрузка — мерж.\"}}' || true"
           },
           {
             "type": "command",
-            "command": "jq -r '.tool_input.command // \"\"' | grep -Eq '(^|[;&|(] *)gh pr merge|(checkout|switch) (main|master)[^;|]*&& *git( -C [^ ]+)* pull([ ;&|)]|$)' && echo '{\"hookSpecificOutput\": {\"hookEventName\": \"PostToolUse\", \"additionalContext\": \"Мерж — четыре акта AGENTS.md «Жизненный цикл сессии»: проткать #1506, переключить модусы, закрыть по оси, reconcile; затем фидбэк-рефлексия и словарный проход.\"}}' || true"
+            "command": "jq -r '.tool_input.command // \"\"' | grep -Eq '(^|[;&|(] *)gh pr merge|(checkout|switch) (main|master)[^;|]*&& *git( -C [^ ]+)* pull([ ;&|)]|$)' && echo '{\"hookSpecificOutput\": {\"hookEventName\": \"PostToolUse\", \"additionalContext\": \"Мерж — четыре акта AGENTS.md «Жизненный цикл сессии»: проткать #1506, переключить модусы, закрыть по оси, reconcile; затем фидбэк-рефлексия.\"}}' || true"
           }
         ]
       }
