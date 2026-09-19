@@ -937,8 +937,8 @@ export async function startFakeNks(opts = {}) {
     socket.on("close", () => {
       st.ws.delete(socket);
       st.wsNames.delete(socket);
-      // Последний сокет места закрыт — «не слушает» сразу; окно платформы («слушает» ещё ~40 с)
-      // проба ставит сама через /control {places: [{…, listening: true}]}.
+      // Последний сокет места закрыт — «не слушает» сразу (прежние серверы держали «слушает» ещё ~40 с;
+      // такое окно проба ставит сама через /control {places: [{…, listening: true}]}.
       const stillHeld =
         placeName === undefined
           ? st.ws.size > 0

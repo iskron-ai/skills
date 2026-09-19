@@ -1,12 +1,12 @@
 # Поверхности харнессов — куда реально ложатся ритуалы
 
-iskronify доставляет **ритуалы** (ориентация на старте сессии, push → обновление графа, память вне локальных хранилищ). Каждый харнесс запускает их по-своему, и пути файлов не взаимозаменяемы. Прошивай поверхности используемого харнесса; никогда не пиши конфиг формата, о котором гадаешь.
+iskronify доставляет **ритуалы** (ориентация на старте сессии, пуш — холодное ревью этапа, мерж — обновление графа, память вне локальных хранилищ). Каждый харнесс запускает их по-своему, и пути файлов не взаимозаменяемы. Прошивай поверхности используемого харнесса; никогда не пиши конфиг формата, о котором гадаешь.
 
 | Харнесс | Читает | Нужен файл-указатель | Поверхность автоматизации |
 |---|---|---|---|
 | Claude Code | `CLAUDE.md` | **да** — `CLAUDE.md` = `@AGENTS.md` | хуки в `.claude/settings.json` |
-| Codex CLI | `AGENTS.md` | нет | `hooks.json` в CODEX_HOME |
-| OpenCode | `AGENTS.md` | нет | плагины в `.opencode/plugins/` |
+| Codex CLI | `AGENTS.md` | нет | `hooks.json` в CODEX_HOME — вне worktree, не прошивается; ритуалы держит проза AGENTS.md |
+| OpenCode | `AGENTS.md` | нет | плагин в `.opencode/plugins/` проекта |
 
 Определи до выбора: `.claude/` или кэш плагинов → Claude Code; `opencode.json` / `.opencode/` → OpenCode; `.codex/` или `~/.codex/` → Codex. Истинным может быть не одно — прошей каждый присутствующий харнесс; тело `AGENTS.md` общее.
 
@@ -16,9 +16,11 @@ iskronify доставляет **ритуалы** (ориентация на с�
 
 ## Codex CLI
 
-**Читает `AGENTS.md` нативно — файл-указатель не создавать.** Обнаружение идёт от корня проекта вниз до cwd и мержит каждый найденный `AGENTS.md` поверх пользовательского `~/.codex/AGENTS.md`. `AGENTS.override.md` — локальный оверрайд с приоритетом над `AGENTS.md` той же директории: естественный дом машинно-локальных заметок; коммитить его нельзя.
+**Читает `AGENTS.md` нативно — файл-указатель не создавать.** Обнаружение идёт от корня проекта вниз до cwd и мержит каждый найденный `AGENTS.md` поверх пользовательского `~/.codex/AGENTS.md`. Пользовательский файл поведение агента не настраивает (Шаг 1). `AGENTS.override.md` — локальный оверрайд с приоритетом над `AGENTS.md` той же директории: естественный дом машинно-локальных заметок; коммитить его нельзя.
 
 **Сперва найди CODEX_HOME, и не считай, что это `~/.codex`.** На 0.149.0-alpha.4.1 настоящий дом лежал в `~/Library/Application Support/orca/codex-runtime-home/home`, а `~/.codex` существовал рядом и хуков не держал вовсе. Спрашивай сам харнесс: `codex doctor` печатает CODEX_HOME строкой, вместе с путём до `config.toml`.
+
+**Хуки CODEX_HOME — вне worktree, и iskronify их не прошивает** (Шаг 1): они машинно-локальны, и ритуалы Codex держит проза «Жизненный цикл сессии» в AGENTS.md. У 0.151 в бинаре есть источник хуков `project` с доверием проекту, но путь файла проекта своими руками не наблюдался — наблюдай на своей версии прежде, чем прошивать; до тех пор ниже — форма, по которой читать и чинить уже стоящее.
 
 **Хуки объявляются в `hooks.json` в CODEX_HOME — файлом JSON, не секцией TOML.** `config.toml` при этом тоже несёт слово `hooks`, и на нём легко обмануться: там стоят таблицы `[hooks.state."<путь до hooks.json>:<событие>:0:0"]` — служебное состояние, ключом которого служит путь к самому hooks.json. Это следствие хуков, а не место, где их заводят: правка `config.toml` хука не создаёт.
 
@@ -38,13 +40,13 @@ iskronify доставляет **ритуалы** (ориентация на с�
 
 `SessionStart` несёт ещё и **source** — `startup`, `resume`, `clear`, `compact` — и именно против source матчится `matcher`. Ориентации-на-старте обычно нужны только `startup` и `resume`; матч всех четырёх пере-запускает ритуал после каждой компакции.
 
-Маппинг ритуалов: ориентация → `SessionStart`; memory-guard → `PreToolUse` по пишущему тулу; push → граф → `PostToolUse` по shell-тулу.
+Маппинг ритуалов: ориентация → `SessionStart`; memory-guard → `PreToolUse` по пишущему тулу; пуш и мерж → `PostToolUse` по shell-тулу, одной строкой каждый.
 
 ## OpenCode
 
-**Читает `AGENTS.md` нативно — без указателя.** Дополнительные файлы правил перечисляются в `instructions` в `opencode.json` (проект) или `~/.config/opencode/opencode.json` (глобально), глобы разрешены — используй это, чтобы переиспользовать существующие файлы правил, а не копировать их в `AGENTS.md`.
+**Читает `AGENTS.md` нативно — без указателя.** Дополнительные файлы правил перечисляются в `instructions` в `opencode.json` проекта (глобальный `~/.config/opencode/opencode.json` поведение агента не настраивает — Шаг 1), глобы разрешены — используй это, чтобы переиспользовать существующие файлы правил, а не копировать их в `AGENTS.md`.
 
-Файла хуков нет. Эквивалент — **плагин**: JS/TS-файл в `.opencode/plugins/` (проект) или `~/.config/opencode/plugins/` (глобально), автозагружаемый на старте — по разу на каждую локацию сервиса. **Форма — OpenCode 2 (`@opencode/plugin` 2.0.4): default-экспорт объекта `{ id, setup(ctx) }`.** Прежняя форма 1.x — экспорт async-функции, возвращающей карту хуков `"tool.execute.before"` — загрузчиком 2.x отвергается (`Plugin must export a default definition with an id and an effect or setup function`; в логе сервиса — `failed to load plugin … SchemaError(Missing key at ["default"])`), и ритуалы молча не действуют. Импортов плагину не нужно: всё приходит в `ctx`.
+Файла хуков нет. Эквивалент — **плагин**: JS/TS-файл в `.opencode/plugins/` проекта — ритуалы кладутся только туда; глобальный `~/.config/opencode/plugins/` держит лишь поставленный плагин поставки, не ритуалы репо (Шаг 1). Плагин автозагружается на старте — по разу на каждую локацию сервиса. **Форма — OpenCode 2 (`@opencode/plugin` 2.0.4): default-экспорт объекта `{ id, setup(ctx) }`.** Прежняя форма 1.x — экспорт async-функции, возвращающей карту хуков `"tool.execute.before"` — загрузчиком 2.x отвергается (`Plugin must export a default definition with an id and an effect or setup function`; в логе сервиса — `failed to load plugin … SchemaError(Missing key at ["default"])`), и ритуалы молча не действуют. Импортов плагину не нужно: всё приходит в `ctx`.
 
 ```js
 // .opencode/plugins/iskron-rituals.js — OpenCode 2
@@ -57,12 +59,20 @@ export default {
       if (["write", "edit"].includes(input.tool) && isLocalMemoryPath(path))
         throw new Error("local agent memory is forbidden for project state");
     });
-    // push → граф: после shell-вызова с git push дописать напоминание в результат.
+    // пуш и мерж: после shell-вызова дописать одну строку в результат — пуш
+    // не отгрузка (холодное ревью этапа), мерж — четыре акта AGENTS.md.
     // Поля result только для чтения — заменяется сам result; content — строка или массив частей.
     await ctx.tool.hook("execute.after", (input) => {
       if (input.tool !== "bash" || input.status !== "completed") return;
-      if (!/git push/.test(String(input.input?.command ?? ""))) return;
-      const note = "[iskron] пуш — не мерж; после мержа: ткачество, модусы, закрытие по оси, reconcile.";
+      const cmd = String(input.input?.command ?? "");
+      const push = /(^|[;&|(] *)(env +)?([A-Za-z_]+=\S+ +)*git( -C \S+)* push([ ;&|)]|$)/;
+      const merge = /(^|[;&|(] *)gh pr merge|(checkout|switch) (main|master)[^;|]*&& *git( -C \S+)* pull([ ;&|)]|$)/;
+      const note = push.test(cmd)
+        ? "[iskron] пуш — не отгрузка: самопроверка, словарный проход по тексту PR, холодное ревью этапа."
+        : merge.test(cmd)
+          ? "[iskron] мерж — четыре акта AGENTS.md: проткать, модусы, закрыть по оси, reconcile."
+          : "";
+      if (!note) return;
       const c = input.result.content;
       input.result = {
         ...input.result,
@@ -85,7 +95,7 @@ export default {
 
 `ctx.tool.hook("execute.before", …)` / `("execute.after", …)` оборачивают вызовы тулов — **throw из `execute.before` и есть блокировка**: memory-guard здесь — throw, не код выхода; в `execute.after` у завершившегося вызова (`status: "completed"`) заменяется поле `result` целиком (его собственные поля только для чтения). Формы сверены с типами пакета 2.0.4 (`@opencode/plugin` → `dist/promise/tool.d.ts`, `plugin.d.ts`; событие `session.created` — `@opencode/schema`, `session-event.d.ts`: `data.sessionID`, `data.projectID`, `data.location`); живой прогон ритуалов на 2.x в этой поставке не делался — сверяй по типам при апгрейде. TUI у серверного плагина нет: слово человеку идёт промптом в сессию или в stderr сервиса. Ключ фронтматтера `slash: true` парсер 2.x отбрасывает: команды палитры «/» регистрирует плагин через `ctx.command.transform`.
 
-Маппинг ритуалов: ориентация → `ctx.event.subscribe` на `session.created`; memory-guard → `ctx.tool.hook("execute.before")` с throw; push → граф → `ctx.tool.hook("execute.after")` по shell-тулу. Ролевые файлы суб-агентов: `.opencode/agents/` (см. `delegation.md`).
+Маппинг ритуалов: ориентация → `ctx.event.subscribe` на `session.created`; memory-guard → `ctx.tool.hook("execute.before")` с throw; пуш и мерж → `ctx.tool.hook("execute.after")` по shell-тулу. Ролевые файлы суб-агентов: `.opencode/agents/` (см. `delegation.md`).
 
 ## Чек-лист перепроверки (мейнтейнерам)
 
