@@ -3545,7 +3545,7 @@ async function runStand(msg) {
   const entries = parseBoard(board.text);
   const header = /^\s*Каналы(?:\s*\((\d+)\))?(?:\s|:|$)/m.exec(board.text);
   const declared = header?.[1] != null ? Number(header[1]) : null;
-  const empty = /не держит канала/i.test(board.text);
+  const empty = /не держит канала|нигде не стоит/i.test(board.text);
   const recognized = !!header || empty || entries.length > 0;
   let own = entries.filter((e) => e.karta === karta && nameOf(e.address) === name);
   const separate = derived && a.take !== true && name === derived ? await separatePlace(realm, karta, derived) : null;

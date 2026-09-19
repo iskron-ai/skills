@@ -779,24 +779,27 @@ test("revoking one's own standing through the bridge is quiet: no dead-token ala
   assert.equal((await fake.control({})).counts.register_standing, 1, "no re-register after revoke");
 });
 
-test("iskron_stand takes the first place in an empty graph: the server's «no channels» phrase is a recognized board", async (t) => {
-  const { fake, bridge } = await ready(t);
-  await fake.control({
-    boardText:
-      'Ни одна роль этого графа не держит канала. Открой его: iskron_channel(action="connect", karta=…).',
+// Both phrasings are the server's: 0.43 said «не держит канала», the surface
+// of 2026-09-19 (observed on mcp.iskron.ru, an empty graph) says «нигде не стоит».
+for (const phrase of [
+  'Ни одна роль этого графа не держит канала. Открой его: iskron_channel(action="connect", karta=…).',
+  'Ни одна роль этого графа нигде не стоит. Открой место: iskron_channel(action="mint", karta="#N").',
+])
+  test(`iskron_stand takes the first place in an empty graph: «${phrase.slice(26, 48)}» is a recognized board`, async (t) => {
+    const { fake, bridge } = await ready(t);
+    await fake.control({ boardText: phrase });
+    const reply = await bridge.call("tools/call", {
+      name: "iskron_stand",
+      arguments: { realm: "nks-dev", karta: 931, name: "proba" },
+    });
+    assert.ok(!reply.result?.isError, textOf(reply));
+    assert.match(textOf(reply), /connect и register/, textOf(reply));
+    assert.equal(
+      (await fake.control({})).counts.connect,
+      1,
+      "the first agent in a fresh graph can stand",
+    );
   });
-  const reply = await bridge.call("tools/call", {
-    name: "iskron_stand",
-    arguments: { realm: "nks-dev", karta: 931, name: "proba" },
-  });
-  assert.ok(!reply.result?.isError, textOf(reply));
-  assert.match(textOf(reply), /connect и register/, textOf(reply));
-  assert.equal(
-    (await fake.control({})).counts.connect,
-    1,
-    "the first agent in a fresh graph can stand",
-  );
-});
 
 test("iskron_stand: a header count that does not match the parsed lines blocks a blind connect, but not when the own place is visible or take=true", async (t) => {
   const { fake, bridge } = await ready(t);

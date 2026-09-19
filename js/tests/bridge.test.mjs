@@ -3384,8 +3384,10 @@ test("a certificate the machine does not trust is «not sent», is not knocked a
     },
     (_q, s) => s.end("{}"),
   );
+  // Attempts are counted by TCP connection, not by tlsClientError: Bun's client
+  // drops the handshake without the alert that makes Node's server raise it.
   let handshakes = 0;
-  srv.on("tlsClientError", () => handshakes++);
+  srv.on("connection", () => handshakes++);
   await new Promise((r) => srv.listen(0, "127.0.0.1", r));
   const dir = mkdtempSync(join(tmpdir(), "iskron-bridge-test-"));
   const bridge = startBridge(`https://127.0.0.1:${srv.address().port}/mcp`, dir, {

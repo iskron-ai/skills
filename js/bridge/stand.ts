@@ -216,8 +216,9 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   // идут только по распознанной однозначной форме; иначе честный отказ.
   const header = /^\s*Каналы(?:\s*\((\d+)\))?(?:\s|:|$)/m.exec(board.text);
   const declared = header?.[1] != null ? Number(header[1]) : null;
-  // Пустой граф сервер печатает без заголовка: «Ни одна роль этого графа не держит канала» — законная пустота.
-  const empty = /не держит канала/i.test(board.text); // ровно наблюдённая фраза сервера 0.43
+  // Пустой граф сервер печатает без заголовка — законная пустота. Фразы наблюдённые:
+  // «…не держит канала» (0.43) и «…нигде не стоит» (mcp.iskron.ru, 2026-09-19, #5380).
+  const empty = /не держит канала|нигде не стоит/i.test(board.text);
   const recognized = !!header || empty || entries.length > 0;
   let own = entries.filter((e) => e.karta === karta && nameOf(e.address) === name);
   // Выведенное имя держит живой мост другой сессии — встаём рядом на имя.N (#5407).
