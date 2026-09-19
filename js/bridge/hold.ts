@@ -482,7 +482,7 @@ function openHolder(url: string, key: string): void {
       log(text);
       broadcast({ kind: "note", text });
     },
-    // Подвисание громко во всех харнесах: сторожу строкой, pi и OpenCode — уведомлением (#5380).
+    // Подвисание: сторожу под Monitor — строкой, будящей агента; pi и OpenCode показывают уведомление человеку, агента оно не будит (#5380).
     onHung: (text) => {
       log(text);
       broadcast({ kind: "note", text });

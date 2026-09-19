@@ -2478,7 +2478,7 @@ function openHolder(url, key) {
       log(text);
       broadcast({ kind: "note", text });
     },
-    // Подвисание громко во всех харнесах: сторожу строкой, pi и OpenCode — уведомлением (#5380).
+    // Подвисание: сторожу под Monitor — строкой, будящей агента; pi и OpenCode показывают уведомление человеку, агента оно не будит (#5380).
     onHung: (text) => {
       log(text);
       broadcast({ kind: "note", text });
@@ -2948,20 +2948,6 @@ var listens = (e) => /(^|·)\s*слушает/.test(e.rest);
 function undelivered(e) {
   const m = /не доставлено\s+(\d+)/.exec(e.rest);
   return m ? Number(m[1]) : 0;
-}
-function suffixOf(base, name) {
-  if (!name.startsWith(`${base}.`)) return null;
-  const tail = name.slice(base.length + 1);
-  return /^[2-9]$|^[1-9]\d+$/.test(tail) && Number(tail) >= 2 ? Number(tail) : null;
-}
-function freeSuffix(entries, karta, base, heldHere) {
-  for (let n = 2; n <= 99; n++) {
-    const tail = `.${n}`;
-    const cand = base.slice(0, NAME_MAX - tail.length).replace(/[-._]+$/, "") + tail;
-    const e = entries.find((x) => x.karta === karta && nameOf(x.address) === cand);
-    if (!e || !listens(e) || heldHere(cand)) return cand;
-  }
-  return null;
 }
 
 // js/bridge/resume.ts
@@ -3477,7 +3463,7 @@ async function runStand(msg) {
   }
   const parts = asked ? null : deriveParts(model, cwd);
   const fitted = parts ? fitName(parts) : null;
-  let name = asked || (fitted?.name ?? "");
+  const name = asked || (fitted?.name ?? "");
   if (parts && fitted && fitted.cut.length) {
     const what = fitted.cut.map((k) => k === "repo" ? "репо" : k === "host" ? "машина" : "модель").join(", ");
     nameNotes.push(
@@ -3489,9 +3475,6 @@ async function runStand(msg) {
       "model не передан — имя без третьей части (машина.репо): вторая сессия этой машины над этим репозиторием сойдётся на то же место; передай model, чтобы различать"
     );
   }
-  const led0 = state.standing;
-  if (!asked && led0 && String(led0.karta) === String(karta) && suffixOf(name, led0.name ?? ""))
-    name = led0.name ?? name;
   const room = typeof a.room === "string" && a.room.trim() ? a.room.trim() : null;
   const led = leadsOtherPlace(karta, name);
   if (led && a.take !== true) {
@@ -3509,18 +3492,7 @@ async function runStand(msg) {
   const declared = header?.[1] != null ? Number(header[1]) : null;
   const empty = /не держит канала/i.test(board.text);
   const recognized = !!header || empty || entries.length > 0;
-  let own = entries.filter((e) => e.karta === karta && nameOf(e.address) === name);
-  if (!asked && a.take !== true && own.length === 1 && listens(own[0]) && !holdsStanding(realm, karta, name) && !await deadPredecessor(realm, karta, name)) {
-    const base = name;
-    const alt = freeSuffix(entries, karta, base, (n) => holdsStanding(realm, karta, n));
-    if (alt) {
-      name = alt;
-      own = entries.filter((e) => e.karta === karta && nameOf(e.address) === name);
-      nameNotes.push(
-        `место ${base} слушает живая сессия другого моста — занимаю отдельное место ${alt}, её не трогаю; вытеснить её — только словом человека: iskron_stand с name="${base}" и take=true`
-      );
-    }
-  }
+  const own = entries.filter((e) => e.karta === karta && nameOf(e.address) === name);
   const stem = name.split(".").slice(0, 2).join(".");
   const branches = new Set(
     git(["branch", "--format=%(refname:short)"], cwd).split("\n").map((x) => sanitize(x.trim())).filter(Boolean)
