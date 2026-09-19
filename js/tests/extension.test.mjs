@@ -80,9 +80,11 @@ function fakePi({ hasUI = true } = {}) {
       if (!handlers.has(name)) handlers.set(name, []);
       handlers.get(name).push(fn);
     },
+    // As real pi 0.85.1 (_refreshToolRegistry): a NEW name becomes active, an
+    // already known name is replaced but its active state is left as it was.
     registerTool: (t) => {
+      if (!tools.has(t.name)) active.add(t.name);
       tools.set(t.name, t);
-      active.add(t.name);
     },
     getActiveTools: () => [...active],
     setActiveTools: (names) => {
@@ -296,6 +298,22 @@ test("list_changed from the bridge re-registers the tools with the new list", as
       "a tool the server dropped is taken out of the active set",
     );
     assert.ok(rec.active.has("iskron_new") && rec.active.has("iskron_channel"));
+    // The server brings the dropped tool back (a rollback): it must be active again.
+    writeFileSync(
+      toolsFile,
+      JSON.stringify([
+        {
+          name: "iskron_channel",
+          description: "Канал, новое описание.",
+          inputSchema: { type: "object" },
+        },
+        { name: "iskron_orient", description: "Ориентир.", inputSchema: { type: "object" } },
+      ]),
+    );
+    writeFileSync(flag, "");
+    const back = Date.now() + 5000;
+    while (!rec.active.has("iskron_orient") && Date.now() < back) await delay(50);
+    assert.ok(rec.active.has("iskron_orient"), "a tool the server returned is active again");
     assert.equal(rec.tools.get("iskron_channel").description, "Канал, новое описание.");
     assert.match(rec.said(), /сервер сменил тулы/);
   } finally {

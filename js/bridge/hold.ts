@@ -403,11 +403,9 @@ function openHolder(url: string, key: string): void {
         const id = full?.type === "message" && typeof full.id === "string" ? full.id : "";
         const seenPath = seenFilePathOf(CFG.authDir, key);
         // Повтор уже отданного кадра (тот же id — платформа отдала его снова после
-        // возврата места) не будит второй раз: память доставленного пережила мост.
-        const again = !!id && seen.has(id);
-        // Кадр, отданный локальному клиенту (Claude Code, Codex), — отдан: сторож выхода, взведённый
-        // после, на нём не выходит. Без клиента не отмечается: принятое в пустоту должно будить его.
-        if (id && clients.size > 0) noteSeen(seenPath, id, seen);
+        // возврата места) не будит второй раз. Отданное локальными клиентами они
+        // помечают сами — в файле, не в этой памяти.
+        const again = !!id && (seen.has(id) || seenIds(seenPath).has(id));
         if (full?.type === "status") return;
         if (again) return log(`frame ${id} came again — already delivered, not raised`);
         if (notifiedClient()) {

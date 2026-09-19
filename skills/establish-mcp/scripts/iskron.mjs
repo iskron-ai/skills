@@ -1681,7 +1681,8 @@ function noteSeen(seenPath, id, seen2) {
   seen2.add(id);
   try {
     if (seen2.size > SEEN_KEEP) {
-      writeFileSync5(seenPath, [...seen2].slice(-SEEN_KEEP).join("\n") + "\n");
+      const merged = /* @__PURE__ */ new Set([...seenIds(seenPath), ...seen2]);
+      writeFileSync5(seenPath, [...merged].slice(-SEEN_KEEP).join("\n") + "\n");
     } else appendFileSync2(seenPath, id + "\n");
   } catch {
   }
@@ -2416,8 +2417,7 @@ function openHolder(url, key) {
         broadcast(ev);
         const id = full?.type === "message" && typeof full.id === "string" ? full.id : "";
         const seenPath = seenFilePathOf(CFG.authDir, key);
-        const again = !!id && seen.has(id);
-        if (id && clients.size > 0) noteSeen(seenPath, id, seen);
+        const again = !!id && (seen.has(id) || seenIds(seenPath).has(id));
         if (full?.type === "status") return;
         if (again) return log(`frame ${id} came again — already delivered, not raised`);
         if (notifiedClient()) {
@@ -2573,12 +2573,14 @@ var joinName = (p) => [p.host, p.repo, p.model].filter(Boolean).join(".");
 
 // js/bridge/placefields.ts
 var model = "";
-var extra = {};
+var extras = /* @__PURE__ */ new Map();
+var placeKey = (p) => `${String(p.realm ?? "")}|${String(p.karta ?? "")}|${String(p.name ?? "")}`;
 function rememberModel(m) {
   if (typeof m === "string" && m.trim()) model = m.trim().replace(/^[^/]*\//, "");
 }
-function placeFields() {
+function placeFields(place = {}) {
   const harness = harnessName();
+  const extra = extras.get(placeKey(place)) ?? {};
   return {
     ...model ? { model } : {},
     attrs: {
@@ -2593,8 +2595,8 @@ function withPlaceFields(args) {
   if (!PLACE_ACTIONS.has(String(args.action))) return args;
   rememberModel(args.model);
   if (args.attrs && typeof args.attrs === "object" && !Array.isArray(args.attrs))
-    extra = { ...args.attrs };
-  return { ...args, ...placeFields() };
+    extras.set(placeKey(args), { ...args.attrs });
+  return { ...args, ...placeFields(args) };
 }
 
 // js/bridge/standing.ts
@@ -2632,7 +2634,11 @@ function ensureStanding() {
           method: "tools/call",
           params: {
             name: "iskron_channel",
-            arguments: { ...state.standing, ...placeFields(), action: "register" }
+            arguments: {
+              ...state.standing,
+              ...placeFields(state.standing ?? {}),
+              action: "register"
+            }
           }
         },
         (m) => {
@@ -3088,7 +3094,7 @@ async function resumeBy(sel, register = true) {
         realm: rec.realm,
         karta: rec.karta,
         name: rec.name,
-        ...placeFields()
+        ...placeFields(rec)
       });
       lines.push(r.isError ? `register отказал — ${short(r.text)}` : "register");
     }
@@ -3547,7 +3553,8 @@ async function runStand(msg) {
     return done(true);
   }
   noteStandCwd(cwd);
-  const register = () => callTool("iskron_channel", { action: "register", realm, karta, name, ...placeFields() });
+  const here = () => placeFields({ realm, karta, name });
+  const register = () => callTool("iskron_channel", { action: "register", realm, karta, name, ...here() });
   const board = await callTool("iskron_channel", { action: "list", realm });
   if (board.isError) {
     lines.push(`Отказано: доска не прочиталась — ${short(board.text)}`);
@@ -3603,7 +3610,7 @@ async function runStand(msg) {
   const fresh = a.take !== true && !holdsStanding(realm, karta, name) && !isParked(realm, karta, name);
   const predecessorDead = fresh && listensElsewhere && await deadPredecessor(realm, karta, name);
   const resumed = fresh && !listensElsewhere ? await resumeFromDisk(realm, karta, name) : null;
-  const extra2 = [];
+  const extra = [];
   if (resumed) {
     const r = await register();
     if (r.isError) {
@@ -3615,7 +3622,7 @@ async function runStand(msg) {
     const newStatus = typeof a.status === "string" && a.status.trim();
     if (resumed.status && !newStatus) {
       const st = await publishStatus(resumed.status);
-      extra2.push(
+      extra.push(
         st.ok ? `Занятость возвращена с местом: ${resumed.status}` : `Занятость с места не возвращена: ${short(st.body)}`
       );
     }
@@ -3637,7 +3644,7 @@ async function runStand(msg) {
     how = listensElsewhere ? wasEvicted(realm, karta, name) ? "место отняли у этого моста (закрытие 4000) — слушает другой держатель; только register: привязка цела, слух — у него; слух здесь — iskron_stand без name встанет рядом на имя.N; отбить место (take=true) — только словом человека" : predecessorDead ? "слушающим доска ещё читает прежний мост этого каталога, а он мёртв (его сокет не отвечает, запись держания цела) — только register; доска отпустит его в течение минуты, и тот же вызов вернёт место с диска тем же адресом — повтори" : "место уже слушает другой держатель (при явном name — возможно, другая машина или человек) — только register: атрибуция есть, слух — у него; нужен слух здесь — возьми другое имя (name); вытеснить его (take=true) — только словом человека" : "сокет уже держит этот мост — register";
   } else {
     const args = { action: "connect", realm, karta, name };
-    Object.assign(args, placeFields());
+    Object.assign(args, here());
     if (typeof a.mute_siblings === "boolean") args.mute_siblings = a.mute_siblings;
     const c = await callTool("iskron_channel", args);
     if (c.isError) {
@@ -3658,7 +3665,7 @@ async function runStand(msg) {
   lines.push(
     `[iskron_stand] стояние ${mine?.address ?? name} — роль #${karta}, граф ${realm}: ${how}.`,
     ...nameNotes.map((n) => `[iskron_stand] ${n}`),
-    ...extra2
+    ...extra
   );
   const block = heardHere ? listenBlock() : null;
   if (block) lines.push(block);

@@ -264,6 +264,64 @@ test("a batch from the ring is not lost to a watchdog that exits on the first fr
   );
 });
 
+// The same on the live path: an exit watchdog attached while two frames land
+// back to back takes the first; the second is written to it but not delivered.
+test("a live batch is not lost to an attached watchdog that exits on the first frame", async (t) => {
+  const { fake, dir } = await connected(t);
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const first = runClient("watchdog-exit", dir, undefined);
+  await waitFor(
+    () => first.err.includes("слушаю") || first.out.includes("слушаю"),
+    "the first arm",
+    5000,
+  ).catch(() => {});
+  await new Promise((r) => setTimeout(r, 300));
+  for (const [id, body] of [
+    ["L-a", "живое первое"],
+    ["L-b", "живое второе"],
+  ])
+    await fake.control({ ws_send: JSON.stringify({ type: "message", id, body }) });
+  assert.equal((await first.done).exit, 0, first.err);
+  const second = runClient("watchdog-exit", dir, undefined);
+  assert.equal((await second.done).exit, 0, `the second arm gets the rest: ${second.err}`);
+  const both = first.out + second.out;
+  assert.ok(both.includes("живое первое") && both.includes("живое второе"), both);
+});
+
+// A long-lived standing has a full .seen; a writer trimming it to the tail
+// must merge the file, or another writer's marks are dropped and a delivered
+// frame wakes again.
+test("trimming a full .seen keeps other writers' marks — a delivered frame does not wake twice", async (t) => {
+  const { fake, dir } = await connected(t);
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  // 205 frames delivered to a watchdog under Monitor: the memory is full.
+  const monitor = runClient("watchdog", dir, undefined, 60_000);
+  await waitFor(() => monitor.out.includes("слушаю стояние"), "the monitor watchdog");
+  for (let i = 0; i < 205; i++)
+    await fake.control({
+      ws_send: JSON.stringify({ type: "message", id: `old-${i}`, body: `старое ${i}` }),
+    });
+  await waitFor(() => monitor.out.includes("старое 204"), "the old frames printed", 20_000);
+  monitor.proc.kill("SIGKILL");
+  await monitor.done;
+  await fake.control({
+    ws_send: JSON.stringify({ type: "message", id: "X", body: "икс без сторожа" }),
+  });
+  await new Promise((r) => setTimeout(r, 300));
+  const a = runClient("watchdog-exit", dir, undefined);
+  assert.equal((await a.done).exit, 0, a.err);
+  assert.ok(a.out.includes("икс"), a.out);
+  const b = runClient("watchdog-exit", dir, undefined);
+  await new Promise((r) => setTimeout(r, 400));
+  await fake.control({ ws_send: JSON.stringify({ type: "message", id: "Z", body: "зет живой" }) });
+  assert.equal((await b.done).exit, 0, b.err);
+  assert.ok(b.out.includes("зет"), `the second arm wakes on the new frame, not on X: ${b.out}`);
+  const c = runClient("watchdog-exit", dir, undefined, 2500);
+  const rc = await c.done;
+  assert.ok(!c.out.includes("икс"), `X woke a second time:\n${c.out}`);
+  assert.equal(rc.exit, null, "nothing new — the third arm keeps waiting");
+});
+
 test("a dead-token close leaves the watchdog loudly and reaches the harness as an error", async (t) => {
   const { fake, dir, bridge, key, standings } = await connected(t);
   await waitFor(() => fake.state.ws.size === 1, "the socket");

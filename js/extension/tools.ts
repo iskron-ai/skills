@@ -191,6 +191,7 @@ export function setupBridge(pi: ExtensionAPI, onChannel: ChannelEventSink): void
       }
     }
 
+    const offByUs = new Set<string>(); // тулы, снятые из активных этим расширением по list_changed
     async function relist(from: Bridge): Promise<void> {
       if (bridge !== from) return;
       try {
@@ -207,8 +208,15 @@ export function setupBridge(pi: ExtensionAPI, onChannel: ChannelEventSink): void
         const kept = new Set(fresh.map((t) => String(t.name)));
         const dropped = tools.map((t) => String(t.name)).filter((n) => !kept.has(n));
         registerAll(fresh);
-        if (dropped.length)
-          pi.setActiveTools(pi.getActiveTools().filter((n) => !dropped.includes(n)));
+        // pi не активирует заново имя, которое уже знает: вернувшийся тул,
+        // снятый здесь же раньше, включается явно; выброшенный — снимается.
+        const back = [...offByUs].filter((n) => kept.has(n));
+        for (const n of dropped) offByUs.add(n);
+        for (const n of back) offByUs.delete(n);
+        if (dropped.length || back.length)
+          pi.setActiveTools([
+            ...new Set([...pi.getActiveTools().filter((n) => !dropped.includes(n)), ...back]),
+          ]);
         tools.splice(0, tools.length, ...fresh);
         notify(`Искрон: сервер сменил тулы — в сессии зарегистрировано ${fresh.length}.`, "info");
       } catch (e) {

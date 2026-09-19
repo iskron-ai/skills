@@ -8,7 +8,12 @@ import { BUILD } from "./build.ts";
 import { harnessName } from "./client.ts";
 
 let model = "";
-let extra: Record<string, unknown> = {}; // attrs, названные агентом сам: едут и в повторных регистрациях
+// attrs, названные агентом сам, — по месту, для которого названы: едут в его
+// повторных регистрациях и не переезжают на другое место.
+const extras = new Map<string, Record<string, unknown>>();
+type Place = { realm?: unknown; karta?: unknown; name?: unknown };
+const placeKey = (p: Place): string =>
+  `${String(p.realm ?? "")}|${String(p.karta ?? "")}|${String(p.name ?? "")}`;
 
 /** Модель из iskron_stand — едет полем места и во всех повторных регистрациях. */
 export function rememberModel(m: unknown): void {
@@ -16,8 +21,9 @@ export function rememberModel(m: unknown): void {
 }
 
 /** Поля места для connect и register: всегда полный набор — свои ключи агента и признак моста. */
-export function placeFields(): { model?: string; attrs: Record<string, unknown> } {
+export function placeFields(place: Place = {}): { model?: string; attrs: Record<string, unknown> } {
   const harness = harnessName();
+  const extra = extras.get(placeKey(place)) ?? {};
   return {
     ...(model ? { model } : {}),
     attrs: {
@@ -38,6 +44,6 @@ export function withPlaceFields(args: Record<string, unknown>): Record<string, u
   if (!PLACE_ACTIONS.has(String(args.action))) return args;
   rememberModel(args.model);
   if (args.attrs && typeof args.attrs === "object" && !Array.isArray(args.attrs))
-    extra = { ...(args.attrs as Record<string, unknown>) };
-  return { ...args, ...placeFields() };
+    extras.set(placeKey(args), { ...(args.attrs as Record<string, unknown>) });
+  return { ...args, ...placeFields(args) };
 }

@@ -201,9 +201,9 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   // каталога OpenCode, перезапуск плагина), вернёт место по нему сам (#5140).
   noteStandCwd(cwd);
 
-  // Поля места (model, attrs) едут каждой регистрации — полным набором (#5174).
+  const here = () => placeFields({ realm, karta, name }); // поля места — каждой регистрации (#5174)
   const register = () =>
-    call("iskron_channel", { action: "register", realm, karta, name, ...placeFields() });
+    call("iskron_channel", { action: "register", realm, karta, name, ...here() });
 
   // 1. Доска — до любой перемены.
   const board = await call("iskron_channel", { action: "list", realm });
@@ -340,7 +340,7 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
       : "сокет уже держит этот мост — register";
   } else {
     const args: Record<string, unknown> = { action: "connect", realm, karta, name };
-    Object.assign(args, placeFields());
+    Object.assign(args, here());
     if (typeof a.mute_siblings === "boolean") args.mute_siblings = a.mute_siblings;
     const c = await call("iskron_channel", args); // новый сокет держатель берёт сам и заново: кольцо кадров чистое
     if (c.isError) {

@@ -62,7 +62,11 @@ export function ensureStanding(): Promise<void> {
           method: "tools/call",
           params: {
             name: "iskron_channel",
-            arguments: { ...state.standing, ...placeFields(), action: "register" },
+            arguments: {
+              ...state.standing,
+              ...placeFields(state.standing ?? {}),
+              action: "register",
+            },
           },
         },
         (m) => {

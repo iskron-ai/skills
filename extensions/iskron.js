@@ -602,6 +602,7 @@ function setupBridge(pi, onChannel) {
         });
       }
     }
+    const offByUs = /* @__PURE__ */ new Set();
     async function relist(from) {
       if (bridge !== from) return;
       try {
@@ -618,8 +619,13 @@ function setupBridge(pi, onChannel) {
         const kept = new Set(fresh.map((t) => String(t.name)));
         const dropped = tools.map((t) => String(t.name)).filter((n) => !kept.has(n));
         registerAll(fresh);
-        if (dropped.length)
-          pi.setActiveTools(pi.getActiveTools().filter((n) => !dropped.includes(n)));
+        const back = [...offByUs].filter((n) => kept.has(n));
+        for (const n of dropped) offByUs.add(n);
+        for (const n of back) offByUs.delete(n);
+        if (dropped.length || back.length)
+          pi.setActiveTools([
+            .../* @__PURE__ */ new Set([...pi.getActiveTools().filter((n) => !dropped.includes(n)), ...back])
+          ]);
         tools.splice(0, tools.length, ...fresh);
         notify(`Искрон: сервер сменил тулы — в сессии зарегистрировано ${fresh.length}.`, "info");
       } catch (e) {
