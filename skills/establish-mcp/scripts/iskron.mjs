@@ -1536,6 +1536,11 @@ function holdSocket(o) {
     sock.addEventListener("open", () => {
       opened = true;
     });
+    sock.addEventListener("ping", () => {
+      if (ws !== sock) return;
+      lastLife = Date.now();
+      runtimeSeesPings = true;
+    });
     sock.addEventListener("message", (e) => {
       if (stopped || ws !== sock) return;
       lastLife = Date.now();
