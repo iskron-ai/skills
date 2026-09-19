@@ -1,5 +1,14 @@
 # Changelog
 
+## [6.9.1](https://github.com/iskron-ai/skills/compare/v6.9.0...v6.9.1) (2026-09-19)
+
+
+### Bug Fixes
+
+* **bridge,opencode,pi:** list_changed в OpenCode и pi, своё место, поля места, пустая доска ([#158](https://github.com/iskron-ai/skills/issues/158)) ([a6e5aa6](https://github.com/iskron-ai/skills/commit/a6e5aa6a4996a89f2024b625177e2af7d6942285))
+* **bridge,standing:** живого держателя выведенного имени не вытесняют — отдельное место имя.N ([#157](https://github.com/iskron-ai/skills/issues/157)) ([331d465](https://github.com/iskron-ai/skills/commit/331d465621d7cdd3a64e8c323bf69d2ba529d98e))
+* **bridge:** таймер живости сокета, распознавание ответов поверхности, list_changed после выкатки ([#155](https://github.com/iskron-ai/skills/issues/155))да  ([29d145f](https://github.com/iskron-ai/skills/commit/29d145f5cca955fc22c4564cd88f542584b84e6f))
+
 ## [6.9.0](https://github.com/iskron-ai/skills/compare/v6.8.0...v6.9.0) (2026-09-19)
 
 
