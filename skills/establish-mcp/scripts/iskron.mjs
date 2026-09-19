@@ -1965,6 +1965,10 @@ async function post(msg, onMessage) {
   }
 }
 var reinitInFlight = null;
+var reinitHooks = [];
+var onReinitialized = (hook) => {
+  reinitHooks.push(hook);
+};
 async function reinitialize() {
   if (reinitInFlight) return reinitInFlight;
   reinitInFlight = (async () => {
@@ -1989,6 +1993,7 @@ async function reinitialize() {
       await post({ jsonrpc: "2.0", method: "notifications/initialized" }, () => {
       });
       log(`session re-established (${state.sessionId || "no session id"})`);
+      for (const hook of reinitHooks) void hook();
     } finally {
       reinitInFlight = null;
     }
@@ -3737,6 +3742,28 @@ ${MOMENT_LINE}` : MOMENT_LINE;
   }
 }
 
+// js/bridge/toolsync.ts
+import { createHash as createHash4 } from "node:crypto";
+var served = null;
+function toolsPrint(result) {
+  const tools = result?.tools;
+  if (!Array.isArray(tools)) return null;
+  const shape = tools.map((t) => [t.name ?? "", JSON.stringify(t.inputSchema ?? null)]).sort((a, b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0);
+  return createHash4("sha256").update(JSON.stringify(shape)).digest("hex");
+}
+function noteServedTools(result) {
+  const print = toolsPrint(result);
+  if (print) served = print;
+}
+async function recheckTools(ask, emit2) {
+  if (!served) return;
+  const fresh = toolsPrint((await ask().catch(() => null))?.result);
+  if (!fresh || fresh === served) return;
+  served = fresh;
+  log("tool list changed under the re-opened session — telling the harness (tools/list_changed)");
+  emit2({ jsonrpc: "2.0", method: "notifications/tools/list_changed" });
+}
+
 // js/bridge/deliver.ts
 function syntheticError(id, message, outcome = UpstreamError.UNKNOWN, holdOff = false) {
   const kind = holdOff === true ? "wait" : holdOff;
@@ -3770,6 +3797,18 @@ var READ_TOOLS = /* @__PURE__ */ new Set([
   "iskron_search",
   "iskron_semantic_search"
 ]);
+onReinitialized(
+  () => recheckTools(async () => {
+    const id = `iskron-bridge-tools-${++state.reinitCounter}`;
+    let got = null;
+    await post({ jsonrpc: "2.0", id, method: "tools/list", params: {} }, (m) => {
+      if (m.id === id) got = m;
+    });
+    const reply2 = got;
+    if (reply2?.result) saveServerCache({ tools: reply2.result });
+    return reply2;
+  }, emit)
+);
 function isRead(msg) {
   if (msg?.method === "initialize" || msg?.method === "tools/list") return true;
   return msg?.method === "tools/call" && READ_TOOLS.has(String(msg.params?.name ?? ""));
@@ -3777,6 +3816,7 @@ function isRead(msg) {
 function lastServerAnswer(msg) {
   const cache = loadServerCache();
   const result = msg?.method === "initialize" ? cache.init : msg?.method === "tools/list" && !msg.params?.cursor ? cache.tools : null;
+  if (result && msg?.method === "tools/list") noteServedTools(result);
   return result ? { jsonrpc: "2.0", id: msg.id, result } : null;
 }
 function ownClient() {
@@ -3821,7 +3861,10 @@ async function deliver(msg) {
       state.protocolVersion = m.result.protocolVersion;
     }
     if (m.id === msg.id) noteStanding(msg, m);
-    if (m.id === msg.id && msg.method === "tools/list") annotateToolList(m);
+    if (m.id === msg.id && msg.method === "tools/list") {
+      if (!msg.params?.cursor) noteServedTools(m.result);
+      annotateToolList(m);
+    }
     if (m.id === msg.id && m.result) {
       if (isInit) saveServerCache({ init: m.result });
       else if (msg.method === "tools/list" && !msg.params?.cursor)
@@ -4424,11 +4467,11 @@ function runWatchdog(argv2) {
 }
 
 // js/watchdog/watchdog-exit.ts
-import { createHash as createHash4 } from "node:crypto";
+import { createHash as createHash5 } from "node:crypto";
 import { writeSync as writeSync2 } from "node:fs";
 function frameId(ev) {
   const id = ev.frame?.id;
-  return typeof id === "string" && id ? id : `raw:${createHash4("sha256").update(ev.raw ?? "").digest("hex").slice(0, 16)}`;
+  return typeof id === "string" && id ? id : `raw:${createHash5("sha256").update(ev.raw ?? "").digest("hex").slice(0, 16)}`;
 }
 var wake = (s) => {
   writeSync2(1, s + "\n");
@@ -4483,7 +4526,7 @@ function runWatchdogExit(argv2) {
 }
 
 // js/cli/doctor.ts
-import { createHash as createHash5 } from "node:crypto";
+import { createHash as createHash6 } from "node:crypto";
 import { existsSync as existsSync7, readdirSync as readdirSync6, readFileSync as readFileSync13 } from "node:fs";
 import { homedir as homedir6 } from "node:os";
 import { dirname as dirname3, join as join13 } from "node:path";
@@ -4491,7 +4534,7 @@ import { fileURLToPath as fileURLToPath4 } from "node:url";
 var out = (s) => {
   process.stdout.write(s + "\n");
 };
-var hashOf2 = (buf) => createHash5("sha256").update(buf).digest("hex").slice(0, 8);
+var hashOf2 = (buf) => createHash6("sha256").update(buf).digest("hex").slice(0, 8);
 var seconds = (ms) => `${Math.round(ms / 1e3)}s`;
 function homeCopyReport() {
   const home = homeBridgePath();

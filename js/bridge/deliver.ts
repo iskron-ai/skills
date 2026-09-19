@@ -19,7 +19,8 @@ import { ensureStanding, isUnattributed, noteStanding, replyText } from "./stand
 import { localStatus } from "./status.ts";
 import { loadServerCache, saveServerCache, sleep } from "./store.ts";
 import { emit, log } from "./streams.ts";
-import { currentAccessToken, post, reinitialize, state } from "./transport.ts";
+import { recheckTools, noteServedTools } from "./toolsync.ts";
+import { currentAccessToken, onReinitialized, post, reinitialize, state } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
 import { takeNotice } from "./update.ts";
 
@@ -101,6 +102,20 @@ const READ_TOOLS = new Set([
   "iskron_semantic_search",
 ]);
 
+// Переоткрыв сессию, мост сверяет список тулов с отданным харнесу (#5405).
+onReinitialized(() =>
+  recheckTools(async () => {
+    const id = `iskron-bridge-tools-${++state.reinitCounter}`;
+    let got: JsonRpcMessage | null = null;
+    await post({ jsonrpc: "2.0", id, method: "tools/list", params: {} }, (m) => {
+      if (m.id === id) got = m;
+    });
+    const reply = got as JsonRpcMessage | null;
+    if (reply?.result) saveServerCache({ tools: reply.result });
+    return reply;
+  }, emit),
+);
+
 function isRead(msg: JsonRpcMessage): boolean {
   if (msg?.method === "initialize" || msg?.method === "tools/list") return true;
   return msg?.method === "tools/call" && READ_TOOLS.has(String(msg.params?.name ?? ""));
@@ -120,6 +135,7 @@ function lastServerAnswer(msg: JsonRpcMessage): JsonRpcMessage | null {
       : msg?.method === "tools/list" && !msg.params?.cursor
         ? cache.tools
         : null;
+  if (result && msg?.method === "tools/list") noteServedTools(result);
   return result ? { jsonrpc: "2.0", id: msg.id, result } : null;
 }
 
@@ -180,7 +196,10 @@ export async function deliver(msg: JsonRpcMessage): Promise<void> {
       state.protocolVersion = m.result.protocolVersion;
     }
     if (m.id === msg.id) noteStanding(msg, m);
-    if (m.id === msg.id && msg.method === "tools/list") annotateToolList(m);
+    if (m.id === msg.id && msg.method === "tools/list") {
+      if (!msg.params?.cursor) noteServedTools(m.result);
+      annotateToolList(m);
+    }
     if (m.id === msg.id && m.result) {
       if (isInit) saveServerCache({ init: m.result });
       else if (msg.method === "tools/list" && !msg.params?.cursor)

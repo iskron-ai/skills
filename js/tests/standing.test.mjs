@@ -551,6 +551,46 @@ test("a 409 that is not about the missing author is not re-bound and repeated", 
   assert.equal(fake.state.counts.register_standing, before, "no re-register for a foreign 409");
 });
 
+// A rollout changes the server's tools while the harness keeps the list it got
+// at the start of the session (#5405). When the bridge re-opens its upstream
+// session it compares the fresh list with the one it served and, on a change,
+// tells the harness notifications/tools/list_changed — the harness re-reads.
+test("a tool list changed under a re-opened session is announced as list_changed", async (t) => {
+  const { fake, bridge } = await connected(t);
+  const first = await bridge.call("tools/list", 20, {});
+  assert.ok(first.result?.tools?.length, JSON.stringify(first));
+  await fake.control({ richTools: true, kill_session: true });
+  await bridge.call("tools/call", 21, {
+    name: "iskron_channel",
+    arguments: { realm: "nks-dev", action: "list" },
+  });
+  await waitFor(
+    () => bridge.notifications.some((n) => n.method === "notifications/tools/list_changed"),
+    "list_changed after the re-opened session found a different list",
+  );
+  const again = await bridge.call("tools/list", 22, {});
+  const had = new Set(first.result.tools.map((x) => x.name));
+  assert.ok(
+    again.result.tools.some((x) => !had.has(x.name)),
+    "the re-read list is the new one",
+  );
+});
+
+test("a re-opened session with the same tool list says nothing", async (t) => {
+  const { fake, bridge } = await connected(t);
+  await bridge.call("tools/list", 20, {});
+  await fake.control({ kill_session: true });
+  await bridge.call("tools/call", 21, {
+    name: "iskron_channel",
+    arguments: { realm: "nks-dev", action: "list" },
+  });
+  await new Promise((r) => setTimeout(r, 800));
+  assert.ok(
+    !bridge.notifications.some((n) => n.method === "notifications/tools/list_changed"),
+    "no list_changed for an unchanged list",
+  );
+});
+
 // Two bridges under one grant — a session with both the plugin's and the user's
 // iskron entry (graph nks-dev: #5395): the one that holds no place must name the
 // bridge that does and the whole handover path, not a bare take=true that would
