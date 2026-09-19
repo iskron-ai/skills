@@ -219,6 +219,28 @@ test("watchdog attaches with no secret and prints what the service sends", async
   await wd.done;
 });
 
+// A frame that landed while no watchdog was attached rides to the next one from
+// the ring — and is then delivered: re-arming the watchdog (Monitor ends every
+// 30 minutes) must not bring it again, only the proof of holding (hello).
+test("a frame handed to a watchdog from the ring is not handed to the next one again", async (t) => {
+  const { fake, dir } = await connected(t);
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  await fake.control({
+    ws_send: JSON.stringify({ type: "message", id: "m-ring-1", body: "пришло без сторожа" }),
+  });
+  await new Promise((r) => setTimeout(r, 300));
+  const first = runClient("watchdog", dir, undefined);
+  await waitFor(() => first.out.includes("пришло без сторожа"), "the first watchdog to get it");
+  first.proc.kill("SIGKILL");
+  await first.done;
+  const second = runClient("watchdog", dir, undefined);
+  await waitFor(() => second.out.includes("слушаю стояние"), "the second watchdog to attach");
+  await new Promise((r) => setTimeout(r, 500));
+  assert.ok(!second.out.includes("пришло без сторожа"), `delivered once:\n${second.out}`);
+  second.proc.kill("SIGKILL");
+  await second.done;
+});
+
 test("a dead-token close leaves the watchdog loudly and reaches the harness as an error", async (t) => {
   const { fake, dir, bridge, key, standings } = await connected(t);
   await waitFor(() => fake.state.ws.size === 1, "the socket");

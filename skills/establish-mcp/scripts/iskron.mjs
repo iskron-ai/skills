@@ -2277,6 +2277,8 @@ function openLocalServer(key) {
     );
     for (const { raw, frame: frame2 } of backlog) {
       sock.write(JSON.stringify({ kind: "frame", raw, frame: frame2 }) + "\n");
+      if (frame2?.type === "message" && typeof frame2.id === "string")
+        noteSeen(seenFilePathOf(CFG.authDir, key), frame2.id, seen);
     }
     if (evictedEvent && evictedKey === key) sock.write(JSON.stringify(evictedEvent) + "\n");
   });
