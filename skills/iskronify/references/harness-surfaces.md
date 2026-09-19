@@ -65,10 +65,11 @@ export default {
     await ctx.tool.hook("execute.after", (input) => {
       if (input.tool !== "bash" || input.status !== "completed") return;
       const cmd = String(input.input?.command ?? "");
-      const as = (re) => new RegExp(`(^|[;&|(] *)([A-Za-z_]+=\\S+ +)*${re.source}( |$)`).test(cmd);
-      const note = as(/git push/)
+      const push = /(^|[;&|(] *)(env +)?([A-Za-z_]+=\S+ +)*git( -C \S+)* push([ ;&|)]|$)/;
+      const merge = /(^|[;&|(] *)gh pr merge|(checkout|switch) (main|master)[^;|]*&& *git( -C \S+)* pull([ ;&|)]|$)/;
+      const note = push.test(cmd)
         ? "[iskron] пуш — не отгрузка: самопроверка и холодное ревью этапа."
-        : as(/(gh pr merge|git pull)/)
+        : merge.test(cmd)
           ? "[iskron] мерж — четыре акта AGENTS.md: проткать, модусы, закрыть по оси, reconcile."
           : "";
       if (!note) return;
