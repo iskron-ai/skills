@@ -1460,7 +1460,7 @@ var PI_CLIENT = "pi-iskron";
 var NOTIFIED_CLIENTS = /* @__PURE__ */ new Set([PI_CLIENT, OPENCODE_CLIENT]);
 
 // js/shared/channel.ts
-import { subscribe, unsubscribe } from "node:diagnostics_channel";
+import * as diagnostics from "node:diagnostics_channel";
 var PING_CHANNEL = "undici:websocket:ping";
 var SILENT_INTERVALS = 3;
 var DEAD_TOKEN_CODES = [4001, 4002];
@@ -1507,15 +1507,19 @@ function holdSocket(o) {
   let ws = null;
   let lastLife = 0;
   let pingMs = 0;
-  let pingSeen = false;
+  let runtimeSeesPings = false;
+  let lastTick = 0;
   let watch = null;
   const onPing = (m) => {
     const from = m?.websocket;
     if (!ws || from !== void 0 && from !== ws) return;
     lastLife = Date.now();
-    pingSeen = true;
+    runtimeSeesPings = true;
   };
-  subscribe(PING_CHANNEL, onPing);
+  diagnostics.subscribe?.(PING_CHANNEL, onPing);
+  const unsubscribePing = () => {
+    diagnostics.unsubscribe?.(PING_CHANNEL, onPing);
+  };
   const stopWatch = () => {
     if (watch) clearInterval(watch);
     watch = null;
@@ -1527,7 +1531,6 @@ function holdSocket(o) {
     ws = sock;
     stopWatch();
     lastLife = startedAt;
-    pingSeen = false;
     let gone = false;
     let opened = false;
     sock.addEventListener("open", () => {
@@ -1556,23 +1559,25 @@ function holdSocket(o) {
       stopWatch();
       if (!(interval > 0)) return;
       pingMs = interval;
-      watch = setInterval(
-        () => {
-          if (stopped || ws !== sock || !pingSeen) return;
-          const silent = Date.now() - lastLife;
-          if (silent <= SILENT_INTERVALS * pingMs + 1e3) return;
-          stopWatch();
-          o.onNote?.(
-            `соединение молчит ${Math.round(silent / 1e3)} с при пинге раз в ${pingMs / 1e3} с — подвисло без закрытия; переоткрываю тем же адресом, ждавшее придёт в hello`
-          );
-          try {
-            sock.close();
-          } catch {
-          }
-          void dropped(1006);
-        },
-        Math.max(pingMs, 250)
-      );
+      const every = Math.max(pingMs, 250);
+      lastTick = Date.now();
+      watch = setInterval(() => {
+        const now2 = Date.now();
+        if (now2 - lastTick > 2 * every + 1e3) lastLife = now2;
+        lastTick = now2;
+        if (stopped || ws !== sock || !runtimeSeesPings) return;
+        const silent = now2 - lastLife;
+        if (silent <= SILENT_INTERVALS * pingMs + 1e3) return;
+        stopWatch();
+        o.onNote?.(
+          `соединение молчит ${Math.round(silent / 1e3)} с при пинге раз в ${pingMs / 1e3} с — подвисло без закрытия; переоткрываю тем же адресом. Кадры, пришедшие за время молчания, могли пропасть — сверь iskron_channel(action="history")`
+        );
+        try {
+          sock.close();
+        } catch {
+        }
+        void dropped(1006);
+      }, every);
       watch.unref?.();
     }
     function yieldTo(cb, code) {
@@ -1581,7 +1586,7 @@ function holdSocket(o) {
       stopped = true;
       if (retry) clearTimeout(retry);
       stopWatch();
-      unsubscribe(PING_CHANNEL, onPing);
+      unsubscribePing();
       cb(code);
     }
     async function dropped(code) {
@@ -1635,7 +1640,7 @@ function holdSocket(o) {
     close(reason = "held no more") {
       stopped = true;
       stopWatch();
-      unsubscribe(PING_CHANNEL, onPing);
+      unsubscribePing();
       if (retry) clearTimeout(retry);
       retry = null;
       const sock = ws;
@@ -2614,7 +2619,7 @@ var replyText = (reply2) => {
 };
 var seatIsGone = (reply2) => /no such standing|take it with connect|такого стояния|занять.*connect/i.test(replyText(reply2));
 var UNATTRIBUTED_CODE = /write_unattributed\w*|session_not_registered/;
-var UNATTRIBUTED_REFUSAL = /\b409\b|не зарегистрирован[аоы]? ни за каким стоянием|hold no registered standing/i;
+var UNATTRIBUTED_REFUSAL = /не зарегистрирован[аоы]? ни за каким стоянием|hold no registered standing/i;
 var isUnattributed = (reply2) => {
   if (!reply2) return false;
   const text = replyText(reply2);
@@ -3582,7 +3587,7 @@ async function runStand(msg) {
       );
   }
   const hooks = await callTool("iskron_admin", { action: "list_webhooks", realm, node_id: karta });
-  const hooksRecognized = !hooks.isError && /^\s*Вебхуки(?:\s|:|\(|$)/m.test(hooks.text);
+  const hooksRecognized = !hooks.isError && (/^\s*Вебхуки(?:\s|:|\(|$)/m.test(hooks.text) || /вебхуки не зарегистрированы/i.test(hooks.text));
   const nameRe = new RegExp(`:${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![A-Za-z0-9._-])`);
   const wakesMe = hooksRecognized && hooks.text.split(/\n(?=\s*#\d+\s*→)/).some((b) => /активен/.test(b) && nameRe.test(b));
   if (wakesMe) lines.push("Хук инбокса роли: стоит и будит это стояние.");
@@ -3598,8 +3603,8 @@ async function runStand(msg) {
       action: "add_webhook",
       realm,
       node_id: karta,
-      url: incoming,
-      ttl_seconds: 0
+      url: incoming
+      // без ttl_seconds — постоянный: 0 снимает срок только в update_webhook, на добавлении контур его отвергает
     });
     lines.push(
       h.isError ? `Хук инбокса роли: не взвёлся — ${short(h.text)}` : `Хук инбокса роли: взведён (${short(h.text, 120)}).`

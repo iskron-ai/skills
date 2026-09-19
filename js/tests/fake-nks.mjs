@@ -256,6 +256,7 @@ export async function startFakeNks(opts = {}) {
           });
         }
       }
+      if ("send_conflict" in patch) st.sendConflict = patch.send_conflict || null; // текст отказа 409 не о безавторности
       if ("statusGone" in patch) st.statusGone = !!patch.statusGone; // статусный адрес повернули
       if (patch.revoke_access) st.access = null;
       if (patch.rotate_access) st.access = mintAccess(st); // сосед провернул грант: старый bearer больше не принимается
@@ -715,6 +716,20 @@ export async function startFakeNks(opts = {}) {
         }
         if (a.action === "send") {
           const bound = st.standings.get(sid);
+          // Отказ 409 иного рода (/control {send_conflict}): сессия привязана, отказ не о безавторности.
+          if (bound && st.sendConflict) {
+            st.counts.send_conflicts = (st.counts.send_conflicts ?? 0) + 1;
+            return json(
+              res,
+              200,
+              {
+                jsonrpc: "2.0",
+                id: msg.id,
+                result: { isError: true, content: [{ type: "text", text: st.sendConflict }] },
+              },
+              extra,
+            );
+          }
           if (!bound) {
             st.counts.unattributed++;
             return json(
@@ -728,7 +743,7 @@ export async function startFakeNks(opts = {}) {
                   content: [
                     {
                       type: "text",
-                      text: "Отказано (409, session_not_registered): эта сессия не зарегистрирована ни за каким стоянием",
+                      text: "Ошибка: Отказано (409): Эта сессия не зарегистрирована ни за каким стоянием, поэтому слово пришло бы без автора и читалось бы как слова владельца учётки.",
                     },
                   ],
                 },
@@ -773,6 +788,22 @@ export async function startFakeNks(opts = {}) {
             );
           }
           const mine = st.webhooks.filter((w) => String(w.karta) === String(a.node_id));
+          // Пустой список поверхность печатает без заголовка — наблюдено на mcp.iskron.ru.
+          if (!mine.length)
+            return json(
+              res,
+              200,
+              {
+                jsonrpc: "2.0",
+                id: msg.id,
+                result: {
+                  content: [
+                    { type: "text", text: `Для #${a.node_id} вебхуки не зарегистрированы.` },
+                  ],
+                },
+              },
+              extra,
+            );
           const lines = [`Вебхуки для #${a.node_id} (${mine.length}):`];
           for (const w of mine) {
             const wakes = [...st.places.values()].find((p) => p.incoming === w.url);
@@ -795,6 +826,21 @@ export async function startFakeNks(opts = {}) {
           );
         }
         if (a.action === "add_webhook") {
+          // Нулевой срок — ход update_webhook («0 снимает срок»); на добавлении контур его отвергает (#5380).
+          if (a.ttl_seconds === 0)
+            return json(
+              res,
+              200,
+              {
+                jsonrpc: "2.0",
+                id: msg.id,
+                result: {
+                  isError: true,
+                  content: [{ type: "text", text: "Отказано (422): ttl_seconds must be positive" }],
+                },
+              },
+              extra,
+            );
           st.counts.webhooks_added++;
           const id = 100 + st.webhooks.length;
           st.webhooks.push({ id, karta: String(a.node_id), url: a.url, active: true });

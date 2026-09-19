@@ -512,13 +512,38 @@ test("a connection silent past three ping intervals is reopened aloud; unseen pi
   await fake.control({ ws_hang: true });
   await waitFor(() => fake.state.counts.ws_upgrades >= 2, "the hung socket to be reopened", 8000);
   assert.match(bridge.stderr, /подвисло без закрытия/, "the reopen is said aloud");
+  assert.match(bridge.stderr, /могли пропасть/, "a hung socket's frames are not promised back");
 
   // hello promises a ping every 0.2 s, and none ever comes (Bun has no channel to see it by)
   const quiet = await connected(t, { fakeOpts: { helloPingS: 0.2 } });
   await waitFor(() => quiet.fake.state.ws.size === 1, "the socket");
   await quiet.fake.control({ ws_hang: true });
-  await new Promise((r) => setTimeout(r, 2500));
-  assert.equal(quiet.fake.state.counts.ws_upgrades, 1, "no ping seen — no timer, no reopen");
+  // The window is 1.6 s: by 3 s an armed timer would have spoken, reopen or not.
+  await new Promise((r) => setTimeout(r, 3000));
+  assert.ok(!/подвисло/.test(quiet.bridge.stderr), "no ping seen — no timer, nothing said");
+  assert.equal(quiet.fake.state.counts.ws_upgrades, 1, "no ping seen — no reopen");
+});
+
+// Only the surface's own words for "no author" buy a re-register (#5380): a
+// 409 of another kind — a conflict, a repeated mint — is passed through as is,
+// once, and the standing binding is not touched.
+test("a 409 that is not about the missing author is not re-bound and repeated", async (t) => {
+  const { fake, bridge } = await connected(t);
+  const reg = await bridge.call("tools/call", 5, {
+    name: "iskron_channel",
+    arguments: { realm: "nks-dev", action: "register", karta: 931, name: "proba" },
+  });
+  assert.ok(!reg.result?.isError, JSON.stringify(reg));
+  const before = fake.state.counts.register_standing;
+  await fake.control({ send_conflict: "Отказано (409): место сменило версию — перечитай доску" });
+  const r = await bridge.call("tools/call", 6, {
+    name: "iskron_channel",
+    arguments: { realm: "nks-dev", action: "send", karta: 931, text: "привет" },
+  });
+  assert.ok(r.result?.isError, JSON.stringify(r));
+  assert.match(r.result.content[0].text, /сменило версию/);
+  assert.equal(fake.state.counts.send_conflicts, 1, "the refused call is not repeated");
+  assert.equal(fake.state.counts.register_standing, before, "no re-register for a foreign 409");
 });
 
 // Two bridges under one grant — a session with both the plugin's and the user's

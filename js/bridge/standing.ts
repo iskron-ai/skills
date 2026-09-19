@@ -115,8 +115,10 @@ export const seatIsGone = (reply: JsonRpcMessage | null): boolean =>
 // CODES, never on prose: a node body read back may well contain the words
 // "session not registered", and a lookup must not buy a register for that.
 const UNATTRIBUTED_CODE = /write_unattributed\w*|session_not_registered/;
+// Голый 409 признаком не служит: им же отвечают повторная чеканка и конфликт
+// версии, и там перерегистрация с повтором — лишний вызов поверх отказа (#5380).
 const UNATTRIBUTED_REFUSAL =
-  /\b409\b|не зарегистрирован[аоы]? ни за каким стоянием|hold no registered standing/i;
+  /не зарегистрирован[аоы]? ни за каким стоянием|hold no registered standing/i;
 
 export const isUnattributed = (reply: JsonRpcMessage | null): boolean => {
   if (!reply) return false;

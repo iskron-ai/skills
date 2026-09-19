@@ -16,7 +16,9 @@
 //     тем же адресом вслух (граф nks-dev: #5397); пока ни одного пинга не видно,
 //     таймер не взведён — рантайм без канала диагностики не видит пингов вовсе.
 
-import { subscribe, unsubscribe } from "node:diagnostics_channel";
+// Пространством имён, не именованным импортом: у рантайма без этих экспортов
+// (Bun не проверен) модуль всё равно линкуется, а таймер просто не взводится.
+import * as diagnostics from "node:diagnostics_channel";
 
 /** Канал, в который undici (WebSocket Node) публикует каждый входящий протокольный пинг. */
 const PING_CHANNEL = "undici:websocket:ping";
@@ -170,10 +172,13 @@ export function holdSocket(o: HoldOptions): Holder {
   let retry: ReturnType<typeof setTimeout> | null = null;
   let ws: WebSocket | null = null;
   // Живость соединения: последний знак от службы (пинг или кадр), интервал из
-  // hello и взведён ли таймер — взводит его первый увиденный пинг.
+  // hello; таймер взводит первый увиденный пинг.
   let lastLife = 0;
   let pingMs = 0;
-  let pingSeen = false;
+  // Видит ли рантайм пинги вообще — держится на весь holder: соединение,
+  // подвисшее до своего первого пинга, иначе не поймалось бы никогда.
+  let runtimeSeesPings = false;
+  let lastTick = 0;
   let watch: ReturnType<typeof setInterval> | null = null;
   // Node 22 не называет сокет пинга, Node 26 называет: чужой пинг может лишь
   // продлить жизнь, но не объявить живое мёртвым — у моста сокет один.
@@ -181,9 +186,12 @@ export function holdSocket(o: HoldOptions): Holder {
     const from = (m as { websocket?: unknown } | null)?.websocket;
     if (!ws || (from !== undefined && from !== ws)) return;
     lastLife = Date.now();
-    pingSeen = true;
+    runtimeSeesPings = true;
   };
-  subscribe(PING_CHANNEL, onPing);
+  diagnostics.subscribe?.(PING_CHANNEL, onPing);
+  const unsubscribePing = (): void => {
+    diagnostics.unsubscribe?.(PING_CHANNEL, onPing);
+  };
   const stopWatch = (): void => {
     if (watch) clearInterval(watch);
     watch = null;
@@ -196,7 +204,6 @@ export function holdSocket(o: HoldOptions): Holder {
     ws = sock;
     stopWatch();
     lastLife = startedAt;
-    pingSeen = false;
     let gone = false; // обрыв разбирается один раз, чем бы он ни пришёл
     let opened = false; // апгрейд прошёл: повёрнутый адрес не открывается вовсе
     sock.addEventListener("open", () => {
@@ -231,24 +238,30 @@ export function holdSocket(o: HoldOptions): Holder {
       stopWatch();
       if (!(interval > 0)) return;
       pingMs = interval;
-      watch = setInterval(
-        () => {
-          if (stopped || ws !== sock || !pingSeen) return;
-          const silent = Date.now() - lastLife;
-          if (silent <= SILENT_INTERVALS * pingMs + 1000) return;
-          stopWatch();
-          o.onNote?.(
-            `соединение молчит ${Math.round(silent / 1000)} с при пинге раз в ${pingMs / 1000} с — подвисло без закрытия; переоткрываю тем же адресом, ждавшее придёт в hello`,
-          );
-          try {
-            sock.close();
-          } catch {
-            /* закрывать нечего */
-          }
-          void dropped(1006);
-        },
-        Math.max(pingMs, 250),
-      );
+      const every = Math.max(pingMs, 250);
+      lastTick = Date.now();
+      watch = setInterval(() => {
+        const now = Date.now();
+        // Таймер опоздал на интервалы — спал процесс (крышка ноутбука), а не
+        // служба: молчание меряется заново, иначе живое назвали бы подвисшим.
+        if (now - lastTick > 2 * every + 1000) lastLife = now;
+        lastTick = now;
+        if (stopped || ws !== sock || !runtimeSeesPings) return;
+        const silent = now - lastLife;
+        if (silent <= SILENT_INTERVALS * pingMs + 1000) return;
+        stopWatch();
+        // «Прочитано» у контура значит «записано в сокет», не «взято» (#5380):
+        // кадры, ушедшие в подвисшее соединение, в hello не вернутся.
+        o.onNote?.(
+          `соединение молчит ${Math.round(silent / 1000)} с при пинге раз в ${pingMs / 1000} с — подвисло без закрытия; переоткрываю тем же адресом. Кадры, пришедшие за время молчания, могли пропасть — сверь iskron_channel(action="history")`,
+        );
+        try {
+          sock.close();
+        } catch {
+          /* закрывать нечего */
+        }
+        void dropped(1006);
+      }, every);
       watch.unref?.();
     }
 
@@ -258,7 +271,7 @@ export function holdSocket(o: HoldOptions): Holder {
       stopped = true;
       if (retry) clearTimeout(retry);
       stopWatch();
-      unsubscribe(PING_CHANNEL, onPing);
+      unsubscribePing();
       cb(code);
     }
 
@@ -323,7 +336,7 @@ export function holdSocket(o: HoldOptions): Holder {
     close(reason = "held no more") {
       stopped = true;
       stopWatch();
-      unsubscribe(PING_CHANNEL, onPing);
+      unsubscribePing();
       if (retry) clearTimeout(retry);
       retry = null;
       const sock = ws;
