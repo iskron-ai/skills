@@ -366,7 +366,11 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
 
   // 4. Хук инбокса роли — чтобы вимарша posed_to приходила тем же сокетом.
   const hooks = await call("iskron_admin", { action: "list_webhooks", realm, node_id: karta });
-  const hooksRecognized = !hooks.isError && /^\s*Вебхуки(?:\s|:|\(|$)/m.test(hooks.text);
+  // Пустой список поверхность печатает без заголовка: «Для #N вебхуки не зарегистрированы.» (#5380).
+  const hooksRecognized =
+    !hooks.isError &&
+    (/^\s*Вебхуки(?:\s|:|\(|$)/m.test(hooks.text) ||
+      /вебхуки не зарегистрированы/i.test(hooks.text));
   const nameRe = new RegExp(`:${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![A-Za-z0-9._-])`);
   const wakesMe =
     hooksRecognized &&
@@ -384,8 +388,7 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
       action: "add_webhook",
       realm,
       node_id: karta,
-      url: incoming,
-      ttl_seconds: 0,
+      url: incoming, // без ttl_seconds: 0 снимает срок только в update_webhook; на добавлении его отвергает контур (слово архитектора, #5380)
     });
     lines.push(
       h.isError

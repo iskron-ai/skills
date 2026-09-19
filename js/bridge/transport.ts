@@ -250,6 +250,11 @@ export async function post(
 // Transparent re-initialize after a lost session: replay the harness's own
 // initialize params under a bridge-internal id, swallow the response.
 let reinitInFlight: Promise<void> | null = null;
+const reinitHooks: (() => void | Promise<void>)[] = [];
+/** Что сделать после прозрачного переоткрытия сессии (сверка списка тулов, #5405). */
+export const onReinitialized = (hook: () => void | Promise<void>): void => {
+  reinitHooks.push(hook);
+};
 
 export async function reinitialize(): Promise<void> {
   if (reinitInFlight) return reinitInFlight;
@@ -274,6 +279,7 @@ export async function reinitialize(): Promise<void> {
       if (got.result?.protocolVersion) state.protocolVersion = got.result.protocolVersion;
       await post({ jsonrpc: "2.0", method: "notifications/initialized" }, () => {});
       log(`session re-established (${state.sessionId || "no session id"})`);
+      for (const hook of reinitHooks) void hook();
     } finally {
       reinitInFlight = null;
     }

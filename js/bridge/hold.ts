@@ -249,6 +249,8 @@ function openLocalServer(key: string): void {
     );
     for (const { raw, frame } of backlog) {
       sock.write(JSON.stringify({ kind: "frame", raw, frame } satisfies ChannelEvent) + "\n");
+      if (frame?.type === "message" && typeof frame.id === "string")
+        noteSeen(seenFilePathOf(CFG.authDir, key), frame.id, seen);
     }
     // Место отняли, а сторож перевзвёлся: молчание читалось бы как слух.
     if (evictedEvent && evictedKey === key) sock.write(JSON.stringify(evictedEvent) + "\n");
@@ -481,6 +483,12 @@ function openHolder(url: string, key: string): void {
     onNote: (text) => {
       log(text);
       broadcast({ kind: "note", text });
+    },
+    // Подвисание: сторожу под Monitor — строкой, будящей агента; pi и OpenCode показывают уведомление человеку, агента оно не будит (#5380).
+    onHung: (text) => {
+      log(text);
+      broadcast({ kind: "note", text });
+      notify("warning", { kind: "note", text });
     },
   });
 }

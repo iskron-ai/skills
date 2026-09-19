@@ -107,8 +107,8 @@ const authorizeUrlIn = (text) =>
   /(http:\/\/127\.0\.0\.1:\d+\/login\?k=[\w-]+)/.exec(text || "")?.[1] ?? null;
 
 /** A bridge that has authorized and connected a standing; returns everything the tests read. */
-async function connected(t, { env = {}, init = INIT } = {}) {
-  const fake = await startFakeNks();
+async function connected(t, { env = {}, init = INIT, fakeOpts = {} } = {}) {
+  const fake = await startFakeNks(fakeOpts);
   const dir = mkdtempSync(join(tmpdir(), "iskron-standing-"));
   const bridge = startBridge(fake.mcpUrl, dir, env);
   t.after(async () => {
@@ -217,6 +217,28 @@ test("watchdog attaches with no secret and prints what the service sends", async
   );
   wd.proc.kill("SIGKILL");
   await wd.done;
+});
+
+// A frame that landed while no watchdog was attached rides to the next one from
+// the ring — and is then delivered: re-arming the watchdog (Monitor ends every
+// 30 minutes) must not bring it again, only the proof of holding (hello).
+test("a frame handed to a watchdog from the ring is not handed to the next one again", async (t) => {
+  const { fake, dir } = await connected(t);
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  await fake.control({
+    ws_send: JSON.stringify({ type: "message", id: "m-ring-1", body: "пришло без сторожа" }),
+  });
+  await new Promise((r) => setTimeout(r, 300));
+  const first = runClient("watchdog", dir, undefined);
+  await waitFor(() => first.out.includes("пришло без сторожа"), "the first watchdog to get it");
+  first.proc.kill("SIGKILL");
+  await first.done;
+  const second = runClient("watchdog", dir, undefined);
+  await waitFor(() => second.out.includes("слушаю стояние"), "the second watchdog to attach");
+  await new Promise((r) => setTimeout(r, 500));
+  assert.ok(!second.out.includes("пришло без сторожа"), `delivered once:\n${second.out}`);
+  second.proc.kill("SIGKILL");
+  await second.done;
 });
 
 test("a dead-token close leaves the watchdog loudly and reaches the harness as an error", async (t) => {
@@ -497,6 +519,143 @@ test("status before connect is a teaching refusal from the bridge, not a server 
   assert.ok(r.result?.isError);
   assert.match(r.result.content[0].text, /iskron_stand/, "the refusal names the re-identification");
   assert.equal(fake.state.counts.mcp, 0);
+});
+
+// A hung connection (graph nks-dev: #5380, #5397): the service stops writing
+// without closing. The holder reads the ping interval from hello, sees the
+// protocol pings, and after three silent intervals says so and reopens the
+// same address. With no ping ever seen the timer is not armed: a runtime that
+// cannot see pings must not call a live connection dead.
+test("a connection silent past three ping intervals is reopened aloud; unseen pings arm nothing", async (t) => {
+  const { fake, bridge } = await connected(t, { fakeOpts: { pingMs: 200 } });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  // Longer than the 1.6 s window: a timer that ignored the pings would have fired.
+  await new Promise((r) => setTimeout(r, 2500));
+  assert.equal(fake.state.counts.ws_upgrades, 1, "a pinging connection is left alone");
+  await fake.control({ ws_hang: true });
+  await waitFor(() => fake.state.counts.ws_upgrades >= 2, "the hung socket to be reopened", 8000);
+  assert.match(bridge.stderr, /подвисло без закрытия/, "the reopen is said aloud");
+  assert.match(bridge.stderr, /могли пропасть/, "a hung socket's frames are not promised back");
+  assert.ok(
+    bridge.notifications.some((n) => JSON.stringify(n).includes("подвисло")),
+    "the harness is told too — pi and OpenCode hear no watchdog",
+  );
+
+  // hello promises a ping every 0.2 s, and none ever comes (Bun has no channel to see it by)
+  const quiet = await connected(t, { fakeOpts: { helloPingS: 0.2 } });
+  await waitFor(() => quiet.fake.state.ws.size === 1, "the socket");
+  await quiet.fake.control({ ws_hang: true });
+  // The window is 1.6 s: by 3 s an armed timer would have spoken, reopen or not.
+  await new Promise((r) => setTimeout(r, 3000));
+  assert.ok(!/подвисло/.test(quiet.bridge.stderr), "no ping seen — no timer, nothing said");
+  assert.equal(quiet.fake.state.counts.ws_upgrades, 1, "no ping seen — no reopen");
+});
+
+// Only the surface's own words for "no author" buy a re-register (#5380): a
+// 409 of another kind — a conflict, a repeated mint — is passed through as is,
+// once, and the standing binding is not touched.
+test("a 409 that is not about the missing author is not re-bound and repeated", async (t) => {
+  const { fake, bridge } = await connected(t);
+  const reg = await bridge.call("tools/call", 5, {
+    name: "iskron_channel",
+    arguments: { realm: "nks-dev", action: "register", karta: 931, name: "proba" },
+  });
+  assert.ok(!reg.result?.isError, JSON.stringify(reg));
+  const before = fake.state.counts.register_standing;
+  await fake.control({ send_conflict: "Отказано (409): место сменило версию — перечитай доску" });
+  const r = await bridge.call("tools/call", 6, {
+    name: "iskron_channel",
+    arguments: { realm: "nks-dev", action: "send", karta: 931, text: "привет" },
+  });
+  assert.ok(r.result?.isError, JSON.stringify(r));
+  assert.match(r.result.content[0].text, /сменило версию/);
+  assert.equal(fake.state.counts.send_conflicts, 1, "the refused call is not repeated");
+  assert.equal(fake.state.counts.register_standing, before, "no re-register for a foreign 409");
+});
+
+// A rollout changes the server's tools while the harness keeps the list it got
+// at the start of the session (#5405). When the bridge re-opens its upstream
+// session it compares the fresh list with the one it served and, on a change,
+// tells the harness notifications/tools/list_changed — the harness re-reads.
+test("a tool list changed under a re-opened session is announced as list_changed", async (t) => {
+  const { fake, bridge } = await connected(t);
+  const first = await bridge.call("tools/list", 20, {});
+  assert.ok(first.result?.tools?.length, JSON.stringify(first));
+  await fake.control({ richTools: true, kill_session: true });
+  await bridge.call("tools/call", 21, {
+    name: "iskron_channel",
+    arguments: { realm: "nks-dev", action: "list" },
+  });
+  await waitFor(
+    () => bridge.notifications.some((n) => n.method === "notifications/tools/list_changed"),
+    "list_changed after the re-opened session found a different list",
+  );
+  const again = await bridge.call("tools/list", 22, {});
+  const had = new Set(first.result.tools.map((x) => x.name));
+  assert.ok(
+    again.result.tools.some((x) => !had.has(x.name)),
+    "the re-read list is the new one",
+  );
+});
+
+// The shared answers cache keeps the form the harness gets — with the bridge's
+// own tool — or the next start without network serves a list without it, and a
+// cached list must not read as a changed one once the session opens (#5405).
+test("the re-check keeps the bridge's own tool in the cache and a cached list is not a change", async (t) => {
+  const { fake, dir, bridge } = await connected(t);
+  await bridge.call("tools/list", 20, {});
+  await fake.control({ kill_session: true });
+  await bridge.call("tools/call", 21, {
+    name: "iskron_channel",
+    arguments: { realm: "nks-dev", action: "list" },
+  });
+  await new Promise((r) => setTimeout(r, 800));
+  const cacheFile = readdirSync(dir).find((f) => f.endsWith(".server-answers"));
+  assert.ok(cacheFile, readdirSync(dir).join(","));
+  assert.match(
+    readFileSync(join(dir, cacheFile), "utf8"),
+    /iskron_stand/,
+    "the cache keeps iskron_stand",
+  );
+  // A second bridge serves the list from that cache before its session opens,
+  // then opens it: the server did not change, so the harness hears nothing.
+  const second = startBridge(fake.mcpUrl, dir);
+  t.after(() => second.stop());
+  await fake.control({ kill_session: true });
+  await second.call("initialize", 1, INIT);
+  const listed = await second.call("tools/list", 2, {});
+  assert.ok(
+    listed.result.tools.some((x) => x.name === "iskron_stand"),
+    JSON.stringify(listed),
+  );
+  await second.call("tools/call", 3, {
+    name: "iskron_channel",
+    arguments: { realm: "nks-dev", action: "list" },
+  });
+  await new Promise((r) => setTimeout(r, 800));
+  assert.ok(
+    !second.notifications.some((n) => n.method === "notifications/tools/list_changed"),
+    "a list served from the cache is not a change",
+  );
+  assert.ok(
+    !bridge.notifications.some((n) => n.method === "notifications/tools/list_changed"),
+    "an unchanged list says nothing",
+  );
+});
+
+test("a re-opened session with the same tool list says nothing", async (t) => {
+  const { fake, bridge } = await connected(t);
+  await bridge.call("tools/list", 20, {});
+  await fake.control({ kill_session: true });
+  await bridge.call("tools/call", 21, {
+    name: "iskron_channel",
+    arguments: { realm: "nks-dev", action: "list" },
+  });
+  await new Promise((r) => setTimeout(r, 800));
+  assert.ok(
+    !bridge.notifications.some((n) => n.method === "notifications/tools/list_changed"),
+    "no list_changed for an unchanged list",
+  );
 });
 
 // Two bridges under one grant — a session with both the plugin's and the user's

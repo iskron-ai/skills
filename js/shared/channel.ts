@@ -12,6 +12,18 @@
 //   три быстрых обрыва спрашивают /version прежде, чем винить токен: служба
 //     жива, а нас рвёт — слово делателю и переоткрытие реже, место не бросаем;
 //     служба молчит — выкатка, держим токен.
+//   соединение, молчащее дольше трёх интервалов пинга из hello, переоткрывается
+//     тем же адресом вслух (граф nks-dev: #5397); пока ни одного пинга не видно,
+//     таймер не взведён — рантайм, не показывающий пингов, живое мёртвым не объявит.
+
+// Пространством имён, не именованным импортом: модуль линкуется и там, где этих
+// экспортов нет. Bun канал не наполняет — его пинги приходят событием сокета (ниже).
+import * as diagnostics from "node:diagnostics_channel";
+
+/** Канал, в который undici (WebSocket Node) публикует каждый входящий протокольный пинг. */
+const PING_CHANNEL = "undici:websocket:ping";
+/** Сколько интервалов пинга соединение может молчать, прежде чем считаться подвисшим. */
+const SILENT_INTERVALS = 3;
 
 /** Закрытия, после которых тем же токеном не переоткрываются. */
 export const DEAD_TOKEN_CODES = [4001, 4002];
@@ -136,6 +148,8 @@ export interface HoldOptions {
   onServiceAlive: (version: string) => void;
   /** Служебные слова, которые будить не должны. */
   onNote?: (text: string) => void;
+  /** Соединение подвисло и переоткрывается: кадры могли пропасть — слово громче служебного. Без него — как onNote. */
+  onHung?: (text: string) => void;
 }
 
 export interface Holder {
@@ -159,20 +173,55 @@ export function holdSocket(o: HoldOptions): Holder {
   let lastEviction: number | null = null;
   let retry: ReturnType<typeof setTimeout> | null = null;
   let ws: WebSocket | null = null;
+  // Живость соединения: последний знак от службы (пинг или кадр), интервал из
+  // hello; таймер взводит первый увиденный пинг.
+  let lastLife = 0;
+  let pingMs = 0;
+  // Видит ли рантайм пинги вообще — держится на весь holder: соединение,
+  // подвисшее до своего первого пинга, иначе не поймалось бы никогда.
+  let runtimeSeesPings = false;
+  let lastTick = 0;
+  let watch: ReturnType<typeof setInterval> | null = null;
+  // Node 22 не называет сокет пинга, Node 26 называет: чужой пинг может лишь
+  // продлить жизнь, но не объявить живое мёртвым — у моста сокет один.
+  const onPing = (m: unknown): void => {
+    const from = (m as { websocket?: unknown } | null)?.websocket;
+    if (!ws || (from !== undefined && from !== ws)) return;
+    lastLife = Date.now();
+    runtimeSeesPings = true;
+  };
+  diagnostics.subscribe?.(PING_CHANNEL, onPing);
+  const unsubscribePing = (): void => {
+    diagnostics.unsubscribe?.(PING_CHANNEL, onPing);
+  };
+  const stopWatch = (): void => {
+    if (watch) clearInterval(watch);
+    watch = null;
+  };
 
   function open(): void {
     if (stopped) return;
     const startedAt = Date.now(); // от конструкции, НЕ в onopen — см. channel.md
     const sock = new WebSocket(o.url);
     ws = sock;
+    stopWatch();
+    lastLife = startedAt;
     let gone = false; // обрыв разбирается один раз, чем бы он ни пришёл
     let opened = false; // апгрейд прошёл: повёрнутый адрес не открывается вовсе
     sock.addEventListener("open", () => {
       opened = true;
     });
+    // Bun (рантайм моста в OpenCode) канала диагностики не наполняет, но шлёт
+    // нестандартное событие ping самого сокета; Node его не шлёт вовсе.
+    sock.addEventListener("ping", () => {
+      if (ws !== sock) return;
+      lastLife = Date.now();
+      runtimeSeesPings = true;
+    });
 
     sock.addEventListener("message", (e: MessageEvent) => {
       if (stopped || ws !== sock) return;
+      lastLife = Date.now();
       const raw = typeof e.data === "string" ? e.data : "[двоичный кадр]";
       let frame: Frame | null = null;
       if (typeof e.data === "string") {
@@ -182,6 +231,7 @@ export function holdSocket(o: HoldOptions): Holder {
           /* не JSON — донесём как есть */
         }
       }
+      if (frame?.type === "hello") watchLife(Number(frame.ping_interval_seconds) * 1000);
       o.onFrame(raw, frame && typeof frame === "object" ? frame : null);
     });
     // Обрыв на самом апгрейде даёт на части рантаймов ТОЛЬКО error: close не
@@ -193,16 +243,50 @@ export function holdSocket(o: HoldOptions): Holder {
     );
     sock.addEventListener("close", (e) => void dropped((e as unknown as { code: number }).code));
 
+    function watchLife(interval: number): void {
+      stopWatch();
+      if (!(interval > 0)) return;
+      pingMs = interval;
+      const every = Math.max(pingMs, 250);
+      lastTick = Date.now();
+      watch = setInterval(() => {
+        const now = Date.now();
+        // Таймер опоздал на интервалы — спал процесс (крышка ноутбука), а не
+        // служба: молчание меряется заново, иначе живое назвали бы подвисшим.
+        if (now - lastTick > 2 * every + 1000) lastLife = now;
+        lastTick = now;
+        if (stopped || ws !== sock || !runtimeSeesPings) return;
+        const silent = now - lastLife;
+        if (silent <= SILENT_INTERVALS * pingMs + 1000) return;
+        stopWatch();
+        // «Прочитано» у контура значит «записано в сокет», не «взято» (#5380):
+        // кадры, ушедшие в подвисшее соединение, в hello не вернутся.
+        (o.onHung ?? o.onNote)?.(
+          `соединение молчит ${Math.round(silent / 1000)} с при пинге раз в ${pingMs / 1000} с — подвисло без закрытия; переоткрываю тем же адресом. Кадры, пришедшие за время молчания, могли пропасть — сверь iskron_channel(action="history")`,
+        );
+        try {
+          sock.close();
+        } catch {
+          /* закрывать нечего */
+        }
+        void dropped(1006);
+      }, every);
+      watch.unref?.();
+    }
+
     function yieldTo(cb: (code: number) => void, code: number): void {
       if (dead) return;
       dead = true;
       stopped = true;
       if (retry) clearTimeout(retry);
+      stopWatch();
+      unsubscribePing();
       cb(code);
     }
 
     async function dropped(code: number): Promise<void> {
       if (stopped || ws !== sock) return;
+      stopWatch();
       // Мёртвый токен громче любого предположения об обрыве и старше вытеснения:
       // он проходит ограду `gone` всегда и снимает уже назначенное переоткрытие.
       if (DEAD_TOKEN_CODES.includes(code)) return yieldTo(o.onDeadToken, code);
@@ -260,6 +344,8 @@ export function holdSocket(o: HoldOptions): Holder {
   return {
     close(reason = "held no more") {
       stopped = true;
+      stopWatch();
+      unsubscribePing();
       if (retry) clearTimeout(retry);
       retry = null;
       const sock = ws;

@@ -1460,6 +1460,9 @@ var PI_CLIENT = "pi-iskron";
 var NOTIFIED_CLIENTS = /* @__PURE__ */ new Set([PI_CLIENT, OPENCODE_CLIENT]);
 
 // js/shared/channel.ts
+import * as diagnostics from "node:diagnostics_channel";
+var PING_CHANNEL = "undici:websocket:ping";
+var SILENT_INTERVALS = 3;
 var DEAD_TOKEN_CODES = [4001, 4002];
 var EVICTED_CODE = 4e3;
 var EVICTION_WINDOW_MS = 6e4;
@@ -1502,18 +1505,45 @@ function holdSocket(o) {
   let lastEviction = null;
   let retry = null;
   let ws = null;
+  let lastLife = 0;
+  let pingMs = 0;
+  let runtimeSeesPings = false;
+  let lastTick = 0;
+  let watch = null;
+  const onPing = (m) => {
+    const from = m?.websocket;
+    if (!ws || from !== void 0 && from !== ws) return;
+    lastLife = Date.now();
+    runtimeSeesPings = true;
+  };
+  diagnostics.subscribe?.(PING_CHANNEL, onPing);
+  const unsubscribePing = () => {
+    diagnostics.unsubscribe?.(PING_CHANNEL, onPing);
+  };
+  const stopWatch = () => {
+    if (watch) clearInterval(watch);
+    watch = null;
+  };
   function open() {
     if (stopped) return;
     const startedAt = Date.now();
     const sock = new WebSocket(o.url);
     ws = sock;
+    stopWatch();
+    lastLife = startedAt;
     let gone = false;
     let opened = false;
     sock.addEventListener("open", () => {
       opened = true;
     });
+    sock.addEventListener("ping", () => {
+      if (ws !== sock) return;
+      lastLife = Date.now();
+      runtimeSeesPings = true;
+    });
     sock.addEventListener("message", (e) => {
       if (stopped || ws !== sock) return;
+      lastLife = Date.now();
       const raw = typeof e.data === "string" ? e.data : "[двоичный кадр]";
       let frame2 = null;
       if (typeof e.data === "string") {
@@ -1522,6 +1552,7 @@ function holdSocket(o) {
         } catch {
         }
       }
+      if (frame2?.type === "hello") watchLife(Number(frame2.ping_interval_seconds) * 1e3);
       o.onFrame(raw, frame2 && typeof frame2 === "object" ? frame2 : null);
     });
     sock.addEventListener(
@@ -1529,15 +1560,43 @@ function holdSocket(o) {
       () => setTimeout(() => void dropped(1006), ERROR_GUESS_DELAY_MS)
     );
     sock.addEventListener("close", (e) => void dropped(e.code));
+    function watchLife(interval) {
+      stopWatch();
+      if (!(interval > 0)) return;
+      pingMs = interval;
+      const every = Math.max(pingMs, 250);
+      lastTick = Date.now();
+      watch = setInterval(() => {
+        const now2 = Date.now();
+        if (now2 - lastTick > 2 * every + 1e3) lastLife = now2;
+        lastTick = now2;
+        if (stopped || ws !== sock || !runtimeSeesPings) return;
+        const silent = now2 - lastLife;
+        if (silent <= SILENT_INTERVALS * pingMs + 1e3) return;
+        stopWatch();
+        (o.onHung ?? o.onNote)?.(
+          `соединение молчит ${Math.round(silent / 1e3)} с при пинге раз в ${pingMs / 1e3} с — подвисло без закрытия; переоткрываю тем же адресом. Кадры, пришедшие за время молчания, могли пропасть — сверь iskron_channel(action="history")`
+        );
+        try {
+          sock.close();
+        } catch {
+        }
+        void dropped(1006);
+      }, every);
+      watch.unref?.();
+    }
     function yieldTo(cb, code) {
       if (dead) return;
       dead = true;
       stopped = true;
       if (retry) clearTimeout(retry);
+      stopWatch();
+      unsubscribePing();
       cb(code);
     }
     async function dropped(code) {
       if (stopped || ws !== sock) return;
+      stopWatch();
       if (DEAD_TOKEN_CODES.includes(code)) return yieldTo(o.onDeadToken, code);
       const now2 = Date.now();
       const afterEviction = lastEviction !== null && now2 - lastEviction < EVICTION_WINDOW_MS;
@@ -1585,6 +1644,8 @@ function holdSocket(o) {
   return {
     close(reason = "held no more") {
       stopped = true;
+      stopWatch();
+      unsubscribePing();
       if (retry) clearTimeout(retry);
       retry = null;
       const sock = ws;
@@ -1904,6 +1965,10 @@ async function post(msg, onMessage) {
   }
 }
 var reinitInFlight = null;
+var reinitHooks = [];
+var onReinitialized = (hook) => {
+  reinitHooks.push(hook);
+};
 async function reinitialize() {
   if (reinitInFlight) return reinitInFlight;
   reinitInFlight = (async () => {
@@ -1928,6 +1993,7 @@ async function reinitialize() {
       await post({ jsonrpc: "2.0", method: "notifications/initialized" }, () => {
       });
       log(`session re-established (${state.sessionId || "no session id"})`);
+      for (const hook of reinitHooks) void hook();
     } finally {
       reinitInFlight = null;
     }
@@ -2211,6 +2277,8 @@ function openLocalServer(key) {
     );
     for (const { raw, frame: frame2 } of backlog) {
       sock.write(JSON.stringify({ kind: "frame", raw, frame: frame2 }) + "\n");
+      if (frame2?.type === "message" && typeof frame2.id === "string")
+        noteSeen(seenFilePathOf(CFG.authDir, key), frame2.id, seen);
     }
     if (evictedEvent && evictedKey === key) sock.write(JSON.stringify(evictedEvent) + "\n");
   });
@@ -2411,6 +2479,12 @@ function openHolder(url, key) {
     onNote: (text) => {
       log(text);
       broadcast({ kind: "note", text });
+    },
+    // Подвисание: сторожу под Monitor — строкой, будящей агента; pi и OpenCode показывают уведомление человеку, агента оно не будит (#5380).
+    onHung: (text) => {
+      log(text);
+      broadcast({ kind: "note", text });
+      notify("warning", { kind: "note", text });
     }
   });
 }
@@ -2563,7 +2637,7 @@ var replyText = (reply2) => {
 };
 var seatIsGone = (reply2) => /no such standing|take it with connect|такого стояния|занять.*connect/i.test(replyText(reply2));
 var UNATTRIBUTED_CODE = /write_unattributed\w*|session_not_registered/;
-var UNATTRIBUTED_REFUSAL = /\b409\b|не зарегистрирован[аоы]? ни за каким стоянием|hold no registered standing/i;
+var UNATTRIBUTED_REFUSAL = /не зарегистрирован[аоы]? ни за каким стоянием|hold no registered standing/i;
 var isUnattributed = (reply2) => {
   if (!reply2) return false;
   const text = replyText(reply2);
@@ -3531,7 +3605,7 @@ async function runStand(msg) {
       );
   }
   const hooks = await callTool("iskron_admin", { action: "list_webhooks", realm, node_id: karta });
-  const hooksRecognized = !hooks.isError && /^\s*Вебхуки(?:\s|:|\(|$)/m.test(hooks.text);
+  const hooksRecognized = !hooks.isError && (/^\s*Вебхуки(?:\s|:|\(|$)/m.test(hooks.text) || /вебхуки не зарегистрированы/i.test(hooks.text));
   const nameRe = new RegExp(`:${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![A-Za-z0-9._-])`);
   const wakesMe = hooksRecognized && hooks.text.split(/\n(?=\s*#\d+\s*→)/).some((b) => /активен/.test(b) && nameRe.test(b));
   if (wakesMe) lines.push("Хук инбокса роли: стоит и будит это стояние.");
@@ -3547,8 +3621,8 @@ async function runStand(msg) {
       action: "add_webhook",
       realm,
       node_id: karta,
-      url: incoming,
-      ttl_seconds: 0
+      url: incoming
+      // без ttl_seconds: 0 снимает срок только в update_webhook; на добавлении его отвергает контур (слово архитектора, #5380)
     });
     lines.push(
       h.isError ? `Хук инбокса роли: не взвёлся — ${short(h.text)}` : `Хук инбокса роли: взведён (${short(h.text, 120)}).`
@@ -3642,6 +3716,28 @@ ${MOMENT_LINE}` : MOMENT_LINE;
   }
 }
 
+// js/bridge/toolsync.ts
+import { createHash as createHash4 } from "node:crypto";
+var served = null;
+function toolsPrint(result) {
+  const tools = result?.tools;
+  if (!Array.isArray(tools)) return null;
+  const shape = tools.map((t) => [t.name ?? "", JSON.stringify(t.inputSchema ?? null)]).sort((a, b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0);
+  return createHash4("sha256").update(JSON.stringify(shape)).digest("hex");
+}
+function noteServedTools(result) {
+  const print = toolsPrint(result);
+  if (print) served = print;
+}
+async function recheckTools(ask, emit2) {
+  if (!served) return;
+  const fresh = toolsPrint((await ask().catch(() => null))?.result);
+  if (!fresh || fresh === served) return;
+  served = fresh;
+  log("tool list changed under the re-opened session — telling the harness (tools/list_changed)");
+  emit2({ jsonrpc: "2.0", method: "notifications/tools/list_changed" });
+}
+
 // js/bridge/deliver.ts
 function syntheticError(id, message, outcome = UpstreamError.UNKNOWN, holdOff = false) {
   const kind = holdOff === true ? "wait" : holdOff;
@@ -3675,6 +3771,23 @@ var READ_TOOLS = /* @__PURE__ */ new Set([
   "iskron_search",
   "iskron_semantic_search"
 ]);
+var harnessListing = 0;
+onReinitialized(() => {
+  if (harnessListing > 0) return;
+  return recheckTools(async () => {
+    const id = `iskron-bridge-tools-${++state.reinitCounter}`;
+    let got = null;
+    await post({ jsonrpc: "2.0", id, method: "tools/list", params: {} }, (m) => {
+      if (m.id === id) got = m;
+    });
+    const reply2 = got;
+    if (reply2?.result) {
+      annotateToolList(reply2);
+      saveServerCache({ tools: reply2.result });
+    }
+    return reply2;
+  }, emit);
+});
 function isRead(msg) {
   if (msg?.method === "initialize" || msg?.method === "tools/list") return true;
   return msg?.method === "tools/call" && READ_TOOLS.has(String(msg.params?.name ?? ""));
@@ -3682,7 +3795,13 @@ function isRead(msg) {
 function lastServerAnswer(msg) {
   const cache = loadServerCache();
   const result = msg?.method === "initialize" ? cache.init : msg?.method === "tools/list" && !msg.params?.cursor ? cache.tools : null;
-  return result ? { jsonrpc: "2.0", id: msg.id, result } : null;
+  if (!result) return null;
+  const reply2 = { jsonrpc: "2.0", id: msg.id, result };
+  if (msg?.method === "tools/list") {
+    annotateToolList(reply2);
+    noteServedTools(reply2.result);
+  }
+  return reply2;
 }
 function ownClient() {
   const info = state.initParams?.clientInfo;
@@ -3698,6 +3817,15 @@ function withNotice(reply2) {
   return reply2;
 }
 async function deliver(msg) {
+  const listing = msg?.method === "tools/list";
+  if (listing) harnessListing++;
+  try {
+    await deliverOne(msg);
+  } finally {
+    if (listing) harnessListing--;
+  }
+}
+async function deliverOne(msg) {
   const local = localStatus(msg) ?? localLeave(msg);
   if (local) {
     emit(await local);
@@ -3726,7 +3854,10 @@ async function deliver(msg) {
       state.protocolVersion = m.result.protocolVersion;
     }
     if (m.id === msg.id) noteStanding(msg, m);
-    if (m.id === msg.id && msg.method === "tools/list") annotateToolList(m);
+    if (m.id === msg.id && msg.method === "tools/list") {
+      annotateToolList(m);
+      if (!msg.params?.cursor) noteServedTools(m.result);
+    }
     if (m.id === msg.id && m.result) {
       if (isInit) saveServerCache({ init: m.result });
       else if (msg.method === "tools/list" && !msg.params?.cursor)
@@ -4329,11 +4460,11 @@ function runWatchdog(argv2) {
 }
 
 // js/watchdog/watchdog-exit.ts
-import { createHash as createHash4 } from "node:crypto";
+import { createHash as createHash5 } from "node:crypto";
 import { writeSync as writeSync2 } from "node:fs";
 function frameId(ev) {
   const id = ev.frame?.id;
-  return typeof id === "string" && id ? id : `raw:${createHash4("sha256").update(ev.raw ?? "").digest("hex").slice(0, 16)}`;
+  return typeof id === "string" && id ? id : `raw:${createHash5("sha256").update(ev.raw ?? "").digest("hex").slice(0, 16)}`;
 }
 var wake = (s) => {
   writeSync2(1, s + "\n");
@@ -4388,7 +4519,7 @@ function runWatchdogExit(argv2) {
 }
 
 // js/cli/doctor.ts
-import { createHash as createHash5 } from "node:crypto";
+import { createHash as createHash6 } from "node:crypto";
 import { existsSync as existsSync7, readdirSync as readdirSync6, readFileSync as readFileSync13 } from "node:fs";
 import { homedir as homedir6 } from "node:os";
 import { dirname as dirname3, join as join13 } from "node:path";
@@ -4396,7 +4527,7 @@ import { fileURLToPath as fileURLToPath4 } from "node:url";
 var out = (s) => {
   process.stdout.write(s + "\n");
 };
-var hashOf2 = (buf) => createHash5("sha256").update(buf).digest("hex").slice(0, 8);
+var hashOf2 = (buf) => createHash6("sha256").update(buf).digest("hex").slice(0, 8);
 var seconds = (ms) => `${Math.round(ms / 1e3)}s`;
 function homeCopyReport() {
   const home = homeBridgePath();

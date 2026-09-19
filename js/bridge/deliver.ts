@@ -19,7 +19,8 @@ import { ensureStanding, isUnattributed, noteStanding, replyText } from "./stand
 import { localStatus } from "./status.ts";
 import { loadServerCache, saveServerCache, sleep } from "./store.ts";
 import { emit, log } from "./streams.ts";
-import { currentAccessToken, post, reinitialize, state } from "./transport.ts";
+import { noteServedTools, recheckTools } from "./toolsync.ts";
+import { currentAccessToken, onReinitialized, post, reinitialize, state } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
 import { takeNotice } from "./update.ts";
 
@@ -101,6 +102,26 @@ const READ_TOOLS = new Set([
   "iskron_semantic_search",
 ]);
 
+// Переоткрыв сессию, мост сверяет список тулов с отданным харнесу (#5405).
+// Свой tools/list харнеса в полёте — он и так получит свежий список: не спрашиваем дважды.
+let harnessListing = 0;
+onReinitialized(() => {
+  if (harnessListing > 0) return;
+  return recheckTools(async () => {
+    const id = `iskron-bridge-tools-${++state.reinitCounter}`;
+    let got: JsonRpcMessage | null = null;
+    await post({ jsonrpc: "2.0", id, method: "tools/list", params: {} }, (m) => {
+      if (m.id === id) got = m;
+    });
+    const reply = got as JsonRpcMessage | null;
+    if (reply?.result) {
+      annotateToolList(reply); // в общий кэш — та форма, что уходит харнесу, не сырая
+      saveServerCache({ tools: reply.result });
+    }
+    return reply;
+  }, emit);
+});
+
 function isRead(msg: JsonRpcMessage): boolean {
   if (msg?.method === "initialize" || msg?.method === "tools/list") return true;
   return msg?.method === "tools/call" && READ_TOOLS.has(String(msg.params?.name ?? ""));
@@ -120,7 +141,13 @@ function lastServerAnswer(msg: JsonRpcMessage): JsonRpcMessage | null {
       : msg?.method === "tools/list" && !msg.params?.cursor
         ? cache.tools
         : null;
-  return result ? { jsonrpc: "2.0", id: msg.id, result } : null;
+  if (!result) return null;
+  const reply: JsonRpcMessage = { jsonrpc: "2.0", id: msg.id, result };
+  if (msg?.method === "tools/list") {
+    annotateToolList(reply);
+    noteServedTools(reply.result);
+  }
+  return reply;
 }
 
 // Наш собственный клиент (плагин OpenCode, `make surface`) отказ рукопожатия
@@ -146,6 +173,16 @@ function withNotice(reply: JsonRpcMessage): JsonRpcMessage {
 // Deliver one harness message upstream, with one auth retry and one session
 // retry. On final failure a request id is ALWAYS answered with an error.
 export async function deliver(msg: JsonRpcMessage): Promise<void> {
+  const listing = msg?.method === "tools/list";
+  if (listing) harnessListing++;
+  try {
+    await deliverOne(msg);
+  } finally {
+    if (listing) harnessListing--;
+  }
+}
+
+async function deliverOne(msg: JsonRpcMessage): Promise<void> {
   // Слово о занятости не покидает моста: держатель сокета говорит его сам.
   const local = localStatus(msg) ?? localLeave(msg);
   if (local) {
@@ -180,7 +217,10 @@ export async function deliver(msg: JsonRpcMessage): Promise<void> {
       state.protocolVersion = m.result.protocolVersion;
     }
     if (m.id === msg.id) noteStanding(msg, m);
-    if (m.id === msg.id && msg.method === "tools/list") annotateToolList(m);
+    if (m.id === msg.id && msg.method === "tools/list") {
+      annotateToolList(m); // одна форма для отпечатка, кэша и сверки — аннотированная
+      if (!msg.params?.cursor) noteServedTools(m.result);
+    }
     if (m.id === msg.id && m.result) {
       if (isInit) saveServerCache({ init: m.result });
       else if (msg.method === "tools/list" && !msg.params?.cursor)
