@@ -487,6 +487,7 @@ var PROTOCOL = "2025-06-18";
 function setupBridge(pi, onChannel) {
   let bridge = null;
   const offByUs = /* @__PURE__ */ new Set();
+  const known = /* @__PURE__ */ new Set();
   let notify = () => {
   };
   let canSpeak = false;
@@ -555,6 +556,7 @@ function setupBridge(pi, onChannel) {
     } while (cursor);
     if (bridge !== b) return b.stop();
     function registerAll(list) {
+      for (const t of list) known.add(String(t.name));
       for (const tool of list) {
         const name = String(tool.name);
         pi.registerTool({
@@ -636,12 +638,16 @@ function setupBridge(pi, onChannel) {
         );
       }
     }
+    const listed = new Set(tools.map((t) => String(t.name)));
+    const gone = [...known].filter((n) => !listed.has(n));
+    const returned = [...offByUs].filter((n) => listed.has(n));
     registerAll(tools);
-    const returned = [...offByUs].filter((n) => tools.some((t) => String(t.name) === n));
-    if (returned.length) {
-      for (const n of returned) offByUs.delete(n);
-      pi.setActiveTools([.../* @__PURE__ */ new Set([...pi.getActiveTools(), ...returned])]);
-    }
+    for (const n of gone) offByUs.add(n);
+    for (const n of returned) offByUs.delete(n);
+    if (gone.length || returned.length)
+      pi.setActiveTools([
+        .../* @__PURE__ */ new Set([...pi.getActiveTools().filter((n) => !gone.includes(n)), ...returned])
+      ]);
     const server = init?.serverInfo;
     notify(
       `Искрон: мост поднят (${server?.name ?? "сервер"} ${server?.version ?? ""}), тулов в сессии: ${tools.length}${toldLogin ? " — вход состоялся" : ""}.`,

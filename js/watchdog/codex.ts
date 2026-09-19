@@ -51,6 +51,7 @@ export function runWatchdogCodex(argv: string[]): void {
   parseWatchdogArgs(argv); // валидность флагов — там же
   const seenPath = seenFilePathOf(target.authDir, target.key);
   const seen = seenIds(seenPath);
+  const waiting = new Map<number, string[]>(); // id запроса turn/start → id кадров, ждущих подтверждения
 
   let door: Door | null = null;
   let ready: Promise<Door> | null = null;
@@ -60,7 +61,14 @@ export function runWatchdogCodex(argv: string[]): void {
     if (ready) return ready;
     ready = openDoor(
       socketPath,
-      () => {},
+      (m) => {
+        // Доставлен кадр, когда тред ПРИНЯЛ turn/start, — не когда запрос ушёл (#5428).
+        const ids = typeof m?.id === "number" ? waiting.get(m.id) : undefined;
+        if (!ids) return;
+        waiting.delete(m.id);
+        if (m.error) return note(`ДЕЛАТЕЛЬ: тред не принял кадр — ${m.error.message ?? "отказ"}`);
+        for (const id of ids) noteSeen(seenPath, id, seen);
+      },
       (why) => {
         note(`дверь закрылась: ${why} — открою заново на следующем кадре`);
         door = null;
@@ -86,30 +94,25 @@ export function runWatchdogCodex(argv: string[]): void {
   async function deliver(text: string, ids: string[] = []): Promise<void> {
     try {
       const d = door ?? (await open());
+      const reqId = nextId++;
+      if (ids.length) waiting.set(reqId, ids);
       d.send({
         method: "turn/start",
-        id: nextId++,
+        id: reqId,
         params: { threadId, input: [{ type: "text", text }], turnTrigger: "iskron-channel" },
       });
       note(`кадр вложен в тред ${threadId}`);
-      for (const id of ids) noteSeen(seenPath, id, seen); // вложенный — отданный (#5428)
     } catch (e) {
       note(`ДЕЛАТЕЛЬ: кадр не вложился — ${(e as Error).message}`);
     }
   }
 
-  // Мост отдаёт прицепившемуся кольцо последних кадров задним числом — для лога
-  // это память, для двери это повторная побудка тем же словом. Кольцо пропускаем:
-  // недоставленное за глухоту служба и так пришлёт заново на переподключении.
-  let replay = 0;
+  // Мост отдаёт из кольца задним числом только то, что никто не доставил (#5428),
+  // — это кадры, пришедшие между взводами: их вкладываем, как живые.
   attach(target.path, {
     onEvent: (ev) => {
       switch (ev.kind) {
         case "frame": {
-          if (replay > 0) {
-            replay--;
-            return note("кадр из кольца моста — уже был, в тред не кладу");
-          }
           const type = ev.frame?.type;
           if (type !== "message") return note(`кадр ${type ?? "не разобран"} — не повод будить`);
           void deliver(
@@ -136,7 +139,6 @@ export function runWatchdogCodex(argv: string[]): void {
           void deliver(ev.text ?? "Искрон: сокет рвут, а служба отвечает — мост держит место"); // держание идёт, сторож слушает дальше
           break;
         case "attached":
-          replay = ev.buffered ?? 0;
           note(`слушаю стояние ${ev.key}; кадры кладу в тред ${threadId}`);
           break;
         default:

@@ -3,7 +3,7 @@
 // выбрасывать пометки другого (граф nks-dev: #5428). Исходник импортируется
 // напрямую (Node снимает типы); старую копию подставляй правкой импорта.
 import assert from "node:assert/strict";
-import { appendFileSync, mkdtempSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdtempSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -22,4 +22,15 @@ test("trimming a full memory merges the file: another writer's mark survives", (
   assert.ok(after.has("other"), "the other writer's mark is kept");
   assert.ok(after.has("new"));
   assert.ok(after.size <= 200, `trimmed to the tail: ${after.size}`);
+});
+
+test("a trim leaves the writer's memory at the tail and no temporary file behind", () => {
+  const dir = mkdtempSync(join(tmpdir(), "iskron-seen-"));
+  const path = join(dir, "k.seen");
+  writeFileSync(path, Array.from({ length: 200 }, (_, i) => `m-${i}`).join("\n") + "\n");
+  const memory = seenIds(path);
+  noteSeen(path, "a", memory);
+  noteSeen(path, "b", memory);
+  assert.ok(memory.size <= 200, `the memory is trimmed with the file: ${memory.size}`);
+  assert.deepEqual(readdirSync(dir), ["k.seen"], "no temporary file is left");
 });

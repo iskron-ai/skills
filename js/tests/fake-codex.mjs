@@ -80,6 +80,13 @@ export function startFakeCodex(socketPath, logFile) {
         if (msg.id == null) continue;
         if (msg.method === "initialize") {
           socket.write(frame(JSON.stringify({ id: msg.id, result: { userAgent: "fake-codex" } })));
+        } else if (msg.method === "turn/start" && msg.params?.threadId === "no-such-thread") {
+          // A thread the daemon does not know: the turn is refused, nothing is delivered.
+          socket.write(
+            frame(
+              JSON.stringify({ id: msg.id, error: { code: -32600, message: "thread not found" } }),
+            ),
+          );
         } else if (msg.method === "turn/start") {
           socket.write(
             frame(

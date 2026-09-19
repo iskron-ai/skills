@@ -94,6 +94,8 @@ export function runWatchdog(argv: string[]): void {
           break;
         case "stale":
           for (const line of wrapLines(ev.text ?? "")) log(line); // одна пачка — одно событие
+          for (const f of ev.frames ?? [])
+            if (typeof f.id === "string" && f.id) noteSeen(seenPath, f.id, seen); // напечатана — отдана
           break;
         case "dead":
         case "evicted":

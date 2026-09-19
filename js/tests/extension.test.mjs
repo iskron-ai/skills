@@ -345,6 +345,25 @@ test("list_changed from the bridge re-registers the tools with the new list", as
     const again = Date.now() + 8000;
     while (!rec.active.has("iskron_orient") && Date.now() < again) await delay(50);
     assert.ok(rec.active.has("iskron_orient"), "returned under a new bridge — active again");
+    // And a tool the server dropped between sessions, without list_changed: off at the next bridge.
+    writeFileSync(
+      toolsFile,
+      JSON.stringify([
+        {
+          name: "iskron_channel",
+          description: "Канал, новое описание.",
+          inputSchema: { type: "object" },
+        },
+      ]),
+    );
+    await rec.fire("session_shutdown");
+    await rec.fire("session_start");
+    const gone = Date.now() + 8000;
+    while (rec.active.has("iskron_orient") && Date.now() < gone) await delay(50);
+    assert.ok(
+      !rec.active.has("iskron_orient"),
+      "dropped between sessions — off under the new bridge",
+    );
     assert.equal(rec.tools.get("iskron_channel").description, "Канал, новое описание.");
     assert.match(rec.said(), /сервер сменил тулы/);
   } finally {

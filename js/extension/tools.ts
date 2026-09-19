@@ -50,6 +50,7 @@ export function setupBridge(pi: ExtensionAPI, onChannel: ChannelEventSink): void
   // Тулы, снятые из активных по list_changed, — на всё расширение, не на один мост:
   // pi не включает заново известное имя, и вернувшийся при новом мосте тул включаем сами.
   const offByUs = new Set<string>();
+  const known = new Set<string>(); // все имена, которые расширение регистрировало в этом pi
   let notify: Notify = () => {};
   // Голос сессии: без UI сказать некому, и это условие отказа от подмены моста,
   // а не мелочь — см. refreshHomeBridge.
@@ -143,6 +144,7 @@ export function setupBridge(pi: ExtensionAPI, onChannel: ChannelEventSink): void
     // заново (pi кладёт тул по имени — повтор заменяет), выброшенный сервером
     // снимается из активных — снять регистрацию pi не даёт.
     function registerAll(list: any[]): void {
+      for (const t of list) known.add(String(t.name));
       for (const tool of list) {
         const name = String(tool.name);
         pi.registerTool({
@@ -230,12 +232,18 @@ export function setupBridge(pi: ExtensionAPI, onChannel: ChannelEventSink): void
       }
     }
 
+    // Новый мост — новый список: известное прежде, но пропавшее, снимается из
+    // активных, а вернувшееся включается (pi известное имя сам не включит).
+    const listed = new Set(tools.map((t) => String(t.name)));
+    const gone = [...known].filter((n) => !listed.has(n));
+    const returned = [...offByUs].filter((n) => listed.has(n));
     registerAll(tools);
-    const returned = [...offByUs].filter((n) => tools.some((t) => String(t.name) === n));
-    if (returned.length) {
-      for (const n of returned) offByUs.delete(n);
-      pi.setActiveTools([...new Set([...pi.getActiveTools(), ...returned])]);
-    }
+    for (const n of gone) offByUs.add(n);
+    for (const n of returned) offByUs.delete(n);
+    if (gone.length || returned.length)
+      pi.setActiveTools([
+        ...new Set([...pi.getActiveTools().filter((n) => !gone.includes(n)), ...returned]),
+      ]);
 
     const server = init?.serverInfo;
     notify(

@@ -4386,6 +4386,7 @@ function runWatchdogCodex(argv2) {
   parseWatchdogArgs(argv2);
   const seenPath = seenFilePathOf(target.authDir, target.key);
   const seen2 = seenIds(seenPath);
+  const waiting = /* @__PURE__ */ new Map();
   let door = null;
   let ready = null;
   let nextId = 1;
@@ -4393,7 +4394,12 @@ function runWatchdogCodex(argv2) {
     if (ready) return ready;
     ready = openDoor(
       socketPath,
-      () => {
+      (m) => {
+        const ids = typeof m?.id === "number" ? waiting.get(m.id) : void 0;
+        if (!ids) return;
+        waiting.delete(m.id);
+        if (m.error) return note(`ДЕЛАТЕЛЬ: тред не принял кадр — ${m.error.message ?? "отказ"}`);
+        for (const id of ids) noteSeen(seenPath, id, seen2);
       },
       (why) => {
         note(`дверь закрылась: ${why} — открою заново на следующем кадре`);
@@ -4419,26 +4425,22 @@ function runWatchdogCodex(argv2) {
   async function deliver2(text, ids = []) {
     try {
       const d = door ?? await open();
+      const reqId = nextId++;
+      if (ids.length) waiting.set(reqId, ids);
       d.send({
         method: "turn/start",
-        id: nextId++,
+        id: reqId,
         params: { threadId, input: [{ type: "text", text }], turnTrigger: "iskron-channel" }
       });
       note(`кадр вложен в тред ${threadId}`);
-      for (const id of ids) noteSeen(seenPath, id, seen2);
     } catch (e) {
       note(`ДЕЛАТЕЛЬ: кадр не вложился — ${e.message}`);
     }
   }
-  let replay = 0;
   attach(target.path, {
     onEvent: (ev) => {
       switch (ev.kind) {
         case "frame": {
-          if (replay > 0) {
-            replay--;
-            return note("кадр из кольца моста — уже был, в тред не кладу");
-          }
           const type = ev.frame?.type;
           if (type !== "message") return note(`кадр ${type ?? "не разобран"} — не повод будить`);
           void deliver2(
@@ -4465,7 +4467,6 @@ function runWatchdogCodex(argv2) {
           void deliver2(ev.text ?? "Искрон: сокет рвут, а служба отвечает — мост держит место");
           break;
         case "attached":
-          replay = ev.buffered ?? 0;
           note(`слушаю стояние ${ev.key}; кадры кладу в тред ${threadId}`);
           break;
         default:
@@ -4547,6 +4548,8 @@ function runWatchdog(argv2) {
           break;
         case "stale":
           for (const line of wrapLines(ev.text ?? "")) log2(line);
+          for (const f of ev.frames ?? [])
+            if (typeof f.id === "string" && f.id) noteSeen(seenPath, f.id, seen2);
           break;
         case "dead":
         case "evicted":

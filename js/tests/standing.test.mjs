@@ -470,6 +470,60 @@ test("a frame put into the Codex thread is marked delivered — the fallback exi
   assert.equal(r.exit, null, "nothing new — the fallback keeps waiting");
 });
 
+// Delivered is what the thread ACCEPTED: a refused turn/start (a thread the
+// daemon does not know) marks nothing, and the fallback exit watchdog gets it.
+test("a frame the Codex thread refused is not marked — the fallback exit watchdog gets it", async (t) => {
+  const { fake, dir, key } = await connected(t);
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const home = mkdtempSync("/tmp/cxd-");
+  const sock = join(home, "app-server-control", "app-server-control.sock");
+  const log = join(home, "door.log");
+  writeFileSync(log, "");
+  const door = await startFakeCodex(sock, log);
+  t.after(() => door.stop());
+  const wd = runClient("watchdog-codex", dir, key, 15000, {
+    CODEX_HOME: home,
+    CODEX_THREAD_ID: "no-such-thread",
+  });
+  await waitFor(() => wd.err.includes("слушаю стояние"), "the codex watchdog to attach");
+  await fake.control({
+    ws_send: JSON.stringify({ type: "message", id: "cx-refused", body: "тред не принял" }),
+  });
+  await waitFor(() => wd.err.includes("тред не принял кадр"), "the refusal said aloud");
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+  const fallback = runClient("watchdog-exit", dir, key);
+  assert.equal((await fallback.done).exit, 0, fallback.err);
+  assert.ok(fallback.out.includes("тред не принял"), fallback.out);
+});
+
+// A frame that arrived between two arms of the Codex watchdog is in the ring,
+// undelivered: the next arm puts it into the thread instead of skipping it.
+test("a frame that waited in the ring reaches the Codex thread on the next arm", async (t) => {
+  const { fake, dir, key } = await connected(t);
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  await fake.control({
+    ws_send: JSON.stringify({ type: "message", id: "cx-gap", body: "между взводами" }),
+  });
+  await new Promise((r) => setTimeout(r, 300));
+  const home = mkdtempSync("/tmp/cxd-");
+  const sock = join(home, "app-server-control", "app-server-control.sock");
+  const log = join(home, "door.log");
+  writeFileSync(log, "");
+  const door = await startFakeCodex(sock, log);
+  t.after(() => door.stop());
+  const wd = runClient("watchdog-codex", dir, key, 15000, {
+    CODEX_HOME: home,
+    CODEX_THREAD_ID: "thread-9",
+  });
+  await waitFor(
+    () => readFileSync(log, "utf8").includes("между взводами"),
+    "the gap frame in the thread",
+  );
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
 test("watchdog-codex refuses to guess: no thread id or no door is a code-2 exit that names the move", async (t) => {
   const { dir, key } = await connected(t);
   const noThread = await runClient("watchdog-codex", dir, key, 5000, { CODEX_THREAD_ID: "" }).done;
