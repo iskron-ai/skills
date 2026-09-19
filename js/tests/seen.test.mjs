@@ -34,3 +34,19 @@ test("a trim leaves the writer's memory at the tail and no temporary file behind
   assert.ok(memory.size <= 200, `the memory is trimmed with the file: ${memory.size}`);
   assert.deepEqual(readdirSync(dir), ["k.seen"], "no temporary file is left");
 });
+
+test("a long-lived writer's stale memory does not push another writer's fresh mark out of the tail", () => {
+  const dir = mkdtempSync(join(tmpdir(), "iskron-seen-"));
+  const path = join(dir, "k.seen");
+  const memory = new Set(Array.from({ length: 200 }, (_, i) => `stale-${i}`)); // old memory, file moved on
+  writeFileSync(
+    path,
+    Array.from({ length: 199 }, (_, i) => `f-${i}`)
+      .concat("fresh")
+      .join("\n") + "\n",
+  );
+  noteSeen(path, "mine", memory);
+  const after = seenIds(path);
+  assert.ok(after.has("fresh"), "the other writer's fresh mark stays");
+  assert.ok(after.has("mine"), "and this writer's new mark too");
+});

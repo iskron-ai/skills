@@ -112,8 +112,8 @@ export async function startFakeNks(opts = {}) {
     // Доска: занятые места по ролям (connect кладёт), комнаты — стояния человека,
     // которые тест объявляет через /control {rooms:[{karta,address}]}.
     places: new Map(), // "karta:name" → { karta, name, incoming }
-    hung: new Set(),
-    placeArgs: [], // поля места, с которыми пришли connect/mint/register (#5174) // сокеты, в которые служба перестала писать (/control {ws_hang})
+    hung: new Set(), // сокеты, в которые служба перестала писать (/control {ws_hang})
+    placeArgs: [], // поля места, с которыми пришли connect/mint/register (#5174)
     rooms: [],
     webhooks: [], // { id, karta, url, active }
     sends: [], // { karta, standing, text, bound }

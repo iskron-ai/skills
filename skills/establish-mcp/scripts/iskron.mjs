@@ -1681,7 +1681,8 @@ function noteSeen(seenPath, id, seen2) {
   seen2.add(id);
   try {
     if (seen2.size > SEEN_KEEP) {
-      const tail = [.../* @__PURE__ */ new Set([...seenIds(seenPath), ...seen2])].slice(-SEEN_KEEP);
+      seen2.delete(id);
+      const tail = [.../* @__PURE__ */ new Set([...seen2, ...seenIds(seenPath), id])].slice(-SEEN_KEEP);
       const tmp = `${seenPath}.${process.pid}.tmp`;
       writeFileSync5(tmp, tail.join("\n") + "\n");
       renameSync4(tmp, seenPath);

@@ -23,7 +23,9 @@ export function noteSeen(seenPath: string, id: string, seen: Set<string>): void 
     if (seen.size > SEEN_KEEP) {
       // Rewrite with the tail — merged with the file: other writers' marks are
       // in it and not in this memory, and dropping them re-wakes a delivered frame.
-      const tail = [...new Set([...seenIds(seenPath), ...seen])].slice(-SEEN_KEEP);
+      // Свежее — в хвост: своя старая память, затем файл (там свежие метки других), своя новая метка последней.
+      seen.delete(id);
+      const tail = [...new Set([...seen, ...seenIds(seenPath), id])].slice(-SEEN_KEEP);
       // Во временный файл и rename: читающий в миг обрезки не увидит пустого файла.
       const tmp = `${seenPath}.${process.pid}.tmp`;
       writeFileSync(tmp, tail.join("\n") + "\n");
