@@ -36,7 +36,7 @@ import {
   sanitize,
 } from "./names.ts";
 import { deadPredecessor, resumeFromDisk } from "./resume.ts";
-import { publishStatus } from "./status.ts";
+import { publishStatus, TAKE_PATH } from "./status.ts";
 import { state } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
 import { readLatest, staleNotice } from "./update.ts";
@@ -449,7 +449,7 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   // и при «только register», и после вытеснения, пока статусный адрес у моста.
   if (typeof a.status === "string" && a.status.trim() && !hasStatusAddressFor(realm, karta, name)) {
     lines.push(
-      "Занятость не публикуется: статусного адреса этого стояния у моста нет — он у держателя сокета; take=true берёт слух и адрес сюда.",
+      `Занятость не публикуется: статусного адреса этого стояния у моста нет — он у держателя сокета; ${TAKE_PATH}.`,
     );
   } else if (typeof a.status === "string" && a.status.trim()) {
     const st = await publishStatus(a.status.trim());

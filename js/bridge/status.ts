@@ -2,7 +2,14 @@
 // владельца, граф nks-dev: #4284 отвергнут): action="status" у iskron_channel
 // исполняется здесь, на сервер не уходит. POST на статусный адрес из ответа
 // connect; ответ поверхности — успех или ProblemDetail — доносится целиком.
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+
+import { socketPathOf, standingsDirOf } from "../shared/standings.ts";
+import { CFG } from "./config.ts";
 import { rememberStatus, statusAddress } from "./hold.ts";
+import { type HoldRecord, keyOf, readHoldRecord } from "./holdrecord.ts";
+import { localSocketAlive } from "./sweep.ts";
 import { type JsonRpcMessage } from "./types.ts";
 
 /** action="status" — занятость ЭТОГО стояния. Возвращает null для всякого другого вызова. */
@@ -18,6 +25,7 @@ export function localStatus(msg: JsonRpcMessage): Promise<JsonRpcMessage> | null
   });
   return (async () => {
     const st = await publishStatus(text);
+    if (!st.ok && !statusAddress()) return reply(await notHeldHere(), true);
     if (st.ok) return reply(`занятость ${statusAddress()?.key}: ${text || "(снята)"}`);
     return reply(st.body, true);
   })();
@@ -33,9 +41,7 @@ export async function publishStatus(text: string): Promise<{ ok: boolean; body: 
   if (!addr) {
     return {
       ok: false,
-      body:
-        "Отказано (мост): у моста нет стояния этого агента — назовись одним вызовом iskron_stand(realm, karta, model, status) " +
-        "(занятость можно передать прямо в нём); место слушает другой держатель — take=true берёт слух и статусный адрес сюда",
+      body: "Отказано (мост): этот мост места не держит, статусного адреса у него нет.",
     };
   }
   const st = await publishStatusTo(addr.url, text);
@@ -44,6 +50,58 @@ export async function publishStatus(text: string): Promise<{ ok: boolean; body: 
     rememberStatus(text);
   }
   return st;
+}
+
+/**
+ * Путь передачи слуха целиком: читающий отказ взвешивает «забрать слух» против
+ * «слышать» и, не зная о возврате, выбирает молчащую строку (граф nks-dev: #5395).
+ */
+export const TAKE_PATH =
+  "iskron_stand с take=true переносит слух и статусный адрес сюда — ход обратим: прежний держатель получит закрытие 4000, " +
+  "вернуть место ему — iskron_stand с take=true из его сессии; кадры, ждущие места, лежат у платформы и передачу переживают (придут в hello); " +
+  "после переноса перевзведи сторожа командой из ответа";
+
+/** Места, которые держат другие живые мосты этой машины: свежая запись держания и отвечающий локальный сокет. */
+async function heldElsewhere(): Promise<HoldRecord[]> {
+  const dir = standingsDirOf(CFG.authDir);
+  if (!existsSync(dir)) return [];
+  const out: HoldRecord[] = [];
+  for (const f of readdirSync(dir).filter((x) => x.endsWith(".hold"))) {
+    try {
+      const raw = JSON.parse(readFileSync(join(dir, f), "utf8")) as HoldRecord;
+      const key = keyOf(raw.realm, raw.karta, raw.name);
+      const rec = readHoldRecord(key);
+      if (rec && (await localSocketAlive(socketPathOf(CFG.authDir, key))))
+        out.push({ ...rec, key });
+    } catch {
+      /* битый файл — не держатель */
+    }
+  }
+  return out;
+}
+
+/** Отказ моста без стояния: называет живого держателя этой машины, если он есть, и путь передачи целиком. */
+export async function notHeldHere(): Promise<string> {
+  const others = await heldElsewhere();
+  const head = "Отказано (мост): этот мост места не держит, статусного адреса у него нет.";
+  if (!others.length)
+    return (
+      `${head} Назовись одним вызовом iskron_stand(realm, karta, model, status) — занятость можно передать прямо в нём. ` +
+      `Если место слушает другой держатель, stand скажет это; тогда ${TAKE_PATH}.`
+    );
+  const list = others
+    .map((r) => {
+      const where = [r.cwd && `каталог ${r.cwd}`, r.client && `харнесс ${r.client}`].filter(
+        Boolean,
+      );
+      return where.length ? `${r.key} (${where.join(", ")})` : r.key;
+    })
+    .join("; ");
+  return (
+    `${head} Места на этой машине держат другие живые мосты: ${list}. ` +
+    "Если среди них твоё место — в сессии две записи iskron (плагинная и пользовательская): зови status тем же набором тулов, которым звал iskron_stand, передача не нужна. " +
+    `Иначе ${TAKE_PATH}.`
+  );
 }
 
 /** Тот же POST на названный адрес — для выхода, когда стояние уже отпущено, а адрес снят до этого. */

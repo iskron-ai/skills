@@ -499,6 +499,37 @@ test("status before connect is a teaching refusal from the bridge, not a server 
   assert.equal(fake.state.counts.mcp, 0);
 });
 
+// Two bridges under one grant — a session with both the plugin's and the user's
+// iskron entry (graph nks-dev: #5395): the one that holds no place must name the
+// bridge that does and the whole handover path, not a bare take=true that would
+// pull the socket from under the session's own watchdog.
+test("status on a second bridge names the live holder and the whole handover path", async (t) => {
+  const { fake, dir, bridge, key } = await connected(t);
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const ok = await bridge.call("tools/call", 6, {
+    name: "iskron_channel",
+    arguments: { realm: "nks-dev", action: "status", text: "первый" },
+  });
+  assert.ok(!ok.result?.isError, JSON.stringify(ok));
+  const second = startBridge(fake.mcpUrl, dir);
+  t.after(() => second.stop());
+  const init = await second.call("initialize", 1, INIT);
+  assert.ok(init.result, `the second bridge shares the grant: ${JSON.stringify(init)}`);
+  const r = await second.call("tools/call", 2, {
+    name: "iskron_channel",
+    arguments: { realm: "nks-dev", action: "status", text: "второй" },
+  });
+  assert.ok(r.result?.isError, JSON.stringify(r));
+  const said = r.result.content[0].text;
+  assert.ok(said.includes(key), `the refusal names the held place:\n${said}`);
+  assert.match(said, /другие живые мосты/, said);
+  assert.match(said, /тем же набором тулов/, said);
+  assert.match(said, /обратим/, said);
+  assert.match(said, /переживают/, said);
+  assert.equal(fake.state.status, "первый", "the refused line changes nothing");
+  assert.equal(fake.state.ws.size, 1, "the refusal takes no socket");
+});
+
 // The secret never leaves the bridge (graph nks-dev: #4233, #5033): the connect
 // answer the agent reads carries neither the socket nor the status address, so
 // no harness door can open the socket itself and evict the bridge.
