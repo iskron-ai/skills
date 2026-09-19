@@ -1460,6 +1460,9 @@ var PI_CLIENT = "pi-iskron";
 var NOTIFIED_CLIENTS = /* @__PURE__ */ new Set([PI_CLIENT, OPENCODE_CLIENT]);
 
 // js/shared/channel.ts
+import { subscribe, unsubscribe } from "node:diagnostics_channel";
+var PING_CHANNEL = "undici:websocket:ping";
+var SILENT_INTERVALS = 3;
 var DEAD_TOKEN_CODES = [4001, 4002];
 var EVICTED_CODE = 4e3;
 var EVICTION_WINDOW_MS = 6e4;
@@ -1502,11 +1505,29 @@ function holdSocket(o) {
   let lastEviction = null;
   let retry = null;
   let ws = null;
+  let lastLife = 0;
+  let pingMs = 0;
+  let pingSeen = false;
+  let watch = null;
+  const onPing = (m) => {
+    const from = m?.websocket;
+    if (!ws || from !== void 0 && from !== ws) return;
+    lastLife = Date.now();
+    pingSeen = true;
+  };
+  subscribe(PING_CHANNEL, onPing);
+  const stopWatch = () => {
+    if (watch) clearInterval(watch);
+    watch = null;
+  };
   function open() {
     if (stopped) return;
     const startedAt = Date.now();
     const sock = new WebSocket(o.url);
     ws = sock;
+    stopWatch();
+    lastLife = startedAt;
+    pingSeen = false;
     let gone = false;
     let opened = false;
     sock.addEventListener("open", () => {
@@ -1514,6 +1535,7 @@ function holdSocket(o) {
     });
     sock.addEventListener("message", (e) => {
       if (stopped || ws !== sock) return;
+      lastLife = Date.now();
       const raw = typeof e.data === "string" ? e.data : "[двоичный кадр]";
       let frame2 = null;
       if (typeof e.data === "string") {
@@ -1522,6 +1544,7 @@ function holdSocket(o) {
         } catch {
         }
       }
+      if (frame2?.type === "hello") watchLife(Number(frame2.ping_interval_seconds) * 1e3);
       o.onFrame(raw, frame2 && typeof frame2 === "object" ? frame2 : null);
     });
     sock.addEventListener(
@@ -1529,15 +1552,41 @@ function holdSocket(o) {
       () => setTimeout(() => void dropped(1006), ERROR_GUESS_DELAY_MS)
     );
     sock.addEventListener("close", (e) => void dropped(e.code));
+    function watchLife(interval) {
+      stopWatch();
+      if (!(interval > 0)) return;
+      pingMs = interval;
+      watch = setInterval(
+        () => {
+          if (stopped || ws !== sock || !pingSeen) return;
+          const silent = Date.now() - lastLife;
+          if (silent <= SILENT_INTERVALS * pingMs + 1e3) return;
+          stopWatch();
+          o.onNote?.(
+            `соединение молчит ${Math.round(silent / 1e3)} с при пинге раз в ${pingMs / 1e3} с — подвисло без закрытия; переоткрываю тем же адресом, ждавшее придёт в hello`
+          );
+          try {
+            sock.close();
+          } catch {
+          }
+          void dropped(1006);
+        },
+        Math.max(pingMs, 250)
+      );
+      watch.unref?.();
+    }
     function yieldTo(cb, code) {
       if (dead) return;
       dead = true;
       stopped = true;
       if (retry) clearTimeout(retry);
+      stopWatch();
+      unsubscribe(PING_CHANNEL, onPing);
       cb(code);
     }
     async function dropped(code) {
       if (stopped || ws !== sock) return;
+      stopWatch();
       if (DEAD_TOKEN_CODES.includes(code)) return yieldTo(o.onDeadToken, code);
       const now2 = Date.now();
       const afterEviction = lastEviction !== null && now2 - lastEviction < EVICTION_WINDOW_MS;
@@ -1585,6 +1634,8 @@ function holdSocket(o) {
   return {
     close(reason = "held no more") {
       stopped = true;
+      stopWatch();
+      unsubscribe(PING_CHANNEL, onPing);
       if (retry) clearTimeout(retry);
       retry = null;
       const sock = ws;

@@ -103,6 +103,7 @@ export async function startFakeNks(opts = {}) {
       list: 0,
       webhooks_added: 0,
       status_posts: 0,
+      ws_upgrades: 0,
       attributed_send: 0,
       unattributed: 0,
       header_binds: 0,
@@ -111,6 +112,7 @@ export async function startFakeNks(opts = {}) {
     // Доска: занятые места по ролям (connect кладёт), комнаты — стояния человека,
     // которые тест объявляет через /control {rooms:[{karta,address}]}.
     places: new Map(), // "karta:name" → { karta, name, incoming }
+    hung: new Set(), // сокеты, в которые служба перестала писать (/control {ws_hang})
     rooms: [],
     webhooks: [], // { id, karta, url, active }
     sends: [], // { karta, standing, text, bound }
@@ -190,8 +192,10 @@ export async function startFakeNks(opts = {}) {
     if (p === "/control") {
       const patch = JSON.parse((await body(req)) || "{}");
       if (typeof patch.ws_send === "string") {
-        for (const sock of st.ws) sock.write(wsFrame(0x1, patch.ws_send));
+        for (const sock of st.ws) if (!st.hung.has(sock)) sock.write(wsFrame(0x1, patch.ws_send));
       }
+      // Подвисшее соединение (#5380): сокет открыт, но служба больше ничего в него не пишет — ни пинга, ни кадра, ни закрытия.
+      if (patch.ws_hang) for (const sock of st.ws) st.hung.add(sock);
       if (Number.isInteger(patch.ws_refuse)) st.wsRefuse = patch.ws_refuse; // один раз: следующий апгрейд закрывается этим кодом, дальнейшие принимаются
       if (Number.isInteger(patch.ws_close)) {
         for (const sock of st.ws) {
@@ -873,6 +877,7 @@ export async function startFakeNks(opts = {}) {
       return;
     }
     st.ws.add(socket);
+    st.counts.ws_upgrades++;
     // Доска читает по сокету МЕСТА: открыт — его место слушает; адрес без места
     // (сокет из окружения) — по-старому, все места разом.
     const placeName = st.wsTokens.get(u.pathname.slice("/channel/ws/".length));
@@ -893,8 +898,23 @@ export async function startFakeNks(opts = {}) {
     });
     socket.on("error", () => st.ws.delete(socket));
     socket.write(
-      wsFrame(0x1, JSON.stringify({ type: "hello", pending: st.helloPending ?? 0, ping: 30 })),
+      wsFrame(
+        0x1,
+        JSON.stringify({
+          type: "hello",
+          pending: st.helloPending ?? 0,
+          ping_interval_seconds: opts.helloPingS ?? (opts.pingMs ? opts.pingMs / 1000 : 30),
+        }),
+      ),
     );
+    // Протокольный пинг, как у контура (opcode 9, пустая нагрузка): только когда проба его просит.
+    if (opts.pingMs) {
+      const t = setInterval(() => {
+        if (socket.destroyed) return clearInterval(t);
+        if (!st.hung.has(socket)) socket.write(wsFrame(0x9, Buffer.alloc(0)));
+      }, opts.pingMs);
+      t.unref();
+    }
   });
 
   await new Promise((r) => server.listen(0, "127.0.0.1", r));

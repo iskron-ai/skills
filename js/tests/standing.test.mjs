@@ -107,8 +107,8 @@ const authorizeUrlIn = (text) =>
   /(http:\/\/127\.0\.0\.1:\d+\/login\?k=[\w-]+)/.exec(text || "")?.[1] ?? null;
 
 /** A bridge that has authorized and connected a standing; returns everything the tests read. */
-async function connected(t, { env = {}, init = INIT } = {}) {
-  const fake = await startFakeNks();
+async function connected(t, { env = {}, init = INIT, fakeOpts = {} } = {}) {
+  const fake = await startFakeNks(fakeOpts);
   const dir = mkdtempSync(join(tmpdir(), "iskron-standing-"));
   const bridge = startBridge(fake.mcpUrl, dir, env);
   t.after(async () => {
@@ -497,6 +497,28 @@ test("status before connect is a teaching refusal from the bridge, not a server 
   assert.ok(r.result?.isError);
   assert.match(r.result.content[0].text, /iskron_stand/, "the refusal names the re-identification");
   assert.equal(fake.state.counts.mcp, 0);
+});
+
+// A hung connection (graph nks-dev: #5380, #5397): the service stops writing
+// without closing. The holder reads the ping interval from hello, sees the
+// protocol pings, and after three silent intervals says so and reopens the
+// same address. With no ping ever seen the timer is not armed: a runtime that
+// cannot see pings must not call a live connection dead.
+test("a connection silent past three ping intervals is reopened aloud; unseen pings arm nothing", async (t) => {
+  const { fake, bridge } = await connected(t, { fakeOpts: { pingMs: 200 } });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  await new Promise((r) => setTimeout(r, 700));
+  assert.equal(fake.state.counts.ws_upgrades, 1, "a pinging connection is left alone");
+  await fake.control({ ws_hang: true });
+  await waitFor(() => fake.state.counts.ws_upgrades >= 2, "the hung socket to be reopened", 8000);
+  assert.match(bridge.stderr, /подвисло без закрытия/, "the reopen is said aloud");
+
+  // hello promises a ping every 0.2 s, and none ever comes (Bun has no channel to see it by)
+  const quiet = await connected(t, { fakeOpts: { helloPingS: 0.2 } });
+  await waitFor(() => quiet.fake.state.ws.size === 1, "the socket");
+  await quiet.fake.control({ ws_hang: true });
+  await new Promise((r) => setTimeout(r, 2500));
+  assert.equal(quiet.fake.state.counts.ws_upgrades, 1, "no ping seen — no timer, no reopen");
 });
 
 // Two bridges under one grant — a session with both the plugin's and the user's
