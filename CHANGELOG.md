@@ -1,5 +1,13 @@
 # Changelog
 
+## [6.10.1](https://github.com/iskron-ai/skills/compare/v6.10.0...v6.10.1) (2026-09-19)
+
+
+### Bug Fixes
+
+* **iskronify:** контракт 12 — канон графа кладётся ссылочным блоком, не прозой скелета ([#163](https://github.com/iskron-ai/skills/issues/163)) ([adb908c](https://github.com/iskron-ai/skills/commit/adb908c34db89694b4aa2e57e5ded136903c1764))
+* **iskronify:** новая роль в той же сессии — телом в брифе; Reality — живость наблюдена на 0.78.0 ([#161](https://github.com/iskron-ai/skills/issues/161)) ([7df2edc](https://github.com/iskron-ai/skills/commit/7df2edcf433856d8a2a5424b890967eda9e3eeb1))
+
 ## [6.10.0](https://github.com/iskron-ai/skills/compare/v6.9.1...v6.10.0) (2026-09-19)
 
 
