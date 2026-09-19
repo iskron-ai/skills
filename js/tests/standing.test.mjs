@@ -711,7 +711,7 @@ test("status on a second bridge names the live holder and the whole handover pat
   assert.ok(said.includes(key), `the refusal names the held place:\n${said}`);
   assert.match(said, /держат живые мосты/, said);
   assert.match(said, /тем же набором тулов/, said);
-  assert.match(said, /обратим/, said);
+  assert.match(said, /только по слову человека/, said);
   assert.match(said, /очередь места connect не трогает/, said);
   assert.equal(fake.state.status, "первый", "the refused line changes nothing");
   assert.equal(fake.state.ws.size, 1, "the refusal takes no socket");
@@ -735,7 +735,7 @@ test("a turned status address is refused with the whole handover path", async (t
   const said = r.result.content[0].text;
   assert.match(said, /404/, said);
   assert.match(said, /тем же набором тулов/, said);
-  assert.match(said, /обратим/, said);
+  assert.match(said, /только по слову человека/, said);
   assert.match(said, /очередь места connect не трогает/, said);
 });
 
