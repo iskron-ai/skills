@@ -1560,7 +1560,11 @@ test("a foreign squatter on the callback port does not make login impossible", a
     const d = createHash("sha256").update(new URL(fake.mcpUrl).origin).digest();
     const squatted = 42000 + ((d[0] * 256 + d[1]) % 2000);
     const squatter = createServer(() => {});
-    await new Promise((r) => squatter.listen(squatted, "127.0.0.1", r));
+    // Порт, уже занятый параллельной пробой, — та же ступень, держимая чужим (#5516).
+    await new Promise((r) => {
+      squatter.once("error", (e) => (e.code === "EADDRINUSE" ? r() : r(Promise.reject(e))));
+      squatter.listen(squatted, "127.0.0.1", r);
+    });
     try {
       const bridge = spawnBridge();
       const url = await authorize(bridge, dir);
@@ -1571,7 +1575,7 @@ test("a foreign squatter on the callback port does not make login impossible", a
       );
       assert.ok((await bridge.call("tools/list", 2)).result, "and the login must serve as usual");
     } finally {
-      await new Promise((r) => squatter.close(r));
+      await new Promise((r) => (squatter.listening ? squatter.close(r) : r()));
     }
   });
 });
@@ -2757,7 +2761,11 @@ test("a grant that lands while a caller is on its way to a login is taken, not l
     const squatters = [0, 1].map(() => createServer(() => {}));
     for (const [rung, sq] of squatters.entries()) {
       const port = 42000 + ((d[0] * 256 + d[1] + rung * 613) % 2000);
-      await new Promise((r) => sq.listen(port, "127.0.0.1", r));
+      // Порт, уже занятый параллельной пробой, — та же ступень, держимая чужим (#5516).
+      await new Promise((r) => {
+        sq.once("error", (e) => (e.code === "EADDRINUSE" ? r() : r(Promise.reject(e))));
+        sq.listen(port, "127.0.0.1", r);
+      });
     }
     try {
       const bridge = spawnBridge({ ISKRON_BRIDGE_DEAD_RECHECK_MS: "50" });
@@ -2779,7 +2787,9 @@ test("a grant that lands while a caller is on its way to a login is taken, not l
         `the grant that landed serves: ${JSON.stringify(list)}`,
       );
     } finally {
-      await Promise.all(squatters.map((sq) => new Promise((r) => sq.close(r))));
+      await Promise.all(
+        squatters.map((sq) => new Promise((r) => (sq.listening ? sq.close(r) : r()))),
+      );
     }
   });
 });
