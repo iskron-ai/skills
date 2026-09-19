@@ -178,6 +178,7 @@ export async function startFakeNks(opts = {}) {
         await new Promise((r) => setTimeout(r, st.statusDelayMs));
         if (req.socket.destroyed) return;
       }
+      if (st.statusGone) return json(res, 404, { error: "no such standing" }); // адрес повернул чужой connect
       if (typeof text !== "string" || [...text].length > 70) {
         return json(res, 422, { error: "busy line too long" });
       }
@@ -251,6 +252,7 @@ export async function startFakeNks(opts = {}) {
           });
         }
       }
+      if ("statusGone" in patch) st.statusGone = !!patch.statusGone; // статусный адрес повернули
       if (patch.revoke_access) st.access = null;
       if (patch.rotate_access) st.access = mintAccess(st); // сосед провернул грант: старый bearer больше не принимается
       if (patch.drop_standings) st.standings.clear(); // платформа потеряла привязки при живых сессиях mcp
