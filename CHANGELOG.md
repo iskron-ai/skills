@@ -1,5 +1,34 @@
 # Changelog
 
+## [6.9.0](https://github.com/iskron-ai/skills/compare/v6.8.0...v6.9.0) (2026-09-19)
+
+
+### Features
+
+* **inquiry,writing,assembly,vahta,minding:** слово «парковка» снято — клетку называет воля ([#137](https://github.com/iskron-ai/skills/issues/137)) ([a05bb3d](https://github.com/iskron-ai/skills/commit/a05bb3d63973c01da859045bec92f81a24e47369))
+* **inquiry,writing:** стрелка ответа ведёт и на феномен по данности ([#136](https://github.com/iskron-ai/skills/issues/136)) ([8a36b9e](https://github.com/iskron-ai/skills/commit/8a36b9eb09750822e52fb5073a97b2339a6d266e))
+* **opencode:** плагин на API OpenCode 2 — стояние одно на мост, кадр в идущий ход вставкой ([#135](https://github.com/iskron-ai/skills/issues/135)) ([69148fa](https://github.com/iskron-ai/skills/commit/69148fa6bcb7b287496d9db63aa9d8059bbf02e7))
+* **triputi:** скиллы приведены к решённой матрице трипути ([#132](https://github.com/iskron-ai/skills/issues/132)) ([91f50d1](https://github.com/iskron-ai/skills/commit/91f50d10cd830bf13af11f634fe5440c13e0f18f))
+* **writing,assembly,design:** веер различают ступенями — грубая связь на зонте прежде тонких ([#142](https://github.com/iskron-ai/skills/issues/142)) ([67b3648](https://github.com/iskron-ai/skills/commit/67b364863075525630645784b4764703eaa6a80d))
+* **writing,inquiry,assembly,vahta,integrity,methodology-work:** состояние узла — словом клетки, не зонтом ([#148](https://github.com/iskron-ai/skills/issues/148)) ([e058a51](https://github.com/iskron-ai/skills/commit/e058a51d79f8ab343831f9002afec9304c873b72))
+* **writing,vahta,weaving,assembly:** имя — приглашение; тишина — мандат сборки ([#134](https://github.com/iskron-ai/skills/issues/134)) ([6ff119f](https://github.com/iskron-ai/skills/commit/6ff119ff6d144fbdaa40a5760e60dbc386882a62))
+
+
+### Bug Fixes
+
+* **bridge,opencode,standing:** место, возвращённое мостом самим, объявляется в сессию с именем и соседями по каталогу ([#150](https://github.com/iskron-ai/skills/issues/150)) ([7a4f7d6](https://github.com/iskron-ai/skills/commit/7a4f7d6a0ae9e2993674d572b63433c4621d718c))
+* **bridge,opencode:** кадр комнаты 0.71.0 — конверт целиком, платформа без автора, defer очередью, длина по сериализованному телу ([#145](https://github.com/iskron-ai/skills/issues/145)) ([de1d314](https://github.com/iskron-ai/skills/commit/de1d314db91450f0fb5ed8e010cd928cc8466416))
+* **bridge:** отказ занятости называет живой мост-держатель и путь передачи целиком ([#154](https://github.com/iskron-ai/skills/issues/154)) ([a316063](https://github.com/iskron-ai/skills/commit/a31606311d8a54de49a7c3de2b7f49a8b3ea28a3))
+* **design,inquiry,weaving,methodology-work:** отвергнутые атрибуты не упоминаются и как запрет ([#138](https://github.com/iskron-ai/skills/issues/138)) ([763903a](https://github.com/iskron-ai/skills/commit/763903a5d3cb5a164d490f46df3dc75a9828aef1))
+* **entry:** состояние вопрошания — словом клетки «зовёт», не «открыто» ([#151](https://github.com/iskron-ai/skills/issues/151)) ([0c21867](https://github.com/iskron-ai/skills/commit/0c218678c58be4ff3a7db1fd6f47ee18a7706837))
+* **inquiry,vahta:** состояние anga читается из ответа линзы, а не пересказывается словом resolved ([#149](https://github.com/iskron-ai/skills/issues/149)) ([0cc9ee1](https://github.com/iskron-ai/skills/commit/0cc9ee1214e94dd43930a0ed9d5bb962ef825e56))
+* **inquiry,writing:** принятый риск жив как запись — закрывает только отпускание, принятие не закрытие ([#143](https://github.com/iskron-ai/skills/issues/143)) ([eb82dcf](https://github.com/iskron-ai/skills/commit/eb82dcf04d15dcfea32316fb8c04a84bb82392c3))
+* **iskron,vahta:** число зовущих и зовущие риски — словом клетки, не «открытым» ([#152](https://github.com/iskron-ai/skills/issues/152)) ([c4bbfd0](https://github.com/iskron-ai/skills/commit/c4bbfd06526402c50acafd8c5a1e92da1a7c687d))
+* **iskronify:** шаблон не учит судить инбокс по возрасту — будит перемена у якоря, не дата ([#147](https://github.com/iskron-ai/skills/issues/147)) ([b3f4eb0](https://github.com/iskron-ai/skills/commit/b3f4eb0a11f33710db2060dc32aab5e77fe69f92))
+* **standing,entry,vahta,weaving:** вместо копий чужого — источник, знак и ход, который работает ([#139](https://github.com/iskron-ai/skills/issues/139)) ([03ef7aa](https://github.com/iskron-ai/skills/commit/03ef7aa732558c990dc7062ae536fb63e7985eae))
+* **standing,iskron:** граница вставки кадра, почта роли в отлучке, прибор в строке гроссбуха ([#153](https://github.com/iskron-ai/skills/issues/153)) ([5968b6b](https://github.com/iskron-ai/skills/commit/5968b6b2d53e36ea10336decfe751ac01d38ae99))
+* **writing,iskronify:** adhikarin стюардит сам либо действует под старшей ролью — предупреждение только без стюарда по всей цепи специализации ([#144](https://github.com/iskron-ai/skills/issues/144)) ([2f87a12](https://github.com/iskron-ai/skills/commit/2f87a12d68bfc990dad6a5a1389cdd3dbe2aeb32))
+
 ## [6.8.0](https://github.com/iskron-ai/skills/compare/v6.7.0...v6.8.0) (2026-09-17)
 
 
