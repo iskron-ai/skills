@@ -36,7 +36,7 @@ import {
   sanitize,
 } from "./names.ts";
 import { deadPredecessor, resumeFromDisk } from "./resume.ts";
-import { publishStatus, TAKE_PATH } from "./status.ts";
+import { publishStatus, TAKE_PATH, TURNED_GUIDANCE } from "./status.ts";
 import { state } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
 import { readLatest, staleNotice } from "./update.ts";
@@ -449,11 +449,17 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   // и при «только register», и после вытеснения, пока статусный адрес у моста.
   if (typeof a.status === "string" && a.status.trim() && !hasStatusAddressFor(realm, karta, name)) {
     lines.push(
-      `Занятость не публикуется: статусного адреса этого стояния у моста нет — он у держателя сокета; ${TAKE_PATH}.`,
+      predecessorDead
+        ? "Занятость не публикуется: статусного адреса у моста пока нет — повтори тот же вызов, когда доска отпустит мёртвый прежний мост: место вернётся с диска вместе с ним."
+        : `Занятость не публикуется: статусного адреса этого стояния у моста нет — он у держателя сокета; ${TAKE_PATH}.`,
     );
   } else if (typeof a.status === "string" && a.status.trim()) {
     const st = await publishStatus(a.status.trim());
-    lines.push(st.ok ? `Занятость: ${a.status.trim()}` : `Занятость не принята: ${short(st.body)}`);
+    lines.push(
+      st.ok
+        ? `Занятость: ${a.status.trim()}`
+        : `Занятость не принята: ${short(st.body)}${st.code === 404 ? ` ${TURNED_GUIDANCE}` : ""}`,
+    );
   }
   const stale = staleNotice(readLatest(CFG.authDir), CFG.authDir);
   if (stale) lines.push(stale);

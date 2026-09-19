@@ -511,6 +511,15 @@ test("status on a second bridge names the live holder and the whole handover pat
     arguments: { realm: "nks-dev", action: "status", text: "первый" },
   });
   assert.ok(!ok.result?.isError, JSON.stringify(ok));
+  // A long watch without a new busy line: the record is older than the idle
+  // window, yet the bridge lives — liveness is the socket, and reading spares it.
+  const standingsDir = join(dir, "standings");
+  const holdFile = readdirSync(standingsDir).find((f) => f.endsWith(".hold"));
+  const rec = JSON.parse(readFileSync(join(standingsDir, holdFile), "utf8"));
+  writeFileSync(
+    join(standingsDir, holdFile),
+    JSON.stringify({ ...rec, at: Date.now() - 7 * 3600_000 }),
+  );
   const second = startBridge(fake.mcpUrl, dir);
   t.after(() => second.stop());
   const init = await second.call("initialize", 1, INIT);
@@ -522,12 +531,16 @@ test("status on a second bridge names the live holder and the whole handover pat
   assert.ok(r.result?.isError, JSON.stringify(r));
   const said = r.result.content[0].text;
   assert.ok(said.includes(key), `the refusal names the held place:\n${said}`);
-  assert.match(said, /другие живые мосты/, said);
+  assert.match(said, /держат живые мосты/, said);
   assert.match(said, /тем же набором тулов/, said);
   assert.match(said, /обратим/, said);
-  assert.match(said, /переживают/, said);
+  assert.match(said, /очередь места connect не трогает/, said);
   assert.equal(fake.state.status, "первый", "the refused line changes nothing");
   assert.equal(fake.state.ws.size, 1, "the refusal takes no socket");
+  assert.ok(
+    readdirSync(standingsDir).includes(holdFile),
+    "the refusal must not erase the live holder's record",
+  );
 });
 
 // The status address answering 404 means another connect turned it (#5395):
@@ -543,8 +556,9 @@ test("a turned status address is refused with the whole handover path", async (t
   assert.ok(r.result?.isError, JSON.stringify(r));
   const said = r.result.content[0].text;
   assert.match(said, /404/, said);
+  assert.match(said, /тем же набором тулов/, said);
   assert.match(said, /обратим/, said);
-  assert.match(said, /переживают/, said);
+  assert.match(said, /очередь места connect не трогает/, said);
 });
 
 // The secret never leaves the bridge (graph nks-dev: #4233, #5033): the connect
