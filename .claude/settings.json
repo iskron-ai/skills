@@ -46,7 +46,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "jq -r '.tool_input.command // \"\"' | grep -Eq '(^|[;&|(] *)(env +)?([A-Za-z_]+=[^ ]+ +)*git( -C [^ ]+)* push([ ;&|)]|$)' && echo '{\"hookSpecificOutput\": {\"hookEventName\": \"PostToolUse\", \"additionalContext\": \"Пуш не отгрузил ничего: открыл или обновил PR — самопроверка диффа, словарный проход по тексту PR и холодное ревью этапа (AGENTS.md, «Холодное ревью этапа»). Отгрузка — мерж.\"}}' || true"
+            "command": "jq -r '.tool_input.command // \"\"' | grep -Eq '(^|[;&|(] *)(env +)?([A-Za-z_]+=[^ ]+ +)*git( -C [^ ]+)* push([ ;&|)]|$)' && echo '{\"hookSpecificOutput\": {\"hookEventName\": \"PostToolUse\", \"additionalContext\": \"Пуш не отгрузил ничего: открыл или обновил PR — самопроверка диффа, словарный проход по тексту PR и холодное ревью этапа (AGENTS.md, раздел о ревью). Отгрузка — мерж.\"}}' || true"
           },
           {
             "type": "command",
