@@ -1,5 +1,12 @@
 # Changelog
 
+## [6.10.0](https://github.com/iskron-ai/skills/compare/v6.9.1...v6.10.0) (2026-09-19)
+
+
+### Features
+
+* окно «слушает» под честную живость; iskronify контракт 11 — поведение только из worktree, хуки по цене; minding глубже и приватен ([#159](https://github.com/iskron-ai/skills/issues/159)) ([8001dac](https://github.com/iskron-ai/skills/commit/8001dac871fde5d2ac806233a9e6974e6c48f813))
+
 ## [6.9.1](https://github.com/iskron-ai/skills/compare/v6.9.0...v6.9.1) (2026-09-19)
 
 
