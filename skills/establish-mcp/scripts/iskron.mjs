@@ -1667,7 +1667,7 @@ import { chmodSync, mkdirSync as mkdirSync5, unlinkSync as unlinkSync6, writeFil
 import { createServer as createServer2 } from "node:net";
 
 // js/shared/seen.ts
-import { appendFileSync as appendFileSync2, readFileSync as readFileSync6, writeFileSync as writeFileSync5 } from "node:fs";
+import { appendFileSync as appendFileSync2, readFileSync as readFileSync6, renameSync as renameSync4, writeFileSync as writeFileSync5 } from "node:fs";
 var SEEN_KEEP = 200;
 function seenIds(seenPath) {
   try {
@@ -1681,8 +1681,12 @@ function noteSeen(seenPath, id, seen2) {
   seen2.add(id);
   try {
     if (seen2.size > SEEN_KEEP) {
-      const merged = /* @__PURE__ */ new Set([...seenIds(seenPath), ...seen2]);
-      writeFileSync5(seenPath, [...merged].slice(-SEEN_KEEP).join("\n") + "\n");
+      const tail = [.../* @__PURE__ */ new Set([...seenIds(seenPath), ...seen2])].slice(-SEEN_KEEP);
+      const tmp = `${seenPath}.${process.pid}.tmp`;
+      writeFileSync5(tmp, tail.join("\n") + "\n");
+      renameSync4(tmp, seenPath);
+      seen2.clear();
+      for (const x of tail) seen2.add(x);
     } else appendFileSync2(seenPath, id + "\n");
   } catch {
   }
@@ -2413,11 +2417,11 @@ function openHolder(url, key) {
         ring.push({ raw: text, frame: full });
         if (ring.length > RING) ring.shift();
         if (full?.type === "hello") for (const w of [...helloWaiters]) w(full);
-        const ev = { kind: "frame", raw: text, frame: full };
-        broadcast(ev);
         const id = full?.type === "message" && typeof full.id === "string" ? full.id : "";
         const seenPath = seenFilePathOf(CFG.authDir, key);
         const again = !!id && (seen.has(id) || seenIds(seenPath).has(id));
+        const ev = { kind: "frame", raw: text, frame: full };
+        if (!again) broadcast(ev);
         if (full?.type === "status") return;
         if (again) return log(`frame ${id} came again — already delivered, not raised`);
         if (notifiedClient()) {
@@ -2574,7 +2578,7 @@ var joinName = (p) => [p.host, p.repo, p.model].filter(Boolean).join(".");
 // js/bridge/placefields.ts
 var model = "";
 var extras = /* @__PURE__ */ new Map();
-var placeKey = (p) => `${String(p.realm ?? "")}|${String(p.karta ?? "")}|${String(p.name ?? "")}`;
+var placeKey = (p) => `${String(p.realm ?? "")}|${normKarta(p.karta)}|${normName(p.name)}`;
 function rememberModel(m) {
   if (typeof m === "string" && m.trim()) model = m.trim().replace(/^[^/]*\//, "");
 }
@@ -3229,7 +3233,7 @@ async function separatePlace(realm, karta, derived) {
 
 // js/bridge/update.ts
 import { spawn as spawn2 } from "node:child_process";
-import { existsSync as existsSync4, lstatSync, mkdirSync as mkdirSync6, readFileSync as readFileSync11, renameSync as renameSync4, writeFileSync as writeFileSync8 } from "node:fs";
+import { existsSync as existsSync4, lstatSync, mkdirSync as mkdirSync6, readFileSync as readFileSync11, renameSync as renameSync5, writeFileSync as writeFileSync8 } from "node:fs";
 import { homedir as homedir4 } from "node:os";
 import { dirname as dirname2, join as join10 } from "node:path";
 import { fileURLToPath as fileURLToPath3 } from "node:url";
@@ -3265,7 +3269,7 @@ function writeAtomic(path, bytes) {
   mkdirSync6(dirname2(path), { recursive: true, mode: 448 });
   const tmp = `${path}.tmp-${process.pid}`;
   writeFileSync8(tmp, bytes, { mode: 420 });
-  renameSync4(tmp, path);
+  renameSync5(tmp, path);
 }
 var isSymlink = (path) => {
   try {
@@ -4380,6 +4384,8 @@ function runWatchdogCodex(argv2) {
     process.exit(2);
   }
   parseWatchdogArgs(argv2);
+  const seenPath = seenFilePathOf(target.authDir, target.key);
+  const seen2 = seenIds(seenPath);
   let door = null;
   let ready = null;
   let nextId = 1;
@@ -4410,7 +4416,7 @@ function runWatchdogCodex(argv2) {
     });
     return ready;
   }
-  async function deliver2(text) {
+  async function deliver2(text, ids = []) {
     try {
       const d = door ?? await open();
       d.send({
@@ -4419,6 +4425,7 @@ function runWatchdogCodex(argv2) {
         params: { threadId, input: [{ type: "text", text }], turnTrigger: "iskron-channel" }
       });
       note(`кадр вложен в тред ${threadId}`);
+      for (const id of ids) noteSeen(seenPath, id, seen2);
     } catch (e) {
       note(`ДЕЛАТЕЛЬ: кадр не вложился — ${e.message}`);
     }
@@ -4434,11 +4441,17 @@ function runWatchdogCodex(argv2) {
           }
           const type = ev.frame?.type;
           if (type !== "message") return note(`кадр ${type ?? "не разобран"} — не повод будить`);
-          void deliver2(frameToText(ev.frame, ev.raw ?? ""));
+          void deliver2(
+            frameToText(ev.frame, ev.raw ?? ""),
+            typeof ev.frame?.id === "string" ? [ev.frame.id] : []
+          );
           break;
         }
         case "stale":
-          void deliver2(ev.text ?? "Искрон: лежалые кадры");
+          void deliver2(
+            ev.text ?? "Искрон: лежалые кадры",
+            (ev.frames ?? []).map((f) => f.id).filter((x) => typeof x === "string")
+          );
           break;
         case "dead":
         case "evicted":

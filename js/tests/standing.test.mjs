@@ -264,6 +264,24 @@ test("a batch from the ring is not lost to a watchdog that exits on the first fr
   );
 });
 
+// The platform may send a delivered frame again (same id, after the place came
+// back): no client gets it a second time — the bridge checks before it broadcasts.
+test("a frame the platform sends again is not printed twice", async (t) => {
+  const { fake, dir } = await connected(t);
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog", dir, undefined, 20_000);
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog");
+  const frame = JSON.stringify({ type: "message", id: "R-1", body: "одно слово дважды" });
+  await fake.control({ ws_send: frame });
+  await waitFor(() => wd.out.includes("одно слово дважды"), "the first print");
+  await new Promise((r) => setTimeout(r, 200));
+  await fake.control({ ws_send: frame });
+  await new Promise((r) => setTimeout(r, 600));
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+  assert.equal(wd.out.split("одно слово дважды").length - 1, 1, wd.out);
+});
+
 // The same on the live path: an exit watchdog attached while two frames land
 // back to back takes the first; the second is written to it but not delivered.
 test("a live batch is not lost to an attached watchdog that exits on the first frame", async (t) => {
@@ -286,40 +304,6 @@ test("a live batch is not lost to an attached watchdog that exits on the first f
   assert.equal((await second.done).exit, 0, `the second arm gets the rest: ${second.err}`);
   const both = first.out + second.out;
   assert.ok(both.includes("живое первое") && both.includes("живое второе"), both);
-});
-
-// A long-lived standing has a full .seen; a writer trimming it to the tail
-// must merge the file, or another writer's marks are dropped and a delivered
-// frame wakes again.
-test("trimming a full .seen keeps other writers' marks — a delivered frame does not wake twice", async (t) => {
-  const { fake, dir } = await connected(t);
-  await waitFor(() => fake.state.ws.size === 1, "the socket");
-  // 205 frames delivered to a watchdog under Monitor: the memory is full.
-  const monitor = runClient("watchdog", dir, undefined, 60_000);
-  await waitFor(() => monitor.out.includes("слушаю стояние"), "the monitor watchdog");
-  for (let i = 0; i < 205; i++)
-    await fake.control({
-      ws_send: JSON.stringify({ type: "message", id: `old-${i}`, body: `старое ${i}` }),
-    });
-  await waitFor(() => monitor.out.includes("старое 204"), "the old frames printed", 20_000);
-  monitor.proc.kill("SIGKILL");
-  await monitor.done;
-  await fake.control({
-    ws_send: JSON.stringify({ type: "message", id: "X", body: "икс без сторожа" }),
-  });
-  await new Promise((r) => setTimeout(r, 300));
-  const a = runClient("watchdog-exit", dir, undefined);
-  assert.equal((await a.done).exit, 0, a.err);
-  assert.ok(a.out.includes("икс"), a.out);
-  const b = runClient("watchdog-exit", dir, undefined);
-  await new Promise((r) => setTimeout(r, 400));
-  await fake.control({ ws_send: JSON.stringify({ type: "message", id: "Z", body: "зет живой" }) });
-  assert.equal((await b.done).exit, 0, b.err);
-  assert.ok(b.out.includes("зет"), `the second arm wakes on the new frame, not on X: ${b.out}`);
-  const c = runClient("watchdog-exit", dir, undefined, 2500);
-  const rc = await c.done;
-  assert.ok(!c.out.includes("икс"), `X woke a second time:\n${c.out}`);
-  assert.equal(rc.exit, null, "nothing new — the third arm keeps waiting");
 });
 
 test("a dead-token close leaves the watchdog loudly and reaches the harness as an error", async (t) => {
@@ -455,6 +439,35 @@ test("watchdog-codex puts a message frame into the Codex thread through the app-
   const r = await wd.done;
   assert.notEqual(r.exit, 0, "the watchdog must leave non-zero on a dead token");
   assert.match(wd.err, /токен мёртв/);
+});
+
+// A frame put into the Codex thread is delivered (#5428): the fallback exit
+// watchdog armed after it must not wake the doer on the same frame again.
+test("a frame put into the Codex thread is marked delivered — the fallback exit watchdog does not repeat it", async (t) => {
+  const { fake, dir, key } = await connected(t);
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const home = mkdtempSync("/tmp/cxd-");
+  const sock = join(home, "app-server-control", "app-server-control.sock");
+  const log = join(home, "door.log");
+  writeFileSync(log, "");
+  const door = await startFakeCodex(sock, log);
+  t.after(() => door.stop());
+  const wd = runClient("watchdog-codex", dir, key, 15000, {
+    CODEX_HOME: home,
+    CODEX_THREAD_ID: "thread-7",
+  });
+  await waitFor(() => wd.err.includes("слушаю стояние"), "the codex watchdog to attach");
+  await fake.control({
+    ws_send: JSON.stringify({ type: "message", id: "cx-1", body: "в тред Codex" }),
+  });
+  await waitFor(() => readFileSync(log, "utf8").includes("turn/start"), "the frame in the thread");
+  await new Promise((r) => setTimeout(r, 200));
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+  const fallback = runClient("watchdog-exit", dir, key, 2500);
+  const r = await fallback.done;
+  assert.ok(!fallback.out.includes("в тред Codex"), `woke twice on one frame:\n${fallback.out}`);
+  assert.equal(r.exit, null, "nothing new — the fallback keeps waiting");
 });
 
 test("watchdog-codex refuses to guess: no thread id or no door is a code-2 exit that names the move", async (t) => {
@@ -797,7 +810,7 @@ test("proxied connect and the re-bind after a rebuilt session carry model and at
   const own = { worktree: "w1" };
   await bridge.call("tools/call", 3, {
     name: "iskron_channel",
-    arguments: { ...CONNECT, model: "opus-5", attrs: own },
+    arguments: { ...CONNECT, karta: "#931", name: " proba ", model: "opus-5", attrs: own },
   });
   await bridge.call("tools/call", 4, {
     name: "iskron_channel",

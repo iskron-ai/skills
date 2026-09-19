@@ -6,14 +6,16 @@
 import { VERSION } from "../shared/version.ts";
 import { BUILD } from "./build.ts";
 import { harnessName } from "./client.ts";
+import { normKarta, normName } from "./names.ts";
 
 let model = "";
 // attrs, названные агентом сам, — по месту, для которого названы: едут в его
 // повторных регистрациях и не переезжают на другое место.
 const extras = new Map<string, Record<string, unknown>>();
 type Place = { realm?: unknown; karta?: unknown; name?: unknown };
+// Ключ — в той же нормализации, что у привязки (#931 и 931, имя без пробелов по краям).
 const placeKey = (p: Place): string =>
-  `${String(p.realm ?? "")}|${String(p.karta ?? "")}|${String(p.name ?? "")}`;
+  `${String(p.realm ?? "")}|${normKarta(p.karta)}|${normName(p.name)}`;
 
 /** Модель из iskron_stand — едет полем места и во всех повторных регистрациях. */
 export function rememberModel(m: unknown): void {

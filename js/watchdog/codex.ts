@@ -15,6 +15,8 @@ import { join } from "node:path";
 
 import { type Door, openDoor } from "../shared/appserver.ts";
 import { frameToText } from "../shared/frame-text.ts";
+import { noteSeen, seenIds } from "../shared/seen.ts";
+import { seenFilePathOf } from "../shared/standings.ts";
 import { attach, parseWatchdogArgs, resolveStanding } from "./client.ts";
 
 const note = (s: string): void => {
@@ -47,6 +49,8 @@ export function runWatchdogCodex(argv: string[]): void {
     process.exit(2);
   }
   parseWatchdogArgs(argv); // валидность флагов — там же
+  const seenPath = seenFilePathOf(target.authDir, target.key);
+  const seen = seenIds(seenPath);
 
   let door: Door | null = null;
   let ready: Promise<Door> | null = null;
@@ -79,7 +83,7 @@ export function runWatchdogCodex(argv: string[]): void {
     return ready;
   }
 
-  async function deliver(text: string): Promise<void> {
+  async function deliver(text: string, ids: string[] = []): Promise<void> {
     try {
       const d = door ?? (await open());
       d.send({
@@ -88,6 +92,7 @@ export function runWatchdogCodex(argv: string[]): void {
         params: { threadId, input: [{ type: "text", text }], turnTrigger: "iskron-channel" },
       });
       note(`кадр вложен в тред ${threadId}`);
+      for (const id of ids) noteSeen(seenPath, id, seen); // вложенный — отданный (#5428)
     } catch (e) {
       note(`ДЕЛАТЕЛЬ: кадр не вложился — ${(e as Error).message}`);
     }
@@ -107,11 +112,17 @@ export function runWatchdogCodex(argv: string[]): void {
           }
           const type = ev.frame?.type;
           if (type !== "message") return note(`кадр ${type ?? "не разобран"} — не повод будить`);
-          void deliver(frameToText(ev.frame, ev.raw ?? ""));
+          void deliver(
+            frameToText(ev.frame, ev.raw ?? ""),
+            typeof ev.frame?.id === "string" ? [ev.frame.id] : [],
+          );
           break;
         }
         case "stale":
-          void deliver(ev.text ?? "Искрон: лежалые кадры"); // одна пачка — один ход
+          void deliver(
+            ev.text ?? "Искрон: лежалые кадры",
+            (ev.frames ?? []).map((f) => f.id).filter((x): x is string => typeof x === "string"),
+          ); // одна пачка — один ход
           break;
         case "dead":
         case "evicted":
