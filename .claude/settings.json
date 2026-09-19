@@ -38,15 +38,6 @@
             "command": "jq -r '.tool_input.file_path // \"\"' | grep -Eq '\\.claude/projects/.*/memory/' && { echo 'BLOCKED: локальная память агента запрещена целиком, по директории (AGENTS.md, Persistence rules). Маршрутизируй факт: конвенции репо / код-факты → AGENTS.md; состояние проекта → NKS (nks-dev, #1506); пользовательский факт вне проекта → личный граф владельца (minding). Директория заморожена на стабе-запрете.' >&2; exit 2; } || exit 0"
           }
         ]
-      },
-      {
-        "matcher": "mcp__.*iskron_(add_.*|batch)",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "jq -r '.tool_name // \"\"' | grep -Eq 'iskron_(add_[a-z_]+|batch)$' && echo '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"additionalContext\":\"Момент скилла writing: перед вызовом по каждому узлу назови читателя, что изменит извлечение и что здесь ново; тип и given_as, три модуса как утверждения, имя-тезис, стрелки со смыслом; hint — семя превращения: только важное после сессии, не журнал; гроссбух сессии — в файле сессии и в кадре; строки CHECKS в ответе — работа этого такта.\"}}' || true"
-          }
-        ]
       }
     ],
     "PostToolUse": [
@@ -55,17 +46,11 @@
         "hooks": [
           {
             "type": "command",
-            "command": "jq -r '.tool_input.command // \"\"' | grep -q 'git push' && echo '{\"hookSpecificOutput\":{\"hookEventName\":\"PostToolUse\",\"additionalContext\":\"Pushed — ask which kind of push this was: a push that only opens or updates a PR ships nothing; done means merged. After a merge, update the graph from fresh artifact evidence, and it is four acts, not a status edit: weave the shipped state into holon #1506 (weaving skill); switch the modes the merge made true across the whole designed contour, never ahead of evidence; close what the merge resolved along its axis and work the karta inbox (inquiry skill); then run reconcile — the tidy-up tact that checks corpus against graph both ways. Do not look for a transformation number in AGENTS.md: it holds none by rule — orient and read the live map. Then run the after-green-push self-review of your diff, and grep the commit message and branch name against the brand-clean rule.\"}}' || true"
-          }
-        ]
-      }
-    ],
-    "Stop": [
-      {
-        "hooks": [
+            "command": "jq -r '.tool_input.command // \"\"' | grep -Eq '(^|[;&|(] *)([A-Za-z_]+=[^ ]+ +)*git push( |$)' && echo '{\"hookSpecificOutput\": {\"hookEventName\": \"PostToolUse\", \"additionalContext\": \"Пуш не отгрузил ничего: открыл или обновил PR — самопроверка диффа и холодное ревью этапа (AGENTS.md, «Холодное ревью этапа»). Отгрузка — мерж.\"}}' || true"
+          },
           {
             "type": "command",
-            "command": "\"$CLAUDE_PROJECT_DIR/scripts/stop-guard.sh\""
+            "command": "jq -r '.tool_input.command // \"\"' | grep -Eq '(^|[;&|(] *)([A-Za-z_]+=[^ ]+ +)*(gh pr merge|git pull)( |$)' && echo '{\"hookSpecificOutput\": {\"hookEventName\": \"PostToolUse\", \"additionalContext\": \"Мерж — четыре акта AGENTS.md «Жизненный цикл сессии»: проткать #1506, переключить модусы, закрыть по оси, reconcile; затем фидбэк-рефлексия и словарный проход.\"}}' || true"
           }
         ]
       }
