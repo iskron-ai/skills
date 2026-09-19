@@ -24,6 +24,12 @@ import * as diagnostics from "node:diagnostics_channel";
 const PING_CHANNEL = "undici:websocket:ping";
 /** Сколько интервалов пинга соединение может молчать, прежде чем считаться подвисшим. */
 const SILENT_INTERVALS = 3;
+/**
+ * Свой пол молчания: пинг контура — каденс ЕГО живости (три неотвеченных — его
+ * терпение), и при пинге раз в 5 с три интервала короче паузы цикла событий у
+ * харнеса; здоровое соединение не должно читаться подвисшим (граф nks-dev: #5380).
+ */
+const SILENT_FLOOR_MS = Number(process.env.ISKRON_CHANNEL_SILENT_FLOOR_MS) || 60_000;
 
 /** Закрытия, после которых тем же токеном не переоткрываются. */
 export const DEAD_TOKEN_CODES = [4001, 4002];
@@ -257,7 +263,7 @@ export function holdSocket(o: HoldOptions): Holder {
         lastTick = now;
         if (stopped || ws !== sock || !runtimeSeesPings) return;
         const silent = now - lastLife;
-        if (silent <= SILENT_INTERVALS * pingMs + 1000) return;
+        if (silent <= Math.max(SILENT_INTERVALS * pingMs + 1000, SILENT_FLOOR_MS)) return;
         stopWatch();
         // «Прочитано» у контура значит «записано в сокет», не «взято» (#5380):
         // кадры, ушедшие в подвисшее соединение, в hello не вернутся.

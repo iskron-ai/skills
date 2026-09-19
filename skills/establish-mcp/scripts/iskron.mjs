@@ -1463,6 +1463,7 @@ var NOTIFIED_CLIENTS = /* @__PURE__ */ new Set([PI_CLIENT, OPENCODE_CLIENT]);
 import * as diagnostics from "node:diagnostics_channel";
 var PING_CHANNEL = "undici:websocket:ping";
 var SILENT_INTERVALS = 3;
+var SILENT_FLOOR_MS = Number(process.env.ISKRON_CHANNEL_SILENT_FLOOR_MS) || 6e4;
 var DEAD_TOKEN_CODES = [4001, 4002];
 var EVICTED_CODE = 4e3;
 var EVICTION_WINDOW_MS = 6e4;
@@ -1572,7 +1573,7 @@ function holdSocket(o) {
         lastTick = now2;
         if (stopped || ws !== sock || !runtimeSeesPings) return;
         const silent = now2 - lastLife;
-        if (silent <= SILENT_INTERVALS * pingMs + 1e3) return;
+        if (silent <= Math.max(SILENT_INTERVALS * pingMs + 1e3, SILENT_FLOOR_MS)) return;
         stopWatch();
         (o.onHung ?? o.onNote)?.(
           `соединение молчит ${Math.round(silent / 1e3)} с при пинге раз в ${pingMs / 1e3} с — подвисло без закрытия; переоткрываю тем же адресом. Кадры, пришедшие за время молчания, могли пропасть — сверь iskron_channel(action="history")`
