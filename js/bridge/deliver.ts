@@ -19,7 +19,7 @@ import { ensureStanding, isUnattributed, noteStanding, replyText } from "./stand
 import { localStatus } from "./status.ts";
 import { loadServerCache, saveServerCache, sleep } from "./store.ts";
 import { emit, log } from "./streams.ts";
-import { recheckTools, noteServedTools } from "./toolsync.ts";
+import { noteServedTools, recheckTools } from "./toolsync.ts";
 import { currentAccessToken, onReinitialized, post, reinitialize, state } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
 import { takeNotice } from "./update.ts";
