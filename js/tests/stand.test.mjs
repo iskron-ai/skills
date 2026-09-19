@@ -639,6 +639,20 @@ test("iskron_stand: a place whose bridge died is taken back, not skipped to name
   assert.equal(placeOf(t3), `${base}.2`, standText(t3));
 });
 
+// A live session away from its place (leave, or deafness) keeps its local
+// socket: the board may read the place «не слушает», but its mail is still
+// that session's — the newcomer stands beside it, not on it (#5407).
+test("iskron_stand: a live session away from its place keeps it — the newcomer takes name.2", async (t) => {
+  const { fake, bridge, second, args, base } = await twoSessions(t);
+  await bridge.call("tools/call", {
+    name: "iskron_channel",
+    arguments: { realm: "nks-dev", action: "leave" },
+  });
+  await fake.control({ places: [{ karta: 931, name: base, listening: false }] });
+  const r = await second.call("tools/call", { name: "iskron_stand", arguments: args });
+  assert.equal(placeOf(r), `${base}.2`, standText(r));
+});
+
 test("iskron_stand: a separate place that left and stands again does not stack name.2.2", async (t) => {
   const { second, args, base } = await twoSessions(t);
   await second.call("tools/call", { name: "iskron_stand", arguments: args });

@@ -91,7 +91,7 @@ export function setupChannel(pi: ExtensionAPI): (params: any) => void {
       case "evicted":
         loud(
           `Искрон: канал закрыт кодом ${ev.code} — место отняли, слушает другой держатель. ` +
-            "Привязка записей цела; вернуть слух сюда — iskron_stand с take=true.",
+            "Привязка записей цела; слух здесь — iskron_stand без name встанет рядом на имя.N; отбить место (take=true) — только словом человека.",
         );
         return;
       case "alive":
