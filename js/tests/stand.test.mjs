@@ -568,6 +568,88 @@ test("iskron_stand refuses a truncated or ambiguous board and leaves a hook list
   );
 });
 
+// A second live session of one model over one working copy — another session
+// or a subagent — derives the same name (#5402, #5407): it takes the first
+// free `name.N` instead of evicting; "taken" is read positively, by a live
+// local socket this bridge does not own; the separate place arms no role-inbox
+// hook (the owner's word); the base of the suffix is the derived name.
+const standText = (r) => textOf(r);
+const placeOf = (r) => /стояние (?:@[^:\s]+:)?(\S+) — роль/.exec(textOf(r))?.[1];
+async function twoSessions(t) {
+  const { fake, dir, bridge } = await ready(t);
+  const args = { realm: "nks-dev", karta: 931, model: "opus-5" };
+  const first = await bridge.call("tools/call", { name: "iskron_stand", arguments: args });
+  const base = placeOf(first);
+  assert.ok(base, standText(first));
+  for (const end = Date.now() + 10_000; fake.state.ws.size !== 1;) {
+    assert.ok(Date.now() < end, "the first session's socket");
+    await new Promise((res) => setTimeout(res, 50));
+  }
+  const second = startBridge(fake.mcpUrl, dir);
+  t.after(() => second.stop());
+  assert.ok((await second.call("initialize", INIT)).result);
+  return { fake, dir, bridge, second, args, base };
+}
+
+test("iskron_stand: a derived name another live session holds yields a separate place without a role-inbox hook", async (t) => {
+  const { fake, second, args, base } = await twoSessions(t);
+  const connects = fake.state.counts.connect;
+  const hooks = fake.state.counts.webhooks_added;
+  const r = await second.call("tools/call", { name: "iskron_stand", arguments: args });
+  assert.ok(!r.result?.isError, standText(r));
+  assert.equal(placeOf(r), `${base}.2`, standText(r));
+  assert.ok(standText(r).includes(`место ${base} держит живая сессия`), standText(r));
+  assert.equal(fake.state.counts.connect, connects + 1, "one connect — for the new place");
+  assert.equal(fake.state.ws.size, 2, "the first session keeps its socket");
+  assert.equal(fake.state.counts.webhooks_added, hooks, "no role-inbox hook for a separate place");
+  const again = await second.call("tools/call", { name: "iskron_stand", arguments: args });
+  assert.equal(placeOf(again), `${base}.2`, standText(again));
+  assert.equal(
+    fake.state.counts.connect,
+    connects + 1,
+    "the second call comes back, no new connect",
+  );
+});
+
+test("iskron_stand: a bridge that left its place comes back to it, not to name.2", async (t) => {
+  const { fake, bridge } = await ready(t);
+  const args = { realm: "nks-dev", karta: 931, model: "opus-5" };
+  const first = await bridge.call("tools/call", { name: "iskron_stand", arguments: args });
+  const base = placeOf(first);
+  const left = await bridge.call("tools/call", {
+    name: "iskron_channel",
+    arguments: { realm: "nks-dev", action: "leave" },
+  });
+  assert.ok(!left.result?.isError, textOf(left));
+  const connects = fake.state.counts.connect;
+  const back = await bridge.call("tools/call", { name: "iskron_stand", arguments: args });
+  assert.equal(placeOf(back), base, standText(back));
+  assert.equal(fake.state.counts.connect, connects, "a return, not a connect");
+});
+
+test("iskron_stand: a place whose bridge died is taken back, not skipped to name.3", async (t) => {
+  const { fake, dir, second, args, base } = await twoSessions(t);
+  const r = await second.call("tools/call", { name: "iskron_stand", arguments: args });
+  assert.equal(placeOf(r), `${base}.2`, standText(r));
+  await second.stop();
+  const third = startBridge(fake.mcpUrl, dir);
+  t.after(() => third.stop());
+  assert.ok((await third.call("initialize", INIT)).result);
+  const t3 = await third.call("tools/call", { name: "iskron_stand", arguments: args });
+  assert.equal(placeOf(t3), `${base}.2`, standText(t3));
+});
+
+test("iskron_stand: a separate place that left and stands again does not stack name.2.2", async (t) => {
+  const { second, args, base } = await twoSessions(t);
+  await second.call("tools/call", { name: "iskron_stand", arguments: args });
+  await second.call("tools/call", {
+    name: "iskron_channel",
+    arguments: { realm: "nks-dev", action: "leave" },
+  });
+  const back = await second.call("tools/call", { name: "iskron_stand", arguments: args });
+  assert.equal(placeOf(back), `${base}.2`, standText(back));
+});
+
 test("iskron_stand: take=true on the bridge's own place re-enters with a fresh socket and a fresh hello", async (t) => {
   const { fake, bridge } = await ready(t);
   const args = { realm: "nks-dev", karta: 931, name: "proba" };

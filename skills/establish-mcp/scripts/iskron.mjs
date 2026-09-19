@@ -3163,6 +3163,21 @@ var deafReopens = 0;
 var deafSaid = false;
 var REOPEN_LIMIT = 2;
 
+// js/bridge/separate.ts
+function suffixOf(base, name) {
+  if (!name.startsWith(`${base}.`)) return null;
+  const tail = name.slice(base.length + 1);
+  return /^[1-9]\d*$/.test(tail) && Number(tail) >= 2 ? Number(tail) : null;
+}
+var suffixed = (base, n) => base.slice(0, NAME_MAX - `.${n}`.length).replace(/[-._]+$/, "") + `.${n}`;
+async function freeSuffix(base, free) {
+  for (let n = 2; n <= 99; n++) {
+    const cand = suffixed(base, n);
+    if (await free(cand)) return cand;
+  }
+  return null;
+}
+
 // js/bridge/update.ts
 import { spawn as spawn2 } from "node:child_process";
 import { existsSync as existsSync4, lstatSync, mkdirSync as mkdirSync6, readFileSync as readFileSync11, renameSync as renameSync4, writeFileSync as writeFileSync8 } from "node:fs";
@@ -3395,7 +3410,7 @@ var STAND_TOOL = {
       mute_siblings: { type: "boolean", description: "Не слышать эхо других стояний той же роли." },
       take: {
         type: "boolean",
-        description: "Сознательный переход: забрать сокет места, которое слушает другой мост этой машины (обычно прежняя сессия той же рабочей копии) — без take такое место только регистрируется, слух остаётся у держателя; либо сменить место этого моста (стояние одно на мост: другая роль или другое имя без take — отказ вслух, прежнее место остаётся на доске без слуха)."
+        description: "Сознательный переход, только по слову человека: забрать сокет места, которое держит другой мост этой машины (без take выведенное имя встаёт рядом на имя.N, явное — только регистрируется, слух остаётся у держателя); либо сменить место этого моста (стояние одно на мост: другая роль или другое имя без take — отказ вслух, прежнее место остаётся на доске без слуха)."
       },
       room_karta: {
         type: "string",
@@ -3465,7 +3480,11 @@ async function runStand(msg) {
   }
   const parts = asked ? null : deriveParts(model, cwd);
   const fitted = parts ? fitName(parts) : null;
-  const name = asked || (fitted?.name ?? "");
+  const derived = asked ? "" : fitted?.name ?? "";
+  let name = asked || derived;
+  const led0 = state.standing;
+  if (derived && led0 && String(led0.karta) === String(karta) && suffixOf(derived, led0.name ?? ""))
+    name = led0.name ?? name;
   if (parts && fitted && fitted.cut.length) {
     const what = fitted.cut.map((k) => k === "repo" ? "репо" : k === "host" ? "машина" : "модель").join(", ");
     nameNotes.push(
@@ -3494,7 +3513,20 @@ async function runStand(msg) {
   const declared = header?.[1] != null ? Number(header[1]) : null;
   const empty = /не держит канала/i.test(board.text);
   const recognized = !!header || empty || entries.length > 0;
-  const own = entries.filter((e) => e.karta === karta && nameOf(e.address) === name);
+  let own = entries.filter((e) => e.karta === karta && nameOf(e.address) === name);
+  const mineHere = (n) => holdsStanding(realm, karta, n) || isParked(realm, karta, n);
+  const liveElsewhere = async (n) => !mineHere(n) && await localSocketAlive(localSocketPathOf(keyOf(realm, karta, n)));
+  if (derived && a.take !== true && name === derived && await liveElsewhere(derived)) {
+    const separate = await freeSuffix(derived, async (n) => !await liveElsewhere(n));
+    if (separate) {
+      name = separate;
+      own = entries.filter((e) => e.karta === karta && nameOf(e.address) === name);
+      nameNotes.push(
+        `место ${derived} держит живая сессия другого моста — встаю рядом на ${separate}, её не трогаю; вытеснить её — только словом человека (name="${derived}", take=true)`
+      );
+    }
+  }
+  const sub = !!derived && name !== derived;
   const stem = name.split(".").slice(0, 2).join(".");
   const branches = new Set(
     git(["branch", "--format=%(refname:short)"], cwd).split("\n").map((x) => sanitize(x.trim())).filter(Boolean)
@@ -3561,7 +3593,7 @@ async function runStand(msg) {
       return done(true);
     }
     heardHere = !listensElsewhere;
-    how = listensElsewhere ? wasEvicted(realm, karta, name) ? "место отняли у этого моста (закрытие 4000) — слушает другой держатель; только register: привязка цела, слух — у него; вернуть слух сюда — повтори с take=true, сознавая, что снимешь слух с того держателя" : predecessorDead ? "слушающим доска ещё читает прежний мост этого каталога, а он мёртв (его сокет не отвечает, запись держания цела) — только register; доска отпустит его в течение минуты, и тот же вызов вернёт место с диска тем же адресом — повтори" : "место уже слушает другой держатель (обычно прежняя сессия этой рабочей копии; при явном name — возможно, другая машина или человек) — только register: атрибуция есть, слух — у него; нужен слух здесь — повтори с take=true, сознавая, что снимешь слух с того держателя, или возьми другое имя (name)" : "сокет уже держит этот мост — register";
+    how = listensElsewhere ? wasEvicted(realm, karta, name) ? "место отняли у этого моста (закрытие 4000) — слушает другой держатель; только register: привязка цела, слух — у него; вернуть слух сюда — повтори с take=true, сознавая, что снимешь слух с того держателя" : predecessorDead ? "слушающим доска ещё читает прежний мост этого каталога, а он мёртв (его сокет не отвечает, запись держания цела) — только register; доска отпустит его в течение минуты, и тот же вызов вернёт место с диска тем же адресом — повтори" : "место уже слушает другой держатель (при явном name — возможно, другая машина или человек) — только register: атрибуция есть, слух — у него; нужен слух здесь — возьми другое имя (name); вытеснить его (take=true) — только словом человека" : "сокет уже держит этот мост — register";
   } else {
     const args = { action: "connect", realm, karta, name };
     if (typeof a.mute_siblings === "boolean") args.mute_siblings = a.mute_siblings;
@@ -3608,7 +3640,11 @@ async function runStand(msg) {
   const hooksRecognized = !hooks.isError && (/^\s*Вебхуки(?:\s|:|\(|$)/m.test(hooks.text) || /вебхуки не зарегистрированы/i.test(hooks.text));
   const nameRe = new RegExp(`:${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![A-Za-z0-9._-])`);
   const wakesMe = hooksRecognized && hooks.text.split(/\n(?=\s*#\d+\s*→)/).some((b) => /активен/.test(b) && nameRe.test(b));
-  if (wakesMe) lines.push("Хук инбокса роли: стоит и будит это стояние.");
+  if (sub)
+    lines.push(
+      "Хук инбокса роли: отдельному месту не взводится — почту роли слушает основное место, комнаты доставляют своё сами."
+    );
+  else if (wakesMe) lines.push("Хук инбокса роли: стоит и будит это стояние.");
   else if (!hooksRecognized)
     lines.push(
       `Хук инбокса роли: список хуков не распознан — не трогаю (${short(hooks.text, 120)}).`
