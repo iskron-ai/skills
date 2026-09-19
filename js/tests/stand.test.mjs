@@ -568,6 +568,27 @@ test("iskron_stand refuses a truncated or ambiguous board and leaves a hook list
   );
 });
 
+// What the place is travels with every taking and registration (#5174): model
+// without the vendor prefix, attrs with the build sign {name, version, stamp}
+// and the harness — the whole set each time, since attrs replace whole.
+test("iskron_stand names the place: model and attrs ride connect and register", async (t) => {
+  const { fake, bridge } = await ready(t);
+  const r = await bridge.call("tools/call", {
+    name: "iskron_stand",
+    arguments: { realm: "nks-dev", karta: 931, name: "proba", model: "anthropic/claude-opus-5" },
+  });
+  assert.ok(!r.result?.isError, textOf(r));
+  const connect = fake.state.placeArgs.find((x) => x.action === "connect");
+  const register = fake.state.placeArgs.find((x) => x.action === "register");
+  for (const got of [connect, register]) {
+    assert.ok(got, JSON.stringify(fake.state.placeArgs));
+    assert.equal(got.model, "claude-opus-5");
+    assert.equal(got.attrs?.build?.name, "iskron-bridge");
+    assert.match(String(got.attrs?.build?.version), /^\d+\.\d+\.\d+$/);
+    assert.match(String(got.attrs?.build?.stamp), /^[0-9a-f]{8}$/);
+  }
+});
+
 // A second live session of one model over one working copy — another session
 // or a subagent — derives the same name (#5402, #5407): it takes the first
 // free `name.N` instead of evicting; "taken" is read positively, by a live

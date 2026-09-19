@@ -2561,14 +2561,30 @@ var git = (args, cwd = process.cwd()) => {
     return "";
   }
 };
-function deriveParts(model, cwd = process.cwd()) {
+function deriveParts(model2, cwd = process.cwd()) {
   const host = hostname().split(".")[0];
   const top = git(["rev-parse", "--show-toplevel"], cwd);
   const repo = basename2(top || cwd);
-  const short2 = (model ?? "").trim().toLowerCase().replace(/^claude[-_]/, "");
+  const short2 = (model2 ?? "").trim().toLowerCase().replace(/^claude[-_]/, "");
   return { host: sanitize(host ?? ""), repo: sanitize(repo), model: sanitize(short2) };
 }
 var joinName = (p) => [p.host, p.repo, p.model].filter(Boolean).join(".");
+
+// js/bridge/placefields.ts
+var model = "";
+function rememberModel(m) {
+  if (typeof m === "string" && m.trim()) model = m.trim().replace(/^[^/]*\//, "");
+}
+function placeFields() {
+  const harness = harnessName();
+  return {
+    ...model ? { model } : {},
+    attrs: {
+      build: { name: "iskron-bridge", version: VERSION, stamp: BUILD.split("+")[1] ?? "" },
+      ...harness ? { harness } : {}
+    }
+  };
+}
 
 // js/bridge/standing.ts
 function noteStanding(msg, reply2) {
@@ -2603,7 +2619,10 @@ function ensureStanding() {
           jsonrpc: "2.0",
           id,
           method: "tools/call",
-          params: { name: "iskron_channel", arguments: { ...state.standing, action: "register" } }
+          params: {
+            name: "iskron_channel",
+            arguments: { ...state.standing, ...placeFields(), action: "register" }
+          }
         },
         (m) => {
           if (m.id === id) reply2 = m;
@@ -3057,7 +3076,8 @@ async function resumeBy(sel, register = true) {
         action: "register",
         realm: rec.realm,
         karta: rec.karta,
-        name: rec.name
+        name: rec.name,
+        ...placeFields()
       });
       lines.push(r.isError ? `register отказал — ${short(r.text)}` : "register");
     }
@@ -3177,6 +3197,17 @@ async function freeSuffix(base, free) {
     if (await free(cand)) return cand;
   }
   return null;
+}
+async function separatePlace(realm, karta, derived) {
+  const mineHere = (n) => holdsStanding(realm, karta, n) || isParked(realm, karta, n);
+  const liveElsewhere = async (n) => !mineHere(n) && await localSocketAlive(localSocketPathOf(keyOf(realm, karta, n)));
+  if (!await liveElsewhere(derived)) return null;
+  const name = await freeSuffix(derived, async (n) => !await liveElsewhere(n));
+  if (!name) return null;
+  return {
+    name,
+    note: `место ${derived} держит живая сессия другого моста — встаю рядом на ${name}, её не трогаю; если ${derived} — твоё место (мост этой же сессии перезапущен), вернись: iskron_stand(name="${derived}", take=true); вытеснять чужую сессию — только словом человека`
+  };
 }
 
 // js/bridge/update.ts
@@ -3460,7 +3491,8 @@ async function runStand(msg) {
     );
     return done(true);
   }
-  const model = typeof a.model === "string" && a.model.trim() ? a.model : void 0;
+  const model2 = typeof a.model === "string" && a.model.trim() ? a.model : void 0;
+  rememberModel(model2);
   const cwd = typeof a.cwd === "string" && a.cwd.trim() ? a.cwd.trim() : process.cwd();
   if (cwd !== process.cwd() && !isDirectory(cwd)) {
     lines.push(
@@ -3479,7 +3511,7 @@ async function runStand(msg) {
       return done(true);
     }
   }
-  const parts = asked ? null : deriveParts(model, cwd);
+  const parts = asked ? null : deriveParts(model2, cwd);
   const fitted = parts ? fitName(parts) : null;
   const derived = asked ? "" : fitted?.name ?? "";
   let name = asked || derived;
@@ -3492,7 +3524,7 @@ async function runStand(msg) {
       `выведенное имя ${joinName(parts)} длиннее предела ${NAME_MAX} знаков — укорочено до ${name} (срезано: ${what}); нужно другое — передай name`
     );
   }
-  if (!asked && !model) {
+  if (!asked && !model2) {
     nameNotes.push(
       "model не передан — имя без третьей части (машина.репо): вторая сессия этой машины над этим репозиторием сойдётся на то же место; передай model, чтобы различать"
     );
@@ -3504,6 +3536,7 @@ async function runStand(msg) {
     return done(true);
   }
   noteStandCwd(cwd);
+  const register = () => callTool("iskron_channel", { action: "register", realm, karta, name, ...placeFields() });
   const board = await callTool("iskron_channel", { action: "list", realm });
   if (board.isError) {
     lines.push(`Отказано: доска не прочиталась — ${short(board.text)}`);
@@ -3515,17 +3548,11 @@ async function runStand(msg) {
   const empty = /не держит канала/i.test(board.text);
   const recognized = !!header || empty || entries.length > 0;
   let own = entries.filter((e) => e.karta === karta && nameOf(e.address) === name);
-  const mineHere = (n) => holdsStanding(realm, karta, n) || isParked(realm, karta, n);
-  const liveElsewhere = async (n) => !mineHere(n) && await localSocketAlive(localSocketPathOf(keyOf(realm, karta, n)));
-  if (derived && a.take !== true && name === derived && await liveElsewhere(derived)) {
-    const separate = await freeSuffix(derived, async (n) => !await liveElsewhere(n));
-    if (separate) {
-      name = separate;
-      own = entries.filter((e) => e.karta === karta && nameOf(e.address) === name);
-      nameNotes.push(
-        `место ${derived} держит живая сессия другого моста — встаю рядом на ${separate}, её не трогаю; если ${derived} — твоё место (мост этой же сессии перезапущен), вернись: iskron_stand(name="${derived}", take=true); вытеснять чужую сессию — только словом человека`
-      );
-    }
+  const separate = derived && a.take !== true && name === derived ? await separatePlace(realm, karta, derived) : null;
+  if (separate) {
+    name = separate.name;
+    own = entries.filter((e) => e.karta === karta && nameOf(e.address) === name);
+    nameNotes.push(separate.note);
   }
   const sub = !!derived && name !== derived;
   const stem = name.split(".").slice(0, 2).join(".");
@@ -3565,7 +3592,7 @@ async function runStand(msg) {
   const resumed = fresh && !listensElsewhere ? await resumeFromDisk(realm, karta, name) : null;
   const extra = [];
   if (resumed) {
-    const r = await callTool("iskron_channel", { action: "register", realm, karta, name });
+    const r = await register();
     if (r.isError) {
       lines.push(`Отказано: register — ${short(r.text)}`);
       return done(true);
@@ -3580,7 +3607,7 @@ async function runStand(msg) {
       );
     }
   } else if (a.take !== true && isParked(realm, karta, name) && returnToStanding("iskron_stand")) {
-    const r = await callTool("iskron_channel", { action: "register", realm, karta, name });
+    const r = await register();
     if (r.isError) {
       lines.push(`Отказано: register — ${short(r.text)}`);
       return done(true);
@@ -3588,7 +3615,7 @@ async function runStand(msg) {
     heardHere = true;
     how = "возврат на место, с которого мост уходил, — сокет открыт заново тем же адресом, register";
   } else if (a.take !== true && (holdsStanding(realm, karta, name) || listensElsewhere)) {
-    const r = await callTool("iskron_channel", { action: "register", realm, karta, name });
+    const r = await register();
     if (r.isError) {
       lines.push(`Отказано: register — ${short(r.text)}`);
       return done(true);
@@ -3597,6 +3624,7 @@ async function runStand(msg) {
     how = listensElsewhere ? wasEvicted(realm, karta, name) ? "место отняли у этого моста (закрытие 4000) — слушает другой держатель; только register: привязка цела, слух — у него; слух здесь — iskron_stand без name встанет рядом на имя.N; отбить место (take=true) — только словом человека" : predecessorDead ? "слушающим доска ещё читает прежний мост этого каталога, а он мёртв (его сокет не отвечает, запись держания цела) — только register; доска отпустит его в течение минуты, и тот же вызов вернёт место с диска тем же адресом — повтори" : "место уже слушает другой держатель (при явном name — возможно, другая машина или человек) — только register: атрибуция есть, слух — у него; нужен слух здесь — возьми другое имя (name); вытеснить его (take=true) — только словом человека" : "сокет уже держит этот мост — register";
   } else {
     const args = { action: "connect", realm, karta, name };
+    Object.assign(args, placeFields());
     if (typeof a.mute_siblings === "boolean") args.mute_siblings = a.mute_siblings;
     const c = await callTool("iskron_channel", args);
     if (c.isError) {
@@ -3604,7 +3632,7 @@ async function runStand(msg) {
       return done(true);
     }
     incoming = /https?:\/\/\S+\/channel\/in\/\S+/.exec(c.text)?.[0] ?? incoming;
-    const r = await callTool("iskron_channel", { action: "register", realm, karta, name });
+    const r = await register();
     if (r.isError) {
       lines.push(`Место занято, но register отказал — ${short(r.text)}`);
       return done(true);

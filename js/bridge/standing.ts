@@ -1,6 +1,7 @@
 import { errorMessage } from "./errors.ts";
 import { releaseStanding } from "./hold.ts";
 import { normKarta, normName } from "./names.ts";
+import { placeFields } from "./placefields.ts";
 import { debug, log } from "./streams.ts";
 import { post, state } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
@@ -59,7 +60,10 @@ export function ensureStanding(): Promise<void> {
           jsonrpc: "2.0",
           id,
           method: "tools/call",
-          params: { name: "iskron_channel", arguments: { ...state.standing, action: "register" } },
+          params: {
+            name: "iskron_channel",
+            arguments: { ...state.standing, ...placeFields(), action: "register" },
+          },
         },
         (m) => {
           if (m.id === id) reply = m;

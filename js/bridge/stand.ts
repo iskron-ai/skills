@@ -18,7 +18,6 @@ import {
   hasStatusAddressFor,
   holdsStanding,
   isParked,
-  localSocketPathOf,
   noteStandCwd,
   wasEvicted,
 } from "./hold.ts";
@@ -36,10 +35,10 @@ import {
   normName,
   sanitize,
 } from "./names.ts";
+import { placeFields, rememberModel } from "./placefields.ts";
 import { deadPredecessor, resumeFromDisk } from "./resume.ts";
-import { freeSuffix, suffixOf } from "./separate.ts";
+import { separatePlace, suffixOf } from "./separate.ts";
 import { publishStatus, TAKE_PATH, TURNED_GUIDANCE } from "./status.ts";
-import { localSocketAlive } from "./sweep.ts";
 import { state } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
 import { readLatest, staleNotice } from "./update.ts";
@@ -144,6 +143,7 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
     return done(true);
   }
   const model = typeof a.model === "string" && a.model.trim() ? a.model : undefined;
+  rememberModel(model);
   const cwd = typeof a.cwd === "string" && a.cwd.trim() ? a.cwd.trim() : process.cwd();
   // Кривой cwd адресовал бы другое место (репо из несуществующего или чужого
   // каталога) — отказ вслух, как у явного имени (#5068).
@@ -201,6 +201,10 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   // каталога OpenCode, перезапуск плагина), вернёт место по нему сам (#5140).
   noteStandCwd(cwd);
 
+  // Поля места (model, attrs) едут каждой регистрации — полным набором (#5174).
+  const register = () =>
+    call("iskron_channel", { action: "register", realm, karta, name, ...placeFields() });
+
   // 1. Доска — до любой перемены.
   const board = await call("iskron_channel", { action: "list", realm });
   if (board.isError) {
@@ -216,21 +220,15 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   const empty = /не держит канала/i.test(board.text); // ровно наблюдённая фраза сервера 0.43
   const recognized = !!header || empty || entries.length > 0;
   let own = entries.filter((e) => e.karta === karta && nameOf(e.address) === name);
-  // Выведенное имя держит живой мост ДРУГОЙ сессии (или субагента) — его локальный
-  // сокет жив, а место не наше: встаём рядом на первое свободное `имя.N` (#5407).
-  const mineHere = (n: string): boolean =>
-    holdsStanding(realm, karta, n) || isParked(realm, karta, n);
-  const liveElsewhere = async (n: string): Promise<boolean> =>
-    !mineHere(n) && (await localSocketAlive(localSocketPathOf(keyOf(realm, karta, n))));
-  if (derived && a.take !== true && name === derived && (await liveElsewhere(derived))) {
-    const separate = await freeSuffix(derived, async (n) => !(await liveElsewhere(n)));
-    if (separate) {
-      name = separate;
-      own = entries.filter((e) => e.karta === karta && nameOf(e.address) === name);
-      nameNotes.push(
-        `место ${derived} держит живая сессия другого моста — встаю рядом на ${separate}, её не трогаю; если ${derived} — твоё место (мост этой же сессии перезапущен), вернись: iskron_stand(name="${derived}", take=true); вытеснять чужую сессию — только словом человека`,
-      );
-    }
+  // Выведенное имя держит живой мост другой сессии — встаём рядом на имя.N (#5407).
+  const separate =
+    derived && a.take !== true && name === derived
+      ? await separatePlace(realm, karta, derived)
+      : null;
+  if (separate) {
+    name = separate.name;
+    own = entries.filter((e) => e.karta === karta && nameOf(e.address) === name);
+    nameNotes.push(separate.note);
   }
   const sub = !!derived && name !== derived; // отдельное место: хук инбокса роли ему не взводится
   // Места прежнего стандарта имени (машина.репо.ветка) той же машины и репо —
@@ -298,7 +296,7 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   const extra: string[] = []; // строки после шапки ответа
   // take=true — явный новый цикл входа: connect и тогда, когда сокет уже наш.
   if (resumed) {
-    const r = await call("iskron_channel", { action: "register", realm, karta, name });
+    const r = await register();
     if (r.isError) {
       lines.push(`Отказано: register — ${short(r.text)}`);
       return done(true);
@@ -316,7 +314,7 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
     }
   } else if (a.take !== true && isParked(realm, karta, name) && returnToStanding("iskron_stand")) {
     // Ушёл с места и вернулся: тот же адрес, сокет открыт заново, register — атрибуция.
-    const r = await call("iskron_channel", { action: "register", realm, karta, name });
+    const r = await register();
     if (r.isError) {
       lines.push(`Отказано: register — ${short(r.text)}`);
       return done(true);
@@ -325,7 +323,7 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
     how =
       "возврат на место, с которого мост уходил, — сокет открыт заново тем же адресом, register";
   } else if (a.take !== true && (holdsStanding(realm, karta, name) || listensElsewhere)) {
-    const r = await call("iskron_channel", { action: "register", realm, karta, name });
+    const r = await register();
     if (r.isError) {
       lines.push(`Отказано: register — ${short(r.text)}`);
       return done(true);
@@ -340,6 +338,7 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
       : "сокет уже держит этот мост — register";
   } else {
     const args: Record<string, unknown> = { action: "connect", realm, karta, name };
+    Object.assign(args, placeFields());
     if (typeof a.mute_siblings === "boolean") args.mute_siblings = a.mute_siblings;
     const c = await call("iskron_channel", args); // новый сокет держатель берёт сам и заново: кольцо кадров чистое
     if (c.isError) {
@@ -347,7 +346,7 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
       return done(true);
     }
     incoming = /https?:\/\/\S+\/channel\/in\/\S+/.exec(c.text)?.[0] ?? incoming;
-    const r = await call("iskron_channel", { action: "register", realm, karta, name });
+    const r = await register();
     if (r.isError) {
       lines.push(`Место занято, но register отказал — ${short(r.text)}`);
       return done(true);

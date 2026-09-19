@@ -112,7 +112,8 @@ export async function startFakeNks(opts = {}) {
     // Доска: занятые места по ролям (connect кладёт), комнаты — стояния человека,
     // которые тест объявляет через /control {rooms:[{karta,address}]}.
     places: new Map(), // "karta:name" → { karta, name, incoming }
-    hung: new Set(), // сокеты, в которые служба перестала писать (/control {ws_hang})
+    hung: new Set(),
+    placeArgs: [], // поля места, с которыми пришли connect/mint/register (#5174) // сокеты, в которые служба перестала писать (/control {ws_hang})
     rooms: [],
     webhooks: [], // { id, karta, url, active }
     sends: [], // { karta, standing, text, bound }
@@ -566,6 +567,7 @@ export async function startFakeNks(opts = {}) {
             );
           }
           st.counts.register_standing++;
+          st.placeArgs.push({ action: "register", name: a.name, model: a.model, attrs: a.attrs });
           st.standings.set(sid, a.name ?? "(unnamed)");
           return json(
             res,
@@ -620,6 +622,7 @@ export async function startFakeNks(opts = {}) {
           );
         }
         if (a.action === "connect" || a.action === "mint") {
+          st.placeArgs.push({ action: a.action, name: a.name, model: a.model, attrs: a.attrs });
           st.counts.connect++;
           st.wsToken = token("ws"); // как у настоящей поверхности: сокет показан один раз и всякий раз новый
           // wsTokens: чьё место откроет этот адрес — доска и revoke судят по месту, не по мосту (ниже, именем без полей)
