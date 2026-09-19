@@ -314,6 +314,37 @@ test("list_changed from the bridge re-registers the tools with the new list", as
     const back = Date.now() + 5000;
     while (!rec.active.has("iskron_orient") && Date.now() < back) await delay(50);
     assert.ok(rec.active.has("iskron_orient"), "a tool the server returned is active again");
+    // Dropped again, then a new session raises a new bridge that lists it: active again.
+    writeFileSync(
+      toolsFile,
+      JSON.stringify([
+        {
+          name: "iskron_channel",
+          description: "Канал, новое описание.",
+          inputSchema: { type: "object" },
+        },
+      ]),
+    );
+    writeFileSync(flag, "");
+    const off = Date.now() + 5000;
+    while (rec.active.has("iskron_orient") && Date.now() < off) await delay(50);
+    assert.ok(!rec.active.has("iskron_orient"), "dropped once more");
+    writeFileSync(
+      toolsFile,
+      JSON.stringify([
+        {
+          name: "iskron_channel",
+          description: "Канал, новое описание.",
+          inputSchema: { type: "object" },
+        },
+        { name: "iskron_orient", description: "Ориентир.", inputSchema: { type: "object" } },
+      ]),
+    );
+    await rec.fire("session_shutdown");
+    await rec.fire("session_start");
+    const again = Date.now() + 8000;
+    while (!rec.active.has("iskron_orient") && Date.now() < again) await delay(50);
+    assert.ok(rec.active.has("iskron_orient"), "returned under a new bridge — active again");
     assert.equal(rec.tools.get("iskron_channel").description, "Канал, новое описание.");
     assert.match(rec.said(), /сервер сменил тулы/);
   } finally {

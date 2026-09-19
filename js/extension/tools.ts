@@ -47,6 +47,9 @@ const PROTOCOL = "2025-06-18";
  */
 export function setupBridge(pi: ExtensionAPI, onChannel: ChannelEventSink): void {
   let bridge: Bridge | null = null;
+  // Тулы, снятые из активных по list_changed, — на всё расширение, не на один мост:
+  // pi не включает заново известное имя, и вернувшийся при новом мосте тул включаем сами.
+  const offByUs = new Set<string>();
   let notify: Notify = () => {};
   // Голос сессии: без UI сказать некому, и это условие отказа от подмены моста,
   // а не мелочь — см. refreshHomeBridge.
@@ -191,7 +194,6 @@ export function setupBridge(pi: ExtensionAPI, onChannel: ChannelEventSink): void
       }
     }
 
-    const offByUs = new Set<string>(); // тулы, снятые из активных этим расширением по list_changed
     async function relist(from: Bridge): Promise<void> {
       if (bridge !== from) return;
       try {
@@ -229,6 +231,11 @@ export function setupBridge(pi: ExtensionAPI, onChannel: ChannelEventSink): void
     }
 
     registerAll(tools);
+    const returned = [...offByUs].filter((n) => tools.some((t) => String(t.name) === n));
+    if (returned.length) {
+      for (const n of returned) offByUs.delete(n);
+      pi.setActiveTools([...new Set([...pi.getActiveTools(), ...returned])]);
+    }
 
     const server = init?.serverInfo;
     notify(

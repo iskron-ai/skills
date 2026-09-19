@@ -486,6 +486,7 @@ var AUTH_PENDING = /authorization required/i;
 var PROTOCOL = "2025-06-18";
 function setupBridge(pi, onChannel) {
   let bridge = null;
+  const offByUs = /* @__PURE__ */ new Set();
   let notify = () => {
   };
   let canSpeak = false;
@@ -602,7 +603,6 @@ function setupBridge(pi, onChannel) {
         });
       }
     }
-    const offByUs = /* @__PURE__ */ new Set();
     async function relist(from) {
       if (bridge !== from) return;
       try {
@@ -637,6 +637,11 @@ function setupBridge(pi, onChannel) {
       }
     }
     registerAll(tools);
+    const returned = [...offByUs].filter((n) => tools.some((t) => String(t.name) === n));
+    if (returned.length) {
+      for (const n of returned) offByUs.delete(n);
+      pi.setActiveTools([.../* @__PURE__ */ new Set([...pi.getActiveTools(), ...returned])]);
+    }
     const server = init?.serverInfo;
     notify(
       `Искрон: мост поднят (${server?.name ?? "сервер"} ${server?.version ?? ""}), тулов в сессии: ${tools.length}${toldLogin ? " — вход состоялся" : ""}.`,
