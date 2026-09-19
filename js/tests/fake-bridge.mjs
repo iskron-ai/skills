@@ -24,9 +24,14 @@
 //   FB_TOOLS      JSON array for tools/list; default is two tools, one of them
 //                 iskron_channel, since that is the name the extension watches.
 //   FB_PAGINATE   "1" splits tools/list across two pages with a cursor.
+//   FB_TOOLS_FILE file with a JSON tools array, re-read on every tools/list —
+//                 the server's list changing under a live bridge.
+//   FB_CHANGED    file whose appearance makes this bridge say
+//                 notifications/tools/list_changed once (and remove the file),
+//                 as the real bridge does after a rollout (#5406).
 //   FB_REPLY      file holding the text of the NEXT tools/call answer; the probe
 //                 rewrites it between calls. "__ERROR__<text>" answers isError.
-import { appendFileSync, existsSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, unlinkSync } from "node:fs";
 
 const MODE = process.env.FB_MODE || "ok";
 if (process.env.FB_LOG) appendFileSync(process.env.FB_LOG, `start ${process.pid}\n`);
@@ -85,6 +90,20 @@ if (process.env.FB_EVENTS) {
   }, 40).unref();
 }
 const ok = (id, result) => send({ jsonrpc: "2.0", id, result });
+const currentTools = () =>
+  process.env.FB_TOOLS_FILE && existsSync(process.env.FB_TOOLS_FILE)
+    ? JSON.parse(readFileSync(process.env.FB_TOOLS_FILE, "utf8"))
+    : TOOLS;
+if (process.env.FB_CHANGED) {
+  const flag = process.env.FB_CHANGED;
+  setInterval(() => {
+    if (!existsSync(flag)) return;
+    try {
+      unlinkSync(flag);
+    } catch {}
+    send({ jsonrpc: "2.0", method: "notifications/tools/list_changed" });
+  }, 100).unref();
+}
 
 function callResult(name) {
   let text = `ok:${name}`;
@@ -156,9 +175,10 @@ process.stdin.on("data", (chunk) => {
       if (process.env.FB_PAGINATE === "1") {
         // The second page is only reachable through the cursor loop; a client
         // that reads one page and stops registers half the surface.
-        if (!msg.params?.cursor) ok(msg.id, { tools: TOOLS.slice(0, 1), nextCursor: "p2" });
-        else ok(msg.id, { tools: TOOLS.slice(1) });
-      } else ok(msg.id, { tools: TOOLS });
+        if (!msg.params?.cursor)
+          ok(msg.id, { tools: currentTools().slice(0, 1), nextCursor: "p2" });
+        else ok(msg.id, { tools: currentTools().slice(1) });
+      } else ok(msg.id, { tools: currentTools() });
     } else if (msg.method === "tools/call") {
       // FB_CALLS: file to append each tools/call's params to, one JSON per line —
       // the probe reads what the plugin actually sent, not only what it got back.

@@ -1,9 +1,10 @@
 // Память доставленных кадров стояния — id, на которых делателя уже будили.
-// Файл лежит рядом с ключом стояния (см. standings.ts); пишет его и мост
-// (кадр отдан хотя бы одному локальному клиенту — двери харнеса), и сторож
-// выхода-на-кадре (кадр отдан выходом). Читает сторож выхода: кадр из кольца
-// моста, уже отданный, не будит второй раз (граф nks-dev: #4469, #4881).
-import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
+// Файл лежит рядом с ключом стояния (см. standings.ts). Пишет его тот, кто кадр
+// ОТДАЛ: сторож под Monitor — напечатав, сторож выхода — выходя на нём, мост —
+// уведомив pi или OpenCode; запись в локальный сокет ещё не доставка. Читают
+// все: мост — не отдать кольцо второй раз и узнать повтор платформы, сторож
+// выхода — не проснуться на отданном (граф nks-dev: #4469, #4881).
+import { appendFileSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 
 const SEEN_KEEP = 200;
 
@@ -20,8 +21,17 @@ export function noteSeen(seenPath: string, id: string, seen: Set<string>): void 
   seen.add(id);
   try {
     if (seen.size > SEEN_KEEP) {
-      // Rewrite with the tail; the ring is far shorter than this anyway.
-      writeFileSync(seenPath, [...seen].slice(-SEEN_KEEP).join("\n") + "\n");
+      // Rewrite with the tail — merged with the file: other writers' marks are
+      // in it and not in this memory, and dropping them re-wakes a delivered frame.
+      // Свежее — в хвост: своя старая память, затем файл (там свежие метки других), своя новая метка последней.
+      seen.delete(id);
+      const tail = [...new Set([...seen, ...seenIds(seenPath), id])].slice(-SEEN_KEEP);
+      // Во временный файл и rename: читающий в миг обрезки не увидит пустого файла.
+      const tmp = `${seenPath}.${process.pid}.tmp`;
+      writeFileSync(tmp, tail.join("\n") + "\n");
+      renameSync(tmp, seenPath);
+      seen.clear();
+      for (const x of tail) seen.add(x);
     } else appendFileSync(seenPath, id + "\n");
   } catch {
     /* memory is best effort: a lost note costs one extra wake, never a lost one */

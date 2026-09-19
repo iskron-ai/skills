@@ -238,19 +238,19 @@ function openLocalServer(key: string): void {
     // Задним числом — доказательство держания (hello) и кадры, которых ни один
     // местный клиент ещё не получал: перевзведённый сторож не должен нести
     // делателю то же кольцо второй раз — память доставленного у моста есть.
-    const backlog = ring.filter(
-      ({ frame }) =>
-        frame?.type === "hello" ||
-        !(frame?.type === "message" && typeof frame.id === "string" && seen.has(frame.id)),
-    );
+    // Доставленным кадр помечает отдавший его клиент (печатью, выходом) — файл читается заново.
+    const given = seenIds(seenFilePathOf(CFG.authDir, key));
+    const backlog = ring.filter(({ frame }) => {
+      if (frame?.type === "hello") return true;
+      const id = frame?.type === "message" && typeof frame.id === "string" ? frame.id : "";
+      return !id || !(seen.has(id) || given.has(id));
+    });
     sock.write(
       JSON.stringify({ kind: "attached", key, buffered: backlog.length } satisfies ChannelEvent) +
         "\n",
     );
     for (const { raw, frame } of backlog) {
       sock.write(JSON.stringify({ kind: "frame", raw, frame } satisfies ChannelEvent) + "\n");
-      if (frame?.type === "message" && typeof frame.id === "string")
-        noteSeen(seenFilePathOf(CFG.authDir, key), frame.id, seen);
     }
     // Место отняли, а сторож перевзвёлся: молчание читалось бы как слух.
     if (evictedEvent && evictedKey === key) sock.write(JSON.stringify(evictedEvent) + "\n");
@@ -398,16 +398,13 @@ function openHolder(url: string, key: string): void {
         ring.push({ raw: text, frame: full });
         if (ring.length > RING) ring.shift();
         if (full?.type === "hello") for (const w of [...helloWaiters]) w(full);
-        const ev: ChannelEvent = { kind: "frame", raw: text, frame: full };
-        broadcast(ev);
         const id = full?.type === "message" && typeof full.id === "string" ? full.id : "";
         const seenPath = seenFilePathOf(CFG.authDir, key);
         // Повтор уже отданного кадра (тот же id — платформа отдала его снова после
-        // возврата места) не будит второй раз: память доставленного пережила мост.
-        const again = !!id && seen.has(id);
-        // Кадр, отданный локальному клиенту (Claude Code, Codex), — отдан: сторож выхода, взведённый
-        // после, на нём не выходит. Без клиента не отмечается: принятое в пустоту должно будить его.
-        if (id && clients.size > 0) noteSeen(seenPath, id, seen);
+        // возврата места) никому не рассылается; отданное клиенты помечают сами — в файле.
+        const again = !!id && (seen.has(id) || seenIds(seenPath).has(id));
+        const ev: ChannelEvent = { kind: "frame", raw: text, frame: full };
+        if (!again) broadcast(ev);
         if (full?.type === "status") return;
         if (again) return log(`frame ${id} came again — already delivered, not raised`);
         if (notifiedClient()) {

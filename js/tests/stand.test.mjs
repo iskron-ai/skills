@@ -568,6 +568,27 @@ test("iskron_stand refuses a truncated or ambiguous board and leaves a hook list
   );
 });
 
+// What the place is travels with every taking and registration (#5174): model
+// without the vendor prefix, attrs with the build sign {name, version, stamp}
+// and the harness — the whole set each time, since attrs replace whole.
+test("iskron_stand names the place: model and attrs ride connect and register", async (t) => {
+  const { fake, bridge } = await ready(t);
+  const r = await bridge.call("tools/call", {
+    name: "iskron_stand",
+    arguments: { realm: "nks-dev", karta: 931, name: "proba", model: "anthropic/claude-opus-5" },
+  });
+  assert.ok(!r.result?.isError, textOf(r));
+  const connect = fake.state.placeArgs.find((x) => x.action === "connect");
+  const register = fake.state.placeArgs.find((x) => x.action === "register");
+  for (const got of [connect, register]) {
+    assert.ok(got, JSON.stringify(fake.state.placeArgs));
+    assert.equal(got.model, "claude-opus-5");
+    assert.equal(got.attrs?.build?.name, "iskron-bridge");
+    assert.match(String(got.attrs?.build?.version), /^\d+\.\d+\.\d+$/);
+    assert.match(String(got.attrs?.build?.stamp), /^[0-9a-f]{8}$/);
+  }
+});
+
 // A second live session of one model over one working copy — another session
 // or a subagent — derives the same name (#5402, #5407): it takes the first
 // free `name.N` instead of evicting; "taken" is read positively, by a live
@@ -599,6 +620,10 @@ test("iskron_stand: a derived name another live session holds yields a separate 
   assert.ok(!r.result?.isError, standText(r));
   assert.equal(placeOf(r), `${base}.2`, standText(r));
   assert.ok(standText(r).includes(`место ${base} держит живая сессия`), standText(r));
+  assert.ok(
+    standText(r).includes(`вернись: iskron_stand(name="${base}", take=true)`),
+    "the answer names the way back to one's own place",
+  );
   assert.equal(fake.state.counts.connect, connects + 1, "one connect — for the new place");
   assert.equal(fake.state.ws.size, 2, "the first session keeps its socket");
   assert.equal(fake.state.counts.webhooks_added, hooks, "no role-inbox hook for a separate place");
@@ -637,6 +662,8 @@ test("iskron_stand: a place whose bridge died is taken back, not skipped to name
   assert.ok((await third.call("initialize", INIT)).result);
   const t3 = await third.call("tools/call", { name: "iskron_stand", arguments: args });
   assert.equal(placeOf(t3), `${base}.2`, standText(t3));
+  const last = fake.state.placeArgs.filter((x) => x.action === "register").at(-1);
+  assert.equal(last?.attrs?.build?.name, "iskron-bridge", "the taken-back place is named too");
 });
 
 // A live session away from its place (leave, or deafness) keeps its local
@@ -754,24 +781,27 @@ test("revoking one's own standing through the bridge is quiet: no dead-token ala
   assert.equal((await fake.control({})).counts.register_standing, 1, "no re-register after revoke");
 });
 
-test("iskron_stand takes the first place in an empty graph: the server's «no channels» phrase is a recognized board", async (t) => {
-  const { fake, bridge } = await ready(t);
-  await fake.control({
-    boardText:
-      'Ни одна роль этого графа не держит канала. Открой его: iskron_channel(action="connect", karta=…).',
+// Both phrasings are the server's: 0.43 said «не держит канала», the surface
+// of 2026-09-19 (observed on mcp.iskron.ru, an empty graph) says «нигде не стоит».
+for (const phrase of [
+  'Ни одна роль этого графа не держит канала. Открой его: iskron_channel(action="connect", karta=…).',
+  'Ни одна роль этого графа нигде не стоит. Открой место: iskron_channel(action="mint", karta="#N").',
+])
+  test(`iskron_stand takes the first place in an empty graph: «${phrase.slice(26, 48)}» is a recognized board`, async (t) => {
+    const { fake, bridge } = await ready(t);
+    await fake.control({ boardText: phrase });
+    const reply = await bridge.call("tools/call", {
+      name: "iskron_stand",
+      arguments: { realm: "nks-dev", karta: 931, name: "proba" },
+    });
+    assert.ok(!reply.result?.isError, textOf(reply));
+    assert.match(textOf(reply), /connect и register/, textOf(reply));
+    assert.equal(
+      (await fake.control({})).counts.connect,
+      1,
+      "the first agent in a fresh graph can stand",
+    );
   });
-  const reply = await bridge.call("tools/call", {
-    name: "iskron_stand",
-    arguments: { realm: "nks-dev", karta: 931, name: "proba" },
-  });
-  assert.ok(!reply.result?.isError, textOf(reply));
-  assert.match(textOf(reply), /connect и register/, textOf(reply));
-  assert.equal(
-    (await fake.control({})).counts.connect,
-    1,
-    "the first agent in a fresh graph can stand",
-  );
-});
 
 test("iskron_stand: a header count that does not match the parsed lines blocks a blind connect, but not when the own place is visible or take=true", async (t) => {
   const { fake, bridge } = await ready(t);

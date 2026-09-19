@@ -64,6 +64,7 @@ const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 function fakePi({ hasUI = true } = {}) {
   const handlers = new Map();
   const tools = new Map();
+  const active = new Set(); // имена активных тулов, как их держит pi (getActiveTools/setActiveTools)
   const messages = [];
   const notices = [];
   const statuses = [];
@@ -79,13 +80,24 @@ function fakePi({ hasUI = true } = {}) {
       if (!handlers.has(name)) handlers.set(name, []);
       handlers.get(name).push(fn);
     },
-    registerTool: (t) => tools.set(t.name, t),
+    // As real pi 0.85.1 (_refreshToolRegistry): a NEW name becomes active, an
+    // already known name is replaced but its active state is left as it was.
+    registerTool: (t) => {
+      if (!tools.has(t.name)) active.add(t.name);
+      tools.set(t.name, t);
+    },
+    getActiveTools: () => [...active],
+    setActiveTools: (names) => {
+      active.clear();
+      for (const n of names) active.add(n);
+    },
     sendMessage: (msg, opts) => messages.push({ msg, opts }),
   };
   return {
     pi,
     ctx,
     tools,
+    active,
     messages,
     notices,
     statuses,
@@ -109,6 +121,8 @@ const ENV_KEYS = [
   "FB_MODE",
   "FB_TOOLS",
   "FB_PAGINATE",
+  "FB_TOOLS_FILE",
+  "FB_CHANGED",
   "FB_REPLY",
 ];
 
@@ -248,6 +262,111 @@ test("factory alone raises nothing live", async () => {
   } finally {
     // A build that DID raise something leaves a child behind; shutdown reaps it,
     // so a red run stays a red run instead of a hang.
+    await rec.fire("session_shutdown");
+  }
+});
+
+// A rollout changed the server's tools under a live bridge, and the bridge says
+// notifications/tools/list_changed (#5406): the extension re-reads the list and
+// registers the new and changed tools, and a tool the server removed leaves the
+// active set (pi.setActiveTools) — registered tools cannot be unregistered.
+test("list_changed from the bridge re-registers the tools with the new list", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "iskron-ext-lc-"));
+  const toolsFile = join(dir, "tools.json");
+  const flag = join(dir, "changed");
+  const { env } = bridgeEnv("list-changed", { FB_TOOLS_FILE: toolsFile, FB_CHANGED: flag });
+  const rec = await session(env);
+  try {
+    assert.ok(rec.tools.has("iskron_channel"));
+    writeFileSync(
+      toolsFile,
+      JSON.stringify([
+        {
+          name: "iskron_channel",
+          description: "Канал, новое описание.",
+          inputSchema: { type: "object", properties: { action: { type: "string" } } },
+        },
+        { name: "iskron_new", description: "Новый тул.", inputSchema: { type: "object" } },
+      ]),
+    );
+    writeFileSync(flag, "");
+    const deadline = Date.now() + 5000;
+    while (!rec.tools.has("iskron_new") && Date.now() < deadline) await delay(50);
+    assert.ok(rec.tools.has("iskron_new"), "the new tool is registered");
+    assert.ok(
+      !rec.active.has("iskron_orient"),
+      "a tool the server dropped is taken out of the active set",
+    );
+    assert.ok(rec.active.has("iskron_new") && rec.active.has("iskron_channel"));
+    // The server brings the dropped tool back (a rollback): it must be active again.
+    writeFileSync(
+      toolsFile,
+      JSON.stringify([
+        {
+          name: "iskron_channel",
+          description: "Канал, новое описание.",
+          inputSchema: { type: "object" },
+        },
+        { name: "iskron_orient", description: "Ориентир.", inputSchema: { type: "object" } },
+      ]),
+    );
+    writeFileSync(flag, "");
+    const back = Date.now() + 5000;
+    while (!rec.active.has("iskron_orient") && Date.now() < back) await delay(50);
+    assert.ok(rec.active.has("iskron_orient"), "a tool the server returned is active again");
+    // Dropped again, then a new session raises a new bridge that lists it: active again.
+    writeFileSync(
+      toolsFile,
+      JSON.stringify([
+        {
+          name: "iskron_channel",
+          description: "Канал, новое описание.",
+          inputSchema: { type: "object" },
+        },
+      ]),
+    );
+    writeFileSync(flag, "");
+    const off = Date.now() + 5000;
+    while (rec.active.has("iskron_orient") && Date.now() < off) await delay(50);
+    assert.ok(!rec.active.has("iskron_orient"), "dropped once more");
+    writeFileSync(
+      toolsFile,
+      JSON.stringify([
+        {
+          name: "iskron_channel",
+          description: "Канал, новое описание.",
+          inputSchema: { type: "object" },
+        },
+        { name: "iskron_orient", description: "Ориентир.", inputSchema: { type: "object" } },
+      ]),
+    );
+    await rec.fire("session_shutdown");
+    await rec.fire("session_start");
+    const again = Date.now() + 8000;
+    while (!rec.active.has("iskron_orient") && Date.now() < again) await delay(50);
+    assert.ok(rec.active.has("iskron_orient"), "returned under a new bridge — active again");
+    // And a tool the server dropped between sessions, without list_changed: off at the next bridge.
+    writeFileSync(
+      toolsFile,
+      JSON.stringify([
+        {
+          name: "iskron_channel",
+          description: "Канал, новое описание.",
+          inputSchema: { type: "object" },
+        },
+      ]),
+    );
+    await rec.fire("session_shutdown");
+    await rec.fire("session_start");
+    const gone = Date.now() + 8000;
+    while (rec.active.has("iskron_orient") && Date.now() < gone) await delay(50);
+    assert.ok(
+      !rec.active.has("iskron_orient"),
+      "dropped between sessions — off under the new bridge",
+    );
+    assert.equal(rec.tools.get("iskron_channel").description, "Канал, новое описание.");
+    assert.match(rec.said(), /сервер сменил тулы/);
+  } finally {
     await rec.fire("session_shutdown");
   }
 });

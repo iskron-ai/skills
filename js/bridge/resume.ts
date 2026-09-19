@@ -34,6 +34,7 @@ import {
 } from "./hold.ts";
 import { type HoldRecord, keyOf, readHoldRecord } from "./holdrecord.ts";
 import { returnToStanding } from "./leave.ts";
+import { placeFields } from "./placefields.ts";
 import { publishStatus } from "./status.ts";
 import { standingLog } from "./store.ts";
 import { emit, log } from "./streams.ts";
@@ -199,6 +200,7 @@ export async function resumeBy(sel: ResumeSelector, register = true): Promise<Re
         realm: rec.realm,
         karta: rec.karta,
         name: rec.name,
+        ...placeFields(rec),
       });
       lines.push(r.isError ? `register отказал — ${short(r.text)}` : "register");
     }

@@ -241,6 +241,71 @@ test("a frame handed to a watchdog from the ring is not handed to the next one a
   await second.done;
 });
 
+// The exit watchdog leaves on the first frame: the rest of a batch that
+// waited without a listener is NOT delivered yet, so the next arm must get it.
+test("a batch from the ring is not lost to a watchdog that exits on the first frame", async (t) => {
+  const { fake, dir } = await connected(t);
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  for (const [id, body] of [
+    ["m-a", "первое без сторожа"],
+    ["m-b", "второе без сторожа"],
+  ])
+    await fake.control({ ws_send: JSON.stringify({ type: "message", id, body }) });
+  await new Promise((r) => setTimeout(r, 300));
+  const first = runClient("watchdog-exit", dir, undefined);
+  const r1 = await first.done;
+  assert.equal(r1.exit, 0, first.err);
+  const second = runClient("watchdog-exit", dir, undefined);
+  const r2 = await second.done;
+  assert.equal(r2.exit, 0, `the second arm must get the frame the first did not: ${second.err}`);
+  assert.ok(
+    (first.out + second.out).includes("первое") && (first.out + second.out).includes("второе"),
+    `both frames delivered, one per arm:\n${first.out}\n---\n${second.out}`,
+  );
+});
+
+// The platform may send a delivered frame again (same id, after the place came
+// back): no client gets it a second time — the bridge checks before it broadcasts.
+test("a frame the platform sends again is not printed twice", async (t) => {
+  const { fake, dir } = await connected(t);
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog", dir, undefined, 20_000);
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog");
+  const frame = JSON.stringify({ type: "message", id: "R-1", body: "одно слово дважды" });
+  await fake.control({ ws_send: frame });
+  await waitFor(() => wd.out.includes("одно слово дважды"), "the first print");
+  await new Promise((r) => setTimeout(r, 200));
+  await fake.control({ ws_send: frame });
+  await new Promise((r) => setTimeout(r, 600));
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+  assert.equal(wd.out.split("одно слово дважды").length - 1, 1, wd.out);
+});
+
+// The same on the live path: an exit watchdog attached while two frames land
+// back to back takes the first; the second is written to it but not delivered.
+test("a live batch is not lost to an attached watchdog that exits on the first frame", async (t) => {
+  const { fake, dir } = await connected(t);
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const first = runClient("watchdog-exit", dir, undefined);
+  await waitFor(
+    () => first.err.includes("слушаю") || first.out.includes("слушаю"),
+    "the first arm",
+    5000,
+  ).catch(() => {});
+  await new Promise((r) => setTimeout(r, 300));
+  for (const [id, body] of [
+    ["L-a", "живое первое"],
+    ["L-b", "живое второе"],
+  ])
+    await fake.control({ ws_send: JSON.stringify({ type: "message", id, body }) });
+  assert.equal((await first.done).exit, 0, first.err);
+  const second = runClient("watchdog-exit", dir, undefined);
+  assert.equal((await second.done).exit, 0, `the second arm gets the rest: ${second.err}`);
+  const both = first.out + second.out;
+  assert.ok(both.includes("живое первое") && both.includes("живое второе"), both);
+});
+
 test("a dead-token close leaves the watchdog loudly and reaches the harness as an error", async (t) => {
   const { fake, dir, bridge, key, standings } = await connected(t);
   await waitFor(() => fake.state.ws.size === 1, "the socket");
@@ -374,6 +439,93 @@ test("watchdog-codex puts a message frame into the Codex thread through the app-
   const r = await wd.done;
   assert.notEqual(r.exit, 0, "the watchdog must leave non-zero on a dead token");
   assert.match(wd.err, /токен мёртв/);
+});
+
+// A frame put into the Codex thread is delivered (#5428): the fallback exit
+// watchdog armed after it must not wake the doer on the same frame again.
+test("a frame put into the Codex thread is marked delivered — the fallback exit watchdog does not repeat it", async (t) => {
+  const { fake, dir, key } = await connected(t);
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const home = mkdtempSync("/tmp/cxd-");
+  const sock = join(home, "app-server-control", "app-server-control.sock");
+  const log = join(home, "door.log");
+  writeFileSync(log, "");
+  const door = await startFakeCodex(sock, log);
+  t.after(() => door.stop());
+  const wd = runClient("watchdog-codex", dir, key, 15000, {
+    CODEX_HOME: home,
+    CODEX_THREAD_ID: "thread-7",
+  });
+  await waitFor(() => wd.err.includes("слушаю стояние"), "the codex watchdog to attach");
+  await fake.control({
+    ws_send: JSON.stringify({ type: "message", id: "cx-1", body: "в тред Codex" }),
+  });
+  await waitFor(() => readFileSync(log, "utf8").includes("turn/start"), "the frame in the thread");
+  await new Promise((r) => setTimeout(r, 200));
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+  const fallback = runClient("watchdog-exit", dir, key, 2500);
+  const r = await fallback.done;
+  assert.ok(!fallback.out.includes("в тред Codex"), `woke twice on one frame:\n${fallback.out}`);
+  assert.equal(r.exit, null, "nothing new — the fallback keeps waiting");
+});
+
+// Delivered is what the thread ACCEPTED: a refused turn/start (a thread the
+// daemon does not know) marks nothing, and the fallback exit watchdog gets it.
+test("a frame the Codex thread refused is not marked — the fallback exit watchdog gets it", async (t) => {
+  const { fake, dir, key } = await connected(t);
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const home = mkdtempSync("/tmp/cxd-");
+  const sock = join(home, "app-server-control", "app-server-control.sock");
+  const log = join(home, "door.log");
+  writeFileSync(log, "");
+  const door = await startFakeCodex(sock, log);
+  t.after(() => door.stop());
+  const wd = runClient("watchdog-codex", dir, key, 15000, {
+    CODEX_HOME: home,
+    CODEX_THREAD_ID: "no-such-thread",
+  });
+  await waitFor(() => wd.err.includes("слушаю стояние"), "the codex watchdog to attach");
+  await fake.control({
+    ws_send: JSON.stringify({ type: "message", id: "cx-refused", body: "тред не принял" }),
+  });
+  await waitFor(() => wd.err.includes("тред не принял кадр"), "the refusal said aloud");
+  assert.ok(
+    !wd.err.includes("кадр вложен в тред"),
+    `«вложен» is said only on acceptance:\n${wd.err}`,
+  );
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+  const fallback = runClient("watchdog-exit", dir, key);
+  assert.equal((await fallback.done).exit, 0, fallback.err);
+  assert.ok(fallback.out.includes("тред не принял"), fallback.out);
+});
+
+// A frame that arrived between two arms of the Codex watchdog is in the ring,
+// undelivered: the next arm puts it into the thread instead of skipping it.
+test("a frame that waited in the ring reaches the Codex thread on the next arm", async (t) => {
+  const { fake, dir, key } = await connected(t);
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  await fake.control({
+    ws_send: JSON.stringify({ type: "message", id: "cx-gap", body: "между взводами" }),
+  });
+  await new Promise((r) => setTimeout(r, 300));
+  const home = mkdtempSync("/tmp/cxd-");
+  const sock = join(home, "app-server-control", "app-server-control.sock");
+  const log = join(home, "door.log");
+  writeFileSync(log, "");
+  const door = await startFakeCodex(sock, log);
+  t.after(() => door.stop());
+  const wd = runClient("watchdog-codex", dir, key, 15000, {
+    CODEX_HOME: home,
+    CODEX_THREAD_ID: "thread-9",
+  });
+  await waitFor(
+    () => readFileSync(log, "utf8").includes("между взводами"),
+    "the gap frame in the thread",
+  );
+  wd.proc.kill("SIGKILL");
+  await wd.done;
 });
 
 test("watchdog-codex refuses to guess: no thread id or no door is a code-2 exit that names the move", async (t) => {
@@ -599,6 +751,27 @@ test("a tool list changed under a re-opened session is announced as list_changed
   );
 });
 
+// The shared cache may carry iskron_stand written by another build of the
+// bridge; a list served from it must carry THIS build's definition.
+test("a cached list serves this build's iskron_stand, not the one another build cached", async (t) => {
+  const { fake, dir, bridge } = await connected(t);
+  await bridge.call("tools/list", 20, {});
+  const cacheFile = readdirSync(dir).find((f) => f.endsWith(".server-answers"));
+  const cache = JSON.parse(readFileSync(join(dir, cacheFile), "utf8"));
+  for (const tool of cache.tools.tools)
+    if (tool.name === "iskron_stand") tool.description = "ПРЕЖНЯЯ СБОРКА";
+  writeFileSync(join(dir, cacheFile), JSON.stringify(cache));
+  await bridge.stop();
+  await fake.stop(); // no network: the second bridge answers from the cache
+  const second = startBridge(fake.mcpUrl, dir);
+  t.after(() => second.stop());
+  await second.call("initialize", 1, INIT);
+  const listed = await second.call("tools/list", 2, {});
+  assert.ok(listed.result?.tools, `served from the cache: ${JSON.stringify(listed)}`);
+  const stand = listed.result.tools.find((x) => x.name === "iskron_stand");
+  assert.ok(stand && !stand.description.includes("ПРЕЖНЯЯ СБОРКА"), JSON.stringify(stand));
+});
+
 // The shared answers cache keeps the form the harness gets — with the bridge's
 // own tool — or the next start without network serves a list without it, and a
 // cached list must not read as a changed one once the session opens (#5405).
@@ -675,6 +848,47 @@ test("the silence window has a floor of its own: a short ping does not shorten i
   assert.equal(fake.state.counts.ws_upgrades, 1, "three short intervals are not yet silence");
   assert.ok(!/подвисло/.test(bridge.stderr), bridge.stderr);
   await waitFor(() => fake.state.counts.ws_upgrades >= 2, "the reopen past the floor", 8000);
+});
+
+// The five-call path names the place too (#5174): an agent's own connect and
+// register carry the bridge's build sign next to the agent's attrs, and the
+// re-bind after a rebuilt session carries both — attrs replace whole.
+test("proxied connect and the re-bind after a rebuilt session carry model and attrs whole", async (t) => {
+  const fake = await startFakeNks();
+  const dir = mkdtempSync(join(tmpdir(), "iskron-standing-"));
+  const bridge = startBridge(fake.mcpUrl, dir);
+  t.after(async () => {
+    await bridge.stop();
+    await fake.stop();
+  });
+  const pending = await bridge.call("initialize", 1, INIT);
+  await fetch(authorizeUrlIn(pending.error?.message), { redirect: "follow" }).then((r) => r.text());
+  await waitFor(() => readdirSync(dir).some((f) => f.endsWith(".json")), "the grant");
+  await bridge.call("initialize", 2, INIT);
+  const own = { worktree: "w1" };
+  await bridge.call("tools/call", 3, {
+    name: "iskron_channel",
+    arguments: { ...CONNECT, karta: "#931", name: " proba ", model: "opus-5", attrs: own },
+  });
+  await bridge.call("tools/call", 4, {
+    name: "iskron_channel",
+    arguments: { realm: "nks-dev", action: "register", karta: 931, name: "proba" },
+  });
+  const connect = fake.state.placeArgs.find((x) => x.action === "connect");
+  assert.equal(connect?.model, "opus-5", JSON.stringify(fake.state.placeArgs));
+  assert.equal(connect?.attrs?.worktree, "w1", "the agent's own attrs ride");
+  assert.equal(connect?.attrs?.build?.name, "iskron-bridge", "the build sign rides next to them");
+  const before = fake.state.placeArgs.length;
+  await fake.control({ kill_session: true });
+  await bridge.call("tools/call", 5, {
+    name: "iskron_channel",
+    arguments: { realm: "nks-dev", action: "send", karta: 931, text: "после пересборки" },
+  });
+  const rebind = fake.state.placeArgs.slice(before).find((x) => x.action === "register");
+  assert.ok(rebind, `a re-bind happened: ${JSON.stringify(fake.state.placeArgs.slice(before))}`);
+  assert.equal(rebind.attrs?.build?.name, "iskron-bridge", "the re-bind keeps the build sign");
+  assert.equal(rebind.attrs?.worktree, "w1", "the re-bind keeps the agent's attrs");
+  assert.equal(rebind.model, "opus-5");
 });
 
 // Two bridges under one grant — a session with both the plugin's and the user's

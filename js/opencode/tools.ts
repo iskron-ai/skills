@@ -27,12 +27,14 @@ import {
   handshake,
   listTools,
   readCache,
+  refreshToolList,
   sleep,
   textOf,
   writeCache,
 } from "./bridge-io.ts";
 import { createKeeper, type KeptSlot, takeLostMarker, WATCH_MS, writeLostMarker } from "./keep.ts";
 import type { Context } from "./plugin.ts";
+import { statusLines } from "./status.ts";
 
 export type Say = (text: string, level: "info" | "warning" | "error") => void;
 
@@ -159,6 +161,7 @@ export async function setupTools(
       path,
       (line) => say(`Искрон/мост: ${line}`, "info"),
       (method, params) => {
+        if (method === "notifications/tools/list_changed") return void relist(slot.bridge); // #5406
         if (method !== "notifications/message" || params?.logger !== "iskron-channel") return;
         const kind = params?.data?.kind;
         // holding питается наблюдаемым событием — словом моста «держу» и hello,
@@ -311,20 +314,17 @@ export async function setupTools(
     serverSeen: false,
   };
 
-  function statusText(): string {
-    return [
-      `мост: ${path}`,
-      builds,
-      loginPending
-        ? `вход: НЕ ВЫПОЛНЕН — ${loginUrl ? `открой в браузере ${loginUrl}` : "заверши вход в браузере"}. ` +
-          "Адрес локальный: с другой машины — ssh -L <порт>:127.0.0.1:<порт>, либо личный токен в ~/.iskron-bridge/token (скилл establish-mcp)."
-        : state.serverSeen
-          ? "вход: есть, сервер отвечает"
-          : "вход: мост ещё не ответил (рукопожатие идёт)",
-      `тулов iskron_*: ${state.listed.length} (${state.source})`,
-      `мостов живых: ${slots.size + (spare ? 1 : 0)}, сессий с мостом: ${slots.size}`,
-    ].join("\n");
-  }
+  const relist = (b: Bridge | null) =>
+    b &&
+    refreshToolList(
+      b,
+      state,
+      () => ctx.tool.reload(),
+      say,
+      () => !stopped,
+    );
+  const statusText = (): string =>
+    statusLines(path, builds, { loginPending, loginUrl }, state, slots.size, spare ? 1 : 0);
 
   await ctx.tool.transform((editor) => {
     editor.add({

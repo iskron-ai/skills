@@ -9,6 +9,8 @@
 import { writeSync } from "node:fs";
 
 import { frameToText } from "../shared/frame-text.ts";
+import { noteSeen, seenIds } from "../shared/seen.ts";
+import { seenFilePathOf } from "../shared/standings.ts";
 import { attach, resolveStanding } from "./client.ts";
 
 // Monitor Claude Code режет строку события длиннее ~500 знаков (наблюдено:
@@ -66,6 +68,9 @@ export function runWatchdog(argv: string[]): void {
     writeSync(2, `ДЕЛАТЕЛЬ: ${target.error}\n`);
     process.exit(2);
   }
+  // Напечатанный кадр — отданный: пометка его, а не записи моста, держит перевзвод от повтора.
+  const seenPath = seenFilePathOf(target.authDir, target.key);
+  const seen = seenIds(seenPath);
   attach(target.path, {
     onEvent: (ev) => {
       switch (ev.kind) {
@@ -81,6 +86,7 @@ export function runWatchdog(argv: string[]): void {
             break;
           }
           for (const line of wrapLines(frameToText(f, ev.raw ?? ""))) log(line);
+          if (typeof f.id === "string" && f.id) noteSeen(seenPath, f.id, seen); // после печати
           break;
         }
         case "note":
@@ -88,6 +94,8 @@ export function runWatchdog(argv: string[]): void {
           break;
         case "stale":
           for (const line of wrapLines(ev.text ?? "")) log(line); // одна пачка — одно событие
+          for (const f of ev.frames ?? [])
+            if (typeof f.id === "string" && f.id) noteSeen(seenPath, f.id, seen); // напечатана — отдана
           break;
         case "dead":
         case "evicted":

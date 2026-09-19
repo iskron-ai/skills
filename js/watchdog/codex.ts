@@ -15,6 +15,8 @@ import { join } from "node:path";
 
 import { type Door, openDoor } from "../shared/appserver.ts";
 import { frameToText } from "../shared/frame-text.ts";
+import { noteSeen, seenIds } from "../shared/seen.ts";
+import { seenFilePathOf } from "../shared/standings.ts";
 import { attach, parseWatchdogArgs, resolveStanding } from "./client.ts";
 
 const note = (s: string): void => {
@@ -47,6 +49,9 @@ export function runWatchdogCodex(argv: string[]): void {
     process.exit(2);
   }
   parseWatchdogArgs(argv); // валидность флагов — там же
+  const seenPath = seenFilePathOf(target.authDir, target.key);
+  const seen = seenIds(seenPath);
+  const waiting = new Map<number, string[]>(); // id запроса turn/start → id кадров, ждущих подтверждения
 
   let door: Door | null = null;
   let ready: Promise<Door> | null = null;
@@ -56,9 +61,25 @@ export function runWatchdogCodex(argv: string[]): void {
     if (ready) return ready;
     ready = openDoor(
       socketPath,
-      () => {},
+      (m) => {
+        // Доставлен кадр, когда тред ПРИНЯЛ turn/start, — не когда запрос ушёл (#5428).
+        // Встречный запрос демона (есть method) — не ответ, даже при совпавшем id.
+        const ids = !m?.method && typeof m?.id === "number" ? waiting.get(m.id) : undefined;
+        if (!ids) return;
+        waiting.delete(m.id);
+        if (m.error) return note(`ДЕЛАТЕЛЬ: тред не принял кадр — ${m.error.message ?? "отказ"}`);
+        note(`кадр вложен в тред ${threadId}`);
+        for (const id of ids) noteSeen(seenPath, id, seen);
+      },
       (why) => {
-        note(`дверь закрылась: ${why} — открою заново на следующем кадре`);
+        const lost = [...waiting.values()].flat();
+        waiting.clear();
+        note(
+          `дверь закрылась: ${why} — открою заново на следующем кадре` +
+            (lost.length
+              ? `; без ответа: ${lost.join(", ")} — вернутся из кольца следующим взводом`
+              : ""),
+        );
         door = null;
         ready = null;
       },
@@ -79,39 +100,47 @@ export function runWatchdogCodex(argv: string[]): void {
     return ready;
   }
 
-  async function deliver(text: string): Promise<void> {
+  async function deliver(text: string, ids: string[] = []): Promise<void> {
     try {
       const d = door ?? (await open());
+      const reqId = nextId++;
+      waiting.set(reqId, ids);
       d.send({
         method: "turn/start",
-        id: nextId++,
+        id: reqId,
         params: { threadId, input: [{ type: "text", text }], turnTrigger: "iskron-channel" },
       });
-      note(`кадр вложен в тред ${threadId}`);
+      note(`кадр отправлен в тред ${threadId}`);
     } catch (e) {
       note(`ДЕЛАТЕЛЬ: кадр не вложился — ${(e as Error).message}`);
     }
   }
 
-  // Мост отдаёт прицепившемуся кольцо последних кадров задним числом — для лога
-  // это память, для двери это повторная побудка тем же словом. Кольцо пропускаем:
-  // недоставленное за глухоту служба и так пришлёт заново на переподключении.
+  // Мост отдаёт из кольца задним числом только то, что никто не доставил (#5428),
+  // — это кадры, пришедшие между взводами: их вкладываем, как живые. Кадр без id
+  // пометить нечем, и из кольца он пришёл бы на каждом взводе — такой пропускаем.
   let replay = 0;
   attach(target.path, {
     onEvent: (ev) => {
       switch (ev.kind) {
         case "frame": {
-          if (replay > 0) {
-            replay--;
-            return note("кадр из кольца моста — уже был, в тред не кладу");
-          }
+          const fromRing = replay > 0;
+          if (fromRing) replay--;
           const type = ev.frame?.type;
           if (type !== "message") return note(`кадр ${type ?? "не разобран"} — не повод будить`);
-          void deliver(frameToText(ev.frame, ev.raw ?? ""));
+          if (fromRing && typeof ev.frame?.id !== "string")
+            return note("кадр без id из кольца — пометить нечем, в тред не кладу повторно");
+          void deliver(
+            frameToText(ev.frame, ev.raw ?? ""),
+            typeof ev.frame?.id === "string" ? [ev.frame.id] : [],
+          );
           break;
         }
         case "stale":
-          void deliver(ev.text ?? "Искрон: лежалые кадры"); // одна пачка — один ход
+          void deliver(
+            ev.text ?? "Искрон: лежалые кадры",
+            (ev.frames ?? []).map((f) => f.id).filter((x): x is string => typeof x === "string"),
+          ); // одна пачка — один ход
           break;
         case "dead":
         case "evicted":
