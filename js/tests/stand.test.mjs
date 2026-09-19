@@ -599,6 +599,10 @@ test("iskron_stand: a derived name another live session holds yields a separate 
   assert.ok(!r.result?.isError, standText(r));
   assert.equal(placeOf(r), `${base}.2`, standText(r));
   assert.ok(standText(r).includes(`место ${base} держит живая сессия`), standText(r));
+  assert.ok(
+    standText(r).includes(`вернись: iskron_stand(name="${base}", take=true)`),
+    "the answer names the way back to one's own place",
+  );
   assert.equal(fake.state.counts.connect, connects + 1, "one connect — for the new place");
   assert.equal(fake.state.ws.size, 2, "the first session keeps its socket");
   assert.equal(fake.state.counts.webhooks_added, hooks, "no role-inbox hook for a separate place");
