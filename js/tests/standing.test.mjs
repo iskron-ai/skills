@@ -223,7 +223,7 @@ test("watchdog attaches with no secret and prints what the service sends", async
 // the ring — and is then delivered: re-arming the watchdog (Monitor ends every
 // 30 minutes) must not bring it again, only the proof of holding (hello).
 test("a frame handed to a watchdog from the ring is not handed to the next one again", async (t) => {
-  const { fake, dir } = await connected(t);
+  const { fake, dir, standings } = await connected(t);
   await waitFor(() => fake.state.ws.size === 1, "the socket");
   await fake.control({
     ws_send: JSON.stringify({ type: "message", id: "m-ring-1", body: "пришло без сторожа" }),
@@ -231,6 +231,15 @@ test("a frame handed to a watchdog from the ring is not handed to the next one a
   await new Promise((r) => setTimeout(r, 300));
   const first = runClient("watchdog", dir, undefined);
   await waitFor(() => first.out.includes("пришло без сторожа"), "the first watchdog to get it");
+  // Сторож метит кадр сразу после печати; убить его в этот зазор — законная
+  // повторная доставка «хотя бы раз», а не то, что проверяет эта проба (#5516).
+  await waitFor(
+    () =>
+      readdirSync(standings).some(
+        (f) => f.endsWith(".seen") && readFileSync(join(standings, f), "utf8").includes("m-ring-1"),
+      ),
+    "the first watchdog to mark the frame delivered",
+  );
   first.proc.kill("SIGKILL");
   await first.done;
   const second = runClient("watchdog", dir, undefined);
