@@ -138,7 +138,8 @@ const waitSeen = (standings, id) =>
   waitFor(
     () =>
       readdirSync(standings).some(
-        (f) => f.endsWith(".seen") && readFileSync(join(standings, f), "utf8").includes(id),
+        (f) =>
+          f.endsWith(".seen") && readFileSync(join(standings, f), "utf8").split("\n").includes(id),
       ),
     `the watchdog to mark ${id} delivered`,
   );

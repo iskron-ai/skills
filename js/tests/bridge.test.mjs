@@ -1560,7 +1560,11 @@ test("a foreign squatter on the callback port does not make login impossible", a
     const d = createHash("sha256").update(new URL(fake.mcpUrl).origin).digest();
     const squatted = 42000 + ((d[0] * 256 + d[1]) % 2000);
     const squatter = createServer(() => {});
-    await new Promise((r) => squatter.listen(squatted, "127.0.0.1", r));
+    // Порт, уже занятый параллельной пробой, — та же ступень, держимая чужим (#5516).
+    await new Promise((r) => {
+      squatter.once("error", (e) => (e.code === "EADDRINUSE" ? r() : r(Promise.reject(e))));
+      squatter.listen(squatted, "127.0.0.1", r);
+    });
     try {
       const bridge = spawnBridge();
       const url = await authorize(bridge, dir);
@@ -1571,7 +1575,7 @@ test("a foreign squatter on the callback port does not make login impossible", a
       );
       assert.ok((await bridge.call("tools/list", 2)).result, "and the login must serve as usual");
     } finally {
-      await new Promise((r) => squatter.close(r));
+      await new Promise((r) => (squatter.listening ? squatter.close(r) : r()));
     }
   });
 });
