@@ -109,6 +109,8 @@ const ENV_KEYS = [
   "FB_MODE",
   "FB_TOOLS",
   "FB_PAGINATE",
+  "FB_TOOLS_FILE",
+  "FB_CHANGED",
   "FB_REPLY",
 ];
 
@@ -248,6 +250,40 @@ test("factory alone raises nothing live", async () => {
   } finally {
     // A build that DID raise something leaves a child behind; shutdown reaps it,
     // so a red run stays a red run instead of a hang.
+    await rec.fire("session_shutdown");
+  }
+});
+
+// A rollout changed the server's tools under a live bridge, and the bridge says
+// notifications/tools/list_changed (#5406): the extension re-reads the list and
+// registers the new and changed tools; pi has no way to drop a tool, so a tool
+// the server removed stays until restart — the probe asserts only what pi can do.
+test("list_changed from the bridge re-registers the tools with the new list", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "iskron-ext-lc-"));
+  const toolsFile = join(dir, "tools.json");
+  const flag = join(dir, "changed");
+  const { env } = bridgeEnv("list-changed", { FB_TOOLS_FILE: toolsFile, FB_CHANGED: flag });
+  const rec = await session(env);
+  try {
+    assert.ok(rec.tools.has("iskron_channel"));
+    writeFileSync(
+      toolsFile,
+      JSON.stringify([
+        {
+          name: "iskron_channel",
+          description: "Канал, новое описание.",
+          inputSchema: { type: "object", properties: { action: { type: "string" } } },
+        },
+        { name: "iskron_new", description: "Новый тул.", inputSchema: { type: "object" } },
+      ]),
+    );
+    writeFileSync(flag, "");
+    const deadline = Date.now() + 5000;
+    while (!rec.tools.has("iskron_new") && Date.now() < deadline) await delay(50);
+    assert.ok(rec.tools.has("iskron_new"), "the new tool is registered");
+    assert.equal(rec.tools.get("iskron_channel").description, "Канал, новое описание.");
+    assert.match(rec.said(), /сервер сменил тулы/);
+  } finally {
     await rec.fire("session_shutdown");
   }
 });

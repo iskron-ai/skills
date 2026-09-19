@@ -162,6 +162,8 @@ const ENV_KEYS = [
   "FB_AUTHED",
   "FB_TOOLS",
   "FB_PAGINATE",
+  "FB_TOOLS_FILE",
+  "FB_CHANGED",
   "FB_REPLY",
   "FB_EVENTS",
   "FB_CALLS",
@@ -283,6 +285,36 @@ test("every bridge tool stands under its own name, with the server's JSON Schema
       /сборка: мост v\S+\+[0-9a-f]{8}, плагин v\S+/,
       "the status names both builds — the doer answers which build holds without reading files",
     );
+  } finally {
+    await rec.stop();
+  }
+});
+
+// The server changed its tools under a live bridge (a rollout), and the bridge
+// says notifications/tools/list_changed (#5406): the plugin re-reads the list
+// and reloads its transforms — the session sees the new tool without a restart.
+test("list_changed from the bridge re-reads the tools and reloads them", async () => {
+  const toolsFile = join(SANDBOX, "changed-tools.json");
+  const flag = join(SANDBOX, "changed-flag");
+  const b = bridgeEnv("list-changed", { FB_TOOLS_FILE: toolsFile, FB_CHANGED: flag });
+  const rec = await plugin(b.env);
+  try {
+    await serverTools(rec);
+    await rec.call("iskron_channel", { action: "connect" }, "s-lc");
+    const channel = {
+      name: "iskron_channel",
+      description: "Живой канал делателя.",
+      inputSchema: { type: "object", properties: { action: { type: "string" } } },
+    };
+    const fresh = {
+      name: "iskron_new",
+      description: "Новый тул.",
+      inputSchema: { type: "object" },
+    };
+    writeFileSync(toolsFile, JSON.stringify([channel, fresh]));
+    writeFileSync(flag, "");
+    await until(() => rec.tools().has("iskron_new"), "the new tool after list_changed");
+    assert.match(rec.said(), /сервер сменил тулы/);
   } finally {
     await rec.stop();
   }

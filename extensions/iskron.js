@@ -505,6 +505,7 @@ function setupBridge(pi, onChannel) {
       (method, params) => {
         if (method === "notifications/message" && params?.logger === "iskron-channel")
           onChannel(params);
+        if (method === "notifications/tools/list_changed") void relist(b);
       }
     );
     bridge = b;
@@ -552,53 +553,78 @@ function setupBridge(pi, onChannel) {
       cursor = page?.nextCursor;
     } while (cursor);
     if (bridge !== b) return b.stop();
-    for (const tool of tools) {
-      const name = String(tool.name);
-      pi.registerTool({
-        name,
-        label: name,
-        description: String(tool.description ?? ""),
-        promptSnippet: snippet(String(tool.description ?? "")),
-        parameters: toParameters(tool.inputSchema),
-        async execute(_toolCallId, params, signal, onUpdate, _c) {
-          const live = bridge;
-          if (!live) throw new Error(`${name}: мост не поднят в этой сессии`);
-          const started = Date.now();
-          onUpdate?.({ content: [{ type: "text", text: `Искрон: ${name}…` }], details: {} });
-          const tick = setInterval(() => {
-            onUpdate?.({
-              content: [
-                {
-                  type: "text",
-                  text: `Искрон: ${name} — ещё жду, ${Math.round((Date.now() - started) / 1e3)} с`
-                }
-              ],
-              details: {}
-            });
-          }, TICK_MS);
-          tick.unref?.();
-          try {
-            const result = await live.request(
-              "tools/call",
-              { name, arguments: params ?? {} },
-              { signal }
-              // потолка нет: первый вызов может уйти в браузер к человеку
-            );
-            if (result?.isError) {
-              const text = resultToContent(result).map((c) => c.type === "text" ? c.text : "[image]").join("\n");
-              throw new Error(text || `${name}: отказ без текста`);
+    function registerAll(list) {
+      for (const tool of list) {
+        const name = String(tool.name);
+        pi.registerTool({
+          name,
+          label: name,
+          description: String(tool.description ?? ""),
+          promptSnippet: snippet(String(tool.description ?? "")),
+          parameters: toParameters(tool.inputSchema),
+          async execute(_toolCallId, params, signal, onUpdate, _c) {
+            const live = bridge;
+            if (!live) throw new Error(`${name}: мост не поднят в этой сессии`);
+            const started = Date.now();
+            onUpdate?.({ content: [{ type: "text", text: `Искрон: ${name}…` }], details: {} });
+            const tick = setInterval(() => {
+              onUpdate?.({
+                content: [
+                  {
+                    type: "text",
+                    text: `Искрон: ${name} — ещё жду, ${Math.round((Date.now() - started) / 1e3)} с`
+                  }
+                ],
+                details: {}
+              });
+            }, TICK_MS);
+            tick.unref?.();
+            try {
+              const result = await live.request(
+                "tools/call",
+                { name, arguments: params ?? {} },
+                { signal }
+                // потолка нет: первый вызов может уйти в браузер к человеку
+              );
+              if (result?.isError) {
+                const text = resultToContent(result).map((c) => c.type === "text" ? c.text : "[image]").join("\n");
+                throw new Error(text || `${name}: отказ без текста`);
+              }
+              const content = resultToContent(result);
+              return {
+                content,
+                details: { tool: name, structuredContent: result?.structuredContent }
+              };
+            } finally {
+              clearInterval(tick);
             }
-            const content = resultToContent(result);
-            return {
-              content,
-              details: { tool: name, structuredContent: result?.structuredContent }
-            };
-          } finally {
-            clearInterval(tick);
           }
-        }
-      });
+        });
+      }
     }
+    async function relist(from) {
+      if (bridge !== from) return;
+      try {
+        const fresh = [];
+        let next;
+        do {
+          const page = await from.request("tools/list", next ? { cursor: next } : {}, {
+            timeoutMs: HANDSHAKE_MS
+          });
+          for (const t of page?.tools ?? []) fresh.push(t);
+          next = page?.nextCursor;
+        } while (next);
+        if (bridge !== from) return;
+        registerAll(fresh);
+        notify(`Искрон: сервер сменил тулы — в сессии зарегистрировано ${fresh.length}.`, "info");
+      } catch (e) {
+        notify(
+          `Искрон: список тулов после смены на сервере не перечитан — ${e.message}`,
+          "warning"
+        );
+      }
+    }
+    registerAll(tools);
     const server = init?.serverInfo;
     notify(
       `Искрон: мост поднят (${server?.name ?? "сервер"} ${server?.version ?? ""}), тулов в сессии: ${tools.length}${toldLogin ? " — вход состоялся" : ""}.`,

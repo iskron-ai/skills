@@ -171,3 +171,29 @@ export function textOf(result: any): string {
 }
 
 /* eslint-enable @typescript-eslint/no-explicit-any */
+
+/**
+ * Сервер сменил тулы под переоткрытой сессией моста, и мост сказал list_changed
+ * (#5406): перечитать список тем же путём, каким приходит первый, и подменить.
+ */
+export async function refreshToolList(
+  b: Bridge,
+  state: { listed: any[]; source: string },
+  reload: () => Promise<void>,
+  say: (text: string, level: "info" | "warning") => void,
+): Promise<void> {
+  try {
+    const list = await listTools(b);
+    if (JSON.stringify(list) === JSON.stringify(state.listed)) return;
+    state.listed = list;
+    state.source = "с сервера";
+    writeCache(list);
+    await reload();
+    say(`Искрон: сервер сменил тулы — в сессии теперь ${list.length}.`, "info");
+  } catch (e) {
+    say(
+      `Искрон: список тулов после смены на сервере не перечитан — ${(e as Error).message}`,
+      "warning",
+    );
+  }
+}

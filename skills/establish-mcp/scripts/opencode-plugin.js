@@ -401,6 +401,22 @@ async function listTools(b) {
 function textOf(result) {
   return resultToContent(result).map((c) => c.type === "text" ? c.text : "[image]").join("\n");
 }
+async function refreshToolList(b, state2, reload, say) {
+  try {
+    const list = await listTools(b);
+    if (JSON.stringify(list) === JSON.stringify(state2.listed)) return;
+    state2.listed = list;
+    state2.source = "с сервера";
+    writeCache(list);
+    await reload();
+    say(`Искрон: сервер сменил тулы — в сессии теперь ${list.length}.`, "info");
+  } catch (e) {
+    say(
+      `Искрон: список тулов после смены на сервере не перечитан — ${e.message}`,
+      "warning"
+    );
+  }
+}
 
 // js/opencode/keep.ts
 import { mkdirSync as mkdirSync2, readdirSync as readdirSync2, readFileSync as readFileSync3, unlinkSync, writeFileSync as writeFileSync2 } from "node:fs";
@@ -541,6 +557,17 @@ function createKeeper(doors) {
   };
 }
 
+// js/opencode/status.ts
+function statusLines(path, builds, login, state2, sessions, spare) {
+  return [
+    `мост: ${path}`,
+    builds,
+    login.loginPending ? `вход: НЕ ВЫПОЛНЕН — ${login.loginUrl ? `открой в браузере ${login.loginUrl}` : "заверши вход в браузере"}. Адрес локальный: с другой машины — ssh -L <порт>:127.0.0.1:<порт>, либо личный токен в ~/.iskron-bridge/token (скилл establish-mcp).` : state2.serverSeen ? "вход: есть, сервер отвечает" : "вход: мост ещё не ответил (рукопожатие идёт)",
+    `тулов iskron_*: ${state2.listed.length} (${state2.source})`,
+    `мостов живых: ${sessions + spare}, сессий с мостом: ${sessions}`
+  ].join("\n");
+}
+
 // js/opencode/tools.ts
 var IDLE_MS = Number(process.env.ISKRON_BRIDGE_IDLE_MS || 30 * 6e4);
 if (IDLE_MS <= WATCH_MS)
@@ -618,6 +645,7 @@ async function setupTools(ctx, say, onChannel, rootOf) {
       path,
       (line) => say(`Искрон/мост: ${line}`, "info"),
       (method, params) => {
+        if (method === "notifications/tools/list_changed") return void relist(slot.bridge);
         if (method !== "notifications/message" || params?.logger !== "iskron-channel") return;
         const kind = params?.data?.kind;
         if (kind === "held" || kind === "attached" || params?.data?.frame?.type === "hello")
@@ -733,15 +761,8 @@ async function setupTools(ctx, say, onChannel, rootOf) {
     source: "из прошлого списка",
     serverSeen: false
   };
-  function statusText() {
-    return [
-      `мост: ${path}`,
-      builds,
-      loginPending ? `вход: НЕ ВЫПОЛНЕН — ${loginUrl ? `открой в браузере ${loginUrl}` : "заверши вход в браузере"}. Адрес локальный: с другой машины — ssh -L <порт>:127.0.0.1:<порт>, либо личный токен в ~/.iskron-bridge/token (скилл establish-mcp).` : state2.serverSeen ? "вход: есть, сервер отвечает" : "вход: мост ещё не ответил (рукопожатие идёт)",
-      `тулов iskron_*: ${state2.listed.length} (${state2.source})`,
-      `мостов живых: ${slots.size + (spare ? 1 : 0)}, сессий с мостом: ${slots.size}`
-    ].join("\n");
-  }
+  const relist = (b) => b && refreshToolList(b, state2, () => ctx.tool.reload(), say);
+  const statusText = () => statusLines(path, builds, { loginPending, loginUrl }, state2, slots.size, spare ? 1 : 0);
   await ctx.tool.transform((editor) => {
     editor.add({
       name: STATUS_TOOL,
