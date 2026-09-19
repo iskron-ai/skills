@@ -10,7 +10,7 @@
 import { statSync } from "node:fs";
 import { isAbsolute } from "node:path";
 
-import { nameOf, parseBoard } from "./board.ts";
+import { freeSuffix, listens, nameOf, parseBoard, suffixOf } from "./board.ts";
 import { callTool as call, leadsOtherPlace, otherPlaceWord, short } from "./call.ts";
 import { CFG } from "./config.ts";
 import {
@@ -167,7 +167,7 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   }
   const parts = asked ? null : deriveParts(model, cwd);
   const fitted = parts ? fitName(parts) : null;
-  const name = asked || (fitted?.name ?? "");
+  let name = asked || (fitted?.name ?? "");
   if (parts && fitted && fitted.cut.length) {
     const what = fitted.cut
       .map((k) => (k === "repo" ? "репо" : k === "host" ? "машина" : "модель"))
@@ -181,6 +181,10 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
       "model не передан — имя без третьей части (машина.репо): вторая сессия этой машины над этим репозиторием сойдётся на то же место; передай model, чтобы различать",
     );
   }
+  // Мост уже стоит на отдельном месте `имя.N` (#5402) — повторный вызов туда же.
+  const led0 = state.standing;
+  if (!asked && led0 && String(led0.karta) === String(karta) && suffixOf(name, led0.name ?? ""))
+    name = led0.name ?? name;
   const room = typeof a.room === "string" && a.room.trim() ? a.room.trim() : null;
   // Стояние одно на мост (#5154): другое место при ведомом своём — только по
   // явному take=true; иначе отказ вслух, и ничего не тронуто.
@@ -207,7 +211,27 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   // Пустой граф сервер печатает без заголовка: «Ни одна роль этого графа не держит канала» — законная пустота.
   const empty = /не держит канала/i.test(board.text); // ровно наблюдённая фраза сервера 0.43
   const recognized = !!header || empty || entries.length > 0;
-  const own = entries.filter((e) => e.karta === karta && nameOf(e.address) === name);
+  let own = entries.filter((e) => e.karta === karta && nameOf(e.address) === name);
+  // Выведенное имя слушает живой мост другой сессии (не мёртвый предшественник):
+  // равное имя — не тот же делатель; отдельное место `имя.N` вместо вытеснения (#5402).
+  if (
+    !asked &&
+    a.take !== true &&
+    own.length === 1 &&
+    listens(own[0]) &&
+    !holdsStanding(realm, karta, name) &&
+    !(await deadPredecessor(realm, karta, name))
+  ) {
+    const base = name;
+    const alt = freeSuffix(entries, karta, base, (n) => holdsStanding(realm, karta, n));
+    if (alt) {
+      name = alt;
+      own = entries.filter((e) => e.karta === karta && nameOf(e.address) === name);
+      nameNotes.push(
+        `место ${base} слушает живая сессия другого моста — занимаю отдельное место ${alt}, её не трогаю; вытеснить её — только словом человека: iskron_stand с name="${base}" и take=true`,
+      );
+    }
+  }
   // Места прежнего стандарта имени (машина.репо.ветка) той же машины и репо —
   // сироты после перехода на машина.репо.модель: их адрес держат ростеры комнат
   // и хуки инбокса, а слушает их никто. Прежнее имя узнаётся по третьей части,

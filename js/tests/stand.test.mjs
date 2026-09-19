@@ -568,6 +568,39 @@ test("iskron_stand refuses a truncated or ambiguous board and leaves a hook list
   );
 });
 
+// Two live sessions of one model over one working copy derive one name (#5402):
+// the second does not evict the first — it takes the first free `name.N`, and
+// comes back to it on the next call; eviction stays an explicit take=true.
+test("iskron_stand: a derived name another live session listens on yields a separate place, not an eviction", async (t) => {
+  const { fake, dir, bridge } = await ready(t);
+  const args = { realm: "nks-dev", karta: 931, model: "opus-5" };
+  const first = await bridge.call("tools/call", { name: "iskron_stand", arguments: args });
+  const base = /стояние (\S+) — роль/.exec(textOf(first))?.[1];
+  assert.ok(base, textOf(first));
+  for (const end = Date.now() + 10_000; fake.state.ws.size !== 1;) {
+    assert.ok(Date.now() < end, "the first session's socket");
+    await new Promise((res) => setTimeout(res, 50));
+  }
+  const second = startBridge(fake.mcpUrl, dir);
+  t.after(() => second.stop());
+  assert.ok((await second.call("initialize", INIT)).result);
+  const connects = fake.state.counts.connect;
+  const r = await second.call("tools/call", { name: "iskron_stand", arguments: args });
+  const text = textOf(r);
+  assert.ok(!r.result?.isError, text);
+  assert.ok(text.includes(`стояние ${base}.2 — роль`), `a separate place:\n${text}`);
+  assert.ok(text.includes(`место ${base.replace(/^@[^:]+:/, "")} слушает живая сессия`), text);
+  assert.equal(fake.state.counts.connect, connects + 1, "one connect — for the new place");
+  assert.equal(fake.state.ws.size, 2, "the first session keeps its socket");
+  const again = await second.call("tools/call", { name: "iskron_stand", arguments: args });
+  assert.ok(textOf(again).includes(`${base}.2 — роль`), textOf(again));
+  assert.equal(
+    fake.state.counts.connect,
+    connects + 1,
+    "the second call comes back, no new connect",
+  );
+});
+
 test("iskron_stand: take=true on the bridge's own place re-enters with a fresh socket and a fresh hello", async (t) => {
   const { fake, bridge } = await ready(t);
   const args = { realm: "nks-dev", karta: 931, name: "proba" };
