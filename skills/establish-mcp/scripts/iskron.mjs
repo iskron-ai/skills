@@ -4923,6 +4923,21 @@ function harnessReport() {
     } else {
       out(`OpenCode: плагин ${copy} — ДРУГИЕ байты, обнови из поставки: cp "${packaged}" ${copy}`);
     }
+    const cfgFile = join13(opencodeDir, "opencode.json");
+    if (existsSync7(cfgFile)) {
+      try {
+        const cfg = JSON.parse(readFileSync13(cfgFile, "utf8"));
+        const ours = Object.entries(cfg.mcp ?? {}).filter(
+          ([, v]) => /iskron[^"]*\.mjs|iskron-bridge/.test(JSON.stringify(v))
+        );
+        for (const [name] of ours)
+          out(
+            `OpenCode: запись mcp «${name}» ведёт тот же мост — её тулы namespaced и ведут ОДИН мост на все сессии сервиса: запись уходит под подписью соседа. Убери запись из ${cfgFile}; поверхность поставки — плагин`
+          );
+      } catch {
+        out(`OpenCode: ${cfgFile} не читается`);
+      }
+    }
   }
   for (const codexHome of codexHomes()) {
     out(`Codex: дом ${codexHome}`);

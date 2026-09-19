@@ -249,6 +249,40 @@ test("doctor: sees the bridge entry inside the Claude Code and Codex plugins, no
   }
 });
 
+// Рядом с плагином OpenCode может стоять запись mcp того же моста: её тулы едут
+// namespaced и ведут ОДИН мост на все сессии сервиса, поэтому запись дочерней
+// сессии уходит под подписью соседа (граф nks-dev: #5553, класс #4283). doctor
+// обязан назвать эту запись: выбор соседнего тула иначе ничем не виден.
+test("doctor names an mcp entry of the same bridge next to the OpenCode plugin", async () => {
+  const fake = await startFakeNks();
+  const home = mkdtempSync(join(tmpdir(), "iskron-doctor-"));
+  try {
+    const cfg = join(home, ".config", "opencode");
+    mkdirSync(join(cfg, "plugins"), { recursive: true });
+    writeFileSync(join(cfg, "plugins", "iskron.js"), "// плагин поставки");
+    writeFileSync(
+      join(cfg, "opencode.json"),
+      JSON.stringify({
+        mcp: {
+          iskron: {
+            type: "local",
+            command: ["node", join(home, ".iskron-bridge", "iskron-bridge.mjs")],
+          },
+        },
+      }),
+    );
+    const authDir = mkdtempSync(join(tmpdir(), "iskron-doctor-auth-"));
+    const r = await run(["doctor", fake.mcpUrl, "--auth-dir", authDir], { HOME: home });
+    assert.match(
+      r.out,
+      /OpenCode: запись mcp/,
+      `the neighbouring mcp entry must be named: ${r.out}`,
+    );
+  } finally {
+    await fake.stop();
+  }
+});
+
 test("doctor with a personal access token names its source and judges it by a live handshake", async () => {
   const fake = await startFakeNks({ pat: "nks_pat_doc" });
   const dir = mkdtempSync(join(tmpdir(), "iskron-doctor-pat-"));

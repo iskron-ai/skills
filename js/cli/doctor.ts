@@ -349,6 +349,26 @@ export function harnessReport(): void {
     } else {
       out(`OpenCode: плагин ${copy} — ДРУГИЕ байты, обнови из поставки: cp "${packaged}" ${copy}`);
     }
+    // Запись mcp того же моста рядом с плагином: её тулы едут namespaced и ведут
+    // один мост на все сессии сервиса — запись дочерней сессии уходит под чужой
+    // подписью (граф nks-dev: #5553, класс #4283).
+    const cfgFile = join(opencodeDir, "opencode.json");
+    if (existsSync(cfgFile)) {
+      try {
+        const cfg = JSON.parse(readFileSync(cfgFile, "utf8")) as {
+          mcp?: Record<string, unknown>;
+        };
+        const ours = Object.entries(cfg.mcp ?? {}).filter(([, v]) =>
+          /iskron[^"]*\.mjs|iskron-bridge/.test(JSON.stringify(v)),
+        );
+        for (const [name] of ours)
+          out(
+            `OpenCode: запись mcp «${name}» ведёт тот же мост — её тулы namespaced и ведут ОДИН мост на все сессии сервиса: запись уходит под подписью соседа. Убери запись из ${cfgFile}; поверхность поставки — плагин`,
+          );
+      } catch {
+        out(`OpenCode: ${cfgFile} не читается`);
+      }
+    }
   }
   for (const codexHome of codexHomes()) {
     out(`Codex: дом ${codexHome}`);
