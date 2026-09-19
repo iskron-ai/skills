@@ -4395,14 +4395,19 @@ function runWatchdogCodex(argv2) {
     ready = openDoor(
       socketPath,
       (m) => {
-        const ids = typeof m?.id === "number" ? waiting.get(m.id) : void 0;
+        const ids = !m?.method && typeof m?.id === "number" ? waiting.get(m.id) : void 0;
         if (!ids) return;
         waiting.delete(m.id);
         if (m.error) return note(`ДЕЛАТЕЛЬ: тред не принял кадр — ${m.error.message ?? "отказ"}`);
+        note(`кадр вложен в тред ${threadId}`);
         for (const id of ids) noteSeen(seenPath, id, seen2);
       },
       (why) => {
-        note(`дверь закрылась: ${why} — открою заново на следующем кадре`);
+        const lost = [...waiting.values()].flat();
+        waiting.clear();
+        note(
+          `дверь закрылась: ${why} — открою заново на следующем кадре` + (lost.length ? `; без ответа: ${lost.join(", ")} — вернутся из кольца следующим взводом` : "")
+        );
         door = null;
         ready = null;
       }
@@ -4426,23 +4431,28 @@ function runWatchdogCodex(argv2) {
     try {
       const d = door ?? await open();
       const reqId = nextId++;
-      if (ids.length) waiting.set(reqId, ids);
+      waiting.set(reqId, ids);
       d.send({
         method: "turn/start",
         id: reqId,
         params: { threadId, input: [{ type: "text", text }], turnTrigger: "iskron-channel" }
       });
-      note(`кадр вложен в тред ${threadId}`);
+      note(`кадр отправлен в тред ${threadId}`);
     } catch (e) {
       note(`ДЕЛАТЕЛЬ: кадр не вложился — ${e.message}`);
     }
   }
+  let replay = 0;
   attach(target.path, {
     onEvent: (ev) => {
       switch (ev.kind) {
         case "frame": {
+          const fromRing = replay > 0;
+          if (fromRing) replay--;
           const type = ev.frame?.type;
           if (type !== "message") return note(`кадр ${type ?? "не разобран"} — не повод будить`);
+          if (fromRing && typeof ev.frame?.id !== "string")
+            return note("кадр без id из кольца — пометить нечем, в тред не кладу повторно");
           void deliver2(
             frameToText(ev.frame, ev.raw ?? ""),
             typeof ev.frame?.id === "string" ? [ev.frame.id] : []
@@ -4467,6 +4477,7 @@ function runWatchdogCodex(argv2) {
           void deliver2(ev.text ?? "Искрон: сокет рвут, а служба отвечает — мост держит место");
           break;
         case "attached":
+          replay = ev.buffered ?? 0;
           note(`слушаю стояние ${ev.key}; кадры кладу в тред ${threadId}`);
           break;
         default:

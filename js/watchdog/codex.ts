@@ -63,14 +63,23 @@ export function runWatchdogCodex(argv: string[]): void {
       socketPath,
       (m) => {
         // Доставлен кадр, когда тред ПРИНЯЛ turn/start, — не когда запрос ушёл (#5428).
-        const ids = typeof m?.id === "number" ? waiting.get(m.id) : undefined;
+        // Встречный запрос демона (есть method) — не ответ, даже при совпавшем id.
+        const ids = !m?.method && typeof m?.id === "number" ? waiting.get(m.id) : undefined;
         if (!ids) return;
         waiting.delete(m.id);
         if (m.error) return note(`ДЕЛАТЕЛЬ: тред не принял кадр — ${m.error.message ?? "отказ"}`);
+        note(`кадр вложен в тред ${threadId}`);
         for (const id of ids) noteSeen(seenPath, id, seen);
       },
       (why) => {
-        note(`дверь закрылась: ${why} — открою заново на следующем кадре`);
+        const lost = [...waiting.values()].flat();
+        waiting.clear();
+        note(
+          `дверь закрылась: ${why} — открою заново на следующем кадре` +
+            (lost.length
+              ? `; без ответа: ${lost.join(", ")} — вернутся из кольца следующим взводом`
+              : ""),
+        );
         door = null;
         ready = null;
       },
@@ -95,26 +104,32 @@ export function runWatchdogCodex(argv: string[]): void {
     try {
       const d = door ?? (await open());
       const reqId = nextId++;
-      if (ids.length) waiting.set(reqId, ids);
+      waiting.set(reqId, ids);
       d.send({
         method: "turn/start",
         id: reqId,
         params: { threadId, input: [{ type: "text", text }], turnTrigger: "iskron-channel" },
       });
-      note(`кадр вложен в тред ${threadId}`);
+      note(`кадр отправлен в тред ${threadId}`);
     } catch (e) {
       note(`ДЕЛАТЕЛЬ: кадр не вложился — ${(e as Error).message}`);
     }
   }
 
   // Мост отдаёт из кольца задним числом только то, что никто не доставил (#5428),
-  // — это кадры, пришедшие между взводами: их вкладываем, как живые.
+  // — это кадры, пришедшие между взводами: их вкладываем, как живые. Кадр без id
+  // пометить нечем, и из кольца он пришёл бы на каждом взводе — такой пропускаем.
+  let replay = 0;
   attach(target.path, {
     onEvent: (ev) => {
       switch (ev.kind) {
         case "frame": {
+          const fromRing = replay > 0;
+          if (fromRing) replay--;
           const type = ev.frame?.type;
           if (type !== "message") return note(`кадр ${type ?? "не разобран"} — не повод будить`);
+          if (fromRing && typeof ev.frame?.id !== "string")
+            return note("кадр без id из кольца — пометить нечем, в тред не кладу повторно");
           void deliver(
             frameToText(ev.frame, ev.raw ?? ""),
             typeof ev.frame?.id === "string" ? [ev.frame.id] : [],
@@ -139,6 +154,7 @@ export function runWatchdogCodex(argv: string[]): void {
           void deliver(ev.text ?? "Искрон: сокет рвут, а служба отвечает — мост держит место"); // держание идёт, сторож слушает дальше
           break;
         case "attached":
+          replay = ev.buffered ?? 0;
           note(`слушаю стояние ${ev.key}; кадры кладу в тред ${threadId}`);
           break;
         default:

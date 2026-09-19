@@ -490,6 +490,10 @@ test("a frame the Codex thread refused is not marked — the fallback exit watch
     ws_send: JSON.stringify({ type: "message", id: "cx-refused", body: "тред не принял" }),
   });
   await waitFor(() => wd.err.includes("тред не принял кадр"), "the refusal said aloud");
+  assert.ok(
+    !wd.err.includes("кадр вложен в тред"),
+    `«вложен» is said only on acceptance:\n${wd.err}`,
+  );
   wd.proc.kill("SIGKILL");
   await wd.done;
   const fallback = runClient("watchdog-exit", dir, key);
