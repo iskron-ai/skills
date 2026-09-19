@@ -773,7 +773,7 @@ test("a stale burst is one prompt into the holder's session, bodies included", a
   }
 });
 
-test("an eviction is loud in OpenCode: a prompt into the holder's session naming take=true", async () => {
+test("an eviction is loud in OpenCode: a prompt into the holder's session naming the place beside and take=true on the human's word", async () => {
   const b = bridgeEnv("evicted");
   const rec = await plugin(b.env);
   try {
@@ -786,7 +786,10 @@ test("an eviction is loud in OpenCode: a prompt into the holder's session naming
     await until(() => rec.prompts.length === 1, "the eviction prompt");
     assert.equal(rec.prompts[0].sessionID, "s-evicted");
     assert.match(rec.prompts[0].text, /место отняли/);
-    assert.match(rec.prompts[0].text, /iskron_stand с take=true/);
+    assert.match(
+      rec.prompts[0].text,
+      /встанет рядом на имя\.N; отбить место \(take=true\) — только словом человека/,
+    );
   } finally {
     await rec.stop();
   }

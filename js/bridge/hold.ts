@@ -433,7 +433,7 @@ function openHolder(url: string, key: string): void {
     onEvicted: (code) => {
       const text =
         `ДЕЛАТЕЛЬ: закрытие ${code} — место отняли, слушает другой держатель; ` +
-        "привязка записей цела, занятость — пока адрес не повернули connect-ом; вернуть слух сюда — iskron_stand с take=true";
+        "привязка записей цела, занятость — пока адрес не повернули connect-ом; слух здесь — iskron_stand без name встанет рядом на имя.N; отбить место (take=true) — только словом человека";
       log(text);
       standingLog(`evicted ${key}: close ${code}`);
       evictedKey = key;

@@ -1,4 +1,5 @@
 // js/shared/channel.ts
+var SILENT_FLOOR_MS = Number(process.env.ISKRON_CHANNEL_SILENT_FLOOR_MS) || 6e4;
 var FLAP_PAUSES_MS = (process.env.ISKRON_CHANNEL_FLAP_MS || "5000,10000,20000,40000,60000").split(",").map(Number).filter((n) => Number.isFinite(n) && n > 0);
 function classifyOrigin(frame, myKarta) {
   const p = frame.provenance ?? {};
@@ -145,7 +146,7 @@ function setupChannel(pi) {
         return;
       case "evicted":
         loud(
-          `Искрон: канал закрыт кодом ${ev.code} — место отняли, слушает другой держатель. Привязка записей цела; вернуть слух сюда — iskron_stand с take=true.`
+          `Искрон: канал закрыт кодом ${ev.code} — место отняли, слушает другой держатель. Привязка записей цела; слух здесь — iskron_stand без name встанет рядом на имя.N; отбить место (take=true) — только словом человека.`
         );
         return;
       case "alive":

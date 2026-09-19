@@ -158,7 +158,7 @@ export function setupChannel(ctx: Context, say: Say, freshestRoot: () => string 
           loud(
             session,
             `Искрон: канал закрыт кодом ${ev.code} — место отняли, слушает другой держатель. ` +
-              "Привязка записей цела; вернуть слух сюда — iskron_stand с take=true.",
+              "Привязка записей цела; слух здесь — iskron_stand без name встанет рядом на имя.N; отбить место (take=true) — только словом человека.",
           );
           return;
         case "alive":

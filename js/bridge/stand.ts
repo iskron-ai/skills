@@ -18,6 +18,7 @@ import {
   hasStatusAddressFor,
   holdsStanding,
   isParked,
+  localSocketPathOf,
   noteStandCwd,
   wasEvicted,
 } from "./hold.ts";
@@ -36,7 +37,9 @@ import {
   sanitize,
 } from "./names.ts";
 import { deadPredecessor, resumeFromDisk } from "./resume.ts";
+import { freeSuffix, suffixOf } from "./separate.ts";
 import { publishStatus, TAKE_PATH, TURNED_GUIDANCE } from "./status.ts";
+import { localSocketAlive } from "./sweep.ts";
 import { state } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
 import { readLatest, staleNotice } from "./update.ts";
@@ -76,7 +79,7 @@ export const STAND_TOOL = {
       take: {
         type: "boolean",
         description:
-          "Сознательный переход: забрать сокет места, которое слушает другой мост этой машины (обычно прежняя сессия той же рабочей копии) — без take такое место только регистрируется, слух остаётся у держателя; либо сменить место этого моста (стояние одно на мост: другая роль или другое имя без take — отказ вслух, прежнее место остаётся на доске без слуха).",
+          "Сознательный переход, только по слову человека: забрать сокет места, которое держит другой мост этой машины (без take выведенное имя встаёт рядом на имя.N, явное — только регистрируется, слух остаётся у держателя); либо сменить место этого моста (стояние одно на мост: другая роль или другое имя без take — отказ вслух, прежнее место остаётся на доске без слуха).",
       },
       room_karta: {
         type: "string",
@@ -167,7 +170,12 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   }
   const parts = asked ? null : deriveParts(model, cwd);
   const fitted = parts ? fitName(parts) : null;
-  const name = asked || (fitted?.name ?? "");
+  const derived = asked ? "" : (fitted?.name ?? "");
+  let name = asked || derived;
+  // Мост уже стоит на отдельном месте этого выведенного имени — туда же (#5407).
+  const led0 = state.standing;
+  if (derived && led0 && String(led0.karta) === String(karta) && suffixOf(derived, led0.name ?? ""))
+    name = led0.name ?? name;
   if (parts && fitted && fitted.cut.length) {
     const what = fitted.cut
       .map((k) => (k === "repo" ? "репо" : k === "host" ? "машина" : "модель"))
@@ -207,7 +215,24 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   // Пустой граф сервер печатает без заголовка: «Ни одна роль этого графа не держит канала» — законная пустота.
   const empty = /не держит канала/i.test(board.text); // ровно наблюдённая фраза сервера 0.43
   const recognized = !!header || empty || entries.length > 0;
-  const own = entries.filter((e) => e.karta === karta && nameOf(e.address) === name);
+  let own = entries.filter((e) => e.karta === karta && nameOf(e.address) === name);
+  // Выведенное имя держит живой мост ДРУГОЙ сессии (или субагента) — его локальный
+  // сокет жив, а место не наше: встаём рядом на первое свободное `имя.N` (#5407).
+  const mineHere = (n: string): boolean =>
+    holdsStanding(realm, karta, n) || isParked(realm, karta, n);
+  const liveElsewhere = async (n: string): Promise<boolean> =>
+    !mineHere(n) && (await localSocketAlive(localSocketPathOf(keyOf(realm, karta, n))));
+  if (derived && a.take !== true && name === derived && (await liveElsewhere(derived))) {
+    const separate = await freeSuffix(derived, async (n) => !(await liveElsewhere(n)));
+    if (separate) {
+      name = separate;
+      own = entries.filter((e) => e.karta === karta && nameOf(e.address) === name);
+      nameNotes.push(
+        `место ${derived} держит живая сессия другого моста — встаю рядом на ${separate}, её не трогаю; вытеснить её — только словом человека (name="${derived}", take=true)`,
+      );
+    }
+  }
+  const sub = !!derived && name !== derived; // отдельное место: хук инбокса роли ему не взводится
   // Места прежнего стандарта имени (машина.репо.ветка) той же машины и репо —
   // сироты после перехода на машина.репо.модель: их адрес держат ростеры комнат
   // и хуки инбокса, а слушает их никто. Прежнее имя узнаётся по третьей части,
@@ -308,10 +333,10 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
     heardHere = !listensElsewhere;
     how = listensElsewhere
       ? wasEvicted(realm, karta, name)
-        ? "место отняли у этого моста (закрытие 4000) — слушает другой держатель; только register: привязка цела, слух — у него; вернуть слух сюда — повтори с take=true, сознавая, что снимешь слух с того держателя"
+        ? "место отняли у этого моста (закрытие 4000) — слушает другой держатель; только register: привязка цела, слух — у него; слух здесь — iskron_stand без name встанет рядом на имя.N; отбить место (take=true) — только словом человека"
         : predecessorDead
           ? "слушающим доска ещё читает прежний мост этого каталога, а он мёртв (его сокет не отвечает, запись держания цела) — только register; доска отпустит его в течение минуты, и тот же вызов вернёт место с диска тем же адресом — повтори"
-          : "место уже слушает другой держатель (обычно прежняя сессия этой рабочей копии; при явном name — возможно, другая машина или человек) — только register: атрибуция есть, слух — у него; нужен слух здесь — повтори с take=true, сознавая, что снимешь слух с того держателя, или возьми другое имя (name)"
+          : "место уже слушает другой держатель (при явном name — возможно, другая машина или человек) — только register: атрибуция есть, слух — у него; нужен слух здесь — возьми другое имя (name); вытеснить его (take=true) — только словом человека"
       : "сокет уже держит этот мост — register";
   } else {
     const args: Record<string, unknown> = { action: "connect", realm, karta, name };
@@ -375,7 +400,11 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   const wakesMe =
     hooksRecognized &&
     hooks.text.split(/\n(?=\s*#\d+\s*→)/).some((b) => /активен/.test(b) && nameRe.test(b));
-  if (wakesMe) lines.push("Хук инбокса роли: стоит и будит это стояние.");
+  if (sub)
+    lines.push(
+      "Хук инбокса роли: отдельному месту не взводится — почту роли слушает основное место, комнаты доставляют своё сами.",
+    );
+  else if (wakesMe) lines.push("Хук инбокса роли: стоит и будит это стояние.");
   else if (!hooksRecognized)
     lines.push(
       `Хук инбокса роли: список хуков не распознан — не трогаю (${short(hooks.text, 120)}).`,
@@ -401,7 +430,7 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   // повтор один раз не раньше чем через две минуты, дальше — слово человеку.
   if (room && !heardHere) {
     lines.push(
-      `Комната ${room}: стук не отправлен — ответ комнаты ушёл бы держателю сокета, не сюда; нужен вход здесь — повтори с take=true или с другим name.`,
+      `Комната ${room}: стук не отправлен — ответ комнаты ушёл бы держателю сокета, не сюда; нужен вход здесь — другим name; отбить место (take=true) — только словом человека.`,
     );
   } else if (room) {
     const onBoard = entries.find((e) => e.address === room);

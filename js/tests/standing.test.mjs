@@ -527,7 +527,8 @@ test("status before connect is a teaching refusal from the bridge, not a server 
 // same address. With no ping ever seen the timer is not armed: a runtime that
 // cannot see pings must not call a live connection dead.
 test("a connection silent past three ping intervals is reopened aloud; unseen pings arm nothing", async (t) => {
-  const { fake, bridge } = await connected(t, { fakeOpts: { pingMs: 200 } });
+  const floor = { ISKRON_CHANNEL_SILENT_FLOOR_MS: "1000" };
+  const { fake, bridge } = await connected(t, { env: floor, fakeOpts: { pingMs: 200 } });
   await waitFor(() => fake.state.ws.size === 1, "the socket");
   // Longer than the 1.6 s window: a timer that ignored the pings would have fired.
   await new Promise((r) => setTimeout(r, 2500));
@@ -542,7 +543,7 @@ test("a connection silent past three ping intervals is reopened aloud; unseen pi
   );
 
   // hello promises a ping every 0.2 s, and none ever comes (Bun has no channel to see it by)
-  const quiet = await connected(t, { fakeOpts: { helloPingS: 0.2 } });
+  const quiet = await connected(t, { env: floor, fakeOpts: { helloPingS: 0.2 } });
   await waitFor(() => quiet.fake.state.ws.size === 1, "the socket");
   await quiet.fake.control({ ws_hang: true });
   // The window is 1.6 s: by 3 s an armed timer would have spoken, reopen or not.
@@ -658,6 +659,24 @@ test("a re-opened session with the same tool list says nothing", async (t) => {
   );
 });
 
+// The contour's ping is its liveness cadence, not a keepalive (#5380): at 5 s,
+// three intervals are the contour's own patience, and a harness's event loop
+// stalls that long. The holder's silence has its own floor — a short ping does
+// not make a healthy connection read hung.
+test("the silence window has a floor of its own: a short ping does not shorten it", async (t) => {
+  const { fake, bridge } = await connected(t, {
+    env: { ISKRON_CHANNEL_SILENT_FLOOR_MS: "3500" },
+    fakeOpts: { pingMs: 200 },
+  });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  await new Promise((r) => setTimeout(r, 500));
+  await fake.control({ ws_hang: true });
+  await new Promise((r) => setTimeout(r, 2500));
+  assert.equal(fake.state.counts.ws_upgrades, 1, "three short intervals are not yet silence");
+  assert.ok(!/подвисло/.test(bridge.stderr), bridge.stderr);
+  await waitFor(() => fake.state.counts.ws_upgrades >= 2, "the reopen past the floor", 8000);
+});
+
 // Two bridges under one grant — a session with both the plugin's and the user's
 // iskron entry (graph nks-dev: #5395): the one that holds no place must name the
 // bridge that does and the whole handover path, not a bare take=true that would
@@ -692,7 +711,7 @@ test("status on a second bridge names the live holder and the whole handover pat
   assert.ok(said.includes(key), `the refusal names the held place:\n${said}`);
   assert.match(said, /держат живые мосты/, said);
   assert.match(said, /тем же набором тулов/, said);
-  assert.match(said, /обратим/, said);
+  assert.match(said, /только по слову человека/, said);
   assert.match(said, /очередь места connect не трогает/, said);
   assert.equal(fake.state.status, "первый", "the refused line changes nothing");
   assert.equal(fake.state.ws.size, 1, "the refusal takes no socket");
@@ -716,7 +735,7 @@ test("a turned status address is refused with the whole handover path", async (t
   const said = r.result.content[0].text;
   assert.match(said, /404/, said);
   assert.match(said, /тем же набором тулов/, said);
-  assert.match(said, /обратим/, said);
+  assert.match(said, /только по слову человека/, said);
   assert.match(said, /очередь места connect не трогает/, said);
 });
 
