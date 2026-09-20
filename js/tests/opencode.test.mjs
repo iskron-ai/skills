@@ -202,6 +202,17 @@ async function plugin(env = {}, ctxOpts = {}) {
   assert.equal(def.id, "iskron", "the default export must be a definition with an id");
   const rec = fakeCtx(ctxOpts);
   const restore = captureStderr(rec.stderr);
+  // Соседний вход, если проба его просит: его трансформ встаёт ПЕРВЫМ, как у
+  // записи mcp, поднятой сервисом до плагина.
+  if (ctxOpts.neighbour)
+    await rec.ctx.tool.transform((editor) => {
+      editor.add({
+        name: ctxOpts.neighbour,
+        description: "сосед",
+        input: {},
+        execute: async () => ({ content: "" }),
+      });
+    });
   rec.cleanup = await def.setup(rec.ctx);
   rec.said = () => rec.stderr.join("");
   rec.stop = async () => {
@@ -285,6 +296,26 @@ test("every bridge tool stands under its own name, with the server's JSON Schema
       /сборка: мост v\S+\+[0-9a-f]{8}, плагин v\S+/,
       "the status names both builds — the doer answers which build holds without reading files",
     );
+  } finally {
+    await rec.stop();
+  }
+});
+
+// Рядом стоит запись mcp того же Искрона: её тулы OpenCode именует
+// <сервер>_<тул>, и каталог сессии — единственное место, где это видно изнутри
+// (#5553, #5560). Плагин обязан сказать об этом сам, а не ждать doctor.
+test("the plugin names a neighbouring iskron entry it sees in the session catalogue", async () => {
+  const b = bridgeEnv("neighbour");
+  const rec = await plugin(b.env, { neighbour: "iskron_iskron_orient" });
+  try {
+    // Соседский тул стоит в каталоге рядом с нашими, поэтому их на один больше.
+    await until(() => names(rec).length === 4, "the server's tools beside the neighbour", 8000);
+    assert.match(
+      rec.said(),
+      /рядом стоит вторая запись того же графа/,
+      `the plugin must name the neighbour: ${rec.said()}`,
+    );
+    assert.match(rec.said(), /iskron_iskron_orient/, "and name the tool it saw");
   } finally {
     await rec.stop();
   }

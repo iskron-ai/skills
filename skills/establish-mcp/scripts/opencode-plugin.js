@@ -558,6 +558,18 @@ function createKeeper(doors) {
   };
 }
 
+// js/opencode/neighbour.ts
+function warnOnNeighbour(editor, say) {
+  const neighbours = editor.list().map(
+    (t) => String(t.name ?? t.id ?? "")
+  ).filter((name) => /_iskron_[a-z_]+$/.test(name));
+  if (!neighbours.length) return;
+  say(
+    `Искрон: рядом стоит вторая запись того же графа — тулы ${neighbours.slice(0, 3).join(", ")}${neighbours.length > 3 ? " и другие" : ""}. Её мост общий для сессий сервиса, и запись может уйти под подписью соседней сессии: зови тулы iskron_* без префикса, а запись mcp убери из конфига OpenCode.`,
+    "warning"
+  );
+}
+
 // js/opencode/status.ts
 function statusLines(path, builds, login, state2, sessions, spare) {
   return [
@@ -771,6 +783,7 @@ async function setupTools(ctx, say, onChannel, rootOf) {
   );
   const statusText = () => statusLines(path, builds, { loginPending, loginUrl }, state2, slots.size, spare ? 1 : 0);
   await ctx.tool.transform((editor) => {
+    warnOnNeighbour(editor, say);
     editor.add({
       name: STATUS_TOOL,
       description: "Состояние моста Искрона в этой сессии OpenCode: выполнен ли вход, адрес авторизации, сколько тулов iskron_* поднято. Зови, когда тулов iskron_* нет или они отвечают отказом входа.",

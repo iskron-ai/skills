@@ -2,10 +2,8 @@
 // и МОСТ НА КАЖДУЮ СЕССИЮ (граф nks-dev: #4283).
 //
 // Плагин сам говорит с мостом по MCP stdio и регистрирует КАЖДЫЙ тул сервера
-// через ctx.tool.transform под его собственным именем. Нативная запись `mcp`
-// в конфиге OpenCode для этого не годится: тулы MCP-сервера OpenCode именует
-// <сервер>_<тул>, и весь корпус, зовущий iskron_orient, получил бы
-// iskron_iskron_orient — каждая фраза скилла стала бы ложной.
+// через ctx.tool.transform под его собственным именем; чем плоха соседняя
+// запись `mcp` и как она видна в каталоге — neighbour.ts.
 //
 // Сервер OpenCode держит много сессий, и каждая — отдельный агент со своим
 // стоянием; мост же держит одно стояние и одну MCP-сессию к графу. Поэтому
@@ -33,6 +31,7 @@ import {
   writeCache,
 } from "./bridge-io.ts";
 import { createKeeper, type KeptSlot, takeLostMarker, WATCH_MS, writeLostMarker } from "./keep.ts";
+import { warnOnNeighbour } from "./neighbour.ts";
 import type { Context } from "./plugin.ts";
 import { statusLines } from "./status.ts";
 
@@ -327,6 +326,7 @@ export async function setupTools(
     statusLines(path, builds, { loginPending, loginUrl }, state, slots.size, spare ? 1 : 0);
 
   await ctx.tool.transform((editor) => {
+    warnOnNeighbour(editor, say);
     editor.add({
       name: STATUS_TOOL,
       description:
