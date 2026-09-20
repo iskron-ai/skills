@@ -364,20 +364,27 @@ function openCodeMcpEntries(): void {
     } catch {}
     return null;
   };
-  // Комментарии — то, ради чего существует .jsonc: JSON.parse на них падает.
+  // .jsonc существует ради комментариев и висячих запятых: JSON.parse падает на
+  // тех и других. Снимаются они одним проходом, чтобы строковый литерал остался
+  // цел: «,}» внутри строки — текст, а не лишняя запятая.
   const parse = (text: string): { mcp?: Record<string, unknown> } =>
     JSON.parse(
-      text
-        .replace(/"(?:[^"\\]|\\.)*"|\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, (m) =>
-          m.startsWith('"') ? m : "",
-        )
-        // Висячая запятая — обычный стиль .jsonc; без неё весь файл ушёл бы в
-        // «не читается», и настоящая запись пропала бы вместе с ним.
-        .replace(/,(\s*[}\]])/g, "$1"),
+      text.replace(
+        /"(?:[^"\\]|\\.)*"|\/\*[\s\S]*?\*\/|\/\/[^\n]*|,(\s*[}\]])/g,
+        (m, tail: string | undefined) => (m.startsWith('"') ? m : (tail ?? "")),
+      ),
     ) as { mcp?: Record<string, unknown> };
-  const sources: [string, string][] = [...new Set(files)]
-    .filter((f) => existsSync(f))
-    .map((f) => [f, readFileSync(f, "utf8")]);
+  const sources: [string, string][] = [];
+  for (const f of new Set(files)) {
+    if (!existsSync(f)) continue;
+    // Нечитаемый файл по пути вверх (права, каталог вместо файла) не смеет
+    // ронять весь отчёт: остальные его строки — такие же факты.
+    try {
+      sources.push([f, readFileSync(f, "utf8")]);
+    } catch {
+      out(`OpenCode: ${f} не читается`);
+    }
+  }
   if (process.env.OPENCODE_CONFIG_CONTENT)
     sources.unshift(["OPENCODE_CONFIG_CONTENT", process.env.OPENCODE_CONFIG_CONTENT]);
   let found = 0;

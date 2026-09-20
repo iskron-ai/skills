@@ -434,6 +434,42 @@ test("doctor reads the config from the env vars and skips the project layer when
   }
 });
 
+// Нечитаемый файл на пути обхода (каталог вместо файла) не смеет ронять отчёт,
+// а «,}» внутри строки — текст, а не висячая запятая (#5559).
+test("doctor survives an unreadable config on the way up and keeps strings intact", async () => {
+  const fake = await startFakeNks();
+  const home = mkdtempSync(join(tmpdir(), "iskron-doctor-"));
+  const project = mkdtempSync(join(tmpdir(), "iskron-doctor-proj-"));
+  try {
+    // Каталог с именем файла конфига: existsSync истинен, чтение падает EISDIR.
+    mkdirSync(join(project, "opencode.json"), { recursive: true });
+    const deep = join(project, "ниже");
+    mkdirSync(deep, { recursive: true });
+    writeFileSync(
+      join(deep, "opencode.jsonc"),
+      [
+        "{",
+        '  "mcp": {',
+        '    "сОписанием": { "type": "remote", "url": "https://mcp.iskron.ru/",',
+        '      "описание": "скобка и запятая внутри строки: {a,} — это текст", },',
+        "  },",
+        "}",
+      ].join("\n"),
+    );
+    const authDir = mkdtempSync(join(tmpdir(), "iskron-doctor-auth-"));
+    const r = await run(["doctor", fake.mcpUrl, "--auth-dir", authDir], { HOME: home }, deep);
+    assert.match(r.out, /грант:/, `the report must survive an unreadable file: ${r.out}`);
+    assert.match(r.out, /«сОписанием»/, `the entry below must still be found: ${r.out}`);
+    assert.match(
+      r.out,
+      /opencode\.json не читается/,
+      `the unreadable file must be named: ${r.out}`,
+    );
+  } finally {
+    await fake.stop();
+  }
+});
+
 test("doctor with a personal access token names its source and judges it by a live handshake", async () => {
   const fake = await startFakeNks({ pat: "nks_pat_doc" });
   const dir = mkdtempSync(join(tmpdir(), "iskron-doctor-pat-"));

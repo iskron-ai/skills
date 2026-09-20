@@ -4925,11 +4925,19 @@ function openCodeMcpEntries() {
   };
   const parse = (text) => JSON.parse(
     text.replace(
-      /"(?:[^"\\]|\\.)*"|\/\*[\s\S]*?\*\/|\/\/[^\n]*/g,
-      (m) => m.startsWith('"') ? m : ""
-    ).replace(/,(\s*[}\]])/g, "$1")
+      /"(?:[^"\\]|\\.)*"|\/\*[\s\S]*?\*\/|\/\/[^\n]*|,(\s*[}\]])/g,
+      (m, tail) => m.startsWith('"') ? m : tail ?? ""
+    )
   );
-  const sources = [...new Set(files)].filter((f) => existsSync7(f)).map((f) => [f, readFileSync13(f, "utf8")]);
+  const sources = [];
+  for (const f of new Set(files)) {
+    if (!existsSync7(f)) continue;
+    try {
+      sources.push([f, readFileSync13(f, "utf8")]);
+    } catch {
+      out(`OpenCode: ${f} не читается`);
+    }
+  }
   if (process.env.OPENCODE_CONFIG_CONTENT)
     sources.unshift(["OPENCODE_CONFIG_CONTENT", process.env.OPENCODE_CONFIG_CONTENT]);
   let found = 0;
