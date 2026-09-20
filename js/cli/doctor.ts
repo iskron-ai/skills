@@ -323,43 +323,60 @@ function openCodeMcpEntries(): void {
     join(d, ".opencode", "opencode.jsonc"),
   ];
   const upwards: string[] = [];
-  for (let d = process.cwd(); ;) {
-    upwards.push(...dirFiles(d));
-    const up = dirname(d);
-    if (up === d) break;
-    d = up;
-  }
+  // Проектный слой выключается переменной — тогда файлы дерева OpenCode не читает,
+  // и советовать по ним значит указывать на конфиг, которым он не пользуется.
+  if (!process.env.OPENCODE_CONFIG_PROJECT_DISABLE)
+    for (let d = process.cwd(); ;) {
+      upwards.push(...dirFiles(d));
+      const up = dirname(d);
+      if (up === d) break;
+      d = up;
+    }
   const files = [
     ...(process.env.OPENCODE_CONFIG ? [process.env.OPENCODE_CONFIG] : []),
     ...(process.env.OPENCODE_CONFIG_DIR ? dirFiles(process.env.OPENCODE_CONFIG_DIR) : []),
     ...dirFiles(join(homedir(), ".config", "opencode")),
     ...upwards,
   ];
-  // Своя запись — та, что зовёт файл моста или адрес Искрона; чужой сервер,
-  // лежащий в каталоге со словом iskron в пути, своей не становится.
-  const ours = (v: unknown): boolean => {
+  // Своя запись двух родов, и цена у них разная: локальный мост той же поставки
+  // (тулы namespaced, мост общий для сессий сервиса — чужая подпись) и нативная
+  // http-запись на адрес Искрона (законный запасной путь, стояния у неё нет
+  // вовсе). Чужой сервер, лежащий в каталоге со словом iskron в пути, — не наш.
+  const kindOf = (v: unknown): "bridge" | "http" | null => {
     const e = (v ?? {}) as { command?: string | string[]; args?: string[]; url?: string };
     const parts = [
       ...(Array.isArray(e.command) ? e.command : e.command ? [e.command] : []),
       ...(e.args ?? []),
     ];
     if (parts.some((p) => /(^|[\\/])iskron[^\\/]*\.mjs$|iskron-bridge/.test(String(p))))
-      return true;
+      return "bridge";
     try {
-      return !!e.url && /(^|\.)iskron\.ru$/.test(new URL(e.url).hostname);
-    } catch {
-      return false;
-    }
+      if (e.url && /(^|\.)iskron\.ru$/.test(new URL(e.url).hostname)) return "http";
+    } catch {}
+    return null;
   };
+  // Комментарии — то, ради чего существует .jsonc: JSON.parse на них падает.
+  const parse = (text: string): { mcp?: Record<string, unknown> } =>
+    JSON.parse(
+      text.replace(/"(?:[^"\\]|\\.)*"|\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, (m) =>
+        m.startsWith('"') ? m : "",
+      ),
+    ) as { mcp?: Record<string, unknown> };
   for (const file of [...new Set(files)]) {
     if (!existsSync(file)) continue;
     try {
-      const cfg = JSON.parse(readFileSync(file, "utf8")) as { mcp?: Record<string, unknown> };
+      const cfg = parse(readFileSync(file, "utf8"));
       for (const [name, v] of Object.entries(cfg.mcp ?? {})) {
-        if (!ours(v)) continue;
-        const off = (v as { enabled?: boolean }).enabled === false ? " (enabled: false)" : "";
+        const kind = kindOf(v);
+        if (!kind) continue;
+        if ((v as { enabled?: boolean }).enabled === false) {
+          out(`OpenCode: запись mcp «${name}» в ${file} ведёт Искрон, но выключена — не в игре`);
+          continue;
+        }
         out(
-          `OpenCode: запись mcp «${name}»${off} в ${file} ведёт тот же Искрон — её тулы namespaced, а мост у неё общий для сессий сервиса: запись может уйти под подписью соседней сессии. Убери её из этого файла руками: у opencode mcp есть list, add, auth, logout — команды remove нет. Поверхность поставки это плагин`,
+          kind === "bridge"
+            ? `OpenCode: запись mcp «${name}» в ${file} ведёт тот же мост — её тулы namespaced, а мост у неё общий для сессий сервиса: запись может уйти под подписью соседней сессии. Убери её из этого файла руками: у opencode mcp есть list, add, auth, logout — команды remove нет. Поверхность поставки это плагин`
+            : `OpenCode: запись mcp «${name}» в ${file} ведёт Искрон напрямую по http — её тулы namespaced, и стояния канала у неё нет; это запасной путь, и он законен там, где мост не поднять`,
         );
       }
     } catch {

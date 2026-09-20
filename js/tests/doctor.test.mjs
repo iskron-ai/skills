@@ -318,6 +318,50 @@ test("doctor reads the project config too, and leaves a foreign server alone", a
   }
 });
 
+// Три рода записи различаются ценой: мост поставки — чужая подпись, нативная
+// http-запись — законный запасной путь, выключенная — не в игре. И .jsonc
+// существует ради комментариев: JSON.parse на них падает (#5559).
+test("doctor tells the bridge entry from the http fallback and reads jsonc with comments", async () => {
+  const fake = await startFakeNks();
+  const home = mkdtempSync(join(tmpdir(), "iskron-doctor-"));
+  const project = mkdtempSync(join(tmpdir(), "iskron-doctor-proj-"));
+  try {
+    writeFileSync(
+      join(project, "opencode.jsonc"),
+      [
+        "{",
+        "  // запись поставки, заведённая руками",
+        '  "mcp": {',
+        '    "прямой": { "type": "remote", "url": "https://mcp.iskron.ru/" },',
+        '    "выключенный": { "type": "local", "enabled": false,',
+        `      "command": ["node", ${JSON.stringify(join(home, ".iskron-bridge", "iskron-bridge.mjs"))}] }`,
+        "  }",
+        "}",
+      ].join("\n"),
+    );
+    const authDir = mkdtempSync(join(tmpdir(), "iskron-doctor-auth-"));
+    const r = await run(["doctor", fake.mcpUrl, "--auth-dir", authDir], { HOME: home }, project);
+    assert.doesNotMatch(r.out, /opencode\.jsonc не читается/, `jsonc must parse: ${r.out}`);
+    assert.match(
+      r.out,
+      /«прямой».*напрямую по http/,
+      `the http fallback must be told apart: ${r.out}`,
+    );
+    assert.doesNotMatch(
+      r.out,
+      /«прямой».*Убери/,
+      `the http fallback must not be ordered away: ${r.out}`,
+    );
+    assert.match(
+      r.out,
+      /«выключенный».*выключена/,
+      `a disabled entry must be named as such: ${r.out}`,
+    );
+  } finally {
+    await fake.stop();
+  }
+});
+
 test("doctor with a personal access token names its source and judges it by a live handshake", async () => {
   const fake = await startFakeNks({ pat: "nks_pat_doc" });
   const dir = mkdtempSync(join(tmpdir(), "iskron-doctor-pat-"));
