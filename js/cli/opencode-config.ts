@@ -54,15 +54,21 @@ export function openCodeMcpEntries(out: (s: string) => void): void {
     return null;
   };
   // .jsonc существует ради комментариев и висячих запятых: JSON.parse падает на
-  // тех и других. Снимаются они одним проходом, чтобы строковый литерал остался
-  // цел: «,}» внутри строки — текст, а не лишняя запятая.
-  const parse = (text: string): { mcp?: Record<string, unknown> } =>
-    JSON.parse(
-      text.replace(
-        /"(?:[^"\\]|\\.)*"|\/\*[\s\S]*?\*\/|\/\/[^\n]*|,(\s*[}\]])/g,
-        (m, tail: string | undefined) => (m.startsWith('"') ? m : (tail ?? "")),
-      ),
-    ) as { mcp?: Record<string, unknown> };
+  // тех и других. Два прохода, и оба щадят строковый литерал: сперва уходят
+  // комментарии, затем запятая перед закрывающей скобкой — одним проходом
+  // запятая, отделённая от скобки комментарием, осталась бы на месте.
+  const parse = (text: string): { mcp?: Record<string, unknown> } => {
+    const STRING = '"(?:[^"\\\\]|\\\\.)*"';
+    const noComments = text.replace(
+      new RegExp(`${STRING}|/\\*[\\s\\S]*?\\*/|//[^\\n]*`, "g"),
+      (m) => (m.startsWith('"') ? m : ""),
+    );
+    const noTrailing = noComments.replace(
+      new RegExp(`${STRING}|,(\\s*[}\\]])`, "g"),
+      (m, tail: string | undefined) => (m.startsWith('"') ? m : (tail ?? "")),
+    );
+    return JSON.parse(noTrailing) as { mcp?: Record<string, unknown> };
+  };
   // Путь, по которому запись признана мостом, — чтобы читатель сверил сам, а не
   // верил слову: совпадение идёт по имени файла и бывает случайным.
   const bridgePath = (v: unknown): string => {
@@ -75,6 +81,7 @@ export function openCodeMcpEntries(out: (s: string) => void): void {
       parts.find((p) => /(^|[\\/])iskron[^\\/]*\.mjs$|iskron-bridge/.test(p)) ?? parts.join(" ")
     );
   };
+  let unreadable = 0;
   const sources: [string, string][] = [];
   for (const f of new Set(files)) {
     if (!existsSync(f)) continue;
@@ -83,6 +90,7 @@ export function openCodeMcpEntries(out: (s: string) => void): void {
     try {
       sources.push([f, readFileSync(f, "utf8")]);
     } catch {
+      unreadable++;
       out(`OpenCode: ${f} не читается`);
     }
   }
@@ -107,6 +115,7 @@ export function openCodeMcpEntries(out: (s: string) => void): void {
         );
       }
     } catch {
+      unreadable++;
       out(`OpenCode: ${file} не читается`);
     }
   }
@@ -115,6 +124,6 @@ export function openCodeMcpEntries(out: (s: string) => void): void {
   // видел вовсе, и молчание прочли бы как «записи нет» (граф nks-dev: #4279).
   if (!found)
     out(
-      `OpenCode: записей mcp Искрона не нашёл — смотрел вверх от ${process.cwd()}, глобальный слой и переменные; запись в другом дереве этим не проверена, позови doctor из каталога проекта`,
+      `OpenCode: записей mcp Искрона не нашёл${unreadable ? ` в том, что прочёл (${unreadable} файл(а) не разобрались — смотри строки выше)` : ""} — смотрел вверх от ${process.cwd()}, глобальный слой и переменные; запись в другом дереве этим не проверена, позови doctor из каталога проекта`,
     );
 }

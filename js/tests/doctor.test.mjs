@@ -451,7 +451,7 @@ test("doctor survives an unreadable config on the way up and keeps strings intac
         "{",
         '  "mcp": {',
         '    "сОписанием": { "type": "remote", "url": "https://mcp.iskron.ru/",',
-        '      "описание": "скобка и запятая внутри строки: {a,} — это текст", },',
+        '      "описание": "скобка и запятая внутри строки: {a,} — это текст", }, // хвост',
         "  },",
         "}",
       ].join("\n"),

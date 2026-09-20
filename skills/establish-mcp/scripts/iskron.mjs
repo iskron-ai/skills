@@ -4683,12 +4683,18 @@ function openCodeMcpEntries(out4) {
     if (e.url && isProductionServer(e.url)) return "http";
     return null;
   };
-  const parse = (text) => JSON.parse(
-    text.replace(
-      /"(?:[^"\\]|\\.)*"|\/\*[\s\S]*?\*\/|\/\/[^\n]*|,(\s*[}\]])/g,
+  const parse = (text) => {
+    const STRING = '"(?:[^"\\\\]|\\\\.)*"';
+    const noComments = text.replace(
+      new RegExp(`${STRING}|/\\*[\\s\\S]*?\\*/|//[^\\n]*`, "g"),
+      (m) => m.startsWith('"') ? m : ""
+    );
+    const noTrailing = noComments.replace(
+      new RegExp(`${STRING}|,(\\s*[}\\]])`, "g"),
       (m, tail) => m.startsWith('"') ? m : tail ?? ""
-    )
-  );
+    );
+    return JSON.parse(noTrailing);
+  };
   const bridgePath = (v) => {
     const e = v ?? {};
     const parts = [
@@ -4697,12 +4703,14 @@ function openCodeMcpEntries(out4) {
     ].map(String);
     return parts.find((p) => /(^|[\\/])iskron[^\\/]*\.mjs$|iskron-bridge/.test(p)) ?? parts.join(" ");
   };
+  let unreadable = 0;
   const sources = [];
   for (const f of new Set(files)) {
     if (!existsSync7(f)) continue;
     try {
       sources.push([f, readFileSync13(f, "utf8")]);
     } catch {
+      unreadable++;
       out4(`OpenCode: ${f} не читается`);
     }
   }
@@ -4725,12 +4733,13 @@ function openCodeMcpEntries(out4) {
         );
       }
     } catch {
+      unreadable++;
       out4(`OpenCode: ${file} не читается`);
     }
   }
   if (!found)
     out4(
-      `OpenCode: записей mcp Искрона не нашёл — смотрел вверх от ${process.cwd()}, глобальный слой и переменные; запись в другом дереве этим не проверена, позови doctor из каталога проекта`
+      `OpenCode: записей mcp Искрона не нашёл${unreadable ? ` в том, что прочёл (${unreadable} файл(а) не разобрались — смотри строки выше)` : ""} — смотрел вверх от ${process.cwd()}, глобальный слой и переменные; запись в другом дереве этим не проверена, позови doctor из каталога проекта`
     );
 }
 
