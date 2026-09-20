@@ -30,9 +30,10 @@ const PLUGIN = JSON.parse(
   readFileSync(join(HERE, "..", "..", ".claude-plugin", "plugin.json"), "utf8"),
 );
 
-function run(args, env = {}) {
+function run(args, env = {}, cwd = undefined) {
   return new Promise((resolve) => {
     const proc = spawn(NODE, [FILE, ...args], {
+      cwd,
       env: { ...process.env, ...env },
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -243,6 +244,226 @@ test("doctor: sees the bridge entry inside the Claude Code and Codex plugins, no
       r.out,
       /Claude Code: в пользовательском конфиге записи моста нет/,
       "a healthy install must not be reported as having no entry",
+    );
+  } finally {
+    await fake.stop();
+  }
+});
+
+// Рядом с плагином OpenCode может стоять запись mcp того же моста: её тулы едут
+// namespaced и ведут ОДИН мост на все сессии сервиса, поэтому запись дочерней
+// сессии уходит под подписью соседа (граф nks-dev: #5553, класс #4283). doctor
+// обязан назвать эту запись: выбор соседнего тула иначе ничем не виден.
+test("doctor names an mcp entry of the same bridge next to the OpenCode plugin", async () => {
+  const fake = await startFakeNks();
+  const home = mkdtempSync(join(tmpdir(), "iskron-doctor-"));
+  try {
+    const cfg = join(home, ".config", "opencode");
+    mkdirSync(join(cfg, "plugins"), { recursive: true });
+    writeFileSync(join(cfg, "plugins", "iskron.js"), "// плагин поставки");
+    writeFileSync(
+      join(cfg, "opencode.json"),
+      JSON.stringify({
+        mcp: {
+          iskron: {
+            type: "local",
+            command: ["node", join(home, ".iskron-bridge", "iskron-bridge.mjs")],
+          },
+        },
+      }),
+    );
+    const authDir = mkdtempSync(join(tmpdir(), "iskron-doctor-auth-"));
+    const r = await run(["doctor", fake.mcpUrl, "--auth-dir", authDir], { HOME: home });
+    assert.match(r.out, /OpenCode: запись mcp «iskron»/, `the entry must be named: ${r.out}`);
+  } finally {
+    await fake.stop();
+  }
+});
+
+// `opencode mcp add` без --global пишет в конфиг ПРОЕКТА (поверхность #5559):
+// смотреть только глобальный файл значит молчать там, где запись вероятнее.
+// И наоборот: чужой сервер, чей путь лежит в каталоге со словом iskron, своим
+// не становится — иначе совет «убери запись» приходит на чужую работу.
+test("doctor reads the project config too, and leaves a foreign server alone", async () => {
+  const fake = await startFakeNks();
+  const home = mkdtempSync(join(tmpdir(), "iskron-doctor-"));
+  const project = mkdtempSync(join(tmpdir(), "iskron-doctor-proj-"));
+  try {
+    writeFileSync(
+      join(project, "opencode.json"),
+      JSON.stringify({
+        mcp: {
+          "iskron-bridge": {
+            type: "local",
+            command: ["node", join(home, ".iskron-bridge", "iskron-bridge.mjs")],
+          },
+          чужой: { type: "local", command: ["node", join(home, "code", "iskron", "other.mjs")] },
+          "чужой-удалённый": { type: "remote", url: "https://example.com/mcp" },
+        },
+      }),
+    );
+    const authDir = mkdtempSync(join(tmpdir(), "iskron-doctor-auth-"));
+    // Конфиг читается вверх по дереву: запись этажом выше так же опасна.
+    const deep = join(project, "child", "deep");
+    mkdirSync(deep, { recursive: true });
+    const r = await run(["doctor", fake.mcpUrl, "--auth-dir", authDir], { HOME: home }, deep);
+    assert.match(r.out, /запись mcp «iskron-bridge»/, `the entry above must be named: ${r.out}`);
+    assert.doesNotMatch(
+      r.out,
+      /«чужой»|«чужой-удалённый»/,
+      `a foreign server must be left alone: ${r.out}`,
+    );
+    // Чистый отчёт обязан называть охват: doctor идёт вверх от своего каталога.
+    const elsewhere = await run(
+      ["doctor", fake.mcpUrl, "--auth-dir", authDir],
+      { HOME: home },
+      home,
+    );
+    assert.match(
+      elsewhere.out,
+      /записей mcp Искрона не нашёл — смотрел вверх от/,
+      `an empty report must name what it looked at: ${elsewhere.out}`,
+    );
+  } finally {
+    await fake.stop();
+  }
+});
+
+// Три рода записи различаются ценой: мост поставки — чужая подпись, нативная
+// http-запись — законный запасной путь, выключенная — не в игре. И .jsonc
+// существует ради комментариев: JSON.parse на них падает (#5559).
+test("doctor tells the bridge entry from the http fallback and reads jsonc with comments", async () => {
+  const fake = await startFakeNks();
+  const home = mkdtempSync(join(tmpdir(), "iskron-doctor-"));
+  const project = mkdtempSync(join(tmpdir(), "iskron-doctor-proj-"));
+  try {
+    writeFileSync(
+      join(project, "opencode.jsonc"),
+      [
+        "{",
+        "  // запись поставки, заведённая руками",
+        '  "mcp": {',
+        '    "прямой": { "type": "remote", "url": "https://mcp.iskron.ru/" },',
+        '    "английский": { "type": "remote", "url": "https://mcp.iskron.ai/" },',
+        '    "выключенный": { "type": "local", "enabled": false,',
+        `      "command": ["node", ${JSON.stringify(join(home, ".iskron-bridge", "iskron-bridge.mjs"))}], },`,
+        "  }",
+        "}",
+      ].join("\n"),
+    );
+    const authDir = mkdtempSync(join(tmpdir(), "iskron-doctor-auth-"));
+    const r = await run(["doctor", fake.mcpUrl, "--auth-dir", authDir], { HOME: home }, project);
+    assert.doesNotMatch(r.out, /opencode\.jsonc не читается/, `jsonc must parse: ${r.out}`);
+    assert.match(
+      r.out,
+      /«прямой».*напрямую по http/,
+      `the http fallback must be told apart: ${r.out}`,
+    );
+    assert.doesNotMatch(
+      r.out,
+      /«прямой».*Убери/,
+      `the http fallback must not be ordered away: ${r.out}`,
+    );
+    assert.match(
+      r.out,
+      /«выключенный».*выключена/,
+      `a disabled entry must be named as such: ${r.out}`,
+    );
+    assert.match(
+      r.out,
+      /«английский».*напрямую по http/,
+      `the English production address counts too: ${r.out}`,
+    );
+  } finally {
+    await fake.stop();
+  }
+});
+
+// Конфиг приходит и мимо дерева — файлом из переменной или её содержимым; а
+// выключенный проектный слой значит, что файлы дерева OpenCode не читает и
+// советовать по ним нечего (#5559).
+test("doctor reads the config from the env vars and skips the project layer when it is off", async () => {
+  const fake = await startFakeNks();
+  const home = mkdtempSync(join(tmpdir(), "iskron-doctor-"));
+  const project = mkdtempSync(join(tmpdir(), "iskron-doctor-proj-"));
+  const bridge = join(home, ".iskron-bridge", "iskron-bridge.mjs");
+  try {
+    writeFileSync(
+      join(project, "opencode.json"),
+      JSON.stringify({ mcp: { "из-дерева": { type: "local", command: ["node", bridge] } } }),
+    );
+    const external = join(home, "внешний.json");
+    writeFileSync(
+      external,
+      JSON.stringify({ mcp: { "из-переменной": { type: "local", command: ["node", bridge] } } }),
+    );
+    const authDir = mkdtempSync(join(tmpdir(), "iskron-doctor-auth-"));
+    const byVar = await run(
+      ["doctor", fake.mcpUrl, "--auth-dir", authDir],
+      { HOME: home, OPENCODE_CONFIG: external, OPENCODE_CONFIG_PROJECT_DISABLE: "1" },
+      project,
+    );
+    assert.match(
+      byVar.out,
+      /«из-переменной»/,
+      `the file from the env var must be read: ${byVar.out}`,
+    );
+    assert.doesNotMatch(
+      byVar.out,
+      /«из-дерева»/,
+      `the project layer is off — its files must be left alone: ${byVar.out}`,
+    );
+    const byContent = await run(
+      ["doctor", fake.mcpUrl, "--auth-dir", authDir],
+      {
+        HOME: home,
+        OPENCODE_CONFIG_PROJECT_DISABLE: "1",
+        OPENCODE_CONFIG_CONTENT: JSON.stringify({
+          mcp: { "из-содержимого": { type: "local", command: ["node", bridge] } },
+        }),
+      },
+      project,
+    );
+    assert.match(
+      byContent.out,
+      /«из-содержимого»/,
+      `the config passed as content must be read: ${byContent.out}`,
+    );
+  } finally {
+    await fake.stop();
+  }
+});
+
+// Нечитаемый файл на пути обхода (каталог вместо файла) не смеет ронять отчёт,
+// а «,}» внутри строки — текст, а не висячая запятая (#5559).
+test("doctor survives an unreadable config on the way up and keeps strings intact", async () => {
+  const fake = await startFakeNks();
+  const home = mkdtempSync(join(tmpdir(), "iskron-doctor-"));
+  const project = mkdtempSync(join(tmpdir(), "iskron-doctor-proj-"));
+  try {
+    // Каталог с именем файла конфига: existsSync истинен, чтение падает EISDIR.
+    mkdirSync(join(project, "opencode.json"), { recursive: true });
+    const deep = join(project, "ниже");
+    mkdirSync(deep, { recursive: true });
+    writeFileSync(
+      join(deep, "opencode.jsonc"),
+      [
+        "{",
+        '  "mcp": {',
+        '    "сОписанием": { "type": "remote", "url": "https://mcp.iskron.ru/",',
+        '      "описание": "скобка и запятая внутри строки: {a,} — это текст", }, // хвост',
+        "  },",
+        "}",
+      ].join("\n"),
+    );
+    const authDir = mkdtempSync(join(tmpdir(), "iskron-doctor-auth-"));
+    const r = await run(["doctor", fake.mcpUrl, "--auth-dir", authDir], { HOME: home }, deep);
+    assert.match(r.out, /грант:/, `the report must survive an unreadable file: ${r.out}`);
+    assert.match(r.out, /«сОписанием»/, `the entry below must still be found: ${r.out}`);
+    assert.match(
+      r.out,
+      /opencode\.json не читается/,
+      `the unreadable file must be named: ${r.out}`,
     );
   } finally {
     await fake.stop();

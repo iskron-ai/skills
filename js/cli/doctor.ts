@@ -24,6 +24,7 @@ import { readLatest } from "../bridge/update.ts";
 import { homeBridgePath } from "../shared/home.ts";
 import { compareVersions } from "../shared/semver.ts";
 import { VERSION, versionIn } from "../shared/version.ts";
+import { openCodeMcpEntries } from "./opencode-config.ts";
 
 const out = (s: string): void => {
   process.stdout.write(s + "\n");
@@ -350,6 +351,7 @@ export function harnessReport(): void {
       out(`OpenCode: плагин ${copy} — ДРУГИЕ байты, обнови из поставки: cp "${packaged}" ${copy}`);
     }
   }
+  openCodeMcpEntries(out);
   for (const codexHome of codexHomes()) {
     out(`Codex: дом ${codexHome}`);
     codexPluginReport(codexHome);

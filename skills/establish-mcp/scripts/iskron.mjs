@@ -2541,10 +2541,10 @@ var PART_MIN = 3;
 var CUT_ORDER = ["repo", "host", "model"];
 function fitName(parts) {
   const p = { ...parts };
-  const join14 = () => [p.host, p.repo, p.model].filter(Boolean).join(".").replace(/[-.]+$/, "");
+  const join15 = () => [p.host, p.repo, p.model].filter(Boolean).join(".").replace(/[-.]+$/, "");
   const cut = [];
   for (const k of CUT_ORDER) {
-    const over = join14().length - NAME_MAX;
+    const over = join15().length - NAME_MAX;
     if (over <= 0) break;
     const keep = Math.max(k === "model" ? 1 : PART_MIN, p[k].length - over);
     if (keep >= p[k].length) continue;
@@ -2552,7 +2552,7 @@ function fitName(parts) {
     cut.push(k);
   }
   return {
-    name: join14().slice(0, NAME_MAX).replace(/[-.]+$/, ""),
+    name: join15().slice(0, NAME_MAX).replace(/[-.]+$/, ""),
     cut
   };
 }
@@ -4640,10 +4640,110 @@ function runWatchdogExit(argv2) {
 
 // js/cli/doctor.ts
 import { createHash as createHash6 } from "node:crypto";
-import { existsSync as existsSync7, readdirSync as readdirSync6, readFileSync as readFileSync13 } from "node:fs";
+import { existsSync as existsSync8, readdirSync as readdirSync6, readFileSync as readFileSync14 } from "node:fs";
+import { homedir as homedir7 } from "node:os";
+import { dirname as dirname4, join as join14 } from "node:path";
+import { fileURLToPath as fileURLToPath4 } from "node:url";
+
+// js/cli/opencode-config.ts
+import { existsSync as existsSync7, readFileSync as readFileSync13 } from "node:fs";
 import { homedir as homedir6 } from "node:os";
 import { dirname as dirname3, join as join13 } from "node:path";
-import { fileURLToPath as fileURLToPath4 } from "node:url";
+function openCodeMcpEntries(out4) {
+  const dirFiles = (d) => [
+    join13(d, "opencode.json"),
+    join13(d, "opencode.jsonc"),
+    join13(d, ".opencode", "opencode.json"),
+    join13(d, ".opencode", "opencode.jsonc")
+  ];
+  const upwards = [];
+  if (!process.env.OPENCODE_CONFIG_PROJECT_DISABLE)
+    for (let d = process.cwd(); ; ) {
+      upwards.push(...dirFiles(d));
+      const up = dirname3(d);
+      if (up === d) break;
+      d = up;
+    }
+  const files = [
+    ...process.env.OPENCODE_CONFIG ? [process.env.OPENCODE_CONFIG] : [],
+    // Относится ли каталог из переменной к проектному слою, выключатель которого
+    // читается ниже, не наблюдалось (#5559): читаем его в любом случае.
+    ...process.env.OPENCODE_CONFIG_DIR ? dirFiles(process.env.OPENCODE_CONFIG_DIR) : [],
+    ...dirFiles(join13(homedir6(), ".config", "opencode")),
+    ...upwards
+  ];
+  const kindOf = (v) => {
+    const e = v ?? {};
+    const parts = [
+      ...Array.isArray(e.command) ? e.command : e.command ? [e.command] : [],
+      ...e.args ?? []
+    ];
+    if (parts.some((p) => /(^|[\\/])iskron[^\\/]*\.mjs$|iskron-bridge/.test(String(p))))
+      return "bridge";
+    if (e.url && isProductionServer(e.url)) return "http";
+    return null;
+  };
+  const parse = (text) => {
+    const STRING = '"(?:[^"\\\\]|\\\\.)*"';
+    const noComments = text.replace(
+      new RegExp(`${STRING}|/\\*[\\s\\S]*?\\*/|//[^\\n]*`, "g"),
+      (m) => m.startsWith('"') ? m : ""
+    );
+    const noTrailing = noComments.replace(
+      new RegExp(`${STRING}|,(\\s*[}\\]])`, "g"),
+      (m, tail) => m.startsWith('"') ? m : tail ?? ""
+    );
+    return JSON.parse(noTrailing);
+  };
+  const bridgePath = (v) => {
+    const e = v ?? {};
+    const parts = [
+      ...Array.isArray(e.command) ? e.command : e.command ? [e.command] : [],
+      ...e.args ?? []
+    ].map(String);
+    return parts.find((p) => /(^|[\\/])iskron[^\\/]*\.mjs$|iskron-bridge/.test(p)) ?? parts.join(" ");
+  };
+  let unreadable = 0;
+  const sources = [];
+  for (const f of new Set(files)) {
+    if (!existsSync7(f)) continue;
+    try {
+      sources.push([f, readFileSync13(f, "utf8")]);
+    } catch {
+      unreadable++;
+      out4(`OpenCode: ${f} не читается`);
+    }
+  }
+  if (process.env.OPENCODE_CONFIG_CONTENT)
+    sources.unshift(["OPENCODE_CONFIG_CONTENT", process.env.OPENCODE_CONFIG_CONTENT]);
+  let found = 0;
+  for (const [file, text] of sources) {
+    try {
+      const cfg = parse(text);
+      for (const [name, v] of Object.entries(cfg.mcp ?? {})) {
+        const kind = kindOf(v);
+        if (!kind) continue;
+        found++;
+        if (v.enabled === false) {
+          out4(`OpenCode: запись mcp «${name}» в ${file} ведёт Искрон, но выключена — не в игре`);
+          continue;
+        }
+        out4(
+          kind === "bridge" ? `OpenCode: запись mcp «${name}» в ${file} зовёт ${bridgePath(v)} — похоже на мост поставки. Если это он, её тулы namespaced, а мост общий для сессий сервиса: запись может уйти под подписью соседней сессии. Тогда убери её из этого файла руками: у opencode mcp есть list, add, auth, logout — команды remove нет. Поверхность поставки это плагин` : `OpenCode: запись mcp «${name}» в ${file} ведёт Искрон напрямую по http — её тулы namespaced, и стояния канала у неё нет; это запасной путь, и он законен там, где мост не поднять`
+        );
+      }
+    } catch {
+      unreadable++;
+      out4(`OpenCode: ${file} не читается`);
+    }
+  }
+  if (!found)
+    out4(
+      `OpenCode: записей mcp Искрона не нашёл${unreadable ? ` в том, что прочёл (${unreadable} файл(а) не разобрались — смотри строки выше)` : ""} — смотрел вверх от ${process.cwd()}, глобальный слой и переменные; запись в другом дереве этим не проверена, позови doctor из каталога проекта`
+    );
+}
+
+// js/cli/doctor.ts
 var out = (s) => {
   process.stdout.write(s + "\n");
 };
@@ -4653,14 +4753,14 @@ function homeCopyReport() {
   const home = homeBridgePath();
   let self = null;
   try {
-    self = readFileSync13(fileURLToPath4(import.meta.url));
+    self = readFileSync14(fileURLToPath4(import.meta.url));
   } catch {
   }
-  if (!existsSync7(home)) {
+  if (!existsSync8(home)) {
     out(`домашняя копия: нет (${home}) — её кладёт establish-mcp при подключении`);
     return;
   }
-  const bytes = readFileSync13(home);
+  const bytes = readFileSync14(home);
   if (self && bytes.equals(self)) {
     out(`домашняя копия: ${home} — та же сборка, что и этот файл`);
     return;
@@ -4748,12 +4848,12 @@ async function patReport() {
   } else if (res.ok) out(`  токен принят сервером (HTTP ${res.status})`);
   else out(`  сервер ответил HTTP ${res.status} — не отказ токена, смотри строку «сервер»`);
   const path = storePath();
-  if (existsSync7(path)) out(`  хранилище OAuth ${path} есть, но не читается, пока стоит PAT`);
+  if (existsSync8(path)) out(`  хранилище OAuth ${path} есть, но не читается, пока стоит PAT`);
 }
 function grantReport() {
   const path = storePath();
   out(`грант: ${path}`);
-  if (!existsSync7(path)) {
+  if (!existsSync8(path)) {
     out("  хранилища нет — мост ещё ни разу не входил на этот сервер");
     return;
   }
@@ -4785,11 +4885,11 @@ function grantReport() {
   if (st.refused_since)
     out(`  отказ стоит с ${new Date(st.refused_since).toISOString()}: ${st.reason ?? ""}`);
   for (const suffix of [".auth-pending", ".refreshing"]) {
-    if (existsSync7(path + suffix)) out(`  замок: ${path + suffix}`);
+    if (existsSync8(path + suffix)) out(`  замок: ${path + suffix}`);
   }
   const logPath = grantLogPath();
-  if (existsSync7(logPath)) {
-    const lines = readFileSync13(logPath, "utf8").trim().split("\n").slice(-3);
+  if (existsSync8(logPath)) {
+    const lines = readFileSync14(logPath, "utf8").trim().split("\n").slice(-3);
     out(`  grant.log, последнее:`);
     for (const l of lines) out(`    ${l}`);
   }
@@ -4812,10 +4912,10 @@ function latestReport() {
   else out(`свежий релиз: v${latest.version}, этот файл не отстал; спрашивал ${ago} мин назад`);
 }
 function claudePluginReport() {
-  const registry = join13(homedir6(), ".claude", "plugins", "installed_plugins.json");
-  if (!existsSync7(registry)) return;
+  const registry = join14(homedir7(), ".claude", "plugins", "installed_plugins.json");
+  if (!existsSync8(registry)) return;
   try {
-    const reg = JSON.parse(readFileSync13(registry, "utf8"));
+    const reg = JSON.parse(readFileSync14(registry, "utf8"));
     const mine = Object.entries(reg.plugins ?? {}).filter(([k]) => /^iskron@/.test(k));
     if (!mine.length) {
       out(`Claude Code: плагин iskron не установлен (${registry})`);
@@ -4823,11 +4923,11 @@ function claudePluginReport() {
     }
     for (const [key, installs] of mine) {
       for (const inst of installs) {
-        const manifest = inst.installPath ? join13(inst.installPath, ".mcp.json") : "";
+        const manifest = inst.installPath ? join14(inst.installPath, ".mcp.json") : "";
         let entry = "запись моста в манифесте не найдена";
-        if (manifest && existsSync7(manifest)) {
+        if (manifest && existsSync8(manifest)) {
           try {
-            const m = JSON.parse(readFileSync13(manifest, "utf8"));
+            const m = JSON.parse(readFileSync14(manifest, "utf8"));
             const hit = Object.entries(m.mcpServers ?? {}).find(
               ([, v]) => (v.args ?? []).some((a) => /iskron\.mjs/.test(a))
             );
@@ -4848,17 +4948,17 @@ function claudePluginReport() {
 function codexHomes() {
   const homes = [
     process.env.CODEX_HOME?.trim() || "",
-    join13(homedir6(), ".codex"),
-    ...process.platform === "darwin" ? [join13(homedir6(), "Library", "Application Support", "orca", "codex-runtime-home", "home")] : []
+    join14(homedir7(), ".codex"),
+    ...process.platform === "darwin" ? [join14(homedir7(), "Library", "Application Support", "orca", "codex-runtime-home", "home")] : []
   ].filter(Boolean);
-  return [...new Set(homes)].filter((h) => existsSync7(h));
+  return [...new Set(homes)].filter((h) => existsSync8(h));
 }
 function codexPluginReport(home) {
-  const cache = join13(home, "plugins", "cache");
-  if (!existsSync7(cache)) return;
+  const cache = join14(home, "plugins", "cache");
+  if (!existsSync8(cache)) return;
   let found = 0;
   for (const market of readdirSync6(cache)) {
-    const marketDir = join13(cache, market);
+    const marketDir = join14(cache, market);
     let plugins;
     try {
       plugins = readdirSync6(marketDir);
@@ -4867,12 +4967,12 @@ function codexPluginReport(home) {
     }
     for (const plugin of plugins) {
       if (!/iskron/.test(plugin)) continue;
-      const dir = join13(marketDir, plugin);
-      const manifest = join13(dir, ".codex-plugin", "plugin.json");
+      const dir = join14(marketDir, plugin);
+      const manifest = join14(dir, ".codex-plugin", "plugin.json");
       let word = "манифеста нет";
-      if (existsSync7(manifest)) {
+      if (existsSync8(manifest)) {
         try {
-          const m = JSON.parse(readFileSync13(manifest, "utf8"));
+          const m = JSON.parse(readFileSync14(manifest, "utf8"));
           const hit = Object.values(m.mcpServers ?? {}).some(
             (v) => (v.args ?? []).some((a) => /iskron\.mjs/.test(a))
           );
@@ -4889,10 +4989,10 @@ function codexPluginReport(home) {
 }
 function harnessReport() {
   claudePluginReport();
-  const claude = join13(homedir6(), ".claude.json");
-  if (existsSync7(claude)) {
+  const claude = join14(homedir7(), ".claude.json");
+  if (existsSync8(claude)) {
     try {
-      const cfg = JSON.parse(readFileSync13(claude, "utf8"));
+      const cfg = JSON.parse(readFileSync14(claude, "utf8"));
       const entries = Object.entries(cfg.mcpServers ?? {}).filter(
         ([, v]) => (v.args ?? []).some((a) => /iskron/.test(a))
       );
@@ -4908,27 +5008,28 @@ function harnessReport() {
       out(`Claude Code: ${claude} не читается`);
     }
   }
-  const opencodeDir = join13(homedir6(), ".config", "opencode");
-  if (existsSync7(opencodeDir)) {
-    const copy = join13(opencodeDir, "plugins", "iskron.js");
-    const packaged = join13(dirname3(fileURLToPath4(import.meta.url)), "opencode-plugin.js");
-    if (!existsSync7(copy)) {
+  const opencodeDir = join14(homedir7(), ".config", "opencode");
+  if (existsSync8(opencodeDir)) {
+    const copy = join14(opencodeDir, "plugins", "iskron.js");
+    const packaged = join14(dirname4(fileURLToPath4(import.meta.url)), "opencode-plugin.js");
+    if (!existsSync8(copy)) {
       out(`OpenCode: плагина нет (${copy}) — его кладёт establish-mcp при подключении`);
-    } else if (!existsSync7(packaged)) {
+    } else if (!existsSync8(packaged)) {
       out(
         `OpenCode: плагин ${copy} стоит; рядом с этим файлом поставки плагина нет, сверить не с чем`
       );
-    } else if (readFileSync13(copy).equals(readFileSync13(packaged))) {
+    } else if (readFileSync14(copy).equals(readFileSync14(packaged))) {
       out(`OpenCode: плагин ${copy} — та же сборка, что в поставке`);
     } else {
       out(`OpenCode: плагин ${copy} — ДРУГИЕ байты, обнови из поставки: cp "${packaged}" ${copy}`);
     }
   }
+  openCodeMcpEntries(out);
   for (const codexHome of codexHomes()) {
     out(`Codex: дом ${codexHome}`);
     codexPluginReport(codexHome);
-    const door = join13(codexHome, "app-server-control", "app-server-control.sock");
-    if (existsSync7(door)) out(`Codex: дверь app-server открыта (${door})`);
+    const door = join14(codexHome, "app-server-control", "app-server-control.sock");
+    if (existsSync8(door)) out(`Codex: дверь app-server открыта (${door})`);
     else if (Buffer.byteLength(door) > 100)
       out(
         `Codex: двери нет и не будет — дом длиннее предела unix-сокета; нужен короткий дом для демона и сессий`
@@ -4937,9 +5038,9 @@ function harnessReport() {
       out(
         `Codex: двери нет (${door}) — демон app-server не поднят; без неё кадр доставляет watchdog-exit`
       );
-    const codex = join13(codexHome, "config.toml");
-    if (existsSync7(codex)) {
-      const text = readFileSync13(codex, "utf8");
+    const codex = join14(codexHome, "config.toml");
+    if (existsSync8(codex)) {
+      const text = readFileSync14(codex, "utf8");
       out(
         `Codex: ${/^\s*\[mcp_servers\."?iskron"?\]|^\s*mcp_servers\."?iskron"?\s*=/m.test(text) ? "ручная запись моста в config.toml есть" : "ручной записи моста в config.toml нет (штатная — в плагине)"}`
       );
