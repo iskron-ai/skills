@@ -311,18 +311,29 @@ function codexPluginReport(home: string): void {
 }
 
 // Запись mcp того же моста рядом с плагином OpenCode: её тулы едут namespaced и
-// ведут один мост на все сессии сервиса — запись дочерней сессии уходит под
-// подписью соседа (граф nks-dev: #5553, класс #4283). Мест у конфига шесть, и
-// `mcp add` без --global пишет в проектное (поверхность — #5559), поэтому
-// смотреть только глобальный файл значит молчать там, где запись вероятнее всего.
+// ведут мост, общий для сессий сервиса, — запись дочерней сессии может уйти под
+// подписью соседней (граф nks-dev: #5553, класс #4283). Конфиг OpenCode читается
+// ВВЕРХ по дереву от текущего каталога, плюс глобальный слой и переменные
+// (поверхность — #5559): смотреть только рядом значит молчать на этаж выше.
 function openCodeMcpEntries(): void {
-  const dirFiles = (d: string): string[] => [join(d, "opencode.json"), join(d, "opencode.jsonc")];
+  const dirFiles = (d: string): string[] => [
+    join(d, "opencode.json"),
+    join(d, "opencode.jsonc"),
+    join(d, ".opencode", "opencode.json"),
+    join(d, ".opencode", "opencode.jsonc"),
+  ];
+  const upwards: string[] = [];
+  for (let d = process.cwd(); ;) {
+    upwards.push(...dirFiles(d));
+    const up = dirname(d);
+    if (up === d) break;
+    d = up;
+  }
   const files = [
     ...(process.env.OPENCODE_CONFIG ? [process.env.OPENCODE_CONFIG] : []),
     ...(process.env.OPENCODE_CONFIG_DIR ? dirFiles(process.env.OPENCODE_CONFIG_DIR) : []),
     ...dirFiles(join(homedir(), ".config", "opencode")),
-    ...dirFiles(process.cwd()),
-    ...dirFiles(join(process.cwd(), ".opencode")),
+    ...upwards,
   ];
   // Своя запись — та, что зовёт файл моста или адрес Искрона; чужой сервер,
   // лежащий в каталоге со словом iskron в пути, своей не становится.
@@ -348,7 +359,7 @@ function openCodeMcpEntries(): void {
         if (!ours(v)) continue;
         const off = (v as { enabled?: boolean }).enabled === false ? " (enabled: false)" : "";
         out(
-          `OpenCode: запись mcp «${name}»${off} в ${file} ведёт тот же Искрон — её тулы namespaced, а мост у неё общий для сессий сервиса: запись может уйти под подписью соседней сессии. Убери её (opencode mcp remove) — поверхность поставки это плагин`,
+          `OpenCode: запись mcp «${name}»${off} в ${file} ведёт тот же Искрон — её тулы namespaced, а мост у неё общий для сессий сервиса: запись может уйти под подписью соседней сессии. Убери её из этого файла руками: у opencode mcp есть list, add, auth, logout — команды remove нет. Поверхность поставки это плагин`,
         );
       }
     } catch {

@@ -4888,13 +4888,24 @@ function codexPluginReport(home) {
   if (!found) out(`Codex: плагина iskron в кэше нет (${cache})`);
 }
 function openCodeMcpEntries() {
-  const dirFiles = (d) => [join13(d, "opencode.json"), join13(d, "opencode.jsonc")];
+  const dirFiles = (d) => [
+    join13(d, "opencode.json"),
+    join13(d, "opencode.jsonc"),
+    join13(d, ".opencode", "opencode.json"),
+    join13(d, ".opencode", "opencode.jsonc")
+  ];
+  const upwards = [];
+  for (let d = process.cwd(); ; ) {
+    upwards.push(...dirFiles(d));
+    const up = dirname3(d);
+    if (up === d) break;
+    d = up;
+  }
   const files = [
     ...process.env.OPENCODE_CONFIG ? [process.env.OPENCODE_CONFIG] : [],
     ...process.env.OPENCODE_CONFIG_DIR ? dirFiles(process.env.OPENCODE_CONFIG_DIR) : [],
     ...dirFiles(join13(homedir6(), ".config", "opencode")),
-    ...dirFiles(process.cwd()),
-    ...dirFiles(join13(process.cwd(), ".opencode"))
+    ...upwards
   ];
   const ours = (v) => {
     const e = v ?? {};
@@ -4918,7 +4929,7 @@ function openCodeMcpEntries() {
         if (!ours(v)) continue;
         const off = v.enabled === false ? " (enabled: false)" : "";
         out(
-          `OpenCode: запись mcp «${name}»${off} в ${file} ведёт тот же Искрон — её тулы namespaced, а мост у неё общий для сессий сервиса: запись может уйти под подписью соседней сессии. Убери её (opencode mcp remove) — поверхность поставки это плагин`
+          `OpenCode: запись mcp «${name}»${off} в ${file} ведёт тот же Искрон — её тулы namespaced, а мост у неё общий для сессий сервиса: запись может уйти под подписью соседней сессии. Убери её из этого файла руками: у opencode mcp есть list, add, auth, logout — команды remove нет. Поверхность поставки это плагин`
         );
       }
     } catch {

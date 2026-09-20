@@ -303,8 +303,11 @@ test("doctor reads the project config too, and leaves a foreign server alone", a
       }),
     );
     const authDir = mkdtempSync(join(tmpdir(), "iskron-doctor-auth-"));
-    const r = await run(["doctor", fake.mcpUrl, "--auth-dir", authDir], { HOME: home }, project);
-    assert.match(r.out, /запись mcp «iskron-bridge»/, `the project entry must be named: ${r.out}`);
+    // Конфиг читается вверх по дереву: запись этажом выше так же опасна.
+    const deep = join(project, "child", "deep");
+    mkdirSync(deep, { recursive: true });
+    const r = await run(["doctor", fake.mcpUrl, "--auth-dir", authDir], { HOME: home }, deep);
+    assert.match(r.out, /запись mcp «iskron-bridge»/, `the entry above must be named: ${r.out}`);
     assert.doesNotMatch(
       r.out,
       /«чужой»|«чужой-удалённый»/,
