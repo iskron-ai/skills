@@ -4928,10 +4928,12 @@ function openCodeMcpEntries() {
       (m) => m.startsWith('"') ? m : ""
     )
   );
-  for (const file of [...new Set(files)]) {
-    if (!existsSync7(file)) continue;
+  const sources = [...new Set(files)].filter((f) => existsSync7(f)).map((f) => [f, readFileSync13(f, "utf8")]);
+  if (process.env.OPENCODE_CONFIG_CONTENT)
+    sources.unshift(["OPENCODE_CONFIG_CONTENT", process.env.OPENCODE_CONFIG_CONTENT]);
+  for (const [file, text] of sources) {
     try {
-      const cfg = parse(readFileSync13(file, "utf8"));
+      const cfg = parse(text);
       for (const [name, v] of Object.entries(cfg.mcp ?? {})) {
         const kind = kindOf(v);
         if (!kind) continue;

@@ -332,6 +332,9 @@ function openCodeMcpEntries(): void {
       if (up === d) break;
       d = up;
     }
+  // Переменные названы бинарём 2.0.9, но влияния на `opencode mcp list` у них не
+  // наблюдалось (#5559): читаем их на стороне безопасности — лишняя строка дешевле
+  // молчания о записи, которую сервис всё же возьмёт.
   const files = [
     ...(process.env.OPENCODE_CONFIG ? [process.env.OPENCODE_CONFIG] : []),
     ...(process.env.OPENCODE_CONFIG_DIR ? dirFiles(process.env.OPENCODE_CONFIG_DIR) : []),
@@ -362,10 +365,14 @@ function openCodeMcpEntries(): void {
         m.startsWith('"') ? m : "",
       ),
     ) as { mcp?: Record<string, unknown> };
-  for (const file of [...new Set(files)]) {
-    if (!existsSync(file)) continue;
+  const sources: [string, string][] = [...new Set(files)]
+    .filter((f) => existsSync(f))
+    .map((f) => [f, readFileSync(f, "utf8")]);
+  if (process.env.OPENCODE_CONFIG_CONTENT)
+    sources.unshift(["OPENCODE_CONFIG_CONTENT", process.env.OPENCODE_CONFIG_CONTENT]);
+  for (const [file, text] of sources) {
     try {
-      const cfg = parse(readFileSync(file, "utf8"));
+      const cfg = parse(text);
       for (const [name, v] of Object.entries(cfg.mcp ?? {})) {
         const kind = kindOf(v);
         if (!kind) continue;

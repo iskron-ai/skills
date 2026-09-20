@@ -362,6 +362,61 @@ test("doctor tells the bridge entry from the http fallback and reads jsonc with 
   }
 });
 
+// Конфиг приходит и мимо дерева — файлом из переменной или её содержимым; а
+// выключенный проектный слой значит, что файлы дерева OpenCode не читает и
+// советовать по ним нечего (#5559).
+test("doctor reads the config from the env vars and skips the project layer when it is off", async () => {
+  const fake = await startFakeNks();
+  const home = mkdtempSync(join(tmpdir(), "iskron-doctor-"));
+  const project = mkdtempSync(join(tmpdir(), "iskron-doctor-proj-"));
+  const bridge = join(home, ".iskron-bridge", "iskron-bridge.mjs");
+  try {
+    writeFileSync(
+      join(project, "opencode.json"),
+      JSON.stringify({ mcp: { "из-дерева": { type: "local", command: ["node", bridge] } } }),
+    );
+    const external = join(home, "внешний.json");
+    writeFileSync(
+      external,
+      JSON.stringify({ mcp: { "из-переменной": { type: "local", command: ["node", bridge] } } }),
+    );
+    const authDir = mkdtempSync(join(tmpdir(), "iskron-doctor-auth-"));
+    const byVar = await run(
+      ["doctor", fake.mcpUrl, "--auth-dir", authDir],
+      { HOME: home, OPENCODE_CONFIG: external, OPENCODE_CONFIG_PROJECT_DISABLE: "1" },
+      project,
+    );
+    assert.match(
+      byVar.out,
+      /«из-переменной»/,
+      `the file from the env var must be read: ${byVar.out}`,
+    );
+    assert.doesNotMatch(
+      byVar.out,
+      /«из-дерева»/,
+      `the project layer is off — its files must be left alone: ${byVar.out}`,
+    );
+    const byContent = await run(
+      ["doctor", fake.mcpUrl, "--auth-dir", authDir],
+      {
+        HOME: home,
+        OPENCODE_CONFIG_PROJECT_DISABLE: "1",
+        OPENCODE_CONFIG_CONTENT: JSON.stringify({
+          mcp: { "из-содержимого": { type: "local", command: ["node", bridge] } },
+        }),
+      },
+      project,
+    );
+    assert.match(
+      byContent.out,
+      /«из-содержимого»/,
+      `the config passed as content must be read: ${byContent.out}`,
+    );
+  } finally {
+    await fake.stop();
+  }
+});
+
 test("doctor with a personal access token names its source and judges it by a live handshake", async () => {
   const fake = await startFakeNks({ pat: "nks_pat_doc" });
   const dir = mkdtempSync(join(tmpdir(), "iskron-doctor-pat-"));
