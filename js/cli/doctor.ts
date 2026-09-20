@@ -337,6 +337,8 @@ function openCodeMcpEntries(): void {
   // молчания о записи, которую сервис всё же возьмёт.
   const files = [
     ...(process.env.OPENCODE_CONFIG ? [process.env.OPENCODE_CONFIG] : []),
+    // Относится ли каталог из переменной к проектному слою, выключатель которого
+    // читается ниже, не наблюдалось (#5559): читаем его в любом случае.
     ...(process.env.OPENCODE_CONFIG_DIR ? dirFiles(process.env.OPENCODE_CONFIG_DIR) : []),
     ...dirFiles(join(homedir(), ".config", "opencode")),
     ...upwards,
@@ -353,15 +355,9 @@ function openCodeMcpEntries(): void {
     ];
     if (parts.some((p) => /(^|[\\/])iskron[^\\/]*\.mjs$|iskron-bridge/.test(String(p))))
       return "bridge";
-    try {
-      // Продовых адреса два — русский и английский (#5040): решает общий предикат,
-      // а не имя одного хоста.
-      if (
-        e.url &&
-        (isProductionServer(e.url) || /(^|\.)iskron\.(ru|ai)$/.test(new URL(e.url).hostname))
-      )
-        return "http";
-    } catch {}
+    // Продовых адреса ровно два — русский и английский (#5040), и решает их общий
+    // предикат: прочие хосты тех же доменов поставке не принадлежат.
+    if (e.url && isProductionServer(e.url)) return "http";
     return null;
   };
   // .jsonc существует ради комментариев и висячих запятых: JSON.parse падает на
@@ -374,6 +370,18 @@ function openCodeMcpEntries(): void {
         (m, tail: string | undefined) => (m.startsWith('"') ? m : (tail ?? "")),
       ),
     ) as { mcp?: Record<string, unknown> };
+  // Путь, по которому запись признана мостом, — чтобы читатель сверил сам, а не
+  // верил слову: совпадение идёт по имени файла и бывает случайным.
+  const bridgePath = (v: unknown): string => {
+    const e = (v ?? {}) as { command?: string | string[]; args?: string[] };
+    const parts = [
+      ...(Array.isArray(e.command) ? e.command : e.command ? [e.command] : []),
+      ...(e.args ?? []),
+    ].map(String);
+    return (
+      parts.find((p) => /(^|[\\/])iskron[^\\/]*\.mjs$|iskron-bridge/.test(p)) ?? parts.join(" ")
+    );
+  };
   const sources: [string, string][] = [];
   for (const f of new Set(files)) {
     if (!existsSync(f)) continue;
@@ -401,7 +409,7 @@ function openCodeMcpEntries(): void {
         }
         out(
           kind === "bridge"
-            ? `OpenCode: запись mcp «${name}» в ${file} ведёт тот же мост — её тулы namespaced, а мост у неё общий для сессий сервиса: запись может уйти под подписью соседней сессии. Убери её из этого файла руками: у opencode mcp есть list, add, auth, logout — команды remove нет. Поверхность поставки это плагин`
+            ? `OpenCode: запись mcp «${name}» в ${file} зовёт ${bridgePath(v)} — похоже на мост поставки. Если это он, её тулы namespaced, а мост общий для сессий сервиса: запись может уйти под подписью соседней сессии. Тогда убери её из этого файла руками: у opencode mcp есть list, add, auth, logout — команды remove нет. Поверхность поставки это плагин`
             : `OpenCode: запись mcp «${name}» в ${file} ведёт Искрон напрямую по http — её тулы namespaced, и стояния канала у неё нет; это запасной путь, и он законен там, где мост не поднять`,
         );
       }

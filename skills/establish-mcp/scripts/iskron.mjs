@@ -4904,6 +4904,8 @@ function openCodeMcpEntries() {
     }
   const files = [
     ...process.env.OPENCODE_CONFIG ? [process.env.OPENCODE_CONFIG] : [],
+    // Относится ли каталог из переменной к проектному слою, выключатель которого
+    // читается ниже, не наблюдалось (#5559): читаем его в любом случае.
     ...process.env.OPENCODE_CONFIG_DIR ? dirFiles(process.env.OPENCODE_CONFIG_DIR) : [],
     ...dirFiles(join13(homedir6(), ".config", "opencode")),
     ...upwards
@@ -4916,11 +4918,7 @@ function openCodeMcpEntries() {
     ];
     if (parts.some((p) => /(^|[\\/])iskron[^\\/]*\.mjs$|iskron-bridge/.test(String(p))))
       return "bridge";
-    try {
-      if (e.url && (isProductionServer(e.url) || /(^|\.)iskron\.(ru|ai)$/.test(new URL(e.url).hostname)))
-        return "http";
-    } catch {
-    }
+    if (e.url && isProductionServer(e.url)) return "http";
     return null;
   };
   const parse = (text) => JSON.parse(
@@ -4929,6 +4927,14 @@ function openCodeMcpEntries() {
       (m, tail) => m.startsWith('"') ? m : tail ?? ""
     )
   );
+  const bridgePath = (v) => {
+    const e = v ?? {};
+    const parts = [
+      ...Array.isArray(e.command) ? e.command : e.command ? [e.command] : [],
+      ...e.args ?? []
+    ].map(String);
+    return parts.find((p) => /(^|[\\/])iskron[^\\/]*\.mjs$|iskron-bridge/.test(p)) ?? parts.join(" ");
+  };
   const sources = [];
   for (const f of new Set(files)) {
     if (!existsSync7(f)) continue;
@@ -4953,7 +4959,7 @@ function openCodeMcpEntries() {
           continue;
         }
         out(
-          kind === "bridge" ? `OpenCode: запись mcp «${name}» в ${file} ведёт тот же мост — её тулы namespaced, а мост у неё общий для сессий сервиса: запись может уйти под подписью соседней сессии. Убери её из этого файла руками: у opencode mcp есть list, add, auth, logout — команды remove нет. Поверхность поставки это плагин` : `OpenCode: запись mcp «${name}» в ${file} ведёт Искрон напрямую по http — её тулы namespaced, и стояния канала у неё нет; это запасной путь, и он законен там, где мост не поднять`
+          kind === "bridge" ? `OpenCode: запись mcp «${name}» в ${file} зовёт ${bridgePath(v)} — похоже на мост поставки. Если это он, её тулы namespaced, а мост общий для сессий сервиса: запись может уйти под подписью соседней сессии. Тогда убери её из этого файла руками: у opencode mcp есть list, add, auth, logout — команды remove нет. Поверхность поставки это плагин` : `OpenCode: запись mcp «${name}» в ${file} ведёт Искрон напрямую по http — её тулы namespaced, и стояния канала у неё нет; это запасной путь, и он законен там, где мост не поднять`
         );
       }
     } catch {
