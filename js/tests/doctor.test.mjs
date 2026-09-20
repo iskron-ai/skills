@@ -30,9 +30,10 @@ const PLUGIN = JSON.parse(
   readFileSync(join(HERE, "..", "..", ".claude-plugin", "plugin.json"), "utf8"),
 );
 
-function run(args, env = {}) {
+function run(args, env = {}, cwd = undefined) {
   return new Promise((resolve) => {
     const proc = spawn(NODE, [FILE, ...args], {
+      cwd,
       env: { ...process.env, ...env },
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -273,10 +274,41 @@ test("doctor names an mcp entry of the same bridge next to the OpenCode plugin",
     );
     const authDir = mkdtempSync(join(tmpdir(), "iskron-doctor-auth-"));
     const r = await run(["doctor", fake.mcpUrl, "--auth-dir", authDir], { HOME: home });
-    assert.match(
+    assert.match(r.out, /OpenCode: запись mcp «iskron»/, `the entry must be named: ${r.out}`);
+  } finally {
+    await fake.stop();
+  }
+});
+
+// `opencode mcp add` без --global пишет в конфиг ПРОЕКТА (поверхность #5559):
+// смотреть только глобальный файл значит молчать там, где запись вероятнее.
+// И наоборот: чужой сервер, чей путь лежит в каталоге со словом iskron, своим
+// не становится — иначе совет «убери запись» приходит на чужую работу.
+test("doctor reads the project config too, and leaves a foreign server alone", async () => {
+  const fake = await startFakeNks();
+  const home = mkdtempSync(join(tmpdir(), "iskron-doctor-"));
+  const project = mkdtempSync(join(tmpdir(), "iskron-doctor-proj-"));
+  try {
+    writeFileSync(
+      join(project, "opencode.json"),
+      JSON.stringify({
+        mcp: {
+          "iskron-bridge": {
+            type: "local",
+            command: ["node", join(home, ".iskron-bridge", "iskron-bridge.mjs")],
+          },
+          чужой: { type: "local", command: ["node", join(home, "code", "iskron", "other.mjs")] },
+          "чужой-удалённый": { type: "remote", url: "https://example.com/mcp" },
+        },
+      }),
+    );
+    const authDir = mkdtempSync(join(tmpdir(), "iskron-doctor-auth-"));
+    const r = await run(["doctor", fake.mcpUrl, "--auth-dir", authDir], { HOME: home }, project);
+    assert.match(r.out, /запись mcp «iskron-bridge»/, `the project entry must be named: ${r.out}`);
+    assert.doesNotMatch(
       r.out,
-      /OpenCode: запись mcp/,
-      `the neighbouring mcp entry must be named: ${r.out}`,
+      /«чужой»|«чужой-удалённый»/,
+      `a foreign server must be left alone: ${r.out}`,
     );
   } finally {
     await fake.stop();

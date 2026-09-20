@@ -4887,6 +4887,45 @@ function codexPluginReport(home) {
   }
   if (!found) out(`Codex: плагина iskron в кэше нет (${cache})`);
 }
+function openCodeMcpEntries() {
+  const dirFiles = (d) => [join13(d, "opencode.json"), join13(d, "opencode.jsonc")];
+  const files = [
+    ...process.env.OPENCODE_CONFIG ? [process.env.OPENCODE_CONFIG] : [],
+    ...process.env.OPENCODE_CONFIG_DIR ? dirFiles(process.env.OPENCODE_CONFIG_DIR) : [],
+    ...dirFiles(join13(homedir6(), ".config", "opencode")),
+    ...dirFiles(process.cwd()),
+    ...dirFiles(join13(process.cwd(), ".opencode"))
+  ];
+  const ours = (v) => {
+    const e = v ?? {};
+    const parts = [
+      ...Array.isArray(e.command) ? e.command : e.command ? [e.command] : [],
+      ...e.args ?? []
+    ];
+    if (parts.some((p) => /(^|[\\/])iskron[^\\/]*\.mjs$|iskron-bridge/.test(String(p))))
+      return true;
+    try {
+      return !!e.url && /(^|\.)iskron\.ru$/.test(new URL(e.url).hostname);
+    } catch {
+      return false;
+    }
+  };
+  for (const file of [...new Set(files)]) {
+    if (!existsSync7(file)) continue;
+    try {
+      const cfg = JSON.parse(readFileSync13(file, "utf8"));
+      for (const [name, v] of Object.entries(cfg.mcp ?? {})) {
+        if (!ours(v)) continue;
+        const off = v.enabled === false ? " (enabled: false)" : "";
+        out(
+          `OpenCode: запись mcp «${name}»${off} в ${file} ведёт тот же Искрон — её тулы namespaced, а мост у неё общий для сессий сервиса: запись может уйти под подписью соседней сессии. Убери её (opencode mcp remove) — поверхность поставки это плагин`
+        );
+      }
+    } catch {
+      out(`OpenCode: ${file} не читается`);
+    }
+  }
+}
 function harnessReport() {
   claudePluginReport();
   const claude = join13(homedir6(), ".claude.json");
@@ -4923,22 +4962,8 @@ function harnessReport() {
     } else {
       out(`OpenCode: плагин ${copy} — ДРУГИЕ байты, обнови из поставки: cp "${packaged}" ${copy}`);
     }
-    const cfgFile = join13(opencodeDir, "opencode.json");
-    if (existsSync7(cfgFile)) {
-      try {
-        const cfg = JSON.parse(readFileSync13(cfgFile, "utf8"));
-        const ours = Object.entries(cfg.mcp ?? {}).filter(
-          ([, v]) => /iskron[^"]*\.mjs|iskron-bridge/.test(JSON.stringify(v))
-        );
-        for (const [name] of ours)
-          out(
-            `OpenCode: запись mcp «${name}» ведёт тот же мост — её тулы namespaced и ведут ОДИН мост на все сессии сервиса: запись уходит под подписью соседа. Убери запись из ${cfgFile}; поверхность поставки — плагин`
-          );
-      } catch {
-        out(`OpenCode: ${cfgFile} не читается`);
-      }
-    }
   }
+  openCodeMcpEntries();
   for (const codexHome of codexHomes()) {
     out(`Codex: дом ${codexHome}`);
     codexPluginReport(codexHome);
