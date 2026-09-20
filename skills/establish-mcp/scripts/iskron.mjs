@@ -4917,7 +4917,8 @@ function openCodeMcpEntries() {
     if (parts.some((p) => /(^|[\\/])iskron[^\\/]*\.mjs$|iskron-bridge/.test(String(p))))
       return "bridge";
     try {
-      if (e.url && /(^|\.)iskron\.ru$/.test(new URL(e.url).hostname)) return "http";
+      if (e.url && (isProductionServer(e.url) || /(^|\.)iskron\.(ru|ai)$/.test(new URL(e.url).hostname)))
+        return "http";
     } catch {
     }
     return null;
@@ -4926,7 +4927,7 @@ function openCodeMcpEntries() {
     text.replace(
       /"(?:[^"\\]|\\.)*"|\/\*[\s\S]*?\*\/|\/\/[^\n]*/g,
       (m) => m.startsWith('"') ? m : ""
-    )
+    ).replace(/,(\s*[}\]])/g, "$1")
   );
   const sources = [...new Set(files)].filter((f) => existsSync7(f)).map((f) => [f, readFileSync13(f, "utf8")]);
   if (process.env.OPENCODE_CONFIG_CONTENT)

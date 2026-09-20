@@ -354,16 +354,26 @@ function openCodeMcpEntries(): void {
     if (parts.some((p) => /(^|[\\/])iskron[^\\/]*\.mjs$|iskron-bridge/.test(String(p))))
       return "bridge";
     try {
-      if (e.url && /(^|\.)iskron\.ru$/.test(new URL(e.url).hostname)) return "http";
+      // Продовых адреса два — русский и английский (#5040): решает общий предикат,
+      // а не имя одного хоста.
+      if (
+        e.url &&
+        (isProductionServer(e.url) || /(^|\.)iskron\.(ru|ai)$/.test(new URL(e.url).hostname))
+      )
+        return "http";
     } catch {}
     return null;
   };
   // Комментарии — то, ради чего существует .jsonc: JSON.parse на них падает.
   const parse = (text: string): { mcp?: Record<string, unknown> } =>
     JSON.parse(
-      text.replace(/"(?:[^"\\]|\\.)*"|\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, (m) =>
-        m.startsWith('"') ? m : "",
-      ),
+      text
+        .replace(/"(?:[^"\\]|\\.)*"|\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, (m) =>
+          m.startsWith('"') ? m : "",
+        )
+        // Висячая запятая — обычный стиль .jsonc; без неё весь файл ушёл бы в
+        // «не читается», и настоящая запись пропала бы вместе с ним.
+        .replace(/,(\s*[}\]])/g, "$1"),
     ) as { mcp?: Record<string, unknown> };
   const sources: [string, string][] = [...new Set(files)]
     .filter((f) => existsSync(f))

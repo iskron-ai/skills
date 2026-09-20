@@ -333,8 +333,9 @@ test("doctor tells the bridge entry from the http fallback and reads jsonc with 
         "  // запись поставки, заведённая руками",
         '  "mcp": {',
         '    "прямой": { "type": "remote", "url": "https://mcp.iskron.ru/" },',
+        '    "английский": { "type": "remote", "url": "https://mcp.iskron.ai/" },',
         '    "выключенный": { "type": "local", "enabled": false,',
-        `      "command": ["node", ${JSON.stringify(join(home, ".iskron-bridge", "iskron-bridge.mjs"))}] }`,
+        `      "command": ["node", ${JSON.stringify(join(home, ".iskron-bridge", "iskron-bridge.mjs"))}], },`,
         "  }",
         "}",
       ].join("\n"),
@@ -356,6 +357,11 @@ test("doctor tells the bridge entry from the http fallback and reads jsonc with 
       r.out,
       /«выключенный».*выключена/,
       `a disabled entry must be named as such: ${r.out}`,
+    );
+    assert.match(
+      r.out,
+      /«английский».*напрямую по http/,
+      `the English production address counts too: ${r.out}`,
     );
   } finally {
     await fake.stop();
