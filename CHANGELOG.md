@@ -1,5 +1,14 @@
 # Changelog
 
+## [6.10.2](https://github.com/iskron-ai/skills/compare/v6.10.1...v6.10.2) (2026-09-20)
+
+
+### Bug Fixes
+
+* **bridge:** статусный адрес держится экземпляром моста, не держателем сокета ([#169](https://github.com/iskron-ai/skills/issues/169)) ([2877a23](https://github.com/iskron-ai/skills/commit/2877a2313eba772e0dfcf58a22389cf8925eb9ac))
+* **doctor,establish-mcp:** запись mcp рядом с плагином OpenCode названа ([#165](https://github.com/iskron-ai/skills/issues/165)) ([e89c16e](https://github.com/iskron-ai/skills/commit/e89c16e56f31a1e91d2e3f4a46bc91d99ebe6800))
+* **opencode:** имя тула соседней записи — через точку, наблюдено на 2.0.9 ([#168](https://github.com/iskron-ai/skills/issues/168)) ([72a2feb](https://github.com/iskron-ai/skills/commit/72a2feb1b93c3735c4ff20cab778199ac63ebb86))
+
 ## [6.10.1](https://github.com/iskron-ai/skills/compare/v6.10.0...v6.10.1) (2026-09-19)
 
 
