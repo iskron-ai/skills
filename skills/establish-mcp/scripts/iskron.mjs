@@ -4932,12 +4932,14 @@ function openCodeMcpEntries() {
   const sources = [...new Set(files)].filter((f) => existsSync7(f)).map((f) => [f, readFileSync13(f, "utf8")]);
   if (process.env.OPENCODE_CONFIG_CONTENT)
     sources.unshift(["OPENCODE_CONFIG_CONTENT", process.env.OPENCODE_CONFIG_CONTENT]);
+  let found = 0;
   for (const [file, text] of sources) {
     try {
       const cfg = parse(text);
       for (const [name, v] of Object.entries(cfg.mcp ?? {})) {
         const kind = kindOf(v);
         if (!kind) continue;
+        found++;
         if (v.enabled === false) {
           out(`OpenCode: запись mcp «${name}» в ${file} ведёт Искрон, но выключена — не в игре`);
           continue;
@@ -4950,6 +4952,10 @@ function openCodeMcpEntries() {
       out(`OpenCode: ${file} не читается`);
     }
   }
+  if (!found)
+    out(
+      `OpenCode: записей mcp Искрона не нашёл — смотрел вверх от ${process.cwd()}, глобальный слой и переменные; запись в другом дереве этим не проверена, позови doctor из каталога проекта`
+    );
 }
 function harnessReport() {
   claudePluginReport();

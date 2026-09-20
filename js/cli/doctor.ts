@@ -380,12 +380,14 @@ function openCodeMcpEntries(): void {
     .map((f) => [f, readFileSync(f, "utf8")]);
   if (process.env.OPENCODE_CONFIG_CONTENT)
     sources.unshift(["OPENCODE_CONFIG_CONTENT", process.env.OPENCODE_CONFIG_CONTENT]);
+  let found = 0;
   for (const [file, text] of sources) {
     try {
       const cfg = parse(text);
       for (const [name, v] of Object.entries(cfg.mcp ?? {})) {
         const kind = kindOf(v);
         if (!kind) continue;
+        found++;
         if ((v as { enabled?: boolean }).enabled === false) {
           out(`OpenCode: запись mcp «${name}» в ${file} ведёт Искрон, но выключена — не в игре`);
           continue;
@@ -400,6 +402,13 @@ function openCodeMcpEntries(): void {
       out(`OpenCode: ${file} не читается`);
     }
   }
+  // Чистого отчёта без названного охвата не бывает: doctor идёт вверх от СВОЕГО
+  // каталога, а зовут его обычно из дома — тогда запись в дереве проекта он не
+  // видел вовсе, и молчание прочли бы как «записи нет» (граф nks-dev: #4279).
+  if (!found)
+    out(
+      `OpenCode: записей mcp Искрона не нашёл — смотрел вверх от ${process.cwd()}, глобальный слой и переменные; запись в другом дереве этим не проверена, позови doctor из каталога проекта`,
+    );
 }
 
 export function harnessReport(): void {

@@ -313,6 +313,17 @@ test("doctor reads the project config too, and leaves a foreign server alone", a
       /«чужой»|«чужой-удалённый»/,
       `a foreign server must be left alone: ${r.out}`,
     );
+    // Чистый отчёт обязан называть охват: doctor идёт вверх от своего каталога.
+    const elsewhere = await run(
+      ["doctor", fake.mcpUrl, "--auth-dir", authDir],
+      { HOME: home },
+      home,
+    );
+    assert.match(
+      elsewhere.out,
+      /записей mcp Искрона не нашёл — смотрел вверх от/,
+      `an empty report must name what it looked at: ${elsewhere.out}`,
+    );
   } finally {
     await fake.stop();
   }
