@@ -1,5 +1,13 @@
 # Changelog
 
+## [6.11.0](https://github.com/iskron-ai/skills/compare/v6.10.2...v6.11.0) (2026-09-21)
+
+
+### Features
+
+* **iskronify:** контракт 13 — слот обложки «Раскладка»: README папок и GOTCHAS.md владельца прогон не вливает и не перетирает ([#171](https://github.com/iskron-ai/skills/issues/171)) ([f61b58a](https://github.com/iskron-ai/skills/commit/f61b58a99ab7614cdf8ca96fa6f6e00aad7ddc99))
+* **vahta,writing:** вахта по сигналу и с субагентами организует; провенанса в теле узла не бывает ([#173](https://github.com/iskron-ai/skills/issues/173)) ([f74af71](https://github.com/iskron-ai/skills/commit/f74af71a17d6baf994aadad86e248e0cb52f20b0))
+
 ## [6.10.2](https://github.com/iskron-ai/skills/compare/v6.10.1...v6.10.2) (2026-09-20)
 
 
