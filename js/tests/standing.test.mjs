@@ -1629,7 +1629,7 @@ test("a seat gone at the platform releases the hold too: socket closed aloud, re
     name: "iskron_channel",
     arguments: { ...CONNECT, action: "register" },
   });
-  assert.match(reg.result.content[0].text, /зарегистрировано/);
+  assert.match(reg.result.content[0].text, /теперь говорит от стояния/);
   assert.ok(
     readdirSync(standings).some((f) => f.endsWith(".hold")),
     "the place is held before the seat expires",

@@ -2,11 +2,13 @@
 // канала (граф nks-dev: #4233, #5033). Секрет сокета вырезается, держание
 // уходит в hold.ts; своё revoke отпускает место тихо (#5012).
 import { statusUrl as deriveStatusUrl } from "../shared/channel.ts";
-import { holdStanding, releaseStanding, setRevokingOwn } from "./hold.ts";
+import { besideKeyIn, holdStanding, releaseStanding, setRevokingOwn } from "./hold.ts";
 import { listenBlock } from "./listen.ts";
+import { dropExtra, extraIn, extraPlaces } from "./places.ts";
+import { otherRealm } from "./realms.ts";
 import { rememberedPlace, replyText } from "./standing.ts";
 import { log } from "./streams.ts";
-import { state } from "./transport.ts";
+import { type Standing, state } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
 
 const SOCKET_RE =
@@ -67,7 +69,12 @@ function revokesOwn(msg: JsonRpcMessage): boolean {
   const a = msg?.params?.arguments;
   if (msg?.params?.name !== "iskron_channel" || a?.action !== "revoke") return false;
   const s = state.standing;
-  if (!s) return false;
+  if (!s || besideKeyIn(a.realm)) return false; // место другого графа снимается одно (absorbRevokeReply)
+  return names(a, s) && !otherRealm(a.realm, s.realm);
+}
+
+/** Называет ли revoke это место — пустым, «mine», именем или полным адресом, и его ролью. */
+function names(a: Record<string, unknown>, s: Standing): boolean {
   const asked = typeof a.standing === "string" ? a.standing.trim() : "";
   const own =
     asked === "" ||
@@ -90,7 +97,25 @@ export function absorbRevokeReply(msg: JsonRpcMessage, reply: JsonRpcMessage): J
   if (msg?.params?.name !== "iskron_channel" || msg?.params?.arguments?.action !== "revoke")
     return reply;
   setRevokingOwn(false);
-  if (reply?.error || reply?.result?.isError) return reply;
+  const a = msg.params.arguments;
+  if (reply?.error || reply?.result?.isError) {
+    // Основное место канала сервер не снимает, пока на канале стоят места других
+    // графов (#5186): отказ его — и слово моста, что именно держит канал (#5838).
+    const held = extraPlaces().map((p) => p.door.key);
+    const content = reply.result?.content;
+    if (revokesOwn(msg) && held.length && Array.isArray(content))
+      content.push({
+        type: "text",
+        text: `[iskron-bridge] ${state.standing?.name ?? "это место"} — основное место канала моста, а на канале стоят места других графов: ${held.join(", ")}. Мост ничего не отпустил; снять основное — сперва сними их (revoke в их графе).`,
+      });
+    return reply;
+  }
+  const beside = extraIn(a.realm);
+  if (beside && names(a, beside.standing)) {
+    // Место другого графа снято своим revoke: его дверь и запись — прочь, канал цел (#5838).
+    dropExtra(beside.door.key, "снято своим revoke", true);
+    return reply;
+  }
   if (!revokesOwn(msg)) return reply;
   const name = state.standing?.name ?? "unnamed";
   releaseStanding("снято своим revoke", true);

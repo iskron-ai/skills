@@ -116,6 +116,15 @@ export function classifyOrigin(frame: Frame, myKarta?: string | number | null): 
   return "peer";
 }
 
+/** Место канала в hello (наблюдено на живом сервере, мост 6.11.0). */
+export interface HelloStanding {
+  karta_seq?: number;
+  pending?: number;
+  realm?: string;
+  standing?: string;
+  standing_id?: string;
+}
+
 export interface Frame {
   type?: string;
   body?: unknown;
@@ -126,6 +135,13 @@ export interface Frame {
   body_chars?: number;
   /** Как получено тело: "history" — мост дочитал обрезанный кадр; "truncated: …" — не вышло. */
   body_read?: string;
+  /** Адрес кадра — место канала, которому он (#5838): id места, его полный адрес, граф @owner/slug, роль. */
+  to_standing_id?: string;
+  to_standing?: string;
+  realm?: string;
+  karta_seq?: number;
+  /** hello: все места канала — по одному на граф, где канал стоит. */
+  standings?: HelloStanding[];
   /** Кто говорит, по провенансу: платформа, человек, брат по роли, делатель другой роли. Ставит мост. */
   origin?: FrameOrigin;
   provenance?: {

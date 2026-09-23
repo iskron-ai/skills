@@ -6,8 +6,9 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { socketPathOf, standingsDirOf } from "../shared/standings.ts";
+import { resolveAgainstLed } from "./call.ts";
 import { CFG } from "./config.ts";
-import { rememberStatus, statusAddress } from "./hold.ts";
+import { heldPlaces, rememberStatus, statusAddress } from "./hold.ts";
 import { type HoldRecord, keyOf } from "./holdrecord.ts";
 import { localSocketAlive } from "./sweep.ts";
 import { type JsonRpcMessage } from "./types.ts";
@@ -23,12 +24,14 @@ export function localStatus(msg: JsonRpcMessage): Promise<JsonRpcMessage> | null
     id: msg.id,
     result: { ...(isError ? { isError: true } : {}), content: [{ type: "text", text: body }] },
   });
+  // Занятость — места графа из вызова (#5838); без графа — основного.
+  const realm = typeof a.realm === "string" ? a.realm : "";
   return (async () => {
-    const st = await publishStatus(text);
-    if (!st.ok && !statusAddress())
-      return reply(await notHeldHere(typeof a.realm === "string" ? a.realm : ""), true);
+    await resolveAgainstLed(realm); // граф вызова — в той же форме, что граф места
+    const st = await publishStatus(text, realm);
+    if (!st.ok && !statusAddress()) return reply(await notHeldHere(realm), true);
     if (st.code === 404) return reply(`${st.body} ${TURNED_GUIDANCE}`, true);
-    if (st.ok) return reply(`занятость ${statusAddress()?.key}: ${text || "(снята)"}`);
+    if (st.ok) return reply(`занятость ${statusAddress(realm)?.key}: ${text || "(снята)"}`);
     return reply(st.body, true);
   })();
 }
@@ -44,19 +47,34 @@ let lastPublished = "";
 /** Последняя строка занятости, которую доска приняла от этого моста; пустая — снята. */
 export const publishedStatus = (): string => lastPublished;
 
-/** POST строки занятости на статусный адрес стояния, которое держит мост. */
-export async function publishStatus(text: string): Promise<StatusOutcome> {
-  const addr = statusAddress();
+/**
+ * POST строки занятости на статусный адрес канала, который держит мост. Строка
+ * держится у МЕСТА: со standing_id она ложится на одно место канала, без него —
+ * на все живые (#5838). realm — место этого графа; `everyPlace` — все места разом (уход).
+ */
+export async function publishStatus(
+  text: string,
+  realm?: string,
+  everyPlace = false,
+): Promise<StatusOutcome> {
+  const addr = statusAddress(realm);
   if (!addr) {
     return {
       ok: false,
       body: "Отказано (мост): этот мост места не держит, статусного адреса у него нет.",
     };
   }
-  const st = await publishStatusTo(addr.url, text);
+  // Мест на канале несколько, а id этого не известен — строка легла бы на все: отказ вслух.
+  // Место одно — строка без id ложится на него же, как прежде.
+  if (!everyPlace && !addr.standingId && heldPlaces().length > 1)
+    return {
+      ok: false,
+      body: `Отказано (мост): id места ${addr.key} у моста ещё не известен (hello его не назвал) — без него строка легла бы на все места канала; повтори iskron_stand этого графа.`,
+    };
+  const st = await publishStatusTo(addr.url, text, 5000, everyPlace ? null : addr.standingId);
   if (st.ok) {
-    lastPublished = text;
-    rememberStatus(text);
+    if (addr.key === statusAddress()?.key) lastPublished = text;
+    rememberStatus(text, realm);
   }
   return st;
 }
@@ -129,13 +147,14 @@ export async function publishStatusTo(
   url: string,
   text: string,
   timeoutMs = 5000,
+  standingId: string | null = null,
 ): Promise<StatusOutcome> {
   let res: Response;
   try {
     res = await fetch(url, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ text }),
+      body: JSON.stringify(standingId ? { text, standing_id: standingId } : { text }),
       signal: AbortSignal.timeout(timeoutMs),
     });
   } catch (e) {

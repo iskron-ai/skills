@@ -1,9 +1,11 @@
 import { errorMessage } from "./errors.ts";
-import { releaseStanding } from "./hold.ts";
+import { addPlace, noteStandingId, releaseStanding } from "./hold.ts";
 import { normKarta, normName } from "./names.ts";
 import { placeFields } from "./placefields.ts";
+import { dropExtra, keyOfPlace, rememberPlace } from "./places.ts";
+import { otherRealm } from "./realms.ts";
 import { debug, log } from "./streams.ts";
-import { post, state } from "./transport.ts";
+import { post, type Standing, state } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
 
 // Remember a registration the harness made, so it can be replayed into the next
@@ -13,7 +15,14 @@ export function noteStanding(msg: JsonRpcMessage, reply: JsonRpcMessage): void {
   const a = msg?.params?.arguments;
   if (msg?.params?.name !== "iskron_channel" || a?.action !== "register") return;
   if (reply?.error || reply?.result?.isError) return;
-  state.standing = rememberedPlace(a.realm, a.karta, a.name);
+  const place = rememberedPlace(a.realm, a.karta, a.name);
+  const prim = state.standing;
+  if (prim && otherRealm(prim.realm, place.realm)) {
+    // Другой граф — место рядом на том же канале, не подмена основного (#5838).
+    rememberPlace(place);
+    addPlace(place);
+  } else state.standing = place;
+  noteStandingId(place.realm, standingIdOf(reply)); // id места — для кадров и занятости (#5838)
   state.standingSession = state.sessionId;
   debug(`standing remembered: ${a.name ?? "(unnamed)"} at karta ${a.karta} in ${a.realm}`);
 }
@@ -30,7 +39,8 @@ export function rememberedPlace(
   name: unknown,
 ): { realm: string; karta: string; name?: string } {
   const k = normKarta(karta);
-  const prev = state.standing;
+  // Роль — число графа: «agent» в другом графе не берёт числа основного места.
+  const prev = [state.standing, ...state.places].find((p) => p && !otherRealm(p.realm, realm));
   const n = typeof name === "string" ? normName(name) : undefined;
   return {
     realm: String(realm ?? ""),
@@ -53,29 +63,10 @@ export function ensureStanding(): Promise<void> {
   if (standingInFlight) return standingInFlight; // wait for the replay already running
   standingInFlight = (async () => {
     try {
-      const id = `iskron-bridge-restanding-${++state.reinitCounter}`;
-      let reply: JsonRpcMessage | null = null;
-      await post(
-        {
-          jsonrpc: "2.0",
-          id,
-          method: "tools/call",
-          params: {
-            name: "iskron_channel",
-            arguments: {
-              ...state.standing,
-              ...placeFields(state.standing ?? {}),
-              action: "register",
-            },
-          },
-        },
-        (m) => {
-          if (m.id === id) reply = m;
-        },
-      );
-      const got = reply as JsonRpcMessage | null;
+      const got = await replayRegister(state.standing);
       if (got && !got.error && !got.result?.isError) {
-        state.standingSession = state.sessionId;
+        // Места других графов — тем же ходом: иначе их записи легли бы без автора (#5838).
+        if (await replayBeside()) state.standingSession = state.sessionId;
         log(`standing re-registered on the new session (${state.standing?.name ?? "unnamed"})`);
       } else if (seatIsGone(got)) {
         // The seat itself is gone (expired while we were away) — say so and let
@@ -101,6 +92,60 @@ export function ensureStanding(): Promise<void> {
     }
   })();
   return standingInFlight;
+}
+
+async function replayRegister(place: Standing | null): Promise<JsonRpcMessage | null> {
+  const id = `iskron-bridge-restanding-${++state.reinitCounter}`;
+  let reply: JsonRpcMessage | null = null;
+  await post(
+    {
+      jsonrpc: "2.0",
+      id,
+      method: "tools/call",
+      params: {
+        name: "iskron_channel",
+        arguments: { ...place, ...placeFields(place ?? {}), action: "register" },
+      },
+    },
+    (m) => {
+      if (m.id === id) reply = m;
+    },
+  );
+  return reply as JsonRpcMessage | null;
+}
+
+/** Повторная регистрация мест других графов; true — все на месте (истёкшее забыто). */
+async function replayBeside(): Promise<boolean> {
+  let whole = true;
+  for (const place of [...state.places]) {
+    const got = await replayRegister(place);
+    if (got && !got.error && !got.result?.isError) continue;
+    const key = keyOfPlace(place);
+    if (seatIsGone(got)) {
+      log(
+        `the place ${key} is gone at the platform, forgetting it: ${replyText(got).slice(0, 200)}`,
+      );
+      dropExtra(key, "место у платформы истекло — register: места нет", true);
+      state.places = state.places.filter((p) => keyOfPlace(p) !== key);
+    } else {
+      whole = false;
+      log(`could not re-register ${key} this time, will retry: ${replyText(got).slice(0, 200)}`);
+    }
+  }
+  return whole;
+}
+
+/**
+ * id места из ответа тула iskron_channel(action="register") — мост зовёт тул, не
+ * API, и ответ — проза: строка «🪪 id этого места — …», id на следующей строке
+ * (наблюдено на сервере 0.74.0). Без этой строки — null: id не угадывается.
+ */
+export function standingIdOf(reply: JsonRpcMessage | null): string | null {
+  const m =
+    /id этого места[^\n]*\n\s*([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i.exec(
+      replyText(reply),
+    );
+  return m?.[1] ?? null;
 }
 
 export const replyText = (reply: JsonRpcMessage | null): string => {

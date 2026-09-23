@@ -14,6 +14,38 @@ function classifyOrigin(frame, myKarta) {
   return "peer";
 }
 
+// js/shared/clients.ts
+var PI_CLIENT = "pi-iskron";
+
+// js/shared/version.ts
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+var VERSION = "6.11.0";
+function buildOf(selfUrl) {
+  try {
+    const src = readFileSync(fileURLToPath(selfUrl));
+    return `v${VERSION}+${createHash("sha256").update(src).digest("hex").slice(0, 8)}`;
+  } catch {
+    return `v${VERSION}`;
+  }
+}
+function versionIn(text) {
+  const m = /^(?:const|let|var)\s+VERSION\s*=\s*"([^"]+)"/m.exec(text);
+  return m ? m[1] : null;
+}
+
+// js/bridge/build.ts
+var BUILD = buildOf(import.meta.url);
+
+// js/bridge/config.ts
+var DEFAULT_SERVER_URL = "https://mcp.iskron.ru/";
+var ENGLISH_SERVER_URL = "https://mcp.iskron.ai/";
+var PRODUCTION_URLS = new Set([DEFAULT_SERVER_URL, ENGLISH_SERVER_URL].map(strip));
+function strip(url) {
+  return url.replace(/\/+$/, "");
+}
+
 // js/shared/frame-text.ts
 var NOT_ENVELOPE = /* @__PURE__ */ new Set(["body", "provenance", "type", "origin"]);
 var ENVELOPE_FIRST = ["id", "received_at", "stale", "content_type", "body_chars", "body_read"];
@@ -51,38 +83,6 @@ ${body}`;
 
 // js/bridge/backlog.ts
 var BACKLOG_MS = Number(process.env.ISKRON_BRIDGE_BACKLOG_MS) || 1500;
-
-// js/shared/clients.ts
-var PI_CLIENT = "pi-iskron";
-
-// js/shared/version.ts
-import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-var VERSION = "6.11.0";
-function buildOf(selfUrl) {
-  try {
-    const src = readFileSync(fileURLToPath(selfUrl));
-    return `v${VERSION}+${createHash("sha256").update(src).digest("hex").slice(0, 8)}`;
-  } catch {
-    return `v${VERSION}`;
-  }
-}
-function versionIn(text) {
-  const m = /^(?:const|let|var)\s+VERSION\s*=\s*"([^"]+)"/m.exec(text);
-  return m ? m[1] : null;
-}
-
-// js/bridge/build.ts
-var BUILD = buildOf(import.meta.url);
-
-// js/bridge/config.ts
-var DEFAULT_SERVER_URL = "https://mcp.iskron.ru/";
-var ENGLISH_SERVER_URL = "https://mcp.iskron.ai/";
-var PRODUCTION_URLS = new Set([DEFAULT_SERVER_URL, ENGLISH_SERVER_URL].map(strip));
-function strip(url) {
-  return url.replace(/\/+$/, "");
-}
 
 // js/bridge/holdrecord.ts
 var HOLD_RECORD_MAX_AGE_MS = 6 * 60 * 60 * 1e3;

@@ -2,7 +2,7 @@ import { OWN_CLIENTS } from "../shared/clients.ts";
 import { absorbChannelReply, absorbRevokeReply, expectOwnRevoke } from "./absorb.ts";
 import { ensureAuth } from "./auth.ts";
 import { BUILD } from "./build.ts";
-import { crossPlaceRefusal, serialized } from "./call.ts";
+import { crossPlaceRefusal, resolveAgainstLed, serialized } from "./call.ts";
 import {
   AuthPending,
   errorMessage,
@@ -273,6 +273,8 @@ async function deliverOne(msg: JsonRpcMessage): Promise<void> {
       heldReply = null;
       // Стояние одно на мост: connect/mint/register под другое место при ведомом
       // своём — отказ вслух, на сервер не уходит (#5154).
+      if (hasId && msg.method === "tools/call" && msg.params?.name === "iskron_channel")
+        await resolveAgainstLed(msg.params.arguments?.realm); // графы сличаются в одной форме (#5838)
       const cross = hasId ? crossPlaceRefusal(msg) : null;
       if (cross) {
         emit(cross);

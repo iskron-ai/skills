@@ -1233,7 +1233,7 @@ test("стояние перерегистрируется само, когда �
       name: "iskron_channel",
       arguments: { realm: "nks-dev", action: "register", karta: 931, name: "проба" },
     });
-    assert.match(reg.result.content[0].text, /зарегистрировано/);
+    assert.match(reg.result.content[0].text, /теперь говорит от стояния/);
 
     await fake.control({ kill_session: true }); // простой, вытеснение, закрытие — снаружи не различить
 
@@ -1273,7 +1273,7 @@ async function standUp(bridge, dir) {
   await authorize(bridge, dir);
   assert.ok((await bridge.call("initialize", 2, INIT_PARAMS)).result, "сессия должна существовать");
   const reg = await bridge.call("tools/call", 3, { name: "iskron_channel", arguments: REG });
-  assert.match(reg.result.content[0].text, /зарегистрировано/);
+  assert.match(reg.result.content[0].text, /теперь говорит от стояния/);
 }
 
 test("параллельные вызовы после смены сессии — все несут автора, register переигран один раз", async (t) => {
