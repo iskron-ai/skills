@@ -295,6 +295,147 @@ test("a frame the platform sends again is not printed twice", async (t) => {
   assert.equal(wd.out.split("одно слово дважды").length - 1, 1, wd.out);
 });
 
+// One graph event is fanned out to every place of a role, each copy under its
+// own frame id with the same event_id in the body; a sibling place's copies come
+// back stale when the socket reopens (#5829). The doer hears the event once: a
+// second live copy, a stale copy, and a copy after the watchdog is re-armed are
+// all dropped; a stale re-send of a frame already delivered is not re-offered.
+// The frame as the platform emits a graph event: via=graph, an object body, a numeric event_id.
+const graphEvent = (id, eventId, reason, extra = {}) =>
+  JSON.stringify({
+    type: "message",
+    id,
+    content_type: "application/json",
+    provenance: { via: "graph" },
+    body: {
+      realm_slug: "nks-dev",
+      event_kind: "posed_to",
+      vimarsha_seq: 5829,
+      vimarsha_version: 1,
+      event_id: eventId,
+      reason,
+    },
+    ...extra,
+  });
+
+test("one graph event fanned out under several frame ids reaches the watchdog once; a stale re-send of a delivered frame is dropped", async (t) => {
+  const { fake, dir, standings } = await connected(t);
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog", dir, undefined, 30_000);
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog");
+  await fake.control({ ws_send: graphEvent("fan-1", 42, "событие сорок два") });
+  await waitFor(() => wd.out.includes("событие сорок два"), "the first copy");
+  await waitSeen(standings, "fan-1");
+  await fake.control({ ws_send: graphEvent("fan-2", 42, "событие сорок два") });
+  await fake.control({ ws_send: graphEvent("fan-3", 42, "событие сорок два", { stale: true }) });
+  // A doer's word that happens to carry event_id-looking JSON is a word, not an event.
+  await fake.control({
+    ws_send: JSON.stringify({
+      type: "message",
+      id: "word-1",
+      provenance: { via: "direct", from_karta_seq: 7 },
+      body: JSON.stringify({ event_id: 42, reason: "слово делателя" }),
+    }),
+  });
+  await waitFor(() => wd.out.includes("слово делателя"), "a doer's word with event_id text");
+  // A plain frame delivered live, then handed back stale under the same id.
+  await fake.control({
+    ws_send: JSON.stringify({ type: "message", id: "plain-1", body: "простое слово" }),
+  });
+  await waitFor(() => wd.out.includes("простое слово"), "the plain frame");
+  await waitSeen(standings, "plain-1");
+  await fake.control({
+    ws_send: JSON.stringify({ type: "message", id: "plain-1", stale: true, body: "простое слово" }),
+  });
+  await new Promise((r) => setTimeout(r, 2500)); // past the stale burst window
+  assert.equal(wd.out.split("событие сорок два").length - 1, 1, `one event, one print:\n${wd.out}`);
+  assert.equal(wd.out.split("простое слово").length - 1, 1, `delivered once:\n${wd.out}`);
+  assert.ok(!wd.out.includes("Лежалых кадров"), `nothing stale left to offer:\n${wd.out}`);
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+  // Re-armed: yet another copy of the same event stays quiet, a new event is heard.
+  const again = runClient("watchdog", dir, undefined, 20_000);
+  await waitFor(() => again.out.includes("слушаю стояние"), "the re-armed watchdog");
+  await fake.control({ ws_send: graphEvent("fan-4", 42, "событие сорок два") });
+  await fake.control({ ws_send: graphEvent("fan-5", 43, "событие сорок три") });
+  await waitFor(() => again.out.includes("событие сорок три"), "a new event to be heard");
+  await new Promise((r) => setTimeout(r, 300));
+  again.proc.kill("SIGKILL");
+  await again.done;
+  assert.ok(!again.out.includes("событие сорок два"), `a copy after re-arm:\n${again.out}`);
+});
+
+// A copy pushed out of the ring before anyone took it does not hold the event:
+// a later copy — here a stale one — is still offered.
+test("a copy evicted from the ring undelivered does not swallow the event: a later stale copy reaches the watchdog", async (t) => {
+  const { fake, dir } = await connected(t);
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  await fake.control({ ws_send: graphEvent("ev-a", 90, "вытесненное событие") });
+  for (let i = 1; i <= 20; i++)
+    await fake.control({
+      ws_send: JSON.stringify({ type: "message", id: `fill-${i}`, body: `заполнитель ${i}` }),
+    });
+  await new Promise((r) => setTimeout(r, 300));
+  const wd = runClient("watchdog", dir, undefined, 20_000);
+  await waitFor(() => wd.out.includes("заполнитель 20"), "the ring replay");
+  assert.ok(!wd.out.includes("вытесненное событие"), "the first copy is out of the ring");
+  await fake.control({ ws_send: graphEvent("ev-b", 90, "вытесненное событие", { stale: true }) });
+  await waitFor(() => wd.out.includes("вытесненное событие"), "the stale copy to be offered");
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
+// The bridge's own memory dies with it; the watchdog's ev: mark in .seen is what
+// keeps an event printed before a restart from being printed again after it.
+test("a copy of an event printed before the bridge restarted is not printed again after it", async (t) => {
+  const { fake, dir, bridge, standings } = await connected(t);
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog", dir, undefined, 20_000);
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog");
+  await fake.control({ ws_send: graphEvent("rs-1", 70, "до перезапуска моста") });
+  await waitFor(() => wd.out.includes("до перезапуска моста"), "the first print");
+  await waitSeen(standings, "rs-1");
+  await new Promise((r) => setTimeout(r, 200)); // the event mark follows the id mark
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+  bridge.proc.kill("SIGKILL");
+  await waitFor(() => bridge.proc.signalCode !== null, "the first bridge to exit");
+  await waitFor(() => fake.state.ws.size === 0, "the fake to see the socket close");
+  const second = startBridge(fake.mcpUrl, dir);
+  t.after(() => second.stop());
+  assert.ok((await second.call("initialize", 1, INIT)).result);
+  await fake.control({ places: [{ karta: "931", name: "proba", listening: false }] });
+  const st = await second.call("tools/call", 2, {
+    name: "iskron_stand",
+    arguments: { realm: "nks-dev", karta: 931, name: "proba" },
+  });
+  assert.ok(!st.result?.isError, JSON.stringify(st));
+  await waitFor(() => fake.state.ws.size === 1, "the place resumed");
+  const next = runClient("watchdog", dir, undefined, 20_000);
+  await waitFor(() => next.out.includes("слушаю стояние"), "the watchdog after the restart");
+  await fake.control({ ws_send: graphEvent("rs-2", 70, "до перезапуска моста") });
+  await fake.control({ ws_send: graphEvent("rs-3", 71, "после перезапуска") });
+  await waitFor(() => next.out.includes("после перезапуска"), "a new event to be heard");
+  await new Promise((r) => setTimeout(r, 300));
+  next.proc.kill("SIGKILL");
+  await next.done;
+  assert.ok(!next.out.includes("до перезапуска моста"), `printed again:\n${next.out}`);
+});
+
+// Stale wakes nobody; a live copy of the same event must still wake the exit
+// watchdog, even when a stale copy of it arrived first.
+test("a live copy of an event wakes the exit watchdog even when its stale copy came first", async (t) => {
+  const { fake, dir, key } = await connected(t);
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog-exit", dir, key, 8000);
+  await waitFor(() => wd.err.includes("hello"), "hello to be noted");
+  await fake.control({ ws_send: graphEvent("ws-1", 80, "будит живая копия", { stale: true }) });
+  await fake.control({ ws_send: graphEvent("ws-2", 80, "будит живая копия") });
+  const r = await wd.done;
+  assert.equal(r.exit, 0, `the live copy must wake: ${wd.err}`);
+  assert.ok(wd.out.includes("будит живая копия"), wd.out);
+});
+
 // The same on the live path: an exit watchdog attached while two frames land
 // back to back takes the first; the second is written to it but not delivered.
 test("a live batch is not lost to an attached watchdog that exits on the first frame", async (t) => {

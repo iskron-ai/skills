@@ -5,6 +5,7 @@
 // выхода в лог и .seen.
 import { type Frame } from "../shared/channel.ts";
 import { frameToText } from "../shared/frame-text.ts";
+import { eventKeyOf } from "../shared/seen.ts";
 import { type ChannelEvent } from "./hold.ts";
 
 const STALE_BURST_KEEP = 20;
@@ -21,6 +22,7 @@ export function noteStale(frame: Frame, flush: (ev: ChannelEvent) => void): void
   timer = setTimeout(() => {
     timer = null;
     const frames = burst.splice(0);
+    if (!frames.length) return; // все копии вынула живая копия того же события
     const bodies = frames.map((f) => {
       const t = frameToText(f, JSON.stringify(f));
       return [...t].length > BODY_CAP ? [...t].slice(0, BODY_CAP).join("") + "…" : t;
@@ -34,6 +36,15 @@ export function noteStale(frame: Frame, flush: (ev: ChannelEvent) => void): void
         bodies.join("\n\n"),
     });
   }, STALE_BURST_MS).unref();
+}
+
+/** Лежит ли в копящейся пачке копия этого события графа (fanout.ts). */
+export const staleHasEvent = (evKey: string): boolean => burst.some((f) => eventKeyOf(f) === evKey);
+
+/** Вынуть из копящейся пачки копии события — живая копия будит, пачка нет (fanout.ts). */
+export function dropStaleEvent(evKey: string): void {
+  for (let i = burst.length - 1; i >= 0; i--)
+    if (eventKeyOf(burst[i]) === evKey) burst.splice(i, 1);
 }
 
 /** Забыть накопленное — при отпускании стояния. */

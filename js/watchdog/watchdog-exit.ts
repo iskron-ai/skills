@@ -10,7 +10,7 @@ import { createHash } from "node:crypto";
 import { writeSync } from "node:fs";
 
 import { type ChannelEvent } from "../bridge/hold.ts";
-import { noteSeen, seenIds } from "../shared/seen.ts";
+import { deliveredKeys, eventKeyOf, noteSeen, seenIds } from "../shared/seen.ts";
 import { seenFilePathOf } from "../shared/standings.ts";
 import { attach, resolveStanding } from "./client.ts";
 
@@ -58,13 +58,15 @@ export function runWatchdogExit(argv: string[]): void {
           if (seen.has(id)) return note(`кадр ${id} уже отдан прежним взводом — не повод будить`);
           wake(ev.raw ?? ""); // сперва отдать: запись до побудки при смерти между ними потеряла бы кадр насовсем
           noteSeen(seenPath, id, seen);
+          const evKey = eventKeyOf(ev.frame);
+          if (evKey) noteSeen(seenPath, evKey, seen); // событие графа отдано — другие копии веера тоже
           process.exit(0); // конец процесса И ЕСТЬ доставка
           break;
         }
         case "stale":
           // Пачка лежалых: не повод будить, но и не потеря — тела в логе, id помечены.
           for (const f of ev.frames ?? [])
-            if (typeof f.id === "string" && f.id) noteSeen(seenPath, f.id, seen);
+            for (const k of deliveredKeys(f)) noteSeen(seenPath, k, seen);
           note(ev.text ?? "лежалые кадры");
           break;
         case "dead":

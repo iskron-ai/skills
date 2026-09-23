@@ -1669,6 +1669,18 @@ import { createServer as createServer2 } from "node:net";
 // js/shared/seen.ts
 import { appendFileSync as appendFileSync2, readFileSync as readFileSync6, renameSync as renameSync4, writeFileSync as writeFileSync5 } from "node:fs";
 var SEEN_KEEP = 200;
+function eventKeyOf(frame2) {
+  if (frame2?.provenance?.via !== "graph") return "";
+  const body = frame2.body;
+  if (!body || typeof body !== "object" || Array.isArray(body)) return "";
+  const ev = body.event_id;
+  return typeof ev === "number" || typeof ev === "string" && ev ? `ev:${ev}` : "";
+}
+function deliveredKeys(frame2) {
+  const id = typeof frame2?.id === "string" ? frame2.id : "";
+  const ev = eventKeyOf(frame2);
+  return [id, ev && frame2?.stale === true ? `evs:${ev.slice(3)}` : ev].filter(Boolean);
+}
 function seenIds(seenPath) {
   try {
     return new Set(readFileSync6(seenPath, "utf8").split("\n").filter(Boolean));
@@ -2021,6 +2033,60 @@ function stampOrigin(frame2) {
   return { ...frame2, origin: classifyOrigin(frame2, state.standing?.karta) };
 }
 
+// js/bridge/stale.ts
+var STALE_BURST_KEEP = 20;
+var STALE_BURST_MS = 1500;
+var BODY_CAP2 = 800;
+var burst = [];
+var timer2 = null;
+function noteStale(frame2, flush2) {
+  if (burst.length < STALE_BURST_KEEP) burst.push(frame2);
+  if (timer2) return;
+  timer2 = setTimeout(() => {
+    timer2 = null;
+    const frames2 = burst.splice(0);
+    if (!frames2.length) return;
+    const bodies = frames2.map((f) => {
+      const t = frameToText(f, JSON.stringify(f));
+      return [...t].length > BODY_CAP2 ? [...t].slice(0, BODY_CAP2).join("") + "…" : t;
+    });
+    flush2({
+      kind: "stale",
+      frames: frames2,
+      text: `Лежалых кадров: ${frames2.length} — принятое, пока место не слушали, или повтор службы после пересборки сессии; хода не стоят, но прочти; полностью — iskron_channel(action="history").
+
+` + bodies.join("\n\n")
+    });
+  }, STALE_BURST_MS).unref();
+}
+var staleHasEvent = (evKey) => burst.some((f) => eventKeyOf(f) === evKey);
+function dropStaleEvent(evKey) {
+  for (let i = burst.length - 1; i >= 0; i--)
+    if (eventKeyOf(burst[i]) === evKey) burst.splice(i, 1);
+}
+function dropStale() {
+  burst.length = 0;
+  if (timer2) clearTimeout(timer2);
+  timer2 = null;
+}
+
+// js/bridge/fanout.ts
+function isDelivered(keys, seen2, seenPath) {
+  if (!keys.length) return false;
+  const given = seenIds(seenPath);
+  return keys.some((k) => seen2.has(k) || given.has(k));
+}
+function redundantCopy(frame2, ring2, seen2, seenPath) {
+  const ev = frame2?.type === "message" ? eventKeyOf(frame2) : "";
+  if (!ev) return "";
+  const stale = frame2?.stale === true;
+  const keys = stale ? [ev, `evs:${ev.slice(3)}`] : [ev];
+  if (isDelivered(keys, seen2, seenPath) || ring2.some((r) => eventKeyOf(r.frame) === ev)) return ev;
+  if (stale) return staleHasEvent(ev) ? ev : "";
+  dropStaleEvent(ev);
+  return "";
+}
+
 // js/bridge/holdrecord.ts
 import { readFileSync as readFileSync7, unlinkSync as unlinkSync4, writeFileSync as writeFileSync6 } from "node:fs";
 var holdFilePathFor = (key) => holdFilePathOf(CFG.authDir, key);
@@ -2055,37 +2121,6 @@ function dropHoldRecord(key) {
     unlinkSync4(holdFilePathFor(key));
   } catch {
   }
-}
-
-// js/bridge/stale.ts
-var STALE_BURST_KEEP = 20;
-var STALE_BURST_MS = 1500;
-var BODY_CAP2 = 800;
-var burst = [];
-var timer2 = null;
-function noteStale(frame2, flush2) {
-  if (burst.length < STALE_BURST_KEEP) burst.push(frame2);
-  if (timer2) return;
-  timer2 = setTimeout(() => {
-    timer2 = null;
-    const frames2 = burst.splice(0);
-    const bodies = frames2.map((f) => {
-      const t = frameToText(f, JSON.stringify(f));
-      return [...t].length > BODY_CAP2 ? [...t].slice(0, BODY_CAP2).join("") + "…" : t;
-    });
-    flush2({
-      kind: "stale",
-      frames: frames2,
-      text: `Лежалых кадров: ${frames2.length} — принятое, пока место не слушали, или повтор службы после пересборки сессии; хода не стоят, но прочти; полностью — iskron_channel(action="history").
-
-` + bodies.join("\n\n")
-    });
-  }, STALE_BURST_MS).unref();
-}
-function dropStale() {
-  burst.length = 0;
-  if (timer2) clearTimeout(timer2);
-  timer2 = null;
 }
 
 // js/bridge/sweep.ts
@@ -2276,12 +2311,10 @@ function openLocalServer(key) {
     sock.on("close", () => gone(sock));
     sock.on("error", () => gone(sock));
     for (const fn of attachHooks) fn();
-    const given = seenIds(seenFilePathOf(CFG.authDir, key));
-    const backlog = ring.filter(({ frame: frame2 }) => {
-      if (frame2?.type === "hello") return true;
-      const id = frame2?.type === "message" && typeof frame2.id === "string" ? frame2.id : "";
-      return !id || !(seen.has(id) || given.has(id));
-    });
+    const seenPath = seenFilePathOf(CFG.authDir, key);
+    const backlog = ring.filter(
+      ({ frame: frame2 }) => frame2?.type !== "message" || !isDelivered(deliveredKeys(frame2), seen, seenPath)
+    );
     sock.write(
       JSON.stringify({ kind: "attached", key, buffered: backlog.length }) + "\n"
     );
@@ -2409,18 +2442,17 @@ function openHolder(url, key) {
     url,
     onFrame: (raw, frame2) => {
       void Promise.resolve(stampOrigin(frame2)).then((full) => {
+        const seenPath = seenFilePathOf(CFG.authDir, key);
+        const id = full?.type === "message" && typeof full.id === "string" ? full.id : "";
+        const evKey = redundantCopy(full, ring, seen, seenPath);
+        if (evKey) return log(`frame ${id || "?"} carries ${evKey} already offered — not raised`);
+        const again = isDelivered(id ? [id] : [], seen, seenPath);
         if (full?.type === "message" && full.stale === true)
-          return noteStale(full, (ev2) => {
-            broadcast(ev2);
-            notify("info", ev2);
-          });
+          return again ? log(`stale frame ${id} already delivered — dropped`) : noteStale(full, (ev2) => (broadcast(ev2), notify("info", ev2)));
         const text = full === frame2 ? raw : JSON.stringify(full);
         ring.push({ raw: text, frame: full });
         if (ring.length > RING) ring.shift();
         if (full?.type === "hello") for (const w of [...helloWaiters]) w(full);
-        const id = full?.type === "message" && typeof full.id === "string" ? full.id : "";
-        const seenPath = seenFilePathOf(CFG.authDir, key);
-        const again = !!id && (seen.has(id) || seenIds(seenPath).has(id));
         const ev = { kind: "frame", raw: text, frame: full };
         if (!again) broadcast(ev);
         if (full?.type === "status") return;
@@ -2428,7 +2460,7 @@ function openHolder(url, key) {
         if (notifiedClient()) {
           const flushBacklog = (b) => {
             for (const f of b.frames ?? [])
-              if (typeof f.id === "string" && f.id) noteSeen(seenPath, f.id, seen);
+              for (const k of deliveredKeys(f)) noteSeen(seenPath, k, seen);
             notify("info", b);
           };
           if (full?.type === "hello" && Number(full.pending) > 0)
@@ -2437,7 +2469,7 @@ function openHolder(url, key) {
             if (full.origin === "platform") openBacklog(0, flushBacklog);
             if (noteBacklog(full)) return;
           }
-          if (id) noteSeen(seenPath, id, seen);
+          for (const k of deliveredKeys(full)) noteSeen(seenPath, k, seen);
         }
         notify("info", ev);
       });
@@ -4454,16 +4486,13 @@ function runWatchdogCodex(argv2) {
           if (type !== "message") return note(`кадр ${type ?? "не разобран"} — не повод будить`);
           if (fromRing && typeof ev.frame?.id !== "string")
             return note("кадр без id из кольца — пометить нечем, в тред не кладу повторно");
-          void deliver2(
-            frameToText(ev.frame, ev.raw ?? ""),
-            typeof ev.frame?.id === "string" ? [ev.frame.id] : []
-          );
+          void deliver2(frameToText(ev.frame, ev.raw ?? ""), deliveredKeys(ev.frame));
           break;
         }
         case "stale":
           void deliver2(
             ev.text ?? "Искрон: лежалые кадры",
-            (ev.frames ?? []).map((f) => f.id).filter((x) => typeof x === "string")
+            (ev.frames ?? []).flatMap((f) => deliveredKeys(f))
           );
           break;
         case "dead":
@@ -4552,7 +4581,7 @@ function runWatchdog(argv2) {
             break;
           }
           for (const line of wrapLines(frameToText(f, ev.raw ?? ""))) log2(line);
-          if (typeof f.id === "string" && f.id) noteSeen(seenPath, f.id, seen2);
+          for (const k of deliveredKeys(f)) noteSeen(seenPath, k, seen2);
           break;
         }
         case "note":
@@ -4561,7 +4590,7 @@ function runWatchdog(argv2) {
         case "stale":
           for (const line of wrapLines(ev.text ?? "")) log2(line);
           for (const f of ev.frames ?? [])
-            if (typeof f.id === "string" && f.id) noteSeen(seenPath, f.id, seen2);
+            for (const k of deliveredKeys(f)) noteSeen(seenPath, k, seen2);
           break;
         case "dead":
         case "evicted":
@@ -4610,12 +4639,14 @@ function runWatchdogExit(argv2) {
           if (seen2.has(id)) return note2(`кадр ${id} уже отдан прежним взводом — не повод будить`);
           wake(ev.raw ?? "");
           noteSeen(seenPath, id, seen2);
+          const evKey = eventKeyOf(ev.frame);
+          if (evKey) noteSeen(seenPath, evKey, seen2);
           process.exit(0);
           break;
         }
         case "stale":
           for (const f of ev.frames ?? [])
-            if (typeof f.id === "string" && f.id) noteSeen(seenPath, f.id, seen2);
+            for (const k of deliveredKeys(f)) noteSeen(seenPath, k, seen2);
           note2(ev.text ?? "лежалые кадры");
           break;
         case "dead":
