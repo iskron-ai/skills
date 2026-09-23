@@ -110,7 +110,7 @@ Bianhua — ХОЛИСТИЧЕСКАЯ перемена, кросс-контур
 ```
 iskron_add_vimarsha(genre="samshaya",
   name="<эмодзи> Задето ли <X> превращением «<bianhua>»?",   # на языке графа
-  vimarsha_of=<первый якорь>, posed_by="#N",   # роль, которая спрашивает; кто и почему — в reasoning
+  vimarsha_of=<первый якорь>, posed_by=<короткий адрес: роль, стояние или имя>,   # не проза; почему — в reasoning
   epistemic_mode="anumita", ontic_mode="vartamana", volitive_mode="chanda")
 → добавочные якоря: iskron_arrow(action="link", arrow_type="vimarsha_of", ...)
 → iskron_arrow(action="link", arrow_type="anga", source=<новая>, target=<bianhua>,
