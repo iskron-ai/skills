@@ -21,6 +21,7 @@
 // собственным стоянием (#5154), угадыванием она не выбирается.
 import { type ChannelEvent } from "../bridge/hold.ts";
 import { frameToText } from "../shared/frame-text.ts";
+import { stackOf } from "../shared/room-kinds.ts";
 import type { Context } from "./plugin.ts";
 import { type Say } from "./tools.ts";
 
@@ -106,14 +107,13 @@ export function setupChannel(ctx: Context, say: Say, freshestRoot: () => string 
           // Служебные кадры не будят: hello доказывает, что сокет держат, и только.
           if (frame?.type === "hello") return say("Искрон: канал слушает", "info");
           if (frame?.type === "status") return;
-          // Стопка слова комнаты (#4957, дешёвая ступень): defer — не прерывать,
-          // очередью до конца хода; interrupt и кадр без стопки — вставкой в идущий ход.
-          const stack = (frame as Record<string, unknown> | null)?.stack;
+          // Путь кадра решает словарь родов комнаты (#5851): пачка — очередью до
+          // конца хода; прерывающий и кадр не комнаты — вставкой в идущий ход.
           void deliver(
             session,
             frameToText(frame, ev.raw ?? ""),
             `кадр ${frame?.id ?? "без id"}`,
-            stack === "defer" ? "queue" : "steer",
+            stackOf(frame) === "batch" ? "queue" : "steer",
             child,
           );
           return;

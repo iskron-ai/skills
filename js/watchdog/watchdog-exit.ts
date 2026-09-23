@@ -10,6 +10,8 @@ import { createHash } from "node:crypto";
 import { writeSync } from "node:fs";
 
 import { type ChannelEvent } from "../bridge/hold.ts";
+import { frameToText } from "../shared/frame-text.ts";
+import { stackOf } from "../shared/room-kinds.ts";
 import { deliveredKeys, eventKeyOf, noteSeen, seenIds } from "../shared/seen.ts";
 import { seenFilePathOf } from "../shared/standings.ts";
 import { attach, resolveStanding } from "./client.ts";
@@ -56,6 +58,12 @@ export function runWatchdogExit(argv: string[]): void {
           if (type !== "message") return note(`кадр ${type ?? "не разобран"} — не повод будить`);
           const id = frameId(ev);
           if (seen.has(id)) return note(`кадр ${id} уже отдан прежним взводом — не повод будить`);
+          // Кадр комнаты рода «в пачку» (словарь родов, #5851) не будит: живой приходит
+          // пачкой backlog, этот — из кольца; тело в лог, id помечен, как у пачки.
+          if (stackOf(ev.frame) === "batch") {
+            for (const k of deliveredKeys(ev.frame)) noteSeen(seenPath, k, seen);
+            return note(frameToText(ev.frame, ev.raw ?? ""));
+          }
           wake(ev.raw ?? ""); // сперва отдать: запись до побудки при смерти между ними потеряла бы кадр насовсем
           noteSeen(seenPath, id, seen);
           const evKey = eventKeyOf(ev.frame);
@@ -64,7 +72,8 @@ export function runWatchdogExit(argv: string[]): void {
           break;
         }
         case "stale":
-          // Пачка лежалых: не повод будить, но и не потеря — тела в логе, id помечены.
+        case "backlog":
+          // Пачка лежалых или кадров комнаты «в пачку»: не повод будить, но и не потеря — тела в логе, id помечены.
           for (const f of ev.frames ?? [])
             for (const k of deliveredKeys(f)) noteSeen(seenPath, k, seen);
           note(ev.text ?? "лежалые кадры");

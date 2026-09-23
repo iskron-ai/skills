@@ -40,6 +40,14 @@ import { test } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { startFakeNks } from "./fake-nks.mjs";
+import {
+  closing,
+  PLATFORM,
+  progress,
+  roomFrame,
+  said as saidFrame,
+  unknownKind,
+} from "./room-frames.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SOURCE =
@@ -1638,7 +1646,15 @@ test("a dead child bridge is replaced by a fresh child bridge that resumes the c
 
 // ── room frames (api 0.71.0: envelope flattened ahead of provenance and body) ──
 
-test("a room frame reaches the agent with its whole envelope; defer queues, a platform record with no author is a wake-up", async () => {
+const envelopeOf = (text) =>
+  JSON.parse(
+    text
+      .split("\n")
+      .find((l) => l.startsWith("frame: "))
+      .slice(7),
+  );
+
+test("a room frame reaches the agent with its whole envelope; said defer queues, a platform record with no author is a wake-up", async () => {
   const b = bridgeEnv("room");
   const rec = await plugin(b.env);
   try {
@@ -1646,24 +1662,13 @@ test("a room frame reaches the agent with its whole envelope; defer queues, a pl
     await until(() => rec.tools().has("iskron_channel"), "the channel tool");
     await rec.call("iskron_channel", { action: "connect" }, "s-room");
     const [pid] = pidsOf(b.log);
-    const said = {
-      type: "message",
-      id: "room-msg-1",
-      room: { id: "r-1", zachin: "Стенд комнат", realm: "nks-dev", status: "open" },
-      entry_id: 41,
-      kind: "text",
-      stack: "defer",
-      stack_by: "platform",
-      body: "слово участника",
-      body_chars: 17,
-      provenance: { from_standing: "@aleksei:probe", from_karta_seq: 48, auth: "pat", via: "room" },
-    };
+    const said = saidFrame("defer", 41);
     appendFileSync(`${b.events}.${pid}`, event("frame", { frame: said, raw: "" }));
     await until(() => rec.prompts.length === 1, "the room frame to be prompted");
     assert.equal(
       rec.prompts[0].delivery,
       "queue",
-      "stack=defer must not interrupt the running turn (#4957)",
+      "said with stack=defer must not interrupt the running turn (#4957)",
     );
     const text = rec.prompts[0].text;
     assert.match(
@@ -1673,43 +1678,87 @@ test("a room frame reaches the agent with its whole envelope; defer queues, a pl
     );
     assert.match(
       text,
-      /слово КОМНАТЫ «Стенд комнат», род text, стопка defer/,
-      "the room line names zachin, kind and stack",
+      /слово КОМНАТЫ «Стенд»: слово от Алексей \(@aleksei:probe\)/,
+      "the room line says the kind in words",
     );
-    const envelope = JSON.parse(
-      text
-        .split("\n")
-        .find((l) => l.startsWith("frame: "))
-        .slice(7),
-    );
+    const envelope = envelopeOf(text);
     assert.deepEqual(
       envelope.room,
       said.room,
       "the room envelope must reach the agent, not be dropped by a key whitelist",
     );
-    assert.equal(envelope.kind, "text");
+    assert.equal(envelope.event_kind, "room.said");
     assert.equal(envelope.stack, "defer");
     assert.equal(envelope.entry_id, 41);
 
-    const left = {
-      type: "message",
-      id: "room-msg-2",
-      room: said.room,
+    const closed = roomFrame("closed", {
       entry_id: 42,
-      kind: "auto",
-      stack: "interrupt",
-      body: "",
-      body_chars: 2,
-      provenance: { auth: "platform", via: "room" },
-    };
-    appendFileSync(`${b.events}.${pid}`, event("frame", { frame: left, raw: "" }));
+      author: PLATFORM,
+      fields: { reason: "consensus" },
+      status: "closed",
+    });
+    appendFileSync(`${b.events}.${pid}`, event("frame", { frame: closed, raw: "" }));
     await until(() => rec.prompts.length === 2, "the platform record to be prompted");
-    assert.equal(rec.prompts[1].delivery, "steer", "interrupt steers into the running turn");
+    assert.equal(rec.prompts[1].delivery, "steer", "closed steers into the running turn");
     assert.match(
       rec.prompts[1].text,
-      /^Кадр канала Искрона от ПЛАТФОРМЫ — побудка, не человек и не делатель\nзапись КОМНАТЫ «Стенд комнат», род auto, стопка interrupt\n/,
+      /^Кадр канала Искрона от ПЛАТФОРМЫ — побудка, не человек и не делатель\nзапись КОМНАТЫ «Стенд»: комната закрыта: consensus\n/,
       "a room record without an author is the platform speaking, not an unknown doer",
     );
+  } finally {
+    await rec.stop();
+  }
+});
+
+// The dictionary of room kinds (#5851): event_kind decides, stack counts only on said.
+test("room kinds: closing steers a busy agent despite stack=defer and says who may object; progress and an unknown kind queue; said follows its stack", async () => {
+  const b = bridgeEnv("room-kinds");
+  const rec = await plugin(b.env);
+  try {
+    await serverTools(rec);
+    await until(() => rec.tools().has("iskron_channel"), "the channel tool");
+    await rec.call("iskron_channel", { action: "connect" }, "s-kinds");
+    const [pid] = pidsOf(b.log);
+    const send = async (frame, i) => {
+      appendFileSync(`${b.events}.${pid}`, event("frame", { frame, raw: JSON.stringify(frame) }));
+      await until(() => rec.prompts.length === i, `prompt ${i}`);
+      return rec.prompts[i - 1];
+    };
+    const c = closing();
+    const p1 = await send(c, 1);
+    assert.equal(p1.delivery, "steer", "closing interrupts the running turn, stack=defer or not");
+    assert.match(
+      p1.text,
+      /ведущий Алексей \(@aleksei:probe\) предлагает закрыть комнату до 2026-09-23T10:05:00Z; свидетельства: 41/,
+    );
+    assert.match(p1.text, /ты можешь возразить — objection, in_reply_to=50/);
+    assert.deepEqual(envelopeOf(p1.text).line, c.line, "the frame JSON carries line unchanged");
+    assert.match(p1.text, /\n\nсделано, см\. 41$/, "the body passes through unchanged");
+
+    const p2 = await send(progress(), 2);
+    assert.equal(p2.delivery, "queue", "progress batches");
+    assert.match(p2.text, /Алексей \(@aleksei:probe\): \[tests\] пробы зелёные = ok; без сети/);
+
+    const p3 = await send(unknownKind(), 3);
+    assert.equal(
+      p3.delivery,
+      "queue",
+      "an unknown kind never interrupts, even with stack=interrupt",
+    );
+    assert.match(p3.text, /род weather мосту неизвестен/);
+
+    const p4 = await send(saidFrame("interrupt", 62), 4);
+    assert.equal(p4.delivery, "steer", "said with stack=interrupt steers");
+    const p5 = await send(saidFrame("defer", 63), 5);
+    assert.equal(p5.delivery, "queue", "said with stack=defer queues");
+
+    const p6 = await send(roomFrame("invite", { entry_id: 64, key: "invite:@tester:proba" }), 6);
+    assert.equal(p6.delivery, "steer", "an invite to my own standing interrupts");
+    assert.match(p6.text, /@tester:proba приглашён/);
+    const p7 = await send(roomFrame("invite", { entry_id: 65, key: "invite:@other:x" }), 7);
+    assert.equal(p7.delivery, "queue", "an invite to someone else batches");
+    const p8 = await send(roomFrame("opened", { entry_id: 66 }), 8);
+    assert.equal(p8.delivery, "queue", "opened does not interrupt");
   } finally {
     await rec.stop();
   }

@@ -1,8 +1,9 @@
 import { classifyOrigin, type Frame } from "./channel.ts";
+import { roomKind } from "./room-kinds.ts";
 
 /** Ключи кадра, которые печатаются не в конверте: тело — следом, провенанс и штампы моста — своими строками. */
 const NOT_ENVELOPE = new Set(["body", "provenance", "type", "origin"]);
-/** Порядок первых ключей конверта; остальное — как пришло (конверт комнаты: room, entry_id, kind, stack, …). */
+/** Порядок первых ключей конверта; остальное — как пришло (конверт комнаты: room, entry_id, event_kind, line, stack, …). */
 const ENVELOPE_FIRST = ["id", "received_at", "stale", "content_type", "body_chars", "body_read"];
 
 /**
@@ -33,16 +34,17 @@ export function frameToText(frame: Frame | null | undefined, raw: string): strin
   if (room && typeof room === "object") {
     // Слово комнаты: агенту важно узнать это прежде тела — обратного адреса у
     // такого кадра нет, ответ есть запись в ту же комнату, а не send стоянию.
-    const f = frame as Record<string, unknown>;
     const zachin = typeof room.zachin === "string" ? ` «${room.zachin}»` : "";
-    const kind = typeof f.kind === "string" ? `, род ${f.kind}` : "";
-    const stack = typeof f.stack === "string" ? `, стопка ${f.stack}` : "";
+    // Род и стопку говорит словарь родов (room-kinds.ts) словами, не ключами:
+    // сами ключи едут в конверте ниже без правки.
+    const rk = roomKind(frame);
+    const words = rk ? `: ${rk.words}` : "";
     // Обратного адреса у кадра комнаты нет: send стоянию туда не доходит; ход
     // для комнат — в списке тулов сессии. Платформенная запись ответа не ждёт.
     lines.push(
       origin === "platform"
-        ? `запись КОМНАТЫ${zachin}${kind}${stack}`
-        : `слово КОМНАТЫ${zachin}${kind}${stack} — ответ идёт записью в ту же комнату с in_reply_to по id слова (ход для комнат — в списке тулов сессии), не send стоянию`,
+        ? `запись КОМНАТЫ${zachin}${words}`
+        : `слово КОМНАТЫ${zachin}${words} — ответ идёт записью в ту же комнату с in_reply_to по id слова (ход для комнат — в списке тулов сессии), не send стоянию`,
     );
   }
   if (frame.provenance) lines.push(`provenance: ${JSON.stringify(frame.provenance)}`);

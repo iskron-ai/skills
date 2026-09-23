@@ -45,6 +45,8 @@ import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
+import { closing, progress, roomFrame, said, unknownKind } from "./room-frames.mjs";
+
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SOURCE = process.env.ISKRON_EXTENSION || join(HERE, "..", "..", "extensions", "iskron.js");
 const FAKE_BRIDGE = join(HERE, "fake-bridge.mjs");
@@ -473,6 +475,39 @@ test("a dead-token event complains loudly; 4001 alone offers mint", async () => 
 });
 
 // A burst of stale frames is one message into the turn, bodies included.
+// The dictionary of room kinds (#5851): event_kind decides the way into the
+// turn; stack counts only on said. A busy agent gets closing now, progress later.
+test("room kinds: closing steers despite stack=defer, progress and an unknown kind follow up, said follows its stack", async () => {
+  const { events, env } = eventsEnv("room-kinds");
+  const rec = await session(env);
+  try {
+    const cases = [
+      [closing(), "steer"],
+      [progress(), "followUp"],
+      [unknownKind(), "followUp"],
+      [said("interrupt", 62), "steer"],
+      [said("defer", 63), "followUp"],
+      [roomFrame("invite", { entry_id: 64, key: "invite:@tester:proba" }), "steer"],
+      [roomFrame("opened", { entry_id: 66 }), "followUp"],
+    ];
+    for (const [f] of cases) push(events, frame(f));
+    await delay(400);
+    assert.equal(rec.messages.length, cases.length, "every room frame raises a message");
+    cases.forEach(([f, way], i) =>
+      assert.equal(
+        rec.messages[i].opts.deliverAs,
+        way,
+        `${f.event_kind} (stack ${f.stack ?? "—"}) must go ${way}`,
+      ),
+    );
+    const text = rec.messages[0].msg.content;
+    assert.match(text, /предлагает закрыть комнату до 2026-09-23T10:05:00Z; свидетельства: 41/);
+    assert.match(text, /ты можешь возразить — objection, in_reply_to=50/);
+  } finally {
+    await rec.stop();
+  }
+});
+
 test("a stale burst enters the turn once, with its bodies", async () => {
   const { events, env } = eventsEnv("stale");
   const rec = await session(env);

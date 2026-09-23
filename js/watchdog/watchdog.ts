@@ -93,6 +93,7 @@ export function runWatchdog(argv: string[]): void {
           log(ev.text ?? "");
           break;
         case "stale":
+        case "backlog": // пачка кадров комнаты (словарь родов, #5851) — как лежалые: одним залпом
           for (const line of wrapLines(ev.text ?? "")) log(line); // одна пачка — одно событие
           for (const f of ev.frames ?? [])
             for (const k of deliveredKeys(f)) noteSeen(seenPath, k, seen); // напечатана — отдана

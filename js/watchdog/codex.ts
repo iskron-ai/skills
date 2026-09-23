@@ -134,8 +134,9 @@ export function runWatchdogCodex(argv: string[]): void {
           break;
         }
         case "stale":
+        case "backlog": // пачка кадров комнаты (словарь родов, #5851) — один ход, раньше прерывающего
           void deliver(
-            ev.text ?? "Искрон: лежалые кадры",
+            ev.text ?? "Искрон: пачка кадров",
             (ev.frames ?? []).flatMap((f) => deliveredKeys(f)),
           ); // одна пачка — один ход
           break;

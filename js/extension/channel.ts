@@ -11,6 +11,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 import { type ChannelEvent } from "../bridge/hold.ts";
 import { frameToText } from "../shared/frame-text.ts";
+import { stackOf } from "../shared/room-kinds.ts";
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- контекст pi здесь читается по двум полям */
 
@@ -54,6 +55,7 @@ export function setupChannel(pi: ExtensionAPI): (params: any) => void {
         if (frame?.type === "status") return;
         // Вот ради чего всё: кадр входит в идущий ход, а простаивающего агента
         // поднимает. Это и есть то, чего у сторожа-процесса быть не может.
+        // Кадр комнаты в пачку (словарь родов, #5851) ход не режет — ждёт его конца.
         pi.sendMessage(
           {
             customType: "iskron-channel",
@@ -61,7 +63,7 @@ export function setupChannel(pi: ExtensionAPI): (params: any) => void {
             display: true,
             details: frame ?? { raw },
           },
-          { triggerTurn: true, deliverAs: "steer" },
+          { triggerTurn: true, deliverAs: stackOf(frame) === "batch" ? "followUp" : "steer" },
         );
         return;
       }
