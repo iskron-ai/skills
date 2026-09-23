@@ -27,7 +27,6 @@ import {
   isParked,
   ledKey,
   noteStandCwd,
-  rereadPlaces,
   standingIdIn,
   wasEvicted,
 } from "./hold.ts";
@@ -273,10 +272,11 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
       return done(true);
     }
     heardHere = holdsStanding(realm, karta, name);
-    // id места — только из hello: сокет перечитывает места канала тем же адресом.
-    const ids = heardHere && !standingIdIn(realm) ? await rereadPlaces() : null;
-    if (ids && !standingIdIn(realm))
-      extra.push("hello места этого графа не назвал — id места неизвестен.");
+    // id места — из ответа register (standing.ts); без него кадры места найдут его по графу и адресу.
+    if (heardHere && !standingIdIn(realm))
+      extra.push(
+        "register id места не назвал — кадры места находятся по графу и адресу, занятость ждёт id.",
+      );
     how = `место другого графа — встаёт рядом на канале, который держит этот мост (${ledKey()}): register`;
   } else if (resumed) {
     const r = await register();

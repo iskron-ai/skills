@@ -942,10 +942,10 @@ test("two graphs: the second place stands beside the first on the same channel �
   assert.ok(textOf(b).includes(`watchdog ${keyB}`), `B's block names B's key:\n${textOf(b)}`);
   assert.ok(keyA !== keyB, `two places, two watchdog keys: ${keyA} / ${keyB}`);
   assert.equal(fake.state.counts.connect, 1, "the second place rides the same channel");
-  // The socket is re-read once for hello's standings[] (the fake answers no close
-  // handshake, so the old one lingers): every open socket is of the one channel.
-  const channels = new Set([...fake.state.ws].map((s) => fake.state.wsChans.get(s)));
-  assert.equal(channels.size, 1, "one channel's socket carries both places");
+  // No reopen: the place id comes with register, the open socket carries the new place.
+  assert.equal(fake.state.ws.size, 1, "one socket carries both places");
+  assert.equal(fake.state.counts.ws_upgrades, 1, "the socket was never reopened");
+  assert.equal(fake.state.channels.size, 1, "one channel");
   assert.ok(fake.state.places.get("931:proba")?.listening, "place A listens");
   assert.ok(fake.state.places.get("48:proba-b")?.listening, "place B listens");
 });
@@ -1023,6 +1023,10 @@ test("r5 and the slug of the SAME graph are one graph: another name there is ref
   const other = await stand({ realm: NKS, karta: 931, name: "vtoraya" });
   assert.ok(other.result?.isError, `r5 and ${NKS} must be one graph:\n${textOf(other)}`);
   assert.match(textOf(other), /уже ведёт место proba--931--r5/, textOf(other));
+  // The bare slug is resolved by the graph list (the live tool's text shape) — the same graph again.
+  const bare = await stand({ realm: "nks-dev", karta: 931, name: "vtoraya" });
+  assert.ok(bare.result?.isError, `nks-dev and r5 must be one graph:\n${textOf(bare)}`);
+  assert.ok(fake.state.counts.realm_list >= 1, "the graph list was read");
   const same = await stand({ realm: NKS, karta: 931, name: "proba" });
   assert.ok(!same.result?.isError, textOf(same));
   assert.doesNotMatch(textOf(same), /встаёт рядом/, "the same graph never stands beside itself");

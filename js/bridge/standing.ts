@@ -1,5 +1,5 @@
 import { errorMessage } from "./errors.ts";
-import { addPlace, releaseStanding } from "./hold.ts";
+import { addPlace, noteStandingId, releaseStanding } from "./hold.ts";
 import { normKarta, normName } from "./names.ts";
 import { placeFields } from "./placefields.ts";
 import { dropExtra, keyOfPlace, rememberPlace } from "./places.ts";
@@ -22,6 +22,7 @@ export function noteStanding(msg: JsonRpcMessage, reply: JsonRpcMessage): void {
     rememberPlace(place);
     addPlace(place);
   } else state.standing = place;
+  noteStandingId(place.realm, standingIdOf(reply)); // id места — для кадров и занятости (#5838)
   state.standingSession = state.sessionId;
   debug(`standing remembered: ${a.name ?? "(unnamed)"} at karta ${a.karta} in ${a.realm}`);
 }
@@ -132,6 +133,15 @@ async function replayBeside(): Promise<boolean> {
     }
   }
   return whole;
+}
+
+/** standing_id из ответа register (RegisteredSession {standing_id, channel_id, opened}) — JSON или «standing_id: …». */
+export function standingIdOf(reply: JsonRpcMessage | null): string | null {
+  const m =
+    /"?standing_id"?\s*[:=]\s*"?([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i.exec(
+      replyText(reply),
+    );
+  return m?.[1] ?? null;
 }
 
 export const replyText = (reply: JsonRpcMessage | null): string => {

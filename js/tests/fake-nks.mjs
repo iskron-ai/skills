@@ -653,7 +653,24 @@ export async function startFakeNks(opts = {}) {
             {
               jsonrpc: "2.0",
               id: msg.id,
-              result: { content: [{ type: "text", text: `зарегистрировано: ${a.name}` }] },
+              // RegisteredSession {standing_id, channel_id, opened} — как у настоящей поверхности;
+              // нового hello нет: сокет канала сам несёт кадры нового места.
+              result: {
+                content: [
+                  {
+                    type: "text",
+                    text:
+                      `зарегистрировано: ${a.name}\n` +
+                      JSON.stringify({
+                        standing_id: st.channels
+                          .get(st.standings.get(sid))
+                          ?.places.get(slug(a.realm))?.standing_id,
+                        channel_id: st.standings.get(sid),
+                        opened: !!reg.added,
+                      }),
+                  },
+                ],
+              },
             },
             extra,
           );
@@ -900,11 +917,18 @@ export async function startFakeNks(opts = {}) {
           );
         }
       }
-      // Список графов учётки: оба имени графа в одной строке (форма условная).
+      // Список графов учётки — ровно та форма, что отдаёт живой тул iskron_realm(action="list").
       if (msg.method === "tools/call" && msg.params?.name === "iskron_realm") {
         st.counts.realm_list = (st.counts.realm_list ?? 0) + 1;
-        const lines = [`Графы (${st.realms.length}):`];
-        for (const r of st.realms) lines.push(`  ${r.short} · ${r.canon} — граф`);
+        const lines = [
+          `Доступные графы (${st.realms.length}) — адресуй их как @owner/slug или rN; обе формы показаны ниже:`,
+          "",
+          "▸ @nks (организация)",
+        ];
+        for (const r of st.realms)
+          lines.push(
+            `    ${r.canon}  ${r.short}  ${r.canon.replace(/^@[^/]+\//, "")} · 2026-09-23`,
+          );
         return json(
           res,
           200,

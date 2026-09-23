@@ -2407,14 +2407,14 @@ function learnRealm(alias, canonical) {
   const t = trimmed(alias);
   if (t && !t.startsWith("@") && CANON_RE.test(canonical)) aliases.set(t, canonical);
 }
+var LIST_LINE_RE = /^ {4}(@[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+) {2}(r\d+) {2}.* · /;
 function learnRealmList(text) {
   const slugs = /* @__PURE__ */ new Map();
   for (const line of text.split("\n")) {
-    const canon = line.match(new RegExp(CANON_RE.source, "g")) ?? [];
-    if (canon.length !== 1) continue;
-    const c = canon[0];
-    const short2 = line.match(/(?<![\w/@-])r\d+(?![\w-])/g) ?? [];
-    if (short2.length === 1) learnRealm(short2[0], c);
+    const m = LIST_LINE_RE.exec(line);
+    if (!m) continue;
+    const [, c, short2] = m;
+    learnRealm(short2, c);
     const slug = c.replace(/^@[^/]+\//, "");
     slugs.set(slug, [.../* @__PURE__ */ new Set([...slugs.get(slug) ?? [], c])]);
   }
@@ -2655,14 +2655,9 @@ function addPlace(s) {
   return addExtra(s, ch, doorHooks);
 }
 var standingIdIn = (realm) => (extraIn(realm)?.door ?? door)?.standingId ?? null;
-async function rereadPlaces(timeoutMs = 4e3) {
-  if (!holder?.alive || !currentUrl || !currentKey) return null;
-  holder.close("перечитать места канала");
-  for (const d of doors())
-    for (let i = d.ring.length - 1; i >= 0; i--)
-      if (d.ring[i]?.frame?.type === "hello") d.ring.splice(i, 1);
-  openHolder(currentUrl, currentKey);
-  return awaitHello(timeoutMs);
+function noteStandingId(realm, id) {
+  const d = extraIn(realm)?.door ?? (state.standing && !otherRealm(realm, state.standing.realm) ? door : null);
+  if (d && id) d.standingId = id;
 }
 var held = () => door && state.standing ? { standing: state.standing, door } : null;
 function releaseStanding(reason, forget = false, keepBeside = false) {
@@ -2903,6 +2898,7 @@ function noteStanding(msg, reply2) {
     rememberPlace(place);
     addPlace(place);
   } else state.standing = place;
+  noteStandingId(place.realm, standingIdOf(reply2));
   state.standingSession = state.sessionId;
   debug(`standing remembered: ${a.name ?? "(unnamed)"} at karta ${a.karta} in ${a.realm}`);
 }
@@ -2981,6 +2977,12 @@ async function replayBeside() {
     }
   }
   return whole;
+}
+function standingIdOf(reply2) {
+  const m = /"?standing_id"?\s*[:=]\s*"?([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i.exec(
+    replyText(reply2)
+  );
+  return m?.[1] ?? null;
 }
 var replyText = (reply2) => {
   if (!reply2) return "";
@@ -4006,9 +4008,10 @@ async function runStand(msg) {
       return done(true);
     }
     heardHere = holdsStanding(realm, karta, name);
-    const ids = heardHere && !standingIdIn(realm) ? await rereadPlaces() : null;
-    if (ids && !standingIdIn(realm))
-      extra.push("hello места этого графа не назвал — id места неизвестен.");
+    if (heardHere && !standingIdIn(realm))
+      extra.push(
+        "register id места не назвал — кадры места находятся по графу и адресу, занятость ждёт id."
+      );
     how = `место другого графа — встаёт рядом на канале, который держит этот мост (${ledKey()}): register`;
   } else if (resumed) {
     const r = await register();

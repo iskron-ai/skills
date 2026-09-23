@@ -1,9 +1,10 @@
 // Один граф — одно имя (граф nks-dev: #5838). Граф пишут тремя способами:
 // @owner/slug (так его печатают кадры и hello), короткий id rN и голый slug.
 // Сравнивать можно только каноническую форму @owner/slug: сомнение «тот же
-// граф» — не ответ, иначе r5 и чужой слаг слились бы в одно место. Короткие
-// id и голые слаги разрешаются по списку графов (iskron_realm list) и по hello
-// (его standings[] несут граф в канонической форме); неразрешённое — само по себе.
+// граф» — не ответ, иначе r5 и чужой слаг слились бы в одно место. Короткий id
+// места узнаётся прежде всего из hello (standings[].realm всегда @owner/slug,
+// places.ts); список графов (iskron_realm list) — запасной путь, когда сличать
+// надо раньше hello. Неразрешённое имя — само по себе, не «тот же граф».
 
 const aliases = new Map<string, string>(); // rN или slug → @owner/slug
 let listed: Promise<void> | null = null;
@@ -35,17 +36,18 @@ export function learnRealm(alias: unknown, canonical: string): void {
 }
 
 /**
- * Разобрать ответ списка графов: строка, несущая один @owner/slug и один rN,
- * связывает их; slug канонической формы — тоже имя графа, если он в списке один.
+ * Разобрать текст тула iskron_realm(action="list") — строка графа такова:
+ * `    @owner/slug  rN  имя · дата` (четыре пробела, по два между полями).
+ * Связывает rN с @owner/slug; голый slug — тоже имя графа, если он в списке один.
  */
+const LIST_LINE_RE = /^ {4}(@[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+) {2}(r\d+) {2}.* · /;
 export function learnRealmList(text: string): void {
   const slugs = new Map<string, string[]>();
   for (const line of text.split("\n")) {
-    const canon = line.match(new RegExp(CANON_RE.source, "g")) ?? [];
-    if (canon.length !== 1) continue;
-    const c = canon[0];
-    const short = line.match(/(?<![\w/@-])r\d+(?![\w-])/g) ?? [];
-    if (short.length === 1) learnRealm(short[0], c);
+    const m = LIST_LINE_RE.exec(line);
+    if (!m) continue;
+    const [, c, short] = m;
+    learnRealm(short, c);
     const slug = c.replace(/^@[^/]+\//, "");
     slugs.set(slug, [...new Set([...(slugs.get(slug) ?? []), c])]);
   }

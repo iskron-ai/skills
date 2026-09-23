@@ -228,23 +228,20 @@ export function addPlace(s: Standing): string | null {
   return addExtra(s, ch, doorHooks);
 }
 
-/** id места этого графа у платформы, если hello или кадр его назвали. */
+/** id места этого графа у платформы, если register, hello или кадр его назвали. */
 export const standingIdIn = (realm: string): string | null =>
   (extraIn(realm)?.door ?? door)?.standingId ?? null;
 
 /**
- * Место рядом встало register-ом, а hello, открывший сокет, его ещё не знал:
- * id места — только из hello (#5838). Сокет переоткрывается тем же адресом —
- * тихо, без ухода с места — и свежий hello называет все места канала.
+ * id места из ответа register (RegisteredSession.standing_id, #5838): по нему
+ * кадр находит дверь места, а занятость — место. Новое место приходит в тот же
+ * сокет — служба перечитывает места канала на каждом проходе доставки.
  */
-export async function rereadPlaces(timeoutMs = 4000): Promise<Frame | null> {
-  if (!holder?.alive || !currentUrl || !currentKey) return null;
-  holder.close("перечитать места канала");
-  for (const d of doors())
-    for (let i = d.ring.length - 1; i >= 0; i--)
-      if (d.ring[i]?.frame?.type === "hello") d.ring.splice(i, 1);
-  openHolder(currentUrl, currentKey);
-  return awaitHello(timeoutMs);
+export function noteStandingId(realm: string, id: string | null): void {
+  const d =
+    extraIn(realm)?.door ??
+    (state.standing && !otherRealm(realm, state.standing.realm) ? door : null);
+  if (d && id) d.standingId = id;
 }
 
 const held = (): Place | null =>
