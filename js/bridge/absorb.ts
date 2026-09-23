@@ -2,11 +2,19 @@
 // канала (граф nks-dev: #4233, #5033). Секрет сокета вырезается, держание
 // уходит в hold.ts; своё revoke отпускает место тихо (#5012).
 import { statusUrl as deriveStatusUrl } from "../shared/channel.ts";
-import { holdStanding, releaseStanding, setRevokingOwn } from "./hold.ts";
+import {
+  besideKeyIn,
+  holdStanding,
+  promoteBeside,
+  releaseStanding,
+  setRevokingOwn,
+} from "./hold.ts";
 import { listenBlock } from "./listen.ts";
+import { sameRealm } from "./names.ts";
+import { dropExtra, extraIn } from "./places.ts";
 import { rememberedPlace, replyText } from "./standing.ts";
 import { log } from "./streams.ts";
-import { state } from "./transport.ts";
+import { type Standing, state } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
 
 const SOCKET_RE =
@@ -67,7 +75,12 @@ function revokesOwn(msg: JsonRpcMessage): boolean {
   const a = msg?.params?.arguments;
   if (msg?.params?.name !== "iskron_channel" || a?.action !== "revoke") return false;
   const s = state.standing;
-  if (!s) return false;
+  if (!s || besideKeyIn(a.realm)) return false; // место другого графа снимается одно (absorbRevokeReply)
+  return names(a, s) && sameRealm(a.realm, s.realm);
+}
+
+/** Называет ли revoke это место — пустым, «mine», именем или полным адресом, и его ролью. */
+function names(a: Record<string, unknown>, s: Standing): boolean {
   const asked = typeof a.standing === "string" ? a.standing.trim() : "";
   const own =
     asked === "" ||
@@ -91,8 +104,17 @@ export function absorbRevokeReply(msg: JsonRpcMessage, reply: JsonRpcMessage): J
     return reply;
   setRevokingOwn(false);
   if (reply?.error || reply?.result?.isError) return reply;
+  const a = msg.params.arguments;
+  const beside = extraIn(a.realm);
+  if (beside && names(a, beside.standing)) {
+    // Место другого графа снято своим revoke: его дверь и запись — прочь, канал цел (#5838).
+    dropExtra(beside.door.key, "снято своим revoke", true);
+    return reply;
+  }
   if (!revokesOwn(msg)) return reply;
   const name = state.standing?.name ?? "unnamed";
+  // Места других графов на канале остаются: основным становится одно из них, сокет цел (#5838).
+  if (promoteBeside("снято своим revoke")) return reply;
   releaseStanding("снято своим revoke", true);
   state.standing = null;
   state.standingSession = null;

@@ -11,13 +11,14 @@ import { statSync } from "node:fs";
 import { isAbsolute } from "node:path";
 
 import { nameOf, parseBoard } from "./board.ts";
-import { callTool as call, leadsOtherPlace, otherPlaceWord, short } from "./call.ts";
+import { besideRefusal, callTool as call, leadsOtherPlace, otherPlaceWord, short } from "./call.ts";
 import { CFG } from "./config.ts";
 import {
   awaitHello,
   hasStatusAddressFor,
   holdsStanding,
   isParked,
+  ledKey,
   noteStandCwd,
   wasEvicted,
 } from "./hold.ts";
@@ -33,6 +34,7 @@ import {
   nameFault,
   normKarta,
   normName,
+  sameRealm,
   sanitize,
 } from "./names.ts";
 import { placeFields, rememberModel } from "./placefields.ts";
@@ -46,60 +48,7 @@ import { readLatest, staleNotice } from "./update.ts";
 /** Имя места, которое ведёт мост, — для совета в отказе «стояние одно на мост». */
 const ledName = (): string => state.standing?.name ?? "";
 
-export const STAND_TOOL = {
-  name: "iskron_stand",
-  description:
-    "[мост] Занять стояние одним вызовом: мост читает доску, выводит имя (машина.репо.модель), занимает место " +
-    "(connect и register; только register, если сокет уже держит этот мост), взводит хук инбокса роли своим входящим " +
-    "адресом, при room шлёт кадр join стоянию комнаты по полному адресу с провода (повтор — только repeat_knock=true, один раз, не раньше чем через 2 минуты) и возвращает " +
-    "имя, команду сторожа, число ожидавших кадров, состояние хука и расписку стука. Дальше — запустить сторожа " +
-    "командой из ответа и ждать. Тул исполняет мост; нет его в сессии — тулы идут мимо моста либо мост старой сборки (doctor скажет), стой по скиллу standing.",
-  inputSchema: {
-    type: "object",
-    properties: {
-      realm: { type: "string", description: "Адрес графа: @owner/slug или rN." },
-      karta: { type: "string", description: "Роль агента (#N из AGENTS.md или строки запуска)." },
-      name: {
-        type: "string",
-        description:
-          "Своя половина имени стояния; без неё выводится машина.репо.модель — модель из параметра model.",
-      },
-      room: {
-        type: "string",
-        description:
-          "Полный адрес стояния комнаты @handle:name из строки приглашения; мост шлёт ему join.",
-      },
-      model: {
-        type: "string",
-        description:
-          "Модель, которой бежит агент (id или имя, например claude-opus-5 или opus-5) — третья часть выведенного имени; без неё имя — машина.репо.",
-      },
-      mute_siblings: { type: "boolean", description: "Не слышать эхо других стояний той же роли." },
-      take: {
-        type: "boolean",
-        description:
-          "Сознательный переход: своё место (мост этой же сессии перезапущен) агент возвращает сам, чужого живого держателя вытесняет только по слову человека — забрать сокет места, которое держит другой мост этой машины (без take выведенное имя встаёт рядом на имя.N, явное — только регистрируется, слух остаётся у держателя); либо сменить место этого моста (стояние одно на мост: другая роль или другое имя без take — отказ вслух, прежнее место остаётся на доске без слуха).",
-      },
-      room_karta: {
-        type: "string",
-        description:
-          "Роль, чьё стояние — комната (#N), если комнаты нет на доске; обычно роль человека, приславшего приглашение.",
-      },
-      repeat_knock: {
-        type: "boolean",
-        description:
-          "Осознанный повтор стука в ту же комнату: разрешён один раз и не раньше чем через 2 минуты после первого; без него повторный вызов второго join не шлёт.",
-      },
-      status: { type: "string", description: "Первая строка занятости (до 64 символов)." },
-      cwd: {
-        type: "string",
-        description:
-          "Директория сессии харнесса, существующий абсолютный каталог — из неё выводится репо для имени (git toplevel, иначе её basename) и читаются ветки при поиске мест прежнего имени, когда мост запущен не из рабочей копии; плагин OpenCode подставляет её сам. Без неё — cwd моста; несуществующая или относительная — отказ вслух.",
-      },
-    },
-    required: ["realm", "karta"],
-  },
-};
+export { STAND_TOOL } from "./standtool.ts";
 
 const isDirectory = (p: string): boolean => {
   try {
@@ -173,7 +122,7 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   const derived = asked ? "" : (fitted?.name ?? "");
   let name = asked || derived;
   // Мост уже стоит на отдельном месте этого выведенного имени — туда же (#5407).
-  const led0 = state.standing;
+  const led0 = state.standing && sameRealm(state.standing.realm, realm) ? state.standing : null;
   if (derived && led0 && String(led0.karta) === String(karta) && suffixOf(derived, led0.name ?? ""))
     name = led0.name ?? name;
   if (parts && fitted && fitted.cut.length) {
@@ -192,11 +141,19 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   const room = typeof a.room === "string" && a.room.trim() ? a.room.trim() : null;
   // Стояние одно на мост (#5154): другое место при ведомом своём — только по
   // явному take=true; иначе отказ вслух, и ничего не тронуто.
-  const led = leadsOtherPlace(karta, name);
+  const led = leadsOtherPlace(realm, karta, name);
   if (led && a.take !== true) {
     lines.push(otherPlaceWord(led, keyOf(realm, karta, name), name === ledName()));
     return done(true);
   }
+  // Место другого графа встаёт рядом на канале, который держит мост (#5838).
+  const noChannel = besideRefusal(realm, "stand");
+  if (noChannel) {
+    lines.push(noChannel);
+    return done(true);
+  }
+  const prim = state.standing;
+  const beside = !!prim && !sameRealm(realm, prim.realm) && !holdsStanding(realm, karta, name);
   // Каталог сессии — в запись держания: мост, поднятый заново (вытеснение
   // каталога OpenCode, перезапуск плагина), вернёт место по нему сам (#5140).
   noteStandCwd(cwd);
@@ -297,7 +254,17 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   const resumed = fresh && !listensElsewhere ? await resumeFromDisk(realm, karta, name) : null;
   const extra: string[] = []; // строки после шапки ответа
   // take=true — явный новый цикл входа: connect и тогда, когда сокет уже наш.
-  if (resumed) {
+  if (beside) {
+    // Канал держит места в нескольких графах: register на нём в этом графе
+    // добавляет место, сокет тот же — connect открыл бы второй канал (#5838).
+    const r = await register();
+    if (r.isError) {
+      lines.push(`Отказано: register — ${short(r.text)}`);
+      return done(true);
+    }
+    heardHere = holdsStanding(realm, karta, name);
+    how = `место другого графа — встаёт рядом на канале, который держит этот мост (${ledKey()}): register`;
+  } else if (resumed) {
     const r = await register();
     if (r.isError) {
       lines.push(`Отказано: register — ${short(r.text)}`);
@@ -369,7 +336,7 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
     ...nameNotes.map((n) => `[iskron_stand] ${n}`),
     ...extra,
   );
-  const block = heardHere ? listenBlock() : null;
+  const block = heardHere ? listenBlock(realm) : null;
   if (block) lines.push(block);
   else if (!heardHere)
     lines.push(
@@ -378,7 +345,14 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   else lines.push("Сокета у моста нет — слушать нечем; проверь ответ connect.");
 
   // 3. hello — доказательство держания; свежий он только за connect этого вызова.
-  if (!heardHere) lines.push("Слух — у другого держателя; здесь только атрибуция записей.");
+  if (!heardHere)
+    lines.push(
+      beside
+        ? "Место записано, но двери у него нет — сокет канала моста не жив; кадры этого графа сюда не придут."
+        : "Слух — у другого держателя; здесь только атрибуция записей.",
+    );
+  else if (beside)
+    lines.push("Сокет канала держит этот мост — кадры места этого графа идут его сторожу.");
   else if (how.startsWith("сокет уже держит") || how.startsWith("возврат места с диска"))
     lines.push("Сокет держит этот мост (hello получен при открытии сокета).");
   else {
@@ -487,7 +461,7 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
         : `Занятость не публикуется: статусного адреса этого стояния у моста нет — он у держателя сокета; ${TAKE_PATH}.`,
     );
   } else if (typeof a.status === "string" && a.status.trim()) {
-    const st = await publishStatus(a.status.trim());
+    const st = await publishStatus(a.status.trim(), realm);
     lines.push(
       st.ok
         ? `Занятость: ${a.status.trim()}`

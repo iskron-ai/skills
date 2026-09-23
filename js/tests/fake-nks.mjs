@@ -108,7 +108,14 @@ export async function startFakeNks(opts = {}) {
       unattributed: 0,
       header_binds: 0,
     },
-    standings: new Map(), // сессия MCP → имя стояния; убивается вместе с сессией
+    // Привязка, как у настоящей поверхности (#5838): сессия MCP → канал, канал →
+    // места по графам. register на том же канале в другом графе ДОБАВЛЯЕТ место,
+    // а запись подписывается местом канала в графе самой записи.
+    standings: new Map(), // сессия MCP → id канала; убивается вместе с сессией
+    channels: new Map(), // id канала → { places: Map(слаг графа → { karta, name }) }
+    wsChannel: new Map(), // адрес сокета → id канала
+    wsChans: new Map(), // открытый сокет → id канала
+    writes: [], // { tool, realm, author } — чем подписана каждая запись фабрики
     // Доска: занятые места по ролям (connect кладёт), комнаты — стояния человека,
     // которые тест объявляет через /control {rooms:[{karta,address}]}.
     places: new Map(), // "karta:name" → { karta, name, incoming }
@@ -152,6 +159,45 @@ export async function startFakeNks(opts = {}) {
       req.on("error", rej);
     });
   st.snow = () => Date.now() + st.clockSkewMs;
+
+  // ── каналы и места (#5838) ──
+  const slug = (r) =>
+    String(r ?? "")
+      .trim()
+      .replace(/^@[^/]+\//, "");
+  const cleanName = (n) => String(n ?? "").trim() || "(unnamed)";
+  let chanSeq = 0;
+  const newChannel = (realm, karta, name) => {
+    const id = `ch-${++chanSeq}`;
+    st.channels.set(id, { places: new Map([[slug(realm), { karta, name }]]) });
+    return id;
+  };
+  /** Канал, который держит место (граф, имя), — или undefined. */
+  const channelOfPlace = (realm, name) =>
+    [...st.channels].find(([, c]) => c.places.get(slug(realm))?.name === name)?.[0];
+  /** register: своё место — привязка к его каналу; новое место в другом графе — рядом на канале сессии. */
+  const registerPlace = (sid, realm, rawKarta, rawName) => {
+    const karta = String(rawKarta ?? "")
+      .trim()
+      .replace(/^#/, "");
+    const name = cleanName(rawName);
+    const seat = channelOfPlace(realm, name);
+    if (seat) return (st.standings.set(sid, seat), { added: false });
+    const mine = st.channels.get(st.standings.get(sid));
+    if (mine && !mine.places.has(slug(realm))) {
+      mine.places.set(slug(realm), { karta, name });
+      return { added: true, channel: st.standings.get(sid), karta, name };
+    }
+    st.standings.set(sid, newChannel(realm, karta, name));
+    return { added: false };
+  };
+  /** Автор записи: место канала сессии в графе записи; граф не назван — первое место канала. */
+  const authorOf = (sid, realm) => {
+    const c = st.channels.get(st.standings.get(sid));
+    if (!c) return undefined;
+    if (realm == null || realm === "") return [...c.places.values()][0]?.name;
+    return c.places.get(slug(realm))?.name;
+  };
   const json = (res, code, obj, headers = {}) => {
     res.writeHead(code, {
       "content-type": "application/json",
@@ -456,7 +502,7 @@ export async function startFakeNks(opts = {}) {
         if (hdr && !st.ignoreStandingHeader) {
           const parts = String(hdr).trim().split(/\s+/);
           if (parts.length === 3) {
-            st.standings.set(fresh, parts[2]);
+            registerPlace(fresh, parts[0], parts[1], parts[2]);
             st.counts.header_binds++;
           }
         }
@@ -568,7 +614,18 @@ export async function startFakeNks(opts = {}) {
           }
           st.counts.register_standing++;
           st.placeArgs.push({ action: "register", name: a.name, model: a.model, attrs: a.attrs });
-          st.standings.set(sid, a.name ?? "(unnamed)");
+          const reg = registerPlace(sid, a.realm, a.karta, a.name);
+          if (reg.added) {
+            // Место рядом на канале: на доске его графа, слушает — если сокет канала открыт.
+            const listening = [...st.ws].some((s) => st.wsChans.get(s) === reg.channel);
+            st.places.set(`${reg.karta}:${reg.name}`, {
+              karta: reg.karta,
+              name: reg.name,
+              realm: a.realm,
+              incoming: `${base}/api/channel/in/mailbox-${reg.name}`,
+              listening,
+            });
+          }
           return json(
             res,
             200,
@@ -594,8 +651,12 @@ export async function startFakeNks(opts = {}) {
               extra,
             );
           }
-          const lines = [`Каналы (${st.places.size + st.rooms.length}):`];
-          for (const p of st.places.values()) {
+          // Доска — графа из вызова: место без графа (объявленное пробой) видно на любой.
+          const shown = [...st.places.values()].filter(
+            (p) => p.realm == null || slug(p.realm) === slug(a.realm),
+          );
+          const lines = [`Каналы (${shown.length + st.rooms.length}):`];
+          for (const p of shown) {
             // Форма живой доски (iskron_channel list, сервер 0.43): строка места,
             // строка занятости «💬 «…»» и строка входящего адреса «📥».
             lines.push(
@@ -626,14 +687,20 @@ export async function startFakeNks(opts = {}) {
           st.counts.connect++;
           st.wsToken = token("ws"); // как у настоящей поверхности: сокет показан один раз и всякий раз новый
           // wsTokens: чьё место откроет этот адрес — доска и revoke судят по месту, не по мосту (ниже, именем без полей)
-          st.standings.set(sid, a.name ?? "(unnamed)");
           // The real surface prints the role as a bare number whatever the caller wrote («#931» is lawful).
           const karta = String(a.karta).trim().replace(/^#/, "");
           const name = String(a.name ?? "").trim();
+          // Канал места: тот же, если место уже есть (адрес сокета новый), иначе новый.
+          const chan =
+            channelOfPlace(a.realm, cleanName(a.name)) ??
+            newChannel(a.realm, karta, cleanName(a.name));
+          st.standings.set(sid, chan);
+          st.wsChannel.set(st.wsToken, chan);
           st.wsTokens.set(st.wsToken, name);
           st.places.set(`${karta}:${name}`, {
             karta,
             name,
+            realm: a.realm,
             incoming: `${base}/api/channel/in/mailbox-${a.name ?? "unnamed"}`,
             listening: true,
           });
@@ -663,14 +730,29 @@ export async function startFakeNks(opts = {}) {
         if (a.action === "revoke") {
           const name = String(a.standing ?? "").replace(/^.*:/, "");
           const had = st.places.delete(`${String(a.karta).replace(/^#/, "")}:${name}`);
+          // Место снимается с канала; канал без мест закрыт, с местами других графов — жив (#5838).
+          const chan =
+            channelOfPlace(a.realm, name) ??
+            [...st.channels].find(([, c]) =>
+              [...c.places.values()].some((p) => p.name === name),
+            )?.[0];
+          const places = st.channels.get(chan)?.places;
+          for (const [r, p] of places ?? [])
+            if (p.name === name && (!places.has(slug(a.realm)) || r === slug(a.realm)))
+              places.delete(r);
+          const empty = !st.channels.get(chan)?.places.size;
           // As the real surface: only the revoked place's socket is closed — the
           // socket of another place the same bridge holds stays up (#5154).
           for (const sock of st.ws) {
             if ((st.wsNames.get(sock) ?? name) !== name) continue;
+            if (chan && st.wsChans.get(sock) === chan && !empty) continue;
             sock.write(wsFrame(0x8, Buffer.from([4001 >> 8, 4001 & 0xff])));
             setTimeout(() => sock.end(), 100).unref();
           }
-          for (const [sid2, bound] of st.standings) if (bound === name) st.standings.delete(sid2);
+          if (chan && empty) {
+            st.channels.delete(chan);
+            for (const [sid2, bound] of st.standings) if (bound === chan) st.standings.delete(sid2);
+          }
           // Как у настоящей поверхности: закрытие сокета уходит раньше ответа по HTTP.
           if (st.revokeReplyDelayMs) await new Promise((r) => setTimeout(r, st.revokeReplyDelayMs));
           return json(
@@ -718,7 +800,7 @@ export async function startFakeNks(opts = {}) {
           );
         }
         if (a.action === "send") {
-          const bound = st.standings.get(sid);
+          const bound = authorOf(sid, a.realm);
           // Отказ 409 иного рода (/control {send_conflict}): сессия привязана, отказ не о безавторности.
           if (bound && st.sendConflict) {
             st.counts.send_conflicts = (st.counts.send_conflicts ?? 0) + 1;
@@ -862,7 +944,9 @@ export async function startFakeNks(opts = {}) {
       // Пишущая фабрика графа: пишет и без привязки, но метит запись безавторной —
       // так ведёт себя настоящая поверхность (write_unattributed_several_standings).
       if (msg.method === "tools/call" && /^iskron_(add_|update)/.test(msg.params?.name ?? "")) {
-        const bound = st.standings.get(sid);
+        const realm = msg.params.arguments?.realm;
+        const bound = authorOf(sid, realm); // место канала в графе записи (#5838)
+        st.writes.push({ tool: msg.params.name, realm, author: bound ?? null });
         if (!bound) st.counts.unattributed++;
         return json(
           res,
@@ -930,6 +1014,8 @@ export async function startFakeNks(opts = {}) {
     // Доска читает по сокету МЕСТА: открыт — его место слушает; адрес без места
     // (сокет из окружения) — по-старому, все места разом.
     const placeName = st.wsTokens.get(u.pathname.slice("/channel/ws/".length));
+    const chan = st.wsChannel.get(u.pathname.slice("/channel/ws/".length));
+    if (chan) st.wsChans.set(socket, chan);
     const ofPlace = (pl) => placeName === undefined || pl.name === placeName;
     if (placeName !== undefined) st.wsNames.set(socket, placeName);
     for (const pl of st.places.values()) if (ofPlace(pl)) pl.listening = true;
@@ -937,6 +1023,7 @@ export async function startFakeNks(opts = {}) {
     socket.on("close", () => {
       st.ws.delete(socket);
       st.wsNames.delete(socket);
+      st.wsChans.delete(socket);
       // Последний сокет места закрыт — «не слушает» сразу (прежние серверы держали «слушает» ещё ~40 с;
       // такое окно проба ставит сама через /control {places: [{…, listening: true}]}.
       const stillHeld =
@@ -952,6 +1039,12 @@ export async function startFakeNks(opts = {}) {
         JSON.stringify({
           type: "hello",
           pending: st.helloPending ?? 0,
+          // Все места канала — как у настоящей поверхности (#5838).
+          standings: [...(st.channels.get(chan)?.places ?? [])].map(([realm, p]) => ({
+            realm,
+            karta: p.karta,
+            name: p.name,
+          })),
           ping_interval_seconds: opts.helloPingS ?? (opts.pingMs ? opts.pingMs / 1000 : 30),
         }),
       ),

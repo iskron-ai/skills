@@ -705,7 +705,7 @@ function bindCallback(port) {
       } catch {
       }
     };
-    const server2 = createServer((req, res) => {
+    const server = createServer((req, res) => {
       const u = new URL(req.url ?? "/", `http://127.0.0.1:${port}`);
       if (u.pathname === "/login" && mint && loginKey && u.searchParams.get("k") === loginKey) {
         mint().then(
@@ -743,10 +743,10 @@ function bindCallback(port) {
       }
       deliver2({ code: u.searchParams.get("code"), state: u.searchParams.get("state"), err });
     });
-    server2.once("error", reject);
-    server2.listen(port, "127.0.0.1", () => {
-      server2.removeListener("error", reject);
-      server2.on("error", (e) => log(`callback server: ${e.message}`));
+    server.once("error", reject);
+    server.listen(port, "127.0.0.1", () => {
+      server.removeListener("error", reject);
+      server.on("error", (e) => log(`callback server: ${e.message}`));
       resolve({
         port,
         report: (failure) => tellBrowser(
@@ -754,7 +754,7 @@ function bindCallback(port) {
         ),
         close: () => {
           tellBrowser("iskron-bridge: the login was abandoned — nothing was stored.");
-          server2.close();
+          server.close();
         },
         serveLogin: (key, fn) => {
           loginKey = key;
@@ -1662,10 +1662,6 @@ function holdSocket(o) {
   };
 }
 
-// js/bridge/hold.ts
-import { chmodSync, mkdirSync as mkdirSync5, unlinkSync as unlinkSync6, writeFileSync as writeFileSync7 } from "node:fs";
-import { createServer as createServer2 } from "node:net";
-
 // js/shared/seen.ts
 import { appendFileSync as appendFileSync2, readFileSync as readFileSync6, renameSync as renameSync4, writeFileSync as writeFileSync5 } from "node:fs";
 var SEEN_KEEP = 200;
@@ -1688,18 +1684,18 @@ function seenIds(seenPath) {
     return /* @__PURE__ */ new Set();
   }
 }
-function noteSeen(seenPath, id, seen2) {
-  if (seen2.has(id)) return;
-  seen2.add(id);
+function noteSeen(seenPath, id, seen) {
+  if (seen.has(id)) return;
+  seen.add(id);
   try {
-    if (seen2.size > SEEN_KEEP) {
-      seen2.delete(id);
-      const tail = [.../* @__PURE__ */ new Set([...seen2, ...seenIds(seenPath), id])].slice(-SEEN_KEEP);
+    if (seen.size > SEEN_KEEP) {
+      seen.delete(id);
+      const tail = [.../* @__PURE__ */ new Set([...seen, ...seenIds(seenPath), id])].slice(-SEEN_KEEP);
       const tmp = `${seenPath}.${process.pid}.tmp`;
       writeFileSync5(tmp, tail.join("\n") + "\n");
       renameSync4(tmp, seenPath);
-      seen2.clear();
-      for (const x of tail) seen2.add(x);
+      seen.clear();
+      for (const x of tail) seen.add(x);
     } else appendFileSync2(seenPath, id + "\n");
   } catch {
   }
@@ -1829,6 +1825,11 @@ var state = {
   // it hangs on the change of id, never on a timer.
   standing: null,
   // {realm, karta, name} of the last register that succeeded
+  // Places in OTHER graphs on the same channel (#5838): register on the channel
+  // in another graph adds a place, and a write is signed by the place of its
+  // own graph. `standing` stays the place the socket was taken for; these ride
+  // it and are replayed with it after every session turnover.
+  places: [],
   standingSession: null,
   // the session id that registration is known to hold in
   // The access token the session was opened with. A session is opened BY a
@@ -2033,6 +2034,10 @@ function stampOrigin(frame2) {
   return { ...frame2, origin: classifyOrigin(frame2, state.standing?.karta) };
 }
 
+// js/bridge/door.ts
+import { chmodSync, mkdirSync as mkdirSync5, unlinkSync as unlinkSync6, writeFileSync as writeFileSync7 } from "node:fs";
+import { createServer as createServer2 } from "node:net";
+
 // js/bridge/stale.ts
 var STALE_BURST_KEEP = 20;
 var STALE_BURST_MS = 1500;
@@ -2071,21 +2076,26 @@ function dropStale() {
 }
 
 // js/bridge/fanout.ts
-function isDelivered(keys, seen2, seenPath) {
+function isDelivered(keys, seen, seenPath) {
   if (!keys.length) return false;
   const given = seenIds(seenPath);
-  return keys.some((k) => seen2.has(k) || given.has(k));
+  return keys.some((k) => seen.has(k) || given.has(k));
 }
-function redundantCopy(frame2, ring2, seen2, seenPath) {
+function redundantCopy(frame2, ring, seen, seenPath) {
   const ev = frame2?.type === "message" ? eventKeyOf(frame2) : "";
   if (!ev) return "";
   const stale = frame2?.stale === true;
   const keys = stale ? [ev, `evs:${ev.slice(3)}`] : [ev];
-  if (isDelivered(keys, seen2, seenPath) || ring2.some((r) => eventKeyOf(r.frame) === ev)) return ev;
+  if (isDelivered(keys, seen, seenPath) || ring.some((r) => eventKeyOf(r.frame) === ev)) return ev;
   if (stale) return staleHasEvent(ev) ? ev : "";
   dropStaleEvent(ev);
   return "";
 }
+
+// js/bridge/sweep.ts
+import { existsSync, readdirSync as readdirSync2, readFileSync as readFileSync8, unlinkSync as unlinkSync5 } from "node:fs";
+import { connect as connectLocal } from "node:net";
+import { join as join6 } from "node:path";
 
 // js/bridge/holdrecord.ts
 import { readFileSync as readFileSync7, unlinkSync as unlinkSync4, writeFileSync as writeFileSync6 } from "node:fs";
@@ -2124,9 +2134,6 @@ function dropHoldRecord(key) {
 }
 
 // js/bridge/sweep.ts
-import { existsSync, readdirSync as readdirSync2, readFileSync as readFileSync8, unlinkSync as unlinkSync5 } from "node:fs";
-import { connect as connectLocal } from "node:net";
-import { join as join6 } from "node:path";
 function localSocketAlive(sock) {
   return new Promise((resolve) => {
     if (process.platform !== "win32" && !existsSync(sock)) return resolve(false);
@@ -2185,19 +2192,276 @@ function sweepStale(authDir, mine) {
   }
 }
 
-// js/bridge/hold.ts
+// js/bridge/door.ts
 var RING = 20;
-function standingsDir() {
-  return standingsDirOf(CFG.authDir);
+var Door = class {
+  key;
+  clients = /* @__PURE__ */ new Set();
+  ring = [];
+  /** Память доставленных кадров — та же, что читает сторож выхода (../shared/seen.ts). */
+  seen;
+  /** С какого мига ни один локальный клиент не слушает; null — слушают. */
+  idleAt = Date.now();
+  server = null;
+  hooks;
+  constructor(key, hooks) {
+    this.key = key;
+    this.hooks = hooks;
+    this.seen = seenIds(this.seenPath);
+  }
+  get seenPath() {
+    return seenFilePathOf(CFG.authDir, this.key);
+  }
+  get socketPath() {
+    return socketPathOf(CFG.authDir, this.key);
+  }
+  push(raw, frame2) {
+    this.ring.push({ raw, frame: frame2 });
+    if (this.ring.length > RING) this.ring.shift();
+  }
+  broadcast(ev) {
+    const line = JSON.stringify(ev) + "\n";
+    for (const c of this.clients) {
+      try {
+        c.write(line);
+      } catch {
+        this.clients.delete(c);
+      }
+    }
+  }
+  open() {
+    const path = this.socketPath;
+    const key = this.key;
+    mkdirSync5(standingsDirOf(CFG.authDir), { recursive: true, mode: 448 });
+    sweepStale(CFG.authDir, key);
+    writeFileSync7(keyFilePathOf(CFG.authDir, key), key + "\n", { mode: 384 });
+    if (process.platform !== "win32") {
+      try {
+        unlinkSync6(path);
+      } catch {
+      }
+    }
+    const gone = (sock) => {
+      this.clients.delete(sock);
+      if (this.clients.size === 0) this.idleAt = Date.now();
+    };
+    const srv = createServer2((sock) => {
+      this.clients.add(sock);
+      this.idleAt = null;
+      sock.on("close", () => gone(sock));
+      sock.on("error", () => gone(sock));
+      this.hooks.onAttach();
+      const backlog = this.ring.filter(
+        ({ frame: frame2 }) => frame2?.type !== "message" || !isDelivered(deliveredKeys(frame2), this.seen, this.seenPath)
+      );
+      sock.write(
+        JSON.stringify({ kind: "attached", key, buffered: backlog.length }) + "\n"
+      );
+      for (const { raw, frame: frame2 } of backlog) {
+        sock.write(JSON.stringify({ kind: "frame", raw, frame: frame2 }) + "\n");
+      }
+      const late = this.hooks.lateEvent();
+      if (late) sock.write(JSON.stringify(late) + "\n");
+    });
+    srv.on(
+      "error",
+      (e) => this.hooks.onError(
+        `ДЕЛАТЕЛЬ: локальный сокет стояния не поднялся (${e.message}) — сторожу не к чему цепляться`
+      )
+    );
+    srv.listen(path, () => {
+      if (process.platform !== "win32") {
+        try {
+          chmodSync(path, 384);
+        } catch {
+        }
+      }
+      log(`standing socket held; local listeners attach at ${path}`);
+    });
+    this.server = srv;
+  }
+  /** Закрыть дверь: клиенты, сервер, файлы ключа, памяти и сокета. Идемпотентно. */
+  close() {
+    for (const c of this.clients) {
+      try {
+        c.end();
+      } catch {
+      }
+    }
+    this.clients.clear();
+    const srv = this.server;
+    this.server = null;
+    if (srv) {
+      try {
+        srv.close();
+      } catch {
+      }
+    }
+    for (const p of [keyFilePathOf(CFG.authDir, this.key), this.seenPath]) {
+      try {
+        unlinkSync6(p);
+      } catch {
+      }
+    }
+    if (process.platform !== "win32") {
+      try {
+        unlinkSync6(this.socketPath);
+      } catch {
+      }
+    }
+    this.ring.length = 0;
+    this.idleAt = null;
+  }
+};
+
+// js/bridge/names.ts
+import { execFileSync } from "node:child_process";
+import { hostname } from "node:os";
+import { basename as basename2 } from "node:path";
+var NAME_MAX = 48;
+var normKarta = (k) => String(k ?? "").trim().replace(/^#/, "");
+var normName = (n) => typeof n === "string" ? n.trim() : "";
+var realmSlug = (r) => String(r ?? "").trim().replace(/^@[^/]+\//, "");
+function sameRealm(a, b) {
+  const x = realmSlug(a);
+  const y = realmSlug(b);
+  if (!x || !y || x === y) return true;
+  return /^r\d+$/.test(x) !== /^r\d+$/.test(y);
 }
+var realmMatches = (a, b) => !!realmSlug(a) && realmSlug(a) === realmSlug(b);
+var NAME_RE = /^[a-z0-9][a-z0-9._-]*$/;
+var sanitize = (s) => s.toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^[-.]+|[-.]+$/g, "").slice(0, NAME_MAX);
+function nameFault(name) {
+  if (name.length > NAME_MAX) return `длиннее предела: ${name.length} знаков`;
+  if (!NAME_RE.test(name))
+    return /[A-Z]/.test(name) ? "заглавные буквы не допускаются" : "недопустимые знаки или первый знак не буква и не цифра";
+  return null;
+}
+var PART_MIN = 3;
+var CUT_ORDER = ["repo", "host", "model"];
+function fitName(parts) {
+  const p = { ...parts };
+  const join15 = () => [p.host, p.repo, p.model].filter(Boolean).join(".").replace(/[-.]+$/, "");
+  const cut = [];
+  for (const k of CUT_ORDER) {
+    const over = join15().length - NAME_MAX;
+    if (over <= 0) break;
+    const keep = Math.max(k === "model" ? 1 : PART_MIN, p[k].length - over);
+    if (keep >= p[k].length) continue;
+    p[k] = p[k].slice(0, keep).replace(/[-.]+$/, "");
+    cut.push(k);
+  }
+  return {
+    name: join15().slice(0, NAME_MAX).replace(/[-.]+$/, ""),
+    cut
+  };
+}
+var git = (args, cwd = process.cwd()) => {
+  try {
+    return execFileSync("git", args, {
+      cwd,
+      timeout: 2e3,
+      stdio: ["ignore", "pipe", "ignore"]
+    }).toString().trim();
+  } catch {
+    return "";
+  }
+};
+function deriveParts(model2, cwd = process.cwd()) {
+  const host = hostname().split(".")[0];
+  const top = git(["rev-parse", "--show-toplevel"], cwd);
+  const repo = basename2(top || cwd);
+  const short2 = (model2 ?? "").trim().toLowerCase().replace(/^claude[-_]/, "");
+  return { host: sanitize(host ?? ""), repo: sanitize(repo), model: sanitize(short2) };
+}
+var joinName = (p) => [p.host, p.repo, p.model].filter(Boolean).join(".");
+
+// js/bridge/places.ts
+var extras = /* @__PURE__ */ new Map();
+var keyOfPlace = (s) => keyOf(s.realm, s.karta, s.name ?? "");
+var extraPlaces = () => [...extras.values()];
+var extraIn = (realm) => extraPlaces().find((p) => realmMatches(p.standing.realm, realm));
+function extraOf(realm, karta, name) {
+  const p = extraIn(realm);
+  return p && String(p.standing.karta) === normKarta(karta) && (p.standing.name ?? "") === normName(name) ? p : void 0;
+}
+function rememberPlace(s) {
+  state.places = state.places.filter((p) => !realmMatches(p.realm, s.realm));
+  state.places.push(s);
+}
+function writeRecord(p, ch, status) {
+  const s = p.standing;
+  writeHoldRecord(p.door.key, {
+    realm: s.realm,
+    karta: s.karta,
+    name: s.name ?? "",
+    url: ch.url,
+    statusUrl: ch.statusUrl,
+    status: status ?? readHoldRecord(p.door.key)?.status,
+    cwd: ch.cwd ?? readHoldRecord(p.door.key)?.cwd,
+    client: harnessName(),
+    key: p.door.key
+  });
+}
+function addExtra(s, ch, hooks) {
+  const key = keyOfPlace(s);
+  const have = extras.get(key);
+  if (have) return key;
+  for (const p of extraPlaces())
+    if (realmMatches(p.standing.realm, s.realm)) dropExtra(p.door.key, "другое место графа", true);
+  const door2 = new Door(key, hooks);
+  door2.open();
+  const place = { standing: s, door: door2 };
+  extras.set(key, place);
+  writeRecord(place, ch);
+  standingLog(`held ${key} beside the channel`);
+  return key;
+}
+function repointExtras(ch) {
+  for (const p of extraPlaces()) writeRecord(p, ch);
+}
+function rememberExtraStatus(key, ch, text) {
+  const p = extras.get(key);
+  if (p) writeRecord(p, ch, text || "");
+}
+function dropExtra(key, reason, forget) {
+  const p = extras.get(key);
+  if (!p) return;
+  extras.delete(key);
+  p.door.close();
+  if (forget) {
+    dropHoldRecord(key);
+    state.places = state.places.filter((s) => keyOfPlace(s) !== key);
+  }
+  standingLog(`released ${key}: ${reason}${forget ? " (record dropped)" : ""}`);
+}
+function takeExtra(key) {
+  const p = extras.get(key);
+  if (!p) return void 0;
+  extras.delete(key);
+  state.places = state.places.filter((s) => keyOfPlace(s) !== key);
+  return p;
+}
+function dropAllExtras(reason, forget) {
+  for (const k of [...extras.keys()]) dropExtra(k, reason, forget);
+  if (forget) state.places = [];
+}
+var nameOfAddress = (a) => typeof a === "string" ? a.replace(/^.*:/, "") : "";
+function extraForFrame(frame2, primary) {
+  if (!frame2 || !extras.size) return void 0;
+  const byRealm = frame2.realm != null ? extraIn(frame2.realm) : void 0;
+  if (byRealm || frame2.realm != null && primary && realmMatches(frame2.realm, primary.realm))
+    return byRealm;
+  const to = nameOfAddress(frame2.to_standing);
+  if (!to || to === (primary?.name ?? "")) return void 0;
+  const named = extraPlaces().filter((p) => (p.standing.name ?? "") === to);
+  return named.length === 1 ? named[0] : void 0;
+}
+
+// js/bridge/hold.ts
 function keyFor() {
   const s = state.standing;
   return s ? keyOf(s.realm, s.karta, s.name ?? "") : "env";
-}
-var socketPathFor = (key) => socketPathOf(CFG.authDir, key);
-var keyFilePathFor = (key) => keyFilePathOf(CFG.authDir, key);
-function keptRecordStatus(key) {
-  return readHoldRecord(key)?.status;
 }
 var standCwd = null;
 function noteStandCwd(cwd) {
@@ -2206,14 +2470,18 @@ function noteStandCwd(cwd) {
   if (cwd && currentKey && currentUrl) rememberStatus(readHoldRecord(currentKey)?.status ?? "");
   return prev;
 }
-function rememberStatus(text) {
+var channel = () => currentUrl ? { url: currentUrl, statusUrl: currentStatusUrl, cwd: standCwd } : null;
+function rememberStatus(text, realm) {
   const s = state.standing;
-  if (!s || !currentKey || !currentUrl) return;
+  const ch = channel();
+  if (!s || !currentKey || !ch) return;
+  const extra = realm ? extraIn(realm) : void 0;
+  if (extra) return rememberExtraStatus(extra.door.key, ch, text);
   writeHoldRecord(currentKey, {
     realm: s.realm,
     karta: s.karta,
     name: s.name ?? "",
-    url: currentUrl,
+    url: ch.url,
     statusUrl: currentStatusUrl,
     status: text || void 0,
     cwd: standCwd ?? readHoldRecord(currentKey)?.cwd,
@@ -2223,26 +2491,36 @@ function rememberStatus(text) {
 }
 var holdsKey = (key) => !!holder?.alive && currentKey === key;
 var ledKey = () => currentKey;
-var localSocketPathOf = (key) => socketPathFor(key);
+var holdsChannel = () => !!holder?.alive && !!currentKey;
+var localSocketPathOf = (key) => socketPathOf(CFG.authDir, key);
 function noteResuming(delta) {
   resuming += delta;
 }
 var holder = null;
-var server = null;
+var door = null;
 var currentKey = null;
 var currentUrl = null;
 var currentStatusUrl = null;
 var evictedKey = null;
 var evictedEvent = null;
-var clients = /* @__PURE__ */ new Set();
 var parked = false;
-var listenerIdleAt = null;
 var attachHooks = [];
-var ring = [];
 var helloWaiters = /* @__PURE__ */ new Set();
-var seen = /* @__PURE__ */ new Set();
+var doorHooks = {
+  onAttach: () => {
+    for (const fn of attachHooks) fn();
+  },
+  lateEvent: () => evictedKey ? evictedEvent : null,
+  onError: (text) => {
+    log(text);
+    notify("error", { kind: "note", text });
+  }
+};
+var doors = () => [...door ? [door] : [], ...extraPlaces().map((p) => p.door)];
 function isOwn(realm, karta, name) {
   const s = state.standing;
+  if (!currentKey) return false;
+  if (extraOf(realm, karta, name)) return true;
   return !!s && s.realm === realm && String(s.karta) === String(karta) && (s.name ?? "") === name && currentKey === keyFor();
 }
 function holdsStanding(realm, karta, name) {
@@ -2252,17 +2530,27 @@ function wasEvicted(realm, karta, name) {
   return !!evictedKey && evictedKey === currentKey && isOwn(realm, karta, name);
 }
 var hasStatusAddressFor = (realm, karta, name) => !!currentStatusUrl && !!currentKey && isOwn(realm, karta, name);
-var statusAddress = () => currentStatusUrl && currentKey ? { url: currentStatusUrl, key: currentKey } : null;
+function statusAddress(realm) {
+  if (!currentStatusUrl || !currentKey) return null;
+  const extra = realm ? extraIn(realm) : void 0;
+  return { url: currentStatusUrl, key: extra?.door.key ?? currentKey };
+}
+var besideKeyIn = (realm) => extraIn(realm)?.door.key ?? null;
 var isParked = (realm, karta, name) => parked && isOwn(realm, karta, name);
-var listenerIdleSince = () => holder?.alive && clients.size === 0 ? listenerIdleAt : null;
+function listenerIdleSince() {
+  if (!holder?.alive) return null;
+  const ds = doors();
+  if (!ds.length || ds.some((d) => d.clients.size > 0)) return null;
+  return Math.max(...ds.map((d) => d.idleAt ?? 0));
+}
 function onListenerAttached(fn) {
   attachHooks.push(fn);
 }
-var localListeners = () => clients.size;
+var localListeners = () => doors().reduce((n, d) => n + d.clients.size, 0);
 var resuming = 0;
 function awaitHello(timeoutMs) {
-  const seen2 = ring.find((r) => r.frame?.type === "hello")?.frame ?? null;
-  if (seen2) return Promise.resolve(seen2);
+  const seen = door?.ring.find((r) => r.frame?.type === "hello")?.frame ?? null;
+  if (seen) return Promise.resolve(seen);
   return new Promise((resolve) => {
     const done = (f) => {
       helloWaiters.delete(done);
@@ -2272,16 +2560,9 @@ function awaitHello(timeoutMs) {
     setTimeout(() => done(null), timeoutMs).unref();
   });
 }
-var heldKey = () => currentKey;
+var heldKey = (realm) => (realm ? besideKeyIn(realm) : null) ?? currentKey;
 function broadcast(ev) {
-  const line = JSON.stringify(ev) + "\n";
-  for (const c of clients) {
-    try {
-      c.write(line);
-    } catch {
-      clients.delete(c);
-    }
-  }
+  for (const d of doors()) d.broadcast(ev);
 }
 function notify(level, data) {
   emit({
@@ -2290,58 +2571,28 @@ function notify(level, data) {
     params: { level, logger: "iskron-channel", data }
   });
 }
-function openLocalServer(key) {
-  const path = socketPathFor(key);
-  mkdirSync5(standingsDir(), { recursive: true, mode: 448 });
-  sweepStale(CFG.authDir, key);
-  writeFileSync7(keyFilePathFor(key), key + "\n", { mode: 384 });
-  if (process.platform !== "win32") {
-    try {
-      unlinkSync6(path);
-    } catch {
-    }
-  }
-  const gone = (sock) => {
-    clients.delete(sock);
-    if (clients.size === 0) listenerIdleAt = Date.now();
-  };
-  const srv = createServer2((sock) => {
-    clients.add(sock);
-    listenerIdleAt = null;
-    sock.on("close", () => gone(sock));
-    sock.on("error", () => gone(sock));
-    for (const fn of attachHooks) fn();
-    const seenPath = seenFilePathOf(CFG.authDir, key);
-    const backlog = ring.filter(
-      ({ frame: frame2 }) => frame2?.type !== "message" || !isDelivered(deliveredKeys(frame2), seen, seenPath)
-    );
-    sock.write(
-      JSON.stringify({ kind: "attached", key, buffered: backlog.length }) + "\n"
-    );
-    for (const { raw, frame: frame2 } of backlog) {
-      sock.write(JSON.stringify({ kind: "frame", raw, frame: frame2 }) + "\n");
-    }
-    if (evictedEvent && evictedKey === key) sock.write(JSON.stringify(evictedEvent) + "\n");
-  });
-  srv.on("error", (e) => {
-    const text = `ДЕЛАТЕЛЬ: локальный сокет стояния не поднялся (${e.message}) — сторожу не к чему цепляться`;
-    log(text);
-    notify("error", { kind: "note", text });
-  });
-  srv.listen(path, () => {
-    if (process.platform !== "win32") {
-      try {
-        chmodSync(path, 384);
-      } catch {
-      }
-    }
-    log(`standing socket held; local listeners attach at ${path}`);
-  });
-  server = srv;
+function addPlace(s) {
+  const ch = channel();
+  const primary = state.standing;
+  if (!holder?.alive || !ch || !primary || sameRealm(primary.realm, s.realm)) return null;
+  return addExtra(s, ch, doorHooks);
 }
-function releaseStanding(reason, forget = false) {
+function promoteBeside(reason) {
+  const next = extraPlaces()[0];
+  if (!next || !currentKey || !holder?.alive) return false;
+  dropHoldRecord(currentKey);
+  door?.close();
+  standingLog(`released ${currentKey}: ${reason}; ${next.door.key} leads the channel now`);
+  takeExtra(next.door.key);
+  door = next.door;
+  currentKey = next.door.key;
+  state.standing = next.standing;
+  return true;
+}
+function releaseStanding(reason, forget = false, keepBeside = false) {
   if (forget && currentKey) dropHoldRecord(currentKey);
-  if (!holder && !server) return;
+  if (!keepBeside) dropAllExtras(reason, forget);
+  if (!holder && !door) return;
   flushBacklogNow();
   standingLog(`released ${currentKey ?? "?"}: ${reason}${forget ? " (record dropped)" : ""}`);
   const released = { kind: "released", key: currentKey ?? void 0, text: reason };
@@ -2349,59 +2600,31 @@ function releaseStanding(reason, forget = false) {
   notify("info", released);
   holder?.close(reason);
   holder = null;
-  for (const c of clients) {
-    try {
-      c.end();
-    } catch {
-    }
-  }
-  clients.clear();
   for (const w of [...helloWaiters]) w(null);
-  const srv = server;
-  server = null;
-  if (srv) {
-    try {
-      srv.close();
-    } catch {
-    }
-  }
-  if (currentKey) {
-    for (const p of [keyFilePathFor(currentKey), seenFilePathOf(CFG.authDir, currentKey)]) {
-      try {
-        unlinkSync6(p);
-      } catch {
-      }
-    }
-    if (process.platform !== "win32") {
-      try {
-        unlinkSync6(socketPathFor(currentKey));
-      } catch {
-      }
-    }
-  }
-  ring.length = 0;
+  door?.close();
+  door = null;
   parked = false;
-  listenerIdleAt = null;
   currentKey = null;
   currentUrl = null;
   currentStatusUrl = null;
   evictedKey = null;
   evictedEvent = null;
-  seen = /* @__PURE__ */ new Set();
   dropStale();
 }
 function holdStanding(url, statusUrl2) {
   const key = keyFor();
   if (url === currentUrl && key === currentKey && holder?.alive) return key;
-  releaseStanding("новый сокет", !!currentKey && currentKey !== key);
+  const same = !!currentKey && currentKey === key;
+  releaseStanding("новый сокет", !!currentKey && currentKey !== key, same);
   currentKey = key;
   currentUrl = url;
   currentStatusUrl = statusUrl2 || statusUrl(url);
-  openLocalServer(key);
+  door = new Door(key, doorHooks);
+  door.open();
   const s = state.standing;
   if (s)
     writeHoldRecord(key, {
-      status: keptRecordStatus(key),
+      status: readHoldRecord(key)?.status,
       realm: s.realm,
       karta: s.karta,
       name: s.name ?? "",
@@ -2411,8 +2634,8 @@ function holdStanding(url, statusUrl2) {
       client: harnessName(),
       key
     });
-  listenerIdleAt = Date.now();
-  seen = seenIds(seenFilePathOf(CFG.authDir, key));
+  const ch = channel();
+  if (same && ch) repointExtras(ch);
   openHolder(url, key);
   standingLog(`held ${key}${standCwd ? ` cwd=${standCwd}` : ""}`);
   notify("info", { kind: "held", key });
@@ -2431,55 +2654,60 @@ function parkStanding(reason) {
 function resumeStanding() {
   if (!parked || !currentUrl || !currentKey) return false;
   parked = false;
-  for (let i = ring.length - 1; i >= 0; i--)
-    if (ring[i]?.frame?.type === "hello") ring.splice(i, 1);
+  for (const d of doors())
+    for (let i = d.ring.length - 1; i >= 0; i--)
+      if (d.ring[i]?.frame?.type === "hello") d.ring.splice(i, 1);
   openHolder(currentUrl, currentKey);
   standingLog(`resumed ${currentKey}: socket reopened on the same address`);
   return true;
+}
+function deliverTo(d, raw, frame2, full) {
+  const seenPath = d.seenPath;
+  const id = full?.type === "message" && typeof full.id === "string" ? full.id : "";
+  const evKey = redundantCopy(full, d.ring, d.seen, seenPath);
+  if (evKey) return log(`frame ${id || "?"} carries ${evKey} already offered — not raised`);
+  const again = isDelivered(id ? [id] : [], d.seen, seenPath);
+  if (full?.type === "message" && full.stale === true)
+    return again ? log(`stale frame ${id} already delivered — dropped`) : noteStale(full, (ev2) => (d.broadcast(ev2), notify("info", ev2)));
+  const text = full === frame2 ? raw : JSON.stringify(full);
+  const hello = full?.type === "hello";
+  for (const x of hello ? doors() : [d]) x.push(text, full);
+  if (hello) for (const w of [...helloWaiters]) w(full);
+  const ev = { kind: "frame", raw: text, frame: full };
+  if (!again) for (const x of hello ? doors() : [d]) x.broadcast(ev);
+  if (full?.type === "status") return;
+  if (again) return log(`frame ${id} came again — already delivered, not raised`);
+  if (notifiedClient()) {
+    const flushBacklog = (b) => {
+      for (const f of b.frames ?? [])
+        for (const k of deliveredKeys(f)) noteSeen(seenPath, k, d.seen);
+      notify("info", b);
+    };
+    if (hello && Number(full.pending) > 0) openBacklog(Number(full.pending), flushBacklog);
+    if (full?.type === "message") {
+      if (full.origin === "platform") openBacklog(0, flushBacklog);
+      if (noteBacklog(full)) return;
+    }
+    for (const k of deliveredKeys(full)) noteSeen(seenPath, k, d.seen);
+  }
+  notify("info", d === door ? ev : { ...ev, key: d.key });
 }
 function openHolder(url, key) {
   holder = holdSocket({
     url,
     onFrame: (raw, frame2) => {
       void Promise.resolve(stampOrigin(frame2)).then((full) => {
-        const seenPath = seenFilePathOf(CFG.authDir, key);
-        const id = full?.type === "message" && typeof full.id === "string" ? full.id : "";
-        const evKey = redundantCopy(full, ring, seen, seenPath);
-        if (evKey) return log(`frame ${id || "?"} carries ${evKey} already offered — not raised`);
-        const again = isDelivered(id ? [id] : [], seen, seenPath);
-        if (full?.type === "message" && full.stale === true)
-          return again ? log(`stale frame ${id} already delivered — dropped`) : noteStale(full, (ev2) => (broadcast(ev2), notify("info", ev2)));
-        const text = full === frame2 ? raw : JSON.stringify(full);
-        ring.push({ raw: text, frame: full });
-        if (ring.length > RING) ring.shift();
-        if (full?.type === "hello") for (const w of [...helloWaiters]) w(full);
-        const ev = { kind: "frame", raw: text, frame: full };
-        if (!again) broadcast(ev);
-        if (full?.type === "status") return;
-        if (again) return log(`frame ${id} came again — already delivered, not raised`);
-        if (notifiedClient()) {
-          const flushBacklog = (b) => {
-            for (const f of b.frames ?? [])
-              for (const k of deliveredKeys(f)) noteSeen(seenPath, k, seen);
-            notify("info", b);
-          };
-          if (full?.type === "hello" && Number(full.pending) > 0)
-            openBacklog(Number(full.pending), flushBacklog);
-          if (full?.type === "message") {
-            if (full.origin === "platform") openBacklog(0, flushBacklog);
-            if (noteBacklog(full)) return;
-          }
-          for (const k of deliveredKeys(full)) noteSeen(seenPath, k, seen);
-        }
-        notify("info", ev);
+        const d = extraForFrame(full, state.standing)?.door ?? door;
+        if (d) deliverTo(d, raw, frame2, full);
       });
     },
     onEvicted: (code) => {
       const text = `ДЕЛАТЕЛЬ: закрытие ${code} — место отняли, слушает другой держатель; привязка записей цела, занятость — пока адрес не повернули connect-ом; слух здесь — iskron_stand без name встанет рядом на имя.N; отбить место (take=true) — только словом человека`;
       log(text);
-      standingLog(`evicted ${key}: close ${code}`);
-      evictedKey = key;
-      dropHoldRecord(key);
+      const k = currentKey ?? key;
+      standingLog(`evicted ${k}: close ${code}`);
+      evictedKey = k;
+      dropHoldRecord(k);
       const ev = { kind: "evicted", code, text };
       evictedEvent = ev;
       broadcast(ev);
@@ -2538,8 +2766,8 @@ function clientName() {
   const info = state.initParams?.clientInfo;
   return typeof info?.name === "string" ? info.name : "";
 }
-function listenBlock() {
-  const key = heldKey();
+function listenBlock(realm) {
+  const key = heldKey(realm);
   if (!key) return null;
   const self = fileURLToPath2(import.meta.url);
   const where = CFG.authDir === defaultAuthDir() ? "" : ` --auth-dir "${CFG.authDir}"`;
@@ -2554,70 +2782,16 @@ ${listen}
 Кадры приходят и уведомлениями MCP (logger iskron-channel).`;
 }
 
-// js/bridge/names.ts
-import { execFileSync } from "node:child_process";
-import { hostname } from "node:os";
-import { basename as basename2 } from "node:path";
-var NAME_MAX = 48;
-var normKarta = (k) => String(k ?? "").trim().replace(/^#/, "");
-var normName = (n) => typeof n === "string" ? n.trim() : "";
-var NAME_RE = /^[a-z0-9][a-z0-9._-]*$/;
-var sanitize = (s) => s.toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^[-.]+|[-.]+$/g, "").slice(0, NAME_MAX);
-function nameFault(name) {
-  if (name.length > NAME_MAX) return `длиннее предела: ${name.length} знаков`;
-  if (!NAME_RE.test(name))
-    return /[A-Z]/.test(name) ? "заглавные буквы не допускаются" : "недопустимые знаки или первый знак не буква и не цифра";
-  return null;
-}
-var PART_MIN = 3;
-var CUT_ORDER = ["repo", "host", "model"];
-function fitName(parts) {
-  const p = { ...parts };
-  const join15 = () => [p.host, p.repo, p.model].filter(Boolean).join(".").replace(/[-.]+$/, "");
-  const cut = [];
-  for (const k of CUT_ORDER) {
-    const over = join15().length - NAME_MAX;
-    if (over <= 0) break;
-    const keep = Math.max(k === "model" ? 1 : PART_MIN, p[k].length - over);
-    if (keep >= p[k].length) continue;
-    p[k] = p[k].slice(0, keep).replace(/[-.]+$/, "");
-    cut.push(k);
-  }
-  return {
-    name: join15().slice(0, NAME_MAX).replace(/[-.]+$/, ""),
-    cut
-  };
-}
-var git = (args, cwd = process.cwd()) => {
-  try {
-    return execFileSync("git", args, {
-      cwd,
-      timeout: 2e3,
-      stdio: ["ignore", "pipe", "ignore"]
-    }).toString().trim();
-  } catch {
-    return "";
-  }
-};
-function deriveParts(model2, cwd = process.cwd()) {
-  const host = hostname().split(".")[0];
-  const top = git(["rev-parse", "--show-toplevel"], cwd);
-  const repo = basename2(top || cwd);
-  const short2 = (model2 ?? "").trim().toLowerCase().replace(/^claude[-_]/, "");
-  return { host: sanitize(host ?? ""), repo: sanitize(repo), model: sanitize(short2) };
-}
-var joinName = (p) => [p.host, p.repo, p.model].filter(Boolean).join(".");
-
 // js/bridge/placefields.ts
 var model = "";
-var extras = /* @__PURE__ */ new Map();
+var extras2 = /* @__PURE__ */ new Map();
 var placeKey = (p) => `${String(p.realm ?? "")}|${normKarta(p.karta)}|${normName(p.name)}`;
 function rememberModel(m) {
   if (typeof m === "string" && m.trim()) model = m.trim().replace(/^[^/]*\//, "");
 }
 function placeFields(place = {}) {
   const harness = harnessName();
-  const extra = extras.get(placeKey(place)) ?? {};
+  const extra = extras2.get(placeKey(place)) ?? {};
   return {
     ...model ? { model } : {},
     attrs: {
@@ -2632,7 +2806,7 @@ function withPlaceFields(args) {
   if (!PLACE_ACTIONS.has(String(args.action))) return args;
   rememberModel(args.model);
   if (args.attrs && typeof args.attrs === "object" && !Array.isArray(args.attrs))
-    extras.set(placeKey(args), { ...args.attrs });
+    extras2.set(placeKey(args), { ...args.attrs });
   return { ...args, ...placeFields(args) };
 }
 
@@ -2641,13 +2815,18 @@ function noteStanding(msg, reply2) {
   const a = msg?.params?.arguments;
   if (msg?.params?.name !== "iskron_channel" || a?.action !== "register") return;
   if (reply2?.error || reply2?.result?.isError) return;
-  state.standing = rememberedPlace(a.realm, a.karta, a.name);
+  const place = rememberedPlace(a.realm, a.karta, a.name);
+  const prim = state.standing;
+  if (prim && !sameRealm(prim.realm, place.realm)) {
+    rememberPlace(place);
+    addPlace(place);
+  } else state.standing = place;
   state.standingSession = state.sessionId;
   debug(`standing remembered: ${a.name ?? "(unnamed)"} at karta ${a.karta} in ${a.realm}`);
 }
 function rememberedPlace(realm, karta, name) {
   const k = normKarta(karta);
-  const prev = state.standing;
+  const prev = [state.standing, ...state.places].find((p) => p && sameRealm(p.realm, realm));
   const n = typeof name === "string" ? normName(name) : void 0;
   return {
     realm: String(realm ?? ""),
@@ -2662,29 +2841,9 @@ function ensureStanding() {
   if (standingInFlight) return standingInFlight;
   standingInFlight = (async () => {
     try {
-      const id = `iskron-bridge-restanding-${++state.reinitCounter}`;
-      let reply2 = null;
-      await post(
-        {
-          jsonrpc: "2.0",
-          id,
-          method: "tools/call",
-          params: {
-            name: "iskron_channel",
-            arguments: {
-              ...state.standing,
-              ...placeFields(state.standing ?? {}),
-              action: "register"
-            }
-          }
-        },
-        (m) => {
-          if (m.id === id) reply2 = m;
-        }
-      );
-      const got = reply2;
+      const got = await replayRegister(state.standing);
       if (got && !got.error && !got.result?.isError) {
-        state.standingSession = state.sessionId;
+        if (await replayBeside()) state.standingSession = state.sessionId;
         log(`standing re-registered on the new session (${state.standing?.name ?? "unnamed"})`);
       } else if (seatIsGone(got)) {
         log(`the standing's seat is gone, forgetting it: ${replyText(got).slice(0, 200)}`);
@@ -2702,6 +2861,44 @@ function ensureStanding() {
     }
   })();
   return standingInFlight;
+}
+async function replayRegister(place) {
+  const id = `iskron-bridge-restanding-${++state.reinitCounter}`;
+  let reply2 = null;
+  await post(
+    {
+      jsonrpc: "2.0",
+      id,
+      method: "tools/call",
+      params: {
+        name: "iskron_channel",
+        arguments: { ...place, ...placeFields(place ?? {}), action: "register" }
+      }
+    },
+    (m) => {
+      if (m.id === id) reply2 = m;
+    }
+  );
+  return reply2;
+}
+async function replayBeside() {
+  let whole = true;
+  for (const place of [...state.places]) {
+    const got = await replayRegister(place);
+    if (got && !got.error && !got.result?.isError) continue;
+    const key = keyOfPlace(place);
+    if (seatIsGone(got)) {
+      log(
+        `the place ${key} is gone at the platform, forgetting it: ${replyText(got).slice(0, 200)}`
+      );
+      dropExtra(key, "место у платформы истекло — register: места нет", true);
+      state.places = state.places.filter((p) => keyOfPlace(p) !== key);
+    } else {
+      whole = false;
+      log(`could not re-register ${key} this time, will retry: ${replyText(got).slice(0, 200)}`);
+    }
+  }
+  return whole;
 }
 var replyText = (reply2) => {
   if (!reply2) return "";
@@ -2752,7 +2949,10 @@ function revokesOwn(msg) {
   const a = msg?.params?.arguments;
   if (msg?.params?.name !== "iskron_channel" || a?.action !== "revoke") return false;
   const s = state.standing;
-  if (!s) return false;
+  if (!s || besideKeyIn(a.realm)) return false;
+  return names(a, s) && sameRealm(a.realm, s.realm);
+}
+function names(a, s) {
   const asked = typeof a.standing === "string" ? a.standing.trim() : "";
   const own = asked === "" || asked === "mine" || asked === (s.name ?? "") || asked.endsWith(`:${s.name ?? ""}`);
   return own && String(a.karta ?? s.karta) === String(s.karta);
@@ -2765,8 +2965,15 @@ function absorbRevokeReply(msg, reply2) {
     return reply2;
   setRevokingOwn(false);
   if (reply2?.error || reply2?.result?.isError) return reply2;
+  const a = msg.params.arguments;
+  const beside = extraIn(a.realm);
+  if (beside && names(a, beside.standing)) {
+    dropExtra(beside.door.key, "снято своим revoke", true);
+    return reply2;
+  }
   if (!revokesOwn(msg)) return reply2;
   const name = state.standing?.name ?? "unnamed";
+  if (promoteBeside("снято своим revoke")) return reply2;
   releaseStanding("снято своим revoke", true);
   state.standing = null;
   state.standingSession = null;
@@ -2775,37 +2982,51 @@ function absorbRevokeReply(msg, reply2) {
 }
 
 // js/bridge/call.ts
-function leadsOtherPlace(karta, name) {
+function leadsOtherPlace(realm, karta, name) {
   const led = ledKey();
-  const s = state.standing;
-  if (!led || !s) return null;
+  const prim = state.standing;
+  if (!led || !prim) return null;
+  const ex = extraIn(realm);
+  const beside = ex?.door.key;
+  const s = ex ? ex.standing : prim;
+  if (!ex && !sameRealm(realm, prim.realm)) return null;
   const k = normKarta(karta);
   const n = normName(name);
   const sameKarta = k === "agent" || k === String(s.karta);
-  return sameKarta && n === (s.name ?? "") ? null : led;
+  return sameKarta && n === (s.name ?? "") ? null : beside ?? led;
 }
 function otherPlaceWord(led, asked, sameName = false) {
   const advice = led === asked ? "ключи совпали — это то же место: повтори iskron_stand с take=true, чтобы переоткрыть его сознательно" : sameName ? "то же имя под другой ролью (оно вывелось из того же каталога) — передай другое name, либо iskron_stand с take=true, чтобы сменить место этого моста" : "занять другое место вместо этого — iskron_stand с take=true (прежнее останется на доске без слуха; ненужное сними revoke)";
-  return `Отказано (мост): этот мост уже ведёт место ${led} — стояние одно на мост, и место ${asked} его сняло бы с сокета молча. ${advice.charAt(0).toUpperCase()}${advice.slice(1)}; держать оба разом — второй мост, то есть другая сессия харнесса.`;
+  return `Отказано (мост): этот мост уже ведёт место ${led} — в графе место одно на мост, и место ${asked} его сняло бы с сокета молча. ${advice.charAt(0).toUpperCase()}${advice.slice(1)}; держать оба разом — второй мост, то есть другая сессия харнесса; место в другом графе встаёт рядом само.`;
 }
+function besideRefusal(realm, how) {
+  const prim = state.standing;
+  const led = ledKey();
+  if (!led || !prim || sameRealm(realm, prim.realm)) return null;
+  if (how === "stand" && holdsChannel()) return null;
+  return how === "connect" ? `Отказано (мост): этот мост ведёт место ${led}, а connect в другом графе открыл бы второй канал и снял бы его с сокета. Место в другом графе встаёт рядом на том же канале — iskron_stand(realm=…) или register.` : `Отказано (мост): этот мост ведёт место ${led}, но сокета канала у него сейчас нет (ушёл с места или место отняли) — место другого графа встать рядом не может. Сперва верни ${led}: iskron_stand его графа.`;
+}
+var refusal = (msg, text) => ({
+  jsonrpc: "2.0",
+  id: msg.id,
+  result: { isError: true, content: [{ type: "text", text }] }
+});
 function crossPlaceRefusal(msg) {
   if (msg?.method !== "tools/call" || msg.params?.name !== "iskron_channel") return null;
   const a = msg.params.arguments ?? {};
   if (!["connect", "mint", "register"].includes(String(a.action))) return null;
+  const realm = typeof a.realm === "string" ? a.realm.trim() : "";
+  if (a.action !== "register") {
+    const word = besideRefusal(realm, "connect");
+    if (word) return refusal(msg, word);
+  }
   const karta = normKarta(a.karta ?? state.standing?.karta ?? "");
   const name = normName(a.name);
-  const led = leadsOtherPlace(karta, name);
+  const led = leadsOtherPlace(realm, karta, name);
   if (!led) return null;
-  const asked = keyOf(typeof a.realm === "string" ? a.realm.trim() : "", karta, name);
+  const asked = keyOf(realm, karta, name);
   const sameName = name === (state.standing?.name ?? "");
-  return {
-    jsonrpc: "2.0",
-    id: msg.id,
-    result: {
-      isError: true,
-      content: [{ type: "text", text: otherPlaceWord(led, asked, sameName) }]
-    }
-  };
+  return refusal(msg, otherPlaceWord(led, asked, sameName));
 }
 var seq = 0;
 async function callTool(name, args) {
@@ -2852,19 +3073,19 @@ function localStatus(msg) {
     id: msg.id,
     result: { ...isError ? { isError: true } : {}, content: [{ type: "text", text: body }] }
   });
+  const realm = typeof a.realm === "string" ? a.realm : "";
   return (async () => {
-    const st = await publishStatus(text);
-    if (!st.ok && !statusAddress())
-      return reply2(await notHeldHere(typeof a.realm === "string" ? a.realm : ""), true);
+    const st = await publishStatus(text, realm);
+    if (!st.ok && !statusAddress()) return reply2(await notHeldHere(realm), true);
     if (st.code === 404) return reply2(`${st.body} ${TURNED_GUIDANCE}`, true);
-    if (st.ok) return reply2(`занятость ${statusAddress()?.key}: ${text || "(снята)"}`);
+    if (st.ok) return reply2(`занятость ${statusAddress(realm)?.key}: ${text || "(снята)"}`);
     return reply2(st.body, true);
   })();
 }
 var lastPublished = "";
 var publishedStatus = () => lastPublished;
-async function publishStatus(text) {
-  const addr = statusAddress();
+async function publishStatus(text, realm) {
+  const addr = statusAddress(realm);
   if (!addr) {
     return {
       ok: false,
@@ -2873,8 +3094,8 @@ async function publishStatus(text) {
   }
   const st = await publishStatusTo(addr.url, text);
   if (st.ok) {
-    lastPublished = text;
-    rememberStatus(text);
+    if (addr.key === statusAddress()?.key) lastPublished = text;
+    rememberStatus(text, realm);
   }
   return st;
 }
@@ -2994,6 +3215,21 @@ function startDeafnessWatch() {
 function localLeave(msg) {
   if (msg?.method !== "tools/call" || msg?.params?.name !== "iskron_channel") return null;
   if (msg.params?.arguments?.action !== "leave") return null;
+  const beside = besideKeyIn(msg.params.arguments.realm);
+  if (beside)
+    return Promise.resolve({
+      jsonrpc: "2.0",
+      id: msg.id,
+      result: {
+        isError: true,
+        content: [
+          {
+            type: "text",
+            text: `Отказано (мост): место ${beside} стоит на общем канале моста рядом с ${ledKey()} — уход закрыл бы сокет всем местам канала. Уйти со всех — leave в графе ${state.standing?.realm ?? "основного места"}; снять только это место — revoke.`
+          }
+        ]
+      }
+    });
   return leaveStanding("по слову делателя").then((text) => ({
     jsonrpc: "2.0",
     id: msg.id,
@@ -3471,11 +3707,10 @@ function startFreshnessWatch(authDir, serverUrl) {
   setInterval(() => void tick(), CHECK_INTERVAL_MS).unref();
 }
 
-// js/bridge/stand.ts
-var ledName = () => state.standing?.name ?? "";
+// js/bridge/standtool.ts
 var STAND_TOOL = {
   name: "iskron_stand",
-  description: "[мост] Занять стояние одним вызовом: мост читает доску, выводит имя (машина.репо.модель), занимает место (connect и register; только register, если сокет уже держит этот мост), взводит хук инбокса роли своим входящим адресом, при room шлёт кадр join стоянию комнаты по полному адресу с провода (повтор — только repeat_knock=true, один раз, не раньше чем через 2 минуты) и возвращает имя, команду сторожа, число ожидавших кадров, состояние хука и расписку стука. Дальше — запустить сторожа командой из ответа и ждать. Тул исполняет мост; нет его в сессии — тулы идут мимо моста либо мост старой сборки (doctor скажет), стой по скиллу standing.",
+  description: "[мост] Занять стояние одним вызовом: мост читает доску, выводит имя (машина.репо.модель), занимает место (connect и register; только register, если сокет уже держит этот мост), взводит хук инбокса роли своим входящим адресом, при room шлёт кадр join стоянию комнаты по полному адресу с провода (повтор — только repeat_knock=true, один раз, не раньше чем через 2 минуты) и возвращает имя, команду сторожа, число ожидавших кадров, состояние хука и расписку стука. Место в другом графе встаёт рядом на том же канале (register): сессия слышит все свои графы, и запись в каждом подписана местом этого графа. Дальше — запустить сторожа командой из ответа и ждать. Тул исполняет мост; нет его в сессии — тулы идут мимо моста либо мост старой сборки (doctor скажет), стой по скиллу standing.",
   inputSchema: {
     type: "object",
     properties: {
@@ -3496,7 +3731,7 @@ var STAND_TOOL = {
       mute_siblings: { type: "boolean", description: "Не слышать эхо других стояний той же роли." },
       take: {
         type: "boolean",
-        description: "Сознательный переход: своё место (мост этой же сессии перезапущен) агент возвращает сам, чужого живого держателя вытесняет только по слову человека — забрать сокет места, которое держит другой мост этой машины (без take выведенное имя встаёт рядом на имя.N, явное — только регистрируется, слух остаётся у держателя); либо сменить место этого моста (стояние одно на мост: другая роль или другое имя без take — отказ вслух, прежнее место остаётся на доске без слуха)."
+        description: "Сознательный переход: своё место (мост этой же сессии перезапущен) агент возвращает сам, чужого живого держателя вытесняет только по слову человека — забрать сокет места, которое держит другой мост этой машины (без take выведенное имя встаёт рядом на имя.N, явное — только регистрируется, слух остаётся у держателя); либо сменить место этого моста в графе (в графе одно место на мост: другая роль или другое имя без take — отказ вслух, прежнее место остаётся на доске без слуха). Место в другом графе take не требует — оно встаёт рядом."
       },
       room_karta: {
         type: "string",
@@ -3515,6 +3750,9 @@ var STAND_TOOL = {
     required: ["realm", "karta"]
   }
 };
+
+// js/bridge/stand.ts
+var ledName = () => state.standing?.name ?? "";
 var isDirectory = (p) => {
   try {
     return isAbsolute(p) && statSync2(p).isDirectory();
@@ -3569,7 +3807,7 @@ async function runStand(msg) {
   const fitted = parts ? fitName(parts) : null;
   const derived = asked ? "" : fitted?.name ?? "";
   let name = asked || derived;
-  const led0 = state.standing;
+  const led0 = state.standing && sameRealm(state.standing.realm, realm) ? state.standing : null;
   if (derived && led0 && String(led0.karta) === String(karta) && suffixOf(derived, led0.name ?? ""))
     name = led0.name ?? name;
   if (parts && fitted && fitted.cut.length) {
@@ -3584,11 +3822,18 @@ async function runStand(msg) {
     );
   }
   const room = typeof a.room === "string" && a.room.trim() ? a.room.trim() : null;
-  const led = leadsOtherPlace(karta, name);
+  const led = leadsOtherPlace(realm, karta, name);
   if (led && a.take !== true) {
     lines.push(otherPlaceWord(led, keyOf(realm, karta, name), name === ledName()));
     return done(true);
   }
+  const noChannel = besideRefusal(realm, "stand");
+  if (noChannel) {
+    lines.push(noChannel);
+    return done(true);
+  }
+  const prim = state.standing;
+  const beside = !!prim && !sameRealm(realm, prim.realm) && !holdsStanding(realm, karta, name);
   noteStandCwd(cwd);
   const here = () => placeFields({ realm, karta, name });
   const register = () => callTool("iskron_channel", { action: "register", realm, karta, name, ...here() });
@@ -3648,7 +3893,15 @@ async function runStand(msg) {
   const predecessorDead = fresh && listensElsewhere && await deadPredecessor(realm, karta, name);
   const resumed = fresh && !listensElsewhere ? await resumeFromDisk(realm, karta, name) : null;
   const extra = [];
-  if (resumed) {
+  if (beside) {
+    const r = await register();
+    if (r.isError) {
+      lines.push(`Отказано: register — ${short(r.text)}`);
+      return done(true);
+    }
+    heardHere = holdsStanding(realm, karta, name);
+    how = `место другого графа — встаёт рядом на канале, который держит этот мост (${ledKey()}): register`;
+  } else if (resumed) {
     const r = await register();
     if (r.isError) {
       lines.push(`Отказано: register — ${short(r.text)}`);
@@ -3704,14 +3957,19 @@ async function runStand(msg) {
     ...nameNotes.map((n) => `[iskron_stand] ${n}`),
     ...extra
   );
-  const block = heardHere ? listenBlock() : null;
+  const block = heardHere ? listenBlock(realm) : null;
   if (block) lines.push(block);
   else if (!heardHere)
     lines.push(
       "Команда сторожа не выдаётся: сокет у другого держателя, местного нет — эта сессия кадры и приглашения не принимает."
     );
   else lines.push("Сокета у моста нет — слушать нечем; проверь ответ connect.");
-  if (!heardHere) lines.push("Слух — у другого держателя; здесь только атрибуция записей.");
+  if (!heardHere)
+    lines.push(
+      beside ? "Место записано, но двери у него нет — сокет канала моста не жив; кадры этого графа сюда не придут." : "Слух — у другого держателя; здесь только атрибуция записей."
+    );
+  else if (beside)
+    lines.push("Сокет канала держит этот мост — кадры места этого графа идут его сторожу.");
   else if (how.startsWith("сокет уже держит") || how.startsWith("возврат места с диска"))
     lines.push("Сокет держит этот мост (hello получен при открытии сокета).");
   else {
@@ -3799,7 +4057,7 @@ async function runStand(msg) {
       predecessorDead ? "Занятость не публикуется: статусного адреса у моста пока нет — повтори тот же вызов, когда доска отпустит мёртвый прежний мост: место вернётся с диска вместе с ним." : `Занятость не публикуется: статусного адреса этого стояния у моста нет — он у держателя сокета; ${TAKE_PATH}.`
     );
   } else if (typeof a.status === "string" && a.status.trim()) {
-    const st = await publishStatus(a.status.trim());
+    const st = await publishStatus(a.status.trim(), realm);
     lines.push(
       st.ok ? `Занятость: ${a.status.trim()}` : `Занятость не принята: ${short(st.body)}${st.code === 404 ? ` ${TURNED_GUIDANCE}` : ""}`
     );
@@ -4418,9 +4676,9 @@ function runWatchdogCodex(argv2) {
   }
   parseWatchdogArgs(argv2);
   const seenPath = seenFilePathOf(target.authDir, target.key);
-  const seen2 = seenIds(seenPath);
+  const seen = seenIds(seenPath);
   const waiting = /* @__PURE__ */ new Map();
-  let door = null;
+  let door2 = null;
   let ready = null;
   let nextId = 1;
   function open() {
@@ -4433,7 +4691,7 @@ function runWatchdogCodex(argv2) {
         waiting.delete(m.id);
         if (m.error) return note(`ДЕЛАТЕЛЬ: тред не принял кадр — ${m.error.message ?? "отказ"}`);
         note(`кадр вложен в тред ${threadId}`);
-        for (const id of ids) noteSeen(seenPath, id, seen2);
+        for (const id of ids) noteSeen(seenPath, id, seen);
       },
       (why) => {
         const lost = [...waiting.values()].flat();
@@ -4441,11 +4699,11 @@ function runWatchdogCodex(argv2) {
         note(
           `дверь закрылась: ${why} — открою заново на следующем кадре` + (lost.length ? `; без ответа: ${lost.join(", ")} — вернутся из кольца следующим взводом` : "")
         );
-        door = null;
+        door2 = null;
         ready = null;
       }
     ).then((d) => {
-      door = d;
+      door2 = d;
       d.send({
         method: "initialize",
         id: nextId++,
@@ -4462,7 +4720,7 @@ function runWatchdogCodex(argv2) {
   }
   async function deliver2(text, ids = []) {
     try {
-      const d = door ?? await open();
+      const d = door2 ?? await open();
       const reqId = nextId++;
       waiting.set(reqId, ids);
       d.send({
@@ -4565,7 +4823,7 @@ function runWatchdog(argv2) {
     process.exit(2);
   }
   const seenPath = seenFilePathOf(target.authDir, target.key);
-  const seen2 = seenIds(seenPath);
+  const seen = seenIds(seenPath);
   attach(target.path, {
     onEvent: (ev) => {
       switch (ev.kind) {
@@ -4581,7 +4839,7 @@ function runWatchdog(argv2) {
             break;
           }
           for (const line of wrapLines(frameToText(f, ev.raw ?? ""))) log2(line);
-          for (const k of deliveredKeys(f)) noteSeen(seenPath, k, seen2);
+          for (const k of deliveredKeys(f)) noteSeen(seenPath, k, seen);
           break;
         }
         case "note":
@@ -4590,7 +4848,7 @@ function runWatchdog(argv2) {
         case "stale":
           for (const line of wrapLines(ev.text ?? "")) log2(line);
           for (const f of ev.frames ?? [])
-            for (const k of deliveredKeys(f)) noteSeen(seenPath, k, seen2);
+            for (const k of deliveredKeys(f)) noteSeen(seenPath, k, seen);
           break;
         case "dead":
         case "evicted":
@@ -4628,7 +4886,7 @@ function runWatchdogExit(argv2) {
     process.exit(2);
   }
   const seenPath = seenFilePathOf(target.authDir, target.key);
-  const seen2 = seenIds(seenPath);
+  const seen = seenIds(seenPath);
   attach(target.path, {
     onEvent: (ev) => {
       switch (ev.kind) {
@@ -4636,17 +4894,17 @@ function runWatchdogExit(argv2) {
           const type = ev.frame?.type;
           if (type !== "message") return note2(`кадр ${type ?? "не разобран"} — не повод будить`);
           const id = frameId(ev);
-          if (seen2.has(id)) return note2(`кадр ${id} уже отдан прежним взводом — не повод будить`);
+          if (seen.has(id)) return note2(`кадр ${id} уже отдан прежним взводом — не повод будить`);
           wake(ev.raw ?? "");
-          noteSeen(seenPath, id, seen2);
+          noteSeen(seenPath, id, seen);
           const evKey = eventKeyOf(ev.frame);
-          if (evKey) noteSeen(seenPath, evKey, seen2);
+          if (evKey) noteSeen(seenPath, evKey, seen);
           process.exit(0);
           break;
         }
         case "stale":
           for (const f of ev.frames ?? [])
-            for (const k of deliveredKeys(f)) noteSeen(seenPath, k, seen2);
+            for (const k of deliveredKeys(f)) noteSeen(seenPath, k, seen);
           note2(ev.text ?? "лежалые кадры");
           break;
         case "dead":
@@ -5059,15 +5317,15 @@ function harnessReport() {
   for (const codexHome of codexHomes()) {
     out(`Codex: дом ${codexHome}`);
     codexPluginReport(codexHome);
-    const door = join14(codexHome, "app-server-control", "app-server-control.sock");
-    if (existsSync8(door)) out(`Codex: дверь app-server открыта (${door})`);
-    else if (Buffer.byteLength(door) > 100)
+    const door2 = join14(codexHome, "app-server-control", "app-server-control.sock");
+    if (existsSync8(door2)) out(`Codex: дверь app-server открыта (${door2})`);
+    else if (Buffer.byteLength(door2) > 100)
       out(
         `Codex: двери нет и не будет — дом длиннее предела unix-сокета; нужен короткий дом для демона и сессий`
       );
     else
       out(
-        `Codex: двери нет (${door}) — демон app-server не поднят; без неё кадр доставляет watchdog-exit`
+        `Codex: двери нет (${door2}) — демон app-server не поднят; без неё кадр доставляет watchdog-exit`
       );
     const codex = join14(codexHome, "config.toml");
     if (existsSync8(codex)) {

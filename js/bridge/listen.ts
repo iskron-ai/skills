@@ -20,8 +20,8 @@ function clientName(): string {
  * iskron_stand. Строка слушания — одна, своего харнеса: агент pi, получивший
  * три команды, запускал сторож Claude Code (#5047); незнакомому клиенту — все.
  */
-export function listenBlock(): string | null {
-  const key = heldKey();
+export function listenBlock(realm?: string): string | null {
+  const key = heldKey(realm); // место этого графа на канале (#5838); без графа — основное
   if (!key) return null;
   const self = fileURLToPath(import.meta.url);
   // Сторож выводит каталог сокетов так же, как мост: не по умолчанию — скажи ему где.

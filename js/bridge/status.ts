@@ -23,12 +23,13 @@ export function localStatus(msg: JsonRpcMessage): Promise<JsonRpcMessage> | null
     id: msg.id,
     result: { ...(isError ? { isError: true } : {}), content: [{ type: "text", text: body }] },
   });
+  // Занятость — места графа из вызова (#5838); без графа — основного.
+  const realm = typeof a.realm === "string" ? a.realm : "";
   return (async () => {
-    const st = await publishStatus(text);
-    if (!st.ok && !statusAddress())
-      return reply(await notHeldHere(typeof a.realm === "string" ? a.realm : ""), true);
+    const st = await publishStatus(text, realm);
+    if (!st.ok && !statusAddress()) return reply(await notHeldHere(realm), true);
     if (st.code === 404) return reply(`${st.body} ${TURNED_GUIDANCE}`, true);
-    if (st.ok) return reply(`занятость ${statusAddress()?.key}: ${text || "(снята)"}`);
+    if (st.ok) return reply(`занятость ${statusAddress(realm)?.key}: ${text || "(снята)"}`);
     return reply(st.body, true);
   })();
 }
@@ -44,9 +45,9 @@ let lastPublished = "";
 /** Последняя строка занятости, которую доска приняла от этого моста; пустая — снята. */
 export const publishedStatus = (): string => lastPublished;
 
-/** POST строки занятости на статусный адрес стояния, которое держит мост. */
-export async function publishStatus(text: string): Promise<StatusOutcome> {
-  const addr = statusAddress();
+/** POST строки занятости на статусный адрес стояния, которое держит мост; realm — место этого графа на канале. */
+export async function publishStatus(text: string, realm?: string): Promise<StatusOutcome> {
+  const addr = statusAddress(realm);
   if (!addr) {
     return {
       ok: false,
@@ -55,8 +56,8 @@ export async function publishStatus(text: string): Promise<StatusOutcome> {
   }
   const st = await publishStatusTo(addr.url, text);
   if (st.ok) {
-    lastPublished = text;
-    rememberStatus(text);
+    if (addr.key === statusAddress()?.key) lastPublished = text;
+    rememberStatus(text, realm);
   }
   return st;
 }

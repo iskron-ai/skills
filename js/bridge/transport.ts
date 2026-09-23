@@ -31,6 +31,11 @@ export const state = {
   // the agent derived for itself. So re-registering is the bridge's duty, and
   // it hangs on the change of id, never on a timer.
   standing: null as Standing | null, // {realm, karta, name} of the last register that succeeded
+  // Places in OTHER graphs on the same channel (#5838): register on the channel
+  // in another graph adds a place, and a write is signed by the place of its
+  // own graph. `standing` stays the place the socket was taken for; these ride
+  // it and are replayed with it after every session turnover.
+  places: [] as Standing[],
   standingSession: null as string | null, // the session id that registration is known to hold in
   // The access token the session was opened with. A session is opened BY a
   // credential and dies with it (the surface's own word): once the token in the

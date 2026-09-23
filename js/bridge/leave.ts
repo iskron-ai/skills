@@ -16,7 +16,9 @@
 //   • конец сессии: занятость снимается перед выходом (main.ts).
 import { notifiedClient } from "./client.ts";
 import {
+  besideKeyIn,
   holdsStanding,
+  ledKey,
   listenerIdleSince,
   localListeners,
   onListenerAttached,
@@ -104,6 +106,22 @@ export function startDeafnessWatch(): void {
 export function localLeave(msg: JsonRpcMessage): Promise<JsonRpcMessage> | null {
   if (msg?.method !== "tools/call" || msg?.params?.name !== "iskron_channel") return null;
   if (msg.params?.arguments?.action !== "leave") return null;
+  // Сокет у мест канала общий (#5838): уход места другого графа закрыл бы слух всем — отказ вслух.
+  const beside = besideKeyIn(msg.params.arguments.realm);
+  if (beside)
+    return Promise.resolve({
+      jsonrpc: "2.0",
+      id: msg.id,
+      result: {
+        isError: true,
+        content: [
+          {
+            type: "text",
+            text: `Отказано (мост): место ${beside} стоит на общем канале моста рядом с ${ledKey()} — уход закрыл бы сокет всем местам канала. Уйти со всех — leave в графе ${state.standing?.realm ?? "основного места"}; снять только это место — revoke.`,
+          },
+        ],
+      },
+    });
   return leaveStanding("по слову делателя").then((text) => ({
     jsonrpc: "2.0",
     id: msg.id,
