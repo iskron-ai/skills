@@ -3,7 +3,7 @@
 // месту при переоткрытии сокета. Делатель слышит событие один раз.
 import { type Frame } from "../shared/channel.ts";
 import { eventKeyOf, seenIds } from "../shared/seen.ts";
-import { dropStaleEvent, staleHasEvent } from "./stale.ts";
+import { type StaleBurst } from "./stale.ts";
 
 /** Помечена ли хоть одна метка отданной — в памяти моста или в файле .seen, который пишут клиенты. */
 export function isDelivered(keys: string[], seen: Set<string>, seenPath: string): boolean {
@@ -23,13 +23,14 @@ export function redundantCopy(
   ring: readonly { frame: Frame | null }[],
   seen: Set<string>,
   seenPath: string,
+  burst: StaleBurst,
 ): string {
   const ev = frame?.type === "message" ? eventKeyOf(frame) : "";
   if (!ev) return "";
   const stale = frame?.stale === true;
   const keys = stale ? [ev, `evs:${ev.slice(3)}`] : [ev];
   if (isDelivered(keys, seen, seenPath) || ring.some((r) => eventKeyOf(r.frame) === ev)) return ev;
-  if (stale) return staleHasEvent(ev) ? ev : "";
-  dropStaleEvent(ev);
+  if (stale) return burst.hasEvent(ev) ? ev : "";
+  burst.dropEvent(ev);
   return "";
 }

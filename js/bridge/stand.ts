@@ -11,7 +11,14 @@ import { statSync } from "node:fs";
 import { isAbsolute } from "node:path";
 
 import { nameOf, parseBoard } from "./board.ts";
-import { besideRefusal, callTool as call, leadsOtherPlace, otherPlaceWord, short } from "./call.ts";
+import {
+  besideRefusal,
+  callTool as call,
+  leadsOtherPlace,
+  otherPlaceWord,
+  resolveAgainstLed,
+  short,
+} from "./call.ts";
 import { CFG } from "./config.ts";
 import {
   awaitHello,
@@ -20,6 +27,8 @@ import {
   isParked,
   ledKey,
   noteStandCwd,
+  rereadPlaces,
+  standingIdIn,
   wasEvicted,
 } from "./hold.ts";
 import { keyOf } from "./holdrecord.ts";
@@ -34,10 +43,10 @@ import {
   nameFault,
   normKarta,
   normName,
-  sameRealm,
   sanitize,
 } from "./names.ts";
 import { placeFields, rememberModel } from "./placefields.ts";
+import { otherRealm } from "./realms.ts";
 import { deadPredecessor, resumeFromDisk } from "./resume.ts";
 import { separatePlace, suffixOf } from "./separate.ts";
 import { publishStatus, TAKE_PATH, TURNED_GUIDANCE } from "./status.ts";
@@ -121,8 +130,9 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   const fitted = parts ? fitName(parts) : null;
   const derived = asked ? "" : (fitted?.name ?? "");
   let name = asked || derived;
+  await resolveAgainstLed(realm); // графы сличаются в одной форме @owner/slug (#5838)
   // Мост уже стоит на отдельном месте этого выведенного имени — туда же (#5407).
-  const led0 = state.standing && sameRealm(state.standing.realm, realm) ? state.standing : null;
+  const led0 = state.standing && !otherRealm(state.standing.realm, realm) ? state.standing : null;
   if (derived && led0 && String(led0.karta) === String(karta) && suffixOf(derived, led0.name ?? ""))
     name = led0.name ?? name;
   if (parts && fitted && fitted.cut.length) {
@@ -153,7 +163,7 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
     return done(true);
   }
   const prim = state.standing;
-  const beside = !!prim && !sameRealm(realm, prim.realm) && !holdsStanding(realm, karta, name);
+  const beside = !!prim && otherRealm(realm, prim.realm) && !holdsStanding(realm, karta, name);
   // Каталог сессии — в запись держания: мост, поднятый заново (вытеснение
   // каталога OpenCode, перезапуск плагина), вернёт место по нему сам (#5140).
   noteStandCwd(cwd);
@@ -263,6 +273,10 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
       return done(true);
     }
     heardHere = holdsStanding(realm, karta, name);
+    // id места — только из hello: сокет перечитывает места канала тем же адресом.
+    const ids = heardHere && !standingIdIn(realm) ? await rereadPlaces() : null;
+    if (ids && !standingIdIn(realm))
+      extra.push("hello места этого графа не назвал — id места неизвестен.");
     how = `место другого графа — встаёт рядом на канале, который держит этот мост (${ledKey()}): register`;
   } else if (resumed) {
     const r = await register();

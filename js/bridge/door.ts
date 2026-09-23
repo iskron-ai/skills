@@ -13,8 +13,10 @@ import {
   socketPathOf,
   standingsDirOf,
 } from "../shared/standings.ts";
+import { Backlog } from "./backlog.ts";
 import { CFG } from "./config.ts";
 import { isDelivered } from "./fanout.ts";
+import { StaleBurst } from "./stale.ts";
 import { log } from "./streams.ts";
 import { sweepStale } from "./sweep.ts";
 
@@ -54,6 +56,11 @@ export class Door {
   seen: Set<string>;
   /** С какого мига ни один локальный клиент не слушает; null — слушают. */
   idleAt: number | null = Date.now();
+  /** Пачки места — лежалая и побудки: у каждого места свои (#5838). */
+  readonly stale = new StaleBurst();
+  readonly backlog = new Backlog();
+  /** id места у платформы (hello standings[].standing_id) — по нему кадр находит дверь и занятость — место. */
+  standingId: string | null = null;
   private server: Server | null = null;
   private readonly hooks: DoorHooks;
 
@@ -145,6 +152,9 @@ export class Door {
 
   /** Закрыть дверь: клиенты, сервер, файлы ключа, памяти и сокета. Идемпотентно. */
   close(): void {
+    // Пачка, ещё не отданная, уходит сейчас, а не теряется молча (backlog.ts).
+    this.backlog.flushNow();
+    this.stale.drop();
     for (const c of this.clients) {
       try {
         c.end();

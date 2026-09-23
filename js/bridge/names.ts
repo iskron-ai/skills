@@ -21,28 +21,6 @@ export const normKarta = (k: unknown): string =>
     .trim()
     .replace(/^#/, "");
 export const normName = (n: unknown): string => (typeof n === "string" ? n.trim() : "");
-
-/** Граф без владельца: одно место пишут и «nks-dev», и «@nks/nks-dev». */
-const realmSlug = (r: unknown): string =>
-  String(r ?? "")
-    .trim()
-    .replace(/^@[^/]+\//, "");
-
-/**
- * Тот же ли граф — для правила «в графе одно место на мост» (#5154): сомнение
- * читается как «тот же». Пустой граф и короткий id (rN) против слага не
- * сличить — правило остаётся в силе, а не выключается догадкой.
- */
-export function sameRealm(a: unknown, b: unknown): boolean {
-  const x = realmSlug(a);
-  const y = realmSlug(b);
-  if (!x || !y || x === y) return true;
-  return /^r\d+$/.test(x) !== /^r\d+$/.test(y);
-}
-
-/** Тот же ли граф наверняка — для разбора кадров по местам: сомнение не маршрут. */
-export const realmMatches = (a: unknown, b: unknown): boolean =>
-  !!realmSlug(a) && realmSlug(a) === realmSlug(b);
 const NAME_RE = /^[a-z0-9][a-z0-9._-]*$/;
 
 /** Одна часть выведенного имени — к правилу: строчные, допустимые знаки, без краевых точек и дефисов. */

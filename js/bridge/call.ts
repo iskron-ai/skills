@@ -4,8 +4,9 @@
 import { absorbChannelReply } from "./absorb.ts";
 import { holdsChannel, ledKey } from "./hold.ts";
 import { keyOf } from "./holdrecord.ts";
-import { normKarta, normName, sameRealm } from "./names.ts";
+import { normKarta, normName } from "./names.ts";
 import { extraIn } from "./places.ts";
+import { otherRealm, resolveRealms } from "./realms.ts";
 import { noteStanding, replyText } from "./standing.ts";
 import { post, state } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
@@ -17,8 +18,9 @@ import { type JsonRpcMessage } from "./types.ts";
  * переписывал привязку — сабагент в дочерней сессии того же моста уводил
  * родителя. Место в ДРУГОМ графе встаёт рядом на том же канале (#5838) — там
  * правило сличает с местом того графа, если мост его уже ведёт. Возвращает ключ
- * ведомого места, когда просят другое, иначе null. Одно место пишут и
- * «nks-dev», и «@nks/nks-dev»; сомнение в графе читается как тот же граф.
+ * ведомого места, когда просят другое, иначе null. Графы сличаются в
+ * канонической форме @owner/slug (realms.ts): r5, nks-dev и @nks/nks-dev —
+ * один граф, когда разрешены; неразрешённое имя — другой граф, не «тот же».
  */
 export function leadsOtherPlace(realm: unknown, karta: unknown, name: unknown): string | null {
   const led = ledKey();
@@ -27,7 +29,7 @@ export function leadsOtherPlace(realm: unknown, karta: unknown, name: unknown): 
   const ex = extraIn(realm);
   const beside = ex?.door.key;
   const s = ex ? ex.standing : prim;
-  if (!ex && !sameRealm(realm, prim.realm)) return null;
+  if (!ex && otherRealm(realm, prim.realm)) return null;
   const k = normKarta(karta);
   const n = normName(name);
   // Роль: «agent» — своя по слову поверхности, что бы ни было записано; всё
@@ -36,6 +38,19 @@ export function leadsOtherPlace(realm: unknown, karta: unknown, name: unknown): 
   // мост, вставший как «me», числовой роли своим местом не считает (#5154).
   const sameKarta = k === "agent" || k === String(s.karta);
   return sameKarta && n === (s.name ?? "") ? null : (beside ?? led);
+}
+
+/**
+ * Перед сличением графов: мост ведёт место, а граф вызова и граф места записаны
+ * по-разному — разрешить оба в @owner/slug одним списком графов (iskron_realm list).
+ */
+export async function resolveAgainstLed(realm: unknown): Promise<void> {
+  const prim = state.standing;
+  if (!prim || !ledKey() || String(realm ?? "").trim() === prim.realm) return;
+  await resolveRealms([realm, prim.realm, ...state.places.map((p) => p.realm)], async () => {
+    const r = await callTool("iskron_realm", { action: "list" });
+    return r.isError ? null : r.text;
+  });
 }
 
 /** Слово отказа: совет по тому, ЧЕМ просимое место отличается от ведомого. */
@@ -60,7 +75,7 @@ export function otherPlaceWord(led: string, asked: string, sameName = false): st
 export function besideRefusal(realm: unknown, how: "stand" | "connect"): string | null {
   const prim = state.standing;
   const led = ledKey();
-  if (!led || !prim || sameRealm(realm, prim.realm)) return null;
+  if (!led || !prim || !otherRealm(realm, prim.realm)) return null;
   if (how === "stand" && holdsChannel()) return null;
   return how === "connect"
     ? `Отказано (мост): этот мост ведёт место ${led}, а connect в другом графе открыл бы второй канал и снял бы его с сокета. Место в другом графе встаёт рядом на том же канале — iskron_stand(realm=…) или register.`

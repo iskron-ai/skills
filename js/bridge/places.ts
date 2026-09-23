@@ -9,7 +9,8 @@ import { type Frame } from "../shared/channel.ts";
 import { harnessName } from "./client.ts";
 import { Door, type DoorHooks } from "./door.ts";
 import { dropHoldRecord, keyOf, readHoldRecord, writeHoldRecord } from "./holdrecord.ts";
-import { normKarta, normName, realmMatches } from "./names.ts";
+import { normKarta, normName } from "./names.ts";
+import { canonRealm, learnRealm, sameRealm } from "./realms.ts";
 import { standingLog } from "./store.ts";
 import { type Standing, state } from "./transport.ts";
 
@@ -32,7 +33,7 @@ export const extraPlaces = (): Place[] => [...extras.values()];
 
 /** Место канала в этом графе (наверняка тот же граф), если мост его держит. */
 export const extraIn = (realm: unknown): Place | undefined =>
-  extraPlaces().find((p) => realmMatches(p.standing.realm, realm));
+  extraPlaces().find((p) => sameRealm(p.standing.realm, realm));
 
 /** Место именно с этими тремя именами среди мест других графов. */
 export function extraOf(realm: unknown, karta: unknown, name: unknown): Place | undefined {
@@ -46,7 +47,7 @@ export function extraOf(realm: unknown, karta: unknown, name: unknown): Place | 
 
 /** Запомнить место другого графа для повторной регистрации — одно на граф. */
 export function rememberPlace(s: Standing): void {
-  state.places = state.places.filter((p) => !realmMatches(p.realm, s.realm));
+  state.places = state.places.filter((p) => !sameRealm(p.realm, s.realm));
   state.places.push(s);
 }
 
@@ -72,7 +73,7 @@ export function addExtra(s: Standing, ch: Channel, hooks: DoorHooks): string {
   if (have) return key;
   // Иное место того же графа сменяет прежнее — правило «в графе одно место» уже пройдено.
   for (const p of extraPlaces())
-    if (realmMatches(p.standing.realm, s.realm)) dropExtra(p.door.key, "другое место графа", true);
+    if (sameRealm(p.standing.realm, s.realm)) dropExtra(p.door.key, "другое место графа", true);
   const door = new Door(key, hooks);
   door.open();
   const place = { standing: s, door };
@@ -106,33 +107,70 @@ export function dropExtra(key: string, reason: string, forget: boolean): void {
   standingLog(`released ${key}: ${reason}${forget ? " (record dropped)" : ""}`);
 }
 
-/** Вынуть место рядом, не закрывая двери, — оно становится основным (hold.ts). */
-export function takeExtra(key: string): Place | undefined {
-  const p = extras.get(key);
-  if (!p) return undefined;
-  extras.delete(key);
-  state.places = state.places.filter((s) => keyOfPlace(s) !== key);
-  return p;
-}
-
 export function dropAllExtras(reason: string, forget: boolean): void {
   for (const k of [...extras.keys()]) dropExtra(k, reason, forget);
   if (forget) state.places = [];
 }
 
 const nameOfAddress = (a: unknown): string => (typeof a === "string" ? a.replace(/^.*:/, "") : "");
+const all = (primary: Place | null): Place[] => [...(primary ? [primary] : []), ...extraPlaces()];
+const unresolved = (realm: string): boolean => !canonRealm(realm).startsWith("@");
 
 /**
- * Чьей двери кадр: по графу кадра наверняка, иначе по адресату (to_standing),
- * если имя называет одно место рядом и не основное. Неясное — основному месту.
+ * hello перечисляет места канала: {realm @owner/slug, standing @handle:name,
+ * standing_id, karta_seq}. Каждое узнанное — id своей двери (по нему кадр и
+ * занятость находят место); граф места, записанный rN или слагом, заодно
+ * узнаёт свою каноническую форму, если имя и роль называют одно место hello.
  */
-export function extraForFrame(frame: Frame | null, primary: Standing | null): Place | undefined {
-  if (!frame || !extras.size) return undefined;
-  const byRealm = frame.realm != null ? extraIn(frame.realm) : undefined;
-  if (byRealm || (frame.realm != null && primary && realmMatches(frame.realm, primary.realm)))
-    return byRealm;
+export function learnFromHello(hello: Frame | null, primary: Place | null): void {
+  const listed = Array.isArray(hello?.standings) ? hello.standings : [];
+  for (const p of all(primary)) {
+    const same = listed.filter(
+      (e) =>
+        nameOfAddress(e.standing) === (p.standing.name ?? "") &&
+        (e.karta_seq == null || String(e.karta_seq) === String(p.standing.karta)),
+    );
+    const mine = same.filter((e) => sameRealm(e.realm, p.standing.realm));
+    const e =
+      mine.length === 1
+        ? mine[0]
+        : unresolved(p.standing.realm) && same.length === 1
+          ? same[0]
+          : null;
+    if (!e) continue;
+    if (e.realm && unresolved(p.standing.realm)) learnRealm(p.standing.realm, e.realm);
+    if (typeof e.standing_id === "string" && e.standing_id) p.door.standingId = e.standing_id;
+  }
+}
+
+/**
+ * Чьей двери кадр (#5838): по to_standing_id — id места; иначе по графу, адресу
+ * и роли кадра, если они называют ровно одно место (и тогда id места узнаётся).
+ * Кадр без адреса — слово канала, основному месту. Адрес есть, а места нет или
+ * их несколько — основному месту со словом об этом, не молча.
+ */
+export function routeFrame(frame: Frame | null, primary: Place): { door: Door; note?: string } {
+  if (!frame || !extras.size) return { door: primary.door };
+  const places = all(primary);
+  const id = typeof frame.to_standing_id === "string" ? frame.to_standing_id : "";
+  const byId = id ? places.find((p) => p.door.standingId === id) : undefined;
+  if (byId) return { door: byId.door };
   const to = nameOfAddress(frame.to_standing);
-  if (!to || to === (primary?.name ?? "")) return undefined;
-  const named = extraPlaces().filter((p) => (p.standing.name ?? "") === to);
-  return named.length === 1 ? named[0] : undefined;
+  if (!id && !to && frame.realm == null && frame.karta_seq == null) return { door: primary.door };
+  const fits = places.filter(
+    (p) =>
+      (frame.realm == null || sameRealm(frame.realm, p.standing.realm)) &&
+      (!to || to === (p.standing.name ?? "")) &&
+      (frame.karta_seq == null || String(frame.karta_seq) === String(p.standing.karta)),
+  );
+  if (fits.length === 1) {
+    if (id && !fits[0].door.standingId) fits[0].door.standingId = id;
+    return { door: fits[0].door };
+  }
+  return {
+    door: primary.door,
+    note:
+      `ДЕЛАТЕЛЬ: кадр ${String(frame.id ?? "?")} (to_standing_id ${id || "—"}, ${frame.to_standing ?? "—"}, граф ${frame.realm ?? "—"}) ` +
+      `не сопоставлен ни одному месту моста (${fits.length ? "подходят несколько" : "не подходит ни одно"}) — отдан основному месту ${primary.door.key}; сверь адрес кадра.`,
+  };
 }

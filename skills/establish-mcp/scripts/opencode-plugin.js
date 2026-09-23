@@ -14,44 +14,6 @@ function classifyOrigin(frame, myKarta) {
   return "peer";
 }
 
-// js/shared/frame-text.ts
-var NOT_ENVELOPE = /* @__PURE__ */ new Set(["body", "provenance", "type", "origin"]);
-var ENVELOPE_FIRST = ["id", "received_at", "stale", "content_type", "body_chars", "body_read"];
-function frameToText(frame, raw) {
-  if (!frame) return `Кадр канала Искрона:
-${raw}`;
-  const p = frame.provenance ?? {};
-  const origin = frame.origin ?? classifyOrigin(frame);
-  const standing = p.from_standing ? ` — стояние ${p.from_standing}` : "";
-  const role = p.from_karta_seq != null ? `роли #${p.from_karta_seq}` : "роли неизвестной";
-  const who = origin === "platform" ? "от ПЛАТФОРМЫ — побудка, не человек и не делатель" : origin === "human" ? `от ЧЕЛОВЕКА${p.user ? ` @${p.user}` : ""} (${role})${standing}` : origin === "sibling" ? `от БРАТА по твоей роли (#${p.from_karta_seq})${standing} — другое стояние той же роли` : `от делателя ${role}${standing}`;
-  const lines = [`Кадр канала Искрона ${who}`];
-  const room = frame.room;
-  if (room && typeof room === "object") {
-    const f = frame;
-    const zachin = typeof room.zachin === "string" ? ` «${room.zachin}»` : "";
-    const kind = typeof f.kind === "string" ? `, род ${f.kind}` : "";
-    const stack = typeof f.stack === "string" ? `, стопка ${f.stack}` : "";
-    lines.push(
-      origin === "platform" ? `запись КОМНАТЫ${zachin}${kind}${stack}` : `слово КОМНАТЫ${zachin}${kind}${stack} — ответ идёт записью в ту же комнату с in_reply_to по id слова (ход для комнат — в списке тулов сессии), не send стоянию`
-    );
-  }
-  if (frame.provenance) lines.push(`provenance: ${JSON.stringify(frame.provenance)}`);
-  const envelope = {};
-  const rec = frame;
-  for (const k of ENVELOPE_FIRST) if (rec[k] !== void 0) envelope[k] = rec[k];
-  for (const k of Object.keys(rec))
-    if (!(k in envelope) && !NOT_ENVELOPE.has(k) && rec[k] !== void 0) envelope[k] = rec[k];
-  if (Object.keys(envelope).length) lines.push(`frame: ${JSON.stringify(envelope)}`);
-  const body = typeof frame.body === "string" ? frame.body : frame.body === void 0 ? raw : JSON.stringify(frame.body, null, 1).replace(/\n\s*/g, " ");
-  return `${lines.join("\n")}
-
-${body}`;
-}
-
-// js/bridge/backlog.ts
-var BACKLOG_MS = Number(process.env.ISKRON_BRIDGE_BACKLOG_MS) || 1500;
-
 // js/shared/clients.ts
 var OPENCODE_CLIENT = "opencode-iskron";
 
@@ -92,6 +54,44 @@ var PRODUCTION_URLS = new Set([DEFAULT_SERVER_URL, ENGLISH_SERVER_URL].map(strip
 function strip(url) {
   return url.replace(/\/+$/, "");
 }
+
+// js/shared/frame-text.ts
+var NOT_ENVELOPE = /* @__PURE__ */ new Set(["body", "provenance", "type", "origin"]);
+var ENVELOPE_FIRST = ["id", "received_at", "stale", "content_type", "body_chars", "body_read"];
+function frameToText(frame, raw) {
+  if (!frame) return `Кадр канала Искрона:
+${raw}`;
+  const p = frame.provenance ?? {};
+  const origin = frame.origin ?? classifyOrigin(frame);
+  const standing = p.from_standing ? ` — стояние ${p.from_standing}` : "";
+  const role = p.from_karta_seq != null ? `роли #${p.from_karta_seq}` : "роли неизвестной";
+  const who = origin === "platform" ? "от ПЛАТФОРМЫ — побудка, не человек и не делатель" : origin === "human" ? `от ЧЕЛОВЕКА${p.user ? ` @${p.user}` : ""} (${role})${standing}` : origin === "sibling" ? `от БРАТА по твоей роли (#${p.from_karta_seq})${standing} — другое стояние той же роли` : `от делателя ${role}${standing}`;
+  const lines = [`Кадр канала Искрона ${who}`];
+  const room = frame.room;
+  if (room && typeof room === "object") {
+    const f = frame;
+    const zachin = typeof room.zachin === "string" ? ` «${room.zachin}»` : "";
+    const kind = typeof f.kind === "string" ? `, род ${f.kind}` : "";
+    const stack = typeof f.stack === "string" ? `, стопка ${f.stack}` : "";
+    lines.push(
+      origin === "platform" ? `запись КОМНАТЫ${zachin}${kind}${stack}` : `слово КОМНАТЫ${zachin}${kind}${stack} — ответ идёт записью в ту же комнату с in_reply_to по id слова (ход для комнат — в списке тулов сессии), не send стоянию`
+    );
+  }
+  if (frame.provenance) lines.push(`provenance: ${JSON.stringify(frame.provenance)}`);
+  const envelope = {};
+  const rec = frame;
+  for (const k of ENVELOPE_FIRST) if (rec[k] !== void 0) envelope[k] = rec[k];
+  for (const k of Object.keys(rec))
+    if (!(k in envelope) && !NOT_ENVELOPE.has(k) && rec[k] !== void 0) envelope[k] = rec[k];
+  if (Object.keys(envelope).length) lines.push(`frame: ${JSON.stringify(envelope)}`);
+  const body = typeof frame.body === "string" ? frame.body : frame.body === void 0 ? raw : JSON.stringify(frame.body, null, 1).replace(/\n\s*/g, " ");
+  return `${lines.join("\n")}
+
+${body}`;
+}
+
+// js/bridge/backlog.ts
+var BACKLOG_MS = Number(process.env.ISKRON_BRIDGE_BACKLOG_MS) || 1500;
 
 // js/bridge/holdrecord.ts
 var HOLD_RECORD_MAX_AGE_MS = 6 * 60 * 60 * 1e3;

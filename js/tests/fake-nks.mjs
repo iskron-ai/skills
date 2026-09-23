@@ -6,7 +6,7 @@
 // The one leg it cannot stand in for is a human deciding to consent; here the
 // test plays that part by fetching the authorize URL itself.
 
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { createServer } from "node:http";
 
 const b64url = (b) => Buffer.from(b).toString("base64url");
@@ -116,6 +116,13 @@ export async function startFakeNks(opts = {}) {
     wsChannel: new Map(), // адрес сокета → id канала
     wsChans: new Map(), // открытый сокет → id канала
     writes: [], // { tool, realm, author } — чем подписана каждая запись фабрики
+    placeStatus: new Map(), // standing_id места → строка занятости: она держится у места (#5838)
+    // Графы учётки: iskron_realm list печатает оба имени — rN и @owner/slug.
+    realms: [
+      { short: "r5", canon: "@nks/nks-dev" },
+      { short: "r7", canon: "@nks/drugoy" },
+      { short: "r2", canon: "@nks/methodology" },
+    ],
     // Доска: занятые места по ролям (connect кладёт), комнаты — стояния человека,
     // которые тест объявляет через /control {rooms:[{karta,address}]}.
     places: new Map(), // "karta:name" → { karta, name, incoming }
@@ -161,15 +168,24 @@ export async function startFakeNks(opts = {}) {
   st.snow = () => Date.now() + st.clockSkewMs;
 
   // ── каналы и места (#5838) ──
-  const slug = (r) =>
-    String(r ?? "")
-      .trim()
-      .replace(/^@[^/]+\//, "");
+  // Граф — в канонической форме @owner/slug, как его печатают кадры и hello; rN и
+  // голый слаг разрешаются по списку графов (iskron_realm list отдаёт оба имени).
+  const slug = (r) => {
+    const t = String(r ?? "").trim();
+    if (t.startsWith("@")) return t;
+    const known = st.realms.find((x) => x.short === t || x.canon.replace(/^@[^/]+\//, "") === t);
+    return known ? known.canon : t;
+  };
   const cleanName = (n) => String(n ?? "").trim() || "(unnamed)";
   let chanSeq = 0;
+  const place = (karta, name) => ({ karta, name, standing_id: randomUUID() });
   const newChannel = (realm, karta, name) => {
     const id = `ch-${++chanSeq}`;
-    st.channels.set(id, { places: new Map([[slug(realm), { karta, name }]]) });
+    // primary — граф места, ради которого канал открыт: его снять нельзя, пока стоят другие (#5186).
+    st.channels.set(id, {
+      primary: slug(realm),
+      places: new Map([[slug(realm), place(karta, name)]]),
+    });
     return id;
   };
   /** Канал, который держит место (граф, имя), — или undefined. */
@@ -185,7 +201,7 @@ export async function startFakeNks(opts = {}) {
     if (seat) return (st.standings.set(sid, seat), { added: false });
     const mine = st.channels.get(st.standings.get(sid));
     if (mine && !mine.places.has(slug(realm))) {
-      mine.places.set(slug(realm), { karta, name });
+      mine.places.set(slug(realm), place(karta, name));
       return { added: true, channel: st.standings.get(sid), karta, name };
     }
     st.standings.set(sid, newChannel(realm, karta, name));
@@ -219,7 +235,7 @@ export async function startFakeNks(opts = {}) {
     }
 
     if (p.startsWith("/channel/status/") && req.method === "POST") {
-      const { text } = JSON.parse((await body(req)) || "{}");
+      const { text, standing_id } = JSON.parse((await body(req)) || "{}");
       if (st.statusDelayMs) {
         // A slow status surface, whose write lands with its answer: a client
         // killed before the answer has published nothing — this is what the
@@ -233,6 +249,11 @@ export async function startFakeNks(opts = {}) {
       }
       st.status = text;
       st.counts.status_posts++;
+      // Строка держится у места: со standing_id — у одного места канала, без него — у всех (#5838).
+      const chan = st.channels.get(st.wsChannel.get(p.slice("/channel/status/".length)));
+      for (const pl of chan?.places.values() ?? [])
+        if (!standing_id || pl.standing_id === standing_id)
+          st.placeStatus.set(pl.standing_id, text);
       return json(res, 200, { ok: true });
     }
 
@@ -729,6 +750,30 @@ export async function startFakeNks(opts = {}) {
         }
         if (a.action === "revoke") {
           const name = String(a.standing ?? "").replace(/^.*:/, "");
+          // Снятие — по id места; основное место канала не снимается, пока на
+          // канале стоят места других графов (#5186) — как у настоящей поверхности.
+          const target = st.channels.get(channelOfPlace(a.realm, name));
+          if (target && target.primary === slug(a.realm) && target.places.size > 1) {
+            st.counts.revoke_refused = (st.counts.revoke_refused ?? 0) + 1;
+            return json(
+              res,
+              200,
+              {
+                jsonrpc: "2.0",
+                id: msg.id,
+                result: {
+                  isError: true,
+                  content: [
+                    {
+                      type: "text",
+                      text: `Отказано (409): «${name}» — основное место канала, на нём стоят места других графов (${target.places.size - 1}); сначала сними их.`,
+                    },
+                  ],
+                },
+              },
+              extra,
+            );
+          }
           const had = st.places.delete(`${String(a.karta).replace(/^#/, "")}:${name}`);
           // Место снимается с канала; канал без мест закрыт, с местами других графов — жив (#5838).
           const chan =
@@ -854,6 +899,22 @@ export async function startFakeNks(opts = {}) {
             extra,
           );
         }
+      }
+      // Список графов учётки: оба имени графа в одной строке (форма условная).
+      if (msg.method === "tools/call" && msg.params?.name === "iskron_realm") {
+        st.counts.realm_list = (st.counts.realm_list ?? 0) + 1;
+        const lines = [`Графы (${st.realms.length}):`];
+        for (const r of st.realms) lines.push(`  ${r.short} · ${r.canon} — граф`);
+        return json(
+          res,
+          200,
+          {
+            jsonrpc: "2.0",
+            id: msg.id,
+            result: { content: [{ type: "text", text: lines.join("\n") }] },
+          },
+          extra,
+        );
       }
       // Хуки роли: list_webhooks печатает по строке на хук с тем, кого он будит;
       // add_webhook кладёт новый — так мост видит, стоит ли уже хук на его стояние.
@@ -1040,10 +1101,13 @@ export async function startFakeNks(opts = {}) {
           type: "hello",
           pending: st.helloPending ?? 0,
           // Все места канала — как у настоящей поверхности (#5838).
+          // Форма наблюдена на живом сервере (мост 6.11.0).
           standings: [...(st.channels.get(chan)?.places ?? [])].map(([realm, p]) => ({
+            karta_seq: Number(p.karta),
+            pending: 0,
             realm,
-            karta: p.karta,
-            name: p.name,
+            standing: `@tester:${p.name}`,
+            standing_id: p.standing_id,
           })),
           ping_interval_seconds: opts.helloPingS ?? (opts.pingMs ? opts.pingMs / 1000 : 30),
         }),

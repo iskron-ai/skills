@@ -764,7 +764,7 @@ function bindCallback(port) {
         // it, so a human who comes back to the tab late still lands it (graph
         // nks-dev: #4721). A bridge left by its harness bounds the wait itself.
         waitForCode: (expectedState, timeoutMs = 0) => new Promise((res, rej) => {
-          const timer3 = timeoutMs > 0 ? setTimeout(
+          const timer = timeoutMs > 0 ? setTimeout(
             () => rej(new Error("timed out waiting for the browser authorization")),
             timeoutMs
           ) : null;
@@ -775,7 +775,7 @@ function bindCallback(port) {
               );
               return false;
             }
-            if (timer3) clearTimeout(timer3);
+            if (timer) clearTimeout(timer);
             handOff = null;
             if (v.err) rej(new Error(`authorization refused: ${v.err}`));
             else if (!v.code) rej(new Error("callback missing code"));
@@ -1142,12 +1142,12 @@ function acquireRefreshLock() {
   } catch (e) {
     notHeld(e);
   }
-  let held = null;
+  let held2 = null;
   try {
-    held = JSON.parse(readFileSync5(refreshLockPath(), "utf8"));
+    held2 = JSON.parse(readFileSync5(refreshLockPath(), "utf8"));
   } catch {
   }
-  if (held && pidAlive(held.pid) && Date.now() - held.started_at < REFRESH_LOCK_STALE_MS) {
+  if (held2 && pidAlive(held2.pid) && Date.now() - held2.started_at < REFRESH_LOCK_STALE_MS) {
     return false;
   }
   debug("breaking a refresh lock nobody is holding");
@@ -1717,93 +1717,6 @@ var keyFilePathOf = (authDir, key) => join5(standingsDirOf(authDir), `${hashOf(k
 var holdFilePathOf = (authDir, key) => join5(standingsDirOf(authDir), `${hashOf(key)}.hold`);
 var seenFilePathOf = (authDir, key) => join5(standingsDirOf(authDir), `${hashOf(key)}.seen`);
 
-// js/shared/frame-text.ts
-var NOT_ENVELOPE = /* @__PURE__ */ new Set(["body", "provenance", "type", "origin"]);
-var ENVELOPE_FIRST = ["id", "received_at", "stale", "content_type", "body_chars", "body_read"];
-function frameToText(frame2, raw) {
-  if (!frame2) return `Кадр канала Искрона:
-${raw}`;
-  const p = frame2.provenance ?? {};
-  const origin = frame2.origin ?? classifyOrigin(frame2);
-  const standing = p.from_standing ? ` — стояние ${p.from_standing}` : "";
-  const role = p.from_karta_seq != null ? `роли #${p.from_karta_seq}` : "роли неизвестной";
-  const who = origin === "platform" ? "от ПЛАТФОРМЫ — побудка, не человек и не делатель" : origin === "human" ? `от ЧЕЛОВЕКА${p.user ? ` @${p.user}` : ""} (${role})${standing}` : origin === "sibling" ? `от БРАТА по твоей роли (#${p.from_karta_seq})${standing} — другое стояние той же роли` : `от делателя ${role}${standing}`;
-  const lines = [`Кадр канала Искрона ${who}`];
-  const room = frame2.room;
-  if (room && typeof room === "object") {
-    const f = frame2;
-    const zachin = typeof room.zachin === "string" ? ` «${room.zachin}»` : "";
-    const kind = typeof f.kind === "string" ? `, род ${f.kind}` : "";
-    const stack = typeof f.stack === "string" ? `, стопка ${f.stack}` : "";
-    lines.push(
-      origin === "platform" ? `запись КОМНАТЫ${zachin}${kind}${stack}` : `слово КОМНАТЫ${zachin}${kind}${stack} — ответ идёт записью в ту же комнату с in_reply_to по id слова (ход для комнат — в списке тулов сессии), не send стоянию`
-    );
-  }
-  if (frame2.provenance) lines.push(`provenance: ${JSON.stringify(frame2.provenance)}`);
-  const envelope = {};
-  const rec = frame2;
-  for (const k of ENVELOPE_FIRST) if (rec[k] !== void 0) envelope[k] = rec[k];
-  for (const k of Object.keys(rec))
-    if (!(k in envelope) && !NOT_ENVELOPE.has(k) && rec[k] !== void 0) envelope[k] = rec[k];
-  if (Object.keys(envelope).length) lines.push(`frame: ${JSON.stringify(envelope)}`);
-  const body = typeof frame2.body === "string" ? frame2.body : frame2.body === void 0 ? raw : JSON.stringify(frame2.body, null, 1).replace(/\n\s*/g, " ");
-  return `${lines.join("\n")}
-
-${body}`;
-}
-
-// js/bridge/backlog.ts
-var BACKLOG_MS = Number(process.env.ISKRON_BRIDGE_BACKLOG_MS) || 1500;
-var BACKLOG_KEEP = 20;
-var BODY_CAP = 800;
-var frames = [];
-var total = 0;
-var pending = 0;
-var timer = null;
-var flush = null;
-function openBacklog(expected, emit2) {
-  pending = Math.max(pending, expected);
-  flush = emit2;
-  if (timer) return;
-  timer = setTimeout(close, BACKLOG_MS).unref();
-}
-function flushBacklogNow() {
-  if (!timer) return;
-  clearTimeout(timer);
-  close();
-}
-function noteBacklog(frame2) {
-  if (!timer) return false;
-  total++;
-  if (frames.length < BACKLOG_KEEP) frames.push(frame2);
-  return true;
-}
-var at = (f) => typeof f.received_at === "string" ? f.received_at : "";
-function close() {
-  timer = null;
-  const got = frames.splice(0).sort((a, b) => at(a) < at(b) ? -1 : at(a) > at(b) ? 1 : 0);
-  const count = total;
-  const expected = pending;
-  total = 0;
-  pending = 0;
-  const emit2 = flush;
-  flush = null;
-  if (!got.length || !emit2) return;
-  const bodies = got.map((f) => {
-    const t = frameToText(f, JSON.stringify(f));
-    return [...t].length > BODY_CAP ? [...t].slice(0, BODY_CAP).join("") + "…" : t;
-  });
-  const head = `Побудка: кадров ${count}` + (expected ? ` (ожидало в очереди: ${expected})` : "") + (count > got.length ? `, здесь первые ${got.length}` : "") + ' — пришли одной пачкой; разбери все, а не последний: полностью и остальное — iskron_channel(action="history", view="log").';
-  emit2({
-    kind: "backlog",
-    frames: got,
-    pending: expected,
-    text: `${head}
-
-${bodies.join("\n\n")}`
-  });
-}
-
 // js/bridge/transport.ts
 var state = {
   sessionId: null,
@@ -2038,42 +1951,142 @@ function stampOrigin(frame2) {
 import { chmodSync, mkdirSync as mkdirSync5, unlinkSync as unlinkSync6, writeFileSync as writeFileSync7 } from "node:fs";
 import { createServer as createServer2 } from "node:net";
 
+// js/shared/frame-text.ts
+var NOT_ENVELOPE = /* @__PURE__ */ new Set(["body", "provenance", "type", "origin"]);
+var ENVELOPE_FIRST = ["id", "received_at", "stale", "content_type", "body_chars", "body_read"];
+function frameToText(frame2, raw) {
+  if (!frame2) return `Кадр канала Искрона:
+${raw}`;
+  const p = frame2.provenance ?? {};
+  const origin = frame2.origin ?? classifyOrigin(frame2);
+  const standing = p.from_standing ? ` — стояние ${p.from_standing}` : "";
+  const role = p.from_karta_seq != null ? `роли #${p.from_karta_seq}` : "роли неизвестной";
+  const who = origin === "platform" ? "от ПЛАТФОРМЫ — побудка, не человек и не делатель" : origin === "human" ? `от ЧЕЛОВЕКА${p.user ? ` @${p.user}` : ""} (${role})${standing}` : origin === "sibling" ? `от БРАТА по твоей роли (#${p.from_karta_seq})${standing} — другое стояние той же роли` : `от делателя ${role}${standing}`;
+  const lines = [`Кадр канала Искрона ${who}`];
+  const room = frame2.room;
+  if (room && typeof room === "object") {
+    const f = frame2;
+    const zachin = typeof room.zachin === "string" ? ` «${room.zachin}»` : "";
+    const kind = typeof f.kind === "string" ? `, род ${f.kind}` : "";
+    const stack = typeof f.stack === "string" ? `, стопка ${f.stack}` : "";
+    lines.push(
+      origin === "platform" ? `запись КОМНАТЫ${zachin}${kind}${stack}` : `слово КОМНАТЫ${zachin}${kind}${stack} — ответ идёт записью в ту же комнату с in_reply_to по id слова (ход для комнат — в списке тулов сессии), не send стоянию`
+    );
+  }
+  if (frame2.provenance) lines.push(`provenance: ${JSON.stringify(frame2.provenance)}`);
+  const envelope = {};
+  const rec = frame2;
+  for (const k of ENVELOPE_FIRST) if (rec[k] !== void 0) envelope[k] = rec[k];
+  for (const k of Object.keys(rec))
+    if (!(k in envelope) && !NOT_ENVELOPE.has(k) && rec[k] !== void 0) envelope[k] = rec[k];
+  if (Object.keys(envelope).length) lines.push(`frame: ${JSON.stringify(envelope)}`);
+  const body = typeof frame2.body === "string" ? frame2.body : frame2.body === void 0 ? raw : JSON.stringify(frame2.body, null, 1).replace(/\n\s*/g, " ");
+  return `${lines.join("\n")}
+
+${body}`;
+}
+
+// js/bridge/backlog.ts
+var BACKLOG_MS = Number(process.env.ISKRON_BRIDGE_BACKLOG_MS) || 1500;
+var BACKLOG_KEEP = 20;
+var BODY_CAP = 800;
+var at = (f) => typeof f.received_at === "string" ? f.received_at : "";
+var Backlog = class {
+  frames = [];
+  total = 0;
+  pending = 0;
+  timer = null;
+  flush = null;
+  /** Открыть окно — по hello с pending либо по кадру платформы; открытое не продлевается, только пополняется. */
+  open(expected, emit2) {
+    this.pending = Math.max(this.pending, expected);
+    this.flush = emit2;
+    if (this.timer) return;
+    this.timer = setTimeout(() => this.close(), BACKLOG_MS).unref();
+  }
+  /** Отдать накопленное сейчас — при отпускании стояния: неотданное не теряется молча. */
+  flushNow() {
+    if (!this.timer) return;
+    clearTimeout(this.timer);
+    this.close();
+  }
+  /** Положить живой кадр в пачку; false — окна нет, кадр идёт своим путём. */
+  note(frame2) {
+    if (!this.timer) return false;
+    this.total++;
+    if (this.frames.length < BACKLOG_KEEP) this.frames.push(frame2);
+    return true;
+  }
+  close() {
+    this.timer = null;
+    const got = this.frames.splice(0).sort((a, b) => at(a) < at(b) ? -1 : at(a) > at(b) ? 1 : 0);
+    const count = this.total;
+    const expected = this.pending;
+    this.total = 0;
+    this.pending = 0;
+    const emit2 = this.flush;
+    this.flush = null;
+    if (!got.length || !emit2) return;
+    const bodies = got.map((f) => {
+      const t = frameToText(f, JSON.stringify(f));
+      return [...t].length > BODY_CAP ? [...t].slice(0, BODY_CAP).join("") + "…" : t;
+    });
+    const head = `Побудка: кадров ${count}` + (expected ? ` (ожидало в очереди: ${expected})` : "") + (count > got.length ? `, здесь первые ${got.length}` : "") + ' — пришли одной пачкой; разбери все, а не последний: полностью и остальное — iskron_channel(action="history", view="log").';
+    emit2({
+      kind: "backlog",
+      frames: got,
+      pending: expected,
+      text: `${head}
+
+${bodies.join("\n\n")}`
+    });
+  }
+};
+
 // js/bridge/stale.ts
 var STALE_BURST_KEEP = 20;
 var STALE_BURST_MS = 1500;
 var BODY_CAP2 = 800;
-var burst = [];
-var timer2 = null;
-function noteStale(frame2, flush2) {
-  if (burst.length < STALE_BURST_KEEP) burst.push(frame2);
-  if (timer2) return;
-  timer2 = setTimeout(() => {
-    timer2 = null;
-    const frames2 = burst.splice(0);
-    if (!frames2.length) return;
-    const bodies = frames2.map((f) => {
-      const t = frameToText(f, JSON.stringify(f));
-      return [...t].length > BODY_CAP2 ? [...t].slice(0, BODY_CAP2).join("") + "…" : t;
-    });
-    flush2({
-      kind: "stale",
-      frames: frames2,
-      text: `Лежалых кадров: ${frames2.length} — принятое, пока место не слушали, или повтор службы после пересборки сессии; хода не стоят, но прочти; полностью — iskron_channel(action="history").
+var StaleBurst = class {
+  burst = [];
+  timer = null;
+  /** Положить лежалый кадр в пачку; по истечении полосы `flush` получает одно событие. */
+  note(frame2, flush) {
+    if (this.burst.length < STALE_BURST_KEEP) this.burst.push(frame2);
+    if (this.timer) return;
+    this.timer = setTimeout(() => {
+      this.timer = null;
+      const frames = this.burst.splice(0);
+      if (!frames.length) return;
+      const bodies = frames.map((f) => {
+        const t = frameToText(f, JSON.stringify(f));
+        return [...t].length > BODY_CAP2 ? [...t].slice(0, BODY_CAP2).join("") + "…" : t;
+      });
+      flush({
+        kind: "stale",
+        frames,
+        text: `Лежалых кадров: ${frames.length} — принятое, пока место не слушали, или повтор службы после пересборки сессии; хода не стоят, но прочти; полностью — iskron_channel(action="history").
 
 ` + bodies.join("\n\n")
-    });
-  }, STALE_BURST_MS).unref();
-}
-var staleHasEvent = (evKey) => burst.some((f) => eventKeyOf(f) === evKey);
-function dropStaleEvent(evKey) {
-  for (let i = burst.length - 1; i >= 0; i--)
-    if (eventKeyOf(burst[i]) === evKey) burst.splice(i, 1);
-}
-function dropStale() {
-  burst.length = 0;
-  if (timer2) clearTimeout(timer2);
-  timer2 = null;
-}
+      });
+    }, STALE_BURST_MS).unref();
+  }
+  /** Лежит ли в копящейся пачке копия этого события графа (fanout.ts). */
+  hasEvent(evKey) {
+    return this.burst.some((f) => eventKeyOf(f) === evKey);
+  }
+  /** Вынуть из копящейся пачки копии события — живая копия будит, пачка нет (fanout.ts). */
+  dropEvent(evKey) {
+    for (let i = this.burst.length - 1; i >= 0; i--)
+      if (eventKeyOf(this.burst[i]) === evKey) this.burst.splice(i, 1);
+  }
+  /** Забыть накопленное — при отпускании стояния. */
+  drop() {
+    this.burst.length = 0;
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = null;
+  }
+};
 
 // js/bridge/fanout.ts
 function isDelivered(keys, seen, seenPath) {
@@ -2081,14 +2094,14 @@ function isDelivered(keys, seen, seenPath) {
   const given = seenIds(seenPath);
   return keys.some((k) => seen.has(k) || given.has(k));
 }
-function redundantCopy(frame2, ring, seen, seenPath) {
+function redundantCopy(frame2, ring, seen, seenPath, burst) {
   const ev = frame2?.type === "message" ? eventKeyOf(frame2) : "";
   if (!ev) return "";
   const stale = frame2?.stale === true;
   const keys = stale ? [ev, `evs:${ev.slice(3)}`] : [ev];
   if (isDelivered(keys, seen, seenPath) || ring.some((r) => eventKeyOf(r.frame) === ev)) return ev;
-  if (stale) return staleHasEvent(ev) ? ev : "";
-  dropStaleEvent(ev);
+  if (stale) return burst.hasEvent(ev) ? ev : "";
+  burst.dropEvent(ev);
   return "";
 }
 
@@ -2202,6 +2215,11 @@ var Door = class {
   seen;
   /** С какого мига ни один локальный клиент не слушает; null — слушают. */
   idleAt = Date.now();
+  /** Пачки места — лежалая и побудки: у каждого места свои (#5838). */
+  stale = new StaleBurst();
+  backlog = new Backlog();
+  /** id места у платформы (hello standings[].standing_id) — по нему кадр находит дверь и занятость — место. */
+  standingId = null;
   server = null;
   hooks;
   constructor(key, hooks) {
@@ -2282,6 +2300,8 @@ var Door = class {
   }
   /** Закрыть дверь: клиенты, сервер, файлы ключа, памяти и сокета. Идемпотентно. */
   close() {
+    this.backlog.flushNow();
+    this.stale.drop();
     for (const c of this.clients) {
       try {
         c.end();
@@ -2321,14 +2341,6 @@ import { basename as basename2 } from "node:path";
 var NAME_MAX = 48;
 var normKarta = (k) => String(k ?? "").trim().replace(/^#/, "");
 var normName = (n) => typeof n === "string" ? n.trim() : "";
-var realmSlug = (r) => String(r ?? "").trim().replace(/^@[^/]+\//, "");
-function sameRealm(a, b) {
-  const x = realmSlug(a);
-  const y = realmSlug(b);
-  if (!x || !y || x === y) return true;
-  return /^r\d+$/.test(x) !== /^r\d+$/.test(y);
-}
-var realmMatches = (a, b) => !!realmSlug(a) && realmSlug(a) === realmSlug(b);
 var NAME_RE = /^[a-z0-9][a-z0-9._-]*$/;
 var sanitize = (s) => s.toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^[-.]+|[-.]+$/g, "").slice(0, NAME_MAX);
 function nameFault(name) {
@@ -2376,17 +2388,64 @@ function deriveParts(model2, cwd = process.cwd()) {
 }
 var joinName = (p) => [p.host, p.repo, p.model].filter(Boolean).join(".");
 
+// js/bridge/realms.ts
+var aliases = /* @__PURE__ */ new Map();
+var listed = null;
+var CANON_RE = /@[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+/;
+var trimmed = (r) => String(r ?? "").trim();
+function canonRealm(r) {
+  const t = trimmed(r);
+  if (t.startsWith("@")) return t;
+  return aliases.get(t) ?? t;
+}
+function sameRealm(a, b) {
+  const x = canonRealm(a);
+  return !!x && x === canonRealm(b);
+}
+var otherRealm = (a, b) => !!trimmed(a) && !!trimmed(b) && !sameRealm(a, b);
+function learnRealm(alias, canonical) {
+  const t = trimmed(alias);
+  if (t && !t.startsWith("@") && CANON_RE.test(canonical)) aliases.set(t, canonical);
+}
+function learnRealmList(text) {
+  const slugs = /* @__PURE__ */ new Map();
+  for (const line of text.split("\n")) {
+    const canon = line.match(new RegExp(CANON_RE.source, "g")) ?? [];
+    if (canon.length !== 1) continue;
+    const c = canon[0];
+    const short2 = line.match(/(?<![\w/@-])r\d+(?![\w-])/g) ?? [];
+    if (short2.length === 1) learnRealm(short2[0], c);
+    const slug = c.replace(/^@[^/]+\//, "");
+    slugs.set(slug, [.../* @__PURE__ */ new Set([...slugs.get(slug) ?? [], c])]);
+  }
+  for (const [slug, cs] of slugs) if (cs.length === 1) learnRealm(slug, cs[0]);
+}
+async function resolveRealms(names2, list) {
+  const open = names2.map(trimmed).filter((t) => t && !t.startsWith("@") && !aliases.has(t));
+  if (!open.length) return;
+  listed ??= list().then(
+    (text) => {
+      if (text) learnRealmList(text);
+      else listed = null;
+    },
+    () => {
+      listed = null;
+    }
+  );
+  await listed;
+}
+
 // js/bridge/places.ts
 var extras = /* @__PURE__ */ new Map();
 var keyOfPlace = (s) => keyOf(s.realm, s.karta, s.name ?? "");
 var extraPlaces = () => [...extras.values()];
-var extraIn = (realm) => extraPlaces().find((p) => realmMatches(p.standing.realm, realm));
+var extraIn = (realm) => extraPlaces().find((p) => sameRealm(p.standing.realm, realm));
 function extraOf(realm, karta, name) {
   const p = extraIn(realm);
   return p && String(p.standing.karta) === normKarta(karta) && (p.standing.name ?? "") === normName(name) ? p : void 0;
 }
 function rememberPlace(s) {
-  state.places = state.places.filter((p) => !realmMatches(p.realm, s.realm));
+  state.places = state.places.filter((p) => !sameRealm(p.realm, s.realm));
   state.places.push(s);
 }
 function writeRecord(p, ch, status) {
@@ -2408,7 +2467,7 @@ function addExtra(s, ch, hooks) {
   const have = extras.get(key);
   if (have) return key;
   for (const p of extraPlaces())
-    if (realmMatches(p.standing.realm, s.realm)) dropExtra(p.door.key, "другое место графа", true);
+    if (sameRealm(p.standing.realm, s.realm)) dropExtra(p.door.key, "другое место графа", true);
   const door2 = new Door(key, hooks);
   door2.open();
   const place = { standing: s, door: door2 };
@@ -2435,27 +2494,45 @@ function dropExtra(key, reason, forget) {
   }
   standingLog(`released ${key}: ${reason}${forget ? " (record dropped)" : ""}`);
 }
-function takeExtra(key) {
-  const p = extras.get(key);
-  if (!p) return void 0;
-  extras.delete(key);
-  state.places = state.places.filter((s) => keyOfPlace(s) !== key);
-  return p;
-}
 function dropAllExtras(reason, forget) {
   for (const k of [...extras.keys()]) dropExtra(k, reason, forget);
   if (forget) state.places = [];
 }
 var nameOfAddress = (a) => typeof a === "string" ? a.replace(/^.*:/, "") : "";
-function extraForFrame(frame2, primary) {
-  if (!frame2 || !extras.size) return void 0;
-  const byRealm = frame2.realm != null ? extraIn(frame2.realm) : void 0;
-  if (byRealm || frame2.realm != null && primary && realmMatches(frame2.realm, primary.realm))
-    return byRealm;
+var all = (primary) => [...primary ? [primary] : [], ...extraPlaces()];
+var unresolved = (realm) => !canonRealm(realm).startsWith("@");
+function learnFromHello(hello, primary) {
+  const listed2 = Array.isArray(hello?.standings) ? hello.standings : [];
+  for (const p of all(primary)) {
+    const same = listed2.filter(
+      (e2) => nameOfAddress(e2.standing) === (p.standing.name ?? "") && (e2.karta_seq == null || String(e2.karta_seq) === String(p.standing.karta))
+    );
+    const mine = same.filter((e2) => sameRealm(e2.realm, p.standing.realm));
+    const e = mine.length === 1 ? mine[0] : unresolved(p.standing.realm) && same.length === 1 ? same[0] : null;
+    if (!e) continue;
+    if (e.realm && unresolved(p.standing.realm)) learnRealm(p.standing.realm, e.realm);
+    if (typeof e.standing_id === "string" && e.standing_id) p.door.standingId = e.standing_id;
+  }
+}
+function routeFrame(frame2, primary) {
+  if (!frame2 || !extras.size) return { door: primary.door };
+  const places = all(primary);
+  const id = typeof frame2.to_standing_id === "string" ? frame2.to_standing_id : "";
+  const byId = id ? places.find((p) => p.door.standingId === id) : void 0;
+  if (byId) return { door: byId.door };
   const to = nameOfAddress(frame2.to_standing);
-  if (!to || to === (primary?.name ?? "")) return void 0;
-  const named = extraPlaces().filter((p) => (p.standing.name ?? "") === to);
-  return named.length === 1 ? named[0] : void 0;
+  if (!id && !to && frame2.realm == null && frame2.karta_seq == null) return { door: primary.door };
+  const fits = places.filter(
+    (p) => (frame2.realm == null || sameRealm(frame2.realm, p.standing.realm)) && (!to || to === (p.standing.name ?? "")) && (frame2.karta_seq == null || String(frame2.karta_seq) === String(p.standing.karta))
+  );
+  if (fits.length === 1) {
+    if (id && !fits[0].door.standingId) fits[0].door.standingId = id;
+    return { door: fits[0].door };
+  }
+  return {
+    door: primary.door,
+    note: `ДЕЛАТЕЛЬ: кадр ${String(frame2.id ?? "?")} (to_standing_id ${id || "—"}, ${frame2.to_standing ?? "—"}, граф ${frame2.realm ?? "—"}) не сопоставлен ни одному месту моста (${fits.length ? "подходят несколько" : "не подходит ни одно"}) — отдан основному месту ${primary.door.key}; сверь адрес кадра.`
+  };
 }
 
 // js/bridge/hold.ts
@@ -2521,7 +2598,7 @@ function isOwn(realm, karta, name) {
   const s = state.standing;
   if (!currentKey) return false;
   if (extraOf(realm, karta, name)) return true;
-  return !!s && s.realm === realm && String(s.karta) === String(karta) && (s.name ?? "") === name && currentKey === keyFor();
+  return !!s && (s.realm === realm || sameRealm(s.realm, realm)) && String(s.karta) === String(karta) && (s.name ?? "") === name && currentKey === keyFor();
 }
 function holdsStanding(realm, karta, name) {
   return !!holder?.alive && isOwn(realm, karta, name);
@@ -2532,8 +2609,8 @@ function wasEvicted(realm, karta, name) {
 var hasStatusAddressFor = (realm, karta, name) => !!currentStatusUrl && !!currentKey && isOwn(realm, karta, name);
 function statusAddress(realm) {
   if (!currentStatusUrl || !currentKey) return null;
-  const extra = realm ? extraIn(realm) : void 0;
-  return { url: currentStatusUrl, key: extra?.door.key ?? currentKey };
+  const d = (realm ? extraIn(realm)?.door : void 0) ?? door;
+  return { url: currentStatusUrl, key: d?.key ?? currentKey, standingId: d?.standingId ?? null };
 }
 var besideKeyIn = (realm) => extraIn(realm)?.door.key ?? null;
 var isParked = (realm, karta, name) => parked && isOwn(realm, karta, name);
@@ -2574,26 +2651,25 @@ function notify(level, data) {
 function addPlace(s) {
   const ch = channel();
   const primary = state.standing;
-  if (!holder?.alive || !ch || !primary || sameRealm(primary.realm, s.realm)) return null;
+  if (!holder?.alive || !ch || !primary || !otherRealm(primary.realm, s.realm)) return null;
   return addExtra(s, ch, doorHooks);
 }
-function promoteBeside(reason) {
-  const next = extraPlaces()[0];
-  if (!next || !currentKey || !holder?.alive) return false;
-  dropHoldRecord(currentKey);
-  door?.close();
-  standingLog(`released ${currentKey}: ${reason}; ${next.door.key} leads the channel now`);
-  takeExtra(next.door.key);
-  door = next.door;
-  currentKey = next.door.key;
-  state.standing = next.standing;
-  return true;
+var standingIdIn = (realm) => (extraIn(realm)?.door ?? door)?.standingId ?? null;
+async function rereadPlaces(timeoutMs = 4e3) {
+  if (!holder?.alive || !currentUrl || !currentKey) return null;
+  holder.close("перечитать места канала");
+  for (const d of doors())
+    for (let i = d.ring.length - 1; i >= 0; i--)
+      if (d.ring[i]?.frame?.type === "hello") d.ring.splice(i, 1);
+  openHolder(currentUrl, currentKey);
+  return awaitHello(timeoutMs);
 }
+var held = () => door && state.standing ? { standing: state.standing, door } : null;
 function releaseStanding(reason, forget = false, keepBeside = false) {
   if (forget && currentKey) dropHoldRecord(currentKey);
   if (!keepBeside) dropAllExtras(reason, forget);
   if (!holder && !door) return;
-  flushBacklogNow();
+  door?.backlog.flushNow();
   standingLog(`released ${currentKey ?? "?"}: ${reason}${forget ? " (record dropped)" : ""}`);
   const released = { kind: "released", key: currentKey ?? void 0, text: reason };
   broadcast(released);
@@ -2609,7 +2685,6 @@ function releaseStanding(reason, forget = false, keepBeside = false) {
   currentStatusUrl = null;
   evictedKey = null;
   evictedEvent = null;
-  dropStale();
 }
 function holdStanding(url, statusUrl2) {
   const key = keyFor();
@@ -2664,11 +2739,11 @@ function resumeStanding() {
 function deliverTo(d, raw, frame2, full) {
   const seenPath = d.seenPath;
   const id = full?.type === "message" && typeof full.id === "string" ? full.id : "";
-  const evKey = redundantCopy(full, d.ring, d.seen, seenPath);
+  const evKey = redundantCopy(full, d.ring, d.seen, seenPath, d.stale);
   if (evKey) return log(`frame ${id || "?"} carries ${evKey} already offered — not raised`);
   const again = isDelivered(id ? [id] : [], d.seen, seenPath);
   if (full?.type === "message" && full.stale === true)
-    return again ? log(`stale frame ${id} already delivered — dropped`) : noteStale(full, (ev2) => (d.broadcast(ev2), notify("info", ev2)));
+    return again ? log(`stale frame ${id} already delivered — dropped`) : d.stale.note(full, (ev2) => (d.broadcast(ev2), notify("info", keyed(d, ev2))));
   const text = full === frame2 ? raw : JSON.stringify(full);
   const hello = full?.type === "hello";
   for (const x of hello ? doors() : [d]) x.push(text, full);
@@ -2681,33 +2756,40 @@ function deliverTo(d, raw, frame2, full) {
     const flushBacklog = (b) => {
       for (const f of b.frames ?? [])
         for (const k of deliveredKeys(f)) noteSeen(seenPath, k, d.seen);
-      notify("info", b);
+      notify("info", keyed(d, b));
     };
-    if (hello && Number(full.pending) > 0) openBacklog(Number(full.pending), flushBacklog);
+    if (hello && Number(full.pending) > 0) d.backlog.open(Number(full.pending), flushBacklog);
     if (full?.type === "message") {
-      if (full.origin === "platform") openBacklog(0, flushBacklog);
-      if (noteBacklog(full)) return;
+      if (full.origin === "platform") d.backlog.open(0, flushBacklog);
+      if (d.backlog.note(full)) return;
     }
     for (const k of deliveredKeys(full)) noteSeen(seenPath, k, d.seen);
   }
-  notify("info", d === door ? ev : { ...ev, key: d.key });
+  notify("info", keyed(d, ev));
 }
+var keyed = (d, ev) => d === door ? ev : { ...ev, key: d.key };
 function openHolder(url, key) {
   holder = holdSocket({
     url,
     onFrame: (raw, frame2) => {
       void Promise.resolve(stampOrigin(frame2)).then((full) => {
-        const d = extraForFrame(full, state.standing)?.door ?? door;
-        if (d) deliverTo(d, raw, frame2, full);
+        const primary = held();
+        if (!primary) return door ? deliverTo(door, raw, frame2, full) : void 0;
+        if (full?.type === "hello") learnFromHello(full, primary);
+        const { door: d, note: note3 } = routeFrame(full?.type === "hello" ? null : full, primary);
+        if (note3) {
+          log(note3);
+          d.broadcast({ kind: "note", text: note3 });
+        }
+        deliverTo(d, raw, frame2, full);
       });
     },
     onEvicted: (code) => {
       const text = `ДЕЛАТЕЛЬ: закрытие ${code} — место отняли, слушает другой держатель; привязка записей цела, занятость — пока адрес не повернули connect-ом; слух здесь — iskron_stand без name встанет рядом на имя.N; отбить место (take=true) — только словом человека`;
       log(text);
-      const k = currentKey ?? key;
-      standingLog(`evicted ${k}: close ${code}`);
-      evictedKey = k;
-      dropHoldRecord(k);
+      standingLog(`evicted ${key}: close ${code}`);
+      evictedKey = key;
+      dropHoldRecord(key);
       const ev = { kind: "evicted", code, text };
       evictedEvent = ev;
       broadcast(ev);
@@ -2817,7 +2899,7 @@ function noteStanding(msg, reply2) {
   if (reply2?.error || reply2?.result?.isError) return;
   const place = rememberedPlace(a.realm, a.karta, a.name);
   const prim = state.standing;
-  if (prim && !sameRealm(prim.realm, place.realm)) {
+  if (prim && otherRealm(prim.realm, place.realm)) {
     rememberPlace(place);
     addPlace(place);
   } else state.standing = place;
@@ -2826,7 +2908,7 @@ function noteStanding(msg, reply2) {
 }
 function rememberedPlace(realm, karta, name) {
   const k = normKarta(karta);
-  const prev = [state.standing, ...state.places].find((p) => p && sameRealm(p.realm, realm));
+  const prev = [state.standing, ...state.places].find((p) => p && !otherRealm(p.realm, realm));
   const n = typeof name === "string" ? normName(name) : void 0;
   return {
     realm: String(realm ?? ""),
@@ -2950,7 +3032,7 @@ function revokesOwn(msg) {
   if (msg?.params?.name !== "iskron_channel" || a?.action !== "revoke") return false;
   const s = state.standing;
   if (!s || besideKeyIn(a.realm)) return false;
-  return names(a, s) && sameRealm(a.realm, s.realm);
+  return names(a, s) && !otherRealm(a.realm, s.realm);
 }
 function names(a, s) {
   const asked = typeof a.standing === "string" ? a.standing.trim() : "";
@@ -2964,8 +3046,17 @@ function absorbRevokeReply(msg, reply2) {
   if (msg?.params?.name !== "iskron_channel" || msg?.params?.arguments?.action !== "revoke")
     return reply2;
   setRevokingOwn(false);
-  if (reply2?.error || reply2?.result?.isError) return reply2;
   const a = msg.params.arguments;
+  if (reply2?.error || reply2?.result?.isError) {
+    const held2 = extraPlaces().map((p) => p.door.key);
+    const content = reply2.result?.content;
+    if (revokesOwn(msg) && held2.length && Array.isArray(content))
+      content.push({
+        type: "text",
+        text: `[iskron-bridge] ${state.standing?.name ?? "это место"} — основное место канала моста, а на канале стоят места других графов: ${held2.join(", ")}. Мост ничего не отпустил; снять основное — сперва сними их (revoke в их графе).`
+      });
+    return reply2;
+  }
   const beside = extraIn(a.realm);
   if (beside && names(a, beside.standing)) {
     dropExtra(beside.door.key, "снято своим revoke", true);
@@ -2973,7 +3064,6 @@ function absorbRevokeReply(msg, reply2) {
   }
   if (!revokesOwn(msg)) return reply2;
   const name = state.standing?.name ?? "unnamed";
-  if (promoteBeside("снято своим revoke")) return reply2;
   releaseStanding("снято своим revoke", true);
   state.standing = null;
   state.standingSession = null;
@@ -2989,11 +3079,19 @@ function leadsOtherPlace(realm, karta, name) {
   const ex = extraIn(realm);
   const beside = ex?.door.key;
   const s = ex ? ex.standing : prim;
-  if (!ex && !sameRealm(realm, prim.realm)) return null;
+  if (!ex && otherRealm(realm, prim.realm)) return null;
   const k = normKarta(karta);
   const n = normName(name);
   const sameKarta = k === "agent" || k === String(s.karta);
   return sameKarta && n === (s.name ?? "") ? null : beside ?? led;
+}
+async function resolveAgainstLed(realm) {
+  const prim = state.standing;
+  if (!prim || !ledKey() || String(realm ?? "").trim() === prim.realm) return;
+  await resolveRealms([realm, prim.realm, ...state.places.map((p) => p.realm)], async () => {
+    const r = await callTool("iskron_realm", { action: "list" });
+    return r.isError ? null : r.text;
+  });
 }
 function otherPlaceWord(led, asked, sameName = false) {
   const advice = led === asked ? "ключи совпали — это то же место: повтори iskron_stand с take=true, чтобы переоткрыть его сознательно" : sameName ? "то же имя под другой ролью (оно вывелось из того же каталога) — передай другое name, либо iskron_stand с take=true, чтобы сменить место этого моста" : "занять другое место вместо этого — iskron_stand с take=true (прежнее останется на доске без слуха; ненужное сними revoke)";
@@ -3002,7 +3100,7 @@ function otherPlaceWord(led, asked, sameName = false) {
 function besideRefusal(realm, how) {
   const prim = state.standing;
   const led = ledKey();
-  if (!led || !prim || sameRealm(realm, prim.realm)) return null;
+  if (!led || !prim || !otherRealm(realm, prim.realm)) return null;
   if (how === "stand" && holdsChannel()) return null;
   return how === "connect" ? `Отказано (мост): этот мост ведёт место ${led}, а connect в другом графе открыл бы второй канал и снял бы его с сокета. Место в другом графе встаёт рядом на том же канале — iskron_stand(realm=…) или register.` : `Отказано (мост): этот мост ведёт место ${led}, но сокета канала у него сейчас нет (ушёл с места или место отняли) — место другого графа встать рядом не может. Сперва верни ${led}: iskron_stand его графа.`;
 }
@@ -3075,6 +3173,7 @@ function localStatus(msg) {
   });
   const realm = typeof a.realm === "string" ? a.realm : "";
   return (async () => {
+    await resolveAgainstLed(realm);
     const st = await publishStatus(text, realm);
     if (!st.ok && !statusAddress()) return reply2(await notHeldHere(realm), true);
     if (st.code === 404) return reply2(`${st.body} ${TURNED_GUIDANCE}`, true);
@@ -3084,7 +3183,7 @@ function localStatus(msg) {
 }
 var lastPublished = "";
 var publishedStatus = () => lastPublished;
-async function publishStatus(text, realm) {
+async function publishStatus(text, realm, everyPlace = false) {
   const addr = statusAddress(realm);
   if (!addr) {
     return {
@@ -3092,7 +3191,12 @@ async function publishStatus(text, realm) {
       body: "Отказано (мост): этот мост места не держит, статусного адреса у него нет."
     };
   }
-  const st = await publishStatusTo(addr.url, text);
+  if (!everyPlace && !addr.standingId && addr.key !== statusAddress()?.key)
+    return {
+      ok: false,
+      body: `Отказано (мост): id места ${addr.key} у моста ещё не известен (hello его не назвал) — без него строка легла бы на все места канала; повтори iskron_stand этого графа.`
+    };
+  const st = await publishStatusTo(addr.url, text, 5e3, everyPlace ? null : addr.standingId);
   if (st.ok) {
     if (addr.key === statusAddress()?.key) lastPublished = text;
     rememberStatus(text, realm);
@@ -3133,13 +3237,13 @@ async function notHeldHere(realm) {
   }).join("; ");
   return `${head} Места этого графа на этой машине держат живые мосты: ${list}. ${TURNED_GUIDANCE}`;
 }
-async function publishStatusTo(url, text, timeoutMs = 5e3) {
+async function publishStatusTo(url, text, timeoutMs = 5e3, standingId = null) {
   let res;
   try {
     res = await fetch(url, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ text }),
+      body: JSON.stringify(standingId ? { text, standing_id: standingId } : { text }),
       signal: AbortSignal.timeout(timeoutMs)
     });
   } catch (e) {
@@ -3173,7 +3277,7 @@ async function leaveStanding(reason) {
   const parked2 = parkStanding(reason);
   if (!parked2) return "мост места не держит — уходить неоткуда";
   keptStatus = publishedStatus();
-  const st = await publishStatus("");
+  const st = await publishStatus("", void 0, true);
   if (st.ok && keptStatus) rememberStatus(keptStatus);
   const line = st.ok ? "занятость снята" : `занятость не снята (${st.body})`;
   log(`left the standing: ${reason}; ${line}`);
@@ -3215,26 +3319,27 @@ function startDeafnessWatch() {
 function localLeave(msg) {
   if (msg?.method !== "tools/call" || msg?.params?.name !== "iskron_channel") return null;
   if (msg.params?.arguments?.action !== "leave") return null;
-  const beside = besideKeyIn(msg.params.arguments.realm);
-  if (beside)
-    return Promise.resolve({
-      jsonrpc: "2.0",
-      id: msg.id,
-      result: {
-        isError: true,
-        content: [
-          {
-            type: "text",
-            text: `Отказано (мост): место ${beside} стоит на общем канале моста рядом с ${ledKey()} — уход закрыл бы сокет всем местам канала. Уйти со всех — leave в графе ${state.standing?.realm ?? "основного места"}; снять только это место — revoke.`
-          }
-        ]
-      }
-    });
-  return leaveStanding("по слову делателя").then((text) => ({
+  const realm = msg.params.arguments.realm;
+  const answer = (text, isError = false) => ({
     jsonrpc: "2.0",
     id: msg.id,
-    result: { content: [{ type: "text", text }] }
-  }));
+    result: { ...isError ? { isError: true } : {}, content: [{ type: "text", text }] }
+  });
+  return (async () => {
+    await resolveAgainstLed(realm);
+    const beside = besideKeyIn(realm);
+    if (beside)
+      return answer(
+        `Отказано (мост): место ${beside} стоит на общем канале моста рядом с ${ledKey()} — уход закрыл бы сокет всем местам канала. Уйти со всех — leave в графе ${state.standing?.realm ?? "основного места"}; снять только это место — revoke.`,
+        true
+      );
+    if (state.standing && otherRealm(realm, state.standing.realm))
+      return answer(
+        `Отказано (мост): в графе ${String(realm)} этот мост места не держит — уходить неоткуда; его место ${ledKey()} в графе ${state.standing.realm} не тронуто.`,
+        true
+      );
+    return answer(await leaveStanding("по слову делателя"));
+  })();
 }
 
 // js/bridge/stand.ts
@@ -3286,13 +3391,13 @@ async function resumeFromDisk(realm, karta, name) {
     holdStanding(rec.url, rec.statusUrl);
     const hello = await awaitHello(4e3);
     if (hello && holdsKey(key)) {
-      const pending2 = Number(hello.pending) || 0;
-      log(`standing resumed from disk (${key}), pending ${pending2}`);
-      standingLog(`resumed-from-disk ${key}: pending ${pending2}`);
+      const pending = Number(hello.pending) || 0;
+      log(`standing resumed from disk (${key}), pending ${pending}`);
+      standingLog(`resumed-from-disk ${key}: pending ${pending}`);
       return {
-        word: `возврат места с диска после перезапуска моста — сокет открыт заново тем же адресом (ожидало кадров — ${pending2})`,
+        word: `возврат места с диска после перезапуска моста — сокет открыт заново тем же адресом (ожидало кадров — ${pending})`,
         status: rec.status,
-        pending: pending2
+        pending
       };
     }
   } finally {
@@ -3315,10 +3420,10 @@ function recordsFor(sel) {
       const rec = JSON.parse(readFileSync10(join8(dir, f), "utf8"));
       if (!rec || rec.client !== mine) continue;
       const key = keyOf(rec.realm, rec.karta, rec.name);
-      const keyed = !!sel.key && key === sel.key;
-      if (!keyed && (!sel.cwd || rec.cwd !== sel.cwd)) continue;
+      const keyed2 = !!sel.key && key === sel.key;
+      if (!keyed2 && (!sel.cwd || rec.cwd !== sel.cwd)) continue;
       const fresh = readHoldRecord(key);
-      if (fresh) (keyed ? byKey : byCwd).push(fresh);
+      if (fresh) (keyed2 ? byKey : byCwd).push(fresh);
     } catch {
     }
   }
@@ -3429,11 +3534,11 @@ async function runCheck(msg) {
     (e) => e.karta === String(s.karta) && nameOf(e.address) === (s.name ?? "")
   );
   if (!mine) return reply(msg, { holding: true, key, word: "своего места на доске нет" });
-  const pending2 = undelivered(mine);
+  const pending = undelivered(mine);
   const listening = listens(mine);
   if (listening) {
     deafReopens = 0;
-    return reply(msg, { holding: true, key, listening, pending: pending2, word: "слушаю" });
+    return reply(msg, { holding: true, key, listening, pending, word: "слушаю" });
   }
   if (deafReopens >= REOPEN_LIMIT) {
     const text = `Искрон: доска читает место ${key} не слушающим и после ${REOPEN_LIMIT} переоткрытий сокета — больше не рву; проверь доску и сервер, вернуть слух — iskron_stand с take=true.`;
@@ -3450,14 +3555,14 @@ async function runCheck(msg) {
       holding: true,
       key,
       listening,
-      pending: pending2,
+      pending,
       reopened: false,
       stuck: true,
       word: text
     });
   }
   deafReopens++;
-  standingLog(`reopen ${key}: board reads deaf${pending2 ? ` with ${pending2} pending` : ""}`);
+  standingLog(`reopen ${key}: board reads deaf${pending ? ` with ${pending} pending` : ""}`);
   parkStanding("доска не читает слушающим");
   resumeStanding();
   const hello = await awaitHello(4e3);
@@ -3465,7 +3570,7 @@ async function runCheck(msg) {
     holding: true,
     key,
     listening,
-    pending: pending2,
+    pending,
     reopened: !!hello,
     word: hello ? `сокет переоткрыт: ожидало кадров — ${Number(hello.pending) || 0}` : "сокет переоткрыт, hello за 4 с не пришёл"
   });
@@ -3807,7 +3912,8 @@ async function runStand(msg) {
   const fitted = parts ? fitName(parts) : null;
   const derived = asked ? "" : fitted?.name ?? "";
   let name = asked || derived;
-  const led0 = state.standing && sameRealm(state.standing.realm, realm) ? state.standing : null;
+  await resolveAgainstLed(realm);
+  const led0 = state.standing && !otherRealm(state.standing.realm, realm) ? state.standing : null;
   if (derived && led0 && String(led0.karta) === String(karta) && suffixOf(derived, led0.name ?? ""))
     name = led0.name ?? name;
   if (parts && fitted && fitted.cut.length) {
@@ -3833,7 +3939,7 @@ async function runStand(msg) {
     return done(true);
   }
   const prim = state.standing;
-  const beside = !!prim && !sameRealm(realm, prim.realm) && !holdsStanding(realm, karta, name);
+  const beside = !!prim && otherRealm(realm, prim.realm) && !holdsStanding(realm, karta, name);
   noteStandCwd(cwd);
   const here = () => placeFields({ realm, karta, name });
   const register = () => callTool("iskron_channel", { action: "register", realm, karta, name, ...here() });
@@ -3900,6 +4006,9 @@ async function runStand(msg) {
       return done(true);
     }
     heardHere = holdsStanding(realm, karta, name);
+    const ids = heardHere && !standingIdIn(realm) ? await rereadPlaces() : null;
+    if (ids && !standingIdIn(realm))
+      extra.push("hello места этого графа не назвал — id места неизвестен.");
     how = `место другого графа — встаёт рядом на канале, который держит этот мост (${ledKey()}): register`;
   } else if (resumed) {
     const r = await register();
@@ -4273,6 +4382,8 @@ async function deliverOne(msg) {
         return;
       }
       heldReply = null;
+      if (hasId && msg.method === "tools/call" && msg.params?.name === "iskron_channel")
+        await resolveAgainstLed(msg.params.arguments?.realm);
       const cross = hasId ? crossPlaceRefusal(msg) : null;
       if (cross) {
         emit(cross);
@@ -4282,11 +4393,11 @@ async function deliverOne(msg) {
       if (msg.method === "tools/call" && msg.params?.name === "iskron_channel" && msg.params.arguments)
         msg.params.arguments = withPlaceFields(msg.params.arguments);
       await post(msg, forward);
-      const held = heldReply;
-      if (held) {
-        if (state.standing && isUnattributed(held)) {
+      const held2 = heldReply;
+      if (held2) {
+        if (state.standing && isUnattributed(held2)) {
           state.standingSession = null;
-          const refused = !!held.result?.isError;
+          const refused = !!held2.result?.isError;
           if (refused && !standingRetried) {
             standingRetried = true;
             log("the call ran unattributed — re-binding the standing and repeating it once");
@@ -4295,11 +4406,11 @@ async function deliverOne(msg) {
             if (state.standingSession === state.sessionId) continue;
           } else {
             log(
-              `a write went out unattributed (${replyText(held).slice(0, 120)}) — the standing is re-bound before the next call`
+              `a write went out unattributed (${replyText(held2).slice(0, 120)}) — the standing is re-bound before the next call`
             );
           }
         }
-        emit(withNotice(absorbRevokeReply(msg, absorbChannelReply(msg, held))));
+        emit(withNotice(absorbRevokeReply(msg, absorbChannelReply(msg, held2))));
       }
       return;
     } catch (e) {
@@ -4337,16 +4448,16 @@ async function deliverOne(msg) {
             if (hasId) emit(syntheticError(msg.id, authErr.message, outcome, "human"));
             return;
           }
-          const held = authErr instanceof HoldOffError;
+          const held2 = authErr instanceof HoldOffError;
           const message = errorMessage(authErr);
-          log(`${held ? "authorization holding off" : "authorization failed"}: ${message}`);
+          log(`${held2 ? "authorization holding off" : "authorization failed"}: ${message}`);
           if (hasId) {
             emit(
               syntheticError(
                 msg.id,
-                `${held ? "authorization holding off" : "authorization failed"}: ${message}`,
+                `${held2 ? "authorization holding off" : "authorization failed"}: ${message}`,
                 outcome,
-                held && (authErr.retryNow ? "knock" : "wait")
+                held2 && (authErr.retryNow ? "knock" : "wait")
               )
             );
           }
@@ -4412,16 +4523,16 @@ function bridgeMain(argv2) {
   holdFromEnv();
   startDeafnessWatch();
   const rl = createInterface({ input: process.stdin, terminal: false });
-  const pending2 = /* @__PURE__ */ new Set();
+  const pending = /* @__PURE__ */ new Set();
   let handshake = null;
   rl.on("line", (line) => {
-    const trimmed = line.trim();
-    if (!trimmed) return;
+    const trimmed2 = line.trim();
+    if (!trimmed2) return;
     let msg;
     try {
-      msg = JSON.parse(trimmed);
+      msg = JSON.parse(trimmed2);
     } catch {
-      log(`unparseable line from harness: ${trimmed.slice(0, 120)}`);
+      log(`unparseable line from harness: ${trimmed2.slice(0, 120)}`);
       return;
     }
     const run = () => deliver(msg).catch((e) => log(`unexpected: ${e?.stack || errorMessage(e)}`));
@@ -4436,8 +4547,8 @@ function bridgeMain(argv2) {
       const gate = handshake;
       p = gate.then(run, run);
     } else p = run();
-    pending2.add(p);
-    p.finally(() => pending2.delete(p));
+    pending.add(p);
+    p.finally(() => pending.delete(p));
   });
   let leaving = null;
   const leave = (why) => leaving ??= windDown(why);
@@ -4447,7 +4558,7 @@ function bridgeMain(argv2) {
     releaseStanding(why);
     if (addr) await publishStatusTo(addr.url, "", 3e3).catch(() => {
     });
-    await Promise.allSettled([...pending2, ...tokenRequestsInFlight]);
+    await Promise.allSettled([...pending, ...tokenRequestsInFlight]);
     await flushStdout();
     const flow = pendingFlow();
     if (flow) {
@@ -4584,21 +4695,21 @@ function resolveStanding(argv2) {
   const dir = standingsDirOf(authDir);
   const pathFor = (k) => socketPathOf(authDir, k);
   if (key) return { key, path: pathFor(key), authDir };
-  const held = existsSync5(dir) ? readdirSync5(dir).filter((f) => f.endsWith(".key")).map((f) => {
+  const held2 = existsSync5(dir) ? readdirSync5(dir).filter((f) => f.endsWith(".key")).map((f) => {
     try {
       return readFileSync12(join11(dir, f), "utf8").trim();
     } catch {
       return "";
     }
   }).filter(Boolean) : [];
-  if (held.length === 1) return { key: held[0], path: pathFor(held[0]), authDir };
-  if (held.length === 0) {
+  if (held2.length === 1) return { key: held2[0], path: pathFor(held2[0]), authDir };
+  if (held2.length === 0) {
     return {
       error: "мост не держит ни одного стояния — назовись одним вызовом iskron_stand(realm, karta, model): его ответ назовёт команду слушания"
     };
   }
   return {
-    error: `мост держит несколько стояний — назови нужное: ` + held.join(", ")
+    error: `мост держит несколько стояний — назови нужное: ` + held2.join(", ")
   };
 }
 function attach(path, o) {

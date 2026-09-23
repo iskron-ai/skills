@@ -8,7 +8,7 @@
 // краснота, ради которой проба написана.
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { hostname, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
@@ -866,56 +866,34 @@ for (const [client, expect, forbid] of [
 
 // One session through one bridge stands in every graph it works in: a channel
 // holds places in several graphs (register on it in another graph adds a place),
-// a write is signed by the place of its own graph, frames carry their graph. The
-// bridge used to swap or refuse the second place; now it stands beside the first
-// on the same socket — and the one-place rule (#5154) still holds inside a graph.
-test("one bridge stands in two graphs: both places listen on one socket, each write is signed by its graph's place, each frame reaches its own watchdog, and the one-place rule still holds within a graph", async (t) => {
-  const { fake, dir, bridge } = await ready(t);
-  const waitFor = async (check, what) => {
-    const deadline = Date.now() + 8000;
-    while (!check()) {
-      if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
-      await new Promise((r) => setTimeout(r, 50));
-    }
-  };
-  const stand = (args) => bridge.call("tools/call", { name: "iskron_stand", arguments: args });
-  const A = { realm: "nks-dev", karta: 931, name: "proba" };
-  const B = { realm: "@nks/drugoy", karta: 48, name: "proba-b" };
+// a write is signed by the place of its own graph, a frame names its place by
+// to_standing_id. Each case below stands up its own bridge, so each can fail alone.
+const waitUntil = async (check, what, ms = 8000) => {
+  const deadline = Date.now() + ms;
+  while (!check()) {
+    if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
+    await new Promise((r) => setTimeout(r, 50));
+  }
+};
+const pause = (ms) => new Promise((r) => setTimeout(r, ms));
 
+/** A bridge standing in graph A, then in graph B; returns what the cases read. */
+async function twoGraphs(t, A, B, init = INIT) {
+  const { fake, dir, bridge } = await ready(t, init);
+  const stand = (args) => bridge.call("tools/call", { name: "iskron_stand", arguments: args });
   const a = await stand(A);
   assert.ok(!a.result?.isError, textOf(a));
-  const keyA = /watchdog (\S+)/.exec(textOf(a))?.[1];
   const b = await stand(B);
   assert.ok(!b.result?.isError, `the second graph's place must stand beside:\n${textOf(b)}`);
-  assert.match(textOf(b), /встаёт рядом на канале/, textOf(b));
-  const keyB = /watchdog (\S+)/.exec(textOf(b))?.[1];
-  assert.ok(keyA && keyB && keyA !== keyB, `two places, two watchdog keys: ${keyA} / ${keyB}`);
-  assert.equal(
-    fake.state.counts.connect,
-    1,
-    "the second place rides the same channel — no connect",
-  );
-  assert.equal(fake.state.ws.size, 1, "one socket carries both places");
-  assert.ok(fake.state.places.get("931:proba")?.listening, "place A still listens");
-  assert.ok(fake.state.places.get("48:proba-b")?.listening, "place B listens");
-
-  // Writes: each is signed by the place of its own graph.
-  const write = async (realm, n) => {
-    const r = await bridge.call("tools/call", {
-      name: "iskron_add_phenomenon",
-      arguments: { realm, name: n },
-    });
-    return textOf(r);
-  };
-  assert.match(await write("nks-dev", "в A"), /автор: proba\)/);
-  assert.match(await write("@nks/drugoy", "в B"), /автор: proba-b\)/);
-  // A session turnover: the bridge restores ALL places, not only the first.
-  await fake.control({ kill_session: true });
-  assert.match(await write("@nks/drugoy", "в B снова"), /автор: proba-b\)/);
-  assert.match(await write("nks-dev", "в A снова"), /автор: proba\)/);
-  assert.equal(fake.state.counts.unattributed, 0, "no write went out without its author");
-
-  // Frames: each reaches the watchdog of its own place, and only it.
+  // The key the listener block names (pi's block names none — the same form, computed).
+  const keyOfPlace = (p) =>
+    `${p.name}--${p.karta}--${p.realm}`.replace(/[^A-Za-z0-9._-]+/g, "_").slice(0, 120);
+  const keyA = keyOfPlace(A);
+  const keyB = keyOfPlace(B);
+  // The platform's id of each place — what frames carry in to_standing_id.
+  const idOf = (canon, name) =>
+    [...fake.state.channels.values()].map((c) => c.places.get(canon)).find((p) => p?.name === name)
+      ?.standing_id;
   const watch = (key) => {
     const proc = spawn(NODE, [FILE, "watchdog", key, "--auth-dir", dir], {
       stdio: ["ignore", "pipe", "pipe"],
@@ -925,45 +903,250 @@ test("one bridge stands in two graphs: both places listen on one socket, each wr
     t.after(() => proc.kill("SIGKILL"));
     return w;
   };
+  const write = async (realm, n) =>
+    textOf(
+      await bridge.call("tools/call", {
+        name: "iskron_add_phenomenon",
+        arguments: { realm, name: n },
+      }),
+    );
+  return { fake, dir, bridge, stand, a, b, keyA, keyB, idOf, watch, write };
+}
+
+/** A frame in the shape observed on the live server (bridge 6.11.0). */
+const liveFrame = (id, canon, name, karta, standingId, body, more = {}) => ({
+  type: "message",
+  id,
+  received_at: new Date().toISOString(),
+  stale: false,
+  content_type: "text/plain",
+  body_chars: body.length,
+  to_standing_id: standingId,
+  to_standing: `@tester:${name}`,
+  realm: canon,
+  karta_seq: karta,
+  body,
+  ...more,
+});
+
+const NKS = "@nks/nks-dev";
+const DRUGOY = "@nks/drugoy";
+
+test("two graphs: the second place stands beside the first on the same channel — one socket, both listening, no second connect", async (t) => {
+  const { fake, b, keyA, keyB } = await twoGraphs(
+    t,
+    { realm: NKS, karta: 931, name: "proba" },
+    { realm: DRUGOY, karta: 48, name: "proba-b" },
+  );
+  assert.match(textOf(b), /встаёт рядом на канале/, textOf(b));
+  assert.ok(textOf(b).includes(`watchdog ${keyB}`), `B's block names B's key:\n${textOf(b)}`);
+  assert.ok(keyA !== keyB, `two places, two watchdog keys: ${keyA} / ${keyB}`);
+  assert.equal(fake.state.counts.connect, 1, "the second place rides the same channel");
+  // The socket is re-read once for hello's standings[] (the fake answers no close
+  // handshake, so the old one lingers): every open socket is of the one channel.
+  const channels = new Set([...fake.state.ws].map((s) => fake.state.wsChans.get(s)));
+  assert.equal(channels.size, 1, "one channel's socket carries both places");
+  assert.ok(fake.state.places.get("931:proba")?.listening, "place A listens");
+  assert.ok(fake.state.places.get("48:proba-b")?.listening, "place B listens");
+});
+
+test("two graphs: each write is signed by the place of its own graph, also after a session turnover", async (t) => {
+  const { fake, write } = await twoGraphs(
+    t,
+    { realm: NKS, karta: 931, name: "proba" },
+    { realm: DRUGOY, karta: 48, name: "proba-b" },
+  );
+  assert.match(await write(NKS, "в A"), /автор: proba\)/);
+  assert.match(await write(DRUGOY, "в B"), /автор: proba-b\)/);
+  await fake.control({ kill_session: true });
+  assert.match(await write(DRUGOY, "в B снова"), /автор: proba-b\)/);
+  assert.match(await write(NKS, "в A снова"), /автор: proba\)/);
+  assert.equal(fake.state.counts.unattributed, 0, "no write went out without its author");
+});
+
+test("two graphs under the SAME derived name: frames route by to_standing_id to their own watchdog; an unmatched frame goes to the first place with a word, never silently", async (t) => {
+  const { fake, keyA, keyB, idOf, watch } = await twoGraphs(
+    t,
+    { realm: NKS, karta: 931, name: "proba" },
+    { realm: DRUGOY, karta: 48, name: "proba" },
+  );
+  const idA = idOf(NKS, "proba");
+  const idB = idOf(DRUGOY, "proba");
+  assert.ok(idA && idB && idA !== idB, "the fake gives each place its own id");
   const wa = watch(keyA);
   const wb = watch(keyB);
-  await waitFor(() => wa.out.includes("слушаю стояние"), "watchdog A to attach");
-  await waitFor(() => wb.out.includes("слушаю стояние"), "watchdog B to attach");
-  for (const [id, realm, to, body] of [
-    ["a-1", "nks-dev", "@tester:proba", "слово месту A"],
-    ["b-1", "@nks/drugoy", "@tester:proba-b", "слово месту B"],
-  ])
-    await fake.control({
-      ws_send: JSON.stringify({ type: "message", id, realm, to_standing: to, body }),
-    });
-  await waitFor(() => wa.out.includes("слово месту A"), "the frame for A at watchdog A");
-  await waitFor(() => wb.out.includes("слово месту B"), "the frame for B at watchdog B");
-  await new Promise((r) => setTimeout(r, 300));
+  await waitUntil(() => wa.out.includes("слушаю стояние"), "watchdog A to attach");
+  await waitUntil(() => wb.out.includes("слушаю стояние"), "watchdog B to attach");
+  const send = (f) => fake.control({ ws_send: JSON.stringify(f) });
+  await send(liveFrame("a-1", NKS, "proba", 931, idA, "слово месту A"));
+  await send(liveFrame("b-1", DRUGOY, "proba", 48, idB, "слово месту B"));
+  // Only the id: the address and graph cannot decide it, the id does.
+  await send({ type: "message", id: "b-2", to_standing_id: idB, body: "по одному id к B" });
+  await send(
+    liveFrame("x-1", "@nks/chuzhoy", "chuzhoe", 5, "00000000-0000-0000-0000-000000000000", "ничьё"),
+  );
+  await waitUntil(() => wa.out.includes("слово месту A"), "A's frame at watchdog A");
+  await waitUntil(() => wb.out.includes("слово месту B"), "B's frame at watchdog B");
+  await waitUntil(() => wb.out.includes("по одному id к B"), "the id-only frame at watchdog B");
+  await waitUntil(() => wa.out.includes("не сопоставлен"), "the word about the unmatched frame");
+  await pause(300);
   assert.ok(!wa.out.includes("слово месту B"), `B's frame leaked to A:\n${wa.out}`);
+  assert.ok(!wa.out.includes("по одному id к B"), `B's id frame leaked to A:\n${wa.out}`);
   assert.ok(!wb.out.includes("слово месту A"), `A's frame leaked to B:\n${wb.out}`);
+  assert.ok(!wb.out.includes("ничьё"), `the unmatched frame went to B:\n${wb.out}`);
+});
 
-  // Within a graph the rule holds (#5154): another name in A, another in B — refused.
-  const otherA = await stand({ ...A, name: "vtoraya" });
+test("r5 and the slug of ANOTHER graph are two graphs: two places, and frames in the canonical form reach the place stood as r5", async (t) => {
+  const { fake, b, keyA, keyB, idOf, watch } = await twoGraphs(
+    t,
+    { realm: "r5", karta: 931, name: "proba" },
+    { realm: "@nks/methodology", karta: 12, name: "proba" },
+  );
+  assert.match(textOf(b), /встаёт рядом на канале/, textOf(b));
+  assert.equal(fake.state.counts.connect, 1);
+  const wa = watch(keyA);
+  const wb = watch(keyB);
+  await waitUntil(() => wa.out.includes("слушаю стояние"), "watchdog A to attach");
+  await waitUntil(() => wb.out.includes("слушаю стояние"), "watchdog B to attach");
+  const idA = idOf(NKS, "proba");
+  await fake.control({ ws_send: JSON.stringify(liveFrame("a-5", NKS, "proba", 931, idA, "в r5")) });
+  await waitUntil(() => wa.out.includes("в r5"), "the frame for the r5 place at watchdog A");
+  await pause(300);
+  assert.ok(!wb.out.includes("в r5"), `the r5 frame leaked to the methodology place:\n${wb.out}`);
+});
+
+test("r5 and the slug of the SAME graph are one graph: another name there is refused (#5154), the same place is only registered", async (t) => {
+  const { fake, bridge } = await ready(t);
+  const stand = (args) => bridge.call("tools/call", { name: "iskron_stand", arguments: args });
+  const a = await stand({ realm: "r5", karta: 931, name: "proba" });
+  assert.ok(!a.result?.isError, textOf(a));
+  const other = await stand({ realm: NKS, karta: 931, name: "vtoraya" });
+  assert.ok(other.result?.isError, `r5 and ${NKS} must be one graph:\n${textOf(other)}`);
+  assert.match(textOf(other), /уже ведёт место proba--931--r5/, textOf(other));
+  const same = await stand({ realm: NKS, karta: 931, name: "proba" });
+  assert.ok(!same.result?.isError, textOf(same));
+  assert.doesNotMatch(textOf(same), /встаёт рядом/, "the same graph never stands beside itself");
+  assert.equal(fake.state.counts.connect, 1);
+});
+
+test("two graphs: within each graph the one-place rule still holds (#5154)", async (t) => {
+  const { fake, stand, keyA, keyB } = await twoGraphs(
+    t,
+    { realm: NKS, karta: 931, name: "proba" },
+    { realm: DRUGOY, karta: 48, name: "proba-b" },
+  );
+  const otherA = await stand({ realm: NKS, karta: 931, name: "vtoraya" });
   assert.ok(otherA.result?.isError, textOf(otherA));
   assert.match(textOf(otherA), new RegExp(`уже ведёт место ${keyA}`), textOf(otherA));
-  const otherB = await stand({ ...B, name: "tretya" });
+  const otherB = await stand({ realm: DRUGOY, karta: 48, name: "tretya" });
   assert.ok(otherB.result?.isError, textOf(otherB));
   assert.match(textOf(otherB), new RegExp(`уже ведёт место ${keyB}`), textOf(otherB));
   assert.equal(fake.state.counts.connect, 1, "a refused place took nothing");
-  assert.ok(fake.state.places.get("931:proba")?.listening, "A listens after the refusals");
-  assert.ok(fake.state.places.get("48:proba-b")?.listening, "B listens after the refusals");
+});
 
-  // Revoking one graph's place releases that place only: the channel, its socket
-  // and the other graph's place, its watchdog and its signature stay.
-  const rv = await bridge.call("tools/call", {
-    name: "iskron_channel",
-    arguments: { realm: "nks-dev", action: "revoke", karta: 931, standing: "proba" },
-  });
-  assert.ok(!rv.result?.isError, textOf(rv));
-  await new Promise((r) => setTimeout(r, 300));
-  assert.equal(fake.state.ws.size, 1, "the channel's socket survives one place's revoke");
+test("two graphs: the busy line is held per place — status in a graph carries that place's standing_id", async (t) => {
+  const { fake, bridge, idOf } = await twoGraphs(
+    t,
+    { realm: NKS, karta: 931, name: "proba" },
+    { realm: DRUGOY, karta: 48, name: "proba" },
+  );
+  const status = (realm, text) =>
+    bridge.call("tools/call", {
+      name: "iskron_channel",
+      arguments: { realm, action: "status", text },
+    });
+  const sb = await status(DRUGOY, "занят в B");
+  assert.ok(!sb.result?.isError, textOf(sb));
+  const sa = await status(NKS, "занят в A");
+  assert.ok(!sa.result?.isError, textOf(sa));
+  assert.equal(fake.state.placeStatus.get(idOf(DRUGOY, "proba")), "занят в B");
+  assert.equal(fake.state.placeStatus.get(idOf(NKS, "proba")), "занят в A");
+});
+
+test("two graphs: revoking the first place is refused by the server while another graph's place stands on the channel, the bridge says so and keeps both; revoking the second releases only it", async (t) => {
+  const { fake, bridge, keyA, keyB, watch, write } = await twoGraphs(
+    t,
+    { realm: NKS, karta: 931, name: "proba" },
+    { realm: DRUGOY, karta: 48, name: "proba-b" },
+  );
+  const wa = watch(keyA);
+  const wb = watch(keyB);
+  await waitUntil(() => wb.out.includes("слушаю стояние"), "watchdog B to attach");
+  const revoke = (realm, karta, standing) =>
+    bridge.call("tools/call", {
+      name: "iskron_channel",
+      arguments: { realm, action: "revoke", karta, standing },
+    });
+  const first = await revoke(NKS, 931, "proba");
+  assert.ok(first.result?.isError, textOf(first));
+  assert.match(textOf(first), /основное место канала моста/, textOf(first));
+  await pause(300);
+  assert.equal(fake.state.counts.connect, 1, "the channel is untouched");
+  assert.ok(fake.state.channels.size === 1, "the channel with both places stands");
+  assert.equal(wa.proc.exitCode, null, "watchdog A stays attached");
   assert.equal(wb.proc.exitCode, null, "watchdog B stays attached");
-  assert.match(await write("@nks/drugoy", "в B после снятия A"), /автор: proba-b\)/);
-  const again = await stand(B);
-  assert.match(textOf(again), /сокет уже держит этот мост/, textOf(again));
+  assert.match(await write(NKS, "A после отказа"), /автор: proba\)/);
+  const second = await revoke(DRUGOY, 48, "proba-b");
+  assert.ok(!second.result?.isError, textOf(second));
+  await waitUntil(() => wb.proc.exitCode !== null, "watchdog B to lose its place");
+  assert.equal(fake.state.channels.size, 1, "the channel survives the second place's revoke");
+  assert.match(await write(NKS, "A после снятия B"), /автор: proba\)/);
+  assert.equal(wa.proc.exitCode, null, "watchdog A stays attached");
+});
+
+test("two graphs: the stale batch and the wake batch are per place — each carries only its own frames and marks its own .seen", async (t) => {
+  const { fake, dir, bridge, keyB, idOf } = await twoGraphs(
+    t,
+    { realm: NKS, karta: 931, name: "proba" },
+    { realm: DRUGOY, karta: 48, name: "proba" },
+    { ...INIT, clientInfo: { name: "pi-iskron", version: "0" } },
+  );
+  const idA = idOf(NKS, "proba");
+  const idB = idOf(DRUGOY, "proba");
+  const send = (f) => fake.control({ ws_send: JSON.stringify(f) });
+  // Stale: one frame for each place.
+  await send(liveFrame("sa-1", NKS, "proba", 931, idA, "лежалое A", { stale: true }));
+  await send(liveFrame("sb-1", DRUGOY, "proba", 48, idB, "лежалое B", { stale: true }));
+  const events = (kind) =>
+    bridge.notifications.map((n) => n.params?.data).filter((d) => d?.kind === kind);
+  await waitUntil(() => events("stale").length >= 2, "a stale batch per place");
+  const staleB = events("stale").find((d) => d.key === keyB);
+  const staleA = events("stale").find((d) => !d.key);
+  assert.deepEqual(
+    staleB?.frames?.map((f) => f.id),
+    ["sb-1"],
+    JSON.stringify(events("stale")),
+  );
+  assert.deepEqual(
+    staleA?.frames?.map((f) => f.id),
+    ["sa-1"],
+    JSON.stringify(events("stale")),
+  );
+  // Wake: a platform frame opens A's batch; B's frame beside it is not swallowed.
+  await send(
+    liveFrame("wa-1", NKS, "proba", 931, idA, "побудка A", { provenance: { via: "platform" } }),
+  );
+  await send(liveFrame("wb-1", DRUGOY, "proba", 48, idB, "слово B"));
+  await waitUntil(() => events("backlog").length >= 1, "A's wake batch");
+  const batch = events("backlog")[0];
+  assert.deepEqual(
+    batch.frames.map((f) => f.id),
+    ["wa-1"],
+    JSON.stringify(batch),
+  );
+  assert.ok(!batch.key, "the batch is A's");
+  const lone = events("frame").find((d) => d.frame?.id === "wb-1");
+  assert.equal(lone?.key, keyB, "B's frame rides alone, under B's key");
+  // Each place's .seen holds its own frames only.
+  const standings = join(dir, "standings");
+  const seenWith = (id) =>
+    readdirSync(standings).filter(
+      (f) =>
+        f.endsWith(".seen") && readFileSync(join(standings, f), "utf8").split("\n").includes(id),
+    );
+  await waitUntil(
+    () => seenWith("wa-1").length && seenWith("wb-1").length,
+    "both marked delivered",
+  );
+  assert.notDeepEqual(seenWith("wa-1"), seenWith("wb-1"), "the two places share one .seen");
 });

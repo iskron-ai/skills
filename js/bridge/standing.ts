@@ -1,8 +1,9 @@
 import { errorMessage } from "./errors.ts";
 import { addPlace, releaseStanding } from "./hold.ts";
-import { normKarta, normName, sameRealm } from "./names.ts";
+import { normKarta, normName } from "./names.ts";
 import { placeFields } from "./placefields.ts";
 import { dropExtra, keyOfPlace, rememberPlace } from "./places.ts";
+import { otherRealm } from "./realms.ts";
 import { debug, log } from "./streams.ts";
 import { post, type Standing, state } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
@@ -16,7 +17,7 @@ export function noteStanding(msg: JsonRpcMessage, reply: JsonRpcMessage): void {
   if (reply?.error || reply?.result?.isError) return;
   const place = rememberedPlace(a.realm, a.karta, a.name);
   const prim = state.standing;
-  if (prim && !sameRealm(prim.realm, place.realm)) {
+  if (prim && otherRealm(prim.realm, place.realm)) {
     // Другой граф — место рядом на том же канале, не подмена основного (#5838).
     rememberPlace(place);
     addPlace(place);
@@ -38,7 +39,7 @@ export function rememberedPlace(
 ): { realm: string; karta: string; name?: string } {
   const k = normKarta(karta);
   // Роль — число графа: «agent» в другом графе не берёт числа основного места.
-  const prev = [state.standing, ...state.places].find((p) => p && sameRealm(p.realm, realm));
+  const prev = [state.standing, ...state.places].find((p) => p && !otherRealm(p.realm, realm));
   const n = typeof name === "string" ? normName(name) : undefined;
   return {
     realm: String(realm ?? ""),

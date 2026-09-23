@@ -6,6 +6,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { socketPathOf, standingsDirOf } from "../shared/standings.ts";
+import { resolveAgainstLed } from "./call.ts";
 import { CFG } from "./config.ts";
 import { rememberStatus, statusAddress } from "./hold.ts";
 import { type HoldRecord, keyOf } from "./holdrecord.ts";
@@ -26,6 +27,7 @@ export function localStatus(msg: JsonRpcMessage): Promise<JsonRpcMessage> | null
   // Занятость — места графа из вызова (#5838); без графа — основного.
   const realm = typeof a.realm === "string" ? a.realm : "";
   return (async () => {
+    await resolveAgainstLed(realm); // граф вызова — в той же форме, что граф места
     const st = await publishStatus(text, realm);
     if (!st.ok && !statusAddress()) return reply(await notHeldHere(realm), true);
     if (st.code === 404) return reply(`${st.body} ${TURNED_GUIDANCE}`, true);
@@ -45,8 +47,16 @@ let lastPublished = "";
 /** Последняя строка занятости, которую доска приняла от этого моста; пустая — снята. */
 export const publishedStatus = (): string => lastPublished;
 
-/** POST строки занятости на статусный адрес стояния, которое держит мост; realm — место этого графа на канале. */
-export async function publishStatus(text: string, realm?: string): Promise<StatusOutcome> {
+/**
+ * POST строки занятости на статусный адрес канала, который держит мост. Строка
+ * держится у МЕСТА: со standing_id она ложится на одно место канала, без него —
+ * на все живые (#5838). realm — место этого графа; `everyPlace` — все места разом (уход).
+ */
+export async function publishStatus(
+  text: string,
+  realm?: string,
+  everyPlace = false,
+): Promise<StatusOutcome> {
   const addr = statusAddress(realm);
   if (!addr) {
     return {
@@ -54,7 +64,13 @@ export async function publishStatus(text: string, realm?: string): Promise<Statu
       body: "Отказано (мост): этот мост места не держит, статусного адреса у него нет.",
     };
   }
-  const st = await publishStatusTo(addr.url, text);
+  // Место рядом без известного id — строка легла бы на все места канала: отказ вслух.
+  if (!everyPlace && !addr.standingId && addr.key !== statusAddress()?.key)
+    return {
+      ok: false,
+      body: `Отказано (мост): id места ${addr.key} у моста ещё не известен (hello его не назвал) — без него строка легла бы на все места канала; повтори iskron_stand этого графа.`,
+    };
+  const st = await publishStatusTo(addr.url, text, 5000, everyPlace ? null : addr.standingId);
   if (st.ok) {
     if (addr.key === statusAddress()?.key) lastPublished = text;
     rememberStatus(text, realm);
@@ -130,13 +146,14 @@ export async function publishStatusTo(
   url: string,
   text: string,
   timeoutMs = 5000,
+  standingId: string | null = null,
 ): Promise<StatusOutcome> {
   let res: Response;
   try {
     res = await fetch(url, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ text }),
+      body: JSON.stringify(standingId ? { text, standing_id: standingId } : { text }),
       signal: AbortSignal.timeout(timeoutMs),
     });
   } catch (e) {
