@@ -7,38 +7,16 @@
 // одно событие kind=backlog с кадрами по received_at, телами (обрезанными,
 // как у лежалых) и указанием на history за остальным. Окно у каждого места
 // своё (door.ts, #5838): пачка одного графа метится в .seen своего места.
-// Тем же классом копится пачка кадров комнаты для сторожей (roomstack.ts, #5851).
 import { type Frame } from "../shared/channel.ts";
 import { frameToText } from "../shared/frame-text.ts";
 import { type ChannelEvent } from "./door.ts";
 
 /** Окно накопления; переменная — шов для проб, не ручка человека. */
 const BACKLOG_MS = Number(process.env.ISKRON_BRIDGE_BACKLOG_MS) || 1500;
-/**
- * Окно пачки кадров комнаты для сторожей (словарь родов, #5851): кадр рода
- * «в пачку» ждёт до минуты, прерывающий отдаёт накопленное раньше себя.
- */
-export const ROOM_BATCH_MS = Number(process.env.ISKRON_BRIDGE_ROOM_BATCH_MS) || 60_000;
 const BACKLOG_KEEP = 20;
 const BODY_CAP = 800;
 
 const at = (f: Frame): string => (typeof f.received_at === "string" ? f.received_at : "");
-
-/** Шапка пачки: сколько пришло, сколько ждало по hello, сколько здесь. */
-type Head = (count: number, expected: number, kept: number) => string;
-
-const wakeHead: Head = (count, expected, kept) =>
-  `Побудка: кадров ${count}` +
-  (expected ? ` (ожидало в очереди: ${expected})` : "") +
-  (count > kept ? `, здесь первые ${kept}` : "") +
-  " — пришли одной пачкой; разбери все, а не последний: " +
-  'полностью и остальное — iskron_channel(action="history", view="log").';
-
-export const roomHead: Head = (count, _expected, kept) =>
-  `Комната: кадров ${count}` +
-  (count > kept ? `, здесь первые ${kept}` : "") +
-  " — накопились, не прерывая хода; разбери по порядку; " +
-  'полностью — iskron_channel(action="history").';
 
 export class Backlog {
   private readonly frames: Frame[] = [];
@@ -47,25 +25,12 @@ export class Backlog {
   private timer: ReturnType<typeof setTimeout> | null = null;
   private flush: ((ev: ChannelEvent) => void) | null = null;
 
-  private readonly windowMs: number;
-  private readonly head: Head;
-
-  constructor(windowMs = BACKLOG_MS, head: Head = wakeHead) {
-    this.windowMs = windowMs;
-    this.head = head;
-  }
-
   /** Открыть окно — по hello с pending либо по кадру платформы; открытое не продлевается, только пополняется. */
   open(expected: number, emit: (ev: ChannelEvent) => void): void {
     this.pending = Math.max(this.pending, expected);
     this.flush = emit;
     if (this.timer) return;
-    this.timer = setTimeout(() => this.close(), this.windowMs).unref();
-  }
-
-  /** Лежит ли кадр в копящейся пачке — кольцо не отдаёт его прицепившемуся отдельно (door.ts). */
-  holds(frame: Frame | null): boolean {
-    return !!frame && this.frames.includes(frame);
+    this.timer = setTimeout(() => this.close(), BACKLOG_MS).unref();
   }
 
   /** Отдать накопленное сейчас — при отпускании стояния: неотданное не теряется молча. */
@@ -97,7 +62,12 @@ export class Backlog {
       const t = frameToText(f, JSON.stringify(f));
       return [...t].length > BODY_CAP ? [...t].slice(0, BODY_CAP).join("") + "…" : t;
     });
-    const head = this.head(count, expected, got.length);
+    const head =
+      `Побудка: кадров ${count}` +
+      (expected ? ` (ожидало в очереди: ${expected})` : "") +
+      (count > got.length ? `, здесь первые ${got.length}` : "") +
+      " — пришли одной пачкой; разбери все, а не последний: " +
+      'полностью и остальное — iskron_channel(action="history", view="log").';
     emit({
       kind: "backlog",
       frames: got,

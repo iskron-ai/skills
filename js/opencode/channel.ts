@@ -107,8 +107,8 @@ export function setupChannel(ctx: Context, say: Say, freshestRoot: () => string 
           // Служебные кадры не будят: hello доказывает, что сокет держат, и только.
           if (frame?.type === "hello") return say("Искрон: канал слушает", "info");
           if (frame?.type === "status") return;
-          // Путь кадра решает словарь родов комнаты (#5851): пачка — очередью до
-          // конца хода; прерывающий и кадр не комнаты — вставкой в идущий ход.
+          // Путь кадра (#5851): с event_kind — правило рода, без него — своя стопка
+          // кадра, как прежде (#4957); пачка — очередью до конца хода, прочее — вставкой.
           void deliver(
             session,
             frameToText(frame, ev.raw ?? ""),

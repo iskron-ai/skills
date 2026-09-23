@@ -10,8 +10,6 @@ import { createHash } from "node:crypto";
 import { writeSync } from "node:fs";
 
 import { type ChannelEvent } from "../bridge/hold.ts";
-import { frameToText } from "../shared/frame-text.ts";
-import { stackOf } from "../shared/room-kinds.ts";
 import { deliveredKeys, eventKeyOf, noteSeen, seenIds } from "../shared/seen.ts";
 import { seenFilePathOf } from "../shared/standings.ts";
 import { attach, resolveStanding } from "./client.ts";
@@ -50,6 +48,7 @@ export function runWatchdogExit(argv: string[]): void {
   }
   const seenPath = seenFilePathOf(target.authDir, target.key);
   const seen = seenIds(seenPath);
+  let woke = false; // отдан хоть один кадр залпа пачки
   attach(target.path, {
     onEvent: (ev) => {
       switch (ev.kind) {
@@ -57,23 +56,24 @@ export function runWatchdogExit(argv: string[]): void {
           const type = ev.frame?.type;
           if (type !== "message") return note(`кадр ${type ?? "не разобран"} — не повод будить`);
           const id = frameId(ev);
-          if (seen.has(id)) return note(`кадр ${id} уже отдан прежним взводом — не повод будить`);
-          // Кадр комнаты рода «в пачку» (словарь родов, #5851) не будит: живой приходит
-          // пачкой backlog, этот — из кольца; тело в лог, id помечен, как у пачки.
-          if (stackOf(ev.frame) === "batch") {
-            for (const k of deliveredKeys(ev.frame)) noteSeen(seenPath, k, seen);
-            return note(frameToText(ev.frame, ev.raw ?? ""));
+          // Пачка кадров комнаты (мост, roomstack.ts) — одна побудка: печатаем её
+          // целиком и выходим на последнем кадре залпа, не на первом.
+          const last = !ev.batch || ev.batch.at >= ev.batch.of;
+          if (seen.has(id)) {
+            note(`кадр ${id} уже отдан прежним взводом — не повод будить`);
+            if (last && woke) process.exit(0);
+            return;
           }
           wake(ev.raw ?? ""); // сперва отдать: запись до побудки при смерти между ними потеряла бы кадр насовсем
           noteSeen(seenPath, id, seen);
           const evKey = eventKeyOf(ev.frame);
           if (evKey) noteSeen(seenPath, evKey, seen); // событие графа отдано — другие копии веера тоже
-          process.exit(0); // конец процесса И ЕСТЬ доставка
+          woke = true;
+          if (last) process.exit(0); // конец процесса И ЕСТЬ доставка
           break;
         }
         case "stale":
-        case "backlog":
-          // Пачка лежалых или кадров комнаты «в пачку»: не повод будить, но и не потеря — тела в логе, id помечены.
+          // Пачка лежалых: не повод будить, но и не потеря — тела в логе, id помечены.
           for (const f of ev.frames ?? [])
             for (const k of deliveredKeys(f)) noteSeen(seenPath, k, seen);
           note(ev.text ?? "лежалые кадры");

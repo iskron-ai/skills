@@ -35,10 +35,14 @@ export function frameToText(frame: Frame | null | undefined, raw: string): strin
     // Слово комнаты: агенту важно узнать это прежде тела — обратного адреса у
     // такого кадра нет, ответ есть запись в ту же комнату, а не send стоянию.
     const zachin = typeof room.zachin === "string" ? ` «${room.zachin}»` : "";
-    // Род и стопку говорит словарь родов (room-kinds.ts) словами, не ключами:
-    // сами ключи едут в конверте ниже без правки.
+    // Кадр с event_kind — род словами из словаря (room-kinds.ts); без него —
+    // прежняя шапка: верхний kind и стопка. Ключи едут в конверте ниже без правки.
     const rk = roomKind(frame);
-    const words = rk ? `: ${rk.words}` : "";
+    const f = frame as Record<string, unknown>;
+    const words = rk
+      ? `: ${rk.words}`
+      : (typeof f.kind === "string" ? `, род ${f.kind}` : "") +
+        (typeof f.stack === "string" ? `, стопка ${f.stack}` : "");
     // Обратного адреса у кадра комнаты нет: send стоянию туда не доходит; ход
     // для комнат — в списке тулов сессии. Платформенная запись ответа не ждёт.
     lines.push(

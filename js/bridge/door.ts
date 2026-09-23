@@ -13,9 +13,10 @@ import {
   socketPathOf,
   standingsDirOf,
 } from "../shared/standings.ts";
-import { Backlog, ROOM_BATCH_MS, roomHead } from "./backlog.ts";
+import { Backlog } from "./backlog.ts";
 import { CFG } from "./config.ts";
 import { isDelivered } from "./fanout.ts";
+import { RoomBatch } from "./roomstack.ts";
 import { StaleBurst } from "./stale.ts";
 import { log } from "./streams.ts";
 import { sweepStale } from "./sweep.ts";
@@ -37,6 +38,8 @@ export interface ChannelEvent {
   frames?: Frame[];
   /** kind="backlog": сколько кадров ожидало по hello. */
   pending?: number;
+  /** kind="frame" из пачки кадров комнаты (roomstack.ts): его место в залпе — at из of; пачка — одна побудка. */
+  batch?: { at: number; of: number };
 }
 
 export interface DoorHooks {
@@ -60,7 +63,7 @@ export class Door {
   readonly stale = new StaleBurst();
   readonly backlog = new Backlog();
   /** Пачка кадров комнаты рода «в пачку» — для сторожей, не для клиентов уведомлений (roomstack.ts, #5851). */
-  readonly roomBatch = new Backlog(ROOM_BATCH_MS, roomHead);
+  readonly roomBatch = new RoomBatch();
   /** id места у платформы (hello standings[].standing_id) — по нему кадр находит дверь и занятость — место. */
   standingId: string | null = null;
   private server: Server | null = null;

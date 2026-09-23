@@ -45,6 +45,7 @@ import {
   directWord,
   graphPosed,
   legacyRoom,
+  ME_ID,
   PLATFORM,
   progress,
   roomFrame,
@@ -1755,21 +1756,31 @@ test("room kinds: closing steers a busy agent despite stack=defer and says who m
     const p5 = await send(saidFrame("defer", 63), 5);
     assert.equal(p5.delivery, "queue", "said with stack=defer queues");
 
-    const p6 = await send(roomFrame("invite", { entry_id: 64, key: "invite:@tester:proba" }), 6);
-    assert.equal(p6.delivery, "steer", "an invite to my own standing interrupts");
-    assert.match(p6.text, /@tester:proba приглашён/);
+    const p6 = await send(roomFrame("invite", { entry_id: 64, key: `invite:${ME_ID}` }), 6);
+    assert.equal(p6.delivery, "steer", "an invite to my own standing id interrupts");
+    assert.match(p6.text, new RegExp(`${ME_ID} приглашён`));
     const p7 = await send(roomFrame("invite", { entry_id: 65, key: "invite:@other:x" }), 7);
     assert.equal(p7.delivery, "queue", "an invite to someone else batches");
     const p8 = await send(roomFrame("opened", { entry_id: 66 }), 8);
     assert.equal(p8.delivery, "queue", "opened does not interrupt");
+    const p9 = await send(roomFrame("invite", { entry_id: 67, key: "invite:@tester:proba" }), 9);
+    assert.equal(p9.delivery, "steer", "an invite to my own standing address interrupts too");
+    // may_object carries standing ids only: my address there is not me, another id is not me.
+    const notMine = closing();
+    notMine.line.fields.may_object = ["@tester:proba", "9b2e4d6f-1a3c-4e5b-9d7f-0c2e4a6b8d1f"];
+    const p10 = await send(notMine, 10);
+    assert.equal(p10.delivery, "steer", "closing interrupts even when I may not object");
+    assert.match(p10.text, /возражать не тебе/);
+    assert.doesNotMatch(p10.text, /ты можешь возразить/);
   } finally {
     await rec.stop();
   }
 });
 
-// Today's production may not send event_kind yet: the old top-level kinds keep their way,
-// and frames that are not room frames never meet the dictionary.
-test("room kinds leave non-room frames alone and keep the old shape: a direct word, a graph event and old text interrupt steer; old text defer and auto queue", async () => {
+// Today's production (api 0.86.0) sends no event_kind: a room frame keeps main's way —
+// its own stack, whatever its old kind — and frames that are not room frames never meet
+// the dictionary. A guard: it holds main's behaviour, so it is green on main by design.
+test("room kinds leave non-room frames and the old room shape as on main: every old kind by its own stack, no unknown path", async () => {
   const b = bridgeEnv("room-legacy");
   const rec = await plugin(b.env);
   try {
@@ -1783,8 +1794,11 @@ test("room kinds leave non-room frames alone and keep the old shape: a direct wo
       [legacyRoom("text", "interrupt", 71), "steer"],
       [legacyRoom("text", "defer", 72), "queue"],
       [legacyRoom("text", undefined, 73), "steer"],
-      [legacyRoom("auto", "interrupt", 74), "queue"],
-      [legacyRoom("vote", "interrupt", 75), "queue"],
+      [legacyRoom("auto", "interrupt", 74), "steer"],
+      [legacyRoom("direct", "interrupt", 75), "steer"],
+      [legacyRoom("digest", "defer", 76), "queue"],
+      [legacyRoom("important", "interrupt", 77), "steer"],
+      [legacyRoom("ledger", "defer", 78), "queue"],
     ];
     for (const [i, [frame, way]] of cases.entries()) {
       appendFileSync(`${b.events}.${pid}`, event("frame", { frame, raw: JSON.stringify(frame) }));
@@ -1801,9 +1815,13 @@ test("room kinds leave non-room frames alone and keep the old shape: a direct wo
       /КОМНАТЫ|мосту неизвестен/,
       "a graph event is not a room frame",
     );
-    assert.match(rec.prompts[2].text, /слово КОМНАТЫ «Стенд»: слово от @aleksei:probe/);
-    assert.match(rec.prompts[5].text, /запись КОМНАТЫ «Стенд»: техническая запись комнаты/);
-    assert.match(rec.prompts[6].text, /род vote мосту неизвестен/);
+    assert.match(rec.prompts[2].text, /слово КОМНАТЫ «Стенд», род text, стопка interrupt/);
+    assert.match(rec.prompts[5].text, /запись КОМНАТЫ «Стенд», род auto, стопка interrupt\n/);
+    assert.match(rec.prompts[7].text, /запись КОМНАТЫ «Стенд», род digest, стопка defer\n/);
+    assert.ok(
+      rec.prompts.every((p) => !/мосту неизвестен/.test(p.text)),
+      "no old kind takes the unknown path",
+    );
   } finally {
     await rec.stop();
   }

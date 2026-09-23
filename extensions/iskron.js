@@ -65,7 +65,6 @@ var WORDS = {
   accepted: "{target} принял приглашение",
   node: "в комнате узел #{seq} {name} ({realm})",
   link: "комната связана с {room}",
-  legacy_auto: "техническая запись комнаты",
   unknown: "род {kind} мосту неизвестен"
 };
 var RULES = {
@@ -83,27 +82,17 @@ var RULES = {
   withdraw: "batch",
   accepted: "batch",
   node: "batch",
-  link: "batch",
-  legacy_auto: "batch"
+  link: "batch"
 };
 var obj = (v) => v && typeof v === "object" && !Array.isArray(v) ? v : {};
 var str = (v) => typeof v === "string" ? v : typeof v === "number" || typeof v === "boolean" ? String(v) : "";
-var LEGACY = { text: "said", auto: "legacy_auto" };
-function kindOf(frame) {
-  const ek = frame.event_kind;
-  if (typeof ek === "string") return ek.startsWith("room.") ? ek.slice(5) : "";
-  if (typeof frame.room === "object" && frame.room && typeof frame.kind === "string")
-    return LEGACY[frame.kind] ?? frame.kind.replace(/^room\./, "");
-  return "";
-}
-function authorOf(line, frame) {
+function authorOf(line) {
   const a = obj(line.author);
-  const p = obj(frame.provenance);
   const name = str(a.name);
-  const standing = str(a.standing) || (line.author ? "" : str(p.from_standing));
+  const standing = str(a.standing);
   if (name) return standing ? `${name} (${standing})` : name;
   if (standing) return standing;
-  return a.kind === "platform" || p.auth === "platform" ? "платформа" : "?";
+  return a.kind === "platform" ? "платформа" : "?";
 }
 var after = (key, prefix) => key.startsWith(prefix) ? key.slice(prefix.length) : key;
 function fill(template, v) {
@@ -113,15 +102,13 @@ function fill(template, v) {
     return x || "?";
   });
 }
-var mineOf = (frame) => {
-  const to = str(frame.to_standing);
-  return to ? [to] : [];
-};
+var mineOf = (frame) => [str(frame.to_standing_id), str(frame.to_standing)].filter(Boolean);
 function roomKind(frame) {
   if (!frame || typeof frame !== "object") return null;
   const f = frame;
-  const kind = kindOf(f);
-  if (!kind) return null;
+  const ek = f.event_kind;
+  if (typeof ek !== "string" || !ek.startsWith("room.")) return null;
+  const kind = ek.slice(5);
   const line = obj(f.line);
   const fields = obj(line.fields);
   const key = str(line.key);
@@ -129,7 +116,7 @@ function roomKind(frame) {
   const node = obj(fields.node);
   const values = {
     kind,
-    author: authorOf(line, f),
+    author: authorOf(line),
     key,
     done: line.done,
     verdict: line.verdict,
@@ -146,10 +133,11 @@ function roomKind(frame) {
   };
   const rule = RULES[kind];
   if (!rule) return { kind, rule: "batch", words: fill(WORDS.unknown, values), known: false };
-  let words = fill(WORDS[kind] ?? WORDS.unknown, values);
+  let words = fill(WORDS[kind], values);
   if (kind === "closing") {
     const may = Array.isArray(fields.may_object) ? fields.may_object.map(str) : [];
-    const mayI = mine.some((m) => may.includes(m));
+    const myId = str(f.to_standing_id);
+    const mayI = !!myId && may.includes(myId);
     words += "; " + fill(mayI ? WORDS.closing_may : WORDS.closing_not, values);
   }
   const stack = rule === "stack" ? (
@@ -158,7 +146,8 @@ function roomKind(frame) {
   ) : rule === "mine" ? mine.includes(str(values.target)) ? "interrupt" : "batch" : rule;
   return { kind, rule: stack, words, known: true };
 }
-var stackOf = (frame) => roomKind(frame)?.rule ?? "interrupt";
+var byKind = (frame) => roomKind(frame) !== null;
+var stackOf = (frame) => roomKind(frame)?.rule ?? (frame?.stack === "defer" ? "batch" : "interrupt");
 
 // js/shared/frame-text.ts
 var NOT_ENVELOPE = /* @__PURE__ */ new Set(["body", "provenance", "type", "origin"]);
@@ -176,7 +165,8 @@ ${raw}`;
   if (room && typeof room === "object") {
     const zachin = typeof room.zachin === "string" ? ` «${room.zachin}»` : "";
     const rk = roomKind(frame);
-    const words = rk ? `: ${rk.words}` : "";
+    const f = frame;
+    const words = rk ? `: ${rk.words}` : (typeof f.kind === "string" ? `, род ${f.kind}` : "") + (typeof f.stack === "string" ? `, стопка ${f.stack}` : "");
     lines.push(
       origin === "platform" ? `запись КОМНАТЫ${zachin}${words}` : `слово КОМНАТЫ${zachin}${words} — ответ идёт записью в ту же комнату с in_reply_to по id слова (ход для комнат — в списке тулов сессии), не send стоянию`
     );
@@ -196,6 +186,8 @@ ${body}`;
 
 // js/bridge/backlog.ts
 var BACKLOG_MS = Number(process.env.ISKRON_BRIDGE_BACKLOG_MS) || 1500;
+
+// js/bridge/roomstack.ts
 var ROOM_BATCH_MS = Number(process.env.ISKRON_BRIDGE_ROOM_BATCH_MS) || 6e4;
 
 // js/bridge/holdrecord.ts
@@ -229,6 +221,7 @@ function setupChannel(pi) {
           return;
         }
         if (frame?.type === "status") return;
+        const later = byKind(frame) && stackOf(frame) === "batch";
         pi.sendMessage(
           {
             customType: "iskron-channel",
@@ -236,7 +229,7 @@ function setupChannel(pi) {
             display: true,
             details: frame ?? { raw }
           },
-          { triggerTurn: true, deliverAs: stackOf(frame) === "batch" ? "followUp" : "steer" }
+          { triggerTurn: true, deliverAs: later ? "followUp" : "steer" }
         );
         return;
       }

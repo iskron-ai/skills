@@ -374,7 +374,7 @@ function deliverTo(d: Door, raw: string, frame: Frame | null, full: Frame | null
   if (msg) noteRoomKind(msg);
   // Сторожам кадр комнаты «в пачку» — пачкой по окну, прерывающий — после накопленного (roomstack.ts).
   const toBatch = (b: ChannelEvent): void => (d.broadcast(b), notify("info", keyed(d, b)));
-  if (msg && !notifiedClient() && batchForWatchdogs(d, msg, toBatch)) return;
+  if (msg && !notifiedClient() && batchForWatchdogs(d, text, msg, toBatch)) return;
   if (!again) for (const x of hello ? doors() : [d]) x.broadcast(ev);
   if (full?.type === "status") return;
   if (again) return log(`frame ${id} came again — already delivered, not raised`);

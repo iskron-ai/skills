@@ -1,9 +1,9 @@
 // Словарь родов комнаты: технический кадр комнаты — слово и стопка (граф
-// nks-dev: #5851, форма провода — #5893). Решает `event_kind: "room.<род>"`;
-// верхний `kind` — лишь переходный запасной путь, когда event_kind нет.
-// Правила — кодом (RULES и stackOf), слова — ДАННЫМИ (WORDS): локализация
-// заменит таблицу, не код. Одно решение о пути кадра — stackOf, его читают
-// мост (пачка для сторожей), плагин OpenCode и расширение pi.
+// nks-dev: #5851, форма провода — #5893). Решает только `event_kind:
+// "room.<род>"`. Кадр без event_kind (сегодняшний бой: верхний kind со своей
+// стопкой) словарь не трогает: путь у него прежний — у каждого харнеса свой,
+// как до словаря. Правила — кодом (RULES и stackOf), слова — ДАННЫМИ (WORDS):
+// локализация заменит таблицу, не код.
 import { type Frame } from "./channel.ts";
 
 /** Куда идёт кадр: прервать идущий ход или лечь в пачку. */
@@ -31,7 +31,6 @@ export const WORDS: Readonly<Record<string, string>> = {
   accepted: "{target} принял приглашение",
   node: "в комнате узел #{seq} {name} ({realm})",
   link: "комната связана с {room}",
-  legacy_auto: "техническая запись комнаты",
   unknown: "род {kind} мосту неизвестен",
 };
 
@@ -56,7 +55,6 @@ const RULES: Readonly<Record<string, Rule>> = {
   accepted: "batch",
   node: "batch",
   link: "batch",
-  legacy_auto: "batch",
 };
 
 export interface RoomKind {
@@ -75,32 +73,14 @@ const obj = (v: unknown): Rec =>
 const str = (v: unknown): string =>
   typeof v === "string" ? v : typeof v === "number" || typeof v === "boolean" ? String(v) : "";
 
-/**
- * Прежние роды верхнего kind (конверт комнаты до event_kind): text — слово
- * участника со своей стопкой, auto — техническая запись, в пачку. Прочий
- * прежний род — путь неизвестного.
- */
-const LEGACY: Readonly<Record<string, string>> = { text: "said", auto: "legacy_auto" };
-
-/** Род кадра комнаты; "" — кадр не кадр комнаты, словарь его не трогает. */
-function kindOf(frame: Rec): string {
-  const ek = frame.event_kind;
-  if (typeof ek === "string") return ek.startsWith("room.") ? ek.slice(5) : "";
-  // Переходно: event_kind нет — верхний kind конверта комнаты, прежние роды по LEGACY.
-  if (typeof frame.room === "object" && frame.room && typeof frame.kind === "string")
-    return LEGACY[frame.kind] ?? frame.kind.replace(/^room\./, "");
-  return "";
-}
-
-/** Кто написал строку: имя (стояние), иначе стояние, иначе платформа; без line — по провенансу. */
-function authorOf(line: Rec, frame: Rec): string {
+/** Кто написал строку: имя (стояние), иначе стояние, иначе платформа. */
+function authorOf(line: Rec): string {
   const a = obj(line.author);
-  const p = obj(frame.provenance);
   const name = str(a.name);
-  const standing = str(a.standing) || (line.author ? "" : str(p.from_standing));
+  const standing = str(a.standing);
   if (name) return standing ? `${name} (${standing})` : name;
   if (standing) return standing;
-  return a.kind === "platform" || p.auth === "platform" ? "платформа" : "?";
+  return a.kind === "platform" ? "платформа" : "?";
 }
 
 const after = (key: string, prefix: string): string =>
@@ -114,18 +94,17 @@ function fill(template: string, v: Rec): string {
   });
 }
 
-/** Свои стояния кадра: место, которому он пришёл. */
-const mineOf = (frame: Rec): string[] => {
-  const to = str(frame.to_standing);
-  return to ? [to] : [];
-};
+/** Своё стояние кадра для ключа invite — id места и его адрес: формат ключа (#5893 §4.2) ещё не подтверждён. */
+const mineOf = (frame: Rec): string[] =>
+  [str(frame.to_standing_id), str(frame.to_standing)].filter(Boolean);
 
-/** Технический кадр комнаты — род, правило, слово; null — кадр не такой. */
+/** Технический кадр комнаты (event_kind room.*) — род, правило, слово; null — словарь кадр не решает. */
 export function roomKind(frame: Frame | null | undefined): RoomKind | null {
   if (!frame || typeof frame !== "object") return null;
   const f = frame as Rec;
-  const kind = kindOf(f);
-  if (!kind) return null;
+  const ek = f.event_kind;
+  if (typeof ek !== "string" || !ek.startsWith("room.")) return null;
+  const kind = ek.slice(5);
   const line = obj(f.line);
   const fields = obj(line.fields);
   const key = str(line.key);
@@ -133,7 +112,7 @@ export function roomKind(frame: Frame | null | undefined): RoomKind | null {
   const node = obj(fields.node);
   const values: Rec = {
     kind,
-    author: authorOf(line, f),
+    author: authorOf(line),
     key,
     done: line.done,
     verdict: line.verdict,
@@ -150,10 +129,12 @@ export function roomKind(frame: Frame | null | undefined): RoomKind | null {
   };
   const rule = RULES[kind];
   if (!rule) return { kind, rule: "batch", words: fill(WORDS.unknown, values), known: false };
-  let words = fill(WORDS[kind] ?? WORDS.unknown, values);
+  let words = fill(WORDS[kind], values);
   if (kind === "closing") {
+    // may_object несёт только id стояний, как to_standing_id; адреса @h:имя там не бывает.
     const may = Array.isArray(fields.may_object) ? fields.may_object.map(str) : [];
-    const mayI = mine.some((m) => may.includes(m));
+    const myId = str(f.to_standing_id);
+    const mayI = !!myId && may.includes(myId);
     words += "; " + fill(mayI ? WORDS.closing_may : WORDS.closing_not, values);
   }
   const stack: Stack =
@@ -170,6 +151,13 @@ export function roomKind(frame: Frame | null | undefined): RoomKind | null {
   return { kind, rule: stack, words, known: true };
 }
 
-/** Единственное решение о пути кадра: прервать ход или в пачку. Не кадр комнаты — прерывает, как прежде. */
+/** Решает ли путь кадра словарь: только у кадра с event_kind room.*; прочим — прежний путь харнеса. */
+export const byKind = (frame: Frame | null | undefined): boolean => roomKind(frame) !== null;
+
+/**
+ * Путь кадра: у кадра с event_kind — правило рода; у прочих — своя стопка
+ * кадра, как читал её плагин OpenCode до словаря (defer — в пачку).
+ */
 export const stackOf = (frame: Frame | null | undefined): Stack =>
-  roomKind(frame)?.rule ?? "interrupt";
+  roomKind(frame)?.rule ??
+  ((frame as Rec | null | undefined)?.stack === "defer" ? "batch" : "interrupt");

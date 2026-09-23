@@ -50,6 +50,7 @@ import {
   directWord,
   graphPosed,
   legacyRoom,
+  ME_ID,
   progress,
   roomFrame,
   said,
@@ -496,7 +497,9 @@ test("room kinds: closing steers despite stack=defer, progress and an unknown ki
       [unknownKind(), "followUp"],
       [said("interrupt", 62), "steer"],
       [said("defer", 63), "followUp"],
-      [roomFrame("invite", { entry_id: 64, key: "invite:@tester:proba" }), "steer"],
+      [roomFrame("invite", { entry_id: 64, key: `invite:${ME_ID}` }), "steer"],
+      [roomFrame("invite", { entry_id: 65, key: "invite:@tester:proba" }), "steer"],
+      [roomFrame("invite", { entry_id: 67, key: "invite:@other:x" }), "followUp"],
       [roomFrame("opened", { entry_id: 66 }), "followUp"],
     ];
     for (const [f] of cases) push(events, frame(f));
@@ -517,7 +520,9 @@ test("room kinds: closing steers despite stack=defer, progress and an unknown ki
   }
 });
 
-test("room kinds leave non-room frames alone and keep the old shape: a direct word, a graph event and old text interrupt steer; old text defer and auto follow up", async () => {
+// Today's production sends no event_kind: pi steered every room frame before the
+// dictionary, and still does. A guard of main's behaviour — green on main by design.
+test("room kinds leave non-room frames and the old room shape as on main: all steer", async () => {
   const { events, env } = eventsEnv("room-legacy");
   const rec = await session(env);
   try {
@@ -525,8 +530,10 @@ test("room kinds leave non-room frames alone and keep the old shape: a direct wo
       [directWord(), "steer"],
       [graphPosed(), "steer"],
       [legacyRoom("text", "interrupt", 71), "steer"],
-      [legacyRoom("text", "defer", 72), "followUp"],
-      [legacyRoom("auto", "interrupt", 74), "followUp"],
+      [legacyRoom("text", "defer", 72), "steer"],
+      [legacyRoom("auto", "interrupt", 74), "steer"],
+      [legacyRoom("direct", "interrupt", 75), "steer"],
+      [legacyRoom("digest", "defer", 76), "steer"],
     ];
     for (const [f] of cases) push(events, frame(f));
     await delay(400);

@@ -1970,7 +1970,6 @@ var WORDS = {
   accepted: "{target} принял приглашение",
   node: "в комнате узел #{seq} {name} ({realm})",
   link: "комната связана с {room}",
-  legacy_auto: "техническая запись комнаты",
   unknown: "род {kind} мосту неизвестен"
 };
 var RULES = {
@@ -1988,27 +1987,17 @@ var RULES = {
   withdraw: "batch",
   accepted: "batch",
   node: "batch",
-  link: "batch",
-  legacy_auto: "batch"
+  link: "batch"
 };
 var obj = (v) => v && typeof v === "object" && !Array.isArray(v) ? v : {};
 var str = (v) => typeof v === "string" ? v : typeof v === "number" || typeof v === "boolean" ? String(v) : "";
-var LEGACY = { text: "said", auto: "legacy_auto" };
-function kindOf(frame2) {
-  const ek = frame2.event_kind;
-  if (typeof ek === "string") return ek.startsWith("room.") ? ek.slice(5) : "";
-  if (typeof frame2.room === "object" && frame2.room && typeof frame2.kind === "string")
-    return LEGACY[frame2.kind] ?? frame2.kind.replace(/^room\./, "");
-  return "";
-}
-function authorOf(line, frame2) {
+function authorOf(line) {
   const a = obj(line.author);
-  const p = obj(frame2.provenance);
   const name = str(a.name);
-  const standing = str(a.standing) || (line.author ? "" : str(p.from_standing));
+  const standing = str(a.standing);
   if (name) return standing ? `${name} (${standing})` : name;
   if (standing) return standing;
-  return a.kind === "platform" || p.auth === "platform" ? "платформа" : "?";
+  return a.kind === "platform" ? "платформа" : "?";
 }
 var after = (key, prefix) => key.startsWith(prefix) ? key.slice(prefix.length) : key;
 function fill(template, v) {
@@ -2018,15 +2007,13 @@ function fill(template, v) {
     return x || "?";
   });
 }
-var mineOf = (frame2) => {
-  const to = str(frame2.to_standing);
-  return to ? [to] : [];
-};
+var mineOf = (frame2) => [str(frame2.to_standing_id), str(frame2.to_standing)].filter(Boolean);
 function roomKind(frame2) {
   if (!frame2 || typeof frame2 !== "object") return null;
   const f = frame2;
-  const kind = kindOf(f);
-  if (!kind) return null;
+  const ek = f.event_kind;
+  if (typeof ek !== "string" || !ek.startsWith("room.")) return null;
+  const kind = ek.slice(5);
   const line = obj(f.line);
   const fields = obj(line.fields);
   const key = str(line.key);
@@ -2034,7 +2021,7 @@ function roomKind(frame2) {
   const node = obj(fields.node);
   const values = {
     kind,
-    author: authorOf(line, f),
+    author: authorOf(line),
     key,
     done: line.done,
     verdict: line.verdict,
@@ -2051,10 +2038,11 @@ function roomKind(frame2) {
   };
   const rule = RULES[kind];
   if (!rule) return { kind, rule: "batch", words: fill(WORDS.unknown, values), known: false };
-  let words = fill(WORDS[kind] ?? WORDS.unknown, values);
+  let words = fill(WORDS[kind], values);
   if (kind === "closing") {
     const may = Array.isArray(fields.may_object) ? fields.may_object.map(str) : [];
-    const mayI = mine.some((m) => may.includes(m));
+    const myId = str(f.to_standing_id);
+    const mayI = !!myId && may.includes(myId);
     words += "; " + fill(mayI ? WORDS.closing_may : WORDS.closing_not, values);
   }
   const stack = rule === "stack" ? (
@@ -2063,7 +2051,8 @@ function roomKind(frame2) {
   ) : rule === "mine" ? mine.includes(str(values.target)) ? "interrupt" : "batch" : rule;
   return { kind, rule: stack, words, known: true };
 }
-var stackOf = (frame2) => roomKind(frame2)?.rule ?? "interrupt";
+var byKind = (frame2) => roomKind(frame2) !== null;
+var stackOf = (frame2) => roomKind(frame2)?.rule ?? (frame2?.stack === "defer" ? "batch" : "interrupt");
 
 // js/shared/frame-text.ts
 var NOT_ENVELOPE = /* @__PURE__ */ new Set(["body", "provenance", "type", "origin"]);
@@ -2081,7 +2070,8 @@ ${raw}`;
   if (room && typeof room === "object") {
     const zachin = typeof room.zachin === "string" ? ` «${room.zachin}»` : "";
     const rk = roomKind(frame2);
-    const words = rk ? `: ${rk.words}` : "";
+    const f = frame2;
+    const words = rk ? `: ${rk.words}` : (typeof f.kind === "string" ? `, род ${f.kind}` : "") + (typeof f.stack === "string" ? `, стопка ${f.stack}` : "");
     lines.push(
       origin === "platform" ? `запись КОМНАТЫ${zachin}${words}` : `слово КОМНАТЫ${zachin}${words} — ответ идёт записью в ту же комнату с in_reply_to по id слова (ход для комнат — в списке тулов сессии), не send стоянию`
     );
@@ -2101,34 +2091,21 @@ ${body}`;
 
 // js/bridge/backlog.ts
 var BACKLOG_MS = Number(process.env.ISKRON_BRIDGE_BACKLOG_MS) || 1500;
-var ROOM_BATCH_MS = Number(process.env.ISKRON_BRIDGE_ROOM_BATCH_MS) || 6e4;
 var BACKLOG_KEEP = 20;
 var BODY_CAP = 800;
 var at = (f) => typeof f.received_at === "string" ? f.received_at : "";
-var wakeHead = (count, expected, kept) => `Побудка: кадров ${count}` + (expected ? ` (ожидало в очереди: ${expected})` : "") + (count > kept ? `, здесь первые ${kept}` : "") + ' — пришли одной пачкой; разбери все, а не последний: полностью и остальное — iskron_channel(action="history", view="log").';
-var roomHead = (count, _expected, kept) => `Комната: кадров ${count}` + (count > kept ? `, здесь первые ${kept}` : "") + ' — накопились, не прерывая хода; разбери по порядку; полностью — iskron_channel(action="history").';
 var Backlog = class {
   frames = [];
   total = 0;
   pending = 0;
   timer = null;
   flush = null;
-  windowMs;
-  head;
-  constructor(windowMs = BACKLOG_MS, head = wakeHead) {
-    this.windowMs = windowMs;
-    this.head = head;
-  }
   /** Открыть окно — по hello с pending либо по кадру платформы; открытое не продлевается, только пополняется. */
   open(expected, emit2) {
     this.pending = Math.max(this.pending, expected);
     this.flush = emit2;
     if (this.timer) return;
-    this.timer = setTimeout(() => this.close(), this.windowMs).unref();
-  }
-  /** Лежит ли кадр в копящейся пачке — кольцо не отдаёт его прицепившемуся отдельно (door.ts). */
-  holds(frame2) {
-    return !!frame2 && this.frames.includes(frame2);
+    this.timer = setTimeout(() => this.close(), BACKLOG_MS).unref();
   }
   /** Отдать накопленное сейчас — при отпускании стояния: неотданное не теряется молча. */
   flushNow() {
@@ -2157,7 +2134,7 @@ var Backlog = class {
       const t = frameToText(f, JSON.stringify(f));
       return [...t].length > BODY_CAP ? [...t].slice(0, BODY_CAP).join("") + "…" : t;
     });
-    const head = this.head(count, expected, got.length);
+    const head = `Побудка: кадров ${count}` + (expected ? ` (ожидало в очереди: ${expected})` : "") + (count > got.length ? `, здесь первые ${got.length}` : "") + ' — пришли одной пачкой; разбери все, а не последний: полностью и остальное — iskron_channel(action="history", view="log").';
     emit2({
       kind: "backlog",
       frames: got,
@@ -2229,6 +2206,54 @@ function redundantCopy(frame2, ring, seen, seenPath, burst) {
   if (stale) return burst.hasEvent(ev) ? ev : "";
   burst.dropEvent(ev);
   return "";
+}
+
+// js/bridge/roomstack.ts
+var ROOM_BATCH_MS = Number(process.env.ISKRON_BRIDGE_ROOM_BATCH_MS) || 6e4;
+var ROOM_BATCH_CAP = 20;
+var RoomBatch = class {
+  held = [];
+  timer = null;
+  emit = null;
+  add(raw, frame2, emit2) {
+    this.emit = emit2;
+    this.held.push({ raw, frame: frame2 });
+    if (this.held.length >= ROOM_BATCH_CAP) return this.flushNow();
+    this.timer ??= setTimeout(() => this.flushNow(), ROOM_BATCH_MS).unref();
+  }
+  /** Лежит ли кадр в копящейся пачке — кольцо не отдаёт его прицепившемуся отдельно (door.ts). */
+  holds(frame2) {
+    return !!frame2 && this.held.some((h) => h.frame === frame2);
+  }
+  /** Отдать накопленное сейчас: по окну, по полной пачке, перед прерывающим, при отпускании. */
+  flushNow() {
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = null;
+    const got = this.held.splice(0);
+    const emit2 = this.emit;
+    if (!got.length || !emit2) return;
+    const of = got.length;
+    emit2({
+      kind: "note",
+      text: `Комната: кадров ${of} — накопились, не прерывая хода; следом все по порядку; полностью — iskron_channel(action="history").`
+    });
+    got.forEach(
+      (h, i) => emit2({ kind: "frame", raw: h.raw, frame: h.frame, batch: { at: i + 1, of } })
+    );
+  }
+};
+function noteRoomKind(frame2) {
+  const rk = roomKind(frame2);
+  if (rk && !rk.known)
+    log(`room frame ${String(frame2.id ?? "?")}: ${rk.words} — batched, not interrupting`);
+}
+function batchForWatchdogs(d, raw, frame2, emit2) {
+  if (byKind(frame2) && stackOf(frame2) === "batch") {
+    d.roomBatch.add(raw, frame2, emit2);
+    return true;
+  }
+  d.roomBatch.flushNow();
+  return false;
 }
 
 // js/bridge/sweep.ts
@@ -2345,7 +2370,7 @@ var Door = class {
   stale = new StaleBurst();
   backlog = new Backlog();
   /** Пачка кадров комнаты рода «в пачку» — для сторожей, не для клиентов уведомлений (roomstack.ts, #5851). */
-  roomBatch = new Backlog(ROOM_BATCH_MS, roomHead);
+  roomBatch = new RoomBatch();
   /** id места у платформы (hello standings[].standing_id) — по нему кадр находит дверь и занятость — место. */
   standingId = null;
   server = null;
@@ -2675,21 +2700,6 @@ function routeFrame(frame2, primary) {
   };
 }
 
-// js/bridge/roomstack.ts
-function noteRoomKind(frame2) {
-  const rk = roomKind(frame2);
-  if (rk && !rk.known)
-    log(`room frame ${String(frame2.id ?? "?")}: ${rk.words} — batched, not interrupting`);
-}
-function batchForWatchdogs(d, frame2, flush) {
-  if (stackOf(frame2) === "batch") {
-    d.roomBatch.open(0, flush);
-    return d.roomBatch.note(frame2);
-  }
-  d.roomBatch.flushNow();
-  return false;
-}
-
 // js/bridge/hold.ts
 function keyFor() {
   const s = state.standing;
@@ -2906,7 +2916,7 @@ function deliverTo(d, raw, frame2, full) {
   const msg = full?.type === "message" && !again ? full : null;
   if (msg) noteRoomKind(msg);
   const toBatch = (b) => (d.broadcast(b), notify("info", keyed(d, b)));
-  if (msg && !notifiedClient() && batchForWatchdogs(d, msg, toBatch)) return;
+  if (msg && !notifiedClient() && batchForWatchdogs(d, text, msg, toBatch)) return;
   if (!again) for (const x of hello ? doors() : [d]) x.broadcast(ev);
   if (full?.type === "status") return;
   if (again) return log(`frame ${id} came again — already delivered, not raised`);
@@ -5090,9 +5100,8 @@ function runWatchdogCodex(argv2) {
           break;
         }
         case "stale":
-        case "backlog":
           void deliver2(
-            ev.text ?? "Искрон: пачка кадров",
+            ev.text ?? "Искрон: лежалые кадры",
             (ev.frames ?? []).flatMap((f) => deliveredKeys(f))
           );
           break;
@@ -5189,7 +5198,6 @@ function runWatchdog(argv2) {
           log2(ev.text ?? "");
           break;
         case "stale":
-        case "backlog":
           for (const line of wrapLines(ev.text ?? "")) log2(line);
           for (const f of ev.frames ?? [])
             for (const k of deliveredKeys(f)) noteSeen(seenPath, k, seen);
@@ -5231,6 +5239,7 @@ function runWatchdogExit(argv2) {
   }
   const seenPath = seenFilePathOf(target.authDir, target.key);
   const seen = seenIds(seenPath);
+  let woke = false;
   attach(target.path, {
     onEvent: (ev) => {
       switch (ev.kind) {
@@ -5238,20 +5247,21 @@ function runWatchdogExit(argv2) {
           const type = ev.frame?.type;
           if (type !== "message") return note2(`кадр ${type ?? "не разобран"} — не повод будить`);
           const id = frameId(ev);
-          if (seen.has(id)) return note2(`кадр ${id} уже отдан прежним взводом — не повод будить`);
-          if (stackOf(ev.frame) === "batch") {
-            for (const k of deliveredKeys(ev.frame)) noteSeen(seenPath, k, seen);
-            return note2(frameToText(ev.frame, ev.raw ?? ""));
+          const last = !ev.batch || ev.batch.at >= ev.batch.of;
+          if (seen.has(id)) {
+            note2(`кадр ${id} уже отдан прежним взводом — не повод будить`);
+            if (last && woke) process.exit(0);
+            return;
           }
           wake(ev.raw ?? "");
           noteSeen(seenPath, id, seen);
           const evKey = eventKeyOf(ev.frame);
           if (evKey) noteSeen(seenPath, evKey, seen);
-          process.exit(0);
+          woke = true;
+          if (last) process.exit(0);
           break;
         }
         case "stale":
-        case "backlog":
           for (const f of ev.frames ?? [])
             for (const k of deliveredKeys(f)) noteSeen(seenPath, k, seen);
           note2(ev.text ?? "лежалые кадры");
@@ -5310,7 +5320,7 @@ function openCodeMcpEntries(out4) {
     ...dirFiles(join13(homedir6(), ".config", "opencode")),
     ...upwards
   ];
-  const kindOf2 = (v) => {
+  const kindOf = (v) => {
     const e = v ?? {};
     const parts = [
       ...Array.isArray(e.command) ? e.command : e.command ? [e.command] : [],
@@ -5359,7 +5369,7 @@ function openCodeMcpEntries(out4) {
     try {
       const cfg = parse(text);
       for (const [name, v] of Object.entries(cfg.mcp ?? {})) {
-        const kind = kindOf2(v);
+        const kind = kindOf(v);
         if (!kind) continue;
         found++;
         if (v.enabled === false) {
