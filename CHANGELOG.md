@@ -1,5 +1,18 @@
 # Changelog
 
+## [6.12.0](https://github.com/iskron-ai/skills/compare/v6.11.0...v6.12.0) (2026-09-23)
+
+
+### Features
+
+* **architect:** скилл всякого ведущего комнаты; провенанс — в reasoning, posed_by — короткий адрес ([#176](https://github.com/iskron-ai/skills/issues/176)) ([6f54582](https://github.com/iskron-ai/skills/commit/6f54582ba1b3d98d88e23cbec8efd3cbfcd5457b))
+* **bridge:** место на каждый граф на одном канале — одна сессия держит стояния в нескольких графах ([#177](https://github.com/iskron-ai/skills/issues/177)) ([415715d](https://github.com/iskron-ai/skills/commit/415715d56604dd25e4f0602cde2a3885290cb363))
+
+
+### Bug Fixes
+
+* **bridge:** одно событие графа доходит до делателя один раз ([#174](https://github.com/iskron-ai/skills/issues/174)) ([4d6e849](https://github.com/iskron-ai/skills/commit/4d6e849979f800122d305828306ed6143632bb73))
+
 ## [6.11.0](https://github.com/iskron-ai/skills/compare/v6.10.2...v6.11.0) (2026-09-21)
 
 
