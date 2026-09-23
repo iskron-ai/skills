@@ -6,7 +6,7 @@ import { holdsChannel, ledKey } from "./hold.ts";
 import { keyOf } from "./holdrecord.ts";
 import { normKarta, normName } from "./names.ts";
 import { extraIn } from "./places.ts";
-import { otherRealm, resolveRealms } from "./realms.ts";
+import { canonRealm, otherRealm, resolveRealms, unknownRealm, unresolvedWord } from "./realms.ts";
 import { noteStanding, replyText } from "./standing.ts";
 import { post, state } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
@@ -20,7 +20,8 @@ import { type JsonRpcMessage } from "./types.ts";
  * правило сличает с местом того графа, если мост его уже ведёт. Возвращает ключ
  * ведомого места, когда просят другое, иначе null. Графы сличаются в
  * канонической форме @owner/slug (realms.ts): r5, nks-dev и @nks/nks-dev —
- * один граф, когда разрешены; неразрешённое имя — другой граф, не «тот же».
+ * один граф, когда разрешены; неразрешённое имя до сюда не доходит — отказ
+ * раньше (unresolvedRefusal).
  */
 export function leadsOtherPlace(realm: unknown, karta: unknown, name: unknown): string | null {
   const led = ledKey();
@@ -51,6 +52,23 @@ export async function resolveAgainstLed(realm: unknown): Promise<void> {
     const r = await callTool("iskron_realm", { action: "list" });
     return r.isError ? null : r.text;
   });
+}
+
+/** Графы мест, которые ведёт мост, — в канонической форме, где она известна. */
+export const heldRealms = (): string[] =>
+  [state.standing, ...state.places].filter((s) => !!s).map((s) => canonRealm(s?.realm));
+
+/**
+ * Имя графа, которое мост не разрешил, против графов своих мест: ни «тот же»
+ * (заблокировал бы место рядом), ни «другой» (обошёл бы правило одного места,
+ * #5154) — отказ вслух с просьбой о полном @owner/slug (#5838). Иначе null.
+ */
+export function unresolvedRefusal(realm: unknown): string | null {
+  if (!ledKey() || !state.standing) return null;
+  const held = [state.standing, ...state.places];
+  return held.some((s) => unknownRealm(realm, s.realm))
+    ? unresolvedWord(realm, heldRealms())
+    : null;
 }
 
 /** Слово отказа: совет по тому, ЧЕМ просимое место отличается от ведомого. */
@@ -94,6 +112,8 @@ export function crossPlaceRefusal(msg: JsonRpcMessage): JsonRpcMessage | null {
   const a = msg.params.arguments ?? {};
   if (!["connect", "mint", "register"].includes(String(a.action))) return null;
   const realm = typeof a.realm === "string" ? a.realm.trim() : "";
+  const unresolved = unresolvedRefusal(realm);
+  if (unresolved) return refusal(msg, unresolved);
   if (a.action !== "register") {
     const word = besideRefusal(realm, "connect");
     if (word) return refusal(msg, word);

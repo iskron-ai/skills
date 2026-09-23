@@ -2390,7 +2390,7 @@ var joinName = (p) => [p.host, p.repo, p.model].filter(Boolean).join(".");
 
 // js/bridge/realms.ts
 var aliases = /* @__PURE__ */ new Map();
-var listed = null;
+var listing = null;
 var CANON_RE = /@[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+/;
 var trimmed = (r) => String(r ?? "").trim();
 function canonRealm(r) {
@@ -2398,11 +2398,18 @@ function canonRealm(r) {
   if (t.startsWith("@")) return t;
   return aliases.get(t) ?? t;
 }
-function sameRealm(a, b) {
-  const x = canonRealm(a);
-  return !!x && x === canonRealm(b);
+var resolvedRealm = (r) => canonRealm(r).startsWith("@");
+function realmRelation(a, b) {
+  const x = trimmed(a);
+  const y = trimmed(b);
+  if (x && x === y) return "same";
+  if (!resolvedRealm(x) || !resolvedRealm(y)) return "unknown";
+  return canonRealm(x) === canonRealm(y) ? "same" : "other";
 }
-var otherRealm = (a, b) => !!trimmed(a) && !!trimmed(b) && !sameRealm(a, b);
+var sameRealm = (a, b) => realmRelation(a, b) === "same";
+var otherRealm = (a, b) => !!trimmed(a) && !!trimmed(b) && realmRelation(a, b) === "other";
+var unknownRealm = (a, b) => !!trimmed(a) && !!trimmed(b) && realmRelation(a, b) === "unknown";
+var unresolvedWord = (realm, held2) => `Отказано (мост): граф «${trimmed(realm)}» мост не разрешил в @owner/slug (списка графов нет или имени в нём нет) — тот ли это граф, что у мест моста (${held2.join(", ")}), не известно, и гадать нельзя. Повтори вызов с полным адресом графа @owner/slug.`;
 function learnRealm(alias, canonical) {
   const t = trimmed(alias);
   if (t && !t.startsWith("@") && CANON_RE.test(canonical)) aliases.set(t, canonical);
@@ -2421,18 +2428,18 @@ function learnRealmList(text) {
   for (const [slug, cs] of slugs) if (cs.length === 1) learnRealm(slug, cs[0]);
 }
 async function resolveRealms(names2, list) {
-  const open = names2.map(trimmed).filter((t) => t && !t.startsWith("@") && !aliases.has(t));
+  const open = names2.map(trimmed).filter((t) => t && !resolvedRealm(t));
   if (!open.length) return;
-  listed ??= list().then(
+  listing ??= list().then(
     (text) => {
       if (text) learnRealmList(text);
-      else listed = null;
     },
     () => {
-      listed = null;
     }
-  );
-  await listed;
+  ).finally(() => {
+    listing = null;
+  });
+  await listing;
 }
 
 // js/bridge/places.ts
@@ -2502,9 +2509,9 @@ var nameOfAddress = (a) => typeof a === "string" ? a.replace(/^.*:/, "") : "";
 var all = (primary) => [...primary ? [primary] : [], ...extraPlaces()];
 var unresolved = (realm) => !canonRealm(realm).startsWith("@");
 function learnFromHello(hello, primary) {
-  const listed2 = Array.isArray(hello?.standings) ? hello.standings : [];
+  const listed = Array.isArray(hello?.standings) ? hello.standings : [];
   for (const p of all(primary)) {
-    const same = listed2.filter(
+    const same = listed.filter(
       (e2) => nameOfAddress(e2.standing) === (p.standing.name ?? "") && (e2.karta_seq == null || String(e2.karta_seq) === String(p.standing.karta))
     );
     const mine = same.filter((e2) => sameRealm(e2.realm, p.standing.realm));
@@ -2612,6 +2619,10 @@ function statusAddress(realm) {
   const d = (realm ? extraIn(realm)?.door : void 0) ?? door;
   return { url: currentStatusUrl, key: d?.key ?? currentKey, standingId: d?.standingId ?? null };
 }
+var heldPlaces = () => [
+  ...door && state.standing ? [{ key: door.key, realm: state.standing.realm, primary: true }] : [],
+  ...extraPlaces().map((p) => ({ key: p.door.key, realm: p.standing.realm, primary: false }))
+];
 var besideKeyIn = (realm) => extraIn(realm)?.door.key ?? null;
 var isParked = (realm, karta, name) => parked && isOwn(realm, karta, name);
 function listenerIdleSince() {
@@ -3095,6 +3106,12 @@ async function resolveAgainstLed(realm) {
     return r.isError ? null : r.text;
   });
 }
+var heldRealms = () => [state.standing, ...state.places].filter((s) => !!s).map((s) => canonRealm(s?.realm));
+function unresolvedRefusal(realm) {
+  if (!ledKey() || !state.standing) return null;
+  const held2 = [state.standing, ...state.places];
+  return held2.some((s) => unknownRealm(realm, s.realm)) ? unresolvedWord(realm, heldRealms()) : null;
+}
 function otherPlaceWord(led, asked, sameName = false) {
   const advice = led === asked ? "ключи совпали — это то же место: повтори iskron_stand с take=true, чтобы переоткрыть его сознательно" : sameName ? "то же имя под другой ролью (оно вывелось из того же каталога) — передай другое name, либо iskron_stand с take=true, чтобы сменить место этого моста" : "занять другое место вместо этого — iskron_stand с take=true (прежнее останется на доске без слуха; ненужное сними revoke)";
   return `Отказано (мост): этот мост уже ведёт место ${led} — в графе место одно на мост, и место ${asked} его сняло бы с сокета молча. ${advice.charAt(0).toUpperCase()}${advice.slice(1)}; держать оба разом — второй мост, то есть другая сессия харнесса; место в другом графе встаёт рядом само.`;
@@ -3116,6 +3133,8 @@ function crossPlaceRefusal(msg) {
   const a = msg.params.arguments ?? {};
   if (!["connect", "mint", "register"].includes(String(a.action))) return null;
   const realm = typeof a.realm === "string" ? a.realm.trim() : "";
+  const unresolved2 = unresolvedRefusal(realm);
+  if (unresolved2) return refusal(msg, unresolved2);
   if (a.action !== "register") {
     const word = besideRefusal(realm, "connect");
     if (word) return refusal(msg, word);
@@ -3193,7 +3212,7 @@ async function publishStatus(text, realm, everyPlace = false) {
       body: "Отказано (мост): этот мост места не держит, статусного адреса у него нет."
     };
   }
-  if (!everyPlace && !addr.standingId && addr.key !== statusAddress()?.key)
+  if (!everyPlace && !addr.standingId && heldPlaces().length > 1)
     return {
       ok: false,
       body: `Отказано (мост): id места ${addr.key} у моста ещё не известен (hello его не назвал) — без него строка легла бы на все места канала; повтори iskron_stand этого графа.`
@@ -3275,9 +3294,12 @@ var DEAF_MS = Number(process.env.ISKRON_BRIDGE_DEAF_MS) || 15 * 6e4;
 var TICK_MS = Math.min(6e4, Math.max(200, Math.floor(DEAF_MS / 5)));
 var deafWithoutListener = () => !notifiedClient();
 var keptStatus = "";
+var keptBeside = [];
 async function leaveStanding(reason) {
+  const beside = heldPlaces().filter((p) => !p.primary).map((p) => ({ realm: p.realm, text: readHoldRecord(p.key)?.status ?? "" })).filter((k) => k.text);
   const parked2 = parkStanding(reason);
   if (!parked2) return "мост места не держит — уходить неоткуда";
+  keptBeside = beside;
   keptStatus = publishedStatus();
   const st = await publishStatus("", void 0, true);
   if (st.ok && keptStatus) rememberStatus(keptStatus);
@@ -3296,6 +3318,10 @@ function returnToStanding(how) {
       if (!st.ok) log(`busy line not restored after the return: ${st.body}`);
     });
   }
+  for (const k of keptBeside.splice(0))
+    void publishStatus(k.text, k.realm).then((st) => {
+      if (!st.ok) log(`busy line of ${k.realm} not restored after the return: ${st.body}`);
+    });
   emit({
     jsonrpc: "2.0",
     method: "notifications/message",
@@ -3329,6 +3355,8 @@ function localLeave(msg) {
   });
   return (async () => {
     await resolveAgainstLed(realm);
+    const unresolved2 = unresolvedRefusal(realm);
+    if (unresolved2) return answer(unresolved2, true);
     const beside = besideKeyIn(realm);
     if (beside)
       return answer(
@@ -3930,6 +3958,11 @@ async function runStand(msg) {
     );
   }
   const room = typeof a.room === "string" && a.room.trim() ? a.room.trim() : null;
+  const unresolved2 = unresolvedRefusal(realm);
+  if (unresolved2) {
+    lines.push(unresolved2);
+    return done(true);
+  }
   const led = leadsOtherPlace(realm, karta, name);
   if (led && a.take !== true) {
     lines.push(otherPlaceWord(led, keyOf(realm, karta, name), name === ledName()));
@@ -4311,12 +4344,12 @@ function withNotice(reply2) {
   return reply2;
 }
 async function deliver(msg) {
-  const listing = msg?.method === "tools/list";
-  if (listing) harnessListing++;
+  const listing2 = msg?.method === "tools/list";
+  if (listing2) harnessListing++;
   try {
     await deliverOne(msg);
   } finally {
-    if (listing) harnessListing--;
+    if (listing2) harnessListing--;
   }
 }
 async function deliverOne(msg) {

@@ -878,11 +878,12 @@ const waitUntil = async (check, what, ms = 8000) => {
 const pause = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /** A bridge standing in graph A, then in graph B; returns what the cases read. */
-async function twoGraphs(t, A, B, init = INIT) {
+async function twoGraphs(t, A, B, init = INIT, beforeB = async () => {}) {
   const { fake, dir, bridge } = await ready(t, init);
   const stand = (args) => bridge.call("tools/call", { name: "iskron_stand", arguments: args });
   const a = await stand(A);
   assert.ok(!a.result?.isError, textOf(a));
+  await beforeB(fake);
   const b = await stand(B);
   assert.ok(!b.result?.isError, `the second graph's place must stand beside:\n${textOf(b)}`);
   // The key the listener block names (pi's block names none — the same form, computed).
@@ -1153,4 +1154,61 @@ test("two graphs: the stale batch and the wake batch are per place — each carr
     "both marked delivered",
   );
   assert.notDeepEqual(seenWith("wa-1"), seenWith("wb-1"), "the two places share one .seen");
+});
+
+test("a graph name the bridge cannot resolve is refused aloud — stand, bare register and leave ask for @owner/slug and name the held places; the list is re-read on each miss", async (t) => {
+  const { fake, bridge } = await ready(t);
+  const stand = (args) => bridge.call("tools/call", { name: "iskron_stand", arguments: args });
+  const channel = (args) => bridge.call("tools/call", { name: "iskron_channel", arguments: args });
+  const a = await stand({ realm: NKS, karta: 931, name: "proba" });
+  assert.ok(!a.result?.isError, textOf(a));
+  const connects = fake.state.counts.connect;
+  const registers = fake.state.counts.register_standing;
+  const refusedWith = (r, what) => {
+    assert.ok(r.result?.isError, `${what} must be refused:\n${textOf(r)}`);
+    assert.match(textOf(r), /не разрешил в @owner\/slug/, what);
+    assert.match(textOf(r), /полным адресом графа @owner\/slug/, what);
+    assert.ok(textOf(r).includes(NKS), `${what} names the held place's graph:\n${textOf(r)}`);
+  };
+  refusedWith(await stand({ realm: "r99", karta: 931, name: "vtoraya" }), "iskron_stand in r99");
+  const listsAfterFirst = fake.state.counts.realm_list;
+  refusedWith(
+    await channel({ realm: "r99", action: "register", karta: 931, name: "proba" }),
+    "a bare register in r99",
+  );
+  assert.ok(fake.state.counts.realm_list > listsAfterFirst, "a miss re-reads the graph list");
+  refusedWith(await channel({ realm: "r99", action: "leave" }), "leave in r99");
+  assert.equal(fake.state.counts.connect, connects, "nothing was connected");
+  assert.equal(fake.state.counts.register_standing, registers, "nothing was registered");
+});
+
+test("status in a graph whose place id is unknown is refused while the bridge holds two places; with one place a line without id still lands", async (t) => {
+  const { fake, bridge, idOf } = await twoGraphs(
+    t,
+    { realm: NKS, karta: 931, name: "proba" },
+    { realm: DRUGOY, karta: 48, name: "proba" },
+    INIT,
+    (f) => f.control({ registerNoId: true }),
+  );
+  const status = (realm, text) =>
+    bridge.call("tools/call", {
+      name: "iskron_channel",
+      arguments: { realm, action: "status", text },
+    });
+  const sb = await status(DRUGOY, "занят в B");
+  assert.ok(sb.result?.isError, `no id, two places — must refuse:\n${textOf(sb)}`);
+  assert.match(textOf(sb), /легла бы на все места канала/, textOf(sb));
+  assert.equal(fake.state.placeStatus.size, 0, "no line landed anywhere");
+  const sa = await status(NKS, "занят в A");
+  assert.ok(!sa.result?.isError, textOf(sa));
+  assert.equal(fake.state.placeStatus.get(idOf(NKS, "proba")), "занят в A");
+  assert.equal(fake.state.placeStatus.get(idOf(DRUGOY, "proba")), undefined, "B untouched");
+  // One place, id unknown: the line lands as before.
+  const one = await ready(t);
+  await one.fake.control({ registerNoId: true });
+  const s1 = await one.bridge.call("tools/call", {
+    name: "iskron_stand",
+    arguments: { realm: NKS, karta: 931, name: "odin", status: "один" },
+  });
+  assert.match(textOf(s1), /Занятость: один/, textOf(s1));
 });

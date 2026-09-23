@@ -18,6 +18,7 @@ import {
   otherPlaceWord,
   resolveAgainstLed,
   short,
+  unresolvedRefusal,
 } from "./call.ts";
 import { CFG } from "./config.ts";
 import {
@@ -150,6 +151,12 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   const room = typeof a.room === "string" && a.room.trim() ? a.room.trim() : null;
   // Стояние одно на мост (#5154): другое место при ведомом своём — только по
   // явному take=true; иначе отказ вслух, и ничего не тронуто.
+  // Имя графа, не разрешённое в @owner/slug, против графов своих мест — отказ, не догадка (#5838).
+  const unresolved = unresolvedRefusal(realm);
+  if (unresolved) {
+    lines.push(unresolved);
+    return done(true);
+  }
   const led = leadsOtherPlace(realm, karta, name);
   if (led && a.take !== true) {
     lines.push(otherPlaceWord(led, keyOf(realm, karta, name), name === ledName()));

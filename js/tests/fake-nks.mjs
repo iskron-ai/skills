@@ -292,6 +292,7 @@ export async function startFakeNks(opts = {}) {
         "silentNewSession",
         "standingRefuseNext",
         "standingSeatGoneNext",
+        "registerNoId", // ответ register без standing_id — id места мосту не известен
         "rooms",
         "boardText",
         "hooksText",
@@ -662,9 +663,10 @@ export async function startFakeNks(opts = {}) {
                     text:
                       `зарегистрировано: ${a.name}\n` +
                       JSON.stringify({
-                        standing_id: st.channels
-                          .get(st.standings.get(sid))
-                          ?.places.get(slug(a.realm))?.standing_id,
+                        standing_id: st.registerNoId
+                          ? undefined
+                          : st.channels.get(st.standings.get(sid))?.places.get(slug(a.realm))
+                              ?.standing_id,
                         channel_id: st.standings.get(sid),
                         opened: !!reg.added,
                       }),

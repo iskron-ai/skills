@@ -165,6 +165,14 @@ export function statusAddress(
   return { url: currentStatusUrl, key: d?.key ?? currentKey, standingId: d?.standingId ?? null };
 }
 
+/** Места, которые держит мост: основное первым, затем места других графов (#5838). */
+export const heldPlaces = (): { key: string; realm: string; primary: boolean }[] => [
+  ...(door && state.standing
+    ? [{ key: door.key, realm: state.standing.realm, primary: true }]
+    : []),
+  ...extraPlaces().map((p) => ({ key: p.door.key, realm: p.standing.realm, primary: false })),
+];
+
 /** Место другого графа, если вызов его называет: уход и занятость — места своего графа (#5838). */
 export const besideKeyIn = (realm: unknown): string | null => extraIn(realm)?.door.key ?? null;
 

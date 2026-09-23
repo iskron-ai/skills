@@ -7,7 +7,7 @@
 // надо раньше hello. Неразрешённое имя — само по себе, не «тот же граф».
 
 const aliases = new Map<string, string>(); // rN или slug → @owner/slug
-let listed: Promise<void> | null = null;
+let listing: Promise<void> | null = null; // чтение списка в полёте — одно на всех ждущих
 
 const CANON_RE = /@[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+/;
 const trimmed = (r: unknown): string => String(r ?? "").trim();
@@ -19,15 +19,37 @@ export function canonRealm(r: unknown): string {
   return aliases.get(t) ?? t;
 }
 
-/** Тот же ли граф — только по канонической форме; пустое не равно ничему. */
-export function sameRealm(a: unknown, b: unknown): boolean {
-  const x = canonRealm(a);
-  return !!x && x === canonRealm(b);
+/** Разрешено ли имя графа в @owner/slug. */
+export const resolvedRealm = (r: unknown): boolean => canonRealm(r).startsWith("@");
+
+/**
+ * Отношение двух имён графа: тот же, другой — или не известно. Одно и то же
+ * написание — тот же граф; иначе судят только канонические формы, а имя, не
+ * разрешённое в @owner/slug, даёт «не известно»: ни место рядом, ни правило
+ * одного места на нём не держатся — вызов отказывается вслух (#5838).
+ */
+export function realmRelation(a: unknown, b: unknown): "same" | "other" | "unknown" {
+  const x = trimmed(a);
+  const y = trimmed(b);
+  if (x && x === y) return "same";
+  if (!resolvedRealm(x) || !resolvedRealm(y)) return "unknown";
+  return canonRealm(x) === canonRealm(y) ? "same" : "other";
 }
 
-/** Другой ли граф: оба названы и канонически различны (неразрешённое имя — другое, не «тот же»). */
+/** Тот же ли граф наверняка. */
+export const sameRealm = (a: unknown, b: unknown): boolean => realmRelation(a, b) === "same";
+
+/** Другой ли граф наверняка: оба названы и разрешены в разные @owner/slug. */
 export const otherRealm = (a: unknown, b: unknown): boolean =>
-  !!trimmed(a) && !!trimmed(b) && !sameRealm(a, b);
+  !!trimmed(a) && !!trimmed(b) && realmRelation(a, b) === "other";
+
+/** Не известно, тот ли граф: имя не разрешилось — вызов отказывается, не гадает. */
+export const unknownRealm = (a: unknown, b: unknown): boolean =>
+  !!trimmed(a) && !!trimmed(b) && realmRelation(a, b) === "unknown";
+
+/** Слово отказа по неразрешённому имени графа; held — места моста в канонической форме. */
+export const unresolvedWord = (realm: unknown, held: string[]): string =>
+  `Отказано (мост): граф «${trimmed(realm)}» мост не разрешил в @owner/slug (списка графов нет или имени в нём нет) — тот ли это граф, что у мест моста (${held.join(", ")}), не известно, и гадать нельзя. Повтори вызов с полным адресом графа @owner/slug.`;
 
 /** Запомнить, что это имя графа — такой-то @owner/slug (hello, список графов). */
 export function learnRealm(alias: unknown, canonical: string): void {
@@ -55,23 +77,25 @@ export function learnRealmList(text: string): void {
 }
 
 /**
- * Разрешить имена графов в каноническую форму — один раз спросив список
- * графов, если среди них есть неразрешённое. `list` — вызов iskron_realm list.
+ * Разрешить имена графов в каноническую форму: есть неразрешённое — список
+ * графов перечитывается (граф мог появиться после прошлого чтения); прочтённое
+ * не держится навсегда отрицательным ответом. `list` — вызов iskron_realm list.
  */
 export async function resolveRealms(
   names: unknown[],
   list: () => Promise<string | null>,
 ): Promise<void> {
-  const open = names.map(trimmed).filter((t) => t && !t.startsWith("@") && !aliases.has(t));
+  const open = names.map(trimmed).filter((t) => t && !resolvedRealm(t));
   if (!open.length) return;
-  listed ??= list().then(
-    (text) => {
-      if (text) learnRealmList(text);
-      else listed = null; // список не прочитался — спросить в следующий раз
-    },
-    () => {
-      listed = null;
-    },
-  );
-  await listed;
+  listing ??= list()
+    .then(
+      (text) => {
+        if (text) learnRealmList(text);
+      },
+      () => {},
+    )
+    .finally(() => {
+      listing = null;
+    });
+  await listing;
 }

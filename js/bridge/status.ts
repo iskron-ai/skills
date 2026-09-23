@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { socketPathOf, standingsDirOf } from "../shared/standings.ts";
 import { resolveAgainstLed } from "./call.ts";
 import { CFG } from "./config.ts";
-import { rememberStatus, statusAddress } from "./hold.ts";
+import { heldPlaces, rememberStatus, statusAddress } from "./hold.ts";
 import { type HoldRecord, keyOf } from "./holdrecord.ts";
 import { localSocketAlive } from "./sweep.ts";
 import { type JsonRpcMessage } from "./types.ts";
@@ -64,8 +64,9 @@ export async function publishStatus(
       body: "Отказано (мост): этот мост места не держит, статусного адреса у него нет.",
     };
   }
-  // Место рядом без известного id — строка легла бы на все места канала: отказ вслух.
-  if (!everyPlace && !addr.standingId && addr.key !== statusAddress()?.key)
+  // Мест на канале несколько, а id этого не известен — строка легла бы на все: отказ вслух.
+  // Место одно — строка без id ложится на него же, как прежде.
+  if (!everyPlace && !addr.standingId && heldPlaces().length > 1)
     return {
       ok: false,
       body: `Отказано (мост): id места ${addr.key} у моста ещё не известен (hello его не назвал) — без него строка легла бы на все места канала; повтори iskron_stand этого графа.`,

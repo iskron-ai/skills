@@ -14,16 +14,18 @@
 //     место читалось бы слушающим при делателе, которого не разбудить;
 //     pi и OpenCode кадр получают уведомлением и глухими не бывают;
 //   • конец сессии: занятость снимается перед выходом (main.ts).
-import { resolveAgainstLed } from "./call.ts";
+import { resolveAgainstLed, unresolvedRefusal } from "./call.ts";
 import { notifiedClient } from "./client.ts";
 import {
   besideKeyIn,
+  heldPlaces,
   holdsStanding,
   ledKey,
   listenerIdleSince,
   localListeners,
   onListenerAttached,
   parkStanding,
+  readHoldRecord,
   rememberStatus,
   resumeStanding,
 } from "./hold.ts";
@@ -42,11 +44,19 @@ const deafWithoutListener = (): boolean => !notifiedClient();
 
 /** Строка занятости, снятая уходом, — возвращается вместе с местом. */
 let keptStatus = "";
+/** Строки мест других графов, снятые тем же уходом, — каждая своему месту (#5838). */
+let keptBeside: { realm: string; text: string }[] = [];
 
 /** Уйти с места: занятость снята, сокет закрыт, место цело. Возвращает слово о сделанном. */
 export async function leaveStanding(reason: string): Promise<string> {
+  // Строки мест рядом — из их записей держания, до того как уход их снимет.
+  const beside = heldPlaces()
+    .filter((p) => !p.primary)
+    .map((p) => ({ realm: p.realm, text: readHoldRecord(p.key)?.status ?? "" }))
+    .filter((k) => k.text);
   const parked = parkStanding(reason);
   if (!parked) return "мост места не держит — уходить неоткуда";
+  keptBeside = beside;
   keptStatus = publishedStatus();
   const st = await publishStatus("", undefined, true); // сокет закрыт у всех мест канала — и строка у всех
   // Снятая занятость остаётся в записи держания: мост, поднятый заново над
@@ -77,6 +87,11 @@ export function returnToStanding(how: string): boolean {
       if (!st.ok) log(`busy line not restored after the return: ${st.body}`);
     });
   }
+  // Каждое место рядом — своей строкой, не строкой основного (#5838).
+  for (const k of keptBeside.splice(0))
+    void publishStatus(k.text, k.realm).then((st) => {
+      if (!st.ok) log(`busy line of ${k.realm} not restored after the return: ${st.body}`);
+    });
   emit({
     jsonrpc: "2.0",
     method: "notifications/message",
@@ -116,6 +131,8 @@ export function localLeave(msg: JsonRpcMessage): Promise<JsonRpcMessage> | null 
   });
   return (async () => {
     await resolveAgainstLed(realm); // граф вызова и граф места — в одной форме (#5838)
+    const unresolved = unresolvedRefusal(realm);
+    if (unresolved) return answer(unresolved, true);
     // Сокет у мест канала общий (#5838): уход места другого графа закрыл бы слух всем — отказ вслух.
     const beside = besideKeyIn(realm);
     if (beside)
