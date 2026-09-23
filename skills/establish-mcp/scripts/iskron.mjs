@@ -2990,7 +2990,7 @@ async function replayBeside() {
   return whole;
 }
 function standingIdOf(reply2) {
-  const m = /"?standing_id"?\s*[:=]\s*"?([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i.exec(
+  const m = /id этого места[^\n]*\n\s*([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i.exec(
     replyText(reply2)
   );
   return m?.[1] ?? null;
@@ -3297,6 +3297,7 @@ var keptStatus = "";
 var keptBeside = [];
 async function leaveStanding(reason) {
   const beside = heldPlaces().filter((p) => !p.primary).map((p) => ({ realm: p.realm, text: readHoldRecord(p.key)?.status ?? "" })).filter((k) => k.text);
+  const leaving = heldPlaces().map((p) => p.key);
   const parked2 = parkStanding(reason);
   if (!parked2) return "мост места не держит — уходить неоткуда";
   keptBeside = beside;
@@ -3305,7 +3306,8 @@ async function leaveStanding(reason) {
   if (st.ok && keptStatus) rememberStatus(keptStatus);
   const line = st.ok ? "занятость снята" : `занятость не снята (${st.body})`;
   log(`left the standing: ${reason}; ${line}`);
-  return `ушёл с места ${parked2}: сокет закрыт, ${line}; адрес, очередь и хуки целы — почта копится и придёт при возвращении (сторож или iskron_stand)`;
+  const which = leaving.length > 1 ? `с мест ${leaving.join(", ")} (сокет канала у них общий)` : `с места ${parked2}`;
+  return `ушёл ${which}: сокет закрыт, ${line}; адрес, очередь и хуки целы — почта копится и придёт при возвращении (сторож или iskron_stand)`;
 }
 function returnToStanding(how) {
   if (!resumeStanding()) return false;
@@ -3395,6 +3397,60 @@ var listens = (e) => /(^|·)\s*слушает/.test(e.rest);
 function undelivered(e) {
   const m = /не доставлено\s+(\d+)/.exec(e.rest);
   return m ? Number(m[1]) : 0;
+}
+
+// js/bridge/hook.ts
+var adminParams = null;
+function adminParamNames() {
+  adminParams ??= (async () => {
+    const id = `iskron-bridge-admin-schema-${++state.reinitCounter}`;
+    let got = null;
+    await post({ jsonrpc: "2.0", id, method: "tools/list", params: {} }, (m) => {
+      if (m.id === id) got = m;
+    }).catch(() => {
+    });
+    const tools = got?.result?.tools;
+    const admin = Array.isArray(tools) ? tools.find(
+      (t) => t?.name === "iskron_admin"
+    ) : void 0;
+    const names2 = new Set(Object.keys(admin?.inputSchema?.properties ?? {}));
+    if (!names2.size) adminParams = null;
+    return names2;
+  })();
+  return adminParams;
+}
+async function armRoleHook(p) {
+  const { realm, karta, name } = p;
+  const hooks = await callTool("iskron_admin", { action: "list_webhooks", realm, node_id: karta });
+  const recognized = !hooks.isError && (/^\s*Вебхуки(?:\s|:|\(|$)/m.test(hooks.text) || /вебхуки не зарегистрированы/i.test(hooks.text));
+  const nameRe = new RegExp(`:${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![A-Za-z0-9._-])`);
+  const wakesMe = recognized && hooks.text.split(/\n(?=\s*#\d+\s*→)/).some((b) => /активен/.test(b) && nameRe.test(b));
+  if (p.sub)
+    return "Хук инбокса роли: отдельному месту не взводится — почту роли слушает основное место, комнаты доставляют своё сами.";
+  if (wakesMe) return "Хук инбокса роли: стоит и будит это стояние.";
+  if (!recognized)
+    return `Хук инбокса роли: список хуков не распознан — не трогаю (${short(hooks.text, 120)}).`;
+  if (!p.heardHere) return "Хук инбокса роли: не взвожу — слух у другого держателя.";
+  if (p.beside) {
+    if (!(await adminParamNames()).has("channel"))
+      return `Хук инбокса роли: не взведён — у места этого графа своего входящего адреса нет (адрес — у канала, открытого в графе ${p.channelRealm}), а тул iskron_admin(action="add_webhook") в этой поверхности параметра channel не объявляет; хук на канал (channel=self) взвести нечем — почта роли этого графа сокетом не приходит.`;
+    const h2 = await callTool("iskron_admin", {
+      action: "add_webhook",
+      realm,
+      node_id: karta,
+      channel: "self"
+    });
+    return h2.isError ? `Хук инбокса роли: на канал (channel=self) не взвёлся — ${short(h2.text)}` : `Хук инбокса роли: взведён на канал (channel=self) — почта роли этого графа идёт в тот же сокет месту этого графа (${short(h2.text, 120)}).`;
+  }
+  if (!p.incoming) return "Хук инбокса роли: не взведён — входящий адрес стояния не прочитался.";
+  const h = await callTool("iskron_admin", {
+    action: "add_webhook",
+    realm,
+    node_id: karta,
+    url: p.incoming
+    // без ttl_seconds: 0 снимает срок только в update_webhook; на добавлении его отвергает контур (слово архитектора, #5380)
+  });
+  return h.isError ? `Хук инбокса роли: не взвёлся — ${short(h.text)}` : `Хук инбокса роли: взведён на входящий адрес места (${short(h.text, 120)}).`;
 }
 
 // js/bridge/resume.ts
@@ -4125,34 +4181,20 @@ async function runStand(msg) {
         "hello за 4 с не пришёл — сокет мост держит, но доказательства слуха ещё нет: проверь доску."
       );
   }
-  const hooks = await callTool("iskron_admin", { action: "list_webhooks", realm, node_id: karta });
-  const hooksRecognized = !hooks.isError && (/^\s*Вебхуки(?:\s|:|\(|$)/m.test(hooks.text) || /вебхуки не зарегистрированы/i.test(hooks.text));
-  const nameRe = new RegExp(`:${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![A-Za-z0-9._-])`);
-  const wakesMe = hooksRecognized && hooks.text.split(/\n(?=\s*#\d+\s*→)/).some((b) => /активен/.test(b) && nameRe.test(b));
-  if (sub)
-    lines.push(
-      "Хук инбокса роли: отдельному месту не взводится — почту роли слушает основное место, комнаты доставляют своё сами."
-    );
-  else if (wakesMe) lines.push("Хук инбокса роли: стоит и будит это стояние.");
-  else if (!hooksRecognized)
-    lines.push(
-      `Хук инбокса роли: список хуков не распознан — не трогаю (${short(hooks.text, 120)}).`
-    );
-  else if (!heardHere) lines.push("Хук инбокса роли: не взвожу — слух у другого держателя.");
-  else if (!incoming)
-    lines.push("Хук инбокса роли: не взведён — входящий адрес стояния не прочитался.");
-  else {
-    const h = await callTool("iskron_admin", {
-      action: "add_webhook",
+  const main = state.standing;
+  lines.push(
+    await armRoleHook({
       realm,
-      node_id: karta,
-      url: incoming
-      // без ttl_seconds: 0 снимает срок только в update_webhook; на добавлении его отвергает контур (слово архитектора, #5380)
-    });
-    lines.push(
-      h.isError ? `Хук инбокса роли: не взвёлся — ${short(h.text)}` : `Хук инбокса роли: взведён (${short(h.text, 120)}).`
-    );
-  }
+      karta,
+      name,
+      incoming,
+      heardHere,
+      sub,
+      beside: !!main && otherRealm(realm, main.realm),
+      // место на канале, открытом в другом графе
+      channelRealm: main?.realm ?? realm
+    })
+  );
   if (room && !heardHere) {
     lines.push(
       `Комната ${room}: стук не отправлен — ответ комнаты ушёл бы держателю сокета, не сюда; нужен вход здесь — другим name; отбить место (take=true) — только словом человека.`

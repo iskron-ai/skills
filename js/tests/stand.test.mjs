@@ -941,6 +941,18 @@ test("two graphs: the second place stands beside the first on the same channel �
   );
   assert.match(textOf(b), /встаёт рядом на канале/, textOf(b));
   assert.ok(textOf(b).includes(`watchdog ${keyB}`), `B's block names B's key:\n${textOf(b)}`);
+  // The place id comes from the register reply's prose («🪪 id этого места»).
+  assert.doesNotMatch(
+    textOf(b),
+    /id места не назвал/,
+    `the register id was not parsed:\n${textOf(b)}`,
+  );
+  // Without a channel parameter on the hook tool, the reply says so and nothing breaks.
+  assert.match(
+    textOf(b),
+    /Хук инбокса роли: не взведён — у места этого графа своего входящего адреса нет/,
+    textOf(b),
+  );
   assert.ok(keyA !== keyB, `two places, two watchdog keys: ${keyA} / ${keyB}`);
   assert.equal(fake.state.counts.connect, 1, "the second place rides the same channel");
   // No reopen: the place id comes with register, the open socket carries the new place.
@@ -1211,4 +1223,41 @@ test("status in a graph whose place id is unknown is refused while the bridge ho
     arguments: { realm: NKS, karta: 931, name: "odin", status: "один" },
   });
   assert.match(textOf(s1), /Занятость: один/, textOf(s1));
+});
+
+test("two graphs: graph B's role hook is armed on the channel (channel=self), and a posed_to question in B reaches watchdog B only", async (t) => {
+  const { fake, b, keyA, keyB, watch } = await twoGraphs(
+    t,
+    { realm: NKS, karta: 931, name: "proba" },
+    { realm: DRUGOY, karta: 48, name: "proba" },
+    INIT,
+    (f) => f.control({ adminChannelSelf: true }),
+  );
+  assert.match(textOf(b), /Хук инбокса роли: взведён на канал \(channel=self\)/, textOf(b));
+  assert.ok(
+    fake.state.webhooks.some((w) => w.channel === "self" && w.karta === "48" && w.realm === DRUGOY),
+    "the hook was registered on the channel for B's role in B",
+  );
+  const wa = watch(keyA);
+  const wb = watch(keyB);
+  await waitUntil(() => wa.out.includes("слушаю стояние"), "watchdog A to attach");
+  await waitUntil(() => wb.out.includes("слушаю стояние"), "watchdog B to attach");
+  await fake.control({ posed_to: { realm: DRUGOY, karta: 48, text: "вопрос роли в B" } });
+  await waitUntil(() => wb.out.includes("вопрос роли в B"), "the posed_to event at watchdog B");
+  await pause(300);
+  assert.ok(!wa.out.includes("вопрос роли в B"), `B's question leaked to A:\n${wa.out}`);
+});
+
+test("two graphs: leave names every place it leaves — the socket is shared", async (t) => {
+  const { bridge, keyA, keyB } = await twoGraphs(
+    t,
+    { realm: NKS, karta: 931, name: "proba" },
+    { realm: DRUGOY, karta: 48, name: "proba" },
+  );
+  const left = await bridge.call("tools/call", {
+    name: "iskron_channel",
+    arguments: { realm: NKS, action: "leave" },
+  });
+  assert.ok(!left.result?.isError, textOf(left));
+  assert.ok(textOf(left).includes(keyA) && textOf(left).includes(keyB), textOf(left));
 });

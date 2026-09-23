@@ -34,6 +34,15 @@ function mintAccess(st) {
   return jwt({ exp: secs(st.snow()) + st.accessTtl - st.accessExpSkewSec });
 }
 
+// Ответ iskron_channel(action="register") — дословная форма живого сервера 0.74.0;
+// без id (registerNoId) строки id нет вовсе.
+const registeredText = (name, id) =>
+  `Эта сессия теперь говорит от стояния @tester:${name ?? "(unnamed)"}. Ничего не выпущено и никто не вытеснен — слушающий на этом стоянии слушать не перестал.\n` +
+  (id
+    ? `  🪪 id этого места — им сужают строку занятости до него одного, и его же берёт отзыв:\n     ${id}\n`
+    : "") +
+  "\n  Приписывание держится на сессии; …";
+
 // Один ws-кадр сервера клиенту (без маски): FIN + opcode, длина в одной из трёх форм.
 function wsFrame(opcode, payload) {
   const data = Buffer.isBuffer(payload) ? payload : Buffer.from(payload, "utf8");
@@ -293,6 +302,7 @@ export async function startFakeNks(opts = {}) {
         "standingRefuseNext",
         "standingSeatGoneNext",
         "registerNoId", // ответ register без standing_id — id места мосту не известен
+        "adminChannelSelf", // tools/list объявляет у iskron_admin параметр channel
         "rooms",
         "boardText",
         "hooksText",
@@ -302,6 +312,34 @@ export async function startFakeNks(opts = {}) {
         if (k in patch) st[k] = patch[k];
       }
       if (patch.message_full) st.messages.set(patch.message_full.id, patch.message_full.text);
+      // Вимарша posed_to роли в графе: хук channel:self доставляет её внутри службы —
+      // в сокет каждого канала, где у роли есть место этого графа, с to_standing_id места.
+      if (patch.posed_to) {
+        const { realm, karta, text, id } = patch.posed_to;
+        const canon = slug(realm);
+        const armed = st.webhooks.some(
+          (w) => w.channel === "self" && w.realm === canon && w.karta === String(karta) && w.active,
+        );
+        for (const [chanId, c] of armed ? st.channels : []) {
+          const pl = c.places.get(canon);
+          if (!pl || pl.karta !== String(karta)) continue;
+          const frame = {
+            type: "message",
+            id: id ?? token("posed"),
+            received_at: new Date().toISOString(),
+            stale: false,
+            content_type: "text/plain",
+            body_chars: text.length,
+            to_standing_id: pl.standing_id,
+            to_standing: `@tester:${pl.name}`,
+            realm: canon,
+            karta_seq: Number(pl.karta),
+            body: text,
+          };
+          for (const sock of st.ws)
+            if (st.wsChans.get(sock) === chanId) sock.write(wsFrame(0x1, JSON.stringify(frame)));
+        }
+      }
       // Чужое живое место на доске — как если бы его держал мост другой сессии.
       if (Array.isArray(patch.webhooks)) {
         for (const w of patch.webhooks) {
@@ -555,30 +593,48 @@ export async function startFakeNks(opts = {}) {
             jsonrpc: "2.0",
             id: msg.id,
             result: {
-              tools: st.richTools
+              tools: st.adminChannelSelf
                 ? [
+                    // Схема тула хуков объявляет channel — хук на канал ({"channel":"self"}).
                     {
-                      name: "iskron_orient",
-                      description: "Войдите в граф.",
-                      inputSchema: { type: "object" },
-                    },
-                    {
-                      name: "iskron_add_vimarsha",
-                      description: "Создай вопрошание.",
-                      inputSchema: { type: "object" },
-                    },
-                    {
-                      name: "iskron_batch",
-                      description: "Атомарная дельта.",
-                      inputSchema: { type: "object" },
-                    },
-                    {
-                      name: "iskron_channel",
-                      description: "Живой канал роли.",
-                      inputSchema: { type: "object" },
+                      name: "iskron_admin",
+                      description: "Администрирование: хуки роли.",
+                      inputSchema: {
+                        type: "object",
+                        properties: {
+                          action: { type: "string" },
+                          realm: { type: "string" },
+                          node_id: { type: "string" },
+                          url: { type: "string" },
+                          channel: { type: "string" },
+                        },
+                      },
                     },
                   ]
-                : [{ name: "nks_orient" }],
+                : st.richTools
+                  ? [
+                      {
+                        name: "iskron_orient",
+                        description: "Войдите в граф.",
+                        inputSchema: { type: "object" },
+                      },
+                      {
+                        name: "iskron_add_vimarsha",
+                        description: "Создай вопрошание.",
+                        inputSchema: { type: "object" },
+                      },
+                      {
+                        name: "iskron_batch",
+                        description: "Атомарная дельта.",
+                        inputSchema: { type: "object" },
+                      },
+                      {
+                        name: "iskron_channel",
+                        description: "Живой канал роли.",
+                        inputSchema: { type: "object" },
+                      },
+                    ]
+                  : [{ name: "nks_orient" }],
             },
           },
           extra,
@@ -644,7 +700,7 @@ export async function startFakeNks(opts = {}) {
               karta: reg.karta,
               name: reg.name,
               realm: a.realm,
-              incoming: `${base}/api/channel/in/mailbox-${reg.name}`,
+              incoming: null, // своего входящего адреса у места другого графа нет — он у канала (#5838)
               listening,
             });
           }
@@ -654,22 +710,19 @@ export async function startFakeNks(opts = {}) {
             {
               jsonrpc: "2.0",
               id: msg.id,
-              // RegisteredSession {standing_id, channel_id, opened} — как у настоящей поверхности;
-              // нового hello нет: сокет канала сам несёт кадры нового места.
+              // Ответ тула — проза, как на живом сервере 0.74.0: id места строкой после
+              // «🪪 id этого места». Нового hello нет: сокет канала сам несёт кадры нового места.
               result: {
                 content: [
                   {
                     type: "text",
-                    text:
-                      `зарегистрировано: ${a.name}\n` +
-                      JSON.stringify({
-                        standing_id: st.registerNoId
-                          ? undefined
-                          : st.channels.get(st.standings.get(sid))?.places.get(slug(a.realm))
-                              ?.standing_id,
-                        channel_id: st.standings.get(sid),
-                        opened: !!reg.added,
-                      }),
+                    text: registeredText(
+                      a.name,
+                      st.registerNoId
+                        ? null
+                        : st.channels.get(st.standings.get(sid))?.places.get(slug(a.realm))
+                            ?.standing_id,
+                    ),
                   },
                 ],
               },
@@ -703,7 +756,7 @@ export async function startFakeNks(opts = {}) {
               `  #${p.karta} 👨‍💻 Роль 能 · @tester:${p.name} — живой · простой 6h · ${p.pending ? `не доставлено ${p.pending} · ` : ""}${p.listening ? "слушает" : "не слушает"} · сокет был 2026-09-08T16:43:28.211106Z · открыл @tester`,
             );
             lines.push(`     💬 «${p.status ?? "на вахте"}» · 2026-09-08T16:08:56.121391Z`);
-            lines.push(`     📥 ${p.incoming}`);
+            if (p.incoming) lines.push(`     📥 ${p.incoming}`);
           }
           for (const r of st.rooms) {
             lines.push(
@@ -959,7 +1012,9 @@ export async function startFakeNks(opts = {}) {
               extra,
             );
           }
-          const mine = st.webhooks.filter((w) => String(w.karta) === String(a.node_id));
+          const mine = st.webhooks.filter(
+            (w) => String(w.karta) === String(a.node_id) && (!w.realm || w.realm === slug(a.realm)),
+          );
           // Пустой список поверхность печатает без заголовка — наблюдено на mcp.iskron.ru.
           if (!mine.length)
             return json(
@@ -978,7 +1033,12 @@ export async function startFakeNks(opts = {}) {
             );
           const lines = [`Вебхуки для #${a.node_id} (${mine.length}):`];
           for (const w of mine) {
-            const wakes = [...st.places.values()].find((p) => p.incoming === w.url);
+            const wakes =
+              w.channel === "self"
+                ? [...st.places.values()].find(
+                    (p) => p.karta === w.karta && p.realm != null && slug(p.realm) === w.realm,
+                  )
+                : [...st.places.values()].find((p) => p.incoming === w.url);
             lines.push(
               `  #${w.id} → doer:#${w.karta} — ${w.active ? "активен" : "пауза"} [minimal]`,
             );
@@ -1015,6 +1075,28 @@ export async function startFakeNks(opts = {}) {
             );
           st.counts.webhooks_added++;
           const id = 100 + st.webhooks.length;
+          // {"channel":"self"} — хук на канал: доставка внутри службы местам роли этого графа (#5838).
+          if (a.channel === "self") {
+            st.webhooks.push({
+              id,
+              karta: String(a.node_id),
+              channel: "self",
+              realm: slug(a.realm),
+              active: true,
+            });
+            return json(
+              res,
+              200,
+              {
+                jsonrpc: "2.0",
+                id: msg.id,
+                result: {
+                  content: [{ type: "text", text: `Вебхук #${id} создан → канал (self)` }],
+                },
+              },
+              extra,
+            );
+          }
           st.webhooks.push({ id, karta: String(a.node_id), url: a.url, active: true });
           return json(
             res,

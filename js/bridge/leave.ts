@@ -54,6 +54,8 @@ export async function leaveStanding(reason: string): Promise<string> {
     .filter((p) => !p.primary)
     .map((p) => ({ realm: p.realm, text: readHoldRecord(p.key)?.status ?? "" }))
     .filter((k) => k.text);
+  // Сокет у мест канала общий: уход закрывает его всем — и слово называет всех (#5838).
+  const leaving = heldPlaces().map((p) => p.key);
   const parked = parkStanding(reason);
   if (!parked) return "мост места не держит — уходить неоткуда";
   keptBeside = beside;
@@ -64,7 +66,11 @@ export async function leaveStanding(reason: string): Promise<string> {
   if (st.ok && keptStatus) rememberStatus(keptStatus);
   const line = st.ok ? "занятость снята" : `занятость не снята (${st.body})`;
   log(`left the standing: ${reason}; ${line}`);
-  return `ушёл с места ${parked}: сокет закрыт, ${line}; адрес, очередь и хуки целы — почта копится и придёт при возвращении (сторож или iskron_stand)`;
+  const which =
+    leaving.length > 1
+      ? `с мест ${leaving.join(", ")} (сокет канала у них общий)`
+      : `с места ${parked}`;
+  return `ушёл ${which}: сокет закрыт, ${line}; адрес, очередь и хуки целы — почта копится и придёт при возвращении (сторож или iskron_stand)`;
 }
 
 /**

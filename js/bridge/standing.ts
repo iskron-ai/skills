@@ -135,10 +135,14 @@ async function replayBeside(): Promise<boolean> {
   return whole;
 }
 
-/** standing_id из ответа register (RegisteredSession {standing_id, channel_id, opened}) — JSON или «standing_id: …». */
+/**
+ * id места из ответа тула iskron_channel(action="register") — мост зовёт тул, не
+ * API, и ответ — проза: строка «🪪 id этого места — …», id на следующей строке
+ * (наблюдено на сервере 0.74.0). Без этой строки — null: id не угадывается.
+ */
 export function standingIdOf(reply: JsonRpcMessage | null): string | null {
   const m =
-    /"?standing_id"?\s*[:=]\s*"?([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i.exec(
+    /id этого места[^\n]*\n\s*([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i.exec(
       replyText(reply),
     );
   return m?.[1] ?? null;

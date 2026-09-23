@@ -32,6 +32,7 @@ import {
   wasEvicted,
 } from "./hold.ts";
 import { keyOf } from "./holdrecord.ts";
+import { armRoleHook } from "./hook.ts";
 import { returnToStanding } from "./leave.ts";
 import { listenBlock } from "./listen.ts";
 import {
@@ -386,41 +387,19 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   }
 
   // 4. Хук инбокса роли — чтобы вимарша posed_to приходила тем же сокетом.
-  const hooks = await call("iskron_admin", { action: "list_webhooks", realm, node_id: karta });
-  // Пустой список поверхность печатает без заголовка: «Для #N вебхуки не зарегистрированы.» (#5380).
-  const hooksRecognized =
-    !hooks.isError &&
-    (/^\s*Вебхуки(?:\s|:|\(|$)/m.test(hooks.text) ||
-      /вебхуки не зарегистрированы/i.test(hooks.text));
-  const nameRe = new RegExp(`:${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![A-Za-z0-9._-])`);
-  const wakesMe =
-    hooksRecognized &&
-    hooks.text.split(/\n(?=\s*#\d+\s*→)/).some((b) => /активен/.test(b) && nameRe.test(b));
-  if (sub)
-    lines.push(
-      "Хук инбокса роли: отдельному месту не взводится — почту роли слушает основное место, комнаты доставляют своё сами.",
-    );
-  else if (wakesMe) lines.push("Хук инбокса роли: стоит и будит это стояние.");
-  else if (!hooksRecognized)
-    lines.push(
-      `Хук инбокса роли: список хуков не распознан — не трогаю (${short(hooks.text, 120)}).`,
-    );
-  else if (!heardHere) lines.push("Хук инбокса роли: не взвожу — слух у другого держателя.");
-  else if (!incoming)
-    lines.push("Хук инбокса роли: не взведён — входящий адрес стояния не прочитался.");
-  else {
-    const h = await call("iskron_admin", {
-      action: "add_webhook",
+  const main = state.standing;
+  lines.push(
+    await armRoleHook({
       realm,
-      node_id: karta,
-      url: incoming, // без ttl_seconds: 0 снимает срок только в update_webhook; на добавлении его отвергает контур (слово архитектора, #5380)
-    });
-    lines.push(
-      h.isError
-        ? `Хук инбокса роли: не взвёлся — ${short(h.text)}`
-        : `Хук инбокса роли: взведён (${short(h.text, 120)}).`,
-    );
-  }
+      karta,
+      name,
+      incoming,
+      heardHere,
+      sub,
+      beside: !!main && otherRealm(realm, main.realm), // место на канале, открытом в другом графе
+      channelRealm: main?.realm ?? realm,
+    }),
+  );
 
   // 5. Стук в комнату — по полному адресу с провода. Правило #4342: один стук,
   // повтор один раз не раньше чем через две минуты, дальше — слово человеку.
