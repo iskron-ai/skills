@@ -31,6 +31,7 @@ export const WORDS: Readonly<Record<string, string>> = {
   accepted: "{target} принял приглашение",
   node: "в комнате узел #{seq} {name} ({realm})",
   link: "комната связана с {room}",
+  legacy_auto: "техническая запись комнаты",
   unknown: "род {kind} мосту неизвестен",
 };
 
@@ -55,6 +56,7 @@ const RULES: Readonly<Record<string, Rule>> = {
   accepted: "batch",
   node: "batch",
   link: "batch",
+  legacy_auto: "batch",
 };
 
 export interface RoomKind {
@@ -73,24 +75,32 @@ const obj = (v: unknown): Rec =>
 const str = (v: unknown): string =>
   typeof v === "string" ? v : typeof v === "number" || typeof v === "boolean" ? String(v) : "";
 
-/** Род кадра комнаты; "" — кадр не технический кадр комнаты. */
+/**
+ * Прежние роды верхнего kind (конверт комнаты до event_kind): text — слово
+ * участника со своей стопкой, auto — техническая запись, в пачку. Прочий
+ * прежний род — путь неизвестного.
+ */
+const LEGACY: Readonly<Record<string, string>> = { text: "said", auto: "legacy_auto" };
+
+/** Род кадра комнаты; "" — кадр не кадр комнаты, словарь его не трогает. */
 function kindOf(frame: Rec): string {
   const ek = frame.event_kind;
   if (typeof ek === "string") return ek.startsWith("room.") ? ek.slice(5) : "";
-  // Переходно: event_kind нет — верхний kind конверта комнаты.
+  // Переходно: event_kind нет — верхний kind конверта комнаты, прежние роды по LEGACY.
   if (typeof frame.room === "object" && frame.room && typeof frame.kind === "string")
-    return frame.kind.replace(/^room\./, "");
+    return LEGACY[frame.kind] ?? frame.kind.replace(/^room\./, "");
   return "";
 }
 
-/** Кто написал строку: имя (стояние), иначе стояние, иначе платформа. */
-function authorOf(line: Rec): string {
+/** Кто написал строку: имя (стояние), иначе стояние, иначе платформа; без line — по провенансу. */
+function authorOf(line: Rec, frame: Rec): string {
   const a = obj(line.author);
+  const p = obj(frame.provenance);
   const name = str(a.name);
-  const standing = str(a.standing);
+  const standing = str(a.standing) || (line.author ? "" : str(p.from_standing));
   if (name) return standing ? `${name} (${standing})` : name;
   if (standing) return standing;
-  return a.kind === "platform" ? "платформа" : "?";
+  return a.kind === "platform" || p.auth === "platform" ? "платформа" : "?";
 }
 
 const after = (key: string, prefix: string): string =>
@@ -123,7 +133,7 @@ export function roomKind(frame: Frame | null | undefined): RoomKind | null {
   const node = obj(fields.node);
   const values: Rec = {
     kind,
-    author: authorOf(line),
+    author: authorOf(line, f),
     key,
     done: line.done,
     verdict: line.verdict,

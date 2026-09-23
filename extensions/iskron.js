@@ -65,6 +65,7 @@ var WORDS = {
   accepted: "{target} принял приглашение",
   node: "в комнате узел #{seq} {name} ({realm})",
   link: "комната связана с {room}",
+  legacy_auto: "техническая запись комнаты",
   unknown: "род {kind} мосту неизвестен"
 };
 var RULES = {
@@ -82,24 +83,27 @@ var RULES = {
   withdraw: "batch",
   accepted: "batch",
   node: "batch",
-  link: "batch"
+  link: "batch",
+  legacy_auto: "batch"
 };
 var obj = (v) => v && typeof v === "object" && !Array.isArray(v) ? v : {};
 var str = (v) => typeof v === "string" ? v : typeof v === "number" || typeof v === "boolean" ? String(v) : "";
+var LEGACY = { text: "said", auto: "legacy_auto" };
 function kindOf(frame) {
   const ek = frame.event_kind;
   if (typeof ek === "string") return ek.startsWith("room.") ? ek.slice(5) : "";
   if (typeof frame.room === "object" && frame.room && typeof frame.kind === "string")
-    return frame.kind.replace(/^room\./, "");
+    return LEGACY[frame.kind] ?? frame.kind.replace(/^room\./, "");
   return "";
 }
-function authorOf(line) {
+function authorOf(line, frame) {
   const a = obj(line.author);
+  const p = obj(frame.provenance);
   const name = str(a.name);
-  const standing = str(a.standing);
+  const standing = str(a.standing) || (line.author ? "" : str(p.from_standing));
   if (name) return standing ? `${name} (${standing})` : name;
   if (standing) return standing;
-  return a.kind === "platform" ? "платформа" : "?";
+  return a.kind === "platform" || p.auth === "platform" ? "платформа" : "?";
 }
 var after = (key, prefix) => key.startsWith(prefix) ? key.slice(prefix.length) : key;
 function fill(template, v) {
@@ -125,7 +129,7 @@ function roomKind(frame) {
   const node = obj(fields.node);
   const values = {
     kind,
-    author: authorOf(line),
+    author: authorOf(line, f),
     key,
     done: line.done,
     verdict: line.verdict,

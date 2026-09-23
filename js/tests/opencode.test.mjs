@@ -42,6 +42,9 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { startFakeNks } from "./fake-nks.mjs";
 import {
   closing,
+  directWord,
+  graphPosed,
+  legacyRoom,
   PLATFORM,
   progress,
   roomFrame,
@@ -1759,6 +1762,48 @@ test("room kinds: closing steers a busy agent despite stack=defer and says who m
     assert.equal(p7.delivery, "queue", "an invite to someone else batches");
     const p8 = await send(roomFrame("opened", { entry_id: 66 }), 8);
     assert.equal(p8.delivery, "queue", "opened does not interrupt");
+  } finally {
+    await rec.stop();
+  }
+});
+
+// Today's production may not send event_kind yet: the old top-level kinds keep their way,
+// and frames that are not room frames never meet the dictionary.
+test("room kinds leave non-room frames alone and keep the old shape: a direct word, a graph event and old text interrupt steer; old text defer and auto queue", async () => {
+  const b = bridgeEnv("room-legacy");
+  const rec = await plugin(b.env);
+  try {
+    await serverTools(rec);
+    await until(() => rec.tools().has("iskron_channel"), "the channel tool");
+    await rec.call("iskron_channel", { action: "connect" }, "s-legacy");
+    const [pid] = pidsOf(b.log);
+    const cases = [
+      [directWord(), "steer"],
+      [graphPosed(), "steer"],
+      [legacyRoom("text", "interrupt", 71), "steer"],
+      [legacyRoom("text", "defer", 72), "queue"],
+      [legacyRoom("text", undefined, 73), "steer"],
+      [legacyRoom("auto", "interrupt", 74), "queue"],
+      [legacyRoom("vote", "interrupt", 75), "queue"],
+    ];
+    for (const [i, [frame, way]] of cases.entries()) {
+      appendFileSync(`${b.events}.${pid}`, event("frame", { frame, raw: JSON.stringify(frame) }));
+      await until(() => rec.prompts.length === i + 1, `prompt ${i + 1}`);
+      assert.equal(rec.prompts[i].delivery, way, `${frame.id} must go ${way}`);
+    }
+    assert.match(
+      rec.prompts[0].text,
+      /^Кадр канала Искрона от делателя роли #48 — стояние @alari:sosed\n/,
+    );
+    assert.doesNotMatch(rec.prompts[0].text, /КОМНАТЫ/, "a direct word is not a room word");
+    assert.doesNotMatch(
+      rec.prompts[1].text,
+      /КОМНАТЫ|мосту неизвестен/,
+      "a graph event is not a room frame",
+    );
+    assert.match(rec.prompts[2].text, /слово КОМНАТЫ «Стенд»: слово от @aleksei:probe/);
+    assert.match(rec.prompts[5].text, /запись КОМНАТЫ «Стенд»: техническая запись комнаты/);
+    assert.match(rec.prompts[6].text, /род vote мосту неизвестен/);
   } finally {
     await rec.stop();
   }

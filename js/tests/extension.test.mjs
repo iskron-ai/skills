@@ -45,7 +45,16 @@ import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-import { closing, progress, roomFrame, said, unknownKind } from "./room-frames.mjs";
+import {
+  closing,
+  directWord,
+  graphPosed,
+  legacyRoom,
+  progress,
+  roomFrame,
+  said,
+  unknownKind,
+} from "./room-frames.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SOURCE = process.env.ISKRON_EXTENSION || join(HERE, "..", "..", "extensions", "iskron.js");
@@ -503,6 +512,33 @@ test("room kinds: closing steers despite stack=defer, progress and an unknown ki
     const text = rec.messages[0].msg.content;
     assert.match(text, /предлагает закрыть комнату до 2026-09-23T10:05:00Z; свидетельства: 41/);
     assert.match(text, /ты можешь возразить — objection, in_reply_to=50/);
+  } finally {
+    await rec.stop();
+  }
+});
+
+test("room kinds leave non-room frames alone and keep the old shape: a direct word, a graph event and old text interrupt steer; old text defer and auto follow up", async () => {
+  const { events, env } = eventsEnv("room-legacy");
+  const rec = await session(env);
+  try {
+    const cases = [
+      [directWord(), "steer"],
+      [graphPosed(), "steer"],
+      [legacyRoom("text", "interrupt", 71), "steer"],
+      [legacyRoom("text", "defer", 72), "followUp"],
+      [legacyRoom("auto", "interrupt", 74), "followUp"],
+    ];
+    for (const [f] of cases) push(events, frame(f));
+    await delay(400);
+    assert.equal(rec.messages.length, cases.length, "every frame raises a message");
+    cases.forEach(([f, way], i) =>
+      assert.equal(rec.messages[i].opts.deliverAs, way, `${f.id} must go ${way}`),
+    );
+    assert.doesNotMatch(
+      rec.messages[1].msg.content,
+      /КОМНАТЫ/,
+      "a graph event is not a room frame",
+    );
   } finally {
     await rec.stop();
   }

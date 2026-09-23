@@ -18,7 +18,15 @@ import { fileURLToPath } from "node:url";
 
 import { startFakeCodex } from "./fake-codex.mjs";
 import { startFakeNks } from "./fake-nks.mjs";
-import { closing, progress, said, unknownKind } from "./room-frames.mjs";
+import {
+  closing,
+  directWord,
+  graphPosed,
+  legacyRoom,
+  progress,
+  said,
+  unknownKind,
+} from "./room-frames.mjs";
 
 // Чем запускать поставку: node по умолчанию; ISKRON_NODE подставляет другой рантайм
 // (например, `opencode` под BUN_BE_BUN=1 — Bun, встроенный в OpenCode).
@@ -2637,6 +2645,90 @@ test("watchdog-codex: progress waits; closing puts the batch into the thread fir
   assert.match(first, /пробы зелёные/);
   assert.match(second, /предлагает закрыть комнату/);
   assert.match(second, /ты можешь возразить — objection, in_reply_to=50/);
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
+// Non-room frames never meet the room dictionary, and the old room shape (no event_kind) keeps its way.
+test("room kinds leave the Monitor watchdog's other frames alone: a direct word, a graph event and old text interrupt print at once; old auto waits", async (t) => {
+  const { fake, dir, key } = await connected(t, {
+    env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "10000" },
+  });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog", dir, key, 20_000);
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
+  await sendRoom(fake, legacyRoom("auto", "interrupt", 74));
+  await sendRoom(fake, directWord());
+  await sendRoom(fake, graphPosed());
+  await sendRoom(fake, legacyRoom("text", "interrupt", 71));
+  await waitFor(
+    () => wd.out.includes("прямое слово соседа") && wd.out.includes("прежний род text"),
+    "the direct word and old text interrupt at once",
+    3000,
+  );
+  assert.ok(wd.out.includes("graph-1"), `the graph event printed at once:\n${wd.out}`);
+  // The interrupting frames flushed the waiting auto record ahead of themselves — order holds.
+  const flat = wd.out.replace(/\n/g, " ");
+  assert.ok(
+    flat.indexOf("прежний род auto") >= 0 &&
+      flat.indexOf("прежний род auto") < flat.indexOf("прямое слово соседа"),
+    `old auto rides in the batch ahead of the next interrupt:\n${wd.out}`,
+  );
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
+test("room kinds leave the exit watchdog's other frames alone: a direct word, a graph event and old text interrupt each wake it", async (t) => {
+  const { fake, dir, key } = await connected(t, {
+    env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "10000" },
+  });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  for (const [frame, mark] of [
+    [directWord(), "прямое слово соседа"],
+    [graphPosed(), "graph-1"],
+    [legacyRoom("text", "interrupt", 71), "прежний род text"],
+  ]) {
+    const wd = runClient("watchdog-exit", dir, key, 8000);
+    await waitFor(() => wd.err.includes("слушаю стояние"), "the exit watchdog to attach");
+    await sendRoom(fake, frame);
+    const r = await wd.done;
+    assert.equal(r.exit, 0, `${frame.id} must wake: ${wd.err}`);
+    assert.ok(wd.out.includes(mark), wd.out);
+  }
+});
+
+test("room kinds leave the Codex thread's other frames alone: a direct word, a graph event and old text interrupt enter at once", async (t) => {
+  const { fake, dir, key } = await connected(t, {
+    env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "10000" },
+  });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const home = mkdtempSync("/tmp/cxd-");
+  const sock = join(home, "app-server-control", "app-server-control.sock");
+  const log = join(home, "door.log");
+  writeFileSync(log, "");
+  const door = await startFakeCodex(sock, log);
+  t.after(() => door.stop());
+  const wd = runClient("watchdog-codex", dir, key, 20_000, {
+    CODEX_HOME: home,
+    CODEX_THREAD_ID: "thread-legacy",
+  });
+  await waitFor(() => wd.err.includes("слушаю стояние"), "the watchdog to attach");
+  const turns = () =>
+    readFileSync(log, "utf8")
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((l) => JSON.parse(l))
+      .filter((c) => c.method === "turn/start")
+      .map((c) => c.params.input[0].text);
+  await sendRoom(fake, directWord());
+  await sendRoom(fake, graphPosed());
+  await sendRoom(fake, legacyRoom("text", "interrupt", 71));
+  await waitFor(() => turns().length === 3, "three turns at once", 3000);
+  const [a, b, c] = turns();
+  assert.match(a, /прямое слово соседа/);
+  assert.match(b, /graph-1/);
+  assert.match(c, /прежний род text/);
   wd.proc.kill("SIGKILL");
   await wd.done;
 });

@@ -67,6 +67,45 @@ export const progress = (entry_id = 44) =>
 export const said = (stack, entry_id) =>
   roomFrame("said", { entry_id, key: "said", stack, body: `слово со стопкой ${stack}` });
 
+/** Кадр комнаты прежней формы (без event_kind): верхний kind text|auto|…, как на сегодняшнем бою. */
+export const legacyRoom = (kind, stack, entry_id) => ({
+  type: "message",
+  id: `room-old-${entry_id}`,
+  room: { id: "r-1", zachin: "Стенд", realm: "nks-dev", status: "open" },
+  entry_id,
+  kind,
+  ...(stack ? { stack, stack_by: "platform" } : {}),
+  body: `прежний род ${kind} со стопкой ${stack ?? "—"}`,
+  provenance:
+    kind === "text"
+      ? { from_standing: "@aleksei:probe", from_karta_seq: 48, auth: "pat", via: "room" }
+      : { auth: "platform", via: "room" },
+});
+
+/** Не кадр комнаты: прямое слово делателя. */
+export const directWord = (id = "direct-1") => ({
+  type: "message",
+  id,
+  body: "прямое слово соседа",
+  provenance: { from_standing: "@alari:sosed", from_karta_seq: 48, auth: "oidc" },
+});
+
+/** Не кадр комнаты: событие графа posed_to (via=graph, тело-объект с event_id и своим event_kind). */
+export const graphPosed = (id = "graph-1", event_id = 9001) => ({
+  type: "message",
+  id,
+  content_type: "application/json",
+  provenance: { via: "graph" },
+  body: {
+    realm_slug: "nks-dev",
+    event_kind: "posed_to",
+    vimarsha_seq: 5829,
+    vimarsha_version: 1,
+    event_id,
+    reason: "posed_to",
+  },
+});
+
 /** Род, которого словарь не знает. */
 export const unknownKind = (entry_id = 61) =>
   roomFrame("weather", { entry_id, key: "weather", stack: "interrupt", body: "" });
