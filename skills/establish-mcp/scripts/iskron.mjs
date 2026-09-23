@@ -1951,6 +1951,109 @@ function stampOrigin(frame2) {
 import { chmodSync, mkdirSync as mkdirSync5, unlinkSync as unlinkSync6, writeFileSync as writeFileSync7 } from "node:fs";
 import { createServer as createServer2 } from "node:net";
 
+// js/shared/room-kinds.ts
+var WORDS = {
+  said: "слово от {author}",
+  closing: "ведущий {author} предлагает закрыть комнату до {ends_at}; свидетельства: {evidence}",
+  closing_may: "ты можешь возразить — objection, in_reply_to={entry_id}",
+  closing_not: "возражать не тебе",
+  closed: "комната закрыта: {reason}",
+  objection: "{author} возражает против закрытия: {reason}",
+  late_objection: "{author} возразил после закрытия",
+  progress: "{author}: [{key}] {done} = {verdict}{; note}",
+  lead: "ведёт {author}",
+  opened: "комнату открыл {author}",
+  joined: "вошёл {author}",
+  left: "вышел {author}",
+  invite: "{target} приглашён",
+  withdraw: "приглашение отозвано",
+  accepted: "{target} принял приглашение",
+  node: "в комнате узел #{seq} {name} ({realm})",
+  link: "комната связана с {room}",
+  unknown: "род {kind} мосту неизвестен"
+};
+var RULES = {
+  said: "stack",
+  closing: "interrupt",
+  closed: "interrupt",
+  objection: "interrupt",
+  late_objection: "interrupt",
+  invite: "mine",
+  progress: "batch",
+  lead: "batch",
+  opened: "batch",
+  joined: "batch",
+  left: "batch",
+  withdraw: "batch",
+  accepted: "batch",
+  node: "batch",
+  link: "batch"
+};
+var obj = (v) => v && typeof v === "object" && !Array.isArray(v) ? v : {};
+var str = (v) => typeof v === "string" ? v : typeof v === "number" || typeof v === "boolean" ? String(v) : "";
+function authorOf(line) {
+  const a = obj(line.author);
+  const name = str(a.name);
+  const standing = str(a.standing);
+  if (name) return standing ? `${name} (${standing})` : name;
+  if (standing) return standing;
+  return a.kind === "platform" ? "платформа" : "?";
+}
+var after = (key, prefix) => key.startsWith(prefix) ? key.slice(prefix.length) : key;
+function fill(template, v) {
+  return template.replace(/\{([^\w{}]*)(\w+)\}/g, (_m, sep, name) => {
+    const x = str(v[name]);
+    if (sep) return x ? sep + x : "";
+    return x || "?";
+  });
+}
+var mineOf = (frame2) => [str(frame2.to_standing_id), str(frame2.to_standing)].filter(Boolean);
+function roomKind(frame2) {
+  if (!frame2 || typeof frame2 !== "object") return null;
+  const f = frame2;
+  const ek = f.event_kind;
+  if (typeof ek !== "string" || !ek.startsWith("room.")) return null;
+  const kind = ek.slice(5);
+  const line = obj(f.line);
+  const fields = obj(line.fields);
+  const key = str(line.key);
+  const mine = mineOf(f);
+  const node = obj(fields.node);
+  const values = {
+    kind,
+    author: authorOf(line),
+    key,
+    done: line.done,
+    verdict: line.verdict,
+    note: line.note,
+    ends_at: fields.ends_at,
+    evidence: Array.isArray(fields.evidence) ? fields.evidence.map(str).join(", ") : "",
+    entry_id: line.entry_id ?? f.entry_id,
+    reason: fields.reason,
+    target: after(key, "invite:"),
+    room: after(key, "link:"),
+    seq: node.seq,
+    name: node.name,
+    realm: node.realm
+  };
+  const rule = RULES[kind];
+  if (!rule) return { kind, rule: "batch", words: fill(WORDS.unknown, values), known: false };
+  let words = fill(WORDS[kind], values);
+  if (kind === "closing") {
+    const may = Array.isArray(fields.may_object) ? fields.may_object.map(str) : [];
+    const myId = str(f.to_standing_id);
+    const mayI = !!myId && may.includes(myId);
+    words += "; " + fill(mayI ? WORDS.closing_may : WORDS.closing_not, values);
+  }
+  const stack = rule === "stack" ? (
+    // Стопка решает только у said; слово без стопки — прежним путём, вставкой.
+    f.stack === "defer" ? "batch" : "interrupt"
+  ) : rule === "mine" ? mine.includes(str(values.target)) ? "interrupt" : "batch" : rule;
+  return { kind, rule: stack, words, known: true };
+}
+var byKind = (frame2) => roomKind(frame2) !== null;
+var stackOf = (frame2) => roomKind(frame2)?.rule ?? (frame2?.stack === "defer" ? "batch" : "interrupt");
+
 // js/shared/frame-text.ts
 var NOT_ENVELOPE = /* @__PURE__ */ new Set(["body", "provenance", "type", "origin"]);
 var ENVELOPE_FIRST = ["id", "received_at", "stale", "content_type", "body_chars", "body_read"];
@@ -1965,12 +2068,12 @@ ${raw}`;
   const lines = [`Кадр канала Искрона ${who}`];
   const room = frame2.room;
   if (room && typeof room === "object") {
-    const f = frame2;
     const zachin = typeof room.zachin === "string" ? ` «${room.zachin}»` : "";
-    const kind = typeof f.kind === "string" ? `, род ${f.kind}` : "";
-    const stack = typeof f.stack === "string" ? `, стопка ${f.stack}` : "";
+    const rk = roomKind(frame2);
+    const f = frame2;
+    const words = rk ? `: ${rk.words}` : (typeof f.kind === "string" ? `, род ${f.kind}` : "") + (typeof f.stack === "string" ? `, стопка ${f.stack}` : "");
     lines.push(
-      origin === "platform" ? `запись КОМНАТЫ${zachin}${kind}${stack}` : `слово КОМНАТЫ${zachin}${kind}${stack} — ответ идёт записью в ту же комнату с in_reply_to по id слова (ход для комнат — в списке тулов сессии), не send стоянию`
+      origin === "platform" ? `запись КОМНАТЫ${zachin}${words}` : `слово КОМНАТЫ${zachin}${words} — ответ идёт записью в ту же комнату с in_reply_to по id слова (ход для комнат — в списке тулов сессии), не send стоянию`
     );
   }
   if (frame2.provenance) lines.push(`provenance: ${JSON.stringify(frame2.provenance)}`);
@@ -2105,6 +2208,54 @@ function redundantCopy(frame2, ring, seen, seenPath, burst) {
   return "";
 }
 
+// js/bridge/roomstack.ts
+var ROOM_BATCH_MS = Number(process.env.ISKRON_BRIDGE_ROOM_BATCH_MS) || 6e4;
+var ROOM_BATCH_CAP = 20;
+var RoomBatch = class {
+  held = [];
+  timer = null;
+  emit = null;
+  add(raw, frame2, emit2) {
+    this.emit = emit2;
+    this.held.push({ raw, frame: frame2 });
+    if (this.held.length >= ROOM_BATCH_CAP) return this.flushNow();
+    this.timer ??= setTimeout(() => this.flushNow(), ROOM_BATCH_MS).unref();
+  }
+  /** Лежит ли кадр в копящейся пачке — кольцо не отдаёт его прицепившемуся отдельно (door.ts). */
+  holds(frame2) {
+    return !!frame2 && this.held.some((h) => h.frame === frame2);
+  }
+  /** Отдать накопленное сейчас: по окну, по полной пачке, перед прерывающим, при отпускании. */
+  flushNow() {
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = null;
+    const got = this.held.splice(0);
+    const emit2 = this.emit;
+    if (!got.length || !emit2) return;
+    const of = got.length;
+    emit2({
+      kind: "note",
+      text: `Комната: кадров ${of} — накопились, не прерывая хода; следом все по порядку; полностью — iskron_channel(action="history").`
+    });
+    got.forEach(
+      (h, i) => emit2({ kind: "frame", raw: h.raw, frame: h.frame, batch: { at: i + 1, of } })
+    );
+  }
+};
+function noteRoomKind(frame2) {
+  const rk = roomKind(frame2);
+  if (rk && !rk.known)
+    log(`room frame ${String(frame2.id ?? "?")}: ${rk.words} — batched, not interrupting`);
+}
+function batchForWatchdogs(d, raw, frame2, emit2) {
+  if (byKind(frame2) && stackOf(frame2) === "batch") {
+    d.roomBatch.add(raw, frame2, emit2);
+    return true;
+  }
+  d.roomBatch.flushNow();
+  return false;
+}
+
 // js/bridge/sweep.ts
 import { existsSync, readdirSync as readdirSync2, readFileSync as readFileSync8, unlinkSync as unlinkSync5 } from "node:fs";
 import { connect as connectLocal } from "node:net";
@@ -2218,6 +2369,8 @@ var Door = class {
   /** Пачки места — лежалая и побудки: у каждого места свои (#5838). */
   stale = new StaleBurst();
   backlog = new Backlog();
+  /** Пачка кадров комнаты рода «в пачку» — для сторожей, не для клиентов уведомлений (roomstack.ts, #5851). */
+  roomBatch = new RoomBatch();
   /** id места у платформы (hello standings[].standing_id) — по нему кадр находит дверь и занятость — место. */
   standingId = null;
   server = null;
@@ -2270,7 +2423,7 @@ var Door = class {
       sock.on("error", () => gone(sock));
       this.hooks.onAttach();
       const backlog = this.ring.filter(
-        ({ frame: frame2 }) => frame2?.type !== "message" || !isDelivered(deliveredKeys(frame2), this.seen, this.seenPath)
+        ({ frame: frame2 }) => frame2?.type !== "message" || !isDelivered(deliveredKeys(frame2), this.seen, this.seenPath) && !this.roomBatch.holds(frame2)
       );
       sock.write(
         JSON.stringify({ kind: "attached", key, buffered: backlog.length }) + "\n"
@@ -2298,9 +2451,14 @@ var Door = class {
     });
     this.server = srv;
   }
+  /** Отдать неотданные пачки сейчас — при отпускании: побудки и комнаты (backlog.ts). */
+  flushBatches() {
+    this.backlog.flushNow();
+    this.roomBatch.flushNow();
+  }
   /** Закрыть дверь: клиенты, сервер, файлы ключа, памяти и сокета. Идемпотентно. */
   close() {
-    this.backlog.flushNow();
+    this.flushBatches();
     this.stale.drop();
     for (const c of this.clients) {
       try {
@@ -2675,7 +2833,7 @@ function releaseStanding(reason, forget = false, keepBeside = false) {
   if (forget && currentKey) dropHoldRecord(currentKey);
   if (!keepBeside) dropAllExtras(reason, forget);
   if (!holder && !door) return;
-  door?.backlog.flushNow();
+  door?.flushBatches();
   standingLog(`released ${currentKey ?? "?"}: ${reason}${forget ? " (record dropped)" : ""}`);
   const released = { kind: "released", key: currentKey ?? void 0, text: reason };
   broadcast(released);
@@ -2755,6 +2913,10 @@ function deliverTo(d, raw, frame2, full) {
   for (const x of hello ? doors() : [d]) x.push(text, full);
   if (hello) for (const w of [...helloWaiters]) w(full);
   const ev = { kind: "frame", raw: text, frame: full };
+  const msg = full?.type === "message" && !again ? full : null;
+  if (msg) noteRoomKind(msg);
+  const toBatch = (b) => (d.broadcast(b), notify("info", keyed(d, b)));
+  if (msg && !notifiedClient() && batchForWatchdogs(d, text, msg, toBatch)) return;
   if (!again) for (const x of hello ? doors() : [d]) x.broadcast(ev);
   if (full?.type === "status") return;
   if (again) return log(`frame ${id} came again — already delivered, not raised`);
@@ -5077,6 +5239,7 @@ function runWatchdogExit(argv2) {
   }
   const seenPath = seenFilePathOf(target.authDir, target.key);
   const seen = seenIds(seenPath);
+  let woke = false;
   attach(target.path, {
     onEvent: (ev) => {
       switch (ev.kind) {
@@ -5084,12 +5247,18 @@ function runWatchdogExit(argv2) {
           const type = ev.frame?.type;
           if (type !== "message") return note2(`кадр ${type ?? "не разобран"} — не повод будить`);
           const id = frameId(ev);
-          if (seen.has(id)) return note2(`кадр ${id} уже отдан прежним взводом — не повод будить`);
+          const last = !ev.batch || ev.batch.at >= ev.batch.of;
+          if (seen.has(id)) {
+            note2(`кадр ${id} уже отдан прежним взводом — не повод будить`);
+            if (last && woke) process.exit(0);
+            return;
+          }
           wake(ev.raw ?? "");
           noteSeen(seenPath, id, seen);
           const evKey = eventKeyOf(ev.frame);
           if (evKey) noteSeen(seenPath, evKey, seen);
-          process.exit(0);
+          woke = true;
+          if (last) process.exit(0);
           break;
         }
         case "stale":

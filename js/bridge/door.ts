@@ -16,6 +16,7 @@ import {
 import { Backlog } from "./backlog.ts";
 import { CFG } from "./config.ts";
 import { isDelivered } from "./fanout.ts";
+import { RoomBatch } from "./roomstack.ts";
 import { StaleBurst } from "./stale.ts";
 import { log } from "./streams.ts";
 import { sweepStale } from "./sweep.ts";
@@ -37,6 +38,8 @@ export interface ChannelEvent {
   frames?: Frame[];
   /** kind="backlog": сколько кадров ожидало по hello. */
   pending?: number;
+  /** kind="frame" из пачки кадров комнаты (roomstack.ts): его место в залпе — at из of; пачка — одна побудка. */
+  batch?: { at: number; of: number };
 }
 
 export interface DoorHooks {
@@ -59,6 +62,8 @@ export class Door {
   /** Пачки места — лежалая и побудки: у каждого места свои (#5838). */
   readonly stale = new StaleBurst();
   readonly backlog = new Backlog();
+  /** Пачка кадров комнаты рода «в пачку» — для сторожей, не для клиентов уведомлений (roomstack.ts, #5851). */
+  readonly roomBatch = new RoomBatch();
   /** id места у платформы (hello standings[].standing_id) — по нему кадр находит дверь и занятость — место. */
   standingId: string | null = null;
   private server: Server | null = null;
@@ -119,9 +124,12 @@ export class Door {
       // местный клиент ещё не получал: перевзведённый сторож не должен нести
       // делателю то же кольцо второй раз — память доставленного у моста есть.
       // Доставленным кадр помечает отдавший его клиент (печатью, выходом) — файл читается заново.
+      // Кадр, лежащий в копящейся пачке комнаты, придёт с ней, не отдельно.
       const backlog = this.ring.filter(
         ({ frame }) =>
-          frame?.type !== "message" || !isDelivered(deliveredKeys(frame), this.seen, this.seenPath),
+          frame?.type !== "message" ||
+          (!isDelivered(deliveredKeys(frame), this.seen, this.seenPath) &&
+            !this.roomBatch.holds(frame)),
       );
       sock.write(
         JSON.stringify({ kind: "attached", key, buffered: backlog.length } satisfies ChannelEvent) +
@@ -150,10 +158,16 @@ export class Door {
     this.server = srv;
   }
 
+  /** Отдать неотданные пачки сейчас — при отпускании: побудки и комнаты (backlog.ts). */
+  flushBatches(): void {
+    this.backlog.flushNow();
+    this.roomBatch.flushNow();
+  }
+
   /** Закрыть дверь: клиенты, сервер, файлы ключа, памяти и сокета. Идемпотентно. */
   close(): void {
     // Пачка, ещё не отданная, уходит сейчас, а не теряется молча (backlog.ts).
-    this.backlog.flushNow();
+    this.flushBatches();
     this.stale.drop();
     for (const c of this.clients) {
       try {

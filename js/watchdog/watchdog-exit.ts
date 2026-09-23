@@ -48,6 +48,7 @@ export function runWatchdogExit(argv: string[]): void {
   }
   const seenPath = seenFilePathOf(target.authDir, target.key);
   const seen = seenIds(seenPath);
+  let woke = false; // отдан хоть один кадр залпа пачки
   attach(target.path, {
     onEvent: (ev) => {
       switch (ev.kind) {
@@ -55,12 +56,20 @@ export function runWatchdogExit(argv: string[]): void {
           const type = ev.frame?.type;
           if (type !== "message") return note(`кадр ${type ?? "не разобран"} — не повод будить`);
           const id = frameId(ev);
-          if (seen.has(id)) return note(`кадр ${id} уже отдан прежним взводом — не повод будить`);
+          // Пачка кадров комнаты (мост, roomstack.ts) — одна побудка: печатаем её
+          // целиком и выходим на последнем кадре залпа, не на первом.
+          const last = !ev.batch || ev.batch.at >= ev.batch.of;
+          if (seen.has(id)) {
+            note(`кадр ${id} уже отдан прежним взводом — не повод будить`);
+            if (last && woke) process.exit(0);
+            return;
+          }
           wake(ev.raw ?? ""); // сперва отдать: запись до побудки при смерти между ними потеряла бы кадр насовсем
           noteSeen(seenPath, id, seen);
           const evKey = eventKeyOf(ev.frame);
           if (evKey) noteSeen(seenPath, evKey, seen); // событие графа отдано — другие копии веера тоже
-          process.exit(0); // конец процесса И ЕСТЬ доставка
+          woke = true;
+          if (last) process.exit(0); // конец процесса И ЕСТЬ доставка
           break;
         }
         case "stale":

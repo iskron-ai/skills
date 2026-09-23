@@ -40,6 +40,7 @@ import {
   routeFrame,
 } from "./places.ts";
 import { otherRealm, sameRealm } from "./realms.ts";
+import { batchForWatchdogs, noteRoomKind } from "./roomstack.ts";
 import { standingLog } from "./store.ts";
 import { emit, log } from "./streams.ts";
 import { type Standing, state } from "./transport.ts";
@@ -265,7 +266,7 @@ export function releaseStanding(reason: string, forget = false, keepBeside = fal
   if (!keepBeside) dropAllExtras(reason, forget);
   if (!holder && !door) return;
   // Пачка, ещё не отданная, уходит сейчас, а не теряется молча (backlog.ts).
-  door?.backlog.flushNow();
+  door?.flushBatches();
   standingLog(`released ${currentKey ?? "?"}: ${reason}${forget ? " (record dropped)" : ""}`);
   const released: ChannelEvent = { kind: "released", key: currentKey ?? undefined, text: reason };
   broadcast(released);
@@ -369,6 +370,11 @@ function deliverTo(d: Door, raw: string, frame: Frame | null, full: Frame | null
   for (const x of hello ? doors() : [d]) x.push(text, full);
   if (hello) for (const w of [...helloWaiters]) w(full);
   const ev: ChannelEvent = { kind: "frame", raw: text, frame: full };
+  const msg = full?.type === "message" && !again ? full : null;
+  if (msg) noteRoomKind(msg);
+  // Сторожам кадр комнаты «в пачку» — пачкой по окну, прерывающий — после накопленного (roomstack.ts).
+  const toBatch = (b: ChannelEvent): void => (d.broadcast(b), notify("info", keyed(d, b)));
+  if (msg && !notifiedClient() && batchForWatchdogs(d, text, msg, toBatch)) return;
   if (!again) for (const x of hello ? doors() : [d]) x.broadcast(ev);
   if (full?.type === "status") return;
   if (again) return log(`frame ${id} came again — already delivered, not raised`);

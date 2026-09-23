@@ -55,6 +55,108 @@ function strip(url) {
   return url.replace(/\/+$/, "");
 }
 
+// js/shared/room-kinds.ts
+var WORDS = {
+  said: "слово от {author}",
+  closing: "ведущий {author} предлагает закрыть комнату до {ends_at}; свидетельства: {evidence}",
+  closing_may: "ты можешь возразить — objection, in_reply_to={entry_id}",
+  closing_not: "возражать не тебе",
+  closed: "комната закрыта: {reason}",
+  objection: "{author} возражает против закрытия: {reason}",
+  late_objection: "{author} возразил после закрытия",
+  progress: "{author}: [{key}] {done} = {verdict}{; note}",
+  lead: "ведёт {author}",
+  opened: "комнату открыл {author}",
+  joined: "вошёл {author}",
+  left: "вышел {author}",
+  invite: "{target} приглашён",
+  withdraw: "приглашение отозвано",
+  accepted: "{target} принял приглашение",
+  node: "в комнате узел #{seq} {name} ({realm})",
+  link: "комната связана с {room}",
+  unknown: "род {kind} мосту неизвестен"
+};
+var RULES = {
+  said: "stack",
+  closing: "interrupt",
+  closed: "interrupt",
+  objection: "interrupt",
+  late_objection: "interrupt",
+  invite: "mine",
+  progress: "batch",
+  lead: "batch",
+  opened: "batch",
+  joined: "batch",
+  left: "batch",
+  withdraw: "batch",
+  accepted: "batch",
+  node: "batch",
+  link: "batch"
+};
+var obj = (v) => v && typeof v === "object" && !Array.isArray(v) ? v : {};
+var str = (v) => typeof v === "string" ? v : typeof v === "number" || typeof v === "boolean" ? String(v) : "";
+function authorOf(line) {
+  const a = obj(line.author);
+  const name = str(a.name);
+  const standing = str(a.standing);
+  if (name) return standing ? `${name} (${standing})` : name;
+  if (standing) return standing;
+  return a.kind === "platform" ? "платформа" : "?";
+}
+var after = (key, prefix) => key.startsWith(prefix) ? key.slice(prefix.length) : key;
+function fill(template, v) {
+  return template.replace(/\{([^\w{}]*)(\w+)\}/g, (_m, sep, name) => {
+    const x = str(v[name]);
+    if (sep) return x ? sep + x : "";
+    return x || "?";
+  });
+}
+var mineOf = (frame) => [str(frame.to_standing_id), str(frame.to_standing)].filter(Boolean);
+function roomKind(frame) {
+  if (!frame || typeof frame !== "object") return null;
+  const f = frame;
+  const ek = f.event_kind;
+  if (typeof ek !== "string" || !ek.startsWith("room.")) return null;
+  const kind = ek.slice(5);
+  const line = obj(f.line);
+  const fields = obj(line.fields);
+  const key = str(line.key);
+  const mine = mineOf(f);
+  const node = obj(fields.node);
+  const values = {
+    kind,
+    author: authorOf(line),
+    key,
+    done: line.done,
+    verdict: line.verdict,
+    note: line.note,
+    ends_at: fields.ends_at,
+    evidence: Array.isArray(fields.evidence) ? fields.evidence.map(str).join(", ") : "",
+    entry_id: line.entry_id ?? f.entry_id,
+    reason: fields.reason,
+    target: after(key, "invite:"),
+    room: after(key, "link:"),
+    seq: node.seq,
+    name: node.name,
+    realm: node.realm
+  };
+  const rule = RULES[kind];
+  if (!rule) return { kind, rule: "batch", words: fill(WORDS.unknown, values), known: false };
+  let words = fill(WORDS[kind], values);
+  if (kind === "closing") {
+    const may = Array.isArray(fields.may_object) ? fields.may_object.map(str) : [];
+    const myId = str(f.to_standing_id);
+    const mayI = !!myId && may.includes(myId);
+    words += "; " + fill(mayI ? WORDS.closing_may : WORDS.closing_not, values);
+  }
+  const stack = rule === "stack" ? (
+    // Стопка решает только у said; слово без стопки — прежним путём, вставкой.
+    f.stack === "defer" ? "batch" : "interrupt"
+  ) : rule === "mine" ? mine.includes(str(values.target)) ? "interrupt" : "batch" : rule;
+  return { kind, rule: stack, words, known: true };
+}
+var stackOf = (frame) => roomKind(frame)?.rule ?? (frame?.stack === "defer" ? "batch" : "interrupt");
+
 // js/shared/frame-text.ts
 var NOT_ENVELOPE = /* @__PURE__ */ new Set(["body", "provenance", "type", "origin"]);
 var ENVELOPE_FIRST = ["id", "received_at", "stale", "content_type", "body_chars", "body_read"];
@@ -69,12 +171,12 @@ ${raw}`;
   const lines = [`Кадр канала Искрона ${who}`];
   const room = frame.room;
   if (room && typeof room === "object") {
-    const f = frame;
     const zachin = typeof room.zachin === "string" ? ` «${room.zachin}»` : "";
-    const kind = typeof f.kind === "string" ? `, род ${f.kind}` : "";
-    const stack = typeof f.stack === "string" ? `, стопка ${f.stack}` : "";
+    const rk = roomKind(frame);
+    const f = frame;
+    const words = rk ? `: ${rk.words}` : (typeof f.kind === "string" ? `, род ${f.kind}` : "") + (typeof f.stack === "string" ? `, стопка ${f.stack}` : "");
     lines.push(
-      origin === "platform" ? `запись КОМНАТЫ${zachin}${kind}${stack}` : `слово КОМНАТЫ${zachin}${kind}${stack} — ответ идёт записью в ту же комнату с in_reply_to по id слова (ход для комнат — в списке тулов сессии), не send стоянию`
+      origin === "platform" ? `запись КОМНАТЫ${zachin}${words}` : `слово КОМНАТЫ${zachin}${words} — ответ идёт записью в ту же комнату с in_reply_to по id слова (ход для комнат — в списке тулов сессии), не send стоянию`
     );
   }
   if (frame.provenance) lines.push(`provenance: ${JSON.stringify(frame.provenance)}`);
@@ -92,6 +194,9 @@ ${body}`;
 
 // js/bridge/backlog.ts
 var BACKLOG_MS = Number(process.env.ISKRON_BRIDGE_BACKLOG_MS) || 1500;
+
+// js/bridge/roomstack.ts
+var ROOM_BATCH_MS = Number(process.env.ISKRON_BRIDGE_ROOM_BATCH_MS) || 6e4;
 
 // js/bridge/holdrecord.ts
 var HOLD_RECORD_MAX_AGE_MS = 6 * 60 * 60 * 1e3;
@@ -957,12 +1062,11 @@ function setupChannel(ctx, say, freshestRoot) {
           const frame = ev.frame ?? null;
           if (frame?.type === "hello") return say("Искрон: канал слушает", "info");
           if (frame?.type === "status") return;
-          const stack = frame?.stack;
           void deliver(
             session,
             frameToText(frame, ev.raw ?? ""),
             `кадр ${frame?.id ?? "без id"}`,
-            stack === "defer" ? "queue" : "steer",
+            stackOf(frame) === "batch" ? "queue" : "steer",
             child
           );
           return;

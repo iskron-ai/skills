@@ -18,6 +18,15 @@ import { fileURLToPath } from "node:url";
 
 import { startFakeCodex } from "./fake-codex.mjs";
 import { startFakeNks } from "./fake-nks.mjs";
+import {
+  closing,
+  directWord,
+  graphPosed,
+  legacyRoom,
+  progress,
+  said,
+  unknownKind,
+} from "./room-frames.mjs";
 
 // Чем запускать поставку: node по умолчанию; ISKRON_NODE подставляет другой рантайм
 // (например, `opencode` под BUN_BE_BUN=1 — Bun, встроенный в OpenCode).
@@ -2517,4 +2526,240 @@ test("two bridges on two places: the board reads both listening, and revoking on
   );
   assert.match(after, /@tester:proba — [^\n]*слушает/, after);
   assert.ok(!/@tester:vtoraya/.test(after), "the revoked place is off the board");
+});
+
+// ── room kinds for watchdogs (#5851): the bridge batches, an interrupt flushes first ──
+
+const sendRoom = (fake, frame) => fake.control({ ws_send: JSON.stringify(frame) });
+
+test("room kinds under the Monitor watchdog: progress and said defer wait; closing brings the batch first, then itself", async (t) => {
+  const { fake, dir, key } = await connected(t, {
+    env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "10000" },
+  });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog", dir, key, 20_000);
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
+  await sendRoom(fake, progress());
+  await sendRoom(fake, said("defer", 63));
+  await new Promise((r) => setTimeout(r, 1000));
+  assert.ok(!wd.out.includes("пробы зелёные"), `progress printed before the window:\n${wd.out}`);
+  assert.ok(!wd.out.includes("стопкой defer"), `said defer printed before the window:\n${wd.out}`);
+  await sendRoom(fake, closing());
+  await waitFor(() => wd.out.includes("ты можешь возразить"), "closing to be printed");
+  const flat = wd.out.replace(/\n/g, " ");
+  const batch = flat.indexOf("Комната: кадров 2");
+  const prog = flat.indexOf("[tests] пробы зелёные = ok; без сети");
+  const close = flat.indexOf("предлагает закрыть комнату");
+  assert.ok(batch >= 0 && prog > batch, `the batch head and progress words:\n${wd.out}`);
+  assert.ok(close > prog, `the batch goes out before closing, not after:\n${wd.out}`);
+  assert.ok(flat.indexOf("стопкой defer") < close, "said defer rides in the batch, before closing");
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
+test("a room batch alone goes out after its window; an unknown kind batches and is written to the bridge log", async (t) => {
+  const { fake, dir, key, bridge } = await connected(t, {
+    env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "2000" },
+  });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog", dir, key, 15_000);
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
+  const sent = Date.now();
+  await sendRoom(fake, unknownKind());
+  await sendRoom(fake, progress(45));
+  await waitFor(
+    () => bridge.stderr.includes("род weather мосту неизвестен"),
+    "the bridge log line",
+  );
+  await new Promise((r) => setTimeout(r, 700));
+  assert.ok(!wd.out.includes("мосту неизвестен"), `an unknown kind interrupted:\n${wd.out}`);
+  await waitFor(() => wd.out.includes("пробы зелёные"), "the batch after the window", 8000);
+  assert.ok(Date.now() - sent >= 1800, "the batch waited for its window");
+  assert.match(wd.out, /Комната: кадров 2/);
+  assert.match(wd.out, /род weather мосту неизвестен/);
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
+test("said with stack interrupt reaches the Monitor watchdog at once", async (t) => {
+  const { fake, dir, key } = await connected(t, {
+    env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "10000" },
+  });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog", dir, key, 15_000);
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
+  await sendRoom(fake, said("interrupt", 62));
+  await waitFor(() => wd.out.includes("стопкой interrupt"), "said interrupt printed", 3000);
+  assert.match(wd.out, /слово от Алексей \(@aleksei:probe\)/);
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
+// A batch flush is a delivery: the exit watchdog prints the whole batch and leaves on it.
+test("the exit watchdog leaves at the batch flush with the whole batch, not on its first frame", async (t) => {
+  const { fake, dir, key } = await connected(t, {
+    env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "2000" },
+  });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog-exit", dir, key, 15_000);
+  await waitFor(() => wd.err.includes("hello"), "hello to be noted");
+  await sendRoom(fake, progress(46));
+  await sendRoom(fake, progress(48));
+  await new Promise((r) => setTimeout(r, 700));
+  assert.equal(wd.proc.exitCode, null, `the exit watchdog left before the window: ${wd.out}`);
+  const r = await wd.done;
+  assert.equal(r.exit, 0, `the flush must wake: ${wd.err}`);
+  assert.ok(
+    wd.out.includes("room-msg-46") && wd.out.includes("room-msg-48"),
+    `the whole batch is handed over:\n${wd.out}`,
+  );
+});
+
+test("the exit watchdog: closing flushes the batch, the watchdog leaves on it, closing comes on the next arm", async (t) => {
+  const { fake, dir, key } = await connected(t, {
+    env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "10000" },
+  });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const first = runClient("watchdog-exit", dir, key, 15_000);
+  await waitFor(() => first.err.includes("hello"), "hello to be noted");
+  await sendRoom(fake, progress(49));
+  await new Promise((r) => setTimeout(r, 700));
+  assert.equal(first.proc.exitCode, null, `the exit watchdog left on a batch frame: ${first.out}`);
+  await sendRoom(fake, closing());
+  const r1 = await first.done;
+  assert.equal(r1.exit, 0);
+  assert.ok(first.out.includes("room-msg-49"), `the batch goes first:\n${first.out}`);
+  assert.ok(!first.out.includes("room.closing"), `closing waits for the next arm:\n${first.out}`);
+  const second = runClient("watchdog-exit", dir, key, 8000);
+  const r2 = await second.done;
+  assert.equal(r2.exit, 0, `closing must wake the next arm: ${second.err}`);
+  assert.match(second.out, /room\.closing/);
+  assert.ok(!second.out.includes("room-msg-49"), "the batch is not handed twice");
+});
+
+test("a full room batch goes out at once, before its window: nothing is dropped", async (t) => {
+  const { fake, dir, key } = await connected(t, {
+    env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "30000" },
+  });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog", dir, key, 20_000);
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
+  for (let i = 0; i < 21; i++) await sendRoom(fake, progress(200 + i));
+  await waitFor(() => wd.out.includes("room-msg-219"), "the full batch", 5000);
+  assert.match(wd.out, /Комната: кадров 20/);
+  for (let i = 0; i < 20; i++) assert.ok(wd.out.includes(`room-msg-${200 + i}`), `frame ${i}`);
+  assert.ok(!wd.out.includes("room-msg-220"), "the 21st starts the next batch");
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
+test("watchdog-codex: progress waits; closing puts the batch into the thread first, then itself", async (t) => {
+  const { fake, dir, key } = await connected(t, {
+    env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "10000" },
+  });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const home = mkdtempSync("/tmp/cxd-");
+  const sock = join(home, "app-server-control", "app-server-control.sock");
+  const log = join(home, "door.log");
+  writeFileSync(log, "");
+  const door = await startFakeCodex(sock, log);
+  t.after(() => door.stop());
+  const wd = runClient("watchdog-codex", dir, key, 20_000, {
+    CODEX_HOME: home,
+    CODEX_THREAD_ID: "thread-room",
+  });
+  await waitFor(() => wd.err.includes("слушаю стояние"), "the watchdog to attach");
+  const turns = () =>
+    readFileSync(log, "utf8")
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((l) => JSON.parse(l))
+      .filter((c) => c.method === "turn/start");
+  await sendRoom(fake, progress(47));
+  await new Promise((r) => setTimeout(r, 1000));
+  assert.equal(turns().length, 0, "progress must not enter the thread before the window");
+  await sendRoom(fake, closing());
+  await waitFor(() => turns().length === 2, "the batch and closing in the thread");
+  const [first, second] = turns().map((c) => c.params.input[0].text);
+  assert.match(first, /\[tests\] пробы зелёные = ok/);
+  assert.match(second, /предлагает закрыть комнату/);
+  assert.match(second, /ты можешь возразить — objection, in_reply_to=50/);
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
+// Today's production (api 0.86.0) sends no event_kind: every old room frame, whatever its
+// kind or stack, and every non-room frame reach a watchdog at once, as on main. Guards of
+// main's behaviour — green on main by design.
+const LEGACY_AT_ONCE = () => [
+  [directWord(), "прямое слово соседа"],
+  [graphPosed(), "graph-1"],
+  [legacyRoom("text", "interrupt", 71), "прежний род text со стопкой interrupt"],
+  [legacyRoom("direct", "interrupt", 75), "прежний род direct"],
+  [legacyRoom("digest", "defer", 76), "прежний род digest"],
+  [legacyRoom("auto", "defer", 74), "прежний род auto"],
+];
+
+test("room kinds leave the Monitor watchdog's other frames and the old room shape as on main: all print at once", async (t) => {
+  const { fake, dir, key, bridge } = await connected(t, {
+    env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "10000" },
+  });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog", dir, key, 20_000);
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
+  const cases = LEGACY_AT_ONCE();
+  for (const [frame] of cases) await sendRoom(fake, frame);
+  await waitFor(() => cases.every(([, mark]) => wd.out.includes(mark)), "all at once", 3000);
+  assert.ok(!wd.out.includes("Комната: кадров"), `no batch without event_kind:\n${wd.out}`);
+  assert.ok(!bridge.stderr.includes("мосту неизвестен"), "no unknown-kind line for old kinds");
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
+test("room kinds leave the exit watchdog's other frames and the old room shape as on main: each wakes it", async (t) => {
+  const { fake, dir, key } = await connected(t, {
+    env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "10000" },
+  });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  for (const [frame, mark] of LEGACY_AT_ONCE()) {
+    const wd = runClient("watchdog-exit", dir, key, 8000);
+    await waitFor(() => wd.err.includes("слушаю стояние"), "the exit watchdog to attach");
+    await sendRoom(fake, frame);
+    const r = await wd.done;
+    assert.equal(r.exit, 0, `${frame.id} must wake: ${wd.err}`);
+    assert.ok(wd.out.includes(mark), wd.out);
+  }
+});
+
+test("room kinds leave the Codex thread's other frames and the old room shape as on main: all enter at once", async (t) => {
+  const { fake, dir, key } = await connected(t, {
+    env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "10000" },
+  });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const home = mkdtempSync("/tmp/cxd-");
+  const sock = join(home, "app-server-control", "app-server-control.sock");
+  const log = join(home, "door.log");
+  writeFileSync(log, "");
+  const door = await startFakeCodex(sock, log);
+  t.after(() => door.stop());
+  const wd = runClient("watchdog-codex", dir, key, 20_000, {
+    CODEX_HOME: home,
+    CODEX_THREAD_ID: "thread-legacy",
+  });
+  await waitFor(() => wd.err.includes("слушаю стояние"), "the watchdog to attach");
+  const turns = () =>
+    readFileSync(log, "utf8")
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((l) => JSON.parse(l))
+      .filter((c) => c.method === "turn/start")
+      .map((c) => c.params.input[0].text);
+  const cases = LEGACY_AT_ONCE();
+  for (const [frame] of cases) await sendRoom(fake, frame);
+  await waitFor(() => turns().length === cases.length, "every frame at once", 3000);
+  turns().forEach((text, i) => assert.ok(text.includes(cases[i][1]), text));
+  wd.proc.kill("SIGKILL");
+  await wd.done;
 });
