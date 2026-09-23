@@ -6,7 +6,39 @@
 // выхода — не проснуться на отданном (граф nks-dev: #4469, #4881).
 import { appendFileSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 
+import { type Frame } from "./channel.ts";
+
 const SEEN_KEEP = 200;
+
+const eventIdIn = (o: unknown): string => {
+  const v = o && typeof o === "object" ? (o as Record<string, unknown>).event_id : undefined;
+  return typeof v === "string" || typeof v === "number" ? String(v) : "";
+};
+
+/**
+ * Метка события графа в памяти доставленного: `ev:<event_id>`; "" — кадр не несёт
+ * события. Платформа раздаёт одно событие каждому месту роли, у каждой копии свой
+ * id кадра и тот же event_id в теле (граф nks-dev: #5829) — делатель слышит его раз.
+ */
+export function eventKeyOf(frame: Frame | null | undefined): string {
+  if (!frame) return "";
+  let body: unknown = frame.body;
+  if (typeof body === "string" && body.trimStart().startsWith("{")) {
+    try {
+      body = JSON.parse(body);
+    } catch {
+      body = undefined;
+    }
+  }
+  const ev = eventIdIn(frame) || eventIdIn(body);
+  return ev ? `ev:${ev}` : "";
+}
+
+/** Метки доставленного кадра: его id и событие графа, которое он несёт. */
+export function deliveredKeys(frame: Frame | null | undefined): string[] {
+  const id = typeof frame?.id === "string" ? frame.id : "";
+  return [id, eventKeyOf(frame)].filter(Boolean);
+}
 
 export function seenIds(seenPath: string): Set<string> {
   try {

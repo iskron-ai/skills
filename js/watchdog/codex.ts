@@ -15,7 +15,7 @@ import { join } from "node:path";
 
 import { type Door, openDoor } from "../shared/appserver.ts";
 import { frameToText } from "../shared/frame-text.ts";
-import { noteSeen, seenIds } from "../shared/seen.ts";
+import { deliveredKeys, noteSeen, seenIds } from "../shared/seen.ts";
 import { seenFilePathOf } from "../shared/standings.ts";
 import { attach, parseWatchdogArgs, resolveStanding } from "./client.ts";
 
@@ -130,16 +130,13 @@ export function runWatchdogCodex(argv: string[]): void {
           if (type !== "message") return note(`кадр ${type ?? "не разобран"} — не повод будить`);
           if (fromRing && typeof ev.frame?.id !== "string")
             return note("кадр без id из кольца — пометить нечем, в тред не кладу повторно");
-          void deliver(
-            frameToText(ev.frame, ev.raw ?? ""),
-            typeof ev.frame?.id === "string" ? [ev.frame.id] : [],
-          );
+          void deliver(frameToText(ev.frame, ev.raw ?? ""), deliveredKeys(ev.frame));
           break;
         }
         case "stale":
           void deliver(
             ev.text ?? "Искрон: лежалые кадры",
-            (ev.frames ?? []).map((f) => f.id).filter((x): x is string => typeof x === "string"),
+            (ev.frames ?? []).flatMap((f) => deliveredKeys(f)),
           ); // одна пачка — один ход
           break;
         case "dead":

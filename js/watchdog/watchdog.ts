@@ -9,7 +9,7 @@
 import { writeSync } from "node:fs";
 
 import { frameToText } from "../shared/frame-text.ts";
-import { noteSeen, seenIds } from "../shared/seen.ts";
+import { deliveredKeys, noteSeen, seenIds } from "../shared/seen.ts";
 import { seenFilePathOf } from "../shared/standings.ts";
 import { attach, resolveStanding } from "./client.ts";
 
@@ -86,7 +86,7 @@ export function runWatchdog(argv: string[]): void {
             break;
           }
           for (const line of wrapLines(frameToText(f, ev.raw ?? ""))) log(line);
-          if (typeof f.id === "string" && f.id) noteSeen(seenPath, f.id, seen); // после печати
+          for (const k of deliveredKeys(f)) noteSeen(seenPath, k, seen); // после печати
           break;
         }
         case "note":
@@ -95,7 +95,7 @@ export function runWatchdog(argv: string[]): void {
         case "stale":
           for (const line of wrapLines(ev.text ?? "")) log(line); // одна пачка — одно событие
           for (const f of ev.frames ?? [])
-            if (typeof f.id === "string" && f.id) noteSeen(seenPath, f.id, seen); // напечатана — отдана
+            for (const k of deliveredKeys(f)) noteSeen(seenPath, k, seen); // напечатана — отдана
           break;
         case "dead":
         case "evicted":

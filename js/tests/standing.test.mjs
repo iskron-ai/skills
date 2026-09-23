@@ -295,6 +295,59 @@ test("a frame the platform sends again is not printed twice", async (t) => {
   assert.equal(wd.out.split("одно слово дважды").length - 1, 1, wd.out);
 });
 
+// One graph event is fanned out to every place of a role, each copy under its
+// own frame id with the same event_id in the body; a sibling place's copies come
+// back stale when the socket reopens (#5829). The doer hears the event once: a
+// second live copy, a stale copy, and a copy after the watchdog is re-armed are
+// all dropped; a stale re-send of a frame already delivered is not re-offered.
+test("one graph event fanned out under several frame ids reaches the watchdog once; a stale re-send of a delivered frame is dropped", async (t) => {
+  const { fake, dir, standings } = await connected(t);
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const graphEvent = (id, extra = {}, body = { event_id: "ev-42", text: "событие сорок два" }) =>
+    JSON.stringify({ type: "message", id, provenance: { via: "graph" }, body, ...extra });
+  const wd = runClient("watchdog", dir, undefined, 30_000);
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog");
+  await fake.control({ ws_send: graphEvent("fan-1") });
+  await waitFor(() => wd.out.includes("событие сорок два"), "the first copy");
+  await waitSeen(standings, "fan-1");
+  // The same event under another place's frame id, body as JSON text this time.
+  await fake.control({
+    ws_send: graphEvent(
+      "fan-2",
+      {},
+      JSON.stringify({ event_id: "ev-42", text: "событие сорок два" }),
+    ),
+  });
+  await fake.control({ ws_send: graphEvent("fan-3", { stale: true }) });
+  // A plain frame delivered live, then handed back stale under the same id.
+  await fake.control({
+    ws_send: JSON.stringify({ type: "message", id: "plain-1", body: "простое слово" }),
+  });
+  await waitFor(() => wd.out.includes("простое слово"), "the plain frame");
+  await waitSeen(standings, "plain-1");
+  await fake.control({
+    ws_send: JSON.stringify({ type: "message", id: "plain-1", stale: true, body: "простое слово" }),
+  });
+  await new Promise((r) => setTimeout(r, 2500)); // past the stale burst window
+  assert.equal(wd.out.split("событие сорок два").length - 1, 1, `one event, one print:\n${wd.out}`);
+  assert.equal(wd.out.split("простое слово").length - 1, 1, `delivered once:\n${wd.out}`);
+  assert.ok(!wd.out.includes("Лежалых кадров"), `nothing stale left to offer:\n${wd.out}`);
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+  // Re-armed: yet another copy of the same event stays quiet, a new event is heard.
+  const again = runClient("watchdog", dir, undefined, 20_000);
+  await waitFor(() => again.out.includes("слушаю стояние"), "the re-armed watchdog");
+  await fake.control({ ws_send: graphEvent("fan-4") });
+  await fake.control({
+    ws_send: graphEvent("fan-5", {}, { event_id: "ev-43", text: "событие сорок три" }),
+  });
+  await waitFor(() => again.out.includes("событие сорок три"), "a new event to be heard");
+  await new Promise((r) => setTimeout(r, 300));
+  again.proc.kill("SIGKILL");
+  await again.done;
+  assert.ok(!again.out.includes("событие сорок два"), `a copy after re-arm:\n${again.out}`);
+});
+
 // The same on the live path: an exit watchdog attached while two frames land
 // back to back takes the first; the second is written to it but not delivered.
 test("a live batch is not lost to an attached watchdog that exits on the first frame", async (t) => {

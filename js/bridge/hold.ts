@@ -20,7 +20,7 @@ import {
   holdSocket,
   statusUrl as deriveStatusUrl,
 } from "../shared/channel.ts";
-import { noteSeen, seenIds } from "../shared/seen.ts";
+import { deliveredKeys, noteSeen, seenIds } from "../shared/seen.ts";
 import {
   keyFilePathOf,
   seenFilePathOf,
@@ -31,6 +31,7 @@ import { flushBacklogNow, noteBacklog, openBacklog } from "./backlog.ts";
 import { harnessName, notifiedClient } from "./client.ts";
 import { stampOrigin } from "./complete.ts";
 import { CFG } from "./config.ts";
+import { dropOffered, isDelivered, offeredBefore } from "./fanout.ts";
 import { dropHoldRecord, keyOf, readHoldRecord, writeHoldRecord } from "./holdrecord.ts";
 import { dropStale, noteStale } from "./stale.ts";
 import { standingLog } from "./store.ts";
@@ -239,12 +240,11 @@ function openLocalServer(key: string): void {
     // местный клиент ещё не получал: перевзведённый сторож не должен нести
     // делателю то же кольцо второй раз — память доставленного у моста есть.
     // Доставленным кадр помечает отдавший его клиент (печатью, выходом) — файл читается заново.
-    const given = seenIds(seenFilePathOf(CFG.authDir, key));
-    const backlog = ring.filter(({ frame }) => {
-      if (frame?.type === "hello") return true;
-      const id = frame?.type === "message" && typeof frame.id === "string" ? frame.id : "";
-      return !id || !(seen.has(id) || given.has(id));
-    });
+    const seenPath = seenFilePathOf(CFG.authDir, key);
+    const backlog = ring.filter(
+      ({ frame }) =>
+        frame?.type !== "message" || !isDelivered(deliveredKeys(frame), seen, seenPath),
+    );
     sock.write(
       JSON.stringify({ kind: "attached", key, buffered: backlog.length } satisfies ChannelEvent) +
         "\n",
@@ -318,6 +318,7 @@ export function releaseStanding(reason: string, forget = false): void {
   evictedKey = null;
   evictedEvent = null;
   seen = new Set();
+  dropOffered();
   dropStale();
 }
 
@@ -384,25 +385,27 @@ function openHolder(url: string, key: string): void {
     url,
     onFrame: (raw, frame) => {
       void Promise.resolve(stampOrigin(frame)).then((full) => {
-        // Лежалый кадр — принятое, пока место не слушали (после revoke — почта
-        // предшественника), либо повтор службы после пересборки сессии: хода не
-        // стоит, но и не теряется — уходит одной пачкой на полосу, не по одному.
+        const seenPath = seenFilePathOf(CFG.authDir, key);
+        const id = full?.type === "message" && typeof full.id === "string" ? full.id : "";
+        // Копия события графа, уже предложенного или отданного (веер, fanout.ts), — никому.
+        const evKey = offeredBefore(full, seen, seenPath);
+        if (evKey) return log(`frame ${id || "?"} carries ${evKey} already offered — not raised`);
+        // Повтор уже отданного кадра (тот же id — платформа отдала его снова после
+        // возврата места) никому не рассылается; отданное клиенты помечают сами — в файле.
+        const again = isDelivered(id ? [id] : [], seen, seenPath);
+        // Лежалый кадр — принятое, пока место не слушали (после revoke — почта предшественника),
+        // либо повтор службы после пересборки сессии: хода не стоит, но и не теряется — одной
+        // пачкой на полосу, не по одному; лежалая копия уже отданного кадра в пачку не идёт.
         if (full?.type === "message" && full.stale === true)
-          return noteStale(full, (ev) => {
-            broadcast(ev);
-            notify("info", ev);
-          });
+          return again
+            ? log(`stale frame ${id} already delivered — dropped`)
+            : noteStale(full, (ev) => (broadcast(ev), notify("info", ev)));
         const text = full === frame ? raw : JSON.stringify(full);
         // В кольцо идёт и hello: сторож, прицепившийся позже, должен увидеть
         // доказательство держания, а не только рабочие кадры.
         ring.push({ raw: text, frame: full });
         if (ring.length > RING) ring.shift();
         if (full?.type === "hello") for (const w of [...helloWaiters]) w(full);
-        const id = full?.type === "message" && typeof full.id === "string" ? full.id : "";
-        const seenPath = seenFilePathOf(CFG.authDir, key);
-        // Повтор уже отданного кадра (тот же id — платформа отдала его снова после
-        // возврата места) никому не рассылается; отданное клиенты помечают сами — в файле.
-        const again = !!id && (seen.has(id) || seenIds(seenPath).has(id));
         const ev: ChannelEvent = { kind: "frame", raw: text, frame: full };
         if (!again) broadcast(ev);
         if (full?.type === "status") return;
@@ -413,7 +416,7 @@ function openHolder(url: string, key: string): void {
           // умерший в окне мост его не потеряет: платформа отдаст снова.
           const flushBacklog = (b: ChannelEvent): void => {
             for (const f of b.frames ?? [])
-              if (typeof f.id === "string" && f.id) noteSeen(seenPath, f.id, seen);
+              for (const k of deliveredKeys(f)) noteSeen(seenPath, k, seen);
             notify("info", b);
           };
           if (full?.type === "hello" && Number(full.pending) > 0)
@@ -422,7 +425,7 @@ function openHolder(url: string, key: string): void {
             if (full.origin === "platform") openBacklog(0, flushBacklog);
             if (noteBacklog(full)) return;
           }
-          if (id) noteSeen(seenPath, id, seen);
+          for (const k of deliveredKeys(full)) noteSeen(seenPath, k, seen);
         }
         notify("info", ev);
       });
