@@ -1669,26 +1669,17 @@ import { createServer as createServer2 } from "node:net";
 // js/shared/seen.ts
 import { appendFileSync as appendFileSync2, readFileSync as readFileSync6, renameSync as renameSync4, writeFileSync as writeFileSync5 } from "node:fs";
 var SEEN_KEEP = 200;
-var eventIdIn = (o) => {
-  const v = o && typeof o === "object" ? o.event_id : void 0;
-  return typeof v === "string" || typeof v === "number" ? String(v) : "";
-};
 function eventKeyOf(frame2) {
-  if (!frame2) return "";
-  let body = frame2.body;
-  if (typeof body === "string" && body.trimStart().startsWith("{")) {
-    try {
-      body = JSON.parse(body);
-    } catch {
-      body = void 0;
-    }
-  }
-  const ev = eventIdIn(frame2) || eventIdIn(body);
-  return ev ? `ev:${ev}` : "";
+  if (frame2?.provenance?.via !== "graph") return "";
+  const body = frame2.body;
+  if (!body || typeof body !== "object" || Array.isArray(body)) return "";
+  const ev = body.event_id;
+  return typeof ev === "number" || typeof ev === "string" && ev ? `ev:${ev}` : "";
 }
 function deliveredKeys(frame2) {
   const id = typeof frame2?.id === "string" ? frame2.id : "";
-  return [id, eventKeyOf(frame2)].filter(Boolean);
+  const ev = eventKeyOf(frame2);
+  return [id, ev && frame2?.stale === true ? `evs:${ev.slice(3)}` : ev].filter(Boolean);
 }
 function seenIds(seenPath) {
   try {
@@ -2042,23 +2033,59 @@ function stampOrigin(frame2) {
   return { ...frame2, origin: classifyOrigin(frame2, state.standing?.karta) };
 }
 
+// js/bridge/stale.ts
+var STALE_BURST_KEEP = 20;
+var STALE_BURST_MS = 1500;
+var BODY_CAP2 = 800;
+var burst = [];
+var timer2 = null;
+function noteStale(frame2, flush2) {
+  if (burst.length < STALE_BURST_KEEP) burst.push(frame2);
+  if (timer2) return;
+  timer2 = setTimeout(() => {
+    timer2 = null;
+    const frames2 = burst.splice(0);
+    if (!frames2.length) return;
+    const bodies = frames2.map((f) => {
+      const t = frameToText(f, JSON.stringify(f));
+      return [...t].length > BODY_CAP2 ? [...t].slice(0, BODY_CAP2).join("") + "…" : t;
+    });
+    flush2({
+      kind: "stale",
+      frames: frames2,
+      text: `Лежалых кадров: ${frames2.length} — принятое, пока место не слушали, или повтор службы после пересборки сессии; хода не стоят, но прочти; полностью — iskron_channel(action="history").
+
+` + bodies.join("\n\n")
+    });
+  }, STALE_BURST_MS).unref();
+}
+var staleHasEvent = (evKey) => burst.some((f) => eventKeyOf(f) === evKey);
+function dropStaleEvent(evKey) {
+  for (let i = burst.length - 1; i >= 0; i--)
+    if (eventKeyOf(burst[i]) === evKey) burst.splice(i, 1);
+}
+function dropStale() {
+  burst.length = 0;
+  if (timer2) clearTimeout(timer2);
+  timer2 = null;
+}
+
 // js/bridge/fanout.ts
-var KEEP = 500;
-var offered = /* @__PURE__ */ new Set();
 function isDelivered(keys, seen2, seenPath) {
   if (!keys.length) return false;
   const given = seenIds(seenPath);
   return keys.some((k) => seen2.has(k) || given.has(k));
 }
-function offeredBefore(frame2, seen2, seenPath) {
-  const evKey = frame2?.type === "message" ? eventKeyOf(frame2) : "";
-  if (!evKey) return "";
-  if (offered.has(evKey) || isDelivered([evKey], seen2, seenPath)) return evKey;
-  offered.add(evKey);
-  if (offered.size > KEEP) offered.delete(offered.values().next().value);
+function redundantCopy(frame2, ring2, seen2, seenPath) {
+  const ev = frame2?.type === "message" ? eventKeyOf(frame2) : "";
+  if (!ev) return "";
+  const stale = frame2?.stale === true;
+  const keys = stale ? [ev, `evs:${ev.slice(3)}`] : [ev];
+  if (isDelivered(keys, seen2, seenPath) || ring2.some((r) => eventKeyOf(r.frame) === ev)) return ev;
+  if (stale) return staleHasEvent(ev) ? ev : "";
+  dropStaleEvent(ev);
   return "";
 }
-var dropOffered = () => offered.clear();
 
 // js/bridge/holdrecord.ts
 import { readFileSync as readFileSync7, unlinkSync as unlinkSync4, writeFileSync as writeFileSync6 } from "node:fs";
@@ -2094,37 +2121,6 @@ function dropHoldRecord(key) {
     unlinkSync4(holdFilePathFor(key));
   } catch {
   }
-}
-
-// js/bridge/stale.ts
-var STALE_BURST_KEEP = 20;
-var STALE_BURST_MS = 1500;
-var BODY_CAP2 = 800;
-var burst = [];
-var timer2 = null;
-function noteStale(frame2, flush2) {
-  if (burst.length < STALE_BURST_KEEP) burst.push(frame2);
-  if (timer2) return;
-  timer2 = setTimeout(() => {
-    timer2 = null;
-    const frames2 = burst.splice(0);
-    const bodies = frames2.map((f) => {
-      const t = frameToText(f, JSON.stringify(f));
-      return [...t].length > BODY_CAP2 ? [...t].slice(0, BODY_CAP2).join("") + "…" : t;
-    });
-    flush2({
-      kind: "stale",
-      frames: frames2,
-      text: `Лежалых кадров: ${frames2.length} — принятое, пока место не слушали, или повтор службы после пересборки сессии; хода не стоят, но прочти; полностью — iskron_channel(action="history").
-
-` + bodies.join("\n\n")
-    });
-  }, STALE_BURST_MS).unref();
-}
-function dropStale() {
-  burst.length = 0;
-  if (timer2) clearTimeout(timer2);
-  timer2 = null;
 }
 
 // js/bridge/sweep.ts
@@ -2392,7 +2388,6 @@ function releaseStanding(reason, forget = false) {
   evictedKey = null;
   evictedEvent = null;
   seen = /* @__PURE__ */ new Set();
-  dropOffered();
   dropStale();
 }
 function holdStanding(url, statusUrl2) {
@@ -2449,7 +2444,7 @@ function openHolder(url, key) {
       void Promise.resolve(stampOrigin(frame2)).then((full) => {
         const seenPath = seenFilePathOf(CFG.authDir, key);
         const id = full?.type === "message" && typeof full.id === "string" ? full.id : "";
-        const evKey = offeredBefore(full, seen, seenPath);
+        const evKey = redundantCopy(full, ring, seen, seenPath);
         if (evKey) return log(`frame ${id || "?"} carries ${evKey} already offered — not raised`);
         const again = isDelivered(id ? [id] : [], seen, seenPath);
         if (full?.type === "message" && full.stale === true)

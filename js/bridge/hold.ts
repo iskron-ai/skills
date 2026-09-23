@@ -31,7 +31,7 @@ import { flushBacklogNow, noteBacklog, openBacklog } from "./backlog.ts";
 import { harnessName, notifiedClient } from "./client.ts";
 import { stampOrigin } from "./complete.ts";
 import { CFG } from "./config.ts";
-import { dropOffered, isDelivered, offeredBefore } from "./fanout.ts";
+import { isDelivered, redundantCopy } from "./fanout.ts";
 import { dropHoldRecord, keyOf, readHoldRecord, writeHoldRecord } from "./holdrecord.ts";
 import { dropStale, noteStale } from "./stale.ts";
 import { standingLog } from "./store.ts";
@@ -318,7 +318,6 @@ export function releaseStanding(reason: string, forget = false): void {
   evictedKey = null;
   evictedEvent = null;
   seen = new Set();
-  dropOffered();
   dropStale();
 }
 
@@ -388,7 +387,7 @@ function openHolder(url: string, key: string): void {
         const seenPath = seenFilePathOf(CFG.authDir, key);
         const id = full?.type === "message" && typeof full.id === "string" ? full.id : "";
         // Копия события графа, уже предложенного или отданного (веер, fanout.ts), — никому.
-        const evKey = offeredBefore(full, seen, seenPath);
+        const evKey = redundantCopy(full, ring, seen, seenPath);
         if (evKey) return log(`frame ${id || "?"} carries ${evKey} already offered — not raised`);
         // Повтор уже отданного кадра (тот же id — платформа отдала его снова после
         // возврата места) никому не рассылается; отданное клиенты помечают сами — в файле.
