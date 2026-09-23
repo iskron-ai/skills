@@ -10,26 +10,29 @@ import { callTool as call, short } from "./call.ts";
 import { post, state } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
 
-/** Параметры iskron_admin по схеме сервера — один запрос tools/list на процесс. */
-let adminParams: Promise<Set<string>> | null = null;
-function adminParamNames(): Promise<Set<string>> {
-  adminParams ??= (async () => {
-    const id = `iskron-bridge-admin-schema-${++state.reinitCounter}`;
-    let got: JsonRpcMessage | null = null;
+/**
+ * Параметры iskron_admin по схеме сервера — читаются заново на каждый iskron_stand:
+ * работающий мост подхватывает channel, как только сервер его объявит. null —
+ * схему прочесть не удалось (tools/list отказал, пуст или тул на другой странице).
+ */
+async function adminParamNames(): Promise<Set<string> | null> {
+  const id = `iskron-bridge-admin-schema-${++state.reinitCounter}`;
+  let got: JsonRpcMessage | null = null;
+  try {
     await post({ jsonrpc: "2.0", id, method: "tools/list", params: {} }, (m) => {
       if (m.id === id) got = m;
-    }).catch(() => {});
-    const tools = (got as JsonRpcMessage | null)?.result?.tools;
-    const admin = Array.isArray(tools)
-      ? (tools as { name?: string; inputSchema?: { properties?: Record<string, unknown> } }[]).find(
-          (t) => t?.name === "iskron_admin",
-        )
-      : undefined;
-    const names = new Set(Object.keys(admin?.inputSchema?.properties ?? {}));
-    if (!names.size) adminParams = null; // схемы не видно — спросить в следующий раз
-    return names;
-  })();
-  return adminParams;
+    });
+  } catch {
+    return null;
+  }
+  const result = (got as JsonRpcMessage | null)?.result;
+  const tools = result?.tools;
+  if (!Array.isArray(tools)) return null;
+  const admin = (
+    tools as { name?: string; inputSchema?: { properties?: Record<string, unknown> } }[]
+  ).find((t) => t?.name === "iskron_admin");
+  if (!admin) return null; // тула на этой странице нет (список постраничный или урезан) — схема не прочтена
+  return new Set(Object.keys(admin.inputSchema?.properties ?? {}));
 }
 
 export interface HookPlace {
@@ -68,7 +71,10 @@ export async function armRoleHook(p: HookPlace): Promise<string> {
   if (!p.heardHere) return "Хук инбокса роли: не взвожу — слух у другого держателя.";
   if (p.beside) {
     // Своего адреса у места нет — хук ставится на канал, если тул это умеет.
-    if (!(await adminParamNames()).has("channel"))
+    const params = await adminParamNames();
+    if (!params)
+      return `Хук инбокса роли: не взведён — у места этого графа своего входящего адреса нет (адрес — у канала, открытого в графе ${p.channelRealm}), а схему тула iskron_admin прочесть не удалось (tools/list не ответил или iskron_admin в нём не нашёлся) — объявлен ли параметр channel, не известно; хук на канал (channel=self) не взвожу вслепую — повтори iskron_stand этого графа.`;
+    if (!params.has("channel"))
       return `Хук инбокса роли: не взведён — у места этого графа своего входящего адреса нет (адрес — у канала, открытого в графе ${p.channelRealm}), а тул iskron_admin(action="add_webhook") в этой поверхности параметра channel не объявляет; хук на канал (channel=self) взвести нечем — почта роли этого графа сокетом не приходит.`;
     const h = await call("iskron_admin", {
       action: "add_webhook",

@@ -3400,24 +3400,22 @@ function undelivered(e) {
 }
 
 // js/bridge/hook.ts
-var adminParams = null;
-function adminParamNames() {
-  adminParams ??= (async () => {
-    const id = `iskron-bridge-admin-schema-${++state.reinitCounter}`;
-    let got = null;
+async function adminParamNames() {
+  const id = `iskron-bridge-admin-schema-${++state.reinitCounter}`;
+  let got = null;
+  try {
     await post({ jsonrpc: "2.0", id, method: "tools/list", params: {} }, (m) => {
       if (m.id === id) got = m;
-    }).catch(() => {
     });
-    const tools = got?.result?.tools;
-    const admin = Array.isArray(tools) ? tools.find(
-      (t) => t?.name === "iskron_admin"
-    ) : void 0;
-    const names2 = new Set(Object.keys(admin?.inputSchema?.properties ?? {}));
-    if (!names2.size) adminParams = null;
-    return names2;
-  })();
-  return adminParams;
+  } catch {
+    return null;
+  }
+  const result = got?.result;
+  const tools = result?.tools;
+  if (!Array.isArray(tools)) return null;
+  const admin = tools.find((t) => t?.name === "iskron_admin");
+  if (!admin) return null;
+  return new Set(Object.keys(admin.inputSchema?.properties ?? {}));
 }
 async function armRoleHook(p) {
   const { realm, karta, name } = p;
@@ -3432,7 +3430,10 @@ async function armRoleHook(p) {
     return `Хук инбокса роли: список хуков не распознан — не трогаю (${short(hooks.text, 120)}).`;
   if (!p.heardHere) return "Хук инбокса роли: не взвожу — слух у другого держателя.";
   if (p.beside) {
-    if (!(await adminParamNames()).has("channel"))
+    const params = await adminParamNames();
+    if (!params)
+      return `Хук инбокса роли: не взведён — у места этого графа своего входящего адреса нет (адрес — у канала, открытого в графе ${p.channelRealm}), а схему тула iskron_admin прочесть не удалось (tools/list не ответил или iskron_admin в нём не нашёлся) — объявлен ли параметр channel, не известно; хук на канал (channel=self) не взвожу вслепую — повтори iskron_stand этого графа.`;
+    if (!params.has("channel"))
       return `Хук инбокса роли: не взведён — у места этого графа своего входящего адреса нет (адрес — у канала, открытого в графе ${p.channelRealm}), а тул iskron_admin(action="add_webhook") в этой поверхности параметра channel не объявляет; хук на канал (channel=self) взвести нечем — почта роли этого графа сокетом не приходит.`;
     const h2 = await callTool("iskron_admin", {
       action: "add_webhook",

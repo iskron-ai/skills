@@ -947,7 +947,8 @@ test("two graphs: the second place stands beside the first on the same channel �
     /id места не назвал/,
     `the register id was not parsed:\n${textOf(b)}`,
   );
-  // Without a channel parameter on the hook tool, the reply says so and nothing breaks.
+  // The default fake lists no iskron_admin: the schema is unread, the reply says so and nothing breaks.
+  assert.match(textOf(b), /схему тула iskron_admin прочесть не удалось/, textOf(b));
   assert.match(
     textOf(b),
     /Хук инбокса роли: не взведён — у места этого графа своего входящего адреса нет/,
@@ -1234,6 +1235,9 @@ test("two graphs: graph B's role hook is armed on the channel (channel=self), an
     (f) => f.control({ adminChannelSelf: true }),
   );
   assert.match(textOf(b), /Хук инбокса роли: взведён на канал \(channel=self\)/, textOf(b));
+  // UNVERIFIED: the fake's list_webhooks line for a channel hook and its channel:self
+  // delivery are modelled on the API steward's word, not observed — revisit once the
+  // server ships channel:self on the MCP tool.
   assert.ok(
     fake.state.webhooks.some((w) => w.channel === "self" && w.karta === "48" && w.realm === DRUGOY),
     "the hook was registered on the channel for B's role in B",
