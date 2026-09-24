@@ -64,8 +64,20 @@ var WORDS = {
   withdraw: "приглашение отозвано, отзывает {author}",
   accepted: "{who} принял приглашение",
   node: "в деле узел #{seq} {name} ({realm})",
-  link: "дело связано с {room}",
+  link: "дело связано с #{room} ({rel})",
+  auto: "запись платформы {code} о деле #{room}",
   unknown: "род {kind} мосту неизвестен"
+};
+var AUTO_WORDS = {
+  child_opened: "дочернее дело #{room} открыто",
+  child_closing: "дочернее дело #{room} закрывается",
+  child_closed: "дочернее дело #{room} закрыто",
+  child_late_objection: "позднее возражение в дочернем деле #{room}"
+};
+var REL_WORDS = {
+  parent: "дочернее к нему",
+  child: "родительское к нему",
+  continues: "продолжает его"
 };
 var RULES = {
   said: "stack",
@@ -82,7 +94,9 @@ var RULES = {
   withdraw: "batch",
   accepted: "batch",
   node: "batch",
-  link: "batch"
+  link: "batch",
+  // Запись платформы о связанном деле: признака прерывания у неё нет (#4925).
+  auto: "batch"
 };
 var obj = (v) => v && typeof v === "object" && !Array.isArray(v) ? v : {};
 var str = (v) => typeof v === "string" ? v : typeof v === "number" || typeof v === "boolean" ? String(v) : "";
@@ -101,6 +115,10 @@ function fill(template, v) {
     if (sep) return x ? sep + x : "";
     return x || "?";
   });
+}
+function roomOf(v) {
+  const r = obj(v);
+  return str(r.seq) || str(r.id) || str(v);
 }
 var mineOf = (frame) => [str(frame.to_standing_id), str(frame.to_standing)].filter(Boolean);
 function myRole(frame, fields) {
@@ -143,14 +161,19 @@ function roomKind(frame) {
     target: after(key, "invite:"),
     // Ключ несёт id; имя приглашённого — в полях строки (наблюдено на бою: standing/karta с name).
     who: whoOf(fields) || after(key, "invite:"),
-    room: after(key, "link:"),
+    room: roomOf(fields.room) || after(key, "link:"),
+    rel: REL_WORDS[str(fields.rel)] ?? fields.rel,
+    code: fields.code,
     seq: node.seq,
     name: node.name,
     realm: node.realm
   };
   const rule = RULES[kind];
   if (!rule) return { kind, rule: "batch", words: fill(WORDS.unknown, values), known: false };
-  let words = fill(WORDS[kind], values);
+  let words = fill(
+    kind === "auto" ? AUTO_WORDS[str(values.code)] ?? WORDS.auto : WORDS[kind],
+    values
+  );
   if (kind === "closing") {
     const may = Array.isArray(fields.may_object) ? fields.may_object.map((m) => typeof m === "string" ? m : str(obj(m).id)) : [];
     const myId = str(f.to_standing_id);
