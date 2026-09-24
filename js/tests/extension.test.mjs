@@ -514,7 +514,7 @@ test("room kinds: closing steers despite stack=defer, progress and an unknown ki
     );
     const text = rec.messages[0].msg.content;
     assert.match(text, /предлагает закрыть комнату до 2026-09-23T10:05:00Z; свидетельства: 41/);
-    assert.match(text, /ты можешь возразить — objection, in_reply_to=50/);
+    assert.match(text, /ты можешь возразить — iskron_room\(action="object", in_reply_to=50\)/);
   } finally {
     await rec.stop();
   }

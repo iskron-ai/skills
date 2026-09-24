@@ -1735,7 +1735,7 @@ test("room kinds: closing steers a busy agent despite stack=defer and says who m
       p1.text,
       /ведущий Алексей \(@aleksei:probe\) предлагает закрыть комнату до 2026-09-23T10:05:00Z; свидетельства: 41/,
     );
-    assert.match(p1.text, /ты можешь возразить — objection, in_reply_to=50/);
+    assert.match(p1.text, /ты можешь возразить — iskron_room\(action="object", in_reply_to=50\)/);
     assert.deepEqual(envelopeOf(p1.text).line, c.line, "the frame JSON carries line unchanged");
     assert.match(p1.text, /\n\nсделано, см\. 41$/, "the body passes through unchanged");
 
