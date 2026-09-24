@@ -1,5 +1,12 @@
 # Changelog
 
+## [6.15.1](https://github.com/iskron-ai/skills/compare/v6.15.0...v6.15.1) (2026-09-24)
+
+
+### Bug Fixes
+
+* **bridge:** имя стояния в связанном ворктри — репо основной копии, не каталог задачи ([#189](https://github.com/iskron-ai/skills/issues/189)) ([410087f](https://github.com/iskron-ai/skills/commit/410087fe413b27439ad9f87fcb628fc610bf2bfb))
+
 ## [6.15.0](https://github.com/iskron-ai/skills/compare/v6.14.0...v6.15.0) (2026-09-24)
 
 
