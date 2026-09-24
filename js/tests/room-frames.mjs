@@ -161,6 +161,22 @@ export const graphPosed = (id = "graph-1", event_id = 9001) => ({
   },
 });
 
+/** Дочернее дело в полях link и auto — {id, seq, zachin} (#5893 §4.3a). */
+export const CHILD = { id: "r-12", seq: 12, zachin: "Плитка" };
+
+/** Запись платформы родителю о дочернем деле (#5893 §4.2): auto с code, ключ link:<дочернее>. */
+export const auto = (code, entry_id = 80) =>
+  roomFrame("auto", {
+    entry_id,
+    key: `link:${CHILD.id}`,
+    author: PLATFORM,
+    fields: { code, room: CHILD, entry: 900 },
+  });
+
+/** Связь дел (#4915): link {room, rel}, автор — открывший. */
+export const link = (rel, entry_id = 81) =>
+  roomFrame("link", { entry_id, key: `link:${CHILD.id}`, fields: { room: CHILD, rel } });
+
 /** Род, которого словарь не знает. */
 export const unknownKind = (entry_id = 61) =>
   roomFrame("weather", { entry_id, key: "weather", stack: "interrupt", body: "" });

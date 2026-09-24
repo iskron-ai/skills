@@ -46,6 +46,7 @@ import { test } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
+  auto,
   closing,
   directWord,
   graphPosed,
@@ -524,6 +525,24 @@ test("room kinds: closing steers despite stack=defer, progress and an unknown ki
       text,
       /ты можешь возразить — iskron_case\(action="object", in_reply_to=50\) \(прежнее имя iskron_room\)/,
     );
+  } finally {
+    await rec.stop();
+  }
+});
+
+// auto — a platform record to the parent about its child case (#5893 §4.2, #4925):
+// words by its code, never interrupting.
+test("room kinds: an auto record about a child case follows up in words, not as an unknown kind", async () => {
+  const { events, env } = eventsEnv("room-auto");
+  const rec = await session(env);
+  try {
+    push(events, frame(auto("child_closed")));
+    await delay(400);
+    assert.equal(rec.messages.length, 1, "the auto frame raises a message");
+    assert.equal(rec.messages[0].opts.deliverAs, "followUp", "a child closing does not interrupt");
+    const text = rec.messages[0].msg.content;
+    assert.match(text, /дочернее дело #12 закрыто/);
+    assert.doesNotMatch(text, /неизвестен/, "auto is a kind the bridge knows");
   } finally {
     await rec.stop();
   }

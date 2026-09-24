@@ -41,10 +41,12 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { startFakeNks } from "./fake-nks.mjs";
 import {
+  auto,
   closing,
   directWord,
   graphPosed,
   legacyRoom,
+  link,
   ME_ID,
   MY_KARTA,
   PLATFORM,
@@ -1804,6 +1806,39 @@ test("room kinds: closing steers a busy agent despite stack=defer and says who m
     assert.equal(p10.delivery, "steer", "closing interrupts even when I may not object");
     assert.match(p10.text, /возражать не тебе/);
     assert.doesNotMatch(p10.text, /ты можешь возразить/);
+  } finally {
+    await rec.stop();
+  }
+});
+
+// auto — a platform record to the parent about its child case (#5893 §4.2, #4925):
+// words by its code, never interrupting; link — the relation in words.
+test("room kinds: an auto record about a child case queues in words, not as an unknown kind; link names the relation", async () => {
+  const b = bridgeEnv("room-auto");
+  const rec = await plugin(b.env);
+  try {
+    await serverTools(rec);
+    await until(() => rec.tools().has("iskron_channel"), "the channel tool");
+    await rec.call("iskron_channel", { action: "connect" }, "s-auto");
+    const [pid] = pidsOf(b.log);
+    const send = async (frame, i) => {
+      appendFileSync(`${b.events}.${pid}`, event("frame", { frame, raw: JSON.stringify(frame) }));
+      await until(() => rec.prompts.length === i, `prompt ${i}`);
+      return rec.prompts[i - 1];
+    };
+    const closed = await send(auto("child_closed"), 1);
+    assert.equal(closed.delivery, "queue", "a child closing is news, not a call to act");
+    assert.match(closed.text, /дочернее дело #12 закрыто/);
+    assert.doesNotMatch(closed.text, /неизвестен/, "auto is a kind the bridge knows");
+    const late = await send(auto("child_late_objection", 82), 2);
+    assert.equal(late.delivery, "queue");
+    assert.match(late.text, /позднее возражение в дочернем деле #12/);
+    const other = await send(auto("all_nodes_done", 83), 3);
+    assert.equal(other.delivery, "queue");
+    assert.match(other.text, /запись платформы all_nodes_done о деле #12/);
+    const linked = await send(link("parent"), 4);
+    assert.equal(linked.delivery, "queue");
+    assert.match(linked.text, /дело связано с #12 \(дочернее к нему\)/);
   } finally {
     await rec.stop();
   }

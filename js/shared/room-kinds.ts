@@ -31,8 +31,24 @@ export const WORDS: Readonly<Record<string, string>> = {
   withdraw: "приглашение отозвано, отзывает {author}",
   accepted: "{who} принял приглашение",
   node: "в деле узел #{seq} {name} ({realm})",
-  link: "дело связано с {room}",
+  link: "дело связано с #{room} ({rel})",
+  auto: "запись платформы {code} о деле #{room}",
   unknown: "род {kind} мосту неизвестен",
+};
+
+/** Слова записи платформы auto по её code (#5893 §4.2, ступени — #5973); неизвестный code — WORDS.auto. */
+export const AUTO_WORDS: Readonly<Record<string, string>> = {
+  child_opened: "дочернее дело #{room} открыто",
+  child_closing: "дочернее дело #{room} закрывается",
+  child_closed: "дочернее дело #{room} закрыто",
+  child_late_objection: "позднее возражение в дочернем деле #{room}",
+};
+
+/** Связь дел link по rel (#4915): чем это дело приходится делу #{room}; неизвестный rel — как пришёл. */
+export const REL_WORDS: Readonly<Record<string, string>> = {
+  parent: "дочернее к нему",
+  child: "родительское к нему",
+  continues: "продолжает его",
 };
 
 /**
@@ -56,6 +72,8 @@ const RULES: Readonly<Record<string, Rule>> = {
   accepted: "batch",
   node: "batch",
   link: "batch",
+  // Запись платформы о связанном деле: признака прерывания у неё нет (#4925).
+  auto: "batch",
 };
 
 export interface RoomKind {
@@ -93,6 +111,12 @@ function fill(template: string, v: Rec): string {
     if (sep) return x ? sep + x : "";
     return x || "?";
   });
+}
+
+/** Связанное дело в полях link и auto — {id, seq, zachin} (#5893 §4.3a): seq, иначе id; голая строка — как есть. */
+function roomOf(v: unknown): string {
+  const r = obj(v);
+  return str(r.seq) || str(r.id) || str(v);
 }
 
 /** Своё стояние кадра для ключа invite — id места и его адрес: формат ключа (#5893 §4.2) ещё не подтверждён. */
@@ -148,14 +172,19 @@ export function roomKind(frame: Frame | null | undefined): RoomKind | null {
     target: after(key, "invite:"),
     // Ключ несёт id; имя приглашённого — в полях строки (наблюдено на бою: standing/karta с name).
     who: whoOf(fields) || after(key, "invite:"),
-    room: after(key, "link:"),
+    room: roomOf(fields.room) || after(key, "link:"),
+    rel: REL_WORDS[str(fields.rel)] ?? fields.rel,
+    code: fields.code,
     seq: node.seq,
     name: node.name,
     realm: node.realm,
   };
   const rule = RULES[kind];
   if (!rule) return { kind, rule: "batch", words: fill(WORDS.unknown, values), known: false };
-  let words = fill(WORDS[kind], values);
+  let words = fill(
+    kind === "auto" ? (AUTO_WORDS[str(values.code)] ?? WORDS.auto) : WORDS[kind],
+    values,
+  );
   if (kind === "closing") {
     // На бою (api 0.88.0) may_object — массив объектов {id, standing, name, karta};
     // id — тот же, что to_standing_id. Голую строку id принимаем тоже.

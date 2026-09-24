@@ -19,6 +19,7 @@ import { fileURLToPath } from "node:url";
 import { startFakeCodex } from "./fake-codex.mjs";
 import { startFakeNks } from "./fake-nks.mjs";
 import {
+  auto,
   closing,
   directWord,
   graphPosed,
@@ -2849,6 +2850,28 @@ test("a room batch alone goes out after its window; an unknown kind batches and 
   assert.ok(Date.now() - sent >= 1800, "the batch waited for its window");
   assert.match(wd.out, /Дело: кадров 2/);
   assert.match(wd.out, /род weather мосту неизвестен/);
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
+// auto — a platform record to the parent about its child case (#5893 §4.2, #4925).
+test("an auto record about a child case batches in words and leaves no unknown-kind line in the bridge log", async (t) => {
+  const { fake, dir, key, bridge } = await connected(t, {
+    env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "2000" },
+  });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog", dir, key, 15_000);
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
+  const sent = Date.now();
+  await sendRoom(fake, auto("child_closed"));
+  await waitFor(() => wd.out.includes("дочернее дело #12 закрыто"), "the batch", 8000);
+  assert.ok(Date.now() - sent >= 1800, "auto waited for the batch window, not interrupting");
+  assert.match(wd.out, /Дело: кадров 1/);
+  assert.ok(!wd.out.includes("неизвестен"), `auto printed as unknown:\n${wd.out}`);
+  assert.ok(
+    !bridge.stderr.includes("неизвестен"),
+    `unknown-kind line in the log:\n${bridge.stderr}`,
+  );
   wd.proc.kill("SIGKILL");
   await wd.done;
 });
