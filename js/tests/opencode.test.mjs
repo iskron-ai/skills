@@ -1682,7 +1682,7 @@ test("a room frame reaches the agent with its whole envelope; said defer queues,
     );
     assert.match(
       text,
-      /слово КОМНАТЫ «Стенд»: слово от Алексей \(@aleksei:probe\)/,
+      /слово ДЕЛА «Стенд»: слово от Алексей \(@aleksei:probe\)/,
       "the room line says the kind in words",
     );
     const envelope = envelopeOf(text);
@@ -1706,7 +1706,7 @@ test("a room frame reaches the agent with its whole envelope; said defer queues,
     assert.equal(rec.prompts[1].delivery, "steer", "closed steers into the running turn");
     assert.match(
       rec.prompts[1].text,
-      /^Кадр канала Искрона от ПЛАТФОРМЫ — побудка, не человек и не делатель\nзапись КОМНАТЫ «Стенд»: комната закрыта: consensus\n/,
+      /^Кадр канала Искрона от ПЛАТФОРМЫ — побудка, не человек и не делатель\nзапись ДЕЛА «Стенд»: дело закрыто: consensus\n/,
       "a room record without an author is the platform speaking, not an unknown doer",
     );
   } finally {
@@ -1733,9 +1733,12 @@ test("room kinds: closing steers a busy agent despite stack=defer and says who m
     assert.equal(p1.delivery, "steer", "closing interrupts the running turn, stack=defer or not");
     assert.match(
       p1.text,
-      /ведущий Алексей \(@aleksei:probe\) предлагает закрыть комнату до 2026-09-23T10:05:00Z; свидетельства: 41/,
+      /ведущий Алексей \(@aleksei:probe\) предлагает закрыть дело до 2026-09-23T10:05:00Z; свидетельства: 41/,
     );
-    assert.match(p1.text, /ты можешь возразить — iskron_room\(action="object", in_reply_to=50\)/);
+    assert.match(
+      p1.text,
+      /ты можешь возразить — iskron_case\(action="object", in_reply_to=50\) \(прежнее имя iskron_room\)/,
+    );
     assert.deepEqual(envelopeOf(p1.text).line, c.line, "the frame JSON carries line unchanged");
     assert.match(p1.text, /\n\nсделано, см\. 41$/, "the body passes through unchanged");
 
@@ -1821,15 +1824,15 @@ test("room kinds leave non-room frames and the old room shape as on main: every 
       rec.prompts[0].text,
       /^Кадр канала Искрона от делателя роли #48 — стояние @alari:sosed\n/,
     );
-    assert.doesNotMatch(rec.prompts[0].text, /КОМНАТЫ/, "a direct word is not a room word");
+    assert.doesNotMatch(rec.prompts[0].text, /ДЕЛА/, "a direct word is not a room word");
     assert.doesNotMatch(
       rec.prompts[1].text,
-      /КОМНАТЫ|мосту неизвестен/,
+      /ДЕЛА|мосту неизвестен/,
       "a graph event is not a room frame",
     );
-    assert.match(rec.prompts[2].text, /слово КОМНАТЫ «Стенд», род text, стопка interrupt/);
-    assert.match(rec.prompts[5].text, /запись КОМНАТЫ «Стенд», род auto, стопка interrupt\n/);
-    assert.match(rec.prompts[7].text, /запись КОМНАТЫ «Стенд», род digest, стопка defer\n/);
+    assert.match(rec.prompts[2].text, /слово ДЕЛА «Стенд», род text, стопка interrupt/);
+    assert.match(rec.prompts[5].text, /запись ДЕЛА «Стенд», род auto, стопка interrupt\n/);
+    assert.match(rec.prompts[7].text, /запись ДЕЛА «Стенд», род digest, стопка defer\n/);
     assert.ok(
       rec.prompts.every((p) => !/мосту неизвестен/.test(p.text)),
       "no old kind takes the unknown path",

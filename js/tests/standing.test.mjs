@@ -2547,9 +2547,9 @@ test("room kinds under the Monitor watchdog: progress and said defer wait; closi
   await sendRoom(fake, closing());
   await waitFor(() => wd.out.includes("ты можешь возразить"), "closing to be printed");
   const flat = wd.out.replace(/\n/g, " ");
-  const batch = flat.indexOf("Комната: кадров 2");
+  const batch = flat.indexOf("Дело: кадров 2");
   const prog = flat.indexOf("[tests] пробы зелёные = ok; без сети");
-  const close = flat.indexOf("предлагает закрыть комнату");
+  const close = flat.indexOf("предлагает закрыть дело");
   assert.ok(batch >= 0 && prog > batch, `the batch head and progress words:\n${wd.out}`);
   assert.ok(close > prog, `the batch goes out before closing, not after:\n${wd.out}`);
   assert.ok(flat.indexOf("стопкой defer") < close, "said defer rides in the batch, before closing");
@@ -2575,7 +2575,7 @@ test("a room batch alone goes out after its window; an unknown kind batches and 
   assert.ok(!wd.out.includes("мосту неизвестен"), `an unknown kind interrupted:\n${wd.out}`);
   await waitFor(() => wd.out.includes("пробы зелёные"), "the batch after the window", 8000);
   assert.ok(Date.now() - sent >= 1800, "the batch waited for its window");
-  assert.match(wd.out, /Комната: кадров 2/);
+  assert.match(wd.out, /Дело: кадров 2/);
   assert.match(wd.out, /род weather мосту неизвестен/);
   wd.proc.kill("SIGKILL");
   await wd.done;
@@ -2646,7 +2646,7 @@ test("a full room batch goes out at once, before its window: nothing is dropped"
   await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
   for (let i = 0; i < 21; i++) await sendRoom(fake, progress(200 + i));
   await waitFor(() => wd.out.includes("room-msg-219"), "the full batch", 5000);
-  assert.match(wd.out, /Комната: кадров 20/);
+  assert.match(wd.out, /Дело: кадров 20/);
   for (let i = 0; i < 20; i++) assert.ok(wd.out.includes(`room-msg-${200 + i}`), `frame ${i}`);
   assert.ok(!wd.out.includes("room-msg-220"), "the 21st starts the next batch");
   wd.proc.kill("SIGKILL");
@@ -2683,8 +2683,11 @@ test("watchdog-codex: progress waits; closing puts the batch into the thread fir
   await waitFor(() => turns().length === 2, "the batch and closing in the thread");
   const [first, second] = turns().map((c) => c.params.input[0].text);
   assert.match(first, /\[tests\] пробы зелёные = ok/);
-  assert.match(second, /предлагает закрыть комнату/);
-  assert.match(second, /ты можешь возразить — iskron_room\(action="object", in_reply_to=50\)/);
+  assert.match(second, /предлагает закрыть дело/);
+  assert.match(
+    second,
+    /ты можешь возразить — iskron_case\(action="object", in_reply_to=50\) \(прежнее имя iskron_room\)/,
+  );
   wd.proc.kill("SIGKILL");
   await wd.done;
 });
@@ -2711,7 +2714,7 @@ test("room kinds leave the Monitor watchdog's other frames and the old room shap
   const cases = LEGACY_AT_ONCE();
   for (const [frame] of cases) await sendRoom(fake, frame);
   await waitFor(() => cases.every(([, mark]) => wd.out.includes(mark)), "all at once", 3000);
-  assert.ok(!wd.out.includes("Комната: кадров"), `no batch without event_kind:\n${wd.out}`);
+  assert.ok(!wd.out.includes("Дело: кадров"), `no batch without event_kind:\n${wd.out}`);
   assert.ok(!bridge.stderr.includes("мосту неизвестен"), "no unknown-kind line for old kinds");
   wd.proc.kill("SIGKILL");
   await wd.done;

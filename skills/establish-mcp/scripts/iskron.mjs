@@ -1954,22 +1954,22 @@ import { createServer as createServer2 } from "node:net";
 // js/shared/room-kinds.ts
 var WORDS = {
   said: "слово от {author}",
-  closing: "ведущий {author} предлагает закрыть комнату до {ends_at}{; свидетельства: evidence}",
-  closing_may: 'ты можешь возразить — iskron_room(action="object", in_reply_to={entry_id})',
+  closing: "ведущий {author} предлагает закрыть дело до {ends_at}{; свидетельства: evidence}",
+  closing_may: 'ты можешь возразить — iskron_case(action="object", in_reply_to={entry_id}) (прежнее имя iskron_room)',
   closing_not: "возражать не тебе",
-  closed: "комната закрыта: {reason}",
+  closed: "дело закрыто: {reason}",
   objection: "{author} возражает против закрытия: {reason}",
   late_objection: "{author} возразил после закрытия",
   progress: "{author}: [{key}] {done} = {verdict}{; note}",
   lead: "ведёт {author}",
-  opened: "комнату открыл {author}",
+  opened: "дело открыл {author}",
   joined: "вошёл {author}",
   left: "вышел {author}",
   invite: "{who} приглашён",
   withdraw: "приглашение отозвано",
   accepted: "{who} принял приглашение",
-  node: "в комнате узел #{seq} {name} ({realm})",
-  link: "комната связана с {room}",
+  node: "в деле узел #{seq} {name} ({realm})",
+  link: "дело связано с {room}",
   unknown: "род {kind} мосту неизвестен"
 };
 var RULES = {
@@ -2082,7 +2082,7 @@ ${raw}`;
     const f = frame2;
     const words = rk ? `: ${rk.words}` : (typeof f.kind === "string" ? `, род ${f.kind}` : "") + (typeof f.stack === "string" ? `, стопка ${f.stack}` : "");
     lines.push(
-      origin === "platform" ? `запись КОМНАТЫ${zachin}${words}` : `слово КОМНАТЫ${zachin}${words} — ответ идёт записью в ту же комнату с in_reply_to по id слова (ход для комнат — в списке тулов сессии), не send стоянию`
+      origin === "platform" ? `запись ДЕЛА${zachin}${words}` : `слово ДЕЛА${zachin}${words} — ответ идёт записью в то же дело с in_reply_to по id слова (ход для дел — в списке тулов сессии), не send стоянию`
     );
   }
   if (frame2.provenance) lines.push(`provenance: ${JSON.stringify(frame2.provenance)}`);
@@ -2244,7 +2244,7 @@ var RoomBatch = class {
     const of = got.length;
     emit2({
       kind: "note",
-      text: `Комната: кадров ${of} — накопились, не прерывая хода; следом все по порядку; полностью — iskron_channel(action="history").`
+      text: `Дело: кадров ${of} — накопились, не прерывая хода; следом все по порядку; полностью — iskron_channel(action="history").`
     });
     got.forEach(
       (h, i) => emit2({ kind: "frame", raw: h.raw, frame: h.frame, batch: { at: i + 1, of } })
@@ -3613,7 +3613,7 @@ async function armRoleHook(p) {
   const nameRe = new RegExp(`:${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![A-Za-z0-9._-])`);
   const wakesMe = recognized && hooks.text.split(/\n(?=\s*#\d+\s*→)/).some((b) => /активен/.test(b) && nameRe.test(b));
   if (p.sub)
-    return "Хук инбокса роли: отдельному месту не взводится — почту роли слушает основное место, комнаты доставляют своё сами.";
+    return "Хук инбокса роли: отдельному месту не взводится — почту роли слушает основное место, дела доставляют своё сами.";
   if (wakesMe) return "Хук инбокса роли: стоит и будит это стояние.";
   if (!recognized)
     return `Хук инбокса роли: список хуков не распознан — не трогаю (${short(hooks.text, 120)}).`;
@@ -4257,7 +4257,7 @@ async function runStand(msg) {
   });
   for (const e of legacy) {
     nameNotes.push(
-      `на доске живо место прежнего имени ${e.address} — его адрес могут держать комнаты и хуки; сними его: iskron_channel(action="revoke", realm="${realm}", karta="${karta}", standing="${e.address}")`
+      `на доске живо место прежнего имени ${e.address} — его адрес могут держать дела и хуки; сними его: iskron_channel(action="revoke", realm="${realm}", karta="${karta}", standing="${e.address}")`
     );
   }
   const unread = declared != null && declared !== entries.length;
@@ -4446,7 +4446,7 @@ async function runStand(msg) {
 
 // js/bridge/moment.ts
 var WRITE_TOOL = /^iskron_(add_[a-z_]+|batch)$/;
-var JSON_LINE = "Момент скилла writing: перед вызовом по каждому узлу назови читателя, что изменит извлечение и что здесь ново; тип и given_as, три модуса как утверждения, имя-тезис, стрелки со смыслом; тело — нынешнее знание, никогда провенанс: кто сказал, когда, чьей рукой — в истории узла и в комнате, узел переписывается, а не дописывается разделом; hint — семя превращения: только важное после сессии, не журнал; гроссбух сессии — в файле сессии и в кадре; строки CHECKS в ответе — работа этого такта.";
+var JSON_LINE = "Момент скилла writing: перед вызовом по каждому узлу назови читателя, что изменит извлечение и что здесь ново; тип и given_as, три модуса как утверждения, имя-тезис, стрелки со смыслом; тело — нынешнее знание, никогда провенанс: кто сказал, когда, чьей рукой — в истории узла и в деле, узел переписывается, а не дописывается разделом; hint — семя превращения: только важное после сессии, не журнал; гроссбух сессии — в файле сессии и в кадре; строки CHECKS в ответе — работа этого такта.";
 var MOMENT_LINE = "[мост] " + JSON_LINE;
 var STATUS_LINE = '[мост] action="status" (realm, text до 64 символов) — занятость ЭТОГО стояния: исполняет мост, держатель сокета, на сервер вызов не уходит; пустой text снимает; отказ поверхности приходит целиком.';
 var LEAVE_LINE = '[мост] action="leave" (realm) — уйти с места: исполняет мост — сокет закрыт, занятость снята, адрес, очередь и хуки целы; почта копится и придёт при возвращении (сторож или iskron_stand). Сам мост уходит только там, где кадр доходит лишь сторожем (Claude Code, Codex) и сторож не взведён 15 минут; в pi и OpenCode кадр приходит уведомлением, и мост места не бросает. Занятость снимается на конце сессии.';

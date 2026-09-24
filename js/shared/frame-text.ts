@@ -47,8 +47,8 @@ export function frameToText(frame: Frame | null | undefined, raw: string): strin
     // для комнат — в списке тулов сессии. Платформенная запись ответа не ждёт.
     lines.push(
       origin === "platform"
-        ? `запись КОМНАТЫ${zachin}${words}`
-        : `слово КОМНАТЫ${zachin}${words} — ответ идёт записью в ту же комнату с in_reply_to по id слова (ход для комнат — в списке тулов сессии), не send стоянию`,
+        ? `запись ДЕЛА${zachin}${words}`
+        : `слово ДЕЛА${zachin}${words} — ответ идёт записью в то же дело с in_reply_to по id слова (ход для дел — в списке тулов сессии), не send стоянию`,
     );
   }
   if (frame.provenance) lines.push(`provenance: ${JSON.stringify(frame.provenance)}`);

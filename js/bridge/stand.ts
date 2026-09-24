@@ -208,7 +208,7 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   }
   const sub = !!derived && name !== derived; // отдельное место: хук инбокса роли ему не взводится
   // Места прежнего стандарта имени (машина.репо.ветка) той же машины и репо —
-  // сироты после перехода на машина.репо.модель: их адрес держат ростеры комнат
+  // сироты после перехода на машина.репо.модель: их адрес держат ростеры дел
   // и хуки инбокса, а слушает их никто. Прежнее имя узнаётся по третьей части,
   // равной имени локальной ветки, — иначе это сосед на другой модели, и его
   // место трогать нельзя.
@@ -228,7 +228,7 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   });
   for (const e of legacy) {
     nameNotes.push(
-      `на доске живо место прежнего имени ${e.address} — его адрес могут держать комнаты и хуки; сними его: iskron_channel(action="revoke", realm="${realm}", karta="${karta}", standing="${e.address}")`,
+      `на доске живо место прежнего имени ${e.address} — его адрес могут держать дела и хуки; сними его: iskron_channel(action="revoke", realm="${realm}", karta="${karta}", standing="${e.address}")`,
     );
   }
   // Счёт в заголовке не сошёлся с разобранным — где-то строка, которой парсер не
