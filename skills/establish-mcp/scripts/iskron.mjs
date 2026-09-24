@@ -1954,22 +1954,22 @@ import { createServer as createServer2 } from "node:net";
 // js/shared/room-kinds.ts
 var WORDS = {
   said: "слово от {author}",
-  closing: "ведущий {author} предлагает закрыть комнату до {ends_at}{; свидетельства: evidence}",
-  closing_may: 'ты можешь возразить — iskron_room(action="object", in_reply_to={entry_id})',
+  closing: "ведущий {author} предлагает закрыть дело до {ends_at}{; свидетельства: evidence}",
+  closing_may: 'ты можешь возразить — iskron_case(action="object", in_reply_to={entry_id})',
   closing_not: "возражать не тебе",
-  closed: "комната закрыта: {reason}",
+  closed: "дело закрыто: {reason}",
   objection: "{author} возражает против закрытия: {reason}",
   late_objection: "{author} возразил после закрытия",
   progress: "{author}: [{key}] {done} = {verdict}{; note}",
   lead: "ведёт {author}",
-  opened: "комнату открыл {author}",
+  opened: "дело открыл {author}",
   joined: "вошёл {author}",
   left: "вышел {author}",
   invite: "{who} приглашён",
   withdraw: "приглашение отозвано",
   accepted: "{who} принял приглашение",
-  node: "в комнате узел #{seq} {name} ({realm})",
-  link: "комната связана с {room}",
+  node: "в деле узел #{seq} {name} ({realm})",
+  link: "дело связано с {room}",
   unknown: "род {kind} мосту неизвестен"
 };
 var RULES = {
@@ -2082,7 +2082,7 @@ ${raw}`;
     const f = frame2;
     const words = rk ? `: ${rk.words}` : (typeof f.kind === "string" ? `, род ${f.kind}` : "") + (typeof f.stack === "string" ? `, стопка ${f.stack}` : "");
     lines.push(
-      origin === "platform" ? `запись КОМНАТЫ${zachin}${words}` : `слово КОМНАТЫ${zachin}${words} — ответ идёт записью в ту же комнату с in_reply_to по id слова (ход для комнат — в списке тулов сессии), не send стоянию`
+      origin === "platform" ? `запись ДЕЛА${zachin}${words}` : `слово ДЕЛА${zachin}${words} — ответ идёт записью в то же дело с in_reply_to по id слова (ход для дел — в списке тулов сессии), не send стоянию`
     );
   }
   if (frame2.provenance) lines.push(`provenance: ${JSON.stringify(frame2.provenance)}`);
@@ -2244,7 +2244,7 @@ var RoomBatch = class {
     const of = got.length;
     emit2({
       kind: "note",
-      text: `Комната: кадров ${of} — накопились, не прерывая хода; следом все по порядку; полностью — iskron_channel(action="history").`
+      text: `Дело: кадров ${of} — накопились, не прерывая хода; следом все по порядку; полностью — iskron_channel(action="history").`
     });
     got.forEach(
       (h, i) => emit2({ kind: "frame", raw: h.raw, frame: h.frame, batch: { at: i + 1, of } })

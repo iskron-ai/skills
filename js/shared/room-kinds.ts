@@ -15,22 +15,22 @@ export type Stack = "interrupt" | "batch";
  */
 export const WORDS: Readonly<Record<string, string>> = {
   said: "слово от {author}",
-  closing: "ведущий {author} предлагает закрыть комнату до {ends_at}{; свидетельства: evidence}",
-  closing_may: 'ты можешь возразить — iskron_room(action="object", in_reply_to={entry_id})',
+  closing: "ведущий {author} предлагает закрыть дело до {ends_at}{; свидетельства: evidence}",
+  closing_may: 'ты можешь возразить — iskron_case(action="object", in_reply_to={entry_id})',
   closing_not: "возражать не тебе",
-  closed: "комната закрыта: {reason}",
+  closed: "дело закрыто: {reason}",
   objection: "{author} возражает против закрытия: {reason}",
   late_objection: "{author} возразил после закрытия",
   progress: "{author}: [{key}] {done} = {verdict}{; note}",
   lead: "ведёт {author}",
-  opened: "комнату открыл {author}",
+  opened: "дело открыл {author}",
   joined: "вошёл {author}",
   left: "вышел {author}",
   invite: "{who} приглашён",
   withdraw: "приглашение отозвано",
   accepted: "{who} принял приглашение",
-  node: "в комнате узел #{seq} {name} ({realm})",
-  link: "комната связана с {room}",
+  node: "в деле узел #{seq} {name} ({realm})",
+  link: "дело связано с {room}",
   unknown: "род {kind} мосту неизвестен",
 };
 

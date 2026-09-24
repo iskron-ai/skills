@@ -513,8 +513,8 @@ test("room kinds: closing steers despite stack=defer, progress and an unknown ki
       ),
     );
     const text = rec.messages[0].msg.content;
-    assert.match(text, /предлагает закрыть комнату до 2026-09-23T10:05:00Z; свидетельства: 41/);
-    assert.match(text, /ты можешь возразить — iskron_room\(action="object", in_reply_to=50\)/);
+    assert.match(text, /предлагает закрыть дело до 2026-09-23T10:05:00Z; свидетельства: 41/);
+    assert.match(text, /ты можешь возразить — iskron_case\(action="object", in_reply_to=50\)/);
   } finally {
     await rec.stop();
   }
@@ -541,11 +541,7 @@ test("room kinds leave non-room frames and the old room shape as on main: all st
     cases.forEach(([f, way], i) =>
       assert.equal(rec.messages[i].opts.deliverAs, way, `${f.id} must go ${way}`),
     );
-    assert.doesNotMatch(
-      rec.messages[1].msg.content,
-      /КОМНАТЫ/,
-      "a graph event is not a room frame",
-    );
+    assert.doesNotMatch(rec.messages[1].msg.content, /ДЕЛА/, "a graph event is not a room frame");
   } finally {
     await rec.stop();
   }
