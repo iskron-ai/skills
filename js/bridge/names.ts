@@ -4,8 +4,9 @@
 // что свежая сессия восстановит без памяти; длиннее предела сервера оно
 // укорачивается с пометкой сразу после шапки ответа.
 import { execFileSync } from "node:child_process";
+import { realpathSync } from "node:fs";
 import { hostname } from "node:os";
-import { basename } from "node:path";
+import { basename, dirname, resolve } from "node:path";
 
 /** Правило имени стояния у сервера (наблюдено отказом 400). */
 export const NAME_MAX = 48;
@@ -93,6 +94,33 @@ export const git = (args: string[], cwd: string = process.cwd()): string => {
   }
 };
 
+const real = (p: string): string => {
+  try {
+    return realpathSync(p);
+  } catch {
+    return p;
+  }
+};
+
+/**
+ * Имя репо для каталога сессии. Обычная копия — basename toplevel, как всегда.
+ * В связанном ворктри toplevel — каталог задачи, поэтому репо берётся от
+ * основной копии: общий git-каталог `…/repo/.git` → `repo`; иной расклад
+ * (голый репо) — имя origin без `.git`, затем toplevel, затем сам каталог
+ * (r5 #5108, второй случай).
+ */
+export function repoName(cwd: string = process.cwd()): string {
+  const top = git(["rev-parse", "--show-toplevel"], cwd);
+  const [gitDir, common] = git(["rev-parse", "--git-dir", "--git-common-dir"], cwd).split("\n");
+  if (!gitDir || !common || real(resolve(cwd, gitDir)) === real(resolve(cwd, common)))
+    return basename(top || cwd);
+  const shared = real(resolve(cwd, common));
+  if (basename(shared) === ".git") return basename(dirname(shared));
+  const origin = git(["remote", "get-url", "origin"], cwd).replace(/\/+$/, "");
+  const fromOrigin = basename(origin.replace(/^.*:/, "/")).replace(/\.git$/, "");
+  return fromOrigin || basename(top || cwd);
+}
+
 /**
  * машина.репо.модель — из того, что свежая сессия восстановит без памяти. Третья
  * часть — модель, которой бежит агент (её знает только он, потому она идёт
@@ -105,8 +133,7 @@ export const git = (args: string[], cwd: string = process.cwd()): string => {
  */
 export function deriveParts(model?: string, cwd: string = process.cwd()): NameParts {
   const host = hostname().split(".")[0];
-  const top = git(["rev-parse", "--show-toplevel"], cwd);
-  const repo = basename(top || cwd);
+  const repo = repoName(cwd);
   const short = (model ?? "")
     .trim()
     .toLowerCase()

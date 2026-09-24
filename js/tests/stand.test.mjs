@@ -366,6 +366,61 @@ test("iskron_stand names the repository of the session directory given as cwd, n
   }
 });
 
+// A linked worktree's toplevel is the task directory, not the repository: the
+// repository part comes from the main checkout (r5 #5108, second case).
+test("iskron_stand names the main checkout's repository from a linked worktree, and a plain checkout as before", async (t) => {
+  const { fake, bridge } = await ready(t);
+  const host = hostname().split(".")[0].toLowerCase();
+  const scratch = mkdtempSync(join(tmpdir(), "stand-wt-"));
+  t.after(() => rmSync(scratch, { recursive: true, force: true }));
+  const repo = join(scratch, "repoA");
+  mkdirSync(repo);
+  const g = (...args) => execFileSync("git", args, { cwd: repo, stdio: "ignore" });
+  g("init", "-q");
+  g(
+    "-c",
+    "user.name=probe",
+    "-c",
+    "user.email=probe@example.invalid",
+    "commit",
+    "-q",
+    "--allow-empty",
+    "-m",
+    "init",
+  );
+  g("worktree", "add", "-q", join(scratch, "taskdir"));
+
+  const stand = async (cwd, take) => {
+    const reply = await bridge.call("tools/call", {
+      name: "iskron_stand",
+      arguments: {
+        realm: "nks-dev",
+        karta: "#931",
+        model: "opus-5",
+        cwd,
+        ...(take ? { take: true } : {}),
+      },
+    });
+    const text = textOf(reply);
+    assert.ok(!reply.result?.isError, text);
+    return /стояние (\S+) — роль #931/.exec(text)?.[1];
+  };
+
+  const inWorktree = join(scratch, "taskdir");
+  assert.equal(
+    await stand(inWorktree, false),
+    `${host}.repoa.opus-5`,
+    "in a linked worktree the repository is the main checkout's, not the task directory's",
+  );
+  assert.ok([...fake.state.places.keys()].includes(`931:${host}.repoa.opus-5`));
+
+  // The plain checkout names the same repository, exactly as before.
+  const plain = join(scratch, "repoB");
+  mkdirSync(plain);
+  execFileSync("git", ["init", "-q", plain]);
+  assert.equal(await stand(plain, true), `${host}.repob.opus-5`, "a plain checkout: its toplevel");
+});
+
 test("iskron_stand refuses without realm and karta, naming what it needs", async (t) => {
   const { bridge } = await ready(t);
   const reply = await bridge.call("tools/call", {

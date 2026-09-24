@@ -77,16 +77,16 @@ function emit(msg) {
   writeTo(process.stdout, JSON.stringify(msg) + "\n");
 }
 function flushStdout() {
-  return new Promise((resolve) => {
+  return new Promise((resolve2) => {
     const out4 = process.stdout;
-    if (!canWrite(out4)) return resolve();
+    if (!canWrite(out4)) return resolve2();
     let done = false;
     const finish = () => {
       if (done) return;
       done = true;
       out4.off("error", finish);
       out4.off("close", finish);
-      resolve();
+      resolve2();
     };
     out4.once("error", finish);
     out4.once("close", finish);
@@ -602,12 +602,12 @@ function pidAlive(pid) {
   }
 }
 function portListening(port, timeoutMs = 700) {
-  return new Promise((resolve) => {
-    if (!Number.isInteger(port)) return resolve(false);
+  return new Promise((resolve2) => {
+    if (!Number.isInteger(port)) return resolve2(false);
     const sock = connect({ host: "127.0.0.1", port });
     const done = (v) => {
       sock.destroy();
-      resolve(v);
+      resolve2(v);
     };
     sock.setTimeout(timeoutMs, () => done(false));
     sock.once("connect", () => done(true));
@@ -681,7 +681,7 @@ function installAuthLockExitHook() {
 import { createServer } from "node:http";
 var PAGE_HOLD_MS = 2e4;
 function bindCallback(port) {
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve2, reject) => {
     let handOff = null;
     let received = null;
     let browser = null;
@@ -747,7 +747,7 @@ function bindCallback(port) {
     server.listen(port, "127.0.0.1", () => {
       server.removeListener("error", reject);
       server.on("error", (e) => log(`callback server: ${e.message}`));
-      resolve({
+      resolve2({
         port,
         report: (failure) => tellBrowser(
           failure ? `iskron-bridge: authorization failed (${esc(failure)}) — nothing was stored; the agent has the details.` : "iskron-bridge: authenticated — you can close this tab."
@@ -2308,12 +2308,12 @@ function dropHoldRecord(key) {
 
 // js/bridge/sweep.ts
 function localSocketAlive(sock) {
-  return new Promise((resolve) => {
-    if (process.platform !== "win32" && !existsSync(sock)) return resolve(false);
+  return new Promise((resolve2) => {
+    if (process.platform !== "win32" && !existsSync(sock)) return resolve2(false);
     const probe = connectLocal(sock);
     const done = (v) => {
       probe.destroy();
-      resolve(v);
+      resolve2(v);
     };
     probe.once("connect", () => done(true));
     probe.once("error", () => done(false));
@@ -2503,8 +2503,9 @@ var Door = class {
 
 // js/bridge/names.ts
 import { execFileSync } from "node:child_process";
+import { realpathSync } from "node:fs";
 import { hostname } from "node:os";
-import { basename as basename2 } from "node:path";
+import { basename as basename2, dirname as dirname2, resolve } from "node:path";
 var NAME_MAX = 48;
 var normKarta = (k) => String(k ?? "").trim().replace(/^#/, "");
 var normName = (n) => typeof n === "string" ? n.trim() : "";
@@ -2546,10 +2547,27 @@ var git = (args, cwd = process.cwd()) => {
     return "";
   }
 };
+var real = (p) => {
+  try {
+    return realpathSync(p);
+  } catch {
+    return p;
+  }
+};
+function repoName(cwd = process.cwd()) {
+  const top = git(["rev-parse", "--show-toplevel"], cwd);
+  const [gitDir, common] = git(["rev-parse", "--git-dir", "--git-common-dir"], cwd).split("\n");
+  if (!gitDir || !common || real(resolve(cwd, gitDir)) === real(resolve(cwd, common)))
+    return basename2(top || cwd);
+  const shared = real(resolve(cwd, common));
+  if (basename2(shared) === ".git") return basename2(dirname2(shared));
+  const origin = git(["remote", "get-url", "origin"], cwd).replace(/\/+$/, "");
+  const fromOrigin = basename2(origin.replace(/^.*:/, "/")).replace(/\.git$/, "");
+  return fromOrigin || basename2(top || cwd);
+}
 function deriveParts(model2, cwd = process.cwd()) {
   const host = hostname().split(".")[0];
-  const top = git(["rev-parse", "--show-toplevel"], cwd);
-  const repo = basename2(top || cwd);
+  const repo = repoName(cwd);
   const short2 = (model2 ?? "").trim().toLowerCase().replace(/^claude[-_]/, "");
   return { host: sanitize(host ?? ""), repo: sanitize(repo), model: sanitize(short2) };
 }
@@ -2806,10 +2824,10 @@ var resuming = 0;
 function awaitHello(timeoutMs) {
   const seen = door?.ring.find((r) => r.frame?.type === "hello")?.frame ?? null;
   if (seen) return Promise.resolve(seen);
-  return new Promise((resolve) => {
+  return new Promise((resolve2) => {
     const done = (f) => {
       helloWaiters.delete(done);
-      resolve(f);
+      resolve2(f);
     };
     helloWaiters.add(done);
     setTimeout(() => done(null), timeoutMs).unref();
@@ -3867,7 +3885,7 @@ async function separatePlace(realm, karta, derived) {
 import { spawn as spawn2 } from "node:child_process";
 import { existsSync as existsSync4, lstatSync, mkdirSync as mkdirSync6, readFileSync as readFileSync11, renameSync as renameSync5, writeFileSync as writeFileSync8 } from "node:fs";
 import { homedir as homedir4 } from "node:os";
-import { dirname as dirname2, join as join10 } from "node:path";
+import { dirname as dirname3, join as join10 } from "node:path";
 import { fileURLToPath as fileURLToPath3 } from "node:url";
 
 // js/shared/home.ts
@@ -3898,7 +3916,7 @@ var opencodePluginPath = () => join10(homedir4(), ".config", "opencode", "plugin
 var setupPathOf = (authDir) => join10(authDir, "SETUP.md");
 var latestPathOf = (authDir) => join10(authDir, "latest.json");
 function writeAtomic(path, bytes) {
-  mkdirSync6(dirname2(path), { recursive: true, mode: 448 });
+  mkdirSync6(dirname3(path), { recursive: true, mode: 448 });
   const tmp = `${path}.tmp-${process.pid}`;
   writeFileSync8(tmp, bytes, { mode: 420 });
   renameSync5(tmp, path);
@@ -3935,7 +3953,7 @@ function syncHome(self = selfPath()) {
     writeAtomic(home, mine);
     out4.copied.push(home);
     const plugin = opencodePluginPath();
-    const packaged = join10(dirname2(self), "opencode-plugin.js");
+    const packaged = join10(dirname3(self), "opencode-plugin.js");
     if (existsSync4(plugin) && existsSync4(packaged)) {
       const fresh = readFileSync11(packaged);
       if (!readFileSync11(plugin).equals(fresh)) {
@@ -4107,7 +4125,7 @@ var STAND_TOOL = {
       status: { type: "string", description: "Первая строка занятости (до 64 символов)." },
       cwd: {
         type: "string",
-        description: "Директория сессии харнесса, существующий абсолютный каталог — из неё выводится репо для имени (git toplevel, иначе её basename) и читаются ветки при поиске мест прежнего имени, когда мост запущен не из рабочей копии; плагин OpenCode подставляет её сам. Без неё — cwd моста; несуществующая или относительная — отказ вслух."
+        description: "Директория сессии харнесса, существующий абсолютный каталог — из неё выводится репо для имени (git toplevel, в связанном ворктри — основной копии, иначе её basename) и читаются ветки при поиске мест прежнего имени, когда мост запущен не из рабочей копии; плагин OpenCode подставляет её сам. Без неё — cwd моста; несуществующая или относительная — отказ вслух."
       }
     },
     required: ["realm", "karta"]
@@ -4871,7 +4889,7 @@ function frame(data) {
   return Buffer.concat([head, mask, masked]);
 }
 function openDoor(socketPath, onMessage, onClose) {
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve2, reject) => {
     const req = request({
       socketPath,
       path: "/",
@@ -4914,7 +4932,7 @@ function openDoor(socketPath, onMessage, onClose) {
       });
       socket.on("close", () => onClose("сокет закрыт"));
       socket.on("error", (e) => onClose(e.message));
-      resolve({
+      resolve2({
         send: (msg) => socket.write(frame(Buffer.from(JSON.stringify(msg)))),
         close: () => socket.end()
       });
@@ -5299,13 +5317,13 @@ function runWatchdogExit(argv2) {
 import { createHash as createHash6 } from "node:crypto";
 import { existsSync as existsSync8, readdirSync as readdirSync6, readFileSync as readFileSync14 } from "node:fs";
 import { homedir as homedir7 } from "node:os";
-import { dirname as dirname4, join as join14 } from "node:path";
+import { dirname as dirname5, join as join14 } from "node:path";
 import { fileURLToPath as fileURLToPath4 } from "node:url";
 
 // js/cli/opencode-config.ts
 import { existsSync as existsSync7, readFileSync as readFileSync13 } from "node:fs";
 import { homedir as homedir6 } from "node:os";
-import { dirname as dirname3, join as join13 } from "node:path";
+import { dirname as dirname4, join as join13 } from "node:path";
 function openCodeMcpEntries(out4) {
   const dirFiles = (d) => [
     join13(d, "opencode.json"),
@@ -5317,7 +5335,7 @@ function openCodeMcpEntries(out4) {
   if (!process.env.OPENCODE_CONFIG_PROJECT_DISABLE)
     for (let d = process.cwd(); ; ) {
       upwards.push(...dirFiles(d));
-      const up = dirname3(d);
+      const up = dirname4(d);
       if (up === d) break;
       d = up;
     }
@@ -5668,7 +5686,7 @@ function harnessReport() {
   const opencodeDir = join14(homedir7(), ".config", "opencode");
   if (existsSync8(opencodeDir)) {
     const copy = join14(opencodeDir, "plugins", "iskron.js");
-    const packaged = join14(dirname4(fileURLToPath4(import.meta.url)), "opencode-plugin.js");
+    const packaged = join14(dirname5(fileURLToPath4(import.meta.url)), "opencode-plugin.js");
     if (!existsSync8(copy)) {
       out(`OpenCode: плагина нет (${copy}) — его кладёт establish-mcp при подключении`);
     } else if (!existsSync8(packaged)) {
