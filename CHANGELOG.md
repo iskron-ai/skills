@@ -1,5 +1,17 @@
 # Changelog
 
+## [6.17.0](https://github.com/iskron-ai/skills/compare/v6.16.2...v6.17.0) (2026-09-24)
+
+
+### Features
+
+* **skills:** дело ступени 6 — замысел первым словом, ведение уговором, донесение из дочернего, субагент в деле, гроссбух строками дела ([#198](https://github.com/iskron-ai/skills/issues/198)) ([281ed96](https://github.com/iskron-ai/skills/commit/281ed96dab0c8d99ddeb31f9c6a9d0ab98887344))
+
+
+### Bug Fixes
+
+* **bridge:** род auto в словаре дела — записи платформы о дочерних делах словами, пачкой ([#200](https://github.com/iskron-ai/skills/issues/200)) ([0b3cad6](https://github.com/iskron-ai/skills/commit/0b3cad65ff8bc4e65026fa99692341062a8003f9))
+
 ## [6.16.2](https://github.com/iskron-ai/skills/compare/v6.16.1...v6.16.2) (2026-09-24)
 
 
