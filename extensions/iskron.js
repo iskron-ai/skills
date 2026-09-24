@@ -21,7 +21,7 @@ var PI_CLIENT = "pi-iskron";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-var VERSION = "6.16.2";
+var VERSION = "6.17.0";
 function buildOf(selfUrl) {
   try {
     const src = readFileSync(fileURLToPath(selfUrl));
