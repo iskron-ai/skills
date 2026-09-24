@@ -1,5 +1,12 @@
 # Changelog
 
+## [6.16.0](https://github.com/iskron-ai/skills/compare/v6.15.1...v6.16.0) (2026-09-24)
+
+
+### Features
+
+* **skills:** дело — тул iskron_case, разговор talk; дела по единицам под родительским ([#191](https://github.com/iskron-ai/skills/issues/191)) ([37f78ae](https://github.com/iskron-ai/skills/commit/37f78ae4f7e20002b594094e8ee73e97582644b0))
+
 ## [6.15.1](https://github.com/iskron-ai/skills/compare/v6.15.0...v6.15.1) (2026-09-24)
 
 
