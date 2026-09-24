@@ -6,7 +6,7 @@
 // одного графа не уходит сторожу другого.
 import { type Frame } from "../shared/channel.ts";
 import { frameToText } from "../shared/frame-text.ts";
-import { eventKeyOf } from "../shared/seen.ts";
+import { deliveredKeys, eventKeyOf } from "../shared/seen.ts";
 import { type ChannelEvent } from "./door.ts";
 
 const STALE_BURST_KEEP = 20;
@@ -39,6 +39,10 @@ export class StaleBurst {
         {
           kind: "stale",
           frames,
+          // Сторож метит отданным и то, что пачка назвала числом: иначе оно вернётся с повтором (#5831).
+          ...(all.length > frames.length
+            ? { unshown: all.slice(frames.length).flatMap((f) => deliveredKeys(f)) }
+            : {}),
           text:
             `Лежалых кадров: ${all.length}` +
             (all.length > frames.length ? `, здесь первые ${frames.length}` : "") +

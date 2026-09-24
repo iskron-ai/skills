@@ -10,9 +10,9 @@ import { createHash } from "node:crypto";
 import { writeSync } from "node:fs";
 
 import { type ChannelEvent } from "../bridge/hold.ts";
-import { deliveredKeys, eventKeyOf, noteSeen, seenIds } from "../shared/seen.ts";
+import { eventKeyOf, noteSeen, seenIds } from "../shared/seen.ts";
 import { seenFilePathOf } from "../shared/standings.ts";
-import { attach, resolveStanding } from "./client.ts";
+import { adoptSeenPath, attach, resolveStanding, staleBatchKeys } from "./client.ts";
 
 // The bridge replays its ring to every client that attaches, so a watchdog
 // re-armed after a wake meets the frame it was woken on again. Leaving on it
@@ -46,7 +46,7 @@ export function runWatchdogExit(argv: string[]): void {
     note(`ДЕЛАТЕЛЬ: ${target.error}`);
     process.exit(2);
   }
-  const seenPath = seenFilePathOf(target.authDir, target.key);
+  let seenPath = seenFilePathOf(target.authDir, target.key);
   const seen = seenIds(seenPath);
   let woke = false; // отдан хоть один кадр залпа пачки
   attach(target.path, {
@@ -74,8 +74,7 @@ export function runWatchdogExit(argv: string[]): void {
         }
         case "stale":
           // Пачка лежалых: не повод будить, но и не потеря — тела в логе, id помечены.
-          for (const f of ev.frames ?? [])
-            for (const k of deliveredKeys(f)) noteSeen(seenPath, k, seen);
+          for (const k of staleBatchKeys(ev)) noteSeen(seenPath, k, seen);
           note(ev.text ?? "лежалые кадры");
           break;
         case "dead":
@@ -85,6 +84,7 @@ export function runWatchdogExit(argv: string[]): void {
           process.exit(1);
           break;
         case "attached":
+          seenPath = adoptSeenPath(ev.seen, seenPath, seen); // память места на его сервере
           note(`слушаю стояние ${ev.key}`);
           break;
         default:

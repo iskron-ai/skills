@@ -7,7 +7,12 @@ import { type Frame } from "../shared/channel.ts";
 import { eventKeyOf, seenIds } from "../shared/seen.ts";
 import { type StaleBurst } from "./stale.ts";
 
-/** Файл .seen, прочитанный последним, — по его отпечатку: очередь в сотню кадров не читает его сотню раз. */
+/**
+ * Последнее прочтение каждого файла .seen и его отпечаток (inode, размер, mtime).
+ * Файл перечитывается, только когда отпечаток сменился — дописью любого писателя
+ * или обрезкой (rename); иначе отдаётся прежний набор. Кадр, чья метка найдена в
+ * памяти моста, файла не трогает вовсе.
+ */
 const lastRead = new Map<string, { stamp: string; ids: Set<string> }>();
 
 function givenIds(seenPath: string): Set<string> {

@@ -10,7 +10,7 @@
 // appears — the red this probe exists to show.
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
@@ -116,9 +116,11 @@ const authorizeUrlIn = (text) =>
   /(http:\/\/127\.0\.0\.1:\d+\/login\?k=[\w-]+)/.exec(text || "")?.[1] ?? null;
 
 /** A bridge that has authorized and connected a standing; returns everything the tests read. */
-async function connected(t, { env = {}, init = INIT, fakeOpts = {} } = {}) {
+async function connected(t, { env = {}, init = INIT, fakeOpts = {}, dir: given } = {}) {
   const fake = await startFakeNks(fakeOpts);
-  const dir = mkdtempSync(join(tmpdir(), "iskron-standing-"));
+  const dir = given ?? mkdtempSync(join(tmpdir(), "iskron-standing-"));
+  const grants = () => readdirSync(dir).filter((f) => f.endsWith(".json")).length;
+  const grantsBefore = grants();
   const bridge = startBridge(fake.mcpUrl, dir, env);
   t.after(async () => {
     await bridge.stop();
@@ -129,10 +131,7 @@ async function connected(t, { env = {}, init = INIT, fakeOpts = {} } = {}) {
   assert.ok(url, `expected an authorize URL, got ${JSON.stringify(pending)}`);
   const res = await fetch(url, { redirect: "follow" });
   await res.text();
-  await waitFor(
-    () => readdirSync(dir).some((f) => f.endsWith(".json")),
-    "the exchanged tokens to reach the store",
-  );
+  await waitFor(() => grants() > grantsBefore, "the exchanged tokens to reach the store");
   const initReply = await bridge.call("initialize", 2, init);
   assert.ok(initReply.result, `initialize after the grant: ${JSON.stringify(initReply)}`);
   const reply = await bridge.call("tools/call", 3, { name: "iskron_channel", arguments: CONNECT });
@@ -1969,6 +1968,126 @@ test("a day's queue re-sent after a reconnect is not printed again by the Monito
   wd.proc.kill("SIGKILL");
   await wd.done;
   assert.equal(printed(), DAY, `printed again: ${printed() - DAY}`);
+});
+
+// The memory outlives the bridge, and the place key does not name the server,
+// while `use en|ru|url` share one grant directory: the memory is per server.
+test("the memory of delivery is per server: a mark made against one server does not hide the same id on another", async (t) => {
+  const a = await connected(t, { init: OPENCODE_INIT });
+  await waitFor(() => a.fake.state.ws.size === 1, "the socket on A");
+  await a.fake.control({
+    ws_send: JSON.stringify({ type: "message", id: "same-1", body: "на сервере A" }),
+  });
+  await waitFor(() => handedIds(a.bridge).includes("same-1"), "handed on A");
+  await a.bridge.stop();
+  const b = await connected(t, { init: OPENCODE_INIT, dir: a.dir });
+  await waitFor(() => b.fake.state.ws.size === 1, "the socket on B");
+  await b.fake.control({
+    ws_send: JSON.stringify({ type: "message", id: "same-1", body: "на сервере B" }),
+  });
+  await waitFor(() => handedIds(b.bridge).includes("same-1"), "the same id handed on B");
+});
+
+/** Drop every .seen file: the bridge loses its word on what was delivered, the client keeps its own. */
+const forgetSeenFiles = (standings) => {
+  for (const f of readdirSync(standings).filter((x) => x.endsWith(".seen")))
+    unlinkSync(join(standings, f));
+};
+
+// The watchdog's own memory is the second line behind the bridge: an id it has
+// printed is not printed again even when the bridge hands it over again.
+test("the Monitor watchdog does not print again an id it printed, even when the bridge hands it over again", async (t) => {
+  const { fake, dir, key, standings } = await connected(t);
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog", dir, key, 20_000);
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog");
+  const once = JSON.stringify({ type: "message", id: "g-1", body: "однажды-g" });
+  await fake.control({ ws_send: once });
+  await waitSeen(standings, "g-1");
+  forgetSeenFiles(standings);
+  await fake.control({ ws_send: once });
+  await fake.control({ ws_send: JSON.stringify({ type: "message", id: "g-2", body: "потом-g" }) });
+  await waitFor(() => wd.out.includes("потом-g"), "the next frame");
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+  assert.equal((wd.out.match(/однажды-g/g) ?? []).length, 1, wd.out);
+});
+
+test("the Codex watchdog does not put into the thread again an id it put there, even when the bridge hands it over again", async (t) => {
+  const { fake, dir, key, standings } = await connected(t);
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const home = mkdtempSync("/tmp/cxd-");
+  const sock = join(home, "app-server-control", "app-server-control.sock");
+  const log = join(home, "door.log");
+  writeFileSync(log, "");
+  const door = await startFakeCodex(sock, log);
+  t.after(() => door.stop());
+  const wd = runClient("watchdog-codex", dir, key, 15000, {
+    CODEX_HOME: home,
+    CODEX_THREAD_ID: "thread-5",
+  });
+  await waitFor(() => wd.err.includes("слушаю стояние"), "the codex watchdog to attach");
+  const once = JSON.stringify({ type: "message", id: "cg-1", body: "однажды-cg" });
+  await fake.control({ ws_send: once });
+  await waitSeen(standings, "cg-1");
+  forgetSeenFiles(standings);
+  await fake.control({ ws_send: once });
+  await fake.control({
+    ws_send: JSON.stringify({ type: "message", id: "cg-2", body: "потом-cg" }),
+  });
+  await waitFor(() => readFileSync(log, "utf8").includes("потом-cg"), "the next frame");
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+  assert.equal((readFileSync(log, "utf8").match(/однажды-cg/g) ?? []).length, 1);
+});
+
+// A stale batch shows twenty and names the rest by count: the watchdog that
+// printed it marks them all, or a reconnect brings the unshown back.
+const staleBurst = (n) =>
+  Array.from({ length: n }, (_, i) =>
+    JSON.stringify({ type: "message", id: `sb-${i}`, body: `лежалое-${i}-`, stale: true }),
+  );
+
+test("the Monitor watchdog marks the frames a stale batch named but did not show — none comes back after a reconnect", async (t) => {
+  const { fake, dir, key } = await connected(t);
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog", dir, key, 30_000);
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog");
+  const shown = () => (wd.out.match(/лежалое-\d+-/g) ?? []).length;
+  await fake.control({ ws_send_many: staleBurst(25) });
+  await waitFor(() => /Лежалых кадров: 25, здесь первые 20/.test(wd.out), "the stale batch");
+  await new Promise((r) => setTimeout(r, 300)); // the marks follow the print
+  assert.equal(shown(), 20);
+  await reconnect(fake);
+  await fake.control({
+    ws_send_many: staleBurst(25).map((s) => s.replace('"stale":true', '"stale":false')),
+  });
+  await fake.control({ ws_send: JSON.stringify({ type: "message", id: "sb-new", body: "новое" }) });
+  await waitFor(() => wd.out.includes("новое"), "a new frame to be printed");
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+  assert.equal(shown(), 20, `printed again: ${shown() - 20}`);
+});
+
+test("the Codex watchdog marks the frames a stale batch named but did not show once the thread takes it", async (t) => {
+  const { fake, dir, key, standings } = await connected(t);
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const home = mkdtempSync("/tmp/cxd-");
+  const sock = join(home, "app-server-control", "app-server-control.sock");
+  const log = join(home, "door.log");
+  writeFileSync(log, "");
+  const door = await startFakeCodex(sock, log);
+  t.after(() => door.stop());
+  const wd = runClient("watchdog-codex", dir, key, 15000, {
+    CODEX_HOME: home,
+    CODEX_THREAD_ID: "thread-6",
+  });
+  await waitFor(() => wd.err.includes("слушаю стояние"), "the codex watchdog to attach");
+  await fake.control({ ws_send_many: staleBurst(25) });
+  await waitFor(() => wd.err.includes("кадр вложен в тред"), "the stale batch in the thread");
+  await waitSeen(standings, "sb-24");
+  wd.proc.kill("SIGKILL");
+  await wd.done;
 });
 
 // The plugin cannot pass anything to a bridge it spawned before the session

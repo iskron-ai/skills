@@ -23,7 +23,7 @@ import { socketPathOf } from "../shared/standings.ts";
 import { harnessName, notifiedClient } from "./client.ts";
 import { stampOrigin } from "./complete.ts";
 import { CFG } from "./config.ts";
-import { type ChannelEvent, Door, type DoorHooks } from "./door.ts";
+import { type ChannelEvent, Door, type DoorHooks, ENV_KEY } from "./door.ts";
 import { isDelivered, redundantCopy } from "./fanout.ts";
 import { dropHoldRecord, keyOf, readHoldRecord, writeHoldRecord } from "./holdrecord.ts";
 import {
@@ -50,7 +50,7 @@ export type { ChannelEvent } from "./door.ts";
 /** Имя стояния → безопасная часть пути: буквы, цифры, точка, дефис; прочее — подчёркивание. */
 function keyFor(): string {
   const s = state.standing;
-  return s ? keyOf(s.realm, s.karta, s.name ?? "") : "env";
+  return s ? keyOf(s.realm, s.karta, s.name ?? "") : ENV_KEY;
 }
 
 /** Каталог сессии, из которого занимается место (cwd в iskron_stand), — в запись держания, для возврата по каталогу (resume.ts). */

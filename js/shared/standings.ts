@@ -32,6 +32,20 @@ export const keyFilePathOf = (authDir: string, key: string): string =>
 export const holdFilePathOf = (authDir: string, key: string): string =>
   join(standingsDirOf(authDir), `${hashOf(key)}.hold`);
 
-/** Память сторожа выхода — id уже отданных кадров; файл рядом с ключом, не с сокетом: на Windows сокет — именованный канал, не путь. */
-export const seenFilePathOf = (authDir: string, key: string): string =>
-  join(standingsDirOf(authDir), `${hashOf(key)}.seen`);
+/**
+ * Память отданного — id уже отданных кадров; файл рядом с ключом, не с сокетом: на
+ * Windows сокет — именованный канал, не путь. С `server` — память места на этом
+ * сервере (`<хеш ключа>.<хеш origin>.seen`): она переживает мост, а ключ места
+ * сервера не называет, и каталог гранта у `use en|ru|url` один (#5831). Без
+ * `server` — прежнее имя: память живёт, пока жив мост.
+ */
+export function seenFilePathOf(authDir: string, key: string, server = ""): string {
+  if (!server) return join(standingsDirOf(authDir), `${hashOf(key)}.seen`);
+  let origin = server;
+  try {
+    origin = new URL(server).origin;
+  } catch {
+    /* не URL — хешируется как есть */
+  }
+  return join(standingsDirOf(authDir), `${hashOf(key)}.${hashOf(origin).slice(0, 8)}.seen`);
+}

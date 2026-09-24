@@ -11,7 +11,7 @@ import { writeSync } from "node:fs";
 import { frameToText } from "../shared/frame-text.ts";
 import { deliveredKeys, noteSeen, seenIds } from "../shared/seen.ts";
 import { seenFilePathOf } from "../shared/standings.ts";
-import { attach, resolveStanding } from "./client.ts";
+import { adoptSeenPath, attach, resolveStanding, staleBatchKeys } from "./client.ts";
 
 // Monitor Claude Code режет строку события длиннее ~500 знаков (наблюдено:
 // «...(truncated)»), а строки в одном залпе склеивает в одно событие целиком.
@@ -69,12 +69,13 @@ export function runWatchdog(argv: string[]): void {
     process.exit(2);
   }
   // Напечатанный кадр — отданный: пометка его, а не записи моста, держит перевзвод от повтора.
-  const seenPath = seenFilePathOf(target.authDir, target.key);
+  let seenPath = seenFilePathOf(target.authDir, target.key);
   const seen = seenIds(seenPath);
   attach(target.path, {
     onEvent: (ev) => {
       switch (ev.kind) {
         case "attached":
+          seenPath = adoptSeenPath(ev.seen, seenPath, seen); // память места на его сервере
           log(
             `слушаю стояние ${ev.key}${ev.buffered ? ` (${plural(ev.buffered)} задним числом)` : ""}`,
           );
@@ -96,8 +97,8 @@ export function runWatchdog(argv: string[]): void {
           break;
         case "stale":
           for (const line of wrapLines(ev.text ?? "")) log(line); // одна пачка — одно событие
-          for (const f of ev.frames ?? [])
-            for (const k of deliveredKeys(f)) noteSeen(seenPath, k, seen); // напечатана — отдана
+          // Напечатана — отдана, и названное пачкой числом сверх показанного тоже.
+          for (const k of staleBatchKeys(ev)) noteSeen(seenPath, k, seen);
           break;
         case "dead":
         case "evicted":

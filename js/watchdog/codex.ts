@@ -17,7 +17,13 @@ import { type Door, openDoor } from "../shared/appserver.ts";
 import { frameToText } from "../shared/frame-text.ts";
 import { deliveredKeys, noteSeen, seenIds } from "../shared/seen.ts";
 import { seenFilePathOf } from "../shared/standings.ts";
-import { attach, parseWatchdogArgs, resolveStanding } from "./client.ts";
+import {
+  adoptSeenPath,
+  attach,
+  parseWatchdogArgs,
+  resolveStanding,
+  staleBatchKeys,
+} from "./client.ts";
 
 const note = (s: string): void => {
   process.stderr.write(s + "\n");
@@ -49,7 +55,7 @@ export function runWatchdogCodex(argv: string[]): void {
     process.exit(2);
   }
   parseWatchdogArgs(argv); // валидность флагов — там же
-  const seenPath = seenFilePathOf(target.authDir, target.key);
+  let seenPath = seenFilePathOf(target.authDir, target.key);
   const seen = seenIds(seenPath);
   const waiting = new Map<number, string[]>(); // id запроса turn/start → id кадров, ждущих подтверждения
 
@@ -137,10 +143,7 @@ export function runWatchdogCodex(argv: string[]): void {
           break;
         }
         case "stale":
-          void deliver(
-            ev.text ?? "Искрон: лежалые кадры",
-            (ev.frames ?? []).flatMap((f) => deliveredKeys(f)),
-          ); // одна пачка — один ход
+          void deliver(ev.text ?? "Искрон: лежалые кадры", staleBatchKeys(ev)); // одна пачка — один ход
           break;
         case "dead":
         case "evicted":
@@ -155,6 +158,7 @@ export function runWatchdogCodex(argv: string[]): void {
           break;
         case "attached":
           replay = ev.buffered ?? 0;
+          seenPath = adoptSeenPath(ev.seen, seenPath, seen); // память места на его сервере
           note(`слушаю стояние ${ev.key}; кадры кладу в тред ${threadId}`);
           break;
         default:
