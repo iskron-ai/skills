@@ -2684,7 +2684,10 @@ test("watchdog-codex: progress waits; closing puts the batch into the thread fir
   const [first, second] = turns().map((c) => c.params.input[0].text);
   assert.match(first, /\[tests\] пробы зелёные = ok/);
   assert.match(second, /предлагает закрыть дело/);
-  assert.match(second, /ты можешь возразить — iskron_case\(action="object", in_reply_to=50\)/);
+  assert.match(
+    second,
+    /ты можешь возразить — iskron_case\(action="object", in_reply_to=50\) \(прежнее имя iskron_room\)/,
+  );
   wd.proc.kill("SIGKILL");
   await wd.done;
 });

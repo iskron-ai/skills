@@ -1955,7 +1955,7 @@ import { createServer as createServer2 } from "node:net";
 var WORDS = {
   said: "слово от {author}",
   closing: "ведущий {author} предлагает закрыть дело до {ends_at}{; свидетельства: evidence}",
-  closing_may: 'ты можешь возразить — iskron_case(action="object", in_reply_to={entry_id})',
+  closing_may: 'ты можешь возразить — iskron_case(action="object", in_reply_to={entry_id}) (прежнее имя iskron_room)',
   closing_not: "возражать не тебе",
   closed: "дело закрыто: {reason}",
   objection: "{author} возражает против закрытия: {reason}",
@@ -3613,7 +3613,7 @@ async function armRoleHook(p) {
   const nameRe = new RegExp(`:${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![A-Za-z0-9._-])`);
   const wakesMe = recognized && hooks.text.split(/\n(?=\s*#\d+\s*→)/).some((b) => /активен/.test(b) && nameRe.test(b));
   if (p.sub)
-    return "Хук инбокса роли: отдельному месту не взводится — почту роли слушает основное место, комнаты доставляют своё сами.";
+    return "Хук инбокса роли: отдельному месту не взводится — почту роли слушает основное место, дела доставляют своё сами.";
   if (wakesMe) return "Хук инбокса роли: стоит и будит это стояние.";
   if (!recognized)
     return `Хук инбокса роли: список хуков не распознан — не трогаю (${short(hooks.text, 120)}).`;
@@ -4257,7 +4257,7 @@ async function runStand(msg) {
   });
   for (const e of legacy) {
     nameNotes.push(
-      `на доске живо место прежнего имени ${e.address} — его адрес могут держать комнаты и хуки; сними его: iskron_channel(action="revoke", realm="${realm}", karta="${karta}", standing="${e.address}")`
+      `на доске живо место прежнего имени ${e.address} — его адрес могут держать дела и хуки; сними его: iskron_channel(action="revoke", realm="${realm}", karta="${karta}", standing="${e.address}")`
     );
   }
   const unread = declared != null && declared !== entries.length;

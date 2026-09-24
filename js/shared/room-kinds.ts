@@ -16,7 +16,8 @@ export type Stack = "interrupt" | "batch";
 export const WORDS: Readonly<Record<string, string>> = {
   said: "слово от {author}",
   closing: "ведущий {author} предлагает закрыть дело до {ends_at}{; свидетельства: evidence}",
-  closing_may: 'ты можешь возразить — iskron_case(action="object", in_reply_to={entry_id})',
+  closing_may:
+    'ты можешь возразить — iskron_case(action="object", in_reply_to={entry_id}) (прежнее имя iskron_room)',
   closing_not: "возражать не тебе",
   closed: "дело закрыто: {reason}",
   objection: "{author} возражает против закрытия: {reason}",

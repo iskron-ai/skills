@@ -64,7 +64,7 @@ export async function armRoleHook(p: HookPlace): Promise<string> {
     recognized &&
     hooks.text.split(/\n(?=\s*#\d+\s*→)/).some((b) => /активен/.test(b) && nameRe.test(b));
   if (p.sub)
-    return "Хук инбокса роли: отдельному месту не взводится — почту роли слушает основное место, комнаты доставляют своё сами.";
+    return "Хук инбокса роли: отдельному месту не взводится — почту роли слушает основное место, дела доставляют своё сами.";
   if (wakesMe) return "Хук инбокса роли: стоит и будит это стояние.";
   if (!recognized)
     return `Хук инбокса роли: список хуков не распознан — не трогаю (${short(hooks.text, 120)}).`;
