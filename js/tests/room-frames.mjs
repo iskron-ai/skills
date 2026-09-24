@@ -54,7 +54,15 @@ export const closing = () =>
     key: "closing",
     stack: "defer",
     status: "closing",
-    fields: { evidence: [41], ends_at: "2026-09-23T10:05:00Z", may_object: [ME_ID, ALEKSEI_ID] },
+    // Форма боя (api 0.88.0, наблюдено живым прогоном): объекты мест, не голые id.
+    fields: {
+      evidence: [41],
+      ends_at: "2026-09-23T10:05:00Z",
+      may_object: [
+        { id: ME_ID, standing: ME, name: "proba", karta: { seq: 3, name: "Прораб" } },
+        { id: ALEKSEI_ID, standing: ALEKSEI.standing, name: "Алексей", karta: ALEKSEI.karta },
+      ],
+    },
     body: "сделано, см. 41",
   });
 
