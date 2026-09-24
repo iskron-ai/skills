@@ -1,5 +1,12 @@
 # Changelog
 
+## [6.16.2](https://github.com/iskron-ai/skills/compare/v6.16.1...v6.16.2) (2026-09-24)
+
+
+### Bug Fixes
+
+* **bridge:** приглашение моей роли в дело прерывает, как приглашение моему месту ([#196](https://github.com/iskron-ai/skills/issues/196)) ([a00d833](https://github.com/iskron-ai/skills/commit/a00d833d7d51fe2c4b1b5225de2aaa172013b87a))
+
 ## [6.16.1](https://github.com/iskron-ai/skills/compare/v6.16.0...v6.16.1) (2026-09-24)
 
 
