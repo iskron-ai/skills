@@ -1,5 +1,12 @@
 # Changelog
 
+## [6.14.0](https://github.com/iskron-ai/skills/compare/v6.13.1...v6.14.0) (2026-09-24)
+
+
+### Features
+
+* **skills:** дело на поверхности агента — ходы журнала, закрытие и возражение, ведущий по проекции ([#184](https://github.com/iskron-ai/skills/issues/184)) ([fd97758](https://github.com/iskron-ai/skills/commit/fd97758b14a7ac6ae9ab6b24f4ddb322ecd29ce5))
+
 ## [6.13.1](https://github.com/iskron-ai/skills/compare/v6.13.0...v6.13.1) (2026-09-24)
 
 
