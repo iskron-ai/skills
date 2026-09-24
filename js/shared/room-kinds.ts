@@ -26,9 +26,9 @@ export const WORDS: Readonly<Record<string, string>> = {
   opened: "комнату открыл {author}",
   joined: "вошёл {author}",
   left: "вышел {author}",
-  invite: "{target} приглашён",
+  invite: "{who} приглашён",
   withdraw: "приглашение отозвано",
-  accepted: "{target} принял приглашение",
+  accepted: "{who} принял приглашение",
   node: "в комнате узел #{seq} {name} ({realm})",
   link: "комната связана с {room}",
   unknown: "род {kind} мосту неизвестен",
@@ -98,6 +98,15 @@ function fill(template: string, v: Rec): string {
 const mineOf = (frame: Rec): string[] =>
   [str(frame.to_standing_id), str(frame.to_standing)].filter(Boolean);
 
+/** Имя приглашённого из полей строки: место, иначе роль. */
+function whoOf(fields: Rec): string {
+  const st = obj(fields.standing);
+  const ka = obj(fields.karta);
+  const name = str(st.name) || str(ka.name);
+  const addr = str(st.standing);
+  return name && addr ? `${name} (${addr})` : name || addr;
+}
+
 /** Технический кадр комнаты (event_kind room.*) — род, правило, слово; null — словарь кадр не решает. */
 export function roomKind(frame: Frame | null | undefined): RoomKind | null {
   if (!frame || typeof frame !== "object") return null;
@@ -122,6 +131,8 @@ export function roomKind(frame: Frame | null | undefined): RoomKind | null {
     entry_id: line.entry_id ?? f.entry_id,
     reason: fields.reason,
     target: after(key, "invite:"),
+    // Ключ несёт id; имя приглашённого — в полях строки (наблюдено на бою: standing/karta с name).
+    who: whoOf(fields) || after(key, "invite:"),
     room: after(key, "link:"),
     seq: node.seq,
     name: node.name,
