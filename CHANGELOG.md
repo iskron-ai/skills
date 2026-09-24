@@ -1,5 +1,13 @@
 # Changelog
 
+## [6.13.1](https://github.com/iskron-ai/skills/compare/v6.13.0...v6.13.1) (2026-09-24)
+
+
+### Bug Fixes
+
+* **bridge:** may_object на бою — объекты мест, «ты можешь возразить» сверяется по их id ([#181](https://github.com/iskron-ai/skills/issues/181)) ([03209d1](https://github.com/iskron-ai/skills/commit/03209d188364c727d3cf646666b553dc9ee95e14))
+* **bridge:** подсказка возражения называет настоящий ход iskron_room(action="object"); без свидетельств — без «?» ([#183](https://github.com/iskron-ai/skills/issues/183)) ([91f0815](https://github.com/iskron-ai/skills/commit/91f0815e9850eea41cd9657c1fd9590fae063c32))
+
 ## [6.13.0](https://github.com/iskron-ai/skills/compare/v6.12.0...v6.13.0) (2026-09-24)
 
 
