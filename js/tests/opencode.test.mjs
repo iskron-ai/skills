@@ -1759,8 +1759,20 @@ test("room kinds: closing steers a busy agent despite stack=defer and says who m
     const p6 = await send(roomFrame("invite", { entry_id: 64, key: `invite:${ME_ID}` }), 6);
     assert.equal(p6.delivery, "steer", "an invite to my own standing id interrupts");
     assert.match(p6.text, new RegExp(`${ME_ID} приглашён`));
-    const p7 = await send(roomFrame("invite", { entry_id: 65, key: "invite:@other:x" }), 7);
+    const p7 = await send(
+      roomFrame("invite", {
+        entry_id: 65,
+        key: "invite:5744a929-982c-4efe-88ff-480ab66f61b8",
+        fields: { standing: { name: "Прораб", standing: "@other:x" } },
+      }),
+      7,
+    );
     assert.equal(p7.delivery, "queue", "an invite to someone else batches");
+    assert.match(
+      p7.text,
+      /Прораб \(@other:x\) приглашён/,
+      "the invite names the invitee, not the raw id",
+    );
     const p8 = await send(roomFrame("opened", { entry_id: 66 }), 8);
     assert.equal(p8.delivery, "queue", "opened does not interrupt");
     const p9 = await send(roomFrame("invite", { entry_id: 67, key: "invite:@tester:proba" }), 9);

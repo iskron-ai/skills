@@ -60,9 +60,9 @@ var WORDS = {
   opened: "комнату открыл {author}",
   joined: "вошёл {author}",
   left: "вышел {author}",
-  invite: "{target} приглашён",
+  invite: "{who} приглашён",
   withdraw: "приглашение отозвано",
-  accepted: "{target} принял приглашение",
+  accepted: "{who} принял приглашение",
   node: "в комнате узел #{seq} {name} ({realm})",
   link: "комната связана с {room}",
   unknown: "род {kind} мосту неизвестен"
@@ -103,6 +103,13 @@ function fill(template, v) {
   });
 }
 var mineOf = (frame) => [str(frame.to_standing_id), str(frame.to_standing)].filter(Boolean);
+function whoOf(fields) {
+  const st = obj(fields.standing);
+  const ka = obj(fields.karta);
+  const name = str(st.name) || str(ka.name);
+  const addr = str(st.standing);
+  return name && addr ? `${name} (${addr})` : name || addr;
+}
 function roomKind(frame) {
   if (!frame || typeof frame !== "object") return null;
   const f = frame;
@@ -126,6 +133,8 @@ function roomKind(frame) {
     entry_id: line.entry_id ?? f.entry_id,
     reason: fields.reason,
     target: after(key, "invite:"),
+    // Ключ несёт id; имя приглашённого — в полях строки (наблюдено на бою: standing/karta с name).
+    who: whoOf(fields) || after(key, "invite:"),
     room: after(key, "link:"),
     seq: node.seq,
     name: node.name,
