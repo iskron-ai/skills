@@ -14,7 +14,8 @@
 //
 // Usage:
 //   node iskron.mjs [bridge] [server-url] [--timeout <ms>] [--auth-dir <dir>]
-//                   [--client-name <name>] [--no-browser] [--debug]
+//                   [--client-name <name>] [--no-browser] [--debug] [--satellite]
+// --satellite (or ISKRON_BRIDGE_SATELLITE=1): the bridge of a subagent run — see satellite.ts.
 // With no server-url the bridge points at the product instance (DEFAULT_SERVER_URL);
 // pass a URL (or set ISKRON_BRIDGE_URL) only for another instance or fork.
 // Env (flags win): ISKRON_BRIDGE_URL, ISKRON_BRIDGE_TIMEOUT, ISKRON_BRIDGE_AUTH_DIR,
@@ -84,7 +85,9 @@ export function bridgeMain(argv: string[]): void {
   startTokenKeepalive();
   startFreshnessWatch(CFG.authDir, CFG.serverUrl); // отставание поставки — слово моста, не память человека
   holdFromEnv(); // сокет из окружения без connect (отладка) либо возврат места по каталогу сессии (#5140)
-  startDeafnessWatch(); // никто не слушает — мост уходит с места сам (#4895)
+  // Никто не слушает — мост уходит с места сам (#4895). Спутник сторожа не держит
+  // по устройству: его место подписывает записи прогона, и уход по глухоте погасил бы его посреди работы.
+  if (!CFG.satellite) startDeafnessWatch();
 
   const rl = createInterface({ input: process.stdin, terminal: false });
   const pending = new Set<Promise<void>>();
@@ -142,7 +145,8 @@ export function bridgeMain(argv: string[]): void {
     // отпускаются ПЕРВЫМИ: харнес, убивающий мост по короткой отсрочке, не должен
     // застать его в сетевом вызове с живым ключом — сторож ушёл бы на мёртвый сокет.
     const addr = statusAddress();
-    releaseStanding(why); // сокет стояния живёт ровно столько, сколько сессия
+    // Сокет стояния живёт ровно столько, сколько сессия; у спутника — и записи держания нет: возврата с диска у него не бывает.
+    releaseStanding(why, CFG.satellite);
     if (addr) await publishStatusTo(addr.url, "", 3000).catch(() => {});
     await Promise.allSettled([...pending, ...tokenRequestsInFlight]);
     await flushStdout(); // an answer half-written is an answer not given

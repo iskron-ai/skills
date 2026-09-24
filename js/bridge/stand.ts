@@ -49,6 +49,7 @@ import {
 import { placeFields, rememberModel } from "./placefields.ts";
 import { otherRealm } from "./realms.ts";
 import { deadPredecessor, resumeFromDisk } from "./resume.ts";
+import { SATELLITE_TTL_S, satelliteGate, satelliteListenWord } from "./satellite.ts";
 import { separatePlace, suffixOf } from "./separate.ts";
 import { publishStatus, TAKE_PATH, TURNED_GUIDANCE } from "./status.ts";
 import { state } from "./transport.ts";
@@ -127,10 +128,18 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
       return done(true);
     }
   }
-  const parts = asked ? null : deriveParts(model, cwd);
+  // Место-спутник субагента (satellite.ts, #6002): только у моста-спутника и только оно у него.
+  const gate = await satelliteGate(a, realm, karta, asked);
+  if (gate && !gate.ok) {
+    lines.push(gate.refusal);
+    return done(true);
+  }
+  const sat = gate?.ok ? { name: gate.name, caller: gate.caller } : null;
+  if (gate?.ok) nameNotes.push(...gate.notes);
+  const parts = asked || sat ? null : deriveParts(model, cwd);
   const fitted = parts ? fitName(parts) : null;
-  const derived = asked ? "" : (fitted?.name ?? "");
-  let name = asked || derived;
+  const derived = asked || sat ? "" : (fitted?.name ?? "");
+  let name = asked || sat?.name || derived;
   await resolveAgainstLed(realm); // графы сличаются в одной форме @owner/slug (#5838)
   // Мост уже стоит на отдельном месте этого выведенного имени — туда же (#5407).
   const led0 = state.standing && !otherRealm(state.standing.realm, realm) ? state.standing : null;
@@ -144,7 +153,7 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
       `выведенное имя ${joinName(parts)} длиннее предела ${NAME_MAX} знаков — укорочено до ${name} (срезано: ${what}); нужно другое — передай name`,
     );
   }
-  if (!asked && !model) {
+  if (!asked && !sat && !model) {
     nameNotes.push(
       "model не передан — имя без третьей части (машина.репо): вторая сессия этой машины над этим репозиторием сойдётся на то же место; передай model, чтобы различать",
     );
@@ -206,7 +215,7 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
     own = entries.filter((e) => e.karta === karta && nameOf(e.address) === name);
     nameNotes.push(separate.note);
   }
-  const sub = !!derived && name !== derived; // отдельное место: хук инбокса роли ему не взводится
+  const sub = !!sat || (!!derived && name !== derived); // отдельное место и спутник: хук инбокса роли не взводится
   // Места прежнего стандарта имени (машина.репо.ветка) той же машины и репо —
   // сироты после перехода на машина.репо.модель: их адрес держат ростеры дел
   // и хуки инбокса, а слушает их никто. Прежнее имя узнаётся по третьей части,
@@ -220,6 +229,7 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
       .filter(Boolean),
   );
   const legacy = entries.filter((e) => {
+    if (sat) return false; // спутнику прежние места позвавшего не его забота
     if (e.karta !== karta || nameOf(e.address) === name) return false;
     const own = nameOf(e.address);
     if (!own.startsWith(`${stem}.`)) return false;
@@ -265,8 +275,9 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   // ротируется — адрес, хуки и очередь те же (#5061). Доска ещё читает
   // «слушает» (окно платформы после смерти прежнего моста) — только register,
   // как велит канон, и ответ говорит, что слушающий — мёртвый предшественник.
+  // Спутник с диска не возвращается: его место живёт прогоном (satellite.ts).
   const fresh =
-    a.take !== true && !holdsStanding(realm, karta, name) && !isParked(realm, karta, name);
+    !sat && a.take !== true && !holdsStanding(realm, karta, name) && !isParked(realm, karta, name);
   const predecessorDead = fresh && listensElsewhere && (await deadPredecessor(realm, karta, name));
   const resumed = fresh && !listensElsewhere ? await resumeFromDisk(realm, karta, name) : null;
   const extra: string[] = []; // строки после шапки ответа
@@ -331,7 +342,16 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
     const args: Record<string, unknown> = { action: "connect", realm, karta, name };
     Object.assign(args, here());
     if (typeof a.mute_siblings === "boolean") args.mute_siblings = a.mute_siblings;
-    const c = await call("iskron_channel", args); // новый сокет держатель берёт сам и заново: кольцо кадров чистое
+    if (sat) args.ttl_seconds = SATELLITE_TTL_S; // приглашения спутнику не переживают прогон (#6001, условие а)
+    let c = await call("iskron_channel", args); // новый сокет держатель берёт сам и заново: кольцо кадров чистое
+    if (sat && c.isError && /ttl/i.test(c.text)) {
+      // Разброс окна держит контур; вне его — место всё же нужно прогону, окно — умолчание контура.
+      extra.push(
+        `Окно простоя ${SATELLITE_TTL_S} с контур не принял (${short(c.text, 120)}) — место занято с окном по умолчанию контура.`,
+      );
+      delete args.ttl_seconds;
+      c = await call("iskron_channel", args);
+    }
     if (c.isError) {
       lines.push(`Отказано: connect — ${short(c.text)}`);
       return done(true);
@@ -358,7 +378,7 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
     ...nameNotes.map((n) => `[iskron_stand] ${n}`),
     ...extra,
   );
-  const block = heardHere ? listenBlock(realm) : null;
+  const block = heardHere ? (sat ? satelliteListenWord() : listenBlock(realm)) : null;
   if (block) lines.push(block);
   else if (!heardHere)
     lines.push(

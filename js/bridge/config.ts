@@ -72,6 +72,7 @@ export function parseArgs(argv: string[]): Config {
     pat: null,
     patSource: null,
     serverSource: "argument",
+    satellite: process.env.ISKRON_BRIDGE_SATELLITE === "1",
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -80,6 +81,7 @@ export function parseArgs(argv: string[]): Config {
     else if (a === "--client-name") cfg.clientName = argv[++i];
     else if (a === "--no-browser") cfg.noBrowser = true;
     else if (a === "--debug") cfg.debug = true;
+    else if (a === "--satellite") cfg.satellite = true;
     else if (a === "--version") {
       process.stdout.write(BUILD + "\n");
       process.exit(0);

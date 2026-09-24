@@ -17,6 +17,12 @@ type Place = { realm?: unknown; karta?: unknown; name?: unknown };
 const placeKey = (p: Place): string =>
   `${String(p.realm ?? "")}|${normKarta(p.karta)}|${normName(p.name)}`;
 
+let satelliteOf = "";
+/** Место позвавшего у моста-спутника (satellite.ts) — едет в attrs каждого занятия и регистрации: доска печатает место спутником. */
+export function noteSatelliteOf(address: string): void {
+  satelliteOf = address;
+}
+
 /** Модель из iskron_stand — едет полем места и во всех повторных регистрациях. */
 export function rememberModel(m: unknown): void {
   if (typeof m === "string" && m.trim()) model = m.trim().replace(/^[^/]*\//, "");
@@ -32,6 +38,7 @@ export function placeFields(place: Place = {}): { model?: string; attrs: Record<
       ...extra,
       build: { name: "iskron-bridge", version: VERSION, stamp: BUILD.split("+")[1] ?? "" },
       ...(harness ? { harness } : {}),
+      ...(satelliteOf ? { satellite_of: satelliteOf } : {}),
     },
   };
 }

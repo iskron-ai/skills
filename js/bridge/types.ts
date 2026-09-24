@@ -72,4 +72,6 @@ export interface Config {
   patSource: string | null;
   /** Откуда взят адрес сервера: аргумент, окружение, файл выбора рядом с грантом или умолчание. */
   serverSource: "argument" | "ISKRON_BRIDGE_URL" | "file" | "default";
+  /** Мост-спутник (satellite.ts): место на прогон субагента — без записи держания, без хука, с коротким ttl. */
+  satellite: boolean;
 }

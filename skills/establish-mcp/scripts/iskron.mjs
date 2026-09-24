@@ -148,7 +148,8 @@ function parseArgs(argv2) {
     staticClientId: process.env.ISKRON_BRIDGE_CLIENT_ID || null,
     pat: null,
     patSource: null,
-    serverSource: "argument"
+    serverSource: "argument",
+    satellite: process.env.ISKRON_BRIDGE_SATELLITE === "1"
   };
   for (let i = 0; i < argv2.length; i++) {
     const a = argv2[i];
@@ -157,6 +158,7 @@ function parseArgs(argv2) {
     else if (a === "--client-name") cfg.clientName = argv2[++i];
     else if (a === "--no-browser") cfg.noBrowser = true;
     else if (a === "--debug") cfg.debug = true;
+    else if (a === "--satellite") cfg.satellite = true;
     else if (a === "--version") {
       process.stdout.write(BUILD + "\n");
       process.exit(0);
@@ -2359,6 +2361,7 @@ function keyOf(realm, karta, name) {
 }
 var HOLD_RECORD_MAX_AGE_MS = 6 * 60 * 60 * 1e3;
 function writeHoldRecord(key, rec) {
+  if (CFG.satellite) return;
   try {
     writeFileSync6(holdFilePathFor(key), JSON.stringify({ ...rec, at: Date.now() }) + "\n", {
       mode: 384
@@ -3182,6 +3185,10 @@ ${listen}
 var model = "";
 var extras2 = /* @__PURE__ */ new Map();
 var placeKey = (p) => `${String(p.realm ?? "")}|${normKarta(p.karta)}|${normName(p.name)}`;
+var satelliteOf = "";
+function noteSatelliteOf(address) {
+  satelliteOf = address;
+}
 function rememberModel(m) {
   if (typeof m === "string" && m.trim()) model = m.trim().replace(/^[^/]*\//, "");
 }
@@ -3193,7 +3200,8 @@ function placeFields(place = {}) {
     attrs: {
       ...extra,
       build: { name: "iskron-bridge", version: VERSION, stamp: BUILD.split("+")[1] ?? "" },
-      ...harness ? { harness } : {}
+      ...harness ? { harness } : {},
+      ...satelliteOf ? { satellite_of: satelliteOf } : {}
     }
   };
 }
@@ -3974,6 +3982,90 @@ var deafReopens = 0;
 var deafSaid = false;
 var REOPEN_LIMIT = 2;
 
+// js/bridge/satellite.ts
+var SATELLITE_TTL_S = Number(process.env.ISKRON_BRIDGE_SATELLITE_TTL) || 300;
+var SUB_RE = /\.sub-([1-9]\d*)$/;
+var satelliteName = (base, n) => base.slice(0, NAME_MAX - `.sub-${n}`.length).replace(/[-._]+$/, "") + `.sub-${n}`;
+function isSatelliteOf(base, name) {
+  const m = SUB_RE.exec(name);
+  return !!m && satelliteName(base, Number(m[1])) === name;
+}
+function pickSatellite(entries, of, karta, led) {
+  const address = of.startsWith("@") && of.includes(":") ? of : null;
+  const base = address ? nameOf(address) : of.replace(/^@/, "");
+  const fault = base ? nameFault(base) : "пусто";
+  if (fault)
+    return {
+      ok: false,
+      refusal: `Отказано (мост): satellite_of «${of}» — не имя места (${fault}); передай место позвавшего как печатает доска: @handle:name.`
+    };
+  const callers = entries.filter(
+    (e) => address ? e.address === address : nameOf(e.address) === base
+  );
+  if (!callers.length)
+    return {
+      ok: false,
+      refusal: `Отказано (мост): места позвавшего ${of} на доске этого графа нет — спутнику не к чему встать рядом; проверь satellite_of и граф в постановке.`
+    };
+  const same = callers.filter((e) => e.karta === normKarta(karta));
+  if (!same.length)
+    return {
+      ok: false,
+      refusal: `Отказано (мост): место позвавшего ${callers[0].address} держит роль #${callers[0].karta}, а не #${normKarta(karta)} — спутник действует в мандате позвавшего, его ролью.`
+    };
+  if (same.length > 1)
+    return {
+      ok: false,
+      refusal: `Отказано (мост): имя ${base} у роли #${normKarta(karta)} носят ${same.length} места — передай satellite_of полным адресом @handle:name.`
+    };
+  const caller = same[0].address;
+  const notes = [];
+  if (led && isSatelliteOf(base, led)) return { ok: true, name: led, caller, notes };
+  const taken = new Set(entries.map((e) => nameOf(e.address)));
+  for (let n = 1; n <= 99; n++) {
+    const name = satelliteName(base, n);
+    if (taken.has(name)) continue;
+    if (!name.startsWith(`${base}.`))
+      notes.push(
+        `имя ${base}.sub-${n} длиннее предела ${NAME_MAX} знаков — база укорочена: ${name}`
+      );
+    return { ok: true, name, caller, notes };
+  }
+  return {
+    ok: false,
+    refusal: `Отказано (мост): у места ${caller} заняты все спутники .sub-1…99 — прибери погасшие места прежних прогонов.`
+  };
+}
+async function satelliteGate(a, realm, karta, asked) {
+  const of = typeof a.satellite_of === "string" ? a.satellite_of.trim() : "";
+  const refuse = (refusal2) => ({ ok: false, refusal: refusal2 });
+  if (CFG.satellite && !of)
+    return refuse(
+      "Отказано (мост): это мост-спутник — он занимает только место-спутник субагента; передай satellite_of — место позвавшего (@handle:name) из постановки."
+    );
+  if (!of) return null;
+  if (!CFG.satellite)
+    return refuse(
+      "Отказано (мост): satellite_of — только мосту-спутнику (запись моста с --satellite в файле агента); этот мост — мост сессии, и место-спутник на нём заняло бы голос позвавшего. Субагенту без своего моста — предел: он говорит местом позвавшего и называет себя в своих строках."
+    );
+  if (asked || a.take === true || typeof a.room === "string" && a.room.trim())
+    return refuse(
+      "Отказано (мост): имя спутника выводит мост — name, take и room вместе с satellite_of не передаются."
+    );
+  const b = await callTool("iskron_channel", { action: "list", realm });
+  if (b.isError) return refuse(`Отказано: доска не прочиталась — ${short(b.text)}`);
+  const s = state.standing;
+  const led = s && !otherRealm(s.realm, realm) ? s.name ?? null : null;
+  const pick = pickSatellite(parseBoard(b.text), of, karta, led);
+  if (!pick.ok) return pick;
+  noteSatelliteOf(pick.caller);
+  pick.notes.push(
+    `место-спутник ${pick.caller}: роль позвавшего, хука инбокса роли нет, окно простоя канала ${SATELLITE_TTL_S} с, записи держания нет — место живёт прогоном`
+  );
+  return pick;
+}
+var satelliteListenWord = () => `[iskron-bridge] Место-спутник: сторожа не взводи — место живёт прогоном субагента и подписывает его записи; с концом прогона мост уходит с места сам, канал гаснет окном простоя ${SATELLITE_TTL_S} с. Первый ход — вход в дело, названное постановкой, и пересказ постановки первым словом в нём.`;
+
 // js/bridge/separate.ts
 function suffixOf(base, name) {
   if (!name.startsWith(`${base}.`)) return null;
@@ -4241,6 +4333,10 @@ var STAND_TOOL = {
         type: "boolean",
         description: "Осознанный повтор стука в ту же комнату: разрешён один раз и не раньше чем через 2 минуты после первого; без него повторный вызов второго join не шлёт."
       },
+      satellite_of: {
+        type: "string",
+        description: "Только мосту-спутнику субагента (запись моста с --satellite в файле агента): место позвавшего @handle:name из постановки. Мост встаёт рядом местом-спутником <имя позвавшего>.sub-N (первое свободное N), ролью позвавшего, без хука инбокса роли; место живёт прогоном. name, take и room с ним не передаются."
+      },
       status: { type: "string", description: "Первая строка занятости (до 64 символов)." },
       cwd: {
         type: "string",
@@ -4303,10 +4399,17 @@ async function runStand(msg) {
       return done(true);
     }
   }
-  const parts = asked ? null : deriveParts(model2, cwd);
+  const gate = await satelliteGate(a, realm, karta, asked);
+  if (gate && !gate.ok) {
+    lines.push(gate.refusal);
+    return done(true);
+  }
+  const sat = gate?.ok ? { name: gate.name, caller: gate.caller } : null;
+  if (gate?.ok) nameNotes.push(...gate.notes);
+  const parts = asked || sat ? null : deriveParts(model2, cwd);
   const fitted = parts ? fitName(parts) : null;
-  const derived = asked ? "" : fitted?.name ?? "";
-  let name = asked || derived;
+  const derived = asked || sat ? "" : fitted?.name ?? "";
+  let name = asked || sat?.name || derived;
   await resolveAgainstLed(realm);
   const led0 = state.standing && !otherRealm(state.standing.realm, realm) ? state.standing : null;
   if (derived && led0 && String(led0.karta) === String(karta) && suffixOf(derived, led0.name ?? ""))
@@ -4317,7 +4420,7 @@ async function runStand(msg) {
       `выведенное имя ${joinName(parts)} длиннее предела ${NAME_MAX} знаков — укорочено до ${name} (срезано: ${what}); нужно другое — передай name`
     );
   }
-  if (!asked && !model2) {
+  if (!asked && !sat && !model2) {
     nameNotes.push(
       "model не передан — имя без третьей части (машина.репо): вторая сессия этой машины над этим репозиторием сойдётся на то же место; передай model, чтобы различать"
     );
@@ -4362,12 +4465,13 @@ async function runStand(msg) {
     own = entries.filter((e) => e.karta === karta && nameOf(e.address) === name);
     nameNotes.push(separate.note);
   }
-  const sub = !!derived && name !== derived;
+  const sub = !!sat || !!derived && name !== derived;
   const stem = name.split(".").slice(0, 2).join(".");
   const branches = new Set(
     git(["branch", "--format=%(refname:short)"], cwd).split("\n").map((x) => sanitize(x.trim())).filter(Boolean)
   );
   const legacy = entries.filter((e) => {
+    if (sat) return false;
     if (e.karta !== karta || nameOf(e.address) === name) return false;
     const own2 = nameOf(e.address);
     if (!own2.startsWith(`${stem}.`)) return false;
@@ -4395,7 +4499,7 @@ async function runStand(msg) {
   let how;
   let heardHere;
   const listensElsewhere = !!mine && /(^|·)\s*слушает/.test(mine.rest) && !holdsStanding(realm, karta, name);
-  const fresh = a.take !== true && !holdsStanding(realm, karta, name) && !isParked(realm, karta, name);
+  const fresh = !sat && a.take !== true && !holdsStanding(realm, karta, name) && !isParked(realm, karta, name);
   const predecessorDead = fresh && listensElsewhere && await deadPredecessor(realm, karta, name);
   const resumed = fresh && !listensElsewhere ? await resumeFromDisk(realm, karta, name) : null;
   const extra = [];
@@ -4446,7 +4550,15 @@ async function runStand(msg) {
     const args = { action: "connect", realm, karta, name };
     Object.assign(args, here());
     if (typeof a.mute_siblings === "boolean") args.mute_siblings = a.mute_siblings;
-    const c = await callTool("iskron_channel", args);
+    if (sat) args.ttl_seconds = SATELLITE_TTL_S;
+    let c = await callTool("iskron_channel", args);
+    if (sat && c.isError && /ttl/i.test(c.text)) {
+      extra.push(
+        `Окно простоя ${SATELLITE_TTL_S} с контур не принял (${short(c.text, 120)}) — место занято с окном по умолчанию контура.`
+      );
+      delete args.ttl_seconds;
+      c = await callTool("iskron_channel", args);
+    }
     if (c.isError) {
       lines.push(`Отказано: connect — ${short(c.text)}`);
       return done(true);
@@ -4467,7 +4579,7 @@ async function runStand(msg) {
     ...nameNotes.map((n) => `[iskron_stand] ${n}`),
     ...extra
   );
-  const block = heardHere ? listenBlock(realm) : null;
+  const block = heardHere ? sat ? satelliteListenWord() : listenBlock(realm) : null;
   if (block) lines.push(block);
   else if (!heardHere)
     lines.push(
@@ -4908,7 +5020,7 @@ function bridgeMain(argv2) {
   startTokenKeepalive();
   startFreshnessWatch(CFG.authDir, CFG.serverUrl);
   holdFromEnv();
-  startDeafnessWatch();
+  if (!CFG.satellite) startDeafnessWatch();
   const rl = createInterface({ input: process.stdin, terminal: false });
   const pending = /* @__PURE__ */ new Set();
   let handshake = null;
@@ -4942,7 +5054,7 @@ function bridgeMain(argv2) {
   const windDown = async (why) => {
     debug(`${why} — winding down`);
     const addr = statusAddress();
-    releaseStanding(why);
+    releaseStanding(why, CFG.satellite);
     if (addr) await publishStatusTo(addr.url, "", 3e3).catch(() => {
     });
     await Promise.allSettled([...pending, ...tokenRequestsInFlight]);
@@ -5927,7 +6039,8 @@ function runUse(argv2) {
 
 // js/cli/iskron.ts
 var USAGE = `iskron ${BUILD}
-  node iskron.mjs [bridge] [server-url] [--timeout <ms>] [--auth-dir <dir>] [--no-browser] [--debug]
+  node iskron.mjs [bridge] [server-url] [--timeout <ms>] [--auth-dir <dir>] [--no-browser] [--debug] [--satellite]
+      (--satellite — мост прогона субагента из файла агента: только место-спутник <место позвавшего>.sub-N)
   node iskron.mjs watchdog [ключ] [--auth-dir <dir>]
   node iskron.mjs watchdog-exit [ключ] [--auth-dir <dir>]
   node iskron.mjs watchdog-codex [ключ] [--auth-dir <dir>]   (из оболочки Codex: CODEX_THREAD_ID, CODEX_HOME)

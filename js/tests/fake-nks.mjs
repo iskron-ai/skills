@@ -781,7 +781,13 @@ export async function startFakeNks(opts = {}) {
           );
         }
         if (a.action === "connect" || a.action === "mint") {
-          st.placeArgs.push({ action: a.action, name: a.name, model: a.model, attrs: a.attrs });
+          st.placeArgs.push({
+            action: a.action,
+            name: a.name,
+            model: a.model,
+            attrs: a.attrs,
+            ttl_seconds: a.ttl_seconds,
+          });
           st.counts.connect++;
           st.wsToken = token("ws"); // как у настоящей поверхности: сокет показан один раз и всякий раз новый
           // wsTokens: чьё место откроет этот адрес — доска и revoke судят по месту, не по мосту (ниже, именем без полей)
