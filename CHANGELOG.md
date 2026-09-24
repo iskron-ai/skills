@@ -1,5 +1,12 @@
 # Changelog
 
+## [6.15.0](https://github.com/iskron-ai/skills/compare/v6.14.0...v6.15.0) (2026-09-24)
+
+
+### Features
+
+* **skills:** штабные практики в силе — пересказ, стык с пробой, сдача смены, краткость доклада, узкие права ведущего ([#186](https://github.com/iskron-ai/skills/issues/186)) ([2040fde](https://github.com/iskron-ai/skills/commit/2040fde9247c2899b50bd049979af3833fa7a37d))
+
 ## [6.14.0](https://github.com/iskron-ai/skills/compare/v6.13.1...v6.14.0) (2026-09-24)
 
 
