@@ -1,7 +1,7 @@
 {
   "server": {
     "name": "iskron",
-    "version": "0.74.0"
+    "version": "0.82.1"
   },
   "protocolVersion": "2025-06-18",
   "resource": "https://mcp.iskron.ru",
@@ -15,6 +15,7 @@
     "iskron_admin",
     "iskron_arrow",
     "iskron_batch",
+    "iskron_case",
     "iskron_channel",
     "iskron_delete_node",
     "iskron_history",
@@ -150,12 +151,6 @@
       "inquirer",
       "reader",
       "writer"
-    ],
-    "payload": [
-      "full",
-      "minimal",
-      "ntfy",
-      "titled"
     ],
     "base_role": [
       "none",
