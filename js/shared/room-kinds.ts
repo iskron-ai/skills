@@ -142,8 +142,11 @@ export function roomKind(frame: Frame | null | undefined): RoomKind | null {
   if (!rule) return { kind, rule: "batch", words: fill(WORDS.unknown, values), known: false };
   let words = fill(WORDS[kind], values);
   if (kind === "closing") {
-    // may_object несёт только id стояний, как to_standing_id; адреса @h:имя там не бывает.
-    const may = Array.isArray(fields.may_object) ? fields.may_object.map(str) : [];
+    // На бою (api 0.88.0) may_object — массив объектов {id, standing, name, karta};
+    // id — тот же, что to_standing_id. Голую строку id принимаем тоже.
+    const may = Array.isArray(fields.may_object)
+      ? fields.may_object.map((m) => (typeof m === "string" ? m : str(obj(m).id)))
+      : [];
     const myId = str(f.to_standing_id);
     const mayI = !!myId && may.includes(myId);
     words += "; " + fill(mayI ? WORDS.closing_may : WORDS.closing_not, values);
