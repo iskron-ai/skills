@@ -23,6 +23,9 @@ import { sweepStale } from "./sweep.ts";
 
 const RING = 20; // кадров, которые прицепившийся позже клиент получит задним числом
 
+/** Ключ стояния без места — сокет из окружения (hold.ts keyFor). */
+export const ENV_KEY = "env";
+
 export interface ChannelEvent {
   // held — мост взял сокет (питает holding плагина OpenCode, #5140); backlog — пачка побудки; lost — слух потерян, resumed — место возвращено без хода агента (оба синтезирует плагин, #5366)
   // prettier-ignore
@@ -34,8 +37,12 @@ export interface ChannelEvent {
   code?: number;
   version?: string;
   buffered?: number;
+  /** kind="attached": файл памяти отданного этого места — сторож метит и читает его, а не выводит путь сам (сервер ему не известен). */
+  seen?: string;
   /** kind="stale": лежалые кадры полосы — принятое, пока место не слушали, или повтор службы; kind="backlog": кадры пачки по received_at. */
   frames?: Frame[];
+  /** kind="stale": метки кадров полосы сверх показанных — названы числом и адресом history, отдаются вместе с пачкой. */
+  unshown?: string[];
   /** kind="backlog": сколько кадров ожидало по hello. */
   pending?: number;
   /** kind="frame" из пачки кадров комнаты (roomstack.ts): его место в залпе — at из of; пачка — одна побудка. */
@@ -75,8 +82,16 @@ export class Door {
     this.seen = seenIds(this.seenPath);
   }
 
+  /**
+   * Место (ключ по имени, роли и графу) помнит отданное на своём сервере и после
+   * моста; стояние без места (ключ "env") смешивает места — его память живёт с мостом.
+   */
+  get persistent(): boolean {
+    return this.key !== ENV_KEY;
+  }
+
   get seenPath(): string {
-    return seenFilePathOf(CFG.authDir, this.key);
+    return seenFilePathOf(CFG.authDir, this.key, this.persistent ? CFG.serverUrl : "");
   }
 
   get socketPath(): string {
@@ -132,8 +147,12 @@ export class Door {
             !this.roomBatch.holds(frame)),
       );
       sock.write(
-        JSON.stringify({ kind: "attached", key, buffered: backlog.length } satisfies ChannelEvent) +
-          "\n",
+        JSON.stringify({
+          kind: "attached",
+          key,
+          buffered: backlog.length,
+          seen: this.seenPath,
+        } satisfies ChannelEvent) + "\n",
       );
       for (const { raw, frame } of backlog) {
         sock.write(JSON.stringify({ kind: "frame", raw, frame } satisfies ChannelEvent) + "\n");
@@ -164,7 +183,13 @@ export class Door {
     this.roomBatch.flushNow();
   }
 
-  /** Закрыть дверь: клиенты, сервер, файлы ключа, памяти и сокета. Идемпотентно. */
+  /**
+   * Закрыть дверь: клиенты, сервер, файлы ключа и сокета. Идемпотентно. Память
+   * отданного места (.seen по серверу) остаётся: место, возвращённое новым мостом,
+   * получает от платформы ту же очередь снова и не должно отдать её второй раз
+   * (#5831); лежалые файлы прибирает уборка по возрасту (sweep.ts). Память
+   * стояния без места уходит с мостом, как прежде.
+   */
   close(): void {
     // Пачка, ещё не отданная, уходит сейчас, а не теряется молча (backlog.ts).
     this.flushBatches();
@@ -182,7 +207,10 @@ export class Door {
         srv.close();
       } catch {}
     }
-    for (const p of [keyFilePathOf(CFG.authDir, this.key), this.seenPath]) {
+    for (const p of [
+      keyFilePathOf(CFG.authDir, this.key),
+      ...(this.persistent ? [] : [this.seenPath]),
+    ]) {
       try {
         unlinkSync(p);
       } catch {}

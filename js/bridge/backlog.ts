@@ -20,13 +20,15 @@ const at = (f: Frame): string => (typeof f.received_at === "string" ? f.received
 
 export class Backlog {
   private readonly frames: Frame[] = [];
+  /** Все кадры окна — пачка показывает первые BACKLOG_KEEP, отданными метятся все (#5831). */
+  private readonly all: Frame[] = [];
   private total = 0;
   private pending = 0;
   private timer: ReturnType<typeof setTimeout> | null = null;
-  private flush: ((ev: ChannelEvent) => void) | null = null;
+  private flush: ((ev: ChannelEvent, all: Frame[]) => void) | null = null;
 
   /** Открыть окно — по hello с pending либо по кадру платформы; открытое не продлевается, только пополняется. */
-  open(expected: number, emit: (ev: ChannelEvent) => void): void {
+  open(expected: number, emit: (ev: ChannelEvent, all: Frame[]) => void): void {
     this.pending = Math.max(this.pending, expected);
     this.flush = emit;
     if (this.timer) return;
@@ -40,10 +42,13 @@ export class Backlog {
     this.close();
   }
 
-  /** Положить живой кадр в пачку; false — окна нет, кадр идёт своим путём. */
+  /** Положить живой кадр в пачку; false — окна нет, кадр идёт своим путём. Повтор id, уже лежащего в окне, не считается. */
   note(frame: Frame): boolean {
     if (!this.timer) return false;
+    const id = typeof frame.id === "string" ? frame.id : "";
+    if (id && this.all.some((f) => f.id === id)) return true;
     this.total++;
+    this.all.push(frame);
     if (this.frames.length < BACKLOG_KEEP) this.frames.push(frame);
     return true;
   }
@@ -51,6 +56,7 @@ export class Backlog {
   private close(): void {
     this.timer = null;
     const got = this.frames.splice(0).sort((a, b) => (at(a) < at(b) ? -1 : at(a) > at(b) ? 1 : 0));
+    const all = this.all.splice(0);
     const count = this.total;
     const expected = this.pending;
     this.total = 0;
@@ -68,11 +74,14 @@ export class Backlog {
       (count > got.length ? `, здесь первые ${got.length}` : "") +
       " — пришли одной пачкой; разбери все, а не последний: " +
       'полностью и остальное — iskron_channel(action="history", view="log").';
-    emit({
-      kind: "backlog",
-      frames: got,
-      pending: expected,
-      text: `${head}\n\n${bodies.join("\n\n")}`,
-    });
+    emit(
+      {
+        kind: "backlog",
+        frames: got,
+        pending: expected,
+        text: `${head}\n\n${bodies.join("\n\n")}`,
+      },
+      all,
+    );
   }
 }

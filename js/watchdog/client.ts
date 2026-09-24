@@ -6,6 +6,7 @@ import { connect } from "node:net";
 import { join } from "node:path";
 
 import { type ChannelEvent } from "../bridge/hold.ts";
+import { deliveredKeys, seenIds } from "../shared/seen.ts";
 import { authDirFromEnv, socketPathOf, standingsDirOf } from "../shared/standings.ts";
 
 const ATTACH_WINDOW_MS = 60_000; // мост может подняться чуть позже сторожа
@@ -64,6 +65,28 @@ export function resolveStanding(argv: string[]): Resolved | { error: string } {
     error: `мост держит несколько стояний — назови нужное: ` + held.join(", "),
   };
 }
+
+/**
+ * Файл памяти отданного, который мост назвал в attached (память места — по его
+ * серверу, а сервер сторожу не известен); мост, не назвавший его, оставляет
+ * выведенный путь. Память перечитывается из названного файла.
+ */
+export function adoptSeenPath(
+  named: string | undefined,
+  current: string,
+  seen: Set<string>,
+): string {
+  if (!named || named === current) return current;
+  seen.clear();
+  for (const x of seenIds(named)) seen.add(x);
+  return named;
+}
+
+/** Метки лежалой пачки: показанные кадры и названные числом сверх них (#5831). */
+export const staleBatchKeys = (ev: ChannelEvent): string[] => [
+  ...(ev.frames ?? []).flatMap((f) => deliveredKeys(f)),
+  ...(ev.unshown ?? []),
+];
 
 export interface AttachOptions {
   onEvent: (ev: ChannelEvent) => void;

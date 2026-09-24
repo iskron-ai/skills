@@ -202,6 +202,9 @@ var ROOM_BATCH_MS = Number(process.env.ISKRON_BRIDGE_ROOM_BATCH_MS) || 6e4;
 // js/bridge/holdrecord.ts
 var HOLD_RECORD_MAX_AGE_MS = 6 * 60 * 60 * 1e3;
 
+// js/bridge/sweep.ts
+var SEEN_FILE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1e3;
+
 // js/extension/channel.ts
 function setupChannel(pi) {
   let ctxRef = null;

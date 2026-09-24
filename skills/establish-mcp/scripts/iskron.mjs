@@ -1664,7 +1664,8 @@ function holdSocket(o) {
 
 // js/shared/seen.ts
 import { appendFileSync as appendFileSync2, readFileSync as readFileSync6, renameSync as renameSync4, writeFileSync as writeFileSync5 } from "node:fs";
-var SEEN_KEEP = 200;
+var SEEN_KEEP = 5e3;
+var SEEN_SLACK = 1e3;
 function eventKeyOf(frame2) {
   if (frame2?.provenance?.via !== "graph") return "";
   const body = frame2.body;
@@ -1688,17 +1689,20 @@ function noteSeen(seenPath, id, seen) {
   if (seen.has(id)) return;
   seen.add(id);
   try {
-    if (seen.size > SEEN_KEEP) {
-      seen.delete(id);
-      const tail = [.../* @__PURE__ */ new Set([...seen, ...seenIds(seenPath), id])].slice(-SEEN_KEEP);
-      const tmp = `${seenPath}.${process.pid}.tmp`;
-      writeFileSync5(tmp, tail.join("\n") + "\n");
-      renameSync4(tmp, seenPath);
-      seen.clear();
-      for (const x of tail) seen.add(x);
-    } else appendFileSync2(seenPath, id + "\n");
+    appendFileSync2(seenPath, id + "\n");
+    if (seen.size > SEEN_KEEP + SEEN_SLACK) compact(seenPath, seen);
   } catch {
   }
+}
+function compact(seenPath, seen) {
+  const file = [...seenIds(seenPath)];
+  const inFile = new Set(file);
+  const tail = [...[...seen].filter((x) => !inFile.has(x)), ...file].slice(-SEEN_KEEP);
+  const tmp = `${seenPath}.${process.pid}.tmp`;
+  writeFileSync5(tmp, tail.join("\n") + "\n");
+  renameSync4(tmp, seenPath);
+  seen.clear();
+  for (const x of tail) seen.add(x);
 }
 
 // js/shared/standings.ts
@@ -1715,7 +1719,15 @@ function socketPathOf(authDir, key) {
 }
 var keyFilePathOf = (authDir, key) => join5(standingsDirOf(authDir), `${hashOf(key)}.key`);
 var holdFilePathOf = (authDir, key) => join5(standingsDirOf(authDir), `${hashOf(key)}.hold`);
-var seenFilePathOf = (authDir, key) => join5(standingsDirOf(authDir), `${hashOf(key)}.seen`);
+function seenFilePathOf(authDir, key, server = "") {
+  if (!server) return join5(standingsDirOf(authDir), `${hashOf(key)}.seen`);
+  let origin = server;
+  try {
+    origin = new URL(server).origin;
+  } catch {
+  }
+  return join5(standingsDirOf(authDir), `${hashOf(key)}.${hashOf(origin).slice(0, 8)}.seen`);
+}
 
 // js/bridge/transport.ts
 var state = {
@@ -2105,6 +2117,8 @@ var BODY_CAP = 800;
 var at = (f) => typeof f.received_at === "string" ? f.received_at : "";
 var Backlog = class {
   frames = [];
+  /** Все кадры окна — пачка показывает первые BACKLOG_KEEP, отданными метятся все (#5831). */
+  all = [];
   total = 0;
   pending = 0;
   timer = null;
@@ -2122,16 +2136,20 @@ var Backlog = class {
     clearTimeout(this.timer);
     this.close();
   }
-  /** Положить живой кадр в пачку; false — окна нет, кадр идёт своим путём. */
+  /** Положить живой кадр в пачку; false — окна нет, кадр идёт своим путём. Повтор id, уже лежащего в окне, не считается. */
   note(frame2) {
     if (!this.timer) return false;
+    const id = typeof frame2.id === "string" ? frame2.id : "";
+    if (id && this.all.some((f) => f.id === id)) return true;
     this.total++;
+    this.all.push(frame2);
     if (this.frames.length < BACKLOG_KEEP) this.frames.push(frame2);
     return true;
   }
   close() {
     this.timer = null;
     const got = this.frames.splice(0).sort((a, b) => at(a) < at(b) ? -1 : at(a) > at(b) ? 1 : 0);
+    const all2 = this.all.splice(0);
     const count = this.total;
     const expected = this.pending;
     this.total = 0;
@@ -2144,43 +2162,58 @@ var Backlog = class {
       return [...t].length > BODY_CAP ? [...t].slice(0, BODY_CAP).join("") + "…" : t;
     });
     const head = `Побудка: кадров ${count}` + (expected ? ` (ожидало в очереди: ${expected})` : "") + (count > got.length ? `, здесь первые ${got.length}` : "") + ' — пришли одной пачкой; разбери все, а не последний: полностью и остальное — iskron_channel(action="history", view="log").';
-    emit2({
-      kind: "backlog",
-      frames: got,
-      pending: expected,
-      text: `${head}
+    emit2(
+      {
+        kind: "backlog",
+        frames: got,
+        pending: expected,
+        text: `${head}
 
 ${bodies.join("\n\n")}`
-    });
+      },
+      all2
+    );
   }
 };
+
+// js/bridge/fanout.ts
+import { statSync as statSync2 } from "node:fs";
 
 // js/bridge/stale.ts
 var STALE_BURST_KEEP = 20;
 var STALE_BURST_MS = 1500;
 var BODY_CAP2 = 800;
 var StaleBurst = class {
+  /** Все кадры полосы — пачка показывает первые STALE_BURST_KEEP, отданными метятся все (#5831). */
   burst = [];
   timer = null;
-  /** Положить лежалый кадр в пачку; по истечении полосы `flush` получает одно событие. */
+  /**
+   * Положить лежалый кадр в пачку; по истечении полосы `flush` получает одно событие
+   * и все кадры полосы, показанные и нет. Повтор id, уже лежащего в пачке, — не второй кадр.
+   */
   note(frame2, flush) {
-    if (this.burst.length < STALE_BURST_KEEP) this.burst.push(frame2);
+    const id = typeof frame2.id === "string" ? frame2.id : "";
+    if (!id || !this.burst.some((f) => f.id === id)) this.burst.push(frame2);
     if (this.timer) return;
     this.timer = setTimeout(() => {
       this.timer = null;
-      const frames = this.burst.splice(0);
-      if (!frames.length) return;
+      const all2 = this.burst.splice(0);
+      if (!all2.length) return;
+      const frames = all2.slice(0, STALE_BURST_KEEP);
       const bodies = frames.map((f) => {
         const t = frameToText(f, JSON.stringify(f));
         return [...t].length > BODY_CAP2 ? [...t].slice(0, BODY_CAP2).join("") + "…" : t;
       });
-      flush({
-        kind: "stale",
-        frames,
-        text: `Лежалых кадров: ${frames.length} — принятое, пока место не слушали, или повтор службы после пересборки сессии; хода не стоят, но прочти; полностью — iskron_channel(action="history").
-
-` + bodies.join("\n\n")
-      });
+      flush(
+        {
+          kind: "stale",
+          frames,
+          // Сторож метит отданным и то, что пачка назвала числом: иначе оно вернётся с повтором (#5831).
+          ...all2.length > frames.length ? { unshown: all2.slice(frames.length).flatMap((f) => deliveredKeys(f)) } : {},
+          text: `Лежалых кадров: ${all2.length}` + (all2.length > frames.length ? `, здесь первые ${frames.length}` : "") + ' — принятое, пока место не слушали, или повтор службы после пересборки сессии; хода не стоят, но прочти; полностью — iskron_channel(action="history").\n\n' + bodies.join("\n\n")
+        },
+        all2
+      );
     }, STALE_BURST_MS).unref();
   }
   /** Лежит ли в копящейся пачке копия этого события графа (fanout.ts). */
@@ -2201,10 +2234,27 @@ var StaleBurst = class {
 };
 
 // js/bridge/fanout.ts
+var lastRead = /* @__PURE__ */ new Map();
+function givenIds(seenPath) {
+  let stamp;
+  try {
+    const st = statSync2(seenPath);
+    stamp = `${st.ino}:${st.size}:${st.mtimeMs}`;
+  } catch {
+    lastRead.delete(seenPath);
+    return /* @__PURE__ */ new Set();
+  }
+  const hit = lastRead.get(seenPath);
+  if (hit?.stamp === stamp) return hit.ids;
+  const ids = seenIds(seenPath);
+  lastRead.set(seenPath, { stamp, ids });
+  return ids;
+}
 function isDelivered(keys, seen, seenPath) {
   if (!keys.length) return false;
-  const given = seenIds(seenPath);
-  return keys.some((k) => seen.has(k) || given.has(k));
+  if (keys.some((k) => seen.has(k))) return true;
+  const given = givenIds(seenPath);
+  return keys.some((k) => given.has(k));
 }
 function redundantCopy(frame2, ring, seen, seenPath, burst) {
   const ev = frame2?.type === "message" ? eventKeyOf(frame2) : "";
@@ -2266,9 +2316,9 @@ function batchForWatchdogs(d, raw, frame2, emit2) {
 }
 
 // js/bridge/sweep.ts
-import { existsSync, readdirSync as readdirSync2, readFileSync as readFileSync8, unlinkSync as unlinkSync5 } from "node:fs";
+import { existsSync, readdirSync as readdirSync2, readFileSync as readFileSync8, statSync as statSync3, unlinkSync as unlinkSync5 } from "node:fs";
 import { connect as connectLocal } from "node:net";
-import { join as join6 } from "node:path";
+import { basename as basename2, join as join6 } from "node:path";
 
 // js/bridge/holdrecord.ts
 import { readFileSync as readFileSync7, unlinkSync as unlinkSync4, writeFileSync as writeFileSync6 } from "node:fs";
@@ -2320,9 +2370,21 @@ function localSocketAlive(sock) {
     probe.setTimeout(1e3, () => done(false));
   });
 }
+var SEEN_FILE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1e3;
 function sweepStale(authDir, mine) {
   const dir = standingsDirOf(authDir);
   if (!existsSync(dir)) return;
+  const mineHash = basename2(seenFilePathOf(authDir, mine), ".seen");
+  for (const f of readdirSync2(dir).filter((x) => x.endsWith(".seen"))) {
+    const p = join6(dir, f);
+    const [keyHash, serverHash] = f.split(".");
+    if (keyHash === mineHash || existsSync(join6(dir, `${keyHash}.key`))) continue;
+    try {
+      if (serverHash === "seen" || Date.now() - statSync3(p).mtimeMs > SEEN_FILE_MAX_AGE_MS)
+        unlinkSync5(p);
+    } catch {
+    }
+  }
   for (const f of readdirSync2(dir).filter((x) => x.endsWith(".hold"))) {
     try {
       const rec = JSON.parse(readFileSync8(join6(dir, f), "utf8"));
@@ -2367,6 +2429,7 @@ function sweepStale(authDir, mine) {
 
 // js/bridge/door.ts
 var RING = 20;
+var ENV_KEY = "env";
 var Door = class {
   key;
   clients = /* @__PURE__ */ new Set();
@@ -2389,8 +2452,15 @@ var Door = class {
     this.hooks = hooks;
     this.seen = seenIds(this.seenPath);
   }
+  /**
+   * Место (ключ по имени, роли и графу) помнит отданное на своём сервере и после
+   * моста; стояние без места (ключ "env") смешивает места — его память живёт с мостом.
+   */
+  get persistent() {
+    return this.key !== ENV_KEY;
+  }
   get seenPath() {
-    return seenFilePathOf(CFG.authDir, this.key);
+    return seenFilePathOf(CFG.authDir, this.key, this.persistent ? CFG.serverUrl : "");
   }
   get socketPath() {
     return socketPathOf(CFG.authDir, this.key);
@@ -2435,7 +2505,12 @@ var Door = class {
         ({ frame: frame2 }) => frame2?.type !== "message" || !isDelivered(deliveredKeys(frame2), this.seen, this.seenPath) && !this.roomBatch.holds(frame2)
       );
       sock.write(
-        JSON.stringify({ kind: "attached", key, buffered: backlog.length }) + "\n"
+        JSON.stringify({
+          kind: "attached",
+          key,
+          buffered: backlog.length,
+          seen: this.seenPath
+        }) + "\n"
       );
       for (const { raw, frame: frame2 } of backlog) {
         sock.write(JSON.stringify({ kind: "frame", raw, frame: frame2 }) + "\n");
@@ -2465,7 +2540,13 @@ var Door = class {
     this.backlog.flushNow();
     this.roomBatch.flushNow();
   }
-  /** Закрыть дверь: клиенты, сервер, файлы ключа, памяти и сокета. Идемпотентно. */
+  /**
+   * Закрыть дверь: клиенты, сервер, файлы ключа и сокета. Идемпотентно. Память
+   * отданного места (.seen по серверу) остаётся: место, возвращённое новым мостом,
+   * получает от платформы ту же очередь снова и не должно отдать её второй раз
+   * (#5831); лежалые файлы прибирает уборка по возрасту (sweep.ts). Память
+   * стояния без места уходит с мостом, как прежде.
+   */
   close() {
     this.flushBatches();
     this.stale.drop();
@@ -2484,7 +2565,10 @@ var Door = class {
       } catch {
       }
     }
-    for (const p of [keyFilePathOf(CFG.authDir, this.key), this.seenPath]) {
+    for (const p of [
+      keyFilePathOf(CFG.authDir, this.key),
+      ...this.persistent ? [] : [this.seenPath]
+    ]) {
       try {
         unlinkSync6(p);
       } catch {
@@ -2505,7 +2589,7 @@ var Door = class {
 import { execFileSync } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { hostname } from "node:os";
-import { basename as basename2, dirname as dirname2, resolve } from "node:path";
+import { basename as basename3, dirname as dirname2, resolve } from "node:path";
 var NAME_MAX = 48;
 var normKarta = (k) => String(k ?? "").trim().replace(/^#/, "");
 var normName = (n) => typeof n === "string" ? n.trim() : "";
@@ -2558,12 +2642,12 @@ function repoName(cwd = process.cwd()) {
   const top = git(["rev-parse", "--show-toplevel"], cwd);
   const [gitDir, common] = git(["rev-parse", "--git-dir", "--git-common-dir"], cwd).split("\n");
   if (!gitDir || !common || real(resolve(cwd, gitDir)) === real(resolve(cwd, common)))
-    return basename2(top || cwd);
+    return basename3(top || cwd);
   const shared = real(resolve(cwd, common));
-  if (basename2(shared) === ".git") return basename2(dirname2(shared));
+  if (basename3(shared) === ".git") return basename3(dirname2(shared));
   const origin = git(["remote", "get-url", "origin"], cwd).replace(/\/+$/, "");
-  const fromOrigin = basename2(origin.replace(/^.*:/, "/")).replace(/\.git$/, "");
-  return fromOrigin || basename2(top || cwd);
+  const fromOrigin = basename3(origin.replace(/^.*:/, "/")).replace(/\.git$/, "");
+  return fromOrigin || basename3(top || cwd);
 }
 function deriveParts(model2, cwd = process.cwd()) {
   const host = hostname().split(".")[0];
@@ -2730,7 +2814,7 @@ function routeFrame(frame2, primary) {
 // js/bridge/hold.ts
 function keyFor() {
   const s = state.standing;
-  return s ? keyOf(s.realm, s.karta, s.name ?? "") : "env";
+  return s ? keyOf(s.realm, s.karta, s.name ?? "") : ENV_KEY;
 }
 var standCwd = null;
 function noteStandCwd(cwd) {
@@ -2934,7 +3018,12 @@ function deliverTo(d, raw, frame2, full) {
   if (evKey) return log(`frame ${id || "?"} carries ${evKey} already offered — not raised`);
   const again = isDelivered(id ? [id] : [], d.seen, seenPath);
   if (full?.type === "message" && full.stale === true)
-    return again ? log(`stale frame ${id} already delivered — dropped`) : d.stale.note(full, (ev2) => (d.broadcast(ev2), notify("info", keyed(d, ev2))));
+    return again ? log(`stale frame ${id} already delivered — dropped`) : d.stale.note(full, (ev2, all2) => {
+      if (notifiedClient())
+        for (const f of all2) for (const k of deliveredKeys(f)) noteSeen(seenPath, k, d.seen);
+      d.broadcast(ev2);
+      notify("info", keyed(d, ev2));
+    });
   const text = full === frame2 ? raw : JSON.stringify(full);
   const hello = full?.type === "hello";
   for (const x of hello ? doors() : [d]) x.push(text, full);
@@ -2948,9 +3037,8 @@ function deliverTo(d, raw, frame2, full) {
   if (full?.type === "status") return;
   if (again) return log(`frame ${id} came again — already delivered, not raised`);
   if (notifiedClient()) {
-    const flushBacklog = (b) => {
-      for (const f of b.frames ?? [])
-        for (const k of deliveredKeys(f)) noteSeen(seenPath, k, d.seen);
+    const flushBacklog = (b, all2) => {
+      for (const f of all2) for (const k of deliveredKeys(f)) noteSeen(seenPath, k, d.seen);
       notify("info", keyed(d, b));
     };
     if (hello && Number(full.pending) > 0) d.backlog.open(Number(full.pending), flushBacklog);
@@ -3564,7 +3652,7 @@ function localLeave(msg) {
 }
 
 // js/bridge/stand.ts
-import { statSync as statSync2 } from "node:fs";
+import { statSync as statSync4 } from "node:fs";
 import { isAbsolute } from "node:path";
 
 // js/bridge/board.ts
@@ -4136,7 +4224,7 @@ var STAND_TOOL = {
 var ledName = () => state.standing?.name ?? "";
 var isDirectory = (p) => {
   try {
-    return isAbsolute(p) && statSync2(p).isDirectory();
+    return isAbsolute(p) && statSync4(p).isDirectory();
   } catch {
     return false;
   }
@@ -4980,6 +5068,16 @@ function resolveStanding(argv2) {
     error: `мост держит несколько стояний — назови нужное: ` + held2.join(", ")
   };
 }
+function adoptSeenPath(named, current, seen) {
+  if (!named || named === current) return current;
+  seen.clear();
+  for (const x of seenIds(named)) seen.add(x);
+  return named;
+}
+var staleBatchKeys = (ev) => [
+  ...(ev.frames ?? []).flatMap((f) => deliveredKeys(f)),
+  ...ev.unshown ?? []
+];
 function attach(path, o) {
   const startedAt = Date.now();
   let attached = false;
@@ -5054,7 +5152,7 @@ function runWatchdogCodex(argv2) {
     process.exit(2);
   }
   parseWatchdogArgs(argv2);
-  const seenPath = seenFilePathOf(target.authDir, target.key);
+  let seenPath = seenFilePathOf(target.authDir, target.key);
   const seen = seenIds(seenPath);
   const waiting = /* @__PURE__ */ new Map();
   let door2 = null;
@@ -5123,14 +5221,13 @@ function runWatchdogCodex(argv2) {
           if (type !== "message") return note(`кадр ${type ?? "не разобран"} — не повод будить`);
           if (fromRing && typeof ev.frame?.id !== "string")
             return note("кадр без id из кольца — пометить нечем, в тред не кладу повторно");
+          if (typeof ev.frame?.id === "string" && seen.has(ev.frame.id))
+            return note(`кадр ${ev.frame.id} уже вложен — в тред не кладу повторно`);
           void deliver2(frameToText(ev.frame, ev.raw ?? ""), deliveredKeys(ev.frame));
           break;
         }
         case "stale":
-          void deliver2(
-            ev.text ?? "Искрон: лежалые кадры",
-            (ev.frames ?? []).flatMap((f) => deliveredKeys(f))
-          );
+          void deliver2(ev.text ?? "Искрон: лежалые кадры", staleBatchKeys(ev));
           break;
         case "dead":
         case "evicted":
@@ -5145,6 +5242,7 @@ function runWatchdogCodex(argv2) {
           break;
         case "attached":
           replay = ev.buffered ?? 0;
+          seenPath = adoptSeenPath(ev.seen, seenPath, seen);
           note(`слушаю стояние ${ev.key}; кадры кладу в тред ${threadId}`);
           break;
         default:
@@ -5201,12 +5299,13 @@ function runWatchdog(argv2) {
 `);
     process.exit(2);
   }
-  const seenPath = seenFilePathOf(target.authDir, target.key);
+  let seenPath = seenFilePathOf(target.authDir, target.key);
   const seen = seenIds(seenPath);
   attach(target.path, {
     onEvent: (ev) => {
       switch (ev.kind) {
         case "attached":
+          seenPath = adoptSeenPath(ev.seen, seenPath, seen);
           log2(
             `слушаю стояние ${ev.key}${ev.buffered ? ` (${plural(ev.buffered)} задним числом)` : ""}`
           );
@@ -5217,6 +5316,7 @@ function runWatchdog(argv2) {
             log2(ev.raw ?? "");
             break;
           }
+          if (typeof f.id === "string" && seen.has(f.id)) break;
           for (const line of wrapLines(frameToText(f, ev.raw ?? ""))) log2(line);
           for (const k of deliveredKeys(f)) noteSeen(seenPath, k, seen);
           break;
@@ -5226,8 +5326,7 @@ function runWatchdog(argv2) {
           break;
         case "stale":
           for (const line of wrapLines(ev.text ?? "")) log2(line);
-          for (const f of ev.frames ?? [])
-            for (const k of deliveredKeys(f)) noteSeen(seenPath, k, seen);
+          for (const k of staleBatchKeys(ev)) noteSeen(seenPath, k, seen);
           break;
         case "dead":
         case "evicted":
@@ -5264,7 +5363,7 @@ function runWatchdogExit(argv2) {
     note2(`ДЕЛАТЕЛЬ: ${target.error}`);
     process.exit(2);
   }
-  const seenPath = seenFilePathOf(target.authDir, target.key);
+  let seenPath = seenFilePathOf(target.authDir, target.key);
   const seen = seenIds(seenPath);
   let woke = false;
   attach(target.path, {
@@ -5289,8 +5388,7 @@ function runWatchdogExit(argv2) {
           break;
         }
         case "stale":
-          for (const f of ev.frames ?? [])
-            for (const k of deliveredKeys(f)) noteSeen(seenPath, k, seen);
+          for (const k of staleBatchKeys(ev)) noteSeen(seenPath, k, seen);
           note2(ev.text ?? "лежалые кадры");
           break;
         case "dead":
@@ -5300,6 +5398,7 @@ function runWatchdogExit(argv2) {
           process.exit(1);
           break;
         case "attached":
+          seenPath = adoptSeenPath(ev.seen, seenPath, seen);
           note2(`слушаю стояние ${ev.key}`);
           break;
         default:

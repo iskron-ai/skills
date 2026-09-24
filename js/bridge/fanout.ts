@@ -1,15 +1,42 @@
 // Веер одного события графа по местам роли (граф nks-dev: #5829): у каждой копии
 // свой id кадра и тот же event_id; лежалые копии погасших мест приходят живому
 // месту при переоткрытии сокета. Делатель слышит событие один раз.
+import { statSync } from "node:fs";
+
 import { type Frame } from "../shared/channel.ts";
 import { eventKeyOf, seenIds } from "../shared/seen.ts";
 import { type StaleBurst } from "./stale.ts";
 
+/**
+ * Последнее прочтение каждого файла .seen и его отпечаток (inode, размер, mtime).
+ * Файл перечитывается, только когда отпечаток сменился — дописью любого писателя
+ * или обрезкой (rename); иначе отдаётся прежний набор. Кадр, чья метка найдена в
+ * памяти моста, файла не трогает вовсе.
+ */
+const lastRead = new Map<string, { stamp: string; ids: Set<string> }>();
+
+function givenIds(seenPath: string): Set<string> {
+  let stamp: string;
+  try {
+    const st = statSync(seenPath);
+    stamp = `${st.ino}:${st.size}:${st.mtimeMs}`;
+  } catch {
+    lastRead.delete(seenPath);
+    return new Set();
+  }
+  const hit = lastRead.get(seenPath);
+  if (hit?.stamp === stamp) return hit.ids;
+  const ids = seenIds(seenPath);
+  lastRead.set(seenPath, { stamp, ids });
+  return ids;
+}
+
 /** Помечена ли хоть одна метка отданной — в памяти моста или в файле .seen, который пишут клиенты. */
 export function isDelivered(keys: string[], seen: Set<string>, seenPath: string): boolean {
   if (!keys.length) return false;
-  const given = seenIds(seenPath);
-  return keys.some((k) => seen.has(k) || given.has(k));
+  if (keys.some((k) => seen.has(k))) return true;
+  const given = givenIds(seenPath);
+  return keys.some((k) => given.has(k));
 }
 
 /**
