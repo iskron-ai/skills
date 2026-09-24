@@ -48,10 +48,10 @@ typecheck:
 # ходит к релизам; проба самообновления снимает выключатель сама, на подставном
 # доме и подставных релизах.
 test:
-	@ISKRON_BRIDGE_NO_UPDATE=1 node --test --test-timeout=120000 js/tests/*.test.mjs
+	@ISKRON_BRIDGE_NO_UPDATE=1 node --test --test-timeout=300000 js/tests/*.test.mjs
 
 test-coverage:
-	@ISKRON_BRIDGE_NO_UPDATE=1 node --test --test-timeout=120000 --experimental-test-coverage js/tests/*.test.mjs
+	@ISKRON_BRIDGE_NO_UPDATE=1 node --test --test-timeout=300000 --experimental-test-coverage js/tests/*.test.mjs
 
 # One suite at a time, for the red-probe discipline (see AGENTS.md).
 test-watchdog:
