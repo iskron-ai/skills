@@ -1,5 +1,13 @@
 # Changelog
 
+## [6.16.1](https://github.com/iskron-ai/skills/compare/v6.16.0...v6.16.1) (2026-09-24)
+
+
+### Bug Fixes
+
+* **bridge:** уже отданный кадр не отдаётся снова после переподключения ([#193](https://github.com/iskron-ai/skills/issues/193)) ([eeb9c1f](https://github.com/iskron-ai/skills/commit/eeb9c1fdbab2cf21bed9fff0defafe3581fb4434))
+* **test:** лимит времени набора проб 300 с — standing.test с пробами повторной доставки не укладывался в 120 с на CI с покрытием ([#195](https://github.com/iskron-ai/skills/issues/195)) ([11d127b](https://github.com/iskron-ai/skills/commit/11d127b5a6ceb0d3ecef30eb043d80637e02e6c6))
+
 ## [6.16.0](https://github.com/iskron-ai/skills/compare/v6.15.1...v6.16.0) (2026-09-24)
 
 
