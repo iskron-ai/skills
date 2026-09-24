@@ -69,8 +69,8 @@ var WORDS = {
   opened: "дело открыл {author}",
   joined: "вошёл {author}",
   left: "вышел {author}",
-  invite: "{who} приглашён",
-  withdraw: "приглашение отозвано",
+  invite: "{author} зовёт {who} в дело",
+  withdraw: "приглашение отозвано, отзывает {author}",
   accepted: "{who} принял приглашение",
   node: "в деле узел #{seq} {name} ({realm})",
   link: "дело связано с {room}",
@@ -112,6 +112,14 @@ function fill(template, v) {
   });
 }
 var mineOf = (frame) => [str(frame.to_standing_id), str(frame.to_standing)].filter(Boolean);
+function myRole(frame, fields) {
+  const ka = obj(fields.karta);
+  const seq = str(ka.seq);
+  if (!seq || seq !== str(frame.karta_seq)) return false;
+  const theirs = str(ka.realm);
+  const mine = str(frame.realm) || str(obj(frame.room).realm);
+  return !theirs || !mine || theirs === mine;
+}
 function whoOf(fields) {
   const st = obj(fields.standing);
   const ka = obj(fields.karta);
@@ -161,7 +169,7 @@ function roomKind(frame) {
   const stack = rule === "stack" ? (
     // Стопка решает только у said; слово без стопки — прежним путём, вставкой.
     f.stack === "defer" ? "batch" : "interrupt"
-  ) : rule === "mine" ? mine.includes(str(values.target)) ? "interrupt" : "batch" : rule;
+  ) : rule === "mine" ? mine.includes(str(values.target)) || myRole(f, fields) ? "interrupt" : "batch" : rule;
   return { kind, rule: stack, words, known: true };
 }
 var stackOf = (frame) => roomKind(frame)?.rule ?? (frame?.stack === "defer" ? "batch" : "interrupt");

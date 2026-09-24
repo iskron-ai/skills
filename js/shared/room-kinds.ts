@@ -27,8 +27,8 @@ export const WORDS: Readonly<Record<string, string>> = {
   opened: "дело открыл {author}",
   joined: "вошёл {author}",
   left: "вышел {author}",
-  invite: "{who} приглашён",
-  withdraw: "приглашение отозвано",
+  invite: "{author} зовёт {who} в дело",
+  withdraw: "приглашение отозвано, отзывает {author}",
   accepted: "{who} принял приглашение",
   node: "в деле узел #{seq} {name} ({realm})",
   link: "дело связано с {room}",
@@ -37,7 +37,7 @@ export const WORDS: Readonly<Record<string, string>> = {
 
 /**
  * Правило рода: interrupt и batch — всегда так; stack — по стопке кадра
- * (только у said); mine — прерывает, когда цель — своё стояние (invite).
+ * (только у said); mine — прерывает, когда цель — своё стояние или своя роль (invite).
  */
 type Rule = Stack | "stack" | "mine";
 const RULES: Readonly<Record<string, Rule>> = {
@@ -99,6 +99,20 @@ function fill(template: string, v: Rec): string {
 const mineOf = (frame: Rec): string[] =>
   [str(frame.to_standing_id), str(frame.to_standing)].filter(Boolean);
 
+/**
+ * Приглашение моей роли (api 0.89.6): ключ несёт id узла роли, поля строки —
+ * karta {id, name, seq, realm} (наблюдено на бою), кадр — мой karta_seq. seq
+ * принадлежит графу: названные с обеих сторон графы обязаны совпасть.
+ */
+function myRole(frame: Rec, fields: Rec): boolean {
+  const ka = obj(fields.karta);
+  const seq = str(ka.seq);
+  if (!seq || seq !== str(frame.karta_seq)) return false;
+  const theirs = str(ka.realm);
+  const mine = str(frame.realm) || str(obj(frame.room).realm);
+  return !theirs || !mine || theirs === mine;
+}
+
 /** Имя приглашённого из полей строки: место, иначе роль. */
 function whoOf(fields: Rec): string {
   const st = obj(fields.standing);
@@ -159,7 +173,7 @@ export function roomKind(frame: Frame | null | undefined): RoomKind | null {
         ? "batch"
         : "interrupt"
       : rule === "mine"
-        ? mine.includes(str(values.target))
+        ? mine.includes(str(values.target)) || myRole(f, fields)
           ? "interrupt"
           : "batch"
         : rule;

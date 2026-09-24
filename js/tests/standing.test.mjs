@@ -23,9 +23,12 @@ import {
   directWord,
   graphPosed,
   legacyRoom,
+  MY_KARTA,
   progress,
+  roleInvite,
   said,
   unknownKind,
+  withdraw,
 } from "./room-frames.mjs";
 
 // Чем запускать поставку: node по умолчанию; ISKRON_NODE подставляет другой рантайм
@@ -2860,6 +2863,30 @@ test("said with stack interrupt reaches the Monitor watchdog at once", async (t)
   await sendRoom(fake, said("interrupt", 62));
   await waitFor(() => wd.out.includes("стопкой interrupt"), "said interrupt printed", 3000);
   assert.match(wd.out, /слово от Алексей \(@aleksei:probe\)/);
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
+// api 0.89.6 invites a ROLE: the key carries the role node id, the line's karta its seq.
+test("an invite to my role reaches the Monitor watchdog at once; an invite to another role and a withdraw wait in the batch", async (t) => {
+  const { fake, dir, key } = await connected(t, {
+    env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "10000" },
+  });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog", dir, key, 15_000);
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
+  await sendRoom(fake, roleInvite(69, MY_KARTA + 1));
+  await sendRoom(fake, withdraw(71));
+  await sendRoom(fake, roleInvite(68));
+  await waitFor(() => wd.out.includes("room-msg-68"), "the invite to my role printed", 3000);
+  assert.match(wd.out, /Алексей \(@aleksei:probe\) зовёт 🚚 Поставщик плитки в дело/);
+  const flat = wd.out.replace(/\n/g, " ");
+  assert.ok(
+    flat.indexOf("Дело: кадров 2") >= 0 &&
+      flat.indexOf("room-msg-71") < flat.indexOf("room-msg-68"),
+    `the other role's invite and the withdraw ride in the batch, flushed first:\n${wd.out}`,
+  );
+  assert.match(wd.out, /приглашение отозвано, отзывает Алексей/);
   wd.proc.kill("SIGKILL");
   await wd.done;
 });
