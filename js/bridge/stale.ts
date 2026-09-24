@@ -14,29 +14,40 @@ const STALE_BURST_MS = 1500;
 const BODY_CAP = 800;
 
 export class StaleBurst {
+  /** Все кадры полосы — пачка показывает первые STALE_BURST_KEEP, отданными метятся все (#5831). */
   private readonly burst: Frame[] = [];
   private timer: ReturnType<typeof setTimeout> | null = null;
 
-  /** Положить лежалый кадр в пачку; по истечении полосы `flush` получает одно событие. */
-  note(frame: Frame, flush: (ev: ChannelEvent) => void): void {
-    if (this.burst.length < STALE_BURST_KEEP) this.burst.push(frame);
+  /**
+   * Положить лежалый кадр в пачку; по истечении полосы `flush` получает одно событие
+   * и все кадры полосы, показанные и нет. Повтор id, уже лежащего в пачке, — не второй кадр.
+   */
+  note(frame: Frame, flush: (ev: ChannelEvent, all: Frame[]) => void): void {
+    const id = typeof frame.id === "string" ? frame.id : "";
+    if (!id || !this.burst.some((f) => f.id === id)) this.burst.push(frame);
     if (this.timer) return;
     this.timer = setTimeout(() => {
       this.timer = null;
-      const frames = this.burst.splice(0);
-      if (!frames.length) return; // все копии вынула живая копия того же события
+      const all = this.burst.splice(0);
+      if (!all.length) return; // все копии вынула живая копия того же события
+      const frames = all.slice(0, STALE_BURST_KEEP);
       const bodies = frames.map((f) => {
         const t = frameToText(f, JSON.stringify(f));
         return [...t].length > BODY_CAP ? [...t].slice(0, BODY_CAP).join("") + "…" : t;
       });
-      flush({
-        kind: "stale",
-        frames,
-        text:
-          `Лежалых кадров: ${frames.length} — принятое, пока место не слушали, или повтор службы после пересборки сессии; ` +
-          'хода не стоят, но прочти; полностью — iskron_channel(action="history").\n\n' +
-          bodies.join("\n\n"),
-      });
+      flush(
+        {
+          kind: "stale",
+          frames,
+          text:
+            `Лежалых кадров: ${all.length}` +
+            (all.length > frames.length ? `, здесь первые ${frames.length}` : "") +
+            " — принятое, пока место не слушали, или повтор службы после пересборки сессии; " +
+            'хода не стоят, но прочти; полностью — iskron_channel(action="history").\n\n' +
+            bodies.join("\n\n"),
+        },
+        all,
+      );
     }, STALE_BURST_MS).unref();
   }
 

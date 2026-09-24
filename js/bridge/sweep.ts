@@ -1,5 +1,5 @@
 // Уборка мёртвых ключей стояний перед тем, как мост положит свой (см. hold.ts).
-import { existsSync, readdirSync, readFileSync, unlinkSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync, unlinkSync } from "node:fs";
 import { connect as connectLocal } from "node:net";
 import { join } from "node:path";
 
@@ -27,9 +27,24 @@ export function localSocketAlive(sock: string): Promise<boolean> {
   });
 }
 
+/**
+ * Сколько живёт память отданного (.seen) места, которое никто не держит: она
+ * переживает мост, потому что платформа отдаёт очередь места снова и назавтра
+ * (#5831), но не вечно — иначе каталог копил бы файл на каждое имя.
+ */
+const SEEN_FILE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+
 export function sweepStale(authDir: string, mine: string): void {
   const dir = standingsDirOf(authDir);
   if (!existsSync(dir)) return;
+  const mineSeen = seenFilePathOf(authDir, mine);
+  for (const f of readdirSync(dir).filter((x) => x.endsWith(".seen"))) {
+    const p = join(dir, f);
+    if (p === mineSeen || existsSync(join(dir, f.replace(/\.seen$/, ".key")))) continue;
+    try {
+      if (Date.now() - statSync(p).mtimeMs > SEEN_FILE_MAX_AGE_MS) unlinkSync(p);
+    } catch {}
+  }
   // Записи держания старше срока простоя места — мертвы у платформы, стираются здесь.
   for (const f of readdirSync(dir).filter((x) => x.endsWith(".hold"))) {
     try {
@@ -53,8 +68,9 @@ export function sweepStale(authDir: string, mine: string): void {
     }
     if (!key || key === mine) continue;
     const sock = socketPathOf(authDir, key);
+    // Память отданного остаётся: место мёртвого моста вернёт другой, и очередь придёт снова.
     const drop = (): void => {
-      for (const p of [keyFile, sock, seenFilePathOf(authDir, key)]) {
+      for (const p of [keyFile, sock]) {
         try {
           unlinkSync(p);
         } catch {}

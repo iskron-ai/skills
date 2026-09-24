@@ -85,6 +85,8 @@ export function runWatchdog(argv: string[]): void {
             log(ev.raw ?? ""); // служебный кадр (hello, статус) короток и печатается как есть
             break;
           }
+          // Повтор уже напечатанного (тот же id) — вторая линия за мостом: не печатается (#5831).
+          if (typeof f.id === "string" && seen.has(f.id)) break;
           for (const line of wrapLines(frameToText(f, ev.raw ?? ""))) log(line);
           for (const k of deliveredKeys(f)) noteSeen(seenPath, k, seen); // после печати
           break;

@@ -164,7 +164,12 @@ export class Door {
     this.roomBatch.flushNow();
   }
 
-  /** Закрыть дверь: клиенты, сервер, файлы ключа, памяти и сокета. Идемпотентно. */
+  /**
+   * Закрыть дверь: клиенты, сервер, файлы ключа и сокета. Идемпотентно. Память
+   * отданного (.seen) остаётся: место, возвращённое новым мостом, получает от
+   * платформы ту же очередь снова и не должно отдать её второй раз (#5831);
+   * лежалые файлы памяти прибирает уборка по возрасту (sweep.ts).
+   */
   close(): void {
     // Пачка, ещё не отданная, уходит сейчас, а не теряется молча (backlog.ts).
     this.flushBatches();
@@ -182,11 +187,9 @@ export class Door {
         srv.close();
       } catch {}
     }
-    for (const p of [keyFilePathOf(CFG.authDir, this.key), this.seenPath]) {
-      try {
-        unlinkSync(p);
-      } catch {}
-    }
+    try {
+      unlinkSync(keyFilePathOf(CFG.authDir, this.key));
+    } catch {}
     if (process.platform !== "win32") {
       try {
         unlinkSync(this.socketPath);

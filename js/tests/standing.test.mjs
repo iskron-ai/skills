@@ -1821,6 +1821,156 @@ test("for a client that hears by notification a delivered frame is remembered in
   assert.match(bridge.stderr, /frame r-1 came again/);
 });
 
+// A day's queue handed again (graph nks-dev: #5831, #5828): after a reconnect the
+// platform re-sends frames it already delivered, live and stale alike. None may
+// reach the doer twice — the memory of delivery holds a day's traffic (ids and
+// event marks), and for pi and OpenCode the bridge marks everything it hands
+// over, the stale batch included.
+const DAY = 190;
+const dayFrame = (i, extra = {}) =>
+  i % 2
+    ? graphEvent(`day-${i}`, 7000 + i, `день-${i}-`, extra)
+    : JSON.stringify({ type: "message", id: `day-${i}`, body: `день-${i}-`, ...extra });
+const OPENCODE_INIT = { ...INIT, clientInfo: { name: "opencode-iskron", version: "1" } };
+/** Frame ids a notified client was handed — alone, in a stale batch, in a wake batch. */
+const handedIds = (bridge, from = 0) =>
+  bridge.notifications.slice(from).flatMap((n) => {
+    const d = n.params?.data;
+    return [d?.frame?.id, ...(d?.frames ?? []).map((f) => f?.id)].filter(
+      (x) => typeof x === "string",
+    );
+  });
+/** Drop the socket and wait for the bridge to open another. */
+async function reconnect(fake) {
+  const known = new Set(fake.state.ws);
+  await fake.control({ ws_close: 1011 });
+  await waitFor(() => [...fake.state.ws].some((s) => !known.has(s)), "the bridge to reconnect");
+}
+
+test("a day's queue re-sent after a reconnect reaches a notified client once — live, stale and wake batch; a new frame still does", async (t) => {
+  const { fake, bridge } = await connected(t, {
+    env: { ISKRON_BRIDGE_BACKLOG_MS: "400" },
+    init: OPENCODE_INIT,
+  });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  // Yesterday: the first ten came as a stale batch, the rest live.
+  await fake.control({
+    ws_send_many: Array.from({ length: DAY }, (_, i) => dayFrame(i, i < 10 ? { stale: true } : {})),
+  });
+  await waitFor(
+    () => new Set(handedIds(bridge)).size === DAY,
+    "yesterday's queue handed over",
+    20_000,
+  );
+  // Today: the socket drops, hello says the whole queue waited, and the platform re-sends it.
+  await fake.control({ helloPending: DAY });
+  const mark = bridge.notifications.length;
+  await reconnect(fake);
+  await fake.control({
+    ws_send_many: Array.from({ length: DAY }, (_, i) => dayFrame(i, { stale: i % 3 === 0 })),
+  });
+  await new Promise((r) => setTimeout(r, 2500)); // past the stale and the wake windows
+  const again = handedIds(bridge, mark).filter((id) => id.startsWith("day-"));
+  assert.equal(again.length, 0, `handed again: ${again.length} (${again.slice(0, 5).join(", ")}…)`);
+  await fake.control({
+    ws_send: JSON.stringify({ type: "message", id: "fresh-1", body: "новое" }),
+  });
+  await waitFor(() => handedIds(bridge, mark).includes("fresh-1"), "a new frame to be handed");
+});
+
+// A batch shows its first twenty and names the rest by count and history — all of
+// them were handed over, so none comes back after a reconnect.
+test("a notified client is not handed again the frames a wake or stale batch named but did not show", async (t) => {
+  const { fake, bridge } = await connected(t, {
+    env: { ISKRON_BRIDGE_BACKLOG_MS: "600" },
+    init: OPENCODE_INIT,
+  });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wake = Array.from({ length: 30 }, (_, i) =>
+    JSON.stringify({ type: "message", id: `wk-${i}`, body: `побудка ${i}` }),
+  );
+  const stale = Array.from({ length: 25 }, (_, i) =>
+    JSON.stringify({ type: "message", id: `st-${i}`, body: `лежалое ${i}`, stale: true }),
+  );
+  await fake.control({ ws_send_many: [JSON.stringify({ type: "hello", pending: 30 }), ...wake] });
+  await fake.control({ ws_send_many: stale });
+  const batches = () =>
+    bridge.notifications.filter((n) => /backlog|stale/.test(n.params?.data?.kind));
+  await waitFor(() => batches().length === 2, "the wake batch and the stale batch", 5000);
+  const told = batches().map((n) => n.params.data.text);
+  assert.ok(
+    told.some((x) => /кадров 30.*первые 20/.test(x)),
+    told.join("\n---\n"),
+  );
+  const mark = bridge.notifications.length;
+  await reconnect(fake);
+  await fake.control({
+    ws_send_many: [...wake, ...stale.map((s) => s.replace('"stale":true', '"stale":false'))],
+  });
+  await fake.control({ ws_send_many: stale });
+  await new Promise((r) => setTimeout(r, 2200)); // past the stale window
+  const again = handedIds(bridge, mark);
+  assert.deepEqual(again, [], "handed again");
+});
+
+test("the memory of delivery outlives a clean bridge exit: the place taken back hands a notified client nothing it had", async (t) => {
+  const { fake, dir, bridge } = await connected(t, { init: OPENCODE_INIT });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  await fake.control({ ws_send: dayFrame(1) });
+  await fake.control({ ws_send: dayFrame(2, { stale: true }) });
+  await waitFor(
+    () => ["day-1", "day-2"].every((id) => handedIds(bridge).includes(id)),
+    "both handed",
+  );
+  const known = new Set(fake.state.ws);
+  await bridge.stop(); // stdin closed — the harness is gone, cleanly
+  assert.equal(bridge.proc.exitCode, 0, "the bridge left cleanly");
+  const second = startBridge(fake.mcpUrl, dir);
+  t.after(() => second.stop());
+  assert.ok((await second.call("initialize", 1, OPENCODE_INIT)).result);
+  await fake.control({ places: [{ karta: "931", name: "proba", listening: false }] });
+  const st = await second.call("tools/call", 2, {
+    name: "iskron_stand",
+    arguments: { realm: "nks-dev", karta: 931, name: "proba" },
+  });
+  assert.ok(!st.result?.isError, JSON.stringify(st));
+  await waitFor(() => [...fake.state.ws].some((s) => !known.has(s)), "the place taken back");
+  for (const s of known) s.destroy(); // the first bridge's socket, if the fake still holds it
+  await fake.control({
+    ws_send_many: [dayFrame(1), dayFrame(2, { stale: true }), dayFrame(2)],
+  });
+  await fake.control({
+    ws_send: JSON.stringify({ type: "message", id: "fresh-2", body: "новое" }),
+  });
+  await waitFor(() => handedIds(second).includes("fresh-2"), "a new frame to be handed");
+  await new Promise((r) => setTimeout(r, 1800)); // past the stale window
+  const again = handedIds(second).filter((id) => id.startsWith("day-"));
+  assert.deepEqual(again, [], "yesterday's frames handed again");
+});
+
+test("a day's queue re-sent after a reconnect is not printed again by the Monitor watchdog; a new frame is", async (t) => {
+  const { fake, dir, key } = await connected(t);
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog", dir, key, 60_000);
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog");
+  const printed = () => (wd.out.match(/день-\d+-/g) ?? []).length;
+  await fake.control({ ws_send_many: Array.from({ length: DAY }, (_, i) => dayFrame(i)) });
+  await waitFor(() => printed() === DAY, "yesterday's queue printed", 20_000);
+  await new Promise((r) => setTimeout(r, 300)); // the last marks follow the last print
+  await reconnect(fake);
+  await fake.control({
+    ws_send_many: Array.from({ length: DAY }, (_, i) => dayFrame(i, { stale: i % 3 === 0 })),
+  });
+  await new Promise((r) => setTimeout(r, 2500)); // past the stale window
+  await fake.control({
+    ws_send: JSON.stringify({ type: "message", id: "fresh-3", body: "новое" }),
+  });
+  await waitFor(() => wd.out.includes("новое"), "a new frame to be printed");
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+  assert.equal(printed(), DAY, `printed again: ${printed() - DAY}`);
+});
+
 // The plugin cannot pass anything to a bridge it spawned before the session
 // existed; instead it asks the bridge to resume by the session's directory,
 // which iskron_stand wrote into the hold record.

@@ -1664,7 +1664,8 @@ function holdSocket(o) {
 
 // js/shared/seen.ts
 import { appendFileSync as appendFileSync2, readFileSync as readFileSync6, renameSync as renameSync4, writeFileSync as writeFileSync5 } from "node:fs";
-var SEEN_KEEP = 200;
+var SEEN_KEEP = 5e3;
+var SEEN_SLACK = 1e3;
 function eventKeyOf(frame2) {
   if (frame2?.provenance?.via !== "graph") return "";
   const body = frame2.body;
@@ -1688,17 +1689,20 @@ function noteSeen(seenPath, id, seen) {
   if (seen.has(id)) return;
   seen.add(id);
   try {
-    if (seen.size > SEEN_KEEP) {
-      seen.delete(id);
-      const tail = [.../* @__PURE__ */ new Set([...seen, ...seenIds(seenPath), id])].slice(-SEEN_KEEP);
-      const tmp = `${seenPath}.${process.pid}.tmp`;
-      writeFileSync5(tmp, tail.join("\n") + "\n");
-      renameSync4(tmp, seenPath);
-      seen.clear();
-      for (const x of tail) seen.add(x);
-    } else appendFileSync2(seenPath, id + "\n");
+    appendFileSync2(seenPath, id + "\n");
+    if (seen.size > SEEN_KEEP + SEEN_SLACK) compact(seenPath, seen);
   } catch {
   }
+}
+function compact(seenPath, seen) {
+  const file = [...seenIds(seenPath)];
+  const inFile = new Set(file);
+  const tail = [...[...seen].filter((x) => !inFile.has(x)), ...file].slice(-SEEN_KEEP);
+  const tmp = `${seenPath}.${process.pid}.tmp`;
+  writeFileSync5(tmp, tail.join("\n") + "\n");
+  renameSync4(tmp, seenPath);
+  seen.clear();
+  for (const x of tail) seen.add(x);
 }
 
 // js/shared/standings.ts
@@ -2105,6 +2109,8 @@ var BODY_CAP = 800;
 var at = (f) => typeof f.received_at === "string" ? f.received_at : "";
 var Backlog = class {
   frames = [];
+  /** Все кадры окна — пачка показывает первые BACKLOG_KEEP, отданными метятся все (#5831). */
+  all = [];
   total = 0;
   pending = 0;
   timer = null;
@@ -2122,16 +2128,20 @@ var Backlog = class {
     clearTimeout(this.timer);
     this.close();
   }
-  /** Положить живой кадр в пачку; false — окна нет, кадр идёт своим путём. */
+  /** Положить живой кадр в пачку; false — окна нет, кадр идёт своим путём. Повтор id, уже лежащего в окне, не считается. */
   note(frame2) {
     if (!this.timer) return false;
+    const id = typeof frame2.id === "string" ? frame2.id : "";
+    if (id && this.all.some((f) => f.id === id)) return true;
     this.total++;
+    this.all.push(frame2);
     if (this.frames.length < BACKLOG_KEEP) this.frames.push(frame2);
     return true;
   }
   close() {
     this.timer = null;
     const got = this.frames.splice(0).sort((a, b) => at(a) < at(b) ? -1 : at(a) > at(b) ? 1 : 0);
+    const all2 = this.all.splice(0);
     const count = this.total;
     const expected = this.pending;
     this.total = 0;
@@ -2144,43 +2154,56 @@ var Backlog = class {
       return [...t].length > BODY_CAP ? [...t].slice(0, BODY_CAP).join("") + "…" : t;
     });
     const head = `Побудка: кадров ${count}` + (expected ? ` (ожидало в очереди: ${expected})` : "") + (count > got.length ? `, здесь первые ${got.length}` : "") + ' — пришли одной пачкой; разбери все, а не последний: полностью и остальное — iskron_channel(action="history", view="log").';
-    emit2({
-      kind: "backlog",
-      frames: got,
-      pending: expected,
-      text: `${head}
+    emit2(
+      {
+        kind: "backlog",
+        frames: got,
+        pending: expected,
+        text: `${head}
 
 ${bodies.join("\n\n")}`
-    });
+      },
+      all2
+    );
   }
 };
+
+// js/bridge/fanout.ts
+import { statSync as statSync2 } from "node:fs";
 
 // js/bridge/stale.ts
 var STALE_BURST_KEEP = 20;
 var STALE_BURST_MS = 1500;
 var BODY_CAP2 = 800;
 var StaleBurst = class {
+  /** Все кадры полосы — пачка показывает первые STALE_BURST_KEEP, отданными метятся все (#5831). */
   burst = [];
   timer = null;
-  /** Положить лежалый кадр в пачку; по истечении полосы `flush` получает одно событие. */
+  /**
+   * Положить лежалый кадр в пачку; по истечении полосы `flush` получает одно событие
+   * и все кадры полосы, показанные и нет. Повтор id, уже лежащего в пачке, — не второй кадр.
+   */
   note(frame2, flush) {
-    if (this.burst.length < STALE_BURST_KEEP) this.burst.push(frame2);
+    const id = typeof frame2.id === "string" ? frame2.id : "";
+    if (!id || !this.burst.some((f) => f.id === id)) this.burst.push(frame2);
     if (this.timer) return;
     this.timer = setTimeout(() => {
       this.timer = null;
-      const frames = this.burst.splice(0);
-      if (!frames.length) return;
+      const all2 = this.burst.splice(0);
+      if (!all2.length) return;
+      const frames = all2.slice(0, STALE_BURST_KEEP);
       const bodies = frames.map((f) => {
         const t = frameToText(f, JSON.stringify(f));
         return [...t].length > BODY_CAP2 ? [...t].slice(0, BODY_CAP2).join("") + "…" : t;
       });
-      flush({
-        kind: "stale",
-        frames,
-        text: `Лежалых кадров: ${frames.length} — принятое, пока место не слушали, или повтор службы после пересборки сессии; хода не стоят, но прочти; полностью — iskron_channel(action="history").
-
-` + bodies.join("\n\n")
-      });
+      flush(
+        {
+          kind: "stale",
+          frames,
+          text: `Лежалых кадров: ${all2.length}` + (all2.length > frames.length ? `, здесь первые ${frames.length}` : "") + ' — принятое, пока место не слушали, или повтор службы после пересборки сессии; хода не стоят, но прочти; полностью — iskron_channel(action="history").\n\n' + bodies.join("\n\n")
+        },
+        all2
+      );
     }, STALE_BURST_MS).unref();
   }
   /** Лежит ли в копящейся пачке копия этого события графа (fanout.ts). */
@@ -2201,10 +2224,27 @@ var StaleBurst = class {
 };
 
 // js/bridge/fanout.ts
+var lastRead = /* @__PURE__ */ new Map();
+function givenIds(seenPath) {
+  let stamp;
+  try {
+    const st = statSync2(seenPath);
+    stamp = `${st.ino}:${st.size}:${st.mtimeMs}`;
+  } catch {
+    lastRead.delete(seenPath);
+    return /* @__PURE__ */ new Set();
+  }
+  const hit = lastRead.get(seenPath);
+  if (hit?.stamp === stamp) return hit.ids;
+  const ids = seenIds(seenPath);
+  lastRead.set(seenPath, { stamp, ids });
+  return ids;
+}
 function isDelivered(keys, seen, seenPath) {
   if (!keys.length) return false;
-  const given = seenIds(seenPath);
-  return keys.some((k) => seen.has(k) || given.has(k));
+  if (keys.some((k) => seen.has(k))) return true;
+  const given = givenIds(seenPath);
+  return keys.some((k) => given.has(k));
 }
 function redundantCopy(frame2, ring, seen, seenPath, burst) {
   const ev = frame2?.type === "message" ? eventKeyOf(frame2) : "";
@@ -2266,7 +2306,7 @@ function batchForWatchdogs(d, raw, frame2, emit2) {
 }
 
 // js/bridge/sweep.ts
-import { existsSync, readdirSync as readdirSync2, readFileSync as readFileSync8, unlinkSync as unlinkSync5 } from "node:fs";
+import { existsSync, readdirSync as readdirSync2, readFileSync as readFileSync8, statSync as statSync3, unlinkSync as unlinkSync5 } from "node:fs";
 import { connect as connectLocal } from "node:net";
 import { join as join6 } from "node:path";
 
@@ -2320,9 +2360,19 @@ function localSocketAlive(sock) {
     probe.setTimeout(1e3, () => done(false));
   });
 }
+var SEEN_FILE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1e3;
 function sweepStale(authDir, mine) {
   const dir = standingsDirOf(authDir);
   if (!existsSync(dir)) return;
+  const mineSeen = seenFilePathOf(authDir, mine);
+  for (const f of readdirSync2(dir).filter((x) => x.endsWith(".seen"))) {
+    const p = join6(dir, f);
+    if (p === mineSeen || existsSync(join6(dir, f.replace(/\.seen$/, ".key")))) continue;
+    try {
+      if (Date.now() - statSync3(p).mtimeMs > SEEN_FILE_MAX_AGE_MS) unlinkSync5(p);
+    } catch {
+    }
+  }
   for (const f of readdirSync2(dir).filter((x) => x.endsWith(".hold"))) {
     try {
       const rec = JSON.parse(readFileSync8(join6(dir, f), "utf8"));
@@ -2347,7 +2397,7 @@ function sweepStale(authDir, mine) {
     if (!key || key === mine) continue;
     const sock = socketPathOf(authDir, key);
     const drop = () => {
-      for (const p of [keyFile, sock, seenFilePathOf(authDir, key)]) {
+      for (const p of [keyFile, sock]) {
         try {
           unlinkSync5(p);
         } catch {
@@ -2465,7 +2515,12 @@ var Door = class {
     this.backlog.flushNow();
     this.roomBatch.flushNow();
   }
-  /** Закрыть дверь: клиенты, сервер, файлы ключа, памяти и сокета. Идемпотентно. */
+  /**
+   * Закрыть дверь: клиенты, сервер, файлы ключа и сокета. Идемпотентно. Память
+   * отданного (.seen) остаётся: место, возвращённое новым мостом, получает от
+   * платформы ту же очередь снова и не должно отдать её второй раз (#5831);
+   * лежалые файлы памяти прибирает уборка по возрасту (sweep.ts).
+   */
   close() {
     this.flushBatches();
     this.stale.drop();
@@ -2484,11 +2539,9 @@ var Door = class {
       } catch {
       }
     }
-    for (const p of [keyFilePathOf(CFG.authDir, this.key), this.seenPath]) {
-      try {
-        unlinkSync6(p);
-      } catch {
-      }
+    try {
+      unlinkSync6(keyFilePathOf(CFG.authDir, this.key));
+    } catch {
     }
     if (process.platform !== "win32") {
       try {
@@ -2934,7 +2987,12 @@ function deliverTo(d, raw, frame2, full) {
   if (evKey) return log(`frame ${id || "?"} carries ${evKey} already offered — not raised`);
   const again = isDelivered(id ? [id] : [], d.seen, seenPath);
   if (full?.type === "message" && full.stale === true)
-    return again ? log(`stale frame ${id} already delivered — dropped`) : d.stale.note(full, (ev2) => (d.broadcast(ev2), notify("info", keyed(d, ev2))));
+    return again ? log(`stale frame ${id} already delivered — dropped`) : d.stale.note(full, (ev2, all2) => {
+      if (notifiedClient())
+        for (const f of all2) for (const k of deliveredKeys(f)) noteSeen(seenPath, k, d.seen);
+      d.broadcast(ev2);
+      notify("info", keyed(d, ev2));
+    });
   const text = full === frame2 ? raw : JSON.stringify(full);
   const hello = full?.type === "hello";
   for (const x of hello ? doors() : [d]) x.push(text, full);
@@ -2948,9 +3006,8 @@ function deliverTo(d, raw, frame2, full) {
   if (full?.type === "status") return;
   if (again) return log(`frame ${id} came again — already delivered, not raised`);
   if (notifiedClient()) {
-    const flushBacklog = (b) => {
-      for (const f of b.frames ?? [])
-        for (const k of deliveredKeys(f)) noteSeen(seenPath, k, d.seen);
+    const flushBacklog = (b, all2) => {
+      for (const f of all2) for (const k of deliveredKeys(f)) noteSeen(seenPath, k, d.seen);
       notify("info", keyed(d, b));
     };
     if (hello && Number(full.pending) > 0) d.backlog.open(Number(full.pending), flushBacklog);
@@ -3564,7 +3621,7 @@ function localLeave(msg) {
 }
 
 // js/bridge/stand.ts
-import { statSync as statSync2 } from "node:fs";
+import { statSync as statSync4 } from "node:fs";
 import { isAbsolute } from "node:path";
 
 // js/bridge/board.ts
@@ -4136,7 +4193,7 @@ var STAND_TOOL = {
 var ledName = () => state.standing?.name ?? "";
 var isDirectory = (p) => {
   try {
-    return isAbsolute(p) && statSync2(p).isDirectory();
+    return isAbsolute(p) && statSync4(p).isDirectory();
   } catch {
     return false;
   }
@@ -5123,6 +5180,8 @@ function runWatchdogCodex(argv2) {
           if (type !== "message") return note(`кадр ${type ?? "не разобран"} — не повод будить`);
           if (fromRing && typeof ev.frame?.id !== "string")
             return note("кадр без id из кольца — пометить нечем, в тред не кладу повторно");
+          if (typeof ev.frame?.id === "string" && seen.has(ev.frame.id))
+            return note(`кадр ${ev.frame.id} уже вложен — в тред не кладу повторно`);
           void deliver2(frameToText(ev.frame, ev.raw ?? ""), deliveredKeys(ev.frame));
           break;
         }
@@ -5217,6 +5276,7 @@ function runWatchdog(argv2) {
             log2(ev.raw ?? "");
             break;
           }
+          if (typeof f.id === "string" && seen.has(f.id)) break;
           for (const line of wrapLines(frameToText(f, ev.raw ?? ""))) log2(line);
           for (const k of deliveredKeys(f)) noteSeen(seenPath, k, seen);
           break;

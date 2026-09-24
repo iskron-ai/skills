@@ -359,10 +359,17 @@ function deliverTo(d: Door, raw: string, frame: Frame | null, full: Frame | null
   // Лежалый кадр — принятое, пока место не слушали (после revoke — почта предшественника),
   // либо повтор службы после пересборки сессии: хода не стоит, но и не теряется — одной
   // пачкой на полосу, не по одному; лежалая копия уже отданного кадра в пачку не идёт.
+  // pi и OpenCode: уведомление пачкой и есть доставка — отданными метятся все кадры
+  // полосы, иначе платформа, отдав их снова после переподключения, будит ими опять (#5831).
   if (full?.type === "message" && full.stale === true)
     return again
       ? log(`stale frame ${id} already delivered — dropped`)
-      : d.stale.note(full, (ev) => (d.broadcast(ev), notify("info", keyed(d, ev))));
+      : d.stale.note(full, (ev, all) => {
+          if (notifiedClient())
+            for (const f of all) for (const k of deliveredKeys(f)) noteSeen(seenPath, k, d.seen);
+          d.broadcast(ev);
+          notify("info", keyed(d, ev));
+        });
   const text = full === frame ? raw : JSON.stringify(full);
   // В кольцо идёт и hello — каждой двери: сторож, прицепившийся позже, должен
   // увидеть доказательство держания, а не только рабочие кадры.
@@ -381,10 +388,10 @@ function deliverTo(d: Door, raw: string, frame: Frame | null, full: Frame | null
   if (notifiedClient()) {
     // pi и OpenCode: уведомление и есть доставка, и .seen пишется в миг
     // уведомления — кадр в окне пачки (backlog.ts, #5140) ещё не отдан, и
-    // умерший в окне мост его не потеряет: платформа отдаст снова.
-    const flushBacklog = (b: ChannelEvent): void => {
-      for (const f of b.frames ?? [])
-        for (const k of deliveredKeys(f)) noteSeen(seenPath, k, d.seen);
+    // умерший в окне мост его не потеряет: платформа отдаст снова. Метятся все
+    // кадры окна, и не показанные пачкой: она называет их числом и адресом history.
+    const flushBacklog = (b: ChannelEvent, all: Frame[]): void => {
+      for (const f of all) for (const k of deliveredKeys(f)) noteSeen(seenPath, k, d.seen);
       notify("info", keyed(d, b));
     };
     if (hello && Number(full.pending) > 0) d.backlog.open(Number(full.pending), flushBacklog);

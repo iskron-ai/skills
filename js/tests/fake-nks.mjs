@@ -271,6 +271,11 @@ export async function startFakeNks(opts = {}) {
       if (typeof patch.ws_send === "string") {
         for (const sock of st.ws) if (!st.hung.has(sock)) sock.write(wsFrame(0x1, patch.ws_send));
       }
+      // Очередь разом (повтор платформы после переподключения): кадры по порядку, одним запросом.
+      if (Array.isArray(patch.ws_send_many)) {
+        for (const text of patch.ws_send_many)
+          for (const sock of st.ws) if (!st.hung.has(sock)) sock.write(wsFrame(0x1, text));
+      }
       // Подвисшее соединение (#5380): сокет открыт, но служба больше ничего в него не пишет — ни пинга, ни кадра, ни закрытия.
       if (patch.ws_hang) for (const sock of st.ws) st.hung.add(sock);
       if (Number.isInteger(patch.ws_refuse)) st.wsRefuse = patch.ws_refuse; // один раз: следующий апгрейд закрывается этим кодом, дальнейшие принимаются

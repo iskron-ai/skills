@@ -130,6 +130,9 @@ export function runWatchdogCodex(argv: string[]): void {
           if (type !== "message") return note(`кадр ${type ?? "не разобран"} — не повод будить`);
           if (fromRing && typeof ev.frame?.id !== "string")
             return note("кадр без id из кольца — пометить нечем, в тред не кладу повторно");
+          // Повтор уже вложенного (тот же id) — вторая линия за мостом (#5831).
+          if (typeof ev.frame?.id === "string" && seen.has(ev.frame.id))
+            return note(`кадр ${ev.frame.id} уже вложен — в тред не кладу повторно`);
           void deliver(frameToText(ev.frame, ev.raw ?? ""), deliveredKeys(ev.frame));
           break;
         }
