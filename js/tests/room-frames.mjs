@@ -21,10 +21,21 @@ let n = 0;
 /** Кадр комнаты рода `kind`; всё, что не названо, — как на проводе у обычной строки. */
 export function roomFrame(
   kind,
-  { entry_id, key = kind, fields = {}, author = ALEKSEI, stack, line = {}, body = "", status } = {},
+  {
+    entry_id,
+    key = kind,
+    fields = {},
+    author = ALEKSEI,
+    stack,
+    line = {},
+    body = "",
+    status,
+    envelope = {},
+  } = {},
 ) {
   const id = entry_id ?? 100 + ++n;
   return {
+    ...envelope,
     type: "message",
     id: `room-msg-${id}`,
     room: { ...ROOM, status: status ?? ROOM.status },
@@ -64,6 +75,38 @@ export const closing = () =>
       ],
     },
     body: "сделано, см. 41",
+  });
+
+/** Роль места проб и граф, которые кадр несёт в конверте (karta_seq, realm). */
+export const MY_KARTA = 4;
+export const MY_REALM = "@alari/paper-demo";
+
+/**
+ * Приглашение РОЛИ (api 0.89.6, форма наблюдена на бою): ключ — id узла роли,
+ * поля строки — karta {id, name, realm, seq}; кадр доходит живому месту роли и
+ * несёт его karta_seq. seq = MY_KARTA — моя роль, иначе чужая.
+ */
+export const roleInvite = (entry_id, seq = MY_KARTA) =>
+  roomFrame("invite", {
+    entry_id,
+    key: "invite:5744a929-982c-4efe-88ff-480ab66f61b8",
+    fields: {
+      karta: {
+        id: "5744a929-982c-4efe-88ff-480ab66f61b8",
+        name: "🚚 Поставщик плитки",
+        realm: MY_REALM,
+        seq,
+      },
+    },
+    envelope: { realm: MY_REALM, karta_seq: MY_KARTA },
+  });
+
+/** Отзыв приглашения моему месту — в пачку. */
+export const withdraw = (entry_id) =>
+  roomFrame("withdraw", {
+    entry_id,
+    key: `invite:${ME_ID}`,
+    envelope: { realm: MY_REALM, karta_seq: MY_KARTA },
   });
 
 /** Отчёт о ходе — в пачку. */

@@ -46,11 +46,14 @@ import {
   graphPosed,
   legacyRoom,
   ME_ID,
+  MY_KARTA,
   PLATFORM,
   progress,
+  roleInvite,
   roomFrame,
   said as saidFrame,
   unknownKind,
+  withdraw,
 } from "./room-frames.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -1759,31 +1762,45 @@ test("room kinds: closing steers a busy agent despite stack=defer and says who m
     const p5 = await send(saidFrame("defer", 63), 5);
     assert.equal(p5.delivery, "queue", "said with stack=defer queues");
 
-    const p6 = await send(roomFrame("invite", { entry_id: 64, key: `invite:${ME_ID}` }), 6);
+    // An invite to my ROLE (api 0.89.6): the key carries the role node id, the line's karta my seq.
+    const r1 = await send(roleInvite(68), 6);
+    assert.equal(r1.delivery, "steer", "an invite to my role interrupts");
+    assert.match(r1.text, /Алексей \(@aleksei:probe\) зовёт 🚚 Поставщик плитки в дело/);
+    const r2 = await send(roleInvite(69, MY_KARTA + 1), 7);
+    assert.equal(r2.delivery, "queue", "an invite to another role batches");
+    const otherRealm = roleInvite(70);
+    otherRealm.line.fields.karta.realm = "@alari/other";
+    const r3 = await send(otherRealm, 8);
+    assert.equal(r3.delivery, "queue", "my role's seq in another graph is not my role");
+    const r4 = await send(withdraw(71), 9);
+    assert.equal(r4.delivery, "queue", "a withdrawn invite batches, even when it was mine");
+    assert.match(r4.text, /приглашение отозвано, отзывает Алексей \(@aleksei:probe\)/);
+
+    const p6 = await send(roomFrame("invite", { entry_id: 64, key: `invite:${ME_ID}` }), 10);
     assert.equal(p6.delivery, "steer", "an invite to my own standing id interrupts");
-    assert.match(p6.text, new RegExp(`${ME_ID} приглашён`));
+    assert.match(p6.text, new RegExp(`Алексей \\(@aleksei:probe\\) зовёт ${ME_ID} в дело`));
     const p7 = await send(
       roomFrame("invite", {
         entry_id: 65,
         key: "invite:5744a929-982c-4efe-88ff-480ab66f61b8",
         fields: { standing: { name: "Прораб", standing: "@other:x" } },
       }),
-      7,
+      11,
     );
     assert.equal(p7.delivery, "queue", "an invite to someone else batches");
     assert.match(
       p7.text,
-      /Прораб \(@other:x\) приглашён/,
+      /зовёт Прораб \(@other:x\) в дело/,
       "the invite names the invitee, not the raw id",
     );
-    const p8 = await send(roomFrame("opened", { entry_id: 66 }), 8);
+    const p8 = await send(roomFrame("opened", { entry_id: 66 }), 12);
     assert.equal(p8.delivery, "queue", "opened does not interrupt");
-    const p9 = await send(roomFrame("invite", { entry_id: 67, key: "invite:@tester:proba" }), 9);
+    const p9 = await send(roomFrame("invite", { entry_id: 67, key: "invite:@tester:proba" }), 13);
     assert.equal(p9.delivery, "steer", "an invite to my own standing address interrupts too");
     // may_object carries standing ids only: my address there is not me, another id is not me.
     const notMine = closing();
     notMine.line.fields.may_object = ["@tester:proba", "9b2e4d6f-1a3c-4e5b-9d7f-0c2e4a6b8d1f"];
-    const p10 = await send(notMine, 10);
+    const p10 = await send(notMine, 14);
     assert.equal(p10.delivery, "steer", "closing interrupts even when I may not object");
     assert.match(p10.text, /возражать не тебе/);
     assert.doesNotMatch(p10.text, /ты можешь возразить/);

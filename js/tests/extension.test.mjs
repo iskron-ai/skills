@@ -51,10 +51,13 @@ import {
   graphPosed,
   legacyRoom,
   ME_ID,
+  MY_KARTA,
   progress,
+  roleInvite,
   roomFrame,
   said,
   unknownKind,
+  withdraw,
 } from "./room-frames.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -501,6 +504,9 @@ test("room kinds: closing steers despite stack=defer, progress and an unknown ki
       [roomFrame("invite", { entry_id: 65, key: "invite:@tester:proba" }), "steer"],
       [roomFrame("invite", { entry_id: 67, key: "invite:@other:x" }), "followUp"],
       [roomFrame("opened", { entry_id: 66 }), "followUp"],
+      [roleInvite(68), "steer"],
+      [roleInvite(69, MY_KARTA + 1), "followUp"],
+      [withdraw(71), "followUp"],
     ];
     for (const [f] of cases) push(events, frame(f));
     await delay(400);
@@ -509,7 +515,7 @@ test("room kinds: closing steers despite stack=defer, progress and an unknown ki
       assert.equal(
         rec.messages[i].opts.deliverAs,
         way,
-        `${f.event_kind} (stack ${f.stack ?? "—"}) must go ${way}`,
+        `${f.event_kind} ${f.line.key} (stack ${f.stack ?? "—"}) must go ${way}`,
       ),
     );
     const text = rec.messages[0].msg.content;
