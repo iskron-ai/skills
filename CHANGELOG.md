@@ -1,5 +1,17 @@
 # Changelog
 
+## [6.13.0](https://github.com/iskron-ai/skills/compare/v6.12.0...v6.13.0) (2026-09-24)
+
+
+### Features
+
+* **bridge:** словарь родов комнаты — слово и стопка технического кадра, закрытие прерывает ([#178](https://github.com/iskron-ai/skills/issues/178)) ([8829207](https://github.com/iskron-ai/skills/commit/882920723c74f621ba60566c4de0da48e89eac1a))
+
+
+### Bug Fixes
+
+* **bridge:** приглашение в комнату называет приглашённого по имени, не голым id из ключа ([#180](https://github.com/iskron-ai/skills/issues/180)) ([11f97f0](https://github.com/iskron-ai/skills/commit/11f97f00ddd839835bc35fa6e8b4180fc2ded54c))
+
 ## [6.12.0](https://github.com/iskron-ai/skills/compare/v6.11.0...v6.12.0) (2026-09-23)
 
 
