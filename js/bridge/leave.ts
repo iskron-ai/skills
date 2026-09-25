@@ -29,6 +29,7 @@ import {
   rememberStatus,
   resumeStanding,
 } from "./hold.ts";
+import { markLeft } from "./holdrecord.ts";
 import { otherRealm } from "./realms.ts";
 import { publishedStatus, publishStatus } from "./status.ts";
 import { emit, log } from "./streams.ts";
@@ -48,7 +49,7 @@ let keptStatus = "";
 let keptBeside: { realm: string; text: string }[] = [];
 
 /** Уйти с места: занятость снята, сокет закрыт, место цело. Возвращает слово о сделанном. */
-export async function leaveStanding(reason: string): Promise<string> {
+export async function leaveStanding(reason: string, byWord = false): Promise<string> {
   // Строки мест рядом — из их записей держания, до того как уход их снимет.
   const beside = heldPlaces()
     .filter((p) => !p.primary)
@@ -62,15 +63,21 @@ export async function leaveStanding(reason: string): Promise<string> {
   keptStatus = publishedStatus();
   const st = await publishStatus("", undefined, true); // сокет закрыт у всех мест канала — и строка у всех
   // Снятая занятость остаётся в записи держания: мост, поднятый заново над
-  // оставленным местом, вернёт её вместе с местом (канон п. 3).
+  // оставленным местом, вернёт её, только если возвращается та же сессия —
+  // чужой сессии это слово прежнего держателя, и оно не публикуется (#6017).
   if (st.ok && keptStatus) rememberStatus(keptStatus);
+  // Уход словом держателя держится: сторож слуха и возврат по каталогу или
+  // ключу место не поднимают — только iskron_stand по имени (#6017).
+  if (byWord) for (const k of leaving) markLeft(k, true);
   const line = st.ok ? "занятость снята" : `занятость не снята (${st.body})`;
   log(`left the standing: ${reason}; ${line}`);
   const which =
     leaving.length > 1
       ? `с мест ${leaving.join(", ")} (сокет канала у них общий)`
       : `с места ${parked}`;
-  return `ушёл ${which}: сокет закрыт, ${line}; адрес, очередь и хуки целы — почта копится и придёт при возвращении (сторож или iskron_stand)`;
+  return byWord
+    ? `ушёл ${which}: сокет закрыт, ${line}; адрес, очередь и хуки целы — почта копится; место отпущено словом, само не вернётся — вернуть: iskron_stand тем же именем`
+    : `ушёл ${which}: сокет закрыт, ${line}; адрес, очередь и хуки целы — почта копится и придёт при возвращении (сторож или iskron_stand)`;
 }
 
 /**
@@ -84,6 +91,7 @@ export async function leaveStanding(reason: string): Promise<string> {
  */
 export function returnToStanding(how: string): boolean {
   if (!resumeStanding()) return false;
+  for (const p of heldPlaces()) markLeft(p.key, false); // на месте снова — пометка ухода словом снята
   const text = `мост вернулся на место (${how}) — сокет открыт заново тем же адресом${keptStatus ? `, занятость «${keptStatus}» возвращена` : ""}`;
   log(text);
   if (keptStatus) {
@@ -151,6 +159,6 @@ export function localLeave(msg: JsonRpcMessage): Promise<JsonRpcMessage> | null 
         `Отказано (мост): в графе ${String(realm)} этот мост места не держит — уходить неоткуда; его место ${ledKey()} в графе ${state.standing.realm} не тронуто.`,
         true,
       );
-    return answer(await leaveStanding("по слову делателя"));
+    return answer(await leaveStanding("по слову делателя", true));
   })();
 }

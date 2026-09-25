@@ -2362,15 +2362,40 @@ function keyOf(realm, karta, name) {
   return `${name || "_"}--${karta}--${realm}`.replace(/[^A-Za-z0-9._-]+/g, "_").slice(0, 120);
 }
 var HOLD_RECORD_MAX_AGE_MS = 6 * 60 * 60 * 1e3;
+var harnessSession = null;
+function noteHarnessSession(id) {
+  if (id) harnessSession = id;
+}
+var sessionOfBridge = () => harnessSession;
+function leftOnDisk(key) {
+  try {
+    return JSON.parse(readFileSync7(holdFilePathFor(key), "utf8"))?.left === true;
+  } catch {
+    return false;
+  }
+}
 function writeHoldRecord(key, rec) {
   if (CFG.satellite) return;
   try {
-    writeFileSync6(holdFilePathFor(key), JSON.stringify({ ...rec, at: Date.now() }) + "\n", {
-      mode: 384
-    });
+    const session = harnessSession ?? rec.session;
+    const left = rec.left ?? leftOnDisk(key);
+    writeFileSync6(
+      holdFilePathFor(key),
+      JSON.stringify({
+        ...rec,
+        session: session ?? void 0,
+        left: left || void 0,
+        at: Date.now()
+      }) + "\n",
+      { mode: 384 }
+    );
   } catch (e) {
     log(`hold record not written: ${e.message}`);
   }
+}
+function markLeft(key, on) {
+  const r = readHoldRecord(key);
+  if (r && r.left === true !== on) writeHoldRecord(key, { ...r, left: on });
 }
 function readHoldRecord(key) {
   try {
@@ -3018,7 +3043,9 @@ function holdStanding(url, statusUrl2) {
       statusUrl: currentStatusUrl,
       cwd: standCwd ?? readHoldRecord(key)?.cwd,
       client: harnessName(),
-      key
+      key,
+      left: false
+      // сокет держится снова — пометка ухода словом снята
     });
   const ch = channel();
   if (same && ch) repointExtras(ch);
@@ -3613,7 +3640,7 @@ var TICK_MS = Math.min(6e4, Math.max(200, Math.floor(DEAF_MS / 5)));
 var deafWithoutListener = () => !notifiedClient();
 var keptStatus = "";
 var keptBeside = [];
-async function leaveStanding(reason) {
+async function leaveStanding(reason, byWord = false) {
   const beside = heldPlaces().filter((p) => !p.primary).map((p) => ({ realm: p.realm, text: readHoldRecord(p.key)?.status ?? "" })).filter((k) => k.text);
   const leaving = heldPlaces().map((p) => p.key);
   const parked2 = parkStanding(reason);
@@ -3622,13 +3649,15 @@ async function leaveStanding(reason) {
   keptStatus = publishedStatus();
   const st = await publishStatus("", void 0, true);
   if (st.ok && keptStatus) rememberStatus(keptStatus);
+  if (byWord) for (const k of leaving) markLeft(k, true);
   const line = st.ok ? "занятость снята" : `занятость не снята (${st.body})`;
   log(`left the standing: ${reason}; ${line}`);
   const which = leaving.length > 1 ? `с мест ${leaving.join(", ")} (сокет канала у них общий)` : `с места ${parked2}`;
-  return `ушёл ${which}: сокет закрыт, ${line}; адрес, очередь и хуки целы — почта копится и придёт при возвращении (сторож или iskron_stand)`;
+  return byWord ? `ушёл ${which}: сокет закрыт, ${line}; адрес, очередь и хуки целы — почта копится; место отпущено словом, само не вернётся — вернуть: iskron_stand тем же именем` : `ушёл ${which}: сокет закрыт, ${line}; адрес, очередь и хуки целы — почта копится и придёт при возвращении (сторож или iskron_stand)`;
 }
 function returnToStanding(how) {
   if (!resumeStanding()) return false;
+  for (const p of heldPlaces()) markLeft(p.key, false);
   const text = `мост вернулся на место (${how}) — сокет открыт заново тем же адресом${keptStatus ? `, занятость «${keptStatus}» возвращена` : ""}`;
   log(text);
   if (keptStatus) {
@@ -3688,7 +3717,7 @@ function localLeave(msg) {
         `Отказано (мост): в графе ${String(realm)} этот мост места не держит — уходить неоткуда; его место ${ledKey()} в графе ${state.standing.realm} не тронуто.`,
         true
       );
-    return answer(await leaveStanding("по слову делателя"));
+    return answer(await leaveStanding("по слову делателя", true));
   })();
 }
 
@@ -3797,11 +3826,19 @@ async function resumeFromDisk(realm, karta, name) {
     const hello = await awaitHello(4e3);
     if (hello && holdsKey(key)) {
       const pending = Number(hello.pending) || 0;
+      const me = sessionOfBridge();
+      let busy = "";
+      if (rec.status && me && rec.session === me) {
+        const st = await publishStatus(rec.status);
+        busy = st.ok ? `; занятость возвращена: ${rec.status}` : `; занятость не возвращена: ${short(st.body)}`;
+      } else if (rec.status) {
+        rememberStatus("");
+        busy = "; прежняя строка занятости не возвращена — скажи свою";
+      }
       log(`standing resumed from disk (${key}), pending ${pending}`);
       standingLog(`resumed-from-disk ${key}: pending ${pending}`);
       return {
-        word: `возврат места с диска после перезапуска моста — сокет открыт заново тем же адресом (ожидало кадров — ${pending})`,
-        status: rec.status,
+        word: `возврат места с диска после перезапуска моста — сокет открыт заново тем же адресом (ожидало кадров — ${pending})${busy}`,
         pending
       };
     }
@@ -3816,24 +3853,44 @@ async function resumeFromDisk(realm, karta, name) {
 }
 function recordsFor(sel) {
   const dir = standingsDirOf(CFG.authDir);
-  if (!existsSync3(dir)) return [];
+  if (!existsSync3(dir)) return { own: [], sameDir: [], legacy: [], left: [] };
   const mine = harnessName();
+  const led = ledKey();
   const byKey = [];
   const byCwd = [];
+  const sameDir = [];
+  const legacy = [];
+  const left = [];
   for (const f of readdirSync4(dir).filter((x) => x.endsWith(".hold"))) {
     try {
       const rec = JSON.parse(readFileSync10(join8(dir, f), "utf8"));
       if (!rec || rec.client !== mine) continue;
       const key = keyOf(rec.realm, rec.karta, rec.name);
       const keyed2 = !!sel.key && key === sel.key;
-      if (!keyed2 && (!sel.cwd || rec.cwd !== sel.cwd)) continue;
+      const inDir = !!sel.cwd && rec.cwd === sel.cwd;
+      if (!keyed2 && !inDir) continue;
       const fresh = readHoldRecord(key);
-      if (fresh) (keyed2 ? byKey : byCwd).push(fresh);
+      if (!fresh) continue;
+      if (inDir) sameDir.push(key);
+      if (fresh.left) {
+        left.push(key);
+        continue;
+      }
+      const stoodHere = key === led || !!sel.session && fresh.session === sel.session;
+      if (keyed2) byKey.push(fresh);
+      else if (stoodHere) byCwd.push(fresh);
+      else if (!fresh.session) legacy.push(fresh.name);
     } catch {
     }
   }
-  return [...byKey, ...byCwd.sort((a, b) => (b.at ?? 0) - (a.at ?? 0))];
+  return {
+    own: [...byKey, ...byCwd.sort((a, b) => (b.at ?? 0) - (a.at ?? 0))],
+    sameDir,
+    legacy,
+    left
+  };
 }
+var legacyWord = (names2) => names2.map((n) => `есть место прежней сборки без сессии: ${n} — вернуть: iskron_stand(name="${n}")`).join("; ");
 async function backToParked(key, how) {
   if (!returnToStanding(how)) return { resumed: false, key, word: "возврат на место не удался" };
   const hello = await awaitHello(4e3);
@@ -3845,12 +3902,27 @@ async function backToParked(key, how) {
   };
 }
 async function resumeBy(sel, register = true) {
-  const recs = recordsFor(sel);
-  if (!recs.length)
+  const { own: recs, sameDir, legacy, left } = recordsFor(sel);
+  if (!recs.length) {
+    const said = [
+      `своей записи держания ${sel.key ? `с ключом ${sel.key}` : `для каталога ${sel.cwd ?? "?"}`} нет`
+    ];
+    const foreign = sameDir.filter((k) => !left.includes(k));
+    if (foreign.length)
+      said.push(
+        `в каталоге лежат записи мест, на которых эта сессия не стояла (${foreign.join(", ")}); по одному каталогу они не берутся, место займёт iskron_stand`
+      );
+    if (left.length)
+      said.push(
+        `место отпущено словом держателя (leave): ${left.join(", ")} — само не вернётся, вернуть: iskron_stand тем же именем`
+      );
+    if (legacy.length) said.push(legacyWord(legacy));
     return {
       resumed: false,
-      word: `своей записи держания ${sel.key ? `с ключом ${sel.key}` : `для каталога ${sel.cwd ?? "?"}`} нет`
+      word: said.join(" — "),
+      ...legacy.length ? { legacy } : {}
     };
+  }
   const led = ledKey();
   const skipped = [];
   for (const rec of recs) {
@@ -3881,14 +3953,11 @@ async function resumeBy(sel, register = true) {
       });
       lines.push(r.isError ? `register отказал — ${short(r.text)}` : "register");
     }
-    if (back.status) {
-      const st = await publishStatus(back.status);
-      lines.push(
-        st.ok ? `занятость возвращена: ${back.status}` : `занятость не возвращена: ${short(st.body)}`
-      );
-    }
-    const others = recs.map((r) => keyOf(r.realm, r.karta, r.name)).filter((k) => k !== key && readHoldRecord(k) !== null);
+    const others = [
+      .../* @__PURE__ */ new Set([...recs.map((r) => keyOf(r.realm, r.karta, r.name)), ...sameDir])
+    ].filter((k) => k !== key && readHoldRecord(k) !== null);
     if (others.length) lines.push(`в том же каталоге записи и других мест: ${others.join(", ")}`);
+    lines.push('место не твоё — iskron_channel(action="leave") отпустит его, канал цел');
     return { resumed: true, key, pending: back.pending, word: lines.join("; "), others };
   }
   return { resumed: false, word: `возвращать нечего — ${skipped.join("; ")}` };
@@ -3904,22 +3973,35 @@ var reply = (msg, result) => ({
 });
 var selectorOf = (msg) => ({
   key: typeof msg.params?.key === "string" && msg.params.key.trim() ? msg.params.key.trim() : void 0,
-  cwd: typeof msg.params?.cwd === "string" && msg.params.cwd.trim() ? msg.params.cwd.trim() : void 0
+  cwd: typeof msg.params?.cwd === "string" && msg.params.cwd.trim() ? msg.params.cwd.trim() : void 0,
+  session: typeof msg.params?.session === "string" && msg.params.session.trim() ? msg.params.session.trim() : void 0
 });
+function selectorFrom(msg) {
+  const sel = selectorOf(msg);
+  noteHarnessSession(sel.session);
+  return sel;
+}
 var isResumeCall = (msg) => msg?.method === "iskron/resume";
 var isCheckCall = (msg) => msg?.method === "iskron/check";
 async function runResume(msg) {
-  const sel = selectorOf(msg);
+  const sel = selectorFrom(msg);
   if (!sel.key && !sel.cwd)
     return reply(msg, { resumed: false, word: "ни key, ни cwd не передан" });
   return reply(msg, await resumeBy(sel));
 }
 async function runCheck(msg) {
-  const sel = selectorOf(msg);
+  const sel = selectorFrom(msg);
   const s = state.standing;
   const key = s ? keyOf(s.realm, s.karta, s.name ?? "") : null;
   if (!s || !key || !holdsKey(key)) {
     if (s && key && isParked(s.realm, s.karta, s.name ?? "")) {
+      if (readHoldRecord(key)?.left)
+        return reply(msg, {
+          holding: false,
+          resumed: false,
+          key,
+          word: `место ${key} отпущено словом держателя (leave) — сторож его не поднимает; вернуть: iskron_stand тем же именем`
+        });
       const r2 = await backToParked(key, "сторож слуха");
       return reply(msg, { holding: r2.resumed, ...r2 });
     }
@@ -4547,13 +4629,6 @@ async function runStand(msg) {
     }
     heardHere = true;
     how = `${resumed.word}, register`;
-    const newStatus = typeof a.status === "string" && a.status.trim();
-    if (resumed.status && !newStatus) {
-      const st = await publishStatus(resumed.status);
-      extra.push(
-        st.ok ? `Занятость возвращена с местом: ${resumed.status}` : `Занятость с места не возвращена: ${short(st.body)}`
-      );
-    }
   } else if (a.take !== true && isParked(realm, karta, name) && returnToStanding("iskron_stand")) {
     const r = await register();
     if (r.isError) {
