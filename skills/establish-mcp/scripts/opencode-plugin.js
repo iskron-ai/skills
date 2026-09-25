@@ -32,7 +32,7 @@ var OPENCODE_CLIENT = "opencode-iskron";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-var VERSION = "6.18.0";
+var VERSION = "6.19.0";
 function buildOf(selfUrl) {
   try {
     const src = readFileSync(fileURLToPath(selfUrl));
