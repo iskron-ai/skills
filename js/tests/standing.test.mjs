@@ -1487,7 +1487,7 @@ test("a re-armed watchdog gets hello and only the frames no local client has see
 // A bridge raised anew under a place a previous bridge of this auth dir held
 // (plugin restart, /mcp reconnect) takes the place back from disk — the same
 // address, no connect; a revoke or a dead token forgets the record (#5061).
-test("a bridge restarted under a held place resumes it from disk: same address, no connect, the busy line back; while the board still reads «слушает» — only register", async (t) => {
+test("a bridge restarted under a held place resumes it from disk: same address, no connect, the old busy line not published anew; while the board still reads «слушает» — only register", async (t) => {
   const { fake, dir, bridge, standings } = await connected(t);
   await waitFor(() => fake.state.ws.size === 1, "the socket");
   const st0 = await bridge.call("tools/call", 4, {
@@ -1526,6 +1526,7 @@ test("a bridge restarted under a held place resumes it from disk: same address, 
   assert.equal(fake.state.counts.connect, 1);
   await fake.control({ places: [{ karta: "931", name: "proba", listening: false }] });
 
+  const posts = fake.state.counts.status_posts;
   const st = await second.call("tools/call", 3, {
     name: "iskron_stand",
     arguments: { realm: "nks-dev", karta: 931, name: "proba" },
@@ -1536,8 +1537,12 @@ test("a bridge restarted under a held place resumes it from disk: same address, 
   assert.equal(fake.state.counts.connect, 1, "the place is resumed, not rotated");
   assert.equal(fresh().length, 1, "one socket reopened on the saved address");
   assert.match(said, /Сокет держит этот мост/, said);
-  assert.match(said, /Занятость возвращена с местом: до перезапуска/, said);
-  await waitFor(() => fake.state.status === "до перезапуска", "the busy line to come back");
+  // The busy line is the holder's word about its work: a resume does not publish
+  // it again under a fresh stamp (graph nks-dev: #6017).
+  assert.match(said, /прежняя строка занятости не возвращена/, said);
+  assert.doesNotMatch(said, /Занятость возвращена/, said);
+  await new Promise((r) => setTimeout(r, 300));
+  assert.equal(fake.state.counts.status_posts, posts, "no busy line is published by the resume");
   const write = await second.call("tools/call", 4, {
     name: "iskron_add_phenomenon",
     arguments: { name: "после перезапуска" },
@@ -2101,6 +2106,8 @@ test("iskron/resume by the session's directory: a bridge restarted after the plu
   const { fake, dir, bridge, standings } = await connected(t);
   await waitFor(() => fake.state.ws.size === 1, "the socket");
   const cwd = mkdtempSync(join(tmpdir(), "iskron-session-dir-"));
+  // The plugin names its session to the bridge first (its resume, before any call).
+  await bridge.call("iskron/resume", 4, { cwd, session: "ses-vahta" });
   const stand = await bridge.call("tools/call", 5, {
     name: "iskron_stand",
     arguments: { realm: "nks-dev", karta: 931, name: "proba", cwd, status: "на вахте" },
@@ -2108,11 +2115,9 @@ test("iskron/resume by the session's directory: a bridge restarted after the plu
   const said = (stand.result?.content ?? []).map((c) => c.text ?? "").join("\n");
   assert.match(said, /сокет уже держит этот мост — register/, said);
   const hold = readdirSync(standings).find((f) => f.endsWith(".hold"));
-  assert.equal(
-    JSON.parse(readFileSync(join(standings, hold), "utf8")).cwd,
-    cwd,
-    "the record names the directory",
-  );
+  const rec = JSON.parse(readFileSync(join(standings, hold), "utf8"));
+  assert.equal(rec.cwd, cwd, "the record names the directory");
+  assert.equal(rec.session, "ses-vahta", "the record names the session that stood");
   const known = new Set(fake.state.ws);
   const fresh = () => [...fake.state.ws].filter((x) => !known.has(x));
   bridge.proc.kill("SIGKILL");
@@ -2121,16 +2126,21 @@ test("iskron/resume by the session's directory: a bridge restarted after the plu
   const second = startBridge(fake.mcpUrl, dir);
   t.after(() => second.stop());
   assert.ok((await second.call("initialize", 1, INIT)).result);
-  const wrong = await second.call("iskron/resume", 2, { cwd: "/nowhere/else" });
+  const wrong = await second.call("iskron/resume", 2, {
+    cwd: "/nowhere/else",
+    session: "ses-vahta",
+  });
   assert.equal(wrong.result?.resumed, false, JSON.stringify(wrong));
   assert.equal(fresh().length, 0, "another directory's place is not touched");
   const registers = fake.state.counts.register_standing;
-  const back = await second.call("iskron/resume", 3, { cwd });
+  const posts = fake.state.counts.status_posts;
+  const back = await second.call("iskron/resume", 3, { cwd, session: "ses-vahta" });
   assert.equal(back.result?.resumed, true, JSON.stringify(back));
   assert.equal(back.result.pending, 2, "the answer says how many frames waited");
   assert.match(back.result.word, /возврат места с диска/);
   assert.match(back.result.word, /register/);
-  assert.match(back.result.word, /занятость возвращена: на вахте/);
+  assert.match(back.result.word, /прежняя строка занятости не возвращена/);
+  assert.match(back.result.word, /iskron_channel\(action="leave"\)/, "the way to let go is named");
   assert.equal(fake.state.counts.connect, 1, "the place is resumed, not rotated");
   assert.equal(fresh().length, 1, "one socket reopened on the saved address");
   assert.equal(
@@ -2138,12 +2148,13 @@ test("iskron/resume by the session's directory: a bridge restarted after the plu
     registers + 1,
     "the session is attributed by register",
   );
-  await waitFor(() => fake.state.status === "на вахте", "the busy line to come back");
   assert.ok(
     second.notifications.some((n) => n.params?.data?.kind === "held"),
     "the resumed place is said as «held»",
   );
-  const again = await second.call("iskron/resume", 4, { cwd });
+  await new Promise((r) => setTimeout(r, 300));
+  assert.equal(fake.state.counts.status_posts, posts, "the old busy line is not published anew");
+  const again = await second.call("iskron/resume", 4, { cwd, session: "ses-vahta" });
   assert.equal(again.result?.resumed, true, "a held place answers «held», not a second resume");
   assert.match(again.result.word, /уже держит/);
   assert.equal(fresh().length, 1, "no second socket for a place already held");
@@ -2153,44 +2164,95 @@ test("iskron/resume by the session's directory: a bridge restarted after the plu
   );
 });
 
-// Two standings of one role from one working copy (a brother and me, all day):
-// the directory does not tell them apart, and the resume by directory takes the
-// freshest record — so the answer must name the other records of that directory,
-// for the agent to check the taken name against its own before the first write
-// (graph nks-dev: #5366).
-test("iskron/resume by a directory shared by two places of one role: the freshest is resumed and the answer names the other", async (t) => {
+// Two standings of one role from one working copy, both sessions gone without a
+// way back. Two holders in one directory, stood by two sessions (#5366); the
+// plugin names its session in every resume. Returns the fake, the grant
+// directory and the shared session directory.
+async function twoDeadHolders(t) {
   const { fake, dir, bridge } = await connected(t);
   await waitFor(() => fake.state.ws.size === 1, "the socket");
   const cwd = mkdtempSync(join(tmpdir(), "iskron-shared-dir-"));
+  await bridge.call("iskron/resume", 4, { cwd, session: "ses-proba" });
   await bridge.call("tools/call", 5, {
     name: "iskron_stand",
-    arguments: { realm: "nks-dev", karta: 931, name: "proba", cwd },
+    arguments: { realm: "nks-dev", karta: 931, name: "proba", cwd, status: "свод двух фаз" },
   });
   const brother = startBridge(fake.mcpUrl, dir);
   t.after(() => brother.stop());
   assert.ok((await brother.call("initialize", 1, INIT)).result);
   await new Promise((r) => setTimeout(r, 20)); // the brother's record is the fresher one
-  const stood = await brother.call("tools/call", 2, {
+  await brother.call("iskron/resume", 2, { cwd, session: "ses-brat" });
+  const stood = await brother.call("tools/call", 3, {
     name: "iskron_stand",
-    arguments: { realm: "nks-dev", karta: 931, name: "brat", cwd },
+    arguments: { realm: "nks-dev", karta: 931, name: "brat", cwd, status: "жду архитектора" },
   });
   assert.match((stood.result?.content ?? []).map((c) => c.text ?? "").join("\n"), /brat/);
   await waitFor(() => fake.state.ws.size === 2, "both sockets");
   bridge.proc.kill("SIGKILL");
   brother.proc.kill("SIGKILL");
   await waitFor(() => fake.state.ws.size === 0, "the sockets to close");
+  return { fake, dir, cwd };
+}
+
+// A session that never stood makes its first call in the same directory: the
+// directory alone must give it neither place, and no busy line of a dead holder
+// may reach the board under a fresh stamp (graph nks-dev: #6017).
+test("iskron/resume by a directory of two dead holders gives a session that never stood no place and publishes no busy line", async (t) => {
+  const { fake, dir, cwd } = await twoDeadHolders(t);
+  const known = new Set(fake.state.ws);
+  const fresh = () => [...fake.state.ws].filter((x) => !known.has(x));
+  const posts = fake.state.counts.status_posts;
+  const registers = fake.state.counts.register_standing;
   const third = startBridge(fake.mcpUrl, dir);
   t.after(() => third.stop());
   assert.ok((await third.call("initialize", 1, INIT)).result);
-  const back = await third.call("iskron/resume", 2, { cwd });
-  assert.equal(back.result?.resumed, true, JSON.stringify(back));
-  assert.equal(back.result.key, "brat--931--nks-dev", "the freshest record of the directory");
-  assert.deepEqual(
-    back.result.others,
-    ["proba--931--nks-dev"],
-    "the answer names the other place of the same directory",
+  const stranger = await third.call("iskron/resume", 2, { cwd, session: "ses-novaya" });
+  assert.equal(stranger.result?.resumed, false, JSON.stringify(stranger));
+  assert.match(stranger.result.word, /эта сессия не стояла/);
+  const bare = await third.call("iskron/resume", 3, { cwd });
+  assert.equal(bare.result?.resumed, false, `no session named: ${JSON.stringify(bare)}`);
+  await new Promise((r) => setTimeout(r, 300));
+  assert.equal(fresh().length, 0, "no socket is opened for a place this session never held");
+  assert.equal(fake.state.counts.register_standing, registers, "no register");
+  assert.equal(fake.state.counts.status_posts, posts, "no busy line is published");
+  // Not taken, not erased: the holders' records wait for their own sessions.
+  assert.equal(
+    readdirSync(join(dir, "standings")).filter((f) => f.endsWith(".hold")).length,
+    2,
+    "both records are left for their holders",
   );
-  assert.match(back.result.word, /в том же каталоге записи и других мест: proba--931--nks-dev/);
+});
+
+// The legitimate return: the session that stood gets ITS place back — not the
+// freshest of the directory — without the old busy line, and can let it go by
+// leave without ending the channel.
+test("iskron/resume by the session that stood returns its own place, not the freshest, without its old busy line, and leave lets it go", async (t) => {
+  const { fake, dir, cwd } = await twoDeadHolders(t);
+  const known = new Set(fake.state.ws);
+  const fresh = () => [...fake.state.ws].filter((x) => !known.has(x));
+  const posts = fake.state.counts.status_posts;
+  const back4 = startBridge(fake.mcpUrl, dir);
+  t.after(() => back4.stop());
+  assert.ok((await back4.call("initialize", 1, INIT)).result);
+  const back = await back4.call("iskron/resume", 2, { cwd, session: "ses-proba" });
+  assert.equal(back.result?.resumed, true, JSON.stringify(back));
+  assert.equal(
+    back.result.key,
+    "proba--931--nks-dev",
+    "the session's own record, not the freshest",
+  );
+  assert.deepEqual(back.result.others, ["brat--931--nks-dev"], "the neighbour is named");
+  assert.match(back.result.word, /прежняя строка занятости не возвращена/);
+  assert.match(back.result.word, /iskron_channel\(action="leave"\)/);
+  await waitFor(() => fresh().length === 1, "the socket reopened on the saved address");
+  await new Promise((r) => setTimeout(r, 300));
+  assert.equal(fake.state.counts.status_posts, posts, "the old busy line is not published anew");
+  const left = await back4.call("tools/call", 3, {
+    name: "iskron_channel",
+    arguments: { realm: "nks-dev", action: "leave" },
+  });
+  assert.ok(!left.result?.isError, JSON.stringify(left));
+  assert.match(left.result?.content?.[0]?.text ?? "", /ушёл с места proba--931--nks-dev/);
 });
 
 // The plugin's watch: every N minutes a session that stood asks its bridge
@@ -2276,6 +2338,7 @@ test("a hold record names its harness and key: another harness's record is not r
   const { fake, dir, bridge, standings } = await connected(t, { init: own });
   await waitFor(() => fake.state.ws.size === 1, "the socket");
   const cwd = mkdtempSync(join(tmpdir(), "iskron-harness-dir-"));
+  await bridge.call("iskron/resume", 4, { cwd, session: "ses-1" });
   await bridge.call("tools/call", 5, {
     name: "iskron_stand",
     arguments: { realm: "nks-dev", karta: 931, name: "proba", cwd },
@@ -2308,7 +2371,7 @@ test("a hold record names its harness and key: another harness's record is not r
       })
     ).result,
   );
-  const foreign = await other.call("iskron/resume", 2, { cwd });
+  const foreign = await other.call("iskron/resume", 2, { cwd, session: "ses-1" });
   assert.equal(foreign.result?.resumed, false, JSON.stringify(foreign));
   assert.match(foreign.result.word, /своей записи держания .* нет/);
   assert.equal(fresh().length, 0, "another harness's place is never opened");
@@ -2323,7 +2386,11 @@ test("a hold record names its harness and key: another harness's record is not r
   const keyOnly = await mine.call("iskron/resume", 2, { key: "drugoe--931--nks-dev" });
   assert.equal(keyOnly.result?.resumed, false, "a wrong key without a directory resumes nothing");
   assert.equal(fresh().length, 0);
-  const staleKey = await mine.call("iskron/resume", 3, { key: "drugoe--931--nks-dev", cwd });
+  const staleKey = await mine.call("iskron/resume", 3, {
+    key: "drugoe--931--nks-dev",
+    cwd,
+    session: "ses-1",
+  });
   assert.equal(staleKey.result?.resumed, true, JSON.stringify(staleKey));
   assert.equal(
     staleKey.result.key,

@@ -624,16 +624,17 @@ function takeLostMarker(authDir2) {
 }
 function resumedWord(key, others) {
   const rest = Array.isArray(others) ? others.filter((k) => typeof k === "string") : [];
-  return `Искрон: мост поднялся и сам вернул место ${key} — по своей записи держания (каталог сессии либо ключ прежнего места), без твоего хода. ` + (rest.length ? `В том же каталоге записи и других мест: ${rest.join(", ")} — каталог их не различает, возврат взял свежайшую. ` : "") + "Сверь имя с выведенным для этой сессии: чужое — займи своё одним iskron_stand; запись, уже ушедшую этим ходом, проверь по автору в истории узла — слово под чужим именем ляжет другому месту, а мост ответит успехом.";
+  return `Искрон: мост поднялся и сам вернул место ${key} — по своей записи держания (каталог сессии либо ключ прежнего места), без твоего хода. ` + (rest.length ? `В том же каталоге записи и других мест: ${rest.join(", ")} — каталог их не различает; возврат взял место, на котором стояла эта сессия. ` : "") + 'Сверь имя с выведенным для этой сессии: чужое — отпусти его iskron_channel(action="leave") (канал цел; revoke места, основавшего канал, платформа отвергает) и займи своё одним iskron_stand; запись, уже ушедшую этим ходом, проверь по автору в истории узла — слово под чужим именем ляжет другому месту, а мост ответит успехом.';
 }
 function createKeeper(doors) {
   const roots = /* @__PURE__ */ new Set();
   const hints = /* @__PURE__ */ new Map();
   let stopped = false;
   function selector(slot) {
-    if (slot.child) return slot.key ? { key: slot.key } : {};
-    const key = slot.key ?? (slot.dir ? hints.get(slot.dir) : void 0);
-    return { ...key ? { key } : {}, ...slot.dir ? { cwd: slot.dir } : {} };
+    const session = slot.session ? { session: slot.session } : {};
+    if (slot.child) return slot.key ? { key: slot.key, ...session } : session;
+    const key = slot.key ?? (slot.session ? hints.get(slot.session) : void 0);
+    return { ...key ? { key } : {}, ...slot.dir ? { cwd: slot.dir } : {}, ...session };
   }
   async function resume(slot, root) {
     try {
@@ -688,7 +689,7 @@ function createKeeper(doors) {
   timer.unref?.();
   return {
     hint(entries) {
-      for (const e of entries) if (e.dir && e.key && !e.child) hints.set(e.dir, e.key);
+      for (const e of entries) if (e.session && e.key && !e.child) hints.set(e.session, e.key);
     },
     resume,
     stood(slot) {

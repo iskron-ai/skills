@@ -1140,7 +1140,10 @@ test("stopping the plugin with a holding bridge leaves a marker, and the next in
   ]);
   const second = await plugin(b.env, {
     keepMarker: true,
-    sessions: [{ id: "s-back", location: { directory: "/work/held" } }],
+    sessions: [
+      { id: "s-back", location: { directory: "/work/held" } },
+      { id: "s-held", location: { directory: "/work/held" } },
+    ],
   });
   try {
     assert.match(second.said(), /слух был потерян в \d\d:\d\d/);
@@ -1152,15 +1155,26 @@ test("stopping the plugin with a holding bridge leaves a marker, and the next in
     assert.equal(second.prompts[0].sessionID, "s-next");
     assert.match(second.prompts[0].text, /слух был потерян/);
     assert.match(second.prompts[0].text, /iskron_stand/);
-    // The session of the lost directory resumes by the marker's key, not by directory alone.
+    // Another session of the lost directory gets no key: the marker's key is a
+    // hint only to the session that held its socket (graph nks-dev: #6017).
+    const sentBy = () =>
+      readFileSync(calls, "utf8")
+        .trim()
+        .split("\n")
+        .map((l) => JSON.parse(l));
     writeFileSync(calls, "");
     await second.call("iskron_orient", {}, "s-back");
-    const sent = readFileSync(calls, "utf8")
-      .trim()
-      .split("\n")
-      .map((l) => JSON.parse(l));
-    assert.equal(sent[0].name, "iskron/resume");
-    assert.deepEqual(sent[0].arguments, { key: "proba--931--nks-dev", cwd: "/work/held" });
+    assert.equal(sentBy()[0].name, "iskron/resume");
+    assert.deepEqual(sentBy()[0].arguments, { cwd: "/work/held", session: "s-back" });
+    // The session that held it resumes by the marker's key, not by directory alone.
+    writeFileSync(calls, "");
+    await second.call("iskron_orient", {}, "s-held");
+    assert.equal(sentBy()[0].name, "iskron/resume");
+    assert.deepEqual(sentBy()[0].arguments, {
+      key: "proba--931--nks-dev",
+      cwd: "/work/held",
+      session: "s-held",
+    });
   } finally {
     await second.stop();
   }
@@ -1572,7 +1586,7 @@ test("a child's held place in the loss marker is flagged and never hints the roo
     assert.equal(sent[0].name, "iskron/resume");
     assert.deepEqual(
       sent[0].arguments,
-      { key: "root--2816--nks-dev", cwd: "/work/same" },
+      { key: "root--2816--nks-dev", cwd: "/work/same", session: "root" },
       "the root resumes by ITS key — the child's record of the same directory is no hint",
     );
   } finally {
@@ -1643,7 +1657,7 @@ test("a dead child bridge is replaced by a fresh child bridge that resumes the c
     );
     assert.deepEqual(
       sent[0].arguments,
-      { key: "child--931--nks-dev" },
+      { key: "child--931--nks-dev", session: "child" },
       "a child resumes by key only, never by the shared directory",
     );
     assert.match(rec.said(), /сессия child — возврат места с диска/);

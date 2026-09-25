@@ -1,8 +1,9 @@
 // Слух сессии OpenCode переживает простой, перезапуск плагина и вытеснение
 // каталога (граф nks-dev: #5140). Три хода половины «тулы», собранные здесь:
 //   • возврат места — мост нового экземпляра плагина сам находит СВОЮ запись
-//     держания (`iskron/resume {key?, cwd}`: ключ, если плагин его знает — из
-//     `held` прежнего моста или из маркера потери, иначе каталог сессии) и шлёт
+//     держания (`iskron/resume {key?, cwd, session}`: ключ, если плагин его знает —
+//     из `held` прежнего моста или из маркера потери этой сессии, иначе каталог
+//     сессии, и тогда только запись, на которой стояла она же, #6017) и шлёт
 //     hello.pending, а накопленное приходит пачкой побудки;
 //   • маркер потери — плагин, который останавливают с держащими мостами, пишет
 //     на диск, кого держал (файл на экземпляр: локаций сервиса несколько);
@@ -125,9 +126,9 @@ export function resumedWord(key: string, others?: unknown): string {
   return (
     `Искрон: мост поднялся и сам вернул место ${key} — по своей записи держания (каталог сессии либо ключ прежнего места), без твоего хода. ` +
     (rest.length
-      ? `В том же каталоге записи и других мест: ${rest.join(", ")} — каталог их не различает, возврат взял свежайшую. `
+      ? `В том же каталоге записи и других мест: ${rest.join(", ")} — каталог их не различает; возврат взял место, на котором стояла эта сессия. `
       : "") +
-    "Сверь имя с выведенным для этой сессии: чужое — займи своё одним iskron_stand; " +
+    'Сверь имя с выведенным для этой сессии: чужое — отпусти его iskron_channel(action="leave") (канал цел; revoke места, основавшего канал, платформа отвергает) и займи своё одним iskron_stand; ' +
     "запись, уже ушедшую этим ходом, проверь по автору в истории узла — слово под чужим именем ляжет другому месту, а мост ответит успехом."
   );
 }
@@ -143,7 +144,7 @@ export interface KeeperDoors<S extends KeptSlot> {
 }
 
 export interface Keeper<S extends KeptSlot> {
-  /** Ключи мест из маркера потери — по каталогу: возврат по ключу точнее, чем по каталогу. */
+  /** Ключи мест из маркера потери — по сессии, их державшей: возврат по ключу точнее, чем по каталогу. */
   hint(entries: LostEntry[]): void;
   /** Новая сессия получила мост: вернуть её место с диска, если прежний экземпляр его держал. */
   resume(slot: S, root: string): Promise<void>;
@@ -158,15 +159,20 @@ export interface Keeper<S extends KeptSlot> {
 
 export function createKeeper<S extends KeptSlot>(doors: KeeperDoors<S>): Keeper<S> {
   const roots = new Set<string>(); // стоявшие корневые сессии
-  const hints = new Map<string, string>(); // каталог → ключ из маркера потери
+  // Сессия → ключ из маркера потери. Ключуется сессией, не каталогом: ключ
+  // подсказывается только той сессии, что держала его сокет, — другая сессия
+  // того же каталога чужого места не наследует (#6017).
+  const hints = new Map<string, string>();
   let stopped = false;
 
-  function selector(slot: S): { key?: string; cwd?: string } {
+  function selector(slot: S): { key?: string; cwd?: string; session?: string } {
+    const session = slot.session ? { session: slot.session } : {};
     // Детский мост возвращает место только по ключу: по каталогу он поднял бы
     // запись корня, стоящего в том же каталоге.
-    if (slot.child) return slot.key ? { key: slot.key } : {};
-    const key = slot.key ?? (slot.dir ? hints.get(slot.dir) : undefined);
-    return { ...(key ? { key } : {}), ...(slot.dir ? { cwd: slot.dir } : {}) };
+    if (slot.child) return slot.key ? { key: slot.key, ...session } : session;
+    const key = slot.key ?? (slot.session ? hints.get(slot.session) : undefined);
+    // Сессия — своя запись по каталогу только та, на которой стояла она (мост сверяет).
+    return { ...(key ? { key } : {}), ...(slot.dir ? { cwd: slot.dir } : {}), ...session };
   }
 
   async function resume(slot: S, root: string): Promise<void> {
@@ -232,9 +238,8 @@ export function createKeeper<S extends KeptSlot>(doors: KeeperDoors<S>): Keeper<
 
   return {
     hint(entries) {
-      // Подсказка ключуется каталогом, а корень и его ребёнок стоят в одном:
-      // детская запись корню не подсказка — иначе корень вернул бы детское место.
-      for (const e of entries) if (e.dir && e.key && !e.child) hints.set(e.dir, e.key);
+      // Детская запись корню не подсказка — ребёнок возвращается своим мостом по ключу.
+      for (const e of entries) if (e.session && e.key && !e.child) hints.set(e.session, e.key);
     },
     resume,
     stood(slot) {

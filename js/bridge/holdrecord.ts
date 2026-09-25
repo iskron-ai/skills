@@ -30,6 +30,8 @@ export interface HoldRecord {
   client?: string;
   /** ключ стояния — тот, что печатает блок [iskron-bridge]; возврат по ключу точнее возврата по каталогу */
   key?: string;
+  /** сессия харнесса, стоявшая на месте (id сессии плагина OpenCode): по каталогу место возвращается только ей (#6017) */
+  session?: string;
   /** когда записано (мс эпохи): место без сокета живёт у платформы шесть часов, дольше запись мертва */
   at?: number;
 }
@@ -37,12 +39,32 @@ export interface HoldRecord {
 /** Срок записи — время простоя, которое платформа даёт месту без сокета. */
 export const HOLD_RECORD_MAX_AGE_MS = 6 * 60 * 60 * 1000;
 
+/** Сессия харнесса, чей это мост, — её называет плагин в `iskron/resume` и `iskron/check` (resume.ts). */
+let harnessSession: string | null = null;
+export function noteHarnessSession(id: string | undefined): void {
+  if (id) harnessSession = id;
+}
+export const sessionOfBridge = (): string | null => harnessSession;
+
+/** Сессия, записанная в прежней записи ключа: мост, чья сессия не названа, её не стирает. */
+function sessionOnDisk(key: string): string | undefined {
+  try {
+    const r = JSON.parse(readFileSync(holdFilePathFor(key), "utf8")) as HoldRecord;
+    return typeof r?.session === "string" ? r.session : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export function writeHoldRecord(key: string, rec: HoldRecord): void {
   if (CFG.satellite) return; // место спутника живёт прогоном: возвращать с диска нечего (satellite.ts)
   try {
-    writeFileSync(holdFilePathFor(key), JSON.stringify({ ...rec, at: Date.now() }) + "\n", {
-      mode: 0o600,
-    });
+    const session = harnessSession ?? rec.session ?? sessionOnDisk(key);
+    writeFileSync(
+      holdFilePathFor(key),
+      JSON.stringify({ ...rec, ...(session ? { session } : {}), at: Date.now() }) + "\n",
+      { mode: 0o600 },
+    );
   } catch (e) {
     log(`hold record not written: ${(e as Error).message}`);
   }

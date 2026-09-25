@@ -2362,12 +2362,27 @@ function keyOf(realm, karta, name) {
   return `${name || "_"}--${karta}--${realm}`.replace(/[^A-Za-z0-9._-]+/g, "_").slice(0, 120);
 }
 var HOLD_RECORD_MAX_AGE_MS = 6 * 60 * 60 * 1e3;
+var harnessSession = null;
+function noteHarnessSession(id) {
+  if (id) harnessSession = id;
+}
+function sessionOnDisk(key) {
+  try {
+    const r = JSON.parse(readFileSync7(holdFilePathFor(key), "utf8"));
+    return typeof r?.session === "string" ? r.session : void 0;
+  } catch {
+    return void 0;
+  }
+}
 function writeHoldRecord(key, rec) {
   if (CFG.satellite) return;
   try {
-    writeFileSync6(holdFilePathFor(key), JSON.stringify({ ...rec, at: Date.now() }) + "\n", {
-      mode: 384
-    });
+    const session = harnessSession ?? rec.session ?? sessionOnDisk(key);
+    writeFileSync6(
+      holdFilePathFor(key),
+      JSON.stringify({ ...rec, ...session ? { session } : {}, at: Date.now() }) + "\n",
+      { mode: 384 }
+    );
   } catch (e) {
     log(`hold record not written: ${e.message}`);
   }
@@ -3797,11 +3812,11 @@ async function resumeFromDisk(realm, karta, name) {
     const hello = await awaitHello(4e3);
     if (hello && holdsKey(key)) {
       const pending = Number(hello.pending) || 0;
+      if (rec.status) rememberStatus("");
       log(`standing resumed from disk (${key}), pending ${pending}`);
       standingLog(`resumed-from-disk ${key}: pending ${pending}`);
       return {
-        word: `возврат места с диска после перезапуска моста — сокет открыт заново тем же адресом (ожидало кадров — ${pending})`,
-        status: rec.status,
+        word: `возврат места с диска после перезапуска моста — сокет открыт заново тем же адресом (ожидало кадров — ${pending})` + (rec.status ? "; прежняя строка занятости не возвращена — скажи свою" : ""),
         pending
       };
     }
@@ -3816,23 +3831,30 @@ async function resumeFromDisk(realm, karta, name) {
 }
 function recordsFor(sel) {
   const dir = standingsDirOf(CFG.authDir);
-  if (!existsSync3(dir)) return [];
+  if (!existsSync3(dir)) return { own: [], sameDir: [] };
   const mine = harnessName();
+  const led = ledKey();
   const byKey = [];
   const byCwd = [];
+  const sameDir = [];
   for (const f of readdirSync4(dir).filter((x) => x.endsWith(".hold"))) {
     try {
       const rec = JSON.parse(readFileSync10(join8(dir, f), "utf8"));
       if (!rec || rec.client !== mine) continue;
       const key = keyOf(rec.realm, rec.karta, rec.name);
       const keyed2 = !!sel.key && key === sel.key;
-      if (!keyed2 && (!sel.cwd || rec.cwd !== sel.cwd)) continue;
+      const inDir = !!sel.cwd && rec.cwd === sel.cwd;
+      if (!keyed2 && !inDir) continue;
       const fresh = readHoldRecord(key);
-      if (fresh) (keyed2 ? byKey : byCwd).push(fresh);
+      if (!fresh) continue;
+      if (inDir) sameDir.push(key);
+      const stoodHere = key === led || !!sel.session && fresh.session === sel.session;
+      if (keyed2) byKey.push(fresh);
+      else if (stoodHere) byCwd.push(fresh);
     } catch {
     }
   }
-  return [...byKey, ...byCwd.sort((a, b) => (b.at ?? 0) - (a.at ?? 0))];
+  return { own: [...byKey, ...byCwd.sort((a, b) => (b.at ?? 0) - (a.at ?? 0))], sameDir };
 }
 async function backToParked(key, how) {
   if (!returnToStanding(how)) return { resumed: false, key, word: "возврат на место не удался" };
@@ -3845,11 +3867,11 @@ async function backToParked(key, how) {
   };
 }
 async function resumeBy(sel, register = true) {
-  const recs = recordsFor(sel);
+  const { own: recs, sameDir } = recordsFor(sel);
   if (!recs.length)
     return {
       resumed: false,
-      word: `своей записи держания ${sel.key ? `с ключом ${sel.key}` : `для каталога ${sel.cwd ?? "?"}`} нет`
+      word: `своей записи держания ${sel.key ? `с ключом ${sel.key}` : `для каталога ${sel.cwd ?? "?"}`} нет` + (sameDir.length ? ` — в каталоге лежат записи мест, на которых эта сессия не стояла (${sameDir.join(", ")}); по одному каталогу они не берутся, место займёт iskron_stand` : "")
     };
   const led = ledKey();
   const skipped = [];
@@ -3881,14 +3903,11 @@ async function resumeBy(sel, register = true) {
       });
       lines.push(r.isError ? `register отказал — ${short(r.text)}` : "register");
     }
-    if (back.status) {
-      const st = await publishStatus(back.status);
-      lines.push(
-        st.ok ? `занятость возвращена: ${back.status}` : `занятость не возвращена: ${short(st.body)}`
-      );
-    }
-    const others = recs.map((r) => keyOf(r.realm, r.karta, r.name)).filter((k) => k !== key && readHoldRecord(k) !== null);
+    const others = [
+      .../* @__PURE__ */ new Set([...recs.map((r) => keyOf(r.realm, r.karta, r.name)), ...sameDir])
+    ].filter((k) => k !== key && readHoldRecord(k) !== null);
     if (others.length) lines.push(`в том же каталоге записи и других мест: ${others.join(", ")}`);
+    lines.push('место не твоё — iskron_channel(action="leave") отпустит его, канал цел');
     return { resumed: true, key, pending: back.pending, word: lines.join("; "), others };
   }
   return { resumed: false, word: `возвращать нечего — ${skipped.join("; ")}` };
@@ -3904,18 +3923,24 @@ var reply = (msg, result) => ({
 });
 var selectorOf = (msg) => ({
   key: typeof msg.params?.key === "string" && msg.params.key.trim() ? msg.params.key.trim() : void 0,
-  cwd: typeof msg.params?.cwd === "string" && msg.params.cwd.trim() ? msg.params.cwd.trim() : void 0
+  cwd: typeof msg.params?.cwd === "string" && msg.params.cwd.trim() ? msg.params.cwd.trim() : void 0,
+  session: typeof msg.params?.session === "string" && msg.params.session.trim() ? msg.params.session.trim() : void 0
 });
+function selectorFrom(msg) {
+  const sel = selectorOf(msg);
+  noteHarnessSession(sel.session);
+  return sel;
+}
 var isResumeCall = (msg) => msg?.method === "iskron/resume";
 var isCheckCall = (msg) => msg?.method === "iskron/check";
 async function runResume(msg) {
-  const sel = selectorOf(msg);
+  const sel = selectorFrom(msg);
   if (!sel.key && !sel.cwd)
     return reply(msg, { resumed: false, word: "ни key, ни cwd не передан" });
   return reply(msg, await resumeBy(sel));
 }
 async function runCheck(msg) {
-  const sel = selectorOf(msg);
+  const sel = selectorFrom(msg);
   const s = state.standing;
   const key = s ? keyOf(s.realm, s.karta, s.name ?? "") : null;
   if (!s || !key || !holdsKey(key)) {
@@ -4547,13 +4572,6 @@ async function runStand(msg) {
     }
     heardHere = true;
     how = `${resumed.word}, register`;
-    const newStatus = typeof a.status === "string" && a.status.trim();
-    if (resumed.status && !newStatus) {
-      const st = await publishStatus(resumed.status);
-      extra.push(
-        st.ok ? `Занятость возвращена с местом: ${resumed.status}` : `Занятость с места не возвращена: ${short(st.body)}`
-      );
-    }
   } else if (a.take !== true && isParked(realm, karta, name) && returnToStanding("iskron_stand")) {
     const r = await register();
     if (r.isError) {

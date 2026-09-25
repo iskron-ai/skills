@@ -304,16 +304,9 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
       return done(true);
     }
     heardHere = true;
+    // Строку занятости из записи возврат не публикует заново (#6017): свежая
+    // отметка выдала бы прежнее слово о работе за сказанное сейчас.
     how = `${resumed.word}, register`;
-    const newStatus = typeof a.status === "string" && a.status.trim();
-    if (resumed.status && !newStatus) {
-      const st = await publishStatus(resumed.status);
-      extra.push(
-        st.ok
-          ? `Занятость возвращена с местом: ${resumed.status}`
-          : `Занятость с места не возвращена: ${short(st.body)}`,
-      );
-    }
   } else if (a.take !== true && isParked(realm, karta, name) && returnToStanding("iskron_stand")) {
     // Ушёл с места и вернулся: тот же адрес, сокет открыт заново, register — атрибуция.
     const r = await register();
