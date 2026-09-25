@@ -77,6 +77,9 @@ const COPY = join(SANDBOX, "iskron.js");
 copyFileSync(SOURCE, COPY);
 process.env.HOME = SANDBOX;
 process.env.ISKRON_BRIDGE_AUTH_DIR = join(SANDBOX, "auth");
+/** The window a case burst gathers in before its one prompt — short under the probes. */
+const BATCH_MS = 150;
+process.env.ISKRON_OPENCODE_BATCH_MS = String(BATCH_MS);
 
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 /** The markers keep.ts leaves next to the grant when a plugin stops with a holding bridge — one file per instance. */
@@ -121,7 +124,7 @@ function registry() {
   };
 }
 
-function fakeCtx({ sessions = [], skills = [], gone = new Set() } = {}) {
+function fakeCtx({ sessions = [], skills = [], gone = new Set(), inboxIds = false } = {}) {
   const prompts = [];
   const tools = registry();
   const commands = registry();
@@ -138,9 +141,13 @@ function fakeCtx({ sessions = [], skills = [], gone = new Set() } = {}) {
         if (gone.has(sessionID)) throw new Error(`Session not found: ${sessionID}`);
         return sessions.find((x) => x.id === sessionID) ?? { id: sessionID };
       },
+      // OpenCode answers a prompt with its inbox item; the id comes back in
+      // session.inbox.delivered when a turn takes it. Off by default: most probes need no id.
       prompt: async (o) => {
         prompts.push(o);
-        return {};
+        return inboxIds
+          ? { id: `inbox-${prompts.length}`, type: "user", delivery: o.delivery }
+          : {};
       },
     },
     skill: { list: async () => ({ location: { directory: SANDBOX }, data: skills }) },
@@ -1723,14 +1730,10 @@ test("a room frame reaches the agent with its whole envelope; said defer queues,
     await until(() => rec.tools().has("iskron_channel"), "the channel tool");
     await rec.call("iskron_channel", { action: "connect" }, "s-room");
     const [pid] = pidsOf(b.log);
-    const said = saidFrame("defer", 41);
+    const said = saidFrame("interrupt", 41);
     appendFileSync(`${b.events}.${pid}`, event("frame", { frame: said, raw: "" }));
     await until(() => rec.prompts.length === 1, "the room frame to be prompted");
-    assert.equal(
-      rec.prompts[0].delivery,
-      "queue",
-      "said with stack=defer must not interrupt the running turn (#4957)",
-    );
+    assert.equal(rec.prompts[0].delivery, "steer", "said with stack=interrupt steers");
     const text = rec.prompts[0].text;
     assert.match(
       text,
@@ -1749,7 +1752,7 @@ test("a room frame reaches the agent with its whole envelope; said defer queues,
       "the room envelope must reach the agent, not be dropped by a key whitelist",
     );
     assert.equal(envelope.event_kind, "room.said");
-    assert.equal(envelope.stack, "defer");
+    assert.equal(envelope.stack, "interrupt");
     assert.equal(envelope.entry_id, 41);
 
     const closed = roomFrame("closed", {
@@ -1765,6 +1768,22 @@ test("a room frame reaches the agent with its whole envelope; said defer queues,
       rec.prompts[1].text,
       /^Кадр канала Искрона от ПЛАТФОРМЫ — побудка, не человек и не делатель\nзапись ДЕЛА «Стенд»: дело закрыто: consensus\n/,
       "a room record without an author is the platform speaking, not an unknown doer",
+    );
+
+    appendFileSync(
+      `${b.events}.${pid}`,
+      event("frame", { frame: saidFrame("defer", 43), raw: "" }),
+    );
+    await until(() => rec.prompts.length === 3, "the deferred word to be prompted");
+    assert.equal(
+      rec.prompts[2].delivery,
+      "queue",
+      "said with stack=defer must not interrupt the running turn (#4957)",
+    );
+    assert.match(
+      rec.prompts[2].text,
+      /^Дело: кадров 1 — [^\n]*\n\[43\] слово от Алексей \(@aleksei:probe\): слово со стопкой defer$/,
+      "a deferred word is a line of the case burst, its envelope behind the history pointer",
     );
   } finally {
     await rec.stop();
@@ -1917,7 +1936,7 @@ test("room kinds: a said in flight queues, body follows its stack in words, an a
     const text = await send(bodyFrame(55, 54), 2);
     assert.equal(text.delivery, "queue", "body with its word's stack=defer queues");
     assert.match(text.text, /текст слова \[54\] от Алексей \(@aleksei:probe\)/);
-    assert.match(text.text, /\n\nтекст второй фазы$/, "the word's text passes through");
+    assert.match(text.text, /: текст второй фазы$/, "the word's text passes through in its line");
     assert.doesNotMatch(text.text, /неизвестен/, "body is a kind the bridge knows");
     const loud = bodyFrame(61, 60);
     loud.stack = "interrupt";
@@ -1931,6 +1950,132 @@ test("room kinds: a said in flight queues, body follows its stack in words, an a
     assert.match(byTerm.text, /слово \[58\] оборвано платформой по сроку/);
     const plain = await send(saidFrame("interrupt", 62), 6);
     assert.equal(plain.delivery, "steer", "a said without body_pending still steers");
+  } finally {
+    await rec.stop();
+  }
+});
+
+// A case burst was one queue prompt per frame, and OpenCode hands the queue out one
+// prompt per turn: on a live case the lag reached an hour and a half, and direct
+// words stood in the same queue behind it.
+const caseBurst = (from, n) => Array.from({ length: n }, (_, i) => progress(from + i));
+const lines = (frames) =>
+  frames.map((frame) => event("frame", { frame, raw: JSON.stringify(frame) })).join("");
+
+test("ten case frames in a row are one queue prompt: a head with the history pointer, then a line per frame", async () => {
+  const b = bridgeEnv("case-burst");
+  const rec = await plugin(b.env);
+  try {
+    await serverTools(rec);
+    await rec.call("iskron_channel", { action: "connect" }, "s-burst");
+    const [pid] = pidsOf(b.log);
+    appendFileSync(`${b.events}.${pid}`, lines(caseBurst(201, 10)));
+    await until(() => rec.prompts.length >= 1, "the burst prompt");
+    await delay(BATCH_MS * 4);
+    assert.equal(rec.prompts.length, 1, "ten frames, one prompt — never one per frame");
+    const [p] = rec.prompts;
+    assert.equal(p.delivery, "queue");
+    const rows = p.text.split("\n");
+    assert.match(
+      rows[0],
+      /^Дело: кадров 10 — .*iskron_case\(realm="nks-dev", action="history", room=7, since=200\)/,
+    );
+    assert.equal(rows.length, 11, "a head and ten lines, no envelopes");
+    rows.slice(1).forEach((row, i) => assert.match(row, new RegExp(`^\\[${201 + i}\\] `)));
+  } finally {
+    await rec.stop();
+  }
+});
+
+test("a direct word and a human word amid a case burst steer apart and whole; the burst stays one prompt", async () => {
+  const b = bridgeEnv("case-direct");
+  const rec = await plugin(b.env);
+  try {
+    await serverTools(rec);
+    await rec.call("iskron_channel", { action: "connect" }, "s-direct");
+    const [pid] = pidsOf(b.log);
+    // Both carry stack=defer: a stack is a case's word, not a reason to queue a direct word.
+    const direct = { ...directWord("direct-9"), stack: "defer" };
+    const human = saidFrame("defer", 230);
+    human.provenance = { ...human.provenance, as_person: true };
+    appendFileSync(
+      `${b.events}.${pid}`,
+      lines([...caseBurst(211, 5), direct, human, ...caseBurst(216, 5)]),
+    );
+    await until(() => rec.prompts.length >= 3, "two words and the burst");
+    await delay(BATCH_MS * 4);
+    assert.equal(rec.prompts.length, 3, "two words apart, the ten case frames in one prompt");
+    const steered = rec.prompts.filter((p) => p.delivery === "steer");
+    const queued = rec.prompts.filter((p) => p.delivery === "queue");
+    assert.equal(steered.length, 2, "neither word waits in the case queue");
+    assert.match(
+      steered[0].text,
+      /^Кадр канала Искрона от делателя роли #48 — стояние @alari:sosed\n[\s\S]*\n\nпрямое слово соседа$/,
+      "the direct word goes whole, its envelope and body intact",
+    );
+    assert.match(steered[1].text, /^Кадр канала Искрона от ЧЕЛОВЕКА/);
+    assert.match(steered[1].text, /\n\nслово со стопкой defer$/, "the human word goes whole");
+    assert.equal(queued.length, 1);
+    assert.match(queued[0].text, /^Дело: кадров 10 — /);
+    assert.doesNotMatch(
+      queued[0].text,
+      /прямое слово|слово со стопкой/,
+      "no word inside the burst",
+    );
+  } finally {
+    await rec.stop();
+  }
+});
+
+test("a lone interrupting case frame still steers at once and whole", async () => {
+  const b = bridgeEnv("case-lone");
+  const rec = await plugin(b.env);
+  try {
+    await serverTools(rec);
+    await rec.call("iskron_channel", { action: "connect" }, "s-lone");
+    const [pid] = pidsOf(b.log);
+    const c = closing();
+    appendFileSync(`${b.events}.${pid}`, lines([c]));
+    await until(() => rec.prompts.length === 1, "the closing prompt");
+    await delay(BATCH_MS * 3);
+    assert.equal(rec.prompts.length, 1);
+    assert.equal(rec.prompts[0].delivery, "steer");
+    assert.deepEqual(envelopeOf(rec.prompts[0].text).line, c.line, "the envelope travels whole");
+    assert.match(rec.prompts[0].text, /\n\nсделано, см\. 41$/);
+  } finally {
+    await rec.stop();
+  }
+});
+
+test("while the burst prompt waits in the session's queue, new case frames wait here and go as one prompt when OpenCode takes it", async () => {
+  const b = bridgeEnv("case-pending");
+  const rec = await plugin(b.env, { inboxIds: true });
+  try {
+    await serverTools(rec);
+    await rec.call("iskron_channel", { action: "connect" }, "s-pend");
+    const [pid] = pidsOf(b.log);
+    appendFileSync(`${b.events}.${pid}`, lines(caseBurst(241, 2)));
+    await until(() => rec.prompts.length >= 1, "the first burst");
+    for (const [i, frame] of caseBurst(243, 3).entries()) {
+      appendFileSync(`${b.events}.${pid}`, lines([frame]));
+      await delay(BATCH_MS * 2 + i);
+    }
+    assert.equal(rec.prompts.length, 1, "the first prompt is not taken yet: the rest wait here");
+    rec.emit({
+      type: "session.inbox.delivered",
+      data: { sessionID: "s-pend", inboxID: "inbox-1" },
+    });
+    await until(() => rec.prompts.length === 2, "the held frames after the take");
+    assert.equal(rec.prompts[1].delivery, "queue");
+    assert.match(rec.prompts[1].text, /^Дело: кадров 3 — /);
+    assert.deepEqual(
+      rec.prompts[1].text
+        .split("\n")
+        .slice(1)
+        .map((r) => r.match(/^\[(\d+)\]/)?.[1]),
+      ["243", "244", "245"],
+      "every held frame enters the prompt that goes, none twice",
+    );
   } finally {
     await rec.stop();
   }
@@ -1976,7 +2121,11 @@ test("room kinds leave non-room frames and the old room shape as on main: every 
     );
     assert.match(rec.prompts[2].text, /слово ДЕЛА «Стенд», род text, стопка interrupt/);
     assert.match(rec.prompts[5].text, /запись ДЕЛА «Стенд», род auto, стопка interrupt\n/);
-    assert.match(rec.prompts[7].text, /запись ДЕЛА «Стенд», род digest, стопка defer\n/);
+    assert.match(
+      rec.prompts[7].text,
+      /^Дело: кадров 1 — [^\n]*\n\[76\] кадр room-old-76: /,
+      "an old deferred room frame is a line of the case burst",
+    );
     assert.ok(
       rec.prompts.every((p) => !/мосту неизвестен/.test(p.text)),
       "no old kind takes the unknown path",

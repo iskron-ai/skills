@@ -8,7 +8,7 @@
 // ложится. Кадр без event_kind словарь не трогает: он
 // идёт сразу, как прежде. Кольцо двери при этом получает каждый кадр (hold.ts).
 import { classifyOrigin, type Frame } from "../shared/channel.ts";
-import { batchPointer } from "../shared/frame-text.ts";
+import { batchHead } from "../shared/frame-text.ts";
 import { byKind, roomKind, stackOf } from "../shared/room-kinds.ts";
 import { deliveredKeys, noteSeen } from "../shared/seen.ts";
 import { type ChannelEvent, type Door } from "./door.ts";
@@ -85,14 +85,7 @@ export class RoomBatch {
     const emit = this.emit;
     if (!got.length || !emit) return;
     const of = got.length;
-    // Как прочесть целиком — в шапке, не в конце: обрезка режет хвост.
-    emit({
-      kind: "note",
-      text:
-        `Дело: кадров ${of} — накопились, не прерывая хода; ` +
-        `${batchPointer(got.map((h) => h.frame))}; следом по строке на кадр.`,
-      batch: { at: 0, of },
-    });
+    emit({ kind: "note", text: batchHead(got.map((h) => h.frame)), batch: { at: 0, of } });
     got.forEach((h, i) =>
       emit({ kind: "frame", raw: h.raw, frame: h.frame, batch: { at: i + 1, of } }),
     );

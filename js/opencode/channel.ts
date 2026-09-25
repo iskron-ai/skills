@@ -10,6 +10,11 @@
 // Живой кадр и громкое слово о слухе идут steer: с queue у делателя с длинными
 // ходами кадры всплывали по одному за ход и отставали часами (граф nks-dev:
 // #5233). Пачка побудки и лежалых — queue: она не срочна и ход не режет.
+// Кадры дела «в пачку» — тоже queue, но одним промптом на пачку, как у сторожа:
+// шапка с указателем на history и по строке на кадр. Пока прежний промпт пачки
+// не взят ходом, новые кадры копятся здесь (дописать неотданный промпт
+// контекст плагина не даёт) и уходят одним, когда OpenCode скажет, что взял.
+// Прямое слово и слово человека в пачку не ложатся — steer, целиком.
 // Доставка есть возврат управления агенту; кадр, ушедший в лог, — глушитель
 // (урок контура opencode-плагина канала: делатель стоит глухим, считая себя
 // слушающим).
@@ -20,8 +25,9 @@
 // нет); дочерняя сессия (субагент) — адресат только своего моста, поднятого её
 // собственным стоянием (#5154), угадыванием она не выбирается.
 import { type ChannelEvent } from "../bridge/hold.ts";
-import { frameToText } from "../shared/frame-text.ts";
-import { stackOf } from "../shared/room-kinds.ts";
+import { classifyOrigin, type Frame, isDirectWord } from "../shared/channel.ts";
+import { batchHead, batchLine, frameToText } from "../shared/frame-text.ts";
+import { roomKind, stackOf } from "../shared/room-kinds.ts";
 import type { Context } from "./plugin.ts";
 import { type Say } from "./tools.ts";
 
@@ -31,6 +37,33 @@ export interface Channel {
    * ничей); `child` — мост дочерней сессии, вставшей своим вызовом.
    */
   onEvent(session: string | null, params: unknown, child?: boolean): void;
+  /** OpenCode взял промпт из очереди сессии (`inbox` — его id) или сессия встала (без id). */
+  taken(session: string, inbox?: string): void;
+  /** Плагин останавливают: накопленное уходит сейчас, не умирает с ним. */
+  stop(): void;
+}
+
+/** Окно пачки дела; переменная — шов для проб, не ручка человека. */
+const CASE_BATCH_MS = Number(process.env.ISKRON_OPENCODE_BATCH_MS) || 5_000;
+/** Полная пачка уходит, не дожидаясь окна. */
+const CASE_BATCH_CAP = 20;
+/** Промпт пачки, о взятии которого OpenCode молчит дольше, считается взятым: кадры не ждут вечно. */
+const PENDING_MAX_MS = 15 * 60_000;
+
+/** Кадр дела в пачку: стопка batch, не прямое слово и не слово человека (его полёт и обрыв — в пачку). */
+function toPile(frame: Frame | null): boolean {
+  if (!frame || frame.type !== "message" || stackOf(frame) !== "batch" || isDirectWord(frame))
+    return false;
+  return (frame.origin ?? classifyOrigin(frame)) !== "human" || !!roomKind(frame)?.phase;
+}
+
+interface Pile {
+  session: string | null;
+  child: boolean;
+  held: Frame[];
+  timer: ReturnType<typeof setTimeout> | null;
+  /** Промпт пачки в очереди сессии, ещё не взятый ходом; inbox null — ещё в полёте. */
+  pending: { session: string; inbox: string | null; at: number } | null;
 }
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- уведомления моста без схемы */
@@ -55,7 +88,7 @@ export function setupChannel(ctx: Context, say: Say, freshestRoot: () => string 
     frame = "кадр",
     delivery: "steer" | "queue" = "steer",
     child = false,
-  ): Promise<void> {
+  ): Promise<{ session: string; inbox: string | null } | null> {
     let id = session;
     if (child && (!id || !(await accepting(id)))) {
       // Место дочерней сессии пережило её: корню этот кадр не адресован — там
@@ -65,7 +98,7 @@ export function setupChannel(ctx: Context, say: Say, freshestRoot: () => string 
           `кадр остаётся в истории стояния (iskron_channel history); место дочерней сессии — лишнее на канале, где корень стоит дальше: снимать ли его revoke, решай, зная цену (standing) —${text.slice(0, 120)}`,
         "error",
       );
-      return;
+      return null;
     }
     if (id && !(await accepting(id))) {
       say(
@@ -82,14 +115,62 @@ export function setupChannel(ctx: Context, say: Say, freshestRoot: () => string 
           text.slice(0, 120),
         "error",
       );
-      return;
+      return null;
     }
     try {
-      await ctx.session.prompt({ sessionID: id, text, delivery });
+      const r: any = await ctx.session.prompt({ sessionID: id, text, delivery });
       say(`Искрон: ${frame} вложен в сессию ${id}`, "info");
+      const inbox = r?.id ?? r?.data?.id;
+      return { session: id, inbox: typeof inbox === "string" ? inbox : null };
     } catch (e) {
       say(`Искрон: ${frame} не вложился в сессию ${id}: ${(e as Error).message}`, "error");
+      return null;
     }
+  }
+
+  // Пачки дела — по мосту-адресату: копятся окном, а пока прежний промпт пачки
+  // ждёт в очереди сессии — до его взятия. Кадр покидает пачку, только войдя в
+  // отданный промпт.
+  const piles = new Map<string, Pile>();
+  const takenEarly = new Set<string>();
+
+  function schedule(p: Pile): void {
+    if (p.timer) clearTimeout(p.timer);
+    const wait = p.pending
+      ? Math.max(0, p.pending.at + PENDING_MAX_MS - Date.now())
+      : CASE_BATCH_MS;
+    p.timer = setTimeout(() => {
+      p.timer = null;
+      p.pending = null; // окно вышло либо OpenCode молчит о взятии дольше предела
+      flush(p);
+    }, wait);
+    (p.timer as { unref?: () => void }).unref?.();
+  }
+
+  function flush(p: Pile): void {
+    if (p.timer) clearTimeout(p.timer);
+    p.timer = null;
+    if (!p.held.length) return;
+    const frames = p.held.splice(0);
+    const at = Date.now();
+    p.pending = { session: "", inbox: null, at };
+    const text = [batchHead(frames), ...frames.map(batchLine)].join("\n");
+    void deliver(p.session, text, `пачка дела (${frames.length})`, "queue", p.child).then((got) => {
+      // Без id взятия не увидеть: следующая пачка — по окну, не по взятию.
+      const inbox = got?.inbox && !takenEarly.delete(got.inbox) ? got.inbox : null;
+      p.pending = got && inbox ? { session: got.session, inbox, at } : null;
+      if (p.held.length) schedule(p);
+    });
+  }
+
+  function pile(session: string | null, child: boolean, frame: Frame): void {
+    const key = `${child ? "child" : "root"}:${session ?? ""}`;
+    let p = piles.get(key);
+    if (!p) piles.set(key, (p = { session, child, held: [], timer: null, pending: null }));
+    if (frame.id && p.held.some((f) => f.id === frame.id)) return; // повтор ждущего
+    p.held.push(frame);
+    if (!p.pending && p.held.length >= CASE_BATCH_CAP) return flush(p);
+    if (!p.timer) schedule(p);
   }
 
   function loud(session: string | null, text: string): void {
@@ -98,6 +179,27 @@ export function setupChannel(ctx: Context, say: Say, freshestRoot: () => string 
   }
 
   return {
+    taken(session, inbox) {
+      let matched = false;
+      for (const p of piles.values()) {
+        if (!p.pending || (inbox ? p.pending.inbox !== inbox : p.pending.session !== session))
+          continue;
+        matched = true;
+        p.pending = null;
+        flush(p); // накопленное за ходом уже подождало — уходит сейчас
+      }
+      // Взятие обогнало ответ на prompt: id запоминается, пачка сверит его по ответу.
+      if (inbox && !matched) {
+        takenEarly.add(inbox);
+        for (const old of takenEarly) if (takenEarly.size > 100) takenEarly.delete(old);
+      }
+    },
+    stop() {
+      for (const p of piles.values()) {
+        p.pending = null;
+        flush(p);
+      }
+    },
     onEvent(session, params: any, child = false) {
       const ev = params?.data as ChannelEvent | undefined;
       if (!ev || typeof ev !== "object") return;
@@ -108,12 +210,13 @@ export function setupChannel(ctx: Context, say: Say, freshestRoot: () => string 
           if (frame?.type === "hello") return say("Искрон: канал слушает", "info");
           if (frame?.type === "status") return;
           // Путь кадра (#5851): с event_kind — правило рода, без него — своя стопка
-          // кадра, как прежде (#4957); пачка — очередью до конца хода, прочее — вставкой.
+          // кадра, как прежде (#4957); пачка — одним промптом очередью, прочее — вставкой.
+          if (frame && toPile(frame)) return pile(session, child, frame);
           void deliver(
             session,
             frameToText(frame, ev.raw ?? ""),
             `кадр ${frame?.id ?? "без id"}`,
-            stackOf(frame) === "batch" ? "queue" : "steer",
+            "steer",
             child,
           );
           return;

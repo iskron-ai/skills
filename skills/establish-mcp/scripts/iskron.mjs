@@ -2191,6 +2191,9 @@ function batchLine(frame2) {
   const text = flat.length > BATCH_TEXT ? flat.slice(0, BATCH_TEXT).join("") + "…" : flat.join("");
   return `[${entry}] ${words}${author}${text ? `: ${text}` : ""}`;
 }
+function batchHead(frames) {
+  return `Дело: кадров ${frames.length} — накопились, не прерывая хода; ${batchPointer(frames)}; следом по строке на кадр.`;
+}
 function batchPointer(frames) {
   const since = /* @__PURE__ */ new Map();
   for (const frame2 of frames) {
@@ -2433,11 +2436,7 @@ var RoomBatch = class {
     const emit2 = this.emit;
     if (!got.length || !emit2) return;
     const of = got.length;
-    emit2({
-      kind: "note",
-      text: `Дело: кадров ${of} — накопились, не прерывая хода; ${batchPointer(got.map((h) => h.frame))}; следом по строке на кадр.`,
-      batch: { at: 0, of }
-    });
+    emit2({ kind: "note", text: batchHead(got.map((h) => h.frame)), batch: { at: 0, of } });
     got.forEach(
       (h, i) => emit2({ kind: "frame", raw: h.raw, frame: h.frame, batch: { at: i + 1, of } })
     );

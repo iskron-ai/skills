@@ -81,9 +81,11 @@ async function setup(ctx: Context): Promise<() => void> {
   // Половины ставятся порознь и каждая под своим try: сорвавшаяся одна не
   // должна унести другую — и не должна унести загрузку плагина.
   let onChannel: (session: string | null, params: unknown, child?: boolean) => void = () => {};
+  let ch: ReturnType<typeof setupChannel> | null = null;
   try {
-    const ch = setupChannel(ctx, say, freshestRoot);
-    onChannel = (s, p, c) => ch.onEvent(s, p, c);
+    const c0 = setupChannel(ctx, say, freshestRoot);
+    ch = c0;
+    onChannel = (s, p, c) => c0.onEvent(s, p, c);
   } catch (e) {
     say(`Искрон: канал не встал — ${(e as Error).message}`, "error");
   }
@@ -132,6 +134,14 @@ async function setup(ctx: Context): Promise<() => void> {
           case "skill.updated":
             void commands.refresh();
             break;
+          // Очередь сессии сдвинулась: ждущая пачка дела уходит одним промптом.
+          case "session.inbox.delivered":
+          case "session.inbox.cancelled":
+            if (id && typeof ev.data?.inboxID === "string") ch?.taken(id, ev.data.inboxID);
+            break;
+          case "session.idle":
+            if (id) ch?.taken(id);
+            break;
         }
       }
     } catch {
@@ -141,6 +151,7 @@ async function setup(ctx: Context): Promise<() => void> {
 
   return () => {
     controller.abort();
+    ch?.stop();
     half.stop();
   };
 }
