@@ -38,6 +38,7 @@ export interface HoldRecord {
 export const HOLD_RECORD_MAX_AGE_MS = 6 * 60 * 60 * 1000;
 
 export function writeHoldRecord(key: string, rec: HoldRecord): void {
+  if (CFG.satellite) return; // место спутника живёт прогоном: возвращать с диска нечего (satellite.ts)
   try {
     writeFileSync(holdFilePathFor(key), JSON.stringify({ ...rec, at: Date.now() }) + "\n", {
       mode: 0o600,
