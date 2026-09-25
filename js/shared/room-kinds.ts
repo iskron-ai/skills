@@ -34,6 +34,8 @@ export const WORDS: Readonly<Record<string, string>> = {
   withdraw: "приглашение отозвано, отзывает {author}",
   node: "в деле узел #{seq} {name} ({realm}){; reasoning}",
   node_updated: "узел #{seq} {name} обновлён{; reasoning}",
+  node_deleted: "узел #{seq} {name} удалён{; reasoning}",
+  node_undeleted: "узел #{seq} {name} восстановлен{; reasoning}",
   link: "дело связано с #{room} ({rel})",
   auto: "запись платформы {code} о деле #{room}",
   unknown: "род {kind} мосту неизвестен",
@@ -52,6 +54,13 @@ export const REL_WORDS: Readonly<Record<string, string>> = {
   parent: "дочернее к нему",
   child: "родительское к нему",
   continues: "продолжает его",
+};
+
+/** Слово записи node по op (#6070); bound и неизвестный op — WORDS.node. */
+const NODE_OPS: Readonly<Record<string, string>> = {
+  updated: WORDS.node_updated,
+  deleted: WORDS.node_deleted,
+  undeleted: WORDS.node_undeleted,
 };
 
 /**
@@ -198,7 +207,8 @@ export function roomKind(frame: Frame | null | undefined): RoomKind | null {
     seq: node.seq,
     name: node.name,
     realm: node.realm,
-    reasoning: fields.reasoning,
+    // reasoning дельты узла — тело записи node (line.done, body кадра), не поле (слово api, #6070).
+    reasoning: kind === "node" ? line.done || f.body : undefined,
   };
   const rule = RULES[kind];
   const author = str(values.author);
@@ -223,9 +233,9 @@ export function roomKind(frame: Frame | null | undefined): RoomKind | null {
         : WORDS.body_aborted
       : kind === "auto"
         ? (AUTO_WORDS[str(values.code)] ?? WORDS.auto)
-        : // op узла (bound | updated): только updated меняет слово; без op — как bound.
-          kind === "node" && fields.op === "updated"
-          ? WORDS.node_updated
+        : // op узла (bound | updated | deleted | undeleted): без op и bound — прежнее слово.
+          kind === "node" && NODE_OPS[str(fields.op)]
+          ? NODE_OPS[str(fields.op)]
           : WORDS[kind];
   let words = fill(wordsOf, values);
   if (kind === "closing") {
