@@ -70,11 +70,12 @@ var WORDS = {
   late_objection: "{author} возразил после закрытия",
   progress: "{author}: [{key}] {done} = {verdict}{; note}",
   opened: "дело открыл {author}",
-  joined: "вошёл {author}",
-  left: "вышел {author}",
+  joined: "вошёл {who}",
+  left: "вышел {who}{; причина: reason}",
   invite: "{author} зовёт {who} в дело",
   withdraw: "приглашение отозвано, отзывает {author}",
-  node: "в деле узел #{seq} {name} ({realm})",
+  node: "в деле узел #{seq} {name} ({realm}){; reasoning}",
+  node_updated: "узел #{seq} {name} обновлён{; reasoning}",
   link: "дело связано с #{room} ({rel})",
   auto: "запись платформы {code} о деле #{room}",
   unknown: "род {kind} мосту неизвестен"
@@ -157,13 +158,12 @@ function roomKind(frame) {
   const key = str(line.key);
   const mine = mineOf(f);
   const node = obj(fields.node);
+  const byWhom = authorOf(
+    kind === "body" && Object.keys(obj(f.in_reply_to_from)).length ? f.in_reply_to_from : line.author
+  );
   const values = {
     kind,
-    // У body строка — запись тела (у обрыва по сроку её автор — платформа);
-    // автор самого слова — in_reply_to_from конверта (#5893 §4.5b, §4.6).
-    author: authorOf(
-      kind === "body" && Object.keys(obj(f.in_reply_to_from)).length ? f.in_reply_to_from : line.author
-    ),
+    author: byWhom,
     key,
     done: line.done,
     verdict: line.verdict,
@@ -176,13 +176,15 @@ function roomKind(frame) {
     reason: fields.reason,
     target: after(key, "invite:"),
     // Ключ несёт id; имя приглашённого — в полях строки (наблюдено на бою: standing/karta с name).
-    who: whoOf(fields) || after(key, "invite:"),
+    // Вошедший и ушедший — место fields.standing (уход по сроку пишет платформа, api 0.89.6), иначе автор.
+    who: kind === "joined" || kind === "left" ? whoOf({ standing: fields.standing }) || byWhom : whoOf(fields) || after(key, "invite:"),
     room: roomOf(fields.room) || after(key, "link:"),
     rel: REL_WORDS[str(fields.rel)] ?? fields.rel,
     code: fields.code,
     seq: node.seq,
     name: node.name,
-    realm: node.realm
+    realm: node.realm,
+    reasoning: fields.reasoning
   };
   const rule = RULES[kind];
   const author = str(values.author);
@@ -197,7 +199,10 @@ function roomKind(frame) {
     };
   const pending = kind === "said" && f.body_pending === true && !str(f.body) && !str(line.done);
   const aborted = kind === "body" && fields.aborted === true;
-  const wordsOf = pending ? WORDS.said_pending : aborted ? obj(line.author).kind === "platform" ? WORDS.body_lapsed : WORDS.body_aborted : kind === "auto" ? AUTO_WORDS[str(values.code)] ?? WORDS.auto : WORDS[kind];
+  const wordsOf = pending ? WORDS.said_pending : aborted ? obj(line.author).kind === "platform" ? WORDS.body_lapsed : WORDS.body_aborted : kind === "auto" ? AUTO_WORDS[str(values.code)] ?? WORDS.auto : (
+    // op узла (bound | updated): только updated меняет слово; без op — как bound.
+    kind === "node" && fields.op === "updated" ? WORDS.node_updated : WORDS[kind]
+  );
   let words = fill(wordsOf, values);
   if (kind === "closing") {
     const may = Array.isArray(fields.may_object) ? fields.may_object.map((m) => typeof m === "string" ? m : str(obj(m).id)) : [];
