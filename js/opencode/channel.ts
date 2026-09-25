@@ -48,7 +48,7 @@ const CASE_BATCH_MS = Number(process.env.ISKRON_OPENCODE_BATCH_MS) || 5_000;
 /** Полная пачка уходит, не дожидаясь окна. */
 const CASE_BATCH_CAP = 20;
 /** Промпт пачки, о взятии которого OpenCode молчит дольше, считается взятым: кадры не ждут вечно. */
-const PENDING_MAX_MS = 15 * 60_000;
+const PENDING_MAX_MS = Number(process.env.ISKRON_OPENCODE_PENDING_MS) || 120_000;
 
 /** Кадр дела в пачку: стопка batch, не прямое слово и не слово человека (его полёт и обрыв — в пачку). */
 function toPile(frame: Frame | null): boolean {

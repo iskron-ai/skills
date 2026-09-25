@@ -1124,7 +1124,7 @@ async function setupTools(ctx, say, onChannel, rootOf) {
 // js/opencode/channel.ts
 var CASE_BATCH_MS = Number(process.env.ISKRON_OPENCODE_BATCH_MS) || 5e3;
 var CASE_BATCH_CAP = 20;
-var PENDING_MAX_MS = 15 * 6e4;
+var PENDING_MAX_MS = Number(process.env.ISKRON_OPENCODE_PENDING_MS) || 12e4;
 function toPile(frame) {
   if (!frame || frame.type !== "message" || stackOf(frame) !== "batch" || isDirectWord(frame))
     return false;
