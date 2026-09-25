@@ -16,6 +16,7 @@ import {
   deadTokenAdvice,
   type Holder,
   holdSocket,
+  isDirectWord,
   statusUrl as deriveStatusUrl,
 } from "../shared/channel.ts";
 import { deliveredKeys, noteSeen } from "../shared/seen.ts";
@@ -362,7 +363,8 @@ function deliverTo(d: Door, raw: string, frame: Frame | null, full: Frame | null
   // пачкой на полосу, не по одному; лежалая копия уже отданного кадра в пачку не идёт.
   // pi и OpenCode: уведомление пачкой и есть доставка — отданными метятся все кадры
   // полосы, иначе платформа, отдав их снова после переподключения, будит ими опять (#5831).
-  if (full?.type === "message" && full.stale === true)
+  // Прямое слово в пачку лежалых не ложится: идёт отдельно и целиком, путём живого.
+  if (full?.type === "message" && full.stale === true && !isDirectWord(full))
     return again
       ? log(`stale frame ${id} already delivered — dropped`)
       : d.stale.note(full, (ev, all) => {

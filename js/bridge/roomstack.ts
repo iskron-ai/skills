@@ -3,10 +3,11 @@
 // Monitor, Codex, сторож выхода) пачку копит мост: кадр с event_kind рода
 // «в пачку» ложится в пачку своей двери и уходит по окну, по полной пачке или
 // перед прерывающим кадром — порядок цел. Пачка уходит залпом обычных событий
-// frame (слово шапки у каждого своё) за одной строкой note: сторож любой
-// редакции печатает их как кадры. Кадр без event_kind словарь не трогает: он
+// frame с меткой batch за одной строкой note: сторож печатает их по строке на
+// кадр и указатель на history, без конвертов. Слово человека в пачку не
+// ложится. Кадр без event_kind словарь не трогает: он
 // идёт сразу, как прежде. Кольцо двери при этом получает каждый кадр (hold.ts).
-import { type Frame } from "../shared/channel.ts";
+import { classifyOrigin, type Frame } from "../shared/channel.ts";
 import { byKind, roomKind, stackOf } from "../shared/room-kinds.ts";
 import { type ChannelEvent, type Door } from "./door.ts";
 import { log } from "./streams.ts";
@@ -44,8 +45,8 @@ export class RoomBatch {
     emit({
       kind: "note",
       text:
-        `Дело: кадров ${of} — накопились, не прерывая хода; следом все по порядку; ` +
-        'полностью — iskron_channel(action="history").',
+        `Дело: кадров ${of} — накопились, не прерывая хода; следом по строке на кадр, ` +
+        "в конце — как прочесть целиком.",
     });
     got.forEach((h, i) =>
       emit({ kind: "frame", raw: h.raw, frame: h.frame, batch: { at: i + 1, of } }),
@@ -67,7 +68,9 @@ export function batchForWatchdogs(
   frame: Frame,
   emit: (ev: ChannelEvent) => void,
 ): boolean {
-  if (byKind(frame) && stackOf(frame) === "batch") {
+  // Слово человека в пачку не ложится никогда: какая бы ни была стопка, оно идёт сейчас.
+  const human = (frame.origin ?? classifyOrigin(frame)) === "human";
+  if (!human && byKind(frame) && stackOf(frame) === "batch") {
     d.roomBatch.add(raw, frame, emit);
     return true;
   }

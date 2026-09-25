@@ -10,6 +10,8 @@ import { createHash } from "node:crypto";
 import { writeSync } from "node:fs";
 
 import { type ChannelEvent } from "../bridge/hold.ts";
+import { type Frame } from "../shared/channel.ts";
+import { batchLine, batchPointer } from "../shared/frame-text.ts";
 import { eventKeyOf, noteSeen, seenIds } from "../shared/seen.ts";
 import { seenFilePathOf } from "../shared/standings.ts";
 import { adoptSeenPath, attach, resolveStanding, staleBatchKeys } from "./client.ts";
@@ -49,6 +51,7 @@ export function runWatchdogExit(argv: string[]): void {
   let seenPath = seenFilePathOf(target.authDir, target.key);
   const seen = seenIds(seenPath);
   let woke = false; // отдан хоть один кадр залпа пачки
+  const batch: Frame[] = []; // отданные кадры залпа — для указателя в его конце
   attach(target.path, {
     onEvent: (ev) => {
       switch (ev.kind) {
@@ -58,18 +61,25 @@ export function runWatchdogExit(argv: string[]): void {
           const id = frameId(ev);
           // Пачка кадров комнаты (мост, roomstack.ts) — одна побудка: печатаем её
           // целиком и выходим на последнем кадре залпа, не на первом.
+          // Кадр пачки — строкой, без конверта; в конце залпа — как прочесть пачку целиком.
           const last = !ev.batch || ev.batch.at >= ev.batch.of;
+          const leave = (): never => {
+            if (ev.batch && batch.length) wake(batchPointer(batch));
+            process.exit(0);
+          };
           if (seen.has(id)) {
             note(`кадр ${id} уже отдан прежним взводом — не повод будить`);
-            if (last && woke) process.exit(0);
+            if (last && woke) leave();
             return;
           }
-          wake(ev.raw ?? ""); // сперва отдать: запись до побудки при смерти между ними потеряла бы кадр насовсем
+          if (ev.batch && ev.frame) batch.push(ev.frame);
+          // Сперва отдать: запись до побудки при смерти между ними потеряла бы кадр насовсем.
+          wake(ev.batch && ev.frame ? batchLine(ev.frame) : (ev.raw ?? ""));
           noteSeen(seenPath, id, seen);
           const evKey = eventKeyOf(ev.frame);
           if (evKey) noteSeen(seenPath, evKey, seen); // событие графа отдано — другие копии веера тоже
           woke = true;
-          if (last) process.exit(0); // конец процесса И ЕСТЬ доставка
+          if (last) leave(); // конец процесса И ЕСТЬ доставка
           break;
         }
         case "stale":
