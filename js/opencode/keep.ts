@@ -183,7 +183,13 @@ export function createKeeper<S extends KeptSlot>(doors: KeeperDoors<S>): Keeper<
       const r: any = await slot.bridge.request("iskron/resume", selector(slot), {
         timeoutMs: 30_000,
       });
-      if (!r?.resumed) return;
+      if (!r?.resumed) {
+        // Место прежней сборки без сессии по каталогу не возвращается, но и не
+        // молчит: мост называет его, и слово идёт в сессию — вернуть по имени (#6017).
+        if (Array.isArray(r?.legacy) && r.legacy.length && typeof r.word === "string")
+          doors.tell(root, `Искрон: ${r.word}.`, slot.child);
+        return;
+      }
       slot.holding = true;
       slot.stood = true;
       if (typeof r.key === "string") slot.key = r.key;

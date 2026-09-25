@@ -36,9 +36,16 @@ import {
   rememberStatus,
   resumeStanding,
 } from "./hold.ts";
-import { type HoldRecord, keyOf, noteHarnessSession, readHoldRecord } from "./holdrecord.ts";
+import {
+  type HoldRecord,
+  keyOf,
+  noteHarnessSession,
+  readHoldRecord,
+  sessionOfBridge,
+} from "./holdrecord.ts";
 import { returnToStanding } from "./leave.ts";
 import { placeFields } from "./placefields.ts";
+import { publishStatus } from "./status.ts";
 import { standingLog } from "./store.ts";
 import { emit, log } from "./streams.ts";
 import { localSocketAlive } from "./sweep.ts";
@@ -61,9 +68,11 @@ export async function deadPredecessor(
  * только когда его локальный сокет мёртв (живой держатель — не наше место) и
  * мост не ведёт другого места. Слух доказывается свежим hello; мёртвый токен —
  * протухшая запись, стирается тихо, и место занимается заново connect-ом.
- * Строка занятости из записи не возвращается и из неё стирается (#6017): это
- * слово прежнего держателя, и опубликованная заново она читалась бы с доски
- * сказанной сейчас. Возвращает слово об исходе или null, когда возвращать нечего.
+ * Строка занятости из записи возвращается, только если возвращается та же
+ * сессия, что её сказала; иначе она не публикуется и из записи стирается
+ * (#6017): это слово прежнего держателя, и опубликованная заново она читалась
+ * бы с доски сказанной сейчас. Возвращает слово об исходе или null, когда
+ * возвращать нечего.
  */
 export async function resumeFromDisk(
   realm: string,
@@ -86,13 +95,22 @@ export async function resumeFromDisk(
     const hello = await awaitHello(4000);
     if (hello && holdsKey(key)) {
       const pending = Number(hello.pending) || 0;
-      if (rec.status) rememberStatus(""); // строка прежнего держателя — не наша: в записи её больше нет
+      const me = sessionOfBridge();
+      let busy = "";
+      if (rec.status && me && rec.session === me) {
+        // Своя строка той же сессии (например, снятая сторожем глухоты) — обратно.
+        const st = await publishStatus(rec.status);
+        busy = st.ok
+          ? `; занятость возвращена: ${rec.status}`
+          : `; занятость не возвращена: ${short(st.body)}`;
+      } else if (rec.status) {
+        rememberStatus(""); // строка прежнего держателя — не наша: в записи её больше нет
+        busy = "; прежняя строка занятости не возвращена — скажи свою";
+      }
       log(`standing resumed from disk (${key}), pending ${pending}`);
       standingLog(`resumed-from-disk ${key}: pending ${pending}`);
       return {
-        word:
-          `возврат места с диска после перезапуска моста — сокет открыт заново тем же адресом (ожидало кадров — ${pending})` +
-          (rec.status ? "; прежняя строка занятости не возвращена — скажи свою" : ""),
+        word: `возврат места с диска после перезапуска моста — сокет открыт заново тем же адресом (ожидало кадров — ${pending})${busy}`,
         pending,
       };
     }
@@ -125,16 +143,27 @@ export interface ResumeSelector {
  * появления, и сессия, никогда не стоявшая, унаследовала бы место ушедшего
  * держателя со всем его рассказом о работе (#6017). Ключ сессия знает, только
  * если держала его сокет (`held` своего моста, маркер своей потери).
- * `sameDir` — все записи этого харнесса того же каталога, для слова «с кем делишь каталог».
+ * Место, отпущенное словом держателя (`left`), своим не считается никак —
+ * вернуть его может только iskron_stand по имени.
+ * `sameDir` — все записи этого харнесса того же каталога, для слова «с кем делишь каталог»;
+ * `legacy` — имена записей прежней сборки без сессии в этом каталоге: по каталогу не берутся,
+ * но называются вслух, чтобы их держатель вернул их по имени.
  */
-function recordsFor(sel: ResumeSelector): { own: HoldRecord[]; sameDir: string[] } {
+function recordsFor(sel: ResumeSelector): {
+  own: HoldRecord[];
+  sameDir: string[];
+  legacy: string[];
+  left: string[];
+} {
   const dir = standingsDirOf(CFG.authDir);
-  if (!existsSync(dir)) return { own: [], sameDir: [] };
+  if (!existsSync(dir)) return { own: [], sameDir: [], legacy: [], left: [] };
   const mine = harnessName();
   const led = ledKey();
   const byKey: HoldRecord[] = [];
   const byCwd: HoldRecord[] = [];
   const sameDir: string[] = [];
+  const legacy: string[] = [];
+  const left: string[] = [];
   for (const f of readdirSync(dir).filter((x) => x.endsWith(".hold"))) {
     try {
       const rec = JSON.parse(readFileSync(join(dir, f), "utf8")) as HoldRecord;
@@ -147,15 +176,31 @@ function recordsFor(sel: ResumeSelector): { own: HoldRecord[]; sameDir: string[]
       const fresh = readHoldRecord(key);
       if (!fresh) continue;
       if (inDir) sameDir.push(key);
+      if (fresh.left) {
+        left.push(key);
+        continue;
+      }
       const stoodHere = key === led || (!!sel.session && fresh.session === sel.session);
       if (keyed) byKey.push(fresh);
       else if (stoodHere) byCwd.push(fresh);
+      else if (!fresh.session) legacy.push(fresh.name);
     } catch {
       /* чужой или битый файл — не наш */
     }
   }
-  return { own: [...byKey, ...byCwd.sort((a, b) => (b.at ?? 0) - (a.at ?? 0))], sameDir };
+  return {
+    own: [...byKey, ...byCwd.sort((a, b) => (b.at ?? 0) - (a.at ?? 0))],
+    sameDir,
+    legacy,
+    left,
+  };
 }
+
+/** Слово о записях прежней сборки без сессии: по каталогу не возвращаются, возвращаются по имени. */
+export const legacyWord = (names: string[]): string =>
+  names
+    .map((n) => `есть место прежней сборки без сессии: ${n} — вернуть: iskron_stand(name="${n}")`)
+    .join("; ");
 
 export interface ResumeOutcome {
   resumed: boolean;
@@ -168,6 +213,8 @@ export interface ResumeOutcome {
    * агент сверяет занятое имя с выведенным для своей сессии (граф nks-dev: #5366).
    */
   others?: string[];
+  /** Имена мест прежней сборки без сессии в каталоге: не возвращены — названы, чтобы их вернули по имени. */
+  legacy?: string[];
 }
 
 /** Обратно на запаркованное место (leave, переоткрытие): сокет заново, hello — доказательство. */
@@ -190,16 +237,27 @@ async function backToParked(key: string, how: string): Promise<ResumeOutcome> {
  * «держу»; запарковано — обратно на место; чужое или ведём другое — не трогаем.
  */
 export async function resumeBy(sel: ResumeSelector, register = true): Promise<ResumeOutcome> {
-  const { own: recs, sameDir } = recordsFor(sel);
-  if (!recs.length)
+  const { own: recs, sameDir, legacy, left } = recordsFor(sel);
+  if (!recs.length) {
+    const said = [
+      `своей записи держания ${sel.key ? `с ключом ${sel.key}` : `для каталога ${sel.cwd ?? "?"}`} нет`,
+    ];
+    const foreign = sameDir.filter((k) => !left.includes(k));
+    if (foreign.length)
+      said.push(
+        `в каталоге лежат записи мест, на которых эта сессия не стояла (${foreign.join(", ")}); по одному каталогу они не берутся, место займёт iskron_stand`,
+      );
+    if (left.length)
+      said.push(
+        `место отпущено словом держателя (leave): ${left.join(", ")} — само не вернётся, вернуть: iskron_stand тем же именем`,
+      );
+    if (legacy.length) said.push(legacyWord(legacy));
     return {
       resumed: false,
-      word:
-        `своей записи держания ${sel.key ? `с ключом ${sel.key}` : `для каталога ${sel.cwd ?? "?"}`} нет` +
-        (sameDir.length
-          ? ` — в каталоге лежат записи мест, на которых эта сессия не стояла (${sameDir.join(", ")}); по одному каталогу они не берутся, место займёт iskron_stand`
-          : ""),
+      word: said.join(" — "),
+      ...(legacy.length ? { legacy } : {}),
     };
+  }
   const led = ledKey();
   const skipped: string[] = [];
   for (const rec of recs) {
@@ -298,6 +356,14 @@ export async function runCheck(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   const key = s ? keyOf(s.realm, s.karta, s.name ?? "") : null;
   if (!s || !key || !holdsKey(key)) {
     if (s && key && isParked(s.realm, s.karta, s.name ?? "")) {
+      // Ушёл словом (leave) — уход держится: сторож место не поднимает (#6017).
+      if (readHoldRecord(key)?.left)
+        return reply(msg, {
+          holding: false,
+          resumed: false,
+          key,
+          word: `место ${key} отпущено словом держателя (leave) — сторож его не поднимает; вернуть: iskron_stand тем же именем`,
+        });
       const r = await backToParked(key, "сторож слуха");
       return reply(msg, { holding: r.resumed, ...r });
     }

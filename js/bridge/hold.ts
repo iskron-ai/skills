@@ -309,6 +309,7 @@ export function holdStanding(url: string, statusUrl?: string | null): string {
       cwd: standCwd ?? readHoldRecord(key)?.cwd,
       client: harnessName(),
       key,
+      left: false, // сокет держится снова — пометка ухода словом снята
     });
   const ch = channel();
   if (same && ch) repointExtras(ch);

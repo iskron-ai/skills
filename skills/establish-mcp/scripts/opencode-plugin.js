@@ -644,7 +644,11 @@ function createKeeper(doors) {
       const r = await slot.bridge.request("iskron/resume", selector(slot), {
         timeoutMs: 3e4
       });
-      if (!r?.resumed) return;
+      if (!r?.resumed) {
+        if (Array.isArray(r?.legacy) && r.legacy.length && typeof r.word === "string")
+          doors.tell(root, `Искрон: ${r.word}.`, slot.child);
+        return;
+      }
       slot.holding = true;
       slot.stood = true;
       if (typeof r.key === "string") slot.key = r.key;

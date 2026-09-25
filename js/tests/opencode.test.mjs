@@ -1033,6 +1033,40 @@ test("a place resumed by the bridge itself is announced into the session with it
   }
 });
 
+// A record of a pre-upgrade build carries no session: the directory alone does
+// not return it (#6017), but the bridge names it, and the plugin says it into
+// the session — its holder takes it back by name instead of losing it silently.
+test("a place of a pre-session build, not resumed by the directory, is said into the session with the way back by name", async () => {
+  const calls = join(SANDBOX, "legacy.calls");
+  const resume = join(SANDBOX, "legacy.answer");
+  writeFileSync(calls, "");
+  writeFileSync(
+    resume,
+    JSON.stringify({
+      resumed: false,
+      word: 'своей записи держания для каталога /work/old нет — есть место прежней сборки без сессии: proba — вернуть: iskron_stand(name="proba")',
+      legacy: ["proba"],
+    }),
+  );
+  const b = bridgeEnv("legacy", { FB_CALLS: calls, FB_RESUME: resume });
+  const rec = await plugin(b.env, {
+    sessions: [{ id: "s-old", location: { directory: "/work/old" } }],
+  });
+  try {
+    await serverTools(rec);
+    await rec.call("iskron_orient", {}, "s-old");
+    await until(
+      () => rec.prompts.some((p) => /прежней сборки без сессии/.test(p.text)),
+      "the legacy place said into the session",
+    );
+    const word = rec.prompts.find((p) => /прежней сборки без сессии/.test(p.text));
+    assert.equal(word.sessionID, "s-old");
+    assert.match(word.text, /iskron_stand\(name="proba"\)/, "the way back by name is said");
+  } finally {
+    await rec.stop();
+  }
+});
+
 test("a holding bridge that dies is announced into its session as lost hearing, and the watch raises a fresh bridge that resumes the place", async () => {
   const calls = join(SANDBOX, "lost.calls");
   const resume = join(SANDBOX, "lost.answer");

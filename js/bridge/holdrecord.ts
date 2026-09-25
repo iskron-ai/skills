@@ -32,6 +32,8 @@ export interface HoldRecord {
   key?: string;
   /** сессия харнесса, стоявшая на месте (id сессии плагина OpenCode): по каталогу место возвращается только ей (#6017) */
   session?: string;
+  /** держатель отпустил место словом (iskron_channel leave): ни сторож, ни возврат по каталогу или ключу его не поднимают — только iskron_stand по имени */
+  left?: boolean;
   /** когда записано (мс эпохи): место без сокета живёт у платформы шесть часов, дольше запись мертва */
   at?: number;
 }
@@ -46,28 +48,43 @@ export function noteHarnessSession(id: string | undefined): void {
 }
 export const sessionOfBridge = (): string | null => harnessSession;
 
-/** Сессия, записанная в прежней записи ключа: мост, чья сессия не названа, её не стирает. */
-function sessionOnDisk(key: string): string | undefined {
+/** Отпущено ли место словом держателя по прежней записи ключа — переписывание записи этого не снимает. */
+function leftOnDisk(key: string): boolean {
   try {
-    const r = JSON.parse(readFileSync(holdFilePathFor(key), "utf8")) as HoldRecord;
-    return typeof r?.session === "string" ? r.session : undefined;
+    return (JSON.parse(readFileSync(holdFilePathFor(key), "utf8")) as HoldRecord)?.left === true;
   } catch {
-    return undefined;
+    return false;
   }
 }
 
+/**
+ * Сессия в записи — только названная ЭТОМУ процессу моста (или переданная явно):
+ * мост, чья сессия не названа, чужую с диска не наследует (#6017).
+ * `left` держится с диска, пока новое держание не скажет `left: false`.
+ */
 export function writeHoldRecord(key: string, rec: HoldRecord): void {
   if (CFG.satellite) return; // место спутника живёт прогоном: возвращать с диска нечего (satellite.ts)
   try {
-    const session = harnessSession ?? rec.session ?? sessionOnDisk(key);
+    const session = harnessSession ?? rec.session;
+    const left = rec.left ?? leftOnDisk(key);
     writeFileSync(
       holdFilePathFor(key),
-      JSON.stringify({ ...rec, ...(session ? { session } : {}), at: Date.now() }) + "\n",
+      JSON.stringify({
+        ...rec,
+        session: session ?? undefined,
+        left: left || undefined,
+        at: Date.now(),
+      }) + "\n",
       { mode: 0o600 },
     );
   } catch (e) {
     log(`hold record not written: ${(e as Error).message}`);
   }
+}
+/** Пометить запись места отпущенной словом держателя (leave) или снять пометку (возврат на место). */
+export function markLeft(key: string, on: boolean): void {
+  const r = readHoldRecord(key);
+  if (r && (r.left === true) !== on) writeHoldRecord(key, { ...r, left: on });
 }
 /** Запись места; просроченная стирается и не читается. */
 export function readHoldRecord(key: string): HoldRecord | null {
