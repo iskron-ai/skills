@@ -1,5 +1,5 @@
 // Кадры комнаты в форме провода (граф nks-dev: #5893): конверт несёт
-// event_kind "room.<род>" и строку журнала line; stack — только у said.
+// event_kind "room.<род>" и строку журнала line; stack — только у said и body (метка слова).
 // Одно место для проб моста, сторожей, плагина OpenCode и расширения pi.
 // Своё стояние проб — @tester:proba (так фейк NKS адресует место «proba»).
 
@@ -121,6 +121,91 @@ export const progress = (entry_id = 44) =>
 /** Слово участника со стопкой. */
 export const said = (stack, entry_id) =>
   roomFrame("said", { entry_id, key: "said", stack, body: `слово со стопкой ${stack}` });
+
+// ── Слово в две фазы (api 0.91.x; #5893 §4.5b, #5953) ──
+// said в полёте: body_pending: true — верхним полем КОНВЕРТА (#5893 §4.5b; api
+// подтвердил по коду провода), текста нет. Стопка interrupt: такой said не
+// прерывает и со своей стопкой.
+export const saidInFlight = (entry_id = 54) =>
+  roomFrame("said", {
+    entry_id,
+    key: "said",
+    stack: "interrupt",
+    fields: { kind: "text" },
+    envelope: { body_pending: true },
+    body: "",
+  });
+
+/** Автор слова — место-объект in_reply_to_from конверта (#5893 §4.6). */
+const WORD_FROM = { id: ALEKSEI_ID, standing: ALEKSEI.standing, name: "Алексей" };
+
+// body: форма наблюдена на сокете места (локальный api 0.90.1-8, 2026-09-25):
+// in_reply_to, kind, line (запись body: refers_to, fields, done), word, body,
+// stack. В наблюдении срезаны provenance и room — их кладёт roomFrame, как и
+// at и author строки (§4.1); ключа у body нет. in_reply_to_from в срезе не
+// виден — он по §4.5b/§4.6 и слову api по коду провода.
+const bodyLine = (refers_to, fields, done) => ({
+  key: undefined,
+  refers_to,
+  fields,
+  ...(done === undefined ? {} : { done }),
+});
+const wordOf = (refers_to, text) => ({
+  entry_id: refers_to,
+  line: text
+    ? { entry_id: refers_to, kind: "said", fields: { kind: "text" }, done: text }
+    : {
+        entry_id: refers_to,
+        kind: "said",
+        fields: { aborted: true, kind: "text" },
+        verdict: "bad",
+      },
+});
+
+/** Текст слова refers_to второй фазой; стопка — метка слова. */
+export const body = (entry_id = 55, refers_to = 54, text = "текст второй фазы") =>
+  roomFrame("body", {
+    entry_id,
+    stack: "defer",
+    line: bodyLine(refers_to, {}, text),
+    envelope: {
+      in_reply_to: refers_to,
+      in_reply_to_from: WORD_FROM,
+      kind: "body",
+      word: wordOf(refers_to, text),
+    },
+    body: text,
+  });
+
+/** Обрыв слова автором: наблюдён без стопки и с пустым телом. */
+export const bodyAborted = (entry_id = 57, refers_to = 56) =>
+  roomFrame("body", {
+    entry_id,
+    line: bodyLine(refers_to, { aborted: true }),
+    envelope: {
+      in_reply_to: refers_to,
+      in_reply_to_from: WORD_FROM,
+      kind: "body",
+      word: wordOf(refers_to),
+    },
+    body: "",
+  });
+
+/** Обрыв платформой по сроку: вживую не наблюдён — по §4.5b автор записи платформа, стопка defer. */
+export const bodyLapsed = (entry_id = 59, refers_to = 58) =>
+  roomFrame("body", {
+    entry_id,
+    author: PLATFORM,
+    stack: "defer",
+    line: bodyLine(refers_to, { aborted: true }),
+    envelope: {
+      in_reply_to: refers_to,
+      in_reply_to_from: WORD_FROM,
+      kind: "body",
+      word: wordOf(refers_to),
+    },
+    body: "",
+  });
 
 /** Кадр комнаты прежней формы (без event_kind): верхний kind text|direct|digest|auto|… со своей стопкой, как на сегодняшнем бою. */
 export const legacyRoom = (kind, stack, entry_id) => ({

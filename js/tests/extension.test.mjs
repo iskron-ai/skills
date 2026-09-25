@@ -47,6 +47,9 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
   auto,
+  body as bodyFrame,
+  bodyAborted,
+  bodyLapsed,
   closing,
   directWord,
   graphPosed,
@@ -57,6 +60,7 @@ import {
   roleInvite,
   roomFrame,
   said,
+  saidInFlight,
   unknownKind,
   withdraw,
 } from "./room-frames.mjs";
@@ -543,6 +547,40 @@ test("room kinds: an auto record about a child case follows up in words, not as 
     const text = rec.messages[0].msg.content;
     assert.match(text, /дочернее дело #12 закрыто/);
     assert.doesNotMatch(text, /неизвестен/, "auto is a kind the bridge knows");
+  } finally {
+    await rec.stop();
+  }
+});
+
+// A word in two phases (#5893 §4.5b): said in flight carries no text and follows up;
+// body brings the text by its word's stack; an abort follows up in words.
+test("room kinds: a said in flight follows up, body follows its stack in words, an abort follows up; plain said still steers", async () => {
+  const { events, env } = eventsEnv("room-body");
+  const rec = await session(env);
+  try {
+    const loud = bodyFrame(61, 60);
+    loud.stack = "interrupt";
+    const cases = [
+      [saidInFlight(54), "followUp"],
+      [bodyFrame(55, 54), "followUp"],
+      [bodyAborted(57, 56), "followUp"],
+      [bodyLapsed(59, 58), "followUp"],
+      [loud, "steer"],
+      [said("interrupt", 62), "steer"],
+    ];
+    for (const [f] of cases) push(events, frame(f));
+    await delay(400);
+    assert.equal(rec.messages.length, cases.length, "every room frame raises a message");
+    cases.forEach(([f, way], i) =>
+      assert.equal(rec.messages[i].opts.deliverAs, way, `${f.id} must go ${way}`),
+    );
+    const text = (i) => rec.messages[i].msg.content;
+    assert.match(text(0), /слово от Алексей \(@aleksei:probe\) в полёте — текст придёт следом/);
+    assert.match(text(1), /текст слова \[54\] от Алексей \(@aleksei:probe\)/);
+    assert.match(text(1), /\n\nтекст второй фазы$/, "the word's text passes through");
+    assert.match(text(2), /слово \[56\] оборвано автором/);
+    assert.match(text(3), /слово \[58\] оборвано платформой по сроку/);
+    for (let i = 0; i < 4; i++) assert.doesNotMatch(text(i), /неизвестен/, text(i));
   } finally {
     await rec.stop();
   }

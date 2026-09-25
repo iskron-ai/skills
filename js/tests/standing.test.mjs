@@ -20,6 +20,9 @@ import { startFakeCodex } from "./fake-codex.mjs";
 import { startFakeNks } from "./fake-nks.mjs";
 import {
   auto,
+  body as bodyFrame,
+  bodyAborted,
+  bodyLapsed,
   closing,
   directWord,
   graphPosed,
@@ -28,6 +31,7 @@ import {
   progress,
   roleInvite,
   said,
+  saidInFlight,
   unknownKind,
   withdraw,
 } from "./room-frames.mjs";
@@ -3063,6 +3067,40 @@ test("an auto record about a child case batches in words and leaves no unknown-k
     !bridge.stderr.includes("неизвестен"),
     `unknown-kind line in the log:\n${bridge.stderr}`,
   );
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
+// A word in two phases (#5893 §4.5b): said in flight and aborts wait in the batch in words;
+// body follows its word's stack; a plain said still interrupts.
+test("a said in flight, a deferred body and aborts wait in the batch in words; body and said with stack interrupt reach the Monitor watchdog at once", async (t) => {
+  const { fake, dir, key, bridge } = await connected(t, {
+    env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "2000" },
+  });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog", dir, key, 20_000);
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
+  const sent = Date.now();
+  await sendRoom(fake, saidInFlight(54));
+  await sendRoom(fake, bodyFrame(55, 54));
+  await sendRoom(fake, bodyAborted(57, 56));
+  await sendRoom(fake, bodyLapsed(59, 58));
+  await new Promise((r) => setTimeout(r, 700));
+  assert.ok(!wd.out.includes("room-msg-54"), `a said in flight interrupted:\n${wd.out}`);
+  await waitFor(() => wd.out.includes("Дело: кадров 4"), "the batch after the window", 8000);
+  assert.ok(Date.now() - sent >= 1800, "the batch waited for its window");
+  assert.match(wd.out, /слово от Алексей \(@aleksei:probe\) в полёте — текст придёт следом/);
+  assert.match(wd.out, /текст слова \[54\] от Алексей \(@aleksei:probe\)/);
+  assert.match(wd.out, /слово \[56\] оборвано автором/);
+  assert.match(wd.out, /слово \[58\] оборвано платформой по сроку/);
+  assert.ok(!wd.out.includes("неизвестен"), `body printed as unknown:\n${wd.out}`);
+  assert.ok(!bridge.stderr.includes("неизвестен"), `unknown-kind line:\n${bridge.stderr}`);
+  const loud = bodyFrame(61, 60);
+  loud.stack = "interrupt";
+  await sendRoom(fake, loud);
+  await waitFor(() => wd.out.includes("room-msg-61"), "body interrupt printed", 1500);
+  await sendRoom(fake, said("interrupt", 62));
+  await waitFor(() => wd.out.includes("стопкой interrupt"), "said interrupt printed", 1500);
   wd.proc.kill("SIGKILL");
   await wd.done;
 });

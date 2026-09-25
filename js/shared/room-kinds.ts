@@ -15,6 +15,10 @@ export type Stack = "interrupt" | "batch";
  */
 export const WORDS: Readonly<Record<string, string>> = {
   said: "слово от {author}",
+  said_pending: "слово от {author} в полёте — текст придёт следом",
+  body: "текст слова [{refers_to}] от {author}",
+  body_aborted: "слово [{refers_to}] оборвано автором",
+  body_lapsed: "слово [{refers_to}] оборвано платформой по сроку",
   closing: "ведущий {author} предлагает закрыть дело до {ends_at}{; свидетельства: evidence}",
   closing_may:
     'ты можешь возразить — iskron_case(action="object", in_reply_to={entry_id}) (прежнее имя iskron_room)',
@@ -23,13 +27,11 @@ export const WORDS: Readonly<Record<string, string>> = {
   objection: "{author} возражает против закрытия: {reason}",
   late_objection: "{author} возразил после закрытия",
   progress: "{author}: [{key}] {done} = {verdict}{; note}",
-  lead: "ведёт {author}",
   opened: "дело открыл {author}",
   joined: "вошёл {author}",
   left: "вышел {author}",
   invite: "{author} зовёт {who} в дело",
   withdraw: "приглашение отозвано, отзывает {author}",
-  accepted: "{who} принял приглашение",
   node: "в деле узел #{seq} {name} ({realm})",
   link: "дело связано с #{room} ({rel})",
   auto: "запись платформы {code} о деле #{room}",
@@ -53,23 +55,23 @@ export const REL_WORDS: Readonly<Record<string, string>> = {
 
 /**
  * Правило рода: interrupt и batch — всегда так; stack — по стопке кадра
- * (только у said); mine — прерывает, когда цель — своё стояние или своя роль (invite).
+ * (said и body: стопка — метка слова); mine — прерывает, когда цель — своё
+ * стояние или своя роль (invite). Слово в полёте и обрыв — в пачку (#5953).
  */
 type Rule = Stack | "stack" | "mine";
 const RULES: Readonly<Record<string, Rule>> = {
   said: "stack",
+  body: "stack",
   closing: "interrupt",
   closed: "interrupt",
   objection: "interrupt",
   late_objection: "interrupt",
   invite: "mine",
   progress: "batch",
-  lead: "batch",
   opened: "batch",
   joined: "batch",
   left: "batch",
   withdraw: "batch",
-  accepted: "batch",
   node: "batch",
   link: "batch",
   // Запись платформы о связанном деле: признака прерывания у неё нет (#4925).
@@ -92,9 +94,9 @@ const obj = (v: unknown): Rec =>
 const str = (v: unknown): string =>
   typeof v === "string" ? v : typeof v === "number" || typeof v === "boolean" ? String(v) : "";
 
-/** Кто написал строку: имя (стояние), иначе стояние, иначе платформа. */
-function authorOf(line: Rec): string {
-  const a = obj(line.author);
+/** Кто написал: имя (стояние), иначе стояние, иначе платформа; a — author строки или место in_reply_to_from. */
+function authorOf(author: unknown): string {
+  const a = obj(author);
   const name = str(a.name);
   const standing = str(a.standing);
   if (name) return standing ? `${name} (${standing})` : name;
@@ -160,7 +162,13 @@ export function roomKind(frame: Frame | null | undefined): RoomKind | null {
   const node = obj(fields.node);
   const values: Rec = {
     kind,
-    author: authorOf(line),
+    // У body строка — запись тела (у обрыва по сроку её автор — платформа);
+    // автор самого слова — in_reply_to_from конверта (#5893 §4.5b, §4.6).
+    author: authorOf(
+      kind === "body" && Object.keys(obj(f.in_reply_to_from)).length
+        ? f.in_reply_to_from
+        : line.author,
+    ),
     key,
     done: line.done,
     verdict: line.verdict,
@@ -168,6 +176,8 @@ export function roomKind(frame: Frame | null | undefined): RoomKind | null {
     ends_at: fields.ends_at,
     evidence: Array.isArray(fields.evidence) ? fields.evidence.map(str).join(", ") : "",
     entry_id: line.entry_id ?? f.entry_id,
+    // Слово, которому body несёт текст или обрыв: refers_to строки, иначе in_reply_to конверта.
+    refers_to: str(line.refers_to) || str(f.in_reply_to) || str(obj(f.word).entry_id),
     reason: fields.reason,
     target: after(key, "invite:"),
     // Ключ несёт id; имя приглашённого — в полях строки (наблюдено на бою: standing/karta с name).
@@ -181,10 +191,20 @@ export function roomKind(frame: Frame | null | undefined): RoomKind | null {
   };
   const rule = RULES[kind];
   if (!rule) return { kind, rule: "batch", words: fill(WORDS.unknown, values), known: false };
-  let words = fill(
-    kind === "auto" ? (AUTO_WORDS[str(values.code)] ?? WORDS.auto) : WORDS[kind],
-    values,
-  );
+  // Слово в две фазы (#5953): said в полёте — признак body_pending в конверте, текста нет;
+  // обрыв — body с fields.aborted, автор-платформа — обрыв по сроку.
+  const pending = kind === "said" && f.body_pending === true && !str(f.body) && !str(line.done);
+  const aborted = kind === "body" && fields.aborted === true;
+  const wordsOf = pending
+    ? WORDS.said_pending
+    : aborted
+      ? obj(line.author).kind === "platform"
+        ? WORDS.body_lapsed
+        : WORDS.body_aborted
+      : kind === "auto"
+        ? (AUTO_WORDS[str(values.code)] ?? WORDS.auto)
+        : WORDS[kind];
+  let words = fill(wordsOf, values);
   if (kind === "closing") {
     // На бою (api 0.88.0) may_object — массив объектов {id, standing, name, karta};
     // id — тот же, что to_standing_id. Голую строку id принимаем тоже.
@@ -197,7 +217,7 @@ export function roomKind(frame: Frame | null | undefined): RoomKind | null {
   }
   const stack: Stack =
     rule === "stack"
-      ? // Стопка решает только у said; слово без стопки — прежним путём, вставкой.
+      ? // Стопка решает у said и body; слово без стопки — прежним путём, вставкой.
         f.stack === "defer"
         ? "batch"
         : "interrupt"
@@ -206,7 +226,8 @@ export function roomKind(frame: Frame | null | undefined): RoomKind | null {
           ? "interrupt"
           : "batch"
         : rule;
-  return { kind, rule: stack, words, known: true };
+  // Слово в полёте (текста нет) и обрыв не будят: в пачку при любой стопке.
+  return { kind, rule: pending || aborted ? "batch" : stack, words, known: true };
 }
 
 /** Решает ли путь кадра словарь: только у кадра с event_kind room.*; прочим — прежний путь харнеса. */
