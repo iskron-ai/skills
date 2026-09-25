@@ -13,6 +13,17 @@ function classifyOrigin(frame, myKarta) {
     return "sibling";
   return "peer";
 }
+function isDirectWord(frame) {
+  if (frame?.type !== "message") return false;
+  const f = frame;
+  if (f.room || typeof f.event_kind === "string" && f.event_kind.startsWith("room."))
+    return false;
+  const p = frame.provenance ?? {};
+  if (p.via === "graph" || p.via === "room") return false;
+  const origin = frame.origin ?? classifyOrigin(frame);
+  if (origin === "platform") return false;
+  return origin === "human" || !!p.from_standing || p.from_karta_seq != null;
+}
 
 // js/shared/clients.ts
 var OPENCODE_CLIENT = "opencode-iskron";
@@ -260,6 +271,39 @@ ${raw}`;
   return `${lines.join("\n")}
 
 ${body}`;
+}
+var BATCH_TEXT = 160;
+function batchLine(frame) {
+  const f = frame;
+  const rk = roomKind(frame);
+  const line = f.line ?? {};
+  const e = f.entry_id ?? line.entry_id ?? f.id;
+  const entry = typeof e === "number" || typeof e === "string" ? e : "?";
+  const words = rk?.words ?? `кадр ${typeof f.id === "string" ? f.id : "?"}`;
+  const author = rk?.author && !words.includes(rk.author) ? ` — ${rk.author}` : "";
+  const body = typeof frame.body === "string" ? frame.body : frame.body === void 0 ? "" : JSON.stringify(frame.body);
+  const flat = [...body.replace(/\s+/g, " ").trim()];
+  const text = flat.length > BATCH_TEXT ? flat.slice(0, BATCH_TEXT).join("") + "…" : flat.join("");
+  return `[${entry}] ${words}${author}${text ? `: ${text}` : ""}`;
+}
+function batchHead(frames) {
+  return `Дело: кадров ${frames.length} — накопились, не прерывая хода; ${batchPointer(frames)}; следом по строке на кадр.`;
+}
+function batchPointer(frames) {
+  const since = /* @__PURE__ */ new Map();
+  for (const frame of frames) {
+    const f = frame;
+    const room = f.room ?? {};
+    const line = f.line ?? {};
+    const n = room.seq ?? room.id;
+    const e = Number(f.entry_id ?? line.entry_id);
+    if (typeof n !== "number" && typeof n !== "string" || !Number.isFinite(e)) continue;
+    const realm = room.realm ?? f.realm;
+    const args = (typeof realm === "string" && realm ? `realm="${realm}", ` : "") + `action="history", room=${typeof n === "number" ? String(n) : JSON.stringify(n)}`;
+    since.set(args, Math.min(since.get(args) ?? e, e));
+  }
+  if (!since.size) return 'целиком — iskron_channel(action="history")';
+  return "целиком — " + [...since].map(([args, e]) => `iskron_case(${args}, since=${e - 1})`).join("; ") + " (старый тул без since — history с keep_cursor=true)";
 }
 
 // js/bridge/backlog.ts
@@ -1086,6 +1130,14 @@ async function setupTools(ctx, say, onChannel, rootOf) {
 }
 
 // js/opencode/channel.ts
+var CASE_BATCH_MS = Number(process.env.ISKRON_OPENCODE_BATCH_MS) || 5e3;
+var CASE_BATCH_CAP = 20;
+var PENDING_MAX_MS = Number(process.env.ISKRON_OPENCODE_PENDING_MS) || 12e4;
+function toPile(frame) {
+  if (!frame || frame.type !== "message" || stackOf(frame) !== "batch" || isDirectWord(frame))
+    return false;
+  return (frame.origin ?? classifyOrigin(frame)) !== "human" || !!roomKind(frame)?.phase;
+}
 function setupChannel(ctx, say, freshestRoot) {
   async function accepting(id) {
     try {
@@ -1102,7 +1154,7 @@ function setupChannel(ctx, say, freshestRoot) {
         `Искрон: ${frame} на место дочерней сессии ${id ?? "?"}, которой больше нет, — корню не переадресую; кадр остаётся в истории стояния (iskron_channel history); место дочерней сессии — лишнее на канале, где корень стоит дальше: снимать ли его revoke, решай, зная цену (standing) —${text.slice(0, 120)}`,
         "error"
       );
-      return;
+      return null;
     }
     if (id && !await accepting(id)) {
       say(
@@ -1118,20 +1170,78 @@ function setupChannel(ctx, say, freshestRoot) {
         `Искрон: ${frame} ВЛОЖИТЬ НЕКУДА — плагин не видел живой корневой сессии; кадр остаётся в истории стояния — ` + text.slice(0, 120),
         "error"
       );
-      return;
+      return null;
     }
     try {
-      await ctx.session.prompt({ sessionID: id, text, delivery });
+      const r = await ctx.session.prompt({ sessionID: id, text, delivery });
       say(`Искрон: ${frame} вложен в сессию ${id}`, "info");
+      const inbox = r?.id ?? r?.data?.id;
+      return { session: id, inbox: typeof inbox === "string" ? inbox : null };
     } catch (e) {
       say(`Искрон: ${frame} не вложился в сессию ${id}: ${e.message}`, "error");
+      return null;
     }
+  }
+  const piles = /* @__PURE__ */ new Map();
+  const takenEarly = /* @__PURE__ */ new Set();
+  function schedule(p) {
+    if (p.timer) clearTimeout(p.timer);
+    const wait = p.pending ? Math.max(0, p.pending.at + PENDING_MAX_MS - Date.now()) : CASE_BATCH_MS;
+    p.timer = setTimeout(() => {
+      p.timer = null;
+      p.pending = null;
+      flush(p);
+    }, wait);
+    p.timer.unref?.();
+  }
+  function flush(p) {
+    if (p.timer) clearTimeout(p.timer);
+    p.timer = null;
+    if (!p.held.length) return;
+    const frames = p.held.splice(0);
+    const at = Date.now();
+    p.pending = { session: "", inbox: null, at };
+    const text = [batchHead(frames), ...frames.map(batchLine)].join("\n");
+    void deliver(p.session, text, `пачка дела (${frames.length})`, "queue", p.child).then((got) => {
+      const inbox = got?.inbox && !takenEarly.delete(got.inbox) ? got.inbox : null;
+      p.pending = got && inbox ? { session: got.session, inbox, at } : null;
+      if (p.held.length) schedule(p);
+    });
+  }
+  function pile(session, child, frame) {
+    const key = `${child ? "child" : "root"}:${session ?? ""}`;
+    let p = piles.get(key);
+    if (!p) piles.set(key, p = { session, child, held: [], timer: null, pending: null });
+    if (frame.id && p.held.some((f) => f.id === frame.id)) return;
+    p.held.push(frame);
+    if (!p.pending && p.held.length >= CASE_BATCH_CAP) return flush(p);
+    if (!p.timer) schedule(p);
   }
   function loud(session, text) {
     say(text, "error");
     void deliver(session, text);
   }
   return {
+    taken(session, inbox) {
+      let matched = false;
+      for (const p of piles.values()) {
+        if (!p.pending || (inbox ? p.pending.inbox !== inbox : p.pending.session !== session))
+          continue;
+        matched = true;
+        p.pending = null;
+        flush(p);
+      }
+      if (inbox && !matched) {
+        takenEarly.add(inbox);
+        for (const old of takenEarly) if (takenEarly.size > 100) takenEarly.delete(old);
+      }
+    },
+    stop() {
+      for (const p of piles.values()) {
+        p.pending = null;
+        flush(p);
+      }
+    },
     onEvent(session, params, child = false) {
       const ev = params?.data;
       if (!ev || typeof ev !== "object") return;
@@ -1140,11 +1250,12 @@ function setupChannel(ctx, say, freshestRoot) {
           const frame = ev.frame ?? null;
           if (frame?.type === "hello") return say("Искрон: канал слушает", "info");
           if (frame?.type === "status") return;
+          if (frame && toPile(frame)) return pile(session, child, frame);
           void deliver(
             session,
             frameToText(frame, ev.raw ?? ""),
             `кадр ${frame?.id ?? "без id"}`,
-            stackOf(frame) === "batch" ? "queue" : "steer",
+            "steer",
             child
           );
           return;
@@ -1306,9 +1417,11 @@ async function setup(ctx) {
   }
   let onChannel = () => {
   };
+  let ch = null;
   try {
-    const ch = setupChannel(ctx, say, freshestRoot);
-    onChannel = (s, p, c) => ch.onEvent(s, p, c);
+    const c0 = setupChannel(ctx, say, freshestRoot);
+    ch = c0;
+    onChannel = (s, p, c) => c0.onEvent(s, p, c);
   } catch (e) {
     say(`Искрон: канал не встал — ${e.message}`, "error");
   }
@@ -1354,6 +1467,14 @@ async function setup(ctx) {
           case "skill.updated":
             void commands.refresh();
             break;
+          // Очередь сессии сдвинулась: ждущая пачка дела уходит одним промптом.
+          case "session.inbox.delivered":
+          case "session.inbox.cancelled":
+            if (id && typeof ev.data?.inboxID === "string") ch?.taken(id, ev.data.inboxID);
+            break;
+          case "session.idle":
+            if (id) ch?.taken(id);
+            break;
         }
       }
     } catch {
@@ -1361,6 +1482,7 @@ async function setup(ctx) {
   })();
   return () => {
     controller.abort();
+    ch?.stop();
     half.stop();
   };
 }

@@ -95,6 +95,14 @@ export function batchLine(frame: Frame): string {
   return `[${entry}] ${words}${author}${text ? `: ${text}` : ""}`;
 }
 
+/** Шапка пачки дела: число кадров и как прочесть их целиком — в шапке, не в конце: обрезка режет хвост. */
+export function batchHead(frames: Frame[]): string {
+  return (
+    `Дело: кадров ${frames.length} — накопились, не прерывая хода; ` +
+    `${batchPointer(frames)}; следом по строке на кадр.`
+  );
+}
+
 /**
  * Как прочесть пачку целиком: по делу — history с since перед первой записью
  * пачки. since есть у mcp с 0.84.2; старому — запасной ход keep_cursor.
