@@ -291,12 +291,17 @@ export const NODE = { seq: 4057, name: "js-bundle", realm: "@nks/nks-dev" };
 export const nodeBound = (entry_id = 86) =>
   roomFrame("node", { entry_id, key: `node:${NODE.seq}`, fields: { node: NODE } });
 
-/** Узел с op и reasoning — форма по согласованию, не по бою. */
+/**
+ * Узел с op — форма по слову api (ветка api #546), не по бою: reasoning дельты —
+ * ТЕЛО записи (line.done и body кадра), в fields рядом с node только op.
+ */
 export const nodeOp = (op, entry_id = 87) =>
   roomFrame("node", {
     entry_id,
     key: `node:${NODE.seq}`,
-    fields: { node: NODE, op, reasoning: `причина ${op}` },
+    fields: { node: NODE, op },
+    line: { done: `причина ${op}` },
+    body: `причина ${op}`,
   });
 
 /** Род, которого словарь не знает. */

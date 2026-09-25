@@ -3117,9 +3117,16 @@ test("left names the one who left from fields.standing with its reason, not the 
 
 // node with op and reasoning — the agreed form, not yet seen on the wire.
 test("node with op=updated reads as an update, op=bound as the node in the case, each with its reasoning", async (t) => {
-  const out = await batchOf(t, [nodeOp("updated", 87), nodeOp("bound", 88)]);
+  const out = await batchOf(t, [
+    nodeOp("updated", 87),
+    nodeOp("bound", 88),
+    nodeOp("deleted", 89),
+    nodeOp("undeleted", 90),
+  ]);
   assert.match(out, /\[87\] узел #4057 js-bundle обновлён; причина updated/);
   assert.match(out, /\[88\] в деле узел #4057 js-bundle \(@nks\/nks-dev\); причина bound/);
+  assert.match(out, /\[89\] узел #4057 js-bundle удалён; причина deleted/);
+  assert.match(out, /\[90\] узел #4057 js-bundle восстановлен; причина undeleted/);
 });
 
 test("node without op and reasoning prints as before", async (t) => {
