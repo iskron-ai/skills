@@ -8,8 +8,7 @@
 // одно стояние; ключ из ответа connect различает несколько.
 import { writeSync } from "node:fs";
 
-import { type Frame } from "../shared/channel.ts";
-import { batchLine, batchPointer, frameToText } from "../shared/frame-text.ts";
+import { batchLine, frameToText } from "../shared/frame-text.ts";
 import { deliveredKeys, noteSeen, seenIds } from "../shared/seen.ts";
 import { seenFilePathOf } from "../shared/standings.ts";
 import { adoptSeenPath, attach, resolveStanding, staleBatchKeys } from "./client.ts";
@@ -95,7 +94,6 @@ export function runWatchdog(argv: string[]): void {
   // Напечатанный кадр — отданный: пометка его, а не записи моста, держит перевзвод от повтора.
   let seenPath = seenFilePathOf(target.authDir, target.key);
   const seen = seenIds(seenPath);
-  let batch: Frame[] = []; // кадры идущей пачки дела — для указателя в её конце
   const queued = new Set<string>(); // id в очереди печати: пометка ляжет после неё
   attach(target.path, {
     onEvent: (ev) => {
@@ -121,15 +119,8 @@ export function runWatchdog(argv: string[]): void {
             queued.delete(id);
           };
           if (ev.batch) {
-            // Пачка дела — по строке на кадр, без конверта; в конце — как прочесть целиком.
-            if (!again) {
-              batch.push(f);
-              out(wrapLines(batchLine(f)), false, mark);
-            }
-            if (ev.batch.at >= ev.batch.of) {
-              if (batch.length) out([batchPointer(batch)]);
-              batch = [];
-            }
+            // Пачка дела — по строке на кадр, без конверта; как прочесть целиком — в шапке.
+            if (!again) out(wrapLines(batchLine(f)), false, mark);
             break;
           }
           if (!again) out(wrapLines(frameToText(f, ev.raw ?? "")), true, mark);

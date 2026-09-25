@@ -2190,7 +2190,7 @@ function batchPointer(frames) {
     since.set(key, Math.min(since.get(key) ?? e, e));
   }
   if (!since.size) return 'целиком — iskron_channel(action="history")';
-  return "целиком — " + [...since].map(([room, e]) => `iskron_case(action="history", room=${room}, since=${e - 1})`).join("; ");
+  return "целиком — " + [...since].map(([room, e]) => `iskron_case(action="history", room=${room}, since=${e - 1})`).join("; ") + " (старый тул без since — history с keep_cursor=true)";
 }
 
 // js/bridge/backlog.ts
@@ -2388,7 +2388,8 @@ var RoomBatch = class {
     const of = got.length;
     emit2({
       kind: "note",
-      text: `Дело: кадров ${of} — накопились, не прерывая хода; следом по строке на кадр, в конце — как прочесть целиком.`
+      text: `Дело: кадров ${of} — накопились, не прерывая хода; ${batchPointer(got.map((h) => h.frame))}; следом по строке на кадр.`,
+      batch: { at: 0, of }
     });
     got.forEach(
       (h, i) => emit2({ kind: "frame", raw: h.raw, frame: h.frame, batch: { at: i + 1, of } })
@@ -5623,7 +5624,6 @@ function runWatchdog(argv2) {
   }
   let seenPath = seenFilePathOf(target.authDir, target.key);
   const seen = seenIds(seenPath);
-  let batch = [];
   const queued = /* @__PURE__ */ new Set();
   attach(target.path, {
     onEvent: (ev) => {
@@ -5648,14 +5648,7 @@ function runWatchdog(argv2) {
             queued.delete(id);
           };
           if (ev.batch) {
-            if (!again) {
-              batch.push(f);
-              out(wrapLines(batchLine(f)), false, mark);
-            }
-            if (ev.batch.at >= ev.batch.of) {
-              if (batch.length) out([batchPointer(batch)]);
-              batch = [];
-            }
+            if (!again) out(wrapLines(batchLine(f)), false, mark);
             break;
           }
           if (!again) out(wrapLines(frameToText(f, ev.raw ?? "")), true, mark);
@@ -5707,7 +5700,7 @@ function runWatchdogExit(argv2) {
   let seenPath = seenFilePathOf(target.authDir, target.key);
   const seen = seenIds(seenPath);
   let woke = false;
-  const batch = [];
+  let head = "";
   attach(target.path, {
     onEvent: (ev) => {
       switch (ev.kind) {
@@ -5716,22 +5709,19 @@ function runWatchdogExit(argv2) {
           if (type !== "message") return note2(`кадр ${type ?? "не разобран"} — не повод будить`);
           const id = frameId(ev);
           const last = !ev.batch || ev.batch.at >= ev.batch.of;
-          const leave = () => {
-            if (ev.batch && batch.length) wake(batchPointer(batch));
-            process.exit(0);
-          };
           if (seen.has(id)) {
             note2(`кадр ${id} уже отдан прежним взводом — не повод будить`);
-            if (last && woke) leave();
+            if (last && woke) process.exit(0);
             return;
           }
-          if (ev.batch && ev.frame) batch.push(ev.frame);
+          if (ev.batch && head) wake(head);
+          head = "";
           wake(ev.batch && ev.frame ? batchLine(ev.frame) : ev.raw ?? "");
           noteSeen(seenPath, id, seen);
           const evKey = eventKeyOf(ev.frame);
           if (evKey) noteSeen(seenPath, evKey, seen);
           woke = true;
-          if (last) leave();
+          if (last) process.exit(0);
           break;
         }
         case "stale":
@@ -5749,6 +5739,7 @@ function runWatchdogExit(argv2) {
           note2(`слушаю стояние ${ev.key}`);
           break;
         default:
+          if (ev.kind === "note" && ev.batch) head = ev.text ?? "";
           note2(ev.text ?? ev.kind);
       }
     },

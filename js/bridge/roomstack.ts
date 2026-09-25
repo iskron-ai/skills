@@ -3,11 +3,12 @@
 // Monitor, Codex, сторож выхода) пачку копит мост: кадр с event_kind рода
 // «в пачку» ложится в пачку своей двери и уходит по окну, по полной пачке или
 // перед прерывающим кадром — порядок цел. Пачка уходит залпом обычных событий
-// frame с меткой batch за одной строкой note: сторож печатает их по строке на
-// кадр и указатель на history, без конвертов. Слово человека в пачку не
+// frame с меткой batch за строкой-шапкой note (at: 0) с указателем на history:
+// сторож печатает кадры по строке, без конвертов. Слово человека в пачку не
 // ложится. Кадр без event_kind словарь не трогает: он
 // идёт сразу, как прежде. Кольцо двери при этом получает каждый кадр (hold.ts).
 import { classifyOrigin, type Frame } from "../shared/channel.ts";
+import { batchPointer } from "../shared/frame-text.ts";
 import { byKind, roomKind, stackOf } from "../shared/room-kinds.ts";
 import { type ChannelEvent, type Door } from "./door.ts";
 import { log } from "./streams.ts";
@@ -42,11 +43,13 @@ export class RoomBatch {
     const emit = this.emit;
     if (!got.length || !emit) return;
     const of = got.length;
+    // Как прочесть целиком — в шапке, не в конце: обрезка режет хвост.
     emit({
       kind: "note",
       text:
-        `Дело: кадров ${of} — накопились, не прерывая хода; следом по строке на кадр, ` +
-        "в конце — как прочесть целиком.",
+        `Дело: кадров ${of} — накопились, не прерывая хода; ` +
+        `${batchPointer(got.map((h) => h.frame))}; следом по строке на кадр.`,
+      batch: { at: 0, of },
     });
     got.forEach((h, i) =>
       emit({ kind: "frame", raw: h.raw, frame: h.frame, batch: { at: i + 1, of } }),

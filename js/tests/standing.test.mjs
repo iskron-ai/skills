@@ -3295,7 +3295,7 @@ test("a human word right after a case batch goes out alone under Monitor: a paus
   await wd.done;
 });
 
-test("a case batch under Monitor is short: a line per frame, no envelopes, a pointer to read it whole with since", async (t) => {
+test("a case batch under Monitor is short: the head with a pointer to read it whole with since, then a line per frame, no envelopes", async (t) => {
   const { fake, dir, key } = await connected(t, {
     env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "10000" },
   });
@@ -3312,15 +3312,18 @@ test("a case batch under Monitor is short: a line per frame, no envelopes, a poi
   await waitFor(() => wd.out.includes("ты можешь возразить"), "closing to be printed", 5000);
   const lines = wd.lines.map((l) => l.s);
   const head = lines.findIndex((s) => s.includes("Дело: кадров 6"));
-  const ptr = lines.findIndex((s) => s.includes('iskron_case(action="history"'));
-  assert.ok(head >= 0 && ptr > head, `the batch head and its pointer:\n${wd.out}`);
-  const body = lines.slice(head + 1, ptr);
-  assert.equal(body.length, 6, `one line per frame:\n${body.join("\n")}`);
-  for (let i = 0; i < 6; i++) assert.ok(body[i].startsWith(`[${400 + i}] `), body[i]);
+  assert.ok(head >= 0, `the batch head:\n${wd.out}`);
+  // How to read it whole stands in the head: a cut takes the tail, not the head.
+  assert.match(
+    lines[head],
+    /iskron_case\(action="history", room=7, since=399\) \(старый тул без since — history с keep_cursor=true\)/,
+  );
+  const body = lines.slice(head + 1, head + 7);
+  for (let i = 0; i < 6; i++) assert.ok(body[i]?.startsWith(`[${400 + i}] `), body[i]);
+  assert.ok(!lines[head + 7]?.startsWith("[4"), "one line per frame, six of them");
   assert.ok(!body.some((s) => s.startsWith("frame: ")), "no envelopes in the batch");
   assert.match(body[0], /^\[400\] слово от Алексей \(@aleksei:probe\): слово со стопкой defer$/);
   assert.ok(body[5].endsWith("…") && !body[5].includes("НЕ-ДОЛЖНО-ВОЙТИ"), body[5]);
-  assert.match(lines[ptr], /iskron_case\(action="history", room=7, since=399\)/);
   wd.proc.kill("SIGKILL");
   await wd.done;
 });

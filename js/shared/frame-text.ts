@@ -95,7 +95,10 @@ export function batchLine(frame: Frame): string {
   return `[${entry}] ${words}${author}${text ? `: ${text}` : ""}`;
 }
 
-/** Как прочесть пачку целиком: по делу — history с since перед первой записью пачки. */
+/**
+ * Как прочесть пачку целиком: по делу — history с since перед первой записью
+ * пачки. since есть у mcp с 0.84.2; старому — запасной ход keep_cursor.
+ */
 export function batchPointer(frames: Frame[]): string {
   const since = new Map<string, number>();
   for (const frame of frames) {
@@ -112,6 +115,7 @@ export function batchPointer(frames: Frame[]): string {
     "целиком — " +
     [...since]
       .map(([room, e]) => `iskron_case(action="history", room=${room}, since=${e - 1})`)
-      .join("; ")
+      .join("; ") +
+    " (старый тул без since — history с keep_cursor=true)"
   );
 }
