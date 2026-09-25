@@ -1999,6 +1999,8 @@ var WORDS = {
   withdraw: "приглашение отозвано, отзывает {author}",
   node: "в деле узел #{seq} {name} ({realm}){; reasoning}",
   node_updated: "узел #{seq} {name} обновлён{; reasoning}",
+  node_deleted: "узел #{seq} {name} удалён{; reasoning}",
+  node_undeleted: "узел #{seq} {name} восстановлен{; reasoning}",
   link: "дело связано с #{room} ({rel})",
   auto: "запись платформы {code} о деле #{room}",
   unknown: "род {kind} мосту неизвестен"
@@ -2013,6 +2015,11 @@ var REL_WORDS = {
   parent: "дочернее к нему",
   child: "родительское к нему",
   continues: "продолжает его"
+};
+var NODE_OPS = {
+  updated: WORDS.node_updated,
+  deleted: WORDS.node_deleted,
+  undeleted: WORDS.node_undeleted
 };
 var RULES = {
   said: "stack",
@@ -2107,7 +2114,8 @@ function roomKind(frame2) {
     seq: node.seq,
     name: node.name,
     realm: node.realm,
-    reasoning: fields.reasoning
+    // reasoning дельты узла — тело записи node (line.done, body кадра), не поле (слово api, #6070).
+    reasoning: kind === "node" ? line.done || f.body : void 0
   };
   const rule = RULES[kind];
   const author = str(values.author);
@@ -2123,8 +2131,8 @@ function roomKind(frame2) {
   const pending = kind === "said" && f.body_pending === true && !str(f.body) && !str(line.done);
   const aborted = kind === "body" && fields.aborted === true;
   const wordsOf = pending ? WORDS.said_pending : aborted ? obj(line.author).kind === "platform" ? WORDS.body_lapsed : WORDS.body_aborted : kind === "auto" ? AUTO_WORDS[str(values.code)] ?? WORDS.auto : (
-    // op узла (bound | updated): только updated меняет слово; без op — как bound.
-    kind === "node" && fields.op === "updated" ? WORDS.node_updated : WORDS[kind]
+    // op узла (bound | updated | deleted | undeleted): без op и bound — прежнее слово.
+    kind === "node" && NODE_OPS[str(fields.op)] ? NODE_OPS[str(fields.op)] : WORDS[kind]
   );
   let words = fill(wordsOf, values);
   if (kind === "closing") {
