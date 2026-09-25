@@ -61,19 +61,27 @@ export default {
     });
     // пуш и мерж: после shell-вызова дописать одну строку в результат — пуш
     // не отгрузка (холодное ревью этапа), мерж — четыре акта AGENTS.md.
+    // Будит исход, не форма: справка и --auto не будят; код выхода говорит за команду,
+    // только когда она последняя в цепочке или стоит перед &&, иначе — строка подтверждения в выводе.
     // Поля result только для чтения — заменяется сам result; content — строка или массив частей.
     await ctx.tool.hook("execute.after", (input) => {
       if (input.tool !== "bash" || input.status !== "completed") return;
       const cmd = String(input.input?.command ?? "");
-      const push = /(^|[;&|(] *)(env +)?([A-Za-z_]+=\S+ +)*git( -C \S+)* push([ ;&|)]|$)/;
-      const merge = /(^|[;&|(] *)gh pr merge|(checkout|switch) (main|master)[^;|]*&& *git( -C \S+)* pull([ ;&|)]|$)/;
-      const note = push.test(cmd)
+      const c = input.result.content;
+      const out = typeof c === "string" ? c : (c ?? []).map((p) => p.text ?? "").join("\n");
+      const exit = input.result.metadata?.exit; // ключ не сверен живьём; нет его — держится форма хвоста
+      const arg = String.raw`(?:>&|[^;&|)\n])*`;
+      const at = (head, noop) => String.raw`(?:^|[;&|(\n] *)${head}(?=[ ;&|)\n]|$)(?!${arg} (?:${noop})(?:[ ;&|)\n]|$))`;
+      const ran = (head, noop, said) =>
+        new RegExp(at(head, noop)).test(cmd) &&
+        (((exit ?? 0) === 0 && new RegExp(at(head, noop) + arg + String.raw`\s*(?:&&|$)`).test(cmd)) || said.test(out));
+      const pull = /(checkout|switch) (main|master)[^;|]*&& *git( -C \S+)* pull([ ;&|)]|$)/;
+      const note = ran(String.raw`(?:env +)?(?:[A-Za-z_]+=\S+ +)*git(?: -C \S+)* push`, "-h|--help", /To \S+\n [ *+=!-]/)
         ? "[iskron] пуш — не отгрузка: самопроверка, словарный проход по тексту PR, холодное ревью этапа."
-        : merge.test(cmd)
+        : ran("gh pr merge", "-h|--help|--auto|--disable-auto", /(Merged|Squashed and merged|Rebased and merged) pull request/) || pull.test(cmd)
           ? "[iskron] мерж — четыре акта AGENTS.md: проткать, модусы, закрыть по оси, reconcile."
           : "";
       if (!note) return;
-      const c = input.result.content;
       input.result = {
         ...input.result,
         content: typeof c === "string" ? `${c}\n\n${note}` : [...(c ?? []), { type: "text", text: note }],
