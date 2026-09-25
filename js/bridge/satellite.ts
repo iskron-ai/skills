@@ -1,7 +1,7 @@
 // Мост-спутник — своё место субагента (граф nks-dev: #6002, условия
 // архитектора в #6001). Claude Code поднимает MCP-сервер из фронтматтера файла
 // агента отдельным соединением на прогон субагента; такой мост, запущенный с
-// --satellite (или ISKRON_BRIDGE_SATELLITE=1), занимает только место-спутник
+// --satellite (только флагом), занимает только место-спутник
 // рядом с местом позвавшего: имя `<место позвавшего>.sub-<N>` с первым
 // свободным на доске N, роль позвавшего, без хука инбокса роли, канал с
 // коротким окном простоя, без записи держания; с концом прогона (stdin закрыт)
@@ -12,6 +12,7 @@ import { CFG } from "./config.ts";
 import { NAME_MAX, nameFault, normKarta } from "./names.ts";
 import { noteSatelliteOf } from "./placefields.ts";
 import { otherRealm } from "./realms.ts";
+import { log } from "./streams.ts";
 import { state } from "./transport.ts";
 
 /** Окно простоя канала спутника, с; переменная — шов проб и ручка на случай, если контур сузит разброс. */
@@ -73,7 +74,15 @@ export function pickSatellite(
     };
   const caller = same[0].address;
   const notes: string[] = [];
-  if (led && isSatelliteOf(base, led)) return { ok: true, name: led, caller, notes };
+  if (led && isSatelliteOf(base, led)) {
+    // Повтор того же прогона — либо параллельный прогон ТОГО ЖЕ файла агента:
+    // Claude Code мемоизует сервер файла агента по имени и конфигу, и второй
+    // прогон приходит в этот же мост. Различить их мост не может — называет оба.
+    const word = `мост уже держит ${led} — повтор этого прогона либо параллельный прогон того же файла агента, который делит это место и потеряет его, когда первый закончит; параллельно — не больше одного прогона на файл агента`;
+    log(word);
+    notes.push(word);
+    return { ok: true, name: led, caller, notes };
+  }
   const taken = new Set(entries.map((e) => nameOf(e.address)));
   for (let n = 1; n <= 99; n++) {
     const name = satelliteName(base, n);
@@ -126,6 +135,43 @@ export async function satelliteGate(
     `место-спутник ${pick.caller}: роль позвавшего, хука инбокса роли нет, окно простоя канала ${SATELLITE_TTL_S} с, записи держания нет — место живёт прогоном`,
   );
   return pick;
+}
+
+/**
+ * Отказ ли connect именно окну простоя: ответ называет ttl либо несёт код 4xx.
+ * Разброс окна и слова отказа держит контур — мост не угадывает их формулировку.
+ */
+export const ttlRefused = (text: string): boolean =>
+  /ttl/i.test(text) || /(^|\D)4\d\d(\D|$)/.test(text);
+
+const PLACE_ACTIONS = new Set(["connect", "mint", "register", "revoke"]);
+
+/**
+ * Ограда моста-спутника на сыром iskron_channel: connect, mint, register и
+ * revoke — только своего места `.sub-N`, и только после iskron_stand. Иначе
+ * субагент мог бы взять или снять сокет места позвавшего. null — пропустить.
+ */
+export function satelliteChannelRefusal(args: Record<string, unknown>): string | null {
+  if (!CFG.satellite) return null;
+  const action = String(args.action ?? "");
+  if (!PLACE_ACTIONS.has(action)) return null;
+  const s = state.standing;
+  const own = s?.name ?? "";
+  if (!s || !SUB_RE.test(own))
+    return `Отказано (мост-спутник): ${action} мимо iskron_stand — место этому мосту даёт только iskron_stand с satellite_of; чужое место спутник не берёт и не снимает.`;
+  const sameRealm = !otherRealm(args.realm, s.realm);
+  const karta = normKarta(args.karta ?? s.karta);
+  const target =
+    action === "revoke"
+      ? args.channel != null
+        ? null
+        : String(args.standing ?? "")
+      : String(args.name ?? "").trim();
+  const mine =
+    target != null &&
+    (target === own || target.endsWith(`:${own}`) || (action === "revoke" && target === "mine"));
+  if (sameRealm && karta === normKarta(s.karta) && mine) return null;
+  return `Отказано (мост-спутник): ${action} — только своего места ${own} (роль #${normKarta(s.karta)}, граф ${s.realm}); место позвавшего и любое другое спутник не берёт и не снимает.`;
 }
 
 /** Слово о слухе вместо команды сторожа: спутник сторожа не держит. */

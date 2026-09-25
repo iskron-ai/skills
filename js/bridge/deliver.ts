@@ -15,6 +15,7 @@ import { localLeave } from "./leave.ts";
 import { annotateToolList } from "./moment.ts";
 import { withPlaceFields } from "./placefields.ts";
 import { isCheckCall, isResumeCall, runCheck, runResume } from "./resume.ts";
+import { satelliteChannelRefusal } from "./satellite.ts";
 import { isStandCall, runStand } from "./stand.ts";
 import { ensureStanding, isUnattributed, noteStanding, replyText } from "./standing.ts";
 import { localStatus } from "./status.ts";
@@ -275,7 +276,20 @@ async function deliverOne(msg: JsonRpcMessage): Promise<void> {
       // своём — отказ вслух, на сервер не уходит (#5154).
       if (hasId && msg.method === "tools/call" && msg.params?.name === "iskron_channel")
         await resolveAgainstLed(msg.params.arguments?.realm); // графы сличаются в одной форме (#5838)
-      const cross = hasId ? crossPlaceRefusal(msg) : null;
+      // Мост-спутник: сырые ходы над местом — только своего .sub-N (satellite.ts).
+      const satWord =
+        hasId && msg.method === "tools/call" && msg.params?.name === "iskron_channel"
+          ? satelliteChannelRefusal(msg.params.arguments ?? {})
+          : null;
+      const cross = satWord
+        ? {
+            jsonrpc: "2.0",
+            id: msg.id,
+            result: { isError: true, content: [{ type: "text", text: satWord }] },
+          }
+        : hasId
+          ? crossPlaceRefusal(msg)
+          : null;
       if (cross) {
         emit(cross);
         return;

@@ -149,7 +149,9 @@ function parseArgs(argv2) {
     pat: null,
     patSource: null,
     serverSource: "argument",
-    satellite: process.env.ISKRON_BRIDGE_SATELLITE === "1"
+    // Только флагом: мост старше спутника на незнакомом флаге падает громко, а
+    // переменную пропустил бы молча и встал бы полным местом с записью держания.
+    satellite: false
   };
   for (let i = 0; i < argv2.length; i++) {
     const a = argv2[i];
@@ -4020,7 +4022,12 @@ function pickSatellite(entries, of, karta, led) {
     };
   const caller = same[0].address;
   const notes = [];
-  if (led && isSatelliteOf(base, led)) return { ok: true, name: led, caller, notes };
+  if (led && isSatelliteOf(base, led)) {
+    const word = `мост уже держит ${led} — повтор этого прогона либо параллельный прогон того же файла агента, который делит это место и потеряет его, когда первый закончит; параллельно — не больше одного прогона на файл агента`;
+    log(word);
+    notes.push(word);
+    return { ok: true, name: led, caller, notes };
+  }
   const taken = new Set(entries.map((e) => nameOf(e.address)));
   for (let n = 1; n <= 99; n++) {
     const name = satelliteName(base, n);
@@ -4063,6 +4070,23 @@ async function satelliteGate(a, realm, karta, asked) {
     `место-спутник ${pick.caller}: роль позвавшего, хука инбокса роли нет, окно простоя канала ${SATELLITE_TTL_S} с, записи держания нет — место живёт прогоном`
   );
   return pick;
+}
+var ttlRefused = (text) => /ttl/i.test(text) || /(^|\D)4\d\d(\D|$)/.test(text);
+var PLACE_ACTIONS2 = /* @__PURE__ */ new Set(["connect", "mint", "register", "revoke"]);
+function satelliteChannelRefusal(args) {
+  if (!CFG.satellite) return null;
+  const action = String(args.action ?? "");
+  if (!PLACE_ACTIONS2.has(action)) return null;
+  const s = state.standing;
+  const own = s?.name ?? "";
+  if (!s || !SUB_RE.test(own))
+    return `Отказано (мост-спутник): ${action} мимо iskron_stand — место этому мосту даёт только iskron_stand с satellite_of; чужое место спутник не берёт и не снимает.`;
+  const sameRealm2 = !otherRealm(args.realm, s.realm);
+  const karta = normKarta(args.karta ?? s.karta);
+  const target = action === "revoke" ? args.channel != null ? null : String(args.standing ?? "") : String(args.name ?? "").trim();
+  const mine = target != null && (target === own || target.endsWith(`:${own}`) || action === "revoke" && target === "mine");
+  if (sameRealm2 && karta === normKarta(s.karta) && mine) return null;
+  return `Отказано (мост-спутник): ${action} — только своего места ${own} (роль #${normKarta(s.karta)}, граф ${s.realm}); место позвавшего и любое другое спутник не берёт и не снимает.`;
 }
 var satelliteListenWord = () => `[iskron-bridge] Место-спутник: сторожа не взводи — место живёт прогоном субагента и подписывает его записи; с концом прогона мост уходит с места сам, канал гаснет окном простоя ${SATELLITE_TTL_S} с. Первый ход — вход в дело, названное постановкой, и пересказ постановки первым словом в нём.`;
 
@@ -4552,7 +4576,7 @@ async function runStand(msg) {
     if (typeof a.mute_siblings === "boolean") args.mute_siblings = a.mute_siblings;
     if (sat) args.ttl_seconds = SATELLITE_TTL_S;
     let c = await callTool("iskron_channel", args);
-    if (sat && c.isError && /ttl/i.test(c.text)) {
+    if (sat && c.isError && ttlRefused(c.text)) {
       extra.push(
         `Окно простоя ${SATELLITE_TTL_S} с контур не принял (${short(c.text, 120)}) — место занято с окном по умолчанию контура.`
       );
@@ -4883,7 +4907,12 @@ async function deliverOne(msg) {
       heldReply = null;
       if (hasId && msg.method === "tools/call" && msg.params?.name === "iskron_channel")
         await resolveAgainstLed(msg.params.arguments?.realm);
-      const cross = hasId ? crossPlaceRefusal(msg) : null;
+      const satWord = hasId && msg.method === "tools/call" && msg.params?.name === "iskron_channel" ? satelliteChannelRefusal(msg.params.arguments ?? {}) : null;
+      const cross = satWord ? {
+        jsonrpc: "2.0",
+        id: msg.id,
+        result: { isError: true, content: [{ type: "text", text: satWord }] }
+      } : hasId ? crossPlaceRefusal(msg) : null;
       if (cross) {
         emit(cross);
         return;

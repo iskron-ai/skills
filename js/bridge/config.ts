@@ -72,7 +72,9 @@ export function parseArgs(argv: string[]): Config {
     pat: null,
     patSource: null,
     serverSource: "argument",
-    satellite: process.env.ISKRON_BRIDGE_SATELLITE === "1",
+    // Только флагом: мост старше спутника на незнакомом флаге падает громко, а
+    // переменную пропустил бы молча и встал бы полным местом с записью держания.
+    satellite: false,
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];

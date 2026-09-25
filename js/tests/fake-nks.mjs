@@ -368,6 +368,7 @@ export async function startFakeNks(opts = {}) {
           });
         }
       }
+      if ("connect_refuse_ttl" in patch) st.connectRefuseTtl = patch.connect_refuse_ttl || null; // отказ окну простоя на connect
       if ("send_conflict" in patch) st.sendConflict = patch.send_conflict || null; // текст отказа 409 не о безавторности
       if ("statusGone" in patch) st.statusGone = !!patch.statusGone; // статусный адрес повернули
       if (patch.revoke_access) st.access = null;
@@ -776,6 +777,24 @@ export async function startFakeNks(opts = {}) {
               jsonrpc: "2.0",
               id: msg.id,
               result: { content: [{ type: "text", text: lines.join("\n") }] },
+            },
+            extra,
+          );
+        }
+        if (
+          (a.action === "connect" || a.action === "mint") &&
+          st.connectRefuseTtl &&
+          a.ttl_seconds != null
+        ) {
+          // Контур отвергает окно простоя своими словами — проба не знает, какими (/control {connect_refuse_ttl}).
+          st.counts.ttl_refused = (st.counts.ttl_refused ?? 0) + 1;
+          return json(
+            res,
+            200,
+            {
+              jsonrpc: "2.0",
+              id: msg.id,
+              result: { isError: true, content: [{ type: "text", text: st.connectRefuseTtl }] },
             },
             extra,
           );

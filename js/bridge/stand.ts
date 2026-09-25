@@ -49,7 +49,7 @@ import {
 import { placeFields, rememberModel } from "./placefields.ts";
 import { otherRealm } from "./realms.ts";
 import { deadPredecessor, resumeFromDisk } from "./resume.ts";
-import { SATELLITE_TTL_S, satelliteGate, satelliteListenWord } from "./satellite.ts";
+import { SATELLITE_TTL_S, satelliteGate, satelliteListenWord, ttlRefused } from "./satellite.ts";
 import { separatePlace, suffixOf } from "./separate.ts";
 import { publishStatus, TAKE_PATH, TURNED_GUIDANCE } from "./status.ts";
 import { state } from "./transport.ts";
@@ -344,7 +344,7 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
     if (typeof a.mute_siblings === "boolean") args.mute_siblings = a.mute_siblings;
     if (sat) args.ttl_seconds = SATELLITE_TTL_S; // приглашения спутнику не переживают прогон (#6001, условие а)
     let c = await call("iskron_channel", args); // новый сокет держатель берёт сам и заново: кольцо кадров чистое
-    if (sat && c.isError && /ttl/i.test(c.text)) {
+    if (sat && c.isError && ttlRefused(c.text)) {
       // Разброс окна держит контур; вне его — место всё же нужно прогону, окно — умолчание контура.
       extra.push(
         `Окно простоя ${SATELLITE_TTL_S} с контур не принял (${short(c.text, 120)}) — место занято с окном по умолчанию контура.`,

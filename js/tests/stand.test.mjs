@@ -1349,11 +1349,9 @@ async function withCaller(t) {
   await fake.control({ places: [{ karta: "931", name: CALLER, listening: true }] });
   return fake;
 }
-async function satelliteBridge(t, fake, { dir, flag = false } = {}) {
+async function satelliteBridge(t, fake, { dir } = {}) {
   const home = dir ?? mkdtempSync(join(tmpdir(), "iskron-sat-"));
-  const b = flag
-    ? startBridge(fake.mcpUrl, home, process.cwd(), {}, ["--satellite"])
-    : startBridge(fake.mcpUrl, home, process.cwd(), { ISKRON_BRIDGE_SATELLITE: "1" });
+  const b = startBridge(fake.mcpUrl, home, process.cwd(), {}, ["--satellite"]);
   t.after(() => b.stop());
   assert.ok((await b.call("initialize", INIT)).result);
   return b;
@@ -1381,8 +1379,10 @@ test("satellite: a subagent's bridge stands as <caller>.sub-1 in the caller's ro
   const again = await standAs(one, SAT_ARGS);
   assert.equal(placeOf(again), `${CALLER}.sub-1`, textOf(again));
   assert.equal(fake.state.counts.connect, connects, "the same run's place, not .sub-2");
-  // Another run while sub-1 is on the board — the flag form of the same mode.
-  const two = await satelliteBridge(t, fake, { flag: true });
+  assert.match(textOf(again), /параллельный прогон того же файла агента/, "a shared run is named");
+  assert.match(one.stderr, /мост уже держит/, "and warned on stderr");
+  // Another run while sub-1 is on the board.
+  const two = await satelliteBridge(t, fake);
   const r2 = await standAs(two, SAT_ARGS);
   assert.ok(!r2.result?.isError, `${textOf(r2)}\n${two.stderr}`);
   assert.equal(placeOf(r2), `${CALLER}.sub-2`, textOf(r2));
@@ -1439,4 +1439,52 @@ test("satellite: a session bridge still refuses a second name in its graph (#515
   assert.equal(noCaller.result?.isError, true, textOf(noCaller));
   assert.match(textOf(noCaller), /на доске этого графа нет/, textOf(noCaller));
   assert.equal(fake.state.counts.connect, connects, "no refused call takes a place");
+});
+
+test("satellite: raw connect, register or revoke of the caller's place is refused before and after the satellite stands; its own place passes", async (t) => {
+  const fake = await withCaller(t);
+  const sat = await satelliteBridge(t, fake);
+  const channel = (args) =>
+    sat.call("tools/call", {
+      name: "iskron_channel",
+      arguments: { realm: "nks-dev", karta: 931, ...args },
+    });
+  const connects = fake.state.counts.connect;
+  const callerListens = () => fake.state.places.get(`931:${CALLER}`)?.listening === true;
+  const before = await channel({ action: "connect", name: CALLER });
+  assert.equal(before.result?.isError, true, textOf(before));
+  assert.match(textOf(before), /мост-спутник/, textOf(before));
+  const r = await standAs(sat, SAT_ARGS);
+  assert.ok(!r.result?.isError, `${textOf(r)}\n${sat.stderr}`);
+  const standConnects = fake.state.counts.connect;
+  assert.equal(standConnects, connects + 1, "only iskron_stand's own connect went out");
+  for (const args of [
+    { action: "connect", name: CALLER },
+    { action: "mint", name: CALLER },
+    { action: "register", name: CALLER },
+    { action: "revoke", standing: `@tester:${CALLER}` },
+    { action: "revoke", standing: CALLER },
+    { action: "connect", name: `${CALLER}.sub-1`, karta: 48 },
+  ]) {
+    const got = await channel(args);
+    assert.equal(got.result?.isError, true, `${JSON.stringify(args)}: ${textOf(got)}`);
+    assert.match(textOf(got), /только своего места/, textOf(got));
+  }
+  assert.equal(fake.state.counts.connect, standConnects, "no refused call reached the server");
+  assert.ok(callerListens(), "the caller's place stays on the board, listening");
+  const own = await channel({ action: "register", name: `${CALLER}.sub-1` });
+  assert.ok(!own.result?.isError, textOf(own));
+});
+
+test("satellite: a connect refusing the short ttl in any words is retried without it, and the place is taken", async (t) => {
+  const fake = await withCaller(t);
+  await fake.control({ connect_refuse_ttl: "Отказано (422): окно простоя вне разброса контура" });
+  const sat = await satelliteBridge(t, fake);
+  const r = await standAs(sat, SAT_ARGS);
+  assert.ok(!r.result?.isError, `${textOf(r)}\n${sat.stderr}`);
+  assert.equal(placeOf(r), `${CALLER}.sub-1`, textOf(r));
+  assert.equal(fake.state.counts.ttl_refused, 1, "the ttl was offered once");
+  const connect = fake.state.placeArgs.find((x) => x.action === "connect");
+  assert.equal(connect?.ttl_seconds, undefined, "the retry goes without ttl");
+  assert.match(textOf(r), /контур не принял/, textOf(r));
 });
