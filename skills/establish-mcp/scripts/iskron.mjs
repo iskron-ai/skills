@@ -1970,6 +1970,10 @@ import { createServer as createServer2 } from "node:net";
 // js/shared/room-kinds.ts
 var WORDS = {
   said: "слово от {author}",
+  said_pending: "слово от {author} в полёте — текст придёт следом",
+  body: "текст слова [{refers_to}] от {author}",
+  body_aborted: "слово [{refers_to}] оборвано автором",
+  body_lapsed: "слово [{refers_to}] оборвано платформой по сроку",
   closing: "ведущий {author} предлагает закрыть дело до {ends_at}{; свидетельства: evidence}",
   closing_may: 'ты можешь возразить — iskron_case(action="object", in_reply_to={entry_id}) (прежнее имя iskron_room)',
   closing_not: "возражать не тебе",
@@ -1977,13 +1981,11 @@ var WORDS = {
   objection: "{author} возражает против закрытия: {reason}",
   late_objection: "{author} возразил после закрытия",
   progress: "{author}: [{key}] {done} = {verdict}{; note}",
-  lead: "ведёт {author}",
   opened: "дело открыл {author}",
   joined: "вошёл {author}",
   left: "вышел {author}",
   invite: "{author} зовёт {who} в дело",
   withdraw: "приглашение отозвано, отзывает {author}",
-  accepted: "{who} принял приглашение",
   node: "в деле узел #{seq} {name} ({realm})",
   link: "дело связано с #{room} ({rel})",
   auto: "запись платформы {code} о деле #{room}",
@@ -2002,18 +2004,17 @@ var REL_WORDS = {
 };
 var RULES = {
   said: "stack",
+  body: "stack",
   closing: "interrupt",
   closed: "interrupt",
   objection: "interrupt",
   late_objection: "interrupt",
   invite: "mine",
   progress: "batch",
-  lead: "batch",
   opened: "batch",
   joined: "batch",
   left: "batch",
   withdraw: "batch",
-  accepted: "batch",
   node: "batch",
   link: "batch",
   // Запись платформы о связанном деле: признака прерывания у неё нет (#4925).
@@ -2021,8 +2022,8 @@ var RULES = {
 };
 var obj = (v) => v && typeof v === "object" && !Array.isArray(v) ? v : {};
 var str = (v) => typeof v === "string" ? v : typeof v === "number" || typeof v === "boolean" ? String(v) : "";
-function authorOf(line) {
-  const a = obj(line.author);
+function authorOf(author) {
+  const a = obj(author);
   const name = str(a.name);
   const standing = str(a.standing);
   if (name) return standing ? `${name} (${standing})` : name;
@@ -2070,7 +2071,11 @@ function roomKind(frame2) {
   const node = obj(fields.node);
   const values = {
     kind,
-    author: authorOf(line),
+    // У body строка — запись тела (у обрыва по сроку её автор — платформа);
+    // автор самого слова — in_reply_to_from конверта (#5893 §4.5b, §4.6).
+    author: authorOf(
+      kind === "body" && Object.keys(obj(f.in_reply_to_from)).length ? f.in_reply_to_from : line.author
+    ),
     key,
     done: line.done,
     verdict: line.verdict,
@@ -2078,6 +2083,8 @@ function roomKind(frame2) {
     ends_at: fields.ends_at,
     evidence: Array.isArray(fields.evidence) ? fields.evidence.map(str).join(", ") : "",
     entry_id: line.entry_id ?? f.entry_id,
+    // Слово, которому body несёт текст или обрыв: refers_to строки, иначе in_reply_to конверта.
+    refers_to: str(line.refers_to) || str(f.in_reply_to) || str(obj(f.word).entry_id),
     reason: fields.reason,
     target: after(key, "invite:"),
     // Ключ несёт id; имя приглашённого — в полях строки (наблюдено на бою: standing/karta с name).
@@ -2091,10 +2098,10 @@ function roomKind(frame2) {
   };
   const rule = RULES[kind];
   if (!rule) return { kind, rule: "batch", words: fill(WORDS.unknown, values), known: false };
-  let words = fill(
-    kind === "auto" ? AUTO_WORDS[str(values.code)] ?? WORDS.auto : WORDS[kind],
-    values
-  );
+  const pending = kind === "said" && f.body_pending === true && !str(f.body) && !str(line.done);
+  const aborted = kind === "body" && fields.aborted === true;
+  const wordsOf = pending ? WORDS.said_pending : aborted ? obj(line.author).kind === "platform" ? WORDS.body_lapsed : WORDS.body_aborted : kind === "auto" ? AUTO_WORDS[str(values.code)] ?? WORDS.auto : WORDS[kind];
+  let words = fill(wordsOf, values);
   if (kind === "closing") {
     const may = Array.isArray(fields.may_object) ? fields.may_object.map((m) => typeof m === "string" ? m : str(obj(m).id)) : [];
     const myId = str(f.to_standing_id);
@@ -2102,10 +2109,10 @@ function roomKind(frame2) {
     words += "; " + fill(mayI ? WORDS.closing_may : WORDS.closing_not, values);
   }
   const stack = rule === "stack" ? (
-    // Стопка решает только у said; слово без стопки — прежним путём, вставкой.
+    // Стопка решает у said и body; слово без стопки — прежним путём, вставкой.
     f.stack === "defer" ? "batch" : "interrupt"
   ) : rule === "mine" ? mine.includes(str(values.target)) || myRole(f, fields) ? "interrupt" : "batch" : rule;
-  return { kind, rule: stack, words, known: true };
+  return { kind, rule: pending || aborted ? "batch" : stack, words, known: true };
 }
 var byKind = (frame2) => roomKind(frame2) !== null;
 var stackOf = (frame2) => roomKind(frame2)?.rule ?? (frame2?.stack === "defer" ? "batch" : "interrupt");

@@ -42,6 +42,9 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { startFakeNks } from "./fake-nks.mjs";
 import {
   auto,
+  body as bodyFrame,
+  bodyAborted,
+  bodyLapsed,
   closing,
   directWord,
   graphPosed,
@@ -54,6 +57,7 @@ import {
   roleInvite,
   roomFrame,
   said as saidFrame,
+  saidInFlight,
   unknownKind,
   withdraw,
 } from "./room-frames.mjs";
@@ -1887,6 +1891,46 @@ test("room kinds: an auto record about a child case queues in words, not as an u
     const linked = await send(link("parent"), 4);
     assert.equal(linked.delivery, "queue");
     assert.match(linked.text, /дело связано с #12 \(дочернее к нему\)/);
+  } finally {
+    await rec.stop();
+  }
+});
+
+// A word in two phases (#5893 §4.5b): said in flight carries no text and queues;
+// body brings the text by its word's stack; an abort queues in words.
+test("room kinds: a said in flight queues, body follows its stack in words, an abort queues; plain said still steers", async () => {
+  const b = bridgeEnv("room-body");
+  const rec = await plugin(b.env);
+  try {
+    await serverTools(rec);
+    await until(() => rec.tools().has("iskron_channel"), "the channel tool");
+    await rec.call("iskron_channel", { action: "connect" }, "s-body");
+    const [pid] = pidsOf(b.log);
+    const send = async (frame, i) => {
+      appendFileSync(`${b.events}.${pid}`, event("frame", { frame, raw: JSON.stringify(frame) }));
+      await until(() => rec.prompts.length === i, `prompt ${i}`);
+      return rec.prompts[i - 1];
+    };
+    const flying = await send(saidInFlight(54), 1);
+    assert.equal(flying.delivery, "queue", "a said in flight has no text to interrupt with");
+    assert.match(flying.text, /слово от Алексей \(@aleksei:probe\) в полёте — текст придёт следом/);
+    const text = await send(bodyFrame(55, 54), 2);
+    assert.equal(text.delivery, "queue", "body with its word's stack=defer queues");
+    assert.match(text.text, /текст слова \[54\] от Алексей \(@aleksei:probe\)/);
+    assert.match(text.text, /\n\nтекст второй фазы$/, "the word's text passes through");
+    assert.doesNotMatch(text.text, /неизвестен/, "body is a kind the bridge knows");
+    const loud = bodyFrame(61, 60);
+    loud.stack = "interrupt";
+    const loudP = await send(loud, 3);
+    assert.equal(loudP.delivery, "steer", "body with its word's stack=interrupt steers");
+    const byAuthor = await send(bodyAborted(57, 56), 4);
+    assert.equal(byAuthor.delivery, "queue", "an abort by the author queues");
+    assert.match(byAuthor.text, /слово \[56\] оборвано автором/);
+    const byTerm = await send(bodyLapsed(59, 58), 5);
+    assert.equal(byTerm.delivery, "queue", "an abort by the platform queues");
+    assert.match(byTerm.text, /слово \[58\] оборвано платформой по сроку/);
+    const plain = await send(saidFrame("interrupt", 62), 6);
+    assert.equal(plain.delivery, "steer", "a said without body_pending still steers");
   } finally {
     await rec.stop();
   }
