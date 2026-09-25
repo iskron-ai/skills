@@ -262,6 +262,43 @@ export const auto = (code, entry_id = 80) =>
 export const link = (rel, entry_id = 81) =>
   roomFrame("link", { entry_id, key: `link:${CHILD.id}`, fields: { room: CHILD, rel } });
 
+/** Место, ушедшее из дела и вошедшее в него, — в полях строки (api 0.89.6). */
+export const MEMBER_ID = "3c7a9e1b-5d2f-4a8c-b6e0-1f3d5a7c9e2b";
+export const MEMBER = {
+  id: MEMBER_ID,
+  karta: { name: "Архитектор", seq: 48 },
+  name: "fluence.nks-agents.rooms",
+  standing: "@aleksei:fluence.nks-agents.rooms",
+};
+
+/** Уход по истечении (форма боя 2026-09-25, api 0.89.6): автор — платформа, ушедший — в fields.standing. */
+export const leftExpired = (entry_id = 84) =>
+  roomFrame("left", {
+    entry_id,
+    key: `member:${MEMBER_ID}`,
+    author: PLATFORM,
+    fields: { reason: "expired", standing: MEMBER },
+  });
+
+/** Вход места в дело с тем же полем standing, что у ухода. */
+export const joinedMember = (entry_id = 85) =>
+  roomFrame("joined", { entry_id, key: `member:${MEMBER_ID}`, fields: { standing: MEMBER } });
+
+/** Узел в деле — {seq, name, realm}. */
+export const NODE = { seq: 4057, name: "js-bundle", realm: "@nks/nks-dev" };
+
+/** Узел в деле без op и reasoning — сегодняшняя форма боя. */
+export const nodeBound = (entry_id = 86) =>
+  roomFrame("node", { entry_id, key: `node:${NODE.seq}`, fields: { node: NODE } });
+
+/** Узел с op и reasoning — форма по согласованию, не по бою. */
+export const nodeOp = (op, entry_id = 87) =>
+  roomFrame("node", {
+    entry_id,
+    key: `node:${NODE.seq}`,
+    fields: { node: NODE, op, reasoning: `причина ${op}` },
+  });
+
 /** Род, которого словарь не знает. */
 export const unknownKind = (entry_id = 61) =>
   roomFrame("weather", { entry_id, key: "weather", stack: "interrupt", body: "" });

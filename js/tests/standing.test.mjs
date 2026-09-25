@@ -26,8 +26,12 @@ import {
   closing,
   directWord,
   graphPosed,
+  joinedMember,
+  leftExpired,
   legacyRoom,
   MY_KARTA,
+  nodeBound,
+  nodeOp,
   progress,
   roleInvite,
   roomFrame,
@@ -3087,6 +3091,40 @@ test("an auto record about a child case batches in words and leaves no unknown-k
   );
   wd.proc.kill("SIGKILL");
   await wd.done;
+});
+
+// Room kinds batched through the bridge: one batch of frames, its lines in words.
+async function batchOf(t, frames) {
+  const { fake, dir, key } = await connected(t, { env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "1000" } });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog", dir, key, 10_000);
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
+  for (const f of frames) await sendRoom(fake, f);
+  await waitFor(() => wd.out.includes(`Дело: кадров ${frames.length}`), "the batch", 6000);
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+  return wd.out;
+}
+
+// left on expiry (battle form, api 0.89.6): the author is the platform, the one who left — fields.standing.
+test("left names the one who left from fields.standing with its reason, not the platform; joined takes fields.standing too", async (t) => {
+  const out = await batchOf(t, [leftExpired(84), joinedMember(85)]);
+  const who = "fluence\\.nks-agents\\.rooms \\(@aleksei:fluence\\.nks-agents\\.rooms\\)";
+  assert.match(out, new RegExp(`\\[84\\] вышел ${who}; причина: expired`));
+  assert.doesNotMatch(out, /вышел платформа/);
+  assert.match(out, new RegExp(`\\[85\\] вошёл ${who}`));
+});
+
+// node with op and reasoning — the agreed form, not yet seen on the wire.
+test("node with op=updated reads as an update, op=bound as the node in the case, each with its reasoning", async (t) => {
+  const out = await batchOf(t, [nodeOp("updated", 87), nodeOp("bound", 88)]);
+  assert.match(out, /\[87\] узел #4057 js-bundle обновлён; причина updated/);
+  assert.match(out, /\[88\] в деле узел #4057 js-bundle \(@nks\/nks-dev\); причина bound/);
+});
+
+test("node without op and reasoning prints as before", async (t) => {
+  const out = await batchOf(t, [nodeBound(86)]);
+  assert.match(out, /\[86\] в деле узел #4057 js-bundle \(@nks\/nks-dev\) — Алексей/);
 });
 
 // A word in two phases (#5893 §4.5b): said in flight and aborts wait in the batch in words;
