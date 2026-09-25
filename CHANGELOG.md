@@ -1,5 +1,25 @@
 # Changelog
 
+## [6.18.0](https://github.com/iskron-ai/skills/compare/v6.17.0...v6.18.0) (2026-09-25)
+
+
+### Features
+
+* **bridge:** своё место субагента — мост-спутник из файла агента, место на прогон ([#202](https://github.com/iskron-ai/skills/issues/202)) ([72f72a5](https://github.com/iskron-ai/skills/commit/72f72a51cb721c6aa843da474e0c126b0c1a3e2c))
+* **skills:** агенты не пересказывают — строка, слово и узел не дублируют друг друга; слово человека в деле разносит ведущий ([#211](https://github.com/iskron-ai/skills/issues/211)) ([dfe74b4](https://github.com/iskron-ai/skills/commit/dfe74b4edc8ff865564ac30ae1506bbdb42acd7e))
+* **skills:** слово агента — только в дело; вердикт гроссбуха «slop» ([#208](https://github.com/iskron-ai/skills/issues/208)) ([5cb857f](https://github.com/iskron-ai/skills/commit/5cb857f97921d157d9f3bc6bedeaf8b5007a703a))
+* **skills:** спрос и взятие в деле — строки «нужно:» и «беру:», ведущий разводит, запуск по «да» ([#204](https://github.com/iskron-ai/skills/issues/204)) ([08d7b15](https://github.com/iskron-ai/skills/commit/08d7b15dd89a267aaed6b83b9d334136a6251ec6))
+
+
+### Bug Fixes
+
+* **bridge:** место по каталогу — только стоявшей сессии; уход словом держится ([#206](https://github.com/iskron-ai/skills/issues/206)) ([369b0fe](https://github.com/iskron-ai/skills/commit/369b0fe6399c774c9bb2f5299cd587a626aa4aea))
+* **bridge:** прямое слово не теряется в пачке — отдельным событием, пачка дела коротко ([#212](https://github.com/iskron-ai/skills/issues/212)) ([a68054f](https://github.com/iskron-ai/skills/commit/a68054f6dcf13740f196b14ea17836d9d343b4fa))
+* **bridge:** род body и слово в полёте — две фазы слова не будят пустым и не падают в неизвестные ([#209](https://github.com/iskron-ai/skills/issues/209)) ([6e25d87](https://github.com/iskron-ai/skills/commit/6e25d87bb1d9938f962d478538f7d95f1c96cb44))
+* **iskronify:** спутник субагента не проецируется, пока платформа не отделит его от почты роли ([#210](https://github.com/iskron-ai/skills/issues/210)) ([b534081](https://github.com/iskron-ai/skills/commit/b53408177817d37e7ceac84bbe1efee7d14f91d6))
+* **iskronify:** хук после мержа — по исходу, не по форме команды; справка не будит ([#205](https://github.com/iskron-ai/skills/issues/205)) ([e774928](https://github.com/iskron-ai/skills/commit/e774928a75eebbf5201031821dff6bc3d456a2d5))
+* **skills:** замысел дела — зачин, без формы; ведение и донесение — слово, не будущая запись ([#207](https://github.com/iskron-ai/skills/issues/207)) ([537fc76](https://github.com/iskron-ai/skills/commit/537fc766b18705bbdeae0329f8669168ee954c52))
+
 ## [6.17.0](https://github.com/iskron-ai/skills/compare/v6.16.2...v6.17.0) (2026-09-24)
 
 
