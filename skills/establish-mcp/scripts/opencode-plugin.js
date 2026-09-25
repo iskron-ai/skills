@@ -187,7 +187,14 @@ function roomKind(frame) {
   const rule = RULES[kind];
   const author = str(values.author);
   if (!rule)
-    return { kind, rule: "batch", words: fill(WORDS.unknown, values), author, known: false };
+    return {
+      kind,
+      rule: "batch",
+      words: fill(WORDS.unknown, values),
+      author,
+      phase: null,
+      known: false
+    };
   const pending = kind === "said" && f.body_pending === true && !str(f.body) && !str(line.done);
   const aborted = kind === "body" && fields.aborted === true;
   const wordsOf = pending ? WORDS.said_pending : aborted ? obj(line.author).kind === "platform" ? WORDS.body_lapsed : WORDS.body_aborted : kind === "auto" ? AUTO_WORDS[str(values.code)] ?? WORDS.auto : WORDS[kind];
@@ -202,7 +209,8 @@ function roomKind(frame) {
     // Стопка решает у said и body; слово без стопки — прежним путём, вставкой.
     f.stack === "defer" ? "batch" : "interrupt"
   ) : rule === "mine" ? mine.includes(str(values.target)) || myRole(f, fields) ? "interrupt" : "batch" : rule;
-  return { kind, rule: pending || aborted ? "batch" : stack, words, author, known: true };
+  const phase = pending ? "pending" : aborted ? "aborted" : null;
+  return { kind, rule: phase ? "batch" : stack, words, author, phase, known: true };
 }
 var stackOf = (frame) => roomKind(frame)?.rule ?? (frame?.stack === "defer" ? "batch" : "interrupt");
 

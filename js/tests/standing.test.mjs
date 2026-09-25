@@ -3196,7 +3196,7 @@ test("the exit watchdog: closing flushes the batch, the watchdog leaves on it, c
   const r1 = await first.done;
   assert.equal(r1.exit, 0);
   assert.ok(first.out.includes("[49] "), `the batch goes first:\n${first.out}`);
-  assert.match(first.out, /iskron_case\(action="history", room=7, since=48\)/);
+  assert.match(first.out, /iskron_case\(realm="nks-dev", action="history", room=7, since=48\)/);
   assert.ok(!first.out.includes("room.closing"), `closing waits for the next arm:\n${first.out}`);
   const second = runClient("watchdog-exit", dir, key, 8000);
   const r2 = await second.done;
@@ -3295,6 +3295,31 @@ test("a human word right after a case batch goes out alone under Monitor: a paus
   await wd.done;
 });
 
+// A human's word in two phases (#5953): the word in flight carries no text and waits by
+// the dictionary; its body (no as_person on it) is the human's word and comes alone.
+test("a human's word in two phases wakes the exit watchdog once, and that one event carries the text", async (t) => {
+  const { fake, dir, key } = await connected(t, {
+    env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "10000" },
+  });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog-exit", dir, key, 15_000);
+  await waitFor(() => wd.err.includes("hello"), "hello to be noted");
+  const inFlight = saidInFlight(80);
+  inFlight.provenance.as_person = true;
+  await sendRoom(fake, inFlight);
+  await new Promise((r) => setTimeout(r, 700));
+  assert.equal(wd.proc.exitCode, null, `a word in flight woke it empty:\n${wd.out}`);
+  await sendRoom(fake, bodyFrame(81, 80, "текст слова человека ЦЕЛ"));
+  const r = await wd.done;
+  assert.equal(r.exit, 0, `the body must wake: ${wd.err}`);
+  assert.ok(wd.out.includes("текст слова человека ЦЕЛ"), `the text in the event:\n${wd.out}`);
+  assert.ok(!wd.out.includes("в полёте"), `no empty word in flight beside it:\n${wd.out}`);
+  // Nothing is left to wake the next arm: the word in flight went with its body.
+  const next = runClient("watchdog-exit", dir, key, 3000);
+  const r2 = await next.done;
+  assert.equal(r2.exit, null, `the next arm woke on:\n${next.out}`);
+});
+
 test("a case batch under Monitor is short: the head with a pointer to read it whole with since, then a line per frame, no envelopes", async (t) => {
   const { fake, dir, key } = await connected(t, {
     env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "10000" },
@@ -3302,7 +3327,11 @@ test("a case batch under Monitor is short: the head with a pointer to read it wh
   await waitFor(() => fake.state.ws.size === 1, "the socket");
   const wd = runClient("watchdog", dir, key, 20_000);
   await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
-  for (let i = 0; i < 5; i++) await sendRoom(fake, said("defer", 400 + i));
+  // The first record carries its entry_id in the journal line only: since is read from there too.
+  const first = said("defer", 400);
+  delete first.entry_id;
+  await sendRoom(fake, first);
+  for (let i = 1; i < 5; i++) await sendRoom(fake, said("defer", 400 + i));
   const long = "длинное слово ".repeat(40) + "НЕ-ДОЛЖНО-ВОЙТИ";
   await sendRoom(
     fake,
@@ -3316,7 +3345,7 @@ test("a case batch under Monitor is short: the head with a pointer to read it wh
   // How to read it whole stands in the head: a cut takes the tail, not the head.
   assert.match(
     lines[head],
-    /iskron_case\(action="history", room=7, since=399\) \(старый тул без since — history с keep_cursor=true\)/,
+    /iskron_case\(realm="nks-dev", action="history", room=7, since=399\) \(старый тул без since — history с keep_cursor=true\)/,
   );
   const body = lines.slice(head + 1, head + 7);
   for (let i = 0; i < 6; i++) assert.ok(body[i]?.startsWith(`[${400 + i}] `), body[i]);

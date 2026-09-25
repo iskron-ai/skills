@@ -100,22 +100,25 @@ export function batchLine(frame: Frame): string {
  * пачки. since есть у mcp с 0.84.2; старому — запасной ход keep_cursor.
  */
 export function batchPointer(frames: Frame[]): string {
+  // Дело — граф плюс номер; realm iskron_case требует всегда.
   const since = new Map<string, number>();
   for (const frame of frames) {
     const f = frame as Record<string, unknown>;
     const room = (f.room ?? {}) as Record<string, unknown>;
+    const line = (f.line ?? {}) as Record<string, unknown>;
     const n = room.seq ?? room.id;
-    const e = Number(f.entry_id);
+    const e = Number(f.entry_id ?? line.entry_id);
     if ((typeof n !== "number" && typeof n !== "string") || !Number.isFinite(e)) continue;
-    const key = typeof n === "number" ? String(n) : JSON.stringify(n);
-    since.set(key, Math.min(since.get(key) ?? e, e));
+    const realm = room.realm ?? f.realm;
+    const args =
+      (typeof realm === "string" && realm ? `realm="${realm}", ` : "") +
+      `action="history", room=${typeof n === "number" ? String(n) : JSON.stringify(n)}`;
+    since.set(args, Math.min(since.get(args) ?? e, e));
   }
   if (!since.size) return 'целиком — iskron_channel(action="history")';
   return (
     "целиком — " +
-    [...since]
-      .map(([room, e]) => `iskron_case(action="history", room=${room}, since=${e - 1})`)
-      .join("; ") +
+    [...since].map(([args, e]) => `iskron_case(${args}, since=${e - 1})`).join("; ") +
     " (старый тул без since — history с keep_cursor=true)"
   );
 }

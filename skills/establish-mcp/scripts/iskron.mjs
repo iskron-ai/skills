@@ -2110,7 +2110,14 @@ function roomKind(frame2) {
   const rule = RULES[kind];
   const author = str(values.author);
   if (!rule)
-    return { kind, rule: "batch", words: fill(WORDS.unknown, values), author, known: false };
+    return {
+      kind,
+      rule: "batch",
+      words: fill(WORDS.unknown, values),
+      author,
+      phase: null,
+      known: false
+    };
   const pending = kind === "said" && f.body_pending === true && !str(f.body) && !str(line.done);
   const aborted = kind === "body" && fields.aborted === true;
   const wordsOf = pending ? WORDS.said_pending : aborted ? obj(line.author).kind === "platform" ? WORDS.body_lapsed : WORDS.body_aborted : kind === "auto" ? AUTO_WORDS[str(values.code)] ?? WORDS.auto : WORDS[kind];
@@ -2125,7 +2132,8 @@ function roomKind(frame2) {
     // Стопка решает у said и body; слово без стопки — прежним путём, вставкой.
     f.stack === "defer" ? "batch" : "interrupt"
   ) : rule === "mine" ? mine.includes(str(values.target)) || myRole(f, fields) ? "interrupt" : "batch" : rule;
-  return { kind, rule: pending || aborted ? "batch" : stack, words, author, known: true };
+  const phase = pending ? "pending" : aborted ? "aborted" : null;
+  return { kind, rule: phase ? "batch" : stack, words, author, phase, known: true };
 }
 var byKind = (frame2) => roomKind(frame2) !== null;
 var stackOf = (frame2) => roomKind(frame2)?.rule ?? (frame2?.stack === "defer" ? "batch" : "interrupt");
@@ -2154,10 +2162,10 @@ ${raw}`;
   }
   if (frame2.provenance) lines.push(`provenance: ${JSON.stringify(frame2.provenance)}`);
   const envelope = {};
-  const rec = frame2;
-  for (const k of ENVELOPE_FIRST) if (rec[k] !== void 0) envelope[k] = rec[k];
-  for (const k of Object.keys(rec))
-    if (!(k in envelope) && !NOT_ENVELOPE.has(k) && rec[k] !== void 0) envelope[k] = rec[k];
+  const rec2 = frame2;
+  for (const k of ENVELOPE_FIRST) if (rec2[k] !== void 0) envelope[k] = rec2[k];
+  for (const k of Object.keys(rec2))
+    if (!(k in envelope) && !NOT_ENVELOPE.has(k) && rec2[k] !== void 0) envelope[k] = rec2[k];
   if (Object.keys(envelope).length) lines.push(`frame: ${JSON.stringify(envelope)}`);
   const body = typeof frame2.body === "string" ? frame2.body : frame2.body === void 0 ? raw : JSON.stringify(frame2.body, null, 1).replace(/\n\s*/g, " ");
   return `${lines.join("\n")}
@@ -2183,14 +2191,16 @@ function batchPointer(frames) {
   for (const frame2 of frames) {
     const f = frame2;
     const room = f.room ?? {};
+    const line = f.line ?? {};
     const n = room.seq ?? room.id;
-    const e = Number(f.entry_id);
+    const e = Number(f.entry_id ?? line.entry_id);
     if (typeof n !== "number" && typeof n !== "string" || !Number.isFinite(e)) continue;
-    const key = typeof n === "number" ? String(n) : JSON.stringify(n);
-    since.set(key, Math.min(since.get(key) ?? e, e));
+    const realm = room.realm ?? f.realm;
+    const args = (typeof realm === "string" && realm ? `realm="${realm}", ` : "") + `action="history", room=${typeof n === "number" ? String(n) : JSON.stringify(n)}`;
+    since.set(args, Math.min(since.get(args) ?? e, e));
   }
   if (!since.size) return 'целиком — iskron_channel(action="history")';
-  return "целиком — " + [...since].map(([room, e]) => `iskron_case(action="history", room=${room}, since=${e - 1})`).join("; ") + " (старый тул без since — history с keep_cursor=true)";
+  return "целиком — " + [...since].map(([args, e]) => `iskron_case(${args}, since=${e - 1})`).join("; ") + " (старый тул без since — history с keep_cursor=true)";
 }
 
 // js/bridge/backlog.ts
@@ -2364,6 +2374,13 @@ function redundantCopy(frame2, ring, seen, seenPath, burst) {
 // js/bridge/roomstack.ts
 var ROOM_BATCH_MS = Number(process.env.ISKRON_BRIDGE_ROOM_BATCH_MS) || 6e4;
 var ROOM_BATCH_CAP = 20;
+var HUMAN_WORDS_KEEP = 200;
+var rec = (v) => v && typeof v === "object" ? v : {};
+var idOf = (v) => typeof v === "number" || typeof v === "string" && v ? String(v) : "";
+var entryOf = (frame2) => {
+  const f = rec(frame2);
+  return idOf(rec(f.line).entry_id ?? f.entry_id);
+};
 var RoomBatch = class {
   held = [];
   timer = null;
@@ -2373,6 +2390,31 @@ var RoomBatch = class {
     this.held.push({ raw, frame: frame2 });
     if (this.held.length >= ROOM_BATCH_CAP) return this.flushNow();
     this.timer ??= setTimeout(() => this.flushNow(), ROOM_BATCH_MS).unref();
+  }
+  /** entry_id слов человека в полёте: их тело — слово человека, не кадр пачки. */
+  humanWords = /* @__PURE__ */ new Set();
+  rememberHumanWord(entry) {
+    if (!entry) return;
+    this.humanWords.add(entry);
+    const oldest = this.humanWords.values().next();
+    if (this.humanWords.size > HUMAN_WORDS_KEEP && !oldest.done)
+      this.humanWords.delete(oldest.value);
+  }
+  /** true — это было слово человека в полёте; память о нём снята. */
+  forgetHumanWord(entry) {
+    return !!entry && this.humanWords.delete(entry);
+  }
+  /** Вынуть из копящейся пачки слово в полёте, чей текст пришёл: отдан он будет своим телом. */
+  dropWord(entry, dropped) {
+    for (let i = this.held.length - 1; i >= 0; i--) {
+      if (entryOf(this.held[i].frame) !== entry) continue;
+      dropped(this.held[i].frame);
+      this.held.splice(i, 1);
+    }
+    if (!this.held.length && this.timer) {
+      clearTimeout(this.timer);
+      this.timer = null;
+    }
   }
   /** Лежит ли кадр в копящейся пачке — кольцо не отдаёт его прицепившемуся отдельно (door.ts). */
   holds(frame2) {
@@ -2402,8 +2444,22 @@ function noteRoomKind(frame2) {
     log(`room frame ${String(frame2.id ?? "?")}: ${rk.words} — batched, not interrupting`);
 }
 function batchForWatchdogs(d, raw, frame2, emit2) {
-  const human = (frame2.origin ?? classifyOrigin(frame2)) === "human";
-  if (!human && byKind(frame2) && stackOf(frame2) === "batch") {
+  const rk = roomKind(frame2);
+  const f = rec(frame2);
+  let human = (frame2.origin ?? classifyOrigin(frame2)) === "human";
+  if (rk?.kind === "said" && rk.phase === "pending" && human)
+    d.roomBatch.rememberHumanWord(entryOf(frame2));
+  if (rk?.kind === "body") {
+    const word = idOf(rec(f.line).refers_to ?? f.in_reply_to);
+    if (d.roomBatch.forgetHumanWord(word) && rk.phase !== "aborted") {
+      human = true;
+      frame2.origin = "human";
+      d.roomBatch.dropWord(word, (said) => {
+        for (const k of deliveredKeys(said)) noteSeen(d.seenPath, k, d.seen);
+      });
+    }
+  }
+  if ((!human || rk?.phase) && byKind(frame2) && stackOf(frame2) === "batch") {
     d.roomBatch.add(raw, frame2, emit2);
     return true;
   }
@@ -2435,15 +2491,15 @@ function leftOnDisk(key) {
     return false;
   }
 }
-function writeHoldRecord(key, rec) {
+function writeHoldRecord(key, rec2) {
   if (CFG.satellite) return;
   try {
-    const session = harnessSession ?? rec.session;
-    const left = rec.left ?? leftOnDisk(key);
+    const session = harnessSession ?? rec2.session;
+    const left = rec2.left ?? leftOnDisk(key);
     writeFileSync6(
       holdFilePathFor(key),
       JSON.stringify({
-        ...rec,
+        ...rec2,
         session: session ?? void 0,
         left: left || void 0,
         at: Date.now()
@@ -2509,8 +2565,8 @@ function sweepStale(authDir, mine) {
   }
   for (const f of readdirSync2(dir).filter((x) => x.endsWith(".hold"))) {
     try {
-      const rec = JSON.parse(readFileSync8(join6(dir, f), "utf8"));
-      if (typeof rec.at !== "number" || Date.now() - rec.at > HOLD_RECORD_MAX_AGE_MS)
+      const rec2 = JSON.parse(readFileSync8(join6(dir, f), "utf8"));
+      if (typeof rec2.at !== "number" || Date.now() - rec2.at > HOLD_RECORD_MAX_AGE_MS)
         unlinkSync5(join6(dir, f));
     } catch {
       try {
@@ -3641,11 +3697,11 @@ async function heldElsewhere(realm) {
   const out5 = [];
   for (const f of readdirSync3(dir).filter((x) => x.endsWith(".hold"))) {
     try {
-      const rec = JSON.parse(readFileSync9(join7(dir, f), "utf8"));
-      if (!rec?.realm || rec.karta == null) continue;
-      if (!anyRealm && slugOf(String(rec.realm)) !== slugOf(realm)) continue;
-      const key = keyOf(rec.realm, rec.karta, rec.name ?? "");
-      if (await localSocketAlive(socketPathOf(CFG.authDir, key))) out5.push({ ...rec, key });
+      const rec2 = JSON.parse(readFileSync9(join7(dir, f), "utf8"));
+      if (!rec2?.realm || rec2.karta == null) continue;
+      if (!anyRealm && slugOf(String(rec2.realm)) !== slugOf(realm)) continue;
+      const key = keyOf(rec2.realm, rec2.karta, rec2.name ?? "");
+      if (await localSocketAlive(socketPathOf(CFG.authDir, key))) out5.push({ ...rec2, key });
     } catch {
     }
   }
@@ -3872,27 +3928,27 @@ async function deadPredecessor(realm, karta, name) {
 }
 async function resumeFromDisk(realm, karta, name) {
   const key = keyOf(realm, karta, name);
-  const rec = readHoldRecord(key);
-  if (!rec) return null;
+  const rec2 = readHoldRecord(key);
+  if (!rec2) return null;
   if (holdsKey(key)) return null;
   const led = ledKey();
   if (led && led !== key) return null;
   if (await localSocketAlive(localSocketPathOf(key))) return null;
   const prev = state.standing;
   state.standing = { realm, karta, name };
-  const prevCwd = rec.cwd ? noteStandCwd(rec.cwd) : null;
+  const prevCwd = rec2.cwd ? noteStandCwd(rec2.cwd) : null;
   noteResuming(1);
   try {
-    holdStanding(rec.url, rec.statusUrl);
+    holdStanding(rec2.url, rec2.statusUrl);
     const hello = await awaitHello(4e3);
     if (hello && holdsKey(key)) {
       const pending = Number(hello.pending) || 0;
       const me = sessionOfBridge();
       let busy = "";
-      if (rec.status && me && rec.session === me) {
-        const st = await publishStatus(rec.status);
-        busy = st.ok ? `; занятость возвращена: ${rec.status}` : `; занятость не возвращена: ${short(st.body)}`;
-      } else if (rec.status) {
+      if (rec2.status && me && rec2.session === me) {
+        const st = await publishStatus(rec2.status);
+        busy = st.ok ? `; занятость возвращена: ${rec2.status}` : `; занятость не возвращена: ${short(st.body)}`;
+      } else if (rec2.status) {
         rememberStatus("");
         busy = "; прежняя строка занятости не возвращена — скажи свою";
       }
@@ -3909,7 +3965,7 @@ async function resumeFromDisk(realm, karta, name) {
   log(`hold record for ${key} is stale — dropped, the place is taken anew`);
   releaseStanding("возврат с диска не удался", true);
   state.standing = prev;
-  if (rec.cwd) noteStandCwd(prevCwd);
+  if (rec2.cwd) noteStandCwd(prevCwd);
   return null;
 }
 function recordsFor(sel) {
@@ -3924,11 +3980,11 @@ function recordsFor(sel) {
   const left = [];
   for (const f of readdirSync4(dir).filter((x) => x.endsWith(".hold"))) {
     try {
-      const rec = JSON.parse(readFileSync10(join8(dir, f), "utf8"));
-      if (!rec || rec.client !== mine) continue;
-      const key = keyOf(rec.realm, rec.karta, rec.name);
+      const rec2 = JSON.parse(readFileSync10(join8(dir, f), "utf8"));
+      if (!rec2 || rec2.client !== mine) continue;
+      const key = keyOf(rec2.realm, rec2.karta, rec2.name);
       const keyed2 = !!sel.key && key === sel.key;
-      const inDir = !!sel.cwd && rec.cwd === sel.cwd;
+      const inDir = !!sel.cwd && rec2.cwd === sel.cwd;
       if (!keyed2 && !inDir) continue;
       const fresh = readHoldRecord(key);
       if (!fresh) continue;
@@ -3986,10 +4042,10 @@ async function resumeBy(sel, register = true) {
   }
   const led = ledKey();
   const skipped = [];
-  for (const rec of recs) {
-    const key = keyOf(rec.realm, rec.karta, rec.name);
+  for (const rec2 of recs) {
+    const key = keyOf(rec2.realm, rec2.karta, rec2.name);
     if (holdsKey(key)) return { resumed: true, key, pending: 0, word: "мост уже держит это место" };
-    if (isParked(rec.realm, rec.karta, rec.name)) return backToParked(key, "возврат по записи");
+    if (isParked(rec2.realm, rec2.karta, rec2.name)) return backToParked(key, "возврат по записи");
     if (led && led !== key) {
       skipped.push(`${key}: мост ведёт другое место ${led}`);
       continue;
@@ -3998,7 +4054,7 @@ async function resumeBy(sel, register = true) {
       skipped.push(`${key}: держит живой мост`);
       continue;
     }
-    const back = await resumeFromDisk(rec.realm, rec.karta, rec.name);
+    const back = await resumeFromDisk(rec2.realm, rec2.karta, rec2.name);
     if (!back) {
       skipped.push(`${key}: запись протухла — место займёт iskron_stand`);
       continue;
@@ -4007,10 +4063,10 @@ async function resumeBy(sel, register = true) {
     if (register) {
       const r = await callTool("iskron_channel", {
         action: "register",
-        realm: rec.realm,
-        karta: rec.karta,
-        name: rec.name,
-        ...placeFields(rec)
+        realm: rec2.realm,
+        karta: rec2.karta,
+        name: rec2.name,
+        ...placeFields(rec2)
       });
       lines.push(r.isError ? `register отказал — ${short(r.text)}` : "register");
     }
@@ -5596,10 +5652,12 @@ var out = (lines, alone = false, after2) => {
   queue = queue.then(async () => {
     const wait = lastAt && (alone || lastAlone) ? lastAt + ALONE_GAP_MS - Date.now() : 0;
     if (wait > 0) await new Promise((r) => setTimeout(r, wait));
-    process.stdout.write(lines.join("\n") + "\n");
+    const failed = await new Promise(
+      (r) => process.stdout.write(lines.join("\n") + "\n", (e) => r(!!e))
+    );
     lastAt = Date.now();
     lastAlone = alone;
-    after2?.();
+    if (!failed) after2?.();
   });
 };
 var log2 = (s) => out([s]);

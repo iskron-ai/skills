@@ -56,22 +56,27 @@ let queue: Promise<void> = Promise.resolve();
 let lastAt = 0;
 let lastAlone = false;
 
-/** Блок строк одной записью; alone — отдельным событием Monitor. after — когда напечатан. */
+/**
+ * Блок строк одной записью; alone — отдельным событием Monitor. after — когда
+ * запись ушла (колбэк write), не когда вызвана: пометка .seen — после отдачи.
+ */
 const out = (lines: string[], alone = false, after?: () => void): void => {
   queue = queue.then(async () => {
     const wait = lastAt && (alone || lastAlone) ? lastAt + ALONE_GAP_MS - Date.now() : 0;
     if (wait > 0) await new Promise((r) => setTimeout(r, wait));
-    process.stdout.write(lines.join("\n") + "\n");
+    const failed = await new Promise<boolean>((r) =>
+      process.stdout.write(lines.join("\n") + "\n", (e) => r(!!e)),
+    );
     lastAt = Date.now();
     lastAlone = alone;
-    after?.();
+    if (!failed) after?.(); // не ушла — не отдана: перевзвод отдаст снова
   });
 };
 
 const log = (s: string): void => out([s]);
 
 // Последнее слово перед выходом: синхронно, иначе выход следом уносит саму строку;
-// после напечатанного — очередь сперва отдаёт своё.
+// выход ждёт опустевшей очереди: всё поставленное до него уже записано.
 const loudExit = (s: string, code: number): void => {
   queue = queue.then(() => exitNow(s, code));
 };
