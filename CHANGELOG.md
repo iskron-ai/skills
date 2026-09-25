@@ -1,5 +1,19 @@
 # Changelog
 
+## [6.19.0](https://github.com/iskron-ai/skills/compare/v6.18.0...v6.19.0) (2026-09-25)
+
+
+### Features
+
+* **skills:** готовое, что ждёт человека или чужого слова, — своя строка partial по ключу вещи; ведущий несёт её человеку ([#214](https://github.com/iskron-ai/skills/issues/214)) ([dd07f91](https://github.com/iskron-ai/skills/commit/dd07f91a18d44812ca1671b817817723482006f5))
+
+
+### Bug Fixes
+
+* **bridge:** reasoning узла — телом записи, op узла — ещё удалён и восстановлен ([#216](https://github.com/iskron-ai/skills/issues/216)) ([8d174e2](https://github.com/iskron-ai/skills/commit/8d174e27e5ae047c012d0d6cf990e415343a9d37))
+* **bridge:** уход и вход называют место из полей строки, узел в деле — op и reasoning ([#213](https://github.com/iskron-ai/skills/issues/213)) ([cbe92ff](https://github.com/iskron-ai/skills/commit/cbe92ffd94814c84220f9d94bb1ed854b7b0d94e))
+* **opencode:** кадры дела — одним промптом очереди, прямое слово — вставкой отдельно ([#217](https://github.com/iskron-ai/skills/issues/217)) ([d9583e2](https://github.com/iskron-ai/skills/commit/d9583e285fc4e9512c88fa03ac18e5672f604650))
+
 ## [6.18.0](https://github.com/iskron-ai/skills/compare/v6.17.0...v6.18.0) (2026-09-25)
 
 
