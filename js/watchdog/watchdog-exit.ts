@@ -10,6 +10,7 @@ import { createHash } from "node:crypto";
 import { writeSync } from "node:fs";
 
 import { type ChannelEvent } from "../bridge/hold.ts";
+import { batchLine } from "../shared/frame-text.ts";
 import { eventKeyOf, noteSeen, seenIds } from "../shared/seen.ts";
 import { seenFilePathOf } from "../shared/standings.ts";
 import { adoptSeenPath, attach, resolveStanding, staleBatchKeys } from "./client.ts";
@@ -49,6 +50,7 @@ export function runWatchdogExit(argv: string[]): void {
   let seenPath = seenFilePathOf(target.authDir, target.key);
   const seen = seenIds(seenPath);
   let woke = false; // отдан хоть один кадр залпа пачки
+  let head = ""; // шапка идущей пачки: как прочесть целиком
   attach(target.path, {
     onEvent: (ev) => {
       switch (ev.kind) {
@@ -58,13 +60,17 @@ export function runWatchdogExit(argv: string[]): void {
           const id = frameId(ev);
           // Пачка кадров комнаты (мост, roomstack.ts) — одна побудка: печатаем её
           // целиком и выходим на последнем кадре залпа, не на первом.
+          // Кадр пачки — строкой, без конверта; шапка с указателем «целиком» — перед первым отданным.
           const last = !ev.batch || ev.batch.at >= ev.batch.of;
           if (seen.has(id)) {
             note(`кадр ${id} уже отдан прежним взводом — не повод будить`);
             if (last && woke) process.exit(0);
             return;
           }
-          wake(ev.raw ?? ""); // сперва отдать: запись до побудки при смерти между ними потеряла бы кадр насовсем
+          if (ev.batch && head) wake(head);
+          head = "";
+          // Сперва отдать: запись до побудки при смерти между ними потеряла бы кадр насовсем.
+          wake(ev.batch && ev.frame ? batchLine(ev.frame) : (ev.raw ?? ""));
           noteSeen(seenPath, id, seen);
           const evKey = eventKeyOf(ev.frame);
           if (evKey) noteSeen(seenPath, evKey, seen); // событие графа отдано — другие копии веера тоже
@@ -88,6 +94,7 @@ export function runWatchdogExit(argv: string[]): void {
           note(`слушаю стояние ${ev.key}`);
           break;
         default:
+          if (ev.kind === "note" && ev.batch) head = ev.text ?? ""; // шапка пачки — делателю, с её первым кадром
           note(ev.text ?? ev.kind);
       }
     },

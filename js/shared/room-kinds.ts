@@ -84,6 +84,10 @@ export interface RoomKind {
   rule: Stack;
   /** Слово рода для шапки кадра. */
   words: string;
+  /** Автор записи словами: имя (стояние), иначе стояние, иначе платформа. */
+  author: string;
+  /** Фаза слова (#5953): said в полёте — pending, обрыв — aborted; иначе null. */
+  phase: "pending" | "aborted" | null;
   /** false — род мосту неизвестен: пачка и строка в лог моста. */
   known: boolean;
 }
@@ -190,7 +194,16 @@ export function roomKind(frame: Frame | null | undefined): RoomKind | null {
     realm: node.realm,
   };
   const rule = RULES[kind];
-  if (!rule) return { kind, rule: "batch", words: fill(WORDS.unknown, values), known: false };
+  const author = str(values.author);
+  if (!rule)
+    return {
+      kind,
+      rule: "batch",
+      words: fill(WORDS.unknown, values),
+      author,
+      phase: null,
+      known: false,
+    };
   // Слово в две фазы (#5953): said в полёте — признак body_pending в конверте, текста нет;
   // обрыв — body с fields.aborted, автор-платформа — обрыв по сроку.
   const pending = kind === "said" && f.body_pending === true && !str(f.body) && !str(line.done);
@@ -227,7 +240,8 @@ export function roomKind(frame: Frame | null | undefined): RoomKind | null {
           : "batch"
         : rule;
   // Слово в полёте (текста нет) и обрыв не будят: в пачку при любой стопке.
-  return { kind, rule: pending || aborted ? "batch" : stack, words, known: true };
+  const phase = pending ? "pending" : aborted ? "aborted" : null;
+  return { kind, rule: phase ? "batch" : stack, words, author, phase, known: true };
 }
 
 /** Решает ли путь кадра словарь: только у кадра с event_kind room.*; прочим — прежний путь харнеса. */

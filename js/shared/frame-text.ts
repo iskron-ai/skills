@@ -68,3 +68,57 @@ export function frameToText(frame: Frame | null | undefined, raw: string): strin
         : JSON.stringify(frame.body, null, 1).replace(/\n\s*/g, " ");
   return `${lines.join("\n")}\n\n${body}`;
 }
+
+/** Начало текста кадра в строке пачки — сколько знаков. */
+const BATCH_TEXT = 160;
+
+/**
+ * Кадр пачки дела у сторожа — одной строкой: [entry_id] род словами, автор,
+ * начало текста. Конверта нет: целиком кадр читается по указателю batchPointer.
+ */
+export function batchLine(frame: Frame): string {
+  const f = frame as Record<string, unknown>;
+  const rk = roomKind(frame);
+  const line = (f.line ?? {}) as Record<string, unknown>;
+  const e = f.entry_id ?? line.entry_id ?? f.id;
+  const entry = typeof e === "number" || typeof e === "string" ? e : "?";
+  const words = rk?.words ?? `кадр ${typeof f.id === "string" ? f.id : "?"}`;
+  const author = rk?.author && !words.includes(rk.author) ? ` — ${rk.author}` : "";
+  const body =
+    typeof frame.body === "string"
+      ? frame.body
+      : frame.body === undefined
+        ? ""
+        : JSON.stringify(frame.body);
+  const flat = [...body.replace(/\s+/g, " ").trim()];
+  const text = flat.length > BATCH_TEXT ? flat.slice(0, BATCH_TEXT).join("") + "…" : flat.join("");
+  return `[${entry}] ${words}${author}${text ? `: ${text}` : ""}`;
+}
+
+/**
+ * Как прочесть пачку целиком: по делу — history с since перед первой записью
+ * пачки. since есть у mcp с 0.84.2; старому — запасной ход keep_cursor.
+ */
+export function batchPointer(frames: Frame[]): string {
+  // Дело — граф плюс номер; realm iskron_case требует всегда.
+  const since = new Map<string, number>();
+  for (const frame of frames) {
+    const f = frame as Record<string, unknown>;
+    const room = (f.room ?? {}) as Record<string, unknown>;
+    const line = (f.line ?? {}) as Record<string, unknown>;
+    const n = room.seq ?? room.id;
+    const e = Number(f.entry_id ?? line.entry_id);
+    if ((typeof n !== "number" && typeof n !== "string") || !Number.isFinite(e)) continue;
+    const realm = room.realm ?? f.realm;
+    const args =
+      (typeof realm === "string" && realm ? `realm="${realm}", ` : "") +
+      `action="history", room=${typeof n === "number" ? String(n) : JSON.stringify(n)}`;
+    since.set(args, Math.min(since.get(args) ?? e, e));
+  }
+  if (!since.size) return 'целиком — iskron_channel(action="history")';
+  return (
+    "целиком — " +
+    [...since].map(([args, e]) => `iskron_case(${args}, since=${e - 1})`).join("; ") +
+    " (старый тул без since — history с keep_cursor=true)"
+  );
+}

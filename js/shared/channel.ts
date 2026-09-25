@@ -116,6 +116,23 @@ export function classifyOrigin(frame: Frame, myKarta?: string | number | null): 
   return "peer";
 }
 
+/**
+ * Прямое слово — не кадр дела, не событие графа, не платформа: слово человека
+ * или делателя с автором (via hook или напрямую). В пачку — побудки, лежалых,
+ * дела у сторожей — оно не входит: приходит отдельно и целиком.
+ */
+export function isDirectWord(frame: Frame | null | undefined): boolean {
+  if (frame?.type !== "message") return false;
+  const f = frame as Record<string, unknown>;
+  if (f.room || (typeof f.event_kind === "string" && f.event_kind.startsWith("room.")))
+    return false;
+  const p = frame.provenance ?? {};
+  if (p.via === "graph" || p.via === "room") return false;
+  const origin = frame.origin ?? classifyOrigin(frame);
+  if (origin === "platform") return false;
+  return origin === "human" || !!p.from_standing || p.from_karta_seq != null;
+}
+
 /** Место канала в hello (наблюдено на живом сервере, мост 6.11.0). */
 export interface HelloStanding {
   karta_seq?: number;

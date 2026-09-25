@@ -45,9 +45,11 @@ export class StaleBurst {
             : {}),
           text:
             `Лежалых кадров: ${all.length}` +
-            (all.length > frames.length ? `, здесь первые ${frames.length}` : "") +
+            (all.length > frames.length
+              ? `, здесь первые ${frames.length}, не вошло ${all.length - frames.length}`
+              : "") +
             " — принятое, пока место не слушали, или повтор службы после пересборки сессии; " +
-            'хода не стоят, но прочти; полностью — iskron_channel(action="history").\n\n' +
+            'хода не стоят, но прочти; полностью и не вошедшее — iskron_channel(action="history").\n\n' +
             bodies.join("\n\n"),
         },
         all,

@@ -7,7 +7,7 @@
 // одно событие kind=backlog с кадрами по received_at, телами (обрезанными,
 // как у лежалых) и указанием на history за остальным. Окно у каждого места
 // своё (door.ts, #5838): пачка одного графа метится в .seen своего места.
-import { type Frame } from "../shared/channel.ts";
+import { type Frame, isDirectWord } from "../shared/channel.ts";
 import { frameToText } from "../shared/frame-text.ts";
 import { type ChannelEvent } from "./door.ts";
 
@@ -23,6 +23,8 @@ export class Backlog {
   /** Все кадры окна — пачка показывает первые BACKLOG_KEEP, отданными метятся все (#5831). */
   private readonly all: Frame[] = [];
   private total = 0;
+  /** Прямые слова окна — ушли отдельно; шапка называет их числом. */
+  private direct = 0;
   private pending = 0;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private flush: ((ev: ChannelEvent, all: Frame[]) => void) | null = null;
@@ -42,9 +44,16 @@ export class Backlog {
     this.close();
   }
 
-  /** Положить живой кадр в пачку; false — окна нет, кадр идёт своим путём. Повтор id, уже лежащего в окне, не считается. */
+  /**
+   * Положить живой кадр в пачку; false — окна нет или это прямое слово: кадр идёт
+   * своим путём, отдельно и целиком. Повтор id, уже лежащего в окне, не считается.
+   */
   note(frame: Frame): boolean {
     if (!this.timer) return false;
+    if (isDirectWord(frame)) {
+      this.direct++;
+      return false;
+    }
     const id = typeof frame.id === "string" ? frame.id : "";
     if (id && this.all.some((f) => f.id === id)) return true;
     this.total++;
@@ -59,7 +68,9 @@ export class Backlog {
     const all = this.all.splice(0);
     const count = this.total;
     const expected = this.pending;
+    const direct = this.direct;
     this.total = 0;
+    this.direct = 0;
     this.pending = 0;
     const emit = this.flush;
     this.flush = null;
@@ -71,9 +82,10 @@ export class Backlog {
     const head =
       `Побудка: кадров ${count}` +
       (expected ? ` (ожидало в очереди: ${expected})` : "") +
-      (count > got.length ? `, здесь первые ${got.length}` : "") +
+      (count > got.length ? `, здесь первые ${got.length}, не вошло ${count - got.length}` : "") +
       " — пришли одной пачкой; разбери все, а не последний: " +
-      'полностью и остальное — iskron_channel(action="history", view="log").';
+      'полностью и не вошедшее — iskron_channel(action="history", view="log").' +
+      (direct ? ` Прямых слов ${direct} — не здесь: каждое пришло отдельно и целиком.` : "");
     emit(
       {
         kind: "backlog",
