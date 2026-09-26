@@ -1,5 +1,20 @@
 # Changelog
 
+## [6.20.0](https://github.com/iskron-ai/skills/compare/v6.19.0...v6.20.0) (2026-09-26)
+
+
+### Features
+
+* **bridge:** субагент своим местом в роли запускающего; OpenCode — дочерняя сессия спутником; строка запуска с делом ([#221](https://github.com/iskron-ai/skills/issues/221)) ([146578a](https://github.com/iskron-ai/skills/commit/146578a9e6c437fa26d22ef87f6ccbbbb926e8ab))
+* запуск в дело строкой запуска — pi и OpenCode входят сами; мост по-английски на *.ai; строка гроссбуха по канону ([#223](https://github.com/iskron-ai/skills/issues/223)) ([fdccf6d](https://github.com/iskron-ai/skills/commit/fdccf6d1aab30548acaa7c9975ef51e5a49ad312))
+
+
+### Bug Fixes
+
+* **skills:** «комната» в смысле общей работы — «дело»; человеку — «место», «вопрос», «сообщение» ([#218](https://github.com/iskron-ai/skills/issues/218)) ([defedfa](https://github.com/iskron-ai/skills/commit/defedfa9e18d1f01585cfbdf126b61101035d4c7))
+* окно человека — «место человека», не «комната» ([#220](https://github.com/iskron-ai/skills/issues/220)) ([443fc4b](https://github.com/iskron-ai/skills/commit/443fc4b4a7aee657a0377c7bb75e36e6318a3472))
+* ярлык дела — «№N», не «#N» (слова моста и речь навыков) ([#222](https://github.com/iskron-ai/skills/issues/222)) ([54fda1e](https://github.com/iskron-ai/skills/commit/54fda1ec0a5e8652a6508f71ab28b3d863b7f667))
+
 ## [6.19.0](https://github.com/iskron-ai/skills/compare/v6.18.0...v6.19.0) (2026-09-25)
 
 
