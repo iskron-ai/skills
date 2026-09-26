@@ -1,5 +1,12 @@
 # Changelog
 
+## [6.21.0](https://github.com/iskron-ai/skills/compare/v6.20.0...v6.21.0) (2026-09-26)
+
+
+### Features
+
+* **bridge:** короткий кадр дела; адресное слово не мне — одной строкой без побудки ([#224](https://github.com/iskron-ai/skills/issues/224)) ([94e72eb](https://github.com/iskron-ai/skills/commit/94e72eb4cbb407c6f3e8422fe8aa652dd5f8f6d3))
+
 ## [6.20.0](https://github.com/iskron-ai/skills/compare/v6.19.0...v6.20.0) (2026-09-26)
 
 
