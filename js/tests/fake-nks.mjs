@@ -11,13 +11,15 @@ import { readFileSync } from "node:fs";
 import { createServer } from "node:http";
 
 // Аргументы, которые объявляет схема каждого тула в снимке поверхности
-// (fixtures/surface.json, `make surface`). Настоящий сервер собирает тело вызова
-// из этого списка и МОЛЧА роняет всё прочее — без отказа; фейк делает так же,
-// иначе проба зеленеет на поверхности, которой нет. Тул, которого в снимке нет,
+// (fixtures/surface.json, `make surface`). Наблюдено у iskron_channel (r5 #6102):
+// сервер собирает тело /channels* из фиксированного списка и МОЛЧА роняет прочее —
+// без отказа; фейк делает так же для всех тулов, иначе проба зеленеет на
+// поверхности, которой нет. Предел модели: фильтр — по схеме тула, не по действию
+// (у register сервер берёт уже, чем объявляет схема). Тул, которого в снимке нет,
 // идёт как пришёл: о нём фейку судить нечем.
-const DECLARED_ARGS = JSON.parse(
-  readFileSync(new URL("../../fixtures/surface.json", import.meta.url), "utf8"),
-).args ?? {};
+const DECLARED_ARGS =
+  JSON.parse(readFileSync(new URL("../../fixtures/surface.json", import.meta.url), "utf8")).args ??
+  {};
 
 const b64url = (b) => Buffer.from(b).toString("base64url");
 const sha256 = (s) => createHash("sha256").update(s).digest();

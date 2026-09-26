@@ -1548,9 +1548,10 @@ test("satellite: connect and register carry satellite_of = the caller's place id
   const register = mine.find((x) => x.action === "register");
   assert.equal(connect?.satellite_of, ID, JSON.stringify(mine));
   assert.equal(register?.satellite_of, ID, JSON.stringify(mine));
-  // What the platform keeps today: nothing — iskron_channel does not declare the field and
-  // mcp drops it on the way to /channels (r5 #6102). Red here once a snapshot declares it:
-  // then the platform stores the satellite, and this probe should say so.
+  // Tripwire on the snapshot, not evidence about the bridge: what the platform keeps today is
+  // nothing — iskron_channel does not declare the field and mcp drops it on the way to
+  // /channels (r5 #6102). Red here once a snapshot declares it: then the platform stores the
+  // satellite, and this probe should say so.
   for (const x of fake.state.placeArgs)
     assert.ok(!("satellite_of" in x), `dropped as by the server: ${JSON.stringify(x)}`);
   // Contrast on the same fake: a session bridge's connect and register.
