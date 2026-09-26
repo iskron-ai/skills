@@ -2019,6 +2019,12 @@ import { createServer as createServer2 } from "node:net";
 var WORDS = {
   said: "слово от {author}",
   said_pending: "слово от {author} в полёте — текст придёт следом",
+  // Адресное слово не мне (#6081): факт без тела; череда одной пары — одной строкой.
+  aside: "{author} → {addressee}: слово [{entry_id}]",
+  aside_run: "{author} → {addressee}: {count} (последнее [{entry_id}])",
+  word_one: "слово",
+  word_few: "слова",
+  word_many: "слов",
   body: "текст слова [{refers_to}] от {author}",
   body_aborted: "слово [{refers_to}] оборвано автором",
   body_lapsed: "слово [{refers_to}] оборвано платформой по сроку",
@@ -2046,6 +2052,11 @@ var WORDS = {
 var WORDS_EN = {
   said: "message from {author}",
   said_pending: "message from {author} in flight — the text follows",
+  aside: "{author} → {addressee}: message [{entry_id}]",
+  aside_run: "{author} → {addressee}: {count} (last [{entry_id}])",
+  word_one: "message",
+  word_few: "messages",
+  word_many: "messages",
   body: "text of message [{refers_to}] from {author}",
   body_aborted: "message [{refers_to}] cut off by its author",
   body_lapsed: "message [{refers_to}] cut off by the platform on its deadline",
@@ -2165,6 +2176,24 @@ function whoOf(fields) {
   const addr = str(st.standing);
   return name && addr ? `${name} (${addr})` : name || addr;
 }
+function addresseeOf(v) {
+  if (typeof v === "string") return v ? { addr: [v], label: v } : null;
+  const o = obj(v);
+  const handle = str(o.handle).replace(/^@/, "");
+  const standing = str(o.standing) || (handle ? `@${handle}${str(o.name) ? `:${str(o.name)}` : ""}` : "");
+  const id = str(o.id);
+  const name = str(o.standing) ? str(o.name) : "";
+  const label = name && standing ? `${name} (${standing})` : standing || str(o.name) || id;
+  const addr = [standing, id].filter(Boolean);
+  return addr.length ? { addr, label } : null;
+}
+function wordsCount(n) {
+  const W = words();
+  const m10 = n % 10;
+  const m100 = n % 100;
+  const w = lang() === "en" ? n === 1 ? W.word_one : W.word_many : m10 === 1 && m100 !== 11 ? W.word_one : m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14) ? W.word_few : W.word_many;
+  return `${n} ${w}`;
+}
 function roomKind(frame2) {
   if (!frame2 || typeof frame2 !== "object") return null;
   const f = frame2;
@@ -2216,9 +2245,20 @@ function roomKind(frame2) {
       phase: null,
       known: false
     };
+  const W = words();
+  const to = kind === "said" ? addresseeOf(f.addressee) : null;
+  if (to && mine.length && !to.addr.some((a) => mine.includes(a))) {
+    const pair = JSON.stringify([roomOf(f.room), author, to.addr[0]]);
+    const run = (n) => fill(n > 1 ? W.aside_run : W.aside, {
+      ...values,
+      addressee: to.label,
+      count: wordsCount(n)
+    });
+    const aside = { pair, run };
+    return { kind, rule: "batch", words: run(1), author, phase: null, known: true, aside };
+  }
   const pending = kind === "said" && f.body_pending === true && !str(f.body) && !str(line.done);
   const aborted = kind === "body" && fields.aborted === true;
-  const W = words();
   const wordsOf = pending ? W.said_pending : aborted ? obj(line.author).kind === "platform" ? W.body_lapsed : W.body_aborted : kind === "auto" ? autoWords()[str(values.code)] ?? W.auto : (
     // op узла (bound | updated | deleted | undeleted): без op и bound — прежнее слово.
     kind === "node" && NODE_OPS[str(fields.op)] ? W[NODE_OPS[str(fields.op)]] : W[kind]
@@ -2278,15 +2318,16 @@ ${raw}`;
   for (const k of Object.keys(rec2))
     if (!(k in envelope) && !NOT_ENVELOPE.has(k) && rec2[k] !== void 0) envelope[k] = rec2[k];
   if (Object.keys(envelope).length) lines.push(`frame: ${JSON.stringify(envelope)}`);
-  const body = typeof frame2.body === "string" ? frame2.body : frame2.body === void 0 ? raw : JSON.stringify(frame2.body, null, 1).replace(/\n\s*/g, " ");
+  const body = roomKind(frame2)?.aside ? "" : typeof frame2.body === "string" ? frame2.body : frame2.body === void 0 ? raw : JSON.stringify(frame2.body, null, 1).replace(/\n\s*/g, " ");
   return `${lines.join("\n")}
 
 ${body}`;
 }
 var BATCH_TEXT = 160;
-function batchLine(frame2) {
+function batchLine(frame2, run = 1) {
   const f = frame2;
   const rk = roomKind(frame2);
+  if (rk?.aside) return rk.aside.run(run);
   const line = f.line ?? {};
   const e = f.entry_id ?? line.entry_id ?? f.id;
   const entry = typeof e === "number" || typeof e === "string" ? e : "?";
@@ -2296,6 +2337,17 @@ function batchLine(frame2) {
   const flat = [...body.replace(/\s+/g, " ").trim()];
   const text = flat.length > BATCH_TEXT ? flat.slice(0, BATCH_TEXT).join("") + "…" : flat.join("");
   return `[${entry}] ${words2}${author}${text ? `: ${text}` : ""}`;
+}
+function foldAsides(frames) {
+  const pairs = frames.map((f) => roomKind(f)?.aside?.pair ?? null);
+  const out5 = [];
+  let n = 0;
+  pairs.forEach((p, i) => {
+    n = p !== null && i > 0 && pairs[i - 1] === p ? n + 1 : 1;
+    if (p !== null && pairs[i + 1] === p) out5.push(0);
+    else out5.push(n);
+  });
+  return out5;
 }
 function batchHead(frames) {
   return L(
@@ -2556,9 +2608,16 @@ var RoomBatch = class {
     const emit2 = this.emit;
     if (!got.length || !emit2) return;
     const of = got.length;
-    emit2({ kind: "note", text: batchHead(got.map((h) => h.frame)), batch: { at: 0, of } });
+    const frames = got.map((h) => h.frame);
+    const fold = foldAsides(frames);
+    emit2({ kind: "note", text: batchHead(frames), batch: { at: 0, of } });
     got.forEach(
-      (h, i) => emit2({ kind: "frame", raw: h.raw, frame: h.frame, batch: { at: i + 1, of } })
+      (h, i) => emit2({
+        kind: "frame",
+        raw: h.raw,
+        frame: h.frame,
+        batch: { at: i + 1, of, ...fold[i] === 1 ? {} : { fold: fold[i] } }
+      })
     );
   }
 };
@@ -2583,7 +2642,7 @@ function batchForWatchdogs(d, raw, frame2, emit2) {
       });
     }
   }
-  if ((!human || rk?.phase) && byKind(frame2) && stackOf(frame2) === "batch") {
+  if ((!human || rk?.phase || rk?.aside) && byKind(frame2) && stackOf(frame2) === "batch") {
     d.roomBatch.add(raw, frame2, emit2);
     return true;
   }
@@ -6108,6 +6167,7 @@ function runWatchdog(argv2) {
   let seenPath = seenFilePathOf(target.authDir, target.key);
   const seen = seenIds(seenPath);
   const queued = /* @__PURE__ */ new Set();
+  const folded = [];
   attach(target.path, {
     onEvent: (ev) => {
       switch (ev.kind) {
@@ -6131,7 +6191,14 @@ function runWatchdog(argv2) {
             queued.delete(id);
           };
           if (ev.batch) {
-            if (!again) out(wrapLines(batchLine(f)), false, mark);
+            if (ev.batch.fold === 0) {
+              if (!again) folded.push(mark);
+              break;
+            }
+            const within = folded.splice(0);
+            const all2 = () => [...within, mark].forEach((m) => m());
+            if (!again) out(wrapLines(batchLine(f, ev.batch.fold ?? 1)), false, all2);
+            else within.forEach((m) => m());
             break;
           }
           if (!again) out(wrapLines(frameToText(f, ev.raw ?? "")), true, mark);
@@ -6184,6 +6251,7 @@ function runWatchdogExit(argv2) {
   const seen = seenIds(seenPath);
   let woke = false;
   let head = "";
+  const folded = [];
   attach(target.path, {
     onEvent: (ev) => {
       switch (ev.kind) {
@@ -6197,9 +6265,14 @@ function runWatchdogExit(argv2) {
             if (last && woke) process.exit(0);
             return;
           }
+          if (ev.batch?.fold === 0) {
+            folded.push(id);
+            return;
+          }
           if (ev.batch && head) wake(head);
           head = "";
-          wake(ev.batch && ev.frame ? batchLine(ev.frame) : ev.raw ?? "");
+          wake(ev.batch && ev.frame ? batchLine(ev.frame, ev.batch.fold ?? 1) : ev.raw ?? "");
+          for (const k of folded.splice(0)) noteSeen(seenPath, k, seen);
           noteSeen(seenPath, id, seen);
           const evKey = eventKeyOf(ev.frame);
           if (evKey) noteSeen(seenPath, evKey, seen);

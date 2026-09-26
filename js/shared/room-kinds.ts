@@ -17,6 +17,12 @@ export type Stack = "interrupt" | "batch";
 export const WORDS: Readonly<Record<string, string>> = {
   said: "слово от {author}",
   said_pending: "слово от {author} в полёте — текст придёт следом",
+  // Адресное слово не мне (#6081): факт без тела; череда одной пары — одной строкой.
+  aside: "{author} → {addressee}: слово [{entry_id}]",
+  aside_run: "{author} → {addressee}: {count} (последнее [{entry_id}])",
+  word_one: "слово",
+  word_few: "слова",
+  word_many: "слов",
   body: "текст слова [{refers_to}] от {author}",
   body_aborted: "слово [{refers_to}] оборвано автором",
   body_lapsed: "слово [{refers_to}] оборвано платформой по сроку",
@@ -50,6 +56,11 @@ export const WORDS: Readonly<Record<string, string>> = {
 export const WORDS_EN: Readonly<Record<string, string>> = {
   said: "message from {author}",
   said_pending: "message from {author} in flight — the text follows",
+  aside: "{author} → {addressee}: message [{entry_id}]",
+  aside_run: "{author} → {addressee}: {count} (last [{entry_id}])",
+  word_one: "message",
+  word_few: "messages",
+  word_many: "messages",
   body: "text of message [{refers_to}] from {author}",
   body_aborted: "message [{refers_to}] cut off by its author",
   body_lapsed: "message [{refers_to}] cut off by the platform on its deadline",
@@ -162,6 +173,11 @@ export interface RoomKind {
   phase: "pending" | "aborted" | null;
   /** false — род мосту неизвестен: пачка и строка в лог моста. */
   known: boolean;
+  /**
+   * Адресное слово не мне (#6081): в пачку при любой стопке, без тела. pair —
+   * ключ пары в деле (дело, автор, адресат); run(n) — строка череды из n слов.
+   */
+  aside?: { pair: string; run: (n: number) => string };
 }
 
 type Rec = Record<string, unknown>;
@@ -222,6 +238,42 @@ function whoOf(fields: Rec): string {
   const name = str(st.name) || str(ka.name);
   const addr = str(st.standing);
   return name && addr ? `${name} (${addr})` : name || addr;
+}
+
+/**
+ * Адресат слова (api 0.91.3, наблюдено на бою): верхний addressee конверта —
+ * строка-адрес места; объект места {standing | handle+name, id, name} тоже
+ * принимается. addr — чем сравнивать с моим местом, label — как назвать.
+ */
+function addresseeOf(v: unknown): { addr: string[]; label: string } | null {
+  if (typeof v === "string") return v ? { addr: [v], label: v } : null;
+  const o = obj(v);
+  const handle = str(o.handle).replace(/^@/, "");
+  const standing =
+    str(o.standing) || (handle ? `@${handle}${str(o.name) ? `:${str(o.name)}` : ""}` : "");
+  const id = str(o.id);
+  const name = str(o.standing) ? str(o.name) : "";
+  const label = name && standing ? `${name} (${standing})` : standing || str(o.name) || id;
+  const addr = [standing, id].filter(Boolean);
+  return addr.length ? { addr, label } : null;
+}
+
+/** Число слов словом таблицы языка: 1 слово, 3 слова, 5 слов. */
+function wordsCount(n: number): string {
+  const W = words();
+  const m10 = n % 10;
+  const m100 = n % 100;
+  const w =
+    lang() === "en"
+      ? n === 1
+        ? W.word_one
+        : W.word_many
+      : m10 === 1 && m100 !== 11
+        ? W.word_one
+        : m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14)
+          ? W.word_few
+          : W.word_many;
+  return `${n} ${w}`;
 }
 
 /** Технический кадр комнаты (event_kind room.*) — род, правило, слово; null — словарь кадр не решает. */
@@ -286,9 +338,22 @@ export function roomKind(frame: Frame | null | undefined): RoomKind | null {
     };
   // Слово в две фазы (#5953): said в полёте — признак body_pending в конверте, текста нет;
   // обрыв — body с fields.aborted, автор-платформа — обрыв по сроку.
+  const W = words();
+  // Адресное слово (#6081): мне — как всякое слово; не мне — фактом в пачку, без тела.
+  const to = kind === "said" ? addresseeOf(f.addressee) : null;
+  if (to && mine.length && !to.addr.some((a) => mine.includes(a))) {
+    const pair = JSON.stringify([roomOf(f.room), author, to.addr[0]]);
+    const run = (n: number): string =>
+      fill(n > 1 ? W.aside_run : W.aside, {
+        ...values,
+        addressee: to.label,
+        count: wordsCount(n),
+      });
+    const aside = { pair, run };
+    return { kind, rule: "batch", words: run(1), author, phase: null, known: true, aside };
+  }
   const pending = kind === "said" && f.body_pending === true && !str(f.body) && !str(line.done);
   const aborted = kind === "body" && fields.aborted === true;
-  const W = words();
   const wordsOf = pending
     ? W.said_pending
     : aborted

@@ -42,15 +42,18 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { startFakeNks } from "./fake-nks.mjs";
 import {
+  addressed,
   auto,
   body as bodyFrame,
   bodyAborted,
   bodyLapsed,
+  BORIS,
   closing,
   directWord,
   graphPosed,
   legacyRoom,
   link,
+  ME,
   ME_ID,
   MY_KARTA,
   PLATFORM,
@@ -2294,6 +2297,73 @@ test("ten case frames in a row are one queue prompt: a head with the history poi
   } finally {
     await rec.stop();
   }
+});
+
+// An addressed word not to me (#6081): a fact in the case prompt, no body, no steer.
+const ASIDE = "Алексей (@aleksei:probe) → @boris:probe";
+
+/** Кадры в мост сессии; ждать, пока промптов станет n, и ещё окна — лишнего не пришло. */
+async function asidePrompts(name, frames, n) {
+  const b = bridgeEnv(name);
+  const rec = await plugin(b.env);
+  try {
+    await serverTools(rec);
+    await rec.call("iskron_channel", { action: "connect" }, `s-${name}`);
+    const [pid] = pidsOf(b.log);
+    appendFileSync(`${b.events}.${pid}`, lines(frames));
+    await until(() => rec.prompts.length >= n, `${n} prompt(s)`);
+    await delay(BATCH_MS * 4);
+    return [...rec.prompts];
+  } finally {
+    await rec.stop();
+  }
+}
+
+test("(а) an addressed word not to me with stack interrupt does not steer: one line without its body in the case prompt", async () => {
+  const prompts = await asidePrompts("aside-one", [addressed(80)], 1);
+  assert.equal(prompts.length, 1);
+  assert.equal(prompts[0].delivery, "queue", "a word not to me never steers");
+  assert.ok(prompts[0].text.split("\n").includes(`${ASIDE}: слово [80]`), prompts[0].text);
+  assert.doesNotMatch(prompts[0].text, /тайное слово/, "no body of a word not to me");
+});
+
+test("(б) three addressed words of one pair in a row are one line «3 слова»", async () => {
+  const prompts = await asidePrompts(
+    "aside-run",
+    [81, 82, 83].map((id) => addressed(id)),
+    1,
+  );
+  assert.equal(prompts.length, 1);
+  const rows = prompts[0].text.split("\n");
+  assert.equal(rows.length, 2, `a head and one line:\n${prompts[0].text}`);
+  assert.equal(rows[1], `${ASIDE}: 3 слова (последнее [83])`);
+});
+
+test("(в) an addressed word to me with stack interrupt steers at once and whole; the aside before it waits", async () => {
+  const prompts = await asidePrompts("aside-mine", [addressed(86), addressed(87, ME)], 2);
+  const steered = prompts.filter((p) => p.delivery === "steer");
+  assert.equal(steered.length, 1, "only the word to me steers");
+  assert.match(steered[0].text, /слово от Алексей \(@aleksei:probe\)[\s\S]*\n\nтайное слово 87$/);
+  const queued = prompts.filter((p) => p.delivery === "queue");
+  assert.equal(queued.length, 1);
+  assert.ok(queued[0].text.includes(`${ASIDE}: слово [86]`), queued[0].text);
+  assert.doesNotMatch(queued[0].text, /тайное слово/);
+});
+
+test("(г) a word without an addressee between two asides stays whole in its line and breaks the run", async () => {
+  const frames = [
+    addressed(90, BORIS, "defer"),
+    saidFrame("defer", 91),
+    addressed(92, BORIS, "defer"),
+  ];
+  const prompts = await asidePrompts("aside-plain", frames, 1);
+  assert.equal(prompts.length, 1);
+  const rows = prompts[0].text.split("\n").slice(1);
+  assert.deepEqual(rows, [
+    `${ASIDE}: слово [90]`,
+    "[91] слово от Алексей (@aleksei:probe): слово со стопкой defer",
+    `${ASIDE}: слово [92]`,
+  ]);
 });
 
 test("a direct word and a human word amid a case burst steer apart and whole; the burst stays one prompt", async () => {

@@ -86,6 +86,12 @@ function strip(url) {
 var WORDS = {
   said: "слово от {author}",
   said_pending: "слово от {author} в полёте — текст придёт следом",
+  // Адресное слово не мне (#6081): факт без тела; череда одной пары — одной строкой.
+  aside: "{author} → {addressee}: слово [{entry_id}]",
+  aside_run: "{author} → {addressee}: {count} (последнее [{entry_id}])",
+  word_one: "слово",
+  word_few: "слова",
+  word_many: "слов",
   body: "текст слова [{refers_to}] от {author}",
   body_aborted: "слово [{refers_to}] оборвано автором",
   body_lapsed: "слово [{refers_to}] оборвано платформой по сроку",
@@ -113,6 +119,11 @@ var WORDS = {
 var WORDS_EN = {
   said: "message from {author}",
   said_pending: "message from {author} in flight — the text follows",
+  aside: "{author} → {addressee}: message [{entry_id}]",
+  aside_run: "{author} → {addressee}: {count} (last [{entry_id}])",
+  word_one: "message",
+  word_few: "messages",
+  word_many: "messages",
   body: "text of message [{refers_to}] from {author}",
   body_aborted: "message [{refers_to}] cut off by its author",
   body_lapsed: "message [{refers_to}] cut off by the platform on its deadline",
@@ -232,6 +243,24 @@ function whoOf(fields) {
   const addr = str(st.standing);
   return name && addr ? `${name} (${addr})` : name || addr;
 }
+function addresseeOf(v) {
+  if (typeof v === "string") return v ? { addr: [v], label: v } : null;
+  const o = obj(v);
+  const handle = str(o.handle).replace(/^@/, "");
+  const standing = str(o.standing) || (handle ? `@${handle}${str(o.name) ? `:${str(o.name)}` : ""}` : "");
+  const id = str(o.id);
+  const name = str(o.standing) ? str(o.name) : "";
+  const label = name && standing ? `${name} (${standing})` : standing || str(o.name) || id;
+  const addr = [standing, id].filter(Boolean);
+  return addr.length ? { addr, label } : null;
+}
+function wordsCount(n) {
+  const W = words();
+  const m10 = n % 10;
+  const m100 = n % 100;
+  const w = lang() === "en" ? n === 1 ? W.word_one : W.word_many : m10 === 1 && m100 !== 11 ? W.word_one : m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14) ? W.word_few : W.word_many;
+  return `${n} ${w}`;
+}
 function roomKind(frame) {
   if (!frame || typeof frame !== "object") return null;
   const f = frame;
@@ -283,9 +312,20 @@ function roomKind(frame) {
       phase: null,
       known: false
     };
+  const W = words();
+  const to = kind === "said" ? addresseeOf(f.addressee) : null;
+  if (to && mine.length && !to.addr.some((a) => mine.includes(a))) {
+    const pair = JSON.stringify([roomOf(f.room), author, to.addr[0]]);
+    const run = (n) => fill(n > 1 ? W.aside_run : W.aside, {
+      ...values,
+      addressee: to.label,
+      count: wordsCount(n)
+    });
+    const aside = { pair, run };
+    return { kind, rule: "batch", words: run(1), author, phase: null, known: true, aside };
+  }
   const pending = kind === "said" && f.body_pending === true && !str(f.body) && !str(line.done);
   const aborted = kind === "body" && fields.aborted === true;
-  const W = words();
   const wordsOf = pending ? W.said_pending : aborted ? obj(line.author).kind === "platform" ? W.body_lapsed : W.body_aborted : kind === "auto" ? autoWords()[str(values.code)] ?? W.auto : (
     // op узла (bound | updated | deleted | undeleted): без op и bound — прежнее слово.
     kind === "node" && NODE_OPS[str(fields.op)] ? W[NODE_OPS[str(fields.op)]] : W[kind]
@@ -345,10 +385,40 @@ ${raw}`;
   for (const k of Object.keys(rec))
     if (!(k in envelope) && !NOT_ENVELOPE.has(k) && rec[k] !== void 0) envelope[k] = rec[k];
   if (Object.keys(envelope).length) lines.push(`frame: ${JSON.stringify(envelope)}`);
-  const body = typeof frame.body === "string" ? frame.body : frame.body === void 0 ? raw : JSON.stringify(frame.body, null, 1).replace(/\n\s*/g, " ");
+  const body = roomKind(frame)?.aside ? "" : typeof frame.body === "string" ? frame.body : frame.body === void 0 ? raw : JSON.stringify(frame.body, null, 1).replace(/\n\s*/g, " ");
   return `${lines.join("\n")}
 
 ${body}`;
+}
+var BATCH_TEXT = 160;
+function batchLine(frame, run = 1) {
+  const f = frame;
+  const rk = roomKind(frame);
+  if (rk?.aside) return rk.aside.run(run);
+  const line = f.line ?? {};
+  const e = f.entry_id ?? line.entry_id ?? f.id;
+  const entry = typeof e === "number" || typeof e === "string" ? e : "?";
+  const words2 = rk?.words ?? `${L("кадр", "frame")} ${typeof f.id === "string" ? f.id : "?"}`;
+  const author = rk?.author && !words2.includes(rk.author) ? ` — ${rk.author}` : "";
+  const body = typeof frame.body === "string" ? frame.body : frame.body === void 0 ? "" : JSON.stringify(frame.body);
+  const flat = [...body.replace(/\s+/g, " ").trim()];
+  const text = flat.length > BATCH_TEXT ? flat.slice(0, BATCH_TEXT).join("") + "…" : flat.join("");
+  return `[${entry}] ${words2}${author}${text ? `: ${text}` : ""}`;
+}
+function foldAsides(frames) {
+  const pairs = frames.map((f) => roomKind(f)?.aside?.pair ?? null);
+  const out = [];
+  let n = 0;
+  pairs.forEach((p, i) => {
+    n = p !== null && i > 0 && pairs[i - 1] === p ? n + 1 : 1;
+    if (p !== null && pairs[i + 1] === p) out.push(0);
+    else out.push(n);
+  });
+  return out;
+}
+function batchLines(frames) {
+  const fold = foldAsides(frames);
+  return frames.flatMap((f, i) => fold[i] ? [batchLine(f, fold[i])] : []);
 }
 
 // js/bridge/backlog.ts
@@ -364,6 +434,7 @@ var HOLD_RECORD_MAX_AGE_MS = 6 * 60 * 60 * 1e3;
 var SEEN_FILE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1e3;
 
 // js/extension/channel.ts
+var ASIDE_MS = Number(process.env.ISKRON_PI_ASIDE_MS) || 3e3;
 function setupChannel(pi) {
   let ctxRef = null;
   pi.on("session_start", async (_event, ctx) => {
@@ -379,6 +450,23 @@ function setupChannel(pi) {
       { triggerTurn: true, deliverAs: "steer" }
     );
   }
+  const asides = [];
+  let asideTimer = null;
+  function flushAsides() {
+    if (asideTimer) clearTimeout(asideTimer);
+    asideTimer = null;
+    const got = asides.splice(0);
+    if (!got.length) return;
+    pi.sendMessage(
+      {
+        customType: "iskron-channel",
+        content: batchLines(got).join("\n"),
+        display: true,
+        details: { aside: got.map((f) => f.id ?? null) }
+      },
+      { triggerTurn: false, deliverAs: "nextTurn" }
+    );
+  }
   return (params) => {
     const ev = params?.data;
     if (!ev || typeof ev !== "object") return;
@@ -391,6 +479,13 @@ function setupChannel(pi) {
           return;
         }
         if (frame?.type === "status") return;
+        if (roomKind(frame)?.aside && frame) {
+          asides.push(frame);
+          asideTimer ??= setTimeout(flushAsides, ASIDE_MS);
+          asideTimer.unref?.();
+          return;
+        }
+        flushAsides();
         const later = byKind(frame) && stackOf(frame) === "batch";
         pi.sendMessage(
           {

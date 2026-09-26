@@ -10,8 +10,12 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 import { type ChannelEvent } from "../bridge/hold.ts";
-import { frameToText } from "../shared/frame-text.ts";
-import { byKind, stackOf } from "../shared/room-kinds.ts";
+import { type Frame } from "../shared/channel.ts";
+import { batchLines, frameToText } from "../shared/frame-text.ts";
+import { byKind, roomKind, stackOf } from "../shared/room-kinds.ts";
+
+/** Окно свёртки адресных слов не мне; переменная — шов для проб. */
+const ASIDE_MS = Number(process.env.ISKRON_PI_ASIDE_MS) || 3_000;
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- контекст pi здесь читается по двум полям */
 
@@ -38,6 +42,26 @@ export function setupChannel(pi: ExtensionAPI): (params: any) => void {
     );
   }
 
+  // Адресные слова не мне копятся коротким окном и уходят одной записью к
+  // следующему ходу (nextTurn: не прерывает и не поднимает).
+  const asides: Frame[] = [];
+  let asideTimer: ReturnType<typeof setTimeout> | null = null;
+  function flushAsides(): void {
+    if (asideTimer) clearTimeout(asideTimer);
+    asideTimer = null;
+    const got = asides.splice(0);
+    if (!got.length) return;
+    pi.sendMessage(
+      {
+        customType: "iskron-channel",
+        content: batchLines(got).join("\n"),
+        display: true,
+        details: { aside: got.map((f) => f.id ?? null) },
+      },
+      { triggerTurn: false, deliverAs: "nextTurn" },
+    );
+  }
+
   return (params: any) => {
     const ev = params?.data as ChannelEvent | undefined;
     if (!ev || typeof ev !== "object") return;
@@ -55,6 +79,15 @@ export function setupChannel(pi: ExtensionAPI): (params: any) => void {
         if (frame?.type === "status") return;
         // Вот ради чего всё: кадр входит в идущий ход, а простаивающего агента
         // поднимает. Это и есть то, чего у сторожа-процесса быть не может.
+        // Адресное слово не мне (#6081) — фактом без тела и без побудки; череда
+        // одной пары, пришедшая подряд, — одной строкой.
+        if (roomKind(frame)?.aside && frame) {
+          asides.push(frame);
+          asideTimer ??= setTimeout(flushAsides, ASIDE_MS);
+          (asideTimer as { unref?: () => void }).unref?.();
+          return;
+        }
+        flushAsides(); // накопленное — прежде следующего кадра: порядок цел
         // Кадр комнаты с event_kind рода «в пачку» (словарь родов, #5851) ход не
         // режет — ждёт его конца; кадр без event_kind — прежним путём, вставкой.
         const later = byKind(frame) && stackOf(frame) === "batch";

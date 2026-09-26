@@ -100,6 +100,7 @@ export function runWatchdog(argv: string[]): void {
   let seenPath = seenFilePathOf(target.authDir, target.key);
   const seen = seenIds(seenPath);
   const queued = new Set<string>(); // id в очереди печати: пометка ляжет после неё
+  const folded: (() => void)[] = []; // пометки свёрнутых слов череды — после её строки
   attach(target.path, {
     onEvent: (ev) => {
       switch (ev.kind) {
@@ -125,7 +126,16 @@ export function runWatchdog(argv: string[]): void {
           };
           if (ev.batch) {
             // Пачка дела — по строке на кадр, без конверта; как прочесть целиком — в шапке.
-            if (!again) out(wrapLines(batchLine(f)), false, mark);
+            // Адресное слово не мне, свёрнутое в череду (fold 0), своей строки не печатает:
+            // метится вместе со строкой череды, которая его считает (#6081).
+            if (ev.batch.fold === 0) {
+              if (!again) folded.push(mark);
+              break;
+            }
+            const within = folded.splice(0);
+            const all = (): void => [...within, mark].forEach((m) => m());
+            if (!again) out(wrapLines(batchLine(f, ev.batch.fold ?? 1)), false, all);
+            else within.forEach((m) => m());
             break;
           }
           if (!again) out(wrapLines(frameToText(f, ev.raw ?? "")), true, mark);

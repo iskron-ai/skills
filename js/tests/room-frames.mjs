@@ -122,6 +122,22 @@ export const progress = (entry_id = 44) =>
 export const said = (stack, entry_id) =>
   roomFrame("said", { entry_id, key: "said", stack, body: `слово со стопкой ${stack}` });
 
+/** Чужое место — адресат слова, обращённого не мне. */
+export const BORIS = "@boris:probe";
+
+/**
+ * Адресное слово (#6081; api 0.91.3, форма наблюдена на бою): addressee —
+ * верхним полем конверта, строкой-адресом места; объект места — тоже.
+ */
+export const addressed = (entry_id, addressee = BORIS, stack = "interrupt") =>
+  roomFrame("said", {
+    entry_id,
+    key: "said",
+    stack,
+    envelope: { addressee },
+    body: `тайное слово ${entry_id}`,
+  });
+
 // ── Слово в две фазы (api 0.91.x; #5893 §4.5b, #5953) ──
 // said в полёте: body_pending: true — верхним полем КОНВЕРТА (#5893 §4.5b; api
 // подтвердил по коду провода), текста нет. Стопка interrupt: такой said не

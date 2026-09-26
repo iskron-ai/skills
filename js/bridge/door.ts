@@ -47,8 +47,11 @@ export interface ChannelEvent {
   place?: { realm: string; karta: string; name: string };
   /** kind="backlog": сколько кадров ожидало по hello. */
   pending?: number;
-  /** kind="frame" из пачки кадров комнаты (roomstack.ts): его место в залпе — at из of; пачка — одна побудка. */
-  batch?: { at: number; of: number };
+  /**
+   * kind="frame" из пачки кадров комнаты (roomstack.ts): его место в залпе — at из of; пачка — одна побудка.
+   * fold (#6081, foldAsides): 0 — кадр свёрнут в строку следующего; n > 1 — строка череды из n слов.
+   */
+  batch?: { at: number; of: number; fold?: number };
 }
 
 export interface DoorHooks {

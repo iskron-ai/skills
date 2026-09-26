@@ -46,14 +46,17 @@ import { test } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
+  addressed,
   auto,
   body as bodyFrame,
   bodyAborted,
   bodyLapsed,
+  BORIS,
   closing,
   directWord,
   graphPosed,
   legacyRoom,
+  ME,
   ME_ID,
   MY_KARTA,
   progress,
@@ -147,6 +150,7 @@ const ENV_KEYS = [
   "FB_CALLS",
   "FB_STAND_HELD",
   "ISKRON_SATELLITE_OF",
+  "ISKRON_PI_ASIDE_MS",
 ];
 
 let seq = 0;
@@ -660,6 +664,61 @@ test("room kinds: closing steers despite stack=defer, progress and an unknown ki
   } finally {
     await rec.stop();
   }
+});
+
+// An addressed word not to me (#6081): a fact without its body and without a
+// wake (nextTurn); a run of one pair that came in a row — one line.
+const ASIDE = "Алексей (@aleksei:probe) → @boris:probe";
+
+async function asideMessages(name, frames, n) {
+  const { events, env } = eventsEnv(name);
+  const rec = await session({ ...env, ISKRON_PI_ASIDE_MS: 300 });
+  try {
+    for (const f of frames) push(events, frame(f));
+    const until = Date.now() + 5000;
+    while (rec.messages.length < n && Date.now() < until) await delay(50);
+    await delay(700);
+    return rec.messages.map((m) => ({ text: m.msg.content, ...m.opts }));
+  } finally {
+    await rec.stop();
+  }
+}
+
+test("(а) an addressed word not to me with stack interrupt neither steers nor wakes: one line without its body", async () => {
+  const got = await asideMessages("aside-one", [addressed(80)], 1);
+  assert.equal(got.length, 1);
+  assert.equal(got[0].deliverAs, "nextTurn", "a word not to me waits for the next turn");
+  assert.equal(got[0].triggerTurn, false, "a word not to me does not wake");
+  assert.equal(got[0].text, `${ASIDE}: слово [80]`);
+});
+
+test("(б) three addressed words of one pair in a row are one line «3 слова»", async () => {
+  const got = await asideMessages(
+    "aside-run",
+    [81, 82, 83].map((id) => addressed(id)),
+    1,
+  );
+  assert.equal(got.length, 1, JSON.stringify(got));
+  assert.equal(got[0].text, `${ASIDE}: 3 слова (последнее [83])`);
+});
+
+test("(в) an addressed word to me with stack interrupt steers at once and whole; the aside before it goes first as its line", async () => {
+  const got = await asideMessages("aside-mine", [addressed(86), addressed(87, ME)], 2);
+  assert.equal(got.length, 2, JSON.stringify(got));
+  assert.equal(got[0].text, `${ASIDE}: слово [86]`);
+  assert.equal(got[0].deliverAs, "nextTurn");
+  assert.equal(got[1].deliverAs, "steer", "the word to me steers");
+  assert.match(got[1].text, /слово от Алексей \(@aleksei:probe\)[\s\S]*\n\nтайное слово 87$/);
+});
+
+test("(г) a word without an addressee between two asides goes as before, whole, and breaks the run", async () => {
+  const frames = [addressed(90, BORIS, "defer"), said("defer", 91), addressed(92, BORIS, "defer")];
+  const got = await asideMessages("aside-plain", frames, 3);
+  assert.equal(got.length, 3, JSON.stringify(got));
+  assert.equal(got[0].text, `${ASIDE}: слово [90]`);
+  assert.equal(got[1].deliverAs, "followUp", "a plain said defer follows up as before");
+  assert.match(got[1].text, /\n\nслово со стопкой defer$/);
+  assert.equal(got[2].text, `${ASIDE}: слово [92]`);
 });
 
 // auto — a platform record to the parent about its child case (#5893 §4.2, #4925):

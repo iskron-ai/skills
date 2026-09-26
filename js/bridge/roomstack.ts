@@ -8,7 +8,7 @@
 // ложится. Кадр без event_kind словарь не трогает: он
 // идёт сразу, как прежде. Кольцо двери при этом получает каждый кадр (hold.ts).
 import { classifyOrigin, type Frame } from "../shared/channel.ts";
-import { batchHead } from "../shared/frame-text.ts";
+import { batchHead, foldAsides } from "../shared/frame-text.ts";
 import { byKind, roomKind, stackOf } from "../shared/room-kinds.ts";
 import { deliveredKeys, noteSeen } from "../shared/seen.ts";
 import { type ChannelEvent, type Door } from "./door.ts";
@@ -85,9 +85,16 @@ export class RoomBatch {
     const emit = this.emit;
     if (!got.length || !emit) return;
     const of = got.length;
-    emit({ kind: "note", text: batchHead(got.map((h) => h.frame)), batch: { at: 0, of } });
+    const frames = got.map((h) => h.frame);
+    const fold = foldAsides(frames);
+    emit({ kind: "note", text: batchHead(frames), batch: { at: 0, of } });
     got.forEach((h, i) =>
-      emit({ kind: "frame", raw: h.raw, frame: h.frame, batch: { at: i + 1, of } }),
+      emit({
+        kind: "frame",
+        raw: h.raw,
+        frame: h.frame,
+        batch: { at: i + 1, of, ...(fold[i] === 1 ? {} : { fold: fold[i] }) },
+      }),
     );
   }
 }
@@ -125,7 +132,8 @@ export function batchForWatchdogs(
     }
   }
   // Слово человека в пачку не ложится: какая бы ни была стопка, оно идёт сейчас.
-  if ((!human || rk?.phase) && byKind(frame) && stackOf(frame) === "batch") {
+  // Кроме адресного не мне (#6081): оно и от человека — фактом в пачку.
+  if ((!human || rk?.phase || rk?.aside) && byKind(frame) && stackOf(frame) === "batch") {
     d.roomBatch.add(raw, frame, emit);
     return true;
   }
