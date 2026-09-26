@@ -7,7 +7,19 @@
 // test plays that part by fetching the authorize URL itself.
 
 import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { createServer } from "node:http";
+
+// Аргументы, которые объявляет схема каждого тула в снимке поверхности
+// (fixtures/surface.json, `make surface`). Наблюдено у iskron_channel (r5 #6102):
+// сервер собирает тело /channels* из фиксированного списка и МОЛЧА роняет прочее —
+// без отказа; фейк делает так же для всех тулов, иначе проба зеленеет на
+// поверхности, которой нет. Предел модели: фильтр — по схеме тула, не по действию
+// (у register сервер берёт уже, чем объявляет схема). Тул, которого в снимке нет,
+// идёт как пришёл: о нём фейку судить нечем.
+const DECLARED_ARGS =
+  JSON.parse(readFileSync(new URL("../../fixtures/surface.json", import.meta.url), "utf8")).args ??
+  {};
 
 const b64url = (b) => Buffer.from(b).toString("base64url");
 const sha256 = (s) => createHash("sha256").update(s).digest();
@@ -102,6 +114,13 @@ export async function startFakeNks(opts = {}) {
     // Версия сервера в serverInfo — /control {serverVersion:"9"} поднимает её между
     // рукопожатиями, чтобы проба видела, какое рукопожатие какую версию застало.
     serverVersion: opts.serverVersion ?? "0",
+    // Единственный вход будущей поверхности: { тул: [имена аргументов] }, которые
+    // фейк примет СВЕРХ снимка. Проба, которая им пользуется, моделирует сервер,
+    // которого ещё нет, и обязана сказать в комментарии, какой перемены ждёт.
+    futureArgs: opts.futureArgs ?? {},
+    // Каждый tools/call как пришёл, ДО отсева по схеме: что мост ПОСЛАЛ,
+    // судят здесь, а не по тому, что фейк принял.
+    calls: [],
     counts: {
       register: 0,
       authorize: 0,
@@ -139,7 +158,7 @@ export async function startFakeNks(opts = {}) {
     // которые тест объявляет через /control {rooms:[{karta,address}]}.
     places: new Map(), // "karta:name" → { karta, name, incoming }
     hung: new Set(), // сокеты, в которые служба перестала писать (/control {ws_hang})
-    placeArgs: [], // поля места, с которыми пришли connect/mint/register (#5174)
+    placeArgs: [], // поля места, которые фейк ПРИНЯЛ у connect/mint/register (#5174) — после отсева по схеме; посланное — в calls
     acceptLanguage: new Set(), // значения Accept-Language запросов к /mcp ("" — заголовка не было)
     rooms: [],
     webhooks: [], // { id, karta, url, active }
@@ -538,6 +557,17 @@ export async function startFakeNks(opts = {}) {
       let sid = req.headers["mcp-session-id"];
       st.acceptLanguage.add(String(req.headers["accept-language"] ?? "")); // язык, которым мост просил прозу (#6080)
       const msg = JSON.parse(await body(req));
+      if (msg.method === "tools/call" && msg.params) {
+        const { name, arguments: sent } = msg.params;
+        st.calls.push({ name, arguments: structuredClone(sent ?? {}) });
+        const declared = DECLARED_ARGS[name];
+        if (declared && sent && typeof sent === "object") {
+          const ok = new Set([...declared, ...(st.futureArgs[name] ?? [])]);
+          msg.params.arguments = Object.fromEntries(
+            Object.entries(sent).filter(([k]) => ok.has(k)),
+          );
+        }
+      }
       const extra = {};
       if (
         sid &&
@@ -709,8 +739,9 @@ export async function startFakeNks(opts = {}) {
             name: a.name,
             model: a.model,
             attrs: a.attrs,
-            ...("satellite_of" in a ? { satellite_of: a.satellite_of } : {}), // тело как пришло (#6064)
-            ...("locale" in a ? { locale: a.locale } : {}), // язык места (#6080)
+            // Есть только под futureArgs: снимок этих полей не объявляет (#6064, #6080).
+            ...("satellite_of" in a ? { satellite_of: a.satellite_of } : {}),
+            ...("locale" in a ? { locale: a.locale } : {}),
           });
           const reg = registerPlace(sid, a.realm, a.karta, a.name);
           if (reg.added) {
@@ -834,8 +865,9 @@ export async function startFakeNks(opts = {}) {
             model: a.model,
             attrs: a.attrs,
             ttl_seconds: a.ttl_seconds,
-            ...("satellite_of" in a ? { satellite_of: a.satellite_of } : {}), // тело как пришло (#6064)
-            ...("locale" in a ? { locale: a.locale } : {}), // язык места (#6080)
+            // Есть только под futureArgs: снимок этих полей не объявляет (#6064, #6080).
+            ...("satellite_of" in a ? { satellite_of: a.satellite_of } : {}),
+            ...("locale" in a ? { locale: a.locale } : {}),
           });
           st.counts.connect++;
           st.wsToken = token("ws"); // как у настоящей поверхности: сокет показан один раз и всякий раз новый
