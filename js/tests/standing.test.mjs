@@ -3038,7 +3038,7 @@ test("room kinds under the Monitor watchdog: progress and said defer wait; closi
   await waitFor(() => wd.out.includes("ты можешь возразить"), "closing to be printed");
   const flat = wd.out.replace(/\n/g, " ");
   const batch = flat.indexOf("Дело: кадров 2");
-  const prog = flat.indexOf("[tests] пробы зелёные = ok; без сети");
+  const prog = flat.indexOf("[tests] [пробы зелёные] = ok — без сети · Алексей");
   const close = flat.indexOf("предлагает закрыть дело");
   assert.ok(batch >= 0 && prog > batch, `the batch head and progress words:\n${wd.out}`);
   assert.ok(close > prog, `the batch goes out before closing, not after:\n${wd.out}`);
@@ -3520,7 +3520,7 @@ test("watchdog-codex: progress waits; closing puts the batch into the thread fir
   await sendRoom(fake, closing());
   await waitFor(() => turns().length === 2, "the batch and closing in the thread");
   const [first, second] = turns().map((c) => c.params.input[0].text);
-  assert.match(first, /\[tests\] пробы зелёные = ok/);
+  assert.match(first, /\[tests\] \[пробы зелёные\] = ok/);
   assert.match(second, /предлагает закрыть дело/);
   assert.match(
     second,

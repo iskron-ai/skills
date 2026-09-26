@@ -5,6 +5,7 @@
 // как до словаря. Правила — кодом (RULES и stackOf), слова — ДАННЫМИ (WORDS):
 // локализация заменит таблицу, не код.
 import { type Frame } from "./channel.ts";
+import { L, lang } from "./lang.ts";
 
 /** Куда идёт кадр: прервать идущий ход или лечь в пачку. */
 export type Stack = "interrupt" | "batch";
@@ -26,7 +27,8 @@ export const WORDS: Readonly<Record<string, string>> = {
   closed: "дело закрыто: {reason}",
   objection: "{author} возражает против закрытия: {reason}",
   late_objection: "{author} возразил после закрытия",
-  progress: "{author}: [{key}] {done} = {verdict}{; note}",
+  // Строка гроссбуха — ровно «[было] [сделал] = вердикт», примечание к не-ok, автор хвостом (норма владельца).
+  progress: "[{key}] [{done}] = {verdict}{ — note} · {author}",
   opened: "дело открыл {author}",
   joined: "вошёл {who}",
   left: "вышел {who}{; причина: reason}",
@@ -41,12 +43,50 @@ export const WORDS: Readonly<Record<string, string>> = {
   unknown: "род {kind} мосту неизвестен",
 };
 
+/**
+ * Те же роды по-английски (#6080) — именами нормы #6075: case №N, ledger, line,
+ * entered / left, invited, leads; ключи и поля — те же, что у WORDS.
+ */
+export const WORDS_EN: Readonly<Record<string, string>> = {
+  said: "message from {author}",
+  said_pending: "message from {author} in flight — the text follows",
+  body: "text of message [{refers_to}] from {author}",
+  body_aborted: "message [{refers_to}] cut off by its author",
+  body_lapsed: "message [{refers_to}] cut off by the platform on its deadline",
+  closing: "the lead {author} proposes to close the case by {ends_at}{; evidence: evidence}",
+  closing_may:
+    'you may object — iskron_case(action="object", in_reply_to={entry_id}) (former name iskron_room)',
+  closing_not: "the objection is not yours to make",
+  closed: "case closed: {reason}",
+  objection: "{author} objects to closing: {reason}",
+  late_objection: "{author} objected after the close",
+  progress: "[{key}] [{done}] = {verdict}{ — note} · {author}",
+  opened: "case opened by {author}",
+  joined: "entered {who}",
+  left: "left {who}{; reason: reason}",
+  invite: "{author} invites {who} to the case",
+  withdraw: "invitation withdrawn by {author}",
+  node: "node #{seq} {name} ({realm}) in the case{; reasoning}",
+  node_updated: "node #{seq} {name} updated{; reasoning}",
+  node_deleted: "node #{seq} {name} deleted{; reasoning}",
+  node_undeleted: "node #{seq} {name} restored{; reasoning}",
+  link: "case linked to case №{room} ({rel})",
+  auto: "platform record {code} about case №{room}",
+  unknown: "kind {kind} is unknown to the bridge",
+};
+
 /** Слова записи платформы auto по её code (#5893 §4.2, ступени — #5973); неизвестный code — WORDS.auto. */
 export const AUTO_WORDS: Readonly<Record<string, string>> = {
   child_opened: "дочернее дело №{room} открыто",
   child_closing: "дочернее дело №{room} закрывается",
   child_closed: "дочернее дело №{room} закрыто",
   child_late_objection: "позднее возражение в дочернем деле №{room}",
+};
+export const AUTO_WORDS_EN: Readonly<Record<string, string>> = {
+  child_opened: "child case №{room} opened",
+  child_closing: "child case №{room} is closing",
+  child_closed: "child case №{room} closed",
+  child_late_objection: "late objection in child case №{room}",
 };
 
 /** Связь дел link по rel (#4915): чем это дело приходится делу №{room}; неизвестный rel — как пришёл. */
@@ -55,12 +95,34 @@ export const REL_WORDS: Readonly<Record<string, string>> = {
   child: "родительское к нему",
   continues: "продолжает его",
 };
+export const REL_WORDS_EN: Readonly<Record<string, string>> = {
+  parent: "its child",
+  child: "its parent",
+  continues: "continues it",
+};
 
-/** Слово записи node по op (#6070); bound и неизвестный op — WORDS.node. */
+/** Вердикт строки словом нормы (#744, #6075): провод несёт ok | partial | bad; неизвестный — как пришёл. */
+export const VERDICT_WORDS: Readonly<Record<string, string>> = {
+  ok: "ok",
+  partial: "частично",
+  bad: "slop",
+};
+export const VERDICT_WORDS_EN: Readonly<Record<string, string>> = {
+  ok: "ok",
+  partial: "partial",
+  bad: "slop",
+};
+
+/** Таблицы языка поставки (shared/lang.ts). */
+const words = () => (lang() === "en" ? WORDS_EN : WORDS);
+const autoWords = () => (lang() === "en" ? AUTO_WORDS_EN : AUTO_WORDS);
+const relWords = () => (lang() === "en" ? REL_WORDS_EN : REL_WORDS);
+
+/** Слово записи node по op (#6070) — ключ таблицы слов; bound и неизвестный op — WORDS.node. */
 const NODE_OPS: Readonly<Record<string, string>> = {
-  updated: WORDS.node_updated,
-  deleted: WORDS.node_deleted,
-  undeleted: WORDS.node_undeleted,
+  updated: "node_updated",
+  deleted: "node_deleted",
+  undeleted: "node_undeleted",
 };
 
 /**
@@ -115,7 +177,7 @@ function authorOf(author: unknown): string {
   const standing = str(a.standing);
   if (name) return standing ? `${name} (${standing})` : name;
   if (standing) return standing;
-  return a.kind === "platform" ? "платформа" : "?";
+  return a.kind === "platform" ? L("платформа", "platform") : "?";
 }
 
 const after = (key: string, prefix: string): string =>
@@ -186,7 +248,8 @@ export function roomKind(frame: Frame | null | undefined): RoomKind | null {
     author: byWhom,
     key,
     done: line.done,
-    verdict: line.verdict,
+    verdict:
+      (lang() === "en" ? VERDICT_WORDS_EN : VERDICT_WORDS)[str(line.verdict)] ?? line.verdict,
     note: line.note,
     ends_at: fields.ends_at,
     evidence: Array.isArray(fields.evidence) ? fields.evidence.map(str).join(", ") : "",
@@ -202,7 +265,7 @@ export function roomKind(frame: Frame | null | undefined): RoomKind | null {
         ? whoOf({ standing: fields.standing }) || byWhom
         : whoOf(fields) || after(key, "invite:"),
     room: roomOf(fields.room) || after(key, "link:"),
-    rel: REL_WORDS[str(fields.rel)] ?? fields.rel,
+    rel: relWords()[str(fields.rel)] ?? fields.rel,
     code: fields.code,
     seq: node.seq,
     name: node.name,
@@ -216,7 +279,7 @@ export function roomKind(frame: Frame | null | undefined): RoomKind | null {
     return {
       kind,
       rule: "batch",
-      words: fill(WORDS.unknown, values),
+      words: fill(words().unknown, values),
       author,
       phase: null,
       known: false,
@@ -225,19 +288,20 @@ export function roomKind(frame: Frame | null | undefined): RoomKind | null {
   // обрыв — body с fields.aborted, автор-платформа — обрыв по сроку.
   const pending = kind === "said" && f.body_pending === true && !str(f.body) && !str(line.done);
   const aborted = kind === "body" && fields.aborted === true;
+  const W = words();
   const wordsOf = pending
-    ? WORDS.said_pending
+    ? W.said_pending
     : aborted
       ? obj(line.author).kind === "platform"
-        ? WORDS.body_lapsed
-        : WORDS.body_aborted
+        ? W.body_lapsed
+        : W.body_aborted
       : kind === "auto"
-        ? (AUTO_WORDS[str(values.code)] ?? WORDS.auto)
+        ? (autoWords()[str(values.code)] ?? W.auto)
         : // op узла (bound | updated | deleted | undeleted): без op и bound — прежнее слово.
           kind === "node" && NODE_OPS[str(fields.op)]
-          ? NODE_OPS[str(fields.op)]
-          : WORDS[kind];
-  let words = fill(wordsOf, values);
+          ? W[NODE_OPS[str(fields.op)]]
+          : W[kind];
+  let text = fill(wordsOf ?? "", values);
   if (kind === "closing") {
     // На бою (api 0.88.0) may_object — массив объектов {id, standing, name, karta};
     // id — тот же, что to_standing_id. Голую строку id принимаем тоже.
@@ -246,7 +310,7 @@ export function roomKind(frame: Frame | null | undefined): RoomKind | null {
       : [];
     const myId = str(f.to_standing_id);
     const mayI = !!myId && may.includes(myId);
-    words += "; " + fill(mayI ? WORDS.closing_may : WORDS.closing_not, values);
+    text += "; " + fill(mayI ? W.closing_may : W.closing_not, values);
   }
   const stack: Stack =
     rule === "stack"
@@ -261,7 +325,7 @@ export function roomKind(frame: Frame | null | undefined): RoomKind | null {
         : rule;
   // Слово в полёте (текста нет) и обрыв не будят: в пачку при любой стопке.
   const phase = pending ? "pending" : aborted ? "aborted" : null;
-  return { kind, rule: phase ? "batch" : stack, words, author, phase, known: true };
+  return { kind, rule: phase ? "batch" : stack, words: text, author, phase, known: true };
 }
 
 /** Решает ли путь кадра словарь: только у кадра с event_kind room.*; прочим — прежний путь харнеса. */

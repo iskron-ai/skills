@@ -2,6 +2,7 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
+import { setServerLang } from "../shared/lang.ts";
 import { BUILD } from "./build.ts";
 import { log } from "./streams.ts";
 import { type Config } from "./types.ts";
@@ -56,6 +57,7 @@ export let CFG: Config = null as unknown as Config;
 
 export function setConfig(cfg: Config): void {
   CFG = cfg;
+  setServerLang(cfg.serverUrl); // язык моста — по его серверу (shared/lang.ts)
 }
 
 export function parseArgs(argv: string[]): Config {

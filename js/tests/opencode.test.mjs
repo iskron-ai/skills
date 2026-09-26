@@ -215,6 +215,7 @@ const ENV_KEYS = [
   "ISKRON_BRIDGE_URL",
   "ISKRON_BRIDGE_TOKEN",
   "ISKRON_BRIDGE_NO_BROWSER",
+  "ISKRON_BRIDGE_LANG",
 ];
 
 let seq = 0;
@@ -1603,6 +1604,35 @@ test("without a launch line a child's prompt is left as it was: no stand, no joi
   }
 });
 
+test("on an English server (*.ai) the launch line reads «case №N» and the word about entering is English", async () => {
+  const calls = join(SANDBOX, "launch-en.calls");
+  writeFileSync(calls, "");
+  const b = bridgeEnv("launch-en", {
+    FB_CALLS: calls,
+    FB_TOOLS: STAND_AND_CASE,
+    FB_STAND_HELD: "host.repo.opus-5",
+    ISKRON_BRIDGE_URL: "https://mcp.iskron.ai/",
+  });
+  const rec = await plugin(b.env, {
+    sessions: [{ id: "root" }, { id: "child", parentID: "root" }],
+  });
+  try {
+    await until(() => rec.tools().has("iskron_stand"), "the stand tool", 8000);
+    const read = await rec.prompt("child", "start r5 #48 case №77 from @me:lead");
+    assert.equal(
+      read,
+      "start r5 #48 case №77 from @me:lead\n" +
+        "Iskron: seated host.repo.opus-5, entered case №77 — retell the brief as your first message in the case.",
+    );
+    assert.deepEqual(
+      sentCalls(calls).map((c) => c.arguments.room ?? c.name),
+      ["iskron_stand", "#77"],
+    );
+  } finally {
+    await rec.stop();
+  }
+});
+
 test("a refused join comes back as words in the prompt, and the place stays", async () => {
   const calls = join(SANDBOX, "launch-refused.calls");
   writeFileSync(calls, "");
@@ -1994,6 +2024,71 @@ test("a room frame reaches the agent with its whole envelope; said defer queues,
   }
 });
 
+// English Iskron (#6080): a bridge aimed at a *.ai server speaks English in what
+// it writes itself — the case frame's header, the kind words, the case batch —
+// with the names of the norm (#6075): case, ledger line «[was] [did] = verdict».
+// The frames below carry Latin data only, so any Cyrillic left is the plugin's own.
+const ALEX = { kind: "standing", standing: "@alex:probe", name: "Alex", karta: { seq: 48 } };
+const latin = (f) => ({ ...f, room: { ...f.room, zachin: "Bench" } });
+const CYRILLIC = /[а-яё]/i;
+
+for (const [server, en] of [
+  ["https://mcp.iskron.ai/", true],
+  ["https://mcp.iskron.ru/", false],
+]) {
+  test(`a plugin whose bridge looks at ${server} writes the case frame header and batch ${en ? "in English, without Cyrillic" : "in Russian, as before"}`, async () => {
+    const b = bridgeEnv(`lang-${en ? "en" : "ru"}`);
+    const rec = await plugin({ ...b.env, ISKRON_BRIDGE_URL: server });
+    try {
+      await until(() => rec.tools().has("iskron_channel"), "the channel tool", 8000);
+      await rec.call("iskron_channel", { action: "connect" }, "s-lang");
+      const [pid] = pidsOf(b.log);
+      const send = async (frame, i) => {
+        appendFileSync(`${b.events}.${pid}`, event("frame", { frame, raw: JSON.stringify(frame) }));
+        await until(() => rec.prompts.length === i, `prompt ${i}`);
+        return rec.prompts[i - 1].text;
+      };
+      const word = await send(
+        latin(roomFrame("said", { author: ALEX, stack: "interrupt", body: "look at 41" })),
+        1,
+      );
+      const line = await send(
+        latin(
+          roomFrame("progress", {
+            author: ALEX,
+            key: "tests",
+            line: { done: "probes green", verdict: "partial", note: "no network" },
+          }),
+        ),
+        2,
+      );
+      if (en) {
+        assert.doesNotMatch(word, CYRILLIC, word);
+        assert.doesNotMatch(line, CYRILLIC, line);
+        assert.match(
+          word,
+          /^Iskron channel frame from a doer of role #48 — standing @alex:probe\n/,
+        );
+        assert.match(word, /CASE message «Bench»: message from Alex \(@alex:probe\)/);
+        assert.match(line, /^Case: 1 frames — /);
+        assert.match(
+          line,
+          /\[tests\] \[probes green\] = partial — no network · Alex \(@alex:probe\)/,
+        );
+      } else {
+        assert.match(word, /^Кадр канала Искрона от делателя роли #48/);
+        assert.match(word, /слово ДЕЛА «Bench»: слово от Alex/);
+        assert.match(
+          line,
+          /\[tests\] \[probes green\] = частично — no network · Alex \(@alex:probe\)/,
+        );
+      }
+    } finally {
+      await rec.stop();
+    }
+  });
+}
+
 // The dictionary of room kinds (#5851): event_kind decides, stack counts only on said.
 test("room kinds: closing steers a busy agent despite stack=defer and says who may object; progress and an unknown kind queue; said follows its stack", async () => {
   const b = bridgeEnv("room-kinds");
@@ -2024,7 +2119,11 @@ test("room kinds: closing steers a busy agent despite stack=defer and says who m
 
     const p2 = await send(progress(), 2);
     assert.equal(p2.delivery, "queue", "progress batches");
-    assert.match(p2.text, /Алексей \(@aleksei:probe\): \[tests\] пробы зелёные = ok; без сети/);
+    // Строка гроссбуха — ровно «[было] [сделал] = вердикт», примечание, автор хвостом.
+    assert.match(
+      p2.text,
+      /\[tests\] \[пробы зелёные\] = ok — без сети · Алексей \(@aleksei:probe\)/,
+    );
 
     const p3 = await send(unknownKind(), 3);
     assert.equal(

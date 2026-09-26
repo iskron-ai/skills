@@ -3,11 +3,13 @@
 // (без префикса поставщика), attrs — признак сборки {name, version, stamp} и
 // харнес. attrs на поверхности заменяются целиком, поэтому мост всегда шлёт
 // полный свой набор: частичная запись стёрла бы его же признак сборки.
+import { lang } from "../shared/lang.ts";
 import { VERSION } from "../shared/version.ts";
 import { BUILD } from "./build.ts";
 import { harnessName } from "./client.ts";
 import { CFG } from "./config.ts";
 import { normKarta, normName } from "./names.ts";
+import { log } from "./streams.ts";
 
 let model = "";
 // attrs, названные агентом сам, — по месту, для которого названы: едут в его
@@ -40,12 +42,15 @@ export function rememberModel(m: unknown): void {
 export function placeFields(place: Place = {}): {
   model?: string;
   satellite_of?: string;
+  locale?: "en";
   attrs: Record<string, unknown>;
 } {
   const harness = harnessName();
   const extra = extras.get(placeKey(place)) ?? {};
   return {
     ...(model ? { model } : {}),
+    // Язык места (#6080): английский мост просит en; русский молчит — решает умолчание сервера.
+    ...(lang() === "en" ? { locale: "en" as const } : {}),
     ...(CFG.satellite && satelliteOfId ? { satellite_of: satelliteOfId } : {}),
     attrs: {
       ...extra,
@@ -57,6 +62,20 @@ export function placeFields(place: Place = {}): {
 }
 
 const PLACE_ACTIONS = new Set(["connect", "mint", "register"]);
+
+let localeWarned = false;
+/**
+ * Эхо locale в ответе connect/register (api отвечает действующим языком места):
+ * расходится с запрошенным — одна строка в лог на процесс; эха нет — старый api, молчим.
+ */
+export function noteLocaleEcho(args: Record<string, unknown>, text: string): void {
+  const asked = args.locale;
+  if (typeof asked !== "string" || localeWarned) return;
+  const echo = /\blocale\b["']?\s*[:=]\s*["']?([a-z]{2})\b/i.exec(text)?.[1]?.toLowerCase();
+  if (!echo || echo === asked) return;
+  localeWarned = true;
+  log(`locale: asked ${asked}, the server answered ${echo} — its prose stays in ${echo}`);
+}
 
 /**
  * connect/mint/register, которые агент зовёт сам (стояние пятью вызовами), несут

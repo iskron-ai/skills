@@ -14,17 +14,53 @@ function classifyOrigin(frame, myKarta) {
   return "peer";
 }
 
+// js/shared/standings.ts
+import { homedir } from "node:os";
+import { join } from "node:path";
+var defaultAuthDir = () => join(homedir(), ".iskron-bridge");
+var authDirFromEnv = () => process.env.ISKRON_BRIDGE_AUTH_DIR?.trim() || defaultAuthDir();
+
 // js/shared/clients.ts
 var PI_CLIENT = "pi-iskron";
 
+// js/shared/lang.ts
+import { readFileSync } from "node:fs";
+import { join as join2 } from "node:path";
+function langOfUrl(url) {
+  try {
+    return /\.ai\.?$/i.test(new URL(url).hostname) ? "en" : "ru";
+  } catch {
+    return "ru";
+  }
+}
+function forcedLang() {
+  const v = process.env.ISKRON_BRIDGE_LANG?.trim().toLowerCase();
+  return v === "en" || v === "ru" ? v : null;
+}
+function resolve() {
+  const forced = forcedLang();
+  if (forced) return forced;
+  const fromEnv = process.env.ISKRON_BRIDGE_URL?.trim();
+  if (fromEnv) return langOfUrl(fromEnv);
+  try {
+    const text = readFileSync(join2(authDirFromEnv(), "server"), "utf8").trim();
+    if (text) return langOfUrl(text);
+  } catch {
+  }
+  return "ru";
+}
+var current = null;
+var lang = () => current ??= resolve();
+var L = (ru, en) => lang() === "en" ? en : ru;
+
 // js/shared/version.ts
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readFileSync as readFileSync2 } from "node:fs";
 import { fileURLToPath } from "node:url";
 var VERSION = "6.19.0";
 function buildOf(selfUrl) {
   try {
-    const src = readFileSync(fileURLToPath(selfUrl));
+    const src = readFileSync2(fileURLToPath(selfUrl));
     return `v${VERSION}+${createHash("sha256").update(src).digest("hex").slice(0, 8)}`;
   } catch {
     return `v${VERSION}`;
@@ -59,7 +95,8 @@ var WORDS = {
   closed: "дело закрыто: {reason}",
   objection: "{author} возражает против закрытия: {reason}",
   late_objection: "{author} возразил после закрытия",
-  progress: "{author}: [{key}] {done} = {verdict}{; note}",
+  // Строка гроссбуха — ровно «[было] [сделал] = вердикт», примечание к не-ok, автор хвостом (норма владельца).
+  progress: "[{key}] [{done}] = {verdict}{ — note} · {author}",
   opened: "дело открыл {author}",
   joined: "вошёл {who}",
   left: "вышел {who}{; причина: reason}",
@@ -73,21 +110,71 @@ var WORDS = {
   auto: "запись платформы {code} о деле №{room}",
   unknown: "род {kind} мосту неизвестен"
 };
+var WORDS_EN = {
+  said: "message from {author}",
+  said_pending: "message from {author} in flight — the text follows",
+  body: "text of message [{refers_to}] from {author}",
+  body_aborted: "message [{refers_to}] cut off by its author",
+  body_lapsed: "message [{refers_to}] cut off by the platform on its deadline",
+  closing: "the lead {author} proposes to close the case by {ends_at}{; evidence: evidence}",
+  closing_may: 'you may object — iskron_case(action="object", in_reply_to={entry_id}) (former name iskron_room)',
+  closing_not: "the objection is not yours to make",
+  closed: "case closed: {reason}",
+  objection: "{author} objects to closing: {reason}",
+  late_objection: "{author} objected after the close",
+  progress: "[{key}] [{done}] = {verdict}{ — note} · {author}",
+  opened: "case opened by {author}",
+  joined: "entered {who}",
+  left: "left {who}{; reason: reason}",
+  invite: "{author} invites {who} to the case",
+  withdraw: "invitation withdrawn by {author}",
+  node: "node #{seq} {name} ({realm}) in the case{; reasoning}",
+  node_updated: "node #{seq} {name} updated{; reasoning}",
+  node_deleted: "node #{seq} {name} deleted{; reasoning}",
+  node_undeleted: "node #{seq} {name} restored{; reasoning}",
+  link: "case linked to case №{room} ({rel})",
+  auto: "platform record {code} about case №{room}",
+  unknown: "kind {kind} is unknown to the bridge"
+};
 var AUTO_WORDS = {
   child_opened: "дочернее дело №{room} открыто",
   child_closing: "дочернее дело №{room} закрывается",
   child_closed: "дочернее дело №{room} закрыто",
   child_late_objection: "позднее возражение в дочернем деле №{room}"
 };
+var AUTO_WORDS_EN = {
+  child_opened: "child case №{room} opened",
+  child_closing: "child case №{room} is closing",
+  child_closed: "child case №{room} closed",
+  child_late_objection: "late objection in child case №{room}"
+};
 var REL_WORDS = {
   parent: "дочернее к нему",
   child: "родительское к нему",
   continues: "продолжает его"
 };
+var REL_WORDS_EN = {
+  parent: "its child",
+  child: "its parent",
+  continues: "continues it"
+};
+var VERDICT_WORDS = {
+  ok: "ok",
+  partial: "частично",
+  bad: "slop"
+};
+var VERDICT_WORDS_EN = {
+  ok: "ok",
+  partial: "partial",
+  bad: "slop"
+};
+var words = () => lang() === "en" ? WORDS_EN : WORDS;
+var autoWords = () => lang() === "en" ? AUTO_WORDS_EN : AUTO_WORDS;
+var relWords = () => lang() === "en" ? REL_WORDS_EN : REL_WORDS;
 var NODE_OPS = {
-  updated: WORDS.node_updated,
-  deleted: WORDS.node_deleted,
-  undeleted: WORDS.node_undeleted
+  updated: "node_updated",
+  deleted: "node_deleted",
+  undeleted: "node_undeleted"
 };
 var RULES = {
   said: "stack",
@@ -115,7 +202,7 @@ function authorOf(author) {
   const standing = str(a.standing);
   if (name) return standing ? `${name} (${standing})` : name;
   if (standing) return standing;
-  return a.kind === "platform" ? "платформа" : "?";
+  return a.kind === "platform" ? L("платформа", "platform") : "?";
 }
 var after = (key, prefix) => key.startsWith(prefix) ? key.slice(prefix.length) : key;
 function fill(template, v) {
@@ -164,7 +251,7 @@ function roomKind(frame) {
     author: byWhom,
     key,
     done: line.done,
-    verdict: line.verdict,
+    verdict: (lang() === "en" ? VERDICT_WORDS_EN : VERDICT_WORDS)[str(line.verdict)] ?? line.verdict,
     note: line.note,
     ends_at: fields.ends_at,
     evidence: Array.isArray(fields.evidence) ? fields.evidence.map(str).join(", ") : "",
@@ -177,7 +264,7 @@ function roomKind(frame) {
     // Вошедший и ушедший — место fields.standing (уход по сроку пишет платформа, api 0.89.6), иначе автор.
     who: kind === "joined" || kind === "left" ? whoOf({ standing: fields.standing }) || byWhom : whoOf(fields) || after(key, "invite:"),
     room: roomOf(fields.room) || after(key, "link:"),
-    rel: REL_WORDS[str(fields.rel)] ?? fields.rel,
+    rel: relWords()[str(fields.rel)] ?? fields.rel,
     code: fields.code,
     seq: node.seq,
     name: node.name,
@@ -191,30 +278,31 @@ function roomKind(frame) {
     return {
       kind,
       rule: "batch",
-      words: fill(WORDS.unknown, values),
+      words: fill(words().unknown, values),
       author,
       phase: null,
       known: false
     };
   const pending = kind === "said" && f.body_pending === true && !str(f.body) && !str(line.done);
   const aborted = kind === "body" && fields.aborted === true;
-  const wordsOf = pending ? WORDS.said_pending : aborted ? obj(line.author).kind === "platform" ? WORDS.body_lapsed : WORDS.body_aborted : kind === "auto" ? AUTO_WORDS[str(values.code)] ?? WORDS.auto : (
+  const W = words();
+  const wordsOf = pending ? W.said_pending : aborted ? obj(line.author).kind === "platform" ? W.body_lapsed : W.body_aborted : kind === "auto" ? autoWords()[str(values.code)] ?? W.auto : (
     // op узла (bound | updated | deleted | undeleted): без op и bound — прежнее слово.
-    kind === "node" && NODE_OPS[str(fields.op)] ? NODE_OPS[str(fields.op)] : WORDS[kind]
+    kind === "node" && NODE_OPS[str(fields.op)] ? W[NODE_OPS[str(fields.op)]] : W[kind]
   );
-  let words = fill(wordsOf, values);
+  let text = fill(wordsOf ?? "", values);
   if (kind === "closing") {
     const may = Array.isArray(fields.may_object) ? fields.may_object.map((m) => typeof m === "string" ? m : str(obj(m).id)) : [];
     const myId = str(f.to_standing_id);
     const mayI = !!myId && may.includes(myId);
-    words += "; " + fill(mayI ? WORDS.closing_may : WORDS.closing_not, values);
+    text += "; " + fill(mayI ? W.closing_may : W.closing_not, values);
   }
   const stack = rule === "stack" ? (
     // Стопка решает у said и body; слово без стопки — прежним путём, вставкой.
     f.stack === "defer" ? "batch" : "interrupt"
   ) : rule === "mine" ? mine.includes(str(values.target)) || myRole(f, fields) ? "interrupt" : "batch" : rule;
   const phase = pending ? "pending" : aborted ? "aborted" : null;
-  return { kind, rule: phase ? "batch" : stack, words, author, phase, known: true };
+  return { kind, rule: phase ? "batch" : stack, words: text, author, phase, known: true };
 }
 var byKind = (frame) => roomKind(frame) !== null;
 var stackOf = (frame) => roomKind(frame)?.rule ?? (frame?.stack === "defer" ? "batch" : "interrupt");
@@ -223,22 +311,31 @@ var stackOf = (frame) => roomKind(frame)?.rule ?? (frame?.stack === "defer" ? "b
 var NOT_ENVELOPE = /* @__PURE__ */ new Set(["body", "provenance", "type", "origin"]);
 var ENVELOPE_FIRST = ["id", "received_at", "stale", "content_type", "body_chars", "body_read"];
 function frameToText(frame, raw) {
-  if (!frame) return `Кадр канала Искрона:
+  if (!frame) return `${L("Кадр канала Искрона", "Iskron channel frame")}:
 ${raw}`;
   const p = frame.provenance ?? {};
   const origin = frame.origin ?? classifyOrigin(frame);
-  const standing = p.from_standing ? ` — стояние ${p.from_standing}` : "";
-  const role = p.from_karta_seq != null ? `роли #${p.from_karta_seq}` : "роли неизвестной";
-  const who = origin === "platform" ? "от ПЛАТФОРМЫ — побудка, не человек и не делатель" : origin === "human" ? `от ЧЕЛОВЕКА${p.user ? ` @${p.user}` : ""} (${role})${standing}` : origin === "sibling" ? `от БРАТА по твоей роли (#${p.from_karta_seq})${standing} — другое стояние той же роли` : `от делателя ${role}${standing}`;
-  const lines = [`Кадр канала Искрона ${who}`];
+  const standing = p.from_standing ? L(` — стояние ${p.from_standing}`, ` — standing ${p.from_standing}`) : "";
+  const role = p.from_karta_seq != null ? L(`роли #${p.from_karta_seq}`, `role #${p.from_karta_seq}`) : L("роли неизвестной", "unknown role");
+  const who = origin === "platform" ? L(
+    "от ПЛАТФОРМЫ — побудка, не человек и не делатель",
+    "from the PLATFORM — a wake-up, not a human and not a doer"
+  ) : origin === "human" ? L(`от ЧЕЛОВЕКА`, `from a HUMAN`) + `${p.user ? ` @${p.user}` : ""} (${role})${standing}` : origin === "sibling" ? L(
+    `от БРАТА по твоей роли (#${p.from_karta_seq})${standing} — другое стояние той же роли`,
+    `from a SIBLING of your role (#${p.from_karta_seq})${standing} — another standing of the same role`
+  ) : L(`от делателя ${role}${standing}`, `from a doer of ${role}${standing}`);
+  const lines = [`${L("Кадр канала Искрона", "Iskron channel frame")} ${who}`];
   const room = frame.room;
   if (room && typeof room === "object") {
     const zachin = typeof room.zachin === "string" ? ` «${room.zachin}»` : "";
     const rk = roomKind(frame);
     const f = frame;
-    const words = rk ? `: ${rk.words}` : (typeof f.kind === "string" ? `, род ${f.kind}` : "") + (typeof f.stack === "string" ? `, стопка ${f.stack}` : "");
+    const words2 = rk ? `: ${rk.words}` : (typeof f.kind === "string" ? L(`, род ${f.kind}`, `, kind ${f.kind}`) : "") + (typeof f.stack === "string" ? L(`, стопка ${f.stack}`, `, stack ${f.stack}`) : "");
     lines.push(
-      origin === "platform" ? `запись ДЕЛА${zachin}${words}` : `слово ДЕЛА${zachin}${words} — ответ идёт записью в то же дело с in_reply_to по id слова (ход для дел — в списке тулов сессии), не send стоянию`
+      origin === "platform" ? L(`запись ДЕЛА${zachin}${words2}`, `CASE record${zachin}${words2}`) : L(
+        `слово ДЕЛА${zachin}${words2} — ответ идёт записью в то же дело с in_reply_to по id слова (ход для дел — в списке тулов сессии), не send стоянию`,
+        `CASE message${zachin}${words2} — answer with a record in the same case, in_reply_to the message id (the case move is in the session's tool list), not a send to the standing`
+      )
     );
   }
   if (frame.provenance) lines.push(`provenance: ${JSON.stringify(frame.provenance)}`);
@@ -469,12 +566,12 @@ var Bridge = class {
         opts.signal?.removeEventListener("abort", onAbort);
         fn(v);
       };
-      const resolve2 = settle(res);
+      const resolve3 = settle(res);
       const reject = settle(rej);
       function onAbort() {
         reject(new Error("вызов отменён"));
       }
-      this.pending.set(id, { resolve: resolve2, reject });
+      this.pending.set(id, { resolve: resolve3, reject });
       if (opts.signal) {
         if (opts.signal.aborted) return onAbort();
         opts.signal.addEventListener("abort", onAbort, { once: true });
@@ -562,15 +659,27 @@ async function enterCase(l, call, satelliteOf, placeName) {
   try {
     await call("iskron_stand", stand);
   } catch (e) {
-    return `Искрон: строка запуска — не встал: ${e.message}. Встань сам (iskron_stand) и войди в дело №${l.no}: iskron_case(action="join", room="${room}").`;
+    const why = e.message;
+    const join4 = `iskron_case(action="join", room="${room}")`;
+    return L(
+      `Искрон: строка запуска — не встал: ${why}. Встань сам (iskron_stand) и войди в дело №${l.no}: ${join4}.`,
+      `Iskron: launch line — not seated: ${why}. Take your seat yourself (iskron_stand) and enter case №${l.no}: ${join4}.`
+    );
   }
-  const place = placeName() || "своим местом";
+  const place = placeName() || L("своим местом", "in a seat of its own");
   try {
     await call("iskron_case", { action: "join", realm: l.realm, room });
   } catch (e) {
-    return `Искрон: встал ${place}; в дело №${l.no} не вошёл — ${e.message}. Место остаётся.`;
+    const why = e.message;
+    return L(
+      `Искрон: встал ${place}; в дело №${l.no} не вошёл — ${why}. Место остаётся.`,
+      `Iskron: seated ${place}; did not enter case №${l.no} — ${why}. The seat stays.`
+    );
   }
-  return `Искрон: встал ${place}, вошёл в дело №${l.no} — первым словом перескажи бриф в деле.`;
+  return L(
+    `Искрон: встал ${place}, вошёл в дело №${l.no} — первым словом перескажи бриф в деле.`,
+    `Iskron: seated ${place}, entered case №${l.no} — retell the brief as your first message in the case.`
+  );
 }
 
 // js/extension/home-copy.ts
@@ -578,18 +687,18 @@ import {
   accessSync,
   chmodSync,
   constants,
-  readFileSync as readFileSync2,
+  readFileSync as readFileSync3,
   renameSync,
   unlinkSync,
   writeFileSync
 } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { dirname, resolve as resolve2 } from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 
 // js/shared/home.ts
-import { homedir } from "node:os";
-import { join } from "node:path";
-var homeBridgePath = () => join(homedir(), ".iskron-bridge", "iskron-bridge.mjs");
+import { homedir as homedir2 } from "node:os";
+import { join as join3 } from "node:path";
+var homeBridgePath = () => join3(homedir2(), ".iskron-bridge", "iskron-bridge.mjs");
 
 // js/extension/home-copy.ts
 function newer(a, b) {
@@ -600,7 +709,7 @@ function newer(a, b) {
   return 0;
 }
 function packagedBridgePath() {
-  return resolve(
+  return resolve2(
     dirname(fileURLToPath2(import.meta.url)),
     "..",
     "skills",
@@ -621,7 +730,7 @@ function refreshHomeBridge(notify, canSpeak) {
   const homePath = homeBridgePath();
   let packaged;
   try {
-    packaged = readFileSync2(packagedPath);
+    packaged = readFileSync3(packagedPath);
   } catch {
     return;
   }
@@ -635,7 +744,7 @@ function refreshHomeBridge(notify, canSpeak) {
   }
   let home;
   try {
-    home = readFileSync2(homePath);
+    home = readFileSync3(homePath);
   } catch {
     return;
   }
@@ -676,7 +785,7 @@ function findBridge() {
     tried.push(p);
   };
   push(
-    process.env.ISKRON_BRIDGE_PATH?.trim() ? resolve(process.env.ISKRON_BRIDGE_PATH.trim()) : null
+    process.env.ISKRON_BRIDGE_PATH?.trim() ? resolve2(process.env.ISKRON_BRIDGE_PATH.trim()) : null
   );
   try {
     push(packagedBridgePath());

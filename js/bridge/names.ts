@@ -8,6 +8,8 @@ import { realpathSync } from "node:fs";
 import { hostname } from "node:os";
 import { basename, dirname, resolve } from "node:path";
 
+import { L } from "../shared/lang.ts";
+
 /** Правило имени стояния у сервера (наблюдено отказом 400). */
 export const NAME_MAX = 48;
 
@@ -34,11 +36,15 @@ export const sanitize = (s: string): string =>
 
 /** Чем явное имя нарушает правило — словами, или null, если ничем. */
 export function nameFault(name: string): string | null {
-  if (name.length > NAME_MAX) return `длиннее предела: ${name.length} знаков`;
+  if (name.length > NAME_MAX)
+    return L(`длиннее предела: ${name.length} знаков`, `over the limit: ${name.length} signs`);
   if (!NAME_RE.test(name))
     return /[A-Z]/.test(name)
-      ? "заглавные буквы не допускаются"
-      : "недопустимые знаки или первый знак не буква и не цифра";
+      ? L("заглавные буквы не допускаются", "capital letters are not allowed")
+      : L(
+          "недопустимые знаки или первый знак не буква и не цифра",
+          "signs not allowed, or the first sign is neither a letter nor a digit",
+        );
   return null;
 }
 

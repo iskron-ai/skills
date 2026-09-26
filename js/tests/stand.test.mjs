@@ -1594,3 +1594,72 @@ test("satellite: standing in another role, it still may not take, register or re
     "the caller's place stays listening",
   );
 });
+
+// English Iskron (#6080): the bridge's language follows its server — a host on
+// .ai is English, any other Russian; ISKRON_BRIDGE_LANG=en|ru overrides. What the
+// bridge writes itself — the iskron_stand answer — speaks that language; an
+// English bridge asks the api for English prose (Accept-Language) and names the
+// seat's language in connect and register (locale: "en"); a Russian one sends
+// neither and leaves it to the server's default.
+const CYRILLIC = /[а-яё]/i;
+
+for (const [server, en] of [
+  ["https://mcp.iskron.ai/", true],
+  ["https://mcp.iskron.ru/", false],
+]) {
+  test(`a bridge on ${server} answers iskron_stand ${en ? "in English" : "in Russian"} — its own refusal, no network needed`, async (t) => {
+    const dir = mkdtempSync(join(tmpdir(), "iskron-stand-lang-"));
+    const bridge = startBridge(server, dir);
+    t.after(() => bridge.stop());
+    const r = await bridge.call("tools/call", { name: "iskron_stand", arguments: {} });
+    const text = textOf(r);
+    assert.ok(r.result?.isError, text);
+    if (en) {
+      assert.doesNotMatch(text, CYRILLIC, text);
+      assert.match(text, /^Refused \(bridge\): iskron_stand needs realm and karta/);
+    } else assert.match(text, /^Отказано \(мост\): iskron_stand требует realm и karta/);
+  });
+}
+
+test("an English bridge (ISKRON_BRIDGE_LANG=en) answers a whole iskron_stand without Cyrillic of its own, asks for English prose and sends locale en in connect and register", async (t) => {
+  const fake = await startFakeNks({ pat: PAT });
+  const dir = mkdtempSync(join(tmpdir(), "iskron-stand-en-"));
+  const bridge = startBridge(fake.mcpUrl, dir, process.cwd(), { ISKRON_BRIDGE_LANG: "en" });
+  t.after(async () => {
+    await bridge.stop();
+    await fake.stop();
+  });
+  assert.ok((await bridge.call("initialize", INIT)).result);
+  const r = await bridge.call("tools/call", {
+    name: "iskron_stand",
+    arguments: { realm: "nks-dev", karta: 931, name: "proba", model: "opus-5" },
+  });
+  const text = textOf(r);
+  assert.ok(!r.result?.isError, text);
+  // The server's own prose echoed in parentheses is the api's half, in the server's language.
+  const own = text.replace(/\([^()]*\)/g, "");
+  if (process.env.ISKRON_SHOW_STAND) process.stderr.write(text + "\n");
+  assert.doesNotMatch(own, CYRILLIC, text);
+  assert.match(
+    text,
+    /^\[iskron_stand\] standing proba — role #931, graph nks-dev: connect and register\./,
+  );
+  for (const action of ["connect", "register"]) {
+    const got = fake.state.placeArgs.find((x) => x.action === action);
+    assert.equal(got?.locale, "en", `${action}: ${JSON.stringify(fake.state.placeArgs)}`);
+  }
+  assert.ok(fake.state.acceptLanguage.has("en"), [...fake.state.acceptLanguage].join(","));
+});
+
+test("a Russian bridge sends no locale and no Accept-Language — the server's default decides", async (t) => {
+  const { fake, bridge } = await ready(t);
+  const r = await bridge.call("tools/call", {
+    name: "iskron_stand",
+    arguments: { realm: "nks-dev", karta: 931, name: "proba", model: "opus-5" },
+  });
+  assert.ok(!r.result?.isError, textOf(r));
+  assert.match(textOf(r), /стояние proba — роль #931, граф nks-dev: connect и register/);
+  for (const x of fake.state.placeArgs) assert.ok(!("locale" in x), JSON.stringify(x));
+  // fetch's own default («*») is not a choice of language.
+  assert.ok(!fake.state.acceptLanguage.has("en"), [...fake.state.acceptLanguage].join(","));
+});

@@ -3,6 +3,7 @@
 // #5407): живого слушателя не вытесняют, а встают рядом на `имя.N`. «Занято»
 // читается положительно — живой локальный сокет места, который держит не этот
 // мост; отсутствие записи или «не слушает» на доске занятости не доказывают.
+import { L } from "../shared/lang.ts";
 import { holdsStanding, isParked, localSocketPathOf } from "./hold.ts";
 import { keyOf } from "./holdrecord.ts";
 import { NAME_MAX } from "./names.ts";
@@ -50,6 +51,9 @@ export async function separatePlace(
   if (!name) return null;
   return {
     name,
-    note: `место ${derived} держит живая сессия другого моста — встаю рядом на ${name}, её не трогаю; если ${derived} — твоё место по памяти этой сессии (её мост перезапущен; субагенту основное место не своё), вернись: iskron_stand(name="${derived}", take=true); вытеснять чужую сессию — только словом человека`,
+    note: L(
+      `место ${derived} держит живая сессия другого моста — встаю рядом на ${name}, её не трогаю; если ${derived} — твоё место по памяти этой сессии (её мост перезапущен; субагенту основное место не своё), вернись: iskron_stand(name="${derived}", take=true); вытеснять чужую сессию — только словом человека`,
+      `a live session of another bridge holds the seat ${derived} — standing beside as ${name}, leaving it alone; if ${derived} is your seat by this session's memory (its bridge restarted; a subagent does not own the main seat), go back: iskron_stand(name="${derived}", take=true); evicting another session — only on the human's word`,
+    ),
   };
 }

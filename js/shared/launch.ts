@@ -3,6 +3,9 @@
 // дело до первого хода модели — это делает харнес (плагин OpenCode, расширение
 // pi), не текст скилла. Хвост «от <место>» называет место запустившего там, где
 // харнес сам родителя не знает (pi); в OpenCode родитель известен и хвост лишний.
+// По-английски: «start <graph> <role> <case №N> [from <seat>]»; слово о входе —
+// на языке поставки (shared/lang.ts).
+import { L } from "./lang.ts";
 
 /** Что называет строка запуска: граф, роль, дело и, может быть, место запустившего. */
 export interface Launch {
@@ -52,16 +55,25 @@ export async function enterCase(
   try {
     await call("iskron_stand", stand);
   } catch (e) {
-    return (
-      `Искрон: строка запуска — не встал: ${(e as Error).message}. ` +
-      `Встань сам (iskron_stand) и войди в дело №${l.no}: iskron_case(action="join", room="${room}").`
+    const why = (e as Error).message;
+    const join = `iskron_case(action="join", room="${room}")`;
+    return L(
+      `Искрон: строка запуска — не встал: ${why}. Встань сам (iskron_stand) и войди в дело №${l.no}: ${join}.`,
+      `Iskron: launch line — not seated: ${why}. Take your seat yourself (iskron_stand) and enter case №${l.no}: ${join}.`,
     );
   }
-  const place = placeName() || "своим местом";
+  const place = placeName() || L("своим местом", "in a seat of its own");
   try {
     await call("iskron_case", { action: "join", realm: l.realm, room });
   } catch (e) {
-    return `Искрон: встал ${place}; в дело №${l.no} не вошёл — ${(e as Error).message}. Место остаётся.`;
+    const why = (e as Error).message;
+    return L(
+      `Искрон: встал ${place}; в дело №${l.no} не вошёл — ${why}. Место остаётся.`,
+      `Iskron: seated ${place}; did not enter case №${l.no} — ${why}. The seat stays.`,
+    );
   }
-  return `Искрон: встал ${place}, вошёл в дело №${l.no} — первым словом перескажи бриф в деле.`;
+  return L(
+    `Искрон: встал ${place}, вошёл в дело №${l.no} — первым словом перескажи бриф в деле.`,
+    `Iskron: seated ${place}, entered case №${l.no} — retell the brief as your first message in the case.`,
+  );
 }
