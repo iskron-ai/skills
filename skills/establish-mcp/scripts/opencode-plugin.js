@@ -1,3 +1,34 @@
+// js/shared/launch.ts
+var LINE = /^start\s+(\S+)\s+(\S+)\s+(?:(?:дело|case)\s+)?[№#]\s?(\d+)(?:\s+(?:от|from)\s+(@\S+))?(?=\s|$)/iu;
+function parseLaunch(text) {
+  const [, realm, karta, no, of] = LINE.exec(text.trimStart()) ?? [];
+  return realm && karta && no ? { realm, karta, no, of: of ?? null } : null;
+}
+function withWord(text, word) {
+  const body = text.trimStart();
+  const nl = body.indexOf("\n");
+  return nl < 0 ? `${body}
+${word}` : `${body.slice(0, nl)}
+${word}${body.slice(nl)}`;
+}
+async function enterCase(l, call, satelliteOf, placeName) {
+  const room = `#${l.no}`;
+  const stand = { realm: l.realm, karta: l.karta };
+  if (satelliteOf) stand.satellite_of = satelliteOf;
+  try {
+    await call("iskron_stand", stand);
+  } catch (e) {
+    return `Искрон: строка запуска — не встал: ${e.message}. Встань сам (iskron_stand) и войди в дело №${l.no}: iskron_case(action="join", room="${room}").`;
+  }
+  const place = placeName() || "своим местом";
+  try {
+    await call("iskron_case", { action: "join", realm: l.realm, room });
+  } catch (e) {
+    return `Искрон: встал ${place}; в дело №${l.no} не вошёл — ${e.message}. Место остаётся.`;
+  }
+  return `Искрон: встал ${place}, вошёл в дело №${l.no} — первым словом перескажи бриф в деле.`;
+}
+
 // js/shared/channel.ts
 var SILENT_FLOOR_MS = Number(process.env.ISKRON_CHANNEL_SILENT_FLOOR_MS) || 6e4;
 var FLAP_PAUSES_MS = (process.env.ISKRON_CHANNEL_FLAP_MS || "5000,10000,20000,40000,60000").split(",").map(Number).filter((n) => Number.isFinite(n) && n > 0);
@@ -808,18 +839,6 @@ function asSatellite(args, of) {
 }
 
 // js/opencode/launch.ts
-var LINE = /^start\s+(\S+)\s+(\S+)\s+(?:(?:дело|case)\s+)?[№#]\s?(\d+)(?=\s|$)/iu;
-function parseLaunch(text) {
-  const [, realm, karta, no] = LINE.exec(text.trimStart()) ?? [];
-  return realm && karta && no ? { realm, karta, no } : null;
-}
-function withWord(text, word) {
-  const body = text.trimStart();
-  const nl = body.indexOf("\n");
-  return nl < 0 ? `${body}
-${word}` : `${body.slice(0, nl)}
-${word}${body.slice(nl)}`;
-}
 function createLauncher(d) {
   const prompted = /* @__PURE__ */ new Set();
   return {
@@ -832,19 +851,12 @@ function createLauncher(d) {
       const root = await d.rootOf(sessionID);
       if (root === sessionID) return null;
       const slot = d.childSlot(sessionID, root);
-      const room = `#${l.no}`;
-      try {
-        await d.call(slot, STAND_TOOL, { realm: l.realm, karta: l.karta }, sessionID);
-      } catch (e) {
-        return `Искрон: строка запуска — не встал: ${e.message}. Встань сам (iskron_stand) и войди в дело №${l.no}: iskron_case(action="join", room="${room}").`;
-      }
-      const place = slot.place?.name ?? "своим местом";
-      try {
-        await d.call(slot, "iskron_case", { action: "join", realm: l.realm, room }, sessionID);
-      } catch (e) {
-        return `Искрон: встал ${place}; в дело №${l.no} не вошёл — ${e.message}. Место остаётся.`;
-      }
-      return `Искрон: встал ${place}, вошёл в дело №${l.no} — первым словом перескажи бриф в деле.`;
+      return enterCase(
+        l,
+        (name, args) => d.call(slot, name, args, sessionID),
+        null,
+        () => slot.place?.name
+      );
     }
   };
 }

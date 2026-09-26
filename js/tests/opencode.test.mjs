@@ -1617,10 +1617,11 @@ test("a refused join comes back as words in the prompt, and the place stays", as
   });
   try {
     await until(() => rec.tools().has("iskron_stand"), "the stand tool", 8000);
-    const read = await rec.prompt("child", "start r5 #48 case #77");
+    // The tail «from <seat>» is pi's: here the parent is known, and the tail does no harm.
+    const read = await rec.prompt("child", "start r5 #48 case #77 from @me:lead");
     assert.equal(
       read,
-      "start r5 #48 case #77\n" +
+      "start r5 #48 case #77 from @me:lead\n" +
         "Искрон: встал host.repo.opus-5; в дело №77 не вошёл — дело #77 не найдено в этом графе. Место остаётся.",
       "the root holds no place, so the child stands a place of its own",
     );

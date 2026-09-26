@@ -542,6 +542,37 @@ function resultToContent(result) {
   ];
 }
 
+// js/shared/launch.ts
+var LINE = /^start\s+(\S+)\s+(\S+)\s+(?:(?:дело|case)\s+)?[№#]\s?(\d+)(?:\s+(?:от|from)\s+(@\S+))?(?=\s|$)/iu;
+function parseLaunch(text) {
+  const [, realm, karta, no, of] = LINE.exec(text.trimStart()) ?? [];
+  return realm && karta && no ? { realm, karta, no, of: of ?? null } : null;
+}
+function withWord(text, word) {
+  const body = text.trimStart();
+  const nl = body.indexOf("\n");
+  return nl < 0 ? `${body}
+${word}` : `${body.slice(0, nl)}
+${word}${body.slice(nl)}`;
+}
+async function enterCase(l, call, satelliteOf, placeName) {
+  const room = `#${l.no}`;
+  const stand = { realm: l.realm, karta: l.karta };
+  if (satelliteOf) stand.satellite_of = satelliteOf;
+  try {
+    await call("iskron_stand", stand);
+  } catch (e) {
+    return `Искрон: строка запуска — не встал: ${e.message}. Встань сам (iskron_stand) и войди в дело №${l.no}: iskron_case(action="join", room="${room}").`;
+  }
+  const place = placeName() || "своим местом";
+  try {
+    await call("iskron_case", { action: "join", realm: l.realm, room });
+  } catch (e) {
+    return `Искрон: встал ${place}; в дело №${l.no} не вошёл — ${e.message}. Место остаётся.`;
+  }
+  return `Искрон: встал ${place}, вошёл в дело №${l.no} — первым словом перескажи бриф в деле.`;
+}
+
 // js/extension/home-copy.ts
 import {
   accessSync,
@@ -669,6 +700,12 @@ var TICK_MS = 15e3;
 var AUTH_POLL_MS = Number(process.env.ISKRON_MCP_AUTH_POLL_MS || 3e3);
 var AUTH_PENDING = /authorization required/i;
 var PROTOCOL = "2025-06-18";
+function textOrThrow(name, result) {
+  const text = resultToContent(result).map((c) => c.type === "text" ? c.text : "[image]").join("\n");
+  if (result?.isError) throw new Error(text || `${name}: отказ без текста`);
+  return text;
+}
+var callVia = (b) => async (name, args) => textOrThrow(name, await b.request("tools/call", { name, arguments: args }));
 function setupBridge(pi, onChannel) {
   let bridge = null;
   const offByUs = /* @__PURE__ */ new Set();
@@ -676,7 +713,9 @@ function setupBridge(pi, onChannel) {
   let notify = () => {
   };
   let canSpeak = false;
-  async function raise() {
+  let heldName = null;
+  let satellite = false;
+  async function raise(args = []) {
     refreshHomeBridge(notify, canSpeak);
     const found = findBridge();
     if (!found.path) {
@@ -690,12 +729,18 @@ function setupBridge(pi, onChannel) {
       found.path,
       (line) => notify(`Искрон/мост: ${line}`, "info"),
       (method, params) => {
-        if (method === "notifications/message" && params?.logger === "iskron-channel")
+        if (method === "notifications/message" && params?.logger === "iskron-channel") {
+          const name = params?.data?.kind === "held" ? params?.data?.place?.name : null;
+          if (typeof name === "string" && name) heldName = name;
           onChannel(params);
+        }
         if (method === "notifications/tools/list_changed") void relist(b);
-      }
+      },
+      void 0,
+      args
     );
     bridge = b;
+    satellite = args.includes("--satellite");
     b.start();
     let toldLogin = false;
     const deadline = Date.now() + HANDSHAKE_MS;
@@ -774,10 +819,7 @@ function setupBridge(pi, onChannel) {
                 { signal }
                 // потолка нет: первый вызов может уйти в браузер к человеку
               );
-              if (result?.isError) {
-                const text = resultToContent(result).map((c) => c.type === "text" ? c.text : "[image]").join("\n");
-                throw new Error(text || `${name}: отказ без текста`);
-              }
+              if (result?.isError) textOrThrow(name, result);
               const content = resultToContent(result);
               return {
                 content,
@@ -839,17 +881,39 @@ function setupBridge(pi, onChannel) {
       "info"
     );
   }
+  let raising = Promise.resolve();
+  const raiseLoud = (args = []) => raise(args).catch((e) => {
+    notify(`Искрон: мост не поднялся — ${e.message}`, "error");
+    bridge?.stop();
+    bridge = null;
+  });
+  let prompted = false;
+  pi.on("input", async (event) => {
+    if (prompted) return { action: "continue" };
+    prompted = true;
+    const l = parseLaunch(event.text);
+    if (!l) return { action: "continue" };
+    const of = l.of ?? (process.env.ISKRON_SATELLITE_OF?.trim() || null);
+    if (of && !satellite) {
+      bridge?.stop();
+      bridge = null;
+      raising = raiseLoud(["--satellite"]);
+    }
+    await raising;
+    const live = bridge;
+    const word = live ? await enterCase(l, callVia(live), of, () => heldName) : `Искрон: строка запуска — мост не поднят, в дело №${l.no} не вошёл.`;
+    return { action: "transform", text: withWord(event.text, word) };
+  });
   pi.on("session_start", async (_event, ctx) => {
     notify = ctx.hasUI ? (t, l) => ctx.ui.notify(t, l ?? "info") : () => {
     };
     canSpeak = Boolean(ctx.hasUI);
     bridge?.stop();
     bridge = null;
-    const work = raise().catch((e) => {
-      notify(`Искрон: мост не поднялся — ${e.message}`, "error");
-      bridge?.stop();
-      bridge = null;
-    });
+    prompted = false;
+    heldName = null;
+    const work = raiseLoud();
+    raising = work;
     let done = false;
     void work.then(() => {
       done = true;

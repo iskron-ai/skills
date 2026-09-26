@@ -20,9 +20,9 @@
 // сличает её с поставкой.
 import type { Plugin } from "@opencode/plugin";
 
+import { withWord } from "../shared/launch.ts";
 import { setupChannel } from "./channel.ts";
 import { setupCommands } from "./commands.ts";
-import { withWord } from "./launch.ts";
 import { type Say, setupTools } from "./tools.ts";
 
 export type Context = Plugin.Context;
