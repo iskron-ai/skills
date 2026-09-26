@@ -20,6 +20,8 @@ import { startFakeCodex } from "./fake-codex.mjs";
 import { startFakeNks } from "./fake-nks.mjs";
 import {
   addressed,
+  addressedBody,
+  addressedInFlight,
   auto,
   body as bodyFrame,
   bodyAborted,
@@ -3353,6 +3355,26 @@ test("(г) a word without an addressee between two asides stays whole in the bat
   assert.ok(wd.out.includes(`${ASIDE}: слово [90]`), wd.out);
   assert.ok(wd.out.includes(`${ASIDE}: слово [92]`), wd.out);
   assert.ok(!wd.out.includes("тайное слово"), wd.out);
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
+test("(д) an addressed word not to me in flight and then its body with stack interrupt: one line of the pair, no body, no wake", async (t) => {
+  const { fake, dir, key } = await connected(t, {
+    env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "2000" },
+  });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog", dir, key, 15_000);
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
+  await sendRoom(fake, addressedInFlight(94));
+  await sendRoom(fake, addressedBody(95, 94));
+  await new Promise((r) => setTimeout(r, 900));
+  assert.ok(!wd.out.includes("room-msg-95"), `the body woke at once:\n${wd.out}`);
+  await waitFor(() => wd.out.includes(ASIDE), "the pair's line in the batch", 8000);
+  await new Promise((r) => setTimeout(r, 300));
+  assert.ok(wd.out.includes(`${ASIDE}: слово [94]`), wd.out);
+  assert.equal(wd.out.split(ASIDE).length - 1, 1, `the body made a line of its own:\n${wd.out}`);
+  assert.ok(!wd.out.includes("тайное тело"), `the body of a word not to me leaked:\n${wd.out}`);
   wd.proc.kill("SIGKILL");
   await wd.done;
 });

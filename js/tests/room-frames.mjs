@@ -323,3 +323,14 @@ export const nodeOp = (op, entry_id = 87) =>
 /** Род, которого словарь не знает. */
 export const unknownKind = (entry_id = 61) =>
   roomFrame("weather", { entry_id, key: "weather", stack: "interrupt", body: "" });
+
+// Адресное слово в две фазы (#5893 §4.5b): addressee несёт и said в полёте, и его body.
+export const addressedInFlight = (entry_id, addressee = BORIS) => ({
+  ...saidInFlight(entry_id),
+  addressee,
+});
+export const addressedBody = (entry_id, refers_to, addressee = BORIS) => ({
+  ...body(entry_id, refers_to, `тайное тело ${refers_to}`),
+  stack: "interrupt",
+  addressee,
+});

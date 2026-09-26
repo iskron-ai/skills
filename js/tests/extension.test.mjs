@@ -47,6 +47,8 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
   addressed,
+  addressedBody,
+  addressedInFlight,
   auto,
   body as bodyFrame,
   bodyAborted,
@@ -719,6 +721,14 @@ test("(г) a word without an addressee between two asides goes as before, whole,
   assert.equal(got[1].deliverAs, "followUp", "a plain said defer follows up as before");
   assert.match(got[1].text, /\n\nслово со стопкой defer$/);
   assert.equal(got[2].text, `${ASIDE}: слово [92]`);
+});
+
+test("(д) an addressed word not to me in flight and then its body with stack interrupt: one line of the pair, no body, no wake", async () => {
+  const got = await asideMessages("aside-body", [addressedInFlight(94), addressedBody(95, 94)], 1);
+  assert.equal(got.length, 1, JSON.stringify(got));
+  assert.equal(got[0].deliverAs, "nextTurn");
+  assert.equal(got[0].triggerTurn, false);
+  assert.equal(got[0].text, `${ASIDE}: слово [94]`);
 });
 
 // auto — a platform record to the parent about its child case (#5893 §4.2, #4925):

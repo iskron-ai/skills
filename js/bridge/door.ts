@@ -49,9 +49,10 @@ export interface ChannelEvent {
   pending?: number;
   /**
    * kind="frame" из пачки кадров комнаты (roomstack.ts): его место в залпе — at из of; пачка — одна побудка.
-   * fold (#6081, foldAsides): 0 — кадр свёрнут в строку следующего; n > 1 — строка череды из n слов.
+   * Свёртка адресных слов не мне (#6081, foldAsides): folded — кадр свёрнут в строку следующего;
+   * fold — число слов череды, которую закрывает строка этого кадра (без него — сам кадр).
    */
-  batch?: { at: number; of: number; fold?: number };
+  batch?: { at: number; of: number; fold?: number; folded?: true };
 }
 
 export interface DoorHooks {

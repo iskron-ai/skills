@@ -18,8 +18,10 @@ export const WORDS: Readonly<Record<string, string>> = {
   said: "слово от {author}",
   said_pending: "слово от {author} в полёте — текст придёт следом",
   // Адресное слово не мне (#6081): факт без тела; череда одной пары — одной строкой.
-  aside: "{author} → {addressee}: слово [{entry_id}]",
-  aside_run: "{author} → {addressee}: {count} (последнее [{entry_id}])",
+  aside: "{author} → {addressee}: слово [{word}]",
+  aside_run: "{author} → {addressee}: {count} (последнее [{word}])",
+  // Тело адресного слова не мне без самого слова в пачке — продолжение, не новое слово.
+  aside_body: "{author} → {addressee}: текст слова [{word}]",
   word_one: "слово",
   word_few: "слова",
   word_many: "слов",
@@ -56,8 +58,9 @@ export const WORDS: Readonly<Record<string, string>> = {
 export const WORDS_EN: Readonly<Record<string, string>> = {
   said: "message from {author}",
   said_pending: "message from {author} in flight — the text follows",
-  aside: "{author} → {addressee}: message [{entry_id}]",
-  aside_run: "{author} → {addressee}: {count} (last [{entry_id}])",
+  aside: "{author} → {addressee}: message [{word}]",
+  aside_run: "{author} → {addressee}: {count} (last [{word}])",
+  aside_body: "{author} → {addressee}: text of message [{word}]",
   word_one: "message",
   word_few: "messages",
   word_many: "messages",
@@ -174,10 +177,12 @@ export interface RoomKind {
   /** false — род мосту неизвестен: пачка и строка в лог моста. */
   known: boolean;
   /**
-   * Адресное слово не мне (#6081): в пачку при любой стопке, без тела. pair —
-   * ключ пары в деле (дело, автор, адресат); run(n) — строка череды из n слов.
+   * Адресное слово не мне (#6081) — said и его body: в пачку при любой стопке,
+   * без тела. pair — ключ пары в деле (дело, автор слова, адресат); counts —
+   * слово ли это (body — продолжение своего слова, счёт не растит); run(n) —
+   * строка череды из n слов, закрытой этим кадром (0 — одно тело без слова).
    */
-  aside?: { pair: string; run: (n: number) => string };
+  aside?: { pair: string; counts: boolean; run: (n: number) => string };
 }
 
 type Rec = Record<string, unknown>;
@@ -340,17 +345,22 @@ export function roomKind(frame: Frame | null | undefined): RoomKind | null {
   // обрыв — body с fields.aborted, автор-платформа — обрыв по сроку.
   const W = words();
   // Адресное слово (#6081): мне — как всякое слово; не мне — фактом в пачку, без тела.
-  const to = kind === "said" ? addresseeOf(f.addressee) : null;
+  // Тело (body) несёт addressee своего слова и идёт тем же путём, в ту же пару.
+  const to = kind === "said" || kind === "body" ? addresseeOf(f.addressee) : null;
   if (to && mine.length && !to.addr.some((a) => mine.includes(a))) {
+    const counts = kind === "said";
     const pair = JSON.stringify([roomOf(f.room), author, to.addr[0]]);
+    const word = counts ? values.entry_id : values.refers_to;
     const run = (n: number): string =>
-      fill(n > 1 ? W.aside_run : W.aside, {
+      fill(n === 0 ? W.aside_body : n > 1 ? W.aside_run : W.aside, {
         ...values,
+        word,
         addressee: to.label,
         count: wordsCount(n),
       });
-    const aside = { pair, run };
-    return { kind, rule: "batch", words: run(1), author, phase: null, known: true, aside };
+    const aside = { pair, counts, run };
+    const words = run(counts ? 1 : 0);
+    return { kind, rule: "batch", words, author, phase: null, known: true, aside };
   }
   const pending = kind === "said" && f.body_pending === true && !str(f.body) && !str(line.done);
   const aborted = kind === "body" && fields.aborted === true;

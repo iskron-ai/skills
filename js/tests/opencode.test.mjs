@@ -43,6 +43,8 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { startFakeNks } from "./fake-nks.mjs";
 import {
   addressed,
+  addressedBody,
+  addressedInFlight,
   auto,
   body as bodyFrame,
   bodyAborted,
@@ -2364,6 +2366,19 @@ test("(г) a word without an addressee between two asides stays whole in its lin
     "[91] слово от Алексей (@aleksei:probe): слово со стопкой defer",
     `${ASIDE}: слово [92]`,
   ]);
+});
+
+test("(д) an addressed word not to me in flight and then its body with stack interrupt: one line of the pair, no body, no steer", async () => {
+  const prompts = await asidePrompts(
+    "aside-body",
+    [addressedInFlight(94), addressedBody(95, 94)],
+    1,
+  );
+  assert.equal(prompts.length, 1, "the body does not steer apart");
+  assert.equal(prompts[0].delivery, "queue");
+  const rows = prompts[0].text.split("\n");
+  assert.deepEqual(rows.slice(1), [`${ASIDE}: слово [94]`]);
+  assert.doesNotMatch(prompts[0].text, /тайное тело/);
 });
 
 test("a direct word and a human word amid a case burst steer apart and whole; the burst stays one prompt", async () => {

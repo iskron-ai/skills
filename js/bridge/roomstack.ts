@@ -93,7 +93,15 @@ export class RoomBatch {
         kind: "frame",
         raw: h.raw,
         frame: h.frame,
-        batch: { at: i + 1, of, ...(fold[i] === 1 ? {} : { fold: fold[i] }) },
+        batch: {
+          at: i + 1,
+          of,
+          ...(fold[i] === null
+            ? { folded: true }
+            : roomKind(h.frame)?.aside
+              ? { fold: fold[i] ?? 1 }
+              : {}),
+        },
       }),
     );
   }

@@ -154,8 +154,10 @@ var WORDS = {
   said: "слово от {author}",
   said_pending: "слово от {author} в полёте — текст придёт следом",
   // Адресное слово не мне (#6081): факт без тела; череда одной пары — одной строкой.
-  aside: "{author} → {addressee}: слово [{entry_id}]",
-  aside_run: "{author} → {addressee}: {count} (последнее [{entry_id}])",
+  aside: "{author} → {addressee}: слово [{word}]",
+  aside_run: "{author} → {addressee}: {count} (последнее [{word}])",
+  // Тело адресного слова не мне без самого слова в пачке — продолжение, не новое слово.
+  aside_body: "{author} → {addressee}: текст слова [{word}]",
   word_one: "слово",
   word_few: "слова",
   word_many: "слов",
@@ -186,8 +188,9 @@ var WORDS = {
 var WORDS_EN = {
   said: "message from {author}",
   said_pending: "message from {author} in flight — the text follows",
-  aside: "{author} → {addressee}: message [{entry_id}]",
-  aside_run: "{author} → {addressee}: {count} (last [{entry_id}])",
+  aside: "{author} → {addressee}: message [{word}]",
+  aside_run: "{author} → {addressee}: {count} (last [{word}])",
+  aside_body: "{author} → {addressee}: text of message [{word}]",
   word_one: "message",
   word_few: "messages",
   word_many: "messages",
@@ -380,16 +383,20 @@ function roomKind(frame) {
       known: false
     };
   const W = words();
-  const to = kind === "said" ? addresseeOf(f.addressee) : null;
+  const to = kind === "said" || kind === "body" ? addresseeOf(f.addressee) : null;
   if (to && mine.length && !to.addr.some((a) => mine.includes(a))) {
+    const counts = kind === "said";
     const pair = JSON.stringify([roomOf(f.room), author, to.addr[0]]);
-    const run = (n) => fill(n > 1 ? W.aside_run : W.aside, {
+    const word = counts ? values.entry_id : values.refers_to;
+    const run = (n) => fill(n === 0 ? W.aside_body : n > 1 ? W.aside_run : W.aside, {
       ...values,
+      word,
       addressee: to.label,
       count: wordsCount(n)
     });
-    const aside = { pair, run };
-    return { kind, rule: "batch", words: run(1), author, phase: null, known: true, aside };
+    const aside = { pair, counts, run };
+    const words2 = run(counts ? 1 : 0);
+    return { kind, rule: "batch", words: words2, author, phase: null, known: true, aside };
   }
   const pending = kind === "said" && f.body_pending === true && !str(f.body) && !str(line.done);
   const aborted = kind === "body" && fields.aborted === true;
@@ -457,10 +464,10 @@ ${raw}`;
 ${body}`;
 }
 var BATCH_TEXT = 160;
-function batchLine(frame, run = 1) {
+function batchLine(frame, run) {
   const f = frame;
   const rk = roomKind(frame);
-  if (rk?.aside) return rk.aside.run(run);
+  if (rk?.aside) return run === void 0 ? rk.words : rk.aside.run(run);
   const line = f.line ?? {};
   const e = f.entry_id ?? line.entry_id ?? f.id;
   const entry = typeof e === "number" || typeof e === "string" ? e : "?";
@@ -472,19 +479,23 @@ function batchLine(frame, run = 1) {
   return `[${entry}] ${words2}${author}${text ? `: ${text}` : ""}`;
 }
 function foldAsides(frames) {
-  const pairs = frames.map((f) => roomKind(f)?.aside?.pair ?? null);
+  const asides = frames.map((f) => roomKind(f)?.aside ?? null);
   const out = [];
   let n = 0;
-  pairs.forEach((p, i) => {
-    n = p !== null && i > 0 && pairs[i - 1] === p ? n + 1 : 1;
-    if (p !== null && pairs[i + 1] === p) out.push(0);
-    else out.push(n);
+  asides.forEach((a, i) => {
+    if (!a) {
+      n = 0;
+      out.push(1);
+      return;
+    }
+    n = (i > 0 && asides[i - 1]?.pair === a.pair ? n : 0) + (a.counts ? 1 : 0);
+    out.push(asides[i + 1]?.pair === a.pair ? null : n);
   });
   return out;
 }
 function batchLines(frames) {
   const fold = foldAsides(frames);
-  return frames.flatMap((f, i) => fold[i] ? [batchLine(f, fold[i])] : []);
+  return frames.flatMap((f, i) => fold[i] === null ? [] : [batchLine(f, fold[i])]);
 }
 function batchHead(frames) {
   return L(

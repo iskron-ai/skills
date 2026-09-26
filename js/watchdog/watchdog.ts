@@ -126,15 +126,15 @@ export function runWatchdog(argv: string[]): void {
           };
           if (ev.batch) {
             // Пачка дела — по строке на кадр, без конверта; как прочесть целиком — в шапке.
-            // Адресное слово не мне, свёрнутое в череду (fold 0), своей строки не печатает:
+            // Адресное слово не мне, свёрнутое в череду (folded), своей строки не печатает:
             // метится вместе со строкой череды, которая его считает (#6081).
-            if (ev.batch.fold === 0) {
+            if (ev.batch.folded) {
               if (!again) folded.push(mark);
               break;
             }
             const within = folded.splice(0);
             const all = (): void => [...within, mark].forEach((m) => m());
-            if (!again) out(wrapLines(batchLine(f, ev.batch.fold ?? 1)), false, all);
+            if (!again) out(wrapLines(batchLine(f, ev.batch.fold)), false, all);
             else within.forEach((m) => m());
             break;
           }

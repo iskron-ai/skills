@@ -92,13 +92,13 @@ const BATCH_TEXT = 160;
 /**
  * Кадр пачки дела у сторожа — одной строкой: [entry_id] род словами, автор,
  * начало текста. Конверта нет: целиком кадр читается по указателю batchPointer.
- * Адресное слово не мне (#6081) — «А → Б: слово [id]» без тела; run > 1 —
- * строка череды из run слов этой пары, закрытой этим кадром.
+ * Адресное слово не мне (#6081) — «А → Б: слово [id]» без тела; run — число
+ * слов череды этой пары, закрытой этим кадром (foldAsides); без него — сам кадр.
  */
-export function batchLine(frame: Frame, run = 1): string {
+export function batchLine(frame: Frame, run?: number): string {
   const f = frame as Record<string, unknown>;
   const rk = roomKind(frame);
-  if (rk?.aside) return rk.aside.run(run);
+  if (rk?.aside) return run === undefined ? rk.words : rk.aside.run(run);
   const line = (f.line ?? {}) as Record<string, unknown>;
   const e = f.entry_id ?? line.entry_id ?? f.id;
   const entry = typeof e === "number" || typeof e === "string" ? e : "?";
@@ -116,18 +116,23 @@ export function batchLine(frame: Frame, run = 1): string {
 }
 
 /**
- * Свёртка пачки (#6081): подряд идущие адресные слова не мне одной пары — одна
- * строка. На кадр: 0 — свёрнут в строку следующего; n ≥ 1 — печатается строкой
- * череды из n слов (1 — обычная строка).
+ * Свёртка пачки (#6081): подряд идущие адресные слова не мне одной пары и их
+ * тела — одна строка. На кадр: null — свёрнут в строку следующего; n — строка
+ * череды из n слов (тело слова не считается; 0 — одно тело без слова). У кадра
+ * не из череды — 1.
  */
-export function foldAsides(frames: Frame[]): number[] {
-  const pairs = frames.map((f) => roomKind(f)?.aside?.pair ?? null);
-  const out: number[] = [];
+export function foldAsides(frames: Frame[]): (number | null)[] {
+  const asides = frames.map((f) => roomKind(f)?.aside ?? null);
+  const out: (number | null)[] = [];
   let n = 0;
-  pairs.forEach((p, i) => {
-    n = p !== null && i > 0 && pairs[i - 1] === p ? n + 1 : 1;
-    if (p !== null && pairs[i + 1] === p) out.push(0);
-    else out.push(n);
+  asides.forEach((a, i) => {
+    if (!a) {
+      n = 0;
+      out.push(1);
+      return;
+    }
+    n = (i > 0 && asides[i - 1]?.pair === a.pair ? n : 0) + (a.counts ? 1 : 0);
+    out.push(asides[i + 1]?.pair === a.pair ? null : n);
   });
   return out;
 }
@@ -135,7 +140,7 @@ export function foldAsides(frames: Frame[]): number[] {
 /** Строки пачки со свёрткой адресных слов не мне. */
 export function batchLines(frames: Frame[]): string[] {
   const fold = foldAsides(frames);
-  return frames.flatMap((f, i) => (fold[i] ? [batchLine(f, fold[i])] : []));
+  return frames.flatMap((f, i) => (fold[i] === null ? [] : [batchLine(f, fold[i])]));
 }
 
 /** Шапка пачки дела: число кадров и как прочесть их целиком — в шапке, не в конце: обрезка режет хвост. */

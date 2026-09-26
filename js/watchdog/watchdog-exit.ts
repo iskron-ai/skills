@@ -68,15 +68,15 @@ export function runWatchdogExit(argv: string[]): void {
             if (last && woke) process.exit(0);
             return;
           }
-          // Адресное слово не мне, свёрнутое в череду (fold 0), своей строки не печатает.
-          if (ev.batch?.fold === 0) {
+          // Адресное слово не мне, свёрнутое в череду (folded), своей строки не печатает.
+          if (ev.batch?.folded) {
             folded.push(id);
             return;
           }
           if (ev.batch && head) wake(head);
           head = "";
           // Сперва отдать: запись до побудки при смерти между ними потеряла бы кадр насовсем.
-          wake(ev.batch && ev.frame ? batchLine(ev.frame, ev.batch.fold ?? 1) : (ev.raw ?? ""));
+          wake(ev.batch && ev.frame ? batchLine(ev.frame, ev.batch.fold) : (ev.raw ?? ""));
           for (const k of folded.splice(0)) noteSeen(seenPath, k, seen);
           noteSeen(seenPath, id, seen);
           const evKey = eventKeyOf(ev.frame);
