@@ -807,6 +807,106 @@ function asSatellite(args, of) {
   if (args.karta == null || args.karta === "") args.karta = of.karta;
 }
 
+// js/opencode/launch.ts
+var LINE = /^start\s+(\S+)\s+(\S+)\s+(?:(?:дело|case)\s+)?[№#]\s?(\d+)(?=\s|$)/iu;
+function parseLaunch(text) {
+  const [, realm, karta, no] = LINE.exec(text.trimStart()) ?? [];
+  return realm && karta && no ? { realm, karta, no } : null;
+}
+function withWord(text, word) {
+  const body = text.trimStart();
+  const nl = body.indexOf("\n");
+  return nl < 0 ? `${body}
+${word}` : `${body.slice(0, nl)}
+${word}${body.slice(nl)}`;
+}
+function createLauncher(d) {
+  const prompted = /* @__PURE__ */ new Set();
+  return {
+    forget: (id) => void prompted.delete(id),
+    async launch(sessionID, text) {
+      if (prompted.has(sessionID)) return null;
+      prompted.add(sessionID);
+      const l = parseLaunch(text);
+      if (!l) return null;
+      const root = await d.rootOf(sessionID);
+      if (root === sessionID) return null;
+      const slot = d.childSlot(sessionID, root);
+      const room = `#${l.no}`;
+      try {
+        await d.call(slot, STAND_TOOL, { realm: l.realm, karta: l.karta }, sessionID);
+      } catch (e) {
+        return `Искрон: строка запуска — не встал: ${e.message}. Встань сам (iskron_stand) и войди в дело №${l.no}: iskron_case(action="join", room="${room}").`;
+      }
+      const place = slot.place?.name ?? "своим местом";
+      try {
+        await d.call(slot, "iskron_case", { action: "join", realm: l.realm, room }, sessionID);
+      } catch (e) {
+        return `Искрон: встал ${place}; в дело №${l.no} не вошёл — ${e.message}. Место остаётся.`;
+      }
+      return `Искрон: встал ${place}, вошёл в дело №${l.no} — первым словом перескажи бриф в деле.`;
+    }
+  };
+}
+
+// js/opencode/login.ts
+function createLogin(say) {
+  let pending = false;
+  let url = null;
+  const waiters = /* @__PURE__ */ new Set();
+  function started() {
+    if (pending) return { promise: Promise.resolve(), cancel() {
+    } };
+    let waiter = () => {
+    };
+    const promise = new Promise((r) => waiter = r);
+    waiters.add(waiter);
+    return { promise, cancel: () => waiters.delete(waiter) };
+  }
+  function error() {
+    return new Error(
+      `Искрон: нужен вход в граф — ${url ? `открой в браузере ${url}` : "заверши вход в браузере"} и повтори вызов. Адрес локальный для машины OpenCode: с другой — ssh -L <порт>:127.0.0.1:<порт>; на безголовой машине положи личный токен в ~/.iskron-bridge/token (скилл establish-mcp).`
+    );
+  }
+  return {
+    get pending() {
+      return pending;
+    },
+    get url() {
+      return url;
+    },
+    on(next) {
+      for (const w of waiters) w();
+      waiters.clear();
+      if (pending && next === url) return;
+      pending = true;
+      url = next;
+      say(
+        `Искрон: нужен вход — ${next ? `открой ${next} и заверши его` : "заверши его в браузере"}; адрес локальный: с другой машины — ssh -L <порт>:127.0.0.1:<порт>, либо личный токен в ~/.iskron-bridge/token. Тулы iskron_* поднимутся после входа сами.`,
+        "warning"
+      );
+    },
+    done() {
+      pending = false;
+      url = null;
+    },
+    async race(ready) {
+      if (pending) throw error();
+      const login = started();
+      try {
+        await Promise.race([
+          ready(),
+          login.promise.then(() => {
+            throw error();
+          })
+        ]);
+      } finally {
+        login.cancel();
+      }
+    }
+  };
+}
+
 // js/opencode/status.ts
 function statusLines(path, builds, login, state2, sessions, spare) {
   return [
@@ -836,7 +936,7 @@ async function setupTools(ctx, say, onChannel, rootOf) {
       "error"
     );
     return { forget() {
-    }, stop() {
+    }, launch: async () => null, stop() {
     } };
   }
   const path = found.path;
@@ -844,34 +944,7 @@ async function setupTools(ctx, say, onChannel, rootOf) {
   const slots = /* @__PURE__ */ new Map();
   let spare = null;
   let stopped = false;
-  let loginPending = false;
-  let loginUrl = null;
-  const loginWaiters = /* @__PURE__ */ new Set();
-  function loginStarted() {
-    if (loginPending) return { promise: Promise.resolve(), cancel() {
-    } };
-    let waiter = () => {
-    };
-    const promise = new Promise((r) => waiter = r);
-    loginWaiters.add(waiter);
-    return { promise, cancel: () => loginWaiters.delete(waiter) };
-  }
-  function onLogin(url) {
-    for (const w of loginWaiters) w();
-    loginWaiters.clear();
-    if (loginPending && url === loginUrl) return;
-    loginPending = true;
-    loginUrl = url;
-    say(
-      `Искрон: нужен вход — ${url ? `открой ${url} и заверши его` : "заверши его в браузере"}; адрес локальный: с другой машины — ssh -L <порт>:127.0.0.1:<порт>, либо личный токен в ~/.iskron-bridge/token. Тулы iskron_* поднимутся после входа сами.`,
-      "warning"
-    );
-  }
-  function loginError() {
-    return new Error(
-      `Искрон: нужен вход в граф — ${loginUrl ? `открой в браузере ${loginUrl}` : "заверши вход в браузере"} и повтори вызов. Адрес локальный для машины OpenCode: с другой — ssh -L <порт>:127.0.0.1:<порт>; на безголовой машине положи личный токен в ~/.iskron-bridge/token (скилл establish-mcp).`
-    );
-  }
+  const login = createLogin(say);
   function spawn2(args = []) {
     const slot = {
       bridge: null,
@@ -932,10 +1005,7 @@ async function setupTools(ctx, say, onChannel, rootOf) {
     keeper.hint(lost.entries);
   }
   function shake(slot) {
-    slot.ready = handshake(slot.bridge, onLogin, () => {
-      loginPending = false;
-      loginUrl = null;
-    });
+    slot.ready = handshake(slot.bridge, login.on, login.done);
     slot.ready.catch(() => {
     });
   }
@@ -1015,7 +1085,14 @@ async function setupTools(ctx, say, onChannel, rootOf) {
     say,
     () => !stopped
   );
-  const statusText = () => statusLines(path, builds, { loginPending, loginUrl }, state2, slots.size, spare ? 1 : 0);
+  const statusText = () => statusLines(
+    path,
+    builds,
+    { loginPending: login.pending, loginUrl: login.url },
+    state2,
+    slots.size,
+    spare ? 1 : 0
+  );
   await ctx.tool.transform((editor) => {
     editor.add({
       name: STATUS_TOOL,
@@ -1060,20 +1137,7 @@ async function setupTools(ctx, say, onChannel, rootOf) {
       own.resume = keeper.resume(own, sessionID).finally(() => own.resume = null);
     return own;
   }
-  async function awaitReady(slot) {
-    if (loginPending) throw loginError();
-    const login = loginStarted();
-    try {
-      await Promise.race([
-        readyFor(slot),
-        login.promise.then(() => {
-          throw loginError();
-        })
-      ]);
-    } finally {
-      login.cancel();
-    }
-  }
+  const awaitReady = (slot) => login.race(() => readyFor(slot));
   async function callThrough(slot, name, input, sessionID) {
     await awaitReady(slot);
     if (slot.resume) await slot.resume;
@@ -1125,8 +1189,23 @@ async function setupTools(ctx, say, onChannel, rootOf) {
       }
     }
   })();
+  const launcher = createLauncher({
+    rootOf,
+    childSlot: (sessionID, root) => childSlot(sessionID, slots.get(root)),
+    async call(slot, name, args, sessionID) {
+      slot.busy++;
+      try {
+        return (await callThrough(slot, name, args, sessionID)).content;
+      } finally {
+        slot.busy--;
+        slot.lastCall = Date.now();
+      }
+    }
+  });
   return {
+    launch: launcher.launch,
     forget(session) {
+      launcher.forget(session);
       keeper.forget(session);
       const slot = slots.get(session);
       if (!slot) return;
@@ -1447,13 +1526,25 @@ async function setup(ctx) {
   } catch (e) {
     say(`Искрон: канал не встал — ${e.message}`, "error");
   }
-  let half = { forget() {
-  }, stop() {
-  } };
+  let half = {
+    forget() {
+    },
+    launch: async () => null,
+    stop() {
+    }
+  };
   try {
     half = await setupTools(ctx, say, onChannel, rootOf);
   } catch (e) {
     say(`Искрон: мост не поднялся — ${e.message}`, "error");
+  }
+  try {
+    await ctx.session.hook("prompt", async (p) => {
+      const word = await half.launch(String(p.sessionID), p.prompt.text);
+      if (word) p.prompt.text = withWord(p.prompt.text, word);
+    });
+  } catch (e) {
+    say(`Искрон: строка запуска не встала — ${e.message}`, "error");
   }
   let commands = { refresh: async () => {
   } };

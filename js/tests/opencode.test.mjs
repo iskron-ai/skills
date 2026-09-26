@@ -27,6 +27,7 @@ import assert from "node:assert/strict";
 import {
   appendFileSync,
   copyFileSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
@@ -126,6 +127,7 @@ function registry() {
 
 function fakeCtx({ sessions = [], skills = [], gone = new Set(), inboxIds = false } = {}) {
   const prompts = [];
+  const hooks = {};
   const tools = registry();
   const commands = registry();
   const queue = [];
@@ -149,6 +151,12 @@ function fakeCtx({ sessions = [], skills = [], gone = new Set(), inboxIds = fals
           ? { id: `inbox-${prompts.length}`, type: "user", delivery: o.delivery }
           : {};
       },
+      // Session hooks: the probe runs "prompt" the way OpenCode does — awaited,
+      // on a mutable SessionPrompt, before the prompt reaches the model.
+      hook: async (name, cb) => {
+        (hooks[name] ??= []).push(cb);
+        return { dispose: async () => {} };
+      },
     },
     skill: { list: async () => ({ location: { directory: SANDBOX }, data: skills }) },
     event: {
@@ -171,6 +179,13 @@ function fakeCtx({ sessions = [], skills = [], gone = new Set(), inboxIds = fals
     prompts,
     tools: () => tools.get(),
     commands: () => commands.get(),
+    hooks,
+    /** A prompt into a session through its "prompt" hooks; returns what the model would read. */
+    prompt: async (sessionID, text) => {
+      const p = { sessionID, messageID: "m", prompt: { text }, delivery: "queue" };
+      for (const cb of hooks.prompt ?? []) await cb(p);
+      return p.prompt.text;
+    },
     emit: (ev) => {
       queue.push(ev);
       wake?.();
@@ -1482,6 +1497,143 @@ test("a child session of a standing root raises its bridge as a satellite of the
       ["#48", "host.repo.opus-5"],
       ["2816", "host.repo.opus-5"],
     ]);
+  } finally {
+    await rec.stop();
+  }
+});
+
+// A subagent launched with a case (#6078, the owner's word): the child session
+// whose FIRST prompt begins «start <graph> <role> <case №N>» stands as a satellite
+// of the root's place in the named role and joins the case — inside the prompt
+// hook, so before the model reads a word — and the model reads the plugin's word
+// right under the launch line. The case goes to the wire as «#N».
+const STAND_AND_CASE = JSON.stringify([
+  { name: "iskron_stand", description: "Стояние.", inputSchema: { type: "object" } },
+  { name: "iskron_case", description: "Дело.", inputSchema: { type: "object" } },
+]);
+const sentCalls = (file) =>
+  readFileSync(file, "utf8")
+    .trim()
+    .split("\n")
+    .filter(Boolean)
+    .map((l) => JSON.parse(l))
+    .filter((c) => c.name.startsWith("iskron_")); // tool calls, not the bridge's own iskron/resume
+
+test("a child session whose first prompt is a launch line with a case stands as the root's satellite and joins the case before the model reads", async () => {
+  const calls = join(SANDBOX, "launch.calls");
+  writeFileSync(calls, "");
+  const b = bridgeEnv("launch", {
+    FB_CALLS: calls,
+    FB_TOOLS: STAND_AND_CASE,
+    FB_STAND_HELD: "host.repo.opus-5",
+  });
+  const rec = await plugin(b.env, {
+    sessions: [
+      { id: "root", location: { directory: "/work/root" } },
+      { id: "child", parentID: "root", location: { directory: "/work/child" } },
+    ],
+  });
+  try {
+    await until(() => rec.tools().has("iskron_stand"), "the stand tool", 8000);
+    await rec.call("iskron_stand", { realm: "@nks/nks-dev", karta: "#2816" }, "root");
+    const read = await rec.prompt("child", "start @nks/nks-dev #48 дело №77\nБриф: почини мост.");
+    const after = sentCalls(calls).slice(1);
+    assert.deepEqual(
+      after.map((c) => [c.name, c.arguments]),
+      [
+        [
+          "iskron_stand",
+          {
+            realm: "@nks/nks-dev",
+            karta: "#48",
+            satellite_of: "host.repo.opus-5",
+            cwd: "/work/child",
+          },
+        ],
+        ["iskron_case", { action: "join", realm: "@nks/nks-dev", room: "#77" }],
+      ],
+      "stand as the root's satellite in the named role, then join the case — before the hook returns",
+    );
+    assert.notEqual(
+      after[0].pid,
+      sentCalls(calls)[0].pid,
+      "the child stands on a bridge of its own",
+    );
+    assert.equal(
+      read,
+      "start @nks/nks-dev #48 дело №77\n" +
+        "Искрон: встал host.repo.opus-5.sub-1, вошёл в дело №77 — первым словом перескажи бриф в деле.\n" +
+        "Бриф: почини мост.",
+    );
+  } finally {
+    await rec.stop();
+  }
+});
+
+test("without a launch line a child's prompt is left as it was: no stand, no join, no bridge of its own", async () => {
+  const calls = join(SANDBOX, "no-launch.calls");
+  writeFileSync(calls, "");
+  const b = bridgeEnv("no-launch", { FB_CALLS: calls, FB_TOOLS: STAND_AND_CASE });
+  const rec = await plugin(b.env, {
+    sessions: [
+      { id: "root" },
+      { id: "plain", parentID: "root" },
+      { id: "human", parentID: "root" },
+      { id: "later", parentID: "root" },
+    ],
+  });
+  try {
+    await until(() => rec.tools().has("iskron_stand"), "the stand tool", 8000);
+    assert.equal(rec.hooks.prompt?.length, 1, "the plugin listens to prompts");
+    const plain = "Сделай обзор дифа.";
+    assert.equal(await rec.prompt("plain", plain), plain);
+    // A launch line with a human's place, not a case, is the door skill's to run.
+    const human = "start @nks/nks-dev #48 @dmitry:main";
+    assert.equal(await rec.prompt("human", human), human);
+    // Only the FIRST prompt launches.
+    assert.equal(await rec.prompt("later", "привет"), "привет");
+    assert.equal(await rec.prompt("later", "start r5 #48 #77"), "start r5 #48 #77");
+    // A root is the door skill's to launch.
+    assert.equal(await rec.prompt("root", "start r5 #48 #77"), "start r5 #48 #77");
+    assert.deepEqual(sentCalls(calls), []);
+    await until(() => existsSync(b.log), "the plugin's own bridge");
+    assert.equal(pidsOf(b.log).length, 1, "only the plugin's own bridge was started");
+  } finally {
+    await rec.stop();
+  }
+});
+
+test("a refused join comes back as words in the prompt, and the place stays", async () => {
+  const calls = join(SANDBOX, "launch-refused.calls");
+  writeFileSync(calls, "");
+  const b = bridgeEnv("launch-refused", {
+    FB_CALLS: calls,
+    FB_TOOLS: STAND_AND_CASE,
+    FB_STAND_HELD: "host.repo.opus-5",
+  });
+  writeFileSync(`${b.reply}.iskron_case`, "__ERROR__дело #77 не найдено в этом графе");
+  const rec = await plugin(b.env, {
+    sessions: [{ id: "root" }, { id: "child", parentID: "root" }],
+  });
+  try {
+    await until(() => rec.tools().has("iskron_stand"), "the stand tool", 8000);
+    const read = await rec.prompt("child", "start r5 #48 case #77");
+    assert.equal(
+      read,
+      "start r5 #48 case #77\n" +
+        "Искрон: встал host.repo.opus-5; в дело №77 не вошёл — дело #77 не найдено в этом графе. Место остаётся.",
+      "the root holds no place, so the child stands a place of its own",
+    );
+    assert.deepEqual(
+      sentCalls(calls).map((c) => [c.name, c.arguments.action]),
+      [
+        ["iskron_stand", undefined],
+        ["iskron_case", "join"],
+      ],
+      "nothing takes the place back after the refusal",
+    );
+    const child = pidsOf(b.log).at(-1);
+    assert.ok(alive(child), "the child's bridge still holds its place");
   } finally {
     await rec.stop();
   }

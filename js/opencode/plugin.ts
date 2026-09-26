@@ -22,6 +22,7 @@ import type { Plugin } from "@opencode/plugin";
 
 import { setupChannel } from "./channel.ts";
 import { setupCommands } from "./commands.ts";
+import { withWord } from "./launch.ts";
 import { type Say, setupTools } from "./tools.ts";
 
 export type Context = Plugin.Context;
@@ -90,11 +91,26 @@ async function setup(ctx: Context): Promise<() => void> {
     say(`Искрон: канал не встал — ${(e as Error).message}`, "error");
   }
 
-  let half: Awaited<ReturnType<typeof setupTools>> = { forget() {}, stop() {} };
+  let half: Awaited<ReturnType<typeof setupTools>> = {
+    forget() {},
+    launch: async () => null,
+    stop() {},
+  };
   try {
     half = await setupTools(ctx, say, onChannel, rootOf);
   } catch (e) {
     say(`Искрон: мост не поднялся — ${(e as Error).message}`, "error");
+  }
+
+  // Строка запуска с делом (launch.ts): хук промпта ждёт стояния и входа, и
+  // модель читает бриф уже со словом плагина за строкой запуска.
+  try {
+    await ctx.session.hook("prompt", async (p) => {
+      const word = await half.launch(String(p.sessionID), p.prompt.text);
+      if (word) p.prompt.text = withWord(p.prompt.text, word);
+    });
+  } catch (e) {
+    say(`Искрон: строка запуска не встала — ${(e as Error).message}`, "error");
   }
 
   let commands: Awaited<ReturnType<typeof setupCommands>> = { refresh: async () => {} };
