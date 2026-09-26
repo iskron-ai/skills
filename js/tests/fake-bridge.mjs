@@ -8,7 +8,7 @@
 // proxies tools/call. The real bridge would want the network and a browser; this
 // one wants a few env vars.
 //
-//   FB_LOG        file to append "start <pid>" to the moment this starts, so the
+//   FB_LOG        file to append "start <pid> [flags]" to the moment this starts, so the
 //                 probe can see BOTH that a bridge was spawned at all and, by the
 //                 pid, that session_shutdown really killed it.
 //   FB_MODE       ok (default) · mute (reads, never answers — a bridge stuck in
@@ -34,7 +34,12 @@
 import { appendFileSync, existsSync, readFileSync, unlinkSync } from "node:fs";
 
 const MODE = process.env.FB_MODE || "ok";
-if (process.env.FB_LOG) appendFileSync(process.env.FB_LOG, `start ${process.pid}\n`);
+// The flags follow the pid: the OpenCode probe reads `--satellite` off a child session's bridge (#6002).
+if (process.env.FB_LOG)
+  appendFileSync(
+    process.env.FB_LOG,
+    `start ${[process.pid, ...process.argv.slice(2)].join(" ")}\n`,
+  );
 if (MODE === "die") process.exit(3);
 
 const TOOLS = JSON.parse(

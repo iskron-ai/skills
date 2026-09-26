@@ -34,6 +34,7 @@ import {
 } from "./bridge-io.ts";
 import { createKeeper, type KeptSlot, takeLostMarker, WATCH_MS, writeLostMarker } from "./keep.ts";
 import type { Context } from "./plugin.ts";
+import { asSatellite, heldPlace, type SatelliteSlot, STAND_TOOL, standsBy } from "./satellite.ts";
 import { statusLines } from "./status.ts";
 
 export type Say = (text: string, level: "info" | "warning" | "error") => void;
@@ -52,13 +53,11 @@ if (IDLE_MS <= WATCH_MS)
 const REAP_MS = Number(process.env.ISKRON_BRIDGE_REAP_MS || 60_000);
 /** Служебный тул плагина: состояние моста, когда тулов iskron_* ещё нет. */
 export const STATUS_TOOL = "iskron_bridge";
-/** Тул моста, которому плагин подставляет директорию сессии (cwd) для вывода имени. */
-const STAND_TOOL = "iskron_stand";
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- ответы моста приходят без схемы */
 
 /** Мост одной сессии. */
-export interface Slot extends KeptSlot {
+export interface Slot extends KeptSlot, SatelliteSlot {
   /** Рукопожатие прошло — можно звать тулы. */
   ready: Promise<unknown>;
   /** Корневая сессия, которой принадлежит мост; null — ещё никому не отдан. */
@@ -68,12 +67,6 @@ export interface Slot extends KeptSlot {
   busy: number;
   /** Мост остановлен самим плагином — его выход не потеря слуха. */
   ownStop: boolean;
-}
-
-/** Вызов, чей успех означает: сессия стоит (мост держит место либо привязан к нему). */
-function standsBy(name: string, args: Record<string, unknown>): boolean {
-  if (name === STAND_TOOL) return true;
-  return name === "iskron_channel" && ["connect", "mint", "register"].includes(String(args.action));
 }
 
 const hhmm = (): string => new Date().toTimeString().slice(0, 5);
@@ -143,7 +136,7 @@ export async function setupTools(
     );
   }
 
-  function spawn(): Slot {
+  function spawn(args: string[] = []): Slot {
     const slot: Slot = {
       bridge: null as unknown as Bridge,
       ready: Promise.resolve(),
@@ -170,6 +163,7 @@ export async function setupTools(
           keeper.stood(slot);
         if ((kind === "held" || kind === "released") && typeof params?.data?.key === "string")
           slot.key = params.data.key; // ключ места — точный адрес записи для возврата
+        if (kind === "held") slot.place = heldPlace(params?.data) ?? slot.place; // #6002
         if (kind === "released" || kind === "dead" || kind === "evicted") slot.holding = false;
         onChannel(slot.session, params, !!slot.child);
       },
@@ -188,6 +182,7 @@ export async function setupTools(
           },
         });
       },
+      args,
     );
     slot.bridge.start();
     shake(slot);
@@ -367,10 +362,13 @@ export async function setupTools(
    * Место с диска по каталогу ребёнку не возвращается (он встаёт сейчас);
    * возврат по имени внутри iskron_stand — как у всякого моста.
    */
-  function childSlot(sessionID: string): Slot {
+  function childSlot(sessionID: string, parent?: Slot): Slot {
     const have = slots.get(sessionID);
     if (have && !have.bridge.failure) return have;
-    const own = spawn();
+    // Корень держит место — мост ребёнка его спутник (satellite.ts); не держит — как прежде.
+    const of = have?.satelliteOf ?? parent?.place ?? null;
+    const own = spawn(of ? ["--satellite"] : []);
+    own.satelliteOf = of;
     own.session = sessionID;
     own.child = true;
     own.dir = have?.dir ?? null;
@@ -415,9 +413,10 @@ export async function setupTools(
     // получает свой мост, а не мост корня, — иначе её место снимало бы
     // родительское с сокета, а её register переписывал бы привязку корня (#5154).
     if (standsBy(name, args) && slot.session !== sessionID) {
-      slot = childSlot(sessionID);
+      slot = childSlot(sessionID, slot);
       await awaitReady(slot); // свежий детский мост может запросить вход — та же гонка, что у корня
     }
+    if (name === STAND_TOOL) asSatellite(args, slot.satelliteOf);
     // Мост бежит из cwd сервера OpenCode, не из рабочей копии сессии:
     // репо для имени стояния он выводит из директории сессии (r5 #5108) —
     // той, чей это мост: корня для корня, дочерней для её собственного.

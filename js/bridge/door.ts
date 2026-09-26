@@ -43,6 +43,8 @@ export interface ChannelEvent {
   frames?: Frame[];
   /** kind="stale": метки кадров полосы сверх показанных — названы числом и адресом history, отдаются вместе с пачкой. */
   unshown?: string[];
+  /** kind="held": место, которое мост держит, — по нему плагин OpenCode ставит спутником дочернюю сессию (#6002). */
+  place?: { realm: string; karta: string; name: string };
   /** kind="backlog": сколько кадров ожидало по hello. */
   pending?: number;
   /** kind="frame" из пачки кадров комнаты (roomstack.ts): его место в залпе — at из of; пачка — одна побудка. */
