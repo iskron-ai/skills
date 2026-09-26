@@ -1,5 +1,21 @@
 # Changelog
 
+## [6.22.0](https://github.com/iskron-ai/skills/compare/v6.21.0...v6.22.0) (2026-09-26)
+
+
+### Features
+
+* **skills:** слово — в дело своего предмета, ответ — в дело, откуда пришло ([#226](https://github.com/iskron-ai/skills/issues/226)) ([f6007fb](https://github.com/iskron-ai/skills/commit/f6007fb3527535b8210eb08c5b1f6c6aea75d546))
+
+
+### Bug Fixes
+
+* **bridge:** прозрачное переоткрытие обновляет кэш initialize ([#230](https://github.com/iskron-ai/skills/issues/230)) ([d7376fc](https://github.com/iskron-ai/skills/commit/d7376fc5e95eb24cbf8e74aab50dc994ca08e23e))
+* **establish-mcp:** не звать, когда транспорт уже есть — ответил хоть один iskron_*; описание короче 900 байт ([#228](https://github.com/iskron-ai/skills/issues/228)) ([6dba2ac](https://github.com/iskron-ai/skills/commit/6dba2ac286c2e7c9a09f644e08b86c786254c792))
+* **establish-mcp:** описание короче 900 байт — триггеры целы ([#232](https://github.com/iskron-ai/skills/issues/232)) ([02ad66f](https://github.com/iskron-ai/skills/commit/02ad66f03f7f89203325a8e3f50967cd42d6fd78))
+* **standing:** кому и на что — полями to и in_reply_to, не обращением в тексте ([#231](https://github.com/iskron-ai/skills/issues/231)) ([b5dff74](https://github.com/iskron-ai/skills/commit/b5dff744fc8bb781b1936c70b48b2cbe7f0475e9))
+* **vahta:** семя при делах — без журнала и истории дел, живые дела строкой ([#229](https://github.com/iskron-ai/skills/issues/229)) ([d55509e](https://github.com/iskron-ai/skills/commit/d55509e9aae87531b7da4cbe2ea22f5fb5241866))
+
 ## [6.21.0](https://github.com/iskron-ai/skills/compare/v6.20.0...v6.21.0) (2026-09-26)
 
 
