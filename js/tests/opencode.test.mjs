@@ -1899,17 +1899,17 @@ test("room kinds: an auto record about a child case queues in words, not as an u
     };
     const closed = await send(auto("child_closed"), 1);
     assert.equal(closed.delivery, "queue", "a child closing is news, not a call to act");
-    assert.match(closed.text, /дочернее дело #12 закрыто/);
+    assert.match(closed.text, /дочернее дело №12 закрыто/);
     assert.doesNotMatch(closed.text, /неизвестен/, "auto is a kind the bridge knows");
     const late = await send(auto("child_late_objection", 82), 2);
     assert.equal(late.delivery, "queue");
-    assert.match(late.text, /позднее возражение в дочернем деле #12/);
+    assert.match(late.text, /позднее возражение в дочернем деле №12/);
     const other = await send(auto("all_nodes_done", 83), 3);
     assert.equal(other.delivery, "queue");
-    assert.match(other.text, /запись платформы all_nodes_done о деле #12/);
+    assert.match(other.text, /запись платформы all_nodes_done о деле №12/);
     const linked = await send(link("parent"), 4);
     assert.equal(linked.delivery, "queue");
-    assert.match(linked.text, /дело связано с #12 \(дочернее к нему\)/);
+    assert.match(linked.text, /дело связано с №12 \(дочернее к нему\)/);
   } finally {
     await rec.stop();
   }

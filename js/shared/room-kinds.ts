@@ -36,20 +36,20 @@ export const WORDS: Readonly<Record<string, string>> = {
   node_updated: "узел #{seq} {name} обновлён{; reasoning}",
   node_deleted: "узел #{seq} {name} удалён{; reasoning}",
   node_undeleted: "узел #{seq} {name} восстановлен{; reasoning}",
-  link: "дело связано с #{room} ({rel})",
-  auto: "запись платформы {code} о деле #{room}",
+  link: "дело связано с №{room} ({rel})",
+  auto: "запись платформы {code} о деле №{room}",
   unknown: "род {kind} мосту неизвестен",
 };
 
 /** Слова записи платформы auto по её code (#5893 §4.2, ступени — #5973); неизвестный code — WORDS.auto. */
 export const AUTO_WORDS: Readonly<Record<string, string>> = {
-  child_opened: "дочернее дело #{room} открыто",
-  child_closing: "дочернее дело #{room} закрывается",
-  child_closed: "дочернее дело #{room} закрыто",
-  child_late_objection: "позднее возражение в дочернем деле #{room}",
+  child_opened: "дочернее дело №{room} открыто",
+  child_closing: "дочернее дело №{room} закрывается",
+  child_closed: "дочернее дело №{room} закрыто",
+  child_late_objection: "позднее возражение в дочернем деле №{room}",
 };
 
-/** Связь дел link по rel (#4915): чем это дело приходится делу #{room}; неизвестный rel — как пришёл. */
+/** Связь дел link по rel (#4915): чем это дело приходится делу №{room}; неизвестный rel — как пришёл. */
 export const REL_WORDS: Readonly<Record<string, string>> = {
   parent: "дочернее к нему",
   child: "родительское к нему",

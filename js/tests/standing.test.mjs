@@ -3081,7 +3081,7 @@ test("an auto record about a child case batches in words and leaves no unknown-k
   await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
   const sent = Date.now();
   await sendRoom(fake, auto("child_closed"));
-  await waitFor(() => wd.out.includes("дочернее дело #12 закрыто"), "the batch", 8000);
+  await waitFor(() => wd.out.includes("дочернее дело №12 закрыто"), "the batch", 8000);
   assert.ok(Date.now() - sent >= 1800, "auto waited for the batch window, not interrupting");
   assert.match(wd.out, /Дело: кадров 1/);
   assert.ok(!wd.out.includes("неизвестен"), `auto printed as unknown:\n${wd.out}`);

@@ -69,15 +69,15 @@ var WORDS = {
   node_updated: "узел #{seq} {name} обновлён{; reasoning}",
   node_deleted: "узел #{seq} {name} удалён{; reasoning}",
   node_undeleted: "узел #{seq} {name} восстановлен{; reasoning}",
-  link: "дело связано с #{room} ({rel})",
-  auto: "запись платформы {code} о деле #{room}",
+  link: "дело связано с №{room} ({rel})",
+  auto: "запись платформы {code} о деле №{room}",
   unknown: "род {kind} мосту неизвестен"
 };
 var AUTO_WORDS = {
-  child_opened: "дочернее дело #{room} открыто",
-  child_closing: "дочернее дело #{room} закрывается",
-  child_closed: "дочернее дело #{room} закрыто",
-  child_late_objection: "позднее возражение в дочернем деле #{room}"
+  child_opened: "дочернее дело №{room} открыто",
+  child_closing: "дочернее дело №{room} закрывается",
+  child_closed: "дочернее дело №{room} закрыто",
+  child_late_objection: "позднее возражение в дочернем деле №{room}"
 };
 var REL_WORDS = {
   parent: "дочернее к нему",
