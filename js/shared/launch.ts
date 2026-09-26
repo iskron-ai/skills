@@ -19,20 +19,24 @@ export interface Launch {
 
 // Роль сама пишется «#N», поэтому разбор позиционный: граф, роль, затем дело —
 // «дело №N», «дело #N», «case #N» или голое «№N»/«#N»; хвост — «от/from @handle:name».
+// Строка запуска — первая строка текста, которая с неё начинается, а не только первая
+// строка: OpenCode 2.0.16 ставит перед промптом субагента свою строку
+// («You are a subagent spawned by another session.», наблюдено живым прогоном).
 const LINE =
-  /^start\s+(\S+)\s+(\S+)\s+(?:(?:дело|case)\s+)?[№#]\s?(\d+)(?:\s+(?:от|from)\s+(@\S+))?(?=\s|$)/iu;
+  /^[ \t]*start\s+(\S+)\s+(\S+)\s+(?:(?:дело|case)\s+)?[№#]\s?(\d+)(?:[ \t]+(?:от|from)[ \t]+(@\S+))?(?=\s|$)/imu;
 
-/** Строка запуска с делом в начале текста; нет её — null (прежнее поведение). */
+/** Строка запуска с делом среди строк текста; нет её — null (прежнее поведение). */
 export function parseLaunch(text: string): Launch | null {
-  const [, realm, karta, no, of] = LINE.exec(text.trimStart()) ?? [];
+  const [, realm, karta, no, of] = LINE.exec(text) ?? [];
   return realm && karta && no ? { realm, karta, no, of: of ?? null } : null;
 }
 
 /** Слово харнеса ставится сразу за строкой запуска — первым, что прочтёт модель после неё. */
 export function withWord(text: string, word: string): string {
-  const body = text.trimStart();
-  const nl = body.indexOf("\n");
-  return nl < 0 ? `${body}\n${word}` : `${body.slice(0, nl)}\n${word}${body.slice(nl)}`;
+  const m = LINE.exec(text);
+  if (!m) return `${text}\n${word}`;
+  const nl = text.indexOf("\n", m.index);
+  return nl < 0 ? `${text}\n${word}` : `${text.slice(0, nl)}\n${word}${text.slice(nl)}`;
 }
 
 /** Вызов тула от имени агента; отказ — бросок с его словами. */

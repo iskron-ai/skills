@@ -1537,7 +1537,12 @@ test("a child session whose first prompt is a launch line with a case stands as 
   try {
     await until(() => rec.tools().has("iskron_stand"), "the stand tool", 8000);
     await rec.call("iskron_stand", { realm: "@nks/nks-dev", karta: "#2816" }, "root");
-    const read = await rec.prompt("child", "start @nks/nks-dev #48 дело №77\nБриф: почини мост.");
+    // Форма OpenCode 2.0.16 (наблюдено живым прогоном): тул subagent ставит свою строку
+    // перед промптом, и строка запуска приходит второй.
+    const read = await rec.prompt(
+      "child",
+      "You are a subagent spawned by another session.\nstart @nks/nks-dev #48 дело №77\nБриф: почини мост.",
+    );
     const after = sentCalls(calls).slice(1);
     assert.deepEqual(
       after.map((c) => [c.name, c.arguments]),
@@ -1562,7 +1567,8 @@ test("a child session whose first prompt is a launch line with a case stands as 
     );
     assert.equal(
       read,
-      "start @nks/nks-dev #48 дело №77\n" +
+      "You are a subagent spawned by another session.\n" +
+        "start @nks/nks-dev #48 дело №77\n" +
         "Искрон: встал host.repo.opus-5.sub-1, вошёл в дело №77 — первым словом перескажи бриф в деле.\n" +
         "Бриф: почини мост.",
     );

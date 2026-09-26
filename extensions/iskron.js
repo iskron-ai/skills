@@ -640,17 +640,19 @@ function resultToContent(result) {
 }
 
 // js/shared/launch.ts
-var LINE = /^start\s+(\S+)\s+(\S+)\s+(?:(?:дело|case)\s+)?[№#]\s?(\d+)(?:\s+(?:от|from)\s+(@\S+))?(?=\s|$)/iu;
+var LINE = /^[ \t]*start\s+(\S+)\s+(\S+)\s+(?:(?:дело|case)\s+)?[№#]\s?(\d+)(?:[ \t]+(?:от|from)[ \t]+(@\S+))?(?=\s|$)/imu;
 function parseLaunch(text) {
-  const [, realm, karta, no, of] = LINE.exec(text.trimStart()) ?? [];
+  const [, realm, karta, no, of] = LINE.exec(text) ?? [];
   return realm && karta && no ? { realm, karta, no, of: of ?? null } : null;
 }
 function withWord(text, word) {
-  const body = text.trimStart();
-  const nl = body.indexOf("\n");
-  return nl < 0 ? `${body}
-${word}` : `${body.slice(0, nl)}
-${word}${body.slice(nl)}`;
+  const m = LINE.exec(text);
+  if (!m) return `${text}
+${word}`;
+  const nl = text.indexOf("\n", m.index);
+  return nl < 0 ? `${text}
+${word}` : `${text.slice(0, nl)}
+${word}${text.slice(nl)}`;
 }
 async function enterCase(l, call, satelliteOf, placeName) {
   const room = `#${l.no}`;
