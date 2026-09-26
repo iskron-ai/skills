@@ -1,7 +1,7 @@
 ---
 name: establish-mcp
 slash: true
-description: "Транспорт до графа Искрона — только когда его нет: тулов iskron_* в сессии нет или они отказывают транспортом (не подключено, OAuth, мёртвый токен). Ответил хоть один iskron_* — iskron_stand, orient — транспорт есть, скилл не нужен. Ставит iskron-bridge из поставки (stdio-мост, OAuth либо личный токен); нативная http+OAuth запись — запасной путь. Триггеры: «подключи граф», «подними мост», «тулы iskron недоступны», «mcp не подключается», «oauth не проходит», «войти по токену», «PAT вместо oauth», «подключи opencode», «какая версия моста», connect to the graph, raise the bridge, MCP tools missing. Композирует entry и iskronify."
+description: "Транспорт до графа Искрона — только когда его нет: тулов iskron_* нет или они отказывают транспортом (не подключено, OAuth, мёртвый токен); ответил хоть один — скилл не нужен. Ставит iskron-bridge (stdio-мост, OAuth либо личный токен); http+OAuth — запасной путь. Триггеры: «подключи граф», «подними мост», «тулы iskron недоступны», «mcp не подключается», «oauth не проходит», «войти по токену», «PAT вместо oauth», «подключи opencode», «какая версия моста», connect to the graph, raise the bridge, MCP tools missing. Композирует entry и iskronify."
 ---
 
 # Establish MCP — транспорт до графа
