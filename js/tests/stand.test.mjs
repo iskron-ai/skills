@@ -1513,18 +1513,33 @@ test("satellite: karta of another role stands as <caller>.sub-1 in THAT role, an
 
 // The platform learns the place is a satellite from an explicit field, not an
 // attr (#6064: a satellite neither inherits the role's undelivered mail nor joins
-// its fan-out): satellite_of = the caller's standing_id, read off the board, in
-// the body of connect and register. A session bridge never sends it — a server
-// that does not know the field yet must not be touched by ordinary deliveries.
+// its fan-out): satellite_of = the caller's standing_id, in the body of connect
+// and register. The id is printed only by the board of ONE role (list with karta),
+// last under the place, after 🪪, 💬 and 📥 — the fixture is the live board of
+// api 0.91 verbatim; the realm-wide board carries no id line at all. A session
+// bridge never sends the field: a server that does not know it yet must not be
+// touched by ordinary deliveries.
+const LIVE_KARTA_BOARD = `Каналы #931 (4):
+  #931 👨‍💻 Разработчик скилл-репозиториев агента 能 · @alari:16-m3.skills.opus-5-5 — живой · простой 6h · слушает · сокет был 2026-09-26T07:11:15.925457Z · открыл @alari
+     🪪 claude-opus-5-5 · build={"name":"iskron-bridge","stamp":"dc25f0fd","version":"6.17.0"}, harness=claude-code
+     💬 «6.19.0 вышел; волна 2 (дело 13) — после выката на бой» · 2026-09-26T06:15:48.664685Z
+     📥 https://app.iskron.ru/api/channel/in/nks_chh_2O4L1IuLhwYxeieF_UI2KVKScmxoquh4TeKQUlfX2yg
+     id 9499a342-4b74-486f-848c-b7236b36384d`;
+const LIVE_BOARD = LIVE_KARTA_BOARD.replace("Каналы #931 (4):", "Каналы (1):").replace(
+  /\n\s*id \S+$/,
+  "",
+);
 test("satellite: connect and register carry satellite_of = the caller's place id; a session bridge sends no such field", async (t) => {
   const fake = await startFakeNks({ pat: PAT });
   t.after(() => fake.stop());
-  const ID = "0ead1752-b73c-4bdd-9ca5-1a504a92fa37";
-  await fake.control({ places: [{ karta: "931", name: CALLER, listening: true, id: ID }] });
+  const ID = "9499a342-4b74-486f-848c-b7236b36384d";
+  const caller = "16-m3.skills.opus-5-5";
+  await fake.control({ boardText: LIVE_BOARD, boardByKarta: { 931: LIVE_KARTA_BOARD } });
   const sat = await satelliteBridge(t, fake);
-  const r = await standAs(sat, SAT_ARGS);
+  const r = await standAs(sat, { ...SAT_ARGS, satellite_of: `@alari:${caller}` });
   assert.ok(!r.result?.isError, `${textOf(r)}\n${sat.stderr}`);
-  const mine = fake.state.placeArgs.filter((x) => x.name === `${CALLER}.sub-1`);
+  assert.doesNotMatch(textOf(r), /доска не напечатала/, textOf(r));
+  const mine = fake.state.placeArgs.filter((x) => x.name === `${caller}.sub-1`);
   const connect = mine.find((x) => x.action === "connect");
   const register = mine.find((x) => x.action === "register");
   assert.equal(connect?.satellite_of, ID, JSON.stringify(mine));

@@ -4233,13 +4233,14 @@ function pickSatellite(entries, of, karta, led) {
       refusal: `Отказано (мост): имя ${base} на доске носят ${callers.length} места — передай satellite_of полным адресом @handle:name.`
     };
   const caller = same[0].address;
+  const callerKarta = same[0].karta;
   const callerId = same[0].id;
   const notes = [];
   if (led && isSatelliteOf(base, led)) {
     const word = `мост уже держит ${led} — повтор этого прогона либо параллельный прогон того же файла агента, который делит это место и потеряет его, когда первый закончит; параллельно — не больше одного прогона на файл агента`;
     log(word);
     notes.push(word);
-    return { ok: true, name: led, caller, callerId, notes };
+    return { ok: true, name: led, caller, callerKarta, callerId, notes };
   }
   const taken = new Set(entries.map((e) => nameOf(e.address)));
   for (let n = 1; n <= 99; n++) {
@@ -4249,7 +4250,7 @@ function pickSatellite(entries, of, karta, led) {
       notes.push(
         `имя ${base}.sub-${n} длиннее предела ${NAME_MAX} знаков — база укорочена: ${name}`
       );
-    return { ok: true, name, caller, callerId, notes };
+    return { ok: true, name, caller, callerKarta, callerId, notes };
   }
   return {
     ok: false,
@@ -4278,6 +4279,11 @@ async function satelliteGate(a, realm, karta, asked) {
   const led = s && !otherRealm(s.realm, realm) ? s.name ?? null : null;
   const pick = pickSatellite(parseBoard(b.text), of, karta, led);
   if (!pick.ok) return pick;
+  if (!pick.callerId) {
+    const k = await callTool("iskron_channel", { action: "list", realm, karta: pick.callerKarta });
+    if (!k.isError)
+      pick.callerId = parseBoard(k.text).find((e) => e.address === pick.caller)?.id ?? null;
+  }
   noteSatelliteOf(pick.caller, pick.callerId);
   pick.notes.push(
     `место-спутник ${pick.caller}: роль #${normKarta(karta)}, хука инбокса роли нет, окно простоя канала ${SATELLITE_TTL_S} с, записи держания нет — место живёт прогоном`

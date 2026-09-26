@@ -310,6 +310,7 @@ export async function startFakeNks(opts = {}) {
         "adminChannelSelf", // tools/list объявляет у iskron_admin параметр channel
         "rooms",
         "boardText",
+        "boardByKarta", // { "931": text } — доска list с karta: только она печатает строку «id» места
         "hooksText",
         "helloPending", // what the next hello says was waiting in the queue
         "statusDelayMs", // hold the status POST open this long before answering
@@ -365,7 +366,6 @@ export async function startFakeNks(opts = {}) {
             incoming: `${base}/api/channel/in/mailbox-${pl.name}`,
             listening: pl.listening !== false,
             pending: pl.pending ?? 0, // «не доставлено N» on the board
-            id: pl.id ?? null, // «id <uuid>» under the place on the board
           });
         }
       }
@@ -745,6 +745,20 @@ export async function startFakeNks(opts = {}) {
         }
         if (a.action === "list") {
           st.counts.list++;
+          const byKarta =
+            a.karta != null ? st.boardByKarta?.[String(a.karta).replace(/^#/, "")] : undefined;
+          if (typeof byKarta === "string") {
+            return json(
+              res,
+              200,
+              {
+                jsonrpc: "2.0",
+                id: msg.id,
+                result: { content: [{ type: "text", text: byKarta }] },
+              },
+              extra,
+            );
+          }
           if (typeof st.boardText === "string") {
             return json(
               res,
@@ -770,7 +784,6 @@ export async function startFakeNks(opts = {}) {
             );
             lines.push(`     💬 «${p.status ?? "на вахте"}» · 2026-09-08T16:08:56.121391Z`);
             if (p.incoming) lines.push(`     📥 ${p.incoming}`);
-            if (p.id) lines.push(`     id ${p.id}`);
           }
           for (const r of st.rooms) {
             lines.push(
