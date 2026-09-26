@@ -93,6 +93,9 @@ function startBridge(serverUrl, authDir, cwd = process.cwd(), env = {}, args = [
 }
 
 const textOf = (reply) => (reply.result?.content ?? []).map((c) => c.text ?? "").join("\n");
+// Аргументы каждого iskron_channel, какими мост их ПОСЛАЛ — до отсева фейком по схеме снимка.
+const sentToChannel = (fake) =>
+  fake.state.calls.filter((c) => c.name === "iskron_channel").map((c) => c.arguments);
 
 async function ready(t, init = INIT) {
   const fake = await startFakeNks({ pat: PAT });
@@ -1539,11 +1542,17 @@ test("satellite: connect and register carry satellite_of = the caller's place id
   const r = await standAs(sat, { ...SAT_ARGS, satellite_of: `@alari:${caller}` });
   assert.ok(!r.result?.isError, `${textOf(r)}\n${sat.stderr}`);
   assert.doesNotMatch(textOf(r), /доска не напечатала/, textOf(r));
-  const mine = fake.state.placeArgs.filter((x) => x.name === `${caller}.sub-1`);
+  // What the bridge SENT — the raw tools/call, before the fake drops what the schema lacks.
+  const mine = sentToChannel(fake).filter((x) => x.name === `${caller}.sub-1`);
   const connect = mine.find((x) => x.action === "connect");
   const register = mine.find((x) => x.action === "register");
   assert.equal(connect?.satellite_of, ID, JSON.stringify(mine));
   assert.equal(register?.satellite_of, ID, JSON.stringify(mine));
+  // What the platform keeps today: nothing — iskron_channel does not declare the field and
+  // mcp drops it on the way to /channels (r5 #6102). Red here once a snapshot declares it:
+  // then the platform stores the satellite, and this probe should say so.
+  for (const x of fake.state.placeArgs)
+    assert.ok(!("satellite_of" in x), `dropped as by the server: ${JSON.stringify(x)}`);
   // Contrast on the same fake: a session bridge's connect and register.
   const home = mkdtempSync(join(tmpdir(), "iskron-sess-"));
   const session = startBridge(fake.mcpUrl, home);
@@ -1551,7 +1560,7 @@ test("satellite: connect and register carry satellite_of = the caller's place id
   assert.ok((await session.call("initialize", INIT)).result);
   const s = await standAs(session, { realm: "nks-dev", karta: 931, name: "proba" });
   assert.ok(!s.result?.isError, textOf(s));
-  const plain = fake.state.placeArgs.filter((x) => x.name === "proba");
+  const plain = sentToChannel(fake).filter((x) => x.name === "proba");
   assert.ok(
     plain.some((x) => x.action === "connect") && plain.some((x) => x.action === "register"),
   );
@@ -1644,9 +1653,11 @@ test("an English bridge (ISKRON_BRIDGE_LANG=en) answers a whole iskron_stand wit
     text,
     /^\[iskron_stand\] standing proba — role #931, graph nks-dev: connect and register\./,
   );
+  // Judged on what the bridge SENT: iskron_channel does not declare locale yet, and the
+  // server drops it (r5 #6102) — so does the fake.
   for (const action of ["connect", "register"]) {
-    const got = fake.state.placeArgs.find((x) => x.action === action);
-    assert.equal(got?.locale, "en", `${action}: ${JSON.stringify(fake.state.placeArgs)}`);
+    const got = sentToChannel(fake).find((x) => x.action === action);
+    assert.equal(got?.locale, "en", `${action}: ${JSON.stringify(sentToChannel(fake))}`);
   }
   assert.ok(fake.state.acceptLanguage.has("en"), [...fake.state.acceptLanguage].join(","));
 });
@@ -1659,7 +1670,49 @@ test("a Russian bridge sends no locale and no Accept-Language — the server's d
   });
   assert.ok(!r.result?.isError, textOf(r));
   assert.match(textOf(r), /стояние proba — роль #931, граф nks-dev: connect и register/);
-  for (const x of fake.state.placeArgs) assert.ok(!("locale" in x), JSON.stringify(x));
+  for (const x of sentToChannel(fake)) assert.ok(!("locale" in x), JSON.stringify(x));
   // fetch's own default («*») is not a choice of language.
   assert.ok(!fake.state.acceptLanguage.has("en"), [...fake.state.acceptLanguage].join(","));
+});
+
+// The fake treats a tool call as the server does: an argument the tool's schema in
+// fixtures/surface.json does not declare is dropped silently, not refused. The one
+// way past it is named — futureArgs — for a probe that models a surface still to
+// come; the raw call stays in state.calls either way.
+test("fake NKS drops arguments the surface snapshot does not declare, silently; futureArgs lets a probe model a pending surface", async (t) => {
+  const connectWith = async (opts) => {
+    const fake = await startFakeNks({ pat: PAT, ...opts });
+    t.after(() => fake.stop());
+    const post = (body, sid) =>
+      fetch(fake.mcpUrl, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${PAT}`,
+          "content-type": "application/json",
+          ...(sid ? { "mcp-session-id": sid } : {}),
+        },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, ...body }),
+      });
+    const init = await post({ method: "initialize", params: INIT });
+    const sid = init.headers.get("mcp-session-id");
+    const arguments_ = { action: "connect", realm: "nks-dev", karta: "931", name: "p" };
+    const r = await (
+      await post(
+        {
+          method: "tools/call",
+          params: { name: "iskron_channel", arguments: { ...arguments_, satellite_of: "u-1" } },
+        },
+        sid,
+      )
+    ).json();
+    assert.ok(!r.result?.isError, JSON.stringify(r));
+    assert.equal(fake.state.calls.at(-1).arguments.satellite_of, "u-1", "the raw call is kept");
+    return fake.state.placeArgs.find((x) => x.action === "connect");
+  };
+  const today = await connectWith({});
+  assert.ok(today, "connect went through — no refusal");
+  assert.ok(!("satellite_of" in today), JSON.stringify(today));
+  // A probe of the pending server change (r5 #6102) opts in by name.
+  const pending = await connectWith({ futureArgs: { iskron_channel: ["satellite_of"] } });
+  assert.equal(pending?.satellite_of, "u-1", JSON.stringify(pending));
 });
