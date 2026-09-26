@@ -47,8 +47,12 @@ export interface ChannelEvent {
   place?: { realm: string; karta: string; name: string };
   /** kind="backlog": сколько кадров ожидало по hello. */
   pending?: number;
-  /** kind="frame" из пачки кадров комнаты (roomstack.ts): его место в залпе — at из of; пачка — одна побудка. */
-  batch?: { at: number; of: number };
+  /**
+   * kind="frame" из пачки кадров комнаты (roomstack.ts): его место в залпе — at из of; пачка — одна побудка.
+   * Свёртка адресных слов не мне (#6081, foldAsides): folded — кадр свёрнут в строку следующего;
+   * fold — число слов череды, которую закрывает строка этого кадра (без него — сам кадр).
+   */
+  batch?: { at: number; of: number; fold?: number; folded?: true };
 }
 
 export interface DoorHooks {

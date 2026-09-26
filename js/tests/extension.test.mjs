@@ -46,14 +46,20 @@ import { test } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
+  addressed,
+  addressedBody,
+  addressedInFlight,
   auto,
   body as bodyFrame,
   bodyAborted,
   bodyLapsed,
+  BORIS,
   closing,
   directWord,
   graphPosed,
+  joinedMember,
   legacyRoom,
+  ME,
   ME_ID,
   MY_KARTA,
   progress,
@@ -63,6 +69,7 @@ import {
   saidInFlight,
   unknownKind,
   withdraw,
+  withheld,
 } from "./room-frames.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -147,6 +154,7 @@ const ENV_KEYS = [
   "FB_CALLS",
   "FB_STAND_HELD",
   "ISKRON_SATELLITE_OF",
+  "ISKRON_PI_ASIDE_MS",
 ];
 
 let seq = 0;
@@ -582,11 +590,8 @@ test("service frames raise no turn, a work frame does", async () => {
     assert.equal(opts.triggerTurn, true);
     assert.equal(opts.deliverAs, "steer");
     assert.equal(msg.customType, "iskron-channel");
-    // Who speaks is read off provenance, never off the body.
-    assert.match(
-      msg.content,
-      /^Кадр канала Искрона от делателя роли неизвестной — стояние svatantra\nprovenance: \{"from_standing":"svatantra"\}\n\nпосмотри ветку$/,
-    );
+    // Who speaks is read off provenance, never off the body; the frame is short (#6081).
+    assert.match(msg.content, /^svatantra\nпосмотри ветку$/);
 
     push(events, { kind: "frame", raw: "не JSON вовсе", frame: null });
     await delay(250);
@@ -662,6 +667,110 @@ test("room kinds: closing steers despite stack=defer, progress and an unknown ki
   }
 });
 
+// An addressed word not to me (#6081): a fact without its body and without a
+// wake (nextTurn); a run of one pair that came in a row — one line.
+const ASIDE = "Алексей (@aleksei:probe) → @boris:probe";
+/** Дело проб в начале строки — номер и зачин (#6081). */
+const CASE7 = "№7 «Стенд»";
+
+async function asideMessages(name, frames, n) {
+  const { events, env } = eventsEnv(name);
+  const rec = await session({ ...env, ISKRON_PI_ASIDE_MS: 300 });
+  try {
+    for (const f of frames) push(events, frame(f));
+    const until = Date.now() + 5000;
+    while (rec.messages.length < n && Date.now() < until) await delay(50);
+    await delay(700);
+    return rec.messages.map((m) => ({ text: m.msg.content, ...m.opts }));
+  } finally {
+    await rec.stop();
+  }
+}
+
+test("(а) an addressed word not to me with stack interrupt neither steers nor wakes: one line without its body", async () => {
+  const got = await asideMessages("aside-one", [addressed(80)], 1);
+  assert.equal(got.length, 1);
+  assert.equal(got[0].deliverAs, "nextTurn", "a word not to me waits for the next turn");
+  assert.equal(got[0].triggerTurn, false, "a word not to me does not wake");
+  assert.equal(got[0].text, `${CASE7} ${ASIDE}: слово [80]`);
+});
+
+test("(б) three addressed words of one pair in a row are one line «3 слова»", async () => {
+  const got = await asideMessages(
+    "aside-run",
+    [81, 82, 83].map((id) => addressed(id)),
+    1,
+  );
+  assert.equal(got.length, 1, JSON.stringify(got));
+  assert.equal(got[0].text, `${CASE7} ${ASIDE}: 3 слова (последнее [83])`);
+});
+
+test("(в) an addressed word to me with stack interrupt steers at once and whole; the aside before it goes first as its line", async () => {
+  const got = await asideMessages("aside-mine", [addressed(86), addressed(87, ME)], 2);
+  assert.equal(got.length, 2, JSON.stringify(got));
+  assert.equal(got[0].text, `${CASE7} ${ASIDE}: слово [86]`);
+  assert.equal(got[0].deliverAs, "nextTurn");
+  assert.equal(got[1].deliverAs, "steer", "the word to me steers");
+  assert.match(got[1].text, /слово от Алексей \(@aleksei:probe\)[^\n]*\nтайное слово 87\n/);
+});
+
+test("(г) a word without an addressee between two asides goes as before, whole, and breaks the run", async () => {
+  const frames = [addressed(90, BORIS, "defer"), said("defer", 91), addressed(92, BORIS, "defer")];
+  const got = await asideMessages("aside-plain", frames, 3);
+  assert.equal(got.length, 3, JSON.stringify(got));
+  assert.equal(got[0].text, `${CASE7} ${ASIDE}: слово [90]`);
+  assert.equal(got[1].deliverAs, "followUp", "a plain said defer follows up as before");
+  assert.match(got[1].text, /\nслово со стопкой defer\n/);
+  assert.equal(got[2].text, `${CASE7} ${ASIDE}: слово [92]`);
+});
+
+test("(д) an addressed word not to me in flight and then its body with stack interrupt: one line of the pair, no body, no wake", async () => {
+  const got = await asideMessages("aside-body", [addressedInFlight(94), addressedBody(95, 94)], 1);
+  assert.equal(got.length, 1, JSON.stringify(got));
+  assert.equal(got[0].deliverAs, "nextTurn");
+  assert.equal(got[0].triggerTurn, false);
+  assert.equal(got[0].text, `${CASE7} ${ASIDE}: слово [94]`);
+});
+
+test("(е) a word whose body the platform withheld (body_withheld) is an aside: one line, no wake", async () => {
+  const got = await asideMessages("aside-withheld", [withheld(96)], 1);
+  assert.equal(got.length, 1, JSON.stringify(got));
+  assert.equal(got[0].deliverAs, "nextTurn");
+  assert.equal(got[0].text, `${CASE7} ${ASIDE}: слово [96]`);
+});
+
+// A short frame (#6081, the owner's word): a case frame is 1–3 lines — case, entry,
+// words and who; the text once; the answer call. No raw provenance or envelope JSON.
+test("a lone case frame is short: an entry frame within 200 chars and no JSON; a said's text once, with the answer call", async () => {
+  const { events, env } = eventsEnv("short-frame");
+  const rec = await session(env);
+  try {
+    const reply = said("interrupt", 62);
+    reply.in_reply_to = 60;
+    push(events, frame(joinedMember()));
+    push(events, frame(reply));
+    await delay(400);
+    assert.equal(rec.messages.length, 2);
+    const join = rec.messages[0].msg.content;
+    assert.ok([...join].length <= 200, `the entry frame is ${[...join].length} chars:\n${join}`);
+    assert.ok(!join.includes('{"'), `raw JSON in the entry frame:\n${join}`);
+    assert.match(join, /^№7 «Стенд» \[85\] вошёл /);
+    const word = rec.messages[1].msg.content;
+    assert.equal(word.split("слово со стопкой interrupt").length - 1, 1, word);
+    assert.match(
+      word,
+      /^№7 «Стенд» \[62\] слово от Алексей \(@aleksei:probe\)[^\n]*в ответ на \[60\]/,
+    );
+    assert.match(
+      word,
+      /\nответ: iskron_case\(realm="nks-dev", action="say", room="#7", in_reply_to=62\)$/,
+    );
+    assert.ok(!word.includes('{"'), word);
+  } finally {
+    await rec.stop();
+  }
+});
+
 // auto — a platform record to the parent about its child case (#5893 §4.2, #4925):
 // words by its code, never interrupting.
 test("room kinds: an auto record about a child case follows up in words, not as an unknown kind", async () => {
@@ -705,7 +814,7 @@ test("room kinds: a said in flight follows up, body follows its stack in words, 
     const text = (i) => rec.messages[i].msg.content;
     assert.match(text(0), /слово от Алексей \(@aleksei:probe\) в полёте — текст придёт следом/);
     assert.match(text(1), /текст слова \[54\] от Алексей \(@aleksei:probe\)/);
-    assert.match(text(1), /\n\nтекст второй фазы$/, "the word's text passes through");
+    assert.match(text(1), /\nтекст второй фазы\n/, "the word's text passes through");
     assert.match(text(2), /слово \[56\] оборвано автором/);
     assert.match(text(3), /слово \[58\] оборвано платформой по сроку/);
     for (let i = 0; i < 4; i++) assert.doesNotMatch(text(i), /неизвестен/, text(i));
@@ -735,7 +844,7 @@ test("room kinds leave non-room frames and the old room shape as on main: all st
     cases.forEach(([f, way], i) =>
       assert.equal(rec.messages[i].opts.deliverAs, way, `${f.id} must go ${way}`),
     );
-    assert.doesNotMatch(rec.messages[1].msg.content, /ДЕЛА/, "a graph event is not a room frame");
+    assert.doesNotMatch(rec.messages[1].msg.content, /^№/, "a graph event is not a room frame");
   } finally {
     await rec.stop();
   }

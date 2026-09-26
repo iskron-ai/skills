@@ -26,7 +26,7 @@
 // собственным стоянием (#5154), угадыванием она не выбирается.
 import { type ChannelEvent } from "../bridge/hold.ts";
 import { classifyOrigin, type Frame, isDirectWord } from "../shared/channel.ts";
-import { batchHead, batchLine, frameToText } from "../shared/frame-text.ts";
+import { batchHead, batchLines, frameToText } from "../shared/frame-text.ts";
 import { roomKind, stackOf } from "../shared/room-kinds.ts";
 import type { Context } from "./plugin.ts";
 import { type Say } from "./tools.ts";
@@ -50,11 +50,15 @@ const CASE_BATCH_CAP = 20;
 /** Промпт пачки, о взятии которого OpenCode молчит дольше, считается взятым: кадры не ждут вечно. */
 const PENDING_MAX_MS = Number(process.env.ISKRON_OPENCODE_PENDING_MS) || 120_000;
 
-/** Кадр дела в пачку: стопка batch, не прямое слово и не слово человека (его полёт и обрыв — в пачку). */
+/**
+ * Кадр дела в пачку: стопка batch, не прямое слово и не слово человека (его
+ * полёт и обрыв — в пачку, как и его адресное слово не мне, #6081).
+ */
 function toPile(frame: Frame | null): boolean {
   if (!frame || frame.type !== "message" || stackOf(frame) !== "batch" || isDirectWord(frame))
     return false;
-  return (frame.origin ?? classifyOrigin(frame)) !== "human" || !!roomKind(frame)?.phase;
+  const rk = roomKind(frame);
+  return (frame.origin ?? classifyOrigin(frame)) !== "human" || !!rk?.phase || !!rk?.aside;
 }
 
 interface Pile {
@@ -154,7 +158,7 @@ export function setupChannel(ctx: Context, say: Say, freshestRoot: () => string 
     const frames = p.held.splice(0);
     const at = Date.now();
     p.pending = { session: "", inbox: null, at };
-    const text = [batchHead(frames), ...frames.map(batchLine)].join("\n");
+    const text = [batchHead(frames), ...batchLines(frames)].join("\n");
     void deliver(p.session, text, `пачка дела (${frames.length})`, "queue", p.child).then((got) => {
       // Без id взятия не увидеть: следующая пачка — по окну, не по взятию.
       const inbox = got?.inbox && !takenEarly.delete(got.inbox) ? got.inbox : null;

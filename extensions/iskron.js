@@ -86,6 +86,14 @@ function strip(url) {
 var WORDS = {
   said: "слово от {author}",
   said_pending: "слово от {author} в полёте — текст придёт следом",
+  // Адресное слово не мне (#6081): факт без тела; череда одной пары — одной строкой.
+  aside: "{author} → {addressee}: слово [{word}]",
+  aside_run: "{author} → {addressee}: {count} (последнее [{word}])",
+  // Тело адресного слова не мне без самого слова в пачке — продолжение, не новое слово.
+  aside_body: "{author} → {addressee}: текст слова [{word}]",
+  word_one: "слово",
+  word_few: "слова",
+  word_many: "слов",
   body: "текст слова [{refers_to}] от {author}",
   body_aborted: "слово [{refers_to}] оборвано автором",
   body_lapsed: "слово [{refers_to}] оборвано платформой по сроку",
@@ -108,11 +116,30 @@ var WORDS = {
   node_undeleted: "узел #{seq} {name} восстановлен{; reasoning}",
   link: "дело связано с №{room} ({rel})",
   auto: "запись платформы {code} о деле №{room}",
-  unknown: "род {kind} мосту неизвестен"
+  unknown: "род {kind} мосту неизвестен",
+  // Короткий кадр (frame-text.ts): дело, кто говорит, ответ — без сырого конверта.
+  case: "№{room}",
+  reply_to: "в ответ на [{id}]",
+  stale: "лежалый",
+  body_read: "тело: {how}",
+  who_human: "человек{ @user}",
+  who_role: "роль #{karta}",
+  who_sibling: "брат по роли #{karta}",
+  who_platform: "платформа — побудка",
+  who_graph: "событие графа",
+  legacy: "род {kind}{, стопка stack}",
+  answer_case: "ответ: iskron_case({args})",
+  answer_send: "ответ: iskron_channel({args})"
 };
 var WORDS_EN = {
   said: "message from {author}",
   said_pending: "message from {author} in flight — the text follows",
+  aside: "{author} → {addressee}: message [{word}]",
+  aside_run: "{author} → {addressee}: {count} (last [{word}])",
+  aside_body: "{author} → {addressee}: text of message [{word}]",
+  word_one: "message",
+  word_few: "messages",
+  word_many: "messages",
   body: "text of message [{refers_to}] from {author}",
   body_aborted: "message [{refers_to}] cut off by its author",
   body_lapsed: "message [{refers_to}] cut off by the platform on its deadline",
@@ -134,7 +161,19 @@ var WORDS_EN = {
   node_undeleted: "node #{seq} {name} restored{; reasoning}",
   link: "case linked to case №{room} ({rel})",
   auto: "platform record {code} about case №{room}",
-  unknown: "kind {kind} is unknown to the bridge"
+  unknown: "kind {kind} is unknown to the bridge",
+  case: "case №{room}",
+  reply_to: "in reply to [{id}]",
+  stale: "stale",
+  body_read: "body: {how}",
+  who_human: "human{ @user}",
+  who_role: "role #{karta}",
+  who_sibling: "sibling of role #{karta}",
+  who_platform: "platform — a wake-up",
+  who_graph: "graph event",
+  legacy: "kind {kind}{ · stack}",
+  answer_case: "answer: iskron_case({args})",
+  answer_send: "answer: iskron_channel({args})"
 };
 var AUTO_WORDS = {
   child_opened: "дочернее дело №{room} открыто",
@@ -169,6 +208,7 @@ var VERDICT_WORDS_EN = {
   bad: "slop"
 };
 var words = () => lang() === "en" ? WORDS_EN : WORDS;
+var phrase = (key, values = {}) => fill(words()[key] ?? "", values);
 var autoWords = () => lang() === "en" ? AUTO_WORDS_EN : AUTO_WORDS;
 var relWords = () => lang() === "en" ? REL_WORDS_EN : REL_WORDS;
 var NODE_OPS = {
@@ -232,6 +272,24 @@ function whoOf(fields) {
   const addr = str(st.standing);
   return name && addr ? `${name} (${addr})` : name || addr;
 }
+function addresseeOf(v) {
+  if (typeof v === "string") return v ? { addr: [v], label: v } : null;
+  const o = obj(v);
+  const handle = str(o.handle).replace(/^@/, "");
+  const standing = str(o.standing) || (handle ? `@${handle}${str(o.name) ? `:${str(o.name)}` : ""}` : "");
+  const id = str(o.id);
+  const name = str(o.standing) ? str(o.name) : "";
+  const label = name && standing ? `${name} (${standing})` : standing || str(o.name) || id;
+  const addr = [standing, id].filter(Boolean);
+  return addr.length ? { addr, label } : null;
+}
+function wordsCount(n) {
+  const W = words();
+  const m10 = n % 10;
+  const m100 = n % 100;
+  const w = lang() === "en" ? n === 1 ? W.word_one : W.word_many : m10 === 1 && m100 !== 11 ? W.word_one : m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14) ? W.word_few : W.word_many;
+  return `${n} ${w}`;
+}
 function roomKind(frame) {
   if (!frame || typeof frame !== "object") return null;
   const f = frame;
@@ -283,9 +341,26 @@ function roomKind(frame) {
       phase: null,
       known: false
     };
+  const W = words();
+  const word = kind === "said" || kind === "body";
+  const withheld = word && f.body_withheld === true;
+  const to = word ? addresseeOf(f.addressee) ?? (withheld ? { addr: ["?"], label: "?" } : null) : null;
+  if (to && (withheld || mine.length && !to.addr.some((a) => mine.includes(a)))) {
+    const counts = kind === "said";
+    const pair = JSON.stringify([roomOf(f.room), author, to.addr[0]]);
+    const id = counts ? values.entry_id : values.refers_to;
+    const run = (n) => fill(n === 0 ? W.aside_body : n > 1 ? W.aside_run : W.aside, {
+      ...values,
+      word: id,
+      addressee: to.label,
+      count: wordsCount(n)
+    });
+    const aside = { pair, counts, run };
+    const words2 = run(counts ? 1 : 0);
+    return { kind, rule: "batch", words: words2, author, phase: null, known: true, aside };
+  }
   const pending = kind === "said" && f.body_pending === true && !str(f.body) && !str(line.done);
   const aborted = kind === "body" && fields.aborted === true;
-  const W = words();
   const wordsOf = pending ? W.said_pending : aborted ? obj(line.author).kind === "platform" ? W.body_lapsed : W.body_aborted : kind === "auto" ? autoWords()[str(values.code)] ?? W.auto : (
     // op узла (bound | updated | deleted | undeleted): без op и bound — прежнее слово.
     kind === "node" && NODE_OPS[str(fields.op)] ? W[NODE_OPS[str(fields.op)]] : W[kind]
@@ -308,47 +383,132 @@ var byKind = (frame) => roomKind(frame) !== null;
 var stackOf = (frame) => roomKind(frame)?.rule ?? (frame?.stack === "defer" ? "batch" : "interrupt");
 
 // js/shared/frame-text.ts
-var NOT_ENVELOPE = /* @__PURE__ */ new Set(["body", "provenance", "type", "origin"]);
-var ENVELOPE_FIRST = ["id", "received_at", "stale", "content_type", "body_chars", "body_read"];
-function frameToText(frame, raw) {
-  if (!frame) return `${L("Кадр канала Искрона", "Iskron channel frame")}:
-${raw}`;
+var rec = (v) => v && typeof v === "object" ? v : {};
+var idOf = (v) => typeof v === "number" || typeof v === "string" && v ? String(v) : "";
+var ANSWERABLE = /* @__PURE__ */ new Set(["said", "body", "invite", "objection", "late_objection"]);
+var ZACHIN = 40;
+function caseOf(frame) {
+  const f = frame;
+  const room = rec(f.room);
+  const n = idOf(room.seq) || idOf(room.id);
+  if (!n) return null;
+  const z = typeof room.zachin === "string" ? [...room.zachin.trim()] : [];
+  const zachin = z.length > ZACHIN ? z.slice(0, ZACHIN).join("") + "…" : z.join("");
+  const realm = idOf(room.realm) || idOf(f.realm);
+  return { room: n, zachin, realm };
+}
+var caseKey = (frame) => caseOf(frame)?.room ?? "";
+function caseHead(frame, withZachin) {
+  const c = caseOf(frame);
+  if (!c) return "";
+  const no = phrase("case", { room: c.room });
+  return withZachin && c.zachin ? `${no} «${c.zachin}»` : no;
+}
+function whoOf2(frame, withPlace) {
   const p = frame.provenance ?? {};
   const origin = frame.origin ?? classifyOrigin(frame);
-  const standing = p.from_standing ? L(` — стояние ${p.from_standing}`, ` — standing ${p.from_standing}`) : "";
-  const role = p.from_karta_seq != null ? L(`роли #${p.from_karta_seq}`, `role #${p.from_karta_seq}`) : L("роли неизвестной", "unknown role");
-  const who = origin === "platform" ? L(
-    "от ПЛАТФОРМЫ — побудка, не человек и не делатель",
-    "from the PLATFORM — a wake-up, not a human and not a doer"
-  ) : origin === "human" ? L(`от ЧЕЛОВЕКА`, `from a HUMAN`) + `${p.user ? ` @${p.user}` : ""} (${role})${standing}` : origin === "sibling" ? L(
-    `от БРАТА по твоей роли (#${p.from_karta_seq})${standing} — другое стояние той же роли`,
-    `from a SIBLING of your role (#${p.from_karta_seq})${standing} — another standing of the same role`
-  ) : L(`от делателя ${role}${standing}`, `from a doer of ${role}${standing}`);
-  const lines = [`${L("Кадр канала Искрона", "Iskron channel frame")} ${who}`];
-  const room = frame.room;
-  if (room && typeof room === "object") {
-    const zachin = typeof room.zachin === "string" ? ` «${room.zachin}»` : "";
+  if (origin === "platform") return phrase("who_platform");
+  if (p.via === "graph" && p.from_karta_seq == null && !p.from_standing) return phrase("who_graph");
+  const place = withPlace && p.from_standing ? ` (${p.from_standing})` : "";
+  if (origin === "human") return phrase("who_human", { user: p.user }) + place;
+  const karta = p.from_karta_seq;
+  if (karta == null) return p.from_standing ?? "";
+  return phrase(origin === "sibling" ? "who_sibling" : "who_role", { karta }) + place;
+}
+function textOf(frame) {
+  if (roomKind(frame)?.aside) return "";
+  const b = frame.body;
+  return typeof b === "string" ? b : b === void 0 ? "" : JSON.stringify(b);
+}
+function tail(frame, withReply) {
+  const f = frame;
+  const parts = [];
+  const to = idOf(f.in_reply_to) || idOf(frame.provenance?.in_reply_to);
+  if (withReply && to) parts.push(phrase("reply_to", { id: to }));
+  if (frame.stale === true) parts.push(phrase("stale"));
+  if (typeof frame.body_read === "string" && frame.body_read !== "history")
+    parts.push(phrase("body_read", { how: frame.body_read }));
+  return parts.length ? `, ${parts.join(", ")}` : "";
+}
+function frameToText(frame, raw) {
+  if (!frame) return raw;
+  const f = frame;
+  const origin = frame.origin ?? classifyOrigin(frame);
+  const text = textOf(frame);
+  const c = caseOf(frame);
+  if (c) {
     const rk = roomKind(frame);
-    const f = frame;
-    const words2 = rk ? `: ${rk.words}` : (typeof f.kind === "string" ? L(`, род ${f.kind}`, `, kind ${f.kind}`) : "") + (typeof f.stack === "string" ? L(`, стопка ${f.stack}`, `, stack ${f.stack}`) : "");
-    lines.push(
-      origin === "platform" ? L(`запись ДЕЛА${zachin}${words2}`, `CASE record${zachin}${words2}`) : L(
-        `слово ДЕЛА${zachin}${words2} — ответ идёт записью в то же дело с in_reply_to по id слова (ход для дел — в списке тулов сессии), не send стоянию`,
-        `CASE message${zachin}${words2} — answer with a record in the same case, in_reply_to the message id (the case move is in the session's tool list), not a send to the standing`
-      )
-    );
+    const line = rec(f.line);
+    const entry = idOf(f.entry_id) || idOf(line.entry_id);
+    const words2 = rk ? rk.words : phrase("legacy", { kind: f.kind, stack: typeof f.stack === "string" ? f.stack : "" });
+    const author = rk?.author && !words2.includes(rk.author) ? rk.author : "";
+    const who = origin === "platform" ? "" : whoOf2(frame, false);
+    const by = [author, who].filter(Boolean).join(", ");
+    const withReply = rk?.kind !== "body";
+    const head = `${caseHead(frame, true)}${entry ? ` [${entry}]` : ""} ${words2}${by ? ` — ${by}` : ""}${tail(frame, withReply)}`;
+    const lines2 = [head];
+    if (text && !words2.includes(text.trim())) lines2.push(text);
+    const answerable = !rk || ANSWERABLE.has(rk.kind);
+    if (answerable && origin !== "platform" && c.realm && entry) {
+      const args = `realm="${c.realm}", action="say", room="#${c.room}", in_reply_to=${entry}`;
+      lines2.push(phrase("answer_case", { args }));
+    }
+    return lines2.join("\n");
   }
-  if (frame.provenance) lines.push(`provenance: ${JSON.stringify(frame.provenance)}`);
-  const envelope = {};
-  const rec = frame;
-  for (const k of ENVELOPE_FIRST) if (rec[k] !== void 0) envelope[k] = rec[k];
-  for (const k of Object.keys(rec))
-    if (!(k in envelope) && !NOT_ENVELOPE.has(k) && rec[k] !== void 0) envelope[k] = rec[k];
-  if (Object.keys(envelope).length) lines.push(`frame: ${JSON.stringify(envelope)}`);
-  const body = typeof frame.body === "string" ? frame.body : frame.body === void 0 ? raw : JSON.stringify(frame.body, null, 1).replace(/\n\s*/g, " ");
-  return `${lines.join("\n")}
-
-${body}`;
+  const p = frame.provenance ?? {};
+  const id = idOf(frame.id);
+  const lines = [`${whoOf2(frame, true) || "?"}${tail(frame, true)}`];
+  if (text) lines.push(text);
+  if (origin !== "platform" && id && (p.from_standing || p.from_karta_seq != null)) {
+    const karta = p.from_karta_seq ?? p.user_karta_seq;
+    const args = `action="send"${frame.realm ? `, realm="${frame.realm}"` : ""}${karta != null ? `, karta=${karta}` : ""}${p.from_standing ? `, standing="${p.from_standing}"` : ""}, in_reply_to="${id}"`;
+    lines.push(phrase("answer_send", { args }));
+  }
+  return lines.join("\n");
+}
+var BATCH_TEXT = 160;
+function batchLine(frame, run, withZachin = true) {
+  const f = frame;
+  const rk = roomKind(frame);
+  const head = caseHead(frame, withZachin);
+  const pre = head ? `${head} ` : "";
+  if (rk?.aside) return pre + (run === void 0 ? rk.words : rk.aside.run(run));
+  const line = rec(f.line);
+  const e = f.entry_id ?? line.entry_id ?? f.id;
+  const entry = typeof e === "number" || typeof e === "string" ? e : "?";
+  const words2 = rk?.words ?? `${L("кадр", "frame")} ${typeof f.id === "string" ? f.id : "?"}`;
+  const author = rk?.author && !words2.includes(rk.author) ? ` — ${rk.author}` : "";
+  const flat = [...textOf(frame).replace(/\s+/g, " ").trim()];
+  const text = flat.length > BATCH_TEXT ? flat.slice(0, BATCH_TEXT).join("") + "…" : flat.join("");
+  const dup = !!text && words2.includes(text);
+  return `${pre}[${entry}] ${words2}${author}${tail(frame, rk?.kind !== "body")}${text && !dup ? `: ${text}` : ""}`;
+}
+function foldAsides(frames) {
+  const asides = frames.map((f) => roomKind(f)?.aside ?? null);
+  const out = [];
+  let n = 0;
+  asides.forEach((a, i) => {
+    if (!a) {
+      n = 0;
+      out.push(1);
+      return;
+    }
+    n = (i > 0 && asides[i - 1]?.pair === a.pair ? n : 0) + (a.counts ? 1 : 0);
+    out.push(asides[i + 1]?.pair === a.pair ? null : n);
+  });
+  return out;
+}
+function batchLines(frames) {
+  const fold = foldAsides(frames);
+  const seen = /* @__PURE__ */ new Set();
+  return frames.flatMap((f, i) => {
+    const run = fold[i];
+    if (run === null) return [];
+    const key = caseKey(f);
+    const first = !seen.has(key);
+    seen.add(key);
+    return [batchLine(f, roomKind(f)?.aside ? run : void 0, first)];
+  });
 }
 
 // js/bridge/backlog.ts
@@ -364,6 +524,7 @@ var HOLD_RECORD_MAX_AGE_MS = 6 * 60 * 60 * 1e3;
 var SEEN_FILE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1e3;
 
 // js/extension/channel.ts
+var ASIDE_MS = Number(process.env.ISKRON_PI_ASIDE_MS) || 3e3;
 function setupChannel(pi) {
   let ctxRef = null;
   pi.on("session_start", async (_event, ctx) => {
@@ -379,6 +540,23 @@ function setupChannel(pi) {
       { triggerTurn: true, deliverAs: "steer" }
     );
   }
+  const asides = [];
+  let asideTimer = null;
+  function flushAsides() {
+    if (asideTimer) clearTimeout(asideTimer);
+    asideTimer = null;
+    const got = asides.splice(0);
+    if (!got.length) return;
+    pi.sendMessage(
+      {
+        customType: "iskron-channel",
+        content: batchLines(got).join("\n"),
+        display: true,
+        details: { aside: got.map((f) => f.id ?? null) }
+      },
+      { triggerTurn: false, deliverAs: "nextTurn" }
+    );
+  }
   return (params) => {
     const ev = params?.data;
     if (!ev || typeof ev !== "object") return;
@@ -391,6 +569,13 @@ function setupChannel(pi) {
           return;
         }
         if (frame?.type === "status") return;
+        if (roomKind(frame)?.aside && frame) {
+          asides.push(frame);
+          asideTimer ??= setTimeout(flushAsides, ASIDE_MS);
+          asideTimer.unref?.();
+          return;
+        }
+        flushAsides();
         const later = byKind(frame) && stackOf(frame) === "batch";
         pi.sendMessage(
           {

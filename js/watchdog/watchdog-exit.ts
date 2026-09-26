@@ -10,7 +10,7 @@ import { createHash } from "node:crypto";
 import { writeSync } from "node:fs";
 
 import { type ChannelEvent } from "../bridge/hold.ts";
-import { batchLine } from "../shared/frame-text.ts";
+import { batchLine, caseKey, frameToText } from "../shared/frame-text.ts";
 import { eventKeyOf, noteSeen, seenIds } from "../shared/seen.ts";
 import { seenFilePathOf } from "../shared/standings.ts";
 import { adoptSeenPath, attach, resolveStanding, staleBatchKeys } from "./client.ts";
@@ -51,6 +51,8 @@ export function runWatchdogExit(argv: string[]): void {
   const seen = seenIds(seenPath);
   let woke = false; // отдан хоть один кадр залпа пачки
   let head = ""; // шапка идущей пачки: как прочесть целиком
+  const folded: string[] = []; // id свёрнутых адресных слов череды — метятся с её строкой (#6081)
+  const cases = new Set<string>(); // дела, уже названные зачином в идущей пачке
   attach(target.path, {
     onEvent: (ev) => {
       switch (ev.kind) {
@@ -67,10 +69,26 @@ export function runWatchdogExit(argv: string[]): void {
             if (last && woke) process.exit(0);
             return;
           }
+          // Адресное слово не мне, свёрнутое в череду (folded), своей строки не печатает.
+          if (ev.batch?.at === 1) cases.clear(); // зачин дела — у первой его строки в пачке
+          if (ev.batch?.folded) {
+            folded.push(id);
+            return;
+          }
           if (ev.batch && head) wake(head);
           head = "";
+          const key = ev.frame ? caseKey(ev.frame) : "";
+          const first = !cases.has(key);
+          cases.add(key);
           // Сперва отдать: запись до побудки при смерти между ними потеряла бы кадр насовсем.
-          wake(ev.batch && ev.frame ? batchLine(ev.frame) : (ev.raw ?? ""));
+          wake(
+            !ev.frame
+              ? (ev.raw ?? "")
+              : ev.batch
+                ? batchLine(ev.frame, ev.batch.fold, first)
+                : frameToText(ev.frame, ev.raw ?? ""),
+          );
+          for (const k of folded.splice(0)) noteSeen(seenPath, k, seen);
           noteSeen(seenPath, id, seen);
           const evKey = eventKeyOf(ev.frame);
           if (evKey) noteSeen(seenPath, evKey, seen); // событие графа отдано — другие копии веера тоже

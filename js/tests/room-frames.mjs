@@ -122,6 +122,22 @@ export const progress = (entry_id = 44) =>
 export const said = (stack, entry_id) =>
   roomFrame("said", { entry_id, key: "said", stack, body: `слово со стопкой ${stack}` });
 
+/** Чужое место — адресат слова, обращённого не мне. */
+export const BORIS = "@boris:probe";
+
+/**
+ * Адресное слово (#6081; api 0.91.3, форма наблюдена на бою): addressee —
+ * верхним полем конверта, строкой-адресом места; объект места — тоже.
+ */
+export const addressed = (entry_id, addressee = BORIS, stack = "interrupt") =>
+  roomFrame("said", {
+    entry_id,
+    key: "said",
+    stack,
+    envelope: { addressee },
+    body: `тайное слово ${entry_id}`,
+  });
+
 // ── Слово в две фазы (api 0.91.x; #5893 §4.5b, #5953) ──
 // said в полёте: body_pending: true — верхним полем КОНВЕРТА (#5893 §4.5b; api
 // подтвердил по коду провода), текста нет. Стопка interrupt: такой said не
@@ -307,3 +323,26 @@ export const nodeOp = (op, entry_id = 87) =>
 /** Род, которого словарь не знает. */
 export const unknownKind = (entry_id = 61) =>
   roomFrame("weather", { entry_id, key: "weather", stack: "interrupt", body: "" });
+
+/**
+ * Провод api для неадресата (#6081): said: "direct", тело удержано — body пуст,
+ * body_withheld: true, стопка defer от платформы. Кадр без to_standing: адресное
+ * слово узнаётся по удержанию, не по сравнению мест.
+ */
+export const withheld = (entry_id, addressee = BORIS) => {
+  const f = roomFrame("said", { entry_id, key: "said", stack: "defer", body: "" });
+  delete f.to_standing;
+  delete f.to_standing_id;
+  return { ...f, said: "direct", addressee, body_withheld: true };
+};
+
+// Адресное слово в две фазы (#5893 §4.5b): addressee несёт и said в полёте, и его body.
+export const addressedInFlight = (entry_id, addressee = BORIS) => ({
+  ...saidInFlight(entry_id),
+  addressee,
+});
+export const addressedBody = (entry_id, refers_to, addressee = BORIS) => ({
+  ...body(entry_id, refers_to, `тайное тело ${refers_to}`),
+  stack: "interrupt",
+  addressee,
+});
