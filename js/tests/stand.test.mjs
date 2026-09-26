@@ -1,6 +1,6 @@
 // Проба тула моста iskron_stand (граф nks-dev: #4508, #4511 под #4504): один
 // вызов — доска, выведенное имя, connect и register, хук инбокса роли, стук в
-// комнату по полному адресу; повторный вызов не ротирует живое место и не
+// место человека по полному адресу; повторный вызов не ротирует живое место и не
 // шлёт второго join; повтор стука — только осознанный и не раньше двух минут.
 //
 // ISKRON_BRIDGE_PATH наводит пробу на любую копию: против моста без тула
@@ -145,7 +145,9 @@ test("iskron_stand: one call takes the place, arms the inbox hook and knocks; a 
   );
   assert.match(text, /hello получен: ожидало кадров — 0/, text);
   assert.match(text, /Хук инбокса роли: взведён/, text);
-  assert.match(text, /Комната @tester:thread-k2: стук отправлен/, text);
+  assert.match(text, /Место человека @tester:thread-k2: стук отправлен/, text);
+  assert.match(text, /встанешь рядом с человеком/, text);
+  assert.doesNotMatch(text, /[Кк]омнат/, text);
   assert.match(text, /Занятость: на вахте/, text);
   let counts = (await fake.control({})).counts;
   assert.equal(counts.connect, 1);
@@ -178,7 +180,7 @@ test("iskron_stand: one call takes the place, arms the inbox hook and knocks; a 
     name: "iskron_stand",
     arguments: { ...args, room: "@tester:thread-k3" },
   });
-  assert.match(textOf(other), /Комната @tester:thread-k3: стук отправлен/, textOf(other));
+  assert.match(textOf(other), /Место человека @tester:thread-k3: стук отправлен/, textOf(other));
   assert.equal(
     fake.state.sends.length,
     2,
@@ -191,7 +193,7 @@ test("iskron_stand: one call takes the place, arms the inbox hook and knocks; a 
   });
   assert.match(
     textOf(unknown),
-    /этого стояния нет, а send требует роль его держателя/,
+    /Место человека @tester:thread-none: на доске графа nks-dev этого места нет, а send требует роль его держателя/,
     textOf(unknown),
   );
   assert.equal(fake.state.sends.length, 2, "an address absent from the board is never guessed at");
@@ -199,7 +201,11 @@ test("iskron_stand: one call takes the place, arms the inbox hook and knocks; a 
     name: "iskron_stand",
     arguments: { ...args, room: "@tester:thread-none", room_karta: "#77" },
   });
-  assert.match(textOf(byKarta), /Комната @tester:thread-none: стук отправлен/, textOf(byKarta));
+  assert.match(
+    textOf(byKarta),
+    /Место человека @tester:thread-none: стук отправлен/,
+    textOf(byKarta),
+  );
   assert.equal(
     fake.state.sends.at(-1).karta,
     "77",
@@ -485,7 +491,7 @@ test("iskron_stand: a place listening under another bridge is registered, never 
   });
   assert.match(
     textOf(knock),
-    /стук не отправлен — ответ комнаты ушёл бы держателю сокета/,
+    /Место человека @[^:]+:[^:]+: стук не отправлен — ответ человека ушёл бы держателю сокета/,
     textOf(knock),
   );
   assert.equal(fake.state.sends.length, 0, "no join while the socket is elsewhere");
