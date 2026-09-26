@@ -2,7 +2,7 @@ import { lang } from "../shared/lang.ts";
 import { noteServerDate } from "./clock.ts";
 import { CFG } from "./config.ts";
 import { errorCode, errorMessage, UpstreamError } from "./errors.ts";
-import { loadStore } from "./store.ts";
+import { loadStore, saveServerCache } from "./store.ts";
 import { debug, log } from "./streams.ts";
 import { type JsonRpcMessage } from "./types.ts";
 
@@ -285,6 +285,10 @@ export async function reinitialize(): Promise<void> {
         );
       }
       if (got.result?.protocolVersion) state.protocolVersion = got.result.protocolVersion;
+      // The answer that was swallowed here used to leave the handshake cache
+      // (deliver.ts, #4790) quoting whatever the harness's own initialize saw
+      // last — stale the moment the server ships a new version between the two.
+      if (got.result) saveServerCache({ init: got.result });
       await post({ jsonrpc: "2.0", method: "notifications/initialized" }, () => {});
       log(`session re-established (${state.sessionId || "no session id"})`);
       for (const hook of reinitHooks) void hook();

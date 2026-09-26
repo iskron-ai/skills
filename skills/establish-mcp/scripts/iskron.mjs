@@ -1987,6 +1987,7 @@ async function reinitialize() {
         );
       }
       if (got.result?.protocolVersion) state.protocolVersion = got.result.protocolVersion;
+      if (got.result) saveServerCache({ init: got.result });
       await post({ jsonrpc: "2.0", method: "notifications/initialized" }, () => {
       });
       log(`session re-established (${state.sessionId || "no session id"})`);
