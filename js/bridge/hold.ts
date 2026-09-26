@@ -318,8 +318,9 @@ export function holdStanding(url: string, statusUrl?: string | null): string {
   standingLog(`held ${key}${standCwd ? ` cwd=${standCwd}` : ""}`);
   // Слово «держу» уходит и уведомлением: плагин OpenCode не жнёт держащий мост
   // по простою, а прежде узнавал о держании лишь из attached локального сокета,
-  // которого у него нет (#5140).
-  notify("info", { kind: "held", key });
+  // которого у него нет (#5140); место — чтобы дочерняя сессия встала его спутником (#6002).
+  const place = s ? { realm: s.realm, karta: String(s.karta), name: s.name ?? "" } : undefined;
+  notify("info", { kind: "held", key, ...(place ? { place } : {}) });
   return key;
 }
 

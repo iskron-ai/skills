@@ -371,13 +371,15 @@ var Bridge = class {
   onLog;
   onNotification;
   onDie;
+  args;
   constructor(bin, onLog, onNotification = () => {
   }, onDie = () => {
-  }) {
+  }, args = []) {
     this.bin = bin;
     this.onLog = onLog;
     this.onNotification = onNotification;
     this.onDie = onDie;
+    this.args = args;
   }
   /** Мост вышел или не запустился — вызовы к нему отвергаются этим отказом. */
   get failure() {
@@ -385,7 +387,10 @@ var Bridge = class {
   }
   start() {
     const rt = bridgeRuntime();
-    const proc = spawn(rt.bin, [this.bin], { stdio: ["pipe", "pipe", "pipe"], env: rt.env });
+    const proc = spawn(rt.bin, [this.bin, ...this.args], {
+      stdio: ["pipe", "pipe", "pipe"],
+      env: rt.env
+    });
     this.proc = proc;
     proc.stdout?.setEncoding("utf8");
     proc.stdout?.on("data", (chunk) => this.feed(chunk));

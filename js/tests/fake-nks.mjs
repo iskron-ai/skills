@@ -310,6 +310,7 @@ export async function startFakeNks(opts = {}) {
         "adminChannelSelf", // tools/list объявляет у iskron_admin параметр channel
         "rooms",
         "boardText",
+        "boardByKarta", // { "931": text } — доска list с karta: только она печатает строку «id» места
         "hooksText",
         "helloPending", // what the next hello says was waiting in the queue
         "statusDelayMs", // hold the status POST open this long before answering
@@ -697,7 +698,13 @@ export async function startFakeNks(opts = {}) {
             );
           }
           st.counts.register_standing++;
-          st.placeArgs.push({ action: "register", name: a.name, model: a.model, attrs: a.attrs });
+          st.placeArgs.push({
+            action: "register",
+            name: a.name,
+            model: a.model,
+            attrs: a.attrs,
+            ...("satellite_of" in a ? { satellite_of: a.satellite_of } : {}), // тело как пришло (#6064)
+          });
           const reg = registerPlace(sid, a.realm, a.karta, a.name);
           if (reg.added) {
             // Место рядом на канале: на доске его графа, слушает — если сокет канала открыт.
@@ -738,6 +745,20 @@ export async function startFakeNks(opts = {}) {
         }
         if (a.action === "list") {
           st.counts.list++;
+          const byKarta =
+            a.karta != null ? st.boardByKarta?.[String(a.karta).replace(/^#/, "")] : undefined;
+          if (typeof byKarta === "string") {
+            return json(
+              res,
+              200,
+              {
+                jsonrpc: "2.0",
+                id: msg.id,
+                result: { content: [{ type: "text", text: byKarta }] },
+              },
+              extra,
+            );
+          }
           if (typeof st.boardText === "string") {
             return json(
               res,
@@ -806,6 +827,7 @@ export async function startFakeNks(opts = {}) {
             model: a.model,
             attrs: a.attrs,
             ttl_seconds: a.ttl_seconds,
+            ...("satellite_of" in a ? { satellite_of: a.satellite_of } : {}), // тело как пришло (#6064)
           });
           st.counts.connect++;
           st.wsToken = token("ws"); // как у настоящей поверхности: сокет показан один раз и всякий раз новый
