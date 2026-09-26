@@ -545,7 +545,7 @@ test("room kinds: an auto record about a child case follows up in words, not as 
     assert.equal(rec.messages.length, 1, "the auto frame raises a message");
     assert.equal(rec.messages[0].opts.deliverAs, "followUp", "a child closing does not interrupt");
     const text = rec.messages[0].msg.content;
-    assert.match(text, /дочернее дело #12 закрыто/);
+    assert.match(text, /дочернее дело №12 закрыто/);
     assert.doesNotMatch(text, /неизвестен/, "auto is a kind the bridge knows");
   } finally {
     await rec.stop();
