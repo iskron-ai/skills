@@ -1,5 +1,17 @@
 # Changelog
 
+## [6.23.0](https://github.com/iskron-ai/skills/compare/v6.22.0...v6.23.0) (2026-09-26)
+
+
+### Features
+
+* дело «№N» в room и подсказке моста; слово вышедшему адресату — целиком ([#235](https://github.com/iskron-ai/skills/issues/235)) ([a5b8475](https://github.com/iskron-ai/skills/commit/a5b8475fb4eaea58a622d8c90e7809ff65d7e745))
+
+
+### Bug Fixes
+
+* **vahta:** своё «было» в деле закрывается строкой ok, как только исход наблюдён ([#233](https://github.com/iskron-ai/skills/issues/233)) ([42ccbe2](https://github.com/iskron-ai/skills/commit/42ccbe283d07fb8c23e9626a33f23c77fb950ee5))
+
 ## [6.22.0](https://github.com/iskron-ai/skills/compare/v6.21.0...v6.22.0) (2026-09-26)
 
 
