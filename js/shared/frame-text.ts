@@ -101,7 +101,7 @@ export function frameToText(frame: Frame | null | undefined, raw: string): strin
     // закрытие несёт свой ход (object) в словах.
     const answerable = !rk || ANSWERABLE.has(rk.kind);
     if (answerable && origin !== "platform" && c.realm && entry) {
-      const args = `realm="${c.realm}", action="say", room="#${c.room}", in_reply_to=${entry}`;
+      const args = `realm="${c.realm}", action="say", room="№${c.room}", in_reply_to=${entry}`;
       lines.push(phrase("answer_case", { args }));
     }
     return lines.join("\n");

@@ -450,7 +450,7 @@ function frameToText(frame, raw) {
     if (text && !words2.includes(text.trim())) lines2.push(text);
     const answerable = !rk || ANSWERABLE.has(rk.kind);
     if (answerable && origin !== "platform" && c.realm && entry) {
-      const args = `realm="${c.realm}", action="say", room="#${c.room}", in_reply_to=${entry}`;
+      const args = `realm="${c.realm}", action="say", room="№${c.room}", in_reply_to=${entry}`;
       lines2.push(phrase("answer_case", { args }));
     }
     return lines2.join("\n");

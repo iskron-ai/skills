@@ -1984,7 +1984,7 @@ test("a room frame reaches the agent short: case, entry, words, who, the answer;
     );
     assert.equal(
       answerOf(text),
-      'ответ: iskron_case(realm="nks-dev", action="say", room="#7", in_reply_to=41)',
+      'ответ: iskron_case(realm="nks-dev", action="say", room="№7", in_reply_to=41)',
       "the answer names the case and the entry",
     );
 
@@ -2068,7 +2068,7 @@ for (const [server, en] of [
           word,
           /^case №7 «Bench» \[\d+\] message from Alex \(@alex:probe\) — role #48\n/,
         );
-        assert.match(word, /\nanswer: iskron_case\(realm="nks-dev", action="say", room="#7", /);
+        assert.match(word, /\nanswer: iskron_case\(realm="nks-dev", action="say", room="№7", /);
         assert.match(line, /^Case: 1 frames — /);
         assert.match(line, /\ncase №7 «Bench» \[\d+\] \[tests\]/);
         assert.match(

@@ -3565,7 +3565,7 @@ test("a lone interrupting said under Monitor prints whole and short: case, entry
   assert.ok(!own.includes('{"'), `no raw JSON:\n${own}`);
   assert.match(
     wd.out,
-    /ответ: iskron_case\(realm="nks-dev", action="say", room="#7", in_reply_to=500\)/,
+    /ответ: iskron_case\(realm="nks-dev", action="say", room="№7", in_reply_to=500\)/,
   );
   assert.ok(!wd.out.includes("Дело: кадров"), `no batch:\n${wd.out}`);
   assert.ok(!wd.out.includes('iskron_case(action="history"'), `no batch pointer:\n${wd.out}`);
