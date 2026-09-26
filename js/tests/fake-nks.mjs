@@ -99,6 +99,9 @@ export async function startFakeNks(opts = {}) {
     // whole family dies with it. Off by default — a test asks for it when the
     // point IS what replay costs.
     reuseDetection: opts.reuseDetection ?? false,
+    // Версия сервера в serverInfo — /control {serverVersion:"9"} поднимает её между
+    // рукопожатиями, чтобы проба видела, какое рукопожатие какую версию застало.
+    serverVersion: opts.serverVersion ?? "0",
     counts: {
       register: 0,
       authorize: 0,
@@ -293,6 +296,7 @@ export async function startFakeNks(opts = {}) {
       for (const k of [
         "richTools",
         "versionUp",
+        "serverVersion",
         "refreshStatus",
         "refreshError",
         "refreshMessage",
@@ -584,7 +588,7 @@ export async function startFakeNks(opts = {}) {
             result: {
               protocolVersion: "2025-06-18",
               capabilities: {},
-              serverInfo: { name: "fake-nks", version: "0" },
+              serverInfo: { name: "fake-nks", version: st.serverVersion },
             },
           },
           { "mcp-session-id": fresh },

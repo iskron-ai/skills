@@ -2182,6 +2182,58 @@ test("a handshake with the network down is answered from the last server answer,
   });
 });
 
+// The transparent reinitialize (transport.ts, after a session dies under the
+// caller) replays the harness's own initialize and gets back a live answer —
+// but that answer used to be swallowed rather than joining the cache the
+// handshake stands on: a server that shipped a new version between handshakes
+// left the bridge quoting the old one from a cache nobody refreshed.
+test("a session lost and transparently reopened refreshes the handshake cache with the version seen then", async (t) => {
+  await withFake(t, { pat: "nks_pat_probe" }, async ({ fake, dir }) => {
+    const door = await frontDoor(fake.mcpUrl);
+    await door.set("open");
+    const env = { ISKRON_BRIDGE_TOKEN: "nks_pat_probe", ISKRON_BRIDGE_NET_BACKOFF_MS: "20,20,20" };
+    const first = startBridge(door.url, dir, env);
+    try {
+      assert.ok((await first.call("initialize", 1, INIT_PARAMS)).result);
+      first.send({ jsonrpc: "2.0", method: "notifications/initialized" });
+      assert.ok(Array.isArray((await first.call("tools/list", 2)).result?.tools));
+
+      // The server moved to a new version, and the session died under the
+      // bridge — the next call reopens it transparently, seeing the new one.
+      await fake.control({ serverVersion: "9" });
+      await fake.control({ kill_session: true });
+      const afterReopen = await first.call("tools/call", 3, {
+        name: "iskron_orient",
+        arguments: {},
+      });
+      assert.ok(
+        afterReopen.result && !afterReopen.error,
+        `the call must go through after the transparent reinitialize: ${JSON.stringify(afterReopen)}`,
+      );
+    } finally {
+      await first.stop();
+    }
+    // The network is down for the next handshake, so it stands on the cache.
+    await door.set("shut");
+    const second = startBridge(door.url, dir, env);
+    try {
+      const init = await second.call("initialize", 1, INIT_PARAMS);
+      assert.ok(
+        init.result?.protocolVersion,
+        `no network at the start must not fail the handshake: ${JSON.stringify(init.error)}`,
+      );
+      assert.equal(
+        init.result?.serverInfo?.version,
+        "9",
+        `the transparent reinitialize saw version 9 and must have refreshed the cache — not the first handshake's stale version: ${JSON.stringify(init.result?.serverInfo)}`,
+      );
+    } finally {
+      await second.stop();
+      await door.close();
+    }
+  });
+});
+
 // Claude Code shows a stdio server's refused handshake as a bare code and drops
 // its text, and a stdio entry has no login button at all: a handshake refused
 // over a dead grant hides the login from the human and the agent alike, and
