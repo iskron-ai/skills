@@ -8,7 +8,7 @@
 // одно стояние; ключ из ответа connect различает несколько.
 import { writeSync } from "node:fs";
 
-import { batchLine, frameToText } from "../shared/frame-text.ts";
+import { batchLine, caseKey, frameToText } from "../shared/frame-text.ts";
 import { deliveredKeys, noteSeen, seenIds } from "../shared/seen.ts";
 import { seenFilePathOf } from "../shared/standings.ts";
 import { adoptSeenPath, attach, resolveStanding, staleBatchKeys } from "./client.ts";
@@ -101,6 +101,7 @@ export function runWatchdog(argv: string[]): void {
   const seen = seenIds(seenPath);
   const queued = new Set<string>(); // id в очереди печати: пометка ляжет после неё
   const folded: (() => void)[] = []; // пометки свёрнутых слов череды — после её строки
+  const cases = new Set<string>(); // дела, уже названные зачином в идущей пачке
   attach(target.path, {
     onEvent: (ev) => {
       switch (ev.kind) {
@@ -128,13 +129,16 @@ export function runWatchdog(argv: string[]): void {
             // Пачка дела — по строке на кадр, без конверта; как прочесть целиком — в шапке.
             // Адресное слово не мне, свёрнутое в череду (folded), своей строки не печатает:
             // метится вместе со строкой череды, которая его считает (#6081).
+            if (ev.batch.at === 1) cases.clear(); // зачин дела — у первой его строки в пачке
             if (ev.batch.folded) {
               if (!again) folded.push(mark);
               break;
             }
             const within = folded.splice(0);
             const all = (): void => [...within, mark].forEach((m) => m());
-            if (!again) out(wrapLines(batchLine(f, ev.batch.fold)), false, all);
+            const first = !cases.has(caseKey(f));
+            cases.add(caseKey(f));
+            if (!again) out(wrapLines(batchLine(f, ev.batch.fold, first)), false, all);
             else within.forEach((m) => m());
             break;
           }

@@ -53,6 +53,7 @@ import {
   closing,
   directWord,
   graphPosed,
+  joinedMember,
   legacyRoom,
   link,
   ME,
@@ -66,6 +67,7 @@ import {
   saidInFlight,
   unknownKind,
   withdraw,
+  withheld,
 } from "./room-frames.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -682,8 +684,8 @@ test("each root session gets its own bridge, and a frame goes to the session who
     );
     assert.match(
       to["s-a"],
-      /^Кадр канала Искрона от делателя роли #1226 — стояние @alari:telegram-bot\nprovenance: \{"from_standing":"@alari:telegram-bot","from_karta_seq":1226,"auth":"pat","via":"hook"\}\nframe: \{"id":"msg-1"\}\n\nдля первой$/,
-      "provenance must reach the agent as the platform saw it",
+      /^роль #1226 \(@alari:telegram-bot\)\nдля первой\nответ: iskron_channel\(action="send", karta=1226, standing="@alari:telegram-bot", in_reply_to="msg-1"\)$/,
+      "who speaks, the text once and the answer — short (#6081)",
     );
   } finally {
     await rec.stop();
@@ -1959,15 +1961,10 @@ test("a dead child bridge is replaced by a fresh child bridge that resumes the c
 
 // ── room frames (api 0.71.0: envelope flattened ahead of provenance and body) ──
 
-const envelopeOf = (text) =>
-  JSON.parse(
-    text
-      .split("\n")
-      .find((l) => l.startsWith("frame: "))
-      .slice(7),
-  );
+/** Строка ответа короткого кадра дела (#6081): дело и запись, на которую отвечают. */
+const answerOf = (text) => text.split("\n").find((l) => l.startsWith("ответ: ")) ?? "";
 
-test("a room frame reaches the agent with its whole envelope; said defer queues, a platform record with no author is a wake-up", async () => {
+test("a room frame reaches the agent short: case, entry, words, who, the answer; said defer queues, a platform record with no author is the platform's", async () => {
   const b = bridgeEnv("room");
   const rec = await plugin(b.env);
   try {
@@ -1982,23 +1979,14 @@ test("a room frame reaches the agent with its whole envelope; said defer queues,
     const text = rec.prompts[0].text;
     assert.match(
       text,
-      /^Кадр канала Искрона от делателя роли #48/,
-      "a participant's word is a doer's word, by via+auth",
+      /^№7 «Стенд» \[41\] слово от Алексей \(@aleksei:probe\) — роль #48\n/,
+      "the case, the entry, the kind in words and a doer's role, by via+auth",
     );
-    assert.match(
-      text,
-      /слово ДЕЛА «Стенд»: слово от Алексей \(@aleksei:probe\)/,
-      "the room line says the kind in words",
+    assert.equal(
+      answerOf(text),
+      'ответ: iskron_case(realm="nks-dev", action="say", room="#7", in_reply_to=41)',
+      "the answer names the case and the entry",
     );
-    const envelope = envelopeOf(text);
-    assert.deepEqual(
-      envelope.room,
-      said.room,
-      "the room envelope must reach the agent, not be dropped by a key whitelist",
-    );
-    assert.equal(envelope.event_kind, "room.said");
-    assert.equal(envelope.stack, "interrupt");
-    assert.equal(envelope.entry_id, 41);
 
     const closed = roomFrame("closed", {
       entry_id: 42,
@@ -2011,8 +1999,8 @@ test("a room frame reaches the agent with its whole envelope; said defer queues,
     assert.equal(rec.prompts[1].delivery, "steer", "closed steers into the running turn");
     assert.match(
       rec.prompts[1].text,
-      /^Кадр канала Искрона от ПЛАТФОРМЫ — побудка, не человек и не делатель\nзапись ДЕЛА «Стенд»: дело закрыто: consensus\n/,
-      "a room record without an author is the platform speaking, not an unknown doer",
+      /^№7 «Стенд» \[42\] дело закрыто: consensus — платформа$/,
+      "a room record without an author is the platform speaking, and waits no answer",
     );
 
     appendFileSync(
@@ -2027,7 +2015,7 @@ test("a room frame reaches the agent with its whole envelope; said defer queues,
     );
     assert.match(
       rec.prompts[2].text,
-      /^Дело: кадров 1 — [^\n]*\n\[43\] слово от Алексей \(@aleksei:probe\): слово со стопкой defer$/,
+      /^Дело: кадров 1 — [^\n]*\n№7 «Стенд» \[43\] слово от Алексей \(@aleksei:probe\): слово со стопкой defer$/,
       "a deferred word is a line of the case burst, its envelope behind the history pointer",
     );
   } finally {
@@ -2078,17 +2066,18 @@ for (const [server, en] of [
         assert.doesNotMatch(line, CYRILLIC, line);
         assert.match(
           word,
-          /^Iskron channel frame from a doer of role #48 — standing @alex:probe\n/,
+          /^case №7 «Bench» \[\d+\] message from Alex \(@alex:probe\) — role #48\n/,
         );
-        assert.match(word, /CASE message «Bench»: message from Alex \(@alex:probe\)/);
+        assert.match(word, /\nanswer: iskron_case\(realm="nks-dev", action="say", room="#7", /);
         assert.match(line, /^Case: 1 frames — /);
+        assert.match(line, /\ncase №7 «Bench» \[\d+\] \[tests\]/);
         assert.match(
           line,
           /\[tests\] \[probes green\] = partial — no network · Alex \(@alex:probe\)/,
         );
       } else {
-        assert.match(word, /^Кадр канала Искрона от делателя роли #48/);
-        assert.match(word, /слово ДЕЛА «Bench»: слово от Alex/);
+        assert.match(word, /^№7 «Bench» \[\d+\] слово от Alex \(@alex:probe\) — роль #48\n/);
+        assert.match(word, /\nответ: iskron_case\(/);
         assert.match(
           line,
           /\[tests\] \[probes green\] = частично — no network · Alex \(@alex:probe\)/,
@@ -2125,8 +2114,12 @@ test("room kinds: closing steers a busy agent despite stack=defer and says who m
       p1.text,
       /ты можешь возразить — iskron_case\(action="object", in_reply_to=50\) \(прежнее имя iskron_room\)/,
     );
-    assert.deepEqual(envelopeOf(p1.text).line, c.line, "the frame JSON carries line unchanged");
-    assert.match(p1.text, /\n\nсделано, см\. 41$/, "the body passes through unchanged");
+    assert.match(p1.text, /^№7 «Стенд» \[50\] /, "the case and the entry lead");
+    assert.match(
+      p1.text,
+      /\nсделано, см\. 41$/,
+      "the body passes through once, closing waits no say",
+    );
 
     const p2 = await send(progress(), 2);
     assert.equal(p2.delivery, "queue", "progress batches");
@@ -2295,7 +2288,12 @@ test("ten case frames in a row are one queue prompt: a head with the history poi
       /^Дело: кадров 10 — .*iskron_case\(realm="nks-dev", action="history", room=7, since=200\)/,
     );
     assert.equal(rows.length, 11, "a head and ten lines, no envelopes");
-    rows.slice(1).forEach((row, i) => assert.match(row, new RegExp(`^\\[${201 + i}\\] `)));
+    // Каждая строка — с номером дела; зачин — у первой строки дела в пачке (#6081).
+    rows
+      .slice(1)
+      .forEach((row, i) =>
+        assert.match(row, new RegExp(`^№7 ${i ? "" : "«Стенд» "}\\[${201 + i}\\] `)),
+      );
   } finally {
     await rec.stop();
   }
@@ -2325,7 +2323,10 @@ test("(а) an addressed word not to me with stack interrupt does not steer: one 
   const prompts = await asidePrompts("aside-one", [addressed(80)], 1);
   assert.equal(prompts.length, 1);
   assert.equal(prompts[0].delivery, "queue", "a word not to me never steers");
-  assert.ok(prompts[0].text.split("\n").includes(`${ASIDE}: слово [80]`), prompts[0].text);
+  assert.ok(
+    prompts[0].text.split("\n").includes(`№7 «Стенд» ${ASIDE}: слово [80]`),
+    prompts[0].text,
+  );
   assert.doesNotMatch(prompts[0].text, /тайное слово/, "no body of a word not to me");
 });
 
@@ -2338,14 +2339,14 @@ test("(б) three addressed words of one pair in a row are one line «3 слов�
   assert.equal(prompts.length, 1);
   const rows = prompts[0].text.split("\n");
   assert.equal(rows.length, 2, `a head and one line:\n${prompts[0].text}`);
-  assert.equal(rows[1], `${ASIDE}: 3 слова (последнее [83])`);
+  assert.equal(rows[1], `№7 «Стенд» ${ASIDE}: 3 слова (последнее [83])`);
 });
 
 test("(в) an addressed word to me with stack interrupt steers at once and whole; the aside before it waits", async () => {
   const prompts = await asidePrompts("aside-mine", [addressed(86), addressed(87, ME)], 2);
   const steered = prompts.filter((p) => p.delivery === "steer");
   assert.equal(steered.length, 1, "only the word to me steers");
-  assert.match(steered[0].text, /слово от Алексей \(@aleksei:probe\)[\s\S]*\n\nтайное слово 87$/);
+  assert.match(steered[0].text, /слово от Алексей \(@aleksei:probe\)[^\n]*\nтайное слово 87\n/);
   const queued = prompts.filter((p) => p.delivery === "queue");
   assert.equal(queued.length, 1);
   assert.ok(queued[0].text.includes(`${ASIDE}: слово [86]`), queued[0].text);
@@ -2362,9 +2363,9 @@ test("(г) a word without an addressee between two asides stays whole in its lin
   assert.equal(prompts.length, 1);
   const rows = prompts[0].text.split("\n").slice(1);
   assert.deepEqual(rows, [
-    `${ASIDE}: слово [90]`,
-    "[91] слово от Алексей (@aleksei:probe): слово со стопкой defer",
-    `${ASIDE}: слово [92]`,
+    `№7 «Стенд» ${ASIDE}: слово [90]`,
+    "№7 [91] слово от Алексей (@aleksei:probe): слово со стопкой defer",
+    `№7 ${ASIDE}: слово [92]`,
   ]);
 });
 
@@ -2377,8 +2378,34 @@ test("(д) an addressed word not to me in flight and then its body with stack in
   assert.equal(prompts.length, 1, "the body does not steer apart");
   assert.equal(prompts[0].delivery, "queue");
   const rows = prompts[0].text.split("\n");
-  assert.deepEqual(rows.slice(1), [`${ASIDE}: слово [94]`]);
+  assert.deepEqual(rows.slice(1), [`№7 «Стенд» ${ASIDE}: слово [94]`]);
   assert.doesNotMatch(prompts[0].text, /тайное тело/);
+});
+
+test("(е) a word whose body the platform withheld (body_withheld) folds with the pair's run", async () => {
+  const prompts = await asidePrompts("aside-withheld", [addressed(97), withheld(98)], 1);
+  assert.equal(prompts.length, 1);
+  assert.deepEqual(prompts[0].text.split("\n").slice(1), [
+    `№7 «Стенд» ${ASIDE}: 2 слова (последнее [98])`,
+  ]);
+});
+
+// A short frame (#6081, the owner's word): 1–3 lines, no raw JSON, the text once.
+test("a lone case frame is short: a said's text once, no JSON, «in reply to»; batch lines lead with №N, the entry among them", async () => {
+  const reply = saidFrame("interrupt", 62);
+  reply.in_reply_to = 60;
+  const prompts = await asidePrompts("short-frame", [reply, progress(44), joinedMember(85)], 2);
+  const word = prompts.find((p) => p.delivery === "steer").text;
+  assert.equal(word.split("слово со стопкой interrupt").length - 1, 1, word);
+  assert.match(
+    word,
+    /^№7 «Стенд» \[62\] слово от Алексей \(@aleksei:probe\)[^\n]*в ответ на \[60\]\n/,
+  );
+  assert.ok(!word.includes('{"'), word);
+  const batch = prompts.find((p) => p.delivery === "queue").text.split("\n");
+  assert.match(batch[1], /^№7 «Стенд» \[44\] \[tests\]/);
+  assert.match(batch[2], /^№7 \[85\] вошёл /);
+  assert.ok(!batch.join("\n").includes('{"'), batch.join("\n"));
 });
 
 test("a direct word and a human word amid a case burst steer apart and whole; the burst stays one prompt", async () => {
@@ -2404,11 +2431,11 @@ test("a direct word and a human word amid a case burst steer apart and whole; th
     assert.equal(steered.length, 2, "neither word waits in the case queue");
     assert.match(
       steered[0].text,
-      /^Кадр канала Искрона от делателя роли #48 — стояние @alari:sosed\n[\s\S]*\n\nпрямое слово соседа$/,
-      "the direct word goes whole, its envelope and body intact",
+      /^роль #48 \(@alari:sosed\)\nпрямое слово соседа\nответ: iskron_channel\(action="send", karta=48, standing="@alari:sosed", in_reply_to="direct-9"\)$/,
+      "the direct word goes whole and short: who, the text, the answer",
     );
-    assert.match(steered[1].text, /^Кадр канала Искрона от ЧЕЛОВЕКА/);
-    assert.match(steered[1].text, /\n\nслово со стопкой defer$/, "the human word goes whole");
+    assert.match(steered[1].text, /^№7 «Стенд» \[230\] [^\n]* — человек\n/);
+    assert.match(steered[1].text, /\nслово со стопкой defer\n/, "the human word goes whole");
     assert.equal(queued.length, 1);
     assert.match(queued[0].text, /^Дело: кадров 10 — /);
     assert.doesNotMatch(
@@ -2434,8 +2461,8 @@ test("a lone interrupting case frame still steers at once and whole", async () =
     await delay(BATCH_MS * 3);
     assert.equal(rec.prompts.length, 1);
     assert.equal(rec.prompts[0].delivery, "steer");
-    assert.deepEqual(envelopeOf(rec.prompts[0].text).line, c.line, "the envelope travels whole");
-    assert.match(rec.prompts[0].text, /\n\nсделано, см\. 41$/);
+    assert.match(rec.prompts[0].text, /^№7 «Стенд» \[50\] ведущий /, "the case and the entry lead");
+    assert.match(rec.prompts[0].text, /\nсделано, см\. 41$/);
   } finally {
     await rec.stop();
   }
@@ -2466,7 +2493,7 @@ test("while the burst prompt waits in the session's queue, new case frames wait 
       rec.prompts[1].text
         .split("\n")
         .slice(1)
-        .map((r) => r.match(/^\[(\d+)\]/)?.[1]),
+        .map((r) => r.match(/^№7 (?:«Стенд» )?\[(\d+)\]/)?.[1]),
       ["243", "244", "245"],
       "every held frame enters the prompt that goes, none twice",
     );
@@ -2503,21 +2530,21 @@ test("room kinds leave non-room frames and the old room shape as on main: every 
       await until(() => rec.prompts.length === i + 1, `prompt ${i + 1}`);
       assert.equal(rec.prompts[i].delivery, way, `${frame.id} must go ${way}`);
     }
-    assert.match(
-      rec.prompts[0].text,
-      /^Кадр канала Искрона от делателя роли #48 — стояние @alari:sosed\n/,
-    );
-    assert.doesNotMatch(rec.prompts[0].text, /ДЕЛА/, "a direct word is not a room word");
+    assert.match(rec.prompts[0].text, /^роль #48 \(@alari:sosed\)\n/);
+    assert.doesNotMatch(rec.prompts[0].text, /^№/, "a direct word is not a room word");
     assert.doesNotMatch(
       rec.prompts[1].text,
-      /ДЕЛА|мосту неизвестен/,
+      /^№|мосту неизвестен/,
       "a graph event is not a room frame",
     );
-    assert.match(rec.prompts[2].text, /слово ДЕЛА «Стенд», род text, стопка interrupt/);
-    assert.match(rec.prompts[5].text, /запись ДЕЛА «Стенд», род auto, стопка interrupt\n/);
+    assert.match(
+      rec.prompts[2].text,
+      /^№r-1 «Стенд» \[71\] род text, стопка interrupt — роль #48\n/,
+    );
+    assert.match(rec.prompts[5].text, /^№r-1 «Стенд» \[74\] род auto, стопка interrupt\n/);
     assert.match(
       rec.prompts[7].text,
-      /^Дело: кадров 1 — [^\n]*\n\[76\] кадр room-old-76: /,
+      /^Дело: кадров 1 — [^\n]*\n№r-1 «Стенд» \[76\] кадр room-old-76: /,
       "an old deferred room frame is a line of the case burst",
     );
     assert.ok(

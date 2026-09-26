@@ -183,7 +183,20 @@ var WORDS = {
   node_undeleted: "узел #{seq} {name} восстановлен{; reasoning}",
   link: "дело связано с №{room} ({rel})",
   auto: "запись платформы {code} о деле №{room}",
-  unknown: "род {kind} мосту неизвестен"
+  unknown: "род {kind} мосту неизвестен",
+  // Короткий кадр (frame-text.ts): дело, кто говорит, ответ — без сырого конверта.
+  case: "№{room}",
+  reply_to: "в ответ на [{id}]",
+  stale: "лежалый",
+  body_read: "тело: {how}",
+  who_human: "человек{ @user}",
+  who_role: "роль #{karta}",
+  who_sibling: "брат по роли #{karta}",
+  who_platform: "платформа — побудка",
+  who_graph: "событие графа",
+  legacy: "род {kind}{, стопка stack}",
+  answer_case: "ответ: iskron_case({args})",
+  answer_send: "ответ: iskron_channel({args})"
 };
 var WORDS_EN = {
   said: "message from {author}",
@@ -215,7 +228,19 @@ var WORDS_EN = {
   node_undeleted: "node #{seq} {name} restored{; reasoning}",
   link: "case linked to case №{room} ({rel})",
   auto: "platform record {code} about case №{room}",
-  unknown: "kind {kind} is unknown to the bridge"
+  unknown: "kind {kind} is unknown to the bridge",
+  case: "case №{room}",
+  reply_to: "in reply to [{id}]",
+  stale: "stale",
+  body_read: "body: {how}",
+  who_human: "human{ @user}",
+  who_role: "role #{karta}",
+  who_sibling: "sibling of role #{karta}",
+  who_platform: "platform — a wake-up",
+  who_graph: "graph event",
+  legacy: "kind {kind}{ · stack}",
+  answer_case: "answer: iskron_case({args})",
+  answer_send: "answer: iskron_channel({args})"
 };
 var AUTO_WORDS = {
   child_opened: "дочернее дело №{room} открыто",
@@ -250,6 +275,7 @@ var VERDICT_WORDS_EN = {
   bad: "slop"
 };
 var words = () => lang() === "en" ? WORDS_EN : WORDS;
+var phrase = (key, values = {}) => fill(words()[key] ?? "", values);
 var autoWords = () => lang() === "en" ? AUTO_WORDS_EN : AUTO_WORDS;
 var relWords = () => lang() === "en" ? REL_WORDS_EN : REL_WORDS;
 var NODE_OPS = {
@@ -383,14 +409,16 @@ function roomKind(frame) {
       known: false
     };
   const W = words();
-  const to = kind === "said" || kind === "body" ? addresseeOf(f.addressee) : null;
-  if (to && mine.length && !to.addr.some((a) => mine.includes(a))) {
+  const word = kind === "said" || kind === "body";
+  const withheld = word && f.body_withheld === true;
+  const to = word ? addresseeOf(f.addressee) ?? (withheld ? { addr: ["?"], label: "?" } : null) : null;
+  if (to && (withheld || mine.length && !to.addr.some((a) => mine.includes(a)))) {
     const counts = kind === "said";
     const pair = JSON.stringify([roomOf(f.room), author, to.addr[0]]);
-    const word = counts ? values.entry_id : values.refers_to;
+    const id = counts ? values.entry_id : values.refers_to;
     const run = (n) => fill(n === 0 ? W.aside_body : n > 1 ? W.aside_run : W.aside, {
       ...values,
-      word,
+      word: id,
       addressee: to.label,
       count: wordsCount(n)
     });
@@ -421,62 +449,105 @@ function roomKind(frame) {
 var stackOf = (frame) => roomKind(frame)?.rule ?? (frame?.stack === "defer" ? "batch" : "interrupt");
 
 // js/shared/frame-text.ts
-var NOT_ENVELOPE = /* @__PURE__ */ new Set(["body", "provenance", "type", "origin"]);
-var ENVELOPE_FIRST = ["id", "received_at", "stale", "content_type", "body_chars", "body_read"];
-function frameToText(frame, raw) {
-  if (!frame) return `${L("Кадр канала Искрона", "Iskron channel frame")}:
-${raw}`;
+var rec = (v) => v && typeof v === "object" ? v : {};
+var idOf = (v) => typeof v === "number" || typeof v === "string" && v ? String(v) : "";
+var ANSWERABLE = /* @__PURE__ */ new Set(["said", "body", "invite", "objection", "late_objection"]);
+var ZACHIN = 40;
+function caseOf(frame) {
+  const f = frame;
+  const room = rec(f.room);
+  const n = idOf(room.seq) || idOf(room.id);
+  if (!n) return null;
+  const z = typeof room.zachin === "string" ? [...room.zachin.trim()] : [];
+  const zachin = z.length > ZACHIN ? z.slice(0, ZACHIN).join("") + "…" : z.join("");
+  const realm = idOf(room.realm) || idOf(f.realm);
+  return { room: n, zachin, realm };
+}
+var caseKey = (frame) => caseOf(frame)?.room ?? "";
+function caseHead(frame, withZachin) {
+  const c = caseOf(frame);
+  if (!c) return "";
+  const no = phrase("case", { room: c.room });
+  return withZachin && c.zachin ? `${no} «${c.zachin}»` : no;
+}
+function whoOf2(frame, withPlace) {
   const p = frame.provenance ?? {};
   const origin = frame.origin ?? classifyOrigin(frame);
-  const standing = p.from_standing ? L(` — стояние ${p.from_standing}`, ` — standing ${p.from_standing}`) : "";
-  const role = p.from_karta_seq != null ? L(`роли #${p.from_karta_seq}`, `role #${p.from_karta_seq}`) : L("роли неизвестной", "unknown role");
-  const who = origin === "platform" ? L(
-    "от ПЛАТФОРМЫ — побудка, не человек и не делатель",
-    "from the PLATFORM — a wake-up, not a human and not a doer"
-  ) : origin === "human" ? L(`от ЧЕЛОВЕКА`, `from a HUMAN`) + `${p.user ? ` @${p.user}` : ""} (${role})${standing}` : origin === "sibling" ? L(
-    `от БРАТА по твоей роли (#${p.from_karta_seq})${standing} — другое стояние той же роли`,
-    `from a SIBLING of your role (#${p.from_karta_seq})${standing} — another standing of the same role`
-  ) : L(`от делателя ${role}${standing}`, `from a doer of ${role}${standing}`);
-  const lines = [`${L("Кадр канала Искрона", "Iskron channel frame")} ${who}`];
-  const room = frame.room;
-  if (room && typeof room === "object") {
-    const zachin = typeof room.zachin === "string" ? ` «${room.zachin}»` : "";
+  if (origin === "platform") return phrase("who_platform");
+  if (p.via === "graph" && p.from_karta_seq == null && !p.from_standing) return phrase("who_graph");
+  const place = withPlace && p.from_standing ? ` (${p.from_standing})` : "";
+  if (origin === "human") return phrase("who_human", { user: p.user }) + place;
+  const karta = p.from_karta_seq;
+  if (karta == null) return p.from_standing ?? "";
+  return phrase(origin === "sibling" ? "who_sibling" : "who_role", { karta }) + place;
+}
+function textOf(frame) {
+  if (roomKind(frame)?.aside) return "";
+  const b = frame.body;
+  return typeof b === "string" ? b : b === void 0 ? "" : JSON.stringify(b);
+}
+function tail(frame, withReply) {
+  const f = frame;
+  const parts = [];
+  const to = idOf(f.in_reply_to) || idOf(frame.provenance?.in_reply_to);
+  if (withReply && to) parts.push(phrase("reply_to", { id: to }));
+  if (frame.stale === true) parts.push(phrase("stale"));
+  if (typeof frame.body_read === "string" && frame.body_read !== "history")
+    parts.push(phrase("body_read", { how: frame.body_read }));
+  return parts.length ? `, ${parts.join(", ")}` : "";
+}
+function frameToText(frame, raw) {
+  if (!frame) return raw;
+  const f = frame;
+  const origin = frame.origin ?? classifyOrigin(frame);
+  const text = textOf(frame);
+  const c = caseOf(frame);
+  if (c) {
     const rk = roomKind(frame);
-    const f = frame;
-    const words2 = rk ? `: ${rk.words}` : (typeof f.kind === "string" ? L(`, род ${f.kind}`, `, kind ${f.kind}`) : "") + (typeof f.stack === "string" ? L(`, стопка ${f.stack}`, `, stack ${f.stack}`) : "");
-    lines.push(
-      origin === "platform" ? L(`запись ДЕЛА${zachin}${words2}`, `CASE record${zachin}${words2}`) : L(
-        `слово ДЕЛА${zachin}${words2} — ответ идёт записью в то же дело с in_reply_to по id слова (ход для дел — в списке тулов сессии), не send стоянию`,
-        `CASE message${zachin}${words2} — answer with a record in the same case, in_reply_to the message id (the case move is in the session's tool list), not a send to the standing`
-      )
-    );
+    const line = rec(f.line);
+    const entry = idOf(f.entry_id) || idOf(line.entry_id);
+    const words2 = rk ? rk.words : phrase("legacy", { kind: f.kind, stack: typeof f.stack === "string" ? f.stack : "" });
+    const author = rk?.author && !words2.includes(rk.author) ? rk.author : "";
+    const who = origin === "platform" ? "" : whoOf2(frame, false);
+    const by = [author, who].filter(Boolean).join(", ");
+    const withReply = rk?.kind !== "body";
+    const head = `${caseHead(frame, true)}${entry ? ` [${entry}]` : ""} ${words2}${by ? ` — ${by}` : ""}${tail(frame, withReply)}`;
+    const lines2 = [head];
+    if (text && !words2.includes(text.trim())) lines2.push(text);
+    const answerable = !rk || ANSWERABLE.has(rk.kind);
+    if (answerable && origin !== "platform" && c.realm && entry) {
+      const args = `realm="${c.realm}", action="say", room="#${c.room}", in_reply_to=${entry}`;
+      lines2.push(phrase("answer_case", { args }));
+    }
+    return lines2.join("\n");
   }
-  if (frame.provenance) lines.push(`provenance: ${JSON.stringify(frame.provenance)}`);
-  const envelope = {};
-  const rec = frame;
-  for (const k of ENVELOPE_FIRST) if (rec[k] !== void 0) envelope[k] = rec[k];
-  for (const k of Object.keys(rec))
-    if (!(k in envelope) && !NOT_ENVELOPE.has(k) && rec[k] !== void 0) envelope[k] = rec[k];
-  if (Object.keys(envelope).length) lines.push(`frame: ${JSON.stringify(envelope)}`);
-  const body = roomKind(frame)?.aside ? "" : typeof frame.body === "string" ? frame.body : frame.body === void 0 ? raw : JSON.stringify(frame.body, null, 1).replace(/\n\s*/g, " ");
-  return `${lines.join("\n")}
-
-${body}`;
+  const p = frame.provenance ?? {};
+  const id = idOf(frame.id);
+  const lines = [`${whoOf2(frame, true) || "?"}${tail(frame, true)}`];
+  if (text) lines.push(text);
+  if (origin !== "platform" && id && (p.from_standing || p.from_karta_seq != null)) {
+    const karta = p.from_karta_seq ?? p.user_karta_seq;
+    const args = `action="send"${frame.realm ? `, realm="${frame.realm}"` : ""}${karta != null ? `, karta=${karta}` : ""}${p.from_standing ? `, standing="${p.from_standing}"` : ""}, in_reply_to="${id}"`;
+    lines.push(phrase("answer_send", { args }));
+  }
+  return lines.join("\n");
 }
 var BATCH_TEXT = 160;
-function batchLine(frame, run) {
+function batchLine(frame, run, withZachin = true) {
   const f = frame;
   const rk = roomKind(frame);
-  if (rk?.aside) return run === void 0 ? rk.words : rk.aside.run(run);
-  const line = f.line ?? {};
+  const head = caseHead(frame, withZachin);
+  const pre = head ? `${head} ` : "";
+  if (rk?.aside) return pre + (run === void 0 ? rk.words : rk.aside.run(run));
+  const line = rec(f.line);
   const e = f.entry_id ?? line.entry_id ?? f.id;
   const entry = typeof e === "number" || typeof e === "string" ? e : "?";
   const words2 = rk?.words ?? `${L("кадр", "frame")} ${typeof f.id === "string" ? f.id : "?"}`;
   const author = rk?.author && !words2.includes(rk.author) ? ` — ${rk.author}` : "";
-  const body = typeof frame.body === "string" ? frame.body : frame.body === void 0 ? "" : JSON.stringify(frame.body);
-  const flat = [...body.replace(/\s+/g, " ").trim()];
+  const flat = [...textOf(frame).replace(/\s+/g, " ").trim()];
   const text = flat.length > BATCH_TEXT ? flat.slice(0, BATCH_TEXT).join("") + "…" : flat.join("");
-  return `[${entry}] ${words2}${author}${text ? `: ${text}` : ""}`;
+  const dup = !!text && words2.includes(text);
+  return `${pre}[${entry}] ${words2}${author}${tail(frame, rk?.kind !== "body")}${text && !dup ? `: ${text}` : ""}`;
 }
 function foldAsides(frames) {
   const asides = frames.map((f) => roomKind(f)?.aside ?? null);
@@ -495,7 +566,15 @@ function foldAsides(frames) {
 }
 function batchLines(frames) {
   const fold = foldAsides(frames);
-  return frames.flatMap((f, i) => fold[i] === null ? [] : [batchLine(f, fold[i])]);
+  const seen = /* @__PURE__ */ new Set();
+  return frames.flatMap((f, i) => {
+    const run = fold[i];
+    if (run === null) return [];
+    const key = caseKey(f);
+    const first = !seen.has(key);
+    seen.add(key);
+    return [batchLine(f, roomKind(f)?.aside ? run : void 0, first)];
+  });
 }
 function batchHead(frames) {
   return L(
@@ -843,7 +922,7 @@ async function listTools(b) {
   } while (cursor);
   return tools;
 }
-function textOf(result) {
+function textOf2(result) {
   return resultToContent(result).map((c) => c.type === "text" ? c.text : "[image]").join("\n");
 }
 async function refreshToolList(b, state2, reload, say, live) {
@@ -1351,9 +1430,9 @@ async function setupTools(ctx, say, onChannel, rootOf) {
       if (dir) args.cwd = dir;
     }
     const result = await slot.bridge.request("tools/call", { name, arguments: args });
-    if (result?.isError) throw new Error(textOf(result) || `${name}: отказ без текста`);
+    if (result?.isError) throw new Error(textOf2(result) || `${name}: отказ без текста`);
     if (standsBy(name, args)) keeper.stood(slot);
-    return { content: textOf(result) };
+    return { content: textOf2(result) };
   }
   if (state2.listed.length)
     say(`Искрон: тулов из прошлого списка: ${state2.listed.length}; сверю с сервером.`, "info");

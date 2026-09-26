@@ -324,6 +324,18 @@ export const nodeOp = (op, entry_id = 87) =>
 export const unknownKind = (entry_id = 61) =>
   roomFrame("weather", { entry_id, key: "weather", stack: "interrupt", body: "" });
 
+/**
+ * Провод api для неадресата (#6081): said: "direct", тело удержано — body пуст,
+ * body_withheld: true, стопка defer от платформы. Кадр без to_standing: адресное
+ * слово узнаётся по удержанию, не по сравнению мест.
+ */
+export const withheld = (entry_id, addressee = BORIS) => {
+  const f = roomFrame("said", { entry_id, key: "said", stack: "defer", body: "" });
+  delete f.to_standing;
+  delete f.to_standing_id;
+  return { ...f, said: "direct", addressee, body_withheld: true };
+};
+
 // Адресное слово в две фазы (#5893 §4.5b): addressee несёт и said в полёте, и его body.
 export const addressedInFlight = (entry_id, addressee = BORIS) => ({
   ...saidInFlight(entry_id),
