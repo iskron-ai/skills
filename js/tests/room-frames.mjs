@@ -138,6 +138,19 @@ export const addressed = (entry_id, addressee = BORIS, stack = "interrupt") =>
     body: `тайное слово ${entry_id}`,
   });
 
+/**
+ * Адресное слово, чей адресат вышел из дела: addressee остаётся в конверте,
+ * но addressee_left: true велит не сворачивать — слово идёт всем целиком.
+ */
+export const addressedLeft = (entry_id, addressee = BORIS, stack = "interrupt") =>
+  roomFrame("said", {
+    entry_id,
+    key: "said",
+    stack,
+    envelope: { addressee, addressee_left: true },
+    body: `явное слово ${entry_id}`,
+  });
+
 // ── Слово в две фазы (api 0.91.x; #5893 §4.5b, #5953) ──
 // said в полёте: body_pending: true — верхним полем КОНВЕРТА (#5893 §4.5b; api
 // подтвердил по коду провода), текста нет. Стопка interrupt: такой said не

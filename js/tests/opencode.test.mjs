@@ -45,6 +45,7 @@ import {
   addressed,
   addressedBody,
   addressedInFlight,
+  addressedLeft,
   auto,
   body as bodyFrame,
   bodyAborted,
@@ -1984,7 +1985,7 @@ test("a room frame reaches the agent short: case, entry, words, who, the answer;
     );
     assert.equal(
       answerOf(text),
-      'ответ: iskron_case(realm="nks-dev", action="say", room="#7", in_reply_to=41)',
+      'ответ: iskron_case(realm="nks-dev", action="say", room="№7", in_reply_to=41)',
       "the answer names the case and the entry",
     );
 
@@ -2068,7 +2069,7 @@ for (const [server, en] of [
           word,
           /^case №7 «Bench» \[\d+\] message from Alex \(@alex:probe\) — role #48\n/,
         );
-        assert.match(word, /\nanswer: iskron_case\(realm="nks-dev", action="say", room="#7", /);
+        assert.match(word, /\nanswer: iskron_case\(realm="nks-dev", action="say", room="№7", /);
         assert.match(line, /^Case: 1 frames — /);
         assert.match(line, /\ncase №7 «Bench» \[\d+\] \[tests\]/);
         assert.match(
@@ -2328,6 +2329,13 @@ test("(а) an addressed word not to me with stack interrupt does not steer: one 
     prompts[0].text,
   );
   assert.doesNotMatch(prompts[0].text, /тайное слово/, "no body of a word not to me");
+});
+
+test("(а2) an addressed word whose addressee has left the case (addressee_left) is not folded: it prints whole, like any word to all", async () => {
+  const prompts = await asidePrompts("aside-left", [addressedLeft(89)], 1);
+  assert.equal(prompts.length, 1);
+  assert.doesNotMatch(prompts[0].text, new RegExp(ASIDE.replace(/[()]/g, "\\$&")));
+  assert.match(prompts[0].text, /явное слово 89/);
 });
 
 test("(б) three addressed words of one pair in a row are one line «3 слова»", async () => {

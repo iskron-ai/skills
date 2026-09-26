@@ -49,6 +49,7 @@ import {
   addressed,
   addressedBody,
   addressedInFlight,
+  addressedLeft,
   auto,
   body as bodyFrame,
   bodyAborted,
@@ -695,6 +696,13 @@ test("(а) an addressed word not to me with stack interrupt neither steers nor w
   assert.equal(got[0].text, `${CASE7} ${ASIDE}: слово [80]`);
 });
 
+test("(а2) an addressed word whose addressee has left the case (addressee_left) is not folded: it prints whole, like any word to all", async () => {
+  const got = await asideMessages("aside-left", [addressedLeft(89)], 1);
+  assert.equal(got.length, 1, JSON.stringify(got));
+  assert.ok(!got[0].text.includes(ASIDE), `folded as an aside:\n${got[0].text}`);
+  assert.match(got[0].text, /явное слово 89/);
+});
+
 test("(б) three addressed words of one pair in a row are one line «3 слова»", async () => {
   const got = await asideMessages(
     "aside-run",
@@ -763,7 +771,7 @@ test("a lone case frame is short: an entry frame within 200 chars and no JSON; a
     );
     assert.match(
       word,
-      /\nответ: iskron_case\(realm="nks-dev", action="say", room="#7", in_reply_to=62\)$/,
+      /\nответ: iskron_case\(realm="nks-dev", action="say", room="№7", in_reply_to=62\)$/,
     );
     assert.ok(!word.includes('{"'), word);
   } finally {

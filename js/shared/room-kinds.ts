@@ -382,7 +382,14 @@ export function roomKind(frame: Frame | null | undefined): RoomKind | null {
   const to = word
     ? (addresseeOf(f.addressee) ?? (withheld ? { addr: ["?"], label: "?" } : null))
     : null;
-  if (to && (withheld || (mine.length && !to.addr.some((a) => mine.includes(a))))) {
+  // Адресат вышел из дела (api): addressee остаётся в конверте, но слово идёт всем —
+  // не сворачивай в «А → Б», печатай как всякое слово.
+  const addresseeLeft = f.addressee_left === true || fields.addressee_left === true;
+  if (
+    to &&
+    !addresseeLeft &&
+    (withheld || (mine.length && !to.addr.some((a) => mine.includes(a))))
+  ) {
     const counts = kind === "said";
     const pair = JSON.stringify([roomOf(f.room), author, to.addr[0]]);
     const id = counts ? values.entry_id : values.refers_to;

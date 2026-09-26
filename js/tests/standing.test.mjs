@@ -22,6 +22,7 @@ import {
   addressed,
   addressedBody,
   addressedInFlight,
+  addressedLeft,
   auto,
   body as bodyFrame,
   bodyAborted,
@@ -3296,6 +3297,23 @@ test("(а) an addressed word not to me with stack interrupt does not wake the Mo
   await wd.done;
 });
 
+test("(а2) an addressed word whose addressee has left the case (addressee_left) is not folded — it prints in full, like any word to all", async (t) => {
+  const { fake, dir, key } = await connected(t, {
+    env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "1500" },
+  });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog", dir, key, 15_000);
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
+  await sendRoom(fake, addressedLeft(89));
+  await waitFor(() => wd.out.includes("явное слово 89"), "the word printed whole", 8000);
+  assert.ok(
+    !wd.out.includes(ASIDE),
+    `the word with a left addressee was folded as an aside:\n${wd.out}`,
+  );
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
 test("(б) three addressed words of one pair in a row are one line «3 слова» — Monitor and the exit watchdog", async (t) => {
   const { fake, dir, key } = await connected(t, {
     env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "1500" },
@@ -3565,7 +3583,7 @@ test("a lone interrupting said under Monitor prints whole and short: case, entry
   assert.ok(!own.includes('{"'), `no raw JSON:\n${own}`);
   assert.match(
     wd.out,
-    /ответ: iskron_case\(realm="nks-dev", action="say", room="#7", in_reply_to=500\)/,
+    /ответ: iskron_case\(realm="nks-dev", action="say", room="№7", in_reply_to=500\)/,
   );
   assert.ok(!wd.out.includes("Дело: кадров"), `no batch:\n${wd.out}`);
   assert.ok(!wd.out.includes('iskron_case(action="history"'), `no batch pointer:\n${wd.out}`);

@@ -2279,7 +2279,8 @@ function roomKind(frame2) {
   const word = kind === "said" || kind === "body";
   const withheld = word && f.body_withheld === true;
   const to = word ? addresseeOf(f.addressee) ?? (withheld ? { addr: ["?"], label: "?" } : null) : null;
-  if (to && (withheld || mine.length && !to.addr.some((a) => mine.includes(a)))) {
+  const addresseeLeft = f.addressee_left === true || fields.addressee_left === true;
+  if (to && !addresseeLeft && (withheld || mine.length && !to.addr.some((a) => mine.includes(a)))) {
     const counts = kind === "said";
     const pair = JSON.stringify([roomOf(f.room), author, to.addr[0]]);
     const id = counts ? values.entry_id : values.refers_to;
@@ -2384,7 +2385,7 @@ function frameToText(frame2, raw) {
     if (text && !words2.includes(text.trim())) lines2.push(text);
     const answerable = !rk || ANSWERABLE.has(rk.kind);
     if (answerable && origin !== "platform" && c.realm && entry) {
-      const args = `realm="${c.realm}", action="say", room="#${c.room}", in_reply_to=${entry}`;
+      const args = `realm="${c.realm}", action="say", room="№${c.room}", in_reply_to=${entry}`;
       lines2.push(phrase("answer_case", { args }));
     }
     return lines2.join("\n");
