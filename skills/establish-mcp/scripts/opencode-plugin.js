@@ -1,3 +1,86 @@
+// js/shared/lang.ts
+import { readFileSync } from "node:fs";
+import { join as join2 } from "node:path";
+
+// js/shared/standings.ts
+import { homedir } from "node:os";
+import { join } from "node:path";
+var defaultAuthDir = () => join(homedir(), ".iskron-bridge");
+var authDirFromEnv = () => process.env.ISKRON_BRIDGE_AUTH_DIR?.trim() || defaultAuthDir();
+
+// js/shared/lang.ts
+function langOfUrl(url) {
+  try {
+    return /\.ai\.?$/i.test(new URL(url).hostname) ? "en" : "ru";
+  } catch {
+    return "ru";
+  }
+}
+function forcedLang() {
+  const v = process.env.ISKRON_BRIDGE_LANG?.trim().toLowerCase();
+  return v === "en" || v === "ru" ? v : null;
+}
+function resolve() {
+  const forced = forcedLang();
+  if (forced) return forced;
+  const fromEnv = process.env.ISKRON_BRIDGE_URL?.trim();
+  if (fromEnv) return langOfUrl(fromEnv);
+  try {
+    const text = readFileSync(join2(authDirFromEnv(), "server"), "utf8").trim();
+    if (text) return langOfUrl(text);
+  } catch {
+  }
+  return "ru";
+}
+var current = null;
+var lang = () => current ??= resolve();
+var L = (ru, en) => lang() === "en" ? en : ru;
+
+// js/shared/launch.ts
+var LINE = /^[ \t]*start\s+(\S+)\s+(\S+)\s+(?:(?:дело|case)\s+)?[№#]\s?(\d+)(?:[ \t]+(?:от|from)[ \t]+(@\S+))?(?=\s|$)/imu;
+function parseLaunch(text) {
+  const [, realm, karta, no, of] = LINE.exec(text) ?? [];
+  return realm && karta && no ? { realm, karta, no, of: of ?? null } : null;
+}
+function withWord(text, word) {
+  const m = LINE.exec(text);
+  if (!m) return `${text}
+${word}`;
+  const nl = text.indexOf("\n", m.index);
+  return nl < 0 ? `${text}
+${word}` : `${text.slice(0, nl)}
+${word}${text.slice(nl)}`;
+}
+async function enterCase(l, call, satelliteOf, placeName) {
+  const room = `#${l.no}`;
+  const stand = { realm: l.realm, karta: l.karta };
+  if (satelliteOf) stand.satellite_of = satelliteOf;
+  try {
+    await call("iskron_stand", stand);
+  } catch (e) {
+    const why = e.message;
+    const join6 = `iskron_case(action="join", room="${room}")`;
+    return L(
+      `Искрон: строка запуска — не встал: ${why}. Встань сам (iskron_stand) и войди в дело №${l.no}: ${join6}.`,
+      `Iskron: launch line — not seated: ${why}. Take your seat yourself (iskron_stand) and enter case №${l.no}: ${join6}.`
+    );
+  }
+  const place = placeName() || L("своим местом", "in a seat of its own");
+  try {
+    await call("iskron_case", { action: "join", realm: l.realm, room });
+  } catch (e) {
+    const why = e.message;
+    return L(
+      `Искрон: встал ${place}; в дело №${l.no} не вошёл — ${why}. Место остаётся.`,
+      `Iskron: seated ${place}; did not enter case №${l.no} — ${why}. The seat stays.`
+    );
+  }
+  return L(
+    `Искрон: встал ${place}, вошёл в дело №${l.no} — первым словом перескажи бриф в деле.`,
+    `Iskron: seated ${place}, entered case №${l.no} — retell the brief as your first message in the case.`
+  );
+}
+
 // js/shared/channel.ts
 var SILENT_FLOOR_MS = Number(process.env.ISKRON_CHANNEL_SILENT_FLOOR_MS) || 6e4;
 var FLAP_PAUSES_MS = (process.env.ISKRON_CHANNEL_FLAP_MS || "5000,10000,20000,40000,60000").split(",").map(Number).filter((n) => Number.isFinite(n) && n > 0);
@@ -30,12 +113,12 @@ var OPENCODE_CLIENT = "opencode-iskron";
 
 // js/shared/version.ts
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readFileSync as readFileSync2 } from "node:fs";
 import { fileURLToPath } from "node:url";
 var VERSION = "6.19.0";
 function buildOf(selfUrl) {
   try {
-    const src = readFileSync(fileURLToPath(selfUrl));
+    const src = readFileSync2(fileURLToPath(selfUrl));
     return `v${VERSION}+${createHash("sha256").update(src).digest("hex").slice(0, 8)}`;
   } catch {
     return `v${VERSION}`;
@@ -43,7 +126,7 @@ function buildOf(selfUrl) {
 }
 function buildOfFile(path) {
   try {
-    const src = readFileSync(path);
+    const src = readFileSync2(path);
     const v = versionIn(src.toString("utf8")) ?? "?";
     return `v${v}+${createHash("sha256").update(src).digest("hex").slice(0, 8)}`;
   } catch {
@@ -79,7 +162,8 @@ var WORDS = {
   closed: "дело закрыто: {reason}",
   objection: "{author} возражает против закрытия: {reason}",
   late_objection: "{author} возразил после закрытия",
-  progress: "{author}: [{key}] {done} = {verdict}{; note}",
+  // Строка гроссбуха — ровно «[было] [сделал] = вердикт», примечание к не-ok, автор хвостом (норма владельца).
+  progress: "[{key}] [{done}] = {verdict}{ — note} · {author}",
   opened: "дело открыл {author}",
   joined: "вошёл {who}",
   left: "вышел {who}{; причина: reason}",
@@ -93,21 +177,71 @@ var WORDS = {
   auto: "запись платформы {code} о деле №{room}",
   unknown: "род {kind} мосту неизвестен"
 };
+var WORDS_EN = {
+  said: "message from {author}",
+  said_pending: "message from {author} in flight — the text follows",
+  body: "text of message [{refers_to}] from {author}",
+  body_aborted: "message [{refers_to}] cut off by its author",
+  body_lapsed: "message [{refers_to}] cut off by the platform on its deadline",
+  closing: "the lead {author} proposes to close the case by {ends_at}{; evidence: evidence}",
+  closing_may: 'you may object — iskron_case(action="object", in_reply_to={entry_id}) (former name iskron_room)',
+  closing_not: "the objection is not yours to make",
+  closed: "case closed: {reason}",
+  objection: "{author} objects to closing: {reason}",
+  late_objection: "{author} objected after the close",
+  progress: "[{key}] [{done}] = {verdict}{ — note} · {author}",
+  opened: "case opened by {author}",
+  joined: "entered {who}",
+  left: "left {who}{; reason: reason}",
+  invite: "{author} invites {who} to the case",
+  withdraw: "invitation withdrawn by {author}",
+  node: "node #{seq} {name} ({realm}) in the case{; reasoning}",
+  node_updated: "node #{seq} {name} updated{; reasoning}",
+  node_deleted: "node #{seq} {name} deleted{; reasoning}",
+  node_undeleted: "node #{seq} {name} restored{; reasoning}",
+  link: "case linked to case №{room} ({rel})",
+  auto: "platform record {code} about case №{room}",
+  unknown: "kind {kind} is unknown to the bridge"
+};
 var AUTO_WORDS = {
   child_opened: "дочернее дело №{room} открыто",
   child_closing: "дочернее дело №{room} закрывается",
   child_closed: "дочернее дело №{room} закрыто",
   child_late_objection: "позднее возражение в дочернем деле №{room}"
 };
+var AUTO_WORDS_EN = {
+  child_opened: "child case №{room} opened",
+  child_closing: "child case №{room} is closing",
+  child_closed: "child case №{room} closed",
+  child_late_objection: "late objection in child case №{room}"
+};
 var REL_WORDS = {
   parent: "дочернее к нему",
   child: "родительское к нему",
   continues: "продолжает его"
 };
+var REL_WORDS_EN = {
+  parent: "its child",
+  child: "its parent",
+  continues: "continues it"
+};
+var VERDICT_WORDS = {
+  ok: "ok",
+  partial: "частично",
+  bad: "slop"
+};
+var VERDICT_WORDS_EN = {
+  ok: "ok",
+  partial: "partial",
+  bad: "slop"
+};
+var words = () => lang() === "en" ? WORDS_EN : WORDS;
+var autoWords = () => lang() === "en" ? AUTO_WORDS_EN : AUTO_WORDS;
+var relWords = () => lang() === "en" ? REL_WORDS_EN : REL_WORDS;
 var NODE_OPS = {
-  updated: WORDS.node_updated,
-  deleted: WORDS.node_deleted,
-  undeleted: WORDS.node_undeleted
+  updated: "node_updated",
+  deleted: "node_deleted",
+  undeleted: "node_undeleted"
 };
 var RULES = {
   said: "stack",
@@ -135,7 +269,7 @@ function authorOf(author) {
   const standing = str(a.standing);
   if (name) return standing ? `${name} (${standing})` : name;
   if (standing) return standing;
-  return a.kind === "platform" ? "платформа" : "?";
+  return a.kind === "platform" ? L("платформа", "platform") : "?";
 }
 var after = (key, prefix) => key.startsWith(prefix) ? key.slice(prefix.length) : key;
 function fill(template, v) {
@@ -184,7 +318,7 @@ function roomKind(frame) {
     author: byWhom,
     key,
     done: line.done,
-    verdict: line.verdict,
+    verdict: (lang() === "en" ? VERDICT_WORDS_EN : VERDICT_WORDS)[str(line.verdict)] ?? line.verdict,
     note: line.note,
     ends_at: fields.ends_at,
     evidence: Array.isArray(fields.evidence) ? fields.evidence.map(str).join(", ") : "",
@@ -197,7 +331,7 @@ function roomKind(frame) {
     // Вошедший и ушедший — место fields.standing (уход по сроку пишет платформа, api 0.89.6), иначе автор.
     who: kind === "joined" || kind === "left" ? whoOf({ standing: fields.standing }) || byWhom : whoOf(fields) || after(key, "invite:"),
     room: roomOf(fields.room) || after(key, "link:"),
-    rel: REL_WORDS[str(fields.rel)] ?? fields.rel,
+    rel: relWords()[str(fields.rel)] ?? fields.rel,
     code: fields.code,
     seq: node.seq,
     name: node.name,
@@ -211,30 +345,31 @@ function roomKind(frame) {
     return {
       kind,
       rule: "batch",
-      words: fill(WORDS.unknown, values),
+      words: fill(words().unknown, values),
       author,
       phase: null,
       known: false
     };
   const pending = kind === "said" && f.body_pending === true && !str(f.body) && !str(line.done);
   const aborted = kind === "body" && fields.aborted === true;
-  const wordsOf = pending ? WORDS.said_pending : aborted ? obj(line.author).kind === "platform" ? WORDS.body_lapsed : WORDS.body_aborted : kind === "auto" ? AUTO_WORDS[str(values.code)] ?? WORDS.auto : (
+  const W = words();
+  const wordsOf = pending ? W.said_pending : aborted ? obj(line.author).kind === "platform" ? W.body_lapsed : W.body_aborted : kind === "auto" ? autoWords()[str(values.code)] ?? W.auto : (
     // op узла (bound | updated | deleted | undeleted): без op и bound — прежнее слово.
-    kind === "node" && NODE_OPS[str(fields.op)] ? NODE_OPS[str(fields.op)] : WORDS[kind]
+    kind === "node" && NODE_OPS[str(fields.op)] ? W[NODE_OPS[str(fields.op)]] : W[kind]
   );
-  let words = fill(wordsOf, values);
+  let text = fill(wordsOf ?? "", values);
   if (kind === "closing") {
     const may = Array.isArray(fields.may_object) ? fields.may_object.map((m) => typeof m === "string" ? m : str(obj(m).id)) : [];
     const myId = str(f.to_standing_id);
     const mayI = !!myId && may.includes(myId);
-    words += "; " + fill(mayI ? WORDS.closing_may : WORDS.closing_not, values);
+    text += "; " + fill(mayI ? W.closing_may : W.closing_not, values);
   }
   const stack = rule === "stack" ? (
     // Стопка решает у said и body; слово без стопки — прежним путём, вставкой.
     f.stack === "defer" ? "batch" : "interrupt"
   ) : rule === "mine" ? mine.includes(str(values.target)) || myRole(f, fields) ? "interrupt" : "batch" : rule;
   const phase = pending ? "pending" : aborted ? "aborted" : null;
-  return { kind, rule: phase ? "batch" : stack, words, author, phase, known: true };
+  return { kind, rule: phase ? "batch" : stack, words: text, author, phase, known: true };
 }
 var stackOf = (frame) => roomKind(frame)?.rule ?? (frame?.stack === "defer" ? "batch" : "interrupt");
 
@@ -242,22 +377,31 @@ var stackOf = (frame) => roomKind(frame)?.rule ?? (frame?.stack === "defer" ? "b
 var NOT_ENVELOPE = /* @__PURE__ */ new Set(["body", "provenance", "type", "origin"]);
 var ENVELOPE_FIRST = ["id", "received_at", "stale", "content_type", "body_chars", "body_read"];
 function frameToText(frame, raw) {
-  if (!frame) return `Кадр канала Искрона:
+  if (!frame) return `${L("Кадр канала Искрона", "Iskron channel frame")}:
 ${raw}`;
   const p = frame.provenance ?? {};
   const origin = frame.origin ?? classifyOrigin(frame);
-  const standing = p.from_standing ? ` — стояние ${p.from_standing}` : "";
-  const role = p.from_karta_seq != null ? `роли #${p.from_karta_seq}` : "роли неизвестной";
-  const who = origin === "platform" ? "от ПЛАТФОРМЫ — побудка, не человек и не делатель" : origin === "human" ? `от ЧЕЛОВЕКА${p.user ? ` @${p.user}` : ""} (${role})${standing}` : origin === "sibling" ? `от БРАТА по твоей роли (#${p.from_karta_seq})${standing} — другое стояние той же роли` : `от делателя ${role}${standing}`;
-  const lines = [`Кадр канала Искрона ${who}`];
+  const standing = p.from_standing ? L(` — стояние ${p.from_standing}`, ` — standing ${p.from_standing}`) : "";
+  const role = p.from_karta_seq != null ? L(`роли #${p.from_karta_seq}`, `role #${p.from_karta_seq}`) : L("роли неизвестной", "unknown role");
+  const who = origin === "platform" ? L(
+    "от ПЛАТФОРМЫ — побудка, не человек и не делатель",
+    "from the PLATFORM — a wake-up, not a human and not a doer"
+  ) : origin === "human" ? L(`от ЧЕЛОВЕКА`, `from a HUMAN`) + `${p.user ? ` @${p.user}` : ""} (${role})${standing}` : origin === "sibling" ? L(
+    `от БРАТА по твоей роли (#${p.from_karta_seq})${standing} — другое стояние той же роли`,
+    `from a SIBLING of your role (#${p.from_karta_seq})${standing} — another standing of the same role`
+  ) : L(`от делателя ${role}${standing}`, `from a doer of ${role}${standing}`);
+  const lines = [`${L("Кадр канала Искрона", "Iskron channel frame")} ${who}`];
   const room = frame.room;
   if (room && typeof room === "object") {
     const zachin = typeof room.zachin === "string" ? ` «${room.zachin}»` : "";
     const rk = roomKind(frame);
     const f = frame;
-    const words = rk ? `: ${rk.words}` : (typeof f.kind === "string" ? `, род ${f.kind}` : "") + (typeof f.stack === "string" ? `, стопка ${f.stack}` : "");
+    const words2 = rk ? `: ${rk.words}` : (typeof f.kind === "string" ? L(`, род ${f.kind}`, `, kind ${f.kind}`) : "") + (typeof f.stack === "string" ? L(`, стопка ${f.stack}`, `, stack ${f.stack}`) : "");
     lines.push(
-      origin === "platform" ? `запись ДЕЛА${zachin}${words}` : `слово ДЕЛА${zachin}${words} — ответ идёт записью в то же дело с in_reply_to по id слова (ход для дел — в списке тулов сессии), не send стоянию`
+      origin === "platform" ? L(`запись ДЕЛА${zachin}${words2}`, `CASE record${zachin}${words2}`) : L(
+        `слово ДЕЛА${zachin}${words2} — ответ идёт записью в то же дело с in_reply_to по id слова (ход для дел — в списке тулов сессии), не send стоянию`,
+        `CASE message${zachin}${words2} — answer with a record in the same case, in_reply_to the message id (the case move is in the session's tool list), not a send to the standing`
+      )
     );
   }
   if (frame.provenance) lines.push(`provenance: ${JSON.stringify(frame.provenance)}`);
@@ -279,15 +423,18 @@ function batchLine(frame) {
   const line = f.line ?? {};
   const e = f.entry_id ?? line.entry_id ?? f.id;
   const entry = typeof e === "number" || typeof e === "string" ? e : "?";
-  const words = rk?.words ?? `кадр ${typeof f.id === "string" ? f.id : "?"}`;
-  const author = rk?.author && !words.includes(rk.author) ? ` — ${rk.author}` : "";
+  const words2 = rk?.words ?? `${L("кадр", "frame")} ${typeof f.id === "string" ? f.id : "?"}`;
+  const author = rk?.author && !words2.includes(rk.author) ? ` — ${rk.author}` : "";
   const body = typeof frame.body === "string" ? frame.body : frame.body === void 0 ? "" : JSON.stringify(frame.body);
   const flat = [...body.replace(/\s+/g, " ").trim()];
   const text = flat.length > BATCH_TEXT ? flat.slice(0, BATCH_TEXT).join("") + "…" : flat.join("");
-  return `[${entry}] ${words}${author}${text ? `: ${text}` : ""}`;
+  return `[${entry}] ${words2}${author}${text ? `: ${text}` : ""}`;
 }
 function batchHead(frames) {
-  return `Дело: кадров ${frames.length} — накопились, не прерывая хода; ${batchPointer(frames)}; следом по строке на кадр.`;
+  return L(
+    `Дело: кадров ${frames.length} — накопились, не прерывая хода; ${batchPointer(frames)}; следом по строке на кадр.`,
+    `Case: ${frames.length} frames — gathered without interrupting the turn; ${batchPointer(frames)}; one line per frame follows.`
+  );
 }
 function batchPointer(frames) {
   const since = /* @__PURE__ */ new Map();
@@ -302,8 +449,12 @@ function batchPointer(frames) {
     const args = (typeof realm === "string" && realm ? `realm="${realm}", ` : "") + `action="history", room=${typeof n === "number" ? String(n) : JSON.stringify(n)}`;
     since.set(args, Math.min(since.get(args) ?? e, e));
   }
-  if (!since.size) return 'целиком — iskron_channel(action="history")';
-  return "целиком — " + [...since].map(([args, e]) => `iskron_case(${args}, since=${e - 1})`).join("; ") + " (старый тул без since — history с keep_cursor=true)";
+  const whole = L("целиком — ", "in full — ");
+  if (!since.size) return `${whole}iskron_channel(action="history")`;
+  return whole + [...since].map(([args, e]) => `iskron_case(${args}, since=${e - 1})`).join("; ") + L(
+    " (старый тул без since — history с keep_cursor=true)",
+    " (an older tool without since — history with keep_cursor=true)"
+  );
 }
 
 // js/bridge/backlog.ts
@@ -439,12 +590,12 @@ var Bridge = class {
         opts.signal?.removeEventListener("abort", onAbort);
         fn(v);
       };
-      const resolve2 = settle(res);
+      const resolve3 = settle(res);
       const reject = settle(rej);
       function onAbort() {
         reject(new Error("вызов отменён"));
       }
-      this.pending.set(id, { resolve: resolve2, reject });
+      this.pending.set(id, { resolve: resolve3, reject });
       if (opts.signal) {
         if (opts.signal.aborted) return onAbort();
         opts.signal.addEventListener("abort", onAbort, { once: true });
@@ -518,17 +669,17 @@ import {
   constants,
   mkdirSync,
   readdirSync,
-  readFileSync as readFileSync2,
+  readFileSync as readFileSync3,
   statSync,
   writeFileSync
 } from "node:fs";
-import { homedir as homedir2 } from "node:os";
-import { join as join2, resolve } from "node:path";
+import { homedir as homedir3 } from "node:os";
+import { join as join4, resolve as resolve2 } from "node:path";
 
 // js/shared/home.ts
-import { homedir } from "node:os";
-import { join } from "node:path";
-var homeBridgePath = () => join(homedir(), ".iskron-bridge", "iskron-bridge.mjs");
+import { homedir as homedir2 } from "node:os";
+import { join as join3 } from "node:path";
+var homeBridgePath = () => join3(homedir2(), ".iskron-bridge", "iskron-bridge.mjs");
 
 // js/opencode/bridge-io.ts
 var HANDSHAKE_MS = Number(process.env.ISKRON_MCP_HANDSHAKE_MS || 6e5);
@@ -538,7 +689,7 @@ var PROTOCOL = "2025-06-18";
 function findBridge() {
   const tried = [];
   const env = process.env.ISKRON_BRIDGE_PATH?.trim();
-  if (env) tried.push(resolve(env));
+  if (env) tried.push(resolve2(env));
   tried.push(homeBridgePath());
   for (const candidate of tried) {
     try {
@@ -553,15 +704,15 @@ function buildsLine(bridgePath, pluginUrl) {
   return `сборка: мост ${buildOfFile(bridgePath) ?? "не читается"}, плагин ${buildOf(pluginUrl)}`;
 }
 function authDir() {
-  return process.env.ISKRON_BRIDGE_AUTH_DIR || join2(homedir2(), ".iskron-bridge");
+  return process.env.ISKRON_BRIDGE_AUTH_DIR || join4(homedir3(), ".iskron-bridge");
 }
 function cachePath() {
-  return join2(authDir(), "opencode-tools.json");
+  return join4(authDir(), "opencode-tools.json");
 }
 function grantStamp() {
   const dir = authDir();
   try {
-    return readdirSync(dir).filter((f) => f.endsWith(".json") && f !== "opencode-tools.json").map((f) => `${f}:${statSync(join2(dir, f)).mtimeMs}`).sort().join("|");
+    return readdirSync(dir).filter((f) => f.endsWith(".json") && f !== "opencode-tools.json").map((f) => `${f}:${statSync(join4(dir, f)).mtimeMs}`).sort().join("|");
   } catch {
     return "";
   }
@@ -569,7 +720,7 @@ function grantStamp() {
 var sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 function readCache() {
   try {
-    const list = JSON.parse(readFileSync2(cachePath(), "utf8"));
+    const list = JSON.parse(readFileSync3(cachePath(), "utf8"));
     return Array.isArray(list) && list.length ? list : null;
   } catch {
     return null;
@@ -577,7 +728,7 @@ function readCache() {
 }
 function writeCache(tools) {
   try {
-    mkdirSync(join2(cachePath(), ".."), { recursive: true, mode: 448 });
+    mkdirSync(join4(cachePath(), ".."), { recursive: true, mode: 448 });
     writeFileSync(cachePath(), JSON.stringify(tools), { mode: 384 });
   } catch {
   }
@@ -647,8 +798,8 @@ async function refreshToolList(b, state2, reload, say, live) {
 }
 
 // js/opencode/keep.ts
-import { mkdirSync as mkdirSync2, readdirSync as readdirSync2, readFileSync as readFileSync3, unlinkSync, writeFileSync as writeFileSync2 } from "node:fs";
-import { join as join3 } from "node:path";
+import { mkdirSync as mkdirSync2, readdirSync as readdirSync2, readFileSync as readFileSync4, unlinkSync, writeFileSync as writeFileSync2 } from "node:fs";
+import { join as join5 } from "node:path";
 var WATCH_MS = Number(process.env.ISKRON_BRIDGE_WATCH_MS || 5 * 6e4);
 var MARKER_PREFIX = "opencode-lost";
 function writeLostMarker(authDir2, slots) {
@@ -658,7 +809,7 @@ function writeLostMarker(authDir2, slots) {
     mkdirSync2(authDir2, { recursive: true, mode: 448 });
     const lost = { at: (/* @__PURE__ */ new Date()).toISOString(), entries };
     const name = `${MARKER_PREFIX}.${process.pid}.${Math.random().toString(36).slice(2, 8)}.json`;
-    writeFileSync2(join3(authDir2, name), JSON.stringify(lost), { mode: 384 });
+    writeFileSync2(join5(authDir2, name), JSON.stringify(lost), { mode: 384 });
   } catch {
   }
 }
@@ -674,8 +825,8 @@ function takeLostMarker(authDir2) {
   for (const f of files) {
     let text;
     try {
-      text = readFileSync3(join3(authDir2, f), "utf8");
-      unlinkSync(join3(authDir2, f));
+      text = readFileSync4(join5(authDir2, f), "utf8");
+      unlinkSync(join5(authDir2, f));
     } catch {
       continue;
     }
@@ -807,6 +958,87 @@ function asSatellite(args, of) {
   if (args.karta == null || args.karta === "") args.karta = of.karta;
 }
 
+// js/opencode/launch.ts
+function createLauncher(d) {
+  const prompted = /* @__PURE__ */ new Set();
+  return {
+    forget: (id) => void prompted.delete(id),
+    async launch(sessionID, text) {
+      if (prompted.has(sessionID)) return null;
+      prompted.add(sessionID);
+      const l = parseLaunch(text);
+      if (!l) return null;
+      const root = await d.rootOf(sessionID);
+      if (root === sessionID) return null;
+      const slot = d.childSlot(sessionID, root);
+      return enterCase(
+        l,
+        (name, args) => d.call(slot, name, args, sessionID),
+        null,
+        () => slot.place?.name
+      );
+    }
+  };
+}
+
+// js/opencode/login.ts
+function createLogin(say) {
+  let pending = false;
+  let url = null;
+  const waiters = /* @__PURE__ */ new Set();
+  function started() {
+    if (pending) return { promise: Promise.resolve(), cancel() {
+    } };
+    let waiter = () => {
+    };
+    const promise = new Promise((r) => waiter = r);
+    waiters.add(waiter);
+    return { promise, cancel: () => waiters.delete(waiter) };
+  }
+  function error() {
+    return new Error(
+      `Искрон: нужен вход в граф — ${url ? `открой в браузере ${url}` : "заверши вход в браузере"} и повтори вызов. Адрес локальный для машины OpenCode: с другой — ssh -L <порт>:127.0.0.1:<порт>; на безголовой машине положи личный токен в ~/.iskron-bridge/token (скилл establish-mcp).`
+    );
+  }
+  return {
+    get pending() {
+      return pending;
+    },
+    get url() {
+      return url;
+    },
+    on(next) {
+      for (const w of waiters) w();
+      waiters.clear();
+      if (pending && next === url) return;
+      pending = true;
+      url = next;
+      say(
+        `Искрон: нужен вход — ${next ? `открой ${next} и заверши его` : "заверши его в браузере"}; адрес локальный: с другой машины — ssh -L <порт>:127.0.0.1:<порт>, либо личный токен в ~/.iskron-bridge/token. Тулы iskron_* поднимутся после входа сами.`,
+        "warning"
+      );
+    },
+    done() {
+      pending = false;
+      url = null;
+    },
+    async race(ready) {
+      if (pending) throw error();
+      const login = started();
+      try {
+        await Promise.race([
+          ready(),
+          login.promise.then(() => {
+            throw error();
+          })
+        ]);
+      } finally {
+        login.cancel();
+      }
+    }
+  };
+}
+
 // js/opencode/status.ts
 function statusLines(path, builds, login, state2, sessions, spare) {
   return [
@@ -836,7 +1068,7 @@ async function setupTools(ctx, say, onChannel, rootOf) {
       "error"
     );
     return { forget() {
-    }, stop() {
+    }, launch: async () => null, stop() {
     } };
   }
   const path = found.path;
@@ -844,34 +1076,7 @@ async function setupTools(ctx, say, onChannel, rootOf) {
   const slots = /* @__PURE__ */ new Map();
   let spare = null;
   let stopped = false;
-  let loginPending = false;
-  let loginUrl = null;
-  const loginWaiters = /* @__PURE__ */ new Set();
-  function loginStarted() {
-    if (loginPending) return { promise: Promise.resolve(), cancel() {
-    } };
-    let waiter = () => {
-    };
-    const promise = new Promise((r) => waiter = r);
-    loginWaiters.add(waiter);
-    return { promise, cancel: () => loginWaiters.delete(waiter) };
-  }
-  function onLogin(url) {
-    for (const w of loginWaiters) w();
-    loginWaiters.clear();
-    if (loginPending && url === loginUrl) return;
-    loginPending = true;
-    loginUrl = url;
-    say(
-      `Искрон: нужен вход — ${url ? `открой ${url} и заверши его` : "заверши его в браузере"}; адрес локальный: с другой машины — ssh -L <порт>:127.0.0.1:<порт>, либо личный токен в ~/.iskron-bridge/token. Тулы iskron_* поднимутся после входа сами.`,
-      "warning"
-    );
-  }
-  function loginError() {
-    return new Error(
-      `Искрон: нужен вход в граф — ${loginUrl ? `открой в браузере ${loginUrl}` : "заверши вход в браузере"} и повтори вызов. Адрес локальный для машины OpenCode: с другой — ssh -L <порт>:127.0.0.1:<порт>; на безголовой машине положи личный токен в ~/.iskron-bridge/token (скилл establish-mcp).`
-    );
-  }
+  const login = createLogin(say);
   function spawn2(args = []) {
     const slot = {
       bridge: null,
@@ -932,10 +1137,7 @@ async function setupTools(ctx, say, onChannel, rootOf) {
     keeper.hint(lost.entries);
   }
   function shake(slot) {
-    slot.ready = handshake(slot.bridge, onLogin, () => {
-      loginPending = false;
-      loginUrl = null;
-    });
+    slot.ready = handshake(slot.bridge, login.on, login.done);
     slot.ready.catch(() => {
     });
   }
@@ -1015,7 +1217,14 @@ async function setupTools(ctx, say, onChannel, rootOf) {
     say,
     () => !stopped
   );
-  const statusText = () => statusLines(path, builds, { loginPending, loginUrl }, state2, slots.size, spare ? 1 : 0);
+  const statusText = () => statusLines(
+    path,
+    builds,
+    { loginPending: login.pending, loginUrl: login.url },
+    state2,
+    slots.size,
+    spare ? 1 : 0
+  );
   await ctx.tool.transform((editor) => {
     editor.add({
       name: STATUS_TOOL,
@@ -1060,20 +1269,7 @@ async function setupTools(ctx, say, onChannel, rootOf) {
       own.resume = keeper.resume(own, sessionID).finally(() => own.resume = null);
     return own;
   }
-  async function awaitReady(slot) {
-    if (loginPending) throw loginError();
-    const login = loginStarted();
-    try {
-      await Promise.race([
-        readyFor(slot),
-        login.promise.then(() => {
-          throw loginError();
-        })
-      ]);
-    } finally {
-      login.cancel();
-    }
-  }
+  const awaitReady = (slot) => login.race(() => readyFor(slot));
   async function callThrough(slot, name, input, sessionID) {
     await awaitReady(slot);
     if (slot.resume) await slot.resume;
@@ -1125,8 +1321,23 @@ async function setupTools(ctx, say, onChannel, rootOf) {
       }
     }
   })();
+  const launcher = createLauncher({
+    rootOf,
+    childSlot: (sessionID, root) => childSlot(sessionID, slots.get(root)),
+    async call(slot, name, args, sessionID) {
+      slot.busy++;
+      try {
+        return (await callThrough(slot, name, args, sessionID)).content;
+      } finally {
+        slot.busy--;
+        slot.lastCall = Date.now();
+      }
+    }
+  });
   return {
+    launch: launcher.launch,
     forget(session) {
+      launcher.forget(session);
       keeper.forget(session);
       const slot = slots.get(session);
       if (!slot) return;
@@ -1333,7 +1544,7 @@ function setupChannel(ctx, say, freshestRoot) {
 }
 
 // js/opencode/commands.ts
-import { readFileSync as readFileSync4 } from "node:fs";
+import { readFileSync as readFileSync5 } from "node:fs";
 function slashOf(markdown) {
   if (!markdown.startsWith("---")) return false;
   const end = markdown.indexOf("\n---", 3);
@@ -1356,7 +1567,7 @@ async function listSkills(ctx) {
     if (!id || !path) continue;
     let text;
     try {
-      text = readFileSync4(path, "utf8");
+      text = readFileSync5(path, "utf8");
     } catch {
       continue;
     }
@@ -1447,13 +1658,25 @@ async function setup(ctx) {
   } catch (e) {
     say(`Искрон: канал не встал — ${e.message}`, "error");
   }
-  let half = { forget() {
-  }, stop() {
-  } };
+  let half = {
+    forget() {
+    },
+    launch: async () => null,
+    stop() {
+    }
+  };
   try {
     half = await setupTools(ctx, say, onChannel, rootOf);
   } catch (e) {
     say(`Искрон: мост не поднялся — ${e.message}`, "error");
+  }
+  try {
+    await ctx.session.hook("prompt", async (p) => {
+      const word = await half.launch(String(p.sessionID), p.prompt.text);
+      if (word) p.prompt.text = withWord(p.prompt.text, word);
+    });
+  } catch (e) {
+    say(`Искрон: строка запуска не встала — ${e.message}`, "error");
   }
   let commands = { refresh: async () => {
   } };

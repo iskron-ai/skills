@@ -6,6 +6,7 @@
 // одного графа не уходит сторожу другого.
 import { type Frame } from "../shared/channel.ts";
 import { frameToText } from "../shared/frame-text.ts";
+import { L } from "../shared/lang.ts";
 import { deliveredKeys, eventKeyOf } from "../shared/seen.ts";
 import { type ChannelEvent } from "./door.ts";
 
@@ -44,12 +45,21 @@ export class StaleBurst {
             ? { unshown: all.slice(frames.length).flatMap((f) => deliveredKeys(f)) }
             : {}),
           text:
-            `Лежалых кадров: ${all.length}` +
-            (all.length > frames.length
-              ? `, здесь первые ${frames.length}, не вошло ${all.length - frames.length}`
-              : "") +
-            " — принятое, пока место не слушали, или повтор службы после пересборки сессии; " +
-            'хода не стоят, но прочти; полностью и не вошедшее — iskron_channel(action="history").\n\n' +
+            L(
+              `Лежалых кадров: ${all.length}` +
+                (all.length > frames.length
+                  ? `, здесь первые ${frames.length}, не вошло ${all.length - frames.length}`
+                  : "") +
+                " — принятое, пока место не слушали, или повтор службы после пересборки сессии; " +
+                'хода не стоят, но прочти; полностью и не вошедшее — iskron_channel(action="history").',
+              `Stale frames: ${all.length}` +
+                (all.length > frames.length
+                  ? `, the first ${frames.length} here, ${all.length - frames.length} left out`
+                  : "") +
+                " — taken while the seat was not listening, or the service repeating after a session rebuild; " +
+                'they are not worth a turn, but read them; in full and the rest — iskron_channel(action="history").',
+            ) +
+            "\n\n" +
             bodies.join("\n\n"),
         },
         all,

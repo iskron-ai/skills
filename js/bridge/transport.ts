@@ -1,3 +1,4 @@
+import { lang } from "../shared/lang.ts";
 import { noteServerDate } from "./clock.ts";
 import { CFG } from "./config.ts";
 import { errorCode, errorMessage, UpstreamError } from "./errors.ts";
@@ -112,6 +113,8 @@ export async function post(
     "content-type": "application/json",
     accept: "application/json, text/event-stream",
   };
+  // Язык прозы api — при английском мосте (shared/lang.ts); русский — умолчание сервера.
+  if (lang() === "en") headers["accept-language"] = "en";
   // PAT старше хранилища: с ним грант на диске не читается вовсе (#4267).
   const token = CFG.pat ?? loadStore().tokens?.access_token ?? null;
   if (token) headers.authorization = `Bearer ${token}`;

@@ -13,7 +13,7 @@ import {
 } from "./errors.ts";
 import { localLeave } from "./leave.ts";
 import { annotateToolList } from "./moment.ts";
-import { withPlaceFields } from "./placefields.ts";
+import { noteLocaleEcho, withPlaceFields } from "./placefields.ts";
 import { isCheckCall, isResumeCall, runCheck, runResume } from "./resume.ts";
 import { satelliteChannelRefusal } from "./satellite.ts";
 import { isStandCall, runStand } from "./stand.ts";
@@ -303,6 +303,8 @@ async function deliverOne(msg: JsonRpcMessage): Promise<void> {
         msg.params.arguments = withPlaceFields(msg.params.arguments); // поля места и в пяти вызовах (#5174)
       await post(msg, forward);
       const held = heldReply as JsonRpcMessage | null;
+      if (held && msg.params?.name === "iskron_channel" && msg.params.arguments)
+        noteLocaleEcho(msg.params.arguments, replyText(held));
       if (held) {
         if (state.standing && isUnattributed(held)) {
           // The binding this session trusted is gone on the server's side — a

@@ -17,6 +17,7 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
+import { L } from "../shared/lang.ts";
 import { standingsDirOf } from "../shared/standings.ts";
 import { listens, nameOf, parseBoard, undelivered } from "./board.ts";
 import { callTool, short } from "./call.ts";
@@ -101,16 +102,25 @@ export async function resumeFromDisk(
         // Своя строка той же сессии (например, снятая сторожем глухоты) — обратно.
         const st = await publishStatus(rec.status);
         busy = st.ok
-          ? `; занятость возвращена: ${rec.status}`
-          : `; занятость не возвращена: ${short(st.body)}`;
+          ? L(`; занятость возвращена: ${rec.status}`, `; busy line restored: ${rec.status}`)
+          : L(
+              `; занятость не возвращена: ${short(st.body)}`,
+              `; busy line not restored: ${short(st.body)}`,
+            );
       } else if (rec.status) {
         rememberStatus(""); // строка прежнего держателя — не наша: в записи её больше нет
-        busy = "; прежняя строка занятости не возвращена — скажи свою";
+        busy = L(
+          "; прежняя строка занятости не возвращена — скажи свою",
+          "; the former busy line is not restored — say your own",
+        );
       }
       log(`standing resumed from disk (${key}), pending ${pending}`);
       standingLog(`resumed-from-disk ${key}: pending ${pending}`);
       return {
-        word: `возврат места с диска после перезапуска моста — сокет открыт заново тем же адресом (ожидало кадров — ${pending})${busy}`,
+        word: L(
+          `возврат места с диска после перезапуска моста — сокет открыт заново тем же адресом (ожидало кадров — ${pending})${busy}`,
+          `the seat returned from disk after the bridge restarted — the socket reopened at the same address (frames waiting — ${pending})${busy}`,
+        ),
         pending,
       };
     }

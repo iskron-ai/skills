@@ -1,10 +1,12 @@
 // Вызов тула сервера самим мостом — теми же вызовами, что и агент (stand.ts,
 // resume.ts): доска, connect, register. Ответ connect впитывается мостом так
 // же, как проксируемый (absorb.ts), а принятый register запоминается стоянием.
+import { L } from "../shared/lang.ts";
 import { absorbChannelReply } from "./absorb.ts";
 import { holdsChannel, ledKey } from "./hold.ts";
 import { keyOf } from "./holdrecord.ts";
 import { normKarta, normName } from "./names.ts";
+import { noteLocaleEcho } from "./placefields.ts";
 import { extraIn } from "./places.ts";
 import { canonRealm, otherRealm, resolveRealms, unknownRealm, unresolvedWord } from "./realms.ts";
 import { noteStanding, replyText } from "./standing.ts";
@@ -75,13 +77,25 @@ export function unresolvedRefusal(realm: unknown): string | null {
 export function otherPlaceWord(led: string, asked: string, sameName = false): string {
   const advice =
     led === asked
-      ? "ключи совпали — это то же место: повтори iskron_stand с take=true, чтобы переоткрыть его сознательно"
+      ? L(
+          "ключи совпали — это то же место: повтори iskron_stand с take=true, чтобы переоткрыть его сознательно",
+          "the keys match — it is the same seat: repeat iskron_stand with take=true to reopen it deliberately",
+        )
       : sameName
-        ? "то же имя под другой ролью (оно вывелось из того же каталога) — передай другое name, либо iskron_stand с take=true, чтобы сменить место этого моста"
-        : "занять другое место вместо этого — iskron_stand с take=true (прежнее останется на доске без слуха; ненужное сними revoke)";
-  return (
+        ? L(
+            "то же имя под другой ролью (оно вывелось из того же каталога) — передай другое name, либо iskron_stand с take=true, чтобы сменить место этого моста",
+            "the same name under another role (derived from the same directory) — pass another name, or iskron_stand with take=true to change this bridge's seat",
+          )
+        : L(
+            "занять другое место вместо этого — iskron_stand с take=true (прежнее останется на доске без слуха; ненужное сними revoke)",
+            "to take another seat instead of this one — iskron_stand with take=true (the former stays on the board without hearing; remove what is not needed with revoke)",
+          );
+  const Advice = `${advice.charAt(0).toUpperCase()}${advice.slice(1)}`;
+  return L(
     `Отказано (мост): этот мост уже ведёт место ${led} — в графе место одно на мост, и место ${asked} его сняло бы с сокета молча. ` +
-    `${advice.charAt(0).toUpperCase()}${advice.slice(1)}; держать оба разом — второй мост, то есть другая сессия харнесса; место в другом графе встаёт рядом само.`
+      `${Advice}; держать оба разом — второй мост, то есть другая сессия харнесса; место в другом графе встаёт рядом само.`,
+    `Refused (bridge): this bridge already leads the seat ${led} — one seat per bridge in a graph, and the seat ${asked} would silently take it off the socket. ` +
+      `${Advice}; holding both at once needs a second bridge, that is another harness session; a seat in another graph stands beside by itself.`,
   );
 }
 
@@ -97,7 +111,10 @@ export function besideRefusal(realm: unknown, how: "stand" | "connect"): string 
   if (how === "stand" && holdsChannel()) return null;
   return how === "connect"
     ? `Отказано (мост): этот мост ведёт место ${led}, а connect в другом графе открыл бы второй канал и снял бы его с сокета. Место в другом графе встаёт рядом на том же канале — iskron_stand(realm=…) или register.`
-    : `Отказано (мост): этот мост ведёт место ${led}, но сокета канала у него сейчас нет (ушёл с места или место отняли) — место другого графа встать рядом не может. Сперва верни ${led}: iskron_stand его графа.`;
+    : L(
+        `Отказано (мост): этот мост ведёт место ${led}, но сокета канала у него сейчас нет (ушёл с места или место отняли) — место другого графа встать рядом не может. Сперва верни ${led}: iskron_stand его графа.`,
+        `Refused (bridge): this bridge leads the seat ${led}, but has no channel socket now (it left the seat or the seat was taken) — a seat of another graph cannot stand beside. First bring back ${led}: iskron_stand for its graph.`,
+      );
 }
 
 const refusal = (msg: JsonRpcMessage, text: string): JsonRpcMessage => ({
@@ -149,6 +166,7 @@ export async function callTool(name: string, args: Record<string, unknown>): Pro
   let got = reply as JsonRpcMessage | null;
   if (!got) return { text: "ответа нет", isError: true };
   if (name === "iskron_channel") {
+    noteLocaleEcho(args, replyText(got));
     if (args.action === "register") noteStanding(msg, got);
     if (args.action === "connect") got = absorbChannelReply(msg, got);
   }

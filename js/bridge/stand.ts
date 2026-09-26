@@ -51,6 +51,7 @@ import { otherRealm } from "./realms.ts";
 import { deadPredecessor, resumeFromDisk } from "./resume.ts";
 import { SATELLITE_TTL_S, satelliteGate, satelliteListenWord, ttlRefused } from "./satellite.ts";
 import { separatePlace, suffixOf } from "./separate.ts";
+import { SW } from "./standwords.ts";
 import { publishStatus, TAKE_PATH, TURNED_GUIDANCE } from "./status.ts";
 import { state } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
@@ -97,9 +98,7 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
     },
   });
   if (!realm || !karta) {
-    lines.push(
-      "Отказано (мост): iskron_stand требует realm и karta — граф и роль из AGENTS.md или строки запуска.",
-    );
+    lines.push(SW.needRealmKarta());
     return done(true);
   }
   const model = typeof a.model === "string" && a.model.trim() ? a.model : undefined;
@@ -108,9 +107,7 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   // Кривой cwd адресовал бы другое место (репо из несуществующего или чужого
   // каталога) — отказ вслух, как у явного имени (#5068).
   if (cwd !== process.cwd() && !isDirectory(cwd)) {
-    lines.push(
-      `Отказано (мост): cwd должен быть существующим абсолютным каталогом — получено «${cwd}»${isAbsolute(cwd) ? "" : " (относительный путь резолвился бы от cwd моста, не сессии)"}.`,
-    );
+    lines.push(SW.badCwd(cwd, !isAbsolute(cwd)));
     return done(true);
   }
   const nameNotes: string[] = [];
@@ -122,9 +119,7 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   if (asked) {
     const fault = nameFault(asked);
     if (fault) {
-      lines.push(
-        `Отказано (мост): name «${asked}» — ${fault}; правило имени: строчные латинские буквы, цифры, точка, подчёркивание, дефис, первый знак — буква или цифра, не длиннее ${NAME_MAX} знаков. Имя не укорачивается молча: короткое имя адресовало бы другое место.`,
-      );
+      lines.push(SW.badName(asked, fault, NAME_MAX));
       return done(true);
     }
   }
@@ -146,18 +141,10 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   if (derived && led0 && String(led0.karta) === String(karta) && suffixOf(derived, led0.name ?? ""))
     name = led0.name ?? name;
   if (parts && fitted && fitted.cut.length) {
-    const what = fitted.cut
-      .map((k) => (k === "repo" ? "репо" : k === "host" ? "машина" : "модель"))
-      .join(", ");
-    nameNotes.push(
-      `выведенное имя ${joinName(parts)} длиннее предела ${NAME_MAX} знаков — укорочено до ${name} (срезано: ${what}); нужно другое — передай name`,
-    );
+    const what = fitted.cut.map(SW.cutPart).join(", ");
+    nameNotes.push(SW.nameCut(joinName(parts), NAME_MAX, name, what));
   }
-  if (!asked && !sat && !model) {
-    nameNotes.push(
-      "model не передан — имя без третьей части (машина.репо): вторая сессия этой машины над этим репозиторием сойдётся на то же место; передай model, чтобы различать",
-    );
-  }
+  if (!asked && !sat && !model) nameNotes.push(SW.noModel());
   const room = typeof a.room === "string" && a.room.trim() ? a.room.trim() : null;
   // Стояние одно на мост (#5154): другое место при ведомом своём — только по
   // явному take=true; иначе отказ вслух, и ничего не тронуто.
@@ -191,7 +178,7 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   // 1. Доска — до любой перемены.
   const board = await call("iskron_channel", { action: "list", realm });
   if (board.isError) {
-    lines.push(`Отказано: доска не прочиталась — ${short(board.text)}`);
+    lines.push(SW.boardUnread(short(board.text)));
     return done(true);
   }
   const entries = parseBoard(board.text);
@@ -236,11 +223,7 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
     const third = own.slice(stem.length + 1);
     return branches.has(third) && /живой|слушает/.test(e.rest);
   });
-  for (const e of legacy) {
-    nameNotes.push(
-      `на доске живо место прежнего имени ${e.address} — его адрес могут держать дела и хуки; сними его: iskron_channel(action="revoke", realm="${realm}", karta="${karta}", standing="${e.address}")`,
-    );
-  }
+  for (const e of legacy) nameNotes.push(SW.legacy(e.address, realm, karta));
   // Счёт в заголовке не сошёлся с разобранным — где-то строка, которой парсер не
   // понял; она могла быть твоим живым местом. Ротировать вслепую нельзя, а
   // явный take=true — слово делателя, что он это понимает.
@@ -248,17 +231,14 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   if (!recognized || own.length > 1 || (unread && own.length === 0 && a.take !== true)) {
     lines.push(
       !recognized
-        ? `Отказано: форма доски не распознана — ни заголовка «Каналы», ни слова о пустом графе, ни строк мест; управляющих действий (connect, стук, хук) по догадке не делаю. Начало ответа: ${short(board.text, 160)}`
+        ? SW.boardUnknown(short(board.text, 160))
         : own.length > 1
-          ? `Отказано: на доске ${own.length} места с именем ${name} у роли #${karta} — форма неоднозначна, состояние не определить.`
-          : `Отказано: доска объявляет ${declared} мест, разобрано ${entries.length}, и своего места среди разобранных нет — нераспознанная строка могла быть им; connect ротировал бы его вслепую. Уверен, что места нет, — повтори с take=true.`,
+          ? SW.boardAmbiguous(own.length, name, karta)
+          : SW.boardCount(declared ?? 0, entries.length),
     );
     return done(true);
   }
-  if (unread)
-    lines.push(
-      `Доска объявляет ${declared} мест, разобрано ${entries.length} — одну строку парсер не понял; своё место найдено, иду дальше.`,
-    );
+  if (unread) lines.push(SW.boardCountFound(declared ?? 0, entries.length));
   const mine = own[0];
   let incoming = mine?.incoming ?? null;
 
@@ -281,29 +261,29 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   const predecessorDead = fresh && listensElsewhere && (await deadPredecessor(realm, karta, name));
   const resumed = fresh && !listensElsewhere ? await resumeFromDisk(realm, karta, name) : null;
   const extra: string[] = []; // строки после шапки ответа
+  // Сокет держал этот мост и до вызова (свой register, возврат с диска): hello не ждать.
+  let socketBefore = false;
   // take=true — явный новый цикл входа: connect и тогда, когда сокет уже наш.
   if (beside) {
     // Канал держит места в нескольких графах: register на нём в этом графе
     // добавляет место, сокет тот же — connect открыл бы второй канал (#5838).
     const r = await register();
     if (r.isError) {
-      lines.push(`Отказано: register — ${short(r.text)}`);
+      lines.push(SW.refused("register", short(r.text)));
       return done(true);
     }
     heardHere = holdsStanding(realm, karta, name);
     // id места — из ответа register (standing.ts); без него кадры места найдут его по графу и адресу.
-    if (heardHere && !standingIdIn(realm))
-      extra.push(
-        "register id места не назвал — кадры места находятся по графу и адресу, занятость ждёт id.",
-      );
-    how = `место другого графа — встаёт рядом на канале, который держит этот мост (${ledKey()}): register`;
+    if (heardHere && !standingIdIn(realm)) extra.push(SW.noIdInRegister());
+    how = SW.howBeside(ledKey() ?? "");
   } else if (resumed) {
     const r = await register();
     if (r.isError) {
-      lines.push(`Отказано: register — ${short(r.text)}`);
+      lines.push(SW.refused("register", short(r.text)));
       return done(true);
     }
     heardHere = true;
+    socketBefore = true;
     // Строку занятости из записи возврат не публикует заново (#6017): свежая
     // отметка выдала бы прежнее слово о работе за сказанное сейчас.
     how = `${resumed.word}, register`;
@@ -311,26 +291,26 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
     // Ушёл с места и вернулся: тот же адрес, сокет открыт заново, register — атрибуция.
     const r = await register();
     if (r.isError) {
-      lines.push(`Отказано: register — ${short(r.text)}`);
+      lines.push(SW.refused("register", short(r.text)));
       return done(true);
     }
     heardHere = true;
-    how =
-      "возврат на место, с которого мост уходил, — сокет открыт заново тем же адресом, register";
+    how = SW.howReturned();
   } else if (a.take !== true && (holdsStanding(realm, karta, name) || listensElsewhere)) {
     const r = await register();
     if (r.isError) {
-      lines.push(`Отказано: register — ${short(r.text)}`);
+      lines.push(SW.refused("register", short(r.text)));
       return done(true);
     }
     heardHere = !listensElsewhere;
+    socketBefore = !listensElsewhere;
     how = listensElsewhere
       ? wasEvicted(realm, karta, name)
-        ? "место отняли у этого моста (закрытие 4000) — слушает другой держатель; только register: привязка цела, слух — у него; слух здесь — iskron_stand без name встанет рядом на имя.N; отбить место (take=true) — только словом человека"
+        ? SW.howEvicted()
         : predecessorDead
-          ? "слушающим доска ещё читает прежний мост этого каталога, а он мёртв (его сокет не отвечает, запись держания цела) — только register; как только доска его отпустит (закрытый сокет прежние серверы держали «слушающим» около минуты; с честной живостью, по слову контура, — почти сразу), тот же вызов вернёт место с диска тем же адресом — повтори"
-          : "место уже слушает другой держатель (при явном name — возможно, другая машина или человек) — только register: атрибуция есть, слух — у него; нужен слух здесь — возьми другое имя (name); вытеснить его (take=true) — только словом человека"
-      : "сокет уже держит этот мост — register";
+          ? SW.howDeadPredecessor()
+          : SW.howOtherHolder()
+      : SW.howRegister();
   } else {
     const args: Record<string, unknown> = { action: "connect", realm, karta, name };
     Object.assign(args, here());
@@ -339,64 +319,41 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
     let c = await call("iskron_channel", args); // новый сокет держатель берёт сам и заново: кольцо кадров чистое
     if (sat && c.isError && ttlRefused(c.text)) {
       // Разброс окна держит контур; вне его — место всё же нужно прогону, окно — умолчание контура.
-      extra.push(
-        `Окно простоя ${SATELLITE_TTL_S} с контур не принял (${short(c.text, 120)}) — место занято с окном по умолчанию контура.`,
-      );
+      extra.push(SW.ttlRefused(SATELLITE_TTL_S, short(c.text, 120)));
       delete args.ttl_seconds;
       c = await call("iskron_channel", args);
     }
     if (c.isError) {
-      lines.push(`Отказано: connect — ${short(c.text)}`);
+      lines.push(SW.refused("connect", short(c.text)));
       return done(true);
     }
     incoming = /https?:\/\/\S+\/channel\/in\/\S+/.exec(c.text)?.[0] ?? incoming;
     const r = await register();
     if (r.isError) {
-      lines.push(`Место занято, но register отказал — ${short(r.text)}`);
+      lines.push(SW.takenButRegister(short(r.text)));
       return done(true);
     }
     for (const k of [...knocks.keys()])
       if (k.startsWith(`${realm}|${karta}|${name}|`)) knocks.delete(k);
     heardHere = true;
-    how = mine
-      ? listensElsewhere
-        ? "место слушал другой держатель — connect по take (сокет теперь у этого моста, прежний держатель получил 4000) и register"
-        : a.take === true
-          ? "connect по take — новый цикл входа, счёт стуков сброшен — и register"
-          : "место было — connect (сокет теперь у этого моста) и register"
-      : "connect и register";
+    how = SW.howConnect(!!mine, listensElsewhere, a.take === true);
   }
   lines.push(
-    `[iskron_stand] стояние ${mine?.address ?? name} — роль #${karta}, граф ${realm}: ${how}.`,
+    SW.head(mine?.address ?? name, karta, realm, how),
     ...nameNotes.map((n) => `[iskron_stand] ${n}`),
     ...extra,
   );
   const block = heardHere ? (sat ? satelliteListenWord() : listenBlock(realm)) : null;
   if (block) lines.push(block);
-  else if (!heardHere)
-    lines.push(
-      "Команда сторожа не выдаётся: сокет у другого держателя, местного нет — эта сессия кадры и приглашения не принимает.",
-    );
-  else lines.push("Сокета у моста нет — слушать нечем; проверь ответ connect.");
+  else lines.push(heardHere ? SW.noSocket() : SW.noWatchdog());
 
   // 3. hello — доказательство держания; свежий он только за connect этого вызова.
-  if (!heardHere)
-    lines.push(
-      beside
-        ? "Место записано, но двери у него нет — сокет канала моста не жив; кадры этого графа сюда не придут."
-        : "Слух — у другого держателя; здесь только атрибуция записей.",
-    );
-  else if (beside)
-    lines.push("Сокет канала держит этот мост — кадры места этого графа идут его сторожу.");
-  else if (how.startsWith("сокет уже держит") || how.startsWith("возврат места с диска"))
-    lines.push("Сокет держит этот мост (hello получен при открытии сокета).");
+  if (!heardHere) lines.push(beside ? SW.besideNoDoor() : SW.hearingElsewhere());
+  else if (beside) lines.push(SW.besideHeard());
+  else if (socketBefore) lines.push(SW.heldAlready());
   else {
     const hello = await awaitHello(4000);
-    if (hello) lines.push(`hello получен: ожидало кадров — ${hello.pending ?? 0}.`);
-    else
-      lines.push(
-        "hello за 4 с не пришёл — сокет мост держит, но доказательства слуха ещё нет: проверь доску.",
-      );
+    lines.push(hello ? SW.hello(String(hello.pending ?? 0)) : SW.noHello());
   }
 
   // 4. Хук инбокса роли — чтобы вимарша posed_to приходила тем же сокетом.
@@ -417,9 +374,7 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   // 5. Стук в место человека — по полному адресу с провода. Правило #4342: один стук,
   // повтор один раз не раньше чем через две минуты, дальше — слово человеку.
   if (room && !heardHere) {
-    lines.push(
-      `Место человека ${room}: стук не отправлен — ответ человека ушёл бы держателю сокета, не сюда; нужен вход здесь — другим name; отбить место (take=true) — только словом человека.`,
-    );
+    lines.push(SW.knockNotHere(room));
   } else if (room) {
     const onBoard = entries.find((e) => e.address === room);
     const roomKarta =
@@ -431,23 +386,12 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
     const prior = knocks.get(key);
     const waited = prior ? Date.now() - prior.at : Infinity;
     const again = a.repeat_knock === true;
-    if (prior && prior.count >= KNOCK_LIMIT) {
-      lines.push(
-        `Место человека ${room}: стучал дважды, приглашения нет — больше не стучу в этом заходе; скажи человеку, что его место не ответило, и попроси открыть чат (счёт сбрасывает новый вход: take=true или новая сессия).`,
-      );
-    } else if (prior && !again) {
-      lines.push(
-        `Место человека ${room}: стук уже отправлен ${Math.round(waited / 1000)} с назад — жди приглашения; осознанный повтор — тем же вызовом с repeat_knock=true, не раньше чем через ${Math.round(KNOCK_REPEAT_AFTER_MS / 1000)} с.`,
-      );
-    } else if (prior && waited < KNOCK_REPEAT_AFTER_MS) {
-      lines.push(
-        `Место человека ${room}: повтор рано — с первого стука прошло ${Math.round(waited / 1000)} с, правило ждёт ${Math.round(KNOCK_REPEAT_AFTER_MS / 1000)} с; повтори через ${Math.ceil((KNOCK_REPEAT_AFTER_MS - waited) / 1000)} с.`,
-      );
-    } else if (!roomKarta) {
-      lines.push(
-        `Место человека ${room}: на доске графа ${realm} этого места нет, а send требует роль его держателя — стук не отправлен. Место человека живёт его присутствием: либо он ушёл дольше порога (попроси открыть чат и повтори), либо передай room_karta=<роль человека>.`,
-      );
-    } else {
+    if (prior && prior.count >= KNOCK_LIMIT) lines.push(SW.knockTwice(room));
+    else if (prior && !again) lines.push(SW.knockSent(room, waited, KNOCK_REPEAT_AFTER_MS));
+    else if (prior && waited < KNOCK_REPEAT_AFTER_MS)
+      lines.push(SW.knockEarly(room, waited, KNOCK_REPEAT_AFTER_MS));
+    else if (!roomKarta) lines.push(SW.knockNoRole(room, realm));
+    else {
       const s = await call("iskron_channel", {
         action: "send",
         realm,
@@ -455,12 +399,10 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
         standing: room,
         text: "join",
       });
-      if (s.isError) lines.push(`Место человека ${room}: стук отказан — ${short(s.text)}`);
+      if (s.isError) lines.push(SW.knockRefused(room, short(s.text)));
       else {
         knocks.set(key, { at: Date.now(), count: (prior?.count ?? 0) + 1 });
-        lines.push(
-          `Место человека ${room}: ${prior ? "повторный " : ""}стук отправлен — ${short(s.text, 200)} Жди первого слова из места человека с шапкой; до него туда не пиши — встанешь рядом с человеком, когда оно придёт.`,
-        );
+        lines.push(SW.knockDone(room, !!prior, short(s.text, 200)));
       }
     }
   }
@@ -468,17 +410,13 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   // 6. Занятость — от стояния, которое ведёт мост, не от живого сокета (#5033):
   // и при «только register», и после вытеснения, пока статусный адрес у моста.
   if (typeof a.status === "string" && a.status.trim() && !hasStatusAddressFor(realm, karta, name)) {
-    lines.push(
-      predecessorDead
-        ? "Занятость не публикуется: статусного адреса у моста пока нет — повтори тот же вызов, когда доска отпустит мёртвый прежний мост: место вернётся с диска вместе с ним."
-        : `Занятость не публикуется: статусного адреса этого стояния у моста нет — он у держателя сокета; ${TAKE_PATH}.`,
-    );
+    lines.push(predecessorDead ? SW.statusAfterDead() : SW.statusElsewhere(TAKE_PATH()));
   } else if (typeof a.status === "string" && a.status.trim()) {
     const st = await publishStatus(a.status.trim(), realm);
     lines.push(
       st.ok
-        ? `Занятость: ${a.status.trim()}`
-        : `Занятость не принята: ${short(st.body)}${st.code === 404 ? ` ${TURNED_GUIDANCE}` : ""}`,
+        ? SW.status(a.status.trim())
+        : SW.statusRefused(short(st.body), st.code === 404 ? ` ${TURNED_GUIDANCE()}` : ""),
     );
   }
   const stale = staleNotice(readLatest(CFG.authDir), CFG.authDir);

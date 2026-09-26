@@ -18,6 +18,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { homeBridgePath } from "../shared/home.ts";
+import { L } from "../shared/lang.ts";
 import { compareVersions } from "../shared/semver.ts";
 import { VERSION, versionIn } from "../shared/version.ts";
 import { isProductionServer } from "./config.ts";
@@ -225,21 +226,41 @@ export async function checkLatest(authDir: string, force = false): Promise<Lates
 /** Строка отставания — то, что агент обязан передать человеку. null — поставка свежа или неизвестна. */
 export function staleNotice(latest: Latest | null, authDir: string): string | null {
   if (!latest?.version || compareVersions(latest.version, VERSION) <= 0) return null;
+  const self = process.argv[1];
   const bridgeWord = latest.downloaded.some((p) => p === homeBridgePath())
-    ? "Свежий мост уже скачан в ~/.iskron-bridge и поднимется новой сессией."
+    ? L(
+        "Свежий мост уже скачан в ~/.iskron-bridge и поднимется новой сессией.",
+        "The fresh bridge is already downloaded into ~/.iskron-bridge and comes up with a new session.",
+      )
     : latest.error
-      ? `Скачать свежий мост не вышло (${latest.error}); повтори: node "${process.argv[1]}" update.`
+      ? L(
+          `Скачать свежий мост не вышло (${latest.error}); повтори: node "${self}" update.`,
+          `Downloading the fresh bridge failed (${latest.error}); repeat: node "${self}" update.`,
+        )
       : isSymlink(homeBridgePath())
-        ? "Свежий мост в дом не положен: дом — симлинк на чужую копию, его не трогаю; обнови эту копию сам."
+        ? L(
+            "Свежий мост в дом не положен: дом — симлинк на чужую копию, его не трогаю; обнови эту копию сам.",
+            "The fresh bridge is not put home: home is a symlink to another copy, left alone; update that copy yourself.",
+          )
         : versionOf(homeBridgePath()) &&
             compareVersions(versionOf(homeBridgePath()), latest.version) >= 0
-          ? "Свежий мост уже лежит в ~/.iskron-bridge и поднимется новой сессией."
-          : `Свежий мост в дом не положен; повтори: node "${process.argv[1]}" update (мост, который отвечает, — тот и обновляет дом; в пакетной поставке OpenCode мост живёт в пакете и обновляется с ним).`;
-  return (
+          ? L(
+              "Свежий мост уже лежит в ~/.iskron-bridge и поднимется новой сессией.",
+              "The fresh bridge already lies in ~/.iskron-bridge and comes up with a new session.",
+            )
+          : L(
+              `Свежий мост в дом не положен; повтори: node "${self}" update (мост, который отвечает, — тот и обновляет дом; в пакетной поставке OpenCode мост живёт в пакете и обновляется с ним).`,
+              `The fresh bridge is not put home; repeat: node "${self}" update (the bridge that answers is the one that updates home; in OpenCode's packaged delivery the bridge lives in the package and updates with it).`,
+            );
+  return L(
     `[iskron-bridge] ПОСТАВКА ОТСТАЛА: этот мост v${VERSION}, свежий релиз v${latest.version}. ${bridgeWord} ` +
-    `Скиллы обновляет канал харнеса, и об этом надо СКАЗАТЬ ЧЕЛОВЕКУ: Claude Code — /plugin marketplace update iskron, затем /reload-plugins; ` +
-    `плоская установка — npx skills update --global; pi — pi update git:github.com/iskron-ai/skills; Codex — codex plugin marketplace upgrade iskron, затем codex plugin remove iskron@iskron и codex plugin add iskron@iskron. ` +
-    `Полный порядок — свежий установщик ${setupPathOf(authDir)} (кладёт update); по слову человека «обнови» исполни его.`
+      `Скиллы обновляет канал харнеса, и об этом надо СКАЗАТЬ ЧЕЛОВЕКУ: Claude Code — /plugin marketplace update iskron, затем /reload-plugins; ` +
+      `плоская установка — npx skills update --global; pi — pi update git:github.com/iskron-ai/skills; Codex — codex plugin marketplace upgrade iskron, затем codex plugin remove iskron@iskron и codex plugin add iskron@iskron. ` +
+      `Полный порядок — свежий установщик ${setupPathOf(authDir)} (кладёт update); по слову человека «обнови» исполни его.`,
+    `[iskron-bridge] DELIVERY BEHIND: this bridge is v${VERSION}, the fresh release is v${latest.version}. ${bridgeWord} ` +
+      `The harness channel updates the skills, and this must be TOLD TO THE HUMAN: Claude Code — /plugin marketplace update iskron, then /reload-plugins; ` +
+      `flat install — npx skills update --global; pi — pi update git:github.com/iskron-ai/skills; Codex — codex plugin marketplace upgrade iskron, then codex plugin remove iskron@iskron and codex plugin add iskron@iskron. ` +
+      `The full order — the fresh installer ${setupPathOf(authDir)} (update puts it); on the human's word "update" run it.`,
   );
 }
 

@@ -9,6 +9,7 @@
 // своё (door.ts, #5838): пачка одного графа метится в .seen своего места.
 import { type Frame, isDirectWord } from "../shared/channel.ts";
 import { frameToText } from "../shared/frame-text.ts";
+import { L } from "../shared/lang.ts";
 import { type ChannelEvent } from "./door.ts";
 
 /** Окно накопления; переменная — шов для проб, не ручка человека. */
@@ -79,13 +80,21 @@ export class Backlog {
       const t = frameToText(f, JSON.stringify(f));
       return [...t].length > BODY_CAP ? [...t].slice(0, BODY_CAP).join("") + "…" : t;
     });
-    const head =
+    const cut = count > got.length;
+    const head = L(
       `Побудка: кадров ${count}` +
-      (expected ? ` (ожидало в очереди: ${expected})` : "") +
-      (count > got.length ? `, здесь первые ${got.length}, не вошло ${count - got.length}` : "") +
-      " — пришли одной пачкой; разбери все, а не последний: " +
-      'полностью и не вошедшее — iskron_channel(action="history", view="log").' +
-      (direct ? ` Прямых слов ${direct} — не здесь: каждое пришло отдельно и целиком.` : "");
+        (expected ? ` (ожидало в очереди: ${expected})` : "") +
+        (cut ? `, здесь первые ${got.length}, не вошло ${count - got.length}` : "") +
+        " — пришли одной пачкой; разбери все, а не последний: " +
+        'полностью и не вошедшее — iskron_channel(action="history", view="log").' +
+        (direct ? ` Прямых слов ${direct} — не здесь: каждое пришло отдельно и целиком.` : ""),
+      `Wake-up: ${count} frames` +
+        (expected ? ` (waiting in the queue: ${expected})` : "") +
+        (cut ? `, the first ${got.length} here, ${count - got.length} left out` : "") +
+        " — they came as one batch; go through all of them, not the last one: " +
+        'in full and the rest — iskron_channel(action="history", view="log").' +
+        (direct ? ` ${direct} direct messages are not here: each came on its own and whole.` : ""),
+    );
     emit(
       {
         kind: "backlog",

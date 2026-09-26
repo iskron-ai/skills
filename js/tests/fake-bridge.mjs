@@ -31,6 +31,8 @@
 //                 as the real bridge does after a rollout (#5406).
 //   FB_REPLY      file holding the text of the NEXT tools/call answer; the probe
 //                 rewrites it between calls. "__ERROR__<text>" answers isError.
+//                 <FB_REPLY>.<tool>, when present, answers only that tool.
+//   FB_STAND_HELD place name an iskron_stand says «held» for (satellite: <of>.sub-1).
 import { appendFileSync, existsSync, readFileSync, unlinkSync } from "node:fs";
 
 const MODE = process.env.FB_MODE || "ok";
@@ -113,10 +115,14 @@ if (process.env.FB_CHANGED) {
 function callResult(name) {
   let text = `ok:${name}`;
   if (process.env.FB_REPLY) {
-    try {
-      text = readFileSync(process.env.FB_REPLY, "utf8");
-    } catch {
-      /* keep the default */
+    // <FB_REPLY>.<tool>, when it exists, answers that one tool — the rest keep FB_REPLY.
+    for (const file of [`${process.env.FB_REPLY}.${name}`, process.env.FB_REPLY]) {
+      try {
+        text = readFileSync(file, "utf8");
+        break;
+      } catch {
+        /* next, or keep the default */
+      }
     }
   }
   if (text.startsWith("__ERROR__")) {
@@ -193,6 +199,26 @@ process.stdin.on("data", (chunk) => {
           process.env.FB_CALLS,
           JSON.stringify({ ...msg.params, pid: process.pid }) + "\n",
         );
+      // FB_STAND_HELD: the place name an iskron_stand holds — said as «held» before
+      // the answer, as the real bridge says it (js/bridge/hold.ts); a satellite
+      // stands as <satellite_of>.sub-1.
+      if (process.env.FB_STAND_HELD && msg.params?.name === "iskron_stand") {
+        const a = msg.params.arguments ?? {};
+        const name = a.satellite_of ? `${a.satellite_of}.sub-1` : process.env.FB_STAND_HELD;
+        send({
+          jsonrpc: "2.0",
+          method: "notifications/message",
+          params: {
+            level: "info",
+            logger: "iskron-channel",
+            data: {
+              kind: "held",
+              key: `k-${name}`,
+              place: { realm: a.realm, karta: a.karta, name },
+            },
+          },
+        });
+      }
       ok(msg.id, callResult(msg.params?.name));
     } else if (msg.method === "iskron/resume" || msg.method === "iskron/check") {
       // The bridge's own requests from the OpenCode plugin (js/bridge/resume.ts):

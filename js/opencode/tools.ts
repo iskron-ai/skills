@@ -33,6 +33,8 @@ import {
   writeCache,
 } from "./bridge-io.ts";
 import { createKeeper, type KeptSlot, takeLostMarker, WATCH_MS, writeLostMarker } from "./keep.ts";
+import { createLauncher } from "./launch.ts";
+import { createLogin } from "./login.ts";
 import type { Context } from "./plugin.ts";
 import { asSatellite, heldPlace, type SatelliteSlot, STAND_TOOL, standsBy } from "./satellite.ts";
 import { statusLines } from "./status.ts";
@@ -74,6 +76,8 @@ const hhmm = (): string => new Date().toTimeString().slice(0, 5);
 export interface ToolsHalf {
   /** Сессия умерла — её мост отпускается вместе со стоянием. */
   forget(session: string): void;
+  /** Первый промпт сессии — строка запуска с делом исполняется до хода модели (launch.ts). */
+  launch(session: string, text: string): Promise<string | null>;
   stop(): void;
 }
 
@@ -91,7 +95,7 @@ export async function setupTools(
         ". Задай ISKRON_BRIDGE_PATH или поставь мост скиллом establish-mcp.",
       "error",
     );
-    return { forget() {}, stop() {} };
+    return { forget() {}, launch: async () => null, stop() {} };
   }
   const path = found.path;
   const builds = buildsLine(path, import.meta.url);
@@ -100,41 +104,8 @@ export async function setupTools(
   let spare: Slot | null = null;
   let stopped = false;
 
-  // Человек в браузере: сказать один раз на вход. Вход кончился или мост
-  // открыл новый (другая ссылка) — скажется снова.
-  let loginPending = false;
-  let loginUrl: string | null = null;
-  // Вызов, ждущий рукопожатия, отпускается в миг, когда мост запросил вход:
-  // человека внутри вызова не ждут, адрес уходит ответом.
-  const loginWaiters = new Set<() => void>();
-  /** Обещание входа и его снятие — вызов, кончившийся иначе, ждуна за собой не оставляет. */
-  function loginStarted(): { promise: Promise<void>; cancel: () => void } {
-    if (loginPending) return { promise: Promise.resolve(), cancel() {} };
-    let waiter: () => void = () => {};
-    const promise = new Promise<void>((r) => (waiter = r));
-    loginWaiters.add(waiter);
-    return { promise, cancel: () => loginWaiters.delete(waiter) };
-  }
-  function onLogin(url: string | null): void {
-    for (const w of loginWaiters) w();
-    loginWaiters.clear();
-    if (loginPending && url === loginUrl) return;
-    loginPending = true;
-    loginUrl = url;
-    say(
-      `Искрон: нужен вход — ${url ? `открой ${url} и заверши его` : "заверши его в браузере"}; ` +
-        "адрес локальный: с другой машины — ssh -L <порт>:127.0.0.1:<порт>, либо личный токен в ~/.iskron-bridge/token. " +
-        "Тулы iskron_* поднимутся после входа сами.",
-      "warning",
-    );
-  }
-  function loginError(): Error {
-    return new Error(
-      `Искрон: нужен вход в граф — ${loginUrl ? `открой в браузере ${loginUrl}` : "заверши вход в браузере"} и повтори вызов. ` +
-        "Адрес локальный для машины OpenCode: с другой — ssh -L <порт>:127.0.0.1:<порт>; " +
-        "на безголовой машине положи личный токен в ~/.iskron-bridge/token (скилл establish-mcp).",
-    );
-  }
+  // Человек в браузере — один вход на все мосты плагина (login.ts).
+  const login = createLogin(say);
 
   function spawn(args: string[] = []): Slot {
     const slot: Slot = {
@@ -207,10 +178,7 @@ export async function setupTools(
   }
 
   function shake(slot: Slot): void {
-    slot.ready = handshake(slot.bridge, onLogin, () => {
-      loginPending = false;
-      loginUrl = null;
-    });
+    slot.ready = handshake(slot.bridge, login.on, login.done);
     slot.ready.catch(() => {});
   }
 
@@ -319,7 +287,14 @@ export async function setupTools(
       () => !stopped,
     );
   const statusText = (): string =>
-    statusLines(path, builds, { loginPending, loginUrl }, state, slots.size, spare ? 1 : 0);
+    statusLines(
+      path,
+      builds,
+      { loginPending: login.pending, loginUrl: login.url },
+      state,
+      slots.size,
+      spare ? 1 : 0,
+    );
 
   await ctx.tool.transform((editor) => {
     editor.add({
@@ -383,20 +358,7 @@ export async function setupTools(
   }
 
   /** Рукопожатие слота под гонкой со входом: человека внутри вызова не ждут, адрес входа уходит ответом. */
-  async function awaitReady(slot: Slot): Promise<void> {
-    if (loginPending) throw loginError();
-    const login = loginStarted();
-    try {
-      await Promise.race([
-        readyFor(slot),
-        login.promise.then(() => {
-          throw loginError();
-        }),
-      ]);
-    } finally {
-      login.cancel();
-    }
-  }
+  const awaitReady = (slot: Slot): Promise<void> => login.race(() => readyFor(slot));
 
   /** Один вызов тула через мост слота. */
   async function callThrough(
@@ -469,8 +431,25 @@ export async function setupTools(
     }
   })();
 
+  // Строка запуска с делом (launch.ts): тот же вызов, что у execute, с его занятостью.
+  const launcher = createLauncher<Slot>({
+    rootOf,
+    childSlot: (sessionID, root) => childSlot(sessionID, slots.get(root)),
+    async call(slot, name, args, sessionID) {
+      slot.busy++;
+      try {
+        return (await callThrough(slot, name, args, sessionID)).content;
+      } finally {
+        slot.busy--;
+        slot.lastCall = Date.now();
+      }
+    },
+  });
+
   return {
+    launch: launcher.launch,
     forget(session) {
+      launcher.forget(session);
       keeper.forget(session);
       const slot = slots.get(session);
       if (!slot) return;

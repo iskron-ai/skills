@@ -7,6 +7,7 @@
 // запускающий, наследства роли нет), без хука инбокса роли, канал с
 // коротким окном простоя, без записи держания; с концом прогона (stdin закрыт)
 // мост уходит с места, и канал гаснет по окну (main.ts).
+import { L } from "../shared/lang.ts";
 import { type BoardEntry, nameOf, parseBoard } from "./board.ts";
 import { callTool as call, short } from "./call.ts";
 import { CFG } from "./config.ts";
@@ -57,11 +58,14 @@ export function pickSatellite(
 ): SatellitePick {
   const address = of.startsWith("@") && of.includes(":") ? of : null;
   const base = address ? nameOf(address) : of.replace(/^@/, "");
-  const fault = base ? nameFault(base) : "пусто";
+  const fault = base ? nameFault(base) : L("пусто", "empty");
   if (fault)
     return {
       ok: false,
-      refusal: `Отказано (мост): satellite_of «${of}» — не имя места (${fault}); передай место позвавшего как печатает доска: @handle:name.`,
+      refusal: L(
+        `Отказано (мост): satellite_of «${of}» — не имя места (${fault}); передай место позвавшего как печатает доска: @handle:name.`,
+        `Refused (bridge): satellite_of "${of}" is not a seat name (${fault}); pass the caller's seat as the board prints it: @handle:name.`,
+      ),
     };
   const callers = entries.filter((e) =>
     address ? e.address === address : nameOf(e.address) === base,
@@ -69,14 +73,20 @@ export function pickSatellite(
   if (!callers.length)
     return {
       ok: false,
-      refusal: `Отказано (мост): места позвавшего ${of} на доске этого графа нет — спутнику не к чему встать рядом; проверь satellite_of и граф в постановке.`,
+      refusal: L(
+        `Отказано (мост): места позвавшего ${of} на доске этого графа нет — спутнику не к чему встать рядом; проверь satellite_of и граф в постановке.`,
+        `Refused (bridge): the caller's seat ${of} is not on this graph's board — the satellite has nothing to stand beside; check satellite_of and the graph in the brief.`,
+      ),
     };
   // Одно имя у нескольких мест (разные роли) — место своей роли, если оно одно; иначе неоднозначно.
   const same = callers.length > 1 ? callers.filter((e) => e.karta === normKarta(karta)) : callers;
   if (same.length !== 1)
     return {
       ok: false,
-      refusal: `Отказано (мост): имя ${base} на доске носят ${callers.length} места — передай satellite_of полным адресом @handle:name.`,
+      refusal: L(
+        `Отказано (мост): имя ${base} на доске носят ${callers.length} места — передай satellite_of полным адресом @handle:name.`,
+        `Refused (bridge): ${callers.length} seats on the board carry the name ${base} — pass satellite_of as the full address @handle:name.`,
+      ),
     };
   const caller = same[0].address;
   const callerKarta = same[0].karta;
@@ -86,7 +96,10 @@ export function pickSatellite(
     // Повтор того же прогона — либо параллельный прогон ТОГО ЖЕ файла агента:
     // Claude Code мемоизует сервер файла агента по имени и конфигу, и второй
     // прогон приходит в этот же мост. Различить их мост не может — называет оба.
-    const word = `мост уже держит ${led} — повтор этого прогона либо параллельный прогон того же файла агента, который делит это место и потеряет его, когда первый закончит; параллельно — не больше одного прогона на файл агента`;
+    const word = L(
+      `мост уже держит ${led} — повтор этого прогона либо параллельный прогон того же файла агента, который делит это место и потеряет его, когда первый закончит; параллельно — не больше одного прогона на файл агента`,
+      `the bridge already holds ${led} — a repeat of this run or a parallel run of the same agent file, which shares this seat and loses it when the first one ends; in parallel — no more than one run per agent file`,
+    );
     log(word);
     notes.push(word);
     return { ok: true, name: led, caller, callerKarta, callerId, notes };
@@ -97,13 +110,19 @@ export function pickSatellite(
     if (taken.has(name)) continue;
     if (!name.startsWith(`${base}.`))
       notes.push(
-        `имя ${base}.sub-${n} длиннее предела ${NAME_MAX} знаков — база укорочена: ${name}`,
+        L(
+          `имя ${base}.sub-${n} длиннее предела ${NAME_MAX} знаков — база укорочена: ${name}`,
+          `the name ${base}.sub-${n} is longer than the ${NAME_MAX}-sign limit — the base is cut: ${name}`,
+        ),
       );
     return { ok: true, name, caller, callerKarta, callerId, notes };
   }
   return {
     ok: false,
-    refusal: `Отказано (мост): у места ${caller} заняты все спутники .sub-1…99 — прибери погасшие места прежних прогонов.`,
+    refusal: L(
+      `Отказано (мост): у места ${caller} заняты все спутники .sub-1…99 — прибери погасшие места прежних прогонов.`,
+      `Refused (bridge): every satellite .sub-1…99 of the seat ${caller} is taken — clear the dead seats of former runs.`,
+    ),
   };
 }
 
@@ -121,19 +140,34 @@ export async function satelliteGate(
   const refuse = (refusal: string): SatellitePick => ({ ok: false, refusal });
   if (CFG.satellite && !of)
     return refuse(
-      "Отказано (мост): это мост-спутник — он занимает только место-спутник субагента; передай satellite_of — место позвавшего (@handle:name) из постановки.",
+      L(
+        "Отказано (мост): это мост-спутник — он занимает только место-спутник субагента; передай satellite_of — место позвавшего (@handle:name) из постановки.",
+        "Refused (bridge): this is a satellite bridge — it takes only a subagent's satellite seat; pass satellite_of — the caller's seat (@handle:name) from the brief.",
+      ),
     );
   if (!of) return null;
   if (!CFG.satellite)
     return refuse(
-      "Отказано (мост): satellite_of — только мосту-спутнику (запись моста с --satellite в файле агента); этот мост — мост сессии, и место-спутник на нём заняло бы голос позвавшего. Субагенту без своего моста — предел: он говорит местом позвавшего и называет себя в своих строках.",
+      L(
+        "Отказано (мост): satellite_of — только мосту-спутнику (запись моста с --satellite в файле агента); этот мост — мост сессии, и место-спутник на нём заняло бы голос позвавшего. Субагенту без своего моста — предел: он говорит местом позвавшего и называет себя в своих строках.",
+        "Refused (bridge): satellite_of is for a satellite bridge only (a bridge entry with --satellite in the agent file); this is a session bridge, and a satellite seat on it would take the caller's voice. A subagent without a bridge of its own has a limit: it speaks as the caller's seat and names itself in its lines.",
+      ),
     );
   if (asked || a.take === true || (typeof a.room === "string" && a.room.trim()))
     return refuse(
-      "Отказано (мост): имя спутника выводит мост — name, take и room вместе с satellite_of не передаются.",
+      L(
+        "Отказано (мост): имя спутника выводит мост — name, take и room вместе с satellite_of не передаются.",
+        "Refused (bridge): the bridge derives the satellite's name — name, take and room do not go with satellite_of.",
+      ),
     );
   const b = await call("iskron_channel", { action: "list", realm });
-  if (b.isError) return refuse(`Отказано: доска не прочиталась — ${short(b.text)}`);
+  if (b.isError)
+    return refuse(
+      L(
+        `Отказано: доска не прочиталась — ${short(b.text)}`,
+        `Refused: the board did not read — ${short(b.text)}`,
+      ),
+    );
   const s = state.standing;
   const led = s && !otherRealm(s.realm, realm) ? (s.name ?? null) : null;
   const pick = pickSatellite(parseBoard(b.text), of, karta, led);
@@ -146,11 +180,17 @@ export async function satelliteGate(
   }
   noteSatelliteOf(pick.caller, pick.callerId);
   pick.notes.push(
-    `место-спутник ${pick.caller}: роль #${normKarta(karta)}, хука инбокса роли нет, окно простоя канала ${SATELLITE_TTL_S} с, записи держания нет — место живёт прогоном`,
+    L(
+      `место-спутник ${pick.caller}: роль #${normKarta(karta)}, хука инбокса роли нет, окно простоя канала ${SATELLITE_TTL_S} с, записи держания нет — место живёт прогоном`,
+      `satellite seat of ${pick.caller}: role #${normKarta(karta)}, no role inbox hook, channel idle window ${SATELLITE_TTL_S} s, no holding record — the seat lives by the run`,
+    ),
   );
   if (!pick.callerId)
     pick.notes.push(
-      `id места ${pick.caller} доска не напечатала — признак спутника (satellite_of) платформе не послан: место может унаследовать недоставленную почту роли`,
+      L(
+        `id места ${pick.caller} доска не напечатала — признак спутника (satellite_of) платформе не послан: место может унаследовать недоставленную почту роли`,
+        `the board did not print the id of ${pick.caller} — the satellite sign (satellite_of) was not sent to the platform: the seat may inherit the role's undelivered mail`,
+      ),
     );
   return pick;
 }
@@ -194,6 +234,11 @@ export function satelliteChannelRefusal(args: Record<string, unknown>): string |
 
 /** Слово о слухе вместо команды сторожа: спутник сторожа не держит. */
 export const satelliteListenWord = (): string =>
-  `[iskron-bridge] Место-спутник: сторожа не взводи — место живёт прогоном субагента и подписывает его записи; ` +
-  `с концом прогона мост уходит с места сам, канал гаснет окном простоя ${SATELLITE_TTL_S} с. ` +
-  `Первый ход — вход в дело, названное постановкой, и пересказ постановки первым словом в нём.`;
+  L(
+    `[iskron-bridge] Место-спутник: сторожа не взводи — место живёт прогоном субагента и подписывает его записи; ` +
+      `с концом прогона мост уходит с места сам, канал гаснет окном простоя ${SATELLITE_TTL_S} с. ` +
+      `Первый ход — вход в дело, названное постановкой, и пересказ постановки первым словом в нём.`,
+    `[iskron-bridge] Satellite seat: do not arm a watchdog — the seat lives by the subagent's run and signs its records; ` +
+      `when the run ends the bridge leaves the seat itself, the channel dies after the ${SATELLITE_TTL_S} s idle window. ` +
+      `The first move — enter the case the brief names and retell the brief as your first message in it.`,
+  );

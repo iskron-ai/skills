@@ -144,6 +144,9 @@ const ENV_KEYS = [
   "FB_TOOLS_FILE",
   "FB_CHANGED",
   "FB_REPLY",
+  "FB_CALLS",
+  "FB_STAND_HELD",
+  "ISKRON_SATELLITE_OF",
 ];
 
 let seq = 0;
@@ -410,6 +413,131 @@ test("bridge raised: every server tool stands in the session under its own name"
     assert.deepEqual(channel.parameters.required, ["action"]);
     // The prompt line is one sentence of the description, not the whole of it.
     assert.equal(channel.promptSnippet, "Живой канал делателя.");
+  } finally {
+    await rec.stop();
+  }
+});
+
+// A launch line with a case (#6078): pi has no child sessions — a helper is a
+// separate pi process — so the launching seat comes in the line's tail «от
+// <seat>» or, without it, in ISKRON_SATELLITE_OF. On the FIRST prompt the
+// extension raises its bridge anew as a satellite, stands beside that seat in
+// the named role and joins the case — in the input hook, before the model reads —
+// and hands the model the prompt with its word under the launch line.
+const STAND_AND_CASE = JSON.stringify([
+  { name: "iskron_stand", description: "Стояние.", inputSchema: { type: "object" } },
+  { name: "iskron_case", description: "Дело.", inputSchema: { type: "object" } },
+]);
+/** The "input" hooks as pi runs them: a transform replaces the text, "continue" leaves it. */
+async function prompt(rec, text) {
+  for (const fn of rec.handlers.get("input") ?? []) {
+    const r = await fn({ type: "input", text, source: "interactive" }, rec.ctx);
+    if (r?.action === "transform") text = r.text;
+  }
+  return text;
+}
+const toolCalls = (file) =>
+  existsSync(file)
+    ? readFileSync(file, "utf8")
+        .trim()
+        .split("\n")
+        .filter(Boolean)
+        .map((l) => JSON.parse(l))
+    : [];
+const starts = (log) => readFileSync(log, "utf8").trim().split("\n");
+
+test("a first prompt «start … дело №N от <seat>» stands as that seat's satellite and joins the case before the model reads", async () => {
+  const calls = join(SANDBOX, "launch-tail.calls");
+  const { log, env } = bridgeEnv("launch-tail", {
+    FB_TOOLS: STAND_AND_CASE,
+    FB_CALLS: calls,
+    FB_STAND_HELD: "host.repo.opus-5",
+  });
+  const rec = await session(env);
+  try {
+    const read = await prompt(
+      rec,
+      "start @nks/nks-dev #48 дело №77 от @me:host.repo\nБриф: почини.",
+    );
+    assert.deepEqual(
+      toolCalls(calls).map((c) => [c.name, c.arguments]),
+      [
+        ["iskron_stand", { realm: "@nks/nks-dev", karta: "#48", satellite_of: "@me:host.repo" }],
+        ["iskron_case", { action: "join", realm: "@nks/nks-dev", room: "#77" }],
+      ],
+    );
+    const s = starts(log);
+    assert.equal(s.length, 2, s.join("\n"));
+    assert.match(s[1], /--satellite/, "the bridge is raised anew as a satellite");
+    assert.equal(
+      read,
+      "start @nks/nks-dev #48 дело №77 от @me:host.repo\n" +
+        "Искрон: встал @me:host.repo.sub-1, вошёл в дело №77 — первым словом перескажи бриф в деле.\n" +
+        "Бриф: почини.",
+    );
+  } finally {
+    await rec.stop();
+  }
+});
+
+test("without the tail the seat comes from ISKRON_SATELLITE_OF; only the first prompt launches, and a prompt without the line is left as it was", async () => {
+  const calls = join(SANDBOX, "launch-env.calls");
+  const { env } = bridgeEnv("launch-env", {
+    FB_TOOLS: STAND_AND_CASE,
+    FB_CALLS: calls,
+    FB_STAND_HELD: "host.repo.opus-5",
+    ISKRON_SATELLITE_OF: "@me:lead",
+  });
+  const rec = await session(env);
+  try {
+    assert.match(
+      await prompt(rec, "start r5 #48 case #77"),
+      /встал @me:lead\.sub-1, вошёл в дело №77/,
+    );
+    assert.equal(
+      await prompt(rec, "start r5 #48 #78"),
+      "start r5 #48 #78",
+      "only the first prompt",
+    );
+    assert.deepEqual(
+      toolCalls(calls).map((c) => c.arguments.satellite_of ?? c.arguments.room),
+      ["@me:lead", "#77"],
+    );
+  } finally {
+    await rec.stop();
+  }
+  const plain = await session(bridgeEnv("launch-none", { FB_TOOLS: STAND_AND_CASE }).env);
+  try {
+    assert.equal(await prompt(plain, "Сделай обзор."), "Сделай обзор.");
+  } finally {
+    await plain.stop();
+  }
+});
+
+test("with no launching seat at all the session stands its own place; a refused join comes back as words and the place stays", async () => {
+  const calls = join(SANDBOX, "launch-own.calls");
+  const b = bridgeEnv("launch-own", {
+    FB_TOOLS: STAND_AND_CASE,
+    FB_CALLS: calls,
+    FB_STAND_HELD: "host.repo.opus-5",
+  });
+  writeFileSync(`${b.reply}.iskron_case`, "__ERROR__дело #77 не найдено");
+  const rec = await session(b.env);
+  try {
+    const read = await prompt(rec, "start r5 #48 #77");
+    assert.equal(
+      read,
+      "start r5 #48 #77\nИскрон: встал host.repo.opus-5; в дело №77 не вошёл — дело #77 не найдено. Место остаётся.",
+    );
+    assert.deepEqual(
+      toolCalls(calls).map((c) => [c.name, c.arguments.satellite_of]),
+      [
+        ["iskron_stand", undefined],
+        ["iskron_case", undefined],
+      ],
+    );
+    assert.equal(starts(b.log).length, 1, "no satellite bridge without a seat");
+    assert.ok(alive(pidOf(b.log)), "the place's bridge stays up");
   } finally {
     await rec.stop();
   }

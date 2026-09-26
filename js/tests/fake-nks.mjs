@@ -137,6 +137,7 @@ export async function startFakeNks(opts = {}) {
     places: new Map(), // "karta:name" → { karta, name, incoming }
     hung: new Set(), // сокеты, в которые служба перестала писать (/control {ws_hang})
     placeArgs: [], // поля места, с которыми пришли connect/mint/register (#5174)
+    acceptLanguage: new Set(), // значения Accept-Language запросов к /mcp ("" — заголовка не было)
     rooms: [],
     webhooks: [], // { id, karta, url, active }
     sends: [], // { karta, standing, text, bound }
@@ -531,6 +532,7 @@ export async function startFakeNks(opts = {}) {
         );
       }
       let sid = req.headers["mcp-session-id"];
+      st.acceptLanguage.add(String(req.headers["accept-language"] ?? "")); // язык, которым мост просил прозу (#6080)
       const msg = JSON.parse(await body(req));
       const extra = {};
       if (
@@ -704,6 +706,7 @@ export async function startFakeNks(opts = {}) {
             model: a.model,
             attrs: a.attrs,
             ...("satellite_of" in a ? { satellite_of: a.satellite_of } : {}), // тело как пришло (#6064)
+            ...("locale" in a ? { locale: a.locale } : {}), // язык места (#6080)
           });
           const reg = registerPlace(sid, a.realm, a.karta, a.name);
           if (reg.added) {
@@ -828,6 +831,7 @@ export async function startFakeNks(opts = {}) {
             attrs: a.attrs,
             ttl_seconds: a.ttl_seconds,
             ...("satellite_of" in a ? { satellite_of: a.satellite_of } : {}), // тело как пришло (#6064)
+            ...("locale" in a ? { locale: a.locale } : {}), // язык места (#6080)
           });
           st.counts.connect++;
           st.wsToken = token("ws"); // как у настоящей поверхности: сокет показан один раз и всякий раз новый
