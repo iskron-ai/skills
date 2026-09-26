@@ -1,5 +1,17 @@
 # Changelog
 
+## [6.24.0](https://github.com/iskron-ai/skills/compare/v6.23.0...v6.24.0) (2026-09-26)
+
+
+### Features
+
+* **skills:** открытые дела — в обзоре контура и в at ([#236](https://github.com/iskron-ai/skills/issues/236)) ([a1eb8f1](https://github.com/iskron-ai/skills/commit/a1eb8f17964b406bf970fcdbd4ee1df7b63d709b))
+
+
+### Bug Fixes
+
+* **iskronify:** зазор хука мержа назван — мерж на форже и ворктри ([#239](https://github.com/iskron-ai/skills/issues/239)) ([dee43a9](https://github.com/iskron-ai/skills/commit/dee43a9d281efb7469b2dd3e600c4251a292177d))
+
 ## [6.23.0](https://github.com/iskron-ai/skills/compare/v6.22.0...v6.23.0) (2026-09-26)
 
 
