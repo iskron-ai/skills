@@ -3,7 +3,8 @@
 // агента отдельным соединением на прогон субагента; такой мост, запущенный с
 // --satellite (только флагом), занимает только место-спутник
 // рядом с местом позвавшего: имя `<место позвавшего>.sub-<N>` с первым
-// свободным на доске N, роль позвавшего, без хука инбокса роли, канал с
+// свободным на доске N, роль — названная karta вызова (её называет
+// запускающий, наследства роли нет), без хука инбокса роли, канал с
 // коротким окном простоя, без записи держания; с концом прогона (stdin закрыт)
 // мост уходит с места, и канал гаснет по окну (main.ts).
 import { type BoardEntry, nameOf, parseBoard } from "./board.ts";
@@ -31,13 +32,15 @@ export function isSatelliteOf(base: string, name: string): boolean {
 }
 
 export type SatellitePick =
-  { ok: true; name: string; caller: string; notes: string[] } | { ok: false; refusal: string };
+  | { ok: true; name: string; caller: string; callerId: string | null; notes: string[] }
+  | { ok: false; refusal: string };
 
 /**
  * Место-спутник по доске: место позвавшего (`@handle:name` либо голое имя)
- * должно стоять на доске под той же ролью; имя — первое `.sub-N`, которого на
- * доске нет вовсе. `led` — имя места, которое этот мост уже ведёт в графе:
- * спутник той же базы возвращается на него, а не берёт следующий номер.
+ * должно стоять на доске — любой роли: роль спутника — `karta` вызова; имя —
+ * первое `.sub-N`, которого на доске нет вовсе. `led` — имя места, которое
+ * этот мост уже ведёт в графе: спутник той же базы возвращается на него, а не
+ * берёт следующий номер.
  */
 export function pickSatellite(
   entries: BoardEntry[],
@@ -61,18 +64,15 @@ export function pickSatellite(
       ok: false,
       refusal: `Отказано (мост): места позвавшего ${of} на доске этого графа нет — спутнику не к чему встать рядом; проверь satellite_of и граф в постановке.`,
     };
-  const same = callers.filter((e) => e.karta === normKarta(karta));
-  if (!same.length)
+  // Одно имя у нескольких мест (разные роли) — место своей роли, если оно одно; иначе неоднозначно.
+  const same = callers.length > 1 ? callers.filter((e) => e.karta === normKarta(karta)) : callers;
+  if (same.length !== 1)
     return {
       ok: false,
-      refusal: `Отказано (мост): место позвавшего ${callers[0].address} держит роль #${callers[0].karta}, а не #${normKarta(karta)} — спутник действует в мандате позвавшего, его ролью.`,
-    };
-  if (same.length > 1)
-    return {
-      ok: false,
-      refusal: `Отказано (мост): имя ${base} у роли #${normKarta(karta)} носят ${same.length} места — передай satellite_of полным адресом @handle:name.`,
+      refusal: `Отказано (мост): имя ${base} на доске носят ${callers.length} места — передай satellite_of полным адресом @handle:name.`,
     };
   const caller = same[0].address;
+  const callerId = same[0].id;
   const notes: string[] = [];
   if (led && isSatelliteOf(base, led)) {
     // Повтор того же прогона — либо параллельный прогон ТОГО ЖЕ файла агента:
@@ -81,7 +81,7 @@ export function pickSatellite(
     const word = `мост уже держит ${led} — повтор этого прогона либо параллельный прогон того же файла агента, который делит это место и потеряет его, когда первый закончит; параллельно — не больше одного прогона на файл агента`;
     log(word);
     notes.push(word);
-    return { ok: true, name: led, caller, notes };
+    return { ok: true, name: led, caller, callerId, notes };
   }
   const taken = new Set(entries.map((e) => nameOf(e.address)));
   for (let n = 1; n <= 99; n++) {
@@ -91,7 +91,7 @@ export function pickSatellite(
       notes.push(
         `имя ${base}.sub-${n} длиннее предела ${NAME_MAX} знаков — база укорочена: ${name}`,
       );
-    return { ok: true, name, caller, notes };
+    return { ok: true, name, caller, callerId, notes };
   }
   return {
     ok: false,
@@ -130,10 +130,14 @@ export async function satelliteGate(
   const led = s && !otherRealm(s.realm, realm) ? (s.name ?? null) : null;
   const pick = pickSatellite(parseBoard(b.text), of, karta, led);
   if (!pick.ok) return pick;
-  noteSatelliteOf(pick.caller);
+  noteSatelliteOf(pick.caller, pick.callerId);
   pick.notes.push(
-    `место-спутник ${pick.caller}: роль позвавшего, хука инбокса роли нет, окно простоя канала ${SATELLITE_TTL_S} с, записи держания нет — место живёт прогоном`,
+    `место-спутник ${pick.caller}: роль #${normKarta(karta)}, хука инбокса роли нет, окно простоя канала ${SATELLITE_TTL_S} с, записи держания нет — место живёт прогоном`,
   );
+  if (!pick.callerId)
+    pick.notes.push(
+      `id места ${pick.caller} доска не напечатала — признак спутника (satellite_of) платформе не послан: место может унаследовать недоставленную почту роли`,
+    );
   return pick;
 }
 

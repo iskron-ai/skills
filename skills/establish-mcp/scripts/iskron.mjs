@@ -3180,7 +3180,8 @@ function holdStanding(url, statusUrl2) {
   if (same && ch) repointExtras(ch);
   openHolder(url, key);
   standingLog(`held ${key}${standCwd ? ` cwd=${standCwd}` : ""}`);
-  notify("info", { kind: "held", key });
+  const place = s ? { realm: s.realm, karta: String(s.karta), name: s.name ?? "" } : void 0;
+  notify("info", { kind: "held", key, ...place ? { place } : {} });
   return key;
 }
 function parkStanding(reason) {
@@ -3344,8 +3345,10 @@ var model = "";
 var extras2 = /* @__PURE__ */ new Map();
 var placeKey = (p) => `${String(p.realm ?? "")}|${normKarta(p.karta)}|${normName(p.name)}`;
 var satelliteOf = "";
-function noteSatelliteOf(address) {
+var satelliteOfId = "";
+function noteSatelliteOf(address, id) {
   satelliteOf = address;
+  satelliteOfId = CFG.satellite && id ? id : "";
 }
 function rememberModel(m) {
   if (typeof m === "string" && m.trim()) model = m.trim().replace(/^[^/]*\//, "");
@@ -3355,6 +3358,7 @@ function placeFields(place = {}) {
   const extra = extras2.get(placeKey(place)) ?? {};
   return {
     ...model ? { model } : {},
+    ...CFG.satellite && satelliteOfId ? { satellite_of: satelliteOfId } : {},
     attrs: {
       ...extra,
       build: { name: "iskron-bridge", version: VERSION, stamp: BUILD.split("+")[1] ?? "" },
@@ -3860,11 +3864,13 @@ function parseBoard(text) {
   for (const line of text.split("\n")) {
     const m = /^\s*#(\d+)\s.*?·\s(@\S+)\s—\s(.*)$/.exec(line);
     if (m) {
-      out5.push({ karta: m[1], address: m[2], rest: m[3], incoming: null });
+      out5.push({ karta: m[1], address: m[2], rest: m[3], incoming: null, id: null });
       continue;
     }
     const inc = /📥\s*(https?:\/\/\S+)/.exec(line);
     if (inc && out5.length) out5[out5.length - 1].incoming = inc[1];
+    const id = /^\s*id\s+([0-9a-f][0-9a-f-]{7,})\s*$/i.exec(line);
+    if (id && out5.length) out5[out5.length - 1].id = id[1];
   }
   return out5;
 }
@@ -4220,24 +4226,20 @@ function pickSatellite(entries, of, karta, led) {
       ok: false,
       refusal: `Отказано (мост): места позвавшего ${of} на доске этого графа нет — спутнику не к чему встать рядом; проверь satellite_of и граф в постановке.`
     };
-  const same = callers.filter((e) => e.karta === normKarta(karta));
-  if (!same.length)
+  const same = callers.length > 1 ? callers.filter((e) => e.karta === normKarta(karta)) : callers;
+  if (same.length !== 1)
     return {
       ok: false,
-      refusal: `Отказано (мост): место позвавшего ${callers[0].address} держит роль #${callers[0].karta}, а не #${normKarta(karta)} — спутник действует в мандате позвавшего, его ролью.`
-    };
-  if (same.length > 1)
-    return {
-      ok: false,
-      refusal: `Отказано (мост): имя ${base} у роли #${normKarta(karta)} носят ${same.length} места — передай satellite_of полным адресом @handle:name.`
+      refusal: `Отказано (мост): имя ${base} на доске носят ${callers.length} места — передай satellite_of полным адресом @handle:name.`
     };
   const caller = same[0].address;
+  const callerId = same[0].id;
   const notes = [];
   if (led && isSatelliteOf(base, led)) {
     const word = `мост уже держит ${led} — повтор этого прогона либо параллельный прогон того же файла агента, который делит это место и потеряет его, когда первый закончит; параллельно — не больше одного прогона на файл агента`;
     log(word);
     notes.push(word);
-    return { ok: true, name: led, caller, notes };
+    return { ok: true, name: led, caller, callerId, notes };
   }
   const taken = new Set(entries.map((e) => nameOf(e.address)));
   for (let n = 1; n <= 99; n++) {
@@ -4247,7 +4249,7 @@ function pickSatellite(entries, of, karta, led) {
       notes.push(
         `имя ${base}.sub-${n} длиннее предела ${NAME_MAX} знаков — база укорочена: ${name}`
       );
-    return { ok: true, name, caller, notes };
+    return { ok: true, name, caller, callerId, notes };
   }
   return {
     ok: false,
@@ -4276,10 +4278,14 @@ async function satelliteGate(a, realm, karta, asked) {
   const led = s && !otherRealm(s.realm, realm) ? s.name ?? null : null;
   const pick = pickSatellite(parseBoard(b.text), of, karta, led);
   if (!pick.ok) return pick;
-  noteSatelliteOf(pick.caller);
+  noteSatelliteOf(pick.caller, pick.callerId);
   pick.notes.push(
-    `место-спутник ${pick.caller}: роль позвавшего, хука инбокса роли нет, окно простоя канала ${SATELLITE_TTL_S} с, записи держания нет — место живёт прогоном`
+    `место-спутник ${pick.caller}: роль #${normKarta(karta)}, хука инбокса роли нет, окно простоя канала ${SATELLITE_TTL_S} с, записи держания нет — место живёт прогоном`
   );
+  if (!pick.callerId)
+    pick.notes.push(
+      `id места ${pick.caller} доска не напечатала — признак спутника (satellite_of) платформе не послан: место может унаследовать недоставленную почту роли`
+    );
   return pick;
 }
 var ttlRefused = (text) => /ttl/i.test(text) || /(^|\D)4\d\d(\D|$)/.test(text);
@@ -4570,7 +4576,7 @@ var STAND_TOOL = {
       },
       satellite_of: {
         type: "string",
-        description: "Только мосту-спутнику субагента (запись моста с --satellite в файле агента): место позвавшего @handle:name из постановки. Мост встаёт рядом местом-спутником <имя позвавшего>.sub-N (первое свободное N), ролью позвавшего, без хука инбокса роли; место живёт прогоном. name, take и room с ним не передаются."
+        description: "Только мосту-спутнику субагента (запись моста с --satellite в файле агента): место позвавшего @handle:name из постановки. Мост встаёт рядом местом-спутником <имя позвавшего>.sub-N (первое свободное N), ролью из karta (её называет постановка, роль позвавшего не наследуется), без хука инбокса роли; место живёт прогоном. name, take и room с ним не передаются."
       },
       status: { type: "string", description: "Первая строка занятости (до 64 символов)." },
       cwd: {

@@ -341,13 +341,15 @@ var Bridge = class {
   onLog;
   onNotification;
   onDie;
+  args;
   constructor(bin, onLog, onNotification = () => {
   }, onDie = () => {
-  }) {
+  }, args = []) {
     this.bin = bin;
     this.onLog = onLog;
     this.onNotification = onNotification;
     this.onDie = onDie;
+    this.args = args;
   }
   /** Мост вышел или не запустился — вызовы к нему отвергаются этим отказом. */
   get failure() {
@@ -355,7 +357,10 @@ var Bridge = class {
   }
   start() {
     const rt = bridgeRuntime();
-    const proc = spawn(rt.bin, [this.bin], { stdio: ["pipe", "pipe", "pipe"], env: rt.env });
+    const proc = spawn(rt.bin, [this.bin, ...this.args], {
+      stdio: ["pipe", "pipe", "pipe"],
+      env: rt.env
+    });
     this.proc = proc;
     proc.stdout?.setEncoding("utf8");
     proc.stdout?.on("data", (chunk) => this.feed(chunk));
@@ -785,6 +790,23 @@ function createKeeper(doors) {
   };
 }
 
+// js/opencode/satellite.ts
+var STAND_TOOL = "iskron_stand";
+function standsBy(name, args) {
+  if (name === STAND_TOOL) return true;
+  return name === "iskron_channel" && ["connect", "mint", "register"].includes(String(args.action));
+}
+function heldPlace(data) {
+  const p = data?.place;
+  if (typeof p?.name !== "string" || !p.name) return null;
+  return { realm: String(p.realm), karta: String(p.karta), name: p.name };
+}
+function asSatellite(args, of) {
+  if (!of) return;
+  args.satellite_of ??= of.name;
+  if (args.karta == null || args.karta === "") args.karta = of.karta;
+}
+
 // js/opencode/status.ts
 function statusLines(path, builds, login, state2, sessions, spare) {
   return [
@@ -805,11 +827,6 @@ if (IDLE_MS <= WATCH_MS)
   );
 var REAP_MS = Number(process.env.ISKRON_BRIDGE_REAP_MS || 6e4);
 var STATUS_TOOL = "iskron_bridge";
-var STAND_TOOL = "iskron_stand";
-function standsBy(name, args) {
-  if (name === STAND_TOOL) return true;
-  return name === "iskron_channel" && ["connect", "mint", "register"].includes(String(args.action));
-}
 var hhmm = () => (/* @__PURE__ */ new Date()).toTimeString().slice(0, 5);
 async function setupTools(ctx, say, onChannel, rootOf) {
   const found = findBridge();
@@ -855,7 +872,7 @@ async function setupTools(ctx, say, onChannel, rootOf) {
       `Искрон: нужен вход в граф — ${loginUrl ? `открой в браузере ${loginUrl}` : "заверши вход в браузере"} и повтори вызов. Адрес локальный для машины OpenCode: с другой — ssh -L <порт>:127.0.0.1:<порт>; на безголовой машине положи личный токен в ~/.iskron-bridge/token (скилл establish-mcp).`
     );
   }
-  function spawn2() {
+  function spawn2(args = []) {
     const slot = {
       bridge: null,
       ready: Promise.resolve(),
@@ -880,6 +897,7 @@ async function setupTools(ctx, say, onChannel, rootOf) {
           keeper.stood(slot);
         if ((kind === "held" || kind === "released") && typeof params?.data?.key === "string")
           slot.key = params.data.key;
+        if (kind === "held") slot.place = heldPlace(params?.data) ?? slot.place;
         if (kind === "released" || kind === "dead" || kind === "evicted") slot.holding = false;
         onChannel(slot.session, params, !!slot.child);
       },
@@ -893,7 +911,8 @@ async function setupTools(ctx, say, onChannel, rootOf) {
             text: `Искрон: слух потерян в ${hhmm()} — мост стояния вышел (${e.message}). Сторож слуха поднимет мост и вернёт место с диска; не ждёшь — iskron_stand.`
           }
         });
-      }
+      },
+      args
     );
     slot.bridge.start();
     shake(slot);
@@ -1026,10 +1045,12 @@ async function setupTools(ctx, say, onChannel, rootOf) {
       });
     }
   });
-  function childSlot(sessionID) {
+  function childSlot(sessionID, parent) {
     const have = slots.get(sessionID);
     if (have && !have.bridge.failure) return have;
-    const own = spawn2();
+    const of = have?.satelliteOf ?? parent?.place ?? null;
+    const own = spawn2(of ? ["--satellite"] : []);
+    own.satelliteOf = of;
     own.session = sessionID;
     own.child = true;
     own.dir = have?.dir ?? null;
@@ -1058,9 +1079,10 @@ async function setupTools(ctx, say, onChannel, rootOf) {
     if (slot.resume) await slot.resume;
     const args = { ...input ?? {} };
     if (standsBy(name, args) && slot.session !== sessionID) {
-      slot = childSlot(sessionID);
+      slot = childSlot(sessionID, slot);
       await awaitReady(slot);
     }
+    if (name === STAND_TOOL) asSatellite(args, slot.satelliteOf);
     if (name === STAND_TOOL && !args.cwd) {
       const dir = slot.dir ??= await directoryOf(slot.session ?? sessionID);
       if (dir) args.cwd = dir;

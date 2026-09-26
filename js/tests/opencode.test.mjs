@@ -1436,6 +1436,57 @@ test("a child session that stands gets a bridge of its own: the root keeps its p
   }
 });
 
+// A subagent leads its case with a place of its own (#6002, the owner's word):
+// when the root holds a place, the child's bridge is raised as a SATELLITE of it
+// (`--satellite`), its iskron_stand carries satellite_of = the root's place, and
+// the role is the one the child names — only an unnamed role falls back to the
+// root's. The root's place is learnt from the bridge's «held» word.
+test("a child session of a standing root raises its bridge as a satellite of the root's place, in the role it names or else the root's", async () => {
+  const calls = join(SANDBOX, "satellite.calls");
+  writeFileSync(calls, "");
+  const b = bridgeEnv("satellite", {
+    FB_CALLS: calls,
+    FB_TOOLS: JSON.stringify([
+      { name: "iskron_stand", description: "Стояние.", inputSchema: { type: "object" } },
+    ]),
+  });
+  const rec = await plugin(b.env, {
+    sessions: [
+      { id: "root", location: { directory: "/work/root" } },
+      { id: "child", parentID: "root", location: { directory: "/work/child" } },
+      { id: "second", parentID: "root", location: { directory: "/work/second" } },
+    ],
+  });
+  try {
+    await until(() => rec.tools().has("iskron_stand"), "the stand tool", 8000);
+    await rec.call("iskron_stand", { realm: "nks-dev", karta: "#2816" }, "root");
+    const rootPid = pidOf(b.log);
+    const place = { realm: "@nks/nks-dev", karta: "2816", name: "host.repo.opus-5" };
+    appendFileSync(`${b.events}.${rootPid}`, event("held", { key: "k-root", place }));
+    await delay(400); // the fake bridge relays event lines every 40 ms
+    await rec.call("iskron_stand", { realm: "nks-dev", karta: "#48" }, "child");
+    await rec.call("iskron_stand", { realm: "nks-dev" }, "second");
+    const starts = readFileSync(b.log, "utf8").trim().split("\n");
+    assert.equal(starts.length, 3, starts.join("\n"));
+    assert.doesNotMatch(starts[0], /--satellite/, "the root's bridge is a session bridge");
+    for (const s of starts.slice(1))
+      assert.match(s, /--satellite/, "a child's bridge is a satellite");
+    const stands = readFileSync(calls, "utf8")
+      .trim()
+      .split("\n")
+      .map((l) => JSON.parse(l))
+      .filter((c) => c.name === "iskron_stand")
+      .map((c) => [c.arguments.karta, c.arguments.satellite_of]);
+    assert.deepEqual(stands, [
+      ["#2816", undefined],
+      ["#48", "host.repo.opus-5"],
+      ["2816", "host.repo.opus-5"],
+    ]);
+  } finally {
+    await rec.stop();
+  }
+});
+
 // A child's place can outlive the child: OpenCode sends no «subagent finished»
 // event, so the child's bridge keeps holding. A frame on that place must not be
 // re-addressed to the root — there stands another standing (#5167): it is said

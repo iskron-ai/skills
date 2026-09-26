@@ -6,6 +6,7 @@
 import { VERSION } from "../shared/version.ts";
 import { BUILD } from "./build.ts";
 import { harnessName } from "./client.ts";
+import { CFG } from "./config.ts";
 import { normKarta, normName } from "./names.ts";
 
 let model = "";
@@ -18,9 +19,16 @@ const placeKey = (p: Place): string =>
   `${String(p.realm ?? "")}|${normKarta(p.karta)}|${normName(p.name)}`;
 
 let satelliteOf = "";
-/** Место позвавшего у моста-спутника (satellite.ts) — едет в attrs каждого занятия и регистрации: доска печатает место спутником. */
-export function noteSatelliteOf(address: string): void {
+let satelliteOfId = "";
+/**
+ * Место позвавшего у моста-спутника (satellite.ts): адрес едет в attrs каждого
+ * занятия и регистрации (доска печатает место спутником), id места — полем
+ * satellite_of тела connect, mint и register (#6064: платформа не отдаёт
+ * спутнику почту и веер роли). Вне режима спутника поле не шлётся никогда.
+ */
+export function noteSatelliteOf(address: string, id: string | null): void {
   satelliteOf = address;
+  satelliteOfId = CFG.satellite && id ? id : "";
 }
 
 /** Модель из iskron_stand — едет полем места и во всех повторных регистрациях. */
@@ -29,11 +37,16 @@ export function rememberModel(m: unknown): void {
 }
 
 /** Поля места для connect и register: всегда полный набор — свои ключи агента и признак моста. */
-export function placeFields(place: Place = {}): { model?: string; attrs: Record<string, unknown> } {
+export function placeFields(place: Place = {}): {
+  model?: string;
+  satellite_of?: string;
+  attrs: Record<string, unknown>;
+} {
   const harness = harnessName();
   const extra = extras.get(placeKey(place)) ?? {};
   return {
     ...(model ? { model } : {}),
+    ...(CFG.satellite && satelliteOfId ? { satellite_of: satelliteOfId } : {}),
     attrs: {
       ...extra,
       build: { name: "iskron-bridge", version: VERSION, stamp: BUILD.split("+")[1] ?? "" },

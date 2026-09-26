@@ -1438,9 +1438,6 @@ test("satellite: a session bridge still refuses a second name in its graph (#515
   const plain = await standAs(sat, { realm: "nks-dev", karta: 931, name: "svoe-2" });
   assert.equal(plain.result?.isError, true, textOf(plain));
   assert.match(textOf(plain), /это мост-спутник/, textOf(plain));
-  const wrongRole = await standAs(sat, { ...SAT_ARGS, karta: 48 });
-  assert.equal(wrongRole.result?.isError, true, textOf(wrongRole));
-  assert.match(textOf(wrongRole), /держит роль #931, а не #48/, textOf(wrongRole));
   const noCaller = await standAs(sat, { ...SAT_ARGS, satellite_of: "@tester:nobody" });
   assert.equal(noCaller.result?.isError, true, textOf(noCaller));
   assert.match(textOf(noCaller), /на доске этого графа нет/, textOf(noCaller));
@@ -1493,4 +1490,92 @@ test("satellite: a connect refusing the short ttl in any words is retried withou
   const connect = fake.state.placeArgs.find((x) => x.action === "connect");
   assert.equal(connect?.ttl_seconds, undefined, "the retry goes without ttl");
   assert.match(textOf(r), /контур не принял/, textOf(r));
+});
+
+// The satellite's role is the one its launcher names — the karta of the call —
+// not an inheritance of the caller's role (#6002, the owner's word): the place
+// is still `<caller>.sub-N`, and the caller may hold any role.
+test("satellite: karta of another role stands as <caller>.sub-1 in THAT role, and the guard lets its own place pass", async (t) => {
+  const fake = await withCaller(t);
+  const sat = await satelliteBridge(t, fake);
+  const r = await standAs(sat, { ...SAT_ARGS, karta: 48 });
+  assert.ok(!r.result?.isError, `${textOf(r)}\n${sat.stderr}`);
+  assert.equal(placeOf(r), `${CALLER}.sub-1`, textOf(r));
+  assert.match(textOf(r), /роль #48/, textOf(r));
+  assert.ok(fake.state.places.get(`48:${CALLER}.sub-1`), "the place is taken in role #48");
+  assert.ok(!fake.state.places.get(`931:${CALLER}.sub-1`), "not in the caller's role");
+  const own = await sat.call("tools/call", {
+    name: "iskron_channel",
+    arguments: { realm: "nks-dev", karta: 48, action: "register", name: `${CALLER}.sub-1` },
+  });
+  assert.ok(!own.result?.isError, textOf(own));
+});
+
+// The platform learns the place is a satellite from an explicit field, not an
+// attr (#6064: a satellite neither inherits the role's undelivered mail nor joins
+// its fan-out): satellite_of = the caller's standing_id, read off the board, in
+// the body of connect and register. A session bridge never sends it — a server
+// that does not know the field yet must not be touched by ordinary deliveries.
+test("satellite: connect and register carry satellite_of = the caller's place id; a session bridge sends no such field", async (t) => {
+  const fake = await startFakeNks({ pat: PAT });
+  t.after(() => fake.stop());
+  const ID = "0ead1752-b73c-4bdd-9ca5-1a504a92fa37";
+  await fake.control({ places: [{ karta: "931", name: CALLER, listening: true, id: ID }] });
+  const sat = await satelliteBridge(t, fake);
+  const r = await standAs(sat, SAT_ARGS);
+  assert.ok(!r.result?.isError, `${textOf(r)}\n${sat.stderr}`);
+  const mine = fake.state.placeArgs.filter((x) => x.name === `${CALLER}.sub-1`);
+  const connect = mine.find((x) => x.action === "connect");
+  const register = mine.find((x) => x.action === "register");
+  assert.equal(connect?.satellite_of, ID, JSON.stringify(mine));
+  assert.equal(register?.satellite_of, ID, JSON.stringify(mine));
+  // Contrast on the same fake: a session bridge's connect and register.
+  const home = mkdtempSync(join(tmpdir(), "iskron-sess-"));
+  const session = startBridge(fake.mcpUrl, home);
+  t.after(() => session.stop());
+  assert.ok((await session.call("initialize", INIT)).result);
+  const s = await standAs(session, { realm: "nks-dev", karta: 931, name: "proba" });
+  assert.ok(!s.result?.isError, textOf(s));
+  const plain = fake.state.placeArgs.filter((x) => x.name === "proba");
+  assert.ok(
+    plain.some((x) => x.action === "connect") && plain.some((x) => x.action === "register"),
+  );
+  for (const x of plain)
+    assert.ok(!("satellite_of" in x), `no field outside satellite mode: ${JSON.stringify(x)}`);
+  // «held» names the place: the OpenCode plugin raises a child session's bridge as its satellite.
+  const heldPlace = () =>
+    session.notifications.find((n) => n.params?.data?.kind === "held")?.params.data.place;
+  await until(() => heldPlace(), "the held word");
+  assert.equal(heldPlace().name, "proba");
+  assert.equal(heldPlace().karta, "931");
+});
+
+// Standing in a role of its own gives the satellite no way into anyone else's
+// place: the caller's place in either role, a foreign name in its own role.
+test("satellite: standing in another role, it still may not take, register or revoke the caller's or a foreign place", async (t) => {
+  const fake = await withCaller(t);
+  const sat = await satelliteBridge(t, fake);
+  const r = await standAs(sat, { ...SAT_ARGS, karta: 48 });
+  assert.ok(!r.result?.isError, `${textOf(r)}\n${sat.stderr}`);
+  const connects = fake.state.counts.connect;
+  for (const args of [
+    { action: "connect", name: CALLER, karta: 931 },
+    { action: "connect", name: CALLER, karta: 48 },
+    { action: "mint", name: "chuzhoe", karta: 48 },
+    { action: "register", name: CALLER, karta: 931 },
+    { action: "revoke", standing: `@tester:${CALLER}`, karta: 931 },
+    { action: "connect", name: `${CALLER}.sub-1`, karta: 931 },
+  ]) {
+    const got = await sat.call("tools/call", {
+      name: "iskron_channel",
+      arguments: { realm: "nks-dev", ...args },
+    });
+    assert.equal(got.result?.isError, true, `${JSON.stringify(args)}: ${textOf(got)}`);
+    assert.match(textOf(got), /только своего места/, textOf(got));
+  }
+  assert.equal(fake.state.counts.connect, connects, "no refused call reached the server");
+  assert.ok(
+    fake.state.places.get(`931:${CALLER}`)?.listening,
+    "the caller's place stays listening",
+  );
 });

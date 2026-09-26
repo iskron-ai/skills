@@ -365,6 +365,7 @@ export async function startFakeNks(opts = {}) {
             incoming: `${base}/api/channel/in/mailbox-${pl.name}`,
             listening: pl.listening !== false,
             pending: pl.pending ?? 0, // «не доставлено N» on the board
+            id: pl.id ?? null, // «id <uuid>» under the place on the board
           });
         }
       }
@@ -697,7 +698,13 @@ export async function startFakeNks(opts = {}) {
             );
           }
           st.counts.register_standing++;
-          st.placeArgs.push({ action: "register", name: a.name, model: a.model, attrs: a.attrs });
+          st.placeArgs.push({
+            action: "register",
+            name: a.name,
+            model: a.model,
+            attrs: a.attrs,
+            ...("satellite_of" in a ? { satellite_of: a.satellite_of } : {}), // тело как пришло (#6064)
+          });
           const reg = registerPlace(sid, a.realm, a.karta, a.name);
           if (reg.added) {
             // Место рядом на канале: на доске его графа, слушает — если сокет канала открыт.
@@ -763,6 +770,7 @@ export async function startFakeNks(opts = {}) {
             );
             lines.push(`     💬 «${p.status ?? "на вахте"}» · 2026-09-08T16:08:56.121391Z`);
             if (p.incoming) lines.push(`     📥 ${p.incoming}`);
+            if (p.id) lines.push(`     id ${p.id}`);
           }
           for (const r of st.rooms) {
             lines.push(
@@ -806,6 +814,7 @@ export async function startFakeNks(opts = {}) {
             model: a.model,
             attrs: a.attrs,
             ttl_seconds: a.ttl_seconds,
+            ...("satellite_of" in a ? { satellite_of: a.satellite_of } : {}), // тело как пришло (#6064)
           });
           st.counts.connect++;
           st.wsToken = token("ws"); // как у настоящей поверхности: сокет показан один раз и всякий раз новый
