@@ -763,7 +763,7 @@ test("a lone case frame is short: an entry frame within 200 chars and no JSON; a
     );
     assert.match(
       word,
-      /\nответ: iskron_case\(realm="nks-dev", action="say", room="#7", in_reply_to=62\)$/,
+      /\nответ: iskron_case\(realm="nks-dev", action="say", room="№7", in_reply_to=62\)$/,
     );
     assert.ok(!word.includes('{"'), word);
   } finally {
