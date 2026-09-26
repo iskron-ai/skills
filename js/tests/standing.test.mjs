@@ -3104,7 +3104,10 @@ async function batchOf(t, frames) {
   const wd = runClient("watchdog", dir, key, 10_000);
   await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
   for (const f of frames) await sendRoom(fake, f);
-  await waitFor(() => wd.out.includes(`Дело: кадров ${frames.length}`), "the batch", 6000);
+  const head = `Дело: кадров ${frames.length}`;
+  // Строки кадров идут после шапки отдельно — ждём и их, не одну шапку.
+  const tail = () => wd.out.slice(wd.out.indexOf(head)).split("\n").filter(Boolean).length - 1;
+  await waitFor(() => wd.out.includes(head) && tail() >= frames.length, "the batch", 6000);
   wd.proc.kill("SIGKILL");
   await wd.done;
   return wd.out;
