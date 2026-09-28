@@ -4358,12 +4358,13 @@ async function resumeFromDisk(realm, karta, name) {
   } finally {
     noteResuming(-1);
   }
-  const kept = readHoldRecord(key) !== null;
+  const onDisk = readHoldRecord(key);
+  const kept = onDisk !== null;
   log(
     kept ? `hold record for ${key}: no hello in time — record kept as it was, the place is not taken` : `hold record for ${key} is stale — dropped, the place is taken anew`
   );
   releaseStanding("возврат с диска не удался");
-  if (kept) restoreHoldRecord(key, rec3);
+  if (onDisk?.url === rec3.url) restoreHoldRecord(key, rec3);
   state.standing = prev;
   if (rec3.cwd) noteStandCwd(prevCwd);
   return null;

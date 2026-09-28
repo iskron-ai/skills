@@ -2253,6 +2253,45 @@ test("iskron/resume without a hello in time keeps the hold record, and the next 
   assert.equal(fake.state.counts.connect, 1, "the place is resumed, not rotated");
 });
 
+// The record a failed resume puts back is the one it read — unless another path
+// took the place meanwhile (a connect of this bridge, a second bridge on the same
+// auth dir): a fresh address on disk is not overwritten by the old one.
+test("a failed resume does not put the old record back over a fresher one written meanwhile", async (t) => {
+  const { fake, dir, bridge, standings } = await connected(t);
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const cwd = mkdtempSync(join(tmpdir(), "iskron-race-dir-"));
+  await bridge.call("iskron/resume", 4, { cwd, session: "ses-race" });
+  await bridge.call("tools/call", 5, {
+    name: "iskron_stand",
+    arguments: { realm: "nks-dev", karta: 931, name: "proba", cwd },
+  });
+  bridge.proc.kill("SIGKILL");
+  await waitFor(() => fake.state.ws.size === 0, "the socket to close");
+  await fake.control({ ws_mute: true });
+  const holdFile = join(
+    standings,
+    readdirSync(standings).find((f) => f.endsWith(".hold")),
+  );
+  const second = startBridge(fake.mcpUrl, dir);
+  t.after(() => second.stop());
+  assert.ok((await second.call("initialize", 1, INIT)).result);
+  const pending = second.call("iskron/resume", 2, { cwd, session: "ses-race" });
+  await new Promise((r) => setTimeout(r, 1000)); // inside the 4 s wait for hello
+  const fresher = {
+    ...JSON.parse(readFileSync(holdFile, "utf8")),
+    url: "ws://127.0.0.1:9/channel/ws/fresher",
+    at: Date.now(),
+  };
+  writeFileSync(holdFile, JSON.stringify(fresher) + "\n");
+  const mute = await pending;
+  assert.equal(mute.result?.resumed, false, JSON.stringify(mute));
+  assert.equal(
+    JSON.parse(readFileSync(holdFile, "utf8")).url,
+    fresher.url,
+    "the fresher record written meanwhile must stay",
+  );
+});
+
 // Two standings of one role from one working copy, both sessions gone without a
 // way back. Two holders in one directory, stood by two sessions (#5366); the
 // plugin names its session in every resume. Returns the fake, the grant
