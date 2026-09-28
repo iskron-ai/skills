@@ -1,5 +1,185 @@
 # Changelog
 
+## [6.23.0](https://github.com/iskron-ai/skills/compare/v6.22.0...v6.23.0) (2026-09-26)
+
+
+### Features
+
+* дело «№N» в room и подсказке моста; слово вышедшему адресату — целиком ([#235](https://github.com/iskron-ai/skills/issues/235)) ([a5b8475](https://github.com/iskron-ai/skills/commit/a5b8475fb4eaea58a622d8c90e7809ff65d7e745))
+
+
+### Bug Fixes
+
+* **vahta:** своё «было» в деле закрывается строкой ok, как только исход наблюдён ([#233](https://github.com/iskron-ai/skills/issues/233)) ([42ccbe2](https://github.com/iskron-ai/skills/commit/42ccbe283d07fb8c23e9626a33f23c77fb950ee5))
+
+## [6.22.0](https://github.com/iskron-ai/skills/compare/v6.21.0...v6.22.0) (2026-09-26)
+
+
+### Features
+
+* **skills:** слово — в дело своего предмета, ответ — в дело, откуда пришло ([#226](https://github.com/iskron-ai/skills/issues/226)) ([f6007fb](https://github.com/iskron-ai/skills/commit/f6007fb3527535b8210eb08c5b1f6c6aea75d546))
+
+
+### Bug Fixes
+
+* **bridge:** прозрачное переоткрытие обновляет кэш initialize ([#230](https://github.com/iskron-ai/skills/issues/230)) ([d7376fc](https://github.com/iskron-ai/skills/commit/d7376fc5e95eb24cbf8e74aab50dc994ca08e23e))
+* **establish-mcp:** не звать, когда транспорт уже есть — ответил хоть один iskron_*; описание короче 900 байт ([#228](https://github.com/iskron-ai/skills/issues/228)) ([6dba2ac](https://github.com/iskron-ai/skills/commit/6dba2ac286c2e7c9a09f644e08b86c786254c792))
+* **establish-mcp:** описание короче 900 байт — триггеры целы ([#232](https://github.com/iskron-ai/skills/issues/232)) ([02ad66f](https://github.com/iskron-ai/skills/commit/02ad66f03f7f89203325a8e3f50967cd42d6fd78))
+* **standing:** кому и на что — полями to и in_reply_to, не обращением в тексте ([#231](https://github.com/iskron-ai/skills/issues/231)) ([b5dff74](https://github.com/iskron-ai/skills/commit/b5dff744fc8bb781b1936c70b48b2cbe7f0475e9))
+* **vahta:** семя при делах — без журнала и истории дел, живые дела строкой ([#229](https://github.com/iskron-ai/skills/issues/229)) ([d55509e](https://github.com/iskron-ai/skills/commit/d55509e9aae87531b7da4cbe2ea22f5fb5241866))
+
+## [6.21.0](https://github.com/iskron-ai/skills/compare/v6.20.0...v6.21.0) (2026-09-26)
+
+
+### Features
+
+* **bridge:** короткий кадр дела; адресное слово не мне — одной строкой без побудки ([#224](https://github.com/iskron-ai/skills/issues/224)) ([94e72eb](https://github.com/iskron-ai/skills/commit/94e72eb4cbb407c6f3e8422fe8aa652dd5f8f6d3))
+
+## [6.20.0](https://github.com/iskron-ai/skills/compare/v6.19.0...v6.20.0) (2026-09-26)
+
+
+### Features
+
+* **bridge:** субагент своим местом в роли запускающего; OpenCode — дочерняя сессия спутником; строка запуска с делом ([#221](https://github.com/iskron-ai/skills/issues/221)) ([146578a](https://github.com/iskron-ai/skills/commit/146578a9e6c437fa26d22ef87f6ccbbbb926e8ab))
+* запуск в дело строкой запуска — pi и OpenCode входят сами; мост по-английски на *.ai; строка гроссбуха по канону ([#223](https://github.com/iskron-ai/skills/issues/223)) ([fdccf6d](https://github.com/iskron-ai/skills/commit/fdccf6d1aab30548acaa7c9975ef51e5a49ad312))
+
+
+### Bug Fixes
+
+* **skills:** «комната» в смысле общей работы — «дело»; человеку — «место», «вопрос», «сообщение» ([#218](https://github.com/iskron-ai/skills/issues/218)) ([defedfa](https://github.com/iskron-ai/skills/commit/defedfa9e18d1f01585cfbdf126b61101035d4c7))
+* окно человека — «место человека», не «комната» ([#220](https://github.com/iskron-ai/skills/issues/220)) ([443fc4b](https://github.com/iskron-ai/skills/commit/443fc4b4a7aee657a0377c7bb75e36e6318a3472))
+* ярлык дела — «№N», не «#N» (слова моста и речь навыков) ([#222](https://github.com/iskron-ai/skills/issues/222)) ([54fda1e](https://github.com/iskron-ai/skills/commit/54fda1ec0a5e8652a6508f71ab28b3d863b7f667))
+
+## [6.19.0](https://github.com/iskron-ai/skills/compare/v6.18.0...v6.19.0) (2026-09-25)
+
+
+### Features
+
+* **skills:** готовое, что ждёт человека или чужого слова, — своя строка partial по ключу вещи; ведущий несёт её человеку ([#214](https://github.com/iskron-ai/skills/issues/214)) ([dd07f91](https://github.com/iskron-ai/skills/commit/dd07f91a18d44812ca1671b817817723482006f5))
+
+
+### Bug Fixes
+
+* **bridge:** reasoning узла — телом записи, op узла — ещё удалён и восстановлен ([#216](https://github.com/iskron-ai/skills/issues/216)) ([8d174e2](https://github.com/iskron-ai/skills/commit/8d174e27e5ae047c012d0d6cf990e415343a9d37))
+* **bridge:** уход и вход называют место из полей строки, узел в деле — op и reasoning ([#213](https://github.com/iskron-ai/skills/issues/213)) ([cbe92ff](https://github.com/iskron-ai/skills/commit/cbe92ffd94814c84220f9d94bb1ed854b7b0d94e))
+* **opencode:** кадры дела — одним промптом очереди, прямое слово — вставкой отдельно ([#217](https://github.com/iskron-ai/skills/issues/217)) ([d9583e2](https://github.com/iskron-ai/skills/commit/d9583e285fc4e9512c88fa03ac18e5672f604650))
+
+## [6.18.0](https://github.com/iskron-ai/skills/compare/v6.17.0...v6.18.0) (2026-09-25)
+
+
+### Features
+
+* **bridge:** своё место субагента — мост-спутник из файла агента, место на прогон ([#202](https://github.com/iskron-ai/skills/issues/202)) ([72f72a5](https://github.com/iskron-ai/skills/commit/72f72a51cb721c6aa843da474e0c126b0c1a3e2c))
+* **skills:** агенты не пересказывают — строка, слово и узел не дублируют друг друга; слово человека в деле разносит ведущий ([#211](https://github.com/iskron-ai/skills/issues/211)) ([dfe74b4](https://github.com/iskron-ai/skills/commit/dfe74b4edc8ff865564ac30ae1506bbdb42acd7e))
+* **skills:** слово агента — только в дело; вердикт гроссбуха «slop» ([#208](https://github.com/iskron-ai/skills/issues/208)) ([5cb857f](https://github.com/iskron-ai/skills/commit/5cb857f97921d157d9f3bc6bedeaf8b5007a703a))
+* **skills:** спрос и взятие в деле — строки «нужно:» и «беру:», ведущий разводит, запуск по «да» ([#204](https://github.com/iskron-ai/skills/issues/204)) ([08d7b15](https://github.com/iskron-ai/skills/commit/08d7b15dd89a267aaed6b83b9d334136a6251ec6))
+
+
+### Bug Fixes
+
+* **bridge:** место по каталогу — только стоявшей сессии; уход словом держится ([#206](https://github.com/iskron-ai/skills/issues/206)) ([369b0fe](https://github.com/iskron-ai/skills/commit/369b0fe6399c774c9bb2f5299cd587a626aa4aea))
+* **bridge:** прямое слово не теряется в пачке — отдельным событием, пачка дела коротко ([#212](https://github.com/iskron-ai/skills/issues/212)) ([a68054f](https://github.com/iskron-ai/skills/commit/a68054f6dcf13740f196b14ea17836d9d343b4fa))
+* **bridge:** род body и слово в полёте — две фазы слова не будят пустым и не падают в неизвестные ([#209](https://github.com/iskron-ai/skills/issues/209)) ([6e25d87](https://github.com/iskron-ai/skills/commit/6e25d87bb1d9938f962d478538f7d95f1c96cb44))
+* **iskronify:** спутник субагента не проецируется, пока платформа не отделит его от почты роли ([#210](https://github.com/iskron-ai/skills/issues/210)) ([b534081](https://github.com/iskron-ai/skills/commit/b53408177817d37e7ceac84bbe1efee7d14f91d6))
+* **iskronify:** хук после мержа — по исходу, не по форме команды; справка не будит ([#205](https://github.com/iskron-ai/skills/issues/205)) ([e774928](https://github.com/iskron-ai/skills/commit/e774928a75eebbf5201031821dff6bc3d456a2d5))
+* **skills:** замысел дела — зачин, без формы; ведение и донесение — слово, не будущая запись ([#207](https://github.com/iskron-ai/skills/issues/207)) ([537fc76](https://github.com/iskron-ai/skills/commit/537fc766b18705bbdeae0329f8669168ee954c52))
+
+## [6.17.0](https://github.com/iskron-ai/skills/compare/v6.16.2...v6.17.0) (2026-09-24)
+
+
+### Features
+
+* **skills:** дело ступени 6 — замысел первым словом, ведение уговором, донесение из дочернего, субагент в деле, гроссбух строками дела ([#198](https://github.com/iskron-ai/skills/issues/198)) ([281ed96](https://github.com/iskron-ai/skills/commit/281ed96dab0c8d99ddeb31f9c6a9d0ab98887344))
+
+
+### Bug Fixes
+
+* **bridge:** род auto в словаре дела — записи платформы о дочерних делах словами, пачкой ([#200](https://github.com/iskron-ai/skills/issues/200)) ([0b3cad6](https://github.com/iskron-ai/skills/commit/0b3cad65ff8bc4e65026fa99692341062a8003f9))
+
+## [6.16.2](https://github.com/iskron-ai/skills/compare/v6.16.1...v6.16.2) (2026-09-24)
+
+
+### Bug Fixes
+
+* **bridge:** приглашение моей роли в дело прерывает, как приглашение моему месту ([#196](https://github.com/iskron-ai/skills/issues/196)) ([a00d833](https://github.com/iskron-ai/skills/commit/a00d833d7d51fe2c4b1b5225de2aaa172013b87a))
+
+## [6.16.1](https://github.com/iskron-ai/skills/compare/v6.16.0...v6.16.1) (2026-09-24)
+
+
+### Bug Fixes
+
+* **bridge:** уже отданный кадр не отдаётся снова после переподключения ([#193](https://github.com/iskron-ai/skills/issues/193)) ([eeb9c1f](https://github.com/iskron-ai/skills/commit/eeb9c1fdbab2cf21bed9fff0defafe3581fb4434))
+* **test:** лимит времени набора проб 300 с — standing.test с пробами повторной доставки не укладывался в 120 с на CI с покрытием ([#195](https://github.com/iskron-ai/skills/issues/195)) ([11d127b](https://github.com/iskron-ai/skills/commit/11d127b5a6ceb0d3ecef30eb043d80637e02e6c6))
+
+## [6.16.0](https://github.com/iskron-ai/skills/compare/v6.15.1...v6.16.0) (2026-09-24)
+
+
+### Features
+
+* **skills:** дело — тул iskron_case, разговор talk; дела по единицам под родительским ([#191](https://github.com/iskron-ai/skills/issues/191)) ([37f78ae](https://github.com/iskron-ai/skills/commit/37f78ae4f7e20002b594094e8ee73e97582644b0))
+
+## [6.15.1](https://github.com/iskron-ai/skills/compare/v6.15.0...v6.15.1) (2026-09-24)
+
+
+### Bug Fixes
+
+* **bridge:** имя стояния в связанном ворктри — репо основной копии, не каталог задачи ([#189](https://github.com/iskron-ai/skills/issues/189)) ([410087f](https://github.com/iskron-ai/skills/commit/410087fe413b27439ad9f87fcb628fc610bf2bfb))
+
+## [6.15.0](https://github.com/iskron-ai/skills/compare/v6.14.0...v6.15.0) (2026-09-24)
+
+
+### Features
+
+* **skills:** штабные практики в силе — пересказ, стык с пробой, сдача смены, краткость доклада, узкие права ведущего ([#186](https://github.com/iskron-ai/skills/issues/186)) ([2040fde](https://github.com/iskron-ai/skills/commit/2040fde9247c2899b50bd049979af3833fa7a37d))
+
+## [6.14.0](https://github.com/iskron-ai/skills/compare/v6.13.1...v6.14.0) (2026-09-24)
+
+
+### Features
+
+* **skills:** дело на поверхности агента — ходы журнала, закрытие и возражение, ведущий по проекции ([#184](https://github.com/iskron-ai/skills/issues/184)) ([fd97758](https://github.com/iskron-ai/skills/commit/fd97758b14a7ac6ae9ab6b24f4ddb322ecd29ce5))
+
+## [6.13.1](https://github.com/iskron-ai/skills/compare/v6.13.0...v6.13.1) (2026-09-24)
+
+
+### Bug Fixes
+
+* **bridge:** may_object на бою — объекты мест, «ты можешь возразить» сверяется по их id ([#181](https://github.com/iskron-ai/skills/issues/181)) ([03209d1](https://github.com/iskron-ai/skills/commit/03209d188364c727d3cf646666b553dc9ee95e14))
+* **bridge:** подсказка возражения называет настоящий ход iskron_room(action="object"); без свидетельств — без «?» ([#183](https://github.com/iskron-ai/skills/issues/183)) ([91f0815](https://github.com/iskron-ai/skills/commit/91f0815e9850eea41cd9657c1fd9590fae063c32))
+
+## [6.13.0](https://github.com/iskron-ai/skills/compare/v6.12.0...v6.13.0) (2026-09-24)
+
+
+### Features
+
+* **bridge:** словарь родов комнаты — слово и стопка технического кадра, закрытие прерывает ([#178](https://github.com/iskron-ai/skills/issues/178)) ([8829207](https://github.com/iskron-ai/skills/commit/882920723c74f621ba60566c4de0da48e89eac1a))
+
+
+### Bug Fixes
+
+* **bridge:** приглашение в комнату называет приглашённого по имени, не голым id из ключа ([#180](https://github.com/iskron-ai/skills/issues/180)) ([11f97f0](https://github.com/iskron-ai/skills/commit/11f97f00ddd839835bc35fa6e8b4180fc2ded54c))
+
+## [6.12.0](https://github.com/iskron-ai/skills/compare/v6.11.0...v6.12.0) (2026-09-23)
+
+
+### Features
+
+* **architect:** скилл всякого ведущего комнаты; провенанс — в reasoning, posed_by — короткий адрес ([#176](https://github.com/iskron-ai/skills/issues/176)) ([6f54582](https://github.com/iskron-ai/skills/commit/6f54582ba1b3d98d88e23cbec8efd3cbfcd5457b))
+* **bridge:** место на каждый граф на одном канале — одна сессия держит стояния в нескольких графах ([#177](https://github.com/iskron-ai/skills/issues/177)) ([415715d](https://github.com/iskron-ai/skills/commit/415715d56604dd25e4f0602cde2a3885290cb363))
+
+
+### Bug Fixes
+
+* **bridge:** одно событие графа доходит до делателя один раз ([#174](https://github.com/iskron-ai/skills/issues/174)) ([4d6e849](https://github.com/iskron-ai/skills/commit/4d6e849979f800122d305828306ed6143632bb73))
+
+## [6.11.0](https://github.com/iskron-ai/skills/compare/v6.10.2...v6.11.0) (2026-09-21)
+
+
+### Features
+
+* **iskronify:** контракт 13 — слот обложки «Раскладка»: README папок и GOTCHAS.md владельца прогон не вливает и не перетирает ([#171](https://github.com/iskron-ai/skills/issues/171)) ([f61b58a](https://github.com/iskron-ai/skills/commit/f61b58a99ab7614cdf8ca96fa6f6e00aad7ddc99))
+* **vahta,writing:** вахта по сигналу и с субагентами организует; провенанса в теле узла не бывает ([#173](https://github.com/iskron-ai/skills/issues/173)) ([f74af71](https://github.com/iskron-ai/skills/commit/f74af71a17d6baf994aadad86e248e0cb52f20b0))
+
 ## [6.10.2](https://github.com/iskron-ai/skills/compare/v6.10.1...v6.10.2) (2026-09-20)
 
 

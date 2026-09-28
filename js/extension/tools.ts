@@ -21,6 +21,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 import { Bridge, resultToContent, snippet, toParameters } from "../shared/bridge-client.ts";
 import { PI_CLIENT } from "../shared/clients.ts";
+import { enterCase, type LaunchCall, parseLaunch, withWord } from "../shared/launch.ts";
 import { findBridge, type Notify, refreshHomeBridge } from "./home-copy.ts";
 
 export type ChannelEventSink = (params: any) => void;
@@ -40,6 +41,21 @@ const PROTOCOL = "2025-06-18";
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- ответы моста приходят без схемы */
 
+/** Текст ответа тула; отказ (isError) — бросок с его словами. */
+function textOrThrow(name: string, result: any): string {
+  const text = resultToContent(result)
+    .map((c) => (c.type === "text" ? c.text : "[image]"))
+    .join("\n");
+  if (result?.isError) throw new Error(text || `${name}: отказ без текста`);
+  return text;
+}
+
+/** Вызов тула мостом — для строки запуска. */
+const callVia =
+  (b: Bridge): LaunchCall =>
+  async (name, args) =>
+    textOrThrow(name, await b.request("tools/call", { name, arguments: args }));
+
 /**
  * Половина «тулы»: свои обработчики, своё состояние, свой отказ.
  * `onChannel` — дверь половины «канал»: сюда уходят уведомления дочернего моста
@@ -56,7 +72,12 @@ export function setupBridge(pi: ExtensionAPI, onChannel: ChannelEventSink): void
   // а не мелочь — см. refreshHomeBridge.
   let canSpeak = false;
 
-  async function raise(): Promise<void> {
+  /** Место, которое держит мост, — из его слова «held»; строка запуска называет его в слове о входе. */
+  let heldName: string | null = null;
+  /** Мост поднят спутником (`--satellite`) — для строки запуска с местом запустившего. */
+  let satellite = false;
+
+  async function raise(args: string[] = []): Promise<void> {
     // Прежде поиска: если поставка привезла мост новее домашнего — обновить, вслух.
     // Порядок несущий: обновляем ДО подъёма, иначе новый мост побежал бы только
     // со следующей сессии, а эта осталась бы на старом, уже сказав, что обновилась.
@@ -77,13 +98,19 @@ export function setupBridge(pi: ExtensionAPI, onChannel: ChannelEventSink): void
       (line) => notify(`Искрон/мост: ${line}`, "info"),
       (method, params) => {
         // Кадры стояния мост шлёт стандартным уведомлением с logger iskron-channel.
-        if (method === "notifications/message" && params?.logger === "iskron-channel")
+        if (method === "notifications/message" && params?.logger === "iskron-channel") {
+          const name = params?.data?.kind === "held" ? params?.data?.place?.name : null;
+          if (typeof name === "string" && name) heldName = name;
           onChannel(params);
+        }
         // Сервер сменил тулы под переоткрытой сессией моста: перечитать и зарегистрировать (#5406).
         if (method === "notifications/tools/list_changed") void relist(b);
       },
+      undefined,
+      args,
     );
     bridge = b;
+    satellite = args.includes("--satellite");
     b.start();
 
     // Отказ «нужен вход» — не поломка: мост опубликовал вход и держит его
@@ -177,12 +204,7 @@ export function setupBridge(pi: ExtensionAPI, onChannel: ChannelEventSink): void
                 { signal }, // потолка нет: первый вызов может уйти в браузер к человеку
               );
               // Отказ тула сигналится броском — только он ставит isError.
-              if (result?.isError) {
-                const text = resultToContent(result)
-                  .map((c) => (c.type === "text" ? c.text : "[image]"))
-                  .join("\n");
-                throw new Error(text || `${name}: отказ без текста`);
-              }
+              if (result?.isError) textOrThrow(name, result);
               const content = resultToContent(result);
               return {
                 content,
@@ -252,17 +274,50 @@ export function setupBridge(pi: ExtensionAPI, onChannel: ChannelEventSink): void
     );
   }
 
+  /** Подъём моста сессии — строка запуска ждёт его, прежде чем звать тулы. */
+  let raising: Promise<void> = Promise.resolve();
+  const raiseLoud = (args: string[] = []): Promise<void> =>
+    raise(args).catch((e: Error) => {
+      notify(`Искрон: мост не поднялся — ${e.message}`, "error");
+      bridge?.stop();
+      bridge = null;
+    });
+  /** Первый промпт сессии уже прошёл — строка запуска исполняется только в нём. */
+  let prompted = false;
+
+  // Строка запуска с делом (shared/launch.ts): первый промпт встаёт и входит в
+  // дело до хода модели. Место запустившего — хвост «от <место>», иначе
+  // ISKRON_SATELLITE_OF: мост поднимается заново спутником (`--satellite`) и
+  // встаёт рядом с ним в названной роли; места нет — своим местом.
+  pi.on("input", async (event) => {
+    if (prompted) return { action: "continue" };
+    prompted = true;
+    const l = parseLaunch(event.text);
+    if (!l) return { action: "continue" };
+    const of = l.of ?? (process.env.ISKRON_SATELLITE_OF?.trim() || null);
+    if (of && !satellite) {
+      bridge?.stop();
+      bridge = null;
+      raising = raiseLoud(["--satellite"]);
+    }
+    await raising;
+    const live = bridge;
+    const word = live
+      ? await enterCase(l, callVia(live), of, () => heldName)
+      : `Искрон: строка запуска — мост не поднят, в дело №${l.no} не вошёл.`;
+    return { action: "transform", text: withWord(event.text, word) };
+  });
+
   pi.on("session_start", async (_event, ctx) => {
     notify = ctx.hasUI ? (t, l) => ctx.ui.notify(t, l ?? "info") : () => {};
     canSpeak = Boolean(ctx.hasUI);
     bridge?.stop();
     bridge = null;
+    prompted = false;
+    heldName = null;
 
-    const work = raise().catch((e: Error) => {
-      notify(`Искрон: мост не поднялся — ${e.message}`, "error");
-      bridge?.stop();
-      bridge = null;
-    });
+    const work = raiseLoud();
+    raising = work;
 
     // Ждём ограниченно. Быстрый путь (токены на месте) укладывается в секунды и
     // тулы стоят до первого хода; долгий OAuth не держит сессию заложником —

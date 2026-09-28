@@ -10,9 +10,10 @@ import { createHash } from "node:crypto";
 import { writeSync } from "node:fs";
 
 import { type ChannelEvent } from "../bridge/hold.ts";
-import { noteSeen, seenIds } from "../shared/seen.ts";
+import { batchLine, caseKey, frameToText } from "../shared/frame-text.ts";
+import { eventKeyOf, noteSeen, seenIds } from "../shared/seen.ts";
 import { seenFilePathOf } from "../shared/standings.ts";
-import { attach, resolveStanding } from "./client.ts";
+import { adoptSeenPath, attach, resolveStanding, staleBatchKeys } from "./client.ts";
 
 // The bridge replays its ring to every client that attaches, so a watchdog
 // re-armed after a wake meets the frame it was woken on again. Leaving on it
@@ -46,8 +47,12 @@ export function runWatchdogExit(argv: string[]): void {
     note(`ДЕЛАТЕЛЬ: ${target.error}`);
     process.exit(2);
   }
-  const seenPath = seenFilePathOf(target.authDir, target.key);
+  let seenPath = seenFilePathOf(target.authDir, target.key);
   const seen = seenIds(seenPath);
+  let woke = false; // отдан хоть один кадр залпа пачки
+  let head = ""; // шапка идущей пачки: как прочесть целиком
+  const folded: string[] = []; // id свёрнутых адресных слов череды — метятся с её строкой (#6081)
+  const cases = new Set<string>(); // дела, уже названные зачином в идущей пачке
   attach(target.path, {
     onEvent: (ev) => {
       switch (ev.kind) {
@@ -55,16 +60,45 @@ export function runWatchdogExit(argv: string[]): void {
           const type = ev.frame?.type;
           if (type !== "message") return note(`кадр ${type ?? "не разобран"} — не повод будить`);
           const id = frameId(ev);
-          if (seen.has(id)) return note(`кадр ${id} уже отдан прежним взводом — не повод будить`);
-          wake(ev.raw ?? ""); // сперва отдать: запись до побудки при смерти между ними потеряла бы кадр насовсем
+          // Пачка кадров комнаты (мост, roomstack.ts) — одна побудка: печатаем её
+          // целиком и выходим на последнем кадре залпа, не на первом.
+          // Кадр пачки — строкой, без конверта; шапка с указателем «целиком» — перед первым отданным.
+          const last = !ev.batch || ev.batch.at >= ev.batch.of;
+          if (seen.has(id)) {
+            note(`кадр ${id} уже отдан прежним взводом — не повод будить`);
+            if (last && woke) process.exit(0);
+            return;
+          }
+          // Адресное слово не мне, свёрнутое в череду (folded), своей строки не печатает.
+          if (ev.batch?.at === 1) cases.clear(); // зачин дела — у первой его строки в пачке
+          if (ev.batch?.folded) {
+            folded.push(id);
+            return;
+          }
+          if (ev.batch && head) wake(head);
+          head = "";
+          const key = ev.frame ? caseKey(ev.frame) : "";
+          const first = !cases.has(key);
+          cases.add(key);
+          // Сперва отдать: запись до побудки при смерти между ними потеряла бы кадр насовсем.
+          wake(
+            !ev.frame
+              ? (ev.raw ?? "")
+              : ev.batch
+                ? batchLine(ev.frame, ev.batch.fold, first)
+                : frameToText(ev.frame, ev.raw ?? ""),
+          );
+          for (const k of folded.splice(0)) noteSeen(seenPath, k, seen);
           noteSeen(seenPath, id, seen);
-          process.exit(0); // конец процесса И ЕСТЬ доставка
+          const evKey = eventKeyOf(ev.frame);
+          if (evKey) noteSeen(seenPath, evKey, seen); // событие графа отдано — другие копии веера тоже
+          woke = true;
+          if (last) process.exit(0); // конец процесса И ЕСТЬ доставка
           break;
         }
         case "stale":
           // Пачка лежалых: не повод будить, но и не потеря — тела в логе, id помечены.
-          for (const f of ev.frames ?? [])
-            if (typeof f.id === "string" && f.id) noteSeen(seenPath, f.id, seen);
+          for (const k of staleBatchKeys(ev)) noteSeen(seenPath, k, seen);
           note(ev.text ?? "лежалые кадры");
           break;
         case "dead":
@@ -74,9 +108,11 @@ export function runWatchdogExit(argv: string[]): void {
           process.exit(1);
           break;
         case "attached":
+          seenPath = adoptSeenPath(ev.seen, seenPath, seen); // память места на его сервере
           note(`слушаю стояние ${ev.key}`);
           break;
         default:
+          if (ev.kind === "note" && ev.batch) head = ev.text ?? ""; // шапка пачки — делателю, с её первым кадром
           note(ev.text ?? ev.kind);
       }
     },

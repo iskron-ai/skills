@@ -5,9 +5,11 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
+import { L } from "../shared/lang.ts";
 import { socketPathOf, standingsDirOf } from "../shared/standings.ts";
+import { resolveAgainstLed } from "./call.ts";
 import { CFG } from "./config.ts";
-import { rememberStatus, statusAddress } from "./hold.ts";
+import { heldPlaces, rememberStatus, statusAddress } from "./hold.ts";
 import { type HoldRecord, keyOf } from "./holdrecord.ts";
 import { localSocketAlive } from "./sweep.ts";
 import { type JsonRpcMessage } from "./types.ts";
@@ -23,12 +25,14 @@ export function localStatus(msg: JsonRpcMessage): Promise<JsonRpcMessage> | null
     id: msg.id,
     result: { ...(isError ? { isError: true } : {}), content: [{ type: "text", text: body }] },
   });
+  // Занятость — места графа из вызова (#5838); без графа — основного.
+  const realm = typeof a.realm === "string" ? a.realm : "";
   return (async () => {
-    const st = await publishStatus(text);
-    if (!st.ok && !statusAddress())
-      return reply(await notHeldHere(typeof a.realm === "string" ? a.realm : ""), true);
-    if (st.code === 404) return reply(`${st.body} ${TURNED_GUIDANCE}`, true);
-    if (st.ok) return reply(`занятость ${statusAddress()?.key}: ${text || "(снята)"}`);
+    await resolveAgainstLed(realm); // граф вызова — в той же форме, что граф места
+    const st = await publishStatus(text, realm);
+    if (!st.ok && !statusAddress()) return reply(await notHeldHere(realm), true);
+    if (st.code === 404) return reply(`${st.body} ${TURNED_GUIDANCE()}`, true);
+    if (st.ok) return reply(`занятость ${statusAddress(realm)?.key}: ${text || "(снята)"}`);
     return reply(st.body, true);
   })();
 }
@@ -44,19 +48,34 @@ let lastPublished = "";
 /** Последняя строка занятости, которую доска приняла от этого моста; пустая — снята. */
 export const publishedStatus = (): string => lastPublished;
 
-/** POST строки занятости на статусный адрес стояния, которое держит мост. */
-export async function publishStatus(text: string): Promise<StatusOutcome> {
-  const addr = statusAddress();
+/**
+ * POST строки занятости на статусный адрес канала, который держит мост. Строка
+ * держится у МЕСТА: со standing_id она ложится на одно место канала, без него —
+ * на все живые (#5838). realm — место этого графа; `everyPlace` — все места разом (уход).
+ */
+export async function publishStatus(
+  text: string,
+  realm?: string,
+  everyPlace = false,
+): Promise<StatusOutcome> {
+  const addr = statusAddress(realm);
   if (!addr) {
     return {
       ok: false,
       body: "Отказано (мост): этот мост места не держит, статусного адреса у него нет.",
     };
   }
-  const st = await publishStatusTo(addr.url, text);
+  // Мест на канале несколько, а id этого не известен — строка легла бы на все: отказ вслух.
+  // Место одно — строка без id ложится на него же, как прежде.
+  if (!everyPlace && !addr.standingId && heldPlaces().length > 1)
+    return {
+      ok: false,
+      body: `Отказано (мост): id места ${addr.key} у моста ещё не известен (hello его не назвал) — без него строка легла бы на все места канала; повтори iskron_stand этого графа.`,
+    };
+  const st = await publishStatusTo(addr.url, text, 5000, everyPlace ? null : addr.standingId);
   if (st.ok) {
-    lastPublished = text;
-    rememberStatus(text);
+    if (addr.key === statusAddress()?.key) lastPublished = text;
+    rememberStatus(text, realm);
   }
   return st;
 }
@@ -65,18 +84,28 @@ export async function publishStatus(text: string): Promise<StatusOutcome> {
  * Путь передачи слуха целиком: читающий отказ взвешивает «забрать слух» против
  * «слышать» и, не зная о возврате, выбирает молчащую строку (граф nks-dev: #5395).
  */
-export const TAKE_PATH =
-  "iskron_stand с take=true — только по слову человека — переносит слух и статусный адрес сюда ОДИН раз: адрес остаётся у ЭТОГО экземпляра моста, " +
-  "и поднятый следом сторож его не уносит — по устройству: сторож есть локальный клиент сокета, своего connect он не делает (замер: два вызова занятости подряд при живом стороже, сборка 6.10.1; путь take наблюдала сторона nks-mcp на своей). Прежний держатель получит закрытие 4000 " +
-  "(вытесненному отбивать место назад тем же ходом не нужно — ему место рядом, имя.N); входной адрес и очередь места connect не трогает, ждавшее придёт в hello " +
-  '(справка iskron_channel action="?", connect); после переноса перевзведи сторожа командой из ответа';
+export const TAKE_PATH = (): string =>
+  L(
+    "iskron_stand с take=true — только по слову человека — переносит слух и статусный адрес сюда ОДИН раз: адрес остаётся у ЭТОГО экземпляра моста, " +
+      "и поднятый следом сторож его не уносит — по устройству: сторож есть локальный клиент сокета, своего connect он не делает (замер: два вызова занятости подряд при живом стороже, сборка 6.10.1; путь take наблюдала сторона nks-mcp на своей). Прежний держатель получит закрытие 4000 " +
+      "(вытесненному отбивать место назад тем же ходом не нужно — ему место рядом, имя.N); входной адрес и очередь места connect не трогает, ждавшее придёт в hello " +
+      '(справка iskron_channel action="?", connect); после переноса перевзведи сторожа командой из ответа',
+    "iskron_stand with take=true — only on the human's word — moves the hearing and the status address here ONCE: the address stays with THIS bridge instance, " +
+      "and a watchdog raised after it does not carry it off — by design: the watchdog is a local client of the socket and makes no connect of its own. The former holder gets close 4000 " +
+      "(the evicted one need not take the seat back the same way — it gets a seat beside, name.N); connect does not touch the seat's incoming address and queue, what waited comes in hello " +
+      '(help: iskron_channel action="?", connect); after the move re-arm the watchdog with the command from the answer',
+  );
 
 /** Случай двух записей iskron в одной сессии: место держит мост той же сессии, передача не нужна. */
-const TWO_ENTRIES =
-  "Если место — твоё и держит его мост этой же сессии (в ней две записи iskron, плагинная и пользовательская), зови status тем же набором тулов, которым звал iskron_stand: передача не нужна.";
+const TWO_ENTRIES = (): string =>
+  L(
+    "Если место — твоё и держит его мост этой же сессии (в ней две записи iskron, плагинная и пользовательская), зови status тем же набором тулов, которым звал iskron_stand: передача не нужна.",
+    "If the seat is yours and a bridge of this same session holds it (the session has two iskron entries, the plugin's and the user's), call status with the same tool set you called iskron_stand with: no move is needed.",
+  );
 
 /** Отказ 404: адрес повернул чужой connect — чей, мост не знает, и запись держания общая, поэтому список держателей здесь не печатается. */
-export const TURNED_GUIDANCE = `${TWO_ENTRIES} Иначе ${TAKE_PATH}.`;
+export const TURNED_GUIDANCE = (): string =>
+  `${TWO_ENTRIES()} ${L("Иначе", "Otherwise")} ${TAKE_PATH()}.`;
 
 const slugOf = (realm: string): string => realm.replace(/^@[^/]+\//, "");
 
@@ -111,7 +140,7 @@ export async function notHeldHere(realm: string): Promise<string> {
   if (!others.length)
     return (
       `${head} Назовись одним вызовом iskron_stand(realm, karta, model, status) — занятость можно передать прямо в нём. ` +
-      `Если место слушает другой держатель, iskron_stand скажет это; тогда ${TAKE_PATH}.`
+      `Если место слушает другой держатель, iskron_stand скажет это; тогда ${TAKE_PATH()}.`
     );
   const list = others
     .map((r) => {
@@ -121,7 +150,7 @@ export async function notHeldHere(realm: string): Promise<string> {
       return where.length ? `${r.key} (${where.join(", ")})` : r.key;
     })
     .join("; ");
-  return `${head} Места этого графа на этой машине держат живые мосты: ${list}. ${TURNED_GUIDANCE}`;
+  return `${head} Места этого графа на этой машине держат живые мосты: ${list}. ${TURNED_GUIDANCE()}`;
 }
 
 /** Тот же POST на названный адрес — для выхода, когда стояние уже отпущено, а адрес снят до этого. */
@@ -129,13 +158,14 @@ export async function publishStatusTo(
   url: string,
   text: string,
   timeoutMs = 5000,
+  standingId: string | null = null,
 ): Promise<StatusOutcome> {
   let res: Response;
   try {
     res = await fetch(url, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ text }),
+      body: JSON.stringify(standingId ? { text, standing_id: standingId } : { text }),
       signal: AbortSignal.timeout(timeoutMs),
     });
   } catch (e) {

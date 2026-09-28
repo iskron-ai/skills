@@ -45,6 +45,34 @@ import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
+import {
+  addressed,
+  addressedBody,
+  addressedInFlight,
+  addressedLeft,
+  auto,
+  body as bodyFrame,
+  bodyAborted,
+  bodyLapsed,
+  BORIS,
+  closing,
+  directWord,
+  graphPosed,
+  joinedMember,
+  legacyRoom,
+  ME,
+  ME_ID,
+  MY_KARTA,
+  progress,
+  roleInvite,
+  roomFrame,
+  said,
+  saidInFlight,
+  unknownKind,
+  withdraw,
+  withheld,
+} from "./room-frames.mjs";
+
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SOURCE = process.env.ISKRON_EXTENSION || join(HERE, "..", "..", "extensions", "iskron.js");
 const FAKE_BRIDGE = join(HERE, "fake-bridge.mjs");
@@ -124,6 +152,10 @@ const ENV_KEYS = [
   "FB_TOOLS_FILE",
   "FB_CHANGED",
   "FB_REPLY",
+  "FB_CALLS",
+  "FB_STAND_HELD",
+  "ISKRON_SATELLITE_OF",
+  "ISKRON_PI_ASIDE_MS",
 ];
 
 let seq = 0;
@@ -395,6 +427,131 @@ test("bridge raised: every server tool stands in the session under its own name"
   }
 });
 
+// A launch line with a case (#6078): pi has no child sessions — a helper is a
+// separate pi process — so the launching seat comes in the line's tail «от
+// <seat>» or, without it, in ISKRON_SATELLITE_OF. On the FIRST prompt the
+// extension raises its bridge anew as a satellite, stands beside that seat in
+// the named role and joins the case — in the input hook, before the model reads —
+// and hands the model the prompt with its word under the launch line.
+const STAND_AND_CASE = JSON.stringify([
+  { name: "iskron_stand", description: "Стояние.", inputSchema: { type: "object" } },
+  { name: "iskron_case", description: "Дело.", inputSchema: { type: "object" } },
+]);
+/** The "input" hooks as pi runs them: a transform replaces the text, "continue" leaves it. */
+async function prompt(rec, text) {
+  for (const fn of rec.handlers.get("input") ?? []) {
+    const r = await fn({ type: "input", text, source: "interactive" }, rec.ctx);
+    if (r?.action === "transform") text = r.text;
+  }
+  return text;
+}
+const toolCalls = (file) =>
+  existsSync(file)
+    ? readFileSync(file, "utf8")
+        .trim()
+        .split("\n")
+        .filter(Boolean)
+        .map((l) => JSON.parse(l))
+    : [];
+const starts = (log) => readFileSync(log, "utf8").trim().split("\n");
+
+test("a first prompt «start … дело №N от <seat>» stands as that seat's satellite and joins the case before the model reads", async () => {
+  const calls = join(SANDBOX, "launch-tail.calls");
+  const { log, env } = bridgeEnv("launch-tail", {
+    FB_TOOLS: STAND_AND_CASE,
+    FB_CALLS: calls,
+    FB_STAND_HELD: "host.repo.opus-5",
+  });
+  const rec = await session(env);
+  try {
+    const read = await prompt(
+      rec,
+      "start @nks/nks-dev #48 дело №77 от @me:host.repo\nБриф: почини.",
+    );
+    assert.deepEqual(
+      toolCalls(calls).map((c) => [c.name, c.arguments]),
+      [
+        ["iskron_stand", { realm: "@nks/nks-dev", karta: "#48", satellite_of: "@me:host.repo" }],
+        ["iskron_case", { action: "join", realm: "@nks/nks-dev", room: "#77" }],
+      ],
+    );
+    const s = starts(log);
+    assert.equal(s.length, 2, s.join("\n"));
+    assert.match(s[1], /--satellite/, "the bridge is raised anew as a satellite");
+    assert.equal(
+      read,
+      "start @nks/nks-dev #48 дело №77 от @me:host.repo\n" +
+        "Искрон: встал @me:host.repo.sub-1, вошёл в дело №77 — первым словом перескажи бриф в деле.\n" +
+        "Бриф: почини.",
+    );
+  } finally {
+    await rec.stop();
+  }
+});
+
+test("without the tail the seat comes from ISKRON_SATELLITE_OF; only the first prompt launches, and a prompt without the line is left as it was", async () => {
+  const calls = join(SANDBOX, "launch-env.calls");
+  const { env } = bridgeEnv("launch-env", {
+    FB_TOOLS: STAND_AND_CASE,
+    FB_CALLS: calls,
+    FB_STAND_HELD: "host.repo.opus-5",
+    ISKRON_SATELLITE_OF: "@me:lead",
+  });
+  const rec = await session(env);
+  try {
+    assert.match(
+      await prompt(rec, "start r5 #48 case #77"),
+      /встал @me:lead\.sub-1, вошёл в дело №77/,
+    );
+    assert.equal(
+      await prompt(rec, "start r5 #48 #78"),
+      "start r5 #48 #78",
+      "only the first prompt",
+    );
+    assert.deepEqual(
+      toolCalls(calls).map((c) => c.arguments.satellite_of ?? c.arguments.room),
+      ["@me:lead", "#77"],
+    );
+  } finally {
+    await rec.stop();
+  }
+  const plain = await session(bridgeEnv("launch-none", { FB_TOOLS: STAND_AND_CASE }).env);
+  try {
+    assert.equal(await prompt(plain, "Сделай обзор."), "Сделай обзор.");
+  } finally {
+    await plain.stop();
+  }
+});
+
+test("with no launching seat at all the session stands its own place; a refused join comes back as words and the place stays", async () => {
+  const calls = join(SANDBOX, "launch-own.calls");
+  const b = bridgeEnv("launch-own", {
+    FB_TOOLS: STAND_AND_CASE,
+    FB_CALLS: calls,
+    FB_STAND_HELD: "host.repo.opus-5",
+  });
+  writeFileSync(`${b.reply}.iskron_case`, "__ERROR__дело #77 не найдено");
+  const rec = await session(b.env);
+  try {
+    const read = await prompt(rec, "start r5 #48 #77");
+    assert.equal(
+      read,
+      "start r5 #48 #77\nИскрон: встал host.repo.opus-5; в дело №77 не вошёл — дело #77 не найдено. Место остаётся.",
+    );
+    assert.deepEqual(
+      toolCalls(calls).map((c) => [c.name, c.arguments.satellite_of]),
+      [
+        ["iskron_stand", undefined],
+        ["iskron_case", undefined],
+      ],
+    );
+    assert.equal(starts(b.log).length, 1, "no satellite bridge without a seat");
+    assert.ok(alive(pidOf(b.log)), "the place's bridge stays up");
+  } finally {
+    await rec.stop();
+  }
+});
+
 // The hair that ties the two halves. `connect` binds the CALLING session, so the
 // socket address must never leave it — the tools half reads it out of the answer
 // it is already proxying and hands it to the channel half. Everything about that
@@ -434,11 +591,8 @@ test("service frames raise no turn, a work frame does", async () => {
     assert.equal(opts.triggerTurn, true);
     assert.equal(opts.deliverAs, "steer");
     assert.equal(msg.customType, "iskron-channel");
-    // Who speaks is read off provenance, never off the body.
-    assert.match(
-      msg.content,
-      /^Кадр канала Искрона от делателя роли неизвестной — стояние svatantra\nprovenance: \{"from_standing":"svatantra"\}\n\nпосмотри ветку$/,
-    );
+    // Who speaks is read off provenance, never off the body; the frame is short (#6081).
+    assert.match(msg.content, /^svatantra\nпосмотри ветку$/);
 
     push(events, { kind: "frame", raw: "не JSON вовсе", frame: null });
     await delay(250);
@@ -473,6 +627,237 @@ test("a dead-token event complains loudly; 4001 alone offers mint", async () => 
 });
 
 // A burst of stale frames is one message into the turn, bodies included.
+// The dictionary of room kinds (#5851): event_kind decides the way into the
+// turn; stack counts only on said. A busy agent gets closing now, progress later.
+test("room kinds: closing steers despite stack=defer, progress and an unknown kind follow up, said follows its stack", async () => {
+  const { events, env } = eventsEnv("room-kinds");
+  const rec = await session(env);
+  try {
+    const cases = [
+      [closing(), "steer"],
+      [progress(), "followUp"],
+      [unknownKind(), "followUp"],
+      [said("interrupt", 62), "steer"],
+      [said("defer", 63), "followUp"],
+      [roomFrame("invite", { entry_id: 64, key: `invite:${ME_ID}` }), "steer"],
+      [roomFrame("invite", { entry_id: 65, key: "invite:@tester:proba" }), "steer"],
+      [roomFrame("invite", { entry_id: 67, key: "invite:@other:x" }), "followUp"],
+      [roomFrame("opened", { entry_id: 66 }), "followUp"],
+      [roleInvite(68), "steer"],
+      [roleInvite(69, MY_KARTA + 1), "followUp"],
+      [withdraw(71), "followUp"],
+    ];
+    for (const [f] of cases) push(events, frame(f));
+    await delay(400);
+    assert.equal(rec.messages.length, cases.length, "every room frame raises a message");
+    cases.forEach(([f, way], i) =>
+      assert.equal(
+        rec.messages[i].opts.deliverAs,
+        way,
+        `${f.event_kind} ${f.line.key} (stack ${f.stack ?? "—"}) must go ${way}`,
+      ),
+    );
+    const text = rec.messages[0].msg.content;
+    assert.match(text, /предлагает закрыть дело до 2026-09-23T10:05:00Z; свидетельства: 41/);
+    assert.match(
+      text,
+      /ты можешь возразить — iskron_case\(action="object", in_reply_to=50\) \(прежнее имя iskron_room\)/,
+    );
+  } finally {
+    await rec.stop();
+  }
+});
+
+// An addressed word not to me (#6081): a fact without its body and without a
+// wake (nextTurn); a run of one pair that came in a row — one line.
+const ASIDE = "Алексей (@aleksei:probe) → @boris:probe";
+/** Дело проб в начале строки — номер и зачин (#6081). */
+const CASE7 = "№7 «Стенд»";
+
+async function asideMessages(name, frames, n) {
+  const { events, env } = eventsEnv(name);
+  const rec = await session({ ...env, ISKRON_PI_ASIDE_MS: 300 });
+  try {
+    for (const f of frames) push(events, frame(f));
+    const until = Date.now() + 5000;
+    while (rec.messages.length < n && Date.now() < until) await delay(50);
+    await delay(700);
+    return rec.messages.map((m) => ({ text: m.msg.content, ...m.opts }));
+  } finally {
+    await rec.stop();
+  }
+}
+
+test("(а) an addressed word not to me with stack interrupt neither steers nor wakes: one line without its body", async () => {
+  const got = await asideMessages("aside-one", [addressed(80)], 1);
+  assert.equal(got.length, 1);
+  assert.equal(got[0].deliverAs, "nextTurn", "a word not to me waits for the next turn");
+  assert.equal(got[0].triggerTurn, false, "a word not to me does not wake");
+  assert.equal(got[0].text, `${CASE7} ${ASIDE}: слово [80]`);
+});
+
+test("(а2) an addressed word whose addressee has left the case (addressee_left) is not folded: it prints whole, like any word to all", async () => {
+  const got = await asideMessages("aside-left", [addressedLeft(89)], 1);
+  assert.equal(got.length, 1, JSON.stringify(got));
+  assert.ok(!got[0].text.includes(ASIDE), `folded as an aside:\n${got[0].text}`);
+  assert.match(got[0].text, /явное слово 89/);
+});
+
+test("(б) three addressed words of one pair in a row are one line «3 слова»", async () => {
+  const got = await asideMessages(
+    "aside-run",
+    [81, 82, 83].map((id) => addressed(id)),
+    1,
+  );
+  assert.equal(got.length, 1, JSON.stringify(got));
+  assert.equal(got[0].text, `${CASE7} ${ASIDE}: 3 слова (последнее [83])`);
+});
+
+test("(в) an addressed word to me with stack interrupt steers at once and whole; the aside before it goes first as its line", async () => {
+  const got = await asideMessages("aside-mine", [addressed(86), addressed(87, ME)], 2);
+  assert.equal(got.length, 2, JSON.stringify(got));
+  assert.equal(got[0].text, `${CASE7} ${ASIDE}: слово [86]`);
+  assert.equal(got[0].deliverAs, "nextTurn");
+  assert.equal(got[1].deliverAs, "steer", "the word to me steers");
+  assert.match(got[1].text, /слово от Алексей \(@aleksei:probe\)[^\n]*\nтайное слово 87\n/);
+});
+
+test("(г) a word without an addressee between two asides goes as before, whole, and breaks the run", async () => {
+  const frames = [addressed(90, BORIS, "defer"), said("defer", 91), addressed(92, BORIS, "defer")];
+  const got = await asideMessages("aside-plain", frames, 3);
+  assert.equal(got.length, 3, JSON.stringify(got));
+  assert.equal(got[0].text, `${CASE7} ${ASIDE}: слово [90]`);
+  assert.equal(got[1].deliverAs, "followUp", "a plain said defer follows up as before");
+  assert.match(got[1].text, /\nслово со стопкой defer\n/);
+  assert.equal(got[2].text, `${CASE7} ${ASIDE}: слово [92]`);
+});
+
+test("(д) an addressed word not to me in flight and then its body with stack interrupt: one line of the pair, no body, no wake", async () => {
+  const got = await asideMessages("aside-body", [addressedInFlight(94), addressedBody(95, 94)], 1);
+  assert.equal(got.length, 1, JSON.stringify(got));
+  assert.equal(got[0].deliverAs, "nextTurn");
+  assert.equal(got[0].triggerTurn, false);
+  assert.equal(got[0].text, `${CASE7} ${ASIDE}: слово [94]`);
+});
+
+test("(е) a word whose body the platform withheld (body_withheld) is an aside: one line, no wake", async () => {
+  const got = await asideMessages("aside-withheld", [withheld(96)], 1);
+  assert.equal(got.length, 1, JSON.stringify(got));
+  assert.equal(got[0].deliverAs, "nextTurn");
+  assert.equal(got[0].text, `${CASE7} ${ASIDE}: слово [96]`);
+});
+
+// A short frame (#6081, the owner's word): a case frame is 1–3 lines — case, entry,
+// words and who; the text once; the answer call. No raw provenance or envelope JSON.
+test("a lone case frame is short: an entry frame within 200 chars and no JSON; a said's text once, with the answer call", async () => {
+  const { events, env } = eventsEnv("short-frame");
+  const rec = await session(env);
+  try {
+    const reply = said("interrupt", 62);
+    reply.in_reply_to = 60;
+    push(events, frame(joinedMember()));
+    push(events, frame(reply));
+    await delay(400);
+    assert.equal(rec.messages.length, 2);
+    const join = rec.messages[0].msg.content;
+    assert.ok([...join].length <= 200, `the entry frame is ${[...join].length} chars:\n${join}`);
+    assert.ok(!join.includes('{"'), `raw JSON in the entry frame:\n${join}`);
+    assert.match(join, /^№7 «Стенд» \[85\] вошёл /);
+    const word = rec.messages[1].msg.content;
+    assert.equal(word.split("слово со стопкой interrupt").length - 1, 1, word);
+    assert.match(
+      word,
+      /^№7 «Стенд» \[62\] слово от Алексей \(@aleksei:probe\)[^\n]*в ответ на \[60\]/,
+    );
+    assert.match(
+      word,
+      /\nответ: iskron_case\(realm="nks-dev", action="say", room="№7", in_reply_to=62\)$/,
+    );
+    assert.ok(!word.includes('{"'), word);
+  } finally {
+    await rec.stop();
+  }
+});
+
+// auto — a platform record to the parent about its child case (#5893 §4.2, #4925):
+// words by its code, never interrupting.
+test("room kinds: an auto record about a child case follows up in words, not as an unknown kind", async () => {
+  const { events, env } = eventsEnv("room-auto");
+  const rec = await session(env);
+  try {
+    push(events, frame(auto("child_closed")));
+    await delay(400);
+    assert.equal(rec.messages.length, 1, "the auto frame raises a message");
+    assert.equal(rec.messages[0].opts.deliverAs, "followUp", "a child closing does not interrupt");
+    const text = rec.messages[0].msg.content;
+    assert.match(text, /дочернее дело №12 закрыто/);
+    assert.doesNotMatch(text, /неизвестен/, "auto is a kind the bridge knows");
+  } finally {
+    await rec.stop();
+  }
+});
+
+// A word in two phases (#5893 §4.5b): said in flight carries no text and follows up;
+// body brings the text by its word's stack; an abort follows up in words.
+test("room kinds: a said in flight follows up, body follows its stack in words, an abort follows up; plain said still steers", async () => {
+  const { events, env } = eventsEnv("room-body");
+  const rec = await session(env);
+  try {
+    const loud = bodyFrame(61, 60);
+    loud.stack = "interrupt";
+    const cases = [
+      [saidInFlight(54), "followUp"],
+      [bodyFrame(55, 54), "followUp"],
+      [bodyAborted(57, 56), "followUp"],
+      [bodyLapsed(59, 58), "followUp"],
+      [loud, "steer"],
+      [said("interrupt", 62), "steer"],
+    ];
+    for (const [f] of cases) push(events, frame(f));
+    await delay(400);
+    assert.equal(rec.messages.length, cases.length, "every room frame raises a message");
+    cases.forEach(([f, way], i) =>
+      assert.equal(rec.messages[i].opts.deliverAs, way, `${f.id} must go ${way}`),
+    );
+    const text = (i) => rec.messages[i].msg.content;
+    assert.match(text(0), /слово от Алексей \(@aleksei:probe\) в полёте — текст придёт следом/);
+    assert.match(text(1), /текст слова \[54\] от Алексей \(@aleksei:probe\)/);
+    assert.match(text(1), /\nтекст второй фазы\n/, "the word's text passes through");
+    assert.match(text(2), /слово \[56\] оборвано автором/);
+    assert.match(text(3), /слово \[58\] оборвано платформой по сроку/);
+    for (let i = 0; i < 4; i++) assert.doesNotMatch(text(i), /неизвестен/, text(i));
+  } finally {
+    await rec.stop();
+  }
+});
+
+// Today's production sends no event_kind: pi steered every room frame before the
+// dictionary, and still does. A guard of main's behaviour — green on main by design.
+test("room kinds leave non-room frames and the old room shape as on main: all steer", async () => {
+  const { events, env } = eventsEnv("room-legacy");
+  const rec = await session(env);
+  try {
+    const cases = [
+      [directWord(), "steer"],
+      [graphPosed(), "steer"],
+      [legacyRoom("text", "interrupt", 71), "steer"],
+      [legacyRoom("text", "defer", 72), "steer"],
+      [legacyRoom("auto", "interrupt", 74), "steer"],
+      [legacyRoom("direct", "interrupt", 75), "steer"],
+      [legacyRoom("digest", "defer", 76), "steer"],
+    ];
+    for (const [f] of cases) push(events, frame(f));
+    await delay(400);
+    assert.equal(rec.messages.length, cases.length, "every frame raises a message");
+    cases.forEach(([f, way], i) =>
+      assert.equal(rec.messages[i].opts.deliverAs, way, `${f.id} must go ${way}`),
+    );
+    assert.doesNotMatch(rec.messages[1].msg.content, /^№/, "a graph event is not a room frame");
+  } finally {
+    await rec.stop();
+  }
+});
+
 test("a stale burst enters the turn once, with its bodies", async () => {
   const { events, env } = eventsEnv("stale");
   const rec = await session(env);

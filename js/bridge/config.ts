@@ -2,6 +2,7 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
+import { setServerLang } from "../shared/lang.ts";
 import { BUILD } from "./build.ts";
 import { log } from "./streams.ts";
 import { type Config } from "./types.ts";
@@ -56,6 +57,7 @@ export let CFG: Config = null as unknown as Config;
 
 export function setConfig(cfg: Config): void {
   CFG = cfg;
+  setServerLang(cfg.serverUrl); // язык моста — по его серверу (shared/lang.ts)
 }
 
 export function parseArgs(argv: string[]): Config {
@@ -72,6 +74,9 @@ export function parseArgs(argv: string[]): Config {
     pat: null,
     patSource: null,
     serverSource: "argument",
+    // Только флагом: мост старше спутника на незнакомом флаге падает громко, а
+    // переменную пропустил бы молча и встал бы полным местом с записью держания.
+    satellite: false,
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -80,6 +85,7 @@ export function parseArgs(argv: string[]): Config {
     else if (a === "--client-name") cfg.clientName = argv[++i];
     else if (a === "--no-browser") cfg.noBrowser = true;
     else if (a === "--debug") cfg.debug = true;
+    else if (a === "--satellite") cfg.satellite = true;
     else if (a === "--version") {
       process.stdout.write(BUILD + "\n");
       process.exit(0);

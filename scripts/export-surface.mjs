@@ -115,12 +115,24 @@ try {
   console.error(`# не удалось снять канонический идентификатор ресурса: ${e.message}`);
 }
 
+// Аргументы, которые объявляет схема каждого тула. Сервер собирает тело вызова
+// из этого списка и молча роняет прочее — фейк NKS в пробах (js/tests/fake-nks.mjs)
+// роняет по нему же, чтобы проба не зеленела на поверхности, которой нет.
+// Тулы самого моста (iskron_stand) сюда тоже попадают — снимок видит поверхность
+// глазами агента; фейк их не обслуживает, и строка ему не мешает.
+const declared = Object.fromEntries(
+  tools
+    .map((t) => [t.name, Object.keys(t.inputSchema?.properties ?? {}).sort()])
+    .sort(([a], [b]) => a.localeCompare(b)),
+);
+
 const surface = {
   server: init.result?.serverInfo ?? null,
   protocolVersion: init.result?.protocolVersion ?? null,
   resource: resourceId,
   tools: tools.map((t) => t.name).sort(),
   enums,
+  args: declared,
 };
 const out = join(root, "fixtures/surface.json");
 writeFileSync(out, JSON.stringify(surface, null, 2) + "\n");

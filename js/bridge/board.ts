@@ -7,19 +7,23 @@ export interface BoardEntry {
   address: string;
   rest: string;
   incoming: string | null;
+  /** Собственный id места — строка `id <uuid>` под строкой места; доска без неё — null. */
+  id: string | null;
 }
 
-/** Строки доски: `#N … · @handle:name — …`, за ними `📥 https://…`. */
+/** Строки доски: `#N … · @handle:name — …`, за ними `📥 https://…` и `id <uuid>`. */
 export function parseBoard(text: string): BoardEntry[] {
   const out: BoardEntry[] = [];
   for (const line of text.split("\n")) {
     const m = /^\s*#(\d+)\s.*?·\s(@\S+)\s—\s(.*)$/.exec(line);
     if (m) {
-      out.push({ karta: m[1], address: m[2], rest: m[3], incoming: null });
+      out.push({ karta: m[1], address: m[2], rest: m[3], incoming: null, id: null });
       continue;
     }
     const inc = /📥\s*(https?:\/\/\S+)/.exec(line);
     if (inc && out.length) out[out.length - 1].incoming = inc[1];
+    const id = /^\s*id\s+([0-9a-f][0-9a-f-]{7,})\s*$/i.exec(line);
+    if (id && out.length) out[out.length - 1].id = id[1];
   }
   return out;
 }

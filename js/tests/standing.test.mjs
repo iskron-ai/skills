@@ -10,7 +10,7 @@
 // appears — the red this probe exists to show.
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
@@ -18,6 +18,35 @@ import { fileURLToPath } from "node:url";
 
 import { startFakeCodex } from "./fake-codex.mjs";
 import { startFakeNks } from "./fake-nks.mjs";
+import {
+  addressed,
+  addressedBody,
+  addressedInFlight,
+  addressedLeft,
+  auto,
+  body as bodyFrame,
+  bodyAborted,
+  bodyLapsed,
+  BORIS,
+  closing,
+  directWord,
+  graphPosed,
+  joinedMember,
+  leftExpired,
+  legacyRoom,
+  ME,
+  MY_KARTA,
+  nodeBound,
+  nodeOp,
+  progress,
+  roleInvite,
+  roomFrame,
+  said,
+  saidInFlight,
+  unknownKind,
+  withdraw,
+  withheld,
+} from "./room-frames.mjs";
 
 // Чем запускать поставку: node по умолчанию; ISKRON_NODE подставляет другой рантайм
 // (например, `opencode` под BUN_BE_BUN=1 — Bun, встроенный в OpenCode).
@@ -107,9 +136,11 @@ const authorizeUrlIn = (text) =>
   /(http:\/\/127\.0\.0\.1:\d+\/login\?k=[\w-]+)/.exec(text || "")?.[1] ?? null;
 
 /** A bridge that has authorized and connected a standing; returns everything the tests read. */
-async function connected(t, { env = {}, init = INIT, fakeOpts = {} } = {}) {
+async function connected(t, { env = {}, init = INIT, fakeOpts = {}, dir: given } = {}) {
   const fake = await startFakeNks(fakeOpts);
-  const dir = mkdtempSync(join(tmpdir(), "iskron-standing-"));
+  const dir = given ?? mkdtempSync(join(tmpdir(), "iskron-standing-"));
+  const grants = () => readdirSync(dir).filter((f) => f.endsWith(".json")).length;
+  const grantsBefore = grants();
   const bridge = startBridge(fake.mcpUrl, dir, env);
   t.after(async () => {
     await bridge.stop();
@@ -120,10 +151,7 @@ async function connected(t, { env = {}, init = INIT, fakeOpts = {} } = {}) {
   assert.ok(url, `expected an authorize URL, got ${JSON.stringify(pending)}`);
   const res = await fetch(url, { redirect: "follow" });
   await res.text();
-  await waitFor(
-    () => readdirSync(dir).some((f) => f.endsWith(".json")),
-    "the exchanged tokens to reach the store",
-  );
+  await waitFor(() => grants() > grantsBefore, "the exchanged tokens to reach the store");
   const initReply = await bridge.call("initialize", 2, init);
   assert.ok(initReply.result, `initialize after the grant: ${JSON.stringify(initReply)}`);
   const reply = await bridge.call("tools/call", 3, { name: "iskron_channel", arguments: CONNECT });
@@ -154,7 +182,16 @@ function runClient(sub, dir, key, timeoutMs = 8000, extraEnv = {}) {
   });
   let out = "";
   let err = "";
-  proc.stdout.on("data", (c) => (out += c));
+  // Строки stdout с отметкой прихода: паузы между событиями Monitor меряются по ним.
+  const lines = [];
+  let part = "";
+  proc.stdout.on("data", (c) => {
+    out += c;
+    const at = Date.now();
+    const got = (part + c).split("\n");
+    part = got.pop();
+    for (const s of got) lines.push({ at, s });
+  });
   proc.stderr.on("data", (c) => (err += c));
   const done = new Promise((resolve) => {
     const t = setTimeout(() => {
@@ -174,6 +211,9 @@ function runClient(sub, dir, key, timeoutMs = 8000, extraEnv = {}) {
     },
     get err() {
       return err;
+    },
+    get lines() {
+      return lines;
     },
   };
 }
@@ -293,6 +333,147 @@ test("a frame the platform sends again is not printed twice", async (t) => {
   wd.proc.kill("SIGKILL");
   await wd.done;
   assert.equal(wd.out.split("одно слово дважды").length - 1, 1, wd.out);
+});
+
+// One graph event is fanned out to every place of a role, each copy under its
+// own frame id with the same event_id in the body; a sibling place's copies come
+// back stale when the socket reopens (#5829). The doer hears the event once: a
+// second live copy, a stale copy, and a copy after the watchdog is re-armed are
+// all dropped; a stale re-send of a frame already delivered is not re-offered.
+// The frame as the platform emits a graph event: via=graph, an object body, a numeric event_id.
+const graphEvent = (id, eventId, reason, extra = {}) =>
+  JSON.stringify({
+    type: "message",
+    id,
+    content_type: "application/json",
+    provenance: { via: "graph" },
+    body: {
+      realm_slug: "nks-dev",
+      event_kind: "posed_to",
+      vimarsha_seq: 5829,
+      vimarsha_version: 1,
+      event_id: eventId,
+      reason,
+    },
+    ...extra,
+  });
+
+test("one graph event fanned out under several frame ids reaches the watchdog once; a stale re-send of a delivered frame is dropped", async (t) => {
+  const { fake, dir, standings } = await connected(t);
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog", dir, undefined, 30_000);
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog");
+  await fake.control({ ws_send: graphEvent("fan-1", 42, "событие сорок два") });
+  await waitFor(() => wd.out.includes("событие сорок два"), "the first copy");
+  await waitSeen(standings, "fan-1");
+  await fake.control({ ws_send: graphEvent("fan-2", 42, "событие сорок два") });
+  await fake.control({ ws_send: graphEvent("fan-3", 42, "событие сорок два", { stale: true }) });
+  // A doer's word that happens to carry event_id-looking JSON is a word, not an event.
+  await fake.control({
+    ws_send: JSON.stringify({
+      type: "message",
+      id: "word-1",
+      provenance: { via: "direct", from_karta_seq: 7 },
+      body: JSON.stringify({ event_id: 42, reason: "слово делателя" }),
+    }),
+  });
+  await waitFor(() => wd.out.includes("слово делателя"), "a doer's word with event_id text");
+  // A plain frame delivered live, then handed back stale under the same id.
+  await fake.control({
+    ws_send: JSON.stringify({ type: "message", id: "plain-1", body: "простое слово" }),
+  });
+  await waitFor(() => wd.out.includes("простое слово"), "the plain frame");
+  await waitSeen(standings, "plain-1");
+  await fake.control({
+    ws_send: JSON.stringify({ type: "message", id: "plain-1", stale: true, body: "простое слово" }),
+  });
+  await new Promise((r) => setTimeout(r, 2500)); // past the stale burst window
+  assert.equal(wd.out.split("событие сорок два").length - 1, 1, `one event, one print:\n${wd.out}`);
+  assert.equal(wd.out.split("простое слово").length - 1, 1, `delivered once:\n${wd.out}`);
+  assert.ok(!wd.out.includes("Лежалых кадров"), `nothing stale left to offer:\n${wd.out}`);
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+  // Re-armed: yet another copy of the same event stays quiet, a new event is heard.
+  const again = runClient("watchdog", dir, undefined, 20_000);
+  await waitFor(() => again.out.includes("слушаю стояние"), "the re-armed watchdog");
+  await fake.control({ ws_send: graphEvent("fan-4", 42, "событие сорок два") });
+  await fake.control({ ws_send: graphEvent("fan-5", 43, "событие сорок три") });
+  await waitFor(() => again.out.includes("событие сорок три"), "a new event to be heard");
+  await new Promise((r) => setTimeout(r, 300));
+  again.proc.kill("SIGKILL");
+  await again.done;
+  assert.ok(!again.out.includes("событие сорок два"), `a copy after re-arm:\n${again.out}`);
+});
+
+// A copy pushed out of the ring before anyone took it does not hold the event:
+// a later copy — here a stale one — is still offered.
+test("a copy evicted from the ring undelivered does not swallow the event: a later stale copy reaches the watchdog", async (t) => {
+  const { fake, dir } = await connected(t);
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  await fake.control({ ws_send: graphEvent("ev-a", 90, "вытесненное событие") });
+  for (let i = 1; i <= 20; i++)
+    await fake.control({
+      ws_send: JSON.stringify({ type: "message", id: `fill-${i}`, body: `заполнитель ${i}` }),
+    });
+  await new Promise((r) => setTimeout(r, 300));
+  const wd = runClient("watchdog", dir, undefined, 20_000);
+  await waitFor(() => wd.out.includes("заполнитель 20"), "the ring replay");
+  assert.ok(!wd.out.includes("вытесненное событие"), "the first copy is out of the ring");
+  await fake.control({ ws_send: graphEvent("ev-b", 90, "вытесненное событие", { stale: true }) });
+  await waitFor(() => wd.out.includes("вытесненное событие"), "the stale copy to be offered");
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
+// The bridge's own memory dies with it; the watchdog's ev: mark in .seen is what
+// keeps an event printed before a restart from being printed again after it.
+test("a copy of an event printed before the bridge restarted is not printed again after it", async (t) => {
+  const { fake, dir, bridge, standings } = await connected(t);
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog", dir, undefined, 20_000);
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog");
+  await fake.control({ ws_send: graphEvent("rs-1", 70, "до перезапуска моста") });
+  await waitFor(() => wd.out.includes("до перезапуска моста"), "the first print");
+  await waitSeen(standings, "rs-1");
+  await new Promise((r) => setTimeout(r, 200)); // the event mark follows the id mark
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+  bridge.proc.kill("SIGKILL");
+  await waitFor(() => bridge.proc.signalCode !== null, "the first bridge to exit");
+  await waitFor(() => fake.state.ws.size === 0, "the fake to see the socket close");
+  const second = startBridge(fake.mcpUrl, dir);
+  t.after(() => second.stop());
+  assert.ok((await second.call("initialize", 1, INIT)).result);
+  await fake.control({ places: [{ karta: "931", name: "proba", listening: false }] });
+  const st = await second.call("tools/call", 2, {
+    name: "iskron_stand",
+    arguments: { realm: "nks-dev", karta: 931, name: "proba" },
+  });
+  assert.ok(!st.result?.isError, JSON.stringify(st));
+  await waitFor(() => fake.state.ws.size === 1, "the place resumed");
+  const next = runClient("watchdog", dir, undefined, 20_000);
+  await waitFor(() => next.out.includes("слушаю стояние"), "the watchdog after the restart");
+  await fake.control({ ws_send: graphEvent("rs-2", 70, "до перезапуска моста") });
+  await fake.control({ ws_send: graphEvent("rs-3", 71, "после перезапуска") });
+  await waitFor(() => next.out.includes("после перезапуска"), "a new event to be heard");
+  await new Promise((r) => setTimeout(r, 300));
+  next.proc.kill("SIGKILL");
+  await next.done;
+  assert.ok(!next.out.includes("до перезапуска моста"), `printed again:\n${next.out}`);
+});
+
+// Stale wakes nobody; a live copy of the same event must still wake the exit
+// watchdog, even when a stale copy of it arrived first.
+test("a live copy of an event wakes the exit watchdog even when its stale copy came first", async (t) => {
+  const { fake, dir, key } = await connected(t);
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog-exit", dir, key, 8000);
+  await waitFor(() => wd.err.includes("hello"), "hello to be noted");
+  await fake.control({ ws_send: graphEvent("ws-1", 80, "будит живая копия", { stale: true }) });
+  await fake.control({ ws_send: graphEvent("ws-2", 80, "будит живая копия") });
+  const r = await wd.done;
+  assert.equal(r.exit, 0, `the live copy must wake: ${wd.err}`);
+  assert.ok(wd.out.includes("будит живая копия"), wd.out);
 });
 
 // The same on the live path: an exit watchdog attached while two frames land
@@ -441,7 +622,7 @@ test("watchdog-codex puts a message frame into the Codex thread through the app-
   const turn = calls.find((c) => c.method === "turn/start");
   assert.equal(turn.params.threadId, "thread-42", "the frame goes to THIS thread");
   assert.match(turn.params.input[0].text, /Слово соседа/);
-  assert.match(turn.params.input[0].text, /стояние @alari:sosед/);
+  assert.match(turn.params.input[0].text, /^@alari:sosед\n/);
   assert.equal(
     calls.filter((c) => c.method === "turn/start").length,
     1,
@@ -569,10 +750,8 @@ test("the bridge never re-reads a body: body_chars is a size of the serialised b
     }),
   });
   await waitFor(() => wd.out.includes("m-whole"), "the frame to reach the watchdog");
-  const envelope = wd.out.split("\n").find((l) => l.startsWith("frame: "));
-  assert.ok(envelope, `no envelope line in:\n${wd.out}`);
-  const frame = JSON.parse(envelope.slice("frame: ".length));
-  assert.equal(frame.body_read, undefined, "a whole body must not be re-read nor marked truncated");
+  // A re-read or a cut body is said in the first line's tail («тело: …», #6081).
+  assert.ok(!wd.out.includes("тело: "), `a whole body re-read or marked truncated:\n${wd.out}`);
   assert.ok(wd.out.includes("и ещё строка"), "the doer gets the body as it came");
   await fake.control({ ws_close: 4001 });
   await wd.done;
@@ -1055,7 +1234,7 @@ test("the Monitor watchdog prints a message frame as text in lines, none longer 
   await waitFor(() => wd.out.includes("m-wide"), "the frame to reach the watchdog");
   const lines = wd.out.split("\n");
   assert.ok(
-    lines.some((l) => l.startsWith("Кадр канала Искрона от делателя роли #48")),
+    lines.some((l) => l.startsWith("роль #48 (@alari:sosед)")),
     wd.out,
   );
   assert.ok(
@@ -1334,7 +1513,7 @@ test("a re-armed watchdog gets hello and only the frames no local client has see
 // A bridge raised anew under a place a previous bridge of this auth dir held
 // (plugin restart, /mcp reconnect) takes the place back from disk — the same
 // address, no connect; a revoke or a dead token forgets the record (#5061).
-test("a bridge restarted under a held place resumes it from disk: same address, no connect, the busy line back; while the board still reads «слушает» — only register", async (t) => {
+test("a bridge restarted under a held place resumes it from disk: same address, no connect, the old busy line not published anew; while the board still reads «слушает» — only register", async (t) => {
   const { fake, dir, bridge, standings } = await connected(t);
   await waitFor(() => fake.state.ws.size === 1, "the socket");
   const st0 = await bridge.call("tools/call", 4, {
@@ -1373,6 +1552,7 @@ test("a bridge restarted under a held place resumes it from disk: same address, 
   assert.equal(fake.state.counts.connect, 1);
   await fake.control({ places: [{ karta: "931", name: "proba", listening: false }] });
 
+  const posts = fake.state.counts.status_posts;
   const st = await second.call("tools/call", 3, {
     name: "iskron_stand",
     arguments: { realm: "nks-dev", karta: 931, name: "proba" },
@@ -1383,8 +1563,12 @@ test("a bridge restarted under a held place resumes it from disk: same address, 
   assert.equal(fake.state.counts.connect, 1, "the place is resumed, not rotated");
   assert.equal(fresh().length, 1, "one socket reopened on the saved address");
   assert.match(said, /Сокет держит этот мост/, said);
-  assert.match(said, /Занятость возвращена с местом: до перезапуска/, said);
-  await waitFor(() => fake.state.status === "до перезапуска", "the busy line to come back");
+  // The busy line is the holder's word about its work: a resume does not publish
+  // it again under a fresh stamp (graph nks-dev: #6017).
+  assert.match(said, /прежняя строка занятости не возвращена/, said);
+  assert.doesNotMatch(said, /Занятость возвращена/, said);
+  await new Promise((r) => setTimeout(r, 300));
+  assert.equal(fake.state.counts.status_posts, posts, "no busy line is published by the resume");
   const write = await second.call("tools/call", 4, {
     name: "iskron_add_phenomenon",
     arguments: { name: "после перезапуска" },
@@ -1488,7 +1672,7 @@ test("a seat gone at the platform releases the hold too: socket closed aloud, re
     name: "iskron_channel",
     arguments: { ...CONNECT, action: "register" },
   });
-  assert.match(reg.result.content[0].text, /зарегистрировано/);
+  assert.match(reg.result.content[0].text, /теперь говорит от стояния/);
   assert.ok(
     readdirSync(standings).some((f) => f.endsWith(".hold")),
     "the place is held before the seat expires",
@@ -1610,7 +1794,8 @@ test("hello with pending and a platform wake each open a backlog window: the fra
     !frames().includes("q1") && !frames().includes("q2"),
     "no prompt per frame for a queued frame",
   );
-  // A platform wake opens a window of its own; the neighbour's word next to it rides along.
+  // A platform wake opens a window of its own; the neighbour's word next to it is a direct
+  // word — it never rides in a wake batch: it comes alone and whole.
   await fake.control({
     ws_send: JSON.stringify({
       id: "wake",
@@ -1630,9 +1815,11 @@ test("hello with pending and a platform wake each open a backlog window: the fra
   await waitFor(() => backlogs().length === 2, "the wake's backlog");
   assert.deepEqual(
     backlogs()[1].params.data.frames.map((f) => f.id),
-    ["wake", "peer"],
+    ["wake"],
   );
-  assert.match(backlogs()[1].params.data.text, /от ПЛАТФОРМЫ — побудка/);
+  assert.ok(frames().includes("peer"), "the neighbour's word as its own notification");
+  assert.match(backlogs()[1].params.data.text, /Прямых слов 1 — не здесь/);
+  assert.match(backlogs()[1].params.data.text, /платформа — побудка/);
   // Outside a window a frame rides alone, as before.
   await new Promise((r) => setTimeout(r, 800));
   await fake.control({ ws_send: JSON.stringify({ id: "alone", type: "message", body: "одно" }) });
@@ -1671,6 +1858,278 @@ test("for a client that hears by notification a delivered frame is remembered in
   assert.match(bridge.stderr, /frame r-1 came again/);
 });
 
+// A day's queue handed again (graph nks-dev: #5831, #5828): after a reconnect the
+// platform re-sends frames it already delivered, live and stale alike. None may
+// reach the doer twice — the memory of delivery holds a day's traffic (ids and
+// event marks), and for pi and OpenCode the bridge marks everything it hands
+// over, the stale batch included.
+const DAY = 190;
+const dayFrame = (i, extra = {}) =>
+  i % 2
+    ? graphEvent(`day-${i}`, 7000 + i, `день-${i}-`, extra)
+    : JSON.stringify({ type: "message", id: `day-${i}`, body: `день-${i}-`, ...extra });
+const OPENCODE_INIT = { ...INIT, clientInfo: { name: "opencode-iskron", version: "1" } };
+/** Frame ids a notified client was handed — alone, in a stale batch, in a wake batch. */
+const handedIds = (bridge, from = 0) =>
+  bridge.notifications.slice(from).flatMap((n) => {
+    const d = n.params?.data;
+    return [d?.frame?.id, ...(d?.frames ?? []).map((f) => f?.id)].filter(
+      (x) => typeof x === "string",
+    );
+  });
+/** Drop the socket and wait for the bridge to open another. */
+async function reconnect(fake) {
+  const known = new Set(fake.state.ws);
+  await fake.control({ ws_close: 1011 });
+  await waitFor(() => [...fake.state.ws].some((s) => !known.has(s)), "the bridge to reconnect");
+}
+
+test("a day's queue re-sent after a reconnect reaches a notified client once — live, stale and wake batch; a new frame still does", async (t) => {
+  const { fake, bridge } = await connected(t, {
+    env: { ISKRON_BRIDGE_BACKLOG_MS: "400" },
+    init: OPENCODE_INIT,
+  });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  // Yesterday: the first ten came as a stale batch, the rest live.
+  await fake.control({
+    ws_send_many: Array.from({ length: DAY }, (_, i) => dayFrame(i, i < 10 ? { stale: true } : {})),
+  });
+  await waitFor(
+    () => new Set(handedIds(bridge)).size === DAY,
+    "yesterday's queue handed over",
+    20_000,
+  );
+  // Today: the socket drops, hello says the whole queue waited, and the platform re-sends it.
+  await fake.control({ helloPending: DAY });
+  const mark = bridge.notifications.length;
+  await reconnect(fake);
+  await fake.control({
+    ws_send_many: Array.from({ length: DAY }, (_, i) => dayFrame(i, { stale: i % 3 === 0 })),
+  });
+  await new Promise((r) => setTimeout(r, 2500)); // past the stale and the wake windows
+  const again = handedIds(bridge, mark).filter((id) => id.startsWith("day-"));
+  assert.equal(again.length, 0, `handed again: ${again.length} (${again.slice(0, 5).join(", ")}…)`);
+  await fake.control({
+    ws_send: JSON.stringify({ type: "message", id: "fresh-1", body: "новое" }),
+  });
+  await waitFor(() => handedIds(bridge, mark).includes("fresh-1"), "a new frame to be handed");
+});
+
+// A batch shows its first twenty and names the rest by count and history — all of
+// them were handed over, so none comes back after a reconnect.
+test("a notified client is not handed again the frames a wake or stale batch named but did not show", async (t) => {
+  const { fake, bridge } = await connected(t, {
+    env: { ISKRON_BRIDGE_BACKLOG_MS: "600" },
+    init: OPENCODE_INIT,
+  });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wake = Array.from({ length: 30 }, (_, i) =>
+    JSON.stringify({ type: "message", id: `wk-${i}`, body: `побудка ${i}` }),
+  );
+  const stale = Array.from({ length: 25 }, (_, i) =>
+    JSON.stringify({ type: "message", id: `st-${i}`, body: `лежалое ${i}`, stale: true }),
+  );
+  await fake.control({ ws_send_many: [JSON.stringify({ type: "hello", pending: 30 }), ...wake] });
+  await fake.control({ ws_send_many: stale });
+  const batches = () =>
+    bridge.notifications.filter((n) => /backlog|stale/.test(n.params?.data?.kind));
+  await waitFor(() => batches().length === 2, "the wake batch and the stale batch", 5000);
+  const told = batches().map((n) => n.params.data.text);
+  assert.ok(
+    told.some((x) => /кадров 30.*первые 20/.test(x)),
+    told.join("\n---\n"),
+  );
+  const mark = bridge.notifications.length;
+  await reconnect(fake);
+  await fake.control({
+    ws_send_many: [...wake, ...stale.map((s) => s.replace('"stale":true', '"stale":false'))],
+  });
+  await fake.control({ ws_send_many: stale });
+  await new Promise((r) => setTimeout(r, 2200)); // past the stale window
+  const again = handedIds(bridge, mark);
+  assert.deepEqual(again, [], "handed again");
+});
+
+test("the memory of delivery outlives a clean bridge exit: the place taken back hands a notified client nothing it had", async (t) => {
+  const { fake, dir, bridge } = await connected(t, { init: OPENCODE_INIT });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  await fake.control({ ws_send: dayFrame(1) });
+  await fake.control({ ws_send: dayFrame(2, { stale: true }) });
+  await waitFor(
+    () => ["day-1", "day-2"].every((id) => handedIds(bridge).includes(id)),
+    "both handed",
+  );
+  const known = new Set(fake.state.ws);
+  await bridge.stop(); // stdin closed — the harness is gone, cleanly
+  assert.equal(bridge.proc.exitCode, 0, "the bridge left cleanly");
+  const second = startBridge(fake.mcpUrl, dir);
+  t.after(() => second.stop());
+  assert.ok((await second.call("initialize", 1, OPENCODE_INIT)).result);
+  await fake.control({ places: [{ karta: "931", name: "proba", listening: false }] });
+  const st = await second.call("tools/call", 2, {
+    name: "iskron_stand",
+    arguments: { realm: "nks-dev", karta: 931, name: "proba" },
+  });
+  assert.ok(!st.result?.isError, JSON.stringify(st));
+  await waitFor(() => [...fake.state.ws].some((s) => !known.has(s)), "the place taken back");
+  for (const s of known) s.destroy(); // the first bridge's socket, if the fake still holds it
+  await fake.control({
+    ws_send_many: [dayFrame(1), dayFrame(2, { stale: true }), dayFrame(2)],
+  });
+  await fake.control({
+    ws_send: JSON.stringify({ type: "message", id: "fresh-2", body: "новое" }),
+  });
+  await waitFor(() => handedIds(second).includes("fresh-2"), "a new frame to be handed");
+  await new Promise((r) => setTimeout(r, 1800)); // past the stale window
+  const again = handedIds(second).filter((id) => id.startsWith("day-"));
+  assert.deepEqual(again, [], "yesterday's frames handed again");
+});
+
+test("a day's queue re-sent after a reconnect is not printed again by the Monitor watchdog; a new frame is", async (t) => {
+  const { fake, dir, key } = await connected(t);
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  // Each frame outside a case batch is its own Monitor event, a pause apart: the pause
+  // is shortened here — this probe is about marks, not pacing.
+  const wd = runClient("watchdog", dir, key, 60_000, { ISKRON_WATCHDOG_ALONE_MS: "5" });
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog");
+  const printed = () => (wd.out.match(/день-\d+-/g) ?? []).length;
+  await fake.control({ ws_send_many: Array.from({ length: DAY }, (_, i) => dayFrame(i)) });
+  await waitFor(() => printed() === DAY, "yesterday's queue printed", 20_000);
+  await new Promise((r) => setTimeout(r, 300)); // the last marks follow the last print
+  await reconnect(fake);
+  await fake.control({
+    ws_send_many: Array.from({ length: DAY }, (_, i) => dayFrame(i, { stale: i % 3 === 0 })),
+  });
+  await new Promise((r) => setTimeout(r, 2500)); // past the stale window
+  await fake.control({
+    ws_send: JSON.stringify({ type: "message", id: "fresh-3", body: "новое" }),
+  });
+  await waitFor(() => wd.out.includes("новое"), "a new frame to be printed");
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+  assert.equal(printed(), DAY, `printed again: ${printed() - DAY}`);
+});
+
+// The memory outlives the bridge, and the place key does not name the server,
+// while `use en|ru|url` share one grant directory: the memory is per server.
+test("the memory of delivery is per server: a mark made against one server does not hide the same id on another", async (t) => {
+  const a = await connected(t, { init: OPENCODE_INIT });
+  await waitFor(() => a.fake.state.ws.size === 1, "the socket on A");
+  await a.fake.control({
+    ws_send: JSON.stringify({ type: "message", id: "same-1", body: "на сервере A" }),
+  });
+  await waitFor(() => handedIds(a.bridge).includes("same-1"), "handed on A");
+  await a.bridge.stop();
+  const b = await connected(t, { init: OPENCODE_INIT, dir: a.dir });
+  await waitFor(() => b.fake.state.ws.size === 1, "the socket on B");
+  await b.fake.control({
+    ws_send: JSON.stringify({ type: "message", id: "same-1", body: "на сервере B" }),
+  });
+  await waitFor(() => handedIds(b.bridge).includes("same-1"), "the same id handed on B");
+});
+
+/** Drop every .seen file: the bridge loses its word on what was delivered, the client keeps its own. */
+const forgetSeenFiles = (standings) => {
+  for (const f of readdirSync(standings).filter((x) => x.endsWith(".seen")))
+    unlinkSync(join(standings, f));
+};
+
+// The watchdog's own memory is the second line behind the bridge: an id it has
+// printed is not printed again even when the bridge hands it over again.
+test("the Monitor watchdog does not print again an id it printed, even when the bridge hands it over again", async (t) => {
+  const { fake, dir, key, standings } = await connected(t);
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog", dir, key, 20_000);
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog");
+  const once = JSON.stringify({ type: "message", id: "g-1", body: "однажды-g" });
+  await fake.control({ ws_send: once });
+  await waitSeen(standings, "g-1");
+  forgetSeenFiles(standings);
+  await fake.control({ ws_send: once });
+  await fake.control({ ws_send: JSON.stringify({ type: "message", id: "g-2", body: "потом-g" }) });
+  await waitFor(() => wd.out.includes("потом-g"), "the next frame");
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+  assert.equal((wd.out.match(/однажды-g/g) ?? []).length, 1, wd.out);
+});
+
+test("the Codex watchdog does not put into the thread again an id it put there, even when the bridge hands it over again", async (t) => {
+  const { fake, dir, key, standings } = await connected(t);
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const home = mkdtempSync("/tmp/cxd-");
+  const sock = join(home, "app-server-control", "app-server-control.sock");
+  const log = join(home, "door.log");
+  writeFileSync(log, "");
+  const door = await startFakeCodex(sock, log);
+  t.after(() => door.stop());
+  const wd = runClient("watchdog-codex", dir, key, 15000, {
+    CODEX_HOME: home,
+    CODEX_THREAD_ID: "thread-5",
+  });
+  await waitFor(() => wd.err.includes("слушаю стояние"), "the codex watchdog to attach");
+  const once = JSON.stringify({ type: "message", id: "cg-1", body: "однажды-cg" });
+  await fake.control({ ws_send: once });
+  await waitSeen(standings, "cg-1");
+  forgetSeenFiles(standings);
+  await fake.control({ ws_send: once });
+  await fake.control({
+    ws_send: JSON.stringify({ type: "message", id: "cg-2", body: "потом-cg" }),
+  });
+  await waitFor(() => readFileSync(log, "utf8").includes("потом-cg"), "the next frame");
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+  assert.equal((readFileSync(log, "utf8").match(/однажды-cg/g) ?? []).length, 1);
+});
+
+// A stale batch shows twenty and names the rest by count: the watchdog that
+// printed it marks them all, or a reconnect brings the unshown back.
+const staleBurst = (n) =>
+  Array.from({ length: n }, (_, i) =>
+    JSON.stringify({ type: "message", id: `sb-${i}`, body: `лежалое-${i}-`, stale: true }),
+  );
+
+test("the Monitor watchdog marks the frames a stale batch named but did not show — none comes back after a reconnect", async (t) => {
+  const { fake, dir, key } = await connected(t);
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog", dir, key, 30_000);
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog");
+  const shown = () => (wd.out.match(/лежалое-\d+-/g) ?? []).length;
+  await fake.control({ ws_send_many: staleBurst(25) });
+  await waitFor(() => /Лежалых кадров: 25, здесь первые 20/.test(wd.out), "the stale batch");
+  await new Promise((r) => setTimeout(r, 300)); // the marks follow the print
+  assert.equal(shown(), 20);
+  await reconnect(fake);
+  await fake.control({
+    ws_send_many: staleBurst(25).map((s) => s.replace('"stale":true', '"stale":false')),
+  });
+  await fake.control({ ws_send: JSON.stringify({ type: "message", id: "sb-new", body: "новое" }) });
+  await waitFor(() => wd.out.includes("новое"), "a new frame to be printed");
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+  assert.equal(shown(), 20, `printed again: ${shown() - 20}`);
+});
+
+test("the Codex watchdog marks the frames a stale batch named but did not show once the thread takes it", async (t) => {
+  const { fake, dir, key, standings } = await connected(t);
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const home = mkdtempSync("/tmp/cxd-");
+  const sock = join(home, "app-server-control", "app-server-control.sock");
+  const log = join(home, "door.log");
+  writeFileSync(log, "");
+  const door = await startFakeCodex(sock, log);
+  t.after(() => door.stop());
+  const wd = runClient("watchdog-codex", dir, key, 15000, {
+    CODEX_HOME: home,
+    CODEX_THREAD_ID: "thread-6",
+  });
+  await waitFor(() => wd.err.includes("слушаю стояние"), "the codex watchdog to attach");
+  await fake.control({ ws_send_many: staleBurst(25) });
+  await waitFor(() => wd.err.includes("кадр вложен в тред"), "the stale batch in the thread");
+  await waitSeen(standings, "sb-24");
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
 // The plugin cannot pass anything to a bridge it spawned before the session
 // existed; instead it asks the bridge to resume by the session's directory,
 // which iskron_stand wrote into the hold record.
@@ -1678,6 +2137,8 @@ test("iskron/resume by the session's directory: a bridge restarted after the plu
   const { fake, dir, bridge, standings } = await connected(t);
   await waitFor(() => fake.state.ws.size === 1, "the socket");
   const cwd = mkdtempSync(join(tmpdir(), "iskron-session-dir-"));
+  // The plugin names its session to the bridge first (its resume, before any call).
+  await bridge.call("iskron/resume", 4, { cwd, session: "ses-vahta" });
   const stand = await bridge.call("tools/call", 5, {
     name: "iskron_stand",
     arguments: { realm: "nks-dev", karta: 931, name: "proba", cwd, status: "на вахте" },
@@ -1685,11 +2146,9 @@ test("iskron/resume by the session's directory: a bridge restarted after the plu
   const said = (stand.result?.content ?? []).map((c) => c.text ?? "").join("\n");
   assert.match(said, /сокет уже держит этот мост — register/, said);
   const hold = readdirSync(standings).find((f) => f.endsWith(".hold"));
-  assert.equal(
-    JSON.parse(readFileSync(join(standings, hold), "utf8")).cwd,
-    cwd,
-    "the record names the directory",
-  );
+  const rec = JSON.parse(readFileSync(join(standings, hold), "utf8"));
+  assert.equal(rec.cwd, cwd, "the record names the directory");
+  assert.equal(rec.session, "ses-vahta", "the record names the session that stood");
   const known = new Set(fake.state.ws);
   const fresh = () => [...fake.state.ws].filter((x) => !known.has(x));
   bridge.proc.kill("SIGKILL");
@@ -1698,16 +2157,22 @@ test("iskron/resume by the session's directory: a bridge restarted after the plu
   const second = startBridge(fake.mcpUrl, dir);
   t.after(() => second.stop());
   assert.ok((await second.call("initialize", 1, INIT)).result);
-  const wrong = await second.call("iskron/resume", 2, { cwd: "/nowhere/else" });
+  const wrong = await second.call("iskron/resume", 2, {
+    cwd: "/nowhere/else",
+    session: "ses-vahta",
+  });
   assert.equal(wrong.result?.resumed, false, JSON.stringify(wrong));
   assert.equal(fresh().length, 0, "another directory's place is not touched");
   const registers = fake.state.counts.register_standing;
-  const back = await second.call("iskron/resume", 3, { cwd });
+  const posts = fake.state.counts.status_posts;
+  const back = await second.call("iskron/resume", 3, { cwd, session: "ses-vahta" });
   assert.equal(back.result?.resumed, true, JSON.stringify(back));
   assert.equal(back.result.pending, 2, "the answer says how many frames waited");
   assert.match(back.result.word, /возврат места с диска/);
   assert.match(back.result.word, /register/);
+  // The same session returns: the busy line is its own word, and it comes back (#6017).
   assert.match(back.result.word, /занятость возвращена: на вахте/);
+  assert.match(back.result.word, /iskron_channel\(action="leave"\)/, "the way to let go is named");
   assert.equal(fake.state.counts.connect, 1, "the place is resumed, not rotated");
   assert.equal(fresh().length, 1, "one socket reopened on the saved address");
   assert.equal(
@@ -1715,12 +2180,13 @@ test("iskron/resume by the session's directory: a bridge restarted after the plu
     registers + 1,
     "the session is attributed by register",
   );
-  await waitFor(() => fake.state.status === "на вахте", "the busy line to come back");
   assert.ok(
     second.notifications.some((n) => n.params?.data?.kind === "held"),
     "the resumed place is said as «held»",
   );
-  const again = await second.call("iskron/resume", 4, { cwd });
+  assert.equal(fake.state.counts.status_posts, posts + 1, "the session's own busy line is back");
+  assert.equal(fake.state.status, "на вахте");
+  const again = await second.call("iskron/resume", 4, { cwd, session: "ses-vahta" });
   assert.equal(again.result?.resumed, true, "a held place answers «held», not a second resume");
   assert.match(again.result.word, /уже держит/);
   assert.equal(fresh().length, 1, "no second socket for a place already held");
@@ -1730,44 +2196,204 @@ test("iskron/resume by the session's directory: a bridge restarted after the plu
   );
 });
 
-// Two standings of one role from one working copy (a brother and me, all day):
-// the directory does not tell them apart, and the resume by directory takes the
-// freshest record — so the answer must name the other records of that directory,
-// for the agent to check the taken name against its own before the first write
-// (graph nks-dev: #5366).
-test("iskron/resume by a directory shared by two places of one role: the freshest is resumed and the answer names the other", async (t) => {
+// Two standings of one role from one working copy, both sessions gone without a
+// way back. Two holders in one directory, stood by two sessions (#5366); the
+// plugin names its session in every resume. Returns the fake, the grant
+// directory and the shared session directory.
+async function twoDeadHolders(t) {
   const { fake, dir, bridge } = await connected(t);
   await waitFor(() => fake.state.ws.size === 1, "the socket");
   const cwd = mkdtempSync(join(tmpdir(), "iskron-shared-dir-"));
+  await bridge.call("iskron/resume", 4, { cwd, session: "ses-proba" });
   await bridge.call("tools/call", 5, {
     name: "iskron_stand",
-    arguments: { realm: "nks-dev", karta: 931, name: "proba", cwd },
+    arguments: { realm: "nks-dev", karta: 931, name: "proba", cwd, status: "свод двух фаз" },
   });
   const brother = startBridge(fake.mcpUrl, dir);
   t.after(() => brother.stop());
   assert.ok((await brother.call("initialize", 1, INIT)).result);
   await new Promise((r) => setTimeout(r, 20)); // the brother's record is the fresher one
-  const stood = await brother.call("tools/call", 2, {
+  await brother.call("iskron/resume", 2, { cwd, session: "ses-brat" });
+  const stood = await brother.call("tools/call", 3, {
     name: "iskron_stand",
-    arguments: { realm: "nks-dev", karta: 931, name: "brat", cwd },
+    arguments: { realm: "nks-dev", karta: 931, name: "brat", cwd, status: "жду архитектора" },
   });
   assert.match((stood.result?.content ?? []).map((c) => c.text ?? "").join("\n"), /brat/);
   await waitFor(() => fake.state.ws.size === 2, "both sockets");
   bridge.proc.kill("SIGKILL");
   brother.proc.kill("SIGKILL");
   await waitFor(() => fake.state.ws.size === 0, "the sockets to close");
+  return { fake, dir, cwd };
+}
+
+// A session that never stood makes its first call in the same directory: the
+// directory alone must give it neither place, and no busy line of a dead holder
+// may reach the board under a fresh stamp (graph nks-dev: #6017).
+test("iskron/resume by a directory of two dead holders gives a session that never stood no place and publishes no busy line", async (t) => {
+  const { fake, dir, cwd } = await twoDeadHolders(t);
+  const known = new Set(fake.state.ws);
+  const fresh = () => [...fake.state.ws].filter((x) => !known.has(x));
+  const posts = fake.state.counts.status_posts;
+  const registers = fake.state.counts.register_standing;
   const third = startBridge(fake.mcpUrl, dir);
   t.after(() => third.stop());
   assert.ok((await third.call("initialize", 1, INIT)).result);
-  const back = await third.call("iskron/resume", 2, { cwd });
-  assert.equal(back.result?.resumed, true, JSON.stringify(back));
-  assert.equal(back.result.key, "brat--931--nks-dev", "the freshest record of the directory");
-  assert.deepEqual(
-    back.result.others,
-    ["proba--931--nks-dev"],
-    "the answer names the other place of the same directory",
+  const stranger = await third.call("iskron/resume", 2, { cwd, session: "ses-novaya" });
+  assert.equal(stranger.result?.resumed, false, JSON.stringify(stranger));
+  assert.match(stranger.result.word, /эта сессия не стояла/);
+  const bare = await third.call("iskron/resume", 3, { cwd });
+  assert.equal(bare.result?.resumed, false, `no session named: ${JSON.stringify(bare)}`);
+  await new Promise((r) => setTimeout(r, 300));
+  assert.equal(fresh().length, 0, "no socket is opened for a place this session never held");
+  assert.equal(fake.state.counts.register_standing, registers, "no register");
+  assert.equal(fake.state.counts.status_posts, posts, "no busy line is published");
+  // Not taken, not erased: the holders' records wait for their own sessions.
+  assert.equal(
+    readdirSync(join(dir, "standings")).filter((f) => f.endsWith(".hold")).length,
+    2,
+    "both records are left for their holders",
   );
-  assert.match(back.result.word, /в том же каталоге записи и других мест: proba--931--nks-dev/);
+});
+
+// The legitimate return: the session that stood gets ITS place back — not the
+// freshest of the directory — without the old busy line, and can let it go by
+// leave without ending the channel.
+test("iskron/resume by the session that stood returns its own place, not the freshest, with its own busy line; leave lets it go and sticks against the watch and the directory", async (t) => {
+  const { fake, dir, cwd } = await twoDeadHolders(t);
+  const known = new Set(fake.state.ws);
+  const fresh = () => [...fake.state.ws].filter((x) => !known.has(x));
+  const posts = fake.state.counts.status_posts;
+  const back4 = startBridge(fake.mcpUrl, dir);
+  t.after(() => back4.stop());
+  assert.ok((await back4.call("initialize", 1, INIT)).result);
+  const back = await back4.call("iskron/resume", 2, { cwd, session: "ses-proba" });
+  assert.equal(back.result?.resumed, true, JSON.stringify(back));
+  assert.equal(
+    back.result.key,
+    "proba--931--nks-dev",
+    "the session's own record, not the freshest",
+  );
+  assert.deepEqual(back.result.others, ["brat--931--nks-dev"], "the neighbour is named");
+  // Its own line — the same session said it — comes back with the place.
+  assert.match(back.result.word, /занятость возвращена: свод двух фаз/);
+  assert.match(back.result.word, /iskron_channel\(action="leave"\)/);
+  await waitFor(() => fresh().length === 1, "the socket reopened on the saved address");
+  assert.equal(fake.state.counts.status_posts, posts + 1, "only the session's own line");
+  assert.equal(fake.state.status, "свод двух фаз");
+  const left = await back4.call("tools/call", 3, {
+    name: "iskron_channel",
+    arguments: { realm: "nks-dev", action: "leave" },
+  });
+  assert.ok(!left.result?.isError, JSON.stringify(left));
+  assert.match(left.result?.content?.[0]?.text ?? "", /ушёл с места proba--931--nks-dev/);
+  // A leave by word sticks: the plugin's watch does not bring the place back…
+  // Count socket openings, not live sockets: the left one closes meanwhile.
+  const upgrades = () => fake.state.counts.ws_upgrades;
+  const opened = upgrades();
+  const check = await back4.call("iskron/check", 4, { cwd, session: "ses-proba" });
+  assert.equal(check.result?.holding, false, JSON.stringify(check));
+  assert.equal(check.result.resumed, false);
+  assert.match(check.result.word, /отпущено словом/);
+  await new Promise((r) => setTimeout(r, 300));
+  assert.equal(upgrades(), opened, "no socket reopened by the watch after a leave");
+  // …nor does a restarted bridge by the directory, even for the same session.
+  back4.proc.kill("SIGKILL");
+  await waitFor(() => back4.proc.signalCode !== null, "the bridge to die");
+  const back5 = startBridge(fake.mcpUrl, dir);
+  t.after(() => back5.stop());
+  assert.ok((await back5.call("initialize", 1, INIT)).result);
+  const after = await back5.call("iskron/resume", 2, { cwd, session: "ses-proba" });
+  assert.equal(after.result?.resumed, false, JSON.stringify(after));
+  assert.match(after.result.word, /отпущено словом держателя/);
+  await new Promise((r) => setTimeout(r, 300));
+  assert.equal(upgrades(), opened, "no socket reopened by the directory after a leave");
+  // Only iskron_stand by name brings it back (the board has let the closed socket go).
+  await fake.control({ places: [{ karta: "931", name: "proba", listening: false }] });
+  const stood = await back5.call("tools/call", 3, {
+    name: "iskron_stand",
+    arguments: { realm: "nks-dev", karta: 931, name: "proba", cwd },
+  });
+  const stoodText = (stood.result?.content ?? []).map((c) => c.text ?? "").join("\n");
+  assert.ok(!stood.result?.isError, stoodText);
+  assert.match(stoodText, /возврат места с диска/, stoodText);
+  await waitFor(() => upgrades() === opened + 1, "the place taken back by name");
+  assert.equal(
+    holdOf(join(dir, "standings"), "proba--931--nks-dev")?.left,
+    undefined,
+    "the leave mark is gone once the place is held again",
+  );
+});
+
+/** The hold record of a key, read off the standings directory (file names are hashed). */
+function holdOf(standings, key) {
+  for (const f of readdirSync(standings).filter((x) => x.endsWith(".hold"))) {
+    const r = JSON.parse(readFileSync(join(standings, f), "utf8"));
+    if (r.key === key) return r;
+  }
+  return null;
+}
+
+// A record of a pre-upgrade build carries no session. The directory alone must
+// not return it (that is #6017), but the answer must not be silent either: it
+// names the place and the way back by name (iskron_stand).
+test("iskron/resume names a place of a pre-session build in the directory instead of resuming it or staying silent", async (t) => {
+  const { fake, dir, bridge } = await connected(t);
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const cwd = mkdtempSync(join(tmpdir(), "iskron-legacy-dir-"));
+  // A bridge never told its session writes a record without one — as an old build did.
+  await bridge.call("tools/call", 5, {
+    name: "iskron_stand",
+    arguments: { realm: "nks-dev", karta: 931, name: "proba", cwd, status: "старая сборка" },
+  });
+  assert.equal(holdOf(join(dir, "standings"), "proba--931--nks-dev")?.session, undefined);
+  bridge.proc.kill("SIGKILL");
+  await waitFor(() => fake.state.ws.size === 0, "the socket to close");
+  const known = new Set(fake.state.ws);
+  const posts = fake.state.counts.status_posts;
+  const next = startBridge(fake.mcpUrl, dir);
+  t.after(() => next.stop());
+  assert.ok((await next.call("initialize", 1, INIT)).result);
+  const r = await next.call("iskron/resume", 2, { cwd, session: "ses-novaya" });
+  assert.equal(r.result?.resumed, false, JSON.stringify(r));
+  assert.deepEqual(r.result.legacy, ["proba"], "the pre-session place is named");
+  assert.match(
+    r.result.word,
+    /есть место прежней сборки без сессии: proba — вернуть: iskron_stand\(name="proba"\)/,
+  );
+  await new Promise((res) => setTimeout(res, 300));
+  assert.equal([...fake.state.ws].filter((x) => !known.has(x)).length, 0, "not resumed");
+  assert.equal(fake.state.counts.status_posts, posts, "no busy line");
+});
+
+// A bridge no session was named to must not inherit the session of the record
+// it rewrites: the id belongs to the process that was told it, not to the file.
+test("a bridge with no named session does not carry the previous holder's session into the record", async (t) => {
+  const { fake, dir, bridge } = await connected(t);
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const cwd = mkdtempSync(join(tmpdir(), "iskron-inherit-dir-"));
+  await bridge.call("iskron/resume", 4, { cwd, session: "ses-prezhnyaya" });
+  await bridge.call("tools/call", 5, {
+    name: "iskron_stand",
+    arguments: { realm: "nks-dev", karta: 931, name: "proba", cwd },
+  });
+  const standings = join(dir, "standings");
+  assert.equal(holdOf(standings, "proba--931--nks-dev")?.session, "ses-prezhnyaya");
+  bridge.proc.kill("SIGKILL");
+  await waitFor(() => fake.state.ws.size === 0, "the socket to close");
+  const next = startBridge(fake.mcpUrl, dir);
+  t.after(() => next.stop());
+  assert.ok((await next.call("initialize", 1, INIT)).result);
+  const st = await next.call("tools/call", 2, {
+    name: "iskron_stand",
+    arguments: { realm: "nks-dev", karta: 931, name: "proba", cwd },
+  });
+  const said = (st.result?.content ?? []).map((c) => c.text ?? "").join("\n");
+  assert.match(said, /возврат места с диска/, said);
+  assert.equal(
+    holdOf(standings, "proba--931--nks-dev")?.session,
+    undefined,
+    "the new process was told no session — the record carries none",
+  );
 });
 
 // The plugin's watch: every N minutes a session that stood asks its bridge
@@ -1853,6 +2479,7 @@ test("a hold record names its harness and key: another harness's record is not r
   const { fake, dir, bridge, standings } = await connected(t, { init: own });
   await waitFor(() => fake.state.ws.size === 1, "the socket");
   const cwd = mkdtempSync(join(tmpdir(), "iskron-harness-dir-"));
+  await bridge.call("iskron/resume", 4, { cwd, session: "ses-1" });
   await bridge.call("tools/call", 5, {
     name: "iskron_stand",
     arguments: { realm: "nks-dev", karta: 931, name: "proba", cwd },
@@ -1885,7 +2512,7 @@ test("a hold record names its harness and key: another harness's record is not r
       })
     ).result,
   );
-  const foreign = await other.call("iskron/resume", 2, { cwd });
+  const foreign = await other.call("iskron/resume", 2, { cwd, session: "ses-1" });
   assert.equal(foreign.result?.resumed, false, JSON.stringify(foreign));
   assert.match(foreign.result.word, /своей записи держания .* нет/);
   assert.equal(fresh().length, 0, "another harness's place is never opened");
@@ -1900,7 +2527,11 @@ test("a hold record names its harness and key: another harness's record is not r
   const keyOnly = await mine.call("iskron/resume", 2, { key: "drugoe--931--nks-dev" });
   assert.equal(keyOnly.result?.resumed, false, "a wrong key without a directory resumes nothing");
   assert.equal(fresh().length, 0);
-  const staleKey = await mine.call("iskron/resume", 3, { key: "drugoe--931--nks-dev", cwd });
+  const staleKey = await mine.call("iskron/resume", 3, {
+    key: "drugoe--931--nks-dev",
+    cwd,
+    session: "ses-1",
+  });
   assert.equal(staleKey.result?.resumed, true, JSON.stringify(staleKey));
   assert.equal(
     staleKey.result.key,
@@ -1925,8 +2556,9 @@ test("a hold record names its harness and key: another harness's record is not r
 
 // A bridge that leads a parked place (leave) must not be talked into another
 // record of the same directory: holdStanding of a different key would kill the
-// parked socket and forget the name; the return is to the parked place.
-test("a bridge leading a parked place returns to it on iskron/resume and leaves a fresher record of the same directory alone", async (t) => {
+// parked socket and forget the name. A leave by word sticks against a resume;
+// iskron_stand by name returns to the parked place.
+test("a bridge leading a place left by word is not talked into a fresher record of the directory by iskron/resume, and returns to its place by iskron_stand", async (t) => {
   const own = { ...INIT, clientInfo: { name: "opencode-iskron", version: "1" } };
   const { fake, dir, bridge, standings } = await connected(t, { init: own });
   await waitFor(() => fake.state.ws.size === 1, "the socket");
@@ -1964,14 +2596,27 @@ test("a bridge leading a parked place returns to it on iskron/resume and leaves 
   const known = new Set(fake.state.ws);
   const fresh = () => [...fake.state.ws].filter((x) => !known.has(x));
 
-  const back = await bridge.call("iskron/resume", 7, { cwd });
-  assert.equal(back.result?.resumed, true, JSON.stringify(back));
-  assert.equal(
-    back.result.key,
-    "proba--931--nks-dev",
-    "the return is to the parked place, not the fresher record",
+  // The place was left by word: the plugin's watch does not bring it back (#6017)…
+  const watched = await bridge.call("iskron/check", 10, { cwd });
+  assert.equal(watched.result?.holding, false, JSON.stringify(watched));
+  assert.equal(watched.result.resumed, false);
+  // …and a resume neither brings it back nor talks the bridge into the fresher
+  // record of the same directory.
+  const refused = await bridge.call("iskron/resume", 7, { cwd });
+  assert.equal(refused.result?.resumed, false, JSON.stringify(refused));
+  assert.match(refused.result.word, /отпущено словом держателя \(leave\): proba--931--nks-dev/);
+  await new Promise((r) => setTimeout(r, 300));
+  assert.equal(fresh().length, 0, "neither the left place nor the fresher one is opened");
+  // iskron_stand by name is the way back — to the parked place, not the fresher record.
+  const back = await bridge.call("tools/call", 9, {
+    name: "iskron_stand",
+    arguments: { realm: "nks-dev", karta: 931, name: "proba", cwd },
+  });
+  assert.ok(!back.result?.isError, JSON.stringify(back));
+  assert.match(
+    (back.result?.content ?? []).map((c) => c.text ?? "").join("\n"),
+    /возврат на место, с которого мост уходил/,
   );
-  assert.match(back.result.word, /возврат на место, с которого мост уходил/);
   await waitFor(() => fresh().length === 1, "the parked place's socket reopened");
   assert.equal(fake.state.counts.connect, 2, "no connect");
   await waitFor(() => fake.state.status === "парковка", "the parked place's busy line back");
@@ -2376,4 +3021,754 @@ test("two bridges on two places: the board reads both listening, and revoking on
   );
   assert.match(after, /@tester:proba — [^\n]*слушает/, after);
   assert.ok(!/@tester:vtoraya/.test(after), "the revoked place is off the board");
+});
+
+// ── room kinds for watchdogs (#5851): the bridge batches, an interrupt flushes first ──
+
+const sendRoom = (fake, frame) => fake.control({ ws_send: JSON.stringify(frame) });
+
+test("room kinds under the Monitor watchdog: progress and said defer wait; closing brings the batch first, then itself", async (t) => {
+  const { fake, dir, key } = await connected(t, {
+    env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "10000" },
+  });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog", dir, key, 20_000);
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
+  await sendRoom(fake, progress());
+  await sendRoom(fake, said("defer", 63));
+  await new Promise((r) => setTimeout(r, 1000));
+  assert.ok(!wd.out.includes("пробы зелёные"), `progress printed before the window:\n${wd.out}`);
+  assert.ok(!wd.out.includes("стопкой defer"), `said defer printed before the window:\n${wd.out}`);
+  await sendRoom(fake, closing());
+  await waitFor(() => wd.out.includes("ты можешь возразить"), "closing to be printed");
+  const flat = wd.out.replace(/\n/g, " ");
+  const batch = flat.indexOf("Дело: кадров 2");
+  const prog = flat.indexOf("[tests] [пробы зелёные] = ok — без сети · Алексей");
+  const close = flat.indexOf("предлагает закрыть дело");
+  assert.ok(batch >= 0 && prog > batch, `the batch head and progress words:\n${wd.out}`);
+  assert.ok(close > prog, `the batch goes out before closing, not after:\n${wd.out}`);
+  assert.ok(flat.indexOf("стопкой defer") < close, "said defer rides in the batch, before closing");
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
+test("a room batch alone goes out after its window; an unknown kind batches and is written to the bridge log", async (t) => {
+  const { fake, dir, key, bridge } = await connected(t, {
+    env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "2000" },
+  });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog", dir, key, 15_000);
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
+  const sent = Date.now();
+  await sendRoom(fake, unknownKind());
+  await sendRoom(fake, progress(45));
+  await waitFor(
+    () => bridge.stderr.includes("род weather мосту неизвестен"),
+    "the bridge log line",
+  );
+  await new Promise((r) => setTimeout(r, 700));
+  assert.ok(!wd.out.includes("мосту неизвестен"), `an unknown kind interrupted:\n${wd.out}`);
+  await waitFor(() => wd.out.includes("пробы зелёные"), "the batch after the window", 8000);
+  assert.ok(Date.now() - sent >= 1800, "the batch waited for its window");
+  assert.match(wd.out, /Дело: кадров 2/);
+  assert.match(wd.out, /род weather мосту неизвестен/);
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
+// auto — a platform record to the parent about its child case (#5893 §4.2, #4925).
+test("an auto record about a child case batches in words and leaves no unknown-kind line in the bridge log", async (t) => {
+  const { fake, dir, key, bridge } = await connected(t, {
+    env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "2000" },
+  });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog", dir, key, 15_000);
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
+  const sent = Date.now();
+  await sendRoom(fake, auto("child_closed"));
+  await waitFor(() => wd.out.includes("дочернее дело №12 закрыто"), "the batch", 8000);
+  assert.ok(Date.now() - sent >= 1800, "auto waited for the batch window, not interrupting");
+  assert.match(wd.out, /Дело: кадров 1/);
+  assert.ok(!wd.out.includes("неизвестен"), `auto printed as unknown:\n${wd.out}`);
+  assert.ok(
+    !bridge.stderr.includes("неизвестен"),
+    `unknown-kind line in the log:\n${bridge.stderr}`,
+  );
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
+// Room kinds batched through the bridge: one batch of frames, its lines in words.
+async function batchOf(t, frames) {
+  const { fake, dir, key } = await connected(t, { env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "1000" } });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog", dir, key, 10_000);
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
+  for (const f of frames) await sendRoom(fake, f);
+  const head = `Дело: кадров ${frames.length}`;
+  // Строки кадров идут после шапки отдельно — ждём и их, не одну шапку.
+  const tail = () => wd.out.slice(wd.out.indexOf(head)).split("\n").filter(Boolean).length - 1;
+  await waitFor(() => wd.out.includes(head) && tail() >= frames.length, "the batch", 6000);
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+  return wd.out;
+}
+
+// left on expiry (battle form, api 0.89.6): the author is the platform, the one who left — fields.standing.
+test("left names the one who left from fields.standing with its reason, not the platform; joined takes fields.standing too", async (t) => {
+  const out = await batchOf(t, [leftExpired(84), joinedMember(85)]);
+  const who = "fluence\\.nks-agents\\.rooms \\(@aleksei:fluence\\.nks-agents\\.rooms\\)";
+  assert.match(out, new RegExp(`\\[84\\] вышел ${who}; причина: expired`));
+  assert.doesNotMatch(out, /вышел платформа/);
+  assert.match(out, new RegExp(`\\[85\\] вошёл ${who}`));
+});
+
+// node with op and reasoning — the agreed form, not yet seen on the wire.
+test("node with op=updated reads as an update, op=bound as the node in the case, each with its reasoning", async (t) => {
+  const out = await batchOf(t, [
+    nodeOp("updated", 87),
+    nodeOp("bound", 88),
+    nodeOp("deleted", 89),
+    nodeOp("undeleted", 90),
+  ]);
+  assert.match(out, /\[87\] узел #4057 js-bundle обновлён; причина updated/);
+  assert.match(out, /\[88\] в деле узел #4057 js-bundle \(@nks\/nks-dev\); причина bound/);
+  assert.match(out, /\[89\] узел #4057 js-bundle удалён; причина deleted/);
+  assert.match(out, /\[90\] узел #4057 js-bundle восстановлен; причина undeleted/);
+});
+
+test("node without op and reasoning prints as before", async (t) => {
+  const out = await batchOf(t, [nodeBound(86)]);
+  assert.match(out, /\[86\] в деле узел #4057 js-bundle \(@nks\/nks-dev\) — Алексей/);
+});
+
+// A word in two phases (#5893 §4.5b): said in flight and aborts wait in the batch in words;
+// body follows its word's stack; a plain said still interrupts.
+test("a said in flight, a deferred body and aborts wait in the batch in words; body and said with stack interrupt reach the Monitor watchdog at once", async (t) => {
+  const { fake, dir, key, bridge } = await connected(t, {
+    env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "2000" },
+  });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog", dir, key, 20_000);
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
+  const sent = Date.now();
+  await sendRoom(fake, saidInFlight(54));
+  await sendRoom(fake, bodyFrame(55, 54));
+  await sendRoom(fake, bodyAborted(57, 56));
+  await sendRoom(fake, bodyLapsed(59, 58));
+  await new Promise((r) => setTimeout(r, 700));
+  assert.ok(!wd.out.includes("[54]"), `a said in flight interrupted:\n${wd.out}`);
+  await waitFor(() => wd.out.includes("Дело: кадров 4"), "the batch after the window", 8000);
+  assert.ok(Date.now() - sent >= 1800, "the batch waited for its window");
+  assert.match(wd.out, /слово от Алексей \(@aleksei:probe\) в полёте — текст придёт следом/);
+  assert.match(wd.out, /текст слова \[54\] от Алексей \(@aleksei:probe\)/);
+  assert.match(wd.out, /слово \[56\] оборвано автором/);
+  assert.match(wd.out, /слово \[58\] оборвано платформой по сроку/);
+  assert.ok(!wd.out.includes("неизвестен"), `body printed as unknown:\n${wd.out}`);
+  assert.ok(!bridge.stderr.includes("неизвестен"), `unknown-kind line:\n${bridge.stderr}`);
+  const loud = bodyFrame(61, 60);
+  loud.stack = "interrupt";
+  await sendRoom(fake, loud);
+  await waitFor(() => wd.out.includes("[61] текст слова [60]"), "body interrupt printed", 1500);
+  await sendRoom(fake, said("interrupt", 62));
+  await waitFor(() => wd.out.includes("стопкой interrupt"), "said interrupt printed", 1500);
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
+test("said with stack interrupt reaches the Monitor watchdog at once", async (t) => {
+  const { fake, dir, key } = await connected(t, {
+    env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "10000" },
+  });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog", dir, key, 15_000);
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
+  await sendRoom(fake, said("interrupt", 62));
+  await waitFor(() => wd.out.includes("стопкой interrupt"), "said interrupt printed", 3000);
+  assert.match(wd.out, /слово от Алексей \(@aleksei:probe\)/);
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
+// api 0.89.6 invites a ROLE: the key carries the role node id, the line's karta its seq.
+test("an invite to my role reaches the Monitor watchdog at once; an invite to another role and a withdraw wait in the batch", async (t) => {
+  const { fake, dir, key } = await connected(t, {
+    env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "10000" },
+  });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog", dir, key, 15_000);
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
+  await sendRoom(fake, roleInvite(69, MY_KARTA + 1));
+  await sendRoom(fake, withdraw(71));
+  await sendRoom(fake, roleInvite(68));
+  await waitFor(() => wd.out.includes("[68] "), "the invite to my role printed", 3000);
+  assert.match(wd.out, /Алексей \(@aleksei:probe\) зовёт 🚚 Поставщик плитки в дело/);
+  const flat = wd.out.replace(/\n/g, " ");
+  assert.ok(
+    flat.indexOf("Дело: кадров 2") >= 0 &&
+      flat.indexOf("[71] ") >= 0 &&
+      flat.indexOf("[71] ") < flat.indexOf("[68] "),
+    `the other role's invite and the withdraw ride in the batch, flushed first:\n${wd.out}`,
+  );
+  assert.match(wd.out, /приглашение отозвано, отзывает Алексей/);
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
+// A batch flush is a delivery: the exit watchdog prints the whole batch and leaves on it.
+test("the exit watchdog leaves at the batch flush with the whole batch, not on its first frame", async (t) => {
+  const { fake, dir, key } = await connected(t, {
+    env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "2000" },
+  });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog-exit", dir, key, 15_000);
+  await waitFor(() => wd.err.includes("hello"), "hello to be noted");
+  await sendRoom(fake, progress(46));
+  await sendRoom(fake, progress(48));
+  await new Promise((r) => setTimeout(r, 700));
+  assert.equal(wd.proc.exitCode, null, `the exit watchdog left before the window: ${wd.out}`);
+  const r = await wd.done;
+  assert.equal(r.exit, 0, `the flush must wake: ${wd.err}`);
+  assert.ok(
+    wd.out.includes("[46] ") && wd.out.includes("[48] "),
+    `the whole batch is handed over:\n${wd.out}`,
+  );
+});
+
+test("the exit watchdog: closing flushes the batch, the watchdog leaves on it, closing comes on the next arm", async (t) => {
+  const { fake, dir, key } = await connected(t, {
+    env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "10000" },
+  });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const first = runClient("watchdog-exit", dir, key, 15_000);
+  await waitFor(() => first.err.includes("hello"), "hello to be noted");
+  await sendRoom(fake, progress(49));
+  await new Promise((r) => setTimeout(r, 700));
+  assert.equal(first.proc.exitCode, null, `the exit watchdog left on a batch frame: ${first.out}`);
+  await sendRoom(fake, closing());
+  const r1 = await first.done;
+  assert.equal(r1.exit, 0);
+  assert.ok(first.out.includes("[49] "), `the batch goes first:\n${first.out}`);
+  assert.match(first.out, /iskron_case\(realm="nks-dev", action="history", room=7, since=48\)/);
+  assert.ok(!first.out.includes("[50] "), `closing waits for the next arm:\n${first.out}`);
+  const second = runClient("watchdog-exit", dir, key, 8000);
+  const r2 = await second.done;
+  assert.equal(r2.exit, 0, `closing must wake the next arm: ${second.err}`);
+  assert.match(second.out, /^№7 «Стенд» \[50\] ведущий [^\n]*предлагает закрыть дело/);
+  assert.ok(!second.out.includes("[49] "), "the batch is not handed twice");
+});
+
+test("a full room batch goes out at once, before its window: nothing is dropped", async (t) => {
+  const { fake, dir, key } = await connected(t, {
+    env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "30000" },
+  });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog", dir, key, 20_000);
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
+  for (let i = 0; i < 21; i++) await sendRoom(fake, progress(200 + i));
+  await waitFor(() => wd.out.includes("[219] "), "the full batch", 5000);
+  assert.match(wd.out, /Дело: кадров 20/);
+  for (let i = 0; i < 20; i++) assert.ok(wd.out.includes(`[${200 + i}] `), `frame ${i}`);
+  assert.ok(!wd.out.includes("[220] "), "the 21st starts the next batch");
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
+// ── An addressed word not to me (#6081): a fact in the batch, no body, no wake;
+// a run of one pair — one line. To me — whole and by its stack. ──
+
+const ASIDE = "Алексей (@aleksei:probe) → @boris:probe";
+
+test("(а) an addressed word not to me with stack interrupt does not wake the Monitor watchdog and prints one line without its body", async (t) => {
+  const { fake, dir, key } = await connected(t, {
+    env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "2000" },
+  });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog", dir, key, 15_000);
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
+  await sendRoom(fake, addressed(80));
+  await new Promise((r) => setTimeout(r, 900));
+  assert.ok(!wd.out.includes("тайное слово 80"), `the aside woke at once:\n${wd.out}`);
+  assert.ok(!wd.out.includes(ASIDE), `the aside was printed before the window:\n${wd.out}`);
+  await waitFor(() => wd.out.includes(ASIDE), "the aside in the batch", 8000);
+  assert.match(wd.out, new RegExp(`${ASIDE.replace(/[()]/g, "\\$&")}: слово \\[80\\]`));
+  assert.ok(!wd.out.includes("тайное слово"), `the body of a word not to me leaked:\n${wd.out}`);
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
+test("(а2) an addressed word whose addressee has left the case (addressee_left) is not folded — it prints in full, like any word to all", async (t) => {
+  const { fake, dir, key } = await connected(t, {
+    env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "1500" },
+  });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog", dir, key, 15_000);
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
+  await sendRoom(fake, addressedLeft(89));
+  await waitFor(() => wd.out.includes("явное слово 89"), "the word printed whole", 8000);
+  assert.ok(
+    !wd.out.includes(ASIDE),
+    `the word with a left addressee was folded as an aside:\n${wd.out}`,
+  );
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
+test("(б) three addressed words of one pair in a row are one line «3 слова» — Monitor and the exit watchdog", async (t) => {
+  const { fake, dir, key } = await connected(t, {
+    env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "1500" },
+  });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog", dir, key, 15_000);
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
+  for (const id of [81, 82, 83]) await sendRoom(fake, addressed(id, BORIS, "defer"));
+  await waitFor(() => wd.out.includes("последнее [83]"), "the folded line", 8000);
+  assert.ok(wd.out.includes(`${ASIDE}: 3 слова (последнее [83])`), wd.out);
+  assert.equal(wd.out.split(ASIDE).length - 1, 1, `the run is not one line:\n${wd.out}`);
+  assert.ok(!wd.out.includes("тайное слово"), wd.out);
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+  const ex = runClient("watchdog-exit", dir, key, 15_000);
+  await waitFor(() => ex.err.includes("hello"), "hello to be noted");
+  for (const id of [84, 85, 86]) await sendRoom(fake, addressed(id));
+  const r = await ex.done;
+  assert.equal(r.exit, 0, `the flush must wake: ${ex.err}`);
+  assert.ok(ex.out.includes(`${ASIDE}: 3 слова (последнее [86])`), ex.out);
+  assert.equal(ex.out.split(ASIDE).length - 1, 1, `the run is not one line:\n${ex.out}`);
+});
+
+test("(в) an addressed word to me with stack interrupt wakes the Monitor watchdog at once and whole, after the asides waiting before it", async (t) => {
+  const { fake, dir, key } = await connected(t, {
+    env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "10000" },
+  });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog", dir, key, 15_000);
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
+  await sendRoom(fake, addressed(86));
+  // The addressee as a place object (the form asked of the api) and as an address string.
+  await sendRoom(fake, addressed(87, { standing: ME, name: "proba" }));
+  await waitFor(() => wd.out.includes("тайное слово 87"), "the word to me, whole", 3000);
+  await sendRoom(fake, addressed(88, ME));
+  await waitFor(() => wd.out.includes("тайное слово 88"), "the word to me, whole", 3000);
+  assert.match(wd.out, /слово от Алексей \(@aleksei:probe\)/);
+  const flat = wd.out.replace(/\n/g, " ");
+  const aside = flat.indexOf(`${ASIDE}: слово [86]`);
+  assert.ok(aside >= 0 && aside < flat.indexOf("тайное слово 87"), `the aside first:\n${wd.out}`);
+  assert.ok(!wd.out.includes("тайное слово 86"), `the body of a word not to me leaked:\n${wd.out}`);
+  assert.ok(!wd.out.includes(`→ ${ME}`), `a word to me was folded as an aside:\n${wd.out}`);
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
+test("(г) a word without an addressee between two asides stays whole in the batch and breaks the run", async (t) => {
+  const { fake, dir, key } = await connected(t, {
+    env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "1500" },
+  });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog", dir, key, 15_000);
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
+  await sendRoom(fake, addressed(90, BORIS, "defer"));
+  await sendRoom(fake, said("defer", 91));
+  await sendRoom(fake, addressed(92, BORIS, "defer"));
+  await waitFor(() => wd.out.includes("[92]"), "the batch", 8000);
+  assert.match(wd.out, /\[91\] слово от Алексей \(@aleksei:probe\): слово со стопкой defer/);
+  assert.ok(wd.out.includes(`${ASIDE}: слово [90]`), wd.out);
+  assert.ok(wd.out.includes(`${ASIDE}: слово [92]`), wd.out);
+  assert.ok(!wd.out.includes("тайное слово"), wd.out);
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
+test("(д) an addressed word not to me in flight and then its body with stack interrupt: one line of the pair, no body, no wake", async (t) => {
+  const { fake, dir, key } = await connected(t, {
+    env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "2000" },
+  });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog", dir, key, 15_000);
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
+  await sendRoom(fake, addressedInFlight(94));
+  await sendRoom(fake, addressedBody(95, 94));
+  await new Promise((r) => setTimeout(r, 900));
+  assert.ok(!wd.out.includes("тайное тело 94"), `the body woke at once:\n${wd.out}`);
+  await waitFor(() => wd.out.includes(ASIDE), "the pair's line in the batch", 8000);
+  await new Promise((r) => setTimeout(r, 300));
+  assert.ok(wd.out.includes(`${ASIDE}: слово [94]`), wd.out);
+  assert.equal(wd.out.split(ASIDE).length - 1, 1, `the body made a line of its own:\n${wd.out}`);
+  assert.ok(!wd.out.includes("тайное тело"), `the body of a word not to me leaked:\n${wd.out}`);
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
+test("(е) a word whose body the platform withheld (body_withheld) is an aside under Monitor: a line of the pair, №N first", async (t) => {
+  const { fake, dir, key } = await connected(t, {
+    env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "1500" },
+  });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog", dir, key, 15_000);
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
+  await sendRoom(fake, withheld(96));
+  await waitFor(() => wd.out.includes("Дело: кадров 1"), "the batch", 8000);
+  await new Promise((r) => setTimeout(r, 300));
+  assert.match(
+    wd.out,
+    new RegExp(`^№7 «Стенд» ${ASIDE.replace(/[()]/g, "\\$&")}: слово \\[96\\]`, "m"),
+  );
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
+// ── Monitor glues lines that come within ~200 ms into one event and cuts it by
+// length: a human's word right after a case batch vanished in the cut tail. ──
+
+const HUMAN_TEXT =
+  "стоп, пачку пока не разбирай: сперва ответь на вопрос про мост — сторож съедал " +
+  "слово человека, пришедшее сразу за пачкой дела, и агент его не видел. Проверь " +
+  "это пробой и доложи словами, что увидел. Конец слова: ХВОСТ-ЦЕЛ.";
+const HUMAN = {
+  from_standing: "@dmitry:bridge",
+  from_karta_seq: 1226,
+  auth: "pat",
+  via: "hook",
+  as_person: true,
+  user: "dmitry",
+};
+const humanWord = (id = "human-1", body = HUMAN_TEXT) => ({
+  type: "message",
+  id,
+  body,
+  provenance: HUMAN,
+});
+/** Слово делателя через hook — прямое, не кадр дела. */
+const doerWord = (id, body) => ({
+  type: "message",
+  id,
+  body,
+  provenance: { from_standing: "@aleksei:probe", from_karta_seq: 48, auth: "pat", via: "hook" },
+});
+
+test("a human word right after a case batch goes out alone under Monitor: a pause of 250 ms before and after it, its text whole; a human word never waits in the batch", async (t) => {
+  const { fake, dir, key } = await connected(t, {
+    env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "10000" },
+  });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog", dir, key, 25_000);
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
+  for (let i = 0; i < 6; i++) await sendRoom(fake, said("defer", 300 + i));
+  await sendRoom(fake, humanWord());
+  await sendRoom(fake, said("interrupt", 311));
+  await waitFor(() => wd.out.includes("стопкой interrupt"), "the frame after the human word", 5000);
+  const lines = wd.lines;
+  const first = lines.findIndex((l) => l.s.startsWith("человек @dmitry"));
+  // The word ends with its answer line (#6081): the pause comes after that.
+  const last = lines.findIndex((l, i) => i > first && l.s.startsWith("ответ: iskron_channel"));
+  assert.ok(first > 0 && last >= first, `the human word printed:\n${wd.out}`);
+  assert.ok(wd.out.includes(HUMAN_TEXT), `the human word's text whole:\n${wd.out}`);
+  assert.ok(
+    lines.slice(0, first).some((l) => l.s.includes("Дело: кадров 6")),
+    `the batch went first:\n${wd.out}`,
+  );
+  const before = lines[first].at - lines[first - 1].at;
+  const after = lines[last + 1].at - lines[last].at;
+  assert.ok(before >= 250, `a pause before the human word: ${before} ms\n${wd.out}`);
+  assert.ok(after >= 250, `a pause after the human word: ${after} ms\n${wd.out}`);
+  // A human's word in a case with stack defer does not wait for the batch window.
+  await sendRoom(fake, said("defer", 320));
+  const inCase = roomFrame("said", {
+    entry_id: 321,
+    key: "said",
+    stack: "defer",
+    author: { kind: "standing", standing: "@dmitry:bridge", name: "Дмитрий", karta: { seq: 1226 } },
+    body: "слово человека в деле со стопкой defer",
+  });
+  inCase.provenance.as_person = true;
+  await sendRoom(fake, inCase);
+  await waitFor(
+    () => wd.out.includes("слово человека в деле со стопкой defer"),
+    "the human word in the case at once, not after the window",
+    3000,
+  );
+  assert.match(
+    wd.out,
+    /^№7 [^\n]*\[321\] [^\n]*— человек/m,
+    `printed alone, a human's:\n${wd.out}`,
+  );
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
+// A human's word in two phases (#5953): the word in flight carries no text and waits by
+// the dictionary; its body (no as_person on it) is the human's word and comes alone.
+test("a human's word in two phases wakes the exit watchdog once, and that one event carries the text", async (t) => {
+  const { fake, dir, key } = await connected(t, {
+    env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "10000" },
+  });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog-exit", dir, key, 15_000);
+  await waitFor(() => wd.err.includes("hello"), "hello to be noted");
+  const inFlight = saidInFlight(80);
+  inFlight.provenance.as_person = true;
+  await sendRoom(fake, inFlight);
+  await new Promise((r) => setTimeout(r, 700));
+  assert.equal(wd.proc.exitCode, null, `a word in flight woke it empty:\n${wd.out}`);
+  await sendRoom(fake, bodyFrame(81, 80, "текст слова человека ЦЕЛ"));
+  const r = await wd.done;
+  assert.equal(r.exit, 0, `the body must wake: ${wd.err}`);
+  assert.ok(wd.out.includes("текст слова человека ЦЕЛ"), `the text in the event:\n${wd.out}`);
+  assert.ok(!wd.out.includes("в полёте"), `no empty word in flight beside it:\n${wd.out}`);
+  // Nothing is left to wake the next arm: the word in flight went with its body.
+  const next = runClient("watchdog-exit", dir, key, 3000);
+  const r2 = await next.done;
+  assert.equal(r2.exit, null, `the next arm woke on:\n${next.out}`);
+});
+
+test("a case batch under Monitor is short: the head with a pointer to read it whole with since, then a line per frame, no envelopes", async (t) => {
+  const { fake, dir, key } = await connected(t, {
+    env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "10000" },
+  });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog", dir, key, 20_000);
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
+  // The first record carries its entry_id in the journal line only: since is read from there too.
+  const first = said("defer", 400);
+  delete first.entry_id;
+  await sendRoom(fake, first);
+  for (let i = 1; i < 5; i++) await sendRoom(fake, said("defer", 400 + i));
+  const long = "длинное слово ".repeat(40) + "НЕ-ДОЛЖНО-ВОЙТИ";
+  await sendRoom(
+    fake,
+    roomFrame("said", { entry_id: 405, key: "said", stack: "defer", body: long }),
+  );
+  await sendRoom(fake, closing());
+  await waitFor(() => wd.out.includes("ты можешь возразить"), "closing to be printed", 5000);
+  const lines = wd.lines.map((l) => l.s);
+  const head = lines.findIndex((s) => s.includes("Дело: кадров 6"));
+  assert.ok(head >= 0, `the batch head:\n${wd.out}`);
+  // How to read it whole stands in the head: a cut takes the tail, not the head.
+  assert.match(
+    lines[head],
+    /iskron_case\(realm="nks-dev", action="history", room=7, since=399\) \(старый тул без since — history с keep_cursor=true\)/,
+  );
+  const body = lines.slice(head + 1, head + 7);
+  // Every line leads with its case №N; the case's zachin — on its first line only (#6081).
+  for (let i = 0; i < 6; i++)
+    assert.ok(body[i]?.startsWith(`№7 ${i ? "" : "«Стенд» "}[${400 + i}] `), body[i]);
+  assert.ok(!lines[head + 7]?.startsWith("№7 [4"), "one line per frame, six of them");
+  assert.ok(!body.some((s) => s.includes('{"')), "no envelopes in the batch");
+  assert.match(
+    body[0],
+    /^№7 «Стенд» \[400\] слово от Алексей \(@aleksei:probe\): слово со стопкой defer$/,
+  );
+  assert.ok(body[5].endsWith("…") && !body[5].includes("НЕ-ДОЛЖНО-ВОЙТИ"), body[5]);
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
+test("a lone interrupting said under Monitor prints whole and short: case, entry, full text once, the answer, no batch", async (t) => {
+  const { fake, dir, key } = await connected(t, {
+    env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "10000" },
+  });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog", dir, key, 15_000);
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
+  const text = "прерывающее слово ".repeat(15) + "КОНЕЦ-ЦЕЛ";
+  await sendRoom(
+    fake,
+    roomFrame("said", { entry_id: 500, key: "said", stack: "interrupt", body: text }),
+  );
+  await waitFor(() => wd.out.includes("КОНЕЦ-ЦЕЛ"), "the said printed", 3000);
+  assert.ok(wd.out.includes(text), `the text whole:\n${wd.out}`);
+  assert.match(wd.out, /^№7 «Стенд» \[500\] слово от Алексей/m);
+  assert.equal(wd.out.split("КОНЕЦ-ЦЕЛ").length - 1, 1, `the text once:\n${wd.out}`);
+  const own = wd.out.slice(wd.out.indexOf("№7 «Стенд» [500]")); // hello выше печатается как есть
+  assert.ok(!own.includes('{"'), `no raw JSON:\n${own}`);
+  assert.match(
+    wd.out,
+    /ответ: iskron_case\(realm="nks-dev", action="say", room="№7", in_reply_to=500\)/,
+  );
+  assert.ok(!wd.out.includes("Дело: кадров"), `no batch:\n${wd.out}`);
+  assert.ok(!wd.out.includes('iskron_case(action="history"'), `no batch pointer:\n${wd.out}`);
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
+// A wake of 25 frames after the place came back: a direct word (a human's or a doer's, via
+// hook) never rides in the wake batch — each comes alone and whole; the head names the rest.
+const WAKE_HUMAN = "слово человека в побудке, позиция 22 — ЦЕЛИКОМ-22";
+const WAKE_DOER = "слово делателя в побудке, позиция 24 — ЦЕЛИКОМ-24";
+const wakeFrames = (extra = {}) =>
+  Array.from({ length: 25 }, (_, i) =>
+    JSON.stringify(
+      i === 21
+        ? { ...humanWord("wk-22", WAKE_HUMAN), ...extra }
+        : i === 23
+          ? { ...doerWord("wk-24", WAKE_DOER), ...extra }
+          : { type: "message", id: `wk-${i + 1}`, body: `ожидавшее-${i + 1}`, ...extra },
+    ),
+  );
+
+for (const name of ["opencode-iskron", "pi-iskron"]) {
+  test(`a wake of 25 frames for ${name}: the direct words at 22 and 24 come alone and whole, the batch names what did not fit`, async (t) => {
+    const { fake, bridge } = await connected(t, {
+      env: { ISKRON_BRIDGE_BACKLOG_MS: "800" },
+      init: { ...INIT, clientInfo: { name, version: "1" } },
+    });
+    await waitFor(() => fake.state.ws.size === 1, "the socket");
+    const data = () => bridge.notifications.map((n) => n.params?.data ?? {});
+    await fake.control({
+      ws_send_many: [JSON.stringify({ type: "hello", pending: 25 }), ...wakeFrames()],
+    });
+    await waitFor(() => data().some((d) => d.kind === "backlog"), "the wake batch", 5000);
+    const alone = data().filter((d) => d.kind === "frame" && d.frame?.type === "message");
+    for (const [id, text] of [
+      ["wk-22", WAKE_HUMAN],
+      ["wk-24", WAKE_DOER],
+    ]) {
+      const got = alone.find((d) => d.frame.id === id);
+      assert.ok(got, `${id} comes as its own notification`);
+      assert.equal(got.frame.body, text, `${id} whole`);
+    }
+    const burst = data().find((d) => d.kind === "backlog");
+    assert.ok(
+      !burst.frames.some((f) => ["wk-22", "wk-24"].includes(f.id)),
+      "no direct word in the batch",
+    );
+    assert.match(
+      burst.text,
+      /Побудка: кадров 23 \(ожидало в очереди: 25\), здесь первые 20, не вошло 3/,
+    );
+    assert.match(burst.text, /Прямых слов 2 — не здесь/);
+  });
+}
+
+test("a stale burst of 25 frames for the Monitor watchdog: the direct words at 22 and 24 print alone and whole, the batch names what did not fit", async (t) => {
+  const { fake, dir, key } = await connected(t);
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog", dir, key, 20_000);
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog");
+  await fake.control({ ws_send_many: wakeFrames({ stale: true }) });
+  await waitFor(() => /Лежалых кадров: \d+/.test(wd.out), "the stale batch", 6000);
+  await waitFor(
+    () => wd.out.includes("ЦЕЛИКОМ-22") && wd.out.includes("ЦЕЛИКОМ-24"),
+    "both direct words",
+    3000,
+  );
+  assert.ok(wd.out.includes(WAKE_HUMAN) && wd.out.includes(WAKE_DOER), wd.out);
+  assert.match(wd.out, /Лежалых кадров: 23, здесь первые 20, не вошло 3/);
+  assert.match(wd.out, /^человек @dmitry/m);
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
+test("watchdog-codex: progress waits; closing puts the batch into the thread first, then itself", async (t) => {
+  const { fake, dir, key } = await connected(t, {
+    env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "10000" },
+  });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const home = mkdtempSync("/tmp/cxd-");
+  const sock = join(home, "app-server-control", "app-server-control.sock");
+  const log = join(home, "door.log");
+  writeFileSync(log, "");
+  const door = await startFakeCodex(sock, log);
+  t.after(() => door.stop());
+  const wd = runClient("watchdog-codex", dir, key, 20_000, {
+    CODEX_HOME: home,
+    CODEX_THREAD_ID: "thread-room",
+  });
+  await waitFor(() => wd.err.includes("слушаю стояние"), "the watchdog to attach");
+  const turns = () =>
+    readFileSync(log, "utf8")
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((l) => JSON.parse(l))
+      .filter((c) => c.method === "turn/start");
+  await sendRoom(fake, progress(47));
+  await new Promise((r) => setTimeout(r, 1000));
+  assert.equal(turns().length, 0, "progress must not enter the thread before the window");
+  await sendRoom(fake, closing());
+  await waitFor(() => turns().length === 2, "the batch and closing in the thread");
+  const [first, second] = turns().map((c) => c.params.input[0].text);
+  assert.match(first, /\[tests\] \[пробы зелёные\] = ok/);
+  assert.match(second, /предлагает закрыть дело/);
+  assert.match(
+    second,
+    /ты можешь возразить — iskron_case\(action="object", in_reply_to=50\) \(прежнее имя iskron_room\)/,
+  );
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
+// Today's production (api 0.86.0) sends no event_kind: every old room frame, whatever its
+// kind or stack, and every non-room frame reach a watchdog at once, as on main. Guards of
+// main's behaviour — green on main by design.
+const LEGACY_AT_ONCE = () => [
+  [directWord(), "прямое слово соседа"],
+  [graphPosed(), '"vimarsha_seq":5829'],
+  [legacyRoom("text", "interrupt", 71), "прежний род text со стопкой interrupt"],
+  [legacyRoom("direct", "interrupt", 75), "прежний род direct"],
+  [legacyRoom("digest", "defer", 76), "прежний род digest"],
+  [legacyRoom("auto", "defer", 74), "прежний род auto"],
+];
+
+test("room kinds leave the Monitor watchdog's other frames and the old room shape as on main: all print at once", async (t) => {
+  const { fake, dir, key, bridge } = await connected(t, {
+    env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "10000" },
+  });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog", dir, key, 20_000);
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
+  const cases = LEGACY_AT_ONCE();
+  for (const [frame] of cases) await sendRoom(fake, frame);
+  await waitFor(() => cases.every(([, mark]) => wd.out.includes(mark)), "all at once", 3000);
+  assert.ok(!wd.out.includes("Дело: кадров"), `no batch without event_kind:\n${wd.out}`);
+  assert.ok(!bridge.stderr.includes("мосту неизвестен"), "no unknown-kind line for old kinds");
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
+test("room kinds leave the exit watchdog's other frames and the old room shape as on main: each wakes it", async (t) => {
+  const { fake, dir, key } = await connected(t, {
+    env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "10000" },
+  });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  for (const [frame, mark] of LEGACY_AT_ONCE()) {
+    const wd = runClient("watchdog-exit", dir, key, 8000);
+    await waitFor(() => wd.err.includes("слушаю стояние"), "the exit watchdog to attach");
+    await sendRoom(fake, frame);
+    const r = await wd.done;
+    assert.equal(r.exit, 0, `${frame.id} must wake: ${wd.err}`);
+    assert.ok(wd.out.includes(mark), wd.out);
+  }
+});
+
+test("room kinds leave the Codex thread's other frames and the old room shape as on main: all enter at once", async (t) => {
+  const { fake, dir, key } = await connected(t, {
+    env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "10000" },
+  });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const home = mkdtempSync("/tmp/cxd-");
+  const sock = join(home, "app-server-control", "app-server-control.sock");
+  const log = join(home, "door.log");
+  writeFileSync(log, "");
+  const door = await startFakeCodex(sock, log);
+  t.after(() => door.stop());
+  const wd = runClient("watchdog-codex", dir, key, 20_000, {
+    CODEX_HOME: home,
+    CODEX_THREAD_ID: "thread-legacy",
+  });
+  await waitFor(() => wd.err.includes("слушаю стояние"), "the watchdog to attach");
+  const turns = () =>
+    readFileSync(log, "utf8")
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((l) => JSON.parse(l))
+      .filter((c) => c.method === "turn/start")
+      .map((c) => c.params.input[0].text);
+  const cases = LEGACY_AT_ONCE();
+  for (const [frame] of cases) await sendRoom(fake, frame);
+  await waitFor(() => turns().length === cases.length, "every frame at once", 3000);
+  turns().forEach((text, i) => assert.ok(text.includes(cases[i][1]), text));
+  wd.proc.kill("SIGKILL");
+  await wd.done;
 });

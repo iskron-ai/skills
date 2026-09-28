@@ -116,6 +116,32 @@ export function classifyOrigin(frame: Frame, myKarta?: string | number | null): 
   return "peer";
 }
 
+/**
+ * Прямое слово — не кадр дела, не событие графа, не платформа: слово человека
+ * или делателя с автором (via hook или напрямую). В пачку — побудки, лежалых,
+ * дела у сторожей — оно не входит: приходит отдельно и целиком.
+ */
+export function isDirectWord(frame: Frame | null | undefined): boolean {
+  if (frame?.type !== "message") return false;
+  const f = frame as Record<string, unknown>;
+  if (f.room || (typeof f.event_kind === "string" && f.event_kind.startsWith("room.")))
+    return false;
+  const p = frame.provenance ?? {};
+  if (p.via === "graph" || p.via === "room") return false;
+  const origin = frame.origin ?? classifyOrigin(frame);
+  if (origin === "platform") return false;
+  return origin === "human" || !!p.from_standing || p.from_karta_seq != null;
+}
+
+/** Место канала в hello (наблюдено на живом сервере, мост 6.11.0). */
+export interface HelloStanding {
+  karta_seq?: number;
+  pending?: number;
+  realm?: string;
+  standing?: string;
+  standing_id?: string;
+}
+
 export interface Frame {
   type?: string;
   body?: unknown;
@@ -126,6 +152,13 @@ export interface Frame {
   body_chars?: number;
   /** Как получено тело: "history" — мост дочитал обрезанный кадр; "truncated: …" — не вышло. */
   body_read?: string;
+  /** Адрес кадра — место канала, которому он (#5838): id места, его полный адрес, граф @owner/slug, роль. */
+  to_standing_id?: string;
+  to_standing?: string;
+  realm?: string;
+  karta_seq?: number;
+  /** hello: все места канала — по одному на граф, где канал стоит. */
+  standings?: HelloStanding[];
   /** Кто говорит, по провенансу: платформа, человек, брат по роли, делатель другой роли. Ставит мост. */
   origin?: FrameOrigin;
   provenance?: {

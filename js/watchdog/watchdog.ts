@@ -8,10 +8,10 @@
 // одно стояние; ключ из ответа connect различает несколько.
 import { writeSync } from "node:fs";
 
-import { frameToText } from "../shared/frame-text.ts";
-import { noteSeen, seenIds } from "../shared/seen.ts";
+import { batchLine, caseKey, frameToText } from "../shared/frame-text.ts";
+import { deliveredKeys, noteSeen, seenIds } from "../shared/seen.ts";
 import { seenFilePathOf } from "../shared/standings.ts";
-import { attach, resolveStanding } from "./client.ts";
+import { adoptSeenPath, attach, resolveStanding, staleBatchKeys } from "./client.ts";
 
 // Monitor Claude Code режет строку события длиннее ~500 знаков (наблюдено:
 // «...(truncated)»), а строки в одном залпе склеивает в одно событие целиком.
@@ -47,12 +47,40 @@ const plural = (n: number): string => {
   return `${n} ${word}`;
 };
 
-const log = (s: string): void => {
-  process.stdout.write(s + "\n");
+// Monitor склеивает строки, пришедшие в пределах ~200 мс, в одно событие и режет
+// его по длине: кадр вне пачки (слово человека, прерывающий, прямой) печатается
+// отдельным событием — с паузой больше окна склейки до себя и после себя.
+// Переменная — шов для проб, не ручка человека: очередь в сотни кадров идёт по паузе на кадр.
+const ALONE_GAP_MS = Number(process.env.ISKRON_WATCHDOG_ALONE_MS) || 300;
+let queue: Promise<void> = Promise.resolve();
+let lastAt = 0;
+let lastAlone = false;
+
+/**
+ * Блок строк одной записью; alone — отдельным событием Monitor. after — когда
+ * запись ушла (колбэк write), не когда вызвана: пометка .seen — после отдачи.
+ */
+const out = (lines: string[], alone = false, after?: () => void): void => {
+  queue = queue.then(async () => {
+    const wait = lastAt && (alone || lastAlone) ? lastAt + ALONE_GAP_MS - Date.now() : 0;
+    if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+    const failed = await new Promise<boolean>((r) =>
+      process.stdout.write(lines.join("\n") + "\n", (e) => r(!!e)),
+    );
+    lastAt = Date.now();
+    lastAlone = alone;
+    if (!failed) after?.(); // не ушла — не отдана: перевзвод отдаст снова
+  });
 };
 
-// Последнее слово перед выходом: синхронно, иначе выход следом уносит саму строку.
+const log = (s: string): void => out([s]);
+
+// Последнее слово перед выходом: синхронно, иначе выход следом уносит саму строку;
+// выход ждёт опустевшей очереди: всё поставленное до него уже записано.
 const loudExit = (s: string, code: number): void => {
+  queue = queue.then(() => exitNow(s, code));
+};
+const exitNow = (s: string, code: number): void => {
   try {
     writeSync(1, s + "\n");
     process.exit(code);
@@ -69,12 +97,16 @@ export function runWatchdog(argv: string[]): void {
     process.exit(2);
   }
   // Напечатанный кадр — отданный: пометка его, а не записи моста, держит перевзвод от повтора.
-  const seenPath = seenFilePathOf(target.authDir, target.key);
+  let seenPath = seenFilePathOf(target.authDir, target.key);
   const seen = seenIds(seenPath);
+  const queued = new Set<string>(); // id в очереди печати: пометка ляжет после неё
+  const folded: (() => void)[] = []; // пометки свёрнутых слов череды — после её строки
+  const cases = new Set<string>(); // дела, уже названные зачином в идущей пачке
   attach(target.path, {
     onEvent: (ev) => {
       switch (ev.kind) {
         case "attached":
+          seenPath = adoptSeenPath(ev.seen, seenPath, seen); // память места на его сервере
           log(
             `слушаю стояние ${ev.key}${ev.buffered ? ` (${plural(ev.buffered)} задним числом)` : ""}`,
           );
@@ -85,17 +117,42 @@ export function runWatchdog(argv: string[]): void {
             log(ev.raw ?? ""); // служебный кадр (hello, статус) короток и печатается как есть
             break;
           }
-          for (const line of wrapLines(frameToText(f, ev.raw ?? ""))) log(line);
-          if (typeof f.id === "string" && f.id) noteSeen(seenPath, f.id, seen); // после печати
+          // Повтор уже напечатанного или ждущего печати (тот же id) — вторая линия за мостом: не печатается (#5831).
+          const id = typeof f.id === "string" ? f.id : "";
+          const again = !!id && (seen.has(id) || queued.has(id));
+          if (id && !again) queued.add(id);
+          const mark = (): void => {
+            for (const k of deliveredKeys(f)) noteSeen(seenPath, k, seen); // после печати
+            queued.delete(id);
+          };
+          if (ev.batch) {
+            // Пачка дела — по строке на кадр, без конверта; как прочесть целиком — в шапке.
+            // Адресное слово не мне, свёрнутое в череду (folded), своей строки не печатает:
+            // метится вместе со строкой череды, которая его считает (#6081).
+            if (ev.batch.at === 1) cases.clear(); // зачин дела — у первой его строки в пачке
+            if (ev.batch.folded) {
+              if (!again) folded.push(mark);
+              break;
+            }
+            const within = folded.splice(0);
+            const all = (): void => [...within, mark].forEach((m) => m());
+            const first = !cases.has(caseKey(f));
+            cases.add(caseKey(f));
+            if (!again) out(wrapLines(batchLine(f, ev.batch.fold, first)), false, all);
+            else within.forEach((m) => m());
+            break;
+          }
+          if (!again) out(wrapLines(frameToText(f, ev.raw ?? "")), true, mark);
           break;
         }
         case "note":
           log(ev.text ?? "");
           break;
         case "stale":
-          for (const line of wrapLines(ev.text ?? "")) log(line); // одна пачка — одно событие
-          for (const f of ev.frames ?? [])
-            if (typeof f.id === "string" && f.id) noteSeen(seenPath, f.id, seen); // напечатана — отдана
+          // Одна пачка — одно событие. Напечатана — отдана, и названное числом сверх показанного тоже.
+          out(wrapLines(ev.text ?? ""), false, () => {
+            for (const k of staleBatchKeys(ev)) noteSeen(seenPath, k, seen);
+          });
           break;
         case "dead":
         case "evicted":

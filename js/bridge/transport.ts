@@ -1,7 +1,8 @@
+import { lang } from "../shared/lang.ts";
 import { noteServerDate } from "./clock.ts";
 import { CFG } from "./config.ts";
 import { errorCode, errorMessage, UpstreamError } from "./errors.ts";
-import { loadStore } from "./store.ts";
+import { loadStore, saveServerCache } from "./store.ts";
 import { debug, log } from "./streams.ts";
 import { type JsonRpcMessage } from "./types.ts";
 
@@ -31,6 +32,11 @@ export const state = {
   // the agent derived for itself. So re-registering is the bridge's duty, and
   // it hangs on the change of id, never on a timer.
   standing: null as Standing | null, // {realm, karta, name} of the last register that succeeded
+  // Places in OTHER graphs on the same channel (#5838): register on the channel
+  // in another graph adds a place, and a write is signed by the place of its
+  // own graph. `standing` stays the place the socket was taken for; these ride
+  // it and are replayed with it after every session turnover.
+  places: [] as Standing[],
   standingSession: null as string | null, // the session id that registration is known to hold in
   // The access token the session was opened with. A session is opened BY a
   // credential and dies with it (the surface's own word): once the token in the
@@ -107,6 +113,8 @@ export async function post(
     "content-type": "application/json",
     accept: "application/json, text/event-stream",
   };
+  // Язык прозы api — при английском мосте (shared/lang.ts); русский — умолчание сервера.
+  if (lang() === "en") headers["accept-language"] = "en";
   // PAT старше хранилища: с ним грант на диске не читается вовсе (#4267).
   const token = CFG.pat ?? loadStore().tokens?.access_token ?? null;
   if (token) headers.authorization = `Bearer ${token}`;
@@ -277,6 +285,10 @@ export async function reinitialize(): Promise<void> {
         );
       }
       if (got.result?.protocolVersion) state.protocolVersion = got.result.protocolVersion;
+      // The answer that was swallowed here used to leave the handshake cache
+      // (deliver.ts, #4790) quoting whatever the harness's own initialize saw
+      // last — stale the moment the server ships a new version between the two.
+      if (got.result) saveServerCache({ init: got.result });
       await post({ jsonrpc: "2.0", method: "notifications/initialized" }, () => {});
       log(`session re-established (${state.sessionId || "no session id"})`);
       for (const hook of reinitHooks) void hook();

@@ -3,8 +3,8 @@
 // сессий, и у каждой корневой сессии свой мост, а значит своё стояние).
 //
 //   • тулы    — плагин поднимает мост дочерним процессом на каждую корневую
-//               сессию (и на дочернюю, вставшую своим вызовом: стояние одно
-//               на мост, #5154) и регистрирует каждый тул сервера под его
+//               сессию (и на дочернюю, вставшую своим вызовом: в графе место
+//               одно на мост, #5154) и регистрирует каждый тул сервера под его
 //               собственным именем (tools.ts);
 //   • канал   — кадры стояния, которое держит мост сессии, входят в неё
 //               промптом (channel.ts);
@@ -20,6 +20,7 @@
 // сличает её с поставкой.
 import type { Plugin } from "@opencode/plugin";
 
+import { withWord } from "../shared/launch.ts";
 import { setupChannel } from "./channel.ts";
 import { setupCommands } from "./commands.ts";
 import { type Say, setupTools } from "./tools.ts";
@@ -81,18 +82,35 @@ async function setup(ctx: Context): Promise<() => void> {
   // Половины ставятся порознь и каждая под своим try: сорвавшаяся одна не
   // должна унести другую — и не должна унести загрузку плагина.
   let onChannel: (session: string | null, params: unknown, child?: boolean) => void = () => {};
+  let ch: ReturnType<typeof setupChannel> | null = null;
   try {
-    const ch = setupChannel(ctx, say, freshestRoot);
-    onChannel = (s, p, c) => ch.onEvent(s, p, c);
+    const c0 = setupChannel(ctx, say, freshestRoot);
+    ch = c0;
+    onChannel = (s, p, c) => c0.onEvent(s, p, c);
   } catch (e) {
     say(`Искрон: канал не встал — ${(e as Error).message}`, "error");
   }
 
-  let half: Awaited<ReturnType<typeof setupTools>> = { forget() {}, stop() {} };
+  let half: Awaited<ReturnType<typeof setupTools>> = {
+    forget() {},
+    launch: async () => null,
+    stop() {},
+  };
   try {
     half = await setupTools(ctx, say, onChannel, rootOf);
   } catch (e) {
     say(`Искрон: мост не поднялся — ${(e as Error).message}`, "error");
+  }
+
+  // Строка запуска с делом (launch.ts): хук промпта ждёт стояния и входа, и
+  // модель читает бриф уже со словом плагина за строкой запуска.
+  try {
+    await ctx.session.hook("prompt", async (p) => {
+      const word = await half.launch(String(p.sessionID), p.prompt.text);
+      if (word) p.prompt.text = withWord(p.prompt.text, word);
+    });
+  } catch (e) {
+    say(`Искрон: строка запуска не встала — ${(e as Error).message}`, "error");
   }
 
   let commands: Awaited<ReturnType<typeof setupCommands>> = { refresh: async () => {} };
@@ -132,6 +150,14 @@ async function setup(ctx: Context): Promise<() => void> {
           case "skill.updated":
             void commands.refresh();
             break;
+          // Очередь сессии сдвинулась: ждущая пачка дела уходит одним промптом.
+          case "session.inbox.delivered":
+          case "session.inbox.cancelled":
+            if (id && typeof ev.data?.inboxID === "string") ch?.taken(id, ev.data.inboxID);
+            break;
+          case "session.idle":
+            if (id) ch?.taken(id);
+            break;
         }
       }
     } catch {
@@ -141,6 +167,7 @@ async function setup(ctx: Context): Promise<() => void> {
 
   return () => {
     controller.abort();
+    ch?.stop();
     half.stop();
   };
 }

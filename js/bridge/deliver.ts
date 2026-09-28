@@ -2,7 +2,7 @@ import { OWN_CLIENTS } from "../shared/clients.ts";
 import { absorbChannelReply, absorbRevokeReply, expectOwnRevoke } from "./absorb.ts";
 import { ensureAuth } from "./auth.ts";
 import { BUILD } from "./build.ts";
-import { crossPlaceRefusal, serialized } from "./call.ts";
+import { crossPlaceRefusal, resolveAgainstLed, serialized } from "./call.ts";
 import {
   AuthPending,
   errorMessage,
@@ -13,8 +13,9 @@ import {
 } from "./errors.ts";
 import { localLeave } from "./leave.ts";
 import { annotateToolList } from "./moment.ts";
-import { withPlaceFields } from "./placefields.ts";
+import { noteLocaleEcho, withPlaceFields } from "./placefields.ts";
 import { isCheckCall, isResumeCall, runCheck, runResume } from "./resume.ts";
+import { satelliteChannelRefusal } from "./satellite.ts";
 import { isStandCall, runStand } from "./stand.ts";
 import { ensureStanding, isUnattributed, noteStanding, replyText } from "./standing.ts";
 import { localStatus } from "./status.ts";
@@ -273,7 +274,22 @@ async function deliverOne(msg: JsonRpcMessage): Promise<void> {
       heldReply = null;
       // Стояние одно на мост: connect/mint/register под другое место при ведомом
       // своём — отказ вслух, на сервер не уходит (#5154).
-      const cross = hasId ? crossPlaceRefusal(msg) : null;
+      if (hasId && msg.method === "tools/call" && msg.params?.name === "iskron_channel")
+        await resolveAgainstLed(msg.params.arguments?.realm); // графы сличаются в одной форме (#5838)
+      // Мост-спутник: сырые ходы над местом — только своего .sub-N (satellite.ts).
+      const satWord =
+        hasId && msg.method === "tools/call" && msg.params?.name === "iskron_channel"
+          ? satelliteChannelRefusal(msg.params.arguments ?? {})
+          : null;
+      const cross = satWord
+        ? {
+            jsonrpc: "2.0",
+            id: msg.id,
+            result: { isError: true, content: [{ type: "text", text: satWord }] },
+          }
+        : hasId
+          ? crossPlaceRefusal(msg)
+          : null;
       if (cross) {
         emit(cross);
         return;
@@ -287,6 +303,8 @@ async function deliverOne(msg: JsonRpcMessage): Promise<void> {
         msg.params.arguments = withPlaceFields(msg.params.arguments); // поля места и в пяти вызовах (#5174)
       await post(msg, forward);
       const held = heldReply as JsonRpcMessage | null;
+      if (held && msg.params?.name === "iskron_channel" && msg.params.arguments)
+        noteLocaleEcho(msg.params.arguments, replyText(held));
       if (held) {
         if (state.standing && isUnattributed(held)) {
           // The binding this session trusted is gone on the server's side — a

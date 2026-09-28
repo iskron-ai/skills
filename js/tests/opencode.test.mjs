@@ -27,6 +27,7 @@ import assert from "node:assert/strict";
 import {
   appendFileSync,
   copyFileSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
@@ -40,6 +41,35 @@ import { test } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { startFakeNks } from "./fake-nks.mjs";
+import {
+  addressed,
+  addressedBody,
+  addressedInFlight,
+  addressedLeft,
+  auto,
+  body as bodyFrame,
+  bodyAborted,
+  bodyLapsed,
+  BORIS,
+  closing,
+  directWord,
+  graphPosed,
+  joinedMember,
+  legacyRoom,
+  link,
+  ME,
+  ME_ID,
+  MY_KARTA,
+  PLATFORM,
+  progress,
+  roleInvite,
+  roomFrame,
+  said as saidFrame,
+  saidInFlight,
+  unknownKind,
+  withdraw,
+  withheld,
+} from "./room-frames.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SOURCE =
@@ -56,6 +86,9 @@ const COPY = join(SANDBOX, "iskron.js");
 copyFileSync(SOURCE, COPY);
 process.env.HOME = SANDBOX;
 process.env.ISKRON_BRIDGE_AUTH_DIR = join(SANDBOX, "auth");
+/** The window a case burst gathers in before its one prompt — short under the probes. */
+const BATCH_MS = 150;
+process.env.ISKRON_OPENCODE_BATCH_MS = String(BATCH_MS);
 
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 /** The markers keep.ts leaves next to the grant when a plugin stops with a holding bridge — one file per instance. */
@@ -100,8 +133,9 @@ function registry() {
   };
 }
 
-function fakeCtx({ sessions = [], skills = [], gone = new Set() } = {}) {
+function fakeCtx({ sessions = [], skills = [], gone = new Set(), inboxIds = false } = {}) {
   const prompts = [];
+  const hooks = {};
   const tools = registry();
   const commands = registry();
   const queue = [];
@@ -117,9 +151,19 @@ function fakeCtx({ sessions = [], skills = [], gone = new Set() } = {}) {
         if (gone.has(sessionID)) throw new Error(`Session not found: ${sessionID}`);
         return sessions.find((x) => x.id === sessionID) ?? { id: sessionID };
       },
+      // OpenCode answers a prompt with its inbox item; the id comes back in
+      // session.inbox.delivered when a turn takes it. Off by default: most probes need no id.
       prompt: async (o) => {
         prompts.push(o);
-        return {};
+        return inboxIds
+          ? { id: `inbox-${prompts.length}`, type: "user", delivery: o.delivery }
+          : {};
+      },
+      // Session hooks: the probe runs "prompt" the way OpenCode does — awaited,
+      // on a mutable SessionPrompt, before the prompt reaches the model.
+      hook: async (name, cb) => {
+        (hooks[name] ??= []).push(cb);
+        return { dispose: async () => {} };
       },
     },
     skill: { list: async () => ({ location: { directory: SANDBOX }, data: skills }) },
@@ -143,6 +187,13 @@ function fakeCtx({ sessions = [], skills = [], gone = new Set() } = {}) {
     prompts,
     tools: () => tools.get(),
     commands: () => commands.get(),
+    hooks,
+    /** A prompt into a session through its "prompt" hooks; returns what the model would read. */
+    prompt: async (sessionID, text) => {
+      const p = { sessionID, messageID: "m", prompt: { text }, delivery: "queue" };
+      for (const cb of hooks.prompt ?? []) await cb(p);
+      return p.prompt.text;
+    },
     emit: (ev) => {
       queue.push(ev);
       wake?.();
@@ -172,6 +223,7 @@ const ENV_KEYS = [
   "ISKRON_BRIDGE_URL",
   "ISKRON_BRIDGE_TOKEN",
   "ISKRON_BRIDGE_NO_BROWSER",
+  "ISKRON_BRIDGE_LANG",
 ];
 
 let seq = 0;
@@ -633,8 +685,8 @@ test("each root session gets its own bridge, and a frame goes to the session who
     );
     assert.match(
       to["s-a"],
-      /^Кадр канала Искрона от делателя роли #1226 — стояние @alari:telegram-bot\nprovenance: \{"from_standing":"@alari:telegram-bot","from_karta_seq":1226,"auth":"pat","via":"hook"\}\nframe: \{"id":"msg-1"\}\n\nдля первой$/,
-      "provenance must reach the agent as the platform saw it",
+      /^роль #1226 \(@alari:telegram-bot\)\nдля первой\nответ: iskron_channel\(action="send", karta=1226, standing="@alari:telegram-bot", in_reply_to="msg-1"\)$/,
+      "who speaks, the text once and the answer — short (#6081)",
     );
   } finally {
     await rec.stop();
@@ -1016,6 +1068,40 @@ test("a place resumed by the bridge itself is announced into the session with it
   }
 });
 
+// A record of a pre-upgrade build carries no session: the directory alone does
+// not return it (#6017), but the bridge names it, and the plugin says it into
+// the session — its holder takes it back by name instead of losing it silently.
+test("a place of a pre-session build, not resumed by the directory, is said into the session with the way back by name", async () => {
+  const calls = join(SANDBOX, "legacy.calls");
+  const resume = join(SANDBOX, "legacy.answer");
+  writeFileSync(calls, "");
+  writeFileSync(
+    resume,
+    JSON.stringify({
+      resumed: false,
+      word: 'своей записи держания для каталога /work/old нет — есть место прежней сборки без сессии: proba — вернуть: iskron_stand(name="proba")',
+      legacy: ["proba"],
+    }),
+  );
+  const b = bridgeEnv("legacy", { FB_CALLS: calls, FB_RESUME: resume });
+  const rec = await plugin(b.env, {
+    sessions: [{ id: "s-old", location: { directory: "/work/old" } }],
+  });
+  try {
+    await serverTools(rec);
+    await rec.call("iskron_orient", {}, "s-old");
+    await until(
+      () => rec.prompts.some((p) => /прежней сборки без сессии/.test(p.text)),
+      "the legacy place said into the session",
+    );
+    const word = rec.prompts.find((p) => /прежней сборки без сессии/.test(p.text));
+    assert.equal(word.sessionID, "s-old");
+    assert.match(word.text, /iskron_stand\(name="proba"\)/, "the way back by name is said");
+  } finally {
+    await rec.stop();
+  }
+});
+
 test("a holding bridge that dies is announced into its session as lost hearing, and the watch raises a fresh bridge that resumes the place", async () => {
   const calls = join(SANDBOX, "lost.calls");
   const resume = join(SANDBOX, "lost.answer");
@@ -1123,7 +1209,10 @@ test("stopping the plugin with a holding bridge leaves a marker, and the next in
   ]);
   const second = await plugin(b.env, {
     keepMarker: true,
-    sessions: [{ id: "s-back", location: { directory: "/work/held" } }],
+    sessions: [
+      { id: "s-back", location: { directory: "/work/held" } },
+      { id: "s-held", location: { directory: "/work/held" } },
+    ],
   });
   try {
     assert.match(second.said(), /слух был потерян в \d\d:\d\d/);
@@ -1135,15 +1224,26 @@ test("stopping the plugin with a holding bridge leaves a marker, and the next in
     assert.equal(second.prompts[0].sessionID, "s-next");
     assert.match(second.prompts[0].text, /слух был потерян/);
     assert.match(second.prompts[0].text, /iskron_stand/);
-    // The session of the lost directory resumes by the marker's key, not by directory alone.
+    // Another session of the lost directory gets no key: the marker's key is a
+    // hint only to the session that held its socket (graph nks-dev: #6017).
+    const sentBy = () =>
+      readFileSync(calls, "utf8")
+        .trim()
+        .split("\n")
+        .map((l) => JSON.parse(l));
     writeFileSync(calls, "");
     await second.call("iskron_orient", {}, "s-back");
-    const sent = readFileSync(calls, "utf8")
-      .trim()
-      .split("\n")
-      .map((l) => JSON.parse(l));
-    assert.equal(sent[0].name, "iskron/resume");
-    assert.deepEqual(sent[0].arguments, { key: "proba--931--nks-dev", cwd: "/work/held" });
+    assert.equal(sentBy()[0].name, "iskron/resume");
+    assert.deepEqual(sentBy()[0].arguments, { cwd: "/work/held", session: "s-back" });
+    // The session that held it resumes by the marker's key, not by directory alone.
+    writeFileSync(calls, "");
+    await second.call("iskron_orient", {}, "s-held");
+    assert.equal(sentBy()[0].name, "iskron/resume");
+    assert.deepEqual(sentBy()[0].arguments, {
+      key: "proba--931--nks-dev",
+      cwd: "/work/held",
+      session: "s-held",
+    });
   } finally {
     await second.stop();
   }
@@ -1360,6 +1460,230 @@ test("a child session that stands gets a bridge of its own: the root keeps its p
   }
 });
 
+// A subagent leads its case with a place of its own (#6002, the owner's word):
+// when the root holds a place, the child's bridge is raised as a SATELLITE of it
+// (`--satellite`), its iskron_stand carries satellite_of = the root's place, and
+// the role is the one the child names — only an unnamed role falls back to the
+// root's. The root's place is learnt from the bridge's «held» word.
+test("a child session of a standing root raises its bridge as a satellite of the root's place, in the role it names or else the root's", async () => {
+  const calls = join(SANDBOX, "satellite.calls");
+  writeFileSync(calls, "");
+  const b = bridgeEnv("satellite", {
+    FB_CALLS: calls,
+    FB_TOOLS: JSON.stringify([
+      { name: "iskron_stand", description: "Стояние.", inputSchema: { type: "object" } },
+    ]),
+  });
+  const rec = await plugin(b.env, {
+    sessions: [
+      { id: "root", location: { directory: "/work/root" } },
+      { id: "child", parentID: "root", location: { directory: "/work/child" } },
+      { id: "second", parentID: "root", location: { directory: "/work/second" } },
+    ],
+  });
+  try {
+    await until(() => rec.tools().has("iskron_stand"), "the stand tool", 8000);
+    await rec.call("iskron_stand", { realm: "nks-dev", karta: "#2816" }, "root");
+    const rootPid = pidOf(b.log);
+    const place = { realm: "@nks/nks-dev", karta: "2816", name: "host.repo.opus-5" };
+    appendFileSync(`${b.events}.${rootPid}`, event("held", { key: "k-root", place }));
+    await delay(400); // the fake bridge relays event lines every 40 ms
+    await rec.call("iskron_stand", { realm: "nks-dev", karta: "#48" }, "child");
+    await rec.call("iskron_stand", { realm: "nks-dev" }, "second");
+    const starts = readFileSync(b.log, "utf8").trim().split("\n");
+    assert.equal(starts.length, 3, starts.join("\n"));
+    assert.doesNotMatch(starts[0], /--satellite/, "the root's bridge is a session bridge");
+    for (const s of starts.slice(1))
+      assert.match(s, /--satellite/, "a child's bridge is a satellite");
+    const stands = readFileSync(calls, "utf8")
+      .trim()
+      .split("\n")
+      .map((l) => JSON.parse(l))
+      .filter((c) => c.name === "iskron_stand")
+      .map((c) => [c.arguments.karta, c.arguments.satellite_of]);
+    assert.deepEqual(stands, [
+      ["#2816", undefined],
+      ["#48", "host.repo.opus-5"],
+      ["2816", "host.repo.opus-5"],
+    ]);
+  } finally {
+    await rec.stop();
+  }
+});
+
+// A subagent launched with a case (#6078, the owner's word): the child session
+// whose FIRST prompt begins «start <graph> <role> <case №N>» stands as a satellite
+// of the root's place in the named role and joins the case — inside the prompt
+// hook, so before the model reads a word — and the model reads the plugin's word
+// right under the launch line. The case goes to the wire as «#N».
+const STAND_AND_CASE = JSON.stringify([
+  { name: "iskron_stand", description: "Стояние.", inputSchema: { type: "object" } },
+  { name: "iskron_case", description: "Дело.", inputSchema: { type: "object" } },
+]);
+const sentCalls = (file) =>
+  readFileSync(file, "utf8")
+    .trim()
+    .split("\n")
+    .filter(Boolean)
+    .map((l) => JSON.parse(l))
+    .filter((c) => c.name.startsWith("iskron_")); // tool calls, not the bridge's own iskron/resume
+
+test("a child session whose first prompt is a launch line with a case stands as the root's satellite and joins the case before the model reads", async () => {
+  const calls = join(SANDBOX, "launch.calls");
+  writeFileSync(calls, "");
+  const b = bridgeEnv("launch", {
+    FB_CALLS: calls,
+    FB_TOOLS: STAND_AND_CASE,
+    FB_STAND_HELD: "host.repo.opus-5",
+  });
+  const rec = await plugin(b.env, {
+    sessions: [
+      { id: "root", location: { directory: "/work/root" } },
+      { id: "child", parentID: "root", location: { directory: "/work/child" } },
+    ],
+  });
+  try {
+    await until(() => rec.tools().has("iskron_stand"), "the stand tool", 8000);
+    await rec.call("iskron_stand", { realm: "@nks/nks-dev", karta: "#2816" }, "root");
+    // Форма OpenCode 2.0.16 (наблюдено живым прогоном): тул subagent ставит свою строку
+    // перед промптом, и строка запуска приходит второй.
+    const read = await rec.prompt(
+      "child",
+      "You are a subagent spawned by another session.\nstart @nks/nks-dev #48 дело №77\nБриф: почини мост.",
+    );
+    const after = sentCalls(calls).slice(1);
+    assert.deepEqual(
+      after.map((c) => [c.name, c.arguments]),
+      [
+        [
+          "iskron_stand",
+          {
+            realm: "@nks/nks-dev",
+            karta: "#48",
+            satellite_of: "host.repo.opus-5",
+            cwd: "/work/child",
+          },
+        ],
+        ["iskron_case", { action: "join", realm: "@nks/nks-dev", room: "#77" }],
+      ],
+      "stand as the root's satellite in the named role, then join the case — before the hook returns",
+    );
+    assert.notEqual(
+      after[0].pid,
+      sentCalls(calls)[0].pid,
+      "the child stands on a bridge of its own",
+    );
+    assert.equal(
+      read,
+      "You are a subagent spawned by another session.\n" +
+        "start @nks/nks-dev #48 дело №77\n" +
+        "Искрон: встал host.repo.opus-5.sub-1, вошёл в дело №77 — первым словом перескажи бриф в деле.\n" +
+        "Бриф: почини мост.",
+    );
+  } finally {
+    await rec.stop();
+  }
+});
+
+test("without a launch line a child's prompt is left as it was: no stand, no join, no bridge of its own", async () => {
+  const calls = join(SANDBOX, "no-launch.calls");
+  writeFileSync(calls, "");
+  const b = bridgeEnv("no-launch", { FB_CALLS: calls, FB_TOOLS: STAND_AND_CASE });
+  const rec = await plugin(b.env, {
+    sessions: [
+      { id: "root" },
+      { id: "plain", parentID: "root" },
+      { id: "human", parentID: "root" },
+      { id: "later", parentID: "root" },
+    ],
+  });
+  try {
+    await until(() => rec.tools().has("iskron_stand"), "the stand tool", 8000);
+    assert.equal(rec.hooks.prompt?.length, 1, "the plugin listens to prompts");
+    const plain = "Сделай обзор дифа.";
+    assert.equal(await rec.prompt("plain", plain), plain);
+    // A launch line with a human's place, not a case, is the door skill's to run.
+    const human = "start @nks/nks-dev #48 @dmitry:main";
+    assert.equal(await rec.prompt("human", human), human);
+    // Only the FIRST prompt launches.
+    assert.equal(await rec.prompt("later", "привет"), "привет");
+    assert.equal(await rec.prompt("later", "start r5 #48 #77"), "start r5 #48 #77");
+    // A root is the door skill's to launch.
+    assert.equal(await rec.prompt("root", "start r5 #48 #77"), "start r5 #48 #77");
+    assert.deepEqual(sentCalls(calls), []);
+    await until(() => existsSync(b.log), "the plugin's own bridge");
+    assert.equal(pidsOf(b.log).length, 1, "only the plugin's own bridge was started");
+  } finally {
+    await rec.stop();
+  }
+});
+
+test("on an English server (*.ai) the launch line reads «case №N» and the word about entering is English", async () => {
+  const calls = join(SANDBOX, "launch-en.calls");
+  writeFileSync(calls, "");
+  const b = bridgeEnv("launch-en", {
+    FB_CALLS: calls,
+    FB_TOOLS: STAND_AND_CASE,
+    FB_STAND_HELD: "host.repo.opus-5",
+    ISKRON_BRIDGE_URL: "https://mcp.iskron.ai/",
+  });
+  const rec = await plugin(b.env, {
+    sessions: [{ id: "root" }, { id: "child", parentID: "root" }],
+  });
+  try {
+    await until(() => rec.tools().has("iskron_stand"), "the stand tool", 8000);
+    const read = await rec.prompt("child", "start r5 #48 case №77 from @me:lead");
+    assert.equal(
+      read,
+      "start r5 #48 case №77 from @me:lead\n" +
+        "Iskron: seated host.repo.opus-5, entered case №77 — retell the brief as your first message in the case.",
+    );
+    assert.deepEqual(
+      sentCalls(calls).map((c) => c.arguments.room ?? c.name),
+      ["iskron_stand", "#77"],
+    );
+  } finally {
+    await rec.stop();
+  }
+});
+
+test("a refused join comes back as words in the prompt, and the place stays", async () => {
+  const calls = join(SANDBOX, "launch-refused.calls");
+  writeFileSync(calls, "");
+  const b = bridgeEnv("launch-refused", {
+    FB_CALLS: calls,
+    FB_TOOLS: STAND_AND_CASE,
+    FB_STAND_HELD: "host.repo.opus-5",
+  });
+  writeFileSync(`${b.reply}.iskron_case`, "__ERROR__дело #77 не найдено в этом графе");
+  const rec = await plugin(b.env, {
+    sessions: [{ id: "root" }, { id: "child", parentID: "root" }],
+  });
+  try {
+    await until(() => rec.tools().has("iskron_stand"), "the stand tool", 8000);
+    // The tail «from <seat>» is pi's: here the parent is known, and the tail does no harm.
+    const read = await rec.prompt("child", "start r5 #48 case #77 from @me:lead");
+    assert.equal(
+      read,
+      "start r5 #48 case #77 from @me:lead\n" +
+        "Искрон: встал host.repo.opus-5; в дело №77 не вошёл — дело #77 не найдено в этом графе. Место остаётся.",
+      "the root holds no place, so the child stands a place of its own",
+    );
+    assert.deepEqual(
+      sentCalls(calls).map((c) => [c.name, c.arguments.action]),
+      [
+        ["iskron_stand", undefined],
+        ["iskron_case", "join"],
+      ],
+      "nothing takes the place back after the refusal",
+    );
+    const child = pidsOf(b.log).at(-1);
+    assert.ok(alive(child), "the child's bridge still holds its place");
+  } finally {
+    await rec.stop();
+  }
+});
+
 // A child's place can outlive the child: OpenCode sends no «subagent finished»
 // event, so the child's bridge keeps holding. A frame on that place must not be
 // re-addressed to the root — there stands another standing (#5167): it is said
@@ -1555,7 +1879,7 @@ test("a child's held place in the loss marker is flagged and never hints the roo
     assert.equal(sent[0].name, "iskron/resume");
     assert.deepEqual(
       sent[0].arguments,
-      { key: "root--2816--nks-dev", cwd: "/work/same" },
+      { key: "root--2816--nks-dev", cwd: "/work/same", session: "root" },
       "the root resumes by ITS key — the child's record of the same directory is no hint",
     );
   } finally {
@@ -1626,7 +1950,7 @@ test("a dead child bridge is replaced by a fresh child bridge that resumes the c
     );
     assert.deepEqual(
       sent[0].arguments,
-      { key: "child--931--nks-dev" },
+      { key: "child--931--nks-dev", session: "child" },
       "a child resumes by key only, never by the shared directory",
     );
     assert.match(rec.said(), /сессия child — возврат места с диска/);
@@ -1638,7 +1962,10 @@ test("a dead child bridge is replaced by a fresh child bridge that resumes the c
 
 // ── room frames (api 0.71.0: envelope flattened ahead of provenance and body) ──
 
-test("a room frame reaches the agent with its whole envelope; defer queues, a platform record with no author is a wake-up", async () => {
+/** Строка ответа короткого кадра дела (#6081): дело и запись, на которую отвечают. */
+const answerOf = (text) => text.split("\n").find((l) => l.startsWith("ответ: ")) ?? "";
+
+test("a room frame reaches the agent short: case, entry, words, who, the answer; said defer queues, a platform record with no author is the platform's", async () => {
   const b = bridgeEnv("room");
   const rec = await plugin(b.env);
   try {
@@ -1646,69 +1973,591 @@ test("a room frame reaches the agent with its whole envelope; defer queues, a pl
     await until(() => rec.tools().has("iskron_channel"), "the channel tool");
     await rec.call("iskron_channel", { action: "connect" }, "s-room");
     const [pid] = pidsOf(b.log);
-    const said = {
-      type: "message",
-      id: "room-msg-1",
-      room: { id: "r-1", zachin: "Стенд комнат", realm: "nks-dev", status: "open" },
-      entry_id: 41,
-      kind: "text",
-      stack: "defer",
-      stack_by: "platform",
-      body: "слово участника",
-      body_chars: 17,
-      provenance: { from_standing: "@aleksei:probe", from_karta_seq: 48, auth: "pat", via: "room" },
-    };
+    const said = saidFrame("interrupt", 41);
     appendFileSync(`${b.events}.${pid}`, event("frame", { frame: said, raw: "" }));
     await until(() => rec.prompts.length === 1, "the room frame to be prompted");
-    assert.equal(
-      rec.prompts[0].delivery,
-      "queue",
-      "stack=defer must not interrupt the running turn (#4957)",
-    );
+    assert.equal(rec.prompts[0].delivery, "steer", "said with stack=interrupt steers");
     const text = rec.prompts[0].text;
     assert.match(
       text,
-      /^Кадр канала Искрона от делателя роли #48/,
-      "a participant's word is a doer's word, by via+auth",
+      /^№7 «Стенд» \[41\] слово от Алексей \(@aleksei:probe\) — роль #48\n/,
+      "the case, the entry, the kind in words and a doer's role, by via+auth",
     );
-    assert.match(
-      text,
-      /слово КОМНАТЫ «Стенд комнат», род text, стопка defer/,
-      "the room line names zachin, kind and stack",
+    assert.equal(
+      answerOf(text),
+      'ответ: iskron_case(realm="nks-dev", action="say", room="№7", in_reply_to=41)',
+      "the answer names the case and the entry",
     );
-    const envelope = JSON.parse(
-      text
-        .split("\n")
-        .find((l) => l.startsWith("frame: "))
-        .slice(7),
-    );
-    assert.deepEqual(
-      envelope.room,
-      said.room,
-      "the room envelope must reach the agent, not be dropped by a key whitelist",
-    );
-    assert.equal(envelope.kind, "text");
-    assert.equal(envelope.stack, "defer");
-    assert.equal(envelope.entry_id, 41);
 
-    const left = {
-      type: "message",
-      id: "room-msg-2",
-      room: said.room,
+    const closed = roomFrame("closed", {
       entry_id: 42,
-      kind: "auto",
-      stack: "interrupt",
-      body: "",
-      body_chars: 2,
-      provenance: { auth: "platform", via: "room" },
-    };
-    appendFileSync(`${b.events}.${pid}`, event("frame", { frame: left, raw: "" }));
+      author: PLATFORM,
+      fields: { reason: "consensus" },
+      status: "closed",
+    });
+    appendFileSync(`${b.events}.${pid}`, event("frame", { frame: closed, raw: "" }));
     await until(() => rec.prompts.length === 2, "the platform record to be prompted");
-    assert.equal(rec.prompts[1].delivery, "steer", "interrupt steers into the running turn");
+    assert.equal(rec.prompts[1].delivery, "steer", "closed steers into the running turn");
     assert.match(
       rec.prompts[1].text,
-      /^Кадр канала Искрона от ПЛАТФОРМЫ — побудка, не человек и не делатель\nзапись КОМНАТЫ «Стенд комнат», род auto, стопка interrupt\n/,
-      "a room record without an author is the platform speaking, not an unknown doer",
+      /^№7 «Стенд» \[42\] дело закрыто: consensus — платформа$/,
+      "a room record without an author is the platform speaking, and waits no answer",
+    );
+
+    appendFileSync(
+      `${b.events}.${pid}`,
+      event("frame", { frame: saidFrame("defer", 43), raw: "" }),
+    );
+    await until(() => rec.prompts.length === 3, "the deferred word to be prompted");
+    assert.equal(
+      rec.prompts[2].delivery,
+      "queue",
+      "said with stack=defer must not interrupt the running turn (#4957)",
+    );
+    assert.match(
+      rec.prompts[2].text,
+      /^Дело: кадров 1 — [^\n]*\n№7 «Стенд» \[43\] слово от Алексей \(@aleksei:probe\): слово со стопкой defer$/,
+      "a deferred word is a line of the case burst, its envelope behind the history pointer",
+    );
+  } finally {
+    await rec.stop();
+  }
+});
+
+// English Iskron (#6080): a bridge aimed at a *.ai server speaks English in what
+// it writes itself — the case frame's header, the kind words, the case batch —
+// with the names of the norm (#6075): case, ledger line «[was] [did] = verdict».
+// The frames below carry Latin data only, so any Cyrillic left is the plugin's own.
+const ALEX = { kind: "standing", standing: "@alex:probe", name: "Alex", karta: { seq: 48 } };
+const latin = (f) => ({ ...f, room: { ...f.room, zachin: "Bench" } });
+const CYRILLIC = /[а-яё]/i;
+
+for (const [server, en] of [
+  ["https://mcp.iskron.ai/", true],
+  ["https://mcp.iskron.ru/", false],
+]) {
+  test(`a plugin whose bridge looks at ${server} writes the case frame header and batch ${en ? "in English, without Cyrillic" : "in Russian, as before"}`, async () => {
+    const b = bridgeEnv(`lang-${en ? "en" : "ru"}`);
+    const rec = await plugin({ ...b.env, ISKRON_BRIDGE_URL: server });
+    try {
+      await until(() => rec.tools().has("iskron_channel"), "the channel tool", 8000);
+      await rec.call("iskron_channel", { action: "connect" }, "s-lang");
+      const [pid] = pidsOf(b.log);
+      const send = async (frame, i) => {
+        appendFileSync(`${b.events}.${pid}`, event("frame", { frame, raw: JSON.stringify(frame) }));
+        await until(() => rec.prompts.length === i, `prompt ${i}`);
+        return rec.prompts[i - 1].text;
+      };
+      const word = await send(
+        latin(roomFrame("said", { author: ALEX, stack: "interrupt", body: "look at 41" })),
+        1,
+      );
+      const line = await send(
+        latin(
+          roomFrame("progress", {
+            author: ALEX,
+            key: "tests",
+            line: { done: "probes green", verdict: "partial", note: "no network" },
+          }),
+        ),
+        2,
+      );
+      if (en) {
+        assert.doesNotMatch(word, CYRILLIC, word);
+        assert.doesNotMatch(line, CYRILLIC, line);
+        assert.match(
+          word,
+          /^case №7 «Bench» \[\d+\] message from Alex \(@alex:probe\) — role #48\n/,
+        );
+        assert.match(word, /\nanswer: iskron_case\(realm="nks-dev", action="say", room="№7", /);
+        assert.match(line, /^Case: 1 frames — /);
+        assert.match(line, /\ncase №7 «Bench» \[\d+\] \[tests\]/);
+        assert.match(
+          line,
+          /\[tests\] \[probes green\] = partial — no network · Alex \(@alex:probe\)/,
+        );
+      } else {
+        assert.match(word, /^№7 «Bench» \[\d+\] слово от Alex \(@alex:probe\) — роль #48\n/);
+        assert.match(word, /\nответ: iskron_case\(/);
+        assert.match(
+          line,
+          /\[tests\] \[probes green\] = частично — no network · Alex \(@alex:probe\)/,
+        );
+      }
+    } finally {
+      await rec.stop();
+    }
+  });
+}
+
+// The dictionary of room kinds (#5851): event_kind decides, stack counts only on said.
+test("room kinds: closing steers a busy agent despite stack=defer and says who may object; progress and an unknown kind queue; said follows its stack", async () => {
+  const b = bridgeEnv("room-kinds");
+  const rec = await plugin(b.env);
+  try {
+    await serverTools(rec);
+    await until(() => rec.tools().has("iskron_channel"), "the channel tool");
+    await rec.call("iskron_channel", { action: "connect" }, "s-kinds");
+    const [pid] = pidsOf(b.log);
+    const send = async (frame, i) => {
+      appendFileSync(`${b.events}.${pid}`, event("frame", { frame, raw: JSON.stringify(frame) }));
+      await until(() => rec.prompts.length === i, `prompt ${i}`);
+      return rec.prompts[i - 1];
+    };
+    const c = closing();
+    const p1 = await send(c, 1);
+    assert.equal(p1.delivery, "steer", "closing interrupts the running turn, stack=defer or not");
+    assert.match(
+      p1.text,
+      /ведущий Алексей \(@aleksei:probe\) предлагает закрыть дело до 2026-09-23T10:05:00Z; свидетельства: 41/,
+    );
+    assert.match(
+      p1.text,
+      /ты можешь возразить — iskron_case\(action="object", in_reply_to=50\) \(прежнее имя iskron_room\)/,
+    );
+    assert.match(p1.text, /^№7 «Стенд» \[50\] /, "the case and the entry lead");
+    assert.match(
+      p1.text,
+      /\nсделано, см\. 41$/,
+      "the body passes through once, closing waits no say",
+    );
+
+    const p2 = await send(progress(), 2);
+    assert.equal(p2.delivery, "queue", "progress batches");
+    // Строка гроссбуха — ровно «[было] [сделал] = вердикт», примечание, автор хвостом.
+    assert.match(
+      p2.text,
+      /\[tests\] \[пробы зелёные\] = ok — без сети · Алексей \(@aleksei:probe\)/,
+    );
+
+    const p3 = await send(unknownKind(), 3);
+    assert.equal(
+      p3.delivery,
+      "queue",
+      "an unknown kind never interrupts, even with stack=interrupt",
+    );
+    assert.match(p3.text, /род weather мосту неизвестен/);
+
+    const p4 = await send(saidFrame("interrupt", 62), 4);
+    assert.equal(p4.delivery, "steer", "said with stack=interrupt steers");
+    const p5 = await send(saidFrame("defer", 63), 5);
+    assert.equal(p5.delivery, "queue", "said with stack=defer queues");
+
+    // An invite to my ROLE (api 0.89.6): the key carries the role node id, the line's karta my seq.
+    const r1 = await send(roleInvite(68), 6);
+    assert.equal(r1.delivery, "steer", "an invite to my role interrupts");
+    assert.match(r1.text, /Алексей \(@aleksei:probe\) зовёт 🚚 Поставщик плитки в дело/);
+    const r2 = await send(roleInvite(69, MY_KARTA + 1), 7);
+    assert.equal(r2.delivery, "queue", "an invite to another role batches");
+    const otherRealm = roleInvite(70);
+    otherRealm.line.fields.karta.realm = "@alari/other";
+    const r3 = await send(otherRealm, 8);
+    assert.equal(r3.delivery, "queue", "my role's seq in another graph is not my role");
+    const r4 = await send(withdraw(71), 9);
+    assert.equal(r4.delivery, "queue", "a withdrawn invite batches, even when it was mine");
+    assert.match(r4.text, /приглашение отозвано, отзывает Алексей \(@aleksei:probe\)/);
+
+    const p6 = await send(roomFrame("invite", { entry_id: 64, key: `invite:${ME_ID}` }), 10);
+    assert.equal(p6.delivery, "steer", "an invite to my own standing id interrupts");
+    assert.match(p6.text, new RegExp(`Алексей \\(@aleksei:probe\\) зовёт ${ME_ID} в дело`));
+    const p7 = await send(
+      roomFrame("invite", {
+        entry_id: 65,
+        key: "invite:5744a929-982c-4efe-88ff-480ab66f61b8",
+        fields: { standing: { name: "Прораб", standing: "@other:x" } },
+      }),
+      11,
+    );
+    assert.equal(p7.delivery, "queue", "an invite to someone else batches");
+    assert.match(
+      p7.text,
+      /зовёт Прораб \(@other:x\) в дело/,
+      "the invite names the invitee, not the raw id",
+    );
+    const p8 = await send(roomFrame("opened", { entry_id: 66 }), 12);
+    assert.equal(p8.delivery, "queue", "opened does not interrupt");
+    const p9 = await send(roomFrame("invite", { entry_id: 67, key: "invite:@tester:proba" }), 13);
+    assert.equal(p9.delivery, "steer", "an invite to my own standing address interrupts too");
+    // may_object carries standing ids only: my address there is not me, another id is not me.
+    const notMine = closing();
+    notMine.line.fields.may_object = ["@tester:proba", "9b2e4d6f-1a3c-4e5b-9d7f-0c2e4a6b8d1f"];
+    const p10 = await send(notMine, 14);
+    assert.equal(p10.delivery, "steer", "closing interrupts even when I may not object");
+    assert.match(p10.text, /возражать не тебе/);
+    assert.doesNotMatch(p10.text, /ты можешь возразить/);
+  } finally {
+    await rec.stop();
+  }
+});
+
+// auto — a platform record to the parent about its child case (#5893 §4.2, #4925):
+// words by its code, never interrupting; link — the relation in words.
+test("room kinds: an auto record about a child case queues in words, not as an unknown kind; link names the relation", async () => {
+  const b = bridgeEnv("room-auto");
+  const rec = await plugin(b.env);
+  try {
+    await serverTools(rec);
+    await until(() => rec.tools().has("iskron_channel"), "the channel tool");
+    await rec.call("iskron_channel", { action: "connect" }, "s-auto");
+    const [pid] = pidsOf(b.log);
+    const send = async (frame, i) => {
+      appendFileSync(`${b.events}.${pid}`, event("frame", { frame, raw: JSON.stringify(frame) }));
+      await until(() => rec.prompts.length === i, `prompt ${i}`);
+      return rec.prompts[i - 1];
+    };
+    const closed = await send(auto("child_closed"), 1);
+    assert.equal(closed.delivery, "queue", "a child closing is news, not a call to act");
+    assert.match(closed.text, /дочернее дело №12 закрыто/);
+    assert.doesNotMatch(closed.text, /неизвестен/, "auto is a kind the bridge knows");
+    const late = await send(auto("child_late_objection", 82), 2);
+    assert.equal(late.delivery, "queue");
+    assert.match(late.text, /позднее возражение в дочернем деле №12/);
+    const other = await send(auto("all_nodes_done", 83), 3);
+    assert.equal(other.delivery, "queue");
+    assert.match(other.text, /запись платформы all_nodes_done о деле №12/);
+    const linked = await send(link("parent"), 4);
+    assert.equal(linked.delivery, "queue");
+    assert.match(linked.text, /дело связано с №12 \(дочернее к нему\)/);
+  } finally {
+    await rec.stop();
+  }
+});
+
+// A word in two phases (#5893 §4.5b): said in flight carries no text and queues;
+// body brings the text by its word's stack; an abort queues in words.
+test("room kinds: a said in flight queues, body follows its stack in words, an abort queues; plain said still steers", async () => {
+  const b = bridgeEnv("room-body");
+  const rec = await plugin(b.env);
+  try {
+    await serverTools(rec);
+    await until(() => rec.tools().has("iskron_channel"), "the channel tool");
+    await rec.call("iskron_channel", { action: "connect" }, "s-body");
+    const [pid] = pidsOf(b.log);
+    const send = async (frame, i) => {
+      appendFileSync(`${b.events}.${pid}`, event("frame", { frame, raw: JSON.stringify(frame) }));
+      await until(() => rec.prompts.length === i, `prompt ${i}`);
+      return rec.prompts[i - 1];
+    };
+    const flying = await send(saidInFlight(54), 1);
+    assert.equal(flying.delivery, "queue", "a said in flight has no text to interrupt with");
+    assert.match(flying.text, /слово от Алексей \(@aleksei:probe\) в полёте — текст придёт следом/);
+    const text = await send(bodyFrame(55, 54), 2);
+    assert.equal(text.delivery, "queue", "body with its word's stack=defer queues");
+    assert.match(text.text, /текст слова \[54\] от Алексей \(@aleksei:probe\)/);
+    assert.match(text.text, /: текст второй фазы$/, "the word's text passes through in its line");
+    assert.doesNotMatch(text.text, /неизвестен/, "body is a kind the bridge knows");
+    const loud = bodyFrame(61, 60);
+    loud.stack = "interrupt";
+    const loudP = await send(loud, 3);
+    assert.equal(loudP.delivery, "steer", "body with its word's stack=interrupt steers");
+    const byAuthor = await send(bodyAborted(57, 56), 4);
+    assert.equal(byAuthor.delivery, "queue", "an abort by the author queues");
+    assert.match(byAuthor.text, /слово \[56\] оборвано автором/);
+    const byTerm = await send(bodyLapsed(59, 58), 5);
+    assert.equal(byTerm.delivery, "queue", "an abort by the platform queues");
+    assert.match(byTerm.text, /слово \[58\] оборвано платформой по сроку/);
+    const plain = await send(saidFrame("interrupt", 62), 6);
+    assert.equal(plain.delivery, "steer", "a said without body_pending still steers");
+  } finally {
+    await rec.stop();
+  }
+});
+
+// A case burst was one queue prompt per frame, and OpenCode hands the queue out one
+// prompt per turn: on a live case the lag reached an hour and a half, and direct
+// words stood in the same queue behind it.
+const caseBurst = (from, n) => Array.from({ length: n }, (_, i) => progress(from + i));
+const lines = (frames) =>
+  frames.map((frame) => event("frame", { frame, raw: JSON.stringify(frame) })).join("");
+
+test("ten case frames in a row are one queue prompt: a head with the history pointer, then a line per frame", async () => {
+  const b = bridgeEnv("case-burst");
+  const rec = await plugin(b.env);
+  try {
+    await serverTools(rec);
+    await rec.call("iskron_channel", { action: "connect" }, "s-burst");
+    const [pid] = pidsOf(b.log);
+    appendFileSync(`${b.events}.${pid}`, lines(caseBurst(201, 10)));
+    await until(() => rec.prompts.length >= 1, "the burst prompt");
+    await delay(BATCH_MS * 4);
+    assert.equal(rec.prompts.length, 1, "ten frames, one prompt — never one per frame");
+    const [p] = rec.prompts;
+    assert.equal(p.delivery, "queue");
+    const rows = p.text.split("\n");
+    assert.match(
+      rows[0],
+      /^Дело: кадров 10 — .*iskron_case\(realm="nks-dev", action="history", room=7, since=200\)/,
+    );
+    assert.equal(rows.length, 11, "a head and ten lines, no envelopes");
+    // Каждая строка — с номером дела; зачин — у первой строки дела в пачке (#6081).
+    rows
+      .slice(1)
+      .forEach((row, i) =>
+        assert.match(row, new RegExp(`^№7 ${i ? "" : "«Стенд» "}\\[${201 + i}\\] `)),
+      );
+  } finally {
+    await rec.stop();
+  }
+});
+
+// An addressed word not to me (#6081): a fact in the case prompt, no body, no steer.
+const ASIDE = "Алексей (@aleksei:probe) → @boris:probe";
+
+/** Кадры в мост сессии; ждать, пока промптов станет n, и ещё окна — лишнего не пришло. */
+async function asidePrompts(name, frames, n) {
+  const b = bridgeEnv(name);
+  const rec = await plugin(b.env);
+  try {
+    await serverTools(rec);
+    await rec.call("iskron_channel", { action: "connect" }, `s-${name}`);
+    const [pid] = pidsOf(b.log);
+    appendFileSync(`${b.events}.${pid}`, lines(frames));
+    await until(() => rec.prompts.length >= n, `${n} prompt(s)`);
+    await delay(BATCH_MS * 4);
+    return [...rec.prompts];
+  } finally {
+    await rec.stop();
+  }
+}
+
+test("(а) an addressed word not to me with stack interrupt does not steer: one line without its body in the case prompt", async () => {
+  const prompts = await asidePrompts("aside-one", [addressed(80)], 1);
+  assert.equal(prompts.length, 1);
+  assert.equal(prompts[0].delivery, "queue", "a word not to me never steers");
+  assert.ok(
+    prompts[0].text.split("\n").includes(`№7 «Стенд» ${ASIDE}: слово [80]`),
+    prompts[0].text,
+  );
+  assert.doesNotMatch(prompts[0].text, /тайное слово/, "no body of a word not to me");
+});
+
+test("(а2) an addressed word whose addressee has left the case (addressee_left) is not folded: it prints whole, like any word to all", async () => {
+  const prompts = await asidePrompts("aside-left", [addressedLeft(89)], 1);
+  assert.equal(prompts.length, 1);
+  assert.doesNotMatch(prompts[0].text, new RegExp(ASIDE.replace(/[()]/g, "\\$&")));
+  assert.match(prompts[0].text, /явное слово 89/);
+});
+
+test("(б) three addressed words of one pair in a row are one line «3 слова»", async () => {
+  const prompts = await asidePrompts(
+    "aside-run",
+    [81, 82, 83].map((id) => addressed(id)),
+    1,
+  );
+  assert.equal(prompts.length, 1);
+  const rows = prompts[0].text.split("\n");
+  assert.equal(rows.length, 2, `a head and one line:\n${prompts[0].text}`);
+  assert.equal(rows[1], `№7 «Стенд» ${ASIDE}: 3 слова (последнее [83])`);
+});
+
+test("(в) an addressed word to me with stack interrupt steers at once and whole; the aside before it waits", async () => {
+  const prompts = await asidePrompts("aside-mine", [addressed(86), addressed(87, ME)], 2);
+  const steered = prompts.filter((p) => p.delivery === "steer");
+  assert.equal(steered.length, 1, "only the word to me steers");
+  assert.match(steered[0].text, /слово от Алексей \(@aleksei:probe\)[^\n]*\nтайное слово 87\n/);
+  const queued = prompts.filter((p) => p.delivery === "queue");
+  assert.equal(queued.length, 1);
+  assert.ok(queued[0].text.includes(`${ASIDE}: слово [86]`), queued[0].text);
+  assert.doesNotMatch(queued[0].text, /тайное слово/);
+});
+
+test("(г) a word without an addressee between two asides stays whole in its line and breaks the run", async () => {
+  const frames = [
+    addressed(90, BORIS, "defer"),
+    saidFrame("defer", 91),
+    addressed(92, BORIS, "defer"),
+  ];
+  const prompts = await asidePrompts("aside-plain", frames, 1);
+  assert.equal(prompts.length, 1);
+  const rows = prompts[0].text.split("\n").slice(1);
+  assert.deepEqual(rows, [
+    `№7 «Стенд» ${ASIDE}: слово [90]`,
+    "№7 [91] слово от Алексей (@aleksei:probe): слово со стопкой defer",
+    `№7 ${ASIDE}: слово [92]`,
+  ]);
+});
+
+test("(д) an addressed word not to me in flight and then its body with stack interrupt: one line of the pair, no body, no steer", async () => {
+  const prompts = await asidePrompts(
+    "aside-body",
+    [addressedInFlight(94), addressedBody(95, 94)],
+    1,
+  );
+  assert.equal(prompts.length, 1, "the body does not steer apart");
+  assert.equal(prompts[0].delivery, "queue");
+  const rows = prompts[0].text.split("\n");
+  assert.deepEqual(rows.slice(1), [`№7 «Стенд» ${ASIDE}: слово [94]`]);
+  assert.doesNotMatch(prompts[0].text, /тайное тело/);
+});
+
+test("(е) a word whose body the platform withheld (body_withheld) folds with the pair's run", async () => {
+  const prompts = await asidePrompts("aside-withheld", [addressed(97), withheld(98)], 1);
+  assert.equal(prompts.length, 1);
+  assert.deepEqual(prompts[0].text.split("\n").slice(1), [
+    `№7 «Стенд» ${ASIDE}: 2 слова (последнее [98])`,
+  ]);
+});
+
+// A short frame (#6081, the owner's word): 1–3 lines, no raw JSON, the text once.
+test("a lone case frame is short: a said's text once, no JSON, «in reply to»; batch lines lead with №N, the entry among them", async () => {
+  const reply = saidFrame("interrupt", 62);
+  reply.in_reply_to = 60;
+  const prompts = await asidePrompts("short-frame", [reply, progress(44), joinedMember(85)], 2);
+  const word = prompts.find((p) => p.delivery === "steer").text;
+  assert.equal(word.split("слово со стопкой interrupt").length - 1, 1, word);
+  assert.match(
+    word,
+    /^№7 «Стенд» \[62\] слово от Алексей \(@aleksei:probe\)[^\n]*в ответ на \[60\]\n/,
+  );
+  assert.ok(!word.includes('{"'), word);
+  const batch = prompts.find((p) => p.delivery === "queue").text.split("\n");
+  assert.match(batch[1], /^№7 «Стенд» \[44\] \[tests\]/);
+  assert.match(batch[2], /^№7 \[85\] вошёл /);
+  assert.ok(!batch.join("\n").includes('{"'), batch.join("\n"));
+});
+
+test("a direct word and a human word amid a case burst steer apart and whole; the burst stays one prompt", async () => {
+  const b = bridgeEnv("case-direct");
+  const rec = await plugin(b.env);
+  try {
+    await serverTools(rec);
+    await rec.call("iskron_channel", { action: "connect" }, "s-direct");
+    const [pid] = pidsOf(b.log);
+    // Both carry stack=defer: a stack is a case's word, not a reason to queue a direct word.
+    const direct = { ...directWord("direct-9"), stack: "defer" };
+    const human = saidFrame("defer", 230);
+    human.provenance = { ...human.provenance, as_person: true };
+    appendFileSync(
+      `${b.events}.${pid}`,
+      lines([...caseBurst(211, 5), direct, human, ...caseBurst(216, 5)]),
+    );
+    await until(() => rec.prompts.length >= 3, "two words and the burst");
+    await delay(BATCH_MS * 4);
+    assert.equal(rec.prompts.length, 3, "two words apart, the ten case frames in one prompt");
+    const steered = rec.prompts.filter((p) => p.delivery === "steer");
+    const queued = rec.prompts.filter((p) => p.delivery === "queue");
+    assert.equal(steered.length, 2, "neither word waits in the case queue");
+    assert.match(
+      steered[0].text,
+      /^роль #48 \(@alari:sosed\)\nпрямое слово соседа\nответ: iskron_channel\(action="send", karta=48, standing="@alari:sosed", in_reply_to="direct-9"\)$/,
+      "the direct word goes whole and short: who, the text, the answer",
+    );
+    assert.match(steered[1].text, /^№7 «Стенд» \[230\] [^\n]* — человек\n/);
+    assert.match(steered[1].text, /\nслово со стопкой defer\n/, "the human word goes whole");
+    assert.equal(queued.length, 1);
+    assert.match(queued[0].text, /^Дело: кадров 10 — /);
+    assert.doesNotMatch(
+      queued[0].text,
+      /прямое слово|слово со стопкой/,
+      "no word inside the burst",
+    );
+  } finally {
+    await rec.stop();
+  }
+});
+
+test("a lone interrupting case frame still steers at once and whole", async () => {
+  const b = bridgeEnv("case-lone");
+  const rec = await plugin(b.env);
+  try {
+    await serverTools(rec);
+    await rec.call("iskron_channel", { action: "connect" }, "s-lone");
+    const [pid] = pidsOf(b.log);
+    const c = closing();
+    appendFileSync(`${b.events}.${pid}`, lines([c]));
+    await until(() => rec.prompts.length === 1, "the closing prompt");
+    await delay(BATCH_MS * 3);
+    assert.equal(rec.prompts.length, 1);
+    assert.equal(rec.prompts[0].delivery, "steer");
+    assert.match(rec.prompts[0].text, /^№7 «Стенд» \[50\] ведущий /, "the case and the entry lead");
+    assert.match(rec.prompts[0].text, /\nсделано, см\. 41$/);
+  } finally {
+    await rec.stop();
+  }
+});
+
+test("while the burst prompt waits in the session's queue, new case frames wait here and go as one prompt when OpenCode takes it", async () => {
+  const b = bridgeEnv("case-pending");
+  const rec = await plugin(b.env, { inboxIds: true });
+  try {
+    await serverTools(rec);
+    await rec.call("iskron_channel", { action: "connect" }, "s-pend");
+    const [pid] = pidsOf(b.log);
+    appendFileSync(`${b.events}.${pid}`, lines(caseBurst(241, 2)));
+    await until(() => rec.prompts.length >= 1, "the first burst");
+    for (const [i, frame] of caseBurst(243, 3).entries()) {
+      appendFileSync(`${b.events}.${pid}`, lines([frame]));
+      await delay(BATCH_MS * 2 + i);
+    }
+    assert.equal(rec.prompts.length, 1, "the first prompt is not taken yet: the rest wait here");
+    rec.emit({
+      type: "session.inbox.delivered",
+      data: { sessionID: "s-pend", inboxID: "inbox-1" },
+    });
+    await until(() => rec.prompts.length === 2, "the held frames after the take");
+    assert.equal(rec.prompts[1].delivery, "queue");
+    assert.match(rec.prompts[1].text, /^Дело: кадров 3 — /);
+    assert.deepEqual(
+      rec.prompts[1].text
+        .split("\n")
+        .slice(1)
+        .map((r) => r.match(/^№7 (?:«Стенд» )?\[(\d+)\]/)?.[1]),
+      ["243", "244", "245"],
+      "every held frame enters the prompt that goes, none twice",
+    );
+  } finally {
+    await rec.stop();
+  }
+});
+
+// Today's production (api 0.86.0) sends no event_kind: a room frame keeps main's way —
+// its own stack, whatever its old kind — and frames that are not room frames never meet
+// the dictionary. A guard: it holds main's behaviour, so it is green on main by design.
+test("room kinds leave non-room frames and the old room shape as on main: every old kind by its own stack, no unknown path", async () => {
+  const b = bridgeEnv("room-legacy");
+  const rec = await plugin(b.env);
+  try {
+    await serverTools(rec);
+    await until(() => rec.tools().has("iskron_channel"), "the channel tool");
+    await rec.call("iskron_channel", { action: "connect" }, "s-legacy");
+    const [pid] = pidsOf(b.log);
+    const cases = [
+      [directWord(), "steer"],
+      [graphPosed(), "steer"],
+      [legacyRoom("text", "interrupt", 71), "steer"],
+      [legacyRoom("text", "defer", 72), "queue"],
+      [legacyRoom("text", undefined, 73), "steer"],
+      [legacyRoom("auto", "interrupt", 74), "steer"],
+      [legacyRoom("direct", "interrupt", 75), "steer"],
+      [legacyRoom("digest", "defer", 76), "queue"],
+      [legacyRoom("important", "interrupt", 77), "steer"],
+      [legacyRoom("ledger", "defer", 78), "queue"],
+    ];
+    for (const [i, [frame, way]] of cases.entries()) {
+      appendFileSync(`${b.events}.${pid}`, event("frame", { frame, raw: JSON.stringify(frame) }));
+      await until(() => rec.prompts.length === i + 1, `prompt ${i + 1}`);
+      assert.equal(rec.prompts[i].delivery, way, `${frame.id} must go ${way}`);
+    }
+    assert.match(rec.prompts[0].text, /^роль #48 \(@alari:sosed\)\n/);
+    assert.doesNotMatch(rec.prompts[0].text, /^№/, "a direct word is not a room word");
+    assert.doesNotMatch(
+      rec.prompts[1].text,
+      /^№|мосту неизвестен/,
+      "a graph event is not a room frame",
+    );
+    assert.match(
+      rec.prompts[2].text,
+      /^№r-1 «Стенд» \[71\] род text, стопка interrupt — роль #48\n/,
+    );
+    assert.match(rec.prompts[5].text, /^№r-1 «Стенд» \[74\] род auto, стопка interrupt\n/);
+    assert.match(
+      rec.prompts[7].text,
+      /^Дело: кадров 1 — [^\n]*\n№r-1 «Стенд» \[76\] кадр room-old-76: /,
+      "an old deferred room frame is a line of the case burst",
+    );
+    assert.ok(
+      rec.prompts.every((p) => !/мосту неизвестен/.test(p.text)),
+      "no old kind takes the unknown path",
     );
   } finally {
     await rec.stop();

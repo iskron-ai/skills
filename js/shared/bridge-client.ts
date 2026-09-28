@@ -38,6 +38,7 @@ export class Bridge {
   private readonly onLog: (line: string) => void;
   private readonly onNotification: (method: string, params: any) => void;
   private readonly onDie: (e: Error) => void;
+  private readonly args: string[];
 
   constructor(
     bin: string,
@@ -45,11 +46,14 @@ export class Bridge {
     onNotification: (method: string, params: any) => void = () => {},
     /** Мост умер или остановлен — один раз, с причиной; плагин OpenCode объявляет по нему потерю слуха. */
     onDie: (e: Error) => void = () => {},
+    /** Флаги моста (плагин OpenCode: `--satellite` дочерней сессии, #6002). */
+    args: string[] = [],
   ) {
     this.bin = bin;
     this.onLog = onLog;
     this.onNotification = onNotification;
     this.onDie = onDie;
+    this.args = args;
   }
 
   /** Мост вышел или не запустился — вызовы к нему отвергаются этим отказом. */
@@ -59,7 +63,10 @@ export class Bridge {
 
   start(): void {
     const rt = bridgeRuntime();
-    const proc = spawn(rt.bin, [this.bin], { stdio: ["pipe", "pipe", "pipe"], env: rt.env });
+    const proc = spawn(rt.bin, [this.bin, ...this.args], {
+      stdio: ["pipe", "pipe", "pipe"],
+      env: rt.env,
+    });
     this.proc = proc;
     proc.stdout?.setEncoding("utf8");
     proc.stdout?.on("data", (chunk: string) => this.feed(chunk));
