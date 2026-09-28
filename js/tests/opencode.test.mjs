@@ -219,6 +219,7 @@ const ENV_KEYS = [
   "FB_EVENTS",
   "FB_CALLS",
   "FB_RESUME",
+  "FB_INITS",
   "ISKRON_BRIDGE_WATCH_MS",
   "ISKRON_BRIDGE_URL",
   "ISKRON_BRIDGE_TOKEN",
@@ -526,6 +527,25 @@ test("a bridge stuck in someone's browser: tools come from the last list at once
     );
     await delay(300);
     assert.equal(settled, false, "a call over a mute bridge must keep waiting, not answer");
+  } finally {
+    await rec.stop();
+  }
+});
+
+// A handshake refused for good (the network, a session the server closed) is
+// repeated with a growing pause, not every AUTH_POLL_MS: in the field one bridge
+// re-handshook every 2 s for an hour, up to 1607 times.
+test("a handshake refused not for a login is repeated with a growing pause, not at the poll rate", async () => {
+  const inits = join(SANDBOX, "backoff.inits");
+  writeFileSync(inits, "");
+  const b = bridgeEnv("backoff", { FB_MODE: "net", FB_INITS: inits, ISKRON_MCP_AUTH_POLL_MS: 50 });
+  const rec = await plugin(b.env);
+  try {
+    await delay(1600);
+    const count = readFileSync(inits, "utf8").split("\n").filter(Boolean).length;
+    assert.ok(count >= 2, `the handshake is still repeated (${count})`);
+    // 50 ms apart would be ~30 in 1.6 s; doubling from 50 ms is 6 at most.
+    assert.ok(count <= 8, `the handshake was repeated at the poll rate: ${count} in 1.6 s`);
   } finally {
     await rec.stop();
   }

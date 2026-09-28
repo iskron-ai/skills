@@ -831,6 +831,7 @@ var homeBridgePath = () => join3(homedir2(), ".iskron-bridge", "iskron-bridge.mj
 // js/opencode/bridge-io.ts
 var HANDSHAKE_MS = Number(process.env.ISKRON_MCP_HANDSHAKE_MS || 6e5);
 var AUTH_POLL_MS = Number(process.env.ISKRON_MCP_AUTH_POLL_MS || 2e3);
+var retryPause = (n) => Math.min(AUTH_POLL_MS * 2 ** n, 6e4);
 var AUTH_PENDING = /authorization required/i;
 var PROTOCOL = "2025-06-18";
 function findBridge() {
@@ -1478,6 +1479,7 @@ async function setupTools(ctx, say, onChannel, rootOf) {
     say(`Искрон: тулов из прошлого списка: ${state2.listed.length}; сверю с сервером.`, "info");
   spare = spawn2();
   let first = spare;
+  let misses = 0;
   void (async () => {
     for (; ; ) {
       if (stopped) return;
@@ -1503,7 +1505,7 @@ async function setupTools(ctx, say, onChannel, rootOf) {
         } else {
           shake(first);
         }
-        await sleep(AUTH_POLL_MS);
+        await sleep(retryPause(misses++));
       }
     }
   })();

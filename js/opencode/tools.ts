@@ -20,7 +20,6 @@
 // ctx.tool.reload() — сколько бы ни длился вход человека.
 import { Bridge, toParameters } from "../shared/bridge-client.ts";
 import {
-  AUTH_POLL_MS,
   authDir,
   buildsLine,
   findBridge,
@@ -28,6 +27,7 @@ import {
   listTools,
   readCache,
   refreshToolList,
+  retryPause,
   sleep,
   textOf,
   writeCache,
@@ -409,6 +409,7 @@ export async function setupTools(
   // входа или умерший мост — новое рукопожатие или новый мост, пока плагин жив.
   spare = spawn();
   let first = spare;
+  let misses = 0;
   void (async () => {
     for (;;) {
       if (stopped) return;
@@ -436,7 +437,7 @@ export async function setupTools(
         } else {
           shake(first);
         }
-        await sleep(AUTH_POLL_MS);
+        await sleep(retryPause(misses++));
       }
     }
   })();

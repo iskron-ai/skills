@@ -33,6 +33,7 @@
 //                 rewrites it between calls. "__ERROR__<text>" answers isError.
 //                 <FB_REPLY>.<tool>, when present, answers only that tool.
 //   FB_STAND_HELD place name an iskron_stand says «held» for (satellite: <of>.sub-1).
+//   FB_INITS      file to append "<pid> <ms>" to for every initialize received.
 import { appendFileSync, existsSync, readFileSync, unlinkSync } from "node:fs";
 
 const MODE = process.env.FB_MODE || "ok";
@@ -146,6 +147,9 @@ process.stdin.on("data", (chunk) => {
       continue;
     }
     if (typeof msg.id !== "number") continue; // notifications need no answer
+    // FB_INITS: a line per initialize received — how often a client re-handshakes.
+    if (msg.method === "initialize" && process.env.FB_INITS)
+      appendFileSync(process.env.FB_INITS, `${process.pid} ${Date.now()}\n`);
     if (MODE === "mute") continue; // ...and neither does anything, in this mode
     if (MODE === "net") {
       send({

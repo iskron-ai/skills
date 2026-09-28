@@ -1861,10 +1861,15 @@ async function post(msg, onMessage) {
   if (lang() === "en") headers["accept-language"] = "en";
   const token = CFG.pat ?? loadStore().tokens?.access_token ?? null;
   if (token) headers.authorization = `Bearer ${token}`;
+  const isInit = msg?.method === "initialize";
+  if (isInit && state.sessionId) {
+    log(`initialize under a held session id (${state.sessionId}) — sent without it`);
+    state.sessionId = null;
+    state.sessionToken = null;
+  }
   const sentSession = state.sessionId;
   if (sentSession) headers["mcp-session-id"] = sentSession;
   if (state.protocolVersion) headers["mcp-protocol-version"] = state.protocolVersion;
-  const isInit = msg?.method === "initialize";
   const boundByHeader = isInit ? standingHeader() : null;
   if (boundByHeader) headers["x-nks-standing"] = boundByHeader;
   let res;

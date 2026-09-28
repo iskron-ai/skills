@@ -86,6 +86,7 @@ export async function startFakeNks(opts = {}) {
     pat: opts.pat ?? null,
     sessions: new Set(),
     dead: new Set(),
+    initSids: [], // Mcp-Session-Id каждого рукопожатия, как пришло (null — без заголовка)
     // faults the test switches on through /control
     refreshStatus: null, // e.g. 503 (transient) or 400 (definitive)
     refreshError: null,
@@ -578,6 +579,13 @@ export async function startFakeNks(opts = {}) {
       ) {
         st.dead.add(sid);
         st.sessions.delete(sid); // credential сменился — сессия закрыта
+      }
+      if (msg.method === "initialize") st.initSids.push(sid ?? null); // с каким id пришло рукопожатие
+      if (sid && st.dead.has(sid) && msg.method === "initialize") {
+        // Как на бою: рукопожатие под закрытой сессией — 404 unknown_session, сколько
+        // бы клиент его ни повторял; клиент обязан забыть id (спека MCP).
+        st.counts.init_unknown_session = (st.counts.init_unknown_session ?? 0) + 1;
+        return json(res, 404, { error: "unknown_session" });
       }
       if (sid && st.dead.has(sid) && msg.method !== "initialize") {
         if (!st.silentNewSession) {
