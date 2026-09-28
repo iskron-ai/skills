@@ -12,7 +12,7 @@ iskronify доставляет **ритуалы** (ориентация на с�
 
 ## Claude Code
 
-Читает `CLAUDE.md`, не `AGENTS.md` — отсюда однострочный указатель (`@AGENTS.md`-импорт; Шаг 7). Хуки живут в `.claude/settings.json`, коммитятся. Ролевые файлы суб-агентов: `.claude/agents/` (см. `delegation.md`). JSON хуков, события и команда memory-guard расписаны в Шаге 4 скилла.
+Читает `CLAUDE.md`, не `AGENTS.md` — отсюда однострочный указатель (`@AGENTS.md`-импорт; Шаг 7). Хуки живут в `.claude/settings.json`, коммитятся. Ролевые файлы суб-агентов: `.claude/agents/` (см. `delegation.md`). Хуки и их события названы в Шаге 4 скилла; JSON, фильтры и команда memory-guard — `hooks.md`.
 
 ## Codex CLI
 
