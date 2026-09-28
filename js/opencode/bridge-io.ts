@@ -22,6 +22,12 @@ export const HANDSHAKE_MS = Number(process.env.ISKRON_MCP_HANDSHAKE_MS || 600000
 /** Как часто переспрашивать мост, пока человек входит в браузере. */
 export const AUTH_POLL_MS = Number(process.env.ISKRON_MCP_AUTH_POLL_MS || 2000);
 /**
+ * Пауза перед n-м повтором рукопожатия, упавшего не на входе человека (его
+ * ждёт сам handshake): отказ, что повторится тем же, не долбится раз в
+ * AUTH_POLL_MS — на бою так уходило до полутора тысяч рукопожатий за час.
+ */
+export const retryPause = (n: number): number => Math.min(AUTH_POLL_MS * 2 ** n, 60_000);
+/**
  * Отказ моста без гранта. Это не поломка, а вход в процессе: мост открыл
  * браузер и слушает колбэк на loopback, погасить его — убить вход человека
  * (граф nks-dev: #4712).

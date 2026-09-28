@@ -86,6 +86,7 @@ export async function startFakeNks(opts = {}) {
     pat: opts.pat ?? null,
     sessions: new Set(),
     dead: new Set(),
+    initSids: [], // Mcp-Session-Id каждого рукопожатия, как пришло (null — без заголовка)
     // faults the test switches on through /control
     refreshStatus: null, // e.g. 503 (transient) or 400 (definitive)
     refreshError: null,
@@ -302,6 +303,7 @@ export async function startFakeNks(opts = {}) {
       // Подвисшее соединение (#5380): сокет открыт, но служба больше ничего в него не пишет — ни пинга, ни кадра, ни закрытия.
       if (patch.ws_hang) for (const sock of st.ws) st.hung.add(sock);
       if (Number.isInteger(patch.ws_refuse)) st.wsRefuse = patch.ws_refuse; // один раз: следующий апгрейд закрывается этим кодом, дальнейшие принимаются
+      if (patch.ws_mute) st.wsMute = true; // один раз: следующий апгрейд принят, но hello не идёт — служба медлит
       if (Number.isInteger(patch.ws_close)) {
         for (const sock of st.ws) {
           sock.write(wsFrame(0x8, Buffer.from([patch.ws_close >> 8, patch.ws_close & 0xff])));
@@ -577,6 +579,13 @@ export async function startFakeNks(opts = {}) {
       ) {
         st.dead.add(sid);
         st.sessions.delete(sid); // credential сменился — сессия закрыта
+      }
+      if (msg.method === "initialize") st.initSids.push(sid ?? null); // с каким id пришло рукопожатие
+      if (sid && st.dead.has(sid) && msg.method === "initialize") {
+        // Как на бою: рукопожатие под закрытой сессией — 404 unknown_session, сколько
+        // бы клиент его ни повторял; клиент обязан забыть id (спека MCP).
+        st.counts.init_unknown_session = (st.counts.init_unknown_session ?? 0) + 1;
+        return json(res, 404, { error: "unknown_session" });
       }
       if (sid && st.dead.has(sid) && msg.method !== "initialize") {
         if (!st.silentNewSession) {
@@ -854,6 +863,26 @@ export async function startFakeNks(opts = {}) {
               jsonrpc: "2.0",
               id: msg.id,
               result: { isError: true, content: [{ type: "text", text: st.connectRefuseTtl }] },
+            },
+            extra,
+          );
+        }
+        if (a.action === "mint" && channelOfPlace(a.realm, cleanName(a.name))) {
+          // Чеканка открывает только то, чего нет: на живом канале — 409, как у
+          // настоящей поверхности (справка iskron_channel; граф nks-dev: #5189).
+          st.counts.mint_refused = (st.counts.mint_refused ?? 0) + 1;
+          return json(
+            res,
+            200,
+            {
+              jsonrpc: "2.0",
+              id: msg.id,
+              result: {
+                isError: true,
+                content: [
+                  { type: "text", text: "Отказано (409): канал уже есть — открывай его connect." },
+                ],
+              },
             },
             extra,
           );
@@ -1294,6 +1323,10 @@ export async function startFakeNks(opts = {}) {
       if (!stillHeld) for (const pl of st.places.values()) if (ofPlace(pl)) pl.listening = false;
     });
     socket.on("error", () => st.ws.delete(socket));
+    if (st.wsMute) {
+      st.wsMute = false;
+      return; // сокет открыт, hello нет — возврат с диска не дождётся доказательства слуха
+    }
     socket.write(
       wsFrame(
         0x1,

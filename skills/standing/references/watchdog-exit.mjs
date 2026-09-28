@@ -91,7 +91,7 @@ function open() {
       if (dead) return;
       dead = true;
       if (retry) clearTimeout(retry);
-      note(`ДЕЛАТЕЛЬ: закрытие ${code} — токен мёртв, зови connect (на 4001 — mint)`);
+      note(`ДЕЛАТЕЛЬ: закрытие ${code} — токен мёртв, зови connect`);
       process.exit(1);                    // громко: мёртвый токен не смеет выглядеть пустым инбоксом
     }
     if (gone) return;

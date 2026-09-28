@@ -219,6 +219,9 @@ const ENV_KEYS = [
   "FB_EVENTS",
   "FB_CALLS",
   "FB_RESUME",
+  "FB_INITS",
+  "FB_NET_UP",
+  "FB_DIE_ONCE",
   "ISKRON_BRIDGE_WATCH_MS",
   "ISKRON_BRIDGE_URL",
   "ISKRON_BRIDGE_TOKEN",
@@ -531,6 +534,77 @@ test("a bridge stuck in someone's browser: tools come from the last list at once
   }
 });
 
+// A handshake refused for good (the network, a session the server closed) is
+// repeated with a growing pause, not every AUTH_POLL_MS: in the field one bridge
+// re-handshook every 2 s for an hour, up to 1607 times.
+test("a handshake refused not for a login is repeated with a growing pause, not at the poll rate", async () => {
+  const inits = join(SANDBOX, "backoff.inits");
+  writeFileSync(inits, "");
+  const b = bridgeEnv("backoff", { FB_MODE: "net", FB_INITS: inits, ISKRON_MCP_AUTH_POLL_MS: 50 });
+  const rec = await plugin(b.env);
+  try {
+    await delay(1600);
+    const count = readFileSync(inits, "utf8").split("\n").filter(Boolean).length;
+    assert.ok(count >= 2, `the handshake is still repeated (${count})`);
+    // 50 ms apart would be ~30 in 1.6 s; doubling from 50 ms is 6 at most.
+    assert.ok(count <= 8, `the handshake was repeated at the poll rate: ${count} in 1.6 s`);
+  } finally {
+    await rec.stop();
+  }
+});
+
+// The pause comes before a repeat, not after it: once the network is back, the
+// repeat that succeeds leads to the tools at once instead of sitting out one more
+// (growing) pause first.
+test("once the network is back, the tools come right after the handshake that succeeds, not a pause later", async () => {
+  const inits = join(SANDBOX, "netup.inits");
+  const up = join(SANDBOX, "netup.flag");
+  writeFileSync(inits, "");
+  rmSync(up, { force: true });
+  const b = bridgeEnv("netup", {
+    FB_MODE: "net",
+    FB_NET_UP: up,
+    FB_INITS: inits,
+    ISKRON_MCP_AUTH_POLL_MS: 200,
+  });
+  const rec = await plugin(b.env);
+  try {
+    const count = () => readFileSync(inits, "utf8").split("\n").filter(Boolean).length;
+    await until(() => count() >= 5, "five refused handshakes", 8000);
+    writeFileSync(up, ""); // the network is back
+    const t0 = Date.now();
+    await until(() => /тулов в сессии: \d+ \(с сервера\)/.test(rec.said()), "the tools", 10000);
+    const waited = Date.now() - t0;
+    // Doubling from 200 ms: the pause due now is 3.2 s; a pause after the good
+    // handshake would add the rest of the current one on top (~4.8 s in all).
+    assert.ok(waited < 4000, `the tools came ${waited} ms after the network was back`);
+  } finally {
+    await rec.stop();
+  }
+});
+
+// A bridge that died is replaced at once, not after the retry pause: meanwhile the
+// dead one would be the spare a new session gets, and its first call would fail.
+test("a spare bridge that died is replaced at once: the next session's call goes through a live bridge", async () => {
+  const once = join(SANDBOX, "die-once.flag");
+  writeFileSync(once, "");
+  const b = bridgeEnv("die-once", { FB_DIE_ONCE: once, ISKRON_MCP_AUTH_POLL_MS: 5000 });
+  const rec = await plugin(b.env);
+  try {
+    await until(
+      () => existsSync(b.log) && pidsOf(b.log).length >= 1 && !alive(pidOf(b.log)),
+      "the first bridge to die",
+    );
+    await delay(300); // the plugin sees the death; the retry pause (5 s) is far from over
+    const t0 = Date.now();
+    const got = await rec.call("iskron_orient", {}, "s-after-death");
+    assert.ok(typeof got.content === "string", "the call went through a live bridge");
+    assert.ok(Date.now() - t0 < 3000, "the call did not wait for the retry pause");
+  } finally {
+    await rec.stop();
+  }
+});
+
 // A bridge with no grant answers every request -32001 «authorization required»
 // and keeps its browser flow listening on loopback until the human finishes.
 // Stopping it then kills the callback: the login goes through at the server and
@@ -824,7 +898,9 @@ test("a dead token is loud: an error line and a prompt that names the move", asy
     await until(() => rec.prompts.length === 1, "the dead-token prompt");
     assert.equal(rec.prompts[0].sessionID, "s-holder");
     assert.match(rec.prompts[0].text, /токен мёртв/);
-    assert.match(rec.prompts[0].text, /mint/);
+    // connect on every code: mint answers 409 once the channel is back (#5189).
+    assert.match(rec.prompts[0].text, /action="connect"/);
+    assert.doesNotMatch(rec.prompts[0].text, /mint/, "4001 must not offer mint");
     assert.match(rec.said(), /\[iskron\/error\] .*токен мёртв/, "the human must see it too");
   } finally {
     await rec.stop();
@@ -1188,8 +1264,8 @@ test("a bridge stopped by the plugin itself is not a lost hearing, and the watch
 
 // A plugin stopped with a holding bridge (a restart, an evicted location) leaves
 // a marker next to the grant; the next instance says the loss aloud into the
-// first live session instead of standing silent over an empty board.
-test("stopping the plugin with a holding bridge leaves a marker, and the next instance says the loss into the first session", async () => {
+// session that held instead of standing silent over an empty board.
+test("stopping the plugin with a holding bridge leaves a marker, and the next instance says the loss into the session that held", async () => {
   const calls = join(SANDBOX, "marker.calls");
   writeFileSync(calls, "");
   const b = bridgeEnv("marker", { FB_CALLS: calls });
@@ -1207,6 +1283,7 @@ test("stopping the plugin with a holding bridge leaves a marker, and the next in
   assert.deepEqual(written.entries, [
     { session: "s-held", dir: "/work/held", key: "proba--931--nks-dev", child: false },
   ]);
+  writeFileSync(calls, ""); // what the next instance sends, alone
   const second = await plugin(b.env, {
     keepMarker: true,
     sessions: [
@@ -1218,37 +1295,178 @@ test("stopping the plugin with a holding bridge leaves a marker, and the next in
     assert.match(second.said(), /слух был потерян в \d\d:\d\d/);
     assert.match(second.said(), /proba--931--nks-dev/);
     assert.equal(lostMarkers().length, 0, "the marker is said once and gone");
-    await serverTools(second);
-    await second.call("iskron_orient", {}, "s-next");
-    await until(() => second.prompts.length === 1, "the loss to be said into the first session");
-    assert.equal(second.prompts[0].sessionID, "s-next");
-    assert.match(second.prompts[0].text, /слух был потерян/);
-    assert.match(second.prompts[0].text, /iskron_stand/);
-    // Another session of the lost directory gets no key: the marker's key is a
-    // hint only to the session that held its socket (graph nks-dev: #6017).
     const sentBy = () =>
       readFileSync(calls, "utf8")
         .trim()
         .split("\n")
+        .filter(Boolean)
         .map((l) => JSON.parse(l));
-    writeFileSync(calls, "");
-    await second.call("iskron_orient", {}, "s-back");
-    assert.equal(sentBy()[0].name, "iskron/resume");
-    assert.deepEqual(sentBy()[0].arguments, { cwd: "/work/held", session: "s-back" });
-    // The session that held it resumes by the marker's key, not by directory alone.
-    writeFileSync(calls, "");
-    await second.call("iskron_orient", {}, "s-held");
-    assert.equal(sentBy()[0].name, "iskron/resume");
-    assert.deepEqual(sentBy()[0].arguments, {
+    // The session that held it resumes by the marker's key, not by directory
+    // alone — and at once, without a call of its own (#6137).
+    await until(
+      () => sentBy().some((c) => c.name === "iskron/resume" && c.arguments.session === "s-held"),
+      "the held session's resume",
+    );
+    assert.deepEqual(sentBy().find((c) => c.name === "iskron/resume").arguments, {
       key: "proba--931--nks-dev",
       cwd: "/work/held",
       session: "s-held",
     });
+    await serverTools(second);
+    // The loss is said into the session that held the place, not into whichever calls first.
+    await second.call("iskron_orient", {}, "s-next");
+    await until(() => second.prompts.length >= 1, "the loss to be said");
+    const loss = second.prompts.filter((p) => /слух был потерян/.test(p.text));
+    assert.deepEqual(
+      loss.map((p) => p.sessionID),
+      ["s-held"],
+      "the loss goes into its own session",
+    );
+    assert.match(loss[0].text, /iskron_stand/);
+    // Another session of the lost directory gets no key: the marker's key is a
+    // hint only to the session that held its socket (graph nks-dev: #6017).
+    writeFileSync(calls, "");
+    await second.call("iskron_orient", {}, "s-back");
+    assert.equal(sentBy()[0].name, "iskron/resume");
+    assert.deepEqual(sentBy()[0].arguments, { cwd: "/work/held", session: "s-back" });
   } finally {
     await second.stop();
   }
   // A plugin with nothing held leaves no marker.
   assert.equal(lostMarkers().length, 0);
+});
+
+// A standing session waits for frames and calls no tool: a return that waits for
+// its call never comes, while the loss word promises the place back by itself
+// (graph nks-dev: #6137). The next instance takes the place back at once, into
+// the session that held it; a place that does not come back is said there too,
+// and the session stays under the watch.
+async function heldThenStopped(name) {
+  const b = bridgeEnv(`${name}-first`);
+  const first = await plugin(b.env, {
+    sessions: [{ id: "s-held", location: { directory: "/work/held" } }],
+  });
+  await serverTools(first);
+  await first.call("iskron_channel", { action: "connect" }, "s-held");
+  appendFileSync(`${b.events}.${pidOf(b.log)}`, event("held", { key: "proba--931--nks-dev" }));
+  await until(() => /мост держит стояние proba--931--nks-dev/.test(first.said()), "the held line");
+  await first.stop();
+  assert.equal(lostMarkers().length, 1, "the marker of the stopped instance");
+}
+
+const callsIn = (file) =>
+  readFileSync(file, "utf8")
+    .split("\n")
+    .filter(Boolean)
+    .map((l) => JSON.parse(l));
+
+test("the place of a lost marker comes back at once, without a call of the agent, into the session that held it", async () => {
+  await heldThenStopped("eager");
+  const calls = join(SANDBOX, "eager.calls");
+  const resume = join(SANDBOX, "eager.answer");
+  writeFileSync(calls, "");
+  writeFileSync(
+    resume,
+    JSON.stringify({
+      resumed: true,
+      key: "proba--931--nks-dev",
+      pending: 2,
+      word: "возврат места с диска",
+    }),
+  );
+  const b = bridgeEnv("eager", { FB_CALLS: calls, FB_RESUME: resume });
+  const second = await plugin(b.env, {
+    keepMarker: true,
+    sessions: [{ id: "s-held", location: { directory: "/work/held" } }],
+  });
+  try {
+    // No tool is called in this instance at all.
+    await until(
+      () =>
+        callsIn(calls).some(
+          (c) =>
+            c.name === "iskron/resume" &&
+            c.arguments.key === "proba--931--nks-dev" &&
+            c.arguments.session === "s-held",
+        ),
+      "the resume by the marker's key without a call",
+      1000,
+    );
+    assert.ok(
+      !callsIn(calls).some((c) => !c.name.startsWith("iskron/")),
+      "no tool call went out — the resume did not wait for one",
+    );
+    await until(
+      () => second.prompts.some((p) => /слух был потерян/.test(p.text)),
+      "the loss word",
+      1000,
+    );
+    const loss = second.prompts.find((p) => /слух был потерян/.test(p.text));
+    assert.equal(loss.sessionID, "s-held", "the loss goes into the session that held");
+    await until(
+      () => second.prompts.some((p) => /сам вернул место/.test(p.text)),
+      "the resumed word",
+      1000,
+    );
+    assert.equal(second.prompts.find((p) => /сам вернул место/.test(p.text)).sessionID, "s-held");
+  } finally {
+    await second.stop();
+  }
+});
+
+test("a place of a lost marker that does not come back is said into its session with iskron_stand, the watch tries once more and says its outcome too", async () => {
+  await heldThenStopped("notback");
+  const calls = join(SANDBOX, "notback.calls");
+  const resume = join(SANDBOX, "notback.answer");
+  writeFileSync(calls, "");
+  writeFileSync(
+    resume,
+    JSON.stringify({
+      resumed: false,
+      holding: false,
+      word: "возвращать нечего — proba--931--nks-dev: hello не пришёл — запись цела",
+    }),
+  );
+  const b = bridgeEnv("notback", {
+    FB_CALLS: calls,
+    FB_RESUME: resume,
+    ISKRON_BRIDGE_WATCH_MS: 300,
+  });
+  const second = await plugin(b.env, {
+    keepMarker: true,
+    sessions: [{ id: "s-held", location: { directory: "/work/held" } }],
+  });
+  try {
+    await until(
+      () => second.prompts.some((p) => /не вернулось/.test(p.text)),
+      "the word that the place did not come back",
+      1500,
+    );
+    const word = second.prompts.find((p) => /не вернулось/.test(p.text));
+    assert.equal(word.sessionID, "s-held");
+    assert.match(word.text, /proba--931--nks-dev/, "the place is named");
+    assert.match(word.text, /hello не пришёл/, "the bridge's reason is said");
+    assert.match(word.text, /iskron_stand/, "the way to stand is said");
+    await until(
+      () =>
+        callsIn(calls).some(
+          (c) => c.name === "iskron/check" && c.arguments.key === "proba--931--nks-dev",
+        ),
+      "the watch to try the place again",
+      3000,
+    );
+    // The watch tries once: its failure is said too, or the session hears nothing more.
+    await until(
+      () => second.prompts.some((p) => /на повторе сторожа/.test(p.text)),
+      "the word that the watch's retry failed as well",
+      3000,
+    );
+    const again = second.prompts.find((p) => /на повторе сторожа/.test(p.text));
+    assert.equal(again.sessionID, "s-held");
+    assert.match(again.text, /iskron_stand/);
+  } finally {
+    await second.stop();
+  }
 });
 
 // The keeper's check must not count as activity: a slot whose bridge no longer

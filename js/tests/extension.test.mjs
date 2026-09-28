@@ -606,7 +606,7 @@ test("service frames raise no turn, a work frame does", async () => {
 // A dead token cannot be reconnected through, and the bridge has already
 // stopped trying; the extension has nowhere to exit to, so "loud" means the
 // doer sees it in the turn.
-test("a dead-token event complains loudly; 4001 alone offers mint", async () => {
+test("a dead-token event complains loudly and names connect; mint is offered on no code", async () => {
   for (const code of [4000, 4001, 4002]) {
     const { events, env } = eventsEnv(`dead${code}`);
     const rec = await session(env);
@@ -618,8 +618,10 @@ test("a dead-token event complains loudly; 4001 alone offers mint", async () => 
       assert.equal(rec.messages[0].opts.triggerTurn, true);
       assert.equal(rec.notices.at(-1).level, "error");
       assert.match(rec.notices.at(-1).text, new RegExp(`закрыт кодом ${code} — токен мёртв`));
-      // 4001 is the one where minting a new token is the answer, and only there.
-      assert.equal(/action="mint"/.test(rec.notices.at(-1).text), code === 4001);
+      // connect opens what is not there too; mint answers 409 once the channel
+      // is back (the iskron_channel surface, graph nks-dev: #5189) — so never mint.
+      assert.match(rec.notices.at(-1).text, /action="connect"/);
+      assert.doesNotMatch(rec.notices.at(-1).text, /mint/, `код ${code} предлагает mint`);
     } finally {
       await rec.stop();
     }

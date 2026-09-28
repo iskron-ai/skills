@@ -83,9 +83,13 @@ export async function serviceUp(socketUrl: string): Promise<{ version?: string }
     .catch(() => null);
 }
 
-/** Слово делателю на мёртвом токене — одно на всех держателей. */
+/**
+ * Слово делателю на мёртвом токене — одно на всех держателей и на всякий код:
+ * connect открывает и то, чего нет, а mint на возникшем снова канале — 409
+ * (справка iskron_channel action="?"; граф nks-dev: #5189).
+ */
 export function deadTokenAdvice(code: number): string {
-  return `закрытие ${code} — токен мёртв, зови ${code === 4001 ? "mint" : "connect"}`;
+  return `закрытие ${code} — токен мёртв, зови connect`;
 }
 
 export type FrameOrigin = "platform" | "human" | "sibling" | "peer";

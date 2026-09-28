@@ -20,7 +20,6 @@
 // ctx.tool.reload() — сколько бы ни длился вход человека.
 import { Bridge, toParameters } from "../shared/bridge-client.ts";
 import {
-  AUTH_POLL_MS,
   authDir,
   buildsLine,
   findBridge,
@@ -28,6 +27,7 @@ import {
   listTools,
   readCache,
   refreshToolList,
+  retryPause,
   sleep,
   textOf,
   writeCache,
@@ -164,12 +164,22 @@ export async function setupTools(
     say,
     tell: (root, text, child) =>
       onChannel(root, { logger: "iskron-channel", data: { kind: "resumed", text } }, !!child),
+    lost: (root, text) =>
+      onChannel(root, { logger: "iskron-channel", data: { kind: "lost", text } }),
     slotFor: (root, touch) => slotFor(root, touch),
     ready: readyFor,
     directoryOf,
+    exists: (sessionID) =>
+      Promise.resolve()
+        .then(() => ctx.session.get({ sessionID } as any))
+        .then(
+          () => true,
+          () => false,
+        ),
   });
-  // Прежний экземпляр остановили с держащим мостом: слово о том — в первую живую
-  // сессию, ключи его мест — сторожу, чтобы возврат шёл по ключу, не по каталогу.
+  // Прежний экземпляр остановили с держащим мостом: ключи его мест — сторожу,
+  // чтобы возврат шёл по ключу, не по каталогу; места — обратно сразу, со словом
+  // в державшие сессии (keeper.resumeLost), в первую живую — лишь когда таких нет.
   const lost = takeLostMarker(authDir());
   let lostWord = lost?.text ?? null;
   if (lost) {
@@ -232,7 +242,7 @@ export async function setupTools(
       slot = undefined;
     }
     if (!slot) {
-      slot = spare ?? spawn();
+      slot = spare && !spare.bridge.failure ? spare : spawn();
       spare = null;
       slot.session = root;
       // Память умершего моста — каталог и ключ места — переходит к его замене:
@@ -399,6 +409,7 @@ export async function setupTools(
   // входа или умерший мост — новое рукопожатие или новый мост, пока плагин жив.
   spare = spawn();
   let first = spare;
+  let misses = 0;
   void (async () => {
     for (;;) {
       if (stopped) return;
@@ -417,19 +428,30 @@ export async function setupTools(
         if (stopped) return;
         if (first.bridge.failure) {
           // Мост списка умер — или был отдан сессии и отпущен ею (тогда молча):
-          // список берёт новый запас.
+          // список берёт новый запас сразу, до паузы: мёртвый запас сессии не отдаётся.
           if (first.session === null)
             say(`Искрон: мост умер (${(e as Error).message}) — поднимаю новый.`, "warning");
           if (spare === first) spare = null;
           first = spare ?? spawn();
           spare = first;
+          await sleep(retryPause(0));
         } else {
+          await sleep(retryPause(misses++)); // пауза до повтора: удавшийся — сразу к списку
           shake(first);
         }
-        await sleep(AUTH_POLL_MS);
       }
     }
   })();
+
+  if (lost) {
+    // Вызов тула другой сессии в этом окне слова о чужой потере не берёт;
+    // державших сессий нет — слово ждёт первую живую, как прежде.
+    const word = lostWord;
+    lostWord = null;
+    void keeper.resumeLost(lost.entries, word).then((said) => {
+      if (!said) lostWord ??= word;
+    });
+  }
 
   // Строка запуска с делом (launch.ts): тот же вызов, что у execute, с его занятостью.
   const launcher = createLauncher<Slot>({

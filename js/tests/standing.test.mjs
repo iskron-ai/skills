@@ -1659,6 +1659,10 @@ test("a dead token forgets the hold record; a live holder's place is not taken f
     () => bridge.notifications.some((n) => n.params?.data?.kind === "dead"),
     "the dead token to reach the harness",
   );
+  // 4001 too is answered by connect: mint answers 409 once the channel is back (#5189).
+  const dead = bridge.notifications.find((n) => n.params?.data?.kind === "dead").params.data.text;
+  assert.match(dead, /зови connect/, dead);
+  assert.doesNotMatch(dead, /mint/, dead);
   await waitFor(
     () => !readdirSync(standings).some((f) => f.endsWith(".hold")),
     "a dead token to forget the record",
@@ -2201,6 +2205,90 @@ test("iskron/resume by the session's directory: a bridge restarted after the plu
   assert.match(
     readFileSync(join(dir, "standings.log"), "utf8"),
     /resumed-from-disk proba--931--nks-dev: pending 2/,
+  );
+});
+
+// A resume whose hello does not come in time is not a verdict on the place: the
+// hold record stays, so the plugin's watch can try again — dropping it left the
+// session nothing to return by (graph nks-dev: #6137). A dead token still drops it
+// (the stale-record probe above).
+test("iskron/resume without a hello in time keeps the hold record, and the next resume takes the place back", async (t) => {
+  const { fake, dir, bridge, standings } = await connected(t);
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const cwd = mkdtempSync(join(tmpdir(), "iskron-mute-dir-"));
+  await bridge.call("iskron/resume", 4, { cwd, session: "ses-mute" });
+  await bridge.call("tools/call", 5, {
+    name: "iskron_stand",
+    arguments: { realm: "nks-dev", karta: 931, name: "proba", cwd },
+  });
+  bridge.proc.kill("SIGKILL");
+  await waitFor(() => fake.state.ws.size === 0, "the socket to close");
+  await fake.control({ ws_mute: true }); // the next socket opens, but no hello comes
+  const holdFile = () =>
+    join(
+      standings,
+      readdirSync(standings).find((f) => f.endsWith(".hold")),
+    );
+  const before = readFileSync(holdFile(), "utf8");
+  const second = startBridge(fake.mcpUrl, dir);
+  t.after(() => second.stop());
+  assert.ok((await second.call("initialize", 1, INIT)).result);
+  const mute = await second.call("iskron/resume", 2, { cwd, session: "ses-mute" });
+  assert.equal(mute.result?.resumed, false, JSON.stringify(mute));
+  assert.ok(
+    readdirSync(standings).some((f) => f.endsWith(".hold")),
+    "a missing hello must not drop the hold record — there is nothing to return by without it",
+  );
+  // …nor make it younger: a failed attempt that re-stamps «at» would outlive the
+  // record's age limit forever, one attempt at a time.
+  assert.equal(
+    JSON.parse(readFileSync(holdFile(), "utf8")).at,
+    JSON.parse(before).at,
+    "a failed resume must leave the record's time as it was",
+  );
+  assert.match(mute.result.word, /hello не пришёл — запись цела/, mute.result.word);
+  const back = await second.call("iskron/resume", 3, { cwd, session: "ses-mute" });
+  assert.equal(back.result?.resumed, true, JSON.stringify(back));
+  assert.match(back.result.word, /возврат места с диска/);
+  assert.equal(fake.state.counts.connect, 1, "the place is resumed, not rotated");
+});
+
+// The record a failed resume puts back is the one it read — unless another path
+// took the place meanwhile (a connect of this bridge, a second bridge on the same
+// auth dir): a fresh address on disk is not overwritten by the old one.
+test("a failed resume does not put the old record back over a fresher one written meanwhile", async (t) => {
+  const { fake, dir, bridge, standings } = await connected(t);
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const cwd = mkdtempSync(join(tmpdir(), "iskron-race-dir-"));
+  await bridge.call("iskron/resume", 4, { cwd, session: "ses-race" });
+  await bridge.call("tools/call", 5, {
+    name: "iskron_stand",
+    arguments: { realm: "nks-dev", karta: 931, name: "proba", cwd },
+  });
+  bridge.proc.kill("SIGKILL");
+  await waitFor(() => fake.state.ws.size === 0, "the socket to close");
+  await fake.control({ ws_mute: true });
+  const holdFile = join(
+    standings,
+    readdirSync(standings).find((f) => f.endsWith(".hold")),
+  );
+  const second = startBridge(fake.mcpUrl, dir);
+  t.after(() => second.stop());
+  assert.ok((await second.call("initialize", 1, INIT)).result);
+  const pending = second.call("iskron/resume", 2, { cwd, session: "ses-race" });
+  await new Promise((r) => setTimeout(r, 1000)); // inside the 4 s wait for hello
+  const fresher = {
+    ...JSON.parse(readFileSync(holdFile, "utf8")),
+    url: "ws://127.0.0.1:9/channel/ws/fresher",
+    at: Date.now(),
+  };
+  writeFileSync(holdFile, JSON.stringify(fresher) + "\n");
+  const mute = await pending;
+  assert.equal(mute.result?.resumed, false, JSON.stringify(mute));
+  assert.equal(
+    JSON.parse(readFileSync(holdFile, "utf8")).url,
+    fresher.url,
+    "the fresher record written meanwhile must stay",
   );
 });
 

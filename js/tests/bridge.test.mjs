@@ -1261,6 +1261,35 @@ test("стояние перерегистрируется само, когда �
   });
 });
 
+// Бой, 48 ч: ×9647 рукопожатий плагина OpenCode под уже закрытой сессией — сервер
+// закрыл её по простою, а мост нёс её id в каждом повторном initialize и получал
+// 404 unknown_session около часа. Рукопожатие открывает сессию и чужого id не
+// несёт (спека MCP): повторный initialize харнеса уходит без Mcp-Session-Id и проходит.
+test("повторное рукопожатие харнеса после закрытой сессии уходит без старого id и проходит", async (t) => {
+  await withFake(t, {}, async ({ fake, dir, spawnBridge }) => {
+    const bridge = spawnBridge();
+    await authorize(bridge, dir);
+    assert.ok(
+      (await bridge.call("initialize", 2, INIT_PARAMS)).result,
+      "сессия должна существовать",
+    );
+    await fake.control({ kill_session: true }); // простой за порогом — сессии больше нет
+    const again = await bridge.call("initialize", 3, INIT_PARAMS);
+    assert.ok(
+      again.result && !again.error,
+      `рукопожатие под закрытой сессией: ${JSON.stringify(again.error ?? again)}`,
+    );
+    assert.equal(
+      fake.state.initSids.at(-1),
+      null,
+      "повторное рукопожатие не несёт id закрытой сессии",
+    );
+    assert.equal(fake.state.counts.init_unknown_session ?? 0, 0, "ни одного 404 на рукопожатии");
+    const list = await bridge.call("tools/list", 4, {});
+    assert.ok(list.result?.tools?.length, `вызов после рукопожатия: ${JSON.stringify(list)}`);
+  });
+});
+
 // Четыре свидетельства из боя (nks-dev #3454, #3919; @nks/feedback #63) говорят,
 // что перерегистрация на смену id держит не всегда. Ниже — дыры, названные
 // чтением кода против узлов о сессии; каждая проба моделирует одну.

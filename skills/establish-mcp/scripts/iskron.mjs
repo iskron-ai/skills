@@ -1548,7 +1548,7 @@ async function serviceUp(socketUrl) {
   return fetch(versionUrl(socketUrl), { signal: AbortSignal.timeout(5e3) }).then((r) => r.ok ? r.json() : null).catch(() => null);
 }
 function deadTokenAdvice(code) {
-  return `закрытие ${code} — токен мёртв, зови ${code === 4001 ? "mint" : "connect"}`;
+  return `закрытие ${code} — токен мёртв, зови connect`;
 }
 function classifyOrigin(frame2, myKarta) {
   const p = frame2.provenance ?? {};
@@ -1861,10 +1861,15 @@ async function post(msg, onMessage) {
   if (lang() === "en") headers["accept-language"] = "en";
   const token = CFG.pat ?? loadStore().tokens?.access_token ?? null;
   if (token) headers.authorization = `Bearer ${token}`;
+  const isInit = msg?.method === "initialize";
+  if (isInit && state.sessionId) {
+    log(`initialize under a held session id (${state.sessionId}) — sent without it`);
+    state.sessionId = null;
+    state.sessionToken = null;
+  }
   const sentSession = state.sessionId;
   if (sentSession) headers["mcp-session-id"] = sentSession;
   if (state.protocolVersion) headers["mcp-protocol-version"] = state.protocolVersion;
-  const isInit = msg?.method === "initialize";
   const boundByHeader = isInit ? standingHeader() : null;
   if (boundByHeader) headers["x-nks-standing"] = boundByHeader;
   let res;
@@ -2779,6 +2784,14 @@ function writeHoldRecord(key, rec3) {
     );
   } catch (e) {
     log(`hold record not written: ${e.message}`);
+  }
+}
+function restoreHoldRecord(key, rec3) {
+  if (CFG.satellite) return;
+  try {
+    writeFileSync6(holdFilePathFor(key), JSON.stringify(rec3) + "\n", { mode: 384 });
+  } catch (e) {
+    log(`hold record not restored: ${e.message}`);
   }
 }
 function markLeft(key, on) {
@@ -4345,8 +4358,13 @@ async function resumeFromDisk(realm, karta, name) {
   } finally {
     noteResuming(-1);
   }
-  log(`hold record for ${key} is stale — dropped, the place is taken anew`);
-  releaseStanding("возврат с диска не удался", true);
+  const onDisk = readHoldRecord(key);
+  const kept = onDisk !== null;
+  log(
+    kept ? `hold record for ${key}: no hello in time — record kept as it was, the place is not taken` : `hold record for ${key} is stale — dropped, the place is taken anew`
+  );
+  releaseStanding("возврат с диска не удался");
+  if (onDisk?.url === rec3.url) restoreHoldRecord(key, rec3);
   state.standing = prev;
   if (rec3.cwd) noteStandCwd(prevCwd);
   return null;
@@ -4439,7 +4457,9 @@ async function resumeBy(sel, register = true) {
     }
     const back = await resumeFromDisk(rec3.realm, rec3.karta, rec3.name);
     if (!back) {
-      skipped.push(`${key}: запись протухла — место займёт iskron_stand`);
+      skipped.push(
+        readHoldRecord(key) ? `${key}: hello не пришёл — запись цела, сторож повторит возврат; не ждёшь — iskron_stand` : `${key}: запись протухла — место займёт iskron_stand`
+      );
       continue;
     }
     const lines = [back.word];

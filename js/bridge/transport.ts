@@ -118,13 +118,22 @@ export async function post(
   // PAT старше хранилища: с ним грант на диске не читается вовсе (#4267).
   const token = CFG.pat ?? loadStore().tokens?.access_token ?? null;
   if (token) headers.authorization = `Bearer ${token}`;
+  const isInit = msg?.method === "initialize";
+  if (isInit && state.sessionId) {
+    // An initialize opens a session and never rides one (the MCP spec): the id
+    // of a session the server has closed makes every repeat of it a 404
+    // unknown_session — observed for an hour at a time from a harness that
+    // re-handshakes a live bridge. Forget it; the next call re-binds the standing.
+    log(`initialize under a held session id (${state.sessionId}) — sent without it`);
+    state.sessionId = null;
+    state.sessionToken = null;
+  }
   // The session this request is sent under, kept apart from state: a sibling
   // call may be re-initializing while this one is in flight, and a 404 that
   // comes back after state.sessionId was cleared is still THIS session dying.
   const sentSession = state.sessionId;
   if (sentSession) headers["mcp-session-id"] = sentSession;
   if (state.protocolVersion) headers["mcp-protocol-version"] = state.protocolVersion;
-  const isInit = msg?.method === "initialize";
   const boundByHeader = isInit ? standingHeader() : null;
   if (boundByHeader) headers["x-nks-standing"] = boundByHeader;
 

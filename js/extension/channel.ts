@@ -107,7 +107,6 @@ export function setupChannel(pi: ExtensionAPI): (params: any) => void {
         // так, чтобы он это увидел в ходе, а не в логе, которого никто не читает.
         loud(
           `Искрон: канал закрыт кодом ${ev.code} — токен мёртв. Зови iskron_channel(action="connect")` +
-            (ev.code === 4001 ? ' или action="mint"' : "") +
             ", затем register тем же именем: новый сокет мост возьмёт из ответа сам, перезапуск не нужен.",
         );
         return;

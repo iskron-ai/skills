@@ -18,7 +18,8 @@
 //                 its browser flow waits for the human, until FB_AUTHED exists)
 //                 · net (every request refused -32001 «upstream unreachable» — the
 //                 same code as the login refusal, a different word: the extension
-//                 must not mistake it for a login to wait for)
+//                 must not mistake it for a login to wait for), until the file
+//                 FB_NET_UP exists — the network is back
 //   FB_AUTHED     with FB_MODE=auth: the file whose existence means the human has
 //                 finished the login in the browser.
 //   FB_TOOLS      JSON array for tools/list; default is two tools, one of them
@@ -33,6 +34,7 @@
 //                 rewrites it between calls. "__ERROR__<text>" answers isError.
 //                 <FB_REPLY>.<tool>, when present, answers only that tool.
 //   FB_STAND_HELD place name an iskron_stand says «held» for (satellite: <of>.sub-1).
+//   FB_INITS      file to append "<pid> <ms>" to for every initialize received.
 import { appendFileSync, existsSync, readFileSync, unlinkSync } from "node:fs";
 
 const MODE = process.env.FB_MODE || "ok";
@@ -43,6 +45,12 @@ if (process.env.FB_LOG)
     `start ${[process.pid, ...process.argv.slice(2)].join(" ")}\n`,
   );
 if (MODE === "die") process.exit(3);
+// FB_DIE_ONCE: a file whose presence makes this bridge exit at once — and it is
+// removed, so the next bridge lives (one broken start among good ones).
+if (process.env.FB_DIE_ONCE && existsSync(process.env.FB_DIE_ONCE)) {
+  unlinkSync(process.env.FB_DIE_ONCE);
+  process.exit(3);
+}
 
 const TOOLS = JSON.parse(
   process.env.FB_TOOLS ||
@@ -146,8 +154,11 @@ process.stdin.on("data", (chunk) => {
       continue;
     }
     if (typeof msg.id !== "number") continue; // notifications need no answer
+    // FB_INITS: a line per initialize received — how often a client re-handshakes.
+    if (msg.method === "initialize" && process.env.FB_INITS)
+      appendFileSync(process.env.FB_INITS, `${process.pid} ${Date.now()}\n`);
     if (MODE === "mute") continue; // ...and neither does anything, in this mode
-    if (MODE === "net") {
+    if (MODE === "net" && !existsSync(process.env.FB_NET_UP || "")) {
       send({
         jsonrpc: "2.0",
         id: msg.id,

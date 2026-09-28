@@ -831,6 +831,7 @@ var homeBridgePath = () => join3(homedir2(), ".iskron-bridge", "iskron-bridge.mj
 // js/opencode/bridge-io.ts
 var HANDSHAKE_MS = Number(process.env.ISKRON_MCP_HANDSHAKE_MS || 6e5);
 var AUTH_POLL_MS = Number(process.env.ISKRON_MCP_AUTH_POLL_MS || 2e3);
+var retryPause = (n) => Math.min(AUTH_POLL_MS * 2 ** n, 6e4);
 var AUTH_PENDING = /authorization required/i;
 var PROTOCOL = "2025-06-18";
 function findBridge() {
@@ -1006,7 +1007,18 @@ function resumedWord(key, others) {
 function createKeeper(doors) {
   const roots = /* @__PURE__ */ new Set();
   const hints = /* @__PURE__ */ new Map();
+  const marked = /* @__PURE__ */ new Map();
+  const retrying = /* @__PURE__ */ new Map();
   let stopped = false;
+  function notBack(root, mark, why) {
+    const place = mark.key ?? mark.dir ?? root;
+    roots.add(root);
+    retrying.set(root, place);
+    doors.tell(
+      root,
+      `Искрон: место ${place} с диска не вернулось: ${why}. Сторож слуха повторит возврат один раз; не ждёшь — iskron_stand.`
+    );
+  }
   function selector(slot) {
     const session = slot.session ? { session: slot.session } : {};
     if (slot.child) return slot.key ? { key: slot.key, ...session } : session;
@@ -1014,15 +1026,22 @@ function createKeeper(doors) {
     return { ...key ? { key } : {}, ...slot.dir ? { cwd: slot.dir } : {}, ...session };
   }
   async function resume(slot, root) {
+    const mark = slot.child ? void 0 : marked.get(root);
+    marked.delete(root);
     try {
       await doors.ready(slot);
-      slot.dir ??= await doors.directoryOf(root);
-      if (!slot.dir && !slot.key || slot.child && !slot.key || stopped) return;
+      slot.dir ??= mark?.dir ?? await doors.directoryOf(root);
+      if (stopped) return;
+      if (!slot.dir && !slot.key || slot.child && !slot.key) {
+        if (mark) notBack(root, mark, "ни ключа места, ни каталога сессии");
+        return;
+      }
       const r = await slot.bridge.request("iskron/resume", selector(slot), {
         timeoutMs: 3e4
       });
       if (!r?.resumed) {
-        if (Array.isArray(r?.legacy) && r.legacy.length && typeof r.word === "string")
+        if (mark) notBack(root, mark, typeof r?.word === "string" ? r.word : "мост не ответил");
+        else if (Array.isArray(r?.legacy) && r.legacy.length && typeof r.word === "string")
           doors.tell(root, `Искрон: ${r.word}.`, slot.child);
         return;
       }
@@ -1037,6 +1056,7 @@ function createKeeper(doors) {
         `Искрон: возврат места сессии ${root} не удался — ${e.message}`,
         "warning"
       );
+      if (mark && !stopped) notBack(root, mark, e.message);
     }
   }
   async function check(root) {
@@ -1052,7 +1072,15 @@ function createKeeper(doors) {
     else if (r?.holding === false) {
       slot.holding = false;
       roots.delete(root);
+      const place = retrying.get(root);
+      if (place && !r?.resumed)
+        doors.tell(
+          root,
+          `Искрон: место ${place} не вернулось и на повторе сторожа: ${r?.word ?? "мост не сказал почему"}. Сам сторож его больше не поднимает — займи место iskron_stand.`,
+          slot.child
+        );
     }
+    retrying.delete(root);
     if (r?.resumed) {
       doors.say(`Искрон: сторож слуха вернул место сессии ${root} — ${r.word}`, "info");
       if (typeof r.key === "string") doors.tell(root, resumedWord(r.key, r.others), slot.child);
@@ -1070,7 +1098,25 @@ function createKeeper(doors) {
   timer.unref?.();
   return {
     hint(entries) {
-      for (const e of entries) if (e.session && e.key && !e.child) hints.set(e.session, e.key);
+      for (const e of entries) {
+        if (!e.session || e.child) continue;
+        if (e.key) hints.set(e.session, e.key);
+        marked.set(e.session, e);
+      }
+    },
+    async resumeLost(entries, word) {
+      const seen = /* @__PURE__ */ new Set();
+      let said = false;
+      for (const e of entries) {
+        if (stopped) break;
+        if (e.child || !e.session || seen.has(e.session)) continue;
+        seen.add(e.session);
+        if (!await doors.exists(e.session)) continue;
+        if (word) doors.lost(e.session, word);
+        said = true;
+        await doors.slotFor(e.session, false);
+      }
+      return said;
     },
     resume,
     stood(slot) {
@@ -1080,6 +1126,7 @@ function createKeeper(doors) {
     },
     forget(root) {
       roots.delete(root);
+      retrying.delete(root);
     },
     stop() {
       stopped = true;
@@ -1273,9 +1320,14 @@ async function setupTools(ctx, say, onChannel, rootOf) {
   const keeper = createKeeper({
     say,
     tell: (root, text, child) => onChannel(root, { logger: "iskron-channel", data: { kind: "resumed", text } }, !!child),
+    lost: (root, text) => onChannel(root, { logger: "iskron-channel", data: { kind: "lost", text } }),
     slotFor: (root, touch) => slotFor(root, touch),
     ready: readyFor,
-    directoryOf
+    directoryOf,
+    exists: (sessionID) => Promise.resolve().then(() => ctx.session.get({ sessionID })).then(
+      () => true,
+      () => false
+    )
   });
   const lost = takeLostMarker(authDir());
   let lostWord = lost?.text ?? null;
@@ -1321,7 +1373,7 @@ async function setupTools(ctx, say, onChannel, rootOf) {
       slot = void 0;
     }
     if (!slot) {
-      slot = spare ?? spawn2();
+      slot = spare && !spare.bridge.failure ? spare : spawn2();
       spare = null;
       slot.session = root;
       slot.dir = dead?.dir ?? slot.dir;
@@ -1439,6 +1491,7 @@ async function setupTools(ctx, say, onChannel, rootOf) {
     say(`Искрон: тулов из прошлого списка: ${state2.listed.length}; сверю с сервером.`, "info");
   spare = spawn2();
   let first = spare;
+  let misses = 0;
   void (async () => {
     for (; ; ) {
       if (stopped) return;
@@ -1461,13 +1514,21 @@ async function setupTools(ctx, say, onChannel, rootOf) {
           if (spare === first) spare = null;
           first = spare ?? spawn2();
           spare = first;
+          await sleep(retryPause(0));
         } else {
+          await sleep(retryPause(misses++));
           shake(first);
         }
-        await sleep(AUTH_POLL_MS);
       }
     }
   })();
+  if (lost) {
+    const word = lostWord;
+    lostWord = null;
+    void keeper.resumeLost(lost.entries, word).then((said) => {
+      if (!said) lostWord ??= word;
+    });
+  }
   const launcher = createLauncher({
     rootOf,
     childSlot: (sessionID, root) => childSlot(sessionID, slots.get(root)),
@@ -1644,7 +1705,7 @@ function setupChannel(ctx, say, freshestRoot) {
         case "dead":
           loud(
             session,
-            `Искрон: канал закрыт кодом ${ev.code} — токен мёртв. Зови iskron_channel(action="connect")` + (ev.code === 4001 ? ' или action="mint"' : "") + ", затем register тем же именем: новый сокет мост возьмёт из ответа сам, перезапуск не нужен."
+            `Искрон: канал закрыт кодом ${ev.code} — токен мёртв. Зови iskron_channel(action="connect"), затем register тем же именем: новый сокет мост возьмёт из ответа сам, перезапуск не нужен.`
           );
           return;
         case "stale":
