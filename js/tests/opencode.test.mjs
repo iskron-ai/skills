@@ -220,6 +220,7 @@ const ENV_KEYS = [
   "FB_CALLS",
   "FB_RESUME",
   "FB_INITS",
+  "FB_NET_UP",
   "ISKRON_BRIDGE_WATCH_MS",
   "ISKRON_BRIDGE_URL",
   "ISKRON_BRIDGE_TOKEN",
@@ -546,6 +547,36 @@ test("a handshake refused not for a login is repeated with a growing pause, not 
     assert.ok(count >= 2, `the handshake is still repeated (${count})`);
     // 50 ms apart would be ~30 in 1.6 s; doubling from 50 ms is 6 at most.
     assert.ok(count <= 8, `the handshake was repeated at the poll rate: ${count} in 1.6 s`);
+  } finally {
+    await rec.stop();
+  }
+});
+
+// The pause comes before a repeat, not after it: once the network is back, the
+// repeat that succeeds leads to the tools at once instead of sitting out one more
+// (growing) pause first.
+test("once the network is back, the tools come right after the handshake that succeeds, not a pause later", async () => {
+  const inits = join(SANDBOX, "netup.inits");
+  const up = join(SANDBOX, "netup.flag");
+  writeFileSync(inits, "");
+  rmSync(up, { force: true });
+  const b = bridgeEnv("netup", {
+    FB_MODE: "net",
+    FB_NET_UP: up,
+    FB_INITS: inits,
+    ISKRON_MCP_AUTH_POLL_MS: 200,
+  });
+  const rec = await plugin(b.env);
+  try {
+    const count = () => readFileSync(inits, "utf8").split("\n").filter(Boolean).length;
+    await until(() => count() >= 5, "five refused handshakes", 8000);
+    writeFileSync(up, ""); // the network is back
+    const t0 = Date.now();
+    await until(() => /тулов в сессии: \d+ \(с сервера\)/.test(rec.said()), "the tools", 10000);
+    const waited = Date.now() - t0;
+    // Doubling from 200 ms: the pause due now is 3.2 s; a pause after the good
+    // handshake would add the rest of the current one on top (~4.8 s in all).
+    assert.ok(waited < 4000, `the tools came ${waited} ms after the network was back`);
   } finally {
     await rec.stop();
   }
@@ -1360,7 +1391,7 @@ test("the place of a lost marker comes back at once, without a call of the agent
   }
 });
 
-test("a place of a lost marker that does not come back is said into its session with iskron_stand, and the watch keeps trying", async () => {
+test("a place of a lost marker that does not come back is said into its session with iskron_stand, the watch tries once more and says its outcome too", async () => {
   await heldThenStopped("notback");
   const calls = join(SANDBOX, "notback.calls");
   const resume = join(SANDBOX, "notback.answer");
@@ -1401,6 +1432,15 @@ test("a place of a lost marker that does not come back is said into its session 
       "the watch to try the place again",
       3000,
     );
+    // The watch tries once: its failure is said too, or the session hears nothing more.
+    await until(
+      () => second.prompts.some((p) => /на повторе сторожа/.test(p.text)),
+      "the word that the watch's retry failed as well",
+      3000,
+    );
+    const again = second.prompts.find((p) => /на повторе сторожа/.test(p.text));
+    assert.equal(again.sessionID, "s-held");
+    assert.match(again.text, /iskron_stand/);
   } finally {
     await second.stop();
   }

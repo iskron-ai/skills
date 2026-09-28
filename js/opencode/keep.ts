@@ -183,15 +183,20 @@ export function createKeeper<S extends KeptSlot>(doors: KeeperDoors<S>): Keeper<
   // Сессия → её запись маркера потери, пока её первый возврат не прошёл: исход
   // этого возврата — слово в неё, какой бы он ни был (#6137).
   const marked = new Map<string, LostEntry>();
+  // Сессия → место из маркера, чей возврат не удался и ждёт повтора сторожа: исход
+  // повтора — тоже слово в неё, иначе после второй неудачи она не слышит ничего.
+  const retrying = new Map<string, string>();
   let stopped = false;
 
   /** Место из маркера не вернулось: слово в ту сессию, и сессия — под сторож, он повторит. */
   function notBack(root: string, mark: LostEntry, why: string): void {
+    const place = mark.key ?? mark.dir ?? root;
     roots.add(root);
+    retrying.set(root, place);
     doors.tell(
       root,
-      `Искрон: место ${mark.key ?? mark.dir ?? root} с диска не вернулось: ${why}. ` +
-        "Сторож слуха повторит возврат; не ждёшь — iskron_stand.",
+      `Искрон: место ${place} с диска не вернулось: ${why}. ` +
+        "Сторож слуха повторит возврат один раз; не ждёшь — iskron_stand.",
     );
   }
 
@@ -261,7 +266,16 @@ export function createKeeper<S extends KeptSlot>(doors: KeeperDoors<S>): Keeper<
       // стояние вернёт сессию под сторож через stood.
       slot.holding = false;
       roots.delete(root);
+      const place = retrying.get(root);
+      if (place && !r?.resumed)
+        doors.tell(
+          root,
+          `Искрон: место ${place} не вернулось и на повторе сторожа: ${r?.word ?? "мост не сказал почему"}. ` +
+            "Сам сторож его больше не поднимает — займи место iskron_stand.",
+          slot.child,
+        );
     }
+    retrying.delete(root);
     if (r?.resumed) {
       doors.say(`Искрон: сторож слуха вернул место сессии ${root} — ${r.word}`, "info");
       // Тот же возврат без хода агента, тем же выбором свежайшей записи (#5366).
@@ -311,6 +325,7 @@ export function createKeeper<S extends KeptSlot>(doors: KeeperDoors<S>): Keeper<
     },
     forget(root) {
       roots.delete(root);
+      retrying.delete(root);
     },
     stop() {
       stopped = true;

@@ -18,7 +18,8 @@
 //                 its browser flow waits for the human, until FB_AUTHED exists)
 //                 · net (every request refused -32001 «upstream unreachable» — the
 //                 same code as the login refusal, a different word: the extension
-//                 must not mistake it for a login to wait for)
+//                 must not mistake it for a login to wait for), until the file
+//                 FB_NET_UP exists — the network is back
 //   FB_AUTHED     with FB_MODE=auth: the file whose existence means the human has
 //                 finished the login in the browser.
 //   FB_TOOLS      JSON array for tools/list; default is two tools, one of them
@@ -151,7 +152,7 @@ process.stdin.on("data", (chunk) => {
     if (msg.method === "initialize" && process.env.FB_INITS)
       appendFileSync(process.env.FB_INITS, `${process.pid} ${Date.now()}\n`);
     if (MODE === "mute") continue; // ...and neither does anything, in this mode
-    if (MODE === "net") {
+    if (MODE === "net" && !existsSync(process.env.FB_NET_UP || "")) {
       send({
         jsonrpc: "2.0",
         id: msg.id,

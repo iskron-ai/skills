@@ -2786,6 +2786,14 @@ function writeHoldRecord(key, rec3) {
     log(`hold record not written: ${e.message}`);
   }
 }
+function restoreHoldRecord(key, rec3) {
+  if (CFG.satellite) return;
+  try {
+    writeFileSync6(holdFilePathFor(key), JSON.stringify(rec3) + "\n", { mode: 384 });
+  } catch (e) {
+    log(`hold record not restored: ${e.message}`);
+  }
+}
 function markLeft(key, on) {
   const r = readHoldRecord(key);
   if (r && r.left === true !== on) writeHoldRecord(key, { ...r, left: on });
@@ -4352,9 +4360,10 @@ async function resumeFromDisk(realm, karta, name) {
   }
   const kept = readHoldRecord(key) !== null;
   log(
-    kept ? `hold record for ${key}: no hello in time — record kept, the place is not taken` : `hold record for ${key} is stale — dropped, the place is taken anew`
+    kept ? `hold record for ${key}: no hello in time — record kept as it was, the place is not taken` : `hold record for ${key} is stale — dropped, the place is taken anew`
   );
   releaseStanding("возврат с диска не удался");
+  if (kept) restoreHoldRecord(key, rec3);
   state.standing = prev;
   if (rec3.cwd) noteStandCwd(prevCwd);
   return null;

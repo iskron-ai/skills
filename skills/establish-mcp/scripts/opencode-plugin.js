@@ -1008,12 +1008,15 @@ function createKeeper(doors) {
   const roots = /* @__PURE__ */ new Set();
   const hints = /* @__PURE__ */ new Map();
   const marked = /* @__PURE__ */ new Map();
+  const retrying = /* @__PURE__ */ new Map();
   let stopped = false;
   function notBack(root, mark, why) {
+    const place = mark.key ?? mark.dir ?? root;
     roots.add(root);
+    retrying.set(root, place);
     doors.tell(
       root,
-      `Искрон: место ${mark.key ?? mark.dir ?? root} с диска не вернулось: ${why}. Сторож слуха повторит возврат; не ждёшь — iskron_stand.`
+      `Искрон: место ${place} с диска не вернулось: ${why}. Сторож слуха повторит возврат один раз; не ждёшь — iskron_stand.`
     );
   }
   function selector(slot) {
@@ -1069,7 +1072,15 @@ function createKeeper(doors) {
     else if (r?.holding === false) {
       slot.holding = false;
       roots.delete(root);
+      const place = retrying.get(root);
+      if (place && !r?.resumed)
+        doors.tell(
+          root,
+          `Искрон: место ${place} не вернулось и на повторе сторожа: ${r?.word ?? "мост не сказал почему"}. Сам сторож его больше не поднимает — займи место iskron_stand.`,
+          slot.child
+        );
     }
+    retrying.delete(root);
     if (r?.resumed) {
       doors.say(`Искрон: сторож слуха вернул место сессии ${root} — ${r.word}`, "info");
       if (typeof r.key === "string") doors.tell(root, resumedWord(r.key, r.others), slot.child);
@@ -1115,6 +1126,7 @@ function createKeeper(doors) {
     },
     forget(root) {
       roots.delete(root);
+      retrying.delete(root);
     },
     stop() {
       stopped = true;
@@ -1495,6 +1507,7 @@ async function setupTools(ctx, say, onChannel, rootOf) {
         say(`Искрон: мост поднят, тулов в сессии: ${list.length} (с сервера).`, "info");
         return;
       } catch (e) {
+        await sleep(retryPause(misses++));
         if (stopped) return;
         if (first.bridge.failure) {
           if (first.session === null)
@@ -1505,7 +1518,6 @@ async function setupTools(ctx, say, onChannel, rootOf) {
         } else {
           shake(first);
         }
-        await sleep(retryPause(misses++));
       }
     }
   })();

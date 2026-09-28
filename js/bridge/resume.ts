@@ -42,6 +42,7 @@ import {
   keyOf,
   noteHarnessSession,
   readHoldRecord,
+  restoreHoldRecord,
   sessionOfBridge,
 } from "./holdrecord.ts";
 import { returnToStanding } from "./leave.ts";
@@ -129,14 +130,17 @@ export async function resumeFromDisk(
   }
   // Мёртвый токен запись уже стёр (onDeadToken при возврате); не пришедший за
   // 4 с hello — не приговор месту: запись цела, и сторож повторит возврат, а
-  // iskron_stand тем же именем перепишет её своим connect.
+  // iskron_stand тем же именем перепишет её своим connect. holdStanding выше
+  // переписал её со свежим at — она возвращается прежней, иначе каждая
+  // неудачная попытка продлевала бы ей жизнь бессрочно.
   const kept = readHoldRecord(key) !== null;
   log(
     kept
-      ? `hold record for ${key}: no hello in time — record kept, the place is not taken`
+      ? `hold record for ${key}: no hello in time — record kept as it was, the place is not taken`
       : `hold record for ${key} is stale — dropped, the place is taken anew`,
   );
   releaseStanding("возврат с диска не удался");
+  if (kept) restoreHoldRecord(key, rec);
   state.standing = prev; // память о прежнем имени цела: ничего вместо неё не занято
   if (rec.cwd) noteStandCwd(prevCwd); // иначе следующий голый connect вписал бы чужой каталог в запись другого места
   return null;

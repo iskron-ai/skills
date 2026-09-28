@@ -81,6 +81,19 @@ export function writeHoldRecord(key: string, rec: HoldRecord): void {
     log(`hold record not written: ${(e as Error).message}`);
   }
 }
+/**
+ * Вернуть запись такой, какой она была до неудавшегося возврата, — с прежней
+ * меткой времени: попытка без hello место не молодит, и срок записи держит
+ * последнее настоящее держание, а не последнюю попытку (#6137).
+ */
+export function restoreHoldRecord(key: string, rec: HoldRecord): void {
+  if (CFG.satellite) return;
+  try {
+    writeFileSync(holdFilePathFor(key), JSON.stringify(rec) + "\n", { mode: 0o600 });
+  } catch (e) {
+    log(`hold record not restored: ${(e as Error).message}`);
+  }
+}
 /** Пометить запись места отпущенной словом держателя (leave) или снять пометку (возврат на место). */
 export function markLeft(key: string, on: boolean): void {
   const r = readHoldRecord(key);

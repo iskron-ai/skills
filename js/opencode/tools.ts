@@ -425,6 +425,8 @@ export async function setupTools(
         say(`Искрон: мост поднят, тулов в сессии: ${list.length} (с сервера).`, "info");
         return;
       } catch (e) {
+        // Пауза — до повтора, не после: удавшийся повтор сразу ведёт к списку тулов.
+        await sleep(retryPause(misses++));
         if (stopped) return;
         if (first.bridge.failure) {
           // Мост списка умер — или был отдан сессии и отпущен ею (тогда молча):
@@ -437,7 +439,6 @@ export async function setupTools(
         } else {
           shake(first);
         }
-        await sleep(retryPause(misses++));
       }
     }
   })();

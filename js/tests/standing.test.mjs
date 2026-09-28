@@ -2224,6 +2224,12 @@ test("iskron/resume without a hello in time keeps the hold record, and the next 
   bridge.proc.kill("SIGKILL");
   await waitFor(() => fake.state.ws.size === 0, "the socket to close");
   await fake.control({ ws_mute: true }); // the next socket opens, but no hello comes
+  const holdFile = () =>
+    join(
+      standings,
+      readdirSync(standings).find((f) => f.endsWith(".hold")),
+    );
+  const before = readFileSync(holdFile(), "utf8");
   const second = startBridge(fake.mcpUrl, dir);
   t.after(() => second.stop());
   assert.ok((await second.call("initialize", 1, INIT)).result);
@@ -2232,6 +2238,13 @@ test("iskron/resume without a hello in time keeps the hold record, and the next 
   assert.ok(
     readdirSync(standings).some((f) => f.endsWith(".hold")),
     "a missing hello must not drop the hold record — there is nothing to return by without it",
+  );
+  // …nor make it younger: a failed attempt that re-stamps «at» would outlive the
+  // record's age limit forever, one attempt at a time.
+  assert.equal(
+    JSON.parse(readFileSync(holdFile(), "utf8")).at,
+    JSON.parse(before).at,
+    "a failed resume must leave the record's time as it was",
   );
   assert.match(mute.result.word, /hello не пришёл — запись цела/, mute.result.word);
   const back = await second.call("iskron/resume", 3, { cwd, session: "ses-mute" });
