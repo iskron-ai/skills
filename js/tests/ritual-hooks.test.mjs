@@ -18,7 +18,7 @@
 // ISKRON_HOOKS_SETTINGS / ISKRON_HOOKS_SURFACES point the probe at any copy (a
 // past revision) so it can be shown red before a fix.
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
@@ -86,6 +86,20 @@ const cases = [
   ["git checkout main-foo && git pull", "", false, false],
   ["git switch master-fix && git pull", "", false, false],
   ["git checkout main -q && git pull", "", false, true],
+  // the trunk pull is a command, not a mention, and `;` chains it as `&&` does
+  ['echo "git checkout main && git pull"', "", false, false],
+  ['echo "git checkout main && git pull --ff-only"', "", false, false],
+  ["echo git checkout main && git pull", "", false, false],
+  ["echo 'git checkout main; git pull'", "", false, false],
+  ["git checkout main; git pull", "", false, true],
+  ["git checkout main -q; git pull", "", false, true],
+  ["git checkout main-foo; git pull", "", false, false],
+  // commands may stand between; a newline chains as `;` does; env may lead
+  ["git checkout main && git fetch origin && git pull", "", false, true],
+  ["git checkout main\ngit pull", "", false, true],
+  ["GIT_TERMINAL_PROMPT=0 git checkout main && git pull", "", false, true],
+  ["git checkout main && echo git pull", "", false, false],
+  [`git checkout main${" ".repeat(5000)}`, "", false, false],
   // a help flag is looked for outside quotes: inside them it is text
   ['gh pr merge 12 --squash --subject "fix -h parsing"', "", false, true],
   [
@@ -137,6 +151,22 @@ for (const [command, output, push, merge] of cases) {
     assert.deepEqual(claudeWakes(command, output), { push, merge });
   });
 }
+
+// `|| true` hides a jq that failed to run: a regex that overruns the match
+// retry limit is silence forever, not a verdict — the exit status is judged.
+test("claude hooks: jq judges a long run of spaces without an error", () => {
+  const payload = JSON.stringify({
+    tool_input: { command: `git checkout main${" ".repeat(5000)}` },
+    tool_response: { stdout: "", stderr: "" },
+  });
+  for (const h of bashHooks) {
+    const filter = /^jq -e '([^']+)'/.exec(h.command)?.[1];
+    if (!filter) continue;
+    const r = spawnSync("jq", ["-e", filter], { input: payload, encoding: "utf8" });
+    assert.equal(r.stderr, "", filter.slice(-60));
+    assert.equal(r.status, 1, filter.slice(-60));
+  }
+});
 
 async function loadPlugin() {
   const md = readFileSync(surfacesPath, "utf8");

@@ -75,7 +75,11 @@ export default {
       const ran = (head, noop, said) =>
         new RegExp(at(head, noop)).test(cmd) &&
         (((exit ?? 0) === 0 && new RegExp(at(head, noop) + arg + String.raw`\s*(?:&&|$)`).test(cmd)) || said.test(out));
-      const pull = /(checkout|switch) (main|master)(?=[ ;&|)\n]|$)[^;|]*&& *git( -C \S+)* pull([ ;&|)]|$)/;
+      const env = String.raw`(?:env +)?(?:[A-Za-z_]+=\S+ +)*`;
+      const pull = new RegExp( // подтяжка ствола — командой; до pull цепочка через &&, ; или перевод строки
+        at(String.raw`${env}git(?: -C \S+)* (?:checkout|switch)`, "-h|--help") + String.raw` (?:main|master)(?=[ ;&|)\n]|$)` +
+          String.raw`(?:${arg}(?:&&|;|\n))+ *${env}git(?: -C \S+)* pull(?=[ ;&|)\n]|$)`,
+      );
       const note = ran(String.raw`(?:env +)?(?:[A-Za-z_]+=\S+ +)*git(?: -C \S+)* push`, "-h|--help", /To [^\n]+(?:\n [!=] .*)*\n [ *+-]/)
         ? "[iskron] пуш — не отгрузка: самопроверка, словарный проход по тексту PR, холодное ревью этапа."
         : ran("gh pr merge", "-h|--help|--auto|--disable-auto", /(Merged|Squashed and merged|Rebased and merged) pull request/) || pull.test(cmd)
