@@ -380,7 +380,7 @@ for (const file of shippedFiles) {
 //    human a single door (/iskron) and names no roster, so there is nothing
 //    there left to drift. The roster it used to hold moved to a place that is
 //    load-bearing rather than decorative — the routing tree in skills/iskron,
-//    linted below beside entry's map of situations.
+//    linted below beside the door's map of agent moments.
 try {
   const agents = readFileSync(join(root, "AGENTS.md"), "utf8");
   const m = /по одной директории на скилл \(([^)]*)\)/.exec(agents);
@@ -400,13 +400,15 @@ try {
   fail("AGENTS.md", `could not read: ${e.message}`);
 }
 // 5b. The shipped maps of skills. AGENTS.md never ships, so an agent that
-//     installed the bundle has never read it. What ships are two maps, keyed
-//     differently on purpose — entry by the position the AGENT recognises in
-//     itself, iskron by the outcome a HUMAN wants — and a skill missing from
-//     either is, from that side, unreachable: the harness lists a description,
-//     and a description is a routing surface, not a map.
+//     installed the bundle has never read it. What ships are two maps, both in
+//     the door and keyed differently on purpose — «Моменты агента» by the
+//     moment or position the AGENT recognises in itself, «Маршруты» by the
+//     outcome a HUMAN wants — and a skill missing from either is, from that
+//     side, unreachable: the harness lists a description, and a description is
+//     a routing surface, not a map.
 //     Why two, what was rejected, and how completeness is kept from strangling
-//     the door's genre: graph nks-dev, node #4144 (open).
+//     the door's genre: graph nks-dev, node #4144; why the agent map left entry
+//     for the door: node #6180.
 //     The door is linted over BOTH its files. A decision tree lives by cutting,
 //     so demanding a row per skill in its body would mechanically rebuild the
 //     directory it replaced; the roster may live in the phrasebook while the
@@ -440,8 +442,8 @@ function lintMap(skill, file, sources) {
     fail(file, `map row \`${name}\` matches no directory in skills/`);
   }
 }
-lintMap("entry", "skills/entry/SKILL.md", [
-  ["SKILL.md", /## Карта положений[\s\S]*?(?=\n## )/, /→ \*\*([a-z-]+)\*\*/g, "## Карта положений"],
+lintMap("iskron", "skills/iskron/SKILL.md (Моменты агента)", [
+  ["SKILL.md", /## Моменты агента[\s\S]*?(?=\n## |$)/, /\*\*([a-z-]+)\*\*/g, "## Моменты агента"],
 ]);
 lintMap("iskron", "skills/iskron/SKILL.md + references/phrasebook.md", [
   ["SKILL.md", /## Маршруты[\s\S]*?(?=\n## )/, /→ \*\*([a-z-]+)\*\*/g, "## Маршруты"],
