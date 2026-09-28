@@ -1,5 +1,14 @@
 # Changelog
 
+## [6.25.0](https://github.com/iskron-ai/skills/compare/v6.24.0...v6.25.0) (2026-09-28)
+
+
+### Features
+
+* **assistant:** скилл ассистента — сводка дел и единая точка управления ([#248](https://github.com/iskron-ai/skills/issues/248)) ([2314757](https://github.com/iskron-ai/skills/commit/231475770b2dcc8b5c71f65db8e90f6bfbea4298))
+* **establish-mcp:** сжатие — doctor, вход, use, update, Codex ([#247](https://github.com/iskron-ai/skills/issues/247)) ([78b3f56](https://github.com/iskron-ai/skills/commit/78b3f5612d64e6116b65b1670f14bd32d85199f8))
+* **skills:** сжатие, волна 1 — iskron, entry, writing, architect, AGENTS.md и REALITY.md, контракт 16 ([#246](https://github.com/iskron-ai/skills/issues/246)) ([f3ec271](https://github.com/iskron-ai/skills/commit/f3ec271add9c88d4c96c341334346bad91bf87e6))
+
 ## [6.24.0](https://github.com/iskron-ai/skills/compare/v6.23.0...v6.24.0) (2026-09-28)
 
 
