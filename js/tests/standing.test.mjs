@@ -1330,6 +1330,14 @@ test("tools/list carries the writing-moment line on write tools only", async (t)
     "add tool lacks the line",
   );
   assert.ok(byName.iskron_batch?.includes("[мост] Момент скилла writing"), "batch lacks the line");
+  // Строка моста и строка writing в карте моментов двери iskron — одна строка.
+  const door = readFileSync(join(HERE, "..", "..", "skills", "iskron", "SKILL.md"), "utf8");
+  const row = door.match(/^\| перед `iskron_add_\*`[^|]*\| \*\*writing\*\*: (.+) \|$/m)?.[1];
+  assert.ok(row, "the door's moment map lacks the writing row");
+  assert.ok(
+    byName.iskron_add_vimarsha.includes(`Момент скилла writing: ${row}`),
+    "the bridge's writing-moment line drifted from the door's moment map",
+  );
   assert.ok(!byName.iskron_orient?.includes("[мост]"), "a read tool must stay untouched");
   assert.ok(
     byName.iskron_channel?.includes('action="status"'),
