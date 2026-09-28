@@ -63,6 +63,43 @@ const cases = [
   ],
   ["git push | tail -3", "", false, false],
   ['grep "git push" AGENTS.md', "git push", false, false],
+  // a rejected ref is not an updated one — only an updated ref line wakes
+  [
+    "git push 2>&1 | tail -3",
+    "To github.com:o/r.git\n ! [rejected]        feat/x -> feat/x (non-fast-forward)\nerror: failed to push some refs",
+    false,
+    false,
+  ],
+  [
+    "git push 2>&1 | tail -3",
+    "To github.com:o/r.git\n + 1234567...89abcde feat/x -> feat/x (forced update)",
+    true,
+    false,
+  ],
+  [
+    "git push origin a b 2>&1 | tail -3",
+    "To github.com:o/r.git\n ! [rejected]        a -> a (fetch first)\n   1234567..89abcde  b -> b",
+    true,
+    false,
+  ],
+  // the trunk is a name with a boundary, not a prefix
+  ["git checkout main-foo && git pull", "", false, false],
+  ["git switch master-fix && git pull", "", false, false],
+  ["git checkout main -q && git pull", "", false, true],
+  // a help flag is looked for outside quotes: inside them it is text
+  ['gh pr merge 12 --squash --subject "fix -h parsing"', "", false, true],
+  [
+    "gh pr merge 12 --squash -t 'drop --auto flag' | tail -1",
+    "✓ Merged pull request o/r#12 (t)",
+    false,
+    true,
+  ],
+  // …and outside them it is still seen, after a quoted argument too
+  ['gh pr merge 12 --squash --subject "x" --help', "Usage: gh pr merge", false, false],
+  ['gh pr merge 5 -b "x" --auto', "", false, false],
+  ['git push -o "x" -h', "usage: git push", false, false],
+  ["git push -o 'note -h here' origin feat/x", "", true, false],
+  ['gh pr merge 12 --squash -t "a && b" | tail -1', "", false, false],
 ];
 
 const settings = JSON.parse(readFileSync(settingsPath, "utf8"));
@@ -122,6 +159,36 @@ test("opencode rituals template: wakes by outcome", async () => {
       { push, merge },
       command,
     );
+  }
+});
+
+// Another forge's merge rides the same defs with its own head and confirmation
+// (SKILL.md names fj): the defs are taken from the template itself, so the copy
+// that ships to other repos is judged, not this repo's projection.
+test("iskronify template defs judge another forge's merge by outcome", () => {
+  const skill = readFileSync(join(root, "skills", "iskronify", "SKILL.md"), "utf8");
+  const push = skill.split("\n").find((l) => l.startsWith("def a:") && l.includes(' push"'));
+  assert.ok(push, "push filter line present in SKILL.md");
+  const defs = push.slice(0, push.lastIndexOf("; ran(") + 2);
+  const filter = defs + 'ran("fj pr merge"; "-h|--help"; "Merged PR #")';
+  const fj = [
+    ['fj pr merge 12 -m "fix -h parsing"', "", true],
+    ["fj pr merge 12 --method squash", "", true],
+    ["fj pr merge 1 | tail", "Merged PR #1", true],
+    ["fj pr merge 1 | tail", "", false],
+    ["fj pr merge --help", "", false],
+    ['fj pr merge 12 -m "x" -h', "", false],
+    ['fj pr merge 12 -m "x" --help', "", false],
+  ];
+  for (const [command, output, wakes] of fj) {
+    const payload = JSON.stringify({ tool_input: { command }, tool_response: { stdout: output } });
+    let ran = true;
+    try {
+      execFileSync("jq", ["-e", filter], { input: payload, stdio: ["pipe", "ignore", "ignore"] });
+    } catch {
+      ran = false;
+    }
+    assert.equal(ran, wakes, command);
   }
 });
 
