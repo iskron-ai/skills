@@ -7,7 +7,9 @@
 //     hello.pending, а накопленное приходит пачкой побудки;
 //   • маркер потери — плагин, который останавливают с держащими мостами, пишет
 //     на диск, кого держал (файл на экземпляр: локаций сервиса несколько);
-//     следующий экземпляр озвучивает это в первую живую сессию, а не молчит;
+//     следующий экземпляр говорит это в сессию, державшую место, и тут же
+//     возвращает место без её хода — стоящая сессия, ждущая кадров, тулов не
+//     зовёт (#6137); не вернулось — слово туда же, и сессия под сторожем;
 //   • сторож слуха — раз в N минут стоявшие сессии спрашивают мост
 //     (`iskron/check {key?, cwd}`): мёртвый мост поднимается заново и возвращает
 //     место, глухой переоткрывает сокет; мост, места не ведущий, из-под сторожа
@@ -137,15 +139,30 @@ export interface KeeperDoors<S extends KeptSlot> {
   say: Say;
   /** Слово в сессию — ходом агента, не строкой лога (возврат места без его хода, #5366); child — адресат только своя дочерняя сессия. */
   tell: (root: string, text: string, child?: boolean) => void;
+  /** Слово о потере слуха в сессию — громко (#5140). */
+  lost: (root: string, text: string) => void;
   /** Слот корневой сессии: живой или поднятый заново; touch=false — простой не освежать (сторож — не вызов). */
   slotFor: (root: string, touch: boolean) => Promise<S>;
   ready: (slot: S) => Promise<void>;
   directoryOf: (root: string) => Promise<string | null>;
+  /** Сессия ещё есть: её место стоит возвращать, и слово до неё дойдёт. */
+  exists: (root: string) => Promise<boolean>;
 }
 
 export interface Keeper<S extends KeptSlot> {
-  /** Ключи мест из маркера потери — по сессии, их державшей: возврат по ключу точнее, чем по каталогу. */
+  /**
+   * Записи маркера потери — по сессии, их державшей: возврат по ключу точнее, чем
+   * по каталогу, а исход первого возврата такой сессии — слово в неё.
+   */
   hint(entries: LostEntry[]): void;
+  /**
+   * Места из маркера потери — обратно сразу, без хода агента: стоящая сессия,
+   * ждущая кадров, тулов не зовёт, и возврат, ждавший её вызова, не приходил
+   * никогда (#6137). Слово о потере — в державшую сессию, исход возврата — туда
+   * же. Детские места возвращаются своим мостом по ключу, когда ребёнок встанет;
+   * сессия, которой больше нет, моста не получает. true — слово сказано хоть одной.
+   */
+  resumeLost(entries: LostEntry[], word: string | null): Promise<boolean>;
   /** Новая сессия получила мост: вернуть её место с диска, если прежний экземпляр его держал. */
   resume(slot: S, root: string): Promise<void>;
   /** Успешный stand/connect/register — сессия стоит: держащий мост не жнётся, сторож смотрит. */
@@ -163,7 +180,20 @@ export function createKeeper<S extends KeptSlot>(doors: KeeperDoors<S>): Keeper<
   // подсказывается только той сессии, что держала его сокет, — другая сессия
   // того же каталога чужого места не наследует (#6017).
   const hints = new Map<string, string>();
+  // Сессия → её запись маркера потери, пока её первый возврат не прошёл: исход
+  // этого возврата — слово в неё, какой бы он ни был (#6137).
+  const marked = new Map<string, LostEntry>();
   let stopped = false;
+
+  /** Место из маркера не вернулось: слово в ту сессию, и сессия — под сторож, он повторит. */
+  function notBack(root: string, mark: LostEntry, why: string): void {
+    roots.add(root);
+    doors.tell(
+      root,
+      `Искрон: место ${mark.key ?? mark.dir ?? root} с диска не вернулось: ${why}. ` +
+        "Сторож слуха повторит возврат; не ждёшь — iskron_stand.",
+    );
+  }
 
   function selector(slot: S): { key?: string; cwd?: string; session?: string } {
     const session = slot.session ? { session: slot.session } : {};
@@ -176,17 +206,24 @@ export function createKeeper<S extends KeptSlot>(doors: KeeperDoors<S>): Keeper<
   }
 
   async function resume(slot: S, root: string): Promise<void> {
+    const mark = slot.child ? undefined : marked.get(root);
+    marked.delete(root);
     try {
       await doors.ready(slot);
-      slot.dir ??= await doors.directoryOf(root);
-      if ((!slot.dir && !slot.key) || (slot.child && !slot.key) || stopped) return;
+      slot.dir ??= mark?.dir ?? (await doors.directoryOf(root));
+      if (stopped) return;
+      if ((!slot.dir && !slot.key) || (slot.child && !slot.key)) {
+        if (mark) notBack(root, mark, "ни ключа места, ни каталога сессии");
+        return;
+      }
       const r: any = await slot.bridge.request("iskron/resume", selector(slot), {
         timeoutMs: 30_000,
       });
       if (!r?.resumed) {
+        if (mark) notBack(root, mark, typeof r?.word === "string" ? r.word : "мост не ответил");
         // Место прежней сборки без сессии по каталогу не возвращается, но и не
         // молчит: мост называет его, и слово идёт в сессию — вернуть по имени (#6017).
-        if (Array.isArray(r?.legacy) && r.legacy.length && typeof r.word === "string")
+        else if (Array.isArray(r?.legacy) && r.legacy.length && typeof r.word === "string")
           doors.tell(root, `Искрон: ${r.word}.`, slot.child);
         return;
       }
@@ -204,6 +241,7 @@ export function createKeeper<S extends KeptSlot>(doors: KeeperDoors<S>): Keeper<
         `Искрон: возврат места сессии ${root} не удался — ${(e as Error).message}`,
         "warning",
       );
+      if (mark && !stopped) notBack(root, mark, (e as Error).message);
     }
   }
 
@@ -245,7 +283,25 @@ export function createKeeper<S extends KeptSlot>(doors: KeeperDoors<S>): Keeper<
   return {
     hint(entries) {
       // Детская запись корню не подсказка — ребёнок возвращается своим мостом по ключу.
-      for (const e of entries) if (e.session && e.key && !e.child) hints.set(e.session, e.key);
+      for (const e of entries) {
+        if (!e.session || e.child) continue;
+        if (e.key) hints.set(e.session, e.key);
+        marked.set(e.session, e);
+      }
+    },
+    async resumeLost(entries, word) {
+      const seen = new Set<string>();
+      let said = false;
+      for (const e of entries) {
+        if (stopped) break;
+        if (e.child || !e.session || seen.has(e.session)) continue;
+        seen.add(e.session);
+        if (!(await doors.exists(e.session))) continue;
+        if (word) doors.lost(e.session, word);
+        said = true;
+        await doors.slotFor(e.session, false); // новый слот сам зовёт resume; живой — уже вернул
+      }
+      return said;
     },
     resume,
     stood(slot) {

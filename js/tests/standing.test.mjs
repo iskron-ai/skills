@@ -2200,6 +2200,38 @@ test("iskron/resume by the session's directory: a bridge restarted after the plu
   );
 });
 
+// A resume whose hello does not come in time is not a verdict on the place: the
+// hold record stays, so the plugin's watch can try again — dropping it left the
+// session nothing to return by (graph nks-dev: #6137). A dead token still drops it
+// (the stale-record probe above).
+test("iskron/resume without a hello in time keeps the hold record, and the next resume takes the place back", async (t) => {
+  const { fake, dir, bridge, standings } = await connected(t);
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const cwd = mkdtempSync(join(tmpdir(), "iskron-mute-dir-"));
+  await bridge.call("iskron/resume", 4, { cwd, session: "ses-mute" });
+  await bridge.call("tools/call", 5, {
+    name: "iskron_stand",
+    arguments: { realm: "nks-dev", karta: 931, name: "proba", cwd },
+  });
+  bridge.proc.kill("SIGKILL");
+  await waitFor(() => fake.state.ws.size === 0, "the socket to close");
+  await fake.control({ ws_mute: true }); // the next socket opens, but no hello comes
+  const second = startBridge(fake.mcpUrl, dir);
+  t.after(() => second.stop());
+  assert.ok((await second.call("initialize", 1, INIT)).result);
+  const mute = await second.call("iskron/resume", 2, { cwd, session: "ses-mute" });
+  assert.equal(mute.result?.resumed, false, JSON.stringify(mute));
+  assert.ok(
+    readdirSync(standings).some((f) => f.endsWith(".hold")),
+    "a missing hello must not drop the hold record — there is nothing to return by without it",
+  );
+  assert.match(mute.result.word, /hello не пришёл — запись цела/, mute.result.word);
+  const back = await second.call("iskron/resume", 3, { cwd, session: "ses-mute" });
+  assert.equal(back.result?.resumed, true, JSON.stringify(back));
+  assert.match(back.result.word, /возврат места с диска/);
+  assert.equal(fake.state.counts.connect, 1, "the place is resumed, not rotated");
+});
+
 // Two standings of one role from one working copy, both sessions gone without a
 // way back. Two holders in one directory, stood by two sessions (#5366); the
 // plugin names its session in every resume. Returns the fake, the grant

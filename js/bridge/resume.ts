@@ -127,8 +127,16 @@ export async function resumeFromDisk(
   } finally {
     noteResuming(-1);
   }
-  log(`hold record for ${key} is stale — dropped, the place is taken anew`);
-  releaseStanding("возврат с диска не удался", true);
+  // Мёртвый токен запись уже стёр (onDeadToken при возврате); не пришедший за
+  // 4 с hello — не приговор месту: запись цела, и сторож повторит возврат, а
+  // iskron_stand тем же именем перепишет её своим connect.
+  const kept = readHoldRecord(key) !== null;
+  log(
+    kept
+      ? `hold record for ${key}: no hello in time — record kept, the place is not taken`
+      : `hold record for ${key} is stale — dropped, the place is taken anew`,
+  );
+  releaseStanding("возврат с диска не удался");
   state.standing = prev; // память о прежнем имени цела: ничего вместо неё не занято
   if (rec.cwd) noteStandCwd(prevCwd); // иначе следующий голый connect вписал бы чужой каталог в запись другого места
   return null;
@@ -284,7 +292,11 @@ export async function resumeBy(sel: ResumeSelector, register = true): Promise<Re
     }
     const back = await resumeFromDisk(rec.realm, rec.karta, rec.name);
     if (!back) {
-      skipped.push(`${key}: запись протухла — место займёт iskron_stand`);
+      skipped.push(
+        readHoldRecord(key)
+          ? `${key}: hello не пришёл — запись цела, сторож повторит возврат; не ждёшь — iskron_stand`
+          : `${key}: запись протухла — место займёт iskron_stand`,
+      );
       continue;
     }
     const lines = [back.word];

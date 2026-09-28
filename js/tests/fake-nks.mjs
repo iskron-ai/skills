@@ -302,6 +302,7 @@ export async function startFakeNks(opts = {}) {
       // Подвисшее соединение (#5380): сокет открыт, но служба больше ничего в него не пишет — ни пинга, ни кадра, ни закрытия.
       if (patch.ws_hang) for (const sock of st.ws) st.hung.add(sock);
       if (Number.isInteger(patch.ws_refuse)) st.wsRefuse = patch.ws_refuse; // один раз: следующий апгрейд закрывается этим кодом, дальнейшие принимаются
+      if (patch.ws_mute) st.wsMute = true; // один раз: следующий апгрейд принят, но hello не идёт — служба медлит
       if (Number.isInteger(patch.ws_close)) {
         for (const sock of st.ws) {
           sock.write(wsFrame(0x8, Buffer.from([patch.ws_close >> 8, patch.ws_close & 0xff])));
@@ -1314,6 +1315,10 @@ export async function startFakeNks(opts = {}) {
       if (!stillHeld) for (const pl of st.places.values()) if (ofPlace(pl)) pl.listening = false;
     });
     socket.on("error", () => st.ws.delete(socket));
+    if (st.wsMute) {
+      st.wsMute = false;
+      return; // сокет открыт, hello нет — возврат с диска не дождётся доказательства слуха
+    }
     socket.write(
       wsFrame(
         0x1,

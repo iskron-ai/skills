@@ -1006,7 +1006,15 @@ function resumedWord(key, others) {
 function createKeeper(doors) {
   const roots = /* @__PURE__ */ new Set();
   const hints = /* @__PURE__ */ new Map();
+  const marked = /* @__PURE__ */ new Map();
   let stopped = false;
+  function notBack(root, mark, why) {
+    roots.add(root);
+    doors.tell(
+      root,
+      `Искрон: место ${mark.key ?? mark.dir ?? root} с диска не вернулось: ${why}. Сторож слуха повторит возврат; не ждёшь — iskron_stand.`
+    );
+  }
   function selector(slot) {
     const session = slot.session ? { session: slot.session } : {};
     if (slot.child) return slot.key ? { key: slot.key, ...session } : session;
@@ -1014,15 +1022,22 @@ function createKeeper(doors) {
     return { ...key ? { key } : {}, ...slot.dir ? { cwd: slot.dir } : {}, ...session };
   }
   async function resume(slot, root) {
+    const mark = slot.child ? void 0 : marked.get(root);
+    marked.delete(root);
     try {
       await doors.ready(slot);
-      slot.dir ??= await doors.directoryOf(root);
-      if (!slot.dir && !slot.key || slot.child && !slot.key || stopped) return;
+      slot.dir ??= mark?.dir ?? await doors.directoryOf(root);
+      if (stopped) return;
+      if (!slot.dir && !slot.key || slot.child && !slot.key) {
+        if (mark) notBack(root, mark, "ни ключа места, ни каталога сессии");
+        return;
+      }
       const r = await slot.bridge.request("iskron/resume", selector(slot), {
         timeoutMs: 3e4
       });
       if (!r?.resumed) {
-        if (Array.isArray(r?.legacy) && r.legacy.length && typeof r.word === "string")
+        if (mark) notBack(root, mark, typeof r?.word === "string" ? r.word : "мост не ответил");
+        else if (Array.isArray(r?.legacy) && r.legacy.length && typeof r.word === "string")
           doors.tell(root, `Искрон: ${r.word}.`, slot.child);
         return;
       }
@@ -1037,6 +1052,7 @@ function createKeeper(doors) {
         `Искрон: возврат места сессии ${root} не удался — ${e.message}`,
         "warning"
       );
+      if (mark && !stopped) notBack(root, mark, e.message);
     }
   }
   async function check(root) {
@@ -1070,7 +1086,25 @@ function createKeeper(doors) {
   timer.unref?.();
   return {
     hint(entries) {
-      for (const e of entries) if (e.session && e.key && !e.child) hints.set(e.session, e.key);
+      for (const e of entries) {
+        if (!e.session || e.child) continue;
+        if (e.key) hints.set(e.session, e.key);
+        marked.set(e.session, e);
+      }
+    },
+    async resumeLost(entries, word) {
+      const seen = /* @__PURE__ */ new Set();
+      let said = false;
+      for (const e of entries) {
+        if (stopped) break;
+        if (e.child || !e.session || seen.has(e.session)) continue;
+        seen.add(e.session);
+        if (!await doors.exists(e.session)) continue;
+        if (word) doors.lost(e.session, word);
+        said = true;
+        await doors.slotFor(e.session, false);
+      }
+      return said;
     },
     resume,
     stood(slot) {
@@ -1273,9 +1307,14 @@ async function setupTools(ctx, say, onChannel, rootOf) {
   const keeper = createKeeper({
     say,
     tell: (root, text, child) => onChannel(root, { logger: "iskron-channel", data: { kind: "resumed", text } }, !!child),
+    lost: (root, text) => onChannel(root, { logger: "iskron-channel", data: { kind: "lost", text } }),
     slotFor: (root, touch) => slotFor(root, touch),
     ready: readyFor,
-    directoryOf
+    directoryOf,
+    exists: (sessionID) => Promise.resolve().then(() => ctx.session.get({ sessionID })).then(
+      () => true,
+      () => false
+    )
   });
   const lost = takeLostMarker(authDir());
   let lostWord = lost?.text ?? null;
@@ -1468,6 +1507,13 @@ async function setupTools(ctx, say, onChannel, rootOf) {
       }
     }
   })();
+  if (lost) {
+    const word = lostWord;
+    lostWord = null;
+    void keeper.resumeLost(lost.entries, word).then((said) => {
+      if (!said) lostWord ??= word;
+    });
+  }
   const launcher = createLauncher({
     rootOf,
     childSlot: (sessionID, root) => childSlot(sessionID, slots.get(root)),

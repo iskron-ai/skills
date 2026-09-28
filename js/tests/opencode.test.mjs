@@ -1190,8 +1190,8 @@ test("a bridge stopped by the plugin itself is not a lost hearing, and the watch
 
 // A plugin stopped with a holding bridge (a restart, an evicted location) leaves
 // a marker next to the grant; the next instance says the loss aloud into the
-// first live session instead of standing silent over an empty board.
-test("stopping the plugin with a holding bridge leaves a marker, and the next instance says the loss into the first session", async () => {
+// session that held instead of standing silent over an empty board.
+test("stopping the plugin with a holding bridge leaves a marker, and the next instance says the loss into the session that held", async () => {
   const calls = join(SANDBOX, "marker.calls");
   writeFileSync(calls, "");
   const b = bridgeEnv("marker", { FB_CALLS: calls });
@@ -1209,6 +1209,7 @@ test("stopping the plugin with a holding bridge leaves a marker, and the next in
   assert.deepEqual(written.entries, [
     { session: "s-held", dir: "/work/held", key: "proba--931--nks-dev", child: false },
   ]);
+  writeFileSync(calls, ""); // what the next instance sends, alone
   const second = await plugin(b.env, {
     keepMarker: true,
     sessions: [
@@ -1220,37 +1221,169 @@ test("stopping the plugin with a holding bridge leaves a marker, and the next in
     assert.match(second.said(), /слух был потерян в \d\d:\d\d/);
     assert.match(second.said(), /proba--931--nks-dev/);
     assert.equal(lostMarkers().length, 0, "the marker is said once and gone");
-    await serverTools(second);
-    await second.call("iskron_orient", {}, "s-next");
-    await until(() => second.prompts.length === 1, "the loss to be said into the first session");
-    assert.equal(second.prompts[0].sessionID, "s-next");
-    assert.match(second.prompts[0].text, /слух был потерян/);
-    assert.match(second.prompts[0].text, /iskron_stand/);
-    // Another session of the lost directory gets no key: the marker's key is a
-    // hint only to the session that held its socket (graph nks-dev: #6017).
     const sentBy = () =>
       readFileSync(calls, "utf8")
         .trim()
         .split("\n")
+        .filter(Boolean)
         .map((l) => JSON.parse(l));
-    writeFileSync(calls, "");
-    await second.call("iskron_orient", {}, "s-back");
-    assert.equal(sentBy()[0].name, "iskron/resume");
-    assert.deepEqual(sentBy()[0].arguments, { cwd: "/work/held", session: "s-back" });
-    // The session that held it resumes by the marker's key, not by directory alone.
-    writeFileSync(calls, "");
-    await second.call("iskron_orient", {}, "s-held");
-    assert.equal(sentBy()[0].name, "iskron/resume");
-    assert.deepEqual(sentBy()[0].arguments, {
+    // The session that held it resumes by the marker's key, not by directory
+    // alone — and at once, without a call of its own (#6137).
+    await until(
+      () => sentBy().some((c) => c.name === "iskron/resume" && c.arguments.session === "s-held"),
+      "the held session's resume",
+    );
+    assert.deepEqual(sentBy().find((c) => c.name === "iskron/resume").arguments, {
       key: "proba--931--nks-dev",
       cwd: "/work/held",
       session: "s-held",
     });
+    await serverTools(second);
+    // The loss is said into the session that held the place, not into whichever calls first.
+    await second.call("iskron_orient", {}, "s-next");
+    await until(() => second.prompts.length >= 1, "the loss to be said");
+    const loss = second.prompts.filter((p) => /слух был потерян/.test(p.text));
+    assert.deepEqual(
+      loss.map((p) => p.sessionID),
+      ["s-held"],
+      "the loss goes into its own session",
+    );
+    assert.match(loss[0].text, /iskron_stand/);
+    // Another session of the lost directory gets no key: the marker's key is a
+    // hint only to the session that held its socket (graph nks-dev: #6017).
+    writeFileSync(calls, "");
+    await second.call("iskron_orient", {}, "s-back");
+    assert.equal(sentBy()[0].name, "iskron/resume");
+    assert.deepEqual(sentBy()[0].arguments, { cwd: "/work/held", session: "s-back" });
   } finally {
     await second.stop();
   }
   // A plugin with nothing held leaves no marker.
   assert.equal(lostMarkers().length, 0);
+});
+
+// A standing session waits for frames and calls no tool: a return that waits for
+// its call never comes, while the loss word promises the place back by itself
+// (graph nks-dev: #6137). The next instance takes the place back at once, into
+// the session that held it; a place that does not come back is said there too,
+// and the session stays under the watch.
+async function heldThenStopped(name) {
+  const b = bridgeEnv(`${name}-first`);
+  const first = await plugin(b.env, {
+    sessions: [{ id: "s-held", location: { directory: "/work/held" } }],
+  });
+  await serverTools(first);
+  await first.call("iskron_channel", { action: "connect" }, "s-held");
+  appendFileSync(`${b.events}.${pidOf(b.log)}`, event("held", { key: "proba--931--nks-dev" }));
+  await until(() => /мост держит стояние proba--931--nks-dev/.test(first.said()), "the held line");
+  await first.stop();
+  assert.equal(lostMarkers().length, 1, "the marker of the stopped instance");
+}
+
+const callsIn = (file) =>
+  readFileSync(file, "utf8")
+    .split("\n")
+    .filter(Boolean)
+    .map((l) => JSON.parse(l));
+
+test("the place of a lost marker comes back at once, without a call of the agent, into the session that held it", async () => {
+  await heldThenStopped("eager");
+  const calls = join(SANDBOX, "eager.calls");
+  const resume = join(SANDBOX, "eager.answer");
+  writeFileSync(calls, "");
+  writeFileSync(
+    resume,
+    JSON.stringify({
+      resumed: true,
+      key: "proba--931--nks-dev",
+      pending: 2,
+      word: "возврат места с диска",
+    }),
+  );
+  const b = bridgeEnv("eager", { FB_CALLS: calls, FB_RESUME: resume });
+  const second = await plugin(b.env, {
+    keepMarker: true,
+    sessions: [{ id: "s-held", location: { directory: "/work/held" } }],
+  });
+  try {
+    // No tool is called in this instance at all.
+    await until(
+      () =>
+        callsIn(calls).some(
+          (c) =>
+            c.name === "iskron/resume" &&
+            c.arguments.key === "proba--931--nks-dev" &&
+            c.arguments.session === "s-held",
+        ),
+      "the resume by the marker's key without a call",
+      1000,
+    );
+    assert.ok(
+      !callsIn(calls).some((c) => !c.name.startsWith("iskron/")),
+      "no tool call went out — the resume did not wait for one",
+    );
+    await until(
+      () => second.prompts.some((p) => /слух был потерян/.test(p.text)),
+      "the loss word",
+      1000,
+    );
+    const loss = second.prompts.find((p) => /слух был потерян/.test(p.text));
+    assert.equal(loss.sessionID, "s-held", "the loss goes into the session that held");
+    await until(
+      () => second.prompts.some((p) => /сам вернул место/.test(p.text)),
+      "the resumed word",
+      1000,
+    );
+    assert.equal(second.prompts.find((p) => /сам вернул место/.test(p.text)).sessionID, "s-held");
+  } finally {
+    await second.stop();
+  }
+});
+
+test("a place of a lost marker that does not come back is said into its session with iskron_stand, and the watch keeps trying", async () => {
+  await heldThenStopped("notback");
+  const calls = join(SANDBOX, "notback.calls");
+  const resume = join(SANDBOX, "notback.answer");
+  writeFileSync(calls, "");
+  writeFileSync(
+    resume,
+    JSON.stringify({
+      resumed: false,
+      holding: false,
+      word: "возвращать нечего — proba--931--nks-dev: hello не пришёл — запись цела",
+    }),
+  );
+  const b = bridgeEnv("notback", {
+    FB_CALLS: calls,
+    FB_RESUME: resume,
+    ISKRON_BRIDGE_WATCH_MS: 300,
+  });
+  const second = await plugin(b.env, {
+    keepMarker: true,
+    sessions: [{ id: "s-held", location: { directory: "/work/held" } }],
+  });
+  try {
+    await until(
+      () => second.prompts.some((p) => /не вернулось/.test(p.text)),
+      "the word that the place did not come back",
+      1500,
+    );
+    const word = second.prompts.find((p) => /не вернулось/.test(p.text));
+    assert.equal(word.sessionID, "s-held");
+    assert.match(word.text, /proba--931--nks-dev/, "the place is named");
+    assert.match(word.text, /hello не пришёл/, "the bridge's reason is said");
+    assert.match(word.text, /iskron_stand/, "the way to stand is said");
+    await until(
+      () =>
+        callsIn(calls).some(
+          (c) => c.name === "iskron/check" && c.arguments.key === "proba--931--nks-dev",
+        ),
+      "the watch to try the place again",
+      3000,
+    );
+  } finally {
+    await second.stop();
+  }
 });
 
 // The keeper's check must not count as activity: a slot whose bridge no longer

@@ -4345,8 +4345,11 @@ async function resumeFromDisk(realm, karta, name) {
   } finally {
     noteResuming(-1);
   }
-  log(`hold record for ${key} is stale — dropped, the place is taken anew`);
-  releaseStanding("возврат с диска не удался", true);
+  const kept = readHoldRecord(key) !== null;
+  log(
+    kept ? `hold record for ${key}: no hello in time — record kept, the place is not taken` : `hold record for ${key} is stale — dropped, the place is taken anew`
+  );
+  releaseStanding("возврат с диска не удался");
   state.standing = prev;
   if (rec3.cwd) noteStandCwd(prevCwd);
   return null;
@@ -4439,7 +4442,9 @@ async function resumeBy(sel, register = true) {
     }
     const back = await resumeFromDisk(rec3.realm, rec3.karta, rec3.name);
     if (!back) {
-      skipped.push(`${key}: запись протухла — место займёт iskron_stand`);
+      skipped.push(
+        readHoldRecord(key) ? `${key}: hello не пришёл — запись цела, сторож повторит возврат; не ждёшь — iskron_stand` : `${key}: запись протухла — место займёт iskron_stand`
+      );
       continue;
     }
     const lines = [back.word];
