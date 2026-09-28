@@ -1,5 +1,23 @@
 # Changelog
 
+## [6.24.0](https://github.com/iskron-ai/skills/compare/v6.23.0...v6.24.0) (2026-09-28)
+
+
+### Features
+
+* **iskronify:** согласование слотов — делом на контуре репо, контракт 15 ([#242](https://github.com/iskron-ai/skills/issues/242)) ([7d79dc0](https://github.com/iskron-ai/skills/commit/7d79dc069eeaa501e32d0787cfc04a21ce5f81de))
+* **skills:** открытые дела — в обзоре контура и в at ([#236](https://github.com/iskron-ai/skills/issues/236)) ([a1eb8f1](https://github.com/iskron-ai/skills/commit/a1eb8f17964b406bf970fcdbd4ee1df7b63d709b))
+* **skills:** работа через дела — поручение в деле, строки по вещам, контракт AGENTS.md 14 ([#240](https://github.com/iskron-ai/skills/issues/240)) ([7ec1ad7](https://github.com/iskron-ai/skills/commit/7ec1ad700ff6e1cdd44f8f5c59f7aed75c381084))
+
+
+### Bug Fixes
+
+* **bridge:** место возвращается без хода агента, совет на 4001 — connect, initialize без старой сессии ([#241](https://github.com/iskron-ai/skills/issues/241)) ([57eeff2](https://github.com/iskron-ai/skills/commit/57eeff2e77325af61ce1af6bd71a29df4b10ab97))
+* **iskronify:** зазор хука мержа назван — мерж на форже и ворктри ([#239](https://github.com/iskron-ai/skills/issues/239)) ([dee43a9](https://github.com/iskron-ai/skills/commit/dee43a9d281efb7469b2dd3e600c4251a292177d))
+* **iskronify:** подтяжка ствола в хуке мержа — якорь команды и «;» ([#244](https://github.com/iskron-ai/skills/issues/244)) ([526c98b](https://github.com/iskron-ai/skills/commit/526c98b79ba741a1987f48ad6deeb21f075890eb))
+* **iskronify:** фильтры хуков пуша и мержа будят по исходу ([#243](https://github.com/iskron-ai/skills/issues/243)) ([4ac0b4a](https://github.com/iskron-ai/skills/commit/4ac0b4a23e4057a7dd5ce7a40549bb266d31cc1a))
+* **skills:** журнал дела — место SHA и провенанса; файл сессии — запасной путь ([#245](https://github.com/iskron-ai/skills/issues/245)) ([1ad3e34](https://github.com/iskron-ai/skills/commit/1ad3e34e767ff59cac49fbb5b01f394cf6a44865))
+
 ## [6.23.0](https://github.com/iskron-ai/skills/compare/v6.22.0...v6.23.0) (2026-09-26)
 
 
