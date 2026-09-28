@@ -86,6 +86,14 @@ const cases = [
   ["git checkout main-foo && git pull", "", false, false],
   ["git switch master-fix && git pull", "", false, false],
   ["git checkout main -q && git pull", "", false, true],
+  // the trunk pull is a command, not a mention, and `;` chains it as `&&` does
+  ['echo "git checkout main && git pull"', "", false, false],
+  ['echo "git checkout main && git pull --ff-only"', "", false, false],
+  ["echo git checkout main && git pull", "", false, false],
+  ["echo 'git checkout main; git pull'", "", false, false],
+  ["git checkout main; git pull", "", false, true],
+  ["git checkout main -q; git pull", "", false, true],
+  ["git checkout main-foo; git pull", "", false, false],
   // a help flag is looked for outside quotes: inside them it is text
   ['gh pr merge 12 --squash --subject "fix -h parsing"', "", false, true],
   [
