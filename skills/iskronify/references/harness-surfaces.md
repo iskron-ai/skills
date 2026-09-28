@@ -70,13 +70,13 @@ export default {
       const c = input.result.content;
       const out = typeof c === "string" ? c : (c ?? []).map((p) => p.text ?? "").join("\n");
       const exit = input.result.metadata?.exit; // ключ не сверен живьём; нет его — держится форма хвоста
-      const arg = String.raw`(?:>&|'[^']*'|"(?:[^"\\]|\\.)*"|[^;&|)\n'"])*`; // кавычки — целиком: флаг в них текст
+      const arg = String.raw`(?:>&|\\.|'[^']*'|"(?:[^"\\]|\\.)*"|[^;&|)\n'"\\])*`; // кавычки — целиком: флаг в них текст
       const at = (head, noop) => String.raw`(?:^|[;&|(\n] *)${head}(?=[ ;&|)\n]|$)(?!${arg} (?:${noop})(?:[ ;&|)\n]|$))`;
       const ran = (head, noop, said) =>
         new RegExp(at(head, noop)).test(cmd) &&
         (((exit ?? 0) === 0 && new RegExp(at(head, noop) + arg + String.raw`\s*(?:&&|$)`).test(cmd)) || said.test(out));
       const pull = /(checkout|switch) (main|master)(?=[ ;&|)\n]|$)[^;|]*&& *git( -C \S+)* pull([ ;&|)]|$)/;
-      const note = ran(String.raw`(?:env +)?(?:[A-Za-z_]+=\S+ +)*git(?: -C \S+)* push`, "-h|--help", /To \S+(?:\n [!=] .*)*\n [ *+-]/)
+      const note = ran(String.raw`(?:env +)?(?:[A-Za-z_]+=\S+ +)*git(?: -C \S+)* push`, "-h|--help", /To [^\n]+(?:\n [!=] .*)*\n [ *+-]/)
         ? "[iskron] пуш — не отгрузка: самопроверка, словарный проход по тексту PR, холодное ревью этапа."
         : ran("gh pr merge", "-h|--help|--auto|--disable-auto", /(Merged|Squashed and merged|Rebased and merged) pull request/) || pull.test(cmd)
           ? "[iskron] мерж — четыре акта AGENTS.md: проткать, модусы, закрыть по оси, reconcile."

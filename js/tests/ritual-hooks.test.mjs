@@ -100,6 +100,17 @@ const cases = [
   ['git push -o "x" -h', "usage: git push", false, false],
   ["git push -o 'note -h here' origin feat/x", "", true, false],
   ['gh pr merge 12 --squash -t "a && b" | tail -1', "", false, false],
+  // an escaped quote outside quotes opens no string
+  ["gh pr merge 12 --squash -t don\\'t", "", false, true],
+  ['gh pr merge 12 --squash -t say\\"hi', "", false, true],
+  ["gh pr merge 12 --squash -t don\\'t --help", "Usage: gh pr merge", false, false],
+  // a remote with a space in its path still confirms
+  [
+    "git push /tmp/my\\ repo x 2>&1 | tail -3",
+    "To /tmp/my repo\n * [new branch]      x -> x",
+    true,
+    false,
+  ],
 ];
 
 const settings = JSON.parse(readFileSync(settingsPath, "utf8"));
