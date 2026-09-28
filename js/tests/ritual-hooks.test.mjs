@@ -12,8 +12,9 @@
 // Help (`-h`, `--help`) and `--auto` never wake; the exit status speaks for the
 // command only when it is last in the chain or stands before `&&` (a pipe or
 // `;` after it hands the status to someone else) — otherwise only a printed
-// confirmation does. The iskronify template (SKILL.md) must carry the very
-// filters this repo runs, so the projection cannot drift from its source.
+// confirmation does. The iskronify template (references/hooks.md, the copy
+// that ships to other repos) must carry the very filters this repo runs, so
+// the projection cannot drift from its source.
 //
 // ISKRON_HOOKS_SETTINGS / ISKRON_HOOKS_SURFACES point the probe at any copy (a
 // past revision) so it can be shown red before a fix.
@@ -29,6 +30,7 @@ const settingsPath = process.env.ISKRON_HOOKS_SETTINGS ?? join(root, ".claude", 
 const surfacesPath =
   process.env.ISKRON_HOOKS_SURFACES ??
   join(root, "skills", "iskronify", "references", "harness-surfaces.md");
+const templatePath = join(root, "skills", "iskronify", "references", "hooks.md");
 
 // [command, output, wakes push?, wakes merge?]
 const cases = [
@@ -204,12 +206,12 @@ test("opencode rituals template: wakes by outcome", async () => {
 });
 
 // Another forge's merge rides the same defs with its own head and confirmation
-// (SKILL.md names fj): the defs are taken from the template itself, so the copy
+// (hooks.md names fj): the defs are taken from the template itself, so the copy
 // that ships to other repos is judged, not this repo's projection.
 test("iskronify template defs judge another forge's merge by outcome", () => {
-  const skill = readFileSync(join(root, "skills", "iskronify", "SKILL.md"), "utf8");
+  const skill = readFileSync(templatePath, "utf8");
   const push = skill.split("\n").find((l) => l.startsWith("def a:") && l.includes(' push"'));
-  assert.ok(push, "push filter line present in SKILL.md");
+  assert.ok(push, "push filter line present in hooks.md");
   const defs = push.slice(0, push.lastIndexOf("; ran(") + 2);
   const filter = defs + 'ran("fj pr merge"; "-h|--help"; "Merged PR #")';
   const fj = [
@@ -237,11 +239,11 @@ test(
   "iskronify template carries the filters this repo runs",
   { skip: !!process.env.ISKRON_HOOKS_SETTINGS },
   () => {
-    const skill = readFileSync(join(root, "skills", "iskronify", "SKILL.md"), "utf8");
+    const skill = readFileSync(templatePath, "utf8");
     for (const h of bashHooks) {
       const filter = /^jq -e '([^']+)'/.exec(h.command)?.[1];
       assert.ok(filter, `hook runs a jq -e filter: ${h.command.slice(0, 60)}`);
-      assert.ok(skill.includes(filter), `SKILL.md carries the filter: ${filter.slice(0, 60)}…`);
+      assert.ok(skill.includes(filter), `hooks.md carries the filter: ${filter.slice(0, 60)}…`);
     }
   },
 );

@@ -12,7 +12,7 @@ iskronify доставляет **ритуалы** (ориентация на с�
 
 ## Claude Code
 
-Читает `CLAUDE.md`, не `AGENTS.md` — отсюда однострочный указатель (`@AGENTS.md`-импорт; Шаг 7). Хуки живут в `.claude/settings.json`, коммитятся. Ролевые файлы суб-агентов: `.claude/agents/` (см. `delegation.md`). JSON хуков, события и команда memory-guard расписаны в Шаге 4 скилла.
+Читает `CLAUDE.md`, не `AGENTS.md` — отсюда однострочный указатель (`@AGENTS.md`-импорт; Шаг 7). Хуки живут в `.claude/settings.json`, коммитятся. Ролевые файлы суб-агентов: `.claude/agents/` (см. `delegation.md`). Хуки и их события названы в Шаге 4 скилла; JSON, фильтры и команда memory-guard — `hooks.md`.
 
 ## Codex CLI
 
@@ -60,7 +60,7 @@ export default {
         throw new Error("local agent memory is forbidden for project state");
     });
     // пуш и мерж: после shell-вызова дописать одну строку в результат — пуш
-    // не отгрузка (холодное ревью этапа), мерж — четыре акта AGENTS.md.
+    // не отгрузка (холодное ревью этапа), мерж — акты после мержа AGENTS.md.
     // Будит исход, не форма: справка и --auto не будят; код выхода говорит за команду,
     // только когда она последняя в цепочке или стоит перед &&, иначе — строка подтверждения в выводе.
     // Поля result только для чтения — заменяется сам result; content — строка или массив частей.
@@ -83,7 +83,7 @@ export default {
       const note = ran(String.raw`(?:env +)?(?:[A-Za-z_]+=\S+ +)*git(?: -C \S+)* push`, "-h|--help", /To [^\n]+(?:\n [!=] .*)*\n [ *+-]/)
         ? "[iskron] пуш — не отгрузка: самопроверка, словарный проход по тексту PR, холодное ревью этапа."
         : ran("gh pr merge", "-h|--help|--auto|--disable-auto", /(Merged|Squashed and merged|Rebased and merged) pull request/) || pull.test(cmd)
-          ? "[iskron] мерж — четыре акта AGENTS.md: проткать, модусы, закрыть по оси, reconcile."
+          ? "[iskron] мерж — акты после мержа AGENTS.md: проткать, карта, модусы, закрыть по оси, reconcile, фидбэк, словарь."
           : "";
       if (!note) return;
       input.result = {
