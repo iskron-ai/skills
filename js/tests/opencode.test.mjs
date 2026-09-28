@@ -824,7 +824,9 @@ test("a dead token is loud: an error line and a prompt that names the move", asy
     await until(() => rec.prompts.length === 1, "the dead-token prompt");
     assert.equal(rec.prompts[0].sessionID, "s-holder");
     assert.match(rec.prompts[0].text, /токен мёртв/);
-    assert.match(rec.prompts[0].text, /mint/);
+    // connect on every code: mint answers 409 once the channel is back (#5189).
+    assert.match(rec.prompts[0].text, /action="connect"/);
+    assert.doesNotMatch(rec.prompts[0].text, /mint/, "4001 must not offer mint");
     assert.match(rec.said(), /\[iskron\/error\] .*токен мёртв/, "the human must see it too");
   } finally {
     await rec.stop();

@@ -249,6 +249,9 @@ for (const file of ["watchdog.mjs", "watchdog-exit.mjs"]) {
         `${file} left with 0 after a late ${code} — a clean stop is what a doer reads as "nothing to hear"`,
       );
       assert.match(said, /токен мёртв/, "the last line must name the dead token for the doer");
+      // connect on every code: mint answers 409 once the channel is back.
+      assert.match(said, /зови connect/, "the move is connect");
+      assert.doesNotMatch(said, /mint/, `${file} offers mint on ${code}`);
     });
   }
 }

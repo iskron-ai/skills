@@ -1548,7 +1548,7 @@ async function serviceUp(socketUrl) {
   return fetch(versionUrl(socketUrl), { signal: AbortSignal.timeout(5e3) }).then((r) => r.ok ? r.json() : null).catch(() => null);
 }
 function deadTokenAdvice(code) {
-  return `закрытие ${code} — токен мёртв, зови ${code === 4001 ? "mint" : "connect"}`;
+  return `закрытие ${code} — токен мёртв, зови connect`;
 }
 function classifyOrigin(frame2, myKarta) {
   const p = frame2.provenance ?? {};

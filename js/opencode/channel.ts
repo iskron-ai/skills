@@ -229,7 +229,6 @@ export function setupChannel(ctx: Context, say: Say, freshestRoot: () => string 
           loud(
             session,
             `Искрон: канал закрыт кодом ${ev.code} — токен мёртв. Зови iskron_channel(action="connect")` +
-              (ev.code === 4001 ? ' или action="mint"' : "") +
               ", затем register тем же именем: новый сокет мост возьмёт из ответа сам, перезапуск не нужен.",
           );
           return;

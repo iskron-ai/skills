@@ -1651,6 +1651,10 @@ test("a dead token forgets the hold record; a live holder's place is not taken f
     () => bridge.notifications.some((n) => n.params?.data?.kind === "dead"),
     "the dead token to reach the harness",
   );
+  // 4001 too is answered by connect: mint answers 409 once the channel is back (#5189).
+  const dead = bridge.notifications.find((n) => n.params?.data?.kind === "dead").params.data.text;
+  assert.match(dead, /зови connect/, dead);
+  assert.doesNotMatch(dead, /mint/, dead);
   await waitFor(
     () => !readdirSync(standings).some((f) => f.endsWith(".hold")),
     "a dead token to forget the record",

@@ -858,6 +858,26 @@ export async function startFakeNks(opts = {}) {
             extra,
           );
         }
+        if (a.action === "mint" && channelOfPlace(a.realm, cleanName(a.name))) {
+          // Чеканка открывает только то, чего нет: на живом канале — 409, как у
+          // настоящей поверхности (справка iskron_channel; граф nks-dev: #5189).
+          st.counts.mint_refused = (st.counts.mint_refused ?? 0) + 1;
+          return json(
+            res,
+            200,
+            {
+              jsonrpc: "2.0",
+              id: msg.id,
+              result: {
+                isError: true,
+                content: [
+                  { type: "text", text: "Отказано (409): канал уже есть — открывай его connect." },
+                ],
+              },
+            },
+            extra,
+          );
+        }
         if (a.action === "connect" || a.action === "mint") {
           st.placeArgs.push({
             action: a.action,

@@ -73,7 +73,7 @@ function open() {
       if (retry) clearTimeout(retry);
       // Нулевой выход был бы неотличим от чистой остановки, а молчаливый — от
       // работающего сторожа: оба конца пути отсюда громкие.
-      return loudExit(`ДЕЛАТЕЛЬ: закрытие ${code} — токен мёртв, зови connect (на 4001 — mint)`, 1);
+      return loudExit(`ДЕЛАТЕЛЬ: закрытие ${code} — токен мёртв, зови connect`, 1);
     }
     if (gone) return;
     gone = true;
