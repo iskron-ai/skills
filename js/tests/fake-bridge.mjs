@@ -45,6 +45,12 @@ if (process.env.FB_LOG)
     `start ${[process.pid, ...process.argv.slice(2)].join(" ")}\n`,
   );
 if (MODE === "die") process.exit(3);
+// FB_DIE_ONCE: a file whose presence makes this bridge exit at once — and it is
+// removed, so the next bridge lives (one broken start among good ones).
+if (process.env.FB_DIE_ONCE && existsSync(process.env.FB_DIE_ONCE)) {
+  unlinkSync(process.env.FB_DIE_ONCE);
+  process.exit(3);
+}
 
 const TOOLS = JSON.parse(
   process.env.FB_TOOLS ||

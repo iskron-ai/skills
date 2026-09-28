@@ -221,6 +221,7 @@ const ENV_KEYS = [
   "FB_RESUME",
   "FB_INITS",
   "FB_NET_UP",
+  "FB_DIE_ONCE",
   "ISKRON_BRIDGE_WATCH_MS",
   "ISKRON_BRIDGE_URL",
   "ISKRON_BRIDGE_TOKEN",
@@ -577,6 +578,28 @@ test("once the network is back, the tools come right after the handshake that su
     // Doubling from 200 ms: the pause due now is 3.2 s; a pause after the good
     // handshake would add the rest of the current one on top (~4.8 s in all).
     assert.ok(waited < 4000, `the tools came ${waited} ms after the network was back`);
+  } finally {
+    await rec.stop();
+  }
+});
+
+// A bridge that died is replaced at once, not after the retry pause: meanwhile the
+// dead one would be the spare a new session gets, and its first call would fail.
+test("a spare bridge that died is replaced at once: the next session's call goes through a live bridge", async () => {
+  const once = join(SANDBOX, "die-once.flag");
+  writeFileSync(once, "");
+  const b = bridgeEnv("die-once", { FB_DIE_ONCE: once, ISKRON_MCP_AUTH_POLL_MS: 5000 });
+  const rec = await plugin(b.env);
+  try {
+    await until(
+      () => existsSync(b.log) && pidsOf(b.log).length >= 1 && !alive(pidOf(b.log)),
+      "the first bridge to die",
+    );
+    await delay(300); // the plugin sees the death; the retry pause (5 s) is far from over
+    const t0 = Date.now();
+    const got = await rec.call("iskron_orient", {}, "s-after-death");
+    assert.ok(typeof got.content === "string", "the call went through a live bridge");
+    assert.ok(Date.now() - t0 < 3000, "the call did not wait for the retry pause");
   } finally {
     await rec.stop();
   }

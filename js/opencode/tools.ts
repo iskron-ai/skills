@@ -242,7 +242,7 @@ export async function setupTools(
       slot = undefined;
     }
     if (!slot) {
-      slot = spare ?? spawn();
+      slot = spare && !spare.bridge.failure ? spare : spawn();
       spare = null;
       slot.session = root;
       // Память умершего моста — каталог и ключ места — переходит к его замене:
@@ -425,18 +425,18 @@ export async function setupTools(
         say(`Искрон: мост поднят, тулов в сессии: ${list.length} (с сервера).`, "info");
         return;
       } catch (e) {
-        // Пауза — до повтора, не после: удавшийся повтор сразу ведёт к списку тулов.
-        await sleep(retryPause(misses++));
         if (stopped) return;
         if (first.bridge.failure) {
           // Мост списка умер — или был отдан сессии и отпущен ею (тогда молча):
-          // список берёт новый запас.
+          // список берёт новый запас сразу, до паузы: мёртвый запас сессии не отдаётся.
           if (first.session === null)
             say(`Искрон: мост умер (${(e as Error).message}) — поднимаю новый.`, "warning");
           if (spare === first) spare = null;
           first = spare ?? spawn();
           spare = first;
+          await sleep(retryPause(0));
         } else {
+          await sleep(retryPause(misses++)); // пауза до повтора: удавшийся — сразу к списку
           shake(first);
         }
       }

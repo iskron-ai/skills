@@ -1373,7 +1373,7 @@ async function setupTools(ctx, say, onChannel, rootOf) {
       slot = void 0;
     }
     if (!slot) {
-      slot = spare ?? spawn2();
+      slot = spare && !spare.bridge.failure ? spare : spawn2();
       spare = null;
       slot.session = root;
       slot.dir = dead?.dir ?? slot.dir;
@@ -1507,7 +1507,6 @@ async function setupTools(ctx, say, onChannel, rootOf) {
         say(`Искрон: мост поднят, тулов в сессии: ${list.length} (с сервера).`, "info");
         return;
       } catch (e) {
-        await sleep(retryPause(misses++));
         if (stopped) return;
         if (first.bridge.failure) {
           if (first.session === null)
@@ -1515,7 +1514,9 @@ async function setupTools(ctx, say, onChannel, rootOf) {
           if (spare === first) spare = null;
           first = spare ?? spawn2();
           spare = first;
+          await sleep(retryPause(0));
         } else {
+          await sleep(retryPause(misses++));
           shake(first);
         }
       }
