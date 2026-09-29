@@ -1632,12 +1632,13 @@ test("satellite: connect and register carry satellite_of = the caller's place id
   const register = mine.find((x) => x.action === "register");
   assert.equal(connect?.satellite_of, ID, JSON.stringify(mine));
   assert.equal(register?.satellite_of, ID, JSON.stringify(mine));
-  // Tripwire on the snapshot, not evidence about the bridge: what the platform keeps today is
-  // nothing — iskron_channel does not declare the field and mcp drops it on the way to
-  // /channels (r5 #6102). Red here once a snapshot declares it: then the platform stores the
-  // satellite, and this probe should say so.
-  for (const x of fake.state.placeArgs)
-    assert.ok(!("satellite_of" in x), `dropped as by the server: ${JSON.stringify(x)}`);
+  // The platform keeps it: since mcp 0.92.0 iskron_channel declares satellite_of (the
+  // surface snapshot says so, r5 #6102), and the satellite's connect and register reach
+  // /channels with the caller's place id — the fake passes it on by the same schema.
+  const kept = fake.state.placeArgs.filter((x) => x.name === `${caller}.sub-1`);
+  assert.ok(kept.length >= 2, JSON.stringify(fake.state.placeArgs));
+  for (const x of kept)
+    assert.equal(x.satellite_of, ID, `kept by the server: ${JSON.stringify(x)}`);
   // Contrast on the same fake: a session bridge's connect and register.
   const home = mkdtempSync(join(tmpdir(), "iskron-sess-"));
   const session = startBridge(fake.mcpUrl, home);
@@ -1785,19 +1786,19 @@ test("fake NKS drops arguments the surface snapshot does not declare, silently; 
       await post(
         {
           method: "tools/call",
-          params: { name: "iskron_channel", arguments: { ...arguments_, satellite_of: "u-1" } },
+          params: { name: "iskron_channel", arguments: { ...arguments_, not_yet_declared: "u-1" } },
         },
         sid,
       )
     ).json();
     assert.ok(!r.result?.isError, JSON.stringify(r));
-    assert.equal(fake.state.calls.at(-1).arguments.satellite_of, "u-1", "the raw call is kept");
+    assert.equal(fake.state.calls.at(-1).arguments.not_yet_declared, "u-1", "the raw call is kept");
     return fake.state.placeArgs.find((x) => x.action === "connect");
   };
   const today = await connectWith({});
   assert.ok(today, "connect went through — no refusal");
-  assert.ok(!("satellite_of" in today), JSON.stringify(today));
-  // A probe of the pending server change (r5 #6102) opts in by name.
-  const pending = await connectWith({ futureArgs: { iskron_channel: ["satellite_of"] } });
-  assert.equal(pending?.satellite_of, "u-1", JSON.stringify(pending));
+  assert.ok(!("not_yet_declared" in today), JSON.stringify(today));
+  // A probe of a pending server change opts in by name.
+  const pending = await connectWith({ futureArgs: { iskron_channel: ["not_yet_declared"] } });
+  assert.equal(pending?.not_yet_declared, "u-1", JSON.stringify(pending));
 });
