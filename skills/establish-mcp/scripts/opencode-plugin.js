@@ -1890,9 +1890,15 @@ function createUsageFeed(opts) {
       bySession.set(session, u);
       schedule(session);
     },
+    forget(session) {
+      clearTimeout(timers.get(session));
+      timers.delete(session);
+      bySession.delete(session);
+    },
     stop() {
       for (const t of timers.values()) clearTimeout(t);
       timers.clear();
+      bySession.clear();
     }
   };
 }
@@ -1992,6 +1998,7 @@ async function setup(ctx) {
             if (!id) break;
             roots.delete(id);
             seen.delete(id);
+            usage.forget(id);
             half.forget(id);
             break;
           case "session.created": {

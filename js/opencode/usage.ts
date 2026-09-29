@@ -25,7 +25,7 @@ export function createUsageFeed(opts: {
   listModels: () => Promise<unknown>;
   /** Мост держащего слота сессии; null — места нет, отдавать некуда. */
   bridgeOf: (session: string) => Bridge | null;
-}): { onEvent: (ev: any) => void; stop: () => void } {
+}): { onEvent: (ev: any) => void; forget: (session: string) => void; stop: () => void } {
   const bySession = new Map<string, UsagePayload & { model?: string }>();
   const timers = new Map<string, ReturnType<typeof setTimeout>>();
   const windows = new Map<string, number>(); // "provider/model" → limit.context
@@ -92,9 +92,15 @@ export function createUsageFeed(opts: {
       bySession.set(session, u);
       schedule(session);
     },
+    forget(session: string): void {
+      clearTimeout(timers.get(session));
+      timers.delete(session);
+      bySession.delete(session);
+    },
     stop(): void {
       for (const t of timers.values()) clearTimeout(t);
       timers.clear();
+      bySession.clear();
     },
   };
 }

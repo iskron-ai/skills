@@ -138,6 +138,7 @@ async function setup(ctx: Context): Promise<() => void> {
             if (!id) break;
             roots.delete(id);
             seen.delete(id);
+            usage.forget(id);
             half.forget(id);
             break;
           case "session.created": {

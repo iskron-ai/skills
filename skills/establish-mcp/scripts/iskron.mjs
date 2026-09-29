@@ -5620,9 +5620,11 @@ async function runUsage(msg) {
   if (context !== void 0 && window) u.percent = Math.round(100 * context / window);
   rememberUsage(u);
   let pushed = false;
-  if (state.standing && Date.now() - publishedAt >= MIN_GAP_MS && moved(published2, u)) {
+  const s2 = state.standing;
+  const away = !!s2 && isParked(s2.realm, s2.karta, s2.name ?? "");
+  if (s2 && !away && Date.now() - publishedAt >= MIN_GAP_MS && moved(published2, u)) {
     publishedAt = Date.now();
-    const got = await replayRegister(state.standing);
+    const got = await replayRegister(s2);
     pushed = !!got && !got.error && !got.result?.isError;
     if (pushed) published2 = u;
     else

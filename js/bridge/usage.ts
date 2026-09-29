@@ -3,6 +3,7 @@
 // ключом usage в полный набор attrs (placefields.ts) и повторяет register
 // своего места — не чаще раза в минуту и только при заметном сдвиге: register
 // — вызов на сервер, а цифры меняются каждый шаг.
+import { isParked } from "./hold.ts";
 import { rememberUsage } from "./placefields.ts";
 import { replayRegister } from "./standing.ts";
 import { log } from "./streams.ts";
@@ -55,9 +56,12 @@ export async function runUsage(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   if (context !== undefined && window) u.percent = Math.round((100 * context) / window);
   rememberUsage(u);
   let pushed = false;
-  if (state.standing && Date.now() - publishedAt >= MIN_GAP_MS && moved(published, u)) {
+  const s = state.standing;
+  // Ушёл с места (leave) — register вернул бы привязку отпущенного места; цифры едут со следующим занятием.
+  const away = !!s && isParked(s.realm, s.karta, s.name ?? "");
+  if (s && !away && Date.now() - publishedAt >= MIN_GAP_MS && moved(published, u)) {
     publishedAt = Date.now();
-    const got = await replayRegister(state.standing);
+    const got = await replayRegister(s);
     pushed = !!got && !got.error && !got.result?.isError;
     if (pushed) published = u;
     else
