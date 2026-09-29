@@ -22,8 +22,19 @@ const hashOf = (key: string): string => createHash("sha256").update(key).digest(
  */
 export function socketPathOf(authDir: string, key: string): string {
   if (process.platform === "win32") return `\\\\.\\pipe\\iskron-${hashOf(key)}`;
-  return join(standingsDirOf(authDir), `${hashOf(key)}.sock`);
+  const near = join(standingsDirOf(authDir), `${hashOf(key)}.sock`);
+  if (Buffer.byteLength(near) <= SOCKET_PATH_MAX) return near;
+  // Каталог гранта длинный — сокет в коротком личном каталоге, под хешем
+  // каталога и ключа: два моста с разными каталогами не делят одного сокета.
+  return join(shortSocketDir(), `${hashOf(authDir + "\0" + key)}.sock`);
 }
+
+/** Предел пути unix-сокета без завершающего нуля: 104 байта на macOS и BSD, 108 на Linux. */
+const SOCKET_PATH_MAX = 103;
+
+/** Короткий личный каталог сокетов — когда путь под каталогом гранта не влезает в предел. */
+export const shortSocketDir = (): string =>
+  join("/tmp", `iskron-${typeof process.getuid === "function" ? process.getuid() : "u"}`);
 
 export const keyFilePathOf = (authDir: string, key: string): string =>
   join(standingsDirOf(authDir), `${hashOf(key)}.key`);

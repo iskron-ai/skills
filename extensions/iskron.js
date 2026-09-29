@@ -82,6 +82,14 @@ function strip(url) {
   return url.replace(/\/+$/, "");
 }
 
+// js/bridge/oauth/discovery.ts
+var REGISTRATION_REUSE_MS = 45 * 6e4;
+
+// js/bridge/oauth/flow.ts
+var CLAIM_WAIT_MS = Number(process.env.ISKRON_BRIDGE_CLAIM_WAIT_MS) || 15e3;
+var LANDED_POLL_MS = Number(process.env.ISKRON_BRIDGE_LANDED_POLL_MS) || 2e3;
+var RELEASE_GAP_MS = Number(process.env.ISKRON_BRIDGE_RELEASE_GAP_MS) || 0;
+
 // js/shared/room-kinds.ts
 var WORDS = {
   said: "слово от {author}",

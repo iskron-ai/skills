@@ -2,14 +2,16 @@
 // к которому цепляется сторож места, его кольцо кадров и память отданного.
 // Сокет службы у моста один на канал (hold.ts), дверей — по одной на место:
 // канал держит места в нескольких графах, и кадр идёт к двери своего места.
-import { chmodSync, mkdirSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, lstatSync, mkdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { createServer, type Server, type Socket } from "node:net";
+import { dirname } from "node:path";
 
 import { type Frame } from "../shared/channel.ts";
 import { deliveredKeys, seenIds } from "../shared/seen.ts";
 import {
   keyFilePathOf,
   seenFilePathOf,
+  shortSocketDir,
   socketPathOf,
   standingsDirOf,
 } from "../shared/standings.ts";
@@ -22,6 +24,25 @@ import { log } from "./streams.ts";
 import { sweepStale } from "./sweep.ts";
 
 const RING = 20; // кадров, которые прицепившийся позже клиент получит задним числом
+
+/**
+ * Короткий каталог сокетов лежит в общем /tmp: заводится 0700 и берётся, только
+ * если он каталог (не ссылка) этого пользователя без прав группы и прочих.
+ * Иначе — слово, почему нет; null — годен.
+ */
+function privateDirProblem(dir: string): string | null {
+  try {
+    mkdirSync(dir, { mode: 0o700 });
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== "EEXIST") return `${dir}: ${(e as Error).message}`;
+  }
+  const st = lstatSync(dir);
+  if (!st.isDirectory()) return `${dir} — не каталог`;
+  if (typeof process.getuid === "function" && st.uid !== process.getuid())
+    return `${dir} принадлежит другому пользователю`;
+  if (st.mode & 0o077) return `${dir} открыт группе или прочим`;
+  return null;
+}
 
 /** Ключ стояния без места — сокет из окружения (hold.ts keyFor). */
 export const ENV_KEY = "env";
@@ -79,6 +100,8 @@ export class Door {
   readonly roomBatch = new RoomBatch();
   /** id места у платформы (hello standings[].standing_id) — по нему кадр находит дверь и занятость — место. */
   standingId: string | null = null;
+  /** Почему локальный сокет не поднялся; null — поднят или ещё поднимается. */
+  listenError: string | null = null;
   private server: Server | null = null;
   private readonly hooks: DoorHooks;
 
@@ -124,6 +147,14 @@ export class Door {
     const path = this.socketPath;
     const key = this.key;
     mkdirSync(standingsDirOf(CFG.authDir), { recursive: true, mode: 0o700 });
+    if (process.platform !== "win32" && dirname(path) === shortSocketDir()) {
+      const bad = privateDirProblem(dirname(path));
+      if (bad) {
+        this.listenError = bad;
+        this.hooks.onError(`ДЕЛАТЕЛЬ: локальный сокет стояния не поднят — ${bad}`);
+        return;
+      }
+    }
     sweepStale(CFG.authDir, key);
     writeFileSync(keyFilePathOf(CFG.authDir, key), key + "\n", { mode: 0o600 });
     if (process.platform !== "win32") {
@@ -167,11 +198,12 @@ export class Door {
       const late = this.hooks.lateEvent();
       if (late) sock.write(JSON.stringify(late) + "\n");
     });
-    srv.on("error", (e) =>
+    srv.on("error", (e) => {
+      this.listenError = e.message;
       this.hooks.onError(
         `ДЕЛАТЕЛЬ: локальный сокет стояния не поднялся (${e.message}) — сторожу не к чему цепляться`,
-      ),
-    );
+      );
+    });
     srv.listen(path, () => {
       if (process.platform !== "win32") {
         try {

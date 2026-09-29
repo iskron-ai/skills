@@ -56,8 +56,12 @@ var standingsDirOf = (authDir) => join(authDir, "standings");
 var hashOf = (key) => createHash2("sha256").update(key).digest("hex").slice(0, 16);
 function socketPathOf(authDir, key) {
   if (process.platform === "win32") return `\\\\.\\pipe\\iskron-${hashOf(key)}`;
-  return join(standingsDirOf(authDir), `${hashOf(key)}.sock`);
+  const near = join(standingsDirOf(authDir), `${hashOf(key)}.sock`);
+  if (Buffer.byteLength(near) <= SOCKET_PATH_MAX) return near;
+  return join(shortSocketDir(), `${hashOf(authDir + "\0" + key)}.sock`);
 }
+var SOCKET_PATH_MAX = 103;
+var shortSocketDir = () => join("/tmp", `iskron-${typeof process.getuid === "function" ? process.getuid() : "u"}`);
 var keyFilePathOf = (authDir, key) => join(standingsDirOf(authDir), `${hashOf(key)}.key`);
 var holdFilePathOf = (authDir, key) => join(standingsDirOf(authDir), `${hashOf(key)}.hold`);
 function seenFilePathOf(authDir, key, server = "") {
@@ -1861,6 +1865,8 @@ async function post(msg, onMessage) {
   if (lang() === "en") headers["accept-language"] = "en";
   const token = CFG.pat ?? loadStore().tokens?.access_token ?? null;
   if (token) headers.authorization = `Bearer ${token}`;
+  else if (loginPublished())
+    throw new UpstreamError("unauthorized (login pending)", "auth", null, UpstreamError.NOT_SENT);
   const isInit = msg?.method === "initialize";
   if (isInit && state.sessionId) {
     log(`initialize under a held session id (${state.sessionId}) — sent without it`);
@@ -2018,8 +2024,9 @@ function stampOrigin(frame2) {
 }
 
 // js/bridge/door.ts
-import { chmodSync, mkdirSync as mkdirSync5, unlinkSync as unlinkSync6, writeFileSync as writeFileSync7 } from "node:fs";
+import { chmodSync, lstatSync, mkdirSync as mkdirSync5, unlinkSync as unlinkSync6, writeFileSync as writeFileSync7 } from "node:fs";
 import { createServer as createServer2 } from "node:net";
+import { dirname as dirname2 } from "node:path";
 
 // js/shared/room-kinds.ts
 var WORDS = {
@@ -2891,6 +2898,19 @@ function sweepStale(authDir, mine) {
 
 // js/bridge/door.ts
 var RING = 20;
+function privateDirProblem(dir) {
+  try {
+    mkdirSync5(dir, { mode: 448 });
+  } catch (e) {
+    if (e.code !== "EEXIST") return `${dir}: ${e.message}`;
+  }
+  const st = lstatSync(dir);
+  if (!st.isDirectory()) return `${dir} — не каталог`;
+  if (typeof process.getuid === "function" && st.uid !== process.getuid())
+    return `${dir} принадлежит другому пользователю`;
+  if (st.mode & 63) return `${dir} открыт группе или прочим`;
+  return null;
+}
 var ENV_KEY = "env";
 var Door = class {
   key;
@@ -2907,6 +2927,8 @@ var Door = class {
   roomBatch = new RoomBatch();
   /** id места у платформы (hello standings[].standing_id) — по нему кадр находит дверь и занятость — место. */
   standingId = null;
+  /** Почему локальный сокет не поднялся; null — поднят или ещё поднимается. */
+  listenError = null;
   server = null;
   hooks;
   constructor(key, hooks) {
@@ -2945,6 +2967,14 @@ var Door = class {
     const path = this.socketPath;
     const key = this.key;
     mkdirSync5(standingsDirOf(CFG.authDir), { recursive: true, mode: 448 });
+    if (process.platform !== "win32" && dirname2(path) === shortSocketDir()) {
+      const bad = privateDirProblem(dirname2(path));
+      if (bad) {
+        this.listenError = bad;
+        this.hooks.onError(`ДЕЛАТЕЛЬ: локальный сокет стояния не поднят — ${bad}`);
+        return;
+      }
+    }
     sweepStale(CFG.authDir, key);
     writeFileSync7(keyFilePathOf(CFG.authDir, key), key + "\n", { mode: 384 });
     if (process.platform !== "win32") {
@@ -2980,12 +3010,12 @@ var Door = class {
       const late = this.hooks.lateEvent();
       if (late) sock.write(JSON.stringify(late) + "\n");
     });
-    srv.on(
-      "error",
-      (e) => this.hooks.onError(
+    srv.on("error", (e) => {
+      this.listenError = e.message;
+      this.hooks.onError(
         `ДЕЛАТЕЛЬ: локальный сокет стояния не поднялся (${e.message}) — сторожу не к чему цепляться`
-      )
-    );
+      );
+    });
     srv.listen(path, () => {
       if (process.platform !== "win32") {
         try {
@@ -3051,7 +3081,7 @@ var Door = class {
 import { execFileSync } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { hostname } from "node:os";
-import { basename as basename3, dirname as dirname2, resolve as resolve2 } from "node:path";
+import { basename as basename3, dirname as dirname3, resolve as resolve2 } from "node:path";
 var NAME_MAX = 48;
 var normKarta = (k) => String(k ?? "").trim().replace(/^#/, "");
 var normName = (n) => typeof n === "string" ? n.trim() : "";
@@ -3110,7 +3140,7 @@ function repoName(cwd = process.cwd()) {
   if (!gitDir || !common || real(resolve2(cwd, gitDir)) === real(resolve2(cwd, common)))
     return basename3(top || cwd);
   const shared = real(resolve2(cwd, common));
-  if (basename3(shared) === ".git") return basename3(dirname2(shared));
+  if (basename3(shared) === ".git") return basename3(dirname3(shared));
   const origin = git(["remote", "get-url", "origin"], cwd).replace(/\/+$/, "");
   const fromOrigin = basename3(origin.replace(/^.*:/, "/")).replace(/\.git$/, "");
   return fromOrigin || basename3(top || cwd);
@@ -4890,6 +4920,10 @@ var SW = {
     `hello получен: ожидало кадров — ${pending}.`,
     `hello received: frames waiting — ${pending}.`
   ),
+  noLocalSocket: (why) => L(
+    `НО локальный сокет стояния не поднят (${why}) — сторожу не к чему цепляться: слуха в этой сессии нет, команда сторожа выше не сработает. Место занято, записи подписаны; скажи это человеку.`,
+    `BUT the standing's local socket is not up (${why}) — the watchdog has nothing to attach to: no hearing in this session, the watchdog command above will not work. The seat is held, records are signed; tell the human.`
+  ),
   noHello: () => L(
     "hello за 4 с не пришёл — сокет мост держит, но доказательства слуха ещё нет: проверь доску.",
     "no hello within 4 s — the bridge holds the socket, but there is no proof of hearing yet: check the board."
@@ -4939,9 +4973,9 @@ var SW = {
 
 // js/bridge/update.ts
 import { spawn as spawn2 } from "node:child_process";
-import { existsSync as existsSync4, lstatSync, mkdirSync as mkdirSync6, readFileSync as readFileSync12, renameSync as renameSync5, writeFileSync as writeFileSync8 } from "node:fs";
+import { existsSync as existsSync4, lstatSync as lstatSync2, mkdirSync as mkdirSync6, readFileSync as readFileSync12, renameSync as renameSync5, writeFileSync as writeFileSync8 } from "node:fs";
 import { homedir as homedir4 } from "node:os";
-import { dirname as dirname3, join as join11 } from "node:path";
+import { dirname as dirname4, join as join11 } from "node:path";
 import { fileURLToPath as fileURLToPath3 } from "node:url";
 
 // js/shared/home.ts
@@ -4972,14 +5006,14 @@ var opencodePluginPath = () => join11(homedir4(), ".config", "opencode", "plugin
 var setupPathOf = (authDir) => join11(authDir, "SETUP.md");
 var latestPathOf = (authDir) => join11(authDir, "latest.json");
 function writeAtomic(path, bytes) {
-  mkdirSync6(dirname3(path), { recursive: true, mode: 448 });
+  mkdirSync6(dirname4(path), { recursive: true, mode: 448 });
   const tmp = `${path}.tmp-${process.pid}`;
   writeFileSync8(tmp, bytes, { mode: 420 });
   renameSync5(tmp, path);
 }
 var isSymlink = (path) => {
   try {
-    return lstatSync(path).isSymbolicLink();
+    return lstatSync2(path).isSymbolicLink();
   } catch {
     return false;
   }
@@ -5009,7 +5043,7 @@ function syncHome(self = selfPath()) {
     writeAtomic(home, mine);
     out5.copied.push(home);
     const plugin = opencodePluginPath();
-    const packaged = join11(dirname3(self), "opencode-plugin.js");
+    const packaged = join11(dirname4(self), "opencode-plugin.js");
     if (existsSync4(plugin) && existsSync4(packaged)) {
       const fresh = readFileSync12(packaged);
       if (!readFileSync12(plugin).equals(fresh)) {
@@ -5425,6 +5459,8 @@ async function runStand(msg) {
     const hello = await awaitHello(4e3);
     lines.push(hello ? SW.hello(String(hello.pending ?? 0)) : SW.noHello());
   }
+  const localFault = heardHere ? doors().find((d) => d.key === heldKey(realm))?.listenError ?? null : null;
+  if (localFault) lines.push(SW.noLocalSocket(localFault));
   const main = state.standing;
   lines.push(
     await armRoleHook({
@@ -6429,13 +6465,13 @@ function runWatchdogExit(argv2) {
 import { createHash as createHash6 } from "node:crypto";
 import { existsSync as existsSync8, readdirSync as readdirSync6, readFileSync as readFileSync15 } from "node:fs";
 import { homedir as homedir7 } from "node:os";
-import { dirname as dirname5, join as join15 } from "node:path";
+import { dirname as dirname6, join as join15 } from "node:path";
 import { fileURLToPath as fileURLToPath4 } from "node:url";
 
 // js/cli/opencode-config.ts
 import { existsSync as existsSync7, readFileSync as readFileSync14 } from "node:fs";
 import { homedir as homedir6 } from "node:os";
-import { dirname as dirname4, join as join14 } from "node:path";
+import { dirname as dirname5, join as join14 } from "node:path";
 function openCodeMcpEntries(out5) {
   const dirFiles = (d) => [
     join14(d, "opencode.json"),
@@ -6447,7 +6483,7 @@ function openCodeMcpEntries(out5) {
   if (!process.env.OPENCODE_CONFIG_PROJECT_DISABLE)
     for (let d = process.cwd(); ; ) {
       upwards.push(...dirFiles(d));
-      const up = dirname4(d);
+      const up = dirname5(d);
       if (up === d) break;
       d = up;
     }
@@ -6798,7 +6834,7 @@ function harnessReport() {
   const opencodeDir = join15(homedir7(), ".config", "opencode");
   if (existsSync8(opencodeDir)) {
     const copy = join15(opencodeDir, "plugins", "iskron.js");
-    const packaged = join15(dirname5(fileURLToPath4(import.meta.url)), "opencode-plugin.js");
+    const packaged = join15(dirname6(fileURLToPath4(import.meta.url)), "opencode-plugin.js");
     if (!existsSync8(copy)) {
       out2(`OpenCode: плагина нет (${copy}) — его кладёт establish-mcp при подключении`);
     } else if (!existsSync8(packaged)) {

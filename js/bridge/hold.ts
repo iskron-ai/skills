@@ -129,7 +129,7 @@ const doorHooks: DoorHooks = {
 };
 
 /** Все двери канала: основного места и мест рядом. */
-const doors = (): Door[] => [...(door ? [door] : []), ...extraPlaces().map((p) => p.door)];
+export const doors = (): Door[] => [...(door ? [door] : []), ...extraPlaces().map((p) => p.door)];
 
 function isOwn(realm: string, karta: string | number, name: string): boolean {
   const s = state.standing;

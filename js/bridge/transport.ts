@@ -2,6 +2,7 @@ import { lang } from "../shared/lang.ts";
 import { noteServerDate } from "./clock.ts";
 import { CFG } from "./config.ts";
 import { errorCode, errorMessage, UpstreamError } from "./errors.ts";
+import { loginPublished } from "./oauth/flow.ts";
 import { loadStore, saveServerCache } from "./store.ts";
 import { debug, log } from "./streams.ts";
 import { type JsonRpcMessage } from "./types.ts";
@@ -118,6 +119,9 @@ export async function post(
   // PAT старше хранилища: с ним грант на диске не читается вовсе (#4267).
   const token = CFG.pat ?? loadStore().tokens?.access_token ?? null;
   if (token) headers.authorization = `Bearer ${token}`;
+  // No grant and a login already out: the server can only answer 401 — say it here.
+  else if (loginPublished())
+    throw new UpstreamError("unauthorized (login pending)", "auth", null, UpstreamError.NOT_SENT);
   const isInit = msg?.method === "initialize";
   if (isInit && state.sessionId) {
     // An initialize opens a session and never rides one (the MCP spec): the id
