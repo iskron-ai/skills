@@ -167,6 +167,7 @@ function fakeCtx({ sessions = [], skills = [], gone = new Set(), inboxIds = fals
       },
     },
     skill: { list: async () => ({ location: { directory: SANDBOX }, data: skills }) },
+    model: { list: async () => [{ id: "m1", providerID: "p", limit: { context: 200000 } }] },
     event: {
       subscribe: async function* ({ signal } = {}) {
         while (!signal?.aborted) {
@@ -1189,6 +1190,51 @@ test("a bridge that dies at every start is raised with a growing pause, not a fl
     const spawns = pidsOf(b.log).length;
     assert.ok(spawns >= 2, `the dead bridge is raised again: ${spawns}`);
     assert.ok(spawns <= 8, `spawns in 1.5 s with a 50 ms base pause: ${spawns}`);
+  } finally {
+    await rec.stop();
+  }
+});
+
+// The session's spend goes to the holding session's bridge (graph nks-dev: #6271):
+// tokens spent from session.usage.updated, the window's fill from the last
+// step, the window's size from the step's model — and nothing without a place.
+test("usage events reach the holding session's bridge as iskron/usage, with the model's window", async () => {
+  const calls = join(SANDBOX, "usage.calls");
+  writeFileSync(calls, "");
+  const b = bridgeEnv("usage", { FB_CALLS: calls, ISKRON_USAGE_DEBOUNCE_MS: 50 });
+  const rec = await plugin(b.env, {
+    sessions: [{ id: "s-use", location: { directory: "/work/u" } }],
+  });
+  const usageCalls = () =>
+    readFileSync(calls, "utf8")
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((l) => JSON.parse(l))
+      .filter((c) => c.name === "iskron/usage");
+  try {
+    await serverTools(rec);
+    const tok = { input: 900, output: 100, reasoning: 0, cache: { read: 50000, write: 1000 } };
+    // No place yet: the numbers have nowhere to go.
+    rec.emit({ type: "session.usage.updated", data: { sessionID: "s-use", tokens: tok } });
+    await delay(200);
+    assert.equal(usageCalls().length, 0, "no place, no call");
+    await rec.call("iskron_channel", { action: "connect" }, "s-use");
+    const pid = pidOf(b.log);
+    appendFileSync(`${b.events}.${pid}`, event("held", { key: "use--931--nks-dev" }));
+    await until(() => /мост держит стояние use--931--nks-dev/.test(rec.said()), "the held line");
+    rec.emit({
+      type: "session.step.started",
+      data: { sessionID: "s-use", model: { id: "m1", providerID: "p" } },
+    });
+    rec.emit({ type: "session.step.ended", data: { sessionID: "s-use", tokens: tok } });
+    rec.emit({ type: "session.usage.updated", data: { sessionID: "s-use", tokens: tok } });
+    await until(() => usageCalls().length > 0, "the usage call");
+    assert.deepEqual(usageCalls().at(-1).arguments, {
+      tokens: 2000,
+      context: 51900,
+      window: 200000,
+    });
   } finally {
     await rec.stop();
   }

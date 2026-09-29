@@ -3693,6 +3693,10 @@ Frames also come as MCP notifications (logger iskron-channel).`
 var model = "";
 var extras2 = /* @__PURE__ */ new Map();
 var placeKey = (p) => `${String(p.realm ?? "")}|${normKarta(p.karta)}|${normName(p.name)}`;
+var usage = null;
+function rememberUsage(u) {
+  usage = u;
+}
 var satelliteOf = "";
 var satelliteOfId = "";
 function noteSatelliteOf(address, id) {
@@ -3714,7 +3718,8 @@ function placeFields(place = {}) {
       ...extra,
       build: { name: "iskron-bridge", version: VERSION, stamp: BUILD.split("+")[1] ?? "" },
       ...harness ? { harness } : {},
-      ...satelliteOf ? { satellite_of: satelliteOf } : {}
+      ...satelliteOf ? { satellite_of: satelliteOf } : {},
+      ...usage ? { usage } : {}
     }
   };
 }
@@ -5589,6 +5594,45 @@ async function recheckTools(ask, emit2) {
   emit2({ jsonrpc: "2.0", method: "notifications/tools/list_changed" });
 }
 
+// js/bridge/usage.ts
+var MIN_GAP_MS = Number(process.env.ISKRON_USAGE_GAP_MS || 6e4);
+var published2 = null;
+var publishedAt = 0;
+var num = (v) => typeof v === "number" && Number.isFinite(v) && v >= 0 ? Math.round(v) : void 0;
+function moved(a, b) {
+  if (!a) return true;
+  if (a.percent !== void 0 && b.percent !== void 0 && Math.abs(b.percent - a.percent) >= 5)
+    return true;
+  if (b.tokens !== void 0 && (a.tokens === void 0 || b.tokens >= a.tokens * 1.1 + 1))
+    return true;
+  return a.window !== b.window;
+}
+var isUsageCall = (msg) => msg?.method === "iskron/usage";
+async function runUsage(msg) {
+  const p = msg.params ?? {};
+  const u = { at: (/* @__PURE__ */ new Date()).toISOString() };
+  const tokens = num(p.tokens);
+  const context = num(p.context);
+  const window = num(p.window);
+  if (tokens !== void 0) u.tokens = tokens;
+  if (context !== void 0) u.context = context;
+  if (window) u.window = window;
+  if (context !== void 0 && window) u.percent = Math.round(100 * context / window);
+  rememberUsage(u);
+  let pushed = false;
+  if (state.standing && Date.now() - publishedAt >= MIN_GAP_MS && moved(published2, u)) {
+    publishedAt = Date.now();
+    const got = await replayRegister(state.standing);
+    pushed = !!got && !got.error && !got.result?.isError;
+    if (pushed) published2 = u;
+    else
+      log(
+        `usage: register did not take the attrs this time — ${JSON.stringify(got?.error ?? got?.result ?? null).slice(0, 200)}`
+      );
+  }
+  return { jsonrpc: "2.0", id: msg.id, result: { pushed, usage: u } };
+}
+
 // js/bridge/deliver.ts
 function syntheticError(id, message, outcome = UpstreamError.UNKNOWN, holdOff = false) {
   const kind = holdOff === true ? "wait" : holdOff;
@@ -5739,6 +5783,10 @@ async function deliverOne(msg) {
       }
       if (isResumeCall(msg) || isCheckCall(msg)) {
         emit(await serialized(() => isResumeCall(msg) ? runResume(msg) : runCheck(msg)));
+        return;
+      }
+      if (isUsageCall(msg)) {
+        emit(await serialized(() => runUsage(msg)));
         return;
       }
       heldReply = null;

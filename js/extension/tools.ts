@@ -23,6 +23,7 @@ import { Bridge, resultToContent, snippet, toParameters } from "../shared/bridge
 import { PI_CLIENT } from "../shared/clients.ts";
 import { enterCase, type LaunchCall, parseLaunch, withWord } from "../shared/launch.ts";
 import { findBridge, type Notify, refreshHomeBridge } from "./home-copy.ts";
+import { setupUsage } from "./usage.ts";
 
 export type ChannelEventSink = (params: any) => void;
 
@@ -342,6 +343,9 @@ export function setupBridge(pi: ExtensionAPI, onChannel: ChannelEventSink): void
       }),
     ]);
   });
+
+  // Расход сессии — мосту, пока он держит место (usage.ts, #6271).
+  setupUsage(pi, () => (heldName ? bridge : null));
 
   pi.on("session_shutdown", async () => {
     // Идемпотентно: pi зовёт это и на путях, где ничего не поднималось.

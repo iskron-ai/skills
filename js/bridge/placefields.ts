@@ -20,6 +20,12 @@ type Place = { realm?: unknown; karta?: unknown; name?: unknown };
 const placeKey = (p: Place): string =>
   `${String(p.realm ?? "")}|${normKarta(p.karta)}|${normName(p.name)}`;
 
+// Расход сессии (usage.ts, #6271): последний снятый — едет в каждой регистрации.
+let usage: object | null = null;
+export function rememberUsage(u: object): void {
+  usage = u;
+}
+
 let satelliteOf = "";
 let satelliteOfId = "";
 /**
@@ -57,6 +63,7 @@ export function placeFields(place: Place = {}): {
       build: { name: "iskron-bridge", version: VERSION, stamp: BUILD.split("+")[1] ?? "" },
       ...(harness ? { harness } : {}),
       ...(satelliteOf ? { satellite_of: satelliteOf } : {}),
+      ...(usage ? { usage } : {}),
     },
   };
 }

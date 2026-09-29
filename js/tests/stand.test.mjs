@@ -261,6 +261,45 @@ test("iskron_stand under a long --auth-dir: the watchdog attaches and gets hello
   assert.ok(heard, `no hello through the watchdog:\n${out}\n${bridge.stderr}`);
 });
 
+// The session's spend rides the place's attrs (graph nks-dev: #6271): the plugin
+// hands the numbers over by iskron/usage, the bridge re-registers its place with
+// attrs.usage — only when the numbers moved, never every step.
+test("iskron/usage puts the session's spend into the place's attrs, once per real move", async (t) => {
+  const fake = await startFakeNks({ pat: PAT });
+  const dir = mkdtempSync(join(tmpdir(), "iskron-usage-"));
+  const bridge = startBridge(fake.mcpUrl, dir, process.cwd(), { ISKRON_USAGE_GAP_MS: "0" });
+  t.after(async () => {
+    await bridge.stop();
+    await fake.stop();
+  });
+  assert.ok((await bridge.call("initialize", INIT)).result);
+  const stood = await bridge.call("tools/call", {
+    name: "iskron_stand",
+    arguments: { realm: "nks-dev", karta: 931, name: "proba" },
+  });
+  assert.ok(!stood.result?.isError, textOf(stood));
+  const registers = () => sentToChannel(fake).filter((a) => a.action === "register");
+  const before = registers().length;
+  const first = await bridge.call("iskron/usage", { tokens: 1000, context: 50000, window: 200000 });
+  assert.equal(first.result?.pushed, true, JSON.stringify(first));
+  const last = registers().at(-1);
+  assert.equal(registers().length, before + 1, "one register carries the spend");
+  assert.deepEqual(
+    {
+      tokens: last.attrs.usage.tokens,
+      percent: last.attrs.usage.percent,
+      window: last.attrs.usage.window,
+    },
+    { tokens: 1000, percent: 25, window: 200000 },
+  );
+  assert.ok(last.attrs.build, "the full attrs set stays: build is not lost");
+  const same = await bridge.call("iskron/usage", { tokens: 1005, context: 51000, window: 200000 });
+  assert.equal(same.result?.pushed, false, "a small move is not a server call");
+  const grown = await bridge.call("iskron/usage", { tokens: 5000, context: 90000, window: 200000 });
+  assert.equal(grown.result?.pushed, true, JSON.stringify(grown));
+  assert.equal(registers().at(-1).attrs.usage.percent, 45);
+});
+
 // The third part of a derived name is the model the agent runs on, never the
 // branch: at session start the branch is almost always main and tells two
 // sessions of one machine over one repository apart from nothing.

@@ -25,6 +25,7 @@ import { noteServedTools, recheckTools } from "./toolsync.ts";
 import { currentAccessToken, onReinitialized, post, reinitialize, state } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
 import { takeNotice } from "./update.ts";
+import { isUsageCall, runUsage } from "./usage.ts";
 
 // The verdict a caller actually needs is not "it failed" but "may it have taken
 // effect?" — and those are different sentences. A single "retry the call" over
@@ -269,6 +270,11 @@ async function deliverOne(msg: JsonRpcMessage): Promise<void> {
         // сторож слуха (resume.ts, #5140). Сессия к серверу уже открыта выше —
         // register и доска идут по ней.
         emit(await serialized(() => (isResumeCall(msg) ? runResume(msg) : runCheck(msg))));
+        return;
+      }
+      if (isUsageCall(msg)) {
+        // Расход сессии от плагина или расширения — в attrs места (usage.ts, #6271).
+        emit(await serialized(() => runUsage(msg)));
         return;
       }
       heldReply = null;
