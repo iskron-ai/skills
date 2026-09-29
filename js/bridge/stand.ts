@@ -23,7 +23,9 @@ import {
 import { CFG } from "./config.ts";
 import {
   awaitHello,
+  doors,
   hasStatusAddressFor,
+  heldKey,
   holdsStanding,
   isParked,
   ledKey,
@@ -355,6 +357,11 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
     const hello = await awaitHello(4000);
     lines.push(hello ? SW.hello(String(hello.pending ?? 0)) : SW.noHello());
   }
+  // Сокет службы есть, а локальный для сторожа не поднялся — слуха нет, скажи это.
+  const localFault = heardHere
+    ? (doors().find((d) => d.key === heldKey(realm))?.listenError ?? null)
+    : null;
+  if (localFault) lines.push(SW.noLocalSocket(localFault));
 
   // 4. Хук инбокса роли — чтобы вимарша posed_to приходила тем же сокетом.
   const main = state.standing;

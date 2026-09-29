@@ -216,6 +216,51 @@ test("iskron_stand: one call takes the place, arms the inbox hook and knocks; a 
   );
 });
 
+// A unix socket path is capped at 104 bytes on macOS and BSD: a long grant
+// directory must not leave the watchdog nothing to attach to while the stand
+// answer still promises hearing (graph nks-dev: case №22).
+test("iskron_stand under a long --auth-dir: the watchdog attaches and gets hello", async (t) => {
+  const fake = await startFakeNks({ pat: PAT });
+  const base = mkdtempSync(join(tmpdir(), "iskron-stand-long-"));
+  const dir = join(
+    base,
+    "a-grant-directory-whose-path-is-long-enough",
+    "to-overrun-the-socket-limit",
+  );
+  mkdirSync(dir, { recursive: true });
+  assert.ok(Buffer.byteLength(join(dir, "standings", "0123456789abcdef.sock")) > 104);
+  const bridge = startBridge(fake.mcpUrl, dir);
+  let wd = null;
+  t.after(async () => {
+    wd?.kill("SIGKILL");
+    await bridge.stop();
+    await fake.stop();
+    rmSync(base, { recursive: true, force: true });
+  });
+  assert.ok((await bridge.call("initialize", INIT)).result);
+  const reply = await bridge.call("tools/call", {
+    name: "iskron_stand",
+    arguments: { realm: "nks-dev", karta: 931, name: "proba" },
+  });
+  const text = textOf(reply);
+  assert.ok(!reply.result?.isError, text);
+  const key = / watchdog (\S+)/.exec(text)?.[1];
+  assert.ok(key, text);
+  wd = spawn(NODE, [FILE, "watchdog", key], {
+    env: { ...process.env, ISKRON_BRIDGE_AUTH_DIR: dir, ISKRON_BRIDGE_NO_UPDATE: "1" },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let out = "";
+  const heard = await new Promise((res) => {
+    wd.stdout.on("data", (c) => {
+      out += c;
+      if (/"type":"hello"/.test(out)) res(true);
+    });
+    setTimeout(() => res(false), 10_000).unref();
+  });
+  assert.ok(heard, `no hello through the watchdog:\n${out}\n${bridge.stderr}`);
+});
+
 // The third part of a derived name is the model the agent runs on, never the
 // branch: at session start the branch is almost always main and tells two
 // sessions of one machine over one repository apart from nothing.

@@ -16,7 +16,7 @@ function classifyOrigin(frame, myKarta) {
 
 // js/shared/standings.ts
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 var defaultAuthDir = () => join(homedir(), ".iskron-bridge");
 var authDirFromEnv = () => process.env.ISKRON_BRIDGE_AUTH_DIR?.trim() || defaultAuthDir();
 
@@ -37,7 +37,7 @@ function forcedLang() {
   const v = process.env.ISKRON_BRIDGE_LANG?.trim().toLowerCase();
   return v === "en" || v === "ru" ? v : null;
 }
-function resolve() {
+function resolve2() {
   const forced = forcedLang();
   if (forced) return forced;
   const fromEnv = process.env.ISKRON_BRIDGE_URL?.trim();
@@ -50,7 +50,7 @@ function resolve() {
   return "ru";
 }
 var current = null;
-var lang = () => current ??= resolve();
+var lang = () => current ??= resolve2();
 var L = (ru, en) => lang() === "en" ? en : ru;
 
 // js/shared/version.ts
@@ -81,6 +81,14 @@ var PRODUCTION_URLS = new Set([DEFAULT_SERVER_URL, ENGLISH_SERVER_URL].map(strip
 function strip(url) {
   return url.replace(/\/+$/, "");
 }
+
+// js/bridge/oauth/discovery.ts
+var REGISTRATION_REUSE_MS = 45 * 6e4;
+
+// js/bridge/oauth/flow.ts
+var CLAIM_WAIT_MS = Number(process.env.ISKRON_BRIDGE_CLAIM_WAIT_MS) || 15e3;
+var LANDED_POLL_MS = Number(process.env.ISKRON_BRIDGE_LANDED_POLL_MS) || 2e3;
+var RELEASE_GAP_MS = Number(process.env.ISKRON_BRIDGE_RELEASE_GAP_MS) || 0;
 
 // js/shared/room-kinds.ts
 var WORDS = {
@@ -752,12 +760,12 @@ var Bridge = class {
         opts.signal?.removeEventListener("abort", onAbort);
         fn(v);
       };
-      const resolve3 = settle(res);
+      const resolve4 = settle(res);
       const reject = settle(rej);
       function onAbort() {
         reject(new Error("вызов отменён"));
       }
-      this.pending.set(id, { resolve: resolve3, reject });
+      this.pending.set(id, { resolve: resolve4, reject });
       if (opts.signal) {
         if (opts.signal.aborted) return onAbort();
         opts.signal.addEventListener("abort", onAbort, { once: true });
@@ -880,7 +888,7 @@ import {
   unlinkSync,
   writeFileSync
 } from "node:fs";
-import { dirname, resolve as resolve2 } from "node:path";
+import { dirname, resolve as resolve3 } from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 
 // js/shared/home.ts
@@ -897,7 +905,7 @@ function newer(a, b) {
   return 0;
 }
 function packagedBridgePath() {
-  return resolve2(
+  return resolve3(
     dirname(fileURLToPath2(import.meta.url)),
     "..",
     "skills",
@@ -973,7 +981,7 @@ function findBridge() {
     tried.push(p);
   };
   push(
-    process.env.ISKRON_BRIDGE_PATH?.trim() ? resolve2(process.env.ISKRON_BRIDGE_PATH.trim()) : null
+    process.env.ISKRON_BRIDGE_PATH?.trim() ? resolve3(process.env.ISKRON_BRIDGE_PATH.trim()) : null
   );
   try {
     push(packagedBridgePath());

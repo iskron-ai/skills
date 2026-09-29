@@ -226,6 +226,23 @@ async function withFake(t, opts, fn) {
   }
 }
 
+// A bridge with no grant and a login already out has nothing to send: every
+// call it made anyway was one more 401 on the server — a stream of them from a
+// harness polling while the human had not logged in yet (graph nks-dev: case №22).
+test("with no grant and a login out, calls do not go to the server", async (t) => {
+  await withFake(t, {}, async ({ fake, spawnBridge }) => {
+    const b = spawnBridge();
+    const first = await b.call("initialize", 1, INIT_PARAMS);
+    assert.ok(authorizeUrlIn(first.error?.message), JSON.stringify(first));
+    const sent = (await fake.control({})).counts.mcp;
+    for (let id = 2; id <= 4; id++) {
+      const again = await b.call("initialize", id, INIT_PARAMS);
+      assert.ok(authorizeUrlIn(again.error?.message), JSON.stringify(again));
+    }
+    assert.equal((await fake.control({})).counts.mcp, sent, "a pending login is not a request");
+  });
+});
+
 // --- the browser the bridge opens itself -----------------------------------
 
 // On Windows the bridge used to hand the URL to `cmd /c start "" <url>`, and

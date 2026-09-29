@@ -4,7 +4,7 @@ import { join as join2 } from "node:path";
 
 // js/shared/standings.ts
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 var defaultAuthDir = () => join(homedir(), ".iskron-bridge");
 var authDirFromEnv = () => process.env.ISKRON_BRIDGE_AUTH_DIR?.trim() || defaultAuthDir();
 
@@ -20,7 +20,7 @@ function forcedLang() {
   const v = process.env.ISKRON_BRIDGE_LANG?.trim().toLowerCase();
   return v === "en" || v === "ru" ? v : null;
 }
-function resolve() {
+function resolve2() {
   const forced = forcedLang();
   if (forced) return forced;
   const fromEnv = process.env.ISKRON_BRIDGE_URL?.trim();
@@ -33,7 +33,7 @@ function resolve() {
   return "ru";
 }
 var current = null;
-var lang = () => current ??= resolve();
+var lang = () => current ??= resolve2();
 var L = (ru, en) => lang() === "en" ? en : ru;
 
 // js/shared/launch.ts
@@ -148,6 +148,14 @@ var PRODUCTION_URLS = new Set([DEFAULT_SERVER_URL, ENGLISH_SERVER_URL].map(strip
 function strip(url) {
   return url.replace(/\/+$/, "");
 }
+
+// js/bridge/oauth/discovery.ts
+var REGISTRATION_REUSE_MS = 45 * 6e4;
+
+// js/bridge/oauth/flow.ts
+var CLAIM_WAIT_MS = Number(process.env.ISKRON_BRIDGE_CLAIM_WAIT_MS) || 15e3;
+var LANDED_POLL_MS = Number(process.env.ISKRON_BRIDGE_LANDED_POLL_MS) || 2e3;
+var RELEASE_GAP_MS = Number(process.env.ISKRON_BRIDGE_RELEASE_GAP_MS) || 0;
 
 // js/shared/room-kinds.ts
 var WORDS = {
@@ -737,12 +745,12 @@ var Bridge = class {
         opts.signal?.removeEventListener("abort", onAbort);
         fn(v);
       };
-      const resolve3 = settle(res);
+      const resolve4 = settle(res);
       const reject = settle(rej);
       function onAbort() {
         reject(new Error("вызов отменён"));
       }
-      this.pending.set(id, { resolve: resolve3, reject });
+      this.pending.set(id, { resolve: resolve4, reject });
       if (opts.signal) {
         if (opts.signal.aborted) return onAbort();
         opts.signal.addEventListener("abort", onAbort, { once: true });
@@ -821,7 +829,7 @@ import {
   writeFileSync
 } from "node:fs";
 import { homedir as homedir3 } from "node:os";
-import { join as join4, resolve as resolve2 } from "node:path";
+import { join as join4, resolve as resolve3 } from "node:path";
 
 // js/shared/home.ts
 import { homedir as homedir2 } from "node:os";
@@ -837,7 +845,7 @@ var PROTOCOL = "2025-06-18";
 function findBridge() {
   const tried = [];
   const env = process.env.ISKRON_BRIDGE_PATH?.trim();
-  if (env) tried.push(resolve2(env));
+  if (env) tried.push(resolve3(env));
   tried.push(homeBridgePath());
   for (const candidate of tried) {
     try {
@@ -865,7 +873,7 @@ function grantStamp() {
     return "";
   }
 }
-var sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+var sleep2 = (ms) => new Promise((r) => setTimeout(r, ms));
 function readCache() {
   try {
     const list = JSON.parse(readFileSync3(cachePath(), "utf8"));
@@ -905,7 +913,7 @@ async function handshake(b, onLogin, onReady) {
       onLogin(loginUrlOf(message));
       while (grantStamp() === stamp) {
         if (Date.now() + AUTH_POLL_MS > deadline) throw e;
-        await sleep(AUTH_POLL_MS);
+        await sleep2(AUTH_POLL_MS);
       }
     }
   }
@@ -1390,14 +1398,14 @@ async function setupTools(ctx, say, onChannel, rootOf) {
     return slot;
   }
   const reaper = setInterval(() => {
-    const now = Date.now();
+    const now2 = Date.now();
     for (const [session, slot] of slots) {
-      if (slot.holding || slot.busy > 0 || now - slot.lastCall < IDLE_MS) continue;
+      if (slot.holding || slot.busy > 0 || now2 - slot.lastCall < IDLE_MS) continue;
       slot.ownStop = true;
       slot.bridge.stop();
       slots.delete(session);
     }
-    if (spare && !spare.holding && now - spare.lastCall >= IDLE_MS && state2.serverSeen) {
+    if (spare && !spare.holding && now2 - spare.lastCall >= IDLE_MS && state2.serverSeen) {
       spare.ownStop = true;
       spare.bridge.stop();
       spare = null;
@@ -1491,7 +1499,7 @@ async function setupTools(ctx, say, onChannel, rootOf) {
     say(`Искрон: тулов из прошлого списка: ${state2.listed.length}; сверю с сервером.`, "info");
   spare = spawn2();
   let first = spare;
-  let misses = 0;
+  let [misses, deaths] = [0, 0];
   void (async () => {
     for (; ; ) {
       if (stopped) return;
@@ -1514,9 +1522,9 @@ async function setupTools(ctx, say, onChannel, rootOf) {
           if (spare === first) spare = null;
           first = spare ?? spawn2();
           spare = first;
-          await sleep(retryPause(0));
+          await sleep2(retryPause(deaths++));
         } else {
-          await sleep(retryPause(misses++));
+          await sleep2(retryPause(misses++));
           shake(first);
         }
       }

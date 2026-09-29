@@ -161,6 +161,11 @@ export const SW = {
       `hello получен: ожидало кадров — ${pending}.`,
       `hello received: frames waiting — ${pending}.`,
     ),
+  noLocalSocket: (why: string): string =>
+    L(
+      `НО локальный сокет стояния не поднят (${why}) — сторожу не к чему цепляться: слуха в этой сессии нет, команда сторожа выше не сработает. Место занято, записи подписаны; скажи это человеку.`,
+      `BUT the standing's local socket is not up (${why}) — the watchdog has nothing to attach to: no hearing in this session, the watchdog command above will not work. The seat is held, records are signed; tell the human.`,
+    ),
   noHello: (): string =>
     L(
       "hello за 4 с не пришёл — сокет мост держит, но доказательства слуха ещё нет: проверь доску.",

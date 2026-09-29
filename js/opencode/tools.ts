@@ -409,7 +409,7 @@ export async function setupTools(
   // входа или умерший мост — новое рукопожатие или новый мост, пока плагин жив.
   spare = spawn();
   let first = spare;
-  let misses = 0;
+  let [misses, deaths] = [0, 0]; // deaths — смерти подряд: пауза замены растёт, не шторм запусков
   void (async () => {
     for (;;) {
       if (stopped) return;
@@ -434,7 +434,7 @@ export async function setupTools(
           if (spare === first) spare = null;
           first = spare ?? spawn();
           spare = first;
-          await sleep(retryPause(0));
+          await sleep(retryPause(deaths++));
         } else {
           await sleep(retryPause(misses++)); // пауза до повтора: удавшийся — сразу к списку
           shake(first);
