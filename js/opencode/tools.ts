@@ -409,8 +409,7 @@ export async function setupTools(
   // входа или умерший мост — новое рукопожатие или новый мост, пока плагин жив.
   spare = spawn();
   let first = spare;
-  let misses = 0;
-  let deaths = 0; // смерти моста подряд: пауза замены растёт, иначе битая поставка — шторм запусков
+  let [misses, deaths] = [0, 0]; // deaths — смерти подряд: пауза замены растёт, не шторм запусков
   void (async () => {
     for (;;) {
       if (stopped) return;

@@ -1499,8 +1499,7 @@ async function setupTools(ctx, say, onChannel, rootOf) {
     say(`Искрон: тулов из прошлого списка: ${state2.listed.length}; сверю с сервером.`, "info");
   spare = spawn2();
   let first = spare;
-  let misses = 0;
-  let deaths = 0;
+  let [misses, deaths] = [0, 0];
   void (async () => {
     for (; ; ) {
       if (stopped) return;
