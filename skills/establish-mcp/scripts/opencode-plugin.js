@@ -4,7 +4,7 @@ import { join as join2 } from "node:path";
 
 // js/shared/standings.ts
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 var defaultAuthDir = () => join(homedir(), ".iskron-bridge");
 var authDirFromEnv = () => process.env.ISKRON_BRIDGE_AUTH_DIR?.trim() || defaultAuthDir();
 
@@ -20,7 +20,7 @@ function forcedLang() {
   const v = process.env.ISKRON_BRIDGE_LANG?.trim().toLowerCase();
   return v === "en" || v === "ru" ? v : null;
 }
-function resolve() {
+function resolve2() {
   const forced = forcedLang();
   if (forced) return forced;
   const fromEnv = process.env.ISKRON_BRIDGE_URL?.trim();
@@ -33,7 +33,7 @@ function resolve() {
   return "ru";
 }
 var current = null;
-var lang = () => current ??= resolve();
+var lang = () => current ??= resolve2();
 var L = (ru, en) => lang() === "en" ? en : ru;
 
 // js/shared/launch.ts
@@ -745,12 +745,12 @@ var Bridge = class {
         opts.signal?.removeEventListener("abort", onAbort);
         fn(v);
       };
-      const resolve3 = settle(res);
+      const resolve4 = settle(res);
       const reject = settle(rej);
       function onAbort() {
         reject(new Error("вызов отменён"));
       }
-      this.pending.set(id, { resolve: resolve3, reject });
+      this.pending.set(id, { resolve: resolve4, reject });
       if (opts.signal) {
         if (opts.signal.aborted) return onAbort();
         opts.signal.addEventListener("abort", onAbort, { once: true });
@@ -829,7 +829,7 @@ import {
   writeFileSync
 } from "node:fs";
 import { homedir as homedir3 } from "node:os";
-import { join as join4, resolve as resolve2 } from "node:path";
+import { join as join4, resolve as resolve3 } from "node:path";
 
 // js/shared/home.ts
 import { homedir as homedir2 } from "node:os";
@@ -845,7 +845,7 @@ var PROTOCOL = "2025-06-18";
 function findBridge() {
   const tried = [];
   const env = process.env.ISKRON_BRIDGE_PATH?.trim();
-  if (env) tried.push(resolve2(env));
+  if (env) tried.push(resolve3(env));
   tried.push(homeBridgePath());
   for (const candidate of tried) {
     try {

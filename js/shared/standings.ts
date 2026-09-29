@@ -4,7 +4,7 @@
 // честно отвечает «мост не держит ни одного стояния» о мосте, который держит.
 import { createHash } from "node:crypto";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 export const defaultAuthDir = (): string => join(homedir(), ".iskron-bridge");
 
@@ -26,7 +26,7 @@ export function socketPathOf(authDir: string, key: string): string {
   if (Buffer.byteLength(near) <= SOCKET_PATH_MAX) return near;
   // Каталог гранта длинный — сокет в коротком личном каталоге, под хешем
   // каталога и ключа: два моста с разными каталогами не делят одного сокета.
-  return join(shortSocketDir(), `${hashOf(authDir + "\0" + key)}.sock`);
+  return join(shortSocketDir(), `${hashOf(resolve(authDir) + "\0" + key)}.sock`);
 }
 
 /** Предел пути unix-сокета без завершающего нуля: 104 байта на macOS и BSD, 108 на Linux. */

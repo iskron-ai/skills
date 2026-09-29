@@ -49,7 +49,7 @@ import { join as join2 } from "node:path";
 // js/shared/standings.ts
 import { createHash as createHash2 } from "node:crypto";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 var defaultAuthDir = () => join(homedir(), ".iskron-bridge");
 var authDirFromEnv = () => process.env.ISKRON_BRIDGE_AUTH_DIR?.trim() || defaultAuthDir();
 var standingsDirOf = (authDir) => join(authDir, "standings");
@@ -58,7 +58,7 @@ function socketPathOf(authDir, key) {
   if (process.platform === "win32") return `\\\\.\\pipe\\iskron-${hashOf(key)}`;
   const near = join(standingsDirOf(authDir), `${hashOf(key)}.sock`);
   if (Buffer.byteLength(near) <= SOCKET_PATH_MAX) return near;
-  return join(shortSocketDir(), `${hashOf(authDir + "\0" + key)}.sock`);
+  return join(shortSocketDir(), `${hashOf(resolve(authDir) + "\0" + key)}.sock`);
 }
 var SOCKET_PATH_MAX = 103;
 var shortSocketDir = () => join("/tmp", `iskron-${typeof process.getuid === "function" ? process.getuid() : "u"}`);
@@ -86,7 +86,7 @@ function forcedLang() {
   const v = process.env.ISKRON_BRIDGE_LANG?.trim().toLowerCase();
   return v === "en" || v === "ru" ? v : null;
 }
-function resolve() {
+function resolve2() {
   const forced = forcedLang();
   if (forced) return forced;
   const fromEnv = process.env.ISKRON_BRIDGE_URL?.trim();
@@ -102,7 +102,7 @@ var current = null;
 function setServerLang(serverUrl) {
   current = forcedLang() ?? langOfUrl(serverUrl);
 }
-var lang = () => current ??= resolve();
+var lang = () => current ??= resolve2();
 var L = (ru, en) => lang() === "en" ? en : ru;
 
 // js/bridge/streams.ts
@@ -140,16 +140,16 @@ function emit(msg) {
   writeTo(process.stdout, JSON.stringify(msg) + "\n");
 }
 function flushStdout() {
-  return new Promise((resolve3) => {
+  return new Promise((resolve4) => {
     const out5 = process.stdout;
-    if (!canWrite(out5)) return resolve3();
+    if (!canWrite(out5)) return resolve4();
     let done = false;
     const finish = () => {
       if (done) return;
       done = true;
       out5.off("error", finish);
       out5.off("close", finish);
-      resolve3();
+      resolve4();
     };
     out5.once("error", finish);
     out5.once("close", finish);
@@ -670,12 +670,12 @@ function pidAlive(pid) {
   }
 }
 function portListening(port, timeoutMs = 700) {
-  return new Promise((resolve3) => {
-    if (!Number.isInteger(port)) return resolve3(false);
+  return new Promise((resolve4) => {
+    if (!Number.isInteger(port)) return resolve4(false);
     const sock = connect({ host: "127.0.0.1", port });
     const done = (v) => {
       sock.destroy();
-      resolve3(v);
+      resolve4(v);
     };
     sock.setTimeout(timeoutMs, () => done(false));
     sock.once("connect", () => done(true));
@@ -749,7 +749,7 @@ function installAuthLockExitHook() {
 import { createServer } from "node:http";
 var PAGE_HOLD_MS = 2e4;
 function bindCallback(port) {
-  return new Promise((resolve3, reject) => {
+  return new Promise((resolve4, reject) => {
     let handOff = null;
     let received = null;
     let browser = null;
@@ -815,7 +815,7 @@ function bindCallback(port) {
     server.listen(port, "127.0.0.1", () => {
       server.removeListener("error", reject);
       server.on("error", (e) => log(`callback server: ${e.message}`));
-      resolve3({
+      resolve4({
         port,
         report: (failure) => tellBrowser(
           failure ? `iskron-bridge: authorization failed (${esc(failure)}) — nothing was stored; the agent has the details.` : "iskron-bridge: authenticated — you can close this tab."
@@ -2024,7 +2024,7 @@ function stampOrigin(frame2) {
 }
 
 // js/bridge/door.ts
-import { chmodSync, lstatSync, mkdirSync as mkdirSync5, unlinkSync as unlinkSync6, writeFileSync as writeFileSync7 } from "node:fs";
+import { chmodSync, lstatSync, mkdirSync as mkdirSync5, unlinkSync as unlinkSync6, utimesSync, writeFileSync as writeFileSync7 } from "node:fs";
 import { createServer as createServer2 } from "node:net";
 import { dirname as dirname2 } from "node:path";
 
@@ -2827,12 +2827,12 @@ function dropHoldRecord(key) {
 
 // js/bridge/sweep.ts
 function localSocketAlive(sock) {
-  return new Promise((resolve3) => {
-    if (process.platform !== "win32" && !existsSync(sock)) return resolve3(false);
+  return new Promise((resolve4) => {
+    if (process.platform !== "win32" && !existsSync(sock)) return resolve4(false);
     const probe = connectLocal(sock);
     const done = (v) => {
       probe.destroy();
-      resolve3(v);
+      resolve4(v);
     };
     probe.once("connect", () => done(true));
     probe.once("error", () => done(false));
@@ -2899,12 +2899,17 @@ function sweepStale(authDir, mine) {
 // js/bridge/door.ts
 var RING = 20;
 function privateDirProblem(dir) {
+  let st;
   try {
-    mkdirSync5(dir, { mode: 448 });
+    try {
+      mkdirSync5(dir, { mode: 448 });
+    } catch (e) {
+      if (e.code !== "EEXIST") throw e;
+    }
+    st = lstatSync(dir);
   } catch (e) {
-    if (e.code !== "EEXIST") return `${dir}: ${e.message}`;
+    return `${dir}: ${e.message}`;
   }
-  const st = lstatSync(dir);
   if (!st.isDirectory()) return `${dir} — не каталог`;
   if (typeof process.getuid === "function" && st.uid !== process.getuid())
     return `${dir} принадлежит другому пользователю`;
@@ -2930,6 +2935,7 @@ var Door = class {
   /** Почему локальный сокет не поднялся; null — поднят или ещё поднимается. */
   listenError = null;
   server = null;
+  freshen = null;
   hooks;
   constructor(key, hooks) {
     this.key = key;
@@ -3024,6 +3030,18 @@ var Door = class {
         }
       }
       log(`standing socket held; local listeners attach at ${path}`);
+      if (dirname2(path) === shortSocketDir()) {
+        const touch = () => {
+          const now2 = /* @__PURE__ */ new Date();
+          for (const p of [dirname2(path), path])
+            try {
+              utimesSync(p, now2, now2);
+            } catch {
+            }
+        };
+        this.freshen = setInterval(touch, 6 * 36e5);
+        this.freshen.unref?.();
+      }
     });
     this.server = srv;
   }
@@ -3049,6 +3067,7 @@ var Door = class {
       }
     }
     this.clients.clear();
+    if (this.freshen) clearInterval(this.freshen);
     const srv = this.server;
     this.server = null;
     if (srv) {
@@ -3081,7 +3100,7 @@ var Door = class {
 import { execFileSync } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { hostname } from "node:os";
-import { basename as basename3, dirname as dirname3, resolve as resolve2 } from "node:path";
+import { basename as basename3, dirname as dirname3, resolve as resolve3 } from "node:path";
 var NAME_MAX = 48;
 var normKarta = (k) => String(k ?? "").trim().replace(/^#/, "");
 var normName = (n) => typeof n === "string" ? n.trim() : "";
@@ -3137,9 +3156,9 @@ var real = (p) => {
 function repoName(cwd = process.cwd()) {
   const top = git(["rev-parse", "--show-toplevel"], cwd);
   const [gitDir, common] = git(["rev-parse", "--git-dir", "--git-common-dir"], cwd).split("\n");
-  if (!gitDir || !common || real(resolve2(cwd, gitDir)) === real(resolve2(cwd, common)))
+  if (!gitDir || !common || real(resolve3(cwd, gitDir)) === real(resolve3(cwd, common)))
     return basename3(top || cwd);
-  const shared = real(resolve2(cwd, common));
+  const shared = real(resolve3(cwd, common));
   if (basename3(shared) === ".git") return basename3(dirname3(shared));
   const origin = git(["remote", "get-url", "origin"], cwd).replace(/\/+$/, "");
   const fromOrigin = basename3(origin.replace(/^.*:/, "/")).replace(/\.git$/, "");
@@ -3404,10 +3423,10 @@ var resuming = 0;
 function awaitHello(timeoutMs) {
   const seen = door?.ring.find((r) => r.frame?.type === "hello")?.frame ?? null;
   if (seen) return Promise.resolve(seen);
-  return new Promise((resolve3) => {
+  return new Promise((resolve4) => {
     const done = (f) => {
       helloWaiters.delete(done);
-      resolve3(f);
+      resolve4(f);
     };
     helloWaiters.add(done);
     setTimeout(() => done(null), timeoutMs).unref();
@@ -5969,7 +5988,7 @@ function frame(data) {
   return Buffer.concat([head, mask, masked]);
 }
 function openDoor(socketPath, onMessage, onClose) {
-  return new Promise((resolve3, reject) => {
+  return new Promise((resolve4, reject) => {
     const req = request({
       socketPath,
       path: "/",
@@ -6012,7 +6031,7 @@ function openDoor(socketPath, onMessage, onClose) {
       });
       socket.on("close", () => onClose("сокет закрыт"));
       socket.on("error", (e) => onClose(e.message));
-      resolve3({
+      resolve4({
         send: (msg) => socket.write(frame(Buffer.from(JSON.stringify(msg)))),
         close: () => socket.end()
       });

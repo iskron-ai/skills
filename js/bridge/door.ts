@@ -2,7 +2,7 @@
 // к которому цепляется сторож места, его кольцо кадров и память отданного.
 // Сокет службы у моста один на канал (hold.ts), дверей — по одной на место:
 // канал держит места в нескольких графах, и кадр идёт к двери своего места.
-import { chmodSync, lstatSync, mkdirSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, lstatSync, mkdirSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { createServer, type Server, type Socket } from "node:net";
 import { dirname } from "node:path";
 
@@ -28,15 +28,21 @@ const RING = 20; // кадров, которые прицепившийся по
 /**
  * Короткий каталог сокетов лежит в общем /tmp: заводится 0700 и берётся, только
  * если он каталог (не ссылка) этого пользователя без прав группы и прочих.
- * Иначе — слово, почему нет; null — годен.
+ * Между проверкой и listen его не подменить: /tmp со sticky-битом не даёт
+ * чужому переименовать наш каталог. Иначе — слово, почему нет; null — годен.
  */
 function privateDirProblem(dir: string): string | null {
+  let st;
   try {
-    mkdirSync(dir, { mode: 0o700 });
+    try {
+      mkdirSync(dir, { mode: 0o700 });
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
+    }
+    st = lstatSync(dir);
   } catch (e) {
-    if ((e as NodeJS.ErrnoException).code !== "EEXIST") return `${dir}: ${(e as Error).message}`;
+    return `${dir}: ${(e as Error).message}`;
   }
-  const st = lstatSync(dir);
   if (!st.isDirectory()) return `${dir} — не каталог`;
   if (typeof process.getuid === "function" && st.uid !== process.getuid())
     return `${dir} принадлежит другому пользователю`;
@@ -103,6 +109,7 @@ export class Door {
   /** Почему локальный сокет не поднялся; null — поднят или ещё поднимается. */
   listenError: string | null = null;
   private server: Server | null = null;
+  private freshen: ReturnType<typeof setInterval> | null = null;
   private readonly hooks: DoorHooks;
 
   constructor(key: string, hooks: DoorHooks) {
@@ -211,6 +218,18 @@ export class Door {
         } catch {}
       }
       log(`standing socket held; local listeners attach at ${path}`);
+      // Чистка /tmp (macOS — трое суток без доступа) не снесёт сокет долгой вахты.
+      if (dirname(path) === shortSocketDir()) {
+        const touch = (): void => {
+          const now = new Date();
+          for (const p of [dirname(path), path])
+            try {
+              utimesSync(p, now, now);
+            } catch {}
+        };
+        this.freshen = setInterval(touch, 6 * 3600_000);
+        this.freshen.unref?.();
+      }
     });
     this.server = srv;
   }
@@ -238,6 +257,7 @@ export class Door {
       } catch {}
     }
     this.clients.clear();
+    if (this.freshen) clearInterval(this.freshen);
     const srv = this.server;
     this.server = null;
     if (srv) {
