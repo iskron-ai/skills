@@ -455,6 +455,51 @@ const toolCalls = (file) =>
     : [];
 const starts = (log) => readFileSync(log, "utf8").trim().split("\n");
 
+// The session's spend goes to the bridge at every turn's end while it holds a
+// place (graph nks-dev: #6271): the window's fill from getContextUsage, the
+// session's spend from the assistant entries' usage — nothing without a place.
+test("turn_end hands the session's spend to the bridge as iskron/usage once a place is held", async () => {
+  const calls = join(SANDBOX, "usage.calls");
+  const { env } = bridgeEnv("usage", {
+    FB_TOOLS: STAND_AND_CASE,
+    FB_CALLS: calls,
+    FB_STAND_HELD: "host.repo.opus-5",
+  });
+  const rec = await session(env);
+  const usage = () => toolCalls(calls).filter((c) => c.name === "iskron/usage");
+  rec.ctx.getContextUsage = () => ({ tokens: 42000, contextWindow: 200000, percent: 21 });
+  rec.ctx.sessionManager = {
+    getEntries: () => [
+      { type: "message", message: { role: "user" } },
+      {
+        type: "message",
+        message: {
+          role: "assistant",
+          usage: { input: 900, output: 100, cacheRead: 5000, cacheWrite: 1000 },
+        },
+      },
+      {
+        type: "message",
+        message: {
+          role: "assistant",
+          usage: { input: 50, output: 10, cacheRead: 7000, cacheWrite: 0 },
+        },
+      },
+    ],
+  };
+  try {
+    await rec.fire("turn_end", { type: "turn_end" });
+    assert.equal(usage().length, 0, "no place, nothing handed over");
+    await rec.tools
+      .get("iskron_stand")
+      .execute("id", { realm: "@nks/nks-dev", karta: "#931" }, undefined, () => {}, {});
+    await rec.fire("turn_end", { type: "turn_end" });
+    assert.deepEqual(usage().at(-1)?.arguments, { tokens: 2060, context: 42000, window: 200000 });
+  } finally {
+    await rec.stop();
+  }
+});
+
 test("a first prompt «start … дело №N от <seat>» stands as that seat's satellite and joins the case before the model reads", async () => {
   const calls = join(SANDBOX, "launch-tail.calls");
   const { log, env } = bridgeEnv("launch-tail", {

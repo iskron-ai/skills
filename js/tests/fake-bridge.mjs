@@ -247,6 +247,14 @@ process.stdin.on("data", (chunk) => {
         /* no answer prepared — nothing to resume */
       }
       ok(msg.id, result);
+    } else if (msg.method === "iskron/usage") {
+      // The session's spend from the OpenCode plugin (js/bridge/usage.ts, #6271).
+      if (process.env.FB_CALLS)
+        appendFileSync(
+          process.env.FB_CALLS,
+          JSON.stringify({ name: msg.method, arguments: msg.params, pid: process.pid }) + "\n",
+        );
+      ok(msg.id, { pushed: true });
     } else {
       send({
         jsonrpc: "2.0",

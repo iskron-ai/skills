@@ -94,7 +94,7 @@ export function ensureStanding(): Promise<void> {
   return standingInFlight;
 }
 
-async function replayRegister(place: Standing | null): Promise<JsonRpcMessage | null> {
+export async function replayRegister(place: Standing | null): Promise<JsonRpcMessage | null> {
   const id = `iskron-bridge-restanding-${++state.reinitCounter}`;
   let reply: JsonRpcMessage | null = null;
   await post(

@@ -83,7 +83,7 @@ async function enterCase(l, call, satelliteOf, placeName) {
 
 // js/shared/channel.ts
 var SILENT_FLOOR_MS = Number(process.env.ISKRON_CHANNEL_SILENT_FLOOR_MS) || 6e4;
-var FLAP_PAUSES_MS = (process.env.ISKRON_CHANNEL_FLAP_MS || "5000,10000,20000,40000,60000").split(",").map(Number).filter((n) => Number.isFinite(n) && n > 0);
+var FLAP_PAUSES_MS = (process.env.ISKRON_CHANNEL_FLAP_MS || "5000,10000,20000,40000,60000").split(",").map(Number).filter((n2) => Number.isFinite(n2) && n2 > 0);
 function classifyOrigin(frame, myKarta) {
   const p = frame.provenance ?? {};
   const noAuthor = p.via === "room" && p.from_karta_seq == null && !p.from_standing;
@@ -358,12 +358,12 @@ function addresseeOf(v) {
   const addr = [standing, id].filter(Boolean);
   return addr.length ? { addr, label } : null;
 }
-function wordsCount(n) {
+function wordsCount(n2) {
   const W = words();
-  const m10 = n % 10;
-  const m100 = n % 100;
-  const w = lang() === "en" ? n === 1 ? W.word_one : W.word_many : m10 === 1 && m100 !== 11 ? W.word_one : m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14) ? W.word_few : W.word_many;
-  return `${n} ${w}`;
+  const m10 = n2 % 10;
+  const m100 = n2 % 100;
+  const w = lang() === "en" ? n2 === 1 ? W.word_one : W.word_many : m10 === 1 && m100 !== 11 ? W.word_one : m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14) ? W.word_few : W.word_many;
+  return `${n2} ${w}`;
 }
 function roomKind(frame) {
   if (!frame || typeof frame !== "object") return null;
@@ -425,11 +425,11 @@ function roomKind(frame) {
     const counts = kind === "said";
     const pair = JSON.stringify([roomOf(f.room), author, to.addr[0]]);
     const id = counts ? values.entry_id : values.refers_to;
-    const run = (n) => fill(n === 0 ? W.aside_body : n > 1 ? W.aside_run : W.aside, {
+    const run = (n2) => fill(n2 === 0 ? W.aside_body : n2 > 1 ? W.aside_run : W.aside, {
       ...values,
       word: id,
       addressee: to.label,
-      count: wordsCount(n)
+      count: wordsCount(n2)
     });
     const aside = { pair, counts, run };
     const words2 = run(counts ? 1 : 0);
@@ -465,12 +465,12 @@ var ZACHIN = 40;
 function caseOf(frame) {
   const f = frame;
   const room = rec(f.room);
-  const n = idOf(room.seq) || idOf(room.id);
-  if (!n) return null;
+  const n2 = idOf(room.seq) || idOf(room.id);
+  if (!n2) return null;
   const z = typeof room.zachin === "string" ? [...room.zachin.trim()] : [];
   const zachin = z.length > ZACHIN ? z.slice(0, ZACHIN).join("") + "…" : z.join("");
   const realm = idOf(room.realm) || idOf(f.realm);
-  return { room: n, zachin, realm };
+  return { room: n2, zachin, realm };
 }
 var caseKey = (frame) => caseOf(frame)?.room ?? "";
 function caseHead(frame, withZachin) {
@@ -561,15 +561,15 @@ function batchLine(frame, run, withZachin = true) {
 function foldAsides(frames) {
   const asides = frames.map((f) => roomKind(f)?.aside ?? null);
   const out = [];
-  let n = 0;
+  let n2 = 0;
   asides.forEach((a, i) => {
     if (!a) {
-      n = 0;
+      n2 = 0;
       out.push(1);
       return;
     }
-    n = (i > 0 && asides[i - 1]?.pair === a.pair ? n : 0) + (a.counts ? 1 : 0);
-    out.push(asides[i + 1]?.pair === a.pair ? null : n);
+    n2 = (i > 0 && asides[i - 1]?.pair === a.pair ? n2 : 0) + (a.counts ? 1 : 0);
+    out.push(asides[i + 1]?.pair === a.pair ? null : n2);
   });
   return out;
 }
@@ -597,11 +597,11 @@ function batchPointer(frames) {
     const f = frame;
     const room = f.room ?? {};
     const line = f.line ?? {};
-    const n = room.seq ?? room.id;
+    const n2 = room.seq ?? room.id;
     const e = Number(f.entry_id ?? line.entry_id);
-    if (typeof n !== "number" && typeof n !== "string" || !Number.isFinite(e)) continue;
+    if (typeof n2 !== "number" && typeof n2 !== "string" || !Number.isFinite(e)) continue;
     const realm = room.realm ?? f.realm;
-    const args = (typeof realm === "string" && realm ? `realm="${realm}", ` : "") + `action="history", room=${typeof n === "number" ? String(n) : JSON.stringify(n)}`;
+    const args = (typeof realm === "string" && realm ? `realm="${realm}", ` : "") + `action="history", room=${typeof n2 === "number" ? String(n2) : JSON.stringify(n2)}`;
     since.set(args, Math.min(since.get(args) ?? e, e));
   }
   const whole = L("целиком — ", "in full — ");
@@ -839,7 +839,7 @@ var homeBridgePath = () => join3(homedir2(), ".iskron-bridge", "iskron-bridge.mj
 // js/opencode/bridge-io.ts
 var HANDSHAKE_MS = Number(process.env.ISKRON_MCP_HANDSHAKE_MS || 6e5);
 var AUTH_POLL_MS = Number(process.env.ISKRON_MCP_AUTH_POLL_MS || 2e3);
-var retryPause = (n) => Math.min(AUTH_POLL_MS * 2 ** n, 6e4);
+var retryPause = (n2) => Math.min(AUTH_POLL_MS * 2 ** n2, 6e4);
 var AUTH_PENDING = /authorization required/i;
 var PROTOCOL = "2025-06-18";
 function findBridge() {
@@ -1271,7 +1271,7 @@ async function setupTools(ctx, say, onChannel, rootOf) {
     );
     return { forget() {
     }, launch: async () => null, stop() {
-    } };
+    }, bridgeOf: () => null };
   }
   const path = found.path;
   const builds = buildsLine(path, import.meta.url);
@@ -1552,6 +1552,7 @@ async function setupTools(ctx, say, onChannel, rootOf) {
   });
   return {
     launch: launcher.launch,
+    bridgeOf: (s) => [slots.get(s)].find((x) => x?.holding)?.bridge ?? null,
     forget(session) {
       launcher.forget(session);
       keeper.forget(session);
@@ -1823,6 +1824,85 @@ async function setupCommands(ctx, say) {
   };
 }
 
+// js/opencode/usage.ts
+var DEBOUNCE_MS = Number(process.env.ISKRON_USAGE_DEBOUNCE_MS || 1e4);
+var n = (v) => typeof v === "number" && Number.isFinite(v) ? v : 0;
+var spent = (t) => n(t?.input) + n(t?.output) + n(t?.reasoning) + n(t?.cache?.write);
+var inWindow = (t) => n(t?.input) + n(t?.cache?.read) + n(t?.cache?.write);
+function createUsageFeed(opts) {
+  const bySession = /* @__PURE__ */ new Map();
+  const timers = /* @__PURE__ */ new Map();
+  const windows = /* @__PURE__ */ new Map();
+  let listed = null;
+  const loadWindows = () => listed ??= (async () => {
+    try {
+      const out = await opts.listModels();
+      const list = Array.isArray(out) ? out : out?.data ?? out?.models ?? [];
+      for (const m of list) {
+        const ctx = n(m?.limit?.context);
+        const id = m?.id ?? m?.modelID;
+        const prov = m?.providerID ?? m?.provider?.id;
+        if (ctx && id) windows.set(`${prov ?? ""}/${id}`, ctx);
+      }
+    } catch {
+      listed = null;
+    }
+  })();
+  const flush = (session) => {
+    timers.delete(session);
+    const u = bySession.get(session);
+    if (!u) return;
+    const { model, ...p } = u;
+    if (model && windows.has(model)) p.window = windows.get(model);
+    void opts.bridgeOf(session)?.request("iskron/usage", p, { timeoutMs: 1e4 }).catch(() => {
+    });
+  };
+  const schedule = (session) => {
+    if (!timers.has(session)) {
+      const t = setTimeout(() => flush(session), DEBOUNCE_MS);
+      t.unref?.();
+      timers.set(session, t);
+    }
+  };
+  return {
+    onEvent(ev) {
+      const session = ev?.data?.sessionID;
+      if (typeof session !== "string") return;
+      const u = bySession.get(session) ?? {};
+      switch (ev?.type) {
+        case "session.step.started": {
+          const m = ev.data?.model;
+          if (m?.id) u.model = `${m.providerID ?? ""}/${m.id}`;
+          void loadWindows();
+          break;
+        }
+        case "session.step.ended":
+          if (!ev.data?.tokens) return;
+          u.context = inWindow(ev.data.tokens);
+          break;
+        case "session.usage.updated":
+          if (!ev.data?.tokens) return;
+          u.tokens = spent(ev.data.tokens);
+          break;
+        default:
+          return;
+      }
+      bySession.set(session, u);
+      schedule(session);
+    },
+    forget(session) {
+      clearTimeout(timers.get(session));
+      timers.delete(session);
+      bySession.delete(session);
+    },
+    stop() {
+      for (const t of timers.values()) clearTimeout(t);
+      timers.clear();
+      bySession.clear();
+    }
+  };
+}
+
 // js/opencode/plugin.ts
 async function setup(ctx) {
   const say = (text, level) => {
@@ -1880,7 +1960,8 @@ async function setup(ctx) {
     },
     launch: async () => null,
     stop() {
-    }
+    },
+    bridgeOf: () => null
   };
   try {
     half = await setupTools(ctx, say, onChannel, rootOf);
@@ -1902,6 +1983,10 @@ async function setup(ctx) {
   } catch (e) {
     say(`Искрон: команды скиллов не встали — ${e.message}`, "error");
   }
+  const usage = createUsageFeed({
+    listModels: () => ctx.model.list(),
+    bridgeOf: (s) => half.bridgeOf(roots.get(s) ?? s)
+  });
   const controller = new AbortController();
   void (async () => {
     try {
@@ -1913,6 +1998,7 @@ async function setup(ctx) {
             if (!id) break;
             roots.delete(id);
             seen.delete(id);
+            usage.forget(id);
             half.forget(id);
             break;
           case "session.created": {
@@ -1937,6 +2023,8 @@ async function setup(ctx) {
           case "session.idle":
             if (id) ch?.taken(id);
             break;
+          default:
+            usage.onEvent(ev);
         }
       }
     } catch {
@@ -1944,6 +2032,7 @@ async function setup(ctx) {
   })();
   return () => {
     controller.abort();
+    usage.stop();
     ch?.stop();
     half.stop();
   };

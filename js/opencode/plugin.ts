@@ -24,6 +24,7 @@ import { withWord } from "../shared/launch.ts";
 import { setupChannel } from "./channel.ts";
 import { setupCommands } from "./commands.ts";
 import { type Say, setupTools } from "./tools.ts";
+import { createUsageFeed } from "./usage.ts";
 
 export type Context = Plugin.Context;
 
@@ -95,6 +96,7 @@ async function setup(ctx: Context): Promise<() => void> {
     forget() {},
     launch: async () => null,
     stop() {},
+    bridgeOf: () => null,
   };
   try {
     half = await setupTools(ctx, say, onChannel, rootOf);
@@ -120,6 +122,11 @@ async function setup(ctx: Context): Promise<() => void> {
     say(`Искрон: команды скиллов не встали — ${(e as Error).message}`, "error");
   }
 
+  // Расход сессии — в attrs места её корня (usage.ts, #6271).
+  const usage = createUsageFeed({
+    listModels: () => (ctx as any).model.list(),
+    bridgeOf: (s) => half.bridgeOf(roots.get(s) ?? s),
+  });
   const controller = new AbortController();
   void (async () => {
     try {
@@ -131,6 +138,7 @@ async function setup(ctx: Context): Promise<() => void> {
             if (!id) break;
             roots.delete(id);
             seen.delete(id);
+            usage.forget(id);
             half.forget(id);
             break;
           case "session.created": {
@@ -158,6 +166,8 @@ async function setup(ctx: Context): Promise<() => void> {
           case "session.idle":
             if (id) ch?.taken(id);
             break;
+          default:
+            usage.onEvent(ev);
         }
       }
     } catch {
@@ -167,6 +177,7 @@ async function setup(ctx: Context): Promise<() => void> {
 
   return () => {
     controller.abort();
+    usage.stop();
     ch?.stop();
     half.stop();
   };

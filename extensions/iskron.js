@@ -1,6 +1,6 @@
 // js/shared/channel.ts
 var SILENT_FLOOR_MS = Number(process.env.ISKRON_CHANNEL_SILENT_FLOOR_MS) || 6e4;
-var FLAP_PAUSES_MS = (process.env.ISKRON_CHANNEL_FLAP_MS || "5000,10000,20000,40000,60000").split(",").map(Number).filter((n) => Number.isFinite(n) && n > 0);
+var FLAP_PAUSES_MS = (process.env.ISKRON_CHANNEL_FLAP_MS || "5000,10000,20000,40000,60000").split(",").map(Number).filter((n2) => Number.isFinite(n2) && n2 > 0);
 function classifyOrigin(frame, myKarta) {
   const p = frame.provenance ?? {};
   const noAuthor = p.via === "room" && p.from_karta_seq == null && !p.from_standing;
@@ -291,12 +291,12 @@ function addresseeOf(v) {
   const addr = [standing, id].filter(Boolean);
   return addr.length ? { addr, label } : null;
 }
-function wordsCount(n) {
+function wordsCount(n2) {
   const W = words();
-  const m10 = n % 10;
-  const m100 = n % 100;
-  const w = lang() === "en" ? n === 1 ? W.word_one : W.word_many : m10 === 1 && m100 !== 11 ? W.word_one : m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14) ? W.word_few : W.word_many;
-  return `${n} ${w}`;
+  const m10 = n2 % 10;
+  const m100 = n2 % 100;
+  const w = lang() === "en" ? n2 === 1 ? W.word_one : W.word_many : m10 === 1 && m100 !== 11 ? W.word_one : m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14) ? W.word_few : W.word_many;
+  return `${n2} ${w}`;
 }
 function roomKind(frame) {
   if (!frame || typeof frame !== "object") return null;
@@ -358,11 +358,11 @@ function roomKind(frame) {
     const counts = kind === "said";
     const pair = JSON.stringify([roomOf(f.room), author, to.addr[0]]);
     const id = counts ? values.entry_id : values.refers_to;
-    const run = (n) => fill(n === 0 ? W.aside_body : n > 1 ? W.aside_run : W.aside, {
+    const run = (n2) => fill(n2 === 0 ? W.aside_body : n2 > 1 ? W.aside_run : W.aside, {
       ...values,
       word: id,
       addressee: to.label,
-      count: wordsCount(n)
+      count: wordsCount(n2)
     });
     const aside = { pair, counts, run };
     const words2 = run(counts ? 1 : 0);
@@ -399,12 +399,12 @@ var ZACHIN = 40;
 function caseOf(frame) {
   const f = frame;
   const room = rec(f.room);
-  const n = idOf(room.seq) || idOf(room.id);
-  if (!n) return null;
+  const n2 = idOf(room.seq) || idOf(room.id);
+  if (!n2) return null;
   const z = typeof room.zachin === "string" ? [...room.zachin.trim()] : [];
   const zachin = z.length > ZACHIN ? z.slice(0, ZACHIN).join("") + "…" : z.join("");
   const realm = idOf(room.realm) || idOf(f.realm);
-  return { room: n, zachin, realm };
+  return { room: n2, zachin, realm };
 }
 var caseKey = (frame) => caseOf(frame)?.room ?? "";
 function caseHead(frame, withZachin) {
@@ -495,15 +495,15 @@ function batchLine(frame, run, withZachin = true) {
 function foldAsides(frames) {
   const asides = frames.map((f) => roomKind(f)?.aside ?? null);
   const out = [];
-  let n = 0;
+  let n2 = 0;
   asides.forEach((a, i) => {
     if (!a) {
-      n = 0;
+      n2 = 0;
       out.push(1);
       return;
     }
-    n = (i > 0 && asides[i - 1]?.pair === a.pair ? n : 0) + (a.counts ? 1 : 0);
-    out.push(asides[i + 1]?.pair === a.pair ? null : n);
+    n2 = (i > 0 && asides[i - 1]?.pair === a.pair ? n2 : 0) + (a.counts ? 1 : 0);
+    out.push(asides[i + 1]?.pair === a.pair ? null : n2);
   });
   return out;
 }
@@ -899,7 +899,7 @@ var homeBridgePath = () => join3(homedir2(), ".iskron-bridge", "iskron-bridge.mj
 // js/extension/home-copy.ts
 function newer(a, b) {
   const pa = a.split(".").map(Number), pb = b.split(".").map(Number);
-  if (pa.length !== 3 || pb.length !== 3 || [...pa, ...pb].some((n) => !Number.isInteger(n)))
+  if (pa.length !== 3 || pb.length !== 3 || [...pa, ...pb].some((n2) => !Number.isInteger(n2)))
     return 0;
   for (let i = 0; i < 3; i++) if (pa[i] !== pb[i]) return pa[i] > pb[i] ? 1 : -1;
   return 0;
@@ -996,6 +996,31 @@ function findBridge() {
     }
   }
   return { path: null, tried };
+}
+
+// js/extension/usage.ts
+var n = (v) => typeof v === "number" && Number.isFinite(v) ? v : 0;
+function spent(entries) {
+  let sum = 0;
+  for (const e of entries) {
+    const u = e?.type === "message" && e.message?.role === "assistant" ? e.message.usage : null;
+    if (u) sum += n(u.input) + n(u.output) + n(u.cacheWrite);
+  }
+  return sum;
+}
+function setupUsage(pi, live) {
+  pi.on("turn_end", async (_event, ctx) => {
+    const bridge = live();
+    if (!bridge) return;
+    const c = ctx.getContextUsage?.();
+    const p = {
+      tokens: spent(ctx.sessionManager?.getEntries?.() ?? [])
+    };
+    if (typeof c?.tokens === "number") p.context = c.tokens;
+    if (n(c?.contextWindow)) p.window = c.contextWindow;
+    await bridge.request("iskron/usage", p, { timeoutMs: 1e4 }).catch(() => {
+    });
+  });
 }
 
 // js/extension/tools.ts
@@ -1151,14 +1176,14 @@ function setupBridge(pi, onChannel) {
         } while (next);
         if (bridge !== from) return;
         const kept = new Set(fresh.map((t) => String(t.name)));
-        const dropped = tools.map((t) => String(t.name)).filter((n) => !kept.has(n));
+        const dropped = tools.map((t) => String(t.name)).filter((n2) => !kept.has(n2));
         registerAll(fresh);
-        const back = [...offByUs].filter((n) => kept.has(n));
-        for (const n of dropped) offByUs.add(n);
-        for (const n of back) offByUs.delete(n);
+        const back = [...offByUs].filter((n2) => kept.has(n2));
+        for (const n2 of dropped) offByUs.add(n2);
+        for (const n2 of back) offByUs.delete(n2);
         if (dropped.length || back.length)
           pi.setActiveTools([
-            .../* @__PURE__ */ new Set([...pi.getActiveTools().filter((n) => !dropped.includes(n)), ...back])
+            .../* @__PURE__ */ new Set([...pi.getActiveTools().filter((n2) => !dropped.includes(n2)), ...back])
           ]);
         tools.splice(0, tools.length, ...fresh);
         notify(`Искрон: сервер сменил тулы — в сессии зарегистрировано ${fresh.length}.`, "info");
@@ -1171,14 +1196,14 @@ function setupBridge(pi, onChannel) {
       }
     }
     const listed = new Set(tools.map((t) => String(t.name)));
-    const gone = [...known].filter((n) => !listed.has(n));
-    const returned = [...offByUs].filter((n) => listed.has(n));
+    const gone = [...known].filter((n2) => !listed.has(n2));
+    const returned = [...offByUs].filter((n2) => listed.has(n2));
     registerAll(tools);
-    for (const n of gone) offByUs.add(n);
-    for (const n of returned) offByUs.delete(n);
+    for (const n2 of gone) offByUs.add(n2);
+    for (const n2 of returned) offByUs.delete(n2);
     if (gone.length || returned.length)
       pi.setActiveTools([
-        .../* @__PURE__ */ new Set([...pi.getActiveTools().filter((n) => !gone.includes(n)), ...returned])
+        .../* @__PURE__ */ new Set([...pi.getActiveTools().filter((n2) => !gone.includes(n2)), ...returned])
       ]);
     const server = init?.serverInfo;
     notify(
@@ -1239,6 +1264,7 @@ function setupBridge(pi, onChannel) {
       })
     ]);
   });
+  setupUsage(pi, () => heldName ? bridge : null);
   pi.on("session_shutdown", async () => {
     bridge?.stop();
     bridge = null;

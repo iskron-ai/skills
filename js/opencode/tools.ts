@@ -79,6 +79,7 @@ export interface ToolsHalf {
   /** Первый промпт сессии — строка запуска с делом исполняется до хода модели (launch.ts). */
   launch(session: string, text: string): Promise<string | null>;
   stop(): void;
+  bridgeOf(session: string): Bridge | null; // мост держащего слота — для расхода сессии (usage.ts)
 }
 
 export async function setupTools(
@@ -95,7 +96,7 @@ export async function setupTools(
         ". Задай ISKRON_BRIDGE_PATH или поставь мост скиллом establish-mcp.",
       "error",
     );
-    return { forget() {}, launch: async () => null, stop() {} };
+    return { forget() {}, launch: async () => null, stop() {}, bridgeOf: () => null };
   }
   const path = found.path;
   const builds = buildsLine(path, import.meta.url);
@@ -263,8 +264,7 @@ export async function setupTools(
     return slot;
   }
 
-  // Мост молчащей сессии без стояния не живёт вечно: opencode run плодит
-  // сессии, а запас без сессии — каждая локация сервиса.
+  // Мост молчащей сессии без стояния не живёт вечно: opencode run плодит сессии, а запас без сессии — каждая локация сервиса.
   const reaper = setInterval(() => {
     const now = Date.now();
     for (const [session, slot] of slots) {
@@ -405,8 +405,7 @@ export async function setupTools(
   if (state.listed.length)
     say(`Искрон: тулов из прошлого списка: ${state.listed.length}; сверю с сервером.`, "info");
 
-  // Первый мост — ради списка тулов, фоном и без потолка: истёкшее ожидание
-  // входа или умерший мост — новое рукопожатие или новый мост, пока плагин жив.
+  // Первый мост — ради списка тулов, фоном и без потолка: истёкшее ожидание входа или умерший мост — новое рукопожатие или новый мост, пока плагин жив.
   spare = spawn();
   let first = spare;
   let [misses, deaths] = [0, 0]; // deaths — смерти подряд: пауза замены растёт, не шторм запусков
@@ -470,6 +469,7 @@ export async function setupTools(
 
   return {
     launch: launcher.launch,
+    bridgeOf: (s) => [slots.get(s)].find((x) => x?.holding)?.bridge ?? null,
     forget(session) {
       launcher.forget(session);
       keeper.forget(session);
