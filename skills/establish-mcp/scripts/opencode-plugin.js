@@ -1500,6 +1500,7 @@ async function setupTools(ctx, say, onChannel, rootOf) {
   spare = spawn2();
   let first = spare;
   let misses = 0;
+  let deaths = 0;
   void (async () => {
     for (; ; ) {
       if (stopped) return;
@@ -1522,7 +1523,7 @@ async function setupTools(ctx, say, onChannel, rootOf) {
           if (spare === first) spare = null;
           first = spare ?? spawn2();
           spare = first;
-          await sleep2(retryPause(0));
+          await sleep2(retryPause(deaths++));
         } else {
           await sleep2(retryPause(misses++));
           shake(first);

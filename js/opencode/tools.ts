@@ -410,6 +410,7 @@ export async function setupTools(
   spare = spawn();
   let first = spare;
   let misses = 0;
+  let deaths = 0; // смерти моста подряд: пауза замены растёт, иначе битая поставка — шторм запусков
   void (async () => {
     for (;;) {
       if (stopped) return;
@@ -434,7 +435,7 @@ export async function setupTools(
           if (spare === first) spare = null;
           first = spare ?? spawn();
           spare = first;
-          await sleep(retryPause(0));
+          await sleep(retryPause(deaths++));
         } else {
           await sleep(retryPause(misses++)); // пауза до повтора: удавшийся — сразу к списку
           shake(first);

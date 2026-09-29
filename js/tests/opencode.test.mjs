@@ -1178,6 +1178,22 @@ test("a place of a pre-session build, not resumed by the directory, is said into
   }
 });
 
+// A bridge that dies at every start (a broken install) is raised again with a
+// growing pause, not every AUTH_POLL_MS: a flat pause made ~1800 spawns an hour
+// (graph nks-dev: case №22).
+test("a bridge that dies at every start is raised with a growing pause, not a flat one", async () => {
+  const b = bridgeEnv("storm", { FB_MODE: "die", ISKRON_MCP_AUTH_POLL_MS: "50" });
+  const rec = await plugin(b.env);
+  try {
+    await delay(1500);
+    const spawns = pidsOf(b.log).length;
+    assert.ok(spawns >= 2, `the dead bridge is raised again: ${spawns}`);
+    assert.ok(spawns <= 8, `spawns in 1.5 s with a 50 ms base pause: ${spawns}`);
+  } finally {
+    await rec.stop();
+  }
+});
+
 test("a holding bridge that dies is announced into its session as lost hearing, and the watch raises a fresh bridge that resumes the place", async () => {
   const calls = join(SANDBOX, "lost.calls");
   const resume = join(SANDBOX, "lost.answer");
