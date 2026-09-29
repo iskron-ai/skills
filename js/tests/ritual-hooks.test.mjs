@@ -205,6 +205,25 @@ test("opencode rituals template: wakes by outcome", async () => {
   }
 });
 
+// A trunk pull that failed brought nothing in: the exit status speaks for it,
+// so a refused pull does not wake the merge ritual.
+test("opencode rituals template: a failed trunk pull does not wake", async () => {
+  const after = await loadPlugin();
+  for (const [exit, merge] of [
+    [1, false],
+    [0, true],
+  ]) {
+    const input = {
+      tool: "bash",
+      status: "completed",
+      input: { command: "git checkout main && git pull" },
+      result: { content: "fatal: unable to access 'https://github.com/o/r/'", metadata: { exit } },
+    };
+    after(input);
+    assert.equal(String(input.result.content).includes("мерж"), merge, `exit ${exit}`);
+  }
+});
+
 // Another forge's merge rides the same defs with its own head and confirmation
 // (hooks.md names fj): the defs are taken from the template itself, so the copy
 // that ships to other repos is judged, not this repo's projection.
