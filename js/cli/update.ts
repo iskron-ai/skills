@@ -21,7 +21,11 @@ export async function runUpdate(argv: string[]): Promise<void> {
   out(`сервер: ${CFG.serverUrl} (${serverSourceWord()}) — ${freshnessWord(CFG.serverUrl)}`);
   const latest = await checkLatest(CFG.authDir, true);
   if (!latest || !latest.version) {
-    out(`свежий релиз не узнан: ${latest?.error ?? "нет ответа"} — сеть или GitHub; повтори позже`);
+    out(
+      latest?.rate_limited
+        ? `свежий релиз не узнан: ${latest.error} — лимит GitHub; повтори ${latest.rate_limited_until ? "после сброса" : "позже"}`
+        : `свежий релиз не узнан: ${latest?.error ?? "нет ответа"} — сеть или GitHub; повтори позже`,
+    );
     process.exitCode = 1;
     return;
   }

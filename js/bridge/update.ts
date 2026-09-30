@@ -12,7 +12,7 @@
 // Источник свежести — только релизы репозитория поставки, не сервер графа:
 // другой инстанс или форк сервера обновлений отсюда не получает.
 import { spawn } from "node:child_process";
-import { existsSync, lstatSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -22,15 +22,27 @@ import { L } from "../shared/lang.ts";
 import { compareVersions } from "../shared/semver.ts";
 import { VERSION, versionIn } from "../shared/version.ts";
 import { isProductionServer } from "./config.ts";
+import { RateLimitError, resolveTag, writeAtomic } from "./releases.ts";
 import { SKILLS_ROOT_ENV, skillsRoot } from "./skillset.ts";
 import { emit, log } from "./streams.ts";
 
-export const RELEASES_URL =
-  process.env.ISKRON_BRIDGE_RELEASES_URL?.trim() ||
-  "https://api.github.com/repos/iskron-ai/skills/releases/latest";
 export const RAW_URL =
   process.env.ISKRON_BRIDGE_RAW_URL?.trim() || "https://raw.githubusercontent.com/iskron-ai/skills";
 export const CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
+/** Неудачная сверка без названного сброса повторяется через это время, не через шесть часов. */
+export const FAILED_RETRY_MS = 15 * 60 * 1000;
+/**
+ * Повтор после неудачи: не раньше пола (часы машины могут спешить против
+ * сброса, названного GitHub, — без пола повтор шёл бы каждую секунду) и с
+ * разбросом на мост, чтобы мосты машины не шли к API в одну секунду сброса.
+ * Переменные — только для проб.
+ */
+const envMs = (name: string, dflt: number): number => {
+  const v = Number(process.env[name]);
+  return process.env[name]?.trim() && Number.isFinite(v) && v >= 0 ? v : dflt;
+};
+export const RETRY_FLOOR_MS = envMs("ISKRON_BRIDGE_RETRY_FLOOR_MS", 60_000);
+export const RETRY_JITTER_MS = envMs("ISKRON_BRIDGE_RETRY_JITTER_MS", 60_000);
 /** Пробы и CI: ни дома не трогать, ни в сеть не ходить. */
 export const updatesDisabled = (): boolean => !!process.env.ISKRON_BRIDGE_NO_UPDATE;
 
@@ -39,13 +51,6 @@ export const opencodePluginPath = (): string =>
   join(homedir(), ".config", "opencode", "plugins", "iskron.js");
 export const setupPathOf = (authDir: string): string => join(authDir, "SETUP.md");
 export const latestPathOf = (authDir: string): string => join(authDir, "latest.json");
-
-function writeAtomic(path: string, bytes: Buffer | string): void {
-  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-  const tmp = `${path}.tmp-${process.pid}`;
-  writeFileSync(tmp, bytes, { mode: 0o644 });
-  renameSync(tmp, path);
-}
 
 const isSymlink = (path: string): boolean => {
   try {
@@ -144,6 +149,10 @@ export interface Latest {
   /** Что скачано в дом при этой проверке. */
   downloaded: string[];
   error?: string;
+  /** Отказ — исчерпанный лимит API GitHub: до этой минуты (мс эпохи) спрашивать бессмысленно. */
+  rate_limited_until?: number;
+  /** Отказ — лимит API GitHub (первичный или вторичный), назван ли срок или нет. */
+  rate_limited?: boolean;
 }
 
 export function readLatest(authDir: string): Latest | null {
@@ -199,17 +208,28 @@ export async function downloadRelease(
 }
 
 /**
- * Что свежее: по кэшу, пока ему меньше шести часов, иначе — вопрос релизам.
+ * Когда записанная сверка перестаёт быть ответом. Удачная — через шесть
+ * часов; неудачная — не «проверено»: лимит держит её до своего сброса, прочий
+ * отказ (сеть, скачивание) — четверть часа.
+ */
+export function checkExpiresAt(latest: Latest): number {
+  if (!latest.error) return latest.checked_at + CHECK_INTERVAL_MS;
+  if (latest.rate_limited_until) return latest.rate_limited_until;
+  return latest.checked_at + FAILED_RETRY_MS;
+}
+
+/**
+ * Что свежее: по кэшу, пока он в силе (checkExpiresAt), иначе — вопрос релизам
+ * (resolveTag: общий на машину тег, API, страница релизов).
  * Свежее есть — скачивается в дом тем же ходом. Отказ сети — не ошибка моста:
- * записывается в кэш словом и не повторяется до следующего окна.
+ * записывается в кэш словом и повторяется коротко, не через шесть часов.
  */
 export async function checkLatest(authDir: string, force = false): Promise<Latest | null> {
   const cached = readLatest(authDir);
-  if (!force && cached && Date.now() - cached.checked_at < CHECK_INTERVAL_MS) return cached;
+  if (!force && cached && Date.now() < checkExpiresAt(cached)) return cached;
   const latest: Latest = { checked_at: Date.now(), version: null, tag: null, downloaded: [] };
   try {
-    const body = JSON.parse(await fetchText(RELEASES_URL)) as { tag_name?: string };
-    const tag = body.tag_name?.trim() || null;
+    const tag = await resolveTag(force);
     latest.tag = tag;
     latest.version = tag ? tag.replace(/^v/, "") : null;
     if (latest.version && compareVersions(latest.version, VERSION) > 0) {
@@ -221,6 +241,10 @@ export async function checkLatest(authDir: string, force = false): Promise<Lates
     }
   } catch (e) {
     latest.error = (e as Error).message;
+    if (e instanceof RateLimitError) {
+      latest.rate_limited = true;
+      if (e.resetAt) latest.rate_limited_until = e.resetAt;
+    }
   }
   try {
     writeAtomic(latestPathOf(authDir), JSON.stringify(latest, null, 2));
@@ -295,10 +319,28 @@ export function startFreshnessWatch(authDir: string, serverUrl: string): void {
     );
     return;
   }
+  let retry: ReturnType<typeof setTimeout> | null = null;
+  let told: string | null = null;
+  const spread = Math.floor(Math.random() * RETRY_JITTER_MS); // свой у каждого моста
   const tick = async (): Promise<void> => {
     const latest = await checkLatest(authDir);
+    if (retry) clearTimeout(retry);
+    retry = null;
+    if (latest?.error) {
+      // Неудача — не «проверено»: следующая сверка после сброса лимита либо через
+      // четверть часа, а не на шестичасовом такте (+1 с — сброс назван секундами),
+      // не раньше пола и со своим разбросом (RETRY_FLOOR_MS, RETRY_JITTER_MS).
+      const wait = Math.min(
+        CHECK_INTERVAL_MS,
+        Math.max(RETRY_FLOOR_MS, checkExpiresAt(latest) - Date.now() + 1000) + spread,
+      );
+      retry = setTimeout(() => void tick(), wait);
+      retry.unref();
+    }
     const notice = staleNotice(latest, authDir);
     if (!notice) return;
+    if (latest?.error && notice === told) return; // короткий повтор той же неудачи не твердит то же слово
+    told = notice;
     pendingNotice = notice;
     log(notice);
     emit({

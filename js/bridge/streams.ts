@@ -1,3 +1,5 @@
+import { type Writable } from "node:stream";
+
 import { CFG } from "./config.ts";
 import { type JsonRpcMessage } from "./types.ts";
 
@@ -14,8 +16,19 @@ const FLUSH_STOP_MS = 5_000;
 // pending login whose click landed on a bridge too busy to exchange it, twice,
 // while the human was shown "authenticated" both times. So: note a stream's
 // death once, and never answer a failed write with another write.
-type Stream = NodeJS.WriteStream;
+type Stream = Writable;
 const deadStreams = new WeakSet<Stream>();
+
+// Куда сессия моста пишет харнесу. Полный мост — stdout процесса; сессия,
+// которой stdio подано потоками (session.ts: тонкий мост в запасном ходе,
+// демон машины), — свой поток. Одна на процесс, пока состояние движка
+// глобально (config, transport, hold).
+let sessionOut: Stream | null = null;
+const sessionStream = (): Stream => sessionOut ?? process.stdout;
+
+export function setSessionOutput(s: Stream): void {
+  sessionOut = s;
+}
 
 export function canWrite(s: Stream | null | undefined): s is Stream {
   return !!s && !deadStreams.has(s) && !s.destroyed && s.writable !== false;
@@ -30,16 +43,15 @@ export function guardStream(s: Stream | null | undefined): void {
 // читателя (замерено: 300 КБ при остановленном читателе — колбэк сразу, drain
 // через 0.7 с, когда читатель проснулся). Флаг честен и под Node: write()
 // возвращает false ровно тогда, когда буфер перерос highWaterMark.
-let stdoutBacklog = false;
+const backlogged = new WeakSet<Stream>();
 
 export function writeTo(s: Stream | null | undefined, text: string): boolean {
   if (!canWrite(s)) return false;
   try {
     const fit = s.write(text);
-    if (s === process.stdout) {
-      if (!fit && !stdoutBacklog) s.once("drain", () => (stdoutBacklog = false));
-      stdoutBacklog = !fit;
-    }
+    if (!fit && !backlogged.has(s)) s.once("drain", () => backlogged.delete(s));
+    if (fit) backlogged.delete(s);
+    else backlogged.add(s);
     return true;
   } catch {
     deadStreams.add(s);
@@ -56,7 +68,7 @@ export function debug(msg: string): void {
 }
 
 export function emit(msg: JsonRpcMessage): void {
-  writeTo(process.stdout, JSON.stringify(msg) + "\n");
+  writeTo(sessionStream(), JSON.stringify(msg) + "\n");
 }
 
 // Writing to a pipe is asynchronous, and process.exit does not wait: an answer
@@ -65,9 +77,8 @@ export function emit(msg: JsonRpcMessage): void {
 // sees a truncated line, which is silence wearing an answer's clothes. Every
 // exit path goes through here first. Measured: 200KB written and exited on the
 // spot arrives as 65536 bytes; drained first, it arrives whole.
-export function flushStdout(): Promise<void> {
+export function flushStdout(out: Stream = sessionStream()): Promise<void> {
   return new Promise((resolve) => {
-    const out = process.stdout;
     // Не по writableLength: под Bun он не ведётся, и слив кончался бы до записи.
     if (!canWrite(out)) return resolve();
     // A pipe whose reader is gone never drains, so the drain callback never
@@ -85,7 +96,7 @@ export function flushStdout(): Promise<void> {
     };
     out.once("error", finish);
     out.once("close", finish);
-    if (stdoutBacklog) out.once("drain", finish);
+    if (backlogged.has(out)) out.once("drain", finish);
     else out.write("", finish); // queued behind everything already written
     setTimeout(finish, FLUSH_STOP_MS).unref();
   });
