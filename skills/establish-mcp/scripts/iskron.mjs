@@ -21,22 +21,6 @@ function versionIn(text) {
 // js/bridge/build.ts
 var BUILD = buildOf(import.meta.url);
 
-// js/bridge/main.ts
-import { createInterface } from "node:readline";
-
-// js/bridge/store.ts
-import { createHash as createHash3 } from "node:crypto";
-import {
-  appendFileSync,
-  mkdirSync as mkdirSync2,
-  readFileSync as readFileSync4,
-  renameSync as renameSync2,
-  statSync,
-  unlinkSync,
-  writeFileSync as writeFileSync2
-} from "node:fs";
-import { join as join4 } from "node:path";
-
 // js/bridge/config.ts
 import { mkdirSync, readFileSync as readFileSync3, renameSync, writeFileSync } from "node:fs";
 import { homedir as homedir2 } from "node:os";
@@ -108,21 +92,25 @@ var L = (ru, en) => lang() === "en" ? en : ru;
 // js/bridge/streams.ts
 var FLUSH_STOP_MS = 5e3;
 var deadStreams = /* @__PURE__ */ new WeakSet();
+var sessionOut = null;
+var sessionStream = () => sessionOut ?? process.stdout;
+function setSessionOutput(s2) {
+  sessionOut = s2;
+}
 function canWrite(s2) {
   return !!s2 && !deadStreams.has(s2) && !s2.destroyed && s2.writable !== false;
 }
 function guardStream(s2) {
   if (s2) s2.on("error", () => deadStreams.add(s2));
 }
-var stdoutBacklog = false;
+var backlogged = /* @__PURE__ */ new WeakSet();
 function writeTo(s2, text) {
   if (!canWrite(s2)) return false;
   try {
     const fit = s2.write(text);
-    if (s2 === process.stdout) {
-      if (!fit && !stdoutBacklog) s2.once("drain", () => stdoutBacklog = false);
-      stdoutBacklog = !fit;
-    }
+    if (!fit && !backlogged.has(s2)) s2.once("drain", () => backlogged.delete(s2));
+    if (fit) backlogged.delete(s2);
+    else backlogged.add(s2);
     return true;
   } catch {
     deadStreams.add(s2);
@@ -137,23 +125,22 @@ function debug(msg) {
   if (CFG?.debug) log(`debug: ${msg}`);
 }
 function emit(msg) {
-  writeTo(process.stdout, JSON.stringify(msg) + "\n");
+  writeTo(sessionStream(), JSON.stringify(msg) + "\n");
 }
-function flushStdout() {
-  return new Promise((resolve5) => {
-    const out5 = process.stdout;
-    if (!canWrite(out5)) return resolve5();
+function flushStdout(out5 = sessionStream()) {
+  return new Promise((resolve6) => {
+    if (!canWrite(out5)) return resolve6();
     let done = false;
     const finish = () => {
       if (done) return;
       done = true;
       out5.off("error", finish);
       out5.off("close", finish);
-      resolve5();
+      resolve6();
     };
     out5.once("error", finish);
     out5.once("close", finish);
-    if (stdoutBacklog) out5.once("drain", finish);
+    if (backlogged.has(out5)) out5.once("drain", finish);
     else out5.write("", finish);
     setTimeout(finish, FLUSH_STOP_MS).unref();
   });
@@ -269,9 +256,20 @@ function readPat(cfg) {
 }
 
 // js/bridge/store.ts
+import { createHash as createHash3 } from "node:crypto";
+import {
+  appendFileSync,
+  mkdirSync as mkdirSync2,
+  readFileSync as readFileSync4,
+  renameSync as renameSync2,
+  statSync,
+  unlinkSync,
+  writeFileSync as writeFileSync2
+} from "node:fs";
+import { join as join4 } from "node:path";
 var b64url = (buf) => Buffer.from(buf).toString("base64url");
 var sha256 = (s2) => createHash3("sha256").update(s2).digest();
-var sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+var sleep = (ms2) => new Promise((r) => setTimeout(r, ms2));
 function storePath() {
   const u = new URL(CFG.serverUrl);
   const h = b64url(sha256(u.origin + u.pathname)).slice(0, 10);
@@ -670,12 +668,12 @@ function pidAlive(pid) {
   }
 }
 function portListening(port, timeoutMs = 700) {
-  return new Promise((resolve5) => {
-    if (!Number.isInteger(port)) return resolve5(false);
+  return new Promise((resolve6) => {
+    if (!Number.isInteger(port)) return resolve6(false);
     const sock = connect({ host: "127.0.0.1", port });
     const done = (v) => {
       sock.destroy();
-      resolve5(v);
+      resolve6(v);
     };
     sock.setTimeout(timeoutMs, () => done(false));
     sock.once("connect", () => done(true));
@@ -749,7 +747,7 @@ function installAuthLockExitHook() {
 import { createServer } from "node:http";
 var PAGE_HOLD_MS = 2e4;
 function bindCallback(port) {
-  return new Promise((resolve5, reject) => {
+  return new Promise((resolve6, reject) => {
     let handOff = null;
     let received = null;
     let browser = null;
@@ -815,7 +813,7 @@ function bindCallback(port) {
     server.listen(port, "127.0.0.1", () => {
       server.removeListener("error", reject);
       server.on("error", (e) => log(`callback server: ${e.message}`));
-      resolve5({
+      resolve6({
         port,
         report: (failure) => tellBrowser(
           failure ? `iskron-bridge: authorization failed (${esc(failure)}) — nothing was stored; the agent has the details.` : "iskron-bridge: authenticated — you can close this tab."
@@ -1520,6 +1518,173 @@ function startTokenKeepalive() {
   setInterval(tick, 6e4).unref();
 }
 
+// js/bridge/update.ts
+import { spawn as spawn2 } from "node:child_process";
+import { existsSync as existsSync2, lstatSync, readFileSync as readFileSync9 } from "node:fs";
+import { homedir as homedir5 } from "node:os";
+import { dirname as dirname4, join as join10 } from "node:path";
+import { fileURLToPath as fileURLToPath3 } from "node:url";
+
+// js/shared/home.ts
+import { homedir as homedir3 } from "node:os";
+import { join as join7 } from "node:path";
+var homeBridgePath = () => join7(homedir3(), ".iskron-bridge", "iskron-bridge.mjs");
+
+// js/shared/semver.ts
+function parseVersion(v) {
+  const m = /^v?(\d+)\.(\d+)\.(\d+)/.exec((v ?? "").trim());
+  return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
+}
+function compareVersions(a, b) {
+  const pa = parseVersion(a);
+  const pb = parseVersion(b);
+  if (!pa || !pb) return 0;
+  for (let i = 0; i < 3; i++) if (pa[i] !== pb[i]) return pa[i] - pb[i];
+  return 0;
+}
+
+// js/bridge/releases.ts
+import { mkdirSync as mkdirSync5, readFileSync as readFileSync7, renameSync as renameSync4, writeFileSync as writeFileSync5 } from "node:fs";
+import { dirname as dirname2, join as join8 } from "node:path";
+var RELEASES_URL = process.env.ISKRON_BRIDGE_RELEASES_URL?.trim() || "https://api.github.com/repos/iskron-ai/skills/releases/latest";
+var RELEASES_PAGE_URL = process.env.ISKRON_BRIDGE_RELEASES_PAGE_URL?.trim() || (process.env.ISKRON_BRIDGE_RELEASES_URL?.trim() ? null : "https://github.com/iskron-ai/skills/releases/latest");
+var TAG_TTL_MS = 60 * 60 * 1e3;
+var releaseTagPath = () => join8(dirname2(homeBridgePath()), "release-tag.json");
+function writeAtomic(path, bytes) {
+  mkdirSync5(dirname2(path), { recursive: true, mode: 448 });
+  const tmp = `${path}.tmp-${process.pid}`;
+  writeFileSync5(tmp, bytes, { mode: 420 });
+  renameSync4(tmp, path);
+}
+var RateLimitError = class extends Error {
+  limit;
+  resetAt;
+  constructor(message, limit, resetAt) {
+    super(message);
+    this.limit = limit;
+    this.resetAt = resetAt;
+  }
+};
+function resetWord(resetAt) {
+  return resetAt ? `сброс ${new Date(resetAt).toISOString()} (через ${Math.max(0, Math.ceil((resetAt - Date.now()) / 6e4))} мин)` : "время сброса GitHub не назвал";
+}
+function rateLimitWord(limit, resetAt) {
+  const per = limit ? `${limit} запросов в час` : "лимит в час";
+  return `лимит анонимного API GitHub исчерпан: ${per} на внешний адрес машины, общий всем мостам и клиентам за ним; ${resetWord(resetAt)}`;
+}
+function rateLimitOf(res) {
+  if (res.status !== 403 && res.status !== 429) return null;
+  const remaining = res.headers.get("x-ratelimit-remaining");
+  const retrySec = Number(res.headers.get("retry-after"));
+  if (remaining === "0") {
+    const limit = Number(res.headers.get("x-ratelimit-limit")) || null;
+    const resetSec = Number(res.headers.get("x-ratelimit-reset"));
+    const resetAt = resetSec > 0 ? resetSec * 1e3 : retrySec > 0 ? Date.now() + retrySec * 1e3 : null;
+    return new RateLimitError(rateLimitWord(limit, resetAt), limit, resetAt);
+  }
+  if (retrySec > 0 || res.status === 429) {
+    const resetAt = retrySec > 0 ? Date.now() + retrySec * 1e3 : null;
+    return new RateLimitError(
+      `вторичный лимит API GitHub: слишком частые запросы с внешнего адреса машины; ${resetWord(resetAt)}`,
+      null,
+      resetAt
+    );
+  }
+  return null;
+}
+async function tagFromApi() {
+  const res = await fetch(RELEASES_URL, {
+    headers: { accept: "application/vnd.github+json", "user-agent": `iskron-bridge/${VERSION}` },
+    signal: AbortSignal.timeout(15e3)
+  });
+  const limited = rateLimitOf(res);
+  if (limited) throw limited;
+  if (!res.ok) throw new Error(`HTTP ${res.status} от ${RELEASES_URL}`);
+  const body = await res.json();
+  return body.tag_name?.trim() || null;
+}
+async function tagFromPage(url) {
+  const res = await fetch(url, {
+    redirect: "manual",
+    headers: { "user-agent": `iskron-bridge/${VERSION}` },
+    signal: AbortSignal.timeout(15e3)
+  });
+  const location = res.headers.get("location") ?? "";
+  const m = /\/releases\/tag\/([^/?#]+)/.exec(location);
+  if (res.status < 300 || res.status >= 400 || !m)
+    throw new Error(`HTTP ${res.status} от ${url}${location ? ` → ${location}` : ""} — тега нет`);
+  return decodeURIComponent(m[1]);
+}
+function readReleaseTag() {
+  try {
+    const c = JSON.parse(readFileSync7(releaseTagPath(), "utf8"));
+    return c.source === RELEASES_URL ? c : null;
+  } catch {
+    return null;
+  }
+}
+function writeReleaseTag(c) {
+  try {
+    writeAtomic(releaseTagPath(), JSON.stringify(c, null, 2));
+  } catch {
+  }
+}
+async function resolveTag(force) {
+  const cached = readReleaseTag();
+  const now2 = Date.now();
+  if (!force && cached?.tag && now2 - cached.checked_at < TAG_TTL_MS) return cached.tag;
+  const knownLimit = cached?.api_limited_until && now2 < cached.api_limited_until ? new RateLimitError(
+    cached.api_limit ? rateLimitWord(cached.api_limit, cached.api_limited_until) : `лимит API GitHub, записанный другим мостом машины; ${resetWord(cached.api_limited_until)}`,
+    cached.api_limit ?? null,
+    cached.api_limited_until
+  ) : null;
+  let apiErr = knownLimit;
+  if (!knownLimit) {
+    try {
+      const tag = await tagFromApi();
+      writeReleaseTag({ source: RELEASES_URL, checked_at: Date.now(), tag, via: "api" });
+      return tag;
+    } catch (e) {
+      apiErr = e;
+    }
+  }
+  const limit = apiErr instanceof RateLimitError ? apiErr : null;
+  const limitFields = limit?.resetAt ? { api_limited_until: limit.resetAt, api_limit: limit.limit } : {};
+  if (RELEASES_PAGE_URL) {
+    try {
+      const tag = await tagFromPage(RELEASES_PAGE_URL);
+      log(`релизы: API не ответил (${apiErr?.message}) — тег ${tag} со страницы релизов`);
+      writeReleaseTag({
+        source: RELEASES_URL,
+        checked_at: Date.now(),
+        tag,
+        via: "page",
+        ...limitFields
+      });
+      return tag;
+    } catch (e) {
+      const both = `${apiErr?.message}; запасной путь — ${e.message}`;
+      apiErr = limit ? new RateLimitError(both, limit.limit, limit.resetAt) : new Error(both);
+    }
+  }
+  if (limit?.resetAt)
+    writeReleaseTag({
+      source: RELEASES_URL,
+      checked_at: cached?.checked_at ?? 0,
+      tag: cached?.tag ?? null,
+      ...cached?.via ? { via: cached.via } : {},
+      ...limitFields
+    });
+  throw apiErr;
+}
+
+// js/bridge/skillset.ts
+import { createHash as createHash4 } from "node:crypto";
+import { existsSync, readdirSync as readdirSync2, readFileSync as readFileSync8 } from "node:fs";
+import { homedir as homedir4 } from "node:os";
+import { dirname as dirname3, join as join9, resolve as resolve3 } from "node:path";
+import { fileURLToPath as fileURLToPath2 } from "node:url";
+
 // js/shared/clients.ts
 var OPENCODE_CLIENT = "opencode-iskron";
 var SURFACE_CLIENT = "export-surface";
@@ -1529,6 +1694,332 @@ var NOTIFIED_CLIENTS = /* @__PURE__ */ new Set([PI_CLIENT, OPENCODE_CLIENT]);
 var HARNESS_VERSION_ENV = "ISKRON_HARNESS_VERSION";
 var SKILLS_ROOT_ENV = "ISKRON_SKILLS_ROOT";
 var HOSTED_CLIENTS = /* @__PURE__ */ new Set([PI_CLIENT, OPENCODE_CLIENT]);
+
+// js/bridge/skillset.ts
+var SET = "iskron-ai/skills";
+var BRIDGE_IN_SET = join9("establish-mcp", "scripts", "iskron.mjs");
+var env = (k) => process.env[k]?.trim() ?? "";
+function skillsRoot(self = fileURLToPath2(import.meta.url)) {
+  const plugin = env("CLAUDE_PLUGIN_ROOT");
+  const candidates = [
+    env(SKILLS_ROOT_ENV),
+    resolve3(dirname3(self), "..", ".."),
+    plugin ? join9(plugin, "skills") : "",
+    join9(homedir4(), ".agents", "skills")
+  ];
+  for (const c of candidates) if (c && existsSync(join9(c, BRIDGE_IN_SET))) return resolve3(c);
+  return null;
+}
+var sha8 = (h) => h.digest("hex").slice(0, 8);
+function lockSet(root) {
+  try {
+    const lock = JSON.parse(readFileSync8(join9(dirname3(root), ".skill-lock.json"), "utf8"));
+    const skills = lock.skills ?? {};
+    const own = skills["establish-mcp"]?.source;
+    const name = typeof own === "string" && own.trim() ? own.trim() : SET;
+    const lines = Object.entries(skills).filter(([, s2]) => s2?.source === name && typeof s2.skillFolderHash === "string").map(([n, s2]) => `${n}:${String(s2.skillFolderHash)}
+`).sort();
+    return { name, stamp: lines.length ? sha8(createHash4("sha256").update(lines.join(""))) : null };
+  } catch {
+    return { name: SET, stamp: null };
+  }
+}
+function treeStamp(root) {
+  const h = createHash4("sha256");
+  let n = 0;
+  let names2;
+  try {
+    names2 = readdirSync2(root).sort();
+  } catch {
+    return null;
+  }
+  for (const name of names2) {
+    let body;
+    try {
+      body = readFileSync8(join9(root, name, "SKILL.md"));
+    } catch {
+      continue;
+    }
+    h.update(`${name}\0`);
+    h.update(body);
+    h.update("\0");
+    n++;
+  }
+  return n ? sha8(h) : null;
+}
+function skillsAttr() {
+  const root = skillsRoot();
+  if (!root) return { name: SET, version: "unknown" };
+  let version = "unknown";
+  try {
+    version = versionIn(readFileSync8(join9(root, BRIDGE_IN_SET), "utf8")) ?? "unknown";
+  } catch {
+  }
+  const lock = lockSet(root);
+  const stamp = lock.stamp ?? treeStamp(root);
+  return { name: lock.name, version, ...stamp ? { stamp } : {} };
+}
+
+// js/bridge/update.ts
+var RAW_URL = process.env.ISKRON_BRIDGE_RAW_URL?.trim() || "https://raw.githubusercontent.com/iskron-ai/skills";
+var CHECK_INTERVAL_MS = 6 * 60 * 60 * 1e3;
+var FAILED_RETRY_MS = 15 * 60 * 1e3;
+var envMs = (name, dflt) => {
+  const v = Number(process.env[name]);
+  return process.env[name]?.trim() && Number.isFinite(v) && v >= 0 ? v : dflt;
+};
+var RETRY_FLOOR_MS = envMs("ISKRON_BRIDGE_RETRY_FLOOR_MS", 6e4);
+var RETRY_JITTER_MS = envMs("ISKRON_BRIDGE_RETRY_JITTER_MS", 6e4);
+var updatesDisabled = () => !!process.env.ISKRON_BRIDGE_NO_UPDATE;
+var selfPath = () => fileURLToPath3(import.meta.url);
+var opencodePluginPath = () => join10(homedir5(), ".config", "opencode", "plugins", "iskron.js");
+var setupPathOf = (authDir) => join10(authDir, "SETUP.md");
+var latestPathOf = (authDir) => join10(authDir, "latest.json");
+var isSymlink = (path) => {
+  try {
+    return lstatSync(path).isSymbolicLink();
+  } catch {
+    return false;
+  }
+};
+var versionOf = (path) => {
+  try {
+    return versionIn(readFileSync9(path, "utf8"));
+  } catch {
+    return null;
+  }
+};
+function syncHome(self = selfPath()) {
+  const out5 = { copied: [] };
+  const home = homeBridgePath();
+  let mine;
+  try {
+    mine = readFileSync9(self);
+  } catch {
+    return out5;
+  }
+  if (!versionIn(mine.toString("utf8"))) return out5;
+  if (self === home) return out5;
+  if (isSymlink(home)) return out5;
+  const homeVersion = versionOf(home);
+  const cmp = homeVersion ? compareVersions(VERSION, homeVersion) : 1;
+  if (cmp > 0) {
+    writeAtomic(home, mine);
+    out5.copied.push(home);
+    const plugin = opencodePluginPath();
+    const packaged = join10(dirname4(self), "opencode-plugin.js");
+    if (existsSync2(plugin) && existsSync2(packaged)) {
+      const fresh = readFileSync9(packaged);
+      if (!readFileSync9(plugin).equals(fresh)) {
+        writeAtomic(plugin, fresh);
+        out5.copied.push(plugin);
+      }
+    }
+  } else if (cmp < 0 && homeVersion) {
+    out5.reexec = home;
+  }
+  return out5;
+}
+function reexec(path, argv2) {
+  log(
+    `домашняя копия новее этой сборки (v${versionOf(path) ?? "?"} > v${VERSION}) — запускаюсь ею: ${path}`
+  );
+  const root = skillsRoot();
+  const child = spawn2(process.execPath, [path, ...argv2], {
+    stdio: "inherit",
+    env: {
+      ...process.env,
+      ISKRON_BRIDGE_REEXEC: "1",
+      ...root ? { [SKILLS_ROOT_ENV]: root } : {}
+    }
+  });
+  for (const sig of ["SIGTERM", "SIGINT", "SIGHUP"]) {
+    process.on(sig, () => child.kill(sig));
+  }
+  child.on("exit", (code, signal) => process.exit(code ?? (signal ? 1 : 0)));
+  child.on("error", (e) => {
+    log(`перезапуск не удался: ${e.message}`);
+    process.exit(1);
+  });
+}
+function readLatest(authDir) {
+  try {
+    return JSON.parse(readFileSync9(latestPathOf(authDir), "utf8"));
+  } catch {
+    return null;
+  }
+}
+async function fetchText(url) {
+  const res = await fetch(url, {
+    headers: {
+      accept: "application/vnd.github+json, text/plain, */*",
+      "user-agent": `iskron-bridge/${VERSION}`
+    },
+    signal: AbortSignal.timeout(15e3)
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status} от ${url}`);
+  return res.text();
+}
+async function downloadRelease(tag, version, authDir) {
+  const written = [];
+  const base = `${RAW_URL}/${tag}`;
+  const bridge = await fetchText(`${base}/skills/establish-mcp/scripts/iskron.mjs`);
+  const got = versionIn(bridge);
+  if (got !== version)
+    throw new Error(`скачанный мост называет v${got ?? "?"}, релиз — v${version}`);
+  const home = homeBridgePath();
+  const current2 = versionOf(home);
+  if (!isSymlink(home) && (!current2 || compareVersions(version, current2) > 0)) {
+    writeAtomic(home, bridge);
+    written.push(home);
+  }
+  const plugin = opencodePluginPath();
+  if (existsSync2(plugin)) {
+    const fresh = await fetchText(`${base}/skills/establish-mcp/scripts/opencode-plugin.js`);
+    if (readFileSync9(plugin, "utf8") !== fresh) {
+      writeAtomic(plugin, fresh);
+      written.push(plugin);
+    }
+  }
+  const setup = await fetchText(`${base}/SETUP.md`);
+  writeAtomic(setupPathOf(authDir), setup);
+  written.push(setupPathOf(authDir));
+  return written;
+}
+function checkExpiresAt(latest) {
+  if (!latest.error) return latest.checked_at + CHECK_INTERVAL_MS;
+  if (latest.rate_limited_until) return latest.rate_limited_until;
+  return latest.checked_at + FAILED_RETRY_MS;
+}
+async function checkLatest(authDir, force = false) {
+  const cached = readLatest(authDir);
+  if (!force && cached && Date.now() < checkExpiresAt(cached)) return cached;
+  const latest = { checked_at: Date.now(), version: null, tag: null, downloaded: [] };
+  try {
+    const tag = await resolveTag(force);
+    latest.tag = tag;
+    latest.version = tag ? tag.replace(/^v/, "") : null;
+    if (latest.version && compareVersions(latest.version, VERSION) > 0) {
+      latest.downloaded = await downloadRelease(tag, latest.version, authDir);
+    } else if (force && tag) {
+      writeAtomic(setupPathOf(authDir), await fetchText(`${RAW_URL}/${tag}/SETUP.md`));
+      latest.downloaded = [setupPathOf(authDir)];
+    }
+  } catch (e) {
+    latest.error = e.message;
+    if (e instanceof RateLimitError) {
+      latest.rate_limited = true;
+      if (e.resetAt) latest.rate_limited_until = e.resetAt;
+    }
+  }
+  try {
+    writeAtomic(latestPathOf(authDir), JSON.stringify(latest, null, 2));
+  } catch {
+  }
+  return latest;
+}
+function staleNotice(latest, authDir) {
+  if (!latest?.version || compareVersions(latest.version, VERSION) <= 0) return null;
+  const self = process.argv[1];
+  const bridgeWord = latest.downloaded.some((p) => p === homeBridgePath()) ? L(
+    "Свежий мост уже скачан в ~/.iskron-bridge и поднимется новой сессией.",
+    "The fresh bridge is already downloaded into ~/.iskron-bridge and comes up with a new session."
+  ) : latest.error ? L(
+    `Скачать свежий мост не вышло (${latest.error}); повтори: node "${self}" update.`,
+    `Downloading the fresh bridge failed (${latest.error}); repeat: node "${self}" update.`
+  ) : isSymlink(homeBridgePath()) ? L(
+    "Свежий мост в дом не положен: дом — симлинк на чужую копию, его не трогаю; обнови эту копию сам.",
+    "The fresh bridge is not put home: home is a symlink to another copy, left alone; update that copy yourself."
+  ) : versionOf(homeBridgePath()) && compareVersions(versionOf(homeBridgePath()), latest.version) >= 0 ? L(
+    "Свежий мост уже лежит в ~/.iskron-bridge и поднимется новой сессией.",
+    "The fresh bridge already lies in ~/.iskron-bridge and comes up with a new session."
+  ) : L(
+    `Свежий мост в дом не положен; повтори: node "${self}" update (мост, который отвечает, — тот и обновляет дом; в пакетной поставке OpenCode мост живёт в пакете и обновляется с ним).`,
+    `The fresh bridge is not put home; repeat: node "${self}" update (the bridge that answers is the one that updates home; in OpenCode's packaged delivery the bridge lives in the package and updates with it).`
+  );
+  return L(
+    `[iskron-bridge] ПОСТАВКА ОТСТАЛА: этот мост v${VERSION}, свежий релиз v${latest.version}. ${bridgeWord} Скиллы обновляет канал харнеса, и об этом надо СКАЗАТЬ ЧЕЛОВЕКУ: Claude Code — /plugin marketplace update iskron, затем /reload-plugins; плоская установка — npx skills update --global; pi — pi update git:github.com/iskron-ai/skills; Codex — codex plugin marketplace upgrade iskron, затем codex plugin remove iskron@iskron и codex plugin add iskron@iskron. Полный порядок — свежий установщик ${setupPathOf(authDir)} (кладёт update); по слову человека «обнови» исполни его.`,
+    `[iskron-bridge] DELIVERY BEHIND: this bridge is v${VERSION}, the fresh release is v${latest.version}. ${bridgeWord} The harness channel updates the skills, and this must be TOLD TO THE HUMAN: Claude Code — /plugin marketplace update iskron, then /reload-plugins; flat install — npx skills update --global; pi — pi update git:github.com/iskron-ai/skills; Codex — codex plugin marketplace upgrade iskron, then codex plugin remove iskron@iskron and codex plugin add iskron@iskron. The full order — the fresh installer ${setupPathOf(authDir)} (update puts it); on the human's word "update" run it.`
+  );
+}
+var pendingNotice = null;
+function takeNotice() {
+  const n = pendingNotice;
+  pendingNotice = null;
+  return n;
+}
+function startFreshnessWatch(authDir, serverUrl) {
+  if (updatesDisabled()) return;
+  const explicit = !!process.env.ISKRON_BRIDGE_RELEASES_URL?.trim();
+  if (!explicit && !isProductionServer(serverUrl)) {
+    log(
+      `releases not watched: ${serverUrl} is not a production address — another instance is another delivery`
+    );
+    return;
+  }
+  let retry = null;
+  let told = null;
+  const spread = Math.floor(Math.random() * RETRY_JITTER_MS);
+  const tick = async () => {
+    const latest = await checkLatest(authDir);
+    if (retry) clearTimeout(retry);
+    retry = null;
+    if (latest?.error) {
+      const wait = Math.min(
+        CHECK_INTERVAL_MS,
+        Math.max(RETRY_FLOOR_MS, checkExpiresAt(latest) - Date.now() + 1e3) + spread
+      );
+      retry = setTimeout(() => void tick(), wait);
+      retry.unref();
+    }
+    const notice = staleNotice(latest, authDir);
+    if (!notice) return;
+    if (latest?.error && notice === told) return;
+    told = notice;
+    pendingNotice = notice;
+    log(notice);
+    emit({
+      jsonrpc: "2.0",
+      method: "notifications/message",
+      params: { level: "warning", logger: "iskron-bridge", data: { kind: "stale", text: notice } }
+    });
+  };
+  const delay = Number(process.env.ISKRON_BRIDGE_UPDATE_DELAY_MS ?? 2e3);
+  setTimeout(() => void tick(), Number.isFinite(delay) ? delay : 2e3).unref();
+  setInterval(() => void tick(), CHECK_INTERVAL_MS).unref();
+}
+
+// js/bridge/engine.ts
+function proxyWord() {
+  const env2 = process.env;
+  const proxy = env2.HTTPS_PROXY || env2.https_proxy || env2.HTTP_PROXY || env2.http_proxy;
+  if (!proxy || process.versions.bun) return null;
+  const [major = 0, minor = 0] = process.versions.node.split(".").map(Number);
+  const reads = major > 24 || major === 24 && minor >= 5;
+  const flags = [...process.execArgv, ...(env2.NODE_OPTIONS ?? "").split(/\s+/)];
+  const on = env2.NODE_USE_ENV_PROXY === "1" || flags.includes("--use-env-proxy");
+  if (reads && on) return null;
+  return reads ? "a proxy is set (HTTP(S)_PROXY), but Node reads it only under NODE_USE_ENV_PROXY=1 — add that variable to the bridge's env in the harness config; until then calls go around the proxy" : `a proxy is set (HTTP(S)_PROXY), but Node ${process.versions.node} does not read it at all — Node 24.5+ with NODE_USE_ENV_PROXY=1 or the Bun runtime does; until then calls go around the proxy`;
+}
+function installCrashWords() {
+  process.on("uncaughtException", (e) => log(`uncaught: ${e?.stack || e}`));
+  process.on(
+    "unhandledRejection",
+    (e) => log(`unhandled rejection: ${e?.stack || String(e)}`)
+  );
+}
+function startEngine(cfg) {
+  setConfig(cfg);
+  installAuthLockExitHook();
+  installRefreshLockExitHook();
+  log(
+    `${BUILD} -> ${CFG.serverUrl} (timeout ${CFG.timeoutMs}ms, ${CFG.pat ? `personal access token from ${CFG.patSource}` : `auth in ${storePath()}`})`
+  );
+  const proxy = proxyWord();
+  if (proxy) log(proxy);
+  startTokenKeepalive();
+  startFreshnessWatch(CFG.authDir, CFG.serverUrl);
+}
 
 // js/shared/channel.ts
 import * as diagnostics from "node:diagnostics_channel";
@@ -1745,7 +2236,7 @@ function holdSocket(o) {
 }
 
 // js/shared/seen.ts
-import { appendFileSync as appendFileSync2, readFileSync as readFileSync7, renameSync as renameSync4, writeFileSync as writeFileSync5 } from "node:fs";
+import { appendFileSync as appendFileSync2, readFileSync as readFileSync10, renameSync as renameSync5, writeFileSync as writeFileSync6 } from "node:fs";
 var SEEN_KEEP = 5e3;
 var SEEN_SLACK = 1e3;
 function eventKeyOf(frame2) {
@@ -1762,7 +2253,7 @@ function deliveredKeys(frame2) {
 }
 function seenIds(seenPath) {
   try {
-    return new Set(readFileSync7(seenPath, "utf8").split("\n").filter(Boolean));
+    return new Set(readFileSync10(seenPath, "utf8").split("\n").filter(Boolean));
   } catch {
     return /* @__PURE__ */ new Set();
   }
@@ -1781,8 +2272,8 @@ function compact(seenPath, seen) {
   const inFile = new Set(file);
   const tail2 = [...[...seen].filter((x) => !inFile.has(x)), ...file].slice(-SEEN_KEEP);
   const tmp = `${seenPath}.${process.pid}.tmp`;
-  writeFileSync5(tmp, tail2.join("\n") + "\n");
-  renameSync4(tmp, seenPath);
+  writeFileSync6(tmp, tail2.join("\n") + "\n");
+  renameSync5(tmp, seenPath);
   seen.clear();
   for (const x of tail2) seen.add(x);
 }
@@ -2032,9 +2523,9 @@ function stampOrigin(frame2) {
 }
 
 // js/bridge/door.ts
-import { chmodSync, lstatSync, mkdirSync as mkdirSync5, unlinkSync as unlinkSync6, utimesSync, writeFileSync as writeFileSync7 } from "node:fs";
+import { chmodSync, lstatSync as lstatSync2, mkdirSync as mkdirSync6, unlinkSync as unlinkSync6, utimesSync, writeFileSync as writeFileSync8 } from "node:fs";
 import { createServer as createServer2 } from "node:net";
-import { dirname as dirname2 } from "node:path";
+import { dirname as dirname5 } from "node:path";
 
 // js/shared/room-kinds.ts
 var WORDS = {
@@ -2756,12 +3247,12 @@ function batchForWatchdogs(d, raw, frame2, emit2) {
 }
 
 // js/bridge/sweep.ts
-import { existsSync, readdirSync as readdirSync2, readFileSync as readFileSync9, statSync as statSync3, unlinkSync as unlinkSync5 } from "node:fs";
+import { existsSync as existsSync3, readdirSync as readdirSync3, readFileSync as readFileSync12, statSync as statSync3, unlinkSync as unlinkSync5 } from "node:fs";
 import { connect as connectLocal } from "node:net";
-import { basename as basename2, join as join7 } from "node:path";
+import { basename as basename2, join as join11 } from "node:path";
 
 // js/bridge/holdrecord.ts
-import { readFileSync as readFileSync8, unlinkSync as unlinkSync4, writeFileSync as writeFileSync6 } from "node:fs";
+import { readFileSync as readFileSync11, unlinkSync as unlinkSync4, writeFileSync as writeFileSync7 } from "node:fs";
 var holdFilePathFor = (key) => holdFilePathOf(CFG.authDir, key);
 function keyOf(realm, karta, name) {
   return `${name || "_"}--${karta}--${realm}`.replace(/[^A-Za-z0-9._-]+/g, "_").slice(0, 120);
@@ -2774,7 +3265,7 @@ function noteHarnessSession(id) {
 var sessionOfBridge = () => harnessSession;
 function leftOnDisk(key) {
   try {
-    return JSON.parse(readFileSync8(holdFilePathFor(key), "utf8"))?.left === true;
+    return JSON.parse(readFileSync11(holdFilePathFor(key), "utf8"))?.left === true;
   } catch {
     return false;
   }
@@ -2784,7 +3275,7 @@ function writeHoldRecord(key, rec3) {
   try {
     const session = harnessSession ?? rec3.session;
     const left = rec3.left ?? leftOnDisk(key);
-    writeFileSync6(
+    writeFileSync7(
       holdFilePathFor(key),
       JSON.stringify({
         ...rec3,
@@ -2801,7 +3292,7 @@ function writeHoldRecord(key, rec3) {
 function restoreHoldRecord(key, rec3) {
   if (CFG.satellite) return;
   try {
-    writeFileSync6(holdFilePathFor(key), JSON.stringify(rec3) + "\n", { mode: 384 });
+    writeFileSync7(holdFilePathFor(key), JSON.stringify(rec3) + "\n", { mode: 384 });
   } catch (e) {
     log(`hold record not restored: ${e.message}`);
   }
@@ -2812,7 +3303,7 @@ function markLeft(key, on) {
 }
 function readHoldRecord(key) {
   try {
-    const r = JSON.parse(readFileSync8(holdFilePathFor(key), "utf8"));
+    const r = JSON.parse(readFileSync11(holdFilePathFor(key), "utf8"));
     if (!r || typeof r.url !== "string" || !r.realm || r.karta == null) return null;
     if (typeof r.at !== "number" || Date.now() - r.at > HOLD_RECORD_MAX_AGE_MS) {
       dropHoldRecord(key);
@@ -2832,12 +3323,12 @@ function dropHoldRecord(key) {
 
 // js/bridge/sweep.ts
 function localSocketAlive(sock) {
-  return new Promise((resolve5) => {
-    if (process.platform !== "win32" && !existsSync(sock)) return resolve5(false);
+  return new Promise((resolve6) => {
+    if (process.platform !== "win32" && !existsSync3(sock)) return resolve6(false);
     const probe = connectLocal(sock);
     const done = (v) => {
       probe.destroy();
-      resolve5(v);
+      resolve6(v);
     };
     probe.once("connect", () => done(true));
     probe.once("error", () => done(false));
@@ -2847,36 +3338,36 @@ function localSocketAlive(sock) {
 var SEEN_FILE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1e3;
 function sweepStale(authDir, mine) {
   const dir = standingsDirOf(authDir);
-  if (!existsSync(dir)) return;
+  if (!existsSync3(dir)) return;
   const mineHash = basename2(seenFilePathOf(authDir, mine), ".seen");
-  for (const f of readdirSync2(dir).filter((x) => x.endsWith(".seen"))) {
-    const p = join7(dir, f);
+  for (const f of readdirSync3(dir).filter((x) => x.endsWith(".seen"))) {
+    const p = join11(dir, f);
     const [keyHash, serverHash] = f.split(".");
-    if (keyHash === mineHash || existsSync(join7(dir, `${keyHash}.key`))) continue;
+    if (keyHash === mineHash || existsSync3(join11(dir, `${keyHash}.key`))) continue;
     try {
       if (serverHash === "seen" || Date.now() - statSync3(p).mtimeMs > SEEN_FILE_MAX_AGE_MS)
         unlinkSync5(p);
     } catch {
     }
   }
-  for (const f of readdirSync2(dir).filter((x) => x.endsWith(".hold"))) {
+  for (const f of readdirSync3(dir).filter((x) => x.endsWith(".hold"))) {
     try {
-      const rec3 = JSON.parse(readFileSync9(join7(dir, f), "utf8"));
+      const rec3 = JSON.parse(readFileSync12(join11(dir, f), "utf8"));
       if (typeof rec3.at !== "number" || Date.now() - rec3.at > HOLD_RECORD_MAX_AGE_MS)
-        unlinkSync5(join7(dir, f));
+        unlinkSync5(join11(dir, f));
     } catch {
       try {
-        unlinkSync5(join7(dir, f));
+        unlinkSync5(join11(dir, f));
       } catch {
       }
     }
   }
   if (process.platform === "win32") return;
-  for (const f of readdirSync2(dir).filter((x) => x.endsWith(".key"))) {
-    const keyFile = join7(dir, f);
+  for (const f of readdirSync3(dir).filter((x) => x.endsWith(".key"))) {
+    const keyFile = join11(dir, f);
     let key;
     try {
-      key = readFileSync9(keyFile, "utf8").trim();
+      key = readFileSync12(keyFile, "utf8").trim();
     } catch {
       continue;
     }
@@ -2890,7 +3381,7 @@ function sweepStale(authDir, mine) {
         }
       }
     };
-    if (!existsSync(sock)) {
+    if (!existsSync3(sock)) {
       drop();
       continue;
     }
@@ -2907,11 +3398,11 @@ function privateDirProblem(dir) {
   let st;
   try {
     try {
-      mkdirSync5(dir, { mode: 448 });
+      mkdirSync6(dir, { mode: 448 });
     } catch (e) {
       if (e.code !== "EEXIST") throw e;
     }
-    st = lstatSync(dir);
+    st = lstatSync2(dir);
   } catch (e) {
     return `${dir}: ${e.message}`;
   }
@@ -2977,9 +3468,9 @@ var Door = class {
   open() {
     const path = this.socketPath;
     const key = this.key;
-    mkdirSync5(standingsDirOf(CFG.authDir), { recursive: true, mode: 448 });
-    if (process.platform !== "win32" && dirname2(path) === shortSocketDir()) {
-      const bad = privateDirProblem(dirname2(path));
+    mkdirSync6(standingsDirOf(CFG.authDir), { recursive: true, mode: 448 });
+    if (process.platform !== "win32" && dirname5(path) === shortSocketDir()) {
+      const bad = privateDirProblem(dirname5(path));
       if (bad) {
         this.listenError = bad;
         this.hooks.onError(`ДЕЛАТЕЛЬ: локальный сокет стояния не поднят — ${bad}`);
@@ -2987,7 +3478,7 @@ var Door = class {
       }
     }
     sweepStale(CFG.authDir, key);
-    writeFileSync7(keyFilePathOf(CFG.authDir, key), key + "\n", { mode: 384 });
+    writeFileSync8(keyFilePathOf(CFG.authDir, key), key + "\n", { mode: 384 });
     if (process.platform !== "win32") {
       try {
         unlinkSync6(path);
@@ -3035,10 +3526,10 @@ var Door = class {
         }
       }
       log(`standing socket held; local listeners attach at ${path}`);
-      if (dirname2(path) === shortSocketDir()) {
+      if (dirname5(path) === shortSocketDir()) {
         const touch = () => {
           const now2 = /* @__PURE__ */ new Date();
-          for (const p of [dirname2(path), path])
+          for (const p of [dirname5(path), path])
             try {
               utimesSync(p, now2, now2);
             } catch {
@@ -3105,7 +3596,7 @@ var Door = class {
 import { execFileSync } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { hostname } from "node:os";
-import { basename as basename3, dirname as dirname3, resolve as resolve3 } from "node:path";
+import { basename as basename3, dirname as dirname6, resolve as resolve4 } from "node:path";
 var NAME_MAX = 48;
 var normKarta = (k) => String(k ?? "").trim().replace(/^#/, "");
 var normName = (n) => typeof n === "string" ? n.trim() : "";
@@ -3125,10 +3616,10 @@ var PART_MIN = 3;
 var CUT_ORDER = ["repo", "host", "model"];
 function fitName(parts) {
   const p = { ...parts };
-  const join19 = () => [p.host, p.repo, p.model].filter(Boolean).join(".").replace(/[-.]+$/, "");
+  const join20 = () => [p.host, p.repo, p.model].filter(Boolean).join(".").replace(/[-.]+$/, "");
   const cut = [];
   for (const k of CUT_ORDER) {
-    const over = join19().length - NAME_MAX;
+    const over = join20().length - NAME_MAX;
     if (over <= 0) break;
     const keep = Math.max(k === "model" ? 1 : PART_MIN, p[k].length - over);
     if (keep >= p[k].length) continue;
@@ -3136,7 +3627,7 @@ function fitName(parts) {
     cut.push(k);
   }
   return {
-    name: join19().slice(0, NAME_MAX).replace(/[-.]+$/, ""),
+    name: join20().slice(0, NAME_MAX).replace(/[-.]+$/, ""),
     cut
   };
 }
@@ -3161,10 +3652,10 @@ var real = (p) => {
 function repoName(cwd = process.cwd()) {
   const top = git(["rev-parse", "--show-toplevel"], cwd);
   const [gitDir, common] = git(["rev-parse", "--git-dir", "--git-common-dir"], cwd).split("\n");
-  if (!gitDir || !common || real(resolve3(cwd, gitDir)) === real(resolve3(cwd, common)))
+  if (!gitDir || !common || real(resolve4(cwd, gitDir)) === real(resolve4(cwd, common)))
     return basename3(top || cwd);
-  const shared = real(resolve3(cwd, common));
-  if (basename3(shared) === ".git") return basename3(dirname3(shared));
+  const shared = real(resolve4(cwd, common));
+  if (basename3(shared) === ".git") return basename3(dirname6(shared));
   const origin = git(["remote", "get-url", "origin"], cwd).replace(/\/+$/, "");
   const fromOrigin = basename3(origin.replace(/^.*:/, "/")).replace(/\.git$/, "");
   return fromOrigin || basename3(top || cwd);
@@ -3428,10 +3919,10 @@ var resuming = 0;
 function awaitHello(timeoutMs) {
   const seen = door?.ring.find((r) => r.frame?.type === "hello")?.frame ?? null;
   if (seen) return Promise.resolve(seen);
-  return new Promise((resolve5) => {
+  return new Promise((resolve6) => {
     const done = (f) => {
       helloWaiters.delete(done);
-      resolve5(f);
+      resolve6(f);
     };
     helloWaiters.add(done);
     setTimeout(() => done(null), timeoutMs).unref();
@@ -3648,8 +4139,11 @@ function setRevokingOwn(v) {
   revokingOwn = v;
 }
 
+// js/bridge/session.ts
+import { createInterface } from "node:readline";
+
 // js/bridge/listen.ts
-import { fileURLToPath as fileURLToPath2 } from "node:url";
+import { fileURLToPath as fileURLToPath4 } from "node:url";
 function clientName() {
   const info = state.initParams?.clientInfo;
   return typeof info?.name === "string" ? info.name : "";
@@ -3657,7 +4151,7 @@ function clientName() {
 function listenBlock(realm) {
   const key = heldKey(realm);
   if (!key) return null;
-  const self = fileURLToPath2(import.meta.url);
+  const self = fileURLToPath4(import.meta.url);
   const where = CFG.authDir === defaultAuthDir() ? "" : ` --auth-dir "${CFG.authDir}"`;
   const client = clientName();
   const monitor = L(
@@ -3692,76 +4186,6 @@ ${listen}
 Busy line: iskron_channel(action="status", realm, text) — an empty text clears it.
 Frames also come as MCP notifications (logger iskron-channel).`
   );
-}
-
-// js/bridge/skillset.ts
-import { createHash as createHash4 } from "node:crypto";
-import { existsSync as existsSync2, readdirSync as readdirSync3, readFileSync as readFileSync10 } from "node:fs";
-import { homedir as homedir3 } from "node:os";
-import { dirname as dirname4, join as join8, resolve as resolve4 } from "node:path";
-import { fileURLToPath as fileURLToPath3 } from "node:url";
-var SET = "iskron-ai/skills";
-var BRIDGE_IN_SET = join8("establish-mcp", "scripts", "iskron.mjs");
-var env = (k) => process.env[k]?.trim() ?? "";
-function skillsRoot(self = fileURLToPath3(import.meta.url)) {
-  const plugin = env("CLAUDE_PLUGIN_ROOT");
-  const candidates = [
-    env(SKILLS_ROOT_ENV),
-    resolve4(dirname4(self), "..", ".."),
-    plugin ? join8(plugin, "skills") : "",
-    join8(homedir3(), ".agents", "skills")
-  ];
-  for (const c of candidates) if (c && existsSync2(join8(c, BRIDGE_IN_SET))) return resolve4(c);
-  return null;
-}
-var sha8 = (h) => h.digest("hex").slice(0, 8);
-function lockSet(root) {
-  try {
-    const lock = JSON.parse(readFileSync10(join8(dirname4(root), ".skill-lock.json"), "utf8"));
-    const skills = lock.skills ?? {};
-    const own = skills["establish-mcp"]?.source;
-    const name = typeof own === "string" && own.trim() ? own.trim() : SET;
-    const lines = Object.entries(skills).filter(([, s2]) => s2?.source === name && typeof s2.skillFolderHash === "string").map(([n, s2]) => `${n}:${String(s2.skillFolderHash)}
-`).sort();
-    return { name, stamp: lines.length ? sha8(createHash4("sha256").update(lines.join(""))) : null };
-  } catch {
-    return { name: SET, stamp: null };
-  }
-}
-function treeStamp(root) {
-  const h = createHash4("sha256");
-  let n = 0;
-  let names2;
-  try {
-    names2 = readdirSync3(root).sort();
-  } catch {
-    return null;
-  }
-  for (const name of names2) {
-    let body;
-    try {
-      body = readFileSync10(join8(root, name, "SKILL.md"));
-    } catch {
-      continue;
-    }
-    h.update(`${name}\0`);
-    h.update(body);
-    h.update("\0");
-    n++;
-  }
-  return n ? sha8(h) : null;
-}
-function skillsAttr() {
-  const root = skillsRoot();
-  if (!root) return { name: SET, version: "unknown" };
-  let version = "unknown";
-  try {
-    version = versionIn(readFileSync10(join8(root, BRIDGE_IN_SET), "utf8")) ?? "unknown";
-  } catch {
-  }
-  const lock = lockSet(root);
-  const stamp = lock.stamp ?? treeStamp(root);
-  return { name: lock.name, version, ...stamp ? { stamp } : {} };
 }
 
 // js/bridge/placefields.ts
@@ -4118,15 +4542,15 @@ function serialized(fn) {
 // js/bridge/satellite.ts
 import { randomBytes as randomBytes2 } from "node:crypto";
 import {
-  mkdirSync as mkdirSync6,
-  readFileSync as readFileSync11,
-  renameSync as renameSync5,
+  mkdirSync as mkdirSync7,
+  readFileSync as readFileSync13,
+  renameSync as renameSync6,
   rmSync,
   statSync as statSync4,
   unlinkSync as unlinkSync7,
-  writeFileSync as writeFileSync8
+  writeFileSync as writeFileSync9
 } from "node:fs";
-import { join as join9 } from "node:path";
+import { join as join12 } from "node:path";
 
 // js/bridge/board.ts
 function parseBoard(text) {
@@ -4159,8 +4583,8 @@ function isSatelliteOf(base, name) {
   const m = SUB_RE.exec(name);
   return !!m && satelliteName(base, Number(m[1])) === name;
 }
-var claimDir = () => join9(CFG.authDir, "satellites");
-var claimFile = (name) => join9(claimDir(), `${name.replace(/[^A-Za-z0-9._-]+/g, "_")}.claim`);
+var claimDir = () => join12(CFG.authDir, "satellites");
+var claimFile = (name) => join12(claimDir(), `${name.replace(/[^A-Za-z0-9._-]+/g, "_")}.claim`);
 var claims = /* @__PURE__ */ new Set();
 var releaseOnExit = false;
 var LOCK_STALE_MS = 1e4;
@@ -4177,11 +4601,11 @@ function claimName(name) {
   const file = claimFile(name);
   let pid = 0;
   try {
-    pid = Number(readFileSync11(file, "utf8").trim());
+    pid = Number(readFileSync13(file, "utf8").trim());
   } catch {
   }
   if (pid && pid !== process.pid && alive(pid)) return false;
-  writeFileSync8(file, `${process.pid}
+  writeFileSync9(file, `${process.pid}
 `, { mode: 384 });
   if (!releaseOnExit) process.once("exit", releaseSatelliteClaims);
   releaseOnExit = true;
@@ -4191,7 +4615,7 @@ function claimName(name) {
 function releaseSatelliteClaims() {
   for (const f of claims) {
     try {
-      if (Number(readFileSync11(f, "utf8").trim()) === process.pid) unlinkSync7(f);
+      if (Number(readFileSync13(f, "utf8").trim()) === process.pid) unlinkSync7(f);
     } catch {
     }
   }
@@ -4200,7 +4624,7 @@ function releaseSatelliteClaims() {
 var LOCK_OWNER = "owner";
 function lockOwner(lock) {
   try {
-    return readFileSync11(join9(lock, LOCK_OWNER), "utf8").trim();
+    return readFileSync13(join12(lock, LOCK_OWNER), "utf8").trim();
   } catch {
     return null;
   }
@@ -4217,7 +4641,7 @@ function abandoned(lock, owner) {
 function takeLock(lock, owner) {
   const away = `${lock}.${process.pid}-${randomBytes2(6).toString("hex")}`;
   try {
-    renameSync5(lock, away);
+    renameSync6(lock, away);
   } catch {
     return null;
   }
@@ -4227,17 +4651,17 @@ function takeLock(lock, owner) {
   return null;
 }
 async function underClaimLock(fn) {
-  const lock = join9(claimDir(), ".lock");
+  const lock = join12(claimDir(), ".lock");
   const token = `${process.pid} ${randomBytes2(8).toString("hex")}`;
   let fault = null;
   try {
-    mkdirSync6(claimDir(), { recursive: true, mode: 448 });
+    mkdirSync7(claimDir(), { recursive: true, mode: 448 });
   } catch (e) {
     fault = e.message;
   }
   for (const end = Date.now() + LOCK_WAIT_MS; !fault; ) {
     try {
-      mkdirSync6(lock);
+      mkdirSync7(lock);
     } catch (e) {
       if (e.code !== "EEXIST") fault = e.message;
       else if (Date.now() > end) fault = `the claims lock ${lock} is held too long`;
@@ -4249,7 +4673,7 @@ async function underClaimLock(fn) {
       continue;
     }
     try {
-      writeFileSync8(join9(lock, LOCK_OWNER), `${token}
+      writeFileSync9(join12(lock, LOCK_OWNER), `${token}
 `, { mode: 384 });
     } catch (e) {
       fault = e.message;
@@ -4438,8 +4862,8 @@ var satelliteListenWord = () => L(
 );
 
 // js/bridge/status.ts
-import { existsSync as existsSync3, readdirSync as readdirSync4, readFileSync as readFileSync12 } from "node:fs";
-import { join as join10 } from "node:path";
+import { existsSync as existsSync4, readdirSync as readdirSync4, readFileSync as readFileSync14 } from "node:fs";
+import { join as join13 } from "node:path";
 function localStatus(msg) {
   if (msg?.method !== "tools/call" || msg?.params?.name !== "iskron_channel") return null;
   const a = msg.params?.arguments;
@@ -4494,12 +4918,12 @@ var TURNED_GUIDANCE = () => `${TWO_ENTRIES()} ${L("Иначе", "Otherwise")} ${
 var slugOf = (realm) => realm.replace(/^@[^/]+\//, "");
 async function heldElsewhere(realm) {
   const dir = standingsDirOf(CFG.authDir);
-  if (!existsSync3(dir)) return [];
+  if (!existsSync4(dir)) return [];
   const anyRealm = !realm || /^r\d+$/.test(realm);
   const out5 = [];
   for (const f of readdirSync4(dir).filter((x) => x.endsWith(".hold"))) {
     try {
-      const rec3 = JSON.parse(readFileSync12(join10(dir, f), "utf8"));
+      const rec3 = JSON.parse(readFileSync14(join13(dir, f), "utf8"));
       if (!rec3?.realm || rec3.karta == null) continue;
       if (!anyRealm && slugOf(String(rec3.realm)) !== slugOf(realm)) continue;
       const key = keyOf(rec3.realm, rec3.karta, rec3.name ?? "");
@@ -4746,8 +5170,8 @@ async function armRoleHook(p) {
 }
 
 // js/bridge/resume.ts
-import { existsSync as existsSync4, readdirSync as readdirSync5, readFileSync as readFileSync13 } from "node:fs";
-import { join as join11 } from "node:path";
+import { existsSync as existsSync5, readdirSync as readdirSync5, readFileSync as readFileSync15 } from "node:fs";
+import { join as join14 } from "node:path";
 async function deadPredecessor(realm, karta, name) {
   const key = keyOf(realm, karta, name);
   if (!readHoldRecord(key)) return false;
@@ -4811,7 +5235,7 @@ async function resumeFromDisk(realm, karta, name) {
 }
 function recordsFor(sel) {
   const dir = standingsDirOf(CFG.authDir);
-  if (!existsSync4(dir)) return { own: [], sameDir: [], legacy: [], left: [] };
+  if (!existsSync5(dir)) return { own: [], sameDir: [], legacy: [], left: [] };
   const mine = harnessName();
   const led = ledKey();
   const byKey = [];
@@ -4821,7 +5245,7 @@ function recordsFor(sel) {
   const left = [];
   for (const f of readdirSync5(dir).filter((x) => x.endsWith(".hold"))) {
     try {
-      const rec3 = JSON.parse(readFileSync13(join11(dir, f), "utf8"));
+      const rec3 = JSON.parse(readFileSync15(join14(dir, f), "utf8"));
       if (!rec3 || rec3.client !== mine) continue;
       const key = keyOf(rec3.realm, rec3.karta, rec3.name);
       const keyed2 = !!sel.key && key === sel.key;
@@ -5056,7 +5480,7 @@ async function separatePlace(realm, karta, derived) {
 }
 
 // js/bridge/standwords.ts
-var s = (ms) => Math.round(ms / 1e3);
+var s = (ms2) => Math.round(ms2 / 1e3);
 var SW = {
   needRealmKarta: () => L(
     "Отказано (мост): iskron_stand требует realm и karta — граф и роль из AGENTS.md или строки запуска.",
@@ -5226,395 +5650,6 @@ var SW = {
     `The busy line was not accepted: ${body}${guidance}`
   )
 };
-
-// js/bridge/update.ts
-import { spawn as spawn2 } from "node:child_process";
-import { existsSync as existsSync5, lstatSync as lstatSync2, readFileSync as readFileSync15 } from "node:fs";
-import { homedir as homedir5 } from "node:os";
-import { dirname as dirname6, join as join14 } from "node:path";
-import { fileURLToPath as fileURLToPath4 } from "node:url";
-
-// js/shared/home.ts
-import { homedir as homedir4 } from "node:os";
-import { join as join12 } from "node:path";
-var homeBridgePath = () => join12(homedir4(), ".iskron-bridge", "iskron-bridge.mjs");
-
-// js/shared/semver.ts
-function parseVersion(v) {
-  const m = /^v?(\d+)\.(\d+)\.(\d+)/.exec((v ?? "").trim());
-  return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
-}
-function compareVersions(a, b) {
-  const pa = parseVersion(a);
-  const pb = parseVersion(b);
-  if (!pa || !pb) return 0;
-  for (let i = 0; i < 3; i++) if (pa[i] !== pb[i]) return pa[i] - pb[i];
-  return 0;
-}
-
-// js/bridge/releases.ts
-import { mkdirSync as mkdirSync7, readFileSync as readFileSync14, renameSync as renameSync6, writeFileSync as writeFileSync9 } from "node:fs";
-import { dirname as dirname5, join as join13 } from "node:path";
-var RELEASES_URL = process.env.ISKRON_BRIDGE_RELEASES_URL?.trim() || "https://api.github.com/repos/iskron-ai/skills/releases/latest";
-var RELEASES_PAGE_URL = process.env.ISKRON_BRIDGE_RELEASES_PAGE_URL?.trim() || (process.env.ISKRON_BRIDGE_RELEASES_URL?.trim() ? null : "https://github.com/iskron-ai/skills/releases/latest");
-var TAG_TTL_MS = 60 * 60 * 1e3;
-var releaseTagPath = () => join13(dirname5(homeBridgePath()), "release-tag.json");
-function writeAtomic(path, bytes) {
-  mkdirSync7(dirname5(path), { recursive: true, mode: 448 });
-  const tmp = `${path}.tmp-${process.pid}`;
-  writeFileSync9(tmp, bytes, { mode: 420 });
-  renameSync6(tmp, path);
-}
-var RateLimitError = class extends Error {
-  limit;
-  resetAt;
-  constructor(message, limit, resetAt) {
-    super(message);
-    this.limit = limit;
-    this.resetAt = resetAt;
-  }
-};
-function resetWord(resetAt) {
-  return resetAt ? `сброс ${new Date(resetAt).toISOString()} (через ${Math.max(0, Math.ceil((resetAt - Date.now()) / 6e4))} мин)` : "время сброса GitHub не назвал";
-}
-function rateLimitWord(limit, resetAt) {
-  const per = limit ? `${limit} запросов в час` : "лимит в час";
-  return `лимит анонимного API GitHub исчерпан: ${per} на внешний адрес машины, общий всем мостам и клиентам за ним; ${resetWord(resetAt)}`;
-}
-function rateLimitOf(res) {
-  if (res.status !== 403 && res.status !== 429) return null;
-  const remaining = res.headers.get("x-ratelimit-remaining");
-  const retrySec = Number(res.headers.get("retry-after"));
-  if (remaining === "0") {
-    const limit = Number(res.headers.get("x-ratelimit-limit")) || null;
-    const resetSec = Number(res.headers.get("x-ratelimit-reset"));
-    const resetAt = resetSec > 0 ? resetSec * 1e3 : retrySec > 0 ? Date.now() + retrySec * 1e3 : null;
-    return new RateLimitError(rateLimitWord(limit, resetAt), limit, resetAt);
-  }
-  if (retrySec > 0 || res.status === 429) {
-    const resetAt = retrySec > 0 ? Date.now() + retrySec * 1e3 : null;
-    return new RateLimitError(
-      `вторичный лимит API GitHub: слишком частые запросы с внешнего адреса машины; ${resetWord(resetAt)}`,
-      null,
-      resetAt
-    );
-  }
-  return null;
-}
-async function tagFromApi() {
-  const res = await fetch(RELEASES_URL, {
-    headers: { accept: "application/vnd.github+json", "user-agent": `iskron-bridge/${VERSION}` },
-    signal: AbortSignal.timeout(15e3)
-  });
-  const limited = rateLimitOf(res);
-  if (limited) throw limited;
-  if (!res.ok) throw new Error(`HTTP ${res.status} от ${RELEASES_URL}`);
-  const body = await res.json();
-  return body.tag_name?.trim() || null;
-}
-async function tagFromPage(url) {
-  const res = await fetch(url, {
-    redirect: "manual",
-    headers: { "user-agent": `iskron-bridge/${VERSION}` },
-    signal: AbortSignal.timeout(15e3)
-  });
-  const location = res.headers.get("location") ?? "";
-  const m = /\/releases\/tag\/([^/?#]+)/.exec(location);
-  if (res.status < 300 || res.status >= 400 || !m)
-    throw new Error(`HTTP ${res.status} от ${url}${location ? ` → ${location}` : ""} — тега нет`);
-  return decodeURIComponent(m[1]);
-}
-function readReleaseTag() {
-  try {
-    const c = JSON.parse(readFileSync14(releaseTagPath(), "utf8"));
-    return c.source === RELEASES_URL ? c : null;
-  } catch {
-    return null;
-  }
-}
-function writeReleaseTag(c) {
-  try {
-    writeAtomic(releaseTagPath(), JSON.stringify(c, null, 2));
-  } catch {
-  }
-}
-async function resolveTag(force) {
-  const cached = readReleaseTag();
-  const now2 = Date.now();
-  if (!force && cached?.tag && now2 - cached.checked_at < TAG_TTL_MS) return cached.tag;
-  const knownLimit = cached?.api_limited_until && now2 < cached.api_limited_until ? new RateLimitError(
-    cached.api_limit ? rateLimitWord(cached.api_limit, cached.api_limited_until) : `лимит API GitHub, записанный другим мостом машины; ${resetWord(cached.api_limited_until)}`,
-    cached.api_limit ?? null,
-    cached.api_limited_until
-  ) : null;
-  let apiErr = knownLimit;
-  if (!knownLimit) {
-    try {
-      const tag = await tagFromApi();
-      writeReleaseTag({ source: RELEASES_URL, checked_at: Date.now(), tag, via: "api" });
-      return tag;
-    } catch (e) {
-      apiErr = e;
-    }
-  }
-  const limit = apiErr instanceof RateLimitError ? apiErr : null;
-  const limitFields = limit?.resetAt ? { api_limited_until: limit.resetAt, api_limit: limit.limit } : {};
-  if (RELEASES_PAGE_URL) {
-    try {
-      const tag = await tagFromPage(RELEASES_PAGE_URL);
-      log(`релизы: API не ответил (${apiErr?.message}) — тег ${tag} со страницы релизов`);
-      writeReleaseTag({
-        source: RELEASES_URL,
-        checked_at: Date.now(),
-        tag,
-        via: "page",
-        ...limitFields
-      });
-      return tag;
-    } catch (e) {
-      const both = `${apiErr?.message}; запасной путь — ${e.message}`;
-      apiErr = limit ? new RateLimitError(both, limit.limit, limit.resetAt) : new Error(both);
-    }
-  }
-  if (limit?.resetAt)
-    writeReleaseTag({
-      source: RELEASES_URL,
-      checked_at: cached?.checked_at ?? 0,
-      tag: cached?.tag ?? null,
-      ...cached?.via ? { via: cached.via } : {},
-      ...limitFields
-    });
-  throw apiErr;
-}
-
-// js/bridge/update.ts
-var RAW_URL = process.env.ISKRON_BRIDGE_RAW_URL?.trim() || "https://raw.githubusercontent.com/iskron-ai/skills";
-var CHECK_INTERVAL_MS = 6 * 60 * 60 * 1e3;
-var FAILED_RETRY_MS = 15 * 60 * 1e3;
-var envMs = (name, dflt) => {
-  const v = Number(process.env[name]);
-  return process.env[name]?.trim() && Number.isFinite(v) && v >= 0 ? v : dflt;
-};
-var RETRY_FLOOR_MS = envMs("ISKRON_BRIDGE_RETRY_FLOOR_MS", 6e4);
-var RETRY_JITTER_MS = envMs("ISKRON_BRIDGE_RETRY_JITTER_MS", 6e4);
-var updatesDisabled = () => !!process.env.ISKRON_BRIDGE_NO_UPDATE;
-var selfPath = () => fileURLToPath4(import.meta.url);
-var opencodePluginPath = () => join14(homedir5(), ".config", "opencode", "plugins", "iskron.js");
-var setupPathOf = (authDir) => join14(authDir, "SETUP.md");
-var latestPathOf = (authDir) => join14(authDir, "latest.json");
-var isSymlink = (path) => {
-  try {
-    return lstatSync2(path).isSymbolicLink();
-  } catch {
-    return false;
-  }
-};
-var versionOf = (path) => {
-  try {
-    return versionIn(readFileSync15(path, "utf8"));
-  } catch {
-    return null;
-  }
-};
-function syncHome(self = selfPath()) {
-  const out5 = { copied: [] };
-  const home = homeBridgePath();
-  let mine;
-  try {
-    mine = readFileSync15(self);
-  } catch {
-    return out5;
-  }
-  if (!versionIn(mine.toString("utf8"))) return out5;
-  if (self === home) return out5;
-  if (isSymlink(home)) return out5;
-  const homeVersion = versionOf(home);
-  const cmp = homeVersion ? compareVersions(VERSION, homeVersion) : 1;
-  if (cmp > 0) {
-    writeAtomic(home, mine);
-    out5.copied.push(home);
-    const plugin = opencodePluginPath();
-    const packaged = join14(dirname6(self), "opencode-plugin.js");
-    if (existsSync5(plugin) && existsSync5(packaged)) {
-      const fresh = readFileSync15(packaged);
-      if (!readFileSync15(plugin).equals(fresh)) {
-        writeAtomic(plugin, fresh);
-        out5.copied.push(plugin);
-      }
-    }
-  } else if (cmp < 0 && homeVersion) {
-    out5.reexec = home;
-  }
-  return out5;
-}
-function reexec(path, argv2) {
-  log(
-    `домашняя копия новее этой сборки (v${versionOf(path) ?? "?"} > v${VERSION}) — запускаюсь ею: ${path}`
-  );
-  const root = skillsRoot();
-  const child = spawn2(process.execPath, [path, ...argv2], {
-    stdio: "inherit",
-    env: {
-      ...process.env,
-      ISKRON_BRIDGE_REEXEC: "1",
-      ...root ? { [SKILLS_ROOT_ENV]: root } : {}
-    }
-  });
-  for (const sig of ["SIGTERM", "SIGINT", "SIGHUP"]) {
-    process.on(sig, () => child.kill(sig));
-  }
-  child.on("exit", (code, signal) => process.exit(code ?? (signal ? 1 : 0)));
-  child.on("error", (e) => {
-    log(`перезапуск не удался: ${e.message}`);
-    process.exit(1);
-  });
-}
-function readLatest(authDir) {
-  try {
-    return JSON.parse(readFileSync15(latestPathOf(authDir), "utf8"));
-  } catch {
-    return null;
-  }
-}
-async function fetchText(url) {
-  const res = await fetch(url, {
-    headers: {
-      accept: "application/vnd.github+json, text/plain, */*",
-      "user-agent": `iskron-bridge/${VERSION}`
-    },
-    signal: AbortSignal.timeout(15e3)
-  });
-  if (!res.ok) throw new Error(`HTTP ${res.status} от ${url}`);
-  return res.text();
-}
-async function downloadRelease(tag, version, authDir) {
-  const written = [];
-  const base = `${RAW_URL}/${tag}`;
-  const bridge = await fetchText(`${base}/skills/establish-mcp/scripts/iskron.mjs`);
-  const got = versionIn(bridge);
-  if (got !== version)
-    throw new Error(`скачанный мост называет v${got ?? "?"}, релиз — v${version}`);
-  const home = homeBridgePath();
-  const current2 = versionOf(home);
-  if (!isSymlink(home) && (!current2 || compareVersions(version, current2) > 0)) {
-    writeAtomic(home, bridge);
-    written.push(home);
-  }
-  const plugin = opencodePluginPath();
-  if (existsSync5(plugin)) {
-    const fresh = await fetchText(`${base}/skills/establish-mcp/scripts/opencode-plugin.js`);
-    if (readFileSync15(plugin, "utf8") !== fresh) {
-      writeAtomic(plugin, fresh);
-      written.push(plugin);
-    }
-  }
-  const setup = await fetchText(`${base}/SETUP.md`);
-  writeAtomic(setupPathOf(authDir), setup);
-  written.push(setupPathOf(authDir));
-  return written;
-}
-function checkExpiresAt(latest) {
-  if (!latest.error) return latest.checked_at + CHECK_INTERVAL_MS;
-  if (latest.rate_limited_until) return latest.rate_limited_until;
-  return latest.checked_at + FAILED_RETRY_MS;
-}
-async function checkLatest(authDir, force = false) {
-  const cached = readLatest(authDir);
-  if (!force && cached && Date.now() < checkExpiresAt(cached)) return cached;
-  const latest = { checked_at: Date.now(), version: null, tag: null, downloaded: [] };
-  try {
-    const tag = await resolveTag(force);
-    latest.tag = tag;
-    latest.version = tag ? tag.replace(/^v/, "") : null;
-    if (latest.version && compareVersions(latest.version, VERSION) > 0) {
-      latest.downloaded = await downloadRelease(tag, latest.version, authDir);
-    } else if (force && tag) {
-      writeAtomic(setupPathOf(authDir), await fetchText(`${RAW_URL}/${tag}/SETUP.md`));
-      latest.downloaded = [setupPathOf(authDir)];
-    }
-  } catch (e) {
-    latest.error = e.message;
-    if (e instanceof RateLimitError) {
-      latest.rate_limited = true;
-      if (e.resetAt) latest.rate_limited_until = e.resetAt;
-    }
-  }
-  try {
-    writeAtomic(latestPathOf(authDir), JSON.stringify(latest, null, 2));
-  } catch {
-  }
-  return latest;
-}
-function staleNotice(latest, authDir) {
-  if (!latest?.version || compareVersions(latest.version, VERSION) <= 0) return null;
-  const self = process.argv[1];
-  const bridgeWord = latest.downloaded.some((p) => p === homeBridgePath()) ? L(
-    "Свежий мост уже скачан в ~/.iskron-bridge и поднимется новой сессией.",
-    "The fresh bridge is already downloaded into ~/.iskron-bridge and comes up with a new session."
-  ) : latest.error ? L(
-    `Скачать свежий мост не вышло (${latest.error}); повтори: node "${self}" update.`,
-    `Downloading the fresh bridge failed (${latest.error}); repeat: node "${self}" update.`
-  ) : isSymlink(homeBridgePath()) ? L(
-    "Свежий мост в дом не положен: дом — симлинк на чужую копию, его не трогаю; обнови эту копию сам.",
-    "The fresh bridge is not put home: home is a symlink to another copy, left alone; update that copy yourself."
-  ) : versionOf(homeBridgePath()) && compareVersions(versionOf(homeBridgePath()), latest.version) >= 0 ? L(
-    "Свежий мост уже лежит в ~/.iskron-bridge и поднимется новой сессией.",
-    "The fresh bridge already lies in ~/.iskron-bridge and comes up with a new session."
-  ) : L(
-    `Свежий мост в дом не положен; повтори: node "${self}" update (мост, который отвечает, — тот и обновляет дом; в пакетной поставке OpenCode мост живёт в пакете и обновляется с ним).`,
-    `The fresh bridge is not put home; repeat: node "${self}" update (the bridge that answers is the one that updates home; in OpenCode's packaged delivery the bridge lives in the package and updates with it).`
-  );
-  return L(
-    `[iskron-bridge] ПОСТАВКА ОТСТАЛА: этот мост v${VERSION}, свежий релиз v${latest.version}. ${bridgeWord} Скиллы обновляет канал харнеса, и об этом надо СКАЗАТЬ ЧЕЛОВЕКУ: Claude Code — /plugin marketplace update iskron, затем /reload-plugins; плоская установка — npx skills update --global; pi — pi update git:github.com/iskron-ai/skills; Codex — codex plugin marketplace upgrade iskron, затем codex plugin remove iskron@iskron и codex plugin add iskron@iskron. Полный порядок — свежий установщик ${setupPathOf(authDir)} (кладёт update); по слову человека «обнови» исполни его.`,
-    `[iskron-bridge] DELIVERY BEHIND: this bridge is v${VERSION}, the fresh release is v${latest.version}. ${bridgeWord} The harness channel updates the skills, and this must be TOLD TO THE HUMAN: Claude Code — /plugin marketplace update iskron, then /reload-plugins; flat install — npx skills update --global; pi — pi update git:github.com/iskron-ai/skills; Codex — codex plugin marketplace upgrade iskron, then codex plugin remove iskron@iskron and codex plugin add iskron@iskron. The full order — the fresh installer ${setupPathOf(authDir)} (update puts it); on the human's word "update" run it.`
-  );
-}
-var pendingNotice = null;
-function takeNotice() {
-  const n = pendingNotice;
-  pendingNotice = null;
-  return n;
-}
-function startFreshnessWatch(authDir, serverUrl) {
-  if (updatesDisabled()) return;
-  const explicit = !!process.env.ISKRON_BRIDGE_RELEASES_URL?.trim();
-  if (!explicit && !isProductionServer(serverUrl)) {
-    log(
-      `releases not watched: ${serverUrl} is not a production address — another instance is another delivery`
-    );
-    return;
-  }
-  let retry = null;
-  let told = null;
-  const spread = Math.floor(Math.random() * RETRY_JITTER_MS);
-  const tick = async () => {
-    const latest = await checkLatest(authDir);
-    if (retry) clearTimeout(retry);
-    retry = null;
-    if (latest?.error) {
-      const wait = Math.min(
-        CHECK_INTERVAL_MS,
-        Math.max(RETRY_FLOOR_MS, checkExpiresAt(latest) - Date.now() + 1e3) + spread
-      );
-      retry = setTimeout(() => void tick(), wait);
-      retry.unref();
-    }
-    const notice = staleNotice(latest, authDir);
-    if (!notice) return;
-    if (latest?.error && notice === told) return;
-    told = notice;
-    pendingNotice = notice;
-    log(notice);
-    emit({
-      jsonrpc: "2.0",
-      method: "notifications/message",
-      params: { level: "warning", logger: "iskron-bridge", data: { kind: "stale", text: notice } }
-    });
-  };
-  const delay = Number(process.env.ISKRON_BRIDGE_UPDATE_DELAY_MS ?? 2e3);
-  setTimeout(() => void tick(), Number.isFinite(delay) ? delay : 2e3).unref();
-  setInterval(() => void tick(), CHECK_INTERVAL_MS).unref();
-}
 
 // js/bridge/standtool.ts
 var STAND_TOOL = {
@@ -6306,35 +6341,21 @@ async function deliverOne(msg) {
   }
 }
 
-// js/bridge/main.ts
+// js/bridge/session.ts
 var ORPHAN_FLOW_MS = Number(process.env.ISKRON_BRIDGE_ORPHAN_FLOW_MS) || 5 * 6e4;
-function proxyWord() {
-  const env2 = process.env;
-  const proxy = env2.HTTPS_PROXY || env2.https_proxy || env2.HTTP_PROXY || env2.http_proxy;
-  if (!proxy || process.versions.bun) return null;
-  const [major = 0, minor = 0] = process.versions.node.split(".").map(Number);
-  const reads = major > 24 || major === 24 && minor >= 5;
-  const flags = [...process.execArgv, ...(env2.NODE_OPTIONS ?? "").split(/\s+/)];
-  const on = env2.NODE_USE_ENV_PROXY === "1" || flags.includes("--use-env-proxy");
-  if (reads && on) return null;
-  return reads ? "a proxy is set (HTTP(S)_PROXY), but Node reads it only under NODE_USE_ENV_PROXY=1 — add that variable to the bridge's env in the harness config; until then calls go around the proxy" : `a proxy is set (HTTP(S)_PROXY), but Node ${process.versions.node} does not read it at all — Node 24.5+ with NODE_USE_ENV_PROXY=1 or the Bun runtime does; until then calls go around the proxy`;
-}
-function bridgeMain(argv2) {
-  guardStream(process.stdout);
-  guardStream(process.stderr);
-  setConfig(parseArgs(argv2));
-  installAuthLockExitHook();
-  installRefreshLockExitHook();
-  log(
-    `${BUILD} -> ${CFG.serverUrl} (timeout ${CFG.timeoutMs}ms, ${CFG.pat ? `personal access token from ${CFG.patSource}` : `auth in ${storePath()}`})`
-  );
-  const proxy = proxyWord();
-  if (proxy) log(proxy);
-  startTokenKeepalive();
-  startFreshnessWatch(CFG.authDir, CFG.serverUrl);
+var originsTaken = 0;
+function openSession(io, origin) {
+  if (origin) {
+    if (originsTaken++) throw new Error("this engine holds one session per process");
+    Object.assign(process.env, origin.env);
+    process.chdir(origin.cwd);
+    setConfig(parseArgs(origin.argv));
+  }
+  setSessionOutput(io.output);
+  guardStream(io.output);
   holdFromEnv();
   if (!CFG.satellite) startDeafnessWatch();
-  const rl = createInterface({ input: process.stdin, terminal: false });
+  const rl = createInterface({ input: io.input, terminal: false });
   const pending = /* @__PURE__ */ new Set();
   let handshake = null;
   rl.on("line", (line) => {
@@ -6363,7 +6384,9 @@ function bridgeMain(argv2) {
     p.finally(() => pending.delete(p));
   });
   let leaving = null;
-  const leave = (why) => leaving ??= windDown(why);
+  let markEnded;
+  const ended = new Promise((resolve6) => markEnded = resolve6);
+  const leave = (why) => leaving ??= windDown(why).finally(markEnded);
   const windDown = async (why) => {
     debug(`${why} — winding down`);
     const addr = statusAddress();
@@ -6371,7 +6394,7 @@ function bridgeMain(argv2) {
     if (addr) await publishStatusTo(addr.url, "", 3e3).catch(() => {
     });
     await Promise.allSettled([...pending, ...tokenRequestsInFlight]);
-    await flushStdout();
+    await flushStdout(io.output);
     const flow = pendingFlow();
     if (flow) {
       log(
@@ -6381,11 +6404,491 @@ function bridgeMain(argv2) {
       }), sleep(ORPHAN_FLOW_MS)]);
     }
     await Promise.allSettled([...tokenRequestsInFlight]);
-    await flushStdout();
+    await flushStdout(io.output);
+  };
+  rl.on("close", () => void leave("stdin closed, the harness is gone"));
+  return { leave, ended };
+}
+
+// js/bridge/thin.ts
+import { spawn as spawn3 } from "node:child_process";
+import { linkSync as linkSync2, mkdirSync as mkdirSync8, readFileSync as readFileSync16, unlinkSync as unlinkSync8, writeFileSync as writeFileSync10 } from "node:fs";
+import { createInterface as createInterface2 } from "node:readline";
+import { PassThrough } from "node:stream";
+import { fileURLToPath as fileURLToPath5 } from "node:url";
+
+// js/shared/seam.ts
+import { createHash as createHash6 } from "node:crypto";
+import { connect as connect2 } from "node:net";
+import { tmpdir } from "node:os";
+import { join as join15, resolve as resolve5 } from "node:path";
+var SEAM_PROTOCOL = 1;
+var DAEMON_ENV = "ISKRON_BRIDGE_DAEMON";
+var NO_DAEMON_ENV = "ISKRON_BRIDGE_NO_DAEMON";
+var seamKey = (authDir) => createHash6("sha256").update(resolve5(authDir)).digest("hex").slice(0, 16);
+var SUN_PATH_MAX = 100;
+function seamSocketPath(authDir) {
+  const key = seamKey(authDir);
+  if (process.platform === "win32") return `\\\\.\\pipe\\iskron-daemon-${key}`;
+  const inDir = join15(resolve5(authDir), "daemon.sock");
+  if (Buffer.byteLength(inDir) <= SUN_PATH_MAX) return inDir;
+  return join15(tmpdir(), `iskron-${process.getuid?.() ?? "u"}`, `${key}.sock`);
+}
+var seamRaiseLockPath = (authDir) => join15(resolve5(authDir), "daemon.raising");
+var PASS_ENV = /* @__PURE__ */ new Set([
+  "CLAUDE_PLUGIN_ROOT",
+  "NODE_EXTRA_CA_CERTS",
+  "NODE_USE_ENV_PROXY",
+  "HTTP_PROXY",
+  "HTTPS_PROXY",
+  "NO_PROXY",
+  "ALL_PROXY",
+  "http_proxy",
+  "https_proxy",
+  "no_proxy",
+  "all_proxy"
+]);
+function seamEnv(env2 = process.env) {
+  const out5 = {};
+  for (const [k, v] of Object.entries(env2)) {
+    if (v !== void 0 && (k.startsWith("ISKRON_") || PASS_ENV.has(k))) out5[k] = v;
+  }
+  return out5;
+}
+function helloFrame(o) {
+  return {
+    t: "hello",
+    seam: SEAM_PROTOCOL,
+    build: o.build,
+    path: o.path,
+    argv: o.argv,
+    env: seamEnv(),
+    cwd: process.cwd(),
+    pid: process.pid,
+    session: o.session ?? null,
+    ...o.probe ? { probe: true } : {}
+  };
+}
+function readFrames(socket, onFrame, onBad = () => {
+}) {
+  socket.setEncoding("utf8");
+  let buf = "";
+  socket.on("data", (chunk) => {
+    buf += chunk;
+    let nl;
+    while ((nl = buf.indexOf("\n")) >= 0) {
+      const line = buf.slice(0, nl).trim();
+      buf = buf.slice(nl + 1);
+      if (!line) continue;
+      let f;
+      try {
+        f = JSON.parse(line);
+      } catch {
+        onBad(line);
+        continue;
+      }
+      onFrame(f);
+    }
+  });
+}
+function writeFrame(socket, frame2, cb) {
+  if (socket.destroyed || !socket.writable) {
+    cb?.(new Error("the seam socket is closed"));
+    return false;
+  }
+  return socket.write(JSON.stringify(frame2) + "\n", cb);
+}
+var SeamError = class extends Error {
+  kind;
+  constructor(kind, message) {
+    super(message);
+    this.kind = kind;
+  }
+};
+var ABSENT = /* @__PURE__ */ new Set(["ENOENT", "ECONNREFUSED", "ENOTSOCK", "ENOTDIR"]);
+function connectSeam(path, hello, timeoutMs) {
+  return new Promise((resolveLink, reject) => {
+    const socket = connect2(path);
+    let welcome = null;
+    const early = [];
+    let frameCb = null;
+    let closeCb = null;
+    let closed = false;
+    const fail = (e) => {
+      clearTimeout(timer);
+      socket.destroy();
+      reject(e);
+    };
+    const timer = setTimeout(
+      () => fail(new SeamError("broken", `no welcome from the daemon in ${timeoutMs}ms`)),
+      timeoutMs
+    );
+    timer.unref?.();
+    socket.on("error", (e) => {
+      if (welcome) return;
+      fail(new SeamError(ABSENT.has(e.code ?? "") ? "absent" : "broken", `${e.code ?? e.message}`));
+    });
+    socket.on("close", () => {
+      if (!welcome) {
+        fail(new SeamError("broken", "the daemon closed the seam before its welcome"));
+        return;
+      }
+      if (closed) return;
+      closed = true;
+      closeCb?.();
+    });
+    socket.on("connect", () => writeFrame(socket, hello));
+    readFrames(socket, (f) => {
+      if (!welcome) {
+        if (f.t === "refuse") return fail(new SeamError("refused", f.reason));
+        if (f.t !== "welcome") return fail(new SeamError("broken", `expected welcome, got ${f.t}`));
+        welcome = f;
+        clearTimeout(timer);
+        resolveLink({
+          welcome: f,
+          send: (frame2, cb) => writeFrame(socket, frame2, cb),
+          onFrame: (cb) => {
+            frameCb = cb;
+            for (const e of early.splice(0)) cb(e);
+          },
+          onClose: (cb) => {
+            closeCb = cb;
+            if (closed) cb();
+          },
+          close: () => {
+            socket.end();
+            setTimeout(() => socket.destroy(), 1e3).unref?.();
+          }
+        });
+        return;
+      }
+      if (frameCb) frameCb(f);
+      else early.push(f);
+    });
+  });
+}
+
+// js/bridge/thin.ts
+var ms = (name, dflt) => {
+  const v = Number(process.env[name]);
+  return process.env[name]?.trim() && Number.isFinite(v) && v >= 0 ? v : dflt;
+};
+var ATTACH_MS = ms("ISKRON_BRIDGE_DAEMON_WAIT_MS", 5e3);
+var BYE_MS = ms("ISKRON_BRIDGE_BYE_MS", 5e3);
+var HELLO_MS = 3e3;
+var POLL_MS = 100;
+var RAISE_STALE_MS = 15e3;
+var SELF = (() => {
+  try {
+    return fileURLToPath5(import.meta.url);
+  } catch {
+    return process.argv[1] ?? "";
+  }
+})();
+function daemonWanted() {
+  const off = process.env[NO_DAEMON_ENV]?.trim();
+  return process.env[DAEMON_ENV]?.trim() === "1" && (!off || off === "0");
+}
+function takeRaiseLock(authDir) {
+  const path = seamRaiseLockPath(authDir);
+  const claim = () => {
+    const tmp = `${path}.${process.pid}`;
+    writeFileSync10(tmp, JSON.stringify({ pid: process.pid, started_at: Date.now() }), {
+      mode: 384
+    });
+    try {
+      linkSync2(tmp, path);
+      return true;
+    } catch {
+      return false;
+    } finally {
+      try {
+        unlinkSync8(tmp);
+      } catch {
+      }
+    }
+  };
+  try {
+    mkdirSync8(authDir, { recursive: true, mode: 448 });
+    if (claim()) return true;
+    const held2 = JSON.parse(readFileSync16(path, "utf8"));
+    if (pidAlive(held2.pid) && Date.now() - held2.started_at < RAISE_STALE_MS) return false;
+  } catch {
+  }
+  debug("breaking a daemon raise lock nobody is holding");
+  try {
+    unlinkSync8(path);
+  } catch {
+  }
+  try {
+    return claim();
+  } catch {
+    return false;
+  }
+}
+function dropRaiseLock(authDir) {
+  try {
+    const path = seamRaiseLockPath(authDir);
+    const l = JSON.parse(readFileSync16(path, "utf8"));
+    if (l.pid === process.pid) unlinkSync8(path);
+  } catch {
+  }
+}
+function raiseDaemon(authDir) {
+  if (!takeRaiseLock(authDir)) return null;
+  const entry = process.env.ISKRON_BRIDGE_DAEMON_ENTRY || SELF;
+  log(`no bridge daemon for ${authDir} — raising one: ${entry} daemon`);
+  try {
+    const child = spawn3(process.execPath, [entry, "daemon", "--auth-dir", authDir], {
+      detached: true,
+      stdio: "ignore",
+      cwd: authDir,
+      env: process.env,
+      windowsHide: true
+    });
+    child.unref();
+    return new Promise((r) => {
+      child.once("error", (e) => r(`the daemon did not start: ${e.message}`));
+      child.once("exit", (code, sig) => r(`the daemon exited at once (${sig ?? `code ${code}`})`));
+    });
+  } catch (e) {
+    return Promise.resolve(`the daemon did not start: ${e.message}`);
+  }
+}
+function thinMain(argv2) {
+  const cfg = parseArgs(argv2);
+  setConfig(cfg);
+  const authDir = cfg.authDir;
+  installCrashWords();
+  const socketPath = seamSocketPath(authDir);
+  let mode = "attaching";
+  let link = null;
+  let sessionId = null;
+  let local = null;
+  let initCopy = null;
+  let initSent = false;
+  let initializedSeen = false;
+  let word = null;
+  let leaving = null;
+  let byeDone = null;
+  const queue2 = [];
+  const flights = /* @__PURE__ */ new Map();
+  const replayIds = /* @__PURE__ */ new Set();
+  let replays = 0;
+  const key = (id) => JSON.stringify(id);
+  const writeHarness = (m) => writeTo(process.stdout, JSON.stringify(m) + "\n");
+  const toHarness = (msg) => {
+    if (msg.method === void 0 && msg.id !== void 0 && msg.id !== null) {
+      const k = key(msg.id);
+      if (replayIds.delete(k)) return;
+      const f = flights.get(k);
+      flights.delete(k);
+      if (word && f?.method === "tools/call" && Array.isArray(msg.result?.content)) {
+        msg.result.content.push({ type: "text", text: word });
+        word = null;
+      }
+    }
+    writeHarness(msg);
+  };
+  const toDaemon = (l, msg) => {
+    if (msg.method === "initialize") initSent = true;
+    const f = msg.method && msg.id != null ? flights.get(key(msg.id)) : void 0;
+    l.send({ t: "rpc", msg }, (err) => {
+      if (!err && f) f.sent = true;
+    });
+  };
+  const toLocal = (msg) => {
+    if (msg.method === "initialize") initSent = true;
+    local?.input.write(JSON.stringify(msg) + "\n");
+  };
+  const dispatch2 = (msg) => {
+    if (mode === "daemon" && link) toDaemon(link, msg);
+    else if (mode === "local") toLocal(msg);
+    else queue2.push(msg);
+  };
+  const replay = (send) => {
+    if (!initCopy || !initSent) return;
+    const id = `iskron-thin-replay-${++replays}`;
+    replayIds.add(key(id));
+    send({ ...initCopy, id });
+    if (initializedSeen) send({ jsonrpc: "2.0", method: "notifications/initialized" });
+  };
+  const goLocal = (reason) => {
+    if (mode === "local" || leaving) return;
+    log(`${reason} — going as the full bridge inside this process`);
+    word = `iskron-bridge ${BUILD}: ${reason}; this bridge runs as the full bridge in its own process (${DAEMON_ENV}=1 asked for the machine's daemon).`;
+    const input = new PassThrough();
+    const output = new PassThrough();
+    startEngine(cfg);
+    const session = openSession({ input, output });
+    createInterface2({ input: output, terminal: false }).on("line", (line) => {
+      if (!line.trim()) return;
+      try {
+        toHarness(JSON.parse(line));
+      } catch {
+      }
+    });
+    local = { session, input };
+    mode = "local";
+    replay(toLocal);
+    for (const m of queue2.splice(0)) dispatch2(m);
+  };
+  const onWelcome = (l) => {
+    if (leaving) return l.close();
+    const w = l.welcome;
+    const resumed = w.resumed && !!sessionId && w.session === sessionId;
+    sessionId = w.session;
+    link = l;
+    mode = "daemon";
+    log(
+      `through the machine's bridge daemon ${w.build} (pid ${w.pid}), session ${sessionId}` + (resumed ? " — resumed" : "")
+    );
+    l.onFrame((f) => {
+      if (f.t === "rpc") toHarness(f.msg);
+      else if (f.t === "bye-ok") byeDone?.();
+    });
+    l.onClose(() => {
+      if (link !== l) return;
+      link = null;
+      if (leaving) return byeDone?.();
+      lost();
+    });
+    if (!resumed) replay((m) => toDaemon(l, m));
+    for (const m of queue2.splice(0)) dispatch2(m);
+  };
+  const lost = () => {
+    mode = "attaching";
+    replayIds.clear();
+    log(
+      `the link to the machine's bridge daemon broke — ${flights.size} call(s) in flight get a verdict; reattaching`
+    );
+    for (const f of flights.values()) {
+      writeHarness(
+        syntheticError(
+          f.id,
+          "the link to this machine's bridge daemon broke before the answer came back",
+          f.sent ? UNKNOWN : NOT_SENT
+        )
+      );
+    }
+    flights.clear();
+    void attach2();
+  };
+  const attach2 = async () => {
+    const deadline = Date.now() + ATTACH_MS;
+    let raising = null;
+    let raiseFailed = null;
+    try {
+      for (; ; ) {
+        if (leaving) return;
+        try {
+          const hello = helloFrame({ build: BUILD, path: SELF, argv: argv2, session: sessionId });
+          return onWelcome(await connectSeam(socketPath, hello, HELLO_MS));
+        } catch (e) {
+          if (!(e instanceof SeamError)) throw e;
+          if (e.kind === "refused")
+            return goLocal(`the machine's bridge daemon refused this bridge: ${e.message}`);
+          if (e.kind === "absent" && !raising) {
+            raising = raiseDaemon(authDir);
+            void raising?.then((why) => raiseFailed = why);
+          }
+          if (raiseFailed) return goLocal(`no bridge daemon for ${authDir}: ${raiseFailed}`);
+          if (Date.now() >= deadline)
+            return goLocal(
+              `no bridge daemon for ${authDir} answered in ${ATTACH_MS}ms (${e.message})`
+            );
+          await sleep(POLL_MS);
+        }
+      }
+    } finally {
+      if (raising) dropRaiseLock(authDir);
+    }
+  };
+  const rl = createInterface2({ input: process.stdin, terminal: false });
+  rl.on("line", (line) => {
+    const trimmed2 = line.trim();
+    if (!trimmed2) return;
+    let msg;
+    try {
+      msg = JSON.parse(trimmed2);
+    } catch {
+      log(`unparseable line from harness: ${trimmed2.slice(0, 120)}`);
+      return;
+    }
+    if (msg.method === "initialize") initCopy = msg;
+    if (msg.method === "notifications/initialized") initializedSeen = true;
+    if (msg.method && msg.id !== void 0 && msg.id !== null)
+      flights.set(key(msg.id), { id: msg.id, method: msg.method, sent: false });
+    dispatch2(msg);
+  });
+  const leave = (why) => leaving ??= windDown(why);
+  const windDown = async (why) => {
+    debug(`${why} — winding down`);
+    if (mode === "local" && local) {
+      await local.session.leave(why);
+    } else if (link) {
+      const l = link;
+      await new Promise((resolve6) => {
+        byeDone = resolve6;
+        setTimeout(resolve6, BYE_MS).unref?.();
+        l.send({ t: "bye", why });
+      });
+      l.close();
+    }
+    for (const f of flights.values()) {
+      writeHarness(
+        syntheticError(
+          f.id,
+          "the bridge left before the machine's daemon answered",
+          f.sent ? UNKNOWN : NOT_SENT
+        )
+      );
+    }
+    await flushStdout(process.stdout);
     process.exit(0);
   };
   rl.on("close", () => void leave("stdin closed, the harness is gone"));
   process.on("SIGTERM", () => void leave("SIGTERM"));
+  let interrupted = false;
+  process.on("SIGINT", () => {
+    if (interrupted) process.exit(0);
+    interrupted = true;
+    void leave("SIGINT");
+  });
+  void attach2().catch((e) => goLocal(`the seam failed: ${e?.message ?? String(e)}`));
+}
+async function versionLines(args) {
+  const lines = [BUILD];
+  if (!daemonWanted()) return lines;
+  const i = args.indexOf("--auth-dir");
+  const authDir = (i >= 0 ? args[i + 1] : void 0) || process.env.ISKRON_BRIDGE_AUTH_DIR || defaultAuthDir();
+  const path = seamSocketPath(authDir);
+  try {
+    const l = await connectSeam(
+      path,
+      helloFrame({ build: BUILD, path: SELF, argv: args, probe: true }),
+      HELLO_MS
+    );
+    lines.push(`daemon ${l.welcome.build} (pid ${l.welcome.pid}, ${path})`);
+    l.close();
+  } catch (e) {
+    lines.push(`daemon: none answering at ${path} (${e.message})`);
+  }
+  return lines;
+}
+
+// js/bridge/main.ts
+function bridgeMain(argv2) {
+  guardStream(process.stdout);
+  guardStream(process.stderr);
+  if (daemonWanted()) {
+    thinMain(argv2);
+    return;
+  }
+  startEngine(parseArgs(argv2));
+  const session = openSession({ input: process.stdin, output: process.stdout });
+  void session.ended.then(() => process.exit(0));
+  process.on("SIGTERM", () => void session.leave("SIGTERM"));
   let interrupted = false;
   process.on("SIGINT", () => {
     const addr = statusAddress();
@@ -6399,17 +6902,13 @@ function bridgeMain(argv2) {
       () => process.exit(0)
     );
   });
-  process.on("uncaughtException", (e) => log(`uncaught: ${e?.stack || e}`));
-  process.on(
-    "unhandledRejection",
-    (e) => log(`unhandled rejection: ${e?.stack || String(e)}`)
-  );
+  installCrashWords();
 }
 
 // js/watchdog/codex.ts
 import { existsSync as existsSync7 } from "node:fs";
 import { homedir as homedir6 } from "node:os";
-import { join as join16 } from "node:path";
+import { join as join17 } from "node:path";
 
 // js/shared/appserver.ts
 import { randomBytes as randomBytes3 } from "node:crypto";
@@ -6433,7 +6932,7 @@ function frame(data) {
   return Buffer.concat([head, mask, masked]);
 }
 function openDoor(socketPath, onMessage, onClose) {
-  return new Promise((resolve5, reject) => {
+  return new Promise((resolve6, reject) => {
     const req = request({
       socketPath,
       path: "/",
@@ -6476,7 +6975,7 @@ function openDoor(socketPath, onMessage, onClose) {
       });
       socket.on("close", () => onClose("сокет закрыт"));
       socket.on("error", (e) => onClose(e.message));
-      resolve5({
+      resolve6({
         send: (msg) => socket.write(frame(Buffer.from(JSON.stringify(msg)))),
         close: () => socket.end()
       });
@@ -6488,9 +6987,9 @@ function openDoor(socketPath, onMessage, onClose) {
 }
 
 // js/watchdog/client.ts
-import { existsSync as existsSync6, readdirSync as readdirSync6, readFileSync as readFileSync16 } from "node:fs";
-import { connect as connect2 } from "node:net";
-import { join as join15 } from "node:path";
+import { existsSync as existsSync6, readdirSync as readdirSync6, readFileSync as readFileSync17 } from "node:fs";
+import { connect as connect3 } from "node:net";
+import { join as join16 } from "node:path";
 var ATTACH_WINDOW_MS = 6e4;
 var RETRY_MS = 1e3;
 function parseWatchdogArgs(argv2) {
@@ -6509,7 +7008,7 @@ function resolveStanding(argv2) {
   if (key) return { key, path: pathFor(key), authDir };
   const held2 = existsSync6(dir) ? readdirSync6(dir).filter((f) => f.endsWith(".key")).map((f) => {
     try {
-      return readFileSync16(join15(dir, f), "utf8").trim();
+      return readFileSync17(join16(dir, f), "utf8").trim();
     } catch {
       return "";
     }
@@ -6538,7 +7037,7 @@ function attach(path, o) {
   const startedAt = Date.now();
   let attached = false;
   function tryOnce() {
-    const sock = connect2(path);
+    const sock = connect3(path);
     let buf = "";
     sock.setEncoding("utf8");
     sock.on("connect", () => {
@@ -6584,8 +7083,8 @@ var note = (s2) => {
   process.stderr.write(s2 + "\n");
 };
 function codexDoorPath() {
-  const home = process.env.CODEX_HOME?.trim() || join16(homedir6(), ".codex");
-  return join16(home, "app-server-control", "app-server-control.sock");
+  const home = process.env.CODEX_HOME?.trim() || join17(homedir6(), ".codex");
+  return join17(home, "app-server-control", "app-server-control.sock");
 }
 function runWatchdogCodex(argv2) {
   const threadId = process.env.CODEX_THREAD_ID?.trim();
@@ -6841,11 +7340,11 @@ function runWatchdog(argv2) {
 }
 
 // js/watchdog/watchdog-exit.ts
-import { createHash as createHash6 } from "node:crypto";
+import { createHash as createHash7 } from "node:crypto";
 import { writeSync as writeSync2 } from "node:fs";
 function frameId(ev) {
   const id = ev.frame?.id;
-  return typeof id === "string" && id ? id : `raw:${createHash6("sha256").update(ev.raw ?? "").digest("hex").slice(0, 16)}`;
+  return typeof id === "string" && id ? id : `raw:${createHash7("sha256").update(ev.raw ?? "").digest("hex").slice(0, 16)}`;
 }
 var wake = (s2) => {
   writeSync2(1, s2 + "\n");
@@ -6926,22 +7425,22 @@ function runWatchdogExit(argv2) {
 }
 
 // js/cli/doctor.ts
-import { createHash as createHash7 } from "node:crypto";
-import { existsSync as existsSync9, readdirSync as readdirSync7, readFileSync as readFileSync18 } from "node:fs";
+import { createHash as createHash8 } from "node:crypto";
+import { existsSync as existsSync9, readdirSync as readdirSync7, readFileSync as readFileSync19 } from "node:fs";
 import { homedir as homedir8 } from "node:os";
-import { dirname as dirname8, join as join18 } from "node:path";
-import { fileURLToPath as fileURLToPath5 } from "node:url";
+import { dirname as dirname8, join as join19 } from "node:path";
+import { fileURLToPath as fileURLToPath6 } from "node:url";
 
 // js/cli/opencode-config.ts
-import { existsSync as existsSync8, readFileSync as readFileSync17 } from "node:fs";
+import { existsSync as existsSync8, readFileSync as readFileSync18 } from "node:fs";
 import { homedir as homedir7 } from "node:os";
-import { dirname as dirname7, join as join17 } from "node:path";
+import { dirname as dirname7, join as join18 } from "node:path";
 function openCodeMcpEntries(out5) {
   const dirFiles = (d) => [
-    join17(d, "opencode.json"),
-    join17(d, "opencode.jsonc"),
-    join17(d, ".opencode", "opencode.json"),
-    join17(d, ".opencode", "opencode.jsonc")
+    join18(d, "opencode.json"),
+    join18(d, "opencode.jsonc"),
+    join18(d, ".opencode", "opencode.json"),
+    join18(d, ".opencode", "opencode.jsonc")
   ];
   const upwards = [];
   if (!process.env.OPENCODE_CONFIG_PROJECT_DISABLE)
@@ -6956,7 +7455,7 @@ function openCodeMcpEntries(out5) {
     // Относится ли каталог из переменной к проектному слою, выключатель которого
     // читается ниже, не наблюдалось (#5559): читаем его в любом случае.
     ...process.env.OPENCODE_CONFIG_DIR ? dirFiles(process.env.OPENCODE_CONFIG_DIR) : [],
-    ...dirFiles(join17(homedir7(), ".config", "opencode")),
+    ...dirFiles(join18(homedir7(), ".config", "opencode")),
     ...upwards
   ];
   const kindOf = (v) => {
@@ -6995,7 +7494,7 @@ function openCodeMcpEntries(out5) {
   for (const f of new Set(files)) {
     if (!existsSync8(f)) continue;
     try {
-      sources.push([f, readFileSync17(f, "utf8")]);
+      sources.push([f, readFileSync18(f, "utf8")]);
     } catch {
       unreadable++;
       out5(`OpenCode: ${f} не читается`);
@@ -7034,27 +7533,27 @@ function openCodeMcpEntries(out5) {
 var out2 = (s2) => {
   process.stdout.write(s2 + "\n");
 };
-var hashOf2 = (buf) => createHash7("sha256").update(buf).digest("hex").slice(0, 8);
-var seconds = (ms) => `${Math.round(ms / 1e3)}s`;
+var hashOf2 = (buf) => createHash8("sha256").update(buf).digest("hex").slice(0, 8);
+var seconds = (ms2) => `${Math.round(ms2 / 1e3)}s`;
 function homeCopyReport() {
   const home = homeBridgePath();
   let self = null;
   try {
-    self = readFileSync18(fileURLToPath5(import.meta.url));
+    self = readFileSync19(fileURLToPath6(import.meta.url));
   } catch {
   }
   if (!existsSync9(home)) {
     out2(`домашняя копия: нет (${home}) — её кладёт establish-mcp при подключении`);
     return;
   }
-  const bytes = readFileSync18(home);
+  const bytes = readFileSync19(home);
   if (self && bytes.equals(self)) {
     out2(`домашняя копия: ${home} — та же сборка, что и этот файл`);
     return;
   }
   const v = versionIn(bytes.toString("utf8"));
   out2(
-    `домашняя копия: ${home} — v${v ?? "?"}+${hashOf2(bytes)}, ДРУГИЕ байты: ${self ? `обнови её из поставки: cp "${fileURLToPath5(import.meta.url)}" ${home}` : "этот файл не читается"}`
+    `домашняя копия: ${home} — v${v ?? "?"}+${hashOf2(bytes)}, ДРУГИЕ байты: ${self ? `обнови её из поставки: cp "${fileURLToPath6(import.meta.url)}" ${home}` : "этот файл не читается"}`
   );
 }
 function serverSourceWord() {
@@ -7176,7 +7675,7 @@ function grantReport() {
   }
   const logPath = grantLogPath();
   if (existsSync9(logPath)) {
-    const lines = readFileSync18(logPath, "utf8").trim().split("\n").slice(-3);
+    const lines = readFileSync19(logPath, "utf8").trim().split("\n").slice(-3);
     out2(`  grant.log, последнее:`);
     for (const l of lines) out2(`    ${l}`);
   }
@@ -7199,10 +7698,10 @@ function latestReport() {
   else out2(`свежий релиз: v${latest.version}, этот файл не отстал; спрашивал ${ago} мин назад`);
 }
 function claudePluginReport() {
-  const registry = join18(homedir8(), ".claude", "plugins", "installed_plugins.json");
+  const registry = join19(homedir8(), ".claude", "plugins", "installed_plugins.json");
   if (!existsSync9(registry)) return;
   try {
-    const reg = JSON.parse(readFileSync18(registry, "utf8"));
+    const reg = JSON.parse(readFileSync19(registry, "utf8"));
     const mine = Object.entries(reg.plugins ?? {}).filter(([k]) => /^iskron@/.test(k));
     if (!mine.length) {
       out2(`Claude Code: плагин iskron не установлен (${registry})`);
@@ -7210,11 +7709,11 @@ function claudePluginReport() {
     }
     for (const [key, installs] of mine) {
       for (const inst of installs) {
-        const manifest = inst.installPath ? join18(inst.installPath, ".mcp.json") : "";
+        const manifest = inst.installPath ? join19(inst.installPath, ".mcp.json") : "";
         let entry = "запись моста в манифесте не найдена";
         if (manifest && existsSync9(manifest)) {
           try {
-            const m = JSON.parse(readFileSync18(manifest, "utf8"));
+            const m = JSON.parse(readFileSync19(manifest, "utf8"));
             const hit = Object.entries(m.mcpServers ?? {}).find(
               ([, v]) => (v.args ?? []).some((a) => /iskron\.mjs/.test(a))
             );
@@ -7235,17 +7734,17 @@ function claudePluginReport() {
 function codexHomes() {
   const homes = [
     process.env.CODEX_HOME?.trim() || "",
-    join18(homedir8(), ".codex"),
-    ...process.platform === "darwin" ? [join18(homedir8(), "Library", "Application Support", "orca", "codex-runtime-home", "home")] : []
+    join19(homedir8(), ".codex"),
+    ...process.platform === "darwin" ? [join19(homedir8(), "Library", "Application Support", "orca", "codex-runtime-home", "home")] : []
   ].filter(Boolean);
   return [...new Set(homes)].filter((h) => existsSync9(h));
 }
 function codexPluginReport(home) {
-  const cache = join18(home, "plugins", "cache");
+  const cache = join19(home, "plugins", "cache");
   if (!existsSync9(cache)) return;
   let found = 0;
   for (const market of readdirSync7(cache)) {
-    const marketDir = join18(cache, market);
+    const marketDir = join19(cache, market);
     let plugins;
     try {
       plugins = readdirSync7(marketDir);
@@ -7254,12 +7753,12 @@ function codexPluginReport(home) {
     }
     for (const plugin of plugins) {
       if (!/iskron/.test(plugin)) continue;
-      const dir = join18(marketDir, plugin);
-      const manifest = join18(dir, ".codex-plugin", "plugin.json");
+      const dir = join19(marketDir, plugin);
+      const manifest = join19(dir, ".codex-plugin", "plugin.json");
       let word = "манифеста нет";
       if (existsSync9(manifest)) {
         try {
-          const m = JSON.parse(readFileSync18(manifest, "utf8"));
+          const m = JSON.parse(readFileSync19(manifest, "utf8"));
           const hit = Object.values(m.mcpServers ?? {}).some(
             (v) => (v.args ?? []).some((a) => /iskron\.mjs/.test(a))
           );
@@ -7276,10 +7775,10 @@ function codexPluginReport(home) {
 }
 function harnessReport() {
   claudePluginReport();
-  const claude = join18(homedir8(), ".claude.json");
+  const claude = join19(homedir8(), ".claude.json");
   if (existsSync9(claude)) {
     try {
-      const cfg = JSON.parse(readFileSync18(claude, "utf8"));
+      const cfg = JSON.parse(readFileSync19(claude, "utf8"));
       const entries = Object.entries(cfg.mcpServers ?? {}).filter(
         ([, v]) => (v.args ?? []).some((a) => /iskron/.test(a))
       );
@@ -7295,17 +7794,17 @@ function harnessReport() {
       out2(`Claude Code: ${claude} не читается`);
     }
   }
-  const opencodeDir = join18(homedir8(), ".config", "opencode");
+  const opencodeDir = join19(homedir8(), ".config", "opencode");
   if (existsSync9(opencodeDir)) {
-    const copy = join18(opencodeDir, "plugins", "iskron.js");
-    const packaged = join18(dirname8(fileURLToPath5(import.meta.url)), "opencode-plugin.js");
+    const copy = join19(opencodeDir, "plugins", "iskron.js");
+    const packaged = join19(dirname8(fileURLToPath6(import.meta.url)), "opencode-plugin.js");
     if (!existsSync9(copy)) {
       out2(`OpenCode: плагина нет (${copy}) — его кладёт establish-mcp при подключении`);
     } else if (!existsSync9(packaged)) {
       out2(
         `OpenCode: плагин ${copy} стоит; рядом с этим файлом поставки плагина нет, сверить не с чем`
       );
-    } else if (readFileSync18(copy).equals(readFileSync18(packaged))) {
+    } else if (readFileSync19(copy).equals(readFileSync19(packaged))) {
       out2(`OpenCode: плагин ${copy} — та же сборка, что в поставке`);
     } else {
       out2(`OpenCode: плагин ${copy} — ДРУГИЕ байты, обнови из поставки: cp "${packaged}" ${copy}`);
@@ -7315,7 +7814,7 @@ function harnessReport() {
   for (const codexHome of codexHomes()) {
     out2(`Codex: дом ${codexHome}`);
     codexPluginReport(codexHome);
-    const door2 = join18(codexHome, "app-server-control", "app-server-control.sock");
+    const door2 = join19(codexHome, "app-server-control", "app-server-control.sock");
     if (existsSync9(door2)) out2(`Codex: дверь app-server открыта (${door2})`);
     else if (Buffer.byteLength(door2) > 100)
       out2(
@@ -7325,9 +7824,9 @@ function harnessReport() {
       out2(
         `Codex: двери нет (${door2}) — демон app-server не поднят; без неё кадр доставляет watchdog-exit`
       );
-    const codex = join18(codexHome, "config.toml");
+    const codex = join19(codexHome, "config.toml");
     if (existsSync9(codex)) {
-      const text = readFileSync18(codex, "utf8");
+      const text = readFileSync19(codex, "utf8");
       out2(
         `Codex: ${/^\s*\[mcp_servers\."?iskron"?\]|^\s*mcp_servers\."?iskron"?\s*=/m.test(text) ? "ручная запись моста в config.toml есть" : "ручной записи моста в config.toml нет (штатная — в плагине)"}`
       );
@@ -7337,7 +7836,7 @@ function harnessReport() {
 async function runDoctor(argv2) {
   setConfig(parseArgs(argv2));
   out2(`iskron doctor — ${BUILD}`);
-  out2(`этот файл: ${fileURLToPath5(import.meta.url)}`);
+  out2(`этот файл: ${fileURLToPath6(import.meta.url)}`);
   out2(`node: ${process.version}`);
   homeCopyReport();
   latestReport();
@@ -7458,8 +7957,13 @@ function dispatch() {
     case "bridge":
       bridgeMain(rest);
       break;
+    case "daemon":
+      process.stderr.write(`[iskron-bridge] ${BUILD}: the machine daemon is not in this build
+`);
+      process.exit(3);
+      break;
     case "--version":
-      process.stdout.write(BUILD + "\n");
+      void versionLines(rest).then((lines) => process.stdout.write(lines.join("\n") + "\n"));
       break;
     case "--help":
     case "-h":
