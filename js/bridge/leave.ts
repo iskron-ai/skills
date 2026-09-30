@@ -16,6 +16,7 @@
 //   • конец сессии: занятость снимается перед выходом (main.ts).
 import { resolveAgainstLed, unresolvedRefusal } from "./call.ts";
 import { notifiedClient } from "./client.ts";
+import { CFG } from "./config.ts";
 import {
   besideKeyIn,
   heldPlaces,
@@ -26,6 +27,7 @@ import {
   onListenerAttached,
   parkStanding,
   readHoldRecord,
+  releaseStanding,
   rememberStatus,
   resumeStanding,
 } from "./hold.ts";
@@ -50,6 +52,7 @@ let keptBeside: { realm: string; text: string }[] = [];
 
 /** Уйти с места: занятость снята, сокет закрыт, место цело. Возвращает слово о сделанном. */
 export async function leaveStanding(reason: string, byWord = false): Promise<string> {
+  if (byWord && CFG.satellite) return leaveSatellite(reason);
   // Строки мест рядом — из их записей держания, до того как уход их снимет.
   const beside = heldPlaces()
     .filter((p) => !p.primary)
@@ -78,6 +81,21 @@ export async function leaveStanding(reason: string, byWord = false): Promise<str
   return byWord
     ? `ушёл ${which}: сокет закрыт, ${line}; адрес, очередь и хуки целы — почта копится; место отпущено словом, само не вернётся — вернуть: iskron_stand тем же именем`
     : `ушёл ${which}: сокет закрыт, ${line}; адрес, очередь и хуки целы — почта копится и придёт при возвращении (сторож или iskron_stand)`;
+}
+
+/**
+ * Уход спутника словом — полный (#6361): место живёт прогоном, записи держания
+ * у спутника нет, и пометка ухода не ложилась никуда — сторож слуха плагина
+ * поднимал запаркованное место снова. Отпущено целиком — возвращать нечего.
+ */
+async function leaveSatellite(reason: string): Promise<string> {
+  const place = heldPlaces()[0]?.key;
+  if (!place) return "мост места не держит — уходить неоткуда";
+  const st = await publishStatus("", undefined, true);
+  releaseStanding(`${reason}: место-спутник отпущено целиком`, true);
+  const line = st.ok ? "занятость снята" : `занятость не снята (${st.body})`;
+  log(`left the satellite place: ${reason}; ${line}`);
+  return `ушёл с места-спутника ${place}: сокет закрыт, ${line}; место отпущено целиком — ни сторож, ни возврат его не поднимут; встать снова — iskron_stand с satellite_of`;
 }
 
 /**

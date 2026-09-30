@@ -1858,6 +1858,199 @@ test("a child session of a standing root raises its bridge as a satellite of the
   }
 });
 
+// The satellite's place lives by the run (#6361): OpenCode keeps a child session
+// after its run, so the plugin ends the child's bridge on the end of the child's
+// execution — the bridge winds down and leaves the place, the hearing watch sends
+// it nothing more, and no bridge is raised for it again. The root's own end of
+// execution takes nothing down. The event's form is from the types of
+// @opencode/schema (plugin 2.0.4) only: data.sessionID; a live OpenCode's is not observed.
+test("the end of a child session's run takes its bridge down: the watch raises nothing for it, the root's bridge stays", async () => {
+  const b = bridgeEnv("run-end", {
+    ISKRON_BRIDGE_WATCH_MS: 200,
+    FB_TOOLS: JSON.stringify([
+      { name: "iskron_stand", description: "Стояние.", inputSchema: { type: "object" } },
+    ]),
+  });
+  const rec = await plugin(b.env, {
+    sessions: [
+      { id: "root", location: { directory: "/work/root" } },
+      { id: "child", parentID: "root", location: { directory: "/work/child" } },
+    ],
+  });
+  try {
+    await until(() => rec.tools().has("iskron_stand"), "the stand tool", 8000);
+    await rec.call("iskron_stand", { realm: "nks-dev", karta: "#931" }, "root");
+    const rootPid = pidOf(b.log);
+    const place = { realm: "@nks/nks-dev", karta: "931", name: "host.repo.opus-5" };
+    appendFileSync(`${b.events}.${rootPid}`, event("held", { key: "k-root", place }));
+    await delay(400); // the fake bridge relays event lines every 40 ms
+    await rec.call("iskron_stand", { realm: "nks-dev" }, "child");
+    const childPid = pidsOf(b.log)[1];
+    assert.ok(childPid && alive(childPid), "the child stands on a bridge of its own");
+    for (const type of ["session.execution.succeeded", "session.execution.failed"])
+      rec.emit({ type, data: { sessionID: "root" } });
+    rec.emit({ type: "session.execution.succeeded", data: { sessionID: "child" } });
+    await until(() => !alive(childPid), "the child's bridge to end with its run");
+    await delay(700); // more than three ticks of the hearing watch
+    assert.ok(alive(rootPid), "the root's end of execution takes nothing down");
+    assert.equal(pidsOf(b.log).length, 2, "the watch raises no bridge for the ended child");
+    assert.ok(!/слух потерян/.test(rec.said()), "the plugin's own stop is not a lost hearing");
+  } finally {
+    await rec.stop();
+  }
+});
+
+// A child resumed after its run ended (the field case, case №66 [7133], [7138]):
+// its slot is gone, and a call without a mark went by the root's bridge — a
+// join, line or say signed with the root's place, a leave took the root out of
+// the case. A call that needs a place is refused aloud with the way back; a
+// read goes by the root's bridge, it signs nothing; iskron_stand raises the
+// child a bridge of its own again, and its writes go by it.
+async function endedChild(name, more = []) {
+  const calls = join(SANDBOX, `${name}.calls`);
+  writeFileSync(calls, "");
+  const b = bridgeEnv(name, {
+    FB_CALLS: calls,
+    FB_TOOLS: JSON.stringify(
+      ["iskron_stand", "iskron_case", "iskron_look", ...more].map((n) => ({
+        name: n,
+        description: "Тул.",
+        inputSchema: { type: "object" },
+      })),
+    ),
+  });
+  const rec = await plugin(b.env, {
+    sessions: [
+      { id: "root", location: { directory: "/work/root" } },
+      { id: "child", parentID: "root", location: { directory: "/work/child" } },
+    ],
+  });
+  await until(() => rec.tools().has("iskron_case"), "the tools", 8000);
+  await rec.call("iskron_stand", { realm: "nks-dev", karta: "#931" }, "root");
+  const rootPid = pidOf(b.log);
+  const place = { realm: "@nks/nks-dev", karta: "931", name: "host.repo.opus-5" };
+  appendFileSync(`${b.events}.${rootPid}`, event("held", { key: "k-root", place }));
+  await delay(400); // the fake bridge relays event lines every 40 ms
+  await rec.call("iskron_stand", { realm: "nks-dev" }, "child");
+  const childPid = pidsOf(b.log)[1];
+  rec.emit({ type: "session.execution.succeeded", data: { sessionID: "child" } });
+  await until(() => !alive(childPid), "the child's bridge to end with its run");
+  const sent = () => sentCalls(calls);
+  return { b, rec, rootPid, sent };
+}
+
+test("a child whose run ended is refused aloud on a call that needs a place — never by the root's bridge; a read goes by the root's", async () => {
+  const { rec, rootPid, sent } = await endedChild("ended-write");
+  try {
+    const before = sent().length;
+    await assert.rejects(
+      rec.call("iskron_case", { realm: "nks-dev", action: "leave", room: "№1" }, "child"),
+      /прогон этой дочерней сессии кончился[\s\S]*iskron_stand\(realm, karta, satellite_of="host\.repo\.opus-5"\)/,
+    );
+    assert.equal(sent().length, before, "the refused call reached no bridge");
+    await rec.call("iskron_look", { realm: "nks-dev", node_id: "1" }, "child");
+    const read = sent().at(-1);
+    assert.equal(read?.name, "iskron_look");
+    assert.equal(read?.pid, rootPid, "a read goes by the root's bridge");
+  } finally {
+    await rec.stop();
+  }
+});
+
+// Reads of the account tools sign nothing and go by the root's bridge; their
+// writing actions are refused like any call that needs a place (#6361).
+test("a child whose run ended reads realms, orgs, itself and history by the root's bridge; their writing actions are refused", async () => {
+  const { rec, rootPid, sent } = await endedChild("ended-reads", [
+    "iskron_realm",
+    "iskron_org",
+    "iskron_me",
+    "iskron_history",
+  ]);
+  try {
+    const reads = [
+      ["iskron_realm", "list"],
+      ["iskron_org", "list"],
+      ["iskron_org", "get"],
+      ["iskron_org", "list_members"],
+      ["iskron_me", "whoami"],
+      ["iskron_history", "node"],
+    ];
+    for (const [tool, action] of reads) {
+      await rec.call(tool, { action }, "child");
+      assert.deepEqual([sent().at(-1)?.name, sent().at(-1)?.pid], [tool, rootPid], action);
+    }
+    const before = sent().length;
+    for (const [tool, action] of [
+      ["iskron_realm", "create"],
+      ["iskron_org", "add_member"],
+      ["iskron_me", "set_handle"],
+      ["iskron_history", "restore_node"],
+    ])
+      await assert.rejects(rec.call(tool, { action }, "child"), /кончился[\s\S]*iskron_stand/);
+    assert.equal(sent().length, before, "no refused call reached a bridge");
+  } finally {
+    await rec.stop();
+  }
+});
+
+// A deleted session leaves no mark behind: the plugin forgets it whole.
+test("a deleted child session takes its run-ended mark with it", async () => {
+  const { rec, sent } = await endedChild("ended-deleted");
+  try {
+    rec.emit({ type: "session.deleted", data: { sessionID: "child" } });
+    await delay(200);
+    await rec.call("iskron_case", { action: "say" }, "child");
+    assert.equal(sent().at(-1)?.name, "iskron_case", "the mark is gone, the call is not refused");
+  } finally {
+    await rec.stop();
+  }
+});
+
+test("a child whose run ended stands again on a bridge of its own, and its writes go by it", async () => {
+  const { b, rec, rootPid, sent } = await endedChild("ended-stand");
+  try {
+    await assert.rejects(rec.call("iskron_case", { action: "say" }, "child"), /кончился/);
+    await rec.call("iskron_stand", { realm: "nks-dev" }, "child");
+    const fresh = pidsOf(b.log)[2];
+    assert.ok(fresh && fresh !== rootPid && alive(fresh), "a new bridge of the child's own");
+    assert.match(readFileSync(b.log, "utf8").trim().split("\n")[2], /--satellite/);
+    await rec.call("iskron_case", { action: "say" }, "child");
+    assert.equal(sent().at(-1)?.pid, fresh, "the write goes by the child's new bridge");
+  } finally {
+    await rec.stop();
+  }
+});
+
+// interrupted is not an end of the run (#6361): its meaning is not observed, and
+// a steer — the plugin's own way to put a frame into a turn — may be one.
+test("an interrupted execution of a child session takes nothing down", async () => {
+  const b = bridgeEnv("run-interrupted", {
+    FB_TOOLS: JSON.stringify([
+      { name: "iskron_stand", description: "Стояние.", inputSchema: { type: "object" } },
+    ]),
+  });
+  const rec = await plugin(b.env, {
+    sessions: [
+      { id: "root", location: { directory: "/work/root" } },
+      { id: "child", parentID: "root", location: { directory: "/work/child" } },
+    ],
+  });
+  try {
+    await until(() => rec.tools().has("iskron_stand"), "the stand tool", 8000);
+    await rec.call("iskron_stand", { realm: "nks-dev", karta: "#931" }, "root");
+    const place = { realm: "@nks/nks-dev", karta: "931", name: "host.repo.opus-5" };
+    appendFileSync(`${b.events}.${pidOf(b.log)}`, event("held", { key: "k-root", place }));
+    await delay(400);
+    await rec.call("iskron_stand", { realm: "nks-dev" }, "child");
+    const childPid = pidsOf(b.log)[1];
+    rec.emit({ type: "session.execution.interrupted", data: { sessionID: "child" } });
+    await delay(700);
+    assert.ok(alive(childPid), "the child's bridge lives through an interruption");
+  } finally {
+    await rec.stop();
+  }
+});
+
 // A subagent launched with a case (#6078, the owner's word): the child session
 // whose FIRST prompt begins «start <graph> <role> <case №N>» stands as a satellite
 // of the root's place in the named role and joins the case — inside the prompt
