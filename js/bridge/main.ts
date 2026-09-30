@@ -29,11 +29,8 @@
 //
 // No dependencies. Node >= 22.
 import { parseArgs } from "./config.ts";
-import { installCrashWords, startEngine } from "./engine.ts";
-import { releaseStanding, statusAddress } from "./hold.ts";
-import { tokenRequestsInFlight } from "./oauth/tokenrequest.ts";
+import { fullBridgeSigint, installCrashWords, startEngine } from "./engine.ts";
 import { openSession } from "./session.ts";
-import { publishStatusTo } from "./status.ts";
 import { guardStream } from "./streams.ts";
 import { daemonWanted, thinMain } from "./thin.ts";
 
@@ -48,23 +45,6 @@ export function bridgeMain(argv: string[]): void {
   const session = openSession({ input: process.stdin, output: process.stdout });
   void session.ended.then(() => process.exit(0));
   process.on("SIGTERM", () => void session.leave("SIGTERM"));
-  // Ctrl-C is the one exception — someone is at the terminal, wanting out. Even
-  // so, a rotation already in flight is written down first: the wait is bounded
-  // by the request's own deadline and is usually well under a second, while
-  // leaving without it costs the whole machine its grant (graph @nks/nks-dev,
-  // node #4170). A second Ctrl-C leaves at once — the human has said it twice.
-  let interrupted = false;
-  process.on("SIGINT", () => {
-    const addr = statusAddress();
-    releaseStanding("SIGINT"); // иначе .key переживает мост и уводит сторожа без ключа на мёртвый сокет
-    if (interrupted) process.exit(0);
-    interrupted = true;
-    // Занятость снимается и здесь — коротко, второй Ctrl-C выходит сразу.
-    const clearing = addr ? publishStatusTo(addr.url, "", 2000).catch(() => {}) : null;
-    if (!clearing && tokenRequestsInFlight.size === 0) process.exit(0);
-    Promise.allSettled([...tokenRequestsInFlight, ...(clearing ? [clearing] : [])]).then(() =>
-      process.exit(0),
-    );
-  });
+  process.on("SIGINT", fullBridgeSigint());
   installCrashWords();
 }

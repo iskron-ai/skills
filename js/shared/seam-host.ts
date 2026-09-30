@@ -1,15 +1,15 @@
 // Сторона демона на шве «тонкий мост ↔ демон машины» (провод — seam.ts).
 //
 // Демон машины (шаг 2) берёт отсюда три вещи как есть:
-//   listenSeam(path, onSocket)   локальный вход: личный каталог 0700, сокет 0600,
-//                                мёртвый сокет прежнего демона убирается, живой — отказ
-//   serveSeam(socket, host)      рукопожатие, проводка rpc, bye, окно переподхвата
-//   streamSeamSession(id, open)  сессия движка над потоками (bridge/session.ts
-//                                openSession) как SeamSession
+//   listenSeam(authDir, onSocket) локальный вход (seam-entrance.ts): личный каталог
+//                                 0700 этого пользователя, замок жизни демона, сокет
+//                                 0600; мёртвый сокет убирается, живой — отказ
+//   serveSeam(socket, host)       рукопожатие, ack, проводка rpc, bye, окно переподхвата
+//   streamSeamSession(id, open)   сессия движка над потоками (bridge/session.ts
+//                                 openSession) как SeamSession
 // Хозяин (SeamHost) решает, какую сессию открыть на hello и какую вернуть по id.
-import { chmodSync, mkdirSync, unlinkSync } from "node:fs";
+import { chmodSync, unlinkSync } from "node:fs";
 import { connect, createServer, type Server, type Socket } from "node:net";
-import { dirname } from "node:path";
 import { createInterface } from "node:readline";
 import { PassThrough } from "node:stream";
 
@@ -23,6 +23,12 @@ import {
   type SeamHello,
   writeFrame,
 } from "./seam.ts";
+import {
+  seamDaemonLockPath,
+  seamEntranceProblem,
+  seamSocketPath,
+  takeFileLock,
+} from "./seam-entrance.ts";
 
 /** Сессия движка глазами шва. */
 export interface SeamSession {
@@ -72,15 +78,37 @@ export function serveSeam(socket: Socket, host: SeamHost, graceMs = SEAM_REATTAC
     writeFrame(socket, { t: "refuse", seam: SEAM_PROTOCOL, build: host.build, reason });
     socket.end();
   };
+  // Запрос отдаётся сессии только после того, как его ack ушёл ядру: нет ack у
+  // тонкого моста — сессия запроса не видела, и «не отправлено» честно. Кадры
+  // идут цепочкой — порядок прихода держится (initialize прежде initialized).
+  let chain = Promise.resolve();
   const onFrame = (s: SeamSession, f: SeamFrame) => {
-    if (f.t === "rpc") s.deliver(f.msg);
-    else if (f.t === "bye") {
+    if (f.t === "rpc") {
+      const msg = f.msg;
+      const request = msg.method !== undefined && msg.id !== undefined && msg.id !== null;
+      chain = chain.then(
+        () =>
+          new Promise<void>((done) => {
+            if (!request) {
+              s.deliver(msg);
+              return done();
+            }
+            writeFrame(socket, { t: "ack", id: msg.id as string | number }, (err) => {
+              if (!err) s.deliver(msg);
+              else say(`request ${JSON.stringify(msg.id)} not taken: its ack did not go out`);
+              done();
+            });
+          }),
+      );
+    } else if (f.t === "bye") {
       byeing = true;
       owners.delete(s);
-      void s.end(f.why || "bye").then(() => {
-        writeFrame(socket, { t: "bye-ok" });
-        socket.end();
-      });
+      chain = chain.then(() =>
+        s.end(f.why || "bye").then(() => {
+          writeFrame(socket, { t: "bye-ok" });
+          socket.end();
+        }),
+      );
     }
   };
   readFrames(
@@ -108,6 +136,7 @@ export function serveSeam(socket: Socket, host: SeamHost, graceMs = SEAM_REATTAC
         pid: process.pid,
         session: id,
         resumed,
+        ack: true,
       });
     if (hello.probe) {
       welcome(null, false);
@@ -183,33 +212,50 @@ export function streamSeamSession(
   };
 }
 
-/** Поднять локальный вход демона. Живой демон на этом пути — отказ (EADDRINUSE). */
-export async function listenSeam(path: string, onSocket: (s: Socket) => void): Promise<Server> {
+const fail = (code: string, message: string): NodeJS.ErrnoException =>
+  Object.assign(new Error(message), { code });
+
+/**
+ * Поднять локальный вход демона этого каталога гранта. Порядок: вход личный
+ * (иначе EUNSAFE), замок жизни демона взят (живой держатель — EADDRINUSE),
+ * сокет на пути не отвечает (отвечает — EADDRINUSE, не отвязывается), только
+ * тогда мёртвый сокет убирается и слушается новый, 0600. Замок снимается с
+ * закрытием сервера и с выходом процесса.
+ */
+export async function listenSeam(authDir: string, onSocket: (s: Socket) => void): Promise<Server> {
+  const bad = seamEntranceProblem(authDir);
+  if (bad) throw fail("EUNSAFE", `the seam entrance is not private: ${bad}`);
+  const lock = takeFileLock(seamDaemonLockPath(authDir), Infinity);
+  if (!lock.held)
+    throw fail("EADDRINUSE", lock.fault ?? `a daemon of ${authDir} is alive (its lock is held)`);
+  const path = seamSocketPath(authDir);
   const win = process.platform === "win32";
-  if (!win) {
-    mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-    const alive = await new Promise<boolean>((r) => {
-      const probe = connect(path);
-      probe.once("connect", () => {
-        probe.destroy();
-        r(true);
+  try {
+    if (!win) {
+      const alive = await new Promise<boolean>((r) => {
+        const probe = connect(path);
+        probe.once("connect", () => {
+          probe.destroy();
+          r(true);
+        });
+        probe.once("error", () => r(false));
       });
-      probe.once("error", () => r(false));
-    });
-    if (alive) {
-      const e = new Error(`a daemon already listens on ${path}`) as NodeJS.ErrnoException;
-      e.code = "EADDRINUSE";
-      throw e;
+      if (alive) throw fail("EADDRINUSE", `a daemon already listens on ${path}`);
+      try {
+        unlinkSync(path); // сокет умершего демона
+      } catch {}
     }
-    try {
-      unlinkSync(path); // сокет умершего демона
-    } catch {}
+    const server = createServer(onSocket);
+    await new Promise<void>((r, reject) => {
+      server.once("error", reject);
+      server.listen(path, () => r());
+    });
+    if (!win) chmodSync(path, 0o600);
+    server.once("close", lock.release);
+    process.once("exit", lock.release);
+    return server;
+  } catch (e) {
+    lock.release();
+    throw e;
   }
-  const server = createServer(onSocket);
-  await new Promise<void>((r, reject) => {
-    server.once("error", reject);
-    server.listen(path, () => r());
-  });
-  if (!win) chmodSync(path, 0o600);
-  return server;
 }

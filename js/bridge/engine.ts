@@ -5,8 +5,11 @@
 import { startTokenKeepalive } from "./auth.ts";
 import { BUILD } from "./build.ts";
 import { CFG, setConfig } from "./config.ts";
+import { releaseStanding, statusAddress } from "./hold.ts";
 import { installAuthLockExitHook } from "./oauth/authlock.ts";
 import { installRefreshLockExitHook } from "./oauth/refreshlock.ts";
+import { tokenRequestsInFlight } from "./oauth/tokenrequest.ts";
+import { publishStatusTo } from "./status.ts";
 import { storePath } from "./store.ts";
 import { log } from "./streams.ts";
 import { type Config } from "./types.ts";
@@ -38,6 +41,30 @@ export function installCrashWords(): void {
   process.on("unhandledRejection", (e) =>
     log(`unhandled rejection: ${(e as Error)?.stack || String(e)}`),
   );
+}
+
+/**
+ * Ctrl-C полного моста (и тонкого в полном ходе). Ctrl-C is the one exception —
+ * someone is at the terminal, wanting out. Even so, a rotation already in flight
+ * is written down first: the wait is bounded by the request's own deadline and
+ * is usually well under a second, while leaving without it costs the whole
+ * machine its grant (graph @nks/nks-dev, node #4170). A second Ctrl-C leaves at
+ * once — the human has said it twice.
+ */
+export function fullBridgeSigint(): () => void {
+  let interrupted = false;
+  return () => {
+    const addr = statusAddress();
+    releaseStanding("SIGINT"); // иначе .key переживает мост и уводит сторожа без ключа на мёртвый сокет
+    if (interrupted) process.exit(0);
+    interrupted = true;
+    // Занятость снимается и здесь — коротко, второй Ctrl-C выходит сразу.
+    const clearing = addr ? publishStatusTo(addr.url, "", 2000).catch(() => {}) : null;
+    if (!clearing && tokenRequestsInFlight.size === 0) process.exit(0);
+    Promise.allSettled([...tokenRequestsInFlight, ...(clearing ? [clearing] : [])]).then(() =>
+      process.exit(0),
+    );
+  };
 }
 
 /** Поднять процессную часть движка под этим конфигом. Один раз на процесс. */

@@ -9,7 +9,7 @@
 // проверяет прежнее поведение и на старом мосте зелена.
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
@@ -47,6 +47,7 @@ function startBridge(serverUrl, authDir, env = {}) {
     stdio: ["pipe", "pipe", "pipe"],
   });
   const waiters = new Map();
+  const all = []; // всё, что харнес получил, — для счёта ответов на один id
   let out = "";
   let stderr = "";
   proc.stdout.on("data", (c) => {
@@ -57,6 +58,7 @@ function startBridge(serverUrl, authDir, env = {}) {
       out = out.slice(nl + 1);
       if (!line) continue;
       const msg = JSON.parse(line);
+      all.push(msg);
       const w = waiters.get(msg.id);
       if (w) {
         waiters.delete(msg.id);
@@ -67,6 +69,7 @@ function startBridge(serverUrl, authDir, env = {}) {
   proc.stderr.on("data", (c) => (stderr += c));
   return {
     proc,
+    all,
     get stderr() {
       return stderr;
     },
@@ -152,8 +155,13 @@ async function session(b) {
 test("a call through the thin bridge answers as through the full bridge — and goes through the daemon", async () => {
   await withFake(async ({ dir, spawnBridge }) => {
     const full = await session(spawnBridge());
-    const thinBridge = spawnBridge(THIN_ENV);
+    const thinBridge = spawnBridge({ ...THIN_ENV, HARNESS_OTHER: "1" });
     const thin = await session(thinBridge);
+    assert.match(
+      trailOf(dir),
+      /^env stale=false harness_other=false token_in_hello=false$/m,
+      "the daemon gets the session's env only, and no token over the seam",
+    );
     assert.deepEqual(thin.init.result, full.init.result, "the handshake answers the same");
     assert.deepEqual(toolNames(thin.list), toolNames(full.list), "the same tools are listed");
     assert.ok(thin.orient.result && !thin.orient.error, JSON.stringify(thin.orient));
@@ -194,6 +202,29 @@ test("the daemon killed mid-call: the call gets a verdict, the next one answers 
       /^rpc initialize "iskron-thin-replay-1"$/m,
       "the new session got the harness's initialize replayed",
     );
+  });
+});
+
+// Шов порвался, а демон и сессия живы: вызов уже закрыт вердиктом, и настоящий
+// ответ, пришедший после переподхвата, — второй ответ на один id. Харнес его
+// видеть не должен (ревью #272, п.1).
+test("a seam cut mid-call, the session resumed: one id, one answer", async () => {
+  await withFake(async ({ fake, dir, spawnBridge }) => {
+    const b = spawnBridge({ ...THIN_ENV, ISKRON_FAKE_DAEMON_CUT: "iskron_channel" });
+    await session(b);
+    await fake.control({ listDelayMs: 1200 });
+    const verdict = await b.call("tools/call", 10, {
+      name: "iskron_channel",
+      arguments: { action: "list", realm: "@tester/probe" },
+    });
+    assert.match(verdict.error?.message ?? "", /daemon broke before the answer/);
+    await waitFor("the resume", () => /— resumed/.test(b.stderr));
+    await new Promise((r) => setTimeout(r, 2000)); // настоящий ответ успел бы прийти
+    assert.match(trailOf(dir), /^cut 10$/m, "the seam was cut mid-call");
+    const answers = b.all.filter((m) => m.id === 10);
+    assert.equal(answers.length, 1, `one answer for id 10, got ${JSON.stringify(answers)}`);
+    const next = await b.call("tools/call", 11, { name: "iskron_orient", arguments: {} });
+    assert.ok(next.result && !next.error, JSON.stringify(next));
   });
 });
 
@@ -267,6 +298,99 @@ test("--version names both builds", async () => {
     assert.match(theirs ?? "", new RegExp(`^daemon v\\S+-fake-daemon \\(pid ${daemon.pid}, `));
   } finally {
     daemon.kill("SIGKILL");
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// --- ревью #272: вход, токен, окружение, замок подъёма, Ctrl-C --------------------
+
+// Демон, поднятый не тонким мостом, — со своим окружением (как демон, живущий дольше харнеса).
+async function startDaemon(dir, env) {
+  const d = spawn(NODE, [FAKE_DAEMON, "daemon", "--auth-dir", dir], {
+    env: { ...process.env, ISKRON_BRIDGE_NO_UPDATE: "1", ...env },
+    stdio: "ignore",
+  });
+  await waitFor("the daemon to listen", () => daemonPids(dir).includes(d.pid));
+  return d;
+}
+
+test("a daemon signing in with another personal token refuses the session; the bridge goes full and says why", async () => {
+  await withFake(async ({ dir, spawnBridge }) => {
+    await startDaemon(dir, { ISKRON_BRIDGE_TOKEN: "nks_pat_someone_else" });
+    const b = spawnBridge(THIN_ENV);
+    const { orient } = await session(b);
+    assert.ok(orient.result, JSON.stringify(orient));
+    assert.match(b.stderr, /refused this bridge: .*personal token differs/);
+    assert.match(b.stderr, /going as the full bridge inside this process/);
+  });
+});
+
+test("the session's env replaces the daemon's own session keys, not merges into them", async () => {
+  await withFake(async ({ dir, spawnBridge }) => {
+    await startDaemon(dir, { ISKRON_BRIDGE_TOKEN: PAT, ISKRON_STALE_MARK: "1" });
+    await session(spawnBridge(THIN_ENV));
+    assert.match(trailOf(dir), /^env stale=false /m, "a key the harness did not name is gone");
+  });
+});
+
+test("an entrance open to others is not used: the full bridge, with the reason, no daemon raised", async () => {
+  await withFake(async ({ dir, spawnBridge }) => {
+    mkdirSync(join(dir, "run"), { mode: 0o755 });
+    chmodSync(join(dir, "run"), 0o755);
+    const b = spawnBridge(THIN_ENV);
+    const { orient } = await session(b);
+    assert.ok(orient.result, JSON.stringify(orient));
+    assert.match(b.stderr, /the daemon's entrance is not private \(.*открыт группе или прочим/);
+    assert.equal(existsSync(join(dir, "fake-daemon.log")), false, "no daemon was raised");
+  });
+});
+
+test(
+  "a raise lock the disk refuses sends the bridge full at once, with the reason",
+  {
+    skip: process.getuid?.() === 0 && "root writes anywhere",
+  },
+  async () => {
+    await withFake(async ({ dir, spawnBridge }) => {
+      mkdirSync(join(dir, "run"), { mode: 0o500 });
+      chmodSync(join(dir, "run"), 0o500);
+      try {
+        const started = Date.now();
+        const b = spawnBridge(THIN_ENV); // ожидание демона — 10 с; ждать тут нечего
+        const { orient } = await session(b);
+        assert.ok(orient.result, JSON.stringify(orient));
+        assert.match(b.stderr, /cannot raise the bridge daemon for .*(EACCES|permission denied)/i);
+        assert.ok(Date.now() - started < 5000, "not after the whole wait");
+      } finally {
+        chmodSync(join(dir, "run"), 0o700);
+      }
+    });
+  },
+);
+
+test("Ctrl-C of the thin bridge gone full leaves at once, as the full bridge does — even with a login out", async () => {
+  const fake = await startFakeNks({});
+  const dir = mkdtempSync(join(tmpdir(), "iskron-thin-"));
+  const b = startBridge(fake.mcpUrl, dir, {
+    ISKRON_BRIDGE_TOKEN: "", // вход по OAuth: initialize оставит логин ждать клика
+    ISKRON_BRIDGE_DAEMON: "1",
+    ISKRON_BRIDGE_DAEMON_WAIT_MS: "10000",
+  });
+  try {
+    const init = await b.call("initialize", 1, INIT);
+    assert.match(init.error?.message ?? "", /login|127\.0\.0\.1/i, JSON.stringify(init));
+    assert.match(b.stderr, /going as the full bridge inside this process/);
+    const exited = new Promise((r) => b.proc.once("exit", r));
+    const t0 = Date.now();
+    b.proc.kill("SIGINT");
+    await Promise.race([
+      exited,
+      new Promise((_, rej) => setTimeout(() => rej(new Error("still up 5s after Ctrl-C")), 5000)),
+    ]);
+    assert.ok(Date.now() - t0 < 5000);
+  } finally {
+    await b.stop();
+    await fake.stop();
     rmSync(dir, { recursive: true, force: true });
   }
 });

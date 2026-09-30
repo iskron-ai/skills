@@ -2,25 +2,26 @@
 //
 // Демон машины держит соединение с MCP и сокеты канала; мост агента тонкий:
 // stdio харнеса он отдаёт демону своего каталога гранта по локальному входу.
-// Этот модуль — обе стороны провода, без движка: пути, кадрирование,
-// рукопожатие, версии, bye, ошибки. Сторону демона (приём, сессии, окно
-// переподхвата) несёт seam-host.ts; тонкий мост — bridge/thin.ts.
+// Этот модуль — обе стороны провода, без движка: кадрирование, рукопожатие,
+// версии, ack, bye, ошибки. Вход (путь, личный каталог, замки) — seam-entrance.ts;
+// сторону демона (приём, сессии, окно переподхвата) — seam-host.ts; тонкий
+// мост — bridge/thin.ts.
 //
 // Провод — NDJSON поверх unix-сокета 0600 в личном каталоге (именованный канал
 // под Windows): одна строка — один кадр `{t: …}`.
 //   тонкий → демон  hello   первым кадром; версия шва, сборка, путь, argv, env, cwd, pid,
 //                           session (переподхват по id локальной сессии), probe (только спросить сборку)
-//   демон → тонкий  welcome сборка и pid демона, id локальной сессии, resumed
+//   демон → тонкий  welcome сборка и pid демона, id локальной сессии, resumed, ack
 //                   refuse  шов не той версии либо сессия не принята — с причиной
 //   в обе стороны   rpc     JSON-RPC как есть, свои методы и уведомления тоже
+//   демон → тонкий  ack     запрос с этим id принят сессией (кадр ack ушёл ядру прежде,
+//                           чем запрос отдан сессии: нет ack — сессия запроса не видела)
 //   тонкий → демон  bye     конец сессии по слову харнеса (stdin закрыт, SIGTERM)
 //   демон → тонкий  bye-ok  сессия ушла: всё, что было в полёте, отвечено
 // Закрытие сокета без bye (SIGKILL тонкого моста) — тот же конец сессии в
 // демоне, по истечении окна переподхвата SEAM_REATTACH_GRACE_MS.
 import { createHash } from "node:crypto";
 import { connect, type Socket } from "node:net";
-import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
 
 /** Версия провода. Разные версии не говорят: демон отвечает refuse, тонкий мост идёт полным. */
 export const SEAM_PROTOCOL = 1;
@@ -52,10 +53,12 @@ export interface SeamHello {
   path: string;
   /** argv моста после подкоманды: --satellite, --client-name, --auth-dir, адрес сервера… */
   argv: string[];
-  /** Окружение харнеса, нужное сессии (seamEnv). */
+  /** Окружение харнеса, нужное сессии (seamEnv): без личного токена — он не едет по шву. */
   env: Record<string, string>;
   cwd: string;
   pid: number;
+  /** Отпечаток личного токена моста (sha256, 16 знаков); null — вход по OAuth. Демон с другим — refuse. */
+  patSha?: string | null;
   /** id локальной сессии для переподхвата; нет — новая сессия. */
   session?: string | null;
   /** Только спросить сборку демона (--version): сессии не открывать. */
@@ -71,6 +74,13 @@ export interface SeamWelcome {
   session: string | null;
   /** Сессия та же, что названа в hello: initialize не переигрывается. */
   resumed: boolean;
+  /** Демон подтверждает приём запросов кадром ack; нет — исход любого ушедшего запроса неизвестен. */
+  ack?: boolean;
+}
+
+export interface SeamAck {
+  t: "ack";
+  id: string | number;
 }
 
 export interface SeamRefuse {
@@ -94,35 +104,21 @@ export interface SeamByeOk {
   t: "bye-ok";
 }
 
-export type SeamFrame = SeamHello | SeamWelcome | SeamRefuse | SeamRpc | SeamBye | SeamByeOk;
-
-// --- пути --------------------------------------------------------------------
-
-/** Ключ демона — каталог гранта: один демон на грант. */
-export const seamKey = (authDir: string): string =>
-  createHash("sha256").update(resolve(authDir)).digest("hex").slice(0, 16);
-
-// Путь unix-сокета ограничен ~104 байтами (macOS); длинный каталог гранта
-// уводит сокет в личный каталог под tmp — ключ тот же.
-const SUN_PATH_MAX = 100;
-
-/** Локальный вход демона этого каталога гранта. */
-export function seamSocketPath(authDir: string): string {
-  const key = seamKey(authDir);
-  if (process.platform === "win32") return `\\\\.\\pipe\\iskron-daemon-${key}`;
-  const inDir = join(resolve(authDir), "daemon.sock");
-  if (Buffer.byteLength(inDir) <= SUN_PATH_MAX) return inDir;
-  return join(tmpdir(), `iskron-${process.getuid?.() ?? "u"}`, `${key}.sock`);
-}
-
-/** Замок выборов подъёма демона (по образцу refreshlock): поднимает один. */
-export const seamRaiseLockPath = (authDir: string): string =>
-  join(resolve(authDir), "daemon.raising");
+export type SeamFrame =
+  SeamHello | SeamWelcome | SeamRefuse | SeamRpc | SeamAck | SeamBye | SeamByeOk;
 
 // --- рукопожатие -------------------------------------------------------------
 
-// Окружение, которое нужно сессии в демоне: всё своё (ISKRON_*), корень плагина,
-// прокси и доверенные сертификаты. Остальное окружение харнеса демону не нужно.
+/** Личный токен по шву не ездит: демон того же пользователя берёт его из своего окружения или файла гранта. */
+export const TOKEN_ENV = "ISKRON_BRIDGE_TOKEN";
+
+/** Отпечаток личного токена — сверить, что демон ходит тем же токеном; null — токена нет. */
+export const patShaOf = (pat: string | null | undefined): string | null =>
+  pat ? createHash("sha256").update(pat).digest("hex").slice(0, 16) : null;
+
+// Окружение, которое нужно сессии в демоне: всё своё (ISKRON_*, кроме токена),
+// корень плагина, прокси и доверенные сертификаты. Остальное окружение харнеса
+// демону не нужно.
 const PASS_ENV = new Set([
   "CLAUDE_PLUGIN_ROOT",
   "NODE_EXTRA_CA_CERTS",
@@ -137,11 +133,35 @@ const PASS_ENV = new Set([
   "all_proxy",
 ]);
 
+/** Ключ окружения сессии: его значение — слово харнеса, а не демона. */
+export const isSessionEnvKey = (k: string): boolean =>
+  k !== TOKEN_ENV && (k.startsWith("ISKRON_") || PASS_ENV.has(k));
+
 export function seamEnv(env: NodeJS.ProcessEnv = process.env): Record<string, string> {
   const out: Record<string, string> = {};
-  for (const [k, v] of Object.entries(env)) {
-    if (v !== undefined && (k.startsWith("ISKRON_") || PASS_ENV.has(k))) out[k] = v;
-  }
+  for (const [k, v] of Object.entries(env)) if (v !== undefined && isSessionEnvKey(k)) out[k] = v;
+  return out;
+}
+
+// Демону, поднятому тонким мостом, — окружение сессии, свой токен и основа
+// процесса (дом, пути, tmp, рантайм), не всё окружение харнеса.
+const BASE_ENV = [
+  "HOME",
+  "USERPROFILE",
+  "PATH",
+  "TMPDIR",
+  "TMP",
+  "TEMP",
+  "SystemRoot",
+  "LANG",
+  "LC_ALL",
+  "BUN_BE_BUN",
+  TOKEN_ENV,
+];
+
+export function daemonEnv(env: NodeJS.ProcessEnv = process.env): Record<string, string> {
+  const out = seamEnv(env);
+  for (const k of BASE_ENV) if (env[k] !== undefined) out[k] = env[k]!;
   return out;
 }
 
@@ -151,6 +171,7 @@ export function helloFrame(o: {
   argv: string[];
   session?: string | null;
   probe?: boolean;
+  patSha?: string | null;
 }): SeamHello {
   return {
     t: "hello",
@@ -162,6 +183,7 @@ export function helloFrame(o: {
     cwd: process.cwd(),
     pid: process.pid,
     session: o.session ?? null,
+    patSha: o.patSha ?? null,
     ...(o.probe ? { probe: true } : {}),
   };
 }

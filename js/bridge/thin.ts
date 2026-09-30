@@ -1,20 +1,26 @@
 // Тонкий мост — сторона агента на шве «тонкий мост ↔ демон машины» (провод —
-// shared/seam.ts). Держит stdio харнеса и отдаёт всё демону своего каталога
-// гранта: JSON-RPC как есть в обе стороны. Сам хранит только то, без чего обрыв
-// стал бы молчанием: копию initialize харнеса и id вызовов в полёте.
+// shared/seam.ts, вход — shared/seam-entrance.ts). Держит stdio харнеса и
+// отдаёт всё демону своего каталога гранта: JSON-RPC как есть в обе стороны.
+// Сам хранит только то, без чего обрыв стал бы молчанием: копию initialize
+// харнеса и id вызовов в полёте.
 //
 //   демона нет      поднимает его отсоединённо (`iskron.mjs daemon`) под выборами
-//                   по образцу refreshlock; не встал — полный мост в процессе, и
-//                   мост говорит это: stderr и первый ответ тула
-//   обрыв связи     каждый id в полёте — синтетическая ошибка с вердиктом («не
-//                   отправлено» / «исход неизвестен»), затем переподхват по id
-//                   локальной сессии; сессия новая — initialize переигрывается
+//                   (замок подъёма в личном каталоге шва); не встал, вход не личный,
+//                   замка не взять — полный мост в процессе, и мост говорит это:
+//                   stderr и первый ответ тула
+//   обрыв связи     каждый id в полёте — синтетическая ошибка с вердиктом: запрос,
+//                   чей приём демон подтвердил (ack), — «исход неизвестен»; не
+//                   подтверждённый демоном, говорящим ack, — «не отправлено»; демон
+//                   без ack — «исход неизвестен» всегда. Закрытый вердиктом id
+//                   помнится: настоящий ответ, пришедший после, харнесу не идёт.
+//                   Затем переподхват по id локальной сессии; сессия новая —
+//                   initialize переигрывается
 //   конец           stdin закрыт, SIGTERM — bye демону с ограниченным ожиданием
 //
 // Шаг 1: за флагом ISKRON_BRIDGE_DAEMON=1 (по умолчанию полный мост, как было);
-// ISKRON_BRIDGE_NO_DAEMON=1 — полный мост всегда.
+// ISKRON_BRIDGE_NO_DAEMON=1 — полный мост всегда. Выравнивание дома при старте
+// (cli: syncHome/reexec) тонкий мост пока делает сам, как полный.
 import { spawn } from "node:child_process";
-import { linkSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { createInterface } from "node:readline";
 import { PassThrough } from "node:stream";
 import { fileURLToPath } from "node:url";
@@ -22,20 +28,26 @@ import { fileURLToPath } from "node:url";
 import {
   connectSeam,
   DAEMON_ENV,
+  daemonEnv,
   helloFrame,
   NO_DAEMON_ENV,
+  patShaOf,
   SeamError,
   type SeamLink,
-  seamRaiseLockPath,
-  seamSocketPath,
 } from "../shared/seam.ts";
+import {
+  seamEntranceProblem,
+  seamRaiseLockPath,
+  seamRunDir,
+  seamSocketPath,
+  takeFileLock,
+} from "../shared/seam-entrance.ts";
 import { defaultAuthDir } from "../shared/standings.ts";
 import { BUILD } from "./build.ts";
 import { parseArgs, setConfig } from "./config.ts";
 import { syntheticError } from "./deliver.ts";
-import { installCrashWords, startEngine } from "./engine.ts";
+import { fullBridgeSigint, installCrashWords, startEngine } from "./engine.ts";
 import { NOT_SENT, UNKNOWN } from "./errors.ts";
-import { pidAlive } from "./oauth/authlock.ts";
 import { type BridgeSession, openSession } from "./session.ts";
 import { sleep } from "./store.ts";
 import { debug, flushStdout, log, writeTo } from "./streams.ts";
@@ -68,76 +80,37 @@ export function daemonWanted(): boolean {
   return process.env[DAEMON_ENV]?.trim() === "1" && (!off || off === "0");
 }
 
-// --- выборы подъёма ----------------------------------------------------------
+// --- подъём ------------------------------------------------------------------
 
-interface RaiseLock {
-  pid: number;
-  started_at: number;
-}
+type Raise =
+  | { kind: "raising"; release(): void; failed: Promise<string> }
+  | { kind: "other" } // поднимает другой — ждём его демона
+  | { kind: "fault"; why: string }; // замка не взять — ждать нечего
 
-function takeRaiseLock(authDir: string): boolean {
-  const path = seamRaiseLockPath(authDir);
-  const claim = (): boolean => {
-    const tmp = `${path}.${process.pid}`;
-    writeFileSync(tmp, JSON.stringify({ pid: process.pid, started_at: Date.now() }), {
-      mode: 0o600,
-    });
-    try {
-      linkSync(tmp, path); // атомарно; EEXIST — держит другой
-      return true;
-    } catch {
-      return false;
-    } finally {
-      try {
-        unlinkSync(tmp);
-      } catch {}
-    }
-  };
-  try {
-    mkdirSync(authDir, { recursive: true, mode: 0o700 });
-    if (claim()) return true;
-    const held = JSON.parse(readFileSync(path, "utf8")) as RaiseLock;
-    if (pidAlive(held.pid) && Date.now() - held.started_at < RAISE_STALE_MS) return false;
-  } catch {}
-  debug("breaking a daemon raise lock nobody is holding");
-  try {
-    unlinkSync(path);
-  } catch {}
-  try {
-    return claim();
-  } catch {
-    return false;
-  }
-}
-
-function dropRaiseLock(authDir: string): void {
-  try {
-    const path = seamRaiseLockPath(authDir);
-    const l = JSON.parse(readFileSync(path, "utf8")) as RaiseLock;
-    if (l.pid === process.pid) unlinkSync(path);
-  } catch {}
-}
-
-/** Поднять демон отсоединённо; вернуть обещание его раннего конца (не встал). */
-function raiseDaemon(authDir: string): Promise<string> | null {
-  if (!takeRaiseLock(authDir)) return null; // поднимает другой — ждём его демона
+/** Поднять демон отсоединённо под замком выборов. */
+function raiseDaemon(authDir: string): Raise {
+  const lock = takeFileLock(seamRaiseLockPath(authDir), RAISE_STALE_MS);
+  if (!lock.held) return lock.fault ? { kind: "fault", why: lock.fault } : { kind: "other" };
   const entry = process.env.ISKRON_BRIDGE_DAEMON_ENTRY || SELF;
   log(`no bridge daemon for ${authDir} — raising one: ${entry} daemon`);
   try {
+    // Демону — окружение сессии, токен и основа процесса, не всё окружение харнеса.
     const child = spawn(process.execPath, [entry, "daemon", "--auth-dir", authDir], {
       detached: true,
       stdio: "ignore",
-      cwd: authDir,
-      env: process.env,
+      cwd: seamRunDir(authDir),
+      env: daemonEnv(),
       windowsHide: true,
     });
     child.unref();
-    return new Promise((r) => {
+    const failed = new Promise<string>((r) => {
       child.once("error", (e) => r(`the daemon did not start: ${e.message}`));
       child.once("exit", (code, sig) => r(`the daemon exited at once (${sig ?? `code ${code}`})`));
     });
+    return { kind: "raising", release: lock.release, failed };
   } catch (e) {
-    return Promise.resolve(`the daemon did not start: ${(e as Error).message}`);
+    lock.release();
+    return { kind: "fault", why: `the daemon did not start: ${(e as Error).message}` };
   }
 }
 
@@ -146,8 +119,8 @@ function raiseDaemon(authDir: string): Promise<string> | null {
 interface Flight {
   id: string | number;
   method: string;
-  /** Байты кадра отданы ядру: демон мог его взять — исход неизвестен. */
-  sent: boolean;
+  /** Демон подтвердил приём (ack): сессия запрос видела — исход неизвестен. */
+  acked: boolean;
 }
 
 export function thinMain(argv: string[]): void {
@@ -155,8 +128,8 @@ export function thinMain(argv: string[]): void {
   const cfg = parseArgs(argv);
   setConfig(cfg);
   const authDir = cfg.authDir;
+  const patSha = patShaOf(cfg.pat);
   installCrashWords();
-  const socketPath = seamSocketPath(authDir);
 
   let mode: "attaching" | "daemon" | "local" = "attaching";
   let link: SeamLink | null = null;
@@ -170,6 +143,7 @@ export function thinMain(argv: string[]): void {
   let byeDone: (() => void) | null = null;
   const queue: JsonRpcMessage[] = [];
   const flights = new Map<string, Flight>();
+  const verdicted = new Set<string>(); // id, закрытые вердиктом: их поздний ответ — дубль
   const replayIds = new Set<string>();
   let replays = 0;
   const key = (id: unknown) => JSON.stringify(id);
@@ -179,6 +153,10 @@ export function thinMain(argv: string[]): void {
     if (msg.method === undefined && msg.id !== undefined && msg.id !== null) {
       const k = key(msg.id);
       if (replayIds.delete(k)) return; // ответ переигранного initialize: харнес свой уже получил
+      if (verdicted.delete(k)) {
+        debug(`a late answer to ${k} dropped — the harness already has its verdict`);
+        return;
+      }
       const f = flights.get(k);
       flights.delete(k);
       if (word && f?.method === "tools/call" && Array.isArray(msg.result?.content)) {
@@ -189,12 +167,18 @@ export function thinMain(argv: string[]): void {
     writeHarness(msg);
   };
 
+  // Вердикт каждому id в полёте — и память о нём, чтобы поздний ответ не стал вторым.
+  const verdictAll = (why: string, acks: boolean) => {
+    for (const [k, f] of flights) {
+      writeHarness(syntheticError(f.id, why, !acks || f.acked ? UNKNOWN : NOT_SENT));
+      verdicted.add(k);
+    }
+    flights.clear();
+  };
+
   const toDaemon = (l: SeamLink, msg: JsonRpcMessage) => {
     if (msg.method === "initialize") initSent = true;
-    const f = msg.method && msg.id != null ? flights.get(key(msg.id)) : undefined;
-    l.send({ t: "rpc", msg }, (err) => {
-      if (!err && f) f.sent = true;
-    });
+    l.send({ t: "rpc", msg });
   };
   const toLocal = (msg: JsonRpcMessage) => {
     if (msg.method === "initialize") initSent = true;
@@ -250,54 +234,53 @@ export function thinMain(argv: string[]): void {
     );
     l.onFrame((f) => {
       if (f.t === "rpc") toHarness(f.msg as JsonRpcMessage);
-      else if (f.t === "bye-ok") byeDone?.();
+      else if (f.t === "ack") {
+        const fl = flights.get(key(f.id));
+        if (fl) fl.acked = true;
+      } else if (f.t === "bye-ok") byeDone?.();
     });
     l.onClose(() => {
       if (link !== l) return;
       link = null;
       if (leaving) return byeDone?.();
-      lost();
+      lost(!!w.ack);
     });
     if (!resumed) replay((m) => toDaemon(l, m));
     for (const m of queue.splice(0)) dispatch(m);
   };
 
-  const lost = () => {
+  const lost = (acks: boolean) => {
     mode = "attaching";
     replayIds.clear();
     log(
       `the link to the machine's bridge daemon broke — ${flights.size} call(s) in flight get a verdict; reattaching`,
     );
-    for (const f of flights.values()) {
-      writeHarness(
-        syntheticError(
-          f.id,
-          "the link to this machine's bridge daemon broke before the answer came back",
-          f.sent ? UNKNOWN : NOT_SENT,
-        ),
-      );
-    }
-    flights.clear();
+    verdictAll("the link to this machine's bridge daemon broke before the answer came back", acks);
     void attach();
   };
 
   const attach = async (): Promise<void> => {
+    const unsafe = seamEntranceProblem(authDir);
+    if (unsafe) return goLocal(`the daemon's entrance is not private (${unsafe})`);
+    const socketPath = seamSocketPath(authDir);
     const deadline = Date.now() + ATTACH_MS;
-    let raising: Promise<string> | null = null;
+    let raise: Raise | null = null;
     let raiseFailed: string | null = null;
     try {
       for (;;) {
         if (leaving) return;
         try {
-          const hello = helloFrame({ build: BUILD, path: SELF, argv, session: sessionId });
+          const hello = helloFrame({ build: BUILD, path: SELF, argv, session: sessionId, patSha });
           return onWelcome(await connectSeam(socketPath, hello, HELLO_MS));
         } catch (e) {
           if (!(e instanceof SeamError)) throw e;
           if (e.kind === "refused")
             return goLocal(`the machine's bridge daemon refused this bridge: ${e.message}`);
-          if (e.kind === "absent" && !raising) {
-            raising = raiseDaemon(authDir);
-            void raising?.then((why) => (raiseFailed = why));
+          if (e.kind === "absent" && !raise) {
+            raise = raiseDaemon(authDir);
+            if (raise.kind === "fault")
+              return goLocal(`cannot raise the bridge daemon for ${authDir}: ${raise.why}`);
+            if (raise.kind === "raising") void raise.failed.then((why) => (raiseFailed = why));
           }
           if (raiseFailed) return goLocal(`no bridge daemon for ${authDir}: ${raiseFailed}`);
           if (Date.now() >= deadline)
@@ -308,7 +291,7 @@ export function thinMain(argv: string[]): void {
         }
       }
     } finally {
-      if (raising) dropRaiseLock(authDir);
+      if (raise?.kind === "raising") raise.release();
     }
   };
 
@@ -325,18 +308,22 @@ export function thinMain(argv: string[]): void {
     }
     if (msg.method === "initialize") initCopy = msg;
     if (msg.method === "notifications/initialized") initializedSeen = true;
-    if (msg.method && msg.id !== undefined && msg.id !== null)
-      flights.set(key(msg.id), { id: msg.id, method: msg.method, sent: false });
+    if (msg.method && msg.id !== undefined && msg.id !== null) {
+      verdicted.delete(key(msg.id)); // харнес взял id снова — его ответ уже не дубль
+      flights.set(key(msg.id), { id: msg.id, method: msg.method, acked: false });
+    }
     dispatch(msg);
   });
 
   const leave = (why: string): Promise<void> => (leaving ??= windDown(why));
   const windDown = async (why: string) => {
     debug(`${why} — winding down`);
+    let acks = false;
     if (mode === "local" && local) {
       await local.session.leave(why);
     } else if (link) {
       const l = link;
+      acks = !!l.welcome.ack;
       // bye: демон отвечает всё, что в полёте, снимает сессию и говорит bye-ok
       await new Promise<void>((resolve) => {
         byeDone = resolve;
@@ -346,22 +333,18 @@ export function thinMain(argv: string[]): void {
       l.close();
     }
     // Чего демон не ответил (или что так и не ушло) — вердиктом: харнес мог ещё читать.
-    for (const f of flights.values()) {
-      writeHarness(
-        syntheticError(
-          f.id,
-          "the bridge left before the machine's daemon answered",
-          f.sent ? UNKNOWN : NOT_SENT,
-        ),
-      );
-    }
+    verdictAll("the bridge left before the machine's daemon answered", acks);
     await flushStdout(process.stdout);
     process.exit(0);
   };
   rl.on("close", () => void leave("stdin closed, the harness is gone"));
   process.on("SIGTERM", () => void leave("SIGTERM"));
+  // Ctrl-C: в полном ходе — как у полного моста (выход сразу, без ожидания
+  // входа); через демон — bye, второй Ctrl-C выходит сразу.
+  const localSigint = fullBridgeSigint();
   let interrupted = false;
   process.on("SIGINT", () => {
+    if (mode === "local") return localSigint();
     if (interrupted) process.exit(0);
     interrupted = true;
     void leave("SIGINT");
@@ -380,6 +363,8 @@ export async function versionLines(args: string[]): Promise<string[]> {
   const i = args.indexOf("--auth-dir");
   const authDir =
     (i >= 0 ? args[i + 1] : undefined) || process.env.ISKRON_BRIDGE_AUTH_DIR || defaultAuthDir();
+  const unsafe = seamEntranceProblem(authDir);
+  if (unsafe) return [...lines, `daemon: the entrance is not private (${unsafe})`];
   const path = seamSocketPath(authDir);
   try {
     const l = await connectSeam(

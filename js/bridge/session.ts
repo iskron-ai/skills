@@ -11,6 +11,7 @@
 import { createInterface } from "node:readline";
 import { type Writable } from "node:stream";
 
+import { isSessionEnvKey, patShaOf } from "../shared/seam.ts";
 import { CFG, parseArgs, setConfig } from "./config.ts";
 import { deliver } from "./deliver.ts";
 import { errorMessage } from "./errors.ts";
@@ -38,35 +39,57 @@ export interface BridgeSession {
   leave(why: string): Promise<void>;
   /** Сессия ушла: вход закрыт (или позван leave) и всё отвечено. */
   readonly ended: Promise<void>;
+  /** Откуда сессия; null — сессия этого процесса. Окружение сессии живёт здесь. */
+  readonly origin: SessionOrigin | null;
 }
 
 /**
- * Откуда сессия — мост харнеса, каким его запустили: argv, окружение, cwd, pid.
- * Демон берёт его из рукопожатия шва (shared/seam.ts SeamHello) как есть.
+ * Откуда сессия — мост харнеса, каким его запустили: argv, окружение, cwd, pid,
+ * отпечаток личного токена. Демон берёт его из рукопожатия шва (shared/seam.ts
+ * SeamHello) как есть.
  */
 export interface SessionOrigin {
   argv: string[];
   env: Record<string, string>;
   cwd: string;
   pid: number;
+  patSha?: string | null;
 }
 
-let originsTaken = 0;
+let originTaken = false;
+
+// Пока движок читает окружение процесса, окружение сессии на него ложится —
+// заменой ключей сессии (isSessionEnvKey), не слиянием: ключ, которого харнес
+// не назвал, снимается, а не доживает от прошлой сессии. Личный токен — не ключ
+// сессии: у демона свой (окружение подъёма или файл гранта), и отпечаток сессии
+// с ним сверяется — другой токен — отказ, а не молчаливая подмена входа.
+function applyOrigin(origin: SessionOrigin): void {
+  for (const k of Object.keys(process.env))
+    if (isSessionEnvKey(k) && !(k in origin.env)) delete process.env[k];
+  for (const [k, v] of Object.entries(origin.env)) if (isSessionEnvKey(k)) process.env[k] = v;
+  process.chdir(origin.cwd);
+  const cfg = parseArgs(origin.argv);
+  if (origin.patSha !== undefined && patShaOf(cfg.pat) !== origin.patSha)
+    throw new Error(
+      "this daemon signs in otherwise than the bridge asking (its personal token differs)",
+    );
+  setConfig(cfg);
+}
 
 /**
  * Открыть сессию моста над потоками. Конец входа — уход сессии (как закрытый
  * stdin у полного моста); выходить ли процессу — решает хозяин сессии.
  * Без origin — сессия этого процесса: setConfig уже позван (main.ts, thin.ts).
  * С origin — сессия чужого моста (демон): его конфиг, окружение и cwd. Пока
- * состояние движка глобально, такая сессия одна на процесс; вторая — бросок.
- * Окружение, прочитанное модулями при загрузке (ручки проб *_MS), — процесса.
+ * состояние движка глобально, такая сессия одна на процесс; вторая — бросок,
+ * как и отпечаток токена, не совпавший с демоном. Окружение, прочитанное
+ * модулями при загрузке (ручки проб *_MS), — процесса.
  */
 export function openSession(io: SessionIO, origin?: SessionOrigin): BridgeSession {
   if (origin) {
-    if (originsTaken++) throw new Error("this engine holds one session per process");
-    Object.assign(process.env, origin.env);
-    process.chdir(origin.cwd);
-    setConfig(parseArgs(origin.argv));
+    if (originTaken) throw new Error("this engine holds one session per process");
+    applyOrigin(origin);
+    originTaken = true;
   }
   setSessionOutput(io.output);
   guardStream(io.output); // before the first write: a broken pipe is news, not a crash
@@ -152,5 +175,5 @@ export function openSession(io: SessionIO, origin?: SessionOrigin): BridgeSessio
     await flushStdout(io.output);
   };
   rl.on("close", () => void leave("stdin closed, the harness is gone"));
-  return { leave, ended };
+  return { leave, ended, origin: origin ?? null };
 }
