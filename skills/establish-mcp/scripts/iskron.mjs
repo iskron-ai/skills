@@ -3651,6 +3651,18 @@ function setRevokingOwn(v) {
 import { existsSync as existsSync3, readdirSync as readdirSync4, readFileSync as readFileSync11, statSync as statSync4 } from "node:fs";
 import { isAbsolute, join as join9 } from "node:path";
 
+// js/shared/busyargs.ts
+var STATUS_ONLY_ARGS = /* @__PURE__ */ new Set([
+  "realm",
+  "karta",
+  "name",
+  "cwd",
+  "status",
+  "satellite_of"
+]);
+var unset = (v) => v == null || v === false || v === "";
+var takingArgs = (args) => Object.keys(args).filter((k) => !STATUS_ONLY_ARGS.has(k) && !unset(args[k]));
+
 // js/bridge/board.ts
 function parseBoard(text) {
   const out5 = [];
@@ -4185,19 +4197,18 @@ function localStatus(msg) {
     return reply2(...await statusWord(text, realm));
   })();
 }
-var STATUS_ONLY_ARGS = /* @__PURE__ */ new Set(["realm", "karta", "name", "cwd", "status", "satellite_of"]);
 async function standStatusOnly(msg) {
   const a = msg.params?.arguments ?? {};
   if (typeof a.status !== "string") return { miss: null };
-  const unset = (v) => v == null || v === false || v === "";
-  const extra = Object.keys(a).filter((k2) => !STATUS_ONLY_ARGS.has(k2) && !unset(a[k2]));
+  const unset2 = (v) => v == null || v === false || v === "";
+  const extra = takingArgs(a);
   const realm = typeof a.realm === "string" ? a.realm.trim() : "";
   if (!realm) return { miss: null };
   await resolveAgainstLed(realm);
   const held2 = ledIn(realm);
   if (!held2) return { miss: { why: "none" } };
   if (extra.length) return { miss: { why: "args", args: extra } };
-  if (!unset(a.karta) && normKarta(a.karta) !== String(held2.karta)) return { miss: null };
+  if (!unset2(a.karta) && normKarta(a.karta) !== String(held2.karta)) return { miss: null };
   const asked = normName(a.name);
   if (asked && asked !== (held2.name ?? ""))
     return { miss: { why: "name", asked, held: held2.name ?? "" } };
@@ -4214,10 +4225,14 @@ async function standStatusOnly(msg) {
   }
   const [said, isError] = await statusWord(a.status.trim(), realm);
   const heard = holdsStanding(r, k, n);
-  const body = isError || heard ? said : `${said}; ${L(
+  const why = wasEvicted(r, k, n) ? L(
     "слух у другого держателя — вернуть его iskron_stand с take=true только по слову человека",
     "the hearing is with another holder — take it back by iskron_stand with take=true only on the human's word"
-  )}`;
+  ) : L(
+    "сокет переоткрывается — строка опубликована, слух вернётся сам",
+    "the socket is reopening — the line is published, the hearing comes back by itself"
+  );
+  const body = isError || heard ? said : `${said}; ${why}`;
   const listen = isError || !heard ? null : unheardListenBlock(realm);
   return { reply: replyTo(msg)(listen ? `${body}
 ${listen}` : body, isError) };

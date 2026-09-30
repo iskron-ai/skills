@@ -2,6 +2,7 @@
 // корня (граф nks-dev: #6002): держит корень место — мост ребёнка поднимается с
 // --satellite, и его iskron_stand встаёт местом «место корня».sub-N в роли,
 // которую назвал агент (не назвал — роль корня).
+import { takingArgs } from "../shared/busyargs.ts";
 
 /** Тул моста, которому плагин подставляет директорию сессии (cwd) для вывода имени. */
 export const STAND_TOOL = "iskron_stand";
@@ -13,15 +14,12 @@ export function standsBy(name: string, args: Record<string, unknown>): boolean {
 }
 
 /**
- * Аргументы iskron_stand, которые мост исполняет одной занятостью (#6509): status
- * без аргументов занятия. Её успех — не держание: после отъёма он успешен при
- * чужом сокете; держание плагин знает по слову моста «held» и hello.
+ * Аргументы iskron_stand, которые мост исполняет одной занятостью (#6509) — тем же
+ * списком, что мост (shared/busyargs.ts). Её успех — не держание: после отъёма он
+ * успешен при чужом сокете; держание плагин знает по слову моста «held» и hello.
  */
-function busyOnly(args: Record<string, unknown>): boolean {
-  if (typeof args.status !== "string") return false;
-  const set = (v: unknown): boolean => v != null && v !== false && v !== "";
-  return !["model", "room", "take", "repeat_knock", "mute_siblings"].some((k) => set(args[k]));
-}
+const busyOnly = (args: Record<string, unknown>): boolean =>
+  typeof args.status === "string" && takingArgs(args).length === 0;
 
 /** Место, которое держит мост, — как его называет слово моста «held». */
 export type Place = { realm: string; karta: string; name: string };

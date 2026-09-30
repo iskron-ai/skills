@@ -7,6 +7,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 
+import { takingArgs } from "../shared/busyargs.ts";
 import { L } from "../shared/lang.ts";
 import { socketPathOf, standingsDirOf } from "../shared/standings.ts";
 import { nameOf } from "./board.ts";
@@ -20,6 +21,7 @@ import {
   noteStandCwd,
   rememberStatus,
   statusAddress,
+  wasEvicted,
 } from "./hold.ts";
 import { type HoldRecord, keyOf } from "./holdrecord.ts";
 import { unheardListenBlock } from "./listen.ts";
@@ -70,14 +72,10 @@ export function localStatus(msg: JsonRpcMessage): Promise<JsonRpcMessage> | null
   })();
 }
 
-/**
- * Аргументы iskron_stand, с которыми вызов со status — только занятость; всякий
- * другой ведёт полный путь. satellite_of подставляет сам плагин OpenCode каждому
- * вызову дочерней сессии — он сверяется с держимым местом-спутником. model несёт
- * старт двери (и повторный старт после возврата): он сверяет место — register,
- * хук инбокса, hello — и потому идёт полным путём.
- */
-const STATUS_ONLY_ARGS = new Set(["realm", "karta", "name", "cwd", "status", "satellite_of"]);
+// Список аргументов одной занятости — shared/busyargs.ts, общий с плагином OpenCode.
+// satellite_of сверяется с держимым местом-спутником; model несёт старт двери (и
+// повторный старт после возврата): он сверяет место — register, хук, hello —
+// и потому идёт полным путём.
 
 /**
  * Почему вызов со status не стал одной занятостью — для слова отказа, когда
@@ -108,7 +106,7 @@ export async function standStatusOnly(msg: JsonRpcMessage): Promise<StatusOnly> 
   const a = msg.params?.arguments ?? {};
   if (typeof a.status !== "string") return { miss: null };
   const unset = (v: unknown): boolean => v == null || v === false || v === "";
-  const extra = Object.keys(a).filter((k) => !STATUS_ONLY_ARGS.has(k) && !unset(a[k]));
+  const extra = takingArgs(a);
   const realm = typeof a.realm === "string" ? a.realm.trim() : "";
   if (!realm) return { miss: null };
   await resolveAgainstLed(realm); // граф вызова — в той же форме, что граф места
@@ -134,15 +132,19 @@ export async function standStatusOnly(msg: JsonRpcMessage): Promise<StatusOnly> 
   }
   const [said, isError] = await statusWord(a.status.trim(), realm);
   const heard = holdsStanding(r, k, n);
-  // После отъёма строка — слово стояния, но слуха здесь нет: ответ говорит это
-  // сам, иначе свежая строка над чужим сокетом обманывает и того, кто её поставил.
-  const body =
-    isError || heard
-      ? said
-      : `${said}; ${L(
-          "слух у другого держателя — вернуть его iskron_stand с take=true только по слову человека",
-          "the hearing is with another holder — take it back by iskron_stand with take=true only on the human's word",
-        )}`;
+  // Сокета сейчас нет — ответ говорит почему, иначе свежая строка над чужим или
+  // закрытым сокетом обманывает и того, кто её поставил: отъём (закрытие 4000) —
+  // слух у другого; иначе своё переоткрытие — слух вернётся сам.
+  const why = wasEvicted(r, k, n)
+    ? L(
+        "слух у другого держателя — вернуть его iskron_stand с take=true только по слову человека",
+        "the hearing is with another holder — take it back by iskron_stand with take=true only on the human's word",
+      )
+    : L(
+        "сокет переоткрывается — строка опубликована, слух вернётся сам",
+        "the socket is reopening — the line is published, the hearing comes back by itself",
+      );
+  const body = isError || heard ? said : `${said}; ${why}`;
   // Сокет места держит мост, а сторож к нему не прицеплен — команда слушания тут же;
   // после отъёма слуха здесь нет, и команда сторожа была бы неправдой.
   const listen = isError || !heard ? null : unheardListenBlock(realm);

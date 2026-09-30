@@ -1169,17 +1169,25 @@ function createKeeper(doors) {
   };
 }
 
+// js/shared/busyargs.ts
+var STATUS_ONLY_ARGS = /* @__PURE__ */ new Set([
+  "realm",
+  "karta",
+  "name",
+  "cwd",
+  "status",
+  "satellite_of"
+]);
+var unset = (v) => v == null || v === false || v === "";
+var takingArgs = (args) => Object.keys(args).filter((k) => !STATUS_ONLY_ARGS.has(k) && !unset(args[k]));
+
 // js/opencode/satellite.ts
 var STAND_TOOL = "iskron_stand";
 function standsBy(name, args) {
   if (name === STAND_TOOL) return true;
   return name === "iskron_channel" && ["connect", "mint", "register"].includes(String(args.action));
 }
-function busyOnly(args) {
-  if (typeof args.status !== "string") return false;
-  const set = (v) => v != null && v !== false && v !== "";
-  return !["model", "room", "take", "repeat_knock", "mute_siblings"].some((k) => set(args[k]));
-}
+var busyOnly = (args) => typeof args.status === "string" && takingArgs(args).length === 0;
 function heldPlace(data) {
   const p = data?.place;
   if (typeof p?.name !== "string" || !p.name) return null;

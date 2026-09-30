@@ -678,6 +678,40 @@ test("iskron_stand after an eviction: register only, the busy line still publish
   assert.match(textOf(taken), /hello получен/, "a fresh hello after the explicit take");
 });
 
+// In the window of the bridge's own reopening (a close that is not an eviction —
+// the socket is re-opened after 2 s) the busy line goes out too, and the answer
+// says the hearing comes back by itself — not «another holder, take» (#6509).
+test("iskron_stand busy line while the bridge reopens its own socket: published, and the answer says the hearing comes back by itself", async (t) => {
+  const { fake, bridge } = await ready(t);
+  const first = await bridge.call("tools/call", {
+    name: "iskron_stand",
+    arguments: { realm: "nks-dev", karta: 931, name: "proba" },
+  });
+  assert.ok(!first.result?.isError, textOf(first));
+  const deadline = Date.now() + 10_000;
+  while (fake.state.ws.size !== 1) {
+    if (Date.now() > deadline) throw new Error("timed out waiting for the socket");
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  const known = new Set(fake.state.ws);
+  await fake.control({ ws_close: 1011 }); // не отъём: мост переоткроет сокет через 2 с
+  await new Promise((r) => setTimeout(r, 500));
+  const said = await bridge.call("tools/call", {
+    name: "iskron_stand",
+    arguments: { realm: "nks-dev", status: "в окне переоткрытия" },
+  });
+  const text = textOf(said);
+  assert.ok(!said.result?.isError, text);
+  assert.match(text, /^занятость proba--931--nks-dev: в окне переоткрытия; сокет переоткрывается/);
+  assert.doesNotMatch(text, /другого держателя|take=true/, text);
+  assert.equal(fake.state.status, "в окне переоткрытия");
+  assert.equal(
+    [...fake.state.ws].filter((s) => !known.has(s)).length,
+    0,
+    "the answer came inside the reopen window",
+  );
+});
+
 // The busy line is the standing's word — of THIS standing: a call for another
 // name must not post onto the address the bridge holds for the first one.
 test("iskron_stand with status for another standing is refused outright — one standing per bridge — and the held one's line stays untouched", async (t) => {
@@ -2345,6 +2379,8 @@ test("iskron_stand with realm and status only says why it is no busy line: no se
   };
   await why({ name: "drugoe" }, /имя drugoe, а мост держит здесь proba/);
   await why({ room: "@tester:k" }, /вызов несёт room/);
+  // Список один с плагином OpenCode (shared/busyargs.ts): room_karta — занятие места.
+  await why({ room_karta: "#1226" }, /вызов несёт room_karta/);
   await why({ cwd: "/nowhere/at/all" }, /каталог \/nowhere\/at\/all не существует/);
   await why({ satellite_of: "@tester:kto-to" }, /не спутник места @tester:kto-to/);
   const left = await bridge.call("tools/call", {

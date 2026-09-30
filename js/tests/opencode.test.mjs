@@ -1956,6 +1956,20 @@ test("a satellite child holding its seat calls iskron_stand with status only: th
       .filter((c) => c.name === "iskron_stand")
       .map((c) => [c.arguments.karta, c.arguments.satellite_of, c.arguments.status]);
     assert.deepEqual(stands.at(-1), [undefined, "host.repo.opus-5", "спутник пишет"]);
+    // Один список с мостом (shared/busyargs.ts): room_karta — занятие места, и
+    // роль корня подставляется, как у всякого вызова занятия.
+    await rec.call(
+      "iskron_stand",
+      { realm: "nks-dev", status: "стучу", room_karta: "#1226" },
+      "child",
+    );
+    const withRoom = readFileSync(calls, "utf8")
+      .trim()
+      .split("\n")
+      .map((l) => JSON.parse(l))
+      .filter((c) => c.name === "iskron_stand")
+      .at(-1);
+    assert.equal(withRoom.arguments.karta, "2816", "room_karta is not a busy-line argument");
   } finally {
     await rec.stop();
   }
