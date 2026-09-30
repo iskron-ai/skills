@@ -340,6 +340,7 @@ export async function startFakeNks(opts = {}) {
         "hooksText",
         "helloPending", // what the next hello says was waiting in the queue
         "statusDelayMs", // hold the status POST open this long before answering
+        "listDelayMs", // hold every board read (iskron_channel list) open this long
       ]) {
         if (k in patch) st[k] = patch[k];
       }
@@ -395,6 +396,8 @@ export async function startFakeNks(opts = {}) {
           });
         }
       }
+      // Места, ушедшие с доски (окно простоя канала истекло): ключи `<karta>:<name>`.
+      if (Array.isArray(patch.dropPlaces)) for (const k of patch.dropPlaces) st.places.delete(k);
       if ("connect_refuse_ttl" in patch) st.connectRefuseTtl = patch.connect_refuse_ttl || null; // отказ окну простоя на connect
       if ("send_conflict" in patch) st.sendConflict = patch.send_conflict || null; // текст отказа 409 не о безавторности
       if ("statusGone" in patch) st.statusGone = !!patch.statusGone; // статусный адрес повернули
@@ -792,6 +795,8 @@ export async function startFakeNks(opts = {}) {
         }
         if (a.action === "list") {
           st.counts.list++;
+          // Медленная доска: окно, в котором несколько мостов читают её до чужого connect.
+          if (st.listDelayMs) await new Promise((r) => setTimeout(r, st.listDelayMs));
           const byKarta =
             a.karta != null ? st.boardByKarta?.[String(a.karta).replace(/^#/, "")] : undefined;
           if (typeof byKarta === "string") {

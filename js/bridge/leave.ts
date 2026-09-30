@@ -33,6 +33,7 @@ import {
 } from "./hold.ts";
 import { markLeft } from "./holdrecord.ts";
 import { otherRealm } from "./realms.ts";
+import { releaseSatelliteClaims } from "./satellite.ts";
 import { publishedStatus, publishStatus } from "./status.ts";
 import { emit, log } from "./streams.ts";
 import { state } from "./transport.ts";
@@ -93,6 +94,7 @@ async function leaveSatellite(reason: string): Promise<string> {
   if (!place) return "мост места не держит — уходить неоткуда";
   const st = await publishStatus("", undefined, true);
   releaseStanding(`${reason}: место-спутник отпущено целиком`, true);
+  releaseSatelliteClaims(); // имя свободно следующему прогону (satellite.ts)
   const line = st.ok ? "занятость снята" : `занятость не снята (${st.body})`;
   log(`left the satellite place: ${reason}; ${line}`);
   return `ушёл с места-спутника ${place}: сокет закрыт, ${line}; место отпущено целиком — ни сторож, ни возврат его не поднимут; встать снова — iskron_stand с satellite_of`;
