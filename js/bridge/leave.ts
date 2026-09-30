@@ -13,7 +13,7 @@
 //     Monitor в Claude Code, watchdog-codex в Codex), а его нет дольше порога —
 //     место читалось бы слушающим при делателе, которого не разбудить;
 //     pi и OpenCode кадр получают уведомлением и глухими не бывают;
-//   • конец сессии: занятость снимается перед выходом (main.ts).
+//   • конец сессии: занятость снимается перед выходом (session.ts).
 import { resolveAgainstLed, unresolvedRefusal } from "./call.ts";
 import { notifiedClient } from "./client.ts";
 import { CFG } from "./config.ts";
