@@ -28,13 +28,30 @@ const SUN_PATH_MAX = 103;
 // Имя именованного канала Windows видно всем пользователям машины: его
 // непредсказуемая часть — случайное слово в личном каталоге шва, которого
 // чужой не прочтёт. ACL канала Node не задаёт — это предел, названный в REALITY.md.
+// Файл публикуется атомарно: пишется целиком во временный и ставится на место
+// link() — не rename, чтобы второй пишущий не подменил уже прочитанное первым
+// слово (демон и мост разошлись бы именами). Читатель, заставший файл пустым
+// (прежний неатомарный писатель), перечитывает.
 function pipeNonce(authDir: string): string {
-  const file = join(seamRunDir(authDir), "pipe");
-  mkdirSync(seamRunDir(authDir), { recursive: true, mode: 0o700 });
+  const run = seamRunDir(authDir);
+  const file = join(run, "pipe");
+  mkdirSync(run, { recursive: true, mode: 0o700 });
+  const tmp = `${file}.${process.pid}-${randomBytes(6).toString("hex")}`;
   try {
-    writeFileSync(file, randomBytes(16).toString("hex"), { mode: 0o600, flag: "wx" });
-  } catch {}
-  return readFileSync(file, "utf8").trim();
+    writeFileSync(tmp, randomBytes(16).toString("hex"), { mode: 0o600 });
+    linkSync(tmp, file); // EEXIST — слово уже есть
+  } catch {
+  } finally {
+    try {
+      unlinkSync(tmp);
+    } catch {}
+  }
+  for (let i = 0; i < 50; i++) {
+    const word = readFileSync(file, "utf8").trim();
+    if (word) return word;
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
+  }
+  throw new Error(`${file} stays empty — the pipe name is unknown`);
 }
 
 /** Локальный вход демона этого каталога гранта. Под Windows создаёт случайную часть имени. */
@@ -88,15 +105,20 @@ export type FileLock =
   | {
       held: false;
       /** занят живым — null; иначе причина, почему замка не взять */ fault: string | null;
+      /** кто держит, когда занят живым */
+      holder?: { pid: number; started_at: number };
     };
 
-const pidAlive = (pid: unknown): boolean => {
+// Замки шва лежат в личном каталоге 0700: их хозяин — всегда этот пользователь.
+// EPERM от kill(pid, 0) значит, что pid занят процессом другого пользователя, —
+// номер переиспользован, прежний хозяин мёртв. Жив только свой процесс.
+const ownPidAlive = (pid: unknown): boolean => {
   if (!Number.isInteger(pid) || (pid as number) <= 0) return false;
   try {
     process.kill(pid as number, 0);
     return true;
-  } catch (e) {
-    return (e as NodeJS.ErrnoException).code === "EPERM";
+  } catch {
+    return false;
   }
 };
 
@@ -110,10 +132,11 @@ const readLock = (path: string): LockBody | null => {
 
 /**
  * Взять замок: link() публикует уже записанный файл атомарно (EEXIST — занят).
- * Брошенный (хозяин мёртв или замок старше staleMs) уносится rename в
- * уникальное имя, и снимает его только унёсший, сверив токен: из двух
- * уносящих уносит один, а чужой замок, унесённый по ошибке, не снимается.
- * Отказ файловой системы (EACCES, EROFS…) — fault сразу, не ожидание.
+ * Брошенный (хозяин не свой живой процесс или замок старше staleMs — потолок
+ * давности) уносится rename в уникальное имя, и снимает его только унёсший,
+ * сверив токен: из двух уносящих уносит один, а живой замок, унесённый по
+ * ошибке, возвращается на место. Отказ файловой системы (EACCES, EROFS…) —
+ * fault сразу, не ожидание.
  */
 export function takeFileLock(path: string, staleMs: number): FileLock {
   const token = `${process.pid}-${randomBytes(8).toString("hex")}`;
@@ -143,21 +166,52 @@ export function takeFileLock(path: string, staleMs: number): FileLock {
   try {
     if (claim()) return { held: true, release };
     const held = readLock(path);
-    if (held && pidAlive(held.pid) && Date.now() - held.started_at < staleMs)
-      return { held: false, fault: null };
-    const away = `${path}.stale-${token}`;
-    try {
-      renameSync(path, away);
-    } catch {
-      return { held: false, fault: null }; // унёс другой — он и возьмёт
-    }
-    if (readLock(away)?.token !== held?.token)
-      return { held: false, fault: `a live lock was taken by mistake and is left as ${away}` };
-    try {
-      unlinkSync(away);
-    } catch {}
+    if (held && ownPidAlive(held.pid) && Date.now() - held.started_at < staleMs)
+      return { held: false, fault: null, holder: { pid: held.pid, started_at: held.started_at } };
+    const mistake = carryAwayStale(path, held?.token);
+    if (mistake) return { held: false, fault: mistake.putBack ? null : mistake.word };
     return claim() ? { held: true, release } : { held: false, fault: null };
   } catch (e) {
     return { held: false, fault: `${path}: ${(e as Error).message}` };
   }
+}
+
+/**
+ * Унести брошенный замок с токеном staleToken: rename в уникальное имя, снять
+ * только свой. null — унесён (или его унёс другой); иначе унесён живой по
+ * ошибке: putBack — возвращён на место (замок держат), нет — оставлен в стороне.
+ */
+export function carryAwayStale(
+  path: string,
+  staleToken: string | undefined,
+): { putBack: boolean; word: string } | null {
+  const away = `${path}.stale-${process.pid}-${randomBytes(6).toString("hex")}`;
+  try {
+    renameSync(path, away);
+  } catch {
+    return null; // унёс другой — он и возьмёт
+  }
+  if (readLock(away)?.token !== staleToken) {
+    // Между прочтением и rename брошенный замок сменился живым: он возвращается
+    // на место link() — не поверх замка, взятого третьим тем временем.
+    try {
+      linkSync(away, path);
+    } catch {
+      return {
+        putBack: false,
+        word: `a live lock was carried away by mistake and could not be put back (${path} is taken again); it is left as ${away}`,
+      };
+    }
+    try {
+      unlinkSync(away);
+    } catch {}
+    return {
+      putBack: true,
+      word: `a live lock was carried away by mistake and put back — ${path} is held`,
+    };
+  }
+  try {
+    unlinkSync(away);
+  } catch {}
+  return null;
 }

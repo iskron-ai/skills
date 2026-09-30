@@ -216,31 +216,47 @@ const fail = (code: string, message: string): NodeJS.ErrnoException =>
   Object.assign(new Error(message), { code });
 
 /**
+ * Потолок давности замка жизни демона без ответа сокета: столько демону дано
+ * встать (замок взят, сокет ещё не слушает). Дольше живой демон отвечает на
+ * пробу сокета — молчащий сокет при старом замке значит, что замок протух.
+ */
+export const DAEMON_RISE_MS = 15_000;
+
+const socketAnswers = (path: string): Promise<boolean> =>
+  new Promise((r) => {
+    const probe = connect(path);
+    probe.once("connect", () => {
+      probe.destroy();
+      r(true);
+    });
+    probe.once("error", () => r(false));
+  });
+
+/**
  * Поднять локальный вход демона этого каталога гранта. Порядок: вход личный
- * (иначе EUNSAFE), замок жизни демона взят (живой держатель — EADDRINUSE),
- * сокет на пути не отвечает (отвечает — EADDRINUSE, не отвязывается), только
- * тогда мёртвый сокет убирается и слушается новый, 0600. Замок снимается с
- * закрытием сервера и с выходом процесса.
+ * (иначе EUNSAFE); сокет не отвечает (отвечает — EADDRINUSE, не отвязывается);
+ * замок жизни демона взят — его держит только свой живой процесс не дольше
+ * DAEMON_RISE_MS (держит — EADDRINUSE со словом о замке; чужой pid, мёртвый или
+ * старше потолка — замок протух); только тогда мёртвый сокет убирается и
+ * слушается новый, 0600. Замок снимается с закрытием сервера и с выходом процесса.
  */
 export async function listenSeam(authDir: string, onSocket: (s: Socket) => void): Promise<Server> {
   const bad = seamEntranceProblem(authDir);
   if (bad) throw fail("EUNSAFE", `the seam entrance is not private: ${bad}`);
-  const lock = takeFileLock(seamDaemonLockPath(authDir), Infinity);
-  if (!lock.held)
-    throw fail("EADDRINUSE", lock.fault ?? `a daemon of ${authDir} is alive (its lock is held)`);
   const path = seamSocketPath(authDir);
+  if (await socketAnswers(path)) throw fail("EADDRINUSE", `a daemon already listens on ${path}`);
+  const lockPath = seamDaemonLockPath(authDir);
+  const lock = takeFileLock(lockPath, DAEMON_RISE_MS);
+  if (!lock.held)
+    throw fail(
+      "EADDRINUSE",
+      lock.fault ??
+        `the daemon lock ${lockPath} is held by pid ${lock.holder?.pid ?? "?"}, rising for ` +
+          `${Math.round((Date.now() - (lock.holder?.started_at ?? Date.now())) / 1000)}s — its socket does not answer yet`,
+    );
   const win = process.platform === "win32";
   try {
     if (!win) {
-      const alive = await new Promise<boolean>((r) => {
-        const probe = connect(path);
-        probe.once("connect", () => {
-          probe.destroy();
-          r(true);
-        });
-        probe.once("error", () => r(false));
-      });
-      if (alive) throw fail("EADDRINUSE", `a daemon already listens on ${path}`);
       try {
         unlinkSync(path); // сокет умершего демона
       } catch {}

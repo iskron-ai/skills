@@ -6610,13 +6610,26 @@ var seamKey = (authDir) => createHash7("sha256").update(resolve5(authDir)).diges
 var seamRunDir = (authDir) => join15(resolve5(authDir), "run");
 var SUN_PATH_MAX = 103;
 function pipeNonce(authDir) {
-  const file = join15(seamRunDir(authDir), "pipe");
-  mkdirSync9(seamRunDir(authDir), { recursive: true, mode: 448 });
+  const run = seamRunDir(authDir);
+  const file = join15(run, "pipe");
+  mkdirSync9(run, { recursive: true, mode: 448 });
+  const tmp = `${file}.${process.pid}-${randomBytes3(6).toString("hex")}`;
   try {
-    writeFileSync10(file, randomBytes3(16).toString("hex"), { mode: 384, flag: "wx" });
+    writeFileSync10(tmp, randomBytes3(16).toString("hex"), { mode: 384 });
+    linkSync2(tmp, file);
   } catch {
+  } finally {
+    try {
+      unlinkSync8(tmp);
+    } catch {
+    }
   }
-  return readFileSync16(file, "utf8").trim();
+  for (let i = 0; i < 50; i++) {
+    const word = readFileSync16(file, "utf8").trim();
+    if (word) return word;
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
+  }
+  throw new Error(`${file} stays empty — the pipe name is unknown`);
 }
 function seamSocketPath(authDir) {
   const key = seamKey(authDir);
@@ -6640,13 +6653,13 @@ function seamEntranceProblem(authDir) {
   return sockDir === run ? null : privateDirProblem(sockDir);
 }
 var seamRaiseLockPath = (authDir) => join15(seamRunDir(authDir), "daemon.raising");
-var pidAlive2 = (pid) => {
+var ownPidAlive = (pid) => {
   if (!Number.isInteger(pid) || pid <= 0) return false;
   try {
     process.kill(pid, 0);
     return true;
-  } catch (e) {
-    return e.code === "EPERM";
+  } catch {
+    return false;
   }
 };
 var readLock = (path) => {
@@ -6686,24 +6699,45 @@ function takeFileLock(path, staleMs) {
   try {
     if (claim()) return { held: true, release };
     const held2 = readLock(path);
-    if (held2 && pidAlive2(held2.pid) && Date.now() - held2.started_at < staleMs)
-      return { held: false, fault: null };
-    const away = `${path}.stale-${token}`;
-    try {
-      renameSync7(path, away);
-    } catch {
-      return { held: false, fault: null };
-    }
-    if (readLock(away)?.token !== held2?.token)
-      return { held: false, fault: `a live lock was taken by mistake and is left as ${away}` };
-    try {
-      unlinkSync8(away);
-    } catch {
-    }
+    if (held2 && ownPidAlive(held2.pid) && Date.now() - held2.started_at < staleMs)
+      return { held: false, fault: null, holder: { pid: held2.pid, started_at: held2.started_at } };
+    const mistake = carryAwayStale(path, held2?.token);
+    if (mistake) return { held: false, fault: mistake.putBack ? null : mistake.word };
     return claim() ? { held: true, release } : { held: false, fault: null };
   } catch (e) {
     return { held: false, fault: `${path}: ${e.message}` };
   }
+}
+function carryAwayStale(path, staleToken) {
+  const away = `${path}.stale-${process.pid}-${randomBytes3(6).toString("hex")}`;
+  try {
+    renameSync7(path, away);
+  } catch {
+    return null;
+  }
+  if (readLock(away)?.token !== staleToken) {
+    try {
+      linkSync2(away, path);
+    } catch {
+      return {
+        putBack: false,
+        word: `a live lock was carried away by mistake and could not be put back (${path} is taken again); it is left as ${away}`
+      };
+    }
+    try {
+      unlinkSync8(away);
+    } catch {
+    }
+    return {
+      putBack: true,
+      word: `a live lock was carried away by mistake and put back — ${path} is held`
+    };
+  }
+  try {
+    unlinkSync8(away);
+  } catch {
+  }
+  return null;
 }
 
 // js/bridge/thin.ts

@@ -9,6 +9,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   statSync,
@@ -28,6 +29,7 @@ import {
   SeamError,
 } from "../shared/seam.ts";
 import {
+  carryAwayStale,
   seamDaemonLockPath,
   seamEntranceProblem,
   seamRunDir,
@@ -221,7 +223,10 @@ test("the file lock: a live holder keeps it, a dead one's is stolen once, a refu
   try {
     const mine = takeFileLock(path, 60_000);
     assert.equal(mine.held, true);
-    assert.deepEqual(takeFileLock(path, 60_000), { held: false, fault: null }, "live — wait");
+    const busy = takeFileLock(path, 60_000);
+    assert.equal(busy.held, false, "live — wait");
+    assert.equal(busy.fault, null);
+    assert.equal(busy.holder?.pid, process.pid, "the holder is named");
     mine.release();
     writeFileSync(path, JSON.stringify({ pid: deadPid(), token: "x", started_at: Date.now() }));
     const stolen = takeFileLock(path, 60_000);
@@ -234,6 +239,64 @@ test("the file lock: a live holder keeps it, a dead one's is stolen once, a refu
       assert.equal(r.held, false);
       assert.match(r.fault ?? "", /EACCES|permission/i, "the reason, not a wait");
     }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// Ревью sub-24: B прочёл брошенный замок, A успел его унести и взять свежий, B
+// уносит уже живой замок A. Унесённый по ошибке живой замок возвращается на место.
+test("a live lock carried away by mistake is put back, not left aside", () => {
+  const dir = fresh();
+  const path = join(dir, "r.lock");
+  try {
+    writeFileSync(path, JSON.stringify({ pid: deadPid(), token: "stale", started_at: 0 }));
+    const a = takeFileLock(path, 15_000); // A унёс брошенный и держит свой
+    assert.equal(a.held, true);
+    const liveToken = JSON.parse(readFileSync(path, "utf8")).token;
+    const b = carryAwayStale(path, "stale"); // B — со своим прочтением брошенного
+    assert.equal(b?.putBack, true, `B puts it back: ${JSON.stringify(b)}`);
+    assert.match(b.word, /put back/, "B says what happened");
+    assert.equal(JSON.parse(readFileSync(path, "utf8")).token, liveToken, "A's lock is in place");
+    assert.deepEqual(readdirSync(dir), ["r.lock"], "nothing is left aside");
+    assert.equal(takeFileLock(path, 15_000).held, false, "C does not take it while A holds");
+    a.release();
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a daemon lock does not hold the entrance on a pid alone: a foreign pid with a dead socket is stale", async () => {
+  const dir = fresh();
+  try {
+    assert.equal(seamEntranceProblem(dir), null);
+    // pid 1 — чужой (EPERM), замок свежий, сокета нет: живого демона здесь нет.
+    writeFileSync(
+      seamDaemonLockPath(dir),
+      JSON.stringify({ pid: 1, token: "old", started_at: Date.now() }),
+    );
+    const server = await listenSeam(dir, () => {});
+    await new Promise((r) => server.close(r));
+    // Свой живой pid, замок старше потолка давности, сокет мёртв — тоже брошен.
+    writeFileSync(
+      seamDaemonLockPath(dir),
+      JSON.stringify({ pid: process.pid, token: "hung", started_at: Date.now() - 86_400_000 }),
+    );
+    const again = await listenSeam(dir, () => {});
+    await new Promise((r) => again.close(r));
+    // Свой живой и свежий (демон только встаёт) — держит, и отказ называет замок.
+    writeFileSync(
+      seamDaemonLockPath(dir),
+      JSON.stringify({ pid: process.pid, token: "starting", started_at: Date.now() }),
+    );
+    await assert.rejects(
+      listenSeam(dir, () => {}),
+      (e) => {
+        assert.equal(e.code, "EADDRINUSE");
+        assert.ok(e.message.includes(seamDaemonLockPath(dir)), e.message);
+        return true;
+      },
+    );
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
