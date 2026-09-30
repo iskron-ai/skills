@@ -26,13 +26,26 @@ export interface ProbeCommand {
   env: Record<string, string>;
 }
 
-/** Строки отчёта пробы; первая — ответил ли мост, дальше — тулы, чьи схемы API отвергнет. */
+/** Как войти, когда у машины нет живого входа: ссылка пробного моста умирает вместе с ним. */
+export const LOGIN_ADVICE =
+  "войди: вызови любой тул iskron_* в основной сессии и открой ссылку входа из его ответа (или положи личный токен в ~/.iskron-bridge/token — скилл establish-mcp), потом повтори doctor";
+
+/** Отказ, за которым стоит вход: ссылка входа, OAuth, отвергнутый токен. */
+const LOGIN_RE = /\/login\b|oauth|authoriz|sign.?in|log.?in|вход|войд|токен отвергнут|\b401\b/i;
+
+/** Итог пробы: `lines` — что наблюдено, `findings` — поломки, у каждой готовое действие. */
+export interface ProbeResult {
+  lines: string[];
+  findings: string[];
+}
+
 export async function probeSatellite(
   label: string,
   e: ProbeCommand,
   cwd: string,
-): Promise<string[]> {
+): Promise<ProbeResult> {
   const lines: string[] = [];
+  const findings: string[] = [];
   const env: Record<string, string | undefined> = {
     ...process.env,
     ...e.env,
@@ -88,18 +101,24 @@ export async function probeSatellite(
     capabilities: {},
     clientInfo: { name: "iskron-doctor", version: "1" },
   });
+  // Отказ со ссылкой входа — мёртвый грант машины: ссылку проба унесёт с собой,
+  // поэтому совет тот же, что без входа, а не «сделай, что велит отказ».
+  const refusal = (what: string, raw: unknown): string => {
+    const msg = String(raw ?? "");
+    return LOGIN_RE.test(msg)
+      ? `проба «${label}»: ${what} — спутник не вошёл: грант машины мёртв или отозван → ${LOGIN_ADVICE}`
+      : `проба «${label}»: ${what} вернул отказ: ${msg.slice(0, 300)} → сделай, что велит отказ, и повтори doctor`;
+  };
   if (!init) {
     const why = exited ?? `молчит ${Math.round(PROBE_MS / 1000)}s`;
     const old = /satellite|unknown (flag|option)|неизвестн/i.test(stderr)
       ? " — похоже, домашний мост старше флага --satellite → node ~/.iskron-bridge/iskron-bridge.mjs update"
       : " → запусти эту команду руками и прочти, что она пишет в stderr";
-    lines.push(
+    findings.push(
       `проба «${label}»: мост не ответил на initialize (${why}${tail() ? `; stderr: ${tail()}` : ""})${old}`,
     );
   } else if (init.error) {
-    lines.push(
-      `проба «${label}»: initialize вернул отказ: ${String(init.error.message ?? "").slice(0, 300)} → сделай, что велит отказ; вход в граф общий для машины — войди мостом основной сессии, и спутник возьмёт тот же грант`,
-    );
+    findings.push(refusal("initialize", init.error.message));
   } else {
     child.stdin.write(
       JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }) + "\n",
@@ -109,13 +128,10 @@ export async function probeSatellite(
     const list = await ask(2, "tools/list", {});
     const tools = list?.result?.tools ?? [];
     if (!list)
-      lines.push(
-        `проба «${label}»: initialize ответил (${info.name ?? "?"} v${info.version ?? "?"}), tools/list — нет (${exited ?? "молчит"}) → запусти команду руками`,
+      findings.push(
+        `проба «${label}»: initialize ответил (${info.name ?? "?"} v${info.version ?? "?"}), tools/list — нет (${exited ?? "молчит"}) → запусти команду руками и прочти её stderr`,
       );
-    else if (list.error)
-      lines.push(
-        `проба «${label}»: tools/list вернул отказ: ${String(list.error.message ?? "").slice(0, 300)} → сделай, что велит отказ`,
-      );
+    else if (list.error) findings.push(refusal("tools/list", list.error.message));
     else {
       lines.push(
         `проба «${label}»: мост ответил — ${info.name ?? "?"} v${info.version ?? "?"}, тулов ${tools.length}`,
@@ -123,8 +139,8 @@ export async function probeSatellite(
       for (const t of tools) {
         const bad = ["oneOf", "allOf", "anyOf"].filter((k) => t.inputSchema && k in t.inputSchema);
         if (bad.length)
-          lines.push(
-            `  тул ${t.name}: схема несёт ${bad.join(", ")} на верхнем уровне — сервер отдаёт схему, которую API Anthropic отвергнет («input_schema does not support oneOf, allOf, or anyOf at the top level»), и падает весь прогон субагента, не один этот тул → чинит это сервер, не файл агента и не мост (мост отдаёт схему как есть): скажи имя тула оператору сервера MCP — тому, кто держит адрес из строки «сервер» выше, — и жди его обновления, затем повтори doctor`,
+          findings.push(
+            `тул ${t.name}: схема несёт ${bad.join(", ")} на верхнем уровне — сервер отдаёт схему, которую API Anthropic отвергнет («input_schema does not support oneOf, allOf, or anyOf at the top level»), и падает весь прогон субагента, не один этот тул → чинит это сервер, не файл агента и не мост (мост отдаёт схему как есть): скажи имя тула оператору сервера MCP — тому, кто держит адрес из строки «сервер» выше, — и жди его обновления, затем повтори doctor`,
           );
       }
     }
@@ -146,20 +162,20 @@ export async function probeSatellite(
     // остаётся только закрытый stdin, и ждём его дольше смены токена.
     if (!(await within(WIN_WAIT_MS))) {
       child.kill();
-      lines.push(
-        `проба «${label}»: мост не ушёл по закрытому stdin за ${WIN_WAIT_MS / 1000}s — снят принудительно; если он менял токен, повтори doctor: вход может понадобиться заново`,
+      findings.push(
+        `проба «${label}»: мост не ушёл по закрытому stdin за ${WIN_WAIT_MS / 1000}s — снят принудительно → повтори doctor; если он менял токен, вход может понадобиться заново`,
       );
     }
-    return lines;
+    return { lines, findings };
   }
   if (!(await within(10_000))) {
     child.kill("SIGTERM");
     if (!(await within(REQUEST_MS + 10_000))) {
       child.kill("SIGKILL");
-      lines.push(
-        `проба «${label}»: мост не ушёл ни по закрытому stdin, ни по SIGTERM за ${Math.round((REQUEST_MS + 20_000) / 1000)}s — снят SIGKILL; если он менял токен, повтори doctor: вход может понадобиться заново`,
+      findings.push(
+        `проба «${label}»: мост не ушёл ни по закрытому stdin, ни по SIGTERM за ${Math.round((REQUEST_MS + 20_000) / 1000)}s — снят SIGKILL → повтори doctor; если он менял токен, вход может понадобиться заново`,
       );
     }
   }
-  return lines;
+  return { lines, findings };
 }

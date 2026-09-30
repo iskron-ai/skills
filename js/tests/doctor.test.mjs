@@ -539,8 +539,12 @@ test("use en writes the English production address next to the grant; doctor nam
 // готовое действие (делегирование: skills/iskronify/references/delegation.md).
 // Единая форма записи (проверена живым Claude Code 2.1.285): node сам собирает
 // путь к дому, `--` отделяет флаг моста, splice кладёт путь моста в argv[1].
-const SAT_CODE =
-  "const p=require('path').join(require('os').homedir(),'.iskron-bridge','iskron-bridge.mjs');process.argv.splice(1,0,p);import(require('url').pathToFileURL(p).href)";
+// Эталон — SATELLITE_CODE в js/cli/satform.ts: проба берёт его оттуда, копий не держит.
+const SAT_CODE = JSON.parse(
+  /SATELLITE_CODE\s*=\s*("(?:[^"\\]|\\.)*")/.exec(
+    readFileSync(join(HERE, "..", "cli", "satform.ts"), "utf8"),
+  )[1],
+);
 const SAT_ARGS = `args: [${["-e", SAT_CODE, "--", "--satellite"].map((a) => JSON.stringify(a)).join(", ")}]`;
 const NODE_E = ["type: stdio", "command: node", SAT_ARGS];
 const SH_FORM =
@@ -787,6 +791,53 @@ test("doctor: a probed bridge that outlives stdin close is sent SIGTERM, not kil
   }
 });
 
+// Провал пробы — находка с действием, и файл тогда не «в порядке»: иначе цикл
+// «doctor до раздела без НАДО:» кончался бы при сломанном субагенте. Отказ со
+// ссылкой входа — мёртвый грант: совет тот же, что без входа.
+for (const [what, stub, expect] of [
+  [
+    "a silent bridge",
+    "process.exit(0);",
+    /НАДО: проба «iskron-sub-worker»: мост не ответил на initialize/,
+  ],
+  [
+    "a dead grant",
+    [
+      'import { createInterface } from "node:readline";',
+      "createInterface({ input: process.stdin }).on('line', (l) => {",
+      "  const m = JSON.parse(l);",
+      "  if (m.method === 'initialize') process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: m.id, error: { code: -32001, message: 'нужен вход: откройте http://127.0.0.1:1/login?k=dead' } }) + '\\n');",
+      "});",
+    ].join("\n"),
+    /НАДО: проба «iskron-sub-worker»: initialize — спутник не вошёл: грант машины мёртв или отозван → войди: вызови любой тул iskron_\*/,
+  ],
+]) {
+  test(`doctor: ${what} in the satellite probe is a finding, and the file is not in order`, async () => {
+    const fake = await startFakeNks();
+    const home = mkdtempSync(join(tmpdir(), "iskron-doctor-"));
+    mkdirSync(join(home, ".iskron-bridge"), { recursive: true });
+    writeFileSync(join(home, ".iskron-bridge", "iskron-bridge.mjs"), stub);
+    const project = projectWithAgents({ worker: agentFile("worker", "iskron-sub-worker") });
+    try {
+      const r = await run(
+        ["doctor", fake.mcpUrl, "--auth-dir", join(home, ".iskron-bridge")],
+        {
+          HOME: home,
+          ISKRON_DOCTOR_PLATFORM: "darwin",
+          ISKRON_BRIDGE_TOKEN: "nks_pat_stub",
+          ISKRON_DOCTOR_PROBE_MS: "5000",
+        },
+        project,
+      );
+      assert.match(r.out, expect, r.out);
+      assert.doesNotMatch(r.out, /— в порядке/, r.out);
+      assert.doesNotMatch(r.out, /сделай, что велит отказ/, r.out);
+    } finally {
+      await fake.stop();
+    }
+  });
+}
+
 // Субагент наследует и нативную http-запись на сервер графа — её тулы снимаются так же.
 test("doctor: an http entry on the graph server counts among the caller's bridges", async () => {
   const fake = await startFakeNks();
@@ -854,9 +905,10 @@ test("doctor: a satellite probe names the tool whose schema carries a top-level 
     );
     assert.match(
       r.out,
-      /тул iskron_add_kriya: схема несёт anyOf на верхнем уровне/,
-      `the offending tool must be named: ${r.out}`,
+      /НАДО: тул iskron_add_kriya: схема несёт anyOf на верхнем уровне/,
+      `the offending tool must be a finding: ${r.out}`,
     );
+    assert.doesNotMatch(r.out, /worker\.md: запись «iskron-sub-worker» — в порядке/, r.out);
     assert.doesNotMatch(r.out, /тул iskron_orient:/, `a clean schema is not a finding: ${r.out}`);
   } finally {
     await fake.stop();

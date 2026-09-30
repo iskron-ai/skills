@@ -535,6 +535,39 @@ try {
   fail(".mcp.json", `не удалось сверить с каноническим идентификатором: ${e.message}`);
 }
 
+// Код `node -e` записи моста-спутника живёт в десятке копий (ролевые файлы,
+// блоки delegation.md, проба doctor), а правда одна — SATELLITE_CODE в
+// js/cli/satform.ts: doctor признаёт рабочей только эту форму. Разошедшаяся
+// копия шла бы к потребителю молча, пока doctor не назовёт её у него на машине.
+try {
+  const satform = readFileSync(join(root, "js", "cli", "satform.ts"), "utf8");
+  const m = /SATELLITE_CODE\s*=\s*("(?:[^"\\]|\\.)*")/.exec(satform);
+  if (!m) fail("js/cli/satform.ts", "эталон SATELLITE_CODE не найден — сверять копии не с чем");
+  else {
+    const canonical = JSON.parse(m[1]);
+    const agentsDir = join(root, ".claude", "agents");
+    const copies = [
+      join("skills", "iskronify", "references", "delegation.md"),
+      ...(existsSync(agentsDir)
+        ? readdirSync(agentsDir)
+            .filter((f) => f.endsWith(".md"))
+            .map((f) => join(".claude", "agents", f))
+        : []),
+    ];
+    for (const rel of copies) {
+      const text = readFileSync(join(root, rel), "utf8");
+      const found = [...text.matchAll(/"-e",\s*("(?:[^"\\]|\\.)*")/g)].map((x) => JSON.parse(x[1]));
+      if (!found.length)
+        fail(rel, "нет записи моста-спутника формы `node -e` — единая форма (js/cli/satform.ts) не спроецирована");
+      for (const code of found)
+        if (code !== canonical)
+          fail(rel, "код `node -e` записи моста-спутника расходится с эталоном SATELLITE_CODE в js/cli/satform.ts — скопируй его побайтово");
+    }
+  }
+} catch (e) {
+  fail("js/cli/satform.ts", `сверка копий кода записи моста-спутника не удалась: ${e.message}`);
+}
+
 // Report.
 if (warnings.length > 0) {
   console.warn(`⚠ ${warnings.length} warning${warnings.length === 1 ? "" : "s"} (non-fatal):`);

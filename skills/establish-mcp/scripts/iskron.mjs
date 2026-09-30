@@ -7796,7 +7796,8 @@ function formOf(e) {
     if (sep < 0) return e.args.slice(2).includes("--satellite") ? "eval-no-sep" : "session";
     const after2 = e.args.slice(sep + 1);
     const spliced = /process\.argv\.splice\(\s*1\s*,\s*0\s*,/.test(e.args[1] ?? "");
-    return (spliced ? after2 : after2.slice(1)).includes("--satellite") ? "eval" : "eval-session";
+    if (!(spliced ? after2 : after2.slice(1)).includes("--satellite")) return "eval-session";
+    return e.args[1] === SATELLITE_CODE && after2.length === 1 ? "eval" : "eval-other";
   }
   if (SHELLS.has(base)) {
     const s2 = e.args[e.args.indexOf("-c") + 1] ?? "";
@@ -7839,8 +7840,11 @@ import { createInterface as createInterface3 } from "node:readline";
 var PROBE_MS = Number(process.env.ISKRON_DOCTOR_PROBE_MS) || 3e4;
 var REQUEST_MS = 2e4;
 var WIN_WAIT_MS = 4e4;
+var LOGIN_ADVICE = "войди: вызови любой тул iskron_* в основной сессии и открой ссылку входа из его ответа (или положи личный токен в ~/.iskron-bridge/token — скилл establish-mcp), потом повтори doctor";
+var LOGIN_RE = /\/login\b|oauth|authoriz|sign.?in|log.?in|вход|войд|токен отвергнут|\b401\b/i;
 async function probeSatellite(label, e, cwd) {
   const lines = [];
+  const findings = [];
   const env2 = {
     ...process.env,
     ...e.env,
@@ -7893,16 +7897,18 @@ async function probeSatellite(label, e, cwd) {
     capabilities: {},
     clientInfo: { name: "iskron-doctor", version: "1" }
   });
+  const refusal2 = (what, raw) => {
+    const msg = String(raw ?? "");
+    return LOGIN_RE.test(msg) ? `проба «${label}»: ${what} — спутник не вошёл: грант машины мёртв или отозван → ${LOGIN_ADVICE}` : `проба «${label}»: ${what} вернул отказ: ${msg.slice(0, 300)} → сделай, что велит отказ, и повтори doctor`;
+  };
   if (!init) {
     const why = exited ?? `молчит ${Math.round(PROBE_MS / 1e3)}s`;
     const old = /satellite|unknown (flag|option)|неизвестн/i.test(stderr) ? " — похоже, домашний мост старше флага --satellite → node ~/.iskron-bridge/iskron-bridge.mjs update" : " → запусти эту команду руками и прочти, что она пишет в stderr";
-    lines.push(
+    findings.push(
       `проба «${label}»: мост не ответил на initialize (${why}${tail2() ? `; stderr: ${tail2()}` : ""})${old}`
     );
   } else if (init.error) {
-    lines.push(
-      `проба «${label}»: initialize вернул отказ: ${String(init.error.message ?? "").slice(0, 300)} → сделай, что велит отказ; вход в граф общий для машины — войди мостом основной сессии, и спутник возьмёт тот же грант`
-    );
+    findings.push(refusal2("initialize", init.error.message));
   } else {
     child.stdin.write(
       JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }) + "\n",
@@ -7913,13 +7919,10 @@ async function probeSatellite(label, e, cwd) {
     const list = await ask(2, "tools/list", {});
     const tools = list?.result?.tools ?? [];
     if (!list)
-      lines.push(
-        `проба «${label}»: initialize ответил (${info.name ?? "?"} v${info.version ?? "?"}), tools/list — нет (${exited ?? "молчит"}) → запусти команду руками`
+      findings.push(
+        `проба «${label}»: initialize ответил (${info.name ?? "?"} v${info.version ?? "?"}), tools/list — нет (${exited ?? "молчит"}) → запусти команду руками и прочти её stderr`
       );
-    else if (list.error)
-      lines.push(
-        `проба «${label}»: tools/list вернул отказ: ${String(list.error.message ?? "").slice(0, 300)} → сделай, что велит отказ`
-      );
+    else if (list.error) findings.push(refusal2("tools/list", list.error.message));
     else {
       lines.push(
         `проба «${label}»: мост ответил — ${info.name ?? "?"} v${info.version ?? "?"}, тулов ${tools.length}`
@@ -7927,8 +7930,8 @@ async function probeSatellite(label, e, cwd) {
       for (const t of tools) {
         const bad = ["oneOf", "allOf", "anyOf"].filter((k) => t.inputSchema && k in t.inputSchema);
         if (bad.length)
-          lines.push(
-            `  тул ${t.name}: схема несёт ${bad.join(", ")} на верхнем уровне — сервер отдаёт схему, которую API Anthropic отвергнет («input_schema does not support oneOf, allOf, or anyOf at the top level»), и падает весь прогон субагента, не один этот тул → чинит это сервер, не файл агента и не мост (мост отдаёт схему как есть): скажи имя тула оператору сервера MCP — тому, кто держит адрес из строки «сервер» выше, — и жди его обновления, затем повтори doctor`
+          findings.push(
+            `тул ${t.name}: схема несёт ${bad.join(", ")} на верхнем уровне — сервер отдаёт схему, которую API Anthropic отвергнет («input_schema does not support oneOf, allOf, or anyOf at the top level»), и падает весь прогон субагента, не один этот тул → чинит это сервер, не файл агента и не мост (мост отдаёт схему как есть): скажи имя тула оператору сервера MCP — тому, кто держит адрес из строки «сервер» выше, — и жди его обновления, затем повтори doctor`
           );
       }
     }
@@ -7942,22 +7945,22 @@ async function probeSatellite(label, e, cwd) {
   if (process.platform === "win32") {
     if (!await within(WIN_WAIT_MS)) {
       child.kill();
-      lines.push(
-        `проба «${label}»: мост не ушёл по закрытому stdin за ${WIN_WAIT_MS / 1e3}s — снят принудительно; если он менял токен, повтори doctor: вход может понадобиться заново`
+      findings.push(
+        `проба «${label}»: мост не ушёл по закрытому stdin за ${WIN_WAIT_MS / 1e3}s — снят принудительно → повтори doctor; если он менял токен, вход может понадобиться заново`
       );
     }
-    return lines;
+    return { lines, findings };
   }
   if (!await within(1e4)) {
     child.kill("SIGTERM");
     if (!await within(REQUEST_MS + 1e4)) {
       child.kill("SIGKILL");
-      lines.push(
-        `проба «${label}»: мост не ушёл ни по закрытому stdin, ни по SIGTERM за ${Math.round((REQUEST_MS + 2e4) / 1e3)}s — снят SIGKILL; если он менял токен, повтори doctor: вход может понадобиться заново`
+      findings.push(
+        `проба «${label}»: мост не ушёл ни по закрытому stdin, ни по SIGTERM за ${Math.round((REQUEST_MS + 2e4) / 1e3)}s — снят SIGKILL → повтори doctor; если он менял токен, вход может понадобиться заново`
       );
     }
   }
-  return lines;
+  return { lines, findings };
 }
 
 // js/cli/subagents.ts
@@ -7967,6 +7970,7 @@ var TEMPLATE_PARENTS = ["mcp__iskron-bridge", "mcp__plugin_iskron_iskron", "mcp_
 var FORM_WORD = {
   "eval-no-sep": "--satellite стоит без `--` после кода `node -e` — node примет его за свой флаг («bad option») и не запустится",
   "eval-session": "мост не увидит --satellite в своём argv (нет `--` перед ним или путь моста не положен в argv[1]) и встанет мостом сессии, не спутником",
+  "eval-other": "код `node -e` не совпадает с эталонной формой записи — рабочей признаётся только она, сверенная живьём",
   shell: "форма прежнего контракта (sh -c): на Windows sh нет, а переменных в args фронтматтера Claude Code не раскрывает",
   path: "путь к мосту записан прямо в args — машинный путь в общем файле, на другой машине его нет",
   session: "запись зовёт мост без --satellite — субагент встал бы мостом сессии, а не спутником"
@@ -8230,32 +8234,36 @@ ${readyEntry(
   let noGrantSaid = false;
   const probed = /* @__PURE__ */ new Map();
   for (const r of reports) {
+    const seen = [];
+    if (r.probe && !grant) {
+      r.lines.push(
+        noGrantSaid ? "проба спутника не шла — входа в граф на этой машине нет (действие — строкой выше)" : `проба спутника не шла — входа в граф на этой машине нет → ${LOGIN_ADVICE}`
+      );
+      noGrantSaid = true;
+    } else if (r.probe) {
+      const key = JSON.stringify([r.probe.command, r.probe.args, r.probe.env]);
+      const first2 = probed.get(key);
+      if (first2) {
+        if (first2.failed)
+          r.lines.push(`проба той же команды, что у «${first2.label}», не прошла — действие выше`);
+        else seen.push(`проба: та же команда, что у «${first2.label}» выше`);
+      } else {
+        const res = await probeSatellite(r.probe.name, r.probe, root);
+        probed.set(key, { label: r.probe.name, failed: res.findings.length > 0 });
+        seen.push(...res.lines);
+        r.lines.push(...res.findings);
+      }
+    }
     const where = r.f.scope === "пользователь" ? " (пользовательский)" : "";
     out5(
       `  ${r.f.path}${where}: ${r.names.length ? `запись «${r.names.join("», «")}»` : "без записи моста-спутника"}${r.lines.length ? "" : " — в порядке"}`
     );
+    for (const l of seen) out5(`    ${l}`);
     for (const l of r.lines) {
       const [head, ...rest2] = l.split("\n");
       out5(`    НАДО: ${head}`);
       for (const b of rest2) out5(`      ${b}`);
     }
-    if (!r.probe) continue;
-    if (!grant) {
-      if (!noGrantSaid)
-        out5(
-          "    НАДО: проба спутника не шла — входа в граф на этой машине нет → войди: вызови любой тул iskron_* в основной сессии и открой ссылку входа из его ответа (или положи личный токен в ~/.iskron-bridge/token — скилл establish-mcp), потом повтори doctor"
-        );
-      noGrantSaid = true;
-      continue;
-    }
-    const key = JSON.stringify([r.probe.command, r.probe.args, r.probe.env]);
-    const first2 = probed.get(key);
-    if (first2) {
-      out5(`    проба: та же команда, что у «${first2}» выше`);
-      continue;
-    }
-    probed.set(key, r.probe.name);
-    for (const l of await probeSatellite(r.probe.name, r.probe, root)) out5(`    ${l}`);
   }
   if (claude.length) {
     const t = trustLine(root);

@@ -13,7 +13,7 @@ import { loadStore, storePath } from "../bridge/store.ts";
 import { homeBridgePath } from "../shared/home.ts";
 import { frontmatterText, parseFrontmatter, type YamlValue } from "./frontmatter.ts";
 import { bridgePathOf, formOf, readyEntry, SATELLITE_ARGS, type SatForm } from "./satform.ts";
-import { probeSatellite } from "./satprobe.ts";
+import { LOGIN_ADVICE, probeSatellite } from "./satprobe.ts";
 
 type Out = (s: string) => void;
 
@@ -30,6 +30,8 @@ const FORM_WORD: Record<Exclude<SatForm, "eval">, string> = {
     "--satellite стоит без `--` после кода `node -e` — node примет его за свой флаг («bad option») и не запустится",
   "eval-session":
     "мост не увидит --satellite в своём argv (нет `--` перед ним или путь моста не положен в argv[1]) и встанет мостом сессии, не спутником",
+  "eval-other":
+    "код `node -e` не совпадает с эталонной формой записи — рабочей признаётся только она, сверенная живьём",
   shell:
     "форма прежнего контракта (sh -c): на Windows sh нет, а переменных в args фронтматтера Claude Code не раскрывает",
   path: "путь к мосту записан прямо в args — машинный путь в общем файле, на другой машине его нет",
@@ -348,36 +350,44 @@ export async function subagentsReport(out: Out): Promise<void> {
   // её не зовём и говорим, как войти.
   const grant = hasGrant();
   let noGrantSaid = false;
-  const probed = new Map<string, string>();
+  // Одна команда — одна проба: те же байты моста отвечают всем файлам одинаково.
+  const probed = new Map<string, { label: string; failed: boolean }>();
   for (const r of reports) {
+    // Проба — до заголовка: файл «в порядке», только если и его строки, и проба чисты,
+    // иначе цикл «doctor до раздела без НАДО:» кончался бы при сломанном субагенте.
+    const seen: string[] = [];
+    if (r.probe && !grant) {
+      r.lines.push(
+        noGrantSaid
+          ? "проба спутника не шла — входа в граф на этой машине нет (действие — строкой выше)"
+          : `проба спутника не шла — входа в граф на этой машине нет → ${LOGIN_ADVICE}`,
+      );
+      noGrantSaid = true;
+    } else if (r.probe) {
+      const key = JSON.stringify([r.probe.command, r.probe.args, r.probe.env]);
+      const first = probed.get(key);
+      if (first) {
+        if (first.failed)
+          r.lines.push(`проба той же команды, что у «${first.label}», не прошла — действие выше`);
+        else seen.push(`проба: та же команда, что у «${first.label}» выше`);
+      } else {
+        const res = await probeSatellite(r.probe.name, r.probe, root);
+        probed.set(key, { label: r.probe.name, failed: res.findings.length > 0 });
+        seen.push(...res.lines);
+        r.lines.push(...res.findings);
+      }
+    }
     const where = r.f.scope === "пользователь" ? " (пользовательский)" : "";
     out(
       `  ${r.f.path}${where}: ${r.names.length ? `запись «${r.names.join("», «")}»` : "без записи моста-спутника"}${r.lines.length ? "" : " — в порядке"}`,
     );
+    for (const l of seen) out(`    ${l}`);
     // Готовый блок — строками с отступом в шесть пробелов: сняв их, его вставляют во фронтматтер.
     for (const l of r.lines) {
       const [head, ...rest] = l.split("\n");
       out(`    НАДО: ${head}`);
       for (const b of rest) out(`      ${b}`);
     }
-    if (!r.probe) continue;
-    if (!grant) {
-      if (!noGrantSaid)
-        out(
-          "    НАДО: проба спутника не шла — входа в граф на этой машине нет → войди: вызови любой тул iskron_* в основной сессии и открой ссылку входа из его ответа (или положи личный токен в ~/.iskron-bridge/token — скилл establish-mcp), потом повтори doctor",
-        );
-      noGrantSaid = true;
-      continue;
-    }
-    // Одна команда — одна проба: те же байты моста отвечают всем файлам одинаково.
-    const key = JSON.stringify([r.probe.command, r.probe.args, r.probe.env]);
-    const first = probed.get(key);
-    if (first) {
-      out(`    проба: та же команда, что у «${first}» выше`);
-      continue;
-    }
-    probed.set(key, r.probe.name);
-    for (const l of await probeSatellite(r.probe.name, r.probe, root)) out(`    ${l}`);
   }
   if (claude.length) {
     const t = trustLine(root);

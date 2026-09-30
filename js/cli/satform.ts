@@ -3,8 +3,10 @@
 // машинного пути в файле (Claude Code не раскрывает переменные в args
 // фронтматтера, а sh на Windows нет). `--` отделяет флаги моста от флагов
 // node, а splice кладёт путь моста в argv[1] — иначе мост не увидит
-// `--satellite` в process.argv.slice(2) и встанет мостом сессии. Норма —
-// skills/iskronify/references/delegation.md.
+// `--satellite` в process.argv.slice(2) и встанет мостом сессии. Проверена
+// живьём на macOS (Claude Code 2.1.285); на Windows не сверена (REALITY.md).
+// SATELLITE_CODE — эталон: копии в ролевых файлах и delegation.md сверяет
+// с ним `make validate`. Норма — skills/iskronify/references/delegation.md.
 import { homedir } from "node:os";
 import { basename } from "node:path";
 
@@ -26,11 +28,13 @@ export interface SatEntry {
  * которую единая заменяет.
  *  - eval-no-sep: `--satellite` без `--` — node примет его за свой флаг и не запустится;
  *  - eval-session: мост не увидит `--satellite` в своём argv и встанет мостом сессии;
+ *  - eval-other: `node -e` с кодом не эталона — живьём не сверен;
  *  - shell: `sh -c` прежнего контракта — на Windows sh нет;
  *  - path: путь к мосту прямо в args — машинный путь в общем файле;
  *  - session: `--satellite` нет вовсе — мост сессии, не спутник.
  */
-export type SatForm = "eval" | "eval-no-sep" | "eval-session" | "shell" | "path" | "session";
+export type SatForm =
+  "eval" | "eval-no-sep" | "eval-session" | "eval-other" | "shell" | "path" | "session";
 
 const SHELLS = new Set(["sh", "bash", "zsh", "dash"]);
 const cmdBase = (c: string): string =>
@@ -46,7 +50,9 @@ export function formOf(e: SatEntry): SatForm {
     const after = e.args.slice(sep + 1);
     const spliced = /process\.argv\.splice\(\s*1\s*,\s*0\s*,/.test(e.args[1] ?? "");
     // Без splice process.argv = [node, ...after], и slice(2) теряет первый флаг моста.
-    return (spliced ? after : after.slice(1)).includes("--satellite") ? "eval" : "eval-session";
+    if (!(spliced ? after : after.slice(1)).includes("--satellite")) return "eval-session";
+    // Рабочей признаётся только эталонная форма: любой другой код — не сверенный живьём.
+    return e.args[1] === SATELLITE_CODE && after.length === 1 ? "eval" : "eval-other";
   }
   if (SHELLS.has(base)) {
     const s = e.args[e.args.indexOf("-c") + 1] ?? "";
