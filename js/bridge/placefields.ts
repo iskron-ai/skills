@@ -1,14 +1,16 @@
 // Чем стояние является — поля места, которые мост называет при каждом занятии и
 // каждой регистрации (граф nks-dev: #5174): model — модель, которой бежит агент
-// (без префикса поставщика), attrs — признак сборки {name, version, stamp} и
-// харнес. attrs на поверхности заменяются целиком, поэтому мост всегда шлёт
+// (без префикса поставщика), attrs — признак сборки {name, version, stamp},
+// установленный набор скиллов той же тройкой, харнес и версия хоста (#6226).
+// attrs на поверхности заменяются целиком, поэтому мост всегда шлёт
 // полный свой набор: частичная запись стёрла бы его же признак сборки.
 import { lang } from "../shared/lang.ts";
 import { VERSION } from "../shared/version.ts";
 import { BUILD } from "./build.ts";
-import { harnessName } from "./client.ts";
+import { harnessName, harnessVersion } from "./client.ts";
 import { CFG } from "./config.ts";
 import { normKarta, normName } from "./names.ts";
+import { skillsAttr } from "./skillset.ts";
 import { log } from "./streams.ts";
 
 let model = "";
@@ -61,7 +63,8 @@ export function placeFields(place: Place = {}): {
     attrs: {
       ...extra,
       build: { name: "iskron-bridge", version: VERSION, stamp: BUILD.split("+")[1] ?? "" },
-      ...(harness ? { harness } : {}),
+      skills: skillsAttr(),
+      ...(harness ? { harness, harness_version: harnessVersion() } : {}),
       ...(satelliteOf ? { satellite_of: satelliteOf } : {}),
       ...(usage ? { usage } : {}),
     },

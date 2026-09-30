@@ -35,9 +35,19 @@
 //                 <FB_REPLY>.<tool>, when present, answers only that tool.
 //   FB_STAND_HELD place name an iskron_stand says «held» for (satellite: <of>.sub-1).
 //   FB_INITS      file to append "<pid> <ms>" to for every initialize received.
+//   FB_ENV        file to append one JSON line to at start: the ISKRON_HARNESS_VERSION
+//                 and ISKRON_SKILLS_ROOT the launcher handed this bridge (null — none), #6226.
 import { appendFileSync, existsSync, readFileSync, unlinkSync } from "node:fs";
 
 const MODE = process.env.FB_MODE || "ok";
+if (process.env.FB_ENV)
+  appendFileSync(
+    process.env.FB_ENV,
+    JSON.stringify({
+      harness_version: process.env.ISKRON_HARNESS_VERSION ?? null,
+      skills_root: process.env.ISKRON_SKILLS_ROOT ?? null,
+    }) + "\n",
+  );
 // The flags follow the pid: the OpenCode probe reads `--satellite` off a child session's bridge (#6002).
 if (process.env.FB_LOG)
   appendFileSync(

@@ -61,11 +61,12 @@ export class Bridge {
     return this.dead;
   }
 
-  start(): void {
+  /** env — поверх рантайма: версия хоста для attrs.harness_version (#6226). */
+  start(env: Record<string, string> = {}): void {
     const rt = bridgeRuntime();
     const proc = spawn(rt.bin, [this.bin, ...this.args], {
       stdio: ["pipe", "pipe", "pipe"],
-      env: rt.env,
+      env: { ...rt.env, ...env },
     });
     this.proc = proc;
     proc.stdout?.setEncoding("utf8");

@@ -17,12 +17,15 @@
 // ровно то, что строит `StringEnum` из @earendil-works/pi-ai
 // (`Type.Unsafe({type:"string",enum})`), поэтому оговорка доков про Google
 // исполнена сама собой, и конвертировать нечего.
+import { existsSync } from "node:fs";
+import { dirname } from "node:path";
+
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 import { Bridge, resultToContent, snippet, toParameters } from "../shared/bridge-client.ts";
-import { PI_CLIENT } from "../shared/clients.ts";
+import { HARNESS_VERSION_ENV, PI_CLIENT, SKILLS_ROOT_ENV } from "../shared/clients.ts";
 import { enterCase, type LaunchCall, parseLaunch, withWord } from "../shared/launch.ts";
-import { findBridge, type Notify, refreshHomeBridge } from "./home-copy.ts";
+import { findBridge, type Notify, packagedBridgePath, refreshHomeBridge } from "./home-copy.ts";
 import { setupUsage } from "./usage.ts";
 
 export type ChannelEventSink = (params: any) => void;
@@ -49,6 +52,30 @@ function textOrThrow(name: string, result: any): string {
     .join("\n");
   if (result?.isError) throw new Error(text || `${name}: отказ без текста`);
   return text;
+}
+
+/**
+ * Что мост узнаёт о хосте только окружением (#6226). Версия pi: клиент
+ * рукопожатия — это расширение; пакет pi — внешний, берётся у загрузчика; не
+ * отдал — ничего не объявляем, мост скажет "unknown". Корень набора: пакет, с
+ * которым приехало расширение, — мост из ISKRON_BRIDGE_PATH или домашняя копия
+ * лежит вне него; пакета рядом нет — корня не называем.
+ */
+async function hostEnv(): Promise<Record<string, string>> {
+  const env: Record<string, string> = {};
+  try {
+    const bridge = packagedBridgePath();
+    if (existsSync(bridge)) env[SKILLS_ROOT_ENV] = dirname(dirname(dirname(bridge)));
+  } catch {
+    /* загрузчик не дал собственного пути — корня не называем */
+  }
+  try {
+    const { VERSION } = await import("@earendil-works/pi-coding-agent");
+    if (typeof VERSION === "string" && VERSION.trim()) env[HARNESS_VERSION_ENV] = VERSION.trim();
+  } catch {
+    /* pi не отдал свой пакет — версии не объявляем */
+  }
+  return env;
 }
 
 /** Вызов тула мостом — для строки запуска. */
@@ -94,6 +121,7 @@ export function setupBridge(pi: ExtensionAPI, onChannel: ChannelEventSink): void
       return;
     }
 
+    const env = await hostEnv();
     const b = new Bridge(
       found.path,
       (line) => notify(`Искрон/мост: ${line}`, "info"),
@@ -112,7 +140,7 @@ export function setupBridge(pi: ExtensionAPI, onChannel: ChannelEventSink): void
     );
     bridge = b;
     satellite = args.includes("--satellite");
-    b.start();
+    b.start(env);
 
     // Отказ «нужен вход» — не поломка: мост опубликовал вход и держит его
     // слушателем на своём порту; погасить мост значило бы увести клик человека в
