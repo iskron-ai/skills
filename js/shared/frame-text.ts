@@ -217,12 +217,5 @@ export function batchPointer(frames: Frame[]): string {
   }
   const whole = L("целиком — ", "in full — ");
   if (!since.size) return `${whole}iskron_channel(action="history")`;
-  return (
-    whole +
-    [...since].map(([args, e]) => `iskron_case(${args}, since=${e - 1})`).join("; ") +
-    L(
-      " (старый тул без since — history с keep_cursor=true)",
-      " (an older tool without since — history with keep_cursor=true)",
-    )
-  );
+  return whole + [...since].map(([args, e]) => `iskron_case(${args}, since=${e - 1})`).join("; ");
 }
