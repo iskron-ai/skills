@@ -13,6 +13,7 @@
 // skills actually use (two flat, single-line keys), which both catches malformed
 // YAML and keeps the frontmatter simple.
 
+import { execFileSync } from "node:child_process";
 import { readFileSync, readdirSync, existsSync, statSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -566,6 +567,61 @@ try {
   }
 } catch (e) {
   fail("js/cli/satform.ts", `сверка копий кода записи моста-спутника не удалась: ${e.message}`);
+}
+
+// Маркеры конфликта слияния в отслеживаемых текстовых файлах. Слияние, разведённое
+// пересборкой производных, оставило их в REALITY.md, и ни одна проверка этого не
+// увидела. Строка `=======` засчитывается только рядом с `<<<<<<< `/`>>>>>>> ` —
+// одна она законна (подчёркивание заголовка). Двоичные файлы (NUL в начале) — мимо.
+// Вне git-копии (тарбол релиза) файлы берутся обходом дерева без зависимостей и
+// выходов сборки — проверка не падает оттого, что git нечего спросить.
+const UNTRACKED_DIRS = new Set([".git", "node_modules", "dist", "coverage"]);
+function walkAll(dir, rel = "") {
+  const out = [];
+  for (const e of readdirSync(dir, { withFileTypes: true })) {
+    if (UNTRACKED_DIRS.has(e.name)) continue;
+    const r = rel ? `${rel}/${e.name}` : e.name;
+    if (e.isDirectory()) out.push(...walkAll(join(dir, e.name), r));
+    else if (e.isFile()) out.push(r);
+  }
+  return out;
+}
+function markerCandidates() {
+  try {
+    return execFileSync("git", ["ls-files", "-z"], {
+      cwd: root,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    })
+      .split("\0")
+      .filter(Boolean);
+  } catch {
+    warn("маркеры конфликта", "не git-копия — файлы взяты обходом дерева");
+    return walkAll(root);
+  }
+}
+try {
+  const tracked = markerCandidates();
+  const OPEN = /^(<<<<<<<|>>>>>>>|\|\|\|\|\|\|\|)( |$)/;
+  for (const rel of tracked) {
+    let buf;
+    try {
+      buf = readFileSync(join(root, rel));
+    } catch {
+      continue; // удалён в рабочем дереве, ещё в индексе
+    }
+    if (buf.subarray(0, 8000).includes(0)) continue;
+    const lines = buf.toString("utf8").split(/\r?\n/);
+    const hits = lines.flatMap((l, i) => (OPEN.test(l) ? [i + 1] : []));
+    if (!hits.length) continue;
+    const seps = lines.flatMap((l, i) => (l === "=======" ? [i + 1] : []));
+    fail(
+      rel,
+      `маркеры конфликта слияния в строках ${[...hits, ...seps].sort((a, b) => a - b).join(", ")} — разведи конфликт руками`,
+    );
+  }
+} catch (e) {
+  fail("маркеры конфликта", `проверка маркеров конфликта не удалась: ${e.message}`);
 }
 
 // Report.

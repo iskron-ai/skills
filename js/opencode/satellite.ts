@@ -2,6 +2,7 @@
 // корня (граф nks-dev: #6002): держит корень место — мост ребёнка поднимается с
 // --satellite, и его iskron_stand встаёт местом «место корня».sub-N в роли,
 // которую назвал агент (не назвал — роль корня).
+import { takingArgs } from "../shared/busyargs.ts";
 
 /** Тул моста, которому плагин подставляет директорию сессии (cwd) для вывода имени. */
 export const STAND_TOOL = "iskron_stand";
@@ -11,6 +12,14 @@ export function standsBy(name: string, args: Record<string, unknown>): boolean {
   if (name === STAND_TOOL) return true;
   return name === "iskron_channel" && ["connect", "mint", "register"].includes(String(args.action));
 }
+
+/**
+ * Аргументы iskron_stand, которые мост исполняет одной занятостью (#6509) — тем же
+ * списком, что мост (shared/busyargs.ts). Её успех — не держание: после отъёма он
+ * успешен при чужом сокете; держание плагин знает по слову моста «held» и hello.
+ */
+const busyOnly = (args: Record<string, unknown>): boolean =>
+  typeof args.status === "string" && takingArgs(args).length === 0;
 
 /** Место, которое держит мост, — как его называет слово моста «held». */
 export type Place = { realm: string; karta: string; name: string };
@@ -29,9 +38,20 @@ export function heldPlace(data: { place?: Partial<Place> } | undefined): Place |
   return { realm: String(p.realm), karta: String(p.karta), name: p.name };
 }
 
-/** Аргументы iskron_stand спутника: место корня, роль — названная агентом, иначе роль корня. */
-export function asSatellite(args: Record<string, unknown>, of: Place | null | undefined): void {
-  if (!of) return;
+/**
+ * Аргументы iskron_stand спутника: место корня, роль — названная агентом, иначе роль корня.
+ * Мост ребёнка уже ведёт место (слово «held»), а вызов — одна занятость (#6509): роль
+ * корня не подставляется — спутник в своей роли иначе ушёл бы полным путём занятия.
+ * Возвращает, одна ли это занятость: её успех держанием не считается.
+ */
+export function asSatellite(
+  args: Record<string, unknown>,
+  of: Place | null | undefined,
+  leads = false,
+): boolean {
+  const busy = busyOnly(args);
+  if (!of) return busy;
   args.satellite_of ??= of.name;
-  if (args.karta == null || args.karta === "") args.karta = of.karta;
+  if (!(leads && busy) && (args.karta == null || args.karta === "")) args.karta = of.karta;
+  return busy;
 }
