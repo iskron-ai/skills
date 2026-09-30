@@ -1175,16 +1175,22 @@ function standsBy(name, args) {
   if (name === STAND_TOOL) return true;
   return name === "iskron_channel" && ["connect", "mint", "register"].includes(String(args.action));
 }
+function busyOnly(args) {
+  if (typeof args.status !== "string") return false;
+  const set = (v) => v != null && v !== false && v !== "";
+  return !["model", "room", "take", "repeat_knock", "mute_siblings"].some((k) => set(args[k]));
+}
 function heldPlace(data) {
   const p = data?.place;
   if (typeof p?.name !== "string" || !p.name) return null;
   return { realm: String(p.realm), karta: String(p.karta), name: p.name };
 }
-function asSatellite(args, of, holds = false) {
-  if (!of) return;
+function asSatellite(args, of, leads = false) {
+  const busy = busyOnly(args);
+  if (!of) return busy;
   args.satellite_of ??= of.name;
-  if (holds && typeof args.status === "string") return;
-  if (args.karta == null || args.karta === "") args.karta = of.karta;
+  if (!(leads && busy) && (args.karta == null || args.karta === "")) args.karta = of.karta;
+  return busy;
 }
 
 // js/opencode/launch.ts
@@ -1542,14 +1548,14 @@ async function setupTools(ctx, say, onChannel, rootOf) {
       slot = childSlot(sessionID, slot);
       await awaitReady(slot);
     }
-    if (name === STAND_TOOL) asSatellite(args, slot.satelliteOf, !!slot.place && slot.holding);
+    const busy = name === STAND_TOOL && asSatellite(args, slot.satelliteOf, !!slot.place);
     if (name === STAND_TOOL && !args.cwd) {
       const dir = slot.dir ??= await directoryOf(slot.session ?? sessionID);
       if (dir) args.cwd = dir;
     }
     const result = await slot.bridge.request("tools/call", { name, arguments: args });
     if (result?.isError) throw new Error(textOf2(result) || `${name}: отказ без текста`);
-    if (standsBy(name, args)) keeper.stood(slot);
+    if (standsBy(name, args) && !busy) keeper.stood(slot);
     if (standsBy(name, args)) runEnds.clear(sessionID);
     return { content: textOf2(result) };
   }

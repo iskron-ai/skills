@@ -573,10 +573,35 @@ try {
 // пересборкой производных, оставило их в REALITY.md, и ни одна проверка этого не
 // увидела. Строка `=======` засчитывается только рядом с `<<<<<<< `/`>>>>>>> ` —
 // одна она законна (подчёркивание заголовка). Двоичные файлы (NUL в начале) — мимо.
+// Вне git-копии (тарбол релиза) файлы берутся обходом дерева без зависимостей и
+// выходов сборки — проверка не падает оттого, что git нечего спросить.
+const UNTRACKED_DIRS = new Set([".git", "node_modules", "dist", "coverage"]);
+function walkAll(dir, rel = "") {
+  const out = [];
+  for (const e of readdirSync(dir, { withFileTypes: true })) {
+    if (UNTRACKED_DIRS.has(e.name)) continue;
+    const r = rel ? `${rel}/${e.name}` : e.name;
+    if (e.isDirectory()) out.push(...walkAll(join(dir, e.name), r));
+    else if (e.isFile()) out.push(r);
+  }
+  return out;
+}
+function markerCandidates() {
+  try {
+    return execFileSync("git", ["ls-files", "-z"], {
+      cwd: root,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    })
+      .split("\0")
+      .filter(Boolean);
+  } catch {
+    warn("маркеры конфликта", "не git-копия — файлы взяты обходом дерева");
+    return walkAll(root);
+  }
+}
 try {
-  const tracked = execFileSync("git", ["ls-files", "-z"], { cwd: root, encoding: "utf8" })
-    .split("\0")
-    .filter(Boolean);
+  const tracked = markerCandidates();
   const OPEN = /^(<<<<<<<|>>>>>>>|\|\|\|\|\|\|\|)( |$)/;
   for (const rel of tracked) {
     let buf;
@@ -596,7 +621,7 @@ try {
     );
   }
 } catch (e) {
-  fail("git ls-files", `проверка маркеров конфликта не удалась: ${e.message}`);
+  fail("маркеры конфликта", `проверка маркеров конфликта не удалась: ${e.message}`);
 }
 
 // Report.

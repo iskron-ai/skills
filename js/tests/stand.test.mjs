@@ -660,6 +660,8 @@ test("iskron_stand after an eviction: register only, the busy line still publish
   });
   assert.ok(!bare.result?.isError, textOf(bare));
   assert.match(textOf(bare), /^занятость proba--931--nks-dev: без роли/, textOf(bare));
+  // Строка ушла, а слух — у другого: ответ говорит это сам (#5036, standing «Занятость»).
+  assert.match(textOf(bare), /слух у другого держателя — .*take=true только по слову человека/);
   assert.doesNotMatch(
     textOf(bare),
     /Сторож к этому месту/,

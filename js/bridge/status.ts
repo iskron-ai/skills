@@ -132,10 +132,20 @@ export async function standStatusOnly(msg: JsonRpcMessage): Promise<StatusOnly> 
     if (cwd !== process.cwd() && !isDirectory(cwd)) return { miss: { why: "cwd", cwd } };
     noteStandCwd(cwd);
   }
-  const [body, isError] = await statusWord(a.status.trim(), realm);
+  const [said, isError] = await statusWord(a.status.trim(), realm);
+  const heard = holdsStanding(r, k, n);
+  // После отъёма строка — слово стояния, но слуха здесь нет: ответ говорит это
+  // сам, иначе свежая строка над чужим сокетом обманывает и того, кто её поставил.
+  const body =
+    isError || heard
+      ? said
+      : `${said}; ${L(
+          "слух у другого держателя — вернуть его iskron_stand с take=true только по слову человека",
+          "the hearing is with another holder — take it back by iskron_stand with take=true only on the human's word",
+        )}`;
   // Сокет места держит мост, а сторож к нему не прицеплен — команда слушания тут же;
   // после отъёма слуха здесь нет, и команда сторожа была бы неправдой.
-  const listen = isError || !holdsStanding(r, k, n) ? null : unheardListenBlock(realm);
+  const listen = isError || !heard ? null : unheardListenBlock(realm);
   return { reply: replyTo(msg)(listen ? `${body}\n${listen}` : body, isError) };
 }
 

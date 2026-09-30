@@ -4212,8 +4212,13 @@ async function standStatusOnly(msg) {
     if (cwd !== process.cwd() && !isDirectory(cwd)) return { miss: { why: "cwd", cwd } };
     noteStandCwd(cwd);
   }
-  const [body, isError] = await statusWord(a.status.trim(), realm);
-  const listen = isError || !holdsStanding(r, k, n) ? null : unheardListenBlock(realm);
+  const [said, isError] = await statusWord(a.status.trim(), realm);
+  const heard = holdsStanding(r, k, n);
+  const body = isError || heard ? said : `${said}; ${L(
+    "слух у другого держателя — вернуть его iskron_stand с take=true только по слову человека",
+    "the hearing is with another holder — take it back by iskron_stand with take=true only on the human's word"
+  )}`;
+  const listen = isError || !heard ? null : unheardListenBlock(realm);
   return { reply: replyTo(msg)(listen ? `${body}
 ${listen}` : body, isError) };
 }

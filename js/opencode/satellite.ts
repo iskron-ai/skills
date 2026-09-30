@@ -12,6 +12,17 @@ export function standsBy(name: string, args: Record<string, unknown>): boolean {
   return name === "iskron_channel" && ["connect", "mint", "register"].includes(String(args.action));
 }
 
+/**
+ * Аргументы iskron_stand, которые мост исполняет одной занятостью (#6509): status
+ * без аргументов занятия. Её успех — не держание: после отъёма он успешен при
+ * чужом сокете; держание плагин знает по слову моста «held» и hello.
+ */
+function busyOnly(args: Record<string, unknown>): boolean {
+  if (typeof args.status !== "string") return false;
+  const set = (v: unknown): boolean => v != null && v !== false && v !== "";
+  return !["model", "room", "take", "repeat_knock", "mute_siblings"].some((k) => set(args[k]));
+}
+
 /** Место, которое держит мост, — как его называет слово моста «held». */
 export type Place = { realm: string; karta: string; name: string };
 
@@ -31,16 +42,18 @@ export function heldPlace(data: { place?: Partial<Place> } | undefined): Place |
 
 /**
  * Аргументы iskron_stand спутника: место корня, роль — названная агентом, иначе роль корня.
- * Мост ребёнка уже держит место, а вызов со status — только занятость (#6509): роль
+ * Мост ребёнка уже ведёт место (слово «held»), а вызов — одна занятость (#6509): роль
  * корня не подставляется — спутник в своей роли иначе ушёл бы полным путём занятия.
+ * Возвращает, одна ли это занятость: её успех держанием не считается.
  */
 export function asSatellite(
   args: Record<string, unknown>,
   of: Place | null | undefined,
-  holds = false,
-): void {
-  if (!of) return;
+  leads = false,
+): boolean {
+  const busy = busyOnly(args);
+  if (!of) return busy;
   args.satellite_of ??= of.name;
-  if (holds && typeof args.status === "string") return;
-  if (args.karta == null || args.karta === "") args.karta = of.karta;
+  if (!(leads && busy) && (args.karta == null || args.karta === "")) args.karta = of.karta;
+  return busy;
 }
