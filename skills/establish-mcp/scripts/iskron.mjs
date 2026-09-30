@@ -140,16 +140,16 @@ function emit(msg) {
   writeTo(process.stdout, JSON.stringify(msg) + "\n");
 }
 function flushStdout() {
-  return new Promise((resolve5) => {
+  return new Promise((resolve6) => {
     const out5 = process.stdout;
-    if (!canWrite(out5)) return resolve5();
+    if (!canWrite(out5)) return resolve6();
     let done = false;
     const finish = () => {
       if (done) return;
       done = true;
       out5.off("error", finish);
       out5.off("close", finish);
-      resolve5();
+      resolve6();
     };
     out5.once("error", finish);
     out5.once("close", finish);
@@ -670,12 +670,12 @@ function pidAlive(pid) {
   }
 }
 function portListening(port, timeoutMs = 700) {
-  return new Promise((resolve5) => {
-    if (!Number.isInteger(port)) return resolve5(false);
+  return new Promise((resolve6) => {
+    if (!Number.isInteger(port)) return resolve6(false);
     const sock = connect({ host: "127.0.0.1", port });
     const done = (v) => {
       sock.destroy();
-      resolve5(v);
+      resolve6(v);
     };
     sock.setTimeout(timeoutMs, () => done(false));
     sock.once("connect", () => done(true));
@@ -749,7 +749,7 @@ function installAuthLockExitHook() {
 import { createServer } from "node:http";
 var PAGE_HOLD_MS = 2e4;
 function bindCallback(port) {
-  return new Promise((resolve5, reject) => {
+  return new Promise((resolve6, reject) => {
     let handOff = null;
     let received = null;
     let browser = null;
@@ -815,7 +815,7 @@ function bindCallback(port) {
     server.listen(port, "127.0.0.1", () => {
       server.removeListener("error", reject);
       server.on("error", (e) => log(`callback server: ${e.message}`));
-      resolve5({
+      resolve6({
         port,
         report: (failure) => tellBrowser(
           failure ? `iskron-bridge: authorization failed (${esc(failure)}) — nothing was stored; the agent has the details.` : "iskron-bridge: authenticated — you can close this tab."
@@ -2832,12 +2832,12 @@ function dropHoldRecord(key) {
 
 // js/bridge/sweep.ts
 function localSocketAlive(sock) {
-  return new Promise((resolve5) => {
-    if (process.platform !== "win32" && !existsSync(sock)) return resolve5(false);
+  return new Promise((resolve6) => {
+    if (process.platform !== "win32" && !existsSync(sock)) return resolve6(false);
     const probe = connectLocal(sock);
     const done = (v) => {
       probe.destroy();
-      resolve5(v);
+      resolve6(v);
     };
     probe.once("connect", () => done(true));
     probe.once("error", () => done(false));
@@ -3125,10 +3125,10 @@ var PART_MIN = 3;
 var CUT_ORDER = ["repo", "host", "model"];
 function fitName(parts) {
   const p = { ...parts };
-  const join19 = () => [p.host, p.repo, p.model].filter(Boolean).join(".").replace(/[-.]+$/, "");
+  const join20 = () => [p.host, p.repo, p.model].filter(Boolean).join(".").replace(/[-.]+$/, "");
   const cut = [];
   for (const k of CUT_ORDER) {
-    const over = join19().length - NAME_MAX;
+    const over = join20().length - NAME_MAX;
     if (over <= 0) break;
     const keep = Math.max(k === "model" ? 1 : PART_MIN, p[k].length - over);
     if (keep >= p[k].length) continue;
@@ -3136,7 +3136,7 @@ function fitName(parts) {
     cut.push(k);
   }
   return {
-    name: join19().slice(0, NAME_MAX).replace(/[-.]+$/, ""),
+    name: join20().slice(0, NAME_MAX).replace(/[-.]+$/, ""),
     cut
   };
 }
@@ -3428,10 +3428,10 @@ var resuming = 0;
 function awaitHello(timeoutMs) {
   const seen = door?.ring.find((r) => r.frame?.type === "hello")?.frame ?? null;
   if (seen) return Promise.resolve(seen);
-  return new Promise((resolve5) => {
+  return new Promise((resolve6) => {
     const done = (f) => {
       helloWaiters.delete(done);
-      resolve5(f);
+      resolve6(f);
     };
     helloWaiters.add(done);
     setTimeout(() => done(null), timeoutMs).unref();
@@ -4572,8 +4572,8 @@ async function leaveStanding(reason, byWord = false) {
   if (byWord) for (const k of leaving) markLeft(k, true);
   const line = st.ok ? "занятость снята" : `занятость не снята (${st.body})`;
   log(`left the standing: ${reason}; ${line}`);
-  const which = leaving.length > 1 ? `с мест ${leaving.join(", ")} (сокет канала у них общий)` : `с места ${parked2}`;
-  return byWord ? `ушёл ${which}: сокет закрыт, ${line}; адрес, очередь и хуки целы — почта копится; место отпущено словом, само не вернётся — вернуть: iskron_stand тем же именем` : `ушёл ${which}: сокет закрыт, ${line}; адрес, очередь и хуки целы — почта копится и придёт при возвращении (сторож или iskron_stand)`;
+  const which2 = leaving.length > 1 ? `с мест ${leaving.join(", ")} (сокет канала у них общий)` : `с места ${parked2}`;
+  return byWord ? `ушёл ${which2}: сокет закрыт, ${line}; адрес, очередь и хуки целы — почта копится; место отпущено словом, само не вернётся — вернуть: iskron_stand тем же именем` : `ушёл ${which2}: сокет закрыт, ${line}; адрес, очередь и хуки целы — почта копится и придёт при возвращении (сторож или iskron_stand)`;
 }
 async function leaveSatellite(reason) {
   const place = heldPlaces()[0]?.key;
@@ -5062,9 +5062,9 @@ var SW = {
     "Отказано (мост): iskron_stand требует realm и karta — граф и роль из AGENTS.md или строки запуска.",
     "Refused (bridge): iskron_stand needs realm and karta — the graph and the role from AGENTS.md or the launch line."
   ),
-  badCwd: (cwd, relative) => L(
-    `Отказано (мост): cwd должен быть существующим абсолютным каталогом — получено «${cwd}»${relative ? " (относительный путь резолвился бы от cwd моста, не сессии)" : ""}.`,
-    `Refused (bridge): cwd must be an existing absolute directory — got "${cwd}"${relative ? " (a relative path would resolve against the bridge's cwd, not the session's)" : ""}.`
+  badCwd: (cwd, relative2) => L(
+    `Отказано (мост): cwd должен быть существующим абсолютным каталогом — получено «${cwd}»${relative2 ? " (относительный путь резолвился бы от cwd моста, не сессии)" : ""}.`,
+    `Refused (bridge): cwd must be an existing absolute directory — got "${cwd}"${relative2 ? " (a relative path would resolve against the bridge's cwd, not the session's)" : ""}.`
   ),
   badName: (asked, fault, max) => L(
     `Отказано (мост): name «${asked}» — ${fault}; правило имени: строчные латинские буквы, цифры, точка, подчёркивание, дефис, первый знак — буква или цифра, не длиннее ${max} знаков. Имя не укорачивается молча: короткое имя адресовало бы другое место.`,
@@ -6433,7 +6433,7 @@ function frame(data) {
   return Buffer.concat([head, mask, masked]);
 }
 function openDoor(socketPath, onMessage, onClose) {
-  return new Promise((resolve5, reject) => {
+  return new Promise((resolve6, reject) => {
     const req = request({
       socketPath,
       path: "/",
@@ -6476,7 +6476,7 @@ function openDoor(socketPath, onMessage, onClose) {
       });
       socket.on("close", () => onClose("сокет закрыт"));
       socket.on("error", (e) => onClose(e.message));
-      resolve5({
+      resolve6({
         send: (msg) => socket.write(frame(Buffer.from(JSON.stringify(msg)))),
         close: () => socket.end()
       });
@@ -6927,9 +6927,9 @@ function runWatchdogExit(argv2) {
 
 // js/cli/doctor.ts
 import { createHash as createHash7 } from "node:crypto";
-import { existsSync as existsSync9, readdirSync as readdirSync7, readFileSync as readFileSync18 } from "node:fs";
-import { homedir as homedir8 } from "node:os";
-import { dirname as dirname8, join as join18 } from "node:path";
+import { existsSync as existsSync10, readdirSync as readdirSync8, readFileSync as readFileSync19 } from "node:fs";
+import { homedir as homedir9 } from "node:os";
+import { dirname as dirname9, join as join19 } from "node:path";
 import { fileURLToPath as fileURLToPath5 } from "node:url";
 
 // js/cli/opencode-config.ts
@@ -7030,6 +7030,520 @@ function openCodeMcpEntries(out5) {
     );
 }
 
+// js/cli/subagents.ts
+import { spawnSync } from "node:child_process";
+import { existsSync as existsSync9, readdirSync as readdirSync7, readFileSync as readFileSync18, statSync as statSync6 } from "node:fs";
+import { homedir as homedir8 } from "node:os";
+import { basename as basename4, delimiter, dirname as dirname8, isAbsolute as isAbsolute2, join as join18, relative, resolve as resolve5 } from "node:path";
+
+// js/cli/frontmatter.ts
+function frontmatterText(file) {
+  const body = file.charCodeAt(0) === 65279 ? file.slice(1) : file;
+  const lines = body.split(/\r?\n/);
+  if (lines[0]?.trim() !== "---") return null;
+  const end = lines.findIndex((l, i) => i > 0 && l.trim() === "---");
+  return end < 0 ? null : lines.slice(1, end).join("\n");
+}
+function parseScalar(raw) {
+  const s2 = raw.trim();
+  if (s2.startsWith("[") && s2.endsWith("]")) return splitFlow(s2.slice(1, -1)).map(parseScalar);
+  if (s2.startsWith('"')) {
+    try {
+      return JSON.parse(s2);
+    } catch {
+      return s2.slice(1, s2.lastIndexOf('"') > 0 ? s2.lastIndexOf('"') : void 0);
+    }
+  }
+  if (s2.startsWith("'"))
+    return s2.slice(1, s2.lastIndexOf("'") > 0 ? s2.lastIndexOf("'") : void 0).replace(/''/g, "'");
+  return s2.replace(/\s+#.*$/, "");
+}
+function splitFlow(body) {
+  const parts = [];
+  let depth = 0;
+  let quote = null;
+  let cur = "";
+  for (let i = 0; i < body.length; i++) {
+    const c = body[i];
+    if (quote) {
+      cur += c;
+      if (c === "\\" && quote === '"') cur += body[++i] ?? "";
+      else if (c === quote) quote = null;
+      continue;
+    }
+    if (c === '"' || c === "'") quote = c;
+    else if (c === "[" || c === "{") depth++;
+    else if (c === "]" || c === "}") depth--;
+    else if (c === "," && depth === 0) {
+      if (cur.trim()) parts.push(cur.trim());
+      cur = "";
+      continue;
+    }
+    cur += c;
+  }
+  if (cur.trim()) parts.push(cur.trim());
+  return parts;
+}
+var KEY = /^("[^"]*"|'[^']*'|[^\s"'#-][^:]*?|-[^\s:][^:]*?)\s*:(?:\s+(.*))?$/;
+var unquoteKey = (k) => k.startsWith('"') && k.endsWith('"') || k.startsWith("'") && k.endsWith("'") ? k.slice(1, -1) : k;
+function parseFrontmatter(text) {
+  const lines = [];
+  for (const raw of text.split(/\r?\n/)) {
+    if (!raw.trim() || /^\s*#/.test(raw)) continue;
+    const indent = raw.length - raw.trimStart().length;
+    lines.push({ indent, text: raw.trim() });
+  }
+  let i = 0;
+  const isItem = (l) => l.text === "-" || l.text.startsWith("- ");
+  const block = (indent) => {
+    const first2 = lines[i];
+    if (!first2 || first2.indent < indent) return null;
+    return isItem(first2) ? list(first2.indent) : map(first2.indent);
+  };
+  const map = (indent) => {
+    const outMap = {};
+    while (i < lines.length && lines[i].indent === indent && !isItem(lines[i])) {
+      const m = KEY.exec(lines[i].text);
+      i++;
+      if (!m) continue;
+      const key = unquoteKey(m[1].trim());
+      if (m[2] !== void 0 && m[2].trim() !== "") outMap[key] = parseScalar(m[2]);
+      else {
+        const next = lines[i];
+        outMap[key] = next && (next.indent > indent || next.indent === indent && isItem(next)) ? block(next.indent) : null;
+      }
+    }
+    return outMap;
+  };
+  const list = (indent) => {
+    const items = [];
+    while (i < lines.length && lines[i].indent === indent && isItem(lines[i])) {
+      const content = lines[i].text.slice(1).trimStart();
+      if (!content) {
+        i++;
+        const next = lines[i];
+        items.push(next && next.indent > indent ? block(next.indent) : null);
+        continue;
+      }
+      if (KEY.test(content)) {
+        lines[i] = { indent: indent + (lines[i].text.length - content.length), text: content };
+        items.push(map(lines[i].indent));
+        continue;
+      }
+      i++;
+      items.push(parseScalar(content));
+    }
+    return items;
+  };
+  const top = block(0);
+  return top && typeof top === "object" && !Array.isArray(top) ? top : {};
+}
+
+// js/cli/satprobe.ts
+import { spawn as spawn3 } from "node:child_process";
+import { createInterface as createInterface2 } from "node:readline";
+var PROBE_MS = Number(process.env.ISKRON_DOCTOR_PROBE_MS) || 3e4;
+async function probeSatellite(label, e, cwd) {
+  const lines = [];
+  const env2 = {
+    ...process.env,
+    ...e.env,
+    ISKRON_BRIDGE_NO_BROWSER: "1",
+    ISKRON_BRIDGE_NO_UPDATE: "1",
+    ISKRON_BRIDGE_ORPHAN_FLOW_MS: "1"
+  };
+  delete env2.ISKRON_CHANNEL_SOCKET;
+  delete env2.ISKRON_CHANNEL_STATUS;
+  const child = spawn3(e.command, e.args, { cwd, env: env2, stdio: ["pipe", "pipe", "pipe"] });
+  child.stdin.on("error", () => {
+  });
+  let stderr = "";
+  child.stderr.on("data", (c) => stderr = (stderr + c.toString()).slice(-4e3));
+  const replies = /* @__PURE__ */ new Map();
+  let wake2 = null;
+  createInterface2({ input: child.stdout }).on("line", (l) => {
+    try {
+      const m = JSON.parse(l);
+      if (typeof m.id === "number") replies.set(m.id, m);
+    } catch {
+    }
+    wake2?.();
+  });
+  let exited = null;
+  child.on("error", (err) => {
+    exited = err.message;
+    wake2?.();
+  });
+  child.on("exit", (code, sig) => {
+    exited ??= `вышел с кодом ${code ?? sig}`;
+    wake2?.();
+  });
+  const deadline = Date.now() + PROBE_MS;
+  const ask = async (id, method, params) => {
+    if (!exited)
+      child.stdin.write(JSON.stringify({ jsonrpc: "2.0", id, method, params }) + "\n", () => {
+      });
+    while (!replies.has(id) && !exited && Date.now() < deadline)
+      await new Promise((res) => {
+        wake2 = res;
+        setTimeout(res, 200);
+      });
+    return replies.get(id) ?? null;
+  };
+  const tail2 = () => stderr.trim().split("\n").slice(-2).map((s2) => s2.slice(0, 300)).join(" | ");
+  const init = await ask(1, "initialize", {
+    protocolVersion: "2025-06-18",
+    capabilities: {},
+    clientInfo: { name: "iskron-doctor", version: "1" }
+  });
+  if (!init) {
+    const why = exited ?? `молчит ${Math.round(PROBE_MS / 1e3)}s`;
+    const old = /satellite|unknown (flag|option)|неизвестн/i.test(stderr) ? " — похоже, домашний мост старше флага --satellite → node ~/.iskron-bridge/iskron-bridge.mjs update" : " → запусти эту команду руками и прочти, что она пишет в stderr";
+    lines.push(
+      `проба «${label}»: мост не ответил на initialize (${why}${tail2() ? `; stderr: ${tail2()}` : ""})${old}`
+    );
+  } else if (init.error) {
+    lines.push(
+      `проба «${label}»: initialize вернул отказ: ${String(init.error.message ?? "").slice(0, 300)} → сделай, что велит отказ; вход в граф общий для машины — войди мостом основной сессии, и спутник возьмёт тот же грант`
+    );
+  } else {
+    child.stdin.write(
+      JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }) + "\n",
+      () => {
+      }
+    );
+    const info = init.result?.serverInfo ?? {};
+    const list = await ask(2, "tools/list", {});
+    const tools = list?.result?.tools ?? [];
+    if (!list)
+      lines.push(
+        `проба «${label}»: initialize ответил (${info.name ?? "?"} v${info.version ?? "?"}), tools/list — нет (${exited ?? "молчит"}) → запусти команду руками`
+      );
+    else if (list.error)
+      lines.push(
+        `проба «${label}»: tools/list вернул отказ: ${String(list.error.message ?? "").slice(0, 300)} → сделай, что велит отказ`
+      );
+    else {
+      lines.push(
+        `проба «${label}»: мост ответил — ${info.name ?? "?"} v${info.version ?? "?"}, тулов ${tools.length}`
+      );
+      for (const t of tools) {
+        const bad = ["oneOf", "allOf", "anyOf"].filter((k) => t.inputSchema && k in t.inputSchema);
+        if (bad.length)
+          lines.push(
+            `  тул ${t.name}: схема несёт ${bad.join(", ")} на верхнем уровне — сервер отдаёт схему, которую API Anthropic отвергнет («input_schema does not support oneOf, allOf, or anyOf at the top level»), и падает весь прогон субагента, не один этот тул → чинит это сервер, не файл агента и не мост (мост отдаёт схему как есть): скажи владельцу графа имя тула и жди обновления сервера, затем повтори doctor`
+          );
+      }
+    }
+  }
+  child.stdin.end();
+  const gone = new Promise((res) => exited ? res() : child.once("exit", () => res()));
+  await Promise.race([gone, new Promise((res) => setTimeout(res, 5e3).unref())]);
+  if (!exited) child.kill("SIGKILL");
+  return lines;
+}
+
+// js/cli/subagents.ts
+var platform = () => process.env.ISKRON_DOCTOR_PLATFORM || process.platform;
+var BRIDGE_RE = /iskron-bridge|(^|[\\/"'\s])iskron[^\\/"'\s]*\.mjs/;
+var SHELLS = /* @__PURE__ */ new Set(["sh", "bash", "zsh", "dash"]);
+var TEMPLATE_PARENTS = ["mcp__iskron-bridge", "mcp__plugin_iskron_iskron", "mcp__iskron"];
+var str2 = (v) => typeof v === "string" ? v : "";
+var q = (s2) => JSON.stringify(s2);
+function entriesOf(fm) {
+  const raw = fm.mcpServers;
+  const pairs = [];
+  if (Array.isArray(raw)) {
+    for (const item of raw) {
+      if (typeof item === "string") pairs.push([item, null]);
+      else if (item && typeof item === "object" && !Array.isArray(item))
+        for (const [k, v] of Object.entries(item)) pairs.push([k, v]);
+    }
+  } else if (raw && typeof raw === "object") pairs.push(...Object.entries(raw));
+  return pairs.map(([name, v]) => {
+    const spec = v && typeof v === "object" && !Array.isArray(v) ? v : {};
+    const args = Array.isArray(spec.args) ? spec.args.map((a) => str2(a)) : [];
+    const env2 = {};
+    if (spec.env && typeof spec.env === "object" && !Array.isArray(spec.env))
+      for (const [k, e] of Object.entries(spec.env)) env2[k] = str2(e);
+    return { name, ref: v === null, command: str2(spec.command), args, env: env2 };
+  });
+}
+var listOf = (v) => Array.isArray(v) ? v.map((x) => str2(x).trim()).filter(Boolean) : str2(v).split(",").map((x) => x.trim()).filter(Boolean);
+function agentFiles(dir, scope) {
+  if (!existsSync9(dir)) return [];
+  let names2;
+  try {
+    names2 = readdirSync7(dir).filter((f) => f.endsWith(".md"));
+  } catch {
+    return [];
+  }
+  return names2.sort().map((f) => {
+    const path = join18(dir, f);
+    let fm = {};
+    try {
+      const text = frontmatterText(readFileSync18(path, "utf8"));
+      if (text !== null) fm = parseFrontmatter(text);
+    } catch {
+    }
+    return { path, agent: str2(fm.name) || basename4(f, ".md"), scope, fm };
+  });
+}
+function projectRoot() {
+  const home = resolve5(homedir8());
+  let gitRoot = null;
+  for (let d = process.cwd(); ; ) {
+    if (resolve5(d) === home) break;
+    if (existsSync9(join18(d, ".claude", "agents")) || existsSync9(join18(d, ".opencode", "agents")))
+      return d;
+    if (!gitRoot && existsSync9(join18(d, ".git"))) gitRoot = d;
+    const up = dirname8(d);
+    if (up === d) break;
+    d = up;
+  }
+  return gitRoot ?? process.cwd();
+}
+function which(cmd, cwd) {
+  if (isAbsolute2(cmd) || /[\\/]/.test(cmd)) {
+    const p = resolve5(cwd, cmd);
+    return existsSync9(p) ? p : null;
+  }
+  const exts = platform() === "win32" ? ["", ...(process.env.PATHEXT || ".COM;.EXE;.BAT;.CMD").split(";").filter(Boolean)] : [""];
+  for (const dir of (process.env.PATH || "").split(delimiter).filter(Boolean)) {
+    for (const ext of exts) {
+      const p = join18(dir, cmd + ext);
+      try {
+        if (statSync6(p).isFile()) return p;
+      } catch {
+      }
+    }
+  }
+  return null;
+}
+function nodePath(cwd) {
+  if (/^node(\.exe)?$/i.test(basename4(process.execPath))) return process.execPath;
+  return which("node", cwd) ?? "node";
+}
+function readyEntry(name, cwd) {
+  const spec = platform() === "win32" ? `{"type": "stdio", "command": ${q(nodePath(cwd))}, "args": [${q(homeBridgePath())}, "--satellite"]}` : `{"type": "stdio", "command": "sh", "args": ["-c", ${q('exec node "$HOME/.iskron-bridge/iskron-bridge.mjs" --satellite')}]}`;
+  return `mcpServers: [{${q(name)}: ${spec}}]`;
+}
+function keepLocal(path, root) {
+  const rel = relative(root, path).replace(/\\/g, "/");
+  if (rel.startsWith("..")) return "файл пользовательский, в репо не входит";
+  let tracked = false;
+  try {
+    tracked = spawnSync("git", ["ls-files", "--error-unmatch", rel], { cwd: root, stdio: "ignore" }).status === 0;
+  } catch {
+  }
+  return tracked ? `git update-index --skip-worktree ${rel}` : `добавь строку ${rel} в .git/info/exclude`;
+}
+function bridgePathOf(e) {
+  const hay = [e.command, ...e.args].join(" ");
+  const m = /(?:"([^"]*iskron[^"]*\.mjs)"|'([^']*iskron[^']*\.mjs)'|([^\s"']*iskron[^\s"']*\.mjs))/.exec(
+    hay
+  );
+  const raw = m?.[1] ?? m?.[2] ?? m?.[3];
+  if (!raw) return null;
+  return raw.replace(/^~(?=[\\/])/, homedir8()).replace(/\$\{HOME\}|\$HOME|%USERPROFILE%|\$\{USERPROFILE\}|\$USERPROFILE/g, homedir8());
+}
+function parentBridges(root) {
+  const found = /* @__PURE__ */ new Set();
+  const scan = (servers, prefix) => {
+    if (!servers || typeof servers !== "object") return;
+    for (const [n, v] of Object.entries(servers)) {
+      const e = v ?? {};
+      const hay = [e.command ?? "", ...e.args ?? []].join(" ");
+      if (BRIDGE_RE.test(hay) && !hay.includes("--satellite")) found.add(prefix(n));
+    }
+  };
+  const readJson = (p) => {
+    try {
+      return JSON.parse(readFileSync18(p, "utf8"));
+    } catch {
+      return null;
+    }
+  };
+  const user = readJson(join18(homedir8(), ".claude.json"));
+  if (user) {
+    scan(user.mcpServers, (n) => `mcp__${n}`);
+    const projects = user.projects ?? {};
+    const key = root.replace(/\\/g, "/");
+    for (const [k, p] of Object.entries(projects))
+      if (k.replace(/\\/g, "/") === key) scan(p.mcpServers, (n) => `mcp__${n}`);
+  }
+  scan(readJson(join18(root, ".mcp.json"))?.mcpServers, (n) => `mcp__${n}`);
+  const registry = readJson(join18(homedir8(), ".claude", "plugins", "installed_plugins.json"));
+  const plugins = registry?.plugins ?? {};
+  for (const [key, installs] of Object.entries(plugins)) {
+    const plugin = key.split("@")[0];
+    if (!/iskron/.test(plugin)) continue;
+    for (const inst of installs)
+      if (inst.installPath)
+        scan(
+          readJson(join18(inst.installPath, ".mcp.json"))?.mcpServers,
+          (n) => `mcp__plugin_${plugin}_${n}`
+        );
+  }
+  return [...found];
+}
+function trustLine(root) {
+  let cfg;
+  try {
+    cfg = JSON.parse(readFileSync18(join18(homedir8(), ".claude.json"), "utf8"));
+  } catch {
+    return null;
+  }
+  const keys = Object.entries(cfg.projects ?? {}).filter(([, p]) => p?.hasTrustDialogAccepted).map(([k]) => k.replace(/\\/g, "/").replace(/\/+$/, ""));
+  const here = root.replace(/\\/g, "/").replace(/\/+$/, "");
+  const chain2 = [];
+  for (let d = here; ; ) {
+    chain2.push(d);
+    const up = d.slice(0, d.lastIndexOf("/"));
+    if (!up || up === d) break;
+    d = up;
+  }
+  if (chain2.some((d) => keys.includes(d))) return null;
+  const near = keys.find((k) => chain2.some((d) => d.toLowerCase() === k.toLowerCase()));
+  if (near)
+    return `доверие к папке принято для «${near}», а проект открыт как «${here}» — Claude Code сравнивает путь буква в букву (C:/ и c:/ — разные папки), и в недоверенной папке сервер из фронтматтера не поднимается без диалога → запусти claude в терминале из этой папки и прими диалог доверия либо открой папку тем же написанием пути`;
+  return `доверие к папке «${here}» и её родителям в ~/.claude.json не отмечено — в недоверенной папке сервер из фронтматтера не поднимается, и диалога об этом нет → запусти claude в этой папке и прими диалог доверия`;
+}
+async function subagentsReport(out5) {
+  const root = projectRoot();
+  const userDir = join18(homedir8(), ".claude", "agents");
+  const atHome = resolve5(root) === resolve5(homedir8());
+  const project = atHome ? [] : agentFiles(join18(root, ".claude", "agents"), "проект");
+  const shadowed = new Set(project.map((f) => f.agent));
+  const user = agentFiles(userDir, "пользователь");
+  const claude = [...project, ...user.filter((f) => !shadowed.has(f.agent))];
+  const opencode = [
+    ...agentFiles(join18(root, ".opencode", "agents"), "проект"),
+    ...agentFiles(join18(root, ".opencode", "agent"), "проект")
+  ];
+  out5(
+    `субагенты: проект ${root} (${process.env.ISKRON_DOCTOR_PLATFORM ? `ОС под суд: ${platform()}` : platform()})`
+  );
+  if (!claude.length && !opencode.length) {
+    out5(
+      `  файлов агентов нет (${join18(root, ".claude", "agents")}, ${userDir}, ${join18(root, ".opencode", "agents")}) — позови doctor из каталога проекта, если субагенты там`
+    );
+    return;
+  }
+  for (const f of user.filter((f2) => shadowed.has(f2.agent)))
+    out5(
+      `  ${f.path}: затенён файлом проекта с тем же именем «${f.agent}» — Claude Code берёт проектный`
+    );
+  const parents = parentBridges(root);
+  const byName = /* @__PURE__ */ new Map();
+  const reports = [];
+  for (const f of claude) {
+    const lines = [];
+    const expected = `iskron-sub-${f.agent}`;
+    const entries = entriesOf(f.fm);
+    const ours = entries.filter((e) => BRIDGE_RE.test([e.command, ...e.args].join(" ")));
+    const sat = ours.filter((e) => [e.command, ...e.args].join(" ").includes("--satellite"));
+    let probeEntry = null;
+    const refs = entries.filter((e) => e.ref && /iskron/.test(e.name));
+    for (const r of refs)
+      lines.push(
+        `запись «${r.name}» — ссылка на сервер из конфига сессии, не свой мост на прогон → замени встроенной записью: ${readyEntry(expected, root)}`
+      );
+    if (!sat.length) {
+      if (ours.length)
+        lines.push(
+          `запись «${ours[0].name}» зовёт мост без --satellite — субагент встал бы местом сессии, а не спутником → ${readyEntry(expected, root)}`
+        );
+      else if (!refs.length)
+        lines.push(
+          `записи моста-спутника нет — у субагента нет тулов графа → вставь во фронтматтер: ${readyEntry(expected, root)}`
+        );
+    }
+    for (const e of sat) {
+      byName.set(e.name, [...byName.get(e.name) ?? [], f.path]);
+      if (e.name === "iskron-sub")
+        lines.push(
+          `запись названа «iskron-sub» — общим именем прежнего контракта: второй файл с ним поведёт свои прогоны тем же процессом моста → переименуй запись в iskron-sub-${f.agent}`
+        );
+      const shown = [e.command, ...e.args].join(" ");
+      const cmdBase = basename4(e.command).replace(/\.exe$/i, "");
+      const ready = readyEntry(e.name === "iskron-sub" ? expected : e.name, root);
+      let runnable = true;
+      if (!which(e.command, root)) {
+        runnable = false;
+        lines.push(
+          platform() === "win32" && SHELLS.has(cmdBase) ? `запись «${e.name}» запускает мост через ${e.command} — на Windows ${e.command} нет (в PATH не нашёлся), а Claude Code не раскрывает $HOME в args фронтматтера → замени mcpServers строкой с путями этой машины: ${ready} — файл станет машинным, в общий репо его не коммить: ${keepLocal(f.path, root)}` : `команда записи «${e.name}» «${e.command}» на этой машине не находится (PATH) → ${ready}`
+        );
+      } else if (!SHELLS.has(cmdBase) && e.args.some((a) => /\$\{?[A-Za-z_]|%[A-Za-z_]+%/.test(a))) {
+        runnable = false;
+        lines.push(
+          `запись «${e.name}» несёт переменную в args (${shown}) — Claude Code её не раскрывает, node получит буквальный путь → ${ready}`
+        );
+      }
+      const bridge = bridgePathOf(e);
+      if (bridge && !existsSync9(resolve5(root, bridge)))
+        lines.push(
+          `моста по пути записи нет: ${bridge} → поставь его (скилл establish-mcp кладёт домашнюю копию ${homeBridgePath()}) либо поправь путь`
+        );
+      else if (runnable && !probeEntry) probeEntry = e;
+      else if (!runnable && bridge && platform() === "win32" && existsSync9(homeBridgePath()) && !probeEntry)
+        probeEntry = {
+          name: `${e.name} (предложенная форма)`,
+          ref: false,
+          command: nodePath(root),
+          args: [homeBridgePath(), "--satellite"],
+          env: e.env
+        };
+    }
+    const own = sat.map((e) => `mcp__${e.name}`);
+    const disallowed = listOf(f.fm.disallowedTools).map((d) => d.replace(/__\*$/, ""));
+    const need = (parents.length ? parents : TEMPLATE_PARENTS).filter(
+      (p) => !own.includes(p) && !disallowed.includes(p)
+    );
+    if (sat.length && (need.length || !disallowed.length))
+      lines.push(
+        `мосты позвавшего не сняты (${need.join(", ") || "disallowedTools нет"}) — субагент унаследует их тулы, и его записи уйдут местом позвавшего → disallowedTools: ${[.../* @__PURE__ */ new Set([...disallowed, ...parents.length ? parents : TEMPLATE_PARENTS])].filter((p) => !own.includes(p)).join(", ")}`
+      );
+    for (const o of own.filter((o2) => disallowed.includes(o2)))
+      lines.push(`disallowedTools снимает свой же мост ${o} → убери ${o} из disallowedTools`);
+    reports.push({ f, lines, probe: probeEntry, names: sat.map((e) => e.name) });
+  }
+  for (const [name, files] of byName) {
+    if (files.length < 2) continue;
+    for (const r of reports.filter((r2) => files.includes(r2.f.path)))
+      r.lines.push(
+        `имя записи «${name}» делят ${files.length} файла(ов): ${files.join(", ")} — Claude Code держит одно соединение на имя записи, их прогоны пойдут одним процессом моста, и первый закончивший погасит место другим → переименуй запись в этом файле: iskron-sub-${r.f.agent}`
+      );
+  }
+  const probed = /* @__PURE__ */ new Map();
+  for (const r of reports) {
+    const where = r.f.scope === "пользователь" ? " (пользовательский)" : "";
+    out5(
+      `  ${r.f.path}${where}: ${r.names.length ? `запись «${r.names.join("», «")}»` : "без записи моста-спутника"}${r.lines.length ? "" : " — в порядке"}`
+    );
+    for (const l of r.lines) out5(`    НАДО: ${l}`);
+    if (!r.probe) continue;
+    const key = JSON.stringify([r.probe.command, r.probe.args, r.probe.env]);
+    const first2 = probed.get(key);
+    if (first2) {
+      out5(`    проба: та же команда, что у «${first2[0]}» выше`);
+      continue;
+    }
+    probed.set(key, [r.probe.name]);
+    for (const l of await probeSatellite(r.probe.name, r.probe, root)) out5(`    ${l}`);
+  }
+  if (claude.length) {
+    const t = trustLine(root);
+    if (t && project.length) out5(`  НАДО: ${t}`);
+  }
+  for (const f of opencode) {
+    const keys = Object.keys(f.fm).filter((k) => k === "mcpServers" || k === "mcp");
+    out5(
+      `  ${f.path}: OpenCode — мост-спутник даёт дочерней сессии плагин поставки (строка OpenCode выше), записи в файле не нужно${keys.length ? `; НАДО: ключ ${keys.join(", ")} OpenCode в файле агента не читает → убери его` : ""}`
+    );
+  }
+}
+
 // js/cli/doctor.ts
 var out2 = (s2) => {
   process.stdout.write(s2 + "\n");
@@ -7040,14 +7554,14 @@ function homeCopyReport() {
   const home = homeBridgePath();
   let self = null;
   try {
-    self = readFileSync18(fileURLToPath5(import.meta.url));
+    self = readFileSync19(fileURLToPath5(import.meta.url));
   } catch {
   }
-  if (!existsSync9(home)) {
+  if (!existsSync10(home)) {
     out2(`домашняя копия: нет (${home}) — её кладёт establish-mcp при подключении`);
     return;
   }
-  const bytes = readFileSync18(home);
+  const bytes = readFileSync19(home);
   if (self && bytes.equals(self)) {
     out2(`домашняя копия: ${home} — та же сборка, что и этот файл`);
     return;
@@ -7135,12 +7649,12 @@ async function patReport() {
   } else if (res.ok) out2(`  токен принят сервером (HTTP ${res.status})`);
   else out2(`  сервер ответил HTTP ${res.status} — не отказ токена, смотри строку «сервер»`);
   const path = storePath();
-  if (existsSync9(path)) out2(`  хранилище OAuth ${path} есть, но не читается, пока стоит PAT`);
+  if (existsSync10(path)) out2(`  хранилище OAuth ${path} есть, но не читается, пока стоит PAT`);
 }
 function grantReport() {
   const path = storePath();
   out2(`грант: ${path}`);
-  if (!existsSync9(path)) {
+  if (!existsSync10(path)) {
     out2("  хранилища нет — мост ещё ни разу не входил на этот сервер");
     return;
   }
@@ -7172,11 +7686,11 @@ function grantReport() {
   if (st.refused_since)
     out2(`  отказ стоит с ${new Date(st.refused_since).toISOString()}: ${st.reason ?? ""}`);
   for (const suffix of [".auth-pending", ".refreshing"]) {
-    if (existsSync9(path + suffix)) out2(`  замок: ${path + suffix}`);
+    if (existsSync10(path + suffix)) out2(`  замок: ${path + suffix}`);
   }
   const logPath = grantLogPath();
-  if (existsSync9(logPath)) {
-    const lines = readFileSync18(logPath, "utf8").trim().split("\n").slice(-3);
+  if (existsSync10(logPath)) {
+    const lines = readFileSync19(logPath, "utf8").trim().split("\n").slice(-3);
     out2(`  grant.log, последнее:`);
     for (const l of lines) out2(`    ${l}`);
   }
@@ -7199,10 +7713,10 @@ function latestReport() {
   else out2(`свежий релиз: v${latest.version}, этот файл не отстал; спрашивал ${ago} мин назад`);
 }
 function claudePluginReport() {
-  const registry = join18(homedir8(), ".claude", "plugins", "installed_plugins.json");
-  if (!existsSync9(registry)) return;
+  const registry = join19(homedir9(), ".claude", "plugins", "installed_plugins.json");
+  if (!existsSync10(registry)) return;
   try {
-    const reg = JSON.parse(readFileSync18(registry, "utf8"));
+    const reg = JSON.parse(readFileSync19(registry, "utf8"));
     const mine = Object.entries(reg.plugins ?? {}).filter(([k]) => /^iskron@/.test(k));
     if (!mine.length) {
       out2(`Claude Code: плагин iskron не установлен (${registry})`);
@@ -7210,11 +7724,11 @@ function claudePluginReport() {
     }
     for (const [key, installs] of mine) {
       for (const inst of installs) {
-        const manifest = inst.installPath ? join18(inst.installPath, ".mcp.json") : "";
+        const manifest = inst.installPath ? join19(inst.installPath, ".mcp.json") : "";
         let entry = "запись моста в манифесте не найдена";
-        if (manifest && existsSync9(manifest)) {
+        if (manifest && existsSync10(manifest)) {
           try {
-            const m = JSON.parse(readFileSync18(manifest, "utf8"));
+            const m = JSON.parse(readFileSync19(manifest, "utf8"));
             const hit = Object.entries(m.mcpServers ?? {}).find(
               ([, v]) => (v.args ?? []).some((a) => /iskron\.mjs/.test(a))
             );
@@ -7235,31 +7749,31 @@ function claudePluginReport() {
 function codexHomes() {
   const homes = [
     process.env.CODEX_HOME?.trim() || "",
-    join18(homedir8(), ".codex"),
-    ...process.platform === "darwin" ? [join18(homedir8(), "Library", "Application Support", "orca", "codex-runtime-home", "home")] : []
+    join19(homedir9(), ".codex"),
+    ...process.platform === "darwin" ? [join19(homedir9(), "Library", "Application Support", "orca", "codex-runtime-home", "home")] : []
   ].filter(Boolean);
-  return [...new Set(homes)].filter((h) => existsSync9(h));
+  return [...new Set(homes)].filter((h) => existsSync10(h));
 }
 function codexPluginReport(home) {
-  const cache = join18(home, "plugins", "cache");
-  if (!existsSync9(cache)) return;
+  const cache = join19(home, "plugins", "cache");
+  if (!existsSync10(cache)) return;
   let found = 0;
-  for (const market of readdirSync7(cache)) {
-    const marketDir = join18(cache, market);
+  for (const market of readdirSync8(cache)) {
+    const marketDir = join19(cache, market);
     let plugins;
     try {
-      plugins = readdirSync7(marketDir);
+      plugins = readdirSync8(marketDir);
     } catch {
       continue;
     }
     for (const plugin of plugins) {
       if (!/iskron/.test(plugin)) continue;
-      const dir = join18(marketDir, plugin);
-      const manifest = join18(dir, ".codex-plugin", "plugin.json");
+      const dir = join19(marketDir, plugin);
+      const manifest = join19(dir, ".codex-plugin", "plugin.json");
       let word = "манифеста нет";
-      if (existsSync9(manifest)) {
+      if (existsSync10(manifest)) {
         try {
-          const m = JSON.parse(readFileSync18(manifest, "utf8"));
+          const m = JSON.parse(readFileSync19(manifest, "utf8"));
           const hit = Object.values(m.mcpServers ?? {}).some(
             (v) => (v.args ?? []).some((a) => /iskron\.mjs/.test(a))
           );
@@ -7276,10 +7790,10 @@ function codexPluginReport(home) {
 }
 function harnessReport() {
   claudePluginReport();
-  const claude = join18(homedir8(), ".claude.json");
-  if (existsSync9(claude)) {
+  const claude = join19(homedir9(), ".claude.json");
+  if (existsSync10(claude)) {
     try {
-      const cfg = JSON.parse(readFileSync18(claude, "utf8"));
+      const cfg = JSON.parse(readFileSync19(claude, "utf8"));
       const entries = Object.entries(cfg.mcpServers ?? {}).filter(
         ([, v]) => (v.args ?? []).some((a) => /iskron/.test(a))
       );
@@ -7295,17 +7809,17 @@ function harnessReport() {
       out2(`Claude Code: ${claude} не читается`);
     }
   }
-  const opencodeDir = join18(homedir8(), ".config", "opencode");
-  if (existsSync9(opencodeDir)) {
-    const copy = join18(opencodeDir, "plugins", "iskron.js");
-    const packaged = join18(dirname8(fileURLToPath5(import.meta.url)), "opencode-plugin.js");
-    if (!existsSync9(copy)) {
+  const opencodeDir = join19(homedir9(), ".config", "opencode");
+  if (existsSync10(opencodeDir)) {
+    const copy = join19(opencodeDir, "plugins", "iskron.js");
+    const packaged = join19(dirname9(fileURLToPath5(import.meta.url)), "opencode-plugin.js");
+    if (!existsSync10(copy)) {
       out2(`OpenCode: плагина нет (${copy}) — его кладёт establish-mcp при подключении`);
-    } else if (!existsSync9(packaged)) {
+    } else if (!existsSync10(packaged)) {
       out2(
         `OpenCode: плагин ${copy} стоит; рядом с этим файлом поставки плагина нет, сверить не с чем`
       );
-    } else if (readFileSync18(copy).equals(readFileSync18(packaged))) {
+    } else if (readFileSync19(copy).equals(readFileSync19(packaged))) {
       out2(`OpenCode: плагин ${copy} — та же сборка, что в поставке`);
     } else {
       out2(`OpenCode: плагин ${copy} — ДРУГИЕ байты, обнови из поставки: cp "${packaged}" ${copy}`);
@@ -7315,8 +7829,8 @@ function harnessReport() {
   for (const codexHome of codexHomes()) {
     out2(`Codex: дом ${codexHome}`);
     codexPluginReport(codexHome);
-    const door2 = join18(codexHome, "app-server-control", "app-server-control.sock");
-    if (existsSync9(door2)) out2(`Codex: дверь app-server открыта (${door2})`);
+    const door2 = join19(codexHome, "app-server-control", "app-server-control.sock");
+    if (existsSync10(door2)) out2(`Codex: дверь app-server открыта (${door2})`);
     else if (Buffer.byteLength(door2) > 100)
       out2(
         `Codex: двери нет и не будет — дом длиннее предела unix-сокета; нужен короткий дом для демона и сессий`
@@ -7325,9 +7839,9 @@ function harnessReport() {
       out2(
         `Codex: двери нет (${door2}) — демон app-server не поднят; без неё кадр доставляет watchdog-exit`
       );
-    const codex = join18(codexHome, "config.toml");
-    if (existsSync9(codex)) {
-      const text = readFileSync18(codex, "utf8");
+    const codex = join19(codexHome, "config.toml");
+    if (existsSync10(codex)) {
+      const text = readFileSync19(codex, "utf8");
       out2(
         `Codex: ${/^\s*\[mcp_servers\."?iskron"?\]|^\s*mcp_servers\."?iskron"?\s*=/m.test(text) ? "ручная запись моста в config.toml есть" : "ручной записи моста в config.toml нет (штатная — в плагине)"}`
       );
@@ -7345,6 +7859,7 @@ async function runDoctor(argv2) {
   if (CFG.pat) await patReport();
   else grantReport();
   harnessReport();
+  await subagentsReport(out2);
 }
 
 // js/cli/update.ts

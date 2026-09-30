@@ -173,6 +173,7 @@ export async function startFakeNks(opts = {}) {
     wsTokens: new Map(), // адрес сокета → имя места; wsNames: открытый сокет → имя места (несколько мостов на одном фейке)
     wsNames: new Map(),
     richTools: false, // /control {richTools:true}: tools/list с пишущими тулами — для проверки приписки момента
+    tools: opts.tools ?? null, // список тулов целиком, как его отдал бы сервер: схема, которую API отвергнет, — у doctor
     // Сессия открыта credential'ом и умирает вместе с ним (#188 в nks-dev):
     // сменился bearer — старая сессия закрыта. Как сервер отвечает на мёртвый
     // или чужой id — двумя способами, и оба наблюдены в поле: 404 (клиент
@@ -639,6 +640,9 @@ export async function startFakeNks(opts = {}) {
       if (msg.id === undefined || msg.id === null) {
         res.writeHead(202, extra);
         return res.end();
+      }
+      if (msg.method === "tools/list" && st.tools) {
+        return json(res, 200, { jsonrpc: "2.0", id: msg.id, result: { tools: st.tools } }, extra);
       }
       if (msg.method === "tools/list") {
         return json(
