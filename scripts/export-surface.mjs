@@ -70,16 +70,12 @@ const declared = Object.fromEntries(
 
 // Комбинаторы верхнего уровня схемы каждого тула (граф nks-dev: #6500): anyOf,
 // oneOf или allOf наверху у одного тула — и Messages API отвергает весь список.
-// Мост их сливает, но помечает слитое в `_meta` тула — снимок видит изъян
-// сервера и сквозь мост; `make check-surface` роняет гейт с именем тула.
+// Схему чинит сервер; мост пропускает её как есть, и снимок пишет сырую схему
+// сервера. `make check-surface` роняет гейт с именем тула.
 const TOP_COMBINATORS = ["anyOf", "oneOf", "allOf"];
 const combinators = Object.fromEntries(
   tools
-    .map((t) => {
-      const raw = TOP_COMBINATORS.filter((k) => Array.isArray(t.inputSchema?.[k]));
-      const flattened = t._meta?.["ru.iskron/flattened"] ?? [];
-      return [t.name, [...new Set([...raw, ...flattened])].sort()];
-    })
+    .map((t) => [t.name, TOP_COMBINATORS.filter((k) => Array.isArray(t.inputSchema?.[k]))])
     .sort(([a], [b]) => a.localeCompare(b)),
 );
 

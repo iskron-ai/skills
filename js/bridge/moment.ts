@@ -6,7 +6,6 @@
 // пишущим тулам строку момента. Строка не пересказывает метод: она называет
 // скилл и три вещи, которые чаще всего теряются. Без ссылок на узлы графа —
 // у читающего харнеса графа может не быть.
-import { flattenTopCombinators } from "./schema.ts";
 import { STAND_TOOL } from "./stand.ts";
 import { type JsonRpcMessage } from "./types.ts";
 
@@ -36,7 +35,6 @@ export function annotateToolList(reply: JsonRpcMessage): void {
   if (at >= 0) tools[at] = STAND_TOOL;
   else tools.push(STAND_TOOL);
   for (const t of tools) {
-    if (t) flattenTopCombinators(t); // иначе Messages API отвергает запрос с этим списком целиком
     if (t && t.name === "iskron_channel" && typeof t.description === "string") {
       if (!t.description.includes(STATUS_LINE))
         t.description = `${t.description}\n\n${STATUS_LINE}`;

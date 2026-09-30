@@ -100,8 +100,8 @@ for (const file of mdFiles) {
 
 // 3. Top-level anyOf/oneOf/allOf in a tool's input schema (graph nks-dev:
 //    #6500): the Messages API refuses the WHOLE request over one such tool, so
-//    a harness talking to the server directly never starts. The bridge merges
-//    them and marks what it merged; the snapshot records both, per tool.
+//    the harness never starts. The server owns the fix; the bridge passes the
+//    schema through as is, and the snapshot records the raw one, per tool.
 //    A snapshot older than the field cannot say — the success line says so.
 const combinators = surface.combinators;
 if (combinators) {
