@@ -174,7 +174,10 @@ test("claude hooks: jq judges a long run of spaces without an error", () => {
   }
 });
 
-async function loadPlugin() {
+// `dirs` maps a session id to its working directory, as OpenCode hands it out:
+// ctx.session.get({ sessionID }).location.directory (the plugin's own process
+// directory is the server's, not the session's).
+async function loadPlugin(dirs = {}) {
   const md = readFileSync(surfacesPath, "utf8");
   const block = [...md.matchAll(/```js\n([\s\S]*?)```/g)]
     .map((m) => m[1])
@@ -185,7 +188,11 @@ async function loadPlugin() {
   await mod.default.setup({
     tool: { hook: async (name, fn) => void (hooks[name] = fn) },
     event: { subscribe: async () => (async function* () {})() },
-    session: { prompt: async () => {} },
+    session: {
+      prompt: async () => {},
+      get: async ({ sessionID }) =>
+        dirs[sessionID] ? { location: { directory: dirs[sessionID] } } : null,
+    },
   });
   return hooks["execute.after"];
 }
@@ -307,20 +314,15 @@ for (const [name, command, wakes, lands] of quietCases) {
     const cmd = command();
     const output = sh(a, cmd);
     assert.equal(claudeWakes(cmd, output, a).push, wakes, `claude: ${cmd}`);
-    const after = await loadPlugin();
+    const after = await loadPlugin({ s1: a });
     const input = {
       tool: "bash",
+      sessionID: "s1",
       status: "completed",
       input: { command: cmd },
       result: { content: output, metadata: { exit: 0 } },
     };
-    const here = process.cwd();
-    process.chdir(a);
-    try {
-      await after(input);
-    } finally {
-      process.chdir(here);
-    }
+    await after(input);
     assert.equal(String(input.result.content).includes("пуш"), wakes, `opencode: ${cmd}`);
   });
 }
@@ -340,12 +342,43 @@ for (const cmd of [
   });
 }
 
-test("quiet push: the trunk never wakes", () => {
+for (const trunk of ["main", "master"]) {
+  test(`quiet push: the trunk never wakes (${trunk})`, async () => {
+    const { a } = quietRepos();
+    if (trunk !== "main") {
+      git(a, "checkout", "-q", "-b", trunk, "main");
+      git(a, "push", "-q", "-u", "origin", trunk);
+    } else git(a, "checkout", "-q", "main");
+    git(a, "commit", "-q", "--allow-empty", "-m", "on trunk");
+    const cmd = `git push -q origin ${trunk} 2>&1 | tail -1`;
+    const output = sh(a, cmd);
+    assert.equal(claudeWakes(cmd, output, a).push, false);
+    const after = await loadPlugin({ s1: a });
+    const input = {
+      tool: "bash",
+      sessionID: "s1",
+      status: "completed",
+      input: { command: cmd },
+      result: { content: output, metadata: { exit: 0 } },
+    };
+    await after(input);
+    assert.equal(String(input.result.content).includes("пуш"), false);
+  });
+}
+
+test("quiet push: a session without a known directory stays silent", async () => {
   const { a } = quietRepos();
-  git(a, "checkout", "-q", "main");
-  git(a, "commit", "-q", "--allow-empty", "-m", "on main");
-  const cmd = "git push -q origin main 2>&1 | tail -1";
-  assert.equal(claudeWakes(cmd, sh(a, cmd), a).push, false);
+  const cmd = "git push -q origin feat/x 2>&1 | tail -1";
+  const after = await loadPlugin({});
+  const input = {
+    tool: "bash",
+    sessionID: "unknown",
+    status: "completed",
+    input: { command: cmd },
+    result: { content: "", metadata: { exit: 0 } },
+  };
+  await after(input);
+  assert.equal(String(input.result.content).includes("пуш"), false, a);
 });
 
 // Another forge's merge rides the same defs with its own head and confirmation
