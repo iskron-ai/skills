@@ -84,6 +84,20 @@ const cases = [
     false,
     false,
   ],
+  // real output of a quiet push to a missing file:// remote (transport refusal)
+  [
+    "git push -q file:///nonexistent/x.git main 2>&1 | tail -3",
+    "\nPlease make sure you have the correct access rights\nand the repository exists.\n",
+    false,
+    false,
+  ],
+  [
+    "git push -q file:///nonexistent/x.git main 2>&1 | tail",
+    "fatal: '/nonexistent/x.git' does not appear to be a git repository\nfatal: Could not read from remote repository.\n\nPlease make sure you have the correct access rights\nand the repository exists.\n",
+    false,
+    false,
+  ],
+  ["git push -q origin main 2>&1 | tail -2", "Permission denied (publickey).\n", false, false],
   // text is not a command: quotes and heredoc bodies never wake a quiet push
   ['echo "note; git push -q origin x"', "", false, false],
   ['gh pr create --title t --body "fixes; git push -q origin x here"', "", false, false],

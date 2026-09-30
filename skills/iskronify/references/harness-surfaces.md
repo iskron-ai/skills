@@ -83,7 +83,7 @@ export default {
       const push = String.raw`(?:env +)?(?:[A-Za-z_]+=\S+ +)*git(?: -C \S+)* push`;
       // тихий пуш (-q/--quiet) не печатает «To <remote>»: будит и перед | или ;, если в выводе нет отказа;
       // команда — от начала строки через цельные кавычки, текст в них и heredoc не команда
-      const quiet = new RegExp(String.raw`^(?:${arg}[;&|(\n] *)*` + push + String.raw`(?=[ ;&|)\n]|$)(?!${arg} (?:-h|--help)(?:[ ;&|)\n]|$))` + arg + String.raw` (?:-q|--quiet)(?=[ ;&|)\n]|$)`).test(cmd) && !cmd.includes("<<") && !/! \[|error:|fatal:|hint:/.test(out);
+      const quiet = new RegExp(String.raw`^(?:${arg}[;&|(\n] *)*` + push + String.raw`(?=[ ;&|)\n]|$)(?!${arg} (?:-h|--help)(?:[ ;&|)\n]|$))` + arg + String.raw` (?:-q|--quiet)(?=[ ;&|)\n]|$)`).test(cmd) && !cmd.includes("<<") && !/! \[|error:|fatal:|hint:|Please make sure|Could not |Permission denied/.test(out);
       const note = ran(push, "-h|--help", /To [^\n]+(?:\n [!=] .*)*\n [ *+-]/) || quiet
         ? "[iskron] пуш — не отгрузка: самопроверка, словарный проход по тексту PR, холодное ревью этапа."
         : ran("gh pr merge", "-h|--help|--auto|--disable-auto", /(Merged|Squashed and merged|Rebased and merged) pull request/) || ((exit ?? 0) === 0 && pull.test(cmd))
