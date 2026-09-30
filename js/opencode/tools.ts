@@ -37,6 +37,7 @@ import { createKeeper, type KeptSlot, takeLostMarker, WATCH_MS, writeLostMarker 
 import { createLauncher } from "./launch.ts";
 import { createLogin } from "./login.ts";
 import type { Context } from "./plugin.ts";
+import { createRunEnds } from "./runends.ts";
 import { asSatellite, heldPlace, type SatelliteSlot, STAND_TOOL, standsBy } from "./satellite.ts";
 import { statusLines } from "./status.ts";
 
@@ -77,6 +78,8 @@ const hhmm = (): string => new Date().toTimeString().slice(0, 5);
 export interface ToolsHalf {
   /** Сессия умерла — её мост отпускается вместе со стоянием. */
   forget(session: string): void;
+  /** Прогон сессии кончился — мост дочерней уходит с её местом-спутником (#6361); корень живёт сессией. */
+  ended(session: string): void;
   /** Первый промпт сессии — строка запуска с делом исполняется до хода модели (launch.ts). */
   launch(session: string, text: string): Promise<string | null>;
   stop(): void;
@@ -97,7 +100,7 @@ export async function setupTools(
         ". Задай ISKRON_BRIDGE_PATH или поставь мост скиллом establish-mcp.",
       "error",
     );
-    return { forget() {}, launch: async () => null, stop() {}, bridgeOf: () => null };
+    return { forget() {}, ended() {}, launch: async () => null, stop() {}, bridgeOf: () => null };
   }
   const path = found.path;
   const builds = buildsLine(path, import.meta.url);
@@ -164,6 +167,7 @@ export async function setupTools(
   }
 
   const directoryOf = (sessionID: string) => sessionDirectory(ctx, sessionID);
+  const runEnds = createRunEnds(); // кончившиеся дети: запись с места — отказ вслух (#6361)
   const keeper = createKeeper({
     say,
     tell: (root, text, child) =>
@@ -313,6 +317,7 @@ export async function setupTools(
         // JSON Schema сервера без паспорта диалекта — той же срезкой, что у pi.
         input: toParameters(t.inputSchema),
         async execute(input, tool) {
+          runEnds.guard(String(tool.sessionID), name, input ?? {}); // не мостом корня (#6361)
           const slot = await slotFor(String(tool.sessionID));
           // Вызов в полёте — занятость: мост посреди вызова жнецу не отдаётся,
           // а простой считается от конца вызова, не от его начала.
@@ -388,6 +393,7 @@ export async function setupTools(
     // Отказ тула сигналится броском — так OpenCode показывает его отказом.
     if (result?.isError) throw new Error(textOf(result) || `${name}: отказ без текста`);
     if (standsBy(name, args)) keeper.stood(slot); // ответ тула — наблюдаемое событие держания
+    if (standsBy(name, args)) runEnds.clear(sessionID); // встал заново — запись снова своим мостом
     return { content: textOf(result) };
   }
   if (state.listed.length)
@@ -455,18 +461,22 @@ export async function setupTools(
     },
   });
 
+  function forget(session: string): void {
+    runEnds.clear(session); // удалённая сессия уносит и пометку конца прогона
+    launcher.forget(session);
+    keeper.forget(session);
+    const slot = slots.get(session);
+    if (!slot) return;
+    slots.delete(session);
+    slot.ownStop = true;
+    slot.bridge.stop(); // свёртка моста отпускает стояние: ключ, сокет, занятость
+  }
+
   return {
     launch: launcher.launch,
     bridgeOf: (s) => [slots.get(s)].find((x) => x?.holding)?.bridge ?? null,
-    forget(session) {
-      launcher.forget(session);
-      keeper.forget(session);
-      const slot = slots.get(session);
-      if (!slot) return;
-      slots.delete(session);
-      slot.ownStop = true;
-      slot.bridge.stop(); // свёртка моста отпускает стояние: ключ, сокет, занятость
-    },
+    forget,
+    ended: (s) => void (slots.get(s)?.child && runEnds.end(s, slots.get(s)?.satelliteOf, forget)),
     stop() {
       stopped = true;
       clearInterval(reaper);

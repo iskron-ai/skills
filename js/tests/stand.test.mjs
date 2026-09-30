@@ -1764,6 +1764,33 @@ test("satellite: stdin closing leaves the place and no hold record is ever writt
   await until(() => holdFiles(home).length === 1, "the session bridge's hold record");
 });
 
+// A satellite's leave is a full leave (#6361): it has no hold record to carry
+// «left by word», so a parked satellite was stood up again by the plugin's
+// hearing watch (iskron/check every 5 min) — the place outlived its run.
+test("satellite: leave lets the place go whole — iskron/check brings nothing back and opens no socket", async (t) => {
+  const fake = await withCaller(t);
+  const sat = await satelliteBridge(t, fake);
+  const r = await standAs(sat, SAT_ARGS);
+  assert.ok(!r.result?.isError, `${textOf(r)}\n${sat.stderr}`);
+  await until(() => fake.state.ws.size === 1, "the satellite's socket");
+  const left = await sat.call("tools/call", {
+    name: "iskron_channel",
+    arguments: { realm: "nks-dev", action: "leave" },
+  });
+  assert.ok(!left.result?.isError, textOf(left));
+  const connects = fake.state.counts.connect;
+  const upgrades = fake.state.counts.ws_upgrades;
+  const key = `${CALLER}.sub-1--931--nks-dev`;
+  for (const sel of [{}, { key }]) {
+    const check = await sat.call("iskron/check", sel);
+    assert.equal(check.result?.resumed, false, JSON.stringify(check));
+    assert.notEqual(check.result?.holding, true, JSON.stringify(check));
+  }
+  await new Promise((res) => setTimeout(res, 300));
+  assert.equal(fake.state.counts.ws_upgrades, upgrades, "no socket opened again after leave");
+  assert.equal(fake.state.counts.connect, connects, "no new connect");
+});
+
 test("satellite: a session bridge still refuses a second name in its graph (#5154) and refuses satellite_of; a satellite bridge refuses anything but a satellite place", async (t) => {
   const { fake, bridge } = await ready(t);
   await fake.control({ places: [{ karta: "931", name: CALLER, listening: true }] });
