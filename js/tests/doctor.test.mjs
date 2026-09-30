@@ -10,7 +10,14 @@
 // read as a server URL and refused, which is exactly the red this probe wants.
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  copyFileSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
@@ -473,8 +480,12 @@ test("doctor survives an unreadable config on the way up and keeps strings intac
 test("doctor with a personal access token names its source and judges it by a live handshake", async () => {
   const fake = await startFakeNks({ pat: "nks_pat_doc" });
   const dir = mkdtempSync(join(tmpdir(), "iskron-doctor-pat-"));
+  // Свой дом: иначе раздел «субагенты» нашёл бы настоящий домашний мост машины и
+  // пробовал бы его с подложным токеном против продового адреса.
+  const home = mkdtempSync(join(tmpdir(), "iskron-doctor-"));
   try {
     const good = await run(["doctor", fake.mcpUrl, "--auth-dir", dir], {
+      HOME: home,
       ISKRON_BRIDGE_TOKEN: "nks_pat_doc",
     });
     assert.equal(good.code, 0, good.err);
@@ -482,6 +493,7 @@ test("doctor with a personal access token names its source and judges it by a li
     assert.match(good.out, /токен принят сервером/);
     assert.equal(readdirSync(dir).length, 0, "doctor must write nothing");
     const bad = await run(["doctor", fake.mcpUrl, "--auth-dir", dir], {
+      HOME: home,
       ISKRON_BRIDGE_TOKEN: "nks_pat_wrong",
     });
     assert.match(bad.out, /ТОКЕН ОТВЕРГНУТ/);
@@ -517,6 +529,387 @@ test("use en writes the English production address next to the grant; doctor nam
     assert.match(r.out, /другой инстанс: обновлений с релизов поставки нет/);
     const ru = await run(["use", "ru", "--auth-dir", authDir], { HOME: home });
     assert.equal(readFileSync(join(authDir, "server"), "utf8"), "https://mcp.iskron.ru/\n", ru.out);
+  } finally {
+    await fake.stop();
+  }
+});
+
+// Раздел «субагенты»: агент пользователя сам находит, почему его субагент без
+// тулов графа или падает на 400, — doctor называет файл агента, поломку и
+// готовое действие (делегирование: skills/iskronify/references/delegation.md).
+// Единая форма записи (проверена живым Claude Code 2.1.285): node сам собирает
+// путь к дому, `--` отделяет флаг моста, splice кладёт путь моста в argv[1].
+// Эталон — SATELLITE_CODE в js/cli/satform.ts: проба берёт его оттуда, копий не держит.
+const SAT_CODE = JSON.parse(
+  /SATELLITE_CODE\s*=\s*("(?:[^"\\]|\\.)*")/.exec(
+    readFileSync(join(HERE, "..", "cli", "satform.ts"), "utf8"),
+  )[1],
+);
+const SAT_ARGS = `args: [${["-e", SAT_CODE, "--", "--satellite"].map((a) => JSON.stringify(a)).join(", ")}]`;
+const NODE_E = ["type: stdio", "command: node", SAT_ARGS];
+const SH_FORM =
+  'args: ["-c", "exec node \\"$HOME/.iskron-bridge/iskron-bridge.mjs\\" --satellite"]';
+
+function agentFile(role, entryName, spec = NODE_E) {
+  return [
+    "---",
+    `name: ${role}`,
+    `description: роль ${role}`,
+    "model: sonnet",
+    "mcpServers:",
+    `  - ${entryName}:`,
+    ...spec.map((l) => `      ${l}`),
+    "disallowedTools: mcp__iskron-bridge, mcp__plugin_iskron_iskron, mcp__iskron",
+    "---",
+    "",
+    "Тело.",
+    "",
+  ].join("\n");
+}
+
+function projectWithAgents(files) {
+  const project = mkdtempSync(join(tmpdir(), "iskron-doctor-agents-"));
+  const agents = join(project, ".claude", "agents");
+  mkdirSync(agents, { recursive: true });
+  for (const [role, text] of Object.entries(files)) writeFileSync(join(agents, `${role}.md`), text);
+  return project;
+}
+
+test("doctor: role files sharing one bridge entry name are named, each with its own name to take", async () => {
+  const fake = await startFakeNks();
+  const home = mkdtempSync(join(tmpdir(), "iskron-doctor-"));
+  const project = projectWithAgents({
+    reader: agentFile("reader", "iskron-sub"),
+    worker: agentFile("worker", "iskron-sub"),
+    verifier: agentFile("verifier", "iskron-sub-verifier"),
+  });
+  try {
+    const r = await run(
+      ["doctor", fake.mcpUrl, "--auth-dir", join(home, ".iskron-bridge")],
+      { HOME: home, ISKRON_DOCTOR_PLATFORM: "darwin" },
+      project,
+    );
+    assert.equal(r.code, 0, r.err);
+    assert.match(r.out, /субагенты: проект /, `the section must be there: ${r.out}`);
+    assert.match(
+      r.out,
+      /имя записи «iskron-sub» делят 2 файла/,
+      `a shared name must be named: ${r.out}`,
+    );
+    assert.match(r.out, /переименуй запись в этом файле: iskron-sub-reader/, r.out);
+    assert.match(r.out, /переименуй запись в этом файле: iskron-sub-worker/, r.out);
+    assert.doesNotMatch(
+      r.out,
+      /«iskron-sub-verifier» делят/,
+      `a file with its own name must not be accused: ${r.out}`,
+    );
+  } finally {
+    await fake.stop();
+  }
+});
+
+// Прежние формы — sh -c и путь прямо в args — заменяет одна `node -e` без
+// машинного пути, на любой ОС.
+for (const [form, spec] of [
+  ["sh", ["type: stdio", "command: sh", SH_FORM]],
+  [
+    "path",
+    [
+      "type: stdio",
+      `command: ${JSON.stringify(process.execPath)}`,
+      'args: ["C:\\\\Users\\\\a\\\\.iskron-bridge\\\\iskron-bridge.mjs", "--satellite"]',
+    ],
+  ],
+]) {
+  test(`doctor: a ${form} satellite entry is named, with the single node -e block`, async () => {
+    const fake = await startFakeNks();
+    const home = mkdtempSync(join(tmpdir(), "iskron-doctor-"));
+    const project = projectWithAgents({ worker: agentFile("worker", "iskron-sub-worker", spec) });
+    try {
+      const r = await run(
+        ["doctor", fake.mcpUrl, "--auth-dir", join(home, ".iskron-bridge")],
+        { HOME: home, ISKRON_DOCTOR_PLATFORM: "win32" },
+        project,
+      );
+      assert.equal(r.code, 0, r.err);
+      assert.match(
+        r.out,
+        form === "sh" ? /прежнего контракта \(sh -c\)/ : /машинный путь в общем файле/,
+        r.out,
+      );
+      assert.ok(
+        r.out.includes(
+          `      mcpServers:\n        - iskron-sub-worker:\n            type: stdio\n            command: node\n            ${SAT_ARGS}\n`,
+        ),
+        `the ready block must be the single node -e form: ${r.out}`,
+      );
+      assert.doesNotMatch(r.out, /skip-worktree|info\/exclude/, "no machine file any more");
+    } finally {
+      await fake.stop();
+    }
+  });
+}
+
+// Форма `node -e` признаётся только целиком: без `--` node примет --satellite за
+// свой флаг; без splice мост не увидит его и встанет мостом сессии.
+test("doctor: a node -e entry is accepted only whole — with -- and the bridge path in argv", async () => {
+  const fake = await startFakeNks();
+  const home = mkdtempSync(join(tmpdir(), "iskron-doctor-"));
+  const noSplice =
+    "import(require('path').join(require('os').homedir(), '.iskron-bridge', 'iskron-bridge.mjs'))";
+  const project = projectWithAgents({
+    reader: agentFile("reader", "iskron-sub-reader", [
+      "type: stdio",
+      "command: node",
+      `args: ${JSON.stringify(["-e", SAT_CODE, "--satellite"])}`,
+    ]),
+    worker: agentFile("worker", "iskron-sub-worker", [
+      "type: stdio",
+      "command: node",
+      `args: ${JSON.stringify(["-e", noSplice, "--", "--satellite"])}`,
+    ]),
+  });
+  try {
+    const r = await run(
+      ["doctor", fake.mcpUrl, "--auth-dir", join(home, ".iskron-bridge")],
+      { HOME: home, ISKRON_DOCTOR_PLATFORM: "darwin" },
+      project,
+    );
+    assert.match(r.out, /«iskron-sub-reader»: --satellite стоит без `--`/, r.out);
+    assert.match(r.out, /«iskron-sub-worker»: мост не увидит --satellite.*мостом сессии/, r.out);
+  } finally {
+    await fake.stop();
+  }
+});
+
+// Без входа проба спутника лишь начала бы вход, который никто не кончит: её нет,
+// в доме ничего не появилось, и doctor говорит, как войти.
+test("doctor: with no grant the satellite probe is skipped and the way to log in is named", async () => {
+  const fake = await startFakeNks();
+  const home = mkdtempSync(join(tmpdir(), "iskron-doctor-"));
+  const authDir = join(home, ".iskron-bridge");
+  mkdirSync(authDir, { recursive: true });
+  copyFileSync(FILE, join(authDir, "iskron-bridge.mjs"));
+  const project = projectWithAgents({ worker: agentFile("worker", "iskron-sub-worker") });
+  try {
+    const r = await run(
+      ["doctor", fake.mcpUrl, "--auth-dir", authDir],
+      { HOME: home, ISKRON_DOCTOR_PLATFORM: "darwin", ISKRON_BRIDGE_URL: fake.mcpUrl },
+      project,
+    );
+    assert.match(r.out, /проба спутника не шла — входа в граф на этой машине нет → войди/, r.out);
+    assert.doesNotMatch(r.out, /\/login\?k=/, `no dead login link: ${r.out}`);
+    assert.deepEqual(readdirSync(authDir), ["iskron-bridge.mjs"], "the home must stay untouched");
+  } finally {
+    await fake.stop();
+  }
+});
+
+// Готовый блок, снятый с вывода doctor и вставленный в файл, на повторе не даёт
+// ни одной строки «НАДО:» — на обеих формах, и многострочное описание (`|`)
+// не обрывает разбор фронтматтера.
+for (const platform of ["darwin", "win32"]) {
+  test(`doctor: the ready block pasted back gives no findings on a rerun (${platform})`, async () => {
+    const fake = await startFakeNks({ pat: "nks_pat_rt" });
+    // Дом с пробелом в пути: путь к мосту читается из args целиком, не склейкой.
+    const home = mkdtempSync(join(tmpdir(), "iskron doctor home "));
+    const homeBridge = join(home, ".iskron-bridge", "iskron-bridge.mjs");
+    mkdirSync(dirname(homeBridge), { recursive: true });
+    copyFileSync(FILE, homeBridge);
+    const head = ["---", "name: worker", "description: |", "  первая строка", "  вторая строка"];
+    const project = projectWithAgents({
+      worker: [...head, "model: sonnet", "---", "", "Тело.", ""].join("\n"),
+    });
+    const env = {
+      HOME: home,
+      ISKRON_DOCTOR_PLATFORM: platform,
+      ISKRON_BRIDGE_TOKEN: "nks_pat_rt",
+      ISKRON_BRIDGE_URL: fake.mcpUrl,
+    };
+    const args = ["doctor", fake.mcpUrl, "--auth-dir", join(home, ".iskron-bridge")];
+    try {
+      const first = await run(args, env, project);
+      assert.match(first.out, /записи моста-спутника нет/, first.out);
+      const lines = first.out.split("\n");
+      const at = lines.findIndex((l) => l.includes("записи моста-спутника нет"));
+      const block = [];
+      for (let k = at + 1; k < lines.length && lines[k].startsWith("      "); k++)
+        block.push(lines[k].slice(6));
+      assert.ok(block[0] === "mcpServers:", `the block must follow the finding: ${first.out}`);
+      writeFileSync(
+        join(project, ".claude", "agents", "worker.md"),
+        [...head, "model: sonnet", ...block, "---", "", "Тело.", ""].join("\n"),
+      );
+      const again = await run(args, env, project);
+      assert.equal(again.code, 0, again.err);
+      assert.doesNotMatch(again.out, /НАДО:/, `the pasted block must be clean: ${again.out}`);
+      assert.match(again.out, /проба «iskron-sub-worker»: мост ответил/, again.out);
+    } finally {
+      await fake.stop();
+    }
+  });
+}
+
+// Мост, не ушедший по закрытому stdin, получает SIGTERM и уходит сам — SIGKILL
+// посреди смены токена списал бы грант машины.
+test("doctor: a probed bridge that outlives stdin close is sent SIGTERM, not killed", async () => {
+  const fake = await startFakeNks();
+  const home = mkdtempSync(join(tmpdir(), "iskron-doctor-"));
+  const dir = mkdtempSync(join(tmpdir(), "iskron-doctor-stub-"));
+  // Заглушка лежит домашним мостом: единая форма записи зовёт именно его.
+  mkdirSync(join(home, ".iskron-bridge"), { recursive: true });
+  const stub = join(home, ".iskron-bridge", "iskron-bridge.mjs");
+  const marker = join(dir, "term");
+  writeFileSync(
+    stub,
+    [
+      'import { writeFileSync } from "node:fs";',
+      'import { createInterface } from "node:readline";',
+      "const say = (m) => process.stdout.write(JSON.stringify(m) + '\\n');",
+      "createInterface({ input: process.stdin }).on('line', (l) => {",
+      "  const m = JSON.parse(l);",
+      "  if (m.method === 'initialize') say({ jsonrpc: '2.0', id: m.id, result: { serverInfo: { name: 'stub', version: '1' } } });",
+      "  if (m.method === 'tools/list') say({ jsonrpc: '2.0', id: m.id, result: { tools: [] } });",
+      "});",
+      "process.stdin.on('end', () => setInterval(() => {}, 1000));",
+      `process.on('SIGTERM', () => { writeFileSync(${JSON.stringify(marker)}, 'term'); process.exit(0); });`,
+    ].join("\n"),
+  );
+  const project = projectWithAgents({ worker: agentFile("worker", "iskron-sub-worker") });
+  try {
+    const r = await run(
+      ["doctor", fake.mcpUrl, "--auth-dir", join(home, ".iskron-bridge")],
+      // Личный токен — вход есть, проба идёт; фейк его не знает, но заглушке сервер не нужен.
+      { HOME: home, ISKRON_DOCTOR_PLATFORM: "darwin", ISKRON_BRIDGE_TOKEN: "nks_pat_stub" },
+      project,
+    );
+    assert.match(r.out, /проба «iskron-sub-worker»: мост ответил — stub v1/, r.out);
+    assert.equal(readFileSync(marker, "utf8"), "term", "the bridge must be asked with SIGTERM");
+    assert.doesNotMatch(r.out, /SIGKILL/, r.out);
+  } finally {
+    await fake.stop();
+  }
+});
+
+// Провал пробы — находка с действием, и файл тогда не «в порядке»: иначе цикл
+// «doctor до раздела без НАДО:» кончался бы при сломанном субагенте. Отказ со
+// ссылкой входа — мёртвый грант: совет тот же, что без входа.
+for (const [what, stub, expect] of [
+  [
+    "a silent bridge",
+    "process.exit(0);",
+    /НАДО: проба «iskron-sub-worker»: мост не ответил на initialize/,
+  ],
+  [
+    "a dead grant",
+    [
+      'import { createInterface } from "node:readline";',
+      "createInterface({ input: process.stdin }).on('line', (l) => {",
+      "  const m = JSON.parse(l);",
+      "  if (m.method === 'initialize') process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: m.id, error: { code: -32001, message: 'нужен вход: откройте http://127.0.0.1:1/login?k=dead' } }) + '\\n');",
+      "});",
+    ].join("\n"),
+    /НАДО: проба «iskron-sub-worker»: initialize — спутник не вошёл: грант машины мёртв или отозван → войди: вызови любой тул iskron_\*/,
+  ],
+]) {
+  test(`doctor: ${what} in the satellite probe is a finding, and the file is not in order`, async () => {
+    const fake = await startFakeNks();
+    const home = mkdtempSync(join(tmpdir(), "iskron-doctor-"));
+    mkdirSync(join(home, ".iskron-bridge"), { recursive: true });
+    writeFileSync(join(home, ".iskron-bridge", "iskron-bridge.mjs"), stub);
+    const project = projectWithAgents({ worker: agentFile("worker", "iskron-sub-worker") });
+    try {
+      const r = await run(
+        ["doctor", fake.mcpUrl, "--auth-dir", join(home, ".iskron-bridge")],
+        {
+          HOME: home,
+          ISKRON_DOCTOR_PLATFORM: "darwin",
+          ISKRON_BRIDGE_TOKEN: "nks_pat_stub",
+          ISKRON_DOCTOR_PROBE_MS: "5000",
+        },
+        project,
+      );
+      assert.match(r.out, expect, r.out);
+      assert.doesNotMatch(r.out, /— в порядке/, r.out);
+      assert.doesNotMatch(r.out, /сделай, что велит отказ/, r.out);
+    } finally {
+      await fake.stop();
+    }
+  });
+}
+
+// Субагент наследует и нативную http-запись на сервер графа — её тулы снимаются так же.
+test("doctor: an http entry on the graph server counts among the caller's bridges", async () => {
+  const fake = await startFakeNks();
+  const home = mkdtempSync(join(tmpdir(), "iskron-doctor-"));
+  writeFileSync(
+    join(home, ".claude.json"),
+    JSON.stringify({
+      mcpServers: {
+        "graph-http": { type: "http", url: "https://mcp.iskron.ru/" },
+        "чужой-http": { type: "http", url: "https://example.com/mcp" },
+      },
+    }),
+  );
+  const project = projectWithAgents({ worker: agentFile("worker", "iskron-sub-worker") });
+  try {
+    const r = await run(
+      ["doctor", fake.mcpUrl, "--auth-dir", join(home, ".iskron-bridge")],
+      { HOME: home, ISKRON_DOCTOR_PLATFORM: "darwin" },
+      project,
+    );
+    assert.match(r.out, /мосты позвавшего не сняты \(mcp__graph-http\)/, r.out);
+    assert.doesNotMatch(r.out, /mcp__чужой-http/, r.out);
+  } finally {
+    await fake.stop();
+  }
+});
+
+test("doctor: a satellite probe names the tool whose schema carries a top-level anyOf", async () => {
+  const fake = await startFakeNks({
+    pat: "nks_pat_sub",
+    tools: [
+      { name: "iskron_orient", inputSchema: { type: "object", properties: {} } },
+      {
+        name: "iskron_add_kriya",
+        inputSchema: {
+          anyOf: [
+            { type: "object", properties: { a: { type: "string" } } },
+            { type: "object", properties: { b: { type: "string" } } },
+          ],
+        },
+      },
+    ],
+  });
+  const home = mkdtempSync(join(tmpdir(), "iskron-doctor-"));
+  const homeBridge = join(home, ".iskron-bridge", "iskron-bridge.mjs");
+  mkdirSync(dirname(homeBridge), { recursive: true });
+  copyFileSync(FILE, homeBridge);
+  const project = projectWithAgents({ worker: agentFile("worker", "iskron-sub-worker") });
+  try {
+    const r = await run(
+      ["doctor", fake.mcpUrl, "--auth-dir", join(home, ".iskron-bridge")],
+      {
+        HOME: home,
+        ISKRON_DOCTOR_PLATFORM: "darwin",
+        ISKRON_BRIDGE_TOKEN: "nks_pat_sub",
+        ISKRON_BRIDGE_URL: fake.mcpUrl,
+      },
+      project,
+    );
+    assert.equal(r.code, 0, r.err);
+    assert.match(
+      r.out,
+      /проба «iskron-sub-worker»: мост ответил/,
+      `the probe must answer: ${r.out}`,
+    );
+    assert.match(
+      r.out,
+      /НАДО: тул iskron_add_kriya: схема несёт anyOf на верхнем уровне/,
+      `the offending tool must be a finding: ${r.out}`,
+    );
+    assert.doesNotMatch(r.out, /worker\.md: запись «iskron-sub-worker» — в порядке/, r.out);
+    assert.doesNotMatch(r.out, /тул iskron_orient:/, `a clean schema is not a finding: ${r.out}`);
   } finally {
     await fake.stop();
   }
