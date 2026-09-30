@@ -1,11 +1,11 @@
 #!/usr/bin/env node
-// Демон-заглушка для проб тонкого моста (js/tests/thin.test.mjs). Настоящий
-// демон машины — следующий шаг; заглушка собрана из тех же частей, что возьмёт
-// он: сторона демона на шве (shared/seam-host.ts: listenSeam, serveSeam,
-// streamSeamSession) и сессия движка (bridge/session.ts openSession с
-// происхождением из рукопожатия) в своём процессе. Хозяин держит сессии по id,
-// как демон; движок пока даёт одну на процесс — вторая получает refuse словами
-// движка. Сессия ушла — заглушка уходит (у демона это будет окно простоя).
+// Демон-заглушка для проб тонкого моста (js/tests/thin.test.mjs) — там, где
+// настоящему демону (bridge/daemon.ts) нечего показать без шва для проб: обрыв
+// шва посреди вызова при живой сессии и окружение, которое видит сессия.
+// Собрана из тех же частей, что настоящий: сторона демона на шве
+// (shared/seam-host.ts: listenSeam, serveSeam, streamSeamSession) и сессия
+// движка (bridge/session.ts openSession с происхождением из рукопожатия, в своей
+// области shared/scope.ts). Сессия ушла — заглушка уходит сразу.
 //
 // Запуск — тем же ходом, каким тонкий мост поднимает демон
 // (ISKRON_BRIDGE_DAEMON_ENTRY=<этот файл>):  node fake-daemon.mjs daemon --auth-dir <dir>
@@ -16,6 +16,7 @@ import { appendFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { openSession } from "../bridge/session.ts";
+import { envOf, runIn } from "../shared/scope.ts";
 import { seamSocketPath } from "../shared/seam-entrance.ts";
 import { listenSeam, serveSeam, streamSeamSession } from "../shared/seam-host.ts";
 import { buildOf } from "../shared/version.ts";
@@ -36,8 +37,9 @@ const host = {
   open(hello) {
     const id = `s-${process.pid}-${++counter}`;
     let s;
+    let engine;
     try {
-      s = streamSeamSession(id, (io) => openSession(io, hello));
+      s = streamSeamSession(id, (io, log) => (engine = openSession(io, hello, { id, log })));
     } catch (e) {
       return e.message;
     }
@@ -61,10 +63,12 @@ const host = {
         }),
     };
     sessions.set(id, traced);
-    // Что сессия видит от окружения: ключ демона, которого харнес не назвал
-    // (снимается), чужое окружение харнеса (не доезжает), токен (не едет по шву).
+    // Что сессия видит от окружения — в своей области: ключ демона, которого
+    // харнес не назвал (его нет), чужое окружение харнеса (не доезжает), токен
+    // (не едет по шву).
+    const seen = (k) => runIn(engine.scope, () => envOf(k) !== undefined);
     note(
-      `env stale=${"ISKRON_STALE_MARK" in process.env} harness_other=${"HARNESS_OTHER" in process.env} token_in_hello=${"ISKRON_BRIDGE_TOKEN" in hello.env}`,
+      `env stale=${seen("ISKRON_STALE_MARK")} harness_other=${seen("HARNESS_OTHER")} token_in_hello=${"ISKRON_BRIDGE_TOKEN" in hello.env}`,
     );
     note(
       `hello pid=${hello.pid} session=${hello.session ?? "-"} argv=${JSON.stringify(hello.argv)}`,

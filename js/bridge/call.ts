@@ -2,6 +2,7 @@
 // resume.ts): доска, connect, register. Ответ connect впитывается мостом так
 // же, как проксируемый (absorb.ts), а принятый register запоминается стоянием.
 import { L } from "../shared/lang.ts";
+import { scoped } from "../shared/scope.ts";
 import { absorbChannelReply } from "./absorb.ts";
 import { holdsChannel, ledKey } from "./hold.ts";
 import { keyOf } from "./holdrecord.ts";
@@ -178,10 +179,11 @@ export const short = (s: string, n = 300): string => (s.length > n ? `${s.slice(
 // Ходы моста над местом — iskron_stand, iskron/resume, iskron/check — идут по
 // одному: столкновение стояния с тиком сторожа дало бы два holdStanding и
 // лишний released, по которому плагин снял бы holding (#5140).
-let chain: Promise<unknown> = Promise.resolve();
+// Очередь — сессии (shared/scope.ts): ходы разных сессий демона над своими местами друг друга не ждут.
+const Q = scoped(() => ({ chain: Promise.resolve() as Promise<unknown> }));
 export function serialized<T>(fn: () => Promise<T>): Promise<T> {
-  const p = chain.then(fn, fn);
-  chain = p.then(
+  const p = Q.chain.then(fn, fn);
+  Q.chain = p.then(
     () => undefined,
     () => undefined,
   );

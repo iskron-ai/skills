@@ -7,7 +7,7 @@
 //   node iskron.mjs doctor [server-url] [flags]     какая сборка стоит и работает ли она
 //   node iskron.mjs update [--auth-dir <dir>]       свежий релиз в дом: мост, плагин OpenCode, SETUP.md
 //   node iskron.mjs use <en|ru|url> [--auth-dir <dir>]  постоянный выбор адреса сервера на этой машине
-//   node iskron.mjs daemon --auth-dir <dir>         демон машины для тонких мостов (следующий шаг; здесь — отказ)
+//   node iskron.mjs daemon --auth-dir <dir>         демон машины для тонких мостов (bridge/daemon.ts)
 //   node iskron.mjs --version                       сборка vX.Y.Z+хеш (при ISKRON_BRIDGE_DAEMON=1 — и сборка демона)
 //
 // Каждый долгоживущий запуск (мост, сторожа) сперва выравнивает дом: своя
@@ -19,8 +19,9 @@
 // конфиге харнеса `node ~/.iskron-bridge/iskron-bridge.mjs` остаётся верной,
 // каким бы именем ни лежала копия.
 import { BUILD } from "../bridge/build.ts";
+import { daemonMain } from "../bridge/daemon.ts";
 import { bridgeMain } from "../bridge/main.ts";
-import { versionLines } from "../bridge/thin.ts";
+import { versionLines } from "../bridge/probe.ts";
 import { reexec, syncHome, updatesDisabled } from "../bridge/update.ts";
 import { runWatchdogCodex } from "../watchdog/codex.ts";
 import { runWatchdog } from "../watchdog/watchdog.ts";
@@ -38,6 +39,7 @@ const USAGE = `iskron ${BUILD}
   node iskron.mjs doctor [server-url] [--auth-dir <dir>]
   node iskron.mjs update [--auth-dir <dir>]
   node iskron.mjs use <en|ru|url> [--auth-dir <dir>]   (en — mcp.iskron.ai, ru — mcp.iskron.ru)
+  node iskron.mjs daemon --auth-dir <dir>   (демон машины; его поднимает тонкий мост при ISKRON_BRIDGE_DAEMON=1)
   node iskron.mjs --version
   env: ISKRON_BRIDGE_TOKEN — личный токен вместо OAuth (или файл <auth-dir>/token);
        ISKRON_BRIDGE_URL, ISKRON_BRIDGE_AUTH_DIR, ISKRON_BRIDGE_NO_BROWSER, ISKRON_BRIDGE_DEBUG
@@ -47,13 +49,14 @@ const argv = process.argv.slice(2);
 const [first, ...rest] = argv;
 
 // Дом против себя — только у долгоживущих: мост и сторожа. doctor и update
-// говорят о том файле, который запустили; --version и --help чисты.
+// говорят о том файле, который запустили; --version и --help чисты. Демон
+// машины сверяет дом сам: домашняя новее — встаёт преемником, а не обёрткой.
 const LONG_LIVED = new Set([undefined, "bridge", "watchdog", "watchdog-exit", "watchdog-codex"]);
 const longLived =
   LONG_LIVED.has(first) ||
   (first !== undefined &&
     !first.startsWith("--") &&
-    !["doctor", "update", "use", "-h"].includes(first));
+    !["doctor", "update", "use", "daemon", "-h"].includes(first));
 if (longLived && !updatesDisabled() && !process.env.ISKRON_BRIDGE_REEXEC) {
   const sync = syncHome();
   for (const p of sync.copied)
@@ -86,10 +89,8 @@ function dispatch(): void {
       bridgeMain(rest);
       break;
     case "daemon":
-      // Демон машины (шов — shared/seam.ts, seam-host.ts) приходит следующим
-      // шагом; эта сборка его не несёт, и тонкий мост, не дождавшись, идёт полным.
-      process.stderr.write(`[iskron-bridge] ${BUILD}: the machine daemon is not in this build\n`);
-      process.exit(3);
+      // Демон машины для тонких мостов (bridge/daemon.ts); дом против себя он сверяет сам.
+      void daemonMain(rest);
       break;
     case "--version":
       // При тонком мосте — и сборка демона своего каталога гранта, второй строкой.

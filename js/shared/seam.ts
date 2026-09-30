@@ -18,6 +18,11 @@
 //                           чем запрос отдан сессии: нет ack — сессия запроса не видела)
 //   тонкий → демон  bye     конец сессии по слову харнеса (stdin закрыт, SIGTERM)
 //   демон → тонкий  bye-ok  сессия ушла: всё, что было в полёте, отвечено
+//   демон → тонкий  log     слово сессии в stderr тонкого моста — харнес видит его, как видел
+//                           stderr полного (шаг 2; тонкий мост шага 1 кадр пропускает)
+//   демон → тонкий  handover демон передаёт места преемнику: связь сейчас оборвётся, и тонкий
+//                           мост ждёт преемника, а не поднимает демон сам (шаг 2)
+// Кадр незнакомого вида пропускается обеими сторонами: новое добавляется без смены версии.
 // Закрытие сокета без bye (SIGKILL тонкого моста) — тот же конец сессии в
 // демоне, по истечении окна переподхвата SEAM_REATTACH_GRACE_MS.
 import { createHash } from "node:crypto";
@@ -29,7 +34,7 @@ export const SEAM_PROTOCOL = 1;
 /** Сколько демон держит сессию, чей сокет закрылся без bye, в ожидании переподхвата. */
 export const SEAM_REATTACH_GRACE_MS = 5_000;
 
-/** Включает тонкий мост (по умолчанию выключено, пока демона нет в поставке). */
+/** Включает тонкий мост (по умолчанию выключено: включение — отдельным решением к 7.0.0). */
 export const DAEMON_ENV = "ISKRON_BRIDGE_DAEMON";
 /** Выключатель: полный мост в процессе, что бы ни было. */
 export const NO_DAEMON_ENV = "ISKRON_BRIDGE_NO_DAEMON";
@@ -76,6 +81,20 @@ export interface SeamWelcome {
   resumed: boolean;
   /** Демон подтверждает приём запросов кадром ack; нет — исход любого ушедшего запроса неизвестен. */
   ack?: boolean;
+  /** Ответ на probe: сколько сессий держит демон (doctor). */
+  sessions?: number;
+  /** Ответ на probe: файл демона. */
+  path?: string;
+}
+
+export interface SeamLog {
+  t: "log";
+  line: string;
+}
+
+export interface SeamHandover {
+  t: "handover";
+  why?: string;
 }
 
 export interface SeamAck {
@@ -105,7 +124,15 @@ export interface SeamByeOk {
 }
 
 export type SeamFrame =
-  SeamHello | SeamWelcome | SeamRefuse | SeamRpc | SeamAck | SeamBye | SeamByeOk;
+  | SeamHello
+  | SeamWelcome
+  | SeamRefuse
+  | SeamRpc
+  | SeamAck
+  | SeamBye
+  | SeamByeOk
+  | SeamLog
+  | SeamHandover;
 
 // --- рукопожатие -------------------------------------------------------------
 

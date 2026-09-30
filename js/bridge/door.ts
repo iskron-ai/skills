@@ -7,6 +7,7 @@ import { createServer, type Server, type Socket } from "node:net";
 import { dirname } from "node:path";
 
 import { type Frame } from "../shared/channel.ts";
+import { bindScope } from "../shared/scope.ts";
 import { deliveredKeys, seenIds } from "../shared/seen.ts";
 import {
   keyFilePathOf,
@@ -30,9 +31,10 @@ const RING = 20; // кадров, которые прицепившийся по
 export const ENV_KEY = "env";
 
 export interface ChannelEvent {
-  // held — мост взял сокет (питает holding плагина OpenCode, #5140); backlog — пачка побудки; lost — слух потерян, resumed — место возвращено без хода агента (оба синтезирует плагин, #5366)
+  // held — мост взял сокет (питает holding плагина OpenCode, #5140); backlog — пачка побудки; lost — слух потерян, resumed — место возвращено без хода агента (оба синтезирует плагин, #5366);
+  // handover — демон машины передаёт место преемнику: дверь закроется и откроется тем же путём, сторож переподхватывает её (watchdog/client.ts)
   // prettier-ignore
-  kind: "attached" | "frame" | "note" | "dead" | "alive" | "evicted" | "stale" | "released" | "held" | "backlog" | "lost" | "resumed";
+  kind: "attached" | "frame" | "note" | "dead" | "alive" | "evicted" | "stale" | "released" | "held" | "backlog" | "lost" | "resumed" | "handover";
   key?: string;
   raw?: string;
   frame?: Frame | null;
@@ -87,10 +89,20 @@ export class Door {
   private server: Server | null = null;
   private freshen: ReturnType<typeof setInterval> | null = null;
   private readonly hooks: DoorHooks;
+  // Каталог гранта и сервер — сессии, открывшей дверь (shared/scope.ts): дверь
+  // закрывается и из чужой области (уход демона), а пути у неё те же.
+  private readonly authDir: string;
+  private readonly serverUrl: string;
 
   constructor(key: string, hooks: DoorHooks) {
     this.key = key;
-    this.hooks = hooks;
+    this.hooks = {
+      onAttach: bindScope(hooks.onAttach),
+      lateEvent: bindScope(hooks.lateEvent),
+      onError: bindScope(hooks.onError),
+    };
+    this.authDir = CFG.authDir;
+    this.serverUrl = CFG.serverUrl;
     this.seen = seenIds(this.seenPath);
   }
 
@@ -103,11 +115,11 @@ export class Door {
   }
 
   get seenPath(): string {
-    return seenFilePathOf(CFG.authDir, this.key, this.persistent ? CFG.serverUrl : "");
+    return seenFilePathOf(this.authDir, this.key, this.persistent ? this.serverUrl : "");
   }
 
   get socketPath(): string {
-    return socketPathOf(CFG.authDir, this.key);
+    return socketPathOf(this.authDir, this.key);
   }
 
   push(raw: string, frame: Frame | null): void {
@@ -129,7 +141,8 @@ export class Door {
   open(): void {
     const path = this.socketPath;
     const key = this.key;
-    mkdirSync(standingsDirOf(CFG.authDir), { recursive: true, mode: 0o700 });
+    const authDir = this.authDir;
+    mkdirSync(standingsDirOf(authDir), { recursive: true, mode: 0o700 });
     if (process.platform !== "win32" && dirname(path) === shortSocketDir()) {
       const bad = privateDirProblem(dirname(path));
       if (bad) {
@@ -138,8 +151,8 @@ export class Door {
         return;
       }
     }
-    sweepStale(CFG.authDir, key);
-    writeFileSync(keyFilePathOf(CFG.authDir, key), key + "\n", { mode: 0o600 });
+    sweepStale(authDir, key);
+    writeFileSync(keyFilePathOf(authDir, key), key + "\n", { mode: 0o600 });
     if (process.platform !== "win32") {
       try {
         unlinkSync(path);
@@ -149,64 +162,69 @@ export class Door {
       this.clients.delete(sock);
       if (this.clients.size === 0) this.idleAt = Date.now();
     };
-    const srv = createServer((sock) => {
-      this.clients.add(sock);
-      this.idleAt = null;
-      sock.on("close", () => gone(sock));
-      sock.on("error", () => gone(sock));
-      this.hooks.onAttach();
-      // Задним числом — доказательство держания (hello) и кадры, которых ни один
-      // местный клиент ещё не получал: перевзведённый сторож не должен нести
-      // делателю то же кольцо второй раз — память доставленного у моста есть.
-      // Доставленным кадр помечает отдавший его клиент (печатью, выходом) — файл читается заново.
-      // Кадр, лежащий в копящейся пачке комнаты, придёт с ней, не отдельно.
-      const backlog = this.ring.filter(
-        ({ frame }) =>
-          frame?.type !== "message" ||
-          (!isDelivered(deliveredKeys(frame), this.seen, this.seenPath) &&
-            !this.roomBatch.holds(frame)),
-      );
-      sock.write(
-        JSON.stringify({
-          kind: "attached",
-          key,
-          buffered: backlog.length,
-          seen: this.seenPath,
-        } satisfies ChannelEvent) + "\n",
-      );
-      for (const { raw, frame } of backlog) {
-        sock.write(JSON.stringify({ kind: "frame", raw, frame } satisfies ChannelEvent) + "\n");
-      }
-      // Место отняли, а сторож перевзвёлся: молчание читалось бы как слух.
-      const late = this.hooks.lateEvent();
-      if (late) sock.write(JSON.stringify(late) + "\n");
-    });
+    const srv = createServer(
+      bindScope((sock: Socket) => {
+        this.clients.add(sock);
+        this.idleAt = null;
+        sock.on("close", () => gone(sock));
+        sock.on("error", () => gone(sock));
+        this.hooks.onAttach();
+        // Задним числом — доказательство держания (hello) и кадры, которых ни один
+        // местный клиент ещё не получал: перевзведённый сторож не должен нести
+        // делателю то же кольцо второй раз — память доставленного у моста есть.
+        // Доставленным кадр помечает отдавший его клиент (печатью, выходом) — файл читается заново.
+        // Кадр, лежащий в копящейся пачке комнаты, придёт с ней, не отдельно.
+        const backlog = this.ring.filter(
+          ({ frame }) =>
+            frame?.type !== "message" ||
+            (!isDelivered(deliveredKeys(frame), this.seen, this.seenPath) &&
+              !this.roomBatch.holds(frame)),
+        );
+        sock.write(
+          JSON.stringify({
+            kind: "attached",
+            key,
+            buffered: backlog.length,
+            seen: this.seenPath,
+          } satisfies ChannelEvent) + "\n",
+        );
+        for (const { raw, frame } of backlog) {
+          sock.write(JSON.stringify({ kind: "frame", raw, frame } satisfies ChannelEvent) + "\n");
+        }
+        // Место отняли, а сторож перевзвёлся: молчание читалось бы как слух.
+        const late = this.hooks.lateEvent();
+        if (late) sock.write(JSON.stringify(late) + "\n");
+      }),
+    );
     srv.on("error", (e) => {
       this.listenError = e.message;
       this.hooks.onError(
         `ДЕЛАТЕЛЬ: локальный сокет стояния не поднялся (${e.message}) — сторожу не к чему цепляться`,
       );
     });
-    srv.listen(path, () => {
-      if (process.platform !== "win32") {
-        try {
-          chmodSync(path, 0o600);
-        } catch {}
-      }
-      log(`standing socket held; local listeners attach at ${path}`);
-      // Чистка /tmp (macOS — трое суток без доступа) не снесёт сокет долгой вахты.
-      if (dirname(path) === shortSocketDir()) {
-        const touch = (): void => {
-          const now = new Date();
-          for (const p of [dirname(path), path])
-            try {
-              utimesSync(p, now, now);
-            } catch {}
-        };
-        this.freshen = setInterval(touch, 6 * 3600_000);
-        this.freshen.unref?.();
-      }
-    });
+    srv.listen(
+      path,
+      bindScope(() => {
+        if (process.platform !== "win32") {
+          try {
+            chmodSync(path, 0o600);
+          } catch {}
+        }
+        log(`standing socket held; local listeners attach at ${path}`);
+        // Чистка /tmp (macOS — трое суток без доступа) не снесёт сокет долгой вахты.
+        if (dirname(path) === shortSocketDir()) {
+          const touch = (): void => {
+            const now = new Date();
+            for (const p of [dirname(path), path])
+              try {
+                utimesSync(p, now, now);
+              } catch {}
+          };
+          this.freshen = setInterval(touch, 6 * 3600_000);
+          this.freshen.unref?.();
+        }
+      }),
+    );
     this.server = srv;
   }
 
@@ -242,7 +260,7 @@ export class Door {
       } catch {}
     }
     for (const p of [
-      keyFilePathOf(CFG.authDir, this.key),
+      keyFilePathOf(this.authDir, this.key),
       ...(this.persistent ? [] : [this.seenPath]),
     ]) {
       try {

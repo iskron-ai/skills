@@ -19,6 +19,7 @@ import { fileURLToPath } from "node:url";
 
 import { homeBridgePath } from "../shared/home.ts";
 import { L } from "../shared/lang.ts";
+import { scoped } from "../shared/scope.ts";
 import { compareVersions } from "../shared/semver.ts";
 import { VERSION, versionIn } from "../shared/version.ts";
 import { isProductionServer } from "./config.ts";
@@ -295,22 +296,44 @@ export function staleNotice(latest: Latest | null, authDir: string): string | nu
   );
 }
 
-let pendingNotice: string | null = null;
+const N = scoped(() => ({ pending: null as string | null })); // у каждой сессии — своя строка
 
 /** Строка отставания для первого ответа тула — отдаётся один раз. */
 export function takeNotice(): string | null {
-  const n = pendingNotice;
-  pendingNotice = null;
+  const n = N.pending;
+  N.pending = null;
   return n;
+}
+
+/** Строка отставания — в ближайший ответ тула этой сессии, без уведомления (сессия только открылась). */
+export function pendNotice(notice: string): void {
+  N.pending = notice;
+}
+
+/** Сказать отставание сессии: уведомлением MCP сейчас и строкой в ближайший ответ тула. */
+export function tellNotice(notice: string): void {
+  N.pending = notice;
+  emit({
+    jsonrpc: "2.0",
+    method: "notifications/message",
+    params: { level: "warning", logger: "iskron-bridge", data: { kind: "stale", text: notice } },
+  });
 }
 
 /**
  * Фоновая сверка с релизами: через пару секунд после старта и дальше раз в
  * шесть часов, только у моста, смотрящего на продовый инстанс (другой сервер —
  * другая поставка), и никогда под ISKRON_BRIDGE_NO_UPDATE. Отставание уходит
- * уведомлением MCP и строкой в ближайший ответ тула.
+ * уведомлением MCP и строкой в ближайший ответ тула. `tell` — кому: полный мост
+ * говорит своей сессии; демон машины — каждой своей и обновляет себя (daemon.ts).
+ * `onChecked` — после каждой сверки, какой бы ни был исход.
  */
-export function startFreshnessWatch(authDir: string, serverUrl: string): void {
+export function startFreshnessWatch(
+  authDir: string,
+  serverUrl: string,
+  tell: (notice: string) => void = tellNotice,
+  onChecked: () => void = () => {},
+): void {
   if (updatesDisabled()) return;
   const explicit = !!process.env.ISKRON_BRIDGE_RELEASES_URL?.trim();
   if (!explicit && !isProductionServer(serverUrl)) {
@@ -337,17 +360,13 @@ export function startFreshnessWatch(authDir: string, serverUrl: string): void {
       retry = setTimeout(() => void tick(), wait);
       retry.unref();
     }
+    onChecked();
     const notice = staleNotice(latest, authDir);
     if (!notice) return;
     if (latest?.error && notice === told) return; // короткий повтор той же неудачи не твердит то же слово
     told = notice;
-    pendingNotice = notice;
     log(notice);
-    emit({
-      jsonrpc: "2.0",
-      method: "notifications/message",
-      params: { level: "warning", logger: "iskron-bridge", data: { kind: "stale", text: notice } },
-    });
+    tell(notice);
   };
   const delay = Number(process.env.ISKRON_BRIDGE_UPDATE_DELAY_MS ?? 2000);
   setTimeout(() => void tick(), Number.isFinite(delay) ? delay : 2000).unref();

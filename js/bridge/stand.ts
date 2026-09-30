@@ -10,6 +10,7 @@
 import { statSync } from "node:fs";
 import { isAbsolute } from "node:path";
 
+import { scoped, sessionCwd } from "../shared/scope.ts";
 import { nameOf, parseBoard } from "./board.ts";
 import {
   besideRefusal,
@@ -81,7 +82,7 @@ export const isStandCall = (msg: JsonRpcMessage): boolean =>
  * входа (connect — свежий сокет) сбрасывает счёт по этому месту: предел повторов
  * — на один заход, не пожизненный запрет.
  */
-const knocks = new Map<string, { at: number; count: number }>();
+const knocks = scoped(() => new Map<string, { at: number; count: number }>());
 // Окно повтора — 2 минуты по #4342; переменная — шов для проб, не ручка человека.
 const KNOCK_REPEAT_AFTER_MS = Number(process.env.ISKRON_STAND_KNOCK_REPEAT_MS) || 120_000;
 const KNOCK_LIMIT = 2;
@@ -105,10 +106,11 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   }
   const model = typeof a.model === "string" && a.model.trim() ? a.model : undefined;
   rememberModel(model);
-  const cwd = typeof a.cwd === "string" && a.cwd.trim() ? a.cwd.trim() : process.cwd();
+  // Каталог по умолчанию — моста харнеса: у сессии демона это cwd тонкого моста, не демона.
+  const cwd = typeof a.cwd === "string" && a.cwd.trim() ? a.cwd.trim() : sessionCwd();
   // Кривой cwd адресовал бы другое место (репо из несуществующего или чужого
   // каталога) — отказ вслух, как у явного имени (#5068).
-  if (cwd !== process.cwd() && !isDirectory(cwd)) {
+  if (cwd !== sessionCwd() && !isDirectory(cwd)) {
     lines.push(SW.badCwd(cwd, !isAbsolute(cwd)));
     return done(true);
   }

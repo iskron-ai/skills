@@ -35,8 +35,11 @@ export interface SeamSession {
   readonly id: string;
   /** Сообщение харнеса — в сессию. */
   deliver(msg: RpcMessage): void;
-  /** Куда сессия пишет харнесу: текущий сокет; null — связи нет, сказанное теряется. */
-  attach(sink: ((msg: RpcMessage) => void) | null): void;
+  /**
+   * Куда сессия пишет харнесу: текущий сокет; null — связи нет, сказанное теряется.
+   * `logSink` — куда идёт слово log сессии (кадр log тонкому мосту).
+   */
+  attach(sink: ((msg: RpcMessage) => void) | null, logSink?: ((line: string) => void) | null): void;
   /** Конец сессии; разрешается, когда всё в полёте отвечено. Повторный зов ждёт первого. */
   end(why: string): Promise<void>;
 }
@@ -51,6 +54,15 @@ export interface SeamHost {
   find(id: string): SeamSession | null;
   /** Слово демона в его лог. */
   log?(msg: string): void;
+  /** Сколько сессий держит демон — в ответ на probe. */
+  count?(): number;
+  /** Файл демона — в ответ на probe. */
+  path?: string;
+  /**
+   * Демон уходит (передаёт места преемнику): новые запросы не принимаются —
+   * без ack тонкий мост знает, что они не ушли, и переотправит их преемнику.
+   */
+  draining?(): boolean;
 }
 
 const HELLO_WAIT_MS = 5_000;
@@ -86,6 +98,10 @@ export function serveSeam(socket: Socket, host: SeamHost, graceMs = SEAM_REATTAC
     if (f.t === "rpc") {
       const msg = f.msg;
       const request = msg.method !== undefined && msg.id !== undefined && msg.id !== null;
+      if (host.draining?.()) {
+        if (request) say(`request ${JSON.stringify(msg.id)} not taken: the daemon is handing over`);
+        return;
+      }
       chain = chain.then(
         () =>
           new Promise<void>((done) => {
@@ -137,10 +153,19 @@ export function serveSeam(socket: Socket, host: SeamHost, graceMs = SEAM_REATTAC
         session: id,
         resumed,
         ack: true,
+        ...(id === null && host.count ? { sessions: host.count() } : {}),
+        ...(id === null && host.path ? { path: host.path } : {}),
       });
     if (hello.probe) {
       welcome(null, false);
       socket.end();
+      return;
+    }
+    // Уходящий демон не отказывает (отказ увёл бы тонкий мост полным ходом навсегда) —
+    // рвёт связь: тонкий мост ждёт преемника тем же переподхватом.
+    if (host.draining?.()) {
+      say("seam hello dropped: the daemon is handing over to its successor");
+      socket.destroy();
       return;
     }
     let s = hello.session ? host.find(hello.session) : null;
@@ -156,7 +181,10 @@ export function serveSeam(socket: Socket, host: SeamHost, graceMs = SEAM_REATTAC
     session = s;
     owners.set(s, socket);
     welcome(s.id, resumed);
-    s.attach((msg) => writeFrame(socket, { t: "rpc", msg }));
+    s.attach(
+      (msg) => writeFrame(socket, { t: "rpc", msg }),
+      (line) => writeFrame(socket, { t: "log", line }),
+    );
     say(
       `seam session ${s.id} ${resumed ? "resumed" : "opened"} for pid ${hello.pid} (${hello.build})`,
     );
@@ -167,7 +195,7 @@ export function serveSeam(socket: Socket, host: SeamHost, graceMs = SEAM_REATTAC
     const s = session;
     if (!s || byeing || owners.get(s) !== socket) return;
     owners.delete(s);
-    s.attach(null);
+    s.attach(null, null);
     say(`seam of session ${s.id} closed without bye — ending it in ${graceMs}ms unless reattached`);
     const t = setTimeout(() => {
       graceTimers.delete(s);
@@ -178,15 +206,26 @@ export function serveSeam(socket: Socket, host: SeamHost, graceMs = SEAM_REATTAC
   });
 }
 
-/** Сессия над потоками: open получает вход и выход, как openSession движка. */
+/**
+ * Сессия над потоками: open получает вход и выход, как openSession движка, и
+ * `log` — куда слать слово сессии: тонкому мосту, пока он на связи (onLog — всегда, журнал демона).
+ */
 export function streamSeamSession(
   id: string,
-  open: (io: { input: PassThrough; output: PassThrough }) => { leave(why: string): Promise<void> },
+  open: (
+    io: { input: PassThrough; output: PassThrough },
+    log: (line: string) => void,
+  ) => { leave(why: string): Promise<void> },
   onLost?: (msg: RpcMessage) => void,
+  onLog?: (line: string) => void,
 ): SeamSession {
   const input = new PassThrough();
   const output = new PassThrough();
-  const engine = open({ input, output });
+  let logSink: ((line: string) => void) | null = null;
+  const engine = open({ input, output }, (line) => {
+    onLog?.(line);
+    logSink?.(line);
+  });
   let sink: ((msg: RpcMessage) => void) | null = null;
   createInterface({ input: output, terminal: false }).on("line", (line) => {
     if (!line.trim()) return;
@@ -203,7 +242,10 @@ export function streamSeamSession(
   return {
     id,
     deliver: (msg) => void input.write(JSON.stringify(msg) + "\n"),
-    attach: (s) => void (sink = s),
+    attach: (s, l) => {
+      sink = s;
+      logSink = l ?? null;
+    },
     end: (why) =>
       (ending ??= engine
         .leave(why)

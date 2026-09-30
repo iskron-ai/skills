@@ -6,6 +6,7 @@
 // тем, ради которого он взят: у каждого своя дверь для сторожа, своя запись
 // держания и своя строка в повторной регистрации (standing.ts).
 import { type Frame } from "../shared/channel.ts";
+import { scoped } from "../shared/scope.ts";
 import { harnessName } from "./client.ts";
 import { Door, type DoorHooks } from "./door.ts";
 import { dropHoldRecord, keyOf, readHoldRecord, writeHoldRecord } from "./holdrecord.ts";
@@ -26,7 +27,7 @@ export interface Channel {
   cwd?: string | null;
 }
 
-const extras = new Map<string, Place>(); // ключ места → место с дверью
+const extras = scoped(() => new Map<string, Place>()); // ключ места → место с дверью (у сессии)
 
 export const keyOfPlace = (s: Standing): string => keyOf(s.realm, s.karta, s.name ?? "");
 export const extraPlaces = (): Place[] => [...extras.values()];

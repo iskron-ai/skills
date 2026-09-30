@@ -9,6 +9,7 @@ import { hostname } from "node:os";
 import { basename, dirname, resolve } from "node:path";
 
 import { L } from "../shared/lang.ts";
+import { sessionCwd } from "../shared/scope.ts";
 
 /** Правило имени стояния у сервера (наблюдено отказом 400). */
 export const NAME_MAX = 48;
@@ -86,7 +87,7 @@ export function fitName(parts: NameParts): { name: string; cut: (keyof NameParts
   };
 }
 
-export const git = (args: string[], cwd: string = process.cwd()): string => {
+export const git = (args: string[], cwd: string = sessionCwd()): string => {
   try {
     return execFileSync("git", args, {
       cwd,
@@ -115,7 +116,7 @@ const real = (p: string): string => {
  * (голый репо) — имя origin без `.git`, затем toplevel, затем сам каталог
  * (r5 #5108, второй случай).
  */
-export function repoName(cwd: string = process.cwd()): string {
+export function repoName(cwd: string = sessionCwd()): string {
   const top = git(["rev-parse", "--show-toplevel"], cwd);
   const [gitDir, common] = git(["rev-parse", "--git-dir", "--git-common-dir"], cwd).split("\n");
   if (!gitDir || !common || real(resolve(cwd, gitDir)) === real(resolve(cwd, common)))
@@ -137,7 +138,7 @@ export function repoName(cwd: string = process.cwd()): string {
  * плагин OpenCode поднимает мост из cwd сервера, и без этого репо выводилось
  * бы из чужого каталога (r5 #5108).
  */
-export function deriveParts(model?: string, cwd: string = process.cwd()): NameParts {
+export function deriveParts(model?: string, cwd: string = sessionCwd()): NameParts {
   const host = hostname().split(".")[0];
   const repo = repoName(cwd);
   const short = (model ?? "")

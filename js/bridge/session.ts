@@ -4,29 +4,35 @@
 // shared/seam.ts). Поведение одно и то же: разрез — только о том, откуда
 // строки приходят и куда уходят ответы.
 //
-// Предел разреза сегодня: состояние движка глобально (CFG, transport, hold,
-// выход streams), поэтому сессия одна на процесс, и происхождение сессии
-// (SessionOrigin) ложится на процесс. Демон машины с многими сессиями зовёт
-// openSession так же — поднять это состояние в объект сессии и есть его шаг.
+// Сессия этого процесса (полный мост, запасной ход тонкого) живёт в области
+// процесса. Сессия чужого моста (демон машины, daemon.ts) — в своей области
+// (shared/scope.ts): её конфиг, транспорт, место, поток вывода, pid, cwd и
+// окружение — моста харнеса, и сессий в одном процессе сколько угодно.
 import { createInterface } from "node:readline";
 import { type Writable } from "node:stream";
 
+import { bindScope, newScope, runIn, type Scope } from "../shared/scope.ts";
 import { isSessionEnvKey, patShaOf } from "../shared/seam.ts";
-import { CFG, parseArgs, setConfig } from "./config.ts";
+import { CFG, readArgs, setConfig } from "./config.ts";
 import { deliver } from "./deliver.ts";
 import { errorMessage } from "./errors.ts";
 import { releaseStanding, statusAddress } from "./hold.ts";
+import { handoverUnderway } from "./holdstate.ts";
 import { startDeafnessWatch } from "./leave.ts";
 import { pendingFlow } from "./oauth/flow.ts";
 import { tokenRequestsInFlight } from "./oauth/tokenrequest.ts";
 import { holdFromEnv } from "./resume.ts";
+import { releaseSatelliteClaims } from "./satellite.ts";
 import { publishStatusTo } from "./status.ts";
 import { sleep } from "./store.ts";
 import { debug, flushStdout, guardStream, log, setSessionOutput } from "./streams.ts";
 import { type JsonRpcMessage } from "./types.ts";
+import { lastAgentWork, noteAgentWork } from "./work.ts";
 
 /** How long a bridge left by its harness still waits for a pending login's click. */
 const ORPHAN_FLOW_MS = Number(process.env.ISKRON_BRIDGE_ORPHAN_FLOW_MS) || 5 * 60_000;
+/** Сколько сессия демона, передающего места преемнику, ждёт вызовов в полёте: остальное тонкий мост закроет вердиктом. */
+const HANDOVER_WAIT_MS = Number(process.env.ISKRON_BRIDGE_HANDOVER_WAIT_MS) || 10_000;
 
 /** Откуда сессия читает строки харнеса и куда пишет ответы. */
 export interface SessionIO {
@@ -39,36 +45,44 @@ export interface BridgeSession {
   leave(why: string): Promise<void>;
   /** Сессия ушла: вход закрыт (или позван leave) и всё отвечено. */
   readonly ended: Promise<void>;
-  /** Откуда сессия; null — сессия этого процесса. Окружение сессии живёт здесь. */
+  /** Откуда сессия; null — сессия этого процесса. */
   readonly origin: SessionOrigin | null;
+  /** Область сессии (shared/scope.ts): демон исполняет в ней то, что говорит сессии сам. */
+  readonly scope: Scope | null;
+  /** Миг последней работы агента (мс эпохи; 0 — не было): точка хартбита места, #6510 (work.ts). */
+  lastWork(): number;
 }
 
 /**
  * Откуда сессия — мост харнеса, каким его запустили: argv, окружение, cwd, pid,
- * отпечаток личного токена. Демон берёт его из рукопожатия шва (shared/seam.ts
- * SeamHello) как есть.
+ * файл моста, отпечаток личного токена. Демон берёт его из рукопожатия шва
+ * (shared/seam.ts SeamHello) как есть.
  */
 export interface SessionOrigin {
   argv: string[];
   env: Record<string, string>;
   cwd: string;
   pid: number;
+  path?: string;
   patSha?: string | null;
 }
 
-let originTaken = false;
+/** Опции сессии чужого моста: id в журнале и куда идёт её слово log. */
+export interface SessionOptions {
+  id?: string;
+  log?: (line: string) => void;
+}
 
-// Пока движок читает окружение процесса, окружение сессии на него ложится —
-// заменой ключей сессии (isSessionEnvKey), не слиянием: ключ, которого харнес
-// не назвал, снимается, а не доживает от прошлой сессии. Личный токен — не ключ
-// сессии: у демона свой (окружение подъёма или файл гранта), и отпечаток сессии
-// с ним сверяется — другой токен — отказ, а не молчаливая подмена входа.
+let counter = 0;
+
+// Конфиг сессии — из argv и окружения моста харнеса, в её области: ключи
+// сессии (isSessionEnvKey) — его слово, остальное — процесса. Личный токен —
+// не ключ сессии: у демона свой (окружение подъёма или файл гранта), и
+// отпечаток сессии с ним сверяется — другой токен — отказ, а не молчаливая
+// подмена входа. Окружение, прочитанное модулями при загрузке (ручки проб
+// *_MS), — процесса.
 function applyOrigin(origin: SessionOrigin): void {
-  for (const k of Object.keys(process.env))
-    if (isSessionEnvKey(k) && !(k in origin.env)) delete process.env[k];
-  for (const [k, v] of Object.entries(origin.env)) if (isSessionEnvKey(k)) process.env[k] = v;
-  process.chdir(origin.cwd);
-  const cfg = parseArgs(origin.argv);
+  const cfg = readArgs(origin.argv);
   if (origin.patSha !== undefined && patShaOf(cfg.pat) !== origin.patSha)
     throw new Error(
       "this daemon signs in otherwise than the bridge asking (its personal token differs)",
@@ -80,17 +94,28 @@ function applyOrigin(origin: SessionOrigin): void {
  * Открыть сессию моста над потоками. Конец входа — уход сессии (как закрытый
  * stdin у полного моста); выходить ли процессу — решает хозяин сессии.
  * Без origin — сессия этого процесса: setConfig уже позван (main.ts, thin.ts).
- * С origin — сессия чужого моста (демон): его конфиг, окружение и cwd. Пока
- * состояние движка глобально, такая сессия одна на процесс; вторая — бросок,
- * как и отпечаток токена, не совпавший с демоном. Окружение, прочитанное
- * модулями при загрузке (ручки проб *_MS), — процесса.
+ * С origin — сессия чужого моста (демон) в своей области: негодный argv или
+ * чужой токен — бросок, и хозяин отказывает сессии.
  */
-export function openSession(io: SessionIO, origin?: SessionOrigin): BridgeSession {
-  if (origin) {
-    if (originTaken) throw new Error("this engine holds one session per process");
+export function openSession(
+  io: SessionIO,
+  origin?: SessionOrigin,
+  opts: SessionOptions = {},
+): BridgeSession {
+  if (!origin) return openIn(io, null, null);
+  const scope = newScope(
+    opts.id ?? `s${++counter}`,
+    { env: origin.env, cwd: origin.cwd, pid: origin.pid, path: origin.path ?? "" },
+    isSessionEnvKey,
+  );
+  scope.log = opts.log ?? null;
+  return runIn(scope, () => {
     applyOrigin(origin);
-    originTaken = true;
-  }
+    return openIn(io, origin, scope);
+  });
+}
+
+function openIn(io: SessionIO, origin: SessionOrigin | null, scope: Scope | null): BridgeSession {
   setSessionOutput(io.output);
   guardStream(io.output); // before the first write: a broken pipe is news, not a crash
   holdFromEnv(); // сокет из окружения без connect (отладка) либо возврат места по каталогу сессии (#5140)
@@ -101,37 +126,45 @@ export function openSession(io: SessionIO, origin?: SessionOrigin): BridgeSessio
   const rl = createInterface({ input: io.input, terminal: false });
   const pending = new Set<Promise<void>>();
   let handshake: Promise<void> | null = null;
-  rl.on("line", (line) => {
-    const trimmed = line.trim();
-    if (!trimmed) return;
-    let msg: JsonRpcMessage;
-    try {
-      msg = JSON.parse(trimmed) as JsonRpcMessage;
-    } catch {
-      log(`unparseable line from harness: ${trimmed.slice(0, 120)}`);
-      return;
-    }
-    // Конвейерный клиент (скрипт, сторож, отправитель из оболочки) шлёт
-    // initialized и первый вызов, не дождавшись ответа на initialize; сервер без
-    // Mcp-Session-Id отвечает 400 (граф nks-dev: #4308). Настоящие клиенты ждут —
-    // мост ждёт за тех, кто не ждёт: всё, что пришло, пока рукопожатие в полёте,
-    // уходит после него, в порядке прихода.
-    const run = () =>
-      deliver(msg).catch((e) => log(`unexpected: ${(e as Error)?.stack || errorMessage(e)}`));
-    let p: Promise<void>;
-    if (msg.method === "initialize") {
-      p = run();
-      handshake = p;
-      p.finally(() => {
-        if (handshake === p) handshake = null;
-      });
-    } else if (handshake) {
-      const gate = handshake;
-      p = gate.then(run, run);
-    } else p = run();
-    pending.add(p);
-    p.finally(() => pending.delete(p));
-  });
+  // Строки входа приходят событием потока — из области того, кто пишет в поток
+  // (у демона — сокет шва): сессия исполняет их в своей.
+  rl.on(
+    "line",
+    bindScope((line: string) => {
+      const trimmed = line.trim();
+      if (!trimmed) return;
+      let msg: JsonRpcMessage;
+      try {
+        msg = JSON.parse(trimmed) as JsonRpcMessage;
+      } catch {
+        log(`unparseable line from harness: ${trimmed.slice(0, 120)}`);
+        return;
+      }
+      // Последняя работа агента (work.ts, хартбит места #6510): всякое слово харнеса,
+      // кроме ходов самого тонкого моста (переигранное рукопожатие, возврат места).
+      if (!String(msg.id ?? "").startsWith("iskron-thin-")) noteAgentWork();
+      // Конвейерный клиент (скрипт, сторож, отправитель из оболочки) шлёт
+      // initialized и первый вызов, не дождавшись ответа на initialize; сервер без
+      // Mcp-Session-Id отвечает 400 (граф nks-dev: #4308). Настоящие клиенты ждут —
+      // мост ждёт за тех, кто не ждёт: всё, что пришло, пока рукопожатие в полёте,
+      // уходит после него, в порядке прихода.
+      const run = () =>
+        deliver(msg).catch((e) => log(`unexpected: ${(e as Error)?.stack || errorMessage(e)}`));
+      let p: Promise<void>;
+      if (msg.method === "initialize") {
+        p = run();
+        handshake = p;
+        p.finally(() => {
+          if (handshake === p) handshake = null;
+        });
+      } else if (handshake) {
+        const gate = handshake;
+        p = gate.then(run, run);
+      } else p = run();
+      pending.add(p);
+      p.finally(() => pending.delete(p));
+    }),
+  );
   // A human may be mid-click on OUR authorize URL: dying now kills the callback
   // server and silently loses their login, and the click is not repeatable —
   // the human sees a browser error, not a retry. So a bridge asked to go away
@@ -145,12 +178,19 @@ export function openSession(io: SessionIO, origin?: SessionOrigin): BridgeSessio
   // Уход один на процесс: харнес, гася мост, закрывает stdin И шлёт SIGTERM, и
   // второй уход выходил из процесса, не дождавшись, пока первый снимет
   // занятость с доски (#5140, D1). Кто пришёл вторым — ждёт первого.
+  // У сессии демона вход и процесс не совпадают: вход её ждёт демон, не она.
   let leaving: Promise<void> | null = null;
   let markEnded!: () => void;
   const ended = new Promise<void>((resolve) => (markEnded = resolve));
-  const leave = (why: string): Promise<void> => (leaving ??= windDown(why).finally(markEnded));
+  const leave = bindScope(
+    (why: string): Promise<void> => (leaving ??= windDown(why).finally(markEnded)),
+  );
   const windDown = async (why: string) => {
     debug(`${why} — winding down`);
+    // Демон передаёт места преемнику (daemon.ts): место не отпускается словом,
+    // занятость не снимается, а вызовов в полёте ждём коротко — тонкий мост
+    // закроет неотвеченное вердиктом и переотправит неотправленное.
+    const handover = !!origin && handoverUnderway();
     // Занятость — слово ушедшего делателя: с концом сессии она снимается, иначе
     // доска показывает занятого там, где никого нет (#4895). Сокет и .key
     // отпускаются ПЕРВЫМИ: харнес, убивающий мост по короткой отсрочке, не должен
@@ -158,9 +198,16 @@ export function openSession(io: SessionIO, origin?: SessionOrigin): BridgeSessio
     const addr = statusAddress();
     // Сокет стояния живёт ровно столько, сколько сессия; у спутника — и записи держания нет: возврата с диска у него не бывает.
     releaseStanding(why, CFG.satellite);
-    if (addr) await publishStatusTo(addr.url, "", 3000).catch(() => {});
-    await Promise.allSettled([...pending, ...tokenRequestsInFlight]);
+    if (addr && !handover) await publishStatusTo(addr.url, "", 3000).catch(() => {});
+    if (handover) await Promise.race([Promise.allSettled([...pending]), sleep(HANDOVER_WAIT_MS)]);
+    else await Promise.allSettled([...pending, ...tokenRequestsInFlight]);
     await flushStdout(io.output); // an answer half-written is an answer not given
+    if (origin) {
+      // Сессия демона: вход по OAuth и ротация токена — процесса-демона, он живёт
+      // дольше сессии и их дождётся сам; имена спутника свободны с концом сессии.
+      releaseSatelliteClaims();
+      return;
+    }
     const flow = pendingFlow();
     if (flow) {
       // The login has no deadline while a harness holds us; once it is gone,
@@ -174,6 +221,9 @@ export function openSession(io: SessionIO, origin?: SessionOrigin): BridgeSessio
     await Promise.allSettled([...tokenRequestsInFlight]); // a tick may have started one while we waited
     await flushStdout(io.output);
   };
-  rl.on("close", () => void leave("stdin closed, the harness is gone"));
-  return { leave, ended, origin: origin ?? null };
+  rl.on(
+    "close",
+    bindScope(() => void leave("stdin closed, the harness is gone")),
+  );
+  return { leave, ended, origin, scope, lastWork: bindScope(lastAgentWork) };
 }

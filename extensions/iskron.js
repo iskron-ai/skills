@@ -14,11 +14,56 @@ function classifyOrigin(frame, myKarta) {
   return "peer";
 }
 
+// js/shared/scope.ts
+import { AsyncLocalStorage } from "node:async_hooks";
+var als = new AsyncLocalStorage();
+var PROCESS = {
+  id: "process",
+  origin: null,
+  sessionKey: () => false,
+  slots: /* @__PURE__ */ new Map(),
+  log: null
+};
+var currentScope = () => als.getStore() ?? PROCESS;
+function scoped(init) {
+  const key = {};
+  const own = () => {
+    const slots = currentScope().slots;
+    let v = slots.get(key);
+    if (v === void 0) {
+      v = init();
+      slots.set(key, v);
+    }
+    return v;
+  };
+  return new Proxy({}, {
+    get: (_, k) => {
+      const t = own();
+      const v = Reflect.get(t, k, t);
+      return typeof v === "function" ? v.bind(t) : v;
+    },
+    set: (_, k, v) => Reflect.set(own(), k, v),
+    has: (_, k) => Reflect.has(own(), k),
+    deleteProperty: (_, k) => Reflect.deleteProperty(own(), k),
+    ownKeys: () => Reflect.ownKeys(own()),
+    getOwnPropertyDescriptor: (_, k) => {
+      const d = Reflect.getOwnPropertyDescriptor(own(), k);
+      if (d) d.configurable = true;
+      return d;
+    }
+  });
+}
+function envOf(k) {
+  const s = currentScope();
+  if (s.origin && s.sessionKey(k)) return s.origin.env[k];
+  return process.env[k];
+}
+
 // js/shared/standings.ts
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 var defaultAuthDir = () => join(homedir(), ".iskron-bridge");
-var authDirFromEnv = () => process.env.ISKRON_BRIDGE_AUTH_DIR?.trim() || defaultAuthDir();
+var authDirFromEnv = () => envOf("ISKRON_BRIDGE_AUTH_DIR")?.trim() || defaultAuthDir();
 
 // js/shared/clients.ts
 var PI_CLIENT = "pi-iskron";
@@ -36,13 +81,13 @@ function langOfUrl(url) {
   }
 }
 function forcedLang() {
-  const v = process.env.ISKRON_BRIDGE_LANG?.trim().toLowerCase();
+  const v = envOf("ISKRON_BRIDGE_LANG")?.trim().toLowerCase();
   return v === "en" || v === "ru" ? v : null;
 }
 function resolve2() {
   const forced = forcedLang();
   if (forced) return forced;
-  const fromEnv = process.env.ISKRON_BRIDGE_URL?.trim();
+  const fromEnv = envOf("ISKRON_BRIDGE_URL")?.trim();
   if (fromEnv) return langOfUrl(fromEnv);
   try {
     const text = readFileSync(join2(authDirFromEnv(), "server"), "utf8").trim();
@@ -51,8 +96,8 @@ function resolve2() {
   }
   return "ru";
 }
-var current = null;
-var lang = () => current ??= resolve2();
+var S = scoped(() => ({ current: null }));
+var lang = () => S.current ??= resolve2();
 var L = (ru, en) => lang() === "en" ? en : ru;
 
 // js/shared/version.ts
@@ -76,6 +121,9 @@ function versionIn(text) {
 // js/bridge/build.ts
 var BUILD = buildOf(import.meta.url);
 
+// js/bridge/streams.ts
+var out = scoped(() => ({ stream: null }));
+
 // js/bridge/config.ts
 var DEFAULT_SERVER_URL = "https://mcp.iskron.ru/";
 var ENGLISH_SERVER_URL = "https://mcp.iskron.ai/";
@@ -83,6 +131,11 @@ var PRODUCTION_URLS = new Set([DEFAULT_SERVER_URL, ENGLISH_SERVER_URL].map(strip
 function strip(url) {
   return url.replace(/\/+$/, "");
 }
+var cfgSlot = scoped(() => ({ cfg: null }));
+var CFG = new Proxy({}, {
+  get: (_, k) => cfgSlot.cfg ? Reflect.get(cfgSlot.cfg, k) : void 0,
+  has: (_, k) => !!cfgSlot.cfg && Reflect.has(cfgSlot.cfg, k)
+});
 
 // js/bridge/oauth/discovery.ts
 var REGISTRATION_REUSE_MS = 45 * 6e4;
@@ -91,6 +144,44 @@ var REGISTRATION_REUSE_MS = 45 * 6e4;
 var CLAIM_WAIT_MS = Number(process.env.ISKRON_BRIDGE_CLAIM_WAIT_MS) || 15e3;
 var LANDED_POLL_MS = Number(process.env.ISKRON_BRIDGE_LANDED_POLL_MS) || 2e3;
 var RELEASE_GAP_MS = Number(process.env.ISKRON_BRIDGE_RELEASE_GAP_MS) || 0;
+
+// js/bridge/transport.ts
+var state = scoped(() => ({
+  sessionId: null,
+  protocolVersion: null,
+  initParams: null,
+  // params of the harness's initialize, for transparent replay
+  reinitCounter: 0,
+  // The standing this session registered, and the session it was confirmed in.
+  // Why the bridge owns re-registration, what was observed to go wrong, and the
+  // falsifier that closes it: graph @nks/nks-dev, nodes #3919 (the breakdown),
+  // #3454 (the falsifier), #3800 (the header form the surface binds with).
+  // The server correlates a writer BY THE MCP SESSION ID (its holder's word):
+  // a new session is a different writer, and the surface's own self-repair has
+  // nothing to repeat there, because its memory is keyed by that same id and is
+  // collected with it. Sessions die silently in three ways — idle past the
+  // threshold, eviction by the session ceiling, transport close — and the
+  // bridge is the ONLY party that sees the change and still remembers the name
+  // the agent derived for itself. So re-registering is the bridge's duty, and
+  // it hangs on the change of id, never on a timer.
+  standing: null,
+  // {realm, karta, name} of the last register that succeeded
+  // Places in OTHER graphs on the same channel (#5838): register on the channel
+  // in another graph adds a place, and a write is signed by the place of its
+  // own graph. `standing` stays the place the socket was taken for; these ride
+  // it and are replayed with it after every session turnover.
+  places: [],
+  standingSession: null,
+  // the session id that registration is known to hold in
+  // The access token the session was opened with. A session is opened BY a
+  // credential and dies with it (the surface's own word): once the token in the
+  // store is no longer the one this session was opened with — expired, refreshed
+  // after a 401, rotated by a sibling bridge — the old id is a dead letter, and a
+  // server that opens a fresh session on it silently runs the call unattributed
+  // before we learn the new id. So a changed token means: re-open first.
+  sessionToken: null
+}));
+var reinit = scoped(() => ({ inFlight: null }));
 
 // js/shared/room-kinds.ts
 var WORDS = {
@@ -496,18 +587,18 @@ function batchLine(frame, run, withZachin = true) {
 }
 function foldAsides(frames) {
   const asides = frames.map((f) => roomKind(f)?.aside ?? null);
-  const out = [];
+  const out2 = [];
   let n2 = 0;
   asides.forEach((a, i) => {
     if (!a) {
       n2 = 0;
-      out.push(1);
+      out2.push(1);
       return;
     }
     n2 = (i > 0 && asides[i - 1]?.pair === a.pair ? n2 : 0) + (a.counts ? 1 : 0);
-    out.push(asides[i + 1]?.pair === a.pair ? null : n2);
+    out2.push(asides[i + 1]?.pair === a.pair ? null : n2);
   });
-  return out;
+  return out2;
 }
 function batchLines(frames) {
   const fold = foldAsides(frames);
@@ -530,9 +621,41 @@ var ROOM_BATCH_MS = Number(process.env.ISKRON_BRIDGE_ROOM_BATCH_MS) || 6e4;
 
 // js/bridge/holdrecord.ts
 var HOLD_RECORD_MAX_AGE_MS = 6 * 60 * 60 * 1e3;
+var H = scoped(() => ({ session: null }));
 
 // js/bridge/sweep.ts
 var SEEN_FILE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1e3;
+
+// js/bridge/holdstate.ts
+var H2 = scoped(() => ({
+  /** Каталог сессии, из которого занимается место (cwd в iskron_stand), — в запись держания, для возврата по каталогу (resume.ts). */
+  standCwd: null,
+  holder: null,
+  /** дверь основного места — того, ради которого взят сокет */
+  door: null,
+  currentKey: null,
+  currentUrl: null,
+  currentStatusUrl: null,
+  /** ключ места, отнятого у этого моста закрытием 4000 */
+  evictedKey: null,
+  /** прицепившийся после — узнаёт, а не молчит */
+  evictedEvent: null,
+  /** ушёл с места: сокет службы закрыт, ключ и адреса целы (leave.ts) */
+  parked: false,
+  attachHooks: [],
+  helloWaiters: /* @__PURE__ */ new Set(),
+  /** возвратов с диска в полёте: мёртвый токен при них — протухшая запись, не тревога */
+  resuming: 0,
+  /** своё снятие в полёте (absorb.ts): закрытие 4001 обгонит ответ revoke */
+  revokingOwn: false
+}));
+
+// js/bridge/realms.ts
+var aliases = scoped(() => /* @__PURE__ */ new Map());
+var R = scoped(() => ({ listing: null }));
+
+// js/bridge/places.ts
+var extras = scoped(() => /* @__PURE__ */ new Map());
 
 // js/extension/channel.ts
 var ASIDE_MS = Number(process.env.ISKRON_PI_ASIDE_MS) || 3e3;
@@ -822,7 +945,7 @@ function snippet(description) {
 }
 function resultToContent(result) {
   const blocks = Array.isArray(result?.content) ? result.content : [];
-  const out = blocks.map((b) => {
+  const out2 = blocks.map((b) => {
     if (b?.type === "text") return { type: "text", text: String(b.text ?? "") };
     if (b?.type === "image" && b.data) {
       return {
@@ -833,7 +956,7 @@ function resultToContent(result) {
     }
     return { type: "text", text: JSON.stringify(b) };
   });
-  if (out.length) return out;
+  if (out2.length) return out2;
   const structured = result?.structuredContent;
   return [
     { type: "text", text: structured ? JSON.stringify(structured) : "(пустой ответ)" }

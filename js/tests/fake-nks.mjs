@@ -374,6 +374,31 @@ export async function startFakeNks(opts = {}) {
             if (st.wsChans.get(sock) === chanId) sock.write(wsFrame(0x1, JSON.stringify(frame)));
         }
       }
+      // Слово одному месту по имени — в сокеты, открытые по его адресу (у разных мостов разные места).
+      if (patch.ws_say) {
+        const { name, text, id } = patch.ws_say;
+        for (const [, c] of st.channels) {
+          const found = [...c.places].find(([, p]) => p.name === name);
+          if (!found) continue;
+          const [realm, pl] = found;
+          const frame = JSON.stringify({
+            type: "message",
+            id: id ?? token("say"),
+            received_at: new Date().toISOString(),
+            stale: false,
+            content_type: "text/plain",
+            body_chars: text.length,
+            to_standing_id: pl.standing_id,
+            to_standing: `@tester:${pl.name}`,
+            realm,
+            karta_seq: Number(pl.karta),
+            body: text,
+          });
+          for (const sock of st.ws)
+            if (st.wsNames.get(sock) === name && !st.hung.has(sock))
+              sock.write(wsFrame(0x1, frame));
+        }
+      }
       // Чужое живое место на доске — как если бы его держал мост другой сессии.
       if (Array.isArray(patch.webhooks)) {
         for (const w of patch.webhooks) {
