@@ -1,9 +1,9 @@
-.PHONY: check deps validate check-bundles check-surface lint format format-check typecheck test test-coverage test-watchdog test-extension test-opencode test-codex test-stand test-update build build-js check-js surface hooks plugin
+.PHONY: check deps validate check-bundles check-surface lint format format-check typecheck test test-coverage test-watchdog test-extension test-opencode test-codex test-stand test-update build build-js check-js surface widgets check-widgets hooks plugin
 
 # Run the full CI gate locally: frontmatter contract + bundle sync + surface lint
 # + the JS ladder (lint → format → types → shipped outputs in sync → the
 # behavioural suites of the shipped code). Needs `make deps` once per clone.
-check: validate check-bundles check-surface lint format-check typecheck check-js test
+check: validate check-bundles check-surface check-widgets lint format-check typecheck check-js test
 
 # The dev toolchain for js/ — typescript, esbuild, eslint, prettier, and pi's
 # own types, which the extension is checked against. Nothing here ships: the
@@ -90,6 +90,16 @@ check-js:
 # Refresh fixtures/surface.json from the live server (network + authorized grant).
 surface:
 	@node scripts/export-surface.mjs
+
+# Refresh fixtures/widgets.json from the widget nodes in the graph (network + grant),
+# then render skills/widgets/SKILL.md from it.
+widgets:
+	@node scripts/export-widgets.mjs
+	@node scripts/render-widgets.mjs
+
+# The committed widgets skill matches its snapshot (offline, pure Node).
+check-widgets:
+	@node scripts/render-widgets.mjs --check
 
 # Regenerate every committed derived artifact: the shipped JS, then the
 # <name>.skill bundles that carry it.

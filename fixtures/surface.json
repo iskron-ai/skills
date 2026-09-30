@@ -1,7 +1,7 @@
 {
   "server": {
     "name": "iskron",
-    "version": "0.87.0"
+    "version": "0.92.0"
   },
   "protocolVersion": "2025-06-18",
   "resource": "https://mcp.iskron.ru",
@@ -358,11 +358,13 @@
       "karta",
       "kinds",
       "limit",
+      "locale",
       "message",
       "model",
       "mute_siblings",
       "name",
       "realm",
+      "satellite_of",
       "since",
       "standing",
       "text",

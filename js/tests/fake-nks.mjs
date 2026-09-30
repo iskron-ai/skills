@@ -888,15 +888,15 @@ export async function startFakeNks(opts = {}) {
           );
         }
         if (a.action === "connect" || a.action === "mint") {
+          // Всё, что прошло фильтр схемы снимка (и futureArgs), — как это дошло бы до /channels.
+          const { realm: _r, karta: _k, ...kept } = a;
           st.placeArgs.push({
             action: a.action,
             name: a.name,
             model: a.model,
             attrs: a.attrs,
             ttl_seconds: a.ttl_seconds,
-            // Есть только под futureArgs: снимок этих полей не объявляет (#6064, #6080).
-            ...("satellite_of" in a ? { satellite_of: a.satellite_of } : {}),
-            ...("locale" in a ? { locale: a.locale } : {}),
+            ...kept,
           });
           st.counts.connect++;
           st.wsToken = token("ws"); // как у настоящей поверхности: сокет показан один раз и всякий раз новый
