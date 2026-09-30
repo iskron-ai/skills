@@ -7,27 +7,29 @@
 // Два сужения:
 //  - набор тулов — только по флагу `--tools a,b,c`; без флага харнес видит все
 //    тулы, и мост с ролевыми файлами прежнего вида работает как прежде;
-//  - схема iskron_channel у всех мостов: ходы над местом (mint, connect, register,
-//    revoke, sessions) мост делает сам (iskron_stand, уход, отзыв), и их поля
-//    агенту — только вес.
+//  - схема iskron_channel у всех мостов: занятие места (mint, connect) и сессии
+//    (sessions) мост делает сам — iskron_stand, — и их поля агенту только вес.
+//    register и revoke остаются: корпус велит агенту без вахты назвать себя
+//    register'ом и отзывать место revoke'ом, и их поля — тоже.
+//
+// Выгрузка снимка поверхности (`make surface`, клиент export-surface) получает
+// сырой список: снимок — поверхность сервера, по нему фейк NKS режет аргументы.
+import { SURFACE_CLIENT } from "../shared/clients.ts";
 import { L } from "../shared/lang.ts";
 import { CFG } from "./config.ts";
 import { STAND_TOOL } from "./standtool.ts";
+import { state } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
 
 /** Ходы iskron_channel, которые мост делает сам; из перечня action в описании они убраны. */
-const PLACE_MOVES = new Set(["mint", "connect", "register", "revoke", "sessions"]);
+const PLACE_MOVES = new Set(["mint", "connect", "sessions"]);
 /** Поля схемы iskron_channel, которые берут только эти ходы (по описаниям полей сервера 0.97.1). */
-const PLACE_FIELDS = [
-  "ttl_seconds",
-  "mute_siblings",
-  "locale",
-  "attrs",
-  "name",
-  "model",
-  "satellite_of",
-  "channel",
-];
+const PLACE_FIELDS = ["ttl_seconds", "mute_siblings"];
+
+function clientName(): string {
+  const info = (state.initParams as { clientInfo?: { name?: unknown } } | null)?.clientInfo;
+  return typeof info?.name === "string" ? info.name : "";
+}
 
 /** Имена тулов, которые видит харнес; null — все. iskron_stand в наборе всегда. */
 export function toolSet(): Set<string> | null {
@@ -93,7 +95,7 @@ function channelForHarness(t: Tool): Tool {
  */
 export function narrowToolList(reply: JsonRpcMessage): JsonRpcMessage {
   const tools = reply?.result?.tools;
-  if (!Array.isArray(tools)) return reply;
+  if (!Array.isArray(tools) || clientName() === SURFACE_CLIENT) return reply;
   const set = toolSet();
   const shown = (tools as Tool[])
     .filter((t) => !set || set.has(String(t?.name)))

@@ -2,15 +2,62 @@
 // русские — как были, английские — именами нормы #6075 (seat, the human's seat,
 // standing). Механика — в stand.ts; здесь только слова.
 import { L } from "../shared/lang.ts";
+import { type StatusMiss } from "./status.ts";
 
 const s = (ms: number): number => Math.round(ms / 1000);
 
+/** Почему вызов со status без karta не стал одной занятостью — настоящая причина, одна. */
+function missWord(m: StatusMiss, of?: string): string {
+  const only = L(
+    "Без karta вызов только ставит занятость места, которое ведёт этот мост",
+    "Without karta the call only sets the busy line of the seat this bridge leads",
+  );
+  switch (m.why) {
+    case "none":
+      return L(
+        `${only} в этом графе, — такого места нет.`,
+        `${only} in this graph — there is none.`,
+      );
+    case "args":
+      return L(
+        `${only}, а вызов несёт ${m.args.join(", ")} — это занятие места; для одной занятости — только realm и status.`,
+        `${only}, and the call carries ${m.args.join(", ")} — that is taking a seat; for the busy line alone — only realm and status.`,
+      );
+    case "name":
+      return L(
+        `${only}: вызов называет имя ${m.asked}, а мост держит здесь ${m.held} — назови его или опусти name.`,
+        `${only}: the call names ${m.asked}, and the bridge holds ${m.held} here — name it or leave name out.`,
+      );
+    case "satellite":
+      return L(
+        `${only}: место моста — не спутник места ${of ?? "?"}.`,
+        `${only}: the bridge's seat is not a satellite of ${of ?? "?"}.`,
+      );
+    case "cwd":
+      return L(
+        `${only}: каталог ${m.cwd} не существует или не абсолютный.`,
+        `${only}: the directory ${m.cwd} does not exist or is not absolute.`,
+      );
+    case "parked":
+      return L(
+        `${only}, а с места этот мост ушёл словом (leave): вернись iskron_stand с karta тем же именем.`,
+        `${only}, and this bridge left its seat by word (leave): return by iskron_stand with karta under the same name.`,
+      );
+    case "elsewhere":
+      return L(
+        `${only}, а сокета и статусного адреса этого места у моста нет — сокет места не у этого моста: только register при слухе другого держателя либо сокет отпущен (мёртвый токен, снятие); займи место iskron_stand с karta.`,
+        `${only}, and the bridge has neither the socket nor the status address of this seat — the seat's socket is not with this bridge: register only while another holder hears, or the socket was released (dead token, revoke); take the seat by iskron_stand with karta.`,
+      );
+  }
+}
+
 export const SW = {
-  needRealmKarta: (): string =>
+  /** miss — почему вызов со status без karta не стал занятостью (status.ts); null — status не было. */
+  needRealmKarta: (miss: StatusMiss | null, of?: string): string =>
     L(
       "Отказано (мост): iskron_stand требует realm и karta — граф и роль из AGENTS.md или строки запуска.",
       "Refused (bridge): iskron_stand needs realm and karta — the graph and the role from AGENTS.md or the launch line.",
-    ),
+    ) + (miss ? ` ${missWord(miss, of)}` : ""),
   badCwd: (cwd: string, relative: boolean): string =>
     L(
       `Отказано (мост): cwd должен быть существующим абсолютным каталогом — получено «${cwd}»${relative ? " (относительный путь резолвился бы от cwd моста, не сессии)" : ""}.`,
