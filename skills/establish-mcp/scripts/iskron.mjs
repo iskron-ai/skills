@@ -5254,13 +5254,16 @@ function compareVersions(a, b) {
 
 // js/bridge/update.ts
 var RELEASES_URL = process.env.ISKRON_BRIDGE_RELEASES_URL?.trim() || "https://api.github.com/repos/iskron-ai/skills/releases/latest";
+var RELEASES_PAGE_URL = process.env.ISKRON_BRIDGE_RELEASES_PAGE_URL?.trim() || (process.env.ISKRON_BRIDGE_RELEASES_URL?.trim() ? null : "https://github.com/iskron-ai/skills/releases/latest");
 var RAW_URL = process.env.ISKRON_BRIDGE_RAW_URL?.trim() || "https://raw.githubusercontent.com/iskron-ai/skills";
 var CHECK_INTERVAL_MS = 6 * 60 * 60 * 1e3;
+var TAG_TTL_MS = 60 * 60 * 1e3;
 var updatesDisabled = () => !!process.env.ISKRON_BRIDGE_NO_UPDATE;
 var selfPath = () => fileURLToPath4(import.meta.url);
 var opencodePluginPath = () => join13(homedir5(), ".config", "opencode", "plugins", "iskron.js");
 var setupPathOf = (authDir) => join13(authDir, "SETUP.md");
 var latestPathOf = (authDir) => join13(authDir, "latest.json");
+var releaseTagPath = () => join13(dirname5(homeBridgePath()), "release-tag.json");
 function writeAtomic(path, bytes) {
   mkdirSync7(dirname5(path), { recursive: true, mode: 448 });
   const tmp = `${path}.tmp-${process.pid}`;
@@ -5352,6 +5355,114 @@ async function fetchText(url) {
   if (!res.ok) throw new Error(`HTTP ${res.status} от ${url}`);
   return res.text();
 }
+var RateLimitError = class extends Error {
+  limit;
+  resetAt;
+  constructor(message, limit, resetAt) {
+    super(message);
+    this.limit = limit;
+    this.resetAt = resetAt;
+  }
+};
+function rateLimitWord(limit, resetAt) {
+  const per = limit ? `${limit} запросов в час` : "лимит в час";
+  const reset = resetAt ? `сброс ${new Date(resetAt).toISOString()} (через ${Math.max(0, Math.ceil((resetAt - Date.now()) / 6e4))} мин)` : "время сброса GitHub не назвал";
+  return `лимит анонимного API GitHub исчерпан: ${per} на внешний адрес машины, общий всем мостам и клиентам за ним; ${reset}`;
+}
+function rateLimitOf(res) {
+  const remaining = res.headers.get("x-ratelimit-remaining");
+  if (!(res.status === 429 || res.status === 403 && remaining === "0")) return null;
+  const limit = Number(res.headers.get("x-ratelimit-limit")) || null;
+  const resetSec = Number(res.headers.get("x-ratelimit-reset"));
+  const retrySec = Number(res.headers.get("retry-after"));
+  const resetAt = resetSec > 0 ? resetSec * 1e3 : retrySec > 0 ? Date.now() + retrySec * 1e3 : null;
+  return new RateLimitError(rateLimitWord(limit, resetAt), limit, resetAt);
+}
+async function tagFromApi() {
+  const res = await fetch(RELEASES_URL, {
+    headers: { accept: "application/vnd.github+json", "user-agent": `iskron-bridge/${VERSION}` },
+    signal: AbortSignal.timeout(15e3)
+  });
+  const limited = rateLimitOf(res);
+  if (limited) throw limited;
+  if (!res.ok) throw new Error(`HTTP ${res.status} от ${RELEASES_URL}`);
+  const body = await res.json();
+  return body.tag_name?.trim() || null;
+}
+async function tagFromPage(url) {
+  const res = await fetch(url, {
+    redirect: "manual",
+    headers: { "user-agent": `iskron-bridge/${VERSION}` },
+    signal: AbortSignal.timeout(15e3)
+  });
+  const location = res.headers.get("location") ?? "";
+  const m = /\/releases\/tag\/([^/?#]+)/.exec(location);
+  if (res.status < 300 || res.status >= 400 || !m)
+    throw new Error(`HTTP ${res.status} от ${url}${location ? ` → ${location}` : ""} — тега нет`);
+  return decodeURIComponent(m[1]);
+}
+function readReleaseTag() {
+  try {
+    const c = JSON.parse(readFileSync14(releaseTagPath(), "utf8"));
+    return c.source === RELEASES_URL ? c : null;
+  } catch {
+    return null;
+  }
+}
+function writeReleaseTag(c) {
+  try {
+    writeAtomic(releaseTagPath(), JSON.stringify(c, null, 2));
+  } catch {
+  }
+}
+async function resolveTag(force) {
+  const cached = readReleaseTag();
+  const now2 = Date.now();
+  if (!force && cached?.tag && now2 - cached.checked_at < TAG_TTL_MS) return cached.tag;
+  const knownLimit = cached?.api_limited_until && now2 < cached.api_limited_until ? new RateLimitError(
+    rateLimitWord(cached.api_limit ?? null, cached.api_limited_until),
+    cached.api_limit ?? null,
+    cached.api_limited_until
+  ) : null;
+  let apiErr = knownLimit;
+  if (!knownLimit) {
+    try {
+      const tag = await tagFromApi();
+      writeReleaseTag({ source: RELEASES_URL, checked_at: Date.now(), tag, via: "api" });
+      return tag;
+    } catch (e) {
+      apiErr = e;
+    }
+  }
+  const limit = apiErr instanceof RateLimitError ? apiErr : null;
+  const limitFields = limit?.resetAt ? { api_limited_until: limit.resetAt, api_limit: limit.limit } : {};
+  if (RELEASES_PAGE_URL) {
+    try {
+      const tag = await tagFromPage(RELEASES_PAGE_URL);
+      log(`релизы: API не ответил (${apiErr?.message}) — тег ${tag} со страницы релизов`);
+      writeReleaseTag({
+        source: RELEASES_URL,
+        checked_at: Date.now(),
+        tag,
+        via: "page",
+        ...limitFields
+      });
+      return tag;
+    } catch (e) {
+      const both = `${apiErr?.message}; запасной путь — ${e.message}`;
+      apiErr = limit ? new RateLimitError(both, limit.limit, limit.resetAt) : new Error(both);
+    }
+  }
+  if (limit?.resetAt)
+    writeReleaseTag({
+      source: RELEASES_URL,
+      checked_at: cached?.checked_at ?? 0,
+      tag: cached?.tag ?? null,
+      ...cached?.via ? { via: cached.via } : {},
+      ...limitFields
+    });
+  throw apiErr;
+}
 async function downloadRelease(tag, version, authDir) {
   const written = [];
   const base = `${RAW_URL}/${tag}`;
@@ -5383,8 +5494,7 @@ async function checkLatest(authDir, force = false) {
   if (!force && cached && Date.now() - cached.checked_at < CHECK_INTERVAL_MS) return cached;
   const latest = { checked_at: Date.now(), version: null, tag: null, downloaded: [] };
   try {
-    const body = JSON.parse(await fetchText(RELEASES_URL));
-    const tag = body.tag_name?.trim() || null;
+    const tag = await resolveTag(force);
     latest.tag = tag;
     latest.version = tag ? tag.replace(/^v/, "") : null;
     if (latest.version && compareVersions(latest.version, VERSION) > 0) {
@@ -5395,6 +5505,7 @@ async function checkLatest(authDir, force = false) {
     }
   } catch (e) {
     latest.error = e.message;
+    if (e instanceof RateLimitError && e.resetAt) latest.rate_limited_until = e.resetAt;
   }
   try {
     writeAtomic(latestPathOf(authDir), JSON.stringify(latest, null, 2));
@@ -7199,7 +7310,9 @@ async function runUpdate(argv2) {
   out3(`сервер: ${CFG.serverUrl} (${serverSourceWord()}) — ${freshnessWord(CFG.serverUrl)}`);
   const latest = await checkLatest(CFG.authDir, true);
   if (!latest || !latest.version) {
-    out3(`свежий релиз не узнан: ${latest?.error ?? "нет ответа"} — сеть или GitHub; повтори позже`);
+    out3(
+      latest?.rate_limited_until ? `свежий релиз не узнан: ${latest.error}; повтори после сброса` : `свежий релиз не узнан: ${latest?.error ?? "нет ответа"} — сеть или GitHub; повтори позже`
+    );
     process.exitCode = 1;
     return;
   }

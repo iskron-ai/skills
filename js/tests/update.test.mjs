@@ -49,8 +49,15 @@ function home(t) {
   return { root, dir, bridgePath: join(dir, "iskron-bridge.mjs") };
 }
 
-/** Подставные релизы: /releases/latest и сырые файлы тега. */
-async function releases(t, tag = `v${NEWER}`) {
+/** Сброс лимита в подставном ответе: секунды эпохи, как в x-ratelimit-reset GitHub. */
+const RESET = Math.floor(Date.now() / 1000) + 17 * 60;
+
+/**
+ * Подставные релизы: /releases/latest (API), /page/latest (страница релизов:
+ * 302 на тег) и сырые файлы тега. limited — API отвечает исчерпанным анонимным
+ * лимитом, как GitHub; page: false — страница релизов тега не отдаёт.
+ */
+async function releases(t, tag = `v${NEWER}`, { limited = false, page = true } = {}) {
   const hits = [];
   const srv = createServer((req, res) => {
     hits.push(req.url);
@@ -58,7 +65,20 @@ async function releases(t, tag = `v${NEWER}`) {
       res.writeHead(code, { "content-type": "text/plain" });
       res.end(body);
     };
+    if (req.url === "/releases/latest" && limited) {
+      res.writeHead(403, {
+        "content-type": "application/json",
+        "x-ratelimit-limit": "60",
+        "x-ratelimit-remaining": "0",
+        "x-ratelimit-reset": String(RESET),
+      });
+      return res.end(JSON.stringify({ message: "API rate limit exceeded for 127.0.0.1." }));
+    }
     if (req.url === "/releases/latest") return end(200, JSON.stringify({ tag_name: tag }));
+    if (req.url === "/page/latest" && page) {
+      res.writeHead(302, { location: `http://${req.headers.host}/releases/tag/${tag}` });
+      return res.end();
+    }
     if (req.url === `/raw/${tag}/skills/establish-mcp/scripts/iskron.mjs`)
       return end(200, newerBuild());
     if (req.url === `/raw/${tag}/skills/establish-mcp/scripts/opencode-plugin.js`)
@@ -73,6 +93,7 @@ async function releases(t, tag = `v${NEWER}`) {
     hits,
     env: {
       ISKRON_BRIDGE_RELEASES_URL: `${base}/releases/latest`,
+      ISKRON_BRIDGE_RELEASES_PAGE_URL: `${base}/page/latest`,
       ISKRON_BRIDGE_RAW_URL: `${base}/raw`,
       ISKRON_BRIDGE_UPDATE_DELAY_MS: "0",
     },
@@ -265,11 +286,8 @@ test("a newer release is fetched into the home once per six hours and named in t
   );
 });
 
-test("update: fetches the release on demand and reports what was laid where", async (t) => {
-  const h = home(t);
-  const rel = await releases(t);
-  const authDir = join(h.root, "auth");
-  const r = await new Promise((resolve) => {
+function runUpdate(h, rel, authDir) {
+  return new Promise((resolve) => {
     const proc = spawn(NODE, [FILE, "update", "--auth-dir", authDir], {
       env: { ...process.env, HOME: h.root, ...rel.env, ISKRON_BRIDGE_NO_UPDATE: "" },
       stdio: ["ignore", "pipe", "pipe"],
@@ -280,6 +298,13 @@ test("update: fetches the release on demand and reports what was laid where", as
     proc.stderr.on("data", (c) => (err += c));
     proc.on("exit", (code) => resolve({ code, out, err }));
   });
+}
+
+test("update: fetches the release on demand and reports what was laid where", async (t) => {
+  const h = home(t);
+  const rel = await releases(t);
+  const authDir = join(h.root, "auth");
+  const r = await runUpdate(h, rel, authDir);
   assert.equal(r.code, 0, r.err);
   assert.match(
     r.out,
@@ -291,6 +316,64 @@ test("update: fetches the release on demand and reports what was laid where", as
   assert.match(r.out, /прочти его и исполни/, "the report hands the fresh installer to the agent");
   assert.equal(versionIn(readFileSync(h.bridgePath, "utf8")), NEWER);
   assert.ok(existsSync(join(authDir, "SETUP.md")));
+});
+
+// Anonymous GitHub API gives 60 requests an hour per external address, and every
+// bridge behind it (watches, subagent satellites, update) spends the same budget
+// (graph @nks/nks-dev, vimarsha #6467). The releases page is not that API: its
+// redirect names the fresh tag.
+test("update: the API rate limit does not hide the fresh release — the tag comes from the releases page redirect", async (t) => {
+  const h = home(t);
+  const rel = await releases(t, `v${NEWER}`, { limited: true });
+  const r = await runUpdate(h, rel, join(h.root, "auth"));
+  assert.equal(r.code, 0, r.out + r.err);
+  assert.match(r.out, new RegExp(`свежий релиз: v${NEWER} \\(v${NEWER}\\)`), r.out);
+  assert.equal(versionIn(readFileSync(h.bridgePath, "utf8")), NEWER, "the release is laid home");
+  assert.ok(rel.hits.includes("/page/latest"), `the releases page was asked: ${rel.hits}`);
+  const again = await runUpdate(h, rel, join(h.root, "auth-2"));
+  assert.equal(again.code, 0, again.out + again.err);
+  assert.equal(
+    rel.hits.filter((u) => u === "/releases/latest").length,
+    1,
+    "a known exhausted limit is not asked again before its reset",
+  );
+});
+
+test("update: a rate limit with no way around it is named as the limit with its reset, not as the network", async (t) => {
+  const h = home(t);
+  const rel = await releases(t, `v${NEWER}`, { limited: true, page: false });
+  const r = await runUpdate(h, rel, join(h.root, "auth"));
+  assert.equal(r.code, 1, r.out + r.err);
+  assert.match(r.out, /лимит анонимного API GitHub исчерпан/, r.out);
+  assert.match(r.out, /60 запросов в час/, r.out);
+  assert.ok(r.out.includes(new Date(RESET * 1000).toISOString()), `the reset time: ${r.out}`);
+  assert.ok(!/сеть или GitHub/.test(r.out), `no blame on the network: ${r.out}`);
+});
+
+test("a second bridge on the machine takes the fresh tag from the shared cache, not from GitHub", async (t) => {
+  const fake = await startFakeNks({ pat: PAT });
+  const h = home(t);
+  const rel = await releases(t);
+  t.after(() => fake.stop());
+  const staleSeen = (b) => () => b.notifications.some((n) => n.params?.data?.kind === "stale");
+  // Different auth dirs: the per-grant check record is not what they share.
+  const first = startBridge(fake.mcpUrl, join(h.root, "auth-1"), { HOME: h.root, ...rel.env });
+  t.after(() => first.stop());
+  assert.ok((await first.call("initialize", INIT)).result);
+  await waitFor(staleSeen(first), "the first bridge's stale notice");
+  // The first one laid the release home, so the second runs as that newer copy
+  // and has nothing stale to say — its finished check is its record.
+  const secondDir = join(h.root, "auth-2");
+  const second = startBridge(fake.mcpUrl, secondDir, { HOME: h.root, ...rel.env });
+  t.after(() => second.stop());
+  assert.ok((await second.call("initialize", INIT)).result);
+  await waitFor(() => existsSync(join(secondDir, "latest.json")), "the second bridge's check");
+  assert.equal(JSON.parse(readFileSync(join(secondDir, "latest.json"), "utf8")).tag, `v${NEWER}`);
+  assert.equal(
+    rel.hits.filter((u) => u === "/releases/latest" || u === "/page/latest").length,
+    1,
+    `one question to GitHub for the machine: ${rel.hits}`,
+  );
 });
 
 test("ISKRON_BRIDGE_NO_UPDATE: neither the home nor the releases are touched", async (t) => {
