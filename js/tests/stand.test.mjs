@@ -640,22 +640,34 @@ test("iskron_stand after an eviction: register only, the busy line still publish
     () => bridge.notifications.some((n) => n.params?.data?.kind === "evicted"),
     "the eviction",
   );
+  // Вызов занятия (с model) — только register и слово об отъёме; занятость уходит и тут.
   const again = await bridge.call("tools/call", {
     name: "iskron_stand",
-    arguments: { ...args, status: "после отъёма" },
+    arguments: { ...args, model: "opus-5", status: "после отъёма" },
   });
   const text = textOf(again);
   assert.match(text, /место отняли у этого моста/, text);
   assert.match(text, /только register/, text);
   assert.match(text, /^Занятость: после отъёма$/m, "the busy line is the standing's word");
   assert.equal(fake.state.status, "после отъёма");
-  // Без karta — не занятость: сокет у другого держателя, и отказ говорит это, не «места нет» (#6509).
+  // Занятость — от стояния, не от живого сокета (#5033, #5035): и одна занятость
+  // (realm + status) после отъёма публикуется, пока статусный адрес у моста (#6509).
+  const connects = fake.state.counts.connect;
+  const registers = fake.state.counts.register_standing;
   const bare = await bridge.call("tools/call", {
     name: "iskron_stand",
     arguments: { realm: "nks-dev", status: "без роли" },
   });
-  assert.equal(bare.result?.isError, true, textOf(bare));
-  assert.match(textOf(bare), /сокет этого места держит другой мост/, textOf(bare));
+  assert.ok(!bare.result?.isError, textOf(bare));
+  assert.match(textOf(bare), /^занятость proba--931--nks-dev: без роли/, textOf(bare));
+  assert.doesNotMatch(
+    textOf(bare),
+    /Сторож к этому месту/,
+    "no listen line: the socket is not here",
+  );
+  assert.equal(fake.state.status, "без роли");
+  assert.equal(fake.state.counts.connect, connects, "no connect");
+  assert.equal(fake.state.counts.register_standing, registers, "no register");
   const taken = await bridge.call("tools/call", {
     name: "iskron_stand",
     arguments: { ...args, take: true },
@@ -2322,6 +2334,17 @@ test("iskron_stand with realm and status only says why it is no busy line: no se
   assert.match(textOf(none), /такого места нет/, textOf(none));
   const stood = await stand({ realm: "nks-dev", karta: 931, name: "proba" });
   assert.ok(!stood.result?.isError, textOf(stood));
+  // Каждая причина — своим словом, не общим «несёт аргументы занятия».
+  const why = async (args, re) => {
+    const r = await stand({ realm: "nks-dev", status: "занят", ...args });
+    assert.equal(r.result?.isError, true, textOf(r));
+    assert.match(textOf(r), re, textOf(r));
+    return textOf(r);
+  };
+  await why({ name: "drugoe" }, /имя drugoe, а мост держит здесь proba/);
+  await why({ room: "@tester:k" }, /вызов несёт room/);
+  await why({ cwd: "/nowhere/at/all" }, /каталог \/nowhere\/at\/all не существует/);
+  await why({ satellite_of: "@tester:kto-to" }, /не спутник места @tester:kto-to/);
   const left = await bridge.call("tools/call", {
     name: "iskron_channel",
     arguments: { realm: "nks-dev", action: "leave" },

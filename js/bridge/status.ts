@@ -13,6 +13,7 @@ import { nameOf } from "./board.ts";
 import { resolveAgainstLed } from "./call.ts";
 import { CFG } from "./config.ts";
 import {
+  hasStatusAddressFor,
   heldPlaces,
   holdsStanding,
   isParked,
@@ -79,39 +80,63 @@ export function localStatus(msg: JsonRpcMessage): Promise<JsonRpcMessage> | null
 const STATUS_ONLY_ARGS = new Set(["realm", "karta", "name", "cwd", "status", "satellite_of"]);
 
 /**
- * iskron_stand со status на месте, которое этот мост уже держит живым сокетом
- * (решение владельца, #6509): только строка занятости — без доски, connect,
- * register, хука и стука; пустая строка снимает. Роль и имя — те же, что у
- * места, или опущены. Null — вызов не такой, его ведёт полный путь stand.ts.
+ * Почему вызов со status не стал одной занятостью — для слова отказа, когда
+ * karta нет и полному пути занять место нечем (standwords.ts):
+ * места в графе нет; вызов несёт аргументы занятия; другое имя; не тот спутник;
+ * кривой каталог; ушёл с места словом (leave); сокета и статусного адреса места
+ * у моста нет — только register при чужом слухе либо сокет отпущен (мёртвый
+ * токен, снятие): эти два мост отсюда не различает и говорит честно.
  */
-export async function standStatusOnly(msg: JsonRpcMessage): Promise<JsonRpcMessage | null> {
+export type StatusMiss =
+  | { why: "none" | "satellite" | "parked" | "elsewhere" }
+  | { why: "args"; args: string[] }
+  | { why: "name"; asked: string; held: string }
+  | { why: "cwd"; cwd: string };
+
+/** Ответ одной занятости — либо почему её нет (null — вызов без status или с karta другой роли). */
+export type StatusOnly = { reply: JsonRpcMessage } | { miss: StatusMiss | null; of?: string };
+
+/**
+ * iskron_stand со status на месте, которое ведёт этот мост (решение владельца,
+ * #6509): только строка занятости — без доски, connect, register, хука и стука;
+ * пустая строка снимает. Роль и имя — те же, что у места, или опущены.
+ * Занятость — от стояния, не от живого сокета (#5033, #5035): после отъёма она
+ * публикуется, пока у моста статусный адрес места, как и action="status".
+ * Иначе — miss, и вызов ведёт полный путь stand.ts.
+ */
+export async function standStatusOnly(msg: JsonRpcMessage): Promise<StatusOnly> {
   const a = msg.params?.arguments ?? {};
-  if (typeof a.status !== "string") return null;
+  if (typeof a.status !== "string") return { miss: null };
   const unset = (v: unknown): boolean => v == null || v === false || v === "";
-  if (Object.keys(a).some((k) => !STATUS_ONLY_ARGS.has(k) && !unset(a[k]))) return null;
+  const extra = Object.keys(a).filter((k) => !STATUS_ONLY_ARGS.has(k) && !unset(a[k]));
   const realm = typeof a.realm === "string" ? a.realm.trim() : "";
-  if (!realm) return null;
+  if (!realm) return { miss: null };
   await resolveAgainstLed(realm); // граф вызова — в той же форме, что граф места
   const held = ledIn(realm);
-  if (!held) return null;
-  if (!unset(a.karta) && normKarta(a.karta) !== String(held.karta)) return null;
+  if (!held) return { miss: { why: "none" } };
+  if (extra.length) return { miss: { why: "args", args: extra } };
+  if (!unset(a.karta) && normKarta(a.karta) !== String(held.karta)) return { miss: null };
   const asked = normName(a.name);
-  if (asked && asked !== (held.name ?? "")) return null;
+  if (asked && asked !== (held.name ?? ""))
+    return { miss: { why: "name", asked, held: held.name ?? "" } };
   // Спутник — <имя позвавшего>.sub-N; длинную базу мост укорачивает, потому сличение — префиксом.
   const of = normName(a.satellite_of);
   const base = /^(.+)\.sub-[1-9]\d*$/.exec(held.name ?? "")?.[1];
-  if (of && !(base && nameOf(of).startsWith(base))) return null;
-  if (!holdsStanding(held.realm, held.karta, held.name ?? "")) return null;
+  if (of && !(base && nameOf(of).startsWith(base))) return { miss: { why: "satellite" }, of };
+  const [r, k, n] = [held.realm, held.karta, held.name ?? ""];
+  if (isParked(r, k, n)) return { miss: { why: "parked" } };
+  if (!hasStatusAddressFor(r, k, n)) return { miss: { why: "elsewhere" } };
   // Каталог — локальная память места, как у полного пути: запись держания несёт его для возврата (resume.ts).
   const cwd = typeof a.cwd === "string" ? a.cwd.trim() : "";
   if (cwd) {
-    if (cwd !== process.cwd() && !isDirectory(cwd)) return null; // кривой каталог отказывает полный путь, вслух
+    if (cwd !== process.cwd() && !isDirectory(cwd)) return { miss: { why: "cwd", cwd } };
     noteStandCwd(cwd);
   }
   const [body, isError] = await statusWord(a.status.trim(), realm);
-  // Место держит мост, а сторож к нему не прицеплен — команда слушания тут же.
-  const listen = isError ? null : unheardListenBlock(realm);
-  return replyTo(msg)(listen ? `${body}\n${listen}` : body, isError);
+  // Сокет места держит мост, а сторож к нему не прицеплен — команда слушания тут же;
+  // после отъёма слуха здесь нет, и команда сторожа была бы неправдой.
+  const listen = isError || !holdsStanding(r, k, n) ? null : unheardListenBlock(realm);
+  return { reply: replyTo(msg)(listen ? `${body}\n${listen}` : body, isError) };
 }
 
 /** Место, которое мост ведёт в этом графе (основное либо рядом), — держит ли он сокет, не судит. */
@@ -120,22 +145,6 @@ function ledIn(realm: string): Standing | undefined {
   return prim && (prim.realm === realm || sameRealm(prim.realm, realm))
     ? prim
     : extraIn(realm)?.standing;
-}
-
-/**
- * Почему iskron_stand(realm, status) без karta не стал занятостью — для слова
- * отказа (standwords.ts): места в графе нет; ушёл с него словом (leave); место
- * ведётся, а сокет у другого моста; место слышно здесь, но вызов несёт то, что
- * ведёт полный путь занятия.
- */
-export type StatusMiss = "none" | "parked" | "elsewhere" | "full";
-export async function statusMiss(realm: string): Promise<StatusMiss> {
-  await resolveAgainstLed(realm);
-  const held = ledIn(realm);
-  if (!held) return "none";
-  const [r, k, n] = [held.realm, held.karta, held.name ?? ""];
-  if (isParked(r, k, n)) return "parked";
-  return holdsStanding(r, k, n) ? "full" : "elsewhere";
 }
 
 /** Исход POST занятости; code — HTTP-код отказа поверхности, когда он был. */

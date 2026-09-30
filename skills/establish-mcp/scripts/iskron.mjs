@@ -4188,42 +4188,38 @@ function localStatus(msg) {
 var STATUS_ONLY_ARGS = /* @__PURE__ */ new Set(["realm", "karta", "name", "cwd", "status", "satellite_of"]);
 async function standStatusOnly(msg) {
   const a = msg.params?.arguments ?? {};
-  if (typeof a.status !== "string") return null;
+  if (typeof a.status !== "string") return { miss: null };
   const unset = (v) => v == null || v === false || v === "";
-  if (Object.keys(a).some((k) => !STATUS_ONLY_ARGS.has(k) && !unset(a[k]))) return null;
+  const extra = Object.keys(a).filter((k2) => !STATUS_ONLY_ARGS.has(k2) && !unset(a[k2]));
   const realm = typeof a.realm === "string" ? a.realm.trim() : "";
-  if (!realm) return null;
+  if (!realm) return { miss: null };
   await resolveAgainstLed(realm);
   const held2 = ledIn(realm);
-  if (!held2) return null;
-  if (!unset(a.karta) && normKarta(a.karta) !== String(held2.karta)) return null;
+  if (!held2) return { miss: { why: "none" } };
+  if (extra.length) return { miss: { why: "args", args: extra } };
+  if (!unset(a.karta) && normKarta(a.karta) !== String(held2.karta)) return { miss: null };
   const asked = normName(a.name);
-  if (asked && asked !== (held2.name ?? "")) return null;
+  if (asked && asked !== (held2.name ?? ""))
+    return { miss: { why: "name", asked, held: held2.name ?? "" } };
   const of = normName(a.satellite_of);
   const base = /^(.+)\.sub-[1-9]\d*$/.exec(held2.name ?? "")?.[1];
-  if (of && !(base && nameOf(of).startsWith(base))) return null;
-  if (!holdsStanding(held2.realm, held2.karta, held2.name ?? "")) return null;
+  if (of && !(base && nameOf(of).startsWith(base))) return { miss: { why: "satellite" }, of };
+  const [r, k, n] = [held2.realm, held2.karta, held2.name ?? ""];
+  if (isParked(r, k, n)) return { miss: { why: "parked" } };
+  if (!hasStatusAddressFor(r, k, n)) return { miss: { why: "elsewhere" } };
   const cwd = typeof a.cwd === "string" ? a.cwd.trim() : "";
   if (cwd) {
-    if (cwd !== process.cwd() && !isDirectory(cwd)) return null;
+    if (cwd !== process.cwd() && !isDirectory(cwd)) return { miss: { why: "cwd", cwd } };
     noteStandCwd(cwd);
   }
   const [body, isError] = await statusWord(a.status.trim(), realm);
-  const listen = isError ? null : unheardListenBlock(realm);
-  return replyTo(msg)(listen ? `${body}
-${listen}` : body, isError);
+  const listen = isError || !holdsStanding(r, k, n) ? null : unheardListenBlock(realm);
+  return { reply: replyTo(msg)(listen ? `${body}
+${listen}` : body, isError) };
 }
 function ledIn(realm) {
   const prim = state.standing;
   return prim && (prim.realm === realm || sameRealm(prim.realm, realm)) ? prim : extraIn(realm)?.standing;
-}
-async function statusMiss(realm) {
-  await resolveAgainstLed(realm);
-  const held2 = ledIn(realm);
-  if (!held2) return "none";
-  const [r, k, n] = [held2.realm, held2.karta, held2.name ?? ""];
-  if (isParked(r, k, n)) return "parked";
-  return holdsStanding(r, k, n) ? "full" : "elsewhere";
 }
 var lastPublished = "";
 var publishedStatus = () => lastPublished;
@@ -5717,12 +5713,55 @@ async function separatePlace(realm, karta, derived) {
 
 // js/bridge/standwords.ts
 var s = (ms2) => Math.round(ms2 / 1e3);
+function missWord(m, of) {
+  const only = L(
+    "Без karta вызов только ставит занятость места, которое ведёт этот мост",
+    "Without karta the call only sets the busy line of the seat this bridge leads"
+  );
+  switch (m.why) {
+    case "none":
+      return L(
+        `${only} в этом графе, — такого места нет.`,
+        `${only} in this graph — there is none.`
+      );
+    case "args":
+      return L(
+        `${only}, а вызов несёт ${m.args.join(", ")} — это занятие места; для одной занятости — только realm и status.`,
+        `${only}, and the call carries ${m.args.join(", ")} — that is taking a seat; for the busy line alone — only realm and status.`
+      );
+    case "name":
+      return L(
+        `${only}: вызов называет имя ${m.asked}, а мост держит здесь ${m.held} — назови его или опусти name.`,
+        `${only}: the call names ${m.asked}, and the bridge holds ${m.held} here — name it or leave name out.`
+      );
+    case "satellite":
+      return L(
+        `${only}: место моста — не спутник места ${of ?? "?"}.`,
+        `${only}: the bridge's seat is not a satellite of ${of ?? "?"}.`
+      );
+    case "cwd":
+      return L(
+        `${only}: каталог ${m.cwd} не существует или не абсолютный.`,
+        `${only}: the directory ${m.cwd} does not exist or is not absolute.`
+      );
+    case "parked":
+      return L(
+        `${only}, а с места этот мост ушёл словом (leave): вернись iskron_stand с karta тем же именем.`,
+        `${only}, and this bridge left its seat by word (leave): return by iskron_stand with karta under the same name.`
+      );
+    case "elsewhere":
+      return L(
+        `${only}, а сокета и статусного адреса этого места у моста нет — сокет места не у этого моста: только register при слухе другого держателя либо сокет отпущен (мёртвый токен, снятие); займи место iskron_stand с karta.`,
+        `${only}, and the bridge has neither the socket nor the status address of this seat — the seat's socket is not with this bridge: register only while another holder hears, or the socket was released (dead token, revoke); take the seat by iskron_stand with karta.`
+      );
+  }
+}
 var SW = {
   /** miss — почему вызов со status без karta не стал занятостью (status.ts); null — status не было. */
-  needRealmKarta: (miss) => L(
-    "Отказано (мост): iskron_stand требует realm и karta — граф и роль из AGENTS.md или строки запуска." + (miss === "none" ? " Без karta вызов только ставит занятость места, которое этот мост уже держит в этом графе, — такого места нет." : miss === "parked" ? " Без karta вызов только ставит занятость, а с места этот мост ушёл словом (leave): вернись iskron_stand с karta тем же именем." : miss === "elsewhere" ? " Без karta вызов только ставит занятость, а сокет этого места держит другой мост: занятость ставит держатель сокета; забрать слух — iskron_stand с take=true, только по слову человека." : miss === "full" ? " Место этот мост держит, но вызов несёт то, что ведёт полный путь занятия (room, take, repeat_knock, mute_siblings, model): для одной занятости — только realm и status." : ""),
-    "Refused (bridge): iskron_stand needs realm and karta — the graph and the role from AGENTS.md or the launch line." + (miss === "none" ? " Without karta the call only sets the busy line of a seat this bridge already holds in this graph — there is none." : miss === "parked" ? " Without karta the call only sets the busy line, and this bridge left its seat by word (leave): return by iskron_stand with karta under the same name." : miss === "elsewhere" ? " Without karta the call only sets the busy line, and another bridge holds this seat's socket: the socket's holder sets the busy line; taking the hearing — iskron_stand with take=true, only on the human's word." : miss === "full" ? " This bridge holds the seat, but the call carries what goes the full way of taking it (room, take, repeat_knock, mute_siblings, model): for the busy line alone — only realm and status." : "")
-  ),
+  needRealmKarta: (miss, of) => L(
+    "Отказано (мост): iskron_stand требует realm и karta — граф и роль из AGENTS.md или строки запуска.",
+    "Refused (bridge): iskron_stand needs realm and karta — the graph and the role from AGENTS.md or the launch line."
+  ) + (miss ? ` ${missWord(miss, of)}` : ""),
   badCwd: (cwd, relative) => L(
     `Отказано (мост): cwd должен быть существующим абсолютным каталогом — получено «${cwd}»${relative ? " (относительный путь резолвился бы от cwd моста, не сессии)" : ""}.`,
     `Refused (bridge): cwd must be an existing absolute directory — got "${cwd}"${relative ? " (a relative path would resolve against the bridge's cwd, not the session's)" : ""}.`
@@ -5958,7 +5997,7 @@ var KNOCK_REPEAT_AFTER_MS = Number(process.env.ISKRON_STAND_KNOCK_REPEAT_MS) || 
 var KNOCK_LIMIT = 2;
 async function runStand(msg) {
   const statusOnly = await standStatusOnly(msg);
-  if (statusOnly) return statusOnly;
+  if ("reply" in statusOnly) return statusOnly.reply;
   const a = msg.params?.arguments ?? {};
   const realm = typeof a.realm === "string" ? a.realm.trim() : "";
   const karta = a.karta != null ? normKarta(a.karta) : "";
@@ -5972,9 +6011,7 @@ async function runStand(msg) {
     }
   });
   if (!realm || !karta) {
-    lines.push(
-      SW.needRealmKarta(realm && typeof a.status === "string" ? await statusMiss(realm) : null)
-    );
+    lines.push(SW.needRealmKarta(statusOnly.miss, statusOnly.of));
     return done(true);
   }
   const model2 = typeof a.model === "string" && a.model.trim() ? a.model : void 0;

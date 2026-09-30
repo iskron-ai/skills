@@ -13,6 +13,7 @@
 // skills actually use (two flat, single-line keys), which both catches malformed
 // YAML and keeps the frontmatter simple.
 
+import { execFileSync } from "node:child_process";
 import { readFileSync, readdirSync, existsSync, statSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -566,6 +567,36 @@ try {
   }
 } catch (e) {
   fail("js/cli/satform.ts", `сверка копий кода записи моста-спутника не удалась: ${e.message}`);
+}
+
+// Маркеры конфликта слияния в отслеживаемых текстовых файлах. Слияние, разведённое
+// пересборкой производных, оставило их в REALITY.md, и ни одна проверка этого не
+// увидела. Строка `=======` засчитывается только рядом с `<<<<<<< `/`>>>>>>> ` —
+// одна она законна (подчёркивание заголовка). Двоичные файлы (NUL в начале) — мимо.
+try {
+  const tracked = execFileSync("git", ["ls-files", "-z"], { cwd: root, encoding: "utf8" })
+    .split("\0")
+    .filter(Boolean);
+  const OPEN = /^(<<<<<<<|>>>>>>>|\|\|\|\|\|\|\|)( |$)/;
+  for (const rel of tracked) {
+    let buf;
+    try {
+      buf = readFileSync(join(root, rel));
+    } catch {
+      continue; // удалён в рабочем дереве, ещё в индексе
+    }
+    if (buf.subarray(0, 8000).includes(0)) continue;
+    const lines = buf.toString("utf8").split(/\r?\n/);
+    const hits = lines.flatMap((l, i) => (OPEN.test(l) ? [i + 1] : []));
+    if (!hits.length) continue;
+    const seps = lines.flatMap((l, i) => (l === "=======" ? [i + 1] : []));
+    fail(
+      rel,
+      `маркеры конфликта слияния в строках ${[...hits, ...seps].sort((a, b) => a - b).join(", ")} — разведи конфликт руками`,
+    );
+  }
+} catch (e) {
+  fail("git ls-files", `проверка маркеров конфликта не удалась: ${e.message}`);
 }
 
 // Report.
