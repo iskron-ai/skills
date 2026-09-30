@@ -70,6 +70,26 @@ const cases = [
   ["git push -q; echo done", "done", true, false],
   ["git push -q origin feat/x 2>&1 | tail -3", " ! [rejected] a -> a (fetch first)", false, false],
   ["git push -q 2>&1 | tail", "error: failed to push some refs", false, false],
+  // real output of a quiet non-fast-forward push to a local bare repo (git 2.x):
+  // `tail -3` keeps only the hint lines, and `tail` alone keeps them all
+  [
+    "git push -q origin main 2>&1 | tail -3",
+    "hint: the same ref. If you want to integrate the remote changes, use\nhint: 'git pull' before pushing again.\nhint: See the 'Note about fast-forwards' in 'git push --help' for details.\n",
+    false,
+    false,
+  ],
+  [
+    "git push -q origin main 2>&1 | tail",
+    "To /tmp/o.git\n ! [rejected]        main -> main (fetch first)\nerror: failed to push some refs to '/tmp/o.git'\nhint: Updates were rejected because the remote contains work that you do not\nhint: have locally. This is usually caused by another repository pushing to\nhint: the same ref. If you want to integrate the remote changes, use\nhint: 'git pull' before pushing again.\nhint: See the 'Note about fast-forwards' in 'git push --help' for details.\n",
+    false,
+    false,
+  ],
+  // text is not a command: quotes and heredoc bodies never wake a quiet push
+  ['echo "note; git push -q origin x"', "", false, false],
+  ['gh pr create --title t --body "fixes; git push -q origin x here"', "", false, false],
+  ["git commit -m \"$(cat <<'EOF'\nfix: x\n\ngit push -q origin y\nEOF\n)\"", "", false, false],
+  ["cat <<EOF\ngit push -q origin y\nEOF", "", false, false],
+  ["git commit -qm x && git push -q origin feat/x 2>&1 | tail -3", "", true, false],
   ["git push -q -h | tail", "usage: git push", false, false],
   ["echo git push -q | tail", "", false, false],
   ['grep "git push" AGENTS.md', "git push", false, false],
