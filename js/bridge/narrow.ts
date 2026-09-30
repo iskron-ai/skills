@@ -5,29 +5,15 @@
 // мосты), и сам мост зовёт на сервер любые ходы.
 //
 // Два сужения:
-//  - набор тулов: `--tools a,b,c`; у спутника без флага — набор по умолчанию, но
-//    только харнесу с файлом агента: плагин OpenCode и расширение pi поднимают
-//    спутника дочерней сессии, и ей нужен полный набор;
+//  - набор тулов — только по флагу `--tools a,b,c`; без флага харнес видит все
+//    тулы, и мост с ролевыми файлами прежнего вида работает как прежде;
 //  - схема iskron_channel у всех мостов: ходы над местом (mint, connect, register,
 //    revoke, sessions) мост делает сам (iskron_stand, уход, отзыв), и их поля
 //    агенту — только вес.
-import { HOSTED_CLIENTS } from "../shared/clients.ts";
 import { L } from "../shared/lang.ts";
 import { CFG } from "./config.ts";
 import { STAND_TOOL } from "./standtool.ts";
-import { state } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
-
-/** Набор спутника без `--tools`: встать, дело, чтение графа. */
-export const SATELLITE_TOOLS = [
-  STAND_TOOL.name,
-  "iskron_case",
-  "iskron_look",
-  "iskron_orient",
-  "iskron_search",
-  "iskron_semantic_search",
-  "iskron_history",
-];
 
 /** Ходы iskron_channel, которые мост делает сам; из перечня action в описании они убраны. */
 const PLACE_MOVES = new Set(["mint", "connect", "register", "revoke", "sessions"]);
@@ -43,19 +29,9 @@ const PLACE_FIELDS = [
   "channel",
 ];
 
-function clientName(): string {
-  const info = (state.initParams as { clientInfo?: { name?: unknown } } | null)?.clientInfo;
-  return typeof info?.name === "string" ? info.name : "";
-}
-
 /** Имена тулов, которые видит харнес; null — все. iskron_stand в наборе всегда. */
 export function toolSet(): Set<string> | null {
-  const named = CFG.tools
-    ? CFG.tools
-    : CFG.satellite && !HOSTED_CLIENTS.has(clientName())
-      ? new Set(SATELLITE_TOOLS)
-      : null;
-  return named ? new Set([...named, STAND_TOOL.name]) : null;
+  return CFG.tools ? new Set([...CFG.tools, STAND_TOOL.name]) : null;
 }
 
 /** Отказ вслух на вызов тула вне набора: харнес его не видел, но имя пришло. */
@@ -66,8 +42,8 @@ export function outsideSetRefusal(msg: JsonRpcMessage): JsonRpcMessage | null {
   if (!set || set.has(name)) return null;
   const list = [...set].sort().join(", ");
   const text = L(
-    `Отказано (мост): тула ${name} нет в наборе этого моста (${list}) — набор задаёт --tools в записи моста${CFG.satellite ? "; у спутника без флага — набор по умолчанию" : ""}.`,
-    `Refused (bridge): the tool ${name} is not in this bridge's set (${list}) — the set comes from --tools in the bridge entry${CFG.satellite ? "; a satellite without the flag gets the default set" : ""}.`,
+    `Отказано (мост): тула ${name} нет в наборе этого моста (${list}) — набор задаёт --tools в записи моста.`,
+    `Refused (bridge): the tool ${name} is not in this bridge's set (${list}) — the set comes from --tools in the bridge entry.`,
   );
   return {
     jsonrpc: "2.0",

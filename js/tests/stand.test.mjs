@@ -1699,17 +1699,13 @@ async function withCaller(t) {
   await fake.control({ places: [{ karta: "931", name: CALLER, listening: true }] });
   return fake;
 }
-async function satelliteBridge(t, fake, { dir, init = INIT } = {}) {
+async function satelliteBridge(t, fake, { dir, args = [] } = {}) {
   const home = dir ?? mkdtempSync(join(tmpdir(), "iskron-sat-"));
-  const b = startBridge(fake.mcpUrl, home, process.cwd(), {}, ["--satellite"]);
+  const b = startBridge(fake.mcpUrl, home, process.cwd(), {}, ["--satellite", ...args]);
   t.after(() => b.stop());
-  assert.ok((await b.call("initialize", init)).result);
+  assert.ok((await b.call("initialize", INIT)).result);
   return b;
 }
-// Спутник, который видит iskron_channel: дочерняя сессия плагина OpenCode или
-// расширения pi — у них набор тулов не сужается (bridge/narrow.ts), и сырые ходы
-// над местом доходят до сторожа спутника.
-const HOSTED_INIT = { ...INIT, clientInfo: { name: "pi-iskron", version: "0" } };
 const standAs = (b, args) => b.call("tools/call", { name: "iskron_stand", arguments: args });
 
 test("satellite: a subagent's bridge stands as <caller>.sub-1 in the caller's role with a short ttl and no inbox hook; the next run takes .sub-2", async (t) => {
@@ -1966,7 +1962,7 @@ test("satellite: a session bridge still refuses a second name in its graph (#515
 
 test("satellite: raw connect, register or revoke of the caller's place is refused before and after the satellite stands; its own place passes", async (t) => {
   const fake = await withCaller(t);
-  const sat = await satelliteBridge(t, fake, { init: HOSTED_INIT });
+  const sat = await satelliteBridge(t, fake);
   const channel = (args) =>
     sat.call("tools/call", {
       name: "iskron_channel",
@@ -2017,7 +2013,7 @@ test("satellite: a connect refusing the short ttl in any words is retried withou
 // is still `<caller>.sub-N`, and the caller may hold any role.
 test("satellite: karta of another role stands as <caller>.sub-1 in THAT role, and the guard lets its own place pass", async (t) => {
   const fake = await withCaller(t);
-  const sat = await satelliteBridge(t, fake, { init: HOSTED_INIT });
+  const sat = await satelliteBridge(t, fake);
   const r = await standAs(sat, { ...SAT_ARGS, karta: 48 });
   assert.ok(!r.result?.isError, `${textOf(r)}\n${sat.stderr}`);
   assert.equal(placeOf(r), `${CALLER}.sub-1`, textOf(r));
@@ -2363,19 +2359,13 @@ test("every bridge: the harness sees iskron_channel without the place moves and 
   );
 });
 
-test("satellite without --tools: the harness sees the default set; a tool outside it is refused aloud; a re-opened session is not a changed list", async (t) => {
+test("satellite with --tools: the harness sees exactly the named tools plus iskron_stand; a tool outside the set is refused aloud; a re-opened session is not a changed list", async (t) => {
   const fake = await withCaller(t);
   fake.state.tools = SERVER_TOOLS; // the server's list, not the fake's stub
-  const sat = await satelliteBridge(t, fake);
+  // Short names and full ones both name a tool; iskron_stand comes by itself.
+  const sat = await satelliteBridge(t, fake, { args: ["--tools", "case,iskron_look"] });
   const list = await sat.call("tools/list");
-  assert.deepEqual(namesOf(list), [
-    "iskron_case",
-    "iskron_history",
-    "iskron_look",
-    "iskron_orient",
-    "iskron_search",
-    "iskron_stand",
-  ]);
+  assert.deepEqual(namesOf(list), ["iskron_case", "iskron_look", "iskron_stand"]);
   const before = fake.state.calls.length;
   const refused = await sat.call("tools/call", {
     name: "iskron_add_vimarsha",
@@ -2407,39 +2397,23 @@ test("satellite without --tools: the harness sees the default set; a tool outsid
   );
 });
 
-test("satellite with --tools: the harness sees exactly the named tools plus iskron_stand; a hosted client's satellite without the flag sees all", async (t) => {
+// Сужение — только по флагу: ролевые файлы без --tools и мост новой сборки дают
+// субагенту прежний полный набор, и новый мост один ничего не ломает.
+test("satellite without --tools: the harness sees every tool, and a call to any of them goes through", async (t) => {
   const fake = await withCaller(t);
   fake.state.tools = SERVER_TOOLS;
-  const named = startBridge(
-    fake.mcpUrl,
-    mkdtempSync(join(tmpdir(), "iskron-sat-")),
-    process.cwd(),
-    {},
-    ["--satellite", "--tools", "case,iskron_add_vimarsha"],
-  );
-  t.after(() => named.stop());
-  assert.ok((await named.call("initialize", INIT)).result);
-  assert.deepEqual(namesOf(await named.call("tools/list")), [
-    "iskron_add_vimarsha",
-    "iskron_case",
-    "iskron_stand",
-  ]);
-  // The OpenCode plugin and the pi extension raise a child session's bridge as a
-  // satellite, and that session is a whole agent: no default narrowing for them.
-  const hosted = startBridge(
-    fake.mcpUrl,
-    mkdtempSync(join(tmpdir(), "iskron-sat-")),
-    process.cwd(),
-    {},
-    ["--satellite"],
-  );
-  t.after(() => hosted.stop());
-  assert.ok(
-    (await hosted.call("initialize", { ...INIT, clientInfo: { name: "pi-iskron", version: "1" } }))
-      .result,
-  );
+  const sat = await satelliteBridge(t, fake);
   assert.deepEqual(
-    namesOf(await hosted.call("tools/list")),
+    namesOf(await sat.call("tools/list")),
     [...SERVER_TOOLS.map((x) => x.name), "iskron_stand"].sort(),
+  );
+  const r = await sat.call("tools/call", {
+    name: "iskron_add_vimarsha",
+    arguments: { realm: "nks-dev" },
+  });
+  assert.doesNotMatch(textOf(r), /нет в наборе/, textOf(r));
+  assert.ok(
+    fake.state.calls.some((c) => c.name === "iskron_add_vimarsha"),
+    "the call reached the server",
   );
 });

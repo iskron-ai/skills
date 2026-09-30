@@ -6,7 +6,7 @@ mcpServers:
   - iskron-sub-weaver:
       type: stdio
       command: node
-      args: ["-e", "const p=require('path').join(require('os').homedir(),'.iskron-bridge','iskron-bridge.mjs');process.argv.splice(1,0,p);import(require('url').pathToFileURL(p).href)", "--", "--satellite", "--tools", "iskron_case,iskron_look,iskron_orient,iskron_search,iskron_semantic_search,iskron_history,iskron_add_bianhua,iskron_add_holon,iskron_add_karta,iskron_add_kriya,iskron_add_phenomenon,iskron_add_vimarsha,iskron_arrow,iskron_update,iskron_batch"]
+      args: ["-e", "const p=require('path').join(require('os').homedir(),'.iskron-bridge','iskron-bridge.mjs');process.argv.splice(1,0,p);import(require('url').pathToFileURL(p).href)", "--", "--satellite"]
 disallowedTools: mcp__iskron-bridge, mcp__plugin_iskron_iskron, mcp__iskron
 ---
 

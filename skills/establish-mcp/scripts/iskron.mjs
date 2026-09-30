@@ -6185,15 +6185,6 @@ ${d}` : MOMENT_LINE;
 }
 
 // js/bridge/narrow.ts
-var SATELLITE_TOOLS = [
-  STAND_TOOL.name,
-  "iskron_case",
-  "iskron_look",
-  "iskron_orient",
-  "iskron_search",
-  "iskron_semantic_search",
-  "iskron_history"
-];
 var PLACE_MOVES = /* @__PURE__ */ new Set(["mint", "connect", "register", "revoke", "sessions"]);
 var PLACE_FIELDS = [
   "ttl_seconds",
@@ -6205,13 +6196,8 @@ var PLACE_FIELDS = [
   "satellite_of",
   "channel"
 ];
-function clientName2() {
-  const info = state.initParams?.clientInfo;
-  return typeof info?.name === "string" ? info.name : "";
-}
 function toolSet() {
-  const named = CFG.tools ? CFG.tools : CFG.satellite && !HOSTED_CLIENTS.has(clientName2()) ? new Set(SATELLITE_TOOLS) : null;
-  return named ? /* @__PURE__ */ new Set([...named, STAND_TOOL.name]) : null;
+  return CFG.tools ? /* @__PURE__ */ new Set([...CFG.tools, STAND_TOOL.name]) : null;
 }
 function outsideSetRefusal(msg) {
   if (msg?.method !== "tools/call" || msg.id === void 0 || msg.id === null) return null;
@@ -6220,8 +6206,8 @@ function outsideSetRefusal(msg) {
   if (!set || set.has(name)) return null;
   const list = [...set].sort().join(", ");
   const text = L(
-    `Отказано (мост): тула ${name} нет в наборе этого моста (${list}) — набор задаёт --tools в записи моста${CFG.satellite ? "; у спутника без флага — набор по умолчанию" : ""}.`,
-    `Refused (bridge): the tool ${name} is not in this bridge's set (${list}) — the set comes from --tools in the bridge entry${CFG.satellite ? "; a satellite without the flag gets the default set" : ""}.`
+    `Отказано (мост): тула ${name} нет в наборе этого моста (${list}) — набор задаёт --tools в записи моста.`,
+    `Refused (bridge): the tool ${name} is not in this bridge's set (${list}) — the set comes from --tools in the bridge entry.`
   );
   return {
     jsonrpc: "2.0",
@@ -8754,7 +8740,7 @@ function runUse(argv2) {
 var USAGE = `iskron ${BUILD}
   node iskron.mjs [bridge] [server-url] [--timeout <ms>] [--auth-dir <dir>] [--no-browser] [--debug] [--satellite] [--tools <a,b,c>]
       (--satellite — мост прогона субагента из файла агента: только место-спутник <место позвавшего>.sub-N)
-      (--tools — какие тулы видит харнес, iskron_stand всегда; у спутника без флага — stand, case, look, orient, search, semantic_search, history)
+      (--tools — какие тулы видит харнес, iskron_stand всегда; без флага — все)
   node iskron.mjs watchdog [ключ] [--auth-dir <dir>]
   node iskron.mjs watchdog-exit [ключ] [--auth-dir <dir>]
   node iskron.mjs watchdog-codex [ключ] [--auth-dir <dir>]   (из оболочки Codex: CODEX_THREAD_ID, CODEX_HOME)

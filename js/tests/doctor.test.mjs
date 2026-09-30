@@ -924,14 +924,7 @@ test("doctor: a satellite probe names the tool whose schema carries a top-level 
   const homeBridge = join(home, ".iskron-bridge", "iskron-bridge.mjs");
   mkdirSync(dirname(homeBridge), { recursive: true });
   copyFileSync(FILE, homeBridge);
-  // Проба видит то, что увидит субагент: набор записи (у worker пишущие тулы есть).
-  const project = projectWithAgents({
-    worker: agentFile("worker", "iskron-sub-worker", [
-      "type: stdio",
-      "command: node",
-      `args: ${JSON.stringify(["-e", SAT_CODE, "--", "--satellite", "--tools", "iskron_orient,iskron_add_kriya"])}`,
-    ]),
-  });
+  const project = projectWithAgents({ worker: agentFile("worker", "iskron-sub-worker") });
   try {
     const r = await run(
       ["doctor", fake.mcpUrl, "--auth-dir", join(home, ".iskron-bridge")],

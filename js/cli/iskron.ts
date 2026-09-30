@@ -32,7 +32,7 @@ import { runUse } from "./use.ts";
 const USAGE = `iskron ${BUILD}
   node iskron.mjs [bridge] [server-url] [--timeout <ms>] [--auth-dir <dir>] [--no-browser] [--debug] [--satellite] [--tools <a,b,c>]
       (--satellite — мост прогона субагента из файла агента: только место-спутник <место позвавшего>.sub-N)
-      (--tools — какие тулы видит харнес, iskron_stand всегда; у спутника без флага — stand, case, look, orient, search, semantic_search, history)
+      (--tools — какие тулы видит харнес, iskron_stand всегда; без флага — все)
   node iskron.mjs watchdog [ключ] [--auth-dir <dir>]
   node iskron.mjs watchdog-exit [ключ] [--auth-dir <dir>]
   node iskron.mjs watchdog-codex [ключ] [--auth-dir <dir>]   (из оболочки Codex: CODEX_THREAD_ID, CODEX_HOME)
