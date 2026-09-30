@@ -4219,19 +4219,12 @@ function takeLock(lock, owner) {
   try {
     renameSync5(lock, away);
   } catch {
-    return;
+    return null;
   }
-  if (lockOwner(away) !== owner) {
-    try {
-      renameSync5(away, lock);
-      return;
-    } catch (e) {
-      log(
-        `satellite claims lock of another bridge taken by mistake, not returned: ${e.message}`
-      );
-    }
-  }
+  if (lockOwner(away) !== owner)
+    return `the claims lock of another bridge was taken by mistake and is left as ${away}`;
   rmSync(away, { recursive: true, force: true });
+  return null;
 }
 async function underClaimLock(fn) {
   const lock = join9(claimDir(), ".lock");
@@ -4250,8 +4243,8 @@ async function underClaimLock(fn) {
       else if (Date.now() > end) fault = `the claims lock ${lock} is held too long`;
       else {
         const owner = lockOwner(lock);
-        if (abandoned(lock, owner)) takeLock(lock, owner);
-        await new Promise((r) => setTimeout(r, 20));
+        if (abandoned(lock, owner)) fault = takeLock(lock, owner);
+        if (!fault) await new Promise((r) => setTimeout(r, 20));
       }
       continue;
     }
@@ -4268,21 +4261,25 @@ async function underClaimLock(fn) {
     log(`satellite claims unavailable — the board alone picks the name: ${fault}`);
     return [fn(() => true), fault];
   }
+  let unwritten = null;
+  let value;
   try {
-    const value = fn((name) => {
+    value = fn((name) => {
       try {
         return claimName(name);
       } catch (e) {
-        fault = `claim not written: ${e.message}`;
-        log(`satellite ${fault}`);
+        unwritten = `claim not written: ${e.message}`;
+        log(`satellite ${unwritten}`);
         return true;
       }
     });
-    return [value, fault];
-  } finally {
+  } catch (e) {
     if (lockOwner(lock) === token) takeLock(lock, token);
-    else log(`satellite claims lock ${lock} is no longer ours — left as it is`);
+    throw e;
   }
+  const lost = lockOwner(lock) === token ? takeLock(lock, token) : `the claims lock ${lock} is no longer ours — left as it is; another bridge may have picked at the same time`;
+  if (lost) log(`satellite ${lost}`);
+  return [value, unwritten ?? lost];
 }
 function pickSatellite(entries, of, karta, led, claim = () => true) {
   const address = of.startsWith("@") && of.includes(":") ? of : null;
@@ -4393,8 +4390,8 @@ async function satelliteGate(a, realm, karta, asked) {
   if (unsure && pick.name !== led)
     pick.notes.push(
       L(
-        `заявки имён спутников на этой машине недоступны (${unsure}) — имя ${pick.name} выбрано по одной доске: уникальность не гарантирована, мост-спутник, вставший разом, мог взять то же имя`,
-        `satellite name claims on this machine are unavailable (${unsure}) — the name ${pick.name} was picked by the board alone: uniqueness is not guaranteed, a satellite bridge standing at the same moment may have taken the same name`
+        `заявки имён спутников на этой машине выбор не удержали (${unsure}) — имя ${pick.name} выбрано по доске: уникальность не гарантирована, мост-спутник, вставший разом, мог взять то же имя`,
+        `satellite name claims on this machine did not hold the pick (${unsure}) — the name ${pick.name} was picked by the board: uniqueness is not guaranteed, a satellite bridge standing at the same moment may have taken the same name`
       )
     );
   if (!pick.callerId) {

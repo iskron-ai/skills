@@ -142,35 +142,32 @@ function abandoned(lock: string, owner: string | null): boolean {
 
 /**
  * Унести блокировку с токеном `owner`: rename в уникальное имя атомарен — из
- * двух уносящих её уносит один, и только унёсший удаляет. Унёс не ту (между
- * чтением токена и rename держатель сменился) — возвращает на место.
+ * двух уносящих её уносит один, и только унёсший удаляет. null — унесена и
+ * снята либо её унёс другой. Унёс не ту (между чтением токена и rename
+ * держатель сменился) — чужая не снимается и не возвращается: rename назад
+ * лёг бы поверх пустого `.lock`, только что созданного третьим мостом. Она
+ * остаётся под унесённым именем, а ответ — причина выбирать по одной доске.
  */
-function takeLock(lock: string, owner: string | null): void {
+function takeLock(lock: string, owner: string | null): string | null {
   const away = `${lock}.${process.pid}-${randomBytes(6).toString("hex")}`;
   try {
     renameSync(lock, away);
   } catch {
-    return; // унёс другой
+    return null; // унёс другой
   }
-  if (lockOwner(away) !== owner) {
-    try {
-      renameSync(away, lock);
-      return;
-    } catch (e) {
-      log(
-        `satellite claims lock of another bridge taken by mistake, not returned: ${(e as Error).message}`,
-      );
-    }
-  }
+  if (lockOwner(away) !== owner)
+    return `the claims lock of another bridge was taken by mistake and is left as ${away}`;
   rmSync(away, { recursive: true, force: true });
+  return null;
 }
 
 /**
  * Выбор под блокировкой каталога заявок: мосты этой машины выбирают N по
  * очереди. Блокировка — каталог (mkdir атомарен) с токеном владельца (pid и
  * случайное) внутри; брошенную уносит `takeLock`, в конце снимается только
- * своя. Каталог недоступен, заявка не записалась либо ждать дольше
- * LOCK_WAIT_MS — выбор по одной доске: вторым значением причина, вслух в журнал.
+ * своя. Каталог недоступен, заявка не записалась, ждать дольше LOCK_WAIT_MS,
+ * чужая блокировка унесена по ошибке либо свою унесли посреди выбора — выбор
+ * не гарантирован: вторым значением причина, вслух в журнал и заметкой в ответ.
  */
 async function underClaimLock<T>(
   fn: (claim: (name: string) => boolean) => T,
@@ -191,8 +188,8 @@ async function underClaimLock<T>(
       else if (Date.now() > end) fault = `the claims lock ${lock} is held too long`;
       else {
         const owner = lockOwner(lock);
-        if (abandoned(lock, owner)) takeLock(lock, owner);
-        await new Promise((r) => setTimeout(r, 20));
+        if (abandoned(lock, owner)) fault = takeLock(lock, owner);
+        if (!fault) await new Promise((r) => setTimeout(r, 20));
       }
       continue;
     }
@@ -208,21 +205,29 @@ async function underClaimLock<T>(
     log(`satellite claims unavailable — the board alone picks the name: ${fault}`);
     return [fn(() => true), fault];
   }
+  let unwritten: string | null = null;
+  let value: T;
   try {
-    const value = fn((name) => {
+    value = fn((name) => {
       try {
         return claimName(name);
       } catch (e) {
-        fault = `claim not written: ${(e as Error).message}`;
-        log(`satellite ${fault}`);
+        unwritten = `claim not written: ${(e as Error).message}`;
+        log(`satellite ${unwritten}`);
         return true;
       }
     });
-    return [value, fault];
-  } finally {
+  } catch (e) {
     if (lockOwner(lock) === token) takeLock(lock, token);
-    else log(`satellite claims lock ${lock} is no longer ours — left as it is`);
+    throw e;
   }
+  // Блокировку унесли посреди выбора — другой мост мог выбирать одновременно: вслух и заметкой.
+  const lost =
+    lockOwner(lock) === token
+      ? takeLock(lock, token)
+      : `the claims lock ${lock} is no longer ours — left as it is; another bridge may have picked at the same time`;
+  if (lost) log(`satellite ${lost}`);
+  return [value, unwritten ?? lost];
 }
 
 /**
@@ -364,8 +369,8 @@ export async function satelliteGate(
   if (unsure && pick.name !== led)
     pick.notes.push(
       L(
-        `заявки имён спутников на этой машине недоступны (${unsure}) — имя ${pick.name} выбрано по одной доске: уникальность не гарантирована, мост-спутник, вставший разом, мог взять то же имя`,
-        `satellite name claims on this machine are unavailable (${unsure}) — the name ${pick.name} was picked by the board alone: uniqueness is not guaranteed, a satellite bridge standing at the same moment may have taken the same name`,
+        `заявки имён спутников на этой машине выбор не удержали (${unsure}) — имя ${pick.name} выбрано по доске: уникальность не гарантирована, мост-спутник, вставший разом, мог взять то же имя`,
+        `satellite name claims on this machine did not hold the pick (${unsure}) — the name ${pick.name} was picked by the board: uniqueness is not guaranteed, a satellite bridge standing at the same moment may have taken the same name`,
       ),
     );
   // id места печатает только доска одной роли (list с karta), последней строкой под местом.
