@@ -24,7 +24,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "echo '{\"hookSpecificOutput\":{\"hookEventName\":\"SessionStart\",\"additionalContext\":\"iskron-ai/skills — read the Start section of the iskron door skill first and finish it as readiness, not orientation; addresses: graph @nks/nks-dev (r5), focus contour #1506, agent karta #931, owner karta #1226, js-bundle sub-contour #4057. Standing only on watch (the word вахта, start, a seat address from the window, a frame), one call: iskron_stand. start <graph> <role> <case №N> enters that case; a subagent sharing the bridge of its caller does not stand, join or leave. Source of truth is skills/<name>/SKILL.md — run make build after edits, review the SKILL.md diff by eye.\"}}'"
+            "command": "echo '{\"hookSpecificOutput\":{\"hookEventName\":\"SessionStart\",\"additionalContext\":\"iskron-ai/skills — read the Start section of the iskron door skill first and finish it as readiness, not orientation; addresses: graph @nks/nks-dev (r5), focus contour #1506, agent karta #931, owner karta #1226, js-bundle sub-contour #4057. Standing only on watch (the word вахта, start, a seat address from the window, a frame), one call: iskron_stand. start <graph> <role> <case №N> enters that case; a subagent stands on its own satellite bridge (iskron_stand with satellite_of, then join and leave), and launched on the bridge of its caller it does not write to the graph. Source of truth is skills/<name>/SKILL.md — run make build after edits, review the SKILL.md diff by eye.\"}}'"
           }
         ]
       }
@@ -35,7 +35,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "jq -r '.tool_input.file_path // \"\"' | grep -Eq '\\.claude/projects/.*/memory/' && { echo 'BLOCKED: локальная память агента запрещена целиком, по директории (AGENTS.md, Persistence rules). Маршрутизируй факт: конвенции репо / код-факты → AGENTS.md; состояние проекта → NKS (nks-dev, #1506); пользовательский факт вне проекта → личный граф владельца (minding). Директория заморожена на стабе-запрете.' >&2; exit 2; } || exit 0"
+            "command": "jq -r '.tool_input.file_path // \"\"' | grep -Eq '\\.claude/projects/.*/memory/' && { echo 'BLOCKED: локальная память агента запрещена целиком, по директории (AGENTS.md, Persistence rules). Маршрутизируй факт: конвенции репо / код-факты → AGENTS.md; состояние проекта → NKS (nks-dev, #1506); пользовательский факт вне проекта, включая факты машины → личный граф человека @handle/mind (minding). Директория заморожена на стабе-запрете.' >&2; exit 2; } || exit 0"
           }
         ]
       }
