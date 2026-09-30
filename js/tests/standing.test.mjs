@@ -3642,8 +3642,10 @@ test("a case batch under Monitor is short: the head with a pointer to read it wh
   // How to read it whole stands in the head: a cut takes the tail, not the head.
   assert.match(
     lines[head],
-    /iskron_case\(realm="nks-dev", action="history", room=7, since=399\) \(старый тул без since — history с keep_cursor=true\)/,
+    /iskron_case\(realm="nks-dev", action="history", room=7, since=399\); следом/,
   );
+  // No hint about an «older tool without since»: the delivery ships the tool with since.
+  assert.doesNotMatch(wd.out, /старый тул|older tool/);
   const body = lines.slice(head + 1, head + 7);
   // Every line leads with its case №N; the case's zachin — on its first line only (#6081).
   for (let i = 0; i < 6; i++)
