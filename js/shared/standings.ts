@@ -3,6 +3,7 @@
 // ~/.iskron-bridge); сторож обязан вывести то же место, что и мост, иначе он
 // честно отвечает «мост не держит ни одного стояния» о мосте, который держит.
 import { createHash } from "node:crypto";
+import { lstatSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -35,6 +36,32 @@ const SOCKET_PATH_MAX = 103;
 /** Короткий личный каталог сокетов — когда путь под каталогом гранта не влезает в предел. */
 export const shortSocketDir = (): string =>
   join("/tmp", `iskron-${typeof process.getuid === "function" ? process.getuid() : "u"}`);
+
+/**
+ * Личный каталог сокетов (короткий в общем /tmp, каталог шва демона) заводится
+ * 0700 и берётся, только если он каталог (не ссылка) этого пользователя без
+ * прав группы и прочих. Между проверкой и listen его не подменить: /tmp со
+ * sticky-битом не даёт чужому переименовать наш каталог. Иначе — слово, почему
+ * нет; null — годен. Двери мест (door.ts) и шов демона (seam.ts) — одна проверка.
+ */
+export function privateDirProblem(dir: string): string | null {
+  let st;
+  try {
+    try {
+      mkdirSync(dir, { mode: 0o700 });
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
+    }
+    st = lstatSync(dir);
+  } catch (e) {
+    return `${dir}: ${(e as Error).message}`;
+  }
+  if (!st.isDirectory()) return `${dir} — не каталог`;
+  if (typeof process.getuid === "function" && st.uid !== process.getuid())
+    return `${dir} принадлежит другому пользователю`;
+  if (st.mode & 0o077) return `${dir} открыт группе или прочим`;
+  return null;
+}
 
 export const keyFilePathOf = (authDir: string, key: string): string =>
   join(standingsDirOf(authDir), `${hashOf(key)}.key`);

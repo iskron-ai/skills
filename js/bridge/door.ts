@@ -2,7 +2,7 @@
 // к которому цепляется сторож места, его кольцо кадров и память отданного.
 // Сокет службы у моста один на канал (hold.ts), дверей — по одной на место:
 // канал держит места в нескольких графах, и кадр идёт к двери своего места.
-import { chmodSync, lstatSync, mkdirSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { createServer, type Server, type Socket } from "node:net";
 import { dirname } from "node:path";
 
@@ -10,6 +10,7 @@ import { type Frame } from "../shared/channel.ts";
 import { deliveredKeys, seenIds } from "../shared/seen.ts";
 import {
   keyFilePathOf,
+  privateDirProblem,
   seenFilePathOf,
   shortSocketDir,
   socketPathOf,
@@ -24,31 +25,6 @@ import { log } from "./streams.ts";
 import { sweepStale } from "./sweep.ts";
 
 const RING = 20; // кадров, которые прицепившийся позже клиент получит задним числом
-
-/**
- * Короткий каталог сокетов лежит в общем /tmp: заводится 0700 и берётся, только
- * если он каталог (не ссылка) этого пользователя без прав группы и прочих.
- * Между проверкой и listen его не подменить: /tmp со sticky-битом не даёт
- * чужому переименовать наш каталог. Иначе — слово, почему нет; null — годен.
- */
-function privateDirProblem(dir: string): string | null {
-  let st;
-  try {
-    try {
-      mkdirSync(dir, { mode: 0o700 });
-    } catch (e) {
-      if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
-    }
-    st = lstatSync(dir);
-  } catch (e) {
-    return `${dir}: ${(e as Error).message}`;
-  }
-  if (!st.isDirectory()) return `${dir} — не каталог`;
-  if (typeof process.getuid === "function" && st.uid !== process.getuid())
-    return `${dir} принадлежит другому пользователю`;
-  if (st.mode & 0o077) return `${dir} открыт группе или прочим`;
-  return null;
-}
 
 /** Ключ стояния без места — сокет из окружения (hold.ts keyFor). */
 export const ENV_KEY = "env";
