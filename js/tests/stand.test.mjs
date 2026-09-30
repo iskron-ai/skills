@@ -1699,13 +1699,17 @@ async function withCaller(t) {
   await fake.control({ places: [{ karta: "931", name: CALLER, listening: true }] });
   return fake;
 }
-async function satelliteBridge(t, fake, { dir } = {}) {
+async function satelliteBridge(t, fake, { dir, init = INIT } = {}) {
   const home = dir ?? mkdtempSync(join(tmpdir(), "iskron-sat-"));
   const b = startBridge(fake.mcpUrl, home, process.cwd(), {}, ["--satellite"]);
   t.after(() => b.stop());
-  assert.ok((await b.call("initialize", INIT)).result);
+  assert.ok((await b.call("initialize", init)).result);
   return b;
 }
+// Спутник, который видит iskron_channel: дочерняя сессия плагина OpenCode или
+// расширения pi — у них набор тулов не сужается (bridge/narrow.ts), и сырые ходы
+// над местом доходят до сторожа спутника.
+const HOSTED_INIT = { ...INIT, clientInfo: { name: "pi-iskron", version: "0" } };
 const standAs = (b, args) => b.call("tools/call", { name: "iskron_stand", arguments: args });
 
 test("satellite: a subagent's bridge stands as <caller>.sub-1 in the caller's role with a short ttl and no inbox hook; the next run takes .sub-2", async (t) => {
@@ -1962,7 +1966,7 @@ test("satellite: a session bridge still refuses a second name in its graph (#515
 
 test("satellite: raw connect, register or revoke of the caller's place is refused before and after the satellite stands; its own place passes", async (t) => {
   const fake = await withCaller(t);
-  const sat = await satelliteBridge(t, fake);
+  const sat = await satelliteBridge(t, fake, { init: HOSTED_INIT });
   const channel = (args) =>
     sat.call("tools/call", {
       name: "iskron_channel",
@@ -2013,7 +2017,7 @@ test("satellite: a connect refusing the short ttl in any words is retried withou
 // is still `<caller>.sub-N`, and the caller may hold any role.
 test("satellite: karta of another role stands as <caller>.sub-1 in THAT role, and the guard lets its own place pass", async (t) => {
   const fake = await withCaller(t);
-  const sat = await satelliteBridge(t, fake);
+  const sat = await satelliteBridge(t, fake, { init: HOSTED_INIT });
   const r = await standAs(sat, { ...SAT_ARGS, karta: 48 });
   assert.ok(!r.result?.isError, `${textOf(r)}\n${sat.stderr}`);
   assert.equal(placeOf(r), `${CALLER}.sub-1`, textOf(r));
@@ -2230,4 +2234,212 @@ test("fake NKS drops arguments the surface snapshot does not declare, silently; 
   // A probe of a pending server change opts in by name.
   const pending = await connectWith({ futureArgs: { iskron_channel: ["not_yet_declared"] } });
   assert.equal(pending?.not_yet_declared, "u-1", JSON.stringify(pending));
+});
+
+// Что из списка тулов видит харнес (bridge/narrow.ts). Список тулов — вес каждого
+// запроса агента: у субагента с мостом-спутником 23 тула сервера стоили сотни тысяч
+// токенов на «ответь ок». Харнес видит суженную копию, а общий кэш ответов сервера
+// и ходы самого моста остаются полными. Список ниже — форма сервера 0.97.1:
+// поля iskron_channel и перечень action — дословно, описания прочих укорочены.
+const PLACE_FIELDS = [
+  "ttl_seconds",
+  "mute_siblings",
+  "locale",
+  "attrs",
+  "name",
+  "model",
+  "satellite_of",
+  "channel",
+];
+const prop = (description, type = "string") => ({ description, type });
+const SERVER_TOOLS = [
+  {
+    name: "iskron_channel",
+    description: 'Открывает, читает, пишет и закрывает стояние роли. action="?" открывает справку.',
+    inputSchema: {
+      type: "object",
+      required: ["action"],
+      properties: {
+        realm: prop("Адрес графа."),
+        action: prop(
+          'Что сделать — одно из: mint | connect | register | list | send | sessions | revoke | history. Обязателен в каждом вызове. Передай action="?", чтобы прочесть справку.',
+        ),
+        name: prop("mint, connect и register: собственная половина имени этого стояния."),
+        mute_siblings: prop("mint и connect: не будить тебя записями БРАТЬЕВ.", "boolean"),
+        standing: prop("send и revoke: какое именно стояние роли."),
+        model: prop("mint, connect и register: какая модель стоит на этом месте."),
+        attrs: { description: "mint, connect и register: собственное описание места." },
+        satellite_of: {
+          anyOf: [prop("mint, connect и register: открыть это место СПУТНИКОМ."), { type: "null" }],
+        },
+        locale: prop("mint, connect и register: язык, на котором платформа говорит с местом."),
+        karta: prop("Чьё это стояние; у send — роль АДРЕСАТА."),
+        channel: prop("Только revoke: собственный id МЕСТА."),
+        text: prop("Только send: слова, которые получит адресат."),
+        view: prop("Только history: какое чтение."),
+        ttl_seconds: prop(
+          "Для mint и connect: сколько канал может простоять без жизни сокета.",
+          "number",
+        ),
+      },
+    },
+  },
+  ...["iskron_case", "iskron_look", "iskron_orient", "iskron_search", "iskron_history"].map(
+    (name) => ({
+      name,
+      description: `Тул сервера ${name}.`,
+      inputSchema: { type: "object", properties: { realm: prop("Адрес графа.") } },
+    }),
+  ),
+  {
+    // Описание пишущего тула у сервера длиннее 2048 знаков — предела, до которого
+    // Claude Code режет описание: строка моста в хвосте до агента не доходит.
+    name: "iskron_add_vimarsha",
+    description: "Создаёт вопрошание. ".repeat(160),
+    inputSchema: { type: "object", properties: { realm: prop("Адрес графа.") } },
+  },
+  {
+    name: "iskron_batch",
+    description: "Атомарная дельта. ".repeat(160),
+    inputSchema: { type: "object", properties: { realm: prop("Адрес графа.") } },
+  },
+];
+const namesOf = (list) => (list.result?.tools ?? []).map((x) => x.name).sort();
+
+test("every bridge: the harness sees iskron_channel without the place moves and their fields, the cache keeps them, and the bridge's own connect and register still go out", async (t) => {
+  const fake = await startFakeNks({ pat: PAT, tools: SERVER_TOOLS });
+  const dir = mkdtempSync(join(tmpdir(), "iskron-narrow-"));
+  const bridge = startBridge(fake.mcpUrl, dir);
+  t.after(async () => {
+    await bridge.stop();
+    await fake.stop();
+  });
+  assert.ok((await bridge.call("initialize", INIT)).result);
+  const list = await bridge.call("tools/list");
+  const byName = Object.fromEntries((list.result?.tools ?? []).map((x) => [x.name, x]));
+  // A session bridge keeps every tool.
+  assert.deepEqual(namesOf(list), [...SERVER_TOOLS.map((x) => x.name), "iskron_stand"].sort());
+  const channel = byName.iskron_channel;
+  for (const f of PLACE_FIELDS)
+    assert.ok(!(f in channel.inputSchema.properties), `the harness must not see ${f}`);
+  for (const f of ["realm", "action", "karta", "standing", "text", "view"])
+    assert.ok(f in channel.inputSchema.properties, `${f} stays`);
+  assert.match(
+    channel.inputSchema.properties.action.description,
+    /одно из: list \| send \| history\./,
+  );
+  // The bridge's lines stand FIRST: Claude Code cuts a description at 2048 characters.
+  assert.ok(channel.description.startsWith('[мост] action="status"'), channel.description);
+  for (const name of ["iskron_add_vimarsha", "iskron_batch"]) {
+    const d = byName[name].description;
+    assert.ok(d.startsWith("[мост] Момент скилла writing"), `${name}: ${d.slice(0, 80)}`);
+    assert.ok(d.length > 2048, "the server's own text follows the line");
+  }
+  // The shared answers cache keeps the server's whole schema: other bridges read it.
+  const cached = JSON.parse(
+    readFileSync(
+      join(
+        dir,
+        readdirSync(dir).find((f) => f.endsWith(".server-answers")),
+      ),
+      "utf8",
+    ),
+  ).tools.tools.find((x) => x.name === "iskron_channel");
+  for (const f of PLACE_FIELDS) assert.ok(f in cached.inputSchema.properties, `cache keeps ${f}`);
+  // The bridge still makes the moves itself.
+  const r = await bridge.call("tools/call", {
+    name: "iskron_stand",
+    arguments: { realm: "nks-dev", karta: 931, name: "proba" },
+  });
+  assert.ok(!r.result?.isError, textOf(r));
+  const sent = sentToChannel(fake).filter((x) => x.name === "proba");
+  assert.ok(
+    sent.some((x) => x.action === "connect"),
+    JSON.stringify(sent),
+  );
+  assert.ok(
+    sent.some((x) => x.action === "register"),
+    JSON.stringify(sent),
+  );
+});
+
+test("satellite without --tools: the harness sees the default set; a tool outside it is refused aloud; a re-opened session is not a changed list", async (t) => {
+  const fake = await withCaller(t);
+  fake.state.tools = SERVER_TOOLS; // the server's list, not the fake's stub
+  const sat = await satelliteBridge(t, fake);
+  const list = await sat.call("tools/list");
+  assert.deepEqual(namesOf(list), [
+    "iskron_case",
+    "iskron_history",
+    "iskron_look",
+    "iskron_orient",
+    "iskron_search",
+    "iskron_stand",
+  ]);
+  const before = fake.state.calls.length;
+  const refused = await sat.call("tools/call", {
+    name: "iskron_add_vimarsha",
+    arguments: { realm: "nks-dev" },
+  });
+  assert.equal(refused.result?.isError, true, textOf(refused));
+  assert.match(textOf(refused), /нет в наборе этого моста/, textOf(refused));
+  assert.ok(
+    !fake.state.calls.slice(before).some((c) => c.name === "iskron_add_vimarsha"),
+    "the refused call never reached the server",
+  );
+  // The seat is still taken by the bridge's own moves.
+  const r = await standAs(sat, SAT_ARGS);
+  assert.ok(!r.result?.isError, `${textOf(r)}\n${sat.stderr}`);
+  // The server session turns over: the bridge re-reads the list and compares it with
+  // what the harness saw — the narrowed one — so nothing changed, nothing is said.
+  const inits = fake.state.initSids.length;
+  await fake.control({ kill_session: true });
+  const look = await sat.call("tools/call", {
+    name: "iskron_look",
+    arguments: { realm: "nks-dev" },
+  });
+  assert.ok(!look.error, JSON.stringify(look));
+  await new Promise((r) => setTimeout(r, 800));
+  assert.ok(fake.state.initSids.length > inits, "the server session was re-opened");
+  assert.ok(
+    !sat.notifications.some((n) => n.method === "notifications/tools/list_changed"),
+    `a narrowed list compared with a whole one reads as a change: ${sat.stderr}`,
+  );
+});
+
+test("satellite with --tools: the harness sees exactly the named tools plus iskron_stand; a hosted client's satellite without the flag sees all", async (t) => {
+  const fake = await withCaller(t);
+  fake.state.tools = SERVER_TOOLS;
+  const named = startBridge(
+    fake.mcpUrl,
+    mkdtempSync(join(tmpdir(), "iskron-sat-")),
+    process.cwd(),
+    {},
+    ["--satellite", "--tools", "case,iskron_add_vimarsha"],
+  );
+  t.after(() => named.stop());
+  assert.ok((await named.call("initialize", INIT)).result);
+  assert.deepEqual(namesOf(await named.call("tools/list")), [
+    "iskron_add_vimarsha",
+    "iskron_case",
+    "iskron_stand",
+  ]);
+  // The OpenCode plugin and the pi extension raise a child session's bridge as a
+  // satellite, and that session is a whole agent: no default narrowing for them.
+  const hosted = startBridge(
+    fake.mcpUrl,
+    mkdtempSync(join(tmpdir(), "iskron-sat-")),
+    process.cwd(),
+    {},
+    ["--satellite"],
+  );
+  t.after(() => hosted.stop());
+  assert.ok(
+    (await hosted.call("initialize", { ...INIT, clientInfo: { name: "pi-iskron", version: "1" } }))
+      .result,
+  );
+  assert.deepEqual(
+    namesOf(await hosted.call("tools/list")),
+    [...SERVER_TOOLS.map((x) => x.name), "iskron_stand"].sort(),
+  );
 });

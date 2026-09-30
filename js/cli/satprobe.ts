@@ -111,8 +111,13 @@ export async function probeSatellite(
   };
   if (!init) {
     const why = exited ?? `молчит ${Math.round(PROBE_MS / 1000)}s`;
-    const old = /satellite|unknown (flag|option)|неизвестн/i.test(stderr)
-      ? " — похоже, домашний мост старше флага --satellite → node ~/.iskron-bridge/iskron-bridge.mjs update"
+    const flag = /unknown argument: --tools/.test(stderr)
+      ? "--tools"
+      : /satellite|unknown (flag|option)|неизвестн/i.test(stderr)
+        ? "--satellite"
+        : null;
+    const old = flag
+      ? ` — похоже, домашний мост старше флага ${flag} → node ~/.iskron-bridge/iskron-bridge.mjs update`
       : " → запусти эту команду руками и прочти, что она пишет в stderr";
     findings.push(
       `проба «${label}»: мост не ответил на initialize (${why}${tail() ? `; stderr: ${tail()}` : ""})${old}`,
