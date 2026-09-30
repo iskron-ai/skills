@@ -3587,3 +3587,50 @@ test("the server choice file next to the grant names the server when neither the
     }
   });
 });
+
+// --- a tool list the Messages API accepts (graph nks-dev: #6500) -------------
+// One tool whose input schema carries anyOf, oneOf or allOf at the top level
+// makes the Messages API refuse the whole request: "input_schema does not
+// support oneOf, allOf, or anyOf at the top level" — the harness never starts.
+// The bridge merges the branches into one object and says "one of" in words;
+// the server still validates the call itself.
+
+test("tools/list carries no top-level anyOf/oneOf/allOf, and the call still reaches the server", async (t) => {
+  await withFake(t, { pat: "nks_pat_probe" }, async ({ fake, spawnBridge }) => {
+    const bridge = spawnBridge({ ISKRON_BRIDGE_TOKEN: "nks_pat_probe" });
+    assert.ok((await bridge.call("initialize", 1, INIT_PARAMS)).result);
+    await fake.control({ richTools: true });
+    const list = await bridge.call("tools/list", 2);
+    const tools = list.result?.tools ?? [];
+    const kriya = tools.find((x) => x.name === "iskron_add_kriya");
+    assert.ok(kriya, "the fake serves iskron_add_kriya with anyOf on top");
+    const combined = tools
+      .filter((x) => ["anyOf", "oneOf", "allOf"].some((k) => k in (x.inputSchema ?? {})))
+      .map((x) => x.name);
+    assert.deepEqual(combined, [], "a top-level combinator reaches the harness");
+    const s = kriya.inputSchema;
+    assert.equal(s.type, "object");
+    assert.deepEqual(
+      Object.keys(s.properties).sort(),
+      ["arrows", "attrs", "name", "parent_id", "realm"],
+      "properties are the union of the top level and every branch",
+    );
+    assert.deepEqual(s.required.sort(), ["name", "realm"], "required keeps only what all share");
+    assert.deepEqual(
+      s.properties.attrs,
+      { type: "object", orBoolean: true },
+      "a property's own keys ride as the server wrote them",
+    );
+    assert.match(kriya.description, /Одно из \(anyOf\).*arrows \| parent_id/);
+    assert.deepEqual(kriya._meta?.["ru.iskron/flattened"], ["anyOf"], "the flattening is marked");
+    const call = await bridge.call("tools/call", 3, {
+      name: "iskron_add_kriya",
+      arguments: { realm: "nks-dev", name: "проба", parent_id: "1" },
+    });
+    assert.ok(!call.result?.isError, JSON.stringify(call));
+    assert.ok(
+      fake.state.calls.some((c) => c.name === "iskron_add_kriya" && c.arguments.parent_id === "1"),
+      "the call must reach the server as sent",
+    );
+  });
+});

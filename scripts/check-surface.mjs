@@ -2,7 +2,8 @@
 // Lint the skills corpus against fixtures/surface.json — the committed snapshot
 // of the live nks-mcp tool surface (refresh: node scripts/export-surface.mjs).
 //
-// Two drift classes are caught offline, before merge:
+// Two drift classes are caught offline, before merge (and one surface defect,
+// rule 3 below — a tool schema the Messages API refuses):
 //   1. A tool name written in a skill that the surface does not carry
 //      (rename/drop on the server side — the loud half of skill↔tool sync).
 //   2. An enum value assigned in a skill (the modes, genre, given_as,
@@ -97,6 +98,23 @@ for (const file of mdFiles) {
   }
 }
 
+// 3. Top-level anyOf/oneOf/allOf in a tool's input schema (graph nks-dev:
+//    #6500): the Messages API refuses the WHOLE request over one such tool, so
+//    a harness talking to the server directly never starts. The bridge merges
+//    them and marks what it merged; the snapshot records both, per tool.
+//    A snapshot older than the field cannot say — the success line says so.
+const combinators = surface.combinators;
+if (combinators) {
+  for (const [tool, found] of Object.entries(combinators)) {
+    if (found.length) {
+      errors.push(
+        `fixtures/surface.json: tool "${tool}" has top-level ${found.join("/")} in its input schema — ` +
+          `the Messages API refuses every request carrying it; the server must flatten it`,
+      );
+    }
+  }
+}
+
 if (errors.length) {
   console.error(`check-surface: ${errors.length} problem(s):`);
   for (const e of errors) console.error(`  ✗ ${e}`);
@@ -108,5 +126,8 @@ if (errors.length) {
 console.log(
   `✓ corpus consistent with the surface snapshot (${tools.size} tools, ` +
   `${ENUM_KEYS.length} of ${Object.keys(surface.enums).length} vocabularies — ` +
-  `the rest are per-tool)`,
+  `the rest are per-tool; ` +
+  (combinators
+    ? `no top-level anyOf/oneOf/allOf in ${Object.keys(combinators).length} tool schemas)`
+    : `top-level schema combinators NOT checked — the snapshot predates the field, run make surface)`),
 );

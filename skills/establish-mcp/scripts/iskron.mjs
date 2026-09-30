@@ -4651,6 +4651,53 @@ function localLeave(msg) {
   })();
 }
 
+// js/bridge/schema.ts
+var COMBINATORS = ["anyOf", "oneOf", "allOf"];
+var FLATTENED_META = "ru.iskron/flattened";
+var isObj = (v) => !!v && typeof v === "object" && !Array.isArray(v);
+var reqOf = (s2) => Array.isArray(s2.required) ? s2.required.filter((x) => typeof x === "string") : [];
+function flattenTopCombinators(tool) {
+  const schema = tool?.inputSchema;
+  if (!isObj(schema)) return;
+  const found = COMBINATORS.filter((k) => Array.isArray(schema[k]));
+  if (!found.length) return;
+  const out5 = { ...schema, type: "object" };
+  const properties = isObj(schema.properties) ? { ...schema.properties } : {};
+  const required = new Set(reqOf(schema));
+  const phrases = [];
+  for (const k of found) {
+    delete out5[k];
+    const branches = schema[k].filter(isObj);
+    for (const b of branches)
+      if (isObj(b.properties)) {
+        for (const [p, v] of Object.entries(b.properties))
+          if (!(p in properties)) properties[p] = v;
+      }
+    if (k === "allOf") {
+      for (const b of branches) for (const r of reqOf(b)) required.add(r);
+      continue;
+    }
+    const common = branches.length ? reqOf(branches[0]).filter((r) => branches.every((b) => reqOf(b).includes(r))) : [];
+    for (const r of common) required.add(r);
+    const groups = branches.map((b) => {
+      const own = reqOf(b).filter((r) => !common.includes(r));
+      return own.length ? own.join("+") : "ничего сверх общего";
+    });
+    phrases.push(
+      `[мост] Одно из (${k}): кроме обязательных полей схемы нужна одна из групп — ${groups.join(" | ")}; схему слил мост, вызов проверяет сервер.`
+    );
+  }
+  out5.properties = properties;
+  if (required.size) out5.required = [...required];
+  else delete out5.required;
+  tool.inputSchema = out5;
+  const meta = isObj(tool._meta) ? tool._meta : {};
+  tool._meta = { ...meta, [FLATTENED_META]: found };
+  const d = typeof tool.description === "string" ? tool.description : "";
+  const add = phrases.filter((p) => !d.includes(p));
+  if (add.length) tool.description = [d, ...add].filter(Boolean).join("\n\n");
+}
+
 // js/bridge/stand.ts
 import { statSync as statSync5 } from "node:fs";
 import { isAbsolute } from "node:path";
@@ -5949,6 +5996,7 @@ function annotateToolList(reply2) {
   if (at2 >= 0) tools[at2] = STAND_TOOL;
   else tools.push(STAND_TOOL);
   for (const t of tools) {
+    if (t) flattenTopCombinators(t);
     if (t && t.name === "iskron_channel" && typeof t.description === "string") {
       if (!t.description.includes(STATUS_LINE))
         t.description = `${t.description}

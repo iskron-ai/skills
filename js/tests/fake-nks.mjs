@@ -678,6 +678,30 @@ export async function startFakeNks(opts = {}) {
                         description: "Создай вопрошание.",
                         inputSchema: { type: "object" },
                       },
+                      // Схема с anyOf наверху — так сервер отдал iskron_add_kriya (#6500):
+                      // Messages API отвергает такой список тулов целиком.
+                      {
+                        name: "iskron_add_kriya",
+                        description: "Создай крию.",
+                        inputSchema: {
+                          type: "object",
+                          properties: { realm: { type: "string" }, name: { type: "string" } },
+                          required: ["realm"],
+                          anyOf: [
+                            {
+                              required: ["name", "arrows"],
+                              properties: {
+                                arrows: { type: "array", items: { type: "object" } },
+                                attrs: { type: "object", orBoolean: true },
+                              },
+                            },
+                            {
+                              required: ["name", "parent_id"],
+                              properties: { parent_id: { type: "string" } },
+                            },
+                          ],
+                        },
+                      },
                       {
                         name: "iskron_batch",
                         description: "Атомарная дельта.",

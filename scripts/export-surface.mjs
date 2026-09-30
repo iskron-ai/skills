@@ -68,6 +68,21 @@ const declared = Object.fromEntries(
     .sort(([a], [b]) => a.localeCompare(b)),
 );
 
+// Комбинаторы верхнего уровня схемы каждого тула (граф nks-dev: #6500): anyOf,
+// oneOf или allOf наверху у одного тула — и Messages API отвергает весь список.
+// Мост их сливает, но помечает слитое в `_meta` тула — снимок видит изъян
+// сервера и сквозь мост; `make check-surface` роняет гейт с именем тула.
+const TOP_COMBINATORS = ["anyOf", "oneOf", "allOf"];
+const combinators = Object.fromEntries(
+  tools
+    .map((t) => {
+      const raw = TOP_COMBINATORS.filter((k) => Array.isArray(t.inputSchema?.[k]));
+      const flattened = t._meta?.["ru.iskron/flattened"] ?? [];
+      return [t.name, [...new Set([...raw, ...flattened])].sort()];
+    })
+    .sort(([a], [b]) => a.localeCompare(b)),
+);
+
 const surface = {
   server: init.result?.serverInfo ?? null,
   protocolVersion: init.result?.protocolVersion ?? null,
@@ -75,6 +90,7 @@ const surface = {
   tools: tools.map((t) => t.name).sort(),
   enums,
   args: declared,
+  combinators,
 };
 const out = join(root, "fixtures/surface.json");
 writeFileSync(out, JSON.stringify(surface, null, 2) + "\n");
