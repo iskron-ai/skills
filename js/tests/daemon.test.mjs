@@ -389,6 +389,118 @@ test("the daemon updates under live sessions: the places stay, the thin bridges 
   });
 });
 
+// Демон, обновляемый из временного дома: bump() кладёт в дом сборку v99.0.0 — демон
+// передаёт места преемнику.
+async function updatableDaemon(dir) {
+  const home = mkdtempSync(join(tmpdir(), "iskron-daemon-home-"));
+  const env = { ...process.env, HOME: home, USERPROFILE: home, ISKRON_BRIDGE_TOKEN: PAT };
+  delete env.ISKRON_BRIDGE_NO_UPDATE;
+  env.ISKRON_BRIDGE_DAEMON_HOME_CHECK_MS = "200";
+  env.ISKRON_BRIDGE_DAEMON_TRACE = "1";
+  spawn(NODE, [BRIDGE, "daemon", "--auth-dir", dir], { env, stdio: "ignore" }).unref();
+  const homeCopy = join(home, ".iskron-bridge", "iskron-bridge.mjs");
+  await waitFor("the daemon", () => daemonPids(dir)[0]);
+  await waitFor("the daemon to put itself home", () => existsSync(homeCopy));
+  return {
+    bump() {
+      writeFileSync(
+        homeCopy,
+        readFileSync(BRIDGE, "utf8").replace(
+          /^((?:const|let|var)\s+VERSION\s*=\s*)"[^"]+"/m,
+          '$1"99.0.0"',
+        ),
+      );
+    },
+    cleanup() {
+      for (const pid of daemonPids(dir)) {
+        try {
+          process.kill(pid, "SIGKILL");
+        } catch {}
+      }
+      rmSync(home, { recursive: true, force: true });
+    },
+  };
+}
+const write = (x, name) =>
+  x.request("tools/call", { name: "iskron_add_phenomenon", arguments: { realm: "nks-dev", name } });
+
+// Ревью #280, п.1: записи, посланные в окне смены демона, уходят в новую сессию
+// только после возврата места — иначе они ложатся без автора.
+test("writes sent while the daemon hands over land signed — the place comes back before them", async () => {
+  await withFake(async ({ fake, dir, bridge }) => {
+    const d = await updatableDaemon(dir);
+    try {
+      const a = bridge({});
+      await handshake(a);
+      const r = await stand(a, { realm: "nks-dev", karta: 931, name: "race-a" });
+      assert.ok(!r.result?.isError, textOf(r));
+      await write(a, "before");
+      d.bump();
+      await waitFor("the handover", () => /handing over to/.test(journalOf(dir)), 10_000);
+      const sent = [];
+      for (let i = 0; i < 5; i++) {
+        sent.push(write(a, `during-${i}`));
+        await new Promise((res) => setTimeout(res, 30));
+      }
+      const answers = await Promise.all(sent);
+      assert.ok(
+        answers.every((x) => x.result && !x.error),
+        JSON.stringify(answers.map((x) => x.error?.message ?? textOf(x).slice(0, 80))),
+      );
+      assert.equal(
+        fake.state.counts.unattributed,
+        0,
+        `every write signed: ${JSON.stringify(fake.state.writes)}\n${a.stderr}`,
+      );
+    } finally {
+      d.cleanup();
+    }
+  });
+});
+
+// Ревью #280, пп.2–3: место спутника записи держания не имеет и смену демона не
+// переживает — агент узнаёт это словами, а не безавторными записями.
+test("a satellite whose place did not survive the daemon change is told so: the next call is refused aloud", async () => {
+  await withFake(async ({ fake, dir, bridge }) => {
+    const d = await updatableDaemon(dir);
+    try {
+      const CALLER = "host.repo.opus-5";
+      await fake.control({ places: [{ karta: "931", name: CALLER, listening: true }] });
+      const s = bridge({}, ["--satellite"]);
+      await handshake(s);
+      const sat = { realm: "nks-dev", karta: 931, satellite_of: `@tester:${CALLER}` };
+      const r = await stand(s, sat);
+      assert.ok(!r.result?.isError, textOf(r));
+      d.bump();
+      await waitFor(
+        "the satellite through the successor",
+        () => /through the machine's bridge daemon v99/.test(s.stderr),
+        30_000,
+      );
+      await waitFor(
+        "the word to the harness",
+        () =>
+          s.notifications.some((n) =>
+            /потеряно при смене демона/.test(JSON.stringify(n.params?.data ?? {})),
+          ),
+        10_000,
+      );
+      const before = fake.state.writes.length;
+      const refused = await write(s, "after");
+      assert.equal(refused.result?.isError, true, JSON.stringify(refused));
+      assert.match(textOf(refused), /место спутника потеряно при смене демона/);
+      assert.match(textOf(refused), /iskron_stand с satellite_of/);
+      assert.equal(fake.state.writes.length, before, "the refused write did not go out");
+      const again = await stand(s, sat);
+      assert.ok(!again.result?.isError, textOf(again));
+      await write(s, "signed");
+      assert.equal(fake.state.counts.unattributed, 0, JSON.stringify(fake.state.writes));
+    } finally {
+      d.cleanup();
+    }
+  });
+});
+
 // Решение шага 2: тонкий мост новее демона (по версии) — демон принимает его
 // сессию и тут же передаёт места преемнику его сборкой; равная версия с другим
 // хешем — живут вместе, старшинства по хешу нет.

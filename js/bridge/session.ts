@@ -49,7 +49,7 @@ export interface BridgeSession {
   readonly origin: SessionOrigin | null;
   /** Область сессии (shared/scope.ts): демон исполняет в ней то, что говорит сессии сам. */
   readonly scope: Scope | null;
-  /** Миг последней работы агента (мс эпохи; 0 — не было): точка хартбита места, #6510 (work.ts). */
+  /** Миг последнего вызова тула агентом (мс эпохи; 0 — не было): точка хартбита места, #6510 (work.ts). */
   lastWork(): number;
 }
 
@@ -140,9 +140,10 @@ function openIn(io: SessionIO, origin: SessionOrigin | null, scope: Scope | null
         log(`unparseable line from harness: ${trimmed.slice(0, 120)}`);
         return;
       }
-      // Последняя работа агента (work.ts, хартбит места #6510): всякое слово харнеса,
-      // кроме ходов самого тонкого моста (переигранное рукопожатие, возврат места).
-      if (!String(msg.id ?? "").startsWith("iskron-thin-")) noteAgentWork();
+      // Последняя работа агента (work.ts, хартбит места #6510): только вызов тула
+      // агентом — не служебные ходы плагина (iskron/check, iskron/usage) и моста.
+      if (msg.method === "tools/call" && !String(msg.id ?? "").startsWith("iskron-"))
+        noteAgentWork();
       // Конвейерный клиент (скрипт, сторож, отправитель из оболочки) шлёт
       // initialized и первый вызов, не дождавшись ответа на initialize; сервер без
       // Mcp-Session-Id отвечает 400 (граф nks-dev: #4308). Настоящие клиенты ждут —

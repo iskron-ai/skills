@@ -17,50 +17,40 @@
 //                   помнится: настоящий ответ, пришедший после, харнесу не идёт. Затем
 //                   переподхват по id локальной сессии; сессия новая — initialize
 //                   переигрывается, место сессии возвращается по записи держания
-//                   (запрос iskron/resume с его ключом)
+//                   (запрос iskron/resume с его ключом), и вызовы харнеса ждут этих
+//                   ходов; место не вернулось (у спутника записи нет) — уведомление
+//                   и отказ вслух первого вызова тула, кроме iskron_stand
 //   конец           stdin закрыт, SIGTERM — bye демону с ограниченным ожиданием
 //
 // За флагом ISKRON_BRIDGE_DAEMON=1 (по умолчанию полный мост, как было);
 // ISKRON_BRIDGE_NO_DAEMON=1 — полный мост всегда. Выравнивание дома при старте
 // (cli: syncHome/reexec) тонкий мост делает сам, как полный; сверку с релизами
 // GitHub — никогда: её ведёт только демон (в полном ходе — движок, как у полного).
-import { spawn } from "node:child_process";
-import { readFileSync } from "node:fs";
 import { createInterface } from "node:readline";
 import { PassThrough } from "node:stream";
-import { fileURLToPath } from "node:url";
 
-import { homeBridgePath } from "../shared/home.ts";
+import { L } from "../shared/lang.ts";
 import {
   connectSeam,
   DAEMON_ENV,
-  daemonEnv,
   helloFrame,
   NO_DAEMON_ENV,
   patShaOf,
   SeamError,
   type SeamLink,
 } from "../shared/seam.ts";
-import {
-  seamEntranceProblem,
-  seamRaiseLockPath,
-  seamRunDir,
-  seamSocketPath,
-  takeFileLock,
-} from "../shared/seam-entrance.ts";
-import { compareVersions } from "../shared/semver.ts";
-import { VERSION, versionIn } from "../shared/version.ts";
+import { seamEntranceProblem, seamSocketPath } from "../shared/seam-entrance.ts";
 import { BUILD } from "./build.ts";
 import { parseArgs, setConfig } from "./config.ts";
 import { DAEMON_BUSY_EXIT } from "./daemon.ts";
 import { syntheticError } from "./deliver.ts";
 import { fullBridgeSigint, installCrashWords, startEngine } from "./engine.ts";
 import { NOT_SENT, UNKNOWN } from "./errors.ts";
+import { type Raise, raiseDaemon, SELF } from "./raise.ts";
 import { type BridgeSession, openSession } from "./session.ts";
 import { sleep } from "./store.ts";
 import { debug, flushStdout, log, writeTo } from "./streams.ts";
 import { type JsonRpcMessage } from "./types.ts";
-import { updatesDisabled } from "./update.ts";
 
 const ms = (name: string, dflt: number): number => {
   const v = Number(process.env[name]);
@@ -74,78 +64,17 @@ const REATTACH_MS = ms("ISKRON_BRIDGE_DAEMON_REATTACH_MS", 30_000);
 const BYE_MS = ms("ISKRON_BRIDGE_BYE_MS", 5_000);
 const HELLO_MS = 3_000;
 const POLL_MS = 100;
-/** Замок подъёма, чей хозяин жив, но держит его дольше, — брошен. */
-const RAISE_STALE_MS = 15_000;
 /** Сколько ждать преемника, которого назвал уходящий демон, прежде чем поднять демон самому. */
 const SUCCESSOR_MS = 20_000;
 /** Поднятый демон ушёл словом «демон уже есть» — поднимать снова не раньше этой паузы. */
 const BUSY_RETRY_MS = 2_000;
-
-const SELF = (() => {
-  try {
-    return fileURLToPath(import.meta.url);
-  } catch {
-    return process.argv[1] ?? "";
-  }
-})();
+/** Сколько вызовы харнеса ждут ответа на ходы самого моста в новой сессии. */
+const GATE_MS = 20_000;
 
 /** Тонкий мост включён: флаг стоит, выключателя нет. */
 export function daemonWanted(): boolean {
   const off = process.env[NO_DAEMON_ENV]?.trim();
   return process.env[DAEMON_ENV]?.trim() === "1" && (!off || off === "0");
-}
-
-/**
- * Какой копией поднимать демон: названной переменной, иначе самой новой из
- * своей и домашней — демон, поднятый старой копией, тут же передал бы места
- * новой. Под ISKRON_BRIDGE_NO_UPDATE дом не читается (пробы).
- */
-function daemonEntry(): string {
-  const named = process.env.ISKRON_BRIDGE_DAEMON_ENTRY?.trim();
-  if (named) return named;
-  if (updatesDisabled()) return SELF;
-  const home = homeBridgePath();
-  try {
-    const v = versionIn(readFileSync(home, "utf8"));
-    if (home !== SELF && compareVersions(v, VERSION) > 0) return home;
-  } catch {}
-  return SELF;
-}
-
-// --- подъём ------------------------------------------------------------------
-
-type Raise =
-  | { kind: "raising"; release(): void; failed: Promise<{ code: number | null; why: string }> }
-  | { kind: "other" } // поднимает другой — ждём его демона
-  | { kind: "fault"; why: string }; // замка не взять — ждать нечего
-
-/** Поднять демон отсоединённо под замком выборов. */
-function raiseDaemon(authDir: string): Raise {
-  const lock = takeFileLock(seamRaiseLockPath(authDir), RAISE_STALE_MS);
-  if (!lock.held) return lock.fault ? { kind: "fault", why: lock.fault } : { kind: "other" };
-  const entry = daemonEntry();
-  log(`no bridge daemon for ${authDir} — raising one: ${entry} daemon`);
-  try {
-    // Демону — окружение сессии, токен и основа процесса, не всё окружение харнеса.
-    const child = spawn(process.execPath, [entry, "daemon", "--auth-dir", authDir], {
-      detached: true,
-      stdio: "ignore",
-      cwd: seamRunDir(authDir),
-      env: daemonEnv(),
-      windowsHide: true,
-    });
-    child.unref();
-    const failed = new Promise<{ code: number | null; why: string }>((r) => {
-      child.once("error", (e) => r({ code: null, why: `the daemon did not start: ${e.message}` }));
-      child.once("exit", (code, sig) =>
-        r({ code, why: `the daemon exited at once (${sig ?? `code ${code}`})` }),
-      );
-    });
-    return { kind: "raising", release: lock.release, failed };
-  } catch (e) {
-    lock.release();
-    return { kind: "fault", why: `the daemon did not start: ${(e as Error).message}` };
-  }
 }
 
 // --- тонкий мост -------------------------------------------------------------
@@ -199,7 +128,14 @@ export function thinMain(argv: string[]): void {
   const toHarness = (msg: JsonRpcMessage) => {
     if (msg.method === undefined && msg.id !== undefined && msg.id !== null) {
       const k = key(msg.id);
-      if (replayIds.delete(k)) return; // ответ хода самого моста (initialize, resume): харнес свой уже получил
+      if (replayIds.delete(k)) {
+        // Ответ хода самого моста (initialize, resume): харнес свой уже получил.
+        // Неудачный возврат места — слово агенту; вызовы харнеса ждали этих ответов.
+        if (String(msg.id).startsWith("iskron-thin-resume-") && msg.result?.resumed !== true)
+          placeLost(String(msg.result?.word ?? msg.error?.message ?? "no answer"));
+        openGate(k);
+        return;
+      }
       if (verdicted.delete(k)) {
         debug(`a late answer to ${k} dropped — the harness already has its verdict`);
         return;
@@ -212,14 +148,71 @@ export function thinMain(argv: string[]): void {
       }
     }
     const place = placeWord(msg);
+    // «Отпущено» уходящей сессией при смене демона (спутник отпускает целиком) — не
+    // уход агента: ключ помнится, и новая сессия попробует вернуть место.
+    const handingOver = !!successorAwaited && Date.now() - successorAwaited < SUCCESSOR_MS;
     if (place?.kind === "held" && place.key) heldKey = place.key;
     else if (
       place &&
       ["released", "dead", "evicted"].includes(place.kind) &&
-      (!place.key || place.key === heldKey)
+      (!place.key || place.key === heldKey) &&
+      !(handingOver && place.kind === "released")
     )
       heldKey = null;
     writeHarness(msg);
+  };
+
+  // Ворота после переподхвата к новой сессии: вызовы харнеса ждут, пока ходы самого
+  // моста (переигранный initialize, возврат места) не ответят, — иначе записи
+  // обгоняют возврат места и ложатся без автора. Не ответили за GATE_MS — ворота
+  // открываются со словом.
+  const gate = new Set<string>();
+  let gateTimer: ReturnType<typeof setTimeout> | null = null;
+  const openGate = (k?: string) => {
+    if (k) gate.delete(k);
+    else gate.clear();
+    if (gate.size) return;
+    if (gateTimer) clearTimeout(gateTimer);
+    gateTimer = null;
+    for (const m of queue.splice(0)) dispatch(m);
+  };
+  const closeGate = (k: string) => {
+    gate.add(k);
+    gateTimer ??= setTimeout(() => {
+      gateTimer = null;
+      if (!gate.size) return;
+      log(
+        `the new session did not answer the bridge's own calls in ${GATE_MS}ms — letting calls through`,
+      );
+      openGate();
+    }, GATE_MS);
+  };
+
+  // Место не вернулось в новой сессии: агенту — уведомлением сейчас и отказом
+  // следующего вызова (кроме iskron_stand): записи без места легли бы без автора.
+  let lostWord: string | null = null;
+  const placeLost = (why: string) => {
+    const k = heldKey ?? "?";
+    lostWord = cfg.satellite
+      ? L(
+          `Отказано (мост): место спутника потеряно при смене демона машины (${k}) — у места спутника нет записи держания, и записи легли бы без автора; вызов не отправлен. Встань снова: iskron_stand с satellite_of.`,
+          `Refused (bridge): the satellite's seat was lost in the machine daemon's change (${k}) — a satellite seat has no holding record, and writes would go unattributed; the call was not sent. Stand again: iskron_stand with satellite_of.`,
+        )
+      : L(
+          `Отказано (мост): место ${k} не вернулось после смены демона машины (${why}) — записи легли бы без автора; вызов не отправлен. Верни место: iskron_stand тем же именем.`,
+          `Refused (bridge): the seat ${k} did not come back after the machine daemon's change (${why}) — writes would go unattributed; the call was not sent. Bring it back: iskron_stand with the same name.`,
+        );
+    heldKey = null;
+    log(lostWord);
+    writeHarness({
+      jsonrpc: "2.0",
+      method: "notifications/message",
+      params: {
+        level: "warning",
+        logger: "iskron-channel",
+        data: { kind: "lost", key: k, text: lostWord },
+      },
+    });
   };
 
   // Вердикт каждому id в полёте — и память о нём, чтобы поздний ответ не стал вторым.
@@ -250,7 +243,9 @@ export function thinMain(argv: string[]): void {
     local?.input.write(JSON.stringify(msg) + "\n");
   };
   const dispatch = (msg: JsonRpcMessage) => {
-    if (mode === "daemon" && link) toDaemon(link, msg);
+    if (gate.size)
+      queue.push(msg); // ходы самого моста в новой сессии ещё не ответили
+    else if (mode === "daemon" && link) toDaemon(link, msg);
     else if (mode === "local") toLocal(msg);
     else queue.push(msg);
   };
@@ -263,12 +258,14 @@ export function thinMain(argv: string[]): void {
     if (!queue.some((m) => m.method === "initialize")) {
       const id = `iskron-thin-replay-${++replays}`;
       replayIds.add(key(id));
+      closeGate(key(id));
       send({ ...initCopy, id });
       if (initializedSeen) send({ jsonrpc: "2.0", method: "notifications/initialized" });
     }
     if (heldKey) {
       const id = `iskron-thin-resume-${++replays}`;
       replayIds.add(key(id));
+      closeGate(key(id));
       log(`the session is new — bringing its place ${heldKey} back from the hold record`);
       send({ jsonrpc: "2.0", id, method: "iskron/resume", params: { key: heldKey } });
     }
@@ -335,6 +332,7 @@ export function thinMain(argv: string[]): void {
   const lost = (acks: boolean) => {
     mode = "attaching";
     replayIds.clear();
+    gate.clear(); // ходы моста в оборванной сессии больше не ответят — новая сессия закроет ворота заново
     const inFlight = flights.size;
     const again = verdictAll(
       "the link to this machine's bridge daemon broke before the answer came back",
@@ -411,6 +409,17 @@ export function thinMain(argv: string[]): void {
     }
     if (msg.method === "initialize") initCopy = msg;
     if (msg.method === "notifications/initialized") initializedSeen = true;
+    // Место не вернулось в новой сессии: первый же вызов тула, кроме iskron_stand, — отказ вслух.
+    if (lostWord && msg.method === "tools/call" && msg.id !== undefined && msg.id !== null) {
+      const text = lostWord;
+      lostWord = null;
+      if (msg.params?.name !== "iskron_stand")
+        return void writeHarness({
+          jsonrpc: "2.0",
+          id: msg.id,
+          result: { isError: true, content: [{ type: "text", text }] },
+        });
+    }
     if (msg.method && msg.id !== undefined && msg.id !== null) {
       verdicted.delete(key(msg.id)); // харнес взял id снова — его ответ уже не дубль
       flights.set(key(msg.id), { id: msg.id, msg, acked: false });

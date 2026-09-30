@@ -98,8 +98,11 @@ export function serveSeam(socket: Socket, host: SeamHost, graceMs = SEAM_REATTAC
     if (f.t === "rpc") {
       const msg = f.msg;
       const request = msg.method !== undefined && msg.id !== undefined && msg.id !== null;
-      if (host.draining?.()) {
-        if (request) say(`request ${JSON.stringify(msg.id)} not taken: the daemon is handing over`);
+      // Уходящий демон не берёт новых запросов (без ack тонкий мост переотправит их
+      // преемнику); уведомления (cancelled) и ответы харнеса на запросы сервера —
+      // о том, что уже в полёте в этой сессии, — ей и доставляются.
+      if (request && host.draining?.()) {
+        say(`request ${JSON.stringify(msg.id)} not taken: the daemon is handing over`);
         return;
       }
       chain = chain.then(
@@ -241,7 +244,8 @@ export function streamSeamSession(
   let ending: Promise<void> | null = null;
   return {
     id,
-    deliver: (msg) => void input.write(JSON.stringify(msg) + "\n"),
+    // Сессия ушла — вход закрыт: запись в закрытый поток была бы ошибкой, не доставкой.
+    deliver: (msg) => void (input.writableEnded || input.write(JSON.stringify(msg) + "\n")),
     attach: (s, l) => {
       sink = s;
       logSink = l ?? null;

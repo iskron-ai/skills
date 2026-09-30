@@ -480,8 +480,8 @@ function serveSeam(socket, host, graceMs = SEAM_REATTACH_GRACE_MS) {
     if (f.t === "rpc") {
       const msg = f.msg;
       const request2 = msg.method !== void 0 && msg.id !== void 0 && msg.id !== null;
-      if (host.draining?.()) {
-        if (request2) say(`request ${JSON.stringify(msg.id)} not taken: the daemon is handing over`);
+      if (request2 && host.draining?.()) {
+        say(`request ${JSON.stringify(msg.id)} not taken: the daemon is handing over`);
         return;
       }
       chain = chain.then(
@@ -606,7 +606,8 @@ function streamSeamSession(id, open, onLost, onLog) {
   let ending = null;
   return {
     id,
-    deliver: (msg) => void input.write(JSON.stringify(msg) + "\n"),
+    // Сессия ушла — вход закрыт: запись в закрытый поток была бы ошибкой, не доставкой.
+    deliver: (msg) => void (input.writableEnded || input.write(JSON.stringify(msg) + "\n")),
     attach: (s2, l) => {
       sink = s2;
       logSink = l ?? null;
@@ -7097,7 +7098,8 @@ function openIn(io, origin, scope) {
         log(`unparseable line from harness: ${trimmed2.slice(0, 120)}`);
         return;
       }
-      if (!String(msg.id ?? "").startsWith("iskron-thin-")) noteAgentWork();
+      if (msg.method === "tools/call" && !String(msg.id ?? "").startsWith("iskron-"))
+        noteAgentWork();
       const run = () => deliver(msg).catch((e) => log(`unexpected: ${e?.stack || errorMessage(e)}`));
       let p;
       if (msg.method === "initialize") {
@@ -7411,23 +7413,14 @@ function spawnDaemon(file, authDir, successor) {
 }
 
 // js/bridge/thin.ts
-import { spawn as spawn4 } from "node:child_process";
-import { readFileSync as readFileSync18 } from "node:fs";
 import { createInterface as createInterface3 } from "node:readline";
 import { PassThrough as PassThrough2 } from "node:stream";
+
+// js/bridge/raise.ts
+import { spawn as spawn4 } from "node:child_process";
+import { readFileSync as readFileSync18 } from "node:fs";
 import { fileURLToPath as fileURLToPath6 } from "node:url";
-var ms2 = (name, dflt) => {
-  const v = Number(process.env[name]);
-  return process.env[name]?.trim() && Number.isFinite(v) && v >= 0 ? v : dflt;
-};
-var ATTACH_MS = ms2("ISKRON_BRIDGE_DAEMON_WAIT_MS", 5e3);
-var REATTACH_MS = ms2("ISKRON_BRIDGE_DAEMON_REATTACH_MS", 3e4);
-var BYE_MS = ms2("ISKRON_BRIDGE_BYE_MS", 5e3);
-var HELLO_MS = 3e3;
-var POLL_MS = 100;
 var RAISE_STALE_MS = 15e3;
-var SUCCESSOR_MS = 2e4;
-var BUSY_RETRY_MS = 2e3;
 var SELF2 = (() => {
   try {
     return fileURLToPath6(import.meta.url);
@@ -7435,10 +7428,6 @@ var SELF2 = (() => {
     return process.argv[1] ?? "";
   }
 })();
-function daemonWanted() {
-  const off = process.env[NO_DAEMON_ENV]?.trim();
-  return process.env[DAEMON_ENV]?.trim() === "1" && (!off || off === "0");
-}
 function daemonEntry() {
   const named = process.env.ISKRON_BRIDGE_DAEMON_ENTRY?.trim();
   if (named) return named;
@@ -7478,6 +7467,24 @@ function raiseDaemon(authDir) {
     return { kind: "fault", why: `the daemon did not start: ${e.message}` };
   }
 }
+
+// js/bridge/thin.ts
+var ms2 = (name, dflt) => {
+  const v = Number(process.env[name]);
+  return process.env[name]?.trim() && Number.isFinite(v) && v >= 0 ? v : dflt;
+};
+var ATTACH_MS = ms2("ISKRON_BRIDGE_DAEMON_WAIT_MS", 5e3);
+var REATTACH_MS = ms2("ISKRON_BRIDGE_DAEMON_REATTACH_MS", 3e4);
+var BYE_MS = ms2("ISKRON_BRIDGE_BYE_MS", 5e3);
+var HELLO_MS = 3e3;
+var POLL_MS = 100;
+var SUCCESSOR_MS = 2e4;
+var BUSY_RETRY_MS = 2e3;
+var GATE_MS = 2e4;
+function daemonWanted() {
+  const off = process.env[NO_DAEMON_ENV]?.trim();
+  return process.env[DAEMON_ENV]?.trim() === "1" && (!off || off === "0");
+}
 function placeWord(msg) {
   if (msg.method !== "notifications/message" || msg.params?.logger !== "iskron-channel")
     return null;
@@ -7513,7 +7520,12 @@ function thinMain(argv2) {
   const toHarness = (msg) => {
     if (msg.method === void 0 && msg.id !== void 0 && msg.id !== null) {
       const k = key(msg.id);
-      if (replayIds.delete(k)) return;
+      if (replayIds.delete(k)) {
+        if (String(msg.id).startsWith("iskron-thin-resume-") && msg.result?.resumed !== true)
+          placeLost(String(msg.result?.word ?? msg.error?.message ?? "no answer"));
+        openGate(k);
+        return;
+      }
       if (verdicted.delete(k)) {
         debug(`a late answer to ${k} dropped — the harness already has its verdict`);
         return;
@@ -7526,10 +7538,54 @@ function thinMain(argv2) {
       }
     }
     const place = placeWord(msg);
+    const handingOver2 = !!successorAwaited && Date.now() - successorAwaited < SUCCESSOR_MS;
     if (place?.kind === "held" && place.key) heldKey2 = place.key;
-    else if (place && ["released", "dead", "evicted"].includes(place.kind) && (!place.key || place.key === heldKey2))
+    else if (place && ["released", "dead", "evicted"].includes(place.kind) && (!place.key || place.key === heldKey2) && !(handingOver2 && place.kind === "released"))
       heldKey2 = null;
     writeHarness(msg);
+  };
+  const gate = /* @__PURE__ */ new Set();
+  let gateTimer = null;
+  const openGate = (k) => {
+    if (k) gate.delete(k);
+    else gate.clear();
+    if (gate.size) return;
+    if (gateTimer) clearTimeout(gateTimer);
+    gateTimer = null;
+    for (const m of queue2.splice(0)) dispatch2(m);
+  };
+  const closeGate = (k) => {
+    gate.add(k);
+    gateTimer ??= setTimeout(() => {
+      gateTimer = null;
+      if (!gate.size) return;
+      log(
+        `the new session did not answer the bridge's own calls in ${GATE_MS}ms — letting calls through`
+      );
+      openGate();
+    }, GATE_MS);
+  };
+  let lostWord = null;
+  const placeLost = (why) => {
+    const k = heldKey2 ?? "?";
+    lostWord = cfg.satellite ? L(
+      `Отказано (мост): место спутника потеряно при смене демона машины (${k}) — у места спутника нет записи держания, и записи легли бы без автора; вызов не отправлен. Встань снова: iskron_stand с satellite_of.`,
+      `Refused (bridge): the satellite's seat was lost in the machine daemon's change (${k}) — a satellite seat has no holding record, and writes would go unattributed; the call was not sent. Stand again: iskron_stand with satellite_of.`
+    ) : L(
+      `Отказано (мост): место ${k} не вернулось после смены демона машины (${why}) — записи легли бы без автора; вызов не отправлен. Верни место: iskron_stand тем же именем.`,
+      `Refused (bridge): the seat ${k} did not come back after the machine daemon's change (${why}) — writes would go unattributed; the call was not sent. Bring it back: iskron_stand with the same name.`
+    );
+    heldKey2 = null;
+    log(lostWord);
+    writeHarness({
+      jsonrpc: "2.0",
+      method: "notifications/message",
+      params: {
+        level: "warning",
+        logger: "iskron-channel",
+        data: { kind: "lost", key: k, text: lostWord }
+      }
+    });
   };
   const verdictAll = (why, acks, resend = false) => {
     const again = [];
@@ -7555,7 +7611,9 @@ function thinMain(argv2) {
     local?.input.write(JSON.stringify(msg) + "\n");
   };
   const dispatch2 = (msg) => {
-    if (mode === "daemon" && link) toDaemon(link, msg);
+    if (gate.size)
+      queue2.push(msg);
+    else if (mode === "daemon" && link) toDaemon(link, msg);
     else if (mode === "local") toLocal(msg);
     else queue2.push(msg);
   };
@@ -7564,12 +7622,14 @@ function thinMain(argv2) {
     if (!queue2.some((m) => m.method === "initialize")) {
       const id = `iskron-thin-replay-${++replays}`;
       replayIds.add(key(id));
+      closeGate(key(id));
       send({ ...initCopy, id });
       if (initializedSeen) send({ jsonrpc: "2.0", method: "notifications/initialized" });
     }
     if (heldKey2) {
       const id = `iskron-thin-resume-${++replays}`;
       replayIds.add(key(id));
+      closeGate(key(id));
       log(`the session is new — bringing its place ${heldKey2} back from the hold record`);
       send({ jsonrpc: "2.0", id, method: "iskron/resume", params: { key: heldKey2 } });
     }
@@ -7632,6 +7692,7 @@ function thinMain(argv2) {
   const lost = (acks) => {
     mode = "attaching";
     replayIds.clear();
+    gate.clear();
     const inFlight = flights.size;
     const again = verdictAll(
       "the link to this machine's bridge daemon broke before the answer came back",
@@ -7700,6 +7761,16 @@ function thinMain(argv2) {
     }
     if (msg.method === "initialize") initCopy = msg;
     if (msg.method === "notifications/initialized") initializedSeen = true;
+    if (lostWord && msg.method === "tools/call" && msg.id !== void 0 && msg.id !== null) {
+      const text = lostWord;
+      lostWord = null;
+      if (msg.params?.name !== "iskron_stand")
+        return void writeHarness({
+          jsonrpc: "2.0",
+          id: msg.id,
+          result: { isError: true, content: [{ type: "text", text }] }
+        });
+    }
     if (msg.method && msg.id !== void 0 && msg.id !== null) {
       verdicted.delete(key(msg.id));
       flights.set(key(msg.id), { id: msg.id, msg, acked: false });
