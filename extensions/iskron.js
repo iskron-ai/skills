@@ -22,6 +22,8 @@ var authDirFromEnv = () => process.env.ISKRON_BRIDGE_AUTH_DIR?.trim() || default
 
 // js/shared/clients.ts
 var PI_CLIENT = "pi-iskron";
+var HARNESS_VERSION_ENV = "ISKRON_HARNESS_VERSION";
+var SKILLS_ROOT_ENV = "ISKRON_SKILLS_ROOT";
 
 // js/shared/lang.ts
 import { readFileSync } from "node:fs";
@@ -639,6 +641,10 @@ function setupChannel(pi) {
   };
 }
 
+// js/extension/tools.ts
+import { existsSync } from "node:fs";
+import { dirname as dirname2 } from "node:path";
+
 // js/shared/bridge-client.ts
 import { spawn } from "node:child_process";
 import { basename } from "node:path";
@@ -676,11 +682,12 @@ var Bridge = class {
   get failure() {
     return this.dead;
   }
-  start() {
+  /** env — поверх рантайма: версия хоста для attrs.harness_version (#6226). */
+  start(env = {}) {
     const rt = bridgeRuntime();
     const proc = spawn(rt.bin, [this.bin, ...this.args], {
       stdio: ["pipe", "pipe", "pipe"],
-      env: rt.env
+      env: { ...rt.env, ...env }
     });
     this.proc = proc;
     proc.stdout?.setEncoding("utf8");
@@ -1035,6 +1042,20 @@ function textOrThrow(name, result) {
   if (result?.isError) throw new Error(text || `${name}: отказ без текста`);
   return text;
 }
+async function hostEnv() {
+  const env = {};
+  try {
+    const bridge = packagedBridgePath();
+    if (existsSync(bridge)) env[SKILLS_ROOT_ENV] = dirname2(dirname2(dirname2(bridge)));
+  } catch {
+  }
+  try {
+    const { VERSION: VERSION2 } = await import("@earendil-works/pi-coding-agent");
+    if (typeof VERSION2 === "string" && VERSION2.trim()) env[HARNESS_VERSION_ENV] = VERSION2.trim();
+  } catch {
+  }
+  return env;
+}
 var callVia = (b) => async (name, args) => textOrThrow(name, await b.request("tools/call", { name, arguments: args }));
 function setupBridge(pi, onChannel) {
   let bridge = null;
@@ -1055,6 +1076,7 @@ function setupBridge(pi, onChannel) {
       );
       return;
     }
+    const env = await hostEnv();
     const b = new Bridge(
       found.path,
       (line) => notify(`Искрон/мост: ${line}`, "info"),
@@ -1071,7 +1093,7 @@ function setupBridge(pi, onChannel) {
     );
     bridge = b;
     satellite = args.includes("--satellite");
-    b.start();
+    b.start(env);
     let toldLogin = false;
     const deadline = Date.now() + HANDSHAKE_MS;
     const untilAuthed = async (ask) => {

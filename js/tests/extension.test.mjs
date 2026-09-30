@@ -38,6 +38,7 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -84,6 +85,18 @@ copyFileSync(SOURCE, COPY);
 // homedir() is the second bridge candidate. Moving HOME both frees the probe to
 // decide that candidate and guarantees a real ~/.iskron-bridge is never touched.
 process.env.HOME = SANDBOX;
+// The pi package as the extension resolves it from its own directory — only its
+// VERSION, the host version the extension hands the bridge (#6226). The export
+// is from the types of pi-coding-agent 0.85.1 only; a live pi hands the package
+// through its loader's alias, and that path is not observed here.
+const PI_VERSION = "0.85.1-probe";
+const PI_PKG = join(SANDBOX, "node_modules", "@earendil-works", "pi-coding-agent");
+mkdirSync(PI_PKG, { recursive: true });
+writeFileSync(
+  join(PI_PKG, "package.json"),
+  JSON.stringify({ name: "@earendil-works/pi-coding-agent", type: "module", main: "index.js" }),
+);
+writeFileSync(join(PI_PKG, "index.js"), `export const VERSION = ${JSON.stringify(PI_VERSION)};\n`);
 
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -154,6 +167,9 @@ const ENV_KEYS = [
   "FB_REPLY",
   "FB_CALLS",
   "FB_STAND_HELD",
+  "FB_ENV",
+  "ISKRON_HARNESS_VERSION",
+  "ISKRON_SKILLS_ROOT",
   "ISKRON_SATELLITE_OF",
   "ISKRON_PI_ASIDE_MS",
 ];
@@ -164,15 +180,15 @@ let seq = 0;
  * read at module load, so the query string is what lets one test be slow and
  * the next one quick.
  */
-async function loadFactory(env = {}) {
+async function loadFactory(env = {}, copy = COPY) {
   for (const k of ENV_KEYS) delete process.env[k];
   for (const [k, v] of Object.entries(env)) process.env[k] = String(v);
-  return (await import(`${pathToFileURL(COPY).href}?n=${++seq}`)).default;
+  return (await import(`${pathToFileURL(copy).href}?n=${++seq}`)).default;
 }
 
 /** A live session: factory called, session_start fired, shutdown at hand. */
 async function session(env = {}, opts = {}) {
-  const factory = await loadFactory(env);
+  const factory = await loadFactory(env, opts.copy);
   const rec = fakePi(opts);
   factory(rec.pi);
   await rec.fire("session_start");
@@ -422,6 +438,49 @@ test("bridge raised: every server tool stands in the session under its own name"
     assert.deepEqual(channel.parameters.required, ["action"]);
     // The prompt line is one sentence of the description, not the whole of it.
     assert.equal(channel.promptSnippet, "Живой канал делателя.");
+  } finally {
+    await rec.stop();
+  }
+});
+
+// The extension is the bridge's handshake client, so clientInfo names the
+// extension, not pi: pi's own VERSION rides to the bridge in its environment,
+// for attrs.harness_version (#6226).
+test("the extension hands pi's own version to the bridge it raises", async () => {
+  const envLog = join(SANDBOX, "host-version.env");
+  const { env } = bridgeEnv("host-version", { FB_ENV: envLog });
+  const rec = await session(env);
+  try {
+    const seen = readFileSync(envLog, "utf8").trim().split("\n").map(JSON.parse);
+    assert.equal(seen[0]?.harness_version, PI_VERSION, JSON.stringify(seen));
+    assert.equal(seen[0]?.skills_root, null, "no package beside the extension — no set is named");
+  } finally {
+    await rec.stop();
+  }
+});
+
+// The set the bridge names in attrs.skills is the package the extension came
+// with (#6226): a bridge from elsewhere (ISKRON_BRIDGE_PATH, the home copy)
+// knows it only from the environment.
+test("the extension installed as a package hands its skill set's root to the bridge it raises", async () => {
+  const pkg = join(SANDBOX, "pkg");
+  const scripts = join(pkg, "skills", "establish-mcp", "scripts");
+  mkdirSync(join(pkg, "extensions"), { recursive: true });
+  mkdirSync(scripts, { recursive: true });
+  writeFileSync(join(scripts, "iskron.mjs"), "");
+  const copy = join(pkg, "extensions", "iskron.mjs");
+  copyFileSync(SOURCE, copy);
+  const envLog = join(SANDBOX, "skills-root.env");
+  const { env } = bridgeEnv("skills-root", { FB_ENV: envLog });
+  const rec = await session(env, { copy });
+  try {
+    const seen = readFileSync(envLog, "utf8").trim().split("\n").map(JSON.parse);
+    // Реальными путями: на macOS временный каталог /var/… живёт в /private/var/…
+    assert.equal(
+      realpathSync(seen[0]?.skills_root ?? ""),
+      realpathSync(join(pkg, "skills")),
+      JSON.stringify(seen),
+    );
   } finally {
     await rec.stop();
   }

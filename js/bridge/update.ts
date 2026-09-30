@@ -22,6 +22,7 @@ import { L } from "../shared/lang.ts";
 import { compareVersions } from "../shared/semver.ts";
 import { VERSION, versionIn } from "../shared/version.ts";
 import { isProductionServer } from "./config.ts";
+import { SKILLS_ROOT_ENV, skillsRoot } from "./skillset.ts";
 import { emit, log } from "./streams.ts";
 
 export const RELEASES_URL =
@@ -116,9 +117,15 @@ export function reexec(path: string, argv: string[]): void {
   log(
     `домашняя копия новее этой сборки (v${versionOf(path) ?? "?"} > v${VERSION}) — запускаюсь ею: ${path}`,
   );
+  // Дом лежит вне набора скиллов: корень набора этой копии едет ему окружением (#6226).
+  const root = skillsRoot();
   const child = spawn(process.execPath, [path, ...argv], {
     stdio: "inherit",
-    env: { ...process.env, ISKRON_BRIDGE_REEXEC: "1" },
+    env: {
+      ...process.env,
+      ISKRON_BRIDGE_REEXEC: "1",
+      ...(root ? { [SKILLS_ROOT_ENV]: root } : {}),
+    },
   });
   for (const sig of ["SIGTERM", "SIGINT", "SIGHUP"] as const) {
     process.on(sig, () => child.kill(sig));

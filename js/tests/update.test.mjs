@@ -166,6 +166,35 @@ test("a bridge started from any path hands over to a newer home copy — same st
   );
 });
 
+// The home copy lies outside any skill set, so the set the starter came from
+// rides to it in the environment (#6226): the place names the running bridge by
+// build and the INSTALLED set by skills — here they differ, and that is the signal.
+test("the skill set survives the hand-over: the home copy names the starter's set, not its own", async (t) => {
+  const fake = await startFakeNks({ pat: PAT });
+  const h = home(t);
+  writeFileSync(h.bridgePath, newerBuild());
+  const bridge = startBridge(fake.mcpUrl, join(h.root, "auth"), {
+    HOME: h.root,
+    ISKRON_SKILLS_ROOT: "",
+    CLAUDE_PLUGIN_ROOT: "",
+  });
+  t.after(async () => {
+    await bridge.stop();
+    await fake.stop();
+  });
+  assert.ok((await bridge.call("initialize", INIT)).result);
+  await waitFor(() => bridge.stderr.includes(`v${NEWER}+`), "the newer build to announce itself");
+  const r = await bridge.call("tools/call", {
+    name: "iskron_stand",
+    arguments: { realm: "nks-dev", karta: 931, name: "proba", model: "opus-5" },
+  });
+  assert.ok(!r.result?.isError, JSON.stringify(r));
+  const connect = fake.state.placeArgs.find((x) => x.action === "connect");
+  assert.equal(connect?.attrs?.build?.version, NEWER, JSON.stringify(connect));
+  assert.equal(connect?.attrs?.skills?.version, MINE, JSON.stringify(connect?.attrs));
+  assert.match(String(connect?.attrs?.skills?.stamp), /^[0-9a-f]{8}$/);
+});
+
 test("a newer bridge lays itself into an older home at start", async (t) => {
   const fake = await startFakeNks({ pat: PAT });
   const h = home(t);

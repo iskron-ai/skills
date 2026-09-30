@@ -8,7 +8,16 @@
 // краснота, ради которой проба написана.
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { createHash } from "node:crypto";
+import {
+  copyFileSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { hostname, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
@@ -28,9 +37,9 @@ const INIT = {
 };
 const PAT = "nks_pat_stand";
 
-function startBridge(serverUrl, authDir, cwd = process.cwd(), env = {}, args = []) {
+function startBridge(serverUrl, authDir, cwd = process.cwd(), env = {}, args = [], file = FILE) {
   const notifications = [];
-  const proc = spawn(NODE, [FILE, serverUrl, "--no-browser", "--auth-dir", authDir, ...args], {
+  const proc = spawn(NODE, [file, serverUrl, "--no-browser", "--auth-dir", authDir, ...args], {
     cwd,
     env: {
       ...process.env,
@@ -735,6 +744,253 @@ test("iskron_stand names the place: model and attrs ride connect and register", 
     assert.equal(got.attrs?.build?.name, "iskron-bridge");
     assert.match(String(got.attrs?.build?.version), /^\d+\.\d+\.\d+$/);
     assert.match(String(got.attrs?.build?.stamp), /^[0-9a-f]{8}$/);
+  }
+});
+
+// What else the place is (#6226, the form — #6211): the host's version beside
+// its name, and the skill set INSTALLED at the holder at the moment of taking —
+// the version of the bridge file inside that set (not the running bridge's) and
+// a stamp of 8 hex telling sets apart within one version: a flat install folds
+// skillFolderHash of the set's entries in ~/.agents/.skill-lock.json, a plugin
+// tree hashes its skills/*/SKILL.md. No set found — version "unknown", no stamp.
+const SET = "iskron-ai/skills";
+const MINE = /^(?:const|let|var)\s+VERSION\s*=\s*"([^"]+)"/m.exec(readFileSync(FILE, "utf8"))?.[1];
+const sha8 = (s) => createHash("sha256").update(s).digest("hex").slice(0, 8);
+// The lock's form (v3, source, skillFolderHash of 40 hex) — observed on the
+// machine fluence (case №39 [3293], [5726]).
+const lockFold = (lock, source = SET) =>
+  sha8(
+    Object.entries(lock.skills)
+      .filter(([, s]) => s.source === source)
+      .map(([n, s]) => `${n}:${s.skillFolderHash}\n`)
+      .sort()
+      .join(""),
+  );
+const treeStamp = (root) => {
+  const h = createHash("sha256");
+  for (const n of readdirSync(root).sort()) {
+    let body;
+    try {
+      body = readFileSync(join(root, n, "SKILL.md"));
+    } catch {
+      continue;
+    }
+    h.update(`${n}\0`);
+    h.update(body);
+    h.update("\0");
+  }
+  return h.digest("hex").slice(0, 8);
+};
+/** A skill set laid out as `<root>/<skill>/SKILL.md` with the bridge at establish-mcp/scripts. */
+function skillSet(root, bridgeText) {
+  const scripts = join(root, "establish-mcp", "scripts");
+  mkdirSync(scripts, { recursive: true });
+  if (bridgeText === undefined) copyFileSync(FILE, join(scripts, "iskron.mjs"));
+  else writeFileSync(join(scripts, "iskron.mjs"), bridgeText);
+  for (const n of ["entry", "iskron"]) {
+    mkdirSync(join(root, n), { recursive: true });
+    writeFileSync(join(root, n, "SKILL.md"), `---\nname: ${n}\n---\n${n}\n`);
+  }
+  return join(scripts, "iskron.mjs");
+}
+/** No inherited pointer at a set: the probe decides where the set is. */
+const NO_SET = { ISKRON_SKILLS_ROOT: "", CLAUDE_PLUGIN_ROOT: "", ISKRON_HARNESS_VERSION: "" };
+async function holderReady(t, { file = FILE, env = {}, init = INIT } = {}) {
+  const fake = await startFakeNks({ pat: PAT });
+  const dir = mkdtempSync(join(tmpdir(), "iskron-stand-"));
+  const bridge = startBridge(fake.mcpUrl, dir, process.cwd(), { ...NO_SET, ...env }, [], file);
+  t.after(async () => {
+    await bridge.stop();
+    await fake.stop();
+  });
+  const reply = await bridge.call("initialize", init);
+  assert.ok(reply.result, `initialize: ${JSON.stringify(reply)}`);
+  return { fake, bridge };
+}
+const placeSends = (fake) =>
+  fake.state.placeArgs.filter((x) => x.action === "connect" || x.action === "register");
+const stand = (bridge) =>
+  bridge.call("tools/call", {
+    name: "iskron_stand",
+    arguments: { realm: "nks-dev", karta: 931, name: "proba", model: "opus-5" },
+  });
+
+// clientInfo {name: "claude-code", version: "2.1.273"} — caught by a probe from a
+// live Claude Code handshake, as was Codex's "codex-mcp-client" 0.154.0 (case №39 [3460]).
+test("iskron_stand: a Claude Code handshake gives harness_version — clientInfo.version beside the name", async (t) => {
+  const { fake, bridge } = await holderReady(t, {
+    init: { ...INIT, clientInfo: { name: "claude-code", version: "2.1.273" } },
+  });
+  const r = await stand(bridge);
+  assert.ok(!r.result?.isError, textOf(r));
+  const sent = placeSends(fake);
+  assert.ok(sent.length >= 2, JSON.stringify(fake.state.placeArgs));
+  for (const got of sent) {
+    assert.equal(got.attrs?.harness, "claude-code");
+    assert.equal(got.attrs?.harness_version, "2.1.273", JSON.stringify(got.attrs));
+    assert.equal(got.attrs?.skills?.name, SET, JSON.stringify(got.attrs));
+  }
+});
+
+test("iskron_stand: skills of a flat install — the set's bridge version and the lock's fold; a later register keeps build and harness", async (t) => {
+  const home = mkdtempSync(join(tmpdir(), "iskron-flat-"));
+  const root = join(home, ".agents", "skills");
+  const file = skillSet(root);
+  const lock = {
+    version: 3,
+    skills: {
+      entry: { source: SET, skillFolderHash: "a".repeat(40) },
+      iskron: { source: SET, skillFolderHash: "b".repeat(40) },
+      stranger: { source: "someone/else", skillFolderHash: "c".repeat(40) },
+    },
+  };
+  const lockPath = join(home, ".agents", ".skill-lock.json");
+  writeFileSync(lockPath, JSON.stringify(lock));
+  const { fake, bridge } = await holderReady(t, {
+    file,
+    env: { HOME: home },
+    init: { ...INIT, clientInfo: { name: "claude-code", version: "2.1.273" } },
+  });
+  assert.ok(!(await stand(bridge)).result?.isError);
+  assert.ok(!(await stand(bridge)).result?.isError);
+  const sent = placeSends(fake);
+  assert.ok(sent.length >= 2, JSON.stringify(fake.state.placeArgs));
+  for (const got of sent)
+    assert.deepEqual(got.attrs?.skills, { name: SET, version: MINE, stamp: lockFold(lock) });
+
+  // npx skills update between two takings: the next register names the new set,
+  // and the agent's own register keeps the holder's keys beside its own.
+  lock.skills.entry.skillFolderHash = "d".repeat(40);
+  writeFileSync(lockPath, JSON.stringify(lock));
+  const again = await bridge.call("tools/call", {
+    name: "iskron_channel",
+    arguments: {
+      realm: "nks-dev",
+      action: "register",
+      karta: 931,
+      name: "proba",
+      attrs: { purpose: "p" },
+    },
+  });
+  assert.ok(!again.result?.isError, textOf(again));
+  const last = placeSends(fake).at(-1);
+  assert.equal(last.attrs?.purpose, "p");
+  assert.equal(last.attrs?.build?.name, "iskron-bridge");
+  assert.equal(last.attrs?.harness, "claude-code");
+  assert.equal(last.attrs?.harness_version, "2.1.273");
+  assert.deepEqual(last.attrs?.skills, { name: SET, version: MINE, stamp: lockFold(lock) });
+  assert.notEqual(lockFold(lock), sent[0].attrs.skills.stamp, "the stamp follows the lock");
+});
+
+// The set is named by where it came from (nks-dev graph: #6211, #6226): the
+// lock's establish-mcp entry carries the bridge, so its source is
+// the set's name, and only that source's entries fold into the stamp — a fork
+// is not called iskron-ai/skills, and a stranger set beside it does not move it.
+test("iskron_stand: skills of a flat install from a fork — name and stamp follow the establish-mcp entry's source", async (t) => {
+  const home = mkdtempSync(join(tmpdir(), "iskron-fork-"));
+  const root = join(home, ".agents", "skills");
+  const file = skillSet(root);
+  const FORK = "someone/skills";
+  const lock = {
+    version: 3,
+    skills: {
+      "establish-mcp": { source: FORK, skillFolderHash: "1".repeat(40) },
+      entry: { source: FORK, skillFolderHash: "2".repeat(40) },
+      iskron: { source: SET, skillFolderHash: "3".repeat(40) },
+      stranger: { source: "someone/else", skillFolderHash: "4".repeat(40) },
+    },
+  };
+  writeFileSync(join(home, ".agents", ".skill-lock.json"), JSON.stringify(lock));
+  const { fake, bridge } = await holderReady(t, { file, env: { HOME: home } });
+  assert.ok(!(await stand(bridge)).result?.isError);
+  const sent = placeSends(fake);
+  assert.ok(sent.length >= 2, JSON.stringify(fake.state.placeArgs));
+  for (const got of sent)
+    assert.deepEqual(got.attrs?.skills, {
+      name: FORK,
+      version: MINE,
+      stamp: lockFold(lock, FORK),
+    });
+});
+
+// A lock without an establish-mcp entry does not say which source carries the
+// bridge: the set keeps the default name and folds that name's entries, as
+// before the fork rule; no entry of it — the SKILL.md hash of the tree.
+test("iskron_stand: skills of a flat install whose lock has no establish-mcp entry — iskron-ai/skills, its entries' fold, else the tree", async (t) => {
+  const home = mkdtempSync(join(tmpdir(), "iskron-nobridge-"));
+  const root = join(home, ".agents", "skills");
+  const file = skillSet(root);
+  const lockPath = join(home, ".agents", ".skill-lock.json");
+  const lock = {
+    version: 3,
+    skills: {
+      entry: { source: SET, skillFolderHash: "5".repeat(40) },
+      stranger: { source: "someone/else", skillFolderHash: "6".repeat(40) },
+    },
+  };
+  writeFileSync(lockPath, JSON.stringify(lock));
+  const { fake, bridge } = await holderReady(t, { file, env: { HOME: home } });
+  assert.ok(!(await stand(bridge)).result?.isError);
+  assert.deepEqual(placeSends(fake).at(-1).attrs?.skills, {
+    name: SET,
+    version: MINE,
+    stamp: lockFold(lock),
+  });
+
+  writeFileSync(
+    lockPath,
+    JSON.stringify({ version: 3, skills: { stranger: lock.skills.stranger } }),
+  );
+  assert.ok(!(await stand(bridge)).result?.isError);
+  assert.deepEqual(placeSends(fake).at(-1).attrs?.skills, {
+    name: SET,
+    version: MINE,
+    stamp: treeStamp(root),
+  });
+});
+
+test("iskron_stand: skills of a set named by ISKRON_SKILLS_ROOT — its own bridge version and SKILL.md hash; our client's host version from the environment", async (t) => {
+  const root = join(mkdtempSync(join(tmpdir(), "iskron-plugin-")), "skills");
+  skillSet(root, '#!/usr/bin/env node\nconst VERSION = "1.2.3";\n');
+  const { fake, bridge } = await holderReady(t, {
+    env: { ISKRON_SKILLS_ROOT: root, ISKRON_HARNESS_VERSION: "2.0.18" },
+    init: { ...INIT, clientInfo: { name: "opencode-iskron", version: "1" } },
+  });
+  assert.ok(!(await stand(bridge)).result?.isError);
+  const sent = placeSends(fake);
+  assert.ok(sent.length >= 2, JSON.stringify(fake.state.placeArgs));
+  for (const got of sent) {
+    assert.deepEqual(got.attrs?.skills, { name: SET, version: "1.2.3", stamp: treeStamp(root) });
+    assert.equal(
+      got.attrs?.build?.version,
+      MINE,
+      "the running bridge is named by build, not skills",
+    );
+    assert.equal(got.attrs?.harness, "opencode-iskron");
+    assert.equal(
+      got.attrs?.harness_version,
+      "2.0.18",
+      "the plugin's clientInfo.version is not OpenCode's",
+    );
+  }
+});
+
+test("iskron_stand: no set found — skills version unknown without a stamp; our client without a host version says unknown", async (t) => {
+  const bare = mkdtempSync(join(tmpdir(), "iskron-bare-"));
+  const file = join(bare, "iskron.mjs");
+  copyFileSync(FILE, file);
+  const { fake, bridge } = await holderReady(t, {
+    file,
+    env: { HOME: bare },
+    init: { ...INIT, clientInfo: { name: "opencode-iskron", version: "1" } },
+  });
+  assert.ok(!(await stand(bridge)).result?.isError);
+  const sent = placeSends(fake);
+  assert.ok(sent.length >= 2, JSON.stringify(fake.state.placeArgs));
+  for (const got of sent) {
+    assert.deepEqual(got.attrs?.skills, { name: SET, version: "unknown" });
+    assert.equal(got.attrs?.harness_version, "unknown");
+    assert.equal(got.attrs?.build?.name, "iskron-bridge");
   }
 });
 

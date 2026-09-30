@@ -133,7 +133,13 @@ function registry() {
   };
 }
 
-function fakeCtx({ sessions = [], skills = [], gone = new Set(), inboxIds = false } = {}) {
+function fakeCtx({
+  sessions = [],
+  skills = [],
+  gone = new Set(),
+  inboxIds = false,
+  app = { name: "opencode", version: "2.0.18-probe", channel: "latest" },
+} = {}) {
   const prompts = [];
   const hooks = {};
   const tools = registry();
@@ -142,6 +148,7 @@ function fakeCtx({ sessions = [], skills = [], gone = new Set(), inboxIds = fals
   let wake = null;
   const stderr = [];
   const ctx = {
+    app,
     tool: { transform: tools.transform, reload: tools.reload },
     command: { transform: commands.transform, reload: commands.reload },
     session: {
@@ -223,6 +230,9 @@ const ENV_KEYS = [
   "FB_INITS",
   "FB_NET_UP",
   "FB_DIE_ONCE",
+  "FB_ENV",
+  "ISKRON_HARNESS_VERSION",
+  "ISKRON_SKILLS_ROOT",
   "ISKRON_BRIDGE_WATCH_MS",
   "ISKRON_BRIDGE_URL",
   "ISKRON_BRIDGE_TOKEN",
@@ -341,6 +351,63 @@ test("every bridge tool stands under its own name, with the server's JSON Schema
       /сборка: мост v\S+\+[0-9a-f]{8}, плагин v\S+/,
       "the status names both builds — the doer answers which build holds without reading files",
     );
+  } finally {
+    await rec.stop();
+  }
+});
+
+// The plugin is the bridge's handshake client, so clientInfo names the plugin,
+// not OpenCode: the host's own version rides to the bridge in its environment
+// (ctx.app.version), for attrs.harness_version (#6226). No app — none is claimed.
+// ctx.app {name, version, channel} — from the types of @opencode/plugin 2.0.4
+// (app.d.ts) only; a live OpenCode's ctx.app is not observed.
+test("the plugin hands OpenCode's own version to the bridge it raises", async () => {
+  const envLog = join(SANDBOX, "host-version.env");
+  const b = bridgeEnv("host-version", { FB_ENV: envLog });
+  const rec = await plugin(b.env, {
+    app: { name: "opencode", version: "2.0.18", channel: "latest" },
+  });
+  try {
+    // The tools may already stand from the previous list (cache), before the
+    // bridge has written its first line — wait for the bridge, not the tools.
+    await until(() => existsSync(envLog), "the raised bridge");
+    const seen = readFileSync(envLog, "utf8").trim().split("\n").map(JSON.parse);
+    assert.equal(seen[0]?.harness_version, "2.0.18", JSON.stringify(seen));
+  } finally {
+    await rec.stop();
+  }
+  const bareLog = join(SANDBOX, "host-version-bare.env");
+  const bare = await plugin(bridgeEnv("host-version-bare", { FB_ENV: bareLog }).env, {
+    app: null,
+  });
+  try {
+    await until(() => existsSync(bareLog), "the raised bridge");
+    const seen = readFileSync(bareLog, "utf8").trim().split("\n").map(JSON.parse);
+    assert.equal(seen[0]?.harness_version, null, "no app — the plugin claims no version");
+    assert.equal(seen[0]?.skills_root, null, "no establish-mcp among the skills — no set is named");
+  } finally {
+    await bare.stop();
+  }
+});
+
+// The plugin's bridge is the home copy, outside any set (#6226): the set it
+// names in attrs.skills is the one OpenCode loaded establish-mcp from —
+// ctx.skill.list(), as the commands read it.
+test("the plugin hands the bridge the root of the skill set that carries establish-mcp", async () => {
+  const root = join(SANDBOX, "set-root", "skills");
+  const path = join(root, "establish-mcp", "SKILL.md");
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, "---\nname: establish-mcp\n---\n");
+  const skills = [
+    { id: "builtin", name: "builtin", description: "x", path: "/builtin/x.md", content: "" },
+    { id: "establish-mcp", name: "establish-mcp", description: "x", path, content: "" },
+  ];
+  const envLog = join(SANDBOX, "skills-root.env");
+  const rec = await plugin(bridgeEnv("skills-root", { FB_ENV: envLog }).env, { skills });
+  try {
+    await until(() => existsSync(envLog), "the raised bridge");
+    const seen = readFileSync(envLog, "utf8").trim().split("\n").map(JSON.parse);
+    assert.equal(seen[0]?.skills_root, root, JSON.stringify(seen));
   } finally {
     await rec.stop();
   }

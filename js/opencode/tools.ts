@@ -32,6 +32,7 @@ import {
   textOf,
   writeCache,
 } from "./bridge-io.ts";
+import { hostEnvOf, sessionDirectory } from "./host.ts";
 import { createKeeper, type KeptSlot, takeLostMarker, WATCH_MS, writeLostMarker } from "./keep.ts";
 import { createLauncher } from "./launch.ts";
 import { createLogin } from "./login.ts";
@@ -100,6 +101,7 @@ export async function setupTools(
   }
   const path = found.path;
   const builds = buildsLine(path, import.meta.url);
+  const hostEnv = await hostEnvOf(ctx); // версия OpenCode и корень набора — раз на плагин
 
   const slots = new Map<string, Slot>();
   let spare: Slot | null = null;
@@ -156,11 +158,12 @@ export async function setupTools(
       },
       args,
     );
-    slot.bridge.start();
+    slot.bridge.start(hostEnv);
     shake(slot);
     return slot;
   }
 
+  const directoryOf = (sessionID: string) => sessionDirectory(ctx, sessionID);
   const keeper = createKeeper({
     say,
     tell: (root, text, child) =>
@@ -200,21 +203,6 @@ export async function setupTools(
     } catch {
       shake(slot);
       await slot.ready;
-    }
-  }
-
-  /**
-   * Директория сессии — рабочая копия, над которой идёт ход: у SessionInfo
-   * OpenCode 2 она в location.directory (@opencode/plugin 2.0.4). Нет её —
-   * пусто, мост выведет из своего cwd.
-   */
-  async function directoryOf(sessionID: string): Promise<string | null> {
-    try {
-      const res: any = await ctx.session.get({ sessionID } as any);
-      const dir = res?.location?.directory ?? res?.data?.location?.directory;
-      return typeof dir === "string" && dir.trim() ? dir : null;
-    } catch {
-      return null;
     }
   }
 
