@@ -47,25 +47,14 @@
 mcpServers:
   - iskron-sub-<роль>:
       type: stdio
-      command: sh
-      args: ["-c", "exec node \"$HOME/.iskron-bridge/iskron-bridge.mjs\" --satellite"]
+      command: node
+      args: ["-e", "const p=require('path').join(require('os').homedir(),'.iskron-bridge','iskron-bridge.mjs');process.argv.splice(1,0,p);import(require('url').pathToFileURL(p).href)", "--", "--satellite"]
 disallowedTools: mcp__iskron-bridge, mcp__plugin_iskron_iskron, mcp__iskron
 ```
 
-**Форма записи — по ОС машины, на которой идёт проекция.** macOS и Linux — блок выше: `sh` подставляет домашний каталог сам, абсолютного пути пользователя в файле нет, и файл общий для всех таких машин. Windows — `sh` там нет, а `$HOME` в `args` фронтматтера Claude Code не раскрывает: `command` — абсолютный путь к `node` этой машины, `args` — абсолютный путь к её домашнему мосту и `--satellite`. Готовый блок для каждого файла печатает `node ~/.iskron-bridge/iskron-bridge.mjs doctor` (раздел «субагенты», строки с отступом в шесть пробелов под `НАДО:`) — сняв отступ, вставь его вместо прежних `mcpServers` и `disallowedTools`; путь по памяти не собирай:
+**Форма записи одна на все ОС.** Claude Code не раскрывает переменные в `args` фронтматтера, а `sh` на Windows нет — поэтому путь к домашнему мосту собирает сам `node` из `os.homedir()`, и машинного пути в файле нет: файл общий для всех машин и коммитится как есть. Форма работает только целиком: `--` отделяет флаг моста от флагов `node` (без него `node` примет `--satellite` за свой и не запустится), а `process.argv.splice(1,0,p)` кладёт путь моста в `argv[1]` (без него мост не увидит `--satellite` и встанет мостом сессии). Нужен `node` в `PATH` машины. Прежние формы — `sh -c` и абсолютный путь в `args` — `doctor` называет и печатает на замену этот блок (раздел «субагенты», строки с отступом в шесть пробелов под `НАДО:` — сняв отступ, вставь вместо прежних `mcpServers` и `disallowedTools`).
 
-```yaml
-mcpServers:
-  - iskron-sub-<роль>:
-      type: stdio
-      command: "C:\\Program Files\\nodejs\\node.exe"
-      args: ["C:\\Users\\<пользователь>\\.iskron-bridge\\iskron-bridge.mjs", "--satellite"]
-disallowedTools: mcp__iskron-bridge, mcp__plugin_iskron_iskron, mcp__iskron
-```
-
-Такой файл машинный, и машинный путь в общий репо не коммитится. Локального двойника файла агента у Claude Code нет: при совпадении имени проектный `.claude/agents/` старше пользовательского `~/.claude/agents/`, ключа для агентов в `settings.local.json` нет, а запись-ссылка на сервер из конфига сессии (имя строкой вместо карты) документирована без слова о том, свой ли у прогона процесс, — и такой сервер поднимается ещё и в основной сессии. Поэтому машинная форма живёт в проектном файле, но вне коммитов: файл уже отслеживается — правь его на месте и `git update-index --skip-worktree .claude/agents/<роль>.md`; файл новый — строкой в `.git/info/exclude`. Цена skip-worktree — на `pull`: сменился общий файл — git откажет на нём («would be overwritten»). Выход: `git update-index --no-skip-worktree .claude/agents/<роль>.md`, отложи правку (`git stash`), `pull`, верни машинный блок из `doctor` и снова `--skip-worktree`. Флаг git не показывает в `status` — забытый, он молча прячет и нужные правки файла: список — `git ls-files -v | grep '^S'`. Пользовательский `~/.claude/agents/` — только для роли, которой в проекте нет.
-
-**Мост не поднялся — первый ход `doctor`.** Субагент сказал первой строкой итога, что тулов графа нет, или его прогон упал ошибкой API 400 об `input_schema` — запустивший зовёт `node ~/.iskron-bridge/iskron-bridge.mjs doctor` из каталога проекта и исполняет строки `НАДО:` раздела «субагенты»: у файла своя запись, её имя не делит никто, команда исполнима на этой ОС, мост по пути есть, мосты позвавшего сняты `disallowedTools`, папка доверена, пробный спутник ответил, и API примет схемы его тулов (тул со схемой `anyOf`, `oneOf` или `allOf` на верхнем уровне назван по имени — это чинит сервер, не файл агента и не мост). Затем `doctor` снова, до раздела без `НАДО:`, и запуск заново.
+**Мост не поднялся — первый ход `doctor`.** Субагент сказал первой строкой итога, что тулов графа нет, или его прогон упал ошибкой API 400 об `input_schema` — запустивший зовёт `node ~/.iskron-bridge/iskron-bridge.mjs doctor` из каталога проекта и исполняет строки `НАДО:` раздела «субагенты»: у файла своя запись, её имя не делит никто, команда исполнима на этой ОС, мост по пути есть, мосты позвавшего сняты `disallowedTools`, папка доверена, вход на машине есть, пробный спутник ответил, и API примет схемы его тулов (тул со схемой `anyOf`, `oneOf` или `allOf` на верхнем уровне назван по имени — это чинит оператор сервера MCP, не файл агента и не мост). Затем `doctor` снова, до раздела без `НАДО:`, и запуск заново. Человека зови только туда, куда `doctor` сам отсылает (вход, диалог доверия, ждать сервер).
 
 ```markdown
 ---
@@ -75,8 +64,8 @@ model: haiku
 mcpServers:
   - iskron-sub-reader:
       type: stdio
-      command: sh
-      args: ["-c", "exec node \"$HOME/.iskron-bridge/iskron-bridge.mjs\" --satellite"]
+      command: node
+      args: ["-e", "const p=require('path').join(require('os').homedir(),'.iskron-bridge','iskron-bridge.mjs');process.argv.splice(1,0,p);import(require('url').pathToFileURL(p).href)", "--", "--satellite"]
 disallowedTools: mcp__iskron-bridge, mcp__plugin_iskron_iskron, mcp__iskron
 ---
 
@@ -96,8 +85,8 @@ model: sonnet
 mcpServers:
   - iskron-sub-worker:
       type: stdio
-      command: sh
-      args: ["-c", "exec node \"$HOME/.iskron-bridge/iskron-bridge.mjs\" --satellite"]
+      command: node
+      args: ["-e", "const p=require('path').join(require('os').homedir(),'.iskron-bridge','iskron-bridge.mjs');process.argv.splice(1,0,p);import(require('url').pathToFileURL(p).href)", "--", "--satellite"]
 disallowedTools: mcp__iskron-bridge, mcp__plugin_iskron_iskron, mcp__iskron
 ---
 
@@ -118,8 +107,8 @@ model: opus
 mcpServers:
   - iskron-sub-verifier:
       type: stdio
-      command: sh
-      args: ["-c", "exec node \"$HOME/.iskron-bridge/iskron-bridge.mjs\" --satellite"]
+      command: node
+      args: ["-e", "const p=require('path').join(require('os').homedir(),'.iskron-bridge','iskron-bridge.mjs');process.argv.splice(1,0,p);import(require('url').pathToFileURL(p).href)", "--", "--satellite"]
 disallowedTools: mcp__iskron-bridge, mcp__plugin_iskron_iskron, mcp__iskron
 ---
 
@@ -144,8 +133,8 @@ model: opus
 mcpServers:
   - iskron-sub-reviewer:
       type: stdio
-      command: sh
-      args: ["-c", "exec node \"$HOME/.iskron-bridge/iskron-bridge.mjs\" --satellite"]
+      command: node
+      args: ["-e", "const p=require('path').join(require('os').homedir(),'.iskron-bridge','iskron-bridge.mjs');process.argv.splice(1,0,p);import(require('url').pathToFileURL(p).href)", "--", "--satellite"]
 disallowedTools: mcp__iskron-bridge, mcp__plugin_iskron_iskron, mcp__iskron
 ---
 
@@ -183,6 +172,6 @@ model: <provider/cheap-tier-id — разрешить в момент проек
 ## Заметки мейнтейнера (не деплоятся)
 
 - Перепроверяй при апгрейдах платформ, как interop-референс: Claude Code — директория агентов (`.claude/agents/`), ключи frontmatter (`name`, `description`, `model`, алиасы моделей, `tools`, `mcpServers`); OpenCode — директория (`.opencode/agents/`, множественное), ключи (`description`, `mode: subagent`, `model`), правило наследования (незапиненный суб-агент наследует модель вызывающего), обнаружение скиллов из `.claude/skills/` и `~/.claude/skills/`.
-- Мост-спутник в `mcpServers` (сверено по Claude Code 2.1.285 прогоном субагента и логом `mcp-logs-iskron-sub-<роль>`): запись — список одноключевых карт, inline-сервер соединяется на старте прогона субагента и закрывается с его концом (stdin моста закрыт); `${HOME}` в `args` фронтматтера **не разворачивается** — `node` получает буквальный путь `<cwd>/${HOME}/…` и падает с `MODULE_NOT_FOUND`; поэтому команда — `sh -c 'exec node "$HOME/…"'`, оболочка подставляет домашний каталог сама, без абсолютного пути пользователя в файле (на Windows `sh` нет — там форма с абсолютными путями машины, выше; наблюдено у пользователя на Windows, Claude Code 2.1.138). По документации Claude Code (сверено 2026-09-30): проектный `.claude/agents/` старше пользовательского при совпадении имени; локального двойника файла агента нет; `mcpServers` принимает имя строкой — ссылку на сервер конфига сессии, но делит ли она соединение позвавшего, не сказано; сервер фронтматтера в недоверенной папке не используется, и диалога не предлагается. В VS Code на Windows доверие не поднялось из-за написания пути (`C:/` против `c:/`) — `doctor` сверяет путь проекта с записями доверия в `~/.claude.json` без учёта регистра и называет расхождение. Блок записи `doctor` печатает той же блочной формой YAML, что проекция, и на повторе читает его чисто (проба `js/tests/doctor.test.mjs`); Windows-форма с абсолютными путями живым Claude Code на Windows не сверена. `disallowedTools` с префиксом сервера (`mcp__<сервер>`) снимает унаследованные мосты позвавшего — сверено: без него субагент видел `mcp__iskron-bridge__*` и `mcp__plugin_iskron_iskron__*`, с ним остался один `mcp__iskron-sub-<роль>__*`. Сервер фронтматтера не поднимается: у агента плагина (поле игнорируется), у агента из недоверенной папки (диалог доверия не принят), под `--strict-mcp-config`, `--bare`/`--safe-mode`, в удалённом режиме, под корпоративным конфигом MCP и `strictPluginOnlyCustomization`. Соединение делится по имени записи, не по файлу: пока все файлы несли одну запись `iskron-sub`, параллельные субагенты разных файлов шли одним процессом моста, и конец одного (SIGINT) гасил место другому — поэтому имя у каждого файла своё. Сверено двумя прогонами разом: `reader` и `worker` — два процесса моста (два pid, два лога `mcp-logs-iskron-sub-reader` и `-worker`), конец первого второй пережил; два `worker` — один процесс, одно «Starting connection» в логе, на конце первого «Sending SIGINT to MCP server process» и «Cleared connection cache for reconnection», а следующий вызов второго поднял новый процесс — свежий мост, без места и дела. Параллельных писателей одного файла не запускай (правило 5). Сервер файла агента добавляется поверх списка `tools` и сужается только `disallowedTools`.
+- Мост-спутник в `mcpServers` (сверено по Claude Code 2.1.285 прогоном субагента и логом `mcp-logs-iskron-sub-<роль>`): запись — список одноключевых карт, inline-сервер соединяется на старте прогона субагента и закрывается с его концом (stdin моста закрыт); `${HOME}` в `args` фронтматтера **не разворачивается** — `node` получает буквальный путь `<cwd>/${HOME}/…` и падает с `MODULE_NOT_FOUND`. Прежняя форма `sh -c 'exec node "$HOME/…"'` на Windows не встаёт: `sh` там нет (наблюдено у пользователя на Windows, Claude Code 2.1.138). Поэтому команда — `node -e` с путём из `os.homedir()`, `--` и `--satellite` (сверено по Claude Code 2.1.285 прогоном `claude -p` с субагентом: у него все тулы `mcp__iskron-sub-<роль>__iskron_*`, мостов позвавшего нет, лог `mcp-logs-iskron-sub-<роль>` — connected, закрыт чисто); на Windows живым Claude Code не сверена. Машинный путь в файле (и `skip-worktree` ради него) не нужен: локального двойника файла агента у Claude Code нет — проектный `.claude/agents/` старше пользовательского при совпадении имени (документация, сверено 2026-09-30). `mcpServers` принимает и имя строкой — ссылку на сервер конфига сессии, но делит ли она соединение позвавшего, не сказано; сервер фронтматтера в недоверенной папке не используется, и диалога не предлагается. В VS Code на Windows доверие не поднялось из-за написания пути (`C:/` против `c:/`) — `doctor` сверяет путь проекта с записями доверия в `~/.claude.json` без учёта регистра и называет расхождение. Блок записи `doctor` печатает той же блочной формой YAML, что проекция, и на повторе читает его чисто (проба `js/tests/doctor.test.mjs`). `disallowedTools` с префиксом сервера (`mcp__<сервер>`) снимает унаследованные мосты позвавшего — сверено: без него субагент видел `mcp__iskron-bridge__*` и `mcp__plugin_iskron_iskron__*`, с ним остался один `mcp__iskron-sub-<роль>__*`. Сервер фронтматтера не поднимается: у агента плагина (поле игнорируется), у агента из недоверенной папки (диалог доверия не принят), под `--strict-mcp-config`, `--bare`/`--safe-mode`, в удалённом режиме, под корпоративным конфигом MCP и `strictPluginOnlyCustomization`. Соединение делится по имени записи, не по файлу: пока все файлы несли одну запись `iskron-sub`, параллельные субагенты разных файлов шли одним процессом моста, и конец одного (SIGINT) гасил место другому — поэтому имя у каждого файла своё. Сверено двумя прогонами разом: `reader` и `worker` — два процесса моста (два pid, два лога `mcp-logs-iskron-sub-reader` и `-worker`), конец первого второй пережил; два `worker` — один процесс, одно «Starting connection» в логе, на конце первого «Sending SIGINT to MCP server process» и «Cleared connection cache for reconnection», а следующий вызов второго поднял новый процесс — свежий мост, без места и дела. Параллельных писателей одного файла не запускай (правило 5). Сервер файла агента добавляется поверх списка `tools` и сужается только `disallowedTools`.
 - Обоснование доставки: поле `description` — единственный канал, живущий в контексте каждую сессию на обеих платформах. Тела скиллов грузятся по требованию, и агенты не тянутся к ним рефлекторно — агент-файлы обходят этот провал.
 - `reader` / `worker` / `verifier` / `reviewer` — сознательно голые, родовые имена; могут столкнуться с одноимёнными агентами уровня пользователя — принятый трейд-офф (зеркало конвенции голых имён скиллов); переименуй по-репозиторно, если коллизия укусила.

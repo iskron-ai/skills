@@ -8,6 +8,8 @@ import { createInterface } from "node:readline";
 const PROBE_MS = Number(process.env.ISKRON_DOCTOR_PROBE_MS) || 30_000;
 /** Срок одного запроса пробного моста: столько он может ждать запрос в полёте, уходя. */
 const REQUEST_MS = 20_000;
+/** Windows: ожидание ухода по закрытому stdin — дольше срока запроса со сменой токена. */
+const WIN_WAIT_MS = 40_000;
 
 interface Reply {
   id?: unknown;
@@ -139,6 +141,17 @@ export async function probeSatellite(
       new Promise<boolean>((res) => setTimeout(() => res(false), ms).unref()),
     ]);
   child.stdin.end();
+  if (process.platform === "win32") {
+    // На Windows любой сигнал — TerminateProcess, мгновенный и без уборки: мосту
+    // остаётся только закрытый stdin, и ждём его дольше смены токена.
+    if (!(await within(WIN_WAIT_MS))) {
+      child.kill();
+      lines.push(
+        `проба «${label}»: мост не ушёл по закрытому stdin за ${WIN_WAIT_MS / 1000}s — снят принудительно; если он менял токен, повтори doctor: вход может понадобиться заново`,
+      );
+    }
+    return lines;
+  }
   if (!(await within(10_000))) {
     child.kill("SIGTERM");
     if (!(await within(REQUEST_MS + 10_000))) {

@@ -5661,9 +5661,9 @@ var SW = {
     "Отказано (мост): iskron_stand требует realm и karta — граф и роль из AGENTS.md или строки запуска.",
     "Refused (bridge): iskron_stand needs realm and karta — the graph and the role from AGENTS.md or the launch line."
   ),
-  badCwd: (cwd, relative2) => L(
-    `Отказано (мост): cwd должен быть существующим абсолютным каталогом — получено «${cwd}»${relative2 ? " (относительный путь резолвился бы от cwd моста, не сессии)" : ""}.`,
-    `Refused (bridge): cwd must be an existing absolute directory — got "${cwd}"${relative2 ? " (a relative path would resolve against the bridge's cwd, not the session's)" : ""}.`
+  badCwd: (cwd, relative) => L(
+    `Отказано (мост): cwd должен быть существующим абсолютным каталогом — получено «${cwd}»${relative ? " (относительный путь резолвился бы от cwd моста, не сессии)" : ""}.`,
+    `Refused (bridge): cwd must be an existing absolute directory — got "${cwd}"${relative ? " (a relative path would resolve against the bridge's cwd, not the session's)" : ""}.`
   ),
   badName: (asked, fault, max) => L(
     `Отказано (мост): name «${asked}» — ${fault}; правило имени: строчные латинские буквы, цифры, точка, подчёркивание, дефис, первый знак — буква или цифра, не длиннее ${max} знаков. Имя не укорачивается молча: короткое имя адресовало бы другое место.`,
@@ -7553,7 +7553,7 @@ function runWatchdogExit(argv2) {
 // js/cli/doctor.ts
 import { createHash as createHash9 } from "node:crypto";
 import { existsSync as existsSync10, readdirSync as readdirSync8, readFileSync as readFileSync20 } from "node:fs";
-import { homedir as homedir9 } from "node:os";
+import { homedir as homedir10 } from "node:os";
 import { dirname as dirname10, join as join20 } from "node:path";
 import { fileURLToPath as fileURLToPath6 } from "node:url";
 
@@ -7656,10 +7656,9 @@ function openCodeMcpEntries(out5) {
 }
 
 // js/cli/subagents.ts
-import { spawnSync } from "node:child_process";
 import { existsSync as existsSync9, readdirSync as readdirSync7, readFileSync as readFileSync19, statSync as statSync6 } from "node:fs";
-import { homedir as homedir8 } from "node:os";
-import { basename as basename4, delimiter, dirname as dirname9, isAbsolute as isAbsolute2, join as join19, relative, resolve as resolve6 } from "node:path";
+import { homedir as homedir9 } from "node:os";
+import { basename as basename5, delimiter, dirname as dirname9, isAbsolute as isAbsolute2, join as join19, resolve as resolve6 } from "node:path";
 
 // js/cli/frontmatter.ts
 function frontmatterText(file) {
@@ -7783,11 +7782,63 @@ function parseFrontmatter(text) {
   return top && typeof top === "object" && !Array.isArray(top) ? top : {};
 }
 
+// js/cli/satform.ts
+import { homedir as homedir8 } from "node:os";
+import { basename as basename4 } from "node:path";
+var SATELLITE_CODE = "const p=require('path').join(require('os').homedir(),'.iskron-bridge','iskron-bridge.mjs');process.argv.splice(1,0,p);import(require('url').pathToFileURL(p).href)";
+var SATELLITE_ARGS = ["-e", SATELLITE_CODE, "--", "--satellite"];
+var SHELLS = /* @__PURE__ */ new Set(["sh", "bash", "zsh", "dash"]);
+var cmdBase = (c) => basename4(c.replace(/\\/g, "/")).replace(/\.exe$/i, "").toLowerCase();
+function formOf(e) {
+  const base = cmdBase(e.command);
+  if (base === "node" && (e.args[0] === "-e" || e.args[0] === "--eval")) {
+    const sep = e.args.indexOf("--", 2);
+    if (sep < 0) return e.args.slice(2).includes("--satellite") ? "eval-no-sep" : "session";
+    const after2 = e.args.slice(sep + 1);
+    const spliced = /process\.argv\.splice\(\s*1\s*,\s*0\s*,/.test(e.args[1] ?? "");
+    return (spliced ? after2 : after2.slice(1)).includes("--satellite") ? "eval" : "eval-session";
+  }
+  if (SHELLS.has(base)) {
+    const s2 = e.args[e.args.indexOf("-c") + 1] ?? "";
+    return s2.includes("--satellite") ? "shell" : "session";
+  }
+  return e.args.includes("--satellite") ? "path" : "session";
+}
+var expandHome = (p) => p.replace(/^~(?=[\\/])/, homedir8()).replace(/\$\{HOME\}|\$HOME|%USERPROFILE%|\$\{USERPROFILE\}|\$USERPROFILE/g, homedir8());
+function bridgePathOf(e) {
+  const base = cmdBase(e.command);
+  if (base === "node" && (e.args[0] === "-e" || e.args[0] === "--eval")) {
+    const code = e.args[1] ?? "";
+    if (/homedir\(\)/.test(code) && /\.iskron-bridge/.test(code)) return homeBridgePath();
+    const m = /['"`]([^'"`]*iskron[^'"`]*\.mjs)['"`]/.exec(code);
+    return m ? expandHome(m[1]) : null;
+  }
+  if (SHELLS.has(base)) {
+    const s2 = e.args[e.args.indexOf("-c") + 1] ?? "";
+    const m = /"([^"]*iskron[^"]*\.mjs)"|'([^']*iskron[^']*\.mjs)'|(\S*iskron\S*\.mjs)/.exec(s2);
+    const raw = m?.[1] ?? m?.[2] ?? m?.[3];
+    return raw ? expandHome(raw) : null;
+  }
+  const arg = [e.command, ...e.args].find((a) => /iskron[^\\/]*\.mjs$/i.test(a));
+  return arg ? expandHome(arg) : null;
+}
+function readyEntry(name, disallowed) {
+  return [
+    "mcpServers:",
+    `  - ${name}:`,
+    "      type: stdio",
+    "      command: node",
+    `      args: [${SATELLITE_ARGS.map((a) => JSON.stringify(a)).join(", ")}]`,
+    `disallowedTools: ${disallowed.join(", ")}`
+  ].join("\n");
+}
+
 // js/cli/satprobe.ts
 import { spawn as spawn4 } from "node:child_process";
 import { createInterface as createInterface3 } from "node:readline";
 var PROBE_MS = Number(process.env.ISKRON_DOCTOR_PROBE_MS) || 3e4;
 var REQUEST_MS = 2e4;
+var WIN_WAIT_MS = 4e4;
 async function probeSatellite(label, e, cwd) {
   const lines = [];
   const env2 = {
@@ -7888,6 +7939,15 @@ async function probeSatellite(label, e, cwd) {
     new Promise((res) => setTimeout(() => res(false), ms2).unref())
   ]);
   child.stdin.end();
+  if (process.platform === "win32") {
+    if (!await within(WIN_WAIT_MS)) {
+      child.kill();
+      lines.push(
+        `проба «${label}»: мост не ушёл по закрытому stdin за ${WIN_WAIT_MS / 1e3}s — снят принудительно; если он менял токен, повтори doctor: вход может понадобиться заново`
+      );
+    }
+    return lines;
+  }
   if (!await within(1e4)) {
     child.kill("SIGTERM");
     if (!await within(REQUEST_MS + 1e4)) {
@@ -7903,10 +7963,15 @@ async function probeSatellite(label, e, cwd) {
 // js/cli/subagents.ts
 var platform = () => process.env.ISKRON_DOCTOR_PLATFORM || process.platform;
 var BRIDGE_RE = /iskron-bridge|(^|[\\/"'\s])iskron[^\\/"'\s]*\.mjs/;
-var SHELLS = /* @__PURE__ */ new Set(["sh", "bash", "zsh", "dash"]);
 var TEMPLATE_PARENTS = ["mcp__iskron-bridge", "mcp__plugin_iskron_iskron", "mcp__iskron"];
+var FORM_WORD = {
+  "eval-no-sep": "--satellite стоит без `--` после кода `node -e` — node примет его за свой флаг («bad option») и не запустится",
+  "eval-session": "мост не увидит --satellite в своём argv (нет `--` перед ним или путь моста не положен в argv[1]) и встанет мостом сессии, не спутником",
+  shell: "форма прежнего контракта (sh -c): на Windows sh нет, а переменных в args фронтматтера Claude Code не раскрывает",
+  path: "путь к мосту записан прямо в args — машинный путь в общем файле, на другой машине его нет",
+  session: "запись зовёт мост без --satellite — субагент встал бы мостом сессии, а не спутником"
+};
 var str2 = (v) => typeof v === "string" ? v : "";
-var q = (s2) => JSON.stringify(s2);
 function entriesOf(fm) {
   const raw = fm.mcpServers;
   const pairs = [];
@@ -7943,11 +8008,11 @@ function agentFiles(dir, scope) {
       if (text !== null) fm = parseFrontmatter(text);
     } catch {
     }
-    return { path, agent: str2(fm.name) || basename4(f, ".md"), scope, fm };
+    return { path, agent: str2(fm.name) || basename5(f, ".md"), scope, fm };
   });
 }
 function projectRoot() {
-  const home = resolve6(homedir8());
+  const home = resolve6(homedir9());
   let gitRoot = null;
   for (let d = process.cwd(); ; ) {
     if (resolve6(d) === home) break;
@@ -7977,41 +8042,6 @@ function which(cmd, cwd) {
   }
   return null;
 }
-function nodePath(cwd) {
-  if (/^node(\.exe)?$/i.test(basename4(process.execPath))) return process.execPath;
-  return which("node", cwd) ?? "node";
-}
-function readyEntry(name, cwd, disallowed) {
-  const [command, args] = platform() === "win32" ? [q(nodePath(cwd)), `[${q(homeBridgePath())}, "--satellite"]`] : ["sh", `["-c", ${q('exec node "$HOME/.iskron-bridge/iskron-bridge.mjs" --satellite')}]`];
-  return [
-    "mcpServers:",
-    `  - ${name}:`,
-    "      type: stdio",
-    `      command: ${command}`,
-    `      args: ${args}`,
-    `disallowedTools: ${disallowed.join(", ")}`
-  ].join("\n");
-}
-function keepLocal(path, root) {
-  const rel = relative(root, path).replace(/\\/g, "/");
-  if (rel.startsWith("..")) return "файл пользовательский, в репо не входит";
-  let tracked = false;
-  try {
-    tracked = spawnSync("git", ["ls-files", "--error-unmatch", rel], { cwd: root, stdio: "ignore" }).status === 0;
-  } catch {
-  }
-  return tracked ? `git update-index --skip-worktree ${rel} (правка остаётся локальной; сменится общий файл — git pull откажет на нём: git update-index --no-skip-worktree ${rel}, git stash, pull, верни строку и снова --skip-worktree)` : `добавь строку ${rel} в .git/info/exclude`;
-}
-function bridgePathOf(e) {
-  const hay = [e.command, ...e.args].join(" ");
-  if (/homedir\(\)/.test(hay) && /\.iskron-bridge/.test(hay)) return homeBridgePath();
-  const m = /(?:"([^"]*iskron[^"]*\.mjs)"|'([^']*iskron[^']*\.mjs)'|([^\s"']*iskron[^\s"']*\.mjs))/.exec(
-    hay
-  );
-  const raw = m?.[1] ?? m?.[2] ?? m?.[3];
-  if (!raw) return null;
-  return raw.replace(/^~(?=[\\/])/, homedir8()).replace(/\$\{HOME\}|\$HOME|%USERPROFILE%|\$\{USERPROFILE\}|\$USERPROFILE/g, homedir8());
-}
 function graphServer(url) {
   const norm = (u) => u.trim().replace(/\/+$/, "").toLowerCase();
   return isProductionServer(url) || norm(url) === norm(CFG.serverUrl);
@@ -8034,7 +8064,7 @@ function parentBridges(root) {
       return null;
     }
   };
-  const user = readJson(join19(homedir8(), ".claude.json"));
+  const user = readJson(join19(homedir9(), ".claude.json"));
   if (user) {
     scan(user.mcpServers, (n) => `mcp__${n}`);
     const projects = user.projects ?? {};
@@ -8043,7 +8073,7 @@ function parentBridges(root) {
       if (k.replace(/\\/g, "/") === key) scan(p.mcpServers, (n) => `mcp__${n}`);
   }
   scan(readJson(join19(root, ".mcp.json"))?.mcpServers, (n) => `mcp__${n}`);
-  const registry = readJson(join19(homedir8(), ".claude", "plugins", "installed_plugins.json"));
+  const registry = readJson(join19(homedir9(), ".claude", "plugins", "installed_plugins.json"));
   const plugins = registry?.plugins ?? {};
   for (const [key, installs] of Object.entries(plugins)) {
     const plugin = key.split("@")[0];
@@ -8060,7 +8090,7 @@ function parentBridges(root) {
 function trustLine(root) {
   let cfg;
   try {
-    cfg = JSON.parse(readFileSync19(join19(homedir8(), ".claude.json"), "utf8"));
+    cfg = JSON.parse(readFileSync19(join19(homedir9(), ".claude.json"), "utf8"));
   } catch {
     return null;
   }
@@ -8079,10 +8109,20 @@ function trustLine(root) {
     return `доверие к папке принято для «${near}», а проект открыт как «${here}» — Claude Code сравнивает путь буква в букву (C:/ и c:/ — разные папки), и в недоверенной папке сервер из фронтматтера не поднимается без диалога → запусти claude в терминале из этой папки и прими диалог доверия либо открой папку тем же написанием пути`;
   return `доверие к папке «${here}» и её родителям в ~/.claude.json не отмечено — в недоверенной папке сервер из фронтматтера не поднимается, и диалога об этом нет → запусти claude в этой папке и прими диалог доверия`;
 }
+function hasGrant() {
+  if (CFG.pat) return true;
+  try {
+    if (!existsSync9(storePath())) return false;
+    const t = loadStore().tokens;
+    return Boolean(t?.access_token || t?.refresh_token);
+  } catch {
+    return false;
+  }
+}
 async function subagentsReport(out5) {
   const root = projectRoot();
-  const userDir = join19(homedir8(), ".claude", "agents");
-  const atHome = resolve6(root) === resolve6(homedir8());
+  const userDir = join19(homedir9(), ".claude", "agents");
+  const atHome = resolve6(root) === resolve6(homedir9());
   const project = atHome ? [] : agentFiles(join19(root, ".claude", "agents"), "проект");
   const shadowed = new Set(project.map((f) => f.agent));
   const user = agentFiles(userDir, "пользователь");
@@ -8105,6 +8145,7 @@ async function subagentsReport(out5) {
       `  ${f.path}: затенён файлом проекта с тем же именем «${f.agent}» — Claude Code берёт проектный`
     );
   const parents = parentBridges(root);
+  const required = parents.length ? parents : TEMPLATE_PARENTS;
   const byName = /* @__PURE__ */ new Map();
   const reports = [];
   for (const f of claude) {
@@ -8112,17 +8153,22 @@ async function subagentsReport(out5) {
     const expected = `iskron-sub-${f.agent}`;
     const entries = entriesOf(f.fm);
     const ours = entries.filter((e) => BRIDGE_RE.test([e.command, ...e.args].join(" ")));
-    const sat = ours.filter((e) => [e.command, ...e.args].join(" ").includes("--satellite"));
+    const sat = ours.filter((e) => formOf(e) !== "session");
     let probeEntry = null;
     const own = sat.map((e) => `mcp__${e.name}`);
     const disallowed = listOf(f.fm.disallowedTools).map((d) => d.replace(/__\*$/, ""));
-    const required = parents.length ? parents : TEMPLATE_PARENTS;
     const block = (name) => `блоком ниже вместо прежних mcpServers и disallowedTools:
 ${readyEntry(
       name,
-      root,
       [.../* @__PURE__ */ new Set([...disallowed, ...required])].filter((p) => p !== `mcp__${name}`)
     )}`;
+    const canonical = (e) => ({
+      name: `${e.name} (предложенная форма)`,
+      ref: false,
+      command: "node",
+      args: SATELLITE_ARGS,
+      env: e.env
+    });
     const refs = entries.filter((e) => e.ref && /iskron/.test(e.name));
     for (const r of refs)
       lines.push(
@@ -8130,9 +8176,7 @@ ${readyEntry(
       );
     if (!sat.length) {
       if (ours.length)
-        lines.push(
-          `запись «${ours[0].name}» зовёт мост без --satellite — субагент встал бы местом сессии, а не спутником → ${block(expected)}`
-        );
+        lines.push(`запись «${ours[0].name}»: ${FORM_WORD.session} → ${block(expected)}`);
       else if (!refs.length)
         lines.push(
           `записи моста-спутника нет — у субагента нет тулов графа → вставь во фронтматтер ${block(expected)}`
@@ -8144,35 +8188,27 @@ ${readyEntry(
         lines.push(
           `запись названа «iskron-sub» — общим именем прежнего контракта: второй файл с ним поведёт свои прогоны тем же процессом моста → переименуй запись в iskron-sub-${f.agent}`
         );
-      const shown = [e.command, ...e.args].join(" ");
-      const cmdBase = basename4(e.command).replace(/\.exe$/i, "");
-      const ready = block(e.name === "iskron-sub" ? expected : e.name);
-      let runnable = true;
+      const name = e.name === "iskron-sub" ? expected : e.name;
+      const form = formOf(e);
+      if (form !== "eval") {
+        lines.push(`запись «${e.name}»: ${FORM_WORD[form]} → замени ${block(name)}`);
+        if (!probeEntry && existsSync9(homeBridgePath())) probeEntry = canonical(e);
+        continue;
+      }
       if (!which(e.command, root)) {
-        runnable = false;
         lines.push(
-          platform() === "win32" && SHELLS.has(cmdBase) ? `запись «${e.name}» запускает мост через ${e.command} — на Windows ${e.command} нет (в PATH не нашёлся), а Claude Code не раскрывает $HOME в args фронтматтера; файл станет машинным, в общий репо его не коммить: ${keepLocal(f.path, root)} → замени путями этой машины ${ready}` : `команда записи «${e.name}» «${e.command}» на этой машине не находится (PATH) → ${ready}`
+          `команда записи «${e.name}» «${e.command}» на этой машине не находится (PATH) → поставь Node 22+ либо добавь каталог node в PATH: Claude Code запускает его по PATH`
         );
-      } else if (!SHELLS.has(cmdBase) && e.args.some((a) => /\$\{?[A-Za-z_]|%[A-Za-z_]+%/.test(a))) {
-        runnable = false;
-        lines.push(
-          `запись «${e.name}» несёт переменную в args (${shown}) — Claude Code её не раскрывает, node получит буквальный путь → замени ${ready}`
-        );
+        continue;
       }
       const bridge = bridgePathOf(e);
-      if (bridge && !existsSync9(resolve6(root, bridge)))
+      if (bridge && !existsSync9(resolve6(root, bridge))) {
         lines.push(
-          `моста по пути записи нет: ${bridge} → поставь его (скилл establish-mcp кладёт домашнюю копию ${homeBridgePath()}) либо поправь путь`
+          `моста по пути записи нет: ${bridge} → поставь его (скилл establish-mcp кладёт домашнюю копию ${homeBridgePath()}), затем повтори doctor`
         );
-      else if (runnable && !probeEntry) probeEntry = e;
-      else if (!runnable && bridge && platform() === "win32" && existsSync9(homeBridgePath()) && !probeEntry)
-        probeEntry = {
-          name: `${e.name} (предложенная форма)`,
-          ref: false,
-          command: nodePath(root),
-          args: [homeBridgePath(), "--satellite"],
-          env: e.env
-        };
+        continue;
+      }
+      if (!probeEntry) probeEntry = e;
     }
     const need = required.filter((p) => !own.includes(p) && !disallowed.includes(p));
     if (sat.length && (need.length || !disallowed.length))
@@ -8190,6 +8226,8 @@ ${readyEntry(
         `имя записи «${name}» делят ${files.length} файла(ов): ${files.join(", ")} — Claude Code держит одно соединение на имя записи, их прогоны пойдут одним процессом моста, и первый закончивший погасит место другим → переименуй запись в этом файле: iskron-sub-${r.f.agent}`
       );
   }
+  const grant = hasGrant();
+  let noGrantSaid = false;
   const probed = /* @__PURE__ */ new Map();
   for (const r of reports) {
     const where = r.f.scope === "пользователь" ? " (пользовательский)" : "";
@@ -8202,13 +8240,21 @@ ${readyEntry(
       for (const b of rest2) out5(`      ${b}`);
     }
     if (!r.probe) continue;
+    if (!grant) {
+      if (!noGrantSaid)
+        out5(
+          "    НАДО: проба спутника не шла — входа в граф на этой машине нет → войди: вызови любой тул iskron_* в основной сессии и открой ссылку входа из его ответа (или положи личный токен в ~/.iskron-bridge/token — скилл establish-mcp), потом повтори doctor"
+        );
+      noGrantSaid = true;
+      continue;
+    }
     const key = JSON.stringify([r.probe.command, r.probe.args, r.probe.env]);
     const first2 = probed.get(key);
     if (first2) {
-      out5(`    проба: та же команда, что у «${first2[0]}» выше`);
+      out5(`    проба: та же команда, что у «${first2}» выше`);
       continue;
     }
-    probed.set(key, [r.probe.name]);
+    probed.set(key, r.probe.name);
     for (const l of await probeSatellite(r.probe.name, r.probe, root)) out5(`    ${l}`);
   }
   if (claude.length) {
@@ -8392,7 +8438,7 @@ function latestReport() {
   else out2(`свежий релиз: v${latest.version}, этот файл не отстал; спрашивал ${ago} мин назад`);
 }
 function claudePluginReport() {
-  const registry = join20(homedir9(), ".claude", "plugins", "installed_plugins.json");
+  const registry = join20(homedir10(), ".claude", "plugins", "installed_plugins.json");
   if (!existsSync10(registry)) return;
   try {
     const reg = JSON.parse(readFileSync20(registry, "utf8"));
@@ -8428,8 +8474,8 @@ function claudePluginReport() {
 function codexHomes() {
   const homes = [
     process.env.CODEX_HOME?.trim() || "",
-    join20(homedir9(), ".codex"),
-    ...process.platform === "darwin" ? [join20(homedir9(), "Library", "Application Support", "orca", "codex-runtime-home", "home")] : []
+    join20(homedir10(), ".codex"),
+    ...process.platform === "darwin" ? [join20(homedir10(), "Library", "Application Support", "orca", "codex-runtime-home", "home")] : []
   ].filter(Boolean);
   return [...new Set(homes)].filter((h) => existsSync10(h));
 }
@@ -8469,7 +8515,7 @@ function codexPluginReport(home) {
 }
 function harnessReport() {
   claudePluginReport();
-  const claude = join20(homedir9(), ".claude.json");
+  const claude = join20(homedir10(), ".claude.json");
   if (existsSync10(claude)) {
     try {
       const cfg = JSON.parse(readFileSync20(claude, "utf8"));
@@ -8488,7 +8534,7 @@ function harnessReport() {
       out2(`Claude Code: ${claude} не читается`);
     }
   }
-  const opencodeDir = join20(homedir9(), ".config", "opencode");
+  const opencodeDir = join20(homedir10(), ".config", "opencode");
   if (existsSync10(opencodeDir)) {
     const copy = join20(opencodeDir, "plugins", "iskron.js");
     const packaged = join20(dirname10(fileURLToPath6(import.meta.url)), "opencode-plugin.js");

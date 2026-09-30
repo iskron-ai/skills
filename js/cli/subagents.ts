@@ -3,15 +3,16 @@
 // Поломка здесь не видна ни человеку, ни агенту: субагент без моста просто
 // работает без тулов графа, а схема, которую API отвергает, роняет весь прогон
 // ошибкой 400 без имени тула. Каждая находка — строка с готовым действием.
-// Норма записи — skills/iskronify/references/delegation.md.
-import { spawnSync } from "node:child_process";
+// Норма записи — skills/iskronify/references/delegation.md; форма — satform.ts.
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, delimiter, dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { basename, delimiter, dirname, isAbsolute, join, resolve } from "node:path";
 
 import { CFG, isProductionServer } from "../bridge/config.ts";
+import { loadStore, storePath } from "../bridge/store.ts";
 import { homeBridgePath } from "../shared/home.ts";
 import { frontmatterText, parseFrontmatter, type YamlValue } from "./frontmatter.ts";
+import { bridgePathOf, formOf, readyEntry, SATELLITE_ARGS, type SatForm } from "./satform.ts";
 import { probeSatellite } from "./satprobe.ts";
 
 type Out = (s: string) => void;
@@ -20,9 +21,20 @@ type Out = (s: string) => void;
 const platform = (): string => process.env.ISKRON_DOCTOR_PLATFORM || process.platform;
 
 const BRIDGE_RE = /iskron-bridge|(^|[\\/"'\s])iskron[^\\/"'\s]*\.mjs/;
-const SHELLS = new Set(["sh", "bash", "zsh", "dash"]);
 /** Префиксы серверов графа в шаблоне проекции — снимаются всегда, когда своих не нашлось. */
 const TEMPLATE_PARENTS = ["mcp__iskron-bridge", "mcp__plugin_iskron_iskron", "mcp__iskron"];
+
+/** Что не так с формой записи — и почему её заменяет единая. */
+const FORM_WORD: Record<Exclude<SatForm, "eval">, string> = {
+  "eval-no-sep":
+    "--satellite стоит без `--` после кода `node -e` — node примет его за свой флаг («bad option») и не запустится",
+  "eval-session":
+    "мост не увидит --satellite в своём argv (нет `--` перед ним или путь моста не положен в argv[1]) и встанет мостом сессии, не спутником",
+  shell:
+    "форма прежнего контракта (sh -c): на Windows sh нет, а переменных в args фронтматтера Claude Code не раскрывает",
+  path: "путь к мосту записан прямо в args — машинный путь в общем файле, на другой машине его нет",
+  session: "запись зовёт мост без --satellite — субагент встал бы мостом сессии, а не спутником",
+};
 
 interface Entry {
   name: string;
@@ -40,7 +52,6 @@ interface AgentFile {
 }
 
 const str = (v: YamlValue | undefined): string => (typeof v === "string" ? v : "");
-const q = (s: string): string => JSON.stringify(s);
 
 function entriesOf(fm: Record<string, YamlValue>): Entry[] {
   const raw = fm.mcpServers;
@@ -126,63 +137,6 @@ function which(cmd: string, cwd: string): string | null {
   return null;
 }
 
-/** node этой машины абсолютным путём — для записи, которой оболочка не нужна. */
-function nodePath(cwd: string): string {
-  if (/^node(\.exe)?$/i.test(basename(process.execPath))) return process.execPath;
-  return which("node", cwd) ?? "node";
-}
-
-/**
- * Готовый блок записи моста-спутника для ОС этой машины — блочной формой YAML,
- * той же, что пишет проекция и читает этот doctor: вставленный вместо прежних
- * mcpServers и disallowedTools, он на повторе не даёт ни одной строки «НАДО:».
- */
-export function readyEntry(name: string, cwd: string, disallowed: string[]): string {
-  const [command, args] =
-    platform() === "win32"
-      ? [q(nodePath(cwd)), `[${q(homeBridgePath())}, "--satellite"]`]
-      : ["sh", `["-c", ${q('exec node "$HOME/.iskron-bridge/iskron-bridge.mjs" --satellite')}]`];
-  return [
-    "mcpServers:",
-    `  - ${name}:`,
-    "      type: stdio",
-    `      command: ${command}`,
-    `      args: ${args}`,
-    `disallowedTools: ${disallowed.join(", ")}`,
-  ].join("\n");
-}
-
-/** Как держать машинный файл агента вне общего репо: отслеживаемый — skip-worktree, новый — локальный exclude. */
-function keepLocal(path: string, root: string): string {
-  const rel = relative(root, path).replace(/\\/g, "/");
-  if (rel.startsWith("..")) return "файл пользовательский, в репо не входит";
-  let tracked = false;
-  try {
-    tracked =
-      spawnSync("git", ["ls-files", "--error-unmatch", rel], { cwd: root, stdio: "ignore" })
-        .status === 0;
-  } catch {}
-  return tracked
-    ? `git update-index --skip-worktree ${rel} (правка остаётся локальной; сменится общий файл — git pull откажет на нём: git update-index --no-skip-worktree ${rel}, git stash, pull, верни строку и снова --skip-worktree)`
-    : `добавь строку ${rel} в .git/info/exclude`;
-}
-
-/** Путь к мосту, который зовёт запись, с раскрытым домом — как его увидит оболочка. */
-function bridgePathOf(e: Entry): string | null {
-  const hay = [e.command, ...e.args].join(" ");
-  // Путь, собранный самим node из домашнего каталога (`node -e` с os.homedir()), — дом этой машины.
-  if (/homedir\(\)/.test(hay) && /\.iskron-bridge/.test(hay)) return homeBridgePath();
-  const m =
-    /(?:"([^"]*iskron[^"]*\.mjs)"|'([^']*iskron[^']*\.mjs)'|([^\s"']*iskron[^\s"']*\.mjs))/.exec(
-      hay,
-    );
-  const raw = m?.[1] ?? m?.[2] ?? m?.[3];
-  if (!raw) return null;
-  return raw
-    .replace(/^~(?=[\\/])/, homedir())
-    .replace(/\$\{HOME\}|\$HOME|%USERPROFILE%|\$\{USERPROFILE\}|\$USERPROFILE/g, homedir());
-}
-
 /** Адрес — сервер графа: продовый (русский или английский) либо тот, на который смотрит мост этой машины. */
 function graphServer(url: string): boolean {
   const norm = (u: string) => u.trim().replace(/\/+$/, "").toLowerCase();
@@ -259,6 +213,25 @@ function trustLine(root: string): string | null {
   return `доверие к папке «${here}» и её родителям в ~/.claude.json не отмечено — в недоверенной папке сервер из фронтматтера не поднимается, и диалога об этом нет → запусти claude в этой папке и прими диалог доверия`;
 }
 
+/** Есть ли у машины вход, которым пробный спутник откроет сессию, — иначе проба лишь начала бы вход, которого никто не кончит. */
+function hasGrant(): boolean {
+  if (CFG.pat) return true;
+  try {
+    if (!existsSync(storePath())) return false;
+    const t = loadStore().tokens;
+    return Boolean(t?.access_token || t?.refresh_token);
+  } catch {
+    return false;
+  }
+}
+
+interface Report {
+  f: AgentFile;
+  lines: string[];
+  probe: Entry | null;
+  names: string[];
+}
+
 export async function subagentsReport(out: Out): Promise<void> {
   const root = projectRoot();
   const userDir = join(homedir(), ".claude", "agents");
@@ -287,25 +260,31 @@ export async function subagentsReport(out: Out): Promise<void> {
     );
 
   const parents = parentBridges(root);
+  const required = parents.length ? parents : TEMPLATE_PARENTS;
   const byName = new Map<string, string[]>();
-  const reports: { f: AgentFile; lines: string[]; probe: Entry | null; names: string[] }[] = [];
+  const reports: Report[] = [];
   for (const f of claude) {
     const lines: string[] = [];
     const expected = `iskron-sub-${f.agent}`;
     const entries = entriesOf(f.fm);
     const ours = entries.filter((e) => BRIDGE_RE.test([e.command, ...e.args].join(" ")));
-    const sat = ours.filter((e) => [e.command, ...e.args].join(" ").includes("--satellite"));
+    const sat = ours.filter((e) => formOf(e) !== "session");
     let probeEntry: Entry | null = null;
     // Снимаемые мосты позвавшего — прежние строки файла плюс найденные на машине (или шаблон).
     const own = sat.map((e) => `mcp__${e.name}`);
     const disallowed = listOf(f.fm.disallowedTools).map((d) => d.replace(/__\*$/, ""));
-    const required = parents.length ? parents : TEMPLATE_PARENTS;
     const block = (name: string) =>
       `блоком ниже вместо прежних mcpServers и disallowedTools:\n${readyEntry(
         name,
-        root,
         [...new Set([...disallowed, ...required])].filter((p) => p !== `mcp__${name}`),
       )}`;
+    const canonical = (e: Entry): Entry => ({
+      name: `${e.name} (предложенная форма)`,
+      ref: false,
+      command: "node",
+      args: SATELLITE_ARGS,
+      env: e.env,
+    });
     const refs = entries.filter((e) => e.ref && /iskron/.test(e.name));
     for (const r of refs)
       lines.push(
@@ -313,9 +292,7 @@ export async function subagentsReport(out: Out): Promise<void> {
       );
     if (!sat.length) {
       if (ours.length)
-        lines.push(
-          `запись «${ours[0].name}» зовёт мост без --satellite — субагент встал бы местом сессии, а не спутником → ${block(expected)}`,
-        );
+        lines.push(`запись «${ours[0].name}»: ${FORM_WORD.session} → ${block(expected)}`);
       else if (!refs.length)
         lines.push(
           `записи моста-спутника нет — у субагента нет тулов графа → вставь во фронтматтер ${block(expected)}`,
@@ -327,48 +304,29 @@ export async function subagentsReport(out: Out): Promise<void> {
         lines.push(
           `запись названа «iskron-sub» — общим именем прежнего контракта: второй файл с ним поведёт свои прогоны тем же процессом моста → переименуй запись в iskron-sub-${f.agent}`,
         );
-      const shown = [e.command, ...e.args].join(" ");
-      const cmdBase = basename(e.command).replace(/\.exe$/i, "");
-      // Готовая строка несёт и своё имя: общее имя прежнего контракта в ней не повторяется.
-      const ready = block(e.name === "iskron-sub" ? expected : e.name);
-      let runnable = true;
+      // Готовый блок несёт и своё имя: общее имя прежнего контракта в нём не повторяется.
+      const name = e.name === "iskron-sub" ? expected : e.name;
+      const form = formOf(e);
+      if (form !== "eval") {
+        lines.push(`запись «${e.name}»: ${FORM_WORD[form]} → замени ${block(name)}`);
+        // Пробуем ту форму, что предложена взамен, — если домашний мост, который она зовёт, есть.
+        if (!probeEntry && existsSync(homeBridgePath())) probeEntry = canonical(e);
+        continue;
+      }
       if (!which(e.command, root)) {
-        runnable = false;
         lines.push(
-          platform() === "win32" && SHELLS.has(cmdBase)
-            ? `запись «${e.name}» запускает мост через ${e.command} — на Windows ${e.command} нет (в PATH не нашёлся), а Claude Code не раскрывает $HOME в args фронтматтера; файл станет машинным, в общий репо его не коммить: ${keepLocal(f.path, root)} → замени путями этой машины ${ready}`
-            : `команда записи «${e.name}» «${e.command}» на этой машине не находится (PATH) → ${ready}`,
+          `команда записи «${e.name}» «${e.command}» на этой машине не находится (PATH) → поставь Node 22+ либо добавь каталог node в PATH: Claude Code запускает его по PATH`,
         );
-      } else if (
-        !SHELLS.has(cmdBase) &&
-        e.args.some((a) => /\$\{?[A-Za-z_]|%[A-Za-z_]+%/.test(a))
-      ) {
-        runnable = false;
-        lines.push(
-          `запись «${e.name}» несёт переменную в args (${shown}) — Claude Code её не раскрывает, node получит буквальный путь → замени ${ready}`,
-        );
+        continue;
       }
       const bridge = bridgePathOf(e);
-      if (bridge && !existsSync(resolve(root, bridge)))
+      if (bridge && !existsSync(resolve(root, bridge))) {
         lines.push(
-          `моста по пути записи нет: ${bridge} → поставь его (скилл establish-mcp кладёт домашнюю копию ${homeBridgePath()}) либо поправь путь`,
+          `моста по пути записи нет: ${bridge} → поставь его (скилл establish-mcp кладёт домашнюю копию ${homeBridgePath()}), затем повтори doctor`,
         );
-      else if (runnable && !probeEntry) probeEntry = e;
-      else if (
-        !runnable &&
-        bridge &&
-        platform() === "win32" &&
-        existsSync(homeBridgePath()) &&
-        !probeEntry
-      )
-        // Запись не исполнима здесь — пробуем ту, что предложена взамен.
-        probeEntry = {
-          name: `${e.name} (предложенная форма)`,
-          ref: false,
-          command: nodePath(root),
-          args: [homeBridgePath(), "--satellite"],
-          env: e.env,
-        };
+        continue;
+      }
+      if (!probeEntry) probeEntry = e;
     }
     const need = required.filter((p) => !own.includes(p) && !disallowed.includes(p));
     if (sat.length && (need.length || !disallowed.length))
@@ -386,7 +344,11 @@ export async function subagentsReport(out: Out): Promise<void> {
         `имя записи «${name}» делят ${files.length} файла(ов): ${files.join(", ")} — Claude Code держит одно соединение на имя записи, их прогоны пойдут одним процессом моста, и первый закончивший погасит место другим → переименуй запись в этом файле: iskron-sub-${r.f.agent}`,
       );
   }
-  const probed = new Map<string, string[]>();
+  // Без входа проба лишь начала бы вход, который никто не кончит (регистрация клиента, замок входа):
+  // её не зовём и говорим, как войти.
+  const grant = hasGrant();
+  let noGrantSaid = false;
+  const probed = new Map<string, string>();
   for (const r of reports) {
     const where = r.f.scope === "пользователь" ? " (пользовательский)" : "";
     out(
@@ -399,14 +361,22 @@ export async function subagentsReport(out: Out): Promise<void> {
       for (const b of rest) out(`      ${b}`);
     }
     if (!r.probe) continue;
+    if (!grant) {
+      if (!noGrantSaid)
+        out(
+          "    НАДО: проба спутника не шла — входа в граф на этой машине нет → войди: вызови любой тул iskron_* в основной сессии и открой ссылку входа из его ответа (или положи личный токен в ~/.iskron-bridge/token — скилл establish-mcp), потом повтори doctor",
+        );
+      noGrantSaid = true;
+      continue;
+    }
     // Одна команда — одна проба: те же байты моста отвечают всем файлам одинаково.
     const key = JSON.stringify([r.probe.command, r.probe.args, r.probe.env]);
     const first = probed.get(key);
     if (first) {
-      out(`    проба: та же команда, что у «${first[0]}» выше`);
+      out(`    проба: та же команда, что у «${first}» выше`);
       continue;
     }
-    probed.set(key, [r.probe.name]);
+    probed.set(key, r.probe.name);
     for (const l of await probeSatellite(r.probe.name, r.probe, root)) out(`    ${l}`);
   }
   if (claude.length) {

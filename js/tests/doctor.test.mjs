@@ -537,10 +537,16 @@ test("use en writes the English production address next to the grant; doctor nam
 // Раздел «субагенты»: агент пользователя сам находит, почему его субагент без
 // тулов графа или падает на 400, — doctor называет файл агента, поломку и
 // готовое действие (делегирование: skills/iskronify/references/delegation.md).
+// Единая форма записи (проверена живым Claude Code 2.1.285): node сам собирает
+// путь к дому, `--` отделяет флаг моста, splice кладёт путь моста в argv[1].
+const SAT_CODE =
+  "const p=require('path').join(require('os').homedir(),'.iskron-bridge','iskron-bridge.mjs');process.argv.splice(1,0,p);import(require('url').pathToFileURL(p).href)";
+const SAT_ARGS = `args: [${["-e", SAT_CODE, "--", "--satellite"].map((a) => JSON.stringify(a)).join(", ")}]`;
+const NODE_E = ["type: stdio", "command: node", SAT_ARGS];
 const SH_FORM =
   'args: ["-c", "exec node \\"$HOME/.iskron-bridge/iskron-bridge.mjs\\" --satellite"]';
 
-function agentFile(role, entryName, spec = ["type: stdio", "command: sh", SH_FORM]) {
+function agentFile(role, entryName, spec = NODE_E) {
   return [
     "---",
     `name: ${role}`,
@@ -598,27 +604,98 @@ test("doctor: role files sharing one bridge entry name are named, each with its 
   }
 });
 
-test("doctor: on Windows an sh-launched satellite is named, with a ready entry of this machine's absolute paths", async () => {
+// Прежние формы — sh -c и путь прямо в args — заменяет одна `node -e` без
+// машинного пути, на любой ОС.
+for (const [form, spec] of [
+  ["sh", ["type: stdio", "command: sh", SH_FORM]],
+  [
+    "path",
+    [
+      "type: stdio",
+      `command: ${JSON.stringify(process.execPath)}`,
+      'args: ["C:\\\\Users\\\\a\\\\.iskron-bridge\\\\iskron-bridge.mjs", "--satellite"]',
+    ],
+  ],
+]) {
+  test(`doctor: a ${form} satellite entry is named, with the single node -e block`, async () => {
+    const fake = await startFakeNks();
+    const home = mkdtempSync(join(tmpdir(), "iskron-doctor-"));
+    const project = projectWithAgents({ worker: agentFile("worker", "iskron-sub-worker", spec) });
+    try {
+      const r = await run(
+        ["doctor", fake.mcpUrl, "--auth-dir", join(home, ".iskron-bridge")],
+        { HOME: home, ISKRON_DOCTOR_PLATFORM: "win32" },
+        project,
+      );
+      assert.equal(r.code, 0, r.err);
+      assert.match(
+        r.out,
+        form === "sh" ? /прежнего контракта \(sh -c\)/ : /машинный путь в общем файле/,
+        r.out,
+      );
+      assert.ok(
+        r.out.includes(
+          `      mcpServers:\n        - iskron-sub-worker:\n            type: stdio\n            command: node\n            ${SAT_ARGS}\n`,
+        ),
+        `the ready block must be the single node -e form: ${r.out}`,
+      );
+      assert.doesNotMatch(r.out, /skip-worktree|info\/exclude/, "no machine file any more");
+    } finally {
+      await fake.stop();
+    }
+  });
+}
+
+// Форма `node -e` признаётся только целиком: без `--` node примет --satellite за
+// свой флаг; без splice мост не увидит его и встанет мостом сессии.
+test("doctor: a node -e entry is accepted only whole — with -- and the bridge path in argv", async () => {
   const fake = await startFakeNks();
   const home = mkdtempSync(join(tmpdir(), "iskron-doctor-"));
-  const project = projectWithAgents({ worker: agentFile("worker", "iskron-sub-worker") });
+  const noSplice =
+    "import(require('path').join(require('os').homedir(), '.iskron-bridge', 'iskron-bridge.mjs'))";
+  const project = projectWithAgents({
+    reader: agentFile("reader", "iskron-sub-reader", [
+      "type: stdio",
+      "command: node",
+      `args: ${JSON.stringify(["-e", SAT_CODE, "--satellite"])}`,
+    ]),
+    worker: agentFile("worker", "iskron-sub-worker", [
+      "type: stdio",
+      "command: node",
+      `args: ${JSON.stringify(["-e", noSplice, "--", "--satellite"])}`,
+    ]),
+  });
   try {
     const r = await run(
       ["doctor", fake.mcpUrl, "--auth-dir", join(home, ".iskron-bridge")],
-      // PATH пуст, как у Windows без Git Bash в PATH: sh не находится; doctor запущен абсолютным node.
-      { HOME: home, ISKRON_DOCTOR_PLATFORM: "win32", PATH: "" },
+      { HOME: home, ISKRON_DOCTOR_PLATFORM: "darwin" },
       project,
     );
-    assert.equal(r.code, 0, r.err);
-    assert.match(r.out, /на Windows sh нет/, `sh on Windows must be a finding: ${r.out}`);
-    const bridge = JSON.stringify(join(home, ".iskron-bridge", "iskron-bridge.mjs"));
-    assert.ok(
-      r.out.includes("      mcpServers:\n        - iskron-sub-worker:\n") &&
-        r.out.includes(`        args: [${bridge}, "--satellite"]\n`),
-      `the ready block must carry the absolute home bridge path: ${r.out}`,
+    assert.match(r.out, /«iskron-sub-reader»: --satellite стоит без `--`/, r.out);
+    assert.match(r.out, /«iskron-sub-worker»: мост не увидит --satellite.*мостом сессии/, r.out);
+  } finally {
+    await fake.stop();
+  }
+});
+
+// Без входа проба спутника лишь начала бы вход, который никто не кончит: её нет,
+// в доме ничего не появилось, и doctor говорит, как войти.
+test("doctor: with no grant the satellite probe is skipped and the way to log in is named", async () => {
+  const fake = await startFakeNks();
+  const home = mkdtempSync(join(tmpdir(), "iskron-doctor-"));
+  const authDir = join(home, ".iskron-bridge");
+  mkdirSync(authDir, { recursive: true });
+  copyFileSync(FILE, join(authDir, "iskron-bridge.mjs"));
+  const project = projectWithAgents({ worker: agentFile("worker", "iskron-sub-worker") });
+  try {
+    const r = await run(
+      ["doctor", fake.mcpUrl, "--auth-dir", authDir],
+      { HOME: home, ISKRON_DOCTOR_PLATFORM: "darwin", ISKRON_BRIDGE_URL: fake.mcpUrl },
+      project,
     );
-    assert.doesNotMatch(r.out, / {8}command: sh\n/, "the ready block on Windows must not be sh");
-    assert.match(r.out, /--no-skip-worktree|\.git\/info\/exclude/, "the way out must be named");
+    assert.match(r.out, /проба спутника не шла — входа в граф на этой машине нет → войди/, r.out);
+    assert.doesNotMatch(r.out, /\/login\?k=/, `no dead login link: ${r.out}`);
+    assert.deepEqual(readdirSync(authDir), ["iskron-bridge.mjs"], "the home must stay untouched");
   } finally {
     await fake.stop();
   }
@@ -630,7 +707,8 @@ test("doctor: on Windows an sh-launched satellite is named, with a ready entry o
 for (const platform of ["darwin", "win32"]) {
   test(`doctor: the ready block pasted back gives no findings on a rerun (${platform})`, async () => {
     const fake = await startFakeNks({ pat: "nks_pat_rt" });
-    const home = mkdtempSync(join(tmpdir(), "iskron-doctor-"));
+    // Дом с пробелом в пути: путь к мосту читается из args целиком, не склейкой.
+    const home = mkdtempSync(join(tmpdir(), "iskron doctor home "));
     const homeBridge = join(home, ".iskron-bridge", "iskron-bridge.mjs");
     mkdirSync(dirname(homeBridge), { recursive: true });
     copyFileSync(FILE, homeBridge);
@@ -643,8 +721,6 @@ for (const platform of ["darwin", "win32"]) {
       ISKRON_DOCTOR_PLATFORM: platform,
       ISKRON_BRIDGE_TOKEN: "nks_pat_rt",
       ISKRON_BRIDGE_URL: fake.mcpUrl,
-      // Windows без sh: PATH пуст, doctor запущен абсолютным node.
-      ...(platform === "win32" ? { PATH: "" } : {}),
     };
     const args = ["doctor", fake.mcpUrl, "--auth-dir", join(home, ".iskron-bridge")];
     try {
@@ -676,7 +752,9 @@ test("doctor: a probed bridge that outlives stdin close is sent SIGTERM, not kil
   const fake = await startFakeNks();
   const home = mkdtempSync(join(tmpdir(), "iskron-doctor-"));
   const dir = mkdtempSync(join(tmpdir(), "iskron-doctor-stub-"));
-  const stub = join(dir, "iskron-stub.mjs");
+  // Заглушка лежит домашним мостом: единая форма записи зовёт именно его.
+  mkdirSync(join(home, ".iskron-bridge"), { recursive: true });
+  const stub = join(home, ".iskron-bridge", "iskron-bridge.mjs");
   const marker = join(dir, "term");
   writeFileSync(
     stub,
@@ -693,17 +771,12 @@ test("doctor: a probed bridge that outlives stdin close is sent SIGTERM, not kil
       `process.on('SIGTERM', () => { writeFileSync(${JSON.stringify(marker)}, 'term'); process.exit(0); });`,
     ].join("\n"),
   );
-  const project = projectWithAgents({
-    worker: agentFile("worker", "iskron-sub-worker", [
-      "type: stdio",
-      `command: ${JSON.stringify(process.execPath)}`,
-      `args: [${JSON.stringify(stub)}, "--satellite"]`,
-    ]),
-  });
+  const project = projectWithAgents({ worker: agentFile("worker", "iskron-sub-worker") });
   try {
     const r = await run(
       ["doctor", fake.mcpUrl, "--auth-dir", join(home, ".iskron-bridge")],
-      { HOME: home, ISKRON_DOCTOR_PLATFORM: "darwin" },
+      // Личный токен — вход есть, проба идёт; фейк его не знает, но заглушке сервер не нужен.
+      { HOME: home, ISKRON_DOCTOR_PLATFORM: "darwin", ISKRON_BRIDGE_TOKEN: "nks_pat_stub" },
       project,
     );
     assert.match(r.out, /проба «iskron-sub-worker»: мост ответил — stub v1/, r.out);
@@ -761,13 +834,7 @@ test("doctor: a satellite probe names the tool whose schema carries a top-level 
   const homeBridge = join(home, ".iskron-bridge", "iskron-bridge.mjs");
   mkdirSync(dirname(homeBridge), { recursive: true });
   copyFileSync(FILE, homeBridge);
-  const project = projectWithAgents({
-    worker: agentFile("worker", "iskron-sub-worker", [
-      "type: stdio",
-      `command: ${JSON.stringify(process.execPath)}`,
-      `args: [${JSON.stringify(homeBridge)}, "--satellite"]`,
-    ]),
-  });
+  const project = projectWithAgents({ worker: agentFile("worker", "iskron-sub-worker") });
   try {
     const r = await run(
       ["doctor", fake.mcpUrl, "--auth-dir", join(home, ".iskron-bridge")],
