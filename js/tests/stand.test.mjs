@@ -11,6 +11,7 @@ import { execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   copyFileSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
@@ -1744,9 +1745,12 @@ test("satellite: a subagent's bridge stands as <caller>.sub-1 in the caller's ro
 
 // Two subagent runs of one caller, each with its own satellite bridge (two
 // processes, one home), stand at the same moment: each reads the board before
-// the other's connect lands, and «first N free on the board» gave both the
-// same .sub-N — one place, two runs, and the first to leave took it from the
-// other (case №74). A slow board holds the window open for the probe.
+// the other's connect lands, and «first N free on the board» would give both
+// the same .sub-N — one place, two runs, and the first to leave would take it
+// from the other. The race is derived from the call order, not observed live:
+// in case №74 the shared place was ONE bridge process shared by two agent
+// files with one entry (the `led` path, the first satellite probe above). A
+// slow board holds the window open for the probe.
 test("satellite: two bridges of one caller standing in parallel take different places, and one leaving does not touch the other", async (t) => {
   const fake = await withCaller(t);
   await fake.control({ listDelayMs: 300 });
@@ -1792,6 +1796,91 @@ test("satellite: two bridges of one caller standing in parallel take different p
     fake.state.counts.connect,
     connects,
     "the staying run keeps its place, no new connect",
+  );
+});
+
+// A claim outliving its place would hold the name from the next run while the
+// bridge that wrote it still lives (leave by word keeps the process up); the
+// process's exit must release it too, not leave a file for the alive-check.
+test("satellite: leaving by word and the process's exit release the claim — the name is free for the next run", async (t) => {
+  const fake = await withCaller(t);
+  const home = mkdtempSync(join(tmpdir(), "iskron-sat-"));
+  const claim = join(home, "satellites", `${CALLER}.sub-1.claim`);
+  const a = await satelliteBridge(t, fake, { dir: home });
+  const ra = await standAs(a, SAT_ARGS);
+  assert.ok(!ra.result?.isError, `${textOf(ra)}\n${a.stderr}`);
+  assert.equal(placeOf(ra), `${CALLER}.sub-1`, textOf(ra));
+  assert.ok(existsSync(claim), "the run claims its name");
+  const left = await a.call("tools/call", {
+    name: "iskron_channel",
+    arguments: { realm: "nks-dev", action: "leave" },
+  });
+  assert.ok(!left.result?.isError, textOf(left));
+  assert.ok(!existsSync(claim), "leaving by word releases the claim");
+  // The left place goes off the board with the channel's idle window.
+  await fake.control({ dropPlaces: [`931:${CALLER}.sub-1`] });
+  const b = await satelliteBridge(t, fake, { dir: home });
+  const rb = await standAs(b, SAT_ARGS);
+  assert.ok(!rb.result?.isError, `${textOf(rb)}\n${b.stderr}`);
+  assert.equal(
+    placeOf(rb),
+    `${CALLER}.sub-1`,
+    `the name is free for the next run while the first bridge still lives: ${textOf(rb)}`,
+  );
+  assert.ok(existsSync(claim), "the next run claims it");
+  await b.stop();
+  assert.equal(b.proc.exitCode, 0, "the bridge goes with its run");
+  assert.ok(!existsSync(claim), "the process's exit releases the claim");
+});
+
+// Claims cannot be kept (the claims directory is not a directory, the lock is
+// held by a live bridge past the wait): the board alone picks the name, and the
+// answer says so. A lock left by a dead bridge is taken at once, not waited out;
+// a live bridge's lock is left as it is.
+const UNSURE = /уникальность не гарантирована/;
+test("satellite: without claims (the claims directory is not a directory) the answer says uniqueness is not guaranteed", async (t) => {
+  const fake = await withCaller(t);
+  const noDir = mkdtempSync(join(tmpdir(), "iskron-sat-"));
+  writeFileSync(join(noDir, "satellites"), "not a directory\n");
+  const one = await satelliteBridge(t, fake, { dir: noDir });
+  const r1 = await standAs(one, SAT_ARGS);
+  assert.ok(!r1.result?.isError, `${textOf(r1)}\n${one.stderr}`);
+  assert.equal(placeOf(r1), `${CALLER}.sub-1`, textOf(r1));
+  assert.match(textOf(r1), UNSURE, textOf(r1));
+});
+
+test("satellite: a dead bridge's claims lock is taken at once; a live one's is waited out, left as it is, and the answer says uniqueness is not guaranteed", async (t) => {
+  const fake = await withCaller(t);
+  const unsure = UNSURE;
+  const dead = execFileSync(NODE, ["-e", "process.stdout.write(String(process.pid))"], {
+    encoding: "utf8",
+  });
+  const home = mkdtempSync(join(tmpdir(), "iskron-sat-"));
+  const lock = join(home, "satellites", ".lock");
+  mkdirSync(lock, { recursive: true });
+  writeFileSync(join(lock, "owner"), `${dead} left\n`);
+  const two = await satelliteBridge(t, fake, { dir: home });
+  const started = Date.now();
+  const r2 = await standAs(two, SAT_ARGS);
+  assert.ok(!r2.result?.isError, `${textOf(r2)}\n${two.stderr}`);
+  assert.ok(Date.now() - started < 2500, "a dead bridge's lock is not waited out");
+  assert.doesNotMatch(two.stderr, /claims unavailable/, two.stderr);
+  assert.doesNotMatch(textOf(r2), unsure, textOf(r2));
+  assert.ok(!existsSync(lock), "the lock is released after the pick");
+  await two.stop();
+  await fake.control({ dropPlaces: [`931:${CALLER}.sub-1`] });
+
+  const live = `${process.pid} probe`;
+  mkdirSync(lock);
+  writeFileSync(join(lock, "owner"), `${live}\n`);
+  const three = await satelliteBridge(t, fake, { dir: home });
+  const r3 = await standAs(three, SAT_ARGS);
+  assert.ok(!r3.result?.isError, `${textOf(r3)}\n${three.stderr}`);
+  assert.match(textOf(r3), unsure, textOf(r3));
+  assert.equal(
+    readFileSync(join(lock, "owner"), "utf8").trim(),
+    live,
+    "a live bridge's lock is left as it is",
   );
 });
 

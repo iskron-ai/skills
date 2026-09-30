@@ -396,6 +396,8 @@ export async function startFakeNks(opts = {}) {
           });
         }
       }
+      // Места, ушедшие с доски (окно простоя канала истекло): ключи `<karta>:<name>`.
+      if (Array.isArray(patch.dropPlaces)) for (const k of patch.dropPlaces) st.places.delete(k);
       if ("connect_refuse_ttl" in patch) st.connectRefuseTtl = patch.connect_refuse_ttl || null; // отказ окну простоя на connect
       if ("send_conflict" in patch) st.sendConflict = patch.send_conflict || null; // текст отказа 409 не о безавторности
       if ("statusGone" in patch) st.statusGone = !!patch.statusGone; // статусный адрес повернули

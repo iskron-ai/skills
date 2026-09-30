@@ -4116,7 +4116,16 @@ function serialized(fn) {
 }
 
 // js/bridge/satellite.ts
-import { mkdirSync as mkdirSync6, readFileSync as readFileSync11, rmdirSync, statSync as statSync4, unlinkSync as unlinkSync7, writeFileSync as writeFileSync8 } from "node:fs";
+import { randomBytes as randomBytes2 } from "node:crypto";
+import {
+  mkdirSync as mkdirSync6,
+  readFileSync as readFileSync11,
+  renameSync as renameSync5,
+  rmSync,
+  statSync as statSync4,
+  unlinkSync as unlinkSync7,
+  writeFileSync as writeFileSync8
+} from "node:fs";
 import { join as join9 } from "node:path";
 
 // js/bridge/board.ts
@@ -4188,8 +4197,45 @@ function releaseSatelliteClaims() {
   }
   claims.clear();
 }
+var LOCK_OWNER = "owner";
+function lockOwner(lock) {
+  try {
+    return readFileSync11(join9(lock, LOCK_OWNER), "utf8").trim();
+  } catch {
+    return null;
+  }
+}
+function abandoned(lock, owner) {
+  const pid = owner ? Number(owner.split(" ")[0]) : 0;
+  if (pid && !alive(pid)) return true;
+  try {
+    return Date.now() - statSync4(lock).mtimeMs > LOCK_STALE_MS;
+  } catch {
+    return false;
+  }
+}
+function takeLock(lock, owner) {
+  const away = `${lock}.${process.pid}-${randomBytes2(6).toString("hex")}`;
+  try {
+    renameSync5(lock, away);
+  } catch {
+    return;
+  }
+  if (lockOwner(away) !== owner) {
+    try {
+      renameSync5(away, lock);
+      return;
+    } catch (e) {
+      log(
+        `satellite claims lock of another bridge taken by mistake, not returned: ${e.message}`
+      );
+    }
+  }
+  rmSync(away, { recursive: true, force: true });
+}
 async function underClaimLock(fn) {
   const lock = join9(claimDir(), ".lock");
+  const token = `${process.pid} ${randomBytes2(8).toString("hex")}`;
   let fault = null;
   try {
     mkdirSync6(claimDir(), { recursive: true, mode: 448 });
@@ -4199,35 +4245,43 @@ async function underClaimLock(fn) {
   for (const end = Date.now() + LOCK_WAIT_MS; !fault; ) {
     try {
       mkdirSync6(lock);
-      break;
     } catch (e) {
       if (e.code !== "EEXIST") fault = e.message;
       else if (Date.now() > end) fault = `the claims lock ${lock} is held too long`;
+      else {
+        const owner = lockOwner(lock);
+        if (abandoned(lock, owner)) takeLock(lock, owner);
+        await new Promise((r) => setTimeout(r, 20));
+      }
+      continue;
     }
     try {
-      if (Date.now() - statSync4(lock).mtimeMs > LOCK_STALE_MS) rmdirSync(lock);
-    } catch {
+      writeFileSync8(join9(lock, LOCK_OWNER), `${token}
+`, { mode: 384 });
+    } catch (e) {
+      fault = e.message;
+      rmSync(lock, { recursive: true, force: true });
     }
-    await new Promise((r) => setTimeout(r, 20));
+    break;
   }
   if (fault) {
     log(`satellite claims unavailable — the board alone picks the name: ${fault}`);
-    return fn(() => true);
+    return [fn(() => true), fault];
   }
   try {
-    return fn((name) => {
+    const value = fn((name) => {
       try {
         return claimName(name);
       } catch (e) {
-        log(`satellite claim not written: ${e.message}`);
+        fault = `claim not written: ${e.message}`;
+        log(`satellite ${fault}`);
         return true;
       }
     });
+    return [value, fault];
   } finally {
-    try {
-      rmdirSync(lock);
-    } catch {
-    }
+    if (lockOwner(lock) === token) takeLock(lock, token);
+    else log(`satellite claims lock ${lock} is no longer ours — left as it is`);
   }
 }
 function pickSatellite(entries, of, karta, led, claim = () => true) {
@@ -4332,8 +4386,17 @@ async function satelliteGate(a, realm, karta, asked) {
   const s2 = state.standing;
   const led = s2 && !otherRealm(s2.realm, realm) ? s2.name ?? null : null;
   const entries = parseBoard(b.text);
-  const pick = await underClaimLock((claim) => pickSatellite(entries, of, karta, led, claim));
+  const [pick, unsure] = await underClaimLock(
+    (claim) => pickSatellite(entries, of, karta, led, claim)
+  );
   if (!pick.ok) return pick;
+  if (unsure && pick.name !== led)
+    pick.notes.push(
+      L(
+        `заявки имён спутников на этой машине недоступны (${unsure}) — имя ${pick.name} выбрано по одной доске: уникальность не гарантирована, мост-спутник, вставший разом, мог взять то же имя`,
+        `satellite name claims on this machine are unavailable (${unsure}) — the name ${pick.name} was picked by the board alone: uniqueness is not guaranteed, a satellite bridge standing at the same moment may have taken the same name`
+      )
+    );
   if (!pick.callerId) {
     const k = await callTool("iskron_channel", { action: "list", realm, karta: pick.callerKarta });
     if (!k.isError)
@@ -5169,7 +5232,7 @@ var SW = {
 
 // js/bridge/update.ts
 import { spawn as spawn2 } from "node:child_process";
-import { existsSync as existsSync5, lstatSync as lstatSync2, mkdirSync as mkdirSync7, readFileSync as readFileSync14, renameSync as renameSync5, writeFileSync as writeFileSync9 } from "node:fs";
+import { existsSync as existsSync5, lstatSync as lstatSync2, mkdirSync as mkdirSync7, readFileSync as readFileSync14, renameSync as renameSync6, writeFileSync as writeFileSync9 } from "node:fs";
 import { homedir as homedir5 } from "node:os";
 import { dirname as dirname5, join as join13 } from "node:path";
 import { fileURLToPath as fileURLToPath4 } from "node:url";
@@ -5205,7 +5268,7 @@ function writeAtomic(path, bytes) {
   mkdirSync7(dirname5(path), { recursive: true, mode: 448 });
   const tmp = `${path}.tmp-${process.pid}`;
   writeFileSync9(tmp, bytes, { mode: 420 });
-  renameSync5(tmp, path);
+  renameSync6(tmp, path);
 }
 var isSymlink = (path) => {
   try {
@@ -6194,10 +6257,10 @@ import { homedir as homedir6 } from "node:os";
 import { join as join15 } from "node:path";
 
 // js/shared/appserver.ts
-import { randomBytes as randomBytes2 } from "node:crypto";
+import { randomBytes as randomBytes3 } from "node:crypto";
 import { request } from "node:http";
 function frame(data) {
-  const mask = randomBytes2(4);
+  const mask = randomBytes3(4);
   let head;
   if (data.length < 126) head = Buffer.from([129, 128 | data.length]);
   else if (data.length < 65536) {
@@ -6224,7 +6287,7 @@ function openDoor(socketPath, onMessage, onClose) {
         Connection: "Upgrade",
         Upgrade: "websocket",
         "Sec-WebSocket-Version": "13",
-        "Sec-WebSocket-Key": randomBytes2(16).toString("base64")
+        "Sec-WebSocket-Key": randomBytes3(16).toString("base64")
       }
     });
     req.on("upgrade", (_res, socket) => {
