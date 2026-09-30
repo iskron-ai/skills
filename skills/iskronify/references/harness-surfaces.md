@@ -64,7 +64,7 @@ export default {
     // Будит исход, не форма: справка и --auto не будят; код выхода говорит за команду,
     // только когда она последняя в цепочке или стоит перед &&, иначе — строка подтверждения в выводе.
     // Поля result только для чтения — заменяется сам result; content — строка или массив частей.
-    await ctx.tool.hook("execute.after", (input) => {
+    await ctx.tool.hook("execute.after", async (input) => {
       if (input.tool !== "bash" || input.status !== "completed") return;
       const cmd = String(input.input?.command ?? "");
       const c = input.result.content;
@@ -81,9 +81,15 @@ export default {
           String.raw`(?:${arg}(?:&&|;|\n))+ *${env}git(?: -C \S+)* pull(?=[ ;&|)\n]|$)`,
       );
       const push = String.raw`(?:env +)?(?:[A-Za-z_]+=\S+ +)*git(?: -C \S+)* push`;
-      // тихий пуш (-q/--quiet) не печатает «To <remote>»: будит и перед | или ;, если в выводе нет отказа;
-      // команда — от начала строки через цельные кавычки, текст в них и heredoc не команда
-      const quiet = new RegExp(String.raw`^(?:${arg}[;&|(\n] *)*` + push + String.raw`(?=[ ;&|)\n]|$)(?!${arg} (?:-h|--help)(?:[ ;&|)\n]|$))` + arg + String.raw` (?:-q|--quiet)(?=[ ;&|)\n]|$)`).test(cmd) && !cmd.includes("<<") && !/! \[|error:|fatal:|hint:|Please make sure|Could not |Permission denied/.test(out);
+      // тихий пуш (-q/--quiet) не печатает «To <remote>» и по выводу неотличим от отказа: судит состояние git —
+      // команда от начала строки через цельные кавычки, без <<, HEAD непуст и равен @{push}, ветка не main
+      let quiet = false;
+      if (new RegExp(String.raw`^(?:${arg}[;&|(\n] *)*` + push + String.raw`(?=[ ;&|)\n]|$)(?!${arg} (?:-h|--help)(?:[ ;&|)\n]|$))` + arg + String.raw` (?:-q|--quiet)(?=[ ;&|)\n]|$)`).test(cmd) && !cmd.includes("<<")) {
+        const { execFileSync } = await import("node:child_process");
+        const git = (...a) => { try { return execFileSync("git", a, { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim(); } catch { return ""; } };
+        const head = git("rev-parse", "HEAD");
+        quiet = head !== "" && head === git("rev-parse", "@{push}") && git("rev-parse", "--abbrev-ref", "HEAD") !== "main";
+      }
       const note = ran(push, "-h|--help", /To [^\n]+(?:\n [!=] .*)*\n [ *+-]/) || quiet
         ? "[iskron] пуш — не отгрузка: самопроверка, словарный проход по тексту PR, холодное ревью этапа."
         : ran("gh pr merge", "-h|--help|--auto|--disable-auto", /(Merged|Squashed and merged|Rebased and merged) pull request/) || ((exit ?? 0) === 0 && pull.test(cmd))

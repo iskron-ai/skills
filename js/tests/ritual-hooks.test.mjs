@@ -20,7 +20,8 @@
 // past revision) so it can be shown red before a fix.
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -64,48 +65,6 @@ const cases = [
     false,
   ],
   ["git push | tail -3", "", false, false],
-  // a quiet push prints no `To <remote>`: -q/--quiet wakes it before a pipe or `;`
-  ["git push -q origin feat/x 2>&1 | tail -3", "", true, false],
-  ["git push --quiet | tail", "", true, false],
-  ["git push -q; echo done", "done", true, false],
-  ["git push -q origin feat/x 2>&1 | tail -3", " ! [rejected] a -> a (fetch first)", false, false],
-  ["git push -q 2>&1 | tail", "error: failed to push some refs", false, false],
-  // real output of a quiet non-fast-forward push to a local bare repo (git 2.x):
-  // `tail -3` keeps only the hint lines, and `tail` alone keeps them all
-  [
-    "git push -q origin main 2>&1 | tail -3",
-    "hint: the same ref. If you want to integrate the remote changes, use\nhint: 'git pull' before pushing again.\nhint: See the 'Note about fast-forwards' in 'git push --help' for details.\n",
-    false,
-    false,
-  ],
-  [
-    "git push -q origin main 2>&1 | tail",
-    "To /tmp/o.git\n ! [rejected]        main -> main (fetch first)\nerror: failed to push some refs to '/tmp/o.git'\nhint: Updates were rejected because the remote contains work that you do not\nhint: have locally. This is usually caused by another repository pushing to\nhint: the same ref. If you want to integrate the remote changes, use\nhint: 'git pull' before pushing again.\nhint: See the 'Note about fast-forwards' in 'git push --help' for details.\n",
-    false,
-    false,
-  ],
-  // real output of a quiet push to a missing file:// remote (transport refusal)
-  [
-    "git push -q file:///nonexistent/x.git main 2>&1 | tail -3",
-    "\nPlease make sure you have the correct access rights\nand the repository exists.\n",
-    false,
-    false,
-  ],
-  [
-    "git push -q file:///nonexistent/x.git main 2>&1 | tail",
-    "fatal: '/nonexistent/x.git' does not appear to be a git repository\nfatal: Could not read from remote repository.\n\nPlease make sure you have the correct access rights\nand the repository exists.\n",
-    false,
-    false,
-  ],
-  ["git push -q origin main 2>&1 | tail -2", "Permission denied (publickey).\n", false, false],
-  // text is not a command: quotes and heredoc bodies never wake a quiet push
-  ['echo "note; git push -q origin x"', "", false, false],
-  ['gh pr create --title t --body "fixes; git push -q origin x here"', "", false, false],
-  ["git commit -m \"$(cat <<'EOF'\nfix: x\n\ngit push -q origin y\nEOF\n)\"", "", false, false],
-  ["cat <<EOF\ngit push -q origin y\nEOF", "", false, false],
-  ["git commit -qm x && git push -q origin feat/x 2>&1 | tail -3", "", true, false],
-  ["git push -q -h | tail", "usage: git push", false, false],
-  ["echo git push -q | tail", "", false, false],
   ['grep "git push" AGENTS.md', "git push", false, false],
   // a rejected ref is not an updated one — only an updated ref line wakes
   [
@@ -176,7 +135,10 @@ const bashHooks = settings.hooks.PostToolUse.filter((g) => g.matcher === "Bash")
   (g) => g.hooks,
 );
 
-function claudeWakes(command, output) {
+// every `jq -e '<filter>'` a hook command runs (the push hook runs two)
+const filtersOf = (command) => [...command.matchAll(/jq -e '([^']+)'/g)].map((m) => m[1]);
+
+function claudeWakes(command, output, cwd = process.cwd()) {
   const payload = JSON.stringify({
     hook_event_name: "PostToolUse",
     tool_name: "Bash",
@@ -184,7 +146,7 @@ function claudeWakes(command, output) {
     tool_response: { stdout: output, stderr: "", exit_code: 0 },
   });
   const said = bashHooks.map((h) =>
-    execFileSync("bash", ["-c", h.command], { input: payload, encoding: "utf8" }),
+    execFileSync("bash", ["-c", h.command], { input: payload, encoding: "utf8", cwd }),
   );
   const joined = said.join("");
   return { push: joined.includes("Пуш"), merge: joined.includes("Мерж") };
@@ -204,11 +166,11 @@ test("claude hooks: jq judges a long run of spaces without an error", () => {
     tool_response: { stdout: "", stderr: "" },
   });
   for (const h of bashHooks) {
-    const filter = /^jq -e '([^']+)'/.exec(h.command)?.[1];
-    if (!filter) continue;
-    const r = spawnSync("jq", ["-e", filter], { input: payload, encoding: "utf8" });
-    assert.equal(r.stderr, "", filter.slice(-60));
-    assert.equal(r.status, 1, filter.slice(-60));
+    for (const filter of filtersOf(h.command)) {
+      const r = spawnSync("jq", ["-e", filter], { input: payload, encoding: "utf8" });
+      assert.equal(r.stderr, "", filter.slice(-60));
+      assert.equal(r.status, 1, filter.slice(-60));
+    }
   }
 });
 
@@ -237,7 +199,7 @@ test("opencode rituals template: wakes by outcome", async () => {
       input: { command },
       result: { content: output, metadata: { exit: 0 } },
     };
-    after(input);
+    await after(input);
     const text = String(input.result.content);
     assert.deepEqual(
       { push: text.includes("пуш"), merge: text.includes("мерж") },
@@ -261,9 +223,129 @@ test("opencode rituals template: a failed trunk pull does not wake", async () =>
       input: { command: "git checkout main && git pull" },
       result: { content: "fatal: unable to access 'https://github.com/o/r/'", metadata: { exit } },
     };
-    after(input);
+    await after(input);
     assert.equal(String(input.result.content).includes("мерж"), merge, `exit ${exit}`);
   }
+});
+
+// A quiet push prints no `To <remote>`, and a cut tail (`| tail -1`, `| head -1`)
+// makes its output indistinguishable from a refusal — so the state of git speaks:
+// after the call HEAD equals @{push} only when the remote took the push. The
+// commands below really run against a local bare repository; their real output
+// is what the hooks are shown.
+const git = (cwd, ...args) =>
+  execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+const sh = (cwd, command) => {
+  const r = spawnSync("bash", ["-c", command], { cwd, encoding: "utf8" });
+  return `${r.stdout}${r.stderr}`;
+};
+
+function quietRepos() {
+  const dir = mkdtempSync(join(tmpdir(), "quiet-push-"));
+  const origin = join(dir, "origin.git");
+  git(dir, "init", "-q", "--bare", "-b", "main", origin);
+  const clone = (name) => {
+    const p = join(dir, name);
+    git(dir, "clone", "-q", origin, p);
+    git(p, "config", "user.email", "t@t");
+    git(p, "config", "user.name", "t");
+    return p;
+  };
+  const a = clone("a");
+  git(a, "commit", "-q", "--allow-empty", "-m", "base");
+  git(a, "push", "-q", "origin", "main");
+  git(a, "checkout", "-q", "-b", "feat/x");
+  git(a, "push", "-q", "-u", "origin", "feat/x");
+  const b = clone("b");
+  git(b, "checkout", "-q", "feat/x");
+  return { dir, a, b, origin };
+}
+
+// [name, setup(a, b) → command, wakes]
+const quietCases = [
+  ["a clean quiet push wakes", () => "git push -q origin feat/x 2>&1 | tail -3", true, true],
+  [
+    "…with --quiet and a head cut",
+    () => "git push --quiet origin feat/x 2>&1 | head -1",
+    true,
+    true,
+  ],
+  ["…before a `;`", () => "git push -q origin feat/x; echo done", true, true],
+  [
+    "…after a chain",
+    () => "git status -sb && git push -q origin feat/x 2>&1 | tail -1",
+    true,
+    true,
+  ],
+  [
+    "a non-fast-forward refusal stays silent (tail -3)",
+    () => "git push -q origin feat/x 2>&1 | tail -3",
+    false,
+    false,
+  ],
+  ["…(tail -1)", () => "git push -q origin feat/x 2>&1 | tail -1", false, false],
+  ["…(head -1)", () => "git push -q origin feat/x 2>&1 | head -1", false, false],
+  ["…(whole output)", () => "git push -q origin feat/x 2>&1 | cat", false, false],
+  [
+    "a missing remote stays silent (tail -1)",
+    () => "git push -q file:///nonexistent/x.git feat/x 2>&1 | tail -1",
+    false,
+    false,
+  ],
+  ["…(tail -3)", () => "git push -q file:///nonexistent/x.git feat/x 2>&1 | tail -3", false, false],
+];
+
+for (const [name, command, wakes, lands] of quietCases) {
+  test(`quiet push: ${name}`, async () => {
+    const { a, b } = quietRepos();
+    if (!lands) {
+      // someone else pushed first: the local push is refused
+      git(b, "commit", "-q", "--allow-empty", "-m", "theirs");
+      git(b, "push", "-q", "origin", "feat/x");
+    }
+    git(a, "commit", "-q", "--allow-empty", "-m", "mine");
+    const cmd = command();
+    const output = sh(a, cmd);
+    assert.equal(claudeWakes(cmd, output, a).push, wakes, `claude: ${cmd}`);
+    const after = await loadPlugin();
+    const input = {
+      tool: "bash",
+      status: "completed",
+      input: { command: cmd },
+      result: { content: output, metadata: { exit: 0 } },
+    };
+    const here = process.cwd();
+    process.chdir(a);
+    try {
+      await after(input);
+    } finally {
+      process.chdir(here);
+    }
+    assert.equal(String(input.result.content).includes("пуш"), wakes, `opencode: ${cmd}`);
+  });
+}
+
+// text is not a command, whatever the state of git says
+for (const cmd of [
+  'echo "note; git push -q origin x"',
+  'gh pr create --title t --body "fixes; git push -q origin x here"',
+  "git commit -m \"$(cat <<'EOF'\nfix: x\n\ngit push -q origin y\nEOF\n)\"",
+  "cat <<EOF\ngit push -q origin y\nEOF",
+  "git push -q -h | tail",
+  "echo git push -q | tail",
+]) {
+  test(`quiet push: text never wakes: ${cmd.split("\n")[0]}`, () => {
+    const { a } = quietRepos(); // HEAD equals @{push} here
+    assert.equal(claudeWakes(cmd, "", a).push, false);
+  });
+}
+
+test("quiet push: the trunk never wakes", () => {
+  const { a } = quietRepos();
+  git(a, "checkout", "-q", "main");
+  git(a, "commit", "-q", "--allow-empty", "-m", "on main");
+  const cmd = "git push -q origin main 2>&1 | tail -1";
+  assert.equal(claudeWakes(cmd, sh(a, cmd), a).push, false);
 });
 
 // Another forge's merge rides the same defs with its own head and confirmation
@@ -302,9 +384,10 @@ test(
   () => {
     const skill = readFileSync(templatePath, "utf8");
     for (const h of bashHooks) {
-      const filter = /^jq -e '([^']+)'/.exec(h.command)?.[1];
-      assert.ok(filter, `hook runs a jq -e filter: ${h.command.slice(0, 60)}`);
-      assert.ok(skill.includes(filter), `hooks.md carries the filter: ${filter.slice(0, 60)}…`);
+      const filters = filtersOf(h.command);
+      assert.ok(filters.length, `hook runs a jq -e filter: ${h.command.slice(0, 60)}`);
+      for (const filter of filters)
+        assert.ok(skill.includes(filter), `hooks.md carries the filter: ${filter.slice(0, 60)}…`);
     }
   },
 );
