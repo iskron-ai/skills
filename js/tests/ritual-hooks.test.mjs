@@ -64,6 +64,14 @@ const cases = [
     false,
   ],
   ["git push | tail -3", "", false, false],
+  // a quiet push prints no `To <remote>`: -q/--quiet wakes it before a pipe or `;`
+  ["git push -q origin feat/x 2>&1 | tail -3", "", true, false],
+  ["git push --quiet | tail", "", true, false],
+  ["git push -q; echo done", "done", true, false],
+  ["git push -q origin feat/x 2>&1 | tail -3", " ! [rejected] a -> a (fetch first)", false, false],
+  ["git push -q 2>&1 | tail", "error: failed to push some refs", false, false],
+  ["git push -q -h | tail", "usage: git push", false, false],
+  ["echo git push -q | tail", "", false, false],
   ['grep "git push" AGENTS.md', "git push", false, false],
   // a rejected ref is not an updated one — only an updated ref line wakes
   [

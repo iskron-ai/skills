@@ -80,7 +80,10 @@ export default {
         at(String.raw`${env}git(?: -C \S+)* (?:checkout|switch)`, "-h|--help") + String.raw` (?:main|master)(?=[ ;&|)\n]|$)` +
           String.raw`(?:${arg}(?:&&|;|\n))+ *${env}git(?: -C \S+)* pull(?=[ ;&|)\n]|$)`,
       );
-      const note = ran(String.raw`(?:env +)?(?:[A-Za-z_]+=\S+ +)*git(?: -C \S+)* push`, "-h|--help", /To [^\n]+(?:\n [!=] .*)*\n [ *+-]/)
+      const push = String.raw`(?:env +)?(?:[A-Za-z_]+=\S+ +)*git(?: -C \S+)* push`;
+      // тихий пуш (-q/--quiet) не печатает «To <remote>»: будит и перед | или ;, если в выводе нет отказа
+      const quiet = new RegExp(at(push, "-h|--help") + arg + String.raw` (?:-q|--quiet)(?=[ ;&|)\n]|$)`).test(cmd) && !/! \[|error:|fatal:/.test(out);
+      const note = ran(push, "-h|--help", /To [^\n]+(?:\n [!=] .*)*\n [ *+-]/) || quiet
         ? "[iskron] пуш — не отгрузка: самопроверка, словарный проход по тексту PR, холодное ревью этапа."
         : ran("gh pr merge", "-h|--help|--auto|--disable-auto", /(Merged|Squashed and merged|Rebased and merged) pull request/) || ((exit ?? 0) === 0 && pull.test(cmd))
           ? "[iskron] мерж — акты после мержа AGENTS.md: проткать, карта, модусы, закрыть по оси, reconcile, фидбэк, словарь."
