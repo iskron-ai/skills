@@ -5,7 +5,8 @@
 // register, когда сокет уже держит этот мост: живое стояние не ротируется без
 // причины), хук инбокса роли, стук в место человека по полному адресу с провода
 // (один раз за сессию: второй join — повтор, не разговор), занятость. Ответ
-// один: имя, команда сторожа, ожидавшие кадры, хук, расписка стука.
+// один: имя, команда сторожа, ожидавшие кадры, хук, расписка стука. Вызов со
+// status на месте, которое мост уже держит, — только занятость (status.ts, #6509).
 // Отсутствие тула в сессии — тулы идут мимо моста либо мост старой сборки.
 import { statSync } from "node:fs";
 import { isAbsolute } from "node:path";
@@ -54,7 +55,7 @@ import { deadPredecessor, resumeFromDisk } from "./resume.ts";
 import { SATELLITE_TTL_S, satelliteGate, satelliteListenWord, ttlRefused } from "./satellite.ts";
 import { separatePlace, suffixOf } from "./separate.ts";
 import { SW } from "./standwords.ts";
-import { publishStatus, TAKE_PATH, TURNED_GUIDANCE } from "./status.ts";
+import { publishStatus, standStatusOnly, TAKE_PATH, TURNED_GUIDANCE } from "./status.ts";
 import { state } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
 import { readLatest, staleNotice } from "./update.ts";
@@ -87,6 +88,9 @@ const KNOCK_REPEAT_AFTER_MS = Number(process.env.ISKRON_STAND_KNOCK_REPEAT_MS) |
 const KNOCK_LIMIT = 2;
 
 export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
+  // Занятость на месте, которое мост уже держит, — только строка (#6509).
+  const statusOnly = await standStatusOnly(msg);
+  if ("reply" in statusOnly) return statusOnly.reply;
   const a = msg.params?.arguments ?? {};
   const realm = typeof a.realm === "string" ? a.realm.trim() : "";
   const karta = a.karta != null ? normKarta(a.karta) : "";
@@ -100,7 +104,7 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
     },
   });
   if (!realm || !karta) {
-    lines.push(SW.needRealmKarta());
+    lines.push(SW.needRealmKarta(statusOnly.miss, statusOnly.of));
     return done(true);
   }
   const model = typeof a.model === "string" && a.model.trim() ? a.model : undefined;

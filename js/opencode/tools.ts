@@ -381,7 +381,7 @@ export async function setupTools(
       slot = childSlot(sessionID, slot);
       await awaitReady(slot); // свежий детский мост может запросить вход — та же гонка, что у корня
     }
-    if (name === STAND_TOOL) asSatellite(args, slot.satelliteOf);
+    const busy = name === STAND_TOOL && asSatellite(args, slot.satelliteOf, !!slot.place);
     // Мост бежит из cwd сервера OpenCode, не из рабочей копии сессии:
     // репо для имени стояния он выводит из директории сессии (r5 #5108) —
     // той, чей это мост: корня для корня, дочерней для её собственного.
@@ -392,7 +392,8 @@ export async function setupTools(
     const result = await slot.bridge.request("tools/call", { name, arguments: args });
     // Отказ тула сигналится броском — так OpenCode показывает его отказом.
     if (result?.isError) throw new Error(textOf(result) || `${name}: отказ без текста`);
-    if (standsBy(name, args)) keeper.stood(slot); // ответ тула — наблюдаемое событие держания
+    // Ответ тула — наблюдаемое событие держания; ответ одной занятости — нет (#6509).
+    if (standsBy(name, args) && !busy) keeper.stood(slot);
     if (standsBy(name, args)) runEnds.clear(sessionID); // встал заново — запись снова своим мостом
     return { content: textOf(result) };
   }
