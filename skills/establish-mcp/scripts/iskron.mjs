@@ -3125,10 +3125,10 @@ var PART_MIN = 3;
 var CUT_ORDER = ["repo", "host", "model"];
 function fitName(parts) {
   const p = { ...parts };
-  const join18 = () => [p.host, p.repo, p.model].filter(Boolean).join(".").replace(/[-.]+$/, "");
+  const join19 = () => [p.host, p.repo, p.model].filter(Boolean).join(".").replace(/[-.]+$/, "");
   const cut = [];
   for (const k of CUT_ORDER) {
-    const over = join18().length - NAME_MAX;
+    const over = join19().length - NAME_MAX;
     if (over <= 0) break;
     const keep = Math.max(k === "model" ? 1 : PART_MIN, p[k].length - over);
     if (keep >= p[k].length) continue;
@@ -3136,7 +3136,7 @@ function fitName(parts) {
     cut.push(k);
   }
   return {
-    name: join18().slice(0, NAME_MAX).replace(/[-.]+$/, ""),
+    name: join19().slice(0, NAME_MAX).replace(/[-.]+$/, ""),
     cut
   };
 }
@@ -5229,9 +5229,9 @@ var SW = {
 
 // js/bridge/update.ts
 import { spawn as spawn2 } from "node:child_process";
-import { existsSync as existsSync5, lstatSync as lstatSync2, mkdirSync as mkdirSync7, readFileSync as readFileSync14, renameSync as renameSync6, writeFileSync as writeFileSync9 } from "node:fs";
+import { existsSync as existsSync5, lstatSync as lstatSync2, readFileSync as readFileSync15 } from "node:fs";
 import { homedir as homedir5 } from "node:os";
-import { dirname as dirname5, join as join13 } from "node:path";
+import { dirname as dirname6, join as join14 } from "node:path";
 import { fileURLToPath as fileURLToPath4 } from "node:url";
 
 // js/shared/home.ts
@@ -5252,108 +5252,18 @@ function compareVersions(a, b) {
   return 0;
 }
 
-// js/bridge/update.ts
+// js/bridge/releases.ts
+import { mkdirSync as mkdirSync7, readFileSync as readFileSync14, renameSync as renameSync6, writeFileSync as writeFileSync9 } from "node:fs";
+import { dirname as dirname5, join as join13 } from "node:path";
 var RELEASES_URL = process.env.ISKRON_BRIDGE_RELEASES_URL?.trim() || "https://api.github.com/repos/iskron-ai/skills/releases/latest";
 var RELEASES_PAGE_URL = process.env.ISKRON_BRIDGE_RELEASES_PAGE_URL?.trim() || (process.env.ISKRON_BRIDGE_RELEASES_URL?.trim() ? null : "https://github.com/iskron-ai/skills/releases/latest");
-var RAW_URL = process.env.ISKRON_BRIDGE_RAW_URL?.trim() || "https://raw.githubusercontent.com/iskron-ai/skills";
-var CHECK_INTERVAL_MS = 6 * 60 * 60 * 1e3;
 var TAG_TTL_MS = 60 * 60 * 1e3;
-var updatesDisabled = () => !!process.env.ISKRON_BRIDGE_NO_UPDATE;
-var selfPath = () => fileURLToPath4(import.meta.url);
-var opencodePluginPath = () => join13(homedir5(), ".config", "opencode", "plugins", "iskron.js");
-var setupPathOf = (authDir) => join13(authDir, "SETUP.md");
-var latestPathOf = (authDir) => join13(authDir, "latest.json");
 var releaseTagPath = () => join13(dirname5(homeBridgePath()), "release-tag.json");
 function writeAtomic(path, bytes) {
   mkdirSync7(dirname5(path), { recursive: true, mode: 448 });
   const tmp = `${path}.tmp-${process.pid}`;
   writeFileSync9(tmp, bytes, { mode: 420 });
   renameSync6(tmp, path);
-}
-var isSymlink = (path) => {
-  try {
-    return lstatSync2(path).isSymbolicLink();
-  } catch {
-    return false;
-  }
-};
-var versionOf = (path) => {
-  try {
-    return versionIn(readFileSync14(path, "utf8"));
-  } catch {
-    return null;
-  }
-};
-function syncHome(self = selfPath()) {
-  const out5 = { copied: [] };
-  const home = homeBridgePath();
-  let mine;
-  try {
-    mine = readFileSync14(self);
-  } catch {
-    return out5;
-  }
-  if (!versionIn(mine.toString("utf8"))) return out5;
-  if (self === home) return out5;
-  if (isSymlink(home)) return out5;
-  const homeVersion = versionOf(home);
-  const cmp = homeVersion ? compareVersions(VERSION, homeVersion) : 1;
-  if (cmp > 0) {
-    writeAtomic(home, mine);
-    out5.copied.push(home);
-    const plugin = opencodePluginPath();
-    const packaged = join13(dirname5(self), "opencode-plugin.js");
-    if (existsSync5(plugin) && existsSync5(packaged)) {
-      const fresh = readFileSync14(packaged);
-      if (!readFileSync14(plugin).equals(fresh)) {
-        writeAtomic(plugin, fresh);
-        out5.copied.push(plugin);
-      }
-    }
-  } else if (cmp < 0 && homeVersion) {
-    out5.reexec = home;
-  }
-  return out5;
-}
-function reexec(path, argv2) {
-  log(
-    `домашняя копия новее этой сборки (v${versionOf(path) ?? "?"} > v${VERSION}) — запускаюсь ею: ${path}`
-  );
-  const root = skillsRoot();
-  const child = spawn2(process.execPath, [path, ...argv2], {
-    stdio: "inherit",
-    env: {
-      ...process.env,
-      ISKRON_BRIDGE_REEXEC: "1",
-      ...root ? { [SKILLS_ROOT_ENV]: root } : {}
-    }
-  });
-  for (const sig of ["SIGTERM", "SIGINT", "SIGHUP"]) {
-    process.on(sig, () => child.kill(sig));
-  }
-  child.on("exit", (code, signal) => process.exit(code ?? (signal ? 1 : 0)));
-  child.on("error", (e) => {
-    log(`перезапуск не удался: ${e.message}`);
-    process.exit(1);
-  });
-}
-function readLatest(authDir) {
-  try {
-    return JSON.parse(readFileSync14(latestPathOf(authDir), "utf8"));
-  } catch {
-    return null;
-  }
-}
-async function fetchText(url) {
-  const res = await fetch(url, {
-    headers: {
-      accept: "application/vnd.github+json, text/plain, */*",
-      "user-agent": `iskron-bridge/${VERSION}`
-    },
-    signal: AbortSignal.timeout(15e3)
-  });
-  if (!res.ok) throw new Error(`HTTP ${res.status} от ${url}`);
-  return res.text();
 }
 var RateLimitError = class extends Error {
   limit;
@@ -5463,6 +5373,101 @@ async function resolveTag(force) {
     });
   throw apiErr;
 }
+
+// js/bridge/update.ts
+var RAW_URL = process.env.ISKRON_BRIDGE_RAW_URL?.trim() || "https://raw.githubusercontent.com/iskron-ai/skills";
+var CHECK_INTERVAL_MS = 6 * 60 * 60 * 1e3;
+var FAILED_RETRY_MS = 15 * 60 * 1e3;
+var updatesDisabled = () => !!process.env.ISKRON_BRIDGE_NO_UPDATE;
+var selfPath = () => fileURLToPath4(import.meta.url);
+var opencodePluginPath = () => join14(homedir5(), ".config", "opencode", "plugins", "iskron.js");
+var setupPathOf = (authDir) => join14(authDir, "SETUP.md");
+var latestPathOf = (authDir) => join14(authDir, "latest.json");
+var isSymlink = (path) => {
+  try {
+    return lstatSync2(path).isSymbolicLink();
+  } catch {
+    return false;
+  }
+};
+var versionOf = (path) => {
+  try {
+    return versionIn(readFileSync15(path, "utf8"));
+  } catch {
+    return null;
+  }
+};
+function syncHome(self = selfPath()) {
+  const out5 = { copied: [] };
+  const home = homeBridgePath();
+  let mine;
+  try {
+    mine = readFileSync15(self);
+  } catch {
+    return out5;
+  }
+  if (!versionIn(mine.toString("utf8"))) return out5;
+  if (self === home) return out5;
+  if (isSymlink(home)) return out5;
+  const homeVersion = versionOf(home);
+  const cmp = homeVersion ? compareVersions(VERSION, homeVersion) : 1;
+  if (cmp > 0) {
+    writeAtomic(home, mine);
+    out5.copied.push(home);
+    const plugin = opencodePluginPath();
+    const packaged = join14(dirname6(self), "opencode-plugin.js");
+    if (existsSync5(plugin) && existsSync5(packaged)) {
+      const fresh = readFileSync15(packaged);
+      if (!readFileSync15(plugin).equals(fresh)) {
+        writeAtomic(plugin, fresh);
+        out5.copied.push(plugin);
+      }
+    }
+  } else if (cmp < 0 && homeVersion) {
+    out5.reexec = home;
+  }
+  return out5;
+}
+function reexec(path, argv2) {
+  log(
+    `домашняя копия новее этой сборки (v${versionOf(path) ?? "?"} > v${VERSION}) — запускаюсь ею: ${path}`
+  );
+  const root = skillsRoot();
+  const child = spawn2(process.execPath, [path, ...argv2], {
+    stdio: "inherit",
+    env: {
+      ...process.env,
+      ISKRON_BRIDGE_REEXEC: "1",
+      ...root ? { [SKILLS_ROOT_ENV]: root } : {}
+    }
+  });
+  for (const sig of ["SIGTERM", "SIGINT", "SIGHUP"]) {
+    process.on(sig, () => child.kill(sig));
+  }
+  child.on("exit", (code, signal) => process.exit(code ?? (signal ? 1 : 0)));
+  child.on("error", (e) => {
+    log(`перезапуск не удался: ${e.message}`);
+    process.exit(1);
+  });
+}
+function readLatest(authDir) {
+  try {
+    return JSON.parse(readFileSync15(latestPathOf(authDir), "utf8"));
+  } catch {
+    return null;
+  }
+}
+async function fetchText(url) {
+  const res = await fetch(url, {
+    headers: {
+      accept: "application/vnd.github+json, text/plain, */*",
+      "user-agent": `iskron-bridge/${VERSION}`
+    },
+    signal: AbortSignal.timeout(15e3)
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status} от ${url}`);
+  return res.text();
+}
 async function downloadRelease(tag, version, authDir) {
   const written = [];
   const base = `${RAW_URL}/${tag}`;
@@ -5479,7 +5484,7 @@ async function downloadRelease(tag, version, authDir) {
   const plugin = opencodePluginPath();
   if (existsSync5(plugin)) {
     const fresh = await fetchText(`${base}/skills/establish-mcp/scripts/opencode-plugin.js`);
-    if (readFileSync14(plugin, "utf8") !== fresh) {
+    if (readFileSync15(plugin, "utf8") !== fresh) {
       writeAtomic(plugin, fresh);
       written.push(plugin);
     }
@@ -5489,9 +5494,14 @@ async function downloadRelease(tag, version, authDir) {
   written.push(setupPathOf(authDir));
   return written;
 }
+function checkExpiresAt(latest) {
+  if (!latest.error) return latest.checked_at + CHECK_INTERVAL_MS;
+  if (latest.rate_limited_until) return latest.rate_limited_until;
+  return latest.checked_at + FAILED_RETRY_MS;
+}
 async function checkLatest(authDir, force = false) {
   const cached = readLatest(authDir);
-  if (!force && cached && Date.now() - cached.checked_at < CHECK_INTERVAL_MS) return cached;
+  if (!force && cached && Date.now() < checkExpiresAt(cached)) return cached;
   const latest = { checked_at: Date.now(), version: null, tag: null, downloaded: [] };
   try {
     const tag = await resolveTag(force);
@@ -5552,10 +5562,24 @@ function startFreshnessWatch(authDir, serverUrl) {
     );
     return;
   }
+  let retry = null;
+  let told = null;
   const tick = async () => {
     const latest = await checkLatest(authDir);
+    if (retry) clearTimeout(retry);
+    retry = null;
+    if (latest?.error) {
+      const wait = Math.min(
+        CHECK_INTERVAL_MS,
+        Math.max(0, checkExpiresAt(latest) - Date.now()) + 1e3
+      );
+      retry = setTimeout(() => void tick(), wait);
+      retry.unref();
+    }
     const notice = staleNotice(latest, authDir);
     if (!notice) return;
+    if (latest?.error && notice === told) return;
+    told = notice;
     pendingNotice = notice;
     log(notice);
     emit({
@@ -6362,7 +6386,7 @@ function bridgeMain(argv2) {
 // js/watchdog/codex.ts
 import { existsSync as existsSync7 } from "node:fs";
 import { homedir as homedir6 } from "node:os";
-import { join as join15 } from "node:path";
+import { join as join16 } from "node:path";
 
 // js/shared/appserver.ts
 import { randomBytes as randomBytes3 } from "node:crypto";
@@ -6441,9 +6465,9 @@ function openDoor(socketPath, onMessage, onClose) {
 }
 
 // js/watchdog/client.ts
-import { existsSync as existsSync6, readdirSync as readdirSync6, readFileSync as readFileSync15 } from "node:fs";
+import { existsSync as existsSync6, readdirSync as readdirSync6, readFileSync as readFileSync16 } from "node:fs";
 import { connect as connect2 } from "node:net";
-import { join as join14 } from "node:path";
+import { join as join15 } from "node:path";
 var ATTACH_WINDOW_MS = 6e4;
 var RETRY_MS = 1e3;
 function parseWatchdogArgs(argv2) {
@@ -6462,7 +6486,7 @@ function resolveStanding(argv2) {
   if (key) return { key, path: pathFor(key), authDir };
   const held2 = existsSync6(dir) ? readdirSync6(dir).filter((f) => f.endsWith(".key")).map((f) => {
     try {
-      return readFileSync15(join14(dir, f), "utf8").trim();
+      return readFileSync16(join15(dir, f), "utf8").trim();
     } catch {
       return "";
     }
@@ -6537,8 +6561,8 @@ var note = (s2) => {
   process.stderr.write(s2 + "\n");
 };
 function codexDoorPath() {
-  const home = process.env.CODEX_HOME?.trim() || join15(homedir6(), ".codex");
-  return join15(home, "app-server-control", "app-server-control.sock");
+  const home = process.env.CODEX_HOME?.trim() || join16(homedir6(), ".codex");
+  return join16(home, "app-server-control", "app-server-control.sock");
 }
 function runWatchdogCodex(argv2) {
   const threadId = process.env.CODEX_THREAD_ID?.trim();
@@ -6880,27 +6904,27 @@ function runWatchdogExit(argv2) {
 
 // js/cli/doctor.ts
 import { createHash as createHash7 } from "node:crypto";
-import { existsSync as existsSync9, readdirSync as readdirSync7, readFileSync as readFileSync17 } from "node:fs";
+import { existsSync as existsSync9, readdirSync as readdirSync7, readFileSync as readFileSync18 } from "node:fs";
 import { homedir as homedir8 } from "node:os";
-import { dirname as dirname7, join as join17 } from "node:path";
+import { dirname as dirname8, join as join18 } from "node:path";
 import { fileURLToPath as fileURLToPath5 } from "node:url";
 
 // js/cli/opencode-config.ts
-import { existsSync as existsSync8, readFileSync as readFileSync16 } from "node:fs";
+import { existsSync as existsSync8, readFileSync as readFileSync17 } from "node:fs";
 import { homedir as homedir7 } from "node:os";
-import { dirname as dirname6, join as join16 } from "node:path";
+import { dirname as dirname7, join as join17 } from "node:path";
 function openCodeMcpEntries(out5) {
   const dirFiles = (d) => [
-    join16(d, "opencode.json"),
-    join16(d, "opencode.jsonc"),
-    join16(d, ".opencode", "opencode.json"),
-    join16(d, ".opencode", "opencode.jsonc")
+    join17(d, "opencode.json"),
+    join17(d, "opencode.jsonc"),
+    join17(d, ".opencode", "opencode.json"),
+    join17(d, ".opencode", "opencode.jsonc")
   ];
   const upwards = [];
   if (!process.env.OPENCODE_CONFIG_PROJECT_DISABLE)
     for (let d = process.cwd(); ; ) {
       upwards.push(...dirFiles(d));
-      const up = dirname6(d);
+      const up = dirname7(d);
       if (up === d) break;
       d = up;
     }
@@ -6909,7 +6933,7 @@ function openCodeMcpEntries(out5) {
     // Относится ли каталог из переменной к проектному слою, выключатель которого
     // читается ниже, не наблюдалось (#5559): читаем его в любом случае.
     ...process.env.OPENCODE_CONFIG_DIR ? dirFiles(process.env.OPENCODE_CONFIG_DIR) : [],
-    ...dirFiles(join16(homedir7(), ".config", "opencode")),
+    ...dirFiles(join17(homedir7(), ".config", "opencode")),
     ...upwards
   ];
   const kindOf = (v) => {
@@ -6948,7 +6972,7 @@ function openCodeMcpEntries(out5) {
   for (const f of new Set(files)) {
     if (!existsSync8(f)) continue;
     try {
-      sources.push([f, readFileSync16(f, "utf8")]);
+      sources.push([f, readFileSync17(f, "utf8")]);
     } catch {
       unreadable++;
       out5(`OpenCode: ${f} не читается`);
@@ -6993,14 +7017,14 @@ function homeCopyReport() {
   const home = homeBridgePath();
   let self = null;
   try {
-    self = readFileSync17(fileURLToPath5(import.meta.url));
+    self = readFileSync18(fileURLToPath5(import.meta.url));
   } catch {
   }
   if (!existsSync9(home)) {
     out2(`домашняя копия: нет (${home}) — её кладёт establish-mcp при подключении`);
     return;
   }
-  const bytes = readFileSync17(home);
+  const bytes = readFileSync18(home);
   if (self && bytes.equals(self)) {
     out2(`домашняя копия: ${home} — та же сборка, что и этот файл`);
     return;
@@ -7129,7 +7153,7 @@ function grantReport() {
   }
   const logPath = grantLogPath();
   if (existsSync9(logPath)) {
-    const lines = readFileSync17(logPath, "utf8").trim().split("\n").slice(-3);
+    const lines = readFileSync18(logPath, "utf8").trim().split("\n").slice(-3);
     out2(`  grant.log, последнее:`);
     for (const l of lines) out2(`    ${l}`);
   }
@@ -7152,10 +7176,10 @@ function latestReport() {
   else out2(`свежий релиз: v${latest.version}, этот файл не отстал; спрашивал ${ago} мин назад`);
 }
 function claudePluginReport() {
-  const registry = join17(homedir8(), ".claude", "plugins", "installed_plugins.json");
+  const registry = join18(homedir8(), ".claude", "plugins", "installed_plugins.json");
   if (!existsSync9(registry)) return;
   try {
-    const reg = JSON.parse(readFileSync17(registry, "utf8"));
+    const reg = JSON.parse(readFileSync18(registry, "utf8"));
     const mine = Object.entries(reg.plugins ?? {}).filter(([k]) => /^iskron@/.test(k));
     if (!mine.length) {
       out2(`Claude Code: плагин iskron не установлен (${registry})`);
@@ -7163,11 +7187,11 @@ function claudePluginReport() {
     }
     for (const [key, installs] of mine) {
       for (const inst of installs) {
-        const manifest = inst.installPath ? join17(inst.installPath, ".mcp.json") : "";
+        const manifest = inst.installPath ? join18(inst.installPath, ".mcp.json") : "";
         let entry = "запись моста в манифесте не найдена";
         if (manifest && existsSync9(manifest)) {
           try {
-            const m = JSON.parse(readFileSync17(manifest, "utf8"));
+            const m = JSON.parse(readFileSync18(manifest, "utf8"));
             const hit = Object.entries(m.mcpServers ?? {}).find(
               ([, v]) => (v.args ?? []).some((a) => /iskron\.mjs/.test(a))
             );
@@ -7188,17 +7212,17 @@ function claudePluginReport() {
 function codexHomes() {
   const homes = [
     process.env.CODEX_HOME?.trim() || "",
-    join17(homedir8(), ".codex"),
-    ...process.platform === "darwin" ? [join17(homedir8(), "Library", "Application Support", "orca", "codex-runtime-home", "home")] : []
+    join18(homedir8(), ".codex"),
+    ...process.platform === "darwin" ? [join18(homedir8(), "Library", "Application Support", "orca", "codex-runtime-home", "home")] : []
   ].filter(Boolean);
   return [...new Set(homes)].filter((h) => existsSync9(h));
 }
 function codexPluginReport(home) {
-  const cache = join17(home, "plugins", "cache");
+  const cache = join18(home, "plugins", "cache");
   if (!existsSync9(cache)) return;
   let found = 0;
   for (const market of readdirSync7(cache)) {
-    const marketDir = join17(cache, market);
+    const marketDir = join18(cache, market);
     let plugins;
     try {
       plugins = readdirSync7(marketDir);
@@ -7207,12 +7231,12 @@ function codexPluginReport(home) {
     }
     for (const plugin of plugins) {
       if (!/iskron/.test(plugin)) continue;
-      const dir = join17(marketDir, plugin);
-      const manifest = join17(dir, ".codex-plugin", "plugin.json");
+      const dir = join18(marketDir, plugin);
+      const manifest = join18(dir, ".codex-plugin", "plugin.json");
       let word = "манифеста нет";
       if (existsSync9(manifest)) {
         try {
-          const m = JSON.parse(readFileSync17(manifest, "utf8"));
+          const m = JSON.parse(readFileSync18(manifest, "utf8"));
           const hit = Object.values(m.mcpServers ?? {}).some(
             (v) => (v.args ?? []).some((a) => /iskron\.mjs/.test(a))
           );
@@ -7229,10 +7253,10 @@ function codexPluginReport(home) {
 }
 function harnessReport() {
   claudePluginReport();
-  const claude = join17(homedir8(), ".claude.json");
+  const claude = join18(homedir8(), ".claude.json");
   if (existsSync9(claude)) {
     try {
-      const cfg = JSON.parse(readFileSync17(claude, "utf8"));
+      const cfg = JSON.parse(readFileSync18(claude, "utf8"));
       const entries = Object.entries(cfg.mcpServers ?? {}).filter(
         ([, v]) => (v.args ?? []).some((a) => /iskron/.test(a))
       );
@@ -7248,17 +7272,17 @@ function harnessReport() {
       out2(`Claude Code: ${claude} не читается`);
     }
   }
-  const opencodeDir = join17(homedir8(), ".config", "opencode");
+  const opencodeDir = join18(homedir8(), ".config", "opencode");
   if (existsSync9(opencodeDir)) {
-    const copy = join17(opencodeDir, "plugins", "iskron.js");
-    const packaged = join17(dirname7(fileURLToPath5(import.meta.url)), "opencode-plugin.js");
+    const copy = join18(opencodeDir, "plugins", "iskron.js");
+    const packaged = join18(dirname8(fileURLToPath5(import.meta.url)), "opencode-plugin.js");
     if (!existsSync9(copy)) {
       out2(`OpenCode: плагина нет (${copy}) — его кладёт establish-mcp при подключении`);
     } else if (!existsSync9(packaged)) {
       out2(
         `OpenCode: плагин ${copy} стоит; рядом с этим файлом поставки плагина нет, сверить не с чем`
       );
-    } else if (readFileSync17(copy).equals(readFileSync17(packaged))) {
+    } else if (readFileSync18(copy).equals(readFileSync18(packaged))) {
       out2(`OpenCode: плагин ${copy} — та же сборка, что в поставке`);
     } else {
       out2(`OpenCode: плагин ${copy} — ДРУГИЕ байты, обнови из поставки: cp "${packaged}" ${copy}`);
@@ -7268,7 +7292,7 @@ function harnessReport() {
   for (const codexHome of codexHomes()) {
     out2(`Codex: дом ${codexHome}`);
     codexPluginReport(codexHome);
-    const door2 = join17(codexHome, "app-server-control", "app-server-control.sock");
+    const door2 = join18(codexHome, "app-server-control", "app-server-control.sock");
     if (existsSync9(door2)) out2(`Codex: дверь app-server открыта (${door2})`);
     else if (Buffer.byteLength(door2) > 100)
       out2(
@@ -7278,9 +7302,9 @@ function harnessReport() {
       out2(
         `Codex: двери нет (${door2}) — демон app-server не поднят; без неё кадр доставляет watchdog-exit`
       );
-    const codex = join17(codexHome, "config.toml");
+    const codex = join18(codexHome, "config.toml");
     if (existsSync9(codex)) {
-      const text = readFileSync17(codex, "utf8");
+      const text = readFileSync18(codex, "utf8");
       out2(
         `Codex: ${/^\s*\[mcp_servers\."?iskron"?\]|^\s*mcp_servers\."?iskron"?\s*=/m.test(text) ? "ручная запись моста в config.toml есть" : "ручной записи моста в config.toml нет (штатная — в плагине)"}`
       );

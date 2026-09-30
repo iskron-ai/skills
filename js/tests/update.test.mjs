@@ -55,7 +55,8 @@ const RESET = Math.floor(Date.now() / 1000) + 17 * 60;
 /**
  * Подставные релизы: /releases/latest (API), /page/latest (страница релизов:
  * 302 на тег) и сырые файлы тега. limited — API отвечает исчерпанным анонимным
- * лимитом, как GitHub; page: false — страница релизов тега не отдаёт.
+ * лимитом, как GitHub (true — со сбросом RESET; число — до этого мгновения, мс
+ * эпохи, и сброс назван им); page: false — страница релизов тега не отдаёт.
  */
 async function releases(t, tag = `v${NEWER}`, { limited = false, page = true } = {}) {
   const hits = [];
@@ -65,12 +66,13 @@ async function releases(t, tag = `v${NEWER}`, { limited = false, page = true } =
       res.writeHead(code, { "content-type": "text/plain" });
       res.end(body);
     };
-    if (req.url === "/releases/latest" && limited) {
+    const limitedNow = limited === true || (typeof limited === "number" && Date.now() < limited);
+    if (req.url === "/releases/latest" && limitedNow) {
       res.writeHead(403, {
         "content-type": "application/json",
         "x-ratelimit-limit": "60",
         "x-ratelimit-remaining": "0",
-        "x-ratelimit-reset": String(RESET),
+        "x-ratelimit-reset": String(limited === true ? RESET : Math.ceil(limited / 1000)),
       });
       return res.end(JSON.stringify({ message: "API rate limit exceeded for 127.0.0.1." }));
     }
@@ -375,6 +377,67 @@ test("a second bridge on the machine takes the fresh tag from the shared cache, 
     `one question to GitHub for the machine: ${rel.hits}`,
   );
 });
+
+// A failed check used to be recorded as "checked" for six hours and silenced the
+// check of every bridge sharing the record (vimarsha #6467).
+test("a failed check is not a six-hour answer: after the limit resets the watching bridge asks again", async (t) => {
+  const fake = await startFakeNks({ pat: PAT });
+  const h = home(t);
+  const rel = await releases(t, `v${NEWER}`, { limited: Date.now() + 1500, page: false });
+  const bridge = startBridge(fake.mcpUrl, join(h.root, "auth"), { HOME: h.root, ...rel.env });
+  t.after(async () => {
+    await bridge.stop();
+    await fake.stop();
+  });
+  assert.ok((await bridge.call("initialize", INIT)).result);
+  await waitFor(
+    () => bridge.notifications.some((n) => n.params?.data?.kind === "stale"),
+    "the stale notice after the limit's reset",
+  );
+  assert.ok(
+    rel.hits.filter((u) => u === "/releases/latest").length >= 2,
+    `refused, then asked again: ${rel.hits}`,
+  );
+  assert.equal(versionIn(readFileSync(h.bridgePath, "utf8")), NEWER);
+});
+
+for (const [what, seed] of [
+  [
+    "a rate limit that has reset",
+    { error: "лимит анонимного API GitHub исчерпан", rate_limited_until: Date.now() - 1000 },
+  ],
+  ["a network failure a quarter of an hour old", { error: "fetch failed", ago: 16 * 60 * 1000 }],
+]) {
+  test(`a bridge started after a failed check (${what}) asks the releases instead of trusting the failure`, async (t) => {
+    const fake = await startFakeNks({ pat: PAT });
+    const h = home(t);
+    const rel = await releases(t);
+    const authDir = join(h.root, "auth");
+    mkdirSync(authDir, { recursive: true });
+    const { ago = 60 * 1000, ...rest } = seed;
+    writeFileSync(
+      join(authDir, "latest.json"),
+      JSON.stringify({
+        checked_at: Date.now() - ago,
+        version: null,
+        tag: null,
+        downloaded: [],
+        ...rest,
+      }),
+    );
+    const bridge = startBridge(fake.mcpUrl, authDir, { HOME: h.root, ...rel.env });
+    t.after(async () => {
+      await bridge.stop();
+      await fake.stop();
+    });
+    assert.ok((await bridge.call("initialize", INIT)).result);
+    await waitFor(
+      () => bridge.notifications.some((n) => n.params?.data?.kind === "stale"),
+      "the stale notice from a fresh check",
+    );
+    assert.equal(JSON.parse(readFileSync(join(authDir, "latest.json"), "utf8")).version, NEWER);
+  });
+}
 
 test("ISKRON_BRIDGE_NO_UPDATE: neither the home nor the releases are touched", async (t) => {
   const fake = await startFakeNks({ pat: PAT });
