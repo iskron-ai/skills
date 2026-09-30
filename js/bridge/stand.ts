@@ -55,7 +55,13 @@ import { deadPredecessor, resumeFromDisk } from "./resume.ts";
 import { SATELLITE_TTL_S, satelliteGate, satelliteListenWord, ttlRefused } from "./satellite.ts";
 import { separatePlace, suffixOf } from "./separate.ts";
 import { SW } from "./standwords.ts";
-import { publishStatus, standStatusOnly, TAKE_PATH, TURNED_GUIDANCE } from "./status.ts";
+import {
+  publishStatus,
+  standStatusOnly,
+  statusMiss,
+  TAKE_PATH,
+  TURNED_GUIDANCE,
+} from "./status.ts";
 import { state } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
 import { readLatest, staleNotice } from "./update.ts";
@@ -104,7 +110,9 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
     },
   });
   if (!realm || !karta) {
-    lines.push(SW.needRealmKarta(typeof a.status === "string"));
+    lines.push(
+      SW.needRealmKarta(realm && typeof a.status === "string" ? await statusMiss(realm) : null),
+    );
     return done(true);
   }
   const model = typeof a.model === "string" && a.model.trim() ? a.model : undefined;

@@ -1858,6 +1858,49 @@ test("a child session of a standing root raises its bridge as a satellite of the
   }
 });
 
+// The busy line goes by iskron_stand(status) on the seat the bridge holds (#6509):
+// a satellite standing in a role of its own that calls iskron_stand(realm, status)
+// must not be handed the root's role — the bridge would take it for another seat
+// and go the full way of taking one. The plugin still names satellite_of.
+test("a satellite child holding its seat calls iskron_stand with status only: the plugin adds satellite_of but not the root's role", async () => {
+  const calls = join(SANDBOX, "satellite-status.calls");
+  writeFileSync(calls, "");
+  const b = bridgeEnv("satellite-status", {
+    FB_CALLS: calls,
+    FB_TOOLS: JSON.stringify([
+      { name: "iskron_stand", description: "Стояние.", inputSchema: { type: "object" } },
+    ]),
+  });
+  const rec = await plugin(b.env, {
+    sessions: [
+      { id: "root", location: { directory: "/work/root" } },
+      { id: "child", parentID: "root", location: { directory: "/work/child" } },
+    ],
+  });
+  try {
+    await until(() => rec.tools().has("iskron_stand"), "the stand tool", 8000);
+    await rec.call("iskron_stand", { realm: "nks-dev", karta: "#2816" }, "root");
+    const place = { realm: "@nks/nks-dev", karta: "2816", name: "host.repo.opus-5" };
+    appendFileSync(`${b.events}.${pidOf(b.log)}`, event("held", { key: "k-root", place }));
+    await delay(400); // the fake bridge relays event lines every 40 ms
+    await rec.call("iskron_stand", { realm: "nks-dev", karta: "#48" }, "child");
+    const childPid = pidsOf(b.log)[1];
+    const sub = { realm: "@nks/nks-dev", karta: "48", name: "host.repo.opus-5.sub-1" };
+    appendFileSync(`${b.events}.${childPid}`, event("held", { key: "k-sub", place: sub }));
+    await delay(400);
+    await rec.call("iskron_stand", { realm: "nks-dev", status: "спутник пишет" }, "child");
+    const stands = readFileSync(calls, "utf8")
+      .trim()
+      .split("\n")
+      .map((l) => JSON.parse(l))
+      .filter((c) => c.name === "iskron_stand")
+      .map((c) => [c.arguments.karta, c.arguments.satellite_of, c.arguments.status]);
+    assert.deepEqual(stands.at(-1), [undefined, "host.repo.opus-5", "спутник пишет"]);
+  } finally {
+    await rec.stop();
+  }
+});
+
 // The satellite's place lives by the run (#6361): OpenCode keeps a child session
 // after its run, so the plugin ends the child's bridge on the end of the child's
 // execution — the bridge winds down and leaves the place, the hearing watch sends

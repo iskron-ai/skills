@@ -29,9 +29,18 @@ export function heldPlace(data: { place?: Partial<Place> } | undefined): Place |
   return { realm: String(p.realm), karta: String(p.karta), name: p.name };
 }
 
-/** Аргументы iskron_stand спутника: место корня, роль — названная агентом, иначе роль корня. */
-export function asSatellite(args: Record<string, unknown>, of: Place | null | undefined): void {
+/**
+ * Аргументы iskron_stand спутника: место корня, роль — названная агентом, иначе роль корня.
+ * Мост ребёнка уже держит место, а вызов со status — только занятость (#6509): роль
+ * корня не подставляется — спутник в своей роли иначе ушёл бы полным путём занятия.
+ */
+export function asSatellite(
+  args: Record<string, unknown>,
+  of: Place | null | undefined,
+  holds = false,
+): void {
   if (!of) return;
   args.satellite_of ??= of.name;
+  if (holds && typeof args.status === "string") return;
   if (args.karta == null || args.karta === "") args.karta = of.karta;
 }

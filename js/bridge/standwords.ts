@@ -6,16 +6,29 @@ import { L } from "../shared/lang.ts";
 const s = (ms: number): number => Math.round(ms / 1000);
 
 export const SW = {
-  needRealmKarta: (status: boolean): string =>
+  /** miss — почему вызов со status без karta не стал занятостью (status.ts); null — status не было. */
+  needRealmKarta: (miss: "none" | "parked" | "elsewhere" | "full" | null): string =>
     L(
       "Отказано (мост): iskron_stand требует realm и karta — граф и роль из AGENTS.md или строки запуска." +
-        (status
+        (miss === "none"
           ? " Без karta вызов только ставит занятость места, которое этот мост уже держит в этом графе, — такого места нет."
-          : ""),
+          : miss === "parked"
+            ? " Без karta вызов только ставит занятость, а с места этот мост ушёл словом (leave): вернись iskron_stand с karta тем же именем."
+            : miss === "elsewhere"
+              ? " Без karta вызов только ставит занятость, а сокет этого места держит другой мост: занятость ставит держатель сокета; забрать слух — iskron_stand с take=true, только по слову человека."
+              : miss === "full"
+                ? " Место этот мост держит, но вызов несёт то, что ведёт полный путь занятия (room, take, repeat_knock, mute_siblings, model): для одной занятости — только realm и status."
+                : ""),
       "Refused (bridge): iskron_stand needs realm and karta — the graph and the role from AGENTS.md or the launch line." +
-        (status
+        (miss === "none"
           ? " Without karta the call only sets the busy line of a seat this bridge already holds in this graph — there is none."
-          : ""),
+          : miss === "parked"
+            ? " Without karta the call only sets the busy line, and this bridge left its seat by word (leave): return by iskron_stand with karta under the same name."
+            : miss === "elsewhere"
+              ? " Without karta the call only sets the busy line, and another bridge holds this seat's socket: the socket's holder sets the busy line; taking the hearing — iskron_stand with take=true, only on the human's word."
+              : miss === "full"
+                ? " This bridge holds the seat, but the call carries what goes the full way of taking it (room, take, repeat_knock, mute_siblings, model): for the busy line alone — only realm and status."
+                : ""),
     ),
   badCwd: (cwd: string, relative: boolean): string =>
     L(

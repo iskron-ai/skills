@@ -12,15 +12,21 @@ import { socketPathOf, standingsDirOf } from "../shared/standings.ts";
 import { nameOf } from "./board.ts";
 import { resolveAgainstLed } from "./call.ts";
 import { CFG } from "./config.ts";
-import { heldPlaces, holdsStanding, noteStandCwd, rememberStatus, statusAddress } from "./hold.ts";
+import {
+  heldPlaces,
+  holdsStanding,
+  isParked,
+  noteStandCwd,
+  rememberStatus,
+  statusAddress,
+} from "./hold.ts";
 import { type HoldRecord, keyOf } from "./holdrecord.ts";
 import { unheardListenBlock } from "./listen.ts";
 import { normKarta, normName } from "./names.ts";
-import { rememberModel } from "./placefields.ts";
 import { extraIn } from "./places.ts";
 import { sameRealm } from "./realms.ts";
 import { localSocketAlive } from "./sweep.ts";
-import { state } from "./transport.ts";
+import { type Standing, state } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
 
 const isDirectory = (p: string): boolean => {
@@ -66,17 +72,11 @@ export function localStatus(msg: JsonRpcMessage): Promise<JsonRpcMessage> | null
 /**
  * Аргументы iskron_stand, с которыми вызов со status — только занятость; всякий
  * другой ведёт полный путь. satellite_of подставляет сам плагин OpenCode каждому
- * вызову дочерней сессии — он сверяется с держимым местом-спутником.
+ * вызову дочерней сессии — он сверяется с держимым местом-спутником. model несёт
+ * старт двери (и повторный старт после возврата): он сверяет место — register,
+ * хук инбокса, hello — и потому идёт полным путём.
  */
-const STATUS_ONLY_ARGS = new Set([
-  "realm",
-  "karta",
-  "name",
-  "model",
-  "cwd",
-  "status",
-  "satellite_of",
-]);
+const STATUS_ONLY_ARGS = new Set(["realm", "karta", "name", "cwd", "status", "satellite_of"]);
 
 /**
  * iskron_stand со status на месте, которое этот мост уже держит живым сокетом
@@ -92,11 +92,7 @@ export async function standStatusOnly(msg: JsonRpcMessage): Promise<JsonRpcMessa
   const realm = typeof a.realm === "string" ? a.realm.trim() : "";
   if (!realm) return null;
   await resolveAgainstLed(realm); // граф вызова — в той же форме, что граф места
-  const prim = state.standing;
-  const held =
-    prim && (prim.realm === realm || sameRealm(prim.realm, realm))
-      ? prim
-      : extraIn(realm)?.standing;
+  const held = ledIn(realm);
   if (!held) return null;
   if (!unset(a.karta) && normKarta(a.karta) !== String(held.karta)) return null;
   const asked = normName(a.name);
@@ -106,18 +102,40 @@ export async function standStatusOnly(msg: JsonRpcMessage): Promise<JsonRpcMessa
   const base = /^(.+)\.sub-[1-9]\d*$/.exec(held.name ?? "")?.[1];
   if (of && !(base && nameOf(of).startsWith(base))) return null;
   if (!holdsStanding(held.realm, held.karta, held.name ?? "")) return null;
-  // Каталог и модель — локальная память места, как у полного пути: запись держания
-  // несёт каталог для возврата (resume.ts), модель едет в повторных регистрациях.
+  // Каталог — локальная память места, как у полного пути: запись держания несёт его для возврата (resume.ts).
   const cwd = typeof a.cwd === "string" ? a.cwd.trim() : "";
   if (cwd) {
     if (cwd !== process.cwd() && !isDirectory(cwd)) return null; // кривой каталог отказывает полный путь, вслух
     noteStandCwd(cwd);
   }
-  rememberModel(a.model);
   const [body, isError] = await statusWord(a.status.trim(), realm);
   // Место держит мост, а сторож к нему не прицеплен — команда слушания тут же.
   const listen = isError ? null : unheardListenBlock(realm);
   return replyTo(msg)(listen ? `${body}\n${listen}` : body, isError);
+}
+
+/** Место, которое мост ведёт в этом графе (основное либо рядом), — держит ли он сокет, не судит. */
+function ledIn(realm: string): Standing | undefined {
+  const prim = state.standing;
+  return prim && (prim.realm === realm || sameRealm(prim.realm, realm))
+    ? prim
+    : extraIn(realm)?.standing;
+}
+
+/**
+ * Почему iskron_stand(realm, status) без karta не стал занятостью — для слова
+ * отказа (standwords.ts): места в графе нет; ушёл с него словом (leave); место
+ * ведётся, а сокет у другого моста; место слышно здесь, но вызов несёт то, что
+ * ведёт полный путь занятия.
+ */
+export type StatusMiss = "none" | "parked" | "elsewhere" | "full";
+export async function statusMiss(realm: string): Promise<StatusMiss> {
+  await resolveAgainstLed(realm);
+  const held = ledIn(realm);
+  if (!held) return "none";
+  const [r, k, n] = [held.realm, held.karta, held.name ?? ""];
+  if (isParked(r, k, n)) return "parked";
+  return holdsStanding(r, k, n) ? "full" : "elsewhere";
 }
 
 /** Исход POST занятости; code — HTTP-код отказа поверхности, когда он был. */

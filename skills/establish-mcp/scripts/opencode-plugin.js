@@ -1180,9 +1180,10 @@ function heldPlace(data) {
   if (typeof p?.name !== "string" || !p.name) return null;
   return { realm: String(p.realm), karta: String(p.karta), name: p.name };
 }
-function asSatellite(args, of) {
+function asSatellite(args, of, holds = false) {
   if (!of) return;
   args.satellite_of ??= of.name;
+  if (holds && typeof args.status === "string") return;
   if (args.karta == null || args.karta === "") args.karta = of.karta;
 }
 
@@ -1541,7 +1542,7 @@ async function setupTools(ctx, say, onChannel, rootOf) {
       slot = childSlot(sessionID, slot);
       await awaitReady(slot);
     }
-    if (name === STAND_TOOL) asSatellite(args, slot.satelliteOf);
+    if (name === STAND_TOOL) asSatellite(args, slot.satelliteOf, !!slot.place && slot.holding);
     if (name === STAND_TOOL && !args.cwd) {
       const dir = slot.dir ??= await directoryOf(slot.session ?? sessionID);
       if (dir) args.cwd = dir;

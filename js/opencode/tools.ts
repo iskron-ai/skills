@@ -381,7 +381,7 @@ export async function setupTools(
       slot = childSlot(sessionID, slot);
       await awaitReady(slot); // свежий детский мост может запросить вход — та же гонка, что у корня
     }
-    if (name === STAND_TOOL) asSatellite(args, slot.satelliteOf);
+    if (name === STAND_TOOL) asSatellite(args, slot.satelliteOf, !!slot.place && slot.holding);
     // Мост бежит из cwd сервера OpenCode, не из рабочей копии сессии:
     // репо для имени стояния он выводит из директории сессии (r5 #5108) —
     // той, чей это мост: корня для корня, дочерней для её собственного.

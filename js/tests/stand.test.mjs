@@ -649,6 +649,13 @@ test("iskron_stand after an eviction: register only, the busy line still publish
   assert.match(text, /только register/, text);
   assert.match(text, /^Занятость: после отъёма$/m, "the busy line is the standing's word");
   assert.equal(fake.state.status, "после отъёма");
+  // Без karta — не занятость: сокет у другого держателя, и отказ говорит это, не «места нет» (#6509).
+  const bare = await bridge.call("tools/call", {
+    name: "iskron_stand",
+    arguments: { realm: "nks-dev", status: "без роли" },
+  });
+  assert.equal(bare.result?.isError, true, textOf(bare));
+  assert.match(textOf(bare), /сокет этого места держит другой мост/, textOf(bare));
   const taken = await bridge.call("tools/call", {
     name: "iskron_stand",
     arguments: { ...args, take: true },
@@ -2292,6 +2299,40 @@ test("iskron_stand with status on the seat this bridge holds only sets the busy 
   assert.equal(textOf(cleared), `занятость ${key}: (снята)`, "a heard seat gets the one line");
   assert.equal(fake.state.status, "", "an empty status clears the line");
   await untouched("clearing");
+
+  // Старт двери несёт model — он сверяет место: register и хук, не одна занятость.
+  const restart = await stand({ ...seat, model: "opus-5", status: "снова на вахте" });
+  const said = textOf(restart);
+  assert.ok(!restart.result?.isError, said);
+  assert.match(said, /сокет уже держит этот мост — register/, said);
+  assert.match(said, /Хук инбокса роли: стоит и будит это стояние/, said);
+  assert.match(said, /^Занятость: снова на вахте$/m, said);
+  const now = (await fake.control({})).counts;
+  assert.equal(now.register_standing, before.register_standing + 1, "the start registers");
+  assert.equal(now.list, before.list + 1, "the start reads the board");
+  assert.equal(now.connect, before.connect, "a held seat is not rotated");
+});
+
+// realm + status без karta, когда занятость не ставится, — отказ называет почему (#6509).
+test("iskron_stand with realm and status only says why it is no busy line: no seat in the graph, or the seat was left by word", async (t) => {
+  const { fake, bridge } = await ready(t);
+  const stand = (args) => bridge.call("tools/call", { name: "iskron_stand", arguments: args });
+  const none = await stand({ realm: "nks-dev", status: "занят" });
+  assert.equal(none.result?.isError, true, textOf(none));
+  assert.match(textOf(none), /такого места нет/, textOf(none));
+  const stood = await stand({ realm: "nks-dev", karta: 931, name: "proba" });
+  assert.ok(!stood.result?.isError, textOf(stood));
+  const left = await bridge.call("tools/call", {
+    name: "iskron_channel",
+    arguments: { realm: "nks-dev", action: "leave" },
+  });
+  assert.ok(!left.result?.isError, textOf(left));
+  const posts = fake.state.counts.status_posts;
+  const parked = await stand({ realm: "nks-dev", status: "занят" });
+  assert.equal(parked.result?.isError, true, textOf(parked));
+  assert.match(textOf(parked), /ушёл словом \(leave\)/, textOf(parked));
+  assert.doesNotMatch(textOf(parked), /такого места нет/, textOf(parked));
+  assert.equal(fake.state.counts.status_posts, posts, "nothing is posted");
 });
 
 // Плагин OpenCode подставляет satellite_of каждому iskron_stand дочерней сессии:

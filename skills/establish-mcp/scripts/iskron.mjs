@@ -4185,15 +4185,7 @@ function localStatus(msg) {
     return reply2(...await statusWord(text, realm));
   })();
 }
-var STATUS_ONLY_ARGS = /* @__PURE__ */ new Set([
-  "realm",
-  "karta",
-  "name",
-  "model",
-  "cwd",
-  "status",
-  "satellite_of"
-]);
+var STATUS_ONLY_ARGS = /* @__PURE__ */ new Set(["realm", "karta", "name", "cwd", "status", "satellite_of"]);
 async function standStatusOnly(msg) {
   const a = msg.params?.arguments ?? {};
   if (typeof a.status !== "string") return null;
@@ -4202,8 +4194,7 @@ async function standStatusOnly(msg) {
   const realm = typeof a.realm === "string" ? a.realm.trim() : "";
   if (!realm) return null;
   await resolveAgainstLed(realm);
-  const prim = state.standing;
-  const held2 = prim && (prim.realm === realm || sameRealm(prim.realm, realm)) ? prim : extraIn(realm)?.standing;
+  const held2 = ledIn(realm);
   if (!held2) return null;
   if (!unset(a.karta) && normKarta(a.karta) !== String(held2.karta)) return null;
   const asked = normName(a.name);
@@ -4217,11 +4208,22 @@ async function standStatusOnly(msg) {
     if (cwd !== process.cwd() && !isDirectory(cwd)) return null;
     noteStandCwd(cwd);
   }
-  rememberModel(a.model);
   const [body, isError] = await statusWord(a.status.trim(), realm);
   const listen = isError ? null : unheardListenBlock(realm);
   return replyTo(msg)(listen ? `${body}
 ${listen}` : body, isError);
+}
+function ledIn(realm) {
+  const prim = state.standing;
+  return prim && (prim.realm === realm || sameRealm(prim.realm, realm)) ? prim : extraIn(realm)?.standing;
+}
+async function statusMiss(realm) {
+  await resolveAgainstLed(realm);
+  const held2 = ledIn(realm);
+  if (!held2) return "none";
+  const [r, k, n] = [held2.realm, held2.karta, held2.name ?? ""];
+  if (isParked(r, k, n)) return "parked";
+  return holdsStanding(r, k, n) ? "full" : "elsewhere";
 }
 var lastPublished = "";
 var publishedStatus = () => lastPublished;
@@ -5716,9 +5718,10 @@ async function separatePlace(realm, karta, derived) {
 // js/bridge/standwords.ts
 var s = (ms2) => Math.round(ms2 / 1e3);
 var SW = {
-  needRealmKarta: (status) => L(
-    "Отказано (мост): iskron_stand требует realm и karta — граф и роль из AGENTS.md или строки запуска." + (status ? " Без karta вызов только ставит занятость места, которое этот мост уже держит в этом графе, — такого места нет." : ""),
-    "Refused (bridge): iskron_stand needs realm and karta — the graph and the role from AGENTS.md or the launch line." + (status ? " Without karta the call only sets the busy line of a seat this bridge already holds in this graph — there is none." : "")
+  /** miss — почему вызов со status без karta не стал занятостью (status.ts); null — status не было. */
+  needRealmKarta: (miss) => L(
+    "Отказано (мост): iskron_stand требует realm и karta — граф и роль из AGENTS.md или строки запуска." + (miss === "none" ? " Без karta вызов только ставит занятость места, которое этот мост уже держит в этом графе, — такого места нет." : miss === "parked" ? " Без karta вызов только ставит занятость, а с места этот мост ушёл словом (leave): вернись iskron_stand с karta тем же именем." : miss === "elsewhere" ? " Без karta вызов только ставит занятость, а сокет этого места держит другой мост: занятость ставит держатель сокета; забрать слух — iskron_stand с take=true, только по слову человека." : miss === "full" ? " Место этот мост держит, но вызов несёт то, что ведёт полный путь занятия (room, take, repeat_knock, mute_siblings, model): для одной занятости — только realm и status." : ""),
+    "Refused (bridge): iskron_stand needs realm and karta — the graph and the role from AGENTS.md or the launch line." + (miss === "none" ? " Without karta the call only sets the busy line of a seat this bridge already holds in this graph — there is none." : miss === "parked" ? " Without karta the call only sets the busy line, and this bridge left its seat by word (leave): return by iskron_stand with karta under the same name." : miss === "elsewhere" ? " Without karta the call only sets the busy line, and another bridge holds this seat's socket: the socket's holder sets the busy line; taking the hearing — iskron_stand with take=true, only on the human's word." : miss === "full" ? " This bridge holds the seat, but the call carries what goes the full way of taking it (room, take, repeat_knock, mute_siblings, model): for the busy line alone — only realm and status." : "")
   ),
   badCwd: (cwd, relative) => L(
     `Отказано (мост): cwd должен быть существующим абсолютным каталогом — получено «${cwd}»${relative ? " (относительный путь резолвился бы от cwd моста, не сессии)" : ""}.`,
@@ -5888,7 +5891,7 @@ var SW = {
 // js/bridge/standtool.ts
 var STAND_TOOL = {
   name: "iskron_stand",
-  description: '[мост] Занять стояние одним вызовом: мост читает доску, выводит имя (машина.репо.модель), занимает место (connect и register; только register, если сокет уже держит этот мост), взводит хук инбокса роли своим входящим адресом, при room стучит кадром join в место человека по полному адресу с провода (повтор — только repeat_knock=true, один раз, не раньше чем через 2 минуты) и возвращает имя, команду сторожа, число ожидавших кадров, состояние хука и расписку стука. Место в другом графе встаёт рядом на том же канале (register): сессия слышит все свои графы, и запись в каждом подписана местом этого графа. Дальше — запустить сторожа командой из ответа и ждать. Он же — ход занятости: на месте, которое этот мост уже держит, вызов realm и status (karta и name — те же или опущены) лишь ставит строку занятости — без доски, connect, register, хука и стука; пустой status снимает; прежний iskron_channel(action="status") оставлен для совместимости. Тул исполняет мост; нет его в сессии — тулы идут мимо моста либо мост старой сборки (doctor скажет), стой по скиллу standing.',
+  description: '[мост] Занять стояние одним вызовом: мост читает доску, выводит имя (машина.репо.модель), занимает место (connect и register; только register, если сокет уже держит этот мост), взводит хук инбокса роли своим входящим адресом, при room стучит кадром join в место человека по полному адресу с провода (повтор — только repeat_knock=true, один раз, не раньше чем через 2 минуты) и возвращает имя, команду сторожа, число ожидавших кадров, состояние хука и расписку стука. Место в другом графе встаёт рядом на том же канале (register): сессия слышит все свои графы, и запись в каждом подписана местом этого графа. Дальше — запустить сторожа командой из ответа и ждать. Он же — ход занятости: на месте, которое этот мост уже держит, вызов realm и status (karta и name — те же или опущены; без model, room, take — с ними это занятие места и сверка) лишь ставит строку занятости — без доски, connect, register, хука и стука; пустой status снимает; прежний iskron_channel(action="status") оставлен для совместимости. Тул исполняет мост; нет его в сессии — тулы идут мимо моста либо мост старой сборки (doctor скажет), стой по скиллу standing.',
   inputSchema: {
     type: "object",
     properties: {
@@ -5969,7 +5972,9 @@ async function runStand(msg) {
     }
   });
   if (!realm || !karta) {
-    lines.push(SW.needRealmKarta(typeof a.status === "string"));
+    lines.push(
+      SW.needRealmKarta(realm && typeof a.status === "string" ? await statusMiss(realm) : null)
+    );
     return done(true);
   }
   const model2 = typeof a.model === "string" && a.model.trim() ? a.model : void 0;
