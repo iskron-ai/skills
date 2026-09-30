@@ -779,6 +779,7 @@ function bridgeRuntime() {
   if (!/^node/i.test(basename(process.execPath))) return { bin: "node", env: process.env };
   return { bin: process.execPath, env: process.env };
 }
+var SERVICE_ID = "iskron-service-";
 var STOP_GRACE_MS = 5e3;
 var Bridge = class {
   proc = null;
@@ -860,7 +861,8 @@ var Bridge = class {
       } catch {
         continue;
       }
-      if (typeof msg?.id !== "number") {
+      const service = typeof msg?.id === "string" && msg.id.startsWith(SERVICE_ID);
+      if (typeof msg?.id !== "number" && !service) {
         if (typeof msg?.method === "string") this.onNotification(msg.method, msg.params);
         continue;
       }
@@ -882,7 +884,7 @@ var Bridge = class {
   }
   request(method, params, opts = {}) {
     if (this.dead) return Promise.reject(this.dead);
-    const id = this.nextId++;
+    const id = opts.service ? `${SERVICE_ID}${this.nextId++}` : this.nextId++;
     return new Promise((res, rej) => {
       let timer = null;
       const settle = (fn) => (v) => {
@@ -1179,7 +1181,7 @@ async function hostEnv() {
   }
   return env;
 }
-var callVia = (b) => async (name, args) => textOrThrow(name, await b.request("tools/call", { name, arguments: args }));
+var callVia = (b) => async (name, args) => textOrThrow(name, await b.request("tools/call", { name, arguments: args }, { service: true }));
 function setupBridge(pi, onChannel) {
   let bridge = null;
   const offByUs = /* @__PURE__ */ new Set();

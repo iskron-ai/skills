@@ -121,6 +121,7 @@ export function thinMain(argv: string[]): void {
   const flights = new Map<string, Flight>();
   const verdicted = new Set<string>(); // id, закрытые вердиктом: их поздний ответ — дубль
   const replayIds = new Set<string>();
+  const cancelled = new Set<string>(); // отменённые харнесом, пока их приём не подтверждён
   let replays = 0;
   const key = (id: unknown) => JSON.stringify(id);
   const writeHarness = (m: JsonRpcMessage) => writeTo(process.stdout, JSON.stringify(m) + "\n");
@@ -142,6 +143,9 @@ export function thinMain(argv: string[]): void {
       }
       const f = flights.get(k);
       flights.delete(k);
+      // Успешный iskron_stand — место снова у сессии: отказ потерянного места снят.
+      if (f?.msg.params?.name === "iskron_stand" && msg.result && !msg.result.isError)
+        lostWord = null;
       if (word && f?.msg.method === "tools/call" && Array.isArray(msg.result?.content)) {
         msg.result.content.push({ type: "text", text: word });
         word = null;
@@ -151,8 +155,10 @@ export function thinMain(argv: string[]): void {
     // «Отпущено» уходящей сессией при смене демона (спутник отпускает целиком) — не
     // уход агента: ключ помнится, и новая сессия попробует вернуть место.
     const handingOver = !!successorAwaited && Date.now() - successorAwaited < SUCCESSOR_MS;
-    if (place?.kind === "held" && place.key) heldKey = place.key;
-    else if (
+    if (place?.kind === "held" && place.key) {
+      heldKey = place.key;
+      lostWord = null; // место снова взято — записи подписаны, отказ снят
+    } else if (
       place &&
       ["released", "dead", "evicted"].includes(place.kind) &&
       (!place.key || place.key === heldKey) &&
@@ -222,7 +228,9 @@ export function thinMain(argv: string[]): void {
     const again: JsonRpcMessage[] = [];
     for (const [k, f] of flights) {
       if (resend && acks && !f.acked) {
-        again.push(f.msg);
+        // Харнес отменил его, пока тот не ушёл, — не переотправлять и не отвечать.
+        if (cancelled.delete(k)) flights.delete(k);
+        else again.push(f.msg);
         continue;
       }
       writeHarness(syntheticError(f.id, why, !acks || f.acked ? UNKNOWN : NOT_SENT));
@@ -409,17 +417,33 @@ export function thinMain(argv: string[]): void {
     }
     if (msg.method === "initialize") initCopy = msg;
     if (msg.method === "notifications/initialized") initializedSeen = true;
-    // Место не вернулось в новой сессии: первый же вызов тула, кроме iskron_stand, — отказ вслух.
-    if (lostWord && msg.method === "tools/call" && msg.id !== undefined && msg.id !== null) {
-      const text = lostWord;
-      lostWord = null;
-      if (msg.params?.name !== "iskron_stand")
-        return void writeHarness({
-          jsonrpc: "2.0",
-          id: msg.id,
-          result: { isError: true, content: [{ type: "text", text }] },
-        });
+    // Отмена вызова, который ещё не ушёл (ждёт переподхвата или ворот) либо ушёл без
+    // ack уходящему демону: он не уходит снова. Принятый демоном — отмена идёт сессии.
+    if (msg.method === "notifications/cancelled") {
+      const k = key(msg.params?.requestId);
+      const f = flights.get(k);
+      if (f && !f.acked) {
+        const i = queue.indexOf(f.msg);
+        if (i >= 0) {
+          queue.splice(i, 1);
+          flights.delete(k);
+        } else cancelled.add(k);
+      }
     }
+    // Место не вернулось в новой сессии: каждый вызов тула, кроме iskron_stand, — отказ
+    // вслух, пока сессия не возьмёт место снова (уведомление held снимает отказ).
+    if (
+      lostWord &&
+      msg.method === "tools/call" &&
+      msg.id !== undefined &&
+      msg.id !== null &&
+      msg.params?.name !== "iskron_stand"
+    )
+      return void writeHarness({
+        jsonrpc: "2.0",
+        id: msg.id,
+        result: { isError: true, content: [{ type: "text", text: lostWord }] },
+      });
     if (msg.method && msg.id !== undefined && msg.id !== null) {
       verdicted.delete(key(msg.id)); // харнес взял id снова — его ответ уже не дубль
       flights.set(key(msg.id), { id: msg.id, msg, acked: false });

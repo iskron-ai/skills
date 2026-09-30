@@ -7514,6 +7514,7 @@ function thinMain(argv2) {
   const flights = /* @__PURE__ */ new Map();
   const verdicted = /* @__PURE__ */ new Set();
   const replayIds = /* @__PURE__ */ new Set();
+  const cancelled = /* @__PURE__ */ new Set();
   let replays = 0;
   const key = (id) => JSON.stringify(id);
   const writeHarness = (m) => writeTo(process.stdout, JSON.stringify(m) + "\n");
@@ -7532,6 +7533,8 @@ function thinMain(argv2) {
       }
       const f = flights.get(k);
       flights.delete(k);
+      if (f?.msg.params?.name === "iskron_stand" && msg.result && !msg.result.isError)
+        lostWord = null;
       if (word && f?.msg.method === "tools/call" && Array.isArray(msg.result?.content)) {
         msg.result.content.push({ type: "text", text: word });
         word = null;
@@ -7539,8 +7542,10 @@ function thinMain(argv2) {
     }
     const place = placeWord(msg);
     const handingOver2 = !!successorAwaited && Date.now() - successorAwaited < SUCCESSOR_MS;
-    if (place?.kind === "held" && place.key) heldKey2 = place.key;
-    else if (place && ["released", "dead", "evicted"].includes(place.kind) && (!place.key || place.key === heldKey2) && !(handingOver2 && place.kind === "released"))
+    if (place?.kind === "held" && place.key) {
+      heldKey2 = place.key;
+      lostWord = null;
+    } else if (place && ["released", "dead", "evicted"].includes(place.kind) && (!place.key || place.key === heldKey2) && !(handingOver2 && place.kind === "released"))
       heldKey2 = null;
     writeHarness(msg);
   };
@@ -7591,7 +7596,8 @@ function thinMain(argv2) {
     const again = [];
     for (const [k, f] of flights) {
       if (resend && acks && !f.acked) {
-        again.push(f.msg);
+        if (cancelled.delete(k)) flights.delete(k);
+        else again.push(f.msg);
         continue;
       }
       writeHarness(syntheticError(f.id, why, !acks || f.acked ? UNKNOWN : NOT_SENT));
@@ -7761,16 +7767,23 @@ function thinMain(argv2) {
     }
     if (msg.method === "initialize") initCopy = msg;
     if (msg.method === "notifications/initialized") initializedSeen = true;
-    if (lostWord && msg.method === "tools/call" && msg.id !== void 0 && msg.id !== null) {
-      const text = lostWord;
-      lostWord = null;
-      if (msg.params?.name !== "iskron_stand")
-        return void writeHarness({
-          jsonrpc: "2.0",
-          id: msg.id,
-          result: { isError: true, content: [{ type: "text", text }] }
-        });
+    if (msg.method === "notifications/cancelled") {
+      const k = key(msg.params?.requestId);
+      const f = flights.get(k);
+      if (f && !f.acked) {
+        const i = queue2.indexOf(f.msg);
+        if (i >= 0) {
+          queue2.splice(i, 1);
+          flights.delete(k);
+        } else cancelled.add(k);
+      }
     }
+    if (lostWord && msg.method === "tools/call" && msg.id !== void 0 && msg.id !== null && msg.params?.name !== "iskron_stand")
+      return void writeHarness({
+        jsonrpc: "2.0",
+        id: msg.id,
+        result: { isError: true, content: [{ type: "text", text: lostWord }] }
+      });
     if (msg.method && msg.id !== void 0 && msg.id !== null) {
       verdicted.delete(key(msg.id));
       flights.set(key(msg.id), { id: msg.id, msg, acked: false });

@@ -757,6 +757,7 @@ function bridgeRuntime() {
   if (!/^node/i.test(basename(process.execPath))) return { bin: "node", env: process.env };
   return { bin: process.execPath, env: process.env };
 }
+var SERVICE_ID = "iskron-service-";
 var STOP_GRACE_MS = 5e3;
 var Bridge = class {
   proc = null;
@@ -838,7 +839,8 @@ var Bridge = class {
       } catch {
         continue;
       }
-      if (typeof msg?.id !== "number") {
+      const service = typeof msg?.id === "string" && msg.id.startsWith(SERVICE_ID);
+      if (typeof msg?.id !== "number" && !service) {
         if (typeof msg?.method === "string") this.onNotification(msg.method, msg.params);
         continue;
       }
@@ -860,7 +862,7 @@ var Bridge = class {
   }
   request(method, params, opts = {}) {
     if (this.dead) return Promise.reject(this.dead);
-    const id = this.nextId++;
+    const id = opts.service ? `${SERVICE_ID}${this.nextId++}` : this.nextId++;
     return new Promise((res, rej) => {
       let timer = null;
       const settle = (fn) => (v) => {
@@ -1656,7 +1658,7 @@ async function setupTools(ctx, say, onChannel, rootOf) {
     return own;
   }
   const awaitReady = (slot) => login.race(() => readyFor(slot));
-  async function callThrough(slot, name, input, sessionID) {
+  async function callThrough(slot, name, input, sessionID, service = false) {
     await awaitReady(slot);
     if (slot.resume) await slot.resume;
     const args = { ...input ?? {} };
@@ -1669,7 +1671,7 @@ async function setupTools(ctx, say, onChannel, rootOf) {
       const dir = slot.dir ??= await directoryOf(slot.session ?? sessionID);
       if (dir) args.cwd = dir;
     }
-    const result = await slot.bridge.request("tools/call", { name, arguments: args });
+    const result = await slot.bridge.request("tools/call", { name, arguments: args }, { service });
     if (result?.isError) throw new Error(textOf2(result) || `${name}: отказ без текста`);
     if (standsBy(name, args)) keeper.stood(slot);
     if (standsBy(name, args)) runEnds.clear(sessionID);
@@ -1723,7 +1725,7 @@ async function setupTools(ctx, say, onChannel, rootOf) {
     async call(slot, name, args, sessionID) {
       slot.busy++;
       try {
-        return (await callThrough(slot, name, args, sessionID)).content;
+        return (await callThrough(slot, name, args, sessionID, true)).content;
       } finally {
         slot.busy--;
         slot.lastCall = Date.now();

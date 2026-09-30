@@ -485,15 +485,99 @@ test("a satellite whose place did not survive the daemon change is told so: the 
           ),
         10_000,
       );
+      // Отказ держится на каждом вызове до нового iskron_stand, не на одном первом.
       const before = fake.state.writes.length;
-      const refused = await write(s, "after");
-      assert.equal(refused.result?.isError, true, JSON.stringify(refused));
-      assert.match(textOf(refused), /место спутника потеряно при смене демона/);
-      assert.match(textOf(refused), /iskron_stand с satellite_of/);
-      assert.equal(fake.state.writes.length, before, "the refused write did not go out");
+      for (const name of ["after-1", "after-2"]) {
+        const refused = await write(s, name);
+        assert.equal(refused.result?.isError, true, `${name}: ${JSON.stringify(refused)}`);
+        assert.match(textOf(refused), /место спутника потеряно при смене демона/);
+        assert.match(textOf(refused), /iskron_stand с satellite_of/);
+      }
+      assert.equal(fake.state.writes.length, before, "no refused write went out");
+      assert.equal(fake.state.counts.unattributed, 0, JSON.stringify(fake.state.writes));
       const again = await stand(s, sat);
       assert.ok(!again.result?.isError, textOf(again));
       await write(s, "signed");
+      assert.equal(fake.state.counts.unattributed, 0, JSON.stringify(fake.state.writes));
+    } finally {
+      d.cleanup();
+    }
+  });
+});
+
+// Приёмка #280, п.3: вызов, отменённый харнесом в окне смены демона, пока его
+// приём не подтверждён, не уходит новой сессии и не получает ответа.
+test("a call cancelled while the daemon hands over is not sent again and gets no answer", async () => {
+  await withFake(async ({ fake, dir, bridge }) => {
+    const d = await updatableDaemon(dir);
+    try {
+      const a = bridge({});
+      await handshake(a);
+      const r = await stand(a, { realm: "nks-dev", karta: 931, name: "cancel-a" });
+      assert.ok(!r.result?.isError, textOf(r));
+      d.bump();
+      await waitFor("the handover", () => /handing over to/.test(journalOf(dir)), 10_000);
+      const before = fake.state.writes.length;
+      a.send({
+        jsonrpc: "2.0",
+        id: 50,
+        method: "tools/call",
+        params: {
+          name: "iskron_add_phenomenon",
+          arguments: { realm: "nks-dev", name: "cancelled" },
+        },
+      });
+      a.send({ jsonrpc: "2.0", method: "notifications/cancelled", params: { requestId: 50 } });
+      await waitFor(
+        "the successor",
+        () => /through the machine's bridge daemon v99/.test(a.stderr),
+        30_000,
+      );
+      const after = await write(a, "after");
+      assert.ok(after.result && !after.result.isError, JSON.stringify(after));
+      await new Promise((res) => setTimeout(res, 500));
+      assert.equal(a.all.filter((m) => m.id === 50).length, 0, "no answer to the cancelled call");
+      assert.equal(fake.state.writes.length, before + 1, "only the later write went out");
+    } finally {
+      d.cleanup();
+    }
+  });
+});
+
+// Приёмка #280, п.1: обычное место, чья запись держания пропала, после смены
+// демона не вернулось — отказ вслух на каждом вызове до iskron_stand.
+test("a place that did not come back after the daemon change refuses every call until iskron_stand", async () => {
+  await withFake(async ({ fake, dir, bridge }) => {
+    const d = await updatableDaemon(dir);
+    try {
+      const a = bridge({});
+      await handshake(a);
+      const args = { realm: "nks-dev", karta: 931, name: "gone-a" };
+      const r = await stand(a, args);
+      assert.ok(!r.result?.isError, textOf(r));
+      // Записи держания нет — возвращать нечем.
+      for (const f of readdirSync(join(dir, "standings")).filter((x) => x.endsWith(".hold")))
+        rmSync(join(dir, "standings", f));
+      d.bump();
+      await waitFor(
+        "the word to the harness",
+        () =>
+          a.notifications.some((n) =>
+            /не вернулось после смены демона/.test(JSON.stringify(n.params?.data ?? {})),
+          ),
+        30_000,
+      );
+      const before = fake.state.writes.length;
+      for (const name of ["x-1", "x-2"]) {
+        const refused = await write(a, name);
+        assert.equal(refused.result?.isError, true, `${name}: ${JSON.stringify(refused)}`);
+        assert.match(textOf(refused), /не вернулось после смены демона машины/);
+      }
+      assert.equal(fake.state.writes.length, before, "no refused write went out");
+      const again = await stand(a, args);
+      assert.ok(!again.result?.isError, textOf(again));
+      const ok = await write(a, "signed");
+      assert.ok(ok.result && !ok.result.isError, JSON.stringify(ok));
       assert.equal(fake.state.counts.unattributed, 0, JSON.stringify(fake.state.writes));
     } finally {
       d.cleanup();

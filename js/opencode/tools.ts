@@ -369,6 +369,7 @@ export async function setupTools(
     name: string,
     input: any,
     sessionID: string,
+    service = false, // строка запуска — служебный ход, не работа агента (#6510)
   ): Promise<{ content: string }> {
     await awaitReady(slot);
     if (slot.resume) await slot.resume; // место возвращается с диска — не занимать его дважды
@@ -389,7 +390,7 @@ export async function setupTools(
       const dir = (slot.dir ??= await directoryOf(slot.session ?? sessionID));
       if (dir) args.cwd = dir;
     }
-    const result = await slot.bridge.request("tools/call", { name, arguments: args });
+    const result = await slot.bridge.request("tools/call", { name, arguments: args }, { service });
     // Отказ тула сигналится броском — так OpenCode показывает его отказом.
     if (result?.isError) throw new Error(textOf(result) || `${name}: отказ без текста`);
     if (standsBy(name, args)) keeper.stood(slot); // ответ тула — наблюдаемое событие держания
@@ -453,7 +454,7 @@ export async function setupTools(
     async call(slot, name, args, sessionID) {
       slot.busy++;
       try {
-        return (await callThrough(slot, name, args, sessionID)).content;
+        return (await callThrough(slot, name, args, sessionID, true)).content;
       } finally {
         slot.busy--;
         slot.lastCall = Date.now();
