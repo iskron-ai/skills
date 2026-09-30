@@ -3955,8 +3955,18 @@ function addExtra(s2, ch, hooks) {
   extras.set(key, place);
   writeRecord(place, ch);
   standingLog(`held ${key} beside the channel`);
+  besideWord({
+    kind: "beside",
+    key,
+    place: { realm: s2.realm, karta: String(s2.karta), name: s2.name ?? "" }
+  });
   return key;
 }
+var besideWord = (data) => emit({
+  jsonrpc: "2.0",
+  method: "notifications/message",
+  params: { level: "info", logger: "iskron-channel", data }
+});
 function repointExtras(ch) {
   for (const p of extraPlaces()) writeRecord(p, ch);
 }
@@ -3974,6 +3984,7 @@ function dropExtra(key, reason, forget) {
     state.places = state.places.filter((s2) => keyOfPlace(s2) !== key);
   }
   standingLog(`released ${key}: ${reason}${forget ? " (record dropped)" : ""}`);
+  if (!handoverReason()) besideWord({ kind: "beside-gone", key, text: reason });
 }
 function dropAllExtras(reason, forget) {
   for (const k of [...extras.keys()]) dropExtra(k, reason, forget);
@@ -7416,6 +7427,60 @@ function spawnDaemon(file, authDir, successor) {
 import { createInterface as createInterface3 } from "node:readline";
 import { PassThrough as PassThrough2 } from "node:stream";
 
+// js/bridge/lostplaces.ts
+function placeWord(msg) {
+  if (msg.method !== "notifications/message" || msg.params?.logger !== "iskron-channel")
+    return null;
+  const data = msg.params?.data;
+  const realm = typeof data?.place?.realm === "string" ? data.place.realm.trim() : "";
+  return typeof data?.kind === "string" ? { kind: data.kind, key: typeof data.key === "string" ? data.key : void 0, realm } : null;
+}
+function lostPlaces(say, log3) {
+  const live = /* @__PURE__ */ new Map();
+  const lost = /* @__PURE__ */ new Map();
+  return {
+    live,
+    /** Место снова взято (held, beside) — отказ по нему снят. */
+    regained(k, realm) {
+      live.set(k, realm);
+      for (const [lk, e] of lost)
+        if (lk === k || e.satellite && e.realm === realm) lost.delete(lk);
+    },
+    lose(k, realm, why, satellite) {
+      const text = satellite ? L(
+        `Отказано (мост): место спутника потеряно при смене демона машины (${k}) — у места спутника нет записи держания, и записи легли бы без автора; вызов не отправлен. Встань снова: iskron_stand с satellite_of.`,
+        `Refused (bridge): the satellite's seat was lost in the machine daemon's change (${k}) — a satellite seat has no holding record, and writes would go unattributed; the call was not sent. Stand again: iskron_stand with satellite_of.`
+      ) : L(
+        `Отказано (мост): место ${k} (граф ${realm}) не вернулось после смены демона машины (${why}) — записи легли бы без автора; вызов не отправлен. Верни место: iskron_stand в этом графе тем же именем.`,
+        `Refused (bridge): the seat ${k} (graph ${realm}) did not come back after the machine daemon's change (${why}) — writes would go unattributed; the call was not sent. Bring it back: iskron_stand in that graph with the same name.`
+      );
+      lost.set(k, { realm, satellite, text });
+      live.delete(k);
+      log3(text);
+      say({
+        jsonrpc: "2.0",
+        method: "notifications/message",
+        params: {
+          level: "warning",
+          logger: "iskron-channel",
+          data: { kind: "lost", key: k, text }
+        }
+      });
+    },
+    /** Отказ вызова тула из-за потерянного места; null — пропустить. */
+    refusal(msg) {
+      if (!lost.size || msg.method !== "tools/call" || msg.params?.name === "iskron_stand")
+        return null;
+      const r = msg.params?.arguments?.realm;
+      const realm = slugOf2(typeof r === "string" ? r : "");
+      const hit = [...lost.values()].find((e) => slugOf2(e.realm) === realm);
+      if (hit) return hit.text;
+      return [...live.values()].some((x) => slugOf2(x) === realm) ? null : [...lost.values()][0].text;
+    }
+  };
+}
+var slugOf2 = (realm) => realm.trim().replace(/^@[^/]+\//, "");
+
 // js/bridge/raise.ts
 import { spawn as spawn4 } from "node:child_process";
 import { readFileSync as readFileSync18 } from "node:fs";
@@ -7485,12 +7550,6 @@ function daemonWanted() {
   const off = process.env[NO_DAEMON_ENV]?.trim();
   return process.env[DAEMON_ENV]?.trim() === "1" && (!off || off === "0");
 }
-function placeWord(msg) {
-  if (msg.method !== "notifications/message" || msg.params?.logger !== "iskron-channel")
-    return null;
-  const data = msg.params?.data;
-  return typeof data?.kind === "string" ? { kind: data.kind, key: typeof data.key === "string" ? data.key : void 0 } : null;
-}
 function thinMain(argv2) {
   const cfg = parseArgs(argv2);
   setConfig(cfg);
@@ -7522,19 +7581,20 @@ function thinMain(argv2) {
     if (msg.method === void 0 && msg.id !== void 0 && msg.id !== null) {
       const k = key(msg.id);
       if (replayIds.delete(k)) {
-        if (String(msg.id).startsWith("iskron-thin-resume-") && msg.result?.resumed !== true)
-          placeLost(String(msg.result?.word ?? msg.error?.message ?? "no answer"));
+        const back = resuming.get(k);
+        resuming.delete(k);
+        if (back && msg.result?.resumed !== true)
+          placeLost(back.key, back.realm, String(msg.result?.word ?? msg.error?.message ?? "?"));
         openGate(k);
         return;
       }
+      cancelled.delete(k);
       if (verdicted.delete(k)) {
         debug(`a late answer to ${k} dropped — the harness already has its verdict`);
         return;
       }
       const f = flights.get(k);
       flights.delete(k);
-      if (f?.msg.params?.name === "iskron_stand" && msg.result && !msg.result.isError)
-        lostWord = null;
       if (word && f?.msg.method === "tools/call" && Array.isArray(msg.result?.content)) {
         msg.result.content.push({ type: "text", text: word });
         word = null;
@@ -7542,11 +7602,14 @@ function thinMain(argv2) {
     }
     const place = placeWord(msg);
     const handingOver2 = !!successorAwaited && Date.now() - successorAwaited < SUCCESSOR_MS;
-    if (place?.kind === "held" && place.key) {
-      heldKey2 = place.key;
-      lostWord = null;
-    } else if (place && ["released", "dead", "evicted"].includes(place.kind) && (!place.key || place.key === heldKey2) && !(handingOver2 && place.kind === "released"))
+    if ((place?.kind === "held" || place?.kind === "beside") && place.key) {
+      if (place.kind === "held") heldKey2 = place.key;
+      places.regained(place.key, place.realm);
+    } else if (place?.kind === "beside-gone" && place.key) live.delete(place.key);
+    else if (place && ["released", "dead", "evicted"].includes(place.kind) && (!place.key || place.key === heldKey2) && !(handingOver2 && place.kind === "released")) {
+      if (heldKey2) live.delete(heldKey2);
       heldKey2 = null;
+    }
     writeHarness(msg);
   };
   const gate = /* @__PURE__ */ new Set();
@@ -7570,27 +7633,12 @@ function thinMain(argv2) {
       openGate();
     }, GATE_MS);
   };
-  let lostWord = null;
-  const placeLost = (why) => {
-    const k = heldKey2 ?? "?";
-    lostWord = cfg.satellite ? L(
-      `Отказано (мост): место спутника потеряно при смене демона машины (${k}) — у места спутника нет записи держания, и записи легли бы без автора; вызов не отправлен. Встань снова: iskron_stand с satellite_of.`,
-      `Refused (bridge): the satellite's seat was lost in the machine daemon's change (${k}) — a satellite seat has no holding record, and writes would go unattributed; the call was not sent. Stand again: iskron_stand with satellite_of.`
-    ) : L(
-      `Отказано (мост): место ${k} не вернулось после смены демона машины (${why}) — записи легли бы без автора; вызов не отправлен. Верни место: iskron_stand тем же именем.`,
-      `Refused (bridge): the seat ${k} did not come back after the machine daemon's change (${why}) — writes would go unattributed; the call was not sent. Bring it back: iskron_stand with the same name.`
-    );
-    heldKey2 = null;
-    log(lostWord);
-    writeHarness({
-      jsonrpc: "2.0",
-      method: "notifications/message",
-      params: {
-        level: "warning",
-        logger: "iskron-channel",
-        data: { kind: "lost", key: k, text: lostWord }
-      }
-    });
+  const places = lostPlaces(writeHarness, log);
+  const live = places.live;
+  const resuming = /* @__PURE__ */ new Map();
+  const placeLost = (k, realm, why) => {
+    places.lose(k, realm, why, cfg.satellite && k === heldKey2);
+    if (k === heldKey2) heldKey2 = null;
   };
   const verdictAll = (why, acks, resend = false) => {
     const again = [];
@@ -7617,7 +7665,15 @@ function thinMain(argv2) {
     local?.input.write(JSON.stringify(msg) + "\n");
   };
   const dispatch2 = (msg) => {
-    if (gate.size)
+    const refusal2 = !gate.size && msg.id != null ? places.refusal(msg) : null;
+    if (refusal2) {
+      flights.delete(key(msg.id));
+      writeHarness({
+        jsonrpc: "2.0",
+        id: msg.id,
+        result: { isError: true, content: [{ type: "text", text: refusal2 }] }
+      });
+    } else if (gate.size)
       queue2.push(msg);
     else if (mode === "daemon" && link) toDaemon(link, msg);
     else if (mode === "local") toLocal(msg);
@@ -7632,12 +7688,23 @@ function thinMain(argv2) {
       send({ ...initCopy, id });
       if (initializedSeen) send({ jsonrpc: "2.0", method: "notifications/initialized" });
     }
-    if (heldKey2) {
+    const held2 = heldKey2 ? { key: heldKey2, realm: live.get(heldKey2) ?? "" } : null;
+    for (const [k, realm] of [...live]) {
+      if (k === heldKey2) continue;
+      placeLost(
+        k,
+        realm,
+        L("места других графов рядом не возвращаются", "beside seats do not come back")
+      );
+    }
+    live.clear();
+    if (held2) {
       const id = `iskron-thin-resume-${++replays}`;
       replayIds.add(key(id));
+      resuming.set(key(id), held2);
       closeGate(key(id));
-      log(`the session is new — bringing its place ${heldKey2} back from the hold record`);
-      send({ jsonrpc: "2.0", id, method: "iskron/resume", params: { key: heldKey2 } });
+      log(`the session is new — bringing its place ${held2.key} back from the hold record`);
+      send({ jsonrpc: "2.0", id, method: "iskron/resume", params: { key: held2.key } });
     }
   };
   const goLocal = (reason) => {
@@ -7676,6 +7743,7 @@ function thinMain(argv2) {
       else if (f.t === "ack") {
         const fl = flights.get(key(f.id));
         if (fl) fl.acked = true;
+        cancelled.delete(key(f.id));
       } else if (f.t === "log")
         writeTo(process.stderr, f.line.endsWith("\n") ? f.line : `${f.line}
 `);
@@ -7698,6 +7766,7 @@ function thinMain(argv2) {
   const lost = (acks) => {
     mode = "attaching";
     replayIds.clear();
+    resuming.clear();
     gate.clear();
     const inFlight = flights.size;
     const again = verdictAll(
@@ -7778,14 +7847,9 @@ function thinMain(argv2) {
         } else cancelled.add(k);
       }
     }
-    if (lostWord && msg.method === "tools/call" && msg.id !== void 0 && msg.id !== null && msg.params?.name !== "iskron_stand")
-      return void writeHarness({
-        jsonrpc: "2.0",
-        id: msg.id,
-        result: { isError: true, content: [{ type: "text", text: lostWord }] }
-      });
     if (msg.method && msg.id !== void 0 && msg.id !== null) {
       verdicted.delete(key(msg.id));
+      cancelled.delete(key(msg.id));
       flights.set(key(msg.id), { id: msg.id, msg, acked: false });
     }
     dispatch2(msg);

@@ -34,7 +34,7 @@ export interface ChannelEvent {
   // held — мост взял сокет (питает holding плагина OpenCode, #5140); backlog — пачка побудки; lost — слух потерян, resumed — место возвращено без хода агента (оба синтезирует плагин, #5366);
   // handover — демон машины передаёт место преемнику: дверь закроется и откроется тем же путём, сторож переподхватывает её (watchdog/client.ts)
   // prettier-ignore
-  kind: "attached" | "frame" | "note" | "dead" | "alive" | "evicted" | "stale" | "released" | "held" | "backlog" | "lost" | "resumed" | "handover";
+  kind: "attached" | "frame" | "note" | "dead" | "alive" | "evicted" | "stale" | "released" | "held" | "backlog" | "lost" | "resumed" | "handover" | "beside" | "beside-gone";
   key?: string;
   raw?: string;
   frame?: Frame | null;

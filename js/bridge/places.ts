@@ -8,11 +8,13 @@
 import { type Frame } from "../shared/channel.ts";
 import { scoped } from "../shared/scope.ts";
 import { harnessName } from "./client.ts";
-import { Door, type DoorHooks } from "./door.ts";
+import { type ChannelEvent, Door, type DoorHooks } from "./door.ts";
 import { dropHoldRecord, keyOf, readHoldRecord, writeHoldRecord } from "./holdrecord.ts";
+import { handoverReason } from "./holdstate.ts";
 import { normKarta, normName } from "./names.ts";
 import { canonRealm, learnRealm, sameRealm } from "./realms.ts";
 import { standingLog } from "./store.ts";
+import { emit } from "./streams.ts";
 import { type Standing, state } from "./transport.ts";
 
 export interface Place {
@@ -81,8 +83,23 @@ export function addExtra(s: Standing, ch: Channel, hooks: DoorHooks): string {
   extras.set(key, place);
   writeRecord(place, ch);
   standingLog(`held ${key} beside the channel`);
+  besideWord({
+    kind: "beside",
+    key,
+    place: { realm: s.realm, karta: String(s.karta), name: s.name ?? "" },
+  });
   return key;
 }
+
+// Слово харнесу о месте рядом (beside, beside-gone): по нему тонкий мост знает места
+// сессии — при смене демона они теряются громко (lostplaces.ts). Не held и не released:
+// те — об основном месте, и плагин OpenCode судит по ним о держании.
+const besideWord = (data: ChannelEvent): void =>
+  emit({
+    jsonrpc: "2.0",
+    method: "notifications/message",
+    params: { level: "info", logger: "iskron-channel", data },
+  });
 
 /** Канал сменил адреса (переоткрыт тем же местом): записи мест рядом — за ним. */
 export function repointExtras(ch: Channel): void {
@@ -106,6 +123,8 @@ export function dropExtra(key: string, reason: string, forget: boolean): void {
     state.places = state.places.filter((s) => keyOfPlace(s) !== key);
   }
   standingLog(`released ${key}: ${reason}${forget ? " (record dropped)" : ""}`);
+  // Смена демона снимает места не по слову агента: тонкий мост должен их помнить.
+  if (!handoverReason()) besideWord({ kind: "beside-gone", key, text: reason });
 }
 
 export function dropAllExtras(reason: string, forget: boolean): void {

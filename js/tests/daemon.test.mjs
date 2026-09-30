@@ -574,14 +574,108 @@ test("a place that did not come back after the daemon change refuses every call 
         assert.match(textOf(refused), /не вернулось после смены демона машины/);
       }
       assert.equal(fake.state.writes.length, before, "no refused write went out");
-      const again = await stand(a, args);
-      assert.ok(!again.result?.isError, textOf(again));
-      const ok = await write(a, "signed");
-      assert.ok(ok.result && !ok.result.isError, JSON.stringify(ok));
+      // Ревью #280, круг 3: место в другом графе отказа потерянного не снимает.
+      const other = await stand(a, { realm: "drugoy", karta: 48, name: "other-b" });
+      assert.ok(!other.result?.isError, textOf(other));
+      const still = await write(a, "x-3");
+      assert.equal(
+        still.result?.isError,
+        true,
+        `after a stand elsewhere: ${JSON.stringify(still)}`,
+      );
+      assert.match(textOf(still), /не вернулось после смены демона машины/);
+      const there = await a.request("tools/call", {
+        name: "iskron_add_phenomenon",
+        arguments: { realm: "drugoy", name: "в другом графе" },
+      });
+      assert.ok(
+        there.result && !there.result.isError,
+        `the other graph is free: ${JSON.stringify(there)}`,
+      );
+      assert.equal(fake.state.writes.length, before + 1, "only the other graph's write went out");
       assert.equal(fake.state.counts.unattributed, 0, JSON.stringify(fake.state.writes));
     } finally {
       d.cleanup();
     }
+  });
+});
+
+// Ревью #280, круг 3: место рядом в другом графе смену демона не переживает —
+// громко: уведомление lost по нему и отказ записей в его граф до iskron_stand там.
+test("a beside seat lost in the daemon change is said and its graph refused until iskron_stand there", async () => {
+  await withFake(async ({ fake, dir, bridge }) => {
+    const d = await updatableDaemon(dir);
+    try {
+      const a = bridge({});
+      await handshake(a);
+      const ra = await stand(a, { realm: "nks-dev", karta: 931, name: "main-a" });
+      assert.ok(!ra.result?.isError, textOf(ra));
+      const besideArgs = { realm: "drugoy", karta: 48, name: "main-a" };
+      const rb = await stand(a, besideArgs);
+      assert.ok(!rb.result?.isError, `beside: ${textOf(rb)}`);
+      await waitFor("the beside word", () =>
+        a.notifications.some((n) => n.params?.data?.kind === "beside"),
+      );
+      d.bump();
+      await waitFor(
+        "the lost word for the beside seat",
+        () =>
+          a.notifications.some(
+            (n) => n.params?.data?.kind === "lost" && /drugoy/.test(n.params?.data?.key ?? ""),
+          ),
+        30_000,
+      );
+      const before = fake.state.writes.length;
+      for (const name of ["b-1", "b-2"]) {
+        const refused = await a.request("tools/call", {
+          name: "iskron_add_phenomenon",
+          arguments: { realm: "drugoy", name },
+        });
+        assert.equal(refused.result?.isError, true, `${name}: ${JSON.stringify(refused)}`);
+        assert.match(textOf(refused), /граф drugoy\) не вернулось после смены демона/);
+      }
+      assert.equal(fake.state.writes.length, before, "no refused write went out");
+      const main = await write(a, "main");
+      assert.ok(
+        main.result && !main.result.isError,
+        `the main seat came back: ${JSON.stringify(main)}\n${JSON.stringify(a.notifications.map((n) => n.params?.data?.kind + ":" + (n.params?.data?.key ?? "") + ":" + JSON.stringify(n.params?.data?.place ?? null)))}\n${a.stderr}`,
+      );
+      const again = await stand(a, besideArgs);
+      assert.ok(!again.result?.isError, textOf(again));
+      const there = await a.request("tools/call", {
+        name: "iskron_add_phenomenon",
+        arguments: { realm: "drugoy", name: "снова" },
+      });
+      assert.ok(there.result && !there.result.isError, JSON.stringify(there));
+      assert.equal(fake.state.counts.unattributed, 0, JSON.stringify(fake.state.writes));
+    } finally {
+      d.cleanup();
+    }
+  });
+});
+
+// Ревью #280, круг 3: отмена помнится только до ack или ответа — повторный id после
+// отменённого не глотается при следующем обрыве.
+test("a cancelled id reused later is sent again after a break, not swallowed", async () => {
+  await withFake(async ({ dir, bridge }) => {
+    const b = bridge({});
+    await handshake(b);
+    const [first] = await waitFor("the daemon", () => daemonPids(dir)[0] && daemonPids(dir));
+    const orient = { name: "iskron_orient", arguments: {} };
+    // Отмена, пока приём не подтверждён; демон оживает — вызов принят и отвечен.
+    process.kill(first, "SIGSTOP");
+    const answered = b.request("tools/call", orient, 70);
+    b.send({ jsonrpc: "2.0", method: "notifications/cancelled", params: { requestId: 70 } });
+    await new Promise((r) => setTimeout(r, 200));
+    process.kill(first, "SIGCONT");
+    await answered;
+    // Тот же id снова — и обрыв до ack: вызов уходит новому демону.
+    process.kill(first, "SIGSTOP");
+    const again = b.request("tools/call", orient, 70);
+    await new Promise((r) => setTimeout(r, 300));
+    process.kill(first, "SIGKILL");
+    const reply = await again;
+    assert.ok(reply.result && !reply.error, `the reused id is answered: ${JSON.stringify(reply)}`);
   });
 });
 
