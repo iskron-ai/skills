@@ -1,6 +1,8 @@
 // doctor — одна команда на машине пользователя, отвечающая «какая сборка стоит
-// и работает ли она». Читает и не пишет: ни в хранилище гранта, ни в лог.
+// и работает ли она». Сам читает и не пишет: ни в хранилище гранта, ни в лог.
 // Каждая строка — факт, наблюдённый здесь и сейчас, с названным путём.
+// Исключение одно — проба моста-спутника в разделе «субагенты»: это запуск
+// самого моста, и пишет он то, что пишет мост (кэш ответа сервера, обновлённый грант).
 import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -25,6 +27,7 @@ import { homeBridgePath } from "../shared/home.ts";
 import { compareVersions } from "../shared/semver.ts";
 import { VERSION, versionIn } from "../shared/version.ts";
 import { openCodeMcpEntries } from "./opencode-config.ts";
+import { subagentsReport } from "./subagents.ts";
 
 const out = (s: string): void => {
   process.stdout.write(s + "\n");
@@ -386,4 +389,5 @@ export async function runDoctor(argv: string[]): Promise<void> {
   if (CFG.pat) await patReport();
   else grantReport();
   harnessReport();
+  await subagentsReport(out);
 }

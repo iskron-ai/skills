@@ -23,169 +23,28 @@
 //                  ISKRON_BRIDGE_RESOURCE (override the resource indicator / audience),
 //                  ISKRON_BRIDGE_CLIENT_ID,
 //                  ISKRON_BRIDGE_TOKEN (a personal access token: no OAuth at all; the
-//                  file <auth-dir>/token is read when the variable is absent)
+//                  file <auth-dir>/token is read when the variable is absent),
+//                  ISKRON_BRIDGE_DAEMON=1 (тонкий мост к демону машины, thin.ts; по
+//                  умолчанию выключено), ISKRON_BRIDGE_NO_DAEMON=1 (полный мост всегда)
 //
 // No dependencies. Node >= 22.
-import { createInterface } from "node:readline";
-
-import { startTokenKeepalive } from "./auth.ts";
-import { BUILD } from "./build.ts";
-import { CFG, parseArgs, setConfig } from "./config.ts";
-import { deliver } from "./deliver.ts";
-import { errorMessage } from "./errors.ts";
-import { releaseStanding, statusAddress } from "./hold.ts";
-import { startDeafnessWatch } from "./leave.ts";
-import { installAuthLockExitHook } from "./oauth/authlock.ts";
-import { pendingFlow } from "./oauth/flow.ts";
-import { installRefreshLockExitHook } from "./oauth/refreshlock.ts";
-import { tokenRequestsInFlight } from "./oauth/tokenrequest.ts";
-import { holdFromEnv } from "./resume.ts";
-import { publishStatusTo } from "./status.ts";
-import { sleep, storePath } from "./store.ts";
-import { debug, flushStdout, guardStream, log } from "./streams.ts";
-import { type JsonRpcMessage } from "./types.ts";
-import { startFreshnessWatch } from "./update.ts";
-
-/** How long a bridge left by its harness still waits for a pending login's click. */
-const ORPHAN_FLOW_MS = Number(process.env.ISKRON_BRIDGE_ORPHAN_FLOW_MS) || 5 * 60_000;
-
-// Прокси корпоративной сети: Bun читает HTTP(S)_PROXY сам, Node — только с
-// 24.5 и под NODE_USE_ENV_PROXY=1 (граф nks-dev: #4717, развилка для Node 22 —
-// #4718). Идти мимо заданного прокси молча — значит упираться в сетевой отказ
-// без причины, поэтому мост говорит рычаг на старте.
-export function proxyWord(): string | null {
-  const env = process.env;
-  const proxy = env.HTTPS_PROXY || env.https_proxy || env.HTTP_PROXY || env.http_proxy;
-  if (!proxy || process.versions.bun) return null;
-  const [major = 0, minor = 0] = process.versions.node.split(".").map(Number);
-  const reads = major > 24 || (major === 24 && minor >= 5);
-  const flags = [...process.execArgv, ...(env.NODE_OPTIONS ?? "").split(/\s+/)]; // NODE_OPTIONS flags are not in execArgv
-  const on = env.NODE_USE_ENV_PROXY === "1" || flags.includes("--use-env-proxy");
-  if (reads && on) return null;
-  return reads
-    ? "a proxy is set (HTTP(S)_PROXY), but Node reads it only under NODE_USE_ENV_PROXY=1 — " +
-        "add that variable to the bridge's env in the harness config; until then calls go around the proxy"
-    : `a proxy is set (HTTP(S)_PROXY), but Node ${process.versions.node} does not read it at all — ` +
-        "Node 24.5+ with NODE_USE_ENV_PROXY=1 or the Bun runtime does; until then calls go around the proxy";
-}
+import { parseArgs } from "./config.ts";
+import { fullBridgeSigint, installCrashWords, startEngine } from "./engine.ts";
+import { openSession } from "./session.ts";
+import { guardStream } from "./streams.ts";
+import { daemonWanted, thinMain } from "./thin.ts";
 
 export function bridgeMain(argv: string[]): void {
   guardStream(process.stdout); // before the first write: a broken pipe is news, not a crash
   guardStream(process.stderr);
-  setConfig(parseArgs(argv));
-  installAuthLockExitHook();
-  installRefreshLockExitHook();
-  log(
-    `${BUILD} -> ${CFG.serverUrl} (timeout ${CFG.timeoutMs}ms, ${
-      CFG.pat ? `personal access token from ${CFG.patSource}` : `auth in ${storePath()}`
-    })`,
-  );
-  const proxy = proxyWord();
-  if (proxy) log(proxy);
-  startTokenKeepalive();
-  startFreshnessWatch(CFG.authDir, CFG.serverUrl); // отставание поставки — слово моста, не память человека
-  holdFromEnv(); // сокет из окружения без connect (отладка) либо возврат места по каталогу сессии (#5140)
-  // Никто не слушает — мост уходит с места сам (#4895). Спутник сторожа не держит
-  // по устройству: его место подписывает записи прогона, и уход по глухоте погасил бы его посреди работы.
-  if (!CFG.satellite) startDeafnessWatch();
-
-  const rl = createInterface({ input: process.stdin, terminal: false });
-  const pending = new Set<Promise<void>>();
-  let handshake: Promise<void> | null = null;
-  rl.on("line", (line) => {
-    const trimmed = line.trim();
-    if (!trimmed) return;
-    let msg: JsonRpcMessage;
-    try {
-      msg = JSON.parse(trimmed) as JsonRpcMessage;
-    } catch {
-      log(`unparseable line from harness: ${trimmed.slice(0, 120)}`);
-      return;
-    }
-    // Конвейерный клиент (скрипт, сторож, отправитель из оболочки) шлёт
-    // initialized и первый вызов, не дождавшись ответа на initialize; сервер без
-    // Mcp-Session-Id отвечает 400 (граф nks-dev: #4308). Настоящие клиенты ждут —
-    // мост ждёт за тех, кто не ждёт: всё, что пришло, пока рукопожатие в полёте,
-    // уходит после него, в порядке прихода.
-    const run = () =>
-      deliver(msg).catch((e) => log(`unexpected: ${(e as Error)?.stack || errorMessage(e)}`));
-    let p: Promise<void>;
-    if (msg.method === "initialize") {
-      p = run();
-      handshake = p;
-      p.finally(() => {
-        if (handshake === p) handshake = null;
-      });
-    } else if (handshake) {
-      const gate = handshake;
-      p = gate.then(run, run);
-    } else p = run();
-    pending.add(p);
-    p.finally(() => pending.delete(p));
-  });
-  // A human may be mid-click on OUR authorize URL: dying now kills the callback
-  // server and silently loses their login, and the click is not repeatable —
-  // the human sees a browser error, not a retry. So a bridge asked to go away
-  // outlives a pending flow, and a token rotation already in flight must land
-  // on disk before exit; each request's own timeout bounds the wait. A harness
-  // that will not wait that long may kill us outright. That is survivable for
-  // the browser flow: the next bridge finds no listener on the callback port
-  // and takes the flow over. It is NOT survivable for an in-flight rotation:
-  // the killed bridge leaves the machine holding a retired refresh token. That
-  // is the price SIGKILL always pays; SIGTERM, stdin-close, and SIGINT no longer do.
-  // Уход один на процесс: харнес, гася мост, закрывает stdin И шлёт SIGTERM, и
-  // второй уход выходил из процесса, не дождавшись, пока первый снимет
-  // занятость с доски (#5140, D1). Кто пришёл вторым — ждёт первого.
-  let leaving: Promise<void> | null = null;
-  const leave = (why: string): Promise<void> => (leaving ??= windDown(why));
-  const windDown = async (why: string) => {
-    debug(`${why} — winding down`);
-    // Занятость — слово ушедшего делателя: с концом сессии она снимается, иначе
-    // доска показывает занятого там, где никого нет (#4895). Сокет и .key
-    // отпускаются ПЕРВЫМИ: харнес, убивающий мост по короткой отсрочке, не должен
-    // застать его в сетевом вызове с живым ключом — сторож ушёл бы на мёртвый сокет.
-    const addr = statusAddress();
-    // Сокет стояния живёт ровно столько, сколько сессия; у спутника — и записи держания нет: возврата с диска у него не бывает.
-    releaseStanding(why, CFG.satellite);
-    if (addr) await publishStatusTo(addr.url, "", 3000).catch(() => {});
-    await Promise.allSettled([...pending, ...tokenRequestsInFlight]);
-    await flushStdout(); // an answer half-written is an answer not given
-    const flow = pendingFlow();
-    if (flow) {
-      // The login has no deadline while a harness holds us; once it is gone,
-      // the click is waited for only so long — nothing is left hanging forever.
-      log(
-        `${why}, but an authorization flow is pending — staying up for the human's click, ` +
-          `at most ${Math.round(ORPHAN_FLOW_MS / 1000)}s`,
-      );
-      await Promise.race([flow.catch(() => {}), sleep(ORPHAN_FLOW_MS)]);
-    }
-    await Promise.allSettled([...tokenRequestsInFlight]); // a tick may have started one while we waited
-    await flushStdout();
-    process.exit(0);
-  };
-  rl.on("close", () => void leave("stdin closed, the harness is gone"));
-  process.on("SIGTERM", () => void leave("SIGTERM"));
-  // Ctrl-C is the one exception — someone is at the terminal, wanting out. Even
-  // so, a rotation already in flight is written down first: the wait is bounded
-  // by the request's own deadline and is usually well under a second, while
-  // leaving without it costs the whole machine its grant (graph @nks/nks-dev,
-  // node #4170). A second Ctrl-C leaves at once — the human has said it twice.
-  let interrupted = false;
-  process.on("SIGINT", () => {
-    const addr = statusAddress();
-    releaseStanding("SIGINT"); // иначе .key переживает мост и уводит сторожа без ключа на мёртвый сокет
-    if (interrupted) process.exit(0);
-    interrupted = true;
-    // Занятость снимается и здесь — коротко, второй Ctrl-C выходит сразу.
-    const clearing = addr ? publishStatusTo(addr.url, "", 2000).catch(() => {}) : null;
-    if (!clearing && tokenRequestsInFlight.size === 0) process.exit(0);
-    Promise.allSettled([...tokenRequestsInFlight, ...(clearing ? [clearing] : [])]).then(() =>
-      process.exit(0),
-    );
-  });
-  process.on("uncaughtException", (e) => log(`uncaught: ${e?.stack || e}`));
-  process.on("unhandledRejection", (e) =>
-    log(`unhandled rejection: ${(e as Error)?.stack || String(e)}`),
-  );
+  if (daemonWanted()) {
+    thinMain(argv);
+    return;
+  }
+  startEngine(parseArgs(argv));
+  const session = openSession({ input: process.stdin, output: process.stdout });
+  void session.ended.then(() => process.exit(0));
+  process.on("SIGTERM", () => void session.leave("SIGTERM"));
+  process.on("SIGINT", fullBridgeSigint());
+  installCrashWords();
 }

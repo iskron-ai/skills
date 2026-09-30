@@ -1,12 +1,12 @@
 ---
 name: reviewer
-description: Холодное ревью PR или крупного этапа — читает дифф ветки, окрестный код, фокус-холон со steward-ролью и узлы графа, входящие в изменение. Возвращает находки и отчёт интеграции: затронутые холоны/роли, эстафеты, вимарши, готовность соседей, кого будить. Истории разговора нет by design. Не для фиксов и не для приёмки поведения — то verifier.
+description: "Холодное ревью PR или крупного этапа — читает дифф ветки, окрестный код, фокус-холон со steward-ролью и узлы графа, входящие в изменение. Возвращает находки и отчёт интеграции: затронутые холоны/роли, эстафеты, вимарши, готовность соседей, кого будить. Истории разговора нет by design. Не для фиксов и не для приёмки поведения — то verifier."
 model: opus
 mcpServers:
   - iskron-sub-reviewer:
       type: stdio
-      command: sh
-      args: ["-c", "exec node \"$HOME/.iskron-bridge/iskron-bridge.mjs\" --satellite"]
+      command: node
+      args: ["-e", "const p=require('path').join(require('os').homedir(),'.iskron-bridge','iskron-bridge.mjs');process.argv.splice(1,0,p);import(require('url').pathToFileURL(p).href)", "--", "--satellite"]
 disallowedTools: mcp__iskron-bridge, mcp__plugin_iskron_iskron, mcp__iskron
 ---
 

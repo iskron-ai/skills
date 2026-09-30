@@ -7,7 +7,8 @@
 //   node iskron.mjs doctor [server-url] [flags]     какая сборка стоит и работает ли она
 //   node iskron.mjs update [--auth-dir <dir>]       свежий релиз в дом: мост, плагин OpenCode, SETUP.md
 //   node iskron.mjs use <en|ru|url> [--auth-dir <dir>]  постоянный выбор адреса сервера на этой машине
-//   node iskron.mjs --version                       сборка vX.Y.Z+хеш
+//   node iskron.mjs daemon --auth-dir <dir>         демон машины для тонких мостов (следующий шаг; здесь — отказ)
+//   node iskron.mjs --version                       сборка vX.Y.Z+хеш (при ISKRON_BRIDGE_DAEMON=1 — и сборка демона)
 //
 // Каждый долгоживущий запуск (мост, сторожа) сперва выравнивает дом: своя
 // сборка новее домашней — ложится в дом; домашняя новее — запускается она
@@ -19,6 +20,7 @@
 // каким бы именем ни лежала копия.
 import { BUILD } from "../bridge/build.ts";
 import { bridgeMain } from "../bridge/main.ts";
+import { versionLines } from "../bridge/thin.ts";
 import { reexec, syncHome, updatesDisabled } from "../bridge/update.ts";
 import { runWatchdogCodex } from "../watchdog/codex.ts";
 import { runWatchdog } from "../watchdog/watchdog.ts";
@@ -83,8 +85,15 @@ function dispatch(): void {
     case "bridge":
       bridgeMain(rest);
       break;
+    case "daemon":
+      // Демон машины (шов — shared/seam.ts, seam-host.ts) приходит следующим
+      // шагом; эта сборка его не несёт, и тонкий мост, не дождавшись, идёт полным.
+      process.stderr.write(`[iskron-bridge] ${BUILD}: the machine daemon is not in this build\n`);
+      process.exit(3);
+      break;
     case "--version":
-      process.stdout.write(BUILD + "\n");
+      // При тонком мосте — и сборка демона своего каталога гранта, второй строкой.
+      void versionLines(rest).then((lines) => process.stdout.write(lines.join("\n") + "\n"));
       break;
     case "--help":
     case "-h":

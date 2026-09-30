@@ -5,8 +5,8 @@ model: sonnet
 mcpServers:
   - iskron-sub-searcher:
       type: stdio
-      command: sh
-      args: ["-c", "exec node \"$HOME/.iskron-bridge/iskron-bridge.mjs\" --satellite"]
+      command: node
+      args: ["-e", "const p=require('path').join(require('os').homedir(),'.iskron-bridge','iskron-bridge.mjs');process.argv.splice(1,0,p);import(require('url').pathToFileURL(p).href)", "--", "--satellite"]
 disallowedTools: mcp__iskron-bridge, mcp__plugin_iskron_iskron, mcp__iskron
 ---
 
