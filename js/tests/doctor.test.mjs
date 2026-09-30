@@ -613,15 +613,129 @@ test("doctor: on Windows an sh-launched satellite is named, with a ready entry o
     assert.match(r.out, /на Windows sh нет/, `sh on Windows must be a finding: ${r.out}`);
     const bridge = JSON.stringify(join(home, ".iskron-bridge", "iskron-bridge.mjs"));
     assert.ok(
-      r.out.includes(`mcpServers: [{"iskron-sub-worker": {"type": "stdio", "command": `) &&
-        r.out.includes(`"args": [${bridge}, "--satellite"]}}]`),
-      `the ready entry must carry the absolute home bridge path: ${r.out}`,
+      r.out.includes("      mcpServers:\n        - iskron-sub-worker:\n") &&
+        r.out.includes(`        args: [${bridge}, "--satellite"]\n`),
+      `the ready block must carry the absolute home bridge path: ${r.out}`,
     );
-    assert.doesNotMatch(
-      r.out,
-      /mcpServers: \[\{"iskron-sub-worker": \{"type": "stdio", "command": "sh"/,
-      "the ready entry on Windows must not be the sh form",
+    assert.doesNotMatch(r.out, / {8}command: sh\n/, "the ready block on Windows must not be sh");
+    assert.match(r.out, /--no-skip-worktree|\.git\/info\/exclude/, "the way out must be named");
+  } finally {
+    await fake.stop();
+  }
+});
+
+// Готовый блок, снятый с вывода doctor и вставленный в файл, на повторе не даёт
+// ни одной строки «НАДО:» — на обеих формах, и многострочное описание (`|`)
+// не обрывает разбор фронтматтера.
+for (const platform of ["darwin", "win32"]) {
+  test(`doctor: the ready block pasted back gives no findings on a rerun (${platform})`, async () => {
+    const fake = await startFakeNks({ pat: "nks_pat_rt" });
+    const home = mkdtempSync(join(tmpdir(), "iskron-doctor-"));
+    const homeBridge = join(home, ".iskron-bridge", "iskron-bridge.mjs");
+    mkdirSync(dirname(homeBridge), { recursive: true });
+    copyFileSync(FILE, homeBridge);
+    const head = ["---", "name: worker", "description: |", "  первая строка", "  вторая строка"];
+    const project = projectWithAgents({
+      worker: [...head, "model: sonnet", "---", "", "Тело.", ""].join("\n"),
+    });
+    const env = {
+      HOME: home,
+      ISKRON_DOCTOR_PLATFORM: platform,
+      ISKRON_BRIDGE_TOKEN: "nks_pat_rt",
+      ISKRON_BRIDGE_URL: fake.mcpUrl,
+      // Windows без sh: PATH пуст, doctor запущен абсолютным node.
+      ...(platform === "win32" ? { PATH: "" } : {}),
+    };
+    const args = ["doctor", fake.mcpUrl, "--auth-dir", join(home, ".iskron-bridge")];
+    try {
+      const first = await run(args, env, project);
+      assert.match(first.out, /записи моста-спутника нет/, first.out);
+      const lines = first.out.split("\n");
+      const at = lines.findIndex((l) => l.includes("записи моста-спутника нет"));
+      const block = [];
+      for (let k = at + 1; k < lines.length && lines[k].startsWith("      "); k++)
+        block.push(lines[k].slice(6));
+      assert.ok(block[0] === "mcpServers:", `the block must follow the finding: ${first.out}`);
+      writeFileSync(
+        join(project, ".claude", "agents", "worker.md"),
+        [...head, "model: sonnet", ...block, "---", "", "Тело.", ""].join("\n"),
+      );
+      const again = await run(args, env, project);
+      assert.equal(again.code, 0, again.err);
+      assert.doesNotMatch(again.out, /НАДО:/, `the pasted block must be clean: ${again.out}`);
+      assert.match(again.out, /проба «iskron-sub-worker»: мост ответил/, again.out);
+    } finally {
+      await fake.stop();
+    }
+  });
+}
+
+// Мост, не ушедший по закрытому stdin, получает SIGTERM и уходит сам — SIGKILL
+// посреди смены токена списал бы грант машины.
+test("doctor: a probed bridge that outlives stdin close is sent SIGTERM, not killed", async () => {
+  const fake = await startFakeNks();
+  const home = mkdtempSync(join(tmpdir(), "iskron-doctor-"));
+  const dir = mkdtempSync(join(tmpdir(), "iskron-doctor-stub-"));
+  const stub = join(dir, "iskron-stub.mjs");
+  const marker = join(dir, "term");
+  writeFileSync(
+    stub,
+    [
+      'import { writeFileSync } from "node:fs";',
+      'import { createInterface } from "node:readline";',
+      "const say = (m) => process.stdout.write(JSON.stringify(m) + '\\n');",
+      "createInterface({ input: process.stdin }).on('line', (l) => {",
+      "  const m = JSON.parse(l);",
+      "  if (m.method === 'initialize') say({ jsonrpc: '2.0', id: m.id, result: { serverInfo: { name: 'stub', version: '1' } } });",
+      "  if (m.method === 'tools/list') say({ jsonrpc: '2.0', id: m.id, result: { tools: [] } });",
+      "});",
+      "process.stdin.on('end', () => setInterval(() => {}, 1000));",
+      `process.on('SIGTERM', () => { writeFileSync(${JSON.stringify(marker)}, 'term'); process.exit(0); });`,
+    ].join("\n"),
+  );
+  const project = projectWithAgents({
+    worker: agentFile("worker", "iskron-sub-worker", [
+      "type: stdio",
+      `command: ${JSON.stringify(process.execPath)}`,
+      `args: [${JSON.stringify(stub)}, "--satellite"]`,
+    ]),
+  });
+  try {
+    const r = await run(
+      ["doctor", fake.mcpUrl, "--auth-dir", join(home, ".iskron-bridge")],
+      { HOME: home, ISKRON_DOCTOR_PLATFORM: "darwin" },
+      project,
     );
+    assert.match(r.out, /проба «iskron-sub-worker»: мост ответил — stub v1/, r.out);
+    assert.equal(readFileSync(marker, "utf8"), "term", "the bridge must be asked with SIGTERM");
+    assert.doesNotMatch(r.out, /SIGKILL/, r.out);
+  } finally {
+    await fake.stop();
+  }
+});
+
+// Субагент наследует и нативную http-запись на сервер графа — её тулы снимаются так же.
+test("doctor: an http entry on the graph server counts among the caller's bridges", async () => {
+  const fake = await startFakeNks();
+  const home = mkdtempSync(join(tmpdir(), "iskron-doctor-"));
+  writeFileSync(
+    join(home, ".claude.json"),
+    JSON.stringify({
+      mcpServers: {
+        "graph-http": { type: "http", url: "https://mcp.iskron.ru/" },
+        "чужой-http": { type: "http", url: "https://example.com/mcp" },
+      },
+    }),
+  );
+  const project = projectWithAgents({ worker: agentFile("worker", "iskron-sub-worker") });
+  try {
+    const r = await run(
+      ["doctor", fake.mcpUrl, "--auth-dir", join(home, ".iskron-bridge")],
+      { HOME: home, ISKRON_DOCTOR_PLATFORM: "darwin" },
+      project,
+    );
+    assert.match(r.out, /мосты позвавшего не сняты \(mcp__graph-http\)/, r.out);
+    assert.doesNotMatch(r.out, /mcp__чужой-http/, r.out);
   } finally {
     await fake.stop();
   }

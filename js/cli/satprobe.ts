@@ -6,6 +6,8 @@ import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 
 const PROBE_MS = Number(process.env.ISKRON_DOCTOR_PROBE_MS) || 30_000;
+/** Срок одного запроса пробного моста: столько он может ждать запрос в полёте, уходя. */
+const REQUEST_MS = 20_000;
 
 interface Reply {
   id?: unknown;
@@ -35,6 +37,7 @@ export async function probeSatellite(
     ISKRON_BRIDGE_NO_BROWSER: "1",
     ISKRON_BRIDGE_NO_UPDATE: "1",
     ISKRON_BRIDGE_ORPHAN_FLOW_MS: "1",
+    ISKRON_BRIDGE_TIMEOUT: e.env.ISKRON_BRIDGE_TIMEOUT ?? String(REQUEST_MS),
   };
   delete env.ISKRON_CHANNEL_SOCKET; // проба не держит чужого сокета
   delete env.ISKRON_CHANNEL_STATUS;
@@ -119,15 +122,31 @@ export async function probeSatellite(
         const bad = ["oneOf", "allOf", "anyOf"].filter((k) => t.inputSchema && k in t.inputSchema);
         if (bad.length)
           lines.push(
-            `  тул ${t.name}: схема несёт ${bad.join(", ")} на верхнем уровне — сервер отдаёт схему, которую API Anthropic отвергнет («input_schema does not support oneOf, allOf, or anyOf at the top level»), и падает весь прогон субагента, не один этот тул → чинит это сервер, не файл агента и не мост (мост отдаёт схему как есть): скажи владельцу графа имя тула и жди обновления сервера, затем повтори doctor`,
+            `  тул ${t.name}: схема несёт ${bad.join(", ")} на верхнем уровне — сервер отдаёт схему, которую API Anthropic отвергнет («input_schema does not support oneOf, allOf, or anyOf at the top level»), и падает весь прогон субагента, не один этот тул → чинит это сервер, не файл агента и не мост (мост отдаёт схему как есть): скажи имя тула оператору сервера MCP — тому, кто держит адрес из строки «сервер» выше, — и жди его обновления, затем повтори doctor`,
           );
       }
     }
   }
-  child.stdin.end();
+  // Уход — вежливо: закрытый stdin и SIGTERM мост отрабатывает сам и перед выходом
+  // дожидается запросов в полёте, в том числе смены токена, — SIGKILL посреди неё
+  // оставил бы машину со списанным refresh-токеном. Поэтому SIGKILL — только мосту,
+  // который не ушёл и после SIGTERM за срок своего запроса, и об этом строка.
   const gone = new Promise<void>((res) => (exited ? res() : child.once("exit", () => res())));
-  // Таймер отпущен: иначе doctor ждал бы его, и мост, ушедший сразу, стоил бы пять секунд.
-  await Promise.race([gone, new Promise((res) => setTimeout(res, 5000).unref())]);
-  if (!exited) child.kill("SIGKILL");
+  // Таймеры отпущены: мост, ушедший сразу, не держит doctor лишние секунды.
+  const within = (ms: number) =>
+    Promise.race([
+      gone.then(() => true),
+      new Promise<boolean>((res) => setTimeout(() => res(false), ms).unref()),
+    ]);
+  child.stdin.end();
+  if (!(await within(10_000))) {
+    child.kill("SIGTERM");
+    if (!(await within(REQUEST_MS + 10_000))) {
+      child.kill("SIGKILL");
+      lines.push(
+        `проба «${label}»: мост не ушёл ни по закрытому stdin, ни по SIGTERM за ${Math.round((REQUEST_MS + 20_000) / 1000)}s — снят SIGKILL; если он менял токен, повтори doctor: вход может понадобиться заново`,
+      );
+    }
+  }
   return lines;
 }

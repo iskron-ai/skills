@@ -1,6 +1,7 @@
 // Фронтматтер файла агента — подмножество YAML, которым такие файлы пишут:
-// карты, блочные списки (в том числе `- имя:` с картой под ним), списки в
-// скобках, строки в двойных и одинарных кавычках, голые скаляры. Полный YAML
+// карты, блочные списки (в том числе `- имя:` с картой под ним), списки и карты
+// в скобках, строки в двойных и одинарных кавычках, голые скаляры, в том числе
+// многострочные (`|`, `>` и продолжение с большим отступом). Полный YAML
 // doctor не нужен: ему надо прочесть mcpServers и disallowedTools так, как их
 // пишет проекция iskronify и как их правит человек руками. Непрочитанное
 // остаётся строкой — doctor говорит о том, что прочёл, а не угадывает.
@@ -21,10 +22,18 @@ export function frontmatterText(file: string): string | null {
   return end < 0 ? null : lines.slice(1, end).join("\n");
 }
 
-/** Скаляр или список в скобках — значение, стоящее в строке после `ключ:`. */
+/** Скаляр, список или карта в скобках — значение, стоящее в строке после `ключ:`. */
 export function parseScalar(raw: string): YamlValue {
   const s = raw.trim();
   if (s.startsWith("[") && s.endsWith("]")) return splitFlow(s.slice(1, -1)).map(parseScalar);
+  if (s.startsWith("{") && s.endsWith("}")) {
+    const out: Record<string, YamlValue> = {};
+    for (const part of splitFlow(s.slice(1, -1))) {
+      const m = KEY.exec(part);
+      if (m) out[unquoteKey(m[1].trim())] = m[2] === undefined ? null : parseScalar(m[2]);
+    }
+    return out;
+  }
   if (s.startsWith('"')) {
     try {
       return JSON.parse(s) as string;
@@ -65,7 +74,8 @@ function splitFlow(body: string): string[] {
   return parts;
 }
 
-const KEY = /^("[^"]*"|'[^']*'|[^\s"'#-][^:]*?|-[^\s:][^:]*?)\s*:(?:\s+(.*))?$/;
+const KEY = /^("[^"]*"|'[^']*'|[^\s"'#{[-][^:]*?|-[^\s:][^:]*?)\s*:(?:\s+(.*))?$/;
+const BLOCK_SCALAR = /^[|>][-+0-9]*$/;
 
 const unquoteKey = (k: string): string =>
   (k.startsWith('"') && k.endsWith('"')) || (k.startsWith("'") && k.endsWith("'"))
@@ -83,6 +93,16 @@ export function parseFrontmatter(text: string): Record<string, YamlValue> {
   let i = 0;
   const isItem = (l: Line) => l.text === "-" || l.text.startsWith("- ");
 
+  // Значение в строке и его продолжение: строки глубже владельца значения —
+  // тело блочного скаляра (`|`, `>`) или перенос голого, а не новые ключи.
+  const scalarAt = (raw: string, owner: number): YamlValue => {
+    const more: string[] = [];
+    while (i < lines.length && lines[i].indent > owner) more.push(lines[i++].text);
+    const head = raw.trim();
+    if (BLOCK_SCALAR.test(head)) return more.join(head.startsWith("|") ? "\n" : " ");
+    return more.length ? [head, ...more].join(" ") : parseScalar(head);
+  };
+
   const block = (indent: number): YamlValue => {
     const first = lines[i];
     if (!first || first.indent < indent) return null;
@@ -94,9 +114,12 @@ export function parseFrontmatter(text: string): Record<string, YamlValue> {
     while (i < lines.length && lines[i].indent === indent && !isItem(lines[i])) {
       const m = KEY.exec(lines[i].text);
       i++;
-      if (!m) continue;
+      if (!m) {
+        while (i < lines.length && lines[i].indent > indent) i++; // непрочитанное — целиком
+        continue;
+      }
       const key = unquoteKey(m[1].trim());
-      if (m[2] !== undefined && m[2].trim() !== "") outMap[key] = parseScalar(m[2]);
+      if (m[2] !== undefined && m[2].trim() !== "") outMap[key] = scalarAt(m[2], indent);
       else {
         const next = lines[i];
         // `ключ:` и список под ним на том же отступе — законная форма YAML.
@@ -126,7 +149,7 @@ export function parseFrontmatter(text: string): Record<string, YamlValue> {
         continue;
       }
       i++;
-      items.push(parseScalar(content));
+      items.push(scalarAt(content, indent));
     }
     return items;
   };

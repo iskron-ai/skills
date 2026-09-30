@@ -7047,6 +7047,14 @@ function frontmatterText(file) {
 function parseScalar(raw) {
   const s2 = raw.trim();
   if (s2.startsWith("[") && s2.endsWith("]")) return splitFlow(s2.slice(1, -1)).map(parseScalar);
+  if (s2.startsWith("{") && s2.endsWith("}")) {
+    const out5 = {};
+    for (const part of splitFlow(s2.slice(1, -1))) {
+      const m = KEY.exec(part);
+      if (m) out5[unquoteKey(m[1].trim())] = m[2] === void 0 ? null : parseScalar(m[2]);
+    }
+    return out5;
+  }
   if (s2.startsWith('"')) {
     try {
       return JSON.parse(s2);
@@ -7084,7 +7092,8 @@ function splitFlow(body) {
   if (cur.trim()) parts.push(cur.trim());
   return parts;
 }
-var KEY = /^("[^"]*"|'[^']*'|[^\s"'#-][^:]*?|-[^\s:][^:]*?)\s*:(?:\s+(.*))?$/;
+var KEY = /^("[^"]*"|'[^']*'|[^\s"'#{[-][^:]*?|-[^\s:][^:]*?)\s*:(?:\s+(.*))?$/;
+var BLOCK_SCALAR = /^[|>][-+0-9]*$/;
 var unquoteKey = (k) => k.startsWith('"') && k.endsWith('"') || k.startsWith("'") && k.endsWith("'") ? k.slice(1, -1) : k;
 function parseFrontmatter(text) {
   const lines = [];
@@ -7095,6 +7104,13 @@ function parseFrontmatter(text) {
   }
   let i = 0;
   const isItem = (l) => l.text === "-" || l.text.startsWith("- ");
+  const scalarAt = (raw, owner) => {
+    const more = [];
+    while (i < lines.length && lines[i].indent > owner) more.push(lines[i++].text);
+    const head = raw.trim();
+    if (BLOCK_SCALAR.test(head)) return more.join(head.startsWith("|") ? "\n" : " ");
+    return more.length ? [head, ...more].join(" ") : parseScalar(head);
+  };
   const block = (indent) => {
     const first2 = lines[i];
     if (!first2 || first2.indent < indent) return null;
@@ -7105,9 +7121,12 @@ function parseFrontmatter(text) {
     while (i < lines.length && lines[i].indent === indent && !isItem(lines[i])) {
       const m = KEY.exec(lines[i].text);
       i++;
-      if (!m) continue;
+      if (!m) {
+        while (i < lines.length && lines[i].indent > indent) i++;
+        continue;
+      }
       const key = unquoteKey(m[1].trim());
-      if (m[2] !== void 0 && m[2].trim() !== "") outMap[key] = parseScalar(m[2]);
+      if (m[2] !== void 0 && m[2].trim() !== "") outMap[key] = scalarAt(m[2], indent);
       else {
         const next = lines[i];
         outMap[key] = next && (next.indent > indent || next.indent === indent && isItem(next)) ? block(next.indent) : null;
@@ -7131,7 +7150,7 @@ function parseFrontmatter(text) {
         continue;
       }
       i++;
-      items.push(parseScalar(content));
+      items.push(scalarAt(content, indent));
     }
     return items;
   };
@@ -7143,6 +7162,7 @@ function parseFrontmatter(text) {
 import { spawn as spawn3 } from "node:child_process";
 import { createInterface as createInterface2 } from "node:readline";
 var PROBE_MS = Number(process.env.ISKRON_DOCTOR_PROBE_MS) || 3e4;
+var REQUEST_MS = 2e4;
 async function probeSatellite(label, e, cwd) {
   const lines = [];
   const env2 = {
@@ -7150,7 +7170,8 @@ async function probeSatellite(label, e, cwd) {
     ...e.env,
     ISKRON_BRIDGE_NO_BROWSER: "1",
     ISKRON_BRIDGE_NO_UPDATE: "1",
-    ISKRON_BRIDGE_ORPHAN_FLOW_MS: "1"
+    ISKRON_BRIDGE_ORPHAN_FLOW_MS: "1",
+    ISKRON_BRIDGE_TIMEOUT: e.env.ISKRON_BRIDGE_TIMEOUT ?? String(REQUEST_MS)
   };
   delete env2.ISKRON_CHANNEL_SOCKET;
   delete env2.ISKRON_CHANNEL_STATUS;
@@ -7231,15 +7252,26 @@ async function probeSatellite(label, e, cwd) {
         const bad = ["oneOf", "allOf", "anyOf"].filter((k) => t.inputSchema && k in t.inputSchema);
         if (bad.length)
           lines.push(
-            `  тул ${t.name}: схема несёт ${bad.join(", ")} на верхнем уровне — сервер отдаёт схему, которую API Anthropic отвергнет («input_schema does not support oneOf, allOf, or anyOf at the top level»), и падает весь прогон субагента, не один этот тул → чинит это сервер, не файл агента и не мост (мост отдаёт схему как есть): скажи владельцу графа имя тула и жди обновления сервера, затем повтори doctor`
+            `  тул ${t.name}: схема несёт ${bad.join(", ")} на верхнем уровне — сервер отдаёт схему, которую API Anthropic отвергнет («input_schema does not support oneOf, allOf, or anyOf at the top level»), и падает весь прогон субагента, не один этот тул → чинит это сервер, не файл агента и не мост (мост отдаёт схему как есть): скажи имя тула оператору сервера MCP — тому, кто держит адрес из строки «сервер» выше, — и жди его обновления, затем повтори doctor`
           );
       }
     }
   }
-  child.stdin.end();
   const gone = new Promise((res) => exited ? res() : child.once("exit", () => res()));
-  await Promise.race([gone, new Promise((res) => setTimeout(res, 5e3).unref())]);
-  if (!exited) child.kill("SIGKILL");
+  const within = (ms) => Promise.race([
+    gone.then(() => true),
+    new Promise((res) => setTimeout(() => res(false), ms).unref())
+  ]);
+  child.stdin.end();
+  if (!await within(1e4)) {
+    child.kill("SIGTERM");
+    if (!await within(REQUEST_MS + 1e4)) {
+      child.kill("SIGKILL");
+      lines.push(
+        `проба «${label}»: мост не ушёл ни по закрытому stdin, ни по SIGTERM за ${Math.round((REQUEST_MS + 2e4) / 1e3)}s — снят SIGKILL; если он менял токен, повтори doctor: вход может понадобиться заново`
+      );
+    }
+  }
   return lines;
 }
 
@@ -7324,9 +7356,16 @@ function nodePath(cwd) {
   if (/^node(\.exe)?$/i.test(basename4(process.execPath))) return process.execPath;
   return which("node", cwd) ?? "node";
 }
-function readyEntry(name, cwd) {
-  const spec = platform() === "win32" ? `{"type": "stdio", "command": ${q(nodePath(cwd))}, "args": [${q(homeBridgePath())}, "--satellite"]}` : `{"type": "stdio", "command": "sh", "args": ["-c", ${q('exec node "$HOME/.iskron-bridge/iskron-bridge.mjs" --satellite')}]}`;
-  return `mcpServers: [{${q(name)}: ${spec}}]`;
+function readyEntry(name, cwd, disallowed) {
+  const [command, args] = platform() === "win32" ? [q(nodePath(cwd)), `[${q(homeBridgePath())}, "--satellite"]`] : ["sh", `["-c", ${q('exec node "$HOME/.iskron-bridge/iskron-bridge.mjs" --satellite')}]`];
+  return [
+    "mcpServers:",
+    `  - ${name}:`,
+    "      type: stdio",
+    `      command: ${command}`,
+    `      args: ${args}`,
+    `disallowedTools: ${disallowed.join(", ")}`
+  ].join("\n");
 }
 function keepLocal(path, root) {
   const rel = relative(root, path).replace(/\\/g, "/");
@@ -7336,16 +7375,21 @@ function keepLocal(path, root) {
     tracked = spawnSync("git", ["ls-files", "--error-unmatch", rel], { cwd: root, stdio: "ignore" }).status === 0;
   } catch {
   }
-  return tracked ? `git update-index --skip-worktree ${rel}` : `добавь строку ${rel} в .git/info/exclude`;
+  return tracked ? `git update-index --skip-worktree ${rel} (правка остаётся локальной; сменится общий файл — git pull откажет на нём: git update-index --no-skip-worktree ${rel}, git stash, pull, верни строку и снова --skip-worktree)` : `добавь строку ${rel} в .git/info/exclude`;
 }
 function bridgePathOf(e) {
   const hay = [e.command, ...e.args].join(" ");
+  if (/homedir\(\)/.test(hay) && /\.iskron-bridge/.test(hay)) return homeBridgePath();
   const m = /(?:"([^"]*iskron[^"]*\.mjs)"|'([^']*iskron[^']*\.mjs)'|([^\s"']*iskron[^\s"']*\.mjs))/.exec(
     hay
   );
   const raw = m?.[1] ?? m?.[2] ?? m?.[3];
   if (!raw) return null;
   return raw.replace(/^~(?=[\\/])/, homedir8()).replace(/\$\{HOME\}|\$HOME|%USERPROFILE%|\$\{USERPROFILE\}|\$USERPROFILE/g, homedir8());
+}
+function graphServer(url) {
+  const norm = (u) => u.trim().replace(/\/+$/, "").toLowerCase();
+  return isProductionServer(url) || norm(url) === norm(CFG.serverUrl);
 }
 function parentBridges(root) {
   const found = /* @__PURE__ */ new Set();
@@ -7355,6 +7399,7 @@ function parentBridges(root) {
       const e = v ?? {};
       const hay = [e.command ?? "", ...e.args ?? []].join(" ");
       if (BRIDGE_RE.test(hay) && !hay.includes("--satellite")) found.add(prefix(n));
+      else if (typeof e.url === "string" && graphServer(e.url)) found.add(prefix(n));
     }
   };
   const readJson = (p) => {
@@ -7444,19 +7489,28 @@ async function subagentsReport(out5) {
     const ours = entries.filter((e) => BRIDGE_RE.test([e.command, ...e.args].join(" ")));
     const sat = ours.filter((e) => [e.command, ...e.args].join(" ").includes("--satellite"));
     let probeEntry = null;
+    const own = sat.map((e) => `mcp__${e.name}`);
+    const disallowed = listOf(f.fm.disallowedTools).map((d) => d.replace(/__\*$/, ""));
+    const required = parents.length ? parents : TEMPLATE_PARENTS;
+    const block = (name) => `блоком ниже вместо прежних mcpServers и disallowedTools:
+${readyEntry(
+      name,
+      root,
+      [.../* @__PURE__ */ new Set([...disallowed, ...required])].filter((p) => p !== `mcp__${name}`)
+    )}`;
     const refs = entries.filter((e) => e.ref && /iskron/.test(e.name));
     for (const r of refs)
       lines.push(
-        `запись «${r.name}» — ссылка на сервер из конфига сессии, не свой мост на прогон → замени встроенной записью: ${readyEntry(expected, root)}`
+        `запись «${r.name}» — ссылка на сервер из конфига сессии, не свой мост на прогон → замени встроенной записью, ${block(expected)}`
       );
     if (!sat.length) {
       if (ours.length)
         lines.push(
-          `запись «${ours[0].name}» зовёт мост без --satellite — субагент встал бы местом сессии, а не спутником → ${readyEntry(expected, root)}`
+          `запись «${ours[0].name}» зовёт мост без --satellite — субагент встал бы местом сессии, а не спутником → ${block(expected)}`
         );
       else if (!refs.length)
         lines.push(
-          `записи моста-спутника нет — у субагента нет тулов графа → вставь во фронтматтер: ${readyEntry(expected, root)}`
+          `записи моста-спутника нет — у субагента нет тулов графа → вставь во фронтматтер ${block(expected)}`
         );
     }
     for (const e of sat) {
@@ -7467,17 +7521,17 @@ async function subagentsReport(out5) {
         );
       const shown = [e.command, ...e.args].join(" ");
       const cmdBase = basename4(e.command).replace(/\.exe$/i, "");
-      const ready = readyEntry(e.name === "iskron-sub" ? expected : e.name, root);
+      const ready = block(e.name === "iskron-sub" ? expected : e.name);
       let runnable = true;
       if (!which(e.command, root)) {
         runnable = false;
         lines.push(
-          platform() === "win32" && SHELLS.has(cmdBase) ? `запись «${e.name}» запускает мост через ${e.command} — на Windows ${e.command} нет (в PATH не нашёлся), а Claude Code не раскрывает $HOME в args фронтматтера → замени mcpServers строкой с путями этой машины: ${ready} — файл станет машинным, в общий репо его не коммить: ${keepLocal(f.path, root)}` : `команда записи «${e.name}» «${e.command}» на этой машине не находится (PATH) → ${ready}`
+          platform() === "win32" && SHELLS.has(cmdBase) ? `запись «${e.name}» запускает мост через ${e.command} — на Windows ${e.command} нет (в PATH не нашёлся), а Claude Code не раскрывает $HOME в args фронтматтера; файл станет машинным, в общий репо его не коммить: ${keepLocal(f.path, root)} → замени путями этой машины ${ready}` : `команда записи «${e.name}» «${e.command}» на этой машине не находится (PATH) → ${ready}`
         );
       } else if (!SHELLS.has(cmdBase) && e.args.some((a) => /\$\{?[A-Za-z_]|%[A-Za-z_]+%/.test(a))) {
         runnable = false;
         lines.push(
-          `запись «${e.name}» несёт переменную в args (${shown}) — Claude Code её не раскрывает, node получит буквальный путь → ${ready}`
+          `запись «${e.name}» несёт переменную в args (${shown}) — Claude Code её не раскрывает, node получит буквальный путь → замени ${ready}`
         );
       }
       const bridge = bridgePathOf(e);
@@ -7495,14 +7549,10 @@ async function subagentsReport(out5) {
           env: e.env
         };
     }
-    const own = sat.map((e) => `mcp__${e.name}`);
-    const disallowed = listOf(f.fm.disallowedTools).map((d) => d.replace(/__\*$/, ""));
-    const need = (parents.length ? parents : TEMPLATE_PARENTS).filter(
-      (p) => !own.includes(p) && !disallowed.includes(p)
-    );
+    const need = required.filter((p) => !own.includes(p) && !disallowed.includes(p));
     if (sat.length && (need.length || !disallowed.length))
       lines.push(
-        `мосты позвавшего не сняты (${need.join(", ") || "disallowedTools нет"}) — субагент унаследует их тулы, и его записи уйдут местом позвавшего → disallowedTools: ${[.../* @__PURE__ */ new Set([...disallowed, ...parents.length ? parents : TEMPLATE_PARENTS])].filter((p) => !own.includes(p)).join(", ")}`
+        `мосты позвавшего не сняты (${need.join(", ") || "disallowedTools нет"}) — субагент унаследует их тулы, и его записи уйдут местом позвавшего → замени строку: disallowedTools: ${[.../* @__PURE__ */ new Set([...disallowed, ...required])].filter((p) => !own.includes(p)).join(", ")}`
       );
     for (const o of own.filter((o2) => disallowed.includes(o2)))
       lines.push(`disallowedTools снимает свой же мост ${o} → убери ${o} из disallowedTools`);
@@ -7521,7 +7571,11 @@ async function subagentsReport(out5) {
     out5(
       `  ${r.f.path}${where}: ${r.names.length ? `запись «${r.names.join("», «")}»` : "без записи моста-спутника"}${r.lines.length ? "" : " — в порядке"}`
     );
-    for (const l of r.lines) out5(`    НАДО: ${l}`);
+    for (const l of r.lines) {
+      const [head, ...rest2] = l.split("\n");
+      out5(`    НАДО: ${head}`);
+      for (const b of rest2) out5(`      ${b}`);
+    }
     if (!r.probe) continue;
     const key = JSON.stringify([r.probe.command, r.probe.args, r.probe.env]);
     const first2 = probed.get(key);

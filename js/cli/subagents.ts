@@ -9,6 +9,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, delimiter, dirname, isAbsolute, join, relative, resolve } from "node:path";
 
+import { CFG, isProductionServer } from "../bridge/config.ts";
 import { homeBridgePath } from "../shared/home.ts";
 import { frontmatterText, parseFrontmatter, type YamlValue } from "./frontmatter.ts";
 import { probeSatellite } from "./satprobe.ts";
@@ -131,13 +132,24 @@ function nodePath(cwd: string): string {
   return which("node", cwd) ?? "node";
 }
 
-/** Готовая строка записи моста-спутника для ОС этой машины — вставляется во фронтматтер вместо прежней. */
-export function readyEntry(name: string, cwd: string): string {
-  const spec =
+/**
+ * Готовый блок записи моста-спутника для ОС этой машины — блочной формой YAML,
+ * той же, что пишет проекция и читает этот doctor: вставленный вместо прежних
+ * mcpServers и disallowedTools, он на повторе не даёт ни одной строки «НАДО:».
+ */
+export function readyEntry(name: string, cwd: string, disallowed: string[]): string {
+  const [command, args] =
     platform() === "win32"
-      ? `{"type": "stdio", "command": ${q(nodePath(cwd))}, "args": [${q(homeBridgePath())}, "--satellite"]}`
-      : `{"type": "stdio", "command": "sh", "args": ["-c", ${q('exec node "$HOME/.iskron-bridge/iskron-bridge.mjs" --satellite')}]}`;
-  return `mcpServers: [{${q(name)}: ${spec}}]`;
+      ? [q(nodePath(cwd)), `[${q(homeBridgePath())}, "--satellite"]`]
+      : ["sh", `["-c", ${q('exec node "$HOME/.iskron-bridge/iskron-bridge.mjs" --satellite')}]`];
+  return [
+    "mcpServers:",
+    `  - ${name}:`,
+    "      type: stdio",
+    `      command: ${command}`,
+    `      args: ${args}`,
+    `disallowedTools: ${disallowed.join(", ")}`,
+  ].join("\n");
 }
 
 /** Как держать машинный файл агента вне общего репо: отслеживаемый — skip-worktree, новый — локальный exclude. */
@@ -151,13 +163,15 @@ function keepLocal(path: string, root: string): string {
         .status === 0;
   } catch {}
   return tracked
-    ? `git update-index --skip-worktree ${rel}`
+    ? `git update-index --skip-worktree ${rel} (правка остаётся локальной; сменится общий файл — git pull откажет на нём: git update-index --no-skip-worktree ${rel}, git stash, pull, верни строку и снова --skip-worktree)`
     : `добавь строку ${rel} в .git/info/exclude`;
 }
 
 /** Путь к мосту, который зовёт запись, с раскрытым домом — как его увидит оболочка. */
 function bridgePathOf(e: Entry): string | null {
   const hay = [e.command, ...e.args].join(" ");
+  // Путь, собранный самим node из домашнего каталога (`node -e` с os.homedir()), — дом этой машины.
+  if (/homedir\(\)/.test(hay) && /\.iskron-bridge/.test(hay)) return homeBridgePath();
   const m =
     /(?:"([^"]*iskron[^"]*\.mjs)"|'([^']*iskron[^']*\.mjs)'|([^\s"']*iskron[^\s"']*\.mjs))/.exec(
       hay,
@@ -169,15 +183,23 @@ function bridgePathOf(e: Entry): string | null {
     .replace(/\$\{HOME\}|\$HOME|%USERPROFILE%|\$\{USERPROFILE\}|\$USERPROFILE/g, homedir());
 }
 
+/** Адрес — сервер графа: продовый (русский или английский) либо тот, на который смотрит мост этой машины. */
+function graphServer(url: string): boolean {
+  const norm = (u: string) => u.trim().replace(/\/+$/, "").toLowerCase();
+  return isProductionServer(url) || norm(url) === norm(CFG.serverUrl);
+}
+
 /** Серверы моста, которые субагент унаследует от позвавшего: их тулы надо снять disallowedTools. */
 function parentBridges(root: string): string[] {
   const found = new Set<string>();
   const scan = (servers: unknown, prefix: (n: string) => string) => {
     if (!servers || typeof servers !== "object") return;
     for (const [n, v] of Object.entries(servers as Record<string, unknown>)) {
-      const e = (v ?? {}) as { command?: string; args?: string[] };
+      const e = (v ?? {}) as { command?: string; args?: string[]; url?: string };
       const hay = [e.command ?? "", ...(e.args ?? [])].join(" ");
       if (BRIDGE_RE.test(hay) && !hay.includes("--satellite")) found.add(prefix(n));
+      // Нативная http-запись на сервер графа — те же тулы графа у субагента, снимаются так же.
+      else if (typeof e.url === "string" && graphServer(e.url)) found.add(prefix(n));
     }
   };
   const readJson = (p: string): Record<string, unknown> | null => {
@@ -274,19 +296,29 @@ export async function subagentsReport(out: Out): Promise<void> {
     const ours = entries.filter((e) => BRIDGE_RE.test([e.command, ...e.args].join(" ")));
     const sat = ours.filter((e) => [e.command, ...e.args].join(" ").includes("--satellite"));
     let probeEntry: Entry | null = null;
+    // Снимаемые мосты позвавшего — прежние строки файла плюс найденные на машине (или шаблон).
+    const own = sat.map((e) => `mcp__${e.name}`);
+    const disallowed = listOf(f.fm.disallowedTools).map((d) => d.replace(/__\*$/, ""));
+    const required = parents.length ? parents : TEMPLATE_PARENTS;
+    const block = (name: string) =>
+      `блоком ниже вместо прежних mcpServers и disallowedTools:\n${readyEntry(
+        name,
+        root,
+        [...new Set([...disallowed, ...required])].filter((p) => p !== `mcp__${name}`),
+      )}`;
     const refs = entries.filter((e) => e.ref && /iskron/.test(e.name));
     for (const r of refs)
       lines.push(
-        `запись «${r.name}» — ссылка на сервер из конфига сессии, не свой мост на прогон → замени встроенной записью: ${readyEntry(expected, root)}`,
+        `запись «${r.name}» — ссылка на сервер из конфига сессии, не свой мост на прогон → замени встроенной записью, ${block(expected)}`,
       );
     if (!sat.length) {
       if (ours.length)
         lines.push(
-          `запись «${ours[0].name}» зовёт мост без --satellite — субагент встал бы местом сессии, а не спутником → ${readyEntry(expected, root)}`,
+          `запись «${ours[0].name}» зовёт мост без --satellite — субагент встал бы местом сессии, а не спутником → ${block(expected)}`,
         );
       else if (!refs.length)
         lines.push(
-          `записи моста-спутника нет — у субагента нет тулов графа → вставь во фронтматтер: ${readyEntry(expected, root)}`,
+          `записи моста-спутника нет — у субагента нет тулов графа → вставь во фронтматтер ${block(expected)}`,
         );
     }
     for (const e of sat) {
@@ -298,13 +330,13 @@ export async function subagentsReport(out: Out): Promise<void> {
       const shown = [e.command, ...e.args].join(" ");
       const cmdBase = basename(e.command).replace(/\.exe$/i, "");
       // Готовая строка несёт и своё имя: общее имя прежнего контракта в ней не повторяется.
-      const ready = readyEntry(e.name === "iskron-sub" ? expected : e.name, root);
+      const ready = block(e.name === "iskron-sub" ? expected : e.name);
       let runnable = true;
       if (!which(e.command, root)) {
         runnable = false;
         lines.push(
           platform() === "win32" && SHELLS.has(cmdBase)
-            ? `запись «${e.name}» запускает мост через ${e.command} — на Windows ${e.command} нет (в PATH не нашёлся), а Claude Code не раскрывает $HOME в args фронтматтера → замени mcpServers строкой с путями этой машины: ${ready} — файл станет машинным, в общий репо его не коммить: ${keepLocal(f.path, root)}`
+            ? `запись «${e.name}» запускает мост через ${e.command} — на Windows ${e.command} нет (в PATH не нашёлся), а Claude Code не раскрывает $HOME в args фронтматтера; файл станет машинным, в общий репо его не коммить: ${keepLocal(f.path, root)} → замени путями этой машины ${ready}`
             : `команда записи «${e.name}» «${e.command}» на этой машине не находится (PATH) → ${ready}`,
         );
       } else if (
@@ -313,7 +345,7 @@ export async function subagentsReport(out: Out): Promise<void> {
       ) {
         runnable = false;
         lines.push(
-          `запись «${e.name}» несёт переменную в args (${shown}) — Claude Code её не раскрывает, node получит буквальный путь → ${ready}`,
+          `запись «${e.name}» несёт переменную в args (${shown}) — Claude Code её не раскрывает, node получит буквальный путь → замени ${ready}`,
         );
       }
       const bridge = bridgePathOf(e);
@@ -338,14 +370,10 @@ export async function subagentsReport(out: Out): Promise<void> {
           env: e.env,
         };
     }
-    const own = sat.map((e) => `mcp__${e.name}`);
-    const disallowed = listOf(f.fm.disallowedTools).map((d) => d.replace(/__\*$/, ""));
-    const need = (parents.length ? parents : TEMPLATE_PARENTS).filter(
-      (p) => !own.includes(p) && !disallowed.includes(p),
-    );
+    const need = required.filter((p) => !own.includes(p) && !disallowed.includes(p));
     if (sat.length && (need.length || !disallowed.length))
       lines.push(
-        `мосты позвавшего не сняты (${need.join(", ") || "disallowedTools нет"}) — субагент унаследует их тулы, и его записи уйдут местом позвавшего → disallowedTools: ${[...new Set([...disallowed, ...(parents.length ? parents : TEMPLATE_PARENTS)])].filter((p) => !own.includes(p)).join(", ")}`,
+        `мосты позвавшего не сняты (${need.join(", ") || "disallowedTools нет"}) — субагент унаследует их тулы, и его записи уйдут местом позвавшего → замени строку: disallowedTools: ${[...new Set([...disallowed, ...required])].filter((p) => !own.includes(p)).join(", ")}`,
       );
     for (const o of own.filter((o) => disallowed.includes(o)))
       lines.push(`disallowedTools снимает свой же мост ${o} → убери ${o} из disallowedTools`);
@@ -364,7 +392,12 @@ export async function subagentsReport(out: Out): Promise<void> {
     out(
       `  ${r.f.path}${where}: ${r.names.length ? `запись «${r.names.join("», «")}»` : "без записи моста-спутника"}${r.lines.length ? "" : " — в порядке"}`,
     );
-    for (const l of r.lines) out(`    НАДО: ${l}`);
+    // Готовый блок — строками с отступом в шесть пробелов: сняв их, его вставляют во фронтматтер.
+    for (const l of r.lines) {
+      const [head, ...rest] = l.split("\n");
+      out(`    НАДО: ${head}`);
+      for (const b of rest) out(`      ${b}`);
+    }
     if (!r.probe) continue;
     // Одна команда — одна проба: те же байты моста отвечают всем файлам одинаково.
     const key = JSON.stringify([r.probe.command, r.probe.args, r.probe.env]);
