@@ -7,7 +7,7 @@ import { NOTIFIED_CLIENTS, PI_CLIENT } from "../shared/clients.ts";
 import { L } from "../shared/lang.ts";
 import { defaultAuthDir } from "../shared/standings.ts";
 import { CFG } from "./config.ts";
-import { heldKey } from "./hold.ts";
+import { doors, heldKey } from "./hold.ts";
 import { state } from "./transport.ts";
 
 /** Имя клиента рукопожатия — по нему мост знает харнес (граф nks-dev: #5047). */
@@ -24,6 +24,38 @@ function clientName(): string {
 export function listenBlock(realm?: string): string | null {
   const key = heldKey(realm); // место этого графа на канале (#5838); без графа — основное
   if (!key) return null;
+  const listen = listenLine(key);
+  return L(
+    `[iskron-bridge] Сокет этого стояния держит мост — вручать его никому не нужно` +
+      ` (строка выше о том, что никто не слушает, описывает миг до этого держания).` +
+      `\n${listen}` +
+      `\nЗанятость: iskron_stand(realm, status) на этом месте — пустой status снимает.` +
+      `\nКадры приходят и уведомлениями MCP (logger iskron-channel).`,
+    `[iskron-bridge] The bridge holds this standing's socket — there is no one to hand it to` +
+      ` (a line above saying no one listens describes the moment before this holding).` +
+      `\n${listen}` +
+      `\nBusy line: iskron_stand(realm, status) on this seat — an empty status clears it.` +
+      `\nFrames also come as MCP notifications (logger iskron-channel).`,
+  );
+}
+
+/**
+ * Строка слушания, когда к месту этого графа не прицеплен ни один сторож, а
+ * харнесу он нужен (не pi и не OpenCode), — для ответа занятости: место держит
+ * мост, слуха нет. Иначе null.
+ */
+export function unheardListenBlock(realm?: string): string | null {
+  const key = heldKey(realm);
+  if (!key || NOTIFIED_CLIENTS.has(clientName())) return null;
+  if ((doors().find((d) => d.key === key)?.clients.size ?? 0) > 0) return null;
+  return L(
+    `[iskron-bridge] Сторож к этому месту не прицеплен — кадры копятся. ${listenLine(key)}`,
+    `[iskron-bridge] No watchdog is attached to this seat — frames pile up. ${listenLine(key)}`,
+  );
+}
+
+/** Одна строка слушания своего харнеса для места key. */
+function listenLine(key: string): string {
   const self = fileURLToPath(import.meta.url);
   // Сторож выводит каталог сокетов так же, как мост: не по умолчанию — скажи ему где.
   const where = CFG.authDir === defaultAuthDir() ? "" : ` --auth-dir "${CFG.authDir}"`;
@@ -42,7 +74,7 @@ export function listenBlock(realm?: string): string | null {
   );
   // Имена: claude-code снято с рукопожатия Claude Code; pi и OpenCode — свои
   // константы; Codex — по подстроке, его рукопожатие в поле не снималось.
-  const listen = NOTIFIED_CLIENTS.has(client)
+  return NOTIFIED_CLIENTS.has(client)
     ? L(
         `Слушает ${client === PI_CLIENT ? "расширение pi" : "плагин OpenCode"} само — сторож не нужен, кадры входят в ход.`,
         `The ${client === PI_CLIENT ? "pi extension" : "OpenCode plugin"} listens itself — no watchdog needed, frames enter the turn.`,
@@ -58,16 +90,4 @@ export function listenBlock(realm?: string): string | null {
             `Listen: ${codex}; without the app-server door — ${exit}.`,
           )
         : L(`Слушать: ${monitor}; ${exit}; ${codex}.`, `Listen: ${monitor}; ${exit}; ${codex}.`);
-  return L(
-    `[iskron-bridge] Сокет этого стояния держит мост — вручать его никому не нужно` +
-      ` (строка выше о том, что никто не слушает, описывает миг до этого держания).` +
-      `\n${listen}` +
-      `\nЗанятость: iskron_channel(action="status", realm, text) — пустой text снимает.` +
-      `\nКадры приходят и уведомлениями MCP (logger iskron-channel).`,
-    `[iskron-bridge] The bridge holds this standing's socket — there is no one to hand it to` +
-      ` (a line above saying no one listens describes the moment before this holding).` +
-      `\n${listen}` +
-      `\nBusy line: iskron_channel(action="status", realm, text) — an empty text clears it.` +
-      `\nFrames also come as MCP notifications (logger iskron-channel).`,
-  );
 }

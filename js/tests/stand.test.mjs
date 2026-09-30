@@ -125,7 +125,9 @@ test("tools/list carries iskron_stand — the bridge's own tool, in the server's
   const list = await bridge.call("tools/list");
   const stand = (list.result?.tools ?? []).find((x) => x.name === "iskron_stand");
   assert.ok(stand, `no iskron_stand in ${JSON.stringify(list.result?.tools?.map((x) => x.name))}`);
-  assert.deepEqual(stand.inputSchema.required, ["realm", "karta"]);
+  // karta — только для занятия места; занятость на держимом месте без неё (#6509).
+  assert.deepEqual(stand.inputSchema.required, ["realm"]);
+  assert.match(stand.inputSchema.properties.status.description, /обновить занятость/);
   assert.ok(
     stand.description.startsWith("[мост]"),
     "the tool must name the bridge as its executor",
@@ -2230,4 +2232,87 @@ test("fake NKS drops arguments the surface snapshot does not declare, silently; 
   // A probe of a pending server change opts in by name.
   const pending = await connectWith({ futureArgs: { iskron_channel: ["not_yet_declared"] } });
   assert.equal(pending?.not_yet_declared, "u-1", JSON.stringify(pending));
+});
+
+// Занятость — ходом моста, который и приносит агенту кадры (решение владельца,
+// граф nks-dev: #6509): iskron_stand со status на месте, которое мост уже держит,
+// только ставит строку — без доски, connect, register, хука и стука; роль и имя —
+// те же или опущены; пустой status снимает. Сторожа нет — команда слушания тут же.
+test("iskron_stand with status on the seat this bridge holds only sets the busy line — no board, connect, register, hook or knock; an empty status clears it", async (t) => {
+  const { fake, dir, bridge } = await ready(t);
+  await fake.control({ rooms: [{ karta: "3505", address: "@tester:thread-k2" }] });
+  const stand = (args) => bridge.call("tools/call", { name: "iskron_stand", arguments: args });
+  const seat = { realm: "nks-dev", karta: 931, name: "proba" };
+  const first = await stand({ ...seat, room: "@tester:thread-k2", status: "на вахте" });
+  assert.ok(!first.result?.isError, textOf(first));
+  const key = / watchdog (\S+)/.exec(textOf(first))?.[1];
+  assert.ok(key, textOf(first));
+  const before = { ...(await fake.control({})).counts };
+  const channelCalls = sentToChannel(fake).length;
+  const sends = fake.state.sends.length;
+  const untouched = async (what) => {
+    const now = (await fake.control({})).counts;
+    for (const c of ["connect", "register_standing", "list", "webhooks_added"])
+      assert.equal(now[c], before[c], `${what}: ${c} must not move`);
+    assert.equal(sentToChannel(fake).length, channelCalls, `${what}: no iskron_channel call`);
+    assert.equal(fake.state.sends.length, sends, `${what}: no knock`);
+  };
+
+  const same = await stand({ ...seat, status: "пишу пробу" });
+  const text = textOf(same);
+  assert.ok(!same.result?.isError, text);
+  assert.equal(text.split("\n")[0], `занятость ${key}: пишу пробу`, text);
+  assert.equal(fake.state.status, "пишу пробу");
+  assert.match(text, /Сторож к этому месту не прицеплен/, "no watchdog — the listen line comes");
+  assert.ok(text.includes(` watchdog ${key}`), text);
+  await untouched("same seat");
+
+  const bare = await stand({ realm: "nks-dev", status: "только граф" });
+  assert.ok(!bare.result?.isError, textOf(bare));
+  assert.equal(textOf(bare).split("\n")[0], `занятость ${key}: только граф`, textOf(bare));
+  assert.equal(fake.state.status, "только граф");
+  await untouched("realm and status only");
+
+  const wd = spawn(NODE, [FILE, "watchdog", key], {
+    env: { ...process.env, ISKRON_BRIDGE_AUTH_DIR: dir, ISKRON_BRIDGE_NO_UPDATE: "1" },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  t.after(() => wd.kill());
+  let out = "";
+  const heard = await new Promise((res) => {
+    wd.stdout.on("data", (c) => {
+      out += c;
+      if (/"type":"hello"|слушаю стояние/.test(out)) res(true);
+    });
+    setTimeout(() => res(false), 10_000).unref();
+  });
+  assert.ok(heard, `the watchdog did not attach:\n${out}`);
+  const cleared = await stand({ realm: "nks-dev", karta: "#931", status: "" });
+  assert.ok(!cleared.result?.isError, textOf(cleared));
+  assert.equal(textOf(cleared), `занятость ${key}: (снята)`, "a heard seat gets the one line");
+  assert.equal(fake.state.status, "", "an empty status clears the line");
+  await untouched("clearing");
+});
+
+// Плагин OpenCode подставляет satellite_of каждому iskron_stand дочерней сессии:
+// на держимом месте-спутнике и такой вызов со status — только занятость (#6509).
+test("satellite: iskron_stand with status and satellite_of on the held .sub-N seat only sets the busy line", async (t) => {
+  const fake = await withCaller(t);
+  const sat = await satelliteBridge(t, fake);
+  const r = await standAs(sat, SAT_ARGS);
+  assert.ok(!r.result?.isError, `${textOf(r)}\n${sat.stderr}`);
+  const connects = fake.state.counts.connect;
+  const registers = fake.state.counts.register_standing;
+  const lists = fake.state.counts.list;
+  const s = await standAs(sat, { ...SAT_ARGS, status: "спутник пишет" });
+  assert.ok(!s.result?.isError, textOf(s));
+  assert.equal(
+    textOf(s).split("\n")[0],
+    `занятость ${CALLER}.sub-1--931--nks-dev: спутник пишет`,
+    textOf(s),
+  );
+  assert.equal(fake.state.status, "спутник пишет");
+  assert.equal(fake.state.counts.connect, connects, "no connect");
+  assert.equal(fake.state.counts.register_standing, registers, "no register");
+  assert.equal(fake.state.counts.list, lists, "no board read");
 });

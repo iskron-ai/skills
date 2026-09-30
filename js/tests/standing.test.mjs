@@ -231,8 +231,8 @@ test("connect through the bridge: the bridge holds the socket and the answer nam
     `a bridge off the default auth dir must tell the watchdog where to look:\n${text}`,
   );
   assert.ok(
-    text.includes('iskron_channel(action="status"'),
-    "the block must name the status call, not a file",
+    text.includes("iskron_stand(realm, status)"),
+    "the block must name the status call, not a file — iskron_stand, the bridge's own (#6509)",
   );
   await waitFor(() => fake.state.ws.size === 1, "the bridge to open the standing socket");
   const held = readdirSync(standings);
@@ -2156,7 +2156,9 @@ test("iskron/resume by the session's directory: a bridge restarted after the plu
     arguments: { realm: "nks-dev", karta: 931, name: "proba", cwd, status: "на вахте" },
   });
   const said = (stand.result?.content ?? []).map((c) => c.text ?? "").join("\n");
-  assert.match(said, /сокет уже держит этот мост — register/, said);
+  // Место уже держит этот мост, и вызов со status — только занятость (#6509); каталог
+  // всё равно ложится в запись держания.
+  assert.match(said, /^занятость proba--931--nks-dev: на вахте/, said);
   const hold = readdirSync(standings).find((f) => f.endsWith(".hold"));
   const rec = JSON.parse(readFileSync(join(standings, hold), "utf8"));
   assert.equal(rec.cwd, cwd, "the record names the directory");

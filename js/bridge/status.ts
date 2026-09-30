@@ -1,18 +1,52 @@
 // Занятость стояния — слово держателя сокета, а держит его мост (решение
-// владельца, граф nks-dev: #4284 отвергнут): action="status" у iskron_channel
-// исполняется здесь, на сервер не уходит. POST на статусный адрес из ответа
-// connect; ответ поверхности — успех или ProblemDetail — доносится целиком.
-import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+// владельца, граф nks-dev: #4284 отвергнут). Основной ход — iskron_stand(status)
+// на месте, которое мост уже держит (#6509): мост, приносящий агенту кадры,
+// и ставит его занятость; action="status" у iskron_channel — прежний ход, живёт
+// ради совместимости. Оба исполняются здесь, на сервер не уходят. POST на
+// статусный адрес из ответа connect; ответ поверхности доносится целиком.
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { isAbsolute, join } from "node:path";
 
 import { L } from "../shared/lang.ts";
 import { socketPathOf, standingsDirOf } from "../shared/standings.ts";
+import { nameOf } from "./board.ts";
 import { resolveAgainstLed } from "./call.ts";
 import { CFG } from "./config.ts";
-import { heldPlaces, rememberStatus, statusAddress } from "./hold.ts";
+import { heldPlaces, holdsStanding, noteStandCwd, rememberStatus, statusAddress } from "./hold.ts";
 import { type HoldRecord, keyOf } from "./holdrecord.ts";
+import { unheardListenBlock } from "./listen.ts";
+import { normKarta, normName } from "./names.ts";
+import { rememberModel } from "./placefields.ts";
+import { extraIn } from "./places.ts";
+import { sameRealm } from "./realms.ts";
 import { localSocketAlive } from "./sweep.ts";
+import { state } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
+
+const isDirectory = (p: string): boolean => {
+  try {
+    return isAbsolute(p) && statSync(p).isDirectory();
+  } catch {
+    return false;
+  }
+};
+
+const replyTo =
+  (msg: JsonRpcMessage) =>
+  (body: string, isError = false): JsonRpcMessage => ({
+    jsonrpc: "2.0",
+    id: msg.id,
+    result: { ...(isError ? { isError: true } : {}), content: [{ type: "text", text: body }] },
+  });
+
+/** Публикация строки занятости места этого графа и слово о ней — общее для обоих ходов. */
+async function statusWord(text: string, realm: string): Promise<[string, boolean]> {
+  const st = await publishStatus(text, realm);
+  if (!st.ok && !statusAddress()) return [await notHeldHere(realm), true];
+  if (st.code === 404) return [`${st.body} ${TURNED_GUIDANCE()}`, true];
+  if (st.ok) return [`занятость ${statusAddress(realm)?.key}: ${text || "(снята)"}`, false];
+  return [st.body, true];
+}
 
 /** action="status" — занятость ЭТОГО стояния. Возвращает null для всякого другого вызова. */
 export function localStatus(msg: JsonRpcMessage): Promise<JsonRpcMessage> | null {
@@ -20,21 +54,70 @@ export function localStatus(msg: JsonRpcMessage): Promise<JsonRpcMessage> | null
   const a = msg.params?.arguments;
   if (a?.action !== "status") return null;
   const text = typeof a.text === "string" ? a.text : "";
-  const reply = (body: string, isError = false): JsonRpcMessage => ({
-    jsonrpc: "2.0",
-    id: msg.id,
-    result: { ...(isError ? { isError: true } : {}), content: [{ type: "text", text: body }] },
-  });
+  const reply = replyTo(msg);
   // Занятость — места графа из вызова (#5838); без графа — основного.
   const realm = typeof a.realm === "string" ? a.realm : "";
   return (async () => {
     await resolveAgainstLed(realm); // граф вызова — в той же форме, что граф места
-    const st = await publishStatus(text, realm);
-    if (!st.ok && !statusAddress()) return reply(await notHeldHere(realm), true);
-    if (st.code === 404) return reply(`${st.body} ${TURNED_GUIDANCE()}`, true);
-    if (st.ok) return reply(`занятость ${statusAddress(realm)?.key}: ${text || "(снята)"}`);
-    return reply(st.body, true);
+    return reply(...(await statusWord(text, realm)));
   })();
+}
+
+/**
+ * Аргументы iskron_stand, с которыми вызов со status — только занятость; всякий
+ * другой ведёт полный путь. satellite_of подставляет сам плагин OpenCode каждому
+ * вызову дочерней сессии — он сверяется с держимым местом-спутником.
+ */
+const STATUS_ONLY_ARGS = new Set([
+  "realm",
+  "karta",
+  "name",
+  "model",
+  "cwd",
+  "status",
+  "satellite_of",
+]);
+
+/**
+ * iskron_stand со status на месте, которое этот мост уже держит живым сокетом
+ * (решение владельца, #6509): только строка занятости — без доски, connect,
+ * register, хука и стука; пустая строка снимает. Роль и имя — те же, что у
+ * места, или опущены. Null — вызов не такой, его ведёт полный путь stand.ts.
+ */
+export async function standStatusOnly(msg: JsonRpcMessage): Promise<JsonRpcMessage | null> {
+  const a = msg.params?.arguments ?? {};
+  if (typeof a.status !== "string") return null;
+  const unset = (v: unknown): boolean => v == null || v === false || v === "";
+  if (Object.keys(a).some((k) => !STATUS_ONLY_ARGS.has(k) && !unset(a[k]))) return null;
+  const realm = typeof a.realm === "string" ? a.realm.trim() : "";
+  if (!realm) return null;
+  await resolveAgainstLed(realm); // граф вызова — в той же форме, что граф места
+  const prim = state.standing;
+  const held =
+    prim && (prim.realm === realm || sameRealm(prim.realm, realm))
+      ? prim
+      : extraIn(realm)?.standing;
+  if (!held) return null;
+  if (!unset(a.karta) && normKarta(a.karta) !== String(held.karta)) return null;
+  const asked = normName(a.name);
+  if (asked && asked !== (held.name ?? "")) return null;
+  // Спутник — <имя позвавшего>.sub-N; длинную базу мост укорачивает, потому сличение — префиксом.
+  const of = normName(a.satellite_of);
+  const base = /^(.+)\.sub-[1-9]\d*$/.exec(held.name ?? "")?.[1];
+  if (of && !(base && nameOf(of).startsWith(base))) return null;
+  if (!holdsStanding(held.realm, held.karta, held.name ?? "")) return null;
+  // Каталог и модель — локальная память места, как у полного пути: запись держания
+  // несёт каталог для возврата (resume.ts), модель едет в повторных регистрациях.
+  const cwd = typeof a.cwd === "string" ? a.cwd.trim() : "";
+  if (cwd) {
+    if (cwd !== process.cwd() && !isDirectory(cwd)) return null; // кривой каталог отказывает полный путь, вслух
+    noteStandCwd(cwd);
+  }
+  rememberModel(a.model);
+  const [body, isError] = await statusWord(a.status.trim(), realm);
+  // Место держит мост, а сторож к нему не прицеплен — команда слушания тут же.
+  const listen = isError ? null : unheardListenBlock(realm);
+  return replyTo(msg)(listen ? `${body}\n${listen}` : body, isError);
 }
 
 /** Исход POST занятости; code — HTTP-код отказа поверхности, когда он был. */

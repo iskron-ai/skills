@@ -3648,8 +3648,31 @@ function setRevokingOwn(v) {
 }
 
 // js/bridge/status.ts
-import { existsSync as existsSync3, readdirSync as readdirSync4, readFileSync as readFileSync11 } from "node:fs";
-import { join as join9 } from "node:path";
+import { existsSync as existsSync3, readdirSync as readdirSync4, readFileSync as readFileSync11, statSync as statSync4 } from "node:fs";
+import { isAbsolute, join as join9 } from "node:path";
+
+// js/bridge/board.ts
+function parseBoard(text) {
+  const out5 = [];
+  for (const line of text.split("\n")) {
+    const m = /^\s*#(\d+)\s.*?·\s(@\S+)\s—\s(.*)$/.exec(line);
+    if (m) {
+      out5.push({ karta: m[1], address: m[2], rest: m[3], incoming: null, id: null });
+      continue;
+    }
+    const inc = /📥\s*(https?:\/\/\S+)/.exec(line);
+    if (inc && out5.length) out5[out5.length - 1].incoming = inc[1];
+    const id = /^\s*id\s+([0-9a-f][0-9a-f-]{7,})\s*$/i.exec(line);
+    if (id && out5.length) out5[out5.length - 1].id = id[1];
+  }
+  return out5;
+}
+var nameOf = (address) => address.slice(address.indexOf(":") + 1);
+var listens = (e) => /(^|·)\s*слушает/.test(e.rest);
+function undelivered(e) {
+  const m = /не доставлено\s+(\d+)/.exec(e.rest);
+  return m ? Number(m[1]) : 0;
+}
 
 // js/bridge/listen.ts
 import { fileURLToPath as fileURLToPath2 } from "node:url";
@@ -3660,6 +3683,28 @@ function clientName() {
 function listenBlock(realm) {
   const key = heldKey(realm);
   if (!key) return null;
+  const listen = listenLine(key);
+  return L(
+    `[iskron-bridge] Сокет этого стояния держит мост — вручать его никому не нужно (строка выше о том, что никто не слушает, описывает миг до этого держания).
+${listen}
+Занятость: iskron_stand(realm, status) на этом месте — пустой status снимает.
+Кадры приходят и уведомлениями MCP (logger iskron-channel).`,
+    `[iskron-bridge] The bridge holds this standing's socket — there is no one to hand it to (a line above saying no one listens describes the moment before this holding).
+${listen}
+Busy line: iskron_stand(realm, status) on this seat — an empty status clears it.
+Frames also come as MCP notifications (logger iskron-channel).`
+  );
+}
+function unheardListenBlock(realm) {
+  const key = heldKey(realm);
+  if (!key || NOTIFIED_CLIENTS.has(clientName())) return null;
+  if ((doors().find((d) => d.key === key)?.clients.size ?? 0) > 0) return null;
+  return L(
+    `[iskron-bridge] Сторож к этому месту не прицеплен — кадры копятся. ${listenLine(key)}`,
+    `[iskron-bridge] No watchdog is attached to this seat — frames pile up. ${listenLine(key)}`
+  );
+}
+function listenLine(key) {
   const self = fileURLToPath2(import.meta.url);
   const where = CFG.authDir === defaultAuthDir() ? "" : ` --auth-dir "${CFG.authDir}"`;
   const client = clientName();
@@ -3675,7 +3720,7 @@ function listenBlock(realm) {
     `в Codex внутри одной длинной команды своей оболочки — node "${self}" watchdog-codex ${key}${where} & …; kill %1 (кадр входит в идущий тред через app-server; отдельной командой с nohup сторож умирает вместе с ней)`,
     `in Codex inside one long command of your shell — node "${self}" watchdog-codex ${key}${where} & …; kill %1 (a frame enters the running thread through app-server; as a separate nohup command the watchdog dies with it)`
   );
-  const listen = NOTIFIED_CLIENTS.has(client) ? L(
+  return NOTIFIED_CLIENTS.has(client) ? L(
     `Слушает ${client === PI_CLIENT ? "расширение pi" : "плагин OpenCode"} само — сторож не нужен, кадры входят в ход.`,
     `The ${client === PI_CLIENT ? "pi extension" : "OpenCode plugin"} listens itself — no watchdog needed, frames enter the turn.`
   ) : client === "claude-code" ? L(
@@ -3685,16 +3730,6 @@ function listenBlock(realm) {
     `Слушать: ${codex}; без двери app-server — ${exit}.`,
     `Listen: ${codex}; without the app-server door — ${exit}.`
   ) : L(`Слушать: ${monitor}; ${exit}; ${codex}.`, `Listen: ${monitor}; ${exit}; ${codex}.`);
-  return L(
-    `[iskron-bridge] Сокет этого стояния держит мост — вручать его никому не нужно (строка выше о том, что никто не слушает, описывает миг до этого держания).
-${listen}
-Занятость: iskron_channel(action="status", realm, text) — пустой text снимает.
-Кадры приходят и уведомлениями MCP (logger iskron-channel).`,
-    `[iskron-bridge] The bridge holds this standing's socket — there is no one to hand it to (a line above saying no one listens describes the moment before this holding).
-${listen}
-Busy line: iskron_channel(action="status", realm, text) — an empty text clears it.
-Frames also come as MCP notifications (logger iskron-channel).`
-  );
 }
 
 // js/bridge/skillset.ts
@@ -4119,25 +4154,74 @@ function serialized(fn) {
 }
 
 // js/bridge/status.ts
+var isDirectory = (p) => {
+  try {
+    return isAbsolute(p) && statSync4(p).isDirectory();
+  } catch {
+    return false;
+  }
+};
+var replyTo = (msg) => (body, isError = false) => ({
+  jsonrpc: "2.0",
+  id: msg.id,
+  result: { ...isError ? { isError: true } : {}, content: [{ type: "text", text: body }] }
+});
+async function statusWord(text, realm) {
+  const st = await publishStatus(text, realm);
+  if (!st.ok && !statusAddress()) return [await notHeldHere(realm), true];
+  if (st.code === 404) return [`${st.body} ${TURNED_GUIDANCE()}`, true];
+  if (st.ok) return [`занятость ${statusAddress(realm)?.key}: ${text || "(снята)"}`, false];
+  return [st.body, true];
+}
 function localStatus(msg) {
   if (msg?.method !== "tools/call" || msg?.params?.name !== "iskron_channel") return null;
   const a = msg.params?.arguments;
   if (a?.action !== "status") return null;
   const text = typeof a.text === "string" ? a.text : "";
-  const reply2 = (body, isError = false) => ({
-    jsonrpc: "2.0",
-    id: msg.id,
-    result: { ...isError ? { isError: true } : {}, content: [{ type: "text", text: body }] }
-  });
+  const reply2 = replyTo(msg);
   const realm = typeof a.realm === "string" ? a.realm : "";
   return (async () => {
     await resolveAgainstLed(realm);
-    const st = await publishStatus(text, realm);
-    if (!st.ok && !statusAddress()) return reply2(await notHeldHere(realm), true);
-    if (st.code === 404) return reply2(`${st.body} ${TURNED_GUIDANCE()}`, true);
-    if (st.ok) return reply2(`занятость ${statusAddress(realm)?.key}: ${text || "(снята)"}`);
-    return reply2(st.body, true);
+    return reply2(...await statusWord(text, realm));
   })();
+}
+var STATUS_ONLY_ARGS = /* @__PURE__ */ new Set([
+  "realm",
+  "karta",
+  "name",
+  "model",
+  "cwd",
+  "status",
+  "satellite_of"
+]);
+async function standStatusOnly(msg) {
+  const a = msg.params?.arguments ?? {};
+  if (typeof a.status !== "string") return null;
+  const unset = (v) => v == null || v === false || v === "";
+  if (Object.keys(a).some((k) => !STATUS_ONLY_ARGS.has(k) && !unset(a[k]))) return null;
+  const realm = typeof a.realm === "string" ? a.realm.trim() : "";
+  if (!realm) return null;
+  await resolveAgainstLed(realm);
+  const prim = state.standing;
+  const held2 = prim && (prim.realm === realm || sameRealm(prim.realm, realm)) ? prim : extraIn(realm)?.standing;
+  if (!held2) return null;
+  if (!unset(a.karta) && normKarta(a.karta) !== String(held2.karta)) return null;
+  const asked = normName(a.name);
+  if (asked && asked !== (held2.name ?? "")) return null;
+  const of = normName(a.satellite_of);
+  const base = /^(.+)\.sub-[1-9]\d*$/.exec(held2.name ?? "")?.[1];
+  if (of && !(base && nameOf(of).startsWith(base))) return null;
+  if (!holdsStanding(held2.realm, held2.karta, held2.name ?? "")) return null;
+  const cwd = typeof a.cwd === "string" ? a.cwd.trim() : "";
+  if (cwd) {
+    if (cwd !== process.cwd() && !isDirectory(cwd)) return null;
+    noteStandCwd(cwd);
+  }
+  rememberModel(a.model);
+  const [body, isError] = await statusWord(a.status.trim(), realm);
+  const listen = isError ? null : unheardListenBlock(realm);
+  return replyTo(msg)(listen ? `${body}
+${listen}` : body, isError);
 }
 var lastPublished = "";
 var publishedStatus = () => lastPublished;
@@ -4837,36 +4921,11 @@ import {
   readFileSync as readFileSync14,
   renameSync as renameSync6,
   rmSync,
-  statSync as statSync4,
+  statSync as statSync5,
   unlinkSync as unlinkSync7,
   writeFileSync as writeFileSync9
 } from "node:fs";
 import { join as join13 } from "node:path";
-
-// js/bridge/board.ts
-function parseBoard(text) {
-  const out5 = [];
-  for (const line of text.split("\n")) {
-    const m = /^\s*#(\d+)\s.*?·\s(@\S+)\s—\s(.*)$/.exec(line);
-    if (m) {
-      out5.push({ karta: m[1], address: m[2], rest: m[3], incoming: null, id: null });
-      continue;
-    }
-    const inc = /📥\s*(https?:\/\/\S+)/.exec(line);
-    if (inc && out5.length) out5[out5.length - 1].incoming = inc[1];
-    const id = /^\s*id\s+([0-9a-f][0-9a-f-]{7,})\s*$/i.exec(line);
-    if (id && out5.length) out5[out5.length - 1].id = id[1];
-  }
-  return out5;
-}
-var nameOf = (address) => address.slice(address.indexOf(":") + 1);
-var listens = (e) => /(^|·)\s*слушает/.test(e.rest);
-function undelivered(e) {
-  const m = /не доставлено\s+(\d+)/.exec(e.rest);
-  return m ? Number(m[1]) : 0;
-}
-
-// js/bridge/satellite.ts
 var SATELLITE_TTL_S = Number(process.env.ISKRON_BRIDGE_SATELLITE_TTL) || 300;
 var SUB_RE = /\.sub-([1-9]\d*)$/;
 var satelliteName = (base, n) => base.slice(0, NAME_MAX - `.sub-${n}`.length).replace(/[-._]+$/, "") + `.sub-${n}`;
@@ -4924,7 +4983,7 @@ function abandoned(lock, owner) {
   const pid = owner ? Number(owner.split(" ")[0]) : 0;
   if (pid && !alive(pid)) return true;
   try {
-    return Date.now() - statSync4(lock).mtimeMs > LOCK_STALE_MS;
+    return Date.now() - statSync5(lock).mtimeMs > LOCK_STALE_MS;
   } catch {
     return false;
   }
@@ -5251,8 +5310,8 @@ function localLeave(msg) {
 }
 
 // js/bridge/stand.ts
-import { statSync as statSync5 } from "node:fs";
-import { isAbsolute } from "node:path";
+import { statSync as statSync6 } from "node:fs";
+import { isAbsolute as isAbsolute2 } from "node:path";
 
 // js/bridge/hook.ts
 async function adminParamNames() {
@@ -5657,9 +5716,9 @@ async function separatePlace(realm, karta, derived) {
 // js/bridge/standwords.ts
 var s = (ms2) => Math.round(ms2 / 1e3);
 var SW = {
-  needRealmKarta: () => L(
-    "Отказано (мост): iskron_stand требует realm и karta — граф и роль из AGENTS.md или строки запуска.",
-    "Refused (bridge): iskron_stand needs realm and karta — the graph and the role from AGENTS.md or the launch line."
+  needRealmKarta: (status) => L(
+    "Отказано (мост): iskron_stand требует realm и karta — граф и роль из AGENTS.md или строки запуска." + (status ? " Без karta вызов только ставит занятость места, которое этот мост уже держит в этом графе, — такого места нет." : ""),
+    "Refused (bridge): iskron_stand needs realm and karta — the graph and the role from AGENTS.md or the launch line." + (status ? " Without karta the call only sets the busy line of a seat this bridge already holds in this graph — there is none." : "")
   ),
   badCwd: (cwd, relative) => L(
     `Отказано (мост): cwd должен быть существующим абсолютным каталогом — получено «${cwd}»${relative ? " (относительный путь резолвился бы от cwd моста, не сессии)" : ""}.`,
@@ -5829,12 +5888,15 @@ var SW = {
 // js/bridge/standtool.ts
 var STAND_TOOL = {
   name: "iskron_stand",
-  description: "[мост] Занять стояние одним вызовом: мост читает доску, выводит имя (машина.репо.модель), занимает место (connect и register; только register, если сокет уже держит этот мост), взводит хук инбокса роли своим входящим адресом, при room стучит кадром join в место человека по полному адресу с провода (повтор — только repeat_knock=true, один раз, не раньше чем через 2 минуты) и возвращает имя, команду сторожа, число ожидавших кадров, состояние хука и расписку стука. Место в другом графе встаёт рядом на том же канале (register): сессия слышит все свои графы, и запись в каждом подписана местом этого графа. Дальше — запустить сторожа командой из ответа и ждать. Тул исполняет мост; нет его в сессии — тулы идут мимо моста либо мост старой сборки (doctor скажет), стой по скиллу standing.",
+  description: '[мост] Занять стояние одним вызовом: мост читает доску, выводит имя (машина.репо.модель), занимает место (connect и register; только register, если сокет уже держит этот мост), взводит хук инбокса роли своим входящим адресом, при room стучит кадром join в место человека по полному адресу с провода (повтор — только repeat_knock=true, один раз, не раньше чем через 2 минуты) и возвращает имя, команду сторожа, число ожидавших кадров, состояние хука и расписку стука. Место в другом графе встаёт рядом на том же канале (register): сессия слышит все свои графы, и запись в каждом подписана местом этого графа. Дальше — запустить сторожа командой из ответа и ждать. Он же — ход занятости: на месте, которое этот мост уже держит, вызов realm и status (karta и name — те же или опущены) лишь ставит строку занятости — без доски, connect, register, хука и стука; пустой status снимает; прежний iskron_channel(action="status") оставлен для совместимости. Тул исполняет мост; нет его в сессии — тулы идут мимо моста либо мост старой сборки (doctor скажет), стой по скиллу standing.',
   inputSchema: {
     type: "object",
     properties: {
       realm: { type: "string", description: "Адрес графа: @owner/slug или rN." },
-      karta: { type: "string", description: "Роль агента (#N из AGENTS.md или строки запуска)." },
+      karta: {
+        type: "string",
+        description: "Роль агента (#N из AGENTS.md или строки запуска). Нужна, чтобы занять место; для занятости на держимом месте её можно опустить."
+      },
       name: {
         type: "string",
         description: "Своя половина имени стояния; без неё выводится машина.репо.модель — модель из параметра model."
@@ -5864,21 +5926,25 @@ var STAND_TOOL = {
         type: "string",
         description: "Только мосту-спутнику субагента (запись моста с --satellite в файле агента): место позвавшего @handle:name из постановки. Мост встаёт рядом местом-спутником <имя позвавшего>.sub-N (первое свободное N), ролью из karta (её называет постановка, роль позвавшего не наследуется), без хука инбокса роли; место живёт прогоном. name, take и room с ним не передаются."
       },
-      status: { type: "string", description: "Первая строка занятости (до 64 символов)." },
+      status: {
+        type: "string",
+        description: "Занятость места, до 64 символов: при занятии — первая строка; на месте, которое этот мост уже держит, — основной способ обновить занятость (вызов только её и ставит); пустая строка снимает."
+      },
       cwd: {
         type: "string",
         description: "Директория сессии харнесса, существующий абсолютный каталог — из неё выводится репо для имени (git toplevel, в связанном ворктри — основной копии, иначе её basename) и читаются ветки при поиске мест прежнего имени, когда мост запущен не из рабочей копии; плагин OpenCode подставляет её сам. Без неё — cwd моста; несуществующая или относительная — отказ вслух."
       }
     },
-    required: ["realm", "karta"]
+    required: ["realm"]
+    // karta — только для занятия места; занятость на держимом месте без неё (#6509)
   }
 };
 
 // js/bridge/stand.ts
 var ledName = () => state.standing?.name ?? "";
-var isDirectory = (p) => {
+var isDirectory2 = (p) => {
   try {
-    return isAbsolute(p) && statSync5(p).isDirectory();
+    return isAbsolute2(p) && statSync6(p).isDirectory();
   } catch {
     return false;
   }
@@ -5888,6 +5954,8 @@ var knocks = /* @__PURE__ */ new Map();
 var KNOCK_REPEAT_AFTER_MS = Number(process.env.ISKRON_STAND_KNOCK_REPEAT_MS) || 12e4;
 var KNOCK_LIMIT = 2;
 async function runStand(msg) {
+  const statusOnly = await standStatusOnly(msg);
+  if (statusOnly) return statusOnly;
   const a = msg.params?.arguments ?? {};
   const realm = typeof a.realm === "string" ? a.realm.trim() : "";
   const karta = a.karta != null ? normKarta(a.karta) : "";
@@ -5901,14 +5969,14 @@ async function runStand(msg) {
     }
   });
   if (!realm || !karta) {
-    lines.push(SW.needRealmKarta());
+    lines.push(SW.needRealmKarta(typeof a.status === "string"));
     return done(true);
   }
   const model2 = typeof a.model === "string" && a.model.trim() ? a.model : void 0;
   rememberModel(model2);
   const cwd = typeof a.cwd === "string" && a.cwd.trim() ? a.cwd.trim() : process.cwd();
-  if (cwd !== process.cwd() && !isDirectory(cwd)) {
-    lines.push(SW.badCwd(cwd, !isAbsolute(cwd)));
+  if (cwd !== process.cwd() && !isDirectory2(cwd)) {
+    lines.push(SW.badCwd(cwd, !isAbsolute2(cwd)));
     return done(true);
   }
   const nameNotes = [];
@@ -6150,7 +6218,7 @@ async function runStand(msg) {
 var WRITE_TOOL = /^iskron_(add_[a-z_]+|batch)$/;
 var JSON_LINE = "Момент скилла writing: перед вызовом по каждому узлу назови читателя, что изменит извлечение и что здесь ново; тип и given_as, три модуса как утверждения, имя-тезис, стрелки со смыслом; тело — нынешнее знание, никогда провенанс: кто сказал, когда, чьей рукой — в истории узла и в деле, узел переписывается, а не дописывается разделом; hint — семя превращения: только важное после сессии, не журнал; гроссбух — строками дела; нет дела — открой его, файл сессии — лишь запасной путь; кадром не шлётся; строки CHECKS в ответе — работа этого такта.";
 var MOMENT_LINE = "[мост] " + JSON_LINE;
-var STATUS_LINE = '[мост] action="status" (realm, text до 64 символов) — занятость ЭТОГО стояния: исполняет мост, держатель сокета, на сервер вызов не уходит; пустой text снимает; отказ поверхности приходит целиком.';
+var STATUS_LINE = '[мост] Занятость ставит iskron_stand(realm, status) на месте, которое мост уже держит, — основной ход; action="status" (realm, text до 64 символов) — прежний, оставлен для совместимости: исполняет мост, держатель сокета, на сервер вызов не уходит; пустой text снимает; отказ поверхности приходит целиком.';
 var LEAVE_LINE = '[мост] action="leave" (realm) — уйти с места: исполняет мост — сокет закрыт, занятость снята, адрес, очередь и хуки целы; почта копится и придёт при возвращении (сторож или iskron_stand). У места-спутника субагента уход полный: место отпущено целиком, почта не копится, возврата нет — встать снова можно только iskron_stand с satellite_of. Сам мост уходит только там, где кадр доходит лишь сторожем (Claude Code, Codex) и сторож не взведён 15 минут; в pi и OpenCode кадр приходит уведомлением, и мост места не бросает. Занятость снимается на конце сессии.';
 function annotateToolList(reply2) {
   const tools = reply2?.result?.tools;

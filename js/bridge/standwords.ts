@@ -6,10 +6,16 @@ import { L } from "../shared/lang.ts";
 const s = (ms: number): number => Math.round(ms / 1000);
 
 export const SW = {
-  needRealmKarta: (): string =>
+  needRealmKarta: (status: boolean): string =>
     L(
-      "Отказано (мост): iskron_stand требует realm и karta — граф и роль из AGENTS.md или строки запуска.",
-      "Refused (bridge): iskron_stand needs realm and karta — the graph and the role from AGENTS.md or the launch line.",
+      "Отказано (мост): iskron_stand требует realm и karta — граф и роль из AGENTS.md или строки запуска." +
+        (status
+          ? " Без karta вызов только ставит занятость места, которое этот мост уже держит в этом графе, — такого места нет."
+          : ""),
+      "Refused (bridge): iskron_stand needs realm and karta — the graph and the role from AGENTS.md or the launch line." +
+        (status
+          ? " Without karta the call only sets the busy line of a seat this bridge already holds in this graph — there is none."
+          : ""),
     ),
   badCwd: (cwd: string, relative: boolean): string =>
     L(
