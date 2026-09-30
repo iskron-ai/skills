@@ -7,6 +7,15 @@
 // запускающий, наследства роли нет), без хука инбокса роли, канал с
 // коротким окном простоя, без записи держания; с концом прогона (stdin закрыт)
 // мост уходит с места, и канал гаснет по окну (main.ts).
+//
+// N выбирается под заявкой машины: мосты-спутники, вставшие разом, читают
+// доску раньше чужого connect, и «первое свободное на доске» давало обоим одно
+// имя — одно место на два прогона, и уход первого снимал его второму (дело
+// №74). Заявка — файл имени в доме моста с pid держателя, выбор идёт под
+// короткой блокировкой каталога заявок; заявка живого чужого моста — занято.
+import { mkdirSync, readFileSync, rmdirSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+
 import { L } from "../shared/lang.ts";
 import { type BoardEntry, nameOf, parseBoard } from "./board.ts";
 import { callTool as call, short } from "./call.ts";
@@ -43,10 +52,113 @@ export type SatellitePick =
     }
   | { ok: false; refusal: string };
 
+const claimDir = (): string => join(CFG.authDir, "satellites");
+// По имени, без графа: имя спутника несёт машину и место позвавшего, а граф
+// в вызове пишут по-разному (@owner/slug, slug, rN) — заявка по нему разошлась бы.
+const claimFile = (name: string): string =>
+  join(claimDir(), `${name.replace(/[^A-Za-z0-9._-]+/g, "_")}.claim`);
+/** Заявки этого процесса — снимаются уходом с места и выходом процесса. */
+const claims = new Set<string>();
+let releaseOnExit = false;
+const LOCK_STALE_MS = 10_000;
+const LOCK_WAIT_MS = 3_000;
+
+function alive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+/**
+ * Заявить имя спутника на этой машине — только под блокировкой каталога.
+ * true — имя за этим мостом; false — его держит заявка живого другого моста.
+ */
+function claimName(name: string): boolean {
+  const file = claimFile(name);
+  let pid = 0;
+  try {
+    pid = Number(readFileSync(file, "utf8").trim());
+  } catch {
+    // заявки нет
+  }
+  if (pid && pid !== process.pid && alive(pid)) return false;
+  writeFileSync(file, `${process.pid}\n`, { mode: 0o600 });
+  if (!releaseOnExit) process.once("exit", releaseSatelliteClaims);
+  releaseOnExit = true;
+  claims.add(file);
+  return true;
+}
+
+/** Снять заявки этого моста: место отпущено — имя свободно следующему прогону. */
+export function releaseSatelliteClaims(): void {
+  for (const f of claims) {
+    try {
+      if (Number(readFileSync(f, "utf8").trim()) === process.pid) unlinkSync(f);
+    } catch {
+      // уже снята
+    }
+  }
+  claims.clear();
+}
+
+/**
+ * Выбор под блокировкой каталога заявок (mkdir атомарен): мосты этой машины
+ * выбирают N по очереди. Блокировка брошенная (старше LOCK_STALE_MS) снимается;
+ * каталог недоступен либо ждать дольше LOCK_WAIT_MS — выбор по одной доске, вслух в журнал.
+ */
+async function underClaimLock<T>(fn: (claim: (name: string) => boolean) => T): Promise<T> {
+  const lock = join(claimDir(), ".lock");
+  let fault: string | null = null;
+  try {
+    mkdirSync(claimDir(), { recursive: true, mode: 0o700 });
+  } catch (e) {
+    fault = (e as Error).message;
+  }
+  for (const end = Date.now() + LOCK_WAIT_MS; !fault;) {
+    try {
+      mkdirSync(lock);
+      break;
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== "EEXIST") fault = (e as Error).message;
+      else if (Date.now() > end) fault = `the claims lock ${lock} is held too long`;
+    }
+    try {
+      if (Date.now() - statSync(lock).mtimeMs > LOCK_STALE_MS) rmdirSync(lock);
+    } catch {
+      // снял другой
+    }
+    await new Promise((r) => setTimeout(r, 20));
+  }
+  if (fault) {
+    log(`satellite claims unavailable — the board alone picks the name: ${fault}`);
+    return fn(() => true);
+  }
+  try {
+    return fn((name) => {
+      try {
+        return claimName(name);
+      } catch (e) {
+        log(`satellite claim not written: ${(e as Error).message}`);
+        return true;
+      }
+    });
+  } finally {
+    try {
+      rmdirSync(lock);
+    } catch {
+      // уже снята
+    }
+  }
+}
+
 /**
  * Место-спутник по доске: место позвавшего (`@handle:name` либо голое имя)
  * должно стоять на доске — любой роли: роль спутника — `karta` вызова; имя —
- * первое `.sub-N`, которого на доске нет вовсе. `led` — имя места, которое
+ * первое `.sub-N`, которого на доске нет вовсе и которое не заявил другой
+ * живой мост этой машины (`claim`). `led` — имя места, которое
  * этот мост уже ведёт в графе: спутник той же базы возвращается на него, а не
  * берёт следующий номер.
  */
@@ -55,6 +167,7 @@ export function pickSatellite(
   of: string,
   karta: string,
   led: string | null,
+  claim: (name: string) => boolean = () => true,
 ): SatellitePick {
   const address = of.startsWith("@") && of.includes(":") ? of : null;
   const base = address ? nameOf(address) : of.replace(/^@/, "");
@@ -93,12 +206,14 @@ export function pickSatellite(
   const callerId = same[0].id;
   const notes: string[] = [];
   if (led && isSatelliteOf(base, led)) {
-    // Повтор того же прогона — либо параллельный прогон ТОГО ЖЕ файла агента:
-    // Claude Code мемоизует сервер файла агента по имени и конфигу, и второй
-    // прогон приходит в этот же мост. Различить их мост не может — называет оба.
+    // Повтор того же прогона — либо параллельный прогон с той же записью моста:
+    // Claude Code делит соединение сервера фронтматтера между параллельными
+    // прогонами, и не только одного файла — в деле №74 ревьюер и ткач (два
+    // файла с одной записью iskron-sub) шли одним процессом моста. Прогона
+    // вызов не называет, различить их мост не может — называет оба.
     const word = L(
-      `мост уже держит ${led} — повтор этого прогона либо параллельный прогон того же файла агента, который делит это место и потеряет его, когда первый закончит; параллельно — не больше одного прогона на файл агента`,
-      `the bridge already holds ${led} — a repeat of this run or a parallel run of the same agent file, which shares this seat and loses it when the first one ends; in parallel — no more than one run per agent file`,
+      `мост уже держит ${led} — повтор этого прогона либо параллельный прогон с той же записью моста (тот же файл агента или другой с той же записью), который делит это место и потеряет его, когда первый закончит; параллельно — не больше одного прогона на запись моста`,
+      `the bridge already holds ${led} — a repeat of this run or a parallel run with the same bridge entry (the same agent file or another with the same entry), which shares this seat and loses it when the first one ends; in parallel — no more than one run per bridge entry`,
     );
     log(word);
     notes.push(word);
@@ -107,7 +222,7 @@ export function pickSatellite(
   const taken = new Set(entries.map((e) => nameOf(e.address)));
   for (let n = 1; n <= 99; n++) {
     const name = satelliteName(base, n);
-    if (taken.has(name)) continue;
+    if (taken.has(name) || !claim(name)) continue;
     if (!name.startsWith(`${base}.`))
       notes.push(
         L(
@@ -170,7 +285,8 @@ export async function satelliteGate(
     );
   const s = state.standing;
   const led = s && !otherRealm(s.realm, realm) ? (s.name ?? null) : null;
-  const pick = pickSatellite(parseBoard(b.text), of, karta, led);
+  const entries = parseBoard(b.text);
+  const pick = await underClaimLock((claim) => pickSatellite(entries, of, karta, led, claim));
   if (!pick.ok) return pick;
   // id места печатает только доска одной роли (list с karta), последней строкой под местом.
   if (!pick.callerId) {

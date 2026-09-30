@@ -1728,7 +1728,11 @@ test("satellite: a subagent's bridge stands as <caller>.sub-1 in the caller's ro
   const again = await standAs(one, SAT_ARGS);
   assert.equal(placeOf(again), `${CALLER}.sub-1`, textOf(again));
   assert.equal(fake.state.counts.connect, connects, "the same run's place, not .sub-2");
-  assert.match(textOf(again), /параллельный прогон того же файла агента/, "a shared run is named");
+  assert.match(
+    textOf(again),
+    /параллельный прогон с той же записью моста/,
+    "a shared run is named",
+  );
   assert.match(one.stderr, /мост уже держит/, "and warned on stderr");
   // Another run while sub-1 is on the board.
   const two = await satelliteBridge(t, fake);
@@ -1736,6 +1740,59 @@ test("satellite: a subagent's bridge stands as <caller>.sub-1 in the caller's ro
   assert.ok(!r2.result?.isError, `${textOf(r2)}\n${two.stderr}`);
   assert.equal(placeOf(r2), `${CALLER}.sub-2`, textOf(r2));
   assert.equal(fake.state.counts.webhooks_added, hooks, "no role-inbox hook for a satellite");
+});
+
+// Two subagent runs of one caller, each with its own satellite bridge (two
+// processes, one home), stand at the same moment: each reads the board before
+// the other's connect lands, and «first N free on the board» gave both the
+// same .sub-N — one place, two runs, and the first to leave took it from the
+// other (case №74). A slow board holds the window open for the probe.
+test("satellite: two bridges of one caller standing in parallel take different places, and one leaving does not touch the other", async (t) => {
+  const fake = await withCaller(t);
+  await fake.control({ listDelayMs: 300 });
+  const home = mkdtempSync(join(tmpdir(), "iskron-sat-"));
+  // The claim of a bridge that died without letting go does not hold the name.
+  const dead = execFileSync(NODE, ["-e", "process.stdout.write(String(process.pid))"], {
+    encoding: "utf8",
+  });
+  mkdirSync(join(home, "satellites"), { recursive: true });
+  writeFileSync(join(home, "satellites", `${CALLER}.sub-1.claim`), `${dead}\n`);
+  const [a, b] = await Promise.all([
+    satelliteBridge(t, fake, { dir: home }),
+    satelliteBridge(t, fake, { dir: home }),
+  ]);
+  const [ra, rb] = await Promise.all([standAs(a, SAT_ARGS), standAs(b, SAT_ARGS)]);
+  assert.ok(!ra.result?.isError, `${textOf(ra)}\n${a.stderr}`);
+  assert.ok(!rb.result?.isError, `${textOf(rb)}\n${b.stderr}`);
+  const names = [placeOf(ra), placeOf(rb)];
+  assert.deepEqual(
+    [...names].sort(),
+    [`${CALLER}.sub-1`, `${CALLER}.sub-2`],
+    `two runs, two places: ${names.join(", ")}`,
+  );
+  await fake.control({ listDelayMs: 0 });
+  await until(() => fake.state.ws.size === 2, "both satellites' sockets");
+  const left = await a.call("tools/call", {
+    name: "iskron_channel",
+    arguments: { realm: "nks-dev", action: "leave" },
+  });
+  assert.ok(!left.result?.isError, textOf(left));
+  assert.match(textOf(left), new RegExp(`ушёл с места-спутника ${names[0]}`), textOf(left));
+  await new Promise((r) => setTimeout(r, 300));
+  const other = fake.state.places.get(`931:${names[1]}`);
+  assert.equal(other?.listening, true, `${names[1]} still listens after ${names[0]} left`);
+  assert.ok(
+    [...fake.state.wsNames.values()].includes(names[1]),
+    "the staying run's socket is open",
+  );
+  const connects = fake.state.counts.connect;
+  const again = await standAs(b, SAT_ARGS);
+  assert.equal(placeOf(again), names[1], textOf(again));
+  assert.equal(
+    fake.state.counts.connect,
+    connects,
+    "the staying run keeps its place, no new connect",
+  );
 });
 
 test("satellite: stdin closing leaves the place and no hold record is ever written; a session bridge writes one", async (t) => {
