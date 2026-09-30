@@ -31,6 +31,18 @@ export const RAW_URL =
 export const CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
 /** Неудачная сверка без названного сброса повторяется через это время, не через шесть часов. */
 export const FAILED_RETRY_MS = 15 * 60 * 1000;
+/**
+ * Повтор после неудачи: не раньше пола (часы машины могут спешить против
+ * сброса, названного GitHub, — без пола повтор шёл бы каждую секунду) и с
+ * разбросом на мост, чтобы мосты машины не шли к API в одну секунду сброса.
+ * Переменные — только для проб.
+ */
+const envMs = (name: string, dflt: number): number => {
+  const v = Number(process.env[name]);
+  return process.env[name]?.trim() && Number.isFinite(v) && v >= 0 ? v : dflt;
+};
+export const RETRY_FLOOR_MS = envMs("ISKRON_BRIDGE_RETRY_FLOOR_MS", 60_000);
+export const RETRY_JITTER_MS = envMs("ISKRON_BRIDGE_RETRY_JITTER_MS", 60_000);
 /** Пробы и CI: ни дома не трогать, ни в сеть не ходить. */
 export const updatesDisabled = (): boolean => !!process.env.ISKRON_BRIDGE_NO_UPDATE;
 
@@ -139,6 +151,8 @@ export interface Latest {
   error?: string;
   /** Отказ — исчерпанный лимит API GitHub: до этой минуты (мс эпохи) спрашивать бессмысленно. */
   rate_limited_until?: number;
+  /** Отказ — лимит API GitHub (первичный или вторичный), назван ли срок или нет. */
+  rate_limited?: boolean;
 }
 
 export function readLatest(authDir: string): Latest | null {
@@ -227,7 +241,10 @@ export async function checkLatest(authDir: string, force = false): Promise<Lates
     }
   } catch (e) {
     latest.error = (e as Error).message;
-    if (e instanceof RateLimitError && e.resetAt) latest.rate_limited_until = e.resetAt;
+    if (e instanceof RateLimitError) {
+      latest.rate_limited = true;
+      if (e.resetAt) latest.rate_limited_until = e.resetAt;
+    }
   }
   try {
     writeAtomic(latestPathOf(authDir), JSON.stringify(latest, null, 2));
@@ -304,16 +321,18 @@ export function startFreshnessWatch(authDir: string, serverUrl: string): void {
   }
   let retry: ReturnType<typeof setTimeout> | null = null;
   let told: string | null = null;
+  const spread = Math.floor(Math.random() * RETRY_JITTER_MS); // свой у каждого моста
   const tick = async (): Promise<void> => {
     const latest = await checkLatest(authDir);
     if (retry) clearTimeout(retry);
     retry = null;
     if (latest?.error) {
       // Неудача — не «проверено»: следующая сверка после сброса лимита либо через
-      // четверть часа, а не на шестичасовом такте (+1 с — сброс назван секундами).
+      // четверть часа, а не на шестичасовом такте (+1 с — сброс назван секундами),
+      // не раньше пола и со своим разбросом (RETRY_FLOOR_MS, RETRY_JITTER_MS).
       const wait = Math.min(
         CHECK_INTERVAL_MS,
-        Math.max(0, checkExpiresAt(latest) - Date.now()) + 1000,
+        Math.max(RETRY_FLOOR_MS, checkExpiresAt(latest) - Date.now() + 1000) + spread,
       );
       retry = setTimeout(() => void tick(), wait);
       retry.unref();

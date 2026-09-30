@@ -1,9 +1,11 @@
-// Свежий тег релиза поставки — вопрос, который задаёт каждый мост машины
-// (граф nks-dev: вимарша #6467). Анонимный REST API GitHub даёт 60 запросов в
-// час на внешний адрес, и все мосты за ним — вахты, спутники субагентов,
-// подкоманда update — делят этот лимит. Поэтому ответ общий на машину (файл в
-// доме моста), страница релизов — запасной путь мимо API, а отказ по лимиту
-// называет лимит и сброс.
+// Свежий тег релиза поставки (граф nks-dev: вимарша #6467). Анонимный REST API
+// GitHub даёт 60 запросов в час на внешний адрес, и всё за ним — мосты, update,
+// прочие клиенты — делит этот лимит. Запись сверки latest.json и так общая
+// мостам под одним каталогом гранта (по умолчанию ~/.iskron-bridge, спутники
+// тоже). Здесь новое: страница релизов — запасной путь мимо API; память
+// известного лимита в доме моста — до сброса API не спрашивает ни один мост
+// машины и ни одна подкоманда update; тот же файл отдаёт тег мостам с другим
+// каталогом гранта; отказ по лимиту называет лимит и сброс.
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
@@ -48,24 +50,43 @@ export class RateLimitError extends Error {
   }
 }
 
-function rateLimitWord(limit: number | null, resetAt: number | null): string {
-  const per = limit ? `${limit} запросов в час` : "лимит в час";
-  const reset = resetAt
+function resetWord(resetAt: number | null): string {
+  return resetAt
     ? `сброс ${new Date(resetAt).toISOString()} (через ${Math.max(0, Math.ceil((resetAt - Date.now()) / 60_000))} мин)`
     : "время сброса GitHub не назвал";
-  return `лимит анонимного API GitHub исчерпан: ${per} на внешний адрес машины, общий всем мостам и клиентам за ним; ${reset}`;
 }
 
-/** 403 с x-ratelimit-remaining: 0 или 429 — лимит; иначе null. */
+function rateLimitWord(limit: number | null, resetAt: number | null): string {
+  const per = limit ? `${limit} запросов в час` : "лимит в час";
+  return `лимит анонимного API GitHub исчерпан: ${per} на внешний адрес машины, общий всем мостам и клиентам за ним; ${resetWord(resetAt)}`;
+}
+
+/**
+ * Лимит или нет. Первичный — 403 с x-ratelimit-remaining: 0, срок —
+ * x-ratelimit-reset. Вторичный (частота запросов) — 403 или 429 с retry-after
+ * при оставшемся первичном, срок — retry-after. 429 без обоих — лимит без
+ * названного срока. Прочее — null.
+ */
 function rateLimitOf(res: Response): RateLimitError | null {
+  if (res.status !== 403 && res.status !== 429) return null;
   const remaining = res.headers.get("x-ratelimit-remaining");
-  if (!(res.status === 429 || (res.status === 403 && remaining === "0"))) return null;
-  const limit = Number(res.headers.get("x-ratelimit-limit")) || null;
-  const resetSec = Number(res.headers.get("x-ratelimit-reset"));
   const retrySec = Number(res.headers.get("retry-after"));
-  const resetAt =
-    resetSec > 0 ? resetSec * 1000 : retrySec > 0 ? Date.now() + retrySec * 1000 : null;
-  return new RateLimitError(rateLimitWord(limit, resetAt), limit, resetAt);
+  if (remaining === "0") {
+    const limit = Number(res.headers.get("x-ratelimit-limit")) || null;
+    const resetSec = Number(res.headers.get("x-ratelimit-reset"));
+    const resetAt =
+      resetSec > 0 ? resetSec * 1000 : retrySec > 0 ? Date.now() + retrySec * 1000 : null;
+    return new RateLimitError(rateLimitWord(limit, resetAt), limit, resetAt);
+  }
+  if (retrySec > 0 || res.status === 429) {
+    const resetAt = retrySec > 0 ? Date.now() + retrySec * 1000 : null;
+    return new RateLimitError(
+      `вторичный лимит API GitHub: слишком частые запросы с внешнего адреса машины; ${resetWord(resetAt)}`,
+      null,
+      resetAt,
+    );
+  }
+  return null;
 }
 
 async function tagFromApi(): Promise<string | null> {
@@ -136,7 +157,9 @@ export async function resolveTag(force: boolean): Promise<string | null> {
   const knownLimit =
     cached?.api_limited_until && now < cached.api_limited_until
       ? new RateLimitError(
-          rateLimitWord(cached.api_limit ?? null, cached.api_limited_until),
+          cached.api_limit
+            ? rateLimitWord(cached.api_limit, cached.api_limited_until)
+            : `лимит API GitHub, записанный другим мостом машины; ${resetWord(cached.api_limited_until)}`,
           cached.api_limit ?? null,
           cached.api_limited_until,
         )

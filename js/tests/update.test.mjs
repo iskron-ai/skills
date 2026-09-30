@@ -56,9 +56,15 @@ const RESET = Math.floor(Date.now() / 1000) + 17 * 60;
  * Подставные релизы: /releases/latest (API), /page/latest (страница релизов:
  * 302 на тег) и сырые файлы тега. limited — API отвечает исчерпанным анонимным
  * лимитом, как GitHub (true — со сбросом RESET; число — до этого мгновения, мс
- * эпохи, и сброс назван им); page: false — страница релизов тега не отдаёт.
+ * эпохи, и сброс назван им); reset — назвать этот сброс (секунды эпохи) вместо
+ * своего; secondary — вторичный лимит: 403 с retry-after в секундах при
+ * оставшемся первичном; page: false — страница релизов тега не отдаёт.
  */
-async function releases(t, tag = `v${NEWER}`, { limited = false, page = true } = {}) {
+async function releases(
+  t,
+  tag = `v${NEWER}`,
+  { limited = false, reset = null, secondary = null, page = true } = {},
+) {
   const hits = [];
   const srv = createServer((req, res) => {
     hits.push(req.url);
@@ -72,9 +78,21 @@ async function releases(t, tag = `v${NEWER}`, { limited = false, page = true } =
         "content-type": "application/json",
         "x-ratelimit-limit": "60",
         "x-ratelimit-remaining": "0",
-        "x-ratelimit-reset": String(limited === true ? RESET : Math.ceil(limited / 1000)),
+        "x-ratelimit-reset": String(
+          reset ?? (limited === true ? RESET : Math.ceil(limited / 1000)),
+        ),
       });
       return res.end(JSON.stringify({ message: "API rate limit exceeded for 127.0.0.1." }));
+    }
+    if (req.url === "/releases/latest" && secondary) {
+      res.writeHead(403, {
+        "content-type": "application/json",
+        "x-ratelimit-limit": "60",
+        "x-ratelimit-remaining": "55",
+        "x-ratelimit-reset": String(RESET),
+        "retry-after": String(secondary),
+      });
+      return res.end(JSON.stringify({ message: "You have exceeded a secondary rate limit." }));
     }
     if (req.url === "/releases/latest") return end(200, JSON.stringify({ tag_name: tag }));
     if (req.url === "/page/latest" && page) {
@@ -352,13 +370,27 @@ test("update: a rate limit with no way around it is named as the limit with its 
   assert.ok(!/сеть или GitHub/.test(r.out), `no blame on the network: ${r.out}`);
 });
 
-test("a second bridge on the machine takes the fresh tag from the shared cache, not from GitHub", async (t) => {
+test("update: a secondary rate limit (retry-after while the hourly budget remains) is a limit too, named with its deadline", async (t) => {
+  const h = home(t);
+  const rel = await releases(t, `v${NEWER}`, { secondary: 120, page: false });
+  const r = await runUpdate(h, rel, join(h.root, "auth"));
+  assert.equal(r.code, 1, r.out + r.err);
+  assert.match(r.out, /вторичный лимит API GitHub/, r.out);
+  assert.match(r.out, /сброс \S+ \(через 2 мин\)/, r.out);
+  assert.match(r.out, /— лимит GitHub; повтори после сброса/, r.out);
+  assert.ok(!/сеть или GitHub/.test(r.out), `no blame on the network: ${r.out}`);
+});
+
+// Bridges under ONE auth dir (the default ~/.iskron-bridge, satellites too)
+// already shared latest.json before this change. What this probe proves is the
+// narrower thing added here: the tag answer lives in the bridge home, so a
+// bridge under ANOTHER auth dir takes it without asking GitHub.
+test("a bridge under another auth dir takes the fresh tag from the home's release answer, not from GitHub", async (t) => {
   const fake = await startFakeNks({ pat: PAT });
   const h = home(t);
   const rel = await releases(t);
   t.after(() => fake.stop());
   const staleSeen = (b) => () => b.notifications.some((n) => n.params?.data?.kind === "stale");
-  // Different auth dirs: the per-grant check record is not what they share.
   const first = startBridge(fake.mcpUrl, join(h.root, "auth-1"), { HOME: h.root, ...rel.env });
   t.after(() => first.stop());
   assert.ok((await first.call("initialize", INIT)).result);
@@ -384,7 +416,12 @@ test("a failed check is not a six-hour answer: after the limit resets the watchi
   const fake = await startFakeNks({ pat: PAT });
   const h = home(t);
   const rel = await releases(t, `v${NEWER}`, { limited: Date.now() + 1500, page: false });
-  const bridge = startBridge(fake.mcpUrl, join(h.root, "auth"), { HOME: h.root, ...rel.env });
+  const bridge = startBridge(fake.mcpUrl, join(h.root, "auth"), {
+    HOME: h.root,
+    ...rel.env,
+    ISKRON_BRIDGE_RETRY_FLOOR_MS: "0", // пол и разброс повтора — минуты; проба ждёт секунды
+    ISKRON_BRIDGE_RETRY_JITTER_MS: "300",
+  });
   t.after(async () => {
     await bridge.stop();
     await fake.stop();
@@ -399,6 +436,33 @@ test("a failed check is not a six-hour answer: after the limit resets the watchi
     `refused, then asked again: ${rel.hits}`,
   );
   assert.equal(versionIn(readFileSync(h.bridgePath, "utf8")), NEWER);
+});
+
+// A machine clock running ahead of GitHub reads the named reset as already past
+// while the API still refuses: without a floor the retry would come every second.
+test("a limit whose reset the machine clock already sees as past is retried after the floor, not in a tight loop", async (t) => {
+  const fake = await startFakeNks({ pat: PAT });
+  const h = home(t);
+  const past = Math.floor(Date.now() / 1000) - 60;
+  const rel = await releases(t, `v${NEWER}`, { limited: true, reset: past, page: false });
+  const authDir = join(h.root, "auth");
+  const bridge = startBridge(fake.mcpUrl, authDir, {
+    HOME: h.root,
+    ...rel.env,
+    ISKRON_BRIDGE_RETRY_JITTER_MS: "0",
+  });
+  t.after(async () => {
+    await bridge.stop();
+    await fake.stop();
+  });
+  assert.ok((await bridge.call("initialize", INIT)).result);
+  await waitFor(() => existsSync(join(authDir, "latest.json")), "the first, refused check");
+  await new Promise((r) => setTimeout(r, 3500));
+  assert.equal(
+    rel.hits.filter((u) => u === "/releases/latest").length,
+    1,
+    `no retry before the floor: ${rel.hits}`,
+  );
 });
 
 for (const [what, seed] of [

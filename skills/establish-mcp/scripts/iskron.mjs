@@ -5274,19 +5274,32 @@ var RateLimitError = class extends Error {
     this.resetAt = resetAt;
   }
 };
+function resetWord(resetAt) {
+  return resetAt ? `сброс ${new Date(resetAt).toISOString()} (через ${Math.max(0, Math.ceil((resetAt - Date.now()) / 6e4))} мин)` : "время сброса GitHub не назвал";
+}
 function rateLimitWord(limit, resetAt) {
   const per = limit ? `${limit} запросов в час` : "лимит в час";
-  const reset = resetAt ? `сброс ${new Date(resetAt).toISOString()} (через ${Math.max(0, Math.ceil((resetAt - Date.now()) / 6e4))} мин)` : "время сброса GitHub не назвал";
-  return `лимит анонимного API GitHub исчерпан: ${per} на внешний адрес машины, общий всем мостам и клиентам за ним; ${reset}`;
+  return `лимит анонимного API GitHub исчерпан: ${per} на внешний адрес машины, общий всем мостам и клиентам за ним; ${resetWord(resetAt)}`;
 }
 function rateLimitOf(res) {
+  if (res.status !== 403 && res.status !== 429) return null;
   const remaining = res.headers.get("x-ratelimit-remaining");
-  if (!(res.status === 429 || res.status === 403 && remaining === "0")) return null;
-  const limit = Number(res.headers.get("x-ratelimit-limit")) || null;
-  const resetSec = Number(res.headers.get("x-ratelimit-reset"));
   const retrySec = Number(res.headers.get("retry-after"));
-  const resetAt = resetSec > 0 ? resetSec * 1e3 : retrySec > 0 ? Date.now() + retrySec * 1e3 : null;
-  return new RateLimitError(rateLimitWord(limit, resetAt), limit, resetAt);
+  if (remaining === "0") {
+    const limit = Number(res.headers.get("x-ratelimit-limit")) || null;
+    const resetSec = Number(res.headers.get("x-ratelimit-reset"));
+    const resetAt = resetSec > 0 ? resetSec * 1e3 : retrySec > 0 ? Date.now() + retrySec * 1e3 : null;
+    return new RateLimitError(rateLimitWord(limit, resetAt), limit, resetAt);
+  }
+  if (retrySec > 0 || res.status === 429) {
+    const resetAt = retrySec > 0 ? Date.now() + retrySec * 1e3 : null;
+    return new RateLimitError(
+      `вторичный лимит API GitHub: слишком частые запросы с внешнего адреса машины; ${resetWord(resetAt)}`,
+      null,
+      resetAt
+    );
+  }
+  return null;
 }
 async function tagFromApi() {
   const res = await fetch(RELEASES_URL, {
@@ -5330,7 +5343,7 @@ async function resolveTag(force) {
   const now2 = Date.now();
   if (!force && cached?.tag && now2 - cached.checked_at < TAG_TTL_MS) return cached.tag;
   const knownLimit = cached?.api_limited_until && now2 < cached.api_limited_until ? new RateLimitError(
-    rateLimitWord(cached.api_limit ?? null, cached.api_limited_until),
+    cached.api_limit ? rateLimitWord(cached.api_limit, cached.api_limited_until) : `лимит API GitHub, записанный другим мостом машины; ${resetWord(cached.api_limited_until)}`,
     cached.api_limit ?? null,
     cached.api_limited_until
   ) : null;
@@ -5378,6 +5391,12 @@ async function resolveTag(force) {
 var RAW_URL = process.env.ISKRON_BRIDGE_RAW_URL?.trim() || "https://raw.githubusercontent.com/iskron-ai/skills";
 var CHECK_INTERVAL_MS = 6 * 60 * 60 * 1e3;
 var FAILED_RETRY_MS = 15 * 60 * 1e3;
+var envMs = (name, dflt) => {
+  const v = Number(process.env[name]);
+  return process.env[name]?.trim() && Number.isFinite(v) && v >= 0 ? v : dflt;
+};
+var RETRY_FLOOR_MS = envMs("ISKRON_BRIDGE_RETRY_FLOOR_MS", 6e4);
+var RETRY_JITTER_MS = envMs("ISKRON_BRIDGE_RETRY_JITTER_MS", 6e4);
 var updatesDisabled = () => !!process.env.ISKRON_BRIDGE_NO_UPDATE;
 var selfPath = () => fileURLToPath4(import.meta.url);
 var opencodePluginPath = () => join14(homedir5(), ".config", "opencode", "plugins", "iskron.js");
@@ -5515,7 +5534,10 @@ async function checkLatest(authDir, force = false) {
     }
   } catch (e) {
     latest.error = e.message;
-    if (e instanceof RateLimitError && e.resetAt) latest.rate_limited_until = e.resetAt;
+    if (e instanceof RateLimitError) {
+      latest.rate_limited = true;
+      if (e.resetAt) latest.rate_limited_until = e.resetAt;
+    }
   }
   try {
     writeAtomic(latestPathOf(authDir), JSON.stringify(latest, null, 2));
@@ -5564,6 +5586,7 @@ function startFreshnessWatch(authDir, serverUrl) {
   }
   let retry = null;
   let told = null;
+  const spread = Math.floor(Math.random() * RETRY_JITTER_MS);
   const tick = async () => {
     const latest = await checkLatest(authDir);
     if (retry) clearTimeout(retry);
@@ -5571,7 +5594,7 @@ function startFreshnessWatch(authDir, serverUrl) {
     if (latest?.error) {
       const wait = Math.min(
         CHECK_INTERVAL_MS,
-        Math.max(0, checkExpiresAt(latest) - Date.now()) + 1e3
+        Math.max(RETRY_FLOOR_MS, checkExpiresAt(latest) - Date.now() + 1e3) + spread
       );
       retry = setTimeout(() => void tick(), wait);
       retry.unref();
@@ -7335,7 +7358,7 @@ async function runUpdate(argv2) {
   const latest = await checkLatest(CFG.authDir, true);
   if (!latest || !latest.version) {
     out3(
-      latest?.rate_limited_until ? `свежий релиз не узнан: ${latest.error}; повтори после сброса` : `свежий релиз не узнан: ${latest?.error ?? "нет ответа"} — сеть или GitHub; повтори позже`
+      latest?.rate_limited ? `свежий релиз не узнан: ${latest.error} — лимит GitHub; повтори ${latest.rate_limited_until ? "после сброса" : "позже"}` : `свежий релиз не узнан: ${latest?.error ?? "нет ответа"} — сеть или GitHub; повтори позже`
     );
     process.exitCode = 1;
     return;
