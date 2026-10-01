@@ -77,11 +77,23 @@ export function parseArgs(argv: string[]): Config {
     // Только флагом: мост старше спутника на незнакомом флаге падает громко, а
     // переменную пропустил бы молча и встал бы полным местом с записью держания.
     satellite: false,
+    tools: null,
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--timeout") cfg.timeoutMs = Number(argv[++i]);
-    else if (a === "--auth-dir") cfg.authDir = argv[++i];
+    else if (a === "--tools") {
+      // Набор тулов харнеса (narrow.ts): имена через запятую, префикс iskron_ можно опустить.
+      const names = (argv[++i] ?? "")
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
+      if (!names.length) {
+        log("--tools needs a comma-separated list of tool names");
+        process.exit(2);
+      }
+      cfg.tools = new Set(names.map((n) => (n.startsWith("iskron_") ? n : `iskron_${n}`)));
+    } else if (a === "--auth-dir") cfg.authDir = argv[++i];
     else if (a === "--client-name") cfg.clientName = argv[++i];
     else if (a === "--no-browser") cfg.noBrowser = true;
     else if (a === "--debug") cfg.debug = true;

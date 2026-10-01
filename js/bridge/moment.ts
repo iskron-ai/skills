@@ -34,16 +34,17 @@ export function annotateToolList(reply: JsonRpcMessage): void {
   const at = tools.findIndex((t) => t?.name === STAND_TOOL.name);
   if (at >= 0) tools[at] = STAND_TOOL;
   else tools.push(STAND_TOOL);
+  // Строки моста — в НАЧАЛО описания: Claude Code режет описание тула до 2048
+  // знаков, а описания пишущих тулов сервера длиннее — в хвосте строку не видно.
   for (const t of tools) {
     if (t && t.name === "iskron_channel" && typeof t.description === "string") {
-      if (!t.description.includes(STATUS_LINE))
-        t.description = `${t.description}\n\n${STATUS_LINE}`;
-      if (!t.description.includes(LEAVE_LINE)) t.description = `${t.description}\n${LEAVE_LINE}`;
+      if (!t.description.includes(LEAVE_LINE)) t.description = `${LEAVE_LINE}\n\n${t.description}`;
+      if (!t.description.includes(STATUS_LINE)) t.description = `${STATUS_LINE}\n${t.description}`;
       continue;
     }
     if (!t || typeof t.name !== "string" || !WRITE_TOOL.test(t.name)) continue;
     const d = typeof t.description === "string" ? t.description : "";
     if (d.includes(MOMENT_LINE)) continue;
-    t.description = d ? `${d}\n\n${MOMENT_LINE}` : MOMENT_LINE;
+    t.description = d ? `${MOMENT_LINE}\n\n${d}` : MOMENT_LINE;
   }
 }

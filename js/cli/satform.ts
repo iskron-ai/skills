@@ -42,6 +42,29 @@ const cmdBase = (c: string): string =>
     .replace(/\.exe$/i, "")
     .toLowerCase();
 
+/**
+ * Список тулов — правило моста (bridge/config.ts, parseArgs): имена через запятую,
+ * пробелы вокруг имён вырезаются, пустые куски не считаются. «case, look» — тот же
+ * набор, что «case,look», и рабочая запись с ним остаётся рабочей.
+ */
+const isToolList = (v: string | undefined): v is string =>
+  !!v && v.split(",").some((s) => s.trim().length > 0);
+
+/**
+ * Хвост флагов моста, который запись несёт после `--satellite` и который готовый
+ * блок переносит: набор тулов `--tools a,b,c`. Любая форма — массивом или строкой sh -c.
+ */
+export function toolsTail(e: SatEntry): string[] {
+  const words = SHELLS.has(cmdBase(e.command))
+    ? (e.args[e.args.indexOf("-c") + 1] ?? "")
+        .split(/\s+/)
+        .map((w) => w.replace(/^["']|["']$/g, ""))
+    : e.args;
+  const at = words.indexOf("--tools");
+  const v = at >= 0 ? words[at + 1] : undefined;
+  return isToolList(v) ? ["--tools", v] : [];
+}
+
 export function formOf(e: SatEntry): SatForm {
   const base = cmdBase(e.command);
   if (base === "node" && (e.args[0] === "-e" || e.args[0] === "--eval")) {
@@ -52,7 +75,13 @@ export function formOf(e: SatEntry): SatForm {
     // Без splice process.argv = [node, ...after], и slice(2) теряет первый флаг моста.
     if (!(spliced ? after : after.slice(1)).includes("--satellite")) return "eval-session";
     // Рабочей признаётся только эталонная форма: любой другой код — не сверенный живьём.
-    return e.args[1] === SATELLITE_CODE && after.length === 1 ? "eval" : "eval-other";
+    // После --satellite — ничего либо набор тулов `--tools a,b,c` (bridge/narrow.ts).
+    const tail = after.slice(1);
+    const known =
+      !tail.length || (tail.length === 2 && tail[0] === "--tools" && isToolList(tail[1]));
+    return e.args[1] === SATELLITE_CODE && after[0] === "--satellite" && known
+      ? "eval"
+      : "eval-other";
   }
   if (SHELLS.has(base)) {
     const s = e.args[e.args.indexOf("-c") + 1] ?? "";
@@ -90,13 +119,13 @@ export function bridgePathOf(e: SatEntry): string | null {
  * doctor: вставленный вместо прежних mcpServers и disallowedTools, он на повторе
  * не даёт ни одной строки «НАДО:». Один на все ОС — машинного в нём нет.
  */
-export function readyEntry(name: string, disallowed: string[]): string {
+export function readyEntry(name: string, disallowed: string[], tail: string[] = []): string {
   return [
     "mcpServers:",
     `  - ${name}:`,
     "      type: stdio",
     "      command: node",
-    `      args: [${SATELLITE_ARGS.map((a) => JSON.stringify(a)).join(", ")}]`,
+    `      args: [${[...SATELLITE_ARGS, ...tail].map((a) => JSON.stringify(a)).join(", ")}]`,
     `disallowedTools: ${disallowed.join(", ")}`,
   ].join("\n");
 }

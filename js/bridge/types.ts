@@ -74,4 +74,6 @@ export interface Config {
   serverSource: "argument" | "ISKRON_BRIDGE_URL" | "file" | "default";
   /** Мост-спутник (satellite.ts): место на прогон субагента — без записи держания, без хука, с коротким ttl. */
   satellite: boolean;
+  /** `--tools`: набор тулов, который видит харнес (narrow.ts); null — набор по умолчанию. */
+  tools: Set<string> | null;
 }

@@ -12,7 +12,14 @@ import { CFG, isProductionServer } from "../bridge/config.ts";
 import { loadStore, storePath } from "../bridge/store.ts";
 import { homeBridgePath } from "../shared/home.ts";
 import { frontmatterText, parseFrontmatter, type YamlValue } from "./frontmatter.ts";
-import { bridgePathOf, formOf, readyEntry, SATELLITE_ARGS, type SatForm } from "./satform.ts";
+import {
+  bridgePathOf,
+  formOf,
+  readyEntry,
+  SATELLITE_ARGS,
+  type SatForm,
+  toolsTail,
+} from "./satform.ts";
 import { LOGIN_ADVICE, probeSatellite } from "./satprobe.ts";
 
 type Out = (s: string) => void;
@@ -275,16 +282,18 @@ export async function subagentsReport(out: Out): Promise<void> {
     // Снимаемые мосты позвавшего — прежние строки файла плюс найденные на машине (или шаблон).
     const own = sat.map((e) => `mcp__${e.name}`);
     const disallowed = listOf(f.fm.disallowedTools).map((d) => d.replace(/__\*$/, ""));
-    const block = (name: string) =>
+    // Набор тулов записи (`--tools`) едет в готовый блок: замена формы его не теряет.
+    const block = (name: string, e?: Entry) =>
       `блоком ниже вместо прежних mcpServers и disallowedTools:\n${readyEntry(
         name,
         [...new Set([...disallowed, ...required])].filter((p) => p !== `mcp__${name}`),
+        e ? toolsTail(e) : [],
       )}`;
     const canonical = (e: Entry): Entry => ({
       name: `${e.name} (предложенная форма)`,
       ref: false,
       command: "node",
-      args: SATELLITE_ARGS,
+      args: [...SATELLITE_ARGS, ...toolsTail(e)],
       env: e.env,
     });
     const refs = entries.filter((e) => e.ref && /iskron/.test(e.name));
@@ -294,7 +303,7 @@ export async function subagentsReport(out: Out): Promise<void> {
       );
     if (!sat.length) {
       if (ours.length)
-        lines.push(`запись «${ours[0].name}»: ${FORM_WORD.session} → ${block(expected)}`);
+        lines.push(`запись «${ours[0].name}»: ${FORM_WORD.session} → ${block(expected, ours[0])}`);
       else if (!refs.length)
         lines.push(
           `записи моста-спутника нет — у субагента нет тулов графа → вставь во фронтматтер ${block(expected)}`,
@@ -310,7 +319,7 @@ export async function subagentsReport(out: Out): Promise<void> {
       const name = e.name === "iskron-sub" ? expected : e.name;
       const form = formOf(e);
       if (form !== "eval") {
-        lines.push(`запись «${e.name}»: ${FORM_WORD[form]} → замени ${block(name)}`);
+        lines.push(`запись «${e.name}»: ${FORM_WORD[form]} → замени ${block(name, e)}`);
         // Пробуем ту форму, что предложена взамен, — если домашний мост, который она зовёт, есть.
         if (!probeEntry && existsSync(homeBridgePath())) probeEntry = canonical(e);
         continue;
