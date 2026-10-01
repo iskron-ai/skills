@@ -682,6 +682,86 @@ test("doctor: a node -e entry is accepted only whole — with -- and the bridge 
   }
 });
 
+// Набор тулов спутника (`--tools`, bridge/narrow.ts) — хвост после --satellite:
+// эталонная форма с ним остаётся эталонной, а замена прежней формы его переносит.
+const TOOLS_TAIL = ["--tools", "iskron_case,iskron_add_vimarsha"];
+test("doctor: a node -e entry with a --tools tail is the single form, and a replaced form keeps the tail", async () => {
+  const fake = await startFakeNks();
+  const home = mkdtempSync(join(tmpdir(), "iskron-doctor-"));
+  const project = projectWithAgents({
+    worker: agentFile("worker", "iskron-sub-worker", [
+      "type: stdio",
+      "command: node",
+      `args: ${JSON.stringify(["-e", SAT_CODE, "--", "--satellite", ...TOOLS_TAIL])}`,
+    ]),
+    weaver: agentFile("weaver", "iskron-sub-weaver", [
+      "type: stdio",
+      "command: sh",
+      `args: ${JSON.stringify(["-c", `exec node "$HOME/.iskron-bridge/iskron-bridge.mjs" --satellite ${TOOLS_TAIL.join(" ")}`])}`,
+    ]),
+  });
+  try {
+    const r = await run(
+      ["doctor", fake.mcpUrl, "--auth-dir", join(home, ".iskron-bridge")],
+      { HOME: home, ISKRON_DOCTOR_PLATFORM: "darwin" },
+      project,
+    );
+    assert.equal(r.code, 0, r.err);
+    assert.doesNotMatch(r.out, /«iskron-sub-worker»: код `node -e`/, r.out);
+    assert.match(r.out, /«iskron-sub-weaver»: форма прежнего контракта/, r.out);
+    const tailed = `args: [${["-e", SAT_CODE, "--", "--satellite", ...TOOLS_TAIL].map((a) => JSON.stringify(a)).join(", ")}]`;
+    assert.ok(
+      r.out.includes(
+        `        - iskron-sub-weaver:\n            type: stdio\n            command: node\n            ${tailed}\n`,
+      ),
+      `the ready block must carry the tool set: ${r.out}`,
+    );
+  } finally {
+    await fake.stop();
+  }
+});
+
+// Правило списка тулов — одно с мостом (bridge/config.ts, parseArgs): имена через
+// запятую, пробелы вокруг имён мост вырезает. «case, look» в записи — тот же
+// набор, что «case,look»: рабочая форма остаётся рабочей, и готовый блок при
+// замене иной формы хвост с пробелом не теряет.
+const SPACED_TAIL = ["--tools", "iskron_case, iskron_add_vimarsha"];
+test("doctor: spaces after commas in a --tools list are the bridge's own form — the entry is not named alien, and a replacement keeps the spaced tail", async () => {
+  const fake = await startFakeNks();
+  const home = mkdtempSync(join(tmpdir(), "iskron-doctor-"));
+  const project = projectWithAgents({
+    worker: agentFile("worker", "iskron-sub-worker", [
+      "type: stdio",
+      "command: node",
+      `args: ${JSON.stringify(["-e", SAT_CODE, "--", "--satellite", ...SPACED_TAIL])}`,
+    ]),
+    weaver: agentFile("weaver", "iskron-sub-weaver", [
+      "type: stdio",
+      "command: node",
+      `args: ${JSON.stringify(["-e", SAT_CODE, "--satellite", ...SPACED_TAIL])}`,
+    ]),
+  });
+  try {
+    const r = await run(
+      ["doctor", fake.mcpUrl, "--auth-dir", join(home, ".iskron-bridge")],
+      { HOME: home, ISKRON_DOCTOR_PLATFORM: "darwin" },
+      project,
+    );
+    assert.equal(r.code, 0, r.err);
+    assert.doesNotMatch(r.out, /«iskron-sub-worker»: код `node -e`/, r.out);
+    assert.match(r.out, /«iskron-sub-weaver»: --satellite стоит без `--`/, r.out);
+    const tailed = `args: [${["-e", SAT_CODE, "--", "--satellite", ...SPACED_TAIL].map((a) => JSON.stringify(a)).join(", ")}]`;
+    assert.ok(
+      r.out.includes(
+        `        - iskron-sub-weaver:\n            type: stdio\n            command: node\n            ${tailed}\n`,
+      ),
+      `the ready block must carry the spaced tool set: ${r.out}`,
+    );
+  } finally {
+    await fake.stop();
+  }
+});
+
 // Без входа проба спутника лишь начала бы вход, который никто не кончит: её нет,
 // в доме ничего не появилось, и doctor говорит, как войти.
 test("doctor: with no grant the satellite probe is skipped and the way to log in is named", async () => {

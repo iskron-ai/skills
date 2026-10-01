@@ -858,12 +858,20 @@ function readArgs(argv2) {
     serverSource: "argument",
     // Только флагом: мост старше спутника на незнакомом флаге падает громко, а
     // переменную пропустил бы молча и встал бы полным местом с записью держания.
-    satellite: false
+    satellite: false,
+    tools: null
   };
   for (let i = 0; i < argv2.length; i++) {
     const a = argv2[i];
     if (a === "--timeout") cfg.timeoutMs = Number(argv2[++i]);
-    else if (a === "--auth-dir") cfg.authDir = argv2[++i];
+    else if (a === "--tools") {
+      const names2 = (argv2[++i] ?? "").split(",").map((s2) => s2.trim()).filter(Boolean);
+      if (!names2.length) {
+        log("--tools needs a comma-separated list of tool names");
+        process.exit(2);
+      }
+      cfg.tools = new Set(names2.map((n) => n.startsWith("iskron_") ? n : `iskron_${n}`));
+    } else if (a === "--auth-dir") cfg.authDir = argv2[++i];
     else if (a === "--client-name") cfg.clientName = argv2[++i];
     else if (a === "--no-browser") cfg.noBrowser = true;
     else if (a === "--debug") cfg.debug = true;
@@ -6832,21 +6840,78 @@ function annotateToolList(reply2) {
   else tools.push(STAND_TOOL);
   for (const t of tools) {
     if (t && t.name === "iskron_channel" && typeof t.description === "string") {
-      if (!t.description.includes(STATUS_LINE))
-        t.description = `${t.description}
+      if (!t.description.includes(LEAVE_LINE)) t.description = `${LEAVE_LINE}
 
-${STATUS_LINE}`;
-      if (!t.description.includes(LEAVE_LINE)) t.description = `${t.description}
-${LEAVE_LINE}`;
+${t.description}`;
+      if (!t.description.includes(STATUS_LINE)) t.description = `${STATUS_LINE}
+${t.description}`;
       continue;
     }
     if (!t || typeof t.name !== "string" || !WRITE_TOOL.test(t.name)) continue;
     const d = typeof t.description === "string" ? t.description : "";
     if (d.includes(MOMENT_LINE)) continue;
-    t.description = d ? `${d}
+    t.description = d ? `${MOMENT_LINE}
 
-${MOMENT_LINE}` : MOMENT_LINE;
+${d}` : MOMENT_LINE;
   }
+}
+
+// js/bridge/narrow.ts
+var PLACE_MOVES = /* @__PURE__ */ new Set(["mint", "connect", "sessions"]);
+var PLACE_FIELDS = ["ttl_seconds", "mute_siblings"];
+function clientName2() {
+  const info = state.initParams?.clientInfo;
+  return typeof info?.name === "string" ? info.name : "";
+}
+function toolSet() {
+  return CFG.tools ? /* @__PURE__ */ new Set([...CFG.tools, STAND_TOOL.name]) : null;
+}
+function outsideSetRefusal(msg) {
+  if (msg?.method !== "tools/call" || msg.id === void 0 || msg.id === null) return null;
+  const set = toolSet();
+  const name = String(msg.params?.name ?? "");
+  if (!set || set.has(name)) return null;
+  const list = [...set].sort().join(", ");
+  const text = L(
+    `Отказано (мост): тула ${name} нет в наборе этого моста (${list}) — набор задаёт --tools в записи моста.`,
+    `Refused (bridge): the tool ${name} is not in this bridge's set (${list}) — the set comes from --tools in the bridge entry.`
+  );
+  return {
+    jsonrpc: "2.0",
+    id: msg.id,
+    result: { isError: true, content: [{ type: "text", text }] }
+  };
+}
+function withoutPlaceMoves(text) {
+  return text.replace(
+    /((?:одно из|one of):\s*)([a-z_]+(?:\s*\|\s*[a-z_]+)*)/i,
+    (_, head, list) => head + list.split("|").map((s2) => s2.trim()).filter((s2) => !PLACE_MOVES.has(s2)).join(" | ")
+  );
+}
+function channelForHarness(t) {
+  const schema = t.inputSchema;
+  const props = schema?.properties;
+  if (!schema || !props) return t;
+  const kept = {};
+  for (const [k, v] of Object.entries(props)) if (!PLACE_FIELDS.includes(k)) kept[k] = v;
+  const action = kept.action;
+  if (action) {
+    const a = { ...action };
+    if (typeof a.description === "string") a.description = withoutPlaceMoves(a.description);
+    if (Array.isArray(a.enum)) a.enum = a.enum.filter((x) => !PLACE_MOVES.has(String(x)));
+    kept.action = a;
+  }
+  const next = { ...schema, properties: kept };
+  if (Array.isArray(schema.required))
+    next.required = schema.required.filter((r) => !PLACE_FIELDS.includes(String(r)));
+  return { ...t, inputSchema: next };
+}
+function narrowToolList(reply2) {
+  const tools = reply2?.result?.tools;
+  if (!Array.isArray(tools) || clientName2() === SURFACE_CLIENT) return reply2;
+  const set = toolSet();
+  const shown = tools.filter((t) => !set || set.has(String(t?.name))).map((t) => t?.name === "iskron_channel" ? channelForHarness(t) : t);
+  return { ...reply2, result: { ...reply2.result, tools: shown } };
 }
 
 // js/bridge/toolsync.ts
@@ -6954,11 +7019,10 @@ onReinitialized(() => {
       if (m.id === id) got = m;
     });
     const reply2 = got;
-    if (reply2?.result) {
-      annotateToolList(reply2);
-      saveServerCache({ tools: reply2.result });
-    }
-    return reply2;
+    if (!reply2?.result) return reply2;
+    annotateToolList(reply2);
+    saveServerCache({ tools: reply2.result });
+    return narrowToolList(reply2);
   }, emit);
 });
 function isRead(msg) {
@@ -6970,11 +7034,11 @@ function lastServerAnswer(msg) {
   const result = msg?.method === "initialize" ? cache.init : msg?.method === "tools/list" && !msg.params?.cursor ? cache.tools : null;
   if (!result) return null;
   const reply2 = { jsonrpc: "2.0", id: msg.id, result };
-  if (msg?.method === "tools/list") {
-    annotateToolList(reply2);
-    noteServedTools(reply2.result);
-  }
-  return reply2;
+  if (msg?.method !== "tools/list") return reply2;
+  annotateToolList(reply2);
+  const shown = narrowToolList(reply2);
+  noteServedTools(shown.result);
+  return shown;
 }
 function ownClient() {
   const info = state.initParams?.clientInfo;
@@ -7022,19 +7086,18 @@ async function deliverOne(msg) {
   const isStand = isStandCall(msg);
   let heldReply;
   let standingRetried = false;
-  const forward = (m) => {
+  const forward = (reply2) => {
+    let m = reply2;
     if (isInit && m.id === msg.id && m.result?.protocolVersion) {
       state.protocolVersion = m.result.protocolVersion;
     }
     if (m.id === msg.id) noteStanding(msg, m);
+    if (m.id === msg.id && m.result && isInit) saveServerCache({ init: m.result });
     if (m.id === msg.id && msg.method === "tools/list") {
       annotateToolList(m);
+      if (m.result && !msg.params?.cursor) saveServerCache({ tools: m.result });
+      m = narrowToolList(m);
       if (!msg.params?.cursor) noteServedTools(m.result);
-    }
-    if (m.id === msg.id && m.result) {
-      if (isInit) saveServerCache({ init: m.result });
-      else if (msg.method === "tools/list" && !msg.params?.cursor)
-        saveServerCache({ tools: m.result });
     }
     if (isToolCall && hasId && m.id === msg.id) {
       heldReply = m;
@@ -7075,7 +7138,7 @@ async function deliverOne(msg) {
         jsonrpc: "2.0",
         id: msg.id,
         result: { isError: true, content: [{ type: "text", text: satWord }] }
-      } : hasId ? crossPlaceRefusal(msg) : null;
+      } : hasId ? outsideSetRefusal(msg) ?? crossPlaceRefusal(msg) : null;
       if (cross) {
         emit(cross);
         return;
@@ -8889,6 +8952,13 @@ var SATELLITE_CODE = "const p=require('path').join(require('os').homedir(),'.isk
 var SATELLITE_ARGS = ["-e", SATELLITE_CODE, "--", "--satellite"];
 var SHELLS = /* @__PURE__ */ new Set(["sh", "bash", "zsh", "dash"]);
 var cmdBase = (c) => basename4(c.replace(/\\/g, "/")).replace(/\.exe$/i, "").toLowerCase();
+var isToolList = (v) => !!v && v.split(",").some((s2) => s2.trim().length > 0);
+function toolsTail(e) {
+  const words2 = SHELLS.has(cmdBase(e.command)) ? (e.args[e.args.indexOf("-c") + 1] ?? "").split(/\s+/).map((w) => w.replace(/^["']|["']$/g, "")) : e.args;
+  const at2 = words2.indexOf("--tools");
+  const v = at2 >= 0 ? words2[at2 + 1] : void 0;
+  return isToolList(v) ? ["--tools", v] : [];
+}
 function formOf(e) {
   const base = cmdBase(e.command);
   if (base === "node" && (e.args[0] === "-e" || e.args[0] === "--eval")) {
@@ -8897,7 +8967,9 @@ function formOf(e) {
     const after2 = e.args.slice(sep + 1);
     const spliced = /process\.argv\.splice\(\s*1\s*,\s*0\s*,/.test(e.args[1] ?? "");
     if (!(spliced ? after2 : after2.slice(1)).includes("--satellite")) return "eval-session";
-    return e.args[1] === SATELLITE_CODE && after2.length === 1 ? "eval" : "eval-other";
+    const tail2 = after2.slice(1);
+    const known = !tail2.length || tail2.length === 2 && tail2[0] === "--tools" && isToolList(tail2[1]);
+    return e.args[1] === SATELLITE_CODE && after2[0] === "--satellite" && known ? "eval" : "eval-other";
   }
   if (SHELLS.has(base)) {
     const s2 = e.args[e.args.indexOf("-c") + 1] ?? "";
@@ -8923,13 +8995,13 @@ function bridgePathOf(e) {
   const arg = [e.command, ...e.args].find((a) => /iskron[^\\/]*\.mjs$/i.test(a));
   return arg ? expandHome(arg) : null;
 }
-function readyEntry(name, disallowed) {
+function readyEntry(name, disallowed, tail2 = []) {
   return [
     "mcpServers:",
     `  - ${name}:`,
     "      type: stdio",
     "      command: node",
-    `      args: [${SATELLITE_ARGS.map((a) => JSON.stringify(a)).join(", ")}]`,
+    `      args: [${[...SATELLITE_ARGS, ...tail2].map((a) => JSON.stringify(a)).join(", ")}]`,
     `disallowedTools: ${disallowed.join(", ")}`
   ].join("\n");
 }
@@ -9003,7 +9075,8 @@ async function probeSatellite(label, e, cwd) {
   };
   if (!init) {
     const why = exited ?? `молчит ${Math.round(PROBE_MS / 1e3)}s`;
-    const old = /satellite|unknown (flag|option)|неизвестн/i.test(stderr) ? " — похоже, домашний мост старше флага --satellite → node ~/.iskron-bridge/iskron-bridge.mjs update" : " → запусти эту команду руками и прочти, что она пишет в stderr";
+    const flag = /unknown argument: --tools/.test(stderr) ? "--tools" : /satellite|unknown (flag|option)|неизвестн/i.test(stderr) ? "--satellite" : null;
+    const old = flag ? ` — похоже, домашний мост старше флага ${flag} → node ~/.iskron-bridge/iskron-bridge.mjs update` : " → запусти эту команду руками и прочти, что она пишет в stderr";
     findings.push(
       `проба «${label}»: мост не ответил на initialize (${why}${tail2() ? `; stderr: ${tail2()}` : ""})${old}`
     );
@@ -9261,16 +9334,17 @@ async function subagentsReport(out6) {
     let probeEntry = null;
     const own = sat.map((e) => `mcp__${e.name}`);
     const disallowed = listOf(f.fm.disallowedTools).map((d) => d.replace(/__\*$/, ""));
-    const block = (name) => `блоком ниже вместо прежних mcpServers и disallowedTools:
+    const block = (name, e) => `блоком ниже вместо прежних mcpServers и disallowedTools:
 ${readyEntry(
       name,
-      [.../* @__PURE__ */ new Set([...disallowed, ...required])].filter((p) => p !== `mcp__${name}`)
+      [.../* @__PURE__ */ new Set([...disallowed, ...required])].filter((p) => p !== `mcp__${name}`),
+      e ? toolsTail(e) : []
     )}`;
     const canonical = (e) => ({
       name: `${e.name} (предложенная форма)`,
       ref: false,
       command: "node",
-      args: SATELLITE_ARGS,
+      args: [...SATELLITE_ARGS, ...toolsTail(e)],
       env: e.env
     });
     const refs = entries.filter((e) => e.ref && /iskron/.test(e.name));
@@ -9280,7 +9354,7 @@ ${readyEntry(
       );
     if (!sat.length) {
       if (ours.length)
-        lines.push(`запись «${ours[0].name}»: ${FORM_WORD.session} → ${block(expected)}`);
+        lines.push(`запись «${ours[0].name}»: ${FORM_WORD.session} → ${block(expected, ours[0])}`);
       else if (!refs.length)
         lines.push(
           `записи моста-спутника нет — у субагента нет тулов графа → вставь во фронтматтер ${block(expected)}`
@@ -9295,7 +9369,7 @@ ${readyEntry(
       const name = e.name === "iskron-sub" ? expected : e.name;
       const form = formOf(e);
       if (form !== "eval") {
-        lines.push(`запись «${e.name}»: ${FORM_WORD[form]} → замени ${block(name)}`);
+        lines.push(`запись «${e.name}»: ${FORM_WORD[form]} → замени ${block(name, e)}`);
         if (!probeEntry && existsSync9(homeBridgePath())) probeEntry = canonical(e);
         continue;
       }
@@ -9777,8 +9851,9 @@ function runUse(argv2) {
 
 // js/cli/iskron.ts
 var USAGE = `iskron ${BUILD}
-  node iskron.mjs [bridge] [server-url] [--timeout <ms>] [--auth-dir <dir>] [--no-browser] [--debug] [--satellite]
+  node iskron.mjs [bridge] [server-url] [--timeout <ms>] [--auth-dir <dir>] [--no-browser] [--debug] [--satellite] [--tools <a,b,c>]
       (--satellite — мост прогона субагента из файла агента: только место-спутник <место позвавшего>.sub-N)
+      (--tools — какие тулы видит харнес, iskron_stand всегда; без флага — все)
   node iskron.mjs watchdog [ключ] [--auth-dir <dir>]
   node iskron.mjs watchdog-exit [ключ] [--auth-dir <dir>]
   node iskron.mjs watchdog-codex [ключ] [--auth-dir <dir>]   (из оболочки Codex: CODEX_THREAD_ID, CODEX_HOME)

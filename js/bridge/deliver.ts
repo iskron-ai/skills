@@ -14,6 +14,7 @@ import {
 } from "./errors.ts";
 import { localLeave } from "./leave.ts";
 import { annotateToolList } from "./moment.ts";
+import { narrowToolList, outsideSetRefusal } from "./narrow.ts";
 import { noteLocaleEcho, withPlaceFields } from "./placefields.ts";
 import { isCheckCall, isResumeCall, runCheck, runResume } from "./resume.ts";
 import { satelliteChannelRefusal } from "./satellite.ts";
@@ -118,11 +119,10 @@ onReinitialized(() => {
       if (m.id === id) got = m;
     });
     const reply = got as JsonRpcMessage | null;
-    if (reply?.result) {
-      annotateToolList(reply); // в общий кэш — та форма, что уходит харнесу, не сырая
-      saveServerCache({ tools: reply.result });
-    }
-    return reply;
+    if (!reply?.result) return reply;
+    annotateToolList(reply); // в общий кэш — аннотированный и полный список
+    saveServerCache({ tools: reply.result });
+    return narrowToolList(reply); // сверка — с тем, что видел бы харнес (narrow.ts)
   }, emit);
 });
 
@@ -147,11 +147,11 @@ function lastServerAnswer(msg: JsonRpcMessage): JsonRpcMessage | null {
         : null;
   if (!result) return null;
   const reply: JsonRpcMessage = { jsonrpc: "2.0", id: msg.id, result };
-  if (msg?.method === "tools/list") {
-    annotateToolList(reply);
-    noteServedTools(reply.result);
-  }
-  return reply;
+  if (msg?.method !== "tools/list") return reply;
+  annotateToolList(reply);
+  const shown = narrowToolList(reply);
+  noteServedTools(shown.result);
+  return shown;
 }
 
 // Наш собственный клиент (плагин OpenCode, `make surface`) отказ рукопожатия
@@ -216,19 +216,18 @@ async function deliverOne(msg: JsonRpcMessage): Promise<void> {
   const isStand = isStandCall(msg);
   let heldReply: JsonRpcMessage | null;
   let standingRetried = false;
-  const forward = (m: JsonRpcMessage) => {
+  const forward = (reply: JsonRpcMessage) => {
+    let m = reply;
     if (isInit && m.id === msg.id && m.result?.protocolVersion) {
       state.protocolVersion = m.result.protocolVersion;
     }
     if (m.id === msg.id) noteStanding(msg, m);
+    if (m.id === msg.id && m.result && isInit) saveServerCache({ init: m.result });
     if (m.id === msg.id && msg.method === "tools/list") {
-      annotateToolList(m); // одна форма для отпечатка, кэша и сверки — аннотированная
+      annotateToolList(m); // аннотированная форма — в общий кэш, полной
+      if (m.result && !msg.params?.cursor) saveServerCache({ tools: m.result });
+      m = narrowToolList(m); // харнесу — суженная копия, и отпечаток по ней (narrow.ts)
       if (!msg.params?.cursor) noteServedTools(m.result);
-    }
-    if (m.id === msg.id && m.result) {
-      if (isInit) saveServerCache({ init: m.result });
-      else if (msg.method === "tools/list" && !msg.params?.cursor)
-        saveServerCache({ tools: m.result });
     }
     if (isToolCall && hasId && m.id === msg.id) {
       heldReply = m;
@@ -295,7 +294,7 @@ async function deliverOne(msg: JsonRpcMessage): Promise<void> {
             result: { isError: true, content: [{ type: "text", text: satWord }] },
           }
         : hasId
-          ? crossPlaceRefusal(msg)
+          ? (outsideSetRefusal(msg) ?? crossPlaceRefusal(msg)) // тул вне набора моста (narrow.ts)
           : null;
       if (cross) {
         emit(cross);

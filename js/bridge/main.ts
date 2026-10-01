@@ -14,8 +14,9 @@
 //
 // Usage:
 //   node iskron.mjs [bridge] [server-url] [--timeout <ms>] [--auth-dir <dir>]
-//                   [--client-name <name>] [--no-browser] [--debug] [--satellite]
+//                   [--client-name <name>] [--no-browser] [--debug] [--satellite] [--tools <a,b,c>]
 // --satellite: the bridge of a subagent run — see satellite.ts (a flag only, no env: an older bridge must fail loudly).
+// --tools: the tools the harness sees — see narrow.ts.
 // With no server-url the bridge points at the product instance (DEFAULT_SERVER_URL);
 // pass a URL (or set ISKRON_BRIDGE_URL) only for another instance or fork.
 // Env (flags win): ISKRON_BRIDGE_URL, ISKRON_BRIDGE_TIMEOUT, ISKRON_BRIDGE_AUTH_DIR,
