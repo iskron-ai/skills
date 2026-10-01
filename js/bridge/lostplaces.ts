@@ -9,7 +9,7 @@
 // того же слага — другой граф, а имя, не разрешённое против потерянных, — отказ
 // с просьбой полного адреса (#5838), не текст чужой потери.
 import { L } from "../shared/lang.ts";
-import { realmRelation, sameRealm, unresolvedWord } from "./realms.ts";
+import { learnRealmList, realmRelation, sameRealm, unresolvedWord } from "./realms.ts";
 import { type JsonRpcMessage } from "./types.ts";
 
 /** Слово сессии о месте, которое она держит или отпустила (hold.ts, places.ts). */
@@ -117,6 +117,52 @@ export function lostPlaces(say: (m: JsonRpcMessage) => void, log: (m: string) =>
       return [...lost.values()].some((e) => realmRelation(r, e.realm) === "unknown")
         ? unresolvedWord(r, [...live.values()])
         : null;
+    },
+  };
+}
+
+/**
+ * Служебные вызовы списка графов (iskron_realm list) тонкого моста: отказ
+ * потерянного места сличает rN и слаг вызова с графом потери (realms.ts), а без
+ * списка всякое неразрешённое имя — отказ с просьбой полного адреса. Мост зовёт
+ * список сам, своим id (`iskron-thin-realms-*`), когда потери есть: при
+ * переподхвате — сразу, по отказу возврата места — когда потеря открылась
+ * ответом iskron/resume. Отказ вместо списка — громко в log, не молчание.
+ */
+export function realmListAsk() {
+  const asked = new Set<string>(); // JSON.stringify(id) своих вызовов без ответа
+  return {
+    /** Вызов списка, когда потери есть; null — потерь нет или спрос уже в полёте. */
+    ask(lostCount: number, id: () => string): JsonRpcMessage | null {
+      if (!lostCount || asked.size) return null;
+      const call: JsonRpcMessage = {
+        jsonrpc: "2.0",
+        id: id(),
+        method: "tools/call",
+        params: { name: "iskron_realm", arguments: { action: "list" } },
+      };
+      asked.add(JSON.stringify(call.id));
+      return call;
+    },
+    /** Ответ собственного вызова списка: true — потреблён (алиасы учтены, отказ — громко). */
+    reply(msg: JsonRpcMessage, log: (m: string) => void): boolean {
+      if (msg.method !== undefined || msg.id === undefined || msg.id === null) return false;
+      if (!asked.delete(JSON.stringify(msg.id))) return false;
+      const content = msg.result?.content;
+      const text = (Array.isArray(content) ? content : [])
+        .map((c) => String(c?.text ?? ""))
+        .join("\n");
+      if (msg.error || msg.result?.isError)
+        log(
+          `the realm list came back refused instead of the list — rN and slugs stay unresolved: ` +
+            `${text || msg.error?.message || "?"}`,
+        );
+      learnRealmList(text);
+      return true;
+    },
+    /** Ответа не будет (связь порвалась) — позволить спросить снова. */
+    forget(): void {
+      asked.clear();
     },
   };
 }

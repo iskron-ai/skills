@@ -47,9 +47,8 @@ import { DAEMON_BUSY_EXIT } from "./daemon.ts";
 import { syntheticError } from "./deliver.ts";
 import { fullBridgeSigint, installCrashWords, startEngine } from "./engine.ts";
 import { NOT_SENT, UNKNOWN } from "./errors.ts";
-import { lostPlaces, placeWord } from "./lostplaces.ts";
+import { lostPlaces, placeWord, realmListAsk } from "./lostplaces.ts";
 import { type Raise, raiseDaemon, SELF } from "./raise.ts";
-import { learnRealmList } from "./realms.ts";
 import { type BridgeSession, openSession } from "./session.ts";
 import { sleep } from "./store.ts";
 import { debug, flushStdout, log, writeTo } from "./streams.ts";
@@ -114,7 +113,7 @@ export function thinMain(argv: string[]): void {
   const flights = new Map<string, Flight>();
   const verdicted = new Set<string>(); // id, закрытые вердиктом: их поздний ответ — дубль
   const replayIds = new Set<string>();
-  const realmIds = new Set<string>(); // id собственных вызовов списка графов (realms.ts)
+  const realmIds = realmListAsk(); // служебные вызовы списка графов (lostplaces.ts)
   const cancelled = new Set<string>(); // отменённые харнесом, пока их приём не подтверждён
   let replays = 0;
   const key = (id: unknown) => JSON.stringify(id);
@@ -123,22 +122,16 @@ export function thinMain(argv: string[]): void {
   const toHarness = (msg: JsonRpcMessage) => {
     if (msg.method === undefined && msg.id !== undefined && msg.id !== null) {
       const k = key(msg.id);
-      if (realmIds.delete(k)) {
-        // Ответ собственного вызова списка графов: rN и слаг учатся каноническим
-        // формам (realms.ts) — по ним отказ потерянного места сличает граф вызова.
-        const content = msg.result?.content;
-        learnRealmList(
-          (Array.isArray(content) ? content : []).map((c) => String(c?.text ?? "")).join("\n"),
-        );
-        return; // харнес этого вызова не звал — его ответ харнесу не идёт
-      }
+      if (realmIds.reply(msg, log)) return; // ответ своего вызова списка графов — не харнесу
       if (replayIds.delete(k)) {
         // Ответ хода самого моста (initialize, resume): харнес свой уже получил.
         // Неудачный возврат места — слово агенту; вызовы харнеса ждали этих ответов.
         const back = resuming.get(k);
         resuming.delete(k);
-        if (back && msg.result?.resumed !== true)
+        if (back && msg.result?.resumed !== true) {
           placeLost(back.key, back.realm, String(msg.result?.word ?? msg.error?.message ?? "?"));
+          askRealms(); // потеря открылась ответом resume — списки графов спросить теперь
+        }
         openGate(k);
         return;
       }
@@ -194,6 +187,16 @@ export function thinMain(argv: string[]): void {
   const placeLost = (k: string, realm: string, why: string) => {
     places.lose(k, realm, why, cfg.satellite && k === heldKey);
     if (k === heldKey) heldKey = null;
+  };
+  // Спросить список графов своим вызовом (потери есть — без списка rN и слаг
+  // вызовов не разрешаются, lostplaces.ts): по переподхвату и по отказу возврата
+  // места — потеря держимого места открывается ответом iskron/resume, позже
+  // точки переподхвата.
+  const askRealms = () => {
+    const m = realmIds.ask(places.lostCount(), () => `iskron-thin-realms-${++replays}`);
+    if (!m) return;
+    if (mode === "daemon" && link) toDaemon(link, m);
+    else if (mode === "local") toLocal(m);
   };
 
   // Вердикт каждому id в полёте — и память о нём, чтобы поздний ответ не стал вторым.
@@ -295,6 +298,7 @@ export function thinMain(argv: string[]): void {
     local = { session, input };
     mode = "local";
     replay(toLocal);
+    askRealms(); // потери replay'я открылись и здесь — списки графов спросить в своей сессии
     for (const m of queue.splice(0)) dispatch(m);
   };
 
@@ -332,19 +336,7 @@ export function thinMain(argv: string[]): void {
       lost(!!w.ack);
     });
     if (!resumed) replay((m) => toDaemon(l, m));
-    if (places.lostCount()) {
-      // Потерянные места есть — спросить список графов своим вызовом: отказ
-      // потерянного места сличает rN и слаг вызова с графом потери (realms.ts),
-      // а без списка всякое неразрешённое имя — отказ с просьбой полного адреса.
-      const id = `iskron-thin-realms-${++replays}`;
-      realmIds.add(key(id));
-      toDaemon(l, {
-        jsonrpc: "2.0",
-        id,
-        method: "tools/call",
-        params: { name: "iskron_realm", arguments: { action: "list" } },
-      });
-    }
+    askRealms(); // потери при переподхвате — списки графов своим вызовом (lostplaces.ts)
     for (const m of queue.splice(0)) dispatch(m);
   };
 
@@ -352,7 +344,7 @@ export function thinMain(argv: string[]): void {
     mode = "attaching";
     replayIds.clear();
     resuming.clear();
-    realmIds.clear();
+    realmIds.forget();
     gate.clear(); // ходы моста в оборванной сессии больше не ответят — новая сессия закроет ворота заново
     if (gateTimer) clearTimeout(gateTimer); // …и таймер: унаследованный открыл бы ворота раньше GATE_MS новой сессии
     gateTimer = null;

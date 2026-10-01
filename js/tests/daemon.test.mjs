@@ -851,6 +851,117 @@ test("a lost seat refuses only its own graph: no-realm calls and rN into a held 
   });
 });
 
+// Ревью #280 (круг 2, Sol): служебный вызов списка графов (iskron_realm list) —
+// то, чем тонкий мост после потери места разрешает rN и слаг вызовов, — идёт
+// обычным tools/call через сессию демона. Сужение --tools без iskron_realm в
+// наборе отвергало его (narrow.ts outsideSetRefusal), и мост молча принимал
+// отказ за ответ списка: rN держимого графа получал unresolved-отказ, потеря
+// спутника не снималась возвратом с иным написанием того же графа.
+test("the bridge's own realm list is past --tools: rN into the held graph goes through, and a satellite's regain under another spelling lifts the loss", async () => {
+  await withFake(async ({ fake, dir, bridge }) => {
+    const d = await updatableDaemon(dir);
+    try {
+      // Держимое место и место рядом: рядом теряется при смене демона, и без
+      // списка графов r5 и nks-dev для отказа потерянного места неразличимы.
+      const a = bridge({}, ["--tools", "case"]);
+      await handshake(a);
+      const ra = await stand(a, { realm: "nks-dev", karta: 931, name: "narrow-a" });
+      assert.ok(!ra.result?.isError, textOf(ra));
+      const rb = await stand(a, { realm: "drugoy", karta: 48, name: "narrow-a" });
+      assert.ok(!rb.result?.isError, `beside: ${textOf(rb)}`);
+      await waitFor("the beside word", () =>
+        a.notifications.some((n) => n.params?.data?.kind === "beside"),
+      );
+      const listsForA = fake.state.counts.realm_list ?? 0;
+      d.bump();
+      await waitFor(
+        "the lost word for the beside seat",
+        () =>
+          a.notifications.some(
+            (n) => n.params?.data?.kind === "lost" && /drugoy/.test(n.params?.data?.key ?? ""),
+          ),
+        30_000,
+      );
+      // Служебный вызов списка дошёл до сервера — сужение его не срезало.
+      await waitFor(
+        "the bridge's own realm list at the server",
+        () => (fake.state.counts.realm_list ?? 0) > listsForA,
+        10_000,
+      );
+      // rN в держимый граф — держимый, не потерянный: вызов проходит. Ответ
+      // списка мог ещё не свериться в алиасы — короткий ретрай.
+      let passedA = null;
+      for (let i = 0; i < 30 && !passedA; i++) {
+        const r = await a.request("tools/call", {
+          name: "iskron_case",
+          arguments: { action: "mine", realm: "r5" },
+        });
+        if (r.result && !r.result.isError) passedA = r;
+        else await new Promise((res) => setTimeout(res, 200));
+      }
+      assert.ok(passedA, `rN into the held graph must go through:\n${a.stderr}`);
+      assert.ok(
+        fake.state.calls.some((c) => c.name === "iskron_case" && c.arguments?.realm === "r5"),
+        "the call reached the server",
+      );
+      // Спутник: место теряется (записи держания нет), возврат — новым
+      // iskron_stand. Потеря записана написанием «nks-dev», возврат — «r5»:
+      // тот же граф, и потеря должна сняться.
+      const CALLER = "host.repo.gpt-astra";
+      await fake.control({ places: [{ karta: "931", name: CALLER, listening: true }] });
+      const s = bridge({}, ["--satellite", "--tools", "case"]);
+      await handshake(s);
+      const sat = { realm: "nks-dev", karta: 931, satellite_of: `@tester:${CALLER}` };
+      const rs = await stand(s, sat);
+      assert.ok(!rs.result?.isError, textOf(rs));
+      process.kill(daemonPids(dir).at(-1), "SIGTERM");
+      await waitFor(
+        "the satellite's lost word",
+        () =>
+          s.notifications.some((n) =>
+            /потеряно при смене демона/.test(JSON.stringify(n.params?.data ?? {})),
+          ),
+        30_000,
+      );
+      // Дождаться, пока список сверился в алиасы: отказ каноническому написанию
+      // станет текстом потери спутника, а не «мост не разрешил».
+      let named = null;
+      for (let i = 0; i < 30 && !named; i++) {
+        const r = await s.request("tools/call", {
+          name: "iskron_case",
+          arguments: { action: "mine", realm: "@nks/nks-dev" },
+        });
+        if (/место спутника потеряно/.test(textOf(r))) named = r;
+        else await new Promise((res) => setTimeout(res, 200));
+      }
+      assert.ok(
+        named,
+        `the satellite's loss must be named for the canonical spelling:\n${s.stderr}`,
+      );
+      // Возврат иным написанием того же графа — потеря снята: вызов прежним
+      // написанием проходит, а не отказывается текстом снятой потери.
+      const back = await stand(s, { ...sat, realm: "r5" });
+      assert.ok(!back.result?.isError, textOf(back));
+      let passedB = null;
+      for (let i = 0; i < 30 && !passedB; i++) {
+        const r = await s.request("tools/call", {
+          name: "iskron_case",
+          arguments: { action: "mine", realm: "nks-dev" },
+        });
+        if (r.result && !r.result.isError) passedB = r;
+        else await new Promise((res) => setTimeout(res, 200));
+      }
+      assert.ok(passedB, `the regained satellite's graph must be free:\n${s.stderr}`);
+      assert.ok(
+        fake.state.calls.some((c) => c.name === "iskron_case" && c.arguments?.realm === "nks-dev"),
+        "the call reached the server",
+      );
+    } finally {
+      d.cleanup();
+    }
+  });
+});
+
 // Ревью #280 (Opus п.1 / GLM п.3): при нескольких потерянных графах отказ
 // подписан графом вызова, а не текстом первой потери.
 test("with two seats lost the refusal names the graph of the call, not the first lost one", async () => {

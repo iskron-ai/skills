@@ -6866,8 +6866,10 @@ function clientName2() {
 function toolSet() {
   return CFG.tools ? /* @__PURE__ */ new Set([...CFG.tools, STAND_TOOL.name]) : null;
 }
+var ownCall = (id) => String(id ?? "").startsWith("iskron-");
 function outsideSetRefusal(msg) {
   if (msg?.method !== "tools/call" || msg.id === void 0 || msg.id === null) return null;
+  if (ownCall(msg.id)) return null;
   const set = toolSet();
   const name = String(msg.params?.name ?? "");
   if (!set || set.has(name)) return null;
@@ -7708,6 +7710,40 @@ function lostPlaces(say, log3) {
     }
   };
 }
+function realmListAsk() {
+  const asked = /* @__PURE__ */ new Set();
+  return {
+    /** Вызов списка, когда потери есть; null — потерь нет или спрос уже в полёте. */
+    ask(lostCount, id) {
+      if (!lostCount || asked.size) return null;
+      const call = {
+        jsonrpc: "2.0",
+        id: id(),
+        method: "tools/call",
+        params: { name: "iskron_realm", arguments: { action: "list" } }
+      };
+      asked.add(JSON.stringify(call.id));
+      return call;
+    },
+    /** Ответ собственного вызова списка: true — потреблён (алиасы учтены, отказ — громко). */
+    reply(msg, log3) {
+      if (msg.method !== void 0 || msg.id === void 0 || msg.id === null) return false;
+      if (!asked.delete(JSON.stringify(msg.id))) return false;
+      const content = msg.result?.content;
+      const text = (Array.isArray(content) ? content : []).map((c) => String(c?.text ?? "")).join("\n");
+      if (msg.error || msg.result?.isError)
+        log3(
+          `the realm list came back refused instead of the list — rN and slugs stay unresolved: ${text || msg.error?.message || "?"}`
+        );
+      learnRealmList(text);
+      return true;
+    },
+    /** Ответа не будет (связь порвалась) — позволить спросить снова. */
+    forget() {
+      asked.clear();
+    }
+  };
+}
 
 // js/bridge/raise.ts
 import { spawn as spawn4 } from "node:child_process";
@@ -7801,7 +7837,7 @@ function thinMain(argv2) {
   const flights = /* @__PURE__ */ new Map();
   const verdicted = /* @__PURE__ */ new Set();
   const replayIds = /* @__PURE__ */ new Set();
-  const realmIds = /* @__PURE__ */ new Set();
+  const realmIds = realmListAsk();
   const cancelled = /* @__PURE__ */ new Set();
   let replays = 0;
   const key = (id) => JSON.stringify(id);
@@ -7809,18 +7845,14 @@ function thinMain(argv2) {
   const toHarness = (msg) => {
     if (msg.method === void 0 && msg.id !== void 0 && msg.id !== null) {
       const k = key(msg.id);
-      if (realmIds.delete(k)) {
-        const content = msg.result?.content;
-        learnRealmList(
-          (Array.isArray(content) ? content : []).map((c) => String(c?.text ?? "")).join("\n")
-        );
-        return;
-      }
+      if (realmIds.reply(msg, log)) return;
       if (replayIds.delete(k)) {
         const back = resuming.get(k);
         resuming.delete(k);
-        if (back && msg.result?.resumed !== true)
+        if (back && msg.result?.resumed !== true) {
           placeLost(back.key, back.realm, String(msg.result?.word ?? msg.error?.message ?? "?"));
+          askRealms();
+        }
         openGate(k);
         return;
       }
@@ -7867,6 +7899,12 @@ function thinMain(argv2) {
   const placeLost = (k, realm, why) => {
     places.lose(k, realm, why, cfg.satellite && k === heldKey2);
     if (k === heldKey2) heldKey2 = null;
+  };
+  const askRealms = () => {
+    const m = realmIds.ask(places.lostCount(), () => `iskron-thin-realms-${++replays}`);
+    if (!m) return;
+    if (mode === "daemon" && link) toDaemon(link, m);
+    else if (mode === "local") toLocal(m);
   };
   const verdictAll = (why, acks, resend = false) => {
     const again = [];
@@ -7953,6 +7991,7 @@ function thinMain(argv2) {
     local = { session, input };
     mode = "local";
     replay(toLocal);
+    askRealms();
     for (const m of queue2.splice(0)) dispatch2(m);
   };
   const onWelcome = (l) => {
@@ -7989,23 +8028,14 @@ function thinMain(argv2) {
       lost(!!w.ack);
     });
     if (!resumed) replay((m) => toDaemon(l, m));
-    if (places.lostCount()) {
-      const id = `iskron-thin-realms-${++replays}`;
-      realmIds.add(key(id));
-      toDaemon(l, {
-        jsonrpc: "2.0",
-        id,
-        method: "tools/call",
-        params: { name: "iskron_realm", arguments: { action: "list" } }
-      });
-    }
+    askRealms();
     for (const m of queue2.splice(0)) dispatch2(m);
   };
   const lost = (acks) => {
     mode = "attaching";
     replayIds.clear();
     resuming.clear();
-    realmIds.clear();
+    realmIds.forget();
     gate.clear();
     if (gateTimer) clearTimeout(gateTimer);
     gateTimer = null;
