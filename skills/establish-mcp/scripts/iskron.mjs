@@ -7982,7 +7982,7 @@ var SATELLITE_CODE = "const p=require('path').join(require('os').homedir(),'.isk
 var SATELLITE_ARGS = ["-e", SATELLITE_CODE, "--", "--satellite"];
 var SHELLS = /* @__PURE__ */ new Set(["sh", "bash", "zsh", "dash"]);
 var cmdBase = (c) => basename4(c.replace(/\\/g, "/")).replace(/\.exe$/i, "").toLowerCase();
-var isToolList = (v) => !!v && /^[A-Za-z0-9_,]+$/.test(v);
+var isToolList = (v) => !!v && v.split(",").some((s2) => s2.trim().length > 0);
 function toolsTail(e) {
   const words2 = SHELLS.has(cmdBase(e.command)) ? (e.args[e.args.indexOf("-c") + 1] ?? "").split(/\s+/).map((w) => w.replace(/^["']|["']$/g, "")) : e.args;
   const at2 = words2.indexOf("--tools");

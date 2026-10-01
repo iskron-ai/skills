@@ -35,8 +35,8 @@ const THIN_ENV = {
   ISKRON_BRIDGE_DAEMON_WAIT_MS: "10000",
 };
 
-function startBridge(serverUrl, authDir, env = {}) {
-  const proc = spawn(NODE, [BRIDGE, serverUrl, "--no-browser", "--auth-dir", authDir], {
+function startBridge(serverUrl, authDir, env = {}, args = []) {
+  const proc = spawn(NODE, [BRIDGE, serverUrl, "--no-browser", "--auth-dir", authDir, ...args], {
     env: {
       ...process.env,
       ISKRON_BRIDGE_NO_BROWSER: "1",
@@ -123,8 +123,8 @@ async function withFake(fn) {
   const fake = await startFakeNks({ pat: PAT });
   const dir = mkdtempSync(join(tmpdir(), "iskron-thin-"));
   const bridges = [];
-  const spawnBridge = (env) => {
-    const b = startBridge(fake.mcpUrl, dir, env);
+  const spawnBridge = (env, args) => {
+    const b = startBridge(fake.mcpUrl, dir, env, args);
     bridges.push(b);
     return b;
   };
@@ -246,6 +246,37 @@ test("no daemon to be had: the full bridge runs in the process, and says so", as
     const again = await b.call("tools/call", 5, write);
     assert.match(textOf(again), /Создан узел/, JSON.stringify(again));
     assert.doesNotMatch(textOf(again), /runs as the full bridge/, "said once");
+  });
+});
+
+// Набор --tools при тонком ходе не теряется: шов несёт argv моста в рукопожатии
+// (shared/seam.ts SeamHello), и сессия демона разбирает его как свой конфиг
+// (bridge/session.ts applyOrigin → parseArgs(origin.argv)) — сужение списка и
+// отказ вне набора живут на стороне демона. Холодное ревью #282 боялось молчаливой
+// потери («демону с пустым CFG.tools»): проба держит факт — потеряй шов argv или
+// разбор его сессией, и она краснеет.
+test("thin bridge with --tools: the daemon's session carries the bridge's set — the list is narrowed and an outside tool is refused", async () => {
+  await withFake(async ({ fake, dir, spawnBridge }) => {
+    fake.state.tools = [
+      { name: "iskron_case", description: "Тул дела.", inputSchema: { type: "object" } },
+      { name: "iskron_look", description: "Тул чтения.", inputSchema: { type: "object" } },
+    ];
+    const b = spawnBridge(THIN_ENV, ["--tools", "case"]);
+    const init = await b.call("initialize", 1, INIT);
+    b.send({ jsonrpc: "2.0", method: "notifications/initialized" });
+    assert.ok(init.result, JSON.stringify(init));
+    const list = await b.call("tools/list", 2);
+    assert.deepEqual(
+      toolNames(list).sort(),
+      ["iskron_case", "iskron_stand"],
+      `the set must hold through the daemon: ${JSON.stringify(list)}`,
+    );
+    const textOf = (r) => (r.result?.content ?? []).map((c) => c.text).join("\n");
+    const refused = await b.call("tools/call", 3, { name: "iskron_look", arguments: {} });
+    assert.equal(refused.result?.isError, true, JSON.stringify(refused));
+    assert.match(textOf(refused), /нет в наборе этого моста/, textOf(refused));
+    assert.match(b.stderr, /through the machine's bridge daemon/, b.stderr);
+    assert.match(trailOf(dir), /^rpc tools\/call 3$/m, "the call went through the daemon");
   });
 });
 

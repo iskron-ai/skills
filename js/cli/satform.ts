@@ -42,7 +42,13 @@ const cmdBase = (c: string): string =>
     .replace(/\.exe$/i, "")
     .toLowerCase();
 
-const isToolList = (v: string | undefined): v is string => !!v && /^[A-Za-z0-9_,]+$/.test(v);
+/**
+ * Список тулов — правило моста (bridge/config.ts, parseArgs): имена через запятую,
+ * пробелы вокруг имён вырезаются, пустые куски не считаются. «case, look» — тот же
+ * набор, что «case,look», и рабочая запись с ним остаётся рабочей.
+ */
+const isToolList = (v: string | undefined): v is string =>
+  !!v && v.split(",").some((s) => s.trim().length > 0);
 
 /**
  * Хвост флагов моста, который запись несёт после `--satellite` и который готовый

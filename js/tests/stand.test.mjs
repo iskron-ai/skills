@@ -2292,13 +2292,41 @@ test("fake NKS drops arguments the surface snapshot does not declare, silently; 
 // Что из списка тулов видит харнес (bridge/narrow.ts). Список тулов — вес каждого
 // запроса агента: у субагента с мостом-спутником 23 тула сервера стоили сотни тысяч
 // токенов на «ответь ок». Харнес видит суженную копию, а общий кэш ответов сервера
-// и ходы самого моста остаются полными. Список ниже — форма сервера 0.97.1:
-// поля iskron_channel и перечень action — дословно, описания прочих укорочены.
-// Режутся занятие места и сессии (mint, connect, sessions) и поля только их;
-// register и revoke корпус велит агенту звать самому — они и их поля остаются.
+// и ходы самого моста остаются полными. Поля iskron_channel — имена из снимка
+// поверхности (fixtures/surface.json, `make surface`): сколько полей у сервера ни
+// станет, мок держит их все — описания полей сокращены, кроме перечня action,
+// чьё сужение проверяет проба. Режутся занятие места и сессии (mint, connect,
+// sessions) и поля только их; register и revoke корпус велит агенту звать самому
+// — они и их поля остаются.
 const PLACE_FIELDS = ["ttl_seconds", "mute_siblings"];
 const AGENT_FIELDS = ["name", "model", "attrs", "locale", "satellite_of", "channel", "standing"];
 const prop = (description, type = "string") => ({ description, type });
+const CHANNEL_FIELD = {
+  realm: prop("Адрес графа."),
+  action: prop(
+    'Что сделать — одно из: mint | connect | register | list | send | sessions | revoke | history. Обязателен в каждом вызове. Передай action="?", чтобы прочесть справку.',
+  ),
+  name: prop("mint, connect и register: собственная половина имени этого стояния."),
+  mute_siblings: prop("mint и connect: не будить тебя записями БРАТЬЕВ.", "boolean"),
+  standing: prop("send и revoke: какое именно стояние роли."),
+  model: prop("mint, connect и register: какая модель стоит на этом месте."),
+  attrs: { description: "mint, connect и register: собственное описание места." },
+  satellite_of: {
+    anyOf: [prop("mint, connect и register: открыть это место СПУТНИКОМ."), { type: "null" }],
+  },
+  locale: prop("mint, connect и register: язык, на котором платформа говорит с местом."),
+  karta: prop("Чьё это стояние; у send — роль АДРЕСАТА."),
+  channel: prop("Только revoke: собственный id МЕСТА."),
+  text: prop("Только send: слова, которые получит адресат."),
+  view: prop("Только history: какое чтение."),
+  ttl_seconds: prop(
+    "Для mint и connect: сколько канал может простоять без жизни сокета.",
+    "number",
+  ),
+};
+const SURFACE_ARGS = JSON.parse(
+  readFileSync(new URL("../../fixtures/surface.json", import.meta.url), "utf8"),
+).args;
 const SERVER_TOOLS = [
   {
     name: "iskron_channel",
@@ -2306,29 +2334,12 @@ const SERVER_TOOLS = [
     inputSchema: {
       type: "object",
       required: ["action"],
-      properties: {
-        realm: prop("Адрес графа."),
-        action: prop(
-          'Что сделать — одно из: mint | connect | register | list | send | sessions | revoke | history. Обязателен в каждом вызове. Передай action="?", чтобы прочесть справку.',
-        ),
-        name: prop("mint, connect и register: собственная половина имени этого стояния."),
-        mute_siblings: prop("mint и connect: не будить тебя записями БРАТЬЕВ.", "boolean"),
-        standing: prop("send и revoke: какое именно стояние роли."),
-        model: prop("mint, connect и register: какая модель стоит на этом месте."),
-        attrs: { description: "mint, connect и register: собственное описание места." },
-        satellite_of: {
-          anyOf: [prop("mint, connect и register: открыть это место СПУТНИКОМ."), { type: "null" }],
-        },
-        locale: prop("mint, connect и register: язык, на котором платформа говорит с местом."),
-        karta: prop("Чьё это стояние; у send — роль АДРЕСАТА."),
-        channel: prop("Только revoke: собственный id МЕСТА."),
-        text: prop("Только send: слова, которые получит адресат."),
-        view: prop("Только history: какое чтение."),
-        ttl_seconds: prop(
-          "Для mint и connect: сколько канал может простоять без жизни сокета.",
-          "number",
-        ),
-      },
+      properties: Object.fromEntries(
+        SURFACE_ARGS.iskron_channel.map((f) => [
+          f,
+          CHANNEL_FIELD[f] ?? prop("Поле iskron_channel."),
+        ]),
+      ),
     },
   },
   ...["iskron_case", "iskron_look", "iskron_orient", "iskron_search", "iskron_history"].map(
