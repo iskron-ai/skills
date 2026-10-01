@@ -53,6 +53,17 @@ jobs:
       - name: Lint tool names and enum values against fixtures/surface.json
         run: make check-surface
 
+  widgets-in-sync:
+    name: Widgets skill matches its snapshot
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+      - name: Verify skills/widgets/SKILL.md renders from fixtures/widgets.json (bytes)
+        run: make check-widgets
+
   js:
     name: Shipped JS — lint, types, outputs, behaviour
     runs-on: ubuntu-latest
