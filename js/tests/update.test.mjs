@@ -291,6 +291,19 @@ test("a newer release is fetched into the home once per six hours and named in t
   const text = (reply.result?.content ?? []).map((c) => c.text ?? "").join("\n");
   assert.match(text, /ПОСТАВКА ОТСТАЛА: этот мост v\d+\.\d+\.\d+, свежий релиз v99\.0\.0/, text);
   assert.match(text, /СКАЗАТЬ ЧЕЛОВЕКУ/, "the notice tells the agent to pass the word on");
+  // Плоская установка: update ходит только по lock-файлу, набор приносит повторный
+  // add --all; снятое убирается руками — проба держит строку, которой дверь
+  // «обнови» ведёт плоский канал (#4659).
+  assert.match(
+    text,
+    /плоская установка — повторный npx skills add iskron-ai\/skills --all --global/,
+    "the flat-install order repeats add --all, not update",
+  );
+  assert.match(
+    text,
+    /npx skills remove <имя> --global/,
+    "a skill dropped from the supply is named as a hand removal",
+  );
   const again = await bridge.call("tools/call", {
     name: "iskron_channel",
     arguments: { action: "list", realm: "nks-dev" },
