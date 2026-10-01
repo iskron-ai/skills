@@ -795,3 +795,253 @@ test("the idle window: the daemon outlives its last session by the window, a ses
     assert.equal(daemonPids(dir).length, 1, "no second daemon was raised");
   });
 });
+
+// Ревью #280 (Opus, п.1): отказ потерянного места касается только вызовов в
+// потерянный граф. Вызов без графа и вызов rN в держимый граф свободны — раньше
+// оба отказывались текстом чужой потери (сравнение по слагу без разрешения rN).
+test("a lost seat refuses only its own graph: no-realm calls and rN into a held graph go through", async () => {
+  await withFake(async ({ fake, dir, bridge }) => {
+    const d = await updatableDaemon(dir);
+    try {
+      const a = bridge({});
+      await handshake(a);
+      const ra = await stand(a, { realm: "nks-dev", karta: 931, name: "free-a" });
+      assert.ok(!ra.result?.isError, textOf(ra));
+      const rb = await stand(a, { realm: "drugoy", karta: 48, name: "free-a" });
+      assert.ok(!rb.result?.isError, `beside: ${textOf(rb)}`);
+      await waitFor("the beside word", () =>
+        a.notifications.some((n) => n.params?.data?.kind === "beside"),
+      );
+      d.bump();
+      await waitFor(
+        "the lost word for the beside seat",
+        () =>
+          a.notifications.some(
+            (n) => n.params?.data?.kind === "lost" && /drugoy/.test(n.params?.data?.key ?? ""),
+          ),
+        30_000,
+      );
+      // Вызов без графа — не в потерянный граф: не отказывается.
+      const orient = await a.request("tools/call", { name: "iskron_orient", arguments: {} });
+      assert.ok(
+        orient.result && !orient.result.isError,
+        `a no-realm call is free: ${JSON.stringify(orient)}`,
+      );
+      // rN в держимый граф — держимый, не потерянный: запись подписана. Ответ
+      // собственного вызова списка мог ещё не свернуться в алиасы — короткий ретрай.
+      await waitFor("the bridge's own realm list", () =>
+        /rpc tools\/call "iskron-thin-realms-\d+"/.test(journalOf(dir)),
+      );
+      const before = fake.state.writes.length;
+      let w = null;
+      for (let i = 0; i < 30 && !w; i++) {
+        const r = await a.request("tools/call", {
+          name: "iskron_add_phenomenon",
+          arguments: { realm: "r5", name: "r5-write" },
+        });
+        if (r.result && !r.result.isError) w = r;
+        else await new Promise((res) => setTimeout(res, 200));
+      }
+      assert.ok(w, `rN into the held graph must go through:\n${a.stderr}`);
+      assert.equal(fake.state.writes.length, before + 1, "the write went out");
+      assert.equal(fake.state.counts.unattributed, 0, JSON.stringify(fake.state.writes));
+    } finally {
+      d.cleanup();
+    }
+  });
+});
+
+// Ревью #280 (Opus п.1 / GLM п.3): при нескольких потерянных графах отказ
+// подписан графом вызова, а не текстом первой потери.
+test("with two seats lost the refusal names the graph of the call, not the first lost one", async () => {
+  await withFake(async ({ fake, dir, bridge }) => {
+    const d = await updatableDaemon(dir);
+    try {
+      const a = bridge({});
+      await handshake(a);
+      const ra = await stand(a, { realm: "nks-dev", karta: 931, name: "two-a" });
+      assert.ok(!ra.result?.isError, textOf(ra));
+      const rb = await stand(a, { realm: "drugoy", karta: 48, name: "two-a" });
+      assert.ok(!rb.result?.isError, `beside: ${textOf(rb)}`);
+      await waitFor("the beside word", () =>
+        a.notifications.some((n) => n.params?.data?.kind === "beside"),
+      );
+      // Записи держания прочь: не вернётся и основное место.
+      for (const f of readdirSync(join(dir, "standings")).filter((x) => x.endsWith(".hold")))
+        rmSync(join(dir, "standings", f));
+      d.bump();
+      await waitFor(
+        "the lost word for the main seat",
+        () =>
+          a.notifications.some(
+            (n) => n.params?.data?.kind === "lost" && /nks-dev/.test(n.params?.data?.key ?? ""),
+          ),
+        30_000,
+      );
+      const call = (realm) =>
+        a.request("tools/call", {
+          name: "iskron_add_phenomenon",
+          arguments: { realm, name: "naming" },
+        });
+      const first = await call("r5");
+      assert.equal(first.result?.isError, true, JSON.stringify(first));
+      assert.doesNotMatch(
+        textOf(first),
+        /drugoy/,
+        `the refusal must not be signed by the first lost graph: ${textOf(first)}`,
+      );
+      await waitFor("the bridge's own realm list", () =>
+        /rpc tools\/call "iskron-thin-realms-\d+"/.test(journalOf(dir)),
+      );
+      // Ответ списка мог ещё не свернуться в алиасы — ждём, пока отказ станет
+      // называть граф вызова, коротким ретраем.
+      let named = null;
+      for (let i = 0; i < 30 && !named; i++) {
+        const r = await call("r5");
+        const t = textOf(r);
+        if (/nks-dev/.test(t) && !/граф drugoy/.test(t)) named = r;
+        else await new Promise((res) => setTimeout(res, 200));
+      }
+      assert.ok(named, `the refusal must name the called graph:\n${a.stderr}`);
+      assert.equal(named.result?.isError, true, JSON.stringify(named));
+      assert.equal(fake.state.counts.unattributed, 0, JSON.stringify(fake.state.writes));
+    } finally {
+      d.cleanup();
+    }
+  });
+});
+
+// Ревью #280 (Opus, п.1): @a/x и @b/x — для отказа потерянного места разные
+// графы; раньше совпадение по слагу отказывало вызов в чужой граф.
+test("another owner's same slug is a different graph: a lost seat does not refuse its calls", async () => {
+  await withFake(async ({ dir, bridge }) => {
+    const d = await updatableDaemon(dir);
+    try {
+      const a = bridge({});
+      await handshake(a);
+      const r = await stand(a, { realm: "@nks/nks-dev", karta: 931, name: "owner-a" });
+      assert.ok(!r.result?.isError, textOf(r));
+      for (const f of readdirSync(join(dir, "standings")).filter((x) => x.endsWith(".hold")))
+        rmSync(join(dir, "standings", f));
+      d.bump();
+      await waitFor(
+        "the lost word",
+        () =>
+          a.notifications.some(
+            (n) => n.params?.data?.kind === "lost" && /nks-dev/.test(n.params?.data?.key ?? ""),
+          ),
+        30_000,
+      );
+      const list = await a.request("tools/call", {
+        name: "iskron_channel",
+        arguments: { action: "list", realm: "@outsider/nks-dev" },
+      });
+      assert.ok(
+        list.result && !list.result.isError,
+        `another graph is free: ${JSON.stringify(list)}`,
+      );
+      assert.doesNotMatch(
+        textOf(list),
+        /не вернулось после смены демона/,
+        "the refusal must not reach another owner's graph",
+      );
+    } finally {
+      d.cleanup();
+    }
+  });
+});
+
+// Ревью #280 (Opus, п.4): SIGTERM демона — не передача преемнику и не уход
+// агента: тонкий мост помнит место, переподхват возвращает его по записи
+// держания (iskron/resume) — записи подписаны; раньше место терялось молча и
+// записи ложились без автора.
+test("SIGTERM of the daemon is not the agent leaving: the seat comes back and writes stay signed", async () => {
+  await withFake(async ({ fake, dir, bridge }) => {
+    const a = bridge({});
+    await handshake(a);
+    const r = await stand(a, { realm: "nks-dev", karta: 931, name: "term-a" });
+    assert.ok(!r.result?.isError, textOf(r));
+    const [first] = await waitFor("the daemon", () => daemonPids(dir)[0] && daemonPids(dir));
+    process.kill(first, "SIGTERM");
+    const w = await write(a, "after-term"); // ворота: ждёт возврата места в новой сессии
+    assert.ok(w.result && !w.result.isError, JSON.stringify(w));
+    assert.equal(
+      fake.state.counts.unattributed,
+      0,
+      `every write signed: ${JSON.stringify(fake.state.writes)}\n${a.stderr}`,
+    );
+    assert.match(a.stderr, /bringing its place .* back from the hold record/);
+    assert.equal(daemonPids(dir).length, 2, "a new daemon was raised");
+  });
+});
+
+// Ревью #280 (Opus, п.4), спутник: у спутника записи держания нет — конец демона
+// без преемника обязан стать громким lost и отказом вслух, не молчанием.
+test("SIGTERM of the daemon with a satellite: the lost seat is said and the next call refused", async () => {
+  await withFake(async ({ fake, dir, bridge }) => {
+    const CALLER = "host.repo.opus-5";
+    await fake.control({ places: [{ karta: "931", name: CALLER, listening: true }] });
+    const s = bridge({}, ["--satellite"]);
+    await handshake(s);
+    const sat = { realm: "nks-dev", karta: 931, satellite_of: `@tester:${CALLER}` };
+    const r = await stand(s, sat);
+    assert.ok(!r.result?.isError, textOf(r));
+    const [first] = await waitFor("the daemon", () => daemonPids(dir)[0] && daemonPids(dir));
+    process.kill(first, "SIGTERM");
+    await waitFor("the successor daemon", () => daemonPids(dir).length === 2, 30_000);
+    const refused = await write(s, "sat-term");
+    assert.equal(
+      refused.result?.isError,
+      true,
+      `the lost satellite seat refuses the next call: ${JSON.stringify(refused)}`,
+    );
+    assert.match(textOf(refused), /место спутника потеряно при смене демона/);
+    assert.equal(fake.state.counts.unattributed, 0, JSON.stringify(fake.state.writes));
+    const again = await stand(s, sat);
+    assert.ok(!again.result?.isError, textOf(again));
+    const signed = await write(s, "signed-after-term");
+    assert.ok(signed.result && !signed.result.isError, JSON.stringify(signed));
+    assert.equal(fake.state.counts.unattributed, 0, JSON.stringify(fake.state.writes));
+  });
+});
+
+// Ревью #280 (Opus, п.3): обрыв чистит и таймер ворот — унаследованный открыл бы
+// ворота новой сессии раньше её GATE_MS, до ответа iskron/resume. Обёртка
+// slow-daemon.mjs делает миг второго рукопожатия предсказуемым: унаследованный
+// таймер сработал бы заметно раньше полной задержки новой сессии.
+test("the gate timer does not survive the break: the second wait is a full one", async () => {
+  await withFake(async ({ fake, dir, bridge }) => {
+    const a = bridge({
+      ISKRON_BRIDGE_DAEMON_ENTRY: join(HERE, "slow-daemon.mjs"),
+      ISKRON_TEST_DAEMON_DELAY_MS: "3000",
+    });
+    await handshake(a);
+    const r = await stand(a, { realm: "nks-dev", karta: 931, name: "gate-t" });
+    assert.ok(!r.result?.isError, textOf(r));
+    await fake.control({ registerToolDelayMs: 21_000 }); // возврат места не отвечает раньше ворот
+    const killLatest = () => {
+      const pids = daemonPids(dir);
+      process.kill(pids[pids.length - 1], "SIGKILL");
+    };
+    killLatest(); // первый обрыв: реплей шлёт initialize и iskron/resume, ворота закрыты
+    await waitFor("the resume in flight", () =>
+      /bringing its place .* back from the hold record/.test(a.stderr),
+    );
+    await new Promise((res) => setTimeout(res, 300));
+    killLatest(); // второй обрыв — ворота ещё закрыты, таймер первой очереди жив
+    await waitFor("the third daemon", () => daemonPidIn(a.stderr).length === 3, 30_000);
+    const arm2 = Date.now();
+    await waitFor(
+      "the gate to time out",
+      () =>
+        /did not answer the bridge's own calls in 20000ms — letting calls through/.test(a.stderr),
+      30_000,
+    );
+    const opened = Date.now();
+    await fake.control({ registerToolDelayMs: 0 });
+    assert.ok(
+      opened - arm2 >= 20_000 - 1500,
+      `the gate opened ${opened - arm2}ms after the second attach — earlier than its own GATE_MS`,
+    );
+  });
+});

@@ -94,6 +94,9 @@ export async function startFakeNks(opts = {}) {
     mcpStatus: null, // force an HTTP status on /mcp
     mcpHangMs: 0, // hold /mcp open past the caller's deadline: the request left, the answer never came
     revokeReplyDelayMs: 0, // revoke: the 4001 close goes out first, the HTTP answer this much later
+    statusDelayMs: 0,
+    listDelayMs: 0,
+    registerToolDelayMs: 0, // hold the iskron_channel register tool open this long
     refreshDelayMs: opts.refreshDelayMs ?? 0, // widen the window several bridges race in
     codeDelayMs: opts.codeDelayMs ?? 0, // hold the code exchange open, as a slow server does
     registerDelayMs: opts.registerDelayMs ?? 0, // hold dynamic registration open: the window two bridges race in
@@ -342,6 +345,7 @@ export async function startFakeNks(opts = {}) {
         "helloPending", // what the next hello says was waiting in the queue
         "statusDelayMs", // hold the status POST open this long before answering
         "listDelayMs", // hold every board read (iskron_channel list) open this long
+        "registerToolDelayMs", // hold the iskron_channel register tool open this long (возврат места при переподхвате)
       ]) {
         if (k in patch) st[k] = patch[k];
       }
@@ -732,6 +736,8 @@ export async function startFakeNks(opts = {}) {
       if (msg.method === "tools/call" && msg.params?.name === "iskron_channel") {
         const a = msg.params.arguments ?? {};
         if (a.action === "register") {
+          if (st.registerToolDelayMs)
+            await new Promise((r) => setTimeout(r, st.registerToolDelayMs));
           if (st.standingSeatGoneNext > 0) {
             st.standingSeatGoneNext--;
             return json(

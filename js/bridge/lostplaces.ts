@@ -2,10 +2,14 @@
 // Места — ключ → граф, как его назвал агент: основное — по уведомлению held,
 // рядом в других графах — по beside (снятое — beside-gone). Место не вернулось в
 // новой сессии — агенту уведомлением lost сейчас и отказом каждого вызова тула в
-// его граф (и в граф, которого мост заведомо не держит: другое написание, без
-// графа), кроме iskron_stand, пока место с тем же ключом не взято снова; у
+// его граф, кроме iskron_stand, пока место с тем же ключом не взято снова; у
 // спутника — любое место-спутник того же графа (имя .sub-N выбирает мост).
+// Граф вызова сличается с графом потери по realms.ts — канонической формой
+// @owner/slug с разрешением rN и слага; вызов без графа свободен, чужой владелец
+// того же слага — другой граф, а имя, не разрешённое против потерянных, — отказ
+// с просьбой полного адреса (#5838), не текст чужой потери.
 import { L } from "../shared/lang.ts";
+import { realmRelation, sameRealm, unresolvedWord } from "./realms.ts";
 import { type JsonRpcMessage } from "./types.ts";
 
 /** Слово сессии о месте, которое она держит или отпустила (hold.ts, places.ts). */
@@ -31,7 +35,7 @@ export function lostPlaces(say: (m: JsonRpcMessage) => void, log: (m: string) =>
     regained(k: string, realm: string): void {
       live.set(k, realm);
       for (const [lk, e] of lost)
-        if (lk === k || (e.satellite && e.realm === realm)) lost.delete(lk);
+        if (lk === k || (e.satellite && sameRealm(e.realm, realm))) lost.delete(lk);
     },
     lose(k: string, realm: string, why: string, satellite: boolean): void {
       const text = satellite
@@ -56,21 +60,63 @@ export function lostPlaces(say: (m: JsonRpcMessage) => void, log: (m: string) =>
         },
       });
     },
-    /** Отказ вызова тула из-за потерянного места; null — пропустить. */
+    /** Сколько мест потеряно — тонкий мост решает по этому, учить ли имена графов. */
+    lostCount(): number {
+      return lost.size;
+    },
+    /**
+     * Слово о месте, пришедшее тонкому мосту, свёрнуто здесь; возвращает heldKey
+     * после слова. «Держу» и «рядом» — место взято: отказ по нему снят; held с
+     * иным ключом — агент сменил основное место, и прежний ключ из live прочь —
+     * иначе следующий обрыв назвал бы его потерей. «Отпущено» (released) словом
+     * сессии демона при живом харнесе (`daemonSession`) — не уход агента: так
+     * кончается демон без преемника (SIGTERM/SIGINT), и ключ остаётся —
+     * переподхват вернёт место по записи держания (iskron/resume), а не выйдет —
+     * скажет lost вслух. Подлинный уход агента идёт через собственный leave
+     * тонкого моста, смерть и отъём места — словами dead и evicted.
+     */
+    seen(
+      place: { kind: string; key?: string; realm: string } | null,
+      heldKey: string | null,
+      daemonSession: boolean,
+    ): string | null {
+      if ((place?.kind === "held" || place?.kind === "beside") && place.key) {
+        if (place.kind === "held") {
+          if (heldKey && heldKey !== place.key) live.delete(heldKey);
+          heldKey = place.key;
+        }
+        this.regained(place.key, place.realm); // место снова взято — отказ по нему снят
+      } else if (place?.kind === "beside-gone" && place.key) live.delete(place.key);
+      else if (
+        place &&
+        ["released", "dead", "evicted"].includes(place.kind) &&
+        (!place.key || place.key === heldKey) &&
+        !(place.kind === "released" && daemonSession)
+      ) {
+        if (heldKey) live.delete(heldKey);
+        heldKey = null;
+      }
+      return heldKey;
+    },
+    /**
+     * Отказ вызова тула из-за потерянного места; null — пропустить. Отказ
+     * касается только вызовов в потерянный граф: вызов без графа свободен, граф
+     * сличается канонически (realms.ts), и отказ подписан графом вызова, а не
+     * первой попавшейся потери. Имя, не разрешённое против потерянных, — отказ с
+     * просьбой полного адреса (#5838): гадать нельзя, а пропустить — записать без автора.
+     */
     refusal(msg: JsonRpcMessage): string | null {
       if (!lost.size || msg.method !== "tools/call" || msg.params?.name === "iskron_stand")
         return null;
       const r = msg.params?.arguments?.realm;
-      const realm = slugOf(typeof r === "string" ? r : "");
-      const hit = [...lost.values()].find((e) => slugOf(e.realm) === realm);
-      if (hit) return hit.text;
-      // Граф, которого мост заведомо держит, свободен; прочий (rN, без графа) — отказ.
-      return [...live.values()].some((x) => slugOf(x) === realm)
-        ? null
-        : [...lost.values()][0].text;
+      if (typeof r !== "string" || !r.trim()) return null; // вызов без графа — не в потерянный граф
+      const hit = [...lost.entries()].find(([, e]) => realmRelation(r, e.realm) === "same");
+      if (hit) return hit[1].text;
+      // Граф, который мост держит, свободен; уверенно другой граф — тоже.
+      if ([...live.values()].some((x) => realmRelation(r, x) === "same")) return null;
+      return [...lost.values()].some((e) => realmRelation(r, e.realm) === "unknown")
+        ? unresolvedWord(r, [...live.values()])
+        : null;
     },
   };
 }
-
-// @owner/slug и голый slug — одно написание графа; rN тонкий мост не разрешает.
-const slugOf = (realm: string): string => realm.trim().replace(/^@[^/]+\//, "");

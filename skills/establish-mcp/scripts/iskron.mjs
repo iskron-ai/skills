@@ -7574,7 +7574,7 @@ function lostPlaces(say, log3) {
     regained(k, realm) {
       live.set(k, realm);
       for (const [lk, e] of lost)
-        if (lk === k || e.satellite && e.realm === realm) lost.delete(lk);
+        if (lk === k || e.satellite && sameRealm(e.realm, realm)) lost.delete(lk);
     },
     lose(k, realm, why, satellite) {
       const text = satellite ? L(
@@ -7597,19 +7597,54 @@ function lostPlaces(say, log3) {
         }
       });
     },
-    /** Отказ вызова тула из-за потерянного места; null — пропустить. */
+    /** Сколько мест потеряно — тонкий мост решает по этому, учить ли имена графов. */
+    lostCount() {
+      return lost.size;
+    },
+    /**
+     * Слово о месте, пришедшее тонкому мосту, свёрнуто здесь; возвращает heldKey
+     * после слова. «Держу» и «рядом» — место взято: отказ по нему снят; held с
+     * иным ключом — агент сменил основное место, и прежний ключ из live прочь —
+     * иначе следующий обрыв назвал бы его потерей. «Отпущено» (released) словом
+     * сессии демона при живом харнесе (`daemonSession`) — не уход агента: так
+     * кончается демон без преемника (SIGTERM/SIGINT), и ключ остаётся —
+     * переподхват вернёт место по записи держания (iskron/resume), а не выйдет —
+     * скажет lost вслух. Подлинный уход агента идёт через собственный leave
+     * тонкого моста, смерть и отъём места — словами dead и evicted.
+     */
+    seen(place, heldKey2, daemonSession) {
+      if ((place?.kind === "held" || place?.kind === "beside") && place.key) {
+        if (place.kind === "held") {
+          if (heldKey2 && heldKey2 !== place.key) live.delete(heldKey2);
+          heldKey2 = place.key;
+        }
+        this.regained(place.key, place.realm);
+      } else if (place?.kind === "beside-gone" && place.key) live.delete(place.key);
+      else if (place && ["released", "dead", "evicted"].includes(place.kind) && (!place.key || place.key === heldKey2) && !(place.kind === "released" && daemonSession)) {
+        if (heldKey2) live.delete(heldKey2);
+        heldKey2 = null;
+      }
+      return heldKey2;
+    },
+    /**
+     * Отказ вызова тула из-за потерянного места; null — пропустить. Отказ
+     * касается только вызовов в потерянный граф: вызов без графа свободен, граф
+     * сличается канонически (realms.ts), и отказ подписан графом вызова, а не
+     * первой попавшейся потери. Имя, не разрешённое против потерянных, — отказ с
+     * просьбой полного адреса (#5838): гадать нельзя, а пропустить — записать без автора.
+     */
     refusal(msg) {
       if (!lost.size || msg.method !== "tools/call" || msg.params?.name === "iskron_stand")
         return null;
       const r = msg.params?.arguments?.realm;
-      const realm = slugOf2(typeof r === "string" ? r : "");
-      const hit = [...lost.values()].find((e) => slugOf2(e.realm) === realm);
-      if (hit) return hit.text;
-      return [...live.values()].some((x) => slugOf2(x) === realm) ? null : [...lost.values()][0].text;
+      if (typeof r !== "string" || !r.trim()) return null;
+      const hit = [...lost.entries()].find(([, e]) => realmRelation(r, e.realm) === "same");
+      if (hit) return hit[1].text;
+      if ([...live.values()].some((x) => realmRelation(r, x) === "same")) return null;
+      return [...lost.values()].some((e) => realmRelation(r, e.realm) === "unknown") ? unresolvedWord(r, [...live.values()]) : null;
     }
   };
 }
-var slugOf2 = (realm) => realm.trim().replace(/^@[^/]+\//, "");
 
 // js/bridge/raise.ts
 import { spawn as spawn4 } from "node:child_process";
@@ -7703,6 +7738,7 @@ function thinMain(argv2) {
   const flights = /* @__PURE__ */ new Map();
   const verdicted = /* @__PURE__ */ new Set();
   const replayIds = /* @__PURE__ */ new Set();
+  const realmIds = /* @__PURE__ */ new Set();
   const cancelled = /* @__PURE__ */ new Set();
   let replays = 0;
   const key = (id) => JSON.stringify(id);
@@ -7710,6 +7746,13 @@ function thinMain(argv2) {
   const toHarness = (msg) => {
     if (msg.method === void 0 && msg.id !== void 0 && msg.id !== null) {
       const k = key(msg.id);
+      if (realmIds.delete(k)) {
+        const content = msg.result?.content;
+        learnRealmList(
+          (Array.isArray(content) ? content : []).map((c) => String(c?.text ?? "")).join("\n")
+        );
+        return;
+      }
       if (replayIds.delete(k)) {
         const back = resuming.get(k);
         resuming.delete(k);
@@ -7731,15 +7774,7 @@ function thinMain(argv2) {
       }
     }
     const place = placeWord(msg);
-    const handingOver2 = !!successorAwaited && Date.now() - successorAwaited < SUCCESSOR_MS;
-    if ((place?.kind === "held" || place?.kind === "beside") && place.key) {
-      if (place.kind === "held") heldKey2 = place.key;
-      places.regained(place.key, place.realm);
-    } else if (place?.kind === "beside-gone" && place.key) live.delete(place.key);
-    else if (place && ["released", "dead", "evicted"].includes(place.kind) && (!place.key || place.key === heldKey2) && !(handingOver2 && place.kind === "released")) {
-      if (heldKey2) live.delete(heldKey2);
-      heldKey2 = null;
-    }
+    heldKey2 = places.seen(place, heldKey2, mode === "daemon" && !leaving);
     writeHarness(msg);
   };
   const gate = /* @__PURE__ */ new Set();
@@ -7891,13 +7926,26 @@ function thinMain(argv2) {
       lost(!!w.ack);
     });
     if (!resumed) replay((m) => toDaemon(l, m));
+    if (places.lostCount()) {
+      const id = `iskron-thin-realms-${++replays}`;
+      realmIds.add(key(id));
+      toDaemon(l, {
+        jsonrpc: "2.0",
+        id,
+        method: "tools/call",
+        params: { name: "iskron_realm", arguments: { action: "list" } }
+      });
+    }
     for (const m of queue2.splice(0)) dispatch2(m);
   };
   const lost = (acks) => {
     mode = "attaching";
     replayIds.clear();
     resuming.clear();
+    realmIds.clear();
     gate.clear();
+    if (gateTimer) clearTimeout(gateTimer);
+    gateTimer = null;
     const inFlight = flights.size;
     const again = verdictAll(
       "the link to this machine's bridge daemon broke before the answer came back",
