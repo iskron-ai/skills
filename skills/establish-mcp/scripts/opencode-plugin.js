@@ -1294,21 +1294,36 @@ function createKeeper(doors) {
   };
 }
 
+// js/shared/busyargs.ts
+var STATUS_ONLY_ARGS = /* @__PURE__ */ new Set([
+  "realm",
+  "karta",
+  "name",
+  "cwd",
+  "status",
+  "satellite_of"
+]);
+var unset = (v) => v == null || v === false || v === "";
+var takingArgs = (args) => Object.keys(args).filter((k) => !STATUS_ONLY_ARGS.has(k) && !unset(args[k]));
+
 // js/opencode/satellite.ts
 var STAND_TOOL = "iskron_stand";
 function standsBy(name, args) {
   if (name === STAND_TOOL) return true;
   return name === "iskron_channel" && ["connect", "mint", "register"].includes(String(args.action));
 }
+var busyOnly = (args) => typeof args.status === "string" && takingArgs(args).length === 0;
 function heldPlace(data) {
   const p = data?.place;
   if (typeof p?.name !== "string" || !p.name) return null;
   return { realm: String(p.realm), karta: String(p.karta), name: p.name };
 }
-function asSatellite(args, of) {
-  if (!of) return;
+function asSatellite(args, of, leads = false) {
+  const busy = busyOnly(args);
+  if (!of) return busy;
   args.satellite_of ??= of.name;
-  if (args.karta == null || args.karta === "") args.karta = of.karta;
+  if (!(leads && busy) && (args.karta == null || args.karta === "")) args.karta = of.karta;
+  return busy;
 }
 
 // js/opencode/launch.ts
@@ -1666,14 +1681,14 @@ async function setupTools(ctx, say, onChannel, rootOf) {
       slot = childSlot(sessionID, slot);
       await awaitReady(slot);
     }
-    if (name === STAND_TOOL) asSatellite(args, slot.satelliteOf);
+    const busy = name === STAND_TOOL && asSatellite(args, slot.satelliteOf, !!slot.place);
     if (name === STAND_TOOL && !args.cwd) {
       const dir = slot.dir ??= await directoryOf(slot.session ?? sessionID);
       if (dir) args.cwd = dir;
     }
     const result = await slot.bridge.request("tools/call", { name, arguments: args }, { service });
     if (result?.isError) throw new Error(textOf2(result) || `${name}: отказ без текста`);
-    if (standsBy(name, args)) keeper.stood(slot);
+    if (standsBy(name, args) && !busy) keeper.stood(slot);
     if (standsBy(name, args)) runEnds.clear(sessionID);
     return { content: textOf2(result) };
   }

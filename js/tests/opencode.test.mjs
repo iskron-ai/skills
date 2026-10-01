@@ -1858,6 +1858,123 @@ test("a child session of a standing root raises its bridge as a satellite of the
   }
 });
 
+// After an eviction the busy line still goes by iskron_stand(status) (#6509,
+// #5035), and its answer is a success — but a success of the busy line is not
+// holding: the hearing is with another holder. The plugin must not mark the slot
+// holding again (a stop would then leave a loss marker for a place it does not
+// hear, and the idle reaper would spare it), and a satellite child is still not
+// handed the root's role for its status call.
+test("an evicted seat's busy line through iskron_stand is not holding: no loss marker for it, and the satellite child is not given the root's role", async () => {
+  const calls = join(SANDBOX, "evicted-status.calls");
+  writeFileSync(calls, "");
+  const b = bridgeEnv("evicted-status", {
+    FB_CALLS: calls,
+    FB_TOOLS: JSON.stringify([
+      { name: "iskron_stand", description: "Стояние.", inputSchema: { type: "object" } },
+    ]),
+  });
+  const rec = await plugin(b.env, {
+    sessions: [
+      { id: "root", location: { directory: "/work/root" } },
+      { id: "child", parentID: "root", location: { directory: "/work/child" } },
+    ],
+  });
+  let stopped = false;
+  try {
+    await until(() => rec.tools().has("iskron_stand"), "the stand tool", 8000);
+    await rec.call("iskron_stand", { realm: "nks-dev", karta: "#2816" }, "root");
+    const place = { realm: "@nks/nks-dev", karta: "2816", name: "host.repo.opus-5" };
+    appendFileSync(`${b.events}.${pidOf(b.log)}`, event("held", { key: "k-root", place }));
+    await delay(400); // the fake bridge relays event lines every 40 ms
+    await rec.call("iskron_stand", { realm: "nks-dev", karta: "#48" }, "child");
+    const childPid = pidsOf(b.log)[1];
+    const sub = { realm: "@nks/nks-dev", karta: "48", name: "host.repo.opus-5.sub-1" };
+    appendFileSync(`${b.events}.${childPid}`, event("held", { key: "k-sub", place: sub }));
+    await delay(400);
+    appendFileSync(
+      `${b.events}.${childPid}`,
+      event("evicted", { code: 4000, text: "ДЕЛАТЕЛЬ: место отняли" }),
+    );
+    await delay(400);
+    await rec.call("iskron_stand", { realm: "nks-dev", status: "после отъёма" }, "child");
+    const last = readFileSync(calls, "utf8")
+      .trim()
+      .split("\n")
+      .map((l) => JSON.parse(l))
+      .filter((c) => c.name === "iskron_stand")
+      .at(-1);
+    assert.equal(last.arguments.karta, undefined, "no root role for the busy line");
+    assert.equal(last.arguments.satellite_of, "host.repo.opus-5");
+    await rec.stop();
+    stopped = true;
+    const keys = lostMarkers().flatMap(
+      (f) => JSON.parse(readFileSync(f, "utf8")).entries?.map((e) => e.key) ?? [],
+    );
+    assert.ok(keys.includes("k-root"), `the root still holds: ${JSON.stringify(keys)}`);
+    assert.ok(!keys.includes("k-sub"), `the evicted child is not holding: ${JSON.stringify(keys)}`);
+  } finally {
+    if (!stopped) await rec.stop();
+    for (const f of lostMarkers()) rmSync(f, { force: true });
+  }
+});
+
+// The busy line goes by iskron_stand(status) on the seat the bridge holds (#6509):
+// a satellite standing in a role of its own that calls iskron_stand(realm, status)
+// must not be handed the root's role — the bridge would take it for another seat
+// and go the full way of taking one. The plugin still names satellite_of.
+test("a satellite child holding its seat calls iskron_stand with status only: the plugin adds satellite_of but not the root's role", async () => {
+  const calls = join(SANDBOX, "satellite-status.calls");
+  writeFileSync(calls, "");
+  const b = bridgeEnv("satellite-status", {
+    FB_CALLS: calls,
+    FB_TOOLS: JSON.stringify([
+      { name: "iskron_stand", description: "Стояние.", inputSchema: { type: "object" } },
+    ]),
+  });
+  const rec = await plugin(b.env, {
+    sessions: [
+      { id: "root", location: { directory: "/work/root" } },
+      { id: "child", parentID: "root", location: { directory: "/work/child" } },
+    ],
+  });
+  try {
+    await until(() => rec.tools().has("iskron_stand"), "the stand tool", 8000);
+    await rec.call("iskron_stand", { realm: "nks-dev", karta: "#2816" }, "root");
+    const place = { realm: "@nks/nks-dev", karta: "2816", name: "host.repo.opus-5" };
+    appendFileSync(`${b.events}.${pidOf(b.log)}`, event("held", { key: "k-root", place }));
+    await delay(400); // the fake bridge relays event lines every 40 ms
+    await rec.call("iskron_stand", { realm: "nks-dev", karta: "#48" }, "child");
+    const childPid = pidsOf(b.log)[1];
+    const sub = { realm: "@nks/nks-dev", karta: "48", name: "host.repo.opus-5.sub-1" };
+    appendFileSync(`${b.events}.${childPid}`, event("held", { key: "k-sub", place: sub }));
+    await delay(400);
+    await rec.call("iskron_stand", { realm: "nks-dev", status: "спутник пишет" }, "child");
+    const stands = readFileSync(calls, "utf8")
+      .trim()
+      .split("\n")
+      .map((l) => JSON.parse(l))
+      .filter((c) => c.name === "iskron_stand")
+      .map((c) => [c.arguments.karta, c.arguments.satellite_of, c.arguments.status]);
+    assert.deepEqual(stands.at(-1), [undefined, "host.repo.opus-5", "спутник пишет"]);
+    // Один список с мостом (shared/busyargs.ts): room_karta — занятие места, и
+    // роль корня подставляется, как у всякого вызова занятия.
+    await rec.call(
+      "iskron_stand",
+      { realm: "nks-dev", status: "стучу", room_karta: "#1226" },
+      "child",
+    );
+    const withRoom = readFileSync(calls, "utf8")
+      .trim()
+      .split("\n")
+      .map((l) => JSON.parse(l))
+      .filter((c) => c.name === "iskron_stand")
+      .at(-1);
+    assert.equal(withRoom.arguments.karta, "2816", "room_karta is not a busy-line argument");
+  } finally {
+    await rec.stop();
+  }
+});
+
 // The satellite's place lives by the run (#6361): OpenCode keeps a child session
 // after its run, so the plugin ends the child's bridge on the end of the child's
 // execution — the bridge winds down and leaves the place, the hearing watch sends

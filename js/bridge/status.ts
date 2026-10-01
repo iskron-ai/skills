@@ -1,19 +1,62 @@
 // Занятость стояния — слово держателя сокета, а держит его мост (решение
-// владельца, граф nks-dev: #4284 отвергнут): action="status" у iskron_channel
-// исполняется здесь, на сервер не уходит. POST на статусный адрес из ответа
-// connect; ответ поверхности — успех или ProblemDetail — доносится целиком.
-import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+// владельца, граф nks-dev: #4284 отвергнут). Основной ход — iskron_stand(status)
+// на месте, которое мост уже держит (#6509): мост, приносящий агенту кадры,
+// и ставит его занятость; action="status" у iskron_channel — прежний ход, живёт
+// ради совместимости. Оба исполняются здесь, на сервер не уходят. POST на
+// статусный адрес из ответа connect; ответ поверхности доносится целиком.
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { isAbsolute, join } from "node:path";
 
+import { takingArgs } from "../shared/busyargs.ts";
 import { L } from "../shared/lang.ts";
 import { scoped } from "../shared/scope.ts";
 import { socketPathOf, standingsDirOf } from "../shared/standings.ts";
+import { nameOf } from "./board.ts";
 import { resolveAgainstLed } from "./call.ts";
 import { CFG } from "./config.ts";
-import { heldPlaces, rememberStatus, statusAddress } from "./hold.ts";
+import {
+  hasStatusAddressFor,
+  heldPlaces,
+  holdsStanding,
+  isParked,
+  noteStandCwd,
+  rememberStatus,
+  statusAddress,
+  wasEvicted,
+} from "./hold.ts";
 import { type HoldRecord, keyOf } from "./holdrecord.ts";
+import { unheardListenBlock } from "./listen.ts";
+import { normKarta, normName } from "./names.ts";
+import { extraIn } from "./places.ts";
+import { sameRealm } from "./realms.ts";
 import { localSocketAlive } from "./sweep.ts";
+import { type Standing, state } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
+
+const isDirectory = (p: string): boolean => {
+  try {
+    return isAbsolute(p) && statSync(p).isDirectory();
+  } catch {
+    return false;
+  }
+};
+
+const replyTo =
+  (msg: JsonRpcMessage) =>
+  (body: string, isError = false): JsonRpcMessage => ({
+    jsonrpc: "2.0",
+    id: msg.id,
+    result: { ...(isError ? { isError: true } : {}), content: [{ type: "text", text: body }] },
+  });
+
+/** Публикация строки занятости места этого графа и слово о ней — общее для обоих ходов. */
+async function statusWord(text: string, realm: string): Promise<[string, boolean]> {
+  const st = await publishStatus(text, realm);
+  if (!st.ok && !statusAddress()) return [await notHeldHere(realm), true];
+  if (st.code === 404) return [`${st.body} ${TURNED_GUIDANCE()}`, true];
+  if (st.ok) return [`занятость ${statusAddress(realm)?.key}: ${text || "(снята)"}`, false];
+  return [st.body, true];
+}
 
 /** action="status" — занятость ЭТОГО стояния. Возвращает null для всякого другого вызова. */
 export function localStatus(msg: JsonRpcMessage): Promise<JsonRpcMessage> | null {
@@ -21,21 +64,100 @@ export function localStatus(msg: JsonRpcMessage): Promise<JsonRpcMessage> | null
   const a = msg.params?.arguments;
   if (a?.action !== "status") return null;
   const text = typeof a.text === "string" ? a.text : "";
-  const reply = (body: string, isError = false): JsonRpcMessage => ({
-    jsonrpc: "2.0",
-    id: msg.id,
-    result: { ...(isError ? { isError: true } : {}), content: [{ type: "text", text: body }] },
-  });
+  const reply = replyTo(msg);
   // Занятость — места графа из вызова (#5838); без графа — основного.
   const realm = typeof a.realm === "string" ? a.realm : "";
   return (async () => {
     await resolveAgainstLed(realm); // граф вызова — в той же форме, что граф места
-    const st = await publishStatus(text, realm);
-    if (!st.ok && !statusAddress()) return reply(await notHeldHere(realm), true);
-    if (st.code === 404) return reply(`${st.body} ${TURNED_GUIDANCE()}`, true);
-    if (st.ok) return reply(`занятость ${statusAddress(realm)?.key}: ${text || "(снята)"}`);
-    return reply(st.body, true);
+    return reply(...(await statusWord(text, realm)));
   })();
+}
+
+// Список аргументов одной занятости — shared/busyargs.ts, общий с плагином OpenCode.
+// satellite_of сверяется с держимым местом-спутником; model несёт старт двери (и
+// повторный старт после возврата): он сверяет место — register, хук, hello —
+// и потому идёт полным путём.
+
+/**
+ * Почему вызов со status не стал одной занятостью — для слова отказа, когда
+ * karta нет и полному пути занять место нечем (standwords.ts):
+ * места в графе нет; вызов несёт аргументы занятия; другое имя; не тот спутник;
+ * кривой каталог; ушёл с места словом (leave); сокета и статусного адреса места
+ * у моста нет — только register при чужом слухе либо сокет отпущен (мёртвый
+ * токен, снятие): эти два мост отсюда не различает и говорит честно.
+ */
+export type StatusMiss =
+  | { why: "none" | "satellite" | "parked" | "elsewhere" }
+  | { why: "args"; args: string[] }
+  | { why: "name"; asked: string; held: string }
+  | { why: "cwd"; cwd: string };
+
+/** Ответ одной занятости — либо почему её нет (null — вызов без status или с karta другой роли). */
+export type StatusOnly = { reply: JsonRpcMessage } | { miss: StatusMiss | null; of?: string };
+
+/**
+ * iskron_stand со status на месте, которое ведёт этот мост (решение владельца,
+ * #6509): только строка занятости — без доски, connect, register, хука и стука;
+ * пустая строка снимает. Роль и имя — те же, что у места, или опущены.
+ * Занятость — от стояния, не от живого сокета (#5033, #5035): после отъёма она
+ * публикуется, пока у моста статусный адрес места, как и action="status".
+ * Иначе — miss, и вызов ведёт полный путь stand.ts.
+ */
+export async function standStatusOnly(msg: JsonRpcMessage): Promise<StatusOnly> {
+  const a = msg.params?.arguments ?? {};
+  if (typeof a.status !== "string") return { miss: null };
+  const unset = (v: unknown): boolean => v == null || v === false || v === "";
+  const extra = takingArgs(a);
+  const realm = typeof a.realm === "string" ? a.realm.trim() : "";
+  if (!realm) return { miss: null };
+  await resolveAgainstLed(realm); // граф вызова — в той же форме, что граф места
+  const held = ledIn(realm);
+  if (!held) return { miss: { why: "none" } };
+  if (extra.length) return { miss: { why: "args", args: extra } };
+  if (!unset(a.karta) && normKarta(a.karta) !== String(held.karta)) return { miss: null };
+  const asked = normName(a.name);
+  if (asked && asked !== (held.name ?? ""))
+    return { miss: { why: "name", asked, held: held.name ?? "" } };
+  // Спутник — <имя позвавшего>.sub-N; длинную базу мост укорачивает, потому сличение — префиксом.
+  const of = normName(a.satellite_of);
+  const base = /^(.+)\.sub-[1-9]\d*$/.exec(held.name ?? "")?.[1];
+  if (of && !(base && nameOf(of).startsWith(base))) return { miss: { why: "satellite" }, of };
+  const [r, k, n] = [held.realm, held.karta, held.name ?? ""];
+  if (isParked(r, k, n)) return { miss: { why: "parked" } };
+  if (!hasStatusAddressFor(r, k, n)) return { miss: { why: "elsewhere" } };
+  // Каталог — локальная память места, как у полного пути: запись держания несёт его для возврата (resume.ts).
+  const cwd = typeof a.cwd === "string" ? a.cwd.trim() : "";
+  if (cwd) {
+    if (cwd !== process.cwd() && !isDirectory(cwd)) return { miss: { why: "cwd", cwd } };
+    noteStandCwd(cwd);
+  }
+  const [said, isError] = await statusWord(a.status.trim(), realm);
+  const heard = holdsStanding(r, k, n);
+  // Сокета сейчас нет — ответ говорит почему, иначе свежая строка над чужим или
+  // закрытым сокетом обманывает и того, кто её поставил: отъём (закрытие 4000) —
+  // слух у другого; иначе своё переоткрытие — слух вернётся сам.
+  const why = wasEvicted(r, k, n)
+    ? L(
+        "слух у другого держателя — вернуть его iskron_stand с take=true только по слову человека",
+        "the hearing is with another holder — take it back by iskron_stand with take=true only on the human's word",
+      )
+    : L(
+        "сокет переоткрывается — строка опубликована, слух вернётся сам",
+        "the socket is reopening — the line is published, the hearing comes back by itself",
+      );
+  const body = isError || heard ? said : `${said}; ${why}`;
+  // Сокет места держит мост, а сторож к нему не прицеплен — команда слушания тут же;
+  // после отъёма слуха здесь нет, и команда сторожа была бы неправдой.
+  const listen = isError || !heard ? null : unheardListenBlock(realm);
+  return { reply: replyTo(msg)(listen ? `${body}\n${listen}` : body, isError) };
+}
+
+/** Место, которое мост ведёт в этом графе (основное либо рядом), — держит ли он сокет, не судит. */
+function ledIn(realm: string): Standing | undefined {
+  const prim = state.standing;
+  return prim && (prim.realm === realm || sameRealm(prim.realm, realm))
+    ? prim
+    : extraIn(realm)?.standing;
 }
 
 /** Исход POST занятости; code — HTTP-код отказа поверхности, когда он был. */
