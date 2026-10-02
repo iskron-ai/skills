@@ -17,7 +17,7 @@ import { leaveJoinedCases, revokeSatellitePlaces, satellitePlaces } from "./case
 import { CFG, readArgs, setConfig } from "./config.ts";
 import { deliver } from "./deliver.ts";
 import { errorMessage } from "./errors.ts";
-import { releaseStanding, statusAddress } from "./hold.ts";
+import { releaseStanding } from "./hold.ts";
 import { handoverUnderway } from "./holdstate.ts";
 import { startDeafnessWatch } from "./leave.ts";
 import { pendingFlow } from "./oauth/flow.ts";
@@ -26,6 +26,7 @@ import { tokenRequestsInFlight } from "./oauth/tokenrequest.ts";
 import { holdFromEnv } from "./resume.ts";
 import { releaseSatelliteClaims } from "./satellite.ts";
 import { publishStatusTo } from "./status.ts";
+import { statusAddress } from "./statusaddr.ts";
 import { sleep } from "./store.ts";
 import { debug, flushStdout, guardStream, log, setSessionOutput } from "./streams.ts";
 import { suspended } from "./suspend.ts";
