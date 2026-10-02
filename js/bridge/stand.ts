@@ -317,7 +317,7 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
         ? SW.howEvicted()
         : predecessorDead
           ? SW.howDeadPredecessor()
-          : SW.howOtherHolder()
+          : SW.howOtherHolder(mine?.address ?? name, realm, karta, !!asked)
       : SW.howRegister();
   } else {
     const args: Record<string, unknown> = { action: "connect", realm, karta, name };
