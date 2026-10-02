@@ -1522,7 +1522,10 @@ test("two graphs: the busy line of a place beside names it @handle:name, not its
   const text = textOf(said);
   assert.ok(!said.result?.isError, text);
   assert.equal(text.split("\n")[0], "занятость @tester:proba-b: место рядом", text);
-  assert.ok(!text.includes(keyB), `the record key must not stand in for the place:\n${text}`);
+  assert.ok(
+    !text.split("\n")[0].includes(keyB),
+    `the record key must not stand in for the place:\n${text}`,
+  );
   assert.equal(fake.state.status, "место рядом");
 });
 

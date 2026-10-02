@@ -5009,18 +5009,6 @@ function openHolder(url, key) {
   );
 }
 
-// js/bridge/statusaddr.ts
-function statusAddress(realm) {
-  if (!H2.currentStatusUrl || !H2.currentKey) return null;
-  const d = (realm ? extraIn(realm)?.door : void 0) ?? H2.door;
-  return {
-    url: H2.currentStatusUrl,
-    key: d?.key ?? H2.currentKey,
-    standingId: d?.standingId ?? null,
-    place: d?.address ?? null
-  };
-}
-
 // js/bridge/status.ts
 import { existsSync as existsSync3, readdirSync as readdirSync4, readFileSync as readFileSync14, statSync as statSync4 } from "node:fs";
 import { isAbsolute, join as join11 } from "node:path";
@@ -5541,6 +5529,18 @@ function serialized(fn) {
     () => void 0
   );
   return p;
+}
+
+// js/bridge/statusaddr.ts
+function statusAddress(realm) {
+  if (!H2.currentStatusUrl || !H2.currentKey) return null;
+  const d = (realm ? extraIn(realm)?.door : void 0) ?? H2.door;
+  return {
+    url: H2.currentStatusUrl,
+    key: d?.key ?? H2.currentKey,
+    standingId: d?.standingId ?? null,
+    place: d?.address ?? null
+  };
 }
 
 // js/bridge/status.ts
