@@ -4,7 +4,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-var VERSION = "7.1.0";
+var VERSION = "7.2.0";
 function buildOf(selfUrl) {
   try {
     const src = readFileSync(fileURLToPath(selfUrl));
@@ -3894,8 +3894,8 @@ function leftOnDisk(key) {
     return false;
   }
 }
-function writeHoldRecord(key, rec4) {
-  if (CFG.satellite) return;
+function writeHoldRecord(key, rec4, paused = false) {
+  if (CFG.satellite && !paused) return;
   try {
     const session = H.session ?? rec4.session;
     const left = rec4.left ?? leftOnDisk(key);
@@ -6136,6 +6136,11 @@ function noteCaseEntry(name, args, reply2) {
     if (roomNo(c.room) === no && !otherRealm(c.realm, realm)) joined.delete(k);
   if (a.action === "join") joined.set(`${realm ? canonRealm(realm) : ""}#${no}`, { realm, room });
 }
+var joinedCases = () => [...joined.values()];
+function seedJoined(cases) {
+  for (const c of cases ?? [])
+    if (c?.room) joined.set(`${c.realm ? canonRealm(c.realm) : ""}#${roomNo(c.room)}`, c);
+}
 async function leaveJoinedCases() {
   if (!CFG.satellite || !joined.size) return;
   const cases = [...joined.values()];
@@ -6771,6 +6776,43 @@ async function armRoleHook(p) {
 // js/bridge/resume.ts
 import { existsSync as existsSync5, readdirSync as readdirSync5, readFileSync as readFileSync18 } from "node:fs";
 import { join as join15 } from "node:path";
+
+// js/bridge/suspend.ts
+var S3 = scoped(() => ({ on: false }));
+var suspended = () => S3.on;
+function localSuspend(msg) {
+  if (msg?.method !== "iskron/suspend") return null;
+  const answer = (result) => ({ jsonrpc: "2.0", id: msg.id, result });
+  const s2 = state.standing;
+  const { currentKey: key, currentUrl: url, currentStatusUrl: statusUrl2 } = H2;
+  if (!CFG.satellite || !s2?.name || !key || !url)
+    return Promise.resolve(answer({ suspended: false, word: "места-спутника нет — паузы нет" }));
+  const cases = joinedCases();
+  writeHoldRecord(
+    key,
+    {
+      realm: s2.realm,
+      karta: s2.karta,
+      name: s2.name,
+      url,
+      statusUrl: statusUrl2,
+      client: harnessName(),
+      key,
+      session: sessionOfBridge() ?? void 0,
+      cases
+    },
+    true
+  );
+  S3.on = true;
+  log(`satellite paused for a plugin reload: ${key}, cases ${cases.length} — place and cases kept`);
+  return Promise.resolve(answer({ suspended: true, key, cases: cases.length }));
+}
+function afterResume(key) {
+  if (!CFG.satellite || !key) return;
+  seedJoined(readHoldRecord(key)?.cases);
+}
+
+// js/bridge/resume.ts
 async function deadPredecessor(realm, karta, name) {
   const key = keyOf(realm, karta, name);
   if (!readHoldRecord(key)) return false;
@@ -6980,7 +7022,9 @@ async function runResume(msg) {
   const sel = selectorFrom(msg);
   if (!sel.key && !sel.cwd)
     return reply(msg, { resumed: false, word: "ни key, ни cwd не передан" });
-  return reply(msg, await resumeBy(sel));
+  const r = await resumeBy(sel);
+  if (r.resumed) afterResume(r.key);
+  return reply(msg, r);
 }
 async function runCheck(msg) {
   const sel = selectorFrom(msg);
@@ -7832,7 +7876,7 @@ async function deliver(msg) {
   }
 }
 async function deliverOne(msg) {
-  const local = localStatus(msg) ?? localLeave(msg);
+  const local = localStatus(msg) ?? localLeave(msg) ?? localSuspend(msg);
   if (local) {
     emit(await local);
     return;
@@ -8100,11 +8144,12 @@ function openIn(io, origin, scope) {
     const handover = !!origin && handoverUnderway();
     const addr = statusAddress();
     const places = satellitePlaces();
-    const closing = !handover || CFG.satellite;
-    const spent = closing ? usagePlace() : null;
-    releaseStanding(why, CFG.satellite);
-    await Promise.all([leaveJoinedCases(), flushUsage(spent)]);
-    await revokeSatellitePlaces(places);
+    const paused = suspended();
+    const closing = (!handover || CFG.satellite) && !paused;
+    const spent = closing || paused ? usagePlace() : null;
+    releaseStanding(why, CFG.satellite && !paused);
+    await Promise.all([paused ? null : leaveJoinedCases(), flushUsage(spent)]);
+    if (!paused) await revokeSatellitePlaces(places);
     if (addr && closing) await publishStatusTo(addr.url, "", 3e3).catch(() => {
     });
     if (handover) await Promise.race([Promise.allSettled([...pending2]), sleep(HANDOVER_WAIT_MS)]);

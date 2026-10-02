@@ -25,6 +25,7 @@ import { ensureStanding, isUnattributed, noteStanding, replyText } from "./stand
 import { localStatus } from "./status.ts";
 import { loadServerCache, saveServerCache, sleep } from "./store.ts";
 import { emit, log } from "./streams.ts";
+import { localSuspend } from "./suspend.ts";
 import { noteServedTools, recheckTools } from "./toolsync.ts";
 import { currentAccessToken, onReinitialized, post, reinitialize, state } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
@@ -192,7 +193,7 @@ export async function deliver(msg: JsonRpcMessage): Promise<void> {
 
 async function deliverOne(msg: JsonRpcMessage): Promise<void> {
   // Слово о занятости не покидает моста: держатель сокета говорит его сам.
-  const local = localStatus(msg) ?? localLeave(msg);
+  const local = localStatus(msg) ?? localLeave(msg) ?? localSuspend(msg);
   if (local) {
     emit(await local);
     return;

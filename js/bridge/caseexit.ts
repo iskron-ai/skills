@@ -39,6 +39,15 @@ export function noteCaseEntry(name: unknown, args: unknown, reply: JsonRpcMessag
   if (a.action === "join") joined.set(`${realm ? canonRealm(realm) : ""}#${no}`, { realm, room });
 }
 
+/** Дела прогона — в запись паузы спутника (suspend.ts): новый мост выйдет из них на конце. */
+export const joinedCases = (): { realm?: string; room: string }[] => [...joined.values()];
+
+/** Дела прогона, переданные паузой прежнего моста: этот мост их и покинет на конце. */
+export function seedJoined(cases: { realm?: string; room: string }[] | undefined): void {
+  for (const c of cases ?? [])
+    if (c?.room) joined.set(`${c.realm ? canonRealm(c.realm) : ""}#${roomNo(c.room)}`, c);
+}
+
 /**
  * Выйти из дел прогона — на конце прогона спутника, прежде чем место уйдёт
  * (#6573): разом и под общим потолком — невышедшее закроется сроком места.

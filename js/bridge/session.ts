@@ -29,6 +29,7 @@ import { releaseSatelliteClaims } from "./satellite.ts";
 import { publishStatusTo } from "./status.ts";
 import { sleep } from "./store.ts";
 import { debug, flushStdout, guardStream, log, setSessionOutput } from "./streams.ts";
+import { suspended } from "./suspend.ts";
 import { type JsonRpcMessage } from "./types.ts";
 import { flushUsage, usagePlace } from "./usage.ts";
 import { lastAgentWork, noteAgentWork } from "./work.ts";
@@ -203,18 +204,20 @@ function openIn(io: SessionIO, origin: SessionOrigin | null, scope: Scope | null
     const places = satellitePlaces();
     // Место закрывается с сессией всегда, кроме места не-спутника, переданного преемнику:
     // у закрываемого последний снимок расхода уходит до revoke (#6401), и при смене демона.
-    const closing = !handover || CFG.satellite;
-    const spent = closing ? usagePlace() : null;
+    // Пауза спутника на перезагрузку плагина (suspend.ts): место, дела и занятость ждут нового моста.
+    const paused = suspended();
+    const closing = (!handover || CFG.satellite) && !paused;
+    const spent = closing || paused ? usagePlace() : null;
     // Сокет стояния живёт ровно столько, сколько сессия; у спутника — и записи держания нет: возврата с диска у него не бывает.
-    releaseStanding(why, CFG.satellite);
+    releaseStanding(why, CFG.satellite && !paused);
     // Спутник выходит из дел прогона сам (#6573), пока место на доске: конец
     // прогона — конец поручения, а истечение срока места оставило бы «slop».
     // И при смене демона: место спутника не возвращается, а потерянное место
     // закрывается (#6593, #6550 п.4) — иначе на доске «живой · не слушает».
     // Последний снимок расхода ложится тем же тактом — до revoke: по закрытому месту записи нет (#6401).
-    await Promise.all([leaveJoinedCases(), flushUsage(spent)]);
+    await Promise.all([paused ? null : leaveJoinedCases(), flushUsage(spent)]);
     // Конец спутника закрывает и место (#6593): место снимается с доски.
-    await revokeSatellitePlaces(places);
+    if (!paused) await revokeSatellitePlaces(places);
     // Спутник отпускается целиком и при передаче (возврата с диска нет) — его занятость уходит с ним.
     if (addr && closing) await publishStatusTo(addr.url, "", 3000).catch(() => {});
     if (handover) await Promise.race([Promise.allSettled([...pending]), sleep(HANDOVER_WAIT_MS)]);

@@ -38,6 +38,10 @@ export interface KeptSlot {
   resume: Promise<void> | null;
   /** Мост дочерней сессии (её собственное стояние, #5154): в подсказки возврата корня его запись не идёт. */
   child?: boolean;
+  /** Место корня, спутником которого встал ребёнок, — его мост нового экземпляра встаёт тем же спутником (#6625). */
+  satelliteOf?: { realm: string; karta: string; name: string } | null;
+  /** Дело поручения ребёнка — исход ведущего субагента (leads.ts) переживает перезагрузку. */
+  room?: string | null;
 }
 
 export interface LostEntry {
@@ -45,6 +49,8 @@ export interface LostEntry {
   dir: string | null;
   key: string | null;
   child?: boolean;
+  of?: { realm: string; karta: string; name: string } | null;
+  room?: string | null;
 }
 interface Lost {
   at: string;
@@ -57,7 +63,13 @@ const MARKER_PREFIX = "opencode-lost";
 export function writeLostMarker(authDir: string, slots: Iterable<KeptSlot>): void {
   const entries = [...slots]
     .filter((s) => s.holding && s.session)
-    .map((s) => ({ session: s.session as string, dir: s.dir, key: s.key, child: !!s.child }));
+    .map((s) => ({
+      session: s.session as string,
+      dir: s.dir,
+      key: s.key,
+      child: !!s.child,
+      ...(s.child ? { of: s.satelliteOf ?? null, room: s.room ?? null } : {}),
+    }));
   if (!entries.length) return;
   try {
     mkdirSync(authDir, { recursive: true, mode: 0o700 });
@@ -98,6 +110,7 @@ export function takeLostMarker(authDir: string): { text: string; entries: LostEn
           dir: e.dir ?? null,
           key: e.key ?? null,
           child: !!e.child,
+          ...(e.child ? { of: e.of ?? null, room: e.room ?? null } : {}),
         });
     } catch {
       /* битый маркер — не слово */
@@ -164,7 +177,7 @@ export interface Keeper<S extends KeptSlot> {
    */
   resumeLost(entries: LostEntry[], word: string | null): Promise<boolean>;
   /** Новая сессия получила мост: вернуть её место с диска, если прежний экземпляр его держал. */
-  resume(slot: S, root: string): Promise<void>;
+  resume(slot: S, root: string, quiet?: boolean): Promise<void>;
   /** Успешный stand/connect/register — сессия стоит: держащий мост не жнётся, сторож смотрит. */
   stood(slot: S): void;
   /** Сессия удалена — сторожу за ней не смотреть: иначе он поднимал бы ей мост каждый такт. */
@@ -210,7 +223,7 @@ export function createKeeper<S extends KeptSlot>(doors: KeeperDoors<S>): Keeper<
     return { ...(key ? { key } : {}), ...(slot.dir ? { cwd: slot.dir } : {}), ...session };
   }
 
-  async function resume(slot: S, root: string): Promise<void> {
+  async function resume(slot: S, root: string, quiet = false): Promise<void> {
     const mark = slot.child ? undefined : marked.get(root);
     marked.delete(root);
     try {
@@ -239,8 +252,10 @@ export function createKeeper<S extends KeptSlot>(doors: KeeperDoors<S>): Keeper<
       doors.say(`Искрон: сессия ${root} — ${r.word}`, "info");
       // Место занято без хода агента, и имя взято из записи каталога: каталог не
       // различает стояний одной роли в одной рабочей копии, а слово под чужим
-      // именем ляжет брату при успешном ответе (#5366). Занятое имя — в сессию.
-      if (typeof r.key === "string") doors.tell(root, resumedWord(r.key, r.others), slot.child);
+      // именем ляжет брату при успешном ответе (#5366). Занятое имя — в сессию;
+      // ребёнку, чьё место вернулось по его же ключу после перезагрузки, — молча: он ждёт (#6625).
+      if (typeof r.key === "string" && !quiet)
+        doors.tell(root, resumedWord(r.key, r.others), slot.child);
     } catch (e) {
       doors.say(
         `Искрон: возврат места сессии ${root} не удался — ${(e as Error).message}`,

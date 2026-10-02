@@ -1,5 +1,12 @@
 # Changelog
 
+## [7.2.0](https://github.com/iskron-ai/skills/compare/v7.1.0...v7.2.0) (2026-10-02)
+
+
+### Features
+
+* **opencode:** ведущий субагент — конец по уходу, кадры свои, итог родителю ([#304](https://github.com/iskron-ai/skills/issues/304)) ([9dae7e2](https://github.com/iskron-ai/skills/commit/9dae7e2bee6259c4916141e21d2a19f179164827))
+
 ## [7.1.0](https://github.com/iskron-ai/skills/compare/v7.0.0...v7.1.0) (2026-10-02)
 
 
