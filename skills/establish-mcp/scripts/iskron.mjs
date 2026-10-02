@@ -7660,10 +7660,10 @@ function openIn(io, origin, scope) {
   const windDown = async (why) => {
     debug(`${why} — winding down`);
     const handover = !!origin && handoverUnderway();
-    if (!handover) await leaveJoinedCases();
     const addr = statusAddress();
     const places = handover ? [] : satellitePlaces();
     releaseStanding(why, CFG.satellite);
+    if (!handover) await leaveJoinedCases();
     await revokeSatellitePlaces(places);
     if (addr && !handover) await publishStatusTo(addr.url, "", 3e3).catch(() => {
     });

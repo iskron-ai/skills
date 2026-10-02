@@ -1966,6 +1966,28 @@ test("satellite: a hung leave at the run's end does not hold the place — the b
   assert.equal(caseCalls(fake, "leave").length, 3, "each case's leave was asked, at once");
 });
 
+// Claude Code's SIGINT is followed by a kill whose grace nobody measured: the
+// .key goes before any network call of the run's end, not after a hung leave.
+test("satellite: on SIGINT the .key goes before the cases are left — a hung leave does not hold it", async (t) => {
+  const fake = await withCaller(t);
+  const home = mkdtempSync(join(tmpdir(), "iskron-sat-"));
+  const sat = await satelliteBridge(t, fake, { dir: home });
+  assert.ok(!(await standAs(sat, SAT_ARGS)).result?.isError, sat.stderr);
+  await caseAs(sat, "join", "№102");
+  await fake.control({ case_leave_hang: true });
+  const keys = () =>
+    existsSync(join(home, "standings"))
+      ? readdirSync(join(home, "standings")).filter((f) => f.endsWith(".key"))
+      : [];
+  await until(() => keys().length > 0, "the satellite's .key");
+  const exited = new Promise((r) => sat.proc.once("exit", (code, signal) => r({ code, signal })));
+  sat.proc.kill("SIGINT");
+  await until(() => caseCalls(fake, "leave").length > 0, "the case leave asked on SIGINT");
+  assert.deepEqual(keys(), [], `the .key is gone before the leave is asked:\n${sat.stderr}`);
+  const how = await Promise.race([exited, new Promise((r) => setTimeout(() => r(null), 5_000))]);
+  assert.ok(how && how.signal === null, `the bridge exits on its own:\n${sat.stderr}`);
+});
+
 // Two subagent runs of one caller, each with its own satellite bridge (two
 // processes, one home), stand at the same moment: each reads the board before
 // the other's connect lands, and «first N free on the board» would give both
