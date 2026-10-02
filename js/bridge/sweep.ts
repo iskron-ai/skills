@@ -61,6 +61,13 @@ export function sweepStale(authDir: string, mine: string): void {
       } catch {}
     }
   }
+  // Спул передачи, который никто не дослал (место не вернулось), — не дольше записи держания (#6586).
+  for (const f of readdirSync(dir).filter((x) => x.endsWith(".spool"))) {
+    try {
+      if (Date.now() - statSync(join(dir, f)).mtimeMs > HOLD_RECORD_MAX_AGE_MS)
+        unlinkSync(join(dir, f));
+    } catch {}
+  }
   if (process.platform === "win32") return;
   for (const f of readdirSync(dir).filter((x) => x.endsWith(".key"))) {
     const keyFile = join(dir, f);

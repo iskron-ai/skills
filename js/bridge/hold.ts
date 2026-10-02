@@ -26,6 +26,7 @@ import { stampOrigin } from "./complete.ts";
 import { CFG } from "./config.ts";
 import { type ChannelEvent, Door, type DoorHooks, ENV_KEY } from "./door.ts";
 import { isDelivered, redundantCopy } from "./fanout.ts";
+import { letGo, takeSpool } from "./handoff.ts";
 import { dropHoldRecord, keyOf, readHoldRecord, writeHoldRecord } from "./holdrecord.ts";
 import { type Frame, H, handoverReason } from "./holdstate.ts";
 import {
@@ -272,7 +273,7 @@ export function releaseStanding(reason: string, forget = false, keepBeside = fal
     broadcast(released);
     notify("info", released); // плагин OpenCode снимает holding по этому слову, не по догадке (#5140)
   }
-  H.holder?.close(reason);
+  letGo(H.holder, handover && !forget ? (key ?? null) : null, reason); // передаётся — до вытеснения (#6586)
   H.holder = null;
   for (const w of [...H.helloWaiters]) w(null); // ждать hello от отпущенного сокета незачем
   H.door?.close();
@@ -418,7 +419,7 @@ function openHolder(url: string, key: string): void {
   H.holder = holdSocket(
     bindAll<Parameters<typeof holdSocket>[0]>({
       url,
-      onFrame: (raw, frame) => {
+      onFrame: function onFrame(raw, frame) {
         void Promise.resolve(stampOrigin(frame)).then((full) => {
           const primary = held();
           if (!primary) return H.door ? deliverTo(H.door, raw, frame, full) : undefined; // сокет без стояния (окружение)
@@ -431,6 +432,7 @@ function openHolder(url: string, key: string): void {
             d.broadcast({ kind: "note", text: note });
           }
           deliverTo(d, raw, frame, full);
+          if (full?.type === "hello") takeSpool(key, onFrame); // пришедшее уходящему демону (#6586)
         });
       },
       onEvicted: (code) => {
