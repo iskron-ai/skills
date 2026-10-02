@@ -1362,7 +1362,14 @@ for (const [label, after] of [
       after(a);
       await waitFor("the old daemon gone", () => !alive(first), 30_000);
       assert.equal(fake.state.status, "", `the busy line is cleared:\n${journalOf(dir)}`);
-      assert.match(journalOf(dir), /place term-k--931--nks-dev: busy line cleared/);
+      // SIGTERM обоим разом: тонкий мост может умереть раньше, чем демон решит
+      // «передача», — тогда сессия уходит обычным отпуском и снимает строку сама.
+      // Передача была (после SIGKILL моста — всегда) — строку снимает предел, и журнал это называет.
+      if (
+        label.startsWith("SIGKILL") ||
+        /place term-k--931--nks-dev handed over/.test(journalOf(dir))
+      )
+        assert.match(journalOf(dir), /place term-k--931--nks-dev: busy line cleared/);
     });
   });
 }
@@ -1433,6 +1440,32 @@ test("SIGTERM of the daemon under a satellite: its busy line goes, and its place
       ["№33"],
       `its case is left:\n${journalOf(dir)}`,
     );
+  });
+});
+
+// Ревью #297, п.1: место спутника на смене демона закрывается — последний снимок
+// расхода, придержанный порогом, ложится до revoke (#6401). Сборка faf654b при
+// передаче не слала его вовсе.
+test("SIGTERM of the daemon under a satellite: the held-back usage snapshot lands before its place is revoked", async () => {
+  await withFake(async ({ fake, dir, bridge }) => {
+    const CALLER = "host.repo.opus-5";
+    await fake.control({ places: [{ karta: "931", name: CALLER, listening: true }] });
+    const s = bridge({ ISKRON_USAGE_GAP_MS: "600000" }, ["--satellite"], INIT_PI);
+    await handshake(s);
+    const r = await stand(s, { realm: "nks-dev", karta: 931, satellite_of: `@tester:${CALLER}` });
+    assert.ok(!r.result?.isError, `${textOf(r)}\n${s.stderr}`);
+    const seat = `931:${CALLER}.sub-1`;
+    const first = await s.request("iskron/usage", { tokens: 1000, model: "m1" });
+    assert.equal(first.result?.pushed, true, JSON.stringify(first));
+    const held = await s.request("iskron/usage", { tokens: 9000, model: "m2" });
+    assert.equal(held.result?.pushed, false, "the gap holds the second snapshot back");
+    const [pid] = daemonPids(dir);
+    process.kill(pid, "SIGTERM");
+    await waitFor("the old daemon gone", () => !alive(pid), 30_000);
+    assert.ok(!fake.state.places.has(seat), `the seat is revoked:\n${journalOf(dir)}`);
+    const usage = fake.state.placeAttrs.get(seat)?.usage;
+    assert.equal(usage?.tokens, 9000, `${JSON.stringify(usage)}\n${journalOf(dir)}`);
+    assert.equal(usage?.model, "m2");
   });
 });
 

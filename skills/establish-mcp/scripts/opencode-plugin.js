@@ -2120,6 +2120,12 @@ var DEBOUNCE_MS = Number(process.env.ISKRON_USAGE_DEBOUNCE_MS || 1e4);
 var n = (v) => typeof v === "number" && Number.isFinite(v) ? v : 0;
 var spent = (t) => n(t?.input) + n(t?.output) + n(t?.reasoning) + n(t?.cache?.write);
 var inWindow = (t) => n(t?.input) + n(t?.cache?.read) + n(t?.cache?.write);
+var kinds = (t) => ({
+  input: n(t?.input),
+  output: n(t?.output) + n(t?.reasoning),
+  cache_read: n(t?.cache?.read),
+  cache_write: n(t?.cache?.write)
+});
 function createUsageFeed(opts) {
   const bySession = /* @__PURE__ */ new Map();
   const timers = /* @__PURE__ */ new Map();
@@ -2139,18 +2145,28 @@ function createUsageFeed(opts) {
       listed = null;
     }
   })();
-  const flush = (session) => {
-    timers.delete(session);
+  const inFlight = /* @__PURE__ */ new Map();
+  const send = async (session, timeoutMs) => {
     const u = bySession.get(session);
     if (!u) return;
-    const { model, ...p } = u;
-    if (model && windows.has(model)) p.window = windows.get(model);
-    void opts.bridgeOf(session)?.request("iskron/usage", p, { timeoutMs: 1e4 }).catch(() => {
+    const { ref, ...p } = u;
+    if (ref && windows.has(ref)) p.window = windows.get(ref);
+    await opts.bridgeOf(session)?.request("iskron/usage", p, { timeoutMs }).catch(() => {
     });
+  };
+  const flush = (session, timeoutMs = 1e4) => {
+    clearTimeout(timers.get(session));
+    timers.delete(session);
+    const p = (inFlight.get(session) ?? Promise.resolve()).then(() => send(session, timeoutMs));
+    inFlight.set(session, p);
+    void p.finally(() => {
+      if (inFlight.get(session) === p) inFlight.delete(session);
+    });
+    return p;
   };
   const schedule = (session) => {
     if (!timers.has(session)) {
-      const t = setTimeout(() => flush(session), DEBOUNCE_MS);
+      const t = setTimeout(() => void flush(session), DEBOUNCE_MS);
       t.unref?.();
       timers.set(session, t);
     }
@@ -2163,7 +2179,10 @@ function createUsageFeed(opts) {
       switch (ev?.type) {
         case "session.step.started": {
           const m = ev.data?.model;
-          if (m?.id) u.model = `${m.providerID ?? ""}/${m.id}`;
+          if (m?.id) {
+            u.ref = `${m.providerID ?? ""}/${m.id}`;
+            u.model = String(m.id);
+          }
           void loadWindows();
           break;
         }
@@ -2173,7 +2192,7 @@ function createUsageFeed(opts) {
           break;
         case "session.usage.updated":
           if (!ev.data?.tokens) return;
-          u.tokens = spent(ev.data.tokens);
+          Object.assign(u, { tokens: spent(ev.data.tokens), ...kinds(ev.data.tokens) });
           break;
         default:
           return;
@@ -2181,6 +2200,8 @@ function createUsageFeed(opts) {
       bySession.set(session, u);
       schedule(session);
     },
+    // Ждущего снимка нет — дождаться ушедшего: мост не уходит с местом раньше его ответа.
+    flush: (session) => timers.has(session) ? flush(session, 3e3) : inFlight.get(session) ?? Promise.resolve(),
     forget(session) {
       clearTimeout(timers.get(session));
       timers.delete(session);
@@ -2283,7 +2304,7 @@ ${counts}`;
   }
   const usage = createUsageFeed({
     listModels: () => ctx.model.list(),
-    bridgeOf: (s) => half.bridgeOf(roots.get(s) ?? s)
+    bridgeOf: (s) => half.bridgeOf(s)
   });
   const controller = new AbortController();
   void (async () => {
@@ -2296,8 +2317,10 @@ ${counts}`;
             if (!id) break;
             roots.delete(id);
             seen.delete(id);
-            usage.forget(id);
-            half.forget(id);
+            void usage.flush(id).finally(() => {
+              usage.forget(id);
+              half.forget(id);
+            });
             break;
           case "session.created": {
             if (!id) break;
@@ -2327,7 +2350,7 @@ ${counts}`;
           // steer, которым плагин сам вкладывает кадры, — ребёнок погас бы посреди работы.
           case "session.execution.succeeded":
           case "session.execution.failed":
-            if (id) half.ended(id);
+            if (id) void usage.flush(id).finally(() => half.ended(id));
             break;
           default:
             usage.onEvent(ev);

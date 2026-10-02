@@ -28,6 +28,7 @@ import { publishStatusTo } from "./status.ts";
 import { sleep } from "./store.ts";
 import { debug, flushStdout, guardStream, log, setSessionOutput } from "./streams.ts";
 import { type JsonRpcMessage } from "./types.ts";
+import { flushUsage, usagePlace } from "./usage.ts";
 import { lastAgentWork, noteAgentWork } from "./work.ts";
 
 /** How long a bridge left by its harness still waits for a pending login's click. */
@@ -200,18 +201,22 @@ function openIn(io: SessionIO, origin: SessionOrigin | null, scope: Scope | null
     // сторож ушёл бы на мёртвый сокет. Выход из дел и revoke идут вызовами сессии, сокет им не нужен.
     const addr = statusAddress();
     const places = satellitePlaces();
+    // Место закрывается с сессией всегда, кроме места не-спутника, переданного преемнику:
+    // у закрываемого последний снимок расхода уходит до revoke (#6401), и при смене демона.
+    const closing = !handover || CFG.satellite;
+    const spent = closing ? usagePlace() : null;
     // Сокет стояния живёт ровно столько, сколько сессия; у спутника — и записи держания нет: возврата с диска у него не бывает.
     releaseStanding(why, CFG.satellite);
     // Спутник выходит из дел прогона сам (#6573), пока место на доске: конец
     // прогона — конец поручения, а истечение срока места оставило бы «slop».
     // И при смене демона: место спутника не возвращается, а потерянное место
     // закрывается (#6593, #6550 п.4) — иначе на доске «живой · не слушает».
-    await leaveJoinedCases();
+    // Последний снимок расхода ложится тем же тактом — до revoke: по закрытому месту записи нет (#6401).
+    await Promise.all([leaveJoinedCases(), flushUsage(spent)]);
     // Конец спутника закрывает и место (#6593): место снимается с доски.
     await revokeSatellitePlaces(places);
     // Спутник отпускается целиком и при передаче (возврата с диска нет) — его занятость уходит с ним.
-    if (addr && (!handover || CFG.satellite))
-      await publishStatusTo(addr.url, "", 3000).catch(() => {});
+    if (addr && closing) await publishStatusTo(addr.url, "", 3000).catch(() => {});
     if (handover) await Promise.race([Promise.allSettled([...pending]), sleep(HANDOVER_WAIT_MS)]);
     else await Promise.allSettled([...pending, ...tokenRequestsInFlight]);
     await flushStdout(io.output); // an answer half-written is an answer not given

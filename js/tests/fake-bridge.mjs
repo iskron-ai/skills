@@ -39,6 +39,8 @@
 //   FB_INITS      file to append "<pid> <ms>" to for every initialize received.
 //   FB_ENV        file to append one JSON line to at start: the ISKRON_HARNESS_VERSION
 //                 and ISKRON_SKILLS_ROOT the launcher handed this bridge (null — none), #6226.
+//   FB_USAGE_DELAY_MS the first iskron/usage is answered this much later; with FB_CALLS
+//                 every answer is logged as iskron/usage:answered.
 import { appendFileSync, existsSync, readFileSync, unlinkSync } from "node:fs";
 
 const MODE = process.env.FB_MODE || "ok";
@@ -152,6 +154,7 @@ function callResult(name) {
 }
 
 let buf = "";
+let usageDelayed = false;
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", (chunk) => {
   buf += chunk;
@@ -271,7 +274,25 @@ process.stdin.on("data", (chunk) => {
           process.env.FB_CALLS,
           JSON.stringify({ name: msg.method, arguments: msg.params, pid: process.pid }) + "\n",
         );
-      ok(msg.id, { pushed: true });
+      // FB_USAGE_DELAY_MS: the first snapshot's answer comes this much later — a
+      // register in flight — and its answer is logged, so the probe sees the order.
+      const answer = () => {
+        if (process.env.FB_CALLS)
+          appendFileSync(
+            process.env.FB_CALLS,
+            JSON.stringify({
+              name: "iskron/usage:answered",
+              arguments: msg.params,
+              pid: process.pid,
+            }) + "\n",
+          );
+        ok(msg.id, { pushed: true });
+      };
+      const delayMs = Number(process.env.FB_USAGE_DELAY_MS || 0);
+      if (delayMs && !usageDelayed) {
+        usageDelayed = true;
+        setTimeout(answer, delayMs);
+      } else answer();
     } else {
       send({
         jsonrpc: "2.0",

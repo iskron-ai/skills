@@ -128,10 +128,11 @@ async function setup(ctx: Context): Promise<() => void> {
     say(`Искрон: команды скиллов не встали — ${(e as Error).message}`, "error");
   }
 
-  // Расход сессии — в attrs места её корня (usage.ts, #6271).
+  // Расход сессии — в attrs её собственного места (usage.ts, #6401): корня — месту
+  // корня, субагента — его месту-спутнику; субагент без своего места не пишет никуда.
   const usage = createUsageFeed({
     listModels: () => (ctx as any).model.list(),
-    bridgeOf: (s) => half.bridgeOf(roots.get(s) ?? s),
+    bridgeOf: (s) => half.bridgeOf(s),
   });
   const controller = new AbortController();
   void (async () => {
@@ -144,8 +145,10 @@ async function setup(ctx: Context): Promise<() => void> {
             if (!id) break;
             roots.delete(id);
             seen.delete(id);
-            usage.forget(id);
-            half.forget(id);
+            void usage.flush(id).finally(() => {
+              usage.forget(id);
+              half.forget(id);
+            });
             break;
           case "session.created": {
             // data.parentID есть в самом событии, но это родитель, не корень:
@@ -178,7 +181,8 @@ async function setup(ctx: Context): Promise<() => void> {
           // steer, которым плагин сам вкладывает кадры, — ребёнок погас бы посреди работы.
           case "session.execution.succeeded":
           case "session.execution.failed":
-            if (id) half.ended(id);
+            // Ждущий снимок расхода — мосту до его ухода: снимок ложится до закрытия места (#6401).
+            if (id) void usage.flush(id).finally(() => half.ended(id));
             break;
           default:
             usage.onEvent(ev);

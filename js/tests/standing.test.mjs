@@ -3484,7 +3484,7 @@ test("(а2) an addressed word whose addressee has left the case (addressee_left)
 });
 
 test("(б) three addressed words of one pair in a row are one count «записей 3» — Monitor and the exit watchdog", async (t) => {
-  const { fake, dir, key } = await connected(t, {
+  const { fake, dir, key, standings } = await connected(t, {
     env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "1500" },
   });
   await waitFor(() => fake.state.ws.size === 1, "the socket");
@@ -3495,6 +3495,9 @@ test("(б) three addressed words of one pair in a row are one count «запис
   assert.ok(wd.out.includes(countOf(3, 80)), wd.out);
   assert.ok(!wd.out.includes(ASIDE), wd.out);
   assert.ok(!wd.out.includes("тайное слово"), wd.out);
+  // Убитый между печатью 997 и его пометкой сторож отдал бы его кольцом сторожу
+  // выхода — законный повтор, который будит его раньше пачки (#5516).
+  await waitSeen(standings, "room-msg-997");
   wd.proc.kill("SIGKILL");
   await wd.done;
   const ex = runClient("watchdog-exit", dir, key, 15_000);
