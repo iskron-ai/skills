@@ -1204,8 +1204,9 @@ function createChildren(d) {
     return own;
   }
   async function back(e) {
-    if (!await d.exists(e.session)) return;
     d.leads.back(e.session, e.room);
+    if (!await d.exists(e.session))
+      return d.leads.fail(e.session, "перезагрузка плагина, сессия субагента не читается");
     if (!e.key) return d.leads.fail(e.session, "перезагрузка плагина, ключа места нет");
     const own = childSlot(e.session, null, e);
     for (let i = 0; i < BACK_TRIES && !own.holding; i++) {

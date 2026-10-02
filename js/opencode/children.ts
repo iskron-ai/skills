@@ -58,8 +58,11 @@ export function createChildren(d: ChildDoors) {
 
   /** Ребёнок прежнего экземпляра: тот же спутник, место по ключу; не вернулось — конец. */
   async function back(e: LostEntry): Promise<void> {
-    if (!(await d.exists(e.session))) return; // сессии нет — место уйдёт сроком канала
     d.leads.back(e.session, e.room);
+    // Сессия не читается (удалена или сбой get) — ребёнок кончен: его запись иначе
+    // пошла бы мостом корня (#6361); место уйдёт сроком канала, родителю — слово, если он известен.
+    if (!(await d.exists(e.session)))
+      return d.leads.fail(e.session, "перезагрузка плагина, сессия субагента не читается");
     if (!e.key) return d.leads.fail(e.session, "перезагрузка плагина, ключа места нет");
     const own = childSlot(e.session, null, e);
     for (let i = 0; i < BACK_TRIES && !own.holding; i++) {

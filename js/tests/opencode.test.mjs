@@ -2468,7 +2468,7 @@ test("two children of one parent in one case: A's word to B wakes only B, neithe
 // the next instance raises the child the same satellite bridge and takes the place
 // back by key, without a word to the child: its session waits on. The tie to the
 // parent is the session's parentID (OpenCode's Session), as at the first start.
-async function reloadedChild(name, env = {}) {
+async function reloadedChild(name, env = {}, gone = null) {
   const calls = join(SANDBOX, `${name}.calls`);
   const resume = join(SANDBOX, `${name}.resume`);
   writeFileSync(calls, "");
@@ -2498,7 +2498,9 @@ async function reloadedChild(name, env = {}) {
       .split("\n")
       .filter(Boolean)
       .map((l) => JSON.parse(l));
-  const second = await plugin(b.env, { keepMarker: true, sessions });
+  // gone — сессии, которые второй экземпляр не прочтёт (ctx.session.get бросает): возврата им нет.
+  const second = await plugin(b.env, { keepMarker: true, sessions, ...(gone ? { gone } : {}) });
+  if (gone) return { b, first, second, childPid, all };
   try {
     const back = () =>
       all().find((c) => c.name === "iskron/resume" && c.arguments.session === "child");
@@ -2537,6 +2539,26 @@ test("marker-child: a reload pauses the child's bridge and the next instance tak
     await until(() => ends(second).length === 1, "the end in the parent");
     assert.match(ends(second)[0].text, /вышел из дела №77 по исходу/);
     assert.equal(ends(second)[0].sessionID, "root");
+  } finally {
+    await second.stop();
+  }
+});
+
+// A child whose session the next instance cannot read (deleted, or ctx.session.get
+// failing for a while) is not taken back — and is ended: its write is refused,
+// never served by the root's bridge (#6361).
+test("marker-child: a child whose session cannot be read after a reload is ended — its write is refused, not sent by the root's bridge", async () => {
+  const { second, all } = await reloadedChild("reload-unread", {}, new Set(["child"]));
+  try {
+    await until(() => second.tools().has("iskron_case"), "the tools", 8000);
+    await delay(300);
+    const before = all().length;
+    await assert.rejects(
+      second.call("iskron_case", { realm: "nks-dev", action: "say", room: "#77" }, "child"),
+      /дочерняя сессия кончена/,
+    );
+    assert.equal(all().length, before, "the refused write reached no bridge");
+    assert.ok(!all().some((c) => c.name === "iskron/resume" && c.arguments.session === "child"));
   } finally {
     await second.stop();
   }
