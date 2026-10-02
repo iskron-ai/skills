@@ -39,6 +39,7 @@ import {
   readdirSync,
   readFileSync,
   realpathSync,
+  renameSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -1144,7 +1145,11 @@ test("a new code from the bridge while the login waits: the human is told the ne
   try {
     await delay(300);
     assert.ok(rec.said().includes(first), "the first notice names the page with the code");
-    writeFileSync(deviceFile, next);
+    // Replaced whole, never truncated in place: the fake bridge re-reads the page
+    // on every refused request, and an empty read in between is a refusal with
+    // no code — a third notice the extension rightly gives.
+    writeFileSync(`${deviceFile}.next`, next);
+    renameSync(`${deviceFile}.next`, deviceFile);
     const deadline = Date.now() + 3000;
     while (!rec.said().includes(next) && Date.now() < deadline) await delay(50);
     assert.ok(rec.said().includes(next), "the new page reaches the human");
