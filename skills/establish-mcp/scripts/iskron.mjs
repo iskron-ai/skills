@@ -4,7 +4,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-var VERSION = "7.2.0";
+var VERSION = "7.2.1";
 function buildOf(selfUrl) {
   try {
     const src = readFileSync(fileURLToPath(selfUrl));
@@ -6958,6 +6958,7 @@ async function resumeBy(sel, register = true) {
   }
   const led = ledKey();
   const skipped = [];
+  const elsewhere = [];
   for (const rec4 of recs) {
     const key = keyOf(rec4.realm, rec4.karta, rec4.name);
     if (holdsKey(key)) return { resumed: true, key, pending: 0, word: "мост уже держит это место" };
@@ -6968,6 +6969,7 @@ async function resumeBy(sel, register = true) {
     }
     if (await localSocketAlive(localSocketPathOf(key))) {
       skipped.push(`${key}: держит живой мост`);
+      elsewhere.push(key);
       continue;
     }
     const back = await resumeFromDisk(rec4.realm, rec4.karta, rec4.name);
@@ -6995,7 +6997,11 @@ async function resumeBy(sel, register = true) {
     lines.push('место не твоё — iskron_channel(action="leave") отпустит его, канал цел');
     return { resumed: true, key, pending: back.pending, word: lines.join("; "), others };
   }
-  return { resumed: false, word: `возвращать нечего — ${skipped.join("; ")}` };
+  return {
+    resumed: false,
+    word: `возвращать нечего — ${skipped.join("; ")}`,
+    ...elsewhere.length ? { elsewhere } : {}
+  };
 }
 function holdFromEnv() {
   const url = envOf("ISKRON_CHANNEL_SOCKET")?.trim();

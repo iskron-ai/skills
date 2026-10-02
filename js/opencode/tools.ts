@@ -33,12 +33,13 @@ import {
   writeCache,
 } from "./bridge-io.ts";
 import { createChildren } from "./children.ts";
-import { hostEnvOf, sessionDirectory } from "./host.ts";
-import { createKeeper, type KeptSlot, takeLostMarker, WATCH_MS, writeLostMarker } from "./keep.ts";
+import { homeOf, hostEnvOf, sessionDirectory } from "./host.ts";
+import { createKeeper, type KeptSlot, WATCH_MS } from "./keep.ts";
 import { createLauncher } from "./launch.ts";
 import { createLeads } from "./leads.ts";
 import { leadDoors } from "./leadwords.ts";
 import { createLogin } from "./login.ts";
+import { takeLostMarker, writeLostMarker } from "./marker.ts";
 import type { Context } from "./plugin.ts";
 import { createRunEnds } from "./runends.ts";
 import { asSatellite, heldPlace, type SatelliteSlot, STAND_TOOL, standsBy } from "./satellite.ts";
@@ -85,6 +86,8 @@ export interface ToolsHalf {
   launch(session: string, text: string): Promise<string | null>;
   stop(): void | Promise<void>;
   bridgeOf(session: string): Bridge | null; // мост держащего слота — для расхода сессии (usage.ts)
+  /** Имя места живого ведущего субагента; не ведущий — null (notice.ts). */
+  leadOf(session: string): string | null;
 }
 
 export async function setupTools(
@@ -102,7 +105,15 @@ export async function setupTools(
         ". Задай ISKRON_BRIDGE_PATH или поставь мост скиллом establish-mcp.",
       "error",
     );
-    return { forget() {}, onEvent() {}, launch: async () => null, stop() {}, bridgeOf: () => null };
+    const none = () => null;
+    return {
+      forget() {},
+      onEvent() {},
+      launch: async () => null,
+      stop() {},
+      bridgeOf: none,
+      leadOf: none,
+    };
   }
   const path = found.path;
   const builds = buildsLine(path, import.meta.url);
@@ -193,10 +204,12 @@ export async function setupTools(
   // Прежний экземпляр остановили с держащим мостом: ключи его мест — сторожу,
   // чтобы возврат шёл по ключу, не по каталогу; места — обратно сразу, со словом
   // в державшие сессии (keeper.resumeLost), в первую живую — лишь когда таких нет.
-  const lost = takeLostMarker(authDir());
+  // Только маркеры своей локации: сессии других локаций зовут тулы через свой экземпляр (#6626).
+  const home = homeOf(ctx);
+  const lost = takeLostMarker(authDir(), home);
   let lostWord = lost?.text ?? null;
   if (lost) {
-    say(lost.text, "warning");
+    if (lost.text) say(lost.text, "warning");
     keeper.hint(lost.entries);
     // Дети прежнего экземпляра (#6625): место-спутник обратно по ключу, тихо (children.ts).
     for (const e of lost.entries) if (e.child && e.session) void children.back(e);
@@ -458,6 +471,7 @@ export async function setupTools(
       runEnds.clear(s, true); // сессии нет — и окончательной пометки нет
     },
     onEvent: (ev) => leads.onEvent(ev),
+    leadOf: (s) => leads.nameOf(s),
     async stop() {
       stopped = true;
       clearInterval(reaper);
@@ -465,7 +479,7 @@ export async function setupTools(
       keeper.stop();
       await children.pause(); // перезагрузка — не конец ребёнка (#6625): место и дела ждут
       // Остановка с держащими мостами — на диск: следующий экземпляр скажет о потере.
-      writeLostMarker(authDir(), slots.values());
+      writeLostMarker(authDir(), slots.values(), home);
       if (spare) spare.ownStop = true;
       spare?.bridge.stop();
       spare = null;

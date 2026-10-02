@@ -14,11 +14,15 @@ export interface Leads {
   released(child: string): boolean;
   /** Слово моста ребёнка: «held» называет место, кадр — не простой. */
   heard(child: string, kind: unknown, place?: Place | null): void;
-  /** Ребёнок прежнего экземпляра плагина возвращается: ведущий с его делом поручения. */
-  back(child: string, room: string | null | undefined): void;
+  /** Ребёнок прежнего экземпляра плагина возвращается: ведущий с его делом поручения; noted — его ход родителю уже назван. */
+  back(child: string, room: string | null | undefined, noted?: boolean): void;
   /** Место вернуть не удалось — мост гасится, родителю слово без пробуждения. */
   fail(child: string, why: string): Promise<void>;
   roomOf(child: string): string | null;
+  /** Первый ход ребёнка родителю назван — в маркер потери, чтобы не повторять. */
+  noted(child: string): boolean;
+  /** Имя места живого ведущего субагента (без места — id сессии); не ведущий — null. */
+  nameOf(child: string): string | null;
   onEvent(ev: any): void;
   stop(): void;
 }
@@ -45,6 +49,11 @@ export const endWord = (who: string, why: string, last: string): string => {
 
 export const turnWord = (place: string): string =>
   `Искрон: субагент ${place} сдал ход, не поручение — он продолжает и ждёт кадров своего дела; итог ляжет сюда по его концу. ` +
+  `Отпустить раньше — iskron_channel(action="revoke", standing="${place}").`;
+
+export const noticeWord = (child: string, place: string): string =>
+  `Искрон: уведомление OpenCode <subagent sessionID="${child}" state="completed"> — конец ХОДА субагента ${place}, не поручения: ` +
+  `он ведущий, стоит своим местом и ждёт кадров своего дела. Не считай его закончившим — итог ляжет сюда словом «КОНЧЕН» по его концу. ` +
   `Отпустить раньше — iskron_channel(action="revoke", standing="${place}").`;
 
 export const releaseWord = (who: string): string =>

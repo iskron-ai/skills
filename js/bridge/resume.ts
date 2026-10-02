@@ -258,6 +258,12 @@ export interface ResumeOutcome {
   others?: string[];
   /** Имена мест прежней сборки без сессии в каталоге: не возвращены — названы, чтобы их вернули по имени. */
   legacy?: string[];
+  /**
+   * Ключи своих мест (по ключу или стоявших этой сессией), чей сокет держит живой
+   * мост другой сессии: возврат их не берёт, и сессия без слова о том считала бы
+   * место своим, а занятость шла бы мостом, места не держащим (#6626).
+   */
+  elsewhere?: string[];
 }
 
 /** Обратно на запаркованное место (leave, переоткрытие): сокет заново, hello — доказательство. */
@@ -304,6 +310,7 @@ export async function resumeBy(sel: ResumeSelector, register = true): Promise<Re
   }
   const led = ledKey();
   const skipped: string[] = [];
+  const elsewhere: string[] = [];
   for (const rec of recs) {
     const key = keyOf(rec.realm, rec.karta, rec.name);
     if (holdsKey(key)) return { resumed: true, key, pending: 0, word: "мост уже держит это место" };
@@ -314,6 +321,7 @@ export async function resumeBy(sel: ResumeSelector, register = true): Promise<Re
     }
     if (await localSocketAlive(localSocketPathOf(key))) {
       skipped.push(`${key}: держит живой мост`);
+      elsewhere.push(key);
       continue;
     }
     const back = await resumeFromDisk(rec.realm, rec.karta, rec.name);
@@ -345,7 +353,11 @@ export async function resumeBy(sel: ResumeSelector, register = true): Promise<Re
     lines.push('место не твоё — iskron_channel(action="leave") отпустит его, канал цел');
     return { resumed: true, key, pending: back.pending, word: lines.join("; "), others };
   }
-  return { resumed: false, word: `возвращать нечего — ${skipped.join("; ")}` };
+  return {
+    resumed: false,
+    word: `возвращать нечего — ${skipped.join("; ")}`,
+    ...(elsewhere.length ? { elsewhere } : {}),
+  };
 }
 
 /** Старт моста: сокет из окружения без connect — отладочный путь. */
