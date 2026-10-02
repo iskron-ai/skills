@@ -23,8 +23,8 @@
 //                   iskron_stand
 //   конец           stdin закрыт, SIGTERM — bye демону с ограниченным ожиданием
 //
-// За флагом ISKRON_BRIDGE_DAEMON=1 (по умолчанию полный мост, как было);
-// ISKRON_BRIDGE_NO_DAEMON=1 — полный мост всегда. Выравнивание дома при старте
+// Умолчание моста во всех харнесах; выключатель ISKRON_BRIDGE_DAEMON=0 (или
+// ISKRON_BRIDGE_NO_DAEMON=1) — полный мост всегда. Выравнивание дома при старте
 // (cli: syncHome/reexec) тонкий мост делает сам, как полный; сверку с релизами
 // GitHub — никогда: её ведёт только демон (в полном ходе — движок, как у полного).
 import { createInterface } from "node:readline";
@@ -73,10 +73,11 @@ const BUSY_RETRY_MS = 2_000;
 /** Сколько вызовы харнеса ждут ответа на ходы самого моста в новой сессии. */
 const GATE_MS = 20_000;
 
-/** Тонкий мост включён: флаг стоит, выключателя нет. */
+/** Тонкий мост включён: умолчание, пока не стоит выключатель. */
 export function daemonWanted(): boolean {
+  if (process.env[DAEMON_ENV]?.trim() === "0") return false;
   const off = process.env[NO_DAEMON_ENV]?.trim();
-  return process.env[DAEMON_ENV]?.trim() === "1" && (!off || off === "0");
+  return !off || off === "0";
 }
 
 // --- тонкий мост -------------------------------------------------------------
@@ -293,7 +294,7 @@ export function thinMain(argv: string[]): void {
     log(`${reason} — going as the full bridge inside this process`);
     word =
       `iskron-bridge ${BUILD}: ${reason}; this bridge runs as the full bridge in its own process ` +
-      `(${DAEMON_ENV}=1 asked for the machine's daemon).`;
+      `(the machine's daemon is the default; ${DAEMON_ENV}=0 runs the full bridge on purpose).`;
     const input = new PassThrough();
     const output = new PassThrough();
     startEngine(cfg);

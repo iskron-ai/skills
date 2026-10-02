@@ -41,7 +41,8 @@ function run(args, env = {}, cwd = undefined) {
   return new Promise((resolve) => {
     const proc = spawn(NODE, [FILE, ...args], {
       cwd,
-      env: { ...process.env, ...env },
+      // ISKRON_BRIDGE_DAEMON=0 — полный мост: --version одной строкой, демон машины не спрашивается.
+      env: { ...process.env, ISKRON_BRIDGE_DAEMON: "0", ...env },
       stdio: ["ignore", "pipe", "pipe"],
     });
     let out = "";
@@ -124,7 +125,7 @@ test("doctor: reads an existing grant without touching it, and sees the home cop
       process.execPath,
       [FILE, fake.mcpUrl, "--no-browser", "--auth-dir", authDir],
       {
-        env: { ...process.env, HOME: home },
+        env: { ...process.env, HOME: home, ISKRON_BRIDGE_DAEMON: "0" },
         stdio: ["pipe", "pipe", "pipe"],
       },
     );

@@ -62,7 +62,12 @@ function startBridge(serverUrl, authDir, extraEnv = {}, { browser = false } = {}
     NODE,
     [BRIDGE, serverUrl, ...(browser ? [] : ["--no-browser"]), "--auth-dir", authDir],
     {
-      env: { ...process.env, ...(browser ? {} : { ISKRON_BRIDGE_NO_BROWSER: "1" }), ...extraEnv },
+      env: {
+        ...process.env,
+        ISKRON_BRIDGE_DAEMON: "0", // полный мост в процессе: эти пробы о нём, не о шве
+        ...(browser ? {} : { ISKRON_BRIDGE_NO_BROWSER: "1" }),
+        ...extraEnv,
+      },
       stdio: ["pipe", "pipe", "pipe"],
     },
   );
@@ -1641,7 +1646,9 @@ test("the bridge names the plugin's version — one delivery, one number", async
     ),
   );
   const out = await new Promise((res, rej) => {
-    const p = spawn(NODE, [BRIDGE, "--version"]);
+    const p = spawn(NODE, [BRIDGE, "--version"], {
+      env: { ...process.env, ISKRON_BRIDGE_DAEMON: "0" },
+    });
     let o = "";
     p.stdout.on("data", (c) => (o += c));
     p.on("exit", () => res(o.trim()));
