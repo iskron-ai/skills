@@ -9,7 +9,9 @@ import { type ChannelEvent } from "../bridge/hold.ts";
 import { deliveredKeys, seenIds } from "../shared/seen.ts";
 import { authDirFromEnv, socketPathOf, standingsDirOf } from "../shared/standings.ts";
 
-const ATTACH_WINDOW_MS = 60_000; // мост может подняться чуть позже сторожа
+// Мост может подняться чуть позже сторожа, место — вернуться после смены демона.
+// Переменная — шов для проб, не ручка человека.
+const ATTACH_WINDOW_MS = Number(process.env.ISKRON_WATCHDOG_ATTACH_MS) || 60_000;
 const RETRY_MS = 1000;
 
 export interface Resolved {
@@ -96,7 +98,8 @@ export interface AttachOptions {
 
 /**
  * Прицепиться к локальному сокету и читать NDJSON-события, пока мост жив.
- * Событие handover — демон машины передаёт место преемнику: дверь закроется и
+ * Событие handover — демон машины передаёт место преемнику (обновление или SIGTERM
+ * при тонком мосте на связи): дверь закроется и
  * откроется тем же путём, и сторож переподхватывает её в том же окне, что и на
  * старте, а не уходит словом «мост отпустил стояние».
  */
@@ -104,6 +107,7 @@ export function attach(path: string, o: AttachOptions): void {
   let startedAt = Date.now();
   let attached = false;
   let handover = false;
+  let waitingBack = false; // место передано и ждёт возврата
 
   function tryOnce(): void {
     const sock = connect(path);
@@ -111,6 +115,7 @@ export function attach(path: string, o: AttachOptions): void {
     sock.setEncoding("utf8");
     sock.on("connect", () => {
       attached = true;
+      waitingBack = false;
     });
     sock.on("data", (chunk: string) => {
       buf += chunk;
@@ -148,12 +153,18 @@ export function attach(path: string, o: AttachOptions): void {
         // Место уходит к преемнику демона: та же дверь откроется снова — ждём её окном старта.
         attached = false;
         handover = false;
+        waitingBack = true;
         startedAt = Date.now();
         return void setTimeout(tryOnce, RETRY_MS);
       }
       if (attached) return o.onGone("мост отпустил стояние или ушёл — сессия кончилась?");
       if (Date.now() - startedAt > ATTACH_WINDOW_MS) {
-        return o.onGone(`мост не поднял локальный сокет ${path} за ${ATTACH_WINDOW_MS / 1000}s`);
+        const s = ATTACH_WINDOW_MS / 1000;
+        return o.onGone(
+          waitingBack
+            ? `место не вернулось за ${s}s после смены демона — сокет ${path} не поднят; вернуть — iskron_stand`
+            : `мост не поднял локальный сокет ${path} за ${s}s`,
+        );
       }
       setTimeout(tryOnce, RETRY_MS);
     });

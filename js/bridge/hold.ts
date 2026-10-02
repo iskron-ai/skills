@@ -274,7 +274,7 @@ export function releaseStanding(reason: string, forget = false, keepBeside = fal
     broadcast(released);
     notify("info", released); // плагин OpenCode снимает holding по этому слову, не по догадке (#5140)
   }
-  letGo(H.holder, handover && !forget ? (key ?? null) : null, reason); // передаётся — до вытеснения (#6586)
+  letGo(H.holder, handover && !forget ? (key ?? null) : null, reason, H.currentStatusUrl); // до вытеснения (#6586)
   H.holder = null;
   for (const w of [...H.helloWaiters]) w(null); // ждать hello от отпущенного сокета незачем
   H.door?.close();
