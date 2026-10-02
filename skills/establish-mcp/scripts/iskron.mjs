@@ -7735,13 +7735,13 @@ function openIn(io, origin, scope) {
     const handover = !!origin && handoverUnderway();
     const addr = statusAddress();
     const places = satellitePlaces();
-    const spent = handover ? null : usagePlace();
+    const closing = !handover || CFG.satellite;
+    const spent = closing ? usagePlace() : null;
     releaseStanding(why, CFG.satellite);
     await Promise.all([leaveJoinedCases(), flushUsage(spent)]);
     await revokeSatellitePlaces(places);
-    if (addr && (!handover || CFG.satellite))
-      await publishStatusTo(addr.url, "", 3e3).catch(() => {
-      });
+    if (addr && closing) await publishStatusTo(addr.url, "", 3e3).catch(() => {
+    });
     if (handover) await Promise.race([Promise.allSettled([...pending2]), sleep(HANDOVER_WAIT_MS)]);
     else await Promise.allSettled([...pending2, ...tokenRequestsInFlight]);
     await flushStdout(io.output);

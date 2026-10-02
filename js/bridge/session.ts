@@ -201,7 +201,10 @@ function openIn(io: SessionIO, origin: SessionOrigin | null, scope: Scope | null
     // сторож ушёл бы на мёртвый сокет. Выход из дел и revoke идут вызовами сессии, сокет им не нужен.
     const addr = statusAddress();
     const places = satellitePlaces();
-    const spent = handover ? null : usagePlace();
+    // Место закрывается с сессией всегда, кроме места не-спутника, переданного преемнику:
+    // у закрываемого последний снимок расхода уходит до revoke (#6401), и при смене демона.
+    const closing = !handover || CFG.satellite;
+    const spent = closing ? usagePlace() : null;
     // Сокет стояния живёт ровно столько, сколько сессия; у спутника — и записи держания нет: возврата с диска у него не бывает.
     releaseStanding(why, CFG.satellite);
     // Спутник выходит из дел прогона сам (#6573), пока место на доске: конец
@@ -213,8 +216,7 @@ function openIn(io: SessionIO, origin: SessionOrigin | null, scope: Scope | null
     // Конец спутника закрывает и место (#6593): место снимается с доски.
     await revokeSatellitePlaces(places);
     // Спутник отпускается целиком и при передаче (возврата с диска нет) — его занятость уходит с ним.
-    if (addr && (!handover || CFG.satellite))
-      await publishStatusTo(addr.url, "", 3000).catch(() => {});
+    if (addr && closing) await publishStatusTo(addr.url, "", 3000).catch(() => {});
     if (handover) await Promise.race([Promise.allSettled([...pending]), sleep(HANDOVER_WAIT_MS)]);
     else await Promise.allSettled([...pending, ...tokenRequestsInFlight]);
     await flushStdout(io.output); // an answer half-written is an answer not given

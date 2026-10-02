@@ -2128,6 +2128,67 @@ test("usage: a child's spend reaches its own bridge at its run's end, before the
   }
 });
 
+// Review of #297, p.2: a snapshot already handed to the bridge is in flight when
+// the run ends. The last one waits for its answer and goes after it — never
+// overtaking it, never left behind when the child's bridge goes (faf654b did both).
+test("usage: the run's end waits for the snapshot in flight, then sends the last one", async () => {
+  const calls = join(SANDBOX, "usage-flight.calls");
+  writeFileSync(calls, "");
+  const b = bridgeEnv("usage-flight", {
+    FB_CALLS: calls,
+    FB_USAGE_DELAY_MS: 1500,
+    ISKRON_USAGE_DEBOUNCE_MS: 50,
+    FB_TOOLS: JSON.stringify([
+      { name: "iskron_stand", description: "Стояние.", inputSchema: { type: "object" } },
+    ]),
+  });
+  const rec = await plugin(b.env, {
+    sessions: [
+      { id: "root", location: { directory: "/work/root" } },
+      { id: "child", parentID: "root", location: { directory: "/work/child" } },
+    ],
+  });
+  const usageLines = () =>
+    readFileSync(calls, "utf8")
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((l) => JSON.parse(l))
+      .filter((c) => c.name.startsWith("iskron/usage"));
+  const tok = (input) => ({ input, output: 10, reasoning: 5, cache: { read: 100, write: 1 } });
+  try {
+    await until(() => rec.tools().has("iskron_stand"), "the stand tool", 8000);
+    await rec.call("iskron_stand", { realm: "nks-dev", karta: "#931" }, "root");
+    const rootPid = pidOf(b.log);
+    const place = { realm: "@nks/nks-dev", karta: "931", name: "host.repo.opus-5" };
+    appendFileSync(`${b.events}.${rootPid}`, event("held", { key: "k-root", place }));
+    await delay(400); // the fake bridge relays event lines every 40 ms
+    await rec.call("iskron_stand", { realm: "nks-dev" }, "child");
+    const childPid = pidsOf(b.log)[1];
+    const sub = { ...place, name: "host.repo.opus-5.sub-1" };
+    appendFileSync(`${b.events}.${childPid}`, event("held", { key: "k-sub", place: sub }));
+    await delay(400);
+    rec.emit({ type: "session.usage.updated", data: { sessionID: "child", tokens: tok(200) } });
+    await until(() => usageLines().length > 0, "the first snapshot in flight");
+    rec.emit({ type: "session.usage.updated", data: { sessionID: "child", tokens: tok(300) } });
+    rec.emit({ type: "session.execution.succeeded", data: { sessionID: "child" } });
+    await until(() => !alive(childPid), "the child's bridge to end with its run", 8000);
+    assert.deepEqual(
+      usageLines()
+        .filter((c) => c.pid === childPid)
+        .map((c) => [c.name, c.arguments.input]),
+      [
+        ["iskron/usage", 200],
+        ["iskron/usage:answered", 200],
+        ["iskron/usage", 300],
+        ["iskron/usage:answered", 300],
+      ],
+    );
+  } finally {
+    await rec.stop();
+  }
+});
+
 // A child resumed after its run ended (the field case, case №66 [7133], [7138]):
 // its slot is gone, and a call without a mark went by the root's bridge — a
 // join, line or say signed with the root's place, a leave took the root out of

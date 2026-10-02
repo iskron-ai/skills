@@ -2127,15 +2127,24 @@ function createUsageFeed(opts) {
       listed = null;
     }
   })();
-  const flush = async (session, timeoutMs = 1e4) => {
-    clearTimeout(timers.get(session));
-    timers.delete(session);
+  const inFlight = /* @__PURE__ */ new Map();
+  const send = async (session, timeoutMs) => {
     const u = bySession.get(session);
     if (!u) return;
     const { ref, ...p } = u;
     if (ref && windows.has(ref)) p.window = windows.get(ref);
     await opts.bridgeOf(session)?.request("iskron/usage", p, { timeoutMs }).catch(() => {
     });
+  };
+  const flush = (session, timeoutMs = 1e4) => {
+    clearTimeout(timers.get(session));
+    timers.delete(session);
+    const p = (inFlight.get(session) ?? Promise.resolve()).then(() => send(session, timeoutMs));
+    inFlight.set(session, p);
+    void p.finally(() => {
+      if (inFlight.get(session) === p) inFlight.delete(session);
+    });
+    return p;
   };
   const schedule = (session) => {
     if (!timers.has(session)) {
@@ -2173,7 +2182,8 @@ function createUsageFeed(opts) {
       bySession.set(session, u);
       schedule(session);
     },
-    flush: (session) => timers.has(session) ? flush(session, 3e3) : Promise.resolve(),
+    // Ждущего снимка нет — дождаться ушедшего: мост не уходит с местом раньше его ответа.
+    flush: (session) => timers.has(session) ? flush(session, 3e3) : inFlight.get(session) ?? Promise.resolve(),
     forget(session) {
       clearTimeout(timers.get(session));
       timers.delete(session);

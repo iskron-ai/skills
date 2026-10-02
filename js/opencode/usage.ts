@@ -68,9 +68,10 @@ export function createUsageFeed(opts: {
       }
     })());
 
-  const flush = async (session: string, timeoutMs = 10_000): Promise<void> => {
-    clearTimeout(timers.get(session));
-    timers.delete(session);
+  // Снимки сессии уходят мосту по одному: следующий — после ответа на ушедший,
+  // иначе последний обогнал бы предыдущий, и место легло бы со старыми цифрами.
+  const inFlight = new Map<string, Promise<void>>();
+  const send = async (session: string, timeoutMs: number): Promise<void> => {
     const u = bySession.get(session);
     if (!u) return;
     const { ref, ...p } = u;
@@ -79,6 +80,17 @@ export function createUsageFeed(opts: {
       .bridgeOf(session)
       ?.request("iskron/usage", p, { timeoutMs })
       .catch(() => {});
+  };
+  const flush = (session: string, timeoutMs = 10_000): Promise<void> => {
+    clearTimeout(timers.get(session));
+    timers.delete(session);
+    // Цифры берутся в миг отправки, не постановки: уходит последний снимок.
+    const p = (inFlight.get(session) ?? Promise.resolve()).then(() => send(session, timeoutMs));
+    inFlight.set(session, p);
+    void p.finally(() => {
+      if (inFlight.get(session) === p) inFlight.delete(session);
+    });
+    return p;
   };
   const schedule = (session: string): void => {
     if (!timers.has(session)) {
@@ -117,7 +129,9 @@ export function createUsageFeed(opts: {
       bySession.set(session, u);
       schedule(session);
     },
-    flush: (session) => (timers.has(session) ? flush(session, 3_000) : Promise.resolve()),
+    // Ждущего снимка нет — дождаться ушедшего: мост не уходит с местом раньше его ответа.
+    flush: (session) =>
+      timers.has(session) ? flush(session, 3_000) : (inFlight.get(session) ?? Promise.resolve()),
     forget(session: string): void {
       clearTimeout(timers.get(session));
       timers.delete(session);
