@@ -69,8 +69,17 @@ function writeRecord(p: Place, ch: Channel, status?: string): void {
   });
 }
 
-/** Поставить место рядом на канал, который держит мост: своя дверь и запись держания. Возвращает ключ. */
-export function addExtra(s: Standing, ch: Channel, hooks: DoorHooks): string {
+/**
+ * Поставить место рядом на канал, который держит мост: своя дверь и запись держания. Возвращает ключ.
+ * `primaryAddress` — адрес основного места: канал один, хэндл тот же, так что до hello
+ * место зовётся @handle:name, а не ключом.
+ */
+export function addExtra(
+  s: Standing,
+  ch: Channel,
+  hooks: DoorHooks,
+  primaryAddress: string | null = null,
+): string {
   const key = keyOfPlace(s);
   const have = extras.get(key);
   if (have) return key;
@@ -78,6 +87,8 @@ export function addExtra(s: Standing, ch: Channel, hooks: DoorHooks): string {
   for (const p of extraPlaces())
     if (sameRealm(p.standing.realm, s.realm)) dropExtra(p.door.key, "другое место графа", true);
   const door = new Door(key, hooks);
+  const handle = primaryAddress?.match(/^(.*):/)?.[1];
+  if (handle && s.name) door.address = `${handle}:${s.name}`;
   door.open();
   const place = { standing: s, door };
   extras.set(key, place);
@@ -160,6 +171,7 @@ export function learnFromHello(hello: Frame | null, primary: Place | null): void
     if (!e) continue;
     if (e.realm && unresolved(p.standing.realm)) learnRealm(p.standing.realm, e.realm);
     if (typeof e.standing_id === "string" && e.standing_id) p.door.standingId = e.standing_id;
+    if (typeof e.standing === "string" && e.standing) p.door.address = e.standing;
   }
 }
 

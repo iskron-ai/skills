@@ -6,11 +6,12 @@
 import { startTokenKeepalive } from "./auth.ts";
 import { BUILD } from "./build.ts";
 import { CFG, setConfig } from "./config.ts";
-import { releaseStanding, statusAddress } from "./hold.ts";
+import { releaseStanding } from "./hold.ts";
 import { installAuthLockExitHook } from "./oauth/authlock.ts";
 import { installRefreshLockExitHook } from "./oauth/refreshlock.ts";
 import { tokenRequestsInFlight } from "./oauth/tokenrequest.ts";
 import { publishStatusTo } from "./status.ts";
+import { statusAddress } from "./statusaddr.ts";
 import { storePath } from "./store.ts";
 import { log } from "./streams.ts";
 import { type Config } from "./types.ts";

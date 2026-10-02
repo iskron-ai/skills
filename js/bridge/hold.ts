@@ -149,19 +149,6 @@ export function wasEvicted(realm: string, karta: string | number, name: string):
 export const hasStatusAddressFor = (realm: string, karta: string | number, name: string): boolean =>
   !!H.currentStatusUrl && !!H.currentKey && isOwn(realm, karta, name);
 
-/** Статусный адрес канала, ключ и id места этого графа (без графа — основного) — для занятости (status.ts). */
-export function statusAddress(
-  realm?: string,
-): { url: string; key: string; standingId: string | null } | null {
-  if (!H.currentStatusUrl || !H.currentKey) return null;
-  const d = (realm ? extraIn(realm)?.door : undefined) ?? H.door;
-  return {
-    url: H.currentStatusUrl,
-    key: d?.key ?? H.currentKey,
-    standingId: d?.standingId ?? null,
-  };
-}
-
 /** Места, которые держит мост: основное первым, затем места других графов (#5838). */
 export const heldPlaces = (): { key: string; realm: string; primary: boolean }[] => [
   ...(H.door && state.standing
@@ -228,7 +215,7 @@ export function addPlace(s: Standing): string | null {
   const ch = channel();
   const primary = state.standing;
   if (!H.holder?.alive || !ch || !primary || !otherRealm(primary.realm, s.realm)) return null;
-  return addExtra(s, ch, doorHooks);
+  return addExtra(s, ch, doorHooks, H.door?.address ?? null);
 }
 
 /** id места этого графа у платформы, если register, hello или кадр его назвали. */

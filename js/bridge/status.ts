@@ -21,7 +21,6 @@ import {
   isParked,
   noteStandCwd,
   rememberStatus,
-  statusAddress,
   wasEvicted,
 } from "./hold.ts";
 import { type HoldRecord, keyOf } from "./holdrecord.ts";
@@ -29,6 +28,7 @@ import { unheardListenBlock } from "./listen.ts";
 import { normKarta, normName } from "./names.ts";
 import { extraIn } from "./places.ts";
 import { sameRealm } from "./realms.ts";
+import { statusAddress } from "./statusaddr.ts";
 import { publishStatusTo, type StatusOutcome } from "./statuspost.ts";
 import { localSocketAlive } from "./sweep.ts";
 import { type Standing, state } from "./transport.ts";
@@ -57,7 +57,11 @@ async function statusWord(text: string, realm: string): Promise<[string, boolean
   const st = await publishStatus(text, realm);
   if (!st.ok && !statusAddress()) return [await notHeldHere(realm), true];
   if (st.code === 404) return [`${st.body} ${TURNED_GUIDANCE()}`, true];
-  if (st.ok) return [`занятость ${statusAddress(realm)?.key}: ${text || "(снята)"}`, false];
+  if (st.ok)
+    return [
+      `занятость ${statusAddress(realm)?.place ?? statusAddress(realm)?.key}: ${text || "(снята)"}`,
+      false,
+    ];
   return [st.body, true];
 }
 
