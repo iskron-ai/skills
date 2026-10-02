@@ -3,8 +3,8 @@
 // side on. Not a test file. ISKRON_BRIDGE_PATH points the probes at another
 // build — a past one, to watch them fail on the defect they were written for.
 
-import { spawn } from "node:child_process";
-import { mkdtempSync, readdirSync, readFileSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { connect } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -74,8 +74,36 @@ export async function withFake(opts, fn, env = {}) {
     await fn({ fake, dir, bridge });
   } finally {
     await bridge.stop();
+    await reap(dir);
     await fake.stop();
   }
+}
+
+// The pids of this auth dir's processes: the daemon a thin bridge raised by
+// default outlives the bridge, and one waiting out a login abandoned with the
+// probe never leaves by itself. pgrep finds it by its --auth-dir; where pgrep
+// is not, its life lock names it.
+function pidsOf(dir) {
+  const found = spawnSync("pgrep", ["-f", dir], { encoding: "utf8" });
+  if (!found.error) return found.stdout.split("\n").map(Number).filter(Boolean);
+  try {
+    return [JSON.parse(readFileSync(join(dir, "run", "daemon.lock"), "utf8")).pid];
+  } catch {
+    return [];
+  }
+}
+
+/** Every process of the probe's auth dir goes, then the dir itself. */
+export async function reap(dir) {
+  for (const pid of pidsOf(dir)) {
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch {
+      /* gone already */
+    }
+  }
+  await waitFor(() => pidsOf(dir).length === 0, `the processes of ${dir} to go`, 5_000);
+  rmSync(dir, { recursive: true, force: true });
 }
 
 /** The loopback link and the device link (with its code) an answer hands out. */

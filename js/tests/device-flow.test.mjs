@@ -13,6 +13,7 @@ import {
   INIT,
   linksIn,
   readStore,
+  reap,
   startBridge,
   waitFor,
   withFake,
@@ -43,11 +44,14 @@ test("refused on the other device: polling stops, and the next call offers a new
   });
 });
 
+// Two full bridges, no daemon: the login lives in the first one's process, and
+// only its death hands it to the second — a daemon would hold it for both.
 test("a login taken over from a bridge gone keeps its code, and the code still lands", async () => {
   const fake = await startFakeNks({ device: NAMED });
   const dir = mkdtempSync(join(tmpdir(), "iskron-device-test-"));
-  const first = startBridge(fake.mcpUrl, dir);
-  const second = startBridge(fake.mcpUrl, dir);
+  const full = { ISKRON_BRIDGE_DAEMON: "0" };
+  const first = startBridge(fake.mcpUrl, dir, full);
+  const second = startBridge(fake.mcpUrl, dir, full);
   try {
     const code = codeIn(await first.call("initialize", 1, INIT));
     await first.stop();
@@ -58,7 +62,9 @@ test("a login taken over from a bridge gone keeps its code, and the code still l
     await grantLanded(dir);
     assert.ok((await second.call("tools/list", 2)).result?.tools?.length);
   } finally {
+    await first.stop();
     await second.stop();
+    await reap(dir);
     await fake.stop();
   }
 });
