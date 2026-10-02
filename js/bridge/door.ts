@@ -20,7 +20,7 @@ import {
 import { Backlog } from "./backlog.ts";
 import { CFG } from "./config.ts";
 import { isDelivered } from "./fanout.ts";
-import { RoomBatch } from "./roomstack.ts";
+import { countOnly, emitBatch, RoomBatch } from "./roomstack.ts";
 import { StaleBurst } from "./stale.ts";
 import { log } from "./streams.ts";
 import { sweepStale } from "./sweep.ts";
@@ -188,8 +188,15 @@ export class Door {
             seen: this.seenPath,
           } satisfies ChannelEvent) + "\n",
         );
+        // Неадресованные месту записи дел (#6574) — пачкой впереди, счётом: так
+        // пришли бы и живыми; поодиночке сторож взял бы их за побудку.
+        const counts = backlog.filter((h): h is { raw: string; frame: Frame } =>
+          countOnly(h.frame),
+        );
+        const put = (ev: ChannelEvent): void => void sock.write(JSON.stringify(ev) + "\n");
+        if (counts.length) emitBatch(counts, put);
         for (const { raw, frame } of backlog) {
-          sock.write(JSON.stringify({ kind: "frame", raw, frame } satisfies ChannelEvent) + "\n");
+          if (!countOnly(frame)) put({ kind: "frame", raw, frame });
         }
         // Место отняли, а сторож перевзвёлся: молчание читалось бы как слух.
         const late = this.hooks.lateEvent();

@@ -21,6 +21,7 @@ import {
 import { bindAll } from "../shared/scope.ts";
 import { deliveredKeys, noteSeen } from "../shared/seen.ts";
 import { socketPathOf } from "../shared/standings.ts";
+import { markAddressed } from "./addressmark.ts";
 import { harnessName, notifiedClient } from "./client.ts";
 import { stampOrigin } from "./complete.ts";
 import { CFG } from "./config.ts";
@@ -357,8 +358,8 @@ function deliverTo(d: Door, raw: string, frame: Frame | null, full: Frame | null
   // Копия события графа, уже предложенного или отданного (веер, fanout.ts), — никому.
   const evKey = redundantCopy(full, d.ring, d.seen, seenPath, d.stale);
   if (evKey) return log(`frame ${id || "?"} carries ${evKey} already offered — not raised`);
-  // Повтор уже отданного кадра (тот же id — платформа отдала его снова после
-  // возврата места) никому не рассылается; отданное клиенты помечают сами — в файле.
+  if (full?.type === "message") markAddressed(full, seenPath, d.seen); // до повтора и лежалых
+  // Повтор уже отданного кадра (тот же id — платформа отдала его снова после возврата места) никому не рассылается; отданное клиенты помечают сами — в файле.
   const again = isDelivered(id ? [id] : [], d.seen, seenPath);
   // Лежалый кадр — принятое, пока место не слушали (после revoke — почта предшественника),
   // либо повтор службы после пересборки сессии: хода не стоит, но и не теряется — одной
@@ -375,9 +376,8 @@ function deliverTo(d: Door, raw: string, frame: Frame | null, full: Frame | null
           d.broadcast(ev);
           notify("info", keyed(d, ev));
         });
-  const text = full === frame ? raw : JSON.stringify(full);
-  // В кольцо идёт и hello — каждой двери: сторож, прицепившийся позже, должен
-  // увидеть доказательство держания, а не только рабочие кадры.
+  const text = full === frame && !full?.addressed ? raw : JSON.stringify(full);
+  // В кольцо идёт и hello — каждой двери: сторож, прицепившийся позже, должен увидеть доказательство держания, а не только рабочие кадры.
   const hello = full?.type === "hello";
   for (const x of hello ? doors() : [d]) x.push(text, full);
   if (hello) for (const w of [...H.helloWaiters]) w(full);

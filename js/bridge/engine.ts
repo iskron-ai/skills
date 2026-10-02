@@ -51,10 +51,17 @@ export function installCrashWords(): void {
  * is usually well under a second, while leaving without it costs the whole
  * machine its grant (graph @nks/nks-dev, node #4170). A second Ctrl-C leaves at
  * once — the human has said it twice.
+ * Спутник SIGINT'ом гасит харнес (Claude Code), не человек: первый идёт концом
+ * прогона сессии (`leave` — выход из дел и снятие места, #6573, #6593).
  */
-export function fullBridgeSigint(): () => void {
+export function fullBridgeSigint(leave?: (why: string) => Promise<void>): () => void {
   let interrupted = false;
   return () => {
+    if (CFG.satellite && leave && !interrupted) {
+      interrupted = true;
+      void leave("SIGINT");
+      return;
+    }
     const addr = statusAddress();
     releaseStanding("SIGINT"); // иначе .key переживает мост и уводит сторожа без ключа на мёртвый сокет
     if (interrupted) process.exit(0);

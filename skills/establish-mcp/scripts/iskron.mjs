@@ -2458,6 +2458,367 @@ function compact(seenPath, seen) {
   for (const x of tail2) seen.add(x);
 }
 
+// js/shared/room-kinds.ts
+var WORDS = {
+  said: "слово от {author}",
+  said_pending: "слово от {author} в полёте — текст придёт следом",
+  // Адресное слово не мне (#6081): факт без тела; череда одной пары — одной строкой.
+  aside: "{author} → {addressee}: слово [{word}]",
+  aside_run: "{author} → {addressee}: {count} (последнее [{word}])",
+  // Тело адресного слова не мне без самого слова в пачке — продолжение, не новое слово.
+  aside_body: "{author} → {addressee}: текст слова [{word}]",
+  word_one: "слово",
+  word_few: "слова",
+  word_many: "слов",
+  body: "текст слова [{refers_to}] от {author}",
+  body_aborted: "слово [{refers_to}] оборвано автором",
+  body_lapsed: "слово [{refers_to}] оборвано платформой по сроку",
+  closing: "ведущий {author} предлагает закрыть дело до {ends_at}{; свидетельства: evidence}",
+  closing_may: 'ты можешь возразить — iskron_case(action="object", in_reply_to={entry_id}) (прежнее имя iskron_room)',
+  closing_not: "возражать не тебе",
+  closed: "дело закрыто: {reason}",
+  objection: "{author} возражает против закрытия: {reason}",
+  late_objection: "{author} возразил после закрытия",
+  // Строка гроссбуха — ровно «[было] [сделал] = вердикт», примечание к не-ok, автор хвостом (норма владельца).
+  progress: "[{key}] [{done}] = {verdict}{ — note} · {author}",
+  opened: "дело открыл {author}",
+  joined: "вошёл {who}",
+  left: "вышел {who}{; причина: reason}",
+  invite: "{author} зовёт {who} в дело",
+  withdraw: "приглашение отозвано, отзывает {author}",
+  node: "в деле узел #{seq} {name} ({realm}){; reasoning}",
+  node_updated: "узел #{seq} {name} обновлён{; reasoning}",
+  node_deleted: "узел #{seq} {name} удалён{; reasoning}",
+  node_undeleted: "узел #{seq} {name} восстановлен{; reasoning}",
+  link: "дело связано с №{room} ({rel})",
+  auto: "запись платформы {code} о деле №{room}",
+  unknown: "род {kind} мосту неизвестен",
+  // Короткий кадр (frame-text.ts): дело, кто говорит, ответ — без сырого конверта.
+  case: "№{room}",
+  reply_to: "в ответ на [{id}]",
+  stale: "лежалый",
+  body_read: "тело: {how}",
+  who_human: "человек{ @user}",
+  who_role: "роль #{karta}",
+  who_sibling: "брат по роли #{karta}",
+  who_platform: "платформа — побудка",
+  who_graph: "событие графа",
+  legacy: "род {kind}{, стопка stack}"
+};
+var WORDS_EN = {
+  said: "message from {author}",
+  said_pending: "message from {author} in flight — the text follows",
+  aside: "{author} → {addressee}: message [{word}]",
+  aside_run: "{author} → {addressee}: {count} (last [{word}])",
+  aside_body: "{author} → {addressee}: text of message [{word}]",
+  word_one: "message",
+  word_few: "messages",
+  word_many: "messages",
+  body: "text of message [{refers_to}] from {author}",
+  body_aborted: "message [{refers_to}] cut off by its author",
+  body_lapsed: "message [{refers_to}] cut off by the platform on its deadline",
+  closing: "the lead {author} proposes to close the case by {ends_at}{; evidence: evidence}",
+  closing_may: 'you may object — iskron_case(action="object", in_reply_to={entry_id}) (former name iskron_room)',
+  closing_not: "the objection is not yours to make",
+  closed: "case closed: {reason}",
+  objection: "{author} objects to closing: {reason}",
+  late_objection: "{author} objected after the close",
+  progress: "[{key}] [{done}] = {verdict}{ — note} · {author}",
+  opened: "case opened by {author}",
+  joined: "entered {who}",
+  left: "left {who}{; reason: reason}",
+  invite: "{author} invites {who} to the case",
+  withdraw: "invitation withdrawn by {author}",
+  node: "node #{seq} {name} ({realm}) in the case{; reasoning}",
+  node_updated: "node #{seq} {name} updated{; reasoning}",
+  node_deleted: "node #{seq} {name} deleted{; reasoning}",
+  node_undeleted: "node #{seq} {name} restored{; reasoning}",
+  link: "case linked to case №{room} ({rel})",
+  auto: "platform record {code} about case №{room}",
+  unknown: "kind {kind} is unknown to the bridge",
+  case: "case №{room}",
+  reply_to: "in reply to [{id}]",
+  stale: "stale",
+  body_read: "body: {how}",
+  who_human: "human{ @user}",
+  who_role: "role #{karta}",
+  who_sibling: "sibling of role #{karta}",
+  who_platform: "platform — a wake-up",
+  who_graph: "graph event",
+  legacy: "kind {kind}{ · stack}"
+};
+var AUTO_WORDS = {
+  child_opened: "дочернее дело №{room} открыто",
+  child_closing: "дочернее дело №{room} закрывается",
+  child_closed: "дочернее дело №{room} закрыто",
+  child_late_objection: "позднее возражение в дочернем деле №{room}"
+};
+var AUTO_WORDS_EN = {
+  child_opened: "child case №{room} opened",
+  child_closing: "child case №{room} is closing",
+  child_closed: "child case №{room} closed",
+  child_late_objection: "late objection in child case №{room}"
+};
+var REL_WORDS = {
+  parent: "дочернее к нему",
+  child: "родительское к нему",
+  continues: "продолжает его"
+};
+var REL_WORDS_EN = {
+  parent: "its child",
+  child: "its parent",
+  continues: "continues it"
+};
+var VERDICT_WORDS = {
+  ok: "ok",
+  partial: "частично",
+  bad: "slop"
+};
+var VERDICT_WORDS_EN = {
+  ok: "ok",
+  partial: "partial",
+  bad: "slop"
+};
+var words = () => lang() === "en" ? WORDS_EN : WORDS;
+var phrase = (key, values = {}) => fill(words()[key] ?? "", values);
+var autoWords = () => lang() === "en" ? AUTO_WORDS_EN : AUTO_WORDS;
+var relWords = () => lang() === "en" ? REL_WORDS_EN : REL_WORDS;
+var NODE_OPS = {
+  updated: "node_updated",
+  deleted: "node_deleted",
+  undeleted: "node_undeleted"
+};
+var RULES = {
+  said: "stack",
+  body: "stack",
+  closing: "interrupt",
+  closed: "interrupt",
+  objection: "interrupt",
+  late_objection: "interrupt",
+  invite: "mine",
+  progress: "batch",
+  opened: "batch",
+  joined: "batch",
+  left: "batch",
+  withdraw: "batch",
+  node: "batch",
+  link: "batch",
+  // Запись платформы о связанном деле: признака прерывания у неё нет (#4925).
+  auto: "batch"
+};
+var obj = (v) => v && typeof v === "object" && !Array.isArray(v) ? v : {};
+var str = (v) => typeof v === "string" ? v : typeof v === "number" || typeof v === "boolean" ? String(v) : "";
+function authorOf(author) {
+  const a = obj(author);
+  const name = str(a.name);
+  const standing = str(a.standing);
+  if (name) return standing ? `${name} (${standing})` : name;
+  if (standing) return standing;
+  return a.kind === "platform" ? L("платформа", "platform") : "?";
+}
+var after = (key, prefix) => key.startsWith(prefix) ? key.slice(prefix.length) : key;
+function fill(template, v) {
+  return template.replace(/\{([^\w{}]*)(\w+)\}/g, (_m, sep, name) => {
+    const x = str(v[name]);
+    if (sep) return x ? sep + x : "";
+    return x || "?";
+  });
+}
+function roomOf(v) {
+  const r = obj(v);
+  return str(r.seq) || str(r.id) || str(v);
+}
+var mineOf = (frame2) => [str(frame2.to_standing_id), str(frame2.to_standing)].filter(Boolean);
+function myRole(frame2, fields) {
+  const ka = obj(fields.karta);
+  const seq2 = str(ka.seq);
+  if (!seq2 || seq2 !== str(frame2.karta_seq)) return false;
+  const theirs = str(ka.realm);
+  const mine = str(frame2.realm) || str(obj(frame2.room).realm);
+  return !theirs || !mine || theirs === mine;
+}
+function whoOf(fields) {
+  const st = obj(fields.standing);
+  const ka = obj(fields.karta);
+  const name = str(st.name) || str(ka.name);
+  const addr = str(st.standing);
+  return name && addr ? `${name} (${addr})` : name || addr;
+}
+function addresseeOf(v) {
+  if (typeof v === "string") return v ? { addr: [v], label: v } : null;
+  const o = obj(v);
+  const handle = str(o.handle).replace(/^@/, "");
+  const standing = str(o.standing) || (handle ? `@${handle}${str(o.name) ? `:${str(o.name)}` : ""}` : "");
+  const id = str(o.id);
+  const name = str(o.standing) ? str(o.name) : "";
+  const label = name && standing ? `${name} (${standing})` : standing || str(o.name) || id;
+  const addr = [standing, id].filter(Boolean);
+  return addr.length ? { addr, label } : null;
+}
+function wordsCount(n) {
+  const W2 = words();
+  const m10 = n % 10;
+  const m100 = n % 100;
+  const w = lang() === "en" ? n === 1 ? W2.word_one : W2.word_many : m10 === 1 && m100 !== 11 ? W2.word_one : m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14) ? W2.word_few : W2.word_many;
+  return `${n} ${w}`;
+}
+function roomKind(frame2) {
+  if (!frame2 || typeof frame2 !== "object") return null;
+  const f = frame2;
+  const ek = f.event_kind;
+  if (typeof ek !== "string" || !ek.startsWith("room.")) return null;
+  const kind = ek.slice(5);
+  const line = obj(f.line);
+  const fields = obj(line.fields);
+  const key = str(line.key);
+  const mine = mineOf(f);
+  const node = obj(fields.node);
+  const byWhom = authorOf(
+    kind === "body" && Object.keys(obj(f.in_reply_to_from)).length ? f.in_reply_to_from : line.author
+  );
+  const values = {
+    kind,
+    author: byWhom,
+    key,
+    done: line.done,
+    verdict: (lang() === "en" ? VERDICT_WORDS_EN : VERDICT_WORDS)[str(line.verdict)] ?? line.verdict,
+    note: line.note,
+    ends_at: fields.ends_at,
+    evidence: Array.isArray(fields.evidence) ? fields.evidence.map(str).join(", ") : "",
+    entry_id: line.entry_id ?? f.entry_id,
+    // Слово, которому body несёт текст или обрыв: refers_to строки, иначе in_reply_to конверта.
+    refers_to: str(line.refers_to) || str(f.in_reply_to) || str(obj(f.word).entry_id),
+    reason: fields.reason,
+    target: after(key, "invite:"),
+    // Ключ несёт id; имя приглашённого — в полях строки (наблюдено на бою: standing/karta с name).
+    // Вошедший и ушедший — место fields.standing (уход по сроку пишет платформа, api 0.89.6), иначе автор.
+    who: kind === "joined" || kind === "left" ? whoOf({ standing: fields.standing }) || byWhom : whoOf(fields) || after(key, "invite:"),
+    room: roomOf(fields.room) || after(key, "link:"),
+    rel: relWords()[str(fields.rel)] ?? fields.rel,
+    code: fields.code,
+    seq: node.seq,
+    name: node.name,
+    realm: node.realm,
+    // reasoning дельты узла — тело записи node (line.done, body кадра), не поле (слово api, #6070).
+    reasoning: kind === "node" ? line.done || f.body : void 0
+  };
+  const rule = RULES[kind];
+  const author = str(values.author);
+  if (!rule)
+    return {
+      kind,
+      rule: "batch",
+      words: fill(words().unknown, values),
+      author,
+      phase: null,
+      known: false
+    };
+  const W2 = words();
+  const word = kind === "said" || kind === "body";
+  const withheld = word && f.body_withheld === true;
+  const to = word ? addresseeOf(f.addressee) ?? (withheld ? { addr: ["?"], label: "?" } : null) : null;
+  const addresseeLeft = f.addressee_left === true || fields.addressee_left === true;
+  if (to && !addresseeLeft && (withheld || mine.length && !to.addr.some((a) => mine.includes(a)))) {
+    const counts = kind === "said";
+    const pair = JSON.stringify([roomOf(f.room), author, to.addr[0]]);
+    const id = counts ? values.entry_id : values.refers_to;
+    const run = (n) => fill(n === 0 ? W2.aside_body : n > 1 ? W2.aside_run : W2.aside, {
+      ...values,
+      word: id,
+      addressee: to.label,
+      count: wordsCount(n)
+    });
+    const aside = { pair, counts, run };
+    const words2 = run(counts ? 1 : 0);
+    return { kind, rule: "batch", words: words2, author, phase: null, known: true, aside };
+  }
+  const pending2 = kind === "said" && f.body_pending === true && !str(f.body) && !str(line.done);
+  const aborted = kind === "body" && fields.aborted === true;
+  const wordsOf = pending2 ? W2.said_pending : aborted ? obj(line.author).kind === "platform" ? W2.body_lapsed : W2.body_aborted : kind === "auto" ? autoWords()[str(values.code)] ?? W2.auto : (
+    // op узла (bound | updated | deleted | undeleted): без op и bound — прежнее слово.
+    kind === "node" && NODE_OPS[str(fields.op)] ? W2[NODE_OPS[str(fields.op)]] : W2[kind]
+  );
+  let text = fill(wordsOf ?? "", values);
+  if (kind === "closing") {
+    const may = Array.isArray(fields.may_object) ? fields.may_object.map((m) => typeof m === "string" ? m : str(obj(m).id)) : [];
+    const myId = str(f.to_standing_id);
+    const mayI = !!myId && may.includes(myId);
+    text += "; " + fill(mayI ? W2.closing_may : W2.closing_not, values);
+  }
+  const stack = rule === "stack" ? (
+    // Стопка решает у said и body; слово без стопки — прежним путём, вставкой.
+    f.stack === "defer" ? "batch" : "interrupt"
+  ) : rule === "mine" ? mine.includes(str(values.target)) || myRole(f, fields) ? "interrupt" : "batch" : rule;
+  const phase = pending2 ? "pending" : aborted ? "aborted" : null;
+  return { kind, rule: phase ? "batch" : stack, words: text, author, phase, known: true };
+}
+var byKind = (frame2) => roomKind(frame2) !== null;
+var stackOf = (frame2) => roomKind(frame2)?.rule ?? (frame2?.stack === "defer" ? "batch" : "interrupt");
+
+// js/shared/addressed.ts
+var LOUD_KINDS = /* @__PURE__ */ new Set(["closing", "closed", "objection", "late_objection"]);
+var addressedWords = /* @__PURE__ */ new Set();
+var WORDS_KEPT = 512;
+function wordKeyOf(frame2) {
+  const f = frame2;
+  const line = obj(f.line);
+  const entry = roomKind(frame2)?.kind === "body" ? str(line.refers_to) || str(f.in_reply_to) || str(obj(f.word).entry_id) : str(line.entry_id ?? f.entry_id);
+  return `${mineOf(f)[0] ?? ""}|${str(obj(f.room).id) || str(obj(f.room).seq)}|${entry}`;
+}
+function rememberWord(key) {
+  addressedWords.add(key);
+  for (const old of addressedWords) {
+    if (addressedWords.size <= WORDS_KEPT) break;
+    addressedWords.delete(old);
+  }
+}
+function addressedToMine(frame2) {
+  if (!frame2) return false;
+  const f = frame2;
+  const room = obj(f.room);
+  if (!str(room.seq) && !str(room.id)) return true;
+  if (!byKind(frame2)) return true;
+  const line = obj(f.line);
+  const fields = obj(line.fields);
+  const rk = roomKind(frame2);
+  if (rk?.aside) return false;
+  const mine = mineOf(f);
+  const hit = (v) => {
+    const a = addresseeOf(v);
+    return !!a && mine.length > 0 && a.addr.some((x) => mine.includes(x));
+  };
+  if (rk?.kind === "body") {
+    const word = obj(f.word);
+    if (f.addressed === true || hit(f.addressee) || str(obj(obj(word.line).fields).kind) === "important" || addressedWords.has(wordKeyOf(frame2)))
+      return true;
+  } else if (
+    // Слово мне, ответ на мою запись (#5954), помеченное важным: род слова
+    // important на конверте или в полях строки. Слово в полёте запоминается —
+    // его тело придёт второй фазой без этих признаков.
+    hit(f.addressee) || hit(f.in_reply_to_from) || str(f.said) === "important" || str(fields.kind) === "important"
+  ) {
+    if (rk?.phase === "pending") rememberWord(wordKeyOf(frame2));
+    return true;
+  }
+  if (rk?.kind === "invite" || rk?.kind === "withdraw") {
+    if (mine.includes(after(str(line.key), "invite:"))) return true;
+    if (rk.kind === "invite" && myRole(f, fields)) return true;
+  }
+  if (rk && LOUD_KINDS.has(rk.kind)) return true;
+  return (frame2.origin ?? classifyOrigin(frame2, str(f.karta_seq) || void 0)) === "human";
+}
+
+// js/bridge/addressmark.ts
+var markOf = (frame2) => `word:${wordKeyOf(frame2)}`;
+function markAddressed(frame2, seenPath, seen) {
+  const rk = roomKind(frame2);
+  if (rk?.kind === "said" && rk.phase === "pending") {
+    if (addressedToMine(frame2)) noteSeen(seenPath, markOf(frame2), seen);
+  } else if (rk?.kind === "body" && !rk.aside) {
+    if (seen.has(markOf(frame2)) || addressedToMine(frame2)) frame2.addressed = true;
+  }
+}
+
 // js/shared/clients.ts
 var OPENCODE_CLIENT = "opencode-iskron";
 var SURFACE_CLIENT = "export-surface";
@@ -2717,312 +3078,20 @@ import { chmodSync as chmodSync2, mkdirSync as mkdirSync7, unlinkSync as unlinkS
 import { createServer as createServer3 } from "node:net";
 import { dirname as dirname3 } from "node:path";
 
-// js/shared/room-kinds.ts
-var WORDS = {
-  said: "слово от {author}",
-  said_pending: "слово от {author} в полёте — текст придёт следом",
-  // Адресное слово не мне (#6081): факт без тела; череда одной пары — одной строкой.
-  aside: "{author} → {addressee}: слово [{word}]",
-  aside_run: "{author} → {addressee}: {count} (последнее [{word}])",
-  // Тело адресного слова не мне без самого слова в пачке — продолжение, не новое слово.
-  aside_body: "{author} → {addressee}: текст слова [{word}]",
-  word_one: "слово",
-  word_few: "слова",
-  word_many: "слов",
-  body: "текст слова [{refers_to}] от {author}",
-  body_aborted: "слово [{refers_to}] оборвано автором",
-  body_lapsed: "слово [{refers_to}] оборвано платформой по сроку",
-  closing: "ведущий {author} предлагает закрыть дело до {ends_at}{; свидетельства: evidence}",
-  closing_may: 'ты можешь возразить — iskron_case(action="object", in_reply_to={entry_id}) (прежнее имя iskron_room)',
-  closing_not: "возражать не тебе",
-  closed: "дело закрыто: {reason}",
-  objection: "{author} возражает против закрытия: {reason}",
-  late_objection: "{author} возразил после закрытия",
-  // Строка гроссбуха — ровно «[было] [сделал] = вердикт», примечание к не-ok, автор хвостом (норма владельца).
-  progress: "[{key}] [{done}] = {verdict}{ — note} · {author}",
-  opened: "дело открыл {author}",
-  joined: "вошёл {who}",
-  left: "вышел {who}{; причина: reason}",
-  invite: "{author} зовёт {who} в дело",
-  withdraw: "приглашение отозвано, отзывает {author}",
-  node: "в деле узел #{seq} {name} ({realm}){; reasoning}",
-  node_updated: "узел #{seq} {name} обновлён{; reasoning}",
-  node_deleted: "узел #{seq} {name} удалён{; reasoning}",
-  node_undeleted: "узел #{seq} {name} восстановлен{; reasoning}",
-  link: "дело связано с №{room} ({rel})",
-  auto: "запись платформы {code} о деле №{room}",
-  unknown: "род {kind} мосту неизвестен",
-  // Короткий кадр (frame-text.ts): дело, кто говорит, ответ — без сырого конверта.
-  case: "№{room}",
-  reply_to: "в ответ на [{id}]",
-  stale: "лежалый",
-  body_read: "тело: {how}",
-  who_human: "человек{ @user}",
-  who_role: "роль #{karta}",
-  who_sibling: "брат по роли #{karta}",
-  who_platform: "платформа — побудка",
-  who_graph: "событие графа",
-  legacy: "род {kind}{, стопка stack}",
-  answer_case: "ответ: iskron_case({args})",
-  answer_send: "ответ: iskron_channel({args})"
-};
-var WORDS_EN = {
-  said: "message from {author}",
-  said_pending: "message from {author} in flight — the text follows",
-  aside: "{author} → {addressee}: message [{word}]",
-  aside_run: "{author} → {addressee}: {count} (last [{word}])",
-  aside_body: "{author} → {addressee}: text of message [{word}]",
-  word_one: "message",
-  word_few: "messages",
-  word_many: "messages",
-  body: "text of message [{refers_to}] from {author}",
-  body_aborted: "message [{refers_to}] cut off by its author",
-  body_lapsed: "message [{refers_to}] cut off by the platform on its deadline",
-  closing: "the lead {author} proposes to close the case by {ends_at}{; evidence: evidence}",
-  closing_may: 'you may object — iskron_case(action="object", in_reply_to={entry_id}) (former name iskron_room)',
-  closing_not: "the objection is not yours to make",
-  closed: "case closed: {reason}",
-  objection: "{author} objects to closing: {reason}",
-  late_objection: "{author} objected after the close",
-  progress: "[{key}] [{done}] = {verdict}{ — note} · {author}",
-  opened: "case opened by {author}",
-  joined: "entered {who}",
-  left: "left {who}{; reason: reason}",
-  invite: "{author} invites {who} to the case",
-  withdraw: "invitation withdrawn by {author}",
-  node: "node #{seq} {name} ({realm}) in the case{; reasoning}",
-  node_updated: "node #{seq} {name} updated{; reasoning}",
-  node_deleted: "node #{seq} {name} deleted{; reasoning}",
-  node_undeleted: "node #{seq} {name} restored{; reasoning}",
-  link: "case linked to case №{room} ({rel})",
-  auto: "platform record {code} about case №{room}",
-  unknown: "kind {kind} is unknown to the bridge",
-  case: "case №{room}",
-  reply_to: "in reply to [{id}]",
-  stale: "stale",
-  body_read: "body: {how}",
-  who_human: "human{ @user}",
-  who_role: "role #{karta}",
-  who_sibling: "sibling of role #{karta}",
-  who_platform: "platform — a wake-up",
-  who_graph: "graph event",
-  legacy: "kind {kind}{ · stack}",
-  answer_case: "answer: iskron_case({args})",
-  answer_send: "answer: iskron_channel({args})"
-};
-var AUTO_WORDS = {
-  child_opened: "дочернее дело №{room} открыто",
-  child_closing: "дочернее дело №{room} закрывается",
-  child_closed: "дочернее дело №{room} закрыто",
-  child_late_objection: "позднее возражение в дочернем деле №{room}"
-};
-var AUTO_WORDS_EN = {
-  child_opened: "child case №{room} opened",
-  child_closing: "child case №{room} is closing",
-  child_closed: "child case №{room} closed",
-  child_late_objection: "late objection in child case №{room}"
-};
-var REL_WORDS = {
-  parent: "дочернее к нему",
-  child: "родительское к нему",
-  continues: "продолжает его"
-};
-var REL_WORDS_EN = {
-  parent: "its child",
-  child: "its parent",
-  continues: "continues it"
-};
-var VERDICT_WORDS = {
-  ok: "ok",
-  partial: "частично",
-  bad: "slop"
-};
-var VERDICT_WORDS_EN = {
-  ok: "ok",
-  partial: "partial",
-  bad: "slop"
-};
-var words = () => lang() === "en" ? WORDS_EN : WORDS;
-var phrase = (key, values = {}) => fill(words()[key] ?? "", values);
-var autoWords = () => lang() === "en" ? AUTO_WORDS_EN : AUTO_WORDS;
-var relWords = () => lang() === "en" ? REL_WORDS_EN : REL_WORDS;
-var NODE_OPS = {
-  updated: "node_updated",
-  deleted: "node_deleted",
-  undeleted: "node_undeleted"
-};
-var RULES = {
-  said: "stack",
-  body: "stack",
-  closing: "interrupt",
-  closed: "interrupt",
-  objection: "interrupt",
-  late_objection: "interrupt",
-  invite: "mine",
-  progress: "batch",
-  opened: "batch",
-  joined: "batch",
-  left: "batch",
-  withdraw: "batch",
-  node: "batch",
-  link: "batch",
-  // Запись платформы о связанном деле: признака прерывания у неё нет (#4925).
-  auto: "batch"
-};
-var obj = (v) => v && typeof v === "object" && !Array.isArray(v) ? v : {};
-var str = (v) => typeof v === "string" ? v : typeof v === "number" || typeof v === "boolean" ? String(v) : "";
-function authorOf(author) {
-  const a = obj(author);
-  const name = str(a.name);
-  const standing = str(a.standing);
-  if (name) return standing ? `${name} (${standing})` : name;
-  if (standing) return standing;
-  return a.kind === "platform" ? L("платформа", "platform") : "?";
-}
-var after = (key, prefix) => key.startsWith(prefix) ? key.slice(prefix.length) : key;
-function fill(template, v) {
-  return template.replace(/\{([^\w{}]*)(\w+)\}/g, (_m, sep, name) => {
-    const x = str(v[name]);
-    if (sep) return x ? sep + x : "";
-    return x || "?";
-  });
-}
-function roomOf(v) {
-  const r = obj(v);
-  return str(r.seq) || str(r.id) || str(v);
-}
-var mineOf = (frame2) => [str(frame2.to_standing_id), str(frame2.to_standing)].filter(Boolean);
-function myRole(frame2, fields) {
-  const ka = obj(fields.karta);
-  const seq2 = str(ka.seq);
-  if (!seq2 || seq2 !== str(frame2.karta_seq)) return false;
-  const theirs = str(ka.realm);
-  const mine = str(frame2.realm) || str(obj(frame2.room).realm);
-  return !theirs || !mine || theirs === mine;
-}
-function whoOf(fields) {
-  const st = obj(fields.standing);
-  const ka = obj(fields.karta);
-  const name = str(st.name) || str(ka.name);
-  const addr = str(st.standing);
-  return name && addr ? `${name} (${addr})` : name || addr;
-}
-function addresseeOf(v) {
-  if (typeof v === "string") return v ? { addr: [v], label: v } : null;
-  const o = obj(v);
-  const handle = str(o.handle).replace(/^@/, "");
-  const standing = str(o.standing) || (handle ? `@${handle}${str(o.name) ? `:${str(o.name)}` : ""}` : "");
-  const id = str(o.id);
-  const name = str(o.standing) ? str(o.name) : "";
-  const label = name && standing ? `${name} (${standing})` : standing || str(o.name) || id;
-  const addr = [standing, id].filter(Boolean);
-  return addr.length ? { addr, label } : null;
-}
-function wordsCount(n) {
-  const W2 = words();
-  const m10 = n % 10;
-  const m100 = n % 100;
-  const w = lang() === "en" ? n === 1 ? W2.word_one : W2.word_many : m10 === 1 && m100 !== 11 ? W2.word_one : m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14) ? W2.word_few : W2.word_many;
-  return `${n} ${w}`;
-}
-function roomKind(frame2) {
-  if (!frame2 || typeof frame2 !== "object") return null;
-  const f = frame2;
-  const ek = f.event_kind;
-  if (typeof ek !== "string" || !ek.startsWith("room.")) return null;
-  const kind = ek.slice(5);
-  const line = obj(f.line);
-  const fields = obj(line.fields);
-  const key = str(line.key);
-  const mine = mineOf(f);
-  const node = obj(fields.node);
-  const byWhom = authorOf(
-    kind === "body" && Object.keys(obj(f.in_reply_to_from)).length ? f.in_reply_to_from : line.author
-  );
-  const values = {
-    kind,
-    author: byWhom,
-    key,
-    done: line.done,
-    verdict: (lang() === "en" ? VERDICT_WORDS_EN : VERDICT_WORDS)[str(line.verdict)] ?? line.verdict,
-    note: line.note,
-    ends_at: fields.ends_at,
-    evidence: Array.isArray(fields.evidence) ? fields.evidence.map(str).join(", ") : "",
-    entry_id: line.entry_id ?? f.entry_id,
-    // Слово, которому body несёт текст или обрыв: refers_to строки, иначе in_reply_to конверта.
-    refers_to: str(line.refers_to) || str(f.in_reply_to) || str(obj(f.word).entry_id),
-    reason: fields.reason,
-    target: after(key, "invite:"),
-    // Ключ несёт id; имя приглашённого — в полях строки (наблюдено на бою: standing/karta с name).
-    // Вошедший и ушедший — место fields.standing (уход по сроку пишет платформа, api 0.89.6), иначе автор.
-    who: kind === "joined" || kind === "left" ? whoOf({ standing: fields.standing }) || byWhom : whoOf(fields) || after(key, "invite:"),
-    room: roomOf(fields.room) || after(key, "link:"),
-    rel: relWords()[str(fields.rel)] ?? fields.rel,
-    code: fields.code,
-    seq: node.seq,
-    name: node.name,
-    realm: node.realm,
-    // reasoning дельты узла — тело записи node (line.done, body кадра), не поле (слово api, #6070).
-    reasoning: kind === "node" ? line.done || f.body : void 0
-  };
-  const rule = RULES[kind];
-  const author = str(values.author);
-  if (!rule)
-    return {
-      kind,
-      rule: "batch",
-      words: fill(words().unknown, values),
-      author,
-      phase: null,
-      known: false
-    };
-  const W2 = words();
-  const word = kind === "said" || kind === "body";
-  const withheld = word && f.body_withheld === true;
-  const to = word ? addresseeOf(f.addressee) ?? (withheld ? { addr: ["?"], label: "?" } : null) : null;
-  const addresseeLeft = f.addressee_left === true || fields.addressee_left === true;
-  if (to && !addresseeLeft && (withheld || mine.length && !to.addr.some((a) => mine.includes(a)))) {
-    const counts = kind === "said";
-    const pair = JSON.stringify([roomOf(f.room), author, to.addr[0]]);
-    const id = counts ? values.entry_id : values.refers_to;
-    const run = (n) => fill(n === 0 ? W2.aside_body : n > 1 ? W2.aside_run : W2.aside, {
-      ...values,
-      word: id,
-      addressee: to.label,
-      count: wordsCount(n)
-    });
-    const aside = { pair, counts, run };
-    const words2 = run(counts ? 1 : 0);
-    return { kind, rule: "batch", words: words2, author, phase: null, known: true, aside };
-  }
-  const pending2 = kind === "said" && f.body_pending === true && !str(f.body) && !str(line.done);
-  const aborted = kind === "body" && fields.aborted === true;
-  const wordsOf = pending2 ? W2.said_pending : aborted ? obj(line.author).kind === "platform" ? W2.body_lapsed : W2.body_aborted : kind === "auto" ? autoWords()[str(values.code)] ?? W2.auto : (
-    // op узла (bound | updated | deleted | undeleted): без op и bound — прежнее слово.
-    kind === "node" && NODE_OPS[str(fields.op)] ? W2[NODE_OPS[str(fields.op)]] : W2[kind]
-  );
-  let text = fill(wordsOf ?? "", values);
-  if (kind === "closing") {
-    const may = Array.isArray(fields.may_object) ? fields.may_object.map((m) => typeof m === "string" ? m : str(obj(m).id)) : [];
-    const myId = str(f.to_standing_id);
-    const mayI = !!myId && may.includes(myId);
-    text += "; " + fill(mayI ? W2.closing_may : W2.closing_not, values);
-  }
-  const stack = rule === "stack" ? (
-    // Стопка решает у said и body; слово без стопки — прежним путём, вставкой.
-    f.stack === "defer" ? "batch" : "interrupt"
-  ) : rule === "mine" ? mine.includes(str(values.target)) || myRole(f, fields) ? "interrupt" : "batch" : rule;
-  const phase = pending2 ? "pending" : aborted ? "aborted" : null;
-  return { kind, rule: phase ? "batch" : stack, words: text, author, phase, known: true };
-}
-var byKind = (frame2) => roomKind(frame2) !== null;
-var stackOf = (frame2) => roomKind(frame2)?.rule ?? (frame2?.stack === "defer" ? "batch" : "interrupt");
-
 // js/shared/frame-text.ts
 var rec = (v) => v && typeof v === "object" ? v : {};
 var idOf = (v) => typeof v === "number" || typeof v === "string" && v ? String(v) : "";
-var ANSWERABLE = /* @__PURE__ */ new Set(["said", "body", "invite", "objection", "late_objection"]);
 var ZACHIN = 40;
+function casesOf(frames) {
+  const by = /* @__PURE__ */ new Map();
+  for (const f of frames) {
+    const key = caseKey(f) || idOf(f.id) || "?";
+    const got = by.get(key);
+    if (got) got.push(f);
+    else by.set(key, [f]);
+  }
+  return [...by.values()];
+}
 function caseOf(frame2) {
   const f = frame2;
   const room = rec(f.room);
@@ -3073,6 +3142,7 @@ function frameToText(frame2, raw) {
   const text = textOf(frame2);
   const c = caseOf(frame2);
   if (c) {
+    if (!addressedToMine(frame2)) return caseCountLine([frame2]);
     const rk = roomKind(frame2);
     const line = rec(f.line);
     const entry = idOf(f.entry_id) || idOf(line.entry_id);
@@ -3084,22 +3154,10 @@ function frameToText(frame2, raw) {
     const head = `${caseHead(frame2, true)}${entry ? ` [${entry}]` : ""} ${words2}${by ? ` — ${by}` : ""}${tail(frame2, withReply)}`;
     const lines2 = [head];
     if (text && !words2.includes(text.trim())) lines2.push(text);
-    const answerable = !rk || ANSWERABLE.has(rk.kind);
-    if (answerable && origin !== "platform" && c.realm && entry) {
-      const args = `realm="${c.realm}", action="say", room="№${c.room}", in_reply_to=${entry}`;
-      lines2.push(phrase("answer_case", { args }));
-    }
     return lines2.join("\n");
   }
-  const p = frame2.provenance ?? {};
-  const id = idOf(frame2.id);
   const lines = [`${whoOf2(frame2, true) || "?"}${tail(frame2, true)}`];
   if (text) lines.push(text);
-  if (origin !== "platform" && id && (p.from_standing || p.from_karta_seq != null)) {
-    const karta = p.from_karta_seq ?? p.user_karta_seq;
-    const args = `action="send"${frame2.realm ? `, realm="${frame2.realm}"` : ""}${karta != null ? `, karta=${karta}` : ""}${p.from_standing ? `, standing="${p.from_standing}"` : ""}, in_reply_to="${id}"`;
-    lines.push(phrase("answer_send", { args }));
-  }
   return lines.join("\n");
 }
 var BATCH_TEXT = 160;
@@ -3134,11 +3192,22 @@ function foldAsides(frames) {
   });
   return out6;
 }
-function batchHead(frames) {
+function caseCountLine(frames) {
+  const c = frames.length ? caseOf(frames[0]) : null;
+  if (!c) return "";
+  const mineN = frames.filter((f) => addressedToMine(f)).length;
+  const head = caseHead(frames[0], true);
+  const yours = mineN ? L(` — адресованные строками ниже; `, ` — yours in the lines below; `) : L(` — адресованных месту нет; `, ` — none of them yours; `);
   return L(
-    `Дело: кадров ${frames.length} — накопились, не прерывая хода; ${batchPointer(frames)}; следом по строке на кадр.`,
-    `Case: ${frames.length} frames — gathered without interrupting the turn; ${batchPointer(frames)}; one line per frame follows.`
-  );
+    `${head}: записей ${frames.length}, тебе ${mineN}`,
+    `${head}: ${frames.length} records, yours ${mineN}`
+  ) + yours + batchPointer(frames) + ".";
+}
+function caseCountLines(frames) {
+  return casesOf(frames).map(caseCountLine).filter(Boolean);
+}
+function batchHead(frames) {
+  return caseCountLines(frames).join("\n");
 }
 function batchPointer(frames) {
   const since = /* @__PURE__ */ new Map();
@@ -3216,14 +3285,17 @@ var Backlog = class {
     const emit2 = this.flush;
     this.flush = null;
     if (!got.length || !emit2) return;
-    const bodies = got.map((f) => {
-      const t = frameToText(f, JSON.stringify(f));
-      return [...t].length > BODY_CAP ? [...t].slice(0, BODY_CAP).join("") + "…" : t;
-    });
+    const bodies = [
+      ...caseCountLines(got),
+      ...got.filter((f) => addressedToMine(f)).map((f) => {
+        const t = frameToText(f, JSON.stringify(f));
+        return [...t].length > BODY_CAP ? [...t].slice(0, BODY_CAP).join("") + "…" : t;
+      })
+    ];
     const cut = count > got.length;
     const head = L(
-      `Побудка: кадров ${count}` + (expected ? ` (ожидало в очереди: ${expected})` : "") + (cut ? `, здесь первые ${got.length}, не вошло ${count - got.length}` : "") + ' — пришли одной пачкой; разбери все, а не последний: полностью и не вошедшее — iskron_channel(action="history", view="log").' + (direct ? ` Прямых слов ${direct} — не здесь: каждое пришло отдельно и целиком.` : ""),
-      `Wake-up: ${count} frames` + (expected ? ` (waiting in the queue: ${expected})` : "") + (cut ? `, the first ${got.length} here, ${count - got.length} left out` : "") + ' — they came as one batch; go through all of them, not the last one: in full and the rest — iskron_channel(action="history", view="log").' + (direct ? ` ${direct} direct messages are not here: each came on its own and whole.` : "")
+      `Побудка: кадров ${count}` + (expected ? ` (ожидало в очереди: ${expected})` : "") + (cut ? `, здесь первые ${got.length}, не вошло ${count - got.length}` : "") + ' — адресованные месту — текстом, прочие — счётом; полностью и не вошедшее — iskron_channel(action="history", view="log").' + (direct ? ` Прямых слов ${direct} — не здесь: каждое пришло отдельно и целиком.` : ""),
+      `Wake-up: ${count} frames` + (expected ? ` (waiting in the queue: ${expected})` : "") + (cut ? `, the first ${got.length} here, ${count - got.length} left out` : "") + ' — those addressed to the seat as text, the rest by count; in full and the rest — iskron_channel(action="history", view="log").' + (direct ? ` ${direct} direct messages are not here: each came on its own and whole.` : "")
     );
     emit2(
       {
@@ -3263,10 +3335,13 @@ var StaleBurst = class {
       const all2 = this.burst.splice(0);
       if (!all2.length) return;
       const frames = all2.slice(0, STALE_BURST_KEEP);
-      const bodies = frames.map((f) => {
-        const t = frameToText(f, JSON.stringify(f));
-        return [...t].length > BODY_CAP2 ? [...t].slice(0, BODY_CAP2).join("") + "…" : t;
-      });
+      const bodies = [
+        ...caseCountLines(frames),
+        ...frames.filter((f) => addressedToMine(f)).map((f) => {
+          const t = frameToText(f, JSON.stringify(f));
+          return [...t].length > BODY_CAP2 ? [...t].slice(0, BODY_CAP2).join("") + "…" : t;
+        })
+      ];
       flush(
         {
           kind: "stale",
@@ -3274,8 +3349,8 @@ var StaleBurst = class {
           // Сторож метит отданным и то, что пачка назвала числом: иначе оно вернётся с повтором (#5831).
           ...all2.length > frames.length ? { unshown: all2.slice(frames.length).flatMap((f) => deliveredKeys(f)) } : {},
           text: L(
-            `Лежалых кадров: ${all2.length}` + (all2.length > frames.length ? `, здесь первые ${frames.length}, не вошло ${all2.length - frames.length}` : "") + ' — принятое, пока место не слушали, или повтор службы после пересборки сессии; хода не стоят, но прочти; полностью и не вошедшее — iskron_channel(action="history").',
-            `Stale frames: ${all2.length}` + (all2.length > frames.length ? `, the first ${frames.length} here, ${all2.length - frames.length} left out` : "") + ' — taken while the seat was not listening, or the service repeating after a session rebuild; they are not worth a turn, but read them; in full and the rest — iskron_channel(action="history").'
+            `Лежалых кадров: ${all2.length}` + (all2.length > frames.length ? `, здесь первые ${frames.length}, не вошло ${all2.length - frames.length}` : "") + ' — принятые, пока место не слушали, или повтор службы после пересборки сессии; адресованные месту — текстом, прочие — счётом; полностью и не вошедшее — iskron_channel(action="history").',
+            `Stale frames: ${all2.length}` + (all2.length > frames.length ? `, the first ${frames.length} here, ${all2.length - frames.length} left out` : "") + ' — taken while the seat was not listening, or the service repeating after a session rebuild; those addressed to the seat as text, the rest by count; in full and the rest — iskron_channel(action="history").'
           ) + "\n\n" + bodies.join("\n\n")
         },
         all2
@@ -3389,24 +3464,30 @@ var RoomBatch = class {
     const got = this.held.splice(0);
     const emit2 = this.emit;
     if (!got.length || !emit2) return;
-    const of = got.length;
-    const frames = got.map((h) => h.frame);
-    const fold = foldAsides(frames);
-    emit2({ kind: "note", text: batchHead(frames), batch: { at: 0, of } });
-    got.forEach(
-      (h, i) => emit2({
-        kind: "frame",
-        raw: h.raw,
-        frame: h.frame,
-        batch: {
-          at: i + 1,
-          of,
-          ...fold[i] === null ? { folded: true } : roomKind(h.frame)?.aside ? { fold: fold[i] ?? 1 } : {}
-        }
-      })
-    );
+    emitBatch(got, emit2);
   }
 };
+function emitBatch(got, emit2) {
+  const of = got.length;
+  const frames = got.map((h) => h.frame);
+  const fold = foldAsides(frames);
+  emit2({ kind: "note", text: batchHead(frames), batch: { at: 0, of } });
+  got.forEach(
+    (h, i) => emit2({
+      kind: "frame",
+      raw: h.raw,
+      frame: h.frame,
+      batch: {
+        at: i + 1,
+        of,
+        ...fold[i] === null ? { folded: true } : roomKind(h.frame)?.aside ? { fold: fold[i] ?? 1 } : {}
+      }
+    })
+  );
+}
+function countOnly(frame2) {
+  return frame2?.type === "message" && !!byKind(frame2) && !addressedToMine(frame2);
+}
 function noteRoomKind(frame2) {
   const rk = roomKind(frame2);
   if (rk && !rk.known)
@@ -3428,7 +3509,7 @@ function batchForWatchdogs(d, raw, frame2, emit2) {
       });
     }
   }
-  if ((!human || rk?.phase || rk?.aside) && byKind(frame2) && stackOf(frame2) === "batch") {
+  if ((!human || rk?.phase || rk?.aside) && byKind(frame2) && (!addressedToMine(frame2) || stackOf(frame2) === "batch")) {
     d.roomBatch.add(raw, frame2, emit2);
     return true;
   }
@@ -3697,8 +3778,13 @@ var Door = class {
             seen: this.seenPath
           }) + "\n"
         );
+        const counts = backlog.filter(
+          (h) => countOnly(h.frame)
+        );
+        const put = (ev) => void sock.write(JSON.stringify(ev) + "\n");
+        if (counts.length) emitBatch(counts, put);
         for (const { raw, frame: frame2 } of backlog) {
-          sock.write(JSON.stringify({ kind: "frame", raw, frame: frame2 }) + "\n");
+          if (!countOnly(frame2)) put({ kind: "frame", raw, frame: frame2 });
         }
         const late = this.hooks.lateEvent();
         if (late) sock.write(JSON.stringify(late) + "\n");
@@ -4418,6 +4504,7 @@ function deliverTo(d, raw, frame2, full) {
   const id = full?.type === "message" && typeof full.id === "string" ? full.id : "";
   const evKey = redundantCopy(full, d.ring, d.seen, seenPath, d.stale);
   if (evKey) return log(`frame ${id || "?"} carries ${evKey} already offered — not raised`);
+  if (full?.type === "message") markAddressed(full, seenPath, d.seen);
   const again = isDelivered(id ? [id] : [], d.seen, seenPath);
   if (full?.type === "message" && full.stale === true && !isDirectWord(full))
     return again ? log(`stale frame ${id} already delivered — dropped`) : d.stale.note(full, (ev2, all2) => {
@@ -4426,7 +4513,7 @@ function deliverTo(d, raw, frame2, full) {
       d.broadcast(ev2);
       notify("info", keyed(d, ev2));
     });
-  const text = full === frame2 ? raw : JSON.stringify(full);
+  const text = full === frame2 && !full?.addressed ? raw : JSON.stringify(full);
   const hello = full?.type === "hello";
   for (const x of hello ? doors() : [d]) x.push(text, full);
   if (hello) for (const w of [...H2.helloWaiters]) w(full);
@@ -5615,9 +5702,14 @@ function installCrashWords() {
     (e) => log(`unhandled rejection: ${e?.stack || String(e)}`)
   );
 }
-function fullBridgeSigint() {
+function fullBridgeSigint(leave) {
   let interrupted = false;
   return () => {
+    if (CFG.satellite && leave && !interrupted) {
+      interrupted = true;
+      void leave("SIGINT");
+      return;
+    }
     const addr = statusAddress();
     releaseStanding("SIGINT");
     if (interrupted) process.exit(0);
@@ -5645,6 +5737,66 @@ function startEngine(cfg, opts = {}) {
 
 // js/bridge/session.ts
 import { createInterface as createInterface2 } from "node:readline";
+
+// js/bridge/caseexit.ts
+var LEAVE_CAP_MS = Number(process.env.ISKRON_CASE_LEAVE_MS) || 1500;
+var joined = scoped(() => /* @__PURE__ */ new Map());
+var roomNo = (room) => room.replace(/^[#№]\s*/, "");
+function noteCaseEntry(name, args, reply2) {
+  if (reply2.result?.isError || name !== "iskron_case" && name !== "iskron_room") return;
+  const a = args ?? {};
+  if (a.action !== "join" && a.action !== "leave") return;
+  const room = typeof a.room === "string" ? a.room.trim() : "";
+  if (!room || a.action === "join" && room.startsWith("-")) return;
+  const realm = typeof a.realm === "string" ? a.realm : void 0;
+  const no = roomNo(room);
+  for (const [k, c] of joined)
+    if (roomNo(c.room) === no && !otherRealm(c.realm, realm)) joined.delete(k);
+  if (a.action === "join") joined.set(`${realm ? canonRealm(realm) : ""}#${no}`, { realm, room });
+}
+async function leaveJoinedCases() {
+  if (!CFG.satellite || !joined.size) return;
+  const cases = [...joined.values()];
+  joined.clear();
+  const leaves = cases.map(async (c) => {
+    try {
+      const r = await callTool("iskron_case", { action: "leave", ...c });
+      log(
+        r.isError ? `could not leave case ${c.room} at the run's end: ${r.text.slice(0, 120)}` : `left case ${c.room} at the run's end (#6573)`
+      );
+    } catch (e) {
+      log(`could not leave case ${c.room} at the run's end: ${e.message}`);
+    }
+  });
+  if (!await underCap(Promise.allSettled(leaves)))
+    log(
+      `case leave at the run's end exceeded ${LEAVE_CAP_MS} ms — the place goes, the rest lapse by term`
+    );
+}
+var satellitePlaces = () => CFG.satellite ? [state.standing, ...extraPlaces().map((p) => p.standing)].filter(
+  (s2) => !!s2?.name
+) : [];
+async function revokeSatellitePlaces(places) {
+  if (!places.length) return;
+  const revokes = places.map(
+    (s2) => callTool("iskron_channel", { action: "revoke", realm: s2.realm, karta: s2.karta, standing: s2.name }).then(
+      (r) => log(
+        r.isError ? `could not revoke ${s2.name} at the run's end: ${r.text.slice(0, 120)}` : `revoked ${s2.name} in ${s2.realm} at the run's end (#6593)`
+      )
+    ).catch((e) => log(`could not revoke ${s2.name} at the run's end: ${e.message}`))
+  );
+  if (!await underCap(Promise.allSettled(revokes)))
+    log(
+      `revoke at the run's end exceeded ${LEAVE_CAP_MS} ms — the place lapses by the channel's term`
+    );
+}
+async function underCap(work) {
+  let timer;
+  const cap = new Promise((r) => timer = setTimeout(() => r("cap"), LEAVE_CAP_MS));
+  const got = await Promise.race([work, cap]);
+  clearTimeout(timer);
+  return got !== "cap";
+}
 
 // js/bridge/satellite.ts
 import { randomBytes as randomBytes3 } from "node:crypto";
@@ -7344,6 +7496,7 @@ async function deliverOne(msg) {
             );
           }
         }
+        noteCaseEntry(msg.params?.name, msg.params?.arguments, held2);
         emit(withNotice(absorbRevokeReply(msg, absorbChannelReply(msg, held2))));
       }
       return;
@@ -7508,7 +7661,10 @@ function openIn(io, origin, scope) {
     debug(`${why} — winding down`);
     const handover = !!origin && handoverUnderway();
     const addr = statusAddress();
+    const places = handover ? [] : satellitePlaces();
     releaseStanding(why, CFG.satellite);
+    if (!handover) await leaveJoinedCases();
+    await revokeSatellitePlaces(places);
     if (addr && !handover) await publishStatusTo(addr.url, "", 3e3).catch(() => {
     });
     if (handover) await Promise.race([Promise.allSettled([...pending2]), sleep(HANDOVER_WAIT_MS)]);
@@ -8329,7 +8485,7 @@ function thinMain(argv2) {
   };
   rl.on("close", () => void leave("stdin closed, the harness is gone"));
   process.on("SIGTERM", () => void leave("SIGTERM"));
-  const localSigint = fullBridgeSigint();
+  const localSigint = fullBridgeSigint(leave);
   let interrupted = false;
   process.on("SIGINT", () => {
     if (mode === "local") return localSigint();
@@ -8352,7 +8508,7 @@ function bridgeMain(argv2) {
   const session = openSession({ input: process.stdin, output: process.stdout });
   void session.ended.then(() => process.exit(0));
   process.on("SIGTERM", () => void session.leave("SIGTERM"));
-  process.on("SIGINT", fullBridgeSigint());
+  process.on("SIGINT", fullBridgeSigint(session.leave));
   installCrashWords();
 }
 
@@ -8667,6 +8823,15 @@ function runWatchdogCodex(argv2) {
     }
   }
   let replay = 0;
+  let pend = [];
+  const withPend = (text, ids) => {
+    const got = pend;
+    pend = [];
+    void deliver2([...got.length ? [batchHead(got.map((g) => g.frame))] : [], text].join("\n"), [
+      ...got.flatMap((g) => g.ids),
+      ...ids
+    ]);
+  };
   attach(target.path, {
     onEvent: (ev) => {
       switch (ev.kind) {
@@ -8679,7 +8844,15 @@ function runWatchdogCodex(argv2) {
             return note("кадр без id из кольца — пометить нечем, в тред не кладу повторно");
           if (typeof ev.frame?.id === "string" && seen.has(ev.frame.id))
             return note(`кадр ${ev.frame.id} уже вложен — в тред не кладу повторно`);
-          void deliver2(frameToText(ev.frame, ev.raw ?? ""), deliveredKeys(ev.frame));
+          if (ev.batch && ev.frame && !addressedToMine(ev.frame)) {
+            pend.push({
+              frame: ev.frame,
+              ids: [...deliveredKeys(ev.frame), ...ev.frame.id ? [ev.frame.id] : []]
+            });
+            pend.splice(0, Math.max(0, pend.length - 500));
+            return;
+          }
+          withPend(frameToText(ev.frame, ev.raw ?? ""), deliveredKeys(ev.frame));
           break;
         }
         case "stale":
@@ -8737,6 +8910,7 @@ var plural = (n) => {
   return `${n} ${word}`;
 };
 var ALONE_GAP_MS = Number(process.env.ISKRON_WATCHDOG_ALONE_MS) || 300;
+var RIDERS_MAX = 100;
 var queue = Promise.resolve();
 var lastAt = 0;
 var lastAlone = false;
@@ -8777,6 +8951,20 @@ function runWatchdog(argv2) {
   const queued = /* @__PURE__ */ new Set();
   const folded = [];
   const cases = /* @__PURE__ */ new Set();
+  let head = "";
+  let fresh = false;
+  const riders = [];
+  const riderMarks = [];
+  const hold = () => {
+    if (head) riders.push(head);
+    riders.splice(0, Math.max(0, riders.length - RIDERS_MAX));
+    head = "";
+  };
+  const take = () => {
+    const lines = [...riders.splice(0), ...head ? [head] : []];
+    head = "";
+    return { lines, marks: riderMarks.splice(0) };
+  };
   attach(target.path, {
     onEvent: (ev) => {
       switch (ev.kind) {
@@ -8800,24 +8988,49 @@ function runWatchdog(argv2) {
             queued.delete(id);
           };
           if (ev.batch) {
-            if (ev.batch.at === 1) cases.clear();
+            if (ev.batch.at === 1) {
+              cases.clear();
+              fresh = false;
+            }
+            if (!again) fresh = true;
+            const last = ev.batch.at >= ev.batch.of;
+            if (last && !fresh) head = "";
             if (ev.batch.folded) {
               if (!again) folded.push(mark);
+              if (last) hold();
               break;
             }
             const within = folded.splice(0);
             const all2 = () => [...within, mark].forEach((m) => m());
+            if (!addressedToMine(f)) {
+              riderMarks.push(all2);
+              if (last) hold();
+              break;
+            }
             const first2 = !cases.has(caseKey(f));
             cases.add(caseKey(f));
-            if (!again) out2(wrapLines(batchLine(f, ev.batch.fold, first2)), false, all2);
-            else within.forEach((m) => m());
+            if (!again) {
+              const r = take();
+              out2(
+                [...r.lines, ...wrapLines(batchLine(f, ev.batch.fold, first2))],
+                false,
+                () => [...r.marks, all2].forEach((m) => m())
+              );
+            } else all2();
+            if (last) hold();
             break;
           }
-          if (!again) out2(wrapLines(frameToText(f, ev.raw ?? "")), true, mark);
+          if (!again) {
+            const r = take();
+            if (r.lines.length) out2(r.lines, false, () => r.marks.forEach((m) => m()));
+            out2(wrapLines(frameToText(f, ev.raw ?? "")), true, mark);
+          }
           break;
         }
         case "note":
-          log2(ev.text ?? "");
+          if (ev.batch)
+            head = ev.text ?? "";
+          else log2(ev.text ?? "");
           break;
         case "stale":
           out2(wrapLines(ev.text ?? ""), false, () => {
@@ -8865,6 +9078,17 @@ function runWatchdogExit(argv2) {
   let head = "";
   const folded = [];
   const cases = /* @__PURE__ */ new Set();
+  const riders = [];
+  const riderIds = [];
+  const hold = () => {
+    if (head) riders.push(head);
+    riders.splice(0, Math.max(0, riders.length - 100));
+    head = "";
+  };
+  const leave = () => {
+    for (const k of [...riderIds.splice(0), ...folded.splice(0)]) noteSeen(seenPath, k, seen);
+    process.exit(0);
+  };
   attach(target.path, {
     onEvent: (ev) => {
       switch (ev.kind) {
@@ -8875,7 +9099,17 @@ function runWatchdogExit(argv2) {
           const last = !ev.batch || ev.batch.at >= ev.batch.of;
           if (seen.has(id)) {
             note2(`кадр ${id} уже отдан прежним взводом — не повод будить`);
-            if (last && woke) process.exit(0);
+            if (last) hold();
+            if (last && woke) leave();
+            return;
+          }
+          if (ev.batch && !addressedToMine(ev.frame)) {
+            riderIds.push(id, ...folded.splice(0));
+            if (last) {
+              hold();
+              if (woke) leave();
+              note2("пачка без адресованных месту — счёт ждёт ближайшей побудки");
+            }
             return;
           }
           if (ev.batch?.at === 1) cases.clear();
@@ -8883,7 +9117,7 @@ function runWatchdogExit(argv2) {
             folded.push(id);
             return;
           }
-          if (ev.batch && head) wake(head);
+          for (const s2 of [...riders.splice(0), ...head ? [head] : []]) wake(s2);
           head = "";
           const key = ev.frame ? caseKey(ev.frame) : "";
           const first2 = !cases.has(key);
@@ -8891,7 +9125,7 @@ function runWatchdogExit(argv2) {
           wake(
             !ev.frame ? ev.raw ?? "" : ev.batch ? batchLine(ev.frame, ev.batch.fold, first2) : frameToText(ev.frame, ev.raw ?? "")
           );
-          for (const k of folded.splice(0)) noteSeen(seenPath, k, seen);
+          for (const k of [...riderIds.splice(0), ...folded.splice(0)]) noteSeen(seenPath, k, seen);
           noteSeen(seenPath, id, seen);
           const evKey = eventKeyOf(ev.frame);
           if (evKey) noteSeen(seenPath, evKey, seen);

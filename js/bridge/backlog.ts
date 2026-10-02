@@ -7,8 +7,9 @@
 // одно событие kind=backlog с кадрами по received_at, телами (обрезанными,
 // как у лежалых) и указанием на history за остальным. Окно у каждого места
 // своё (door.ts, #5838): пачка одного графа метится в .seen своего места.
+import { addressedToMine } from "../shared/addressed.ts";
 import { type Frame, isDirectWord } from "../shared/channel.ts";
-import { frameToText } from "../shared/frame-text.ts";
+import { caseCountLines, frameToText } from "../shared/frame-text.ts";
 import { L } from "../shared/lang.ts";
 import { type ChannelEvent } from "./door.ts";
 
@@ -76,22 +77,29 @@ export class Backlog {
     const emit = this.flush;
     this.flush = null;
     if (!got.length || !emit) return;
-    const bodies = got.map((f) => {
-      const t = frameToText(f, JSON.stringify(f));
-      return [...t].length > BODY_CAP ? [...t].slice(0, BODY_CAP).join("") + "…" : t;
-    });
+    // Закон #6574: адресованные месту — текстом, прочие записи дел — счётом
+    // по одному на дело; поручений отвечать конверт не несёт.
+    const bodies = [
+      ...caseCountLines(got),
+      ...got
+        .filter((f) => addressedToMine(f))
+        .map((f) => {
+          const t = frameToText(f, JSON.stringify(f));
+          return [...t].length > BODY_CAP ? [...t].slice(0, BODY_CAP).join("") + "…" : t;
+        }),
+    ];
     const cut = count > got.length;
     const head = L(
       `Побудка: кадров ${count}` +
         (expected ? ` (ожидало в очереди: ${expected})` : "") +
         (cut ? `, здесь первые ${got.length}, не вошло ${count - got.length}` : "") +
-        " — пришли одной пачкой; разбери все, а не последний: " +
+        " — адресованные месту — текстом, прочие — счётом; " +
         'полностью и не вошедшее — iskron_channel(action="history", view="log").' +
         (direct ? ` Прямых слов ${direct} — не здесь: каждое пришло отдельно и целиком.` : ""),
       `Wake-up: ${count} frames` +
         (expected ? ` (waiting in the queue: ${expected})` : "") +
         (cut ? `, the first ${got.length} here, ${count - got.length} left out` : "") +
-        " — they came as one batch; go through all of them, not the last one: " +
+        " — those addressed to the seat as text, the rest by count; " +
         'in full and the rest — iskron_channel(action="history", view="log").' +
         (direct ? ` ${direct} direct messages are not here: each came on its own and whole.` : ""),
     );

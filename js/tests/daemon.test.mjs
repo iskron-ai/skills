@@ -251,6 +251,40 @@ test("two sessions of one daemon at once keep their places, output, writes and s
   });
 });
 
+// Exit from a case by outcome (#6573) is the session's: two satellites in one
+// daemon each leave only the cases their own run joined.
+test("two satellites of one daemon: the end of one run leaves its own cases, not the neighbour's", async () => {
+  await withFake(async ({ fake, bridge }) => {
+    const CALLER = "host.repo.opus-5";
+    await fake.control({ places: [{ karta: "931", name: CALLER, listening: true }] });
+    const s1 = bridge({}, ["--satellite"]);
+    const s2 = bridge({}, ["--satellite"]);
+    await Promise.all([handshake(s1), handshake(s2)]);
+    const sat = { realm: "nks-dev", karta: 931, satellite_of: `@tester:${CALLER}` };
+    for (const s of [s1, s2]) assert.ok(!(await stand(s, sat)).result?.isError, s.stderr);
+    const join = (s, room) =>
+      s.request("tools/call", {
+        name: "iskron_case",
+        arguments: { realm: "nks-dev", action: "join", room },
+      });
+    await join(s1, "№11");
+    await join(s2, "№22");
+    const leaves = () =>
+      fake.state.calls
+        .filter((c) => c.name === "iskron_case" && c.arguments.action === "leave")
+        .map((c) => c.arguments.room);
+    const end = (s) =>
+      new Promise((r) => {
+        s.proc.once("exit", r);
+        s.proc.stdin.end();
+      });
+    await end(s1);
+    assert.deepEqual(leaves(), ["№11"], `the first run leaves its own case only:\n${s1.stderr}`);
+    await end(s2);
+    assert.deepEqual(leaves(), ["№11", "№22"], `the second run leaves its own:\n${s2.stderr}`);
+  });
+});
+
 test("the daemon dies mid-call: the taken call gets a verdict, the call it never took goes again — no error", async () => {
   await withFake(async ({ fake, dir, bridge }) => {
     const b = bridge({});

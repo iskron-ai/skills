@@ -1,3 +1,4 @@
+import { addressedToMine } from "./addressed.ts";
 import { classifyOrigin, type Frame } from "./channel.ts";
 import { L } from "./lang.ts";
 import { phrase, roomKind } from "./room-kinds.ts";
@@ -7,11 +8,20 @@ const rec = (v: unknown): Rec => (v && typeof v === "object" ? (v as Rec) : {});
 const idOf = (v: unknown): string =>
   typeof v === "number" || (typeof v === "string" && v) ? String(v) : "";
 
-/** Роды записи дела, под которыми стоит строка ответа. */
-const ANSWERABLE = new Set(["said", "body", "invite", "objection", "late_objection"]);
-
 /** Зачин дела в строке — сколько знаков. */
 const ZACHIN = 40;
+
+/** Дела кадра из пачки — по делу, в порядке первого появления. */
+function casesOf(frames: Frame[]): Frame[][] {
+  const by = new Map<string, Frame[]>();
+  for (const f of frames) {
+    const key = caseKey(f) || idOf((f as Rec).id) || "?";
+    const got = by.get(key);
+    if (got) got.push(f);
+    else by.set(key, [f]);
+  }
+  return [...by.values()];
+}
 
 /** Дело кадра: номер (seq, иначе id), зачин, граф; null — кадр не из дела. */
 function caseOf(frame: Frame): { room: string; zachin: string; realm: string } | null {
@@ -71,9 +81,10 @@ function tail(frame: Frame, withReply: boolean): string {
 /**
  * Кадр стояния — коротко в ход агента, одинаково в pi, OpenCode и сторожах
  * (граф nks-dev: #6081, слово владельца — кадр уже проверен мостом): первая
- * строка — дело, запись, род словами и кто; следом текст один раз; последней —
- * вызов ответа. Провенанс и конверт сырым JSON не печатаются: целиком кадр
- * читается history дела или канала.
+ * строка — дело, запись, род словами и кто; следом текст один раз. Провенанс
+ * и конверт сырым JSON не печатаются: целиком кадр читается history дела или
+ * канала. Закон #6574: запись дела, не адресованная месту, текстом в ход не
+ * идёт — числом и указанием (caseCountLine); доставка не велит отвечать.
  */
 export function frameToText(frame: Frame | null | undefined, raw: string): string {
   if (!frame) return raw;
@@ -82,6 +93,7 @@ export function frameToText(frame: Frame | null | undefined, raw: string): strin
   const text = textOf(frame);
   const c = caseOf(frame);
   if (c) {
+    if (!addressedToMine(frame)) return caseCountLine([frame]);
     const rk = roomKind(frame);
     const line = rec(f.line);
     const entry = idOf(f.entry_id) || idOf(line.entry_id);
@@ -97,28 +109,11 @@ export function frameToText(frame: Frame | null | undefined, raw: string): strin
       `${by ? ` — ${by}` : ""}${tail(frame, withReply)}`;
     const lines = [head];
     if (text && !words.includes(text.trim())) lines.push(text);
-    // Ответ — у слова и записи, ждущей слова; строки гроссбуха, входы, узлы его не ждут,
-    // закрытие несёт свой ход (object) в словах.
-    const answerable = !rk || ANSWERABLE.has(rk.kind);
-    if (answerable && origin !== "platform" && c.realm && entry) {
-      const args = `realm="${c.realm}", action="say", room="№${c.room}", in_reply_to=${entry}`;
-      lines.push(phrase("answer_case", { args }));
-    }
     return lines.join("\n");
   }
-  // Прямое слово, побудка, событие графа.
-  const p = frame.provenance ?? {};
-  const id = idOf(frame.id);
+  // Прямое слово, побудка, событие графа — без поручения отвечать (#6574).
   const lines = [`${whoOf(frame, true) || "?"}${tail(frame, true)}`];
   if (text) lines.push(text);
-  if (origin !== "platform" && id && (p.from_standing || p.from_karta_seq != null)) {
-    const karta = p.from_karta_seq ?? p.user_karta_seq;
-    const args =
-      `action="send"${frame.realm ? `, realm="${frame.realm}"` : ""}` +
-      `${karta != null ? `, karta=${karta}` : ""}` +
-      `${p.from_standing ? `, standing="${p.from_standing}"` : ""}, in_reply_to="${id}"`;
-    lines.push(phrase("answer_send", { args }));
-  }
   return lines.join("\n");
 }
 
@@ -171,28 +166,53 @@ export function foldAsides(frames: Frame[]): (number | null)[] {
   return out;
 }
 
-/** Строки пачки со свёрткой адресных слов не мне; зачин дела — у первой его строки. */
+/** Строки пачки — только адресованные месту (#6574), текстом; прочие — счётом в шапке. */
 export function batchLines(frames: Frame[]): string[] {
-  const fold = foldAsides(frames);
   const seen = new Set<string>();
-  return frames.flatMap((f, i) => {
-    const run = fold[i];
-    if (run === null) return [];
+  return frames.flatMap((f) => {
+    if (!addressedToMine(f)) return [];
     const key = caseKey(f);
     const first = !seen.has(key);
     seen.add(key);
-    return [batchLine(f, roomKind(f)?.aside ? run : undefined, first)];
+    return [batchLine(f, undefined, first)];
   });
 }
 
-/** Шапка пачки дела: число кадров и как прочесть их целиком — в шапке, не в конце: обрезка режет хвост. */
-export function batchHead(frames: Frame[]): string {
-  return L(
-    `Дело: кадров ${frames.length} — накопились, не прерывая хода; ` +
-      `${batchPointer(frames)}; следом по строке на кадр.`,
-    `Case: ${frames.length} frames — gathered without interrupting the turn; ` +
-      `${batchPointer(frames)}; one line per frame follows.`,
+/**
+ * Строка счёта дела — закон #6574: сколько записей пришло, сколько из них
+ * месту, где читать целиком. Без текста и без поручений. frames — записи
+ * одного дела; указатель — от первой записи списка.
+ */
+export function caseCountLine(frames: Frame[]): string {
+  const c = frames.length ? caseOf(frames[0]) : null;
+  if (!c) return "";
+  const mineN = frames.filter((f) => addressedToMine(f)).length;
+  const head = caseHead(frames[0], true);
+  const yours = mineN
+    ? L(` — адресованные строками ниже; `, ` — yours in the lines below; `)
+    : L(` — адресованных месту нет; `, ` — none of them yours; `);
+  return (
+    L(
+      `${head}: записей ${frames.length}, тебе ${mineN}`,
+      `${head}: ${frames.length} records, yours ${mineN}`,
+    ) +
+    yours +
+    batchPointer(frames) +
+    "."
   );
+}
+
+/**
+ * Строки счёта пачки — по одной на дело (#6574), над всеми его записями: «тебе
+ * N» считает адресованные, что идут строками ниже, — счёт им не противоречит.
+ */
+export function caseCountLines(frames: Frame[]): string[] {
+  return casesOf(frames).map(caseCountLine).filter(Boolean);
+}
+
+/** Шапка пачки дела: счёт по делам и указание, где читать целиком (#6574), — в шапке, не в конце: обрезка режет хвост. */
+export function batchHead(frames: Frame[]): string {
+  return caseCountLines(frames).join("\n");
 }
 
 /**
