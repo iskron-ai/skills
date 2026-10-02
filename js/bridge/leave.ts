@@ -14,6 +14,7 @@
 //     место читалось бы слушающим при делателе, которого не разбудить;
 //     pi и OpenCode кадр получают уведомлением и глухими не бывают;
 //   • конец сессии: занятость снимается перед выходом (session.ts).
+import { scoped } from "../shared/scope.ts";
 import { resolveAgainstLed, unresolvedRefusal } from "./call.ts";
 import { notifiedClient } from "./client.ts";
 import { CFG } from "./config.ts";
@@ -46,10 +47,12 @@ const TICK_MS = Math.min(60_000, Math.max(200, Math.floor(DEAF_MS / 5)));
 /** Кадры этому харнесу доходят только через локального клиента моста. */
 const deafWithoutListener = (): boolean => !notifiedClient();
 
-/** Строка занятости, снятая уходом, — возвращается вместе с местом. */
-let keptStatus = "";
-/** Строки мест других графов, снятые тем же уходом, — каждая своему месту (#5838). */
-let keptBeside: { realm: string; text: string }[] = [];
+const K = scoped(() => ({
+  /** Строка занятости, снятая уходом, — возвращается вместе с местом. */
+  status: "",
+  /** Строки мест других графов, снятые тем же уходом, — каждая своему месту (#5838). */
+  beside: [] as { realm: string; text: string }[],
+}));
 
 /** Уйти с места: занятость снята, сокет закрыт, место цело. Возвращает слово о сделанном. */
 export async function leaveStanding(reason: string, byWord = false): Promise<string> {
@@ -63,13 +66,13 @@ export async function leaveStanding(reason: string, byWord = false): Promise<str
   const leaving = heldPlaces().map((p) => p.key);
   const parked = parkStanding(reason);
   if (!parked) return "мост места не держит — уходить неоткуда";
-  keptBeside = beside;
-  keptStatus = publishedStatus();
+  K.beside = beside;
+  K.status = publishedStatus();
   const st = await publishStatus("", undefined, true); // сокет закрыт у всех мест канала — и строка у всех
   // Снятая занятость остаётся в записи держания: мост, поднятый заново над
   // оставленным местом, вернёт её, только если возвращается та же сессия —
   // чужой сессии это слово прежнего держателя, и оно не публикуется (#6017).
-  if (st.ok && keptStatus) rememberStatus(keptStatus);
+  if (st.ok && K.status) rememberStatus(K.status);
   // Уход словом держателя держится: сторож слуха и возврат по каталогу или
   // ключу место не поднимают — только iskron_stand по имени (#6017).
   if (byWord) for (const k of leaving) markLeft(k, true);
@@ -112,17 +115,17 @@ async function leaveSatellite(reason: string): Promise<string> {
 export function returnToStanding(how: string): boolean {
   if (!resumeStanding()) return false;
   for (const p of heldPlaces()) markLeft(p.key, false); // на месте снова — пометка ухода словом снята
-  const text = `мост вернулся на место (${how}) — сокет открыт заново тем же адресом${keptStatus ? `, занятость «${keptStatus}» возвращена` : ""}`;
+  const text = `мост вернулся на место (${how}) — сокет открыт заново тем же адресом${K.status ? `, занятость «${K.status}» возвращена` : ""}`;
   log(text);
-  if (keptStatus) {
-    const line = keptStatus;
-    keptStatus = "";
+  if (K.status) {
+    const line = K.status;
+    K.status = "";
     void publishStatus(line).then((st) => {
       if (!st.ok) log(`busy line not restored after the return: ${st.body}`);
     });
   }
   // Каждое место рядом — своей строкой, не строкой основного (#5838).
-  for (const k of keptBeside.splice(0))
+  for (const k of K.beside.splice(0))
     void publishStatus(k.text, k.realm).then((st) => {
       if (!st.ok) log(`busy line of ${k.realm} not restored after the return: ${st.body}`);
     });

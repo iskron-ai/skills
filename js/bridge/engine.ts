@@ -1,7 +1,8 @@
 // Процессная часть движка моста — то, что живёт одно на процесс, а не на
-// сессию: конфиг, замки гранта на выходе, бодрствование токена, сверка
+// сессию: конфиг процесса, замки гранта на выходе, бодрствование токена, сверка
 // поставки с релизами. Полный мост зовёт её перед своей единственной сессией
-// (main.ts); тонкий мост — только когда идёт полным мостом в процессе (thin.ts).
+// (main.ts); тонкий мост — только когда идёт полным мостом в процессе (thin.ts);
+// демон машины — раз на свои многие сессии (daemon.ts).
 import { startTokenKeepalive } from "./auth.ts";
 import { BUILD } from "./build.ts";
 import { CFG, setConfig } from "./config.ts";
@@ -67,8 +68,11 @@ export function fullBridgeSigint(): () => void {
   };
 }
 
-/** Поднять процессную часть движка под этим конфигом. Один раз на процесс. */
-export function startEngine(cfg: Config): void {
+/**
+ * Поднять процессную часть движка под этим конфигом. Один раз на процесс.
+ * `freshness: false` — сверку с релизами ведёт хозяин сам (демон машины, daemon.ts).
+ */
+export function startEngine(cfg: Config, opts: { freshness?: boolean } = {}): void {
   setConfig(cfg);
   installAuthLockExitHook();
   installRefreshLockExitHook();
@@ -80,5 +84,6 @@ export function startEngine(cfg: Config): void {
   const proxy = proxyWord();
   if (proxy) log(proxy);
   startTokenKeepalive();
-  startFreshnessWatch(CFG.authDir, CFG.serverUrl); // отставание поставки — слово моста, не память человека
+  // отставание поставки — слово моста, не память человека
+  if (opts.freshness !== false) startFreshnessWatch(CFG.authDir, CFG.serverUrl);
 }

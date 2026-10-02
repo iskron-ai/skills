@@ -3,6 +3,7 @@
 // OpenCode) или только локальным сторожем (Claude Code, Codex), и чью запись
 // держания считать своей.
 import { HARNESS_VERSION_ENV, HOSTED_CLIENTS, NOTIFIED_CLIENTS } from "../shared/clients.ts";
+import { envOf } from "../shared/scope.ts";
 import { state } from "./transport.ts";
 
 const clientInfo = (): { name?: unknown; version?: unknown } | undefined =>
@@ -20,7 +21,7 @@ export function harnessName(): string {
  */
 export function harnessVersion(): string {
   const v = HOSTED_CLIENTS.has(harnessName())
-    ? process.env[HARNESS_VERSION_ENV]
+    ? envOf(HARNESS_VERSION_ENV) // окружение моста харнеса — у сессии демона не его
     : clientInfo()?.version;
   return typeof v === "string" && v.trim() ? v.trim() : "unknown";
 }

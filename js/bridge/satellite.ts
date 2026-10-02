@@ -31,6 +31,7 @@ import {
 import { join } from "node:path";
 
 import { L } from "../shared/lang.ts";
+import { scoped, sessionPid } from "../shared/scope.ts";
 import { type BoardEntry, nameOf, parseBoard } from "./board.ts";
 import { callTool as call, short } from "./call.ts";
 import { CFG } from "./config.ts";
@@ -71,8 +72,13 @@ const claimDir = (): string => join(CFG.authDir, "satellites");
 // в вызове пишут по-разному (@owner/slug, slug, rN) — заявка по нему разошлась бы.
 const claimFile = (name: string): string =>
   join(claimDir(), `${name.replace(/[^A-Za-z0-9._-]+/g, "_")}.claim`);
-/** Заявки этого процесса — снимаются уходом с места и выходом процесса. */
-const claims = new Set<string>();
+// Заявка пишется pid моста харнеса (shared/scope.ts sessionPid): у сессии демона
+// машины это pid тонкого моста, не демона — заявка живёт, пока жив её мост, и
+// две сессии одного демона друг другу имён не отдают.
+/** Заявки этой сессии — снимаются уходом с места и концом сессии. */
+const claims = scoped(() => new Set<string>());
+/** Все заявки процесса — файл → pid, которым записан: выход процесса снимает их все. */
+const allClaims = new Map<string, number>();
 let releaseOnExit = false;
 const LOCK_STALE_MS = 10_000;
 const LOCK_WAIT_MS = 3_000;
@@ -98,24 +104,35 @@ function claimName(name: string): boolean {
   } catch {
     // заявки нет
   }
-  if (pid && pid !== process.pid && alive(pid)) return false;
-  writeFileSync(file, `${process.pid}\n`, { mode: 0o600 });
-  if (!releaseOnExit) process.once("exit", releaseSatelliteClaims);
+  const me = sessionPid();
+  if (pid && pid !== me && alive(pid)) return false;
+  writeFileSync(file, `${me}\n`, { mode: 0o600 });
+  if (!releaseOnExit) process.once("exit", releaseAllClaims);
   releaseOnExit = true;
   claims.add(file);
+  allClaims.set(file, me);
   return true;
 }
 
+const dropClaim = (f: string, pid: number): void => {
+  try {
+    if (Number(readFileSync(f, "utf8").trim()) === pid) unlinkSync(f);
+  } catch {
+    // уже снята
+  }
+  allClaims.delete(f);
+};
+
 /** Снять заявки этого моста: место отпущено — имя свободно следующему прогону. */
 export function releaseSatelliteClaims(): void {
-  for (const f of claims) {
-    try {
-      if (Number(readFileSync(f, "utf8").trim()) === process.pid) unlinkSync(f);
-    } catch {
-      // уже снята
-    }
-  }
+  const me = sessionPid();
+  for (const f of claims) dropClaim(f, me);
   claims.clear();
+}
+
+/** Выход процесса: заявки всех его сессий. */
+function releaseAllClaims(): void {
+  for (const [f, pid] of [...allClaims]) dropClaim(f, pid);
 }
 
 const LOCK_OWNER = "owner";

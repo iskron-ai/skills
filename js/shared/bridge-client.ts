@@ -20,6 +20,9 @@ export function bridgeRuntime(): { bin: string; env: NodeJS.ProcessEnv } {
   return { bin: process.execPath, env: process.env };
 }
 
+/** Префикс id служебного хода клиента (строка запуска и т.п.): мост не считает его работой агента. */
+export const SERVICE_ID = "iskron-service-";
+
 /** Сколько мосту дают уйти самому после SIGTERM — дольше потолка публикации снятой занятости (3 с). */
 const STOP_GRACE_MS = 5000;
 
@@ -31,7 +34,10 @@ export class Bridge {
   private proc: ChildProcess | null = null;
   private buf = "";
   private nextId = 1;
-  private pending = new Map<number, { resolve: (v: any) => void; reject: (e: Error) => void }>();
+  private pending = new Map<
+    number | string,
+    { resolve: (v: any) => void; reject: (e: Error) => void }
+  >();
   private tail: string[] = [];
   private dead: Error | null = null;
   private readonly bin: string;
@@ -123,7 +129,8 @@ export class Bridge {
       } catch {
         continue; // не наш кадр — мост говорит по stderr, а не сюда
       }
-      if (typeof msg?.id !== "number") {
+      const service = typeof msg?.id === "string" && msg.id.startsWith(SERVICE_ID);
+      if (typeof msg?.id !== "number" && !service) {
         // Уведомление без id — слово моста: кадры стояния приходят так.
         if (typeof msg?.method === "string") this.onNotification(msg.method, msg.params);
         continue;
@@ -149,10 +156,11 @@ export class Bridge {
   request(
     method: string,
     params: unknown,
-    opts: { timeoutMs?: number; signal?: AbortSignal } = {},
+    opts: { timeoutMs?: number; signal?: AbortSignal; service?: boolean } = {},
   ): Promise<any> {
     if (this.dead) return Promise.reject(this.dead);
-    const id = this.nextId++;
+    // Служебный ход плагина или расширения — не работа агента (#6510): мост узнаёт его по id.
+    const id = opts.service ? `${SERVICE_ID}${this.nextId++}` : this.nextId++;
     return new Promise((res, rej) => {
       let timer: ReturnType<typeof setTimeout> | null = null;
       const settle = (fn: (v: any) => void) => (v: any) => {

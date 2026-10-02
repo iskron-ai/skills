@@ -78,11 +78,11 @@ async function hostEnv(): Promise<Record<string, string>> {
   return env;
 }
 
-/** Вызов тула мостом — для строки запуска. */
+/** Вызов тула мостом — для строки запуска: служебный ход, не работа агента (#6510). */
 const callVia =
   (b: Bridge): LaunchCall =>
   async (name, args) =>
-    textOrThrow(name, await b.request("tools/call", { name, arguments: args }));
+    textOrThrow(name, await b.request("tools/call", { name, arguments: args }, { service: true }));
 
 /**
  * Половина «тулы»: свои обработчики, своё состояние, свой отказ.

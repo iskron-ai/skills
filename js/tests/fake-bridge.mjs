@@ -163,7 +163,8 @@ process.stdin.on("data", (chunk) => {
     } catch {
       continue;
     }
-    if (typeof msg.id !== "number") continue; // notifications need no answer
+    // Notifications need no answer; a request's id is a number or a string (service moves: iskron-service-N).
+    if (typeof msg.id !== "number" && typeof msg.id !== "string") continue;
     // FB_INITS: a line per initialize received — how often a client re-handshakes.
     if (msg.method === "initialize" && process.env.FB_INITS)
       appendFileSync(process.env.FB_INITS, `${process.pid} ${Date.now()}\n`);
@@ -218,7 +219,7 @@ process.stdin.on("data", (chunk) => {
       if (process.env.FB_CALLS)
         appendFileSync(
           process.env.FB_CALLS,
-          JSON.stringify({ ...msg.params, pid: process.pid }) + "\n",
+          JSON.stringify({ ...msg.params, pid: process.pid, id: msg.id }) + "\n",
         );
       // FB_STAND_HELD: the place name an iskron_stand holds — said as «held» before
       // the answer, as the real bridge says it (js/bridge/hold.ts); a satellite

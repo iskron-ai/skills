@@ -5,10 +5,11 @@
 // уходит notifications/tools/list_changed, и он читает список заново.
 import { createHash } from "node:crypto";
 
+import { scoped } from "../shared/scope.ts";
 import { log } from "./streams.ts";
 import { type JsonRpcMessage } from "./types.ts";
 
-let served: string | null = null;
+const T = scoped(() => ({ served: null as string | null })); // у сессии харнеса — свой список
 
 /** Отпечаток по именам и схемам: описания мост дописывает сам, их различие — не перемена сервера. */
 export function toolsPrint(result: unknown): string | null {
@@ -23,7 +24,7 @@ export function toolsPrint(result: unknown): string | null {
 /** Харнесу отдан список (живой или из кэша): запомнить, что он теперь знает. */
 export function noteServedTools(result: unknown): void {
   const print = toolsPrint(result);
-  if (print) served = print;
+  if (print) T.served = print;
 }
 
 /**
@@ -34,10 +35,10 @@ export async function recheckTools(
   ask: () => Promise<JsonRpcMessage | null>,
   emit: (m: JsonRpcMessage) => void,
 ): Promise<void> {
-  if (!served) return; // харнес списка ещё не просил — сверять не с чем
+  if (!T.served) return; // харнес списка ещё не просил — сверять не с чем
   const fresh = toolsPrint((await ask().catch(() => null))?.result);
-  if (!fresh || fresh === served) return;
-  served = fresh;
+  if (!fresh || fresh === T.served) return;
+  T.served = fresh;
   log("tool list changed under the re-opened session — telling the harness (tools/list_changed)");
   emit({ jsonrpc: "2.0", method: "notifications/tools/list_changed" });
 }
