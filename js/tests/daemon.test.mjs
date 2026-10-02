@@ -1164,6 +1164,9 @@ test("SIGTERM of the daemon is not the agent leaving: the seat comes back and wr
     assert.ok(!r.result?.isError, textOf(r));
     const [first] = await waitFor("the daemon", () => daemonPids(dir)[0] && daemonPids(dir));
     process.kill(first, "SIGTERM");
+    // Сигнал доходит не сразу: запись, ушедшая раньше, принята бы ещё старой сессией
+    // и ответила бы до обрыва — воротами она стала бы лишь случаем.
+    await waitFor("the old daemon gone", () => !alive(first), 30_000);
     const w = await write(a, "after-term"); // ворота: ждёт возврата места в новой сессии
     assert.ok(w.result && !w.result.isError, JSON.stringify(w));
     assert.equal(
