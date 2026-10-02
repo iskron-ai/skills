@@ -656,6 +656,15 @@ test("iskron_stand: a place listening under another bridge is registered, never 
   const first = await bridge.call("tools/call", { name: "iskron_stand", arguments: args });
   const text = textOf(first);
   assert.match(text, /место уже слушает другой держатель .* — только register/, text);
+  // The answer leads forward, not to the human (#6594): the holder is named,
+  // hearing comes by a call without name, the holder is asked in one word.
+  assert.match(text, /другой держатель — @tester:proba —/, `the holder is named:\n${text}`);
+  assert.match(text, /Дальше без человека: слух здесь — iskron_stand без name/, text);
+  assert.match(
+    text,
+    /iskron_channel\(action="send", realm="nks-dev", karta="931", standing="@tester:proba", text=/,
+    text,
+  );
   assert.match(text, /Слух — у другого держателя/, text);
   assert.ok(!/Слушать:/.test(text), "no watchdog command is handed out without a local holder");
   assert.match(text, /Команда сторожа не выдаётся/, text);

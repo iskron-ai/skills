@@ -2468,6 +2468,31 @@ test("iskron/resume names a place of a pre-session build in the directory instea
   assert.equal(fake.state.counts.status_posts, posts, "no busy line");
 });
 
+// The same pre-session record, but its bridge is alive in another session: the
+// place is not offered back by name — that call would give attribution only,
+// no hearing, and the agent would stop to ask the human (graph nks-dev: #6594).
+test("iskron/resume does not offer back a pre-session place whose socket a live bridge of another session holds", async (t) => {
+  const { fake, dir, bridge } = await connected(t);
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const cwd = mkdtempSync(join(tmpdir(), "iskron-legacy-live-"));
+  await bridge.call("tools/call", 5, {
+    name: "iskron_stand",
+    arguments: { realm: "nks-dev", karta: 931, name: "proba", cwd },
+  });
+  assert.equal(holdOf(join(dir, "standings"), "proba--931--nks-dev")?.session, undefined);
+  const next = startBridge(fake.mcpUrl, dir);
+  t.after(() => next.stop());
+  assert.ok((await next.call("initialize", 1, INIT)).result);
+  const r = await next.call("iskron/resume", 2, { cwd, session: "ses-novaya" });
+  assert.equal(r.result?.resumed, false, JSON.stringify(r));
+  assert.equal(
+    r.result.legacy,
+    undefined,
+    `the live neighbour's place is not offered: ${r.result.word}`,
+  );
+  assert.doesNotMatch(r.result.word, /вернуть: iskron_stand\(name="proba"\)/, r.result.word);
+});
+
 // A bridge no session was named to must not inherit the session of the record
 // it rewrites: the id belongs to the process that was told it, not to the file.
 test("a bridge with no named session does not carry the previous holder's session into the record", async (t) => {

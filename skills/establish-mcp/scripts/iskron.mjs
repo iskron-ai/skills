@@ -6505,7 +6505,7 @@ function recordsFor(sel) {
       const stoodHere = key === led || !!sel.session && fresh.session === sel.session;
       if (keyed2) byKey.push(fresh);
       else if (stoodHere) byCwd.push(fresh);
-      else if (!fresh.session) legacy.push(fresh.name);
+      else if (!fresh.session) legacy.push(fresh);
     } catch {
     }
   }
@@ -6517,6 +6517,15 @@ function recordsFor(sel) {
   };
 }
 var legacyWord = (names2) => names2.map((n) => `есть место прежней сборки без сессии: ${n} — вернуть: iskron_stand(name="${n}")`).join("; ");
+async function freeLegacy(recs) {
+  const free = [];
+  for (const r of recs) {
+    const key = keyOf(r.realm, r.karta, r.name);
+    if (!holdsKey(key) && await localSocketAlive(localSocketPathOf(key))) continue;
+    free.push(r.name);
+  }
+  return free;
+}
 async function backToParked(key, how) {
   if (!returnToStanding(how)) return { resumed: false, key, word: "возврат на место не удался" };
   const hello = await awaitHello(4e3);
@@ -6528,8 +6537,9 @@ async function backToParked(key, how) {
   };
 }
 async function resumeBy(sel, register = true) {
-  const { own: recs, sameDir, legacy, left } = recordsFor(sel);
+  const { own: recs, sameDir, legacy: legacyRecs, left } = recordsFor(sel);
   if (!recs.length) {
+    const legacy = await freeLegacy(legacyRecs);
     const said = [
       `своей записи держания ${sel.key ? `с ключом ${sel.key}` : `для каталога ${sel.cwd ?? "?"}`} нет`
     ];
@@ -6832,9 +6842,10 @@ var SW = {
     "слушающим доска ещё читает прежний мост этого каталога, а он мёртв (его сокет не отвечает, запись держания цела) — только register; как только доска его отпустит (закрытый сокет прежние серверы держали «слушающим» около минуты; с честной живостью, по слову контура, — почти сразу), тот же вызов вернёт место с диска тем же адресом — повтори",
     "the board still reads this directory's former bridge as listening, and it is dead (its socket does not answer, the holding record is intact) — register only; once the board lets it go (older servers kept a closed socket «listening» about a minute; with honest liveness, by the contour's word, almost at once) the same call returns the seat from disk at the same address — repeat it"
   ),
-  howOtherHolder: () => L(
-    "место уже слушает другой держатель (при явном name — возможно, другая машина или человек) — только register: атрибуция есть, слух — у него; нужен слух здесь — возьми другое имя (name); вытеснить его (take=true) — только словом человека",
-    "another holder already listens on the seat (with an explicit name — maybe another machine or a human) — register only: attribution is there, the hearing is theirs; need hearing here — take another name (name); evicting them (take=true) — only on the human's word"
+  /** Место слушает другой держатель (#6594): атрибуция есть, ход вперёд — свой, не человека. */
+  howOtherHolder: (holder, realm, karta, explicit) => L(
+    `место уже слушает другой держатель — ${holder} — только register: записи подписаны этим именем, слух — у него. Дальше без человека: слух здесь — ${explicit ? "iskron_stand без name (встанет на выведенное имя, а держит его живой сосед — рядом на имя.N)" : "iskron_stand с другим name"}; кто держит — спроси его одним словом: iskron_channel(action="send", realm="${realm}", karta="${karta}", standing="${holder}", text="<кто ты и зачем>"); твоё по памяти этой сессии (её мост перезапущен) — верни сам take=true; вытеснить живого чужого — только словом человека`,
+    `another holder already listens on the seat — ${holder} — register only: records are signed with this name, the hearing is theirs. Go on without the human: hearing here — ${explicit ? "iskron_stand without name (it takes the derived name, or stands beside as name.N if a live neighbour holds that)" : "iskron_stand with another name"}; who holds it — ask them in one word: iskron_channel(action="send", realm="${realm}", karta="${karta}", standing="${holder}", text="<who you are and why>"); yours by this session's memory (its bridge restarted) — take it back yourself with take=true; evicting a live stranger — only on the human's word`
   ),
   howRegister: () => L("сокет уже держит этот мост — register", "this bridge already holds the socket — register"),
   ttlRefused: (ttl, text) => L(
@@ -7167,7 +7178,7 @@ async function runStand(msg) {
     }
     heardHere = !listensElsewhere;
     socketBefore = !listensElsewhere;
-    how = listensElsewhere ? wasEvicted(realm, karta, name) ? SW.howEvicted() : predecessorDead ? SW.howDeadPredecessor() : SW.howOtherHolder() : SW.howRegister();
+    how = listensElsewhere ? wasEvicted(realm, karta, name) ? SW.howEvicted() : predecessorDead ? SW.howDeadPredecessor() : SW.howOtherHolder(mine?.address ?? name, realm, karta, !!asked) : SW.howRegister();
   } else {
     const args = { action: "connect", realm, karta, name };
     Object.assign(args, here());
