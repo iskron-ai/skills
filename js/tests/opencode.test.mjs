@@ -2468,7 +2468,7 @@ test("two children of one parent in one case: A's word to B wakes only B, neithe
 // the next instance raises the child the same satellite bridge and takes the place
 // back by key, without a word to the child: its session waits on. The tie to the
 // parent is the session's parentID (OpenCode's Session), as at the first start.
-async function reloadedChild(name, env = {}, gone = null) {
+async function reloadedChild(name, env = {}, gone = null, firstTurn = false) {
   const calls = join(SANDBOX, `${name}.calls`);
   const resume = join(SANDBOX, `${name}.resume`);
   writeFileSync(calls, "");
@@ -2491,6 +2491,10 @@ async function reloadedChild(name, env = {}, gone = null) {
   appendFileSync(`${b.events}.${childPid}`, event("held", { key: "k-sub", place: sub }));
   await until(() => /мост держит стояние k-sub/.test(first.said()), "the child's held word");
   await first.call("iskron_case", { realm: "nks-dev", action: "join", room: "#77" }, "child");
+  if (firstTurn) {
+    turn(first, "жду соседа");
+    await until(() => first.synthetics.some((s) => /сдал ход/.test(s.text)), "the first turn word");
+  }
   await first.stop();
   const all = () =>
     readFileSync(calls, "utf8")
@@ -2572,6 +2576,95 @@ test("marker-child: a child taken back after a reload is under the ceiling again
     assert.match(ends(second)[0].text, /потолок простоя/);
   } finally {
     await second.stop();
+  }
+});
+
+// The children's places come back quietly by their own bridges: the root's loss
+// word names the root's places only — a child's key there would call the root to
+// take back a place that is not its own.
+test("marker-child: the root's loss word after a reload names its own place, never its children's", async () => {
+  const { second } = await reloadedChild("reload-word");
+  try {
+    const loss = () => second.prompts.find((p) => /слух был потерян/.test(p.text));
+    await until(loss, "the loss word in the root");
+    assert.equal(loss().sessionID, "root");
+    assert.match(loss().text, /k-root/);
+    assert.doesNotMatch(loss().text, /k-sub|sub-1/, "no child's place in the root's word");
+  } finally {
+    await second.stop();
+  }
+});
+
+// The parent was told the child's first turn before the reload; the next instance
+// knows it from the marker and does not tell it again on the child's next turn.
+test("marker-child: a parent told of the child's first turn is not told again after a reload", async () => {
+  const { second } = await reloadedChild("reload-noted", {}, null, true);
+  try {
+    turn(second, "ход после перезагрузки");
+    await delay(400);
+    assert.ok(
+      !second.synthetics.some((s) => /сдал ход/.test(s.text)),
+      "no second «turn, not the errand» word",
+    );
+  } finally {
+    await second.stop();
+  }
+});
+
+// OpenCode's own notice of a child's turn — `<subagent … state="completed">`, a
+// synthetic into the parent (or the task tool's result) — reads as «done». The
+// plugin cannot catch it, but the "context" hook (SessionContext of @opencode/plugin
+// 2.0.x: system and messages are mutable) reaches every request the model reads:
+// for a live lead named by such a notice, a system word says it is a turn.
+test("OpenCode's «completed» notice of a live lead child's turn gets the plugin's word in the request's system; a plain subagent and an ended lead get none", async () => {
+  const { rec } = await leadChild("lead-notice");
+  const ask = async (...messages) => {
+    const req = { sessionID: "root", system: [], messages };
+    for (const cb of rec.hooks.context ?? []) await cb(req);
+    return req.system.map((p) => p.text);
+  };
+  const notice = (id) => `<subagent sessionID="${id}" state="completed" description="x">\nжду\n`;
+  try {
+    assert.equal(rec.hooks.context?.length, 1, "the plugin hooks the request's context");
+    assert.equal(rec.hooks.compaction?.length, 1, "and the compaction's");
+    turn(rec, "жду соседа");
+    const said = await ask(
+      { role: "user", content: [{ type: "text", text: notice("child") }] },
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            id: "t",
+            name: "task",
+            result: { type: "text", value: notice("other") },
+          },
+        ],
+      },
+    );
+    assert.equal(said.length, 1, "one word: the plain subagent «other» gets none");
+    assert.match(said[0], /sessionID="child"[\s\S]*конец ХОДА субагента host\.repo\.opus-5\.sub-1/);
+    const byTool = await ask({
+      role: "tool",
+      content: [
+        {
+          type: "tool-result",
+          id: "t",
+          name: "task",
+          result: { type: "text", value: notice("child") },
+        },
+      ],
+    });
+    assert.equal(byTool.length, 1, "the task tool's result is read too");
+    await rec.call("iskron_channel", { realm: "nks-dev", action: "leave" }, "child");
+    await until(() => ends(rec).length === 1, "the end in the parent");
+    assert.deepEqual(
+      await ask({ role: "user", content: [{ type: "text", text: notice("child") }] }),
+      [],
+      "an ended lead's notice is left as it is: its end has been said",
+    );
+  } finally {
+    await rec.stop();
   }
 });
 

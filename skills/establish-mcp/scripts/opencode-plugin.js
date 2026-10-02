@@ -1204,7 +1204,7 @@ function createChildren(d) {
     return own;
   }
   async function back(e) {
-    d.leads.back(e.session, e.room);
+    d.leads.back(e.session, e.room, e.noted);
     if (!await d.exists(e.session))
       return d.leads.fail(e.session, "перезагрузка плагина, сессия субагента не читается");
     if (!e.key) return d.leads.fail(e.session, "перезагрузка плагина, ключа места нет");
@@ -1221,7 +1221,10 @@ function createChildren(d) {
   }
   async function pause() {
     const held = [...d.slots.values()].filter((s) => s.child && s.holding && s.session);
-    for (const s of held) s.room = d.leads.roomOf(s.session);
+    for (const s of held) {
+      s.room = d.leads.roomOf(s.session);
+      s.noted = d.leads.noted(s.session);
+    }
     await Promise.all(
       held.map(
         (s) => s.bridge.request("iskron/suspend", {}, { timeoutMs: PAUSE_MS, service: true }).catch(() => {
@@ -1262,6 +1265,11 @@ async function sessionDirectory(ctx, sessionID) {
 import { mkdirSync as mkdirSync2, readdirSync as readdirSync3, readFileSync as readFileSync4, unlinkSync, writeFileSync as writeFileSync2 } from "node:fs";
 import { join as join6 } from "node:path";
 var WATCH_MS = Number(process.env.ISKRON_BRIDGE_WATCH_MS || 5 * 6e4);
+var childPart = (e) => ({
+  of: e.of ?? null,
+  room: e.room ?? null,
+  ...e.noted ? { noted: true } : {}
+});
 var MARKER_PREFIX = "opencode-lost";
 function writeLostMarker(authDir2, slots) {
   const entries = [...slots].filter((s) => s.holding && s.session).map((s) => ({
@@ -1269,7 +1277,7 @@ function writeLostMarker(authDir2, slots) {
     dir: s.dir,
     key: s.key,
     child: !!s.child,
-    ...s.child ? { of: s.satelliteOf ?? null, room: s.room ?? null } : {}
+    ...s.child ? childPart({ of: s.satelliteOf, room: s.room, noted: s.noted }) : {}
   }));
   if (!entries.length) return;
   try {
@@ -1306,7 +1314,7 @@ function takeLostMarker(authDir2) {
           dir: e.dir ?? null,
           key: e.key ?? null,
           child: !!e.child,
-          ...e.child ? { of: e.of ?? null, room: e.room ?? null } : {}
+          ...e.child ? childPart(e) : {}
         });
     } catch {
     }
@@ -1314,9 +1322,9 @@ function takeLostMarker(authDir2) {
   if (!entries.length) return null;
   const when = new Date(at);
   const hhmm2 = Number.isNaN(when.getTime()) ? at : `${String(when.getHours()).padStart(2, "0")}:${String(when.getMinutes()).padStart(2, "0")}`;
-  const where = entries.map((e) => e.key ?? e.dir ?? e.session).join(", ");
+  const where = entries.filter((e) => !e.child).map((e) => e.key ?? e.dir ?? e.session).join(", ");
   return {
-    text: `Искрон: слух был потерян в ${hhmm2} — плагин остановили (перезапуск, вытеснение каталога) с держащим мостом: ${where}. Место возвращается с диска само; ожидавшие кадры придут пачкой. Не вернулось — iskron_stand.`,
+    text: where ? `Искрон: слух был потерян в ${hhmm2} — плагин остановили (перезапуск, вытеснение каталога) с держащим мостом: ${where}. Место возвращается с диска само; ожидавшие кадры придут пачкой. Не вернулось — iskron_stand.` : null,
     entries
   };
 }
@@ -1519,6 +1527,7 @@ var endWord = (who, why, last) => {
 ${said || "(текста он не оставил — смотри его дело)"}`;
 };
 var turnWord = (place) => `Искрон: субагент ${place} сдал ход, не поручение — он продолжает и ждёт кадров своего дела; итог ляжет сюда по его концу. Отпустить раньше — iskron_channel(action="revoke", standing="${place}").`;
+var noticeWord = (child, place) => `Искрон: уведомление OpenCode <subagent sessionID="${child}" state="completed"> — конец ХОДА субагента ${place}, не поручения: он ведущий, стоит своим местом и ждёт кадров своего дела. Не считай его закончившим — итог ляжет сюда словом «КОНЧЕН» по его концу. Отпустить раньше — iskron_channel(action="revoke", standing="${place}").`;
 var releaseWord = (who) => `Искрон: субагент ${who} отпущен — его мост погашен: выход из дел и снятие места делает он; итог лёг сюда синтетикой.`;
 var releasedWord = () => "Искрон: запустивший отпустил тебя — поручение кончено, место снято, из дел ты выведен; встать снова нельзя, в граф и дела больше не пиши.";
 var lostWord = (who, why) => `Искрон: субагент ${who} снят — ${why}. Место без моста уйдёт сроком канала, его дела — сроком места; итога нет, его ход — в его сессии.`;
@@ -1625,12 +1634,15 @@ function createLeads(d) {
       if (kind !== "held" && kind !== "frame") return;
       touch(kind === "held" && !gone.has(child) ? stood(child) : leads.get(child), place);
     },
-    back(child, room) {
+    back(child, room, noted) {
       const l = stood(child);
       if (room) l.room = room;
+      if (noted) l.noted = true;
     },
     fail: (child, why) => finish(child, why, true, false, true),
     roomOf: (child) => leads.get(child)?.room ?? null,
+    noted: (child) => !!leads.get(child)?.noted,
+    nameOf: (child) => leads.get(child)?.place?.name ?? (leads.has(child) ? child : null),
     onEvent(ev) {
       const child = ev?.data?.sessionID;
       const l = typeof child === "string" ? leads.get(child) : void 0;
@@ -1809,10 +1821,18 @@ async function setupTools(ctx, say, onChannel, rootOf, flushUsage = async () => 
       "Искрон: мост не найден — тулов iskron_* в этой сессии не будет. Искал: " + found.tried.join(", ") + ". Задай ISKRON_BRIDGE_PATH или поставь мост скиллом establish-mcp.",
       "error"
     );
-    return { forget() {
-    }, onEvent() {
-    }, launch: async () => null, stop() {
-    }, bridgeOf: () => null };
+    const none = () => null;
+    return {
+      forget() {
+      },
+      onEvent() {
+      },
+      launch: async () => null,
+      stop() {
+      },
+      bridgeOf: none,
+      leadOf: none
+    };
   }
   const path = found.path;
   const builds = buildsLine(path, import.meta.url);
@@ -1885,7 +1905,7 @@ async function setupTools(ctx, say, onChannel, rootOf, flushUsage = async () => 
   const lost = takeLostMarker(authDir());
   let lostWord2 = lost?.text ?? null;
   if (lost) {
-    say(lost.text, "warning");
+    if (lost.text) say(lost.text, "warning");
     keeper.hint(lost.entries);
     for (const e of lost.entries) if (e.child && e.session) void children.back(e);
   }
@@ -2088,6 +2108,7 @@ async function setupTools(ctx, say, onChannel, rootOf, flushUsage = async () => 
       runEnds.clear(s, true);
     },
     onEvent: (ev) => leads.onEvent(ev),
+    leadOf: (s) => leads.nameOf(s),
     async stop() {
       stopped = true;
       clearInterval(reaper);
@@ -2380,6 +2401,26 @@ async function setupCommands(ctx, say) {
   };
 }
 
+// js/opencode/notice.ts
+var COMPLETED = /<subagent sessionID=\\?"([^"\\]+)\\?" state=\\?"completed\\?"/g;
+function* texts(messages) {
+  for (const m of messages)
+    for (const part of Array.isArray(m?.content) ? m.content : []) {
+      if (part?.type === "text" && typeof part.text === "string") yield part.text;
+      else if (part?.type === "tool-result") yield JSON.stringify(part.result ?? "");
+    }
+}
+function annotate(req, nameOf) {
+  const seen = /* @__PURE__ */ new Set();
+  for (const text of texts(req.messages ?? []))
+    for (const [, child] of text.matchAll(COMPLETED)) {
+      if (!child || seen.has(child)) continue;
+      seen.add(child);
+      const name = nameOf(child);
+      if (name) req.system.push({ type: "text", text: noticeWord(child, name) });
+    }
+}
+
 // js/opencode/usage.ts
 var DEBOUNCE_MS = Number(process.env.ISKRON_USAGE_DEBOUNCE_MS || 1e4);
 var n = (v) => typeof v === "number" && Number.isFinite(v) ? v : 0;
@@ -2540,7 +2581,8 @@ async function setup(ctx) {
     launch: async () => null,
     stop() {
     },
-    bridgeOf: () => null
+    bridgeOf: () => null,
+    leadOf: () => null
   };
   let flushUsage = (_s) => Promise.resolve();
   try {
@@ -2560,6 +2602,12 @@ ${counts}`;
     });
   } catch (e) {
     say(`Искрон: строка запуска не встала — ${e.message}`, "error");
+  }
+  try {
+    for (const hook of ["context", "compaction"])
+      await ctx.session.hook(hook, (req) => annotate(req, (s) => half.leadOf(s)));
+  } catch (e) {
+    say(`Искрон: пометка хода субагента не встала — ${e.message}`, "error");
   }
   let commands = { refresh: async () => {
   } };

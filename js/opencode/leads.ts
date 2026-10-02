@@ -110,12 +110,15 @@ export function createLeads(d: W.LeadDoors): W.Leads {
       if (kind !== "held" && kind !== "frame") return;
       touch(kind === "held" && !gone.has(child) ? stood(child) : leads.get(child), place);
     },
-    back(child, room) {
+    back(child, room, noted) {
       const l = stood(child);
       if (room) l.room = room;
+      if (noted) l.noted = true; // ход родителю уже назван прежним экземпляром
     },
     fail: (child, why) => finish(child, why, true, false, true),
     roomOf: (child) => leads.get(child)?.room ?? null,
+    noted: (child) => !!leads.get(child)?.noted,
+    nameOf: (child) => leads.get(child)?.place?.name ?? (leads.has(child) ? child : null),
     onEvent(ev) {
       const child: unknown = ev?.data?.sessionID;
       const l = typeof child === "string" ? leads.get(child) : undefined;

@@ -85,6 +85,8 @@ export interface ToolsHalf {
   launch(session: string, text: string): Promise<string | null>;
   stop(): void | Promise<void>;
   bridgeOf(session: string): Bridge | null; // мост держащего слота — для расхода сессии (usage.ts)
+  /** Имя места живого ведущего субагента; не ведущий — null (notice.ts). */
+  leadOf(session: string): string | null;
 }
 
 export async function setupTools(
@@ -102,7 +104,15 @@ export async function setupTools(
         ". Задай ISKRON_BRIDGE_PATH или поставь мост скиллом establish-mcp.",
       "error",
     );
-    return { forget() {}, onEvent() {}, launch: async () => null, stop() {}, bridgeOf: () => null };
+    const none = () => null;
+    return {
+      forget() {},
+      onEvent() {},
+      launch: async () => null,
+      stop() {},
+      bridgeOf: none,
+      leadOf: none,
+    };
   }
   const path = found.path;
   const builds = buildsLine(path, import.meta.url);
@@ -196,7 +206,7 @@ export async function setupTools(
   const lost = takeLostMarker(authDir());
   let lostWord = lost?.text ?? null;
   if (lost) {
-    say(lost.text, "warning");
+    if (lost.text) say(lost.text, "warning");
     keeper.hint(lost.entries);
     // Дети прежнего экземпляра (#6625): место-спутник обратно по ключу, тихо (children.ts).
     for (const e of lost.entries) if (e.child && e.session) void children.back(e);
@@ -458,6 +468,7 @@ export async function setupTools(
       runEnds.clear(s, true); // сессии нет — и окончательной пометки нет
     },
     onEvent: (ev) => leads.onEvent(ev),
+    leadOf: (s) => leads.nameOf(s),
     async stop() {
       stopped = true;
       clearInterval(reaper);

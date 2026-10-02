@@ -42,6 +42,8 @@ export interface KeptSlot {
   satelliteOf?: { realm: string; karta: string; name: string } | null;
   /** Дело поручения ребёнка — исход ведущего субагента (leads.ts) переживает перезагрузку. */
   room?: string | null;
+  /** Первый ход ребёнка родителю уже назван — новый экземпляр слова о ходе не повторяет. */
+  noted?: boolean;
 }
 
 export interface LostEntry {
@@ -51,7 +53,15 @@ export interface LostEntry {
   child?: boolean;
   of?: { realm: string; karta: string; name: string } | null;
   room?: string | null;
+  noted?: boolean;
 }
+
+/** Поля детской записи маркера: место корня, дело поручения, сказанный ход. */
+const childPart = (e: { of?: LostEntry["of"]; room?: string | null; noted?: boolean }) => ({
+  of: e.of ?? null,
+  room: e.room ?? null,
+  ...(e.noted ? { noted: true } : {}),
+});
 interface Lost {
   at: string;
   entries: LostEntry[];
@@ -68,7 +78,7 @@ export function writeLostMarker(authDir: string, slots: Iterable<KeptSlot>): voi
       dir: s.dir,
       key: s.key,
       child: !!s.child,
-      ...(s.child ? { of: s.satelliteOf ?? null, room: s.room ?? null } : {}),
+      ...(s.child ? childPart({ of: s.satelliteOf, room: s.room, noted: s.noted }) : {}),
     }));
   if (!entries.length) return;
   try {
@@ -83,7 +93,9 @@ export function writeLostMarker(authDir: string, slots: Iterable<KeptSlot>): voi
 }
 
 /** Маркеры прежних экземпляров, прочитанные и стёртые: слово о потере слуха и ключи мест. */
-export function takeLostMarker(authDir: string): { text: string; entries: LostEntry[] } | null {
+export function takeLostMarker(
+  authDir: string,
+): { text: string | null; entries: LostEntry[] } | null {
   const entries: LostEntry[] = [];
   let at = "";
   let files: string[];
@@ -110,7 +122,7 @@ export function takeLostMarker(authDir: string): { text: string; entries: LostEn
           dir: e.dir ?? null,
           key: e.key ?? null,
           child: !!e.child,
-          ...(e.child ? { of: e.of ?? null, room: e.room ?? null } : {}),
+          ...(e.child ? childPart(e) : {}),
         });
     } catch {
       /* битый маркер — не слово */
@@ -121,11 +133,17 @@ export function takeLostMarker(authDir: string): { text: string; entries: LostEn
   const hhmm = Number.isNaN(when.getTime())
     ? at
     : `${String(when.getHours()).padStart(2, "0")}:${String(when.getMinutes()).padStart(2, "0")}`;
-  const where = entries.map((e) => e.key ?? e.dir ?? e.session).join(", ");
+  // Слово — корням: места детей возвращаются тихо своими мостами (children.ts), их ключи
+  // в слове корня звали бы его возвращать чужое; без мест корней слова нет.
+  const where = entries
+    .filter((e) => !e.child)
+    .map((e) => e.key ?? e.dir ?? e.session)
+    .join(", ");
   return {
-    text:
-      `Искрон: слух был потерян в ${hhmm} — плагин остановили (перезапуск, вытеснение каталога) с держащим мостом: ${where}. ` +
-      "Место возвращается с диска само; ожидавшие кадры придут пачкой. Не вернулось — iskron_stand.",
+    text: where
+      ? `Искрон: слух был потерян в ${hhmm} — плагин остановили (перезапуск, вытеснение каталога) с держащим мостом: ${where}. ` +
+        "Место возвращается с диска само; ожидавшие кадры придут пачкой. Не вернулось — iskron_stand."
+      : null,
     entries,
   };
 }
