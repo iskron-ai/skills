@@ -2,13 +2,14 @@
 // (#5154, спутник места корня — #6002) и возврат ведущего субагента после
 // перезагрузки плагина (#6625; #6550, правило 3). Плагин, которого останавливают,
 // ставит держащие мосты детей на паузу (`iskron/suspend`, bridge/suspend.ts):
-// место-спутник, дела и занятость ждут; ключ места, место корня и дело поручения
-// уходят в маркер потери (keep.ts). Новый экземпляр поднимает ребёнку мост тем же
-// спутником и возвращает место по ключу — без слова ребёнку: его сессия ждёт дальше;
+// место-спутник, дела и занятость ждут; ключ места, место корня, дело поручения и
+// сказанный родителю ход уходят в маркер потери (keep.ts). Новый экземпляр поднимает
+// ребёнку мост тем же спутником и возвращает место по ключу — без слова ребёнку: его сессия ждёт дальше;
 // связка с родителем — parentID сессии (leads.ts). Не вернулось — конец со словом родителю.
 import { sleep } from "./bridge-io.ts";
-import type { Keeper, LostEntry } from "./keep.ts";
+import type { Keeper } from "./keep.ts";
 import type { Leads } from "./leadwords.ts";
+import type { LostEntry } from "./marker.ts";
 import type { Slot } from "./tools.ts";
 
 /** Попыток возврата: прежний мост мог ещё не выйти, и его сокет места жив. */
@@ -58,7 +59,7 @@ export function createChildren(d: ChildDoors) {
 
   /** Ребёнок прежнего экземпляра: тот же спутник, место по ключу; не вернулось — конец. */
   async function back(e: LostEntry): Promise<void> {
-    d.leads.back(e.session, e.room);
+    d.leads.back(e.session, e.room, e.noted);
     // Сессия не читается (удалена или сбой get) — ребёнок кончен: его запись иначе
     // пошла бы мостом корня (#6361); место уйдёт сроком канала, родителю — слово, если он известен.
     if (!(await d.exists(e.session)))
@@ -79,7 +80,10 @@ export function createChildren(d: ChildDoors) {
   /** Остановка плагина: держащие мосты детей — на паузу, их место и дела ждут нового экземпляра. */
   async function pause(): Promise<void> {
     const held = [...d.slots.values()].filter((s) => s.child && s.holding && s.session);
-    for (const s of held) s.room = d.leads.roomOf(s.session as string);
+    for (const s of held) {
+      s.room = d.leads.roomOf(s.session as string);
+      s.noted = d.leads.noted(s.session as string);
+    }
     await Promise.all(
       held.map((s) =>
         s.bridge

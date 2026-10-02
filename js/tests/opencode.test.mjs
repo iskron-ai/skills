@@ -143,6 +143,7 @@ function fakeCtx({
   gone = new Set(),
   inboxIds = false,
   app = { name: "opencode", version: "2.0.18-probe", channel: "latest" },
+  location = undefined, // ctx.location — the location this instance is loaded for
 } = {}) {
   const prompts = [];
   const synthetics = [];
@@ -154,6 +155,7 @@ function fakeCtx({
   const stderr = [];
   const ctx = {
     app,
+    ...(location ? { location } : {}),
     tool: { transform: tools.transform, reload: tools.reload },
     command: { transform: commands.transform, reload: commands.reload },
     session: {
@@ -1779,6 +1781,159 @@ test("a place of a lost marker that does not come back is said into its session 
   }
 });
 
+// OpenCode loads the plugin once per location, a session's tools go through the
+// instance of its location, and an update of the delivery reloads every instance
+// at once (graph nks-dev: #6626). An instance that took another location's marker
+// would take that session's place back by ITS bridge and tell the session «taken
+// back», while the session's calls — its busy line too — went by the bridge of its
+// own instance, holding nothing. Each instance takes back its own sessions only.
+const LOC_A = { directory: "/work/A" };
+const LOC_B = { directory: "/work/B" };
+const inLoc = (loc, ...ids) => ({
+  location: loc,
+  sessions: ids.map((id) => ({ id, location: loc })),
+});
+const backAnswer = (key) => ({ resumed: true, holding: true, key, word: "возврат места с диска" });
+
+/** A session stands, and its bridge says «held» with the key. */
+async function standsHeld(rec, b, calls, session, key) {
+  await rec.call("iskron_channel", { action: "connect" }, session);
+  const pid = callsIn(calls)
+    .filter((c) => c.name === "iskron_channel")
+    .at(-1).pid;
+  appendFileSync(`${b.events}.${pid}`, event("held", { key }));
+  await until(() => rec.said().includes(`мост держит стояние ${key}`), `${key} held`);
+}
+
+/** «Taken back by itself» words of an instance, by session, with the key each names. */
+const takenBack = (rec) =>
+  rec.prompts
+    .filter((p) => /сам вернул место/.test(p.text))
+    .map((p) => `${p.sessionID}:${/место (\S+)/.exec(p.text)?.[1]}`)
+    .sort();
+
+/** Two locations' instances come up on one machine after a reload; returns both, once each resumed. */
+async function reloadedLocations(name) {
+  const calls = join(SANDBOX, `${name}.calls`);
+  const resume = join(SANDBOX, `${name}.resume`);
+  writeFileSync(calls, "");
+  const bySession = { a1: backAnswer("k-a1"), a2: backAnswer("k-a2"), b1: backAnswer("k-b1") };
+  writeFileSync(resume, JSON.stringify({ bySession }));
+  const b = bridgeEnv(name, { FB_CALLS: calls, FB_RESUME: resume });
+  const second = { A: null, B: null, calls };
+  second.A = await plugin(b.env, { ...inLoc(LOC_A, "a1", "a2"), keepMarker: true });
+  const resumed = (s) => () =>
+    callsIn(calls).some((c) => c.name === "iskron/resume" && c.arguments.session === s);
+  try {
+    await until(resumed("a1"), "a1's resume");
+    await until(resumed("a2"), "a2's resume");
+    await delay(300);
+    second.B = await plugin(b.env, { ...inLoc(LOC_B, "b1"), keepMarker: true });
+    await until(resumed("b1"), "b1's resume", 8000);
+    await delay(300);
+    return second;
+  } catch (e) {
+    await second.A.stop();
+    await second.B?.stop();
+    throw e;
+  }
+}
+
+test("a reload of every location's instance at once: each takes back only its own sessions' places, and each session hears only its own return", async () => {
+  const calls = join(SANDBOX, "locs-first.calls");
+  writeFileSync(calls, "");
+  const b = bridgeEnv("locs-first", { FB_CALLS: calls });
+  const firstA = await plugin(b.env, inLoc(LOC_A, "a1", "a2"));
+  const firstB = await plugin(b.env, { ...inLoc(LOC_B, "b1"), keepMarker: true });
+  await serverTools(firstA);
+  await serverTools(firstB);
+  await standsHeld(firstA, b, calls, "a1", "k-a1");
+  await standsHeld(firstA, b, calls, "a2", "k-a2");
+  await standsHeld(firstB, b, calls, "b1", "k-b1");
+  await firstA.stop();
+  await firstB.stop();
+  assert.equal(lostMarkers().length, 2, "a marker per instance");
+  const { A, B, calls: sent } = await reloadedLocations("locs");
+  try {
+    assert.deepEqual(
+      takenBack(A),
+      ["a1:k-a1", "a2:k-a2"],
+      "A tells its own sessions, each its own place",
+    );
+    assert.deepEqual(takenBack(B), ["b1:k-b1"], "B tells its own session");
+    assert.ok(!A.prompts.some((p) => p.sessionID === "b1"), "A says nothing into B's session");
+    assert.ok(!B.prompts.some((p) => /^a/.test(p.sessionID)), "B says nothing into A's");
+    // The place is bound where the session's calls go: its busy line goes by the bridge that took it back.
+    const resumer = callsIn(sent).find(
+      (c) => c.name === "iskron/resume" && c.arguments.session === "b1",
+    ).pid;
+    await serverTools(B);
+    await B.call("iskron_orient", {}, "b1");
+    assert.equal(
+      callsIn(sent).at(-1).pid,
+      resumer,
+      "b1's call goes by the bridge that holds its place",
+    );
+  } finally {
+    await A.stop();
+    await B.stop();
+  }
+});
+
+// The update itself: the stopped instances are the previous build's, and their
+// markers carry no location. Every new instance reads such a file and takes the
+// records of its own directory; none takes another location's.
+test("a marker of the previous build, without a location: each location's instance takes its own directory's records only", async () => {
+  for (const f of lostMarkers()) rmSync(f, { force: true });
+  const at = new Date().toISOString();
+  const entries = [
+    { session: "a1", dir: LOC_A.directory, key: "k-a1", child: false },
+    { session: "a2", dir: LOC_A.directory, key: "k-a2", child: false },
+    { session: "b1", dir: LOC_B.directory, key: "k-b1", child: false },
+  ];
+  writeFileSync(
+    join(process.env.ISKRON_BRIDGE_AUTH_DIR, "opencode-lost.4242.legacy.json"),
+    JSON.stringify({ at, entries }),
+  );
+  const { A, B } = await reloadedLocations("locs-legacy");
+  try {
+    assert.deepEqual(takenBack(A), ["a1:k-a1", "a2:k-a2"]);
+    assert.deepEqual(takenBack(B), ["b1:k-b1"]);
+    assert.ok(!A.prompts.some((p) => p.sessionID === "b1"), "A says nothing into B's session");
+  } finally {
+    await A.stop();
+    await B.stop();
+  }
+});
+
+// The session's own place (by its key, or stood by it) is held by a live bridge of
+// another session: the resume takes nothing, and the session is told so with the
+// way back — not left to believe the place is its own (#6626).
+test("a session whose own place a live bridge of another session holds is told the return failed, and how to take it", async () => {
+  const resume = join(SANDBOX, "elsewhere.resume");
+  writeFileSync(
+    resume,
+    JSON.stringify({
+      resumed: false,
+      elsewhere: ["k-own"],
+      word: "возвращать нечего — k-own: держит живой мост",
+    }),
+  );
+  const b = bridgeEnv("elsewhere", { FB_RESUME: resume });
+  const rec = await plugin(b.env, inLoc(LOC_A, "s1"));
+  try {
+    await serverTools(rec);
+    await rec.call("iskron_orient", {}, "s1");
+    await until(() => rec.prompts.some((p) => /не удался/.test(p.text)), "the word to s1");
+    const word = rec.prompts.find((p) => /не удался/.test(p.text));
+    assert.equal(word.sessionID, "s1");
+    assert.match(word.text, /k-own[\s\S]*другой сессии[\s\S]*iskron_stand\(take=true\)/);
+    assert.ok(!rec.prompts.some((p) => /сам вернул место/.test(p.text)));
+  } finally {
+    await rec.stop();
+  }
+});
+
 // The keeper's check must not count as activity: a slot whose bridge no longer
 // holds anything is reaped for idleness like any other, and leaves the watch.
 test("the watch does not refresh idleness: a slot whose bridge holds nothing is reaped and leaves the watch", async () => {
@@ -2283,6 +2438,28 @@ test("a child that leaves its place by the outcome is ended: its bridge goes, th
   }
 });
 
+// The end's word goes into the parent BEFORE the child's bridge is put out: OpenCode
+// lays its own synthetic into the parent when the child goes quiet, and the plugin's
+// «КОНЧЕН» must stand in the parent's queue ahead of it.
+test("a child's end: the word into the parent is laid before the child's bridge is put out", async () => {
+  const { rec, childPid } = await leadChild("lead-order");
+  const synthetic = rec.ctx.session.synthetic;
+  let bridgeDuringWord = null;
+  rec.ctx.session.synthetic = async (o) => {
+    await delay(300); // the bridge, if put out first, is gone by now
+    if (/КОНЧЕН/.test(o.text)) bridgeDuringWord = alive(childPid);
+    return synthetic(o);
+  };
+  try {
+    await rec.call("iskron_channel", { realm: "nks-dev", action: "leave" }, "child");
+    await until(() => ends(rec).length === 1, "the end in the parent");
+    assert.equal(bridgeDuringWord, true, "the child's bridge lives while the end's word is laid");
+    await until(() => !alive(childPid), "the child's bridge to go after the word");
+  } finally {
+    await rec.stop();
+  }
+});
+
 test("a one-shot child launched into a case is ended by leaving that case — and not by leaving another", async () => {
   const calls = join(SANDBOX, "lead-oneshot.calls");
   writeFileSync(calls, "");
@@ -2468,7 +2645,7 @@ test("two children of one parent in one case: A's word to B wakes only B, neithe
 // the next instance raises the child the same satellite bridge and takes the place
 // back by key, without a word to the child: its session waits on. The tie to the
 // parent is the session's parentID (OpenCode's Session), as at the first start.
-async function reloadedChild(name, env = {}, gone = null) {
+async function reloadedChild(name, env = {}, gone = null, firstTurn = false) {
   const calls = join(SANDBOX, `${name}.calls`);
   const resume = join(SANDBOX, `${name}.resume`);
   writeFileSync(calls, "");
@@ -2491,6 +2668,10 @@ async function reloadedChild(name, env = {}, gone = null) {
   appendFileSync(`${b.events}.${childPid}`, event("held", { key: "k-sub", place: sub }));
   await until(() => /мост держит стояние k-sub/.test(first.said()), "the child's held word");
   await first.call("iskron_case", { realm: "nks-dev", action: "join", room: "#77" }, "child");
+  if (firstTurn) {
+    turn(first, "жду соседа");
+    await until(() => first.synthetics.some((s) => /сдал ход/.test(s.text)), "the first turn word");
+  }
   await first.stop();
   const all = () =>
     readFileSync(calls, "utf8")
@@ -2572,6 +2753,95 @@ test("marker-child: a child taken back after a reload is under the ceiling again
     assert.match(ends(second)[0].text, /потолок простоя/);
   } finally {
     await second.stop();
+  }
+});
+
+// The children's places come back quietly by their own bridges: the root's loss
+// word names the root's places only — a child's key there would call the root to
+// take back a place that is not its own.
+test("marker-child: the root's loss word after a reload names its own place, never its children's", async () => {
+  const { second } = await reloadedChild("reload-word");
+  try {
+    const loss = () => second.prompts.find((p) => /слух был потерян/.test(p.text));
+    await until(loss, "the loss word in the root");
+    assert.equal(loss().sessionID, "root");
+    assert.match(loss().text, /k-root/);
+    assert.doesNotMatch(loss().text, /k-sub|sub-1/, "no child's place in the root's word");
+  } finally {
+    await second.stop();
+  }
+});
+
+// The parent was told the child's first turn before the reload; the next instance
+// knows it from the marker and does not tell it again on the child's next turn.
+test("marker-child: a parent told of the child's first turn is not told again after a reload", async () => {
+  const { second } = await reloadedChild("reload-noted", {}, null, true);
+  try {
+    turn(second, "ход после перезагрузки");
+    await delay(400);
+    assert.ok(
+      !second.synthetics.some((s) => /сдал ход/.test(s.text)),
+      "no second «turn, not the errand» word",
+    );
+  } finally {
+    await second.stop();
+  }
+});
+
+// OpenCode's own notice of a child's turn — `<subagent … state="completed">`, a
+// synthetic into the parent (or the task tool's result) — reads as «done». The
+// plugin cannot catch it, but the "context" hook (SessionContext of @opencode/plugin
+// 2.0.x: system and messages are mutable) reaches every request the model reads:
+// for a live lead named by such a notice, a system word says it is a turn.
+test("OpenCode's «completed» notice of a live lead child's turn gets the plugin's word in the request's system; a plain subagent and an ended lead get none", async () => {
+  const { rec } = await leadChild("lead-notice");
+  const ask = async (...messages) => {
+    const req = { sessionID: "root", system: [], messages };
+    for (const cb of rec.hooks.context ?? []) await cb(req);
+    return req.system.map((p) => p.text);
+  };
+  const notice = (id) => `<subagent sessionID="${id}" state="completed" description="x">\nжду\n`;
+  try {
+    assert.equal(rec.hooks.context?.length, 1, "the plugin hooks the request's context");
+    assert.equal(rec.hooks.compaction?.length, 1, "and the compaction's");
+    turn(rec, "жду соседа");
+    const said = await ask(
+      { role: "user", content: [{ type: "text", text: notice("child") }] },
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            id: "t",
+            name: "task",
+            result: { type: "text", value: notice("other") },
+          },
+        ],
+      },
+    );
+    assert.equal(said.length, 1, "one word: the plain subagent «other» gets none");
+    assert.match(said[0], /sessionID="child"[\s\S]*конец ХОДА субагента host\.repo\.opus-5\.sub-1/);
+    const byTool = await ask({
+      role: "tool",
+      content: [
+        {
+          type: "tool-result",
+          id: "t",
+          name: "task",
+          result: { type: "text", value: notice("child") },
+        },
+      ],
+    });
+    assert.equal(byTool.length, 1, "the task tool's result is read too");
+    await rec.call("iskron_channel", { realm: "nks-dev", action: "leave" }, "child");
+    await until(() => ends(rec).length === 1, "the end in the parent");
+    assert.deepEqual(
+      await ask({ role: "user", content: [{ type: "text", text: notice("child") }] }),
+      [],
+      "an ended lead's notice is left as it is: its end has been said",
+    );
+  } finally {
+    await rec.stop();
   }
 });
 

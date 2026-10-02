@@ -23,6 +23,7 @@ import type { Plugin } from "@opencode/plugin";
 import { withWord } from "../shared/launch.ts";
 import { setupChannel } from "./channel.ts";
 import { setupCommands } from "./commands.ts";
+import { annotate } from "./notice.ts";
 import { type Say, setupTools } from "./tools.ts";
 import { createUsageFeed } from "./usage.ts";
 
@@ -98,6 +99,7 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
     launch: async () => null,
     stop() {},
     bridgeOf: () => null,
+    leadOf: () => null,
   };
   // Расход встаёт после тулов (ему нужен мост сессии), а конец субагента сбрасывает его прежде.
   let flushUsage = (_s: string): Promise<void> => Promise.resolve();
@@ -121,6 +123,14 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
     });
   } catch (e) {
     say(`Искрон: строка запуска не встала — ${(e as Error).message}`, "error");
+  }
+
+  // «completed» OpenCode на конце хода ведущего субагента — слово модели, что это ход (notice.ts).
+  try {
+    for (const hook of ["context", "compaction"] as const)
+      await ctx.session.hook(hook, (req) => annotate(req, (s) => half.leadOf(s)));
+  } catch (e) {
+    say(`Искрон: пометка хода субагента не встала — ${(e as Error).message}`, "error");
   }
 
   let commands: Awaited<ReturnType<typeof setupCommands>> = { refresh: async () => {} };

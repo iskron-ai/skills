@@ -1204,7 +1204,7 @@ function createChildren(d) {
     return own;
   }
   async function back(e) {
-    d.leads.back(e.session, e.room);
+    d.leads.back(e.session, e.room, e.noted);
     if (!await d.exists(e.session))
       return d.leads.fail(e.session, "перезагрузка плагина, сессия субагента не читается");
     if (!e.key) return d.leads.fail(e.session, "перезагрузка плагина, ключа места нет");
@@ -1221,7 +1221,10 @@ function createChildren(d) {
   }
   async function pause() {
     const held = [...d.slots.values()].filter((s) => s.child && s.holding && s.session);
-    for (const s of held) s.room = d.leads.roomOf(s.session);
+    for (const s of held) {
+      s.room = d.leads.roomOf(s.session);
+      s.noted = d.leads.noted(s.session);
+    }
     await Promise.all(
       held.map(
         (s) => s.bridge.request("iskron/suspend", {}, { timeoutMs: PAUSE_MS, service: true }).catch(() => {
@@ -1248,6 +1251,12 @@ async function hostEnvOf(ctx) {
   }
   return env;
 }
+function homeOf(ctx) {
+  const loc = ctx.location;
+  if (typeof loc?.directory !== "string" || !loc.directory) return null;
+  const workspace = typeof loc.workspaceID === "string" ? loc.workspaceID : null;
+  return { directory: loc.directory, workspace };
+}
 async function sessionDirectory(ctx, sessionID) {
   try {
     const res = await ctx.session.get({ sessionID });
@@ -1259,71 +1268,12 @@ async function sessionDirectory(ctx, sessionID) {
 }
 
 // js/opencode/keep.ts
-import { mkdirSync as mkdirSync2, readdirSync as readdirSync3, readFileSync as readFileSync4, unlinkSync, writeFileSync as writeFileSync2 } from "node:fs";
-import { join as join6 } from "node:path";
 var WATCH_MS = Number(process.env.ISKRON_BRIDGE_WATCH_MS || 5 * 6e4);
-var MARKER_PREFIX = "opencode-lost";
-function writeLostMarker(authDir2, slots) {
-  const entries = [...slots].filter((s) => s.holding && s.session).map((s) => ({
-    session: s.session,
-    dir: s.dir,
-    key: s.key,
-    child: !!s.child,
-    ...s.child ? { of: s.satelliteOf ?? null, room: s.room ?? null } : {}
-  }));
-  if (!entries.length) return;
-  try {
-    mkdirSync2(authDir2, { recursive: true, mode: 448 });
-    const lost = { at: (/* @__PURE__ */ new Date()).toISOString(), entries };
-    const name = `${MARKER_PREFIX}.${process.pid}.${Math.random().toString(36).slice(2, 8)}.json`;
-    writeFileSync2(join6(authDir2, name), JSON.stringify(lost), { mode: 384 });
-  } catch {
-  }
-}
-function takeLostMarker(authDir2) {
-  const entries = [];
-  let at = "";
-  let files;
-  try {
-    files = readdirSync3(authDir2).filter((f) => f.startsWith(MARKER_PREFIX) && f.endsWith(".json"));
-  } catch {
-    return null;
-  }
-  for (const f of files) {
-    let text;
-    try {
-      text = readFileSync4(join6(authDir2, f), "utf8");
-      unlinkSync(join6(authDir2, f));
-    } catch {
-      continue;
-    }
-    try {
-      const lost = JSON.parse(text);
-      if (lost?.at > at) at = lost.at;
-      for (const e of lost?.entries ?? [])
-        entries.push({
-          session: e.session,
-          dir: e.dir ?? null,
-          key: e.key ?? null,
-          child: !!e.child,
-          ...e.child ? { of: e.of ?? null, room: e.room ?? null } : {}
-        });
-    } catch {
-    }
-  }
-  if (!entries.length) return null;
-  const when = new Date(at);
-  const hhmm2 = Number.isNaN(when.getTime()) ? at : `${String(when.getHours()).padStart(2, "0")}:${String(when.getMinutes()).padStart(2, "0")}`;
-  const where = entries.map((e) => e.key ?? e.dir ?? e.session).join(", ");
-  return {
-    text: `Искрон: слух был потерян в ${hhmm2} — плагин остановили (перезапуск, вытеснение каталога) с держащим мостом: ${where}. Место возвращается с диска само; ожидавшие кадры придут пачкой. Не вернулось — iskron_stand.`,
-    entries
-  };
-}
 function resumedWord(key, others) {
   const rest = Array.isArray(others) ? others.filter((k) => typeof k === "string") : [];
   return `Искрон: мост поднялся и сам вернул место ${key} — по своей записи держания (каталог сессии либо ключ прежнего места), без твоего хода. ` + (rest.length ? `В том же каталоге записи и других мест: ${rest.join(", ")} — каталог их не различает; возврат взял место, на котором стояла эта сессия. ` : "") + 'Сверь имя с выведенным для этой сессии: чужое — отпусти его iskron_channel(action="leave") (канал цел; revoke места, основавшего канал, платформа отвергает) и займи своё одним iskron_stand; запись, уже ушедшую этим ходом, проверь по автору в истории узла — слово под чужим именем ляжет другому месту, а мост ответит успехом.';
 }
+var elsewhereWord = (keys) => `Искрон: возврат места ${keys.join(", ")} с диска не удался — его сокет держит живой мост другой сессии, не мост этой: слух и занятость здесь места не держат. Твоё место — верни его iskron_stand(take=true), только словом человека; не твоё — встань своим именем iskron_stand.`;
 function createKeeper(doors) {
   const roots = /* @__PURE__ */ new Set();
   const hints = /* @__PURE__ */ new Map();
@@ -1361,6 +1311,8 @@ function createKeeper(doors) {
       });
       if (!r?.resumed) {
         if (mark) notBack(root, mark, typeof r?.word === "string" ? r.word : "мост не ответил");
+        else if (Array.isArray(r?.elsewhere) && r.elsewhere.length)
+          doors.tell(root, elsewhereWord(r.elsewhere), slot.child);
         else if (Array.isArray(r?.legacy) && r.legacy.length && typeof r.word === "string")
           doors.tell(root, `Искрон: ${r.word}.`, slot.child);
         return;
@@ -1519,6 +1471,7 @@ var endWord = (who, why, last) => {
 ${said || "(текста он не оставил — смотри его дело)"}`;
 };
 var turnWord = (place) => `Искрон: субагент ${place} сдал ход, не поручение — он продолжает и ждёт кадров своего дела; итог ляжет сюда по его концу. Отпустить раньше — iskron_channel(action="revoke", standing="${place}").`;
+var noticeWord = (child, place) => `Искрон: уведомление OpenCode <subagent sessionID="${child}" state="completed"> — конец ХОДА субагента ${place}, не поручения: он ведущий, стоит своим местом и ждёт кадров своего дела. Не считай его закончившим — итог ляжет сюда словом «КОНЧЕН» по его концу. Отпустить раньше — iskron_channel(action="revoke", standing="${place}").`;
 var releaseWord = (who) => `Искрон: субагент ${who} отпущен — его мост погашен: выход из дел и снятие места делает он; итог лёг сюда синтетикой.`;
 var releasedWord = () => "Искрон: запустивший отпустил тебя — поручение кончено, место снято, из дел ты выведен; встать снова нельзя, в граф и дела больше не пиши.";
 var lostWord = (who, why) => `Искрон: субагент ${who} снят — ${why}. Место без моста уйдёт сроком канала, его дела — сроком места; итога нет, его ход — в его сессии.`;
@@ -1566,13 +1519,13 @@ function createLeads(d) {
     const l = leads.get(child);
     if (!l) return;
     leads.delete(child);
-    if (ended) await d.end(child).catch(() => {
-    });
     const parent = await l.parent;
     const word = lost ? lostWord(who(l, child), why) : endWord(who(l, child), why, (l.last ?? "").trim());
     if (parent) await d.tell(parent, word, wake);
     else d.say(`${word}
 (родителя плагин не знает — итог некому)`, "warning");
+    if (ended) await d.end(child).catch(() => {
+    });
   }
   function leave(child, l, why) {
     l.leaving = why;
@@ -1625,12 +1578,15 @@ function createLeads(d) {
       if (kind !== "held" && kind !== "frame") return;
       touch(kind === "held" && !gone.has(child) ? stood(child) : leads.get(child), place);
     },
-    back(child, room) {
+    back(child, room, noted) {
       const l = stood(child);
       if (room) l.room = room;
+      if (noted) l.noted = true;
     },
     fail: (child, why) => finish(child, why, true, false, true),
     roomOf: (child) => leads.get(child)?.room ?? null,
+    noted: (child) => !!leads.get(child)?.noted,
+    nameOf: (child) => leads.get(child)?.place?.name ?? (leads.has(child) ? child : null),
     onEvent(ev) {
       const child = ev?.data?.sessionID;
       const l = typeof child === "string" ? leads.get(child) : void 0;
@@ -1728,6 +1684,96 @@ function createLogin(say) {
   };
 }
 
+// js/opencode/marker.ts
+import { createHash as createHash2 } from "node:crypto";
+import { mkdirSync as mkdirSync2, readdirSync as readdirSync3, readFileSync as readFileSync4, unlinkSync, writeFileSync as writeFileSync2 } from "node:fs";
+import { join as join6 } from "node:path";
+var PREFIX = "opencode-lost";
+var LEGACY_MS = 2 * 6e4;
+var hash = (s) => createHash2("sha256").update(s).digest("hex").slice(0, 12);
+var tagOf = (home) => home ? hash(`${home.directory}\0${home.workspace ?? ""}`) : "any";
+var tagIn = (f) => /^opencode-lost\.@([^.]+)\./.exec(f)?.[1] ?? null;
+var childPart = (e) => ({
+  of: e.of ?? null,
+  room: e.room ?? null,
+  ...e.noted ? { noted: true } : {}
+});
+function writeLostMarker(authDir2, slots, home) {
+  const entries = [...slots].filter((s) => s.holding && s.session).map((s) => ({
+    session: s.session,
+    dir: s.dir,
+    key: s.key,
+    child: !!s.child,
+    ...s.child ? childPart({ of: s.satelliteOf, room: s.room, noted: s.noted }) : {}
+  }));
+  if (!entries.length) return;
+  try {
+    mkdirSync2(authDir2, { recursive: true, mode: 448 });
+    const lost = { at: (/* @__PURE__ */ new Date()).toISOString(), entries };
+    const rand = Math.random().toString(36).slice(2, 8);
+    const name = `${PREFIX}.@${tagOf(home)}.${process.pid}.${rand}.json`;
+    writeFileSync2(join6(authDir2, name), JSON.stringify(lost), { mode: 384 });
+  } catch {
+  }
+}
+function readOwn(path, tag, home) {
+  const drop = () => {
+    try {
+      unlinkSync(path);
+    } catch {
+    }
+  };
+  let lost = null;
+  try {
+    const text = readFileSync4(path, "utf8");
+    if (tag !== null) drop();
+    lost = JSON.parse(text);
+  } catch {
+  }
+  if (tag === null && !(Date.now() - Date.parse(lost?.at ?? "") < LEGACY_MS)) drop();
+  if (!lost) return null;
+  const mine = (e) => tag !== null || !home || !e.dir || e.dir === home.directory;
+  return { at: lost.at, entries: (lost.entries ?? []).filter(mine) };
+}
+function takeLostMarker(authDir2, home) {
+  const entries = [];
+  const seen = /* @__PURE__ */ new Set();
+  let at = "";
+  let files;
+  try {
+    files = readdirSync3(authDir2).filter((f) => f.startsWith(PREFIX) && f.endsWith(".json"));
+  } catch {
+    return null;
+  }
+  const mine = tagOf(home);
+  files.sort((a, b) => Number(tagIn(b) !== null) - Number(tagIn(a) !== null));
+  for (const f of files) {
+    const tag = tagIn(f);
+    if (tag !== null && tag !== mine) continue;
+    const lost = readOwn(join6(authDir2, f), tag, home);
+    for (const e of lost?.entries ?? []) {
+      if (!e?.session || seen.has(e.session)) continue;
+      seen.add(e.session);
+      if (lost && lost.at > at) at = lost.at;
+      entries.push({
+        session: e.session,
+        dir: e.dir ?? null,
+        key: e.key ?? null,
+        child: !!e.child,
+        ...e.child ? childPart(e) : {}
+      });
+    }
+  }
+  if (!entries.length) return null;
+  const when = new Date(at);
+  const hhmm2 = Number.isNaN(when.getTime()) ? at : when.toTimeString().slice(0, 5);
+  const where = entries.filter((e) => !e.child).map((e) => e.key ?? e.dir ?? e.session).join(", ");
+  return {
+    text: where ? `Искрон: слух был потерян в ${hhmm2} — плагин остановили (перезапуск, вытеснение каталога) с держащим мостом: ${where}. Место возвращается с диска само; ожидавшие кадры придут пачкой. Не вернулось — iskron_stand.` : null,
+    entries
+  };
+}
+
 // js/opencode/runends.ts
 var READ_TOOLS = /* @__PURE__ */ new Set([
   "iskron_look",
@@ -1809,10 +1855,18 @@ async function setupTools(ctx, say, onChannel, rootOf, flushUsage = async () => 
       "Искрон: мост не найден — тулов iskron_* в этой сессии не будет. Искал: " + found.tried.join(", ") + ". Задай ISKRON_BRIDGE_PATH или поставь мост скиллом establish-mcp.",
       "error"
     );
-    return { forget() {
-    }, onEvent() {
-    }, launch: async () => null, stop() {
-    }, bridgeOf: () => null };
+    const none = () => null;
+    return {
+      forget() {
+      },
+      onEvent() {
+      },
+      launch: async () => null,
+      stop() {
+      },
+      bridgeOf: none,
+      leadOf: none
+    };
   }
   const path = found.path;
   const builds = buildsLine(path, import.meta.url);
@@ -1882,10 +1936,11 @@ async function setupTools(ctx, say, onChannel, rootOf, flushUsage = async () => 
     exists
   });
   const children = createChildren({ slots, spawn: spawn2, keeper, leads, exists });
-  const lost = takeLostMarker(authDir());
+  const home = homeOf(ctx);
+  const lost = takeLostMarker(authDir(), home);
   let lostWord2 = lost?.text ?? null;
   if (lost) {
-    say(lost.text, "warning");
+    if (lost.text) say(lost.text, "warning");
     keeper.hint(lost.entries);
     for (const e of lost.entries) if (e.child && e.session) void children.back(e);
   }
@@ -2088,13 +2143,14 @@ async function setupTools(ctx, say, onChannel, rootOf, flushUsage = async () => 
       runEnds.clear(s, true);
     },
     onEvent: (ev) => leads.onEvent(ev),
+    leadOf: (s) => leads.nameOf(s),
     async stop() {
       stopped = true;
       clearInterval(reaper);
       leads.stop();
       keeper.stop();
       await children.pause();
-      writeLostMarker(authDir(), slots.values());
+      writeLostMarker(authDir(), slots.values(), home);
       if (spare) spare.ownStop = true;
       spare?.bridge.stop();
       spare = null;
@@ -2380,6 +2436,26 @@ async function setupCommands(ctx, say) {
   };
 }
 
+// js/opencode/notice.ts
+var COMPLETED = /<subagent sessionID=\\?"([^"\\]+)\\?" state=\\?"completed\\?"/g;
+function* texts(messages) {
+  for (const m of messages)
+    for (const part of Array.isArray(m?.content) ? m.content : []) {
+      if (part?.type === "text" && typeof part.text === "string") yield part.text;
+      else if (part?.type === "tool-result") yield JSON.stringify(part.result ?? "");
+    }
+}
+function annotate(req, nameOf) {
+  const seen = /* @__PURE__ */ new Set();
+  for (const text of texts(req.messages ?? []))
+    for (const [, child] of text.matchAll(COMPLETED)) {
+      if (!child || seen.has(child)) continue;
+      seen.add(child);
+      const name = nameOf(child);
+      if (name) req.system.push({ type: "text", text: noticeWord(child, name) });
+    }
+}
+
 // js/opencode/usage.ts
 var DEBOUNCE_MS = Number(process.env.ISKRON_USAGE_DEBOUNCE_MS || 1e4);
 var n = (v) => typeof v === "number" && Number.isFinite(v) ? v : 0;
@@ -2540,7 +2616,8 @@ async function setup(ctx) {
     launch: async () => null,
     stop() {
     },
-    bridgeOf: () => null
+    bridgeOf: () => null,
+    leadOf: () => null
   };
   let flushUsage = (_s) => Promise.resolve();
   try {
@@ -2560,6 +2637,12 @@ ${counts}`;
     });
   } catch (e) {
     say(`Искрон: строка запуска не встала — ${e.message}`, "error");
+  }
+  try {
+    for (const hook of ["context", "compaction"])
+      await ctx.session.hook(hook, (req) => annotate(req, (s) => half.leadOf(s)));
+  } catch (e) {
+    say(`Искрон: пометка хода субагента не встала — ${e.message}`, "error");
   }
   let commands = { refresh: async () => {
   } };
