@@ -5526,9 +5526,14 @@ function installCrashWords() {
     (e) => log(`unhandled rejection: ${e?.stack || String(e)}`)
   );
 }
-function fullBridgeSigint() {
+function fullBridgeSigint(leave) {
   let interrupted = false;
   return () => {
+    if (CFG.satellite && leave && !interrupted) {
+      interrupted = true;
+      void leave("SIGINT");
+      return;
+    }
     const addr = statusAddress();
     releaseStanding("SIGINT");
     if (interrupted) process.exit(0);
@@ -8303,7 +8308,7 @@ function thinMain(argv2) {
   };
   rl.on("close", () => void leave("stdin closed, the harness is gone"));
   process.on("SIGTERM", () => void leave("SIGTERM"));
-  const localSigint = fullBridgeSigint();
+  const localSigint = fullBridgeSigint(leave);
   let interrupted = false;
   process.on("SIGINT", () => {
     if (mode === "local") return localSigint();
@@ -8326,7 +8331,7 @@ function bridgeMain(argv2) {
   const session = openSession({ input: process.stdin, output: process.stdout });
   void session.ended.then(() => process.exit(0));
   process.on("SIGTERM", () => void session.leave("SIGTERM"));
-  process.on("SIGINT", fullBridgeSigint());
+  process.on("SIGINT", fullBridgeSigint(session.leave));
   installCrashWords();
 }
 

@@ -1888,6 +1888,38 @@ test("satellite: at the run's end the bridge revokes its own .sub-N — the plac
   assert.deepEqual(revokes(plain), [], "the session's place outlives the session");
 });
 
+// Claude Code ends a subagent's bridge with SIGINT, not by closing stdin: the
+// run's end is the same — cases left, place revoked — while a session's bridge
+// keeps its quick Ctrl-C and leaves nothing.
+test("satellite: SIGINT ends the run like stdin-close — cases left, .sub-N revoked; a session's bridge leaves none", async (t) => {
+  const fake = await withCaller(t);
+  const sat = await satelliteBridge(t, fake);
+  assert.ok(!(await standAs(sat, SAT_ARGS)).result?.isError, sat.stderr);
+  await caseAs(sat, "join", "№102");
+  const exited = new Promise((r) => sat.proc.once("exit", (code) => r(code)));
+  sat.proc.kill("SIGINT");
+  assert.equal(await exited, 0, sat.stderr);
+  assert.deepEqual(caseCalls(fake, "leave"), ["№102"], `the case left on SIGINT:\n${sat.stderr}`);
+  assert.deepEqual(
+    revokes(fake),
+    [`${CALLER}.sub-1`],
+    `its place revoked on SIGINT:\n${sat.stderr}`,
+  );
+
+  const plain = await withCaller(t);
+  const own = startBridge(plain.mcpUrl, mkdtempSync(join(tmpdir(), "iskron-own-")));
+  t.after(() => own.stop());
+  assert.ok((await own.call("initialize", INIT)).result);
+  const stood = await standAs(own, { realm: "nks-dev", karta: 931, name: "plain" });
+  assert.ok(!stood.result?.isError, `${textOf(stood)}\n${own.stderr}`);
+  await caseAs(own, "join", "№102");
+  const ownExit = new Promise((r) => own.proc.once("exit", (code) => r(code)));
+  own.proc.kill("SIGINT");
+  assert.equal(await ownExit, 0, own.stderr);
+  assert.deepEqual(caseCalls(plain, "leave"), [], "the session's place outlives Ctrl-C");
+  assert.deepEqual(revokes(plain), [], "the session's place outlives Ctrl-C");
+});
+
 // Places beside in other graphs are the run's too: the socket going leaves them
 // on the board until the channel's term, so each is revoked with the main one.
 test("satellite: at the run's end its places in other graphs are revoked too, not left to the term", async (t) => {
