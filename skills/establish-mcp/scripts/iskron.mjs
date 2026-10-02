@@ -2400,7 +2400,7 @@ function holdSocket(o) {
       }
     },
     handOff(onFrame, onGone) {
-      if (stopped || !ws || ws.readyState > 1) {
+      if (stopped || !ws || ws.readyState !== 1) {
         this.close("handed off without a socket");
         return onGone(0);
       }
@@ -3787,116 +3787,6 @@ var Door = class {
   }
 };
 
-// js/bridge/spool.ts
-import { appendFileSync as appendFileSync3, mkdirSync as mkdirSync8, readFileSync as readFileSync11, unlinkSync as unlinkSync9 } from "node:fs";
-import { dirname as dirname4 } from "node:path";
-var HANDOFF_MS = Number(process.env.ISKRON_BRIDGE_DAEMON_HANDOFF_MS) || 12e3;
-var DRAIN_MS = HANDOFF_MS + 5e3;
-var DRAIN_TICK_MS = 200;
-function append(path, entry) {
-  try {
-    appendFileSync3(path, JSON.stringify(entry) + "\n", { mode: 384 });
-  } catch (e) {
-    log(`handover spool not written (${path}): ${e.message}`);
-  }
-}
-function openSpool(path) {
-  try {
-    mkdirSync8(dirname4(path), { recursive: true, mode: 448 });
-  } catch {
-  }
-  append(path, { open: Date.now() });
-}
-var spoolFrame = (path, raw) => append(path, { frame: raw });
-var closeSpool = (path) => append(path, { done: Date.now() });
-var draining = /* @__PURE__ */ new Set();
-function parseFrame(raw) {
-  try {
-    const f = JSON.parse(raw);
-    return f && typeof f === "object" ? f : null;
-  } catch {
-    return null;
-  }
-}
-function entries(path) {
-  let text;
-  try {
-    text = readFileSync11(path, "utf8");
-  } catch {
-    return null;
-  }
-  return text.slice(0, text.lastIndexOf("\n") + 1).split("\n").filter(Boolean).map((line) => {
-    try {
-      return JSON.parse(line);
-    } catch {
-      return {};
-    }
-  });
-}
-function drainSpool(path, feed) {
-  if (draining.has(path)) return;
-  const give = bindScope((raw) => feed(raw, parseFrame(raw)));
-  const until = Date.now() + DRAIN_MS;
-  let taken = 0;
-  const tick = () => {
-    const all2 = entries(path);
-    if (!all2) return void draining.delete(path);
-    const fresh = all2.slice(taken).filter((e) => typeof e.frame === "string");
-    if (fresh.length) log(`handover spool: ${fresh.length} frame(s) of the outgoing daemon`);
-    for (const e of fresh) give(e.frame);
-    taken = all2.length;
-    const opened = all2.filter((e) => e.open).length;
-    const done = all2.filter((e) => e.done).length;
-    if (done < opened && Date.now() < until) {
-      setTimeout(tick, DRAIN_TICK_MS).unref?.();
-      return;
-    }
-    draining.delete(path);
-    try {
-      unlinkSync9(path);
-    } catch {
-    }
-  };
-  draining.add(path);
-  tick();
-}
-
-// js/bridge/handoff.ts
-var pending = /* @__PURE__ */ new Set();
-function keepUntilEvicted(holder, key) {
-  const path = spoolFilePathOf(CFG.authDir, key);
-  openSpool(path);
-  let timer;
-  let over = false;
-  const done = new Promise((resolve7) => {
-    const end = (why) => {
-      if (over) return;
-      over = true;
-      clearTimeout(timer);
-      closeSpool(path);
-      log(`place ${key} handed over: ${why}`);
-      resolve7();
-    };
-    timer = setTimeout(() => {
-      holder.close("the successor did not take the place");
-      end(`no successor took the socket in ${HANDOFF_MS / 1e3}s — closed`);
-    }, HANDOFF_MS);
-    holder.handOff(
-      (raw) => spoolFrame(path, raw),
-      (code) => end(
-        code === EVICTED_CODE ? "the successor took the socket (close 4000)" : `the socket closed (${code})`
-      )
-    );
-  });
-  pending.add(done);
-}
-function letGo(holder, keepFor, reason) {
-  if (holder && keepFor) keepUntilEvicted(holder, keepFor);
-  else holder?.close(reason);
-}
-var takeSpool = (key, feed) => drainSpool(spoolFilePathOf(CFG.authDir, key), feed);
-var handoffsSettled = () => Promise.all([...pending]).then(() => void 0);
-
 // js/bridge/holdstate.ts
 var H2 = scoped(() => ({
   /** Каталог сессии, из которого занимается место (cwd в iskron_stand), — в запись держания, для возврата по каталогу (resume.ts). */
@@ -3937,7 +3827,7 @@ var handoverUnderway = () => handingOver !== null;
 import { execFileSync } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { hostname } from "node:os";
-import { basename as basename3, dirname as dirname5, resolve as resolve4 } from "node:path";
+import { basename as basename3, dirname as dirname4, resolve as resolve4 } from "node:path";
 var NAME_MAX = 48;
 var normKarta = (k) => String(k ?? "").trim().replace(/^#/, "");
 var normName = (n) => typeof n === "string" ? n.trim() : "";
@@ -3996,7 +3886,7 @@ function repoName(cwd = sessionCwd()) {
   if (!gitDir || !common || real(resolve4(cwd, gitDir)) === real(resolve4(cwd, common)))
     return basename3(top || cwd);
   const shared = real(resolve4(cwd, common));
-  if (basename3(shared) === ".git") return basename3(dirname5(shared));
+  if (basename3(shared) === ".git") return basename3(dirname4(shared));
   const origin = git(["remote", "get-url", "origin"], cwd).replace(/\/+$/, "");
   const fromOrigin = basename3(origin.replace(/^.*:/, "/")).replace(/\.git$/, "");
   return fromOrigin || basename3(top || cwd);
@@ -4153,26 +4043,172 @@ function learnFromHello(hello, primary) {
     if (typeof e.standing_id === "string" && e.standing_id) p.door.standingId = e.standing_id;
   }
 }
-function routeFrame(frame2, primary) {
-  if (!frame2 || !extras.size) return { door: primary.door };
-  const places = all(primary);
+function fitsOf(frame2, places) {
   const id = typeof frame2.to_standing_id === "string" ? frame2.to_standing_id : "";
   const byId = id ? places.find((p) => p.door.standingId === id) : void 0;
-  if (byId) return { door: byId.door };
+  if (byId) return [byId];
   const to = nameOfAddress(frame2.to_standing);
-  if (!id && !to && frame2.realm == null && frame2.karta_seq == null) return { door: primary.door };
+  if (!id && !to && frame2.realm == null && frame2.karta_seq == null) return null;
   const fits = places.filter(
     (p) => (frame2.realm == null || sameRealm(frame2.realm, p.standing.realm)) && (!to || to === (p.standing.name ?? "")) && (frame2.karta_seq == null || String(frame2.karta_seq) === String(p.standing.karta))
   );
-  if (fits.length === 1) {
-    if (id && !fits[0].door.standingId) fits[0].door.standingId = id;
-    return { door: fits[0].door };
-  }
+  if (fits.length === 1 && id && !fits[0].door.standingId) fits[0].door.standingId = id;
+  return fits;
+}
+function strayOf(frame2, primary) {
+  if (frame2?.type !== "message" || fitsOf(frame2, all(primary))?.length !== 0) return null;
+  const back = state.places.find((s2) => frame2.realm != null && sameRealm(s2.realm, frame2.realm));
+  return back ? keyOfPlace(back) : `${String(frame2.to_standing ?? "—")}, граф ${String(frame2.realm ?? "—")}`;
+}
+function routeFrame(frame2, primary) {
+  if (!frame2 || !extras.size) return { door: primary.door };
+  const fits = fitsOf(frame2, all(primary));
+  if (!fits) return { door: primary.door };
+  if (fits.length === 1) return { door: fits[0].door };
+  const id = typeof frame2.to_standing_id === "string" ? frame2.to_standing_id : "";
   return {
     door: primary.door,
     note: `ДЕЛАТЕЛЬ: кадр ${String(frame2.id ?? "?")} (to_standing_id ${id || "—"}, ${frame2.to_standing ?? "—"}, граф ${frame2.realm ?? "—"}) не сопоставлен ни одному месту моста (${fits.length ? "подходят несколько" : "не подходит ни одно"}) — отдан основному месту ${primary.door.key}; сверь адрес кадра.`
   };
 }
+
+// js/bridge/spool.ts
+import { appendFileSync as appendFileSync3, mkdirSync as mkdirSync8, readFileSync as readFileSync11, unlinkSync as unlinkSync9 } from "node:fs";
+import { dirname as dirname5 } from "node:path";
+var HANDOFF_MS = Number(process.env.ISKRON_BRIDGE_DAEMON_HANDOFF_MS) || 12e3;
+var DRAIN_MS = HANDOFF_MS + 5e3;
+var DRAIN_TICK_MS = 200;
+var SPOOL_LIVE_MS = DRAIN_MS;
+function append(path, entry) {
+  try {
+    appendFileSync3(path, JSON.stringify(entry) + "\n", { mode: 384 });
+  } catch (e) {
+    const id = entry.frame === void 0 ? "" : `, frame ${String(parseFrame(entry.frame)?.id ?? "?")}`;
+    log(`handover spool not written (${path}${id}): ${e.message}`);
+  }
+}
+function openSpool(path) {
+  try {
+    mkdirSync8(dirname5(path), { recursive: true, mode: 448 });
+  } catch {
+  }
+  append(path, { open: Date.now() });
+}
+var spoolFrame = (path, raw) => append(path, { frame: raw, at: Date.now() });
+var closeSpool = (path) => append(path, { done: Date.now() });
+var draining = /* @__PURE__ */ new Set();
+function parseFrame(raw) {
+  try {
+    const f = JSON.parse(raw);
+    return f && typeof f === "object" ? f : null;
+  } catch {
+    return null;
+  }
+}
+function entries(path) {
+  let text;
+  try {
+    text = readFileSync11(path, "utf8");
+  } catch {
+    return null;
+  }
+  return text.slice(0, text.lastIndexOf("\n") + 1).split("\n").filter(Boolean).map((line) => {
+    try {
+      return JSON.parse(line);
+    } catch {
+      return {};
+    }
+  });
+}
+function aged(raw, at2) {
+  const frame2 = parseFrame(raw);
+  if (Date.now() - at2 <= SPOOL_LIVE_MS || frame2?.type !== "message") return [raw, frame2];
+  const stale = { ...frame2, stale: true };
+  return [JSON.stringify(stale), stale];
+}
+function drainSpool(path, feed) {
+  if (draining.has(path)) return;
+  const give = bindScope((raw, at2) => feed(...aged(raw, at2)));
+  const until = Date.now() + DRAIN_MS;
+  let taken = 0;
+  let openedAt = 0;
+  const tick = () => {
+    const all2 = entries(path);
+    if (!all2) return void draining.delete(path);
+    const fresh = [];
+    for (const e of all2.slice(taken)) {
+      if (e.open) openedAt = e.open;
+      if (typeof e.frame === "string") fresh.push([e.frame, e.at ?? openedAt]);
+    }
+    if (fresh.length) log(`handover spool: ${fresh.length} frame(s) of the outgoing daemon`);
+    for (const [raw, at2] of fresh) give(raw, at2);
+    taken = all2.length;
+    const opened = all2.filter((e) => e.open).length;
+    const done = all2.filter((e) => e.done).length;
+    if (done < opened && Date.now() < until) {
+      setTimeout(tick, DRAIN_TICK_MS).unref?.();
+      return;
+    }
+    draining.delete(path);
+    try {
+      unlinkSync9(path);
+    } catch {
+    }
+  };
+  draining.add(path);
+  tick();
+}
+
+// js/bridge/handoff.ts
+var pending = /* @__PURE__ */ new Set();
+function keepUntilEvicted(holder, key) {
+  const path = spoolFilePathOf(CFG.authDir, key);
+  openSpool(path);
+  let timer;
+  let over = false;
+  const done = new Promise((resolve7) => {
+    const end = (why) => {
+      if (over) return;
+      over = true;
+      clearTimeout(timer);
+      closeSpool(path);
+      log(`place ${key} handed over: ${why}`);
+      resolve7();
+    };
+    timer = setTimeout(() => {
+      holder.close("the successor did not take the place");
+      end(`no successor took the socket in ${HANDOFF_MS / 1e3}s — closed`);
+    }, HANDOFF_MS);
+    holder.handOff(
+      (raw) => spoolFrame(path, raw),
+      (code) => end(
+        code === EVICTED_CODE ? "the successor took the socket (close 4000)" : `the socket closed (${code})`
+      )
+    );
+  });
+  pending.add(done);
+}
+function letGo(holder, keepFor, reason) {
+  if (holder && keepFor) keepUntilEvicted(holder, keepFor);
+  else holder?.close(reason);
+}
+function takeSpool(key, primary, feed) {
+  drainSpool(spoolFilePathOf(CFG.authDir, key), (raw, frame2) => {
+    const p = primary();
+    const to = p && strayOf(frame2, p);
+    if (!p || !to) return feed(raw, frame2);
+    const text = `ДЕЛАТЕЛЬ: кадр ${String(frame2?.id ?? "?")} из спула смены демона адресован месту ${to}, не вернувшемуся, — не кадр места ${p.door.key}; вернуть место — iskron_stand в его графе. Кадр: ${raw}`;
+    log(text);
+    const ev = { kind: "note", text };
+    p.door.broadcast(ev);
+    emit({
+      jsonrpc: "2.0",
+      method: "notifications/message",
+      params: { level: "info", logger: "iskron-channel", data: ev }
+    });
+  });
+}
+var handoffsSettled = () => Promise.all([...pending]).then(() => void 0);
 
 // js/bridge/hold.ts
 function keyFor() {
@@ -4432,7 +4468,7 @@ function openHolder(url, key) {
             d.broadcast({ kind: "note", text: note3 });
           }
           deliverTo(d, raw, frame2, full);
-          if (full?.type === "hello") takeSpool(key, onFrame);
+          if (full?.type === "hello") takeSpool(key, held, onFrame);
         });
       },
       onEvicted: (code) => {

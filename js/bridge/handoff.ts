@@ -7,8 +7,10 @@
 import { EVICTED_CODE, type Frame, type Holder } from "../shared/channel.ts";
 import { spoolFilePathOf } from "../shared/standings.ts";
 import { CFG } from "./config.ts";
+import { type ChannelEvent } from "./door.ts";
+import { type Place, strayOf } from "./places.ts";
 import { closeSpool, drainSpool, HANDOFF_MS, openSpool, spoolFrame } from "./spool.ts";
-import { log } from "./streams.ts";
+import { emit, log } from "./streams.ts";
 
 /** Удержанные сокеты мест — процесса, не сессии: демон ждёт их всех перед уходом. */
 const pending = new Set<Promise<void>>();
@@ -51,9 +53,33 @@ export function letGo(holder: Holder | null, keepFor: string | null, reason: str
   else holder?.close(reason);
 }
 
-/** Место держит этот держатель (hello) — дослать пришедшее уходящему демону тем же путём. */
-export const takeSpool = (key: string, feed: (raw: string, frame: Frame | null) => void): void =>
-  drainSpool(spoolFilePathOf(CFG.authDir, key), feed);
+/**
+ * Место держит этот держатель (hello) — дослать пришедшее уходящему демону тем же
+ * путём. Кадр места, которого мост не держит (место рядом не вернулось), основному
+ * месту его кадром не отдаётся и в его .seen не метится — слово с адресатом и кадром.
+ */
+export function takeSpool(
+  key: string,
+  primary: () => Place | null,
+  feed: (raw: string, frame: Frame | null) => void,
+): void {
+  drainSpool(spoolFilePathOf(CFG.authDir, key), (raw, frame) => {
+    const p = primary();
+    const to = p && strayOf(frame, p);
+    if (!p || !to) return feed(raw, frame);
+    const text =
+      `ДЕЛАТЕЛЬ: кадр ${String(frame?.id ?? "?")} из спула смены демона адресован месту ${to}, ` +
+      `не вернувшемуся, — не кадр места ${p.door.key}; вернуть место — iskron_stand в его графе. Кадр: ${raw}`;
+    log(text);
+    const ev: ChannelEvent = { kind: "note", text };
+    p.door.broadcast(ev);
+    emit({
+      jsonrpc: "2.0",
+      method: "notifications/message",
+      params: { level: "info", logger: "iskron-channel", data: ev },
+    });
+  });
+}
 
 /** Все удержанные сокеты отпущены — вытеснены преемником или закрыты по пределу. */
 export const handoffsSettled = (): Promise<void> => Promise.all([...pending]).then(() => undefined);

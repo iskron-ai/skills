@@ -3,7 +3,9 @@
 // кладёт сюда — строкой JSON на запись, рядом с ключом места (0600). Записи:
 // {open} — передача началась, {frame} — кадр как пришёл, {done} — сокет ушёл
 // (вытеснен или закрыт по пределу). Преемник после hello досылает кадры тем же
-// путём доставки (hold.ts); повтор отсекает память отданного (.seen).
+// путём доставки (hold.ts); повтор отсекает память отданного (.seen). Кадр,
+// пролежавший в спуле дольше предела досылки (место не вернулось часами), живым
+// не досылается — идёт с пометкой stale, как лежалые кадры службы.
 import { appendFileSync, mkdirSync, readFileSync, unlinkSync } from "node:fs";
 import { dirname } from "node:path";
 
@@ -16,10 +18,14 @@ export const HANDOFF_MS = Number(process.env.ISKRON_BRIDGE_DAEMON_HANDOFF_MS) ||
 /** Сколько преемник ждёт конца спула: предел уходящего и запас на его выход. */
 const DRAIN_MS = HANDOFF_MS + 5_000;
 const DRAIN_TICK_MS = 200;
+/** Предел досылки живым: кадр спула старше — лежалый (stale), хода не стоит. */
+const SPOOL_LIVE_MS = DRAIN_MS;
 
 interface Entry {
   open?: number;
   frame?: string;
+  /** Когда кадр лёг в спул. */
+  at?: number;
   done?: number;
 }
 
@@ -27,7 +33,9 @@ function append(path: string, entry: Entry): void {
   try {
     appendFileSync(path, JSON.stringify(entry) + "\n", { mode: 0o600 });
   } catch (e) {
-    log(`handover spool not written (${path}): ${(e as Error).message}`);
+    const id =
+      entry.frame === undefined ? "" : `, frame ${String(parseFrame(entry.frame)?.id ?? "?")}`;
+    log(`handover spool not written (${path}${id}): ${(e as Error).message}`);
   }
 }
 
@@ -39,7 +47,8 @@ export function openSpool(path: string): void {
   append(path, { open: Date.now() });
 }
 
-export const spoolFrame = (path: string, raw: string): void => append(path, { frame: raw });
+export const spoolFrame = (path: string, raw: string): void =>
+  append(path, { frame: raw, at: Date.now() });
 export const closeSpool = (path: string): void => append(path, { done: Date.now() });
 
 const draining = new Set<string>();
@@ -74,21 +83,35 @@ function entries(path: string): Entry[] | null {
     });
 }
 
+/** Кадр, пролежавший дольше предела досылки, — с пометкой stale; время — его, иначе начала передачи. */
+function aged(raw: string, at: number): [string, Frame | null] {
+  const frame = parseFrame(raw);
+  if (Date.now() - at <= SPOOL_LIVE_MS || frame?.type !== "message") return [raw, frame];
+  const stale = { ...frame, stale: true };
+  return [JSON.stringify(stale), stale];
+}
+
 /**
  * Дослать спул места (преемник, по hello): кадры — feed по порядку, пока каждая
  * начатая передача не допишет конец; конец или предел — файл прочь. Спула нет — ничего.
+ * Кадры спула приходят после hello преемника и могут встать позже более новых живых.
  */
 export function drainSpool(path: string, feed: (raw: string, frame: Frame | null) => void): void {
   if (draining.has(path)) return;
-  const give = bindScope((raw: string) => feed(raw, parseFrame(raw)));
+  const give = bindScope((raw: string, at: number) => feed(...aged(raw, at)));
   const until = Date.now() + DRAIN_MS;
   let taken = 0;
+  let openedAt = 0;
   const tick = (): void => {
     const all = entries(path);
     if (!all) return void draining.delete(path);
-    const fresh = all.slice(taken).filter((e) => typeof e.frame === "string");
+    const fresh: [string, number][] = [];
+    for (const e of all.slice(taken)) {
+      if (e.open) openedAt = e.open;
+      if (typeof e.frame === "string") fresh.push([e.frame, e.at ?? openedAt]);
+    }
     if (fresh.length) log(`handover spool: ${fresh.length} frame(s) of the outgoing daemon`);
-    for (const e of fresh) give(e.frame as string);
+    for (const [raw, at] of fresh) give(raw, at);
     taken = all.length;
     const opened = all.filter((e) => e.open).length;
     const done = all.filter((e) => e.done).length;

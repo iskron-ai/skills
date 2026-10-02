@@ -715,10 +715,6 @@ var H = scoped(() => ({ session: null }));
 // js/bridge/sweep.ts
 var SEEN_FILE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1e3;
 
-// js/bridge/spool.ts
-var HANDOFF_MS = Number(process.env.ISKRON_BRIDGE_DAEMON_HANDOFF_MS) || 12e3;
-var DRAIN_MS = HANDOFF_MS + 5e3;
-
 // js/bridge/holdstate.ts
 var H2 = scoped(() => ({
   /** Каталог сессии, из которого занимается место (cwd в iskron_stand), — в запись держания, для возврата по каталогу (resume.ts). */
@@ -749,6 +745,10 @@ var R = scoped(() => ({ listing: null }));
 
 // js/bridge/places.ts
 var extras = scoped(() => /* @__PURE__ */ new Map());
+
+// js/bridge/spool.ts
+var HANDOFF_MS = Number(process.env.ISKRON_BRIDGE_DAEMON_HANDOFF_MS) || 12e3;
+var DRAIN_MS = HANDOFF_MS + 5e3;
 
 // js/shared/bridge-client.ts
 import { spawn } from "node:child_process";

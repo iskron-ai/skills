@@ -432,7 +432,7 @@ function openHolder(url: string, key: string): void {
             d.broadcast({ kind: "note", text: note });
           }
           deliverTo(d, raw, frame, full);
-          if (full?.type === "hello") takeSpool(key, onFrame); // пришедшее уходящему демону (#6586)
+          if (full?.type === "hello") takeSpool(key, held, onFrame); // пришедшее уходящему демону (#6586)
         });
       },
       onEvicted: (code) => {

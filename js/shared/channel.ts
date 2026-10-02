@@ -417,8 +417,9 @@ export function holdSocket(o: HoldOptions): Holder {
       }
     },
     handOff(onFrame, onGone) {
-      // Обрыв уже был, ждём переоткрытия: вытеснять нечего.
-      if (stopped || !ws || ws.readyState > 1) {
+      // Обрыв уже был, ждём переоткрытия: вытеснять нечего. Сокет ещё открывается —
+      // тоже закрыть: открывшись после сокета преемника, он вытеснил бы его 4000.
+      if (stopped || !ws || ws.readyState !== 1) {
         this.close("handed off without a socket");
         return onGone(0);
       }
