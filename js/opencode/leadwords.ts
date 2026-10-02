@@ -1,8 +1,27 @@
-// Слова о ведущем субагенте его родителю (leads.ts, граф nks-dev: #6625) и двери
-// к контексту OpenCode, которыми они доходят: синтетика в сессию родителя.
+// Договор ведущих субагентов (leads.ts, граф nks-dev: #6625), слова о них родителю
+// и двери к контексту OpenCode, которыми они доходят: синтетика в сессию.
 /* eslint-disable @typescript-eslint/no-explicit-any -- ответы SDK без схемы */
 import type { Context } from "./plugin.ts";
+import type { Place } from "./satellite.ts";
 import type { Say } from "./tools.ts";
+
+export interface Leads {
+  /** Успешный вызов ребёнка его мостом: встал — ведущий; первое дело, куда вошёл, — дело поручения; уход по исходу — конец. */
+  called(child: string, name: string, args: Record<string, unknown>, place?: Place | null): void;
+  /** revoke запустившего, называющий место его ведущего субагента; null — не этот случай. */
+  release(caller: string, name: string, args: Record<string, unknown>): Promise<string | null>;
+  /** Отпущен запустившим — встать снова ему нельзя. */
+  released(child: string): boolean;
+  /** Слово моста ребёнка: «held» называет место, кадр — не простой. */
+  heard(child: string, kind: unknown, place?: Place | null): void;
+  /** Ребёнок прежнего экземпляра плагина возвращается: ведущий с его делом поручения. */
+  back(child: string, room: string | null | undefined): void;
+  /** Место вернуть не удалось — мост гасится, родителю слово без пробуждения. */
+  fail(child: string, why: string): Promise<void>;
+  roomOf(child: string): string | null;
+  onEvent(ev: any): void;
+  stop(): void;
+}
 
 export interface LeadDoors {
   say: Say;
@@ -31,13 +50,17 @@ export const turnWord = (place: string): string =>
 export const releaseWord = (who: string): string =>
   `Искрон: субагент ${who} отпущен — его мост погашен: выход из дел и снятие места делает он; итог лёг сюда синтетикой.`;
 
-export const lostWord = (who: string): string =>
-  `Искрон: субагент ${who} снят перезагрузкой плагина — его мост ушёл с местом при остановке; итога нет, его ход — в его сессии. ` +
-  "Встанет заново (iskron_stand) — продолжит.";
+export const releasedWord = (): string =>
+  "Искрон: запустивший отпустил тебя — поручение кончено, место снято, из дел ты выведен; встать снова нельзя, в граф и дела больше не пиши.";
+
+export const lostWord = (who: string, why: string): string =>
+  `Искрон: субагент ${who} снят — ${why}. Место без моста уйдёт сроком канала, его дела — сроком места; итога нет, его ход — в его сессии.`;
 
 /**
- * Двери ведущих к OpenCode: родитель — parentID сессии, слово — синтетикой (нет её —
- * промптом); конец — снимок расхода мосту (#6401), затем end гасит мост и метит сессию.
+ * Двери ведущих к OpenCode: родитель — parentID сессии (Session публичного API; им же
+ * связка восстанавливается после перезагрузки), слово — синтетикой (нет её — промптом):
+ * resume=false — по описанию API «schedule execution unless resume is false» — ходом не
+ * будит, слово ждёт следующего хода; конец — снимок расхода мосту (#6401), затем end.
  */
 export function leadDoors(
   ctx: Context,
@@ -60,7 +83,7 @@ export function leadDoors(
       try {
         if (typeof s.synthetic === "function")
           await s.synthetic({ sessionID, text, delivery: "queue", resume: wake });
-        else await s.prompt({ sessionID, text, delivery: "queue" });
+        else await s.prompt({ sessionID, text, delivery: "queue", resume: wake });
         say(`Искрон: слово о субагенте вложено в сессию ${sessionID}`, "info");
       } catch (e) {
         say(

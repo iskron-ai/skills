@@ -30,7 +30,7 @@ export type Context = Plugin.Context;
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- события и ответы SDK без схемы */
 
-async function setup(ctx: Context): Promise<() => void> {
+async function setup(ctx: Context): Promise<() => Promise<void>> {
   // Тоста у серверного плагина OpenCode 2 нет: слово человеку — stderr сервиса,
   // а то, что должно дойти до агента, идёт промптом в его сессию (channel.ts).
   const say: Say = (text, level) => {
@@ -194,11 +194,12 @@ async function setup(ctx: Context): Promise<() => void> {
     }
   })();
 
-  return () => {
+  // Остановка ждёт паузы мостов субагентов (children.ts): перезагрузка — не их конец.
+  return async () => {
     controller.abort();
     usage.stop();
     ch?.stop();
-    half.stop();
+    await half.stop();
   };
 }
 

@@ -1182,6 +1182,55 @@ async function refreshToolList(b, state2, reload, say, live) {
   }
 }
 
+// js/opencode/children.ts
+var BACK_TRIES = 4;
+var BACK_PAUSE_MS = Number(process.env.ISKRON_CHILD_BACK_PAUSE_MS) || 1e3;
+var PAUSE_MS = 1500;
+function createChildren(d) {
+  function childSlot(sessionID, parent, back2) {
+    const have = d.slots.get(sessionID);
+    if (have && !have.bridge.failure) return have;
+    const was = have ?? (back2 && { satelliteOf: back2.of, dir: back2.dir, key: back2.key, stood: true });
+    const of = was?.satelliteOf ?? parent?.place ?? null;
+    const own = d.spawn(of ? ["--satellite"] : []);
+    own.satelliteOf = of;
+    own.session = sessionID;
+    own.child = true;
+    own.dir = was?.dir ?? null;
+    own.key = was?.key ?? null;
+    d.slots.set(sessionID, own);
+    if (was?.stood && own.key)
+      own.resume = d.keeper.resume(own, sessionID, !!back2).finally(() => own.resume = null);
+    return own;
+  }
+  async function back(e) {
+    if (!await d.exists(e.session)) return;
+    d.leads.back(e.session, e.room);
+    if (!e.key) return d.leads.fail(e.session, "перезагрузка плагина, ключа места нет");
+    const own = childSlot(e.session, null, e);
+    for (let i = 0; i < BACK_TRIES && !own.holding; i++) {
+      if (i) {
+        await sleep2(BACK_PAUSE_MS);
+        own.resume = d.keeper.resume(own, e.session, true).finally(() => own.resume = null);
+      }
+      await own.resume;
+    }
+    if (!own.holding)
+      await d.leads.fail(e.session, "перезагрузка плагина, место-спутник по ключу не вернулось");
+  }
+  async function pause() {
+    const held = [...d.slots.values()].filter((s) => s.child && s.holding && s.session);
+    for (const s of held) s.room = d.leads.roomOf(s.session);
+    await Promise.all(
+      held.map(
+        (s) => s.bridge.request("iskron/suspend", {}, { timeoutMs: PAUSE_MS, service: true }).catch(() => {
+        })
+      )
+    );
+  }
+  return { childSlot, back, pause };
+}
+
 // js/opencode/host.ts
 import { dirname } from "node:path";
 async function hostEnvOf(ctx) {
@@ -1214,7 +1263,13 @@ import { join as join6 } from "node:path";
 var WATCH_MS = Number(process.env.ISKRON_BRIDGE_WATCH_MS || 5 * 6e4);
 var MARKER_PREFIX = "opencode-lost";
 function writeLostMarker(authDir2, slots) {
-  const entries = [...slots].filter((s) => s.holding && s.session).map((s) => ({ session: s.session, dir: s.dir, key: s.key, child: !!s.child }));
+  const entries = [...slots].filter((s) => s.holding && s.session).map((s) => ({
+    session: s.session,
+    dir: s.dir,
+    key: s.key,
+    child: !!s.child,
+    ...s.child ? { of: s.satelliteOf ?? null, room: s.room ?? null } : {}
+  }));
   if (!entries.length) return;
   try {
     mkdirSync2(authDir2, { recursive: true, mode: 448 });
@@ -1249,7 +1304,8 @@ function takeLostMarker(authDir2) {
           session: e.session,
           dir: e.dir ?? null,
           key: e.key ?? null,
-          child: !!e.child
+          child: !!e.child,
+          ...e.child ? { of: e.of ?? null, room: e.room ?? null } : {}
         });
     } catch {
     }
@@ -1288,7 +1344,7 @@ function createKeeper(doors) {
     const key = slot.key ?? (slot.session ? hints.get(slot.session) : void 0);
     return { ...key ? { key } : {}, ...slot.dir ? { cwd: slot.dir } : {}, ...session };
   }
-  async function resume(slot, root) {
+  async function resume(slot, root, quiet = false) {
     const mark = slot.child ? void 0 : marked.get(root);
     marked.delete(root);
     try {
@@ -1313,7 +1369,8 @@ function createKeeper(doors) {
       if (typeof r.key === "string") slot.key = r.key;
       roots.add(root);
       doors.say(`Искрон: сессия ${root} — ${r.word}`, "info");
-      if (typeof r.key === "string") doors.tell(root, resumedWord(r.key, r.others), slot.child);
+      if (typeof r.key === "string" && !quiet)
+        doors.tell(root, resumedWord(r.key, r.others), slot.child);
     } catch (e) {
       doors.say(
         `Искрон: возврат места сессии ${root} не удался — ${e.message}`,
@@ -1462,7 +1519,8 @@ ${said || "(текста он не оставил — смотри его дел
 };
 var turnWord = (place) => `Искрон: субагент ${place} сдал ход, не поручение — он продолжает и ждёт кадров своего дела; итог ляжет сюда по его концу. Отпустить раньше — iskron_channel(action="revoke", standing="${place}").`;
 var releaseWord = (who) => `Искрон: субагент ${who} отпущен — его мост погашен: выход из дел и снятие места делает он; итог лёг сюда синтетикой.`;
-var lostWord = (who) => `Искрон: субагент ${who} снят перезагрузкой плагина — его мост ушёл с местом при остановке; итога нет, его ход — в его сессии. Встанет заново (iskron_stand) — продолжит.`;
+var releasedWord = () => "Искрон: запустивший отпустил тебя — поручение кончено, место снято, из дел ты выведен; встать снова нельзя, в граф и дела больше не пиши.";
+var lostWord = (who, why) => `Искрон: субагент ${who} снят — ${why}. Место без моста уйдёт сроком канала, его дела — сроком места; итога нет, его ход — в его сессии.`;
 function leadDoors(ctx, say, flush, end) {
   return {
     say,
@@ -1480,7 +1538,7 @@ function leadDoors(ctx, say, flush, end) {
       try {
         if (typeof s.synthetic === "function")
           await s.synthetic({ sessionID, text, delivery: "queue", resume: wake });
-        else await s.prompt({ sessionID, text, delivery: "queue" });
+        else await s.prompt({ sessionID, text, delivery: "queue", resume: wake });
         say(`Искрон: слово о субагенте вложено в сессию ${sessionID}`, "info");
       } catch (e) {
         say(
@@ -1495,21 +1553,23 @@ function leadDoors(ctx, say, flush, end) {
 // js/opencode/leads.ts
 var LEAD_IDLE_MS = Number(process.env.ISKRON_LEAD_IDLE_MS) || 45 * 6e4;
 var TICK_MS = Math.min(6e4, Math.max(100, Math.floor(LEAD_IDLE_MS / 5)));
+var TURN = /^session\.execution\.(started|succeeded|failed)$/;
 var roomNo = (room) => String(room ?? "").replace(/^\s*[#№]\s*|\s+$/g, "");
 var names = (place, child, s) => s === child || !!place?.name && (s === place.name || s.endsWith(`:${place.name}`));
 function createLeads(d) {
   const leads = /* @__PURE__ */ new Map();
+  const gone = /* @__PURE__ */ new Set();
   const who = (l, child) => l.place?.name ?? `сессии ${child}`;
   const parentOf = (child) => d.parentOf(child).catch(() => null);
-  async function finish(child, why, gone = false) {
+  async function finish(child, why, ended = true, wake = true, lost = false) {
     const l = leads.get(child);
     if (!l) return;
     leads.delete(child);
-    if (!gone) await d.end(child).catch(() => {
+    if (ended) await d.end(child).catch(() => {
     });
     const parent = await l.parent;
-    const word = endWord(who(l, child), why, (l.last ?? "").trim());
-    if (parent) await d.tell(parent, word, true);
+    const word = lost ? lostWord(who(l, child), why) : endWord(who(l, child), why, (l.last ?? "").trim());
+    if (parent) await d.tell(parent, word, wake);
     else d.say(`${word}
 (родителя плагин не знает — итог некому)`, "warning");
   }
@@ -1518,7 +1578,7 @@ function createLeads(d) {
     if (!l.running) void finish(child, why);
   }
   function stood(child) {
-    const l = leads.get(child) ?? { parent: parentOf(child), at: 0 };
+    const l = leads.get(child) ?? { parent: parentOf(child), at: Date.now() };
     leads.set(child, l);
     return l;
   }
@@ -1532,17 +1592,19 @@ function createLeads(d) {
     const now2 = Date.now();
     const why = `потолок простоя: ${Math.round(LEAD_IDLE_MS / 6e4)} мин без хода и без кадра`;
     for (const [child, l] of leads)
-      if (!l.running && now2 - l.at >= LEAD_IDLE_MS) void finish(child, why);
+      if (!l.running && now2 - l.at >= LEAD_IDLE_MS) void finish(child, why, true, false);
   }, TICK_MS);
   tick.unref?.();
   return {
     called(child, name, args, place) {
+      if (gone.has(child)) return;
       const l = standsBy(name, args) ? stood(child) : leads.get(child);
       if (!touch(l, place)) return;
-      const room = name === "iskron_case" || name === "iskron_room" ? roomNo(args.room) : "";
+      const room = name === "iskron_case" || name === "iskron_room" ? roomNo(args.room) : null;
       if (args.action === "join" && room) l.room ??= room;
       if (args.action !== "leave") return;
       if (name === "iskron_channel") leave(child, l, "ушёл с места по исходу");
+      else if (room === "") leave(child, l, "ушёл из дел по исходу");
       else if (room && room === l.room) leave(child, l, `вышел из дела №${l.room} по исходу`);
     },
     async release(caller, name, args) {
@@ -1550,26 +1612,29 @@ function createLeads(d) {
       if (name !== "iskron_channel" || args.action !== "revoke" || !s) return null;
       for (const [child, l] of leads) {
         if (!names(l.place, child, s) || await l.parent !== caller) continue;
+        gone.add(child);
         await finish(child, "отпущен словом запустившего");
+        await d.tell(child, releasedWord(), false);
         return releaseWord(who(l, child));
       }
       return null;
     },
+    released: (child) => gone.has(child),
     heard(child, kind, place) {
-      touch(kind === "held" ? stood(child) : leads.get(child), place);
+      if (kind !== "held" && kind !== "frame") return;
+      touch(kind === "held" && !gone.has(child) ? stood(child) : leads.get(child), place);
     },
-    lost(entries) {
-      const children = entries.filter((e) => e.child && e.session);
-      for (const e of children)
-        void parentOf(e.session).then(async (p) => {
-          if (p) await d.tell(p, lostWord(e.key ?? e.session), false);
-        });
-      return children.map((e) => e.session);
+    back(child, room) {
+      const l = stood(child);
+      if (room) l.room = room;
     },
+    fail: (child, why) => finish(child, why, true, false, true),
+    roomOf: (child) => leads.get(child)?.room ?? null,
     onEvent(ev) {
       const child = ev?.data?.sessionID;
       const l = typeof child === "string" ? leads.get(child) : void 0;
-      if (!touch(l) || typeof child !== "string") return;
+      if (!l || typeof child !== "string") return;
+      if (TURN.test(String(ev.type))) l.at = Date.now();
       switch (ev.type) {
         case "session.execution.started":
           l.running = true;
@@ -1588,7 +1653,7 @@ function createLeads(d) {
           });
           return;
         case "session.deleted":
-          return void finish(child, "сессия субагента удалена", true);
+          return void finish(child, "сессия субагента удалена", false);
       }
     },
     stop: () => clearInterval(tick)
@@ -1678,13 +1743,22 @@ var READ_ACTIONS = {
 };
 function createRunEnds() {
   const ended = /* @__PURE__ */ new Map();
+  const released = /* @__PURE__ */ new Set();
   return {
-    end(session, of, forget) {
+    end(session, of, forget, final = false) {
       forget(session);
       ended.set(session, of ?? null);
+      if (final) released.add(session);
     },
-    clear: (session) => void ended.delete(session),
+    clear(session, gone = false) {
+      if (gone) released.delete(session);
+      if (!released.has(session)) ended.delete(session);
+    },
     guard(session, name, args) {
+      if (released.has(session) && !READ_TOOLS.has(name) && !READ_ACTIONS[name]?.has(String(args.action ?? "")))
+        throw new Error(
+          `Отказано (плагин): запустивший отпустил эту дочернюю сессию — поручение кончено, место снято; ${name} не пойдёт ни её местом, ни местом запустившего, и встать снова нельзя.`
+        );
       if (!ended.has(session) || name === STAND_TOOL || READ_TOOLS.has(name)) return;
       const action = String(args.action ?? "");
       if (action === "?" || READ_ACTIONS[name]?.has(action)) return;
@@ -1790,8 +1864,12 @@ async function setupTools(ctx, say, onChannel, rootOf, flushUsage = async () => 
     return slot;
   }
   const directoryOf = (sessionID) => sessionDirectory(ctx, sessionID);
+  const exists = (sessionID) => Promise.resolve().then(() => ctx.session.get({ sessionID })).then(
+    () => true,
+    () => false
+  );
   const runEnds = createRunEnds();
-  const endChild = (c) => runEnds.end(c, slots.get(c)?.satelliteOf, forget);
+  const endChild = (c) => runEnds.end(c, slots.get(c)?.satelliteOf, forget, leads.released(c));
   const leads = createLeads(leadDoors(ctx, say, flushUsage, endChild));
   const keeper = createKeeper({
     say,
@@ -1800,18 +1878,15 @@ async function setupTools(ctx, say, onChannel, rootOf, flushUsage = async () => 
     slotFor: (root, touch) => slotFor(root, touch),
     ready: readyFor,
     directoryOf,
-    exists: (sessionID) => Promise.resolve().then(() => ctx.session.get({ sessionID })).then(
-      () => true,
-      () => false
-    )
+    exists
   });
+  const children = createChildren({ slots, spawn: spawn2, keeper, leads, exists });
   const lost = takeLostMarker(authDir());
   let lostWord2 = lost?.text ?? null;
   if (lost) {
     say(lost.text, "warning");
     keeper.hint(lost.entries);
-    for (const child of leads.lost(lost.entries)) runEnds.end(child, null, () => {
-    });
+    for (const e of lost.entries) if (e.child && e.session) void children.back(e);
   }
   function shake(slot) {
     slot.ready = handshake(slot.bridge, login.on, login.done);
@@ -1830,7 +1905,7 @@ async function setupTools(ctx, say, onChannel, rootOf, flushUsage = async () => 
     const root = await rootOf(sessionID);
     const own = root !== sessionID ? slots.get(sessionID) : void 0;
     if (own) {
-      const live = own.bridge.failure ? childSlot(sessionID) : own;
+      const live = own.bridge.failure ? children.childSlot(sessionID) : own;
       if (touch) live.lastCall = Date.now();
       return live;
     }
@@ -1918,28 +1993,13 @@ async function setupTools(ctx, say, onChannel, rootOf, flushUsage = async () => 
       });
     }
   });
-  function childSlot(sessionID, parent) {
-    const have = slots.get(sessionID);
-    if (have && !have.bridge.failure) return have;
-    const of = have?.satelliteOf ?? parent?.place ?? null;
-    const own = spawn2(of ? ["--satellite"] : []);
-    own.satelliteOf = of;
-    own.session = sessionID;
-    own.child = true;
-    own.dir = have?.dir ?? null;
-    own.key = have?.key ?? null;
-    slots.set(sessionID, own);
-    if (have?.stood && own.key)
-      own.resume = keeper.resume(own, sessionID).finally(() => own.resume = null);
-    return own;
-  }
   const awaitReady = (slot) => login.race(() => readyFor(slot));
   async function callThrough(slot, name, input, sessionID, service = false) {
     await awaitReady(slot);
     if (slot.resume) await slot.resume;
     const args = { ...input ?? {} };
     if (standsBy(name, args) && slot.session !== sessionID) {
-      slot = childSlot(sessionID, slot);
+      slot = children.childSlot(sessionID, slot);
       await awaitReady(slot);
     }
     const busy = name === STAND_TOOL && asSatellite(args, slot.satelliteOf, !!slot.place);
@@ -1998,7 +2058,7 @@ async function setupTools(ctx, say, onChannel, rootOf, flushUsage = async () => 
   }
   const launcher = createLauncher({
     rootOf,
-    childSlot: (sessionID, root) => childSlot(sessionID, slots.get(root)),
+    childSlot: (sessionID, root) => children.childSlot(sessionID, slots.get(root)),
     async call(slot, name, args, sessionID) {
       slot.busy++;
       try {
@@ -2022,13 +2082,17 @@ async function setupTools(ctx, say, onChannel, rootOf, flushUsage = async () => 
   return {
     launch: launcher.launch,
     bridgeOf: (s) => [slots.get(s)].find((x) => x?.holding)?.bridge ?? null,
-    forget,
+    forget(s) {
+      forget(s);
+      runEnds.clear(s, true);
+    },
     onEvent: (ev) => leads.onEvent(ev),
-    stop() {
+    async stop() {
       stopped = true;
       clearInterval(reaper);
       leads.stop();
       keeper.stop();
+      await children.pause();
       writeLostMarker(authDir(), slots.values());
       if (spare) spare.ownStop = true;
       spare?.bridge.stop();
@@ -2560,11 +2624,11 @@ ${counts}`;
     } catch {
     }
   })();
-  return () => {
+  return async () => {
     controller.abort();
     usage.stop();
     ch?.stop();
-    half.stop();
+    await half.stop();
   };
 }
 var plugin_default = { id: "iskron", setup };

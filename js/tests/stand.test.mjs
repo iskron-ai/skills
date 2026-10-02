@@ -2005,6 +2005,39 @@ test("satellite: SIGINT ends the run like stdin-close — cases left, .sub-N rev
   assert.deepEqual(revokes(plain), [], "the session's place outlives Ctrl-C");
 });
 
+// A plugin reload is not the end of a subagent (#6625, #6550 rule 3): the OpenCode
+// plugin pauses its satellite with `iskron/suspend` before stopping it — the place,
+// its cases and its busy line stay, a hold record keeps the socket and the cases;
+// the next satellite bridge takes the place back by key and leaves the cases at
+// its own end, then revokes the place.
+test("satellite: a pause before the stop keeps the place and its cases; the next satellite bridge resumes them by key and leaves them at its own end", async (t) => {
+  const fake = await withCaller(t);
+  const dir = mkdtempSync(join(tmpdir(), "iskron-sat-pause-"));
+  const sat = await satelliteBridge(t, fake, { dir });
+  assert.ok(!(await standAs(sat, SAT_ARGS)).result?.isError, sat.stderr);
+  await caseAs(sat, "join", "№102");
+  const paused = (await sat.call("iskron/suspend", {})).result;
+  assert.equal(paused?.suspended, true, `${JSON.stringify(paused)}\n${sat.stderr}`);
+  await sat.stop();
+  assert.deepEqual(caseCalls(fake, "leave"), [], `no case left on a pause:\n${sat.stderr}`);
+  assert.deepEqual(revokes(fake), [], "the place is not revoked on a pause");
+  assert.ok(fake.state.places.has(`931:${CALLER}.sub-1`), "the place stays on the board");
+  assert.equal(holdFiles(dir).length, 1, "a hold record keeps the paused place");
+
+  const back = await satelliteBridge(t, fake, { dir });
+  const r = (await back.call("iskron/resume", { key: paused.key, session: "child" })).result;
+  assert.equal(r?.resumed, true, `${JSON.stringify(r)}\n${back.stderr}`);
+  assert.equal(r.key, paused.key);
+  await back.stop();
+  assert.deepEqual(
+    caseCalls(fake, "leave"),
+    ["№102"],
+    `the run's case left at its end:\n${back.stderr}`,
+  );
+  assert.deepEqual(revokes(fake), [`${CALLER}.sub-1`], "the place revoked at the real end");
+  assert.equal(holdFiles(dir).length, 0, "the hold record goes with the place");
+});
+
 // Places beside in other graphs are the run's too: the socket going leaves them
 // on the board until the channel's term, so each is revoked with the main one.
 test("satellite: at the run's end its places in other graphs are revoked too, not left to the term", async (t) => {

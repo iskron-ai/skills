@@ -32,6 +32,7 @@ import {
   textOf,
   writeCache,
 } from "./bridge-io.ts";
+import { createChildren } from "./children.ts";
 import { hostEnvOf, sessionDirectory } from "./host.ts";
 import { createKeeper, type KeptSlot, takeLostMarker, WATCH_MS, writeLostMarker } from "./keep.ts";
 import { createLauncher } from "./launch.ts";
@@ -82,7 +83,7 @@ export interface ToolsHalf {
   onEvent(ev: any): void;
   /** Первый промпт сессии — строка запуска с делом исполняется до хода модели (launch.ts). */
   launch(session: string, text: string): Promise<string | null>;
-  stop(): void;
+  stop(): void | Promise<void>;
   bridgeOf(session: string): Bridge | null; // мост держащего слота — для расхода сессии (usage.ts)
 }
 
@@ -165,9 +166,17 @@ export async function setupTools(
   }
 
   const directoryOf = (sessionID: string) => sessionDirectory(ctx, sessionID);
+  const exists = (sessionID: string): Promise<boolean> =>
+    Promise.resolve()
+      .then(() => ctx.session.get({ sessionID } as any))
+      .then(
+        () => true,
+        () => false,
+      );
   const runEnds = createRunEnds(); // кончившиеся дети: запись с места — отказ вслух (#6361)
   // Ведущие субагенты (#6625): конец — явный акт, итог — синтетикой родителю.
-  const endChild = (c: string) => runEnds.end(c, slots.get(c)?.satelliteOf, forget);
+  const endChild = (c: string) =>
+    runEnds.end(c, slots.get(c)?.satelliteOf, forget, leads.released(c));
   const leads = createLeads(leadDoors(ctx, say, flushUsage, endChild));
   const keeper = createKeeper({
     say,
@@ -178,14 +187,9 @@ export async function setupTools(
     slotFor: (root, touch) => slotFor(root, touch),
     ready: readyFor,
     directoryOf,
-    exists: (sessionID) =>
-      Promise.resolve()
-        .then(() => ctx.session.get({ sessionID } as any))
-        .then(
-          () => true,
-          () => false,
-        ),
+    exists,
   });
+  const children = createChildren({ slots, spawn, keeper, leads, exists });
   // Прежний экземпляр остановили с держащим мостом: ключи его мест — сторожу,
   // чтобы возврат шёл по ключу, не по каталогу; места — обратно сразу, со словом
   // в державшие сессии (keeper.resumeLost), в первую живую — лишь когда таких нет.
@@ -194,8 +198,8 @@ export async function setupTools(
   if (lost) {
     say(lost.text, "warning");
     keeper.hint(lost.entries);
-    // Дети прежнего экземпляра: запись без своего моста пошла бы местом корня — отказ (#6625).
-    for (const child of leads.lost(lost.entries)) runEnds.end(child, null, () => {});
+    // Дети прежнего экземпляра (#6625): место-спутник обратно по ключу, тихо (children.ts).
+    for (const e of lost.entries) if (e.child && e.session) void children.back(e);
   }
 
   function shake(slot: Slot): void {
@@ -226,7 +230,7 @@ export async function setupTools(
     if (own) {
       // Умерший детский мост заменяется своим же, не мостом корня: чтения и
       // записи ребёнка не уходят под привязку корня, сторож возвращает его место.
-      const live = own.bridge.failure ? childSlot(sessionID) : own;
+      const live = own.bridge.failure ? children.childSlot(sessionID) : own;
       if (touch) live.lastCall = Date.now();
       return live;
     }
@@ -330,33 +334,6 @@ export async function setupTools(
     }
   });
 
-  /**
-   * Мост дочерней сессии для её собственного стояния — один на сессию: живой
-   * возвращается, умерший заменяется с его памятью о месте; участок get→set
-   * синхронен, и два стоячих вызова одной пачки берут один мост, не два.
-   * Место с диска по каталогу ребёнку не возвращается (он встаёт сейчас);
-   * возврат по имени внутри iskron_stand — как у всякого моста.
-   */
-  function childSlot(sessionID: string, parent?: Slot): Slot {
-    const have = slots.get(sessionID);
-    if (have && !have.bridge.failure) return have;
-    // Корень держит место — мост ребёнка его спутник (satellite.ts); не держит — как прежде.
-    const of = have?.satelliteOf ?? parent?.place ?? null;
-    const own = spawn(of ? ["--satellite"] : []);
-    own.satelliteOf = of;
-    own.session = sessionID;
-    own.child = true;
-    own.dir = have?.dir ?? null;
-    own.key = have?.key ?? null;
-    slots.set(sessionID, own);
-    // Замена умершего детского моста возвращает его место сразу, по ключу из
-    // «held», а не ждёт такта сторожа: записи ребёнка в этом окне шли бы
-    // безавторными. Без ключа возвращать нечем — ребёнок встанет заново.
-    if (have?.stood && own.key)
-      own.resume = keeper.resume(own, sessionID).finally(() => (own.resume = null));
-    return own;
-  }
-
   /** Рукопожатие слота под гонкой со входом: человека внутри вызова не ждут, адрес входа уходит ответом. */
   const awaitReady = (slot: Slot): Promise<void> => login.race(() => readyFor(slot));
 
@@ -376,7 +353,7 @@ export async function setupTools(
     // получает свой мост, а не мост корня, — иначе её место снимало бы
     // родительское с сокета, а её register переписывал бы привязку корня (#5154).
     if (standsBy(name, args) && slot.session !== sessionID) {
-      slot = childSlot(sessionID, slot);
+      slot = children.childSlot(sessionID, slot);
       await awaitReady(slot); // свежий детский мост может запросить вход — та же гонка, что у корня
     }
     const busy = name === STAND_TOOL && asSatellite(args, slot.satelliteOf, !!slot.place);
@@ -450,7 +427,7 @@ export async function setupTools(
   // Строка запуска с делом (launch.ts): тот же вызов, что у execute, с его занятостью.
   const launcher = createLauncher<Slot>({
     rootOf,
-    childSlot: (sessionID, root) => childSlot(sessionID, slots.get(root)),
+    childSlot: (sessionID, root) => children.childSlot(sessionID, slots.get(root)),
     async call(slot, name, args, sessionID) {
       slot.busy++;
       try {
@@ -476,13 +453,17 @@ export async function setupTools(
   return {
     launch: launcher.launch,
     bridgeOf: (s) => [slots.get(s)].find((x) => x?.holding)?.bridge ?? null,
-    forget,
+    forget(s) {
+      forget(s);
+      runEnds.clear(s, true); // сессии нет — и окончательной пометки нет
+    },
     onEvent: (ev) => leads.onEvent(ev),
-    stop() {
+    async stop() {
       stopped = true;
       clearInterval(reaper);
       leads.stop();
       keeper.stop();
+      await children.pause(); // перезагрузка — не конец ребёнка (#6625): место и дела ждут
       // Остановка с держащими мостами — на диск: следующий экземпляр скажет о потере.
       writeLostMarker(authDir(), slots.values());
       if (spare) spare.ownStop = true;
