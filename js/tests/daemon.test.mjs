@@ -1180,6 +1180,120 @@ test("SIGTERM of the daemon is not the agent leaving: the seat comes back and wr
   });
 });
 
+// Сторож места под Monitor харнеса: вывод копится, код выхода — у proc.
+function startWatchdog(dir, key, env = {}) {
+  const proc = spawn(NODE, [BRIDGE, "watchdog", key, "--auth-dir", dir], {
+    env: { ...process.env, ISKRON_BRIDGE_NO_UPDATE: "1", ...env },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const wd = { proc, out: "" };
+  proc.stdout.on("data", (c) => (wd.out += c));
+  return wd;
+}
+
+// #6485: SIGTERM демона при тонком мосте на связи — смена держателя, не уход
+// делателя: тонкий мост поднимает новый демон и возвращает место, сторож
+// переслушивает дверь и показывает слово, посланное после SIGTERM. Прежняя
+// сборка отпускала место словом released — сторож выходил кодом 1.
+test("SIGTERM of the daemon: the watchdog hears the place again and prints a word sent after it", async () => {
+  await withFake(async ({ fake, dir, bridge }) => {
+    const a = bridge({});
+    await handshake(a);
+    const r = await stand(a, { realm: "nks-dev", karta: 931, name: "term-w" });
+    assert.ok(!r.result?.isError, textOf(r));
+    await waitFor("the place's socket", () => fake.state.ws.size === 1);
+    const before = new Set(fake.state.ws);
+    const wd = startWatchdog(dir, "term-w--931--nks-dev");
+    try {
+      await waitFor("the watchdog to attach", () => /слушаю стояние/.test(wd.out));
+      const [first] = daemonPids(dir);
+      process.kill(first, "SIGTERM");
+      // Слово окна — в сокет уходящего: доходит до сторожа ровно раз (спул, #6586).
+      await waitFor("the SIGTERM taken", () => /SIGTERM — ending/.test(journalOf(dir)));
+      await fake.control({ ws_say: { name: "term-w", text: "в окне SIGTERM", id: "term-w-0" } });
+      await waitFor(
+        "the place back at the new daemon",
+        () =>
+          [...fake.state.ws].some((s) => !before.has(s) && fake.state.wsNames.get(s) === "term-w"),
+        30_000,
+      ).catch((e) => {
+        throw new Error(`${e.message}\n${wd.out}\n${a.stderr}\n${journalOf(dir)}`);
+      });
+      await waitFor("the old daemon gone", () => !alive(first), 30_000);
+      await fake.control({ ws_say: { name: "term-w", text: "после SIGTERM", id: "term-w-1" } });
+      await waitFor(
+        "the watchdog to print the word",
+        () => /после SIGTERM/.test(wd.out),
+        10_000,
+      ).catch((e) => {
+        throw new Error(`${e.message}\nexit ${wd.proc.exitCode}\n${wd.out}\n${journalOf(dir)}`);
+      });
+      assert.equal(wd.proc.exitCode, null, `the watchdog is still up:\n${wd.out}`);
+      assert.doesNotMatch(wd.out, /мост отпустил/, wd.out);
+      assert.equal(wd.out.match(/после SIGTERM/g).length, 1, `the word once:\n${wd.out}`);
+      assert.equal(
+        wd.out.match(/в окне SIGTERM/g)?.length,
+        1,
+        `the window's word once:\n${wd.out}`,
+      );
+    } finally {
+      wd.proc.kill("SIGKILL");
+    }
+  });
+});
+
+// #6485, обратная сторона: харнес закрыл вход — делатель ушёл, место отпущено,
+// сторож выходит громко, а не ждёт возврата.
+test("the harness closes stdin: the place is released and the watchdog leaves loudly", async () => {
+  await withFake(async ({ fake, dir, bridge }) => {
+    const a = bridge({});
+    await handshake(a);
+    const r = await stand(a, { realm: "nks-dev", karta: 931, name: "term-x" });
+    assert.ok(!r.result?.isError, textOf(r));
+    await waitFor("the place's socket", () => fake.state.ws.size === 1);
+    const wd = startWatchdog(dir, "term-x--931--nks-dev");
+    try {
+      await waitFor("the watchdog to attach", () => /слушаю стояние/.test(wd.out));
+      a.proc.stdin.end();
+      await waitFor("the watchdog to leave", () => wd.proc.exitCode !== null, 15_000).catch((e) => {
+        throw new Error(`${e.message}\n${wd.out}\n${journalOf(dir)}`);
+      });
+      assert.equal(wd.proc.exitCode, 1, wd.out);
+      assert.match(wd.out, /мост отпустил сокет/, wd.out);
+    } finally {
+      wd.proc.kill("SIGKILL");
+    }
+  });
+});
+
+// #6485, предел: SIGTERM, а место не вернулось (записи держания нет) — сторож не
+// висит: выходит громко за своё окно; демон не держит сокет дольше предела.
+test("SIGTERM of the daemon and the place does not come back: the watchdog leaves at its window", async () => {
+  await withFake(async ({ fake, dir, bridge }) => {
+    const a = bridge({ ISKRON_BRIDGE_DAEMON_HANDOFF_MS: "1500" });
+    await handshake(a);
+    const r = await stand(a, { realm: "nks-dev", karta: 931, name: "term-y" });
+    assert.ok(!r.result?.isError, textOf(r));
+    await waitFor("the place's socket", () => fake.state.ws.size === 1);
+    const wd = startWatchdog(dir, "term-y--931--nks-dev", { ISKRON_WATCHDOG_ATTACH_MS: "3000" });
+    try {
+      await waitFor("the watchdog to attach", () => /слушаю стояние/.test(wd.out));
+      const standings = join(dir, "standings");
+      for (const f of readdirSync(standings)) if (f.endsWith(".hold")) rmSync(join(standings, f));
+      const [first] = daemonPids(dir);
+      process.kill(first, "SIGTERM");
+      await waitFor("the watchdog to leave", () => wd.proc.exitCode !== null, 20_000).catch((e) => {
+        throw new Error(`${e.message}\n${wd.out}\n${journalOf(dir)}`);
+      });
+      assert.equal(wd.proc.exitCode, 1, wd.out);
+      assert.match(wd.out, /место не вернулось за 3s после смены демона/, wd.out);
+      await waitFor("the old daemon gone", () => !alive(first), 10_000);
+    } finally {
+      wd.proc.kill("SIGKILL");
+    }
+  });
+});
+
 // #6586: кадр, который служба записала в сокет места уходящего демона после
 // начала передачи и до того, как узнала о закрытии, считается доставленным
 // (delivered_at — по записи в сокет) и в hello преемника не вернётся. Фейк

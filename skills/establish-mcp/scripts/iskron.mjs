@@ -3808,7 +3808,9 @@ var H2 = scoped(() => ({
   /** возвратов с диска в полёте: мёртвый токен при них — протухшая запись, не тревога */
   resuming: 0,
   /** своё снятие в полёте (absorb.ts): закрытие 4001 обгонит ответ revoke */
-  revokingOwn: false
+  revokingOwn: false,
+  /** демон гаснет, а тонкий мост этой сессии жив: он вернёт место новому демону (daemon.ts, #6485) */
+  handingOver: null
 }));
 function noteResuming(delta) {
   H2.resuming += delta;
@@ -3820,8 +3822,11 @@ var handingOver = null;
 function beginHandover(why) {
   handingOver = why;
 }
-var handoverReason = () => handingOver;
-var handoverUnderway = () => handingOver !== null;
+function beginSessionHandover(why) {
+  H2.handingOver = why;
+}
+var handoverReason = () => handingOver ?? H2.handingOver;
+var handoverUnderway = () => handoverReason() !== null;
 
 // js/bridge/names.ts
 import { execFileSync } from "node:child_process";
@@ -7597,6 +7602,7 @@ async function daemonMain(argv2) {
   }
   const sessions = /* @__PURE__ */ new Map();
   const engines = /* @__PURE__ */ new Map();
+  const attached = /* @__PURE__ */ new Set();
   const sockets = /* @__PURE__ */ new Set();
   let draining2 = false;
   let counter2 = 0;
@@ -7705,13 +7711,21 @@ async function daemonMain(argv2) {
             journal(`[${id}] rpc ${msg.method ?? "reply"} ${JSON.stringify(msg.id ?? null)}`);
           s2.deliver(msg);
         },
-        end: (why) => s2.end(why).then(() => {
-          if (sessions.get(id) !== traced) return;
-          sessions.delete(id);
-          engines.delete(id);
-          log(`session ${id} ended: ${why}`);
-          armIdle();
-        })
+        attach: (sink, logSink) => {
+          if (sink) attached.add(id);
+          else attached.delete(id);
+          s2.attach(sink, logSink);
+        },
+        end: (why) => {
+          attached.delete(id);
+          return s2.end(why).then(() => {
+            if (sessions.get(id) !== traced) return;
+            sessions.delete(id);
+            engines.delete(id);
+            log(`session ${id} ended: ${why}`);
+            armIdle();
+          });
+        }
       };
       sessions.set(id, traced);
       if (opened) engines.set(id, opened);
@@ -7767,10 +7781,14 @@ async function daemonMain(argv2) {
     draining2 = true;
     log(`${sig} — ending ${sessions.size} session(s)`);
     server?.close();
+    for (const id of attached) {
+      const scope = engines.get(id)?.scope;
+      if (scope) runIn(scope, () => beginSessionHandover(`daemon ${sig}`));
+    }
     void Promise.allSettled([...sessions.values()].map((s2) => s2.end(sig))).then(() => {
       for (const so of sockets) so.destroy();
-      process.exit(0);
-    });
+      return handoffsSettled();
+    }).then(() => process.exit(0));
   };
   process.on("SIGTERM", () => stop("SIGTERM"));
   process.on("SIGINT", () => stop("SIGINT"));
@@ -8480,7 +8498,7 @@ function openDoor(socketPath, onMessage, onClose) {
 import { existsSync as existsSync6, readdirSync as readdirSync6, readFileSync as readFileSync20 } from "node:fs";
 import { connect as connect4 } from "node:net";
 import { join as join17 } from "node:path";
-var ATTACH_WINDOW_MS = 6e4;
+var ATTACH_WINDOW_MS = Number(process.env.ISKRON_WATCHDOG_ATTACH_MS) || 6e4;
 var RETRY_MS = 1e3;
 function parseWatchdogArgs(argv2) {
   const out6 = { authDir: authDirFromEnv() };
@@ -8527,12 +8545,14 @@ function attach(path, o) {
   let startedAt = Date.now();
   let attached = false;
   let handover = false;
+  let waitingBack = false;
   function tryOnce() {
     const sock = connect4(path);
     let buf = "";
     sock.setEncoding("utf8");
     sock.on("connect", () => {
       attached = true;
+      waitingBack = false;
     });
     sock.on("data", (chunk) => {
       buf += chunk;
@@ -8566,12 +8586,16 @@ function attach(path, o) {
       if (attached && handover) {
         attached = false;
         handover = false;
+        waitingBack = true;
         startedAt = Date.now();
         return void setTimeout(tryOnce, RETRY_MS);
       }
       if (attached) return o.onGone("мост отпустил стояние или ушёл — сессия кончилась?");
       if (Date.now() - startedAt > ATTACH_WINDOW_MS) {
-        return o.onGone(`мост не поднял локальный сокет ${path} за ${ATTACH_WINDOW_MS / 1e3}s`);
+        const s2 = ATTACH_WINDOW_MS / 1e3;
+        return o.onGone(
+          waitingBack ? `место не вернулось за ${s2}s после смены демона — сокет ${path} не поднят; вернуть — iskron_stand` : `мост не поднял локальный сокет ${path} за ${s2}s`
+        );
       }
       setTimeout(tryOnce, RETRY_MS);
     });
