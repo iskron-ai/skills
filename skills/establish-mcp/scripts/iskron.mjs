@@ -4286,6 +4286,7 @@ async function publishStatusTo(url, text, timeoutMs = 5e3, standingId = null) {
 var pending = /* @__PURE__ */ new Set();
 function keepUntilEvicted(holder, key, statusUrl2) {
   const path = spoolFilePathOf(CFG.authDir, key);
+  const door = socketPathOf(CFG.authDir, key);
   openSpool(path);
   let timer;
   let over = false;
@@ -4299,12 +4300,8 @@ function keepUntilEvicted(holder, key, statusUrl2) {
       void Promise.resolve(after2).then(() => resolve7());
     };
     timer = setTimeout(() => {
-      const cleared = statusUrl2 ? publishStatusTo(statusUrl2, "", 3e3).catch(() => {
-      }) : void 0;
-      end(
-        `no successor took the socket in ${HANDOFF_MS / 1e3}s — closed${cleared ? ", busy line cleared" : ""}`,
-        cleared
-      );
+      const cleared = statusUrl2 ? clearBusy(key, statusUrl2, door) : void 0;
+      end(`no successor took the socket in ${HANDOFF_MS / 1e3}s — closed`, cleared);
       holder.close("the successor did not take the place");
     }, HANDOFF_MS);
     holder.handOff(
@@ -4315,6 +4312,14 @@ function keepUntilEvicted(holder, key, statusUrl2) {
     );
   });
   pending.add(done);
+}
+async function clearBusy(key, statusUrl2, door) {
+  if (await localSocketAlive(door)) {
+    log(`place ${key}: busy line left — the successor's door is up`);
+    return;
+  }
+  const st = await publishStatusTo(statusUrl2, "", 3e3);
+  log(`place ${key}: ${st.ok ? "busy line cleared" : `busy line not cleared — ${st.body}`}`);
 }
 function letGo(holder, keepFor, reason, statusUrl2 = null) {
   if (holder && keepFor) keepUntilEvicted(holder, keepFor, statusUrl2);
