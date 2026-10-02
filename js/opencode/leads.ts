@@ -39,20 +39,21 @@ export function createLeads(d: W.LeadDoors): W.Leads {
   const parentOf = (child: string) => d.parentOf(child).catch(() => null);
 
   /**
-   * Конец: мост гасится (ended), родителю — итог; wake — будить ли его ходом: итог
-   * будит, потолок и невозвращённое место — нет, их слово ждёт его следующего хода.
+   * Конец: родителю — итог, затем мост гасится (ended): слово конца встаёт в очередь
+   * родителя раньше родной синтетики OpenCode по затиханию ребёнка. wake — будить ли
+   * родителя ходом: итог будит, потолок и невозвращённое место — нет.
    */
   async function finish(child: string, why: string, ended = true, wake = true, lost = false) {
     const l = leads.get(child);
     if (!l) return;
     leads.delete(child);
-    if (ended) await d.end(child).catch(() => {});
     const parent = await l.parent;
     const word = lost
       ? W.lostWord(who(l, child), why)
       : W.endWord(who(l, child), why, (l.last ?? "").trim());
     if (parent) await d.tell(parent, word, wake);
     else d.say(`${word}\n(родителя плагин не знает — итог некому)`, "warning");
+    if (ended) await d.end(child).catch(() => {});
   }
 
   function leave(child: string, l: Lead, why: string): void {

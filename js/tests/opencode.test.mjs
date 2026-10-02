@@ -2438,6 +2438,28 @@ test("a child that leaves its place by the outcome is ended: its bridge goes, th
   }
 });
 
+// The end's word goes into the parent BEFORE the child's bridge is put out: OpenCode
+// lays its own synthetic into the parent when the child goes quiet, and the plugin's
+// «КОНЧЕН» must stand in the parent's queue ahead of it.
+test("a child's end: the word into the parent is laid before the child's bridge is put out", async () => {
+  const { rec, childPid } = await leadChild("lead-order");
+  const synthetic = rec.ctx.session.synthetic;
+  let bridgeDuringWord = null;
+  rec.ctx.session.synthetic = async (o) => {
+    await delay(300); // the bridge, if put out first, is gone by now
+    if (/КОНЧЕН/.test(o.text)) bridgeDuringWord = alive(childPid);
+    return synthetic(o);
+  };
+  try {
+    await rec.call("iskron_channel", { realm: "nks-dev", action: "leave" }, "child");
+    await until(() => ends(rec).length === 1, "the end in the parent");
+    assert.equal(bridgeDuringWord, true, "the child's bridge lives while the end's word is laid");
+    await until(() => !alive(childPid), "the child's bridge to go after the word");
+  } finally {
+    await rec.stop();
+  }
+});
+
 test("a one-shot child launched into a case is ended by leaving that case — and not by leaving another", async () => {
   const calls = join(SANDBOX, "lead-oneshot.calls");
   writeFileSync(calls, "");

@@ -1519,13 +1519,13 @@ function createLeads(d) {
     const l = leads.get(child);
     if (!l) return;
     leads.delete(child);
-    if (ended) await d.end(child).catch(() => {
-    });
     const parent = await l.parent;
     const word = lost ? lostWord(who(l, child), why) : endWord(who(l, child), why, (l.last ?? "").trim());
     if (parent) await d.tell(parent, word, wake);
     else d.say(`${word}
 (родителя плагин не знает — итог некому)`, "warning");
+    if (ended) await d.end(child).catch(() => {
+    });
   }
   function leave(child, l, why) {
     l.leaving = why;
