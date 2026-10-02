@@ -797,6 +797,38 @@ test("iskron_stand busy line while the bridge reopens its own socket: published,
   );
 });
 
+// Live on 7.2.1 and 7.2.2: the first busy line after a returned place failed with «the
+// socket connection was closed unexpectedly», the next one passed — a keep-alive
+// connection the server had closed. A closed connection is retried once; an HTTP
+// answer of the surface is not.
+test("iskron_stand busy line over a connection closed under the request: one retry, the line lands", async (t) => {
+  const { fake, bridge } = await ready(t);
+  const stand = (args) => bridge.call("tools/call", { name: "iskron_stand", arguments: args });
+  assert.ok(!(await stand({ realm: "nks-dev", karta: 931, name: "proba" })).result?.isError);
+  const tries = () => fake.state.counts.status_requests;
+  let before = tries();
+  await fake.control({ statusDrop: 1 });
+  const said = await stand({ realm: "nks-dev", status: "после закрытого соединения" });
+  assert.ok(!said.result?.isError, textOf(said));
+  assert.match(textOf(said), /^занятость @tester:proba: после закрытого соединения/);
+  assert.equal(fake.state.status, "после закрытого соединения");
+  assert.equal(tries() - before, 2, "the dropped POST and its one retry");
+
+  before = tries();
+  await fake.control({ statusDrop: 3 });
+  const twice = await stand({ realm: "nks-dev", status: "дважды" });
+  assert.ok(twice.result?.isError, "only one retry");
+  assert.match(textOf(twice), /статусный адрес не ответил/, textOf(twice));
+  assert.equal(tries() - before, 2, "two attempts, not more");
+  await fake.control({ statusDrop: 0 });
+
+  before = tries();
+  await fake.control({ statusGone: true });
+  const gone = await stand({ realm: "nks-dev", status: "ответ поверхности" });
+  assert.match(textOf(gone), /Отказано \(404\)/, textOf(gone));
+  assert.equal(tries() - before, 1, "an HTTP answer is not retried");
+});
+
 // The busy line is the standing's word — of THIS standing: a call for another
 // name must not post onto the address the bridge holds for the first one.
 test("iskron_stand with status for another standing is refused outright — one standing per bridge — and the held one's line stays untouched", async (t) => {

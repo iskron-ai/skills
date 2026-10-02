@@ -9,6 +9,14 @@ export interface StatusOutcome {
   code?: number;
 }
 
+// Соединение закрыто под запросом, ответа не было: Node (undici) — UND_ERR_SOCKET
+// «other side closed», Bun — ECONNRESET «The socket connection was closed unexpectedly».
+const CLOSED = new Set(["UND_ERR_SOCKET", "ECONNRESET", "EPIPE"]);
+const closedUnder = (e: unknown): boolean => {
+  const err = e as { code?: string; cause?: { code?: string } };
+  return CLOSED.has(err?.code ?? "") || CLOSED.has(err?.cause?.code ?? "");
+};
+
 /** Тот же POST на названный адрес — для выхода, когда стояние уже отпущено, а адрес снят до этого. */
 export async function publishStatusTo(
   url: string,
@@ -16,13 +24,21 @@ export async function publishStatusTo(
   timeoutMs = 5000,
   standingId: string | null = null,
 ): Promise<StatusOutcome> {
-  let res: Response;
-  try {
-    res = await fetch(url, {
+  const signal = AbortSignal.timeout(timeoutMs);
+  const post = (): Promise<Response> =>
+    fetch(url, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(standingId ? { text, standing_id: standingId } : { text }),
-      signal: AbortSignal.timeout(timeoutMs),
+      signal,
+    });
+  let res: Response;
+  try {
+    // Строка занятости ставится, а не копится, — повтор безвреден. Один и только на
+    // закрытом соединении (keep-alive из пула, закрытый сервером): ответ поверхности не повторяется.
+    res = await post().catch((e: unknown) => {
+      if (!closedUnder(e) || signal.aborted) throw e;
+      return post();
     });
   } catch (e) {
     return {

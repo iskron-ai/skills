@@ -104,6 +104,7 @@ export async function startFakeNks(opts = {}) {
     mcpHangMs: 0, // hold /mcp open past the caller's deadline: the request left, the answer never came
     revokeReplyDelayMs: 0, // revoke: the 4001 close goes out first, the HTTP answer this much later
     statusDelayMs: 0,
+    statusDrop: 0, // this many next status POSTs: the request is read, the connection closed without an answer
     listDelayMs: 0,
     realmDelayMs: 0, // hold the realm list (iskron_realm list) answer open this long
     registerToolDelayMs: 0, // hold the iskron_channel register tool open this long
@@ -148,6 +149,7 @@ export async function startFakeNks(opts = {}) {
       list: 0,
       webhooks_added: 0,
       status_posts: 0,
+      status_requests: 0, // every status POST that reached the server, answered or not
       ws_upgrades: 0,
       attributed_send: 0,
       unattributed: 0,
@@ -290,12 +292,19 @@ export async function startFakeNks(opts = {}) {
 
     if (p.startsWith("/channel/status/") && req.method === "POST") {
       const { text, standing_id } = JSON.parse((await body(req)) || "{}");
+      st.counts.status_requests++;
       if (st.statusDelayMs) {
         // A slow status surface, whose write lands with its answer: a client
         // killed before the answer has published nothing — this is what the
         // harness's stop grace is measured against (r5 #5140, D1).
         await new Promise((r) => setTimeout(r, st.statusDelayMs));
         if (req.socket.destroyed) return;
+      }
+      // A keep-alive connection the server already closed: the client meets it as a
+      // socket shut under the request, with no HTTP answer (bridge 7.2.1, live).
+      if (st.statusDrop > 0) {
+        st.statusDrop--;
+        return req.socket.destroy();
       }
       if (st.statusGone) return json(res, 404, { error: "no such standing" }); // адрес повернул чужой connect
       if (typeof text !== "string" || [...text].length > 70) {
@@ -362,6 +371,7 @@ export async function startFakeNks(opts = {}) {
         "hooksText",
         "helloPending", // what the next hello says was waiting in the queue
         "statusDelayMs", // hold the status POST open this long before answering
+        "statusDrop", // close the connection under this many next status POSTs
         "listDelayMs", // hold every board read (iskron_channel list) open this long
         "realmDelayMs", // hold the realm list (iskron_realm list) answer open this long
         "registerToolDelayMs", // hold the iskron_channel register tool open this long (возврат места при переподхвате)

@@ -4609,14 +4609,24 @@ function drainSpool(path, feed) {
 }
 
 // js/bridge/statuspost.ts
+var CLOSED = /* @__PURE__ */ new Set(["UND_ERR_SOCKET", "ECONNRESET", "EPIPE"]);
+var closedUnder = (e) => {
+  const err = e;
+  return CLOSED.has(err?.code ?? "") || CLOSED.has(err?.cause?.code ?? "");
+};
 async function publishStatusTo(url, text, timeoutMs = 5e3, standingId = null) {
+  const signal = AbortSignal.timeout(timeoutMs);
+  const post3 = () => fetch(url, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(standingId ? { text, standing_id: standingId } : { text }),
+    signal
+  });
   let res;
   try {
-    res = await fetch(url, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(standingId ? { text, standing_id: standingId } : { text }),
-      signal: AbortSignal.timeout(timeoutMs)
+    res = await post3().catch((e) => {
+      if (!closedUnder(e) || signal.aborted) throw e;
+      return post3();
     });
   } catch (e) {
     return {
