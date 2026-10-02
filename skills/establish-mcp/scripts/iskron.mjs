@@ -4094,13 +4094,15 @@ function writeRecord(p, ch, status) {
     key: p.door.key
   });
 }
-function addExtra(s2, ch, hooks) {
+function addExtra(s2, ch, hooks, primaryAddress = null) {
   const key = keyOfPlace(s2);
   const have = extras.get(key);
   if (have) return key;
   for (const p of extraPlaces())
     if (sameRealm(p.standing.realm, s2.realm)) dropExtra(p.door.key, "другое место графа", true);
   const door = new Door(key, hooks);
+  const handle = primaryAddress?.match(/^(.*):/)?.[1];
+  if (handle && s2.name) door.address = `${handle}:${s2.name}`;
   door.open();
   const place = { standing: s2, door };
   extras.set(key, place);
@@ -4429,16 +4431,6 @@ function wasEvicted(realm, karta, name) {
   return !!H2.evictedKey && H2.evictedKey === H2.currentKey && isOwn(realm, karta, name);
 }
 var hasStatusAddressFor = (realm, karta, name) => !!H2.currentStatusUrl && !!H2.currentKey && isOwn(realm, karta, name);
-function statusAddress(realm) {
-  if (!H2.currentStatusUrl || !H2.currentKey) return null;
-  const d = (realm ? extraIn(realm)?.door : void 0) ?? H2.door;
-  return {
-    url: H2.currentStatusUrl,
-    key: d?.key ?? H2.currentKey,
-    standingId: d?.standingId ?? null,
-    place: d?.address ?? null
-  };
-}
 var heldPlaces = () => [
   ...H2.door && state.standing ? [{ key: H2.door.key, realm: state.standing.realm, primary: true }] : [],
   ...extraPlaces().map((p) => ({ key: p.door.key, realm: p.standing.realm, primary: false }))
@@ -4482,7 +4474,7 @@ function addPlace(s2) {
   const ch = channel();
   const primary = state.standing;
   if (!H2.holder?.alive || !ch || !primary || !otherRealm(primary.realm, s2.realm)) return null;
-  return addExtra(s2, ch, doorHooks);
+  return addExtra(s2, ch, doorHooks, H2.door?.address ?? null);
 }
 var standingIdIn = (realm) => (extraIn(realm)?.door ?? H2.door)?.standingId ?? null;
 function noteStandingId(realm, id) {
@@ -4683,6 +4675,18 @@ function openHolder(url, key) {
       }
     })
   );
+}
+
+// js/bridge/statusaddr.ts
+function statusAddress(realm) {
+  if (!H2.currentStatusUrl || !H2.currentKey) return null;
+  const d = (realm ? extraIn(realm)?.door : void 0) ?? H2.door;
+  return {
+    url: H2.currentStatusUrl,
+    key: d?.key ?? H2.currentKey,
+    standingId: d?.standingId ?? null,
+    place: d?.address ?? null
+  };
 }
 
 // js/bridge/status.ts

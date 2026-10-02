@@ -1512,6 +1512,20 @@ test("two graphs: the second place stands beside the first on the same channel �
   assert.ok(fake.state.places.get("48:proba-b")?.listening, "place B listens");
 });
 
+test("two graphs: the busy line of a place beside names it @handle:name, not its record key — the platform sends no new hello for it", async (t) => {
+  const { fake, stand, keyB } = await twoGraphs(
+    t,
+    { realm: NKS, karta: 931, name: "proba" },
+    { realm: DRUGOY, karta: 48, name: "proba-b" },
+  );
+  const said = await stand({ realm: DRUGOY, status: "место рядом" });
+  const text = textOf(said);
+  assert.ok(!said.result?.isError, text);
+  assert.equal(text.split("\n")[0], "занятость @tester:proba-b: место рядом", text);
+  assert.ok(!text.includes(keyB), `the record key must not stand in for the place:\n${text}`);
+  assert.equal(fake.state.status, "место рядом");
+});
+
 test("two graphs: each write is signed by the place of its own graph, also after a session turnover", async (t) => {
   const { fake, write } = await twoGraphs(
     t,

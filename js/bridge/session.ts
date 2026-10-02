@@ -17,7 +17,8 @@ import { leaveJoinedCases, revokeSatellitePlaces, satellitePlaces } from "./case
 import { CFG, readArgs, setConfig } from "./config.ts";
 import { deliver } from "./deliver.ts";
 import { errorMessage } from "./errors.ts";
-import { releaseStanding, statusAddress } from "./hold.ts";
+import { releaseStanding } from "./hold.ts";
+import { statusAddress } from "./statusaddr.ts";
 import { handoverUnderway } from "./holdstate.ts";
 import { startDeafnessWatch } from "./leave.ts";
 import { pendingFlow } from "./oauth/flow.ts";
