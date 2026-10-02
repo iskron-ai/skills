@@ -1362,7 +1362,14 @@ for (const [label, after] of [
       after(a);
       await waitFor("the old daemon gone", () => !alive(first), 30_000);
       assert.equal(fake.state.status, "", `the busy line is cleared:\n${journalOf(dir)}`);
-      assert.match(journalOf(dir), /place term-k--931--nks-dev: busy line cleared/);
+      // SIGTERM обоим разом: тонкий мост может умереть раньше, чем демон решит
+      // «передача», — тогда сессия уходит обычным отпуском и снимает строку сама.
+      // Передача была (после SIGKILL моста — всегда) — строку снимает предел, и журнал это называет.
+      if (
+        label.startsWith("SIGKILL") ||
+        /place term-k--931--nks-dev handed over/.test(journalOf(dir))
+      )
+        assert.match(journalOf(dir), /place term-k--931--nks-dev: busy line cleared/);
     });
   });
 }
