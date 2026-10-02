@@ -18,6 +18,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
@@ -25,6 +26,7 @@ import { fileURLToPath } from "node:url";
 
 import { connectSeam, helloFrame, patShaOf } from "../shared/seam.ts";
 import { seamSocketPath } from "../shared/seam-entrance.ts";
+import { socketPathOf } from "../shared/standings.ts";
 import { startFakeNks } from "./fake-nks.mjs";
 
 const NODE = process.env.ISKRON_NODE || process.execPath;
@@ -521,6 +523,11 @@ test("a satellite whose place did not survive the daemon change is told so: the 
             /потеряно при смене демона/.test(JSON.stringify(n.params?.data ?? {})),
           ),
         10_000,
+      );
+      // Плановая смена закрывает потерянное место так же, как SIGTERM (#6593).
+      assert.ok(
+        !fake.state.places.has(`931:${CALLER}.sub-1`),
+        `the lost satellite seat is off the board:\n${journalOf(dir)}`,
       );
       // Отказ держится на каждом вызове до нового iskron_stand, не на одном первом.
       const before = fake.state.writes.length;
@@ -1355,13 +1362,43 @@ for (const [label, after] of [
       after(a);
       await waitFor("the old daemon gone", () => !alive(first), 30_000);
       assert.equal(fake.state.status, "", `the busy line is cleared:\n${journalOf(dir)}`);
+      assert.match(journalOf(dir), /place term-k--931--nks-dev: busy line cleared/);
     });
   });
 }
 
+// Ревью #291, гонка: пустой POST уходящего демона без standing_id ложится на все
+// места канала — и на строку преемника, вставшего в последний миг. Дверь места у
+// предела слушает — место преемника, строка его. Дверь здесь — сама проба.
+test("SIGTERM of the daemon, the place's door up again at the limit: the busy line is left to its holder", async () => {
+  await withFake(async ({ fake, dir, bridge }) => {
+    const a = bridge({ ISKRON_BRIDGE_DAEMON_HANDOFF_MS: "1500" });
+    await handshake(a);
+    const seat = { realm: "nks-dev", karta: 931, name: "term-r" };
+    const r = await stand(a, seat);
+    assert.ok(!r.result?.isError, textOf(r));
+    const s = await stand(a, { ...seat, status: "преемник работает" });
+    assert.ok(!s.result?.isError, textOf(s));
+    const [first] = daemonPids(dir);
+    process.kill(first, "SIGTERM");
+    await waitFor("the SIGTERM taken", () => /SIGTERM — ending/.test(journalOf(dir)));
+    a.proc.kill("SIGKILL");
+    const path = socketPathOf(dir, "term-r--931--nks-dev");
+    await waitFor("the outgoing door closed", () => !existsSync(path), 10_000);
+    const door = createServer().listen(path);
+    try {
+      await waitFor("the old daemon gone", () => !alive(first), 30_000);
+      assert.equal(fake.state.status, "преемник работает", journalOf(dir));
+      assert.match(journalOf(dir), /busy line left — the successor's door is up/);
+    } finally {
+      door.close();
+    }
+  });
+});
+
 // Ревью #291, п.2: спутник на SIGTERM демона отпускается целиком (записи держания
 // у него нет) — и занятость уходит с ним. Сборка b000bde её оставляла.
-test("SIGTERM of the daemon under a satellite: its busy line goes with its place", async () => {
+test("SIGTERM of the daemon under a satellite: its busy line goes, and its place is revoked", async () => {
   await withFake(async ({ fake, dir, bridge }) => {
     const CALLER = "host.repo.opus-5";
     await fake.control({ places: [{ karta: "931", name: CALLER, listening: true }] });
@@ -1374,9 +1411,28 @@ test("SIGTERM of the daemon under a satellite: its busy line goes with its place
     assert.ok(!busy.result?.isError, textOf(busy));
     assert.equal(fake.state.status, "спутник пишет");
     const [first] = daemonPids(dir);
+    assert.ok(fake.state.places.has(`931:${CALLER}.sub-1`), "the satellite stood");
+    await s.request("tools/call", {
+      name: "iskron_case",
+      arguments: { realm: "nks-dev", action: "join", room: "№33" },
+    });
     process.kill(first, "SIGTERM");
     await waitFor("the old daemon gone", () => !alive(first), 30_000);
     assert.equal(fake.state.status, "", `the satellite's line is cleared:\n${journalOf(dir)}`);
+    // Потерянное место спутника закрывается (#6593, #6550 п.4): выход из дел и revoke
+    // до выхода демона — не «живой · не слушает».
+    assert.ok(
+      !fake.state.places.has(`931:${CALLER}.sub-1`),
+      `the lost satellite seat is off the board:\n${journalOf(dir)}`,
+    );
+    const left = fake.state.calls.filter(
+      (c) => c.name === "iskron_case" && c.arguments.action === "leave",
+    );
+    assert.deepEqual(
+      left.map((c) => c.arguments.room),
+      ["№33"],
+      `its case is left:\n${journalOf(dir)}`,
+    );
   });
 });
 

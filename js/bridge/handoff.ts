@@ -5,13 +5,14 @@
 // адрес и сервер не вытеснит старый кодом 4000, либо до предела; пришедшее за это
 // время — в спул (spool.ts). Предел вышел — сокет закрыт, как прежде, и занятость снята.
 import { EVICTED_CODE, type Frame, type Holder } from "../shared/channel.ts";
-import { spoolFilePathOf } from "../shared/standings.ts";
+import { socketPathOf, spoolFilePathOf } from "../shared/standings.ts";
 import { CFG } from "./config.ts";
 import { type ChannelEvent } from "./door.ts";
 import { type Place, strayOf } from "./places.ts";
 import { closeSpool, drainSpool, HANDOFF_MS, openSpool, spoolFrame } from "./spool.ts";
 import { publishStatusTo } from "./statuspost.ts";
 import { emit, log } from "./streams.ts";
+import { localSocketAlive } from "./sweep.ts";
 
 /** Удержанные сокеты мест — процесса, не сессии: демон ждёт их всех перед уходом. */
 const pending = new Set<Promise<void>>();
@@ -19,6 +20,7 @@ const pending = new Set<Promise<void>>();
 /** Держать сокет места до вытеснения преемником или до предела; кадры — в спул. */
 function keepUntilEvicted(holder: Holder, key: string, statusUrl: string | null): void {
   const path = spoolFilePathOf(CFG.authDir, key);
+  const door = socketPathOf(CFG.authDir, key);
   openSpool(path);
   let timer: ReturnType<typeof setTimeout> | undefined;
   let over = false;
@@ -34,12 +36,11 @@ function keepUntilEvicted(holder: Holder, key: string, statusUrl: string | null)
     timer = setTimeout(() => {
       // Преемник не взял место — возвращать его некому (тонкий мост умер следом,
       // SIGTERM обоим): занятость — слово ушедшего, уходит с местом (#5059).
-      // Вернётся мост позже — возврат по записи держания поднимет её снова.
-      const cleared = statusUrl ? publishStatusTo(statusUrl, "", 3000).catch(() => {}) : undefined;
-      end(
-        `no successor took the socket in ${HANDOFF_MS / 1000}s — closed${cleared ? ", busy line cleared" : ""}`,
-        cleared,
-      );
+      // Вернётся мост позже — место вернёт запись держания, а строку занятости —
+      // только той же сессии харнеса, которую назвал плагин (resume.ts, #6017);
+      // мост без имени сессии (Claude Code) встаёт без строки, её говорят заново.
+      const cleared = statusUrl ? clearBusy(key, statusUrl, door) : undefined;
+      end(`no successor took the socket in ${HANDOFF_MS / 1000}s — closed`, cleared);
       holder.close("the successor did not take the place");
     }, HANDOFF_MS);
     holder.handOff(
@@ -53,6 +54,22 @@ function keepUntilEvicted(holder: Holder, key: string, statusUrl: string | null)
     );
   });
   pending.add(done);
+}
+
+/**
+ * Снять занятость места, которое преемник не взял до предела. Пустой POST без
+ * standing_id ложится на все места канала — и на строку, которую преемник,
+ * вставший в последний миг (его 4000 ещё в пути), уже поставил: дверь места
+ * слушает — место его, строка не трогается. Окно остаётся одно: преемник
+ * открыл сокет у службы, а дверь ещё не поднял.
+ */
+async function clearBusy(key: string, statusUrl: string, door: string): Promise<void> {
+  if (await localSocketAlive(door)) {
+    log(`place ${key}: busy line left — the successor's door is up`);
+    return;
+  }
+  const st = await publishStatusTo(statusUrl, "", 3000);
+  log(`place ${key}: ${st.ok ? "busy line cleared" : `busy line not cleared — ${st.body}`}`);
 }
 
 /**

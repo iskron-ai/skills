@@ -200,14 +200,16 @@ function openIn(io: SessionIO, origin: SessionOrigin | null, scope: Scope | null
     // убивающий мост по короткой отсрочке, не должен застать его с живым ключом —
     // сторож ушёл бы на мёртвый сокет. Выход из дел и revoke идут вызовами сессии, сокет им не нужен.
     const addr = statusAddress();
-    const places = handover ? [] : satellitePlaces();
+    const places = satellitePlaces();
     const spent = handover ? null : usagePlace();
     // Сокет стояния живёт ровно столько, сколько сессия; у спутника — и записи держания нет: возврата с диска у него не бывает.
     releaseStanding(why, CFG.satellite);
     // Спутник выходит из дел прогона сам (#6573), пока место на доске: конец
     // прогона — конец поручения, а истечение срока места оставило бы «slop».
+    // И при смене демона: место спутника не возвращается, а потерянное место
+    // закрывается (#6593, #6550 п.4) — иначе на доске «живой · не слушает».
     // Последний снимок расхода ложится тем же тактом — до revoke: по закрытому месту записи нет (#6401).
-    await Promise.all([handover ? null : leaveJoinedCases(), flushUsage(spent)]);
+    await Promise.all([leaveJoinedCases(), flushUsage(spent)]);
     // Конец спутника закрывает и место (#6593): место снимается с доски.
     await revokeSatellitePlaces(places);
     // Спутник отпускается целиком и при передаче (возврата с диска нет) — его занятость уходит с ним.
