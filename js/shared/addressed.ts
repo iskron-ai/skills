@@ -1,6 +1,7 @@
 // Адресованность записи дела месту читателя — закон доставки (граф nks-dev:
 // #6574): в ход текстом входит только адресованное, прочее — числом.
 import { classifyOrigin, type Frame } from "./channel.ts";
+import { numberedKey } from "./numbering.ts";
 import { addresseeOf, after, byKind, mineOf, myRole, obj, roomKind, str } from "./room-kinds.ts";
 
 type Rec = Record<string, unknown>;
@@ -19,7 +20,11 @@ export function wordKeyOf(frame: Frame): string {
     roomKind(frame)?.kind === "body"
       ? str(line.refers_to) || str(f.in_reply_to) || str(obj(f.word).entry_id)
       : str(line.entry_id ?? f.entry_id);
-  return `${mineOf(f)[0] ?? ""}|${str(obj(f.room).id) || str(obj(f.room).seq)}|${entry}`;
+  // Номер записи свой в каждом деле: ключ — в счёте кадра, смена нумерации забывает прежние (#6576).
+  return numberedKey(
+    frame,
+    `${mineOf(f)[0] ?? ""}|${str(obj(f.room).id) || str(obj(f.room).seq)}|${entry}`,
+  );
 }
 function rememberWord(key: string): void {
   addressedWords.add(key);

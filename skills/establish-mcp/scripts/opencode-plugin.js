@@ -153,6 +153,10 @@ function isDirectWord(frame) {
   return origin === "human" || !!p.from_standing || p.from_karta_seq != null;
 }
 
+// js/shared/numbering.ts
+var numberingOf = (frame) => frame.numbering === "case" ? "case" : "";
+var numberedKey = (frame, key) => key && numberingOf(frame) ? `case:${key}` : key;
+
 // js/shared/room-kinds.ts
 var WORDS = {
   said: "слово от {author}",
@@ -458,7 +462,10 @@ function wordKeyOf(frame) {
   const f = frame;
   const line = obj(f.line);
   const entry = roomKind(frame)?.kind === "body" ? str(line.refers_to) || str(f.in_reply_to) || str(obj(f.word).entry_id) : str(line.entry_id ?? f.entry_id);
-  return `${mineOf(f)[0] ?? ""}|${str(obj(f.room).id) || str(obj(f.room).seq)}|${entry}`;
+  return numberedKey(
+    frame,
+    `${mineOf(f)[0] ?? ""}|${str(obj(f.room).id) || str(obj(f.room).seq)}|${entry}`
+  );
 }
 function rememberWord(key) {
   addressedWords.add(key);
