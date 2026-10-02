@@ -21,32 +21,269 @@ function versionIn(text) {
 // js/bridge/build.ts
 var BUILD = buildOf(import.meta.url);
 
-// js/bridge/config.ts
-import { mkdirSync as mkdirSync2, readFileSync as readFileSync3, renameSync, writeFileSync } from "node:fs";
-import { homedir as homedir2 } from "node:os";
-import { join as join3 } from "node:path";
+// js/bridge/daemon.ts
+import { spawn as spawn3 } from "node:child_process";
+import { appendFileSync as appendFileSync3, mkdirSync as mkdirSync10, readFileSync as readFileSync17, statSync as statSync7, unlinkSync as unlinkSync10 } from "node:fs";
+import { join as join16 } from "node:path";
+import { fileURLToPath as fileURLToPath5 } from "node:url";
 
-// js/shared/lang.ts
-import { readFileSync as readFileSync2 } from "node:fs";
-import { join as join2 } from "node:path";
+// js/shared/home.ts
+import { homedir } from "node:os";
+import { join } from "node:path";
+var homeBridgePath = () => join(homedir(), ".iskron-bridge", "iskron-bridge.mjs");
+
+// js/shared/scope.ts
+import { AsyncLocalStorage } from "node:async_hooks";
+var als = new AsyncLocalStorage();
+var PROCESS = {
+  id: "process",
+  origin: null,
+  sessionKey: () => false,
+  slots: /* @__PURE__ */ new Map(),
+  log: null
+};
+var currentScope = () => als.getStore() ?? PROCESS;
+function newScope(id, origin, sessionKey) {
+  return { id, origin, sessionKey, slots: /* @__PURE__ */ new Map(), log: null };
+}
+var runIn = (scope, fn) => als.run(scope, fn);
+function bindScope(fn) {
+  const s2 = als.getStore();
+  return s2 ? (...a) => als.run(s2, () => fn(...a)) : fn;
+}
+var bindAll = (o) => Object.fromEntries(
+  Object.entries(o).map(([k, v]) => [
+    k,
+    typeof v === "function" ? bindScope(v) : v
+  ])
+);
+function scoped(init) {
+  const key = {};
+  const own = () => {
+    const slots = currentScope().slots;
+    let v = slots.get(key);
+    if (v === void 0) {
+      v = init();
+      slots.set(key, v);
+    }
+    return v;
+  };
+  return new Proxy({}, {
+    get: (_, k) => {
+      const t = own();
+      const v = Reflect.get(t, k, t);
+      return typeof v === "function" ? v.bind(t) : v;
+    },
+    set: (_, k, v) => Reflect.set(own(), k, v),
+    has: (_, k) => Reflect.has(own(), k),
+    deleteProperty: (_, k) => Reflect.deleteProperty(own(), k),
+    ownKeys: () => Reflect.ownKeys(own()),
+    getOwnPropertyDescriptor: (_, k) => {
+      const d = Reflect.getOwnPropertyDescriptor(own(), k);
+      if (d) d.configurable = true;
+      return d;
+    }
+  });
+}
+function envOf(k) {
+  const s2 = currentScope();
+  if (s2.origin && s2.sessionKey(k)) return s2.origin.env[k];
+  return process.env[k];
+}
+var sessionPid = () => currentScope().origin?.pid ?? process.pid;
+var sessionCwd = () => currentScope().origin?.cwd ?? process.cwd();
+
+// js/shared/seam.ts
+import { createHash as createHash2 } from "node:crypto";
+import { connect } from "node:net";
+var SEAM_PROTOCOL = 1;
+var SEAM_REATTACH_GRACE_MS = 5e3;
+var DAEMON_ENV = "ISKRON_BRIDGE_DAEMON";
+var NO_DAEMON_ENV = "ISKRON_BRIDGE_NO_DAEMON";
+var TOKEN_ENV = "ISKRON_BRIDGE_TOKEN";
+var patShaOf = (pat) => pat ? createHash2("sha256").update(pat).digest("hex").slice(0, 16) : null;
+var PASS_ENV = /* @__PURE__ */ new Set([
+  "CLAUDE_PLUGIN_ROOT",
+  "NODE_EXTRA_CA_CERTS",
+  "NODE_USE_ENV_PROXY",
+  "HTTP_PROXY",
+  "HTTPS_PROXY",
+  "NO_PROXY",
+  "ALL_PROXY",
+  "http_proxy",
+  "https_proxy",
+  "no_proxy",
+  "all_proxy"
+]);
+var isSessionEnvKey = (k) => k !== TOKEN_ENV && (k.startsWith("ISKRON_") || PASS_ENV.has(k));
+function seamEnv(env2 = process.env) {
+  const out6 = {};
+  for (const [k, v] of Object.entries(env2)) if (v !== void 0 && isSessionEnvKey(k)) out6[k] = v;
+  return out6;
+}
+var BASE_ENV = [
+  "HOME",
+  "USERPROFILE",
+  "PATH",
+  "TMPDIR",
+  "TMP",
+  "TEMP",
+  "SystemRoot",
+  "LANG",
+  "LC_ALL",
+  "BUN_BE_BUN",
+  TOKEN_ENV
+];
+function daemonEnv(env2 = process.env) {
+  const out6 = seamEnv(env2);
+  for (const k of BASE_ENV) if (env2[k] !== void 0) out6[k] = env2[k];
+  return out6;
+}
+function helloFrame(o) {
+  return {
+    t: "hello",
+    seam: SEAM_PROTOCOL,
+    build: o.build,
+    path: o.path,
+    argv: o.argv,
+    env: seamEnv(),
+    cwd: process.cwd(),
+    pid: process.pid,
+    session: o.session ?? null,
+    patSha: o.patSha ?? null,
+    ...o.probe ? { probe: true } : {}
+  };
+}
+function checkHello(f) {
+  const h = f;
+  if (!h || h.t !== "hello") return "the first frame is not a hello";
+  if (h.seam !== SEAM_PROTOCOL)
+    return `seam protocol ${String(h.seam)} is not spoken here (this side speaks ${SEAM_PROTOCOL})`;
+  if (!Array.isArray(h.argv) || typeof h.cwd !== "string" || typeof h.pid !== "number")
+    return "the hello lacks argv, cwd or pid";
+  return null;
+}
+function readFrames(socket, onFrame, onBad = () => {
+}) {
+  socket.setEncoding("utf8");
+  let buf = "";
+  socket.on("data", (chunk) => {
+    buf += chunk;
+    let nl;
+    while ((nl = buf.indexOf("\n")) >= 0) {
+      const line = buf.slice(0, nl).trim();
+      buf = buf.slice(nl + 1);
+      if (!line) continue;
+      let f;
+      try {
+        f = JSON.parse(line);
+      } catch {
+        onBad(line);
+        continue;
+      }
+      onFrame(f);
+    }
+  });
+}
+function writeFrame(socket, frame2, cb) {
+  if (socket.destroyed || !socket.writable) {
+    cb?.(new Error("the seam socket is closed"));
+    return false;
+  }
+  return socket.write(JSON.stringify(frame2) + "\n", cb);
+}
+var SeamError = class extends Error {
+  kind;
+  constructor(kind, message) {
+    super(message);
+    this.kind = kind;
+  }
+};
+var ABSENT = /* @__PURE__ */ new Set(["ENOENT", "ECONNREFUSED", "ENOTSOCK", "ENOTDIR"]);
+function connectSeam(path, hello, timeoutMs) {
+  return new Promise((resolveLink, reject) => {
+    const socket = connect(path);
+    let welcome = null;
+    const early = [];
+    let frameCb = null;
+    let closeCb = null;
+    let closed = false;
+    const fail2 = (e) => {
+      clearTimeout(timer);
+      socket.destroy();
+      reject(e);
+    };
+    const timer = setTimeout(
+      () => fail2(new SeamError("broken", `no welcome from the daemon in ${timeoutMs}ms`)),
+      timeoutMs
+    );
+    timer.unref?.();
+    socket.on("error", (e) => {
+      if (welcome) return;
+      fail2(new SeamError(ABSENT.has(e.code ?? "") ? "absent" : "broken", `${e.code ?? e.message}`));
+    });
+    socket.on("close", () => {
+      if (!welcome) {
+        fail2(new SeamError("broken", "the daemon closed the seam before its welcome"));
+        return;
+      }
+      if (closed) return;
+      closed = true;
+      closeCb?.();
+    });
+    socket.on("connect", () => writeFrame(socket, hello));
+    readFrames(socket, (f) => {
+      if (!welcome) {
+        if (f.t === "refuse") return fail2(new SeamError("refused", f.reason));
+        if (f.t !== "welcome") return fail2(new SeamError("broken", `expected welcome, got ${f.t}`));
+        welcome = f;
+        clearTimeout(timer);
+        resolveLink({
+          welcome: f,
+          send: (frame2, cb) => writeFrame(socket, frame2, cb),
+          onFrame: (cb) => {
+            frameCb = cb;
+            for (const e of early.splice(0)) cb(e);
+          },
+          onClose: (cb) => {
+            closeCb = cb;
+            if (closed) cb();
+          },
+          close: () => {
+            socket.end();
+            setTimeout(() => socket.destroy(), 1e3).unref?.();
+          }
+        });
+        return;
+      }
+      if (frameCb) frameCb(f);
+      else early.push(f);
+    });
+  });
+}
+
+// js/shared/seam-entrance.ts
+import { createHash as createHash4, randomBytes } from "node:crypto";
+import { linkSync, mkdirSync as mkdirSync2, readFileSync as readFileSync2, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { dirname, join as join3, resolve as resolve2 } from "node:path";
 
 // js/shared/standings.ts
-import { createHash as createHash2 } from "node:crypto";
+import { createHash as createHash3 } from "node:crypto";
 import { lstatSync, mkdirSync } from "node:fs";
-import { homedir } from "node:os";
-import { join, resolve } from "node:path";
-var defaultAuthDir = () => join(homedir(), ".iskron-bridge");
-var authDirFromEnv = () => process.env.ISKRON_BRIDGE_AUTH_DIR?.trim() || defaultAuthDir();
-var standingsDirOf = (authDir) => join(authDir, "standings");
-var hashOf = (key) => createHash2("sha256").update(key).digest("hex").slice(0, 16);
+import { homedir as homedir2 } from "node:os";
+import { join as join2, resolve } from "node:path";
+var defaultAuthDir = () => join2(homedir2(), ".iskron-bridge");
+var authDirFromEnv = () => envOf("ISKRON_BRIDGE_AUTH_DIR")?.trim() || defaultAuthDir();
+var standingsDirOf = (authDir) => join2(authDir, "standings");
+var hashOf = (key) => createHash3("sha256").update(key).digest("hex").slice(0, 16);
 function socketPathOf(authDir, key) {
   if (process.platform === "win32") return `\\\\.\\pipe\\iskron-${hashOf(key)}`;
-  const near = join(standingsDirOf(authDir), `${hashOf(key)}.sock`);
+  const near = join2(standingsDirOf(authDir), `${hashOf(key)}.sock`);
   if (Buffer.byteLength(near) <= SOCKET_PATH_MAX) return near;
-  return join(shortSocketDir(), `${hashOf(resolve(authDir) + "\0" + key)}.sock`);
+  return join2(shortSocketDir(), `${hashOf(resolve(authDir) + "\0" + key)}.sock`);
 }
 var SOCKET_PATH_MAX = 103;
-var shortSocketDir = () => join("/tmp", `iskron-${typeof process.getuid === "function" ? process.getuid() : "u"}`);
+var shortSocketDir = () => join2("/tmp", `iskron-${typeof process.getuid === "function" ? process.getuid() : "u"}`);
 function privateDirProblem(dir) {
   let st;
   try {
@@ -65,19 +302,385 @@ function privateDirProblem(dir) {
   if (st.mode & 63) return `${dir} открыт группе или прочим`;
   return null;
 }
-var keyFilePathOf = (authDir, key) => join(standingsDirOf(authDir), `${hashOf(key)}.key`);
-var holdFilePathOf = (authDir, key) => join(standingsDirOf(authDir), `${hashOf(key)}.hold`);
+var keyFilePathOf = (authDir, key) => join2(standingsDirOf(authDir), `${hashOf(key)}.key`);
+var holdFilePathOf = (authDir, key) => join2(standingsDirOf(authDir), `${hashOf(key)}.hold`);
 function seenFilePathOf(authDir, key, server = "") {
-  if (!server) return join(standingsDirOf(authDir), `${hashOf(key)}.seen`);
+  if (!server) return join2(standingsDirOf(authDir), `${hashOf(key)}.seen`);
   let origin = server;
   try {
     origin = new URL(server).origin;
   } catch {
   }
-  return join(standingsDirOf(authDir), `${hashOf(key)}.${hashOf(origin).slice(0, 8)}.seen`);
+  return join2(standingsDirOf(authDir), `${hashOf(key)}.${hashOf(origin).slice(0, 8)}.seen`);
 }
 
+// js/shared/seam-entrance.ts
+var seamKey = (authDir) => createHash4("sha256").update(resolve2(authDir)).digest("hex").slice(0, 16);
+var seamRunDir = (authDir) => join3(resolve2(authDir), "run");
+var SUN_PATH_MAX = 103;
+function pipeNonce(authDir) {
+  const run = seamRunDir(authDir);
+  const file = join3(run, "pipe");
+  mkdirSync2(run, { recursive: true, mode: 448 });
+  const tmp = `${file}.${process.pid}-${randomBytes(6).toString("hex")}`;
+  try {
+    writeFileSync(tmp, randomBytes(16).toString("hex"), { mode: 384 });
+    linkSync(tmp, file);
+  } catch {
+  } finally {
+    try {
+      unlinkSync(tmp);
+    } catch {
+    }
+  }
+  for (let i = 0; i < 50; i++) {
+    const word = readFileSync2(file, "utf8").trim();
+    if (word) return word;
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
+  }
+  throw new Error(`${file} stays empty — the pipe name is unknown`);
+}
+function seamSocketPath(authDir) {
+  const key = seamKey(authDir);
+  if (process.platform === "win32")
+    return `\\\\.\\pipe\\iskron-daemon-${key}-${pipeNonce(authDir)}`;
+  const inRun = join3(seamRunDir(authDir), "daemon.sock");
+  if (Buffer.byteLength(inRun) <= SUN_PATH_MAX) return inRun;
+  return join3(shortSocketDir(), `daemon-${key}.sock`);
+}
+function seamEntranceProblem(authDir) {
+  if (process.platform === "win32") return null;
+  const run = seamRunDir(authDir);
+  try {
+    mkdirSync2(dirname(run), { recursive: true, mode: 448 });
+  } catch (e) {
+    return `${dirname(run)}: ${e.message}`;
+  }
+  const bad = privateDirProblem(run);
+  if (bad) return bad;
+  const sockDir = dirname(seamSocketPath(authDir));
+  return sockDir === run ? null : privateDirProblem(sockDir);
+}
+var seamRaiseLockPath = (authDir) => join3(seamRunDir(authDir), "daemon.raising");
+var seamDaemonLockPath = (authDir) => join3(seamRunDir(authDir), "daemon.lock");
+var ownPidAlive = (pid) => {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+};
+var readLock = (path) => {
+  try {
+    return JSON.parse(readFileSync2(path, "utf8"));
+  } catch {
+    return null;
+  }
+};
+function takeFileLock(path, staleMs) {
+  const token = `${process.pid}-${randomBytes(8).toString("hex")}`;
+  const body = JSON.stringify({ pid: process.pid, token, started_at: Date.now() });
+  const release = () => {
+    if (readLock(path)?.token === token) {
+      try {
+        unlinkSync(path);
+      } catch {
+      }
+    }
+  };
+  const claim = () => {
+    const tmp = `${path}.${token}`;
+    writeFileSync(tmp, body, { mode: 384 });
+    try {
+      linkSync(tmp, path);
+      return true;
+    } catch (e) {
+      if (e.code === "EEXIST") return false;
+      throw e;
+    } finally {
+      try {
+        unlinkSync(tmp);
+      } catch {
+      }
+    }
+  };
+  try {
+    if (claim()) return { held: true, release };
+    const held2 = readLock(path);
+    if (held2 && ownPidAlive(held2.pid) && Date.now() - held2.started_at < staleMs)
+      return { held: false, fault: null, holder: { pid: held2.pid, started_at: held2.started_at } };
+    const mistake = carryAwayStale(path, held2?.token);
+    if (mistake) return { held: false, fault: mistake.putBack ? null : mistake.word };
+    return claim() ? { held: true, release } : { held: false, fault: null };
+  } catch (e) {
+    return { held: false, fault: `${path}: ${e.message}` };
+  }
+}
+function carryAwayStale(path, staleToken) {
+  const away = `${path}.stale-${process.pid}-${randomBytes(6).toString("hex")}`;
+  try {
+    renameSync(path, away);
+  } catch {
+    return null;
+  }
+  if (readLock(away)?.token !== staleToken) {
+    try {
+      linkSync(away, path);
+    } catch {
+      return {
+        putBack: false,
+        word: `a live lock was carried away by mistake and could not be put back (${path} is taken again); it is left as ${away}`
+      };
+    }
+    try {
+      unlinkSync(away);
+    } catch {
+    }
+    return {
+      putBack: true,
+      word: `a live lock was carried away by mistake and put back — ${path} is held`
+    };
+  }
+  try {
+    unlinkSync(away);
+  } catch {
+  }
+  return null;
+}
+
+// js/shared/seam-host.ts
+import { chmodSync, unlinkSync as unlinkSync2 } from "node:fs";
+import { connect as connect2, createServer } from "node:net";
+import { createInterface } from "node:readline";
+import { PassThrough } from "node:stream";
+var HELLO_WAIT_MS = 5e3;
+var graceTimers = /* @__PURE__ */ new Map();
+var owners = /* @__PURE__ */ new Map();
+function serveSeam(socket, host, graceMs = SEAM_REATTACH_GRACE_MS) {
+  const say = (m) => host.log?.(m);
+  let session = null;
+  let helloSeen = false;
+  let byeing = false;
+  const early = [];
+  const helloTimer = setTimeout(() => {
+    if (!helloSeen) socket.destroy();
+  }, HELLO_WAIT_MS);
+  helloTimer.unref?.();
+  socket.on("error", () => {
+  });
+  const refuse = (reason) => {
+    say(`seam refused: ${reason}`);
+    writeFrame(socket, { t: "refuse", seam: SEAM_PROTOCOL, build: host.build, reason });
+    socket.end();
+  };
+  let chain = Promise.resolve();
+  const onFrame = (s2, f) => {
+    if (f.t === "rpc") {
+      const msg = f.msg;
+      const request2 = msg.method !== void 0 && msg.id !== void 0 && msg.id !== null;
+      if (request2 && host.draining?.()) {
+        say(`request ${JSON.stringify(msg.id)} not taken: the daemon is handing over`);
+        return;
+      }
+      chain = chain.then(
+        () => new Promise((done) => {
+          if (!request2) {
+            s2.deliver(msg);
+            return done();
+          }
+          writeFrame(socket, { t: "ack", id: msg.id }, (err) => {
+            if (!err) s2.deliver(msg);
+            else say(`request ${JSON.stringify(msg.id)} not taken: its ack did not go out`);
+            done();
+          });
+        })
+      );
+    } else if (f.t === "bye") {
+      byeing = true;
+      owners.delete(s2);
+      chain = chain.then(
+        () => s2.end(f.why || "bye").then(() => {
+          writeFrame(socket, { t: "bye-ok" });
+          socket.end();
+        })
+      );
+    }
+  };
+  readFrames(
+    socket,
+    (f) => {
+      if (!helloSeen) {
+        helloSeen = true;
+        clearTimeout(helloTimer);
+        const why = checkHello(f);
+        if (why) return refuse(why);
+        void accept(f);
+        return;
+      }
+      if (session) onFrame(session, f);
+      else early.push(f);
+    },
+    (line) => say(`unparseable seam line: ${line.slice(0, 120)}`)
+  );
+  const accept = async (hello) => {
+    const welcome = (id, resumed2) => writeFrame(socket, {
+      t: "welcome",
+      seam: SEAM_PROTOCOL,
+      build: host.build,
+      pid: process.pid,
+      session: id,
+      resumed: resumed2,
+      ack: true,
+      ...id === null && host.count ? { sessions: host.count() } : {},
+      ...id === null && host.path ? { path: host.path } : {}
+    });
+    if (hello.probe) {
+      welcome(null, false);
+      socket.end();
+      return;
+    }
+    if (host.draining?.()) {
+      say("seam hello dropped: the daemon is handing over to its successor");
+      socket.destroy();
+      return;
+    }
+    let s2 = hello.session ? host.find(hello.session) : null;
+    const resumed = !!s2;
+    if (!s2) {
+      const opened = await host.open(hello);
+      if (typeof opened === "string") return refuse(opened);
+      s2 = opened;
+    }
+    const grace = graceTimers.get(s2);
+    if (grace) clearTimeout(grace);
+    graceTimers.delete(s2);
+    session = s2;
+    owners.set(s2, socket);
+    welcome(s2.id, resumed);
+    s2.attach(
+      (msg) => writeFrame(socket, { t: "rpc", msg }),
+      (line) => writeFrame(socket, { t: "log", line })
+    );
+    say(
+      `seam session ${s2.id} ${resumed ? "resumed" : "opened"} for pid ${hello.pid} (${hello.build})`
+    );
+    for (const f of early.splice(0)) onFrame(s2, f);
+  };
+  socket.on("close", () => {
+    clearTimeout(helloTimer);
+    const s2 = session;
+    if (!s2 || byeing || owners.get(s2) !== socket) return;
+    owners.delete(s2);
+    s2.attach(null, null);
+    say(`seam of session ${s2.id} closed without bye — ending it in ${graceMs}ms unless reattached`);
+    const t = setTimeout(() => {
+      graceTimers.delete(s2);
+      void s2.end("the thin bridge is gone (seam closed without bye)");
+    }, graceMs);
+    t.unref?.();
+    graceTimers.set(s2, t);
+  });
+}
+function streamSeamSession(id, open, onLost, onLog) {
+  const input = new PassThrough();
+  const output = new PassThrough();
+  let logSink = null;
+  const engine = open({ input, output }, (line) => {
+    onLog?.(line);
+    logSink?.(line);
+  });
+  let sink = null;
+  createInterface({ input: output, terminal: false }).on("line", (line) => {
+    if (!line.trim()) return;
+    let msg;
+    try {
+      msg = JSON.parse(line);
+    } catch {
+      return;
+    }
+    if (sink) sink(msg);
+    else onLost?.(msg);
+  });
+  let ending = null;
+  return {
+    id,
+    // Сессия ушла — вход закрыт: запись в закрытый поток была бы ошибкой, не доставкой.
+    deliver: (msg) => void (input.writableEnded || input.write(JSON.stringify(msg) + "\n")),
+    attach: (s2, l) => {
+      sink = s2;
+      logSink = l ?? null;
+    },
+    end: (why) => ending ??= engine.leave(why).then(() => new Promise((r) => setImmediate(r))).then(() => void input.end())
+  };
+}
+var fail = (code, message) => Object.assign(new Error(message), { code });
+var DAEMON_RISE_MS = 15e3;
+var socketAnswers = (path) => new Promise((r) => {
+  const probe = connect2(path);
+  probe.once("connect", () => {
+    probe.destroy();
+    r(true);
+  });
+  probe.once("error", () => r(false));
+});
+async function listenSeam(authDir, onSocket) {
+  const bad = seamEntranceProblem(authDir);
+  if (bad) throw fail("EUNSAFE", `the seam entrance is not private: ${bad}`);
+  const path = seamSocketPath(authDir);
+  if (await socketAnswers(path)) throw fail("EADDRINUSE", `a daemon already listens on ${path}`);
+  const lockPath = seamDaemonLockPath(authDir);
+  const lock = takeFileLock(lockPath, DAEMON_RISE_MS);
+  if (!lock.held)
+    throw fail(
+      "EADDRINUSE",
+      lock.fault ?? `the daemon lock ${lockPath} is held by pid ${lock.holder?.pid ?? "?"}, rising for ${Math.round((Date.now() - (lock.holder?.started_at ?? Date.now())) / 1e3)}s — its socket does not answer yet`
+    );
+  const win = process.platform === "win32";
+  try {
+    if (!win) {
+      try {
+        unlinkSync2(path);
+      } catch {
+      }
+    }
+    const server = createServer(onSocket);
+    await new Promise((r, reject) => {
+      server.once("error", reject);
+      server.listen(path, () => r());
+    });
+    if (!win) chmodSync(path, 384);
+    server.once("close", lock.release);
+    process.once("exit", lock.release);
+    return server;
+  } catch (e) {
+    lock.release();
+    throw e;
+  }
+}
+
+// js/shared/semver.ts
+function parseVersion(v) {
+  const m = /^v?(\d+)\.(\d+)\.(\d+)/.exec((v ?? "").trim());
+  return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
+}
+function compareVersions(a, b) {
+  const pa = parseVersion(a);
+  const pb = parseVersion(b);
+  if (!pa || !pb) return 0;
+  for (let i = 0; i < 3; i++) if (pa[i] !== pb[i]) return pa[i] - pb[i];
+  return 0;
+}
+
+// js/bridge/config.ts
+import { mkdirSync as mkdirSync3, readFileSync as readFileSync4, renameSync as renameSync2, writeFileSync as writeFileSync2 } from "node:fs";
+import { homedir as homedir3 } from "node:os";
+import { join as join5 } from "node:path";
+
 // js/shared/lang.ts
+import { readFileSync as readFileSync3 } from "node:fs";
+import { join as join4 } from "node:path";
 function langOfUrl(url) {
   try {
     return /\.ai\.?$/i.test(new URL(url).hostname) ? "en" : "ru";
@@ -86,35 +689,39 @@ function langOfUrl(url) {
   }
 }
 function forcedLang() {
-  const v = process.env.ISKRON_BRIDGE_LANG?.trim().toLowerCase();
+  const v = envOf("ISKRON_BRIDGE_LANG")?.trim().toLowerCase();
   return v === "en" || v === "ru" ? v : null;
 }
-function resolve2() {
+function resolve3() {
   const forced = forcedLang();
   if (forced) return forced;
-  const fromEnv = process.env.ISKRON_BRIDGE_URL?.trim();
+  const fromEnv = envOf("ISKRON_BRIDGE_URL")?.trim();
   if (fromEnv) return langOfUrl(fromEnv);
   try {
-    const text = readFileSync2(join2(authDirFromEnv(), "server"), "utf8").trim();
+    const text = readFileSync3(join4(authDirFromEnv(), "server"), "utf8").trim();
     if (text) return langOfUrl(text);
   } catch {
   }
   return "ru";
 }
-var current = null;
+var S = scoped(() => ({ current: null }));
 function setServerLang(serverUrl) {
-  current = forcedLang() ?? langOfUrl(serverUrl);
+  S.current = forcedLang() ?? langOfUrl(serverUrl);
 }
-var lang = () => current ??= resolve2();
+var lang = () => S.current ??= resolve3();
 var L = (ru, en) => lang() === "en" ? en : ru;
 
 // js/bridge/streams.ts
 var FLUSH_STOP_MS = 5e3;
 var deadStreams = /* @__PURE__ */ new WeakSet();
-var sessionOut = null;
-var sessionStream = () => sessionOut ?? process.stdout;
+var out = scoped(() => ({ stream: null }));
+var sessionStream = () => out.stream ?? process.stdout;
 function setSessionOutput(s2) {
-  sessionOut = s2;
+  out.stream = s2;
+}
+var processLog = null;
+function setProcessLog(fn) {
+  processLog = fn;
 }
 function canWrite(s2) {
   return !!s2 && !deadStreams.has(s2) && !s2.destroyed && s2.writable !== false;
@@ -137,30 +744,36 @@ function writeTo(s2, text) {
   }
 }
 function log(msg) {
-  writeTo(process.stderr, `[iskron-bridge ${(/* @__PURE__ */ new Date()).toISOString()}] ${msg}
-`);
+  const line = `[iskron-bridge ${(/* @__PURE__ */ new Date()).toISOString()}] ${msg}
+`;
+  const sink = currentScope().log ?? processLog;
+  if (sink) sink(line);
+  else writeTo(process.stderr, line);
 }
 function debug(msg) {
   if (CFG?.debug) log(`debug: ${msg}`);
 }
 function emit(msg) {
+  if (!out.stream && processLog)
+    return processLog(`emit outside of a session, dropped: ${JSON.stringify(msg).slice(0, 200)}
+`);
   writeTo(sessionStream(), JSON.stringify(msg) + "\n");
 }
-function flushStdout(out5 = sessionStream()) {
+function flushStdout(out6 = sessionStream()) {
   return new Promise((resolve7) => {
-    if (!canWrite(out5)) return resolve7();
+    if (!canWrite(out6)) return resolve7();
     let done = false;
     const finish = () => {
       if (done) return;
       done = true;
-      out5.off("error", finish);
-      out5.off("close", finish);
+      out6.off("error", finish);
+      out6.off("close", finish);
       resolve7();
     };
-    out5.once("error", finish);
-    out5.once("close", finish);
-    if (backlogged.has(out5)) out5.once("drain", finish);
-    else out5.write("", finish);
+    out6.once("error", finish);
+    out6.once("close", finish);
+    if (backlogged.has(out6)) out6.once("drain", finish);
+    else out6.write("", finish);
     setTimeout(finish, FLUSH_STOP_MS).unref();
   });
 }
@@ -183,10 +796,10 @@ function resolveServerChoice(word) {
     return null;
   }
 }
-var serverChoicePath = (authDir) => join3(authDir, "server");
+var serverChoicePath = (authDir) => join5(authDir, "server");
 function readServerChoice(authDir) {
   try {
-    const text = readFileSync3(serverChoicePath(authDir), "utf8").trim();
+    const text = readFileSync4(serverChoicePath(authDir), "utf8").trim();
     return text ? new URL(text).href : null;
   } catch {
     return null;
@@ -194,28 +807,52 @@ function readServerChoice(authDir) {
 }
 function writeServerChoice(authDir, url) {
   const path = serverChoicePath(authDir);
-  mkdirSync2(authDir, { recursive: true, mode: 448 });
+  mkdirSync3(authDir, { recursive: true, mode: 448 });
   const tmp = `${path}.tmp-${process.pid}`;
-  writeFileSync(tmp, url + "\n", { mode: 384 });
-  renameSync(tmp, path);
+  writeFileSync2(tmp, url + "\n", { mode: 384 });
+  renameSync2(tmp, path);
   return path;
 }
-var CFG = null;
+var cfgSlot = scoped(() => ({ cfg: null }));
+var CFG = new Proxy({}, {
+  get: (_, k) => cfgSlot.cfg ? Reflect.get(cfgSlot.cfg, k) : void 0,
+  has: (_, k) => !!cfgSlot.cfg && Reflect.has(cfgSlot.cfg, k)
+});
 function setConfig(cfg) {
-  CFG = cfg;
+  cfgSlot.cfg = cfg;
   setServerLang(cfg.serverUrl);
 }
+var ArgsError = class extends Error {
+  code;
+  /** Что сказать в stdout вместо слова в stderr (--version). */
+  out;
+  constructor(message, code, out6 = null) {
+    super(message);
+    this.code = code;
+    this.out = out6;
+  }
+};
 function parseArgs(argv2) {
+  try {
+    return readArgs(argv2);
+  } catch (e) {
+    if (!(e instanceof ArgsError)) throw e;
+    if (e.out !== null) process.stdout.write(e.out);
+    else log(e.message);
+    process.exit(e.code);
+  }
+}
+function readArgs(argv2) {
   const cfg = {
     serverUrl: "",
-    timeoutMs: Number(process.env.ISKRON_BRIDGE_TIMEOUT) || 12e4,
-    authDir: process.env.ISKRON_BRIDGE_AUTH_DIR || join3(homedir2(), ".iskron-bridge"),
+    timeoutMs: Number(envOf("ISKRON_BRIDGE_TIMEOUT")) || 12e4,
+    authDir: envOf("ISKRON_BRIDGE_AUTH_DIR") || join5(homedir3(), ".iskron-bridge"),
     clientName: "iskron-bridge",
-    noBrowser: !!process.env.ISKRON_BRIDGE_NO_BROWSER,
-    debug: !!process.env.ISKRON_BRIDGE_DEBUG,
-    scope: process.env.ISKRON_BRIDGE_SCOPE || null,
-    resource: process.env.ISKRON_BRIDGE_RESOURCE || null,
-    staticClientId: process.env.ISKRON_BRIDGE_CLIENT_ID || null,
+    noBrowser: !!envOf("ISKRON_BRIDGE_NO_BROWSER"),
+    debug: !!envOf("ISKRON_BRIDGE_DEBUG"),
+    scope: envOf("ISKRON_BRIDGE_SCOPE") || null,
+    resource: envOf("ISKRON_BRIDGE_RESOURCE") || null,
+    staticClientId: envOf("ISKRON_BRIDGE_CLIENT_ID") || null,
     pat: null,
     patSource: null,
     serverSource: "argument",
@@ -239,17 +876,12 @@ function parseArgs(argv2) {
     else if (a === "--no-browser") cfg.noBrowser = true;
     else if (a === "--debug") cfg.debug = true;
     else if (a === "--satellite") cfg.satellite = true;
-    else if (a === "--version") {
-      process.stdout.write(BUILD + "\n");
-      process.exit(0);
-    } else if (!a.startsWith("--") && !cfg.serverUrl) cfg.serverUrl = a;
-    else {
-      log(`unknown argument: ${a}`);
-      process.exit(2);
-    }
+    else if (a === "--version") throw new ArgsError("--version", 0, BUILD + "\n");
+    else if (!a.startsWith("--") && !cfg.serverUrl) cfg.serverUrl = a;
+    else throw new ArgsError(`unknown argument: ${a}`, 2);
   }
   if (!cfg.serverUrl) {
-    const fromEnv = process.env.ISKRON_BRIDGE_URL?.trim();
+    const fromEnv = envOf("ISKRON_BRIDGE_URL")?.trim();
     const fromFile = fromEnv ? null : readServerChoice(cfg.authDir);
     cfg.serverUrl = fromEnv || fromFile || DEFAULT_SERVER_URL;
     cfg.serverSource = fromEnv ? "ISKRON_BRIDGE_URL" : fromFile ? "file" : "default";
@@ -257,23 +889,22 @@ function parseArgs(argv2) {
   try {
     new URL(cfg.serverUrl);
   } catch {
-    log(`not a URL: ${cfg.serverUrl}`);
-    process.exit(2);
+    throw new ArgsError(`not a URL: ${cfg.serverUrl}`, 2);
   }
   if (!Number.isFinite(cfg.timeoutMs) || cfg.timeoutMs < 1e3) cfg.timeoutMs = 12e4;
   readPat(cfg);
   return cfg;
 }
 function readPat(cfg) {
-  const fromEnv = process.env.ISKRON_BRIDGE_TOKEN?.trim();
+  const fromEnv = envOf("ISKRON_BRIDGE_TOKEN")?.trim();
   if (fromEnv) {
     cfg.pat = fromEnv;
     cfg.patSource = "ISKRON_BRIDGE_TOKEN";
     return;
   }
-  const file = join3(cfg.authDir, "token");
+  const file = join5(cfg.authDir, "token");
   try {
-    const text = readFileSync3(file, "utf8").trim();
+    const text = readFileSync4(file, "utf8").trim();
     if (text) {
       cfg.pat = text;
       cfg.patSource = file;
@@ -283,34 +914,34 @@ function readPat(cfg) {
 }
 
 // js/bridge/store.ts
-import { createHash as createHash3 } from "node:crypto";
+import { createHash as createHash5 } from "node:crypto";
 import {
   appendFileSync,
-  mkdirSync as mkdirSync3,
-  readFileSync as readFileSync4,
-  renameSync as renameSync2,
+  mkdirSync as mkdirSync4,
+  readFileSync as readFileSync5,
+  renameSync as renameSync3,
   statSync,
-  unlinkSync,
-  writeFileSync as writeFileSync2
+  unlinkSync as unlinkSync3,
+  writeFileSync as writeFileSync3
 } from "node:fs";
-import { join as join4 } from "node:path";
+import { join as join6 } from "node:path";
 var b64url = (buf) => Buffer.from(buf).toString("base64url");
-var sha256 = (s2) => createHash3("sha256").update(s2).digest();
-var sleep = (ms2) => new Promise((r) => setTimeout(r, ms2));
+var sha256 = (s2) => createHash5("sha256").update(s2).digest();
+var sleep = (ms3) => new Promise((r) => setTimeout(r, ms3));
 function storePath() {
   const u = new URL(CFG.serverUrl);
   const h = b64url(sha256(u.origin + u.pathname)).slice(0, 10);
-  return join4(CFG.authDir, `${u.hostname}_${h}.json`);
+  return join6(CFG.authDir, `${u.hostname}_${h}.json`);
 }
 function loadStore() {
   try {
-    return JSON.parse(readFileSync4(storePath(), "utf8"));
+    return JSON.parse(readFileSync5(storePath(), "utf8"));
   } catch {
     return {};
   }
 }
 function saveStore(patch) {
-  mkdirSync3(CFG.authDir, { recursive: true, mode: 448 });
+  mkdirSync4(CFG.authDir, { recursive: true, mode: 448 });
   const next = {
     ...loadStore(),
     ...patch,
@@ -319,11 +950,11 @@ function saveStore(patch) {
   };
   const tmp = `${storePath()}.tmp-${process.pid}`;
   try {
-    writeFileSync2(tmp, JSON.stringify(next, null, 2), { mode: 384 });
-    renameSync2(tmp, storePath());
+    writeFileSync3(tmp, JSON.stringify(next, null, 2), { mode: 384 });
+    renameSync3(tmp, storePath());
   } catch (e) {
     try {
-      unlinkSync(tmp);
+      unlinkSync3(tmp);
     } catch {
     }
     throw e;
@@ -335,29 +966,29 @@ function serverCachePath() {
 }
 function loadServerCache() {
   try {
-    return JSON.parse(readFileSync4(serverCachePath(), "utf8"));
+    return JSON.parse(readFileSync5(serverCachePath(), "utf8"));
   } catch {
     return {};
   }
 }
 function saveServerCache(patch) {
   try {
-    mkdirSync3(CFG.authDir, { recursive: true, mode: 448 });
+    mkdirSync4(CFG.authDir, { recursive: true, mode: 448 });
     const tmp = `${serverCachePath()}.tmp-${process.pid}`;
-    writeFileSync2(tmp, JSON.stringify({ ...loadServerCache(), ...patch }), { mode: 384 });
-    renameSync2(tmp, serverCachePath());
+    writeFileSync3(tmp, JSON.stringify({ ...loadServerCache(), ...patch }), { mode: 384 });
+    renameSync3(tmp, serverCachePath());
   } catch {
   }
 }
 function grantLogPath() {
-  return join4(CFG.authDir, "grant.log");
+  return join6(CFG.authDir, "grant.log");
 }
 function grantLog(msg) {
   appendJournal(grantLogPath(), msg);
 }
 function appendJournal(path, msg) {
   try {
-    mkdirSync3(CFG.authDir, { recursive: true, mode: 448 });
+    mkdirSync4(CFG.authDir, { recursive: true, mode: 448 });
     let size = 0;
     try {
       size = statSync(path).size;
@@ -365,7 +996,7 @@ function appendJournal(path, msg) {
     }
     if (size > 128e3) {
       try {
-        unlinkSync(path);
+        unlinkSync3(path);
       } catch {
       }
     }
@@ -377,7 +1008,7 @@ function appendJournal(path, msg) {
   }
 }
 function standingsLogPath() {
-  return join4(CFG.authDir, "standings.log");
+  return join6(CFG.authDir, "standings.log");
 }
 function standingLog(msg) {
   appendJournal(standingsLogPath(), msg);
@@ -387,24 +1018,24 @@ function grantStatePath() {
 }
 function loadGrantState() {
   try {
-    return JSON.parse(readFileSync4(grantStatePath(), "utf8"));
+    return JSON.parse(readFileSync5(grantStatePath(), "utf8"));
   } catch {
     return {};
   }
 }
 function saveGrantState(patch) {
   try {
-    mkdirSync3(CFG.authDir, { recursive: true, mode: 448 });
+    mkdirSync4(CFG.authDir, { recursive: true, mode: 448 });
     const next = { ...loadGrantState(), ...patch };
     const tmp = `${grantStatePath()}.tmp-${process.pid}`;
-    writeFileSync2(tmp, JSON.stringify(next), { mode: 384 });
-    renameSync2(tmp, grantStatePath());
+    writeFileSync3(tmp, JSON.stringify(next), { mode: 384 });
+    renameSync3(tmp, grantStatePath());
   } catch {
   }
 }
 function clearGrantState() {
   try {
-    unlinkSync(grantStatePath());
+    unlinkSync3(grantStatePath());
   } catch {
   }
 }
@@ -533,7 +1164,7 @@ function errorMessage(e) {
 
 // js/bridge/oauth/discovery.ts
 import { spawn } from "node:child_process";
-import { join as join5 } from "node:path";
+import { join as join7 } from "node:path";
 async function fetchJson(url, opts = {}, timeoutMs = 15e3) {
   const res = await fetch(url, { ...opts, signal: AbortSignal.timeout(timeoutMs) });
   noteServerDate(res);
@@ -647,7 +1278,7 @@ function openBrowser(url) {
   }
 }
 function windowsOpener(url) {
-  const powershell = join5(
+  const powershell = join7(
     process.env.SystemRoot || "C:\\Windows",
     "System32",
     "WindowsPowerShell",
@@ -669,19 +1300,19 @@ function windowsOpener(url) {
 }
 
 // js/bridge/oauth/flow.ts
-import { randomBytes } from "node:crypto";
+import { randomBytes as randomBytes2 } from "node:crypto";
 
 // js/bridge/oauth/authlock.ts
 import {
-  mkdirSync as mkdirSync4,
+  mkdirSync as mkdirSync5,
   readdirSync,
-  readFileSync as readFileSync5,
-  renameSync as renameSync3,
-  unlinkSync as unlinkSync2,
-  writeFileSync as writeFileSync3
+  readFileSync as readFileSync6,
+  renameSync as renameSync4,
+  unlinkSync as unlinkSync4,
+  writeFileSync as writeFileSync4
 } from "node:fs";
-import { connect } from "node:net";
-import { basename, dirname, join as join6 } from "node:path";
+import { connect as connect3 } from "node:net";
+import { basename, dirname as dirname2, join as join8 } from "node:path";
 function authLockPath() {
   return storePath() + ".auth-pending";
 }
@@ -697,7 +1328,7 @@ function pidAlive(pid) {
 function portListening(port, timeoutMs = 700) {
   return new Promise((resolve7) => {
     if (!Number.isInteger(port)) return resolve7(false);
-    const sock = connect({ host: "127.0.0.1", port });
+    const sock = connect3({ host: "127.0.0.1", port });
     const done = (v) => {
       sock.destroy();
       resolve7(v);
@@ -709,13 +1340,13 @@ function portListening(port, timeoutMs = 700) {
 }
 function readAuthLock() {
   try {
-    return JSON.parse(readFileSync5(authLockPath(), "utf8"));
+    return JSON.parse(readFileSync6(authLockPath(), "utf8"));
   } catch {
     return null;
   }
 }
 function writeAuthLock(fields) {
-  mkdirSync4(CFG.authDir, { recursive: true, mode: 448 });
+  mkdirSync5(CFG.authDir, { recursive: true, mode: 448 });
   const tmp = `${authLockPath()}.tmp-${process.pid}`;
   const body = JSON.stringify({
     ...fields,
@@ -723,29 +1354,29 @@ function writeAuthLock(fields) {
     started_at: fields.started_at ?? Date.now()
   });
   try {
-    writeFileSync3(tmp, body, { mode: 384 });
-    renameSync3(tmp, authLockPath());
+    writeFileSync4(tmp, body, { mode: 384 });
+    renameSync4(tmp, authLockPath());
   } catch {
     try {
-      unlinkSync2(tmp);
+      unlinkSync4(tmp);
     } catch {
     }
-    writeFileSync3(authLockPath(), body, { mode: 384 });
+    writeFileSync4(authLockPath(), body, { mode: 384 });
   }
 }
 function releaseAuthLock(owns) {
   try {
     const l = readAuthLock();
     if (owns && (!l || !owns(l))) return;
-    unlinkSync2(authLockPath());
+    unlinkSync4(authLockPath());
   } catch {
   }
 }
 var tabMarkPath = (state2) => `${authLockPath()}.tab-${state2}`;
 function claimTab(state2) {
   try {
-    mkdirSync4(CFG.authDir, { recursive: true, mode: 448 });
-    writeFileSync3(tabMarkPath(state2), "", { flag: "wx", mode: 384 });
+    mkdirSync5(CFG.authDir, { recursive: true, mode: 448 });
+    writeFileSync4(tabMarkPath(state2), "", { flag: "wx", mode: 384 });
     return true;
   } catch {
     return false;
@@ -754,8 +1385,8 @@ function claimTab(state2) {
 function sweepTabMarks() {
   const prefix = `${basename(authLockPath())}.tab-`;
   try {
-    for (const f of readdirSync(dirname(authLockPath()))) {
-      if (f.startsWith(prefix)) unlinkSync2(join6(dirname(authLockPath()), f));
+    for (const f of readdirSync(dirname2(authLockPath()))) {
+      if (f.startsWith(prefix)) unlinkSync4(join8(dirname2(authLockPath()), f));
     }
   } catch {
   }
@@ -763,15 +1394,15 @@ function sweepTabMarks() {
 function installAuthLockExitHook() {
   process.on("exit", () => {
     try {
-      const l = JSON.parse(readFileSync5(authLockPath(), "utf8"));
-      if (l.pid === process.pid && !l.authorize_url) unlinkSync2(authLockPath());
+      const l = JSON.parse(readFileSync6(authLockPath(), "utf8"));
+      if (l.pid === process.pid && !l.authorize_url) unlinkSync4(authLockPath());
     } catch {
     }
   });
 }
 
 // js/bridge/oauth/callback.ts
-import { createServer } from "node:http";
+import { createServer as createServer2 } from "node:http";
 var PAGE_HOLD_MS = 2e4;
 function bindCallback(port) {
   return new Promise((resolve7, reject) => {
@@ -798,7 +1429,7 @@ function bindCallback(port) {
       } catch {
       }
     };
-    const server = createServer((req, res) => {
+    const server = createServer2((req, res) => {
       const u = new URL(req.url ?? "/", `http://127.0.0.1:${port}`);
       if (u.pathname === "/login" && mint && loginKey && u.searchParams.get("k") === loginKey) {
         mint().then(
@@ -1001,10 +1632,10 @@ function openTabOnce(l) {
   if (!CFG.noBrowser && claimTab(l.state)) openBrowser(l.authorize_url);
 }
 function showTab(l) {
-  const current2 = readAuthLock();
-  if (!published(current2)) return l;
-  openTabOnce(current2);
-  return current2;
+  const current = readAuthLock();
+  if (!published(current)) return l;
+  openTabOnce(current);
+  return current;
 }
 function handOut(l, wantTab) {
   return wantTab && published(l) ? showTab(l) : l;
@@ -1109,9 +1740,9 @@ async function interactiveFlow(meta, judged, note3, wantTab = true) {
       pid: process.pid,
       started_at: Date.now(),
       callback_port: callback.port,
-      authorize_url: loginLink(callback.port, b64url(randomBytes(18))),
-      state: b64url(randomBytes(24)),
-      verifier: b64url(randomBytes(48)),
+      authorize_url: loginLink(callback.port, b64url(randomBytes2(18))),
+      state: b64url(randomBytes2(24)),
+      verifier: b64url(randomBytes2(48)),
       grant: over
     };
     sweepTabMarks();
@@ -1134,8 +1765,8 @@ function runFlow(meta, cb, login, openTab) {
   const key = login.authorize_url.slice(linkPrefix(login.callback_port).length);
   cb.serveLogin(key, async () => {
     const client = await ensureClient(meta, redirectUri);
-    const current2 = readAuthLock();
-    if (current2 && ours(current2)) writeAuthLock({ ...current2, client_id: client.client_id });
+    const current = readAuthLock();
+    if (current && ours(current)) writeAuthLock({ ...current, client_id: client.client_id });
     const u = new URL(meta.as.authorization_endpoint);
     u.searchParams.set("response_type", "code");
     u.searchParams.set("client_id", client.client_id);
@@ -1203,7 +1834,7 @@ var DEAD_RECHECK_MS = pauses(process.env.ISKRON_BRIDGE_DEAD_RECHECK_MS, "1000,20
 var IN_CALL_WAIT_MS = Number(process.env.ISKRON_BRIDGE_IN_CALL_WAIT_MS) || 1e4;
 
 // js/bridge/oauth/refreshlock.ts
-import { linkSync, mkdirSync as mkdirSync5, readFileSync as readFileSync6, unlinkSync as unlinkSync3, writeFileSync as writeFileSync4 } from "node:fs";
+import { linkSync as linkSync2, mkdirSync as mkdirSync6, readFileSync as readFileSync7, unlinkSync as unlinkSync5, writeFileSync as writeFileSync5 } from "node:fs";
 var REFRESH_LOCK_STALE_MS = 45e3;
 function refreshLockPath() {
   return storePath() + ".refreshing";
@@ -1211,15 +1842,15 @@ function refreshLockPath() {
 function acquireRefreshLock() {
   const claim = () => {
     const tmp = `${refreshLockPath()}.${process.pid}`;
-    writeFileSync4(tmp, JSON.stringify({ pid: process.pid, started_at: Date.now() }), {
+    writeFileSync5(tmp, JSON.stringify({ pid: process.pid, started_at: Date.now() }), {
       mode: 384
     });
     try {
-      linkSync(tmp, refreshLockPath());
+      linkSync2(tmp, refreshLockPath());
       return true;
     } finally {
       try {
-        unlinkSync3(tmp);
+        unlinkSync5(tmp);
       } catch {
       }
     }
@@ -1230,14 +1861,14 @@ function acquireRefreshLock() {
     }
   };
   try {
-    mkdirSync5(CFG.authDir, { recursive: true, mode: 448 });
+    mkdirSync6(CFG.authDir, { recursive: true, mode: 448 });
     return claim();
   } catch (e) {
     notHeld(e);
   }
   let held2 = null;
   try {
-    held2 = JSON.parse(readFileSync6(refreshLockPath(), "utf8"));
+    held2 = JSON.parse(readFileSync7(refreshLockPath(), "utf8"));
   } catch {
   }
   if (held2 && pidAlive(held2.pid) && Date.now() - held2.started_at < REFRESH_LOCK_STALE_MS) {
@@ -1245,7 +1876,7 @@ function acquireRefreshLock() {
   }
   debug("breaking a refresh lock nobody is holding");
   try {
-    unlinkSync3(refreshLockPath());
+    unlinkSync5(refreshLockPath());
   } catch {
   }
   try {
@@ -1257,8 +1888,8 @@ function acquireRefreshLock() {
 }
 function releaseRefreshLock() {
   try {
-    const l = JSON.parse(readFileSync6(refreshLockPath(), "utf8"));
-    if (l.pid === process.pid) unlinkSync3(refreshLockPath());
+    const l = JSON.parse(readFileSync7(refreshLockPath(), "utf8"));
+    if (l.pid === process.pid) unlinkSync5(refreshLockPath());
   } catch {
   }
 }
@@ -1428,7 +2059,7 @@ function refusalStands() {
 }
 
 // js/bridge/auth.ts
-var authInFlight = null;
+var authInFlight = /* @__PURE__ */ new Map();
 function heldNote(until) {
   if (until === null) return "the grant itself is whole";
   const minutes = Math.max(1, Math.round((until - now()) / 6e4));
@@ -1441,11 +2072,14 @@ async function ensureAuth(wwwAuthenticate, opts = {}) {
       `the personal access token from ${CFG.patSource} is refused by the server — revoked, expired or without rights to this graph; mint a new one on the graph's token page and put it in ${CFG.patSource}`
     );
   }
-  if (authInFlight) {
-    if (!interactive || authInFlight.interactive) return authInFlight.promise;
-    await authInFlight.promise.catch(() => {
+  const grant = storePath();
+  const flight = authInFlight.get(grant);
+  if (flight) {
+    if (!interactive || flight.interactive) return flight.promise;
+    await flight.promise.catch(() => {
     });
-    if (authInFlight) return authInFlight.promise;
+    const again = authInFlight.get(grant);
+    if (again) return again.promise;
     const s2 = loadStore();
     if (tokenUsable(s2.tokens)) return s2.tokens;
   }
@@ -1510,10 +2144,10 @@ async function ensureAuth(wwwAuthenticate, opts = {}) {
         );
       return await interactiveFlow(meta, s2.tokens);
     } finally {
-      authInFlight = null;
+      authInFlight.delete(grant);
     }
   })();
-  authInFlight = { promise, interactive };
+  authInFlight.set(grant, { promise, interactive });
   return promise;
 }
 var REFRESH_MARGIN_MS = 3 * 6e4;
@@ -1760,7 +2394,7 @@ function holdSocket(o) {
 }
 
 // js/shared/seen.ts
-import { appendFileSync as appendFileSync2, readFileSync as readFileSync7, renameSync as renameSync4, writeFileSync as writeFileSync5 } from "node:fs";
+import { appendFileSync as appendFileSync2, readFileSync as readFileSync8, renameSync as renameSync5, writeFileSync as writeFileSync6 } from "node:fs";
 var SEEN_KEEP = 5e3;
 var SEEN_SLACK = 1e3;
 function eventKeyOf(frame2) {
@@ -1777,7 +2411,7 @@ function deliveredKeys(frame2) {
 }
 function seenIds(seenPath) {
   try {
-    return new Set(readFileSync7(seenPath, "utf8").split("\n").filter(Boolean));
+    return new Set(readFileSync8(seenPath, "utf8").split("\n").filter(Boolean));
   } catch {
     return /* @__PURE__ */ new Set();
   }
@@ -1796,8 +2430,8 @@ function compact(seenPath, seen) {
   const inFile = new Set(file);
   const tail2 = [...[...seen].filter((x) => !inFile.has(x)), ...file].slice(-SEEN_KEEP);
   const tmp = `${seenPath}.${process.pid}.tmp`;
-  writeFileSync5(tmp, tail2.join("\n") + "\n");
-  renameSync4(tmp, seenPath);
+  writeFileSync6(tmp, tail2.join("\n") + "\n");
+  renameSync5(tmp, seenPath);
   seen.clear();
   for (const x of tail2) seen.add(x);
 }
@@ -1813,7 +2447,7 @@ var SKILLS_ROOT_ENV = "ISKRON_SKILLS_ROOT";
 var HOSTED_CLIENTS = /* @__PURE__ */ new Set([PI_CLIENT, OPENCODE_CLIENT]);
 
 // js/bridge/transport.ts
-var state = {
+var state = scoped(() => ({
   sessionId: null,
   protocolVersion: null,
   initParams: null,
@@ -1847,7 +2481,7 @@ var state = {
   // server that opens a fresh session on it silently runs the call unattributed
   // before we learn the new id. So a changed token means: re-open first.
   sessionToken: null
-};
+}));
 function standingHeader() {
   const s2 = state.standing;
   if (!s2?.realm || s2.karta == null || !s2.name) return null;
@@ -2000,14 +2634,14 @@ async function post(msg, onMessage) {
     throw new UpstreamError(`upstream sent unparseable JSON: ${text.slice(0, 200)}`, "http");
   }
 }
-var reinitInFlight = null;
+var reinit = scoped(() => ({ inFlight: null }));
 var reinitHooks = [];
 var onReinitialized = (hook) => {
   reinitHooks.push(hook);
 };
 async function reinitialize() {
-  if (reinitInFlight) return reinitInFlight;
-  reinitInFlight = (async () => {
+  if (reinit.inFlight) return reinit.inFlight;
+  reinit.inFlight = (async () => {
     try {
       if (!state.initParams) throw new UpstreamError("session lost before initialize", "session");
       log("upstream session lost — re-initializing transparently");
@@ -2032,10 +2666,10 @@ async function reinitialize() {
       log(`session re-established (${state.sessionId || "no session id"})`);
       for (const hook of reinitHooks) void hook();
     } finally {
-      reinitInFlight = null;
+      reinit.inFlight = null;
     }
   })();
-  return reinitInFlight;
+  return reinit.inFlight;
 }
 
 // js/bridge/client.ts
@@ -2045,7 +2679,7 @@ function harnessName() {
   return typeof info?.name === "string" ? info.name : "";
 }
 function harnessVersion() {
-  const v = HOSTED_CLIENTS.has(harnessName()) ? process.env[HARNESS_VERSION_ENV] : clientInfo()?.version;
+  const v = HOSTED_CLIENTS.has(harnessName()) ? envOf(HARNESS_VERSION_ENV) : clientInfo()?.version;
   return typeof v === "string" && v.trim() ? v.trim() : "unknown";
 }
 var notifiedClient = () => NOTIFIED_CLIENTS.has(harnessName());
@@ -2057,9 +2691,9 @@ function stampOrigin(frame2) {
 }
 
 // js/bridge/door.ts
-import { chmodSync, mkdirSync as mkdirSync6, unlinkSync as unlinkSync6, utimesSync, writeFileSync as writeFileSync7 } from "node:fs";
-import { createServer as createServer2 } from "node:net";
-import { dirname as dirname2 } from "node:path";
+import { chmodSync as chmodSync2, mkdirSync as mkdirSync7, unlinkSync as unlinkSync8, utimesSync, writeFileSync as writeFileSync8 } from "node:fs";
+import { createServer as createServer3 } from "node:net";
+import { dirname as dirname3 } from "node:path";
 
 // js/shared/room-kinds.ts
 var WORDS = {
@@ -2263,10 +2897,10 @@ function addresseeOf(v) {
   return addr.length ? { addr, label } : null;
 }
 function wordsCount(n) {
-  const W = words();
+  const W2 = words();
   const m10 = n % 10;
   const m100 = n % 100;
-  const w = lang() === "en" ? n === 1 ? W.word_one : W.word_many : m10 === 1 && m100 !== 11 ? W.word_one : m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14) ? W.word_few : W.word_many;
+  const w = lang() === "en" ? n === 1 ? W2.word_one : W2.word_many : m10 === 1 && m100 !== 11 ? W2.word_one : m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14) ? W2.word_few : W2.word_many;
   return `${n} ${w}`;
 }
 function roomKind(frame2) {
@@ -2320,7 +2954,7 @@ function roomKind(frame2) {
       phase: null,
       known: false
     };
-  const W = words();
+  const W2 = words();
   const word = kind === "said" || kind === "body";
   const withheld = word && f.body_withheld === true;
   const to = word ? addresseeOf(f.addressee) ?? (withheld ? { addr: ["?"], label: "?" } : null) : null;
@@ -2329,7 +2963,7 @@ function roomKind(frame2) {
     const counts = kind === "said";
     const pair = JSON.stringify([roomOf(f.room), author, to.addr[0]]);
     const id = counts ? values.entry_id : values.refers_to;
-    const run = (n) => fill(n === 0 ? W.aside_body : n > 1 ? W.aside_run : W.aside, {
+    const run = (n) => fill(n === 0 ? W2.aside_body : n > 1 ? W2.aside_run : W2.aside, {
       ...values,
       word: id,
       addressee: to.label,
@@ -2341,16 +2975,16 @@ function roomKind(frame2) {
   }
   const pending = kind === "said" && f.body_pending === true && !str(f.body) && !str(line.done);
   const aborted = kind === "body" && fields.aborted === true;
-  const wordsOf = pending ? W.said_pending : aborted ? obj(line.author).kind === "platform" ? W.body_lapsed : W.body_aborted : kind === "auto" ? autoWords()[str(values.code)] ?? W.auto : (
+  const wordsOf = pending ? W2.said_pending : aborted ? obj(line.author).kind === "platform" ? W2.body_lapsed : W2.body_aborted : kind === "auto" ? autoWords()[str(values.code)] ?? W2.auto : (
     // op узла (bound | updated | deleted | undeleted): без op и bound — прежнее слово.
-    kind === "node" && NODE_OPS[str(fields.op)] ? W[NODE_OPS[str(fields.op)]] : W[kind]
+    kind === "node" && NODE_OPS[str(fields.op)] ? W2[NODE_OPS[str(fields.op)]] : W2[kind]
   );
   let text = fill(wordsOf ?? "", values);
   if (kind === "closing") {
     const may = Array.isArray(fields.may_object) ? fields.may_object.map((m) => typeof m === "string" ? m : str(obj(m).id)) : [];
     const myId = str(f.to_standing_id);
     const mayI = !!myId && may.includes(myId);
-    text += "; " + fill(mayI ? W.closing_may : W.closing_not, values);
+    text += "; " + fill(mayI ? W2.closing_may : W2.closing_not, values);
   }
   const stack = rule === "stack" ? (
     // Стопка решает у said и body; слово без стопки — прежним путём, вставкой.
@@ -2465,18 +3099,18 @@ function batchLine(frame2, run, withZachin = true) {
 }
 function foldAsides(frames) {
   const asides = frames.map((f) => roomKind(f)?.aside ?? null);
-  const out5 = [];
+  const out6 = [];
   let n = 0;
   asides.forEach((a, i) => {
     if (!a) {
       n = 0;
-      out5.push(1);
+      out6.push(1);
       return;
     }
     n = (i > 0 && asides[i - 1]?.pair === a.pair ? n : 0) + (a.counts ? 1 : 0);
-    out5.push(asides[i + 1]?.pair === a.pair ? null : n);
+    out6.push(asides[i + 1]?.pair === a.pair ? null : n);
   });
-  return out5;
+  return out6;
 }
 function batchHead(frames) {
   return L(
@@ -2781,25 +3415,25 @@ function batchForWatchdogs(d, raw, frame2, emit2) {
 }
 
 // js/bridge/sweep.ts
-import { existsSync, readdirSync as readdirSync2, readFileSync as readFileSync9, statSync as statSync3, unlinkSync as unlinkSync5 } from "node:fs";
+import { existsSync, readdirSync as readdirSync2, readFileSync as readFileSync10, statSync as statSync3, unlinkSync as unlinkSync7 } from "node:fs";
 import { connect as connectLocal } from "node:net";
-import { basename as basename2, join as join7 } from "node:path";
+import { basename as basename2, join as join9 } from "node:path";
 
 // js/bridge/holdrecord.ts
-import { readFileSync as readFileSync8, unlinkSync as unlinkSync4, writeFileSync as writeFileSync6 } from "node:fs";
+import { readFileSync as readFileSync9, unlinkSync as unlinkSync6, writeFileSync as writeFileSync7 } from "node:fs";
 var holdFilePathFor = (key) => holdFilePathOf(CFG.authDir, key);
 function keyOf(realm, karta, name) {
   return `${name || "_"}--${karta}--${realm}`.replace(/[^A-Za-z0-9._-]+/g, "_").slice(0, 120);
 }
 var HOLD_RECORD_MAX_AGE_MS = 6 * 60 * 60 * 1e3;
-var harnessSession = null;
+var H = scoped(() => ({ session: null }));
 function noteHarnessSession(id) {
-  if (id) harnessSession = id;
+  if (id) H.session = id;
 }
-var sessionOfBridge = () => harnessSession;
+var sessionOfBridge = () => H.session;
 function leftOnDisk(key) {
   try {
-    return JSON.parse(readFileSync8(holdFilePathFor(key), "utf8"))?.left === true;
+    return JSON.parse(readFileSync9(holdFilePathFor(key), "utf8"))?.left === true;
   } catch {
     return false;
   }
@@ -2807,9 +3441,9 @@ function leftOnDisk(key) {
 function writeHoldRecord(key, rec3) {
   if (CFG.satellite) return;
   try {
-    const session = harnessSession ?? rec3.session;
+    const session = H.session ?? rec3.session;
     const left = rec3.left ?? leftOnDisk(key);
-    writeFileSync6(
+    writeFileSync7(
       holdFilePathFor(key),
       JSON.stringify({
         ...rec3,
@@ -2826,7 +3460,7 @@ function writeHoldRecord(key, rec3) {
 function restoreHoldRecord(key, rec3) {
   if (CFG.satellite) return;
   try {
-    writeFileSync6(holdFilePathFor(key), JSON.stringify(rec3) + "\n", { mode: 384 });
+    writeFileSync7(holdFilePathFor(key), JSON.stringify(rec3) + "\n", { mode: 384 });
   } catch (e) {
     log(`hold record not restored: ${e.message}`);
   }
@@ -2837,7 +3471,7 @@ function markLeft(key, on) {
 }
 function readHoldRecord(key) {
   try {
-    const r = JSON.parse(readFileSync8(holdFilePathFor(key), "utf8"));
+    const r = JSON.parse(readFileSync9(holdFilePathFor(key), "utf8"));
     if (!r || typeof r.url !== "string" || !r.realm || r.karta == null) return null;
     if (typeof r.at !== "number" || Date.now() - r.at > HOLD_RECORD_MAX_AGE_MS) {
       dropHoldRecord(key);
@@ -2850,7 +3484,7 @@ function readHoldRecord(key) {
 }
 function dropHoldRecord(key) {
   try {
-    unlinkSync4(holdFilePathFor(key));
+    unlinkSync6(holdFilePathFor(key));
   } catch {
   }
 }
@@ -2875,33 +3509,33 @@ function sweepStale(authDir, mine) {
   if (!existsSync(dir)) return;
   const mineHash = basename2(seenFilePathOf(authDir, mine), ".seen");
   for (const f of readdirSync2(dir).filter((x) => x.endsWith(".seen"))) {
-    const p = join7(dir, f);
+    const p = join9(dir, f);
     const [keyHash, serverHash] = f.split(".");
-    if (keyHash === mineHash || existsSync(join7(dir, `${keyHash}.key`))) continue;
+    if (keyHash === mineHash || existsSync(join9(dir, `${keyHash}.key`))) continue;
     try {
       if (serverHash === "seen" || Date.now() - statSync3(p).mtimeMs > SEEN_FILE_MAX_AGE_MS)
-        unlinkSync5(p);
+        unlinkSync7(p);
     } catch {
     }
   }
   for (const f of readdirSync2(dir).filter((x) => x.endsWith(".hold"))) {
     try {
-      const rec3 = JSON.parse(readFileSync9(join7(dir, f), "utf8"));
+      const rec3 = JSON.parse(readFileSync10(join9(dir, f), "utf8"));
       if (typeof rec3.at !== "number" || Date.now() - rec3.at > HOLD_RECORD_MAX_AGE_MS)
-        unlinkSync5(join7(dir, f));
+        unlinkSync7(join9(dir, f));
     } catch {
       try {
-        unlinkSync5(join7(dir, f));
+        unlinkSync7(join9(dir, f));
       } catch {
       }
     }
   }
   if (process.platform === "win32") return;
   for (const f of readdirSync2(dir).filter((x) => x.endsWith(".key"))) {
-    const keyFile = join7(dir, f);
+    const keyFile = join9(dir, f);
     let key;
     try {
-      key = readFileSync9(keyFile, "utf8").trim();
+      key = readFileSync10(keyFile, "utf8").trim();
     } catch {
       continue;
     }
@@ -2910,7 +3544,7 @@ function sweepStale(authDir, mine) {
     const drop = () => {
       for (const p of [keyFile, sock, seenFilePathOf(authDir, key)]) {
         try {
-          unlinkSync5(p);
+          unlinkSync7(p);
         } catch {
         }
       }
@@ -2949,9 +3583,19 @@ var Door = class {
   server = null;
   freshen = null;
   hooks;
+  // Каталог гранта и сервер — сессии, открывшей дверь (shared/scope.ts): дверь
+  // закрывается и из чужой области (уход демона), а пути у неё те же.
+  authDir;
+  serverUrl;
   constructor(key, hooks) {
     this.key = key;
-    this.hooks = hooks;
+    this.hooks = {
+      onAttach: bindScope(hooks.onAttach),
+      lateEvent: bindScope(hooks.lateEvent),
+      onError: bindScope(hooks.onError)
+    };
+    this.authDir = CFG.authDir;
+    this.serverUrl = CFG.serverUrl;
     this.seen = seenIds(this.seenPath);
   }
   /**
@@ -2962,10 +3606,10 @@ var Door = class {
     return this.key !== ENV_KEY;
   }
   get seenPath() {
-    return seenFilePathOf(CFG.authDir, this.key, this.persistent ? CFG.serverUrl : "");
+    return seenFilePathOf(this.authDir, this.key, this.persistent ? this.serverUrl : "");
   }
   get socketPath() {
-    return socketPathOf(CFG.authDir, this.key);
+    return socketPathOf(this.authDir, this.key);
   }
   push(raw, frame2) {
     this.ring.push({ raw, frame: frame2 });
@@ -2984,20 +3628,21 @@ var Door = class {
   open() {
     const path = this.socketPath;
     const key = this.key;
-    mkdirSync6(standingsDirOf(CFG.authDir), { recursive: true, mode: 448 });
-    if (process.platform !== "win32" && dirname2(path) === shortSocketDir()) {
-      const bad = privateDirProblem(dirname2(path));
+    const authDir = this.authDir;
+    mkdirSync7(standingsDirOf(authDir), { recursive: true, mode: 448 });
+    if (process.platform !== "win32" && dirname3(path) === shortSocketDir()) {
+      const bad = privateDirProblem(dirname3(path));
       if (bad) {
         this.listenError = bad;
         this.hooks.onError(`ДЕЛАТЕЛЬ: локальный сокет стояния не поднят — ${bad}`);
         return;
       }
     }
-    sweepStale(CFG.authDir, key);
-    writeFileSync7(keyFilePathOf(CFG.authDir, key), key + "\n", { mode: 384 });
+    sweepStale(authDir, key);
+    writeFileSync8(keyFilePathOf(authDir, key), key + "\n", { mode: 384 });
     if (process.platform !== "win32") {
       try {
-        unlinkSync6(path);
+        unlinkSync8(path);
       } catch {
       }
     }
@@ -3005,56 +3650,61 @@ var Door = class {
       this.clients.delete(sock);
       if (this.clients.size === 0) this.idleAt = Date.now();
     };
-    const srv = createServer2((sock) => {
-      this.clients.add(sock);
-      this.idleAt = null;
-      sock.on("close", () => gone(sock));
-      sock.on("error", () => gone(sock));
-      this.hooks.onAttach();
-      const backlog = this.ring.filter(
-        ({ frame: frame2 }) => frame2?.type !== "message" || !isDelivered(deliveredKeys(frame2), this.seen, this.seenPath) && !this.roomBatch.holds(frame2)
-      );
-      sock.write(
-        JSON.stringify({
-          kind: "attached",
-          key,
-          buffered: backlog.length,
-          seen: this.seenPath
-        }) + "\n"
-      );
-      for (const { raw, frame: frame2 } of backlog) {
-        sock.write(JSON.stringify({ kind: "frame", raw, frame: frame2 }) + "\n");
-      }
-      const late = this.hooks.lateEvent();
-      if (late) sock.write(JSON.stringify(late) + "\n");
-    });
+    const srv = createServer3(
+      bindScope((sock) => {
+        this.clients.add(sock);
+        this.idleAt = null;
+        sock.on("close", () => gone(sock));
+        sock.on("error", () => gone(sock));
+        this.hooks.onAttach();
+        const backlog = this.ring.filter(
+          ({ frame: frame2 }) => frame2?.type !== "message" || !isDelivered(deliveredKeys(frame2), this.seen, this.seenPath) && !this.roomBatch.holds(frame2)
+        );
+        sock.write(
+          JSON.stringify({
+            kind: "attached",
+            key,
+            buffered: backlog.length,
+            seen: this.seenPath
+          }) + "\n"
+        );
+        for (const { raw, frame: frame2 } of backlog) {
+          sock.write(JSON.stringify({ kind: "frame", raw, frame: frame2 }) + "\n");
+        }
+        const late = this.hooks.lateEvent();
+        if (late) sock.write(JSON.stringify(late) + "\n");
+      })
+    );
     srv.on("error", (e) => {
       this.listenError = e.message;
       this.hooks.onError(
         `ДЕЛАТЕЛЬ: локальный сокет стояния не поднялся (${e.message}) — сторожу не к чему цепляться`
       );
     });
-    srv.listen(path, () => {
-      if (process.platform !== "win32") {
-        try {
-          chmodSync(path, 384);
-        } catch {
+    srv.listen(
+      path,
+      bindScope(() => {
+        if (process.platform !== "win32") {
+          try {
+            chmodSync2(path, 384);
+          } catch {
+          }
         }
-      }
-      log(`standing socket held; local listeners attach at ${path}`);
-      if (dirname2(path) === shortSocketDir()) {
-        const touch = () => {
-          const now2 = /* @__PURE__ */ new Date();
-          for (const p of [dirname2(path), path])
-            try {
-              utimesSync(p, now2, now2);
-            } catch {
-            }
-        };
-        this.freshen = setInterval(touch, 6 * 36e5);
-        this.freshen.unref?.();
-      }
-    });
+        log(`standing socket held; local listeners attach at ${path}`);
+        if (dirname3(path) === shortSocketDir()) {
+          const touch = () => {
+            const now2 = /* @__PURE__ */ new Date();
+            for (const p of [dirname3(path), path])
+              try {
+                utimesSync(p, now2, now2);
+              } catch {
+              }
+          };
+          this.freshen = setInterval(touch, 6 * 36e5);
+          this.freshen.unref?.();
+        }
+      })
+    );
     this.server = srv;
   }
   /** Отдать неотданные пачки сейчас — при отпускании: побудки и комнаты (backlog.ts). */
@@ -3089,17 +3739,17 @@ var Door = class {
       }
     }
     for (const p of [
-      keyFilePathOf(CFG.authDir, this.key),
+      keyFilePathOf(this.authDir, this.key),
       ...this.persistent ? [] : [this.seenPath]
     ]) {
       try {
-        unlinkSync6(p);
+        unlinkSync8(p);
       } catch {
       }
     }
     if (process.platform !== "win32") {
       try {
-        unlinkSync6(this.socketPath);
+        unlinkSync8(this.socketPath);
       } catch {
       }
     }
@@ -3108,11 +3758,47 @@ var Door = class {
   }
 };
 
+// js/bridge/holdstate.ts
+var H2 = scoped(() => ({
+  /** Каталог сессии, из которого занимается место (cwd в iskron_stand), — в запись держания, для возврата по каталогу (resume.ts). */
+  standCwd: null,
+  holder: null,
+  /** дверь основного места — того, ради которого взят сокет */
+  door: null,
+  currentKey: null,
+  currentUrl: null,
+  currentStatusUrl: null,
+  /** ключ места, отнятого у этого моста закрытием 4000 */
+  evictedKey: null,
+  /** прицепившийся после — узнаёт, а не молчит */
+  evictedEvent: null,
+  /** ушёл с места: сокет службы закрыт, ключ и адреса целы (leave.ts) */
+  parked: false,
+  attachHooks: [],
+  helloWaiters: /* @__PURE__ */ new Set(),
+  /** возвратов с диска в полёте: мёртвый токен при них — протухшая запись, не тревога */
+  resuming: 0,
+  /** своё снятие в полёте (absorb.ts): закрытие 4001 обгонит ответ revoke */
+  revokingOwn: false
+}));
+function noteResuming(delta) {
+  H2.resuming += delta;
+}
+function setRevokingOwn(v) {
+  H2.revokingOwn = v;
+}
+var handingOver = null;
+function beginHandover(why) {
+  handingOver = why;
+}
+var handoverReason = () => handingOver;
+var handoverUnderway = () => handingOver !== null;
+
 // js/bridge/names.ts
 import { execFileSync } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { hostname } from "node:os";
-import { basename as basename3, dirname as dirname3, resolve as resolve3 } from "node:path";
+import { basename as basename3, dirname as dirname4, resolve as resolve4 } from "node:path";
 var NAME_MAX = 48;
 var normKarta = (k) => String(k ?? "").trim().replace(/^#/, "");
 var normName = (n) => typeof n === "string" ? n.trim() : "";
@@ -3132,10 +3818,10 @@ var PART_MIN = 3;
 var CUT_ORDER = ["repo", "host", "model"];
 function fitName(parts) {
   const p = { ...parts };
-  const join21 = () => [p.host, p.repo, p.model].filter(Boolean).join(".").replace(/[-.]+$/, "");
+  const join22 = () => [p.host, p.repo, p.model].filter(Boolean).join(".").replace(/[-.]+$/, "");
   const cut = [];
   for (const k of CUT_ORDER) {
-    const over = join21().length - NAME_MAX;
+    const over = join22().length - NAME_MAX;
     if (over <= 0) break;
     const keep = Math.max(k === "model" ? 1 : PART_MIN, p[k].length - over);
     if (keep >= p[k].length) continue;
@@ -3143,11 +3829,11 @@ function fitName(parts) {
     cut.push(k);
   }
   return {
-    name: join21().slice(0, NAME_MAX).replace(/[-.]+$/, ""),
+    name: join22().slice(0, NAME_MAX).replace(/[-.]+$/, ""),
     cut
   };
 }
-var git = (args, cwd = process.cwd()) => {
+var git = (args, cwd = sessionCwd()) => {
   try {
     return execFileSync("git", args, {
       cwd,
@@ -3165,28 +3851,28 @@ var real = (p) => {
     return p;
   }
 };
-function repoName(cwd = process.cwd()) {
+function repoName(cwd = sessionCwd()) {
   const top = git(["rev-parse", "--show-toplevel"], cwd);
   const [gitDir, common] = git(["rev-parse", "--git-dir", "--git-common-dir"], cwd).split("\n");
-  if (!gitDir || !common || real(resolve3(cwd, gitDir)) === real(resolve3(cwd, common)))
+  if (!gitDir || !common || real(resolve4(cwd, gitDir)) === real(resolve4(cwd, common)))
     return basename3(top || cwd);
-  const shared = real(resolve3(cwd, common));
-  if (basename3(shared) === ".git") return basename3(dirname3(shared));
+  const shared = real(resolve4(cwd, common));
+  if (basename3(shared) === ".git") return basename3(dirname4(shared));
   const origin = git(["remote", "get-url", "origin"], cwd).replace(/\/+$/, "");
   const fromOrigin = basename3(origin.replace(/^.*:/, "/")).replace(/\.git$/, "");
   return fromOrigin || basename3(top || cwd);
 }
-function deriveParts(model2, cwd = process.cwd()) {
+function deriveParts(model, cwd = sessionCwd()) {
   const host = hostname().split(".")[0];
   const repo = repoName(cwd);
-  const short2 = (model2 ?? "").trim().toLowerCase().replace(/^claude[-_]/, "");
+  const short2 = (model ?? "").trim().toLowerCase().replace(/^claude[-_]/, "");
   return { host: sanitize(host ?? ""), repo: sanitize(repo), model: sanitize(short2) };
 }
 var joinName = (p) => [p.host, p.repo, p.model].filter(Boolean).join(".");
 
 // js/bridge/realms.ts
-var aliases = /* @__PURE__ */ new Map();
-var listing = null;
+var aliases = scoped(() => /* @__PURE__ */ new Map());
+var R = scoped(() => ({ listing: null }));
 var CANON_RE = /@[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+/;
 var trimmed = (r) => String(r ?? "").trim();
 function canonRealm(r) {
@@ -3226,20 +3912,20 @@ function learnRealmList(text) {
 async function resolveRealms(names2, list) {
   const open = names2.map(trimmed).filter((t) => t && !resolvedRealm(t));
   if (!open.length) return;
-  listing ??= list().then(
+  R.listing ??= list().then(
     (text) => {
       if (text) learnRealmList(text);
     },
     () => {
     }
   ).finally(() => {
-    listing = null;
+    R.listing = null;
   });
-  await listing;
+  await R.listing;
 }
 
 // js/bridge/places.ts
-var extras = /* @__PURE__ */ new Map();
+var extras = scoped(() => /* @__PURE__ */ new Map());
 var keyOfPlace = (s2) => keyOf(s2.realm, s2.karta, s2.name ?? "");
 var extraPlaces = () => [...extras.values()];
 var extraIn = (realm) => extraPlaces().find((p) => sameRealm(p.standing.realm, realm));
@@ -3271,14 +3957,24 @@ function addExtra(s2, ch, hooks) {
   if (have) return key;
   for (const p of extraPlaces())
     if (sameRealm(p.standing.realm, s2.realm)) dropExtra(p.door.key, "другое место графа", true);
-  const door2 = new Door(key, hooks);
-  door2.open();
-  const place = { standing: s2, door: door2 };
+  const door = new Door(key, hooks);
+  door.open();
+  const place = { standing: s2, door };
   extras.set(key, place);
   writeRecord(place, ch);
   standingLog(`held ${key} beside the channel`);
+  besideWord({
+    kind: "beside",
+    key,
+    place: { realm: s2.realm, karta: String(s2.karta), name: s2.name ?? "" }
+  });
   return key;
 }
+var besideWord = (data) => emit({
+  jsonrpc: "2.0",
+  method: "notifications/message",
+  params: { level: "info", logger: "iskron-channel", data }
+});
 function repointExtras(ch) {
   for (const p of extraPlaces()) writeRecord(p, ch);
 }
@@ -3296,6 +3992,7 @@ function dropExtra(key, reason, forget) {
     state.places = state.places.filter((s2) => keyOfPlace(s2) !== key);
   }
   standingLog(`released ${key}: ${reason}${forget ? " (record dropped)" : ""}`);
+  if (!handoverReason()) besideWord({ kind: "beside-gone", key, text: reason });
 }
 function dropAllExtras(reason, forget) {
   for (const k of [...extras.keys()]) dropExtra(k, reason, forget);
@@ -3343,108 +4040,101 @@ function keyFor() {
   const s2 = state.standing;
   return s2 ? keyOf(s2.realm, s2.karta, s2.name ?? "") : ENV_KEY;
 }
-var standCwd = null;
 function noteStandCwd(cwd) {
-  const prev = standCwd;
-  standCwd = cwd;
-  if (cwd && currentKey && currentUrl) rememberStatus(readHoldRecord(currentKey)?.status ?? "");
+  const prev = H2.standCwd;
+  H2.standCwd = cwd;
+  if (cwd && H2.currentKey && H2.currentUrl)
+    rememberStatus(readHoldRecord(H2.currentKey)?.status ?? "");
   return prev;
 }
-var channel = () => currentUrl ? { url: currentUrl, statusUrl: currentStatusUrl, cwd: standCwd } : null;
+var channel = () => H2.currentUrl ? { url: H2.currentUrl, statusUrl: H2.currentStatusUrl, cwd: H2.standCwd } : null;
 function rememberStatus(text, realm) {
   const s2 = state.standing;
   const ch = channel();
-  if (!s2 || !currentKey || !ch) return;
+  if (!s2 || !H2.currentKey || !ch) return;
   const extra = realm ? extraIn(realm) : void 0;
   if (extra) return rememberExtraStatus(extra.door.key, ch, text);
-  writeHoldRecord(currentKey, {
+  writeHoldRecord(H2.currentKey, {
     realm: s2.realm,
     karta: s2.karta,
     name: s2.name ?? "",
     url: ch.url,
-    statusUrl: currentStatusUrl,
+    statusUrl: H2.currentStatusUrl,
     status: text || void 0,
-    cwd: standCwd ?? readHoldRecord(currentKey)?.cwd,
+    cwd: H2.standCwd ?? readHoldRecord(H2.currentKey)?.cwd,
     client: harnessName(),
-    key: currentKey
+    key: H2.currentKey
   });
 }
-var holdsKey = (key) => !!holder?.alive && currentKey === key;
-var ledKey = () => currentKey;
-var holdsChannel = () => !!holder?.alive && !!currentKey;
+var holdsKey = (key) => !!H2.holder?.alive && H2.currentKey === key;
+var ledKey = () => H2.currentKey;
+var holdsChannel = () => !!H2.holder?.alive && !!H2.currentKey;
 var localSocketPathOf = (key) => socketPathOf(CFG.authDir, key);
-function noteResuming(delta) {
-  resuming += delta;
-}
-var holder = null;
-var door = null;
-var currentKey = null;
-var currentUrl = null;
-var currentStatusUrl = null;
-var evictedKey = null;
-var evictedEvent = null;
-var parked = false;
-var attachHooks = [];
-var helloWaiters = /* @__PURE__ */ new Set();
 var doorHooks = {
   onAttach: () => {
-    for (const fn of attachHooks) fn();
+    for (const fn of H2.attachHooks) fn();
   },
-  lateEvent: () => evictedKey ? evictedEvent : null,
+  lateEvent: () => H2.evictedKey ? H2.evictedEvent : null,
   onError: (text) => {
     log(text);
     notify("error", { kind: "note", text });
   }
 };
-var doors = () => [...door ? [door] : [], ...extraPlaces().map((p) => p.door)];
+var doors = () => [
+  ...H2.door ? [H2.door] : [],
+  ...extraPlaces().map((p) => p.door)
+];
 function isOwn(realm, karta, name) {
   const s2 = state.standing;
-  if (!currentKey) return false;
+  if (!H2.currentKey) return false;
   if (extraOf(realm, karta, name)) return true;
-  return !!s2 && (s2.realm === realm || sameRealm(s2.realm, realm)) && String(s2.karta) === String(karta) && (s2.name ?? "") === name && currentKey === keyFor();
+  return !!s2 && (s2.realm === realm || sameRealm(s2.realm, realm)) && String(s2.karta) === String(karta) && (s2.name ?? "") === name && H2.currentKey === keyFor();
 }
 function holdsStanding(realm, karta, name) {
-  return !!holder?.alive && isOwn(realm, karta, name);
+  return !!H2.holder?.alive && isOwn(realm, karta, name);
 }
 function wasEvicted(realm, karta, name) {
-  return !!evictedKey && evictedKey === currentKey && isOwn(realm, karta, name);
+  return !!H2.evictedKey && H2.evictedKey === H2.currentKey && isOwn(realm, karta, name);
 }
-var hasStatusAddressFor = (realm, karta, name) => !!currentStatusUrl && !!currentKey && isOwn(realm, karta, name);
+var hasStatusAddressFor = (realm, karta, name) => !!H2.currentStatusUrl && !!H2.currentKey && isOwn(realm, karta, name);
 function statusAddress(realm) {
-  if (!currentStatusUrl || !currentKey) return null;
-  const d = (realm ? extraIn(realm)?.door : void 0) ?? door;
-  return { url: currentStatusUrl, key: d?.key ?? currentKey, standingId: d?.standingId ?? null };
+  if (!H2.currentStatusUrl || !H2.currentKey) return null;
+  const d = (realm ? extraIn(realm)?.door : void 0) ?? H2.door;
+  return {
+    url: H2.currentStatusUrl,
+    key: d?.key ?? H2.currentKey,
+    standingId: d?.standingId ?? null
+  };
 }
 var heldPlaces = () => [
-  ...door && state.standing ? [{ key: door.key, realm: state.standing.realm, primary: true }] : [],
+  ...H2.door && state.standing ? [{ key: H2.door.key, realm: state.standing.realm, primary: true }] : [],
   ...extraPlaces().map((p) => ({ key: p.door.key, realm: p.standing.realm, primary: false }))
 ];
 var besideKeyIn = (realm) => extraIn(realm)?.door.key ?? null;
-var isParked = (realm, karta, name) => parked && isOwn(realm, karta, name);
+var isParked = (realm, karta, name) => H2.parked && isOwn(realm, karta, name);
 function listenerIdleSince() {
-  if (!holder?.alive) return null;
+  if (!H2.holder?.alive) return null;
   const ds = doors();
   if (!ds.length || ds.some((d) => d.clients.size > 0)) return null;
   return Math.max(...ds.map((d) => d.idleAt ?? 0));
 }
 function onListenerAttached(fn) {
-  attachHooks.push(fn);
+  H2.attachHooks.push(fn);
 }
 var localListeners = () => doors().reduce((n, d) => n + d.clients.size, 0);
-var resuming = 0;
 function awaitHello(timeoutMs) {
-  const seen = door?.ring.find((r) => r.frame?.type === "hello")?.frame ?? null;
+  const seen = H2.door?.ring.find((r) => r.frame?.type === "hello")?.frame ?? null;
   if (seen) return Promise.resolve(seen);
   return new Promise((resolve7) => {
     const done = (f) => {
-      helloWaiters.delete(done);
+      H2.helloWaiters.delete(done);
       resolve7(f);
     };
-    helloWaiters.add(done);
+    H2.helloWaiters.add(done);
     setTimeout(() => done(null), timeoutMs).unref();
   });
 }
-var heldKey = (realm) => (realm ? besideKeyIn(realm) : null) ?? currentKey;
+var heldKey = (realm) => (realm ? besideKeyIn(realm) : null) ?? H2.currentKey;
 function broadcast(ev) {
   for (const d of doors()) d.broadcast(ev);
 }
@@ -3458,46 +4148,53 @@ function notify(level, data) {
 function addPlace(s2) {
   const ch = channel();
   const primary = state.standing;
-  if (!holder?.alive || !ch || !primary || !otherRealm(primary.realm, s2.realm)) return null;
+  if (!H2.holder?.alive || !ch || !primary || !otherRealm(primary.realm, s2.realm)) return null;
   return addExtra(s2, ch, doorHooks);
 }
-var standingIdIn = (realm) => (extraIn(realm)?.door ?? door)?.standingId ?? null;
+var standingIdIn = (realm) => (extraIn(realm)?.door ?? H2.door)?.standingId ?? null;
 function noteStandingId(realm, id) {
-  const d = extraIn(realm)?.door ?? (state.standing && !otherRealm(realm, state.standing.realm) ? door : null);
+  const d = extraIn(realm)?.door ?? (state.standing && !otherRealm(realm, state.standing.realm) ? H2.door : null);
   if (d && id) d.standingId = id;
 }
-var held = () => door && state.standing ? { standing: state.standing, door } : null;
+var held = () => H2.door && state.standing ? { standing: state.standing, door: H2.door } : null;
 function releaseStanding(reason, forget = false, keepBeside = false) {
-  if (forget && currentKey) dropHoldRecord(currentKey);
+  if (forget && H2.currentKey) dropHoldRecord(H2.currentKey);
   if (!keepBeside) dropAllExtras(reason, forget);
-  if (!holder && !door) return;
-  door?.flushBatches();
-  standingLog(`released ${currentKey ?? "?"}: ${reason}${forget ? " (record dropped)" : ""}`);
-  const released = { kind: "released", key: currentKey ?? void 0, text: reason };
-  broadcast(released);
-  notify("info", released);
-  holder?.close(reason);
-  holder = null;
-  for (const w of [...helloWaiters]) w(null);
-  door?.close();
-  door = null;
-  parked = false;
-  currentKey = null;
-  currentUrl = null;
-  currentStatusUrl = null;
-  evictedKey = null;
-  evictedEvent = null;
+  if (!H2.holder && !H2.door) return;
+  H2.door?.flushBatches();
+  const key = H2.currentKey ?? void 0;
+  const handover = handoverReason();
+  if (handover && !forget) {
+    standingLog(`handed over ${H2.currentKey ?? "?"}: ${handover}`);
+    broadcast({ kind: "handover", key, text: handover });
+  } else {
+    standingLog(`released ${H2.currentKey ?? "?"}: ${reason}${forget ? " (record dropped)" : ""}`);
+    const released = { kind: "released", key, text: reason };
+    broadcast(released);
+    notify("info", released);
+  }
+  H2.holder?.close(reason);
+  H2.holder = null;
+  for (const w of [...H2.helloWaiters]) w(null);
+  H2.door?.close();
+  H2.door = null;
+  H2.parked = false;
+  H2.currentKey = null;
+  H2.currentUrl = null;
+  H2.currentStatusUrl = null;
+  H2.evictedKey = null;
+  H2.evictedEvent = null;
 }
 function holdStanding(url, statusUrl2) {
   const key = keyFor();
-  if (url === currentUrl && key === currentKey && holder?.alive) return key;
-  const same = !!currentKey && currentKey === key;
-  releaseStanding("новый сокет", !!currentKey && currentKey !== key, same);
-  currentKey = key;
-  currentUrl = url;
-  currentStatusUrl = statusUrl2 || statusUrl(url);
-  door = new Door(key, doorHooks);
-  door.open();
+  if (url === H2.currentUrl && key === H2.currentKey && H2.holder?.alive) return key;
+  const same = !!H2.currentKey && H2.currentKey === key;
+  releaseStanding("новый сокет", !!H2.currentKey && H2.currentKey !== key, same);
+  H2.currentKey = key;
+  H2.currentUrl = url;
+  H2.currentStatusUrl = statusUrl2 || statusUrl(url);
+  H2.door = new Door(key, doorHooks);
+  H2.door.open();
   const s2 = state.standing;
   if (s2)
     writeHoldRecord(key, {
@@ -3506,8 +4203,8 @@ function holdStanding(url, statusUrl2) {
       karta: s2.karta,
       name: s2.name ?? "",
       url,
-      statusUrl: currentStatusUrl,
-      cwd: standCwd ?? readHoldRecord(key)?.cwd,
+      statusUrl: H2.currentStatusUrl,
+      cwd: H2.standCwd ?? readHoldRecord(key)?.cwd,
       client: harnessName(),
       key,
       left: false
@@ -3516,29 +4213,29 @@ function holdStanding(url, statusUrl2) {
   const ch = channel();
   if (same && ch) repointExtras(ch);
   openHolder(url, key);
-  standingLog(`held ${key}${standCwd ? ` cwd=${standCwd}` : ""}`);
+  standingLog(`held ${key}${H2.standCwd ? ` cwd=${H2.standCwd}` : ""}`);
   const place = s2 ? { realm: s2.realm, karta: String(s2.karta), name: s2.name ?? "" } : void 0;
   notify("info", { kind: "held", key, ...place ? { place } : {} });
   return key;
 }
 function parkStanding(reason) {
-  if (!holder?.alive || !currentKey) return null;
-  holder.close(reason);
-  holder = null;
-  parked = true;
-  standingLog(`parked ${currentKey}: ${reason}`);
+  if (!H2.holder?.alive || !H2.currentKey) return null;
+  H2.holder.close(reason);
+  H2.holder = null;
+  H2.parked = true;
+  standingLog(`parked ${H2.currentKey}: ${reason}`);
   const text = `мост ушёл с места (${reason}) — сокет закрыт, место цело; возврат — сторож или iskron_stand`;
   broadcast({ kind: "note", text });
-  return currentKey;
+  return H2.currentKey;
 }
 function resumeStanding() {
-  if (!parked || !currentUrl || !currentKey) return false;
-  parked = false;
+  if (!H2.parked || !H2.currentUrl || !H2.currentKey) return false;
+  H2.parked = false;
   for (const d of doors())
     for (let i = d.ring.length - 1; i >= 0; i--)
       if (d.ring[i]?.frame?.type === "hello") d.ring.splice(i, 1);
-  openHolder(currentUrl, currentKey);
-  standingLog(`resumed ${currentKey}: socket reopened on the same address`);
+  openHolder(H2.currentUrl, H2.currentKey);
+  standingLog(`resumed ${H2.currentKey}: socket reopened on the same address`);
   return true;
 }
 function deliverTo(d, raw, frame2, full) {
@@ -3557,7 +4254,7 @@ function deliverTo(d, raw, frame2, full) {
   const text = full === frame2 ? raw : JSON.stringify(full);
   const hello = full?.type === "hello";
   for (const x of hello ? doors() : [d]) x.push(text, full);
-  if (hello) for (const w of [...helloWaiters]) w(full);
+  if (hello) for (const w of [...H2.helloWaiters]) w(full);
   const ev = { kind: "frame", raw: text, frame: full };
   const msg = full?.type === "message" && !again ? full : null;
   if (msg) noteRoomKind(msg);
@@ -3580,84 +4277,82 @@ function deliverTo(d, raw, frame2, full) {
   }
   notify("info", keyed(d, ev));
 }
-var keyed = (d, ev) => d === door ? ev : { ...ev, key: d.key };
+var keyed = (d, ev) => d === H2.door ? ev : { ...ev, key: d.key };
 function openHolder(url, key) {
-  holder = holdSocket({
-    url,
-    onFrame: (raw, frame2) => {
-      void Promise.resolve(stampOrigin(frame2)).then((full) => {
-        const primary = held();
-        if (!primary) return door ? deliverTo(door, raw, frame2, full) : void 0;
-        if (full?.type === "hello") learnFromHello(full, primary);
-        const { door: d, note: note3 } = routeFrame(full?.type === "hello" ? null : full, primary);
-        if (note3) {
-          log(note3);
-          d.broadcast({ kind: "note", text: note3 });
+  H2.holder = holdSocket(
+    bindAll({
+      url,
+      onFrame: (raw, frame2) => {
+        void Promise.resolve(stampOrigin(frame2)).then((full) => {
+          const primary = held();
+          if (!primary) return H2.door ? deliverTo(H2.door, raw, frame2, full) : void 0;
+          if (full?.type === "hello") learnFromHello(full, primary);
+          const { door: d, note: note3 } = routeFrame(full?.type === "hello" ? null : full, primary);
+          if (note3) {
+            log(note3);
+            d.broadcast({ kind: "note", text: note3 });
+          }
+          deliverTo(d, raw, frame2, full);
+        });
+      },
+      onEvicted: (code) => {
+        const text = `ДЕЛАТЕЛЬ: закрытие ${code} — место отняли, слушает другой держатель; привязка записей цела, занятость — пока адрес не повернули connect-ом; слух здесь — iskron_stand без name встанет рядом на имя.N; отбить место (take=true) — только словом человека`;
+        log(text);
+        standingLog(`evicted ${key}: close ${code}`);
+        H2.evictedKey = key;
+        dropHoldRecord(key);
+        const ev = { kind: "evicted", code, text };
+        H2.evictedEvent = ev;
+        broadcast(ev);
+        notify("warning", ev);
+      },
+      onDeadToken: (code) => {
+        if (H2.revokingOwn) {
+          log(
+            `standing revoked by this session — released quietly, binding forgotten (${state.standing?.name ?? "unnamed"}; close ${code} arrived before the answer)`
+          );
+          releaseStanding("снято своим revoke", true);
+          state.standing = null;
+          state.standingSession = null;
+          return;
         }
-        deliverTo(d, raw, frame2, full);
-      });
-    },
-    onEvicted: (code) => {
-      const text = `ДЕЛАТЕЛЬ: закрытие ${code} — место отняли, слушает другой держатель; привязка записей цела, занятость — пока адрес не повернули connect-ом; слух здесь — iskron_stand без name встанет рядом на имя.N; отбить место (take=true) — только словом человека`;
-      log(text);
-      standingLog(`evicted ${key}: close ${code}`);
-      evictedKey = key;
-      dropHoldRecord(key);
-      const ev = { kind: "evicted", code, text };
-      evictedEvent = ev;
-      broadcast(ev);
-      notify("warning", ev);
-    },
-    onDeadToken: (code) => {
-      if (revokingOwn) {
-        log(
-          `standing revoked by this session — released quietly, binding forgotten (${state.standing?.name ?? "unnamed"}; close ${code} arrived before the answer)`
-        );
-        releaseStanding("снято своим revoke", true);
-        state.standing = null;
-        state.standingSession = null;
-        return;
+        if (H2.resuming > 0) {
+          log(`hold record for ${key} is dead at the platform (close ${code}) — dropped`);
+          releaseStanding("возврат с диска не удался", true);
+          return;
+        }
+        const text = `ДЕЛАТЕЛЬ: ${deadTokenAdvice(code)}`;
+        log(text);
+        standingLog(`dead ${key}: close ${code}`);
+        const ev = { kind: "dead", code, text };
+        broadcast(ev);
+        notify("error", ev);
+        releaseStanding("токен мёртв", true);
+      },
+      onServiceAlive: (version) => {
+        const text = `ДЕЛАТЕЛЬ: сокет рвут, а служба отвечает (${version}) — место держу, переоткрываю реже; не пройдёт — спроси о токене`;
+        log(text);
+        const ev = { kind: "alive", version, text };
+        broadcast(ev);
+        notify("warning", ev);
+      },
+      onNote: (text) => {
+        log(text);
+        broadcast({ kind: "note", text });
+      },
+      // Подвисание: сторожу под Monitor — строкой, будящей агента; pi и OpenCode показывают уведомление человеку, агента оно не будит (#5380).
+      onHung: (text) => {
+        log(text);
+        broadcast({ kind: "note", text });
+        notify("warning", { kind: "note", text });
       }
-      if (resuming > 0) {
-        log(`hold record for ${key} is dead at the platform (close ${code}) — dropped`);
-        releaseStanding("возврат с диска не удался", true);
-        return;
-      }
-      const text = `ДЕЛАТЕЛЬ: ${deadTokenAdvice(code)}`;
-      log(text);
-      standingLog(`dead ${key}: close ${code}`);
-      const ev = { kind: "dead", code, text };
-      broadcast(ev);
-      notify("error", ev);
-      releaseStanding("токен мёртв", true);
-    },
-    onServiceAlive: (version) => {
-      const text = `ДЕЛАТЕЛЬ: сокет рвут, а служба отвечает (${version}) — место держу, переоткрываю реже; не пройдёт — спроси о токене`;
-      log(text);
-      const ev = { kind: "alive", version, text };
-      broadcast(ev);
-      notify("warning", ev);
-    },
-    onNote: (text) => {
-      log(text);
-      broadcast({ kind: "note", text });
-    },
-    // Подвисание: сторожу под Monitor — строкой, будящей агента; pi и OpenCode показывают уведомление человеку, агента оно не будит (#5380).
-    onHung: (text) => {
-      log(text);
-      broadcast({ kind: "note", text });
-      notify("warning", { kind: "note", text });
-    }
-  });
-}
-var revokingOwn = false;
-function setRevokingOwn(v) {
-  revokingOwn = v;
+    })
+  );
 }
 
 // js/bridge/status.ts
-import { existsSync as existsSync3, readdirSync as readdirSync4, readFileSync as readFileSync11, statSync as statSync4 } from "node:fs";
-import { isAbsolute, join as join9 } from "node:path";
+import { existsSync as existsSync3, readdirSync as readdirSync4, readFileSync as readFileSync12, statSync as statSync4 } from "node:fs";
+import { isAbsolute, join as join11 } from "node:path";
 
 // js/shared/busyargs.ts
 var STATUS_ONLY_ARGS = /* @__PURE__ */ new Set([
@@ -3673,19 +4368,19 @@ var takingArgs = (args) => Object.keys(args).filter((k) => !STATUS_ONLY_ARGS.has
 
 // js/bridge/board.ts
 function parseBoard(text) {
-  const out5 = [];
+  const out6 = [];
   for (const line of text.split("\n")) {
     const m = /^\s*#(\d+)\s.*?·\s(@\S+)\s—\s(.*)$/.exec(line);
     if (m) {
-      out5.push({ karta: m[1], address: m[2], rest: m[3], incoming: null, id: null });
+      out6.push({ karta: m[1], address: m[2], rest: m[3], incoming: null, id: null });
       continue;
     }
     const inc = /📥\s*(https?:\/\/\S+)/.exec(line);
-    if (inc && out5.length) out5[out5.length - 1].incoming = inc[1];
+    if (inc && out6.length) out6[out6.length - 1].incoming = inc[1];
     const id = /^\s*id\s+([0-9a-f][0-9a-f-]{7,})\s*$/i.exec(line);
-    if (id && out5.length) out5[out5.length - 1].id = id[1];
+    if (id && out6.length) out6[out6.length - 1].id = id[1];
   }
-  return out5;
+  return out6;
 }
 var nameOf = (address) => address.slice(address.indexOf(":") + 1);
 var listens = (e) => /(^|·)\s*слушает/.test(e.rest);
@@ -3753,41 +4448,41 @@ function listenLine(key) {
 }
 
 // js/bridge/skillset.ts
-import { createHash as createHash4 } from "node:crypto";
-import { existsSync as existsSync2, readdirSync as readdirSync3, readFileSync as readFileSync10 } from "node:fs";
-import { homedir as homedir3 } from "node:os";
-import { dirname as dirname4, join as join8, resolve as resolve4 } from "node:path";
+import { createHash as createHash6 } from "node:crypto";
+import { existsSync as existsSync2, readdirSync as readdirSync3, readFileSync as readFileSync11 } from "node:fs";
+import { homedir as homedir4 } from "node:os";
+import { dirname as dirname5, join as join10, resolve as resolve5 } from "node:path";
 import { fileURLToPath as fileURLToPath3 } from "node:url";
 var SET = "iskron-ai/skills";
-var BRIDGE_IN_SET = join8("establish-mcp", "scripts", "iskron.mjs");
-var env = (k) => process.env[k]?.trim() ?? "";
-function skillsRoot(self = fileURLToPath3(import.meta.url)) {
+var BRIDGE_IN_SET = join10("establish-mcp", "scripts", "iskron.mjs");
+var env = (k) => envOf(k)?.trim() ?? "";
+function skillsRoot(self = currentScope().origin?.path || fileURLToPath3(import.meta.url)) {
   const plugin = env("CLAUDE_PLUGIN_ROOT");
   const candidates = [
     env(SKILLS_ROOT_ENV),
-    resolve4(dirname4(self), "..", ".."),
-    plugin ? join8(plugin, "skills") : "",
-    join8(homedir3(), ".agents", "skills")
+    resolve5(dirname5(self), "..", ".."),
+    plugin ? join10(plugin, "skills") : "",
+    join10(homedir4(), ".agents", "skills")
   ];
-  for (const c of candidates) if (c && existsSync2(join8(c, BRIDGE_IN_SET))) return resolve4(c);
+  for (const c of candidates) if (c && existsSync2(join10(c, BRIDGE_IN_SET))) return resolve5(c);
   return null;
 }
 var sha8 = (h) => h.digest("hex").slice(0, 8);
 function lockSet(root) {
   try {
-    const lock = JSON.parse(readFileSync10(join8(dirname4(root), ".skill-lock.json"), "utf8"));
+    const lock = JSON.parse(readFileSync11(join10(dirname5(root), ".skill-lock.json"), "utf8"));
     const skills = lock.skills ?? {};
     const own = skills["establish-mcp"]?.source;
     const name = typeof own === "string" && own.trim() ? own.trim() : SET;
     const lines = Object.entries(skills).filter(([, s2]) => s2?.source === name && typeof s2.skillFolderHash === "string").map(([n, s2]) => `${n}:${String(s2.skillFolderHash)}
 `).sort();
-    return { name, stamp: lines.length ? sha8(createHash4("sha256").update(lines.join(""))) : null };
+    return { name, stamp: lines.length ? sha8(createHash6("sha256").update(lines.join(""))) : null };
   } catch {
     return { name: SET, stamp: null };
   }
 }
 function treeStamp(root) {
-  const h = createHash4("sha256");
+  const h = createHash6("sha256");
   let n = 0;
   let names2;
   try {
@@ -3798,7 +4493,7 @@ function treeStamp(root) {
   for (const name of names2) {
     let body;
     try {
-      body = readFileSync10(join8(root, name, "SKILL.md"));
+      body = readFileSync11(join10(root, name, "SKILL.md"));
     } catch {
       continue;
     }
@@ -3814,7 +4509,7 @@ function skillsAttr() {
   if (!root) return { name: SET, version: "unknown" };
   let version = "unknown";
   try {
-    version = versionIn(readFileSync10(join8(root, BRIDGE_IN_SET), "utf8")) ?? "unknown";
+    version = versionIn(readFileSync11(join10(root, BRIDGE_IN_SET), "utf8")) ?? "unknown";
   } catch {
   }
   const lock = lockSet(root);
@@ -3823,25 +4518,30 @@ function skillsAttr() {
 }
 
 // js/bridge/placefields.ts
-var model = "";
-var extras2 = /* @__PURE__ */ new Map();
+var P = scoped(() => ({
+  model: "",
+  /** Расход сессии (usage.ts, #6271): последний снятый — едет в каждой регистрации. */
+  usage: null,
+  satelliteOf: "",
+  satelliteOfId: "",
+  localeWarned: false
+}));
+var extras2 = scoped(() => /* @__PURE__ */ new Map());
 var placeKey = (p) => `${String(p.realm ?? "")}|${normKarta(p.karta)}|${normName(p.name)}`;
-var usage = null;
 function rememberUsage(u) {
-  usage = u;
+  P.usage = u;
 }
-var satelliteOf = "";
-var satelliteOfId = "";
 function noteSatelliteOf(address, id) {
-  satelliteOf = address;
-  satelliteOfId = CFG.satellite && id ? id : "";
+  P.satelliteOf = address;
+  P.satelliteOfId = CFG.satellite && id ? id : "";
 }
 function rememberModel(m) {
-  if (typeof m === "string" && m.trim()) model = m.trim().replace(/^[^/]*\//, "");
+  if (typeof m === "string" && m.trim()) P.model = m.trim().replace(/^[^/]*\//, "");
 }
 function placeFields(place = {}) {
   const harness = harnessName();
   const extra = extras2.get(placeKey(place)) ?? {};
+  const { model, usage, satelliteOf, satelliteOfId } = P;
   return {
     ...model ? { model } : {},
     // Язык места (#6080): английский мост просит en; русский молчит — решает умолчание сервера.
@@ -3858,13 +4558,12 @@ function placeFields(place = {}) {
   };
 }
 var PLACE_ACTIONS = /* @__PURE__ */ new Set(["connect", "mint", "register"]);
-var localeWarned = false;
 function noteLocaleEcho(args, text) {
   const asked = args.locale;
-  if (typeof asked !== "string" || localeWarned) return;
+  if (typeof asked !== "string" || P.localeWarned) return;
   const echo = /\blocale\b["']?\s*[:=]\s*["']?([a-z]{2})\b/i.exec(text)?.[1]?.toLowerCase();
   if (!echo || echo === asked) return;
-  localeWarned = true;
+  P.localeWarned = true;
   log(`locale: asked ${asked}, the server answered ${echo} — its prose stays in ${echo}`);
 }
 function withPlaceFields(args) {
@@ -3900,12 +4599,12 @@ function rememberedPlace(realm, karta, name) {
     ...n !== void 0 ? { name: n } : {}
   };
 }
-var standingInFlight = null;
+var R2 = scoped(() => ({ inFlight: null }));
 function ensureStanding() {
   if (!state.standing || !state.sessionId) return Promise.resolve();
   if (state.standingSession === state.sessionId) return Promise.resolve();
-  if (standingInFlight) return standingInFlight;
-  standingInFlight = (async () => {
+  if (R2.inFlight) return R2.inFlight;
+  R2.inFlight = (async () => {
     try {
       const got = await replayRegister(state.standing);
       if (got && !got.error && !got.result?.isError) {
@@ -3923,10 +4622,10 @@ function ensureStanding() {
     } catch (e) {
       log(`re-registering the standing failed: ${errorMessage(e)}`);
     } finally {
-      standingInFlight = null;
+      R2.inFlight = null;
     }
   })();
-  return standingInFlight;
+  return R2.inFlight;
 }
 async function replayRegister(place) {
   const id = `iskron-bridge-restanding-${++state.reinitCounter}`;
@@ -4163,10 +4862,10 @@ async function callTool(name, args) {
   return { text: replyText(got), isError: !!got.error || !!got.result?.isError };
 }
 var short = (s2, n = 300) => s2.length > n ? `${s2.slice(0, n)}…` : s2;
-var chain = Promise.resolve();
+var Q = scoped(() => ({ chain: Promise.resolve() }));
 function serialized(fn) {
-  const p = chain.then(fn, fn);
-  chain = p.then(
+  const p = Q.chain.then(fn, fn);
+  Q.chain = p.then(
     () => void 0,
     () => void 0
   );
@@ -4249,8 +4948,8 @@ function ledIn(realm) {
   const prim = state.standing;
   return prim && (prim.realm === realm || sameRealm(prim.realm, realm)) ? prim : extraIn(realm)?.standing;
 }
-var lastPublished = "";
-var publishedStatus = () => lastPublished;
+var S2 = scoped(() => ({ lastPublished: "" }));
+var publishedStatus = () => S2.lastPublished;
 async function publishStatus(text, realm, everyPlace = false) {
   const addr = statusAddress(realm);
   if (!addr) {
@@ -4266,7 +4965,7 @@ async function publishStatus(text, realm, everyPlace = false) {
     };
   const st = await publishStatusTo(addr.url, text, 5e3, everyPlace ? null : addr.standingId);
   if (st.ok) {
-    if (addr.key === statusAddress()?.key) lastPublished = text;
+    if (addr.key === statusAddress()?.key) S2.lastPublished = text;
     rememberStatus(text, realm);
   }
   return st;
@@ -4285,18 +4984,18 @@ async function heldElsewhere(realm) {
   const dir = standingsDirOf(CFG.authDir);
   if (!existsSync3(dir)) return [];
   const anyRealm = !realm || /^r\d+$/.test(realm);
-  const out5 = [];
+  const out6 = [];
   for (const f of readdirSync4(dir).filter((x) => x.endsWith(".hold"))) {
     try {
-      const rec3 = JSON.parse(readFileSync11(join9(dir, f), "utf8"));
+      const rec3 = JSON.parse(readFileSync12(join11(dir, f), "utf8"));
       if (!rec3?.realm || rec3.karta == null) continue;
       if (!anyRealm && slugOf(String(rec3.realm)) !== slugOf(realm)) continue;
       const key = keyOf(rec3.realm, rec3.karta, rec3.name ?? "");
-      if (await localSocketAlive(socketPathOf(CFG.authDir, key))) out5.push({ ...rec3, key });
+      if (await localSocketAlive(socketPathOf(CFG.authDir, key))) out6.push({ ...rec3, key });
     } catch {
     }
   }
-  return out5;
+  return out6;
 }
 async function notHeldHere(realm) {
   const head = "Отказано (мост): этот мост места не держит, статусного адреса у него нет.";
@@ -4344,41 +5043,23 @@ async function publishStatusTo(url, text, timeoutMs = 5e3, standingId = null) {
 
 // js/bridge/update.ts
 import { spawn as spawn2 } from "node:child_process";
-import { existsSync as existsSync4, lstatSync as lstatSync2, readFileSync as readFileSync13 } from "node:fs";
+import { existsSync as existsSync4, lstatSync as lstatSync2, readFileSync as readFileSync14 } from "node:fs";
 import { homedir as homedir5 } from "node:os";
-import { dirname as dirname6, join as join12 } from "node:path";
+import { dirname as dirname7, join as join13 } from "node:path";
 import { fileURLToPath as fileURLToPath4 } from "node:url";
 
-// js/shared/home.ts
-import { homedir as homedir4 } from "node:os";
-import { join as join10 } from "node:path";
-var homeBridgePath = () => join10(homedir4(), ".iskron-bridge", "iskron-bridge.mjs");
-
-// js/shared/semver.ts
-function parseVersion(v) {
-  const m = /^v?(\d+)\.(\d+)\.(\d+)/.exec((v ?? "").trim());
-  return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
-}
-function compareVersions(a, b) {
-  const pa = parseVersion(a);
-  const pb = parseVersion(b);
-  if (!pa || !pb) return 0;
-  for (let i = 0; i < 3; i++) if (pa[i] !== pb[i]) return pa[i] - pb[i];
-  return 0;
-}
-
 // js/bridge/releases.ts
-import { mkdirSync as mkdirSync7, readFileSync as readFileSync12, renameSync as renameSync5, writeFileSync as writeFileSync8 } from "node:fs";
-import { dirname as dirname5, join as join11 } from "node:path";
+import { mkdirSync as mkdirSync8, readFileSync as readFileSync13, renameSync as renameSync6, writeFileSync as writeFileSync9 } from "node:fs";
+import { dirname as dirname6, join as join12 } from "node:path";
 var RELEASES_URL = process.env.ISKRON_BRIDGE_RELEASES_URL?.trim() || "https://api.github.com/repos/iskron-ai/skills/releases/latest";
 var RELEASES_PAGE_URL = process.env.ISKRON_BRIDGE_RELEASES_PAGE_URL?.trim() || (process.env.ISKRON_BRIDGE_RELEASES_URL?.trim() ? null : "https://github.com/iskron-ai/skills/releases/latest");
 var TAG_TTL_MS = 60 * 60 * 1e3;
-var releaseTagPath = () => join11(dirname5(homeBridgePath()), "release-tag.json");
+var releaseTagPath = () => join12(dirname6(homeBridgePath()), "release-tag.json");
 function writeAtomic(path, bytes) {
-  mkdirSync7(dirname5(path), { recursive: true, mode: 448 });
+  mkdirSync8(dirname6(path), { recursive: true, mode: 448 });
   const tmp = `${path}.tmp-${process.pid}`;
-  writeFileSync8(tmp, bytes, { mode: 420 });
-  renameSync5(tmp, path);
+  writeFileSync9(tmp, bytes, { mode: 420 });
+  renameSync6(tmp, path);
 }
 var RateLimitError = class extends Error {
   limit;
@@ -4441,7 +5122,7 @@ async function tagFromPage(url) {
 }
 function readReleaseTag() {
   try {
-    const c = JSON.parse(readFileSync12(releaseTagPath(), "utf8"));
+    const c = JSON.parse(readFileSync13(releaseTagPath(), "utf8"));
     return c.source === RELEASES_URL ? c : null;
   } catch {
     return null;
@@ -4514,9 +5195,9 @@ var RETRY_FLOOR_MS = envMs("ISKRON_BRIDGE_RETRY_FLOOR_MS", 6e4);
 var RETRY_JITTER_MS = envMs("ISKRON_BRIDGE_RETRY_JITTER_MS", 6e4);
 var updatesDisabled = () => !!process.env.ISKRON_BRIDGE_NO_UPDATE;
 var selfPath = () => fileURLToPath4(import.meta.url);
-var opencodePluginPath = () => join12(homedir5(), ".config", "opencode", "plugins", "iskron.js");
-var setupPathOf = (authDir) => join12(authDir, "SETUP.md");
-var latestPathOf = (authDir) => join12(authDir, "latest.json");
+var opencodePluginPath = () => join13(homedir5(), ".config", "opencode", "plugins", "iskron.js");
+var setupPathOf = (authDir) => join13(authDir, "SETUP.md");
+var latestPathOf = (authDir) => join13(authDir, "latest.json");
 var isSymlink = (path) => {
   try {
     return lstatSync2(path).isSymbolicLink();
@@ -4526,41 +5207,41 @@ var isSymlink = (path) => {
 };
 var versionOf = (path) => {
   try {
-    return versionIn(readFileSync13(path, "utf8"));
+    return versionIn(readFileSync14(path, "utf8"));
   } catch {
     return null;
   }
 };
 function syncHome(self = selfPath()) {
-  const out5 = { copied: [] };
+  const out6 = { copied: [] };
   const home = homeBridgePath();
   let mine;
   try {
-    mine = readFileSync13(self);
+    mine = readFileSync14(self);
   } catch {
-    return out5;
+    return out6;
   }
-  if (!versionIn(mine.toString("utf8"))) return out5;
-  if (self === home) return out5;
-  if (isSymlink(home)) return out5;
+  if (!versionIn(mine.toString("utf8"))) return out6;
+  if (self === home) return out6;
+  if (isSymlink(home)) return out6;
   const homeVersion = versionOf(home);
   const cmp = homeVersion ? compareVersions(VERSION, homeVersion) : 1;
   if (cmp > 0) {
     writeAtomic(home, mine);
-    out5.copied.push(home);
+    out6.copied.push(home);
     const plugin = opencodePluginPath();
-    const packaged = join12(dirname6(self), "opencode-plugin.js");
+    const packaged = join13(dirname7(self), "opencode-plugin.js");
     if (existsSync4(plugin) && existsSync4(packaged)) {
-      const fresh = readFileSync13(packaged);
-      if (!readFileSync13(plugin).equals(fresh)) {
+      const fresh = readFileSync14(packaged);
+      if (!readFileSync14(plugin).equals(fresh)) {
         writeAtomic(plugin, fresh);
-        out5.copied.push(plugin);
+        out6.copied.push(plugin);
       }
     }
   } else if (cmp < 0 && homeVersion) {
-    out5.reexec = home;
+    out6.reexec = home;
   }
-  return out5;
+  return out6;
 }
 function reexec(path, argv2) {
   log(
@@ -4586,7 +5267,7 @@ function reexec(path, argv2) {
 }
 function readLatest(authDir) {
   try {
-    return JSON.parse(readFileSync13(latestPathOf(authDir), "utf8"));
+    return JSON.parse(readFileSync14(latestPathOf(authDir), "utf8"));
   } catch {
     return null;
   }
@@ -4610,15 +5291,15 @@ async function downloadRelease(tag, version, authDir) {
   if (got !== version)
     throw new Error(`скачанный мост называет v${got ?? "?"}, релиз — v${version}`);
   const home = homeBridgePath();
-  const current2 = versionOf(home);
-  if (!isSymlink(home) && (!current2 || compareVersions(version, current2) > 0)) {
+  const current = versionOf(home);
+  if (!isSymlink(home) && (!current || compareVersions(version, current) > 0)) {
     writeAtomic(home, bridge);
     written.push(home);
   }
   const plugin = opencodePluginPath();
   if (existsSync4(plugin)) {
     const fresh = await fetchText(`${base}/skills/establish-mcp/scripts/opencode-plugin.js`);
-    if (readFileSync13(plugin, "utf8") !== fresh) {
+    if (readFileSync14(plugin, "utf8") !== fresh) {
       writeAtomic(plugin, fresh);
       written.push(plugin);
     }
@@ -4684,13 +5365,25 @@ function staleNotice(latest, authDir) {
     `[iskron-bridge] DELIVERY BEHIND: this bridge is v${VERSION}, the fresh release is v${latest.version}. ${bridgeWord} The harness channel updates the skills, and this must be TOLD TO THE HUMAN: Claude Code — /plugin marketplace update iskron, then /reload-plugins; flat install — repeat npx skills add iskron-ai/skills --all --global (it brings new skills and refreshes standing ones: npx skills update --global walks only the lock file and brings none, a dropped skill is removed by hand — npx skills remove <name> --global); pi — pi update git:github.com/iskron-ai/skills; Codex — codex plugin marketplace upgrade iskron, then codex plugin remove iskron@iskron and codex plugin add iskron@iskron. The full order — the fresh installer ${setupPathOf(authDir)} (update puts it); on the human's word "update" run it.`
   );
 }
-var pendingNotice = null;
+var N = scoped(() => ({ pending: null }));
 function takeNotice() {
-  const n = pendingNotice;
-  pendingNotice = null;
+  const n = N.pending;
+  N.pending = null;
   return n;
 }
-function startFreshnessWatch(authDir, serverUrl) {
+function pendNotice(notice) {
+  N.pending = notice;
+}
+function tellNotice(notice) {
+  N.pending = notice;
+  emit({
+    jsonrpc: "2.0",
+    method: "notifications/message",
+    params: { level: "warning", logger: "iskron-bridge", data: { kind: "stale", text: notice } }
+  });
+}
+function startFreshnessWatch(authDir, serverUrl, tell = tellNotice, onChecked = () => {
+}) {
   if (updatesDisabled()) return;
   const explicit = !!process.env.ISKRON_BRIDGE_RELEASES_URL?.trim();
   if (!explicit && !isProductionServer(serverUrl)) {
@@ -4714,17 +5407,13 @@ function startFreshnessWatch(authDir, serverUrl) {
       retry = setTimeout(() => void tick(), wait);
       retry.unref();
     }
+    onChecked();
     const notice = staleNotice(latest, authDir);
     if (!notice) return;
     if (latest?.error && notice === told) return;
     told = notice;
-    pendingNotice = notice;
     log(notice);
-    emit({
-      jsonrpc: "2.0",
-      method: "notifications/message",
-      params: { level: "warning", logger: "iskron-bridge", data: { kind: "stale", text: notice } }
-    });
+    tell(notice);
   };
   const delay = Number(process.env.ISKRON_BRIDGE_UPDATE_DELAY_MS ?? 2e3);
   setTimeout(() => void tick(), Number.isFinite(delay) ? delay : 2e3).unref();
@@ -4765,7 +5454,7 @@ function fullBridgeSigint() {
     );
   };
 }
-function startEngine(cfg) {
+function startEngine(cfg, opts = {}) {
   setConfig(cfg);
   installAuthLockExitHook();
   installRefreshLockExitHook();
@@ -4775,183 +5464,24 @@ function startEngine(cfg) {
   const proxy = proxyWord();
   if (proxy) log(proxy);
   startTokenKeepalive();
-  startFreshnessWatch(CFG.authDir, CFG.serverUrl);
+  if (opts.freshness !== false) startFreshnessWatch(CFG.authDir, CFG.serverUrl);
 }
 
 // js/bridge/session.ts
-import { createInterface } from "node:readline";
-
-// js/shared/seam.ts
-import { createHash as createHash5 } from "node:crypto";
-import { connect as connect2 } from "node:net";
-var SEAM_PROTOCOL = 1;
-var DAEMON_ENV = "ISKRON_BRIDGE_DAEMON";
-var NO_DAEMON_ENV = "ISKRON_BRIDGE_NO_DAEMON";
-var TOKEN_ENV = "ISKRON_BRIDGE_TOKEN";
-var patShaOf = (pat) => pat ? createHash5("sha256").update(pat).digest("hex").slice(0, 16) : null;
-var PASS_ENV = /* @__PURE__ */ new Set([
-  "CLAUDE_PLUGIN_ROOT",
-  "NODE_EXTRA_CA_CERTS",
-  "NODE_USE_ENV_PROXY",
-  "HTTP_PROXY",
-  "HTTPS_PROXY",
-  "NO_PROXY",
-  "ALL_PROXY",
-  "http_proxy",
-  "https_proxy",
-  "no_proxy",
-  "all_proxy"
-]);
-var isSessionEnvKey = (k) => k !== TOKEN_ENV && (k.startsWith("ISKRON_") || PASS_ENV.has(k));
-function seamEnv(env2 = process.env) {
-  const out5 = {};
-  for (const [k, v] of Object.entries(env2)) if (v !== void 0 && isSessionEnvKey(k)) out5[k] = v;
-  return out5;
-}
-var BASE_ENV = [
-  "HOME",
-  "USERPROFILE",
-  "PATH",
-  "TMPDIR",
-  "TMP",
-  "TEMP",
-  "SystemRoot",
-  "LANG",
-  "LC_ALL",
-  "BUN_BE_BUN",
-  TOKEN_ENV
-];
-function daemonEnv(env2 = process.env) {
-  const out5 = seamEnv(env2);
-  for (const k of BASE_ENV) if (env2[k] !== void 0) out5[k] = env2[k];
-  return out5;
-}
-function helloFrame(o) {
-  return {
-    t: "hello",
-    seam: SEAM_PROTOCOL,
-    build: o.build,
-    path: o.path,
-    argv: o.argv,
-    env: seamEnv(),
-    cwd: process.cwd(),
-    pid: process.pid,
-    session: o.session ?? null,
-    patSha: o.patSha ?? null,
-    ...o.probe ? { probe: true } : {}
-  };
-}
-function readFrames(socket, onFrame, onBad = () => {
-}) {
-  socket.setEncoding("utf8");
-  let buf = "";
-  socket.on("data", (chunk) => {
-    buf += chunk;
-    let nl;
-    while ((nl = buf.indexOf("\n")) >= 0) {
-      const line = buf.slice(0, nl).trim();
-      buf = buf.slice(nl + 1);
-      if (!line) continue;
-      let f;
-      try {
-        f = JSON.parse(line);
-      } catch {
-        onBad(line);
-        continue;
-      }
-      onFrame(f);
-    }
-  });
-}
-function writeFrame(socket, frame2, cb) {
-  if (socket.destroyed || !socket.writable) {
-    cb?.(new Error("the seam socket is closed"));
-    return false;
-  }
-  return socket.write(JSON.stringify(frame2) + "\n", cb);
-}
-var SeamError = class extends Error {
-  kind;
-  constructor(kind, message) {
-    super(message);
-    this.kind = kind;
-  }
-};
-var ABSENT = /* @__PURE__ */ new Set(["ENOENT", "ECONNREFUSED", "ENOTSOCK", "ENOTDIR"]);
-function connectSeam(path, hello, timeoutMs) {
-  return new Promise((resolveLink, reject) => {
-    const socket = connect2(path);
-    let welcome = null;
-    const early = [];
-    let frameCb = null;
-    let closeCb = null;
-    let closed = false;
-    const fail = (e) => {
-      clearTimeout(timer);
-      socket.destroy();
-      reject(e);
-    };
-    const timer = setTimeout(
-      () => fail(new SeamError("broken", `no welcome from the daemon in ${timeoutMs}ms`)),
-      timeoutMs
-    );
-    timer.unref?.();
-    socket.on("error", (e) => {
-      if (welcome) return;
-      fail(new SeamError(ABSENT.has(e.code ?? "") ? "absent" : "broken", `${e.code ?? e.message}`));
-    });
-    socket.on("close", () => {
-      if (!welcome) {
-        fail(new SeamError("broken", "the daemon closed the seam before its welcome"));
-        return;
-      }
-      if (closed) return;
-      closed = true;
-      closeCb?.();
-    });
-    socket.on("connect", () => writeFrame(socket, hello));
-    readFrames(socket, (f) => {
-      if (!welcome) {
-        if (f.t === "refuse") return fail(new SeamError("refused", f.reason));
-        if (f.t !== "welcome") return fail(new SeamError("broken", `expected welcome, got ${f.t}`));
-        welcome = f;
-        clearTimeout(timer);
-        resolveLink({
-          welcome: f,
-          send: (frame2, cb) => writeFrame(socket, frame2, cb),
-          onFrame: (cb) => {
-            frameCb = cb;
-            for (const e of early.splice(0)) cb(e);
-          },
-          onClose: (cb) => {
-            closeCb = cb;
-            if (closed) cb();
-          },
-          close: () => {
-            socket.end();
-            setTimeout(() => socket.destroy(), 1e3).unref?.();
-          }
-        });
-        return;
-      }
-      if (frameCb) frameCb(f);
-      else early.push(f);
-    });
-  });
-}
+import { createInterface as createInterface2 } from "node:readline";
 
 // js/bridge/satellite.ts
-import { randomBytes as randomBytes2 } from "node:crypto";
+import { randomBytes as randomBytes3 } from "node:crypto";
 import {
-  mkdirSync as mkdirSync8,
-  readFileSync as readFileSync14,
-  renameSync as renameSync6,
+  mkdirSync as mkdirSync9,
+  readFileSync as readFileSync15,
+  renameSync as renameSync7,
   rmSync,
   statSync as statSync5,
-  unlinkSync as unlinkSync7,
-  writeFileSync as writeFileSync9
+  unlinkSync as unlinkSync9,
+  writeFileSync as writeFileSync10
 } from "node:fs";
-import { join as join13 } from "node:path";
+import { join as join14 } from "node:path";
 var SATELLITE_TTL_S = Number(process.env.ISKRON_BRIDGE_SATELLITE_TTL) || 300;
 var SUB_RE = /\.sub-([1-9]\d*)$/;
 var satelliteName = (base, n) => base.slice(0, NAME_MAX - `.sub-${n}`.length).replace(/[-._]+$/, "") + `.sub-${n}`;
@@ -4959,9 +5489,10 @@ function isSatelliteOf(base, name) {
   const m = SUB_RE.exec(name);
   return !!m && satelliteName(base, Number(m[1])) === name;
 }
-var claimDir = () => join13(CFG.authDir, "satellites");
-var claimFile = (name) => join13(claimDir(), `${name.replace(/[^A-Za-z0-9._-]+/g, "_")}.claim`);
-var claims = /* @__PURE__ */ new Set();
+var claimDir = () => join14(CFG.authDir, "satellites");
+var claimFile = (name) => join14(claimDir(), `${name.replace(/[^A-Za-z0-9._-]+/g, "_")}.claim`);
+var claims = scoped(() => /* @__PURE__ */ new Set());
+var allClaims = /* @__PURE__ */ new Map();
 var releaseOnExit = false;
 var LOCK_STALE_MS = 1e4;
 var LOCK_WAIT_MS = 3e3;
@@ -4977,30 +5508,38 @@ function claimName(name) {
   const file = claimFile(name);
   let pid = 0;
   try {
-    pid = Number(readFileSync14(file, "utf8").trim());
+    pid = Number(readFileSync15(file, "utf8").trim());
   } catch {
   }
-  if (pid && pid !== process.pid && alive(pid)) return false;
-  writeFileSync9(file, `${process.pid}
+  const me = sessionPid();
+  if (pid && pid !== me && alive(pid)) return false;
+  writeFileSync10(file, `${me}
 `, { mode: 384 });
-  if (!releaseOnExit) process.once("exit", releaseSatelliteClaims);
+  if (!releaseOnExit) process.once("exit", releaseAllClaims);
   releaseOnExit = true;
   claims.add(file);
+  allClaims.set(file, me);
   return true;
 }
-function releaseSatelliteClaims() {
-  for (const f of claims) {
-    try {
-      if (Number(readFileSync14(f, "utf8").trim()) === process.pid) unlinkSync7(f);
-    } catch {
-    }
+var dropClaim = (f, pid) => {
+  try {
+    if (Number(readFileSync15(f, "utf8").trim()) === pid) unlinkSync9(f);
+  } catch {
   }
+  allClaims.delete(f);
+};
+function releaseSatelliteClaims() {
+  const me = sessionPid();
+  for (const f of claims) dropClaim(f, me);
   claims.clear();
+}
+function releaseAllClaims() {
+  for (const [f, pid] of [...allClaims]) dropClaim(f, pid);
 }
 var LOCK_OWNER = "owner";
 function lockOwner(lock) {
   try {
-    return readFileSync14(join13(lock, LOCK_OWNER), "utf8").trim();
+    return readFileSync15(join14(lock, LOCK_OWNER), "utf8").trim();
   } catch {
     return null;
   }
@@ -5015,9 +5554,9 @@ function abandoned(lock, owner) {
   }
 }
 function takeLock(lock, owner) {
-  const away = `${lock}.${process.pid}-${randomBytes2(6).toString("hex")}`;
+  const away = `${lock}.${process.pid}-${randomBytes3(6).toString("hex")}`;
   try {
-    renameSync6(lock, away);
+    renameSync7(lock, away);
   } catch {
     return null;
   }
@@ -5027,17 +5566,17 @@ function takeLock(lock, owner) {
   return null;
 }
 async function underClaimLock(fn) {
-  const lock = join13(claimDir(), ".lock");
-  const token = `${process.pid} ${randomBytes2(8).toString("hex")}`;
+  const lock = join14(claimDir(), ".lock");
+  const token = `${process.pid} ${randomBytes3(8).toString("hex")}`;
   let fault = null;
   try {
-    mkdirSync8(claimDir(), { recursive: true, mode: 448 });
+    mkdirSync9(claimDir(), { recursive: true, mode: 448 });
   } catch (e) {
     fault = e.message;
   }
   for (const end = Date.now() + LOCK_WAIT_MS; !fault; ) {
     try {
-      mkdirSync8(lock);
+      mkdirSync9(lock);
     } catch (e) {
       if (e.code !== "EEXIST") fault = e.message;
       else if (Date.now() > end) fault = `the claims lock ${lock} is held too long`;
@@ -5049,7 +5588,7 @@ async function underClaimLock(fn) {
       continue;
     }
     try {
-      writeFileSync9(join13(lock, LOCK_OWNER), `${token}
+      writeFileSync10(join14(lock, LOCK_OWNER), `${token}
 `, { mode: 384 });
     } catch (e) {
       fault = e.message;
@@ -5241,22 +5780,26 @@ var satelliteListenWord = () => L(
 var DEAF_MS = Number(process.env.ISKRON_BRIDGE_DEAF_MS) || 15 * 6e4;
 var TICK_MS = Math.min(6e4, Math.max(200, Math.floor(DEAF_MS / 5)));
 var deafWithoutListener = () => !notifiedClient();
-var keptStatus = "";
-var keptBeside = [];
+var K = scoped(() => ({
+  /** Строка занятости, снятая уходом, — возвращается вместе с местом. */
+  status: "",
+  /** Строки мест других графов, снятые тем же уходом, — каждая своему месту (#5838). */
+  beside: []
+}));
 async function leaveStanding(reason, byWord = false) {
   if (byWord && CFG.satellite) return leaveSatellite(reason);
   const beside = heldPlaces().filter((p) => !p.primary).map((p) => ({ realm: p.realm, text: readHoldRecord(p.key)?.status ?? "" })).filter((k) => k.text);
   const leaving = heldPlaces().map((p) => p.key);
-  const parked2 = parkStanding(reason);
-  if (!parked2) return "мост места не держит — уходить неоткуда";
-  keptBeside = beside;
-  keptStatus = publishedStatus();
+  const parked = parkStanding(reason);
+  if (!parked) return "мост места не держит — уходить неоткуда";
+  K.beside = beside;
+  K.status = publishedStatus();
   const st = await publishStatus("", void 0, true);
-  if (st.ok && keptStatus) rememberStatus(keptStatus);
+  if (st.ok && K.status) rememberStatus(K.status);
   if (byWord) for (const k of leaving) markLeft(k, true);
   const line = st.ok ? "занятость снята" : `занятость не снята (${st.body})`;
   log(`left the standing: ${reason}; ${line}`);
-  const which2 = leaving.length > 1 ? `с мест ${leaving.join(", ")} (сокет канала у них общий)` : `с места ${parked2}`;
+  const which2 = leaving.length > 1 ? `с мест ${leaving.join(", ")} (сокет канала у них общий)` : `с места ${parked}`;
   return byWord ? `ушёл ${which2}: сокет закрыт, ${line}; адрес, очередь и хуки целы — почта копится; место отпущено словом, само не вернётся — вернуть: iskron_stand тем же именем` : `ушёл ${which2}: сокет закрыт, ${line}; адрес, очередь и хуки целы — почта копится и придёт при возвращении (сторож или iskron_stand)`;
 }
 async function leaveSatellite(reason) {
@@ -5272,16 +5815,16 @@ async function leaveSatellite(reason) {
 function returnToStanding(how) {
   if (!resumeStanding()) return false;
   for (const p of heldPlaces()) markLeft(p.key, false);
-  const text = `мост вернулся на место (${how}) — сокет открыт заново тем же адресом${keptStatus ? `, занятость «${keptStatus}» возвращена` : ""}`;
+  const text = `мост вернулся на место (${how}) — сокет открыт заново тем же адресом${K.status ? `, занятость «${K.status}» возвращена` : ""}`;
   log(text);
-  if (keptStatus) {
-    const line = keptStatus;
-    keptStatus = "";
+  if (K.status) {
+    const line = K.status;
+    K.status = "";
     void publishStatus(line).then((st) => {
       if (!st.ok) log(`busy line not restored after the return: ${st.body}`);
     });
   }
-  for (const k of keptBeside.splice(0))
+  for (const k of K.beside.splice(0))
     void publishStatus(k.text, k.realm).then((st) => {
       if (!st.ok) log(`busy line of ${k.realm} not restored after the return: ${st.body}`);
     });
@@ -5363,23 +5906,23 @@ async function armRoleHook(p) {
   const recognized = !hooks.isError && (/^\s*Вебхуки(?:\s|:|\(|$)/m.test(hooks.text) || /вебхуки не зарегистрированы/i.test(hooks.text));
   const nameRe = new RegExp(`:${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![A-Za-z0-9._-])`);
   const wakesMe = recognized && hooks.text.split(/\n(?=\s*#\d+\s*→)/).some((b) => /активен/.test(b) && nameRe.test(b));
-  const H = L("Хук инбокса роли", "Role inbox hook");
+  const H4 = L("Хук инбокса роли", "Role inbox hook");
   if (p.sub)
     return L(
-      `${H}: отдельному месту не взводится — почту роли слушает основное место, дела доставляют своё сами.`,
-      `${H}: not armed for a separate seat — the main seat listens to the role's mail, cases deliver their own.`
+      `${H4}: отдельному месту не взводится — почту роли слушает основное место, дела доставляют своё сами.`,
+      `${H4}: not armed for a separate seat — the main seat listens to the role's mail, cases deliver their own.`
     );
   if (wakesMe)
-    return L(`${H}: стоит и будит это стояние.`, `${H}: in place and wakes this standing.`);
+    return L(`${H4}: стоит и будит это стояние.`, `${H4}: in place and wakes this standing.`);
   if (!recognized)
     return L(
-      `${H}: список хуков не распознан — не трогаю (${short(hooks.text, 120)}).`,
-      `${H}: the hook list is not recognized — left alone (${short(hooks.text, 120)}).`
+      `${H4}: список хуков не распознан — не трогаю (${short(hooks.text, 120)}).`,
+      `${H4}: the hook list is not recognized — left alone (${short(hooks.text, 120)}).`
     );
   if (!p.heardHere)
     return L(
-      `${H}: не взвожу — слух у другого держателя.`,
-      `${H}: not armed — another holder has the hearing.`
+      `${H4}: не взвожу — слух у другого держателя.`,
+      `${H4}: not armed — another holder has the hearing.`
     );
   if (p.beside) {
     const params = await adminParamNames();
@@ -5389,13 +5932,13 @@ async function armRoleHook(p) {
     );
     if (!params)
       return L(
-        `${H}: не взведён — ${noAddress}, а схему тула iskron_admin прочесть не удалось (tools/list не ответил или iskron_admin в нём не нашёлся) — объявлен ли параметр channel, не известно; хук на канал (channel=self) не взвожу вслепую — повтори iskron_stand этого графа.`,
-        `${H}: not armed — ${noAddress}, and the iskron_admin schema could not be read (tools/list did not answer or has no iskron_admin) — whether it declares channel is unknown; no blind hook on the channel (channel=self) — repeat iskron_stand for this graph.`
+        `${H4}: не взведён — ${noAddress}, а схему тула iskron_admin прочесть не удалось (tools/list не ответил или iskron_admin в нём не нашёлся) — объявлен ли параметр channel, не известно; хук на канал (channel=self) не взвожу вслепую — повтори iskron_stand этого графа.`,
+        `${H4}: not armed — ${noAddress}, and the iskron_admin schema could not be read (tools/list did not answer or has no iskron_admin) — whether it declares channel is unknown; no blind hook on the channel (channel=self) — repeat iskron_stand for this graph.`
       );
     if (!params.has("channel"))
       return L(
-        `${H}: не взведён — ${noAddress}, а тул iskron_admin(action="add_webhook") в этой поверхности параметра channel не объявляет; хук на канал (channel=self) взвести нечем — почта роли этого графа сокетом не приходит.`,
-        `${H}: not armed — ${noAddress}, and iskron_admin(action="add_webhook") on this surface declares no channel parameter; nothing to arm a channel hook (channel=self) with — this graph's role mail does not come over the socket.`
+        `${H4}: не взведён — ${noAddress}, а тул iskron_admin(action="add_webhook") в этой поверхности параметра channel не объявляет; хук на канал (channel=self) взвести нечем — почта роли этого графа сокетом не приходит.`,
+        `${H4}: not armed — ${noAddress}, and iskron_admin(action="add_webhook") on this surface declares no channel parameter; nothing to arm a channel hook (channel=self) with — this graph's role mail does not come over the socket.`
       );
     const h2 = await callTool("iskron_admin", {
       action: "add_webhook",
@@ -5404,17 +5947,17 @@ async function armRoleHook(p) {
       channel: "self"
     });
     return h2.isError ? L(
-      `${H}: на канал (channel=self) не взвёлся — ${short(h2.text)}`,
-      `${H}: not armed on the channel (channel=self) — ${short(h2.text)}`
+      `${H4}: на канал (channel=self) не взвёлся — ${short(h2.text)}`,
+      `${H4}: not armed on the channel (channel=self) — ${short(h2.text)}`
     ) : L(
-      `${H}: взведён на канал (channel=self) — почта роли этого графа идёт в тот же сокет месту этого графа (${short(h2.text, 120)}).`,
-      `${H}: armed on the channel (channel=self) — this graph's role mail goes into the same socket to this graph's seat (${short(h2.text, 120)}).`
+      `${H4}: взведён на канал (channel=self) — почта роли этого графа идёт в тот же сокет месту этого графа (${short(h2.text, 120)}).`,
+      `${H4}: armed on the channel (channel=self) — this graph's role mail goes into the same socket to this graph's seat (${short(h2.text, 120)}).`
     );
   }
   if (!p.incoming)
     return L(
-      `${H}: не взведён — входящий адрес стояния не прочитался.`,
-      `${H}: not armed — the standing's incoming address did not read.`
+      `${H4}: не взведён — входящий адрес стояния не прочитался.`,
+      `${H4}: not armed — the standing's incoming address did not read.`
     );
   const h = await callTool("iskron_admin", {
     action: "add_webhook",
@@ -5423,15 +5966,15 @@ async function armRoleHook(p) {
     url: p.incoming
     // без ttl_seconds: 0 снимает срок только в update_webhook; на добавлении его отвергает контур (слово архитектора, #5380)
   });
-  return h.isError ? L(`${H}: не взвёлся — ${short(h.text)}`, `${H}: not armed — ${short(h.text)}`) : L(
-    `${H}: взведён на входящий адрес места (${short(h.text, 120)}).`,
-    `${H}: armed on the seat's incoming address (${short(h.text, 120)}).`
+  return h.isError ? L(`${H4}: не взвёлся — ${short(h.text)}`, `${H4}: not armed — ${short(h.text)}`) : L(
+    `${H4}: взведён на входящий адрес места (${short(h.text, 120)}).`,
+    `${H4}: armed on the seat's incoming address (${short(h.text, 120)}).`
   );
 }
 
 // js/bridge/resume.ts
-import { existsSync as existsSync5, readdirSync as readdirSync5, readFileSync as readFileSync15 } from "node:fs";
-import { join as join14 } from "node:path";
+import { existsSync as existsSync5, readdirSync as readdirSync5, readFileSync as readFileSync16 } from "node:fs";
+import { join as join15 } from "node:path";
 async function deadPredecessor(realm, karta, name) {
   const key = keyOf(realm, karta, name);
   if (!readHoldRecord(key)) return false;
@@ -5505,7 +6048,7 @@ function recordsFor(sel) {
   const left = [];
   for (const f of readdirSync5(dir).filter((x) => x.endsWith(".hold"))) {
     try {
-      const rec3 = JSON.parse(readFileSync15(join14(dir, f), "utf8"));
+      const rec3 = JSON.parse(readFileSync16(join15(dir, f), "utf8"));
       if (!rec3 || rec3.client !== mine) continue;
       const key = keyOf(rec3.realm, rec3.karta, rec3.name);
       const keyed2 = !!sel.key && key === sel.key;
@@ -5607,8 +6150,8 @@ async function resumeBy(sel, register = true) {
   return { resumed: false, word: `возвращать нечего — ${skipped.join("; ")}` };
 }
 function holdFromEnv() {
-  const url = process.env.ISKRON_CHANNEL_SOCKET?.trim();
-  if (url) holdStanding(url, process.env.ISKRON_CHANNEL_STATUS?.trim() || null);
+  const url = envOf("ISKRON_CHANNEL_SOCKET")?.trim();
+  if (url) holdStanding(url, envOf("ISKRON_CHANNEL_STATUS")?.trim() || null);
 }
 var reply = (msg, result) => ({
   jsonrpc: "2.0",
@@ -5668,13 +6211,13 @@ async function runCheck(msg) {
   const pending = undelivered(mine);
   const listening = listens(mine);
   if (listening) {
-    deafReopens = 0;
+    D.reopens = 0;
     return reply(msg, { holding: true, key, listening, pending, word: "слушаю" });
   }
-  if (deafReopens >= REOPEN_LIMIT) {
+  if (D.reopens >= REOPEN_LIMIT) {
     const text = `Искрон: доска читает место ${key} не слушающим и после ${REOPEN_LIMIT} переоткрытий сокета — больше не рву; проверь доску и сервер, вернуть слух — iskron_stand с take=true.`;
-    if (!deafSaid) {
-      deafSaid = true;
+    if (!D.said) {
+      D.said = true;
       standingLog(`reopen ${key}: gave up after ${REOPEN_LIMIT} — board still reads deaf`);
       emit({
         jsonrpc: "2.0",
@@ -5692,7 +6235,7 @@ async function runCheck(msg) {
       word: text
     });
   }
-  deafReopens++;
+  D.reopens++;
   standingLog(`reopen ${key}: board reads deaf${pending ? ` with ${pending} pending` : ""}`);
   parkStanding("доска не читает слушающим");
   resumeStanding();
@@ -5706,8 +6249,7 @@ async function runCheck(msg) {
     word: hello ? `сокет переоткрыт: ожидало кадров — ${Number(hello.pending) || 0}` : "сокет переоткрыт, hello за 4 с не пришёл"
   });
 }
-var deafReopens = 0;
-var deafSaid = false;
+var D = scoped(() => ({ reopens: 0, said: false }));
 var REOPEN_LIMIT = 2;
 
 // js/bridge/separate.ts
@@ -5740,7 +6282,7 @@ async function separatePlace(realm, karta, derived) {
 }
 
 // js/bridge/standwords.ts
-var s = (ms2) => Math.round(ms2 / 1e3);
+var s = (ms3) => Math.round(ms3 / 1e3);
 function missWord(m, of) {
   const only = L(
     "Без karta вызов только ставит занятость места, которое ведёт этот мост",
@@ -6020,7 +6562,7 @@ var isDirectory2 = (p) => {
   }
 };
 var isStandCall = (msg) => msg?.method === "tools/call" && msg?.params?.name === "iskron_stand";
-var knocks = /* @__PURE__ */ new Map();
+var knocks = scoped(() => /* @__PURE__ */ new Map());
 var KNOCK_REPEAT_AFTER_MS = Number(process.env.ISKRON_STAND_KNOCK_REPEAT_MS) || 12e4;
 var KNOCK_LIMIT = 2;
 async function runStand(msg) {
@@ -6042,10 +6584,10 @@ async function runStand(msg) {
     lines.push(SW.needRealmKarta(statusOnly.miss, statusOnly.of));
     return done(true);
   }
-  const model2 = typeof a.model === "string" && a.model.trim() ? a.model : void 0;
-  rememberModel(model2);
-  const cwd = typeof a.cwd === "string" && a.cwd.trim() ? a.cwd.trim() : process.cwd();
-  if (cwd !== process.cwd() && !isDirectory2(cwd)) {
+  const model = typeof a.model === "string" && a.model.trim() ? a.model : void 0;
+  rememberModel(model);
+  const cwd = typeof a.cwd === "string" && a.cwd.trim() ? a.cwd.trim() : sessionCwd();
+  if (cwd !== sessionCwd() && !isDirectory2(cwd)) {
     lines.push(SW.badCwd(cwd, !isAbsolute2(cwd)));
     return done(true);
   }
@@ -6065,7 +6607,7 @@ async function runStand(msg) {
   }
   const sat = gate?.ok ? { name: gate.name, caller: gate.caller } : null;
   if (gate?.ok) nameNotes.push(...gate.notes);
-  const parts = asked || sat ? null : deriveParts(model2, cwd);
+  const parts = asked || sat ? null : deriveParts(model, cwd);
   const fitted = parts ? fitName(parts) : null;
   const derived = asked || sat ? "" : fitted?.name ?? "";
   let name = asked || sat?.name || derived;
@@ -6077,7 +6619,7 @@ async function runStand(msg) {
     const what = fitted.cut.map(SW.cutPart).join(", ");
     nameNotes.push(SW.nameCut(joinName(parts), NAME_MAX, name, what));
   }
-  if (!asked && !sat && !model2) nameNotes.push(SW.noModel());
+  if (!asked && !sat && !model) nameNotes.push(SW.noModel());
   const room = typeof a.room === "string" && a.room.trim() ? a.room.trim() : null;
   const unresolved2 = unresolvedRefusal(realm);
   if (unresolved2) {
@@ -6324,8 +6866,10 @@ function clientName2() {
 function toolSet() {
   return CFG.tools ? /* @__PURE__ */ new Set([...CFG.tools, STAND_TOOL.name]) : null;
 }
+var ownRealmList = (msg) => String(msg.id ?? "").startsWith("iskron-thin-realms-") && msg.params?.name === "iskron_realm" && String(msg.params?.arguments?.action ?? "") === "list";
 function outsideSetRefusal(msg) {
   if (msg?.method !== "tools/call" || msg.id === void 0 || msg.id === null) return null;
+  if (ownRealmList(msg)) return null;
   const set = toolSet();
   const name = String(msg.params?.name ?? "");
   if (!set || set.has(name)) return null;
@@ -6373,31 +6917,30 @@ function narrowToolList(reply2) {
 }
 
 // js/bridge/toolsync.ts
-import { createHash as createHash6 } from "node:crypto";
-var served = null;
+import { createHash as createHash7 } from "node:crypto";
+var T = scoped(() => ({ served: null }));
 function toolsPrint(result) {
   const tools = result?.tools;
   if (!Array.isArray(tools)) return null;
   const shape = tools.map((t) => [t.name ?? "", JSON.stringify(t.inputSchema ?? null)]).sort((a, b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0);
-  return createHash6("sha256").update(JSON.stringify(shape)).digest("hex");
+  return createHash7("sha256").update(JSON.stringify(shape)).digest("hex");
 }
 function noteServedTools(result) {
   const print = toolsPrint(result);
-  if (print) served = print;
+  if (print) T.served = print;
 }
 async function recheckTools(ask, emit2) {
-  if (!served) return;
+  if (!T.served) return;
   const fresh = toolsPrint((await ask().catch(() => null))?.result);
-  if (!fresh || fresh === served) return;
-  served = fresh;
+  if (!fresh || fresh === T.served) return;
+  T.served = fresh;
   log("tool list changed under the re-opened session — telling the harness (tools/list_changed)");
   emit2({ jsonrpc: "2.0", method: "notifications/tools/list_changed" });
 }
 
 // js/bridge/usage.ts
 var MIN_GAP_MS = Number(process.env.ISKRON_USAGE_GAP_MS || 6e4);
-var published2 = null;
-var publishedAt = 0;
+var U = scoped(() => ({ published: null, at: 0 }));
 var num = (v) => typeof v === "number" && Number.isFinite(v) && v >= 0 ? Math.round(v) : void 0;
 function moved(a, b) {
   if (!a) return true;
@@ -6422,11 +6965,11 @@ async function runUsage(msg) {
   let pushed = false;
   const s2 = state.standing;
   const away = !!s2 && isParked(s2.realm, s2.karta, s2.name ?? "");
-  if (s2 && !away && Date.now() - publishedAt >= MIN_GAP_MS && moved(published2, u)) {
-    publishedAt = Date.now();
+  if (s2 && !away && Date.now() - U.at >= MIN_GAP_MS && moved(U.published, u)) {
+    U.at = Date.now();
     const got = await replayRegister(s2);
     pushed = !!got && !got.error && !got.result?.isError;
-    if (pushed) published2 = u;
+    if (pushed) U.published = u;
     else
       log(
         `usage: register did not take the attrs this time — ${JSON.stringify(got?.error ?? got?.result ?? null).slice(0, 200)}`
@@ -6468,9 +7011,9 @@ var READ_TOOLS = /* @__PURE__ */ new Set([
   "iskron_search",
   "iskron_semantic_search"
 ]);
-var harnessListing = 0;
+var H3 = scoped(() => ({ listing: 0 }));
 onReinitialized(() => {
-  if (harnessListing > 0) return;
+  if (H3.listing > 0) return;
   return recheckTools(async () => {
     const id = `iskron-bridge-tools-${++state.reinitCounter}`;
     let got = null;
@@ -6513,12 +7056,12 @@ function withNotice(reply2) {
   return reply2;
 }
 async function deliver(msg) {
-  const listing2 = msg?.method === "tools/list";
-  if (listing2) harnessListing++;
+  const listing = msg?.method === "tools/list";
+  if (listing) H3.listing++;
   try {
     await deliverOne(msg);
   } finally {
-    if (listing2) harnessListing--;
+    if (listing) H3.listing--;
   }
 }
 async function deliverOne(msg) {
@@ -6709,71 +7252,96 @@ async function deliverOne(msg) {
   }
 }
 
+// js/bridge/work.ts
+var W = scoped(() => ({ at: 0 }));
+function noteAgentWork(at2 = Date.now()) {
+  W.at = at2;
+}
+var lastAgentWork = () => W.at;
+
 // js/bridge/session.ts
 var ORPHAN_FLOW_MS = Number(process.env.ISKRON_BRIDGE_ORPHAN_FLOW_MS) || 5 * 6e4;
-var originTaken = false;
+var HANDOVER_WAIT_MS = Number(process.env.ISKRON_BRIDGE_HANDOVER_WAIT_MS) || 1e4;
+var counter = 0;
 function applyOrigin(origin) {
-  for (const k of Object.keys(process.env))
-    if (isSessionEnvKey(k) && !(k in origin.env)) delete process.env[k];
-  for (const [k, v] of Object.entries(origin.env)) if (isSessionEnvKey(k)) process.env[k] = v;
-  process.chdir(origin.cwd);
-  const cfg = parseArgs(origin.argv);
+  const cfg = readArgs(origin.argv);
   if (origin.patSha !== void 0 && patShaOf(cfg.pat) !== origin.patSha)
     throw new Error(
       "this daemon signs in otherwise than the bridge asking (its personal token differs)"
     );
   setConfig(cfg);
 }
-function openSession(io, origin) {
-  if (origin) {
-    if (originTaken) throw new Error("this engine holds one session per process");
+function openSession(io, origin, opts = {}) {
+  if (!origin) return openIn(io, null, null);
+  const scope = newScope(
+    opts.id ?? `s${++counter}`,
+    { env: origin.env, cwd: origin.cwd, pid: origin.pid, path: origin.path ?? "" },
+    isSessionEnvKey
+  );
+  scope.log = opts.log ?? null;
+  return runIn(scope, () => {
     applyOrigin(origin);
-    originTaken = true;
-  }
+    return openIn(io, origin, scope);
+  });
+}
+function openIn(io, origin, scope) {
   setSessionOutput(io.output);
   guardStream(io.output);
   holdFromEnv();
   if (!CFG.satellite) startDeafnessWatch();
-  const rl = createInterface({ input: io.input, terminal: false });
+  const rl = createInterface2({ input: io.input, terminal: false });
   const pending = /* @__PURE__ */ new Set();
   let handshake = null;
-  rl.on("line", (line) => {
-    const trimmed2 = line.trim();
-    if (!trimmed2) return;
-    let msg;
-    try {
-      msg = JSON.parse(trimmed2);
-    } catch {
-      log(`unparseable line from harness: ${trimmed2.slice(0, 120)}`);
-      return;
-    }
-    const run = () => deliver(msg).catch((e) => log(`unexpected: ${e?.stack || errorMessage(e)}`));
-    let p;
-    if (msg.method === "initialize") {
-      p = run();
-      handshake = p;
-      p.finally(() => {
-        if (handshake === p) handshake = null;
-      });
-    } else if (handshake) {
-      const gate = handshake;
-      p = gate.then(run, run);
-    } else p = run();
-    pending.add(p);
-    p.finally(() => pending.delete(p));
-  });
+  rl.on(
+    "line",
+    bindScope((line) => {
+      const trimmed2 = line.trim();
+      if (!trimmed2) return;
+      let msg;
+      try {
+        msg = JSON.parse(trimmed2);
+      } catch {
+        log(`unparseable line from harness: ${trimmed2.slice(0, 120)}`);
+        return;
+      }
+      if (msg.method === "tools/call" && !String(msg.id ?? "").startsWith("iskron-"))
+        noteAgentWork();
+      const run = () => deliver(msg).catch((e) => log(`unexpected: ${e?.stack || errorMessage(e)}`));
+      let p;
+      if (msg.method === "initialize") {
+        p = run();
+        handshake = p;
+        p.finally(() => {
+          if (handshake === p) handshake = null;
+        });
+      } else if (handshake) {
+        const gate = handshake;
+        p = gate.then(run, run);
+      } else p = run();
+      pending.add(p);
+      p.finally(() => pending.delete(p));
+    })
+  );
   let leaving = null;
   let markEnded;
   const ended = new Promise((resolve7) => markEnded = resolve7);
-  const leave = (why) => leaving ??= windDown(why).finally(markEnded);
+  const leave = bindScope(
+    (why) => leaving ??= windDown(why).finally(markEnded)
+  );
   const windDown = async (why) => {
     debug(`${why} — winding down`);
+    const handover = !!origin && handoverUnderway();
     const addr = statusAddress();
     releaseStanding(why, CFG.satellite);
-    if (addr) await publishStatusTo(addr.url, "", 3e3).catch(() => {
+    if (addr && !handover) await publishStatusTo(addr.url, "", 3e3).catch(() => {
     });
-    await Promise.allSettled([...pending, ...tokenRequestsInFlight]);
+    if (handover) await Promise.race([Promise.allSettled([...pending]), sleep(HANDOVER_WAIT_MS)]);
+    else await Promise.allSettled([...pending, ...tokenRequestsInFlight]);
     await flushStdout(io.output);
+    if (origin) {
+      releaseSatelliteClaims();
+      return;
+    }
     const flow = pendingFlow();
     if (flow) {
       log(
@@ -6785,164 +7353,24 @@ function openSession(io, origin) {
     await Promise.allSettled([...tokenRequestsInFlight]);
     await flushStdout(io.output);
   };
-  rl.on("close", () => void leave("stdin closed, the harness is gone"));
-  return { leave, ended, origin: origin ?? null };
+  rl.on(
+    "close",
+    bindScope(() => void leave("stdin closed, the harness is gone"))
+  );
+  return { leave, ended, origin, scope, lastWork: bindScope(lastAgentWork) };
 }
 
-// js/bridge/thin.ts
-import { spawn as spawn3 } from "node:child_process";
-import { createInterface as createInterface2 } from "node:readline";
-import { PassThrough } from "node:stream";
-import { fileURLToPath as fileURLToPath5 } from "node:url";
-
-// js/shared/seam-entrance.ts
-import { createHash as createHash7, randomBytes as randomBytes3 } from "node:crypto";
-import { linkSync as linkSync2, mkdirSync as mkdirSync9, readFileSync as readFileSync16, renameSync as renameSync7, unlinkSync as unlinkSync8, writeFileSync as writeFileSync10 } from "node:fs";
-import { dirname as dirname7, join as join15, resolve as resolve5 } from "node:path";
-var seamKey = (authDir) => createHash7("sha256").update(resolve5(authDir)).digest("hex").slice(0, 16);
-var seamRunDir = (authDir) => join15(resolve5(authDir), "run");
-var SUN_PATH_MAX = 103;
-function pipeNonce(authDir) {
-  const run = seamRunDir(authDir);
-  const file = join15(run, "pipe");
-  mkdirSync9(run, { recursive: true, mode: 448 });
-  const tmp = `${file}.${process.pid}-${randomBytes3(6).toString("hex")}`;
-  try {
-    writeFileSync10(tmp, randomBytes3(16).toString("hex"), { mode: 384 });
-    linkSync2(tmp, file);
-  } catch {
-  } finally {
-    try {
-      unlinkSync8(tmp);
-    } catch {
-    }
-  }
-  for (let i = 0; i < 50; i++) {
-    const word = readFileSync16(file, "utf8").trim();
-    if (word) return word;
-    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
-  }
-  throw new Error(`${file} stays empty — the pipe name is unknown`);
-}
-function seamSocketPath(authDir) {
-  const key = seamKey(authDir);
-  if (process.platform === "win32")
-    return `\\\\.\\pipe\\iskron-daemon-${key}-${pipeNonce(authDir)}`;
-  const inRun = join15(seamRunDir(authDir), "daemon.sock");
-  if (Buffer.byteLength(inRun) <= SUN_PATH_MAX) return inRun;
-  return join15(shortSocketDir(), `daemon-${key}.sock`);
-}
-function seamEntranceProblem(authDir) {
-  if (process.platform === "win32") return null;
-  const run = seamRunDir(authDir);
-  try {
-    mkdirSync9(dirname7(run), { recursive: true, mode: 448 });
-  } catch (e) {
-    return `${dirname7(run)}: ${e.message}`;
-  }
-  const bad = privateDirProblem(run);
-  if (bad) return bad;
-  const sockDir = dirname7(seamSocketPath(authDir));
-  return sockDir === run ? null : privateDirProblem(sockDir);
-}
-var seamRaiseLockPath = (authDir) => join15(seamRunDir(authDir), "daemon.raising");
-var ownPidAlive = (pid) => {
-  if (!Number.isInteger(pid) || pid <= 0) return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-};
-var readLock = (path) => {
-  try {
-    return JSON.parse(readFileSync16(path, "utf8"));
-  } catch {
-    return null;
-  }
-};
-function takeFileLock(path, staleMs) {
-  const token = `${process.pid}-${randomBytes3(8).toString("hex")}`;
-  const body = JSON.stringify({ pid: process.pid, token, started_at: Date.now() });
-  const release = () => {
-    if (readLock(path)?.token === token) {
-      try {
-        unlinkSync8(path);
-      } catch {
-      }
-    }
-  };
-  const claim = () => {
-    const tmp = `${path}.${token}`;
-    writeFileSync10(tmp, body, { mode: 384 });
-    try {
-      linkSync2(tmp, path);
-      return true;
-    } catch (e) {
-      if (e.code === "EEXIST") return false;
-      throw e;
-    } finally {
-      try {
-        unlinkSync8(tmp);
-      } catch {
-      }
-    }
-  };
-  try {
-    if (claim()) return { held: true, release };
-    const held2 = readLock(path);
-    if (held2 && ownPidAlive(held2.pid) && Date.now() - held2.started_at < staleMs)
-      return { held: false, fault: null, holder: { pid: held2.pid, started_at: held2.started_at } };
-    const mistake = carryAwayStale(path, held2?.token);
-    if (mistake) return { held: false, fault: mistake.putBack ? null : mistake.word };
-    return claim() ? { held: true, release } : { held: false, fault: null };
-  } catch (e) {
-    return { held: false, fault: `${path}: ${e.message}` };
-  }
-}
-function carryAwayStale(path, staleToken) {
-  const away = `${path}.stale-${process.pid}-${randomBytes3(6).toString("hex")}`;
-  try {
-    renameSync7(path, away);
-  } catch {
-    return null;
-  }
-  if (readLock(away)?.token !== staleToken) {
-    try {
-      linkSync2(away, path);
-    } catch {
-      return {
-        putBack: false,
-        word: `a live lock was carried away by mistake and could not be put back (${path} is taken again); it is left as ${away}`
-      };
-    }
-    try {
-      unlinkSync8(away);
-    } catch {
-    }
-    return {
-      putBack: true,
-      word: `a live lock was carried away by mistake and put back — ${path} is held`
-    };
-  }
-  try {
-    unlinkSync8(away);
-  } catch {
-  }
-  return null;
-}
-
-// js/bridge/thin.ts
+// js/bridge/daemon.ts
 var ms = (name, dflt) => {
   const v = Number(process.env[name]);
   return process.env[name]?.trim() && Number.isFinite(v) && v >= 0 ? v : dflt;
 };
-var ATTACH_MS = ms("ISKRON_BRIDGE_DAEMON_WAIT_MS", 5e3);
-var BYE_MS = ms("ISKRON_BRIDGE_BYE_MS", 5e3);
-var HELLO_MS = 3e3;
-var POLL_MS = 100;
-var RAISE_STALE_MS = 15e3;
+var IDLE_MS = ms("ISKRON_BRIDGE_DAEMON_IDLE_MS", 6e4);
+var HOME_CHECK_MS = ms("ISKRON_BRIDGE_DAEMON_HOME_CHECK_MS", 6e4);
+var SUCCESSOR_WAIT_MS = ms("ISKRON_BRIDGE_DAEMON_SUCCESSOR_WAIT_MS", 2e4);
+var GRACE_MS = ms("ISKRON_BRIDGE_DAEMON_GRACE_MS", 5e3);
+var JOURNAL_MAX = 256e3;
+var DAEMON_BUSY_EXIT = 75;
 var SELF = (() => {
   try {
     return fileURLToPath5(import.meta.url);
@@ -6950,17 +7378,404 @@ var SELF = (() => {
     return process.argv[1] ?? "";
   }
 })();
-function daemonWanted() {
-  const off = process.env[NO_DAEMON_ENV]?.trim();
-  return process.env[DAEMON_ENV]?.trim() === "1" && (!off || off === "0");
+var versionOfFile = (path) => {
+  try {
+    return versionIn(readFileSync17(path, "utf8"));
+  } catch {
+    return null;
+  }
+};
+async function daemonMain(argv2) {
+  const successor = argv2.includes("--successor");
+  const cfg = parseArgs(argv2.filter((a) => a !== "--successor"));
+  const authDir = cfg.authDir;
+  const run = seamRunDir(authDir);
+  const journalPath = join16(run, "daemon.log");
+  const journal = (line) => {
+    try {
+      mkdirSync10(run, { recursive: true, mode: 448 });
+      try {
+        if (statSync7(journalPath).size > JOURNAL_MAX) unlinkSync10(journalPath);
+      } catch {
+      }
+      const text = line.trimEnd().replace(/\[iskron-bridge [^\]]*\] /, "");
+      appendFileSync3(
+        journalPath,
+        `${(/* @__PURE__ */ new Date()).toISOString()} pid=${process.pid} ${BUILD} ${text}
+`,
+        { mode: 384 }
+      );
+    } catch {
+    }
+  };
+  setProcessLog(journal);
+  installCrashWords();
+  if (!updatesDisabled()) {
+    const sync = syncHome();
+    for (const p of sync.copied) log(`home updated by this build: ${p}`);
+    if (sync.reexec) {
+      log(`the home copy is newer — the daemon rises from it: ${sync.reexec}`);
+      spawnDaemon(sync.reexec, authDir, successor);
+      process.exit(0);
+    }
+  }
+  const sessions = /* @__PURE__ */ new Map();
+  const engines = /* @__PURE__ */ new Map();
+  const sockets = /* @__PURE__ */ new Set();
+  let draining = false;
+  let counter2 = 0;
+  let lastNotice = null;
+  let server = null;
+  let idle = null;
+  const armIdle = () => {
+    if (idle) clearTimeout(idle);
+    idle = null;
+    if (draining || sessions.size) return;
+    idle = setTimeout(() => {
+      idle = null;
+      if (sessions.size || draining) return;
+      const flow = pendingFlow();
+      if (flow) {
+        log("idle, but an authorization flow is pending — staying for the human's click");
+        void flow.finally(armIdle);
+        return;
+      }
+      log(`no session for ${Math.round(IDLE_MS / 1e3)}s — the daemon leaves`);
+      server?.close();
+      process.exit(0);
+    }, IDLE_MS);
+  };
+  const handover = async (to, why) => {
+    if (draining) return;
+    draining = true;
+    if (idle) clearTimeout(idle);
+    log(`handing over to ${to}: ${why} — ${sessions.size} session(s)`);
+    beginHandover(why);
+    server?.close();
+    for (const so of sockets) writeFrame(so, { t: "handover", why });
+    spawnDaemon(to, authDir, true);
+    await Promise.allSettled([...sessions.values()].map((s2) => s2.end(`daemon handover: ${why}`)));
+    for (const so of sockets) so.end();
+    log("handed over — leaving");
+    setTimeout(() => process.exit(0), 300);
+  };
+  const newer = (v) => !!v && compareVersions(v, VERSION) > 0;
+  let homeSeen = "";
+  const checkHome = () => {
+    if (draining || updatesDisabled()) return;
+    const home = homeBridgePath();
+    let stamp;
+    try {
+      const st = statSync7(home);
+      stamp = `${st.ino}:${st.size}:${st.mtimeMs}`;
+    } catch {
+      return;
+    }
+    if (stamp === homeSeen) return;
+    homeSeen = stamp;
+    const v = versionOfFile(home);
+    if (newer(v)) void handover(home, `the home copy is v${v}, this daemon v${VERSION}`);
+  };
+  const newerBridge = (hello) => {
+    if (updatesDisabled()) return;
+    const theirs = /^v(\d+\.\d+\.\d+)/.exec(hello.build)?.[1] ?? null;
+    if (!newer(theirs)) return;
+    const home = homeBridgePath();
+    const homeV = versionOfFile(home);
+    const to = homeV && compareVersions(homeV, theirs) >= 0 ? home : hello.path;
+    if (!to || !newer(versionOfFile(to))) return;
+    setImmediate(() => void handover(to, `a thin bridge ${hello.build} is newer than this daemon`));
+  };
+  const host = {
+    build: BUILD,
+    path: SELF,
+    log: (m) => log(m),
+    count: () => sessions.size,
+    draining: () => draining,
+    find: (id) => sessions.get(id) ?? null,
+    open(hello) {
+      const id = `s${++counter2}-${process.pid}`;
+      let engine = null;
+      let s2;
+      try {
+        s2 = streamSeamSession(
+          id,
+          (io, logTo) => engine = openSession(
+            io,
+            {
+              argv: hello.argv,
+              env: hello.env ?? {},
+              cwd: hello.cwd,
+              pid: hello.pid,
+              path: hello.path,
+              patSha: hello.patSha ?? null
+            },
+            { id, log: logTo }
+          ),
+          (msg) => log(
+            `session ${id}: said while no thin bridge was attached — lost: ${JSON.stringify(msg).slice(0, 160)}`
+          ),
+          (line) => journal(`[${id}] ${line}`)
+        );
+      } catch (e) {
+        return errorMessage(e);
+      }
+      const opened = engine;
+      const traced = {
+        ...s2,
+        deliver: (msg) => {
+          if (process.env.ISKRON_BRIDGE_DAEMON_TRACE)
+            journal(`[${id}] rpc ${msg.method ?? "reply"} ${JSON.stringify(msg.id ?? null)}`);
+          s2.deliver(msg);
+        },
+        end: (why) => s2.end(why).then(() => {
+          if (sessions.get(id) !== traced) return;
+          sessions.delete(id);
+          engines.delete(id);
+          log(`session ${id} ended: ${why}`);
+          armIdle();
+        })
+      };
+      sessions.set(id, traced);
+      if (opened) engines.set(id, opened);
+      if (idle) clearTimeout(idle);
+      idle = null;
+      log(
+        `session ${id} for pid ${hello.pid} (${hello.build}, ${hello.path}) argv=${JSON.stringify(hello.argv)}`
+      );
+      if (lastNotice && opened?.scope) {
+        const notice = lastNotice;
+        runIn(opened.scope, () => pendNotice(notice));
+      }
+      newerBridge(hello);
+      return traced;
+    }
+  };
+  const started = Date.now();
+  for (; ; ) {
+    try {
+      server = await listenSeam(authDir, (socket) => {
+        sockets.add(socket);
+        socket.on("close", () => sockets.delete(socket));
+        serveSeam(socket, host, GRACE_MS);
+      });
+      break;
+    } catch (e) {
+      const code = e.code;
+      if (code === "EADDRINUSE" && successor && Date.now() - started < SUCCESSOR_WAIT_MS) {
+        await new Promise((r) => setTimeout(r, 100));
+        continue;
+      }
+      log(`the daemon does not rise: ${errorMessage(e)}`);
+      process.exit(code === "EADDRINUSE" ? DAEMON_BUSY_EXIT : 3);
+    }
+  }
+  log(`listening ${seamSocketPath(authDir)}${successor ? " (successor)" : ""}`);
+  startEngine(cfg, { freshness: false });
+  startFreshnessWatch(
+    authDir,
+    cfg.serverUrl,
+    (notice) => {
+      lastNotice = notice;
+      for (const e of engines.values()) if (e.scope) runIn(e.scope, () => tellNotice(notice));
+    },
+    checkHome
+  );
+  const homeTimer = setInterval(checkHome, HOME_CHECK_MS);
+  homeTimer.unref();
+  checkHome();
+  armIdle();
+  const stop = (sig) => {
+    if (draining) return;
+    draining = true;
+    log(`${sig} — ending ${sessions.size} session(s)`);
+    server?.close();
+    void Promise.allSettled([...sessions.values()].map((s2) => s2.end(sig))).then(() => {
+      for (const so of sockets) so.destroy();
+      process.exit(0);
+    });
+  };
+  process.on("SIGTERM", () => stop("SIGTERM"));
+  process.on("SIGINT", () => stop("SIGINT"));
+}
+function spawnDaemon(file, authDir, successor) {
+  try {
+    const child = spawn3(
+      process.execPath,
+      [file, "daemon", "--auth-dir", authDir, ...successor ? ["--successor"] : []],
+      {
+        detached: true,
+        stdio: "ignore",
+        cwd: seamRunDir(authDir),
+        env: process.env,
+        windowsHide: true
+      }
+    );
+    child.on("error", (e) => log(`the successor did not start: ${e.message}`));
+    child.unref();
+  } catch (e) {
+    log(`the successor did not start: ${errorMessage(e)}`);
+  }
+}
+
+// js/bridge/thin.ts
+import { createInterface as createInterface3 } from "node:readline";
+import { PassThrough as PassThrough2 } from "node:stream";
+
+// js/bridge/lostplaces.ts
+function placeWord(msg) {
+  if (msg.method !== "notifications/message" || msg.params?.logger !== "iskron-channel")
+    return null;
+  const data = msg.params?.data;
+  const realm = typeof data?.place?.realm === "string" ? data.place.realm.trim() : "";
+  return typeof data?.kind === "string" ? { kind: data.kind, key: typeof data.key === "string" ? data.key : void 0, realm } : null;
+}
+function lostPlaces(say, log3) {
+  const live = /* @__PURE__ */ new Map();
+  const lost = /* @__PURE__ */ new Map();
+  return {
+    live,
+    /** Место снова взято (held, beside) — отказ по нему снят. */
+    regained(k, realm) {
+      live.set(k, realm);
+      for (const [lk, e] of lost)
+        if (lk === k || e.satellite && sameRealm(e.realm, realm)) lost.delete(lk);
+    },
+    lose(k, realm, why, satellite) {
+      const text = satellite ? L(
+        `Отказано (мост): место спутника потеряно при смене демона машины (${k}) — у места спутника нет записи держания, и записи легли бы без автора; вызов не отправлен. Встань снова: iskron_stand с satellite_of.`,
+        `Refused (bridge): the satellite's seat was lost in the machine daemon's change (${k}) — a satellite seat has no holding record, and writes would go unattributed; the call was not sent. Stand again: iskron_stand with satellite_of.`
+      ) : L(
+        `Отказано (мост): место ${k} (граф ${realm}) не вернулось после смены демона машины (${why}) — записи легли бы без автора; вызов не отправлен. Верни место: iskron_stand в этом графе тем же именем.`,
+        `Refused (bridge): the seat ${k} (graph ${realm}) did not come back after the machine daemon's change (${why}) — writes would go unattributed; the call was not sent. Bring it back: iskron_stand in that graph with the same name.`
+      );
+      lost.set(k, { realm, satellite, text });
+      live.delete(k);
+      log3(text);
+      say({
+        jsonrpc: "2.0",
+        method: "notifications/message",
+        params: {
+          level: "warning",
+          logger: "iskron-channel",
+          data: { kind: "lost", key: k, text }
+        }
+      });
+    },
+    /** Сколько мест потеряно — тонкий мост решает по этому, учить ли имена графов. */
+    lostCount() {
+      return lost.size;
+    },
+    /**
+     * Слово о месте, пришедшее тонкому мосту, свёрнуто здесь; возвращает heldKey
+     * после слова. «Держу» и «рядом» — место взято: отказ по нему снят; held с
+     * иным ключом — агент сменил основное место, и прежний ключ из live прочь —
+     * иначе следующий обрыв назвал бы его потерей. «Отпущено» (released) словом
+     * сессии демона при живом харнесе (`daemonSession`) — не уход агента: так
+     * кончается демон без преемника (SIGTERM/SIGINT), и ключ остаётся —
+     * переподхват вернёт место по записи держания (iskron/resume), а не выйдет —
+     * скажет lost вслух. Подлинный уход агента идёт через собственный leave
+     * тонкого моста, смерть и отъём места — словами dead и evicted.
+     */
+    seen(place, heldKey2, daemonSession) {
+      if ((place?.kind === "held" || place?.kind === "beside") && place.key) {
+        if (place.kind === "held") {
+          if (heldKey2 && heldKey2 !== place.key) live.delete(heldKey2);
+          heldKey2 = place.key;
+        }
+        this.regained(place.key, place.realm);
+      } else if (place?.kind === "beside-gone" && place.key) live.delete(place.key);
+      else if (place && ["released", "dead", "evicted"].includes(place.kind) && (!place.key || place.key === heldKey2) && !(place.kind === "released" && daemonSession)) {
+        if (heldKey2) live.delete(heldKey2);
+        heldKey2 = null;
+      }
+      return heldKey2;
+    },
+    /**
+     * Отказ вызова тула из-за потерянного места; null — пропустить. Отказ
+     * касается только вызовов в потерянный граф: вызов без графа свободен, граф
+     * сличается канонически (realms.ts), и отказ подписан графом вызова, а не
+     * первой попавшейся потери. Имя, не разрешённое против потерянных, — отказ с
+     * просьбой полного адреса (#5838): гадать нельзя, а пропустить — записать без автора.
+     */
+    refusal(msg) {
+      if (!lost.size || msg.method !== "tools/call" || msg.params?.name === "iskron_stand")
+        return null;
+      const r = msg.params?.arguments?.realm;
+      if (typeof r !== "string" || !r.trim()) return null;
+      const hit = [...lost.entries()].find(([, e]) => realmRelation(r, e.realm) === "same");
+      if (hit) return hit[1].text;
+      if ([...live.values()].some((x) => realmRelation(r, x) === "same")) return null;
+      return [...lost.values()].some((e) => realmRelation(r, e.realm) === "unknown") ? unresolvedWord(r, [...live.values()]) : null;
+    }
+  };
+}
+function realmListAsk() {
+  const asked = /* @__PURE__ */ new Set();
+  return {
+    /** Вызов списка, когда потери есть; null — потерь нет или спрос уже в полёте. */
+    ask(lostCount, id) {
+      if (!lostCount || asked.size) return null;
+      const call = {
+        jsonrpc: "2.0",
+        id: id(),
+        method: "tools/call",
+        params: { name: "iskron_realm", arguments: { action: "list" } }
+      };
+      asked.add(JSON.stringify(call.id));
+      return call;
+    },
+    /** Ответ собственного вызова списка: true — потреблён (алиасы учтены, отказ — громко). */
+    reply(msg, log3) {
+      if (msg.method !== void 0 || msg.id === void 0 || msg.id === null) return false;
+      if (!asked.delete(JSON.stringify(msg.id))) return false;
+      const content = msg.result?.content;
+      const text = (Array.isArray(content) ? content : []).map((c) => String(c?.text ?? "")).join("\n");
+      if (msg.error || msg.result?.isError)
+        log3(
+          `the realm list came back refused instead of the list — rN and slugs stay unresolved: ${text || msg.error?.message || "?"}`
+        );
+      learnRealmList(text);
+      return true;
+    },
+    /** Ответа не будет (связь порвалась) — позволить спросить снова. */
+    forget() {
+      asked.clear();
+    }
+  };
+}
+
+// js/bridge/raise.ts
+import { spawn as spawn4 } from "node:child_process";
+import { readFileSync as readFileSync18 } from "node:fs";
+import { fileURLToPath as fileURLToPath6 } from "node:url";
+var RAISE_STALE_MS = 15e3;
+var SELF2 = (() => {
+  try {
+    return fileURLToPath6(import.meta.url);
+  } catch {
+    return process.argv[1] ?? "";
+  }
+})();
+function daemonEntry() {
+  const named = process.env.ISKRON_BRIDGE_DAEMON_ENTRY?.trim();
+  if (named) return named;
+  if (updatesDisabled()) return SELF2;
+  const home = homeBridgePath();
+  try {
+    const v = versionIn(readFileSync18(home, "utf8"));
+    if (home !== SELF2 && compareVersions(v, VERSION) > 0) return home;
+  } catch {
+  }
+  return SELF2;
 }
 function raiseDaemon(authDir) {
   const lock = takeFileLock(seamRaiseLockPath(authDir), RAISE_STALE_MS);
   if (!lock.held) return lock.fault ? { kind: "fault", why: lock.fault } : { kind: "other" };
-  const entry = process.env.ISKRON_BRIDGE_DAEMON_ENTRY || SELF;
+  const entry = daemonEntry();
   log(`no bridge daemon for ${authDir} — raising one: ${entry} daemon`);
   try {
-    const child = spawn3(process.execPath, [entry, "daemon", "--auth-dir", authDir], {
+    const child = spawn4(process.execPath, [entry, "daemon", "--auth-dir", authDir], {
       detached: true,
       stdio: "ignore",
       cwd: seamRunDir(authDir),
@@ -6969,14 +7784,35 @@ function raiseDaemon(authDir) {
     });
     child.unref();
     const failed = new Promise((r) => {
-      child.once("error", (e) => r(`the daemon did not start: ${e.message}`));
-      child.once("exit", (code, sig) => r(`the daemon exited at once (${sig ?? `code ${code}`})`));
+      child.once("error", (e) => r({ code: null, why: `the daemon did not start: ${e.message}` }));
+      child.once(
+        "exit",
+        (code, sig) => r({ code, why: `the daemon exited at once (${sig ?? `code ${code}`})` })
+      );
     });
     return { kind: "raising", release: lock.release, failed };
   } catch (e) {
     lock.release();
     return { kind: "fault", why: `the daemon did not start: ${e.message}` };
   }
+}
+
+// js/bridge/thin.ts
+var ms2 = (name, dflt) => {
+  const v = Number(process.env[name]);
+  return process.env[name]?.trim() && Number.isFinite(v) && v >= 0 ? v : dflt;
+};
+var ATTACH_MS = ms2("ISKRON_BRIDGE_DAEMON_WAIT_MS", 5e3);
+var REATTACH_MS = ms2("ISKRON_BRIDGE_DAEMON_REATTACH_MS", 3e4);
+var BYE_MS = ms2("ISKRON_BRIDGE_BYE_MS", 5e3);
+var HELLO_MS = 3e3;
+var POLL_MS = 100;
+var SUCCESSOR_MS = 2e4;
+var BUSY_RETRY_MS = 2e3;
+var GATE_MS = 2e4;
+function daemonWanted() {
+  const off = process.env[NO_DAEMON_ENV]?.trim();
+  return process.env[DAEMON_ENV]?.trim() === "1" && (!off || off === "0");
 }
 function thinMain(argv2) {
   const cfg = parseArgs(argv2);
@@ -6994,39 +7830,105 @@ function thinMain(argv2) {
   let word = null;
   let leaving = null;
   let byeDone = null;
+  let heldKey2 = null;
+  let everAttached = false;
+  let successorAwaited = 0;
   const queue2 = [];
   const flights = /* @__PURE__ */ new Map();
   const verdicted = /* @__PURE__ */ new Set();
   const replayIds = /* @__PURE__ */ new Set();
+  const realmIds = realmListAsk();
+  const cancelled = /* @__PURE__ */ new Set();
   let replays = 0;
   const key = (id) => JSON.stringify(id);
   const writeHarness = (m) => writeTo(process.stdout, JSON.stringify(m) + "\n");
   const toHarness = (msg) => {
     if (msg.method === void 0 && msg.id !== void 0 && msg.id !== null) {
       const k = key(msg.id);
-      if (replayIds.delete(k)) return;
+      if (realmIds.reply(msg, log)) {
+        openGate(k);
+        return;
+      }
+      if (replayIds.delete(k)) {
+        const back = resuming.get(k);
+        resuming.delete(k);
+        if (back && msg.result?.resumed !== true) {
+          placeLost(back.key, back.realm, String(msg.result?.word ?? msg.error?.message ?? "?"));
+          askRealms();
+        }
+        openGate(k);
+        return;
+      }
+      cancelled.delete(k);
       if (verdicted.delete(k)) {
         debug(`a late answer to ${k} dropped — the harness already has its verdict`);
         return;
       }
       const f = flights.get(k);
       flights.delete(k);
-      if (word && f?.method === "tools/call" && Array.isArray(msg.result?.content)) {
+      if (word && f?.msg.method === "tools/call" && Array.isArray(msg.result?.content)) {
         msg.result.content.push({ type: "text", text: word });
         word = null;
       }
     }
+    const place = placeWord(msg);
+    heldKey2 = places.seen(place, heldKey2, mode === "daemon" && !leaving);
     writeHarness(msg);
   };
-  const verdictAll = (why, acks) => {
+  const gate = /* @__PURE__ */ new Set();
+  let gateTimer = null;
+  const openGate = (k) => {
+    if (k) gate.delete(k);
+    else gate.clear();
+    if (gate.size) return;
+    if (gateTimer) clearTimeout(gateTimer);
+    gateTimer = null;
+    for (const m of queue2.splice(0)) dispatch2(m);
+  };
+  const closeGate = (k) => {
+    gate.add(k);
+    gateTimer ??= setTimeout(() => {
+      gateTimer = null;
+      if (!gate.size) return;
+      log(
+        `the new session did not answer the bridge's own calls in ${GATE_MS}ms — letting calls through`
+      );
+      openGate();
+    }, GATE_MS);
+  };
+  const places = lostPlaces(writeHarness, log);
+  const live = places.live;
+  const resuming = /* @__PURE__ */ new Map();
+  const placeLost = (k, realm, why) => {
+    places.lose(k, realm, why, cfg.satellite && k === heldKey2);
+    if (k === heldKey2) heldKey2 = null;
+  };
+  const askRealms = () => {
+    const m = realmIds.ask(places.lostCount(), () => `iskron-thin-realms-${++replays}`);
+    if (!m) return;
+    if (mode === "daemon" && link) toDaemon(link, m);
+    else if (mode === "local") toLocal(m);
+    else return;
+    closeGate(key(m.id));
+  };
+  const verdictAll = (why, acks, resend = false) => {
+    const again = [];
     for (const [k, f] of flights) {
+      if (resend && acks && !f.acked) {
+        if (cancelled.delete(k)) flights.delete(k);
+        else again.push(f.msg);
+        continue;
+      }
       writeHarness(syntheticError(f.id, why, !acks || f.acked ? UNKNOWN : NOT_SENT));
       verdicted.add(k);
+      flights.delete(k);
     }
-    flights.clear();
+    return again;
   };
   const toDaemon = (l, msg) => {
     if (msg.method === "initialize") initSent = true;
+    const f = msg.id !== void 0 && msg.id !== null ? flights.get(key(msg.id)) : void 0;
+    if (f && f.msg === msg) f.acked = false;
     l.send({ t: "rpc", msg });
   };
   const toLocal = (msg) => {
@@ -7034,26 +7936,57 @@ function thinMain(argv2) {
     local?.input.write(JSON.stringify(msg) + "\n");
   };
   const dispatch2 = (msg) => {
-    if (mode === "daemon" && link) toDaemon(link, msg);
+    const refusal2 = !gate.size && msg.id != null ? places.refusal(msg) : null;
+    if (refusal2) {
+      flights.delete(key(msg.id));
+      writeHarness({
+        jsonrpc: "2.0",
+        id: msg.id,
+        result: { isError: true, content: [{ type: "text", text: refusal2 }] }
+      });
+    } else if (gate.size)
+      queue2.push(msg);
+    else if (mode === "daemon" && link) toDaemon(link, msg);
     else if (mode === "local") toLocal(msg);
     else queue2.push(msg);
   };
   const replay = (send) => {
     if (!initCopy || !initSent) return;
-    const id = `iskron-thin-replay-${++replays}`;
-    replayIds.add(key(id));
-    send({ ...initCopy, id });
-    if (initializedSeen) send({ jsonrpc: "2.0", method: "notifications/initialized" });
+    if (!queue2.some((m) => m.method === "initialize")) {
+      const id = `iskron-thin-replay-${++replays}`;
+      replayIds.add(key(id));
+      closeGate(key(id));
+      send({ ...initCopy, id });
+      if (initializedSeen) send({ jsonrpc: "2.0", method: "notifications/initialized" });
+    }
+    const held2 = heldKey2 ? { key: heldKey2, realm: live.get(heldKey2) ?? "" } : null;
+    for (const [k, realm] of [...live]) {
+      if (k === heldKey2) continue;
+      placeLost(
+        k,
+        realm,
+        L("места других графов рядом не возвращаются", "beside seats do not come back")
+      );
+    }
+    live.clear();
+    if (held2) {
+      const id = `iskron-thin-resume-${++replays}`;
+      replayIds.add(key(id));
+      resuming.set(key(id), held2);
+      closeGate(key(id));
+      log(`the session is new — bringing its place ${held2.key} back from the hold record`);
+      send({ jsonrpc: "2.0", id, method: "iskron/resume", params: { key: held2.key } });
+    }
   };
   const goLocal = (reason) => {
     if (mode === "local" || leaving) return;
     log(`${reason} — going as the full bridge inside this process`);
     word = `iskron-bridge ${BUILD}: ${reason}; this bridge runs as the full bridge in its own process (${DAEMON_ENV}=1 asked for the machine's daemon).`;
-    const input = new PassThrough();
-    const output = new PassThrough();
+    const input = new PassThrough2();
+    const output = new PassThrough2();
     startEngine(cfg);
     const session = openSession({ input, output });
-    createInterface2({ input: output, terminal: false }).on("line", (line) => {
+    createInterface3({ input: output, terminal: false }).on("line", (line) => {
       if (!line.trim()) return;
       try {
         toHarness(JSON.parse(line));
@@ -7063,6 +7996,7 @@ function thinMain(argv2) {
     local = { session, input };
     mode = "local";
     replay(toLocal);
+    askRealms();
     for (const m of queue2.splice(0)) dispatch2(m);
   };
   const onWelcome = (l) => {
@@ -7072,6 +8006,7 @@ function thinMain(argv2) {
     sessionId = w.session;
     link = l;
     mode = "daemon";
+    everAttached = true;
     log(
       `through the machine's bridge daemon ${w.build} (pid ${w.pid}), session ${sessionId}` + (resumed ? " — resumed" : "")
     );
@@ -7080,6 +8015,15 @@ function thinMain(argv2) {
       else if (f.t === "ack") {
         const fl = flights.get(key(f.id));
         if (fl) fl.acked = true;
+        cancelled.delete(key(f.id));
+      } else if (f.t === "log")
+        writeTo(process.stderr, f.line.endsWith("\n") ? f.line : `${f.line}
+`);
+      else if (f.t === "handover") {
+        successorAwaited = Date.now();
+        log(
+          `the machine's bridge daemon hands over to its successor (${f.why ?? "?"}) — waiting for it`
+        );
       } else if (f.t === "bye-ok") byeDone?.();
     });
     l.onClose(() => {
@@ -7089,45 +8033,65 @@ function thinMain(argv2) {
       lost(!!w.ack);
     });
     if (!resumed) replay((m) => toDaemon(l, m));
+    askRealms();
     for (const m of queue2.splice(0)) dispatch2(m);
   };
   const lost = (acks) => {
     mode = "attaching";
     replayIds.clear();
-    log(
-      `the link to the machine's bridge daemon broke — ${flights.size} call(s) in flight get a verdict; reattaching`
+    resuming.clear();
+    realmIds.forget();
+    gate.clear();
+    if (gateTimer) clearTimeout(gateTimer);
+    gateTimer = null;
+    const inFlight = flights.size;
+    const again = verdictAll(
+      "the link to this machine's bridge daemon broke before the answer came back",
+      acks,
+      true
     );
-    verdictAll("the link to this machine's bridge daemon broke before the answer came back", acks);
+    log(
+      `the link to the machine's bridge daemon broke — ${inFlight} call(s) in flight: ${again.length} not taken by the daemon go again after the reattach, ${inFlight - again.length} get a verdict; reattaching`
+    );
+    queue2.unshift(...again);
     void attach2();
   };
   const attach2 = async () => {
     const unsafe = seamEntranceProblem(authDir);
     if (unsafe) return goLocal(`the daemon's entrance is not private (${unsafe})`);
     const socketPath = seamSocketPath(authDir);
-    const deadline = Date.now() + ATTACH_MS;
+    const wait = everAttached ? REATTACH_MS : ATTACH_MS;
+    const deadline = Date.now() + wait;
     let raise = null;
     let raiseFailed = null;
+    let raiseAgainAt = 0;
     try {
       for (; ; ) {
         if (leaving) return;
         try {
-          const hello = helloFrame({ build: BUILD, path: SELF, argv: argv2, session: sessionId, patSha });
+          const hello = helloFrame({ build: BUILD, path: SELF2, argv: argv2, session: sessionId, patSha });
           return onWelcome(await connectSeam(socketPath, hello, HELLO_MS));
         } catch (e) {
           if (!(e instanceof SeamError)) throw e;
           if (e.kind === "refused")
             return goLocal(`the machine's bridge daemon refused this bridge: ${e.message}`);
-          if (e.kind === "absent" && !raise) {
-            raise = raiseDaemon(authDir);
-            if (raise.kind === "fault")
-              return goLocal(`cannot raise the bridge daemon for ${authDir}: ${raise.why}`);
-            if (raise.kind === "raising") void raise.failed.then((why) => raiseFailed = why);
+          const successorDue = !!successorAwaited && Date.now() - successorAwaited < SUCCESSOR_MS;
+          if (e.kind === "absent" && !raise && !successorDue && Date.now() >= raiseAgainAt) {
+            const r = raiseDaemon(authDir);
+            raise = r;
+            if (r.kind === "fault")
+              return goLocal(`cannot raise the bridge daemon for ${authDir}: ${r.why}`);
+            if (r.kind === "raising")
+              void r.failed.then(({ code, why }) => {
+                if (code !== DAEMON_BUSY_EXIT) return void (raiseFailed = why);
+                r.release();
+                if (raise === r) raise = null;
+                raiseAgainAt = Date.now() + BUSY_RETRY_MS;
+              });
           }
           if (raiseFailed) return goLocal(`no bridge daemon for ${authDir}: ${raiseFailed}`);
           if (Date.now() >= deadline)
-            return goLocal(
-              `no bridge daemon for ${authDir} answered in ${ATTACH_MS}ms (${e.message})`
-            );
+            return goLocal(`no bridge daemon for ${authDir} answered in ${wait}ms (${e.message})`);
           await sleep(POLL_MS);
         }
       }
@@ -7135,7 +8099,7 @@ function thinMain(argv2) {
       if (raise?.kind === "raising") raise.release();
     }
   };
-  const rl = createInterface2({ input: process.stdin, terminal: false });
+  const rl = createInterface3({ input: process.stdin, terminal: false });
   rl.on("line", (line) => {
     const trimmed2 = line.trim();
     if (!trimmed2) return;
@@ -7148,9 +8112,21 @@ function thinMain(argv2) {
     }
     if (msg.method === "initialize") initCopy = msg;
     if (msg.method === "notifications/initialized") initializedSeen = true;
+    if (msg.method === "notifications/cancelled") {
+      const k = key(msg.params?.requestId);
+      const f = flights.get(k);
+      if (f && !f.acked) {
+        const i = queue2.indexOf(f.msg);
+        if (i >= 0) {
+          queue2.splice(i, 1);
+          flights.delete(k);
+        } else cancelled.add(k);
+      }
+    }
     if (msg.method && msg.id !== void 0 && msg.id !== null) {
       verdicted.delete(key(msg.id));
-      flights.set(key(msg.id), { id: msg.id, method: msg.method, acked: false });
+      cancelled.delete(key(msg.id));
+      flights.set(key(msg.id), { id: msg.id, msg, acked: false });
     }
     dispatch2(msg);
   });
@@ -7169,7 +8145,7 @@ function thinMain(argv2) {
         l.send({ t: "bye", why });
       });
       l.close();
-    }
+    } else acks = true;
     verdictAll("the bridge left before the machine's daemon answered", acks);
     await flushStdout(process.stdout);
     process.exit(0);
@@ -7185,27 +8161,6 @@ function thinMain(argv2) {
     void leave("SIGINT");
   });
   void attach2().catch((e) => goLocal(`the seam failed: ${e?.message ?? String(e)}`));
-}
-async function versionLines(args) {
-  const lines = [BUILD];
-  if (!daemonWanted()) return lines;
-  const i = args.indexOf("--auth-dir");
-  const authDir = (i >= 0 ? args[i + 1] : void 0) || process.env.ISKRON_BRIDGE_AUTH_DIR || defaultAuthDir();
-  const unsafe = seamEntranceProblem(authDir);
-  if (unsafe) return [...lines, `daemon: the entrance is not private (${unsafe})`];
-  const path = seamSocketPath(authDir);
-  try {
-    const l = await connectSeam(
-      path,
-      helloFrame({ build: BUILD, path: SELF, argv: args, probe: true }),
-      HELLO_MS
-    );
-    lines.push(`daemon ${l.welcome.build} (pid ${l.welcome.pid}, ${path})`);
-    l.close();
-  } catch (e) {
-    lines.push(`daemon: none answering at ${path} (${e.message})`);
-  }
-  return lines;
 }
 
 // js/bridge/main.ts
@@ -7224,10 +8179,49 @@ function bridgeMain(argv2) {
   installCrashWords();
 }
 
+// js/bridge/probe.ts
+import { fileURLToPath as fileURLToPath7 } from "node:url";
+var HELLO_MS2 = 3e3;
+var SELF3 = (() => {
+  try {
+    return fileURLToPath7(import.meta.url);
+  } catch {
+    return process.argv[1] ?? "";
+  }
+})();
+async function versionLines(args) {
+  const lines = [BUILD];
+  if (!daemonWanted()) return lines;
+  const d = await probeDaemon(args);
+  lines.push(
+    d.ok ? `daemon ${d.build} (pid ${d.pid}, ${d.socket})` : d.unsafe ? `daemon: the entrance is not private (${d.why})` : `daemon: none answering at ${d.socket} (${d.why})`
+  );
+  return lines;
+}
+async function probeDaemon(args) {
+  const i = args.indexOf("--auth-dir");
+  const authDir = (i >= 0 ? args[i + 1] : void 0) || process.env.ISKRON_BRIDGE_AUTH_DIR || defaultAuthDir();
+  const unsafe = seamEntranceProblem(authDir);
+  if (unsafe) return { ok: false, socket: "", why: unsafe, unsafe: true };
+  const socket = seamSocketPath(authDir);
+  try {
+    const l = await connectSeam(
+      socket,
+      helloFrame({ build: BUILD, path: SELF3, argv: args, probe: true }),
+      HELLO_MS2
+    );
+    l.close();
+    const w = l.welcome;
+    return { ok: true, socket, build: w.build, pid: w.pid, sessions: w.sessions, path: w.path };
+  } catch (e) {
+    return { ok: false, socket, why: e.message };
+  }
+}
+
 // js/watchdog/codex.ts
 import { existsSync as existsSync7 } from "node:fs";
 import { homedir as homedir6 } from "node:os";
-import { join as join17 } from "node:path";
+import { join as join18 } from "node:path";
 
 // js/shared/appserver.ts
 import { randomBytes as randomBytes4 } from "node:crypto";
@@ -7306,19 +8300,19 @@ function openDoor(socketPath, onMessage, onClose) {
 }
 
 // js/watchdog/client.ts
-import { existsSync as existsSync6, readdirSync as readdirSync6, readFileSync as readFileSync17 } from "node:fs";
-import { connect as connect3 } from "node:net";
-import { join as join16 } from "node:path";
+import { existsSync as existsSync6, readdirSync as readdirSync6, readFileSync as readFileSync19 } from "node:fs";
+import { connect as connect4 } from "node:net";
+import { join as join17 } from "node:path";
 var ATTACH_WINDOW_MS = 6e4;
 var RETRY_MS = 1e3;
 function parseWatchdogArgs(argv2) {
-  const out5 = { authDir: authDirFromEnv() };
+  const out6 = { authDir: authDirFromEnv() };
   for (let i = 0; i < argv2.length; i++) {
     const a = argv2[i];
-    if (a === "--auth-dir") out5.authDir = argv2[++i] ?? out5.authDir;
-    else if (!a.startsWith("--") && !out5.key) out5.key = a;
+    if (a === "--auth-dir") out6.authDir = argv2[++i] ?? out6.authDir;
+    else if (!a.startsWith("--") && !out6.key) out6.key = a;
   }
-  return out5;
+  return out6;
 }
 function resolveStanding(argv2) {
   const { key, authDir } = parseWatchdogArgs(argv2);
@@ -7327,7 +8321,7 @@ function resolveStanding(argv2) {
   if (key) return { key, path: pathFor(key), authDir };
   const held2 = existsSync6(dir) ? readdirSync6(dir).filter((f) => f.endsWith(".key")).map((f) => {
     try {
-      return readFileSync17(join16(dir, f), "utf8").trim();
+      return readFileSync19(join17(dir, f), "utf8").trim();
     } catch {
       return "";
     }
@@ -7342,8 +8336,8 @@ function resolveStanding(argv2) {
     error: `мост держит несколько стояний — назови нужное: ` + held2.join(", ")
   };
 }
-function adoptSeenPath(named, current2, seen) {
-  if (!named || named === current2) return current2;
+function adoptSeenPath(named, current, seen) {
+  if (!named || named === current) return current;
   seen.clear();
   for (const x of seenIds(named)) seen.add(x);
   return named;
@@ -7353,10 +8347,11 @@ var staleBatchKeys = (ev) => [
   ...ev.unshown ?? []
 ];
 function attach(path, o) {
-  const startedAt = Date.now();
+  let startedAt = Date.now();
   let attached = false;
+  let handover = false;
   function tryOnce() {
-    const sock = connect3(path);
+    const sock = connect4(path);
     let buf = "";
     sock.setEncoding("utf8");
     sock.on("connect", () => {
@@ -7381,12 +8376,22 @@ function attach(path, o) {
             ev.frame = null;
           }
         }
+        if (ev.kind === "handover") {
+          handover = true;
+          continue;
+        }
         o.onEvent(ev);
       }
     });
     sock.on("error", () => {
     });
     sock.on("close", () => {
+      if (attached && handover) {
+        attached = false;
+        handover = false;
+        startedAt = Date.now();
+        return void setTimeout(tryOnce, RETRY_MS);
+      }
       if (attached) return o.onGone("мост отпустил стояние или ушёл — сессия кончилась?");
       if (Date.now() - startedAt > ATTACH_WINDOW_MS) {
         return o.onGone(`мост не поднял локальный сокет ${path} за ${ATTACH_WINDOW_MS / 1e3}s`);
@@ -7402,8 +8407,8 @@ var note = (s2) => {
   process.stderr.write(s2 + "\n");
 };
 function codexDoorPath() {
-  const home = process.env.CODEX_HOME?.trim() || join17(homedir6(), ".codex");
-  return join17(home, "app-server-control", "app-server-control.sock");
+  const home = process.env.CODEX_HOME?.trim() || join18(homedir6(), ".codex");
+  return join18(home, "app-server-control", "app-server-control.sock");
 }
 function runWatchdogCodex(argv2) {
   const threadId = process.env.CODEX_THREAD_ID?.trim();
@@ -7429,7 +8434,7 @@ function runWatchdogCodex(argv2) {
   let seenPath = seenFilePathOf(target.authDir, target.key);
   const seen = seenIds(seenPath);
   const waiting = /* @__PURE__ */ new Map();
-  let door2 = null;
+  let door = null;
   let ready = null;
   let nextId = 1;
   function open() {
@@ -7450,11 +8455,11 @@ function runWatchdogCodex(argv2) {
         note(
           `дверь закрылась: ${why} — открою заново на следующем кадре` + (lost.length ? `; без ответа: ${lost.join(", ")} — вернутся из кольца следующим взводом` : "")
         );
-        door2 = null;
+        door = null;
         ready = null;
       }
     ).then((d) => {
-      door2 = d;
+      door = d;
       d.send({
         method: "initialize",
         id: nextId++,
@@ -7471,7 +8476,7 @@ function runWatchdogCodex(argv2) {
   }
   async function deliver2(text, ids = []) {
     try {
-      const d = door2 ?? await open();
+      const d = door ?? await open();
       const reqId = nextId++;
       waiting.set(reqId, ids);
       d.send({
@@ -7534,19 +8539,19 @@ function runWatchdogCodex(argv2) {
 import { writeSync } from "node:fs";
 var LINE_MAX = 400;
 function wrapLines(text, max = LINE_MAX) {
-  const out5 = [];
+  const out6 = [];
   for (const line of text.split("\n")) {
     let rest2 = line;
     while ([...rest2].length > max) {
       const head = [...rest2].slice(0, max).join("");
       const cut = head.lastIndexOf(" ");
       const at2 = cut > max / 2 ? cut : head.length;
-      out5.push(rest2.slice(0, at2).trimEnd());
+      out6.push(rest2.slice(0, at2).trimEnd());
       rest2 = rest2.slice(at2).trimStart();
     }
-    out5.push(rest2);
+    out6.push(rest2);
   }
-  return out5;
+  return out6;
 }
 var plural = (n) => {
   const m10 = n % 10;
@@ -7558,7 +8563,7 @@ var ALONE_GAP_MS = Number(process.env.ISKRON_WATCHDOG_ALONE_MS) || 300;
 var queue = Promise.resolve();
 var lastAt = 0;
 var lastAlone = false;
-var out = (lines, alone = false, after2) => {
+var out2 = (lines, alone = false, after2) => {
   queue = queue.then(async () => {
     const wait = lastAt && (alone || lastAlone) ? lastAt + ALONE_GAP_MS - Date.now() : 0;
     if (wait > 0) await new Promise((r) => setTimeout(r, wait));
@@ -7570,7 +8575,7 @@ var out = (lines, alone = false, after2) => {
     if (!failed) after2?.();
   });
 };
-var log2 = (s2) => out([s2]);
+var log2 = (s2) => out2([s2]);
 var loudExit = (s2, code) => {
   queue = queue.then(() => exitNow(s2, code));
 };
@@ -7627,18 +8632,18 @@ function runWatchdog(argv2) {
             const all2 = () => [...within, mark].forEach((m) => m());
             const first2 = !cases.has(caseKey(f));
             cases.add(caseKey(f));
-            if (!again) out(wrapLines(batchLine(f, ev.batch.fold, first2)), false, all2);
+            if (!again) out2(wrapLines(batchLine(f, ev.batch.fold, first2)), false, all2);
             else within.forEach((m) => m());
             break;
           }
-          if (!again) out(wrapLines(frameToText(f, ev.raw ?? "")), true, mark);
+          if (!again) out2(wrapLines(frameToText(f, ev.raw ?? "")), true, mark);
           break;
         }
         case "note":
           log2(ev.text ?? "");
           break;
         case "stale":
-          out(wrapLines(ev.text ?? ""), false, () => {
+          out2(wrapLines(ev.text ?? ""), false, () => {
             for (const k of staleBatchKeys(ev)) noteSeen(seenPath, k, seen);
           });
           break;
@@ -7745,21 +8750,21 @@ function runWatchdogExit(argv2) {
 
 // js/cli/doctor.ts
 import { createHash as createHash9 } from "node:crypto";
-import { existsSync as existsSync10, readdirSync as readdirSync8, readFileSync as readFileSync20 } from "node:fs";
+import { existsSync as existsSync10, readdirSync as readdirSync8, readFileSync as readFileSync22 } from "node:fs";
 import { homedir as homedir10 } from "node:os";
-import { dirname as dirname10, join as join20 } from "node:path";
-import { fileURLToPath as fileURLToPath6 } from "node:url";
+import { dirname as dirname10, join as join21 } from "node:path";
+import { fileURLToPath as fileURLToPath8 } from "node:url";
 
 // js/cli/opencode-config.ts
-import { existsSync as existsSync8, readFileSync as readFileSync18 } from "node:fs";
+import { existsSync as existsSync8, readFileSync as readFileSync20 } from "node:fs";
 import { homedir as homedir7 } from "node:os";
-import { dirname as dirname8, join as join18 } from "node:path";
-function openCodeMcpEntries(out5) {
+import { dirname as dirname8, join as join19 } from "node:path";
+function openCodeMcpEntries(out6) {
   const dirFiles = (d) => [
-    join18(d, "opencode.json"),
-    join18(d, "opencode.jsonc"),
-    join18(d, ".opencode", "opencode.json"),
-    join18(d, ".opencode", "opencode.jsonc")
+    join19(d, "opencode.json"),
+    join19(d, "opencode.jsonc"),
+    join19(d, ".opencode", "opencode.json"),
+    join19(d, ".opencode", "opencode.jsonc")
   ];
   const upwards = [];
   if (!process.env.OPENCODE_CONFIG_PROJECT_DISABLE)
@@ -7774,7 +8779,7 @@ function openCodeMcpEntries(out5) {
     // Относится ли каталог из переменной к проектному слою, выключатель которого
     // читается ниже, не наблюдалось (#5559): читаем его в любом случае.
     ...process.env.OPENCODE_CONFIG_DIR ? dirFiles(process.env.OPENCODE_CONFIG_DIR) : [],
-    ...dirFiles(join18(homedir7(), ".config", "opencode")),
+    ...dirFiles(join19(homedir7(), ".config", "opencode")),
     ...upwards
   ];
   const kindOf = (v) => {
@@ -7813,10 +8818,10 @@ function openCodeMcpEntries(out5) {
   for (const f of new Set(files)) {
     if (!existsSync8(f)) continue;
     try {
-      sources.push([f, readFileSync18(f, "utf8")]);
+      sources.push([f, readFileSync20(f, "utf8")]);
     } catch {
       unreadable++;
-      out5(`OpenCode: ${f} не читается`);
+      out6(`OpenCode: ${f} не читается`);
     }
   }
   if (process.env.OPENCODE_CONFIG_CONTENT)
@@ -7830,28 +8835,28 @@ function openCodeMcpEntries(out5) {
         if (!kind) continue;
         found++;
         if (v.enabled === false) {
-          out5(`OpenCode: запись mcp «${name}» в ${file} ведёт Искрон, но выключена — не в игре`);
+          out6(`OpenCode: запись mcp «${name}» в ${file} ведёт Искрон, но выключена — не в игре`);
           continue;
         }
-        out5(
+        out6(
           kind === "bridge" ? `OpenCode: запись mcp «${name}» в ${file} зовёт ${bridgePath(v)} — похоже на мост поставки. Если это он, её тулы namespaced, а мост общий для сессий сервиса: запись может уйти под подписью соседней сессии. Тогда убери её из этого файла руками: у opencode mcp есть list, add, auth, logout — команды remove нет. Поверхность поставки это плагин` : `OpenCode: запись mcp «${name}» в ${file} ведёт Искрон напрямую по http — её тулы namespaced, и стояния канала у неё нет; это запасной путь, и он законен там, где мост не поднять`
         );
       }
     } catch {
       unreadable++;
-      out5(`OpenCode: ${file} не читается`);
+      out6(`OpenCode: ${file} не читается`);
     }
   }
   if (!found)
-    out5(
+    out6(
       `OpenCode: записей mcp Искрона не нашёл${unreadable ? ` в том, что прочёл (${unreadable} файл(а) не разобрались — смотри строки выше)` : ""} — смотрел вверх от ${process.cwd()}, глобальный слой и переменные; запись в другом дереве этим не проверена, позови doctor из каталога проекта`
     );
 }
 
 // js/cli/subagents.ts
-import { existsSync as existsSync9, readdirSync as readdirSync7, readFileSync as readFileSync19, statSync as statSync7 } from "node:fs";
+import { existsSync as existsSync9, readdirSync as readdirSync7, readFileSync as readFileSync21, statSync as statSync8 } from "node:fs";
 import { homedir as homedir9 } from "node:os";
-import { basename as basename5, delimiter, dirname as dirname9, isAbsolute as isAbsolute3, join as join19, resolve as resolve6 } from "node:path";
+import { basename as basename5, delimiter, dirname as dirname9, isAbsolute as isAbsolute3, join as join20, resolve as resolve6 } from "node:path";
 
 // js/cli/frontmatter.ts
 function frontmatterText(file) {
@@ -7865,12 +8870,12 @@ function parseScalar(raw) {
   const s2 = raw.trim();
   if (s2.startsWith("[") && s2.endsWith("]")) return splitFlow(s2.slice(1, -1)).map(parseScalar);
   if (s2.startsWith("{") && s2.endsWith("}")) {
-    const out5 = {};
+    const out6 = {};
     for (const part of splitFlow(s2.slice(1, -1))) {
       const m = KEY.exec(part);
-      if (m) out5[unquoteKey(m[1].trim())] = m[2] === void 0 ? null : parseScalar(m[2]);
+      if (m) out6[unquoteKey(m[1].trim())] = m[2] === void 0 ? null : parseScalar(m[2]);
     }
-    return out5;
+    return out6;
   }
   if (s2.startsWith('"')) {
     try {
@@ -8037,8 +9042,8 @@ function readyEntry(name, disallowed, tail2 = []) {
 }
 
 // js/cli/satprobe.ts
-import { spawn as spawn4 } from "node:child_process";
-import { createInterface as createInterface3 } from "node:readline";
+import { spawn as spawn5 } from "node:child_process";
+import { createInterface as createInterface4 } from "node:readline";
 var PROBE_MS = Number(process.env.ISKRON_DOCTOR_PROBE_MS) || 3e4;
 var REQUEST_MS = 2e4;
 var WIN_WAIT_MS = 4e4;
@@ -8057,14 +9062,14 @@ async function probeSatellite(label, e, cwd) {
   };
   delete env2.ISKRON_CHANNEL_SOCKET;
   delete env2.ISKRON_CHANNEL_STATUS;
-  const child = spawn4(e.command, e.args, { cwd, env: env2, stdio: ["pipe", "pipe", "pipe"] });
+  const child = spawn5(e.command, e.args, { cwd, env: env2, stdio: ["pipe", "pipe", "pipe"] });
   child.stdin.on("error", () => {
   });
   let stderr = "";
   child.stderr.on("data", (c) => stderr = (stderr + c.toString()).slice(-4e3));
   const replies = /* @__PURE__ */ new Map();
   let wake2 = null;
-  createInterface3({ input: child.stdout }).on("line", (l) => {
+  createInterface4({ input: child.stdout }).on("line", (l) => {
     try {
       const m = JSON.parse(l);
       if (typeof m.id === "number") replies.set(m.id, m);
@@ -8140,9 +9145,9 @@ async function probeSatellite(label, e, cwd) {
     }
   }
   const gone = new Promise((res) => exited ? res() : child.once("exit", () => res()));
-  const within = (ms2) => Promise.race([
+  const within = (ms3) => Promise.race([
     gone.then(() => true),
-    new Promise((res) => setTimeout(() => res(false), ms2).unref())
+    new Promise((res) => setTimeout(() => res(false), ms3).unref())
   ]);
   child.stdin.end();
   if (process.platform === "win32") {
@@ -8208,10 +9213,10 @@ function agentFiles(dir, scope) {
     return [];
   }
   return names2.sort().map((f) => {
-    const path = join19(dir, f);
+    const path = join20(dir, f);
     let fm = {};
     try {
-      const text = frontmatterText(readFileSync19(path, "utf8"));
+      const text = frontmatterText(readFileSync21(path, "utf8"));
       if (text !== null) fm = parseFrontmatter(text);
     } catch {
     }
@@ -8223,9 +9228,9 @@ function projectRoot() {
   let gitRoot = null;
   for (let d = process.cwd(); ; ) {
     if (resolve6(d) === home) break;
-    if (existsSync9(join19(d, ".claude", "agents")) || existsSync9(join19(d, ".opencode", "agents")))
+    if (existsSync9(join20(d, ".claude", "agents")) || existsSync9(join20(d, ".opencode", "agents")))
       return d;
-    if (!gitRoot && existsSync9(join19(d, ".git"))) gitRoot = d;
+    if (!gitRoot && existsSync9(join20(d, ".git"))) gitRoot = d;
     const up = dirname9(d);
     if (up === d) break;
     d = up;
@@ -8240,9 +9245,9 @@ function which(cmd, cwd) {
   const exts = platform() === "win32" ? ["", ...(process.env.PATHEXT || ".COM;.EXE;.BAT;.CMD").split(";").filter(Boolean)] : [""];
   for (const dir of (process.env.PATH || "").split(delimiter).filter(Boolean)) {
     for (const ext of exts) {
-      const p = join19(dir, cmd + ext);
+      const p = join20(dir, cmd + ext);
       try {
-        if (statSync7(p).isFile()) return p;
+        if (statSync8(p).isFile()) return p;
       } catch {
       }
     }
@@ -8266,12 +9271,12 @@ function parentBridges(root) {
   };
   const readJson = (p) => {
     try {
-      return JSON.parse(readFileSync19(p, "utf8"));
+      return JSON.parse(readFileSync21(p, "utf8"));
     } catch {
       return null;
     }
   };
-  const user = readJson(join19(homedir9(), ".claude.json"));
+  const user = readJson(join20(homedir9(), ".claude.json"));
   if (user) {
     scan(user.mcpServers, (n) => `mcp__${n}`);
     const projects = user.projects ?? {};
@@ -8279,8 +9284,8 @@ function parentBridges(root) {
     for (const [k, p] of Object.entries(projects))
       if (k.replace(/\\/g, "/") === key) scan(p.mcpServers, (n) => `mcp__${n}`);
   }
-  scan(readJson(join19(root, ".mcp.json"))?.mcpServers, (n) => `mcp__${n}`);
-  const registry = readJson(join19(homedir9(), ".claude", "plugins", "installed_plugins.json"));
+  scan(readJson(join20(root, ".mcp.json"))?.mcpServers, (n) => `mcp__${n}`);
+  const registry = readJson(join20(homedir9(), ".claude", "plugins", "installed_plugins.json"));
   const plugins = registry?.plugins ?? {};
   for (const [key, installs] of Object.entries(plugins)) {
     const plugin = key.split("@")[0];
@@ -8288,7 +9293,7 @@ function parentBridges(root) {
     for (const inst of installs)
       if (inst.installPath)
         scan(
-          readJson(join19(inst.installPath, ".mcp.json"))?.mcpServers,
+          readJson(join20(inst.installPath, ".mcp.json"))?.mcpServers,
           (n) => `mcp__plugin_${plugin}_${n}`
         );
   }
@@ -8297,21 +9302,21 @@ function parentBridges(root) {
 function trustLine(root) {
   let cfg;
   try {
-    cfg = JSON.parse(readFileSync19(join19(homedir9(), ".claude.json"), "utf8"));
+    cfg = JSON.parse(readFileSync21(join20(homedir9(), ".claude.json"), "utf8"));
   } catch {
     return null;
   }
   const keys = Object.entries(cfg.projects ?? {}).filter(([, p]) => p?.hasTrustDialogAccepted).map(([k]) => k.replace(/\\/g, "/").replace(/\/+$/, ""));
   const here = root.replace(/\\/g, "/").replace(/\/+$/, "");
-  const chain2 = [];
+  const chain = [];
   for (let d = here; ; ) {
-    chain2.push(d);
+    chain.push(d);
     const up = d.slice(0, d.lastIndexOf("/"));
     if (!up || up === d) break;
     d = up;
   }
-  if (chain2.some((d) => keys.includes(d))) return null;
-  const near = keys.find((k) => chain2.some((d) => d.toLowerCase() === k.toLowerCase()));
+  if (chain.some((d) => keys.includes(d))) return null;
+  const near = keys.find((k) => chain.some((d) => d.toLowerCase() === k.toLowerCase()));
   if (near)
     return `доверие к папке принято для «${near}», а проект открыт как «${here}» — Claude Code сравнивает путь буква в букву (C:/ и c:/ — разные папки), и в недоверенной папке сервер из фронтматтера не поднимается без диалога → запусти claude в терминале из этой папки и прими диалог доверия либо открой папку тем же написанием пути`;
   return `доверие к папке «${here}» и её родителям в ~/.claude.json не отмечено — в недоверенной папке сервер из фронтматтера не поднимается, и диалога об этом нет → запусти claude в этой папке и прими диалог доверия`;
@@ -8326,29 +9331,29 @@ function hasGrant() {
     return false;
   }
 }
-async function subagentsReport(out5) {
+async function subagentsReport(out6) {
   const root = projectRoot();
-  const userDir = join19(homedir9(), ".claude", "agents");
+  const userDir = join20(homedir9(), ".claude", "agents");
   const atHome = resolve6(root) === resolve6(homedir9());
-  const project = atHome ? [] : agentFiles(join19(root, ".claude", "agents"), "проект");
+  const project = atHome ? [] : agentFiles(join20(root, ".claude", "agents"), "проект");
   const shadowed = new Set(project.map((f) => f.agent));
   const user = agentFiles(userDir, "пользователь");
   const claude = [...project, ...user.filter((f) => !shadowed.has(f.agent))];
   const opencode = [
-    ...agentFiles(join19(root, ".opencode", "agents"), "проект"),
-    ...agentFiles(join19(root, ".opencode", "agent"), "проект")
+    ...agentFiles(join20(root, ".opencode", "agents"), "проект"),
+    ...agentFiles(join20(root, ".opencode", "agent"), "проект")
   ];
-  out5(
+  out6(
     `субагенты: проект ${root} (${process.env.ISKRON_DOCTOR_PLATFORM ? `ОС под суд: ${platform()}` : platform()})`
   );
   if (!claude.length && !opencode.length) {
-    out5(
-      `  файлов агентов нет (${join19(root, ".claude", "agents")}, ${userDir}, ${join19(root, ".opencode", "agents")}) — позови doctor из каталога проекта, если субагенты там`
+    out6(
+      `  файлов агентов нет (${join20(root, ".claude", "agents")}, ${userDir}, ${join20(root, ".opencode", "agents")}) — позови doctor из каталога проекта, если субагенты там`
     );
     return;
   }
   for (const f of user.filter((f2) => shadowed.has(f2.agent)))
-    out5(
+    out6(
       `  ${f.path}: затенён файлом проекта с тем же именем «${f.agent}» — Claude Code берёт проектный`
     );
   const parents = parentBridges(root);
@@ -8459,53 +9464,53 @@ ${readyEntry(
       }
     }
     const where = r.f.scope === "пользователь" ? " (пользовательский)" : "";
-    out5(
+    out6(
       `  ${r.f.path}${where}: ${r.names.length ? `запись «${r.names.join("», «")}»` : "без записи моста-спутника"}${r.lines.length ? "" : " — в порядке"}`
     );
-    for (const l of seen) out5(`    ${l}`);
+    for (const l of seen) out6(`    ${l}`);
     for (const l of r.lines) {
       const [head, ...rest2] = l.split("\n");
-      out5(`    НАДО: ${head}`);
-      for (const b of rest2) out5(`      ${b}`);
+      out6(`    НАДО: ${head}`);
+      for (const b of rest2) out6(`      ${b}`);
     }
   }
   if (claude.length) {
     const t = trustLine(root);
-    if (t && project.length) out5(`  НАДО: ${t}`);
+    if (t && project.length) out6(`  НАДО: ${t}`);
   }
   for (const f of opencode) {
     const keys = Object.keys(f.fm).filter((k) => k === "mcpServers" || k === "mcp");
-    out5(
+    out6(
       `  ${f.path}: OpenCode — мост-спутник даёт дочерней сессии плагин поставки (строка OpenCode выше), записи в файле не нужно${keys.length ? `; НАДО: ключ ${keys.join(", ")} OpenCode в файле агента не читает → убери его` : ""}`
     );
   }
 }
 
 // js/cli/doctor.ts
-var out2 = (s2) => {
+var out3 = (s2) => {
   process.stdout.write(s2 + "\n");
 };
 var hashOf2 = (buf) => createHash9("sha256").update(buf).digest("hex").slice(0, 8);
-var seconds = (ms2) => `${Math.round(ms2 / 1e3)}s`;
+var seconds = (ms3) => `${Math.round(ms3 / 1e3)}s`;
 function homeCopyReport() {
   const home = homeBridgePath();
   let self = null;
   try {
-    self = readFileSync20(fileURLToPath6(import.meta.url));
+    self = readFileSync22(fileURLToPath8(import.meta.url));
   } catch {
   }
   if (!existsSync10(home)) {
-    out2(`домашняя копия: нет (${home}) — её кладёт establish-mcp при подключении`);
+    out3(`домашняя копия: нет (${home}) — её кладёт establish-mcp при подключении`);
     return;
   }
-  const bytes = readFileSync20(home);
+  const bytes = readFileSync22(home);
   if (self && bytes.equals(self)) {
-    out2(`домашняя копия: ${home} — та же сборка, что и этот файл`);
+    out3(`домашняя копия: ${home} — та же сборка, что и этот файл`);
     return;
   }
   const v = versionIn(bytes.toString("utf8"));
-  out2(
-    `домашняя копия: ${home} — v${v ?? "?"}+${hashOf2(bytes)}, ДРУГИЕ байты: ${self ? `обнови её из поставки: cp "${fileURLToPath6(import.meta.url)}" ${home}` : "этот файл не читается"}`
+  out3(
+    `домашняя копия: ${home} — v${v ?? "?"}+${hashOf2(bytes)}, ДРУГИЕ байты: ${self ? `обнови её из поставки: cp "${fileURLToPath8(import.meta.url)}" ${home}` : "этот файл не читается"}`
   );
 }
 function serverSourceWord() {
@@ -8522,8 +9527,8 @@ function serverSourceWord() {
 }
 var freshnessWord = (url) => isProductionServer(url) ? "продовый адрес: самообновление с релизов поставки включено" : "другой инстанс: обновлений с релизов поставки нет";
 async function serverReport() {
-  out2(`сервер: ${CFG.serverUrl} (${serverSourceWord()})`);
-  out2(`  ${freshnessWord(CFG.serverUrl)}`);
+  out3(`сервер: ${CFG.serverUrl} (${serverSourceWord()})`);
+  out3(`  ${freshnessWord(CFG.serverUrl)}`);
   let res;
   try {
     res = await fetch(CFG.serverUrl, {
@@ -8536,23 +9541,23 @@ async function serverReport() {
       signal: AbortSignal.timeout(1e4)
     });
   } catch (e) {
-    out2(`  недостижим: ${errorMessage(e)}`);
+    out3(`  недостижим: ${errorMessage(e)}`);
     return;
   }
   res.body?.cancel?.();
   const www = res.headers.get("www-authenticate");
   const note3 = www ? " (просит OAuth)" : res.status >= 400 && res.status < 500 ? " (пробник без токена — отказ ожидаем)" : "";
-  out2(`  отвечает: HTTP ${res.status}${note3}`);
+  out3(`  отвечает: HTTP ${res.status}${note3}`);
   try {
     const meta = await discoverMeta(www);
-    out2(`  OAuth: token endpoint ${meta.as.token_endpoint}`);
-    out2(`  resource: ${meta.resource}`);
+    out3(`  OAuth: token endpoint ${meta.as.token_endpoint}`);
+    out3(`  resource: ${meta.resource}`);
   } catch (e) {
-    out2(`  OAuth discovery: ${errorMessage(e)}`);
+    out3(`  OAuth discovery: ${errorMessage(e)}`);
   }
 }
 async function patReport() {
-  out2(`грант: личный токен (PAT) из ${CFG.patSource} — OAuth не используется`);
+  out3(`грант: личный токен (PAT) из ${CFG.patSource} — OAuth не используется`);
   let res;
   try {
     res = await fetch(CFG.serverUrl, {
@@ -8575,38 +9580,38 @@ async function patReport() {
       signal: AbortSignal.timeout(1e4)
     });
   } catch (e) {
-    out2(`  проверить не вышло: ${errorMessage(e)}`);
+    out3(`  проверить не вышло: ${errorMessage(e)}`);
     return;
   }
   res.body?.cancel?.();
   if (res.status === 401) {
-    out2(
+    out3(
       "  ТОКЕН ОТВЕРГНУТ (HTTP 401) — отозван, истёк или без прав на этот граф: выпусти новый на странице токенов графа"
     );
-  } else if (res.ok) out2(`  токен принят сервером (HTTP ${res.status})`);
-  else out2(`  сервер ответил HTTP ${res.status} — не отказ токена, смотри строку «сервер»`);
+  } else if (res.ok) out3(`  токен принят сервером (HTTP ${res.status})`);
+  else out3(`  сервер ответил HTTP ${res.status} — не отказ токена, смотри строку «сервер»`);
   const path = storePath();
-  if (existsSync10(path)) out2(`  хранилище OAuth ${path} есть, но не читается, пока стоит PAT`);
+  if (existsSync10(path)) out3(`  хранилище OAuth ${path} есть, но не читается, пока стоит PAT`);
 }
 function grantReport() {
   const path = storePath();
-  out2(`грант: ${path}`);
+  out3(`грант: ${path}`);
   if (!existsSync10(path)) {
-    out2("  хранилища нет — мост ещё ни разу не входил на этот сервер");
+    out3("  хранилища нет — мост ещё ни разу не входил на этот сервер");
     return;
   }
   const store = loadStore();
   const t = store.tokens;
   if (!t?.access_token) {
-    out2("  токенов нет");
+    out3("  токенов нет");
   } else {
     const usable = tokenUsable(t);
     const left = t.expires_at ? t.expires_at - now() : null;
-    out2(
+    out3(
       `  access: ${usable ? "годен" : "не годен"}${left !== null ? ` (${left > 0 ? "истекает через" : "истёк"} ${seconds(Math.abs(left))})` : ""}`
     );
     const hours = refreshHours(t);
-    if (!t.refresh_token) out2("  refresh: нет");
+    if (!t.refresh_token) out3("  refresh: нет");
     else {
       const parts = [];
       if (hours.nbf)
@@ -8615,57 +9620,57 @@ function grantReport() {
         parts.push(
           now() >= hours.exp ? "ИСТЁК — нужен вход" : `истекает через ${seconds(hours.exp - now())}`
         );
-      out2(`  refresh: есть${parts.length ? ` (${parts.join(", ")})` : ""}`);
+      out3(`  refresh: есть${parts.length ? ` (${parts.join(", ")})` : ""}`);
     }
   }
-  if (store.client?.client_id) out2(`  client_id: ${store.client.client_id}`);
+  if (store.client?.client_id) out3(`  client_id: ${store.client.client_id}`);
   const st = loadGrantState();
   if (st.refused_since)
-    out2(`  отказ стоит с ${new Date(st.refused_since).toISOString()}: ${st.reason ?? ""}`);
+    out3(`  отказ стоит с ${new Date(st.refused_since).toISOString()}: ${st.reason ?? ""}`);
   for (const suffix of [".auth-pending", ".refreshing"]) {
-    if (existsSync10(path + suffix)) out2(`  замок: ${path + suffix}`);
+    if (existsSync10(path + suffix)) out3(`  замок: ${path + suffix}`);
   }
   const logPath = grantLogPath();
   if (existsSync10(logPath)) {
-    const lines = readFileSync20(logPath, "utf8").trim().split("\n").slice(-3);
-    out2(`  grant.log, последнее:`);
-    for (const l of lines) out2(`    ${l}`);
+    const lines = readFileSync22(logPath, "utf8").trim().split("\n").slice(-3);
+    out3(`  grant.log, последнее:`);
+    for (const l of lines) out3(`    ${l}`);
   }
 }
 function latestReport() {
   const latest = readLatest(CFG.authDir);
   if (!latest) {
-    out2(
+    out3(
       "свежий релиз: мост ещё не спрашивал релизы (спросит через пару секунд после старта сессии; руками — подкоманда update)"
     );
     return;
   }
   const ago = Math.round((Date.now() - latest.checked_at) / 6e4);
   if (!latest.version)
-    out2(`свежий релиз: не узнан (${latest.error ?? "без причины"}), спрашивал ${ago} мин назад`);
+    out3(`свежий релиз: не узнан (${latest.error ?? "без причины"}), спрашивал ${ago} мин назад`);
   else if (compareVersions(latest.version, VERSION) > 0)
-    out2(
+    out3(
       `свежий релиз: v${latest.version} — ЭТОТ ФАЙЛ ОТСТАЛ (v${VERSION}); в дом скачано: ${latest.downloaded.join(", ") || "ничего"}; спрашивал ${ago} мин назад`
     );
-  else out2(`свежий релиз: v${latest.version}, этот файл не отстал; спрашивал ${ago} мин назад`);
+  else out3(`свежий релиз: v${latest.version}, этот файл не отстал; спрашивал ${ago} мин назад`);
 }
 function claudePluginReport() {
-  const registry = join20(homedir10(), ".claude", "plugins", "installed_plugins.json");
+  const registry = join21(homedir10(), ".claude", "plugins", "installed_plugins.json");
   if (!existsSync10(registry)) return;
   try {
-    const reg = JSON.parse(readFileSync20(registry, "utf8"));
+    const reg = JSON.parse(readFileSync22(registry, "utf8"));
     const mine = Object.entries(reg.plugins ?? {}).filter(([k]) => /^iskron@/.test(k));
     if (!mine.length) {
-      out2(`Claude Code: плагин iskron не установлен (${registry})`);
+      out3(`Claude Code: плагин iskron не установлен (${registry})`);
       return;
     }
     for (const [key, installs] of mine) {
       for (const inst of installs) {
-        const manifest = inst.installPath ? join20(inst.installPath, ".mcp.json") : "";
+        const manifest = inst.installPath ? join21(inst.installPath, ".mcp.json") : "";
         let entry = "запись моста в манифесте не найдена";
         if (manifest && existsSync10(manifest)) {
           try {
-            const m = JSON.parse(readFileSync20(manifest, "utf8"));
+            const m = JSON.parse(readFileSync22(manifest, "utf8"));
             const hit = Object.entries(m.mcpServers ?? {}).find(
               ([, v]) => (v.args ?? []).some((a) => /iskron\.mjs/.test(a))
             );
@@ -8674,29 +9679,29 @@ function claudePluginReport() {
             entry = `${manifest} не читается`;
           }
         }
-        out2(
+        out3(
           `Claude Code: плагин ${key} v${inst.version ?? "?"} (${inst.scope ?? "?"}) — ${entry}; ${inst.installPath ?? ""}`
         );
       }
     }
   } catch {
-    out2(`Claude Code: ${registry} не читается`);
+    out3(`Claude Code: ${registry} не читается`);
   }
 }
 function codexHomes() {
   const homes = [
     process.env.CODEX_HOME?.trim() || "",
-    join20(homedir10(), ".codex"),
-    ...process.platform === "darwin" ? [join20(homedir10(), "Library", "Application Support", "orca", "codex-runtime-home", "home")] : []
+    join21(homedir10(), ".codex"),
+    ...process.platform === "darwin" ? [join21(homedir10(), "Library", "Application Support", "orca", "codex-runtime-home", "home")] : []
   ].filter(Boolean);
   return [...new Set(homes)].filter((h) => existsSync10(h));
 }
 function codexPluginReport(home) {
-  const cache = join20(home, "plugins", "cache");
+  const cache = join21(home, "plugins", "cache");
   if (!existsSync10(cache)) return;
   let found = 0;
   for (const market of readdirSync8(cache)) {
-    const marketDir = join20(cache, market);
+    const marketDir = join21(cache, market);
     let plugins;
     try {
       plugins = readdirSync8(marketDir);
@@ -8705,12 +9710,12 @@ function codexPluginReport(home) {
     }
     for (const plugin of plugins) {
       if (!/iskron/.test(plugin)) continue;
-      const dir = join20(marketDir, plugin);
-      const manifest = join20(dir, ".codex-plugin", "plugin.json");
+      const dir = join21(marketDir, plugin);
+      const manifest = join21(dir, ".codex-plugin", "plugin.json");
       let word = "манифеста нет";
       if (existsSync10(manifest)) {
         try {
-          const m = JSON.parse(readFileSync20(manifest, "utf8"));
+          const m = JSON.parse(readFileSync22(manifest, "utf8"));
           const hit = Object.values(m.mcpServers ?? {}).some(
             (v) => (v.args ?? []).some((a) => /iskron\.mjs/.test(a))
           );
@@ -8720,122 +9725,140 @@ function codexPluginReport(home) {
         }
       }
       found++;
-      out2(`Codex: плагин ${plugin}@${market} — ${word}; ${dir}`);
+      out3(`Codex: плагин ${plugin}@${market} — ${word}; ${dir}`);
     }
   }
-  if (!found) out2(`Codex: плагина iskron в кэше нет (${cache})`);
+  if (!found) out3(`Codex: плагина iskron в кэше нет (${cache})`);
 }
 function harnessReport() {
   claudePluginReport();
-  const claude = join20(homedir10(), ".claude.json");
+  const claude = join21(homedir10(), ".claude.json");
   if (existsSync10(claude)) {
     try {
-      const cfg = JSON.parse(readFileSync20(claude, "utf8"));
+      const cfg = JSON.parse(readFileSync22(claude, "utf8"));
       const entries = Object.entries(cfg.mcpServers ?? {}).filter(
         ([, v]) => (v.args ?? []).some((a) => /iskron/.test(a))
       );
       if (entries.length) {
         for (const [name, v] of entries) {
-          out2(`Claude Code: запись «${name}» → ${v.command ?? ""} ${(v.args ?? []).join(" ")}`);
+          out3(`Claude Code: запись «${name}» → ${v.command ?? ""} ${(v.args ?? []).join(" ")}`);
         }
       } else
-        out2(
+        out3(
           "Claude Code: ручной записи моста в пользовательском конфиге нет (штатная — в плагине)"
         );
     } catch {
-      out2(`Claude Code: ${claude} не читается`);
+      out3(`Claude Code: ${claude} не читается`);
     }
   }
-  const opencodeDir = join20(homedir10(), ".config", "opencode");
+  const opencodeDir = join21(homedir10(), ".config", "opencode");
   if (existsSync10(opencodeDir)) {
-    const copy = join20(opencodeDir, "plugins", "iskron.js");
-    const packaged = join20(dirname10(fileURLToPath6(import.meta.url)), "opencode-plugin.js");
+    const copy = join21(opencodeDir, "plugins", "iskron.js");
+    const packaged = join21(dirname10(fileURLToPath8(import.meta.url)), "opencode-plugin.js");
     if (!existsSync10(copy)) {
-      out2(`OpenCode: плагина нет (${copy}) — его кладёт establish-mcp при подключении`);
+      out3(`OpenCode: плагина нет (${copy}) — его кладёт establish-mcp при подключении`);
     } else if (!existsSync10(packaged)) {
-      out2(
+      out3(
         `OpenCode: плагин ${copy} стоит; рядом с этим файлом поставки плагина нет, сверить не с чем`
       );
-    } else if (readFileSync20(copy).equals(readFileSync20(packaged))) {
-      out2(`OpenCode: плагин ${copy} — та же сборка, что в поставке`);
+    } else if (readFileSync22(copy).equals(readFileSync22(packaged))) {
+      out3(`OpenCode: плагин ${copy} — та же сборка, что в поставке`);
     } else {
-      out2(`OpenCode: плагин ${copy} — ДРУГИЕ байты, обнови из поставки: cp "${packaged}" ${copy}`);
+      out3(`OpenCode: плагин ${copy} — ДРУГИЕ байты, обнови из поставки: cp "${packaged}" ${copy}`);
     }
   }
-  openCodeMcpEntries(out2);
+  openCodeMcpEntries(out3);
   for (const codexHome of codexHomes()) {
-    out2(`Codex: дом ${codexHome}`);
+    out3(`Codex: дом ${codexHome}`);
     codexPluginReport(codexHome);
-    const door2 = join20(codexHome, "app-server-control", "app-server-control.sock");
-    if (existsSync10(door2)) out2(`Codex: дверь app-server открыта (${door2})`);
-    else if (Buffer.byteLength(door2) > 100)
-      out2(
+    const door = join21(codexHome, "app-server-control", "app-server-control.sock");
+    if (existsSync10(door)) out3(`Codex: дверь app-server открыта (${door})`);
+    else if (Buffer.byteLength(door) > 100)
+      out3(
         `Codex: двери нет и не будет — дом длиннее предела unix-сокета; нужен короткий дом для демона и сессий`
       );
     else
-      out2(
-        `Codex: двери нет (${door2}) — демон app-server не поднят; без неё кадр доставляет watchdog-exit`
+      out3(
+        `Codex: двери нет (${door}) — демон app-server не поднят; без неё кадр доставляет watchdog-exit`
       );
-    const codex = join20(codexHome, "config.toml");
+    const codex = join21(codexHome, "config.toml");
     if (existsSync10(codex)) {
-      const text = readFileSync20(codex, "utf8");
-      out2(
+      const text = readFileSync22(codex, "utf8");
+      out3(
         `Codex: ${/^\s*\[mcp_servers\."?iskron"?\]|^\s*mcp_servers\."?iskron"?\s*=/m.test(text) ? "ручная запись моста в config.toml есть" : "ручной записи моста в config.toml нет (штатная — в плагине)"}`
       );
     }
   }
 }
+async function daemonReport() {
+  out3(
+    daemonWanted() ? "демон машины: тонкий мост включён (ISKRON_BRIDGE_DAEMON=1 в окружении этого процесса)" : "демон машины: выключен — мост идёт полным (включение — ISKRON_BRIDGE_DAEMON=1 в окружении моста)"
+  );
+  if (!existsSync10(seamRunDir(CFG.authDir))) {
+    out3(`  не поднимался: каталога шва ${seamRunDir(CFG.authDir)} нет`);
+    return;
+  }
+  const d = await probeDaemon(["--auth-dir", CFG.authDir]);
+  if (d.ok) {
+    out3(`  сокет: ${d.socket}`);
+    out3(
+      `  отвечает: pid ${d.pid}, сборка ${d.build}${d.build.startsWith(`v${VERSION}+`) ? "" : ` — ДРУГАЯ, чем этот файл (v${VERSION})`}, сессий ${d.sessions ?? "?"}${d.path ? `, файл ${d.path}` : ""}`
+    );
+  } else if (d.unsafe) out3(`  вход не личный: ${d.why} — тонкий мост пойдёт полным`);
+  else out3(`  сокет: ${d.socket} — не отвечает (${d.why})`);
+}
 async function runDoctor(argv2) {
   setConfig(parseArgs(argv2));
-  out2(`iskron doctor — ${BUILD}`);
-  out2(`этот файл: ${fileURLToPath6(import.meta.url)}`);
-  out2(`node: ${process.version}`);
+  out3(`iskron doctor — ${BUILD}`);
+  out3(`этот файл: ${fileURLToPath8(import.meta.url)}`);
+  out3(`node: ${process.version}`);
   homeCopyReport();
   latestReport();
+  await daemonReport();
   await serverReport();
   if (CFG.pat) await patReport();
   else grantReport();
   harnessReport();
-  await subagentsReport(out2);
+  await subagentsReport(out3);
 }
 
 // js/cli/update.ts
-var out3 = (s2) => {
+var out4 = (s2) => {
   process.stdout.write(s2 + "\n");
 };
 async function runUpdate(argv2) {
   setConfig(parseArgs(argv2));
-  out3(`iskron update — ${BUILD}`);
-  out3(`сервер: ${CFG.serverUrl} (${serverSourceWord()}) — ${freshnessWord(CFG.serverUrl)}`);
+  out4(`iskron update — ${BUILD}`);
+  out4(`сервер: ${CFG.serverUrl} (${serverSourceWord()}) — ${freshnessWord(CFG.serverUrl)}`);
   const latest = await checkLatest(CFG.authDir, true);
   if (!latest || !latest.version) {
-    out3(
+    out4(
       latest?.rate_limited ? `свежий релиз не узнан: ${latest.error} — лимит GitHub; повтори ${latest.rate_limited_until ? "после сброса" : "позже"}` : `свежий релиз не узнан: ${latest?.error ?? "нет ответа"} — сеть или GitHub; повтори позже`
     );
     process.exitCode = 1;
     return;
   }
   const cmp = compareVersions(latest.version, VERSION);
-  out3(
+  out4(
     `свежий релиз: v${latest.version} (${latest.tag}); этот файл: v${VERSION}${cmp > 0 ? " — отстал" : cmp < 0 ? " — новее релиза (сборка из ветки)" : " — не отстал"}`
   );
-  if (latest.error) out3(`скачать не вышло: ${latest.error}`);
-  if (latest.downloaded.length) for (const p of latest.downloaded) out3(`положено: ${p}`);
-  else out3(`в дом ничего не клалось: ${homeBridgePath()} не старше релиза`);
+  if (latest.error) out4(`скачать не вышло: ${latest.error}`);
+  if (latest.downloaded.length) for (const p of latest.downloaded) out4(`положено: ${p}`);
+  else out4(`в дом ничего не клалось: ${homeBridgePath()} не старше релиза`);
   harnessReport();
-  out3("");
-  out3("Дальше:");
-  out3(
+  out4("");
+  out4("Дальше:");
+  out4(
     `  1. Скиллы обновляет канал харнеса — порядок в свежем установщике ${setupPathOf(CFG.authDir)}${latest.downloaded.includes(setupPathOf(CFG.authDir)) ? "" : " (не скачан — возьми из релиза)"}: прочти его и исполни шаги обновления для этого харнеса.`
   );
-  out3(
+  out4(
     "  2. Перезапусти сессии харнеса: мост, поднятый прежней сборкой, живёт до конца своей сессии."
   );
-  out3("  3. node ~/.iskron-bridge/iskron-bridge.mjs doctor — сверка, что стоит и работает.");
+  out4("  3. node ~/.iskron-bridge/iskron-bridge.mjs doctor — сверка, что стоит и работает.");
 }
 
 // js/cli/use.ts
-var out4 = (s2) => {
+var out5 = (s2) => {
   process.stdout.write(s2 + "\n");
 };
 function runUse(argv2) {
@@ -8850,13 +9873,13 @@ function runUse(argv2) {
   setConfig(parseArgs(rest2));
   const url = word ? resolveServerChoice(word) : null;
   if (!url) {
-    out4("use: назови адрес — en (mcp.iskron.ai), ru (mcp.iskron.ru) или полный URL инстанса");
+    out5("use: назови адрес — en (mcp.iskron.ai), ru (mcp.iskron.ru) или полный URL инстанса");
     process.exitCode = 2;
     return;
   }
   const path = writeServerChoice(CFG.authDir, url);
-  out4(`мост смотрит на ${url} — записано в ${path}; ${freshnessWord(url)}`);
-  out4(
+  out5(`мост смотрит на ${url} — записано в ${path}; ${freshnessWord(url)}`);
+  out5(
     "Действует с нового процесса моста: перезапусти сессии харнеса. Грант раздельный по адресу — первый вызов на новом адресе ведёт во вход."
   );
 }
@@ -8872,6 +9895,7 @@ var USAGE = `iskron ${BUILD}
   node iskron.mjs doctor [server-url] [--auth-dir <dir>]
   node iskron.mjs update [--auth-dir <dir>]
   node iskron.mjs use <en|ru|url> [--auth-dir <dir>]   (en — mcp.iskron.ai, ru — mcp.iskron.ru)
+  node iskron.mjs daemon --auth-dir <dir>   (демон машины; его поднимает тонкий мост при ISKRON_BRIDGE_DAEMON=1)
   node iskron.mjs --version
   env: ISKRON_BRIDGE_TOKEN — личный токен вместо OAuth (или файл <auth-dir>/token);
        ISKRON_BRIDGE_URL, ISKRON_BRIDGE_AUTH_DIR, ISKRON_BRIDGE_NO_BROWSER, ISKRON_BRIDGE_DEBUG
@@ -8879,7 +9903,7 @@ var USAGE = `iskron ${BUILD}
 var argv = process.argv.slice(2);
 var [first, ...rest] = argv;
 var LONG_LIVED = /* @__PURE__ */ new Set([void 0, "bridge", "watchdog", "watchdog-exit", "watchdog-codex"]);
-var longLived = LONG_LIVED.has(first) || first !== void 0 && !first.startsWith("--") && !["doctor", "update", "use", "-h"].includes(first);
+var longLived = LONG_LIVED.has(first) || first !== void 0 && !first.startsWith("--") && !["doctor", "update", "use", "daemon", "-h"].includes(first);
 if (longLived && !updatesDisabled() && !process.env.ISKRON_BRIDGE_REEXEC) {
   const sync = syncHome();
   for (const p of sync.copied)
@@ -8912,9 +9936,7 @@ function dispatch() {
       bridgeMain(rest);
       break;
     case "daemon":
-      process.stderr.write(`[iskron-bridge] ${BUILD}: the machine daemon is not in this build
-`);
-      process.exit(3);
+      void daemonMain(rest);
       break;
     case "--version":
       void versionLines(rest).then((lines) => process.stdout.write(lines.join("\n") + "\n"));

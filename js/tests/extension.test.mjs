@@ -579,6 +579,11 @@ test("a first prompt «start … дело №N от <seat>» stands as that seat
         ["iskron_case", { action: "join", realm: "@nks/nks-dev", room: "#77" }],
       ],
     );
+    // Строка запуска — служебный ход расширения, не работа агента (хартбит места, #6510).
+    assert.ok(
+      toolCalls(calls).every((c) => String(c.id).startsWith("iskron-service-")),
+      `launch calls are marked as service moves: ${JSON.stringify(toolCalls(calls).map((c) => c.id))}`,
+    );
     const s = starts(log);
     assert.equal(s.length, 2, s.join("\n"));
     assert.match(s[1], /--satellite/, "the bridge is raised anew as a satellite");

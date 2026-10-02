@@ -6,6 +6,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
+import { envOf, scoped } from "./scope.ts";
 import { authDirFromEnv } from "./standings.ts";
 
 export type Lang = "ru" | "en";
@@ -21,7 +22,7 @@ export function langOfUrl(url: string): Lang {
 
 /** Язык, названный переменной ISKRON_BRIDGE_LANG; иначе null. */
 export function forcedLang(): Lang | null {
-  const v = process.env.ISKRON_BRIDGE_LANG?.trim().toLowerCase();
+  const v = envOf("ISKRON_BRIDGE_LANG")?.trim().toLowerCase();
   return v === "en" || v === "ru" ? v : null;
 }
 
@@ -33,7 +34,7 @@ export function forcedLang(): Lang | null {
 function resolve(): Lang {
   const forced = forcedLang();
   if (forced) return forced;
-  const fromEnv = process.env.ISKRON_BRIDGE_URL?.trim();
+  const fromEnv = envOf("ISKRON_BRIDGE_URL")?.trim();
   if (fromEnv) return langOfUrl(fromEnv);
   try {
     const text = readFileSync(join(authDirFromEnv(), "server"), "utf8").trim();
@@ -44,14 +45,15 @@ function resolve(): Lang {
   return "ru";
 }
 
-let current: Lang | null = null;
+// Язык — сессии (shared/scope.ts): демон держит сессии мостов с разными серверами.
+const S = scoped(() => ({ current: null as Lang | null }));
 
 /** Мост ставит язык по своему адресу сервера (аргумент мог назвать его сам); переменная всё равно старше. */
 export function setServerLang(serverUrl: string): void {
-  current = forcedLang() ?? langOfUrl(serverUrl);
+  S.current = forcedLang() ?? langOfUrl(serverUrl);
 }
 
-export const lang = (): Lang => (current ??= resolve());
+export const lang = (): Lang => (S.current ??= resolve());
 
 /** Слово на языке поставки: русское или английское. */
 export const L = (ru: string, en: string): string => (lang() === "en" ? en : ru);

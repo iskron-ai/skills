@@ -2230,6 +2230,12 @@ test("a child session whose first prompt is a launch line with a case stands as 
       sentCalls(calls)[0].pid,
       "the child stands on a bridge of its own",
     );
+    // Вызов агента — работа (числовой id); строка запуска — служебный ход плагина (#6510).
+    assert.equal(typeof sentCalls(calls)[0].id, "number", "the agent's own call");
+    assert.ok(
+      after.every((c) => String(c.id).startsWith("iskron-service-")),
+      `launch calls are marked as service moves: ${JSON.stringify(after.map((c) => c.id))}`,
+    );
     assert.equal(
       read,
       "You are a subagent spawned by another session.\n" +

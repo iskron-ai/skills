@@ -9,6 +9,7 @@ import { isAbsolute, join } from "node:path";
 
 import { takingArgs } from "../shared/busyargs.ts";
 import { L } from "../shared/lang.ts";
+import { scoped } from "../shared/scope.ts";
 import { socketPathOf, standingsDirOf } from "../shared/standings.ts";
 import { nameOf } from "./board.ts";
 import { resolveAgainstLed } from "./call.ts";
@@ -166,9 +167,9 @@ export interface StatusOutcome {
   code?: number;
 }
 
-let lastPublished = "";
+const S = scoped(() => ({ lastPublished: "" }));
 /** Последняя строка занятости, которую доска приняла от этого моста; пустая — снята. */
-export const publishedStatus = (): string => lastPublished;
+export const publishedStatus = (): string => S.lastPublished;
 
 /**
  * POST строки занятости на статусный адрес канала, который держит мост. Строка
@@ -196,7 +197,7 @@ export async function publishStatus(
     };
   const st = await publishStatusTo(addr.url, text, 5000, everyPlace ? null : addr.standingId);
   if (st.ok) {
-    if (addr.key === statusAddress()?.key) lastPublished = text;
+    if (addr.key === statusAddress()?.key) S.lastPublished = text;
     rememberStatus(text, realm);
   }
   return st;

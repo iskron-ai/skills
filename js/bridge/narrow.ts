@@ -36,9 +36,26 @@ export function toolSet(): Set<string> | null {
   return CFG.tools ? new Set([...CFG.tools, STAND_TOOL.name]) : null;
 }
 
+/**
+ * Вызов самого моста, не харнеса, — единственный свой tools/call, идущий через
+ * вход сессии: служебный список графов после потери места (lostplaces.ts — id
+ * `iskron-thin-realms-*`, тул iskron_realm, ход list), которым тонкий мост
+ * разрешает rN и слаг вызовов против потерянных мест. Признак — вызов целиком,
+ * а не префикс id: префикс `iskron-*` выбрал бы и харнес, и его вызов вне
+ * набора --tools шёл бы к серверу. Сужение --tools — про вес запросов харнеса,
+ * свою машину моста оно не режет; прочие свои ходы (replay, resume тонкого,
+ * iskron-bridge-* полного — на post напрямую, минуя вход сессии) — не tools/call
+ * через вход, этого сужения они не встречают.
+ */
+const ownRealmList = (msg: JsonRpcMessage): boolean =>
+  String(msg.id ?? "").startsWith("iskron-thin-realms-") &&
+  msg.params?.name === "iskron_realm" &&
+  String(msg.params?.arguments?.action ?? "") === "list";
+
 /** Отказ вслух на вызов тула вне набора: харнес его не видел, но имя пришло. */
 export function outsideSetRefusal(msg: JsonRpcMessage): JsonRpcMessage | null {
   if (msg?.method !== "tools/call" || msg.id === undefined || msg.id === null) return null;
+  if (ownRealmList(msg)) return null;
   const set = toolSet();
   const name = String(msg.params?.name ?? "");
   if (!set || set.has(name)) return null;
