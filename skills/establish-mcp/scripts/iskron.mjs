@@ -2458,6 +2458,10 @@ function compact(seenPath, seen) {
   for (const x of tail2) seen.add(x);
 }
 
+// js/shared/numbering.ts
+var numberingOf = (frame2) => frame2.numbering === "case" ? "case" : "";
+var numberedKey = (frame2, key) => key && numberingOf(frame2) ? `case:${key}` : key;
+
 // js/shared/room-kinds.ts
 var WORDS = {
   said: "слово от {author}",
@@ -2763,7 +2767,10 @@ function wordKeyOf(frame2) {
   const f = frame2;
   const line = obj(f.line);
   const entry = roomKind(frame2)?.kind === "body" ? str(line.refers_to) || str(f.in_reply_to) || str(obj(f.word).entry_id) : str(line.entry_id ?? f.entry_id);
-  return `${mineOf(f)[0] ?? ""}|${str(obj(f.room).id) || str(obj(f.room).seq)}|${entry}`;
+  return numberedKey(
+    frame2,
+    `${mineOf(f)[0] ?? ""}|${str(obj(f.room).id) || str(obj(f.room).seq)}|${entry}`
+  );
 }
 function rememberWord(key) {
   addressedWords.add(key);
@@ -3408,9 +3415,7 @@ function redundantCopy(frame2, ring, seen, seenPath, burst) {
   return "";
 }
 
-// js/bridge/roomstack.ts
-var ROOM_BATCH_MS = Number(process.env.ISKRON_BRIDGE_ROOM_BATCH_MS) || 6e4;
-var ROOM_BATCH_CAP = 20;
+// js/bridge/humanwords.ts
 var HUMAN_WORDS_KEEP = 200;
 var rec2 = (v) => v && typeof v === "object" ? v : {};
 var idOf2 = (v) => typeof v === "number" || typeof v === "string" && v ? String(v) : "";
@@ -3418,6 +3423,33 @@ var entryOf = (frame2) => {
   const f = rec2(frame2);
   return idOf2(rec2(f.line).entry_id ?? f.entry_id);
 };
+var caseOf2 = (frame2) => {
+  const room = rec2(rec2(frame2).room);
+  return idOf2(room.id) || idOf2(room.seq);
+};
+var wordKey = (frame2, entry) => entry ? numberedKey(frame2, `${caseOf2(frame2)}|${entry}`) : "";
+var isWordOf = (held2, body, word) => !!word && wordKey(held2, entryOf(held2)) === wordKey(body, word);
+var HumanWords = class {
+  words = /* @__PURE__ */ new Set();
+  /** Слово человека в полёте — по его собственной записи. */
+  remember(said) {
+    const key = wordKey(said, entryOf(said));
+    if (!key) return;
+    this.words.add(key);
+    const oldest = this.words.values().next();
+    if (this.words.size > HUMAN_WORDS_KEEP && !oldest.done) this.words.delete(oldest.value);
+  }
+  /** true — тело несёт слово человека в полёте (word — запись слова в деле тела); память снята. */
+  forget(body, word) {
+    const key = wordKey(body, word);
+    return !!key && this.words.delete(key);
+  }
+};
+
+// js/bridge/roomstack.ts
+var ROOM_BATCH_MS = Number(process.env.ISKRON_BRIDGE_ROOM_BATCH_MS) || 6e4;
+var ROOM_BATCH_CAP = 20;
+var rec3 = (v) => v && typeof v === "object" ? v : {};
 var RoomBatch = class {
   held = [];
   timer = null;
@@ -3428,23 +3460,12 @@ var RoomBatch = class {
     if (this.held.length >= ROOM_BATCH_CAP) return this.flushNow();
     this.timer ??= setTimeout(() => this.flushNow(), ROOM_BATCH_MS).unref();
   }
-  /** entry_id слов человека в полёте: их тело — слово человека, не кадр пачки. */
-  humanWords = /* @__PURE__ */ new Set();
-  rememberHumanWord(entry) {
-    if (!entry) return;
-    this.humanWords.add(entry);
-    const oldest = this.humanWords.values().next();
-    if (this.humanWords.size > HUMAN_WORDS_KEEP && !oldest.done)
-      this.humanWords.delete(oldest.value);
-  }
-  /** true — это было слово человека в полёте; память о нём снята. */
-  forgetHumanWord(entry) {
-    return !!entry && this.humanWords.delete(entry);
-  }
+  /** Слова человека в полёте: их тело — слово человека, не кадр пачки. */
+  humanWords = new HumanWords();
   /** Вынуть из копящейся пачки слово в полёте, чей текст пришёл: отдан он будет своим телом. */
-  dropWord(entry, dropped) {
+  dropWord(body, word, dropped) {
     for (let i = this.held.length - 1; i >= 0; i--) {
-      if (entryOf(this.held[i].frame) !== entry) continue;
+      if (!isWordOf(this.held[i].frame, body, word)) continue;
       dropped(this.held[i].frame);
       this.held.splice(i, 1);
     }
@@ -3495,16 +3516,16 @@ function noteRoomKind(frame2) {
 }
 function batchForWatchdogs(d, raw, frame2, emit2) {
   const rk = roomKind(frame2);
-  const f = rec2(frame2);
+  const f = rec3(frame2);
   let human = (frame2.origin ?? classifyOrigin(frame2)) === "human";
   if (rk?.kind === "said" && rk.phase === "pending" && human)
-    d.roomBatch.rememberHumanWord(entryOf(frame2));
+    d.roomBatch.humanWords.remember(frame2);
   if (rk?.kind === "body") {
-    const word = idOf2(rec2(f.line).refers_to ?? f.in_reply_to);
-    if (d.roomBatch.forgetHumanWord(word) && rk.phase !== "aborted") {
+    const word = idOf2(rec3(f.line).refers_to ?? f.in_reply_to);
+    if (d.roomBatch.humanWords.forget(frame2, word) && rk.phase !== "aborted") {
       human = true;
       frame2.origin = "human";
-      d.roomBatch.dropWord(word, (said) => {
+      d.roomBatch.dropWord(frame2, word, (said) => {
         for (const k of deliveredKeys(said)) noteSeen(d.seenPath, k, d.seen);
       });
     }
@@ -3541,15 +3562,15 @@ function leftOnDisk(key) {
     return false;
   }
 }
-function writeHoldRecord(key, rec3) {
+function writeHoldRecord(key, rec4) {
   if (CFG.satellite) return;
   try {
-    const session = H.session ?? rec3.session;
-    const left = rec3.left ?? leftOnDisk(key);
+    const session = H.session ?? rec4.session;
+    const left = rec4.left ?? leftOnDisk(key);
     writeFileSync7(
       holdFilePathFor(key),
       JSON.stringify({
-        ...rec3,
+        ...rec4,
         session: session ?? void 0,
         left: left || void 0,
         at: Date.now()
@@ -3560,10 +3581,10 @@ function writeHoldRecord(key, rec3) {
     log(`hold record not written: ${e.message}`);
   }
 }
-function restoreHoldRecord(key, rec3) {
+function restoreHoldRecord(key, rec4) {
   if (CFG.satellite) return;
   try {
-    writeFileSync7(holdFilePathFor(key), JSON.stringify(rec3) + "\n", { mode: 384 });
+    writeFileSync7(holdFilePathFor(key), JSON.stringify(rec4) + "\n", { mode: 384 });
   } catch (e) {
     log(`hold record not restored: ${e.message}`);
   }
@@ -3623,8 +3644,8 @@ function sweepStale(authDir, mine) {
   }
   for (const f of readdirSync2(dir).filter((x) => x.endsWith(".hold"))) {
     try {
-      const rec3 = JSON.parse(readFileSync10(join9(dir, f), "utf8"));
-      if (typeof rec3.at !== "number" || Date.now() - rec3.at > HOLD_RECORD_MAX_AGE_MS)
+      const rec4 = JSON.parse(readFileSync10(join9(dir, f), "utf8"));
+      if (typeof rec4.at !== "number" || Date.now() - rec4.at > HOLD_RECORD_MAX_AGE_MS)
         unlinkSync7(join9(dir, f));
     } catch {
       try {
@@ -5297,11 +5318,11 @@ async function heldElsewhere(realm) {
   const out6 = [];
   for (const f of readdirSync4(dir).filter((x) => x.endsWith(".hold"))) {
     try {
-      const rec3 = JSON.parse(readFileSync13(join11(dir, f), "utf8"));
-      if (!rec3?.realm || rec3.karta == null) continue;
-      if (!anyRealm && slugOf(String(rec3.realm)) !== slugOf(realm)) continue;
-      const key = keyOf(rec3.realm, rec3.karta, rec3.name ?? "");
-      if (await localSocketAlive(socketPathOf(CFG.authDir, key))) out6.push({ ...rec3, key });
+      const rec4 = JSON.parse(readFileSync13(join11(dir, f), "utf8"));
+      if (!rec4?.realm || rec4.karta == null) continue;
+      if (!anyRealm && slugOf(String(rec4.realm)) !== slugOf(realm)) continue;
+      const key = keyOf(rec4.realm, rec4.karta, rec4.name ?? "");
+      if (await localSocketAlive(socketPathOf(CFG.authDir, key))) out6.push({ ...rec4, key });
     } catch {
     }
   }
@@ -6327,30 +6348,30 @@ async function deadPredecessor(realm, karta, name) {
 }
 async function resumeFromDisk(realm, karta, name) {
   const key = keyOf(realm, karta, name);
-  const rec3 = readHoldRecord(key);
-  if (!rec3) return null;
+  const rec4 = readHoldRecord(key);
+  if (!rec4) return null;
   if (holdsKey(key)) return null;
   const led = ledKey();
   if (led && led !== key) return null;
   if (await localSocketAlive(localSocketPathOf(key))) return null;
   const prev = state.standing;
   state.standing = { realm, karta, name };
-  const prevCwd = rec3.cwd ? noteStandCwd(rec3.cwd) : null;
+  const prevCwd = rec4.cwd ? noteStandCwd(rec4.cwd) : null;
   noteResuming(1);
   try {
-    holdStanding(rec3.url, rec3.statusUrl);
+    holdStanding(rec4.url, rec4.statusUrl);
     const hello = await awaitHello(4e3);
     if (hello && holdsKey(key)) {
       const pending2 = Number(hello.pending) || 0;
       const me = sessionOfBridge();
       let busy = "";
-      if (rec3.status && me && rec3.session === me) {
-        const st = await publishStatus(rec3.status);
-        busy = st.ok ? L(`; занятость возвращена: ${rec3.status}`, `; busy line restored: ${rec3.status}`) : L(
+      if (rec4.status && me && rec4.session === me) {
+        const st = await publishStatus(rec4.status);
+        busy = st.ok ? L(`; занятость возвращена: ${rec4.status}`, `; busy line restored: ${rec4.status}`) : L(
           `; занятость не возвращена: ${short(st.body)}`,
           `; busy line not restored: ${short(st.body)}`
         );
-      } else if (rec3.status) {
+      } else if (rec4.status) {
         rememberStatus("");
         busy = L(
           "; прежняя строка занятости не возвращена — скажи свою",
@@ -6376,9 +6397,9 @@ async function resumeFromDisk(realm, karta, name) {
     kept ? `hold record for ${key}: no hello in time — record kept as it was, the place is not taken` : `hold record for ${key} is stale — dropped, the place is taken anew`
   );
   releaseStanding("возврат с диска не удался");
-  if (onDisk?.url === rec3.url) restoreHoldRecord(key, rec3);
+  if (onDisk?.url === rec4.url) restoreHoldRecord(key, rec4);
   state.standing = prev;
-  if (rec3.cwd) noteStandCwd(prevCwd);
+  if (rec4.cwd) noteStandCwd(prevCwd);
   return null;
 }
 function recordsFor(sel) {
@@ -6393,11 +6414,11 @@ function recordsFor(sel) {
   const left = [];
   for (const f of readdirSync5(dir).filter((x) => x.endsWith(".hold"))) {
     try {
-      const rec3 = JSON.parse(readFileSync17(join15(dir, f), "utf8"));
-      if (!rec3 || rec3.client !== mine) continue;
-      const key = keyOf(rec3.realm, rec3.karta, rec3.name);
+      const rec4 = JSON.parse(readFileSync17(join15(dir, f), "utf8"));
+      if (!rec4 || rec4.client !== mine) continue;
+      const key = keyOf(rec4.realm, rec4.karta, rec4.name);
       const keyed2 = !!sel.key && key === sel.key;
-      const inDir = !!sel.cwd && rec3.cwd === sel.cwd;
+      const inDir = !!sel.cwd && rec4.cwd === sel.cwd;
       if (!keyed2 && !inDir) continue;
       const fresh = readHoldRecord(key);
       if (!fresh) continue;
@@ -6409,7 +6430,7 @@ function recordsFor(sel) {
       const stoodHere = key === led || !!sel.session && fresh.session === sel.session;
       if (keyed2) byKey.push(fresh);
       else if (stoodHere) byCwd.push(fresh);
-      else if (!fresh.session) legacy.push(fresh.name);
+      else if (!fresh.session) legacy.push(fresh);
     } catch {
     }
   }
@@ -6421,6 +6442,15 @@ function recordsFor(sel) {
   };
 }
 var legacyWord = (names2) => names2.map((n) => `есть место прежней сборки без сессии: ${n} — вернуть: iskron_stand(name="${n}")`).join("; ");
+async function freeLegacy(recs) {
+  const free = [];
+  for (const r of recs) {
+    const key = keyOf(r.realm, r.karta, r.name);
+    if (!holdsKey(key) && await localSocketAlive(localSocketPathOf(key))) continue;
+    free.push(r.name);
+  }
+  return free;
+}
 async function backToParked(key, how) {
   if (!returnToStanding(how)) return { resumed: false, key, word: "возврат на место не удался" };
   const hello = await awaitHello(4e3);
@@ -6432,8 +6462,9 @@ async function backToParked(key, how) {
   };
 }
 async function resumeBy(sel, register = true) {
-  const { own: recs, sameDir, legacy, left } = recordsFor(sel);
+  const { own: recs, sameDir, legacy: legacyRecs, left } = recordsFor(sel);
   if (!recs.length) {
+    const legacy = await freeLegacy(legacyRecs);
     const said = [
       `своей записи держания ${sel.key ? `с ключом ${sel.key}` : `для каталога ${sel.cwd ?? "?"}`} нет`
     ];
@@ -6455,10 +6486,10 @@ async function resumeBy(sel, register = true) {
   }
   const led = ledKey();
   const skipped = [];
-  for (const rec3 of recs) {
-    const key = keyOf(rec3.realm, rec3.karta, rec3.name);
+  for (const rec4 of recs) {
+    const key = keyOf(rec4.realm, rec4.karta, rec4.name);
     if (holdsKey(key)) return { resumed: true, key, pending: 0, word: "мост уже держит это место" };
-    if (isParked(rec3.realm, rec3.karta, rec3.name)) return backToParked(key, "возврат по записи");
+    if (isParked(rec4.realm, rec4.karta, rec4.name)) return backToParked(key, "возврат по записи");
     if (led && led !== key) {
       skipped.push(`${key}: мост ведёт другое место ${led}`);
       continue;
@@ -6467,7 +6498,7 @@ async function resumeBy(sel, register = true) {
       skipped.push(`${key}: держит живой мост`);
       continue;
     }
-    const back = await resumeFromDisk(rec3.realm, rec3.karta, rec3.name);
+    const back = await resumeFromDisk(rec4.realm, rec4.karta, rec4.name);
     if (!back) {
       skipped.push(
         readHoldRecord(key) ? `${key}: hello не пришёл — запись цела, сторож повторит возврат; не ждёшь — iskron_stand` : `${key}: запись протухла — место займёт iskron_stand`
@@ -6478,10 +6509,10 @@ async function resumeBy(sel, register = true) {
     if (register) {
       const r = await callTool("iskron_channel", {
         action: "register",
-        realm: rec3.realm,
-        karta: rec3.karta,
-        name: rec3.name,
-        ...placeFields(rec3)
+        realm: rec4.realm,
+        karta: rec4.karta,
+        name: rec4.name,
+        ...placeFields(rec4)
       });
       lines.push(r.isError ? `register отказал — ${short(r.text)}` : "register");
     }
@@ -6736,9 +6767,10 @@ var SW = {
     "слушающим доска ещё читает прежний мост этого каталога, а он мёртв (его сокет не отвечает, запись держания цела) — только register; как только доска его отпустит (закрытый сокет прежние серверы держали «слушающим» около минуты; с честной живостью, по слову контура, — почти сразу), тот же вызов вернёт место с диска тем же адресом — повтори",
     "the board still reads this directory's former bridge as listening, and it is dead (its socket does not answer, the holding record is intact) — register only; once the board lets it go (older servers kept a closed socket «listening» about a minute; with honest liveness, by the contour's word, almost at once) the same call returns the seat from disk at the same address — repeat it"
   ),
-  howOtherHolder: () => L(
-    "место уже слушает другой держатель (при явном name — возможно, другая машина или человек) — только register: атрибуция есть, слух — у него; нужен слух здесь — возьми другое имя (name); вытеснить его (take=true) — только словом человека",
-    "another holder already listens on the seat (with an explicit name — maybe another machine or a human) — register only: attribution is there, the hearing is theirs; need hearing here — take another name (name); evicting them (take=true) — only on the human's word"
+  /** Место слушает другой держатель (#6594): атрибуция есть, ход вперёд — свой, не человека. */
+  howOtherHolder: (holder, realm, karta, explicit) => L(
+    `место уже слушает другой держатель — ${holder} — только register: записи подписаны этим именем, слух — у него. Дальше без человека: слух здесь — ${explicit ? "iskron_stand без name (встанет на выведенное имя, а держит его живой сосед — рядом на имя.N)" : "iskron_stand с другим name"}; кто держит — спроси его одним словом: iskron_channel(action="send", realm="${realm}", karta="${karta}", standing="${holder}", text="<кто ты и зачем>"); твоё по памяти этой сессии (её мост перезапущен) — верни сам take=true; вытеснить живого чужого — только словом человека`,
+    `another holder already listens on the seat — ${holder} — register only: records are signed with this name, the hearing is theirs. Go on without the human: hearing here — ${explicit ? "iskron_stand without name (it takes the derived name, or stands beside as name.N if a live neighbour holds that)" : "iskron_stand with another name"}; who holds it — ask them in one word: iskron_channel(action="send", realm="${realm}", karta="${karta}", standing="${holder}", text="<who you are and why>"); yours by this session's memory (its bridge restarted) — take it back yourself with take=true; evicting a live stranger — only on the human's word`
   ),
   howRegister: () => L("сокет уже держит этот мост — register", "this bridge already holds the socket — register"),
   ttlRefused: (ttl, text) => L(
@@ -7071,7 +7103,7 @@ async function runStand(msg) {
     }
     heardHere = !listensElsewhere;
     socketBefore = !listensElsewhere;
-    how = listensElsewhere ? wasEvicted(realm, karta, name) ? SW.howEvicted() : predecessorDead ? SW.howDeadPredecessor() : SW.howOtherHolder() : SW.howRegister();
+    how = listensElsewhere ? wasEvicted(realm, karta, name) ? SW.howEvicted() : predecessorDead ? SW.howDeadPredecessor() : SW.howOtherHolder(mine?.address ?? name, realm, karta, !!asked) : SW.howRegister();
   } else {
     const args = { action: "connect", realm, karta, name };
     Object.assign(args, here());
