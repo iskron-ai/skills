@@ -1,5 +1,17 @@
 # Changelog
 
+## [7.1.0](https://github.com/iskron-ai/skills/compare/v7.0.0...v7.1.0) (2026-10-02)
+
+
+### Features
+
+* **bridge:** вход с другого устройства — код и ссылка страницы входа (RFC 8628) ([#298](https://github.com/iskron-ai/skills/issues/298)) ([83e37de](https://github.com/iskron-ai/skills/commit/83e37de6b48589cf771760c9e26592ff051a0198))
+
+
+### Bug Fixes
+
+* **bridge:** демон без сессий не ждёт брошенный вход дольше предела ([#302](https://github.com/iskron-ai/skills/issues/302)) ([f617b19](https://github.com/iskron-ai/skills/commit/f617b193e706c65f891cac26183579154057e2bb))
+
 ## [7.0.0](https://github.com/iskron-ai/skills/compare/v6.25.0...v7.0.0) (2026-10-02)
 
 
