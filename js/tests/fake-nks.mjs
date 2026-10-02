@@ -94,6 +94,10 @@ export async function startFakeNks(opts = {}) {
     mcpStatus: null, // force an HTTP status on /mcp
     mcpHangMs: 0, // hold /mcp open past the caller's deadline: the request left, the answer never came
     revokeReplyDelayMs: 0, // revoke: the 4001 close goes out first, the HTTP answer this much later
+    statusDelayMs: 0,
+    listDelayMs: 0,
+    realmDelayMs: 0, // hold the realm list (iskron_realm list) answer open this long
+    registerToolDelayMs: 0, // hold the iskron_channel register tool open this long
     refreshDelayMs: opts.refreshDelayMs ?? 0, // widen the window several bridges race in
     codeDelayMs: opts.codeDelayMs ?? 0, // hold the code exchange open, as a slow server does
     registerDelayMs: opts.registerDelayMs ?? 0, // hold dynamic registration open: the window two bridges race in
@@ -342,6 +346,8 @@ export async function startFakeNks(opts = {}) {
         "helloPending", // what the next hello says was waiting in the queue
         "statusDelayMs", // hold the status POST open this long before answering
         "listDelayMs", // hold every board read (iskron_channel list) open this long
+        "realmDelayMs", // hold the realm list (iskron_realm list) answer open this long
+        "registerToolDelayMs", // hold the iskron_channel register tool open this long (возврат места при переподхвате)
       ]) {
         if (k in patch) st[k] = patch[k];
       }
@@ -372,6 +378,31 @@ export async function startFakeNks(opts = {}) {
           };
           for (const sock of st.ws)
             if (st.wsChans.get(sock) === chanId) sock.write(wsFrame(0x1, JSON.stringify(frame)));
+        }
+      }
+      // Слово одному месту по имени — в сокеты, открытые по его адресу (у разных мостов разные места).
+      if (patch.ws_say) {
+        const { name, text, id } = patch.ws_say;
+        for (const [, c] of st.channels) {
+          const found = [...c.places].find(([, p]) => p.name === name);
+          if (!found) continue;
+          const [realm, pl] = found;
+          const frame = JSON.stringify({
+            type: "message",
+            id: id ?? token("say"),
+            received_at: new Date().toISOString(),
+            stale: false,
+            content_type: "text/plain",
+            body_chars: text.length,
+            to_standing_id: pl.standing_id,
+            to_standing: `@tester:${pl.name}`,
+            realm,
+            karta_seq: Number(pl.karta),
+            body: text,
+          });
+          for (const sock of st.ws)
+            if (st.wsNames.get(sock) === name && !st.hung.has(sock))
+              sock.write(wsFrame(0x1, frame));
         }
       }
       // Чужое живое место на доске — как если бы его держал мост другой сессии.
@@ -707,6 +738,8 @@ export async function startFakeNks(opts = {}) {
       if (msg.method === "tools/call" && msg.params?.name === "iskron_channel") {
         const a = msg.params.arguments ?? {};
         if (a.action === "register") {
+          if (st.registerToolDelayMs)
+            await new Promise((r) => setTimeout(r, st.registerToolDelayMs));
           if (st.standingSeatGoneNext > 0) {
             st.standingSeatGoneNext--;
             return json(
@@ -1105,6 +1138,8 @@ export async function startFakeNks(opts = {}) {
       // Список графов учётки — ровно та форма, что отдаёт живой тул iskron_realm(action="list").
       if (msg.method === "tools/call" && msg.params?.name === "iskron_realm") {
         st.counts.realm_list = (st.counts.realm_list ?? 0) + 1;
+        // Медленный список: окно, в котором вызовы харнеса стоят до алиасов из него.
+        if (st.realmDelayMs) await new Promise((r) => setTimeout(r, st.realmDelayMs));
         const lines = [
           `Доступные графы (${st.realms.length}) — адресуй их как @owner/slug или rN; обе формы показаны ниже:`,
           "",

@@ -1,5 +1,6 @@
 import { type Writable } from "node:stream";
 
+import { currentScope, scoped } from "../shared/scope.ts";
 import { CFG } from "./config.ts";
 import { type JsonRpcMessage } from "./types.ts";
 
@@ -21,13 +22,19 @@ const deadStreams = new WeakSet<Stream>();
 
 // Куда сессия моста пишет харнесу. Полный мост — stdout процесса; сессия,
 // которой stdio подано потоками (session.ts: тонкий мост в запасном ходе,
-// демон машины), — свой поток. Одна на процесс, пока состояние движка
-// глобально (config, transport, hold).
-let sessionOut: Stream | null = null;
-const sessionStream = (): Stream => sessionOut ?? process.stdout;
+// демон машины), — свой поток, в своей области (shared/scope.ts).
+const out = scoped(() => ({ stream: null as Stream | null }));
+const sessionStream = (): Stream => out.stream ?? process.stdout;
 
 export function setSessionOutput(s: Stream): void {
-  sessionOut = s;
+  out.stream = s;
+}
+
+// Слово процесса без stderr (демон машины): его журнал. Сессия демона пишет
+// своё слово в свою область — демон отдаёт его тонкому мосту и в журнал.
+let processLog: ((line: string) => void) | null = null;
+export function setProcessLog(fn: (line: string) => void): void {
+  processLog = fn;
 }
 
 export function canWrite(s: Stream | null | undefined): s is Stream {
@@ -60,7 +67,10 @@ export function writeTo(s: Stream | null | undefined, text: string): boolean {
 }
 
 export function log(msg: string): void {
-  writeTo(process.stderr, `[iskron-bridge ${new Date().toISOString()}] ${msg}\n`);
+  const line = `[iskron-bridge ${new Date().toISOString()}] ${msg}\n`;
+  const sink = currentScope().log ?? processLog;
+  if (sink) sink(line);
+  else writeTo(process.stderr, line);
 }
 
 export function debug(msg: string): void {
@@ -68,6 +78,9 @@ export function debug(msg: string): void {
 }
 
 export function emit(msg: JsonRpcMessage): void {
+  // Демон вне сессии харнеса не пишет никому: слово, потерявшее свою область, — в журнал, не в пустоту.
+  if (!out.stream && processLog)
+    return processLog(`emit outside of a session, dropped: ${JSON.stringify(msg).slice(0, 200)}\n`);
   writeTo(sessionStream(), JSON.stringify(msg) + "\n");
 }
 

@@ -1,4 +1,5 @@
 import { lang } from "../shared/lang.ts";
+import { scoped } from "../shared/scope.ts";
 import { noteServerDate } from "./clock.ts";
 import { CFG } from "./config.ts";
 import { errorCode, errorMessage, UpstreamError } from "./errors.ts";
@@ -15,7 +16,8 @@ export interface Standing {
   name?: string;
 }
 
-export const state = {
+// Сессия к серверу — одна на сессию моста (shared/scope.ts): у демона машины их много.
+export const state = scoped(() => ({
   sessionId: null as string | null,
   protocolVersion: null as string | null,
   initParams: null as unknown, // params of the harness's initialize, for transparent replay
@@ -46,7 +48,7 @@ export const state = {
   // server that opens a fresh session on it silently runs the call unattributed
   // before we learn the new id. So a changed token means: re-open first.
   sessionToken: null as string | null,
-};
+}));
 
 // The three-token form the surface binds a session with at initialize
 // ("realm karta name"): a session opened this way is attributed before its
@@ -270,7 +272,7 @@ export async function post(
 
 // Transparent re-initialize after a lost session: replay the harness's own
 // initialize params under a bridge-internal id, swallow the response.
-let reinitInFlight: Promise<void> | null = null;
+const reinit = scoped(() => ({ inFlight: null as Promise<void> | null }));
 const reinitHooks: (() => void | Promise<void>)[] = [];
 /** Что сделать после прозрачного переоткрытия сессии (сверка списка тулов, #5405). */
 export const onReinitialized = (hook: () => void | Promise<void>): void => {
@@ -278,8 +280,8 @@ export const onReinitialized = (hook: () => void | Promise<void>): void => {
 };
 
 export async function reinitialize(): Promise<void> {
-  if (reinitInFlight) return reinitInFlight;
-  reinitInFlight = (async () => {
+  if (reinit.inFlight) return reinit.inFlight;
+  reinit.inFlight = (async () => {
     try {
       if (!state.initParams) throw new UpstreamError("session lost before initialize", "session");
       log("upstream session lost — re-initializing transparently");
@@ -306,8 +308,8 @@ export async function reinitialize(): Promise<void> {
       log(`session re-established (${state.sessionId || "no session id"})`);
       for (const hook of reinitHooks) void hook();
     } finally {
-      reinitInFlight = null;
+      reinit.inFlight = null;
     }
   })();
-  return reinitInFlight;
+  return reinit.inFlight;
 }

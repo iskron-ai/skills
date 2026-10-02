@@ -94,10 +94,16 @@ export interface AttachOptions {
   onGone: (why: string) => void;
 }
 
-/** Прицепиться к локальному сокету и читать NDJSON-события, пока мост жив. */
+/**
+ * Прицепиться к локальному сокету и читать NDJSON-события, пока мост жив.
+ * Событие handover — демон машины передаёт место преемнику: дверь закроется и
+ * откроется тем же путём, и сторож переподхватывает её в том же окне, что и на
+ * старте, а не уходит словом «мост отпустил стояние».
+ */
 export function attach(path: string, o: AttachOptions): void {
-  const startedAt = Date.now();
+  let startedAt = Date.now();
   let attached = false;
+  let handover = false;
 
   function tryOnce(): void {
     const sock = connect(path);
@@ -127,6 +133,10 @@ export function attach(path: string, o: AttachOptions): void {
             ev.frame = null;
           }
         }
+        if (ev.kind === "handover") {
+          handover = true; // закрытие, которое последует, — не уход моста
+          continue;
+        }
         o.onEvent(ev);
       }
     });
@@ -134,6 +144,13 @@ export function attach(path: string, o: AttachOptions): void {
       /* закрытие скажет своё */
     });
     sock.on("close", () => {
+      if (attached && handover) {
+        // Место уходит к преемнику демона: та же дверь откроется снова — ждём её окном старта.
+        attached = false;
+        handover = false;
+        startedAt = Date.now();
+        return void setTimeout(tryOnce, RETRY_MS);
+      }
       if (attached) return o.onGone("мост отпустил стояние или ушёл — сессия кончилась?");
       if (Date.now() - startedAt > ATTACH_WINDOW_MS) {
         return o.onGone(`мост не поднял локальный сокет ${path} за ${ATTACH_WINDOW_MS / 1000}s`);

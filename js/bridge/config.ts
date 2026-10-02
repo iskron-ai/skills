@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 import { setServerLang } from "../shared/lang.ts";
+import { envOf, scoped } from "../shared/scope.ts";
 import { BUILD } from "./build.ts";
 import { log } from "./streams.ts";
 import { type Config } from "./types.ts";
@@ -51,26 +52,57 @@ export function writeServerChoice(authDir: string, url: string): string {
   return path;
 }
 
-// Конфиг процесса — один на мост, выставляется в main() до первого вызова.
-// Живая привязка ES-модуля: импортёры видят значение после setConfig.
-export let CFG: Config = null as unknown as Config;
+// Конфиг моста — один на сессию (shared/scope.ts): у полного моста сессия одна,
+// и конфиг лежит в области процесса; демон машины выставляет конфиг каждой
+// сессии в её области из argv и окружения моста харнеса. Импортёры читают
+// CFG.x как прежде — прокси отдаёт конфиг своей области.
+const cfgSlot = scoped(() => ({ cfg: null as Config | null }));
+export const CFG: Config = new Proxy({} as Config, {
+  get: (_, k) => (cfgSlot.cfg ? Reflect.get(cfgSlot.cfg, k) : undefined),
+  has: (_, k) => !!cfgSlot.cfg && Reflect.has(cfgSlot.cfg, k),
+});
 
 export function setConfig(cfg: Config): void {
-  CFG = cfg;
+  cfgSlot.cfg = cfg;
   setServerLang(cfg.serverUrl); // язык моста — по его серверу (shared/lang.ts)
 }
 
+/** Аргументы не годятся (или просят только версию): процесс уходит этим кодом, демон отказывает сессии. */
+export class ArgsError extends Error {
+  readonly code: number;
+  /** Что сказать в stdout вместо слова в stderr (--version). */
+  readonly out: string | null;
+  constructor(message: string, code: number, out: string | null = null) {
+    super(message);
+    this.code = code;
+    this.out = out;
+  }
+}
+
+/** Разбор аргументов процесса: негодный — слово и выход, как всегда. */
 export function parseArgs(argv: string[]): Config {
+  try {
+    return readArgs(argv);
+  } catch (e) {
+    if (!(e instanceof ArgsError)) throw e;
+    if (e.out !== null) process.stdout.write(e.out);
+    else log(e.message);
+    process.exit(e.code);
+  }
+}
+
+/** Разбор аргументов без выхода: негодный — ArgsError (демон — отказ сессии, не смерть). */
+export function readArgs(argv: string[]): Config {
   const cfg: Config = {
     serverUrl: "",
-    timeoutMs: Number(process.env.ISKRON_BRIDGE_TIMEOUT) || 120_000,
-    authDir: process.env.ISKRON_BRIDGE_AUTH_DIR || join(homedir(), ".iskron-bridge"),
+    timeoutMs: Number(envOf("ISKRON_BRIDGE_TIMEOUT")) || 120_000,
+    authDir: envOf("ISKRON_BRIDGE_AUTH_DIR") || join(homedir(), ".iskron-bridge"),
     clientName: "iskron-bridge",
-    noBrowser: !!process.env.ISKRON_BRIDGE_NO_BROWSER,
-    debug: !!process.env.ISKRON_BRIDGE_DEBUG,
-    scope: process.env.ISKRON_BRIDGE_SCOPE || null,
-    resource: process.env.ISKRON_BRIDGE_RESOURCE || null,
-    staticClientId: process.env.ISKRON_BRIDGE_CLIENT_ID || null,
+    noBrowser: !!envOf("ISKRON_BRIDGE_NO_BROWSER"),
+    debug: !!envOf("ISKRON_BRIDGE_DEBUG"),
+    scope: envOf("ISKRON_BRIDGE_SCOPE") || null,
+    resource: envOf("ISKRON_BRIDGE_RESOURCE") || null,
+    staticClientId: envOf("ISKRON_BRIDGE_CLIENT_ID") || null,
     pat: null,
     patSource: null,
     serverSource: "argument",
@@ -98,17 +130,12 @@ export function parseArgs(argv: string[]): Config {
     else if (a === "--no-browser") cfg.noBrowser = true;
     else if (a === "--debug") cfg.debug = true;
     else if (a === "--satellite") cfg.satellite = true;
-    else if (a === "--version") {
-      process.stdout.write(BUILD + "\n");
-      process.exit(0);
-    } else if (!a.startsWith("--") && !cfg.serverUrl) cfg.serverUrl = a;
-    else {
-      log(`unknown argument: ${a}`);
-      process.exit(2);
-    }
+    else if (a === "--version") throw new ArgsError("--version", 0, BUILD + "\n");
+    else if (!a.startsWith("--") && !cfg.serverUrl) cfg.serverUrl = a;
+    else throw new ArgsError(`unknown argument: ${a}`, 2);
   }
   if (!cfg.serverUrl) {
-    const fromEnv = process.env.ISKRON_BRIDGE_URL?.trim();
+    const fromEnv = envOf("ISKRON_BRIDGE_URL")?.trim();
     const fromFile = fromEnv ? null : readServerChoice(cfg.authDir);
     cfg.serverUrl = fromEnv || fromFile || DEFAULT_SERVER_URL;
     cfg.serverSource = fromEnv ? "ISKRON_BRIDGE_URL" : fromFile ? "file" : "default";
@@ -116,8 +143,7 @@ export function parseArgs(argv: string[]): Config {
   try {
     new URL(cfg.serverUrl);
   } catch {
-    log(`not a URL: ${cfg.serverUrl}`);
-    process.exit(2);
+    throw new ArgsError(`not a URL: ${cfg.serverUrl}`, 2);
   }
   if (!Number.isFinite(cfg.timeoutMs) || cfg.timeoutMs < 1000) cfg.timeoutMs = 120_000;
   readPat(cfg);
@@ -132,7 +158,7 @@ export function parseArgs(argv: string[]): Config {
  * 401 при нём означает одно: токен отвергнут, и починит его только человек.
  */
 function readPat(cfg: Config): void {
-  const fromEnv = process.env.ISKRON_BRIDGE_TOKEN?.trim();
+  const fromEnv = envOf("ISKRON_BRIDGE_TOKEN")?.trim();
   if (fromEnv) {
     cfg.pat = fromEnv;
     cfg.patSource = "ISKRON_BRIDGE_TOKEN";

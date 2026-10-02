@@ -1,12 +1,16 @@
-// Пробы тонкого моста (bridge/thin.ts) — шаг 1 шва «тонкий мост ↔ демон машины».
-// Демон здесь — заглушка tests/fake-daemon.mjs: сторона демона на шве
-// (shared/seam-host.ts) и сессия движка (bridge/session.ts) в её процессе.
-// Тонкий мост сам поднимает её (ISKRON_BRIDGE_DAEMON_ENTRY), как поднимет демон.
+// Пробы тонкого моста (bridge/thin.ts) на шве «тонкий мост ↔ демон машины».
+// Демон — настоящий (bridge/daemon.ts, `iskron.mjs daemon`): тонкий мост сам
+// поднимает его своей копией, журнал демона — <грант>/run/daemon.log (с
+// ISKRON_BRIDGE_DAEMON_TRACE — и методы rpc). Заглушка tests/fake-daemon.mjs
+// осталась там, где настоящему нечего показать без шва для проб: обрыв шва
+// посреди вызова при живой сессии и окружение, которое видит сессия.
+// Пробы многих сессий одного демона, смерти и обновления демона — daemon.test.mjs.
 //
 // ISKRON_BRIDGE_PATH наводит пробы на другую копию: против моста без шва флаг
-// ISKRON_BRIDGE_DAEMON молча пропускается, через заглушку не идёт ничего —
-// та краснота, ради которой пробы написаны. Проба выключателя (NO_DAEMON)
-// проверяет прежнее поведение и на старом мосте зелена.
+// ISKRON_BRIDGE_DAEMON молча пропускается, против моста шага 1 подкоманда daemon
+// отказывает — через демон не идёт ничего, та краснота, ради которой пробы
+// написаны. Проба выключателя (NO_DAEMON) проверяет прежнее поведение и на
+// старом мосте зелена.
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
@@ -32,6 +36,18 @@ const INIT = {
 const THIN_ENV = {
   ISKRON_BRIDGE_DAEMON: "1",
   ISKRON_BRIDGE_DAEMON_ENTRY: FAKE_DAEMON,
+  ISKRON_BRIDGE_DAEMON_WAIT_MS: "10000",
+};
+// Настоящий демон: тонкий мост поднимает его своей копией.
+const REAL_ENV = {
+  ISKRON_BRIDGE_DAEMON: "1",
+  ISKRON_BRIDGE_DAEMON_WAIT_MS: "10000",
+  ISKRON_BRIDGE_DAEMON_TRACE: "1",
+};
+// Демона не поднять: точки входа нет — процесс демона умирает сразу.
+const NO_DAEMON_ENV = {
+  ISKRON_BRIDGE_DAEMON: "1",
+  ISKRON_BRIDGE_DAEMON_ENTRY: join(HERE, "no-such-daemon.mjs"),
   ISKRON_BRIDGE_DAEMON_WAIT_MS: "10000",
 };
 
@@ -100,6 +116,16 @@ const trailOf = (dir) => {
   }
 };
 const daemonPids = (dir) => [...trailOf(dir).matchAll(/^pid (\d+) listening/gm)].map((m) => +m[1]);
+// Журнал настоящего демона и его pid по строкам «listening».
+const journalOf = (dir) => {
+  try {
+    return readFileSync(join(dir, "run", "daemon.log"), "utf8");
+  } catch {
+    return "";
+  }
+};
+const realPids = (dir) =>
+  [...journalOf(dir).matchAll(/ pid=(\d+) \S+ listening /g)].map((m) => +m[1]);
 const alive = (pid) => {
   try {
     process.kill(pid, 0);
@@ -132,7 +158,7 @@ async function withFake(fn) {
     await fn({ fake, dir, spawnBridge });
   } finally {
     await Promise.all(bridges.map((b) => b.stop()));
-    for (const pid of daemonPids(dir)) {
+    for (const pid of [...daemonPids(dir), ...realPids(dir)]) {
       try {
         process.kill(pid, "SIGKILL");
       } catch {}
@@ -155,33 +181,33 @@ async function session(b) {
 test("a call through the thin bridge answers as through the full bridge — and goes through the daemon", async () => {
   await withFake(async ({ dir, spawnBridge }) => {
     const full = await session(spawnBridge());
-    const thinBridge = spawnBridge({ ...THIN_ENV, HARNESS_OTHER: "1" });
+    const thinBridge = spawnBridge(REAL_ENV);
     const thin = await session(thinBridge);
-    assert.match(
-      trailOf(dir),
-      /^env stale=false harness_other=false token_in_hello=false$/m,
-      "the daemon gets the session's env only, and no token over the seam",
-    );
     assert.deepEqual(thin.init.result, full.init.result, "the handshake answers the same");
     assert.deepEqual(toolNames(thin.list), toolNames(full.list), "the same tools are listed");
     assert.ok(thin.orient.result && !thin.orient.error, JSON.stringify(thin.orient));
     assert.deepEqual(thin.orient.result, full.orient.result, "the tool answers the same");
-    assert.match(trailOf(dir), /^rpc tools\/call 3$/m, "the call went through the daemon");
-    assert.match(thinBridge.stderr, /through the machine's bridge daemon v\S+-fake-daemon/);
+    assert.match(journalOf(dir), /\] rpc tools\/call 3$/m, "the call went through the daemon");
+    assert.match(
+      thinBridge.stderr,
+      /through the machine's bridge daemon v\d+\.\d+\.\d+\+\S+ \(pid/,
+    );
   });
 });
 
 test("the daemon killed mid-call: the call gets a verdict, the next one answers after the reattach", async () => {
   await withFake(async ({ fake, dir, spawnBridge }) => {
-    const b = spawnBridge(THIN_ENV);
+    const b = spawnBridge(REAL_ENV);
     await session(b);
-    const [first] = await waitFor("the daemon's pid", () => daemonPids(dir)[0] && daemonPids(dir));
+    const [first] = await waitFor("the daemon's pid", () => realPids(dir)[0] && realPids(dir));
     await fake.control({ listDelayMs: 4000 });
     const slow = b.call("tools/call", 10, {
       name: "iskron_channel",
       arguments: { action: "list", realm: "@tester/probe" },
     });
-    await waitFor("the slow call at the daemon", () => /^rpc tools\/call 10$/m.test(trailOf(dir)));
+    await waitFor("the slow call at the daemon", () =>
+      /\] rpc tools\/call 10$/m.test(journalOf(dir)),
+    );
     process.kill(first, "SIGKILL");
     const verdict = await slow;
     assert.ok(verdict.error, `a lost call is answered with an error: ${JSON.stringify(verdict)}`);
@@ -194,13 +220,15 @@ test("the daemon killed mid-call: the call gets a verdict, the next one answers 
     await fake.control({ listDelayMs: 0 });
     const next = await b.call("tools/call", 11, { name: "iskron_orient", arguments: {} });
     assert.ok(next.result && !next.error, `after the reattach: ${JSON.stringify(next)}`);
-    const pids = daemonPids(dir);
+    const pids = realPids(dir);
     assert.equal(pids.length, 2, "a new daemon was raised");
     assert.ok(!pids.includes(undefined) && pids[1] !== first);
-    assert.match(
-      trailOf(dir).split(`pid ${pids[1]} listening`)[1],
-      /^rpc initialize "iskron-thin-replay-1"$/m,
-      "the new session got the harness's initialize replayed",
+    const after = journalOf(dir)
+      .split(/\n/)
+      .filter((l) => l.includes(` pid=${pids[1]} `));
+    assert.ok(
+      after.some((l) => /\] rpc initialize "iskron-thin-replay-1"$/.test(l)),
+      `the new session got the harness's initialize replayed:\n${after.join("\n")}`,
     );
   });
 });
@@ -230,8 +258,8 @@ test("a seam cut mid-call, the session resumed: one id, one answer", async () =>
 
 test("no daemon to be had: the full bridge runs in the process, and says so", async () => {
   await withFake(async ({ spawnBridge }) => {
-    // Точка входа по умолчанию — сам мост; подкоманды daemon в этой сборке нет.
-    const b = spawnBridge({ ISKRON_BRIDGE_DAEMON: "1", ISKRON_BRIDGE_DAEMON_WAIT_MS: "10000" });
+    // Точки входа демона нет: поднятый процесс умирает сразу.
+    const b = spawnBridge(NO_DAEMON_ENV);
     const { init, list, orient } = await session(b);
     assert.ok(init.result, JSON.stringify(init));
     assert.ok(toolNames(list).length > 0, JSON.stringify(list));
@@ -292,30 +320,40 @@ test("ISKRON_BRIDGE_NO_DAEMON=1 — the full bridge, no daemon raised", async ()
 
 test("the harness leaves: bye ends the session in the daemon; a killed thin bridge ends it too", async () => {
   await withFake(async ({ dir, spawnBridge }) => {
-    const polite = spawnBridge(THIN_ENV);
+    const env = { ...REAL_ENV, ISKRON_BRIDGE_DAEMON_IDLE_MS: "300" };
+    const polite = spawnBridge(env);
     await session(polite);
     const exited = new Promise((r) => polite.proc.once("exit", r));
     polite.proc.stdin.end();
     await exited;
-    assert.match(trailOf(dir), /^end stdin closed, the harness is gone$/m, "bye carried the why");
-    const [first] = daemonPids(dir);
-    await waitFor("the daemon to leave with its session", () => !alive(first));
+    assert.match(
+      journalOf(dir),
+      /session \S+ ended: stdin closed, the harness is gone$/m,
+      "bye carried the why",
+    );
+    const [first] = realPids(dir);
+    await waitFor("the daemon to leave after its idle window", () => !alive(first));
 
-    const rude = spawnBridge(THIN_ENV);
+    const rude = spawnBridge(env);
     await session(rude);
-    await waitFor("the second daemon", () => daemonPids(dir).length === 2);
+    await waitFor("the second daemon", () => realPids(dir).length === 2);
     await rude.stop(); // SIGKILL
     await waitFor("the session to end on the closed seam", () =>
-      /^end the thin bridge is gone \(seam closed without bye\)$/m.test(trailOf(dir)),
+      /session \S+ ended: the thin bridge is gone \(seam closed without bye\)$/m.test(
+        journalOf(dir),
+      ),
     );
   });
 });
 
 test("--version names both builds", async () => {
   const dir = mkdtempSync(join(tmpdir(), "iskron-thin-"));
-  const daemon = spawn(NODE, [FAKE_DAEMON, "daemon", "--auth-dir", dir], { stdio: "ignore" });
+  const daemon = spawn(NODE, [BRIDGE, "daemon", "--auth-dir", dir], {
+    env: { ...process.env, ISKRON_BRIDGE_NO_UPDATE: "1" },
+    stdio: "ignore",
+  });
   try {
-    await waitFor("the daemon to listen", () => daemonPids(dir).length === 1);
+    await waitFor("the daemon to listen", () => realPids(dir).length === 1);
     const out = await new Promise((res, rej) =>
       execFile(
         NODE,
@@ -326,7 +364,10 @@ test("--version names both builds", async () => {
     );
     const [own, theirs] = out.trim().split("\n");
     assert.match(own, /^v\d+\.\d+\.\d+\+[0-9a-f]{8}$/, "the first line is this build, as always");
-    assert.match(theirs ?? "", new RegExp(`^daemon v\\S+-fake-daemon \\(pid ${daemon.pid}, `));
+    assert.match(
+      theirs ?? "",
+      new RegExp(`^daemon ${own.replace("+", "\\+")} \\(pid ${daemon.pid}, `),
+    );
   } finally {
     daemon.kill("SIGKILL");
     rmSync(dir, { recursive: true, force: true });
@@ -336,19 +377,22 @@ test("--version names both builds", async () => {
 // --- ревью #272: вход, токен, окружение, замок подъёма, Ctrl-C --------------------
 
 // Демон, поднятый не тонким мостом, — со своим окружением (как демон, живущий дольше харнеса).
-async function startDaemon(dir, env) {
-  const d = spawn(NODE, [FAKE_DAEMON, "daemon", "--auth-dir", dir], {
+// Настоящий — файлом моста; заглушка — где пробе нужно видеть окружение сессии.
+async function startDaemon(dir, env, file = BRIDGE) {
+  const d = spawn(NODE, [file, "daemon", "--auth-dir", dir], {
     env: { ...process.env, ISKRON_BRIDGE_NO_UPDATE: "1", ...env },
     stdio: "ignore",
   });
-  await waitFor("the daemon to listen", () => daemonPids(dir).includes(d.pid));
+  await waitFor("the daemon to listen", () =>
+    (file === BRIDGE ? realPids(dir) : daemonPids(dir)).includes(d.pid),
+  );
   return d;
 }
 
 test("a daemon signing in with another personal token refuses the session; the bridge goes full and says why", async () => {
   await withFake(async ({ dir, spawnBridge }) => {
     await startDaemon(dir, { ISKRON_BRIDGE_TOKEN: "nks_pat_someone_else" });
-    const b = spawnBridge(THIN_ENV);
+    const b = spawnBridge(REAL_ENV);
     const { orient } = await session(b);
     assert.ok(orient.result, JSON.stringify(orient));
     assert.match(b.stderr, /refused this bridge: .*personal token differs/);
@@ -358,9 +402,13 @@ test("a daemon signing in with another personal token refuses the session; the b
 
 test("the session's env replaces the daemon's own session keys, not merges into them", async () => {
   await withFake(async ({ dir, spawnBridge }) => {
-    await startDaemon(dir, { ISKRON_BRIDGE_TOKEN: PAT, ISKRON_STALE_MARK: "1" });
-    await session(spawnBridge(THIN_ENV));
-    assert.match(trailOf(dir), /^env stale=false /m, "a key the harness did not name is gone");
+    await startDaemon(dir, { ISKRON_BRIDGE_TOKEN: PAT, ISKRON_STALE_MARK: "1" }, FAKE_DAEMON);
+    await session(spawnBridge({ ...THIN_ENV, HARNESS_OTHER: "1" }));
+    assert.match(
+      trailOf(dir),
+      /^env stale=false harness_other=false token_in_hello=false$/m,
+      "a key the harness did not name is gone; the session gets its env only, and no token over the seam",
+    );
   });
 });
 
@@ -404,8 +452,7 @@ test("Ctrl-C of the thin bridge gone full leaves at once, as the full bridge doe
   const dir = mkdtempSync(join(tmpdir(), "iskron-thin-"));
   const b = startBridge(fake.mcpUrl, dir, {
     ISKRON_BRIDGE_TOKEN: "", // вход по OAuth: initialize оставит логин ждать клика
-    ISKRON_BRIDGE_DAEMON: "1",
-    ISKRON_BRIDGE_DAEMON_WAIT_MS: "10000",
+    ...NO_DAEMON_ENV,
   });
   try {
     const init = await b.call("initialize", 1, INIT);

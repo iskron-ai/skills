@@ -5,7 +5,7 @@ import { discover } from "./oauth/discovery.ts";
 import { interactiveFlow, loginPublished } from "./oauth/flow.ts";
 import { DEAD_RECHECK_MS, IN_CALL_WAIT_MS } from "./oauth/pacing.ts";
 import { refreshShared, refusalStands } from "./oauth/refresh.ts";
-import { loadStore, sleep } from "./store.ts";
+import { loadStore, sleep, storePath } from "./store.ts";
 import { debug, log } from "./streams.ts";
 import { refreshHours, tokenUsable, usableTokens } from "./tokens.ts";
 import { type Tokens } from "./types.ts";
@@ -21,7 +21,9 @@ export interface AuthOptions {
   proactive?: boolean;
 }
 
-let authInFlight: { promise: Promise<Tokens>; interactive: boolean } | null = null;
+// Ход за токеном — один на грант (хранилище сервера), не на сессию: сессии
+// демона машины ждут одного хода, как прежде ждали вызовы одного моста.
+const authInFlight = new Map<string, { promise: Promise<Tokens>; interactive: boolean }>();
 
 // What a long hold says beside the login: the grant is intact and would come
 // back by itself — information, never an instruction to wait (#4794).
@@ -50,13 +52,16 @@ export async function ensureAuth(
         `put it in ${CFG.patSource}`,
     );
   }
-  if (authInFlight) {
+  const grant = storePath();
+  const flight = authInFlight.get(grant);
+  if (flight) {
     // A background (non-interactive) attempt must not stand in for a caller
     // that is allowed to open the browser: await it, and if it could not
     // finish the job, run our own interactive round.
-    if (!interactive || authInFlight.interactive) return authInFlight.promise;
-    await authInFlight.promise.catch(() => {});
-    if (authInFlight) return authInFlight.promise; // someone else already restarted it
+    if (!interactive || flight.interactive) return flight.promise;
+    await flight.promise.catch(() => {});
+    const again = authInFlight.get(grant);
+    if (again) return again.promise; // someone else already restarted it
     const s = loadStore();
     if (tokenUsable(s.tokens)) return s.tokens;
   }
@@ -144,10 +149,10 @@ export async function ensureAuth(
         );
       return await interactiveFlow(meta, s.tokens);
     } finally {
-      authInFlight = null;
+      authInFlight.delete(grant);
     }
   })();
-  authInFlight = { promise, interactive };
+  authInFlight.set(grant, { promise, interactive });
   return promise;
 }
 

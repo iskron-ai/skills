@@ -7,10 +7,12 @@ import { lstatSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
+import { envOf } from "./scope.ts";
+
 export const defaultAuthDir = (): string => join(homedir(), ".iskron-bridge");
 
 export const authDirFromEnv = (): string =>
-  process.env.ISKRON_BRIDGE_AUTH_DIR?.trim() || defaultAuthDir();
+  envOf("ISKRON_BRIDGE_AUTH_DIR")?.trim() || defaultAuthDir();
 
 export const standingsDirOf = (authDir: string): string => join(authDir, "standings");
 
