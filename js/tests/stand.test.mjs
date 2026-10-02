@@ -1888,6 +1888,29 @@ test("satellite: at the run's end the bridge revokes its own .sub-N — the plac
   assert.deepEqual(revokes(plain), [], "the session's place outlives the session");
 });
 
+// Places beside in other graphs are the run's too: the socket going leaves them
+// on the board until the channel's term, so each is revoked with the main one.
+test("satellite: at the run's end its places in other graphs are revoked too, not left to the term", async (t) => {
+  const fake = await withCaller(t);
+  const sat = await satelliteBridge(t, fake);
+  assert.ok(!(await standAs(sat, SAT_ARGS)).result?.isError, sat.stderr);
+  const b = await standAs(sat, {
+    realm: "@nks/drugoy",
+    karta: 48,
+    satellite_of: SAT_ARGS.satellite_of,
+  });
+  assert.ok(!b.result?.isError, `${textOf(b)}\n${sat.stderr}`);
+  const beside = placeOf(b);
+  assert.ok(fake.state.places.has(`48:${beside}`), `the place beside stood: ${beside}`);
+  await sat.stop();
+  assert.deepEqual(
+    revokes(fake).sort(),
+    [`${CALLER}.sub-1`, beside].sort(),
+    `each place of the run revoked:\n${sat.stderr}`,
+  );
+  assert.ok(!fake.state.places.has(`48:${beside}`), "the place beside is off the board at once");
+});
+
 // The harness kills the bridge a short grace after closing it (OpenCode: 5 s);
 // a slow api on leave must not hold the place's socket and .key past it.
 test("satellite: a hung leave at the run's end does not hold the place — the bridge releases its .key and exits on its own", async (t) => {

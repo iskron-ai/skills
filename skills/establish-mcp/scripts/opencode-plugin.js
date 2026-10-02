@@ -153,103 +153,6 @@ function isDirectWord(frame) {
   return origin === "human" || !!p.from_standing || p.from_karta_seq != null;
 }
 
-// js/shared/clients.ts
-var OPENCODE_CLIENT = "opencode-iskron";
-var HARNESS_VERSION_ENV = "ISKRON_HARNESS_VERSION";
-var SKILLS_ROOT_ENV = "ISKRON_SKILLS_ROOT";
-
-// js/shared/version.ts
-import { createHash } from "node:crypto";
-import { readFileSync as readFileSync2 } from "node:fs";
-import { fileURLToPath } from "node:url";
-var VERSION = "6.25.0";
-function buildOf(selfUrl) {
-  try {
-    const src = readFileSync2(fileURLToPath(selfUrl));
-    return `v${VERSION}+${createHash("sha256").update(src).digest("hex").slice(0, 8)}`;
-  } catch {
-    return `v${VERSION}`;
-  }
-}
-function buildOfFile(path) {
-  try {
-    const src = readFileSync2(path);
-    const v = versionIn(src.toString("utf8")) ?? "?";
-    return `v${v}+${createHash("sha256").update(src).digest("hex").slice(0, 8)}`;
-  } catch {
-    return null;
-  }
-}
-function versionIn(text) {
-  const m = /^(?:const|let|var)\s+VERSION\s*=\s*"([^"]+)"/m.exec(text);
-  return m ? m[1] : null;
-}
-
-// js/bridge/build.ts
-var BUILD = buildOf(import.meta.url);
-
-// js/bridge/streams.ts
-var out = scoped(() => ({ stream: null }));
-
-// js/bridge/config.ts
-var DEFAULT_SERVER_URL = "https://mcp.iskron.ru/";
-var ENGLISH_SERVER_URL = "https://mcp.iskron.ai/";
-var PRODUCTION_URLS = new Set([DEFAULT_SERVER_URL, ENGLISH_SERVER_URL].map(strip));
-function strip(url) {
-  return url.replace(/\/+$/, "");
-}
-var cfgSlot = scoped(() => ({ cfg: null }));
-var CFG = new Proxy({}, {
-  get: (_, k) => cfgSlot.cfg ? Reflect.get(cfgSlot.cfg, k) : void 0,
-  has: (_, k) => !!cfgSlot.cfg && Reflect.has(cfgSlot.cfg, k)
-});
-
-// js/bridge/oauth/discovery.ts
-var REGISTRATION_REUSE_MS = 45 * 6e4;
-
-// js/bridge/oauth/flow.ts
-var CLAIM_WAIT_MS = Number(process.env.ISKRON_BRIDGE_CLAIM_WAIT_MS) || 15e3;
-var LANDED_POLL_MS = Number(process.env.ISKRON_BRIDGE_LANDED_POLL_MS) || 2e3;
-var RELEASE_GAP_MS = Number(process.env.ISKRON_BRIDGE_RELEASE_GAP_MS) || 0;
-
-// js/bridge/transport.ts
-var state = scoped(() => ({
-  sessionId: null,
-  protocolVersion: null,
-  initParams: null,
-  // params of the harness's initialize, for transparent replay
-  reinitCounter: 0,
-  // The standing this session registered, and the session it was confirmed in.
-  // Why the bridge owns re-registration, what was observed to go wrong, and the
-  // falsifier that closes it: graph @nks/nks-dev, nodes #3919 (the breakdown),
-  // #3454 (the falsifier), #3800 (the header form the surface binds with).
-  // The server correlates a writer BY THE MCP SESSION ID (its holder's word):
-  // a new session is a different writer, and the surface's own self-repair has
-  // nothing to repeat there, because its memory is keyed by that same id and is
-  // collected with it. Sessions die silently in three ways — idle past the
-  // threshold, eviction by the session ceiling, transport close — and the
-  // bridge is the ONLY party that sees the change and still remembers the name
-  // the agent derived for itself. So re-registering is the bridge's duty, and
-  // it hangs on the change of id, never on a timer.
-  standing: null,
-  // {realm, karta, name} of the last register that succeeded
-  // Places in OTHER graphs on the same channel (#5838): register on the channel
-  // in another graph adds a place, and a write is signed by the place of its
-  // own graph. `standing` stays the place the socket was taken for; these ride
-  // it and are replayed with it after every session turnover.
-  places: [],
-  standingSession: null,
-  // the session id that registration is known to hold in
-  // The access token the session was opened with. A session is opened BY a
-  // credential and dies with it (the surface's own word): once the token in the
-  // store is no longer the one this session was opened with — expired, refreshed
-  // after a 401, rotated by a sibling bridge — the old id is a dead letter, and a
-  // server that opens a fresh session on it silently runs the call unattributed
-  // before we learn the new id. So a changed token means: re-open first.
-  sessionToken: null
-}));
-var reinit = scoped(() => ({ inFlight: null }));
-
 // js/shared/room-kinds.ts
 var WORDS = {
   said: "слово от {author}",
@@ -551,7 +454,12 @@ var stackOf = (frame) => roomKind(frame)?.rule ?? (frame?.stack === "defer" ? "b
 var LOUD_KINDS = /* @__PURE__ */ new Set(["closing", "closed", "objection", "late_objection"]);
 var addressedWords = /* @__PURE__ */ new Set();
 var WORDS_KEPT = 512;
-var wordKey = (f, entry) => `${mineOf(f)[0] ?? ""}|${str(obj(f.room).id) || str(obj(f.room).seq)}|${entry}`;
+function wordKeyOf(frame) {
+  const f = frame;
+  const line = obj(f.line);
+  const entry = roomKind(frame)?.kind === "body" ? str(line.refers_to) || str(f.in_reply_to) || str(obj(f.word).entry_id) : str(line.entry_id ?? f.entry_id);
+  return `${mineOf(f)[0] ?? ""}|${str(obj(f.room).id) || str(obj(f.room).seq)}|${entry}`;
+}
 function rememberWord(key) {
   addressedWords.add(key);
   for (const old of addressedWords) {
@@ -576,8 +484,7 @@ function addressedToMine(frame) {
   };
   if (rk?.kind === "body") {
     const word = obj(f.word);
-    const refers = str(line.refers_to) || str(f.in_reply_to) || str(word.entry_id);
-    if (hit(f.addressee) || str(obj(obj(word.line).fields).kind) === "important" || addressedWords.has(wordKey(f, refers)))
+    if (f.addressed === true || hit(f.addressee) || str(obj(obj(word.line).fields).kind) === "important" || addressedWords.has(wordKeyOf(frame)))
       return true;
   } else if (
     // Слово мне, ответ на мою запись (#5954), помеченное важным: род слова
@@ -585,7 +492,7 @@ function addressedToMine(frame) {
     // его тело придёт второй фазой без этих признаков.
     hit(f.addressee) || hit(f.in_reply_to_from) || str(f.said) === "important" || str(fields.kind) === "important"
   ) {
-    if (rk?.phase === "pending") rememberWord(wordKey(f, str(line.entry_id ?? f.entry_id)));
+    if (rk?.phase === "pending") rememberWord(wordKeyOf(frame));
     return true;
   }
   if (rk?.kind === "invite" || rk?.kind === "withdraw") {
@@ -595,6 +502,103 @@ function addressedToMine(frame) {
   if (rk && LOUD_KINDS.has(rk.kind)) return true;
   return (frame.origin ?? classifyOrigin(frame, str(f.karta_seq) || void 0)) === "human";
 }
+
+// js/shared/clients.ts
+var OPENCODE_CLIENT = "opencode-iskron";
+var HARNESS_VERSION_ENV = "ISKRON_HARNESS_VERSION";
+var SKILLS_ROOT_ENV = "ISKRON_SKILLS_ROOT";
+
+// js/shared/version.ts
+import { createHash } from "node:crypto";
+import { readFileSync as readFileSync2 } from "node:fs";
+import { fileURLToPath } from "node:url";
+var VERSION = "6.25.0";
+function buildOf(selfUrl) {
+  try {
+    const src = readFileSync2(fileURLToPath(selfUrl));
+    return `v${VERSION}+${createHash("sha256").update(src).digest("hex").slice(0, 8)}`;
+  } catch {
+    return `v${VERSION}`;
+  }
+}
+function buildOfFile(path) {
+  try {
+    const src = readFileSync2(path);
+    const v = versionIn(src.toString("utf8")) ?? "?";
+    return `v${v}+${createHash("sha256").update(src).digest("hex").slice(0, 8)}`;
+  } catch {
+    return null;
+  }
+}
+function versionIn(text) {
+  const m = /^(?:const|let|var)\s+VERSION\s*=\s*"([^"]+)"/m.exec(text);
+  return m ? m[1] : null;
+}
+
+// js/bridge/build.ts
+var BUILD = buildOf(import.meta.url);
+
+// js/bridge/streams.ts
+var out = scoped(() => ({ stream: null }));
+
+// js/bridge/config.ts
+var DEFAULT_SERVER_URL = "https://mcp.iskron.ru/";
+var ENGLISH_SERVER_URL = "https://mcp.iskron.ai/";
+var PRODUCTION_URLS = new Set([DEFAULT_SERVER_URL, ENGLISH_SERVER_URL].map(strip));
+function strip(url) {
+  return url.replace(/\/+$/, "");
+}
+var cfgSlot = scoped(() => ({ cfg: null }));
+var CFG = new Proxy({}, {
+  get: (_, k) => cfgSlot.cfg ? Reflect.get(cfgSlot.cfg, k) : void 0,
+  has: (_, k) => !!cfgSlot.cfg && Reflect.has(cfgSlot.cfg, k)
+});
+
+// js/bridge/oauth/discovery.ts
+var REGISTRATION_REUSE_MS = 45 * 6e4;
+
+// js/bridge/oauth/flow.ts
+var CLAIM_WAIT_MS = Number(process.env.ISKRON_BRIDGE_CLAIM_WAIT_MS) || 15e3;
+var LANDED_POLL_MS = Number(process.env.ISKRON_BRIDGE_LANDED_POLL_MS) || 2e3;
+var RELEASE_GAP_MS = Number(process.env.ISKRON_BRIDGE_RELEASE_GAP_MS) || 0;
+
+// js/bridge/transport.ts
+var state = scoped(() => ({
+  sessionId: null,
+  protocolVersion: null,
+  initParams: null,
+  // params of the harness's initialize, for transparent replay
+  reinitCounter: 0,
+  // The standing this session registered, and the session it was confirmed in.
+  // Why the bridge owns re-registration, what was observed to go wrong, and the
+  // falsifier that closes it: graph @nks/nks-dev, nodes #3919 (the breakdown),
+  // #3454 (the falsifier), #3800 (the header form the surface binds with).
+  // The server correlates a writer BY THE MCP SESSION ID (its holder's word):
+  // a new session is a different writer, and the surface's own self-repair has
+  // nothing to repeat there, because its memory is keyed by that same id and is
+  // collected with it. Sessions die silently in three ways — idle past the
+  // threshold, eviction by the session ceiling, transport close — and the
+  // bridge is the ONLY party that sees the change and still remembers the name
+  // the agent derived for itself. So re-registering is the bridge's duty, and
+  // it hangs on the change of id, never on a timer.
+  standing: null,
+  // {realm, karta, name} of the last register that succeeded
+  // Places in OTHER graphs on the same channel (#5838): register on the channel
+  // in another graph adds a place, and a write is signed by the place of its
+  // own graph. `standing` stays the place the socket was taken for; these ride
+  // it and are replayed with it after every session turnover.
+  places: [],
+  standingSession: null,
+  // the session id that registration is known to hold in
+  // The access token the session was opened with. A session is opened BY a
+  // credential and dies with it (the surface's own word): once the token in the
+  // store is no longer the one this session was opened with — expired, refreshed
+  // after a 401, rotated by a sibling bridge — the old id is a dead letter, and a
+  // server that opens a fresh session on it silently runs the call unattributed
+  // before we learn the new id. So a changed token means: re-open first.
+  sessionToken: null
+}));
+var reinit = scoped(() => ({ inFlight: null }));
 
 // js/shared/frame-text.ts
 var rec = (v) => v && typeof v === "object" ? v : {};

@@ -9,9 +9,10 @@
 import { scoped } from "../shared/scope.ts";
 import { callTool as call } from "./call.ts";
 import { CFG } from "./config.ts";
+import { extraPlaces } from "./places.ts";
 import { canonRealm, otherRealm } from "./realms.ts";
 import { log } from "./streams.ts";
-import { state } from "./transport.ts";
+import { type Standing, state } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
 
 /** Все выходы конца прогона — под одним потолком: харнес гасит мост по короткой отсрочке. */
@@ -65,25 +66,34 @@ export async function leaveJoinedCases(): Promise<void> {
     );
 }
 
+/** Места спутника — основное и в других графах; снять до releaseStanding: оно стирает места рядом. */
+export const satellitePlaces = (): Standing[] =>
+  CFG.satellite
+    ? [state.standing, ...extraPlaces().map((p) => p.standing)].filter(
+        (s): s is Standing => !!s?.name,
+      )
+    : [];
+
 /**
- * Снять своё место-спутник на конце прогона (#6550, правило 4; #6593): закрытый
- * сокет места с доски не снимает — только revoke либо срок канала. Зовётся после
- * releaseStanding: сокет уже отпущен, и закрытие 4001 некому принять за смерть токена.
+ * Снять места-спутники на конце прогона (#6550, правило 4; #6593): закрытый
+ * сокет места с доски не снимает — только revoke либо срок канала. Каждое место
+ * канала, и в других графах. Зовётся после releaseStanding: сокет уже отпущен,
+ * и закрытие 4001 некому принять за смерть токена.
  */
-export async function revokeSatellitePlace(): Promise<void> {
-  const s = state.standing;
-  if (!CFG.satellite || !s?.name) return;
-  const args = { action: "revoke", realm: s.realm, karta: s.karta, standing: s.name };
-  const revoke = call("iskron_channel", args).then(
-    (r) =>
-      log(
-        r.isError
-          ? `could not revoke ${s.name} at the run's end: ${r.text.slice(0, 120)}`
-          : `revoked ${s.name} at the run's end (#6593)`,
-      ),
-    (e: Error) => log(`could not revoke ${s.name} at the run's end: ${e.message}`),
+export async function revokeSatellitePlaces(places: Standing[]): Promise<void> {
+  if (!places.length) return;
+  const revokes = places.map((s) =>
+    call("iskron_channel", { action: "revoke", realm: s.realm, karta: s.karta, standing: s.name })
+      .then((r) =>
+        log(
+          r.isError
+            ? `could not revoke ${s.name} at the run's end: ${r.text.slice(0, 120)}`
+            : `revoked ${s.name} in ${s.realm} at the run's end (#6593)`,
+        ),
+      )
+      .catch((e: Error) => log(`could not revoke ${s.name} at the run's end: ${e.message}`)),
   );
-  if (!(await underCap(revoke)))
+  if (!(await underCap(Promise.allSettled(revokes))))
     log(
       `revoke at the run's end exceeded ${LEAVE_CAP_MS} ms — the place lapses by the channel's term`,
     );

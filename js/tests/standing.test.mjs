@@ -39,6 +39,7 @@ import {
   nodeBound,
   nodeOp,
   progress,
+  replyInFlight,
   roleInvite,
   roomFrame,
   said,
@@ -3663,6 +3664,88 @@ test("a human's word in two phases wakes the exit watchdog once, and that one ev
   const next = runClient("watchdog-exit", dir, key, 3000);
   const r2 = await next.done;
   assert.equal(r2.exit, null, `the next arm woke on:\n${next.out}`);
+});
+
+// A word to me in two phases (#6574): the exit watchdog leaves on the word in
+// flight, its body comes to a new process that never saw the flight. The bridge
+// saw both phases: it marks the body addressed on the frame itself, and its
+// .seen keeps the flight across its own restart.
+test("a reply to me in two phases: the exit watchdog wakes on the word in flight, the next arm gets its body as text", async (t) => {
+  const { fake, dir, key } = await connected(t, {
+    env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "800" },
+  });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const first = runClient("watchdog-exit", dir, key, 15_000);
+  await waitFor(() => first.err.includes("hello"), "hello to be noted");
+  await sendRoom(fake, replyInFlight(54));
+  const r1 = await first.done;
+  assert.equal(r1.exit, 0, `the word in flight to me wakes: ${first.err}`);
+  const next = runClient("watchdog-exit", dir, key, 6000);
+  await waitFor(() => next.err.includes("hello"), "hello to be noted");
+  await sendRoom(fake, bodyFrame(55, 54, "текст ответа мне ЦЕЛ"));
+  const r2 = await next.done;
+  assert.equal(r2.exit, 0, `the body of a word to me must wake the next arm: ${next.err}`);
+  assert.ok(next.out.includes("текст ответа мне ЦЕЛ"), `the body as text:\n${next.out}`);
+});
+
+test("a reply to me in two phases across a bridge restart: the body is still known as mine", async (t) => {
+  const { fake, dir, key, bridge } = await connected(t, {
+    env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "800" },
+  });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const first = runClient("watchdog-exit", dir, key, 15_000);
+  await waitFor(() => first.err.includes("hello"), "hello to be noted");
+  await sendRoom(fake, replyInFlight(64));
+  assert.equal((await first.done).exit, 0, `the word in flight to me wakes: ${first.err}`);
+  bridge.proc.kill("SIGKILL");
+  await waitFor(() => bridge.proc.signalCode !== null, "the first bridge to exit");
+  await waitFor(() => fake.state.ws.size === 0, "the fake to see the socket close");
+  const second = startBridge(fake.mcpUrl, dir, { ISKRON_BRIDGE_ROOM_BATCH_MS: "800" });
+  t.after(() => second.stop());
+  assert.ok((await second.call("initialize", 1, INIT)).result);
+  await fake.control({ places: [{ karta: "931", name: "proba", listening: false }] });
+  const st = await second.call("tools/call", 2, {
+    name: "iskron_stand",
+    arguments: { realm: "nks-dev", karta: 931, name: "proba" },
+  });
+  assert.ok(!st.result?.isError, JSON.stringify(st));
+  await waitFor(() => fake.state.ws.size === 1, "the place resumed");
+  const next = runClient("watchdog-exit", dir, key, 6000);
+  await waitFor(() => next.err.includes("hello"), "hello to be noted");
+  await sendRoom(fake, bodyFrame(65, 64, "ответ после перезапуска ЦЕЛ"));
+  const r2 = await next.done;
+  assert.equal(r2.exit, 0, `the body of a word to me must wake after the restart: ${next.err}`);
+  assert.ok(next.out.includes("ответ после перезапуска ЦЕЛ"), `the body as text:\n${next.out}`);
+});
+
+// A batch whose every frame was handed already (#6574): its head went out with
+// them and does not wait to ride before another's line.
+test("the Monitor watchdog: the head of a batch of frames already handed does not ride before the next line", async (t) => {
+  const { fake, dir, key, standings } = await connected(t, {
+    env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "2500" },
+  });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const warm = runClient("watchdog", dir, key, 15_000);
+  await waitFor(() => warm.out.includes("слушаю стояние"), "the watchdog to attach");
+  await nudge(fake, 990);
+  await waitFor(() => warm.out.includes("[990]"), "the word to me", 3000);
+  await waitSeen(standings, "room-msg-990");
+  warm.proc.kill("SIGKILL");
+  await warm.done;
+  // Frames pass the bridge unseen and wait in its batch; meanwhile another
+  // reader hands them — the watchdog armed next reads them as handed.
+  await sendRoom(fake, { ...said("defer", 70), addressee: ME });
+  await sendRoom(fake, progress(71));
+  for (const f of readdirSync(standings).filter((x) => x.endsWith(".seen")))
+    writeFileSync(join(standings, f), "room-msg-70\nroom-msg-71\n", { flag: "a" });
+  const wd = runClient("watchdog", dir, key, 15_000);
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
+  await new Promise((r) => setTimeout(r, 3000));
+  await nudge(fake, 991);
+  await waitFor(() => wd.out.includes("[991]"), "the word to me", 3000);
+  assert.ok(!wd.out.includes("записей 2"), `the handed batch's head rode again:\n${wd.out}`);
+  wd.proc.kill("SIGKILL");
+  await wd.done;
 });
 
 test("a case batch under Monitor is short: a count head with a pointer to read it whole with since, then a line per record to me, no envelopes", async (t) => {

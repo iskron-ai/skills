@@ -108,6 +108,7 @@ export function runWatchdog(argv: string[]): void {
   // Под Monitor строка stdout будит ход: пачка из одних счётов (#6574) не
   // печатается сама — её шапка ждёт и уходит перед ближайшей адресованной строкой.
   let head = ""; // шапка идущей пачки — до её первой адресованной строки
+  let fresh = false; // в идущей пачке есть не отданный прежде кадр
   const riders: string[] = []; // шапки пачек из одних счётов
   const riderMarks: (() => void)[] = []; // их пометки — после печати
   const hold = (): void => {
@@ -150,8 +151,14 @@ export function runWatchdog(argv: string[]): void {
             // (folded), своей строки не печатает: метится вместе со строкой
             // череды, которая его считает (#6081); неадресованное — метится
             // сразу: шапка назвала его числом.
-            if (ev.batch.at === 1) cases.clear(); // зачин дела — у первой его строки в пачке
+            if (ev.batch.at === 1) {
+              cases.clear(); // зачин дела — у первой его строки в пачке
+              fresh = false;
+            }
+            if (!again) fresh = true;
             const last = ev.batch.at >= ev.batch.of;
+            // Пачка из одних отданных — повтор: её шапка уже ушла и в ждущий счёт не встаёт.
+            if (last && !fresh) head = "";
             if (ev.batch.folded) {
               if (!again) folded.push(mark);
               if (last) hold();

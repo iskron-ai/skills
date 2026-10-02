@@ -11,8 +11,16 @@ const LOUD_KINDS = new Set(["closing", "closed", "objection", "late_objection"])
 /** Слова в полёте, адресованные месту: ключ — место, дело, запись слова. */
 const addressedWords = new Set<string>();
 const WORDS_KEPT = 512;
-const wordKey = (f: Rec, entry: string): string =>
-  `${mineOf(f)[0] ?? ""}|${str(obj(f.room).id) || str(obj(f.room).seq)}|${entry}`;
+/** Ключ слова в две фазы: место, дело, запись слова — у said в полёте его запись, у body та, на которую оно. */
+export function wordKeyOf(frame: Frame): string {
+  const f = frame as Rec;
+  const line = obj(f.line);
+  const entry =
+    roomKind(frame)?.kind === "body"
+      ? str(line.refers_to) || str(f.in_reply_to) || str(obj(f.word).entry_id)
+      : str(line.entry_id ?? f.entry_id);
+  return `${mineOf(f)[0] ?? ""}|${str(obj(f.room).id) || str(obj(f.room).seq)}|${entry}`;
+}
 function rememberWord(key: string): void {
   addressedWords.add(key);
   for (const old of addressedWords) {
@@ -51,12 +59,14 @@ export function addressedToMine(frame: Frame | null | undefined): boolean {
     // У body in_reply_to_from — автор САМОГО слова (#5893 §4.6), а род слова — в
     // его строке (word.line): тело адресовано, когда адресовано его слово —
     // запомненное на фазе said в полёте; эхо своего слова месту не адресовано.
+    // Пометка addressed — мостом, видевшим обе фазы (bridge/addressmark.ts):
+    // сторож выхода получает тело новым процессом, память ниже его не помнит.
     const word = obj(f.word);
-    const refers = str(line.refers_to) || str(f.in_reply_to) || str(word.entry_id);
     if (
+      f.addressed === true ||
       hit(f.addressee) ||
       str(obj(obj(word.line).fields).kind) === "important" ||
-      addressedWords.has(wordKey(f, refers))
+      addressedWords.has(wordKeyOf(frame))
     )
       return true;
   } else if (
@@ -68,7 +78,7 @@ export function addressedToMine(frame: Frame | null | undefined): boolean {
     str(f.said) === "important" ||
     str(fields.kind) === "important"
   ) {
-    if (rk?.phase === "pending") rememberWord(wordKey(f, str(line.entry_id ?? f.entry_id)));
+    if (rk?.phase === "pending") rememberWord(wordKeyOf(frame));
     return true;
   }
   // Приглашение мне или его отзыв: ключ invite:<моё место>, приглашение роли — моей роли.

@@ -2436,265 +2436,6 @@ function compact(seenPath, seen) {
   for (const x of tail2) seen.add(x);
 }
 
-// js/shared/clients.ts
-var OPENCODE_CLIENT = "opencode-iskron";
-var SURFACE_CLIENT = "export-surface";
-var OWN_CLIENTS = /* @__PURE__ */ new Set([OPENCODE_CLIENT, SURFACE_CLIENT]);
-var PI_CLIENT = "pi-iskron";
-var NOTIFIED_CLIENTS = /* @__PURE__ */ new Set([PI_CLIENT, OPENCODE_CLIENT]);
-var HARNESS_VERSION_ENV = "ISKRON_HARNESS_VERSION";
-var SKILLS_ROOT_ENV = "ISKRON_SKILLS_ROOT";
-var HOSTED_CLIENTS = /* @__PURE__ */ new Set([PI_CLIENT, OPENCODE_CLIENT]);
-
-// js/bridge/transport.ts
-var state = scoped(() => ({
-  sessionId: null,
-  protocolVersion: null,
-  initParams: null,
-  // params of the harness's initialize, for transparent replay
-  reinitCounter: 0,
-  // The standing this session registered, and the session it was confirmed in.
-  // Why the bridge owns re-registration, what was observed to go wrong, and the
-  // falsifier that closes it: graph @nks/nks-dev, nodes #3919 (the breakdown),
-  // #3454 (the falsifier), #3800 (the header form the surface binds with).
-  // The server correlates a writer BY THE MCP SESSION ID (its holder's word):
-  // a new session is a different writer, and the surface's own self-repair has
-  // nothing to repeat there, because its memory is keyed by that same id and is
-  // collected with it. Sessions die silently in three ways — idle past the
-  // threshold, eviction by the session ceiling, transport close — and the
-  // bridge is the ONLY party that sees the change and still remembers the name
-  // the agent derived for itself. So re-registering is the bridge's duty, and
-  // it hangs on the change of id, never on a timer.
-  standing: null,
-  // {realm, karta, name} of the last register that succeeded
-  // Places in OTHER graphs on the same channel (#5838): register on the channel
-  // in another graph adds a place, and a write is signed by the place of its
-  // own graph. `standing` stays the place the socket was taken for; these ride
-  // it and are replayed with it after every session turnover.
-  places: [],
-  standingSession: null,
-  // the session id that registration is known to hold in
-  // The access token the session was opened with. A session is opened BY a
-  // credential and dies with it (the surface's own word): once the token in the
-  // store is no longer the one this session was opened with — expired, refreshed
-  // after a 401, rotated by a sibling bridge — the old id is a dead letter, and a
-  // server that opens a fresh session on it silently runs the call unattributed
-  // before we learn the new id. So a changed token means: re-open first.
-  sessionToken: null
-}));
-function standingHeader() {
-  const s2 = state.standing;
-  if (!s2?.realm || s2.karta == null || !s2.name) return null;
-  const h = `${s2.realm} ${s2.karta} ${s2.name}`;
-  if (!/^[\x21-\x7e]+ [\x21-\x7e]+ [\x21-\x7e]+$/.test(h)) return null;
-  return h;
-}
-var currentAccessToken = () => CFG.pat ?? loadStore().tokens?.access_token ?? null;
-async function* sseEvents(body) {
-  const reader = body.getReader();
-  const decoder = new TextDecoder();
-  let buf = "";
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buf += decoder.decode(value, { stream: true });
-    let m;
-    while ((m = /\r?\n\r?\n/.exec(buf)) !== null) {
-      const raw = buf.slice(0, m.index);
-      buf = buf.slice(m.index + m[0].length);
-      const data = raw.split(/\r?\n/).filter((l) => l.startsWith("data:")).map((l) => l.slice(5).replace(/^ /, "")).join("\n");
-      if (data) yield data;
-    }
-  }
-}
-var TLS_REFUSALS = /* @__PURE__ */ new Set([
-  "DEPTH_ZERO_SELF_SIGNED_CERT",
-  "SELF_SIGNED_CERT_IN_CHAIN",
-  "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
-  "UNABLE_TO_GET_ISSUER_CERT",
-  "UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
-  "CERT_HAS_EXPIRED",
-  "CERT_NOT_YET_VALID",
-  "CERT_UNTRUSTED",
-  "CERT_REVOKED",
-  "ERR_TLS_CERT_ALTNAME_INVALID"
-]);
-async function post(msg, onMessage) {
-  const headers = {
-    "content-type": "application/json",
-    accept: "application/json, text/event-stream"
-  };
-  if (lang() === "en") headers["accept-language"] = "en";
-  const token = CFG.pat ?? loadStore().tokens?.access_token ?? null;
-  if (token) headers.authorization = `Bearer ${token}`;
-  else if (loginPublished())
-    throw new UpstreamError("unauthorized (login pending)", "auth", null, UpstreamError.NOT_SENT);
-  const isInit = msg?.method === "initialize";
-  if (isInit && state.sessionId) {
-    log(`initialize under a held session id (${state.sessionId}) — sent without it`);
-    state.sessionId = null;
-    state.sessionToken = null;
-  }
-  const sentSession = state.sessionId;
-  if (sentSession) headers["mcp-session-id"] = sentSession;
-  if (state.protocolVersion) headers["mcp-protocol-version"] = state.protocolVersion;
-  const boundByHeader = isInit ? standingHeader() : null;
-  if (boundByHeader) headers["x-nks-standing"] = boundByHeader;
-  let res;
-  try {
-    res = await fetch(CFG.serverUrl, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(msg),
-      signal: AbortSignal.timeout(CFG.timeoutMs)
-    });
-  } catch (e) {
-    const err = e;
-    const timedOut = err.name === "TimeoutError";
-    const code = errorCode(e);
-    const message = errorMessage(e);
-    const tls = TLS_REFUSALS.has(code ?? "");
-    const reason = timedOut ? `no answer within ${CFG.timeoutMs}ms` : (code && !message.includes(code) ? `${message} (${code})` : message) + (tls ? " — the server's certificate is not trusted on this machine (a corporate TLS inspection?); give the bridge the organisation's CA in NODE_EXTRA_CA_CERTS" : "");
-    const neverLeft = !timedOut && (tls || [
-      "ECONNREFUSED",
-      "ENOTFOUND",
-      "EAI_AGAIN",
-      "ERR_SOCKET_BAD_PORT",
-      "ConnectionRefused"
-    ].includes(code ?? ""));
-    throw new UpstreamError(
-      `upstream unreachable: ${reason}`,
-      "network",
-      null,
-      neverLeft ? UpstreamError.NOT_SENT : UpstreamError.UNKNOWN,
-      !timedOut && !tls
-    );
-  }
-  noteServerDate(res);
-  if (res.status === 401) {
-    res.body?.cancel?.();
-    throw new UpstreamError(
-      res.headers.get("www-authenticate") || "unauthorized",
-      "auth",
-      token,
-      UpstreamError.NOT_SENT
-    );
-  }
-  if (res.status === 404 && sentSession) {
-    res.body?.cancel?.();
-    throw new UpstreamError("session expired upstream", "session", null, UpstreamError.NOT_SENT);
-  }
-  const sid = res.headers.get("mcp-session-id");
-  if (sid) {
-    if (sid !== state.sessionId && !isInit) {
-      log(
-        `upstream replaced the session mid-call (${state.sessionId} -> ${sid}) — this call may have gone unattributed`
-      );
-    }
-    state.sessionId = sid;
-    state.sessionToken = token;
-  }
-  if (res.status === 202 || res.status === 204) return;
-  if (!res.ok) {
-    const text2 = (await res.text().catch(() => "")).slice(0, 300);
-    throw new UpstreamError(
-      `upstream HTTP ${res.status}: ${text2}`,
-      "http",
-      null,
-      res.status < 500 ? UpstreamError.NOT_SENT : UpstreamError.UNKNOWN
-    );
-  }
-  const ctype = res.headers.get("content-type") || "";
-  if (ctype.includes("text/event-stream")) {
-    try {
-      if (!res.body) return;
-      for await (const data of sseEvents(res.body)) {
-        try {
-          onMessage(JSON.parse(data));
-        } catch {
-          debug(`unparseable SSE data: ${data.slice(0, 120)}`);
-        }
-      }
-    } catch (e) {
-      throw new UpstreamError(
-        `upstream stream broke mid-response: ${errorMessage(e)}`,
-        "network",
-        null,
-        UpstreamError.UNKNOWN,
-        true
-      );
-    }
-    return;
-  }
-  const text = await res.text();
-  if (!text.trim()) return;
-  try {
-    onMessage(JSON.parse(text));
-  } catch {
-    throw new UpstreamError(`upstream sent unparseable JSON: ${text.slice(0, 200)}`, "http");
-  }
-}
-var reinit = scoped(() => ({ inFlight: null }));
-var reinitHooks = [];
-var onReinitialized = (hook) => {
-  reinitHooks.push(hook);
-};
-async function reinitialize() {
-  if (reinit.inFlight) return reinit.inFlight;
-  reinit.inFlight = (async () => {
-    try {
-      if (!state.initParams) throw new UpstreamError("session lost before initialize", "session");
-      log("upstream session lost — re-initializing transparently");
-      state.sessionId = null;
-      state.sessionToken = null;
-      const id = `iskron-bridge-reinit-${++state.reinitCounter}`;
-      let result = null;
-      await post({ jsonrpc: "2.0", id, method: "initialize", params: state.initParams }, (m) => {
-        if (m.id === id) result = m;
-      });
-      const got = result;
-      if (!got || got.error) {
-        throw new UpstreamError(
-          `re-initialize refused: ${JSON.stringify(got?.error ?? null)}`,
-          "session"
-        );
-      }
-      if (got.result?.protocolVersion) state.protocolVersion = got.result.protocolVersion;
-      if (got.result) saveServerCache({ init: got.result });
-      await post({ jsonrpc: "2.0", method: "notifications/initialized" }, () => {
-      });
-      log(`session re-established (${state.sessionId || "no session id"})`);
-      for (const hook of reinitHooks) void hook();
-    } finally {
-      reinit.inFlight = null;
-    }
-  })();
-  return reinit.inFlight;
-}
-
-// js/bridge/client.ts
-var clientInfo = () => state.initParams?.clientInfo;
-function harnessName() {
-  const info = clientInfo();
-  return typeof info?.name === "string" ? info.name : "";
-}
-function harnessVersion() {
-  const v = HOSTED_CLIENTS.has(harnessName()) ? envOf(HARNESS_VERSION_ENV) : clientInfo()?.version;
-  return typeof v === "string" && v.trim() ? v.trim() : "unknown";
-}
-var notifiedClient = () => NOTIFIED_CLIENTS.has(harnessName());
-
-// js/bridge/complete.ts
-function stampOrigin(frame2) {
-  if (!frame2 || frame2.type !== "message") return frame2;
-  return { ...frame2, origin: classifyOrigin(frame2, state.standing?.karta) };
-}
-
-// js/bridge/door.ts
-import { chmodSync as chmodSync2, mkdirSync as mkdirSync7, unlinkSync as unlinkSync8, utimesSync, writeFileSync as writeFileSync8 } from "node:fs";
-import { createServer as createServer3 } from "node:net";
-import { dirname as dirname3 } from "node:path";
-
 // js/shared/room-kinds.ts
 var WORDS = {
   said: "слово от {author}",
@@ -2996,7 +2737,12 @@ var stackOf = (frame2) => roomKind(frame2)?.rule ?? (frame2?.stack === "defer" ?
 var LOUD_KINDS = /* @__PURE__ */ new Set(["closing", "closed", "objection", "late_objection"]);
 var addressedWords = /* @__PURE__ */ new Set();
 var WORDS_KEPT = 512;
-var wordKey = (f, entry) => `${mineOf(f)[0] ?? ""}|${str(obj(f.room).id) || str(obj(f.room).seq)}|${entry}`;
+function wordKeyOf(frame2) {
+  const f = frame2;
+  const line = obj(f.line);
+  const entry = roomKind(frame2)?.kind === "body" ? str(line.refers_to) || str(f.in_reply_to) || str(obj(f.word).entry_id) : str(line.entry_id ?? f.entry_id);
+  return `${mineOf(f)[0] ?? ""}|${str(obj(f.room).id) || str(obj(f.room).seq)}|${entry}`;
+}
 function rememberWord(key) {
   addressedWords.add(key);
   for (const old of addressedWords) {
@@ -3021,8 +2767,7 @@ function addressedToMine(frame2) {
   };
   if (rk?.kind === "body") {
     const word = obj(f.word);
-    const refers = str(line.refers_to) || str(f.in_reply_to) || str(word.entry_id);
-    if (hit(f.addressee) || str(obj(obj(word.line).fields).kind) === "important" || addressedWords.has(wordKey(f, refers)))
+    if (f.addressed === true || hit(f.addressee) || str(obj(obj(word.line).fields).kind) === "important" || addressedWords.has(wordKeyOf(frame2)))
       return true;
   } else if (
     // Слово мне, ответ на мою запись (#5954), помеченное важным: род слова
@@ -3030,7 +2775,7 @@ function addressedToMine(frame2) {
     // его тело придёт второй фазой без этих признаков.
     hit(f.addressee) || hit(f.in_reply_to_from) || str(f.said) === "important" || str(fields.kind) === "important"
   ) {
-    if (rk?.phase === "pending") rememberWord(wordKey(f, str(line.entry_id ?? f.entry_id)));
+    if (rk?.phase === "pending") rememberWord(wordKeyOf(frame2));
     return true;
   }
   if (rk?.kind === "invite" || rk?.kind === "withdraw") {
@@ -3040,6 +2785,276 @@ function addressedToMine(frame2) {
   if (rk && LOUD_KINDS.has(rk.kind)) return true;
   return (frame2.origin ?? classifyOrigin(frame2, str(f.karta_seq) || void 0)) === "human";
 }
+
+// js/bridge/addressmark.ts
+var markOf = (frame2) => `word:${wordKeyOf(frame2)}`;
+function markAddressed(frame2, seenPath, seen) {
+  const rk = roomKind(frame2);
+  if (rk?.kind === "said" && rk.phase === "pending") {
+    if (addressedToMine(frame2)) noteSeen(seenPath, markOf(frame2), seen);
+  } else if (rk?.kind === "body" && !rk.aside) {
+    if (seen.has(markOf(frame2)) || addressedToMine(frame2)) frame2.addressed = true;
+  }
+}
+
+// js/shared/clients.ts
+var OPENCODE_CLIENT = "opencode-iskron";
+var SURFACE_CLIENT = "export-surface";
+var OWN_CLIENTS = /* @__PURE__ */ new Set([OPENCODE_CLIENT, SURFACE_CLIENT]);
+var PI_CLIENT = "pi-iskron";
+var NOTIFIED_CLIENTS = /* @__PURE__ */ new Set([PI_CLIENT, OPENCODE_CLIENT]);
+var HARNESS_VERSION_ENV = "ISKRON_HARNESS_VERSION";
+var SKILLS_ROOT_ENV = "ISKRON_SKILLS_ROOT";
+var HOSTED_CLIENTS = /* @__PURE__ */ new Set([PI_CLIENT, OPENCODE_CLIENT]);
+
+// js/bridge/transport.ts
+var state = scoped(() => ({
+  sessionId: null,
+  protocolVersion: null,
+  initParams: null,
+  // params of the harness's initialize, for transparent replay
+  reinitCounter: 0,
+  // The standing this session registered, and the session it was confirmed in.
+  // Why the bridge owns re-registration, what was observed to go wrong, and the
+  // falsifier that closes it: graph @nks/nks-dev, nodes #3919 (the breakdown),
+  // #3454 (the falsifier), #3800 (the header form the surface binds with).
+  // The server correlates a writer BY THE MCP SESSION ID (its holder's word):
+  // a new session is a different writer, and the surface's own self-repair has
+  // nothing to repeat there, because its memory is keyed by that same id and is
+  // collected with it. Sessions die silently in three ways — idle past the
+  // threshold, eviction by the session ceiling, transport close — and the
+  // bridge is the ONLY party that sees the change and still remembers the name
+  // the agent derived for itself. So re-registering is the bridge's duty, and
+  // it hangs on the change of id, never on a timer.
+  standing: null,
+  // {realm, karta, name} of the last register that succeeded
+  // Places in OTHER graphs on the same channel (#5838): register on the channel
+  // in another graph adds a place, and a write is signed by the place of its
+  // own graph. `standing` stays the place the socket was taken for; these ride
+  // it and are replayed with it after every session turnover.
+  places: [],
+  standingSession: null,
+  // the session id that registration is known to hold in
+  // The access token the session was opened with. A session is opened BY a
+  // credential and dies with it (the surface's own word): once the token in the
+  // store is no longer the one this session was opened with — expired, refreshed
+  // after a 401, rotated by a sibling bridge — the old id is a dead letter, and a
+  // server that opens a fresh session on it silently runs the call unattributed
+  // before we learn the new id. So a changed token means: re-open first.
+  sessionToken: null
+}));
+function standingHeader() {
+  const s2 = state.standing;
+  if (!s2?.realm || s2.karta == null || !s2.name) return null;
+  const h = `${s2.realm} ${s2.karta} ${s2.name}`;
+  if (!/^[\x21-\x7e]+ [\x21-\x7e]+ [\x21-\x7e]+$/.test(h)) return null;
+  return h;
+}
+var currentAccessToken = () => CFG.pat ?? loadStore().tokens?.access_token ?? null;
+async function* sseEvents(body) {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    let m;
+    while ((m = /\r?\n\r?\n/.exec(buf)) !== null) {
+      const raw = buf.slice(0, m.index);
+      buf = buf.slice(m.index + m[0].length);
+      const data = raw.split(/\r?\n/).filter((l) => l.startsWith("data:")).map((l) => l.slice(5).replace(/^ /, "")).join("\n");
+      if (data) yield data;
+    }
+  }
+}
+var TLS_REFUSALS = /* @__PURE__ */ new Set([
+  "DEPTH_ZERO_SELF_SIGNED_CERT",
+  "SELF_SIGNED_CERT_IN_CHAIN",
+  "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+  "UNABLE_TO_GET_ISSUER_CERT",
+  "UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
+  "CERT_HAS_EXPIRED",
+  "CERT_NOT_YET_VALID",
+  "CERT_UNTRUSTED",
+  "CERT_REVOKED",
+  "ERR_TLS_CERT_ALTNAME_INVALID"
+]);
+async function post(msg, onMessage) {
+  const headers = {
+    "content-type": "application/json",
+    accept: "application/json, text/event-stream"
+  };
+  if (lang() === "en") headers["accept-language"] = "en";
+  const token = CFG.pat ?? loadStore().tokens?.access_token ?? null;
+  if (token) headers.authorization = `Bearer ${token}`;
+  else if (loginPublished())
+    throw new UpstreamError("unauthorized (login pending)", "auth", null, UpstreamError.NOT_SENT);
+  const isInit = msg?.method === "initialize";
+  if (isInit && state.sessionId) {
+    log(`initialize under a held session id (${state.sessionId}) — sent without it`);
+    state.sessionId = null;
+    state.sessionToken = null;
+  }
+  const sentSession = state.sessionId;
+  if (sentSession) headers["mcp-session-id"] = sentSession;
+  if (state.protocolVersion) headers["mcp-protocol-version"] = state.protocolVersion;
+  const boundByHeader = isInit ? standingHeader() : null;
+  if (boundByHeader) headers["x-nks-standing"] = boundByHeader;
+  let res;
+  try {
+    res = await fetch(CFG.serverUrl, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(msg),
+      signal: AbortSignal.timeout(CFG.timeoutMs)
+    });
+  } catch (e) {
+    const err = e;
+    const timedOut = err.name === "TimeoutError";
+    const code = errorCode(e);
+    const message = errorMessage(e);
+    const tls = TLS_REFUSALS.has(code ?? "");
+    const reason = timedOut ? `no answer within ${CFG.timeoutMs}ms` : (code && !message.includes(code) ? `${message} (${code})` : message) + (tls ? " — the server's certificate is not trusted on this machine (a corporate TLS inspection?); give the bridge the organisation's CA in NODE_EXTRA_CA_CERTS" : "");
+    const neverLeft = !timedOut && (tls || [
+      "ECONNREFUSED",
+      "ENOTFOUND",
+      "EAI_AGAIN",
+      "ERR_SOCKET_BAD_PORT",
+      "ConnectionRefused"
+    ].includes(code ?? ""));
+    throw new UpstreamError(
+      `upstream unreachable: ${reason}`,
+      "network",
+      null,
+      neverLeft ? UpstreamError.NOT_SENT : UpstreamError.UNKNOWN,
+      !timedOut && !tls
+    );
+  }
+  noteServerDate(res);
+  if (res.status === 401) {
+    res.body?.cancel?.();
+    throw new UpstreamError(
+      res.headers.get("www-authenticate") || "unauthorized",
+      "auth",
+      token,
+      UpstreamError.NOT_SENT
+    );
+  }
+  if (res.status === 404 && sentSession) {
+    res.body?.cancel?.();
+    throw new UpstreamError("session expired upstream", "session", null, UpstreamError.NOT_SENT);
+  }
+  const sid = res.headers.get("mcp-session-id");
+  if (sid) {
+    if (sid !== state.sessionId && !isInit) {
+      log(
+        `upstream replaced the session mid-call (${state.sessionId} -> ${sid}) — this call may have gone unattributed`
+      );
+    }
+    state.sessionId = sid;
+    state.sessionToken = token;
+  }
+  if (res.status === 202 || res.status === 204) return;
+  if (!res.ok) {
+    const text2 = (await res.text().catch(() => "")).slice(0, 300);
+    throw new UpstreamError(
+      `upstream HTTP ${res.status}: ${text2}`,
+      "http",
+      null,
+      res.status < 500 ? UpstreamError.NOT_SENT : UpstreamError.UNKNOWN
+    );
+  }
+  const ctype = res.headers.get("content-type") || "";
+  if (ctype.includes("text/event-stream")) {
+    try {
+      if (!res.body) return;
+      for await (const data of sseEvents(res.body)) {
+        try {
+          onMessage(JSON.parse(data));
+        } catch {
+          debug(`unparseable SSE data: ${data.slice(0, 120)}`);
+        }
+      }
+    } catch (e) {
+      throw new UpstreamError(
+        `upstream stream broke mid-response: ${errorMessage(e)}`,
+        "network",
+        null,
+        UpstreamError.UNKNOWN,
+        true
+      );
+    }
+    return;
+  }
+  const text = await res.text();
+  if (!text.trim()) return;
+  try {
+    onMessage(JSON.parse(text));
+  } catch {
+    throw new UpstreamError(`upstream sent unparseable JSON: ${text.slice(0, 200)}`, "http");
+  }
+}
+var reinit = scoped(() => ({ inFlight: null }));
+var reinitHooks = [];
+var onReinitialized = (hook) => {
+  reinitHooks.push(hook);
+};
+async function reinitialize() {
+  if (reinit.inFlight) return reinit.inFlight;
+  reinit.inFlight = (async () => {
+    try {
+      if (!state.initParams) throw new UpstreamError("session lost before initialize", "session");
+      log("upstream session lost — re-initializing transparently");
+      state.sessionId = null;
+      state.sessionToken = null;
+      const id = `iskron-bridge-reinit-${++state.reinitCounter}`;
+      let result = null;
+      await post({ jsonrpc: "2.0", id, method: "initialize", params: state.initParams }, (m) => {
+        if (m.id === id) result = m;
+      });
+      const got = result;
+      if (!got || got.error) {
+        throw new UpstreamError(
+          `re-initialize refused: ${JSON.stringify(got?.error ?? null)}`,
+          "session"
+        );
+      }
+      if (got.result?.protocolVersion) state.protocolVersion = got.result.protocolVersion;
+      if (got.result) saveServerCache({ init: got.result });
+      await post({ jsonrpc: "2.0", method: "notifications/initialized" }, () => {
+      });
+      log(`session re-established (${state.sessionId || "no session id"})`);
+      for (const hook of reinitHooks) void hook();
+    } finally {
+      reinit.inFlight = null;
+    }
+  })();
+  return reinit.inFlight;
+}
+
+// js/bridge/client.ts
+var clientInfo = () => state.initParams?.clientInfo;
+function harnessName() {
+  const info = clientInfo();
+  return typeof info?.name === "string" ? info.name : "";
+}
+function harnessVersion() {
+  const v = HOSTED_CLIENTS.has(harnessName()) ? envOf(HARNESS_VERSION_ENV) : clientInfo()?.version;
+  return typeof v === "string" && v.trim() ? v.trim() : "unknown";
+}
+var notifiedClient = () => NOTIFIED_CLIENTS.has(harnessName());
+
+// js/bridge/complete.ts
+function stampOrigin(frame2) {
+  if (!frame2 || frame2.type !== "message") return frame2;
+  return { ...frame2, origin: classifyOrigin(frame2, state.standing?.karta) };
+}
+
+// js/bridge/door.ts
+import { chmodSync as chmodSync2, mkdirSync as mkdirSync7, unlinkSync as unlinkSync8, utimesSync, writeFileSync as writeFileSync8 } from "node:fs";
+import { createServer as createServer3 } from "node:net";
+import { dirname as dirname3 } from "node:path";
 
 // js/shared/frame-text.ts
 var rec = (v) => v && typeof v === "object" ? v : {};
@@ -4303,6 +4318,7 @@ function deliverTo(d, raw, frame2, full) {
   const id = full?.type === "message" && typeof full.id === "string" ? full.id : "";
   const evKey = redundantCopy(full, d.ring, d.seen, seenPath, d.stale);
   if (evKey) return log(`frame ${id || "?"} carries ${evKey} already offered — not raised`);
+  if (full?.type === "message") markAddressed(full, seenPath, d.seen);
   const again = isDelivered(id ? [id] : [], d.seen, seenPath);
   if (full?.type === "message" && full.stale === true && !isDirectWord(full))
     return again ? log(`stale frame ${id} already delivered — dropped`) : d.stale.note(full, (ev2, all2) => {
@@ -4311,7 +4327,7 @@ function deliverTo(d, raw, frame2, full) {
       d.broadcast(ev2);
       notify("info", keyed(d, ev2));
     });
-  const text = full === frame2 ? raw : JSON.stringify(full);
+  const text = full === frame2 && !full?.addressed ? raw : JSON.stringify(full);
   const hello = full?.type === "hello";
   for (const x of hello ? doors() : [d]) x.push(text, full);
   if (hello) for (const w of [...H2.helloWaiters]) w(full);
@@ -5565,17 +5581,19 @@ async function leaveJoinedCases() {
       `case leave at the run's end exceeded ${LEAVE_CAP_MS} ms — the place goes, the rest lapse by term`
     );
 }
-async function revokeSatellitePlace() {
-  const s2 = state.standing;
-  if (!CFG.satellite || !s2?.name) return;
-  const args = { action: "revoke", realm: s2.realm, karta: s2.karta, standing: s2.name };
-  const revoke = callTool("iskron_channel", args).then(
-    (r) => log(
-      r.isError ? `could not revoke ${s2.name} at the run's end: ${r.text.slice(0, 120)}` : `revoked ${s2.name} at the run's end (#6593)`
-    ),
-    (e) => log(`could not revoke ${s2.name} at the run's end: ${e.message}`)
+var satellitePlaces = () => CFG.satellite ? [state.standing, ...extraPlaces().map((p) => p.standing)].filter(
+  (s2) => !!s2?.name
+) : [];
+async function revokeSatellitePlaces(places) {
+  if (!places.length) return;
+  const revokes = places.map(
+    (s2) => callTool("iskron_channel", { action: "revoke", realm: s2.realm, karta: s2.karta, standing: s2.name }).then(
+      (r) => log(
+        r.isError ? `could not revoke ${s2.name} at the run's end: ${r.text.slice(0, 120)}` : `revoked ${s2.name} in ${s2.realm} at the run's end (#6593)`
+      )
+    ).catch((e) => log(`could not revoke ${s2.name} at the run's end: ${e.message}`))
   );
-  if (!await underCap(revoke))
+  if (!await underCap(Promise.allSettled(revokes)))
     log(
       `revoke at the run's end exceeded ${LEAVE_CAP_MS} ms — the place lapses by the channel's term`
     );
@@ -7452,8 +7470,9 @@ function openIn(io, origin, scope) {
     const handover = !!origin && handoverUnderway();
     if (!handover) await leaveJoinedCases();
     const addr = statusAddress();
+    const places = handover ? [] : satellitePlaces();
     releaseStanding(why, CFG.satellite);
-    if (!handover) await revokeSatellitePlace();
+    await revokeSatellitePlaces(places);
     if (addr && !handover) await publishStatusTo(addr.url, "", 3e3).catch(() => {
     });
     if (handover) await Promise.race([Promise.allSettled([...pending]), sleep(HANDOVER_WAIT_MS)]);
@@ -8740,6 +8759,7 @@ function runWatchdog(argv2) {
   const folded = [];
   const cases = /* @__PURE__ */ new Set();
   let head = "";
+  let fresh = false;
   const riders = [];
   const riderMarks = [];
   const hold = () => {
@@ -8775,8 +8795,13 @@ function runWatchdog(argv2) {
             queued.delete(id);
           };
           if (ev.batch) {
-            if (ev.batch.at === 1) cases.clear();
+            if (ev.batch.at === 1) {
+              cases.clear();
+              fresh = false;
+            }
+            if (!again) fresh = true;
             const last = ev.batch.at >= ev.batch.of;
+            if (last && !fresh) head = "";
             if (ev.batch.folded) {
               if (!again) folded.push(mark);
               if (last) hold();
