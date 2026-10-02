@@ -7678,9 +7678,9 @@ function openIn(io, origin, scope) {
     debug(`${why} — winding down`);
     const handover = !!origin && handoverUnderway();
     const addr = statusAddress();
-    const places = handover ? [] : satellitePlaces();
+    const places = satellitePlaces();
     releaseStanding(why, CFG.satellite);
-    if (!handover) await leaveJoinedCases();
+    await leaveJoinedCases();
     await revokeSatellitePlaces(places);
     if (addr && (!handover || CFG.satellite))
       await publishStatusTo(addr.url, "", 3e3).catch(() => {

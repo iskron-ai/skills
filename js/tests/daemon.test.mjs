@@ -524,6 +524,11 @@ test("a satellite whose place did not survive the daemon change is told so: the 
           ),
         10_000,
       );
+      // Плановая смена закрывает потерянное место так же, как SIGTERM (#6593).
+      assert.ok(
+        !fake.state.places.has(`931:${CALLER}.sub-1`),
+        `the lost satellite seat is off the board:\n${journalOf(dir)}`,
+      );
       // Отказ держится на каждом вызове до нового iskron_stand, не на одном первом.
       const before = fake.state.writes.length;
       for (const name of ["after-1", "after-2"]) {
@@ -1393,7 +1398,7 @@ test("SIGTERM of the daemon, the place's door up again at the limit: the busy li
 
 // Ревью #291, п.2: спутник на SIGTERM демона отпускается целиком (записи держания
 // у него нет) — и занятость уходит с ним. Сборка b000bde её оставляла.
-test("SIGTERM of the daemon under a satellite: its busy line goes with its place", async () => {
+test("SIGTERM of the daemon under a satellite: its busy line goes, and its place is revoked", async () => {
   await withFake(async ({ fake, dir, bridge }) => {
     const CALLER = "host.repo.opus-5";
     await fake.control({ places: [{ karta: "931", name: CALLER, listening: true }] });
@@ -1406,9 +1411,28 @@ test("SIGTERM of the daemon under a satellite: its busy line goes with its place
     assert.ok(!busy.result?.isError, textOf(busy));
     assert.equal(fake.state.status, "спутник пишет");
     const [first] = daemonPids(dir);
+    assert.ok(fake.state.places.has(`931:${CALLER}.sub-1`), "the satellite stood");
+    await s.request("tools/call", {
+      name: "iskron_case",
+      arguments: { realm: "nks-dev", action: "join", room: "№33" },
+    });
     process.kill(first, "SIGTERM");
     await waitFor("the old daemon gone", () => !alive(first), 30_000);
     assert.equal(fake.state.status, "", `the satellite's line is cleared:\n${journalOf(dir)}`);
+    // Потерянное место спутника закрывается (#6593, #6550 п.4): выход из дел и revoke
+    // до выхода демона — не «живой · не слушает».
+    assert.ok(
+      !fake.state.places.has(`931:${CALLER}.sub-1`),
+      `the lost satellite seat is off the board:\n${journalOf(dir)}`,
+    );
+    const left = fake.state.calls.filter(
+      (c) => c.name === "iskron_case" && c.arguments.action === "leave",
+    );
+    assert.deepEqual(
+      left.map((c) => c.arguments.room),
+      ["№33"],
+      `its case is left:\n${journalOf(dir)}`,
+    );
   });
 });
 
