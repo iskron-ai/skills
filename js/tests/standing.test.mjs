@@ -3666,6 +3666,58 @@ test("a human's word in two phases wakes the exit watchdog once, and that one ev
   assert.equal(r2.exit, null, `the next arm woke on:\n${next.out}`);
 });
 
+// An entry's number is its own in each case (#6576): the same number in two
+// cases names two entries, and the frame id is the channel's, not the entry's.
+const CASE_8 = { id: "r-8", seq: 8, zachin: "Другое", realm: "nks-dev", status: "open" };
+const inCase8 = (frame) => ({ ...frame, id: `${frame.id}-case-8`, room: CASE_8 });
+const caseNumbered = (frame) => ({ ...frame, id: `${frame.id}-by-case`, numbering: "case" });
+
+test("a human's word in flight in one case does not claim the body of another case's word under the same number", async (t) => {
+  const { fake, dir, key } = await connected(t, {
+    env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "10000" },
+  });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog", dir, key, 15_000);
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
+  const inFlight = saidInFlight(80);
+  inFlight.provenance.as_person = true;
+  await sendRoom(fake, inFlight);
+  await sendRoom(fake, inCase8(saidInFlight(80)));
+  await sendRoom(fake, inCase8(bodyFrame(81, 80, "тело слова агента в деле 8")));
+  await sendRoom(fake, bodyFrame(81, 80, "текст слова человека в деле 7 ЦЕЛ"));
+  await waitFor(() => wd.out.includes("в деле 7 ЦЕЛ"), "the human's body in case 7", 5000);
+  assert.ok(
+    !wd.out.includes("тело слова агента в деле 8"),
+    `the other case's body went as the human's word:\n${wd.out}`,
+  );
+  assert.match(wd.out, /^№7 [^\n]*— человек/m, `case 7's body is the human's:\n${wd.out}`);
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
+test("a change of numbering forgets the human's words in flight: an old number does not claim a body under the new one", async (t) => {
+  const { fake, dir, key } = await connected(t, {
+    env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "10000" },
+  });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog", dir, key, 15_000);
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
+  const inFlight = saidInFlight(80);
+  inFlight.provenance.as_person = true;
+  await sendRoom(fake, inFlight);
+  await sendRoom(fake, caseNumbered(saidInFlight(80)));
+  await sendRoom(fake, caseNumbered(bodyFrame(81, 80, "тело слова агента по новой нумерации")));
+  await nudge(fake);
+  await waitFor(() => wd.out.includes("[999]"), "the word to me", 5000);
+  assert.doesNotMatch(
+    wd.out,
+    /— человек/,
+    `a body under the new numbering went as the human's word:\n${wd.out}`,
+  );
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
 // A word to me in two phases (#6574): the exit watchdog leaves on the word in
 // flight, its body comes to a new process that never saw the flight. The bridge
 // saw both phases: it marks the body addressed on the frame itself, and its

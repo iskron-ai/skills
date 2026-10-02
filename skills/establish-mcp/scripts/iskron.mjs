@@ -3418,6 +3418,11 @@ var entryOf = (frame2) => {
   const f = rec2(frame2);
   return idOf2(rec2(f.line).entry_id ?? f.entry_id);
 };
+var caseOf2 = (frame2) => {
+  const room = rec2(rec2(frame2).room);
+  return idOf2(room.id) || idOf2(room.seq);
+};
+var wordKey = (room, entry) => entry ? `${room}|${entry}` : "";
 var RoomBatch = class {
   held = [];
   timer = null;
@@ -3428,23 +3433,35 @@ var RoomBatch = class {
     if (this.held.length >= ROOM_BATCH_CAP) return this.flushNow();
     this.timer ??= setTimeout(() => this.flushNow(), ROOM_BATCH_MS).unref();
   }
-  /** entry_id слов человека в полёте: их тело — слово человека, не кадр пачки. */
+  /** Слова человека в полёте — дело и номер: их тело — слово человека, не кадр пачки. */
   humanWords = /* @__PURE__ */ new Set();
-  rememberHumanWord(entry) {
-    if (!entry) return;
-    this.humanWords.add(entry);
+  /** Нумерация последнего кадра дела: "case" — номер внутри дела; null — кадров дела ещё не было. */
+  numbering = null;
+  /** Смена нумерации (признак numbering, #6576): прежние номера другого счёта — память слов сброшена. */
+  noteNumbering(frame2) {
+    if (!caseOf2(frame2)) return;
+    const now2 = rec2(frame2).numbering === "case" ? "case" : "";
+    if (this.numbering !== null && this.numbering !== now2) this.humanWords.clear();
+    this.numbering = now2;
+  }
+  rememberHumanWord(room, entry) {
+    const key = wordKey(room, entry);
+    if (!key) return;
+    this.humanWords.add(key);
     const oldest = this.humanWords.values().next();
     if (this.humanWords.size > HUMAN_WORDS_KEEP && !oldest.done)
       this.humanWords.delete(oldest.value);
   }
   /** true — это было слово человека в полёте; память о нём снята. */
-  forgetHumanWord(entry) {
-    return !!entry && this.humanWords.delete(entry);
+  forgetHumanWord(room, entry) {
+    const key = wordKey(room, entry);
+    return !!key && this.humanWords.delete(key);
   }
   /** Вынуть из копящейся пачки слово в полёте, чей текст пришёл: отдан он будет своим телом. */
-  dropWord(entry, dropped) {
+  dropWord(room, entry, dropped) {
     for (let i = this.held.length - 1; i >= 0; i--) {
-      if (entryOf(this.held[i].frame) !== entry) continue;
+      const h = this.held[i].frame;
+      if (caseOf2(h) !== room || entryOf(h) !== entry) continue;
       dropped(this.held[i].frame);
       this.held.splice(i, 1);
     }
@@ -3497,14 +3514,16 @@ function batchForWatchdogs(d, raw, frame2, emit2) {
   const rk = roomKind(frame2);
   const f = rec2(frame2);
   let human = (frame2.origin ?? classifyOrigin(frame2)) === "human";
+  const room = caseOf2(frame2);
+  d.roomBatch.noteNumbering(frame2);
   if (rk?.kind === "said" && rk.phase === "pending" && human)
-    d.roomBatch.rememberHumanWord(entryOf(frame2));
+    d.roomBatch.rememberHumanWord(room, entryOf(frame2));
   if (rk?.kind === "body") {
     const word = idOf2(rec2(f.line).refers_to ?? f.in_reply_to);
-    if (d.roomBatch.forgetHumanWord(word) && rk.phase !== "aborted") {
+    if (d.roomBatch.forgetHumanWord(room, word) && rk.phase !== "aborted") {
       human = true;
       frame2.origin = "human";
-      d.roomBatch.dropWord(word, (said) => {
+      d.roomBatch.dropWord(room, word, (said) => {
         for (const k of deliveredKeys(said)) noteSeen(d.seenPath, k, d.seen);
       });
     }
