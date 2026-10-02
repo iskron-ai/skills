@@ -98,10 +98,17 @@ const cases = [
     false,
     false,
   ],
+  // a forced tag looks like a forced branch in push output (short names): it wakes, a known gap
   [
     "git push --force origin v1 2>&1 | tail -3",
-    "To github.com:o/r.git\n t [tag update]      v1 -> v1  (1234567 -> 89abcde)",
+    "To github.com:o/r.git\n + 61ff2af...930b18f v1 -> v1 (forced update)",
+    true,
     false,
+  ],
+  [
+    "git push origin :refs/tags/v1 2>&1 | tail -3",
+    "To github.com:o/r.git\n - [deleted]         v1",
+    true,
     false,
   ],
   // …but a branch riding along with the tag still wakes
