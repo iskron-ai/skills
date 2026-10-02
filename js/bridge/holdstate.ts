@@ -28,6 +28,8 @@ export const H = scoped(() => ({
   resuming: 0,
   /** своё снятие в полёте (absorb.ts): закрытие 4001 обгонит ответ revoke */
   revokingOwn: false,
+  /** демон гаснет, а тонкий мост этой сессии жив: он вернёт место новому демону (daemon.ts, #6485) */
+  handingOver: null as string | null,
 }));
 
 /** Возврат с диска в полёте (+1) или кончился (−1): мёртвый токен при нём — протухшая запись, не тревога. */
@@ -49,6 +51,14 @@ let handingOver: string | null = null;
 export function beginHandover(why: string): void {
   handingOver = why;
 }
+/**
+ * Слово сессии: демон гаснет без преемника (SIGTERM), а её тонкий мост на связи —
+ * он поднимет новый демон и вернёт место по записи держания. Это смена держателя,
+ * не уход делателя: сторожу «передано», занятость не снимается (#6485).
+ */
+export function beginSessionHandover(why: string): void {
+  H.handingOver = why;
+}
 /** Почему места передаются преемнику; null — не передаются. */
-export const handoverReason = (): string | null => handingOver;
-export const handoverUnderway = (): boolean => handingOver !== null;
+export const handoverReason = (): string | null => handingOver ?? H.handingOver;
+export const handoverUnderway = (): boolean => handoverReason() !== null;

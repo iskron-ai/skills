@@ -112,7 +112,7 @@ export type FileLock =
 // Замки шва лежат в личном каталоге 0700: их хозяин — всегда этот пользователь.
 // EPERM от kill(pid, 0) значит, что pid занят процессом другого пользователя, —
 // номер переиспользован, прежний хозяин мёртв. Жив только свой процесс.
-const ownPidAlive = (pid: unknown): boolean => {
+export const ownPidAlive = (pid: unknown): boolean => {
   if (!Number.isInteger(pid) || (pid as number) <= 0) return false;
   try {
     process.kill(pid as number, 0);

@@ -3894,7 +3894,9 @@ var H2 = scoped(() => ({
   /** возвратов с диска в полёте: мёртвый токен при них — протухшая запись, не тревога */
   resuming: 0,
   /** своё снятие в полёте (absorb.ts): закрытие 4001 обгонит ответ revoke */
-  revokingOwn: false
+  revokingOwn: false,
+  /** демон гаснет, а тонкий мост этой сессии жив: он вернёт место новому демону (daemon.ts, #6485) */
+  handingOver: null
 }));
 function noteResuming(delta) {
   H2.resuming += delta;
@@ -3906,8 +3908,11 @@ var handingOver = null;
 function beginHandover(why) {
   handingOver = why;
 }
-var handoverReason = () => handingOver;
-var handoverUnderway = () => handingOver !== null;
+function beginSessionHandover(why) {
+  H2.handingOver = why;
+}
+var handoverReason = () => handingOver ?? H2.handingOver;
+var handoverUnderway = () => handoverReason() !== null;
 
 // js/bridge/names.ts
 import { execFileSync } from "node:child_process";
@@ -4245,25 +4250,62 @@ function drainSpool(path, feed) {
   tick();
 }
 
+// js/bridge/statuspost.ts
+async function publishStatusTo(url, text, timeoutMs = 5e3, standingId = null) {
+  let res;
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(standingId ? { text, standing_id: standingId } : { text }),
+      signal: AbortSignal.timeout(timeoutMs)
+    });
+  } catch (e) {
+    return {
+      ok: false,
+      body: `Отказано (мост): статусный адрес не ответил — ${e.message}`
+    };
+  }
+  const body = (await res.text().catch(() => "")).trim();
+  if (res.status === 404)
+    return {
+      ok: false,
+      code: 404,
+      body: `Отказано (404) поверхностью: ${body || "без тела"} — этот адрес места больше не адресует: его мог повернуть connect другого держателя, а мог держать другой экземпляр моста той же сессии. Чей он теперь, мост отсюда не знает.`
+    };
+  if (!res.ok)
+    return {
+      ok: false,
+      code: res.status,
+      body: `Отказано (${res.status}) поверхностью: ${body || "без тела"}`
+    };
+  return { ok: true, body };
+}
+
 // js/bridge/handoff.ts
 var pending = /* @__PURE__ */ new Set();
-function keepUntilEvicted(holder, key) {
+function keepUntilEvicted(holder, key, statusUrl2) {
   const path = spoolFilePathOf(CFG.authDir, key);
   openSpool(path);
   let timer;
   let over = false;
   const done = new Promise((resolve7) => {
-    const end = (why) => {
+    const end = (why, after2) => {
       if (over) return;
       over = true;
       clearTimeout(timer);
       closeSpool(path);
       log(`place ${key} handed over: ${why}`);
-      resolve7();
+      void Promise.resolve(after2).then(() => resolve7());
     };
     timer = setTimeout(() => {
+      const cleared = statusUrl2 ? publishStatusTo(statusUrl2, "", 3e3).catch(() => {
+      }) : void 0;
+      end(
+        `no successor took the socket in ${HANDOFF_MS / 1e3}s — closed${cleared ? ", busy line cleared" : ""}`,
+        cleared
+      );
       holder.close("the successor did not take the place");
-      end(`no successor took the socket in ${HANDOFF_MS / 1e3}s — closed`);
     }, HANDOFF_MS);
     holder.handOff(
       (raw) => spoolFrame(path, raw),
@@ -4274,8 +4316,8 @@ function keepUntilEvicted(holder, key) {
   });
   pending.add(done);
 }
-function letGo(holder, keepFor, reason) {
-  if (holder && keepFor) keepUntilEvicted(holder, keepFor);
+function letGo(holder, keepFor, reason, statusUrl2 = null) {
+  if (holder && keepFor) keepUntilEvicted(holder, keepFor, statusUrl2);
   else holder?.close(reason);
 }
 function takeSpool(key, primary, feed) {
@@ -4434,7 +4476,7 @@ function releaseStanding(reason, forget = false, keepBeside = false) {
     broadcast(released);
     notify("info", released);
   }
-  letGo(H2.holder, handover && !forget ? key ?? null : null, reason);
+  letGo(H2.holder, handover && !forget ? key ?? null : null, reason, H2.currentStatusUrl);
   H2.holder = null;
   for (const w of [...H2.helloWaiters]) w(null);
   H2.door?.close();
@@ -5272,36 +5314,6 @@ async function notHeldHere(realm) {
     return where.length ? `${r.key} (${where.join(", ")})` : r.key;
   }).join("; ");
   return `${head} Места этого графа на этой машине держат живые мосты: ${list}. ${TURNED_GUIDANCE()}`;
-}
-async function publishStatusTo(url, text, timeoutMs = 5e3, standingId = null) {
-  let res;
-  try {
-    res = await fetch(url, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(standingId ? { text, standing_id: standingId } : { text }),
-      signal: AbortSignal.timeout(timeoutMs)
-    });
-  } catch (e) {
-    return {
-      ok: false,
-      body: `Отказано (мост): статусный адрес не ответил — ${e.message}`
-    };
-  }
-  const body = (await res.text().catch(() => "")).trim();
-  if (res.status === 404)
-    return {
-      ok: false,
-      code: 404,
-      body: `Отказано (404) поверхностью: ${body || "без тела"} — этот адрес места больше не адресует: его мог повернуть connect другого держателя, а мог держать другой экземпляр моста той же сессии. Чей он теперь, мост отсюда не знает.`
-    };
-  if (!res.ok)
-    return {
-      ok: false,
-      code: res.status,
-      body: `Отказано (${res.status}) поверхностью: ${body || "без тела"}`
-    };
-  return { ok: true, body };
 }
 
 // js/bridge/update.ts
@@ -7665,8 +7677,9 @@ function openIn(io, origin, scope) {
     releaseStanding(why, CFG.satellite);
     if (!handover) await leaveJoinedCases();
     await revokeSatellitePlaces(places);
-    if (addr && !handover) await publishStatusTo(addr.url, "", 3e3).catch(() => {
-    });
+    if (addr && (!handover || CFG.satellite))
+      await publishStatusTo(addr.url, "", 3e3).catch(() => {
+      });
     if (handover) await Promise.race([Promise.allSettled([...pending2]), sleep(HANDOVER_WAIT_MS)]);
     else await Promise.allSettled([...pending2, ...tokenRequestsInFlight]);
     await flushStdout(io.output);
@@ -7753,6 +7766,8 @@ async function daemonMain(argv2) {
   }
   const sessions = /* @__PURE__ */ new Map();
   const engines = /* @__PURE__ */ new Map();
+  const attached = /* @__PURE__ */ new Set();
+  const bridgePids = /* @__PURE__ */ new Map();
   const sockets = /* @__PURE__ */ new Set();
   let draining2 = false;
   let counter2 = 0;
@@ -7861,15 +7876,25 @@ async function daemonMain(argv2) {
             journal(`[${id}] rpc ${msg.method ?? "reply"} ${JSON.stringify(msg.id ?? null)}`);
           s2.deliver(msg);
         },
-        end: (why) => s2.end(why).then(() => {
-          if (sessions.get(id) !== traced) return;
-          sessions.delete(id);
-          engines.delete(id);
-          log(`session ${id} ended: ${why}`);
-          armIdle();
-        })
+        attach: (sink, logSink) => {
+          if (sink) attached.add(id);
+          else attached.delete(id);
+          s2.attach(sink, logSink);
+        },
+        end: (why) => {
+          attached.delete(id);
+          bridgePids.delete(id);
+          return s2.end(why).then(() => {
+            if (sessions.get(id) !== traced) return;
+            sessions.delete(id);
+            engines.delete(id);
+            log(`session ${id} ended: ${why}`);
+            armIdle();
+          });
+        }
       };
       sessions.set(id, traced);
+      bridgePids.set(id, hello.pid);
       if (opened) engines.set(id, opened);
       if (idle) clearTimeout(idle);
       idle = null;
@@ -7923,10 +7948,15 @@ async function daemonMain(argv2) {
     draining2 = true;
     log(`${sig} — ending ${sessions.size} session(s)`);
     server?.close();
+    for (const id of sessions.keys()) {
+      if (!attached.has(id) && !ownPidAlive(bridgePids.get(id))) continue;
+      const scope = engines.get(id)?.scope;
+      if (scope) runIn(scope, () => beginSessionHandover(`daemon ${sig}`));
+    }
     void Promise.allSettled([...sessions.values()].map((s2) => s2.end(sig))).then(() => {
       for (const so of sockets) so.destroy();
-      process.exit(0);
-    });
+      return handoffsSettled();
+    }).then(() => process.exit(0));
   };
   process.on("SIGTERM", () => stop("SIGTERM"));
   process.on("SIGINT", () => stop("SIGINT"));
@@ -8636,7 +8666,7 @@ function openDoor(socketPath, onMessage, onClose) {
 import { existsSync as existsSync6, readdirSync as readdirSync6, readFileSync as readFileSync20 } from "node:fs";
 import { connect as connect4 } from "node:net";
 import { join as join17 } from "node:path";
-var ATTACH_WINDOW_MS = 6e4;
+var ATTACH_WINDOW_MS = Number(process.env.ISKRON_WATCHDOG_ATTACH_MS) || 6e4;
 var RETRY_MS = 1e3;
 function parseWatchdogArgs(argv2) {
   const out6 = { authDir: authDirFromEnv() };
@@ -8683,12 +8713,14 @@ function attach(path, o) {
   let startedAt = Date.now();
   let attached = false;
   let handover = false;
+  let waitingBack = false;
   function tryOnce() {
     const sock = connect4(path);
     let buf = "";
     sock.setEncoding("utf8");
     sock.on("connect", () => {
       attached = true;
+      waitingBack = false;
     });
     sock.on("data", (chunk) => {
       buf += chunk;
@@ -8722,12 +8754,16 @@ function attach(path, o) {
       if (attached && handover) {
         attached = false;
         handover = false;
+        waitingBack = true;
         startedAt = Date.now();
         return void setTimeout(tryOnce, RETRY_MS);
       }
       if (attached) return o.onGone("мост отпустил стояние или ушёл — сессия кончилась?");
       if (Date.now() - startedAt > ATTACH_WINDOW_MS) {
-        return o.onGone(`мост не поднял локальный сокет ${path} за ${ATTACH_WINDOW_MS / 1e3}s`);
+        const s2 = ATTACH_WINDOW_MS / 1e3;
+        return o.onGone(
+          waitingBack ? `место не вернулось за ${s2}s после смены демона — сокет ${path} не поднят; вернуть — iskron_stand` : `мост не поднял локальный сокет ${path} за ${s2}s`
+        );
       }
       setTimeout(tryOnce, RETRY_MS);
     });

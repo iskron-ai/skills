@@ -30,7 +30,7 @@ import { fileURLToPath } from "node:url";
 import { homeBridgePath } from "../shared/home.ts";
 import { runIn } from "../shared/scope.ts";
 import { type SeamHello, writeFrame } from "../shared/seam.ts";
-import { seamRunDir, seamSocketPath } from "../shared/seam-entrance.ts";
+import { ownPidAlive, seamRunDir, seamSocketPath } from "../shared/seam-entrance.ts";
 import {
   listenSeam,
   type SeamHost,
@@ -45,7 +45,7 @@ import { parseArgs } from "./config.ts";
 import { installCrashWords, startEngine } from "./engine.ts";
 import { errorMessage } from "./errors.ts";
 import { handoffsSettled } from "./handoff.ts";
-import { beginHandover } from "./holdstate.ts";
+import { beginHandover, beginSessionHandover } from "./holdstate.ts";
 import { pendingFlow } from "./oauth/flow.ts";
 import { type BridgeSession, openSession } from "./session.ts";
 import { log, setProcessLog } from "./streams.ts";
@@ -128,6 +128,10 @@ export async function daemonMain(argv: string[]): Promise<void> {
 
   const sessions = new Map<string, SeamSession>();
   const engines = new Map<string, BridgeSession>();
+  /** Сессии, чей тонкий мост сейчас на связи. */
+  const attached = new Set<string>();
+  /** pid тонкого моста сессии: шов оборван, а мост жив — он в окне переподхвата. */
+  const bridgePids = new Map<string, number>();
   const sockets = new Set<Socket>();
   let draining = false;
   let counter = 0;
@@ -252,16 +256,25 @@ export async function daemonMain(argv: string[]): Promise<void> {
             journal(`[${id}] rpc ${msg.method ?? "reply"} ${JSON.stringify(msg.id ?? null)}`);
           s.deliver(msg);
         },
-        end: (why) =>
-          s.end(why).then(() => {
+        attach: (sink, logSink) => {
+          if (sink) attached.add(id);
+          else attached.delete(id);
+          s.attach(sink, logSink);
+        },
+        end: (why) => {
+          attached.delete(id); // уходящая (bye, окно переподхвата вышло) — уже не на связи
+          bridgePids.delete(id);
+          return s.end(why).then(() => {
             if (sessions.get(id) !== traced) return;
             sessions.delete(id);
             engines.delete(id);
             log(`session ${id} ended: ${why}`);
             armIdle();
-          }),
+          });
+        },
       };
       sessions.set(id, traced);
+      bridgePids.set(id, hello.pid);
       if (opened) engines.set(id, opened);
       if (idle) clearTimeout(idle);
       idle = null;
@@ -321,10 +334,22 @@ export async function daemonMain(argv: string[]): Promise<void> {
     draining = true;
     log(`${sig} — ending ${sessions.size} session(s)`);
     server?.close();
-    void Promise.allSettled([...sessions.values()].map((s) => s.end(sig))).then(() => {
-      for (const so of sockets) so.destroy();
-      process.exit(0);
-    });
+    // Сессия с тонким мостом на связи — смена держателя, не уход делателя: тонкий мост
+    // поднимет новый демон и вернёт место по записи держания, сторож переслушает дверь,
+    // сокет места держится до вытеснения новым (handoff.ts, #6485). Так же и мост в окне
+    // переподхвата, чей процесс жив: он вернётся к новому демону. Мост умер — отпуск:
+    // возвращать некому; умрёт после — место не взято до предела, занятость снимется там.
+    for (const id of sessions.keys()) {
+      if (!attached.has(id) && !ownPidAlive(bridgePids.get(id))) continue;
+      const scope = engines.get(id)?.scope;
+      if (scope) runIn(scope, () => beginSessionHandover(`daemon ${sig}`));
+    }
+    void Promise.allSettled([...sessions.values()].map((s) => s.end(sig)))
+      .then(() => {
+        for (const so of sockets) so.destroy();
+        return handoffsSettled();
+      })
+      .then(() => process.exit(0));
   };
   process.on("SIGTERM", () => stop("SIGTERM"));
   process.on("SIGINT", () => stop("SIGINT"));
