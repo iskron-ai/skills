@@ -163,6 +163,8 @@ export async function startFakeNks(opts = {}) {
     // которые тест объявляет через /control {rooms:[{karta,address}]}.
     places: new Map(), // "karta:name" → { karta, name, incoming }
     hung: new Set(), // сокеты, в которые служба перестала писать (/control {ws_hang})
+    placeAttrs: new Map(), // "karta:name" → attrs места, последние принятые; переживают revoke (#6401)
+    closedPlaces: new Set(), // "karta:name" снятых revoke: register по ним — 404
     placeArgs: [], // поля места, которые фейк ПРИНЯЛ у connect/mint/register (#5174) — после отсева по схеме; посланное — в calls
     acceptLanguage: new Set(), // значения Accept-Language запросов к /mcp ("" — заголовка не было)
     rooms: [],
@@ -787,6 +789,25 @@ export async function startFakeNks(opts = {}) {
               extra,
             );
           }
+          // Закрытое место (revoke) — 404, как запись attrs по закрытому месту у api (#6401).
+          const regKey = `${String(a.karta).trim().replace(/^#/, "")}:${String(a.name ?? "").trim()}`;
+          if (st.closedPlaces.has(regKey)) {
+            st.counts.register_closed = (st.counts.register_closed ?? 0) + 1;
+            return json(
+              res,
+              200,
+              {
+                jsonrpc: "2.0",
+                id: msg.id,
+                result: {
+                  isError: true,
+                  content: [{ type: "text", text: `Отказано (404): место «${a.name}» закрыто` }],
+                },
+              },
+              extra,
+            );
+          }
+          st.placeAttrs.set(regKey, a.attrs);
           st.counts.register_standing++;
           st.placeArgs.push({
             action: "register",
@@ -958,6 +979,8 @@ export async function startFakeNks(opts = {}) {
           st.standings.set(sid, chan);
           st.wsChannel.set(st.wsToken, chan);
           st.wsTokens.set(st.wsToken, name);
+          st.placeAttrs.set(`${karta}:${name}`, a.attrs);
+          st.closedPlaces.delete(`${karta}:${name}`);
           st.places.set(`${karta}:${name}`, {
             karta,
             name,
@@ -1015,6 +1038,7 @@ export async function startFakeNks(opts = {}) {
             );
           }
           const had = st.places.delete(`${String(a.karta).replace(/^#/, "")}:${name}`);
+          if (had) st.closedPlaces.add(`${String(a.karta).replace(/^#/, "")}:${name}`);
           // Место снимается с канала; канал без мест закрыт, с местами других графов — жив (#5838).
           const chan =
             channelOfPlace(a.realm, name) ??

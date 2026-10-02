@@ -28,6 +28,7 @@ import { publishStatusTo } from "./status.ts";
 import { sleep } from "./store.ts";
 import { debug, flushStdout, guardStream, log, setSessionOutput } from "./streams.ts";
 import { type JsonRpcMessage } from "./types.ts";
+import { flushUsage, usagePlace } from "./usage.ts";
 import { lastAgentWork, noteAgentWork } from "./work.ts";
 
 /** How long a bridge left by its harness still waits for a pending login's click. */
@@ -200,11 +201,13 @@ function openIn(io: SessionIO, origin: SessionOrigin | null, scope: Scope | null
     // сторож ушёл бы на мёртвый сокет. Выход из дел и revoke идут вызовами сессии, сокет им не нужен.
     const addr = statusAddress();
     const places = handover ? [] : satellitePlaces();
+    const spent = handover ? null : usagePlace();
     // Сокет стояния живёт ровно столько, сколько сессия; у спутника — и записи держания нет: возврата с диска у него не бывает.
     releaseStanding(why, CFG.satellite);
     // Спутник выходит из дел прогона сам (#6573), пока место на доске: конец
     // прогона — конец поручения, а истечение срока места оставило бы «slop».
-    if (!handover) await leaveJoinedCases();
+    // Последний снимок расхода ложится тем же тактом — до revoke: по закрытому месту записи нет (#6401).
+    await Promise.all([handover ? null : leaveJoinedCases(), flushUsage(spent)]);
     // Конец спутника закрывает и место (#6593): место снимается с доски.
     await revokeSatellitePlaces(places);
     // Спутник отпускается целиком и при передаче (возврата с диска нет) — его занятость уходит с ним.
