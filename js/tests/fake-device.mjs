@@ -1,8 +1,11 @@
 // The device side of the fake sign-in server (RFC 8628), plugged into
 // fake-nks.mjs when a probe asks for `device: {…}`. Shaped on Rauthy, the
 // server behind mcp.iskron.ru, as observed live (graph nks-dev: #6570, #6619):
-// the code answer and its fields; a code it does not know — expired and gone,
-// or never issued — answered 404 NotFound «DeviceAuthCode does not exist».
+// the code answer and its fields; a poll of the token endpoint with a code it
+// does not know — expired and gone, or never issued — answered 400
+// expired_token «invalid `device_code` or request has expired». (Rauthy's 404
+// «DeviceAuthCode does not exist» is its verification page's answer to the
+// human in the browser, never the bridge's: not played here.)
 // Paced like Rauthy: a poll sooner than the interval (100 ms of slack) is
 // answered slow_down and counted, so a probe can see a bridge that does not
 // keep pace. `client` names a client set up by the operator, as the device
@@ -91,7 +94,10 @@ export function devicePoll(dev, form, grant, json, res) {
     return json(res, status, body);
   };
   if (!code || Date.now() >= code.expires_at) {
-    return answer(404, { error: "NotFound", message: "DeviceAuthCode does not exist" });
+    return answer(400, {
+      error: "expired_token",
+      error_description: "invalid `device_code` or request has expired",
+    });
   }
   if (code.client_id !== form.get("client_id")) return answer(400, { error: "invalid_request" });
   const now = Date.now();
