@@ -94,13 +94,15 @@ async function setup(ctx: Context): Promise<() => void> {
 
   let half: Awaited<ReturnType<typeof setupTools>> = {
     forget() {},
-    ended() {},
+    onEvent() {},
     launch: async () => null,
     stop() {},
     bridgeOf: () => null,
   };
+  // Расход встаёт после тулов (ему нужен мост сессии), а конец субагента сбрасывает его прежде.
+  let flushUsage = (_s: string): Promise<void> => Promise.resolve();
   try {
-    half = await setupTools(ctx, say, onChannel, rootOf);
+    half = await setupTools(ctx, say, onChannel, rootOf, (s) => flushUsage(s));
   } catch (e) {
     say(`Искрон: мост не поднялся — ${(e as Error).message}`, "error");
   }
@@ -134,12 +136,14 @@ async function setup(ctx: Context): Promise<() => void> {
     listModels: () => (ctx as any).model.list(),
     bridgeOf: (s) => half.bridgeOf(s),
   });
+  flushUsage = (s) => usage.flush(s);
   const controller = new AbortController();
   void (async () => {
     try {
       for await (const event of ctx.event.subscribe({ signal: controller.signal })) {
         const ev: any = event;
         const id: string | undefined = ev?.data?.sessionID;
+        half.onEvent(ev); // ход, текст и удаление ведущего субагента (leads.ts)
         switch (ev?.type) {
           case "session.deleted":
             if (!id) break;
@@ -175,14 +179,11 @@ async function setup(ctx: Context): Promise<() => void> {
           case "session.idle":
             if (id) ch?.taken(id);
             break;
-          // Конец прогона: мост дочерней сессии уходит с её местом-спутником (#6361).
-          // Форма события — по типам @opencode/schema (плагин 2.0.4), живьём не снята.
-          // interrupted не гасит: его смысл не наблюдён, а прерыванием может быть и
-          // steer, которым плагин сам вкладывает кадры, — ребёнок погас бы посреди работы.
+          // Конец хода — не конец субагента (#6625): ребёнок ждёт кадров своего дела,
+          // кончает его явный акт (leads.ts). Здесь — лишь ждущий снимок расхода.
           case "session.execution.succeeded":
           case "session.execution.failed":
-            // Ждущий снимок расхода — мосту до его ухода: снимок ложится до закрытия места (#6401).
-            if (id) void usage.flush(id).finally(() => half.ended(id));
+            if (id) void usage.flush(id);
             break;
           default:
             usage.onEvent(ev);

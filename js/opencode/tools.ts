@@ -35,11 +35,13 @@ import {
 import { hostEnvOf, sessionDirectory } from "./host.ts";
 import { createKeeper, type KeptSlot, takeLostMarker, WATCH_MS, writeLostMarker } from "./keep.ts";
 import { createLauncher } from "./launch.ts";
+import { createLeads } from "./leads.ts";
+import { leadDoors } from "./leadwords.ts";
 import { createLogin } from "./login.ts";
 import type { Context } from "./plugin.ts";
 import { createRunEnds } from "./runends.ts";
 import { asSatellite, heldPlace, type SatelliteSlot, STAND_TOOL, standsBy } from "./satellite.ts";
-import { statusLines } from "./status.ts";
+import { statusLines, statusTool } from "./status.ts";
 
 export type Say = (text: string, level: "info" | "warning" | "error") => void;
 
@@ -55,8 +57,6 @@ if (IDLE_MS <= WATCH_MS)
   );
 /** Шаг жнеца простоя; переменная — для проб. */
 const REAP_MS = Number(process.env.ISKRON_BRIDGE_REAP_MS || 60_000);
-/** Служебный тул плагина: состояние моста, когда тулов iskron_* ещё нет. */
-export const STATUS_TOOL = "iskron_bridge";
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- ответы моста приходят без схемы */
 
@@ -78,8 +78,8 @@ const hhmm = (): string => new Date().toTimeString().slice(0, 5);
 export interface ToolsHalf {
   /** Сессия умерла — её мост отпускается вместе со стоянием. */
   forget(session: string): void;
-  /** Прогон сессии кончился — мост дочерней уходит с её местом-спутником (#6361); корень живёт сессией. */
-  ended(session: string): void;
+  /** Событие сервиса: ход, текст, удаление ведущего субагента (leads.ts, #6625). */
+  onEvent(ev: any): void;
   /** Первый промпт сессии — строка запуска с делом исполняется до хода модели (launch.ts). */
   launch(session: string, text: string): Promise<string | null>;
   stop(): void;
@@ -91,6 +91,7 @@ export async function setupTools(
   say: Say,
   onChannel: (session: string | null, params: any, child?: boolean) => void,
   rootOf: (sessionID: string) => Promise<string>,
+  flushUsage: (session: string) => Promise<void> = async () => {},
 ): Promise<ToolsHalf> {
   const found = findBridge();
   if (!found.path) {
@@ -100,7 +101,7 @@ export async function setupTools(
         ". Задай ISKRON_BRIDGE_PATH или поставь мост скиллом establish-mcp.",
       "error",
     );
-    return { forget() {}, ended() {}, launch: async () => null, stop() {}, bridgeOf: () => null };
+    return { forget() {}, onEvent() {}, launch: async () => null, stop() {}, bridgeOf: () => null };
   }
   const path = found.path;
   const builds = buildsLine(path, import.meta.url);
@@ -142,6 +143,7 @@ export async function setupTools(
           slot.key = params.data.key; // ключ места — точный адрес записи для возврата
         if (kind === "held") slot.place = heldPlace(params?.data) ?? slot.place; // #6002
         if (kind === "released" || kind === "dead" || kind === "evicted") slot.holding = false;
+        if (slot.child && slot.session) leads.heard(slot.session, kind, slot.place); // #6625
         onChannel(slot.session, params, !!slot.child);
       },
       (e) => {
@@ -149,15 +151,11 @@ export async function setupTools(
         // сессию, а не строка в лог, которого никто не читает (#5140).
         if (slot.ownStop || stopped || !slot.holding) return;
         slot.holding = false;
-        onChannel(slot.session, {
-          logger: "iskron-channel",
-          data: {
-            kind: "lost",
-            text:
-              `Искрон: слух потерян в ${hhmm()} — мост стояния вышел (${e.message}). ` +
-              "Сторож слуха поднимет мост и вернёт место с диска; не ждёшь — iskron_stand.",
-          },
-        });
+        const text =
+          `Искрон: слух потерян в ${hhmm()} — мост стояния вышел (${e.message}). ` +
+          "Сторож слуха поднимет мост и вернёт место с диска; не ждёшь — iskron_stand.";
+        const lost = { logger: "iskron-channel", data: { kind: "lost", text } };
+        onChannel(slot.session, lost, !!slot.child); // слух ребёнка — слово только ему (#6625)
       },
       args,
     );
@@ -168,6 +166,9 @@ export async function setupTools(
 
   const directoryOf = (sessionID: string) => sessionDirectory(ctx, sessionID);
   const runEnds = createRunEnds(); // кончившиеся дети: запись с места — отказ вслух (#6361)
+  // Ведущие субагенты (#6625): конец — явный акт, итог — синтетикой родителю.
+  const endChild = (c: string) => runEnds.end(c, slots.get(c)?.satelliteOf, forget);
+  const leads = createLeads(leadDoors(ctx, say, flushUsage, endChild));
   const keeper = createKeeper({
     say,
     tell: (root, text, child) =>
@@ -193,6 +194,8 @@ export async function setupTools(
   if (lost) {
     say(lost.text, "warning");
     keeper.hint(lost.entries);
+    // Дети прежнего экземпляра: запись без своего моста пошла бы местом корня — отказ (#6625).
+    for (const child of leads.lost(lost.entries)) runEnds.end(child, null, () => {});
   }
 
   function shake(slot: Slot): void {
@@ -299,16 +302,7 @@ export async function setupTools(
     );
 
   await ctx.tool.transform((editor) => {
-    editor.add({
-      name: STATUS_TOOL,
-      description:
-        "Состояние моста Искрона в этой сессии OpenCode: выполнен ли вход, адрес авторизации, сколько тулов iskron_* поднято. " +
-        "Зови, когда тулов iskron_* нет или они отвечают отказом входа.",
-      input: { type: "object", properties: {}, additionalProperties: false } as any,
-      async execute() {
-        return { content: statusText() };
-      },
-    });
+    editor.add(statusTool(statusText));
     for (const t of state.listed) {
       const name = String(t.name);
       editor.add({
@@ -317,6 +311,9 @@ export async function setupTools(
         // JSON Schema сервера без паспорта диалекта — той же срезкой, что у pi.
         input: toParameters(t.inputSchema),
         async execute(input, tool) {
+          // revoke места своего ведущего субагента — слово запустившего: конец исполняет плагин (#6625).
+          const word = await leads.release(String(tool.sessionID), name, input ?? {});
+          if (word) return { content: word };
           runEnds.guard(String(tool.sessionID), name, input ?? {}); // не мостом корня (#6361)
           const slot = await slotFor(String(tool.sessionID));
           // Вызов в полёте — занятость: мост посреди вызова жнецу не отдаётся,
@@ -396,6 +393,8 @@ export async function setupTools(
     // Ответ тула — наблюдаемое событие держания; ответ одной занятости — нет (#6509).
     if (standsBy(name, args) && !busy) keeper.stood(slot);
     if (standsBy(name, args)) runEnds.clear(sessionID); // встал заново — запись снова своим мостом
+    // Ребёнок, вставший своим мостом, — ведущий; его уход по исходу — конец (#6625).
+    if (slot.child && slot.session === sessionID) leads.called(sessionID, name, args, slot.place);
     return { content: textOf(result) };
   }
   if (state.listed.length)
@@ -478,10 +477,11 @@ export async function setupTools(
     launch: launcher.launch,
     bridgeOf: (s) => [slots.get(s)].find((x) => x?.holding)?.bridge ?? null,
     forget,
-    ended: (s) => void (slots.get(s)?.child && runEnds.end(s, slots.get(s)?.satelliteOf, forget)),
+    onEvent: (ev) => leads.onEvent(ev),
     stop() {
       stopped = true;
       clearInterval(reaper);
+      leads.stop();
       keeper.stop();
       // Остановка с держащими мостами — на диск: следующий экземпляр скажет о потере.
       writeLostMarker(authDir(), slots.values());
