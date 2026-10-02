@@ -23,7 +23,7 @@ var BUILD = buildOf(import.meta.url);
 
 // js/bridge/daemon.ts
 import { spawn as spawn3 } from "node:child_process";
-import { appendFileSync as appendFileSync3, mkdirSync as mkdirSync10, readFileSync as readFileSync17, statSync as statSync7, unlinkSync as unlinkSync10 } from "node:fs";
+import { appendFileSync as appendFileSync4, mkdirSync as mkdirSync11, readFileSync as readFileSync18, statSync as statSync7, unlinkSync as unlinkSync11 } from "node:fs";
 import { join as join16 } from "node:path";
 import { fileURLToPath as fileURLToPath5 } from "node:url";
 
@@ -304,6 +304,7 @@ function privateDirProblem(dir) {
 }
 var keyFilePathOf = (authDir, key) => join2(standingsDirOf(authDir), `${hashOf(key)}.key`);
 var holdFilePathOf = (authDir, key) => join2(standingsDirOf(authDir), `${hashOf(key)}.hold`);
+var spoolFilePathOf = (authDir, key) => join2(standingsDirOf(authDir), `${hashOf(key)}.spool`);
 function seenFilePathOf(authDir, key, server = "") {
   if (!server) return join2(standingsDirOf(authDir), `${hashOf(key)}.seen`);
   let origin = server;
@@ -2237,6 +2238,7 @@ function holdSocket(o) {
   let lastEviction = null;
   let retry = null;
   let ws = null;
+  let handing = null;
   let lastLife = 0;
   let pingMs = 0;
   let runtimeSeesPings = false;
@@ -2277,6 +2279,7 @@ function holdSocket(o) {
       if (stopped || ws !== sock) return;
       lastLife = Date.now();
       const raw = typeof e.data === "string" ? e.data : "[двоичный кадр]";
+      if (handing) return handing.onFrame(raw);
       let frame2 = null;
       if (typeof e.data === "string") {
         try {
@@ -2329,6 +2332,14 @@ function holdSocket(o) {
     async function dropped(code) {
       if (stopped || ws !== sock) return;
       stopWatch();
+      if (handing) {
+        const h = handing;
+        handing = null;
+        stopped = true;
+        ws = null;
+        unsubscribePing();
+        return h.onGone(code);
+      }
       if (DEAD_TOKEN_CODES.includes(code)) return yieldTo(o.onDeadToken, code);
       const now2 = Date.now();
       const afterEviction = lastEviction !== null && now2 - lastEviction < EVICTION_WINDOW_MS;
@@ -2376,6 +2387,7 @@ function holdSocket(o) {
   return {
     close(reason = "held no more") {
       stopped = true;
+      handing = null;
       stopWatch();
       unsubscribePing();
       if (retry) clearTimeout(retry);
@@ -2386,6 +2398,16 @@ function holdSocket(o) {
         sock?.close(1e3, reason);
       } catch {
       }
+    },
+    handOff(onFrame, onGone) {
+      if (stopped || !ws || ws.readyState !== 1) {
+        this.close("handed off without a socket");
+        return onGone(0);
+      }
+      if (retry) clearTimeout(retry);
+      retry = null;
+      stopWatch();
+      handing = { onFrame, onGone };
     },
     get alive() {
       return !stopped && !!ws && (ws.readyState === 0 || ws.readyState === 1);
@@ -2710,9 +2732,9 @@ function roomKind(frame2) {
     const words2 = run(counts ? 1 : 0);
     return { kind, rule: "batch", words: words2, author, phase: null, known: true, aside };
   }
-  const pending = kind === "said" && f.body_pending === true && !str(f.body) && !str(line.done);
+  const pending2 = kind === "said" && f.body_pending === true && !str(f.body) && !str(line.done);
   const aborted = kind === "body" && fields.aborted === true;
-  const wordsOf = pending ? W2.said_pending : aborted ? obj(line.author).kind === "platform" ? W2.body_lapsed : W2.body_aborted : kind === "auto" ? autoWords()[str(values.code)] ?? W2.auto : (
+  const wordsOf = pending2 ? W2.said_pending : aborted ? obj(line.author).kind === "platform" ? W2.body_lapsed : W2.body_aborted : kind === "auto" ? autoWords()[str(values.code)] ?? W2.auto : (
     // op узла (bound | updated | deleted | undeleted): без op и bound — прежнее слово.
     kind === "node" && NODE_OPS[str(fields.op)] ? W2[NODE_OPS[str(fields.op)]] : W2[kind]
   );
@@ -2727,7 +2749,7 @@ function roomKind(frame2) {
     // Стопка решает у said и body; слово без стопки — прежним путём, вставкой.
     f.stack === "defer" ? "batch" : "interrupt"
   ) : rule === "mine" ? mine.includes(str(values.target)) || myRole(f, fields) ? "interrupt" : "batch" : rule;
-  const phase = pending ? "pending" : aborted ? "aborted" : null;
+  const phase = pending2 ? "pending" : aborted ? "aborted" : null;
   return { kind, rule: phase ? "batch" : stack, words: text, author, phase, known: true };
 }
 var byKind = (frame2) => roomKind(frame2) !== null;
@@ -3611,6 +3633,13 @@ function sweepStale(authDir, mine) {
       }
     }
   }
+  for (const f of readdirSync2(dir).filter((x) => x.endsWith(".spool"))) {
+    try {
+      if (Date.now() - statSync3(join9(dir, f)).mtimeMs > HOLD_RECORD_MAX_AGE_MS)
+        unlinkSync7(join9(dir, f));
+    } catch {
+    }
+  }
   if (process.platform === "win32") return;
   for (const f of readdirSync2(dir).filter((x) => x.endsWith(".key"))) {
     const keyFile = join9(dir, f);
@@ -4100,26 +4129,172 @@ function learnFromHello(hello, primary) {
     if (typeof e.standing_id === "string" && e.standing_id) p.door.standingId = e.standing_id;
   }
 }
-function routeFrame(frame2, primary) {
-  if (!frame2 || !extras.size) return { door: primary.door };
-  const places = all(primary);
+function fitsOf(frame2, places) {
   const id = typeof frame2.to_standing_id === "string" ? frame2.to_standing_id : "";
   const byId = id ? places.find((p) => p.door.standingId === id) : void 0;
-  if (byId) return { door: byId.door };
+  if (byId) return [byId];
   const to = nameOfAddress(frame2.to_standing);
-  if (!id && !to && frame2.realm == null && frame2.karta_seq == null) return { door: primary.door };
+  if (!id && !to && frame2.realm == null && frame2.karta_seq == null) return null;
   const fits = places.filter(
     (p) => (frame2.realm == null || sameRealm(frame2.realm, p.standing.realm)) && (!to || to === (p.standing.name ?? "")) && (frame2.karta_seq == null || String(frame2.karta_seq) === String(p.standing.karta))
   );
-  if (fits.length === 1) {
-    if (id && !fits[0].door.standingId) fits[0].door.standingId = id;
-    return { door: fits[0].door };
-  }
+  if (fits.length === 1 && id && !fits[0].door.standingId) fits[0].door.standingId = id;
+  return fits;
+}
+function strayOf(frame2, primary) {
+  if (frame2?.type !== "message" || fitsOf(frame2, all(primary))?.length !== 0) return null;
+  const back = state.places.find((s2) => frame2.realm != null && sameRealm(s2.realm, frame2.realm));
+  return back ? keyOfPlace(back) : `${String(frame2.to_standing ?? "—")}, граф ${String(frame2.realm ?? "—")}`;
+}
+function routeFrame(frame2, primary) {
+  if (!frame2 || !extras.size) return { door: primary.door };
+  const fits = fitsOf(frame2, all(primary));
+  if (!fits) return { door: primary.door };
+  if (fits.length === 1) return { door: fits[0].door };
+  const id = typeof frame2.to_standing_id === "string" ? frame2.to_standing_id : "";
   return {
     door: primary.door,
     note: `ДЕЛАТЕЛЬ: кадр ${String(frame2.id ?? "?")} (to_standing_id ${id || "—"}, ${frame2.to_standing ?? "—"}, граф ${frame2.realm ?? "—"}) не сопоставлен ни одному месту моста (${fits.length ? "подходят несколько" : "не подходит ни одно"}) — отдан основному месту ${primary.door.key}; сверь адрес кадра.`
   };
 }
+
+// js/bridge/spool.ts
+import { appendFileSync as appendFileSync3, mkdirSync as mkdirSync8, readFileSync as readFileSync11, unlinkSync as unlinkSync9 } from "node:fs";
+import { dirname as dirname5 } from "node:path";
+var HANDOFF_MS = Number(process.env.ISKRON_BRIDGE_DAEMON_HANDOFF_MS) || 12e3;
+var DRAIN_MS = HANDOFF_MS + 5e3;
+var DRAIN_TICK_MS = 200;
+var SPOOL_LIVE_MS = DRAIN_MS;
+function append(path, entry) {
+  try {
+    appendFileSync3(path, JSON.stringify(entry) + "\n", { mode: 384 });
+  } catch (e) {
+    const id = entry.frame === void 0 ? "" : `, frame ${String(parseFrame(entry.frame)?.id ?? "?")}`;
+    log(`handover spool not written (${path}${id}): ${e.message}`);
+  }
+}
+function openSpool(path) {
+  try {
+    mkdirSync8(dirname5(path), { recursive: true, mode: 448 });
+  } catch {
+  }
+  append(path, { open: Date.now() });
+}
+var spoolFrame = (path, raw) => append(path, { frame: raw, at: Date.now() });
+var closeSpool = (path) => append(path, { done: Date.now() });
+var draining = /* @__PURE__ */ new Set();
+function parseFrame(raw) {
+  try {
+    const f = JSON.parse(raw);
+    return f && typeof f === "object" ? f : null;
+  } catch {
+    return null;
+  }
+}
+function entries(path) {
+  let text;
+  try {
+    text = readFileSync11(path, "utf8");
+  } catch {
+    return null;
+  }
+  return text.slice(0, text.lastIndexOf("\n") + 1).split("\n").filter(Boolean).map((line) => {
+    try {
+      return JSON.parse(line);
+    } catch {
+      return {};
+    }
+  });
+}
+function aged(raw, at2) {
+  const frame2 = parseFrame(raw);
+  if (Date.now() - at2 <= SPOOL_LIVE_MS || frame2?.type !== "message") return [raw, frame2];
+  const stale = { ...frame2, stale: true };
+  return [JSON.stringify(stale), stale];
+}
+function drainSpool(path, feed) {
+  if (draining.has(path)) return;
+  const give = bindScope((raw, at2) => feed(...aged(raw, at2)));
+  const until = Date.now() + DRAIN_MS;
+  let taken = 0;
+  let openedAt = 0;
+  const tick = () => {
+    const all2 = entries(path);
+    if (!all2) return void draining.delete(path);
+    const fresh = [];
+    for (const e of all2.slice(taken)) {
+      if (e.open) openedAt = e.open;
+      if (typeof e.frame === "string") fresh.push([e.frame, e.at ?? openedAt]);
+    }
+    if (fresh.length) log(`handover spool: ${fresh.length} frame(s) of the outgoing daemon`);
+    for (const [raw, at2] of fresh) give(raw, at2);
+    taken = all2.length;
+    const opened = all2.filter((e) => e.open).length;
+    const done = all2.filter((e) => e.done).length;
+    if (done < opened && Date.now() < until) {
+      setTimeout(tick, DRAIN_TICK_MS).unref?.();
+      return;
+    }
+    draining.delete(path);
+    try {
+      unlinkSync9(path);
+    } catch {
+    }
+  };
+  draining.add(path);
+  tick();
+}
+
+// js/bridge/handoff.ts
+var pending = /* @__PURE__ */ new Set();
+function keepUntilEvicted(holder, key) {
+  const path = spoolFilePathOf(CFG.authDir, key);
+  openSpool(path);
+  let timer;
+  let over = false;
+  const done = new Promise((resolve7) => {
+    const end = (why) => {
+      if (over) return;
+      over = true;
+      clearTimeout(timer);
+      closeSpool(path);
+      log(`place ${key} handed over: ${why}`);
+      resolve7();
+    };
+    timer = setTimeout(() => {
+      holder.close("the successor did not take the place");
+      end(`no successor took the socket in ${HANDOFF_MS / 1e3}s — closed`);
+    }, HANDOFF_MS);
+    holder.handOff(
+      (raw) => spoolFrame(path, raw),
+      (code) => end(
+        code === EVICTED_CODE ? "the successor took the socket (close 4000)" : `the socket closed (${code})`
+      )
+    );
+  });
+  pending.add(done);
+}
+function letGo(holder, keepFor, reason) {
+  if (holder && keepFor) keepUntilEvicted(holder, keepFor);
+  else holder?.close(reason);
+}
+function takeSpool(key, primary, feed) {
+  drainSpool(spoolFilePathOf(CFG.authDir, key), (raw, frame2) => {
+    const p = primary();
+    const to = p && strayOf(frame2, p);
+    if (!p || !to) return feed(raw, frame2);
+    const text = `ДЕЛАТЕЛЬ: кадр ${String(frame2?.id ?? "?")} из спула смены демона адресован месту ${to}, не вернувшемуся, — не кадр места ${p.door.key}; вернуть место — iskron_stand в его графе. Кадр: ${raw}`;
+    log(text);
+    const ev = { kind: "note", text };
+    p.door.broadcast(ev);
+    emit({
+      jsonrpc: "2.0",
+      method: "notifications/message",
+      params: { level: "info", logger: "iskron-channel", data: ev }
+    });
+  });
+}
+var handoffsSettled = () => Promise.all([...pending]).then(() => void 0);
 
 // js/bridge/hold.ts
 function keyFor() {
@@ -4259,7 +4434,7 @@ function releaseStanding(reason, forget = false, keepBeside = false) {
     broadcast(released);
     notify("info", released);
   }
-  H2.holder?.close(reason);
+  letGo(H2.holder, handover && !forget ? key ?? null : null, reason);
   H2.holder = null;
   for (const w of [...H2.helloWaiters]) w(null);
   H2.door?.close();
@@ -4369,7 +4544,7 @@ function openHolder(url, key) {
   H2.holder = holdSocket(
     bindAll({
       url,
-      onFrame: (raw, frame2) => {
+      onFrame: function onFrame(raw, frame2) {
         void Promise.resolve(stampOrigin(frame2)).then((full) => {
           const primary = held();
           if (!primary) return H2.door ? deliverTo(H2.door, raw, frame2, full) : void 0;
@@ -4380,6 +4555,7 @@ function openHolder(url, key) {
             d.broadcast({ kind: "note", text: note3 });
           }
           deliverTo(d, raw, frame2, full);
+          if (full?.type === "hello") takeSpool(key, held, onFrame);
         });
       },
       onEvicted: (code) => {
@@ -4438,7 +4614,7 @@ function openHolder(url, key) {
 }
 
 // js/bridge/status.ts
-import { existsSync as existsSync3, readdirSync as readdirSync4, readFileSync as readFileSync12, statSync as statSync4 } from "node:fs";
+import { existsSync as existsSync3, readdirSync as readdirSync4, readFileSync as readFileSync13, statSync as statSync4 } from "node:fs";
 import { isAbsolute, join as join11 } from "node:path";
 
 // js/shared/busyargs.ts
@@ -4536,9 +4712,9 @@ function listenLine(key) {
 
 // js/bridge/skillset.ts
 import { createHash as createHash6 } from "node:crypto";
-import { existsSync as existsSync2, readdirSync as readdirSync3, readFileSync as readFileSync11 } from "node:fs";
+import { existsSync as existsSync2, readdirSync as readdirSync3, readFileSync as readFileSync12 } from "node:fs";
 import { homedir as homedir4 } from "node:os";
-import { dirname as dirname5, join as join10, resolve as resolve5 } from "node:path";
+import { dirname as dirname6, join as join10, resolve as resolve5 } from "node:path";
 import { fileURLToPath as fileURLToPath3 } from "node:url";
 var SET = "iskron-ai/skills";
 var BRIDGE_IN_SET = join10("establish-mcp", "scripts", "iskron.mjs");
@@ -4547,7 +4723,7 @@ function skillsRoot(self = currentScope().origin?.path || fileURLToPath3(import.
   const plugin = env("CLAUDE_PLUGIN_ROOT");
   const candidates = [
     env(SKILLS_ROOT_ENV),
-    resolve5(dirname5(self), "..", ".."),
+    resolve5(dirname6(self), "..", ".."),
     plugin ? join10(plugin, "skills") : "",
     join10(homedir4(), ".agents", "skills")
   ];
@@ -4557,7 +4733,7 @@ function skillsRoot(self = currentScope().origin?.path || fileURLToPath3(import.
 var sha8 = (h) => h.digest("hex").slice(0, 8);
 function lockSet(root) {
   try {
-    const lock = JSON.parse(readFileSync11(join10(dirname5(root), ".skill-lock.json"), "utf8"));
+    const lock = JSON.parse(readFileSync12(join10(dirname6(root), ".skill-lock.json"), "utf8"));
     const skills = lock.skills ?? {};
     const own = skills["establish-mcp"]?.source;
     const name = typeof own === "string" && own.trim() ? own.trim() : SET;
@@ -4580,7 +4756,7 @@ function treeStamp(root) {
   for (const name of names2) {
     let body;
     try {
-      body = readFileSync11(join10(root, name, "SKILL.md"));
+      body = readFileSync12(join10(root, name, "SKILL.md"));
     } catch {
       continue;
     }
@@ -4596,7 +4772,7 @@ function skillsAttr() {
   if (!root) return { name: SET, version: "unknown" };
   let version = "unknown";
   try {
-    version = versionIn(readFileSync11(join10(root, BRIDGE_IN_SET), "utf8")) ?? "unknown";
+    version = versionIn(readFileSync12(join10(root, BRIDGE_IN_SET), "utf8")) ?? "unknown";
   } catch {
   }
   const lock = lockSet(root);
@@ -5074,7 +5250,7 @@ async function heldElsewhere(realm) {
   const out6 = [];
   for (const f of readdirSync4(dir).filter((x) => x.endsWith(".hold"))) {
     try {
-      const rec3 = JSON.parse(readFileSync12(join11(dir, f), "utf8"));
+      const rec3 = JSON.parse(readFileSync13(join11(dir, f), "utf8"));
       if (!rec3?.realm || rec3.karta == null) continue;
       if (!anyRealm && slugOf(String(rec3.realm)) !== slugOf(realm)) continue;
       const key = keyOf(rec3.realm, rec3.karta, rec3.name ?? "");
@@ -5130,20 +5306,20 @@ async function publishStatusTo(url, text, timeoutMs = 5e3, standingId = null) {
 
 // js/bridge/update.ts
 import { spawn as spawn2 } from "node:child_process";
-import { existsSync as existsSync4, lstatSync as lstatSync2, readFileSync as readFileSync14 } from "node:fs";
+import { existsSync as existsSync4, lstatSync as lstatSync2, readFileSync as readFileSync15 } from "node:fs";
 import { homedir as homedir5 } from "node:os";
-import { dirname as dirname7, join as join13 } from "node:path";
+import { dirname as dirname8, join as join13 } from "node:path";
 import { fileURLToPath as fileURLToPath4 } from "node:url";
 
 // js/bridge/releases.ts
-import { mkdirSync as mkdirSync8, readFileSync as readFileSync13, renameSync as renameSync6, writeFileSync as writeFileSync9 } from "node:fs";
-import { dirname as dirname6, join as join12 } from "node:path";
+import { mkdirSync as mkdirSync9, readFileSync as readFileSync14, renameSync as renameSync6, writeFileSync as writeFileSync9 } from "node:fs";
+import { dirname as dirname7, join as join12 } from "node:path";
 var RELEASES_URL = process.env.ISKRON_BRIDGE_RELEASES_URL?.trim() || "https://api.github.com/repos/iskron-ai/skills/releases/latest";
 var RELEASES_PAGE_URL = process.env.ISKRON_BRIDGE_RELEASES_PAGE_URL?.trim() || (process.env.ISKRON_BRIDGE_RELEASES_URL?.trim() ? null : "https://github.com/iskron-ai/skills/releases/latest");
 var TAG_TTL_MS = 60 * 60 * 1e3;
-var releaseTagPath = () => join12(dirname6(homeBridgePath()), "release-tag.json");
+var releaseTagPath = () => join12(dirname7(homeBridgePath()), "release-tag.json");
 function writeAtomic(path, bytes) {
-  mkdirSync8(dirname6(path), { recursive: true, mode: 448 });
+  mkdirSync9(dirname7(path), { recursive: true, mode: 448 });
   const tmp = `${path}.tmp-${process.pid}`;
   writeFileSync9(tmp, bytes, { mode: 420 });
   renameSync6(tmp, path);
@@ -5209,7 +5385,7 @@ async function tagFromPage(url) {
 }
 function readReleaseTag() {
   try {
-    const c = JSON.parse(readFileSync13(releaseTagPath(), "utf8"));
+    const c = JSON.parse(readFileSync14(releaseTagPath(), "utf8"));
     return c.source === RELEASES_URL ? c : null;
   } catch {
     return null;
@@ -5294,7 +5470,7 @@ var isSymlink = (path) => {
 };
 var versionOf = (path) => {
   try {
-    return versionIn(readFileSync14(path, "utf8"));
+    return versionIn(readFileSync15(path, "utf8"));
   } catch {
     return null;
   }
@@ -5304,7 +5480,7 @@ function syncHome(self = selfPath()) {
   const home = homeBridgePath();
   let mine;
   try {
-    mine = readFileSync14(self);
+    mine = readFileSync15(self);
   } catch {
     return out6;
   }
@@ -5317,10 +5493,10 @@ function syncHome(self = selfPath()) {
     writeAtomic(home, mine);
     out6.copied.push(home);
     const plugin = opencodePluginPath();
-    const packaged = join13(dirname7(self), "opencode-plugin.js");
+    const packaged = join13(dirname8(self), "opencode-plugin.js");
     if (existsSync4(plugin) && existsSync4(packaged)) {
-      const fresh = readFileSync14(packaged);
-      if (!readFileSync14(plugin).equals(fresh)) {
+      const fresh = readFileSync15(packaged);
+      if (!readFileSync15(plugin).equals(fresh)) {
         writeAtomic(plugin, fresh);
         out6.copied.push(plugin);
       }
@@ -5354,7 +5530,7 @@ function reexec(path, argv2) {
 }
 function readLatest(authDir) {
   try {
-    return JSON.parse(readFileSync14(latestPathOf(authDir), "utf8"));
+    return JSON.parse(readFileSync15(latestPathOf(authDir), "utf8"));
   } catch {
     return null;
   }
@@ -5386,7 +5562,7 @@ async function downloadRelease(tag, version, authDir) {
   const plugin = opencodePluginPath();
   if (existsSync4(plugin)) {
     const fresh = await fetchText(`${base}/skills/establish-mcp/scripts/opencode-plugin.js`);
-    if (readFileSync14(plugin, "utf8") !== fresh) {
+    if (readFileSync15(plugin, "utf8") !== fresh) {
       writeAtomic(plugin, fresh);
       written.push(plugin);
     }
@@ -5625,12 +5801,12 @@ async function underCap(work) {
 // js/bridge/satellite.ts
 import { randomBytes as randomBytes3 } from "node:crypto";
 import {
-  mkdirSync as mkdirSync9,
-  readFileSync as readFileSync15,
+  mkdirSync as mkdirSync10,
+  readFileSync as readFileSync16,
   renameSync as renameSync7,
   rmSync,
   statSync as statSync5,
-  unlinkSync as unlinkSync9,
+  unlinkSync as unlinkSync10,
   writeFileSync as writeFileSync10
 } from "node:fs";
 import { join as join14 } from "node:path";
@@ -5660,7 +5836,7 @@ function claimName(name) {
   const file = claimFile(name);
   let pid = 0;
   try {
-    pid = Number(readFileSync15(file, "utf8").trim());
+    pid = Number(readFileSync16(file, "utf8").trim());
   } catch {
   }
   const me = sessionPid();
@@ -5675,7 +5851,7 @@ function claimName(name) {
 }
 var dropClaim = (f, pid) => {
   try {
-    if (Number(readFileSync15(f, "utf8").trim()) === pid) unlinkSync9(f);
+    if (Number(readFileSync16(f, "utf8").trim()) === pid) unlinkSync10(f);
   } catch {
   }
   allClaims.delete(f);
@@ -5691,7 +5867,7 @@ function releaseAllClaims() {
 var LOCK_OWNER = "owner";
 function lockOwner(lock) {
   try {
-    return readFileSync15(join14(lock, LOCK_OWNER), "utf8").trim();
+    return readFileSync16(join14(lock, LOCK_OWNER), "utf8").trim();
   } catch {
     return null;
   }
@@ -5722,13 +5898,13 @@ async function underClaimLock(fn) {
   const token = `${process.pid} ${randomBytes3(8).toString("hex")}`;
   let fault = null;
   try {
-    mkdirSync9(claimDir(), { recursive: true, mode: 448 });
+    mkdirSync10(claimDir(), { recursive: true, mode: 448 });
   } catch (e) {
     fault = e.message;
   }
   for (const end = Date.now() + LOCK_WAIT_MS; !fault; ) {
     try {
-      mkdirSync9(lock);
+      mkdirSync10(lock);
     } catch (e) {
       if (e.code !== "EEXIST") fault = e.message;
       else if (Date.now() > end) fault = `the claims lock ${lock} is held too long`;
@@ -5772,7 +5948,7 @@ async function underClaimLock(fn) {
   if (lost) log(`satellite ${lost}`);
   return [value, unwritten ?? lost];
 }
-function pickSatellite(entries, of, karta, led, claim = () => true) {
+function pickSatellite(entries2, of, karta, led, claim = () => true) {
   const address = of.startsWith("@") && of.includes(":") ? of : null;
   const base = address ? nameOf(address) : of.replace(/^@/, "");
   const fault = base ? nameFault(base) : L("пусто", "empty");
@@ -5784,7 +5960,7 @@ function pickSatellite(entries, of, karta, led, claim = () => true) {
         `Refused (bridge): satellite_of "${of}" is not a seat name (${fault}); pass the caller's seat as the board prints it: @handle:name.`
       )
     };
-  const callers = entries.filter(
+  const callers = entries2.filter(
     (e) => address ? e.address === address : nameOf(e.address) === base
   );
   if (!callers.length)
@@ -5817,7 +5993,7 @@ function pickSatellite(entries, of, karta, led, claim = () => true) {
     notes.push(word);
     return { ok: true, name: led, caller, callerKarta, callerId, notes };
   }
-  const taken = new Set(entries.map((e) => nameOf(e.address)));
+  const taken = new Set(entries2.map((e) => nameOf(e.address)));
   for (let n = 1; n <= 99; n++) {
     const name = satelliteName(base, n);
     if (taken.has(name) || !claim(name)) continue;
@@ -5873,9 +6049,9 @@ async function satelliteGate(a, realm, karta, asked) {
     );
   const s2 = state.standing;
   const led = s2 && !otherRealm(s2.realm, realm) ? s2.name ?? null : null;
-  const entries = parseBoard(b.text);
+  const entries2 = parseBoard(b.text);
   const [pick, unsure] = await underClaimLock(
-    (claim) => pickSatellite(entries, of, karta, led, claim)
+    (claim) => pickSatellite(entries2, of, karta, led, claim)
   );
   if (!pick.ok) return pick;
   if (unsure && pick.name !== led)
@@ -6125,7 +6301,7 @@ async function armRoleHook(p) {
 }
 
 // js/bridge/resume.ts
-import { existsSync as existsSync5, readdirSync as readdirSync5, readFileSync as readFileSync16 } from "node:fs";
+import { existsSync as existsSync5, readdirSync as readdirSync5, readFileSync as readFileSync17 } from "node:fs";
 import { join as join15 } from "node:path";
 async function deadPredecessor(realm, karta, name) {
   const key = keyOf(realm, karta, name);
@@ -6148,7 +6324,7 @@ async function resumeFromDisk(realm, karta, name) {
     holdStanding(rec3.url, rec3.statusUrl);
     const hello = await awaitHello(4e3);
     if (hello && holdsKey(key)) {
-      const pending = Number(hello.pending) || 0;
+      const pending2 = Number(hello.pending) || 0;
       const me = sessionOfBridge();
       let busy = "";
       if (rec3.status && me && rec3.session === me) {
@@ -6164,14 +6340,14 @@ async function resumeFromDisk(realm, karta, name) {
           "; the former busy line is not restored — say your own"
         );
       }
-      log(`standing resumed from disk (${key}), pending ${pending}`);
-      standingLog(`resumed-from-disk ${key}: pending ${pending}`);
+      log(`standing resumed from disk (${key}), pending ${pending2}`);
+      standingLog(`resumed-from-disk ${key}: pending ${pending2}`);
       return {
         word: L(
-          `возврат места с диска после перезапуска моста — сокет открыт заново тем же адресом (ожидало кадров — ${pending})${busy}`,
-          `the seat returned from disk after the bridge restarted — the socket reopened at the same address (frames waiting — ${pending})${busy}`
+          `возврат места с диска после перезапуска моста — сокет открыт заново тем же адресом (ожидало кадров — ${pending2})${busy}`,
+          `the seat returned from disk after the bridge restarted — the socket reopened at the same address (frames waiting — ${pending2})${busy}`
         ),
-        pending
+        pending: pending2
       };
     }
   } finally {
@@ -6200,7 +6376,7 @@ function recordsFor(sel) {
   const left = [];
   for (const f of readdirSync5(dir).filter((x) => x.endsWith(".hold"))) {
     try {
-      const rec3 = JSON.parse(readFileSync16(join15(dir, f), "utf8"));
+      const rec3 = JSON.parse(readFileSync17(join15(dir, f), "utf8"));
       if (!rec3 || rec3.client !== mine) continue;
       const key = keyOf(rec3.realm, rec3.karta, rec3.name);
       const keyed2 = !!sel.key && key === sel.key;
@@ -6360,11 +6536,11 @@ async function runCheck(msg) {
     (e) => e.karta === String(s2.karta) && nameOf(e.address) === (s2.name ?? "")
   );
   if (!mine) return reply(msg, { holding: true, key, word: "своего места на доске нет" });
-  const pending = undelivered(mine);
+  const pending2 = undelivered(mine);
   const listening = listens(mine);
   if (listening) {
     D.reopens = 0;
-    return reply(msg, { holding: true, key, listening, pending, word: "слушаю" });
+    return reply(msg, { holding: true, key, listening, pending: pending2, word: "слушаю" });
   }
   if (D.reopens >= REOPEN_LIMIT) {
     const text = `Искрон: доска читает место ${key} не слушающим и после ${REOPEN_LIMIT} переоткрытий сокета — больше не рву; проверь доску и сервер, вернуть слух — iskron_stand с take=true.`;
@@ -6381,14 +6557,14 @@ async function runCheck(msg) {
       holding: true,
       key,
       listening,
-      pending,
+      pending: pending2,
       reopened: false,
       stuck: true,
       word: text
     });
   }
   D.reopens++;
-  standingLog(`reopen ${key}: board reads deaf${pending ? ` with ${pending} pending` : ""}`);
+  standingLog(`reopen ${key}: board reads deaf${pending2 ? ` with ${pending2} pending` : ""}`);
   parkStanding("доска не читает слушающим");
   resumeStanding();
   const hello = await awaitHello(4e3);
@@ -6396,7 +6572,7 @@ async function runCheck(msg) {
     holding: true,
     key,
     listening,
-    pending,
+    pending: pending2,
     reopened: !!hello,
     word: hello ? `сокет переоткрыт: ожидало кадров — ${Number(hello.pending) || 0}` : "сокет переоткрыт, hello за 4 с не пришёл"
   });
@@ -6594,9 +6770,9 @@ var SW = {
     "Сокет держит этот мост (hello получен при открытии сокета).",
     "This bridge holds the socket (hello came when the socket opened)."
   ),
-  hello: (pending) => L(
-    `hello получен: ожидало кадров — ${pending}.`,
-    `hello received: frames waiting — ${pending}.`
+  hello: (pending2) => L(
+    `hello получен: ожидало кадров — ${pending2}.`,
+    `hello received: frames waiting — ${pending2}.`
   ),
   noLocalSocket: (why) => L(
     `НО локальный сокет стояния не поднят (${why}) — сторожу не к чему цепляться: слуха в этой сессии нет, команда сторожа выше не сработает. Место занято, записи подписаны; скажи это человеку.`,
@@ -6798,18 +6974,18 @@ async function runStand(msg) {
     lines.push(SW.boardUnread(short(board.text)));
     return done(true);
   }
-  const entries = parseBoard(board.text);
+  const entries2 = parseBoard(board.text);
   const header = /^\s*Каналы(?:\s*\((\d+)\))?(?:\s|:|$)/m.exec(board.text);
   const declared = header?.[1] != null ? Number(header[1]) : null;
   const empty = /^\s*Ни одна роль этого графа (?:не держит канала|нигде не стоит)/m.test(
     board.text
   );
-  const recognized = !!header || empty || entries.length > 0;
-  let own = entries.filter((e) => e.karta === karta && nameOf(e.address) === name);
+  const recognized = !!header || empty || entries2.length > 0;
+  let own = entries2.filter((e) => e.karta === karta && nameOf(e.address) === name);
   const separate = derived && a.take !== true && name === derived ? await separatePlace(realm, karta, derived) : null;
   if (separate) {
     name = separate.name;
-    own = entries.filter((e) => e.karta === karta && nameOf(e.address) === name);
+    own = entries2.filter((e) => e.karta === karta && nameOf(e.address) === name);
     nameNotes.push(separate.note);
   }
   const sub = !!sat || !!derived && name !== derived;
@@ -6817,7 +6993,7 @@ async function runStand(msg) {
   const branches = new Set(
     git(["branch", "--format=%(refname:short)"], cwd).split("\n").map((x) => sanitize(x.trim())).filter(Boolean)
   );
-  const legacy = entries.filter((e) => {
+  const legacy = entries2.filter((e) => {
     if (sat) return false;
     if (e.karta !== karta || nameOf(e.address) === name) return false;
     const own2 = nameOf(e.address);
@@ -6826,14 +7002,14 @@ async function runStand(msg) {
     return branches.has(third) && /живой|слушает/.test(e.rest);
   });
   for (const e of legacy) nameNotes.push(SW.legacy(e.address, realm, karta));
-  const unread = declared != null && declared !== entries.length;
+  const unread = declared != null && declared !== entries2.length;
   if (!recognized || own.length > 1 || unread && own.length === 0 && a.take !== true) {
     lines.push(
-      !recognized ? SW.boardUnknown(short(board.text, 160)) : own.length > 1 ? SW.boardAmbiguous(own.length, name, karta) : SW.boardCount(declared ?? 0, entries.length)
+      !recognized ? SW.boardUnknown(short(board.text, 160)) : own.length > 1 ? SW.boardAmbiguous(own.length, name, karta) : SW.boardCount(declared ?? 0, entries2.length)
     );
     return done(true);
   }
-  if (unread) lines.push(SW.boardCountFound(declared ?? 0, entries.length));
+  if (unread) lines.push(SW.boardCountFound(declared ?? 0, entries2.length));
   const mine = own[0];
   let incoming = mine?.incoming ?? null;
   let how;
@@ -6939,7 +7115,7 @@ async function runStand(msg) {
   if (room && !heardHere) {
     lines.push(SW.knockNotHere(room));
   } else if (room) {
-    const onBoard = entries.find((e) => e.address === room);
+    const onBoard = entries2.find((e) => e.address === room);
     const roomKarta = onBoard?.karta ?? (typeof a.room_karta === "string" && a.room_karta.trim() ? a.room_karta.trim().replace(/^#/, "") : null);
     const key = `${realm}|${karta}|${name}|${room}`;
     const prior = knocks.get(key);
@@ -7443,7 +7619,7 @@ function openIn(io, origin, scope) {
   holdFromEnv();
   if (!CFG.satellite) startDeafnessWatch();
   const rl = createInterface2({ input: io.input, terminal: false });
-  const pending = /* @__PURE__ */ new Set();
+  const pending2 = /* @__PURE__ */ new Set();
   let handshake = null;
   rl.on(
     "line",
@@ -7471,8 +7647,8 @@ function openIn(io, origin, scope) {
         const gate = handshake;
         p = gate.then(run, run);
       } else p = run();
-      pending.add(p);
-      p.finally(() => pending.delete(p));
+      pending2.add(p);
+      p.finally(() => pending2.delete(p));
     })
   );
   let leaving = null;
@@ -7491,8 +7667,8 @@ function openIn(io, origin, scope) {
     await revokeSatellitePlaces(places);
     if (addr && !handover) await publishStatusTo(addr.url, "", 3e3).catch(() => {
     });
-    if (handover) await Promise.race([Promise.allSettled([...pending]), sleep(HANDOVER_WAIT_MS)]);
-    else await Promise.allSettled([...pending, ...tokenRequestsInFlight]);
+    if (handover) await Promise.race([Promise.allSettled([...pending2]), sleep(HANDOVER_WAIT_MS)]);
+    else await Promise.allSettled([...pending2, ...tokenRequestsInFlight]);
     await flushStdout(io.output);
     if (origin) {
       releaseSatelliteClaims();
@@ -7536,7 +7712,7 @@ var SELF = (() => {
 })();
 var versionOfFile = (path) => {
   try {
-    return versionIn(readFileSync17(path, "utf8"));
+    return versionIn(readFileSync18(path, "utf8"));
   } catch {
     return null;
   }
@@ -7549,13 +7725,13 @@ async function daemonMain(argv2) {
   const journalPath = join16(run, "daemon.log");
   const journal = (line) => {
     try {
-      mkdirSync10(run, { recursive: true, mode: 448 });
+      mkdirSync11(run, { recursive: true, mode: 448 });
       try {
-        if (statSync7(journalPath).size > JOURNAL_MAX) unlinkSync10(journalPath);
+        if (statSync7(journalPath).size > JOURNAL_MAX) unlinkSync11(journalPath);
       } catch {
       }
       const text = line.trimEnd().replace(/\[iskron-bridge [^\]]*\] /, "");
-      appendFileSync3(
+      appendFileSync4(
         journalPath,
         `${(/* @__PURE__ */ new Date()).toISOString()} pid=${process.pid} ${BUILD} ${text}
 `,
@@ -7578,7 +7754,7 @@ async function daemonMain(argv2) {
   const sessions = /* @__PURE__ */ new Map();
   const engines = /* @__PURE__ */ new Map();
   const sockets = /* @__PURE__ */ new Set();
-  let draining = false;
+  let draining2 = false;
   let counter2 = 0;
   let lastNotice = null;
   let server = null;
@@ -7586,10 +7762,10 @@ async function daemonMain(argv2) {
   const armIdle = () => {
     if (idle) clearTimeout(idle);
     idle = null;
-    if (draining || sessions.size) return;
+    if (draining2 || sessions.size) return;
     idle = setTimeout(() => {
       idle = null;
-      if (sessions.size || draining) return;
+      if (sessions.size || draining2) return;
       const flow = pendingFlow();
       if (flow) {
         log("idle, but an authorization flow is pending — staying for the human's click");
@@ -7602,8 +7778,8 @@ async function daemonMain(argv2) {
     }, IDLE_MS);
   };
   const handover = async (to, why) => {
-    if (draining) return;
-    draining = true;
+    if (draining2) return;
+    draining2 = true;
     if (idle) clearTimeout(idle);
     log(`handing over to ${to}: ${why} — ${sessions.size} session(s)`);
     beginHandover(why);
@@ -7612,13 +7788,14 @@ async function daemonMain(argv2) {
     spawnDaemon(to, authDir, true);
     await Promise.allSettled([...sessions.values()].map((s2) => s2.end(`daemon handover: ${why}`)));
     for (const so of sockets) so.end();
+    await handoffsSettled();
     log("handed over — leaving");
     setTimeout(() => process.exit(0), 300);
   };
   const newer = (v) => !!v && compareVersions(v, VERSION) > 0;
   let homeSeen = "";
   const checkHome = () => {
-    if (draining || updatesDisabled()) return;
+    if (draining2 || updatesDisabled()) return;
     const home = homeBridgePath();
     let stamp;
     try {
@@ -7647,7 +7824,7 @@ async function daemonMain(argv2) {
     path: SELF,
     log: (m) => log(m),
     count: () => sessions.size,
-    draining: () => draining,
+    draining: () => draining2,
     find: (id) => sessions.get(id) ?? null,
     open(hello) {
       const id = `s${++counter2}-${process.pid}`;
@@ -7742,8 +7919,8 @@ async function daemonMain(argv2) {
   checkHome();
   armIdle();
   const stop = (sig) => {
-    if (draining) return;
-    draining = true;
+    if (draining2) return;
+    draining2 = true;
     log(`${sig} — ending ${sessions.size} session(s)`);
     server?.close();
     void Promise.allSettled([...sessions.values()].map((s2) => s2.end(sig))).then(() => {
@@ -7903,7 +8080,7 @@ function realmListAsk() {
 
 // js/bridge/raise.ts
 import { spawn as spawn4 } from "node:child_process";
-import { readFileSync as readFileSync18 } from "node:fs";
+import { readFileSync as readFileSync19 } from "node:fs";
 import { fileURLToPath as fileURLToPath6 } from "node:url";
 var RAISE_STALE_MS = 15e3;
 var SELF2 = (() => {
@@ -7919,7 +8096,7 @@ function daemonEntry() {
   if (updatesDisabled()) return SELF2;
   const home = homeBridgePath();
   try {
-    const v = versionIn(readFileSync18(home, "utf8"));
+    const v = versionIn(readFileSync19(home, "utf8"));
     if (home !== SELF2 && compareVersions(v, VERSION) > 0) return home;
   } catch {
   }
@@ -8456,7 +8633,7 @@ function openDoor(socketPath, onMessage, onClose) {
 }
 
 // js/watchdog/client.ts
-import { existsSync as existsSync6, readdirSync as readdirSync6, readFileSync as readFileSync19 } from "node:fs";
+import { existsSync as existsSync6, readdirSync as readdirSync6, readFileSync as readFileSync20 } from "node:fs";
 import { connect as connect4 } from "node:net";
 import { join as join17 } from "node:path";
 var ATTACH_WINDOW_MS = 6e4;
@@ -8477,7 +8654,7 @@ function resolveStanding(argv2) {
   if (key) return { key, path: pathFor(key), authDir };
   const held2 = existsSync6(dir) ? readdirSync6(dir).filter((f) => f.endsWith(".key")).map((f) => {
     try {
-      return readFileSync19(join17(dir, f), "utf8").trim();
+      return readFileSync20(join17(dir, f), "utf8").trim();
     } catch {
       return "";
     }
@@ -8984,15 +9161,15 @@ function runWatchdogExit(argv2) {
 
 // js/cli/doctor.ts
 import { createHash as createHash9 } from "node:crypto";
-import { existsSync as existsSync10, readdirSync as readdirSync8, readFileSync as readFileSync22 } from "node:fs";
+import { existsSync as existsSync10, readdirSync as readdirSync8, readFileSync as readFileSync23 } from "node:fs";
 import { homedir as homedir10 } from "node:os";
-import { dirname as dirname10, join as join21 } from "node:path";
+import { dirname as dirname11, join as join21 } from "node:path";
 import { fileURLToPath as fileURLToPath8 } from "node:url";
 
 // js/cli/opencode-config.ts
-import { existsSync as existsSync8, readFileSync as readFileSync20 } from "node:fs";
+import { existsSync as existsSync8, readFileSync as readFileSync21 } from "node:fs";
 import { homedir as homedir7 } from "node:os";
-import { dirname as dirname8, join as join19 } from "node:path";
+import { dirname as dirname9, join as join19 } from "node:path";
 function openCodeMcpEntries(out6) {
   const dirFiles = (d) => [
     join19(d, "opencode.json"),
@@ -9004,7 +9181,7 @@ function openCodeMcpEntries(out6) {
   if (!process.env.OPENCODE_CONFIG_PROJECT_DISABLE)
     for (let d = process.cwd(); ; ) {
       upwards.push(...dirFiles(d));
-      const up = dirname8(d);
+      const up = dirname9(d);
       if (up === d) break;
       d = up;
     }
@@ -9052,7 +9229,7 @@ function openCodeMcpEntries(out6) {
   for (const f of new Set(files)) {
     if (!existsSync8(f)) continue;
     try {
-      sources.push([f, readFileSync20(f, "utf8")]);
+      sources.push([f, readFileSync21(f, "utf8")]);
     } catch {
       unreadable++;
       out6(`OpenCode: ${f} не читается`);
@@ -9088,9 +9265,9 @@ function openCodeMcpEntries(out6) {
 }
 
 // js/cli/subagents.ts
-import { existsSync as existsSync9, readdirSync as readdirSync7, readFileSync as readFileSync21, statSync as statSync8 } from "node:fs";
+import { existsSync as existsSync9, readdirSync as readdirSync7, readFileSync as readFileSync22, statSync as statSync8 } from "node:fs";
 import { homedir as homedir9 } from "node:os";
-import { basename as basename5, delimiter, dirname as dirname9, isAbsolute as isAbsolute3, join as join20, resolve as resolve6 } from "node:path";
+import { basename as basename5, delimiter, dirname as dirname10, isAbsolute as isAbsolute3, join as join20, resolve as resolve6 } from "node:path";
 
 // js/cli/frontmatter.ts
 function frontmatterText(file) {
@@ -9450,7 +9627,7 @@ function agentFiles(dir, scope) {
     const path = join20(dir, f);
     let fm = {};
     try {
-      const text = frontmatterText(readFileSync21(path, "utf8"));
+      const text = frontmatterText(readFileSync22(path, "utf8"));
       if (text !== null) fm = parseFrontmatter(text);
     } catch {
     }
@@ -9465,7 +9642,7 @@ function projectRoot() {
     if (existsSync9(join20(d, ".claude", "agents")) || existsSync9(join20(d, ".opencode", "agents")))
       return d;
     if (!gitRoot && existsSync9(join20(d, ".git"))) gitRoot = d;
-    const up = dirname9(d);
+    const up = dirname10(d);
     if (up === d) break;
     d = up;
   }
@@ -9505,7 +9682,7 @@ function parentBridges(root) {
   };
   const readJson = (p) => {
     try {
-      return JSON.parse(readFileSync21(p, "utf8"));
+      return JSON.parse(readFileSync22(p, "utf8"));
     } catch {
       return null;
     }
@@ -9536,7 +9713,7 @@ function parentBridges(root) {
 function trustLine(root) {
   let cfg;
   try {
-    cfg = JSON.parse(readFileSync21(join20(homedir9(), ".claude.json"), "utf8"));
+    cfg = JSON.parse(readFileSync22(join20(homedir9(), ".claude.json"), "utf8"));
   } catch {
     return null;
   }
@@ -9597,8 +9774,8 @@ async function subagentsReport(out6) {
   for (const f of claude) {
     const lines = [];
     const expected = `iskron-sub-${f.agent}`;
-    const entries = entriesOf(f.fm);
-    const ours = entries.filter((e) => BRIDGE_RE.test([e.command, ...e.args].join(" ")));
+    const entries2 = entriesOf(f.fm);
+    const ours = entries2.filter((e) => BRIDGE_RE.test([e.command, ...e.args].join(" ")));
     const sat = ours.filter((e) => formOf(e) !== "session");
     let probeEntry = null;
     const own = sat.map((e) => `mcp__${e.name}`);
@@ -9616,7 +9793,7 @@ ${readyEntry(
       args: [...SATELLITE_ARGS, ...toolsTail(e)],
       env: e.env
     });
-    const refs = entries.filter((e) => e.ref && /iskron/.test(e.name));
+    const refs = entries2.filter((e) => e.ref && /iskron/.test(e.name));
     for (const r of refs)
       lines.push(
         `запись «${r.name}» — ссылка на сервер из конфига сессии, не свой мост на прогон → замени встроенной записью, ${block(expected)}`
@@ -9730,14 +9907,14 @@ function homeCopyReport() {
   const home = homeBridgePath();
   let self = null;
   try {
-    self = readFileSync22(fileURLToPath8(import.meta.url));
+    self = readFileSync23(fileURLToPath8(import.meta.url));
   } catch {
   }
   if (!existsSync10(home)) {
     out3(`домашняя копия: нет (${home}) — её кладёт establish-mcp при подключении`);
     return;
   }
-  const bytes = readFileSync22(home);
+  const bytes = readFileSync23(home);
   if (self && bytes.equals(self)) {
     out3(`домашняя копия: ${home} — та же сборка, что и этот файл`);
     return;
@@ -9866,7 +10043,7 @@ function grantReport() {
   }
   const logPath = grantLogPath();
   if (existsSync10(logPath)) {
-    const lines = readFileSync22(logPath, "utf8").trim().split("\n").slice(-3);
+    const lines = readFileSync23(logPath, "utf8").trim().split("\n").slice(-3);
     out3(`  grant.log, последнее:`);
     for (const l of lines) out3(`    ${l}`);
   }
@@ -9892,7 +10069,7 @@ function claudePluginReport() {
   const registry = join21(homedir10(), ".claude", "plugins", "installed_plugins.json");
   if (!existsSync10(registry)) return;
   try {
-    const reg = JSON.parse(readFileSync22(registry, "utf8"));
+    const reg = JSON.parse(readFileSync23(registry, "utf8"));
     const mine = Object.entries(reg.plugins ?? {}).filter(([k]) => /^iskron@/.test(k));
     if (!mine.length) {
       out3(`Claude Code: плагин iskron не установлен (${registry})`);
@@ -9904,7 +10081,7 @@ function claudePluginReport() {
         let entry = "запись моста в манифесте не найдена";
         if (manifest && existsSync10(manifest)) {
           try {
-            const m = JSON.parse(readFileSync22(manifest, "utf8"));
+            const m = JSON.parse(readFileSync23(manifest, "utf8"));
             const hit = Object.entries(m.mcpServers ?? {}).find(
               ([, v]) => (v.args ?? []).some((a) => /iskron\.mjs/.test(a))
             );
@@ -9949,7 +10126,7 @@ function codexPluginReport(home) {
       let word = "манифеста нет";
       if (existsSync10(manifest)) {
         try {
-          const m = JSON.parse(readFileSync22(manifest, "utf8"));
+          const m = JSON.parse(readFileSync23(manifest, "utf8"));
           const hit = Object.values(m.mcpServers ?? {}).some(
             (v) => (v.args ?? []).some((a) => /iskron\.mjs/.test(a))
           );
@@ -9969,12 +10146,12 @@ function harnessReport() {
   const claude = join21(homedir10(), ".claude.json");
   if (existsSync10(claude)) {
     try {
-      const cfg = JSON.parse(readFileSync22(claude, "utf8"));
-      const entries = Object.entries(cfg.mcpServers ?? {}).filter(
+      const cfg = JSON.parse(readFileSync23(claude, "utf8"));
+      const entries2 = Object.entries(cfg.mcpServers ?? {}).filter(
         ([, v]) => (v.args ?? []).some((a) => /iskron/.test(a))
       );
-      if (entries.length) {
-        for (const [name, v] of entries) {
+      if (entries2.length) {
+        for (const [name, v] of entries2) {
           out3(`Claude Code: запись «${name}» → ${v.command ?? ""} ${(v.args ?? []).join(" ")}`);
         }
       } else
@@ -9988,14 +10165,14 @@ function harnessReport() {
   const opencodeDir = join21(homedir10(), ".config", "opencode");
   if (existsSync10(opencodeDir)) {
     const copy = join21(opencodeDir, "plugins", "iskron.js");
-    const packaged = join21(dirname10(fileURLToPath8(import.meta.url)), "opencode-plugin.js");
+    const packaged = join21(dirname11(fileURLToPath8(import.meta.url)), "opencode-plugin.js");
     if (!existsSync10(copy)) {
       out3(`OpenCode: плагина нет (${copy}) — его кладёт establish-mcp при подключении`);
     } else if (!existsSync10(packaged)) {
       out3(
         `OpenCode: плагин ${copy} стоит; рядом с этим файлом поставки плагина нет, сверить не с чем`
       );
-    } else if (readFileSync22(copy).equals(readFileSync22(packaged))) {
+    } else if (readFileSync23(copy).equals(readFileSync23(packaged))) {
       out3(`OpenCode: плагин ${copy} — та же сборка, что в поставке`);
     } else {
       out3(`OpenCode: плагин ${copy} — ДРУГИЕ байты, обнови из поставки: cp "${packaged}" ${copy}`);
@@ -10017,7 +10194,7 @@ function harnessReport() {
       );
     const codex = join21(codexHome, "config.toml");
     if (existsSync10(codex)) {
-      const text = readFileSync22(codex, "utf8");
+      const text = readFileSync23(codex, "utf8");
       out3(
         `Codex: ${/^\s*\[mcp_servers\."?iskron"?\]|^\s*mcp_servers\."?iskron"?\s*=/m.test(text) ? "ручная запись моста в config.toml есть" : "ручной записи моста в config.toml нет (штатная — в плагине)"}`
       );

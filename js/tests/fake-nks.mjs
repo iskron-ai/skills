@@ -176,6 +176,8 @@ export async function startFakeNks(opts = {}) {
     wsToken: "tok",
     wsTokens: new Map(), // адрес сокета → имя места; wsNames: открытый сокет → имя места (несколько мостов на одном фейке)
     wsNames: new Map(),
+    wsAddress: new Map(), // открытый сокет → путь его адреса: новое подключение тем же путём вытесняет прежнее
+    evicted: new Set(), // вытесненные сокеты, ещё не закрытые: служба в них не пишет, но сервер они держат
     richTools: false, // /control {richTools:true}: tools/list с пишущими тулами — для проверки приписки момента
     tools: opts.tools ?? null, // список тулов целиком, как его отдал бы сервер: схема, которую API отвергнет, — у doctor
     // Сессия открыта credential'ом и умирает вместе с ним (#188 в nks-dev):
@@ -1346,6 +1348,19 @@ export async function startFakeNks(opts = {}) {
       st.wsRefuse = 0;
       return;
     }
+    // opts.evictSameAddress: новое подключение тем же адресом вытесняет прежнее кодом
+    // 4000, как контур; в вытесненный сокет служба больше не пишет (#6586). Без него
+    // прежние сокеты остаются в st.ws — на этом считают переоткрытия пробы стояния.
+    const address = u.pathname;
+    for (const old of opts.evictSameAddress ? [...st.ws] : []) {
+      if (st.wsAddress.get(old) !== address) continue;
+      st.ws.delete(old);
+      st.evicted.add(old);
+      old.on("close", () => st.evicted.delete(old));
+      old.write(wsFrame(0x8, Buffer.from([4000 >> 8, 4000 & 0xff])));
+      setTimeout(() => old.end(), 200).unref();
+    }
+    st.wsAddress.set(socket, address);
     st.ws.add(socket);
     st.counts.ws_upgrades++;
     // Доска читает по сокету МЕСТА: открыт — его место слушает; адрес без места
@@ -1361,6 +1376,7 @@ export async function startFakeNks(opts = {}) {
       st.ws.delete(socket);
       st.wsNames.delete(socket);
       st.wsChans.delete(socket);
+      st.wsAddress.delete(socket);
       // Последний сокет места закрыт — «не слушает» сразу (прежние серверы держали «слушает» ещё ~40 с;
       // такое окно проба ставит сама через /control {places: [{…, listening: true}]}.
       const stillHeld =
@@ -1416,8 +1432,9 @@ export async function startFakeNks(opts = {}) {
     // Открытый ws держит сервер живым: сперва рвём захваченные сокеты, иначе
     // close() ждёт их вечно, а с ним и проба.
     stop: () => {
-      for (const s of st.ws) s.destroy();
+      for (const s of [...st.ws, ...st.evicted]) s.destroy();
       st.ws.clear();
+      st.evicted.clear();
       server.closeAllConnections?.();
       return new Promise((r) => server.close(r));
     },
