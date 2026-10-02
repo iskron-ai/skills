@@ -15,11 +15,18 @@
 //     место, глухой переоткрывает сокет; мост, места не ведущий, из-под сторожа
 //     выходит — его простой снова считает жнец.
 import type { Bridge } from "../shared/bridge-client.ts";
+import { sleep } from "./bridge-io.ts";
 import type { LostEntry } from "./marker.ts";
 import type { Say } from "./tools.ts";
 
 /** Такт сторожа слуха; переменная — шов для проб, не ручка человека. Инвариант: короче простоя жнеца (tools.ts). */
 export const WATCH_MS = Number(process.env.ISKRON_BRIDGE_WATCH_MS || 5 * 60_000);
+/** Сколько возврат ждёт ухода сокета прежнего моста (bye тонкого моста — до 5 с); переменная — для проб. */
+const PATIENCE_MS = Number(process.env.ISKRON_RESUME_PATIENCE_MS || 10_000);
+const STEP_MS = 500;
+
+/** Исход возврата: место взято; его сокет держит живой чужой мост; не вернулось иначе. */
+export type Resumed = "held" | "elsewhere" | "none";
 
 export interface KeptSlot {
   bridge: Bridge;
@@ -33,7 +40,7 @@ export interface KeptSlot {
   /** Ключ стояния, которое держал мост (из `held` или возврата) — точный адрес записи. */
   key: string | null;
   /** Возврат места в полёте: вызов тула ждёт его, чтобы не занимать место дважды. */
-  resume: Promise<void> | null;
+  resume: Promise<unknown> | null;
   /** Мост дочерней сессии (её собственное стояние, #5154): в подсказки возврата корня его запись не идёт. */
   child?: boolean;
   /** Место корня, спутником которого встал ребёнок, — его мост нового экземпляра встаёт тем же спутником (#6625). */
@@ -78,7 +85,7 @@ export interface KeeperDoors<S extends KeptSlot> {
   slotFor: (root: string, touch: boolean) => Promise<S>;
   ready: (slot: S) => Promise<void>;
   directoryOf: (root: string) => Promise<string | null>;
-  /** Сессия ещё есть: её место стоит возвращать, и слово до неё дойдёт. */
+  /** Сессия ещё есть и её тулы идут через этот экземпляр: её место стоит возвращать здесь, и слово до неё дойдёт. */
   exists: (root: string) => Promise<boolean>;
 }
 
@@ -96,8 +103,8 @@ export interface Keeper<S extends KeptSlot> {
    * сессия, которой больше нет, моста не получает. true — слово сказано хоть одной.
    */
   resumeLost(entries: LostEntry[], word: string | null): Promise<boolean>;
-  /** Новая сессия получила мост: вернуть её место с диска, если прежний экземпляр его держал. */
-  resume(slot: S, root: string, quiet?: boolean): Promise<void>;
+  /** Новая сессия получила мост: вернуть её место с диска, если прежний экземпляр его держал; patience — сколько ждать ухода сокета чужого моста. */
+  resume(slot: S, root: string, quiet?: boolean, patience?: number): Promise<Resumed>;
   /** Успешный stand/connect/register — сессия стоит: держащий мост не жнётся, сторож смотрит. */
   stood(slot: S): void;
   /** Сессия удалена — сторожу за ней не смотреть: иначе он поднимал бы ей мост каждый такт. */
@@ -143,31 +150,56 @@ export function createKeeper<S extends KeptSlot>(doors: KeeperDoors<S>): Keeper<
     return { ...(key ? { key } : {}), ...(slot.dir ? { cwd: slot.dir } : {}), ...session };
   }
 
-  async function resume(slot: S, root: string, quiet = false): Promise<void> {
+  /**
+   * Возврат с терпением: сокет места держит живой мост — прежний, ещё не ушедший
+   * (перезагрузка, перенос сессии в другую папку), — и возврат повторяется до ухода
+   * его сокета или до срока, а слово об исходе говорится только по последней попытке.
+   */
+  async function resume(
+    slot: S,
+    root: string,
+    quiet = false,
+    patience = PATIENCE_MS,
+  ): Promise<Resumed> {
+    const until = Date.now() + patience;
+    for (;;) {
+      const final = Date.now() + STEP_MS > until;
+      const r = await once(slot, root, quiet, final);
+      if (r !== "elsewhere" || final || stopped) return r;
+      await sleep(STEP_MS);
+    }
+  }
+
+  async function once(slot: S, root: string, quiet: boolean, final: boolean): Promise<Resumed> {
     const mark = slot.child ? undefined : marked.get(root);
-    marked.delete(root);
     try {
       await doors.ready(slot);
       slot.dir ??= mark?.dir ?? (await doors.directoryOf(root));
-      if (stopped) return;
+      if (stopped) return "none";
       if ((!slot.dir && !slot.key) || (slot.child && !slot.key)) {
+        marked.delete(root);
         if (mark) notBack(root, mark, "ни ключа места, ни каталога сессии");
-        return;
+        return "none";
       }
       const r: any = await slot.bridge.request("iskron/resume", selector(slot), {
         timeoutMs: 30_000,
       });
+      const elsewhere = Array.isArray(r?.elsewhere) && r.elsewhere.length ? r.elsewhere : null;
+      if (!r?.resumed && elsewhere && !final) return "elsewhere"; // ждём ухода его сокета молча
+      marked.delete(root);
       if (!r?.resumed) {
         if (mark) notBack(root, mark, typeof r?.word === "string" ? r.word : "мост не ответил");
         // Своё место сессии держит живой мост другой сессии: вернул не этот мост,
-        // и без слова занятость пошла бы мостом, места не держащим (#6626).
-        else if (Array.isArray(r?.elsewhere) && r.elsewhere.length)
-          doors.tell(root, elsewhereWord(r.elsewhere), slot.child);
+        // и без слова занятость пошла бы мостом, места не держащим (#6626). Ребёнку
+        // на паузе — молча: его исход решает возврат (children.ts), не он сам.
+        else if (elsewhere) {
+          if (!quiet) doors.tell(root, elsewhereWord(elsewhere), slot.child);
+        }
         // Место прежней сборки без сессии по каталогу не возвращается, но и не
         // молчит: мост называет его, и слово идёт в сессию — вернуть по имени (#6017).
         else if (Array.isArray(r?.legacy) && r.legacy.length && typeof r.word === "string")
           doors.tell(root, `Искрон: ${r.word}.`, slot.child);
-        return;
+        return elsewhere ? "elsewhere" : "none";
       }
       slot.holding = true;
       slot.stood = true;
@@ -180,12 +212,15 @@ export function createKeeper<S extends KeptSlot>(doors: KeeperDoors<S>): Keeper<
       // ребёнку, чьё место вернулось по его же ключу после перезагрузки, — молча: он ждёт (#6625).
       if (typeof r.key === "string" && !quiet)
         doors.tell(root, resumedWord(r.key, r.others), slot.child);
+      return "held";
     } catch (e) {
+      marked.delete(root);
       doors.say(
         `Искрон: возврат места сессии ${root} не удался — ${(e as Error).message}`,
         "warning",
       );
       if (mark && !stopped) notBack(root, mark, (e as Error).message);
+      return "none";
     }
   }
 

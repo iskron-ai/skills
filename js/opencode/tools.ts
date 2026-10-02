@@ -33,13 +33,14 @@ import {
   writeCache,
 } from "./bridge-io.ts";
 import { createChildren } from "./children.ts";
-import { homeOf, hostEnvOf, sessionDirectory } from "./host.ts";
+import { hostEnvOf } from "./host.ts";
 import { createKeeper, type KeptSlot, WATCH_MS } from "./keep.ts";
 import { createLauncher } from "./launch.ts";
 import { createLeads } from "./leads.ts";
 import { leadDoors } from "./leadwords.ts";
 import { createLogin } from "./login.ts";
 import { takeLostMarker, writeLostMarker } from "./marker.ts";
+import { createMoves } from "./moves.ts";
 import type { Context } from "./plugin.ts";
 import { createRunEnds } from "./runends.ts";
 import { asSatellite, heldPlace, type SatelliteSlot, STAND_TOOL, standsBy } from "./satellite.ts";
@@ -88,6 +89,8 @@ export interface ToolsHalf {
   bridgeOf(session: string): Bridge | null; // мост держащего слота — для расхода сессии (usage.ts)
   /** Имя места живого ведущего субагента; не ведущий — null (notice.ts). */
   leadOf(session: string): string | null;
+  /** Сессию перенесли в папку dir (событие session.moved). */
+  moved(session: string, dir: string | null): void;
 }
 
 export async function setupTools(
@@ -113,6 +116,7 @@ export async function setupTools(
       stop() {},
       bridgeOf: none,
       leadOf: none,
+      moved() {},
     };
   }
   const path = found.path;
@@ -176,14 +180,8 @@ export async function setupTools(
     return slot;
   }
 
-  const directoryOf = (sessionID: string) => sessionDirectory(ctx, sessionID);
-  const exists = (sessionID: string): Promise<boolean> =>
-    Promise.resolve()
-      .then(() => ctx.session.get({ sessionID } as any))
-      .then(
-        () => true,
-        () => false,
-      );
+  // Локация экземпляра: перенесённая сессия зовёт тулы через экземпляр новой папки (moves.ts).
+  const { home, directoryOf, exists, ours, moved } = createMoves(ctx);
   const runEnds = createRunEnds(); // кончившиеся дети: запись с места — отказ вслух (#6361)
   // Ведущие субагенты (#6625): конец — явный акт, итог — синтетикой родителю.
   const endChild = (c: string) =>
@@ -198,14 +196,13 @@ export async function setupTools(
     slotFor: (root, touch) => slotFor(root, touch),
     ready: readyFor,
     directoryOf,
-    exists,
+    exists: ours,
   });
   const children = createChildren({ slots, spawn, keeper, leads, exists });
   // Прежний экземпляр остановили с держащим мостом: ключи его мест — сторожу,
   // чтобы возврат шёл по ключу, не по каталогу; места — обратно сразу, со словом
   // в державшие сессии (keeper.resumeLost), в первую живую — лишь когда таких нет.
   // Только маркеры своей локации: сессии других локаций зовут тулы через свой экземпляр (#6626).
-  const home = homeOf(ctx);
   const lost = takeLostMarker(authDir(), home);
   let lostWord = lost?.text ?? null;
   if (lost) {
@@ -472,6 +469,7 @@ export async function setupTools(
     },
     onEvent: (ev) => leads.onEvent(ev),
     leadOf: (s) => leads.nameOf(s),
+    moved: (s, dir) => moved({ say, slots, rootOf, forget, slotFor }, s, dir),
     async stop() {
       stopped = true;
       clearInterval(reaper);

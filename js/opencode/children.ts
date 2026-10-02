@@ -12,7 +12,11 @@ import type { Leads } from "./leadwords.ts";
 import type { LostEntry } from "./marker.ts";
 import type { Slot } from "./tools.ts";
 
-/** Попыток возврата: прежний мост мог ещё не выйти, и его сокет места жив. */
+/**
+ * Возврат места ребёнка ждёт ухода сокета прежнего моста (он уходит своим bye) до
+ * BACK_MS — не счётом попыток (keep.ts); попытки — только на иные сбои возврата.
+ */
+const BACK_MS = Number(process.env.ISKRON_CHILD_BACK_MS) || 15_000;
 const BACK_TRIES = 4;
 const BACK_PAUSE_MS = Number(process.env.ISKRON_CHILD_BACK_PAUSE_MS) || 1_000;
 /** Пауза моста ребёнка перед остановкой плагина — не дольше этого. */
@@ -53,7 +57,9 @@ export function createChildren(d: ChildDoors) {
     // «held», а не ждёт такта сторожа: записи ребёнка в этом окне шли бы
     // безавторными. Без ключа возвращать нечем — ребёнок встанет заново.
     if (was?.stood && own.key)
-      own.resume = d.keeper.resume(own, sessionID, !!back).finally(() => (own.resume = null));
+      own.resume = d.keeper
+        .resume(own, sessionID, !!back, back ? BACK_MS : undefined)
+        .finally(() => (own.resume = null));
     return own;
   }
 
@@ -69,9 +75,11 @@ export function createChildren(d: ChildDoors) {
     for (let i = 0; i < BACK_TRIES && !own.holding; i++) {
       if (i) {
         await sleep(BACK_PAUSE_MS);
-        own.resume = d.keeper.resume(own, e.session, true).finally(() => (own.resume = null));
+        own.resume = d.keeper
+          .resume(own, e.session, true, BACK_MS)
+          .finally(() => (own.resume = null));
       }
-      await own.resume;
+      if ((await own.resume) === "elsewhere") break; // сокет прежнего моста не ушёл и за срок
     }
     if (!own.holding)
       await d.leads.fail(e.session, "перезагрузка плагина, место-спутник по ключу не вернулось");

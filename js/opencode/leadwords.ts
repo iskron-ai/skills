@@ -30,8 +30,8 @@ export interface Leads {
 export interface LeadDoors {
   say: Say;
   parentOf(child: string): Promise<string | null>;
-  /** Синтетика в сессию; wake — будить ли её ходом. */
-  tell(session: string, text: string, wake: boolean): Promise<void>;
+  /** Синтетика в сессию; wake — будить ли её ходом; steer — в идущий ход на ближайшей границе шага, не после него. */
+  tell(session: string, text: string, wake: boolean, steer?: boolean): Promise<void>;
   /** Мост ребёнка гасится (расход — прежде), сессия помечена кончившейся. */
   end(child: string): Promise<void>;
 }
@@ -87,12 +87,13 @@ export function leadDoors(
       const s: any = await ctx.session.get({ sessionID: child } as any);
       return s?.parentID ?? s?.data?.parentID ?? null;
     },
-    async tell(sessionID, text, wake) {
+    async tell(sessionID, text, wake, steer = false) {
       const s: any = ctx.session;
+      const delivery = steer ? "steer" : "queue";
       try {
         if (typeof s.synthetic === "function")
-          await s.synthetic({ sessionID, text, delivery: "queue", resume: wake });
-        else await s.prompt({ sessionID, text, delivery: "queue", resume: wake });
+          await s.synthetic({ sessionID, text, delivery, resume: wake });
+        else await s.prompt({ sessionID, text, delivery, resume: wake });
         say(`Искрон: слово о субагенте вложено в сессию ${sessionID}`, "info");
       } catch (e) {
         say(

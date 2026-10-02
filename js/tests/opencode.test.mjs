@@ -257,6 +257,9 @@ const ENV_KEYS = [
   "ISKRON_BRIDGE_NO_BROWSER",
   "ISKRON_BRIDGE_LANG",
   "ISKRON_LEAD_IDLE_MS",
+  "ISKRON_CHILD_BACK_PAUSE_MS",
+  "ISKRON_CHILD_BACK_MS",
+  "ISKRON_RESUME_PATIENCE_MS",
 ];
 
 let seq = 0;
@@ -1919,7 +1922,13 @@ test("a session whose own place a live bridge of another session holds is told t
       word: "возвращать нечего — k-own: держит живой мост",
     }),
   );
-  const b = bridgeEnv("elsewhere", { FB_RESUME: resume });
+  const calls = join(SANDBOX, "elsewhere.calls");
+  writeFileSync(calls, "");
+  const b = bridgeEnv("elsewhere", {
+    FB_CALLS: calls,
+    FB_RESUME: resume,
+    ISKRON_RESUME_PATIENCE_MS: 1200,
+  });
   const rec = await plugin(b.env, inLoc(LOC_A, "s1"));
   try {
     await serverTools(rec);
@@ -1929,8 +1938,88 @@ test("a session whose own place a live bridge of another session holds is told t
     assert.equal(word.sessionID, "s1");
     assert.match(word.text, /k-own[\s\S]*другой сессии[\s\S]*iskron_stand\(take=true\)/);
     assert.ok(!rec.prompts.some((p) => /сам вернул место/.test(p.text)));
+    // The word comes once, after the wait for the other socket to go — not per attempt.
+    const resumes = callsIn(calls).filter((c) => c.name === "iskron/resume").length;
+    assert.ok(resumes > 1, `the resume waited for the other bridge's socket: ${resumes}`);
+    assert.equal(rec.prompts.filter((p) => /не удался/.test(p.text)).length, 1);
   } finally {
     await rec.stop();
+  }
+});
+
+// OpenCode moves a session between folders (#6550 rule 3; event session.moved with
+// data.location — @opencode/protocol). The session's tools then go through the
+// instance of its new folder: the old instance puts out its bridge (the hold record
+// stays), the new one takes the place back by the session at once.
+test("a session moved to another folder: the old location's instance lets its place go, the new one takes it back at once and says so", async () => {
+  const calls = join(SANDBOX, "move.calls");
+  const resume = join(SANDBOX, "move.resume");
+  writeFileSync(calls, "");
+  writeFileSync(resume, JSON.stringify({ bySession: { s1: backAnswer("k-s1") } }));
+  const b = bridgeEnv("move", { FB_CALLS: calls, FB_RESUME: resume });
+  const A = await plugin(b.env, inLoc(LOC_A, "s1"));
+  const B = await plugin(b.env, { ...inLoc(LOC_B), keepMarker: true });
+  try {
+    await serverTools(A);
+    await standsHeld(A, b, calls, "s1", "k-s1");
+    const oldPid = callsIn(calls)
+      .filter((c) => c.name === "iskron_channel")
+      .at(-1).pid;
+    const moved = { type: "session.moved", data: { sessionID: "s1", location: LOC_B } };
+    // The session now lives in B's folder — both instances read it there.
+    A.ctx.session.get = async ({ sessionID }) => ({ id: sessionID, location: LOC_B });
+    B.ctx.session.get = A.ctx.session.get;
+    const saidBefore = A.prompts.length;
+    A.emit(moved);
+    B.emit(moved);
+    await until(() => !alive(oldPid), "the old instance's bridge of s1 to go");
+    const back = () =>
+      callsIn(calls).find(
+        (c) => c.name === "iskron/resume" && c.arguments.session === "s1" && c.pid !== oldPid,
+      );
+    await until(back, "the new instance's resume of s1");
+    assert.equal(back().arguments.cwd, LOC_B.directory, "asked by its new folder and session");
+    await until(() => takenBack(B).length === 1, "the word in s1");
+    assert.deepEqual(takenBack(B), ["s1:k-s1"]);
+    assert.deepEqual(
+      A.prompts.slice(saidBefore),
+      [],
+      "the old instance says nothing after the move",
+    );
+  } finally {
+    await A.stop();
+    await B.stop();
+  }
+});
+
+// The move without the event at the old instance: its reload must not take back the
+// place of a session that now lives in another folder — that is #6626 again.
+test("a reload after a session moved away: the old folder's instance does not take its place back", async () => {
+  const calls = join(SANDBOX, "moved-away.calls");
+  const resume = join(SANDBOX, "moved-away.resume");
+  writeFileSync(calls, "");
+  writeFileSync(resume, JSON.stringify({ bySession: { s1: backAnswer("k-s1") } }));
+  const b = bridgeEnv("moved-away", { FB_CALLS: calls, FB_RESUME: resume });
+  const first = await plugin(b.env, inLoc(LOC_A, "s1"));
+  await serverTools(first);
+  await standsHeld(first, b, calls, "s1", "k-s1");
+  await first.stop();
+  writeFileSync(calls, "");
+  const second = await plugin(b.env, {
+    location: LOC_A,
+    sessions: [{ id: "s1", location: LOC_B }],
+    keepMarker: true,
+  });
+  try {
+    await serverTools(second);
+    await delay(500);
+    assert.ok(
+      !callsIn(calls).some((c) => c.name === "iskron/resume" && c.arguments.session === "s1"),
+      "no resume of the moved session by the old folder's instance",
+    );
+    assert.ok(!second.prompts.some((p) => p.sessionID === "s1"), "no word into it from here");
+  } finally {
+    await second.stop();
   }
 });
 
@@ -2460,6 +2549,21 @@ test("a child's end: the word into the parent is laid before the child's bridge 
   }
 });
 
+// OpenCode's own synthetic wakes the parent when the child goes quiet; a queued
+// «КОНЧЕН» would lie down only after that turn (seen live: +4.8 s). The end goes
+// steer — into the running turn at its next step — and wakes an idle parent.
+test("a child's end goes into the parent steer, waking it", async () => {
+  const { rec } = await leadChild("lead-steer");
+  try {
+    await rec.call("iskron_channel", { realm: "nks-dev", action: "leave" }, "child");
+    await until(() => ends(rec).length === 1, "the end in the parent");
+    assert.equal(ends(rec)[0].delivery, "steer");
+    assert.equal(ends(rec)[0].resume, true);
+  } finally {
+    await rec.stop();
+  }
+});
+
 test("a one-shot child launched into a case is ended by leaving that case — and not by leaving another", async () => {
   const calls = join(SANDBOX, "lead-oneshot.calls");
   writeFileSync(calls, "");
@@ -2751,6 +2855,43 @@ test("marker-child: a child taken back after a reload is under the ceiling again
     await until(() => !alive(newPid), "the forgotten child's bridge to go", 10000);
     await until(() => ends(second).length === 1, "the end in the parent");
     assert.match(ends(second)[0].text, /потолок простоя/);
+  } finally {
+    await second.stop();
+  }
+});
+
+// The previous bridge leaves by its own bye, and its socket of the child's place may
+// live on for seconds: the new child bridge waits for it to go — not a count of
+// attempts — and says nothing to the child meanwhile: no «take it back» that the
+// next attempt would make false, and no end of the child with its place whole.
+test("marker-child: while the previous bridge still holds the child's socket, the return waits for it silently and then takes the place", async () => {
+  const answers = join(SANDBOX, "reload-wait.answers");
+  const elsewhere = {
+    resumed: false,
+    elsewhere: ["k-sub"],
+    word: "возвращать нечего — k-sub: держит живой мост",
+  };
+  writeFileSync(answers, JSON.stringify({ bySession: { child: elsewhere } }));
+  const { second, all, newPid } = await reloadedChild("reload-wait", {
+    FB_RESUME: answers,
+    ISKRON_CHILD_BACK_PAUSE_MS: 150,
+  });
+  try {
+    await delay(1500); // more than every attempt by count
+    const answer = { resumed: true, holding: true, key: "k-sub", word: "место возвращено" };
+    writeFileSync(answers, JSON.stringify({ bySession: { child: answer } }));
+    const resumes = () =>
+      all().filter((c) => c.name === "iskron/resume" && c.arguments.session === "child");
+    const n = resumes().length;
+    await until(() => resumes().length > n, "the return after the socket went", 3000);
+    await delay(300);
+    const toChild = [...second.prompts, ...second.synthetics].filter(
+      (p) => p.sessionID === "child",
+    );
+    assert.deepEqual(toChild, [], "not a word to the child while it waits");
+    assert.deepEqual(second.synthetics, [], "the parent is told nothing: the child goes on");
+    await second.call("iskron_case", { realm: "nks-dev", action: "say", room: "#77" }, "child");
+    assert.equal(all().at(-1).pid, newPid, "the child writes by its own bridge again");
   } finally {
     await second.stop();
   }

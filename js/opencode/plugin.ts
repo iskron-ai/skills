@@ -100,6 +100,7 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
     stop() {},
     bridgeOf: () => null,
     leadOf: () => null,
+    moved() {},
   };
   // Расход встаёт после тулов (ему нужен мост сессии), а конец субагента сбрасывает его прежде.
   let flushUsage = (_s: string): Promise<void> => Promise.resolve();
@@ -176,6 +177,12 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
                 seen.set(root, Date.now());
               });
             else void rootOf(id);
+            break;
+          }
+          // Сессию перенесли в другую папку (#6550 п.3): место — экземпляру её новой локации.
+          case "session.moved": {
+            const dir = ev.data?.location?.directory;
+            if (id) half.moved(id, typeof dir === "string" ? dir : null);
             break;
           }
           case "skill.updated":

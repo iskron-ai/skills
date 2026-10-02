@@ -2177,9 +2177,11 @@ test("iskron/resume by the session's directory: a bridge restarted after the plu
   const second = startBridge(fake.mcpUrl, dir);
   t.after(() => second.stop());
   assert.ok((await second.call("initialize", 1, INIT)).result);
+  // Другой каталог и другая сессия: не её место. Та же сессия из другого каталога —
+  // перенос сессии, её место (проба ниже).
   const wrong = await second.call("iskron/resume", 2, {
     cwd: "/nowhere/else",
-    session: "ses-vahta",
+    session: "ses-chuzhaya",
   });
   assert.equal(wrong.result?.resumed, false, JSON.stringify(wrong));
   assert.equal(fresh().length, 0, "another directory's place is not touched");
@@ -2214,6 +2216,30 @@ test("iskron/resume by the session's directory: a bridge restarted after the plu
     readFileSync(join(dir, "standings.log"), "utf8"),
     /resumed-from-disk proba--931--nks-dev: pending 2/,
   );
+});
+
+// OpenCode moves a session between folders (graph nks-dev: #6550, rule 3): the
+// instance of its new folder asks by the new directory and the same session — the
+// record that session stood is its place, whatever directory it names.
+test("iskron/resume of a session moved to another folder takes back the place it stood, by the session", async (t) => {
+  const { fake, dir, bridge } = await connected(t);
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const before = mkdtempSync(join(tmpdir(), "iskron-moved-from-"));
+  const after = mkdtempSync(join(tmpdir(), "iskron-moved-to-"));
+  await bridge.call("iskron/resume", 4, { cwd: before, session: "ses-moved" });
+  await bridge.call("tools/call", 5, {
+    name: "iskron_stand",
+    arguments: { realm: "nks-dev", karta: 931, name: "proba", cwd: before },
+  });
+  bridge.proc.kill("SIGKILL");
+  await waitFor(() => fake.state.ws.size === 0, "the socket to close");
+  const second = startBridge(fake.mcpUrl, dir);
+  t.after(() => second.stop());
+  assert.ok((await second.call("initialize", 1, INIT)).result);
+  const back = await second.call("iskron/resume", 2, { cwd: after, session: "ses-moved" });
+  assert.equal(back.result?.resumed, true, JSON.stringify(back));
+  assert.equal(back.result.key, "proba--931--nks-dev");
+  assert.equal(fake.state.counts.connect, 1, "the place is resumed, not rotated");
 });
 
 // A resume whose hello does not come in time is not a verdict on the place: the

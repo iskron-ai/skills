@@ -39,9 +39,10 @@ export function createLeads(d: W.LeadDoors): W.Leads {
   const parentOf = (child: string) => d.parentOf(child).catch(() => null);
 
   /**
-   * Конец: родителю — итог, затем мост гасится (ended): слово конца встаёт в очередь
-   * родителя раньше родной синтетики OpenCode по затиханию ребёнка. wake — будить ли
-   * родителя ходом: итог будит, потолок и невозвращённое место — нет.
+   * Конец: родителю — итог, затем мост гасится (ended). Итог будит и идёт steer: родная
+   * синтетика OpenCode по затиханию ребёнка будит родителя первой, и слово с queue
+   * легло бы лишь после его хода; steer ложится в идущий ход на ближайшей границе шага.
+   * Порядок двух синтетик плагин не держит. Потолок и невозвращённое место не будят.
    */
   async function finish(child: string, why: string, ended = true, wake = true, lost = false) {
     const l = leads.get(child);
@@ -51,9 +52,17 @@ export function createLeads(d: W.LeadDoors): W.Leads {
     const word = lost
       ? W.lostWord(who(l, child), why)
       : W.endWord(who(l, child), why, (l.last ?? "").trim());
-    if (parent) await d.tell(parent, word, wake);
+    if (parent) await d.tell(parent, word, wake, wake);
     else d.say(`${word}\n(родителя плагин не знает — итог некому)`, "warning");
-    if (ended) await d.end(child).catch(() => {});
+    if (ended)
+      await d
+        .end(child)
+        .catch((e: Error) =>
+          d.say(
+            `Искрон: мост субагента ${who(l, child)} не погашен после итога — ${e.message}`,
+            "warning",
+          ),
+        );
   }
 
   function leave(child: string, l: Lead, why: string): void {
