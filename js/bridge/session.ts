@@ -207,7 +207,9 @@ function openIn(io: SessionIO, origin: SessionOrigin | null, scope: Scope | null
     if (!handover) await leaveJoinedCases();
     // Конец спутника закрывает и место (#6593): место снимается с доски.
     await revokeSatellitePlaces(places);
-    if (addr && !handover) await publishStatusTo(addr.url, "", 3000).catch(() => {});
+    // Спутник отпускается целиком и при передаче (возврата с диска нет) — его занятость уходит с ним.
+    if (addr && (!handover || CFG.satellite))
+      await publishStatusTo(addr.url, "", 3000).catch(() => {});
     if (handover) await Promise.race([Promise.allSettled([...pending]), sleep(HANDOVER_WAIT_MS)]);
     else await Promise.allSettled([...pending, ...tokenRequestsInFlight]);
     await flushStdout(io.output); // an answer half-written is an answer not given

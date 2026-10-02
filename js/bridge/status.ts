@@ -29,9 +29,12 @@ import { unheardListenBlock } from "./listen.ts";
 import { normKarta, normName } from "./names.ts";
 import { extraIn } from "./places.ts";
 import { sameRealm } from "./realms.ts";
+import { publishStatusTo, type StatusOutcome } from "./statuspost.ts";
 import { localSocketAlive } from "./sweep.ts";
 import { type Standing, state } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
+
+export { publishStatusTo, type StatusOutcome };
 
 const isDirectory = (p: string): boolean => {
   try {
@@ -160,13 +163,6 @@ function ledIn(realm: string): Standing | undefined {
     : extraIn(realm)?.standing;
 }
 
-/** Исход POST занятости; code — HTTP-код отказа поверхности, когда он был. */
-export interface StatusOutcome {
-  ok: boolean;
-  body: string;
-  code?: number;
-}
-
 const S = scoped(() => ({ lastPublished: "" }));
 /** Последняя строка занятости, которую доска приняла от этого моста; пустая — снята. */
 export const publishedStatus = (): string => S.lastPublished;
@@ -274,41 +270,4 @@ export async function notHeldHere(realm: string): Promise<string> {
     })
     .join("; ");
   return `${head} Места этого графа на этой машине держат живые мосты: ${list}. ${TURNED_GUIDANCE()}`;
-}
-
-/** Тот же POST на названный адрес — для выхода, когда стояние уже отпущено, а адрес снят до этого. */
-export async function publishStatusTo(
-  url: string,
-  text: string,
-  timeoutMs = 5000,
-  standingId: string | null = null,
-): Promise<StatusOutcome> {
-  let res: Response;
-  try {
-    res = await fetch(url, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(standingId ? { text, standing_id: standingId } : { text }),
-      signal: AbortSignal.timeout(timeoutMs),
-    });
-  } catch (e) {
-    return {
-      ok: false,
-      body: `Отказано (мост): статусный адрес не ответил — ${(e as Error).message}`,
-    };
-  }
-  const body = (await res.text().catch(() => "")).trim();
-  if (res.status === 404)
-    return {
-      ok: false,
-      code: 404,
-      body: `Отказано (404) поверхностью: ${body || "без тела"} — этот адрес места больше не адресует: его мог повернуть connect другого держателя, а мог держать другой экземпляр моста той же сессии. Чей он теперь, мост отсюда не знает.`,
-    };
-  if (!res.ok)
-    return {
-      ok: false,
-      code: res.status,
-      body: `Отказано (${res.status}) поверхностью: ${body || "без тела"}`,
-    };
-  return { ok: true, body };
 }
