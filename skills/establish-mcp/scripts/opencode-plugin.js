@@ -104,10 +104,10 @@ async function enterCase(l, call, satelliteOf, placeName) {
     await call("iskron_stand", stand);
   } catch (e) {
     const why = e.message;
-    const join6 = `iskron_case(action="join", room="${room}")`;
+    const join7 = `iskron_case(action="join", room="${room}")`;
     return L(
-      `Искрон: строка запуска — не встал: ${why}. Встань сам (iskron_stand) и войди в дело №${l.no}: ${join6}.`,
-      `Iskron: launch line — not seated: ${why}. Take your seat yourself (iskron_stand) and enter case №${l.no}: ${join6}.`
+      `Искрон: строка запуска — не встал: ${why}. Встань сам (iskron_stand) и войди в дело №${l.no}: ${join7}.`,
+      `Iskron: launch line — not seated: ${why}. Take your seat yourself (iskron_stand) and enter case №${l.no}: ${join7}.`
     );
   }
   const place = placeName() || L("своим местом", "in a seat of its own");
@@ -564,6 +564,17 @@ var CFG = new Proxy({}, {
 // js/bridge/oauth/discovery.ts
 var REGISTRATION_REUSE_MS = 45 * 6e4;
 
+// js/bridge/oauth/pacing.ts
+var pauses = (v, fallback) => (v || fallback).split(",").map(Number).filter((n2) => Number.isFinite(n2) && n2 >= 0);
+var DEAD_RECHECK_MS = pauses(process.env.ISKRON_BRIDGE_DEAD_RECHECK_MS, "1000,2000");
+var IN_CALL_WAIT_MS = Number(process.env.ISKRON_BRIDGE_IN_CALL_WAIT_MS) || 1e4;
+
+// js/bridge/oauth/device.ts
+var SLOW_DOWN_MS = Number(process.env.ISKRON_BRIDGE_DEVICE_SLOW_DOWN_MS) || 5e3;
+var REISSUE_PAUSE_MS = Number(process.env.ISKRON_BRIDGE_DEVICE_REISSUE_MS) || 3e4;
+var never = new Promise(() => {
+});
+
 // js/bridge/oauth/flow.ts
 var CLAIM_WAIT_MS = Number(process.env.ISKRON_BRIDGE_CLAIM_WAIT_MS) || 15e3;
 var LANDED_POLL_MS = Number(process.env.ISKRON_BRIDGE_LANDED_POLL_MS) || 2e3;
@@ -1003,18 +1014,53 @@ import {
   accessSync,
   constants,
   mkdirSync,
-  readdirSync,
+  readdirSync as readdirSync2,
   readFileSync as readFileSync3,
-  statSync,
+  statSync as statSync2,
   writeFileSync
 } from "node:fs";
 import { homedir as homedir3 } from "node:os";
-import { join as join4, resolve as resolve3 } from "node:path";
+import { join as join5, resolve as resolve3 } from "node:path";
 
 // js/shared/home.ts
 import { homedir as homedir2 } from "node:os";
 import { join as join3 } from "node:path";
 var homeBridgePath = () => join3(homedir2(), ".iskron-bridge", "iskron-bridge.mjs");
+
+// js/opencode/devicewait.ts
+import { readdirSync, statSync } from "node:fs";
+import { join as join4 } from "node:path";
+var RENEW_BEFORE_MS = 6e4;
+var UNTIL = /valid until (\d{4}-\d\d-\d\d \d\d:\d\d:\d\d) UTC/;
+function deviceOf(message) {
+  const link = /from another device: (\S+)/.exec(message)?.[1];
+  if (!link) return /no sign-in by code: (.+?) — or give the bridge/.exec(message)?.[1] ?? null;
+  const until = UNTIL.exec(message)?.[1];
+  return until ? `${link} (код действует до ${until} UTC)` : link;
+}
+function loginStamp(dir) {
+  try {
+    const files = readdirSync(dir).filter(
+      (f) => f.endsWith(".auth-pending") || f.endsWith(".auth-pending.device")
+    );
+    if (!files.some((f) => f.endsWith(".auth-pending"))) return null;
+    return files.map((f) => `${f}:${statSync(join4(dir, f)).mtimeMs}`).sort().join("|");
+  } catch {
+    return null;
+  }
+}
+function codeWatch(dir, message) {
+  const before = loginStamp(dir);
+  const until = UNTIL.exec(message)?.[1];
+  const end = until ? Date.parse(`${until.replace(" ", "T")}Z`) : NaN;
+  return {
+    moved: () => {
+      const now2 = loginStamp(dir);
+      if (now2 !== null && now2 !== before) return true;
+      return now2 !== null && end - Date.now() < RENEW_BEFORE_MS;
+    }
+  };
+}
 
 // js/opencode/bridge-io.ts
 var HANDSHAKE_MS = Number(process.env.ISKRON_MCP_HANDSHAKE_MS || 6e5);
@@ -1040,15 +1086,15 @@ function buildsLine(bridgePath, pluginUrl) {
   return `сборка: мост ${buildOfFile(bridgePath) ?? "не читается"}, плагин ${buildOf(pluginUrl)}`;
 }
 function authDir() {
-  return process.env.ISKRON_BRIDGE_AUTH_DIR || join4(homedir3(), ".iskron-bridge");
+  return process.env.ISKRON_BRIDGE_AUTH_DIR || join5(homedir3(), ".iskron-bridge");
 }
 function cachePath() {
-  return join4(authDir(), "opencode-tools.json");
+  return join5(authDir(), "opencode-tools.json");
 }
 function grantStamp() {
   const dir = authDir();
   try {
-    return readdirSync(dir).filter((f) => f.endsWith(".json") && f !== "opencode-tools.json").map((f) => `${f}:${statSync(join4(dir, f)).mtimeMs}`).sort().join("|");
+    return readdirSync2(dir).filter((f) => f.endsWith(".json") && f !== "opencode-tools.json").map((f) => `${f}:${statSync2(join5(dir, f)).mtimeMs}`).sort().join("|");
   } catch {
     return "";
   }
@@ -1064,7 +1110,7 @@ function readCache() {
 }
 function writeCache(tools) {
   try {
-    mkdirSync(join4(cachePath(), ".."), { recursive: true, mode: 448 });
+    mkdirSync(join5(cachePath(), ".."), { recursive: true, mode: 448 });
     writeFileSync(cachePath(), JSON.stringify(tools), { mode: 384 });
   } catch {
   }
@@ -1090,10 +1136,12 @@ async function handshake(b, onLogin, onReady) {
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       if (!AUTH_PENDING.test(message)) throw e;
-      onLogin(loginUrlOf(message));
+      onLogin(loginUrlOf(message), deviceOf(message));
+      const code = codeWatch(authDir(), message);
       while (grantStamp() === stamp) {
         if (Date.now() + AUTH_POLL_MS > deadline) throw e;
         await sleep2(AUTH_POLL_MS);
+        if (code.moved()) break;
       }
     }
   }
@@ -1160,8 +1208,8 @@ async function sessionDirectory(ctx, sessionID) {
 }
 
 // js/opencode/keep.ts
-import { mkdirSync as mkdirSync2, readdirSync as readdirSync2, readFileSync as readFileSync4, unlinkSync, writeFileSync as writeFileSync2 } from "node:fs";
-import { join as join5 } from "node:path";
+import { mkdirSync as mkdirSync2, readdirSync as readdirSync3, readFileSync as readFileSync4, unlinkSync, writeFileSync as writeFileSync2 } from "node:fs";
+import { join as join6 } from "node:path";
 var WATCH_MS = Number(process.env.ISKRON_BRIDGE_WATCH_MS || 5 * 6e4);
 var MARKER_PREFIX = "opencode-lost";
 function writeLostMarker(authDir2, slots) {
@@ -1171,7 +1219,7 @@ function writeLostMarker(authDir2, slots) {
     mkdirSync2(authDir2, { recursive: true, mode: 448 });
     const lost = { at: (/* @__PURE__ */ new Date()).toISOString(), entries };
     const name = `${MARKER_PREFIX}.${process.pid}.${Math.random().toString(36).slice(2, 8)}.json`;
-    writeFileSync2(join5(authDir2, name), JSON.stringify(lost), { mode: 384 });
+    writeFileSync2(join6(authDir2, name), JSON.stringify(lost), { mode: 384 });
   } catch {
   }
 }
@@ -1180,15 +1228,15 @@ function takeLostMarker(authDir2) {
   let at = "";
   let files;
   try {
-    files = readdirSync2(authDir2).filter((f) => f.startsWith(MARKER_PREFIX) && f.endsWith(".json"));
+    files = readdirSync3(authDir2).filter((f) => f.startsWith(MARKER_PREFIX) && f.endsWith(".json"));
   } catch {
     return null;
   }
   for (const f of files) {
     let text;
     try {
-      text = readFileSync4(join5(authDir2, f), "utf8");
-      unlinkSync(join5(authDir2, f));
+      text = readFileSync4(join6(authDir2, f), "utf8");
+      unlinkSync(join6(authDir2, f));
     } catch {
       continue;
     }
@@ -1405,9 +1453,13 @@ function createLauncher(d) {
 }
 
 // js/opencode/login.ts
+function elsewhere(device) {
+  return device && /^https?:/.test(device) ? `с другого устройства (телефон подойдёт) — ${device}; либо личный токен в ~/.iskron-bridge/token` : (device ? `${device}; ` : "") + "с другой машины — ssh -L <порт>:127.0.0.1:<порт>, либо личный токен в ~/.iskron-bridge/token";
+}
 function createLogin(say) {
   let pending = false;
   let url = null;
+  let device = null;
   const waiters = /* @__PURE__ */ new Set();
   function started() {
     if (pending) return { promise: Promise.resolve(), cancel() {
@@ -1420,7 +1472,7 @@ function createLogin(say) {
   }
   function error() {
     return new Error(
-      `Искрон: нужен вход в граф — ${url ? `открой в браузере ${url}` : "заверши вход в браузере"} и повтори вызов. Адрес локальный для машины OpenCode: с другой — ssh -L <порт>:127.0.0.1:<порт>; на безголовой машине положи личный токен в ~/.iskron-bridge/token (скилл establish-mcp).`
+      `Искрон: нужен вход в граф — ${url ? `открой в браузере ${url}` : "заверши вход в браузере"} и повтори вызов. Адрес локальный для машины OpenCode: ${elsewhere(device)} (скилл establish-mcp).`
     );
   }
   return {
@@ -1430,20 +1482,25 @@ function createLogin(say) {
     get url() {
       return url;
     },
-    on(next) {
+    get device() {
+      return device;
+    },
+    on(next, nextDevice = null) {
       for (const w of waiters) w();
       waiters.clear();
-      if (pending && next === url) return;
+      if (pending && next === url && nextDevice === device) return;
       pending = true;
       url = next;
+      device = nextDevice;
       say(
-        `Искрон: нужен вход — ${next ? `открой ${next} и заверши его` : "заверши его в браузере"}; адрес локальный: с другой машины — ssh -L <порт>:127.0.0.1:<порт>, либо личный токен в ~/.iskron-bridge/token. Тулы iskron_* поднимутся после входа сами.`,
+        `Искрон: нужен вход — ${next ? `открой ${next} и заверши его` : "заверши его в браузере"}; адрес локальный: ${elsewhere(device)}. Тулы iskron_* поднимутся после входа сами.`,
         "warning"
       );
     },
     done() {
       pending = false;
       url = null;
+      device = null;
     },
     async race(ready) {
       if (pending) throw error();
@@ -1501,7 +1558,7 @@ function statusLines(path, builds, login, state2, sessions, spare) {
   return [
     `мост: ${path}`,
     builds,
-    login.loginPending ? `вход: НЕ ВЫПОЛНЕН — ${login.loginUrl ? `открой в браузере ${login.loginUrl}` : "заверши вход в браузере"}. Адрес локальный: с другой машины — ssh -L <порт>:127.0.0.1:<порт>, либо личный токен в ~/.iskron-bridge/token (скилл establish-mcp).` : state2.serverSeen ? "вход: есть, сервер отвечает" : "вход: мост ещё не ответил (рукопожатие идёт)",
+    login.loginPending ? `вход: НЕ ВЫПОЛНЕН — ${login.loginUrl ? `открой в браузере ${login.loginUrl}` : "заверши вход в браузере"}. Адрес локальный: ${elsewhere(login.loginDevice)} (скилл establish-mcp).` : state2.serverSeen ? "вход: есть, сервер отвечает" : "вход: мост ещё не ответил (рукопожатие идёт)",
     `тулов iskron_*: ${state2.listed.length} (${state2.source})`,
     `мостов живых: ${sessions + spare}, сессий с мостом: ${sessions}`
   ].join("\n");
@@ -1677,7 +1734,7 @@ async function setupTools(ctx, say, onChannel, rootOf) {
   const statusText = () => statusLines(
     path,
     builds,
-    { loginPending: login.pending, loginUrl: login.url },
+    { loginPending: login.pending, loginUrl: login.url, loginDevice: login.device },
     state2,
     slots.size,
     spare ? 1 : 0

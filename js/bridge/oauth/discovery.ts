@@ -87,6 +87,11 @@ export async function discoverMeta(wwwAuthenticate: string | null | undefined): 
   return { as, resource: CFG.resource || prm?.resource || CFG.serverUrl, scope };
 }
 
+// The resource every grant asks for — the loopback login, its exchange, the
+// refresh, the device poll. Discovery is cached in the store, so an override
+// set after a flow ran is seen only where the value is used: here.
+export const resourceOf = (meta: Meta): string => CFG.resource || meta.resource;
+
 // Stable per-origin loopback port, so the registered redirect_uri survives
 // restarts. The port sits in the OS's ephemeral range on Linux, so any
 // outbound socket on the machine can happen to hold it (witnessed on a shared

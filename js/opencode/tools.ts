@@ -292,7 +292,7 @@ export async function setupTools(
     statusLines(
       path,
       builds,
-      { loginPending: login.pending, loginUrl: login.url },
+      { loginPending: login.pending, loginUrl: login.url, loginDevice: login.device },
       state,
       slots.size,
       spare ? 1 : 0,

@@ -10,6 +10,15 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { createServer } from "node:http";
 
+import {
+  DEVICE_GRANT,
+  deviceAuthorize,
+  deviceControl,
+  deviceMeta,
+  devicePoll,
+  deviceState,
+} from "./fake-device.mjs";
+
 // Аргументы, которые объявляет схема каждого тула в снимке поверхности
 // (fixtures/surface.json, `make surface`). Наблюдено у iskron_channel (r5 #6102):
 // сервер собирает тело /channels* из фиксированного списка и МОЛЧА роняет прочее —
@@ -198,6 +207,9 @@ export async function startFakeNks(opts = {}) {
     // the token's audience, so it is the only place a test can see what the
     // bridge actually asked to be issued for.
     resources: { authorize: null, code_exchange: null, refresh: null },
+    // Sign-in from another device (RFC 8628, fake-device.mjs): off unless asked
+    // for — a server without it is what every other probe stands on.
+    device: deviceState(opts.device),
   };
 
   const body = (req) =>
@@ -442,6 +454,7 @@ export async function startFakeNks(opts = {}) {
       if (patch.rotate_access) st.access = mintAccess(st); // сосед провернул грант: старый bearer больше не принимается
       if (patch.drop_standings) st.standings.clear(); // платформа потеряла привязки при живых сессиях mcp
       if (patch.forget_clients) st.clients.clear(); // as if the server expired the dynamic registration
+      deviceControl(st.device, patch);
       return json(res, 200, { counts: st.counts });
     }
 
@@ -459,7 +472,11 @@ export async function startFakeNks(opts = {}) {
         token_endpoint: `${base}${st.tokenPath}`,
         registration_endpoint: `${base}/register`,
         code_challenge_methods_supported: ["S256"],
+        ...deviceMeta(st.device, base),
       });
+    }
+    if (p === "/device" && req.method === "POST" && st.device) {
+      return deviceAuthorize(st.device, st, new URLSearchParams(await body(req)), base, json, res);
     }
 
     if (p === "/register" && req.method === "POST") {
@@ -528,6 +545,7 @@ export async function startFakeNks(opts = {}) {
       if (f.get("grant_type") === "refresh_token") {
         st.counts.refresh++;
         st.resources.refresh = f.get("resource");
+        st.refreshClientId = f.get("client_id");
         if (st.refreshValidFrom && st.snow() < st.refreshValidFrom) {
           st.counts.early_refresh++;
           return json(res, 400, {
@@ -573,6 +591,25 @@ export async function startFakeNks(opts = {}) {
           expires_in: st.accessTtl,
           token_type: "Bearer",
         });
+      }
+      if (f.get("grant_type") === DEVICE_GRANT && st.device) {
+        return devicePoll(
+          st.device,
+          f,
+          () => {
+            st.resources.device = f.get("resource");
+            st.access = mintAccess(st);
+            st.refresh = mintRefresh(st);
+            return {
+              access_token: st.access,
+              refresh_token: st.refresh,
+              expires_in: st.accessTtl,
+              token_type: "Bearer",
+            };
+          },
+          json,
+          res,
+        );
       }
       return json(res, 400, { error: "unsupported_grant_type" });
     }

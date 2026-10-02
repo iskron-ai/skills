@@ -6,6 +6,8 @@ export interface Tokens {
   refresh_expires_at?: number | null;
   /** the client this grant was issued to — the one its refresh must present */
   client_id?: string;
+  /** born of sign-in by code: the audience is that client's default, not the resource asked for */
+  by_code?: boolean;
 }
 
 export interface Client {
@@ -66,6 +68,10 @@ export interface Config {
   scope: string | null;
   resource: string | null;
   staticClientId: string | null;
+  /** Клиент входа по коду устройства (oauth/devicecode.ts); null — заведённый по умолчанию. */
+  deviceClientId: string | null;
+  /** Вход по коду без клиента на сервере — динамической регистрацией (oauth/devicecode.ts); только явно. */
+  deviceRegister: boolean;
   /** Личный токен доступа (PAT): с ним мост не ходит в OAuth вовсе. */
   pat: string | null;
   /** Откуда взят PAT — имя переменной или путь файла; для человека в отказе и в doctor. */

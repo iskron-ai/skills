@@ -223,6 +223,10 @@ const ENV_KEYS = [
   "FB_LOG",
   "FB_MODE",
   "FB_AUTHED",
+  "FB_DEVICE",
+  "FB_DEVICE_FILE",
+  "FB_DEVICE_LEFT_S",
+  "FB_DEVICE_UNSET",
   "FB_TOOLS",
   "FB_PAGINATE",
   "FB_TOOLS_FILE",
@@ -717,6 +721,137 @@ test("first run without a grant and without a last list: setup returns at once, 
     assert.equal(out.content, "ответ после входа");
     assert.equal(pidsOf(b.log).length, 1, "the first session takes the bridge that saw the login");
     assert.match((await rec.call("iskron_bridge", {}, "s-login")).content, /вход: есть/);
+  } finally {
+    writeFileSync(authed, "");
+    await rec.stop();
+    process.env.ISKRON_BRIDGE_AUTH_DIR = prevAuth;
+  }
+});
+
+// The bridge names the same login's sign-in page with a code (#6570): the
+// plugin re-tells the login in its own words and must not drop it — on a
+// machine without a browser it is the only way in.
+test("a login the bridge also offers from another device: the line and the status name the page with the code", async () => {
+  const authDir = mkdtempSync(join(SANDBOX, "auth-device-"));
+  const prevAuth = process.env.ISKRON_BRIDGE_AUTH_DIR;
+  process.env.ISKRON_BRIDGE_AUTH_DIR = authDir;
+  const authed = join(SANDBOX, "device-login.authed");
+  const page = "https://auth.example/device?code=FAKE1234";
+  const b = bridgeEnv("device-login", {
+    FB_MODE: "auth",
+    FB_AUTHED: authed,
+    FB_DEVICE: page,
+    ISKRON_MCP_AUTH_POLL_MS: 50,
+  });
+  const rec = await plugin(b.env);
+  try {
+    await until(() => /нужен вход/.test(rec.said()), "the login line");
+    assert.ok(rec.said().includes(page), "the line names the page with the code");
+    const status = (await rec.call("iskron_bridge", {}, "s-device")).content;
+    assert.ok(status.includes(page), "the status names it too");
+  } finally {
+    writeFileSync(authed, "");
+    await rec.stop();
+    process.env.ISKRON_BRIDGE_AUTH_DIR = prevAuth;
+  }
+});
+
+// A code lives about five minutes; the bridge issues the next one and rewrites
+// the login's record beside the grant, or a caller that found it dying puts
+// one beside the record. The plugin hears either and asks again — the line and
+// the status name the new page, never a dead one.
+test("a new code from the bridge: the plugin re-tells the login with the new page", async () => {
+  const authDir = mkdtempSync(join(SANDBOX, "auth-device-renew-"));
+  const prevAuth = process.env.ISKRON_BRIDGE_AUTH_DIR;
+  process.env.ISKRON_BRIDGE_AUTH_DIR = authDir;
+  const authed = join(SANDBOX, "device-renew.authed");
+  const deviceFile = join(SANDBOX, "device-renew.page");
+  const record = join(authDir, "mcp.example_x.json.auth-pending");
+  const first = "https://auth.example/device?code=OLD11111";
+  const next = "https://auth.example/device?code=NEW22222";
+  writeFileSync(deviceFile, first);
+  writeFileSync(record, "{}");
+  const b = bridgeEnv("device-renew", {
+    FB_MODE: "auth",
+    FB_AUTHED: authed,
+    FB_DEVICE_FILE: deviceFile,
+    ISKRON_MCP_AUTH_POLL_MS: 50,
+  });
+  const rec = await plugin(b.env);
+  try {
+    await until(() => rec.said().includes(first), "the first page");
+    writeFileSync(deviceFile, next);
+    writeFileSync(record, JSON.stringify({ device: { link: next } }));
+    await until(() => rec.said().includes(next), "the new page in a new line");
+    const status = (await rec.call("iskron_bridge", {}, "s-device-renew")).content;
+    assert.ok(status.includes(next), "the status names the new page");
+    assert.ok(!status.includes(first), "and not the dead one");
+    const third = "https://auth.example/device?code=THIRD333";
+    writeFileSync(deviceFile, third);
+    writeFileSync(`${record}.device`, JSON.stringify({ code: { link: third } }));
+    await until(() => rec.said().includes(third), "the code a caller put beside the record");
+  } finally {
+    writeFileSync(authed, "");
+    await rec.stop();
+    process.env.ISKRON_BRIDGE_AUTH_DIR = prevAuth;
+  }
+});
+
+// No client for sign-in by code on the server (#6619): the bridge offers no code
+// and says why — the plugin passes that word on, beside the tunnel and token.
+test("no code because the server has no client: the line and the status name the operator's move", async () => {
+  const authDir = mkdtempSync(join(SANDBOX, "auth-device-unset-"));
+  const prevAuth = process.env.ISKRON_BRIDGE_AUTH_DIR;
+  process.env.ISKRON_BRIDGE_AUTH_DIR = authDir;
+  const authed = join(SANDBOX, "device-unset.authed");
+  const word =
+    "вход по коду на этом сервере не настроен: нет клиента iskron-bridge — ход оператора сервера авторизации";
+  const b = bridgeEnv("device-unset", {
+    FB_MODE: "auth",
+    FB_AUTHED: authed,
+    FB_DEVICE_UNSET: word,
+    ISKRON_MCP_AUTH_POLL_MS: 50,
+  });
+  const rec = await plugin(b.env);
+  try {
+    await until(() => /нужен вход/.test(rec.said()), "the login line");
+    assert.ok(rec.said().includes(word), `the line names the word: ${rec.said()}`);
+    assert.ok(!/с другого устройства/.test(rec.said()), "no page with a code is promised");
+    const status = (await rec.call("iskron_bridge", {}, "s-device-unset")).content;
+    assert.ok(status.includes(word), "the status names it too");
+  } finally {
+    writeFileSync(authed, "");
+    await rec.stop();
+    process.env.ISKRON_BRIDGE_AUTH_DIR = prevAuth;
+  }
+});
+
+// The bridge names the code's end; with under a minute left the human could not
+// make it, so the plugin asks again by itself — the bridge's answer to that is
+// a fresh code — and tells the new page with its end.
+test("a code with under a minute left: the plugin asks again and tells the fresh page", async () => {
+  const authDir = mkdtempSync(join(SANDBOX, "auth-device-dying-"));
+  const prevAuth = process.env.ISKRON_BRIDGE_AUTH_DIR;
+  process.env.ISKRON_BRIDGE_AUTH_DIR = authDir;
+  const authed = join(SANDBOX, "device-dying.authed");
+  const deviceFile = join(SANDBOX, "device-dying.page");
+  const first = "https://auth.example/device?code=DYING111";
+  const next = "https://auth.example/device?code=FRESH222";
+  writeFileSync(deviceFile, first);
+  writeFileSync(join(authDir, "mcp.example_x.json.auth-pending"), "{}");
+  const b = bridgeEnv("device-dying", {
+    FB_MODE: "auth",
+    FB_AUTHED: authed,
+    FB_DEVICE_FILE: deviceFile,
+    FB_DEVICE_LEFT_S: 30,
+    ISKRON_MCP_AUTH_POLL_MS: 50,
+  });
+  const rec = await plugin(b.env);
+  try {
+    await until(() => rec.said().includes(first), "the first page");
+    assert.match(rec.said(), /до \d{4}-\d\d-\d\d \d\d:\d\d:\d\d UTC/, "the line names the end");
+    writeFileSync(deviceFile, next);
+    await until(() => rec.said().includes(next), "the fresh page, with no record change");
   } finally {
     writeFileSync(authed, "");
     await rec.stop();

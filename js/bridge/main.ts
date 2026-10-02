@@ -23,6 +23,9 @@
 //                  ISKRON_BRIDGE_NO_BROWSER, ISKRON_BRIDGE_DEBUG, ISKRON_BRIDGE_SCOPE,
 //                  ISKRON_BRIDGE_RESOURCE (override the resource indicator / audience),
 //                  ISKRON_BRIDGE_CLIENT_ID,
+//                  ISKRON_BRIDGE_DEVICE_CLIENT (the client of sign-in from another device;
+//                  default iskron-bridge; a server without it offers no code),
+//                  ISKRON_BRIDGE_DEVICE_REGISTER=1 (no such client: register one for the code),
 //                  ISKRON_BRIDGE_TOKEN (a personal access token: no OAuth at all; the
 //                  file <auth-dir>/token is read when the variable is absent),
 //                  ISKRON_BRIDGE_DAEMON=0 (полный мост в процессе; по умолчанию —
