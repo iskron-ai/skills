@@ -118,6 +118,11 @@ function loginUrlOf(message: string): string | null {
   return /open in a browser: (\S+)/.exec(message)?.[1] ?? null;
 }
 
+/** Страница входа с кодом — тот же вход с другого устройства (граф nks-dev: #6570). */
+function deviceUrlOf(message: string): string | null {
+  return /from another device: (\S+)/.exec(message)?.[1] ?? null;
+}
+
 /**
  * Рукопожатие. На отказ «нужен вход» мост отвечает сразу, а вход ждёт фоном;
  * рукопожатие повторяется, когда грант ляжет в хранилище. Потолок — HANDSHAKE_MS.
@@ -126,7 +131,7 @@ function loginUrlOf(message: string): string | null {
  */
 export async function handshake(
   b: Bridge,
-  onLogin: (url: string | null) => void,
+  onLogin: (url: string | null, device: string | null) => void,
   onReady: () => void,
 ): Promise<void> {
   const deadline = Date.now() + HANDSHAKE_MS;
@@ -146,7 +151,7 @@ export async function handshake(
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       if (!AUTH_PENDING.test(message)) throw e;
-      onLogin(loginUrlOf(message));
+      onLogin(loginUrlOf(message), deviceUrlOf(message));
       while (grantStamp() === stamp) {
         if (Date.now() + AUTH_POLL_MS > deadline) throw e;
         await sleep(AUTH_POLL_MS);

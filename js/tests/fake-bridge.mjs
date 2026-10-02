@@ -22,6 +22,8 @@
 //                 FB_NET_UP exists — the network is back
 //   FB_AUTHED     with FB_MODE=auth: the file whose existence means the human has
 //                 finished the login in the browser.
+//   FB_DEVICE     with FB_MODE=auth: the sign-in page with a code the refusal also
+//                 names — the same login from another device (#6570).
 //   FB_TOOLS      JSON array for tools/list; default is two tools, one of them
 //                 iskron_channel, since that is the name the extension watches.
 //   FB_PAGINATE   "1" splits tools/list across two pages with a cursor.
@@ -190,7 +192,11 @@ process.stdin.on("data", (chunk) => {
           code: -32001,
           message:
             "iskron-bridge v0+fake: authorization required — open in a browser: " +
-            "http://127.0.0.1:43265/authorize?fake=1 — or give the bridge a personal access " +
+            "http://127.0.0.1:43265/authorize?fake=1" +
+            (process.env.FB_DEVICE
+              ? ` — or sign in from another device: ${process.env.FB_DEVICE} (code FAKE1234, good for about 5 min)`
+              : "") +
+            " — or give the bridge a personal access " +
             "token instead (ISKRON_BRIDGE_TOKEN, or the file <auth-dir>/token). " +
             "The call never reached the server, so nothing was applied — retry freely. " +
             "The bridge stays up.",

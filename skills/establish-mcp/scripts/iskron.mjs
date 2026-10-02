@@ -1126,9 +1126,10 @@ var TokenRefused = class extends Error {
 };
 var AuthPending = class extends Error {
   authorizeUrl;
-  constructor(url, note3) {
+  constructor(url, note3, device) {
+    const minutes = device ? Math.max(1, Math.round((device.expires_at - Date.now()) / 6e4)) : 0;
     super(
-      `authorization required — open in a browser: ${url}${note3 ? ` (${note3})` : ""} — or give the bridge a personal access token instead (ISKRON_BRIDGE_TOKEN, or the file <auth-dir>/token)`
+      `authorization required — open in a browser: ${url}${note3 ? ` (${note3})` : ""}` + (device ? ` — or sign in from another device: ${device.link} (code ${device.user_code}, good for about ${minutes} min; a new code comes with the next call)` : "") + ` — or give the bridge a personal access token instead (ISKRON_BRIDGE_TOKEN, or the file <auth-dir>/token)`
     );
     this.authorizeUrl = url;
   }
@@ -1314,6 +1315,80 @@ import {
 } from "node:fs";
 import { connect as connect3 } from "node:net";
 import { basename, dirname as dirname2, join as join8 } from "node:path";
+
+// js/bridge/oauth/devicecode.ts
+var DEVICE_GRANT = "urn:ietf:params:oauth:grant-type:device_code";
+var DeviceRefusal = class extends Error {
+  error;
+  constructor(message, error) {
+    super(message);
+    this.error = error;
+  }
+};
+function deviceOffered(meta) {
+  const endpoint = meta.as.device_authorization_endpoint;
+  const grants = meta.as.grant_types_supported;
+  return typeof endpoint === "string" && !!endpoint && (!Array.isArray(grants) || grants.includes(DEVICE_GRANT));
+}
+async function post(url, type, body) {
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {
+      "content-type": type === "json" ? "application/json" : "application/x-www-form-urlencoded"
+    },
+    body: type === "json" ? JSON.stringify(body) : new URLSearchParams(body).toString(),
+    signal: AbortSignal.timeout(15e3)
+  });
+  noteServerDate(res);
+  const answer = await res.json().catch(() => null) ?? {};
+  if (!res.ok) {
+    const error = typeof answer.error === "string" ? answer.error : void 0;
+    const said = answer.error_description ?? answer.message ?? "";
+    throw new DeviceRefusal(`POST ${url} -> ${res.status} ${error ?? ""} ${said}`.trim(), error);
+  }
+  return answer;
+}
+async function registerDeviceClient(meta, redirectUri) {
+  if (CFG.staticClientId) return CFG.staticClientId;
+  if (!meta.as.registration_endpoint) {
+    throw new DeviceRefusal("server offers no dynamic client registration", void 0);
+  }
+  const reg = await post(meta.as.registration_endpoint, "json", {
+    client_name: CFG.clientName,
+    redirect_uris: [redirectUri],
+    grant_types: [DEVICE_GRANT, "refresh_token"],
+    token_endpoint_auth_method: "none"
+  });
+  if (typeof reg.client_id !== "string") {
+    throw new DeviceRefusal("registration answered without a client_id", void 0);
+  }
+  log(`registered OAuth client ${reg.client_id} for sign-in from another device`);
+  return reg.client_id;
+}
+async function issueDeviceCode(meta, clientId) {
+  const form = { client_id: clientId };
+  if (meta.scope) form.scope = meta.scope;
+  const a = await post(String(meta.as.device_authorization_endpoint), "form", form);
+  const complete = a.verification_uri_complete ?? a.verification_uri;
+  if (typeof a.device_code !== "string" || typeof complete !== "string") {
+    throw new DeviceRefusal("the device code answer carries no code or no page", void 0);
+  }
+  const code = {
+    client_id: clientId,
+    device_code: a.device_code,
+    user_code: String(a.user_code ?? ""),
+    link: complete,
+    expires_at: Date.now() + (Number(a.expires_in) || 300) * 1e3,
+    // RFC 8628 §3.2: five seconds when the server names no interval.
+    interval_ms: (Number.isFinite(Number(a.interval)) ? Number(a.interval) : 5) * 1e3
+  };
+  log(
+    `sign in from another device: ${code.link} (code ${code.user_code}, good for about ${Math.round((code.expires_at - Date.now()) / 6e4)} min)`
+  );
+  return code;
+}
+
+// js/bridge/oauth/authlock.ts
 function authLockPath() {
   return storePath() + ".auth-pending";
 }
@@ -1597,11 +1672,102 @@ async function tokenRequest(meta, params) {
   }
 }
 
+// js/bridge/oauth/device.ts
+var SLOW_DOWN_MS = Number(process.env.ISKRON_BRIDGE_DEVICE_SLOW_DOWN_MS) || 5e3;
+var REISSUE_PAUSE_MS = Number(process.env.ISKRON_BRIDGE_DEVICE_REISSUE_MS) || 3e4;
+var never = new Promise(() => {
+});
+function deviceSide(meta, redirectUri, resume, onCode) {
+  const halt = new AbortController();
+  let tellFirst = () => {
+  };
+  const first2 = new Promise((r) => tellFirst = r);
+  const pause = (ms3) => new Promise((r) => {
+    const t = setTimeout(r, ms3);
+    halt.signal.addEventListener("abort", () => (clearTimeout(t), r()), { once: true });
+  });
+  const fresh = async (clientId) => {
+    try {
+      const id = clientId ?? await registerDeviceClient(meta, redirectUri);
+      try {
+        return await issueDeviceCode(meta, id);
+      } catch (e) {
+        if (!clientId || !(e instanceof DeviceRefusal) || !/client/.test(e.error ?? "")) throw e;
+        return await issueDeviceCode(meta, await registerDeviceClient(meta, redirectUri));
+      }
+    } catch (e) {
+      log(`sign-in from another device not offered: ${errorMessage(e)}`);
+      return null;
+    }
+  };
+  const run = async () => {
+    if (!deviceOffered(meta)) {
+      tellFirst(null);
+      return never;
+    }
+    let code = resume && resume.expires_at > Date.now() ? resume : await fresh(resume?.client_id);
+    tellFirst(code);
+    onCode(code);
+    let clientId = code?.client_id ?? resume?.client_id;
+    for (; ; ) {
+      while (!code) {
+        await pause(REISSUE_PAUSE_MS);
+        if (halt.signal.aborted) return never;
+        code = await fresh(clientId);
+        if (code) onCode(code);
+      }
+      clientId = code.client_id;
+      await pause(code.interval_ms);
+      if (halt.signal.aborted) return never;
+      let renew = Date.now() >= code.expires_at;
+      if (!renew) {
+        try {
+          await tokenRequest(meta, {
+            grant_type: DEVICE_GRANT,
+            device_code: code.device_code,
+            client_id: code.client_id,
+            resource: meta.resource
+          });
+          return;
+        } catch (e) {
+          const word = e instanceof TokenError ? e.oauthError : void 0;
+          if (word === "access_denied") {
+            throw new Error("authorization refused on the other device", { cause: e });
+          }
+          if (word === "slow_down") {
+            code = { ...code, interval_ms: code.interval_ms + SLOW_DOWN_MS };
+            onCode(code);
+          } else if (word && word !== "authorization_pending") {
+            renew = true;
+          } else if (!word) debug(`device poll: ${errorMessage(e)} — asking again`);
+        }
+      }
+      if (renew) {
+        if (halt.signal.aborted) return never;
+        code = await fresh(clientId);
+        onCode(code);
+      }
+    }
+  };
+  const landed = run();
+  landed.catch(() => {
+  });
+  return {
+    first: first2,
+    landed,
+    stop: () => {
+      halt.abort();
+      tellFirst(null);
+    }
+  };
+}
+
 // js/bridge/oauth/flow.ts
 var CLAIM_WAIT_MS = Number(process.env.ISKRON_BRIDGE_CLAIM_WAIT_MS) || 15e3;
 var CLAIM_GLANCE_MS = 1e3;
 var LANDED_POLL_MS = Number(process.env.ISKRON_BRIDGE_LANDED_POLL_MS) || 2e3;
 var RELEASE_GAP_MS = Number(process.env.ISKRON_BRIDGE_RELEASE_GAP_MS) || 0;
+var DEVICE_FIRST_WAIT_MS = 1e4;
 var flows = /* @__PURE__ */ new Set();
 function pendingFlow() {
   return flows.size ? Promise.allSettled([...flows]).then(() => {
@@ -1626,6 +1792,18 @@ function published(l) {
 function older(l) {
   return !!l?.authorize_url && !l.state;
 }
+function pending(l, note3) {
+  const device = l.device && l.device.expires_at > Date.now() ? l.device : void 0;
+  return new AuthPending(l.authorize_url, note3, device);
+}
+var firstCode = (first2) => new Promise((resolve7) => {
+  const t = setTimeout(() => resolve7(void 0), DEVICE_FIRST_WAIT_MS);
+  t.unref?.();
+  void first2.then((c) => {
+    clearTimeout(t);
+    resolve7(c ?? void 0);
+  });
+});
 function loginPublished() {
   return published(readAuthLock());
 }
@@ -1674,7 +1852,7 @@ async function interactiveFlow(meta, judged, note3, wantTab = true) {
   const standing = readAuthLock();
   if ((published(standing) || older(standing)) && pidAlive(standing.pid) && await portListening(standing.callback_port)) {
     debug(`joining the login held by pid ${standing.pid}`);
-    throw new AuthPending(handOut(standing, wantTab).authorize_url, note3);
+    throw pending(handOut(standing, wantTab), note3);
   }
   let callback = null;
   if (published(standing)) {
@@ -1691,8 +1869,8 @@ async function interactiveFlow(meta, judged, note3, wantTab = true) {
         "the bridge that published this login is gone — listening on its link, so the tab the human has still lands"
       );
       grantLog("authorization flow taken over on the same link — waiting for the human");
-      runFlow(meta, cb, still, wantTab);
-      throw new AuthPending(still.authorize_url, note3);
+      const first2 = runFlow(meta, cb, still, wantTab);
+      throw pending({ ...still, device: await firstCode(first2) }, note3);
     }
     if (cb && published(still)) {
       cb.close();
@@ -1703,20 +1881,20 @@ async function interactiveFlow(meta, judged, note3, wantTab = true) {
   if (published(standing) && !callback) {
     const taken = readAuthLock();
     if (published(taken) && taken.state === standing.state && pidAlive(taken.pid) && await portListening(taken.callback_port)) {
-      throw new AuthPending(handOut(taken, wantTab).authorize_url, note3);
+      throw pending(handOut(taken, wantTab), note3);
     }
     debug(
       `the published login's port ${standing.callback_port} is held by a foreign process — its link can land nowhere; publishing a new login`
     );
   } else if (standing && !standing.authorize_url && pidAlive(standing.pid) && await portListening(standing.callback_port)) {
     const found = await linkOn(standing.callback_port);
-    if (found) throw new AuthPending(handOut(found, wantTab).authorize_url, note3);
+    if (found) throw pending(handOut(found, wantTab), note3);
   }
   for (let rung = 0; rung < CALLBACK_PORT_RUNGS && !callback; rung++) {
     callback = await bindOrNull(callbackPort(rung));
     if (callback) break;
     const found = await linkOn(callbackPort(rung));
-    if (found) throw new AuthPending(handOut(found, wantTab).authorize_url, note3);
+    if (found) throw pending(handOut(found, wantTab), note3);
     await mootFreed(callbackPort(rung));
     callback = await bindOrNull(callbackPort(rung));
     if (callback) break;
@@ -1749,9 +1927,9 @@ async function interactiveFlow(meta, judged, note3, wantTab = true) {
     sweepTabMarks();
     writeAuthLock(login);
     grantLog("authorization flow published — waiting for the human");
-    runFlow(meta, callback, login, wantTab);
+    const first2 = runFlow(meta, callback, login, wantTab);
     started = true;
-    throw new AuthPending(login.authorize_url, note3);
+    throw pending({ ...login, device: await firstCode(first2) }, note3);
   } catch (e) {
     if (!started) {
       callback.close();
@@ -1790,12 +1968,23 @@ function runFlow(meta, cb, login, openTab) {
   });
   cameBack.catch(() => {
   });
+  const device = deviceSide(meta, redirectUri, login.device, (code) => {
+    const current = readAuthLock();
+    if (current && ours(current)) writeAuthLock({ ...current, device: code ?? void 0 });
+  });
   let flow = null;
   flow = (async () => {
     try {
       const codePromise = cb.waitForCode(login.state);
       if (openTab) openTabOnce(login);
-      const code = await Promise.race([codePromise, cameBack]);
+      const code = await Promise.race([codePromise, cameBack, device.landed.then(() => null)]);
+      if (code === null) {
+        releaseAuthLock(ours);
+        log("signed in from another device — tokens saved for every local agent");
+        grantLog("authorization complete (another device)");
+        return;
+      }
+      device.stop();
       const record = readAuthLock();
       const clientId = (record?.state === login.state ? record.client_id : void 0) || CFG.staticClientId || loadStore().client?.client_id || "";
       log("authorization code received — exchanging for tokens");
@@ -1820,6 +2009,7 @@ function runFlow(meta, cb, login, openTab) {
       );
     } finally {
       clearInterval(watch);
+      device.stop();
       releaseAuthLock(ours);
       if (RELEASE_GAP_MS) await sleep(RELEASE_GAP_MS);
       cb.close();
@@ -1827,6 +2017,7 @@ function runFlow(meta, cb, login, openTab) {
     }
   })();
   flows.add(flow);
+  return device.first;
 }
 
 // js/bridge/oauth/pacing.ts
@@ -2736,9 +2927,9 @@ function roomKind(frame2) {
     const words2 = run(counts ? 1 : 0);
     return { kind, rule: "batch", words: words2, author, phase: null, known: true, aside };
   }
-  const pending2 = kind === "said" && f.body_pending === true && !str(f.body) && !str(line.done);
+  const pending3 = kind === "said" && f.body_pending === true && !str(f.body) && !str(line.done);
   const aborted = kind === "body" && fields.aborted === true;
-  const wordsOf = pending2 ? W2.said_pending : aborted ? obj(line.author).kind === "platform" ? W2.body_lapsed : W2.body_aborted : kind === "auto" ? autoWords()[str(values.code)] ?? W2.auto : (
+  const wordsOf = pending3 ? W2.said_pending : aborted ? obj(line.author).kind === "platform" ? W2.body_lapsed : W2.body_aborted : kind === "auto" ? autoWords()[str(values.code)] ?? W2.auto : (
     // op узла (bound | updated | deleted | undeleted): без op и bound — прежнее слово.
     kind === "node" && NODE_OPS[str(fields.op)] ? W2[NODE_OPS[str(fields.op)]] : W2[kind]
   );
@@ -2753,7 +2944,7 @@ function roomKind(frame2) {
     // Стопка решает у said и body; слово без стопки — прежним путём, вставкой.
     f.stack === "defer" ? "batch" : "interrupt"
   ) : rule === "mine" ? mine.includes(str(values.target)) || myRole(f, fields) ? "interrupt" : "batch" : rule;
-  const phase = pending2 ? "pending" : aborted ? "aborted" : null;
+  const phase = pending3 ? "pending" : aborted ? "aborted" : null;
   return { kind, rule: phase ? "batch" : stack, words: text, author, phase, known: true };
 }
 var byKind = (frame2) => roomKind(frame2) !== null;
@@ -2909,7 +3100,7 @@ var TLS_REFUSALS = /* @__PURE__ */ new Set([
   "CERT_REVOKED",
   "ERR_TLS_CERT_ALTNAME_INVALID"
 ]);
-async function post(msg, onMessage) {
+async function post2(msg, onMessage) {
   const headers = {
     "content-type": "application/json",
     accept: "application/json, text/event-stream"
@@ -3039,7 +3230,7 @@ async function reinitialize() {
       state.sessionToken = null;
       const id = `iskron-bridge-reinit-${++state.reinitCounter}`;
       let result = null;
-      await post({ jsonrpc: "2.0", id, method: "initialize", params: state.initParams }, (m) => {
+      await post2({ jsonrpc: "2.0", id, method: "initialize", params: state.initParams }, (m) => {
         if (m.id === id) result = m;
       });
       const got = result;
@@ -3051,7 +3242,7 @@ async function reinitialize() {
       }
       if (got.result?.protocolVersion) state.protocolVersion = got.result.protocolVersion;
       if (got.result) saveServerCache({ init: got.result });
-      await post({ jsonrpc: "2.0", method: "notifications/initialized" }, () => {
+      await post2({ jsonrpc: "2.0", method: "notifications/initialized" }, () => {
       });
       log(`session re-established (${state.sessionId || "no session id"})`);
       for (const hook of reinitHooks) void hook();
@@ -4304,7 +4495,7 @@ async function publishStatusTo(url, text, timeoutMs = 5e3, standingId = null) {
 }
 
 // js/bridge/handoff.ts
-var pending = /* @__PURE__ */ new Set();
+var pending2 = /* @__PURE__ */ new Set();
 function keepUntilEvicted(holder, key, statusUrl2) {
   const path = spoolFilePathOf(CFG.authDir, key);
   const door = socketPathOf(CFG.authDir, key);
@@ -4332,7 +4523,7 @@ function keepUntilEvicted(holder, key, statusUrl2) {
       )
     );
   });
-  pending.add(done);
+  pending2.add(done);
 }
 async function clearBusy(key, statusUrl2, door) {
   if (await localSocketAlive(door)) {
@@ -4362,7 +4553,7 @@ function takeSpool(key, primary, feed) {
     });
   });
 }
-var handoffsSettled = () => Promise.all([...pending]).then(() => void 0);
+var handoffsSettled = () => Promise.all([...pending2]).then(() => void 0);
 
 // js/bridge/hold.ts
 function keyFor() {
@@ -4961,7 +5152,7 @@ function ensureStanding() {
 async function replayRegister(place) {
   const id = `iskron-bridge-restanding-${++state.reinitCounter}`;
   let reply2 = null;
-  await post(
+  await post2(
     {
       jsonrpc: "2.0",
       id,
@@ -5180,7 +5371,7 @@ async function callTool(name, args) {
     params: { name, arguments: args }
   };
   let reply2 = null;
-  await post(msg, (m) => {
+  await post2(msg, (m) => {
     if (m.id === id) reply2 = m;
   });
   let got = reply2;
@@ -6253,7 +6444,7 @@ async function adminParamNames() {
   const id = `iskron-bridge-admin-schema-${++state.reinitCounter}`;
   let got = null;
   try {
-    await post({ jsonrpc: "2.0", id, method: "tools/list", params: {} }, (m) => {
+    await post2({ jsonrpc: "2.0", id, method: "tools/list", params: {} }, (m) => {
       if (m.id === id) got = m;
     });
   } catch {
@@ -6362,7 +6553,7 @@ async function resumeFromDisk(realm, karta, name) {
     holdStanding(rec4.url, rec4.statusUrl);
     const hello = await awaitHello(4e3);
     if (hello && holdsKey(key)) {
-      const pending2 = Number(hello.pending) || 0;
+      const pending3 = Number(hello.pending) || 0;
       const me = sessionOfBridge();
       let busy = "";
       if (rec4.status && me && rec4.session === me) {
@@ -6378,14 +6569,14 @@ async function resumeFromDisk(realm, karta, name) {
           "; the former busy line is not restored — say your own"
         );
       }
-      log(`standing resumed from disk (${key}), pending ${pending2}`);
-      standingLog(`resumed-from-disk ${key}: pending ${pending2}`);
+      log(`standing resumed from disk (${key}), pending ${pending3}`);
+      standingLog(`resumed-from-disk ${key}: pending ${pending3}`);
       return {
         word: L(
-          `возврат места с диска после перезапуска моста — сокет открыт заново тем же адресом (ожидало кадров — ${pending2})${busy}`,
-          `the seat returned from disk after the bridge restarted — the socket reopened at the same address (frames waiting — ${pending2})${busy}`
+          `возврат места с диска после перезапуска моста — сокет открыт заново тем же адресом (ожидало кадров — ${pending3})${busy}`,
+          `the seat returned from disk after the bridge restarted — the socket reopened at the same address (frames waiting — ${pending3})${busy}`
         ),
-        pending: pending2
+        pending: pending3
       };
     }
   } finally {
@@ -6584,11 +6775,11 @@ async function runCheck(msg) {
     (e) => e.karta === String(s2.karta) && nameOf(e.address) === (s2.name ?? "")
   );
   if (!mine) return reply(msg, { holding: true, key, word: "своего места на доске нет" });
-  const pending2 = undelivered(mine);
+  const pending3 = undelivered(mine);
   const listening = listens(mine);
   if (listening) {
     D.reopens = 0;
-    return reply(msg, { holding: true, key, listening, pending: pending2, word: "слушаю" });
+    return reply(msg, { holding: true, key, listening, pending: pending3, word: "слушаю" });
   }
   if (D.reopens >= REOPEN_LIMIT) {
     const text = `Искрон: доска читает место ${key} не слушающим и после ${REOPEN_LIMIT} переоткрытий сокета — больше не рву; проверь доску и сервер, вернуть слух — iskron_stand с take=true.`;
@@ -6605,14 +6796,14 @@ async function runCheck(msg) {
       holding: true,
       key,
       listening,
-      pending: pending2,
+      pending: pending3,
       reopened: false,
       stuck: true,
       word: text
     });
   }
   D.reopens++;
-  standingLog(`reopen ${key}: board reads deaf${pending2 ? ` with ${pending2} pending` : ""}`);
+  standingLog(`reopen ${key}: board reads deaf${pending3 ? ` with ${pending3} pending` : ""}`);
   parkStanding("доска не читает слушающим");
   resumeStanding();
   const hello = await awaitHello(4e3);
@@ -6620,7 +6811,7 @@ async function runCheck(msg) {
     holding: true,
     key,
     listening,
-    pending: pending2,
+    pending: pending3,
     reopened: !!hello,
     word: hello ? `сокет переоткрыт: ожидало кадров — ${Number(hello.pending) || 0}` : "сокет переоткрыт, hello за 4 с не пришёл"
   });
@@ -6819,9 +7010,9 @@ var SW = {
     "Сокет держит этот мост (hello получен при открытии сокета).",
     "This bridge holds the socket (hello came when the socket opened)."
   ),
-  hello: (pending2) => L(
-    `hello получен: ожидало кадров — ${pending2}.`,
-    `hello received: frames waiting — ${pending2}.`
+  hello: (pending3) => L(
+    `hello получен: ожидало кадров — ${pending3}.`,
+    `hello received: frames waiting — ${pending3}.`
   ),
   noLocalSocket: (why) => L(
     `НО локальный сокет стояния не поднят (${why}) — сторожу не к чему цепляться: слуха в этой сессии нет, команда сторожа выше не сработает. Место занято, записи подписаны; скажи это человеку.`,
@@ -7367,7 +7558,7 @@ function syntheticError(id, message, outcome = UpstreamError.UNKNOWN, holdOff = 
   ) : kind === "knock" ? "Nothing was applied and the grant is whole — a benign transition, not a broken authorization: retry the call now. Only a refusal that returns means the hour is real — that one names its own wait." : kind === "dead" ? "Nothing was applied, and no retry and no wait will change that — only a human with a new token can." : kind === "human" ? (
     // The agent reads this; the human does not. A retry buys nothing
     // and a wait shortens nothing — only handing the link over does.
-    "Nothing was applied, and only the human can move this: hand them the link above — the login is already waiting for their click. Once they finish, retry the call."
+    "Nothing was applied, and only the human can move this: hand them the link above — the local one opens only on this machine; from another, the sign-in page with the code, where one is named — the login is already waiting for their click. Once they finish, retry the call."
   ) : "The call never reached the server, so nothing was applied — retry freely." : "The call went out and its answer was lost, so THE OUTCOME IS UNKNOWN — re-read the target before retrying: a blind retry can apply a second time, and a write with no version guard duplicates silently.";
   const tail2 = kind ? "The bridge stays up." : "The bridge stays up; if this repeats, the server side needs attention.";
   return {
@@ -7394,7 +7585,7 @@ onReinitialized(() => {
   return recheckTools(async () => {
     const id = `iskron-bridge-tools-${++state.reinitCounter}`;
     let got = null;
-    await post({ jsonrpc: "2.0", id, method: "tools/list", params: {} }, (m) => {
+    await post2({ jsonrpc: "2.0", id, method: "tools/list", params: {} }, (m) => {
       if (m.id === id) got = m;
     });
     const reply2 = got;
@@ -7525,7 +7716,7 @@ async function deliverOne(msg) {
       expectOwnRevoke(msg);
       if (msg.method === "tools/call" && msg.params?.name === "iskron_channel" && msg.params.arguments)
         msg.params.arguments = withPlaceFields(msg.params.arguments);
-      await post(msg, forward);
+      await post2(msg, forward);
       const held2 = heldReply;
       if (held2 && msg.params?.name === "iskron_channel" && msg.params.arguments)
         noteLocaleEcho(msg.params.arguments, replyText(held2));
@@ -7668,7 +7859,7 @@ function openIn(io, origin, scope) {
   holdFromEnv();
   if (!CFG.satellite) startDeafnessWatch();
   const rl = createInterface2({ input: io.input, terminal: false });
-  const pending2 = /* @__PURE__ */ new Set();
+  const pending3 = /* @__PURE__ */ new Set();
   let handshake = null;
   rl.on(
     "line",
@@ -7696,8 +7887,8 @@ function openIn(io, origin, scope) {
         const gate = handshake;
         p = gate.then(run, run);
       } else p = run();
-      pending2.add(p);
-      p.finally(() => pending2.delete(p));
+      pending3.add(p);
+      p.finally(() => pending3.delete(p));
     })
   );
   let leaving = null;
@@ -7717,8 +7908,8 @@ function openIn(io, origin, scope) {
     if (addr && (!handover || CFG.satellite))
       await publishStatusTo(addr.url, "", 3e3).catch(() => {
       });
-    if (handover) await Promise.race([Promise.allSettled([...pending2]), sleep(HANDOVER_WAIT_MS)]);
-    else await Promise.allSettled([...pending2, ...tokenRequestsInFlight]);
+    if (handover) await Promise.race([Promise.allSettled([...pending3]), sleep(HANDOVER_WAIT_MS)]);
+    else await Promise.allSettled([...pending3, ...tokenRequestsInFlight]);
     await flushStdout(io.output);
     if (origin) {
       releaseSatelliteClaims();

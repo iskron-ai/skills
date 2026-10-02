@@ -11,6 +11,7 @@ import { basename, dirname, join } from "node:path";
 
 import { CFG } from "../config.ts";
 import { storePath } from "../store.ts";
+import { type DeviceCode } from "./devicecode.ts";
 
 // --- machine-wide authorization coordination ------------------------------
 // Dozens of local agents share one grant, so a machine has at most ONE login in
@@ -46,6 +47,8 @@ export interface AuthLock {
   client_id?: string;
   /** a fingerprint of the grant the login was published over — another grant makes it moot */
   grant?: string;
+  /** the same login's code for sign-in from another device, while one stands */
+  device?: DeviceCode;
 }
 
 export function authLockPath(): string {

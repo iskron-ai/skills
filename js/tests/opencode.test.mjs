@@ -724,6 +724,34 @@ test("first run without a grant and without a last list: setup returns at once, 
   }
 });
 
+// The bridge names the same login's sign-in page with a code (#6570): the
+// plugin re-tells the login in its own words and must not drop it — on a
+// machine without a browser it is the only way in.
+test("a login the bridge also offers from another device: the line and the status name the page with the code", async () => {
+  const authDir = mkdtempSync(join(SANDBOX, "auth-device-"));
+  const prevAuth = process.env.ISKRON_BRIDGE_AUTH_DIR;
+  process.env.ISKRON_BRIDGE_AUTH_DIR = authDir;
+  const authed = join(SANDBOX, "device-login.authed");
+  const page = "https://auth.example/device?code=FAKE1234";
+  const b = bridgeEnv("device-login", {
+    FB_MODE: "auth",
+    FB_AUTHED: authed,
+    FB_DEVICE: page,
+    ISKRON_MCP_AUTH_POLL_MS: 50,
+  });
+  const rec = await plugin(b.env);
+  try {
+    await until(() => /нужен вход/.test(rec.said()), "the login line");
+    assert.ok(rec.said().includes(page), "the line names the page with the code");
+    const status = (await rec.call("iskron_bridge", {}, "s-device")).content;
+    assert.ok(status.includes(page), "the status names it too");
+  } finally {
+    writeFileSync(authed, "");
+    await rec.stop();
+    process.env.ISKRON_BRIDGE_AUTH_DIR = prevAuth;
+  }
+});
+
 test("a last list and no grant: tools come from the list, a call refuses with the address instead of hanging, and passes after the login", async () => {
   const authed = join(SANDBOX, "cached-login.authed");
   const b = bridgeEnv("cached-login", {

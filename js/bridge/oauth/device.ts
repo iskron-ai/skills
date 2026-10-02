@@ -1,0 +1,127 @@
+import { errorMessage, TokenError } from "../errors.ts";
+import { debug, log } from "../streams.ts";
+import { type Meta } from "../types.ts";
+import {
+  DEVICE_GRANT,
+  type DeviceCode,
+  deviceOffered,
+  DeviceRefusal,
+  issueDeviceCode,
+  registerDeviceClient,
+} from "./devicecode.ts";
+import { tokenRequest } from "./tokenrequest.ts";
+
+// RFC 8628 §3.5: slow_down widens the interval by five seconds for good.
+const SLOW_DOWN_MS = Number(process.env.ISKRON_BRIDGE_DEVICE_SLOW_DOWN_MS) || 5_000;
+// A code the server would not issue is asked for again after this long.
+const REISSUE_PAUSE_MS = Number(process.env.ISKRON_BRIDGE_DEVICE_REISSUE_MS) || 30_000;
+
+/** The device side of one published login. */
+export interface DeviceSide {
+  /** the first code — null when the server offers no device grant or would not issue one */
+  first: Promise<DeviceCode | null>;
+  /** the grant is stored; rejects when the human refused on the other device */
+  landed: Promise<void>;
+  /** the login ended another way: polling stops, quietly */
+  stop: () => void;
+}
+
+const never = new Promise<never>(() => {});
+
+/**
+ * Runs the device side of the machine's one login: the loopback link and this
+ * code are one login, whichever lands first stores the grant, the other is
+ * stopped. `onCode` hears every code issued (null when none stands), so the
+ * login's record — what every bridge of the machine hands out — stays current.
+ */
+export function deviceSide(
+  meta: Meta,
+  redirectUri: string,
+  resume: DeviceCode | undefined,
+  onCode: (code: DeviceCode | null) => void,
+): DeviceSide {
+  const halt = new AbortController();
+  let tellFirst: (c: DeviceCode | null) => void = () => {};
+  const first = new Promise<DeviceCode | null>((r) => (tellFirst = r));
+  const pause = (ms: number): Promise<void> =>
+    new Promise((r) => {
+      const t = setTimeout(r, ms);
+      halt.signal.addEventListener("abort", () => (clearTimeout(t), r()), { once: true });
+    });
+
+  // A fresh code; a client the server no longer knows is registered anew once.
+  const fresh = async (clientId: string | undefined): Promise<DeviceCode | null> => {
+    try {
+      const id = clientId ?? (await registerDeviceClient(meta, redirectUri));
+      try {
+        return await issueDeviceCode(meta, id);
+      } catch (e) {
+        if (!clientId || !(e instanceof DeviceRefusal) || !/client/.test(e.error ?? "")) throw e;
+        return await issueDeviceCode(meta, await registerDeviceClient(meta, redirectUri));
+      }
+    } catch (e) {
+      log(`sign-in from another device not offered: ${errorMessage(e)}`);
+      return null;
+    }
+  };
+
+  const run = async (): Promise<void> => {
+    if (!deviceOffered(meta)) {
+      tellFirst(null);
+      return never;
+    }
+    let code = resume && resume.expires_at > Date.now() ? resume : await fresh(resume?.client_id);
+    tellFirst(code);
+    onCode(code);
+    let clientId = code?.client_id ?? resume?.client_id;
+    for (;;) {
+      while (!code) {
+        await pause(REISSUE_PAUSE_MS);
+        if (halt.signal.aborted) return never;
+        code = await fresh(clientId);
+        if (code) onCode(code);
+      }
+      clientId = code.client_id;
+      await pause(code.interval_ms);
+      if (halt.signal.aborted) return never;
+      let renew = Date.now() >= code.expires_at;
+      if (!renew) {
+        try {
+          await tokenRequest(meta, {
+            grant_type: DEVICE_GRANT,
+            device_code: code.device_code,
+            client_id: code.client_id,
+            resource: meta.resource,
+          });
+          return;
+        } catch (e) {
+          const word = e instanceof TokenError ? e.oauthError : undefined;
+          if (word === "access_denied") {
+            throw new Error("authorization refused on the other device", { cause: e });
+          }
+          if (word === "slow_down") {
+            code = { ...code, interval_ms: code.interval_ms + SLOW_DOWN_MS };
+            onCode(code);
+          } else if (word && word !== "authorization_pending") {
+            renew = true; // expired_token, or a code the server no longer knows
+          } else if (!word) debug(`device poll: ${errorMessage(e)} — asking again`);
+        }
+      }
+      if (renew) {
+        if (halt.signal.aborted) return never;
+        code = await fresh(clientId);
+        onCode(code);
+      }
+    }
+  };
+  const landed = run();
+  landed.catch(() => {});
+  return {
+    first,
+    landed,
+    stop: () => {
+      halt.abort();
+      tellFirst(null);
+    },
+  };
+}

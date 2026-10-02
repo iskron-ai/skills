@@ -73,12 +73,23 @@ export class TokenRefused extends Error {}
 
 // `note` rides beside the link when the grant is whole and would come back by
 // itself — the login offered instead of a wait, never a wait itself (#4794).
+// `device` is the same login's sign-in page with a code, for a human whose
+// browser is on another device than the bridge (#6570).
 export class AuthPending extends Error {
   authorizeUrl: string;
-  constructor(url: string, note?: string) {
+  constructor(
+    url: string,
+    note?: string,
+    device?: { link: string; user_code: string; expires_at: number },
+  ) {
+    const minutes = device ? Math.max(1, Math.round((device.expires_at - Date.now()) / 60_000)) : 0;
     super(
-      `authorization required — open in a browser: ${url}${note ? ` (${note})` : ""} — or give ` +
-        `the bridge a personal access token instead (ISKRON_BRIDGE_TOKEN, or the file <auth-dir>/token)`,
+      `authorization required — open in a browser: ${url}${note ? ` (${note})` : ""}` +
+        (device
+          ? ` — or sign in from another device: ${device.link} (code ${device.user_code}, ` +
+            `good for about ${minutes} min; a new code comes with the next call)`
+          : "") +
+        ` — or give the bridge a personal access token instead (ISKRON_BRIDGE_TOKEN, or the file <auth-dir>/token)`,
     );
     this.authorizeUrl = url;
   }

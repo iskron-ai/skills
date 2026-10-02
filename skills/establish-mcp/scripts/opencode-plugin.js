@@ -561,6 +561,12 @@ var CFG = new Proxy({}, {
   has: (_, k) => !!cfgSlot.cfg && Reflect.has(cfgSlot.cfg, k)
 });
 
+// js/bridge/oauth/device.ts
+var SLOW_DOWN_MS = Number(process.env.ISKRON_BRIDGE_DEVICE_SLOW_DOWN_MS) || 5e3;
+var REISSUE_PAUSE_MS = Number(process.env.ISKRON_BRIDGE_DEVICE_REISSUE_MS) || 3e4;
+var never = new Promise(() => {
+});
+
 // js/bridge/oauth/discovery.ts
 var REGISTRATION_REUSE_MS = 45 * 6e4;
 
@@ -1072,6 +1078,9 @@ function writeCache(tools) {
 function loginUrlOf(message) {
   return /open in a browser: (\S+)/.exec(message)?.[1] ?? null;
 }
+function deviceUrlOf(message) {
+  return /from another device: (\S+)/.exec(message)?.[1] ?? null;
+}
 async function handshake(b, onLogin, onReady) {
   const deadline = Date.now() + HANDSHAKE_MS;
   for (; ; ) {
@@ -1090,7 +1099,7 @@ async function handshake(b, onLogin, onReady) {
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       if (!AUTH_PENDING.test(message)) throw e;
-      onLogin(loginUrlOf(message));
+      onLogin(loginUrlOf(message), deviceUrlOf(message));
       while (grantStamp() === stamp) {
         if (Date.now() + AUTH_POLL_MS > deadline) throw e;
         await sleep2(AUTH_POLL_MS);
@@ -1405,9 +1414,13 @@ function createLauncher(d) {
 }
 
 // js/opencode/login.ts
+function elsewhere(device) {
+  return device ? `с другого устройства (телефон подойдёт) — ${device}; либо личный токен в ~/.iskron-bridge/token` : "с другой машины — ssh -L <порт>:127.0.0.1:<порт>, либо личный токен в ~/.iskron-bridge/token";
+}
 function createLogin(say) {
   let pending = false;
   let url = null;
+  let device = null;
   const waiters = /* @__PURE__ */ new Set();
   function started() {
     if (pending) return { promise: Promise.resolve(), cancel() {
@@ -1420,7 +1433,7 @@ function createLogin(say) {
   }
   function error() {
     return new Error(
-      `Искрон: нужен вход в граф — ${url ? `открой в браузере ${url}` : "заверши вход в браузере"} и повтори вызов. Адрес локальный для машины OpenCode: с другой — ssh -L <порт>:127.0.0.1:<порт>; на безголовой машине положи личный токен в ~/.iskron-bridge/token (скилл establish-mcp).`
+      `Искрон: нужен вход в граф — ${url ? `открой в браузере ${url}` : "заверши вход в браузере"} и повтори вызов. Адрес локальный для машины OpenCode: ${elsewhere(device)} (скилл establish-mcp).`
     );
   }
   return {
@@ -1430,20 +1443,25 @@ function createLogin(say) {
     get url() {
       return url;
     },
-    on(next) {
+    get device() {
+      return device;
+    },
+    on(next, nextDevice = null) {
       for (const w of waiters) w();
       waiters.clear();
-      if (pending && next === url) return;
+      if (pending && next === url && nextDevice === device) return;
       pending = true;
       url = next;
+      device = nextDevice;
       say(
-        `Искрон: нужен вход — ${next ? `открой ${next} и заверши его` : "заверши его в браузере"}; адрес локальный: с другой машины — ssh -L <порт>:127.0.0.1:<порт>, либо личный токен в ~/.iskron-bridge/token. Тулы iskron_* поднимутся после входа сами.`,
+        `Искрон: нужен вход — ${next ? `открой ${next} и заверши его` : "заверши его в браузере"}; адрес локальный: ${elsewhere(device)}. Тулы iskron_* поднимутся после входа сами.`,
         "warning"
       );
     },
     done() {
       pending = false;
       url = null;
+      device = null;
     },
     async race(ready) {
       if (pending) throw error();
@@ -1501,7 +1519,7 @@ function statusLines(path, builds, login, state2, sessions, spare) {
   return [
     `мост: ${path}`,
     builds,
-    login.loginPending ? `вход: НЕ ВЫПОЛНЕН — ${login.loginUrl ? `открой в браузере ${login.loginUrl}` : "заверши вход в браузере"}. Адрес локальный: с другой машины — ssh -L <порт>:127.0.0.1:<порт>, либо личный токен в ~/.iskron-bridge/token (скилл establish-mcp).` : state2.serverSeen ? "вход: есть, сервер отвечает" : "вход: мост ещё не ответил (рукопожатие идёт)",
+    login.loginPending ? `вход: НЕ ВЫПОЛНЕН — ${login.loginUrl ? `открой в браузере ${login.loginUrl}` : "заверши вход в браузере"}. Адрес локальный: ${elsewhere(login.loginDevice)} (скилл establish-mcp).` : state2.serverSeen ? "вход: есть, сервер отвечает" : "вход: мост ещё не ответил (рукопожатие идёт)",
     `тулов iskron_*: ${state2.listed.length} (${state2.source})`,
     `мостов живых: ${sessions + spare}, сессий с мостом: ${sessions}`
   ].join("\n");
@@ -1677,7 +1695,7 @@ async function setupTools(ctx, say, onChannel, rootOf) {
   const statusText = () => statusLines(
     path,
     builds,
-    { loginPending: login.pending, loginUrl: login.url },
+    { loginPending: login.pending, loginUrl: login.url, loginDevice: login.device },
     state2,
     slots.size,
     spare ? 1 : 0

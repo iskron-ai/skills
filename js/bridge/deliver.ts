@@ -71,7 +71,9 @@ export function syntheticError(
               ? // The agent reads this; the human does not. A retry buys nothing
                 // and a wait shortens nothing — only handing the link over does.
                 "Nothing was applied, and only the human can move this: hand them the link above — " +
-                "the login is already waiting for their click. Once they finish, retry the call."
+                "the local one opens only on this machine; from another, the sign-in page with the " +
+                "code, where one is named — the login is already waiting for their click. Once they " +
+                "finish, retry the call."
               : "The call never reached the server, so nothing was applied — retry freely."
       : "The call went out and its answer was lost, so THE OUTCOME IS UNKNOWN — re-read the target " +
         "before retrying: a blind retry can apply a second time, and a write with no version guard " +
