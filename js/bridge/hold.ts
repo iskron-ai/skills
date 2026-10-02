@@ -21,11 +21,13 @@ import {
 import { bindAll } from "../shared/scope.ts";
 import { deliveredKeys, noteSeen } from "../shared/seen.ts";
 import { socketPathOf } from "../shared/standings.ts";
+import { markAddressed } from "./addressmark.ts";
 import { harnessName, notifiedClient } from "./client.ts";
 import { stampOrigin } from "./complete.ts";
 import { CFG } from "./config.ts";
 import { type ChannelEvent, Door, type DoorHooks, ENV_KEY } from "./door.ts";
 import { isDelivered, redundantCopy } from "./fanout.ts";
+import { letGo, takeSpool } from "./handoff.ts";
 import { dropHoldRecord, keyOf, readHoldRecord, writeHoldRecord } from "./holdrecord.ts";
 import { type Frame, H, handoverReason } from "./holdstate.ts";
 import {
@@ -272,7 +274,7 @@ export function releaseStanding(reason: string, forget = false, keepBeside = fal
     broadcast(released);
     notify("info", released); // плагин OpenCode снимает holding по этому слову, не по догадке (#5140)
   }
-  H.holder?.close(reason);
+  letGo(H.holder, handover && !forget ? (key ?? null) : null, reason); // передаётся — до вытеснения (#6586)
   H.holder = null;
   for (const w of [...H.helloWaiters]) w(null); // ждать hello от отпущенного сокета незачем
   H.door?.close();
@@ -356,8 +358,8 @@ function deliverTo(d: Door, raw: string, frame: Frame | null, full: Frame | null
   // Копия события графа, уже предложенного или отданного (веер, fanout.ts), — никому.
   const evKey = redundantCopy(full, d.ring, d.seen, seenPath, d.stale);
   if (evKey) return log(`frame ${id || "?"} carries ${evKey} already offered — not raised`);
-  // Повтор уже отданного кадра (тот же id — платформа отдала его снова после
-  // возврата места) никому не рассылается; отданное клиенты помечают сами — в файле.
+  if (full?.type === "message") markAddressed(full, seenPath, d.seen); // до повтора и лежалых
+  // Повтор уже отданного кадра (тот же id — платформа отдала его снова после возврата места) никому не рассылается; отданное клиенты помечают сами — в файле.
   const again = isDelivered(id ? [id] : [], d.seen, seenPath);
   // Лежалый кадр — принятое, пока место не слушали (после revoke — почта предшественника),
   // либо повтор службы после пересборки сессии: хода не стоит, но и не теряется — одной
@@ -374,9 +376,8 @@ function deliverTo(d: Door, raw: string, frame: Frame | null, full: Frame | null
           d.broadcast(ev);
           notify("info", keyed(d, ev));
         });
-  const text = full === frame ? raw : JSON.stringify(full);
-  // В кольцо идёт и hello — каждой двери: сторож, прицепившийся позже, должен
-  // увидеть доказательство держания, а не только рабочие кадры.
+  const text = full === frame && !full?.addressed ? raw : JSON.stringify(full);
+  // В кольцо идёт и hello — каждой двери: сторож, прицепившийся позже, должен увидеть доказательство держания, а не только рабочие кадры.
   const hello = full?.type === "hello";
   for (const x of hello ? doors() : [d]) x.push(text, full);
   if (hello) for (const w of [...H.helloWaiters]) w(full);
@@ -418,7 +419,7 @@ function openHolder(url: string, key: string): void {
   H.holder = holdSocket(
     bindAll<Parameters<typeof holdSocket>[0]>({
       url,
-      onFrame: (raw, frame) => {
+      onFrame: function onFrame(raw, frame) {
         void Promise.resolve(stampOrigin(frame)).then((full) => {
           const primary = held();
           if (!primary) return H.door ? deliverTo(H.door, raw, frame, full) : undefined; // сокет без стояния (окружение)
@@ -431,6 +432,7 @@ function openHolder(url: string, key: string): void {
             d.broadcast({ kind: "note", text: note });
           }
           deliverTo(d, raw, frame, full);
+          if (full?.type === "hello") takeSpool(key, held, onFrame); // пришедшее уходящему демону (#6586)
         });
       },
       onEvicted: (code) => {

@@ -139,7 +139,8 @@ async function waitFor(what, fn, ms = 15_000) {
 }
 
 async function withFake(fn) {
-  const fake = await startFakeNks({ pat: PAT });
+  // Смена демона: преемник открывает сокет места тем же адресом — контур вытесняет прежний.
+  const fake = await startFakeNks({ pat: PAT, evictSameAddress: true });
   const dir = mkdtempSync(join(tmpdir(), "iskron-daemon-"));
   const procs = [];
   const bridge = (env, args, init = INIT) => {
@@ -247,6 +248,40 @@ test("two sessions of one daemon at once keep their places, output, writes and s
     );
     // Ни одно слово сессии не потеряло своей области (демон пишет такое в журнал).
     assert.doesNotMatch(journalOf(dir), /emit outside of a session/, journalOf(dir));
+  });
+});
+
+// Exit from a case by outcome (#6573) is the session's: two satellites in one
+// daemon each leave only the cases their own run joined.
+test("two satellites of one daemon: the end of one run leaves its own cases, not the neighbour's", async () => {
+  await withFake(async ({ fake, bridge }) => {
+    const CALLER = "host.repo.opus-5";
+    await fake.control({ places: [{ karta: "931", name: CALLER, listening: true }] });
+    const s1 = bridge({}, ["--satellite"]);
+    const s2 = bridge({}, ["--satellite"]);
+    await Promise.all([handshake(s1), handshake(s2)]);
+    const sat = { realm: "nks-dev", karta: 931, satellite_of: `@tester:${CALLER}` };
+    for (const s of [s1, s2]) assert.ok(!(await stand(s, sat)).result?.isError, s.stderr);
+    const join = (s, room) =>
+      s.request("tools/call", {
+        name: "iskron_case",
+        arguments: { realm: "nks-dev", action: "join", room },
+      });
+    await join(s1, "№11");
+    await join(s2, "№22");
+    const leaves = () =>
+      fake.state.calls
+        .filter((c) => c.name === "iskron_case" && c.arguments.action === "leave")
+        .map((c) => c.arguments.room);
+    const end = (s) =>
+      new Promise((r) => {
+        s.proc.once("exit", r);
+        s.proc.stdin.end();
+      });
+    await end(s1);
+    assert.deepEqual(leaves(), ["№11"], `the first run leaves its own case only:\n${s1.stderr}`);
+    await end(s2);
+    assert.deepEqual(leaves(), ["№11", "№22"], `the second run leaves its own:\n${s2.stderr}`);
   });
 });
 
@@ -391,9 +426,9 @@ test("the daemon updates under live sessions: the places stay, the thin bridges 
 
 // Демон, обновляемый из временного дома: bump() кладёт в дом сборку v99.0.0 — демон
 // передаёт места преемнику.
-async function updatableDaemon(dir) {
+async function updatableDaemon(dir, extra = {}) {
   const home = mkdtempSync(join(tmpdir(), "iskron-daemon-home-"));
-  const env = { ...process.env, HOME: home, USERPROFILE: home, ISKRON_BRIDGE_TOKEN: PAT };
+  const env = { ...process.env, HOME: home, USERPROFILE: home, ISKRON_BRIDGE_TOKEN: PAT, ...extra };
   delete env.ISKRON_BRIDGE_NO_UPDATE;
   env.ISKRON_BRIDGE_DAEMON_HOME_CHECK_MS = "200";
   env.ISKRON_BRIDGE_DAEMON_TRACE = "1";
@@ -402,14 +437,14 @@ async function updatableDaemon(dir) {
   await waitFor("the daemon", () => daemonPids(dir)[0]);
   await waitFor("the daemon to put itself home", () => existsSync(homeCopy));
   return {
-    bump() {
-      writeFileSync(
-        homeCopy,
-        readFileSync(BRIDGE, "utf8").replace(
-          /^((?:const|let|var)\s+VERSION\s*=\s*)"[^"]+"/m,
-          '$1"99.0.0"',
-        ),
+    // rise — через сколько мс преемник встанет: окно смены, в котором места ни у кого.
+    bump(rise = 0) {
+      const v99 = readFileSync(BRIDGE, "utf8").replace(
+        /^((?:const|let|var)\s+VERSION\s*=\s*)"[^"]+"/m,
+        '$1"99.0.0"',
       );
+      const slow = (m) => `${m}await new Promise((r) => setTimeout(r, ${rise}));\n`;
+      writeFileSync(homeCopy, rise ? v99.replace(/^#!.*\n/, slow) : v99);
     },
     cleanup() {
       for (const pid of daemonPids(dir)) {
@@ -1176,6 +1211,257 @@ test("SIGTERM of the daemon is not the agent leaving: the seat comes back and wr
     );
     assert.match(a.stderr, /bringing its place .* back from the hold record/);
     assert.equal(daemonPids(dir).length, 2, "a new daemon was raised");
+  });
+});
+
+// #6586: кадр, который служба записала в сокет места уходящего демона после
+// начала передачи и до того, как узнала о закрытии, считается доставленным
+// (delivered_at — по записи в сокет) и в hello преемника не вернётся. Фейк
+// держит сокет уходящего открытым, пока тот не умер, — как контур до чтения
+// кадра закрытия; слово пишется только в этот сокет, нового ещё нет.
+test("a frame the service wrote into the outgoing daemon's socket reaches the harness after the change", async () => {
+  await withFake(async ({ fake, dir, bridge }) => {
+    const d = await updatableDaemon(dir);
+    try {
+      const a = bridge({}, [], INIT_PI);
+      await handshake(a);
+      const r = await stand(a, { realm: "nks-dev", karta: 931, name: "win-a" });
+      assert.ok(!r.result?.isError, textOf(r));
+      await waitFor("the place's socket", () => fake.state.ws.size === 1);
+      const before = new Set(fake.state.ws);
+      d.bump();
+      await waitFor("the handover", () => /handing over to/.test(journalOf(dir)), 10_000);
+      const open = [...fake.state.ws].filter((s) => fake.state.wsNames.get(s) === "win-a");
+      assert.ok(
+        open.length === 1 && before.has(open[0]),
+        "the word goes only into the outgoing daemon's socket — the successor's is not open yet",
+      );
+      await fake.control({ ws_say: { name: "win-a", text: "в окне смены", id: "win-1" } });
+      await waitFor(
+        "the place back at the successor",
+        () =>
+          [...fake.state.ws].some((s) => !before.has(s) && fake.state.wsNames.get(s) === "win-a"),
+        30_000,
+      );
+      const heard = () =>
+        a.notifications.some((n) => JSON.stringify(n.params?.data ?? {}).includes("в окне смены"));
+      await waitFor("the harness to hear the word sent in the window", heard, 10_000).catch((e) => {
+        throw new Error(`${e.message}\n${a.stderr}\n${journalOf(dir)}`);
+      });
+    } finally {
+      d.cleanup();
+    }
+  });
+});
+
+// #6586, обратная сторона: спул не дублирует. Слово окна, которое служба отдала бы
+// и преемнику (тот же id), и слово после смены доходят по одному разу; уходящий
+// демон отпускает сокет по вытеснению 4000, не дожидаясь предела.
+test("after the change nothing comes twice: the window's word sent again and a new word reach the harness once", async () => {
+  await withFake(async ({ fake, dir, bridge }) => {
+    const d = await updatableDaemon(dir);
+    try {
+      const a = bridge({}, [], INIT_PI);
+      await handshake(a);
+      const r = await stand(a, { realm: "nks-dev", karta: 931, name: "win-b" });
+      assert.ok(!r.result?.isError, textOf(r));
+      await waitFor("the place's socket", () => fake.state.ws.size === 1);
+      const before = new Set(fake.state.ws);
+      const [first] = daemonPids(dir);
+      d.bump(1500);
+      // Сессия уходящего кончилась, преемник ещё не встал: слово — только в спул.
+      await waitFor(
+        "the outgoing session's end",
+        () => /session \S+ ended: daemon handover/.test(journalOf(dir)),
+        10_000,
+      );
+      await fake.control({ ws_say: { name: "win-b", text: "в окне смены", id: "win-2" } });
+      await waitFor(
+        "the place back at the successor",
+        () =>
+          [...fake.state.ws].some((s) => !before.has(s) && fake.state.wsNames.get(s) === "win-b"),
+        30_000,
+      );
+      const times = (text) =>
+        a.notifications.filter((n) => JSON.stringify(n.params?.data ?? {}).includes(text)).length;
+      await waitFor("the window's word", () => times("в окне смены") > 0, 10_000);
+      await waitFor("the outgoing daemon to leave", () => !alive(first), 8_000).catch((e) => {
+        throw new Error(`${e.message}\n${journalOf(dir)}`);
+      });
+      assert.match(journalOf(dir), /handover spool: 1 frame\(s\) of the outgoing daemon/);
+      assert.match(journalOf(dir), /handed over: the successor took the socket \(close 4000\)/);
+      await fake.control({ ws_say: { name: "win-b", text: "в окне смены", id: "win-2" } });
+      await fake.control({ ws_say: { name: "win-b", text: "после смены", id: "after-2" } });
+      await waitFor("the word after the change", () => times("после смены") > 0, 10_000);
+      await new Promise((res) => setTimeout(res, 500));
+      assert.equal(times("в окне смены"), 1, "the window's word once, the spool and the service");
+      assert.equal(times("после смены"), 1, "the word after the change once");
+    } finally {
+      d.cleanup();
+    }
+  });
+});
+
+// #6586, предел: место никто не вернул — уходящий демон держит сокет не дольше
+// предела, затем закрывает его и уходит; ничего не висит. Слово, посланное в
+// окне предела, не потеряно: сокет ещё держится, кадр лёг в спул и доходит, когда
+// агент встаёт на место снова, — сборка, закрывающая сокет сразу, его теряет.
+test("no successor takes the place: the outgoing daemon closes the socket at the limit and leaves", async () => {
+  await withFake(async ({ fake, dir, bridge }) => {
+    const d = await updatableDaemon(dir, { ISKRON_BRIDGE_DAEMON_HANDOFF_MS: "1500" });
+    try {
+      const a = bridge({}, [], INIT_PI);
+      await handshake(a);
+      const r = await stand(a, { realm: "nks-dev", karta: 931, name: "win-c" });
+      assert.ok(!r.result?.isError, textOf(r));
+      await waitFor("the place's socket", () => fake.state.ws.size === 1);
+      const [old] = fake.state.ws;
+      old.resume(); // фейк не читает сокет — без этого закрытия со стороны моста он не видит
+      const [first] = daemonPids(dir);
+      // Записи держания нет — преемнику нечем вернуть место.
+      const standings = join(dir, "standings");
+      for (const f of readdirSync(standings)) if (f.endsWith(".hold")) rmSync(join(standings, f));
+      d.bump();
+      await waitFor("the handover", () => /handing over to/.test(journalOf(dir)), 10_000);
+      await waitFor(
+        "the outgoing session's end",
+        () => /session \S+ ended: daemon handover/.test(journalOf(dir)),
+        10_000,
+      );
+      await fake.control({ ws_say: { name: "win-c", text: "в окне предела", id: "limit-1" } });
+      await waitFor("the outgoing daemon to leave", () => !alive(first), 10_000).catch((e) => {
+        throw new Error(`${e.message}\n${journalOf(dir)}`);
+      });
+      assert.match(journalOf(dir), /handed over: no successor took the socket in 1\.5s — closed/);
+      await waitFor("the outgoing daemon's socket closed", () => old.destroyed, 5_000);
+      assert.equal(fake.state.ws.size, 0, "no socket of the place is open");
+      const again = await stand(a, { realm: "nks-dev", karta: 931, name: "win-c" });
+      assert.ok(!again.result?.isError, textOf(again));
+      const heard = () =>
+        a.notifications.some((n) =>
+          JSON.stringify(n.params?.data ?? {}).includes("в окне предела"),
+        );
+      await waitFor("the word sent within the limit", heard, 10_000).catch((e) => {
+        throw new Error(`${e.message}\n${a.stderr}\n${journalOf(dir)}`);
+      });
+    } finally {
+      d.cleanup();
+    }
+  });
+});
+
+// #6586, лежалый спул: место не вернулось часами (спутник, сокет без стояния), спул
+// лежит; новый hello того же места досылает его не живым — пометкой stale, пачкой лежалых.
+test("a spool left for hours is not delivered as live: the next hello of the place gives it as stale", async () => {
+  await withFake(async ({ fake, dir, bridge }) => {
+    const a = bridge({}, [], INIT_PI);
+    await handshake(a);
+    const r = await stand(a, { realm: "nks-dev", karta: 931, name: "win-s" });
+    assert.ok(!r.result?.isError, textOf(r));
+    await waitFor("the place's socket", () => fake.state.ws.size === 1);
+    const standings = join(dir, "standings");
+    const hold = readdirSync(standings).find((f) => f.endsWith(".hold"));
+    const then = Date.now() - 7 * 3600_000;
+    const frame = {
+      type: "message",
+      id: "old-spool-1",
+      received_at: new Date(then).toISOString(),
+      stale: false,
+      content_type: "text/plain",
+      to_standing: "@tester:win-s",
+      body: "лежалое из спула",
+    };
+    writeFileSync(
+      join(standings, hold.replace(/\.hold$/, ".spool")),
+      [{ open: then }, { frame: JSON.stringify(frame), at: then }, { done: then }]
+        .map((e) => JSON.stringify(e) + "\n")
+        .join(""),
+    );
+    await fake.control({ ws_close: 1011 }); // переоткрытие — новый hello места
+    const carrying = () =>
+      a.notifications.filter((n) =>
+        JSON.stringify(n.params?.data ?? {}).includes("лежалое из спула"),
+      );
+    await waitFor("the spooled frame", () => carrying().length > 0, 15_000).catch((e) => {
+      throw new Error(`${e.message}\n${a.stderr}\n${journalOf(dir)}`);
+    });
+    await new Promise((res) => setTimeout(res, 500));
+    assert.deepEqual(
+      carrying().map((n) => n.params.data.kind),
+      ["stale"],
+      "the hours-old spool comes in the stale batch, not as a live frame",
+    );
+  });
+});
+
+// #6586, место рядом: кадр места другого графа, пришедший в окне смены, лежит в спуле
+// основного места; место рядом смену не пережило — кадр не отдаётся основному месту
+// его кадром и не метится в его .seen, а идёт словом с адресатом.
+test("a spooled frame of a beside seat that did not come back is not given to the main place as its own", async () => {
+  await withFake(async ({ fake, dir, bridge }) => {
+    const d = await updatableDaemon(dir);
+    try {
+      const a = bridge({}, [], INIT_PI);
+      await handshake(a);
+      const ra = await stand(a, { realm: "nks-dev", karta: 931, name: "main-s" });
+      assert.ok(!ra.result?.isError, textOf(ra));
+      const rb = await stand(a, { realm: "drugoy", karta: 48, name: "side-s" });
+      assert.ok(!rb.result?.isError, `beside: ${textOf(rb)}`);
+      await waitFor("the place's socket", () => fake.state.ws.size === 1);
+      const [realm, side] = [...fake.state.channels.values()]
+        .flatMap((c) => [...c.places])
+        .find(([, p]) => p.name === "side-s");
+      const before = new Set(fake.state.ws);
+      const [first] = daemonPids(dir);
+      d.bump(1500);
+      await waitFor(
+        "the outgoing session's end",
+        () => /session \S+ ended: daemon handover/.test(journalOf(dir)),
+        10_000,
+      );
+      await fake.control({
+        ws_send: JSON.stringify({
+          type: "message",
+          id: "side-1",
+          received_at: new Date().toISOString(),
+          stale: false,
+          content_type: "text/plain",
+          to_standing_id: side.standing_id,
+          to_standing: "@tester:side-s",
+          realm,
+          karta_seq: 48,
+          body: "месту рядом",
+        }),
+      });
+      await waitFor(
+        "the place back at the successor",
+        () =>
+          [...fake.state.ws].some((s) => !before.has(s) && fake.state.wsNames.get(s) === "main-s"),
+        30_000,
+      );
+      await waitFor("the outgoing daemon to leave", () => !alive(first), 20_000);
+      const carrying = () =>
+        a.notifications.filter((n) => JSON.stringify(n.params?.data ?? {}).includes("месту рядом"));
+      await waitFor("the beside seat's frame", () => carrying().length > 0, 10_000).catch((e) => {
+        throw new Error(`${e.message}\n${a.stderr}\n${journalOf(dir)}`);
+      });
+      await new Promise((res) => setTimeout(res, 500));
+      const kinds = carrying().map((n) => n.params.data.kind);
+      assert.deepEqual(
+        kinds,
+        ["note"],
+        "said with its addressee, not raised as the main place's frame",
+      );
+      assert.match(carrying()[0].params.data.text, /side-s.*не вернувшемуся/);
+      const standings = join(dir, "standings");
+      for (const f of readdirSync(standings).filter((x) => x.endsWith(".seen")))
+        assert.ok(
+          !readFileSync(join(standings, f), "utf8").includes("side-1"),
+          `${f} marks side-1`,
+        );
+    } finally {
+      d.cleanup();
+    }
   });
 });
 

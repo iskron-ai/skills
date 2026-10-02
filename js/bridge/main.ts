@@ -46,6 +46,6 @@ export function bridgeMain(argv: string[]): void {
   const session = openSession({ input: process.stdin, output: process.stdout });
   void session.ended.then(() => process.exit(0));
   process.on("SIGTERM", () => void session.leave("SIGTERM"));
-  process.on("SIGINT", fullBridgeSigint());
+  process.on("SIGINT", fullBridgeSigint(session.leave));
   installCrashWords();
 }

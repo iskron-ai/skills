@@ -1800,6 +1800,194 @@ test("satellite: a subagent's bridge stands as <caller>.sub-1 in the caller's ro
   assert.equal(fake.state.counts.webhooks_added, hooks, "no role-inbox hook for a satellite");
 });
 
+// Exit from a case by outcome (#6573): a subagent's run ends its errand, so the
+// satellite bridge leaves the cases the run joined, at the run's end, before the
+// place goes — not left to lapse by the place's term. A case the run already left
+// is not left twice; the session's bridge (not a satellite) leaves nothing.
+const caseCalls = (fake, action) =>
+  fake.state.calls
+    .filter((c) => c.name === "iskron_case" && c.arguments.action === action)
+    .map((c) => c.arguments.room);
+const caseAs = (b, action, room) =>
+  b.call("tools/call", {
+    name: "iskron_case",
+    arguments: { realm: "@nks/nks-dev", action, room },
+  });
+
+test("satellite: at the run's end the bridge leaves the cases the run joined, once each; a session's bridge leaves none", async (t) => {
+  const fake = await withCaller(t);
+  const sat = await satelliteBridge(t, fake);
+  assert.ok(!(await standAs(sat, SAT_ARGS)).result?.isError, sat.stderr);
+  for (const room of ["№102", "№7", "№8"]) await caseAs(sat, "join", room);
+  await caseAs(sat, "leave", "№8");
+  await sat.stop();
+  assert.deepEqual(
+    caseCalls(fake, "leave").sort(),
+    ["№102", "№7", "№8"],
+    `the run's joined cases left at its end, №8 not twice:\n${sat.stderr}`,
+  );
+
+  const plain = await startFakeNks({ pat: PAT });
+  t.after(() => plain.stop());
+  const own = startBridge(plain.mcpUrl, mkdtempSync(join(tmpdir(), "iskron-own-")));
+  t.after(() => own.stop());
+  assert.ok((await own.call("initialize", INIT)).result);
+  await caseAs(own, "join", "№102");
+  await own.stop();
+  assert.deepEqual(caseCalls(plain, "leave"), [], "the session's place outlives the session");
+});
+
+// One case named three ways — «#102» in r5 by the launch line, «102» and «№102»
+// in @nks/nks-dev by the agent: one case, left by the run, never left again.
+test("satellite: a case the run joined as #102 in r5 and left as №102 in @nks/nks-dev is not left again at the run's end", async (t) => {
+  const fake = await withCaller(t);
+  const sat = await satelliteBridge(t, fake);
+  assert.ok(!(await standAs(sat, SAT_ARGS)).result?.isError, sat.stderr);
+  const caseIn = (realm, action, room) =>
+    sat.call("tools/call", { name: "iskron_case", arguments: { realm, action, room } });
+  await caseIn("r5", "join", "#102");
+  await caseIn("@nks/nks-dev", "leave", "№102");
+  await caseIn("@nks/nks-dev", "join", "103");
+  await caseIn("r5", "leave", "#103");
+  await sat.stop();
+  assert.deepEqual(
+    caseCalls(fake, "leave"),
+    ["№102", "#103"],
+    `left by the run, not again at its end:\n${sat.stderr}`,
+  );
+});
+
+// The end of a subagent closes its place (#6550 rule 4, #6593): the socket going
+// does not take the place off the board — only revoke or the channel's term do.
+// So the satellite revokes its own .sub-N at the run's end; the caller's place
+// stays, and a session's bridge revokes nothing.
+const revokes = (fake) =>
+  fake.state.calls
+    .filter((c) => c.name === "iskron_channel" && c.arguments.action === "revoke")
+    .map((c) => c.arguments.standing);
+
+test("satellite: at the run's end the bridge revokes its own .sub-N — the place leaves the board at once, the caller's stays", async (t) => {
+  const fake = await withCaller(t);
+  const sat = await satelliteBridge(t, fake);
+  assert.ok(!(await standAs(sat, SAT_ARGS)).result?.isError, sat.stderr);
+  assert.ok(fake.state.places.has(`931:${CALLER}.sub-1`), "the satellite stood");
+  await caseAs(sat, "join", "№102");
+  await sat.stop();
+  assert.deepEqual(revokes(fake), [`${CALLER}.sub-1`], `its own place revoked:\n${sat.stderr}`);
+  assert.ok(!fake.state.places.has(`931:${CALLER}.sub-1`), "off the board at once, not by term");
+  assert.ok(fake.state.places.has(`931:${CALLER}`), "the caller's place is not touched");
+  assert.deepEqual(caseCalls(fake, "leave"), ["№102"], "cases are left before the place goes");
+
+  const plain = await withCaller(t);
+  const own = startBridge(plain.mcpUrl, mkdtempSync(join(tmpdir(), "iskron-own-")));
+  t.after(() => own.stop());
+  assert.ok((await own.call("initialize", INIT)).result);
+  const stood = await standAs(own, { realm: "nks-dev", karta: 931, name: "plain" });
+  assert.ok(!stood.result?.isError, `${textOf(stood)}\n${own.stderr}`);
+  await own.stop();
+  assert.deepEqual(revokes(plain), [], "the session's place outlives the session");
+});
+
+// Claude Code ends a subagent's bridge with SIGINT, not by closing stdin: the
+// run's end is the same — cases left, place revoked — while a session's bridge
+// keeps its quick Ctrl-C and leaves nothing.
+test("satellite: SIGINT ends the run like stdin-close — cases left, .sub-N revoked; a session's bridge leaves none", async (t) => {
+  const fake = await withCaller(t);
+  const sat = await satelliteBridge(t, fake);
+  assert.ok(!(await standAs(sat, SAT_ARGS)).result?.isError, sat.stderr);
+  await caseAs(sat, "join", "№102");
+  const exited = new Promise((r) => sat.proc.once("exit", (code) => r(code)));
+  sat.proc.kill("SIGINT");
+  assert.equal(await exited, 0, sat.stderr);
+  assert.deepEqual(caseCalls(fake, "leave"), ["№102"], `the case left on SIGINT:\n${sat.stderr}`);
+  assert.deepEqual(
+    revokes(fake),
+    [`${CALLER}.sub-1`],
+    `its place revoked on SIGINT:\n${sat.stderr}`,
+  );
+
+  const plain = await withCaller(t);
+  const own = startBridge(plain.mcpUrl, mkdtempSync(join(tmpdir(), "iskron-own-")));
+  t.after(() => own.stop());
+  assert.ok((await own.call("initialize", INIT)).result);
+  const stood = await standAs(own, { realm: "nks-dev", karta: 931, name: "plain" });
+  assert.ok(!stood.result?.isError, `${textOf(stood)}\n${own.stderr}`);
+  await caseAs(own, "join", "№102");
+  const ownExit = new Promise((r) => own.proc.once("exit", (code) => r(code)));
+  own.proc.kill("SIGINT");
+  assert.equal(await ownExit, 0, own.stderr);
+  assert.deepEqual(caseCalls(plain, "leave"), [], "the session's place outlives Ctrl-C");
+  assert.deepEqual(revokes(plain), [], "the session's place outlives Ctrl-C");
+});
+
+// Places beside in other graphs are the run's too: the socket going leaves them
+// on the board until the channel's term, so each is revoked with the main one.
+test("satellite: at the run's end its places in other graphs are revoked too, not left to the term", async (t) => {
+  const fake = await withCaller(t);
+  const sat = await satelliteBridge(t, fake);
+  assert.ok(!(await standAs(sat, SAT_ARGS)).result?.isError, sat.stderr);
+  const b = await standAs(sat, {
+    realm: "@nks/drugoy",
+    karta: 48,
+    satellite_of: SAT_ARGS.satellite_of,
+  });
+  assert.ok(!b.result?.isError, `${textOf(b)}\n${sat.stderr}`);
+  const beside = placeOf(b);
+  assert.ok(fake.state.places.has(`48:${beside}`), `the place beside stood: ${beside}`);
+  await sat.stop();
+  assert.deepEqual(
+    revokes(fake).sort(),
+    [`${CALLER}.sub-1`, beside].sort(),
+    `each place of the run revoked:\n${sat.stderr}`,
+  );
+  assert.ok(!fake.state.places.has(`48:${beside}`), "the place beside is off the board at once");
+});
+
+// The harness kills the bridge a short grace after closing it (OpenCode: 5 s);
+// a slow api on leave must not hold the place's socket and .key past it.
+test("satellite: a hung leave at the run's end does not hold the place — the bridge releases its .key and exits on its own", async (t) => {
+  const fake = await withCaller(t);
+  const home = mkdtempSync(join(tmpdir(), "iskron-sat-"));
+  const sat = await satelliteBridge(t, fake, { dir: home });
+  assert.ok(!(await standAs(sat, SAT_ARGS)).result?.isError, sat.stderr);
+  for (const room of ["№1", "№2", "№3"]) await caseAs(sat, "join", room);
+  await fake.control({ case_leave_hang: true });
+  const keys = () =>
+    existsSync(join(home, "standings"))
+      ? readdirSync(join(home, "standings")).filter((f) => f.endsWith(".key"))
+      : [];
+  await until(() => keys().length > 0, "the satellite's .key");
+  const exited = new Promise((r) => sat.proc.once("exit", (code, signal) => r({ code, signal })));
+  sat.proc.stdin.end();
+  const grace = new Promise((r) => setTimeout(() => r(null), 2_800).unref());
+  const how = await Promise.race([exited, grace]);
+  assert.ok(how && how.signal === null, `the bridge exits on its own, not killed:\n${sat.stderr}`);
+  assert.deepEqual(keys(), [], "the .key goes with the place");
+  assert.equal(caseCalls(fake, "leave").length, 3, "each case's leave was asked, at once");
+});
+
+// Claude Code's SIGINT is followed by a kill whose grace nobody measured: the
+// .key goes before any network call of the run's end, not after a hung leave.
+test("satellite: on SIGINT the .key goes before the cases are left — a hung leave does not hold it", async (t) => {
+  const fake = await withCaller(t);
+  const home = mkdtempSync(join(tmpdir(), "iskron-sat-"));
+  const sat = await satelliteBridge(t, fake, { dir: home });
+  assert.ok(!(await standAs(sat, SAT_ARGS)).result?.isError, sat.stderr);
+  await caseAs(sat, "join", "№102");
+  await fake.control({ case_leave_hang: true });
+  const keys = () =>
+    existsSync(join(home, "standings"))
+      ? readdirSync(join(home, "standings")).filter((f) => f.endsWith(".key"))
+      : [];
+  await until(() => keys().length > 0, "the satellite's .key");
+  const exited = new Promise((r) => sat.proc.once("exit", (code, signal) => r({ code, signal })));
+  sat.proc.kill("SIGINT");
+  await until(() => caseCalls(fake, "leave").length > 0, "the case leave asked on SIGINT");
+  assert.deepEqual(keys(), [], `the .key is gone before the leave is asked:\n${sat.stderr}`);
+  const how = await Promise.race([exited, new Promise((r) => setTimeout(() => r(null), 5_000))]);
+  assert.ok(how && how.signal === null, `the bridge exits on its own:\n${sat.stderr}`);
+});
+
 // Two subagent runs of one caller, each with its own satellite bridge (two
 // processes, one home), stand at the same moment: each reads the board before
 // the other's connect lands, and «first N free on the board» would give both

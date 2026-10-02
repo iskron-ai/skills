@@ -8,6 +8,7 @@
 // одно стояние; ключ из ответа connect различает несколько.
 import { writeSync } from "node:fs";
 
+import { addressedToMine } from "../shared/addressed.ts";
 import { batchLine, caseKey, frameToText } from "../shared/frame-text.ts";
 import { deliveredKeys, noteSeen, seenIds } from "../shared/seen.ts";
 import { seenFilePathOf } from "../shared/standings.ts";
@@ -52,6 +53,8 @@ const plural = (n: number): string => {
 // отдельным событием — с паузой больше окна склейки до себя и после себя.
 // Переменная — шов для проб, не ручка человека: очередь в сотни кадров идёт по паузе на кадр.
 const ALONE_GAP_MS = Number(process.env.ISKRON_WATCHDOG_ALONE_MS) || 300;
+/** Сколько шапок пачек из одних счётов ждёт адресованного, не больше. */
+const RIDERS_MAX = 100;
 let queue: Promise<void> = Promise.resolve();
 let lastAt = 0;
 let lastAlone = false;
@@ -102,6 +105,23 @@ export function runWatchdog(argv: string[]): void {
   const queued = new Set<string>(); // id в очереди печати: пометка ляжет после неё
   const folded: (() => void)[] = []; // пометки свёрнутых слов череды — после её строки
   const cases = new Set<string>(); // дела, уже названные зачином в идущей пачке
+  // Под Monitor строка stdout будит ход: пачка из одних счётов (#6574) не
+  // печатается сама — её шапка ждёт и уходит перед ближайшей адресованной строкой.
+  let head = ""; // шапка идущей пачки — до её первой адресованной строки
+  let fresh = false; // в идущей пачке есть не отданный прежде кадр
+  const riders: string[] = []; // шапки пачек из одних счётов
+  const riderMarks: (() => void)[] = []; // их пометки — после печати
+  const hold = (): void => {
+    if (head) riders.push(head);
+    riders.splice(0, Math.max(0, riders.length - RIDERS_MAX)); // старшие уходят: счёт не копится без меры
+    head = "";
+  };
+  /** Ждущие шапки и шапка идущей пачки — строками перед адресованным; пометки — после печати. */
+  const take = (): { lines: string[]; marks: (() => void)[] } => {
+    const lines = [...riders.splice(0), ...(head ? [head] : [])];
+    head = "";
+    return { lines, marks: riderMarks.splice(0) };
+  };
   attach(target.path, {
     onEvent: (ev) => {
       switch (ev.kind) {
@@ -126,27 +146,53 @@ export function runWatchdog(argv: string[]): void {
             queued.delete(id);
           };
           if (ev.batch) {
-            // Пачка дела — по строке на кадр, без конверта; как прочесть целиком — в шапке.
-            // Адресное слово не мне, свёрнутое в череду (folded), своей строки не печатает:
-            // метится вместе со строкой череды, которая его считает (#6081).
-            if (ev.batch.at === 1) cases.clear(); // зачин дела — у первой его строки в пачке
+            // Пачка дела — счётом по делам в шапке (#6574); строка ниже — только
+            // адресованному месту. Адресное слово не мне, свёрнутое в череду
+            // (folded), своей строки не печатает: метится вместе со строкой
+            // череды, которая его считает (#6081); неадресованное — метится
+            // сразу: шапка назвала его числом.
+            if (ev.batch.at === 1) {
+              cases.clear(); // зачин дела — у первой его строки в пачке
+              fresh = false;
+            }
+            if (!again) fresh = true;
+            const last = ev.batch.at >= ev.batch.of;
+            // Пачка из одних отданных — повтор: её шапка уже ушла и в ждущий счёт не встаёт.
+            if (last && !fresh) head = "";
             if (ev.batch.folded) {
               if (!again) folded.push(mark);
+              if (last) hold();
               break;
             }
             const within = folded.splice(0);
             const all = (): void => [...within, mark].forEach((m) => m());
+            if (!addressedToMine(f)) {
+              riderMarks.push(all);
+              if (last) hold();
+              break;
+            }
             const first = !cases.has(caseKey(f));
             cases.add(caseKey(f));
-            if (!again) out(wrapLines(batchLine(f, ev.batch.fold, first)), false, all);
-            else within.forEach((m) => m());
+            if (!again) {
+              const r = take();
+              out([...r.lines, ...wrapLines(batchLine(f, ev.batch.fold, first))], false, () =>
+                [...r.marks, all].forEach((m) => m()),
+              );
+            } else all();
+            if (last) hold();
             break;
           }
-          if (!again) out(wrapLines(frameToText(f, ev.raw ?? "")), true, mark);
+          if (!again) {
+            const r = take();
+            if (r.lines.length) out(r.lines, false, () => r.marks.forEach((m) => m()));
+            out(wrapLines(frameToText(f, ev.raw ?? "")), true, mark);
+          }
           break;
         }
         case "note":
-          log(ev.text ?? "");
+          if (ev.batch)
+            head = ev.text ?? ""; // шапка пачки — с её первой адресованной строкой
+          else log(ev.text ?? "");
           break;
         case "stale":
           // Одна пачка — одно событие. Напечатана — отдана, и названное числом сверх показанного тоже.

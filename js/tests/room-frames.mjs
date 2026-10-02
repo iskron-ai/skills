@@ -354,6 +354,29 @@ export const addressedInFlight = (entry_id, addressee = BORIS) => ({
   ...saidInFlight(entry_id),
   addressee,
 });
+// Слово в две фазы, адресованное месту не через addressee (#5893 §4.6, #4939):
+// у said in_reply_to_from — автор отвечаемой записи, у его body — автор самого
+// слова; род important — на said и в строке слова (word.line), не в полях body.
+const MY_PLACE = { id: ME_ID, standing: ME, name: "proba" };
+export const replyInFlight = (entry_id, to = MY_PLACE) => ({
+  ...saidInFlight(entry_id),
+  in_reply_to: 40,
+  in_reply_to_from: to,
+});
+export const importantInFlight = (entry_id) => {
+  const f = saidInFlight(entry_id);
+  return { ...f, said: "important", line: { ...f.line, fields: { kind: "important" } } };
+};
+export const importantBody = (entry_id, refers_to) => {
+  const f = body(entry_id, refers_to, `важное тело ${refers_to}`);
+  f.word.line.fields = { kind: "important" };
+  return f;
+};
+/** Тело моего же слова: in_reply_to_from — я, автор слова; месту оно не адресовано. */
+export const ownBody = (entry_id, refers_to) => ({
+  ...body(entry_id, refers_to, `моё тело ${refers_to}`),
+  in_reply_to_from: MY_PLACE,
+});
 export const addressedBody = (entry_id, refers_to, addressee = BORIS) => ({
   ...body(entry_id, refers_to, `тайное тело ${refers_to}`),
   stack: "interrupt",

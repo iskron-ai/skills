@@ -13,8 +13,10 @@ import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
+import { type ChannelEvent } from "../bridge/hold.ts";
+import { addressedToMine } from "../shared/addressed.ts";
 import { type Door, openDoor } from "../shared/appserver.ts";
-import { frameToText } from "../shared/frame-text.ts";
+import { batchHead, frameToText } from "../shared/frame-text.ts";
 import { deliveredKeys, noteSeen, seenIds } from "../shared/seen.ts";
 import { seenFilePathOf } from "../shared/standings.ts";
 import {
@@ -126,6 +128,17 @@ export function runWatchdogCodex(argv: string[]): void {
   // — это кадры, пришедшие между взводами: их вкладываем, как живые. Кадр без id
   // пометить нечем, и из кольца он пришёл бы на каждом взводе — такой пропускаем.
   let replay = 0;
+  // Неадресованные месту записи дел (#6574) копятся и хода не начинают: счётом
+  // по делам они едут шапкой с ближайшим кадром в тред; текст их в тред не идёт.
+  let pend: { frame: NonNullable<ChannelEvent["frame"]>; ids: string[] }[] = [];
+  const withPend = (text: string, ids: string[]): void => {
+    const got = pend;
+    pend = [];
+    void deliver([...(got.length ? [batchHead(got.map((g) => g.frame))] : []), text].join("\n"), [
+      ...got.flatMap((g) => g.ids),
+      ...ids,
+    ]);
+  };
   attach(target.path, {
     onEvent: (ev) => {
       switch (ev.kind) {
@@ -139,7 +152,16 @@ export function runWatchdogCodex(argv: string[]): void {
           // Повтор уже вложенного (тот же id) — вторая линия за мостом (#5831).
           if (typeof ev.frame?.id === "string" && seen.has(ev.frame.id))
             return note(`кадр ${ev.frame.id} уже вложен — в тред не кладу повторно`);
-          void deliver(frameToText(ev.frame, ev.raw ?? ""), deliveredKeys(ev.frame));
+          // Неадресованное месту — числом: копится, строка не кладётся (#6574).
+          if (ev.batch && ev.frame && !addressedToMine(ev.frame)) {
+            pend.push({
+              frame: ev.frame,
+              ids: [...deliveredKeys(ev.frame), ...(ev.frame.id ? [ev.frame.id] : [])],
+            });
+            pend.splice(0, Math.max(0, pend.length - 500)); // старшие уходят: счёт ждёт, не копится без меры
+            return;
+          }
+          withPend(frameToText(ev.frame, ev.raw ?? ""), deliveredKeys(ev.frame)); // накопленное — шапкой впереди
           break;
         }
         case "stale":

@@ -153,103 +153,6 @@ function isDirectWord(frame) {
   return origin === "human" || !!p.from_standing || p.from_karta_seq != null;
 }
 
-// js/shared/clients.ts
-var OPENCODE_CLIENT = "opencode-iskron";
-var HARNESS_VERSION_ENV = "ISKRON_HARNESS_VERSION";
-var SKILLS_ROOT_ENV = "ISKRON_SKILLS_ROOT";
-
-// js/shared/version.ts
-import { createHash } from "node:crypto";
-import { readFileSync as readFileSync2 } from "node:fs";
-import { fileURLToPath } from "node:url";
-var VERSION = "6.25.0";
-function buildOf(selfUrl) {
-  try {
-    const src = readFileSync2(fileURLToPath(selfUrl));
-    return `v${VERSION}+${createHash("sha256").update(src).digest("hex").slice(0, 8)}`;
-  } catch {
-    return `v${VERSION}`;
-  }
-}
-function buildOfFile(path) {
-  try {
-    const src = readFileSync2(path);
-    const v = versionIn(src.toString("utf8")) ?? "?";
-    return `v${v}+${createHash("sha256").update(src).digest("hex").slice(0, 8)}`;
-  } catch {
-    return null;
-  }
-}
-function versionIn(text) {
-  const m = /^(?:const|let|var)\s+VERSION\s*=\s*"([^"]+)"/m.exec(text);
-  return m ? m[1] : null;
-}
-
-// js/bridge/build.ts
-var BUILD = buildOf(import.meta.url);
-
-// js/bridge/streams.ts
-var out = scoped(() => ({ stream: null }));
-
-// js/bridge/config.ts
-var DEFAULT_SERVER_URL = "https://mcp.iskron.ru/";
-var ENGLISH_SERVER_URL = "https://mcp.iskron.ai/";
-var PRODUCTION_URLS = new Set([DEFAULT_SERVER_URL, ENGLISH_SERVER_URL].map(strip));
-function strip(url) {
-  return url.replace(/\/+$/, "");
-}
-var cfgSlot = scoped(() => ({ cfg: null }));
-var CFG = new Proxy({}, {
-  get: (_, k) => cfgSlot.cfg ? Reflect.get(cfgSlot.cfg, k) : void 0,
-  has: (_, k) => !!cfgSlot.cfg && Reflect.has(cfgSlot.cfg, k)
-});
-
-// js/bridge/oauth/discovery.ts
-var REGISTRATION_REUSE_MS = 45 * 6e4;
-
-// js/bridge/oauth/flow.ts
-var CLAIM_WAIT_MS = Number(process.env.ISKRON_BRIDGE_CLAIM_WAIT_MS) || 15e3;
-var LANDED_POLL_MS = Number(process.env.ISKRON_BRIDGE_LANDED_POLL_MS) || 2e3;
-var RELEASE_GAP_MS = Number(process.env.ISKRON_BRIDGE_RELEASE_GAP_MS) || 0;
-
-// js/bridge/transport.ts
-var state = scoped(() => ({
-  sessionId: null,
-  protocolVersion: null,
-  initParams: null,
-  // params of the harness's initialize, for transparent replay
-  reinitCounter: 0,
-  // The standing this session registered, and the session it was confirmed in.
-  // Why the bridge owns re-registration, what was observed to go wrong, and the
-  // falsifier that closes it: graph @nks/nks-dev, nodes #3919 (the breakdown),
-  // #3454 (the falsifier), #3800 (the header form the surface binds with).
-  // The server correlates a writer BY THE MCP SESSION ID (its holder's word):
-  // a new session is a different writer, and the surface's own self-repair has
-  // nothing to repeat there, because its memory is keyed by that same id and is
-  // collected with it. Sessions die silently in three ways — idle past the
-  // threshold, eviction by the session ceiling, transport close — and the
-  // bridge is the ONLY party that sees the change and still remembers the name
-  // the agent derived for itself. So re-registering is the bridge's duty, and
-  // it hangs on the change of id, never on a timer.
-  standing: null,
-  // {realm, karta, name} of the last register that succeeded
-  // Places in OTHER graphs on the same channel (#5838): register on the channel
-  // in another graph adds a place, and a write is signed by the place of its
-  // own graph. `standing` stays the place the socket was taken for; these ride
-  // it and are replayed with it after every session turnover.
-  places: [],
-  standingSession: null,
-  // the session id that registration is known to hold in
-  // The access token the session was opened with. A session is opened BY a
-  // credential and dies with it (the surface's own word): once the token in the
-  // store is no longer the one this session was opened with — expired, refreshed
-  // after a 401, rotated by a sibling bridge — the old id is a dead letter, and a
-  // server that opens a fresh session on it silently runs the call unattributed
-  // before we learn the new id. So a changed token means: re-open first.
-  sessionToken: null
-}));
-var reinit = scoped(() => ({ inFlight: null }));
-
 // js/shared/room-kinds.ts
 var WORDS = {
   said: "слово от {author}",
@@ -295,9 +198,7 @@ var WORDS = {
   who_sibling: "брат по роли #{karta}",
   who_platform: "платформа — побудка",
   who_graph: "событие графа",
-  legacy: "род {kind}{, стопка stack}",
-  answer_case: "ответ: iskron_case({args})",
-  answer_send: "ответ: iskron_channel({args})"
+  legacy: "род {kind}{, стопка stack}"
 };
 var WORDS_EN = {
   said: "message from {author}",
@@ -339,9 +240,7 @@ var WORDS_EN = {
   who_sibling: "sibling of role #{karta}",
   who_platform: "platform — a wake-up",
   who_graph: "graph event",
-  legacy: "kind {kind}{ · stack}",
-  answer_case: "answer: iskron_case({args})",
-  answer_send: "answer: iskron_channel({args})"
+  legacy: "kind {kind}{ · stack}"
 };
 var AUTO_WORDS = {
   child_opened: "дочернее дело №{room} открыто",
@@ -548,13 +447,173 @@ function roomKind(frame) {
   const phase = pending ? "pending" : aborted ? "aborted" : null;
   return { kind, rule: phase ? "batch" : stack, words: text, author, phase, known: true };
 }
+var byKind = (frame) => roomKind(frame) !== null;
 var stackOf = (frame) => roomKind(frame)?.rule ?? (frame?.stack === "defer" ? "batch" : "interrupt");
+
+// js/shared/addressed.ts
+var LOUD_KINDS = /* @__PURE__ */ new Set(["closing", "closed", "objection", "late_objection"]);
+var addressedWords = /* @__PURE__ */ new Set();
+var WORDS_KEPT = 512;
+function wordKeyOf(frame) {
+  const f = frame;
+  const line = obj(f.line);
+  const entry = roomKind(frame)?.kind === "body" ? str(line.refers_to) || str(f.in_reply_to) || str(obj(f.word).entry_id) : str(line.entry_id ?? f.entry_id);
+  return `${mineOf(f)[0] ?? ""}|${str(obj(f.room).id) || str(obj(f.room).seq)}|${entry}`;
+}
+function rememberWord(key) {
+  addressedWords.add(key);
+  for (const old of addressedWords) {
+    if (addressedWords.size <= WORDS_KEPT) break;
+    addressedWords.delete(old);
+  }
+}
+function addressedToMine(frame) {
+  if (!frame) return false;
+  const f = frame;
+  const room = obj(f.room);
+  if (!str(room.seq) && !str(room.id)) return true;
+  if (!byKind(frame)) return true;
+  const line = obj(f.line);
+  const fields = obj(line.fields);
+  const rk = roomKind(frame);
+  if (rk?.aside) return false;
+  const mine = mineOf(f);
+  const hit = (v) => {
+    const a = addresseeOf(v);
+    return !!a && mine.length > 0 && a.addr.some((x) => mine.includes(x));
+  };
+  if (rk?.kind === "body") {
+    const word = obj(f.word);
+    if (f.addressed === true || hit(f.addressee) || str(obj(obj(word.line).fields).kind) === "important" || addressedWords.has(wordKeyOf(frame)))
+      return true;
+  } else if (
+    // Слово мне, ответ на мою запись (#5954), помеченное важным: род слова
+    // important на конверте или в полях строки. Слово в полёте запоминается —
+    // его тело придёт второй фазой без этих признаков.
+    hit(f.addressee) || hit(f.in_reply_to_from) || str(f.said) === "important" || str(fields.kind) === "important"
+  ) {
+    if (rk?.phase === "pending") rememberWord(wordKeyOf(frame));
+    return true;
+  }
+  if (rk?.kind === "invite" || rk?.kind === "withdraw") {
+    if (mine.includes(after(str(line.key), "invite:"))) return true;
+    if (rk.kind === "invite" && myRole(f, fields)) return true;
+  }
+  if (rk && LOUD_KINDS.has(rk.kind)) return true;
+  return (frame.origin ?? classifyOrigin(frame, str(f.karta_seq) || void 0)) === "human";
+}
+
+// js/shared/clients.ts
+var OPENCODE_CLIENT = "opencode-iskron";
+var HARNESS_VERSION_ENV = "ISKRON_HARNESS_VERSION";
+var SKILLS_ROOT_ENV = "ISKRON_SKILLS_ROOT";
+
+// js/shared/version.ts
+import { createHash } from "node:crypto";
+import { readFileSync as readFileSync2 } from "node:fs";
+import { fileURLToPath } from "node:url";
+var VERSION = "6.25.0";
+function buildOf(selfUrl) {
+  try {
+    const src = readFileSync2(fileURLToPath(selfUrl));
+    return `v${VERSION}+${createHash("sha256").update(src).digest("hex").slice(0, 8)}`;
+  } catch {
+    return `v${VERSION}`;
+  }
+}
+function buildOfFile(path) {
+  try {
+    const src = readFileSync2(path);
+    const v = versionIn(src.toString("utf8")) ?? "?";
+    return `v${v}+${createHash("sha256").update(src).digest("hex").slice(0, 8)}`;
+  } catch {
+    return null;
+  }
+}
+function versionIn(text) {
+  const m = /^(?:const|let|var)\s+VERSION\s*=\s*"([^"]+)"/m.exec(text);
+  return m ? m[1] : null;
+}
+
+// js/bridge/build.ts
+var BUILD = buildOf(import.meta.url);
+
+// js/bridge/streams.ts
+var out = scoped(() => ({ stream: null }));
+
+// js/bridge/config.ts
+var DEFAULT_SERVER_URL = "https://mcp.iskron.ru/";
+var ENGLISH_SERVER_URL = "https://mcp.iskron.ai/";
+var PRODUCTION_URLS = new Set([DEFAULT_SERVER_URL, ENGLISH_SERVER_URL].map(strip));
+function strip(url) {
+  return url.replace(/\/+$/, "");
+}
+var cfgSlot = scoped(() => ({ cfg: null }));
+var CFG = new Proxy({}, {
+  get: (_, k) => cfgSlot.cfg ? Reflect.get(cfgSlot.cfg, k) : void 0,
+  has: (_, k) => !!cfgSlot.cfg && Reflect.has(cfgSlot.cfg, k)
+});
+
+// js/bridge/oauth/discovery.ts
+var REGISTRATION_REUSE_MS = 45 * 6e4;
+
+// js/bridge/oauth/flow.ts
+var CLAIM_WAIT_MS = Number(process.env.ISKRON_BRIDGE_CLAIM_WAIT_MS) || 15e3;
+var LANDED_POLL_MS = Number(process.env.ISKRON_BRIDGE_LANDED_POLL_MS) || 2e3;
+var RELEASE_GAP_MS = Number(process.env.ISKRON_BRIDGE_RELEASE_GAP_MS) || 0;
+
+// js/bridge/transport.ts
+var state = scoped(() => ({
+  sessionId: null,
+  protocolVersion: null,
+  initParams: null,
+  // params of the harness's initialize, for transparent replay
+  reinitCounter: 0,
+  // The standing this session registered, and the session it was confirmed in.
+  // Why the bridge owns re-registration, what was observed to go wrong, and the
+  // falsifier that closes it: graph @nks/nks-dev, nodes #3919 (the breakdown),
+  // #3454 (the falsifier), #3800 (the header form the surface binds with).
+  // The server correlates a writer BY THE MCP SESSION ID (its holder's word):
+  // a new session is a different writer, and the surface's own self-repair has
+  // nothing to repeat there, because its memory is keyed by that same id and is
+  // collected with it. Sessions die silently in three ways — idle past the
+  // threshold, eviction by the session ceiling, transport close — and the
+  // bridge is the ONLY party that sees the change and still remembers the name
+  // the agent derived for itself. So re-registering is the bridge's duty, and
+  // it hangs on the change of id, never on a timer.
+  standing: null,
+  // {realm, karta, name} of the last register that succeeded
+  // Places in OTHER graphs on the same channel (#5838): register on the channel
+  // in another graph adds a place, and a write is signed by the place of its
+  // own graph. `standing` stays the place the socket was taken for; these ride
+  // it and are replayed with it after every session turnover.
+  places: [],
+  standingSession: null,
+  // the session id that registration is known to hold in
+  // The access token the session was opened with. A session is opened BY a
+  // credential and dies with it (the surface's own word): once the token in the
+  // store is no longer the one this session was opened with — expired, refreshed
+  // after a 401, rotated by a sibling bridge — the old id is a dead letter, and a
+  // server that opens a fresh session on it silently runs the call unattributed
+  // before we learn the new id. So a changed token means: re-open first.
+  sessionToken: null
+}));
+var reinit = scoped(() => ({ inFlight: null }));
 
 // js/shared/frame-text.ts
 var rec = (v) => v && typeof v === "object" ? v : {};
 var idOf = (v) => typeof v === "number" || typeof v === "string" && v ? String(v) : "";
-var ANSWERABLE = /* @__PURE__ */ new Set(["said", "body", "invite", "objection", "late_objection"]);
 var ZACHIN = 40;
+function casesOf(frames) {
+  const by = /* @__PURE__ */ new Map();
+  for (const f of frames) {
+    const key = caseKey(f) || idOf(f.id) || "?";
+    const got = by.get(key);
+    if (got) got.push(f);
+    else by.set(key, [f]);
+  }
+  return [...by.values()];
+}
 function caseOf(frame) {
   const f = frame;
   const room = rec(f.room);
@@ -605,6 +664,7 @@ function frameToText(frame, raw) {
   const text = textOf(frame);
   const c = caseOf(frame);
   if (c) {
+    if (!addressedToMine(frame)) return caseCountLine([frame]);
     const rk = roomKind(frame);
     const line = rec(f.line);
     const entry = idOf(f.entry_id) || idOf(line.entry_id);
@@ -616,22 +676,10 @@ function frameToText(frame, raw) {
     const head = `${caseHead(frame, true)}${entry ? ` [${entry}]` : ""} ${words2}${by ? ` — ${by}` : ""}${tail(frame, withReply)}`;
     const lines2 = [head];
     if (text && !words2.includes(text.trim())) lines2.push(text);
-    const answerable = !rk || ANSWERABLE.has(rk.kind);
-    if (answerable && origin !== "platform" && c.realm && entry) {
-      const args = `realm="${c.realm}", action="say", room="№${c.room}", in_reply_to=${entry}`;
-      lines2.push(phrase("answer_case", { args }));
-    }
     return lines2.join("\n");
   }
-  const p = frame.provenance ?? {};
-  const id = idOf(frame.id);
   const lines = [`${whoOf2(frame, true) || "?"}${tail(frame, true)}`];
   if (text) lines.push(text);
-  if (origin !== "platform" && id && (p.from_standing || p.from_karta_seq != null)) {
-    const karta = p.from_karta_seq ?? p.user_karta_seq;
-    const args = `action="send"${frame.realm ? `, realm="${frame.realm}"` : ""}${karta != null ? `, karta=${karta}` : ""}${p.from_standing ? `, standing="${p.from_standing}"` : ""}, in_reply_to="${id}"`;
-    lines.push(phrase("answer_send", { args }));
-  }
   return lines.join("\n");
 }
 var BATCH_TEXT = 160;
@@ -651,38 +699,32 @@ function batchLine(frame, run, withZachin = true) {
   const dup = !!text && words2.includes(text);
   return `${pre}[${entry}] ${words2}${author}${tail(frame, rk?.kind !== "body")}${text && !dup ? `: ${text}` : ""}`;
 }
-function foldAsides(frames) {
-  const asides = frames.map((f) => roomKind(f)?.aside ?? null);
-  const out2 = [];
-  let n2 = 0;
-  asides.forEach((a, i) => {
-    if (!a) {
-      n2 = 0;
-      out2.push(1);
-      return;
-    }
-    n2 = (i > 0 && asides[i - 1]?.pair === a.pair ? n2 : 0) + (a.counts ? 1 : 0);
-    out2.push(asides[i + 1]?.pair === a.pair ? null : n2);
-  });
-  return out2;
-}
 function batchLines(frames) {
-  const fold = foldAsides(frames);
   const seen = /* @__PURE__ */ new Set();
-  return frames.flatMap((f, i) => {
-    const run = fold[i];
-    if (run === null) return [];
+  return frames.flatMap((f) => {
+    if (!addressedToMine(f)) return [];
     const key = caseKey(f);
     const first = !seen.has(key);
     seen.add(key);
-    return [batchLine(f, roomKind(f)?.aside ? run : void 0, first)];
+    return [batchLine(f, void 0, first)];
   });
 }
-function batchHead(frames) {
+function caseCountLine(frames) {
+  const c = frames.length ? caseOf(frames[0]) : null;
+  if (!c) return "";
+  const mineN = frames.filter((f) => addressedToMine(f)).length;
+  const head = caseHead(frames[0], true);
+  const yours = mineN ? L(` — адресованные строками ниже; `, ` — yours in the lines below; `) : L(` — адресованных месту нет; `, ` — none of them yours; `);
   return L(
-    `Дело: кадров ${frames.length} — накопились, не прерывая хода; ${batchPointer(frames)}; следом по строке на кадр.`,
-    `Case: ${frames.length} frames — gathered without interrupting the turn; ${batchPointer(frames)}; one line per frame follows.`
-  );
+    `${head}: записей ${frames.length}, тебе ${mineN}`,
+    `${head}: ${frames.length} records, yours ${mineN}`
+  ) + yours + batchPointer(frames) + ".";
+}
+function caseCountLines(frames) {
+  return casesOf(frames).map(caseCountLine).filter(Boolean);
+}
+function batchHead(frames) {
+  return caseCountLines(frames).join("\n");
 }
 function batchPointer(frames) {
   const since = /* @__PURE__ */ new Map();
@@ -745,6 +787,10 @@ var R = scoped(() => ({ listing: null }));
 
 // js/bridge/places.ts
 var extras = scoped(() => /* @__PURE__ */ new Map());
+
+// js/bridge/spool.ts
+var HANDOFF_MS = Number(process.env.ISKRON_BRIDGE_DAEMON_HANDOFF_MS) || 12e3;
+var DRAIN_MS = HANDOFF_MS + 5e3;
 
 // js/shared/bridge-client.ts
 import { spawn } from "node:child_process";
@@ -1784,11 +1830,12 @@ var CASE_BATCH_MS = Number(process.env.ISKRON_OPENCODE_BATCH_MS) || 5e3;
 var CASE_BATCH_CAP = 20;
 var PENDING_MAX_MS = Number(process.env.ISKRON_OPENCODE_PENDING_MS) || 12e4;
 function toPile(frame) {
-  if (!frame || frame.type !== "message" || stackOf(frame) !== "batch" || isDirectWord(frame))
-    return false;
+  if (!frame || frame.type !== "message" || isDirectWord(frame)) return false;
   const rk = roomKind(frame);
-  return (frame.origin ?? classifyOrigin(frame)) !== "human" || !!rk?.phase || !!rk?.aside;
+  if ((frame.origin ?? classifyOrigin(frame)) === "human" && !rk?.phase && !rk?.aside) return false;
+  return !addressedToMine(frame) || stackOf(frame) === "batch";
 }
+var RIDERS_MAX = 500;
 function setupChannel(ctx, say, freshestRoot) {
   async function accepting(id) {
     try {
@@ -1850,9 +1897,14 @@ function setupChannel(ctx, say, freshestRoot) {
     p.timer = null;
     if (!p.held.length) return;
     const frames = p.held.splice(0);
+    if (!frames.some((f) => addressedToMine(f))) {
+      p.riders.push(...frames);
+      p.riders.splice(0, Math.max(0, p.riders.length - RIDERS_MAX));
+      return;
+    }
     const at = Date.now();
     p.pending = { session: "", inbox: null, at };
-    const text = [batchHead(frames), ...batchLines(frames)].join("\n");
+    const text = [batchHead([...p.riders.splice(0), ...frames]), ...batchLines(frames)].join("\n");
     void deliver(p.session, text, `пачка дела (${frames.length})`, "queue", p.child).then((got) => {
       const inbox = got?.inbox && !takenEarly.delete(got.inbox) ? got.inbox : null;
       p.pending = got && inbox ? { session: got.session, inbox, at } : null;
@@ -1862,11 +1914,16 @@ function setupChannel(ctx, say, freshestRoot) {
   function pile(session, child, frame) {
     const key = `${child ? "child" : "root"}:${session ?? ""}`;
     let p = piles.get(key);
-    if (!p) piles.set(key, p = { session, child, held: [], timer: null, pending: null });
+    if (!p)
+      piles.set(key, p = { session, child, held: [], riders: [], timer: null, pending: null });
     if (frame.id && p.held.some((f) => f.id === frame.id)) return;
     p.held.push(frame);
     if (!p.pending && p.held.length >= CASE_BATCH_CAP) return flush(p);
     if (!p.timer) schedule(p);
+  }
+  function riding(ps) {
+    const got = ps.flatMap((p) => p.riders.splice(0));
+    return got.length ? [batchHead(got)] : [];
   }
   function loud(session, text) {
     say(text, "error");
@@ -1893,6 +1950,12 @@ function setupChannel(ctx, say, freshestRoot) {
         flush(p);
       }
     },
+    ride(session) {
+      const own = [...piles.values()].filter(
+        (p) => !p.child && (p.session === session || !p.session && freshestRoot() === session)
+      );
+      return riding(own).join("\n") || null;
+    },
     onEvent(session, params, child = false) {
       const ev = params?.data;
       if (!ev || typeof ev !== "object") return;
@@ -1902,9 +1965,10 @@ function setupChannel(ctx, say, freshestRoot) {
           if (frame?.type === "hello") return say("Искрон: канал слушает", "info");
           if (frame?.type === "status") return;
           if (frame && toPile(frame)) return pile(session, child, frame);
+          const own = piles.get(`${child ? "child" : "root"}:${session ?? ""}`);
           void deliver(
             session,
-            frameToText(frame, ev.raw ?? ""),
+            [...riding(own ? [own] : []), frameToText(frame, ev.raw ?? "")].join("\n"),
             `кадр ${frame?.id ?? "без id"}`,
             "steer",
             child
@@ -2174,6 +2238,11 @@ async function setup(ctx) {
     await ctx.session.hook("prompt", async (p) => {
       const word = await half.launch(String(p.sessionID), p.prompt.text);
       if (word) p.prompt.text = withWord(p.prompt.text, word);
+      const sid = String(p.sessionID);
+      const counts = await rootOf(sid) === sid ? ch?.ride(sid) : null;
+      if (counts) p.prompt.text = `${p.prompt.text}
+
+${counts}`;
     });
   } catch (e) {
     say(`Искрон: строка запуска не встала — ${e.message}`, "error");
