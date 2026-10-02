@@ -2494,6 +2494,28 @@ test("iskron/resume does not offer back a pre-session place whose socket a live 
   assert.doesNotMatch(r.result.word, /вернуть: iskron_stand\(name="proba"\)/, r.result.word);
 });
 
+// The session's own record — stood by it — while a live bridge of another process
+// holds its socket (two plugin instances reloaded at once, graph nks-dev: #6626):
+// the resume takes nothing and names the place as held elsewhere, so the plugin
+// tells the session the return failed instead of leaving it to think it stands.
+test("iskron/resume of the session's own place whose socket a live bridge holds names it as held elsewhere", async (t) => {
+  const { fake, dir, bridge } = await connected(t);
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const cwd = mkdtempSync(join(tmpdir(), "iskron-elsewhere-"));
+  await bridge.call("iskron/resume", 4, { cwd, session: "ses-1" });
+  await bridge.call("tools/call", 5, {
+    name: "iskron_stand",
+    arguments: { realm: "nks-dev", karta: 931, name: "proba", cwd },
+  });
+  const next = startBridge(fake.mcpUrl, dir);
+  t.after(() => next.stop());
+  assert.ok((await next.call("initialize", 1, INIT)).result);
+  const r = await next.call("iskron/resume", 2, { cwd, session: "ses-1" });
+  assert.equal(r.result?.resumed, false, JSON.stringify(r));
+  assert.deepEqual(r.result.elsewhere, ["proba--931--nks-dev"], r.result.word);
+  assert.equal(fake.state.ws.size, 1, "the live holder keeps its socket");
+});
+
 // A bridge no session was named to must not inherit the session of the record
 // it rewrites: the id belongs to the process that was told it, not to the file.
 test("a bridge with no named session does not carry the previous holder's session into the record", async (t) => {

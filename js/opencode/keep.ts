@@ -5,19 +5,17 @@
 //     из `held` прежнего моста или из маркера потери этой сессии, иначе каталог
 //     сессии, и тогда только запись, на которой стояла она же, #6017) и шлёт
 //     hello.pending, а накопленное приходит пачкой побудки;
-//   • маркер потери — плагин, который останавливают с держащими мостами, пишет
-//     на диск, кого держал (файл на экземпляр: локаций сервиса несколько);
-//     следующий экземпляр говорит это в сессию, державшую место, и тут же
+//   • маркер потери (marker.ts) — плагин, который останавливают с держащими
+//     мостами, пишет на диск, кого держал (файл на экземпляр с меткой локации);
+//     следующий экземпляр той же локации говорит это в сессию, державшую место, и тут же
 //     возвращает место без её хода — стоящая сессия, ждущая кадров, тулов не
 //     зовёт (#6137); не вернулось — слово туда же, и сессия под сторожем;
 //   • сторож слуха — раз в N минут стоявшие сессии спрашивают мост
 //     (`iskron/check {key?, cwd}`): мёртвый мост поднимается заново и возвращает
 //     место, глухой переоткрывает сокет; мост, места не ведущий, из-под сторожа
 //     выходит — его простой снова считает жнец.
-import { mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-
 import type { Bridge } from "../shared/bridge-client.ts";
+import type { LostEntry } from "./marker.ts";
 import type { Say } from "./tools.ts";
 
 /** Такт сторожа слуха; переменная — шов для проб, не ручка человека. Инвариант: короче простоя жнеца (tools.ts). */
@@ -46,108 +44,6 @@ export interface KeptSlot {
   noted?: boolean;
 }
 
-export interface LostEntry {
-  session: string;
-  dir: string | null;
-  key: string | null;
-  child?: boolean;
-  of?: { realm: string; karta: string; name: string } | null;
-  room?: string | null;
-  noted?: boolean;
-}
-
-/** Поля детской записи маркера: место корня, дело поручения, сказанный ход. */
-const childPart = (e: { of?: LostEntry["of"]; room?: string | null; noted?: boolean }) => ({
-  of: e.of ?? null,
-  room: e.room ?? null,
-  ...(e.noted ? { noted: true } : {}),
-});
-interface Lost {
-  at: string;
-  entries: LostEntry[];
-}
-
-const MARKER_PREFIX = "opencode-lost";
-
-/** Остановка плагина с держащими мостами — на диск, кого держал: следующий экземпляр скажет. */
-export function writeLostMarker(authDir: string, slots: Iterable<KeptSlot>): void {
-  const entries = [...slots]
-    .filter((s) => s.holding && s.session)
-    .map((s) => ({
-      session: s.session as string,
-      dir: s.dir,
-      key: s.key,
-      child: !!s.child,
-      ...(s.child ? childPart({ of: s.satelliteOf, room: s.room, noted: s.noted }) : {}),
-    }));
-  if (!entries.length) return;
-  try {
-    mkdirSync(authDir, { recursive: true, mode: 0o700 });
-    const lost: Lost = { at: new Date().toISOString(), entries };
-    // Свой файл на экземпляр: два плагина одного сервиса не затирают друг друга.
-    const name = `${MARKER_PREFIX}.${process.pid}.${Math.random().toString(36).slice(2, 8)}.json`;
-    writeFileSync(join(authDir, name), JSON.stringify(lost), { mode: 0o600 });
-  } catch {
-    /* маркер — слово, не обязательство */
-  }
-}
-
-/** Маркеры прежних экземпляров, прочитанные и стёртые: слово о потере слуха и ключи мест. */
-export function takeLostMarker(
-  authDir: string,
-): { text: string | null; entries: LostEntry[] } | null {
-  const entries: LostEntry[] = [];
-  let at = "";
-  let files: string[];
-  try {
-    files = readdirSync(authDir).filter((f) => f.startsWith(MARKER_PREFIX) && f.endsWith(".json"));
-  } catch {
-    return null;
-  }
-  for (const f of files) {
-    // Сперва снять, потом разбирать: битый маркер иначе лежал бы вечно.
-    let text: string;
-    try {
-      text = readFileSync(join(authDir, f), "utf8");
-      unlinkSync(join(authDir, f));
-    } catch {
-      continue;
-    }
-    try {
-      const lost = JSON.parse(text) as Lost;
-      if (lost?.at > at) at = lost.at;
-      for (const e of lost?.entries ?? [])
-        entries.push({
-          session: e.session,
-          dir: e.dir ?? null,
-          key: e.key ?? null,
-          child: !!e.child,
-          ...(e.child ? childPart(e) : {}),
-        });
-    } catch {
-      /* битый маркер — не слово */
-    }
-  }
-  if (!entries.length) return null;
-  const when = new Date(at);
-  const hhmm = Number.isNaN(when.getTime())
-    ? at
-    : `${String(when.getHours()).padStart(2, "0")}:${String(when.getMinutes()).padStart(2, "0")}`;
-  // Слово — корням: места детей возвращаются тихо своими мостами (children.ts), их ключи
-  // в слове корня звали бы его возвращать чужое; без мест корней слова нет.
-  const where = entries
-    .filter((e) => !e.child)
-    .map((e) => e.key ?? e.dir ?? e.session)
-    .join(", ");
-  return {
-    text: where
-      ? `Искрон: слух был потерян в ${hhmm} — плагин остановили (перезапуск, вытеснение каталога) с держащим мостом: ${where}. ` +
-        "Место возвращается с диска само; ожидавшие кадры придут пачкой. Не вернулось — iskron_stand."
-      : null,
-    entries,
-  };
-}
-
 /**
  * Слово агенту о месте, которое мост вернул сам: какое имя занято и с кем оно
  * делит каталог. Промпт входит следующим шагом хода, а первый вызов сессии
@@ -165,6 +61,12 @@ export function resumedWord(key: string, others?: unknown): string {
     "запись, уже ушедшую этим ходом, проверь по автору в истории узла — слово под чужим именем ляжет другому месту, а мост ответит успехом."
   );
 }
+
+/** Слово сессии, чьё место держит не её мост: возврат не удался, и чем вернуть. */
+const elsewhereWord = (keys: string[]): string =>
+  `Искрон: возврат места ${keys.join(", ")} с диска не удался — его сокет держит живой мост другой сессии, не мост этой: ` +
+  "слух и занятость здесь места не держат. Твоё место — верни его iskron_stand(take=true), только словом человека; " +
+  "не твоё — встань своим именем iskron_stand.";
 
 export interface KeeperDoors<S extends KeptSlot> {
   say: Say;
@@ -257,6 +159,10 @@ export function createKeeper<S extends KeptSlot>(doors: KeeperDoors<S>): Keeper<
       });
       if (!r?.resumed) {
         if (mark) notBack(root, mark, typeof r?.word === "string" ? r.word : "мост не ответил");
+        // Своё место сессии держит живой мост другой сессии: вернул не этот мост,
+        // и без слова занятость пошла бы мостом, места не держащим (#6626).
+        else if (Array.isArray(r?.elsewhere) && r.elsewhere.length)
+          doors.tell(root, elsewhereWord(r.elsewhere), slot.child);
         // Место прежней сборки без сессии по каталогу не возвращается, но и не
         // молчит: мост называет его, и слово идёт в сессию — вернуть по имени (#6017).
         else if (Array.isArray(r?.legacy) && r.legacy.length && typeof r.word === "string")

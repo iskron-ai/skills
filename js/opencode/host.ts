@@ -3,6 +3,7 @@
 import { dirname } from "node:path";
 
 import { HARNESS_VERSION_ENV, SKILLS_ROOT_ENV } from "../shared/clients.ts";
+import type { Home } from "./marker.ts";
 import type { Context } from "./plugin.ts";
 
 /**
@@ -28,6 +29,17 @@ export async function hostEnvOf(ctx: Context): Promise<Record<string, string>> {
     /* список скиллов не прочитался — мост найдёт набор сам или скажет "unknown" */
   }
   return env;
+}
+
+/**
+ * Локация этого экземпляра плагина — ctx.location (@opencode/plugin 2.0.4):
+ * OpenCode грузит плагин по разу на локацию, и маркер потери метится ею (marker.ts).
+ */
+export function homeOf(ctx: Context): Home | null {
+  const loc = (ctx as { location?: { directory?: unknown; workspaceID?: unknown } }).location;
+  if (typeof loc?.directory !== "string" || !loc.directory) return null;
+  const workspace = typeof loc.workspaceID === "string" ? loc.workspaceID : null;
+  return { directory: loc.directory, workspace };
 }
 
 /**

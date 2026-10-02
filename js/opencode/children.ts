@@ -7,8 +7,9 @@
 // ребёнку мост тем же спутником и возвращает место по ключу — без слова ребёнку: его сессия ждёт дальше;
 // связка с родителем — parentID сессии (leads.ts). Не вернулось — конец со словом родителю.
 import { sleep } from "./bridge-io.ts";
-import type { Keeper, LostEntry } from "./keep.ts";
+import type { Keeper } from "./keep.ts";
 import type { Leads } from "./leadwords.ts";
+import type { LostEntry } from "./marker.ts";
 import type { Slot } from "./tools.ts";
 
 /** Попыток возврата: прежний мост мог ещё не выйти, и его сокет места жив. */

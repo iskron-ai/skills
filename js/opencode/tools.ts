@@ -33,12 +33,13 @@ import {
   writeCache,
 } from "./bridge-io.ts";
 import { createChildren } from "./children.ts";
-import { hostEnvOf, sessionDirectory } from "./host.ts";
-import { createKeeper, type KeptSlot, takeLostMarker, WATCH_MS, writeLostMarker } from "./keep.ts";
+import { homeOf, hostEnvOf, sessionDirectory } from "./host.ts";
+import { createKeeper, type KeptSlot, WATCH_MS } from "./keep.ts";
 import { createLauncher } from "./launch.ts";
 import { createLeads } from "./leads.ts";
 import { leadDoors } from "./leadwords.ts";
 import { createLogin } from "./login.ts";
+import { takeLostMarker, writeLostMarker } from "./marker.ts";
 import type { Context } from "./plugin.ts";
 import { createRunEnds } from "./runends.ts";
 import { asSatellite, heldPlace, type SatelliteSlot, STAND_TOOL, standsBy } from "./satellite.ts";
@@ -203,7 +204,9 @@ export async function setupTools(
   // Прежний экземпляр остановили с держащим мостом: ключи его мест — сторожу,
   // чтобы возврат шёл по ключу, не по каталогу; места — обратно сразу, со словом
   // в державшие сессии (keeper.resumeLost), в первую живую — лишь когда таких нет.
-  const lost = takeLostMarker(authDir());
+  // Только маркеры своей локации: сессии других локаций зовут тулы через свой экземпляр (#6626).
+  const home = homeOf(ctx);
+  const lost = takeLostMarker(authDir(), home);
   let lostWord = lost?.text ?? null;
   if (lost) {
     if (lost.text) say(lost.text, "warning");
@@ -476,7 +479,7 @@ export async function setupTools(
       keeper.stop();
       await children.pause(); // перезагрузка — не конец ребёнка (#6625): место и дела ждут
       // Остановка с держащими мостами — на диск: следующий экземпляр скажет о потере.
-      writeLostMarker(authDir(), slots.values());
+      writeLostMarker(authDir(), slots.values(), home);
       if (spare) spare.ownStop = true;
       spare?.bridge.stop();
       spare = null;
