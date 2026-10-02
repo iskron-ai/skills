@@ -4,6 +4,7 @@ import { absorbChannelReply, absorbRevokeReply, expectOwnRevoke } from "./absorb
 import { ensureAuth } from "./auth.ts";
 import { BUILD } from "./build.ts";
 import { crossPlaceRefusal, resolveAgainstLed, serialized } from "./call.ts";
+import { noteCaseEntry } from "./caseexit.ts";
 import {
   AuthPending,
   errorMessage,
@@ -333,6 +334,8 @@ async function deliverOne(msg: JsonRpcMessage): Promise<void> {
           }
         }
         // Ответ connect/mint: мост берёт сокет себе и дописывает, как слушать.
+        // Успешный iskron_case — спутник помнит join прогона (#6573, caseexit.ts).
+        noteCaseEntry(msg.params?.name, msg.params?.arguments, held);
         emit(withNotice(absorbRevokeReply(msg, absorbChannelReply(msg, held))));
       }
       return;

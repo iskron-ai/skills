@@ -480,7 +480,7 @@ export function thinMain(argv: string[]): void {
   process.on("SIGTERM", () => void leave("SIGTERM"));
   // Ctrl-C: в полном ходе — как у полного моста (выход сразу, без ожидания
   // входа); через демон — bye, второй Ctrl-C выходит сразу.
-  const localSigint = fullBridgeSigint();
+  const localSigint = fullBridgeSigint(leave);
   let interrupted = false;
   process.on("SIGINT", () => {
     if (mode === "local") return localSigint();

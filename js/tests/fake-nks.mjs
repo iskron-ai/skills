@@ -309,6 +309,7 @@ export async function startFakeNks(opts = {}) {
       }
       // Подвисшее соединение (#5380): сокет открыт, но служба больше ничего в него не пишет — ни пинга, ни кадра, ни закрытия.
       if (patch.ws_hang) for (const sock of st.ws) st.hung.add(sock);
+      if (patch.case_leave_hang) st.caseLeaveHang = true;
       if (Number.isInteger(patch.ws_refuse)) st.wsRefuse = patch.ws_refuse; // один раз: следующий апгрейд закрывается этим кодом, дальнейшие принимаются
       if (patch.ws_mute) st.wsMute = true; // один раз: следующий апгрейд принят, но hello не идёт — служба медлит
       if (Number.isInteger(patch.ws_close)) {
@@ -599,6 +600,8 @@ export async function startFakeNks(opts = {}) {
       if (msg.method === "tools/call" && msg.params) {
         const { name, arguments: sent } = msg.params;
         st.calls.push({ name, arguments: structuredClone(sent ?? {}) });
+        // Медленный api на выходе из дела (/control {case_leave_hang}): leave не отвечает вовсе.
+        if (st.caseLeaveHang && name === "iskron_case" && sent?.action === "leave") return;
         const declared = DECLARED_ARGS[name];
         if (declared && sent && typeof sent === "object") {
           const ok = new Set([...declared, ...(st.futureArgs[name] ?? [])]);

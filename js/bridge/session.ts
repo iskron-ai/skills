@@ -13,6 +13,7 @@ import { type Writable } from "node:stream";
 
 import { bindScope, newScope, runIn, type Scope } from "../shared/scope.ts";
 import { isSessionEnvKey, patShaOf } from "../shared/seam.ts";
+import { leaveJoinedCases, revokeSatellitePlaces, satellitePlaces } from "./caseexit.ts";
 import { CFG, readArgs, setConfig } from "./config.ts";
 import { deliver } from "./deliver.ts";
 import { errorMessage } from "./errors.ts";
@@ -194,11 +195,18 @@ function openIn(io: SessionIO, origin: SessionOrigin | null, scope: Scope | null
     const handover = !!origin && handoverUnderway();
     // Занятость — слово ушедшего делателя: с концом сессии она снимается, иначе
     // доска показывает занятого там, где никого нет (#4895). Сокет и .key
-    // отпускаются ПЕРВЫМИ: харнес, убивающий мост по короткой отсрочке, не должен
-    // застать его в сетевом вызове с живым ключом — сторож ушёл бы на мёртвый сокет.
+    // отпускаются ПЕРВЫМИ, до всякого сетевого вызова, и у спутника тоже: харнес,
+    // убивающий мост по короткой отсрочке, не должен застать его с живым ключом —
+    // сторож ушёл бы на мёртвый сокет. Выход из дел и revoke идут вызовами сессии, сокет им не нужен.
     const addr = statusAddress();
+    const places = handover ? [] : satellitePlaces();
     // Сокет стояния живёт ровно столько, сколько сессия; у спутника — и записи держания нет: возврата с диска у него не бывает.
     releaseStanding(why, CFG.satellite);
+    // Спутник выходит из дел прогона сам (#6573), пока место на доске: конец
+    // прогона — конец поручения, а истечение срока места оставило бы «slop».
+    if (!handover) await leaveJoinedCases();
+    // Конец спутника закрывает и место (#6593): место снимается с доски.
+    await revokeSatellitePlaces(places);
     if (addr && !handover) await publishStatusTo(addr.url, "", 3000).catch(() => {});
     if (handover) await Promise.race([Promise.allSettled([...pending]), sleep(HANDOVER_WAIT_MS)]);
     else await Promise.allSettled([...pending, ...tokenRequestsInFlight]);

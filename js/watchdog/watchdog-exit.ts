@@ -10,6 +10,7 @@ import { createHash } from "node:crypto";
 import { writeSync } from "node:fs";
 
 import { type ChannelEvent } from "../bridge/hold.ts";
+import { addressedToMine } from "../shared/addressed.ts";
 import { batchLine, caseKey, frameToText } from "../shared/frame-text.ts";
 import { eventKeyOf, noteSeen, seenIds } from "../shared/seen.ts";
 import { seenFilePathOf } from "../shared/standings.ts";
@@ -50,9 +51,23 @@ export function runWatchdogExit(argv: string[]): void {
   let seenPath = seenFilePathOf(target.authDir, target.key);
   const seen = seenIds(seenPath);
   let woke = false; // отдан хоть один кадр залпа пачки
-  let head = ""; // шапка идущей пачки: как прочесть целиком
+  let head = ""; // шапка идущей пачки: счёт по делам и указатель
   const folded: string[] = []; // id свёрнутых адресных слов череды — метятся с её строкой (#6081)
   const cases = new Set<string>(); // дела, уже названные зачином в идущей пачке
+  // Пачка из одних счётов (#6574) не будит: шапка ждёт ближайшей побудки, id —
+  // её пометки; со смертью сторожа неотданное придёт кольцом моста снова.
+  const riders: string[] = [];
+  const riderIds: string[] = [];
+  const hold = (): void => {
+    if (head) riders.push(head);
+    riders.splice(0, Math.max(0, riders.length - 100)); // старшие уходят: счёт не копится без меры
+    head = "";
+  };
+  // Выход после побудки: записи пачки за отданной строкой названы её шапкой — отданы.
+  const leave = (): never => {
+    for (const k of [...riderIds.splice(0), ...folded.splice(0)]) noteSeen(seenPath, k, seen);
+    process.exit(0);
+  };
   attach(target.path, {
     onEvent: (ev) => {
       switch (ev.kind) {
@@ -61,21 +76,33 @@ export function runWatchdogExit(argv: string[]): void {
           if (type !== "message") return note(`кадр ${type ?? "не разобран"} — не повод будить`);
           const id = frameId(ev);
           // Пачка кадров комнаты (мост, roomstack.ts) — одна побудка: печатаем её
-          // целиком и выходим на последнем кадре залпа, не на первом.
-          // Кадр пачки — строкой, без конверта; шапка с указателем «целиком» — перед первым отданным.
+          // целиком и выходим на последнем кадре залпа, не на первом. Шапка —
+          // счётом по делам (#6574); строка — только адресованному месту. Пачка
+          // без адресованных не будит: её шапка ждёт ближайшей побудки.
           const last = !ev.batch || ev.batch.at >= ev.batch.of;
           if (seen.has(id)) {
             note(`кадр ${id} уже отдан прежним взводом — не повод будить`);
-            if (last && woke) process.exit(0);
+            if (last) hold();
+            if (last && woke) leave();
             return;
           }
-          // Адресное слово не мне, свёрнутое в череду (folded), своей строки не печатает.
+          // Запись дела, не адресованная месту (#6574): без строки и без будки на
+          // кадр — шапка пачки назвала её числом.
+          if (ev.batch && !addressedToMine(ev.frame)) {
+            riderIds.push(id, ...folded.splice(0));
+            if (last) {
+              hold();
+              if (woke) leave();
+              note("пачка без адресованных месту — счёт ждёт ближайшей побудки");
+            }
+            return;
+          }
           if (ev.batch?.at === 1) cases.clear(); // зачин дела — у первой его строки в пачке
           if (ev.batch?.folded) {
             folded.push(id);
             return;
           }
-          if (ev.batch && head) wake(head);
+          for (const s of [...riders.splice(0), ...(head ? [head] : [])]) wake(s);
           head = "";
           const key = ev.frame ? caseKey(ev.frame) : "";
           const first = !cases.has(key);
@@ -88,7 +115,7 @@ export function runWatchdogExit(argv: string[]): void {
                 ? batchLine(ev.frame, ev.batch.fold, first)
                 : frameToText(ev.frame, ev.raw ?? ""),
           );
-          for (const k of folded.splice(0)) noteSeen(seenPath, k, seen);
+          for (const k of [...riderIds.splice(0), ...folded.splice(0)]) noteSeen(seenPath, k, seen);
           noteSeen(seenPath, id, seen);
           const evKey = eventKeyOf(ev.frame);
           if (evKey) noteSeen(seenPath, evKey, seen); // событие графа отдано — другие копии веера тоже

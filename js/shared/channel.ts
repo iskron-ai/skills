@@ -165,6 +165,8 @@ export interface Frame {
   standings?: HelloStanding[];
   /** Кто говорит, по провенансу: платформа, человек, брат по роли, делатель другой роли. Ставит мост. */
   origin?: FrameOrigin;
+  /** Тело слова в две фазы, адресованного месту (#6574). Ставит мост, видевший его слово в полёте. */
+  addressed?: boolean;
   provenance?: {
     from_standing?: string;
     from_karta_seq?: number;

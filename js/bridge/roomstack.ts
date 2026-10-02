@@ -1,12 +1,14 @@
 // Кадр комнаты по словарю родов — у моста (граф nks-dev: #5851). Клиенты
 // уведомлений (pi, OpenCode) решают путь кадра сами; сторожам (Claude Code под
 // Monitor, Codex, сторож выхода) пачку копит мост: кадр с event_kind рода
-// «в пачку» ложится в пачку своей двери и уходит по окну, по полной пачке или
-// перед прерывающим кадром — порядок цел. Пачка уходит залпом обычных событий
-// frame с меткой batch за строкой-шапкой note (at: 0) с указателем на history:
-// сторож печатает кадры по строке, без конвертов. Слово человека в пачку не
-// ложится. Кадр без event_kind словарь не трогает: он
-// идёт сразу, как прежде. Кольцо двери при этом получает каждый кадр (hold.ts).
+// «в пачку» — и всякая запись дела, не адресованная месту (#6574), — ложится
+// в пачку своей двери и уходит по окну, по полной пачке или перед прерывающим
+// кадром — порядок цел. Пачка уходит залпом обычных событий frame с меткой
+// batch за строкой-шапкой note (at: 0) — счёт по делам с указателем, строки
+// ниже — только адресованные месту. Слово человека в пачку не ложится. Кадр
+// без event_kind словарь не трогает: он идёт сразу, как прежде. Кольцо двери
+// при этом получает каждый кадр (hold.ts).
+import { addressedToMine } from "../shared/addressed.ts";
 import { classifyOrigin, type Frame } from "../shared/channel.ts";
 import { batchHead, foldAsides } from "../shared/frame-text.ts";
 import { byKind, roomKind, stackOf } from "../shared/room-kinds.ts";
@@ -84,27 +86,40 @@ export class RoomBatch {
     const got = this.held.splice(0);
     const emit = this.emit;
     if (!got.length || !emit) return;
-    const of = got.length;
-    const frames = got.map((h) => h.frame);
-    const fold = foldAsides(frames);
-    emit({ kind: "note", text: batchHead(frames), batch: { at: 0, of } });
-    got.forEach((h, i) =>
-      emit({
-        kind: "frame",
-        raw: h.raw,
-        frame: h.frame,
-        batch: {
-          at: i + 1,
-          of,
-          ...(fold[i] === null
-            ? { folded: true }
-            : roomKind(h.frame)?.aside
-              ? { fold: fold[i] ?? 1 }
-              : {}),
-        },
-      }),
-    );
+    emitBatch(got, emit);
   }
+}
+
+/** Пачка залпом: шапка note (at: 0) и кадры с меткой batch. */
+export function emitBatch(
+  got: { raw: string; frame: Frame }[],
+  emit: (ev: ChannelEvent) => void,
+): void {
+  const of = got.length;
+  const frames = got.map((h) => h.frame);
+  const fold = foldAsides(frames);
+  emit({ kind: "note", text: batchHead(frames), batch: { at: 0, of } });
+  got.forEach((h, i) =>
+    emit({
+      kind: "frame",
+      raw: h.raw,
+      frame: h.frame,
+      batch: {
+        at: i + 1,
+        of,
+        ...(fold[i] === null
+          ? { folded: true }
+          : roomKind(h.frame)?.aside
+            ? { fold: fold[i] ?? 1 }
+            : {}),
+      },
+    }),
+  );
+}
+
+/** Запись дела, не адресованная месту (#6574): сторожам — только пачкой, счётом. */
+export function countOnly(frame: Frame | null): frame is Frame {
+  return frame?.type === "message" && !!byKind(frame) && !addressedToMine(frame);
 }
 
 /** Род, мосту неизвестный, — строкой в лог моста: новый род должен быть замечен. */
@@ -141,7 +156,14 @@ export function batchForWatchdogs(
   }
   // Слово человека в пачку не ложится: какая бы ни была стопка, оно идёт сейчас.
   // Кроме адресного не мне (#6081): оно и от человека — фактом в пачку.
-  if ((!human || rk?.phase || rk?.aside) && byKind(frame) && stackOf(frame) === "batch") {
+  // Неадресованное месту дело — в пачку при любой стопке (#6574): текстом в ход
+  // идёт только адресованное, прочее уходит счётом в шапке. Адресованность — до
+  // стопки: слово в полёте запоминается ею, и его тело узнаётся по нему.
+  if (
+    (!human || rk?.phase || rk?.aside) &&
+    byKind(frame) &&
+    (!addressedToMine(frame) || stackOf(frame) === "batch")
+  ) {
     d.roomBatch.add(raw, frame, emit);
     return true;
   }

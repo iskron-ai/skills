@@ -60,8 +60,6 @@ export const WORDS: Readonly<Record<string, string>> = {
   who_platform: "платформа — побудка",
   who_graph: "событие графа",
   legacy: "род {kind}{, стопка stack}",
-  answer_case: "ответ: iskron_case({args})",
-  answer_send: "ответ: iskron_channel({args})",
 };
 
 /**
@@ -110,8 +108,6 @@ export const WORDS_EN: Readonly<Record<string, string>> = {
   who_platform: "platform — a wake-up",
   who_graph: "graph event",
   legacy: "kind {kind}{ · stack}",
-  answer_case: "answer: iskron_case({args})",
-  answer_send: "answer: iskron_channel({args})",
 };
 
 /** Слова записи платформы auto по её code (#5893 §4.2, ступени — #5973); неизвестный code — WORDS.auto. */
@@ -215,9 +211,9 @@ export interface RoomKind {
 }
 
 type Rec = Record<string, unknown>;
-const obj = (v: unknown): Rec =>
+export const obj = (v: unknown): Rec =>
   v && typeof v === "object" && !Array.isArray(v) ? (v as Rec) : {};
-const str = (v: unknown): string =>
+export const str = (v: unknown): string =>
   typeof v === "string" ? v : typeof v === "number" || typeof v === "boolean" ? String(v) : "";
 
 /** Кто написал: имя (стояние), иначе стояние, иначе платформа; a — author строки или место in_reply_to_from. */
@@ -230,7 +226,7 @@ function authorOf(author: unknown): string {
   return a.kind === "platform" ? L("платформа", "platform") : "?";
 }
 
-const after = (key: string, prefix: string): string =>
+export const after = (key: string, prefix: string): string =>
   key.startsWith(prefix) ? key.slice(prefix.length) : key;
 
 function fill(template: string, v: Rec): string {
@@ -248,7 +244,7 @@ function roomOf(v: unknown): string {
 }
 
 /** Своё стояние кадра для ключа invite — id места и его адрес: формат ключа (#5893 §4.2) ещё не подтверждён. */
-const mineOf = (frame: Rec): string[] =>
+export const mineOf = (frame: Rec): string[] =>
   [str(frame.to_standing_id), str(frame.to_standing)].filter(Boolean);
 
 /**
@@ -256,7 +252,7 @@ const mineOf = (frame: Rec): string[] =>
  * karta {id, name, seq, realm} (наблюдено на бою), кадр — мой karta_seq. seq
  * принадлежит графу: названные с обеих сторон графы обязаны совпасть.
  */
-function myRole(frame: Rec, fields: Rec): boolean {
+export function myRole(frame: Rec, fields: Rec): boolean {
   const ka = obj(fields.karta);
   const seq = str(ka.seq);
   if (!seq || seq !== str(frame.karta_seq)) return false;
@@ -279,7 +275,7 @@ function whoOf(fields: Rec): string {
  * строка-адрес места; объект места {standing | handle+name, id, name} тоже
  * принимается. addr — чем сравнивать с моим местом, label — как назвать.
  */
-function addresseeOf(v: unknown): { addr: string[]; label: string } | null {
+export function addresseeOf(v: unknown): { addr: string[]; label: string } | null {
   if (typeof v === "string") return v ? { addr: [v], label: v } : null;
   const o = obj(v);
   const handle = str(o.handle).replace(/^@/, "");
