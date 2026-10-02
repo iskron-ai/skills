@@ -14,31 +14,16 @@ import { batchHead, foldAsides } from "../shared/frame-text.ts";
 import { byKind, roomKind, stackOf } from "../shared/room-kinds.ts";
 import { deliveredKeys, noteSeen } from "../shared/seen.ts";
 import { type ChannelEvent, type Door } from "./door.ts";
+import { HumanWords, idOf, isWordOf } from "./humanwords.ts";
 import { log } from "./streams.ts";
 
 /** Окно пачки; переменная — шов для проб, не ручка человека. */
 const ROOM_BATCH_MS = Number(process.env.ISKRON_BRIDGE_ROOM_BATCH_MS) || 60_000;
 /** Полная пачка уходит сразу, не дожидаясь окна: кадр не отбрасывается никогда. */
 const ROOM_BATCH_CAP = 20;
-/** Сколько слов человека в полёте помнить до их тела. */
-const HUMAN_WORDS_KEEP = 200;
 
 const rec = (v: unknown): Record<string, unknown> =>
   v && typeof v === "object" ? (v as Record<string, unknown>) : {};
-const idOf = (v: unknown): string =>
-  typeof v === "number" || (typeof v === "string" && v) ? String(v) : "";
-/** entry_id записи дела: из строки журнала, иначе из конверта. */
-const entryOf = (frame: Frame): string => {
-  const f = rec(frame);
-  return idOf(rec(f.line).entry_id ?? f.entry_id);
-};
-/** Дело кадра (id, иначе seq); "" — кадр без дела, и запись узнаётся одним номером. */
-const caseOf = (frame: Frame): string => {
-  const room = rec(rec(frame).room);
-  return idOf(room.id) || idOf(room.seq);
-};
-/** Ключ записи — дело и номер: номер записи свой в каждом деле (граф nks-dev: #6576). */
-const wordKey = (room: string, entry: string): string => (entry ? `${room}|${entry}` : "");
 
 export class RoomBatch {
   private readonly held: { raw: string; frame: Frame }[] = [];
@@ -52,39 +37,13 @@ export class RoomBatch {
     this.timer ??= setTimeout(() => this.flushNow(), ROOM_BATCH_MS).unref();
   }
 
-  /** Слова человека в полёте — дело и номер: их тело — слово человека, не кадр пачки. */
-  private readonly humanWords = new Set<string>();
-  /** Нумерация последнего кадра дела: "case" — номер внутри дела; null — кадров дела ещё не было. */
-  private numbering: string | null = null;
-
-  /** Смена нумерации (признак numbering, #6576): прежние номера другого счёта — память слов сброшена. */
-  noteNumbering(frame: Frame): void {
-    if (!caseOf(frame)) return;
-    const now = rec(frame).numbering === "case" ? "case" : "";
-    if (this.numbering !== null && this.numbering !== now) this.humanWords.clear();
-    this.numbering = now;
-  }
-
-  rememberHumanWord(room: string, entry: string): void {
-    const key = wordKey(room, entry);
-    if (!key) return;
-    this.humanWords.add(key);
-    const oldest = this.humanWords.values().next();
-    if (this.humanWords.size > HUMAN_WORDS_KEEP && !oldest.done)
-      this.humanWords.delete(oldest.value);
-  }
-
-  /** true — это было слово человека в полёте; память о нём снята. */
-  forgetHumanWord(room: string, entry: string): boolean {
-    const key = wordKey(room, entry);
-    return !!key && this.humanWords.delete(key);
-  }
+  /** Слова человека в полёте: их тело — слово человека, не кадр пачки. */
+  readonly humanWords = new HumanWords();
 
   /** Вынуть из копящейся пачки слово в полёте, чей текст пришёл: отдан он будет своим телом. */
-  dropWord(room: string, entry: string, dropped: (frame: Frame) => void): void {
+  dropWord(body: Frame, word: string, dropped: (frame: Frame) => void): void {
     for (let i = this.held.length - 1; i >= 0; i--) {
-      const h = this.held[i].frame;
-      if (caseOf(h) !== room || entryOf(h) !== entry) continue;
+      if (!isWordOf(this.held[i].frame, body, word)) continue;
       dropped(this.held[i].frame);
       this.held.splice(i, 1);
     }
@@ -162,16 +121,14 @@ export function batchForWatchdogs(
   // Слово в две фазы (#5953): слово человека в полёте и обрыв идут по словарю,
   // в пачку; тело его слова — слово человека: отдельным событием, а само слово
   // в полёте из копящейся пачки вынимается — будит одно событие, и в нём текст.
-  const room = caseOf(frame);
-  d.roomBatch.noteNumbering(frame);
   if (rk?.kind === "said" && rk.phase === "pending" && human)
-    d.roomBatch.rememberHumanWord(room, entryOf(frame));
+    d.roomBatch.humanWords.remember(frame);
   if (rk?.kind === "body") {
     const word = idOf(rec(f.line).refers_to ?? f.in_reply_to);
-    if (d.roomBatch.forgetHumanWord(room, word) && rk.phase !== "aborted") {
+    if (d.roomBatch.humanWords.forget(frame, word) && rk.phase !== "aborted") {
       human = true;
       frame.origin = "human"; // шапка кадра называет человека, а не место его моста
-      d.roomBatch.dropWord(room, word, (said) => {
+      d.roomBatch.dropWord(frame, word, (said) => {
         for (const k of deliveredKeys(said)) noteSeen(d.seenPath, k, d.seen);
       });
     }

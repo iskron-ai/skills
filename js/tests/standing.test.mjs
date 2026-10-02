@@ -3695,7 +3695,7 @@ test("a human's word in flight in one case does not claim the body of another ca
   await wd.done;
 });
 
-test("a change of numbering forgets the human's words in flight: an old number does not claim a body under the new one", async (t) => {
+test("a change of numbering forgets the words in flight: an old number claims a body under the new one neither for the human nor for me", async (t) => {
   const { fake, dir, key } = await connected(t, {
     env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "10000" },
   });
@@ -3705,15 +3705,20 @@ test("a change of numbering forgets the human's words in flight: an old number d
   const inFlight = saidInFlight(80);
   inFlight.provenance.as_person = true;
   await sendRoom(fake, inFlight);
+  await sendRoom(fake, { ...saidInFlight(82), addressee: ME });
   await sendRoom(fake, caseNumbered(saidInFlight(80)));
   await sendRoom(fake, caseNumbered(bodyFrame(81, 80, "тело слова агента по новой нумерации")));
-  await nudge(fake);
+  await sendRoom(fake, caseNumbered(saidInFlight(82)));
+  await sendRoom(fake, caseNumbered(bodyFrame(83, 82, "тело чужого слова 82 по новой нумерации")));
+  await sendRoom(fake, caseNumbered({ ...said("interrupt", 999), addressee: ME }));
   await waitFor(() => wd.out.includes("[999]"), "the word to me", 5000);
   assert.doesNotMatch(
     wd.out,
     /— человек/,
     `a body under the new numbering went as the human's word:\n${wd.out}`,
   );
+  for (const text of ["тело слова агента по новой нумерации", "тело чужого слова 82"])
+    assert.ok(!wd.out.includes(text), `a body under the new numbering went as text:\n${wd.out}`);
   wd.proc.kill("SIGKILL");
   await wd.done;
 });
