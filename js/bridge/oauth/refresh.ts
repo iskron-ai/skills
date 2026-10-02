@@ -12,7 +12,7 @@ import { grantLog, loadGrantState, loadStore, saveGrantState, saveStore, sleep }
 import { debug, log } from "../streams.ts";
 import { refreshHours, tokenUsable, usableTokens } from "../tokens.ts";
 import { type Meta, type Tokens } from "../types.ts";
-import { discoverMeta } from "./discovery.ts";
+import { discoverMeta, resourceOf } from "./discovery.ts";
 import { acquireRefreshLock, releaseRefreshLock } from "./refreshlock.ts";
 import { tokenRequest } from "./tokenrequest.ts";
 
@@ -64,7 +64,7 @@ async function refreshOnce(meta: Meta, cur: Tokens, proactive: boolean): Promise
       grant_type: "refresh_token",
       refresh_token: cur.refresh_token ?? "",
       client_id: clientId,
-      resource: meta.resource,
+      resource: resourceOf(meta),
     });
   } catch (e) {
     const message = errorMessage(e);

@@ -16,6 +16,7 @@ import { type Bridge, resultToContent } from "../shared/bridge-client.ts";
 import { OPENCODE_CLIENT } from "../shared/clients.ts";
 import { homeBridgePath } from "../shared/home.ts";
 import { buildOf, buildOfFile } from "../shared/version.ts";
+import { codeWatch, deviceOf } from "./devicewait.ts";
 
 /** Потолок самого рукопожатия; истёк — рукопожатие повторяется, не сдаётся. */
 export const HANDSHAKE_MS = Number(process.env.ISKRON_MCP_HANDSHAKE_MS || 600000);
@@ -121,12 +122,14 @@ function loginUrlOf(message: string): string | null {
 /**
  * Рукопожатие. На отказ «нужен вход» мост отвечает сразу, а вход ждёт фоном;
  * рукопожатие повторяется, когда грант ляжет в хранилище. Потолок — HANDSHAKE_MS.
+ * Код входа с другого устройства сменился или доживает (devicewait.ts) — тоже
+ * повод повторить: человеку уходит живая страница, не мёртвая.
  * Успех снимает флаг входа всегда: грант мог лечь извне (токен в
  * ~/.iskron-bridge/token, вход из другого моста), не через этот слот.
  */
 export async function handshake(
   b: Bridge,
-  onLogin: (url: string | null) => void,
+  onLogin: (url: string | null, device: string | null) => void,
   onReady: () => void,
 ): Promise<void> {
   const deadline = Date.now() + HANDSHAKE_MS;
@@ -146,10 +149,12 @@ export async function handshake(
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       if (!AUTH_PENDING.test(message)) throw e;
-      onLogin(loginUrlOf(message));
+      onLogin(loginUrlOf(message), deviceOf(message));
+      const code = codeWatch(authDir(), message);
       while (grantStamp() === stamp) {
         if (Date.now() + AUTH_POLL_MS > deadline) throw e;
         await sleep(AUTH_POLL_MS);
+        if (code.moved()) break;
       }
     }
   }

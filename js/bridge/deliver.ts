@@ -1,6 +1,7 @@
 import { OWN_CLIENTS } from "../shared/clients.ts";
 import { scoped } from "../shared/scope.ts";
 import { absorbChannelReply, absorbRevokeReply, expectOwnRevoke } from "./absorb.ts";
+import { refusedAudience } from "./audience.ts";
 import { ensureAuth } from "./auth.ts";
 import { BUILD } from "./build.ts";
 import { crossPlaceRefusal, resolveAgainstLed, serialized } from "./call.ts";
@@ -71,7 +72,9 @@ export function syntheticError(
               ? // The agent reads this; the human does not. A retry buys nothing
                 // and a wait shortens nothing — only handing the link over does.
                 "Nothing was applied, and only the human can move this: hand them the link above — " +
-                "the login is already waiting for their click. Once they finish, retry the call."
+                "the local one opens only on this machine; from another, the sign-in page with the " +
+                "code, where one is named — the login is already waiting for their click. Once they " +
+                "finish, retry the call."
               : "The call never reached the server, so nothing was applied — retry freely."
       : "The call went out and its answer was lost, so THE OUTCOME IS UNKNOWN — re-read the target " +
         "before retrying: a blind retry can apply a second time, and a write with no version guard " +
@@ -430,16 +433,10 @@ async function deliverOne(msg: JsonRpcMessage): Promise<void> {
           return;
         }
       }
-      // A SECOND 401 — after a refresh already replaced the token — is never
-      // an expiry: the server is refusing tokens as such, and retries cannot
-      // fix that. Name the one likely defect (audience/resource mismatch) and
-      // its lever, or the report that reaches us says only "unauthorized".
       const reason =
         e instanceof UpstreamError
           ? e.kind === "auth" && authRetried
-            ? `upstream refuses even a freshly obtained access token (${e.message}) — not an expiry; ` +
-              `the token's audience/resource may not match what the server validates ` +
-              `(operator lever: ISKRON_BRIDGE_RESOURCE), or the server's token validation is off`
+            ? refusedAudience(e.message)
             : e.message
           : `bridge internal error: ${errorMessage(e)}`;
       log(`request ${hasId ? msg.id : `(notification ${msg?.method})`} failed: ${reason}`);
