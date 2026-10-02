@@ -385,8 +385,8 @@ export function harnessReport(): void {
 async function daemonReport(): Promise<void> {
   out(
     daemonWanted()
-      ? "демон машины: тонкий мост включён (ISKRON_BRIDGE_DAEMON=1 в окружении этого процесса)"
-      : "демон машины: выключен — мост идёт полным (включение — ISKRON_BRIDGE_DAEMON=1 в окружении моста)",
+      ? "демон машины: тонкий мост включён — умолчание (выключатель — ISKRON_BRIDGE_DAEMON=0 в окружении моста)"
+      : "демон машины: выключен — мост идёт полным (выключатель стоит в окружении этого процесса: ISKRON_BRIDGE_DAEMON=0 или ISKRON_BRIDGE_NO_DAEMON)",
   );
   // doctor не пишет: личного каталога шва нет — демона не поднимали, и проба его бы создала.
   if (!existsSync(seamRunDir(CFG.authDir))) {

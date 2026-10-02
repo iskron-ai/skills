@@ -67,7 +67,8 @@ const CONNECT = { realm: "nks-dev", action: "connect", karta: 931, name: "proba"
 // --- a harness that also keeps the bridge's notifications ------------------
 function startBridge(serverUrl, authDir, extraEnv = {}) {
   const proc = spawn(NODE, [FILE, serverUrl, "--no-browser", "--auth-dir", authDir], {
-    env: { ...process.env, ISKRON_BRIDGE_NO_BROWSER: "1", ...extraEnv },
+    // ISKRON_BRIDGE_DAEMON=0 — полный мост в процессе: эти пробы о нём, не о шве.
+    env: { ...process.env, ISKRON_BRIDGE_NO_BROWSER: "1", ISKRON_BRIDGE_DAEMON: "0", ...extraEnv },
     stdio: ["pipe", "pipe", "pipe"],
   });
   const waiters = new Map();

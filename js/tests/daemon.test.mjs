@@ -2,7 +2,8 @@
 // много сессий в одном демоне, каждая в своей области (shared/scope.ts); смерть
 // демона посреди вызова; обновление демона при живых сессиях; окно простоя.
 // Демон настоящий — `iskron.mjs daemon`; тонкие мосты поднимают его своей
-// копией (ISKRON_BRIDGE_DAEMON=1) либо проба поднимает его сама.
+// копией (умолчание; флаг ISKRON_BRIDGE_DAEMON=1 стоит ради копий, где демон
+// был за флагом) либо проба поднимает его сама.
 //
 // ISKRON_BRIDGE_PATH наводит пробы на другую копию: у моста шага 1 подкоманда
 // daemon отказывает — тонкие мосты идут полными каждый в своём процессе, и
@@ -796,14 +797,14 @@ test("doctor names the daemon: the mode, the socket, the pid, the build and the 
         p.stdout.on("data", (c) => (out += c));
         p.on("exit", () => resolve(out));
       });
-    const before = await doctor({});
+    const before = await doctor({ ISKRON_BRIDGE_DAEMON: "0" });
     assert.match(before, /демон машины: выключен — мост идёт полным/, before);
     assert.match(before, /не поднимался: каталога шва .* нет/, before);
     const b = bridge({});
     await handshake(b);
     const [pid] = await waitFor("the daemon", () => daemonPids(dir)[0] && daemonPids(dir));
-    const out = await doctor({ ISKRON_BRIDGE_DAEMON: "1" });
-    assert.match(out, /демон машины: тонкий мост включён/, out);
+    const out = await doctor({}); // без флага: демон — умолчание
+    assert.match(out, /демон машины: тонкий мост включён — умолчание/, out);
     assert.match(
       out,
       new RegExp(`сокет: ${join(dir, "run", "daemon.sock").replaceAll("/", "\\/")}`),

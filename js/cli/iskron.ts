@@ -8,7 +8,7 @@
 //   node iskron.mjs update [--auth-dir <dir>]       свежий релиз в дом: мост, плагин OpenCode, SETUP.md
 //   node iskron.mjs use <en|ru|url> [--auth-dir <dir>]  постоянный выбор адреса сервера на этой машине
 //   node iskron.mjs daemon --auth-dir <dir>         демон машины для тонких мостов (bridge/daemon.ts)
-//   node iskron.mjs --version                       сборка vX.Y.Z+хеш (при ISKRON_BRIDGE_DAEMON=1 — и сборка демона)
+//   node iskron.mjs --version                       сборка vX.Y.Z+хеш и сборка демона (без неё при ISKRON_BRIDGE_DAEMON=0)
 //
 // Каждый долгоживущий запуск (мост, сторожа) сперва выравнивает дом: своя
 // сборка новее домашней — ложится в дом; домашняя новее — запускается она
@@ -40,9 +40,10 @@ const USAGE = `iskron ${BUILD}
   node iskron.mjs doctor [server-url] [--auth-dir <dir>]
   node iskron.mjs update [--auth-dir <dir>]
   node iskron.mjs use <en|ru|url> [--auth-dir <dir>]   (en — mcp.iskron.ai, ru — mcp.iskron.ru)
-  node iskron.mjs daemon --auth-dir <dir>   (демон машины; его поднимает тонкий мост при ISKRON_BRIDGE_DAEMON=1)
+  node iskron.mjs daemon --auth-dir <dir>   (демон машины; его поднимает тонкий мост — мост по умолчанию)
   node iskron.mjs --version
   env: ISKRON_BRIDGE_TOKEN — личный токен вместо OAuth (или файл <auth-dir>/token);
+       ISKRON_BRIDGE_DAEMON=0 — полный мост в своём процессе, без демона машины;
        ISKRON_BRIDGE_URL, ISKRON_BRIDGE_AUTH_DIR, ISKRON_BRIDGE_NO_BROWSER, ISKRON_BRIDGE_DEBUG
 `;
 
@@ -94,7 +95,7 @@ function dispatch(): void {
       void daemonMain(rest);
       break;
     case "--version":
-      // При тонком мосте — и сборка демона своего каталога гранта, второй строкой.
+      // При тонком мосте (умолчание) — и сборка демона своего каталога гранта, второй строкой.
       void versionLines(rest).then((lines) => process.stdout.write(lines.join("\n") + "\n"));
       break;
     case "--help":

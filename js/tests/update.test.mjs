@@ -125,7 +125,13 @@ function startBridge(serverUrl, authDir, env) {
   delete clean.ISKRON_BRIDGE_NO_UPDATE; // пробы гонят под выключателем; здесь он снимается, если сама проба его не ставит
   Object.assign(clean, env);
   const proc = spawn(NODE, [FILE, serverUrl, "--no-browser", "--auth-dir", authDir], {
-    env: { ...clean, ISKRON_BRIDGE_NO_BROWSER: "1", ISKRON_BRIDGE_TOKEN: PAT },
+    // ISKRON_BRIDGE_DAEMON=0 — полный мост в процессе: эти пробы о нём, не о шве.
+    env: {
+      ...clean,
+      ISKRON_BRIDGE_NO_BROWSER: "1",
+      ISKRON_BRIDGE_TOKEN: PAT,
+      ISKRON_BRIDGE_DAEMON: "0",
+    },
     stdio: ["pipe", "pipe", "pipe"],
   });
   const waiters = new Map();
