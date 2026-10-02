@@ -914,6 +914,99 @@ function readPat(cfg) {
   }
 }
 
+// js/bridge/oauth/flow.ts
+import { randomBytes as randomBytes2 } from "node:crypto";
+
+// js/bridge/errors.ts
+var NOT_SENT = "not-sent";
+var UNKNOWN = "unknown";
+var UpstreamError = class extends Error {
+  static NOT_SENT = NOT_SENT;
+  static UNKNOWN = UNKNOWN;
+  kind;
+  // `presented` carries the access token the refused request actually used —
+  // knowledge only the caller has. The store may have moved on since, and a
+  // token a sibling has already replaced must not be blamed for this refusal.
+  presented;
+  // `outcome` says whether the request this error ends could ALREADY have taken
+  // effect upstream. NOT_SENT — it never reached the server, so a retry is free.
+  // UNKNOWN — it went out and the answer was lost, so a blind retry may write a
+  // second time. Nothing between those two is honest, and saying neither is what
+  // made "retry the call" dangerous: under one sentence lived both outcomes, and
+  // the caller could not tell them apart. Witnessed: an update reported as failed
+  // had applied, and the retry advised by that sentence collided with its own
+  // first write.
+  outcome;
+  // `retryable` marks a network failure worth another knock from the bridge
+  // itself: a connection that failed outright. A timeout is not — it already
+  // spent the whole deadline, and repeating it multiplies the wait.
+  retryable;
+  constructor(message, kind, presented = null, outcome = UNKNOWN, retryable = false) {
+    super(message);
+    this.kind = kind;
+    this.presented = presented;
+    this.outcome = outcome;
+    this.retryable = retryable;
+  }
+};
+var TokenError = class extends Error {
+  oauthError;
+  status;
+  oauthMessage;
+  constructor(message, oauthError, status, oauthMessage) {
+    super(message);
+    this.oauthError = oauthError;
+    this.status = status;
+    this.oauthMessage = oauthMessage;
+  }
+};
+var DEFINITIVE_OAUTH_ERRORS = /* @__PURE__ */ new Set([
+  "invalid_grant",
+  "invalid_token",
+  "invalid_client",
+  "unauthorized_client"
+]);
+var TokenRefused = class extends Error {
+};
+var AuthPending = class extends Error {
+  authorizeUrl;
+  constructor(url, note3) {
+    super(
+      `authorization required — open in a browser: ${url}${note3 ? ` (${note3})` : ""} — or give the bridge a personal access token instead (ISKRON_BRIDGE_TOKEN, or the file <auth-dir>/token)`
+    );
+    this.authorizeUrl = url;
+  }
+};
+var HoldOffError = class extends Error {
+  // retryNow marks the one flavor where an immediate retry is the honest move:
+  // the FIRST early refusal of a needed refresh. The cooldown refusal and a
+  // refusal that repeats both name waits that are real.
+  retryNow;
+  // When the hold ends, on the server-corrected clock — the refresh token's own
+  // hour; null when nobody knows. A caller sits out a short one inside the call
+  // and answers a long one with the login.
+  until;
+  constructor(message, retryNow = false, until = null) {
+    super(message);
+    this.retryNow = retryNow;
+    this.until = until;
+  }
+};
+var DeadGrantError = class extends Error {
+  expired;
+  constructor(message, expired = false) {
+    super(message);
+    this.expired = expired;
+  }
+};
+function errorCode(e) {
+  const err = e;
+  return err?.cause?.code ?? err?.code;
+}
+function errorMessage(e) {
+  return e instanceof Error ? e.message : String(e);
+}
+
 // js/bridge/store.ts
 import { createHash as createHash5 } from "node:crypto";
 import {
@@ -1041,268 +1134,6 @@ function clearGrantState() {
   }
 }
 
-// js/bridge/clock.ts
-var SKEW_NOISE_MS = 5e3;
-var SKEW_MATERIAL_MS = 3e4;
-var clockSkewMs = null;
-function skewMs() {
-  if (clockSkewMs === null) {
-    const s2 = Number(loadStore().clock_skew_ms);
-    clockSkewMs = Number.isFinite(s2) ? s2 : 0;
-  }
-  return clockSkewMs;
-}
-function now() {
-  return Date.now() + skewMs();
-}
-function noteServerDate(res) {
-  const d = Date.parse(res?.headers?.get("date") || "");
-  if (!Number.isFinite(d)) return;
-  const measured = d - Date.now();
-  const skew = Math.abs(measured) < SKEW_NOISE_MS ? 0 : measured;
-  const prev = skewMs();
-  clockSkewMs = skew;
-  if (Math.abs(skew - prev) >= SKEW_MATERIAL_MS) {
-    try {
-      saveStore({ clock_skew_ms: skew });
-    } catch {
-    }
-    grantLog(
-      skew === 0 ? "machine clock is back in step with the server" : `machine clock is ${Math.round(Math.abs(skew) / 1e3)}s ${skew > 0 ? "behind" : "ahead of"} the server — token hours are judged by the server's clock (fix NTP to stop paying a 401 per rotation)`
-    );
-  }
-}
-
-// js/bridge/errors.ts
-var NOT_SENT = "not-sent";
-var UNKNOWN = "unknown";
-var UpstreamError = class extends Error {
-  static NOT_SENT = NOT_SENT;
-  static UNKNOWN = UNKNOWN;
-  kind;
-  // `presented` carries the access token the refused request actually used —
-  // knowledge only the caller has. The store may have moved on since, and a
-  // token a sibling has already replaced must not be blamed for this refusal.
-  presented;
-  // `outcome` says whether the request this error ends could ALREADY have taken
-  // effect upstream. NOT_SENT — it never reached the server, so a retry is free.
-  // UNKNOWN — it went out and the answer was lost, so a blind retry may write a
-  // second time. Nothing between those two is honest, and saying neither is what
-  // made "retry the call" dangerous: under one sentence lived both outcomes, and
-  // the caller could not tell them apart. Witnessed: an update reported as failed
-  // had applied, and the retry advised by that sentence collided with its own
-  // first write.
-  outcome;
-  // `retryable` marks a network failure worth another knock from the bridge
-  // itself: a connection that failed outright. A timeout is not — it already
-  // spent the whole deadline, and repeating it multiplies the wait.
-  retryable;
-  constructor(message, kind, presented = null, outcome = UNKNOWN, retryable = false) {
-    super(message);
-    this.kind = kind;
-    this.presented = presented;
-    this.outcome = outcome;
-    this.retryable = retryable;
-  }
-};
-var TokenError = class extends Error {
-  oauthError;
-  status;
-  oauthMessage;
-  constructor(message, oauthError, status, oauthMessage) {
-    super(message);
-    this.oauthError = oauthError;
-    this.status = status;
-    this.oauthMessage = oauthMessage;
-  }
-};
-var DEFINITIVE_OAUTH_ERRORS = /* @__PURE__ */ new Set([
-  "invalid_grant",
-  "invalid_token",
-  "invalid_client",
-  "unauthorized_client"
-]);
-var TokenRefused = class extends Error {
-};
-var AuthPending = class extends Error {
-  authorizeUrl;
-  constructor(url, note3) {
-    super(
-      `authorization required — open in a browser: ${url}${note3 ? ` (${note3})` : ""} — or give the bridge a personal access token instead (ISKRON_BRIDGE_TOKEN, or the file <auth-dir>/token)`
-    );
-    this.authorizeUrl = url;
-  }
-};
-var HoldOffError = class extends Error {
-  // retryNow marks the one flavor where an immediate retry is the honest move:
-  // the FIRST early refusal of a needed refresh. The cooldown refusal and a
-  // refusal that repeats both name waits that are real.
-  retryNow;
-  // When the hold ends, on the server-corrected clock — the refresh token's own
-  // hour; null when nobody knows. A caller sits out a short one inside the call
-  // and answers a long one with the login.
-  until;
-  constructor(message, retryNow = false, until = null) {
-    super(message);
-    this.retryNow = retryNow;
-    this.until = until;
-  }
-};
-var DeadGrantError = class extends Error {
-  expired;
-  constructor(message, expired = false) {
-    super(message);
-    this.expired = expired;
-  }
-};
-function errorCode(e) {
-  const err = e;
-  return err?.cause?.code ?? err?.code;
-}
-function errorMessage(e) {
-  return e instanceof Error ? e.message : String(e);
-}
-
-// js/bridge/oauth/discovery.ts
-import { spawn } from "node:child_process";
-import { join as join7 } from "node:path";
-async function fetchJson(url, opts = {}, timeoutMs = 15e3) {
-  const res = await fetch(url, { ...opts, signal: AbortSignal.timeout(timeoutMs) });
-  noteServerDate(res);
-  if (!res.ok) throw new Error(`${opts.method || "GET"} ${url} -> ${res.status}`);
-  return res.json();
-}
-async function discover(wwwAuthenticate) {
-  const meta = await discoverMeta(wwwAuthenticate);
-  saveStore({ meta });
-  return meta;
-}
-async function discoverMeta(wwwAuthenticate) {
-  const u = new URL(CFG.serverUrl);
-  const candidates = [];
-  const m = /resource_metadata="?([^",\s]+)"?/.exec(wwwAuthenticate || "");
-  if (m) candidates.push(m[1]);
-  const path = u.pathname === "/" ? "" : u.pathname;
-  candidates.push(`${u.origin}/.well-known/oauth-protected-resource${path}`);
-  candidates.push(`${u.origin}/.well-known/oauth-protected-resource`);
-  let prm = null;
-  for (const c of candidates) {
-    try {
-      prm = await fetchJson(c);
-      debug(`protected-resource metadata: ${c}`);
-      break;
-    } catch (e) {
-      debug(`no PRM at ${c}: ${errorMessage(e)}`);
-    }
-  }
-  const asBase = prm?.authorization_servers?.[0] || u.origin;
-  const asUrl = new URL(asBase);
-  const asPath = asUrl.pathname === "/" ? "" : asUrl.pathname;
-  const asCandidates = [
-    `${asUrl.origin}/.well-known/oauth-authorization-server${asPath}`,
-    `${asUrl.origin}${asPath}/.well-known/oauth-authorization-server`,
-    `${asUrl.origin}/.well-known/openid-configuration${asPath}`,
-    `${asUrl.origin}${asPath}/.well-known/openid-configuration`
-  ];
-  let as = null;
-  for (const c of asCandidates) {
-    try {
-      as = await fetchJson(c);
-      debug(`AS metadata: ${c}`);
-      break;
-    } catch (e) {
-      debug(`no AS metadata at ${c}: ${errorMessage(e)}`);
-    }
-  }
-  if (!as?.authorization_endpoint || !as?.token_endpoint) {
-    throw new Error(
-      `OAuth discovery failed for ${CFG.serverUrl}: no authorization server metadata reachable`
-    );
-  }
-  const scope = CFG.scope || (prm?.scopes_supported?.length ? prm.scopes_supported.join(" ") : null);
-  return { as, resource: CFG.resource || prm?.resource || CFG.serverUrl, scope };
-}
-var CALLBACK_PORT_RUNGS = 3;
-function callbackPort(rung = 0) {
-  const d = sha256(new URL(CFG.serverUrl).origin);
-  return 42e3 + (d[0] * 256 + d[1] + rung * 613) % 2e3;
-}
-var REGISTRATION_REUSE_MS = 45 * 6e4;
-function registrationReusable(client, redirectUri) {
-  if (!client?.client_id || client.redirect_uri !== redirectUri) return false;
-  return !!client.registered_at && now() - client.registered_at < REGISTRATION_REUSE_MS;
-}
-async function ensureClient(meta, redirectUri) {
-  if (CFG.staticClientId) return { client_id: CFG.staticClientId };
-  const stored = loadStore().client;
-  if (registrationReusable(stored, redirectUri)) return stored;
-  if (stored?.client_id && stored.redirect_uri === redirectUri) {
-    log(
-      stored.registered_at ? "the dynamic client registration is older than the server's cleanup horizon — registering anew for this login" : "the dynamic client registration carries no timestamp (an earlier build wrote it) — registering anew for this login"
-    );
-  }
-  if (!meta.as.registration_endpoint) {
-    throw new Error("server offers no dynamic client registration; pass ISKRON_BRIDGE_CLIENT_ID");
-  }
-  const reg = await fetchJson(meta.as.registration_endpoint, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      client_name: CFG.clientName,
-      redirect_uris: [redirectUri],
-      grant_types: ["authorization_code", "refresh_token"],
-      response_types: ["code"],
-      token_endpoint_auth_method: "none"
-    })
-  });
-  const client = {
-    client_id: reg.client_id,
-    redirect_uri: redirectUri,
-    registered_at: now()
-  };
-  saveStore({ client });
-  log(`registered OAuth client ${reg.client_id}`);
-  return client;
-}
-function openBrowser(url) {
-  log(`authorize in the browser:
-  ${url}`);
-  if (CFG.noBrowser) return;
-  const [cmd, args] = process.platform === "darwin" ? ["open", [url]] : process.platform === "win32" ? windowsOpener(url) : ["xdg-open", [url]];
-  const manually = (e) => log(`could not open a browser (${errorMessage(e)}) — open the URL above manually`);
-  try {
-    const child = spawn(cmd, args, { stdio: "ignore", detached: true });
-    child.on("error", manually);
-    child.unref();
-  } catch (e) {
-    manually(e);
-  }
-}
-function windowsOpener(url) {
-  const powershell = join7(
-    process.env.SystemRoot || "C:\\Windows",
-    "System32",
-    "WindowsPowerShell",
-    "v1.0",
-    "powershell.exe"
-  );
-  const command = `Start-Process -FilePath '${url.replace(/'/g, "''")}'`;
-  return [
-    powershell,
-    [
-      "-NoProfile",
-      "-NonInteractive",
-      "-WindowStyle",
-      "Hidden",
-      "-EncodedCommand",
-      Buffer.from(command, "utf16le").toString("base64")
-    ]
-  ];
-}
-
-// js/bridge/oauth/flow.ts
-import { randomBytes as randomBytes2 } from "node:crypto";
-
 // js/bridge/oauth/authlock.ts
 import {
   mkdirSync as mkdirSync5,
@@ -1313,7 +1144,7 @@ import {
   writeFileSync as writeFileSync4
 } from "node:fs";
 import { connect as connect3 } from "node:net";
-import { basename, dirname as dirname2, join as join8 } from "node:path";
+import { basename, dirname as dirname2, join as join7 } from "node:path";
 function authLockPath() {
   return storePath() + ".auth-pending";
 }
@@ -1387,7 +1218,7 @@ function sweepTabMarks() {
   const prefix = `${basename(authLockPath())}.tab-`;
   try {
     for (const f of readdirSync(dirname2(authLockPath()))) {
-      if (f.startsWith(prefix)) unlinkSync4(join8(dirname2(authLockPath()), f));
+      if (f.startsWith(prefix)) unlinkSync4(join7(dirname2(authLockPath()), f));
     }
   } catch {
   }
@@ -1514,6 +1345,177 @@ function bindCallback(port) {
       });
     });
   });
+}
+
+// js/bridge/oauth/discovery.ts
+import { spawn } from "node:child_process";
+import { join as join8 } from "node:path";
+
+// js/bridge/clock.ts
+var SKEW_NOISE_MS = 5e3;
+var SKEW_MATERIAL_MS = 3e4;
+var clockSkewMs = null;
+function skewMs() {
+  if (clockSkewMs === null) {
+    const s2 = Number(loadStore().clock_skew_ms);
+    clockSkewMs = Number.isFinite(s2) ? s2 : 0;
+  }
+  return clockSkewMs;
+}
+function now() {
+  return Date.now() + skewMs();
+}
+function noteServerDate(res) {
+  const d = Date.parse(res?.headers?.get("date") || "");
+  if (!Number.isFinite(d)) return;
+  const measured = d - Date.now();
+  const skew = Math.abs(measured) < SKEW_NOISE_MS ? 0 : measured;
+  const prev = skewMs();
+  clockSkewMs = skew;
+  if (Math.abs(skew - prev) >= SKEW_MATERIAL_MS) {
+    try {
+      saveStore({ clock_skew_ms: skew });
+    } catch {
+    }
+    grantLog(
+      skew === 0 ? "machine clock is back in step with the server" : `machine clock is ${Math.round(Math.abs(skew) / 1e3)}s ${skew > 0 ? "behind" : "ahead of"} the server — token hours are judged by the server's clock (fix NTP to stop paying a 401 per rotation)`
+    );
+  }
+}
+
+// js/bridge/oauth/discovery.ts
+async function fetchJson(url, opts = {}, timeoutMs = 15e3) {
+  const res = await fetch(url, { ...opts, signal: AbortSignal.timeout(timeoutMs) });
+  noteServerDate(res);
+  if (!res.ok) throw new Error(`${opts.method || "GET"} ${url} -> ${res.status}`);
+  return res.json();
+}
+async function discover(wwwAuthenticate) {
+  const meta = await discoverMeta(wwwAuthenticate);
+  saveStore({ meta });
+  return meta;
+}
+async function discoverMeta(wwwAuthenticate) {
+  const u = new URL(CFG.serverUrl);
+  const candidates = [];
+  const m = /resource_metadata="?([^",\s]+)"?/.exec(wwwAuthenticate || "");
+  if (m) candidates.push(m[1]);
+  const path = u.pathname === "/" ? "" : u.pathname;
+  candidates.push(`${u.origin}/.well-known/oauth-protected-resource${path}`);
+  candidates.push(`${u.origin}/.well-known/oauth-protected-resource`);
+  let prm = null;
+  for (const c of candidates) {
+    try {
+      prm = await fetchJson(c);
+      debug(`protected-resource metadata: ${c}`);
+      break;
+    } catch (e) {
+      debug(`no PRM at ${c}: ${errorMessage(e)}`);
+    }
+  }
+  const asBase = prm?.authorization_servers?.[0] || u.origin;
+  const asUrl = new URL(asBase);
+  const asPath = asUrl.pathname === "/" ? "" : asUrl.pathname;
+  const asCandidates = [
+    `${asUrl.origin}/.well-known/oauth-authorization-server${asPath}`,
+    `${asUrl.origin}${asPath}/.well-known/oauth-authorization-server`,
+    `${asUrl.origin}/.well-known/openid-configuration${asPath}`,
+    `${asUrl.origin}${asPath}/.well-known/openid-configuration`
+  ];
+  let as = null;
+  for (const c of asCandidates) {
+    try {
+      as = await fetchJson(c);
+      debug(`AS metadata: ${c}`);
+      break;
+    } catch (e) {
+      debug(`no AS metadata at ${c}: ${errorMessage(e)}`);
+    }
+  }
+  if (!as?.authorization_endpoint || !as?.token_endpoint) {
+    throw new Error(
+      `OAuth discovery failed for ${CFG.serverUrl}: no authorization server metadata reachable`
+    );
+  }
+  const scope = CFG.scope || (prm?.scopes_supported?.length ? prm.scopes_supported.join(" ") : null);
+  return { as, resource: CFG.resource || prm?.resource || CFG.serverUrl, scope };
+}
+var CALLBACK_PORT_RUNGS = 3;
+function callbackPort(rung = 0) {
+  const d = sha256(new URL(CFG.serverUrl).origin);
+  return 42e3 + (d[0] * 256 + d[1] + rung * 613) % 2e3;
+}
+var REGISTRATION_REUSE_MS = 45 * 6e4;
+function registrationReusable(client, redirectUri) {
+  if (!client?.client_id || client.redirect_uri !== redirectUri) return false;
+  return !!client.registered_at && now() - client.registered_at < REGISTRATION_REUSE_MS;
+}
+async function ensureClient(meta, redirectUri) {
+  if (CFG.staticClientId) return { client_id: CFG.staticClientId };
+  const stored = loadStore().client;
+  if (registrationReusable(stored, redirectUri)) return stored;
+  if (stored?.client_id && stored.redirect_uri === redirectUri) {
+    log(
+      stored.registered_at ? "the dynamic client registration is older than the server's cleanup horizon — registering anew for this login" : "the dynamic client registration carries no timestamp (an earlier build wrote it) — registering anew for this login"
+    );
+  }
+  if (!meta.as.registration_endpoint) {
+    throw new Error("server offers no dynamic client registration; pass ISKRON_BRIDGE_CLIENT_ID");
+  }
+  const reg = await fetchJson(meta.as.registration_endpoint, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      client_name: CFG.clientName,
+      redirect_uris: [redirectUri],
+      grant_types: ["authorization_code", "refresh_token"],
+      response_types: ["code"],
+      token_endpoint_auth_method: "none"
+    })
+  });
+  const client = {
+    client_id: reg.client_id,
+    redirect_uri: redirectUri,
+    registered_at: now()
+  };
+  saveStore({ client });
+  log(`registered OAuth client ${reg.client_id}`);
+  return client;
+}
+function openBrowser(url) {
+  log(`authorize in the browser:
+  ${url}`);
+  if (CFG.noBrowser) return;
+  const [cmd, args] = process.platform === "darwin" ? ["open", [url]] : process.platform === "win32" ? windowsOpener(url) : ["xdg-open", [url]];
+  const manually = (e) => log(`could not open a browser (${errorMessage(e)}) — open the URL above manually`);
+  try {
+    const child = spawn(cmd, args, { stdio: "ignore", detached: true });
+    child.on("error", manually);
+    child.unref();
+  } catch (e) {
+    manually(e);
+  }
+}
+function windowsOpener(url) {
+  const powershell = join8(
+    process.env.SystemRoot || "C:\\Windows",
+    "System32",
+    "WindowsPowerShell",
+    "v1.0",
+    "powershell.exe"
+  );
+  const command = `Start-Process -FilePath '${url.replace(/'/g, "''")}'`;
+  return [
+    powershell,
+    [
+      "-NoProfile",
+      "-NonInteractive",
+      "-WindowStyle",
+      "Hidden",
+      "-EncodedCommand",
+      Buffer.from(command, "utf16le").toString("base64")
+    ]
+  ];
 }
 
 // js/bridge/tokens.ts
@@ -1833,6 +1835,48 @@ function runFlow(meta, cb, login, openTab) {
 var pauses = (v, fallback) => (v || fallback).split(",").map(Number).filter((n) => Number.isFinite(n) && n >= 0);
 var DEAD_RECHECK_MS = pauses(process.env.ISKRON_BRIDGE_DEAD_RECHECK_MS, "1000,2000");
 var IN_CALL_WAIT_MS = Number(process.env.ISKRON_BRIDGE_IN_CALL_WAIT_MS) || 1e4;
+var ORPHAN_FLOW_MS = Number(process.env.ISKRON_BRIDGE_ORPHAN_FLOW_MS) || 5 * 6e4;
+
+// js/bridge/daemon-idle.ts
+var secs = (ms3) => Math.round(ms3 / 1e3);
+function idleWatch(idleMs, busy, leave) {
+  let timer = null;
+  let round = 0;
+  const hold = () => {
+    round++;
+    if (timer) clearTimeout(timer);
+    timer = null;
+  };
+  const arm = () => {
+    hold();
+    if (busy()) return;
+    const mine = round;
+    timer = setTimeout(() => {
+      timer = null;
+      if (busy()) return;
+      const flow = pendingFlow();
+      if (!flow) {
+        log(`no session for ${secs(idleMs)}s — the daemon leaves`);
+        return leave();
+      }
+      log(
+        `idle, but an authorization flow is pending — staying for the human's click, at most ${secs(ORPHAN_FLOW_MS)}s`
+      );
+      timer = setTimeout(() => {
+        timer = null;
+        if (round !== mine || busy()) return;
+        log(
+          `no session and the login unclicked for ${secs(ORPHAN_FLOW_MS)}s — the daemon leaves; the next bridge takes the login over on its link`
+        );
+        leave();
+      }, ORPHAN_FLOW_MS);
+      void flow.finally(() => {
+        if (round === mine) arm();
+      });
+    }, idleMs);
+  };
+  return { arm, hold };
+}
 
 // js/bridge/oauth/refreshlock.ts
 import { linkSync as linkSync2, mkdirSync as mkdirSync6, readFileSync as readFileSync7, unlinkSync as unlinkSync5, writeFileSync as writeFileSync5 } from "node:fs";
@@ -7673,7 +7717,6 @@ function noteAgentWork(at2 = Date.now()) {
 var lastAgentWork = () => W.at;
 
 // js/bridge/session.ts
-var ORPHAN_FLOW_MS = Number(process.env.ISKRON_BRIDGE_ORPHAN_FLOW_MS) || 5 * 6e4;
 var HANDOVER_WAIT_MS = Number(process.env.ISKRON_BRIDGE_HANDOVER_WAIT_MS) || 1e4;
 var counter = 0;
 function applyOrigin(origin) {
@@ -7846,29 +7889,19 @@ async function daemonMain(argv2) {
   let counter2 = 0;
   let lastNotice = null;
   let server = null;
-  let idle = null;
-  const armIdle = () => {
-    if (idle) clearTimeout(idle);
-    idle = null;
-    if (draining2 || sessions.size) return;
-    idle = setTimeout(() => {
-      idle = null;
-      if (sessions.size || draining2) return;
-      const flow = pendingFlow();
-      if (flow) {
-        log("idle, but an authorization flow is pending — staying for the human's click");
-        void flow.finally(armIdle);
-        return;
-      }
-      log(`no session for ${Math.round(IDLE_MS / 1e3)}s — the daemon leaves`);
+  const idle = idleWatch(
+    IDLE_MS,
+    () => draining2 || sessions.size > 0,
+    () => {
       server?.close();
       process.exit(0);
-    }, IDLE_MS);
-  };
+    }
+  );
+  const armIdle = idle.arm;
   const handover = async (to, why) => {
     if (draining2) return;
     draining2 = true;
-    if (idle) clearTimeout(idle);
+    idle.hold();
     log(`handing over to ${to}: ${why} — ${sessions.size} session(s)`);
     beginHandover(why);
     server?.close();
@@ -7969,8 +8002,7 @@ async function daemonMain(argv2) {
       sessions.set(id, traced);
       bridgePids.set(id, hello.pid);
       if (opened) engines.set(id, opened);
-      if (idle) clearTimeout(idle);
-      idle = null;
+      idle.hold();
       log(
         `session ${id} for pid ${hello.pid} (${hello.build}, ${hello.path}) argv=${JSON.stringify(hello.argv)}`
       );
