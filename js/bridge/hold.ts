@@ -9,9 +9,8 @@
 //     сторож под Monitor (подкоманда watchdog) и печатает кадры строками-событиями;
 //   • уведомления MCP `notifications/message` с logger «iskron-channel» — их
 //     читает расширение pi и вкладывает кадр в ход.
-// Сокет один на канал, а канал держит места в нескольких графах (#5838):
-// места рядом с основным — places.ts, кадр идёт к двери места своего графа.
-// Занятость делатель пишет в файл рядом с сокетом (#4231); публикует мост.
+// Сокет один на канал, а канал держит места в нескольких графах (#5838): места рядом
+// с основным — places.ts, кадр идёт к двери места своего графа. Занятость делатель пишет в файл рядом с сокетом (#4231); публикует мост.
 import {
   deadTokenAdvice,
   holdSocket,
@@ -149,16 +148,17 @@ export function wasEvicted(realm: string, karta: string | number, name: string):
 export const hasStatusAddressFor = (realm: string, karta: string | number, name: string): boolean =>
   !!H.currentStatusUrl && !!H.currentKey && isOwn(realm, karta, name);
 
-/** Статусный адрес канала, ключ и id места этого графа (без графа — основного) — для занятости (status.ts). */
+/** Статусный адрес канала, ключ, id и адрес места (@handle:name, как доска; до hello — null) этого графа (без графа — основного) — для занятости (status.ts). */
 export function statusAddress(
   realm?: string,
-): { url: string; key: string; standingId: string | null } | null {
+): { url: string; key: string; standingId: string | null; place: string | null } | null {
   if (!H.currentStatusUrl || !H.currentKey) return null;
   const d = (realm ? extraIn(realm)?.door : undefined) ?? H.door;
   return {
     url: H.currentStatusUrl,
     key: d?.key ?? H.currentKey,
     standingId: d?.standingId ?? null,
+    place: d?.address ?? null,
   };
 }
 

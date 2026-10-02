@@ -2164,7 +2164,7 @@ test("iskron/resume by the session's directory: a bridge restarted after the plu
   const said = (stand.result?.content ?? []).map((c) => c.text ?? "").join("\n");
   // Место уже держит этот мост, и вызов со status — только занятость (#6509); каталог
   // всё равно ложится в запись держания.
-  assert.match(said, /^занятость proba--931--nks-dev: на вахте/, said);
+  assert.match(said, /^занятость @tester:proba: на вахте/, said);
   const hold = readdirSync(standings).find((f) => f.endsWith(".hold"));
   const rec = JSON.parse(readFileSync(join(standings, hold), "utf8"));
   assert.equal(rec.cwd, cwd, "the record names the directory");
@@ -2772,7 +2772,7 @@ test("a bridge leading a place left by word is not talked into a fresher record 
   });
   assert.match(
     status.result?.content?.[0]?.text ?? "",
-    /занятость proba--931--nks-dev/,
+    /занятость @tester:proba/,
     "the bridge still speaks for its own place",
   );
 });
@@ -2918,7 +2918,7 @@ test("a bridge leading a place refuses another role or name without take=true, k
     name: "iskron_channel",
     arguments: { realm: "nks-dev", action: "status", text: "родитель" },
   });
-  assert.match(said(st), /занятость proba--931--nks-dev/, said(st));
+  assert.match(said(st), /занятость @tester:proba/, said(st));
   // The same place — register and stand with take=true — as before.
   const same = await bridge.call("tools/call", 10, {
     name: "iskron_channel",

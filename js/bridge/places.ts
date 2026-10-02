@@ -160,6 +160,7 @@ export function learnFromHello(hello: Frame | null, primary: Place | null): void
     if (!e) continue;
     if (e.realm && unresolved(p.standing.realm)) learnRealm(p.standing.realm, e.realm);
     if (typeof e.standing_id === "string" && e.standing_id) p.door.standingId = e.standing_id;
+    if (typeof e.standing === "string" && e.standing) p.door.address = e.standing;
   }
 }
 

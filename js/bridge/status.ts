@@ -57,7 +57,11 @@ async function statusWord(text: string, realm: string): Promise<[string, boolean
   const st = await publishStatus(text, realm);
   if (!st.ok && !statusAddress()) return [await notHeldHere(realm), true];
   if (st.code === 404) return [`${st.body} ${TURNED_GUIDANCE()}`, true];
-  if (st.ok) return [`занятость ${statusAddress(realm)?.key}: ${text || "(снята)"}`, false];
+  if (st.ok)
+    return [
+      `занятость ${statusAddress(realm)?.place ?? statusAddress(realm)?.key}: ${text || "(снята)"}`,
+      false,
+    ];
   return [st.body, true];
 }
 

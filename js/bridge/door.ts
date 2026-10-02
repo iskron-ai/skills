@@ -84,6 +84,8 @@ export class Door {
   readonly roomBatch = new RoomBatch();
   /** id места у платформы (hello standings[].standing_id) — по нему кадр находит дверь и занятость — место. */
   standingId: string | null = null;
+  /** Адрес места @handle:name из hello (standings[].standing) — так место зовёт доска; до hello неизвестен. */
+  address: string | null = null;
   /** Почему локальный сокет не поднялся; null — поднят или ещё поднимается. */
   listenError: string | null = null;
   private server: Server | null = null;

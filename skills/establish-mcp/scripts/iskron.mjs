@@ -3709,6 +3709,8 @@ var Door = class {
   roomBatch = new RoomBatch();
   /** id места у платформы (hello standings[].standing_id) — по нему кадр находит дверь и занятость — место. */
   standingId = null;
+  /** Адрес места @handle:name из hello (standings[].standing) — так место зовёт доска; до hello неизвестен. */
+  address = null;
   /** Почему локальный сокет не поднялся; null — поднят или ещё поднимается. */
   listenError = null;
   server = null;
@@ -4153,6 +4155,7 @@ function learnFromHello(hello, primary) {
     if (!e) continue;
     if (e.realm && unresolved(p.standing.realm)) learnRealm(p.standing.realm, e.realm);
     if (typeof e.standing_id === "string" && e.standing_id) p.door.standingId = e.standing_id;
+    if (typeof e.standing === "string" && e.standing) p.door.address = e.standing;
   }
 }
 function fitsOf(frame2, places) {
@@ -4432,7 +4435,8 @@ function statusAddress(realm) {
   return {
     url: H2.currentStatusUrl,
     key: d?.key ?? H2.currentKey,
-    standingId: d?.standingId ?? null
+    standingId: d?.standingId ?? null,
+    place: d?.address ?? null
   };
 }
 var heldPlaces = () => [
@@ -5220,7 +5224,11 @@ async function statusWord(text, realm) {
   const st = await publishStatus(text, realm);
   if (!st.ok && !statusAddress()) return [await notHeldHere(realm), true];
   if (st.code === 404) return [`${st.body} ${TURNED_GUIDANCE()}`, true];
-  if (st.ok) return [`занятость ${statusAddress(realm)?.key}: ${text || "(снята)"}`, false];
+  if (st.ok)
+    return [
+      `занятость ${statusAddress(realm)?.place ?? statusAddress(realm)?.key}: ${text || "(снята)"}`,
+      false
+    ];
   return [st.body, true];
 }
 function localStatus(msg) {

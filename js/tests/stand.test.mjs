@@ -744,7 +744,7 @@ test("iskron_stand after an eviction: register only, the busy line still publish
     arguments: { realm: "nks-dev", status: "без роли" },
   });
   assert.ok(!bare.result?.isError, textOf(bare));
-  assert.match(textOf(bare), /^занятость proba--931--nks-dev: без роли/, textOf(bare));
+  assert.match(textOf(bare), /^занятость @tester:proba: без роли/, textOf(bare));
   // Строка ушла, а слух — у другого: ответ говорит это сам (#5036, standing «Занятость»).
   assert.match(textOf(bare), /слух у другого держателя — .*take=true только по слову человека/);
   assert.doesNotMatch(
@@ -787,7 +787,7 @@ test("iskron_stand busy line while the bridge reopens its own socket: published,
   });
   const text = textOf(said);
   assert.ok(!said.result?.isError, text);
-  assert.match(text, /^занятость proba--931--nks-dev: в окне переоткрытия; сокет переоткрывается/);
+  assert.match(text, /^занятость @tester:proba: в окне переоткрытия; сокет переоткрывается/);
   assert.doesNotMatch(text, /другого держателя|take=true/, text);
   assert.equal(fake.state.status, "в окне переоткрытия");
   assert.equal(
@@ -2830,7 +2830,7 @@ test("iskron_stand with status on the seat this bridge holds only sets the busy 
   const same = await stand({ ...seat, status: "пишу пробу" });
   const text = textOf(same);
   assert.ok(!same.result?.isError, text);
-  assert.equal(text.split("\n")[0], `занятость ${key}: пишу пробу`, text);
+  assert.equal(text.split("\n")[0], `занятость @tester:proba: пишу пробу`, text);
   assert.equal(fake.state.status, "пишу пробу");
   assert.match(text, /Сторож к этому месту не прицеплен/, "no watchdog — the listen line comes");
   assert.ok(text.includes(` watchdog ${key}`), text);
@@ -2838,7 +2838,7 @@ test("iskron_stand with status on the seat this bridge holds only sets the busy 
 
   const bare = await stand({ realm: "nks-dev", status: "только граф" });
   assert.ok(!bare.result?.isError, textOf(bare));
-  assert.equal(textOf(bare).split("\n")[0], `занятость ${key}: только граф`, textOf(bare));
+  assert.equal(textOf(bare).split("\n")[0], `занятость @tester:proba: только граф`, textOf(bare));
   assert.equal(fake.state.status, "только граф");
   await untouched("realm and status only");
 
@@ -2858,7 +2858,11 @@ test("iskron_stand with status on the seat this bridge holds only sets the busy 
   assert.ok(heard, `the watchdog did not attach:\n${out}`);
   const cleared = await stand({ realm: "nks-dev", karta: "#931", status: "" });
   assert.ok(!cleared.result?.isError, textOf(cleared));
-  assert.equal(textOf(cleared), `занятость ${key}: (снята)`, "a heard seat gets the one line");
+  assert.equal(
+    textOf(cleared),
+    `занятость @tester:proba: (снята)`,
+    "a heard seat gets the one line",
+  );
   assert.equal(fake.state.status, "", "an empty status clears the line");
   await untouched("clearing");
 
@@ -2924,7 +2928,7 @@ test("satellite: iskron_stand with status and satellite_of on the held .sub-N se
   assert.ok(!s.result?.isError, textOf(s));
   assert.equal(
     textOf(s).split("\n")[0],
-    `занятость ${CALLER}.sub-1--931--nks-dev: спутник пишет`,
+    `занятость @tester:${CALLER}.sub-1: спутник пишет`,
     textOf(s),
   );
   assert.equal(fake.state.status, "спутник пишет");
