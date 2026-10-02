@@ -49,6 +49,8 @@ export interface AuthLock {
   grant?: string;
   /** the same login's code for sign-in from another device, while one stands */
   device?: DeviceCode;
+  /** why no such code is offered: the server has no client for it — the word for the human */
+  device_unset?: string;
 }
 
 export function authLockPath(): string {

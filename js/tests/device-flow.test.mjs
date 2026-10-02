@@ -89,3 +89,19 @@ test("a grant born of a code refreshes through the device client, with the overr
     { ISKRON_BRIDGE_RESOURCE: resource },
   );
 });
+
+// Rauthy mints a grant by code with the client's default audience, whatever
+// resource was asked for (#6619): a token refused twice names that client and
+// its operator, not a resource lever that does not reach this grant.
+test("a grant by code refused twice: the client's audience is named, not ISKRON_BRIDGE_RESOURCE", async () => {
+  await withFake({ device: NAMED }, async ({ fake, dir, bridge }) => {
+    await fake.control({ device_approve: codeIn(await bridge.call("initialize", 1, INIT)) });
+    await grantLanded(dir);
+    await fake.control({ mcpStatus: 401 });
+    const message = (await bridge.call("tools/list", 2)).error?.message ?? "";
+    assert.match(message, /client iskron-bridge/, message);
+    assert.match(message, /default audience on the sign-in server/);
+    assert.ok(message.includes(fake.mcpUrl), "the address the audience must be");
+    assert.doesNotMatch(message, /operator lever: ISKRON_BRIDGE_RESOURCE/);
+  });
+});

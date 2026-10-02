@@ -1,6 +1,7 @@
 import { OWN_CLIENTS } from "../shared/clients.ts";
 import { scoped } from "../shared/scope.ts";
 import { absorbChannelReply, absorbRevokeReply, expectOwnRevoke } from "./absorb.ts";
+import { refusedAudience } from "./audience.ts";
 import { ensureAuth } from "./auth.ts";
 import { BUILD } from "./build.ts";
 import { crossPlaceRefusal, resolveAgainstLed, serialized } from "./call.ts";
@@ -432,16 +433,10 @@ async function deliverOne(msg: JsonRpcMessage): Promise<void> {
           return;
         }
       }
-      // A SECOND 401 — after a refresh already replaced the token — is never
-      // an expiry: the server is refusing tokens as such, and retries cannot
-      // fix that. Name the one likely defect (audience/resource mismatch) and
-      // its lever, or the report that reaches us says only "unauthorized".
       const reason =
         e instanceof UpstreamError
           ? e.kind === "auth" && authRetried
-            ? `upstream refuses even a freshly obtained access token (${e.message}) — not an expiry; ` +
-              `the token's audience/resource may not match what the server validates ` +
-              `(operator lever: ISKRON_BRIDGE_RESOURCE), or the server's token validation is off`
+            ? refusedAudience(e.message)
             : e.message
           : `bridge internal error: ${errorMessage(e)}`;
       log(`request ${hasId ? msg.id : `(notification ${msg?.method})`} failed: ${reason}`);

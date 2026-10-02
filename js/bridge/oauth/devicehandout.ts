@@ -36,7 +36,8 @@ const later = (a?: DeviceCode, b?: DeviceCode): DeviceCode | undefined =>
 /**
  * What a caller joining a login hands out: its loopback link and, while one
  * stands, the same login's code for sign-in from another device (#6570). A
- * code that is dead or dies within a minute is replaced by a fresh one.
+ * code that is dead or dies within a minute is replaced by a fresh one. None
+ * offered because the server has no client for it — the word why.
  */
 export async function joinedPending(
   meta: Meta,
@@ -48,7 +49,7 @@ export async function joinedPending(
     stale && stale.expires_at - Date.now() < RENEW_BEFORE_MS
       ? await renewed(meta, l, stale)
       : stale;
-  return new AuthPending(l.authorize_url, note, device);
+  return new AuthPending(l.authorize_url, note, device ?? l.device_unset);
 }
 
 async function renewed(

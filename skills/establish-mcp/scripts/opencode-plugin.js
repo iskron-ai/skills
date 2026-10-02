@@ -564,6 +564,11 @@ var CFG = new Proxy({}, {
 // js/bridge/oauth/discovery.ts
 var REGISTRATION_REUSE_MS = 45 * 6e4;
 
+// js/bridge/oauth/pacing.ts
+var pauses = (v, fallback) => (v || fallback).split(",").map(Number).filter((n2) => Number.isFinite(n2) && n2 >= 0);
+var DEAD_RECHECK_MS = pauses(process.env.ISKRON_BRIDGE_DEAD_RECHECK_MS, "1000,2000");
+var IN_CALL_WAIT_MS = Number(process.env.ISKRON_BRIDGE_IN_CALL_WAIT_MS) || 1e4;
+
 // js/bridge/oauth/device.ts
 var SLOW_DOWN_MS = Number(process.env.ISKRON_BRIDGE_DEVICE_SLOW_DOWN_MS) || 5e3;
 var REISSUE_PAUSE_MS = Number(process.env.ISKRON_BRIDGE_DEVICE_REISSUE_MS) || 3e4;
@@ -1029,7 +1034,7 @@ var RENEW_BEFORE_MS = 6e4;
 var UNTIL = /valid until (\d{4}-\d\d-\d\d \d\d:\d\d:\d\d) UTC/;
 function deviceOf(message) {
   const link = /from another device: (\S+)/.exec(message)?.[1];
-  if (!link) return null;
+  if (!link) return /no sign-in by code: (.+?) — or give the bridge/.exec(message)?.[1] ?? null;
   const until = UNTIL.exec(message)?.[1];
   return until ? `${link} (код действует до ${until} UTC)` : link;
 }
@@ -1449,7 +1454,7 @@ function createLauncher(d) {
 
 // js/opencode/login.ts
 function elsewhere(device) {
-  return device ? `с другого устройства (телефон подойдёт) — ${device}; либо личный токен в ~/.iskron-bridge/token` : "с другой машины — ssh -L <порт>:127.0.0.1:<порт>, либо личный токен в ~/.iskron-bridge/token";
+  return device && /^https?:/.test(device) ? `с другого устройства (телефон подойдёт) — ${device}; либо личный токен в ~/.iskron-bridge/token` : (device ? `${device}; ` : "") + "с другой машины — ssh -L <порт>:127.0.0.1:<порт>, либо личный токен в ~/.iskron-bridge/token";
 }
 function createLogin(say) {
   let pending = false;

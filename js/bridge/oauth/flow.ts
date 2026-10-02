@@ -100,7 +100,9 @@ function older(l: AuthLock | null): l is AuthLock & { authorize_url: string } {
   return !!l?.authorize_url && !l.state;
 }
 
-const firstCode = (first: Promise<DeviceCode | null>): Promise<DeviceCode | undefined> =>
+const firstCode = (
+  first: Promise<DeviceCode | string | null>,
+): Promise<DeviceCode | string | undefined> =>
   new Promise((resolve) => {
     const t = setTimeout(() => resolve(undefined), DEVICE_FIRST_WAIT_MS);
     t.unref?.();
@@ -319,7 +321,7 @@ function runFlow(
   cb: Callback,
   login: Published,
   openTab: boolean,
-): Promise<DeviceCode | null> {
+): Promise<DeviceCode | string | null> {
   const ours = (l: AuthLock) => l.pid === process.pid && l.state === login.state;
   const redirectUri = redirectFor(login.callback_port);
   // The sign-in page is minted when the human opens the link. The client it is
@@ -362,9 +364,11 @@ function runFlow(
     meta,
     redirectUri,
     login.device,
-    (code) => {
+    (code, unset) => {
       const current = readAuthLock();
-      if (current && ours(current)) writeAuthLock({ ...current, device: code ?? undefined });
+      if (current && ours(current)) {
+        writeAuthLock({ ...current, device: code ?? undefined, device_unset: unset });
+      }
     },
     () => callerCode(login.state),
   );

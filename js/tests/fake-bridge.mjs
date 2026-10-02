@@ -26,6 +26,8 @@
 //                 names — the same login from another device (#6570).
 //   FB_DEVICE_FILE with FB_MODE=auth: file holding that page, re-read on every
 //                 refusal — the bridge issuing a new code when the old one lapses.
+//   FB_DEVICE_UNSET with FB_MODE=auth and no page: the bridge's word why there is
+//                 no code — the server has no client for it (#6619).
 //   FB_DEVICE_LEFT_S with a page: seconds the code has left at each refusal,
 //                 named as its end in UTC, as the bridge names it; default 300.
 //   FB_TOOLS      JSON array for tools/list; default is two tools, one of them
@@ -210,7 +212,9 @@ process.stdin.on("data", (chunk) => {
                   .replace("T", " ")
                   .slice(0, 19) +
                 " UTC; a call in its last minute or later brings a new one)"
-              : "") +
+              : process.env.FB_DEVICE_UNSET
+                ? ` — no sign-in by code: ${process.env.FB_DEVICE_UNSET}`
+                : "") +
             " — or give the bridge a personal access " +
             "token instead (ISKRON_BRIDGE_TOKEN, or the file <auth-dir>/token). " +
             "The call never reached the server, so nothing was applied — retry freely. " +

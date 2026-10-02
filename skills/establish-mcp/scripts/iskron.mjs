@@ -855,6 +855,7 @@ function readArgs(argv2) {
     resource: envOf("ISKRON_BRIDGE_RESOURCE") || null,
     staticClientId: envOf("ISKRON_BRIDGE_CLIENT_ID") || null,
     deviceClientId: envOf("ISKRON_BRIDGE_DEVICE_CLIENT") || null,
+    deviceRegister: envOf("ISKRON_BRIDGE_DEVICE_REGISTER") === "1",
     pat: null,
     patSource: null,
     serverSource: "argument",
@@ -1130,7 +1131,7 @@ var AuthPending = class extends Error {
   authorizeUrl;
   constructor(url, note3, device) {
     super(
-      `authorization required — open in a browser: ${url}${note3 ? ` (${note3})` : ""}` + (device ? ` — or sign in from another device: ${device.link} (code ${device.user_code}, valid until ${utcTime(device.expires_at)}; a call in its last minute or later brings a new one)` : "") + ` — or give the bridge a personal access token instead (ISKRON_BRIDGE_TOKEN, or the file <auth-dir>/token)`
+      `authorization required — open in a browser: ${url}${note3 ? ` (${note3})` : ""}` + (typeof device === "string" ? ` — no sign-in by code: ${device}` : device ? ` — or sign in from another device: ${device.link} (code ${device.user_code}, valid until ${utcTime(device.expires_at)}; a call in its last minute or later brings a new one)` : "") + ` — or give the bridge a personal access token instead (ISKRON_BRIDGE_TOKEN, or the file <auth-dir>/token)`
     );
     this.authorizeUrl = url;
   }
@@ -1349,35 +1350,6 @@ async function post(url, type, body) {
     throw new DeviceRefusal(`POST ${url} -> ${res.status} ${error ?? ""} ${said}`.trim(), error);
   }
   return answer;
-}
-var DEVICE_CLIENT_ID = "iskron-bridge";
-var clientRefused = (e) => e instanceof DeviceRefusal && /^(invalid_client|unauthorized_client)$/.test(e.error ?? "");
-async function codeThrough(meta, redirectUri, clientId) {
-  const id = clientId ?? (CFG.deviceClientId || DEVICE_CLIENT_ID);
-  try {
-    return await issueDeviceCode(meta, id);
-  } catch (e) {
-    if (!clientRefused(e)) throw e;
-    log(`device client ${id} refused (${errorMessage(e)}) — registering one`);
-    return await issueDeviceCode(meta, await registerDeviceClient(meta, redirectUri));
-  }
-}
-async function registerDeviceClient(meta, redirectUri) {
-  if (CFG.staticClientId) return CFG.staticClientId;
-  if (!meta.as.registration_endpoint) {
-    throw new DeviceRefusal("server offers no dynamic client registration", void 0);
-  }
-  const reg = await post(meta.as.registration_endpoint, "json", {
-    client_name: CFG.clientName,
-    redirect_uris: [redirectUri],
-    grant_types: [DEVICE_GRANT, "refresh_token"],
-    token_endpoint_auth_method: "none"
-  });
-  if (typeof reg.client_id !== "string") {
-    throw new DeviceRefusal("registration answered without a client_id", void 0);
-  }
-  log(`registered OAuth client ${reg.client_id} for sign-in from another device`);
-  return reg.client_id;
 }
 async function issueDeviceCode(meta, clientId) {
   const form = { client_id: clientId };
@@ -1605,6 +1577,64 @@ function bindCallback(port) {
   });
 }
 
+// js/bridge/oauth/deviceclient.ts
+var DEVICE_CLIENT_ID = "iskron-bridge";
+var clientRefused = (e) => e instanceof DeviceRefusal && /^(invalid_client|unauthorized_client)$/.test(e.error ?? "");
+var DeviceUnset = class extends DeviceRefusal {
+};
+async function codeThrough(meta, redirectUri, clientId) {
+  const named = CFG.deviceClientId || DEVICE_CLIENT_ID;
+  const id = clientId ?? named;
+  try {
+    return await issueDeviceCode(meta, id);
+  } catch (e) {
+    if (!clientRefused(e)) throw e;
+    if (CFG.deviceRegister) {
+      log(`device client ${id} refused (${errorMessage(e)}) — registering one`);
+      return await issueDeviceCode(meta, await registerDeviceClient(meta, redirectUri));
+    }
+    if (id !== named) return await codeThrough(meta, redirectUri, void 0);
+    throw new DeviceUnset(
+      L(
+        `вход по коду на этом сервере не настроен: нет клиента ${id} — ход оператора сервера авторизации`,
+        `sign-in by code is not set up on this server: there is no client ${id} — a move for the operator of the sign-in server`
+      ),
+      e.error
+    );
+  }
+}
+async function registerDeviceClient(meta, redirectUri) {
+  if (CFG.staticClientId) return CFG.staticClientId;
+  if (!meta.as.registration_endpoint) {
+    throw new DeviceRefusal("server offers no dynamic client registration", void 0);
+  }
+  const reg = await post(meta.as.registration_endpoint, "json", {
+    client_name: CFG.clientName,
+    redirect_uris: [redirectUri],
+    grant_types: [DEVICE_GRANT, "refresh_token"],
+    token_endpoint_auth_method: "none"
+  });
+  if (typeof reg.client_id !== "string") {
+    throw new DeviceRefusal("registration answered without a client_id", void 0);
+  }
+  log(`registered OAuth client ${reg.client_id} for sign-in from another device`);
+  return reg.client_id;
+}
+
+// js/bridge/oauth/pacing.ts
+var pauses = (v, fallback) => (v || fallback).split(",").map(Number).filter((n) => Number.isFinite(n) && n >= 0);
+var DEAD_RECHECK_MS = pauses(process.env.ISKRON_BRIDGE_DEAD_RECHECK_MS, "1000,2000");
+var IN_CALL_WAIT_MS = Number(process.env.ISKRON_BRIDGE_IN_CALL_WAIT_MS) || 1e4;
+var pauseUntil = (signal, ms3) => new Promise((r) => {
+  const done = () => {
+    clearTimeout(t);
+    signal.removeEventListener("abort", done);
+    r();
+  };
+  const t = setTimeout(done, ms3);
+  signal.addEventListener("abort", done, { once: true });
+});
+
 // js/bridge/tokens.ts
 function jwtClaims(token) {
   try {
@@ -1661,12 +1691,15 @@ async function tokenRequestOnce(meta, params) {
       body.message
     );
   }
-  const refresh = body.refresh_token ?? loadStore().tokens?.refresh_token;
+  const before = loadStore().tokens;
+  const refresh = body.refresh_token ?? before?.refresh_token;
+  const byCode = params.grant_type === DEVICE_GRANT || params.grant_type === "refresh_token" && !!before?.by_code && before.client_id === params.client_id;
   const tokens = {
     access_token: body.access_token,
     refresh_token: refresh,
     ...tokenSchedule(body, refresh),
-    ...params.client_id ? { client_id: params.client_id } : {}
+    ...params.client_id ? { client_id: params.client_id } : {},
+    ...byCode ? { by_code: true } : {}
   };
   saveStore({ tokens });
   clearGrantState();
@@ -1696,23 +1729,21 @@ function deviceSide(meta, redirectUri, resume, onCode, called) {
   let tellFirst = () => {
   };
   const first2 = new Promise((r) => tellFirst = r);
-  const pause = (ms3) => new Promise((r) => {
-    const done = () => {
-      clearTimeout(t);
-      halt.signal.removeEventListener("abort", done);
-      r();
-    };
-    const t = setTimeout(done, ms3);
-    halt.signal.addEventListener("abort", done, { once: true });
-  });
+  let unset2;
+  const pause = (ms3) => pauseUntil(halt.signal, ms3);
   const fresh = async (clientId) => {
     try {
       const code = await codeThrough(meta, redirectUri, clientId);
       return halt.signal.aborted ? null : code;
     } catch (e) {
+      if (e instanceof DeviceUnset) unset2 = e.message;
       log(`sign-in from another device not offered: ${errorMessage(e)}`);
       return null;
     }
+  };
+  const giveUp = () => {
+    onCode(null, unset2);
+    return never;
   };
   const newer = (code) => {
     const r = called();
@@ -1724,7 +1755,8 @@ function deviceSide(meta, redirectUri, resume, onCode, called) {
       return never;
     }
     let code = resume && resume.expires_at > Date.now() ? resume : await fresh(resume?.client_id);
-    tellFirst(code);
+    tellFirst(code ?? unset2 ?? null);
+    if (unset2) return giveUp();
     onCode(code);
     let clientId = code?.client_id ?? resume?.client_id;
     for (; ; ) {
@@ -1732,6 +1764,7 @@ function deviceSide(meta, redirectUri, resume, onCode, called) {
         await pause(REISSUE_PAUSE_MS);
         if (halt.signal.aborted) return never;
         code = await fresh(clientId);
+        if (unset2) return giveUp();
         if (code) onCode(code);
       }
       clientId = code.client_id;
@@ -1770,6 +1803,7 @@ function deviceSide(meta, redirectUri, resume, onCode, called) {
       if (renew) {
         code = newer(code) ?? await fresh(clientId);
         if (halt.signal.aborted) return never;
+        if (unset2) return giveUp();
         onCode(code);
       }
     }
@@ -1803,7 +1837,7 @@ var later = (a, b) => !a || b && b.expires_at > a.expires_at ? b : a;
 async function joinedPending(meta, l, note3) {
   const stale = later(l.device, callerCode(l.state));
   const device = stale && stale.expires_at - Date.now() < RENEW_BEFORE_MS ? await renewed(meta, l, stale) : stale;
-  return new AuthPending(l.authorize_url, note3, device);
+  return new AuthPending(l.authorize_url, note3, device ?? l.device_unset);
 }
 async function renewed(meta, l, stale) {
   const alive2 = (c) => c && c.expires_at > Date.now() ? c : void 0;
@@ -2034,9 +2068,11 @@ function runFlow(meta, cb, login, openTab) {
     meta,
     redirectUri,
     login.device,
-    (code) => {
+    (code, unset2) => {
       const current = readAuthLock();
-      if (current && ours(current)) writeAuthLock({ ...current, device: code ?? void 0 });
+      if (current && ours(current)) {
+        writeAuthLock({ ...current, device: code ?? void 0, device_unset: unset2 });
+      }
     },
     () => callerCode(login.state)
   );
@@ -2087,11 +2123,6 @@ function runFlow(meta, cb, login, openTab) {
   flows.add(flow);
   return device.first;
 }
-
-// js/bridge/oauth/pacing.ts
-var pauses = (v, fallback) => (v || fallback).split(",").map(Number).filter((n) => Number.isFinite(n) && n >= 0);
-var DEAD_RECHECK_MS = pauses(process.env.ISKRON_BRIDGE_DEAD_RECHECK_MS, "1000,2000");
-var IN_CALL_WAIT_MS = Number(process.env.ISKRON_BRIDGE_IN_CALL_WAIT_MS) || 1e4;
 
 // js/bridge/oauth/refreshlock.ts
 import { linkSync as linkSync2, mkdirSync as mkdirSync6, readFileSync as readFileSync8, unlinkSync as unlinkSync5, writeFileSync as writeFileSync6 } from "node:fs";
@@ -6095,6 +6126,17 @@ async function underCap(work) {
   return got !== "cap";
 }
 
+// js/bridge/audience.ts
+function refusedAudience(upstream) {
+  const head = `upstream refuses even a freshly obtained access token (${upstream}) — not an expiry; the token's audience/resource may not match what the server validates`;
+  const s2 = loadStore();
+  if (!s2.tokens?.by_code) {
+    return `${head} (operator lever: ISKRON_BRIDGE_RESOURCE), or the server's token validation is off`;
+  }
+  const resource = s2.meta ? resourceOf(s2.meta) : CFG.serverUrl;
+  return `${head}: this grant came by sign-in by code through client ${s2.tokens.client_id ?? "?"}, so its audience is that client's default audience on the sign-in server, which must be ${resource} — a move for the operator of the sign-in server; ISKRON_BRIDGE_RESOURCE does not reach a grant by code`;
+}
+
 // js/bridge/satellite.ts
 import { randomBytes as randomBytes3 } from "node:crypto";
 import {
@@ -7916,7 +7958,7 @@ async function deliverOne(msg) {
           return;
         }
       }
-      const reason = e instanceof UpstreamError ? e.kind === "auth" && authRetried ? `upstream refuses even a freshly obtained access token (${e.message}) — not an expiry; the token's audience/resource may not match what the server validates (operator lever: ISKRON_BRIDGE_RESOURCE), or the server's token validation is off` : e.message : `bridge internal error: ${errorMessage(e)}`;
+      const reason = e instanceof UpstreamError ? e.kind === "auth" && authRetried ? refusedAudience(e.message) : e.message : `bridge internal error: ${errorMessage(e)}`;
       log(`request ${hasId ? msg.id : `(notification ${msg?.method})`} failed: ${reason}`);
       if (hasId) emit(syntheticError(msg.id, reason, outcome));
       return;

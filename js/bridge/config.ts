@@ -104,6 +104,7 @@ export function readArgs(argv: string[]): Config {
     resource: envOf("ISKRON_BRIDGE_RESOURCE") || null,
     staticClientId: envOf("ISKRON_BRIDGE_CLIENT_ID") || null,
     deviceClientId: envOf("ISKRON_BRIDGE_DEVICE_CLIENT") || null,
+    deviceRegister: envOf("ISKRON_BRIDGE_DEVICE_REGISTER") === "1",
     pat: null,
     patSource: null,
     serverSource: "argument",

@@ -1,8 +1,10 @@
 import { errorMessage, TokenError } from "../errors.ts";
 import { debug, log } from "../streams.ts";
 import { type Meta } from "../types.ts";
-import { codeThrough, DEVICE_GRANT, type DeviceCode, deviceOffered } from "./devicecode.ts";
+import { codeThrough, DeviceUnset } from "./deviceclient.ts";
+import { DEVICE_GRANT, type DeviceCode, deviceOffered } from "./devicecode.ts";
 import { resourceOf } from "./discovery.ts";
+import { pauseUntil } from "./pacing.ts";
 import { tokenRequest } from "./tokenrequest.ts";
 
 // RFC 8628 §3.5: slow_down widens the interval by five seconds for good.
@@ -12,8 +14,11 @@ const REISSUE_PAUSE_MS = Number(process.env.ISKRON_BRIDGE_DEVICE_REISSUE_MS) || 
 
 /** The device side of one published login. */
 export interface DeviceSide {
-  /** the first code — null when the server offers no device grant or would not issue one */
-  first: Promise<DeviceCode | null>;
+  /**
+   * the first code — null when the server offers no device grant or would not
+   * issue one; a string, the word for the human, when it has no client for it
+   */
+  first: Promise<DeviceCode | string | null>;
   /** the grant is stored; rejects when the human refused on the other device */
   landed: Promise<void>;
   /** the login ended another way: polling stops, quietly */
@@ -25,8 +30,9 @@ const never = new Promise<never>(() => {});
 /**
  * Runs the device side of the machine's one login: the loopback link and this
  * code are one login, whichever lands first stores the grant, the other is
- * stopped. `onCode` hears every code issued (null when none stands), so the
- * login's record — what every bridge of the machine hands out — stays current.
+ * stopped. `onCode` hears every code issued (null when none stands, with the
+ * word why when the server has no client for it — then the side stops asking),
+ * so the login's record — what every bridge of the machine hands out — stays current.
  * `called` reads the code a caller issued: one that found the record's code
  * dead or dying asks a fresh one (devicehandout.ts), and that one is polled
  * from then on, the old one never again.
@@ -35,22 +41,14 @@ export function deviceSide(
   meta: Meta,
   redirectUri: string,
   resume: DeviceCode | undefined,
-  onCode: (code: DeviceCode | null) => void,
+  onCode: (code: DeviceCode | null, unset?: string) => void,
   called: () => DeviceCode | undefined,
 ): DeviceSide {
   const halt = new AbortController();
-  let tellFirst: (c: DeviceCode | null) => void = () => {};
-  const first = new Promise<DeviceCode | null>((r) => (tellFirst = r));
-  const pause = (ms: number): Promise<void> =>
-    new Promise((r) => {
-      const done = (): void => {
-        clearTimeout(t);
-        halt.signal.removeEventListener("abort", done);
-        r();
-      };
-      const t = setTimeout(done, ms);
-      halt.signal.addEventListener("abort", done, { once: true });
-    });
+  let tellFirst: (c: DeviceCode | string | null) => void = () => {};
+  const first = new Promise<DeviceCode | string | null>((r) => (tellFirst = r));
+  let unset: string | undefined;
+  const pause = (ms: number): Promise<void> => pauseUntil(halt.signal, ms);
 
   // A fresh code in place of the one polled so far, which is dropped. null —
   // the login stopped meanwhile, or no code was to be had.
@@ -59,9 +57,15 @@ export function deviceSide(
       const code = await codeThrough(meta, redirectUri, clientId);
       return halt.signal.aborted ? null : code;
     } catch (e) {
+      if (e instanceof DeviceUnset) unset = e.message;
       log(`sign-in from another device not offered: ${errorMessage(e)}`);
       return null;
     }
+  };
+  // No client on the server: nothing to poll and nothing to ask again.
+  const giveUp = (): Promise<never> => {
+    onCode(null, unset);
+    return never;
   };
   // A newer code a caller issued, if there is one.
   const newer = (code: DeviceCode): DeviceCode | null => {
@@ -75,7 +79,8 @@ export function deviceSide(
       return never;
     }
     let code = resume && resume.expires_at > Date.now() ? resume : await fresh(resume?.client_id);
-    tellFirst(code);
+    tellFirst(code ?? unset ?? null);
+    if (unset) return giveUp();
     onCode(code);
     let clientId = code?.client_id ?? resume?.client_id;
     for (;;) {
@@ -83,6 +88,7 @@ export function deviceSide(
         await pause(REISSUE_PAUSE_MS);
         if (halt.signal.aborted) return never;
         code = await fresh(clientId);
+        if (unset) return giveUp();
         if (code) onCode(code);
       }
       clientId = code.client_id;
@@ -121,6 +127,7 @@ export function deviceSide(
       if (renew) {
         code = newer(code) ?? (await fresh(clientId));
         if (halt.signal.aborted) return never;
+        if (unset) return giveUp();
         onCode(code);
       }
     }

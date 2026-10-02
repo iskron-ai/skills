@@ -18,11 +18,15 @@ export interface Login {
   race(ready: () => Promise<void>): Promise<void>;
 }
 
-/** Как войти не с машины OpenCode: страница с кодом, если сервер её даёт, иначе туннель или токен. */
+/**
+ * Как войти не с машины OpenCode: страница с кодом, если сервер её даёт, иначе
+ * туннель или токен. `device` без адреса — слово моста, почему кода нет.
+ */
 export function elsewhere(device: string | null): string {
-  return device
+  return device && /^https?:/.test(device)
     ? `с другого устройства (телефон подойдёт) — ${device}; либо личный токен в ~/.iskron-bridge/token`
-    : "с другой машины — ssh -L <порт>:127.0.0.1:<порт>, либо личный токен в ~/.iskron-bridge/token";
+    : (device ? `${device}; ` : "") +
+        "с другой машины — ssh -L <порт>:127.0.0.1:<порт>, либо личный токен в ~/.iskron-bridge/token";
 }
 
 export function createLogin(say: Say): Login {

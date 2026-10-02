@@ -12,10 +12,13 @@ const RENEW_BEFORE_MS = 60_000;
 
 const UNTIL = /valid until (\d{4}-\d\d-\d\d \d\d:\d\d:\d\d) UTC/;
 
-/** Страница входа с кодом и конец её срока — как мост назвал их в отказе. */
+/**
+ * Страница входа с кодом и конец её срока — как мост назвал их в отказе; нет
+ * её, потому что на сервере нет клиента входа по коду, — слово моста, почему.
+ */
 export function deviceOf(message: string): string | null {
   const link = /from another device: (\S+)/.exec(message)?.[1];
-  if (!link) return null;
+  if (!link) return /no sign-in by code: (.+?) — or give the bridge/.exec(message)?.[1] ?? null;
   const until = UNTIL.exec(message)?.[1];
   return until ? `${link} (код действует до ${until} UTC)` : link;
 }

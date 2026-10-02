@@ -223,6 +223,10 @@ const ENV_KEYS = [
   "FB_LOG",
   "FB_MODE",
   "FB_AUTHED",
+  "FB_DEVICE",
+  "FB_DEVICE_FILE",
+  "FB_DEVICE_LEFT_S",
+  "FB_DEVICE_UNSET",
   "FB_TOOLS",
   "FB_PAGINATE",
   "FB_TOOLS_FILE",
@@ -786,6 +790,35 @@ test("a new code from the bridge: the plugin re-tells the login with the new pag
     writeFileSync(deviceFile, third);
     writeFileSync(`${record}.device`, JSON.stringify({ code: { link: third } }));
     await until(() => rec.said().includes(third), "the code a caller put beside the record");
+  } finally {
+    writeFileSync(authed, "");
+    await rec.stop();
+    process.env.ISKRON_BRIDGE_AUTH_DIR = prevAuth;
+  }
+});
+
+// No client for sign-in by code on the server (#6619): the bridge offers no code
+// and says why — the plugin passes that word on, beside the tunnel and token.
+test("no code because the server has no client: the line and the status name the operator's move", async () => {
+  const authDir = mkdtempSync(join(SANDBOX, "auth-device-unset-"));
+  const prevAuth = process.env.ISKRON_BRIDGE_AUTH_DIR;
+  process.env.ISKRON_BRIDGE_AUTH_DIR = authDir;
+  const authed = join(SANDBOX, "device-unset.authed");
+  const word =
+    "вход по коду на этом сервере не настроен: нет клиента iskron-bridge — ход оператора сервера авторизации";
+  const b = bridgeEnv("device-unset", {
+    FB_MODE: "auth",
+    FB_AUTHED: authed,
+    FB_DEVICE_UNSET: word,
+    ISKRON_MCP_AUTH_POLL_MS: 50,
+  });
+  const rec = await plugin(b.env);
+  try {
+    await until(() => /нужен вход/.test(rec.said()), "the login line");
+    assert.ok(rec.said().includes(word), `the line names the word: ${rec.said()}`);
+    assert.ok(!/с другого устройства/.test(rec.said()), "no page with a code is promised");
+    const status = (await rec.call("iskron_bridge", {}, "s-device-unset")).content;
+    assert.ok(status.includes(word), "the status names it too");
   } finally {
     writeFileSync(authed, "");
     await rec.stop();

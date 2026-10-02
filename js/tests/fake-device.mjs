@@ -7,7 +7,8 @@
 // answered slow_down and counted, so a probe can see a bridge that does not
 // keep pace. `client` names a client set up by the operator, as the device
 // login's named client is; any other id must be registered first, and an
-// unknown one is refused with RFC 6749's word invalid_client. The human on the
+// unknown one is refused as auth.iskron.ru refuses it, observed live: 404
+// invalid_client «`client_id` does not exist». The human on the
 // other device is played through /control: { device_approve: <user_code> } or
 // { device_deny: <user_code> }.
 
@@ -56,11 +57,11 @@ export function deviceAuthorize(dev, st, form, base, json, res) {
   const reg =
     st.clients.get(clientId) ??
     (clientId === dev.client ? { grant_types: [DEVICE_GRANT, "refresh_token"] } : null);
-  const refuse = (status, error) => {
+  const refuse = (status, error, said) => {
     dev.asked.push({ client_id: clientId, answer: error });
-    return json(res, status, { error });
+    return json(res, status, { error, ...(said ? { error_description: said } : {}) });
   };
-  if (!reg) return refuse(404, "invalid_client");
+  if (!reg) return refuse(404, "invalid_client", "`client_id` does not exist");
   if (!(reg.grant_types ?? []).includes(DEVICE_GRANT)) return refuse(403, "unauthorized_client");
   dev.asked.push({ client_id: clientId, answer: "code" });
   const deviceCode = randomBytes(16).toString("hex");

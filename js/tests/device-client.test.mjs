@@ -2,7 +2,8 @@
 // client the code is asked for, and what the answer tells the human of its
 // code's end. Rauthy puts no resource in a device grant's audience, so only a
 // client the operator set up with the mcp audience yields a token mcp accepts;
-// registration is the fallback where the server knows no such client.
+// where the server knows no such client, no code is offered — registration
+// only by the operator's switch.
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
@@ -42,21 +43,47 @@ test("ISKRON_BRIDGE_DEVICE_CLIENT names another client", async () => {
   );
 });
 
-test("the named client refused: a registered one is the fallback, and the login lands", async () => {
-  await withFake({ device: { interval: 1 } }, async ({ fake, dir, bridge }) => {
-    const code = codeIn(await bridge.call("initialize", 1, INIT));
-    const [named, registered] = fake.state.device.asked;
-    assert.deepEqual(named, { client_id: "iskron-bridge", answer: "invalid_client" });
-    assert.equal(registered?.answer, "code");
-    assert.equal(fake.state.counts.register, 1);
-    await fake.control({ device_approve: code });
-    await grantLanded(dir);
-    assert.equal(readStore(dir).tokens.client_id, registered.client_id);
+// A registered client has no default audience: its grant is refused by mcp,
+// and nothing but wiping the store undoes it. So no code, and the word why.
+test("no named client on the server: no code, the word names the operator's move, the local link stays", async () => {
+  await withFake({ device: { interval: 1 } }, async ({ fake, bridge }) => {
+    const message = (await bridge.call("initialize", 1, INIT)).error?.message ?? "";
+    const links = linksIn(message);
+    assert.ok(links.local, `the local link stays: ${message}`);
+    assert.equal(links.device, null, "no sign-in page with a code");
+    assert.match(message, /вход по коду на этом сервере не настроен: нет клиента iskron-bridge/);
+    assert.match(message, /ход оператора сервера авторизации/);
+    assert.match(message, /personal access token/, "the token stays offered");
+    assert.equal(fake.state.counts.register, 0, "no dynamic registration");
+    assert.deepEqual(fake.state.device.asked, [
+      { client_id: "iskron-bridge", answer: "invalid_client" },
+    ]);
+    const again = (await bridge.call("initialize", 2, INIT)).error?.message ?? "";
+    assert.match(again, /нет клиента iskron-bridge/, "a joining call names it too");
+    await sleep(1_500);
+    assert.equal(fake.state.device.asked.length, 1, "the server is not asked again");
   });
 });
 
+test("ISKRON_BRIDGE_DEVICE_REGISTER=1: the named client refused, a registered one carries the code", async () => {
+  await withFake(
+    { device: { interval: 1 } },
+    async ({ fake, dir, bridge }) => {
+      const code = codeIn(await bridge.call("initialize", 1, INIT));
+      const [named, registered] = fake.state.device.asked;
+      assert.deepEqual(named, { client_id: "iskron-bridge", answer: "invalid_client" });
+      assert.equal(registered?.answer, "code");
+      assert.equal(fake.state.counts.register, 1);
+      await fake.control({ device_approve: code });
+      await grantLanded(dir);
+      assert.equal(readStore(dir).tokens.client_id, registered.client_id);
+    },
+    { ISKRON_BRIDGE_DEVICE_REGISTER: "1" },
+  );
+});
+
 test("the answer names the moment the code dies, in UTC", async () => {
-  await withFake({ device: { interval: 1 } }, async ({ bridge }) => {
+  await withFake({ device: { interval: 1, client: "iskron-bridge" } }, async ({ bridge }) => {
     const before = Date.now();
     const message = (await bridge.call("initialize", 1, INIT)).error?.message ?? "";
     const after = Date.now();
@@ -69,7 +96,8 @@ test("the answer names the moment the code dies, in UTC", async () => {
 });
 
 test("a call that finds the code dead hands out a fresh one", async () => {
-  await withFake({ device: { interval: 5, expiresIn: 1 } }, async ({ fake, bridge }) => {
+  const device = { interval: 5, expiresIn: 1, client: "iskron-bridge" };
+  await withFake({ device }, async ({ fake, bridge }) => {
     const first = codeIn(await bridge.call("initialize", 1, INIT));
     await sleep(1_500);
     const next = codeIn(await bridge.call("initialize", 2, INIT));
@@ -79,7 +107,8 @@ test("a call that finds the code dead hands out a fresh one", async () => {
 });
 
 test("a call that finds under a minute left hands out a fresh code, and that one is polled", async () => {
-  await withFake({ device: { interval: 1, expiresIn: 30 } }, async ({ fake, dir, bridge }) => {
+  const device = { interval: 1, expiresIn: 30, client: "iskron-bridge" };
+  await withFake({ device }, async ({ fake, dir, bridge }) => {
     const first = codeIn(await bridge.call("initialize", 1, INIT));
     const next = codeIn(await bridge.call("initialize", 2, INIT));
     assert.notEqual(next, first, "a code with 30 s left is not handed out");
