@@ -545,6 +545,7 @@ export async function startFakeNks(opts = {}) {
       if (f.get("grant_type") === "refresh_token") {
         st.counts.refresh++;
         st.resources.refresh = f.get("resource");
+        st.refreshClientId = f.get("client_id");
         if (st.refreshValidFrom && st.snow() < st.refreshValidFrom) {
           st.counts.early_refresh++;
           return json(res, 400, {

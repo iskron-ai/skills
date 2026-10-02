@@ -1124,6 +1124,41 @@ test("a login refusal at the handshake keeps the bridge alive, names the link, a
   }
 });
 
+// The sign-in page with a code (#6570) lives about five minutes and the bridge
+// issues the next one; the extension, asking again while it waits, tells the
+// human the new page — the first notice alone would leave a dead one.
+test("a new code from the bridge while the login waits: the human is told the new page", async () => {
+  const authed = join(SANDBOX, "pi-device-renew.authed");
+  const deviceFile = join(SANDBOX, "pi-device-renew.page");
+  const first = "https://auth.example/device?code=OLD11111";
+  const next = "https://auth.example/device?code=NEW22222";
+  writeFileSync(deviceFile, first);
+  const { env } = bridgeEnv("device-renew", {
+    FB_MODE: "auth",
+    FB_AUTHED: authed,
+    FB_DEVICE_FILE: deviceFile,
+    ISKRON_MCP_AUTH_POLL_MS: 50,
+    ISKRON_MCP_READY_WAIT_MS: 300,
+  });
+  const rec = await session(env);
+  try {
+    await delay(300);
+    assert.ok(rec.said().includes(first), "the first notice names the page with the code");
+    writeFileSync(deviceFile, next);
+    const deadline = Date.now() + 3000;
+    while (!rec.said().includes(next) && Date.now() < deadline) await delay(50);
+    assert.ok(rec.said().includes(next), "the new page reaches the human");
+    assert.equal(
+      rec.said().split("нужен вход").length - 1,
+      2,
+      "one notice per code, not per retry",
+    );
+  } finally {
+    writeFileSync(authed, "");
+    await rec.stop();
+  }
+});
+
 // The same -32001 carries every synthetic refusal of the bridge; only the word
 // «authorization required» is a login to wait for — the rest is still a bridge
 // that did not come up, said once and aloud.

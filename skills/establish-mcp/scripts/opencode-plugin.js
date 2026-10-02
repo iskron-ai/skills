@@ -104,10 +104,10 @@ async function enterCase(l, call, satelliteOf, placeName) {
     await call("iskron_stand", stand);
   } catch (e) {
     const why = e.message;
-    const join6 = `iskron_case(action="join", room="${room}")`;
+    const join7 = `iskron_case(action="join", room="${room}")`;
     return L(
-      `Искрон: строка запуска — не встал: ${why}. Встань сам (iskron_stand) и войди в дело №${l.no}: ${join6}.`,
-      `Iskron: launch line — not seated: ${why}. Take your seat yourself (iskron_stand) and enter case №${l.no}: ${join6}.`
+      `Искрон: строка запуска — не встал: ${why}. Встань сам (iskron_stand) и войди в дело №${l.no}: ${join7}.`,
+      `Iskron: launch line — not seated: ${why}. Take your seat yourself (iskron_stand) and enter case №${l.no}: ${join7}.`
     );
   }
   const place = placeName() || L("своим местом", "in a seat of its own");
@@ -1009,18 +1009,53 @@ import {
   accessSync,
   constants,
   mkdirSync,
-  readdirSync,
+  readdirSync as readdirSync2,
   readFileSync as readFileSync3,
-  statSync,
+  statSync as statSync2,
   writeFileSync
 } from "node:fs";
 import { homedir as homedir3 } from "node:os";
-import { join as join4, resolve as resolve3 } from "node:path";
+import { join as join5, resolve as resolve3 } from "node:path";
 
 // js/shared/home.ts
 import { homedir as homedir2 } from "node:os";
 import { join as join3 } from "node:path";
 var homeBridgePath = () => join3(homedir2(), ".iskron-bridge", "iskron-bridge.mjs");
+
+// js/opencode/devicewait.ts
+import { readdirSync, statSync } from "node:fs";
+import { join as join4 } from "node:path";
+var RENEW_BEFORE_MS = 6e4;
+var UNTIL = /valid until (\d{4}-\d\d-\d\d \d\d:\d\d:\d\d) UTC/;
+function deviceOf(message) {
+  const link = /from another device: (\S+)/.exec(message)?.[1];
+  if (!link) return null;
+  const until = UNTIL.exec(message)?.[1];
+  return until ? `${link} (код действует до ${until} UTC)` : link;
+}
+function loginStamp(dir) {
+  try {
+    const files = readdirSync(dir).filter(
+      (f) => f.endsWith(".auth-pending") || f.endsWith(".auth-pending.device")
+    );
+    if (!files.some((f) => f.endsWith(".auth-pending"))) return null;
+    return files.map((f) => `${f}:${statSync(join4(dir, f)).mtimeMs}`).sort().join("|");
+  } catch {
+    return null;
+  }
+}
+function codeWatch(dir, message) {
+  const before = loginStamp(dir);
+  const until = UNTIL.exec(message)?.[1];
+  const end = until ? Date.parse(`${until.replace(" ", "T")}Z`) : NaN;
+  return {
+    moved: () => {
+      const now2 = loginStamp(dir);
+      if (now2 !== null && now2 !== before) return true;
+      return now2 !== null && end - Date.now() < RENEW_BEFORE_MS;
+    }
+  };
+}
 
 // js/opencode/bridge-io.ts
 var HANDSHAKE_MS = Number(process.env.ISKRON_MCP_HANDSHAKE_MS || 6e5);
@@ -1046,15 +1081,15 @@ function buildsLine(bridgePath, pluginUrl) {
   return `сборка: мост ${buildOfFile(bridgePath) ?? "не читается"}, плагин ${buildOf(pluginUrl)}`;
 }
 function authDir() {
-  return process.env.ISKRON_BRIDGE_AUTH_DIR || join4(homedir3(), ".iskron-bridge");
+  return process.env.ISKRON_BRIDGE_AUTH_DIR || join5(homedir3(), ".iskron-bridge");
 }
 function cachePath() {
-  return join4(authDir(), "opencode-tools.json");
+  return join5(authDir(), "opencode-tools.json");
 }
 function grantStamp() {
   const dir = authDir();
   try {
-    return readdirSync(dir).filter((f) => f.endsWith(".json") && f !== "opencode-tools.json").map((f) => `${f}:${statSync(join4(dir, f)).mtimeMs}`).sort().join("|");
+    return readdirSync2(dir).filter((f) => f.endsWith(".json") && f !== "opencode-tools.json").map((f) => `${f}:${statSync2(join5(dir, f)).mtimeMs}`).sort().join("|");
   } catch {
     return "";
   }
@@ -1070,16 +1105,13 @@ function readCache() {
 }
 function writeCache(tools) {
   try {
-    mkdirSync(join4(cachePath(), ".."), { recursive: true, mode: 448 });
+    mkdirSync(join5(cachePath(), ".."), { recursive: true, mode: 448 });
     writeFileSync(cachePath(), JSON.stringify(tools), { mode: 384 });
   } catch {
   }
 }
 function loginUrlOf(message) {
   return /open in a browser: (\S+)/.exec(message)?.[1] ?? null;
-}
-function deviceUrlOf(message) {
-  return /from another device: (\S+)/.exec(message)?.[1] ?? null;
 }
 async function handshake(b, onLogin, onReady) {
   const deadline = Date.now() + HANDSHAKE_MS;
@@ -1099,10 +1131,12 @@ async function handshake(b, onLogin, onReady) {
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       if (!AUTH_PENDING.test(message)) throw e;
-      onLogin(loginUrlOf(message), deviceUrlOf(message));
+      onLogin(loginUrlOf(message), deviceOf(message));
+      const code = codeWatch(authDir(), message);
       while (grantStamp() === stamp) {
         if (Date.now() + AUTH_POLL_MS > deadline) throw e;
         await sleep2(AUTH_POLL_MS);
+        if (code.moved()) break;
       }
     }
   }
@@ -1169,8 +1203,8 @@ async function sessionDirectory(ctx, sessionID) {
 }
 
 // js/opencode/keep.ts
-import { mkdirSync as mkdirSync2, readdirSync as readdirSync2, readFileSync as readFileSync4, unlinkSync, writeFileSync as writeFileSync2 } from "node:fs";
-import { join as join5 } from "node:path";
+import { mkdirSync as mkdirSync2, readdirSync as readdirSync3, readFileSync as readFileSync4, unlinkSync, writeFileSync as writeFileSync2 } from "node:fs";
+import { join as join6 } from "node:path";
 var WATCH_MS = Number(process.env.ISKRON_BRIDGE_WATCH_MS || 5 * 6e4);
 var MARKER_PREFIX = "opencode-lost";
 function writeLostMarker(authDir2, slots) {
@@ -1180,7 +1214,7 @@ function writeLostMarker(authDir2, slots) {
     mkdirSync2(authDir2, { recursive: true, mode: 448 });
     const lost = { at: (/* @__PURE__ */ new Date()).toISOString(), entries };
     const name = `${MARKER_PREFIX}.${process.pid}.${Math.random().toString(36).slice(2, 8)}.json`;
-    writeFileSync2(join5(authDir2, name), JSON.stringify(lost), { mode: 384 });
+    writeFileSync2(join6(authDir2, name), JSON.stringify(lost), { mode: 384 });
   } catch {
   }
 }
@@ -1189,15 +1223,15 @@ function takeLostMarker(authDir2) {
   let at = "";
   let files;
   try {
-    files = readdirSync2(authDir2).filter((f) => f.startsWith(MARKER_PREFIX) && f.endsWith(".json"));
+    files = readdirSync3(authDir2).filter((f) => f.startsWith(MARKER_PREFIX) && f.endsWith(".json"));
   } catch {
     return null;
   }
   for (const f of files) {
     let text;
     try {
-      text = readFileSync4(join5(authDir2, f), "utf8");
-      unlinkSync(join5(authDir2, f));
+      text = readFileSync4(join6(authDir2, f), "utf8");
+      unlinkSync(join6(authDir2, f));
     } catch {
       continue;
     }

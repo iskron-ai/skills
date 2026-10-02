@@ -91,7 +91,7 @@ export class AuthPending extends Error {
       `authorization required — open in a browser: ${url}${note ? ` (${note})` : ""}` +
         (device
           ? ` — or sign in from another device: ${device.link} (code ${device.user_code}, ` +
-            `valid until ${utcTime(device.expires_at)}; past that, the next call brings a new one)`
+            `valid until ${utcTime(device.expires_at)}; a call in its last minute or later brings a new one)`
           : "") +
         ` — or give the bridge a personal access token instead (ISKRON_BRIDGE_TOKEN, or the file <auth-dir>/token)`,
     );

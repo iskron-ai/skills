@@ -1309,6 +1309,7 @@ function setupBridge(pi, onChannel) {
     satellite = args.includes("--satellite");
     b.start(env);
     let toldLogin = false;
+    let toldLinks = "";
     const deadline = Date.now() + HANDSHAKE_MS;
     const untilAuthed = async (ask) => {
       for (; ; ) {
@@ -1318,8 +1319,10 @@ function setupBridge(pi, onChannel) {
           const message = e instanceof Error ? e.message : String(e);
           if (!AUTH_PENDING.test(message) || bridge !== b || Date.now() + AUTH_POLL_MS > deadline)
             throw e;
-          if (!toldLogin) {
+          const links = [/open in a browser: (\S+)/, /from another device: (\S+)/].map((re) => re.exec(message)?.[1] ?? "").join(" ");
+          if (!toldLogin || links !== toldLinks) {
             toldLogin = true;
+            toldLinks = links;
             notify(`Искрон: нужен вход — ${message}`, "warning");
           }
           await new Promise((r) => setTimeout(r, AUTH_POLL_MS));

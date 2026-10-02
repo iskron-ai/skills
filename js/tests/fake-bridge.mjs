@@ -24,6 +24,10 @@
 //                 finished the login in the browser.
 //   FB_DEVICE     with FB_MODE=auth: the sign-in page with a code the refusal also
 //                 names — the same login from another device (#6570).
+//   FB_DEVICE_FILE with FB_MODE=auth: file holding that page, re-read on every
+//                 refusal — the bridge issuing a new code when the old one lapses.
+//   FB_DEVICE_LEFT_S with a page: seconds the code has left at each refusal,
+//                 named as its end in UTC, as the bridge names it; default 300.
 //   FB_TOOLS      JSON array for tools/list; default is two tools, one of them
 //                 iskron_channel, since that is the name the extension watches.
 //   FB_PAGINATE   "1" splits tools/list across two pages with a cursor.
@@ -188,6 +192,9 @@ process.stdin.on("data", (chunk) => {
       continue;
     }
     if (MODE === "auth" && !existsSync(process.env.FB_AUTHED || "")) {
+      const device = process.env.FB_DEVICE_FILE
+        ? readFileSync(process.env.FB_DEVICE_FILE, "utf8").trim()
+        : process.env.FB_DEVICE;
       send({
         jsonrpc: "2.0",
         id: msg.id,
@@ -196,8 +203,13 @@ process.stdin.on("data", (chunk) => {
           message:
             "iskron-bridge v0+fake: authorization required — open in a browser: " +
             "http://127.0.0.1:43265/authorize?fake=1" +
-            (process.env.FB_DEVICE
-              ? ` — or sign in from another device: ${process.env.FB_DEVICE} (code FAKE1234, good for about 5 min)`
+            (device
+              ? ` — or sign in from another device: ${device} (code FAKE1234, valid until ` +
+                new Date(Date.now() + Number(process.env.FB_DEVICE_LEFT_S || 300) * 1000)
+                  .toISOString()
+                  .replace("T", " ")
+                  .slice(0, 19) +
+                " UTC; a call in its last minute or later brings a new one)"
               : "") +
             " — or give the bridge a personal access " +
             "token instead (ISKRON_BRIDGE_TOKEN, or the file <auth-dir>/token). " +
