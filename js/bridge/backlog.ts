@@ -7,10 +7,10 @@
 // одно событие kind=backlog с кадрами по received_at, телами (обрезанными,
 // как у лежалых) и указанием на history за остальным. Окно у каждого места
 // своё (door.ts, #5838): пачка одного графа метится в .seen своего места.
+import { addressedToMine } from "../shared/addressed.ts";
 import { type Frame, isDirectWord } from "../shared/channel.ts";
-import { frameToText, restCountLines } from "../shared/frame-text.ts";
+import { caseCountLines, frameToText } from "../shared/frame-text.ts";
 import { L } from "../shared/lang.ts";
-import { addressedToMine } from "../shared/room-kinds.ts";
 import { type ChannelEvent } from "./door.ts";
 
 /** Окно накопления; переменная — шов для проб, не ручка человека. */
@@ -80,7 +80,7 @@ export class Backlog {
     // Закон #6574: адресованные месту — текстом, прочие записи дел — счётом
     // по одному на дело; поручений отвечать конверт не несёт.
     const bodies = [
-      ...restCountLines(got),
+      ...caseCountLines(got),
       ...got
         .filter((f) => addressedToMine(f))
         .map((f) => {

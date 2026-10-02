@@ -8,9 +8,10 @@
 // ниже — только адресованные месту. Слово человека в пачку не ложится. Кадр
 // без event_kind словарь не трогает: он идёт сразу, как прежде. Кольцо двери
 // при этом получает каждый кадр (hold.ts).
+import { addressedToMine } from "../shared/addressed.ts";
 import { classifyOrigin, type Frame } from "../shared/channel.ts";
 import { batchHead, foldAsides } from "../shared/frame-text.ts";
-import { addressedToMine, byKind, roomKind, stackOf } from "../shared/room-kinds.ts";
+import { byKind, roomKind, stackOf } from "../shared/room-kinds.ts";
 import { deliveredKeys, noteSeen } from "../shared/seen.ts";
 import { type ChannelEvent, type Door } from "./door.ts";
 import { log } from "./streams.ts";
@@ -143,11 +144,12 @@ export function batchForWatchdogs(
   // Слово человека в пачку не ложится: какая бы ни была стопка, оно идёт сейчас.
   // Кроме адресного не мне (#6081): оно и от человека — фактом в пачку.
   // Неадресованное месту дело — в пачку при любой стопке (#6574): текстом в ход
-  // идёт только адресованное, прочее уходит счётом в шапке.
+  // идёт только адресованное, прочее уходит счётом в шапке. Адресованность — до
+  // стопки: слово в полёте запоминается ею, и его тело узнаётся по нему.
   if (
     (!human || rk?.phase || rk?.aside) &&
     byKind(frame) &&
-    (stackOf(frame) === "batch" || !addressedToMine(frame))
+    (!addressedToMine(frame) || stackOf(frame) === "batch")
   ) {
     d.roomBatch.add(raw, frame, emit);
     return true;

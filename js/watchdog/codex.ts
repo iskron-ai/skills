@@ -14,9 +14,9 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 import { type ChannelEvent } from "../bridge/hold.ts";
+import { addressedToMine } from "../shared/addressed.ts";
 import { type Door, openDoor } from "../shared/appserver.ts";
 import { batchHead, frameToText } from "../shared/frame-text.ts";
-import { addressedToMine } from "../shared/room-kinds.ts";
 import { deliveredKeys, noteSeen, seenIds } from "../shared/seen.ts";
 import { seenFilePathOf } from "../shared/standings.ts";
 import {
@@ -128,17 +128,16 @@ export function runWatchdogCodex(argv: string[]): void {
   // — это кадры, пришедшие между взводами: их вкладываем, как живые. Кадр без id
   // пометить нечем, и из кольца он пришёл бы на каждом взводе — такой пропускаем.
   let replay = 0;
-  // Пачка дела без адресованных месту кадров (#6574): копится и концом уходит
-  // одной записью — счётом по делам; текст неадресованного в тред не идёт.
+  // Неадресованные месту записи дел (#6574) копятся и хода не начинают: счётом
+  // по делам они едут шапкой с ближайшим кадром в тред; текст их в тред не идёт.
   let pend: { frame: NonNullable<ChannelEvent["frame"]>; ids: string[] }[] = [];
-  const flushPend = (): void => {
+  const withPend = (text: string, ids: string[]): void => {
     const got = pend;
     pend = [];
-    if (!got.length) return;
-    void deliver(
-      batchHead(got.map((g) => g.frame)),
-      got.flatMap((g) => g.ids),
-    );
+    void deliver([...(got.length ? [batchHead(got.map((g) => g.frame))] : []), text].join("\n"), [
+      ...got.flatMap((g) => g.ids),
+      ...ids,
+    ]);
   };
   attach(target.path, {
     onEvent: (ev) => {
@@ -159,11 +158,10 @@ export function runWatchdogCodex(argv: string[]): void {
               frame: ev.frame,
               ids: [...deliveredKeys(ev.frame), ...(ev.frame.id ? [ev.frame.id] : [])],
             });
-            if (ev.batch.at >= ev.batch.of) flushPend();
+            pend.splice(0, Math.max(0, pend.length - 500)); // старшие уходят: счёт ждёт, не копится без меры
             return;
           }
-          flushPend(); // накопленное — прежде следующего кадра: порядок цел
-          void deliver(frameToText(ev.frame, ev.raw ?? ""), deliveredKeys(ev.frame));
+          withPend(frameToText(ev.frame, ev.raw ?? ""), deliveredKeys(ev.frame)); // накопленное — шапкой впереди
           break;
         }
         case "stale":

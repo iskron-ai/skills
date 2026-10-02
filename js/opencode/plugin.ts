@@ -111,6 +111,9 @@ async function setup(ctx: Context): Promise<() => void> {
     await ctx.session.hook("prompt", async (p) => {
       const word = await half.launch(String(p.sessionID), p.prompt.text);
       if (word) p.prompt.text = withWord(p.prompt.text, word);
+      // Счёт записей, не будивших хода (#6574), едет с промптом, который ход начнёт.
+      const counts = ch?.ride(await rootOf(String(p.sessionID)));
+      if (counts) p.prompt.text = `${p.prompt.text}\n\n${counts}`;
     });
   } catch (e) {
     say(`Искрон: строка запуска не встала — ${(e as Error).message}`, "error");

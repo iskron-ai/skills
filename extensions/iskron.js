@@ -479,7 +479,19 @@ function roomKind(frame) {
 }
 var byKind = (frame) => roomKind(frame) !== null;
 var stackOf = (frame) => roomKind(frame)?.rule ?? (frame?.stack === "defer" ? "batch" : "interrupt");
+
+// js/shared/addressed.ts
 var LOUD_KINDS = /* @__PURE__ */ new Set(["closing", "closed", "objection", "late_objection"]);
+var addressedWords = /* @__PURE__ */ new Set();
+var WORDS_KEPT = 512;
+var wordKey = (f, entry) => `${mineOf(f)[0] ?? ""}|${str(obj(f.room).id) || str(obj(f.room).seq)}|${entry}`;
+function rememberWord(key) {
+  addressedWords.add(key);
+  for (const old of addressedWords) {
+    if (addressedWords.size <= WORDS_KEPT) break;
+    addressedWords.delete(old);
+  }
+}
 function addressedToMine(frame) {
   if (!frame) return false;
   const f = frame;
@@ -495,8 +507,20 @@ function addressedToMine(frame) {
     const a = addresseeOf(v);
     return !!a && mine.length > 0 && a.addr.some((x) => mine.includes(x));
   };
-  if (hit(f.addressee) || hit(f.in_reply_to_from)) return true;
-  if (str(f.said) === "important" || str(fields.kind) === "important") return true;
+  if (rk?.kind === "body") {
+    const word = obj(f.word);
+    const refers = str(line.refers_to) || str(f.in_reply_to) || str(word.entry_id);
+    if (hit(f.addressee) || str(obj(obj(word.line).fields).kind) === "important" || addressedWords.has(wordKey(f, refers)))
+      return true;
+  } else if (
+    // Слово мне, ответ на мою запись (#5954), помеченное важным: род слова
+    // important на конверте или в полях строки. Слово в полёте запоминается —
+    // его тело придёт второй фазой без этих признаков.
+    hit(f.addressee) || hit(f.in_reply_to_from) || str(f.said) === "important" || str(fields.kind) === "important"
+  ) {
+    if (rk?.phase === "pending") rememberWord(wordKey(f, str(line.entry_id ?? f.entry_id)));
+    return true;
+  }
   if (rk?.kind === "invite" || rk?.kind === "withdraw") {
     if (mine.includes(after(str(line.key), "invite:"))) return true;
     if (rk.kind === "invite" && myRole(f, fields)) return true;
@@ -625,8 +649,11 @@ function caseCountLine(frames) {
     `${head}: ${frames.length} records, yours ${mineN}`
   ) + yours + batchPointer(frames) + ".";
 }
+function caseCountLines(frames) {
+  return casesOf(frames).map(caseCountLine).filter(Boolean);
+}
 function batchHead(frames) {
-  return casesOf(frames).map(caseCountLine).filter(Boolean).join("\n");
+  return caseCountLines(frames).join("\n");
 }
 function batchPointer(frames) {
   const since = /* @__PURE__ */ new Map();

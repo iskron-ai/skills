@@ -1,6 +1,7 @@
+import { addressedToMine } from "./addressed.ts";
 import { classifyOrigin, type Frame } from "./channel.ts";
 import { L } from "./lang.ts";
-import { addressedToMine, phrase, roomKind } from "./room-kinds.ts";
+import { phrase, roomKind } from "./room-kinds.ts";
 
 type Rec = Record<string, unknown>;
 const rec = (v: unknown): Rec => (v && typeof v === "object" ? (v as Rec) : {});
@@ -202,18 +203,16 @@ export function caseCountLine(frames: Frame[]): string {
 }
 
 /**
- * Строки счёта пачки — по одному на дело из неадресованных кадров (#6574):
- * побудке и лежалым числом хватает строки на дело, текста нет.
+ * Строки счёта пачки — по одной на дело (#6574), над всеми его записями: «тебе
+ * N» считает адресованные, что идут строками ниже, — счёт им не противоречит.
  */
-export function restCountLines(frames: Frame[]): string[] {
-  return casesOf(frames.filter((f) => !addressedToMine(f)))
-    .map(caseCountLine)
-    .filter(Boolean);
+export function caseCountLines(frames: Frame[]): string[] {
+  return casesOf(frames).map(caseCountLine).filter(Boolean);
 }
 
 /** Шапка пачки дела: счёт по делам и указание, где читать целиком (#6574), — в шапке, не в конце: обрезка режет хвост. */
 export function batchHead(frames: Frame[]): string {
-  return casesOf(frames).map(caseCountLine).filter(Boolean).join("\n");
+  return caseCountLines(frames).join("\n");
 }
 
 /**

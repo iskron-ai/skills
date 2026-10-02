@@ -546,7 +546,19 @@ function roomKind(frame) {
 }
 var byKind = (frame) => roomKind(frame) !== null;
 var stackOf = (frame) => roomKind(frame)?.rule ?? (frame?.stack === "defer" ? "batch" : "interrupt");
+
+// js/shared/addressed.ts
 var LOUD_KINDS = /* @__PURE__ */ new Set(["closing", "closed", "objection", "late_objection"]);
+var addressedWords = /* @__PURE__ */ new Set();
+var WORDS_KEPT = 512;
+var wordKey = (f, entry) => `${mineOf(f)[0] ?? ""}|${str(obj(f.room).id) || str(obj(f.room).seq)}|${entry}`;
+function rememberWord(key) {
+  addressedWords.add(key);
+  for (const old of addressedWords) {
+    if (addressedWords.size <= WORDS_KEPT) break;
+    addressedWords.delete(old);
+  }
+}
 function addressedToMine(frame) {
   if (!frame) return false;
   const f = frame;
@@ -562,8 +574,20 @@ function addressedToMine(frame) {
     const a = addresseeOf(v);
     return !!a && mine.length > 0 && a.addr.some((x) => mine.includes(x));
   };
-  if (hit(f.addressee) || hit(f.in_reply_to_from)) return true;
-  if (str(f.said) === "important" || str(fields.kind) === "important") return true;
+  if (rk?.kind === "body") {
+    const word = obj(f.word);
+    const refers = str(line.refers_to) || str(f.in_reply_to) || str(word.entry_id);
+    if (hit(f.addressee) || str(obj(obj(word.line).fields).kind) === "important" || addressedWords.has(wordKey(f, refers)))
+      return true;
+  } else if (
+    // Слово мне, ответ на мою запись (#5954), помеченное важным: род слова
+    // important на конверте или в полях строки. Слово в полёте запоминается —
+    // его тело придёт второй фазой без этих признаков.
+    hit(f.addressee) || hit(f.in_reply_to_from) || str(f.said) === "important" || str(fields.kind) === "important"
+  ) {
+    if (rk?.phase === "pending") rememberWord(wordKey(f, str(line.entry_id ?? f.entry_id)));
+    return true;
+  }
   if (rk?.kind === "invite" || rk?.kind === "withdraw") {
     if (mine.includes(after(str(line.key), "invite:"))) return true;
     if (rk.kind === "invite" && myRole(f, fields)) return true;
@@ -692,8 +716,11 @@ function caseCountLine(frames) {
     `${head}: ${frames.length} records, yours ${mineN}`
   ) + yours + batchPointer(frames) + ".";
 }
+function caseCountLines(frames) {
+  return casesOf(frames).map(caseCountLine).filter(Boolean);
+}
 function batchHead(frames) {
-  return casesOf(frames).map(caseCountLine).filter(Boolean).join("\n");
+  return caseCountLines(frames).join("\n");
 }
 function batchPointer(frames) {
   const since = /* @__PURE__ */ new Map();
@@ -1798,8 +1825,9 @@ function toPile(frame) {
   if (!frame || frame.type !== "message" || isDirectWord(frame)) return false;
   const rk = roomKind(frame);
   if ((frame.origin ?? classifyOrigin(frame)) === "human" && !rk?.phase && !rk?.aside) return false;
-  return stackOf(frame) === "batch" || !addressedToMine(frame);
+  return !addressedToMine(frame) || stackOf(frame) === "batch";
 }
+var RIDERS_MAX = 500;
 function setupChannel(ctx, say, freshestRoot) {
   async function accepting(id) {
     try {
@@ -1861,9 +1889,14 @@ function setupChannel(ctx, say, freshestRoot) {
     p.timer = null;
     if (!p.held.length) return;
     const frames = p.held.splice(0);
+    if (!frames.some((f) => addressedToMine(f))) {
+      p.riders.push(...frames);
+      p.riders.splice(0, Math.max(0, p.riders.length - RIDERS_MAX));
+      return;
+    }
     const at = Date.now();
     p.pending = { session: "", inbox: null, at };
-    const text = [batchHead(frames), ...batchLines(frames)].join("\n");
+    const text = [batchHead([...p.riders.splice(0), ...frames]), ...batchLines(frames)].join("\n");
     void deliver(p.session, text, `пачка дела (${frames.length})`, "queue", p.child).then((got) => {
       const inbox = got?.inbox && !takenEarly.delete(got.inbox) ? got.inbox : null;
       p.pending = got && inbox ? { session: got.session, inbox, at } : null;
@@ -1873,11 +1906,16 @@ function setupChannel(ctx, say, freshestRoot) {
   function pile(session, child, frame) {
     const key = `${child ? "child" : "root"}:${session ?? ""}`;
     let p = piles.get(key);
-    if (!p) piles.set(key, p = { session, child, held: [], timer: null, pending: null });
+    if (!p)
+      piles.set(key, p = { session, child, held: [], riders: [], timer: null, pending: null });
     if (frame.id && p.held.some((f) => f.id === frame.id)) return;
     p.held.push(frame);
     if (!p.pending && p.held.length >= CASE_BATCH_CAP) return flush(p);
     if (!p.timer) schedule(p);
+  }
+  function riding(ps) {
+    const got = ps.flatMap((p) => p.riders.splice(0));
+    return got.length ? [batchHead(got)] : [];
   }
   function loud(session, text) {
     say(text, "error");
@@ -1904,6 +1942,12 @@ function setupChannel(ctx, say, freshestRoot) {
         flush(p);
       }
     },
+    ride(session) {
+      const own = [...piles.values()].filter(
+        (p) => !p.child && (p.session === session || !p.session && freshestRoot() === session)
+      );
+      return riding(own).join("\n") || null;
+    },
     onEvent(session, params, child = false) {
       const ev = params?.data;
       if (!ev || typeof ev !== "object") return;
@@ -1913,9 +1957,10 @@ function setupChannel(ctx, say, freshestRoot) {
           if (frame?.type === "hello") return say("Искрон: канал слушает", "info");
           if (frame?.type === "status") return;
           if (frame && toPile(frame)) return pile(session, child, frame);
+          const own = piles.get(`${child ? "child" : "root"}:${session ?? ""}`);
           void deliver(
             session,
-            frameToText(frame, ev.raw ?? ""),
+            [...riding(own ? [own] : []), frameToText(frame, ev.raw ?? "")].join("\n"),
             `кадр ${frame?.id ?? "без id"}`,
             "steer",
             child
@@ -2185,6 +2230,10 @@ async function setup(ctx) {
     await ctx.session.hook("prompt", async (p) => {
       const word = await half.launch(String(p.sessionID), p.prompt.text);
       if (word) p.prompt.text = withWord(p.prompt.text, word);
+      const counts = ch?.ride(await rootOf(String(p.sessionID)));
+      if (counts) p.prompt.text = `${p.prompt.text}
+
+${counts}`;
     });
   } catch (e) {
     say(`Искрон: строка запуска не встала — ${e.message}`, "error");

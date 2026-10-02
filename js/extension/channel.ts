@@ -10,9 +10,10 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 import { type ChannelEvent } from "../bridge/hold.ts";
+import { addressedToMine } from "../shared/addressed.ts";
 import { type Frame } from "../shared/channel.ts";
 import { batchHead, batchLines, frameToText } from "../shared/frame-text.ts";
-import { addressedToMine, byKind, roomKind, stackOf } from "../shared/room-kinds.ts";
+import { byKind, roomKind, stackOf } from "../shared/room-kinds.ts";
 
 /** Окно свёртки неадресованных кадров дела; переменная — шов для проб. */
 const ASIDE_MS = Number(process.env.ISKRON_PI_ASIDE_MS) || 3_000;

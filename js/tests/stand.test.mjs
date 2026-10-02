@@ -1837,6 +1837,49 @@ test("satellite: at the run's end the bridge leaves the cases the run joined, on
   assert.deepEqual(caseCalls(plain, "leave"), [], "the session's place outlives the session");
 });
 
+// One case named three ways — «#102» in r5 by the launch line, «102» and «№102»
+// in @nks/nks-dev by the agent: one case, left by the run, never left again.
+test("satellite: a case the run joined as #102 in r5 and left as №102 in @nks/nks-dev is not left again at the run's end", async (t) => {
+  const fake = await withCaller(t);
+  const sat = await satelliteBridge(t, fake);
+  assert.ok(!(await standAs(sat, SAT_ARGS)).result?.isError, sat.stderr);
+  const caseIn = (realm, action, room) =>
+    sat.call("tools/call", { name: "iskron_case", arguments: { realm, action, room } });
+  await caseIn("r5", "join", "#102");
+  await caseIn("@nks/nks-dev", "leave", "№102");
+  await caseIn("@nks/nks-dev", "join", "103");
+  await caseIn("r5", "leave", "#103");
+  await sat.stop();
+  assert.deepEqual(
+    caseCalls(fake, "leave"),
+    ["№102", "#103"],
+    `left by the run, not again at its end:\n${sat.stderr}`,
+  );
+});
+
+// The harness kills the bridge a short grace after closing it (OpenCode: 5 s);
+// a slow api on leave must not hold the place's socket and .key past it.
+test("satellite: a hung leave at the run's end does not hold the place — the bridge releases its .key and exits on its own", async (t) => {
+  const fake = await withCaller(t);
+  const home = mkdtempSync(join(tmpdir(), "iskron-sat-"));
+  const sat = await satelliteBridge(t, fake, { dir: home });
+  assert.ok(!(await standAs(sat, SAT_ARGS)).result?.isError, sat.stderr);
+  for (const room of ["№1", "№2", "№3"]) await caseAs(sat, "join", room);
+  await fake.control({ case_leave_hang: true });
+  const keys = () =>
+    existsSync(join(home, "standings"))
+      ? readdirSync(join(home, "standings")).filter((f) => f.endsWith(".key"))
+      : [];
+  await until(() => keys().length > 0, "the satellite's .key");
+  const exited = new Promise((r) => sat.proc.once("exit", (code, signal) => r({ code, signal })));
+  sat.proc.stdin.end();
+  const grace = new Promise((r) => setTimeout(() => r(null), 2_800).unref());
+  const how = await Promise.race([exited, grace]);
+  assert.ok(how && how.signal === null, `the bridge exits on its own, not killed:\n${sat.stderr}`);
+  assert.deepEqual(keys(), [], "the .key goes with the place");
+  assert.equal(caseCalls(fake, "leave").length, 3, "each case's leave was asked, at once");
+});
+
 // Two subagent runs of one caller, each with its own satellite bridge (two
 // processes, one home), stand at the same moment: each reads the board before
 // the other's connect lands, and «first N free on the board» would give both

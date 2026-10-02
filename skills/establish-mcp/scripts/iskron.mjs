@@ -2991,7 +2991,19 @@ function roomKind(frame2) {
 }
 var byKind = (frame2) => roomKind(frame2) !== null;
 var stackOf = (frame2) => roomKind(frame2)?.rule ?? (frame2?.stack === "defer" ? "batch" : "interrupt");
+
+// js/shared/addressed.ts
 var LOUD_KINDS = /* @__PURE__ */ new Set(["closing", "closed", "objection", "late_objection"]);
+var addressedWords = /* @__PURE__ */ new Set();
+var WORDS_KEPT = 512;
+var wordKey = (f, entry) => `${mineOf(f)[0] ?? ""}|${str(obj(f.room).id) || str(obj(f.room).seq)}|${entry}`;
+function rememberWord(key) {
+  addressedWords.add(key);
+  for (const old of addressedWords) {
+    if (addressedWords.size <= WORDS_KEPT) break;
+    addressedWords.delete(old);
+  }
+}
 function addressedToMine(frame2) {
   if (!frame2) return false;
   const f = frame2;
@@ -3007,8 +3019,20 @@ function addressedToMine(frame2) {
     const a = addresseeOf(v);
     return !!a && mine.length > 0 && a.addr.some((x) => mine.includes(x));
   };
-  if (hit(f.addressee) || hit(f.in_reply_to_from)) return true;
-  if (str(f.said) === "important" || str(fields.kind) === "important") return true;
+  if (rk?.kind === "body") {
+    const word = obj(f.word);
+    const refers = str(line.refers_to) || str(f.in_reply_to) || str(word.entry_id);
+    if (hit(f.addressee) || str(obj(obj(word.line).fields).kind) === "important" || addressedWords.has(wordKey(f, refers)))
+      return true;
+  } else if (
+    // Слово мне, ответ на мою запись (#5954), помеченное важным: род слова
+    // important на конверте или в полях строки. Слово в полёте запоминается —
+    // его тело придёт второй фазой без этих признаков.
+    hit(f.addressee) || hit(f.in_reply_to_from) || str(f.said) === "important" || str(fields.kind) === "important"
+  ) {
+    if (rk?.phase === "pending") rememberWord(wordKey(f, str(line.entry_id ?? f.entry_id)));
+    return true;
+  }
   if (rk?.kind === "invite" || rk?.kind === "withdraw") {
     if (mine.includes(after(str(line.key), "invite:"))) return true;
     if (rk.kind === "invite" && myRole(f, fields)) return true;
@@ -3142,11 +3166,11 @@ function caseCountLine(frames) {
     `${head}: ${frames.length} records, yours ${mineN}`
   ) + yours + batchPointer(frames) + ".";
 }
-function restCountLines(frames) {
-  return casesOf(frames.filter((f) => !addressedToMine(f))).map(caseCountLine).filter(Boolean);
+function caseCountLines(frames) {
+  return casesOf(frames).map(caseCountLine).filter(Boolean);
 }
 function batchHead(frames) {
-  return casesOf(frames).map(caseCountLine).filter(Boolean).join("\n");
+  return caseCountLines(frames).join("\n");
 }
 function batchPointer(frames) {
   const since = /* @__PURE__ */ new Map();
@@ -3225,7 +3249,7 @@ var Backlog = class {
     this.flush = null;
     if (!got.length || !emit2) return;
     const bodies = [
-      ...restCountLines(got),
+      ...caseCountLines(got),
       ...got.filter((f) => addressedToMine(f)).map((f) => {
         const t = frameToText(f, JSON.stringify(f));
         return [...t].length > BODY_CAP ? [...t].slice(0, BODY_CAP).join("") + "…" : t;
@@ -3275,7 +3299,7 @@ var StaleBurst = class {
       if (!all2.length) return;
       const frames = all2.slice(0, STALE_BURST_KEEP);
       const bodies = [
-        ...restCountLines(frames),
+        ...caseCountLines(frames),
         ...frames.filter((f) => addressedToMine(f)).map((f) => {
           const t = frameToText(f, JSON.stringify(f));
           return [...t].length > BODY_CAP2 ? [...t].slice(0, BODY_CAP2).join("") + "…" : t;
@@ -3442,7 +3466,7 @@ function batchForWatchdogs(d, raw, frame2, emit2) {
       });
     }
   }
-  if ((!human || rk?.phase || rk?.aside) && byKind(frame2) && (stackOf(frame2) === "batch" || !addressedToMine(frame2))) {
+  if ((!human || rk?.phase || rk?.aside) && byKind(frame2) && (!addressedToMine(frame2) || stackOf(frame2) === "batch")) {
     d.roomBatch.add(raw, frame2, emit2);
     return true;
   }
@@ -5507,7 +5531,9 @@ function startEngine(cfg, opts = {}) {
 import { createInterface as createInterface2 } from "node:readline";
 
 // js/bridge/caseexit.ts
-var joined = /* @__PURE__ */ new Map();
+var LEAVE_CAP_MS = Number(process.env.ISKRON_CASE_LEAVE_MS) || 1500;
+var joined = scoped(() => /* @__PURE__ */ new Map());
+var roomNo = (room) => room.replace(/^[#№]\s*/, "");
 function noteCaseEntry(name, args, reply2) {
   if (reply2.result?.isError || name !== "iskron_case" && name !== "iskron_room") return;
   const a = args ?? {};
@@ -5515,15 +5541,16 @@ function noteCaseEntry(name, args, reply2) {
   const room = typeof a.room === "string" ? a.room.trim() : "";
   if (!room || a.action === "join" && room.startsWith("-")) return;
   const realm = typeof a.realm === "string" ? a.realm : void 0;
-  const key = `${realm ?? ""}#${room}`;
-  if (a.action === "join") joined.set(key, { realm, room });
-  else joined.delete(key);
+  const no = roomNo(room);
+  for (const [k, c] of joined)
+    if (roomNo(c.room) === no && !otherRealm(c.realm, realm)) joined.delete(k);
+  if (a.action === "join") joined.set(`${realm ? canonRealm(realm) : ""}#${no}`, { realm, room });
 }
 async function leaveJoinedCases() {
   if (!CFG.satellite || !joined.size) return;
   const cases = [...joined.values()];
   joined.clear();
-  for (const c of cases) {
+  const leaves = cases.map(async (c) => {
     try {
       const r = await callTool("iskron_case", { action: "leave", ...c });
       log(
@@ -5532,7 +5559,15 @@ async function leaveJoinedCases() {
     } catch (e) {
       log(`could not leave case ${c.room} at the run's end: ${e.message}`);
     }
-  }
+  });
+  let timer;
+  const cap = new Promise((r) => timer = setTimeout(() => r("cap"), LEAVE_CAP_MS));
+  const got = await Promise.race([Promise.allSettled(leaves), cap]);
+  clearTimeout(timer);
+  if (got === "cap")
+    log(
+      `case leave at the run's end exceeded ${LEAVE_CAP_MS} ms — the place goes, the rest lapse by term`
+    );
 }
 
 // js/bridge/satellite.ts
@@ -8558,14 +8593,13 @@ function runWatchdogCodex(argv2) {
   }
   let replay = 0;
   let pend = [];
-  const flushPend = () => {
+  const withPend = (text, ids) => {
     const got = pend;
     pend = [];
-    if (!got.length) return;
-    void deliver2(
-      batchHead(got.map((g) => g.frame)),
-      got.flatMap((g) => g.ids)
-    );
+    void deliver2([...got.length ? [batchHead(got.map((g) => g.frame))] : [], text].join("\n"), [
+      ...got.flatMap((g) => g.ids),
+      ...ids
+    ]);
   };
   attach(target.path, {
     onEvent: (ev) => {
@@ -8584,11 +8618,10 @@ function runWatchdogCodex(argv2) {
               frame: ev.frame,
               ids: [...deliveredKeys(ev.frame), ...ev.frame.id ? [ev.frame.id] : []]
             });
-            if (ev.batch.at >= ev.batch.of) flushPend();
+            pend.splice(0, Math.max(0, pend.length - 500));
             return;
           }
-          flushPend();
-          void deliver2(frameToText(ev.frame, ev.raw ?? ""), deliveredKeys(ev.frame));
+          withPend(frameToText(ev.frame, ev.raw ?? ""), deliveredKeys(ev.frame));
           break;
         }
         case "stale":
@@ -8646,6 +8679,7 @@ var plural = (n) => {
   return `${n} ${word}`;
 };
 var ALONE_GAP_MS = Number(process.env.ISKRON_WATCHDOG_ALONE_MS) || 300;
+var RIDERS_MAX = 100;
 var queue = Promise.resolve();
 var lastAt = 0;
 var lastAlone = false;
@@ -8686,6 +8720,19 @@ function runWatchdog(argv2) {
   const queued = /* @__PURE__ */ new Set();
   const folded = [];
   const cases = /* @__PURE__ */ new Set();
+  let head = "";
+  const riders = [];
+  const riderMarks = [];
+  const hold = () => {
+    if (head) riders.push(head);
+    riders.splice(0, Math.max(0, riders.length - RIDERS_MAX));
+    head = "";
+  };
+  const take = () => {
+    const lines = [...riders.splice(0), ...head ? [head] : []];
+    head = "";
+    return { lines, marks: riderMarks.splice(0) };
+  };
   attach(target.path, {
     onEvent: (ev) => {
       switch (ev.kind) {
@@ -8710,27 +8757,43 @@ function runWatchdog(argv2) {
           };
           if (ev.batch) {
             if (ev.batch.at === 1) cases.clear();
+            const last = ev.batch.at >= ev.batch.of;
             if (ev.batch.folded) {
               if (!again) folded.push(mark);
+              if (last) hold();
               break;
             }
             const within = folded.splice(0);
             const all2 = () => [...within, mark].forEach((m) => m());
             if (!addressedToMine(f)) {
-              all2();
+              riderMarks.push(all2);
+              if (last) hold();
               break;
             }
             const first2 = !cases.has(caseKey(f));
             cases.add(caseKey(f));
-            if (!again) out2(wrapLines(batchLine(f, ev.batch.fold, first2)), false, all2);
-            else all2();
+            if (!again) {
+              const r = take();
+              out2(
+                [...r.lines, ...wrapLines(batchLine(f, ev.batch.fold, first2))],
+                false,
+                () => [...r.marks, all2].forEach((m) => m())
+              );
+            } else all2();
+            if (last) hold();
             break;
           }
-          if (!again) out2(wrapLines(frameToText(f, ev.raw ?? "")), true, mark);
+          if (!again) {
+            const r = take();
+            if (r.lines.length) out2(r.lines, false, () => r.marks.forEach((m) => m()));
+            out2(wrapLines(frameToText(f, ev.raw ?? "")), true, mark);
+          }
           break;
         }
         case "note":
-          log2(ev.text ?? "");
+          if (ev.batch)
+            head = ev.text ?? "";
+          else log2(ev.text ?? "");
           break;
         case "stale":
           out2(wrapLines(ev.text ?? ""), false, () => {
@@ -8778,6 +8841,13 @@ function runWatchdogExit(argv2) {
   let head = "";
   const folded = [];
   const cases = /* @__PURE__ */ new Set();
+  const riders = [];
+  const riderIds = [];
+  const hold = () => {
+    if (head) riders.push(head);
+    riders.splice(0, Math.max(0, riders.length - 100));
+    head = "";
+  };
   attach(target.path, {
     onEvent: (ev) => {
       switch (ev.kind) {
@@ -8788,18 +8858,16 @@ function runWatchdogExit(argv2) {
           const last = !ev.batch || ev.batch.at >= ev.batch.of;
           if (seen.has(id)) {
             note2(`кадр ${id} уже отдан прежним взводом — не повод будить`);
+            if (last) hold();
             if (last && woke) process.exit(0);
             return;
           }
           if (ev.batch && !addressedToMine(ev.frame)) {
-            folded.push(id);
+            riderIds.push(id, ...folded.splice(0));
             if (last) {
-              for (const k of folded.splice(0)) noteSeen(seenPath, k, seen);
-              if (!woke && head) {
-                wake(head);
-                woke = true;
-              }
+              hold();
               if (woke) process.exit(0);
+              note2("пачка без адресованных месту — счёт ждёт ближайшей побудки");
             }
             return;
           }
@@ -8808,7 +8876,7 @@ function runWatchdogExit(argv2) {
             folded.push(id);
             return;
           }
-          if (ev.batch && head) wake(head);
+          for (const s2 of [...riders.splice(0), ...head ? [head] : []]) wake(s2);
           head = "";
           const key = ev.frame ? caseKey(ev.frame) : "";
           const first2 = !cases.has(key);
@@ -8816,7 +8884,7 @@ function runWatchdogExit(argv2) {
           wake(
             !ev.frame ? ev.raw ?? "" : ev.batch ? batchLine(ev.frame, ev.batch.fold, first2) : frameToText(ev.frame, ev.raw ?? "")
           );
-          for (const k of folded.splice(0)) noteSeen(seenPath, k, seen);
+          for (const k of [...riderIds.splice(0), ...folded.splice(0)]) noteSeen(seenPath, k, seen);
           noteSeen(seenPath, id, seen);
           const evKey = eventKeyOf(ev.frame);
           if (evKey) noteSeen(seenPath, evKey, seen);

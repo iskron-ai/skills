@@ -4,7 +4,7 @@
 // стопкой) словарь не трогает: путь у него прежний — у каждого харнеса свой,
 // как до словаря. Правила — кодом (RULES и stackOf), слова — ДАННЫМИ (WORDS):
 // локализация заменит таблицу, не код.
-import { classifyOrigin, type Frame } from "./channel.ts";
+import { type Frame } from "./channel.ts";
 import { L, lang } from "./lang.ts";
 
 /** Куда идёт кадр: прервать идущий ход или лечь в пачку. */
@@ -211,9 +211,9 @@ export interface RoomKind {
 }
 
 type Rec = Record<string, unknown>;
-const obj = (v: unknown): Rec =>
+export const obj = (v: unknown): Rec =>
   v && typeof v === "object" && !Array.isArray(v) ? (v as Rec) : {};
-const str = (v: unknown): string =>
+export const str = (v: unknown): string =>
   typeof v === "string" ? v : typeof v === "number" || typeof v === "boolean" ? String(v) : "";
 
 /** Кто написал: имя (стояние), иначе стояние, иначе платформа; a — author строки или место in_reply_to_from. */
@@ -226,7 +226,7 @@ function authorOf(author: unknown): string {
   return a.kind === "platform" ? L("платформа", "platform") : "?";
 }
 
-const after = (key: string, prefix: string): string =>
+export const after = (key: string, prefix: string): string =>
   key.startsWith(prefix) ? key.slice(prefix.length) : key;
 
 function fill(template: string, v: Rec): string {
@@ -244,7 +244,7 @@ function roomOf(v: unknown): string {
 }
 
 /** Своё стояние кадра для ключа invite — id места и его адрес: формат ключа (#5893 §4.2) ещё не подтверждён. */
-const mineOf = (frame: Rec): string[] =>
+export const mineOf = (frame: Rec): string[] =>
   [str(frame.to_standing_id), str(frame.to_standing)].filter(Boolean);
 
 /**
@@ -252,7 +252,7 @@ const mineOf = (frame: Rec): string[] =>
  * karta {id, name, seq, realm} (наблюдено на бою), кадр — мой karta_seq. seq
  * принадлежит графу: названные с обеих сторон графы обязаны совпасть.
  */
-function myRole(frame: Rec, fields: Rec): boolean {
+export function myRole(frame: Rec, fields: Rec): boolean {
   const ka = obj(fields.karta);
   const seq = str(ka.seq);
   if (!seq || seq !== str(frame.karta_seq)) return false;
@@ -275,7 +275,7 @@ function whoOf(fields: Rec): string {
  * строка-адрес места; объект места {standing | handle+name, id, name} тоже
  * принимается. addr — чем сравнивать с моим местом, label — как назвать.
  */
-function addresseeOf(v: unknown): { addr: string[]; label: string } | null {
+export function addresseeOf(v: unknown): { addr: string[]; label: string } | null {
   if (typeof v === "string") return v ? { addr: [v], label: v } : null;
   const o = obj(v);
   const handle = str(o.handle).replace(/^@/, "");
@@ -443,6 +443,7 @@ export function roomKind(frame: Frame | null | undefined): RoomKind | null {
 
 /** Решает ли путь кадра словарь: только у кадра с event_kind room.*; прочим — прежний путь харнеса. */
 export const byKind = (frame: Frame | null | undefined): boolean => roomKind(frame) !== null;
+
 /**
  * Путь кадра: у кадра с event_kind — правило рода; у прочих — своя стопка
  * кадра, как читал её плагин OpenCode до словаря (defer — в пачку).
@@ -450,46 +451,3 @@ export const byKind = (frame: Frame | null | undefined): boolean => roomKind(fra
 export const stackOf = (frame: Frame | null | undefined): Stack =>
   roomKind(frame)?.rule ??
   ((frame as Rec | null | undefined)?.stack === "defer" ? "batch" : "interrupt");
-
-/** Роды, важные сами по себе: требуют действия читателя (окно возражения — #4928). */
-const LOUD_KINDS = new Set(["closing", "closed", "objection", "late_objection"]);
-
-/**
- * Адресовано ли кадр места читателя — закон #6574: в ход текстом входит только
- * адресованное месту — слово ему (addressee), ответ на его запись
- * (in_reply_to_from, #5954), приглашение или его отзыв мне — либо важное:
- * слово рода important (#4939: text | important | direct), роды закрытия и
- * возражения, слово человека. Адресное слово не мне (#6081) и прочие записи
- * дел текстом не доставляются — числом и указателем (frame-text.ts). Не кадр
- * дела (прямое слово, событие графа) — текстом: закон о записях дел. Кадр
- * дела прежней формы, без event_kind, словарь не трогает — путь прежний.
- */
-export function addressedToMine(frame: Frame | null | undefined): boolean {
-  if (!frame) return false;
-  const f = frame as Rec;
-  const room = obj(f.room);
-  if (!str(room.seq) && !str(room.id)) return true; // не запись дела — закон о записях дел
-  if (!byKind(frame)) return true; // прежняя форма — прежний путь
-  const line = obj(f.line);
-  const fields = obj(line.fields);
-  const rk = roomKind(frame);
-  if (rk?.aside) return false; // слово не мне (#6081): факт без тела
-  const mine = mineOf(f);
-  const hit = (v: unknown): boolean => {
-    const a = addresseeOf(v);
-    return !!a && mine.length > 0 && a.addr.some((x) => mine.includes(x));
-  };
-  // Слово мне — целиком; ответ на мою запись и тело моего слова — тоже.
-  if (hit(f.addressee) || hit(f.in_reply_to_from)) return true;
-  // Помеченное важным: род слова important на конверте или в полях строки.
-  if (str(f.said) === "important" || str(fields.kind) === "important") return true;
-  // Приглашение мне или его отзыв: ключ invite:<моё место>, приглашение роли — моей роли.
-  if (rk?.kind === "invite" || rk?.kind === "withdraw") {
-    if (mine.includes(after(str(line.key), "invite:"))) return true;
-    if (rk.kind === "invite" && myRole(f, fields)) return true;
-  }
-  // Роды закрытия и возражения важны сами по себе; слово человека — всегда целиком.
-  if (rk && LOUD_KINDS.has(rk.kind)) return true;
-  // Тело слова человека мост метит origin (roomstack.ts, #5953): провенанс тела его не несёт.
-  return (frame.origin ?? classifyOrigin(frame, str(f.karta_seq) || undefined)) === "human";
-}

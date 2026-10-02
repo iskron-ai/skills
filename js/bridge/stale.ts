@@ -4,10 +4,10 @@
 // событием — под Monitor одним залпом, в pi и OpenCode одним промптом, сторожу
 // выхода в лог и .seen. Пачка у каждого места своя (door.ts, #5838): лежалое
 // одного графа не уходит сторожу другого.
+import { addressedToMine } from "../shared/addressed.ts";
 import { type Frame } from "../shared/channel.ts";
-import { frameToText, restCountLines } from "../shared/frame-text.ts";
+import { caseCountLines, frameToText } from "../shared/frame-text.ts";
 import { L } from "../shared/lang.ts";
-import { addressedToMine } from "../shared/room-kinds.ts";
 import { deliveredKeys, eventKeyOf } from "../shared/seen.ts";
 import { type ChannelEvent } from "./door.ts";
 
@@ -35,7 +35,7 @@ export class StaleBurst {
       const frames = all.slice(0, STALE_BURST_KEEP);
       // Закон #6574: адресованные месту — текстом, прочие записи дел — счётом.
       const bodies = [
-        ...restCountLines(frames),
+        ...caseCountLines(frames),
         ...frames
           .filter((f) => addressedToMine(f))
           .map((f) => {
