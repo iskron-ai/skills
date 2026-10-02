@@ -163,6 +163,36 @@ export function learnFromHello(hello: Frame | null, primary: Place | null): void
   }
 }
 
+/** Места, которым адресован кадр (id места — одно, если оно известно, и тогда id узнаётся); null — кадр без адреса. */
+function fitsOf(frame: Frame, places: Place[]): Place[] | null {
+  const id = typeof frame.to_standing_id === "string" ? frame.to_standing_id : "";
+  const byId = id ? places.find((p) => p.door.standingId === id) : undefined;
+  if (byId) return [byId];
+  const to = nameOfAddress(frame.to_standing);
+  if (!id && !to && frame.realm == null && frame.karta_seq == null) return null;
+  const fits = places.filter(
+    (p) =>
+      (frame.realm == null || sameRealm(frame.realm, p.standing.realm)) &&
+      (!to || to === (p.standing.name ?? "")) &&
+      (frame.karta_seq == null || String(frame.karta_seq) === String(p.standing.karta)),
+  );
+  if (fits.length === 1 && id && !fits[0].door.standingId) fits[0].door.standingId = id;
+  return fits;
+}
+
+/**
+ * Кадр спула смены демона, адресованный месту, которого мост не держит (место
+ * рядом не вернулось, #6586): кому он — ключ места из повторной регистрации,
+ * иначе адрес кадра. Null — кадр основного места, места рядом или без адреса.
+ */
+export function strayOf(frame: Frame | null, primary: Place): string | null {
+  if (frame?.type !== "message" || fitsOf(frame, all(primary))?.length !== 0) return null;
+  const back = state.places.find((s) => frame.realm != null && sameRealm(s.realm, frame.realm));
+  return back
+    ? keyOfPlace(back)
+    : `${String(frame.to_standing ?? "—")}, граф ${String(frame.realm ?? "—")}`;
+}
+
 /**
  * Чьей двери кадр (#5838): по to_standing_id — id места; иначе по графу, адресу
  * и роли кадра, если они называют ровно одно место (и тогда id места узнаётся).
@@ -171,22 +201,10 @@ export function learnFromHello(hello: Frame | null, primary: Place | null): void
  */
 export function routeFrame(frame: Frame | null, primary: Place): { door: Door; note?: string } {
   if (!frame || !extras.size) return { door: primary.door };
-  const places = all(primary);
+  const fits = fitsOf(frame, all(primary));
+  if (!fits) return { door: primary.door };
+  if (fits.length === 1) return { door: fits[0].door };
   const id = typeof frame.to_standing_id === "string" ? frame.to_standing_id : "";
-  const byId = id ? places.find((p) => p.door.standingId === id) : undefined;
-  if (byId) return { door: byId.door };
-  const to = nameOfAddress(frame.to_standing);
-  if (!id && !to && frame.realm == null && frame.karta_seq == null) return { door: primary.door };
-  const fits = places.filter(
-    (p) =>
-      (frame.realm == null || sameRealm(frame.realm, p.standing.realm)) &&
-      (!to || to === (p.standing.name ?? "")) &&
-      (frame.karta_seq == null || String(frame.karta_seq) === String(p.standing.karta)),
-  );
-  if (fits.length === 1) {
-    if (id && !fits[0].door.standingId) fits[0].door.standingId = id;
-    return { door: fits[0].door };
-  }
   return {
     door: primary.door,
     note:

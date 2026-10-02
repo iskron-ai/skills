@@ -198,6 +198,12 @@ export interface HoldOptions {
 export interface Holder {
   /** Отпустить сокет: больше ни переоткрытий, ни кадров. Идемпотентно. */
   close(reason?: string): void;
+  /**
+   * Держать сокет до вытеснения (смена демона, граф nks-dev: #6586): кадры — в
+   * onFrame, слова держателя молчат, любое закрытие — конец держания с его кодом,
+   * без переоткрытия. Сокета уже нет — onGone сразу.
+   */
+  handOff(onFrame: (raw: string) => void, onGone: (code: number) => void): void;
   /** Живой ли сокет (открыт или открывается). */
   readonly alive: boolean;
 }
@@ -216,6 +222,7 @@ export function holdSocket(o: HoldOptions): Holder {
   let lastEviction: number | null = null;
   let retry: ReturnType<typeof setTimeout> | null = null;
   let ws: WebSocket | null = null;
+  let handing: { onFrame: (raw: string) => void; onGone: (code: number) => void } | null = null;
   // Живость соединения: последний знак от службы (пинг или кадр), интервал из
   // hello; таймер взводит первый увиденный пинг.
   let lastLife = 0;
@@ -266,6 +273,7 @@ export function holdSocket(o: HoldOptions): Holder {
       if (stopped || ws !== sock) return;
       lastLife = Date.now();
       const raw = typeof e.data === "string" ? e.data : "[двоичный кадр]";
+      if (handing) return handing.onFrame(raw);
       let frame: Frame | null = null;
       if (typeof e.data === "string") {
         try {
@@ -330,6 +338,14 @@ export function holdSocket(o: HoldOptions): Holder {
     async function dropped(code: number): Promise<void> {
       if (stopped || ws !== sock) return;
       stopWatch();
+      if (handing) {
+        const h = handing;
+        handing = null;
+        stopped = true;
+        ws = null;
+        unsubscribePing();
+        return h.onGone(code);
+      }
       // Мёртвый токен громче любого предположения об обрыве и старше вытеснения:
       // он проходит ограду `gone` всегда и снимает уже назначенное переоткрытие.
       if (DEAD_TOKEN_CODES.includes(code)) return yieldTo(o.onDeadToken, code);
@@ -387,6 +403,7 @@ export function holdSocket(o: HoldOptions): Holder {
   return {
     close(reason = "held no more") {
       stopped = true;
+      handing = null;
       stopWatch();
       unsubscribePing();
       if (retry) clearTimeout(retry);
@@ -398,6 +415,18 @@ export function holdSocket(o: HoldOptions): Holder {
       } catch {
         /* закрывать нечего */
       }
+    },
+    handOff(onFrame, onGone) {
+      // Обрыв уже был, ждём переоткрытия: вытеснять нечего. Сокет ещё открывается —
+      // тоже закрыть: открывшись после сокета преемника, он вытеснил бы его 4000.
+      if (stopped || !ws || ws.readyState !== 1) {
+        this.close("handed off without a socket");
+        return onGone(0);
+      }
+      if (retry) clearTimeout(retry);
+      retry = null;
+      stopWatch();
+      handing = { onFrame, onGone };
     },
     get alive() {
       return !stopped && !!ws && (ws.readyState === 0 || ws.readyState === 1);

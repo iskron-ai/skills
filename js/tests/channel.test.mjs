@@ -221,6 +221,34 @@ test("three fast drops against a live service: the doer is told once, and the ho
   }
 });
 
+// #6586: a socket still opening at the daemon change is not kept for eviction.
+// Opening after the successor's socket, it would make the service evict the
+// successor with 4000 — and the successor's eviction word would drop the place.
+test("handOff of a socket still opening closes it and ends at once, not kept to open after the successor", async () => {
+  sockets.length = 0;
+  const holder = holdSocket({
+    url: "ws://127.0.0.1:9/channel/ws/tok",
+    onFrame: () => {},
+    onDeadToken: () => {},
+    onServiceAlive: () => {},
+  });
+  const s = sockets[0];
+  s.readyState = 0;
+  const gone = [];
+  const kept = [];
+  holder.handOff(
+    (raw) => kept.push(raw),
+    (code) => gone.push(code),
+  );
+  assert.deepEqual(gone, [0], "the hand-off ends at once");
+  assert.equal(s.readyState, 3, "the opening socket is closed");
+  assert.equal(holder.alive, false);
+  s.readyState = 1;
+  s.fire("open");
+  s.fire("message", { data: JSON.stringify({ type: "message", id: "late" }) });
+  assert.deepEqual(kept, [], "nothing is spooled from a socket handed off while opening");
+});
+
 test("frames are parsed once and handed on raw plus parsed; non-JSON stays raw", async () => {
   sockets.length = 0;
   const got = [];

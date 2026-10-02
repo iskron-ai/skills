@@ -15,10 +15,11 @@
 //   обновление      только демон сверяется с релизами; домашняя копия новее (скачал сам,
 //                   положил новый тонкий мост) или тонкий мост новее — демон передаёт места
 //                   преемнику: не принимает новых запросов (без ack тонкий мост переотправит
-//                   их преемнику), ждёт вызовов в полёте, отпускает сокеты мест без слова
-//                   «отпущено» и без снятия занятости, поднимает преемника новой копией и
-//                   уходит; тонкие мосты переподхватываются, места возвращаются по записи
-//                   держания (resume.ts)
+//                   их преемнику), ждёт вызовов в полёте, закрывает двери мест без слова
+//                   «отпущено» и без снятия занятости, поднимает преемника новой копией;
+//                   тонкие мосты переподхватываются, места возвращаются по записи
+//                   держания (resume.ts); сокеты мест уходящий держит до вытеснения
+//                   преемником, пришедшее досылает ему спулом (handoff.ts), и уходит
 //   журнал          <каталог гранта>/run/daemon.log — слово демона и его сессий
 import { spawn } from "node:child_process";
 import { appendFileSync, mkdirSync, readFileSync, statSync, unlinkSync } from "node:fs";
@@ -43,6 +44,7 @@ import { BUILD } from "./build.ts";
 import { parseArgs } from "./config.ts";
 import { installCrashWords, startEngine } from "./engine.ts";
 import { errorMessage } from "./errors.ts";
+import { handoffsSettled } from "./handoff.ts";
 import { beginHandover } from "./holdstate.ts";
 import { pendingFlow } from "./oauth/flow.ts";
 import { type BridgeSession, openSession } from "./session.ts";
@@ -166,6 +168,8 @@ export async function daemonMain(argv: string[]): Promise<void> {
     spawnDaemon(to, authDir, true); // преемник ждёт, пока этот отпустит вход
     await Promise.allSettled([...sessions.values()].map((s) => s.end(`daemon handover: ${why}`)));
     for (const so of sockets) so.end(); // связь оборвалась — вердикты, переотправка, переподхват
+    // Сокеты мест — до вытеснения преемником или до предела (handoff.ts, #6586).
+    await handoffsSettled();
     log("handed over — leaving");
     setTimeout(() => process.exit(0), 300);
   };
