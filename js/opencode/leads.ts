@@ -48,13 +48,16 @@ export function createLeads(d: W.LeadDoors): W.Leads {
     const l = leads.get(child);
     if (!l) return;
     leads.delete(child);
+    // Конец снимает только спутника ребёнка: обычное место, вставшее вместо него, не трогаем.
+    const kept = ended && !lost ? d.ownPlace(child) : null;
+    if (kept) d.say(`Искрон: ${W.keptLine(who(l, child), kept)}`, "warning");
     const parent = await l.parent;
     const word = lost
       ? W.lostWord(who(l, child), why)
-      : W.endWord(who(l, child), why, (l.last ?? "").trim());
+      : W.endWord(who(l, child), why, (l.last ?? "").trim(), kept);
     if (parent) await d.tell(parent, word, wake, wake);
     else d.say(`${word}\n(родителя плагин не знает — итог некому)`, "warning");
-    if (ended)
+    if (ended && !kept)
       await d
         .end(child)
         .catch((e: Error) =>
@@ -108,6 +111,7 @@ export function createLeads(d: W.LeadDoors): W.Leads {
       if (name !== "iskron_channel" || args.action !== "revoke" || !s) return null;
       for (const [child, l] of leads) {
         if (!names(l.place, child, s) || (await l.parent) !== caller) continue;
+        if (d.ownPlace(child)) return null; // не спутник — revoke идёт мостом запустившего как есть
         gone.add(child);
         await finish(child, "отпущен словом запустившего");
         await d.tell(child, W.releasedWord(), false);

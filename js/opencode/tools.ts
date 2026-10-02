@@ -186,7 +186,7 @@ export async function setupTools(
   // Ведущие субагенты (#6625): конец — явный акт, итог — синтетикой родителю.
   const endChild = (c: string) =>
     runEnds.end(c, slots.get(c)?.satelliteOf, forget, leads.released(c));
-  const leads = createLeads(leadDoors(ctx, say, flushUsage, endChild));
+  const leads = createLeads(leadDoors(ctx, say, flushUsage, endChild, slots));
   const keeper = createKeeper({
     say,
     tell: (root, text, child) =>

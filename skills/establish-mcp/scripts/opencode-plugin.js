@@ -1445,6 +1445,12 @@ function standsBy(name, args) {
   return name === "iskron_channel" && ["connect", "mint", "register"].includes(String(args.action));
 }
 var busyOnly = (args) => typeof args.status === "string" && takingArgs(args).length === 0;
+function ownPlace(slot) {
+  const p = slot?.child ? slot.place : null;
+  if (!p?.name) return null;
+  const of = slot?.satelliteOf?.name;
+  return of && p.name.startsWith(`${of}.sub-`) ? null : p.name;
+}
 function heldPlace(data) {
   const p = data?.place;
   if (typeof p?.name !== "string" || !p.name) return null;
@@ -1483,19 +1489,22 @@ function createLauncher(d) {
 
 // js/opencode/leadwords.ts
 var SUMMARY_MAX = 4e3;
-var endWord = (who, why, last) => {
+var endWord = (who, why, last, kept) => {
   const said = last.length > SUMMARY_MAX ? `${last.slice(0, SUMMARY_MAX)}…` : last;
-  return `Искрон: субагент ${who} КОНЧЕН — ${why}. Это конец поручения, не ход: мост субагента погашен, из дел он вышел, место снято. Итог — его последнее слово:
+  const done = kept ? `${keptLine(who, kept)}; снять его — iskron_channel(action="revoke", standing="${kept}"), только словом человека. ` : "мост субагента погашен, из дел он вышел, место снято. ";
+  return `Искрон: субагент ${who} КОНЧЕН — ${why}. Это конец поручения, не ход: ${done}Итог — его последнее слово:
 ${said || "(текста он не оставил — смотри его дело)"}`;
 };
+var keptLine = (who, place) => `ребёнок ${who} стоял не спутником (${place}) — место не снято, мост не погашен`;
 var turnWord = (place) => `Искрон: субагент ${place} сдал ход, не поручение — он продолжает и ждёт кадров своего дела; итог ляжет сюда по его концу. Отпустить раньше — iskron_channel(action="revoke", standing="${place}").`;
 var noticeWord = (child, place) => `Искрон: уведомление OpenCode <subagent sessionID="${child}" state="completed"> — конец ХОДА субагента ${place}, не поручения: он ведущий, стоит своим местом и ждёт кадров своего дела. Не считай его закончившим — итог ляжет сюда словом «КОНЧЕН» по его концу. Отпустить раньше — iskron_channel(action="revoke", standing="${place}").`;
 var releaseWord = (who) => `Искрон: субагент ${who} отпущен — его мост погашен: выход из дел и снятие места делает он; итог лёг сюда синтетикой.`;
 var releasedWord = () => "Искрон: запустивший отпустил тебя — поручение кончено, место снято, из дел ты выведен; встать снова нельзя, в граф и дела больше не пиши.";
 var lostWord = (who, why) => `Искрон: субагент ${who} снят — ${why}. Место без моста уйдёт сроком канала, его дела — сроком места; итога нет, его ход — в его сессии.`;
-function leadDoors(ctx, say, flush, end) {
+function leadDoors(ctx, say, flush, end, slots) {
   return {
     say,
+    ownPlace: (child) => ownPlace(slots.get(child)),
     async end(child) {
       await flush(child).catch(() => {
       });
@@ -1538,12 +1547,14 @@ function createLeads(d) {
     const l = leads.get(child);
     if (!l) return;
     leads.delete(child);
+    const kept = ended && !lost ? d.ownPlace(child) : null;
+    if (kept) d.say(`Искрон: ${keptLine(who(l, child), kept)}`, "warning");
     const parent = await l.parent;
-    const word = lost ? lostWord(who(l, child), why) : endWord(who(l, child), why, (l.last ?? "").trim());
+    const word = lost ? lostWord(who(l, child), why) : endWord(who(l, child), why, (l.last ?? "").trim(), kept);
     if (parent) await d.tell(parent, word, wake, wake);
     else d.say(`${word}
 (родителя плагин не знает — итог некому)`, "warning");
-    if (ended)
+    if (ended && !kept)
       await d.end(child).catch(
         (e) => d.say(
           `Искрон: мост субагента ${who(l, child)} не погашен после итога — ${e.message}`,
@@ -1590,6 +1601,7 @@ function createLeads(d) {
       if (name !== "iskron_channel" || args.action !== "revoke" || !s) return null;
       for (const [child, l] of leads) {
         if (!names(l.place, child, s) || await l.parent !== caller) continue;
+        if (d.ownPlace(child)) return null;
         gone.add(child);
         await finish(child, "отпущен словом запустившего");
         await d.tell(child, releasedWord(), false);
@@ -1975,7 +1987,7 @@ async function setupTools(ctx, say, onChannel, rootOf, flushUsage = async () => 
   const { home, directoryOf, exists, ours, moved } = createMoves(ctx);
   const runEnds = createRunEnds();
   const endChild = (c) => runEnds.end(c, slots.get(c)?.satelliteOf, forget, leads.released(c));
-  const leads = createLeads(leadDoors(ctx, say, flushUsage, endChild));
+  const leads = createLeads(leadDoors(ctx, say, flushUsage, endChild, slots));
   const keeper = createKeeper({
     say,
     tell: (root, text, child) => onChannel(root, { logger: "iskron-channel", data: { kind: "resumed", text } }, !!child),

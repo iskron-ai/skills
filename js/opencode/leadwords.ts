@@ -2,7 +2,7 @@
 // и двери к контексту OpenCode, которыми они доходят: синтетика в сессию.
 /* eslint-disable @typescript-eslint/no-explicit-any -- ответы SDK без схемы */
 import type { Context } from "./plugin.ts";
-import type { Place } from "./satellite.ts";
+import { ownPlace, type Place, type SatelliteSlot } from "./satellite.ts";
 import type { Say } from "./tools.ts";
 
 export interface Leads {
@@ -34,18 +34,27 @@ export interface LeadDoors {
   tell(session: string, text: string, wake: boolean, steer?: boolean): Promise<void>;
   /** Мост ребёнка гасится (расход — прежде), сессия помечена кончившейся. */
   end(child: string): Promise<void>;
+  /** Имя места ребёнка, если это не его спутник (обычное место сессии); спутник или места нет — null. */
+  ownPlace(child: string): string | null;
 }
 
 /** Итог — последний текст ребёнка; длиннее — хвост обрезается. */
 const SUMMARY_MAX = 4000;
 
-export const endWord = (who: string, why: string, last: string): string => {
+export const endWord = (who: string, why: string, last: string, kept?: string | null): string => {
   const said = last.length > SUMMARY_MAX ? `${last.slice(0, SUMMARY_MAX)}…` : last;
+  const done = kept
+    ? `${keptLine(who, kept)}; снять его — iskron_channel(action="revoke", standing="${kept}"), только словом человека. `
+    : "мост субагента погашен, из дел он вышел, место снято. ";
   return (
-    `Искрон: субагент ${who} КОНЧЕН — ${why}. Это конец поручения, не ход: мост субагента погашен, из дел он вышел, место снято. ` +
+    `Искрон: субагент ${who} КОНЧЕН — ${why}. Это конец поручения, не ход: ${done}` +
     `Итог — его последнее слово:\n${said || "(текста он не оставил — смотри его дело)"}`
   );
 };
+
+/** Ребёнок занял обычное место вместо спутника: конец поручения его место не снимает. */
+export const keptLine = (who: string, place: string): string =>
+  `ребёнок ${who} стоял не спутником (${place}) — место не снято, мост не погашен`;
 
 export const turnWord = (place: string): string =>
   `Искрон: субагент ${place} сдал ход, не поручение — он продолжает и ждёт кадров своего дела; итог ляжет сюда по его концу. ` +
@@ -76,9 +85,11 @@ export function leadDoors(
   say: Say,
   flush: (session: string) => Promise<void>,
   end: (child: string) => void,
+  slots: Map<string, SatelliteSlot & { child?: boolean }>,
 ): LeadDoors {
   return {
     say,
+    ownPlace: (child) => ownPlace(slots.get(child)),
     async end(child) {
       await flush(child).catch(() => {});
       end(child);

@@ -2549,6 +2549,39 @@ test("a child's end: the word into the parent is laid before the child's bridge 
   }
 });
 
+// A child that stood not as its satellite — the root held no place, so its bridge
+// is no satellite and its place is an ordinary place of the session (seen live:
+// «16-m3.skills») — is still counted a lead; its end must not take that place
+// down: the end takes only the child's satellite (#6550, rule 4).
+test("a child that stood an ordinary place, not its satellite: its end leaves the place and the bridge, and says so loudly", async () => {
+  const calls = join(SANDBOX, "lead-plain.calls");
+  writeFileSync(calls, "");
+  const b = bridgeEnv("lead-plain", { FB_CALLS: calls, FB_TOOLS: LEAD_TOOLS });
+  const rec = await plugin(b.env, {
+    sessions: [{ id: "root" }, { id: "child", parentID: "root" }],
+  });
+  try {
+    await until(() => rec.tools().has("iskron_case"), "the tools", 8000);
+    await rec.call("iskron_stand", { realm: "nks-dev" }, "child");
+    const childPid = callsIn(calls)
+      .filter((c) => c.name === "iskron_stand")
+      .at(-1).pid;
+    const plain = { realm: "@nks/nks-dev", karta: "931", name: "host.repo" };
+    appendFileSync(`${b.events}.${childPid}`, event("held", { key: "k-plain", place: plain }));
+    await until(() => /мост держит стояние k-plain/.test(rec.said()), "the child's held word");
+    await rec.call("iskron_case", { realm: "nks-dev", action: "join", room: "#77" }, "child");
+    await rec.call("iskron_case", { realm: "nks-dev", action: "leave", room: "#77" }, "child");
+    await until(() => ends(rec).length === 1, "the end in the parent");
+    assert.match(ends(rec)[0].text, /стоял не спутником \(host\.repo\) — место не снято/);
+    assert.doesNotMatch(ends(rec)[0].text, /место снято/);
+    assert.match(rec.said(), /стоял не спутником \(host\.repo\)/, "and a loud line in the log");
+    await delay(400);
+    assert.ok(alive(childPid), "the bridge holding the ordinary place is not put out");
+  } finally {
+    await rec.stop();
+  }
+});
+
 // OpenCode's own synthetic wakes the parent when the child goes quiet; a queued
 // «КОНЧЕН» would lie down only after that turn (seen live: +4.8 s). The end goes
 // steer — into the running turn at its next step — and wakes an idle parent.
