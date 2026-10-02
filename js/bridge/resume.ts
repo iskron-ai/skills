@@ -173,13 +173,13 @@ export interface ResumeSelector {
  * Место, отпущенное словом держателя (`left`), своим не считается никак —
  * вернуть его может только iskron_stand по имени.
  * `sameDir` — все записи этого харнесса того же каталога, для слова «с кем делишь каталог»;
- * `legacy` — имена записей прежней сборки без сессии в этом каталоге: по каталогу не берутся,
+ * `legacy` — записи прежней сборки без сессии в этом каталоге: по каталогу не берутся,
  * но называются вслух, чтобы их держатель вернул их по имени.
  */
 function recordsFor(sel: ResumeSelector): {
   own: HoldRecord[];
   sameDir: string[];
-  legacy: string[];
+  legacy: HoldRecord[];
   left: string[];
 } {
   const dir = standingsDirOf(CFG.authDir);
@@ -189,7 +189,7 @@ function recordsFor(sel: ResumeSelector): {
   const byKey: HoldRecord[] = [];
   const byCwd: HoldRecord[] = [];
   const sameDir: string[] = [];
-  const legacy: string[] = [];
+  const legacy: HoldRecord[] = [];
   const left: string[] = [];
   for (const f of readdirSync(dir).filter((x) => x.endsWith(".hold"))) {
     try {
@@ -210,7 +210,7 @@ function recordsFor(sel: ResumeSelector): {
       const stoodHere = key === led || (!!sel.session && fresh.session === sel.session);
       if (keyed) byKey.push(fresh);
       else if (stoodHere) byCwd.push(fresh);
-      else if (!fresh.session) legacy.push(fresh.name);
+      else if (!fresh.session) legacy.push(fresh);
     } catch {
       /* чужой или битый файл — не наш */
     }
@@ -228,6 +228,21 @@ export const legacyWord = (names: string[]): string =>
   names
     .map((n) => `есть место прежней сборки без сессии: ${n} — вернуть: iskron_stand(name="${n}")`)
     .join("; ");
+
+/**
+ * Места прежней сборки, которые можно предложить вернуть: сокет места не держит
+ * живой мост другой сессии (#6594). Занятое живым соседом не предлагается —
+ * вызов с его именем дал бы только атрибуцию без слуха.
+ */
+async function freeLegacy(recs: HoldRecord[]): Promise<string[]> {
+  const free: string[] = [];
+  for (const r of recs) {
+    const key = keyOf(r.realm, r.karta, r.name);
+    if (!holdsKey(key) && (await localSocketAlive(localSocketPathOf(key)))) continue;
+    free.push(r.name);
+  }
+  return free;
+}
 
 export interface ResumeOutcome {
   resumed: boolean;
@@ -264,8 +279,9 @@ async function backToParked(key: string, how: string): Promise<ResumeOutcome> {
  * «держу»; запарковано — обратно на место; чужое или ведём другое — не трогаем.
  */
 export async function resumeBy(sel: ResumeSelector, register = true): Promise<ResumeOutcome> {
-  const { own: recs, sameDir, legacy, left } = recordsFor(sel);
+  const { own: recs, sameDir, legacy: legacyRecs, left } = recordsFor(sel);
   if (!recs.length) {
+    const legacy = await freeLegacy(legacyRecs);
     const said = [
       `своей записи держания ${sel.key ? `с ключом ${sel.key}` : `для каталога ${sel.cwd ?? "?"}`} нет`,
     ];
