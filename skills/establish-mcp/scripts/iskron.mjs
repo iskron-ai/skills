@@ -6866,10 +6866,10 @@ function clientName2() {
 function toolSet() {
   return CFG.tools ? /* @__PURE__ */ new Set([...CFG.tools, STAND_TOOL.name]) : null;
 }
-var ownCall = (id) => String(id ?? "").startsWith("iskron-");
+var ownRealmList = (msg) => String(msg.id ?? "").startsWith("iskron-thin-realms-") && msg.params?.name === "iskron_realm" && String(msg.params?.arguments?.action ?? "") === "list";
 function outsideSetRefusal(msg) {
   if (msg?.method !== "tools/call" || msg.id === void 0 || msg.id === null) return null;
-  if (ownCall(msg.id)) return null;
+  if (ownRealmList(msg)) return null;
   const set = toolSet();
   const name = String(msg.params?.name ?? "");
   if (!set || set.has(name)) return null;
@@ -7845,7 +7845,10 @@ function thinMain(argv2) {
   const toHarness = (msg) => {
     if (msg.method === void 0 && msg.id !== void 0 && msg.id !== null) {
       const k = key(msg.id);
-      if (realmIds.reply(msg, log)) return;
+      if (realmIds.reply(msg, log)) {
+        openGate(k);
+        return;
+      }
       if (replayIds.delete(k)) {
         const back = resuming.get(k);
         resuming.delete(k);
@@ -7905,6 +7908,8 @@ function thinMain(argv2) {
     if (!m) return;
     if (mode === "daemon" && link) toDaemon(link, m);
     else if (mode === "local") toLocal(m);
+    else return;
+    closeGate(key(m.id));
   };
   const verdictAll = (why, acks, resend = false) => {
     const again = [];

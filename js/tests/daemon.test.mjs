@@ -962,6 +962,96 @@ test("the bridge's own realm list is past --tools: rN into the held graph goes t
   });
 });
 
+// Ревью #280 (круг 3, Opus п.1): исключение своего вызова в сужении --tools было
+// префиксом id `iskron-*` (narrow.ts) — а префикс выбирает и харнес, и его вызов
+// вне набора шёл к серверу. Признак своего вызова — вызов целиком: тул
+// iskron_realm, ход list, id из служебного диапазона `iskron-thin-realms-*`
+// (lostplaces.ts); прочие id, какого бы вида они ни были, сужению подчиняются.
+test("a harness id iskron-* is not the bridge's own call: an outside tool is refused whatever the id, the realm-list shape alone passes", async () => {
+  await withFake(async ({ fake, bridge }) => {
+    const a = bridge({}, ["--tools", "case"]);
+    await handshake(a);
+    // Харнес с id вида iskron-* зовёт тул вне набора — отказ вслух, на сервер не ушло.
+    const forged = await a.request(
+      "tools/call",
+      { name: "iskron_look", arguments: {} },
+      "iskron-harness-1",
+    );
+    assert.equal(forged.result?.isError, true, JSON.stringify(forged));
+    assert.match(textOf(forged), /нет в наборе этого моста/, textOf(forged));
+    assert.equal(
+      fake.state.calls.some((c) => c.name === "iskron_look"),
+      false,
+      "the forged id must not carry an outside tool to the server",
+    );
+    // Служебная форма — тот же тул и ход с id служебного диапазона: сужение её
+    // пропускает, это и есть исключение.
+    const service = await a.request(
+      "tools/call",
+      { name: "iskron_realm", arguments: { action: "list" } },
+      "iskron-thin-realms-1",
+    );
+    assert.ok(service.result && !service.result.isError, JSON.stringify(service));
+    assert.match(textOf(service), /Доступные графы/, textOf(service));
+  });
+});
+
+// Ревью #280 (круг 3, Opus п.2): ворота после переподхвата открывались ответами
+// replay/resume — раньше ответа служебного списка графов, и вызов с rN получал
+// unresolved-отказ там, где летящий к серверу список разрешил бы имя. Ворота
+// держатся и на ответе списка (askRealms закрывает, ответ открывает); проба —
+// один вызов в окне медленного списка, без ретраев.
+test("the gate holds harness calls until the bridge's own realm list answers: rN into the held graph goes through on the first call, no retries", async () => {
+  await withFake(async ({ fake, dir, bridge }) => {
+    const d = await updatableDaemon(dir);
+    try {
+      const a = bridge({});
+      await handshake(a);
+      const ra = await stand(a, { realm: "nks-dev", karta: 931, name: "gate-a" });
+      assert.ok(!ra.result?.isError, textOf(ra));
+      const rb = await stand(a, { realm: "drugoy", karta: 48, name: "gate-a" });
+      assert.ok(!rb.result?.isError, `beside: ${textOf(rb)}`);
+      await waitFor("the beside word", () =>
+        a.notifications.some((n) => n.params?.data?.kind === "beside"),
+      );
+      // Список графов отвечает медленно: окно, в котором вызов харнеса стоит до
+      // алиасов из него, — приговорённый до ответа получил бы unresolved-отказ.
+      await fake.control({ realmDelayMs: 1200 });
+      const listsBefore = fake.state.counts.realm_list ?? 0;
+      d.bump();
+      await waitFor(
+        "the lost word for the beside seat",
+        () =>
+          a.notifications.some(
+            (n) => n.params?.data?.kind === "lost" && /drugoy/.test(n.params?.data?.key ?? ""),
+          ),
+        30_000,
+      );
+      // Служебный список дошёл до сервера и держится открытым — один вызов, без ретраев.
+      await waitFor(
+        "the bridge's own realm list at the server",
+        () => (fake.state.counts.realm_list ?? 0) > listsBefore,
+        10_000,
+      );
+      const only = await a.request("tools/call", {
+        name: "iskron_case",
+        arguments: { action: "mine", realm: "r5" },
+      });
+      assert.ok(
+        only.result && !only.result.isError,
+        `rN into the held graph must pass on the first call:\n${JSON.stringify(only)}\n${a.stderr}`,
+      );
+      assert.ok(
+        fake.state.calls.some((c) => c.name === "iskron_case" && c.arguments?.realm === "r5"),
+        "the call reached the server",
+      );
+      assert.equal(fake.state.counts.unattributed, 0, JSON.stringify(fake.state.writes));
+    } finally {
+      d.cleanup();
+    }
+  });
+});
+
 // Ревью #280 (Opus п.1 / GLM п.3): при нескольких потерянных графах отказ
 // подписан графом вызова, а не текстом первой потери.
 test("with two seats lost the refusal names the graph of the call, not the first lost one", async () => {

@@ -122,7 +122,10 @@ export function thinMain(argv: string[]): void {
   const toHarness = (msg: JsonRpcMessage) => {
     if (msg.method === undefined && msg.id !== undefined && msg.id !== null) {
       const k = key(msg.id);
-      if (realmIds.reply(msg, log)) return; // ответ своего вызова списка графов — не харнесу
+      if (realmIds.reply(msg, log)) {
+        openGate(k); // ворота держались и на списке графов (askRealms) — ответ пришёл
+        return; // ответ своего вызова списка графов — не харнесу
+      }
       if (replayIds.delete(k)) {
         // Ответ хода самого моста (initialize, resume): харнес свой уже получил.
         // Неудачный возврат места — слово агенту; вызовы харнеса ждали этих ответов.
@@ -155,9 +158,10 @@ export function thinMain(argv: string[]): void {
   };
 
   // Ворота после переподхвата к новой сессии: вызовы харнеса ждут, пока ходы самого
-  // моста (переигранный initialize, возврат места) не ответят, — иначе записи
-  // обгоняют возврат места и ложатся без автора. Не ответили за GATE_MS — ворота
-  // открываются со словом.
+  // моста (переигранный initialize, возврат места, служебный список графов) не
+  // ответят, — иначе записи обгоняют возврат места и ложатся без автора, а отказ
+  // потерянного места судится до алиасов из списка. Не ответили за GATE_MS —
+  // ворота открываются со словом.
   const gate = new Set<string>();
   let gateTimer: ReturnType<typeof setTimeout> | null = null;
   const openGate = (k?: string) => {
@@ -197,6 +201,11 @@ export function thinMain(argv: string[]): void {
     if (!m) return;
     if (mode === "daemon" && link) toDaemon(link, m);
     else if (mode === "local") toLocal(m);
+    else return;
+    // Ответ списка в полёте — держать ворота: отказ потерянного места сличает rN
+    // и слаг вызова по алиасам из списка (lostplaces.ts), и вызов, приговорённый
+    // до ответа, получил бы unresolved-отказ там, где список разрешил бы имя.
+    closeGate(key(m.id));
   };
 
   // Вердикт каждому id в полёте — и память о нём, чтобы поздний ответ не стал вторым.
