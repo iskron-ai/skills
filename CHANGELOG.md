@@ -1,5 +1,12 @@
 # Changelog
 
+## [7.2.1](https://github.com/iskron-ai/skills/compare/v7.2.0...v7.2.1) (2026-10-02)
+
+
+### Bug Fixes
+
+* **opencode,bridge:** хвост ведущего субагента и возврат места по своей локации ([#306](https://github.com/iskron-ai/skills/issues/306)) ([6cd6dd7](https://github.com/iskron-ai/skills/commit/6cd6dd787ffc9b0a6c5ab7c7f9c61456c04b1609))
+
 ## [7.2.0](https://github.com/iskron-ai/skills/compare/v7.1.0...v7.2.0) (2026-10-02)
 
 
