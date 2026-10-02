@@ -4,7 +4,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-var VERSION = "6.25.0";
+var VERSION = "7.0.0";
 function buildOf(selfUrl) {
   try {
     const src = readFileSync(fileURLToPath(selfUrl));
@@ -8506,8 +8506,9 @@ var SUCCESSOR_MS = 2e4;
 var BUSY_RETRY_MS = 2e3;
 var GATE_MS = 2e4;
 function daemonWanted() {
+  if (process.env[DAEMON_ENV]?.trim() === "0") return false;
   const off = process.env[NO_DAEMON_ENV]?.trim();
-  return process.env[DAEMON_ENV]?.trim() === "1" && (!off || off === "0");
+  return !off || off === "0";
 }
 function thinMain(argv2) {
   const cfg = parseArgs(argv2);
@@ -8676,7 +8677,7 @@ function thinMain(argv2) {
   const goLocal = (reason) => {
     if (mode === "local" || leaving) return;
     log(`${reason} — going as the full bridge inside this process`);
-    word = `iskron-bridge ${BUILD}: ${reason}; this bridge runs as the full bridge in its own process (${DAEMON_ENV}=1 asked for the machine's daemon).`;
+    word = `iskron-bridge ${BUILD}: ${reason}; this bridge runs as the full bridge in its own process (the machine's daemon is the default; ${DAEMON_ENV}=0 runs the full bridge on purpose).`;
     const input = new PassThrough2();
     const output = new PassThrough2();
     startEngine(cfg);
@@ -10571,7 +10572,7 @@ function harnessReport() {
 }
 async function daemonReport() {
   out3(
-    daemonWanted() ? "демон машины: тонкий мост включён (ISKRON_BRIDGE_DAEMON=1 в окружении этого процесса)" : "демон машины: выключен — мост идёт полным (включение — ISKRON_BRIDGE_DAEMON=1 в окружении моста)"
+    daemonWanted() ? "демон машины: тонкий мост включён — умолчание (выключатель — ISKRON_BRIDGE_DAEMON=0 в окружении моста)" : "демон машины: выключен — мост идёт полным (выключатель стоит в окружении этого процесса: ISKRON_BRIDGE_DAEMON=0 или ISKRON_BRIDGE_NO_DAEMON)"
   );
   if (!existsSync10(seamRunDir(CFG.authDir))) {
     out3(`  не поднимался: каталога шва ${seamRunDir(CFG.authDir)} нет`);
@@ -10674,9 +10675,10 @@ var USAGE = `iskron ${BUILD}
   node iskron.mjs doctor [server-url] [--auth-dir <dir>]
   node iskron.mjs update [--auth-dir <dir>]
   node iskron.mjs use <en|ru|url> [--auth-dir <dir>]   (en — mcp.iskron.ai, ru — mcp.iskron.ru)
-  node iskron.mjs daemon --auth-dir <dir>   (демон машины; его поднимает тонкий мост при ISKRON_BRIDGE_DAEMON=1)
+  node iskron.mjs daemon --auth-dir <dir>   (демон машины; его поднимает тонкий мост — мост по умолчанию)
   node iskron.mjs --version
   env: ISKRON_BRIDGE_TOKEN — личный токен вместо OAuth (или файл <auth-dir>/token);
+       ISKRON_BRIDGE_DAEMON=0 — полный мост в своём процессе, без демона машины;
        ISKRON_BRIDGE_URL, ISKRON_BRIDGE_AUTH_DIR, ISKRON_BRIDGE_NO_BROWSER, ISKRON_BRIDGE_DEBUG
 `;
 var argv = process.argv.slice(2);

@@ -47,6 +47,7 @@ function startBridge(serverUrl, authDir, cwd = process.cwd(), env = {}, args = [
       ISKRON_BRIDGE_NO_BROWSER: "1",
       ISKRON_BRIDGE_TOKEN: PAT,
       ISKRON_BRIDGE_NO_UPDATE: "1",
+      ISKRON_BRIDGE_DAEMON: "0", // полный мост в процессе: эти пробы о нём, не о шве
       ISKRON_STAND_KNOCK_REPEAT_MS: "300", // шов проб: окно повтора 300 мс вместо 2 минут
       ...env,
     },

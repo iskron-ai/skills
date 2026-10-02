@@ -9,8 +9,9 @@
 // ISKRON_BRIDGE_PATH наводит пробы на другую копию: против моста без шва флаг
 // ISKRON_BRIDGE_DAEMON молча пропускается, против моста шага 1 подкоманда daemon
 // отказывает — через демон не идёт ничего, та краснота, ради которой пробы
-// написаны. Проба выключателя (NO_DAEMON) проверяет прежнее поведение и на
-// старом мосте зелена.
+// написаны; против моста, где демон был за флагом, краснеет проба умолчания.
+// Пробы выключателей (ISKRON_BRIDGE_DAEMON=0, NO_DAEMON) проверяют прежнее
+// поведение и на старом мосте зелены.
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
@@ -44,6 +45,8 @@ const REAL_ENV = {
   ISKRON_BRIDGE_DAEMON_WAIT_MS: "10000",
   ISKRON_BRIDGE_DAEMON_TRACE: "1",
 };
+// Выключатель: полный мост в процессе — ход проб, которым нужен полный мост.
+const FULL_ENV = { ISKRON_BRIDGE_DAEMON: "0" };
 // Демона не поднять: точки входа нет — процесс демона умирает сразу.
 const NO_DAEMON_ENV = {
   ISKRON_BRIDGE_DAEMON: "1",
@@ -180,7 +183,7 @@ async function session(b) {
 
 test("a call through the thin bridge answers as through the full bridge — and goes through the daemon", async () => {
   await withFake(async ({ dir, spawnBridge }) => {
-    const full = await session(spawnBridge());
+    const full = await session(spawnBridge(FULL_ENV));
     const thinBridge = spawnBridge(REAL_ENV);
     const thin = await session(thinBridge);
     assert.deepEqual(thin.init.result, full.init.result, "the handshake answers the same");
@@ -305,6 +308,36 @@ test("thin bridge with --tools: the daemon's session carries the bridge's set �
     assert.match(textOf(refused), /нет в наборе этого моста/, textOf(refused));
     assert.match(b.stderr, /through the machine's bridge daemon/, b.stderr);
     assert.match(trailOf(dir), /^rpc tools\/call 3$/m, "the call went through the daemon");
+  });
+});
+
+test("no flag at all — the bridge goes through the machine's daemon by default", async () => {
+  await withFake(async ({ dir, spawnBridge }) => {
+    // undefined снимает переменную из окружения проб: умолчание, а не флаг.
+    const b = spawnBridge({
+      ...REAL_ENV,
+      ISKRON_BRIDGE_DAEMON: undefined,
+      ISKRON_BRIDGE_NO_DAEMON: undefined,
+    });
+    const { orient } = await session(b);
+    assert.ok(orient.result && !orient.error, JSON.stringify(orient));
+    assert.match(
+      b.stderr,
+      /through the machine's bridge daemon v\d+\.\d+\.\d+\+\S+ \(pid/,
+      b.stderr,
+    );
+    assert.doesNotMatch(b.stderr, /going as the full bridge/, b.stderr);
+    assert.match(journalOf(dir), /\] rpc tools\/call 3$/m, "the call went through the daemon");
+  });
+});
+
+test("ISKRON_BRIDGE_DAEMON=0 — the full bridge, no daemon raised", async () => {
+  await withFake(async ({ dir, spawnBridge }) => {
+    const b = spawnBridge({ ...THIN_ENV, ...FULL_ENV });
+    const { orient } = await session(b);
+    assert.ok(orient.result, JSON.stringify(orient));
+    assert.equal(existsSync(join(dir, "fake-daemon.log")), false, "no daemon was raised");
+    assert.doesNotMatch(b.stderr, /daemon/);
   });
 });
 

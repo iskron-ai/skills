@@ -27,8 +27,8 @@
 //                  default iskron-bridge — dynamic registration only when the server knows none),
 //                  ISKRON_BRIDGE_TOKEN (a personal access token: no OAuth at all; the
 //                  file <auth-dir>/token is read when the variable is absent),
-//                  ISKRON_BRIDGE_DAEMON=1 (тонкий мост к демону машины, thin.ts; по
-//                  умолчанию выключено), ISKRON_BRIDGE_NO_DAEMON=1 (полный мост всегда)
+//                  ISKRON_BRIDGE_DAEMON=0 (полный мост в процессе; по умолчанию —
+//                  тонкий мост к демону машины, thin.ts), ISKRON_BRIDGE_NO_DAEMON=1 (то же)
 //
 // No dependencies. Node >= 22.
 import { parseArgs } from "./config.ts";

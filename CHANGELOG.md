@@ -1,5 +1,64 @@
 # Changelog
 
+## [7.0.0](https://github.com/iskron-ai/skills/compare/v6.25.0...v7.0.0) (2026-10-02)
+
+
+### ⚠ BREAKING CHANGES
+
+* **bridge:** демон машины по умолчанию; ISKRON_BRIDGE_DAEMON=0 — полный мост ([#299](https://github.com/iskron-ai/skills/issues/299))
+* **bridge,iskronify:** форма записи моста-спутника в ролевых файлах сменилась; выровненным репо нужен перегон iskronify (контракт 18).
+* **bridge,delegation:** своя запись моста-спутника у каждого ролевого файла, выбор .sub-N под заявкой машины; контракт iskronify 17 ([#267](https://github.com/iskron-ai/skills/issues/267))
+
+### Features
+
+* **bridge,iskronify:** doctor чинит субагентов сам; единая форма записи моста-спутника node -e; контракт iskronify 18 ([#273](https://github.com/iskron-ai/skills/issues/273)) ([c17cf03](https://github.com/iskron-ai/skills/commit/c17cf0340a46b140a33dc64e8e0a86bb3c10dce9))
+* **bridge,iskronify:** флаг --tools у моста и схема iskron_channel без ходов над местом ([#282](https://github.com/iskron-ai/skills/issues/282)) ([94d088d](https://github.com/iskron-ai/skills/commit/94d088df0f03aba397358c67d8662a9df7d1d516))
+* **bridge,opencode,pi:** расход места — поля токенов и модель, снимок до выхода, спутник своим местом ([#297](https://github.com/iskron-ai/skills/issues/297)) ([fcf6c8b](https://github.com/iskron-ai/skills/commit/fcf6c8b41cbe73dacf8c752fe5ecc13bc5ab02f9))
+* **bridge,opencode,pi:** расход сессии и полнота контекста в attrs места ([#254](https://github.com/iskron-ai/skills/issues/254)) ([bee7f0a](https://github.com/iskron-ai/skills/commit/bee7f0a23922cd2740e486665145bf5d8536b42c))
+* **bridge,opencode,pi:** стояние объявляет установленный набор скиллов и версию хоста ([#257](https://github.com/iskron-ai/skills/issues/257)) ([19df489](https://github.com/iskron-ai/skills/commit/19df48929b3e21b8e54ec2e1c755f053aa3e316b))
+* **bridge:** демон машины по умолчанию; ISKRON_BRIDGE_DAEMON=0 — полный мост ([#299](https://github.com/iskron-ai/skills/issues/299)) ([ae9da3d](https://github.com/iskron-ai/skills/commit/ae9da3d68708cdd251ee2978e60ce7c660f5f293))
+* **bridge:** демон машины, шаг 2 — сессии в своих областях, обновление только демоном, переотправка непринятого (за флагом) ([#280](https://github.com/iskron-ai/skills/issues/280)) ([b23e148](https://github.com/iskron-ai/skills/commit/b23e148db8b8eaa633fc9403657e7b7e6a399553))
+* **bridge:** занятость ставит iskron_stand(status) на держимом месте — без доски, connect, register, хука и стука ([#279](https://github.com/iskron-ai/skills/issues/279)) ([2a7afaf](https://github.com/iskron-ai/skills/commit/2a7afaf6413959ca94c87f8dae9ce20606006d59))
+* **bridge:** тонкий мост и шов к демону машины, шаг 1 — за флагом ISKRON_BRIDGE_DAEMON ([#272](https://github.com/iskron-ai/skills/issues/272)) ([2bc0cb1](https://github.com/iskron-ai/skills/commit/2bc0cb141012d74a59ab9d30b6ffc0255a9962b8))
+* **delegation:** роли weaver и searcher — ткач догоняет граф после события работы, поиск отвечает, что граф знает; reader на sonnet ([#274](https://github.com/iskron-ai/skills/issues/274)) ([c10e531](https://github.com/iskron-ai/skills/commit/c10e5318907deb98a619be31d8c96210e5dad753))
+* **delegation:** свой мост-спутник у каждого субагента; запуск на мосту позвавшего не допускается ([#261](https://github.com/iskron-ai/skills/issues/261)) ([8e387f7](https://github.com/iskron-ai/skills/commit/8e387f795444b58d1656545dfe51ad6929394204))
+* **iskron,vahta,standing:** работа субагентами в любой сессии, вход по доле, занятое место, тело PR минимально ([#290](https://github.com/iskron-ai/skills/issues/290)) ([959557b](https://github.com/iskron-ai/skills/commit/959557b1cdd1e42231ac91b01046eb61450c169d))
+* **iskronify:** контракт 19 — прогон без человека, кроме принципиального; обложка — фронтматтер ([#284](https://github.com/iskron-ai/skills/issues/284)) ([37c97f5](https://github.com/iskron-ai/skills/commit/37c97f519c6e6d9f6a2aa53852152df46002c90b))
+* **iskronify:** роль designer ведёт прогон iskronify; умолчание раскладки по [#6412](https://github.com/iskron-ai/skills/issues/6412); AGENTS.md под шаблон (контракт 18) ([#275](https://github.com/iskron-ai/skills/issues/275)) ([5c20c92](https://github.com/iskron-ai/skills/commit/5c20c9264a3ab22bf23caa324f7819215227b397))
+* **skills:** законы дела в двери iskron — группа в дочернем деле, вход сводкой, выход по исходу ([#285](https://github.com/iskron-ai/skills/issues/285)) ([019abb6](https://github.com/iskron-ai/skills/commit/019abb69101a1e39a33edd732fadee51e36d331a))
+* **skills:** сжатие, волна 2 — standing, vahta, chief-of-staff ([#250](https://github.com/iskron-ai/skills/issues/250)) ([3bfedb7](https://github.com/iskron-ai/skills/commit/3bfedb70412c3d0c1b468bb7ebb59e24c6b6446f))
+* **widgets:** скилл виджетов окна собирается из узлов договора; make widgets и check-widgets ([#255](https://github.com/iskron-ai/skills/issues/255)) ([c30e0eb](https://github.com/iskron-ai/skills/commit/c30e0eb2976d843142b260f8713ace957c86769b))
+
+
+### Bug Fixes
+
+* **architect,iskronify:** ткач ведёт ткачество, ведущий принимает перечитыванием узлов; смысл кода — в граф, навигация — README компонента ([#271](https://github.com/iskron-ai/skills/issues/271)) ([cd37f78](https://github.com/iskron-ai/skills/commit/cd37f78540d316d6f2ae8adfc908ef1faae533db))
+* **assistant:** раздел «Карта», граница дел и место, которое держит среда ([#256](https://github.com/iskron-ai/skills/issues/256)) ([1ebd472](https://github.com/iskron-ai/skills/commit/1ebd472577d1cee36c69d8d313ce04622188bbf6))
+* **bridge,delegation:** своя запись моста-спутника у каждого ролевого файла, выбор .sub-N под заявкой машины; контракт iskronify 17 ([#267](https://github.com/iskron-ai/skills/issues/267)) ([20409c4](https://github.com/iskron-ai/skills/commit/20409c41a13da4ec8b9709b93625e9c37721cdda))
+* **bridge,opencode,pi,watchdog:** законы дела в доставке — в ход адресованное месту, прочее счётом; спутник выходит из дел концом прогона ([#287](https://github.com/iskron-ai/skills/issues/287)) ([6e28e5a](https://github.com/iskron-ai/skills/commit/6e28e5abc8b2e8feca693636865218bc425fdf8d))
+* **bridge,opencode:** место-спутник живёт прогоном — конец прогона и уход словом отпускают его целиком ([#258](https://github.com/iskron-ai/skills/issues/258)) ([cb550fb](https://github.com/iskron-ai/skills/commit/cb550fb1a4199ed2139a35db5aeacf67c5a6bec7))
+* **bridge,watchdog:** сторож переживает SIGTERM демона, когда место возвращается ([#291](https://github.com/iskron-ai/skills/issues/291)) ([9e21d15](https://github.com/iskron-ai/skills/commit/9e21d15f330dba98d96c8ab4d45aa078ec16fe98))
+* **bridge:** update и фоновая сверка не глохнут на лимите GitHub API — тег со страницы релизов, память лимита, повтор к сбросу ([#268](https://github.com/iskron-ai/skills/issues/268)) ([45f8f4e](https://github.com/iskron-ai/skills/commit/45f8f4e2cdb9db8eec9f8ccea40fce2d92c9ead6))
+* **bridge:** голова пачки кадров дела без подсказки про «старый тул без since» ([#260](https://github.com/iskron-ai/skills/issues/260)) ([71dbd22](https://github.com/iskron-ai/skills/commit/71dbd22915e692c07872cbc13212897e06bb5fc5))
+* **bridge:** занятое место — не предлагать и вести вперёд, а не к человеку ([#294](https://github.com/iskron-ai/skills/issues/294)) ([84cd301](https://github.com/iskron-ai/skills/commit/84cd30124e2b1a5393c16260e65b66e86c111453))
+* **bridge:** кадр, принятый сокетом уходящего демона, доходит после смены ([#289](https://github.com/iskron-ai/skills/issues/289)) ([1f3fa1f](https://github.com/iskron-ai/skills/commit/1f3fa1f5f56fc9eaacbe6c4066fa012825889f53))
+* **bridge:** остатки ревью передачи места; спутник уходит с места при смене демона ([#296](https://github.com/iskron-ai/skills/issues/296)) ([e29537b](https://github.com/iskron-ai/skills/commit/e29537bd17ae02b8e5858389bb545dc925ecdaaf))
+* **bridge:** слова человека в полёте и адресованное — по делу и нумерации записи ([#293](https://github.com/iskron-ai/skills/issues/293)) ([7a25064](https://github.com/iskron-ai/skills/commit/7a25064d385052334f3d3bc62e24159977b06d32))
+* **bridge:** сокет при длинном --auth-dir; без гранта — не ходить на сервер, пока вход ждёт ([#252](https://github.com/iskron-ai/skills/issues/252)) ([275f9d4](https://github.com/iskron-ai/skills/commit/275f9d4c47da488462c578a798b3b667e9f2d1a9))
+* **intake,iskron:** внешнее слово сверяется с графом и делами прежде передачи ([#264](https://github.com/iskron-ai/skills/issues/264)) ([ca6dd37](https://github.com/iskron-ai/skills/commit/ca6dd37edbaf985ba5ccb9c2413808a1d9d61cb8))
+* **iskron,weaving,architect:** работа не закрыта, пока граф её не догнал; тема — свой ключ; сводка — состояние ([#266](https://github.com/iskron-ai/skills/issues/266)) ([2f46543](https://github.com/iskron-ai/skills/commit/2f465434ab3f9dec0068654b34d4477eb2ac13fa))
+* **iskronify:** пуш одних меток выпуска не будит ревью ветки ([#295](https://github.com/iskron-ai/skills/issues/295)) ([0bf485d](https://github.com/iskron-ai/skills/commit/0bf485d6761de6e41c5c6fc78ada11c5ffb5d951))
+* **iskronify:** фильтр тихого пуша по состоянию git; роль reviewer о чистом брифе ([#281](https://github.com/iskron-ai/skills/issues/281)) ([6a278f5](https://github.com/iskron-ai/skills/commit/6a278f5cc5b5e63f1b91e71dce5d21070153c41d))
+* **iskronify:** человек без места — зов его роли в дело выравнивания; к роли выше — только если она есть ([#259](https://github.com/iskron-ai/skills/issues/259)) ([154c0dd](https://github.com/iskron-ai/skills/commit/154c0dd3c08901eb3ea6f7c40482d3a8fc97f868))
+* **iskron:** слово не твоё — сперва реши, чьё: не по предмету — автору, делать нечего — спроси ведущего и выйди ([#277](https://github.com/iskron-ai/skills/issues/277)) ([1e6de1a](https://github.com/iskron-ai/skills/commit/1e6de1a703b59457ca120ef89d74ec76fabead29))
+* **iskron:** читатель дела сразу говорит автору, что слово не по предмету ([#276](https://github.com/iskron-ai/skills/issues/276)) ([b0cbbaa](https://github.com/iskron-ai/skills/commit/b0cbbaa362734b440455f03a2b313748cde591ae))
+* **setup:** плоское обновление поставки — повторный add --all, не update ([#283](https://github.com/iskron-ai/skills/issues/283)) ([5ba26d7](https://github.com/iskron-ai/skills/commit/5ba26d788c5143d4b8f77f7179d3c8c42b1937eb))
+* **skills:** architect делит дело волны по предметам ([#292](https://github.com/iskron-ai/skills/issues/292)) ([19e774e](https://github.com/iskron-ai/skills/commit/19e774e4c54d8595661f072d2ef2a695b52793f8))
+* **skills:** санкция на тег — на строке стюарда, доля в деле — у автора ([#288](https://github.com/iskron-ai/skills/issues/288)) ([69e60ed](https://github.com/iskron-ai/skills/commit/69e60ed52316a31425729015a7eb0f2f9c2e90f8))
+* **skills:** читать граф как структуру, а не поиск ([#253](https://github.com/iskron-ai/skills/issues/253)) ([a74f2ad](https://github.com/iskron-ai/skills/commit/a74f2ad1f156c7a16ecc2342f1d5c9d32c536313))
+* **standing,chief-of-staff:** talk с about — дело пары о предмете ([#269](https://github.com/iskron-ai/skills/issues/269)) ([327fa62](https://github.com/iskron-ai/skills/commit/327fa623b3b24650893aa12132146749e60aee40))
+* **vahta:** свои строки и долги — по событиям и в три момента; строка работы открыта, пока граф не догнал ([#265](https://github.com/iskron-ai/skills/issues/265)) ([33b62cc](https://github.com/iskron-ai/skills/commit/33b62ccc6b9216fbd2fc26aeb36acabbc98170f0))
+
 ## [6.25.0](https://github.com/iskron-ai/skills/compare/v6.24.0...v6.25.0) (2026-09-28)
 
 
