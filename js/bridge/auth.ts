@@ -1,7 +1,7 @@
 import { now } from "./clock.ts";
 import { CFG } from "./config.ts";
 import { DeadGrantError, errorMessage, HoldOffError, TokenRefused } from "./errors.ts";
-import { discover } from "./oauth/discovery.ts";
+import { discover, resourceOf } from "./oauth/discovery.ts";
 import { interactiveFlow, loginPublished } from "./oauth/flow.ts";
 import { DEAD_RECHECK_MS, IN_CALL_WAIT_MS } from "./oauth/pacing.ts";
 import { refreshShared, refusalStands } from "./oauth/refresh.ts";
@@ -81,7 +81,7 @@ export async function ensureAuth(
       // is, by definition, doing it AFTER a flow already ran and produced the
       // wrong audience. Apply it here, where the value is used, not only where
       // it is discovered.
-      if (CFG.resource) meta.resource = CFG.resource;
+      meta.resource = resourceOf(meta);
       if (interactive && s.tokens?.refresh_token && loginPublished() && refusalStands()) {
         // A login is out and the machine judged the grant dead moments ago:
         // the verdict is in, so the call joins the login rather than knock on

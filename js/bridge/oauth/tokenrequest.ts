@@ -3,6 +3,7 @@ import { TokenError } from "../errors.ts";
 import { clearGrantState, grantLog, loadStore, saveStore } from "../store.ts";
 import { type TokenBody, tokenSchedule } from "../tokens.ts";
 import { type Meta, type Tokens } from "../types.ts";
+import { DEVICE_GRANT } from "./devicecode.ts";
 
 interface TokenEndpointError {
   error?: string;
@@ -28,12 +29,21 @@ async function tokenRequestOnce(meta: Meta, params: Record<string, string>): Pro
       body.message,
     );
   }
-  const refresh = body.refresh_token ?? loadStore().tokens?.refresh_token;
+  const before = loadStore().tokens;
+  const refresh = body.refresh_token ?? before?.refresh_token;
+  // A grant by code keeps that birth through its refreshes: its audience is
+  // the client's on the sign-in server, not the resource asked for (#6619).
+  const byCode =
+    params.grant_type === DEVICE_GRANT ||
+    (params.grant_type === "refresh_token" &&
+      !!before?.by_code &&
+      before.client_id === params.client_id);
   const tokens: Tokens = {
     access_token: body.access_token,
     refresh_token: refresh,
     ...tokenSchedule(body, refresh),
     ...(params.client_id ? { client_id: params.client_id } : {}),
+    ...(byCode ? { by_code: true } : {}),
   };
   saveStore({ tokens });
   clearGrantState(); // a grant in hand ends whatever the machine held against it

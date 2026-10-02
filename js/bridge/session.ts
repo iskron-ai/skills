@@ -22,6 +22,7 @@ import { statusAddress } from "./statusaddr.ts";
 import { handoverUnderway } from "./holdstate.ts";
 import { startDeafnessWatch } from "./leave.ts";
 import { pendingFlow } from "./oauth/flow.ts";
+import { ORPHAN_FLOW_MS } from "./oauth/pacing.ts";
 import { tokenRequestsInFlight } from "./oauth/tokenrequest.ts";
 import { holdFromEnv } from "./resume.ts";
 import { releaseSatelliteClaims } from "./satellite.ts";
@@ -32,8 +33,6 @@ import { type JsonRpcMessage } from "./types.ts";
 import { flushUsage, usagePlace } from "./usage.ts";
 import { lastAgentWork, noteAgentWork } from "./work.ts";
 
-/** How long a bridge left by its harness still waits for a pending login's click. */
-const ORPHAN_FLOW_MS = Number(process.env.ISKRON_BRIDGE_ORPHAN_FLOW_MS) || 5 * 60_000;
 /** Сколько сессия демона, передающего места преемнику, ждёт вызовов в полёте: остальное тонкий мост закроет вердиктом. */
 const HANDOVER_WAIT_MS = Number(process.env.ISKRON_BRIDGE_HANDOVER_WAIT_MS) || 10_000;
 

@@ -149,7 +149,10 @@ export function setupBridge(pi: ExtensionAPI, onChannel: ChannelEventSink): void
     // Ждётся ровно отказ входа — по его слову, не по коду: код -32001 у моста
     // носит и сеть, и мёртвый токен, а они — «мост не поднялся», как прежде.
     // Ожидание ограничено потолком рукопожатия и кончается со сменой сессии.
+    // Сказано один раз на вход и код: страница с кодом (#6570) живёт минуты,
+    // мост выпускает новый — новый и говорится, повторы с тем же кодом — нет.
     let toldLogin = false;
+    let toldLinks = "";
     const deadline = Date.now() + HANDSHAKE_MS;
     const untilAuthed = async <T>(ask: () => Promise<T>): Promise<T> => {
       for (;;) {
@@ -159,8 +162,12 @@ export function setupBridge(pi: ExtensionAPI, onChannel: ChannelEventSink): void
           const message = e instanceof Error ? e.message : String(e);
           if (!AUTH_PENDING.test(message) || bridge !== b || Date.now() + AUTH_POLL_MS > deadline)
             throw e;
-          if (!toldLogin) {
+          const links = [/open in a browser: (\S+)/, /from another device: (\S+)/]
+            .map((re) => re.exec(message)?.[1] ?? "")
+            .join(" ");
+          if (!toldLogin || links !== toldLinks) {
             toldLogin = true;
+            toldLinks = links;
             notify(`Искрон: нужен вход — ${message}`, "warning");
           }
           await new Promise((r) => setTimeout(r, AUTH_POLL_MS));

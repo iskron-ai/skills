@@ -11,7 +11,8 @@
 //                   (тонкий мост, поднявший его, ждёт живого, а не идёт полным)
 //   сессии          Map id → сессия движка в своей области (session.ts, shared/scope.ts):
 //                   конфиг, транспорт, место, вывод, pid, cwd, окружение — моста харнеса
-//   простой         последняя сессия ушла — через окно простоя демон уходит сам
+//   простой         последняя сессия ушла — через окно простоя демон уходит сам; вход,
+//                   ждущий клика, держит его не дольше предела (daemon-idle.ts)
 //   обновление      только демон сверяется с релизами; домашняя копия новее (скачал сам,
 //                   положил новый тонкий мост) или тонкий мост новее — демон передаёт места
 //                   преемнику: не принимает новых запросов (без ack тонкий мост переотправит
@@ -42,11 +43,11 @@ import { compareVersions } from "../shared/semver.ts";
 import { VERSION, versionIn } from "../shared/version.ts";
 import { BUILD } from "./build.ts";
 import { parseArgs } from "./config.ts";
+import { idleWatch } from "./daemon-idle.ts";
 import { installCrashWords, startEngine } from "./engine.ts";
 import { errorMessage } from "./errors.ts";
 import { handoffsSettled } from "./handoff.ts";
 import { beginHandover, beginSessionHandover } from "./holdstate.ts";
-import { pendingFlow } from "./oauth/flow.ts";
 import { type BridgeSession, openSession } from "./session.ts";
 import { log, setProcessLog } from "./streams.ts";
 import {
@@ -137,33 +138,22 @@ export async function daemonMain(argv: string[]): Promise<void> {
   let counter = 0;
   let lastNotice: string | null = null;
   let server: Server | null = null;
-  let idle: ReturnType<typeof setTimeout> | null = null;
 
-  const armIdle = (): void => {
-    if (idle) clearTimeout(idle);
-    idle = null;
-    if (draining || sessions.size) return;
-    idle = setTimeout(() => {
-      idle = null;
-      if (sessions.size || draining) return;
-      const flow = pendingFlow();
-      if (flow) {
-        // Вход ждёт клика человека: колбэк слушает этот процесс — уйти сейчас значило бы потерять вход.
-        log("idle, but an authorization flow is pending — staying for the human's click");
-        void flow.finally(armIdle);
-        return;
-      }
-      log(`no session for ${Math.round(IDLE_MS / 1000)}s — the daemon leaves`);
+  const idle = idleWatch(
+    IDLE_MS,
+    () => draining || sessions.size > 0,
+    () => {
       server?.close();
       process.exit(0);
-    }, IDLE_MS);
-  };
+    },
+  );
+  const armIdle = idle.arm;
 
   // Передать места преемнику и уйти (см. заголовок).
   const handover = async (to: string, why: string): Promise<void> => {
     if (draining) return;
     draining = true;
-    if (idle) clearTimeout(idle);
+    idle.hold();
     log(`handing over to ${to}: ${why} — ${sessions.size} session(s)`);
     beginHandover(why);
     server?.close(); // новых подключений нет
@@ -276,8 +266,7 @@ export async function daemonMain(argv: string[]): Promise<void> {
       sessions.set(id, traced);
       bridgePids.set(id, hello.pid);
       if (opened) engines.set(id, opened);
-      if (idle) clearTimeout(idle);
-      idle = null;
+      idle.hold();
       log(
         `session ${id} for pid ${hello.pid} (${hello.build}, ${hello.path}) argv=${JSON.stringify(hello.argv)}`,
       );
