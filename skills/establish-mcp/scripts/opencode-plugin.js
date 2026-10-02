@@ -204,9 +204,7 @@ var WORDS = {
   who_sibling: "брат по роли #{karta}",
   who_platform: "платформа — побудка",
   who_graph: "событие графа",
-  legacy: "род {kind}{, стопка stack}",
-  answer_case: "ответ: iskron_case({args})",
-  answer_send: "ответ: iskron_channel({args})"
+  legacy: "род {kind}{, стопка stack}"
 };
 var WORDS_EN = {
   said: "message from {author}",
@@ -248,9 +246,7 @@ var WORDS_EN = {
   who_sibling: "sibling of role #{karta}",
   who_platform: "platform — a wake-up",
   who_graph: "graph event",
-  legacy: "kind {kind}{ · stack}",
-  answer_case: "answer: iskron_case({args})",
-  answer_send: "answer: iskron_channel({args})"
+  legacy: "kind {kind}{ · stack}"
 };
 var AUTO_WORDS = {
   child_opened: "дочернее дело №{room} открыто",
@@ -457,13 +453,51 @@ function roomKind(frame) {
   const phase = pending ? "pending" : aborted ? "aborted" : null;
   return { kind, rule: phase ? "batch" : stack, words: text, author, phase, known: true };
 }
+var byKind = (frame) => roomKind(frame) !== null;
 var stackOf = (frame) => roomKind(frame)?.rule ?? (frame?.stack === "defer" ? "batch" : "interrupt");
+var LOUD_KINDS = /* @__PURE__ */ new Set(["closing", "closed", "objection", "late_objection"]);
+function addressedToMine(frame) {
+  if (!frame) return false;
+  const f = frame;
+  const room = obj(f.room);
+  if (!str(room.seq) && !str(room.id)) return true;
+  if (!byKind(frame)) return true;
+  const line = obj(f.line);
+  const fields = obj(line.fields);
+  const rk = roomKind(frame);
+  if (rk?.aside) return false;
+  const mine = mineOf(f);
+  const hit = (v) => {
+    const a = addresseeOf(v);
+    return !!a && mine.length > 0 && a.addr.some((x) => mine.includes(x));
+  };
+  if (hit(f.addressee) || hit(f.in_reply_to_from)) return true;
+  if (str(f.said) === "important" || str(fields.kind) === "important") return true;
+  if (rk?.kind === "invite" || rk?.kind === "withdraw") {
+    if (mine.includes(after(str(line.key), "invite:"))) return true;
+    if (rk.kind === "invite" && myRole(f, fields)) return true;
+  }
+  if (rk && LOUD_KINDS.has(rk.kind)) return true;
+  return (frame.origin ?? classifyOrigin(frame, str(f.karta_seq) || void 0)) === "human";
+}
 
 // js/shared/frame-text.ts
 var rec = (v) => v && typeof v === "object" ? v : {};
 var idOf = (v) => typeof v === "number" || typeof v === "string" && v ? String(v) : "";
-var ANSWERABLE = /* @__PURE__ */ new Set(["said", "body", "invite", "objection", "late_objection"]);
 var ZACHIN = 40;
+function casesOf(frames) {
+  const order = [];
+  const by = /* @__PURE__ */ new Map();
+  for (const f of frames) {
+    const key = caseKey(f) || idOf(f.id) || "?";
+    if (!by.has(key)) {
+      by.set(key, []);
+      order.push(key);
+    }
+    by.get(key).push(f);
+  }
+  return order.map((k) => by.get(k));
+}
 function caseOf(frame) {
   const f = frame;
   const room = rec(f.room);
@@ -514,6 +548,7 @@ function frameToText(frame, raw) {
   const text = textOf(frame);
   const c = caseOf(frame);
   if (c) {
+    if (!addressedToMine(frame)) return caseCountLine([frame]);
     const rk = roomKind(frame);
     const line = rec(f.line);
     const entry = idOf(f.entry_id) || idOf(line.entry_id);
@@ -525,22 +560,10 @@ function frameToText(frame, raw) {
     const head = `${caseHead(frame, true)}${entry ? ` [${entry}]` : ""} ${words2}${by ? ` — ${by}` : ""}${tail(frame, withReply)}`;
     const lines2 = [head];
     if (text && !words2.includes(text.trim())) lines2.push(text);
-    const answerable = !rk || ANSWERABLE.has(rk.kind);
-    if (answerable && origin !== "platform" && c.realm && entry) {
-      const args = `realm="${c.realm}", action="say", room="№${c.room}", in_reply_to=${entry}`;
-      lines2.push(phrase("answer_case", { args }));
-    }
     return lines2.join("\n");
   }
-  const p = frame.provenance ?? {};
-  const id = idOf(frame.id);
   const lines = [`${whoOf2(frame, true) || "?"}${tail(frame, true)}`];
   if (text) lines.push(text);
-  if (origin !== "platform" && id && (p.from_standing || p.from_karta_seq != null)) {
-    const karta = p.from_karta_seq ?? p.user_karta_seq;
-    const args = `action="send"${frame.realm ? `, realm="${frame.realm}"` : ""}${karta != null ? `, karta=${karta}` : ""}${p.from_standing ? `, standing="${p.from_standing}"` : ""}, in_reply_to="${id}"`;
-    lines.push(phrase("answer_send", { args }));
-  }
   return lines.join("\n");
 }
 var BATCH_TEXT = 160;
@@ -560,38 +583,29 @@ function batchLine(frame, run, withZachin = true) {
   const dup = !!text && words2.includes(text);
   return `${pre}[${entry}] ${words2}${author}${tail(frame, rk?.kind !== "body")}${text && !dup ? `: ${text}` : ""}`;
 }
-function foldAsides(frames) {
-  const asides = frames.map((f) => roomKind(f)?.aside ?? null);
-  const out = [];
-  let n2 = 0;
-  asides.forEach((a, i) => {
-    if (!a) {
-      n2 = 0;
-      out.push(1);
-      return;
-    }
-    n2 = (i > 0 && asides[i - 1]?.pair === a.pair ? n2 : 0) + (a.counts ? 1 : 0);
-    out.push(asides[i + 1]?.pair === a.pair ? null : n2);
-  });
-  return out;
-}
 function batchLines(frames) {
-  const fold = foldAsides(frames);
   const seen = /* @__PURE__ */ new Set();
-  return frames.flatMap((f, i) => {
-    const run = fold[i];
-    if (run === null) return [];
+  return frames.flatMap((f) => {
+    if (!addressedToMine(f)) return [];
     const key = caseKey(f);
     const first = !seen.has(key);
     seen.add(key);
-    return [batchLine(f, roomKind(f)?.aside ? run : void 0, first)];
+    return [batchLine(f, void 0, first)];
   });
 }
-function batchHead(frames) {
+function caseCountLine(frames) {
+  const c = frames.length ? caseOf(frames[0]) : null;
+  if (!c) return "";
+  const mineN = frames.filter((f) => addressedToMine(f)).length;
+  const head = caseHead(frames[0], true);
+  const yours = mineN ? L(` — адресованные строками ниже; `, ` — yours in the lines below; `) : L(` — адресованных месту нет; `, ` — none of them yours; `);
   return L(
-    `Дело: кадров ${frames.length} — накопились, не прерывая хода; ${batchPointer(frames)}; следом по строке на кадр.`,
-    `Case: ${frames.length} frames — gathered without interrupting the turn; ${batchPointer(frames)}; one line per frame follows.`
-  );
+    `${head}: записей ${frames.length}, тебе ${mineN}`,
+    `${head}: ${frames.length} records, yours ${mineN}`
+  ) + yours + batchPointer(frames) + ".";
+}
+function batchHead(frames) {
+  return casesOf(frames).map(caseCountLine).filter(Boolean).join("\n");
 }
 function batchPointer(frames) {
   const since = /* @__PURE__ */ new Map();
@@ -1659,10 +1673,10 @@ var CASE_BATCH_MS = Number(process.env.ISKRON_OPENCODE_BATCH_MS) || 5e3;
 var CASE_BATCH_CAP = 20;
 var PENDING_MAX_MS = Number(process.env.ISKRON_OPENCODE_PENDING_MS) || 12e4;
 function toPile(frame) {
-  if (!frame || frame.type !== "message" || stackOf(frame) !== "batch" || isDirectWord(frame))
-    return false;
+  if (!frame || frame.type !== "message" || isDirectWord(frame)) return false;
   const rk = roomKind(frame);
-  return (frame.origin ?? classifyOrigin(frame)) !== "human" || !!rk?.phase || !!rk?.aside;
+  if ((frame.origin ?? classifyOrigin(frame)) === "human" && !rk?.phase && !rk?.aside) return false;
+  return stackOf(frame) === "batch" || !addressedToMine(frame);
 }
 function setupChannel(ctx, say, freshestRoot) {
   async function accepting(id) {

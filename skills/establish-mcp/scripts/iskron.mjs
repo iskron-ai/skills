@@ -2106,9 +2106,7 @@ var WORDS = {
   who_sibling: "брат по роли #{karta}",
   who_platform: "платформа — побудка",
   who_graph: "событие графа",
-  legacy: "род {kind}{, стопка stack}",
-  answer_case: "ответ: iskron_case({args})",
-  answer_send: "ответ: iskron_channel({args})"
+  legacy: "род {kind}{, стопка stack}"
 };
 var WORDS_EN = {
   said: "message from {author}",
@@ -2150,9 +2148,7 @@ var WORDS_EN = {
   who_sibling: "sibling of role #{karta}",
   who_platform: "platform — a wake-up",
   who_graph: "graph event",
-  legacy: "kind {kind}{ · stack}",
-  answer_case: "answer: iskron_case({args})",
-  answer_send: "answer: iskron_channel({args})"
+  legacy: "kind {kind}{ · stack}"
 };
 var AUTO_WORDS = {
   child_opened: "дочернее дело №{room} открыто",
@@ -2361,12 +2357,49 @@ function roomKind(frame2) {
 }
 var byKind = (frame2) => roomKind(frame2) !== null;
 var stackOf = (frame2) => roomKind(frame2)?.rule ?? (frame2?.stack === "defer" ? "batch" : "interrupt");
+var LOUD_KINDS = /* @__PURE__ */ new Set(["closing", "closed", "objection", "late_objection"]);
+function addressedToMine(frame2) {
+  if (!frame2) return false;
+  const f = frame2;
+  const room = obj(f.room);
+  if (!str(room.seq) && !str(room.id)) return true;
+  if (!byKind(frame2)) return true;
+  const line = obj(f.line);
+  const fields = obj(line.fields);
+  const rk = roomKind(frame2);
+  if (rk?.aside) return false;
+  const mine = mineOf(f);
+  const hit = (v) => {
+    const a = addresseeOf(v);
+    return !!a && mine.length > 0 && a.addr.some((x) => mine.includes(x));
+  };
+  if (hit(f.addressee) || hit(f.in_reply_to_from)) return true;
+  if (str(f.said) === "important" || str(fields.kind) === "important") return true;
+  if (rk?.kind === "invite" || rk?.kind === "withdraw") {
+    if (mine.includes(after(str(line.key), "invite:"))) return true;
+    if (rk.kind === "invite" && myRole(f, fields)) return true;
+  }
+  if (rk && LOUD_KINDS.has(rk.kind)) return true;
+  return (frame2.origin ?? classifyOrigin(frame2, str(f.karta_seq) || void 0)) === "human";
+}
 
 // js/shared/frame-text.ts
 var rec = (v) => v && typeof v === "object" ? v : {};
 var idOf = (v) => typeof v === "number" || typeof v === "string" && v ? String(v) : "";
-var ANSWERABLE = /* @__PURE__ */ new Set(["said", "body", "invite", "objection", "late_objection"]);
 var ZACHIN = 40;
+function casesOf(frames) {
+  const order = [];
+  const by = /* @__PURE__ */ new Map();
+  for (const f of frames) {
+    const key = caseKey(f) || idOf(f.id) || "?";
+    if (!by.has(key)) {
+      by.set(key, []);
+      order.push(key);
+    }
+    by.get(key).push(f);
+  }
+  return order.map((k) => by.get(k));
+}
 function caseOf(frame2) {
   const f = frame2;
   const room = rec(f.room);
@@ -2417,6 +2450,7 @@ function frameToText(frame2, raw) {
   const text = textOf(frame2);
   const c = caseOf(frame2);
   if (c) {
+    if (!addressedToMine(frame2)) return caseCountLine([frame2]);
     const rk = roomKind(frame2);
     const line = rec(f.line);
     const entry = idOf(f.entry_id) || idOf(line.entry_id);
@@ -2428,22 +2462,10 @@ function frameToText(frame2, raw) {
     const head = `${caseHead(frame2, true)}${entry ? ` [${entry}]` : ""} ${words2}${by ? ` — ${by}` : ""}${tail(frame2, withReply)}`;
     const lines2 = [head];
     if (text && !words2.includes(text.trim())) lines2.push(text);
-    const answerable = !rk || ANSWERABLE.has(rk.kind);
-    if (answerable && origin !== "platform" && c.realm && entry) {
-      const args = `realm="${c.realm}", action="say", room="№${c.room}", in_reply_to=${entry}`;
-      lines2.push(phrase("answer_case", { args }));
-    }
     return lines2.join("\n");
   }
-  const p = frame2.provenance ?? {};
-  const id = idOf(frame2.id);
   const lines = [`${whoOf2(frame2, true) || "?"}${tail(frame2, true)}`];
   if (text) lines.push(text);
-  if (origin !== "platform" && id && (p.from_standing || p.from_karta_seq != null)) {
-    const karta = p.from_karta_seq ?? p.user_karta_seq;
-    const args = `action="send"${frame2.realm ? `, realm="${frame2.realm}"` : ""}${karta != null ? `, karta=${karta}` : ""}${p.from_standing ? `, standing="${p.from_standing}"` : ""}, in_reply_to="${id}"`;
-    lines.push(phrase("answer_send", { args }));
-  }
   return lines.join("\n");
 }
 var BATCH_TEXT = 160;
@@ -2478,11 +2500,22 @@ function foldAsides(frames) {
   });
   return out5;
 }
-function batchHead(frames) {
+function caseCountLine(frames) {
+  const c = frames.length ? caseOf(frames[0]) : null;
+  if (!c) return "";
+  const mineN = frames.filter((f) => addressedToMine(f)).length;
+  const head = caseHead(frames[0], true);
+  const yours = mineN ? L(` — адресованные строками ниже; `, ` — yours in the lines below; `) : L(` — адресованных месту нет; `, ` — none of them yours; `);
   return L(
-    `Дело: кадров ${frames.length} — накопились, не прерывая хода; ${batchPointer(frames)}; следом по строке на кадр.`,
-    `Case: ${frames.length} frames — gathered without interrupting the turn; ${batchPointer(frames)}; one line per frame follows.`
-  );
+    `${head}: записей ${frames.length}, тебе ${mineN}`,
+    `${head}: ${frames.length} records, yours ${mineN}`
+  ) + yours + batchPointer(frames) + ".";
+}
+function restCountLines(frames) {
+  return casesOf(frames.filter((f) => !addressedToMine(f))).map(caseCountLine).filter(Boolean);
+}
+function batchHead(frames) {
+  return casesOf(frames).map(caseCountLine).filter(Boolean).join("\n");
 }
 function batchPointer(frames) {
   const since = /* @__PURE__ */ new Map();
@@ -2560,14 +2593,17 @@ var Backlog = class {
     const emit2 = this.flush;
     this.flush = null;
     if (!got.length || !emit2) return;
-    const bodies = got.map((f) => {
-      const t = frameToText(f, JSON.stringify(f));
-      return [...t].length > BODY_CAP ? [...t].slice(0, BODY_CAP).join("") + "…" : t;
-    });
+    const bodies = [
+      ...restCountLines(got),
+      ...got.filter((f) => addressedToMine(f)).map((f) => {
+        const t = frameToText(f, JSON.stringify(f));
+        return [...t].length > BODY_CAP ? [...t].slice(0, BODY_CAP).join("") + "…" : t;
+      })
+    ];
     const cut = count > got.length;
     const head = L(
-      `Побудка: кадров ${count}` + (expected ? ` (ожидало в очереди: ${expected})` : "") + (cut ? `, здесь первые ${got.length}, не вошло ${count - got.length}` : "") + ' — пришли одной пачкой; разбери все, а не последний: полностью и не вошедшее — iskron_channel(action="history", view="log").' + (direct ? ` Прямых слов ${direct} — не здесь: каждое пришло отдельно и целиком.` : ""),
-      `Wake-up: ${count} frames` + (expected ? ` (waiting in the queue: ${expected})` : "") + (cut ? `, the first ${got.length} here, ${count - got.length} left out` : "") + ' — they came as one batch; go through all of them, not the last one: in full and the rest — iskron_channel(action="history", view="log").' + (direct ? ` ${direct} direct messages are not here: each came on its own and whole.` : "")
+      `Побудка: кадров ${count}` + (expected ? ` (ожидало в очереди: ${expected})` : "") + (cut ? `, здесь первые ${got.length}, не вошло ${count - got.length}` : "") + ' — адресованные месту — текстом, прочие — счётом; полностью и не вошедшее — iskron_channel(action="history", view="log").' + (direct ? ` Прямых слов ${direct} — не здесь: каждое пришло отдельно и целиком.` : ""),
+      `Wake-up: ${count} frames` + (expected ? ` (waiting in the queue: ${expected})` : "") + (cut ? `, the first ${got.length} here, ${count - got.length} left out` : "") + ' — those addressed to the seat as text, the rest by count; in full and the rest — iskron_channel(action="history", view="log").' + (direct ? ` ${direct} direct messages are not here: each came on its own and whole.` : "")
     );
     emit2(
       {
@@ -2607,10 +2643,13 @@ var StaleBurst = class {
       const all2 = this.burst.splice(0);
       if (!all2.length) return;
       const frames = all2.slice(0, STALE_BURST_KEEP);
-      const bodies = frames.map((f) => {
-        const t = frameToText(f, JSON.stringify(f));
-        return [...t].length > BODY_CAP2 ? [...t].slice(0, BODY_CAP2).join("") + "…" : t;
-      });
+      const bodies = [
+        ...restCountLines(frames),
+        ...frames.filter((f) => addressedToMine(f)).map((f) => {
+          const t = frameToText(f, JSON.stringify(f));
+          return [...t].length > BODY_CAP2 ? [...t].slice(0, BODY_CAP2).join("") + "…" : t;
+        })
+      ];
       flush(
         {
           kind: "stale",
@@ -2618,8 +2657,8 @@ var StaleBurst = class {
           // Сторож метит отданным и то, что пачка назвала числом: иначе оно вернётся с повтором (#5831).
           ...all2.length > frames.length ? { unshown: all2.slice(frames.length).flatMap((f) => deliveredKeys(f)) } : {},
           text: L(
-            `Лежалых кадров: ${all2.length}` + (all2.length > frames.length ? `, здесь первые ${frames.length}, не вошло ${all2.length - frames.length}` : "") + ' — принятое, пока место не слушали, или повтор службы после пересборки сессии; хода не стоят, но прочти; полностью и не вошедшее — iskron_channel(action="history").',
-            `Stale frames: ${all2.length}` + (all2.length > frames.length ? `, the first ${frames.length} here, ${all2.length - frames.length} left out` : "") + ' — taken while the seat was not listening, or the service repeating after a session rebuild; they are not worth a turn, but read them; in full and the rest — iskron_channel(action="history").'
+            `Лежалых кадров: ${all2.length}` + (all2.length > frames.length ? `, здесь первые ${frames.length}, не вошло ${all2.length - frames.length}` : "") + ' — принятые, пока место не слушали, или повтор службы после пересборки сессии; адресованные месту — текстом, прочие — счётом; полностью и не вошедшее — iskron_channel(action="history").',
+            `Stale frames: ${all2.length}` + (all2.length > frames.length ? `, the first ${frames.length} here, ${all2.length - frames.length} left out` : "") + ' — taken while the seat was not listening, or the service repeating after a session rebuild; those addressed to the seat as text, the rest by count; in full and the rest — iskron_channel(action="history").'
           ) + "\n\n" + bodies.join("\n\n")
         },
         all2
@@ -2772,7 +2811,7 @@ function batchForWatchdogs(d, raw, frame2, emit2) {
       });
     }
   }
-  if ((!human || rk?.phase || rk?.aside) && byKind(frame2) && stackOf(frame2) === "batch") {
+  if ((!human || rk?.phase || rk?.aside) && byKind(frame2) && (stackOf(frame2) === "batch" || !addressedToMine(frame2))) {
     d.roomBatch.add(raw, frame2, emit2);
     return true;
   }
@@ -4940,6 +4979,35 @@ function connectSeam(path, hello, timeoutMs) {
   });
 }
 
+// js/bridge/caseexit.ts
+var joined = /* @__PURE__ */ new Map();
+function noteCaseEntry(name, args, reply2) {
+  if (reply2.result?.isError || name !== "iskron_case" && name !== "iskron_room") return;
+  const a = args ?? {};
+  if (a.action !== "join" && a.action !== "leave") return;
+  const room = typeof a.room === "string" ? a.room.trim() : "";
+  if (!room || a.action === "join" && room.startsWith("-")) return;
+  const realm = typeof a.realm === "string" ? a.realm : void 0;
+  const key = `${realm ?? ""}#${room}`;
+  if (a.action === "join") joined.set(key, { realm, room });
+  else joined.delete(key);
+}
+async function leaveJoinedCases() {
+  if (!CFG.satellite || !joined.size) return;
+  const cases = [...joined.values()];
+  joined.clear();
+  for (const c of cases) {
+    try {
+      const r = await callTool("iskron_case", { action: "leave", ...c });
+      log(
+        r.isError ? `could not leave case ${c.room} at the run's end: ${r.text.slice(0, 120)}` : `left case ${c.room} at the run's end (#6573)`
+      );
+    } catch (e) {
+      log(`could not leave case ${c.room} at the run's end: ${e.message}`);
+    }
+  }
+}
+
 // js/bridge/satellite.ts
 import { randomBytes as randomBytes2 } from "node:crypto";
 import {
@@ -6625,6 +6693,7 @@ async function deliverOne(msg) {
             );
           }
         }
+        noteCaseEntry(msg.params?.name, msg.params?.arguments, held2);
         emit(withNotice(absorbRevokeReply(msg, absorbChannelReply(msg, held2))));
       }
       return;
@@ -6768,6 +6837,7 @@ function openSession(io, origin) {
   const leave = (why) => leaving ??= windDown(why).finally(markEnded);
   const windDown = async (why) => {
     debug(`${why} — winding down`);
+    await leaveJoinedCases();
     const addr = statusAddress();
     releaseStanding(why, CFG.satellite);
     if (addr) await publishStatusTo(addr.url, "", 3e3).catch(() => {
@@ -7485,6 +7555,16 @@ function runWatchdogCodex(argv2) {
     }
   }
   let replay = 0;
+  let pend = [];
+  const flushPend = () => {
+    const got = pend;
+    pend = [];
+    if (!got.length) return;
+    void deliver2(
+      batchHead(got.map((g) => g.frame)),
+      got.flatMap((g) => g.ids)
+    );
+  };
   attach(target.path, {
     onEvent: (ev) => {
       switch (ev.kind) {
@@ -7497,6 +7577,15 @@ function runWatchdogCodex(argv2) {
             return note("кадр без id из кольца — пометить нечем, в тред не кладу повторно");
           if (typeof ev.frame?.id === "string" && seen.has(ev.frame.id))
             return note(`кадр ${ev.frame.id} уже вложен — в тред не кладу повторно`);
+          if (ev.batch && ev.frame && !addressedToMine(ev.frame)) {
+            pend.push({
+              frame: ev.frame,
+              ids: [...deliveredKeys(ev.frame), ...ev.frame.id ? [ev.frame.id] : []]
+            });
+            if (ev.batch.at >= ev.batch.of) flushPend();
+            return;
+          }
+          flushPend();
           void deliver2(frameToText(ev.frame, ev.raw ?? ""), deliveredKeys(ev.frame));
           break;
         }
@@ -7625,10 +7714,14 @@ function runWatchdog(argv2) {
             }
             const within = folded.splice(0);
             const all2 = () => [...within, mark].forEach((m) => m());
+            if (!addressedToMine(f)) {
+              all2();
+              break;
+            }
             const first2 = !cases.has(caseKey(f));
             cases.add(caseKey(f));
             if (!again) out(wrapLines(batchLine(f, ev.batch.fold, first2)), false, all2);
-            else within.forEach((m) => m());
+            else all2();
             break;
           }
           if (!again) out(wrapLines(frameToText(f, ev.raw ?? "")), true, mark);
@@ -7694,6 +7787,18 @@ function runWatchdogExit(argv2) {
           if (seen.has(id)) {
             note2(`кадр ${id} уже отдан прежним взводом — не повод будить`);
             if (last && woke) process.exit(0);
+            return;
+          }
+          if (ev.batch && !addressedToMine(ev.frame)) {
+            folded.push(id);
+            if (last) {
+              for (const k of folded.splice(0)) noteSeen(seenPath, k, seen);
+              if (!woke && head) {
+                wake(head);
+                woke = true;
+              }
+              if (woke) process.exit(0);
+            }
             return;
           }
           if (ev.batch?.at === 1) cases.clear();

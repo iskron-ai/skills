@@ -11,10 +11,10 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 import { type ChannelEvent } from "../bridge/hold.ts";
 import { type Frame } from "../shared/channel.ts";
-import { batchLines, frameToText } from "../shared/frame-text.ts";
-import { byKind, roomKind, stackOf } from "../shared/room-kinds.ts";
+import { batchHead, batchLines, frameToText } from "../shared/frame-text.ts";
+import { addressedToMine, byKind, roomKind, stackOf } from "../shared/room-kinds.ts";
 
-/** Окно свёртки адресных слов не мне; переменная — шов для проб. */
+/** Окно свёртки неадресованных кадров дела; переменная — шов для проб. */
 const ASIDE_MS = Number(process.env.ISKRON_PI_ASIDE_MS) || 3_000;
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- контекст pi здесь читается по двум полям */
@@ -42,21 +42,22 @@ export function setupChannel(pi: ExtensionAPI): (params: any) => void {
     );
   }
 
-  // Адресные слова не мне копятся коротким окном и уходят одной записью к
-  // следующему ходу (nextTurn: не прерывает и не поднимает).
-  const asides: Frame[] = [];
+  // Записи дел, не адресованные месту (#6574), копятся коротким окном и уходят
+  // одной записью к следующему ходу (nextTurn: не прерывает и не поднимает):
+  // счёт по делам с адресованными строками, без текста прочего.
+  const aside: Frame[] = [];
   let asideTimer: ReturnType<typeof setTimeout> | null = null;
   function flushAsides(): void {
     if (asideTimer) clearTimeout(asideTimer);
     asideTimer = null;
-    const got = asides.splice(0);
+    const got = aside.splice(0);
     if (!got.length) return;
     pi.sendMessage(
       {
         customType: "iskron-channel",
-        content: batchLines(got).join("\n"),
+        content: [batchHead(got), ...batchLines(got)].join("\n"),
         display: true,
-        details: { aside: got.map((f) => f.id ?? null) },
+        details: { count: got.map((f) => f.id ?? null) },
       },
       { triggerTurn: false, deliverAs: "nextTurn" },
     );
@@ -79,10 +80,10 @@ export function setupChannel(pi: ExtensionAPI): (params: any) => void {
         if (frame?.type === "status") return;
         // Вот ради чего всё: кадр входит в идущий ход, а простаивающего агента
         // поднимает. Это и есть то, чего у сторожа-процесса быть не может.
-        // Адресное слово не мне (#6081) — фактом без тела и без побудки; череда
-        // одной пары, пришедшая подряд, — одной строкой.
-        if (roomKind(frame)?.aside && frame) {
-          asides.push(frame);
+        // Запись дела, не адресованная месту (#6574), — в свёртку числом, без
+        // побудки и без текста; адресованное — само, текстом.
+        if (frame && (byKind(frame) || roomKind(frame)?.aside) && !addressedToMine(frame)) {
+          aside.push(frame);
           asideTimer ??= setTimeout(flushAsides, ASIDE_MS);
           (asideTimer as { unref?: () => void }).unref?.();
           return;

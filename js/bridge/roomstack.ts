@@ -1,15 +1,16 @@
 // Кадр комнаты по словарю родов — у моста (граф nks-dev: #5851). Клиенты
 // уведомлений (pi, OpenCode) решают путь кадра сами; сторожам (Claude Code под
 // Monitor, Codex, сторож выхода) пачку копит мост: кадр с event_kind рода
-// «в пачку» ложится в пачку своей двери и уходит по окну, по полной пачке или
-// перед прерывающим кадром — порядок цел. Пачка уходит залпом обычных событий
-// frame с меткой batch за строкой-шапкой note (at: 0) с указателем на history:
-// сторож печатает кадры по строке, без конвертов. Слово человека в пачку не
-// ложится. Кадр без event_kind словарь не трогает: он
-// идёт сразу, как прежде. Кольцо двери при этом получает каждый кадр (hold.ts).
+// «в пачку» — и всякая запись дела, не адресованная месту (#6574), — ложится
+// в пачку своей двери и уходит по окну, по полной пачке или перед прерывающим
+// кадром — порядок цел. Пачка уходит залпом обычных событий frame с меткой
+// batch за строкой-шапкой note (at: 0) — счёт по делам с указателем, строки
+// ниже — только адресованные месту. Слово человека в пачку не ложится. Кадр
+// без event_kind словарь не трогает: он идёт сразу, как прежде. Кольцо двери
+// при этом получает каждый кадр (hold.ts).
 import { classifyOrigin, type Frame } from "../shared/channel.ts";
 import { batchHead, foldAsides } from "../shared/frame-text.ts";
-import { byKind, roomKind, stackOf } from "../shared/room-kinds.ts";
+import { addressedToMine, byKind, roomKind, stackOf } from "../shared/room-kinds.ts";
 import { deliveredKeys, noteSeen } from "../shared/seen.ts";
 import { type ChannelEvent, type Door } from "./door.ts";
 import { log } from "./streams.ts";
@@ -141,7 +142,13 @@ export function batchForWatchdogs(
   }
   // Слово человека в пачку не ложится: какая бы ни была стопка, оно идёт сейчас.
   // Кроме адресного не мне (#6081): оно и от человека — фактом в пачку.
-  if ((!human || rk?.phase || rk?.aside) && byKind(frame) && stackOf(frame) === "batch") {
+  // Неадресованное месту дело — в пачку при любой стопке (#6574): текстом в ход
+  // идёт только адресованное, прочее уходит счётом в шапке.
+  if (
+    (!human || rk?.phase || rk?.aside) &&
+    byKind(frame) &&
+    (stackOf(frame) === "batch" || !addressedToMine(frame))
+  ) {
     d.roomBatch.add(raw, frame, emit);
     return true;
   }

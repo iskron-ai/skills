@@ -5,8 +5,9 @@
 // выхода в лог и .seen. Пачка у каждого места своя (door.ts, #5838): лежалое
 // одного графа не уходит сторожу другого.
 import { type Frame } from "../shared/channel.ts";
-import { frameToText } from "../shared/frame-text.ts";
+import { frameToText, restCountLines } from "../shared/frame-text.ts";
 import { L } from "../shared/lang.ts";
+import { addressedToMine } from "../shared/room-kinds.ts";
 import { deliveredKeys, eventKeyOf } from "../shared/seen.ts";
 import { type ChannelEvent } from "./door.ts";
 
@@ -32,10 +33,16 @@ export class StaleBurst {
       const all = this.burst.splice(0);
       if (!all.length) return; // все копии вынула живая копия того же события
       const frames = all.slice(0, STALE_BURST_KEEP);
-      const bodies = frames.map((f) => {
-        const t = frameToText(f, JSON.stringify(f));
-        return [...t].length > BODY_CAP ? [...t].slice(0, BODY_CAP).join("") + "…" : t;
-      });
+      // Закон #6574: адресованные месту — текстом, прочие записи дел — счётом.
+      const bodies = [
+        ...restCountLines(frames),
+        ...frames
+          .filter((f) => addressedToMine(f))
+          .map((f) => {
+            const t = frameToText(f, JSON.stringify(f));
+            return [...t].length > BODY_CAP ? [...t].slice(0, BODY_CAP).join("") + "…" : t;
+          }),
+      ];
       flush(
         {
           kind: "stale",
@@ -50,14 +57,16 @@ export class StaleBurst {
                 (all.length > frames.length
                   ? `, здесь первые ${frames.length}, не вошло ${all.length - frames.length}`
                   : "") +
-                " — принятое, пока место не слушали, или повтор службы после пересборки сессии; " +
-                'хода не стоят, но прочти; полностью и не вошедшее — iskron_channel(action="history").',
+                " — принятые, пока место не слушали, или повтор службы после пересборки сессии; " +
+                "адресованные месту — текстом, прочие — счётом; " +
+                'полностью и не вошедшее — iskron_channel(action="history").',
               `Stale frames: ${all.length}` +
                 (all.length > frames.length
                   ? `, the first ${frames.length} here, ${all.length - frames.length} left out`
                   : "") +
                 " — taken while the seat was not listening, or the service repeating after a session rebuild; " +
-                'they are not worth a turn, but read them; in full and the rest — iskron_channel(action="history").',
+                "those addressed to the seat as text, the rest by count; " +
+                'in full and the rest — iskron_channel(action="history").',
             ) +
             "\n\n" +
             bodies.join("\n\n"),

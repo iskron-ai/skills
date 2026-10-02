@@ -4,7 +4,7 @@
 // стопкой) словарь не трогает: путь у него прежний — у каждого харнеса свой,
 // как до словаря. Правила — кодом (RULES и stackOf), слова — ДАННЫМИ (WORDS):
 // локализация заменит таблицу, не код.
-import { type Frame } from "./channel.ts";
+import { classifyOrigin, type Frame } from "./channel.ts";
 import { L, lang } from "./lang.ts";
 
 /** Куда идёт кадр: прервать идущий ход или лечь в пачку. */
@@ -60,8 +60,6 @@ export const WORDS: Readonly<Record<string, string>> = {
   who_platform: "платформа — побудка",
   who_graph: "событие графа",
   legacy: "род {kind}{, стопка stack}",
-  answer_case: "ответ: iskron_case({args})",
-  answer_send: "ответ: iskron_channel({args})",
 };
 
 /**
@@ -110,8 +108,6 @@ export const WORDS_EN: Readonly<Record<string, string>> = {
   who_platform: "platform — a wake-up",
   who_graph: "graph event",
   legacy: "kind {kind}{ · stack}",
-  answer_case: "answer: iskron_case({args})",
-  answer_send: "answer: iskron_channel({args})",
 };
 
 /** Слова записи платформы auto по её code (#5893 §4.2, ступени — #5973); неизвестный code — WORDS.auto. */
@@ -447,7 +443,6 @@ export function roomKind(frame: Frame | null | undefined): RoomKind | null {
 
 /** Решает ли путь кадра словарь: только у кадра с event_kind room.*; прочим — прежний путь харнеса. */
 export const byKind = (frame: Frame | null | undefined): boolean => roomKind(frame) !== null;
-
 /**
  * Путь кадра: у кадра с event_kind — правило рода; у прочих — своя стопка
  * кадра, как читал её плагин OpenCode до словаря (defer — в пачку).
@@ -455,3 +450,46 @@ export const byKind = (frame: Frame | null | undefined): boolean => roomKind(fra
 export const stackOf = (frame: Frame | null | undefined): Stack =>
   roomKind(frame)?.rule ??
   ((frame as Rec | null | undefined)?.stack === "defer" ? "batch" : "interrupt");
+
+/** Роды, важные сами по себе: требуют действия читателя (окно возражения — #4928). */
+const LOUD_KINDS = new Set(["closing", "closed", "objection", "late_objection"]);
+
+/**
+ * Адресовано ли кадр места читателя — закон #6574: в ход текстом входит только
+ * адресованное месту — слово ему (addressee), ответ на его запись
+ * (in_reply_to_from, #5954), приглашение или его отзыв мне — либо важное:
+ * слово рода important (#4939: text | important | direct), роды закрытия и
+ * возражения, слово человека. Адресное слово не мне (#6081) и прочие записи
+ * дел текстом не доставляются — числом и указателем (frame-text.ts). Не кадр
+ * дела (прямое слово, событие графа) — текстом: закон о записях дел. Кадр
+ * дела прежней формы, без event_kind, словарь не трогает — путь прежний.
+ */
+export function addressedToMine(frame: Frame | null | undefined): boolean {
+  if (!frame) return false;
+  const f = frame as Rec;
+  const room = obj(f.room);
+  if (!str(room.seq) && !str(room.id)) return true; // не запись дела — закон о записях дел
+  if (!byKind(frame)) return true; // прежняя форма — прежний путь
+  const line = obj(f.line);
+  const fields = obj(line.fields);
+  const rk = roomKind(frame);
+  if (rk?.aside) return false; // слово не мне (#6081): факт без тела
+  const mine = mineOf(f);
+  const hit = (v: unknown): boolean => {
+    const a = addresseeOf(v);
+    return !!a && mine.length > 0 && a.addr.some((x) => mine.includes(x));
+  };
+  // Слово мне — целиком; ответ на мою запись и тело моего слова — тоже.
+  if (hit(f.addressee) || hit(f.in_reply_to_from)) return true;
+  // Помеченное важным: род слова important на конверте или в полях строки.
+  if (str(f.said) === "important" || str(fields.kind) === "important") return true;
+  // Приглашение мне или его отзыв: ключ invite:<моё место>, приглашение роли — моей роли.
+  if (rk?.kind === "invite" || rk?.kind === "withdraw") {
+    if (mine.includes(after(str(line.key), "invite:"))) return true;
+    if (rk.kind === "invite" && myRole(f, fields)) return true;
+  }
+  // Роды закрытия и возражения важны сами по себе; слово человека — всегда целиком.
+  if (rk && LOUD_KINDS.has(rk.kind)) return true;
+  // Тело слова человека мост метит origin (roomstack.ts, #5953): провенанс тела его не несёт.
+  return (frame.origin ?? classifyOrigin(frame, str(f.karta_seq) || undefined)) === "human";
+}

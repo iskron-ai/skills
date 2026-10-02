@@ -12,6 +12,7 @@ import { createInterface } from "node:readline";
 import { type Writable } from "node:stream";
 
 import { isSessionEnvKey, patShaOf } from "../shared/seam.ts";
+import { leaveJoinedCases } from "./caseexit.ts";
 import { CFG, parseArgs, setConfig } from "./config.ts";
 import { deliver } from "./deliver.ts";
 import { errorMessage } from "./errors.ts";
@@ -151,6 +152,9 @@ export function openSession(io: SessionIO, origin?: SessionOrigin): BridgeSessio
   const leave = (why: string): Promise<void> => (leaving ??= windDown(why).finally(markEnded));
   const windDown = async (why: string) => {
     debug(`${why} — winding down`);
+    // Спутник выходит из дел прогона сам (#6573), пока его место живо: конец
+    // прогона — конец поручения, а истечение срока места оставил бы «slop».
+    await leaveJoinedCases();
     // Занятость — слово ушедшего делателя: с концом сессии она снимается, иначе
     // доска показывает занятого там, где никого нет (#4895). Сокет и .key
     // отпускаются ПЕРВЫМИ: харнес, убивающий мост по короткой отсрочке, не должен

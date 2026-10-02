@@ -10,11 +10,13 @@
 // Живой кадр и громкое слово о слухе идут steer: с queue у делателя с длинными
 // ходами кадры всплывали по одному за ход и отставали часами (граф nks-dev:
 // #5233). Пачка побудки и лежалых — queue: она не срочна и ход не режет.
-// Кадры дела «в пачку» — тоже queue, но одним промптом на пачку, как у сторожа:
-// шапка с указателем на history и по строке на кадр. Пока прежний промпт пачки
-// не взят ходом, новые кадры копятся здесь (дописать неотданный промпт
-// контекст плагина не даёт) и уходят одним, когда OpenCode скажет, что взял.
-// Прямое слово и слово человека в пачку не ложатся — steer, целиком.
+// Кадры дела «в пачку» — тоже queue, одним промптом на пачку, как у сторожа:
+// шапка счётом по делам с указателем, строки ниже — только адресованные месту
+// (#6574); неадресованное дело идёт в пачку и со стопкой прерывания — текстом
+// в ход входит только адресованное. Пока прежний промпт пачки не взят ходом,
+// новые кадры копятся здесь (дописать неотданный промпт контекст плагина не
+// даёт) и уходят одним, когда OpenCode скажет, что взял. Прямое слово и слово
+// человека в пачку не ложатся — steer, целиком.
 // Доставка есть возврат управления агенту; кадр, ушедший в лог, — глушитель
 // (урок контура opencode-плагина канала: делатель стоит глухим, считая себя
 // слушающим).
@@ -27,7 +29,7 @@
 import { type ChannelEvent } from "../bridge/hold.ts";
 import { classifyOrigin, type Frame, isDirectWord } from "../shared/channel.ts";
 import { batchHead, batchLines, frameToText } from "../shared/frame-text.ts";
-import { roomKind, stackOf } from "../shared/room-kinds.ts";
+import { addressedToMine, roomKind, stackOf } from "../shared/room-kinds.ts";
 import type { Context } from "./plugin.ts";
 import { type Say } from "./tools.ts";
 
@@ -51,14 +53,16 @@ const CASE_BATCH_CAP = 20;
 const PENDING_MAX_MS = Number(process.env.ISKRON_OPENCODE_PENDING_MS) || 120_000;
 
 /**
- * Кадр дела в пачку: стопка batch, не прямое слово и не слово человека (его
- * полёт и обрыв — в пачку, как и его адресное слово не мне, #6081).
+ * Кадр дела в пачку: не прямое слово и не слово человека (его полёт и обрыв —
+ * в пачку, как и его адресное слово не мне, #6081); запись дела, не
+ * адресованная месту, — в пачку при любой стопке (#6574): текстом в ход
+ * входит только адресованное, прочее уходит счётом в шапке.
  */
 function toPile(frame: Frame | null): boolean {
-  if (!frame || frame.type !== "message" || stackOf(frame) !== "batch" || isDirectWord(frame))
-    return false;
+  if (!frame || frame.type !== "message" || isDirectWord(frame)) return false;
   const rk = roomKind(frame);
-  return (frame.origin ?? classifyOrigin(frame)) !== "human" || !!rk?.phase || !!rk?.aside;
+  if ((frame.origin ?? classifyOrigin(frame)) === "human" && !rk?.phase && !rk?.aside) return false;
+  return stackOf(frame) === "batch" || !addressedToMine(frame);
 }
 
 interface Pile {

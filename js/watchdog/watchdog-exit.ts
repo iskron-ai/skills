@@ -11,6 +11,7 @@ import { writeSync } from "node:fs";
 
 import { type ChannelEvent } from "../bridge/hold.ts";
 import { batchLine, caseKey, frameToText } from "../shared/frame-text.ts";
+import { addressedToMine } from "../shared/room-kinds.ts";
 import { eventKeyOf, noteSeen, seenIds } from "../shared/seen.ts";
 import { seenFilePathOf } from "../shared/standings.ts";
 import { adoptSeenPath, attach, resolveStanding, staleBatchKeys } from "./client.ts";
@@ -50,7 +51,7 @@ export function runWatchdogExit(argv: string[]): void {
   let seenPath = seenFilePathOf(target.authDir, target.key);
   const seen = seenIds(seenPath);
   let woke = false; // отдан хоть один кадр залпа пачки
-  let head = ""; // шапка идущей пачки: как прочесть целиком
+  let head = ""; // шапка идущей пачки: счёт по делам и указатель
   const folded: string[] = []; // id свёрнутых адресных слов череды — метятся с её строкой (#6081)
   const cases = new Set<string>(); // дела, уже названные зачином в идущей пачке
   attach(target.path, {
@@ -61,15 +62,29 @@ export function runWatchdogExit(argv: string[]): void {
           if (type !== "message") return note(`кадр ${type ?? "не разобран"} — не повод будить`);
           const id = frameId(ev);
           // Пачка кадров комнаты (мост, roomstack.ts) — одна побудка: печатаем её
-          // целиком и выходим на последнем кадре залпа, не на первом.
-          // Кадр пачки — строкой, без конверта; шапка с указателем «целиком» — перед первым отданным.
+          // целиком и выходим на последнем кадре залпа, не на первом. Шапка —
+          // счётом по делам (#6574); строка — только адресованному месту, чей
+          // кадр не разбудил — шапка будит одна: числа приходят, текст — нет.
           const last = !ev.batch || ev.batch.at >= ev.batch.of;
           if (seen.has(id)) {
             note(`кадр ${id} уже отдан прежним взводом — не повод будить`);
             if (last && woke) process.exit(0);
             return;
           }
-          // Адресное слово не мне, свёрнутое в череду (folded), своей строки не печатает.
+          // Запись дела, не адресованная месту (#6574): без строки и без будки на
+          // кадр — шапка пачки назвала её числом.
+          if (ev.batch && !addressedToMine(ev.frame)) {
+            folded.push(id);
+            if (last) {
+              for (const k of folded.splice(0)) noteSeen(seenPath, k, seen);
+              if (!woke && head) {
+                wake(head);
+                woke = true;
+              }
+              if (woke) process.exit(0);
+            }
+            return;
+          }
           if (ev.batch?.at === 1) cases.clear(); // зачин дела — у первой его строки в пачке
           if (ev.batch?.folded) {
             folded.push(id);

@@ -1800,6 +1800,43 @@ test("satellite: a subagent's bridge stands as <caller>.sub-1 in the caller's ro
   assert.equal(fake.state.counts.webhooks_added, hooks, "no role-inbox hook for a satellite");
 });
 
+// Exit from a case by outcome (#6573): a subagent's run ends its errand, so the
+// satellite bridge leaves the cases the run joined, at the run's end, before the
+// place goes — not left to lapse by the place's term. A case the run already left
+// is not left twice; the session's bridge (not a satellite) leaves nothing.
+const caseCalls = (fake, action) =>
+  fake.state.calls
+    .filter((c) => c.name === "iskron_case" && c.arguments.action === action)
+    .map((c) => c.arguments.room);
+const caseAs = (b, action, room) =>
+  b.call("tools/call", {
+    name: "iskron_case",
+    arguments: { realm: "@nks/nks-dev", action, room },
+  });
+
+test("satellite: at the run's end the bridge leaves the cases the run joined, once each; a session's bridge leaves none", async (t) => {
+  const fake = await withCaller(t);
+  const sat = await satelliteBridge(t, fake);
+  assert.ok(!(await standAs(sat, SAT_ARGS)).result?.isError, sat.stderr);
+  for (const room of ["№102", "№7", "№8"]) await caseAs(sat, "join", room);
+  await caseAs(sat, "leave", "№8");
+  await sat.stop();
+  assert.deepEqual(
+    caseCalls(fake, "leave").sort(),
+    ["№102", "№7", "№8"],
+    `the run's joined cases left at its end, №8 not twice:\n${sat.stderr}`,
+  );
+
+  const plain = await startFakeNks({ pat: PAT });
+  t.after(() => plain.stop());
+  const own = startBridge(plain.mcpUrl, mkdtempSync(join(tmpdir(), "iskron-own-")));
+  t.after(() => own.stop());
+  assert.ok((await own.call("initialize", INIT)).result);
+  await caseAs(own, "join", "№102");
+  await own.stop();
+  assert.deepEqual(caseCalls(plain, "leave"), [], "the session's place outlives the session");
+});
+
 // Two subagent runs of one caller, each with its own satellite bridge (two
 // processes, one home), stand at the same moment: each reads the board before
 // the other's connect lands, and «first N free on the board» would give both

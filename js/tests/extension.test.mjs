@@ -735,28 +735,32 @@ test("a dead-token event complains loudly and names connect; mint is offered on 
 // A burst of stale frames is one message into the turn, bodies included.
 // The dictionary of room kinds (#5851): event_kind decides the way into the
 // turn; stack counts only on said. A busy agent gets closing now, progress later.
-test("room kinds: closing steers despite stack=defer, progress and an unknown kind follow up, said follows its stack", async () => {
+// #6574: only what is addressed to the seat enters as text; the rest of the
+// case comes later as one count, whatever its stack.
+test("room kinds: closing and records to me go by their way; the rest of the case is one count for the next turn", async () => {
   const { events, env } = eventsEnv("room-kinds");
-  const rec = await session(env);
+  const rec = await session({ ...env, ISKRON_PI_ASIDE_MS: 300 });
   try {
-    const cases = [
+    const mine = [
       [closing(), "steer"],
-      [progress(), "followUp"],
-      [unknownKind(), "followUp"],
-      [said("interrupt", 62), "steer"],
-      [said("defer", 63), "followUp"],
       [roomFrame("invite", { entry_id: 64, key: `invite:${ME_ID}` }), "steer"],
       [roomFrame("invite", { entry_id: 65, key: "invite:@tester:proba" }), "steer"],
-      [roomFrame("invite", { entry_id: 67, key: "invite:@other:x" }), "followUp"],
-      [roomFrame("opened", { entry_id: 66 }), "followUp"],
       [roleInvite(68), "steer"],
-      [roleInvite(69, MY_KARTA + 1), "followUp"],
       [withdraw(71), "followUp"],
     ];
-    for (const [f] of cases) push(events, frame(f));
-    await delay(400);
-    assert.equal(rec.messages.length, cases.length, "every room frame raises a message");
-    cases.forEach(([f, way], i) =>
+    const rest = [
+      progress(),
+      unknownKind(),
+      said("interrupt", 62),
+      said("defer", 63),
+      roomFrame("invite", { entry_id: 67, key: "invite:@other:x" }),
+      roomFrame("opened", { entry_id: 66 }),
+      roleInvite(69, MY_KARTA + 1),
+    ];
+    for (const f of [...mine.map(([f]) => f), ...rest]) push(events, frame(f));
+    await delay(1000);
+    assert.equal(rec.messages.length, mine.length + 1, JSON.stringify(rec.messages));
+    mine.forEach(([f, way], i) =>
       assert.equal(
         rec.messages[i].opts.deliverAs,
         way,
@@ -769,16 +773,26 @@ test("room kinds: closing steers despite stack=defer, progress and an unknown ki
       text,
       /ты можешь возразить — iskron_case\(action="object", in_reply_to=50\) \(прежнее имя iskron_room\)/,
     );
+    const count = rec.messages.at(-1);
+    assert.equal(count.opts.deliverAs, "nextTurn");
+    assert.equal(count.opts.triggerTurn, false, "the count does not wake");
+    assert.match(count.msg.content, /^№7 «Стенд»: записей 7, тебе 0/);
+    assert.ok(!count.msg.content.includes("слово со стопкой"), count.msg.content);
+    assert.ok(!count.msg.content.includes("пробы зелёные"), count.msg.content);
   } finally {
     await rec.stop();
   }
 });
 
 // An addressed word not to me (#6081): a fact without its body and without a
-// wake (nextTurn); a run of one pair that came in a row — one line.
+// wake (nextTurn); #6574: the words not to the seat come as one count of the case.
 const ASIDE = "Алексей (@aleksei:probe) → @boris:probe";
 /** Дело проб в начале строки — номер и зачин (#6081). */
 const CASE7 = "№7 «Стенд»";
+/** Строка счёта дела проб без адресованных месту (#6574). */
+const countOf = (n, since) =>
+  `${CASE7}: записей ${n}, тебе 0 — адресованных месту нет; ` +
+  `целиком — iskron_case(realm="nks-dev", action="history", room=7, since=${since}).`;
 
 async function asideMessages(name, frames, n) {
   const { events, env } = eventsEnv(name);
@@ -794,91 +808,87 @@ async function asideMessages(name, frames, n) {
   }
 }
 
-test("(а) an addressed word not to me with stack interrupt neither steers nor wakes: one line without its body", async () => {
+test("(а) an addressed word not to me with stack interrupt neither steers nor wakes: a count without its body", async () => {
   const got = await asideMessages("aside-one", [addressed(80)], 1);
   assert.equal(got.length, 1);
   assert.equal(got[0].deliverAs, "nextTurn", "a word not to me waits for the next turn");
   assert.equal(got[0].triggerTurn, false, "a word not to me does not wake");
-  assert.equal(got[0].text, `${CASE7} ${ASIDE}: слово [80]`);
+  assert.equal(got[0].text, countOf(1, 79));
 });
 
-test("(а2) an addressed word whose addressee has left the case (addressee_left) is not folded: it prints whole, like any word to all", async () => {
+test("(а2) an addressed word whose addressee has left the case (addressee_left) is a word to all: a count, no text", async () => {
   const got = await asideMessages("aside-left", [addressedLeft(89)], 1);
   assert.equal(got.length, 1, JSON.stringify(got));
-  assert.ok(!got[0].text.includes(ASIDE), `folded as an aside:\n${got[0].text}`);
-  assert.match(got[0].text, /явное слово 89/);
+  assert.equal(got[0].text, countOf(1, 88));
+  assert.doesNotMatch(got[0].text, /явное слово 89/);
 });
 
-test("(б) three addressed words of one pair in a row are one line «3 слова»", async () => {
+test("(б) three addressed words of one pair in a row are one count «записей 3»", async () => {
   const got = await asideMessages(
     "aside-run",
     [81, 82, 83].map((id) => addressed(id)),
     1,
   );
   assert.equal(got.length, 1, JSON.stringify(got));
-  assert.equal(got[0].text, `${CASE7} ${ASIDE}: 3 слова (последнее [83])`);
+  assert.equal(got[0].text, countOf(3, 80));
 });
 
-test("(в) an addressed word to me with stack interrupt steers at once and whole; the aside before it goes first as its line", async () => {
+test("(в) an addressed word to me with stack interrupt steers at once and whole; the count before it goes first", async () => {
   const got = await asideMessages("aside-mine", [addressed(86), addressed(87, ME)], 2);
   assert.equal(got.length, 2, JSON.stringify(got));
-  assert.equal(got[0].text, `${CASE7} ${ASIDE}: слово [86]`);
+  assert.equal(got[0].text, countOf(1, 85));
   assert.equal(got[0].deliverAs, "nextTurn");
   assert.equal(got[1].deliverAs, "steer", "the word to me steers");
-  assert.match(got[1].text, /слово от Алексей \(@aleksei:probe\)[^\n]*\nтайное слово 87\n/);
+  assert.match(got[1].text, /слово от Алексей \(@aleksei:probe\)[^\n]*\nтайное слово 87$/);
+  assert.doesNotMatch(got[1].text, /ответ:/, "delivery does not ask for an answer");
 });
 
-test("(г) a word without an addressee between two asides goes as before, whole, and breaks the run", async () => {
+test("(г) a word without an addressee between two asides is not to me either: one count of three", async () => {
   const frames = [addressed(90, BORIS, "defer"), said("defer", 91), addressed(92, BORIS, "defer")];
-  const got = await asideMessages("aside-plain", frames, 3);
-  assert.equal(got.length, 3, JSON.stringify(got));
-  assert.equal(got[0].text, `${CASE7} ${ASIDE}: слово [90]`);
-  assert.equal(got[1].deliverAs, "followUp", "a plain said defer follows up as before");
-  assert.match(got[1].text, /\nслово со стопкой defer\n/);
-  assert.equal(got[2].text, `${CASE7} ${ASIDE}: слово [92]`);
+  const got = await asideMessages("aside-plain", frames, 1);
+  assert.equal(got.length, 1, JSON.stringify(got));
+  assert.equal(got[0].text, countOf(3, 89));
+  assert.doesNotMatch(got[0].text, /слово со стопкой defer/);
 });
 
-test("(д) an addressed word not to me in flight and then its body with stack interrupt: one line of the pair, no body, no wake", async () => {
+test("(д) an addressed word not to me in flight and then its body with stack interrupt: one count, no body, no wake", async () => {
   const got = await asideMessages("aside-body", [addressedInFlight(94), addressedBody(95, 94)], 1);
   assert.equal(got.length, 1, JSON.stringify(got));
   assert.equal(got[0].deliverAs, "nextTurn");
   assert.equal(got[0].triggerTurn, false);
-  assert.equal(got[0].text, `${CASE7} ${ASIDE}: слово [94]`);
+  assert.equal(got[0].text, countOf(2, 93));
 });
 
-test("(е) a word whose body the platform withheld (body_withheld) is an aside: one line, no wake", async () => {
+test("(е) a word whose body the platform withheld (body_withheld) is not to me: a count, no wake", async () => {
   const got = await asideMessages("aside-withheld", [withheld(96)], 1);
   assert.equal(got.length, 1, JSON.stringify(got));
   assert.equal(got[0].deliverAs, "nextTurn");
-  assert.equal(got[0].text, `${CASE7} ${ASIDE}: слово [96]`);
+  assert.equal(got[0].text, countOf(1, 95));
 });
 
 // A short frame (#6081, the owner's word): a case frame is 1–3 lines — case, entry,
-// words and who; the text once; the answer call. No raw provenance or envelope JSON.
-test("a lone case frame is short: an entry frame within 200 chars and no JSON; a said's text once, with the answer call", async () => {
+// words and who; the text once. No raw provenance or envelope JSON. #6574: only
+// what is addressed to the seat is a frame, and delivery asks no answer.
+test("a lone case frame to me is short: a said's text once, no JSON, no answer call; an entry not to me is a count", async () => {
   const { events, env } = eventsEnv("short-frame");
-  const rec = await session(env);
+  const rec = await session({ ...env, ISKRON_PI_ASIDE_MS: 300 });
   try {
     const reply = said("interrupt", 62);
     reply.in_reply_to = 60;
+    reply.addressee = ME;
     push(events, frame(joinedMember()));
     push(events, frame(reply));
-    await delay(400);
-    assert.equal(rec.messages.length, 2);
+    await delay(1000);
+    assert.equal(rec.messages.length, 2, JSON.stringify(rec.messages));
     const join = rec.messages[0].msg.content;
-    assert.ok([...join].length <= 200, `the entry frame is ${[...join].length} chars:\n${join}`);
-    assert.ok(!join.includes('{"'), `raw JSON in the entry frame:\n${join}`);
-    assert.match(join, /^№7 «Стенд» \[85\] вошёл /);
+    assert.equal(join, countOf(1, 84));
     const word = rec.messages[1].msg.content;
     assert.equal(word.split("слово со стопкой interrupt").length - 1, 1, word);
     assert.match(
       word,
       /^№7 «Стенд» \[62\] слово от Алексей \(@aleksei:probe\)[^\n]*в ответ на \[60\]/,
     );
-    assert.match(
-      word,
-      /\nответ: iskron_case\(realm="nks-dev", action="say", room="№7", in_reply_to=62\)$/,
-    );
+    assert.doesNotMatch(word, /ответ: iskron_case/, "delivery does not ask for an answer");
     assert.ok(!word.includes('{"'), word);
   } finally {
     await rec.stop();
@@ -886,52 +896,48 @@ test("a lone case frame is short: an entry frame within 200 chars and no JSON; a
 });
 
 // auto — a platform record to the parent about its child case (#5893 §4.2, #4925):
-// words by its code, never interrupting.
-test("room kinds: an auto record about a child case follows up in words, not as an unknown kind", async () => {
+// not to the seat, so a count (#6574), never interrupting.
+test("room kinds: an auto record about a child case is a count for the next turn, without its words", async () => {
   const { events, env } = eventsEnv("room-auto");
-  const rec = await session(env);
+  const rec = await session({ ...env, ISKRON_PI_ASIDE_MS: 300 });
   try {
     push(events, frame(auto("child_closed")));
-    await delay(400);
+    await delay(1000);
     assert.equal(rec.messages.length, 1, "the auto frame raises a message");
-    assert.equal(rec.messages[0].opts.deliverAs, "followUp", "a child closing does not interrupt");
+    assert.equal(rec.messages[0].opts.deliverAs, "nextTurn", "a child closing does not interrupt");
     const text = rec.messages[0].msg.content;
-    assert.match(text, /дочернее дело №12 закрыто/);
-    assert.doesNotMatch(text, /неизвестен/, "auto is a kind the bridge knows");
+    assert.equal(text, countOf(1, 79));
+    assert.doesNotMatch(text, /дочернее дело №12 закрыто/);
   } finally {
     await rec.stop();
   }
 });
 
-// A word in two phases (#5893 §4.5b): said in flight carries no text and follows up;
-// body brings the text by its word's stack; an abort follows up in words.
-test("room kinds: a said in flight follows up, body follows its stack in words, an abort follows up; plain said still steers", async () => {
+// A word in two phases (#5893 §4.5b): not to the seat — one count (#6574);
+// the body of a word to me steers by its stack, whole.
+test("room kinds: a said in flight, bodies and aborts not to me are one count; the body of a word to me steers whole", async () => {
   const { events, env } = eventsEnv("room-body");
-  const rec = await session(env);
+  const rec = await session({ ...env, ISKRON_PI_ASIDE_MS: 300 });
   try {
-    const loud = bodyFrame(61, 60);
+    const loud = bodyFrame(61, 60, "текст моего слова");
     loud.stack = "interrupt";
-    const cases = [
-      [saidInFlight(54), "followUp"],
-      [bodyFrame(55, 54), "followUp"],
-      [bodyAborted(57, 56), "followUp"],
-      [bodyLapsed(59, 58), "followUp"],
-      [loud, "steer"],
-      [said("interrupt", 62), "steer"],
-    ];
-    for (const [f] of cases) push(events, frame(f));
+    loud.addressee = ME;
+    for (const f of [
+      saidInFlight(54),
+      bodyFrame(55, 54),
+      bodyAborted(57, 56),
+      bodyLapsed(59, 58),
+      said("interrupt", 62),
+    ])
+      push(events, frame(f));
+    await delay(1000);
+    push(events, frame(loud));
     await delay(400);
-    assert.equal(rec.messages.length, cases.length, "every room frame raises a message");
-    cases.forEach(([f, way], i) =>
-      assert.equal(rec.messages[i].opts.deliverAs, way, `${f.id} must go ${way}`),
-    );
-    const text = (i) => rec.messages[i].msg.content;
-    assert.match(text(0), /слово от Алексей \(@aleksei:probe\) в полёте — текст придёт следом/);
-    assert.match(text(1), /текст слова \[54\] от Алексей \(@aleksei:probe\)/);
-    assert.match(text(1), /\nтекст второй фазы\n/, "the word's text passes through");
-    assert.match(text(2), /слово \[56\] оборвано автором/);
-    assert.match(text(3), /слово \[58\] оборвано платформой по сроку/);
-    for (let i = 0; i < 4; i++) assert.doesNotMatch(text(i), /неизвестен/, text(i));
+    assert.equal(rec.messages.length, 2, JSON.stringify(rec.messages));
+    assert.equal(rec.messages[0].opts.deliverAs, "nextTurn");
+    assert.equal(rec.messages[0].msg.content, countOf(5, 53));
+    assert.equal(rec.messages[1].opts.deliverAs, "steer");
+    assert.match(rec.messages[1].msg.content, /\nтекст моего слова$/);
   } finally {
     await rec.stop();
   }

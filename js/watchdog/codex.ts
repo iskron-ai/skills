@@ -13,8 +13,10 @@ import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
+import { type ChannelEvent } from "../bridge/hold.ts";
 import { type Door, openDoor } from "../shared/appserver.ts";
-import { frameToText } from "../shared/frame-text.ts";
+import { batchHead, frameToText } from "../shared/frame-text.ts";
+import { addressedToMine } from "../shared/room-kinds.ts";
 import { deliveredKeys, noteSeen, seenIds } from "../shared/seen.ts";
 import { seenFilePathOf } from "../shared/standings.ts";
 import {
@@ -126,6 +128,18 @@ export function runWatchdogCodex(argv: string[]): void {
   // — это кадры, пришедшие между взводами: их вкладываем, как живые. Кадр без id
   // пометить нечем, и из кольца он пришёл бы на каждом взводе — такой пропускаем.
   let replay = 0;
+  // Пачка дела без адресованных месту кадров (#6574): копится и концом уходит
+  // одной записью — счётом по делам; текст неадресованного в тред не идёт.
+  let pend: { frame: NonNullable<ChannelEvent["frame"]>; ids: string[] }[] = [];
+  const flushPend = (): void => {
+    const got = pend;
+    pend = [];
+    if (!got.length) return;
+    void deliver(
+      batchHead(got.map((g) => g.frame)),
+      got.flatMap((g) => g.ids),
+    );
+  };
   attach(target.path, {
     onEvent: (ev) => {
       switch (ev.kind) {
@@ -139,6 +153,16 @@ export function runWatchdogCodex(argv: string[]): void {
           // Повтор уже вложенного (тот же id) — вторая линия за мостом (#5831).
           if (typeof ev.frame?.id === "string" && seen.has(ev.frame.id))
             return note(`кадр ${ev.frame.id} уже вложен — в тред не кладу повторно`);
+          // Неадресованное месту — числом: копится, строка не кладётся (#6574).
+          if (ev.batch && ev.frame && !addressedToMine(ev.frame)) {
+            pend.push({
+              frame: ev.frame,
+              ids: [...deliveredKeys(ev.frame), ...(ev.frame.id ? [ev.frame.id] : [])],
+            });
+            if (ev.batch.at >= ev.batch.of) flushPend();
+            return;
+          }
+          flushPend(); // накопленное — прежде следующего кадра: порядок цел
           void deliver(frameToText(ev.frame, ev.raw ?? ""), deliveredKeys(ev.frame));
           break;
         }

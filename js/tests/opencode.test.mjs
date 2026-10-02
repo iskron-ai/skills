@@ -827,8 +827,8 @@ test("each root session gets its own bridge, and a frame goes to the session who
     );
     assert.match(
       to["s-a"],
-      /^роль #1226 \(@alari:telegram-bot\)\nдля первой\nответ: iskron_channel\(action="send", karta=1226, standing="@alari:telegram-bot", in_reply_to="msg-1"\)$/,
-      "who speaks, the text once and the answer — short (#6081)",
+      /^роль #1226 \(@alari:telegram-bot\)\nдля первой$/,
+      "who speaks and the text once — short (#6081); delivery asks no answer (#6574)",
     );
   } finally {
     await rec.stop();
@@ -2619,10 +2619,12 @@ test("a dead child bridge is replaced by a fresh child bridge that resumes the c
 
 // ── room frames (api 0.71.0: envelope flattened ahead of provenance and body) ──
 
-/** Строка ответа короткого кадра дела (#6081): дело и запись, на которую отвечают. */
-const answerOf = (text) => text.split("\n").find((l) => l.startsWith("ответ: ")) ?? "";
+/** Строка счёта дела проб без адресованных месту (#6574). */
+const countOf = (n, since, zachin = "Стенд") =>
+  `№7 «${zachin}»: записей ${n}, тебе 0 — адресованных месту нет; ` +
+  `целиком — iskron_case(realm="nks-dev", action="history", room=7, since=${since}).`;
 
-test("a room frame reaches the agent short: case, entry, words, who, the answer; said defer queues, a platform record with no author is the platform's", async () => {
+test("a room frame to me reaches the agent short: case, entry, words, who, no answer call; a word to all queues as a count, a platform record with no author is the platform's", async () => {
   const b = bridgeEnv("room");
   const rec = await plugin(b.env);
   try {
@@ -2630,21 +2632,17 @@ test("a room frame reaches the agent short: case, entry, words, who, the answer;
     await until(() => rec.tools().has("iskron_channel"), "the channel tool");
     await rec.call("iskron_channel", { action: "connect" }, "s-room");
     const [pid] = pidsOf(b.log);
-    const said = saidFrame("interrupt", 41);
+    const said = { ...saidFrame("interrupt", 41), addressee: ME };
     appendFileSync(`${b.events}.${pid}`, event("frame", { frame: said, raw: "" }));
     await until(() => rec.prompts.length === 1, "the room frame to be prompted");
-    assert.equal(rec.prompts[0].delivery, "steer", "said with stack=interrupt steers");
+    assert.equal(rec.prompts[0].delivery, "steer", "said to me with stack=interrupt steers");
     const text = rec.prompts[0].text;
     assert.match(
       text,
       /^№7 «Стенд» \[41\] слово от Алексей \(@aleksei:probe\) — роль #48\n/,
       "the case, the entry, the kind in words and a doer's role, by via+auth",
     );
-    assert.equal(
-      answerOf(text),
-      'ответ: iskron_case(realm="nks-dev", action="say", room="№7", in_reply_to=41)',
-      "the answer names the case and the entry",
-    );
+    assert.doesNotMatch(text, /ответ:/, "delivery asks no answer (#6574)");
 
     const closed = roomFrame("closed", {
       entry_id: 42,
@@ -2671,10 +2669,10 @@ test("a room frame reaches the agent short: case, entry, words, who, the answer;
       "queue",
       "said with stack=defer must not interrupt the running turn (#4957)",
     );
-    assert.match(
+    assert.equal(
       rec.prompts[2].text,
-      /^Дело: кадров 1 — [^\n]*\n№7 «Стенд» \[43\] слово от Алексей \(@aleksei:probe\): слово со стопкой defer$/,
-      "a deferred word is a line of the case burst, its envelope behind the history pointer",
+      countOf(1, 42),
+      "a word to all is a count of the case burst, its text behind the history pointer",
     );
   } finally {
     await rec.stop();
@@ -2706,7 +2704,10 @@ for (const [server, en] of [
         return rec.prompts[i - 1].text;
       };
       const word = await send(
-        latin(roomFrame("said", { author: ALEX, stack: "interrupt", body: "look at 41" })),
+        latin({
+          ...roomFrame("said", { author: ALEX, stack: "interrupt", body: "look at 41" }),
+          addressee: ME,
+        }),
         1,
       );
       const line = await send(
@@ -2719,6 +2720,7 @@ for (const [server, en] of [
         ),
         2,
       );
+      // #6574: a ledger line not to the seat is a count; its words stay in history.
       if (en) {
         assert.doesNotMatch(word, CYRILLIC, word);
         assert.doesNotMatch(line, CYRILLIC, line);
@@ -2726,21 +2728,17 @@ for (const [server, en] of [
           word,
           /^case №7 «Bench» \[\d+\] message from Alex \(@alex:probe\) — role #48\n/,
         );
-        assert.match(word, /\nanswer: iskron_case\(realm="nks-dev", action="say", room="№7", /);
-        assert.match(line, /^Case: 1 frames — /);
-        assert.match(line, /\ncase №7 «Bench» \[\d+\] \[tests\]/);
+        assert.doesNotMatch(word, /answer:/);
         assert.match(
           line,
-          /\[tests\] \[probes green\] = partial — no network · Alex \(@alex:probe\)/,
+          /^case №7 «Bench»: 1 records, yours 0 — none of them yours; in full — iskron_case\(/,
         );
       } else {
         assert.match(word, /^№7 «Bench» \[\d+\] слово от Alex \(@alex:probe\) — роль #48\n/);
-        assert.match(word, /\nответ: iskron_case\(/);
-        assert.match(
-          line,
-          /\[tests\] \[probes green\] = частично — no network · Alex \(@alex:probe\)/,
-        );
+        assert.doesNotMatch(word, /ответ:/);
+        assert.match(line, /^№7 «Bench»: записей 1, тебе 0 — адресованных месту нет; целиком — /);
       }
+      assert.doesNotMatch(line, /probes green/);
     } finally {
       await rec.stop();
     }
@@ -2779,13 +2777,10 @@ test("room kinds: closing steers a busy agent despite stack=defer and says who m
       "the body passes through once, closing waits no say",
     );
 
+    // #6574: records not to the seat queue as a count, whatever their stack.
     const p2 = await send(progress(), 2);
     assert.equal(p2.delivery, "queue", "progress batches");
-    // Строка гроссбуха — ровно «[было] [сделал] = вердикт», примечание, автор хвостом.
-    assert.match(
-      p2.text,
-      /\[tests\] \[пробы зелёные\] = ok — без сети · Алексей \(@aleksei:probe\)/,
-    );
+    assert.equal(p2.text, countOf(1, 43), "a ledger line not to me is a count");
 
     const p3 = await send(unknownKind(), 3);
     assert.equal(
@@ -2793,10 +2788,11 @@ test("room kinds: closing steers a busy agent despite stack=defer and says who m
       "queue",
       "an unknown kind never interrupts, even with stack=interrupt",
     );
-    assert.match(p3.text, /род weather мосту неизвестен/);
+    assert.doesNotMatch(p3.text, /род weather мосту неизвестен/);
 
     const p4 = await send(saidFrame("interrupt", 62), 4);
-    assert.equal(p4.delivery, "steer", "said with stack=interrupt steers");
+    assert.equal(p4.delivery, "queue", "a word to all with stack=interrupt queues as a count");
+    assert.equal(p4.text, countOf(1, 61));
     const p5 = await send(saidFrame("defer", 63), 5);
     assert.equal(p5.delivery, "queue", "said with stack=defer queues");
 
@@ -2826,11 +2822,7 @@ test("room kinds: closing steers a busy agent despite stack=defer and says who m
       11,
     );
     assert.equal(p7.delivery, "queue", "an invite to someone else batches");
-    assert.match(
-      p7.text,
-      /зовёт Прораб \(@other:x\) в дело/,
-      "the invite names the invitee, not the raw id",
-    );
+    assert.doesNotMatch(p7.text, /зовёт/, "an invite to someone else is a count, no words");
     const p8 = await send(roomFrame("opened", { entry_id: 66 }), 12);
     assert.equal(p8.delivery, "queue", "opened does not interrupt");
     const p9 = await send(roomFrame("invite", { entry_id: 67, key: "invite:@tester:proba" }), 13);
@@ -2847,9 +2839,9 @@ test("room kinds: closing steers a busy agent despite stack=defer and says who m
   }
 });
 
-// auto — a platform record to the parent about its child case (#5893 §4.2, #4925):
-// words by its code, never interrupting; link — the relation in words.
-test("room kinds: an auto record about a child case queues in words, not as an unknown kind; link names the relation", async () => {
+// auto — a platform record to the parent about its child case (#5893 §4.2, #4925),
+// and link: not to the seat — a count each (#6574), never interrupting.
+test("room kinds: auto records about a child case and link queue as counts, without their words", async () => {
   const b = bridgeEnv("room-auto");
   const rec = await plugin(b.env);
   try {
@@ -2864,25 +2856,24 @@ test("room kinds: an auto record about a child case queues in words, not as an u
     };
     const closed = await send(auto("child_closed"), 1);
     assert.equal(closed.delivery, "queue", "a child closing is news, not a call to act");
-    assert.match(closed.text, /дочернее дело №12 закрыто/);
-    assert.doesNotMatch(closed.text, /неизвестен/, "auto is a kind the bridge knows");
+    assert.equal(closed.text, countOf(1, 79));
     const late = await send(auto("child_late_objection", 82), 2);
     assert.equal(late.delivery, "queue");
-    assert.match(late.text, /позднее возражение в дочернем деле №12/);
+    assert.equal(late.text, countOf(1, 81));
     const other = await send(auto("all_nodes_done", 83), 3);
     assert.equal(other.delivery, "queue");
-    assert.match(other.text, /запись платформы all_nodes_done о деле №12/);
+    assert.equal(other.text, countOf(1, 82));
     const linked = await send(link("parent"), 4);
     assert.equal(linked.delivery, "queue");
-    assert.match(linked.text, /дело связано с №12 \(дочернее к нему\)/);
+    assert.equal(linked.text, countOf(1, 80));
   } finally {
     await rec.stop();
   }
 });
 
-// A word in two phases (#5893 §4.5b): said in flight carries no text and queues;
-// body brings the text by its word's stack; an abort queues in words.
-test("room kinds: a said in flight queues, body follows its stack in words, an abort queues; plain said still steers", async () => {
+// A word in two phases (#5893 §4.5b): not to the seat — each queues as a count
+// (#6574); the body of a word to me follows its stack, whole.
+test("room kinds: a said in flight, bodies and aborts not to me queue as counts; the body of a word to me steers", async () => {
   const b = bridgeEnv("room-body");
   const rec = await plugin(b.env);
   try {
@@ -2897,24 +2888,23 @@ test("room kinds: a said in flight queues, body follows its stack in words, an a
     };
     const flying = await send(saidInFlight(54), 1);
     assert.equal(flying.delivery, "queue", "a said in flight has no text to interrupt with");
-    assert.match(flying.text, /слово от Алексей \(@aleksei:probe\) в полёте — текст придёт следом/);
+    assert.equal(flying.text, countOf(1, 53));
     const text = await send(bodyFrame(55, 54), 2);
     assert.equal(text.delivery, "queue", "body with its word's stack=defer queues");
-    assert.match(text.text, /текст слова \[54\] от Алексей \(@aleksei:probe\)/);
-    assert.match(text.text, /: текст второй фазы$/, "the word's text passes through in its line");
-    assert.doesNotMatch(text.text, /неизвестен/, "body is a kind the bridge knows");
-    const loud = bodyFrame(61, 60);
-    loud.stack = "interrupt";
+    assert.equal(text.text, countOf(1, 54), "the text of a word to all stays in history");
+    const loud = { ...bodyFrame(61, 60, "текст моего слова"), stack: "interrupt", addressee: ME };
     const loudP = await send(loud, 3);
-    assert.equal(loudP.delivery, "steer", "body with its word's stack=interrupt steers");
+    assert.equal(loudP.delivery, "steer", "body of a word to me with stack=interrupt steers");
+    assert.match(loudP.text, /текст слова \[60\] от Алексей \(@aleksei:probe\)/);
+    assert.match(loudP.text, /\nтекст моего слова$/, "the word's text passes through whole");
     const byAuthor = await send(bodyAborted(57, 56), 4);
     assert.equal(byAuthor.delivery, "queue", "an abort by the author queues");
-    assert.match(byAuthor.text, /слово \[56\] оборвано автором/);
+    assert.equal(byAuthor.text, countOf(1, 56));
     const byTerm = await send(bodyLapsed(59, 58), 5);
     assert.equal(byTerm.delivery, "queue", "an abort by the platform queues");
-    assert.match(byTerm.text, /слово \[58\] оборвано платформой по сроку/);
+    assert.equal(byTerm.text, countOf(1, 58));
     const plain = await send(saidFrame("interrupt", 62), 6);
-    assert.equal(plain.delivery, "steer", "a said without body_pending still steers");
+    assert.equal(plain.delivery, "queue", "a word to all queues, whatever its stack");
   } finally {
     await rec.stop();
   }
@@ -2927,7 +2917,7 @@ const caseBurst = (from, n) => Array.from({ length: n }, (_, i) => progress(from
 const lines = (frames) =>
   frames.map((frame) => event("frame", { frame, raw: JSON.stringify(frame) })).join("");
 
-test("ten case frames in a row are one queue prompt: a head with the history pointer, then a line per frame", async () => {
+test("ten case frames in a row are one queue prompt: one count of the case with the history pointer, no line per frame", async () => {
   const b = bridgeEnv("case-burst");
   const rec = await plugin(b.env);
   try {
@@ -2940,18 +2930,8 @@ test("ten case frames in a row are one queue prompt: a head with the history poi
     assert.equal(rec.prompts.length, 1, "ten frames, one prompt — never one per frame");
     const [p] = rec.prompts;
     assert.equal(p.delivery, "queue");
-    const rows = p.text.split("\n");
-    assert.match(
-      rows[0],
-      /^Дело: кадров 10 — .*iskron_case\(realm="nks-dev", action="history", room=7, since=200\)/,
-    );
-    assert.equal(rows.length, 11, "a head and ten lines, no envelopes");
-    // Каждая строка — с номером дела; зачин — у первой строки дела в пачке (#6081).
-    rows
-      .slice(1)
-      .forEach((row, i) =>
-        assert.match(row, new RegExp(`^№7 ${i ? "" : "«Стенд» "}\\[${201 + i}\\] `)),
-      );
+    // #6574: records not to the seat — one count per case, no text, no envelopes.
+    assert.equal(p.text, countOf(10, 200));
   } finally {
     await rec.stop();
   }
@@ -2977,48 +2957,40 @@ async function asidePrompts(name, frames, n) {
   }
 }
 
-test("(а) an addressed word not to me with stack interrupt does not steer: one line without its body in the case prompt", async () => {
+test("(а) an addressed word not to me with stack interrupt does not steer: a count without its body", async () => {
   const prompts = await asidePrompts("aside-one", [addressed(80)], 1);
   assert.equal(prompts.length, 1);
   assert.equal(prompts[0].delivery, "queue", "a word not to me never steers");
-  assert.ok(
-    prompts[0].text.split("\n").includes(`№7 «Стенд» ${ASIDE}: слово [80]`),
-    prompts[0].text,
-  );
-  assert.doesNotMatch(prompts[0].text, /тайное слово/, "no body of a word not to me");
+  assert.equal(prompts[0].text, countOf(1, 79));
 });
 
-test("(а2) an addressed word whose addressee has left the case (addressee_left) is not folded: it prints whole, like any word to all", async () => {
+test("(а2) an addressed word whose addressee has left the case (addressee_left) is a word to all: a count, no text", async () => {
   const prompts = await asidePrompts("aside-left", [addressedLeft(89)], 1);
   assert.equal(prompts.length, 1);
-  assert.doesNotMatch(prompts[0].text, new RegExp(ASIDE.replace(/[()]/g, "\\$&")));
-  assert.match(prompts[0].text, /явное слово 89/);
+  assert.equal(prompts[0].text, countOf(1, 88));
 });
 
-test("(б) three addressed words of one pair in a row are one line «3 слова»", async () => {
+test("(б) three addressed words of one pair in a row are one count «записей 3»", async () => {
   const prompts = await asidePrompts(
     "aside-run",
     [81, 82, 83].map((id) => addressed(id)),
     1,
   );
   assert.equal(prompts.length, 1);
-  const rows = prompts[0].text.split("\n");
-  assert.equal(rows.length, 2, `a head and one line:\n${prompts[0].text}`);
-  assert.equal(rows[1], `№7 «Стенд» ${ASIDE}: 3 слова (последнее [83])`);
+  assert.equal(prompts[0].text, countOf(3, 80));
 });
 
-test("(в) an addressed word to me with stack interrupt steers at once and whole; the aside before it waits", async () => {
+test("(в) an addressed word to me with stack interrupt steers at once and whole, no answer call; the count before it waits", async () => {
   const prompts = await asidePrompts("aside-mine", [addressed(86), addressed(87, ME)], 2);
   const steered = prompts.filter((p) => p.delivery === "steer");
   assert.equal(steered.length, 1, "only the word to me steers");
-  assert.match(steered[0].text, /слово от Алексей \(@aleksei:probe\)[^\n]*\nтайное слово 87\n/);
+  assert.match(steered[0].text, /слово от Алексей \(@aleksei:probe\)[^\n]*\nтайное слово 87$/);
   const queued = prompts.filter((p) => p.delivery === "queue");
   assert.equal(queued.length, 1);
-  assert.ok(queued[0].text.includes(`${ASIDE}: слово [86]`), queued[0].text);
-  assert.doesNotMatch(queued[0].text, /тайное слово/);
+  assert.equal(queued[0].text, countOf(1, 85));
 });
 
-test("(г) a word without an addressee between two asides stays whole in its line and breaks the run", async () => {
+test("(г) a word without an addressee between two asides is not to me either: one count of three", async () => {
   const frames = [
     addressed(90, BORIS, "defer"),
     saidFrame("defer", 91),
@@ -3026,15 +2998,10 @@ test("(г) a word without an addressee between two asides stays whole in its lin
   ];
   const prompts = await asidePrompts("aside-plain", frames, 1);
   assert.equal(prompts.length, 1);
-  const rows = prompts[0].text.split("\n").slice(1);
-  assert.deepEqual(rows, [
-    `№7 «Стенд» ${ASIDE}: слово [90]`,
-    "№7 [91] слово от Алексей (@aleksei:probe): слово со стопкой defer",
-    `№7 ${ASIDE}: слово [92]`,
-  ]);
+  assert.equal(prompts[0].text, countOf(3, 89));
 });
 
-test("(д) an addressed word not to me in flight and then its body with stack interrupt: one line of the pair, no body, no steer", async () => {
+test("(д) an addressed word not to me in flight and then its body with stack interrupt: one count, no body, no steer", async () => {
   const prompts = await asidePrompts(
     "aside-body",
     [addressedInFlight(94), addressedBody(95, 94)],
@@ -3042,24 +3009,26 @@ test("(д) an addressed word not to me in flight and then its body with stack in
   );
   assert.equal(prompts.length, 1, "the body does not steer apart");
   assert.equal(prompts[0].delivery, "queue");
-  const rows = prompts[0].text.split("\n");
-  assert.deepEqual(rows.slice(1), [`№7 «Стенд» ${ASIDE}: слово [94]`]);
-  assert.doesNotMatch(prompts[0].text, /тайное тело/);
+  assert.equal(prompts[0].text, countOf(2, 93));
 });
 
-test("(е) a word whose body the platform withheld (body_withheld) folds with the pair's run", async () => {
+test("(е) a word whose body the platform withheld (body_withheld) counts with the rest", async () => {
   const prompts = await asidePrompts("aside-withheld", [addressed(97), withheld(98)], 1);
   assert.equal(prompts.length, 1);
-  assert.deepEqual(prompts[0].text.split("\n").slice(1), [
-    `№7 «Стенд» ${ASIDE}: 2 слова (последнее [98])`,
-  ]);
+  assert.equal(prompts[0].text, countOf(2, 96));
 });
 
-// A short frame (#6081, the owner's word): 1–3 lines, no raw JSON, the text once.
-test("a lone case frame is short: a said's text once, no JSON, «in reply to»; batch lines lead with №N, the entry among them", async () => {
-  const reply = saidFrame("interrupt", 62);
+// A short frame (#6081, the owner's word): 1–3 lines, no raw JSON, the text once;
+// a burst to me carries a count head and a line per record to me (#6574).
+test("a lone case frame to me is short: a said's text once, no JSON, «in reply to»; a burst is a count head, lines only for what is mine", async () => {
+  const reply = { ...saidFrame("interrupt", 62), addressee: ME };
   reply.in_reply_to = 60;
-  const prompts = await asidePrompts("short-frame", [reply, progress(44), joinedMember(85)], 2);
+  const mineDefer = { ...saidFrame("defer", 86), addressee: ME };
+  const prompts = await asidePrompts(
+    "short-frame",
+    [reply, progress(44), joinedMember(85), mineDefer],
+    2,
+  );
   const word = prompts.find((p) => p.delivery === "steer").text;
   assert.equal(word.split("слово со стопкой interrupt").length - 1, 1, word);
   assert.match(
@@ -3068,9 +3037,10 @@ test("a lone case frame is short: a said's text once, no JSON, «in reply to»; 
   );
   assert.ok(!word.includes('{"'), word);
   const batch = prompts.find((p) => p.delivery === "queue").text.split("\n");
-  assert.match(batch[1], /^№7 «Стенд» \[44\] \[tests\]/);
-  assert.match(batch[2], /^№7 \[85\] вошёл /);
-  assert.ok(!batch.join("\n").includes('{"'), batch.join("\n"));
+  assert.match(batch[0], /^№7 «Стенд»: записей 3, тебе 1 — адресованные строками ниже; /);
+  assert.match(batch[1], /^№7 «Стенд» \[86\] слово от Алексей/);
+  assert.equal(batch.length, 2, batch.join("\n"));
+  assert.ok(!batch.join("\n").includes("пробы зелёные"), batch.join("\n"));
 });
 
 test("a direct word and a human word amid a case burst steer apart and whole; the burst stays one prompt", async () => {
@@ -3096,13 +3066,13 @@ test("a direct word and a human word amid a case burst steer apart and whole; th
     assert.equal(steered.length, 2, "neither word waits in the case queue");
     assert.match(
       steered[0].text,
-      /^роль #48 \(@alari:sosed\)\nпрямое слово соседа\nответ: iskron_channel\(action="send", karta=48, standing="@alari:sosed", in_reply_to="direct-9"\)$/,
-      "the direct word goes whole and short: who, the text, the answer",
+      /^роль #48 \(@alari:sosed\)\nпрямое слово соседа$/,
+      "the direct word goes whole and short: who and the text, no answer call (#6574)",
     );
     assert.match(steered[1].text, /^№7 «Стенд» \[230\] [^\n]* — человек\n/);
-    assert.match(steered[1].text, /\nслово со стопкой defer\n/, "the human word goes whole");
+    assert.match(steered[1].text, /\nслово со стопкой defer$/, "the human word goes whole");
     assert.equal(queued.length, 1);
-    assert.match(queued[0].text, /^Дело: кадров 10 — /);
+    assert.equal(queued[0].text, countOf(10, 210));
     assert.doesNotMatch(
       queued[0].text,
       /прямое слово|слово со стопкой/,
@@ -3153,14 +3123,10 @@ test("while the burst prompt waits in the session's queue, new case frames wait 
     });
     await until(() => rec.prompts.length === 2, "the held frames after the take");
     assert.equal(rec.prompts[1].delivery, "queue");
-    assert.match(rec.prompts[1].text, /^Дело: кадров 3 — /);
-    assert.deepEqual(
-      rec.prompts[1].text
-        .split("\n")
-        .slice(1)
-        .map((r) => r.match(/^№7 (?:«Стенд» )?\[(\d+)\]/)?.[1]),
-      ["243", "244", "245"],
-      "every held frame enters the prompt that goes, none twice",
+    assert.equal(
+      rec.prompts[1].text,
+      countOf(3, 242),
+      "every held frame enters the count that goes, none twice",
     );
   } finally {
     await rec.stop();
@@ -3209,7 +3175,7 @@ test("room kinds leave non-room frames and the old room shape as on main: every 
     assert.match(rec.prompts[5].text, /^№r-1 «Стенд» \[74\] род auto, стопка interrupt\n/);
     assert.match(
       rec.prompts[7].text,
-      /^Дело: кадров 1 — [^\n]*\n№r-1 «Стенд» \[76\] кадр room-old-76: /,
+      /^№r-1 «Стенд»: записей 1, тебе 1 — [^\n]*\n№r-1 «Стенд» \[76\] кадр room-old-76: /,
       "an old deferred room frame is a line of the case burst",
     );
     assert.ok(

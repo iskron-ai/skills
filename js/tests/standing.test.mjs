@@ -749,7 +749,7 @@ test("the bridge never re-reads a body: body_chars is a size of the serialised b
       provenance: { from_standing: "@alari:sosед", auth: "oidc" },
     }),
   });
-  await waitFor(() => wd.out.includes("m-whole"), "the frame to reach the watchdog");
+  await waitFor(() => wd.out.includes("и ещё строка"), "the frame to reach the watchdog");
   // A re-read or a cut body is said in the first line's tail («тело: …», #6081).
   assert.ok(!wd.out.includes("тело: "), `a whole body re-read or marked truncated:\n${wd.out}`);
   assert.ok(wd.out.includes("и ещё строка"), "the doer gets the body as it came");
@@ -1231,7 +1231,11 @@ test("the Monitor watchdog prints a message frame as text in lines, none longer 
       provenance: { from_standing: "@alari:sosед", from_karta_seq: 48, auth: "oidc" },
     }),
   });
-  await waitFor(() => wd.out.includes("m-wide"), "the frame to reach the watchdog");
+  await waitFor(
+    () => wd.out.includes("роль #48 (@alari:sosед)"),
+    "the frame to reach the watchdog",
+  );
+  await new Promise((r) => setTimeout(r, 300));
   const lines = wd.out.split("\n");
   assert.ok(
     lines.some((l) => l.startsWith("роль #48 (@alari:sosед)")),
@@ -3140,12 +3144,17 @@ test("room kinds under the Monitor watchdog: progress and said defer wait; closi
   await sendRoom(fake, closing());
   await waitFor(() => wd.out.includes("ты можешь возразить"), "closing to be printed");
   const flat = wd.out.replace(/\n/g, " ");
-  const batch = flat.indexOf("Дело: кадров 2");
-  const prog = flat.indexOf("[tests] [пробы зелёные] = ok — без сети · Алексей");
+  // #6574: пачка несёт счёт по делам, неадресованные записи — без текста.
+  const batch = flat.indexOf("записей 2, тебе 0");
   const close = flat.indexOf("предлагает закрыть дело");
-  assert.ok(batch >= 0 && prog > batch, `the batch head and progress words:\n${wd.out}`);
-  assert.ok(close > prog, `the batch goes out before closing, not after:\n${wd.out}`);
-  assert.ok(flat.indexOf("стопкой defer") < close, "said defer rides in the batch, before closing");
+  assert.ok(batch >= 0, `the batch count head:\n${wd.out}`);
+  assert.ok(close > batch, `the batch goes out before closing, not after:\n${wd.out}`);
+  assert.ok(!wd.out.includes("пробы зелёные"), `progress text leaked:\n${wd.out}`);
+  assert.ok(!wd.out.includes("стопкой defer"), `said defer text leaked:\n${wd.out}`);
+  assert.match(
+    wd.out,
+    /целиком — iskron_case\(realm="nks-dev", action="history", room=7, since=43\)/,
+  );
   wd.proc.kill("SIGKILL");
   await wd.done;
 });
@@ -3166,10 +3175,11 @@ test("a room batch alone goes out after its window; an unknown kind batches and 
   );
   await new Promise((r) => setTimeout(r, 700));
   assert.ok(!wd.out.includes("мосту неизвестен"), `an unknown kind interrupted:\n${wd.out}`);
-  await waitFor(() => wd.out.includes("пробы зелёные"), "the batch after the window", 8000);
+  await waitFor(() => wd.out.includes("записей 2, тебе 0"), "the batch after the window", 8000);
   assert.ok(Date.now() - sent >= 1800, "the batch waited for its window");
-  assert.match(wd.out, /Дело: кадров 2/);
-  assert.match(wd.out, /род weather мосту неизвестен/);
+  // #6574: неадресованные записи — числом, текст не доставляется.
+  assert.ok(!wd.out.includes("пробы зелёные"), `progress text leaked:\n${wd.out}`);
+  assert.ok(!wd.out.includes("мосту неизвестен"), `unknown kind words leaked:\n${wd.out}`);
   wd.proc.kill("SIGKILL");
   await wd.done;
 });
@@ -3184,9 +3194,11 @@ test("an auto record about a child case batches in words and leaves no unknown-k
   await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
   const sent = Date.now();
   await sendRoom(fake, auto("child_closed"));
-  await waitFor(() => wd.out.includes("дочернее дело №12 закрыто"), "the batch", 8000);
+  await waitFor(() => wd.out.includes("записей 1, тебе 0"), "the batch", 8000);
   assert.ok(Date.now() - sent >= 1800, "auto waited for the batch window, not interrupting");
-  assert.match(wd.out, /Дело: кадров 1/);
+  // #6574: auto — запись дела не месту, текст не доставляется; счёт и указатель.
+  assert.ok(!wd.out.includes("дочернее дело №12 закрыто"), `auto words leaked:\n${wd.out}`);
+  assert.match(wd.out, /iskron_case\(realm="nks-dev", action="history", room=7, since=79\)/);
   assert.ok(!wd.out.includes("неизвестен"), `auto printed as unknown:\n${wd.out}`);
   assert.ok(
     !bridge.stderr.includes("неизвестен"),
@@ -3196,53 +3208,52 @@ test("an auto record about a child case batches in words and leaves no unknown-k
   await wd.done;
 });
 
-// Room kinds batched through the bridge: one batch of frames, its lines in words.
+// Room kinds batched through the bridge: one batch of frames — счёт по делам (#6574),
+// адресованные месту — строками; неадресованные текстом не доставляются.
 async function batchOf(t, frames) {
   const { fake, dir, key } = await connected(t, { env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "1000" } });
   await waitFor(() => fake.state.ws.size === 1, "the socket");
   const wd = runClient("watchdog", dir, key, 10_000);
   await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
   for (const f of frames) await sendRoom(fake, f);
-  const head = `Дело: кадров ${frames.length}`;
-  // Строки кадров идут после шапки отдельно — ждём и их, не одну шапку.
-  const tail = () => wd.out.slice(wd.out.indexOf(head)).split("\n").filter(Boolean).length - 1;
-  await waitFor(() => wd.out.includes(head) && tail() >= frames.length, "the batch", 6000);
+  const head = `записей ${frames.length}`;
+  await waitFor(() => wd.out.includes(head), "the batch", 6000);
   wd.proc.kill("SIGKILL");
   await wd.done;
   return wd.out;
 }
 
 // left on expiry (battle form, api 0.89.6): the author is the platform, the one who left — fields.standing.
-test("left names the one who left from fields.standing with its reason, not the platform; joined takes fields.standing too", async (t) => {
+// #6574: записи не месте — числом; слова записей текстом в ход не идут.
+test("left and joined ride in the batch by count, their words do not arrive as text", async (t) => {
   const out = await batchOf(t, [leftExpired(84), joinedMember(85)]);
-  const who = "fluence\\.nks-agents\\.rooms \\(@aleksei:fluence\\.nks-agents\\.rooms\\)";
-  assert.match(out, new RegExp(`\\[84\\] вышел ${who}; причина: expired`));
-  assert.doesNotMatch(out, /вышел платформа/);
-  assert.match(out, new RegExp(`\\[85\\] вошёл ${who}`));
+  assert.match(out, /№7 «Стенд»: записей 2, тебе 0/);
+  assert.ok(!out.includes("вышел"), `left words leaked:\n${out}`);
+  assert.ok(!out.includes("вошёл"), `joined words leaked:\n${out}`);
 });
 
 // node with op and reasoning — the agreed form, not yet seen on the wire.
-test("node with op=updated reads as an update, op=bound as the node in the case, each with its reasoning", async (t) => {
+test("node records of every op ride in the batch by count, without their words", async (t) => {
   const out = await batchOf(t, [
     nodeOp("updated", 87),
     nodeOp("bound", 88),
     nodeOp("deleted", 89),
     nodeOp("undeleted", 90),
   ]);
-  assert.match(out, /\[87\] узел #4057 js-bundle обновлён; причина updated/);
-  assert.match(out, /\[88\] в деле узел #4057 js-bundle \(@nks\/nks-dev\); причина bound/);
-  assert.match(out, /\[89\] узел #4057 js-bundle удалён; причина deleted/);
-  assert.match(out, /\[90\] узел #4057 js-bundle восстановлен; причина undeleted/);
+  assert.match(out, /№7 «Стенд»: записей 4, тебе 0/);
+  assert.ok(!out.includes("узел #4057"), `node words leaked:\n${out}`);
+  assert.ok(!out.includes("js-bundle"), `node names leaked:\n${out}`);
 });
 
-test("node without op and reasoning prints as before", async (t) => {
+test("a bound node rides in the batch by count as well", async (t) => {
   const out = await batchOf(t, [nodeBound(86)]);
-  assert.match(out, /\[86\] в деле узел #4057 js-bundle \(@nks\/nks-dev\) — Алексей/);
+  assert.match(out, /№7 «Стенд»: записей 1, тебе 0/);
+  assert.ok(!out.includes("в деле узел"), `node words leaked:\n${out}`);
 });
 
-// A word in two phases (#5893 §4.5b): said in flight and aborts wait in the batch in words;
-// body follows its word's stack; a plain said still interrupts.
-test("a said in flight, a deferred body and aborts wait in the batch in words; body and said with stack interrupt reach the Monitor watchdog at once", async (t) => {
+// A word in two phases (#5893 §4.5b): the batch carries them by count (#6574);
+// a body to me still reaches the Monitor watchdog at once, whole.
+test("a said in flight, deferred bodies and aborts ride in the batch by count; a body of my word reaches the watchdog at once", async (t) => {
   const { fake, dir, key, bridge } = await connected(t, {
     env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "2000" },
   });
@@ -3256,34 +3267,37 @@ test("a said in flight, a deferred body and aborts wait in the batch in words; b
   await sendRoom(fake, bodyLapsed(59, 58));
   await new Promise((r) => setTimeout(r, 700));
   assert.ok(!wd.out.includes("[54]"), `a said in flight interrupted:\n${wd.out}`);
-  await waitFor(() => wd.out.includes("Дело: кадров 4"), "the batch after the window", 8000);
+  await waitFor(() => wd.out.includes("записей 4, тебе 0"), "the batch after the window", 8000);
   assert.ok(Date.now() - sent >= 1800, "the batch waited for its window");
-  assert.match(wd.out, /слово от Алексей \(@aleksei:probe\) в полёте — текст придёт следом/);
-  assert.match(wd.out, /текст слова \[54\] от Алексей \(@aleksei:probe\)/);
-  assert.match(wd.out, /слово \[56\] оборвано автором/);
-  assert.match(wd.out, /слово \[58\] оборвано платформой по сроку/);
+  // #6574: слова чужих фаз текстом не приходят — только счёт и указатель.
+  assert.ok(!wd.out.includes("в полёте"), `words of a flight leaked:\n${wd.out}`);
+  assert.ok(!wd.out.includes("оборвано"), `words of an abort leaked:\n${wd.out}`);
   assert.ok(!wd.out.includes("неизвестен"), `body printed as unknown:\n${wd.out}`);
   assert.ok(!bridge.stderr.includes("неизвестен"), `unknown-kind line:\n${bridge.stderr}`);
-  const loud = bodyFrame(61, 60);
-  loud.stack = "interrupt";
-  await sendRoom(fake, loud);
-  await waitFor(() => wd.out.includes("[61] текст слова [60]"), "body interrupt printed", 1500);
-  await sendRoom(fake, said("interrupt", 62));
-  await waitFor(() => wd.out.includes("стопкой interrupt"), "said interrupt printed", 1500);
+  // Тело моего слова — слово мне: сразу и целиком.
+  const mine = bodyFrame(61, 60, "текст моего слова");
+  mine.stack = "interrupt";
+  mine.addressee = ME;
+  await sendRoom(fake, mine);
+  await waitFor(() => wd.out.includes("текст моего слова"), "body of my word printed", 1500);
   wd.proc.kill("SIGKILL");
   await wd.done;
 });
 
-test("said with stack interrupt reaches the Monitor watchdog at once", async (t) => {
+// #6574: слово без адресата — запись дела не месту: даже со стопкой прерывания
+// оно приходит числом, пачкой; текстом в ход идут только адресованные места.
+test("a said with stack interrupt and no addressee rides in the batch by count, its words do not arrive", async (t) => {
   const { fake, dir, key } = await connected(t, {
-    env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "10000" },
+    env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "2000" },
   });
   await waitFor(() => fake.state.ws.size === 1, "the socket");
   const wd = runClient("watchdog", dir, key, 15_000);
   await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
   await sendRoom(fake, said("interrupt", 62));
-  await waitFor(() => wd.out.includes("стопкой interrupt"), "said interrupt printed", 3000);
-  assert.match(wd.out, /слово от Алексей \(@aleksei:probe\)/);
+  await new Promise((r) => setTimeout(r, 700));
+  assert.ok(!wd.out.includes("стопкой interrupt"), `an unaddressed word interrupted:\n${wd.out}`);
+  await waitFor(() => wd.out.includes("записей 1, тебе 0"), "the batch after the window", 8000);
+  assert.ok(!wd.out.includes("стопкой interrupt"), `unaddressed words leaked:\n${wd.out}`);
   wd.proc.kill("SIGKILL");
   await wd.done;
 });
@@ -3301,20 +3315,22 @@ test("an invite to my role reaches the Monitor watchdog at once; an invite to an
   await sendRoom(fake, roleInvite(68));
   await waitFor(() => wd.out.includes("[68] "), "the invite to my role printed", 3000);
   assert.match(wd.out, /Алексей \(@aleksei:probe\) зовёт 🚚 Поставщик плитки в дело/);
+  // #6574: отзыв приглашения мне — адресованная запись, строкой в пачке;
+  // приглашение чужой роли — числом в шапке, без строки.
+  assert.match(wd.out, /№7 «Стенд»: записей 2, тебе 1/);
+  assert.match(wd.out, /\[71\] приглашение отозвано, отзывает Алексей/);
+  assert.ok(!wd.out.includes("[69] "), `another role's invite got a line:\n${wd.out}`);
   const flat = wd.out.replace(/\n/g, " ");
   assert.ok(
-    flat.indexOf("Дело: кадров 2") >= 0 &&
-      flat.indexOf("[71] ") >= 0 &&
-      flat.indexOf("[71] ") < flat.indexOf("[68] "),
-    `the other role's invite and the withdraw ride in the batch, flushed first:\n${wd.out}`,
+    flat.indexOf("записей 2, тебе 1") < flat.indexOf("[68] "),
+    `the batch goes out before the invite to my role:\n${wd.out}`,
   );
-  assert.match(wd.out, /приглашение отозвано, отзывает Алексей/);
   wd.proc.kill("SIGKILL");
   await wd.done;
 });
 
-// A batch flush is a delivery: the exit watchdog prints the whole batch and leaves on it.
-test("the exit watchdog leaves at the batch flush with the whole batch, not on its first frame", async (t) => {
+// A batch flush is a delivery: the exit watchdog wakes on the count head and leaves on it.
+test("the exit watchdog leaves at the batch flush with the count head, not on its first frame", async (t) => {
   const { fake, dir, key } = await connected(t, {
     env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "2000" },
   });
@@ -3327,9 +3343,11 @@ test("the exit watchdog leaves at the batch flush with the whole batch, not on i
   assert.equal(wd.proc.exitCode, null, `the exit watchdog left before the window: ${wd.out}`);
   const r = await wd.done;
   assert.equal(r.exit, 0, `the flush must wake: ${wd.err}`);
+  // #6574: числа приходят одной записью шапки; строки кадров не доставляются.
+  assert.match(wd.out, /№7 «Стенд»: записей 2, тебе 0/);
   assert.ok(
-    wd.out.includes("[46] ") && wd.out.includes("[48] "),
-    `the whole batch is handed over:\n${wd.out}`,
+    !wd.out.includes("[46] ") && !wd.out.includes("[48] "),
+    `frame lines handed over:\n${wd.out}`,
   );
 });
 
@@ -3346,14 +3364,15 @@ test("the exit watchdog: closing flushes the batch, the watchdog leaves on it, c
   await sendRoom(fake, closing());
   const r1 = await first.done;
   assert.equal(r1.exit, 0);
-  assert.ok(first.out.includes("[49] "), `the batch goes first:\n${first.out}`);
+  assert.match(first.out, /№7 «Стенд»: записей 1, тебе 0/);
   assert.match(first.out, /iskron_case\(realm="nks-dev", action="history", room=7, since=48\)/);
+  assert.ok(!first.out.includes("[49] "), `progress words handed over:\n${first.out}`);
   assert.ok(!first.out.includes("[50] "), `closing waits for the next arm:\n${first.out}`);
   const second = runClient("watchdog-exit", dir, key, 8000);
   const r2 = await second.done;
   assert.equal(r2.exit, 0, `closing must wake the next arm: ${second.err}`);
   assert.match(second.out, /^№7 «Стенд» \[50\] ведущий [^\n]*предлагает закрыть дело/);
-  assert.ok(!second.out.includes("[49] "), "the batch is not handed twice");
+  assert.ok(!second.out.includes("записей"), "the batch is not handed twice");
 });
 
 test("a full room batch goes out at once, before its window: nothing is dropped", async (t) => {
@@ -3364,20 +3383,23 @@ test("a full room batch goes out at once, before its window: nothing is dropped"
   const wd = runClient("watchdog", dir, key, 20_000);
   await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
   for (let i = 0; i < 21; i++) await sendRoom(fake, progress(200 + i));
-  await waitFor(() => wd.out.includes("[219] "), "the full batch", 5000);
-  assert.match(wd.out, /Дело: кадров 20/);
-  for (let i = 0; i < 20; i++) assert.ok(wd.out.includes(`[${200 + i}] `), `frame ${i}`);
-  assert.ok(!wd.out.includes("[220] "), "the 21st starts the next batch");
+  await waitFor(() => wd.out.includes("записей 20, тебе 0"), "the full batch", 5000);
+  // #6574: полная пачка — один счёт; кадры не теряются и не получают строк.
+  assert.ok(!wd.out.includes("[219] "), `a per-frame line leaked:\n${wd.out}`);
   wd.proc.kill("SIGKILL");
   await wd.done;
 });
 
-// ── An addressed word not to me (#6081): a fact in the batch, no body, no wake;
-// a run of one pair — one line. To me — whole and by its stack. ──
+// ── An addressed word not to me (#6081): no body, no wake; #6574: words not to
+// the seat are one count of the case in the batch. To me — whole and by its stack. ──
 
 const ASIDE = "Алексей (@aleksei:probe) → @boris:probe";
+/** Строка счёта дела проб без адресованных месту (#6574). */
+const countOf = (n, since) =>
+  `№7 «Стенд»: записей ${n}, тебе 0 — адресованных месту нет; ` +
+  `целиком — iskron_case(realm="nks-dev", action="history", room=7, since=${since}).`;
 
-test("(а) an addressed word not to me with stack interrupt does not wake the Monitor watchdog and prints one line without its body", async (t) => {
+test("(а) an addressed word not to me with stack interrupt does not wake the Monitor watchdog and prints a count without its body", async (t) => {
   const { fake, dir, key } = await connected(t, {
     env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "2000" },
   });
@@ -3386,16 +3408,15 @@ test("(а) an addressed word not to me with stack interrupt does not wake the Mo
   await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
   await sendRoom(fake, addressed(80));
   await new Promise((r) => setTimeout(r, 900));
-  assert.ok(!wd.out.includes("тайное слово 80"), `the aside woke at once:\n${wd.out}`);
-  assert.ok(!wd.out.includes(ASIDE), `the aside was printed before the window:\n${wd.out}`);
-  await waitFor(() => wd.out.includes(ASIDE), "the aside in the batch", 8000);
-  assert.match(wd.out, new RegExp(`${ASIDE.replace(/[()]/g, "\\$&")}: слово \\[80\\]`));
+  assert.ok(!wd.out.includes("записей"), `the aside was printed before the window:\n${wd.out}`);
+  await waitFor(() => wd.out.includes(countOf(1, 79)), "the count in the batch", 8000);
+  assert.ok(!wd.out.includes(ASIDE), `a line of a word not to me:\n${wd.out}`);
   assert.ok(!wd.out.includes("тайное слово"), `the body of a word not to me leaked:\n${wd.out}`);
   wd.proc.kill("SIGKILL");
   await wd.done;
 });
 
-test("(а2) an addressed word whose addressee has left the case (addressee_left) is not folded — it prints in full, like any word to all", async (t) => {
+test("(а2) an addressed word whose addressee has left the case (addressee_left) is a word to all — a count, its text stays in history", async (t) => {
   const { fake, dir, key } = await connected(t, {
     env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "1500" },
   });
@@ -3403,16 +3424,13 @@ test("(а2) an addressed word whose addressee has left the case (addressee_left)
   const wd = runClient("watchdog", dir, key, 15_000);
   await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
   await sendRoom(fake, addressedLeft(89));
-  await waitFor(() => wd.out.includes("явное слово 89"), "the word printed whole", 8000);
-  assert.ok(
-    !wd.out.includes(ASIDE),
-    `the word with a left addressee was folded as an aside:\n${wd.out}`,
-  );
+  await waitFor(() => wd.out.includes(countOf(1, 88)), "the count", 8000);
+  assert.ok(!wd.out.includes("явное слово 89"), `a word to all printed whole:\n${wd.out}`);
   wd.proc.kill("SIGKILL");
   await wd.done;
 });
 
-test("(б) three addressed words of one pair in a row are one line «3 слова» — Monitor and the exit watchdog", async (t) => {
+test("(б) three addressed words of one pair in a row are one count «записей 3» — Monitor and the exit watchdog", async (t) => {
   const { fake, dir, key } = await connected(t, {
     env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "1500" },
   });
@@ -3420,9 +3438,8 @@ test("(б) three addressed words of one pair in a row are one line «3 слов�
   const wd = runClient("watchdog", dir, key, 15_000);
   await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
   for (const id of [81, 82, 83]) await sendRoom(fake, addressed(id, BORIS, "defer"));
-  await waitFor(() => wd.out.includes("последнее [83]"), "the folded line", 8000);
-  assert.ok(wd.out.includes(`${ASIDE}: 3 слова (последнее [83])`), wd.out);
-  assert.equal(wd.out.split(ASIDE).length - 1, 1, `the run is not one line:\n${wd.out}`);
+  await waitFor(() => wd.out.includes(countOf(3, 80)), "the count", 8000);
+  assert.ok(!wd.out.includes(ASIDE), wd.out);
   assert.ok(!wd.out.includes("тайное слово"), wd.out);
   wd.proc.kill("SIGKILL");
   await wd.done;
@@ -3431,8 +3448,8 @@ test("(б) three addressed words of one pair in a row are one line «3 слов�
   for (const id of [84, 85, 86]) await sendRoom(fake, addressed(id));
   const r = await ex.done;
   assert.equal(r.exit, 0, `the flush must wake: ${ex.err}`);
-  assert.ok(ex.out.includes(`${ASIDE}: 3 слова (последнее [86])`), ex.out);
-  assert.equal(ex.out.split(ASIDE).length - 1, 1, `the run is not one line:\n${ex.out}`);
+  assert.ok(ex.out.includes(countOf(3, 83)), ex.out);
+  assert.ok(!ex.out.includes(ASIDE), ex.out);
 });
 
 test("(в) an addressed word to me with stack interrupt wakes the Monitor watchdog at once and whole, after the asides waiting before it", async (t) => {
@@ -3450,15 +3467,16 @@ test("(в) an addressed word to me with stack interrupt wakes the Monitor watchd
   await waitFor(() => wd.out.includes("тайное слово 88"), "the word to me, whole", 3000);
   assert.match(wd.out, /слово от Алексей \(@aleksei:probe\)/);
   const flat = wd.out.replace(/\n/g, " ");
-  const aside = flat.indexOf(`${ASIDE}: слово [86]`);
-  assert.ok(aside >= 0 && aside < flat.indexOf("тайное слово 87"), `the aside first:\n${wd.out}`);
+  const aside = flat.indexOf(countOf(1, 85));
+  assert.ok(aside >= 0 && aside < flat.indexOf("тайное слово 87"), `the count first:\n${wd.out}`);
+  assert.doesNotMatch(wd.out, /ответ:/, "delivery asks no answer (#6574)");
   assert.ok(!wd.out.includes("тайное слово 86"), `the body of a word not to me leaked:\n${wd.out}`);
   assert.ok(!wd.out.includes(`→ ${ME}`), `a word to me was folded as an aside:\n${wd.out}`);
   wd.proc.kill("SIGKILL");
   await wd.done;
 });
 
-test("(г) a word without an addressee between two asides stays whole in the batch and breaks the run", async (t) => {
+test("(г) a word without an addressee between two asides is not to me either: one count of three", async (t) => {
   const { fake, dir, key } = await connected(t, {
     env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "1500" },
   });
@@ -3468,16 +3486,14 @@ test("(г) a word without an addressee between two asides stays whole in the bat
   await sendRoom(fake, addressed(90, BORIS, "defer"));
   await sendRoom(fake, said("defer", 91));
   await sendRoom(fake, addressed(92, BORIS, "defer"));
-  await waitFor(() => wd.out.includes("[92]"), "the batch", 8000);
-  assert.match(wd.out, /\[91\] слово от Алексей \(@aleksei:probe\): слово со стопкой defer/);
-  assert.ok(wd.out.includes(`${ASIDE}: слово [90]`), wd.out);
-  assert.ok(wd.out.includes(`${ASIDE}: слово [92]`), wd.out);
-  assert.ok(!wd.out.includes("тайное слово"), wd.out);
+  await waitFor(() => wd.out.includes(countOf(3, 89)), "the batch", 8000);
+  assert.ok(!wd.out.includes("слово со стопкой defer"), wd.out);
+  assert.ok(!wd.out.includes(ASIDE), wd.out);
   wd.proc.kill("SIGKILL");
   await wd.done;
 });
 
-test("(д) an addressed word not to me in flight and then its body with stack interrupt: one line of the pair, no body, no wake", async (t) => {
+test("(д) an addressed word not to me in flight and then its body with stack interrupt: one count, no body, no wake", async (t) => {
   const { fake, dir, key } = await connected(t, {
     env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "2000" },
   });
@@ -3488,16 +3504,19 @@ test("(д) an addressed word not to me in flight and then its body with stack in
   await sendRoom(fake, addressedBody(95, 94));
   await new Promise((r) => setTimeout(r, 900));
   assert.ok(!wd.out.includes("тайное тело 94"), `the body woke at once:\n${wd.out}`);
-  await waitFor(() => wd.out.includes(ASIDE), "the pair's line in the batch", 8000);
+  await waitFor(() => wd.out.includes(countOf(2, 93)), "the count in the batch", 8000);
   await new Promise((r) => setTimeout(r, 300));
-  assert.ok(wd.out.includes(`${ASIDE}: слово [94]`), wd.out);
-  assert.equal(wd.out.split(ASIDE).length - 1, 1, `the body made a line of its own:\n${wd.out}`);
+  assert.equal(
+    wd.out.split("записей").length - 1,
+    1,
+    `the body made a count of its own:\n${wd.out}`,
+  );
   assert.ok(!wd.out.includes("тайное тело"), `the body of a word not to me leaked:\n${wd.out}`);
   wd.proc.kill("SIGKILL");
   await wd.done;
 });
 
-test("(е) a word whose body the platform withheld (body_withheld) is an aside under Monitor: a line of the pair, №N first", async (t) => {
+test("(е) a word whose body the platform withheld (body_withheld) is not to me under Monitor: a count, №N first", async (t) => {
   const { fake, dir, key } = await connected(t, {
     env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "1500" },
   });
@@ -3505,12 +3524,8 @@ test("(е) a word whose body the platform withheld (body_withheld) is an aside u
   const wd = runClient("watchdog", dir, key, 15_000);
   await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
   await sendRoom(fake, withheld(96));
-  await waitFor(() => wd.out.includes("Дело: кадров 1"), "the batch", 8000);
-  await new Promise((r) => setTimeout(r, 300));
-  assert.match(
-    wd.out,
-    new RegExp(`^№7 «Стенд» ${ASIDE.replace(/[()]/g, "\\$&")}: слово \\[96\\]`, "m"),
-  );
+  await waitFor(() => wd.out.includes("записей 1"), "the batch", 8000);
+  assert.match(wd.out, new RegExp(`^${countOf(1, 95).replace(/[()[\].]/g, "\\$&")}$`, "m"));
   wd.proc.kill("SIGKILL");
   await wd.done;
 });
@@ -3553,16 +3568,16 @@ test("a human word right after a case batch goes out alone under Monitor: a paus
   await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
   for (let i = 0; i < 6; i++) await sendRoom(fake, said("defer", 300 + i));
   await sendRoom(fake, humanWord());
-  await sendRoom(fake, said("interrupt", 311));
+  await sendRoom(fake, { ...said("interrupt", 311), addressee: ME });
   await waitFor(() => wd.out.includes("стопкой interrupt"), "the frame after the human word", 5000);
   const lines = wd.lines;
   const first = lines.findIndex((l) => l.s.startsWith("человек @dmitry"));
-  // The word ends with its answer line (#6081): the pause comes after that.
-  const last = lines.findIndex((l, i) => i > first && l.s.startsWith("ответ: iskron_channel"));
+  // The word ends with its text (no answer line, #6574): the pause comes after that.
+  const last = lines.findIndex((l, i) => i > first && l.s.includes("ХВОСТ-ЦЕЛ."));
   assert.ok(first > 0 && last >= first, `the human word printed:\n${wd.out}`);
   assert.ok(wd.out.includes(HUMAN_TEXT), `the human word's text whole:\n${wd.out}`);
   assert.ok(
-    lines.slice(0, first).some((l) => l.s.includes("Дело: кадров 6")),
+    lines.slice(0, first).some((l) => l.s.includes("записей 6, тебе 0")),
     `the batch went first:\n${wd.out}`,
   );
   const before = lines[first].at - lines[first - 1].at;
@@ -3619,7 +3634,7 @@ test("a human's word in two phases wakes the exit watchdog once, and that one ev
   assert.equal(r2.exit, null, `the next arm woke on:\n${next.out}`);
 });
 
-test("a case batch under Monitor is short: the head with a pointer to read it whole with since, then a line per frame, no envelopes", async (t) => {
+test("a case batch under Monitor is short: a count head with a pointer to read it whole with since, then a line per record to me, no envelopes", async (t) => {
   const { fake, dir, key } = await connected(t, {
     env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "10000" },
   });
@@ -3627,43 +3642,42 @@ test("a case batch under Monitor is short: the head with a pointer to read it wh
   const wd = runClient("watchdog", dir, key, 20_000);
   await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
   // The first record carries its entry_id in the journal line only: since is read from there too.
-  const first = said("defer", 400);
+  const first = { ...said("defer", 400), addressee: ME };
   delete first.entry_id;
   await sendRoom(fake, first);
   for (let i = 1; i < 5; i++) await sendRoom(fake, said("defer", 400 + i));
   const long = "длинное слово ".repeat(40) + "НЕ-ДОЛЖНО-ВОЙТИ";
-  await sendRoom(
-    fake,
-    roomFrame("said", { entry_id: 405, key: "said", stack: "defer", body: long }),
-  );
+  await sendRoom(fake, {
+    ...roomFrame("said", { entry_id: 405, key: "said", stack: "defer", body: long }),
+    addressee: ME,
+  });
   await sendRoom(fake, closing());
   await waitFor(() => wd.out.includes("ты можешь возразить"), "closing to be printed", 5000);
   const lines = wd.lines.map((l) => l.s);
-  const head = lines.findIndex((s) => s.includes("Дело: кадров 6"));
+  const head = lines.findIndex((s) => s.includes("записей 6, тебе 2"));
   assert.ok(head >= 0, `the batch head:\n${wd.out}`);
   // How to read it whole stands in the head: a cut takes the tail, not the head.
   assert.match(
     lines[head],
-    /iskron_case\(realm="nks-dev", action="history", room=7, since=399\); следом/,
+    /^№7 «Стенд»: записей 6, тебе 2 — адресованные строками ниже; целиком — iskron_case\(realm="nks-dev", action="history", room=7, since=399\)\.$/,
   );
   // No hint about an «older tool without since»: the delivery ships the tool with since.
   assert.doesNotMatch(wd.out, /старый тул|older tool/);
-  const body = lines.slice(head + 1, head + 7);
-  // Every line leads with its case №N; the case's zachin — on its first line only (#6081).
-  for (let i = 0; i < 6; i++)
-    assert.ok(body[i]?.startsWith(`№7 ${i ? "" : "«Стенд» "}[${400 + i}] `), body[i]);
-  assert.ok(!lines[head + 7]?.startsWith("№7 [4"), "one line per frame, six of them");
-  assert.ok(!body.some((s) => s.includes('{"')), "no envelopes in the batch");
+  const body = lines.slice(head + 1, head + 3);
+  // A line only for a record to me (#6574); the case's zachin — on its first line only (#6081).
   assert.match(
     body[0],
     /^№7 «Стенд» \[400\] слово от Алексей \(@aleksei:probe\): слово со стопкой defer$/,
   );
-  assert.ok(body[5].endsWith("…") && !body[5].includes("НЕ-ДОЛЖНО-ВОЙТИ"), body[5]);
+  assert.ok(body[1].startsWith("№7 [405] "), body[1]);
+  assert.ok(body[1].endsWith("…") && !body[1].includes("НЕ-ДОЛЖНО-ВОЙТИ"), body[1]);
+  assert.ok(!lines[head + 3]?.startsWith("№7 [4"), "two lines, the rest by count");
+  assert.ok(!body.some((s) => s.includes('{"')), "no envelopes in the batch");
   wd.proc.kill("SIGKILL");
   await wd.done;
 });
 
-test("a lone interrupting said under Monitor prints whole and short: case, entry, full text once, the answer, no batch", async (t) => {
+test("a lone interrupting said to me under Monitor prints whole and short: case, entry, full text once, no answer call, no batch", async (t) => {
   const { fake, dir, key } = await connected(t, {
     env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "10000" },
   });
@@ -3671,21 +3685,18 @@ test("a lone interrupting said under Monitor prints whole and short: case, entry
   const wd = runClient("watchdog", dir, key, 15_000);
   await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
   const text = "прерывающее слово ".repeat(15) + "КОНЕЦ-ЦЕЛ";
-  await sendRoom(
-    fake,
-    roomFrame("said", { entry_id: 500, key: "said", stack: "interrupt", body: text }),
-  );
+  await sendRoom(fake, {
+    ...roomFrame("said", { entry_id: 500, key: "said", stack: "interrupt", body: text }),
+    addressee: ME,
+  });
   await waitFor(() => wd.out.includes("КОНЕЦ-ЦЕЛ"), "the said printed", 3000);
   assert.ok(wd.out.includes(text), `the text whole:\n${wd.out}`);
   assert.match(wd.out, /^№7 «Стенд» \[500\] слово от Алексей/m);
   assert.equal(wd.out.split("КОНЕЦ-ЦЕЛ").length - 1, 1, `the text once:\n${wd.out}`);
   const own = wd.out.slice(wd.out.indexOf("№7 «Стенд» [500]")); // hello выше печатается как есть
   assert.ok(!own.includes('{"'), `no raw JSON:\n${own}`);
-  assert.match(
-    wd.out,
-    /ответ: iskron_case\(realm="nks-dev", action="say", room="№7", in_reply_to=500\)/,
-  );
-  assert.ok(!wd.out.includes("Дело: кадров"), `no batch:\n${wd.out}`);
+  assert.doesNotMatch(wd.out, /ответ: iskron_case/, "delivery asks no answer (#6574)");
+  assert.ok(!wd.out.includes("записей"), `no batch:\n${wd.out}`);
   assert.ok(!wd.out.includes('iskron_case(action="history"'), `no batch pointer:\n${wd.out}`);
   wd.proc.kill("SIGKILL");
   await wd.done;
@@ -3759,7 +3770,7 @@ test("a stale burst of 25 frames for the Monitor watchdog: the direct words at 2
   await wd.done;
 });
 
-test("watchdog-codex: progress waits; closing puts the batch into the thread first, then itself", async (t) => {
+test("watchdog-codex: progress waits; closing puts the batch count into the thread first, then itself", async (t) => {
   const { fake, dir, key } = await connected(t, {
     env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "10000" },
   });
@@ -3788,7 +3799,11 @@ test("watchdog-codex: progress waits; closing puts the batch into the thread fir
   await sendRoom(fake, closing());
   await waitFor(() => turns().length === 2, "the batch and closing in the thread");
   const [first, second] = turns().map((c) => c.params.input[0].text);
-  assert.match(first, /\[tests\] \[пробы зелёные\] = ok/);
+  // #6574: a ledger line not to the seat enters the thread as a count, no words.
+  assert.equal(
+    first,
+    '№7 «Стенд»: записей 1, тебе 0 — адресованных месту нет; целиком — iskron_case(realm="nks-dev", action="history", room=7, since=46).',
+  );
   assert.match(second, /предлагает закрыть дело/);
   assert.match(
     second,
@@ -3820,7 +3835,7 @@ test("room kinds leave the Monitor watchdog's other frames and the old room shap
   const cases = LEGACY_AT_ONCE();
   for (const [frame] of cases) await sendRoom(fake, frame);
   await waitFor(() => cases.every(([, mark]) => wd.out.includes(mark)), "all at once", 3000);
-  assert.ok(!wd.out.includes("Дело: кадров"), `no batch without event_kind:\n${wd.out}`);
+  assert.ok(!wd.out.includes("записей"), `no batch without event_kind:\n${wd.out}`);
   assert.ok(!bridge.stderr.includes("мосту неизвестен"), "no unknown-kind line for old kinds");
   wd.proc.kill("SIGKILL");
   await wd.done;
