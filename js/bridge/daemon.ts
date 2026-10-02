@@ -30,7 +30,7 @@ import { fileURLToPath } from "node:url";
 import { homeBridgePath } from "../shared/home.ts";
 import { runIn } from "../shared/scope.ts";
 import { type SeamHello, writeFrame } from "../shared/seam.ts";
-import { seamRunDir, seamSocketPath } from "../shared/seam-entrance.ts";
+import { ownPidAlive, seamRunDir, seamSocketPath } from "../shared/seam-entrance.ts";
 import {
   listenSeam,
   type SeamHost,
@@ -130,6 +130,8 @@ export async function daemonMain(argv: string[]): Promise<void> {
   const engines = new Map<string, BridgeSession>();
   /** Сессии, чей тонкий мост сейчас на связи. */
   const attached = new Set<string>();
+  /** pid тонкого моста сессии: шов оборван, а мост жив — он в окне переподхвата. */
+  const bridgePids = new Map<string, number>();
   const sockets = new Set<Socket>();
   let draining = false;
   let counter = 0;
@@ -261,6 +263,7 @@ export async function daemonMain(argv: string[]): Promise<void> {
         },
         end: (why) => {
           attached.delete(id); // уходящая (bye, окно переподхвата вышло) — уже не на связи
+          bridgePids.delete(id);
           return s.end(why).then(() => {
             if (sessions.get(id) !== traced) return;
             sessions.delete(id);
@@ -271,6 +274,7 @@ export async function daemonMain(argv: string[]): Promise<void> {
         },
       };
       sessions.set(id, traced);
+      bridgePids.set(id, hello.pid);
       if (opened) engines.set(id, opened);
       if (idle) clearTimeout(idle);
       idle = null;
@@ -332,9 +336,11 @@ export async function daemonMain(argv: string[]): Promise<void> {
     server?.close();
     // Сессия с тонким мостом на связи — смена держателя, не уход делателя: тонкий мост
     // поднимет новый демон и вернёт место по записи держания, сторож переслушает дверь,
-    // сокет места держится до вытеснения новым (handoff.ts, #6485). Без тонкого моста —
-    // отпуск: возвращать некому.
-    for (const id of attached) {
+    // сокет места держится до вытеснения новым (handoff.ts, #6485). Так же и мост в окне
+    // переподхвата, чей процесс жив: он вернётся к новому демону. Мост умер — отпуск:
+    // возвращать некому; умрёт после — место не взято до предела, занятость снимется там.
+    for (const id of sessions.keys()) {
+      if (!attached.has(id) && !ownPidAlive(bridgePids.get(id))) continue;
       const scope = engines.get(id)?.scope;
       if (scope) runIn(scope, () => beginSessionHandover(`daemon ${sig}`));
     }

@@ -23,6 +23,8 @@ import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
+import { connectSeam, helloFrame, patShaOf } from "../shared/seam.ts";
+import { seamSocketPath } from "../shared/seam-entrance.ts";
 import { startFakeNks } from "./fake-nks.mjs";
 
 const NODE = process.env.ISKRON_NODE || process.execPath;
@@ -1322,6 +1324,107 @@ test("SIGTERM of the daemon and the place does not come back: the watchdog leave
       assert.equal(wd.proc.exitCode, 1, wd.out);
       assert.match(wd.out, /место не вернулось за 3s после смены демона/, wd.out);
       await waitFor("the old daemon gone", () => !alive(first), 10_000);
+    } finally {
+      wd.proc.kill("SIGKILL");
+    }
+  });
+});
+
+// Ревью #291, п.1: демон решает «передача» один раз — по тонкому мосту на связи в
+// миг SIGTERM. Мост умер следом (или SIGTERM обоим разом) — место не возвращает
+// никто: преемник не берёт сокет до предела, и занятость снимается там, а не
+// висит на доске (#5059). Сборка b000bde оставляла «работаю».
+for (const [label, after] of [
+  ["SIGKILL of the thin bridge right after", (a) => a.proc.kill("SIGKILL")],
+  ["SIGTERM to both at once", (a) => a.proc.kill("SIGTERM")],
+]) {
+  test(`SIGTERM of the daemon, ${label}: the busy line is cleared at the hand-off limit`, async () => {
+    await withFake(async ({ fake, dir, bridge }) => {
+      const a = bridge({ ISKRON_BRIDGE_DAEMON_HANDOFF_MS: "1500" });
+      await handshake(a);
+      const seat = { realm: "nks-dev", karta: 931, name: "term-k" };
+      const r = await stand(a, seat);
+      assert.ok(!r.result?.isError, textOf(r));
+      const s = await stand(a, { ...seat, status: "работаю" });
+      assert.ok(!s.result?.isError, textOf(s));
+      assert.equal(fake.state.status, "работаю");
+      const [first] = daemonPids(dir);
+      process.kill(first, "SIGTERM");
+      if (label.startsWith("SIGKILL"))
+        await waitFor("the SIGTERM taken", () => /SIGTERM — ending/.test(journalOf(dir)));
+      after(a);
+      await waitFor("the old daemon gone", () => !alive(first), 30_000);
+      assert.equal(fake.state.status, "", `the busy line is cleared:\n${journalOf(dir)}`);
+    });
+  });
+}
+
+// Ревью #291, п.2: спутник на SIGTERM демона отпускается целиком (записи держания
+// у него нет) — и занятость уходит с ним. Сборка b000bde её оставляла.
+test("SIGTERM of the daemon under a satellite: its busy line goes with its place", async () => {
+  await withFake(async ({ fake, dir, bridge }) => {
+    const CALLER = "host.repo.opus-5";
+    await fake.control({ places: [{ karta: "931", name: CALLER, listening: true }] });
+    const s = bridge({}, ["--satellite"]);
+    await handshake(s);
+    const sat = { realm: "nks-dev", karta: 931, satellite_of: `@tester:${CALLER}` };
+    const r = await stand(s, sat);
+    assert.ok(!r.result?.isError, `${textOf(r)}\n${s.stderr}`);
+    const busy = await stand(s, { ...sat, status: "спутник пишет" });
+    assert.ok(!busy.result?.isError, textOf(busy));
+    assert.equal(fake.state.status, "спутник пишет");
+    const [first] = daemonPids(dir);
+    process.kill(first, "SIGTERM");
+    await waitFor("the old daemon gone", () => !alive(first), 30_000);
+    assert.equal(fake.state.status, "", `the satellite's line is cleared:\n${journalOf(dir)}`);
+  });
+});
+
+// Ревью #291, п.3: шов тонкого моста оборван, а сам мост жив — он в окне
+// переподхвата и вернётся к новому демону. SIGTERM демона в этот миг — передача,
+// не отпуск: сторож ждёт возврата места, а не уходит словом «мост отпустил».
+// Мост здесь — сама проба: её pid жив, шов она рвёт без bye.
+test("SIGTERM of the daemon while a live thin bridge is between seams: the place is handed over", async () => {
+  await withFake(async ({ fake, dir, bridge }) => {
+    const a = bridge({ ISKRON_BRIDGE_DAEMON_HANDOFF_MS: "1500" });
+    await handshake(a); // поднимает демон
+    const hello = helloFrame({
+      build: "v0.0.0+probe",
+      path: BRIDGE,
+      argv: [fake.mcpUrl, "--no-browser", "--auth-dir", dir],
+      patSha: patShaOf(PAT),
+    });
+    const link = await connectSeam(seamSocketPath(dir), hello, 10_000);
+    const waiting = new Map();
+    link.onFrame((f) => {
+      if (f.t === "rpc" && waiting.has(f.msg.id)) waiting.get(f.msg.id)(f.msg);
+    });
+    let seq = 100;
+    const ask = (method, params) => {
+      const id = ++seq;
+      const p = new Promise((res) => waiting.set(id, res));
+      link.send({ t: "rpc", msg: { jsonrpc: "2.0", id, method, params } });
+      return p;
+    };
+    assert.ok((await ask("initialize", INIT)).result);
+    link.send({ t: "rpc", msg: { jsonrpc: "2.0", method: "notifications/initialized" } });
+    const r = await ask("tools/call", {
+      name: "iskron_stand",
+      arguments: { realm: "nks-dev", karta: 931, name: "term-z" },
+    });
+    assert.ok(!r.result?.isError, JSON.stringify(r));
+    await waitFor("the place's socket", () => [...fake.state.wsNames.values()].includes("term-z"));
+    const wd = startWatchdog(dir, "term-z--931--nks-dev", { ISKRON_WATCHDOG_ATTACH_MS: "3000" });
+    try {
+      await waitFor("the watchdog to attach", () => /слушаю стояние/.test(wd.out));
+      link.close(); // шов оборван без bye: окно переподхвата
+      await waitFor("the seam gone", () => /closed without bye/.test(journalOf(dir)));
+      const [first] = daemonPids(dir);
+      process.kill(first, "SIGTERM");
+      await waitFor("the old daemon gone", () => !alive(first), 30_000);
+      assert.doesNotMatch(wd.out, /мост отпустил/, `${wd.out}\n${journalOf(dir)}`);
+      await waitFor("the watchdog to leave", () => wd.proc.exitCode !== null, 15_000);
+      assert.match(wd.out, /место не вернулось за 3s после смены демона/, wd.out);
     } finally {
       wd.proc.kill("SIGKILL");
     }

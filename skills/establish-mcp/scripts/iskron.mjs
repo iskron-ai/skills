@@ -4250,25 +4250,62 @@ function drainSpool(path, feed) {
   tick();
 }
 
+// js/bridge/statuspost.ts
+async function publishStatusTo(url, text, timeoutMs = 5e3, standingId = null) {
+  let res;
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(standingId ? { text, standing_id: standingId } : { text }),
+      signal: AbortSignal.timeout(timeoutMs)
+    });
+  } catch (e) {
+    return {
+      ok: false,
+      body: `Отказано (мост): статусный адрес не ответил — ${e.message}`
+    };
+  }
+  const body = (await res.text().catch(() => "")).trim();
+  if (res.status === 404)
+    return {
+      ok: false,
+      code: 404,
+      body: `Отказано (404) поверхностью: ${body || "без тела"} — этот адрес места больше не адресует: его мог повернуть connect другого держателя, а мог держать другой экземпляр моста той же сессии. Чей он теперь, мост отсюда не знает.`
+    };
+  if (!res.ok)
+    return {
+      ok: false,
+      code: res.status,
+      body: `Отказано (${res.status}) поверхностью: ${body || "без тела"}`
+    };
+  return { ok: true, body };
+}
+
 // js/bridge/handoff.ts
 var pending = /* @__PURE__ */ new Set();
-function keepUntilEvicted(holder, key) {
+function keepUntilEvicted(holder, key, statusUrl2) {
   const path = spoolFilePathOf(CFG.authDir, key);
   openSpool(path);
   let timer;
   let over = false;
   const done = new Promise((resolve7) => {
-    const end = (why) => {
+    const end = (why, after2) => {
       if (over) return;
       over = true;
       clearTimeout(timer);
       closeSpool(path);
       log(`place ${key} handed over: ${why}`);
-      resolve7();
+      void Promise.resolve(after2).then(() => resolve7());
     };
     timer = setTimeout(() => {
+      const cleared = statusUrl2 ? publishStatusTo(statusUrl2, "", 3e3).catch(() => {
+      }) : void 0;
+      end(
+        `no successor took the socket in ${HANDOFF_MS / 1e3}s — closed${cleared ? ", busy line cleared" : ""}`,
+        cleared
+      );
       holder.close("the successor did not take the place");
-      end(`no successor took the socket in ${HANDOFF_MS / 1e3}s — closed`);
     }, HANDOFF_MS);
     holder.handOff(
       (raw) => spoolFrame(path, raw),
@@ -4279,8 +4316,8 @@ function keepUntilEvicted(holder, key) {
   });
   pending.add(done);
 }
-function letGo(holder, keepFor, reason) {
-  if (holder && keepFor) keepUntilEvicted(holder, keepFor);
+function letGo(holder, keepFor, reason, statusUrl2 = null) {
+  if (holder && keepFor) keepUntilEvicted(holder, keepFor, statusUrl2);
   else holder?.close(reason);
 }
 function takeSpool(key, primary, feed) {
@@ -4439,7 +4476,7 @@ function releaseStanding(reason, forget = false, keepBeside = false) {
     broadcast(released);
     notify("info", released);
   }
-  letGo(H2.holder, handover && !forget ? key ?? null : null, reason);
+  letGo(H2.holder, handover && !forget ? key ?? null : null, reason, H2.currentStatusUrl);
   H2.holder = null;
   for (const w of [...H2.helloWaiters]) w(null);
   H2.door?.close();
@@ -5277,36 +5314,6 @@ async function notHeldHere(realm) {
     return where.length ? `${r.key} (${where.join(", ")})` : r.key;
   }).join("; ");
   return `${head} Места этого графа на этой машине держат живые мосты: ${list}. ${TURNED_GUIDANCE()}`;
-}
-async function publishStatusTo(url, text, timeoutMs = 5e3, standingId = null) {
-  let res;
-  try {
-    res = await fetch(url, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(standingId ? { text, standing_id: standingId } : { text }),
-      signal: AbortSignal.timeout(timeoutMs)
-    });
-  } catch (e) {
-    return {
-      ok: false,
-      body: `Отказано (мост): статусный адрес не ответил — ${e.message}`
-    };
-  }
-  const body = (await res.text().catch(() => "")).trim();
-  if (res.status === 404)
-    return {
-      ok: false,
-      code: 404,
-      body: `Отказано (404) поверхностью: ${body || "без тела"} — этот адрес места больше не адресует: его мог повернуть connect другого держателя, а мог держать другой экземпляр моста той же сессии. Чей он теперь, мост отсюда не знает.`
-    };
-  if (!res.ok)
-    return {
-      ok: false,
-      code: res.status,
-      body: `Отказано (${res.status}) поверхностью: ${body || "без тела"}`
-    };
-  return { ok: true, body };
 }
 
 // js/bridge/update.ts
@@ -7670,8 +7677,9 @@ function openIn(io, origin, scope) {
     releaseStanding(why, CFG.satellite);
     if (!handover) await leaveJoinedCases();
     await revokeSatellitePlaces(places);
-    if (addr && !handover) await publishStatusTo(addr.url, "", 3e3).catch(() => {
-    });
+    if (addr && (!handover || CFG.satellite))
+      await publishStatusTo(addr.url, "", 3e3).catch(() => {
+      });
     if (handover) await Promise.race([Promise.allSettled([...pending2]), sleep(HANDOVER_WAIT_MS)]);
     else await Promise.allSettled([...pending2, ...tokenRequestsInFlight]);
     await flushStdout(io.output);
@@ -7759,6 +7767,7 @@ async function daemonMain(argv2) {
   const sessions = /* @__PURE__ */ new Map();
   const engines = /* @__PURE__ */ new Map();
   const attached = /* @__PURE__ */ new Set();
+  const bridgePids = /* @__PURE__ */ new Map();
   const sockets = /* @__PURE__ */ new Set();
   let draining2 = false;
   let counter2 = 0;
@@ -7874,6 +7883,7 @@ async function daemonMain(argv2) {
         },
         end: (why) => {
           attached.delete(id);
+          bridgePids.delete(id);
           return s2.end(why).then(() => {
             if (sessions.get(id) !== traced) return;
             sessions.delete(id);
@@ -7884,6 +7894,7 @@ async function daemonMain(argv2) {
         }
       };
       sessions.set(id, traced);
+      bridgePids.set(id, hello.pid);
       if (opened) engines.set(id, opened);
       if (idle) clearTimeout(idle);
       idle = null;
@@ -7937,7 +7948,8 @@ async function daemonMain(argv2) {
     draining2 = true;
     log(`${sig} — ending ${sessions.size} session(s)`);
     server?.close();
-    for (const id of attached) {
+    for (const id of sessions.keys()) {
+      if (!attached.has(id) && !ownPidAlive(bridgePids.get(id))) continue;
       const scope = engines.get(id)?.scope;
       if (scope) runIn(scope, () => beginSessionHandover(`daemon ${sig}`));
     }
