@@ -1,4 +1,4 @@
-// Выход спутника из дел прогона (граф nks-dev: #6573).
+// Выход спутника из дел прогона и снятие его места (граф nks-dev: #6573, #6593).
 //
 // Спутник входит в дела строкой запуска (iskron_case join) и выходит концом
 // поручения; прогон, оборванный без выхода, оставляет место в деле истекать
@@ -11,6 +11,7 @@ import { callTool as call } from "./call.ts";
 import { CFG } from "./config.ts";
 import { canonRealm, otherRealm } from "./realms.ts";
 import { log } from "./streams.ts";
+import { state } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
 
 /** Все выходы конца прогона — под одним потолком: харнес гасит мост по короткой отсрочке. */
@@ -58,12 +59,41 @@ export async function leaveJoinedCases(): Promise<void> {
       log(`could not leave case ${c.room} at the run's end: ${(e as Error).message}`);
     }
   });
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const cap = new Promise<"cap">((r) => (timer = setTimeout(() => r("cap"), LEAVE_CAP_MS)));
-  const got = await Promise.race([Promise.allSettled(leaves), cap]);
-  clearTimeout(timer);
-  if (got === "cap")
+  if (!(await underCap(Promise.allSettled(leaves))))
     log(
       `case leave at the run's end exceeded ${LEAVE_CAP_MS} ms — the place goes, the rest lapse by term`,
     );
+}
+
+/**
+ * Снять своё место-спутник на конце прогона (#6550, правило 4; #6593): закрытый
+ * сокет места с доски не снимает — только revoke либо срок канала. Зовётся после
+ * releaseStanding: сокет уже отпущен, и закрытие 4001 некому принять за смерть токена.
+ */
+export async function revokeSatellitePlace(): Promise<void> {
+  const s = state.standing;
+  if (!CFG.satellite || !s?.name) return;
+  const args = { action: "revoke", realm: s.realm, karta: s.karta, standing: s.name };
+  const revoke = call("iskron_channel", args).then(
+    (r) =>
+      log(
+        r.isError
+          ? `could not revoke ${s.name} at the run's end: ${r.text.slice(0, 120)}`
+          : `revoked ${s.name} at the run's end (#6593)`,
+      ),
+    (e: Error) => log(`could not revoke ${s.name} at the run's end: ${e.message}`),
+  );
+  if (!(await underCap(revoke)))
+    log(
+      `revoke at the run's end exceeded ${LEAVE_CAP_MS} ms — the place lapses by the channel's term`,
+    );
+}
+
+/** true — успело под потолком конца прогона. */
+async function underCap(work: Promise<unknown>): Promise<boolean> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const cap = new Promise<"cap">((r) => (timer = setTimeout(() => r("cap"), LEAVE_CAP_MS)));
+  const got = await Promise.race([work, cap]);
+  clearTimeout(timer);
+  return got !== "cap";
 }

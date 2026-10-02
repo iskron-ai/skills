@@ -1857,6 +1857,37 @@ test("satellite: a case the run joined as #102 in r5 and left as №102 in @nks/
   );
 });
 
+// The end of a subagent closes its place (#6550 rule 4, #6593): the socket going
+// does not take the place off the board — only revoke or the channel's term do.
+// So the satellite revokes its own .sub-N at the run's end; the caller's place
+// stays, and a session's bridge revokes nothing.
+const revokes = (fake) =>
+  fake.state.calls
+    .filter((c) => c.name === "iskron_channel" && c.arguments.action === "revoke")
+    .map((c) => c.arguments.standing);
+
+test("satellite: at the run's end the bridge revokes its own .sub-N — the place leaves the board at once, the caller's stays", async (t) => {
+  const fake = await withCaller(t);
+  const sat = await satelliteBridge(t, fake);
+  assert.ok(!(await standAs(sat, SAT_ARGS)).result?.isError, sat.stderr);
+  assert.ok(fake.state.places.has(`931:${CALLER}.sub-1`), "the satellite stood");
+  await caseAs(sat, "join", "№102");
+  await sat.stop();
+  assert.deepEqual(revokes(fake), [`${CALLER}.sub-1`], `its own place revoked:\n${sat.stderr}`);
+  assert.ok(!fake.state.places.has(`931:${CALLER}.sub-1`), "off the board at once, not by term");
+  assert.ok(fake.state.places.has(`931:${CALLER}`), "the caller's place is not touched");
+  assert.deepEqual(caseCalls(fake, "leave"), ["№102"], "cases are left before the place goes");
+
+  const plain = await withCaller(t);
+  const own = startBridge(plain.mcpUrl, mkdtempSync(join(tmpdir(), "iskron-own-")));
+  t.after(() => own.stop());
+  assert.ok((await own.call("initialize", INIT)).result);
+  const stood = await standAs(own, { realm: "nks-dev", karta: 931, name: "plain" });
+  assert.ok(!stood.result?.isError, `${textOf(stood)}\n${own.stderr}`);
+  await own.stop();
+  assert.deepEqual(revokes(plain), [], "the session's place outlives the session");
+});
+
 // The harness kills the bridge a short grace after closing it (OpenCode: 5 s);
 // a slow api on leave must not hold the place's socket and .key past it.
 test("satellite: a hung leave at the run's end does not hold the place — the bridge releases its .key and exits on its own", async (t) => {

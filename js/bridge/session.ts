@@ -13,7 +13,7 @@ import { type Writable } from "node:stream";
 
 import { bindScope, newScope, runIn, type Scope } from "../shared/scope.ts";
 import { isSessionEnvKey, patShaOf } from "../shared/seam.ts";
-import { leaveJoinedCases } from "./caseexit.ts";
+import { leaveJoinedCases, revokeSatellitePlace } from "./caseexit.ts";
 import { CFG, readArgs, setConfig } from "./config.ts";
 import { deliver } from "./deliver.ts";
 import { errorMessage } from "./errors.ts";
@@ -203,6 +203,8 @@ function openIn(io: SessionIO, origin: SessionOrigin | null, scope: Scope | null
     const addr = statusAddress();
     // Сокет стояния живёт ровно столько, сколько сессия; у спутника — и записи держания нет: возврата с диска у него не бывает.
     releaseStanding(why, CFG.satellite);
+    // Конец спутника закрывает и место (#6593): сокет отпущен, место снимается с доски.
+    if (!handover) await revokeSatellitePlace();
     if (addr && !handover) await publishStatusTo(addr.url, "", 3000).catch(() => {});
     if (handover) await Promise.race([Promise.allSettled([...pending]), sleep(HANDOVER_WAIT_MS)]);
     else await Promise.allSettled([...pending, ...tokenRequestsInFlight]);

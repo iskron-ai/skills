@@ -5560,14 +5560,32 @@ async function leaveJoinedCases() {
       log(`could not leave case ${c.room} at the run's end: ${e.message}`);
     }
   });
-  let timer;
-  const cap = new Promise((r) => timer = setTimeout(() => r("cap"), LEAVE_CAP_MS));
-  const got = await Promise.race([Promise.allSettled(leaves), cap]);
-  clearTimeout(timer);
-  if (got === "cap")
+  if (!await underCap(Promise.allSettled(leaves)))
     log(
       `case leave at the run's end exceeded ${LEAVE_CAP_MS} ms — the place goes, the rest lapse by term`
     );
+}
+async function revokeSatellitePlace() {
+  const s2 = state.standing;
+  if (!CFG.satellite || !s2?.name) return;
+  const args = { action: "revoke", realm: s2.realm, karta: s2.karta, standing: s2.name };
+  const revoke = callTool("iskron_channel", args).then(
+    (r) => log(
+      r.isError ? `could not revoke ${s2.name} at the run's end: ${r.text.slice(0, 120)}` : `revoked ${s2.name} at the run's end (#6593)`
+    ),
+    (e) => log(`could not revoke ${s2.name} at the run's end: ${e.message}`)
+  );
+  if (!await underCap(revoke))
+    log(
+      `revoke at the run's end exceeded ${LEAVE_CAP_MS} ms — the place lapses by the channel's term`
+    );
+}
+async function underCap(work) {
+  let timer;
+  const cap = new Promise((r) => timer = setTimeout(() => r("cap"), LEAVE_CAP_MS));
+  const got = await Promise.race([work, cap]);
+  clearTimeout(timer);
+  return got !== "cap";
 }
 
 // js/bridge/satellite.ts
@@ -7435,6 +7453,7 @@ function openIn(io, origin, scope) {
     if (!handover) await leaveJoinedCases();
     const addr = statusAddress();
     releaseStanding(why, CFG.satellite);
+    if (!handover) await revokeSatellitePlace();
     if (addr && !handover) await publishStatusTo(addr.url, "", 3e3).catch(() => {
     });
     if (handover) await Promise.race([Promise.allSettled([...pending]), sleep(HANDOVER_WAIT_MS)]);
