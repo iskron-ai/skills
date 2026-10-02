@@ -875,6 +875,34 @@ test("a subagent session works through its root's bridge", async () => {
   }
 });
 
+// #6574: the count waiting for a prompt is the root's; a subagent's prompt does not carry it away.
+test("the root's counts ride the root's next prompt, never a subagent's", async () => {
+  const b = bridgeEnv("ride-child");
+  const rec = await plugin(b.env, {
+    sessions: [
+      { id: "root", time: { updated: 1 } },
+      { id: "child", parentID: "root", time: { updated: 2 } },
+    ],
+  });
+  try {
+    await serverTools(rec);
+    await rec.call("iskron_channel", { action: "connect" }, "root");
+    const f = progress();
+    appendFileSync(
+      `${b.events}.${pidOf(b.log)}`,
+      event("frame", { frame: f, raw: JSON.stringify(f) }),
+    );
+    await delay(BATCH_MS * 4);
+    assert.equal(rec.prompts.length, 0, "a count wakes no turn");
+    const child = await rec.prompt("child", "бриф");
+    assert.equal(child, "бриф", `the root's count rode into the subagent's prompt:\n${child}`);
+    const root = await rec.prompt("root", "go");
+    assert.match(root, /^go\n\n№7 «Стенд»: записей 1, тебе 0/, root);
+  } finally {
+    await rec.stop();
+  }
+});
+
 test("a frame from a bridge nobody owns yet goes to the freshest root session the plugin has seen", async () => {
   const b = bridgeEnv("root");
   const rec = await plugin(b.env, {

@@ -3956,6 +3956,104 @@ test("watchdog-codex: progress starts no turn; closing carries the batch count i
   await wd.done;
 });
 
+// #6574 on re-arm: records not to the seat, held as a count and not yet handed,
+// come back from the bridge's ring to the next watchdog — still a count, no wake.
+test("the exit watchdog re-armed after a batch of counts alone does not wake on the replayed counts", async (t) => {
+  const { fake, dir, key } = await connected(t, {
+    env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "1000" },
+  });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const first = runClient("watchdog-exit", dir, key, 15_000);
+  await waitFor(() => first.err.includes("hello"), "hello to be noted");
+  await sendRoom(fake, progress(46));
+  await waitFor(() => first.err.includes("счёт ждёт ближайшей побудки"), "the batch held", 6000);
+  first.proc.kill("SIGKILL");
+  await first.done;
+  const wd = runClient("watchdog-exit", dir, key, 15_000);
+  await waitFor(() => wd.err.includes("слушаю стояние"), "the watchdog to attach");
+  await new Promise((r) => setTimeout(r, 1500));
+  assert.equal(wd.proc.exitCode, null, `the re-armed watchdog woke on a count:\n${wd.out}`);
+  assert.equal(wd.out, "", `the replayed count printed:\n${wd.out}`);
+  await nudge(fake, 49);
+  const r = await wd.done;
+  assert.equal(r.exit, 0, `the word to me must wake: ${wd.err}`);
+  assert.match(wd.out, /^№7 «Стенд»: записей 1, тебе 0[^\n]*\n№7 «Стенд» \[49\] /);
+  assert.ok(!wd.out.includes("[46] "), `the replayed record's line:\n${wd.out}`);
+});
+
+test("the Monitor watchdog re-armed after a batch of counts alone prints nothing for the replayed counts", async (t) => {
+  const { fake, dir, key } = await connected(t, {
+    env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "800" },
+  });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const first = runClient("watchdog", dir, key, 15_000);
+  await waitFor(() => first.out.includes("слушаю стояние"), "the watchdog to attach");
+  await sendRoom(fake, progress(46));
+  await new Promise((r) => setTimeout(r, 1800));
+  first.proc.kill("SIGKILL");
+  await first.done;
+  const wd = runClient("watchdog", dir, key, 15_000);
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
+  await new Promise((r) => setTimeout(r, 1500));
+  const after = wd.out.slice(wd.out.indexOf("слушаю стояние"));
+  assert.ok(!after.includes("[46]") && !after.includes("записей"), `a count woke:\n${after}`);
+  await nudge(fake, 49);
+  await waitFor(() => wd.out.includes("[49]"), "the word to me", 3000);
+  assert.match(wd.out, /№7 «Стенд»: записей 1, тебе 0[^\n]*\n№7 «Стенд» \[49\] /);
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
+test("watchdog-codex re-armed after a batch of counts alone starts no turn on the replayed counts", async (t) => {
+  const { fake, dir, key } = await connected(t, {
+    env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "800" },
+  });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const home = mkdtempSync("/tmp/cxd-");
+  const sock = join(home, "app-server-control", "app-server-control.sock");
+  const log = join(home, "door.log");
+  writeFileSync(log, "");
+  const door = await startFakeCodex(sock, log);
+  t.after(() => door.stop());
+  const env = { CODEX_HOME: home, CODEX_THREAD_ID: "thread-rearm" };
+  const turns = () =>
+    readFileSync(log, "utf8")
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((l) => JSON.parse(l))
+      .filter((c) => c.method === "turn/start");
+  const first = runClient("watchdog-codex", dir, key, 15_000, env);
+  await waitFor(() => first.err.includes("слушаю стояние"), "the watchdog to attach");
+  await sendRoom(fake, progress(47));
+  await new Promise((r) => setTimeout(r, 1800));
+  first.proc.kill("SIGKILL");
+  await first.done;
+  const wd = runClient("watchdog-codex", dir, key, 15_000, env);
+  await waitFor(() => wd.err.includes("слушаю стояние"), "the watchdog to attach");
+  await new Promise((r) => setTimeout(r, 1500));
+  assert.equal(turns().length, 0, `the replayed count started a turn: ${JSON.stringify(turns())}`);
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
+// The exit watchdog leaving on a batch: the records after its line were named in
+// the head it printed — handed, they are marked and come back to nobody.
+test("the exit watchdog leaving on a batch marks the counted records after its line as handed", async (t) => {
+  const { fake, dir, key, standings } = await connected(t, {
+    env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "1000" },
+  });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog-exit", dir, key, 15_000);
+  await waitFor(() => wd.err.includes("hello"), "hello to be noted");
+  await sendRoom(fake, { ...said("defer", 70), addressee: ME });
+  await sendRoom(fake, progress(71));
+  const r = await wd.done;
+  assert.equal(r.exit, 0, `the word to me must wake: ${wd.err}`);
+  assert.match(wd.out, /записей 2, тебе 1/);
+  await waitSeen(standings, "room-msg-71");
+});
+
 // Today's production (api 0.86.0) sends no event_kind: every old room frame, whatever its
 // kind or stack, and every non-room frame reach a watchdog at once, as on main. Guards of
 // main's behaviour — green on main by design.

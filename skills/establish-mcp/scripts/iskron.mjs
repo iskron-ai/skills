@@ -3442,24 +3442,30 @@ var RoomBatch = class {
     const got = this.held.splice(0);
     const emit2 = this.emit;
     if (!got.length || !emit2) return;
-    const of = got.length;
-    const frames = got.map((h) => h.frame);
-    const fold = foldAsides(frames);
-    emit2({ kind: "note", text: batchHead(frames), batch: { at: 0, of } });
-    got.forEach(
-      (h, i) => emit2({
-        kind: "frame",
-        raw: h.raw,
-        frame: h.frame,
-        batch: {
-          at: i + 1,
-          of,
-          ...fold[i] === null ? { folded: true } : roomKind(h.frame)?.aside ? { fold: fold[i] ?? 1 } : {}
-        }
-      })
-    );
+    emitBatch(got, emit2);
   }
 };
+function emitBatch(got, emit2) {
+  const of = got.length;
+  const frames = got.map((h) => h.frame);
+  const fold = foldAsides(frames);
+  emit2({ kind: "note", text: batchHead(frames), batch: { at: 0, of } });
+  got.forEach(
+    (h, i) => emit2({
+      kind: "frame",
+      raw: h.raw,
+      frame: h.frame,
+      batch: {
+        at: i + 1,
+        of,
+        ...fold[i] === null ? { folded: true } : roomKind(h.frame)?.aside ? { fold: fold[i] ?? 1 } : {}
+      }
+    })
+  );
+}
+function countOnly(frame2) {
+  return frame2?.type === "message" && !!byKind(frame2) && !addressedToMine(frame2);
+}
 function noteRoomKind(frame2) {
   const rk = roomKind(frame2);
   if (rk && !rk.known)
@@ -3743,8 +3749,13 @@ var Door = class {
             seen: this.seenPath
           }) + "\n"
         );
+        const counts = backlog.filter(
+          (h) => countOnly(h.frame)
+        );
+        const put = (ev) => void sock.write(JSON.stringify(ev) + "\n");
+        if (counts.length) emitBatch(counts, put);
         for (const { raw, frame: frame2 } of backlog) {
-          sock.write(JSON.stringify({ kind: "frame", raw, frame: frame2 }) + "\n");
+          if (!countOnly(frame2)) put({ kind: "frame", raw, frame: frame2 });
         }
         const late = this.hooks.lateEvent();
         if (late) sock.write(JSON.stringify(late) + "\n");
@@ -8892,6 +8903,10 @@ function runWatchdogExit(argv2) {
     riders.splice(0, Math.max(0, riders.length - 100));
     head = "";
   };
+  const leave = () => {
+    for (const k of [...riderIds.splice(0), ...folded.splice(0)]) noteSeen(seenPath, k, seen);
+    process.exit(0);
+  };
   attach(target.path, {
     onEvent: (ev) => {
       switch (ev.kind) {
@@ -8903,14 +8918,14 @@ function runWatchdogExit(argv2) {
           if (seen.has(id)) {
             note2(`кадр ${id} уже отдан прежним взводом — не повод будить`);
             if (last) hold();
-            if (last && woke) process.exit(0);
+            if (last && woke) leave();
             return;
           }
           if (ev.batch && !addressedToMine(ev.frame)) {
             riderIds.push(id, ...folded.splice(0));
             if (last) {
               hold();
-              if (woke) process.exit(0);
+              if (woke) leave();
               note2("пачка без адресованных месту — счёт ждёт ближайшей побудки");
             }
             return;

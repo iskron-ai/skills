@@ -63,6 +63,11 @@ export function runWatchdogExit(argv: string[]): void {
     riders.splice(0, Math.max(0, riders.length - 100)); // старшие уходят: счёт не копится без меры
     head = "";
   };
+  // Выход после побудки: записи пачки за отданной строкой названы её шапкой — отданы.
+  const leave = (): never => {
+    for (const k of [...riderIds.splice(0), ...folded.splice(0)]) noteSeen(seenPath, k, seen);
+    process.exit(0);
+  };
   attach(target.path, {
     onEvent: (ev) => {
       switch (ev.kind) {
@@ -78,7 +83,7 @@ export function runWatchdogExit(argv: string[]): void {
           if (seen.has(id)) {
             note(`кадр ${id} уже отдан прежним взводом — не повод будить`);
             if (last) hold();
-            if (last && woke) process.exit(0);
+            if (last && woke) leave();
             return;
           }
           // Запись дела, не адресованная месту (#6574): без строки и без будки на
@@ -87,7 +92,7 @@ export function runWatchdogExit(argv: string[]): void {
             riderIds.push(id, ...folded.splice(0));
             if (last) {
               hold();
-              if (woke) process.exit(0);
+              if (woke) leave();
               note("пачка без адресованных месту — счёт ждёт ближайшей побудки");
             }
             return;

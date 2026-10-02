@@ -86,27 +86,40 @@ export class RoomBatch {
     const got = this.held.splice(0);
     const emit = this.emit;
     if (!got.length || !emit) return;
-    const of = got.length;
-    const frames = got.map((h) => h.frame);
-    const fold = foldAsides(frames);
-    emit({ kind: "note", text: batchHead(frames), batch: { at: 0, of } });
-    got.forEach((h, i) =>
-      emit({
-        kind: "frame",
-        raw: h.raw,
-        frame: h.frame,
-        batch: {
-          at: i + 1,
-          of,
-          ...(fold[i] === null
-            ? { folded: true }
-            : roomKind(h.frame)?.aside
-              ? { fold: fold[i] ?? 1 }
-              : {}),
-        },
-      }),
-    );
+    emitBatch(got, emit);
   }
+}
+
+/** Пачка залпом: шапка note (at: 0) и кадры с меткой batch. */
+export function emitBatch(
+  got: { raw: string; frame: Frame }[],
+  emit: (ev: ChannelEvent) => void,
+): void {
+  const of = got.length;
+  const frames = got.map((h) => h.frame);
+  const fold = foldAsides(frames);
+  emit({ kind: "note", text: batchHead(frames), batch: { at: 0, of } });
+  got.forEach((h, i) =>
+    emit({
+      kind: "frame",
+      raw: h.raw,
+      frame: h.frame,
+      batch: {
+        at: i + 1,
+        of,
+        ...(fold[i] === null
+          ? { folded: true }
+          : roomKind(h.frame)?.aside
+            ? { fold: fold[i] ?? 1 }
+            : {}),
+      },
+    }),
+  );
+}
+
+/** Запись дела, не адресованная месту (#6574): сторожам — только пачкой, счётом. */
+export function countOnly(frame: Frame | null): frame is Frame {
+  return frame?.type === "message" && !!byKind(frame) && !addressedToMine(frame);
 }
 
 /** Род, мосту неизвестный, — строкой в лог моста: новый род должен быть замечен. */

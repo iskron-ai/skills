@@ -111,8 +111,10 @@ async function setup(ctx: Context): Promise<() => void> {
     await ctx.session.hook("prompt", async (p) => {
       const word = await half.launch(String(p.sessionID), p.prompt.text);
       if (word) p.prompt.text = withWord(p.prompt.text, word);
-      // Счёт записей, не будивших хода (#6574), едет с промптом, который ход начнёт.
-      const counts = ch?.ride(await rootOf(String(p.sessionID)));
+      // Счёт записей, не будивших хода (#6574), едет с промптом, который ход начнёт;
+      // счёт корня — только с промптом в корень: бриф субагента его не уносит.
+      const sid = String(p.sessionID);
+      const counts = (await rootOf(sid)) === sid ? ch?.ride(sid) : null;
       if (counts) p.prompt.text = `${p.prompt.text}\n\n${counts}`;
     });
   } catch (e) {

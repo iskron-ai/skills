@@ -2234,7 +2234,8 @@ async function setup(ctx) {
     await ctx.session.hook("prompt", async (p) => {
       const word = await half.launch(String(p.sessionID), p.prompt.text);
       if (word) p.prompt.text = withWord(p.prompt.text, word);
-      const counts = ch?.ride(await rootOf(String(p.sessionID)));
+      const sid = String(p.sessionID);
+      const counts = await rootOf(sid) === sid ? ch?.ride(sid) : null;
       if (counts) p.prompt.text = `${p.prompt.text}
 
 ${counts}`;
