@@ -1,9 +1,15 @@
 // The device side of the fake sign-in server (RFC 8628), plugged into
-// fake-nks.mjs when a probe asks for `device: {…}`. Paced like Rauthy, the
-// server behind mcp.iskron.ru: a poll sooner than the interval (100 ms of
-// slack) is answered slow_down and counted, so a probe can see a bridge that
-// does not keep pace. The human on the other device is played through
-// /control: { device_approve: <user_code> } or { device_deny: <user_code> }.
+// fake-nks.mjs when a probe asks for `device: {…}`. Shaped on Rauthy, the
+// server behind mcp.iskron.ru, as observed live (graph nks-dev: #6570, #6619):
+// the code answer and its fields; a code it does not know — expired and gone,
+// or never issued — answered 404 NotFound «DeviceAuthCode does not exist».
+// Paced like Rauthy: a poll sooner than the interval (100 ms of slack) is
+// answered slow_down and counted, so a probe can see a bridge that does not
+// keep pace. `client` names a client set up by the operator, as the device
+// login's named client is; any other id must be registered first, and an
+// unknown one is refused with RFC 6749's word invalid_client. The human on the
+// other device is played through /control: { device_approve: <user_code> } or
+// { device_deny: <user_code> }.
 
 import { randomBytes } from "node:crypto";
 
@@ -14,6 +20,8 @@ export function deviceState(opts) {
   return {
     interval: opts.interval ?? 1, // seconds, as the wire says
     expiresIn: opts.expiresIn ?? 300,
+    client: opts.client ?? null, // a client the operator set up: known without registration
+    asked: [], // { client_id, answer } — every code request as it came
     codes: new Map(), // device_code → { user_code, client_id, expires_at, last_poll, approved, denied }
     issued: [], // user codes in the order they went out
     polls: [], // { at, user_code, answer } — every poll as it came
@@ -38,17 +46,23 @@ export function deviceControl(dev, patch) {
   if (patch.device_approve) find(patch.device_approve).approved = true;
   if (patch.device_deny) find(patch.device_deny).denied = true;
   if (patch.device_slow_down) dev.slowDownNext = patch.device_slow_down;
-  // Every code dies now, ahead of the expires_in it went out with: the server's word, expired_token, is all that tells.
+  // Every code dies now, ahead of the expires_in it went out with: the server's refusal of the code is all that tells.
   if (patch.device_expire) for (const c of dev.codes.values()) c.expires_at = Date.now();
 }
 
 /** POST /device — a code and the page to open it on. */
 export function deviceAuthorize(dev, st, form, base, json, res) {
-  const reg = st.clients.get(form.get("client_id"));
-  if (!reg) return json(res, 404, { error: "invalid_client" });
-  if (!(reg.grant_types ?? []).includes(DEVICE_GRANT)) {
-    return json(res, 403, { error: "unauthorized_client" });
-  }
+  const clientId = form.get("client_id");
+  const reg =
+    st.clients.get(clientId) ??
+    (clientId === dev.client ? { grant_types: [DEVICE_GRANT, "refresh_token"] } : null);
+  const refuse = (status, error) => {
+    dev.asked.push({ client_id: clientId, answer: error });
+    return json(res, status, { error });
+  };
+  if (!reg) return refuse(404, "invalid_client");
+  if (!(reg.grant_types ?? []).includes(DEVICE_GRANT)) return refuse(403, "unauthorized_client");
+  dev.asked.push({ client_id: clientId, answer: "code" });
   const deviceCode = randomBytes(16).toString("hex");
   const userCode = randomBytes(4).toString("hex").toUpperCase();
   dev.codes.set(deviceCode, {
@@ -76,7 +90,7 @@ export function devicePoll(dev, form, grant, json, res) {
     return json(res, status, body);
   };
   if (!code || Date.now() >= code.expires_at) {
-    return answer(400, { error: "expired_token" });
+    return answer(404, { error: "NotFound", message: "DeviceAuthCode does not exist" });
   }
   if (code.client_id !== form.get("client_id")) return answer(400, { error: "invalid_request" });
   const now = Date.now();

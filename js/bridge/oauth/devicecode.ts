@@ -1,5 +1,6 @@
 import { noteServerDate } from "../clock.ts";
 import { CFG } from "../config.ts";
+import { errorMessage, utcTime } from "../errors.ts";
 import { log } from "../streams.ts";
 import { type Meta } from "../types.ts";
 
@@ -71,10 +72,41 @@ async function post(
   return answer;
 }
 
-// A client of its own: the loopback login registers one lazily, when its link
-// is opened, and this one must exist before the code is asked for. The server
-// wants a redirect URI on every dynamic registration; the loopback one is given.
-export async function registerDeviceClient(meta: Meta, redirectUri: string): Promise<string> {
+// The client the device login goes through: one the operator set up (#6619).
+// Rauthy puts no resource in the audience of a device grant — the code request
+// carries none, the token is minted without one — so only a client whose
+// default audience is the mcp address yields a token mcp accepts; a dynamic
+// registration has no default audience.
+const DEVICE_CLIENT_ID = "iskron-bridge";
+
+/** The server does not know the client or does not let it take the device grant. */
+const clientRefused = (e: unknown): boolean =>
+  e instanceof DeviceRefusal && /^(invalid_client|unauthorized_client)$/.test(e.error ?? "");
+
+/**
+ * A code through `clientId` — the one the login already uses — or else the
+ * named client; a dynamic registration only when the server refuses that one.
+ */
+export async function codeThrough(
+  meta: Meta,
+  redirectUri: string,
+  clientId: string | undefined,
+): Promise<DeviceCode> {
+  const id = clientId ?? (CFG.deviceClientId || DEVICE_CLIENT_ID);
+  try {
+    return await issueDeviceCode(meta, id);
+  } catch (e) {
+    if (!clientRefused(e)) throw e;
+    log(`device client ${id} refused (${errorMessage(e)}) — registering one`);
+    return await issueDeviceCode(meta, await registerDeviceClient(meta, redirectUri));
+  }
+}
+
+// The fallback when the server refuses the named client: a client of its own.
+// The loopback login registers one lazily, when its link is opened, and this
+// one must exist before the code is asked for. The server wants a redirect URI
+// on every dynamic registration; the loopback one is given.
+async function registerDeviceClient(meta: Meta, redirectUri: string): Promise<string> {
   if (CFG.staticClientId) return CFG.staticClientId;
   if (!meta.as.registration_endpoint) {
     throw new DeviceRefusal("server offers no dynamic client registration", undefined);
@@ -111,7 +143,7 @@ export async function issueDeviceCode(meta: Meta, clientId: string): Promise<Dev
   };
   log(
     `sign in from another device: ${code.link} (code ${code.user_code}, ` +
-      `good for about ${Math.round((code.expires_at - Date.now()) / 60_000)} min)`,
+      `valid until ${utcTime(code.expires_at)})`,
   );
   return code;
 }

@@ -18,7 +18,14 @@ import {
 import { bindCallback, type Callback } from "./callback.ts";
 import { deviceSide } from "./device.ts";
 import { type DeviceCode } from "./devicecode.ts";
-import { CALLBACK_PORT_RUNGS, callbackPort, ensureClient, openBrowser } from "./discovery.ts";
+import { callerCode, joinedPending } from "./devicehandout.ts";
+import {
+  CALLBACK_PORT_RUNGS,
+  callbackPort,
+  ensureClient,
+  openBrowser,
+  resourceOf,
+} from "./discovery.ts";
 import { tokenRequest } from "./tokenrequest.ts";
 
 /** How long a bridge waits for a sibling that claimed a login to publish its link. */
@@ -32,7 +39,10 @@ const LANDED_POLL_MS = Number(process.env.ISKRON_BRIDGE_LANDED_POLL_MS) || 2_000
 /** A probe's handle only: holds a closing login's port open after its record is dropped. */
 const RELEASE_GAP_MS = Number(process.env.ISKRON_BRIDGE_RELEASE_GAP_MS) || 0;
 
-/** How long the first answer waits for the device code before going out with the loopback link alone. */
+// How long the answer that publishes a login waits for the device code (#6570)
+// before going out with the loopback link alone: a code is at most three POSTs
+// to the sign-in server, a fraction of this; a server slower than that keeps
+// the harness's call no longer, and the next call hands the code out.
 const DEVICE_FIRST_WAIT_MS = 10_000;
 
 // The logins this process is listening for in the background: the harness
@@ -88,13 +98,6 @@ function published(l: AuthLock | null): l is Published {
 // that bridge lives and listens — never a second login beside it (#4809).
 function older(l: AuthLock | null): l is AuthLock & { authorize_url: string } {
   return !!l?.authorize_url && !l.state;
-}
-
-// What a caller hands out for a login: its loopback link and, while one stands,
-// the same login's code for sign-in from another device (#6570).
-function pending(l: AuthLock & { authorize_url: string }, note?: string): AuthPending {
-  const device = l.device && l.device.expires_at > Date.now() ? l.device : undefined;
-  return new AuthPending(l.authorize_url, note, device);
 }
 
 const firstCode = (first: Promise<DeviceCode | null>): Promise<DeviceCode | undefined> =>
@@ -206,7 +209,7 @@ export async function interactiveFlow(
     (await portListening(standing.callback_port))
   ) {
     debug(`joining the login held by pid ${standing.pid}`);
-    throw pending(handOut(standing, wantTab), note);
+    throw await joinedPending(meta, handOut(standing, wantTab), note);
   }
   let callback: Callback | null = null;
   if (published(standing)) {
@@ -227,7 +230,7 @@ export async function interactiveFlow(
       );
       grantLog("authorization flow taken over on the same link — waiting for the human");
       const first = runFlow(meta, cb, still, wantTab);
-      throw pending({ ...still, device: await firstCode(first) }, note);
+      throw new AuthPending(still.authorize_url, note, await firstCode(first));
     }
     if (cb && published(still)) {
       cb.close(); // another login went out meanwhile: that one is joined, not a second
@@ -243,7 +246,7 @@ export async function interactiveFlow(
       pidAlive(taken.pid) &&
       (await portListening(taken.callback_port))
     ) {
-      throw pending(handOut(taken, wantTab), note);
+      throw await joinedPending(meta, handOut(taken, wantTab), note);
     }
     debug(
       `the published login's port ${standing.callback_port} is held by a foreign process — its link can land nowhere; publishing a new login`,
@@ -255,14 +258,14 @@ export async function interactiveFlow(
     (await portListening(standing.callback_port))
   ) {
     const found = await linkOn(standing.callback_port);
-    if (found) throw pending(handOut(found, wantTab), note);
+    if (found) throw await joinedPending(meta, handOut(found, wantTab), note);
   }
 
   for (let rung = 0; rung < CALLBACK_PORT_RUNGS && !callback; rung++) {
     callback = await bindOrNull(callbackPort(rung));
     if (callback) break;
     const found = await linkOn(callbackPort(rung));
-    if (found) throw pending(handOut(found, wantTab), note);
+    if (found) throw await joinedPending(meta, handOut(found, wantTab), note);
     await mootFreed(callbackPort(rung)); // a moot login of a living bridge closing: wait for it
     callback = await bindOrNull(callbackPort(rung)); // freed meanwhile, whoever held it
     if (callback) break;
@@ -298,7 +301,7 @@ export async function interactiveFlow(
     grantLog("authorization flow published — waiting for the human");
     const first = runFlow(meta, callback, login, wantTab);
     started = true;
-    throw pending({ ...login, device: await firstCode(first) }, note);
+    throw new AuthPending(login.authorize_url, note, await firstCode(first));
   } catch (e) {
     // The flow owns the listener once it starts; anything failing before that
     // must give the port and the record back rather than camp on them.
@@ -334,7 +337,7 @@ function runFlow(
     u.searchParams.set("state", login.state);
     u.searchParams.set("code_challenge", b64url(sha256(login.verifier)));
     u.searchParams.set("code_challenge_method", "S256");
-    u.searchParams.set("resource", meta.resource);
+    u.searchParams.set("resource", resourceOf(meta));
     if (meta.scope) u.searchParams.set("scope", meta.scope);
     return u.toString();
   });
@@ -355,10 +358,16 @@ function runFlow(
   // The same login from another device (#6570): its code rides in the record,
   // so every bridge hands it out beside the link; whichever lands first stores
   // the grant and the other is stopped.
-  const device = deviceSide(meta, redirectUri, login.device, (code) => {
-    const current = readAuthLock();
-    if (current && ours(current)) writeAuthLock({ ...current, device: code ?? undefined });
-  });
+  const device = deviceSide(
+    meta,
+    redirectUri,
+    login.device,
+    (code) => {
+      const current = readAuthLock();
+      if (current && ours(current)) writeAuthLock({ ...current, device: code ?? undefined });
+    },
+    () => callerCode(login.state),
+  );
   let flow: Promise<void> | null = null;
   flow = (async () => {
     try {
@@ -385,7 +394,7 @@ function runFlow(
         redirect_uri: redirectUri,
         client_id: clientId,
         code_verifier: login.verifier,
-        resource: meta.resource,
+        resource: resourceOf(meta),
       });
       releaseAuthLock(ours); // the login has landed: no one is to join it from here on
       log("authorization complete — tokens saved for every local agent");

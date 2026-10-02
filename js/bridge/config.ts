@@ -103,6 +103,7 @@ export function readArgs(argv: string[]): Config {
     scope: envOf("ISKRON_BRIDGE_SCOPE") || null,
     resource: envOf("ISKRON_BRIDGE_RESOURCE") || null,
     staticClientId: envOf("ISKRON_BRIDGE_CLIENT_ID") || null,
+    deviceClientId: envOf("ISKRON_BRIDGE_DEVICE_CLIENT") || null,
     pat: null,
     patSource: null,
     serverSource: "argument",

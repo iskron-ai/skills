@@ -1,14 +1,8 @@
 import { errorMessage, TokenError } from "../errors.ts";
 import { debug, log } from "../streams.ts";
 import { type Meta } from "../types.ts";
-import {
-  DEVICE_GRANT,
-  type DeviceCode,
-  deviceOffered,
-  DeviceRefusal,
-  issueDeviceCode,
-  registerDeviceClient,
-} from "./devicecode.ts";
+import { codeThrough, DEVICE_GRANT, type DeviceCode, deviceOffered } from "./devicecode.ts";
+import { resourceOf } from "./discovery.ts";
 import { tokenRequest } from "./tokenrequest.ts";
 
 // RFC 8628 §3.5: slow_down widens the interval by five seconds for good.
@@ -33,36 +27,46 @@ const never = new Promise<never>(() => {});
  * code are one login, whichever lands first stores the grant, the other is
  * stopped. `onCode` hears every code issued (null when none stands), so the
  * login's record — what every bridge of the machine hands out — stays current.
+ * `called` reads the code a caller issued: one that found the record's code
+ * dead or dying asks a fresh one (devicehandout.ts), and that one is polled
+ * from then on, the old one never again.
  */
 export function deviceSide(
   meta: Meta,
   redirectUri: string,
   resume: DeviceCode | undefined,
   onCode: (code: DeviceCode | null) => void,
+  called: () => DeviceCode | undefined,
 ): DeviceSide {
   const halt = new AbortController();
   let tellFirst: (c: DeviceCode | null) => void = () => {};
   const first = new Promise<DeviceCode | null>((r) => (tellFirst = r));
   const pause = (ms: number): Promise<void> =>
     new Promise((r) => {
-      const t = setTimeout(r, ms);
-      halt.signal.addEventListener("abort", () => (clearTimeout(t), r()), { once: true });
+      const done = (): void => {
+        clearTimeout(t);
+        halt.signal.removeEventListener("abort", done);
+        r();
+      };
+      const t = setTimeout(done, ms);
+      halt.signal.addEventListener("abort", done, { once: true });
     });
 
-  // A fresh code; a client the server no longer knows is registered anew once.
+  // A fresh code in place of the one polled so far, which is dropped. null —
+  // the login stopped meanwhile, or no code was to be had.
   const fresh = async (clientId: string | undefined): Promise<DeviceCode | null> => {
     try {
-      const id = clientId ?? (await registerDeviceClient(meta, redirectUri));
-      try {
-        return await issueDeviceCode(meta, id);
-      } catch (e) {
-        if (!clientId || !(e instanceof DeviceRefusal) || !/client/.test(e.error ?? "")) throw e;
-        return await issueDeviceCode(meta, await registerDeviceClient(meta, redirectUri));
-      }
+      const code = await codeThrough(meta, redirectUri, clientId);
+      return halt.signal.aborted ? null : code;
     } catch (e) {
       log(`sign-in from another device not offered: ${errorMessage(e)}`);
       return null;
     }
+  };
+  // A newer code a caller issued, if there is one.
+  const newer = (code: DeviceCode): DeviceCode | null => {
+    const r = called();
+    return r && r.device_code !== code.device_code && r.expires_at > code.expires_at ? r : null;
   };
 
   const run = async (): Promise<void> => {
@@ -84,6 +88,13 @@ export function deviceSide(
       clientId = code.client_id;
       await pause(code.interval_ms);
       if (halt.signal.aborted) return never;
+      const taken = newer(code);
+      if (taken) {
+        debug(`device poll: taking the code ${taken.user_code} a caller issued`);
+        code = { ...taken, interval_ms: Math.max(taken.interval_ms, code.interval_ms) };
+        onCode(code);
+        continue;
+      }
       let renew = Date.now() >= code.expires_at;
       if (!renew) {
         try {
@@ -91,7 +102,7 @@ export function deviceSide(
             grant_type: DEVICE_GRANT,
             device_code: code.device_code,
             client_id: code.client_id,
-            resource: meta.resource,
+            resource: resourceOf(meta),
           });
           return;
         } catch (e) {
@@ -108,8 +119,8 @@ export function deviceSide(
         }
       }
       if (renew) {
+        code = newer(code) ?? (await fresh(clientId));
         if (halt.signal.aborted) return never;
-        code = await fresh(clientId);
         onCode(code);
       }
     }

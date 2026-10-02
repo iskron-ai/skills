@@ -23,7 +23,7 @@ var BUILD = buildOf(import.meta.url);
 
 // js/bridge/daemon.ts
 import { spawn as spawn3 } from "node:child_process";
-import { appendFileSync as appendFileSync4, mkdirSync as mkdirSync11, readFileSync as readFileSync18, statSync as statSync7, unlinkSync as unlinkSync11 } from "node:fs";
+import { appendFileSync as appendFileSync4, mkdirSync as mkdirSync11, readFileSync as readFileSync19, statSync as statSync7, unlinkSync as unlinkSync11 } from "node:fs";
 import { join as join16 } from "node:path";
 import { fileURLToPath as fileURLToPath5 } from "node:url";
 
@@ -854,6 +854,7 @@ function readArgs(argv2) {
     scope: envOf("ISKRON_BRIDGE_SCOPE") || null,
     resource: envOf("ISKRON_BRIDGE_RESOURCE") || null,
     staticClientId: envOf("ISKRON_BRIDGE_CLIENT_ID") || null,
+    deviceClientId: envOf("ISKRON_BRIDGE_DEVICE_CLIENT") || null,
     pat: null,
     patSource: null,
     serverSource: "argument",
@@ -1124,12 +1125,12 @@ var DEFINITIVE_OAUTH_ERRORS = /* @__PURE__ */ new Set([
 ]);
 var TokenRefused = class extends Error {
 };
+var utcTime = (ms3) => new Date(ms3).toISOString().replace("T", " ").slice(0, 19) + " UTC";
 var AuthPending = class extends Error {
   authorizeUrl;
   constructor(url, note3, device) {
-    const minutes = device ? Math.max(1, Math.round((device.expires_at - Date.now()) / 6e4)) : 0;
     super(
-      `authorization required — open in a browser: ${url}${note3 ? ` (${note3})` : ""}` + (device ? ` — or sign in from another device: ${device.link} (code ${device.user_code}, good for about ${minutes} min; a new code comes with the next call)` : "") + ` — or give the bridge a personal access token instead (ISKRON_BRIDGE_TOKEN, or the file <auth-dir>/token)`
+      `authorization required — open in a browser: ${url}${note3 ? ` (${note3})` : ""}` + (device ? ` — or sign in from another device: ${device.link} (code ${device.user_code}, valid until ${utcTime(device.expires_at)}; past that, the next call brings a new one)` : "") + ` — or give the bridge a personal access token instead (ISKRON_BRIDGE_TOKEN, or the file <auth-dir>/token)`
     );
     this.authorizeUrl = url;
   }
@@ -1223,6 +1224,7 @@ async function discoverMeta(wwwAuthenticate) {
   const scope = CFG.scope || (prm?.scopes_supported?.length ? prm.scopes_supported.join(" ") : null);
   return { as, resource: CFG.resource || prm?.resource || CFG.serverUrl, scope };
 }
+var resourceOf = (meta) => CFG.resource || meta.resource;
 var CALLBACK_PORT_RUNGS = 3;
 function callbackPort(rung = 0) {
   const d = sha256(new URL(CFG.serverUrl).origin);
@@ -1348,6 +1350,18 @@ async function post(url, type, body) {
   }
   return answer;
 }
+var DEVICE_CLIENT_ID = "iskron-bridge";
+var clientRefused = (e) => e instanceof DeviceRefusal && /^(invalid_client|unauthorized_client)$/.test(e.error ?? "");
+async function codeThrough(meta, redirectUri, clientId) {
+  const id = clientId ?? (CFG.deviceClientId || DEVICE_CLIENT_ID);
+  try {
+    return await issueDeviceCode(meta, id);
+  } catch (e) {
+    if (!clientRefused(e)) throw e;
+    log(`device client ${id} refused (${errorMessage(e)}) — registering one`);
+    return await issueDeviceCode(meta, await registerDeviceClient(meta, redirectUri));
+  }
+}
 async function registerDeviceClient(meta, redirectUri) {
   if (CFG.staticClientId) return CFG.staticClientId;
   if (!meta.as.registration_endpoint) {
@@ -1383,7 +1397,7 @@ async function issueDeviceCode(meta, clientId) {
     interval_ms: (Number.isFinite(Number(a.interval)) ? Number(a.interval) : 5) * 1e3
   };
   log(
-    `sign in from another device: ${code.link} (code ${code.user_code}, good for about ${Math.round((code.expires_at - Date.now()) / 6e4)} min)`
+    `sign in from another device: ${code.link} (code ${code.user_code}, valid until ${utcTime(code.expires_at)})`
   );
   return code;
 }
@@ -1677,28 +1691,32 @@ var SLOW_DOWN_MS = Number(process.env.ISKRON_BRIDGE_DEVICE_SLOW_DOWN_MS) || 5e3;
 var REISSUE_PAUSE_MS = Number(process.env.ISKRON_BRIDGE_DEVICE_REISSUE_MS) || 3e4;
 var never = new Promise(() => {
 });
-function deviceSide(meta, redirectUri, resume, onCode) {
+function deviceSide(meta, redirectUri, resume, onCode, called) {
   const halt = new AbortController();
   let tellFirst = () => {
   };
   const first2 = new Promise((r) => tellFirst = r);
   const pause = (ms3) => new Promise((r) => {
-    const t = setTimeout(r, ms3);
-    halt.signal.addEventListener("abort", () => (clearTimeout(t), r()), { once: true });
+    const done = () => {
+      clearTimeout(t);
+      halt.signal.removeEventListener("abort", done);
+      r();
+    };
+    const t = setTimeout(done, ms3);
+    halt.signal.addEventListener("abort", done, { once: true });
   });
   const fresh = async (clientId) => {
     try {
-      const id = clientId ?? await registerDeviceClient(meta, redirectUri);
-      try {
-        return await issueDeviceCode(meta, id);
-      } catch (e) {
-        if (!clientId || !(e instanceof DeviceRefusal) || !/client/.test(e.error ?? "")) throw e;
-        return await issueDeviceCode(meta, await registerDeviceClient(meta, redirectUri));
-      }
+      const code = await codeThrough(meta, redirectUri, clientId);
+      return halt.signal.aborted ? null : code;
     } catch (e) {
       log(`sign-in from another device not offered: ${errorMessage(e)}`);
       return null;
     }
+  };
+  const newer = (code) => {
+    const r = called();
+    return r && r.device_code !== code.device_code && r.expires_at > code.expires_at ? r : null;
   };
   const run = async () => {
     if (!deviceOffered(meta)) {
@@ -1719,6 +1737,13 @@ function deviceSide(meta, redirectUri, resume, onCode) {
       clientId = code.client_id;
       await pause(code.interval_ms);
       if (halt.signal.aborted) return never;
+      const taken = newer(code);
+      if (taken) {
+        debug(`device poll: taking the code ${taken.user_code} a caller issued`);
+        code = { ...taken, interval_ms: Math.max(taken.interval_ms, code.interval_ms) };
+        onCode(code);
+        continue;
+      }
       let renew = Date.now() >= code.expires_at;
       if (!renew) {
         try {
@@ -1726,7 +1751,7 @@ function deviceSide(meta, redirectUri, resume, onCode) {
             grant_type: DEVICE_GRANT,
             device_code: code.device_code,
             client_id: code.client_id,
-            resource: meta.resource
+            resource: resourceOf(meta)
           });
           return;
         } catch (e) {
@@ -1743,8 +1768,8 @@ function deviceSide(meta, redirectUri, resume, onCode) {
         }
       }
       if (renew) {
+        code = newer(code) ?? await fresh(clientId);
         if (halt.signal.aborted) return never;
-        code = await fresh(clientId);
         onCode(code);
       }
     }
@@ -1760,6 +1785,47 @@ function deviceSide(meta, redirectUri, resume, onCode) {
       tellFirst(null);
     }
   };
+}
+
+// js/bridge/oauth/devicehandout.ts
+import { readFileSync as readFileSync7, renameSync as renameSync5, writeFileSync as writeFileSync5 } from "node:fs";
+var RENEW_BEFORE_MS = 6e4;
+var freshPath = () => `${authLockPath()}.device`;
+function callerCode(state2) {
+  try {
+    const f = JSON.parse(readFileSync7(freshPath(), "utf8"));
+    return state2 && f.state === state2 ? f.code : void 0;
+  } catch {
+    return void 0;
+  }
+}
+var later = (a, b) => !a || b && b.expires_at > a.expires_at ? b : a;
+async function joinedPending(meta, l, note3) {
+  const stale = later(l.device, callerCode(l.state));
+  const device = stale && stale.expires_at - Date.now() < RENEW_BEFORE_MS ? await renewed(meta, l, stale) : stale;
+  return new AuthPending(l.authorize_url, note3, device);
+}
+async function renewed(meta, l, stale) {
+  const alive2 = (c) => c && c.expires_at > Date.now() ? c : void 0;
+  let code;
+  try {
+    code = await issueDeviceCode(meta, stale.client_id);
+  } catch (e) {
+    log(`no fresh code for sign-in from another device: ${errorMessage(e)}`);
+    return alive2(stale);
+  }
+  const other = callerCode(l.state);
+  if (other && other.device_code !== stale.device_code) return alive2(other);
+  const fresh = { ...code, interval_ms: Math.max(code.interval_ms, stale.interval_ms) };
+  const tmp = `${freshPath()}.tmp-${process.pid}`;
+  try {
+    writeFileSync5(tmp, JSON.stringify({ state: l.state, code: fresh }), { mode: 384 });
+    renameSync5(tmp, freshPath());
+  } catch (e) {
+    log(`fresh code for sign-in from another device not kept: ${errorMessage(e)}`);
+    return alive2(stale);
+  }
+  return fresh;
 }
 
 // js/bridge/oauth/flow.ts
@@ -1791,10 +1857,6 @@ function published(l) {
 }
 function older(l) {
   return !!l?.authorize_url && !l.state;
-}
-function pending(l, note3) {
-  const device = l.device && l.device.expires_at > Date.now() ? l.device : void 0;
-  return new AuthPending(l.authorize_url, note3, device);
 }
 var firstCode = (first2) => new Promise((resolve7) => {
   const t = setTimeout(() => resolve7(void 0), DEVICE_FIRST_WAIT_MS);
@@ -1852,7 +1914,7 @@ async function interactiveFlow(meta, judged, note3, wantTab = true) {
   const standing = readAuthLock();
   if ((published(standing) || older(standing)) && pidAlive(standing.pid) && await portListening(standing.callback_port)) {
     debug(`joining the login held by pid ${standing.pid}`);
-    throw pending(handOut(standing, wantTab), note3);
+    throw await joinedPending(meta, handOut(standing, wantTab), note3);
   }
   let callback = null;
   if (published(standing)) {
@@ -1870,7 +1932,7 @@ async function interactiveFlow(meta, judged, note3, wantTab = true) {
       );
       grantLog("authorization flow taken over on the same link — waiting for the human");
       const first2 = runFlow(meta, cb, still, wantTab);
-      throw pending({ ...still, device: await firstCode(first2) }, note3);
+      throw new AuthPending(still.authorize_url, note3, await firstCode(first2));
     }
     if (cb && published(still)) {
       cb.close();
@@ -1881,20 +1943,20 @@ async function interactiveFlow(meta, judged, note3, wantTab = true) {
   if (published(standing) && !callback) {
     const taken = readAuthLock();
     if (published(taken) && taken.state === standing.state && pidAlive(taken.pid) && await portListening(taken.callback_port)) {
-      throw pending(handOut(taken, wantTab), note3);
+      throw await joinedPending(meta, handOut(taken, wantTab), note3);
     }
     debug(
       `the published login's port ${standing.callback_port} is held by a foreign process — its link can land nowhere; publishing a new login`
     );
   } else if (standing && !standing.authorize_url && pidAlive(standing.pid) && await portListening(standing.callback_port)) {
     const found = await linkOn(standing.callback_port);
-    if (found) throw pending(handOut(found, wantTab), note3);
+    if (found) throw await joinedPending(meta, handOut(found, wantTab), note3);
   }
   for (let rung = 0; rung < CALLBACK_PORT_RUNGS && !callback; rung++) {
     callback = await bindOrNull(callbackPort(rung));
     if (callback) break;
     const found = await linkOn(callbackPort(rung));
-    if (found) throw pending(handOut(found, wantTab), note3);
+    if (found) throw await joinedPending(meta, handOut(found, wantTab), note3);
     await mootFreed(callbackPort(rung));
     callback = await bindOrNull(callbackPort(rung));
     if (callback) break;
@@ -1929,7 +1991,7 @@ async function interactiveFlow(meta, judged, note3, wantTab = true) {
     grantLog("authorization flow published — waiting for the human");
     const first2 = runFlow(meta, callback, login, wantTab);
     started = true;
-    throw pending({ ...login, device: await firstCode(first2) }, note3);
+    throw new AuthPending(login.authorize_url, note3, await firstCode(first2));
   } catch (e) {
     if (!started) {
       callback.close();
@@ -1953,7 +2015,7 @@ function runFlow(meta, cb, login, openTab) {
     u.searchParams.set("state", login.state);
     u.searchParams.set("code_challenge", b64url(sha256(login.verifier)));
     u.searchParams.set("code_challenge_method", "S256");
-    u.searchParams.set("resource", meta.resource);
+    u.searchParams.set("resource", resourceOf(meta));
     if (meta.scope) u.searchParams.set("scope", meta.scope);
     return u.toString();
   });
@@ -1968,10 +2030,16 @@ function runFlow(meta, cb, login, openTab) {
   });
   cameBack.catch(() => {
   });
-  const device = deviceSide(meta, redirectUri, login.device, (code) => {
-    const current = readAuthLock();
-    if (current && ours(current)) writeAuthLock({ ...current, device: code ?? void 0 });
-  });
+  const device = deviceSide(
+    meta,
+    redirectUri,
+    login.device,
+    (code) => {
+      const current = readAuthLock();
+      if (current && ours(current)) writeAuthLock({ ...current, device: code ?? void 0 });
+    },
+    () => callerCode(login.state)
+  );
   let flow = null;
   flow = (async () => {
     try {
@@ -1994,7 +2062,7 @@ function runFlow(meta, cb, login, openTab) {
         redirect_uri: redirectUri,
         client_id: clientId,
         code_verifier: login.verifier,
-        resource: meta.resource
+        resource: resourceOf(meta)
       });
       releaseAuthLock(ours);
       log("authorization complete — tokens saved for every local agent");
@@ -2026,7 +2094,7 @@ var DEAD_RECHECK_MS = pauses(process.env.ISKRON_BRIDGE_DEAD_RECHECK_MS, "1000,20
 var IN_CALL_WAIT_MS = Number(process.env.ISKRON_BRIDGE_IN_CALL_WAIT_MS) || 1e4;
 
 // js/bridge/oauth/refreshlock.ts
-import { linkSync as linkSync2, mkdirSync as mkdirSync6, readFileSync as readFileSync7, unlinkSync as unlinkSync5, writeFileSync as writeFileSync5 } from "node:fs";
+import { linkSync as linkSync2, mkdirSync as mkdirSync6, readFileSync as readFileSync8, unlinkSync as unlinkSync5, writeFileSync as writeFileSync6 } from "node:fs";
 var REFRESH_LOCK_STALE_MS = 45e3;
 function refreshLockPath() {
   return storePath() + ".refreshing";
@@ -2034,7 +2102,7 @@ function refreshLockPath() {
 function acquireRefreshLock() {
   const claim = () => {
     const tmp = `${refreshLockPath()}.${process.pid}`;
-    writeFileSync5(tmp, JSON.stringify({ pid: process.pid, started_at: Date.now() }), {
+    writeFileSync6(tmp, JSON.stringify({ pid: process.pid, started_at: Date.now() }), {
       mode: 384
     });
     try {
@@ -2060,7 +2128,7 @@ function acquireRefreshLock() {
   }
   let held2 = null;
   try {
-    held2 = JSON.parse(readFileSync7(refreshLockPath(), "utf8"));
+    held2 = JSON.parse(readFileSync8(refreshLockPath(), "utf8"));
   } catch {
   }
   if (held2 && pidAlive(held2.pid) && Date.now() - held2.started_at < REFRESH_LOCK_STALE_MS) {
@@ -2080,7 +2148,7 @@ function acquireRefreshLock() {
 }
 function releaseRefreshLock() {
   try {
-    const l = JSON.parse(readFileSync7(refreshLockPath(), "utf8"));
+    const l = JSON.parse(readFileSync8(refreshLockPath(), "utf8"));
     if (l.pid === process.pid) unlinkSync5(refreshLockPath());
   } catch {
   }
@@ -2113,7 +2181,7 @@ async function refreshOnce(meta, cur, proactive) {
       grant_type: "refresh_token",
       refresh_token: cur.refresh_token ?? "",
       client_id: clientId,
-      resource: meta.resource
+      resource: resourceOf(meta)
     });
   } catch (e) {
     const message = errorMessage(e);
@@ -2281,7 +2349,7 @@ async function ensureAuth(wwwAuthenticate, opts = {}) {
       const rejected = opts.rejected ?? (force ? s2.tokens?.access_token ?? null : null);
       if (!force && tokenUsable(s2.tokens)) return s2.tokens;
       const meta = s2.meta?.as ? s2.meta : await discover(wwwAuthenticate);
-      if (CFG.resource) meta.resource = CFG.resource;
+      meta.resource = resourceOf(meta);
       if (interactive && s2.tokens?.refresh_token && loginPublished() && refusalStands()) {
         const landed = usableTokens({ rejected });
         if (landed) return landed;
@@ -2607,7 +2675,7 @@ function holdSocket(o) {
 }
 
 // js/shared/seen.ts
-import { appendFileSync as appendFileSync2, readFileSync as readFileSync8, renameSync as renameSync5, writeFileSync as writeFileSync6 } from "node:fs";
+import { appendFileSync as appendFileSync2, readFileSync as readFileSync9, renameSync as renameSync6, writeFileSync as writeFileSync7 } from "node:fs";
 var SEEN_KEEP = 5e3;
 var SEEN_SLACK = 1e3;
 function eventKeyOf(frame2) {
@@ -2624,7 +2692,7 @@ function deliveredKeys(frame2) {
 }
 function seenIds(seenPath) {
   try {
-    return new Set(readFileSync8(seenPath, "utf8").split("\n").filter(Boolean));
+    return new Set(readFileSync9(seenPath, "utf8").split("\n").filter(Boolean));
   } catch {
     return /* @__PURE__ */ new Set();
   }
@@ -2643,8 +2711,8 @@ function compact(seenPath, seen) {
   const inFile = new Set(file);
   const tail2 = [...[...seen].filter((x) => !inFile.has(x)), ...file].slice(-SEEN_KEEP);
   const tmp = `${seenPath}.${process.pid}.tmp`;
-  writeFileSync6(tmp, tail2.join("\n") + "\n");
-  renameSync5(tmp, seenPath);
+  writeFileSync7(tmp, tail2.join("\n") + "\n");
+  renameSync6(tmp, seenPath);
   seen.clear();
   for (const x of tail2) seen.add(x);
 }
@@ -2927,9 +2995,9 @@ function roomKind(frame2) {
     const words2 = run(counts ? 1 : 0);
     return { kind, rule: "batch", words: words2, author, phase: null, known: true, aside };
   }
-  const pending3 = kind === "said" && f.body_pending === true && !str(f.body) && !str(line.done);
+  const pending2 = kind === "said" && f.body_pending === true && !str(f.body) && !str(line.done);
   const aborted = kind === "body" && fields.aborted === true;
-  const wordsOf = pending3 ? W2.said_pending : aborted ? obj(line.author).kind === "platform" ? W2.body_lapsed : W2.body_aborted : kind === "auto" ? autoWords()[str(values.code)] ?? W2.auto : (
+  const wordsOf = pending2 ? W2.said_pending : aborted ? obj(line.author).kind === "platform" ? W2.body_lapsed : W2.body_aborted : kind === "auto" ? autoWords()[str(values.code)] ?? W2.auto : (
     // op узла (bound | updated | deleted | undeleted): без op и bound — прежнее слово.
     kind === "node" && NODE_OPS[str(fields.op)] ? W2[NODE_OPS[str(fields.op)]] : W2[kind]
   );
@@ -2944,7 +3012,7 @@ function roomKind(frame2) {
     // Стопка решает у said и body; слово без стопки — прежним путём, вставкой.
     f.stack === "defer" ? "batch" : "interrupt"
   ) : rule === "mine" ? mine.includes(str(values.target)) || myRole(f, fields) ? "interrupt" : "batch" : rule;
-  const phase = pending3 ? "pending" : aborted ? "aborted" : null;
+  const phase = pending2 ? "pending" : aborted ? "aborted" : null;
   return { kind, rule: phase ? "batch" : stack, words: text, author, phase, known: true };
 }
 var byKind = (frame2) => roomKind(frame2) !== null;
@@ -3272,7 +3340,7 @@ function stampOrigin(frame2) {
 }
 
 // js/bridge/door.ts
-import { chmodSync as chmodSync2, mkdirSync as mkdirSync7, unlinkSync as unlinkSync8, utimesSync, writeFileSync as writeFileSync8 } from "node:fs";
+import { chmodSync as chmodSync2, mkdirSync as mkdirSync7, unlinkSync as unlinkSync8, utimesSync, writeFileSync as writeFileSync9 } from "node:fs";
 import { createServer as createServer3 } from "node:net";
 import { dirname as dirname3 } from "node:path";
 
@@ -3730,12 +3798,12 @@ function batchForWatchdogs(d, raw, frame2, emit2) {
 }
 
 // js/bridge/sweep.ts
-import { existsSync, readdirSync as readdirSync2, readFileSync as readFileSync10, statSync as statSync3, unlinkSync as unlinkSync7 } from "node:fs";
+import { existsSync, readdirSync as readdirSync2, readFileSync as readFileSync11, statSync as statSync3, unlinkSync as unlinkSync7 } from "node:fs";
 import { connect as connectLocal } from "node:net";
 import { basename as basename2, join as join9 } from "node:path";
 
 // js/bridge/holdrecord.ts
-import { readFileSync as readFileSync9, unlinkSync as unlinkSync6, writeFileSync as writeFileSync7 } from "node:fs";
+import { readFileSync as readFileSync10, unlinkSync as unlinkSync6, writeFileSync as writeFileSync8 } from "node:fs";
 var holdFilePathFor = (key) => holdFilePathOf(CFG.authDir, key);
 function keyOf(realm, karta, name) {
   return `${name || "_"}--${karta}--${realm}`.replace(/[^A-Za-z0-9._-]+/g, "_").slice(0, 120);
@@ -3748,7 +3816,7 @@ function noteHarnessSession(id) {
 var sessionOfBridge = () => H.session;
 function leftOnDisk(key) {
   try {
-    return JSON.parse(readFileSync9(holdFilePathFor(key), "utf8"))?.left === true;
+    return JSON.parse(readFileSync10(holdFilePathFor(key), "utf8"))?.left === true;
   } catch {
     return false;
   }
@@ -3758,7 +3826,7 @@ function writeHoldRecord(key, rec4) {
   try {
     const session = H.session ?? rec4.session;
     const left = rec4.left ?? leftOnDisk(key);
-    writeFileSync7(
+    writeFileSync8(
       holdFilePathFor(key),
       JSON.stringify({
         ...rec4,
@@ -3775,7 +3843,7 @@ function writeHoldRecord(key, rec4) {
 function restoreHoldRecord(key, rec4) {
   if (CFG.satellite) return;
   try {
-    writeFileSync7(holdFilePathFor(key), JSON.stringify(rec4) + "\n", { mode: 384 });
+    writeFileSync8(holdFilePathFor(key), JSON.stringify(rec4) + "\n", { mode: 384 });
   } catch (e) {
     log(`hold record not restored: ${e.message}`);
   }
@@ -3786,7 +3854,7 @@ function markLeft(key, on) {
 }
 function readHoldRecord(key) {
   try {
-    const r = JSON.parse(readFileSync9(holdFilePathFor(key), "utf8"));
+    const r = JSON.parse(readFileSync10(holdFilePathFor(key), "utf8"));
     if (!r || typeof r.url !== "string" || !r.realm || r.karta == null) return null;
     if (typeof r.at !== "number" || Date.now() - r.at > HOLD_RECORD_MAX_AGE_MS) {
       dropHoldRecord(key);
@@ -3835,7 +3903,7 @@ function sweepStale(authDir, mine) {
   }
   for (const f of readdirSync2(dir).filter((x) => x.endsWith(".hold"))) {
     try {
-      const rec4 = JSON.parse(readFileSync10(join9(dir, f), "utf8"));
+      const rec4 = JSON.parse(readFileSync11(join9(dir, f), "utf8"));
       if (typeof rec4.at !== "number" || Date.now() - rec4.at > HOLD_RECORD_MAX_AGE_MS)
         unlinkSync7(join9(dir, f));
     } catch {
@@ -3857,7 +3925,7 @@ function sweepStale(authDir, mine) {
     const keyFile = join9(dir, f);
     let key;
     try {
-      key = readFileSync10(keyFile, "utf8").trim();
+      key = readFileSync11(keyFile, "utf8").trim();
     } catch {
       continue;
     }
@@ -3961,7 +4029,7 @@ var Door = class {
       }
     }
     sweepStale(authDir, key);
-    writeFileSync8(keyFilePathOf(authDir, key), key + "\n", { mode: 384 });
+    writeFileSync9(keyFilePathOf(authDir, key), key + "\n", { mode: 384 });
     if (process.platform !== "win32") {
       try {
         unlinkSync8(path);
@@ -4376,7 +4444,7 @@ function routeFrame(frame2, primary) {
 }
 
 // js/bridge/spool.ts
-import { appendFileSync as appendFileSync3, mkdirSync as mkdirSync8, readFileSync as readFileSync11, unlinkSync as unlinkSync9 } from "node:fs";
+import { appendFileSync as appendFileSync3, mkdirSync as mkdirSync8, readFileSync as readFileSync12, unlinkSync as unlinkSync9 } from "node:fs";
 import { dirname as dirname5 } from "node:path";
 var HANDOFF_MS = Number(process.env.ISKRON_BRIDGE_DAEMON_HANDOFF_MS) || 12e3;
 var DRAIN_MS = HANDOFF_MS + 5e3;
@@ -4411,7 +4479,7 @@ function parseFrame(raw) {
 function entries(path) {
   let text;
   try {
-    text = readFileSync11(path, "utf8");
+    text = readFileSync12(path, "utf8");
   } catch {
     return null;
   }
@@ -4495,7 +4563,7 @@ async function publishStatusTo(url, text, timeoutMs = 5e3, standingId = null) {
 }
 
 // js/bridge/handoff.ts
-var pending2 = /* @__PURE__ */ new Set();
+var pending = /* @__PURE__ */ new Set();
 function keepUntilEvicted(holder, key, statusUrl2) {
   const path = spoolFilePathOf(CFG.authDir, key);
   const door = socketPathOf(CFG.authDir, key);
@@ -4523,7 +4591,7 @@ function keepUntilEvicted(holder, key, statusUrl2) {
       )
     );
   });
-  pending2.add(done);
+  pending.add(done);
 }
 async function clearBusy(key, statusUrl2, door) {
   if (await localSocketAlive(door)) {
@@ -4553,7 +4621,7 @@ function takeSpool(key, primary, feed) {
     });
   });
 }
-var handoffsSettled = () => Promise.all([...pending2]).then(() => void 0);
+var handoffsSettled = () => Promise.all([...pending]).then(() => void 0);
 
 // js/bridge/hold.ts
 function keyFor() {
@@ -4873,7 +4941,7 @@ function openHolder(url, key) {
 }
 
 // js/bridge/status.ts
-import { existsSync as existsSync3, readdirSync as readdirSync4, readFileSync as readFileSync13, statSync as statSync4 } from "node:fs";
+import { existsSync as existsSync3, readdirSync as readdirSync4, readFileSync as readFileSync14, statSync as statSync4 } from "node:fs";
 import { isAbsolute, join as join11 } from "node:path";
 
 // js/shared/busyargs.ts
@@ -4971,7 +5039,7 @@ function listenLine(key) {
 
 // js/bridge/skillset.ts
 import { createHash as createHash6 } from "node:crypto";
-import { existsSync as existsSync2, readdirSync as readdirSync3, readFileSync as readFileSync12 } from "node:fs";
+import { existsSync as existsSync2, readdirSync as readdirSync3, readFileSync as readFileSync13 } from "node:fs";
 import { homedir as homedir4 } from "node:os";
 import { dirname as dirname6, join as join10, resolve as resolve5 } from "node:path";
 import { fileURLToPath as fileURLToPath3 } from "node:url";
@@ -4992,7 +5060,7 @@ function skillsRoot(self = currentScope().origin?.path || fileURLToPath3(import.
 var sha8 = (h) => h.digest("hex").slice(0, 8);
 function lockSet(root) {
   try {
-    const lock = JSON.parse(readFileSync12(join10(dirname6(root), ".skill-lock.json"), "utf8"));
+    const lock = JSON.parse(readFileSync13(join10(dirname6(root), ".skill-lock.json"), "utf8"));
     const skills = lock.skills ?? {};
     const own = skills["establish-mcp"]?.source;
     const name = typeof own === "string" && own.trim() ? own.trim() : SET;
@@ -5015,7 +5083,7 @@ function treeStamp(root) {
   for (const name of names2) {
     let body;
     try {
-      body = readFileSync12(join10(root, name, "SKILL.md"));
+      body = readFileSync13(join10(root, name, "SKILL.md"));
     } catch {
       continue;
     }
@@ -5031,7 +5099,7 @@ function skillsAttr() {
   if (!root) return { name: SET, version: "unknown" };
   let version = "unknown";
   try {
-    version = versionIn(readFileSync12(join10(root, BRIDGE_IN_SET), "utf8")) ?? "unknown";
+    version = versionIn(readFileSync13(join10(root, BRIDGE_IN_SET), "utf8")) ?? "unknown";
   } catch {
   }
   const lock = lockSet(root);
@@ -5509,7 +5577,7 @@ async function heldElsewhere(realm) {
   const out6 = [];
   for (const f of readdirSync4(dir).filter((x) => x.endsWith(".hold"))) {
     try {
-      const rec4 = JSON.parse(readFileSync13(join11(dir, f), "utf8"));
+      const rec4 = JSON.parse(readFileSync14(join11(dir, f), "utf8"));
       if (!rec4?.realm || rec4.karta == null) continue;
       if (!anyRealm && slugOf(String(rec4.realm)) !== slugOf(realm)) continue;
       const key = keyOf(rec4.realm, rec4.karta, rec4.name ?? "");
@@ -5535,13 +5603,13 @@ async function notHeldHere(realm) {
 
 // js/bridge/update.ts
 import { spawn as spawn2 } from "node:child_process";
-import { existsSync as existsSync4, lstatSync as lstatSync2, readFileSync as readFileSync15 } from "node:fs";
+import { existsSync as existsSync4, lstatSync as lstatSync2, readFileSync as readFileSync16 } from "node:fs";
 import { homedir as homedir5 } from "node:os";
 import { dirname as dirname8, join as join13 } from "node:path";
 import { fileURLToPath as fileURLToPath4 } from "node:url";
 
 // js/bridge/releases.ts
-import { mkdirSync as mkdirSync9, readFileSync as readFileSync14, renameSync as renameSync6, writeFileSync as writeFileSync9 } from "node:fs";
+import { mkdirSync as mkdirSync9, readFileSync as readFileSync15, renameSync as renameSync7, writeFileSync as writeFileSync10 } from "node:fs";
 import { dirname as dirname7, join as join12 } from "node:path";
 var RELEASES_URL = process.env.ISKRON_BRIDGE_RELEASES_URL?.trim() || "https://api.github.com/repos/iskron-ai/skills/releases/latest";
 var RELEASES_PAGE_URL = process.env.ISKRON_BRIDGE_RELEASES_PAGE_URL?.trim() || (process.env.ISKRON_BRIDGE_RELEASES_URL?.trim() ? null : "https://github.com/iskron-ai/skills/releases/latest");
@@ -5550,8 +5618,8 @@ var releaseTagPath = () => join12(dirname7(homeBridgePath()), "release-tag.json"
 function writeAtomic(path, bytes) {
   mkdirSync9(dirname7(path), { recursive: true, mode: 448 });
   const tmp = `${path}.tmp-${process.pid}`;
-  writeFileSync9(tmp, bytes, { mode: 420 });
-  renameSync6(tmp, path);
+  writeFileSync10(tmp, bytes, { mode: 420 });
+  renameSync7(tmp, path);
 }
 var RateLimitError = class extends Error {
   limit;
@@ -5614,7 +5682,7 @@ async function tagFromPage(url) {
 }
 function readReleaseTag() {
   try {
-    const c = JSON.parse(readFileSync14(releaseTagPath(), "utf8"));
+    const c = JSON.parse(readFileSync15(releaseTagPath(), "utf8"));
     return c.source === RELEASES_URL ? c : null;
   } catch {
     return null;
@@ -5699,7 +5767,7 @@ var isSymlink = (path) => {
 };
 var versionOf = (path) => {
   try {
-    return versionIn(readFileSync15(path, "utf8"));
+    return versionIn(readFileSync16(path, "utf8"));
   } catch {
     return null;
   }
@@ -5709,7 +5777,7 @@ function syncHome(self = selfPath()) {
   const home = homeBridgePath();
   let mine;
   try {
-    mine = readFileSync15(self);
+    mine = readFileSync16(self);
   } catch {
     return out6;
   }
@@ -5724,8 +5792,8 @@ function syncHome(self = selfPath()) {
     const plugin = opencodePluginPath();
     const packaged = join13(dirname8(self), "opencode-plugin.js");
     if (existsSync4(plugin) && existsSync4(packaged)) {
-      const fresh = readFileSync15(packaged);
-      if (!readFileSync15(plugin).equals(fresh)) {
+      const fresh = readFileSync16(packaged);
+      if (!readFileSync16(plugin).equals(fresh)) {
         writeAtomic(plugin, fresh);
         out6.copied.push(plugin);
       }
@@ -5759,7 +5827,7 @@ function reexec(path, argv2) {
 }
 function readLatest(authDir) {
   try {
-    return JSON.parse(readFileSync15(latestPathOf(authDir), "utf8"));
+    return JSON.parse(readFileSync16(latestPathOf(authDir), "utf8"));
   } catch {
     return null;
   }
@@ -5791,7 +5859,7 @@ async function downloadRelease(tag, version, authDir) {
   const plugin = opencodePluginPath();
   if (existsSync4(plugin)) {
     const fresh = await fetchText(`${base}/skills/establish-mcp/scripts/opencode-plugin.js`);
-    if (readFileSync15(plugin, "utf8") !== fresh) {
+    if (readFileSync16(plugin, "utf8") !== fresh) {
       writeAtomic(plugin, fresh);
       written.push(plugin);
     }
@@ -6031,12 +6099,12 @@ async function underCap(work) {
 import { randomBytes as randomBytes3 } from "node:crypto";
 import {
   mkdirSync as mkdirSync10,
-  readFileSync as readFileSync16,
-  renameSync as renameSync7,
+  readFileSync as readFileSync17,
+  renameSync as renameSync8,
   rmSync,
   statSync as statSync5,
   unlinkSync as unlinkSync10,
-  writeFileSync as writeFileSync10
+  writeFileSync as writeFileSync11
 } from "node:fs";
 import { join as join14 } from "node:path";
 var SATELLITE_TTL_S = Number(process.env.ISKRON_BRIDGE_SATELLITE_TTL) || 300;
@@ -6065,12 +6133,12 @@ function claimName(name) {
   const file = claimFile(name);
   let pid = 0;
   try {
-    pid = Number(readFileSync16(file, "utf8").trim());
+    pid = Number(readFileSync17(file, "utf8").trim());
   } catch {
   }
   const me = sessionPid();
   if (pid && pid !== me && alive(pid)) return false;
-  writeFileSync10(file, `${me}
+  writeFileSync11(file, `${me}
 `, { mode: 384 });
   if (!releaseOnExit) process.once("exit", releaseAllClaims);
   releaseOnExit = true;
@@ -6080,7 +6148,7 @@ function claimName(name) {
 }
 var dropClaim = (f, pid) => {
   try {
-    if (Number(readFileSync16(f, "utf8").trim()) === pid) unlinkSync10(f);
+    if (Number(readFileSync17(f, "utf8").trim()) === pid) unlinkSync10(f);
   } catch {
   }
   allClaims.delete(f);
@@ -6096,7 +6164,7 @@ function releaseAllClaims() {
 var LOCK_OWNER = "owner";
 function lockOwner(lock) {
   try {
-    return readFileSync16(join14(lock, LOCK_OWNER), "utf8").trim();
+    return readFileSync17(join14(lock, LOCK_OWNER), "utf8").trim();
   } catch {
     return null;
   }
@@ -6113,7 +6181,7 @@ function abandoned(lock, owner) {
 function takeLock(lock, owner) {
   const away = `${lock}.${process.pid}-${randomBytes3(6).toString("hex")}`;
   try {
-    renameSync7(lock, away);
+    renameSync8(lock, away);
   } catch {
     return null;
   }
@@ -6145,7 +6213,7 @@ async function underClaimLock(fn) {
       continue;
     }
     try {
-      writeFileSync10(join14(lock, LOCK_OWNER), `${token}
+      writeFileSync11(join14(lock, LOCK_OWNER), `${token}
 `, { mode: 384 });
     } catch (e) {
       fault = e.message;
@@ -6605,7 +6673,7 @@ async function armRoleHook(p) {
 }
 
 // js/bridge/resume.ts
-import { existsSync as existsSync5, readdirSync as readdirSync5, readFileSync as readFileSync17 } from "node:fs";
+import { existsSync as existsSync5, readdirSync as readdirSync5, readFileSync as readFileSync18 } from "node:fs";
 import { join as join15 } from "node:path";
 async function deadPredecessor(realm, karta, name) {
   const key = keyOf(realm, karta, name);
@@ -6628,7 +6696,7 @@ async function resumeFromDisk(realm, karta, name) {
     holdStanding(rec4.url, rec4.statusUrl);
     const hello = await awaitHello(4e3);
     if (hello && holdsKey(key)) {
-      const pending3 = Number(hello.pending) || 0;
+      const pending2 = Number(hello.pending) || 0;
       const me = sessionOfBridge();
       let busy = "";
       if (rec4.status && me && rec4.session === me) {
@@ -6644,14 +6712,14 @@ async function resumeFromDisk(realm, karta, name) {
           "; the former busy line is not restored — say your own"
         );
       }
-      log(`standing resumed from disk (${key}), pending ${pending3}`);
-      standingLog(`resumed-from-disk ${key}: pending ${pending3}`);
+      log(`standing resumed from disk (${key}), pending ${pending2}`);
+      standingLog(`resumed-from-disk ${key}: pending ${pending2}`);
       return {
         word: L(
-          `возврат места с диска после перезапуска моста — сокет открыт заново тем же адресом (ожидало кадров — ${pending3})${busy}`,
-          `the seat returned from disk after the bridge restarted — the socket reopened at the same address (frames waiting — ${pending3})${busy}`
+          `возврат места с диска после перезапуска моста — сокет открыт заново тем же адресом (ожидало кадров — ${pending2})${busy}`,
+          `the seat returned from disk after the bridge restarted — the socket reopened at the same address (frames waiting — ${pending2})${busy}`
         ),
-        pending: pending3
+        pending: pending2
       };
     }
   } finally {
@@ -6680,7 +6748,7 @@ function recordsFor(sel) {
   const left = [];
   for (const f of readdirSync5(dir).filter((x) => x.endsWith(".hold"))) {
     try {
-      const rec4 = JSON.parse(readFileSync17(join15(dir, f), "utf8"));
+      const rec4 = JSON.parse(readFileSync18(join15(dir, f), "utf8"));
       if (!rec4 || rec4.client !== mine) continue;
       const key = keyOf(rec4.realm, rec4.karta, rec4.name);
       const keyed2 = !!sel.key && key === sel.key;
@@ -6850,11 +6918,11 @@ async function runCheck(msg) {
     (e) => e.karta === String(s2.karta) && nameOf(e.address) === (s2.name ?? "")
   );
   if (!mine) return reply(msg, { holding: true, key, word: "своего места на доске нет" });
-  const pending3 = undelivered(mine);
+  const pending2 = undelivered(mine);
   const listening = listens(mine);
   if (listening) {
     D.reopens = 0;
-    return reply(msg, { holding: true, key, listening, pending: pending3, word: "слушаю" });
+    return reply(msg, { holding: true, key, listening, pending: pending2, word: "слушаю" });
   }
   if (D.reopens >= REOPEN_LIMIT) {
     const text = `Искрон: доска читает место ${key} не слушающим и после ${REOPEN_LIMIT} переоткрытий сокета — больше не рву; проверь доску и сервер, вернуть слух — iskron_stand с take=true.`;
@@ -6871,14 +6939,14 @@ async function runCheck(msg) {
       holding: true,
       key,
       listening,
-      pending: pending3,
+      pending: pending2,
       reopened: false,
       stuck: true,
       word: text
     });
   }
   D.reopens++;
-  standingLog(`reopen ${key}: board reads deaf${pending3 ? ` with ${pending3} pending` : ""}`);
+  standingLog(`reopen ${key}: board reads deaf${pending2 ? ` with ${pending2} pending` : ""}`);
   parkStanding("доска не читает слушающим");
   resumeStanding();
   const hello = await awaitHello(4e3);
@@ -6886,7 +6954,7 @@ async function runCheck(msg) {
     holding: true,
     key,
     listening,
-    pending: pending3,
+    pending: pending2,
     reopened: !!hello,
     word: hello ? `сокет переоткрыт: ожидало кадров — ${Number(hello.pending) || 0}` : "сокет переоткрыт, hello за 4 с не пришёл"
   });
@@ -7085,9 +7153,9 @@ var SW = {
     "Сокет держит этот мост (hello получен при открытии сокета).",
     "This bridge holds the socket (hello came when the socket opened)."
   ),
-  hello: (pending3) => L(
-    `hello получен: ожидало кадров — ${pending3}.`,
-    `hello received: frames waiting — ${pending3}.`
+  hello: (pending2) => L(
+    `hello получен: ожидало кадров — ${pending2}.`,
+    `hello received: frames waiting — ${pending2}.`
   ),
   noLocalSocket: (why) => L(
     `НО локальный сокет стояния не поднят (${why}) — сторожу не к чему цепляться: слуха в этой сессии нет, команда сторожа выше не сработает. Место занято, записи подписаны; скажи это человеку.`,
@@ -7894,7 +7962,7 @@ function openIn(io, origin, scope) {
   holdFromEnv();
   if (!CFG.satellite) startDeafnessWatch();
   const rl = createInterface2({ input: io.input, terminal: false });
-  const pending3 = /* @__PURE__ */ new Set();
+  const pending2 = /* @__PURE__ */ new Set();
   let handshake = null;
   rl.on(
     "line",
@@ -7922,8 +7990,8 @@ function openIn(io, origin, scope) {
         const gate = handshake;
         p = gate.then(run, run);
       } else p = run();
-      pending3.add(p);
-      p.finally(() => pending3.delete(p));
+      pending2.add(p);
+      p.finally(() => pending2.delete(p));
     })
   );
   let leaving = null;
@@ -7944,8 +8012,8 @@ function openIn(io, origin, scope) {
     await revokeSatellitePlaces(places);
     if (addr && closing) await publishStatusTo(addr.url, "", 3e3).catch(() => {
     });
-    if (handover) await Promise.race([Promise.allSettled([...pending3]), sleep(HANDOVER_WAIT_MS)]);
-    else await Promise.allSettled([...pending3, ...tokenRequestsInFlight]);
+    if (handover) await Promise.race([Promise.allSettled([...pending2]), sleep(HANDOVER_WAIT_MS)]);
+    else await Promise.allSettled([...pending2, ...tokenRequestsInFlight]);
     await flushStdout(io.output);
     if (origin) {
       releaseSatelliteClaims();
@@ -7989,7 +8057,7 @@ var SELF = (() => {
 })();
 var versionOfFile = (path) => {
   try {
-    return versionIn(readFileSync18(path, "utf8"));
+    return versionIn(readFileSync19(path, "utf8"));
   } catch {
     return null;
   }
@@ -8374,7 +8442,7 @@ function realmListAsk() {
 
 // js/bridge/raise.ts
 import { spawn as spawn4 } from "node:child_process";
-import { readFileSync as readFileSync19 } from "node:fs";
+import { readFileSync as readFileSync20 } from "node:fs";
 import { fileURLToPath as fileURLToPath6 } from "node:url";
 var RAISE_STALE_MS = 15e3;
 var SELF2 = (() => {
@@ -8390,7 +8458,7 @@ function daemonEntry() {
   if (updatesDisabled()) return SELF2;
   const home = homeBridgePath();
   try {
-    const v = versionIn(readFileSync19(home, "utf8"));
+    const v = versionIn(readFileSync20(home, "utf8"));
     if (home !== SELF2 && compareVersions(v, VERSION) > 0) return home;
   } catch {
   }
@@ -8927,7 +8995,7 @@ function openDoor(socketPath, onMessage, onClose) {
 }
 
 // js/watchdog/client.ts
-import { existsSync as existsSync6, readdirSync as readdirSync6, readFileSync as readFileSync20 } from "node:fs";
+import { existsSync as existsSync6, readdirSync as readdirSync6, readFileSync as readFileSync21 } from "node:fs";
 import { connect as connect4 } from "node:net";
 import { join as join17 } from "node:path";
 var ATTACH_WINDOW_MS = Number(process.env.ISKRON_WATCHDOG_ATTACH_MS) || 6e4;
@@ -8948,7 +9016,7 @@ function resolveStanding(argv2) {
   if (key) return { key, path: pathFor(key), authDir };
   const held2 = existsSync6(dir) ? readdirSync6(dir).filter((f) => f.endsWith(".key")).map((f) => {
     try {
-      return readFileSync20(join17(dir, f), "utf8").trim();
+      return readFileSync21(join17(dir, f), "utf8").trim();
     } catch {
       return "";
     }
@@ -9461,13 +9529,13 @@ function runWatchdogExit(argv2) {
 
 // js/cli/doctor.ts
 import { createHash as createHash9 } from "node:crypto";
-import { existsSync as existsSync10, readdirSync as readdirSync8, readFileSync as readFileSync23 } from "node:fs";
+import { existsSync as existsSync10, readdirSync as readdirSync8, readFileSync as readFileSync24 } from "node:fs";
 import { homedir as homedir10 } from "node:os";
 import { dirname as dirname11, join as join21 } from "node:path";
 import { fileURLToPath as fileURLToPath8 } from "node:url";
 
 // js/cli/opencode-config.ts
-import { existsSync as existsSync8, readFileSync as readFileSync21 } from "node:fs";
+import { existsSync as existsSync8, readFileSync as readFileSync22 } from "node:fs";
 import { homedir as homedir7 } from "node:os";
 import { dirname as dirname9, join as join19 } from "node:path";
 function openCodeMcpEntries(out6) {
@@ -9529,7 +9597,7 @@ function openCodeMcpEntries(out6) {
   for (const f of new Set(files)) {
     if (!existsSync8(f)) continue;
     try {
-      sources.push([f, readFileSync21(f, "utf8")]);
+      sources.push([f, readFileSync22(f, "utf8")]);
     } catch {
       unreadable++;
       out6(`OpenCode: ${f} не читается`);
@@ -9565,7 +9633,7 @@ function openCodeMcpEntries(out6) {
 }
 
 // js/cli/subagents.ts
-import { existsSync as existsSync9, readdirSync as readdirSync7, readFileSync as readFileSync22, statSync as statSync8 } from "node:fs";
+import { existsSync as existsSync9, readdirSync as readdirSync7, readFileSync as readFileSync23, statSync as statSync8 } from "node:fs";
 import { homedir as homedir9 } from "node:os";
 import { basename as basename5, delimiter, dirname as dirname10, isAbsolute as isAbsolute3, join as join20, resolve as resolve6 } from "node:path";
 
@@ -9927,7 +9995,7 @@ function agentFiles(dir, scope) {
     const path = join20(dir, f);
     let fm = {};
     try {
-      const text = frontmatterText(readFileSync22(path, "utf8"));
+      const text = frontmatterText(readFileSync23(path, "utf8"));
       if (text !== null) fm = parseFrontmatter(text);
     } catch {
     }
@@ -9982,7 +10050,7 @@ function parentBridges(root) {
   };
   const readJson = (p) => {
     try {
-      return JSON.parse(readFileSync22(p, "utf8"));
+      return JSON.parse(readFileSync23(p, "utf8"));
     } catch {
       return null;
     }
@@ -10013,7 +10081,7 @@ function parentBridges(root) {
 function trustLine(root) {
   let cfg;
   try {
-    cfg = JSON.parse(readFileSync22(join20(homedir9(), ".claude.json"), "utf8"));
+    cfg = JSON.parse(readFileSync23(join20(homedir9(), ".claude.json"), "utf8"));
   } catch {
     return null;
   }
@@ -10207,14 +10275,14 @@ function homeCopyReport() {
   const home = homeBridgePath();
   let self = null;
   try {
-    self = readFileSync23(fileURLToPath8(import.meta.url));
+    self = readFileSync24(fileURLToPath8(import.meta.url));
   } catch {
   }
   if (!existsSync10(home)) {
     out3(`домашняя копия: нет (${home}) — её кладёт establish-mcp при подключении`);
     return;
   }
-  const bytes = readFileSync23(home);
+  const bytes = readFileSync24(home);
   if (self && bytes.equals(self)) {
     out3(`домашняя копия: ${home} — та же сборка, что и этот файл`);
     return;
@@ -10343,7 +10411,7 @@ function grantReport() {
   }
   const logPath = grantLogPath();
   if (existsSync10(logPath)) {
-    const lines = readFileSync23(logPath, "utf8").trim().split("\n").slice(-3);
+    const lines = readFileSync24(logPath, "utf8").trim().split("\n").slice(-3);
     out3(`  grant.log, последнее:`);
     for (const l of lines) out3(`    ${l}`);
   }
@@ -10369,7 +10437,7 @@ function claudePluginReport() {
   const registry = join21(homedir10(), ".claude", "plugins", "installed_plugins.json");
   if (!existsSync10(registry)) return;
   try {
-    const reg = JSON.parse(readFileSync23(registry, "utf8"));
+    const reg = JSON.parse(readFileSync24(registry, "utf8"));
     const mine = Object.entries(reg.plugins ?? {}).filter(([k]) => /^iskron@/.test(k));
     if (!mine.length) {
       out3(`Claude Code: плагин iskron не установлен (${registry})`);
@@ -10381,7 +10449,7 @@ function claudePluginReport() {
         let entry = "запись моста в манифесте не найдена";
         if (manifest && existsSync10(manifest)) {
           try {
-            const m = JSON.parse(readFileSync23(manifest, "utf8"));
+            const m = JSON.parse(readFileSync24(manifest, "utf8"));
             const hit = Object.entries(m.mcpServers ?? {}).find(
               ([, v]) => (v.args ?? []).some((a) => /iskron\.mjs/.test(a))
             );
@@ -10426,7 +10494,7 @@ function codexPluginReport(home) {
       let word = "манифеста нет";
       if (existsSync10(manifest)) {
         try {
-          const m = JSON.parse(readFileSync23(manifest, "utf8"));
+          const m = JSON.parse(readFileSync24(manifest, "utf8"));
           const hit = Object.values(m.mcpServers ?? {}).some(
             (v) => (v.args ?? []).some((a) => /iskron\.mjs/.test(a))
           );
@@ -10446,7 +10514,7 @@ function harnessReport() {
   const claude = join21(homedir10(), ".claude.json");
   if (existsSync10(claude)) {
     try {
-      const cfg = JSON.parse(readFileSync23(claude, "utf8"));
+      const cfg = JSON.parse(readFileSync24(claude, "utf8"));
       const entries2 = Object.entries(cfg.mcpServers ?? {}).filter(
         ([, v]) => (v.args ?? []).some((a) => /iskron/.test(a))
       );
@@ -10472,7 +10540,7 @@ function harnessReport() {
       out3(
         `OpenCode: плагин ${copy} стоит; рядом с этим файлом поставки плагина нет, сверить не с чем`
       );
-    } else if (readFileSync23(copy).equals(readFileSync23(packaged))) {
+    } else if (readFileSync24(copy).equals(readFileSync24(packaged))) {
       out3(`OpenCode: плагин ${copy} — та же сборка, что в поставке`);
     } else {
       out3(`OpenCode: плагин ${copy} — ДРУГИЕ байты, обнови из поставки: cp "${packaged}" ${copy}`);
@@ -10494,7 +10562,7 @@ function harnessReport() {
       );
     const codex = join21(codexHome, "config.toml");
     if (existsSync10(codex)) {
-      const text = readFileSync23(codex, "utf8");
+      const text = readFileSync24(codex, "utf8");
       out3(
         `Codex: ${/^\s*\[mcp_servers\."?iskron"?\]|^\s*mcp_servers\."?iskron"?\s*=/m.test(text) ? "ручная запись моста в config.toml есть" : "ручной записи моста в config.toml нет (штатная — в плагине)"}`
       );

@@ -23,6 +23,8 @@
 //                  ISKRON_BRIDGE_NO_BROWSER, ISKRON_BRIDGE_DEBUG, ISKRON_BRIDGE_SCOPE,
 //                  ISKRON_BRIDGE_RESOURCE (override the resource indicator / audience),
 //                  ISKRON_BRIDGE_CLIENT_ID,
+//                  ISKRON_BRIDGE_DEVICE_CLIENT (the client of sign-in from another device;
+//                  default iskron-bridge — dynamic registration only when the server knows none),
 //                  ISKRON_BRIDGE_TOKEN (a personal access token: no OAuth at all; the
 //                  file <auth-dir>/token is read when the variable is absent),
 //                  ISKRON_BRIDGE_DAEMON=1 (тонкий мост к демону машины, thin.ts; по

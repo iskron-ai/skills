@@ -75,6 +75,11 @@ export class TokenRefused extends Error {}
 // itself — the login offered instead of a wait, never a wait itself (#4794).
 // `device` is the same login's sign-in page with a code, for a human whose
 // browser is on another device than the bridge (#6570).
+// The code's end as a moment, not a span: the answer is read whenever the human
+// gets it, and «about 5 min» is false by then.
+export const utcTime = (ms: number): string =>
+  new Date(ms).toISOString().replace("T", " ").slice(0, 19) + " UTC";
+
 export class AuthPending extends Error {
   authorizeUrl: string;
   constructor(
@@ -82,12 +87,11 @@ export class AuthPending extends Error {
     note?: string,
     device?: { link: string; user_code: string; expires_at: number },
   ) {
-    const minutes = device ? Math.max(1, Math.round((device.expires_at - Date.now()) / 60_000)) : 0;
     super(
       `authorization required — open in a browser: ${url}${note ? ` (${note})` : ""}` +
         (device
           ? ` — or sign in from another device: ${device.link} (code ${device.user_code}, ` +
-            `good for about ${minutes} min; a new code comes with the next call)`
+            `valid until ${utcTime(device.expires_at)}; past that, the next call brings a new one)`
           : "") +
         ` — or give the bridge a personal access token instead (ISKRON_BRIDGE_TOKEN, or the file <auth-dir>/token)`,
     );

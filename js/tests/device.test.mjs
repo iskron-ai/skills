@@ -55,10 +55,10 @@ test("an expired code is replaced by a new one while the login is needed", async
     const first = offered(await bridge.call("initialize", 1, INIT));
     await fake.control({ device_expire: true });
     await waitFor(
-      () => fake.state.device.polls.some((p) => p.answer === "expired_token"),
-      "the server to say expired_token",
+      () => fake.state.device.polls.some((p) => p.answer === "NotFound"),
+      "the server to refuse the code",
     );
-    await waitFor(() => fake.state.device.issued.length >= 2, "a new code after expired_token");
+    await waitFor(() => fake.state.device.issued.length >= 2, "a new code after the refusal");
     const next = linksIn((await bridge.call("initialize", 2, INIT)).error?.message);
     assert.notEqual(next.userCode, first.userCode, "the next call hands out the new code");
     assert.equal(next.userCode, fake.state.device.issued.at(-1));
