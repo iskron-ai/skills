@@ -14,6 +14,8 @@ const pauses = (v: string | undefined, fallback: string): number[] =>
 export const DEAD_RECHECK_MS = pauses(process.env.ISKRON_BRIDGE_DEAD_RECHECK_MS, "1000,2000");
 /** The longest the bridge sits out a hold inside one call before it offers the login instead. */
 export const IN_CALL_WAIT_MS = Number(process.env.ISKRON_BRIDGE_IN_CALL_WAIT_MS) || 10_000;
+/** How long a bridge left by its harness — or a daemon left by its last session — still waits for a pending login's click. */
+export const ORPHAN_FLOW_MS = Number(process.env.ISKRON_BRIDGE_ORPHAN_FLOW_MS) || 5 * 60_000;
 
 /** A pause that ends early, and leaves nothing behind, when `signal` aborts. */
 export const pauseUntil = (signal: AbortSignal, ms: number): Promise<void> =>
