@@ -85,6 +85,38 @@ const cases = [
     true,
     false,
   ],
+  // a push that moved only tags ships a release mark, not a branch to review
+  [
+    "git push origin iskron-0.21.1",
+    "To github.com:o/r.git\n * [new tag]         iskron-0.21.1 -> iskron-0.21.1",
+    false,
+    false,
+  ],
+  [
+    "git push origin iskron-0.21.1 2>&1 | tail -3",
+    "To github.com:o/r.git\n * [new tag]         iskron-0.21.1 -> iskron-0.21.1",
+    false,
+    false,
+  ],
+  [
+    "git push --force origin v1 2>&1 | tail -3",
+    "To github.com:o/r.git\n t [tag update]      v1 -> v1  (1234567 -> 89abcde)",
+    false,
+    false,
+  ],
+  // …but a branch riding along with the tag still wakes
+  [
+    "git push --follow-tags 2>&1 | tail -3",
+    "To github.com:o/r.git\n   1234567..89abcde  feat/x -> feat/x\n * [new tag]         v2 -> v2",
+    true,
+    false,
+  ],
+  [
+    "git push origin feat/y v2",
+    "To github.com:o/r.git\n * [new tag]         v2 -> v2\n * [new branch]      feat/y -> feat/y",
+    true,
+    false,
+  ],
   // the trunk is a name with a boundary, not a prefix
   ["git checkout main-foo && git pull", "", false, false],
   ["git switch master-fix && git pull", "", false, false],

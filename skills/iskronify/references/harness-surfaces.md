@@ -95,7 +95,8 @@ export default {
           quiet = head !== "" && head === git("rev-parse", "@{push}") && !["main", "master"].includes(git("rev-parse", "--abbrev-ref", "HEAD"));
         }
       }
-      const note = ran(push, "-h|--help", /To [^\n]+(?:\n [!=] .*)*\n [ *+-]/) || quiet
+      const tagsOnly = /^(?=[\s\S]*\n [*t] \[(?:new tag|tag update)\])(?![\s\S]*\n (?:[ +-] |\* (?!\[new tag\])))/; // метка выпуска — не ветка на ревью
+      const note = (ran(push, "-h|--help", /To [^\n]+(?:\n [!=] .*)*\n [ *+-]/) && !tagsOnly.test(out)) || quiet
         ? "[iskron] пуш — не отгрузка: самопроверка, словарный проход по тексту PR, холодное ревью этапа."
         : ran("gh pr merge", "-h|--help|--auto|--disable-auto", /(Merged|Squashed and merged|Rebased and merged) pull request/) || ((exit ?? 0) === 0 && pull.test(cmd))
           ? "[iskron] мерж — акты после мержа AGENTS.md: проткать, карта, модусы, закрыть по оси, reconcile, фидбэк, словарь."
