@@ -72,6 +72,10 @@ export const keyFilePathOf = (authDir: string, key: string): string =>
 export const holdFilePathOf = (authDir: string, key: string): string =>
   join(standingsDirOf(authDir), `${hashOf(key)}.hold`);
 
+/** Спул передачи (0600): кадры, пришедшие уходящему демону после закрытия двери места, — преемнику (граф nks-dev: #6586). */
+export const spoolFilePathOf = (authDir: string, key: string): string =>
+  join(standingsDirOf(authDir), `${hashOf(key)}.spool`);
+
 /**
  * Память отданного — id уже отданных кадров; файл рядом с ключом, не с сокетом: на
  * Windows сокет — именованный канал, не путь. С `server` — память места на этом
