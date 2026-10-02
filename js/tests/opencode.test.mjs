@@ -2230,6 +2230,12 @@ test("a child session whose first prompt is a launch line with a case stands as 
       sentCalls(calls)[0].pid,
       "the child stands on a bridge of its own",
     );
+    // Вызов агента — работа (числовой id); строка запуска — служебный ход плагина (#6510).
+    assert.equal(typeof sentCalls(calls)[0].id, "number", "the agent's own call");
+    assert.ok(
+      after.every((c) => String(c.id).startsWith("iskron-service-")),
+      `launch calls are marked as service moves: ${JSON.stringify(after.map((c) => c.id))}`,
+    );
     assert.equal(
       read,
       "You are a subagent spawned by another session.\n" +
@@ -2937,8 +2943,7 @@ test("ten case frames in a row are one queue prompt: one count of the case with 
   }
 });
 
-// An addressed word not to me (#6081): a fact in the case prompt, no body, no steer.
-const ASIDE = "Алексей (@aleksei:probe) → @boris:probe";
+// An addressed word not to me (#6081): no body, no steer; #6574: a count of the case.
 
 /** Кадры в мост сессии; ждать, пока промптов станет n, и ещё окна — лишнего не пришло. */
 async function asidePrompts(name, frames, n) {

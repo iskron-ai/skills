@@ -10,6 +10,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { SKILLS_ROOT_ENV } from "../shared/clients.ts";
+import { currentScope, envOf } from "../shared/scope.ts";
 import { versionIn } from "../shared/version.ts";
 
 /** Корень набора окружением: домашняя копия лежит вне набора и узнаёт его только так. */
@@ -17,14 +18,18 @@ export { SKILLS_ROOT_ENV };
 const SET = "iskron-ai/skills";
 const BRIDGE_IN_SET = join("establish-mcp", "scripts", "iskron.mjs");
 
-const env = (k: string): string => process.env[k]?.trim() ?? "";
+// Окружение и файл — моста харнеса (shared/scope.ts): у сессии демона машины
+// набор узнаётся по тонкому мосту, которым запустил харнес, а не по демону.
+const env = (k: string): string => envOf(k)?.trim() ?? "";
 
 /**
  * Каталог, в котором лежат скиллы набора (`<корень>/<скилл>/SKILL.md`), или null.
  * Порядок: окружение; раскладка собственного файла (…/establish-mcp/scripts/);
  * корень плагина Claude Code; плоская установка ~/.agents/skills.
  */
-export function skillsRoot(self = fileURLToPath(import.meta.url)): string | null {
+export function skillsRoot(
+  self = currentScope().origin?.path || fileURLToPath(import.meta.url),
+): string | null {
   const plugin = env("CLAUDE_PLUGIN_ROOT");
   const candidates = [
     env(SKILLS_ROOT_ENV),

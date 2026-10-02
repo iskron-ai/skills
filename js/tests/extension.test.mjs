@@ -579,6 +579,11 @@ test("a first prompt «start … дело №N от <seat>» stands as that seat
         ["iskron_case", { action: "join", realm: "@nks/nks-dev", room: "#77" }],
       ],
     );
+    // Строка запуска — служебный ход расширения, не работа агента (хартбит места, #6510).
+    assert.ok(
+      toolCalls(calls).every((c) => String(c.id).startsWith("iskron-service-")),
+      `launch calls are marked as service moves: ${JSON.stringify(toolCalls(calls).map((c) => c.id))}`,
+    );
     const s = starts(log);
     assert.equal(s.length, 2, s.join("\n"));
     assert.match(s[1], /--satellite/, "the bridge is raised anew as a satellite");
@@ -786,7 +791,6 @@ test("room kinds: closing and records to me go by their way; the rest of the cas
 
 // An addressed word not to me (#6081): a fact without its body and without a
 // wake (nextTurn); #6574: the words not to the seat come as one count of the case.
-const ASIDE = "Алексей (@aleksei:probe) → @boris:probe";
 /** Дело проб в начале строки — номер и зачин (#6081). */
 const CASE7 = "№7 «Стенд»";
 /** Строка счёта дела проб без адресованных месту (#6574). */

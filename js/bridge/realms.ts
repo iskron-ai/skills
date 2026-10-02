@@ -6,8 +6,11 @@
 // places.ts); список графов (iskron_realm list) — запасной путь, когда сличать
 // надо раньше hello. Неразрешённое имя — само по себе, не «тот же граф».
 
-const aliases = new Map<string, string>(); // rN или slug → @owner/slug
-let listing: Promise<void> | null = null; // чтение списка в полёте — одно на всех ждущих
+import { scoped } from "../shared/scope.ts";
+
+// Имена графов — сессии (shared/scope.ts): у сессий демона могут быть разные серверы и учётки.
+const aliases = scoped(() => new Map<string, string>()); // rN или slug → @owner/slug
+const R = scoped(() => ({ listing: null as Promise<void> | null })); // чтение списка в полёте — одно на всех ждущих
 
 const CANON_RE = /@[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+/;
 const trimmed = (r: unknown): string => String(r ?? "").trim();
@@ -87,7 +90,7 @@ export async function resolveRealms(
 ): Promise<void> {
   const open = names.map(trimmed).filter((t) => t && !resolvedRealm(t));
   if (!open.length) return;
-  listing ??= list()
+  R.listing ??= list()
     .then(
       (text) => {
         if (text) learnRealmList(text);
@@ -95,7 +98,7 @@ export async function resolveRealms(
       () => {},
     )
     .finally(() => {
-      listing = null;
+      R.listing = null;
     });
-  await listing;
+  await R.listing;
 }

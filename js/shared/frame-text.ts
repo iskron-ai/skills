@@ -12,17 +12,14 @@ const ZACHIN = 40;
 
 /** Дела кадра из пачки — по делу, в порядке первого появления. */
 function casesOf(frames: Frame[]): Frame[][] {
-  const order: string[] = [];
   const by = new Map<string, Frame[]>();
   for (const f of frames) {
     const key = caseKey(f) || idOf((f as Rec).id) || "?";
-    if (!by.has(key)) {
-      by.set(key, []);
-      order.push(key);
-    }
-    by.get(key)!.push(f);
+    const got = by.get(key);
+    if (got) got.push(f);
+    else by.set(key, [f]);
   }
-  return order.map((k) => by.get(k)!);
+  return [...by.values()];
 }
 
 /** Дело кадра: номер (seq, иначе id), зачин, граф; null — кадр не из дела. */

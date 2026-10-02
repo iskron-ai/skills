@@ -3,6 +3,7 @@
 // ключом usage в полный набор attrs (placefields.ts) и повторяет register
 // своего места — не чаще раза в минуту и только при заметном сдвиге: register
 // — вызов на сервер, а цифры меняются каждый шаг.
+import { scoped } from "../shared/scope.ts";
 import { isParked } from "./hold.ts";
 import { rememberUsage } from "./placefields.ts";
 import { replayRegister } from "./standing.ts";
@@ -25,8 +26,7 @@ export interface Usage {
 
 const MIN_GAP_MS = Number(process.env.ISKRON_USAGE_GAP_MS || 60_000);
 
-let published: Usage | null = null;
-let publishedAt = 0;
+const U = scoped(() => ({ published: null as Usage | null, at: 0 }));
 
 const num = (v: unknown): number | undefined =>
   typeof v === "number" && Number.isFinite(v) && v >= 0 ? Math.round(v) : undefined;
@@ -59,11 +59,11 @@ export async function runUsage(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   const s = state.standing;
   // Ушёл с места (leave) — register вернул бы привязку отпущенного места; цифры едут со следующим занятием.
   const away = !!s && isParked(s.realm, s.karta, s.name ?? "");
-  if (s && !away && Date.now() - publishedAt >= MIN_GAP_MS && moved(published, u)) {
-    publishedAt = Date.now();
+  if (s && !away && Date.now() - U.at >= MIN_GAP_MS && moved(U.published, u)) {
+    U.at = Date.now();
     const got = await replayRegister(s);
     pushed = !!got && !got.error && !got.result?.isError;
-    if (pushed) published = u;
+    if (pushed) U.published = u;
     else
       log(
         `usage: register did not take the attrs this time — ${JSON.stringify(got?.error ?? got?.result ?? null).slice(0, 200)}`,

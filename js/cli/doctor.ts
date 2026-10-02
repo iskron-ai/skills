@@ -20,10 +20,13 @@ import {
 } from "../bridge/config.ts";
 import { errorMessage } from "../bridge/errors.ts";
 import { discoverMeta } from "../bridge/oauth/discovery.ts";
+import { probeDaemon } from "../bridge/probe.ts";
 import { grantLogPath, loadGrantState, loadStore, storePath } from "../bridge/store.ts";
+import { daemonWanted } from "../bridge/thin.ts";
 import { refreshHours, tokenUsable } from "../bridge/tokens.ts";
 import { readLatest } from "../bridge/update.ts";
 import { homeBridgePath } from "../shared/home.ts";
+import { seamRunDir } from "../shared/seam-entrance.ts";
 import { compareVersions } from "../shared/semver.ts";
 import { VERSION, versionIn } from "../shared/version.ts";
 import { openCodeMcpEntries } from "./opencode-config.ts";
@@ -378,6 +381,28 @@ export function harnessReport(): void {
   }
 }
 
+/** Демон машины своего каталога гранта: режим, сокет, pid, сборка, число сессий. */
+async function daemonReport(): Promise<void> {
+  out(
+    daemonWanted()
+      ? "демон машины: тонкий мост включён (ISKRON_BRIDGE_DAEMON=1 в окружении этого процесса)"
+      : "демон машины: выключен — мост идёт полным (включение — ISKRON_BRIDGE_DAEMON=1 в окружении моста)",
+  );
+  // doctor не пишет: личного каталога шва нет — демона не поднимали, и проба его бы создала.
+  if (!existsSync(seamRunDir(CFG.authDir))) {
+    out(`  не поднимался: каталога шва ${seamRunDir(CFG.authDir)} нет`);
+    return;
+  }
+  const d = await probeDaemon(["--auth-dir", CFG.authDir]);
+  if (d.ok) {
+    out(`  сокет: ${d.socket}`);
+    out(
+      `  отвечает: pid ${d.pid}, сборка ${d.build}${d.build.startsWith(`v${VERSION}+`) ? "" : ` — ДРУГАЯ, чем этот файл (v${VERSION})`}, сессий ${d.sessions ?? "?"}${d.path ? `, файл ${d.path}` : ""}`,
+    );
+  } else if (d.unsafe) out(`  вход не личный: ${d.why} — тонкий мост пойдёт полным`);
+  else out(`  сокет: ${d.socket} — не отвечает (${d.why})`);
+}
+
 export async function runDoctor(argv: string[]): Promise<void> {
   setConfig(parseArgs(argv));
   out(`iskron doctor — ${BUILD}`);
@@ -385,6 +410,7 @@ export async function runDoctor(argv: string[]): Promise<void> {
   out(`node: ${process.version}`);
   homeCopyReport();
   latestReport();
+  await daemonReport();
   await serverReport();
   if (CFG.pat) await patReport();
   else grantReport();

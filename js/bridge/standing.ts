@@ -1,3 +1,4 @@
+import { scoped } from "../shared/scope.ts";
 import { errorMessage } from "./errors.ts";
 import { addPlace, noteStandingId, releaseStanding } from "./hold.ts";
 import { normKarta, normName } from "./names.ts";
@@ -52,7 +53,7 @@ export function rememberedPlace(
 // One replay at a time — and every concurrent caller WAITS for it. A flag that
 // merely skipped the second caller let it through unattributed while the first
 // was still re-registering (harnesses send calls in batches).
-let standingInFlight: Promise<void> | null = null;
+const R = scoped(() => ({ inFlight: null as Promise<void> | null }));
 
 // Put the remembered standing back on the current session — before the call
 // that would otherwise land unattributed. Silent by contract: register releases
@@ -60,8 +61,8 @@ let standingInFlight: Promise<void> | null = null;
 export function ensureStanding(): Promise<void> {
   if (!state.standing || !state.sessionId) return Promise.resolve();
   if (state.standingSession === state.sessionId) return Promise.resolve();
-  if (standingInFlight) return standingInFlight; // wait for the replay already running
-  standingInFlight = (async () => {
+  if (R.inFlight) return R.inFlight; // wait for the replay already running
+  R.inFlight = (async () => {
     try {
       const got = await replayRegister(state.standing);
       if (got && !got.error && !got.result?.isError) {
@@ -88,10 +89,10 @@ export function ensureStanding(): Promise<void> {
     } catch (e) {
       log(`re-registering the standing failed: ${errorMessage(e)}`);
     } finally {
-      standingInFlight = null;
+      R.inFlight = null;
     }
   })();
-  return standingInFlight;
+  return R.inFlight;
 }
 
 export async function replayRegister(place: Standing | null): Promise<JsonRpcMessage | null> {

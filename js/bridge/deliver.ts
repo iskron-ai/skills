@@ -1,4 +1,5 @@
 import { OWN_CLIENTS } from "../shared/clients.ts";
+import { scoped } from "../shared/scope.ts";
 import { absorbChannelReply, absorbRevokeReply, expectOwnRevoke } from "./absorb.ts";
 import { ensureAuth } from "./auth.ts";
 import { BUILD } from "./build.ts";
@@ -109,9 +110,9 @@ const READ_TOOLS = new Set([
 
 // Переоткрыв сессию, мост сверяет список тулов с отданным харнесу (#5405).
 // Свой tools/list харнеса в полёте — он и так получит свежий список: не спрашиваем дважды.
-let harnessListing = 0;
+const H = scoped(() => ({ listing: 0 })); // своих tools/list харнеса в полёте — у сессии
 onReinitialized(() => {
-  if (harnessListing > 0) return;
+  if (H.listing > 0) return;
   return recheckTools(async () => {
     const id = `iskron-bridge-tools-${++state.reinitCounter}`;
     let got: JsonRpcMessage | null = null;
@@ -178,11 +179,11 @@ function withNotice(reply: JsonRpcMessage): JsonRpcMessage {
 // retry. On final failure a request id is ALWAYS answered with an error.
 export async function deliver(msg: JsonRpcMessage): Promise<void> {
   const listing = msg?.method === "tools/list";
-  if (listing) harnessListing++;
+  if (listing) H.listing++;
   try {
     await deliverOne(msg);
   } finally {
-    if (listing) harnessListing--;
+    if (listing) H.listing--;
   }
 }
 

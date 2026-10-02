@@ -18,6 +18,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { L } from "../shared/lang.ts";
+import { envOf, scoped } from "../shared/scope.ts";
 import { standingsDirOf } from "../shared/standings.ts";
 import { listens, nameOf, parseBoard, undelivered } from "./board.ts";
 import { callTool, short } from "./call.ts";
@@ -332,8 +333,8 @@ export async function resumeBy(sel: ResumeSelector, register = true): Promise<Re
 
 /** Старт моста: сокет из окружения без connect — отладочный путь. */
 export function holdFromEnv(): void {
-  const url = process.env.ISKRON_CHANNEL_SOCKET?.trim();
-  if (url) holdStanding(url, process.env.ISKRON_CHANNEL_STATUS?.trim() || null);
+  const url = envOf("ISKRON_CHANNEL_SOCKET")?.trim();
+  if (url) holdStanding(url, envOf("ISKRON_CHANNEL_STATUS")?.trim() || null);
 }
 
 const reply = (msg: JsonRpcMessage, result: unknown): JsonRpcMessage => ({
@@ -416,19 +417,19 @@ export async function runCheck(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   const pending = undelivered(mine);
   const listening = listens(mine);
   if (listening) {
-    deafReopens = 0; // слух вернулся — счёт переоткрытий с начала
+    D.reopens = 0; // слух вернулся — счёт переоткрытий с начала
     return reply(msg, { holding: true, key, listening, pending, word: "слушаю" });
   }
   // Сокет у моста жив, а доска нас не слышит: переоткрыть тем же адресом. Счётчик
   // «не доставлено N» — только слово в ответе, решает признак слуха. Тормоз:
   // два переоткрытия подряд не вернули слух — третьего нет, слово вслух вместо
   // него (иначе каждый такт сторожа рвал бы живой сокет бесконечно).
-  if (deafReopens >= REOPEN_LIMIT) {
+  if (D.reopens >= REOPEN_LIMIT) {
     const text =
       `Искрон: доска читает место ${key} не слушающим и после ${REOPEN_LIMIT} переоткрытий сокета — ` +
       "больше не рву; проверь доску и сервер, вернуть слух — iskron_stand с take=true.";
-    if (!deafSaid) {
-      deafSaid = true;
+    if (!D.said) {
+      D.said = true;
       standingLog(`reopen ${key}: gave up after ${REOPEN_LIMIT} — board still reads deaf`);
       emit({
         jsonrpc: "2.0",
@@ -446,7 +447,7 @@ export async function runCheck(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
       word: text,
     });
   }
-  deafReopens++;
+  D.reopens++;
   standingLog(`reopen ${key}: board reads deaf${pending ? ` with ${pending} pending` : ""}`);
   parkStanding("доска не читает слушающим");
   resumeStanding();
@@ -464,6 +465,5 @@ export async function runCheck(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
 }
 
 /** Переоткрытий подряд при доске, читающей место глухим; предел — REOPEN_LIMIT, дальше слово вслух. */
-let deafReopens = 0;
-let deafSaid = false;
+const D = scoped(() => ({ reopens: 0, said: false }));
 const REOPEN_LIMIT = 2;

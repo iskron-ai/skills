@@ -5,6 +5,7 @@
 // токеном (hold.ts).
 import { readFileSync, unlinkSync, writeFileSync } from "node:fs";
 
+import { scoped } from "../shared/scope.ts";
 import { holdFilePathOf } from "../shared/standings.ts";
 import { CFG } from "./config.ts";
 import { log } from "./streams.ts";
@@ -42,11 +43,11 @@ export interface HoldRecord {
 export const HOLD_RECORD_MAX_AGE_MS = 6 * 60 * 60 * 1000;
 
 /** Сессия харнесса, чей это мост, — её называет плагин в `iskron/resume` и `iskron/check` (resume.ts). */
-let harnessSession: string | null = null;
+const H = scoped(() => ({ session: null as string | null }));
 export function noteHarnessSession(id: string | undefined): void {
-  if (id) harnessSession = id;
+  if (id) H.session = id;
 }
-export const sessionOfBridge = (): string | null => harnessSession;
+export const sessionOfBridge = (): string | null => H.session;
 
 /** Отпущено ли место словом держателя по прежней записи ключа — переписывание записи этого не снимает. */
 function leftOnDisk(key: string): boolean {
@@ -65,7 +66,7 @@ function leftOnDisk(key: string): boolean {
 export function writeHoldRecord(key: string, rec: HoldRecord): void {
   if (CFG.satellite) return; // место спутника живёт прогоном: возвращать с диска нечего (satellite.ts)
   try {
-    const session = harnessSession ?? rec.session;
+    const session = H.session ?? rec.session;
     const left = rec.left ?? leftOnDisk(key);
     writeFileSync(
       holdFilePathFor(key),
