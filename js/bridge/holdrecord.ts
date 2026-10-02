@@ -37,6 +37,8 @@ export interface HoldRecord {
   left?: boolean;
   /** когда записано (мс эпохи): место без сокета живёт у платформы шесть часов, дольше запись мертва */
   at?: number;
+  /** дела, в которые вошёл спутник, — пишет только его пауза на перезагрузку плагина (suspend.ts) */
+  cases?: { realm?: string; room: string }[];
 }
 
 /** Срок записи — время простоя, которое платформа даёт месту без сокета. */
@@ -63,8 +65,9 @@ function leftOnDisk(key: string): boolean {
  * мост, чья сессия не названа, чужую с диска не наследует (#6017).
  * `left` держится с диска, пока новое держание не скажет `left: false`.
  */
-export function writeHoldRecord(key: string, rec: HoldRecord): void {
-  if (CFG.satellite) return; // место спутника живёт прогоном: возвращать с диска нечего (satellite.ts)
+export function writeHoldRecord(key: string, rec: HoldRecord, paused = false): void {
+  // Место спутника живёт прогоном (satellite.ts): с диска его возвращает только пауза на перезагрузку плагина (suspend.ts).
+  if (CFG.satellite && !paused) return;
   try {
     const session = H.session ?? rec.session;
     const left = rec.left ?? leftOnDisk(key);

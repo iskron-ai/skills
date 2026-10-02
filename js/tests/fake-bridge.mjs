@@ -279,10 +279,25 @@ process.stdin.on("data", (chunk) => {
       let result = { resumed: false, holding: false, word: "записи держания нет" };
       try {
         if (process.env.FB_RESUME) result = JSON.parse(readFileSync(process.env.FB_RESUME, "utf8"));
+        // {bySession: {<session>: answer}} — an answer for one session's bridge, the rest as without a file.
+        if (result.bySession)
+          result = result.bySession[msg.params?.session] ?? {
+            resumed: false,
+            holding: false,
+            word: "записи держания нет",
+          };
       } catch {
         /* no answer prepared — nothing to resume */
       }
       ok(msg.id, result);
+    } else if (msg.method === "iskron/suspend") {
+      // The OpenCode plugin pauses a satellite before its stop (js/bridge/suspend.ts, #6625).
+      if (process.env.FB_CALLS)
+        appendFileSync(
+          process.env.FB_CALLS,
+          JSON.stringify({ name: msg.method, arguments: msg.params, pid: process.pid }) + "\n",
+        );
+      ok(msg.id, { suspended: true });
     } else if (msg.method === "iskron/usage") {
       // The session's spend from the OpenCode plugin (js/bridge/usage.ts, #6271).
       if (process.env.FB_CALLS)

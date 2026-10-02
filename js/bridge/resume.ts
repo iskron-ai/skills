@@ -51,6 +51,7 @@ import { placeFields } from "./placefields.ts";
 import { publishStatus } from "./status.ts";
 import { standingLog } from "./store.ts";
 import { emit, log } from "./streams.ts";
+import { afterResume } from "./suspend.ts";
 import { localSocketAlive } from "./sweep.ts";
 import { state } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
@@ -389,7 +390,9 @@ export async function runResume(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   const sel = selectorFrom(msg);
   if (!sel.key && !sel.cwd)
     return reply(msg, { resumed: false, word: "ни key, ни cwd не передан" });
-  return reply(msg, await resumeBy(sel));
+  const r = await resumeBy(sel);
+  if (r.resumed) afterResume(r.key); // спутник после паузы принимает дела прогона (suspend.ts)
+  return reply(msg, r);
 }
 
 /**

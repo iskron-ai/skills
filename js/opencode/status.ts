@@ -2,6 +2,22 @@
 // список тулов и сколько мостов живо. Отдельно от плагина: чистая сборка строк.
 import { elsewhere } from "./login.ts";
 
+/** Служебный тул плагина: состояние моста, когда тулов iskron_* ещё нет. */
+export const STATUS_TOOL = "iskron_bridge";
+
+/** Определение служебного тула для ctx.tool.transform: текст — в миг вызова. */
+export const statusTool = (text: () => string) => ({
+  name: STATUS_TOOL,
+  description:
+    "Состояние моста Искрона в этой сессии OpenCode: выполнен ли вход, адрес авторизации, сколько тулов iskron_* поднято. " +
+    "Зови, когда тулов iskron_* нет или они отвечают отказом входа.",
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- схема входа SDK без типа
+  input: { type: "object", properties: {}, additionalProperties: false } as any,
+  async execute() {
+    return { content: text() };
+  },
+});
+
 export function statusLines(
   path: string,
   builds: string,

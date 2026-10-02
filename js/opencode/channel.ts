@@ -204,9 +204,9 @@ export function setupChannel(ctx: Context, say: Say, freshestRoot: () => string 
     return got.length ? [batchHead(got)] : [];
   }
 
-  function loud(session: string | null, text: string): void {
+  function loud(session: string | null, text: string, child = false): void {
     say(text, "error");
-    void deliver(session, text);
+    void deliver(session, text, "кадр", "steer", child);
   }
 
   return {
@@ -259,15 +259,17 @@ export function setupChannel(ctx: Context, say: Say, freshestRoot: () => string 
           );
           return;
         }
+        // Слово моста ребёнка — только ему (child): корню оно не адресовано (#6625).
         case "dead":
           loud(
             session,
             `Искрон: канал закрыт кодом ${ev.code} — токен мёртв. Зови iskron_channel(action="connect")` +
               ", затем register тем же именем: новый сокет мост возьмёт из ответа сам, перезапуск не нужен.",
+            child,
           );
           return;
         case "stale":
-          if (ev.text) void deliver(session, ev.text, "пачка лежалых кадров", "queue"); // одна пачка — один промпт
+          if (ev.text) void deliver(session, ev.text, "пачка лежалых кадров", "queue", child); // одна пачка — один промпт
           return;
         case "backlog":
           // Побудка с накопленным — один промпт на пачку, не ход на кадр (#5140).
@@ -275,17 +277,23 @@ export function setupChannel(ctx: Context, say: Say, freshestRoot: () => string 
           // вставленная посреди хода, режет работу делателя; одним промптом она
           // по одному за ход не всплывёт, а ждёт лишь конца текущего хода.
           if (ev.text)
-            void deliver(session, ev.text, `пачка побудки (${ev.frames?.length ?? 0})`, "queue");
+            void deliver(
+              session,
+              ev.text,
+              `пачка побудки (${ev.frames?.length ?? 0})`,
+              "queue",
+              child,
+            );
           return;
         case "lost":
           // Держащий мост вышел или прежний плагин остановили: громко, в сессию.
-          if (ev.text) loud(session, ev.text);
+          if (ev.text) loud(session, ev.text, child);
           return;
         case "resumed":
           // Мост вернул место сам (#5366): занятое имя — в сессию, как и потеря слуха.
           if (ev.text) {
             say(ev.text, "warning");
-            void deliver(session, ev.text, "слово о возвращённом месте");
+            void deliver(session, ev.text, "слово о возвращённом месте", "steer", child);
           }
           return;
         case "held":
@@ -299,6 +307,7 @@ export function setupChannel(ctx: Context, say: Say, freshestRoot: () => string 
             session,
             `Искрон: канал закрыт кодом ${ev.code} — место отняли, слушает другой держатель. ` +
               "Привязка записей цела; слух здесь — iskron_stand без name встанет рядом на имя.N; отбить место (take=true) — только словом человека.",
+            child,
           );
           return;
         case "alive":
@@ -306,6 +315,7 @@ export function setupChannel(ctx: Context, say: Say, freshestRoot: () => string 
             session,
             `Искрон: сокет рвут, а служба отвечает (${ev.version ?? ""}) — мост держит место и переоткрывает реже; ` +
               "не пройдёт — спроси о токене.",
+            child,
           );
           return;
         case "note":
