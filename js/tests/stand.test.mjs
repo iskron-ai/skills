@@ -276,40 +276,115 @@ test("iskron_stand under a long --auth-dir: the watchdog attaches and gets hello
 // The session's spend rides the place's attrs (graph nks-dev: #6271): the plugin
 // hands the numbers over by iskron/usage, the bridge re-registers its place with
 // attrs.usage — only when the numbers moved, never every step.
-test("iskron/usage puts the session's spend into the place's attrs, once per real move", async (t) => {
-  const fake = await startFakeNks({ pat: PAT });
+const PI_INIT = { ...INIT, clientInfo: { name: "pi-iskron", version: "0" } };
+async function usageBridge(t, { gap = "0", init = PI_INIT, args = [], fake: given } = {}) {
+  const fake = given ?? (await startFakeNks({ pat: PAT }));
   const dir = mkdtempSync(join(tmpdir(), "iskron-usage-"));
-  const bridge = startBridge(fake.mcpUrl, dir, process.cwd(), { ISKRON_USAGE_GAP_MS: "0" });
+  const env = { ISKRON_USAGE_GAP_MS: gap };
+  const bridge = startBridge(fake.mcpUrl, dir, process.cwd(), env, args);
   t.after(async () => {
     await bridge.stop();
-    await fake.stop();
+    if (!given) await fake.stop();
   });
-  assert.ok((await bridge.call("initialize", INIT)).result);
+  assert.ok((await bridge.call("initialize", init)).result);
+  return { fake, bridge };
+}
+const usageRegisters = (fake) => sentToChannel(fake).filter((a) => a.action === "register");
+const SPEND = { tokens: 1000, input: 700, output: 300, cache_read: 40000, cache_write: 0 };
+
+test("iskron/usage puts the session's spend into the place's attrs, once per real move", async (t) => {
+  const { fake, bridge } = await usageBridge(t);
   const stood = await bridge.call("tools/call", {
     name: "iskron_stand",
     arguments: { realm: "nks-dev", karta: 931, name: "proba" },
   });
   assert.ok(!stood.result?.isError, textOf(stood));
-  const registers = () => sentToChannel(fake).filter((a) => a.action === "register");
+  const registers = () => usageRegisters(fake);
   const before = registers().length;
-  const first = await bridge.call("iskron/usage", { tokens: 1000, context: 50000, window: 200000 });
+  const first = await bridge.call("iskron/usage", {
+    ...SPEND,
+    model: "claude-opus-5-5",
+    context: 50000,
+    window: 200000,
+  });
   assert.equal(first.result?.pushed, true, JSON.stringify(first));
   const last = registers().at(-1);
   assert.equal(registers().length, before + 1, "one register carries the spend");
-  assert.deepEqual(
-    {
-      tokens: last.attrs.usage.tokens,
-      percent: last.attrs.usage.percent,
-      window: last.attrs.usage.window,
-    },
-    { tokens: 1000, percent: 25, window: 200000 },
-  );
+  const { at, ...rest } = last.attrs.usage;
+  assert.ok(!Number.isNaN(Date.parse(at)), `at is ISO: ${at}`);
+  assert.deepEqual(rest, {
+    ...SPEND,
+    model: "claude-opus-5-5",
+    context: 50000,
+    window: 200000,
+    percent: 25,
+  });
   assert.ok(last.attrs.build, "the full attrs set stays: build is not lost");
   const same = await bridge.call("iskron/usage", { tokens: 1005, context: 51000, window: 200000 });
   assert.equal(same.result?.pushed, false, "a small move is not a server call");
   const grown = await bridge.call("iskron/usage", { tokens: 5000, context: 90000, window: 200000 });
   assert.equal(grown.result?.pushed, true, JSON.stringify(grown));
   assert.equal(registers().at(-1).attrs.usage.percent, 45);
+});
+
+// usage is absent, never zero (#6401): Claude Code and Codex give no numbers, so
+// their place carries no usage key at all — whatever reaches the bridge; and a
+// snapshot with no number and no model is no snapshot.
+test("iskron/usage: a Claude Code place carries no usage; a snapshot without numbers leaves the key absent", async (t) => {
+  const cc = await usageBridge(t, { init: { ...INIT, clientInfo: { name: "claude-code" } } });
+  const stand = (b, name) =>
+    b.call("tools/call", {
+      name: "iskron_stand",
+      arguments: { realm: "nks-dev", karta: 931, name },
+    });
+  assert.ok(!(await stand(cc.bridge, "cc")).result?.isError, cc.bridge.stderr);
+  const said = await cc.bridge.call("iskron/usage", { ...SPEND, context: 9000, window: 200000 });
+  assert.equal(said.result?.pushed, false, JSON.stringify(said));
+  await cc.bridge.call("tools/call", {
+    name: "iskron_channel",
+    arguments: { realm: "nks-dev", action: "leave" },
+  });
+  await cc.bridge.stop();
+  for (const r of usageRegisters(cc.fake)) assert.ok(!("usage" in r.attrs), JSON.stringify(r));
+  assert.ok(!("usage" in (cc.fake.state.placeAttrs.get("931:cc") ?? {})), "no usage at the place");
+
+  const pi = await usageBridge(t);
+  const empty = await pi.bridge.call("iskron/usage", { tokens: "lots", window: 0 });
+  assert.equal(empty.result?.usage, null, JSON.stringify(empty));
+  assert.ok(!(await stand(pi.bridge, "pi")).result?.isError, pi.bridge.stderr);
+  await pi.bridge.call("iskron/usage", {});
+  await pi.bridge.stop();
+  const attrs = pi.fake.state.placeAttrs.get("931:pi");
+  assert.ok(attrs?.build, `the place stood with attrs: ${JSON.stringify(attrs)}`);
+  assert.ok(!("usage" in attrs), JSON.stringify(attrs));
+  for (const r of usageRegisters(pi.fake)) assert.ok(!("usage" in r.attrs), JSON.stringify(r));
+});
+
+// The last snapshot goes past the gap before the place goes (#6401): leave by
+// word and the session's end each re-register the place with the latest numbers
+// the gap held back.
+test("iskron/usage: the snapshot the gap held back is flushed before leave and at the session's end", async (t) => {
+  for (const how of ["leave", "end"]) {
+    const { fake, bridge } = await usageBridge(t, { gap: "600000" });
+    const stood = await bridge.call("tools/call", {
+      name: "iskron_stand",
+      arguments: { realm: "nks-dev", karta: 931, name: how },
+    });
+    assert.ok(!stood.result?.isError, textOf(stood));
+    assert.equal((await bridge.call("iskron/usage", SPEND)).result?.pushed, true);
+    const held = await bridge.call("iskron/usage", { ...SPEND, tokens: 9000, model: "m2" });
+    assert.equal(held.result?.pushed, false, "the gap holds the second snapshot back");
+    if (how === "leave") {
+      const left = await bridge.call("tools/call", {
+        name: "iskron_channel",
+        arguments: { realm: "nks-dev", action: "leave" },
+      });
+      assert.ok(!left.result?.isError, textOf(left));
+    } else await bridge.stop();
+    const usage = fake.state.placeAttrs.get(`931:${how}`)?.usage;
+    assert.equal(usage?.tokens, 9000, `${how}: ${JSON.stringify(usage)}\n${bridge.stderr}`);
+    assert.equal(usage?.model, "m2", how);
+  }
 });
 
 // The third part of a derived name is the model the agent runs on, never the
@@ -1950,6 +2025,26 @@ test("satellite: at the run's end its places in other graphs are revoked too, no
     `each place of the run revoked:\n${sat.stderr}`,
   );
   assert.ok(!fake.state.places.has(`48:${beside}`), "the place beside is off the board at once");
+});
+
+// The subagent's last snapshot lands before its place closes (#6401, #6593): a
+// register after revoke is a 404, so the numbers the gap held back go first and
+// stay in the attrs of the closed place.
+test("satellite: at the run's end the last usage snapshot lands before revoke and stays in the closed place's attrs", async (t) => {
+  const fake = await withCaller(t);
+  const { bridge: sat } = await usageBridge(t, { fake, gap: "600000", args: ["--satellite"] });
+  assert.ok(!(await standAs(sat, SAT_ARGS)).result?.isError, sat.stderr);
+  assert.equal((await sat.call("iskron/usage", SPEND)).result?.pushed, true);
+  await sat.call("iskron/usage", { ...SPEND, tokens: 7777, context: 30000, window: 100000 });
+  await sat.stop();
+  const key = `931:${CALLER}.sub-1`;
+  assert.ok(fake.state.closedPlaces.has(key), `the place is closed:\n${sat.stderr}`);
+  const usage = fake.state.placeAttrs.get(key)?.usage;
+  assert.equal(usage?.tokens, 7777, `the last snapshot: ${JSON.stringify(usage)}\n${sat.stderr}`);
+  assert.equal(usage?.percent, 30);
+  assert.ok(!fake.state.counts.register_closed, "nothing written after the place closed");
+  const order = sentToChannel(fake).map((a) => a.action);
+  assert.ok(order.lastIndexOf("register") < order.indexOf("revoke"), order.join(" "));
 });
 
 // The harness kills the bridge a short grace after closing it (OpenCode: 5 s);

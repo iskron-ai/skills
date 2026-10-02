@@ -6142,6 +6142,79 @@ var satelliteListenWord = () => L(
   `[iskron-bridge] Satellite seat: do not arm a watchdog — the seat lives by the subagent's run and signs its records; when the run ends the bridge leaves the seat itself, the channel dies after the ${SATELLITE_TTL_S} s idle window. The first move — enter the case the brief names and retell the brief as your first message in it.`
 );
 
+// js/bridge/usagefields.ts
+var SPENT = ["tokens", "input", "output", "cache_read", "cache_write"];
+var num = (v) => typeof v === "number" && Number.isFinite(v) && v >= 0 ? Math.round(v) : void 0;
+function usageOf(p) {
+  const u = {};
+  for (const k of SPENT) {
+    const v = num(p[k]);
+    if (v !== void 0) u[k] = v;
+  }
+  if (typeof p.model === "string" && p.model.trim()) u.model = p.model.trim().slice(0, 120);
+  const context = num(p.context);
+  const window = num(p.window);
+  if (context !== void 0) u.context = context;
+  if (window) u.window = window;
+  if (context !== void 0 && window) u.percent = Math.round(100 * context / window);
+  return Object.keys(u).length ? { ...u, at: (/* @__PURE__ */ new Date()).toISOString() } : null;
+}
+function moved(a, b) {
+  if (!a) return true;
+  if (a.percent !== void 0 && b.percent !== void 0 && Math.abs(b.percent - a.percent) >= 5)
+    return true;
+  if (b.tokens !== void 0 && (a.tokens === void 0 || b.tokens >= a.tokens * 1.1 + 1))
+    return true;
+  return a.window !== b.window || b.model !== void 0 && a.model !== b.model;
+}
+
+// js/bridge/usage.ts
+var MIN_GAP_MS = Number(process.env.ISKRON_USAGE_GAP_MS || 6e4);
+var FLUSH_CAP_MS = Number(process.env.ISKRON_CASE_LEAVE_MS) || 1500;
+var U = scoped(() => ({ published: null, latest: null, at: 0 }));
+var isUsageCall = (msg) => msg?.method === "iskron/usage";
+function usagePlace() {
+  const s2 = state.standing;
+  return s2 && !isParked(s2.realm, s2.karta, s2.name ?? "") ? s2 : null;
+}
+async function publish(place, u) {
+  U.at = Date.now();
+  const got = await replayRegister(place);
+  const ok = !!got && !got.error && !got.result?.isError;
+  if (ok) U.published = u;
+  else
+    log(
+      `usage: register did not take the attrs this time — ${JSON.stringify(got?.error ?? got?.result ?? null).slice(0, 200)}`
+    );
+  return ok;
+}
+async function runUsage(msg) {
+  const answer = (result) => ({
+    jsonrpc: "2.0",
+    id: msg.id,
+    result
+  });
+  if (!HOSTED_CLIENTS.has(harnessName()))
+    return answer({ pushed: false, usage: null, why: "расход пишут только OpenCode и pi" });
+  const u = usageOf(msg.params ?? {});
+  if (!u) return answer({ pushed: false, usage: null, why: "в снимке нет цифр" });
+  U.latest = u;
+  rememberUsage(u);
+  const s2 = usagePlace();
+  const due = !!s2 && Date.now() - U.at >= MIN_GAP_MS && moved(U.published, u);
+  return answer({ pushed: due && s2 ? await publish(s2, u) : false, usage: u });
+}
+async function flushUsage(place) {
+  const u = U.latest;
+  if (!place || !u || u === U.published) return;
+  let timer;
+  const cap = new Promise((r) => timer = setTimeout(() => r("cap"), FLUSH_CAP_MS));
+  const got = await Promise.race([publish(place, u), cap]);
+  clearTimeout(timer);
+  if (got === "cap")
+    log(`usage: the last snapshot exceeded ${FLUSH_CAP_MS} ms before the place went`);
+}
+
 // js/bridge/leave.ts
 var DEAF_MS = Number(process.env.ISKRON_BRIDGE_DEAF_MS) || 15 * 6e4;
 var TICK_MS = Math.min(6e4, Math.max(200, Math.floor(DEAF_MS / 5)));
@@ -6156,6 +6229,7 @@ async function leaveStanding(reason, byWord = false) {
   if (byWord && CFG.satellite) return leaveSatellite(reason);
   const beside = heldPlaces().filter((p) => !p.primary).map((p) => ({ realm: p.realm, text: readHoldRecord(p.key)?.status ?? "" })).filter((k) => k.text);
   const leaving = heldPlaces().map((p) => p.key);
+  if (leaving.length) await flushUsage(usagePlace());
   const parked = parkStanding(reason);
   if (!parked) return "мост места не держит — уходить неоткуда";
   K.beside = beside;
@@ -6171,6 +6245,7 @@ async function leaveStanding(reason, byWord = false) {
 async function leaveSatellite(reason) {
   const place = heldPlaces()[0]?.key;
   if (!place) return "мост места не держит — уходить неоткуда";
+  await flushUsage(usagePlace());
   const st = await publishStatus("", void 0, true);
   releaseStanding(`${reason}: место-спутник отпущено целиком`, true);
   releaseSatelliteClaims();
@@ -7315,46 +7390,6 @@ async function recheckTools(ask, emit2) {
   emit2({ jsonrpc: "2.0", method: "notifications/tools/list_changed" });
 }
 
-// js/bridge/usage.ts
-var MIN_GAP_MS = Number(process.env.ISKRON_USAGE_GAP_MS || 6e4);
-var U = scoped(() => ({ published: null, at: 0 }));
-var num = (v) => typeof v === "number" && Number.isFinite(v) && v >= 0 ? Math.round(v) : void 0;
-function moved(a, b) {
-  if (!a) return true;
-  if (a.percent !== void 0 && b.percent !== void 0 && Math.abs(b.percent - a.percent) >= 5)
-    return true;
-  if (b.tokens !== void 0 && (a.tokens === void 0 || b.tokens >= a.tokens * 1.1 + 1))
-    return true;
-  return a.window !== b.window;
-}
-var isUsageCall = (msg) => msg?.method === "iskron/usage";
-async function runUsage(msg) {
-  const p = msg.params ?? {};
-  const u = { at: (/* @__PURE__ */ new Date()).toISOString() };
-  const tokens = num(p.tokens);
-  const context = num(p.context);
-  const window = num(p.window);
-  if (tokens !== void 0) u.tokens = tokens;
-  if (context !== void 0) u.context = context;
-  if (window) u.window = window;
-  if (context !== void 0 && window) u.percent = Math.round(100 * context / window);
-  rememberUsage(u);
-  let pushed = false;
-  const s2 = state.standing;
-  const away = !!s2 && isParked(s2.realm, s2.karta, s2.name ?? "");
-  if (s2 && !away && Date.now() - U.at >= MIN_GAP_MS && moved(U.published, u)) {
-    U.at = Date.now();
-    const got = await replayRegister(s2);
-    pushed = !!got && !got.error && !got.result?.isError;
-    if (pushed) U.published = u;
-    else
-      log(
-        `usage: register did not take the attrs this time — ${JSON.stringify(got?.error ?? got?.result ?? null).slice(0, 200)}`
-      );
-  }
-  return { jsonrpc: "2.0", id: msg.id, result: { pushed, usage: u } };
-}
-
 // js/bridge/deliver.ts
 function syntheticError(id, message, outcome = UpstreamError.UNKNOWN, holdOff = false) {
   const kind = holdOff === true ? "wait" : holdOff;
@@ -7711,12 +7746,13 @@ function openIn(io, origin, scope) {
     const handover = !!origin && handoverUnderway();
     const addr = statusAddress();
     const places = satellitePlaces();
+    const closing = !handover || CFG.satellite;
+    const spent = closing ? usagePlace() : null;
     releaseStanding(why, CFG.satellite);
-    await leaveJoinedCases();
+    await Promise.all([leaveJoinedCases(), flushUsage(spent)]);
     await revokeSatellitePlaces(places);
-    if (addr && (!handover || CFG.satellite))
-      await publishStatusTo(addr.url, "", 3e3).catch(() => {
-      });
+    if (addr && closing) await publishStatusTo(addr.url, "", 3e3).catch(() => {
+    });
     if (handover) await Promise.race([Promise.allSettled([...pending2]), sleep(HANDOVER_WAIT_MS)]);
     else await Promise.allSettled([...pending2, ...tokenRequestsInFlight]);
     await flushStdout(io.output);

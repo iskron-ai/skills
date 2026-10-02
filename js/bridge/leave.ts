@@ -39,6 +39,7 @@ import { publishedStatus, publishStatus } from "./status.ts";
 import { emit, log } from "./streams.ts";
 import { state } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
+import { flushUsage, usagePlace } from "./usage.ts";
 
 /** Порог глухоты; переменная — шов для проб, не ручка человека. */
 const DEAF_MS = Number(process.env.ISKRON_BRIDGE_DEAF_MS) || 15 * 60_000;
@@ -64,6 +65,7 @@ export async function leaveStanding(reason: string, byWord = false): Promise<str
     .filter((k) => k.text);
   // Сокет у мест канала общий: уход закрывает его всем — и слово называет всех (#5838).
   const leaving = heldPlaces().map((p) => p.key);
+  if (leaving.length) await flushUsage(usagePlace()); // последний снимок расхода — пока место держится (#6401)
   const parked = parkStanding(reason);
   if (!parked) return "мост места не держит — уходить неоткуда";
   K.beside = beside;
@@ -95,6 +97,7 @@ export async function leaveStanding(reason: string, byWord = false): Promise<str
 async function leaveSatellite(reason: string): Promise<string> {
   const place = heldPlaces()[0]?.key;
   if (!place) return "мост места не держит — уходить неоткуда";
+  await flushUsage(usagePlace());
   const st = await publishStatus("", undefined, true);
   releaseStanding(`${reason}: место-спутник отпущено целиком`, true);
   releaseSatelliteClaims(); // имя свободно следующему прогону (satellite.ts)

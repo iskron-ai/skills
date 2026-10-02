@@ -516,7 +516,8 @@ const starts = (log) => readFileSync(log, "utf8").trim().split("\n");
 
 // The session's spend goes to the bridge at every turn's end while it holds a
 // place (graph nks-dev: #6271): the window's fill from getContextUsage, the
-// session's spend from the assistant entries' usage — nothing without a place.
+// session's spend from the assistant entries' usage, by kind of token, and the
+// model (#6401) — nothing without a place.
 test("turn_end hands the session's spend to the bridge as iskron/usage once a place is held", async () => {
   const calls = join(SANDBOX, "usage.calls");
   const { env } = bridgeEnv("usage", {
@@ -527,6 +528,7 @@ test("turn_end hands the session's spend to the bridge as iskron/usage once a pl
   const rec = await session(env);
   const usage = () => toolCalls(calls).filter((c) => c.name === "iskron/usage");
   rec.ctx.getContextUsage = () => ({ tokens: 42000, contextWindow: 200000, percent: 21 });
+  rec.ctx.model = { id: "claude-opus-5-5", provider: "anthropic" };
   rec.ctx.sessionManager = {
     getEntries: () => [
       { type: "message", message: { role: "user" } },
@@ -553,7 +555,16 @@ test("turn_end hands the session's spend to the bridge as iskron/usage once a pl
       .get("iskron_stand")
       .execute("id", { realm: "@nks/nks-dev", karta: "#931" }, undefined, () => {}, {});
     await rec.fire("turn_end", { type: "turn_end" });
-    assert.deepEqual(usage().at(-1)?.arguments, { tokens: 2060, context: 42000, window: 200000 });
+    assert.deepEqual(usage().at(-1)?.arguments, {
+      tokens: 2060,
+      input: 950,
+      output: 110,
+      cache_read: 12000,
+      cache_write: 1000,
+      model: "claude-opus-5-5",
+      context: 42000,
+      window: 200000,
+    });
   } finally {
     await rec.stop();
   }

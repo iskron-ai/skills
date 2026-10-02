@@ -1,14 +1,20 @@
-// Расход сессии OpenCode для attrs места (граф nks-dev: #6271). Из событий
-// сервиса: session.usage.updated — потрачено сессией накопительно,
-// session.step.started — модель шага, session.step.ended — сколько вошло в окно
-// на этом шаге; размер окна — limit.context модели из ctx.model.list().
+// Расход сессии OpenCode для attrs места (граф nks-dev: #6271, #6401). Из событий
+// сервиса: session.usage.updated — потрачено сессией накопительно, по видам
+// токенов; session.step.started — модель шага; session.step.ended — сколько
+// вошло в окно на этом шаге; размер окна — limit.context модели из ctx.model.list().
 // Мосту уходит не чаще раза в DEBOUNCE_MS на сессию: мост сам решает, стоит ли
-// сдвиг вызова на сервер (bridge/usage.ts).
+// сдвиг вызова на сервер (bridge/usage.ts). Конец прогона и удаление сессии
+// сбрасывают ждущий снимок сразу (flush) — до того, как мост уйдёт с местом.
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { type Bridge } from "../shared/bridge-client.ts";
 
 export interface UsagePayload {
   tokens?: number;
+  input?: number;
+  output?: number;
+  cache_read?: number;
+  cache_write?: number;
+  model?: string;
   context?: number;
   window?: number;
 }
@@ -20,13 +26,28 @@ const n = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ?
 /** Токены одного отчёта сервиса: новые (без чтения кеша) — «потрачено», всё входное — «в окне». */
 const spent = (t: any): number => n(t?.input) + n(t?.output) + n(t?.reasoning) + n(t?.cache?.write);
 const inWindow = (t: any): number => n(t?.input) + n(t?.cache?.read) + n(t?.cache?.write);
+/** По видам: рассуждение — выход модели. */
+const kinds = (t: any): UsagePayload => ({
+  input: n(t?.input),
+  output: n(t?.output) + n(t?.reasoning),
+  cache_read: n(t?.cache?.read),
+  cache_write: n(t?.cache?.write),
+});
+
+export interface UsageFeed {
+  onEvent: (ev: any) => void;
+  /** Ждущий снимок сессии — мосту сейчас, мимо паузы; ждать ответа моста. */
+  flush: (session: string) => Promise<void>;
+  forget: (session: string) => void;
+  stop: () => void;
+}
 
 export function createUsageFeed(opts: {
   listModels: () => Promise<unknown>;
-  /** Мост держащего слота сессии; null — места нет, отдавать некуда. */
+  /** Мост, держащий место самой сессии; null — места нет, отдавать некуда. */
   bridgeOf: (session: string) => Bridge | null;
-}): { onEvent: (ev: any) => void; forget: (session: string) => void; stop: () => void } {
-  const bySession = new Map<string, UsagePayload & { model?: string }>();
+}): UsageFeed {
+  const bySession = new Map<string, UsagePayload & { ref?: string }>();
   const timers = new Map<string, ReturnType<typeof setTimeout>>();
   const windows = new Map<string, number>(); // "provider/model" → limit.context
   let listed: Promise<void> | null = null;
@@ -47,20 +68,33 @@ export function createUsageFeed(opts: {
       }
     })());
 
-  const flush = (session: string): void => {
-    timers.delete(session);
+  // Снимки сессии уходят мосту по одному: следующий — после ответа на ушедший,
+  // иначе последний обогнал бы предыдущий, и место легло бы со старыми цифрами.
+  const inFlight = new Map<string, Promise<void>>();
+  const send = async (session: string, timeoutMs: number): Promise<void> => {
     const u = bySession.get(session);
     if (!u) return;
-    const { model, ...p } = u;
-    if (model && windows.has(model)) p.window = windows.get(model);
-    void opts
+    const { ref, ...p } = u;
+    if (ref && windows.has(ref)) p.window = windows.get(ref);
+    await opts
       .bridgeOf(session)
-      ?.request("iskron/usage", p, { timeoutMs: 10_000 })
+      ?.request("iskron/usage", p, { timeoutMs })
       .catch(() => {});
+  };
+  const flush = (session: string, timeoutMs = 10_000): Promise<void> => {
+    clearTimeout(timers.get(session));
+    timers.delete(session);
+    // Цифры берутся в миг отправки, не постановки: уходит последний снимок.
+    const p = (inFlight.get(session) ?? Promise.resolve()).then(() => send(session, timeoutMs));
+    inFlight.set(session, p);
+    void p.finally(() => {
+      if (inFlight.get(session) === p) inFlight.delete(session);
+    });
+    return p;
   };
   const schedule = (session: string): void => {
     if (!timers.has(session)) {
-      const t = setTimeout(() => flush(session), DEBOUNCE_MS);
+      const t = setTimeout(() => void flush(session), DEBOUNCE_MS);
       t.unref?.();
       timers.set(session, t);
     }
@@ -74,7 +108,10 @@ export function createUsageFeed(opts: {
       switch (ev?.type) {
         case "session.step.started": {
           const m = ev.data?.model;
-          if (m?.id) u.model = `${m.providerID ?? ""}/${m.id}`;
+          if (m?.id) {
+            u.ref = `${m.providerID ?? ""}/${m.id}`;
+            u.model = String(m.id);
+          }
           void loadWindows();
           break;
         }
@@ -84,7 +121,7 @@ export function createUsageFeed(opts: {
           break;
         case "session.usage.updated":
           if (!ev.data?.tokens) return;
-          u.tokens = spent(ev.data.tokens);
+          Object.assign(u, { tokens: spent(ev.data.tokens), ...kinds(ev.data.tokens) });
           break;
         default:
           return;
@@ -92,6 +129,9 @@ export function createUsageFeed(opts: {
       bySession.set(session, u);
       schedule(session);
     },
+    // Ждущего снимка нет — дождаться ушедшего: мост не уходит с местом раньше его ответа.
+    flush: (session) =>
+      timers.has(session) ? flush(session, 3_000) : (inFlight.get(session) ?? Promise.resolve()),
     forget(session: string): void {
       clearTimeout(timers.get(session));
       timers.delete(session);

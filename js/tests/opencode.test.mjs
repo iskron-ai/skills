@@ -1331,6 +1331,11 @@ test("usage events reach the holding session's bridge as iskron/usage, with the 
     await until(() => usageCalls().length > 0, "the usage call");
     assert.deepEqual(usageCalls().at(-1).arguments, {
       tokens: 2000,
+      input: 900,
+      output: 100,
+      cache_read: 50000,
+      cache_write: 1000,
+      model: "m1",
       context: 51900,
       window: 200000,
     });
@@ -2044,6 +2049,141 @@ test("the end of a child session's run takes its bridge down: the watch raises n
     assert.ok(alive(rootPid), "the root's end of execution takes nothing down");
     assert.equal(pidsOf(b.log).length, 2, "the watch raises no bridge for the ended child");
     assert.ok(!/слух потерян/.test(rec.said()), "the plugin's own stop is not a lost hearing");
+  } finally {
+    await rec.stop();
+  }
+});
+
+// Each session's spend goes to its own place (#6401): the child's to its
+// satellite by its own bridge, the root's to the root's — never the child's
+// numbers to the root. The end of a run hands the snapshot the debounce holds
+// over at once, before the child's bridge goes with its place.
+test("usage: a child's spend reaches its own bridge at its run's end, before the bridge goes; the root's stays the root's", async () => {
+  const calls = join(SANDBOX, "usage-child.calls");
+  writeFileSync(calls, "");
+  const b = bridgeEnv("usage-child", {
+    FB_CALLS: calls,
+    ISKRON_USAGE_DEBOUNCE_MS: 600000,
+    FB_TOOLS: JSON.stringify([
+      { name: "iskron_stand", description: "Стояние.", inputSchema: { type: "object" } },
+    ]),
+  });
+  const rec = await plugin(b.env, {
+    sessions: [
+      { id: "root", location: { directory: "/work/root" } },
+      { id: "child", parentID: "root", location: { directory: "/work/child" } },
+    ],
+  });
+  const usageCalls = () =>
+    readFileSync(calls, "utf8")
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((l) => JSON.parse(l))
+      .filter((c) => c.name === "iskron/usage");
+  const tok = (input) => ({ input, output: 10, reasoning: 5, cache: { read: 100, write: 1 } });
+  try {
+    await until(() => rec.tools().has("iskron_stand"), "the stand tool", 8000);
+    await rec.call("iskron_stand", { realm: "nks-dev", karta: "#931" }, "root");
+    const rootPid = pidOf(b.log);
+    const place = { realm: "@nks/nks-dev", karta: "931", name: "host.repo.opus-5" };
+    appendFileSync(`${b.events}.${rootPid}`, event("held", { key: "k-root", place }));
+    await delay(400); // the fake bridge relays event lines every 40 ms
+    await rec.call("iskron_stand", { realm: "nks-dev" }, "child");
+    const childPid = pidsOf(b.log)[1];
+    const sub = { ...place, name: "host.repo.opus-5.sub-1" };
+    appendFileSync(`${b.events}.${childPid}`, event("held", { key: "k-sub", place: sub }));
+    await delay(400);
+    for (const [sessionID, input] of [
+      ["root", 1000],
+      ["child", 200],
+    ]) {
+      const model = { id: `m-${sessionID}`, providerID: "p" };
+      rec.emit({ type: "session.step.started", data: { sessionID, model } });
+      rec.emit({ type: "session.usage.updated", data: { sessionID, tokens: tok(input) } });
+    }
+    await delay(200);
+    assert.equal(usageCalls().length, 0, "the debounce holds both snapshots");
+    rec.emit({ type: "session.execution.succeeded", data: { sessionID: "child" } });
+    await until(() => !alive(childPid), "the child's bridge to end with its run");
+    const child = usageCalls().filter((c) => c.pid === childPid);
+    assert.deepEqual(child.at(-1)?.arguments, {
+      tokens: 216,
+      input: 200,
+      output: 15,
+      cache_read: 100,
+      cache_write: 1,
+      model: "m-child",
+    });
+    rec.emit({ type: "session.execution.succeeded", data: { sessionID: "root" } });
+    await until(() => usageCalls().some((c) => c.pid === rootPid), "the root's snapshot");
+    const root = usageCalls().filter((c) => c.pid === rootPid);
+    assert.deepEqual(
+      root.map((c) => [c.arguments.input, c.arguments.model]),
+      [[1000, "m-root"]],
+      "the root's place gets the root's numbers only",
+    );
+  } finally {
+    await rec.stop();
+  }
+});
+
+// Review of #297, p.2: a snapshot already handed to the bridge is in flight when
+// the run ends. The last one waits for its answer and goes after it — never
+// overtaking it, never left behind when the child's bridge goes (faf654b did both).
+test("usage: the run's end waits for the snapshot in flight, then sends the last one", async () => {
+  const calls = join(SANDBOX, "usage-flight.calls");
+  writeFileSync(calls, "");
+  const b = bridgeEnv("usage-flight", {
+    FB_CALLS: calls,
+    FB_USAGE_DELAY_MS: 1500,
+    ISKRON_USAGE_DEBOUNCE_MS: 50,
+    FB_TOOLS: JSON.stringify([
+      { name: "iskron_stand", description: "Стояние.", inputSchema: { type: "object" } },
+    ]),
+  });
+  const rec = await plugin(b.env, {
+    sessions: [
+      { id: "root", location: { directory: "/work/root" } },
+      { id: "child", parentID: "root", location: { directory: "/work/child" } },
+    ],
+  });
+  const usageLines = () =>
+    readFileSync(calls, "utf8")
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((l) => JSON.parse(l))
+      .filter((c) => c.name.startsWith("iskron/usage"));
+  const tok = (input) => ({ input, output: 10, reasoning: 5, cache: { read: 100, write: 1 } });
+  try {
+    await until(() => rec.tools().has("iskron_stand"), "the stand tool", 8000);
+    await rec.call("iskron_stand", { realm: "nks-dev", karta: "#931" }, "root");
+    const rootPid = pidOf(b.log);
+    const place = { realm: "@nks/nks-dev", karta: "931", name: "host.repo.opus-5" };
+    appendFileSync(`${b.events}.${rootPid}`, event("held", { key: "k-root", place }));
+    await delay(400); // the fake bridge relays event lines every 40 ms
+    await rec.call("iskron_stand", { realm: "nks-dev" }, "child");
+    const childPid = pidsOf(b.log)[1];
+    const sub = { ...place, name: "host.repo.opus-5.sub-1" };
+    appendFileSync(`${b.events}.${childPid}`, event("held", { key: "k-sub", place: sub }));
+    await delay(400);
+    rec.emit({ type: "session.usage.updated", data: { sessionID: "child", tokens: tok(200) } });
+    await until(() => usageLines().length > 0, "the first snapshot in flight");
+    rec.emit({ type: "session.usage.updated", data: { sessionID: "child", tokens: tok(300) } });
+    rec.emit({ type: "session.execution.succeeded", data: { sessionID: "child" } });
+    await until(() => !alive(childPid), "the child's bridge to end with its run", 8000);
+    assert.deepEqual(
+      usageLines()
+        .filter((c) => c.pid === childPid)
+        .map((c) => [c.name, c.arguments.input]),
+      [
+        ["iskron/usage", 200],
+        ["iskron/usage:answered", 200],
+        ["iskron/usage", 300],
+        ["iskron/usage:answered", 300],
+      ],
+    );
   } finally {
     await rec.stop();
   }

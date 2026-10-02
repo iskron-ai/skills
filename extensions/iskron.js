@@ -1210,21 +1210,27 @@ function findBridge() {
 // js/extension/usage.ts
 var n = (v) => typeof v === "number" && Number.isFinite(v) ? v : 0;
 function spent(entries) {
-  let sum = 0;
+  const s = { input: 0, output: 0, cache_read: 0, cache_write: 0 };
   for (const e of entries) {
     const u = e?.type === "message" && e.message?.role === "assistant" ? e.message.usage : null;
-    if (u) sum += n(u.input) + n(u.output) + n(u.cacheWrite);
+    if (!u) continue;
+    s.input += n(u.input);
+    s.output += n(u.output);
+    s.cache_read += n(u.cacheRead);
+    s.cache_write += n(u.cacheWrite);
   }
-  return sum;
+  return { tokens: s.input + s.output + s.cache_write, ...s };
 }
 function setupUsage(pi, live) {
   pi.on("turn_end", async (_event, ctx) => {
     const bridge = live();
     if (!bridge) return;
     const c = ctx.getContextUsage?.();
-    const p = {
-      tokens: spent(ctx.sessionManager?.getEntries?.() ?? [])
-    };
+    const p = spent(
+      ctx.sessionManager?.getEntries?.() ?? []
+    );
+    const model = ctx.model?.id;
+    if (typeof model === "string" && model) p.model = model;
     if (typeof c?.tokens === "number") p.context = c.tokens;
     if (n(c?.contextWindow)) p.window = c.contextWindow;
     await bridge.request("iskron/usage", p, { timeoutMs: 1e4 }).catch(() => {
