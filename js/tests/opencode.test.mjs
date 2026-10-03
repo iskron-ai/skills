@@ -3349,6 +3349,14 @@ test("two children of one parent in one case: A's word to B wakes only B, neithe
 // the next instance raises the child the same satellite bridge and takes the place
 // back by key, without a word to the child: its session waits on. The tie to the
 // parent is the session's parentID (OpenCode's Session), as at the first start.
+/**
+ * The bridge that carried the child's last iskron_case say. Not the last line of the
+ * calls file: the root's own return (iskron/resume after the late marker, keep.ts) may
+ * land after the say on another bridge — a race the probe used to lose under load.
+ */
+const saidBy = (calls) =>
+  calls.filter((c) => c.name === "iskron_case" && c.arguments?.action === "say").at(-1)?.pid;
+
 async function reloadedChild(name, env = {}, gone = null, firstTurn = false) {
   const calls = join(SANDBOX, `${name}.calls`);
   const resume = join(SANDBOX, `${name}.resume`);
@@ -3417,7 +3425,7 @@ test("marker-child: a reload pauses the child's bridge and the next instance tak
     assert.ok(!second.prompts.some((p) => p.sessionID === "child"), "no word wakes the child");
     assert.deepEqual(second.synthetics, [], "the parent is told nothing: the child goes on");
     await second.call("iskron_case", { realm: "nks-dev", action: "say", room: "#77" }, "child");
-    assert.equal(all().at(-1).pid, newPid, "the child's write goes by its own new bridge");
+    assert.equal(saidBy(all()), newPid, "the child's write goes by its own new bridge");
     await second.call("iskron_case", { realm: "nks-dev", action: "leave", room: "№77" }, "child");
     await until(() => !alive(newPid), "the child's bridge to go with leaving its errand's case");
     await until(() => ends(second).length === 1, "the end in the parent");
@@ -3467,7 +3475,7 @@ test("marker-child: a marker laid after the next instance loaded is taken at the
     await second.call("iskron_case", { realm: "nks-dev", action: "say", room: "#77" }, "child");
     const back = all().find((c) => c.name === "iskron/resume" && c.arguments.session === "child");
     assert.ok(back, "the child's place asked back by key");
-    assert.equal(all().at(-1).pid, back.pid, "the child's write goes by its own satellite");
+    assert.equal(saidBy(all()), back.pid, "the child's write goes by its own satellite");
     await second.call("iskron_case", { realm: "nks-dev", action: "leave", room: "№77" }, "child");
     await until(() => ends(second).length === 1, "the end in the parent");
     assert.match(ends(second)[0].text, /вышел из дела №77 по исходу/);
@@ -3545,7 +3553,7 @@ test("marker-child: while the previous bridge still holds the child's socket, th
     assert.deepEqual(toChild, [], "not a word to the child while it waits");
     assert.deepEqual(second.synthetics, [], "the parent is told nothing: the child goes on");
     await second.call("iskron_case", { realm: "nks-dev", action: "say", room: "#77" }, "child");
-    assert.equal(all().at(-1).pid, newPid, "the child writes by its own bridge again");
+    assert.equal(saidBy(all()), newPid, "the child writes by its own bridge again");
   } finally {
     await second.stop();
   }
