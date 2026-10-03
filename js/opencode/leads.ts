@@ -28,7 +28,10 @@ const names = (place: Place | undefined, child: string, s: string): boolean =>
 
 export function createLeads(d: W.LeadDoors): W.Leads {
   const leads = new Map<string, Lead>();
-  const gone = new Set<string>(); // отпущенные запустившим
+  // Кончённые окончательно: отпущенные запустившим (причины нет — слово отказа о нём),
+  // отменённые, снятые платформой — с причиной, которую назовёт отказ ребёнку.
+  const gone = new Map<string, string | undefined>();
+  const over = new Set<string>(); // кончённые любым концом, пока не встали снова
   const who = (l: Lead, child: string): string => l.place?.name ?? `сессии ${child}`;
   const parentOf = (child: string) => d.parentOf(child).catch(() => null);
 
@@ -50,6 +53,7 @@ export function createLeads(d: W.LeadDoors): W.Leads {
     const l = leads.get(child);
     if (!l) return;
     leads.delete(child);
+    over.add(child);
     // Конец снимает только спутника ребёнка: обычное место, вставшее вместо него, не трогаем.
     const kept = ended && kind === "end" ? d.ownPlace(child) : null;
     if (kept) d.say(`Искрон: ${W.keptLine(who(l, child), kept)}`, "warning");
@@ -82,6 +86,7 @@ export function createLeads(d: W.LeadDoors): W.Leads {
   function stood(child: string): Lead {
     const l = leads.get(child) ?? { parent: parentOf(child) };
     leads.set(child, l);
+    over.delete(child);
     return l;
   }
 
@@ -109,7 +114,7 @@ export function createLeads(d: W.LeadDoors): W.Leads {
       for (const [child, l] of leads) {
         if (!names(l.place, child, s) || (await l.parent) !== caller) continue;
         if (d.ownPlace(child)) return null; // не спутник — revoke идёт мостом запустившего как есть
-        gone.add(child);
+        gone.set(child, undefined);
         await finish(child, "отпущен словом запустившего");
         await d.tell(child, W.releasedWord(), false);
         return W.releaseWord(who(l, child));
@@ -117,15 +122,25 @@ export function createLeads(d: W.LeadDoors): W.Leads {
       return null;
     },
     released: (child) => gone.has(child),
+    goneWhy: (child) => gone.get(child),
     heard(child, kind, place) {
-      // Место-спутник снято платформой (вытеснено, токен мёртв): мост без места жнец погасил
+      // Место-спутник снято платформой (вытеснено, закрыто 4001): мост без места жнец погасил
       // бы молча — конец, как revoke запустившего: родителю слово без пробуждения, встать нельзя.
+      // Слово моста о канале ребёнку не идёт (true): он кончен, звать connect ему нечего.
       if ((kind === "evicted" || kind === "dead") && leads.has(child) && !d.ownPlace(child)) {
-        gone.add(child);
-        return void finish(child, W.placeGone(kind), true, false);
+        gone.set(child, W.placeGoneRefusal(kind));
+        void finish(child, W.placeGone(kind), true, false);
+        return true;
       }
-      if (kind !== "held" && kind !== "frame") return;
-      touch(kind === "held" && !gone.has(child) ? stood(child) : leads.get(child), place);
+      if (gone.has(child)) return true;
+      if (kind === "held") {
+        over.delete(child); // встал заново — снова ведущий
+        touch(stood(child), place);
+        return false;
+      }
+      if (over.has(child)) return true; // кончен любым концом — слов о канале ему нет
+      if (kind === "frame") touch(leads.get(child), place);
+      return false;
     },
     back(child, was) {
       const l = stood(child);
@@ -157,7 +172,7 @@ export function createLeads(d: W.LeadDoors): W.Leads {
           // Отмена человеком или запустившим (reason "user") — конец, как revoke запустившего:
           // без пробуждения, встать снова нельзя; shutdown, superseded, inactivity — не отмена.
           if (ev.data?.reason !== "user") return;
-          gone.add(child);
+          gone.set(child, W.CANCELLED_REFUSAL);
           return void finish(child, W.CANCELLED, true, false);
         case "session.execution.succeeded":
         case "session.execution.failed":

@@ -2615,7 +2615,7 @@ test("an evicted satellite seat is not holding: no loss marker for it, and its b
     await until(() => rec.synthetics.some((s) => /КОНЧЕН/.test(s.text)), "the evicted lead's end");
     await assert.rejects(
       rec.call("iskron_stand", { realm: "nks-dev", status: "после отъёма" }, "child"),
-      /отпустил/,
+      /вытеснено другим держателем — поручение кончено/,
     );
     const busy = readFileSync(calls, "utf8")
       .trim()
@@ -2821,7 +2821,10 @@ test("a lead child whose run is interrupted by the user is ended without waking 
     assert.match(ends(rec)[0].text, /отменён в OpenCode[\s\S]*место снято/);
     assert.equal(ends(rec)[0].resume, false, "a cancel does not wake the parent");
     const bridges = pidsOf(b.log).length;
-    await assert.rejects(rec.call("iskron_stand", { realm: "nks-dev" }, "child"), /отпустил/);
+    await assert.rejects(
+      rec.call("iskron_stand", { realm: "nks-dev" }, "child"),
+      /ход отменён в OpenCode — поручение кончено/,
+    );
     assert.equal(pidsOf(b.log).length, bridges, "no bridge raised for the cancelled child");
   } finally {
     await rec.stop();
@@ -2835,12 +2838,30 @@ for (const kind of ["evicted", "dead"])
   test(`a lead child whose satellite place is ${kind} is ended with a word to the parent, not left to the reaper`, async () => {
     const { b, rec, childPid } = await leadChild(`lead-${kind}`);
     try {
-      appendFileSync(`${b.events}.${childPid}`, event(kind, { code: 4000, text: "место снято" }));
+      const code = kind === "dead" ? 4001 : 4000;
+      const text = `ДЕЛАТЕЛЬ: канал закрыт кодом ${code} — токен мёртв. Зови connect`;
+      appendFileSync(`${b.events}.${childPid}`, event(kind, { code, text }));
       await until(() => !alive(childPid), "the placeless child's bridge to go");
       await until(() => ends(rec).length === 1, "the end in the parent");
       assert.match(ends(rec)[0].text, /КОНЧЕН[\s\S]*место-спутник/);
+      assert.doesNotMatch(
+        ends(rec)[0].text,
+        /токен мёртв/,
+        "a 4001 after a revoke is no dead token",
+      );
+      if (kind === "dead") assert.match(ends(rec)[0].text, /отозвано/);
       assert.equal(ends(rec)[0].resume, false, "the loss of the place does not wake the parent");
-      await assert.rejects(rec.call("iskron_stand", { realm: "nks-dev" }, "child"), /отпустил/);
+      // e2e ada1ff7: the ended child was handed the bridge's «call connect» and woken for a turn.
+      await delay(200);
+      const toChild = [...rec.prompts, ...rec.synthetics].filter((p) => p.sessionID === "child");
+      assert.deepEqual(
+        toChild,
+        [],
+        "no channel word is laid into the ended child, nothing wakes it",
+      );
+      const refused = rec.call("iskron_stand", { realm: "nks-dev" }, "child");
+      await assert.rejects(refused, kind === "dead" ? /отозвано/ : /вытеснено/);
+      await assert.rejects(refused, (e) => !/запустивший отпустил/.test(e.message));
     } finally {
       await rec.stop();
     }

@@ -138,9 +138,12 @@ export async function setupTools(
         if (kind === "held") slot.place = heldPlace(params?.data) ?? slot.place; // #6002
         if (kind === "released" || kind === "dead" || kind === "evicted") slot.holding = false;
         // Ведущий — только ребёнок-спутник (#6550 п.4); ребёнок на обычном мосте — один прогон (children.ts).
-        if (slot.child && slot.satelliteOf && slot.session)
+        const over =
+          !!slot.child &&
+          !!slot.satelliteOf &&
+          !!slot.session &&
           leads.heard(slot.session, kind, slot.place);
-        relay(slot.session, params, !!slot.child);
+        if (!over) relay(slot.session, params, !!slot.child); // кончившемуся ведущему слов о канале нет
       },
       (e) => {
         // Держащий мост вышел не по нашей воле — слух потерян, и это слово в
@@ -167,7 +170,7 @@ export async function setupTools(
   const runEnds = createRunEnds(); // кончившиеся дети: запись с места — отказ вслух (#6361)
   // Ведущие субагенты (#6625): конец — явный акт, итог — синтетикой родителю.
   const endChild = (c: string) =>
-    runEnds.end(c, slots.get(c)?.satelliteOf, forget, leads.released(c));
+    runEnds.end(c, slots.get(c)?.satelliteOf, forget, leads.released(c), leads.goneWhy(c));
   const leads = createLeads(leadDoors(ctx, say, flushUsage, endChild, slots));
   const keeper = createKeeper({
     say,
