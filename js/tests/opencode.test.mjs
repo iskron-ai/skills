@@ -2760,12 +2760,11 @@ function turn(rec, text, sessionID = "child") {
 
 const ends = (rec) => rec.synthetics.filter((s) => /КОНЧЕН/.test(s.text));
 
-test("the end of a child's turn in a case ends nothing: its bridge lives, a frame of its case wakes its session and never the root, and the parent hears it is a turn, not the result", async () => {
+test("the end of a child's turn ends nothing: its bridge lives, a frame of its case wakes its session and never the root, and the parent hears it is a turn, not the result", async () => {
   const { b, rec, rootPid, childPid } = await leadChild("lead-turn", {
     ISKRON_BRIDGE_WATCH_MS: 200,
   });
   try {
-    await rec.call("iskron_case", { realm: "nks-dev", action: "join", room: "№7" }, "child");
     turn(rec, "жду соседа по делу");
     rec.emit({ type: "session.execution.succeeded", data: { sessionID: "root" } });
     await delay(700); // more than three ticks of the hearing watch
@@ -2797,44 +2796,13 @@ test("the end of a child's turn in a case ends nothing: its bridge lives, a fram
   }
 });
 
-// #6550 rule 4 (astra on 7.2.6): a lead sitting in no case has no frames to wait for —
-// the end of its turn is its end, like a leave: «КОНЧЕН» with its last word, the bridge
-// goes. A case opened by talk sits without a number: that turn is a turn.
-test("a lead child sitting in no case is ended with its turn: «КОНЧЕН» with its last word, its bridge goes; a talk's case keeps it", async () => {
-  const { rec, childPid } = await leadChild("lead-free");
-  try {
-    turn(rec, "Проба: мост отвечает.");
-    await until(() => !alive(childPid), "the free child's bridge to go with its turn");
-    await until(() => ends(rec).length === 1, "the end in the parent");
-    assert.match(ends(rec)[0].text, /ни в одном деле[\s\S]*Проба: мост отвечает\./);
-    assert.equal(ends(rec)[0].resume, true, "an end by the outcome wakes the parent");
-    assert.ok(!rec.synthetics.some((s) => /сдал ход, не поручение/.test(s.text)), "not a turn");
-  } finally {
-    await rec.stop();
-  }
-  const talk = await leadChild("lead-talk");
-  try {
-    await talk.rec.call(
-      "iskron_case",
-      { realm: "nks-dev", action: "talk", with: "#1226" },
-      "child",
-    );
-    turn(talk.rec, "жду ответа");
-    await until(() => talk.rec.synthetics.length === 1, "the word about the turn");
-    assert.match(talk.rec.synthetics[0].text, /сдал ход, не поручение/);
-    assert.ok(alive(talk.childPid), "a child in a talk's case lives past its turn");
-  } finally {
-    await talk.rec.stop();
-  }
-});
-
 // A cancelled child (the human or the parent stopped its run in OpenCode) is ended like a
 // revoke by its launcher: «КОНЧЕН» to the parent without waking it, the place goes —
-// not kept reopening its socket. Other interruptions (shutdown, superseded) are no end.
-test("a lead child whose run is interrupted by the user is ended without waking the parent; a superseded run is no end", async () => {
-  const { rec, childPid } = await leadChild("lead-cancel");
+// not kept reopening its socket — and it cannot stand again. Other interruptions
+// (shutdown, superseded) are no end.
+test("a lead child whose run is interrupted by the user is ended without waking the parent and cannot stand again; a superseded run is no end", async () => {
+  const { b, rec, childPid } = await leadChild("lead-cancel");
   try {
-    await rec.call("iskron_case", { realm: "nks-dev", action: "join", room: "№7" }, "child");
     rec.emit({ type: "session.execution.started", data: { sessionID: "child" } });
     rec.emit({
       type: "session.execution.interrupted",
@@ -2852,6 +2820,9 @@ test("a lead child whose run is interrupted by the user is ended without waking 
     await until(() => ends(rec).length === 1, "the end in the parent");
     assert.match(ends(rec)[0].text, /отменён в OpenCode[\s\S]*место снято/);
     assert.equal(ends(rec)[0].resume, false, "a cancel does not wake the parent");
+    const bridges = pidsOf(b.log).length;
+    await assert.rejects(rec.call("iskron_stand", { realm: "nks-dev" }, "child"), /отпустил/);
+    assert.equal(pidsOf(b.log).length, bridges, "no bridge raised for the cancelled child");
   } finally {
     await rec.stop();
   }
@@ -3182,23 +3153,16 @@ test("the launcher's revoke of its child's place ends the child for good: the pl
   }
 });
 
-// The ceiling's word lies in the parent without waking it (synthetic resume=false:
-// «schedule execution unless resume is false», OpenCode's description of the call);
-// and only turns and frames count — other events of the child's session do not.
-test("a lead child idle past the ceiling — no turn, no frame, whatever else its session emits — is ended, and the parent is told without being woken", async () => {
-  const { rec, childPid } = await leadChild("lead-ceiling", { ISKRON_LEAD_IDLE_MS: 1500 });
-  const noise = setInterval(() => {
-    for (const type of ["session.usage.updated", "session.viewed", "session.inbox.delivered"])
-      rec.emit({ type, data: { sessionID: "child", tokens: { input: 1 } } });
-  }, 150);
+// #6550 rule 4 (the owner's word, №147 [128]): no idle ceiling — waiting for a human is
+// not being forgotten; the end is an explicit act only. The former knob, set short, ends nothing.
+test("a lead child idle with no turn and no frame is never ended by the plugin — no ceiling, even with the former knob set short", async () => {
+  const { rec, childPid } = await leadChild("lead-no-ceiling", { ISKRON_LEAD_IDLE_MS: 500 });
   try {
-    await until(() => !alive(childPid), "the forgotten child's bridge to go", 8000);
-    await until(() => ends(rec).length === 1, "the end in the parent");
-    assert.match(ends(rec)[0].text, /потолок простоя/);
-    assert.equal(ends(rec)[0].resume, false, "the ceiling does not wake the parent");
-    assert.equal(ends(rec)[0].delivery, "steer", "nor queues a turn after the parent's");
+    turn(rec, "жду ответа человека");
+    await delay(2500);
+    assert.ok(alive(childPid), "the waiting child's bridge lives");
+    assert.equal(ends(rec).length, 0, "no end without an explicit act");
   } finally {
-    clearInterval(noise);
     await rec.stop();
   }
 });
@@ -3384,17 +3348,6 @@ test("marker-child: a child whose session cannot be read after a reload is ended
   }
 });
 
-test("marker-child: a child taken back after a reload is under the ceiling again", async () => {
-  const { second, newPid } = await reloadedChild("reload-ceiling", { ISKRON_LEAD_IDLE_MS: 2500 });
-  try {
-    await until(() => !alive(newPid), "the forgotten child's bridge to go", 10000);
-    await until(() => ends(second).length === 1, "the end in the parent");
-    assert.match(ends(second)[0].text, /потолок простоя/);
-  } finally {
-    await second.stop();
-  }
-});
-
 // The child's last text is its result at the end: it rides the marker through a
 // reload (seen live: a revoke after a reload gave «(текста он не оставил)»).
 test("marker-child: the child's last text survives a reload and is its result at the end", async () => {
@@ -3498,7 +3451,6 @@ test("OpenCode's «completed» notice of a live lead child's turn gets the plugi
   try {
     assert.equal(rec.hooks.context?.length, 1, "the plugin hooks the request's context");
     assert.equal(rec.hooks.compaction?.length, 1, "and the compaction's");
-    await rec.call("iskron_case", { realm: "nks-dev", action: "join", room: "№7" }, "child");
     turn(rec, "жду соседа");
     const said = await ask(
       { role: "user", content: [{ type: "text", text: notice("child") }] },

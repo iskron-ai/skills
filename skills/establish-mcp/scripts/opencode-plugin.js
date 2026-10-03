@@ -1719,31 +1719,7 @@ function createLauncher(d) {
   };
 }
 
-// js/opencode/leadrooms.ts
-var roomNo = (room) => String(room ?? "").replace(/^\s*[#№]\s*|\s+$/g, "");
-var sits = (s) => !!s.blind || !!s.rooms?.size;
-function seatCall(s, name, args) {
-  const room = name === "iskron_case" || name === "iskron_room" ? roomNo(args.room) : null;
-  const inRoom = roomNo(args.in_room);
-  if (inRoom) (s.rooms ??= /* @__PURE__ */ new Set()).add(inRoom);
-  if (args.open_room || room !== null && args.action === "talk") s.blind = true;
-  if (args.action === "join" && room) {
-    s.room ??= room;
-    (s.rooms ??= /* @__PURE__ */ new Set()).add(room);
-  }
-  if (args.action !== "leave") return null;
-  if (name === "iskron_channel") return "ушёл с места по исходу";
-  if (room === "") {
-    s.rooms?.clear();
-    s.blind = false;
-    return "ушёл из дел по исходу";
-  }
-  if (room) s.rooms?.delete(room);
-  return room && room === s.room ? `вышел из дела №${s.room} по исходу` : null;
-}
-
 // js/opencode/leadwords.ts
-var FREE = "сдал ход, не сидя ни в одном деле: ждать кадров нечего";
 var CANCELLED = "его ход отменён в OpenCode (человеком или запустившим)";
 var SUMMARY_MAX = 4e3;
 var endWord = (who, why, last, kept) => {
@@ -1792,9 +1768,7 @@ function leadDoors(ctx, say, flush, end, slots) {
 }
 
 // js/opencode/leads.ts
-var LEAD_IDLE_MS = Number(process.env.ISKRON_LEAD_IDLE_MS) || 45 * 6e4;
-var TICK_MS = Math.min(6e4, Math.max(100, Math.floor(LEAD_IDLE_MS / 5)));
-var TURN = /^session\.execution\.(started|succeeded|failed|interrupted)$/;
+var roomNo = (room) => String(room ?? "").replace(/^\s*[#№]\s*|\s+$/g, "");
 var names = (place, child, s) => s === child || !!place?.name && (s === place.name || s.endsWith(`:${place.name}`));
 function createLeads(d) {
   const leads = /* @__PURE__ */ new Map();
@@ -1826,30 +1800,26 @@ function createLeads(d) {
     if (!l.running) void finish(child, why);
   }
   function stood(child) {
-    const l = leads.get(child) ?? { parent: parentOf(child), at: Date.now() };
+    const l = leads.get(child) ?? { parent: parentOf(child) };
     leads.set(child, l);
     return l;
   }
   function touch(l, place) {
     if (!l) return false;
-    l.at = Date.now();
     if (place) l.place = place;
     return true;
   }
-  const tick = setInterval(() => {
-    const now2 = Date.now();
-    const why = `потолок простоя: ${Math.round(LEAD_IDLE_MS / 6e4)} мин без хода и без кадра`;
-    for (const [child, l] of leads)
-      if (!l.running && now2 - l.at >= LEAD_IDLE_MS) void finish(child, why, true, false);
-  }, TICK_MS);
-  tick.unref?.();
   return {
     called(child, name, args, place) {
       if (gone.has(child)) return;
       const l = standsBy(name, args) ? stood(child) : leads.get(child);
       if (!touch(l, place)) return;
-      const why = seatCall(l, name, args);
-      if (why) leave(child, l, why);
+      const room = name === "iskron_case" || name === "iskron_room" ? roomNo(args.room) : null;
+      if (args.action === "join" && room) l.room ??= room;
+      if (args.action !== "leave") return;
+      if (name === "iskron_channel") leave(child, l, "ушёл с места по исходу");
+      else if (room === "") leave(child, l, "ушёл из дел по исходу");
+      else if (room && room === l.room) leave(child, l, `вышел из дела №${l.room} по исходу`);
     },
     async release(caller, name, args) {
       const s = String(args.standing ?? "").trim();
@@ -1871,8 +1841,7 @@ function createLeads(d) {
     },
     back(child, was) {
       const l = stood(child);
-      if (was.room) (l.rooms ??= /* @__PURE__ */ new Set()).add(l.room = was.room);
-      else l.blind = true;
+      if (was.room) l.room = was.room;
       if (was.noted) l.noted = true;
       if (was.last) l.last ??= was.last;
       if (was.name && was.of) l.place ??= { ...was.of, name: was.name };
@@ -1888,7 +1857,6 @@ function createLeads(d) {
       const child = ev?.data?.sessionID;
       const l = typeof child === "string" ? leads.get(child) : void 0;
       if (!l || typeof child !== "string") return;
-      if (TURN.test(String(ev.type))) l.at = Date.now();
       switch (ev.type) {
         case "session.execution.started":
           l.running = true;
@@ -1898,13 +1866,13 @@ function createLeads(d) {
           return;
         case "session.execution.interrupted":
           l.running = false;
-          if (ev.data?.reason === "user") return void finish(child, CANCELLED, true, false);
-          return;
+          if (ev.data?.reason !== "user") return;
+          gone.add(child);
+          return void finish(child, CANCELLED, true, false);
         case "session.execution.succeeded":
         case "session.execution.failed":
           l.running = false;
           if (l.leaving) return void finish(child, l.leaving);
-          if (!sits(l)) return void finish(child, FREE);
           if (l.noted) return;
           l.noted = true;
           void l.parent.then(async (p) => {
@@ -1914,8 +1882,7 @@ function createLeads(d) {
         case "session.deleted":
           return void finish(child, "сессия субагента удалена", false);
       }
-    },
-    stop: () => clearInterval(tick)
+    }
   };
 }
 
@@ -2455,7 +2422,6 @@ async function setupTools(ctx, say, onChannel, rootOf, flushUsage = async () => 
     async stop() {
       stopped = true;
       clearInterval(reaper);
-      leads.stop();
       keeper.stop();
       await children.pause();
       writeLostMarker(authDir(), slots.values(), home);
