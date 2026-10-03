@@ -35,7 +35,7 @@ export interface HoldRecord {
   session?: string;
   /** держатель отпустил место словом (iskron_channel leave): ни сторож, ни возврат по каталогу или ключу его не поднимают — только iskron_stand по имени */
   left?: boolean;
-  /** когда записано (мс эпохи): место без сокета живёт у платформы шесть часов, дольше запись мертва */
+  /** когда записано (мс эпохи) — переписывается и уходом сессии с живым сокетом (#6649): место без сокета живёт у платформы шесть часов, дольше запись мертва */
   at?: number;
   /** дела, в которые вошёл спутник, — пишет только его пауза на перезагрузку плагина (suspend.ts) */
   cases?: { realm?: string; room: string }[];
@@ -103,11 +103,12 @@ export function markLeft(key: string, on: boolean): void {
   const r = readHoldRecord(key);
   if (r && (r.left === true) !== on) writeHoldRecord(key, { ...r, left: on });
 }
-/** Запись места; просроченная стирается и не читается. */
-export function readHoldRecord(key: string): HoldRecord | null {
+/** Запись места; просроченная стирается и не читается — кроме чтения `anyAge` держащего её моста (holdkeep.ts). */
+export function readHoldRecord(key: string, anyAge = false): HoldRecord | null {
   try {
     const r = JSON.parse(readFileSync(holdFilePathFor(key), "utf8")) as HoldRecord;
     if (!r || typeof r.url !== "string" || !r.realm || r.karta == null) return null;
+    if (anyAge) return r;
     // Запись без метки времени — не свежая, а неведомая: как и уборка, считаем просроченной.
     if (typeof r.at !== "number" || Date.now() - r.at > HOLD_RECORD_MAX_AGE_MS) {
       dropHoldRecord(key);

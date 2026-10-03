@@ -3976,10 +3976,11 @@ function markLeft(key, on) {
   const r = readHoldRecord(key);
   if (r && r.left === true !== on) writeHoldRecord(key, { ...r, left: on });
 }
-function readHoldRecord(key) {
+function readHoldRecord(key, anyAge = false) {
   try {
     const r = JSON.parse(readFileSync10(holdFilePathFor(key), "utf8"));
     if (!r || typeof r.url !== "string" || !r.realm || r.karta == null) return null;
+    if (anyAge) return r;
     if (typeof r.at !== "number" || Date.now() - r.at > HOLD_RECORD_MAX_AGE_MS) {
       dropHoldRecord(key);
       return null;
@@ -4026,6 +4027,7 @@ function sweepStale(authDir, mine) {
     }
   }
   for (const f of readdirSync2(dir).filter((x) => x.endsWith(".hold"))) {
+    if (existsSync(join9(dir, `${basename2(f, ".hold")}.key`))) continue;
     try {
       const rec4 = JSON.parse(readFileSync11(join9(dir, f), "utf8"));
       if (typeof rec4.at !== "number" || Date.now() - rec4.at > HOLD_RECORD_MAX_AGE_MS)
@@ -8536,6 +8538,31 @@ async function deliverOne(msg) {
   }
 }
 
+// js/bridge/holdkeep.ts
+function keepHoldRecord() {
+  const s2 = state.standing;
+  const key = H2.currentKey;
+  if (!s2 || !key || !H2.currentUrl || !H2.holder?.alive) return;
+  const ch = { url: H2.currentUrl, statusUrl: H2.currentStatusUrl, cwd: H2.standCwd };
+  const was = readHoldRecord(key, true);
+  if (was)
+    writeHoldRecord(key, {
+      ...was,
+      realm: s2.realm,
+      karta: s2.karta,
+      name: s2.name ?? "",
+      url: ch.url,
+      statusUrl: ch.statusUrl,
+      cwd: ch.cwd ?? was.cwd,
+      client: harnessName(),
+      key
+    });
+  for (const p of extraPlaces()) {
+    const r = readHoldRecord(p.door.key, true);
+    if (r) rememberExtraStatus(p.door.key, { ...ch, cwd: ch.cwd ?? r.cwd }, r.status ?? "");
+  }
+}
+
 // js/bridge/work.ts
 var W = scoped(() => ({ at: 0 }));
 function noteAgentWork(at2 = Date.now()) {
@@ -8619,6 +8646,7 @@ function openIn(io, origin, scope) {
     const paused = suspended();
     const closing = (!handover || CFG.satellite) && !paused;
     const spent = closing || paused ? usagePlace() : null;
+    if (!CFG.satellite) keepHoldRecord();
     releaseStanding(why, CFG.satellite && !paused);
     await Promise.all([paused ? null : leaveJoinedCases(), flushUsage(spent)]);
     if (!paused) await revokeSatellitePlaces(places);

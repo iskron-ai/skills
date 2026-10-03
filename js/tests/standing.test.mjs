@@ -10,7 +10,14 @@
 // appears — the red this probe exists to show.
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtempSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
@@ -1648,6 +1655,60 @@ test("a bridge restarted under a held place resumes it from disk: same address, 
     !readdirSync(standings).some((f) => f.endsWith(".hold")),
     "a revoke forgets the record",
   );
+});
+
+// #6649: место держалось дольше срока записи без новой занятости, и плагин
+// перезапустили — SIGTERM моста. Срок записи — простой места без сокета: он
+// считается от этого ухода, иначе запись уходила просроченной и место с диска
+// не возвращалось, хотя у платформы оно живо.
+test("a place held longer than the record's life without a new busy line survives a SIGTERM: the record is renewed at leaving and the next bridge resumes the place", async (t) => {
+  const { fake, dir, bridge, standings } = await connected(t);
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const st0 = await bridge.call("tools/call", 4, {
+    name: "iskron_channel",
+    arguments: { realm: "nks-dev", action: "status", text: "до ухода" },
+  });
+  assert.ok(!st0.result?.isError, JSON.stringify(st0));
+  const path = join(
+    standings,
+    readdirSync(standings).find((f) => f.endsWith(".hold")),
+  );
+  const rec = JSON.parse(readFileSync(path, "utf8"));
+  writeFileSync(path, JSON.stringify({ ...rec, at: Date.now() - 7 * 3600 * 1000 }));
+  // A neighbour bridge opening its door sweeps the standings: a held place's record stays.
+  const other = startBridge(fake.mcpUrl, dir);
+  t.after(() => other.stop());
+  assert.ok((await other.call("initialize", 1, INIT)).result);
+  const near = await other.call("tools/call", 2, {
+    name: "iskron_stand",
+    arguments: { realm: "nks-dev", karta: 931, name: "sosed" },
+  });
+  assert.ok(!near.result?.isError, JSON.stringify(near));
+  assert.ok(existsSync(path), "a neighbour's sweep leaves the record of a held place");
+  bridge.proc.kill("SIGTERM"); // the plugin restarts and asks its bridges to go
+  await waitFor(
+    () => bridge.proc.exitCode !== null || bridge.proc.signalCode !== null,
+    "the bridge to exit",
+  );
+  assert.ok(existsSync(path), "the record outlives a SIGTERM");
+  const kept = JSON.parse(readFileSync(path, "utf8"));
+  assert.ok(Date.now() - kept.at < 60_000, `the record's life counts from the leaving: ${kept.at}`);
+  assert.equal(kept.status, "до ухода", "the busy line stays in the record");
+  assert.equal(kept.url, rec.url, "the same address");
+
+  const second = startBridge(fake.mcpUrl, dir);
+  t.after(() => second.stop());
+  assert.ok((await second.call("initialize", 1, INIT)).result);
+  await fake.control({ places: [{ karta: "931", name: "proba", listening: false }] });
+  const connects = fake.state.counts.connect;
+  const st = await second.call("tools/call", 2, {
+    name: "iskron_stand",
+    arguments: { realm: "nks-dev", karta: 931, name: "proba" },
+  });
+  const said = (st.result?.content ?? []).map((c) => c.text ?? "").join("\n");
+  assert.ok(!st.result?.isError, said);
+  assert.match(said, /возврат места с диска после перезапуска моста/, said);
+  assert.equal(fake.state.counts.connect, connects, "the place is resumed, not rotated");
 });
 
 test("a stale hold record is dropped quietly: no dead-token alarm, the place is taken anew; an expired record is never read", async (t) => {
