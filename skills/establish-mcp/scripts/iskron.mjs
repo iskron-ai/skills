@@ -4041,8 +4041,13 @@ var Door = class {
   roomBatch = new RoomBatch();
   /** id места у платформы (hello standings[].standing_id) — по нему кадр находит дверь и занятость — место. */
   standingId = null;
-  /** Адрес места @handle:name из hello (standings[].standing) — так место зовёт доска; до hello неизвестен. */
+  /**
+   * Адрес места @handle:name — так место зовёт доска: из hello (standings[].standing), а у
+   * места рядом до того — выведен из хэндла основного места (addressDerived); нет ни того, ни другого — null.
+   */
   address = null;
+  /** address выведен мостом, а не назван hello. */
+  addressDerived = false;
   /** Почему локальный сокет не поднялся; null — поднят или ещё поднимается. */
   listenError = null;
   server = null;
@@ -4426,6 +4431,12 @@ function writeRecord(p, ch, status) {
     key: p.door.key
   });
 }
+function deriveAddress(p, primaryAddress) {
+  const handle = primaryAddress?.match(/^(.*):/)?.[1];
+  if (!handle || !p.standing.name) return;
+  p.door.address = `${handle}:${p.standing.name}`;
+  p.door.addressDerived = true;
+}
 function addExtra(s2, ch, hooks, primaryAddress = null) {
   const key = keyOfPlace(s2);
   const have = extras.get(key);
@@ -4433,10 +4444,9 @@ function addExtra(s2, ch, hooks, primaryAddress = null) {
   for (const p of extraPlaces())
     if (sameRealm(p.standing.realm, s2.realm)) dropExtra(p.door.key, "другое место графа", true);
   const door = new Door(key, hooks);
-  const handle = primaryAddress?.match(/^(.*):/)?.[1];
-  if (handle && s2.name) door.address = `${handle}:${s2.name}`;
-  door.open();
   const place = { standing: s2, door };
+  deriveAddress(place, primaryAddress);
+  door.open();
   extras.set(key, place);
   writeRecord(place, ch);
   standingLog(`held ${key} beside the channel`);
@@ -4489,7 +4499,10 @@ function learnFromHello(hello, primary) {
     if (!e) continue;
     if (e.realm && unresolved(p.standing.realm)) learnRealm(p.standing.realm, e.realm);
     if (typeof e.standing_id === "string" && e.standing_id) p.door.standingId = e.standing_id;
-    if (typeof e.standing === "string" && e.standing) p.door.address = e.standing;
+    if (typeof e.standing === "string" && e.standing) {
+      p.door.address = e.standing;
+      p.door.addressDerived = false;
+    }
   }
 }
 function fitsOf(frame2, places) {
@@ -4609,14 +4622,24 @@ function drainSpool(path, feed) {
 }
 
 // js/bridge/statuspost.ts
+var CLOSED = /* @__PURE__ */ new Set(["UND_ERR_SOCKET", "ECONNRESET", "EPIPE"]);
+var closedUnder = (e) => {
+  const err = e;
+  return CLOSED.has(err?.code ?? "") || CLOSED.has(err?.cause?.code ?? "");
+};
 async function publishStatusTo(url, text, timeoutMs = 5e3, standingId = null) {
+  const signal = AbortSignal.timeout(timeoutMs);
+  const post3 = () => fetch(url, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(standingId ? { text, standing_id: standingId } : { text }),
+    signal
+  });
   let res;
   try {
-    res = await fetch(url, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(standingId ? { text, standing_id: standingId } : { text }),
-      signal: AbortSignal.timeout(timeoutMs)
+    res = await post3().catch((e) => {
+      if (!closedUnder(e) || signal.aborted) throw e;
+      return post3();
     });
   } catch (e) {
     return {
@@ -5534,12 +5557,15 @@ function serialized(fn) {
 // js/bridge/statusaddr.ts
 function statusAddress(realm) {
   if (!H2.currentStatusUrl || !H2.currentKey) return null;
-  const d = (realm ? extraIn(realm)?.door : void 0) ?? H2.door;
+  const extra = realm ? extraIn(realm) : void 0;
+  const d = extra?.door ?? H2.door;
   return {
     url: H2.currentStatusUrl,
     key: d?.key ?? H2.currentKey,
     standingId: d?.standingId ?? null,
-    place: d?.address ?? null
+    place: d?.address ?? null,
+    derived: d?.addressDerived ?? false,
+    name: (extra?.standing ?? state.standing)?.name ?? ""
   };
 }
 
@@ -5560,12 +5586,13 @@ async function statusWord(text, realm) {
   const st = await publishStatus(text, realm);
   if (!st.ok && !statusAddress()) return [await notHeldHere(realm), true];
   if (st.code === 404) return [`${st.body} ${TURNED_GUIDANCE()}`, true];
-  if (st.ok)
-    return [
-      `занятость ${statusAddress(realm)?.place ?? statusAddress(realm)?.key}: ${text || "(снята)"}`,
-      false
-    ];
+  if (st.ok) return [`занятость ${placeLabel(realm)}: ${text || "(снята)"}`, false];
   return [st.body, true];
+}
+function placeLabel(realm) {
+  const a = statusAddress(realm);
+  if (a?.place) return a.derived ? `${a.place} (адрес выведен, hello его не называл)` : a.place;
+  return `места${a?.name ? ` «${a.name}»` : ""} (адреса @handle:name ещё нет — hello не пришёл)`;
 }
 function localStatus(msg) {
   if (msg?.method !== "tools/call" || msg?.params?.name !== "iskron_channel") return null;

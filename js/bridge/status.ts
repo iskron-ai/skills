@@ -57,12 +57,15 @@ async function statusWord(text: string, realm: string): Promise<[string, boolean
   const st = await publishStatus(text, realm);
   if (!st.ok && !statusAddress()) return [await notHeldHere(realm), true];
   if (st.code === 404) return [`${st.body} ${TURNED_GUIDANCE()}`, true];
-  if (st.ok)
-    return [
-      `занятость ${statusAddress(realm)?.place ?? statusAddress(realm)?.key}: ${text || "(снята)"}`,
-      false,
-    ];
+  if (st.ok) return [`занятость ${placeLabel(realm)}: ${text || "(снята)"}`, false];
   return [st.body, true];
+}
+
+/** Место так, как его зовёт доска; адрес, не названный hello, — помечен, а не выдан за названный. */
+function placeLabel(realm: string): string {
+  const a = statusAddress(realm);
+  if (a?.place) return a.derived ? `${a.place} (адрес выведен, hello его не называл)` : a.place;
+  return `места${a?.name ? ` «${a.name}»` : ""} (адреса @handle:name ещё нет — hello не пришёл)`;
 }
 
 /** action="status" — занятость ЭТОГО стояния. Возвращает null для всякого другого вызова. */
