@@ -71,7 +71,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 2 # the PR merge commit and its base tip, for the outputs lock
+          fetch-depth: 0 # the outputs lock walks the whole push (github.event.before..HEAD)
       - uses: actions/setup-node@v4
         with:
           # The floor the shipped file claims (global WebSocket): the suites run
@@ -87,9 +87,11 @@ jobs:
         run: make check-js
       # The lock: a PR from any branch but the release job's leaves the committed outputs
       # as its base has them (HEAD^1 of the PR's merge commit is the base tip); a push to
-      # main leaves them as the pushed commit's parent has them, unless it is the release
-      # PR's own merge commit. The script reads the event from the environment.
+      # main is walked commit by commit from github.event.before, and only the release PR's
+      # own merge commit may change them. The script reads the event from the environment.
       - name: Committed outputs untouched outside the release PR
+        env:
+          PUSH_BEFORE: ${{ github.event.before }}
         run: bash scripts/check-outputs-frozen.sh
       - name: Behavioural suites against the dev build of js/ in dist/dev (fake NKS + OAuth, fake bridge, fake socket)
         run: make test-coverage
