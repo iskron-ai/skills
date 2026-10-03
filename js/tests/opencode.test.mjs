@@ -2672,13 +2672,27 @@ test("a satellite child holding its seat calls iskron_stand with status only: th
 // child — and on that end the plugin lays the result into the parent as a
 // synthetic marked as the end. The events' form is from the types of
 // @opencode/schema (plugin 2.0.4): data.sessionID; data.text of session.text.ended.
-const LEAD_TOOLS = JSON.stringify(
-  ["iskron_stand", "iskron_channel", "iskron_case", "iskron_look"].map((name) => ({
-    name,
-    description: "Тул.",
-    inputSchema: { type: "object" },
-  })),
-);
+// Tools that declare an action argument, as the server's do: only theirs «?» is help.
+const ASKING = [
+  "iskron_case",
+  "iskron_channel",
+  "iskron_realm",
+  "iskron_org",
+  "iskron_me",
+  "iskron_history",
+];
+const fakeTools = (names) =>
+  JSON.stringify(
+    names.map((name) => ({
+      name,
+      description: "Тул.",
+      inputSchema: ASKING.includes(name)
+        ? { type: "object", properties: { action: { type: "string" } } }
+        : { type: "object" },
+    })),
+  );
+const LEAD_NAMES = ["iskron_stand", "iskron_channel", "iskron_case", "iskron_look"];
+const LEAD_TOOLS = fakeTools(LEAD_NAMES);
 const ROOT_PLACE = { realm: "@nks/nks-dev", karta: "931", name: "host.repo.opus-5" };
 const SUB = "host.repo.opus-5.sub-1";
 
@@ -2883,10 +2897,10 @@ test("a one-shot child launched into a case is ended by leaving that case — an
 // stand is refused, not an ordinary place; a child that never stood — its write is
 // refused whether the root holds a place (it would be signed by the parent's) or not;
 // its reads go by the root's bridge.
-async function childUnder(name, rootHolds) {
+async function childUnder(name, rootHolds, more = []) {
   const calls = join(SANDBOX, `${name}.calls`);
   writeFileSync(calls, "");
-  const b = bridgeEnv(name, { FB_CALLS: calls, FB_TOOLS: LEAD_TOOLS });
+  const b = bridgeEnv(name, { FB_CALLS: calls, FB_TOOLS: fakeTools([...LEAD_NAMES, ...more]) });
   const rec = await plugin(b.env, {
     sessions: [{ id: "root" }, { id: "child", parentID: "root" }],
   });
@@ -2963,6 +2977,28 @@ for (const rootHolds of [true, false])
       await rec.stop();
     }
   });
+
+// Case №147 [106]: «?» is help only for a tool that declares action; elsewhere the server
+// drops the stray argument and runs the write — by the root's bridge, signed by its place.
+test('rule 2: a child without a satellite is refused a stray action "?" on a tool without action; the case\'s "?" goes by the root\'s bridge', async () => {
+  const { rec, calls } = await childUnder("rule2-ask", true, [
+    "iskron_update",
+    "iskron_add_phenomenon",
+  ]);
+  try {
+    const before = callsIn(calls).length;
+    for (const tool of ["iskron_update", "iskron_add_phenomenon"])
+      await assert.rejects(
+        rec.call(tool, { realm: "nks-dev", action: "?" }, "child"),
+        /ушёл бы местом родителя host\.repo\.opus-5/,
+      );
+    assert.equal(callsIn(calls).length, before, "the refused writes reached no bridge");
+    await rec.call("iskron_case", { realm: "nks-dev", action: "?" }, "child");
+    assert.equal(callsIn(calls).at(-1).name, "iskron_case", "the help goes by the root's bridge");
+  } finally {
+    await rec.stop();
+  }
+});
 
 test("a child's case leave without a room ends it", async () => {
   const { rec, childPid } = await leadChild("lead-leave-all");
@@ -3550,13 +3586,7 @@ async function endedChild(name, more = []) {
   writeFileSync(calls, "");
   const b = bridgeEnv(name, {
     FB_CALLS: calls,
-    FB_TOOLS: JSON.stringify(
-      ["iskron_stand", "iskron_case", "iskron_look", "iskron_channel", ...more].map((n) => ({
-        name: n,
-        description: "Тул.",
-        inputSchema: { type: "object" },
-      })),
-    ),
+    FB_TOOLS: fakeTools(["iskron_stand", "iskron_case", "iskron_look", "iskron_channel", ...more]),
   });
   const rec = await plugin(b.env, {
     sessions: [
@@ -3631,6 +3661,27 @@ test("a child whose run ended reads realms, orgs, itself and history by the root
     ])
       await assert.rejects(rec.call(tool, { action }, "child"), /кончена[\s\S]*iskron_stand/);
     assert.equal(sent().length, before, "no refused call reached a bridge");
+  } finally {
+    await rec.stop();
+  }
+});
+
+// Case №147 [106]: a stray «?» on a tool without action is no help but the write itself.
+test('a child whose run ended is refused a stray action "?" on a tool without action; the case\'s "?" goes by the root\'s bridge', async () => {
+  const { rec, rootPid, sent } = await endedChild("ended-ask", [
+    "iskron_update",
+    "iskron_add_phenomenon",
+  ]);
+  try {
+    const before = sent().length;
+    for (const tool of ["iskron_update", "iskron_add_phenomenon"])
+      await assert.rejects(
+        rec.call(tool, { realm: "nks-dev", action: "?" }, "child"),
+        /кончена[\s\S]*iskron_stand/,
+      );
+    assert.equal(sent().length, before, "no refused call reached a bridge");
+    await rec.call("iskron_case", { realm: "nks-dev", action: "?" }, "child");
+    assert.deepEqual([sent().at(-1)?.name, sent().at(-1)?.pid], ["iskron_case", rootPid]);
   } finally {
     await rec.stop();
   }

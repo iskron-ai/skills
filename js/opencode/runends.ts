@@ -38,10 +38,20 @@ const READ_ACTIONS: Record<string, Set<string>> = {
   ]),
 };
 
-/** Вызов только читает: ничего не подписывает и может идти мостом корня. */
-export const readsOnly = (name: string, args: Record<string, unknown>): boolean => {
+/** Тул объявляет аргумент action в своей схеме (inputSchema из tools/list). */
+export const declaresAction = (inputSchema: unknown): boolean => {
+  const props = (inputSchema as { properties?: unknown } | null)?.properties;
+  return !!props && typeof props === "object" && Object.hasOwn(props, "action");
+};
+
+/**
+ * Вызов только читает: ничего не подписывает и может идти мостом корня.
+ * action="?" — справка лишь у тула, объявившего action (asks): у прочих сервер
+ * лишний аргумент молча роняет и исполняет вызов — запись ушла бы местом корня.
+ */
+export const readsOnly = (name: string, args: Record<string, unknown>, asks: boolean): boolean => {
   const action = String(args.action ?? "");
-  return READ_TOOLS.has(name) || action === "?" || !!READ_ACTIONS[name]?.has(action);
+  return READ_TOOLS.has(name) || (asks && action === "?") || !!READ_ACTIONS[name]?.has(action);
 };
 
 /**
@@ -62,8 +72,9 @@ export function childWriteRefusal(
   of: string | null,
   name: string,
   args: Record<string, unknown>,
+  asks: boolean,
 ): string | null {
-  if (readsOnly(name, args)) {
+  if (readsOnly(name, args, asks)) {
     asChildRead(name, args);
     return null;
   }
@@ -85,8 +96,8 @@ export interface RunEnds {
   ): void;
   /** Ребёнок встал заново — пометка снята; отпущенного запустившим снимает только удаление сессии (gone). */
   clear(session: string, gone?: boolean): void;
-  /** Бросает отказ вслух, если вызов кончившегося ребёнка не только читает. */
-  guard(session: string, name: string, args: Record<string, unknown>): void;
+  /** Бросает отказ вслух, если вызов кончившегося ребёнка не только читает; asks — тул объявляет action. */
+  guard(session: string, name: string, args: Record<string, unknown>, asks: boolean): void;
 }
 
 export function createRunEnds(): RunEnds {
@@ -105,7 +116,7 @@ export function createRunEnds(): RunEnds {
       if (!released.has(session)) ended.delete(session);
       if (!ended.has(session)) whys.delete(session);
     },
-    guard(session, name, args) {
+    guard(session, name, args, asks) {
       if (
         released.has(session) &&
         !READ_TOOLS.has(name) &&
@@ -117,7 +128,7 @@ export function createRunEnds(): RunEnds {
         );
       if (!ended.has(session) || name === STAND_TOOL || READ_TOOLS.has(name)) return;
       const action = String(args.action ?? "");
-      if (action === "?" || READ_ACTIONS[name]?.has(action)) return;
+      if ((asks && action === "?") || READ_ACTIONS[name]?.has(action)) return;
       const of = ended.get(session)?.name ?? "<место запустившего>";
       throw new Error(
         `Отказано (плагин): ${whys.get(session) ?? "эта дочерняя сессия кончена, её место-спутник отпущено"} — ` +
