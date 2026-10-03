@@ -26,7 +26,15 @@ import { log } from "./streams.ts";
 import { state } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
 
-const S = scoped(() => ({ on: false }));
+const S = scoped(() => ({
+  on: false,
+  /** адрес, который повернул connect перевзвода (и проигравший потолок — тоже) */
+  turned: null as { url: string; statusUrl: string | null } | null,
+  /** адрес, записанный в запись паузы последним */
+  written: "",
+  write: null as (() => void) | null,
+  connect: null as Promise<unknown> | null,
+}));
 
 /** Мост ушёл на паузу: его конец — не конец прогона (session.ts). */
 export const suspended = (): boolean => S.on;
@@ -45,15 +53,17 @@ export function localSuspend(msg: JsonRpcMessage): Promise<JsonRpcMessage> | nul
       }),
     );
   const cases = joinedCases();
-  const write = () =>
+  const write = () => {
+    const at = S.turned ?? { url, statusUrl };
+    S.written = at.url;
     writeHoldRecord(
       key,
       {
         realm: s.realm,
         karta: s.karta,
         name: s.name ?? "",
-        url: H.currentUrl ?? url,
-        statusUrl: H.currentStatusUrl ?? statusUrl,
+        url: at.url,
+        statusUrl: at.statusUrl,
         client: harnessName(),
         key,
         session: sessionOfBridge() ?? undefined,
@@ -61,6 +71,8 @@ export function localSuspend(msg: JsonRpcMessage): Promise<JsonRpcMessage> | nul
       },
       true,
     );
+  };
+  S.write = write;
   write(); // прежний адрес — сразу: мост, погашенный посреди перевзвода, оставит запись
   S.on = true;
   return rearmForPause(s).then((rearmed) => {
@@ -93,12 +105,33 @@ async function rearmForPause(s: { realm: string; karta: string | number; name?: 
     ...placeFields({ realm: s.realm, karta: String(s.karta), name }),
     ttl_seconds: PAUSE_TTL_S,
   };
-  const r = await Promise.race([
-    call("iskron_channel", args),
-    sleep(REARM_CAP_MS).then(() => null),
-  ]);
-  if (!r || r.isError) log(`satellite pause: idle window not re-armed — ${r?.text ?? "no answer"}`);
-  return !!r && !r.isError && H.currentUrl !== null && !!H.holder;
+  // Ответ connect берёт мост (absorb.ts): новый адрес — в H, отсюда — в запись паузы.
+  const connect = call("iskron_channel", args).then((r) => {
+    if (!r.isError && H.currentUrl) S.turned = { url: H.currentUrl, statusUrl: H.currentStatusUrl };
+    return r;
+  });
+  S.connect = connect;
+  const r = await Promise.race([connect, sleep(REARM_CAP_MS).then(() => null)]);
+  if (!r || r.isError)
+    log(`satellite pause: idle window not re-armed — ${r?.text ?? "no answer yet"}`);
+  return !!r && !r.isError && !!S.turned;
+}
+
+/** Ожидание перевзвода на конце сессии — под отсрочкой харнеса (OpenCode гасит мост через 5 с). */
+const SETTLE_CAP_MS = 3_000;
+
+/**
+ * Конец моста на паузе (session.ts): connect, проигравший потолок, сервер всё равно
+ * исполнит — адрес повёрнут, а в записи прежний, мёртвый. Дождаться его и переписать
+ * запись, если адрес сменился (#147 [145]).
+ */
+export async function pauseSettled(): Promise<void> {
+  if (!S.on || !S.connect) return;
+  await Promise.race([S.connect.catch(() => {}), sleep(SETTLE_CAP_MS)]);
+  if (S.turned && S.turned.url !== S.written) {
+    S.write?.();
+    log(`satellite pause: the late re-arm turned the address — the pause record follows it`);
+  }
 }
 
 /** Возврат по ключу удался: дела прогона из записи паузы — этому мосту. */

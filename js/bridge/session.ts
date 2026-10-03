@@ -30,7 +30,7 @@ import { publishStatusTo } from "./status.ts";
 import { statusAddress } from "./statusaddr.ts";
 import { sleep } from "./store.ts";
 import { debug, flushStdout, guardStream, log, setSessionOutput } from "./streams.ts";
-import { suspended } from "./suspend.ts";
+import { pauseSettled, suspended } from "./suspend.ts";
 import { type JsonRpcMessage } from "./types.ts";
 import { flushUsage, usagePlace } from "./usage.ts";
 import { lastAgentWork, noteAgentWork } from "./work.ts";
@@ -225,6 +225,7 @@ function openIn(io: SessionIO, origin: SessionOrigin | null, scope: Scope | null
     if (addr && closing) await publishStatusTo(addr.url, "", 3000).catch(() => {});
     if (handover) await Promise.race([Promise.allSettled([...pending]), sleep(HANDOVER_WAIT_MS)]);
     else await Promise.allSettled([...pending, ...tokenRequestsInFlight]);
+    if (paused) await pauseSettled(); // поздний перевзвод паузы повернул адрес — запись за ним
     await flushStdout(io.output); // an answer half-written is an answer not given
     if (origin) {
       // Сессия демона: вход по OAuth и ротация токена — процесса-демона, он живёт

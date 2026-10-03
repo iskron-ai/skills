@@ -2443,6 +2443,24 @@ test("satellite: SIGINT ends the run like stdin-close — cases left, .sub-N rev
 // its cases and its busy line stay, a hold record keeps the socket and the cases;
 // the next satellite bridge takes the place back by key and leaves the cases at
 // its own end, then revokes the place.
+// #147 [145]: a re-arm slower than its cap still turns the address at the server; the
+// bridge's end waits for it and the pause record follows the new address.
+test("satellite: a pause whose re-arm loses the cap still lands its turned address in the record at the bridge's end", async (t) => {
+  const fake = await withCaller(t);
+  const dir = mkdtempSync(join(tmpdir(), "iskron-sat-slow-"));
+  const sat = await satelliteBridge(t, fake, { dir });
+  assert.ok(!(await standAs(sat, SAT_ARGS)).result?.isError, sat.stderr);
+  await fake.control({ connect_delay_ms: 1800 });
+  const paused = (await sat.call("iskron/suspend", {})).result;
+  assert.equal(paused?.suspended, true, `${JSON.stringify(paused)}\n${sat.stderr}`);
+  const rec = () => JSON.parse(readFileSync(join(dir, "standings", holdFiles(dir)[0]), "utf8"));
+  const before = rec().url;
+  await sat.stop();
+  const after = rec().url;
+  assert.notEqual(after, before, `the record follows the late turn:\n${sat.stderr}`);
+  assert.ok(after.includes(fake.state.wsToken), `the turned address: ${after}`);
+});
+
 test("satellite: a pause before the stop keeps the place and its cases; the next satellite bridge resumes them by key and leaves them at its own end", async (t) => {
   const fake = await withCaller(t);
   const dir = mkdtempSync(join(tmpdir(), "iskron-sat-pause-"));
