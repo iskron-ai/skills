@@ -70,6 +70,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2 # the PR merge commit and its base tip, for the outputs lock
       - uses: actions/setup-node@v4
         with:
           # The floor the shipped file claims (global WebSocket): the suites run
@@ -83,6 +85,11 @@ jobs:
       - run: make typecheck
       - name: Committed outputs are the release build (no dev mark; only the release job writes them)
         run: make check-js
+      # The lock: a PR from any branch but the release job's leaves the committed outputs
+      # as its base has them (HEAD^1 of the PR's merge commit is the base tip).
+      - name: Committed outputs untouched outside the release PR
+        if: github.event_name == 'pull_request'
+        run: bash scripts/check-outputs-frozen.sh HEAD^1 "$GITHUB_HEAD_REF"
       - name: Behavioural suites against the dev build of js/ in dist/dev (fake NKS + OAuth, fake bridge, fake socket)
         run: make test-coverage
 

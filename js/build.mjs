@@ -111,19 +111,35 @@ const RELEASE = process.env.ISKRON_BUILD_CHANNEL === "release";
 const DEV_DIR = join(ROOT, "dist", "dev");
 const BRIDGE = "skills/establish-mcp/scripts/iskron.mjs";
 
+// Наследие выпуска (#147 [145]): выпуски по 7.2.7 метки не несли, а main до первого
+// выпуска с меткой несёт байты, закоммиченные прежним правилом (у моста — метка dev).
+// Мост этой версии и старше — наследие: метки не судятся, судит только замок CI.
+const LAST_UNMARKED = [7, 2, 7];
+const versionOf = (text) =>
+  /^(?:const|let|var)\s+VERSION\s*=\s*"(\d+)\.(\d+)\.(\d+)"/m
+    .exec(text ?? "")
+    ?.slice(1)
+    .map(Number);
+const legacyBytes = (v) =>
+  !!v && (v[0] - LAST_UNMARKED[0] || v[1] - LAST_UNMARKED[1] || v[2] - LAST_UNMARKED[2]) <= 0;
+
 if (CHECK) {
   let bad = 0;
+  const bridge = existsSync(join(ROOT, BRIDGE)) ? readFileSync(join(ROOT, BRIDGE), "utf8") : null;
+  const legacy = legacyBytes(versionOf(bridge));
   for (const rel of OUTPUTS) {
     const path = join(ROOT, rel);
     const have = existsSync(path) ? readFileSync(path, "utf8") : null;
     const why =
       have === null
         ? "отсутствует"
-        : have.includes(DEV_MARK)
-          ? "несёт метку dev"
-          : rel === BRIDGE && !have.includes(RELEASE_MARK)
-            ? "без метки выпуска"
-            : null;
+        : legacy
+          ? null
+          : have.includes(DEV_MARK)
+            ? "несёт метку dev"
+            : rel === BRIDGE && !have.includes(RELEASE_MARK)
+              ? "без метки выпуска"
+              : null;
     if (why) {
       bad++;
       console.error(`✗ ${rel}: ${why} — его пишет make build-release (джоб выпуска)`);
@@ -131,7 +147,9 @@ if (CHECK) {
   }
   if (bad) process.exit(1);
   process.stdout.write(
-    `✓ ${OUTPUTS.length} закоммиченных выходов JS — сборка выпуска, метки dev нет\n`,
+    legacy
+      ? `✓ ${OUTPUTS.length} закоммиченных выходов JS — наследие выпуска до меток (мост v${versionOf(bridge).join(".")})\n`
+      : `✓ ${OUTPUTS.length} закоммиченных выходов JS — сборка выпуска, метки dev нет\n`,
   );
 } else {
   const outputs = await produce();

@@ -781,8 +781,6 @@ var H2 = scoped(() => ({
   /** Каталог сессии, из которого занимается место (cwd в iskron_stand), — в запись держания, для возврата по каталогу (resume.ts). */
   standCwd: null,
   holder: null,
-  /** последний знак службы сокета, отпущенного уходом (parkStanding), — срок записи держания от него (holdkeep.ts) */
-  heardAt: 0,
   /** дверь основного места — того, ради которого взят сокет */
   door: null,
   currentKey: null,
@@ -1211,11 +1209,7 @@ function createAdopt(d) {
   }
   return {
     take,
-    /**
-     * Маркер, положенный после загрузки этого экземпляра, — взять: перенос сессии сюда при
-     * живом экземпляре либо остановка прежнего, кончившаяся позже нашей загрузки (ребёнок без
-     * своего слота спросит — иначе он ушёл бы мостом корня, astra на 7.2.6).
-     */
+    /** Сессию перенесли сюда при живом экземпляре: маркер переноса, положенный прежним, — взять. */
     now() {
       const lost = takeLostMarker(d.authDir(), d.home);
       if (!lost) return;
@@ -1412,7 +1406,6 @@ var BACK_TRIES = 4;
 var BACK_PAUSE_MS = Number(process.env.ISKRON_CHILD_BACK_PAUSE_MS) || 1e3;
 var PAUSE_MS = 1500;
 function createChildren(d) {
-  const coming = /* @__PURE__ */ new Map();
   function childSlot(sessionID, parent, back2) {
     const have = d.slots.get(sessionID);
     if (have && !have.bridge.failure) return have;
@@ -1432,19 +1425,10 @@ function createChildren(d) {
   async function back(e) {
     if (!e.of) return d.endRun(e.session, false);
     d.leads.back(e.session, e);
-    const ready = (async () => {
-      if (!await d.exists(e.session))
-        return void await d.leads.fail(
-          e.session,
-          "перезагрузка плагина, сессия субагента не читается"
-        );
-      if (!e.key)
-        return void await d.leads.fail(e.session, "перезагрузка плагина, ключа места нет");
-      return childSlot(e.session, null, e);
-    })();
-    coming.set(e.session, ready);
-    const own = await ready.finally(() => coming.delete(e.session));
-    if (!own) return;
+    if (!await d.exists(e.session))
+      return d.leads.fail(e.session, "перезагрузка плагина, сессия субагента не читается");
+    if (!e.key) return d.leads.fail(e.session, "перезагрузка плагина, ключа места нет");
+    const own = childSlot(e.session, null, e);
     for (let i = 0; i < BACK_TRIES && !own.holding; i++) {
       if (i) {
         await sleep2(BACK_PAUSE_MS);
@@ -1470,9 +1454,7 @@ function createChildren(d) {
       )
     );
   }
-  const settled = (session) => coming.get(session)?.catch(() => {
-  });
-  return { childSlot, back, pause, settled };
+  return { childSlot, back, pause };
 }
 
 // js/opencode/half.ts
@@ -1739,7 +1721,6 @@ function createLauncher(d) {
 
 // js/opencode/leadwords.ts
 var CANCELLED = "его ход отменён в OpenCode (человеком или запустившим)";
-var placeGone = (kind) => kind === "evicted" ? "его место-спутник вытеснено другим держателем" : "его место-спутник закрыто платформой (токен мёртв)";
 var SUMMARY_MAX = 4e3;
 var endWord = (who, why, last, kept) => {
   const said = last.length > SUMMARY_MAX ? `${last.slice(0, SUMMARY_MAX)}…` : last;
@@ -1855,10 +1836,6 @@ function createLeads(d) {
     },
     released: (child) => gone.has(child),
     heard(child, kind, place) {
-      if ((kind === "evicted" || kind === "dead") && leads.has(child) && !d.ownPlace(child)) {
-        gone.add(child);
-        return void finish(child, placeGone(kind), true, false);
-      }
       if (kind !== "held" && kind !== "frame") return;
       touch(kind === "held" && !gone.has(child) ? stood(child) : leads.get(child), place);
     },
@@ -2257,10 +2234,6 @@ async function setupTools(ctx, say, onChannel, rootOf, flushUsage = async () => 
   async function slotFor(sessionID, touch = true) {
     const root = await rootOf(sessionID);
     mv.guard(root, sessionID);
-    if (root !== sessionID && !slots.has(sessionID)) {
-      adopt.now();
-      await children.settled(sessionID);
-    }
     const own = root !== sessionID ? slots.get(sessionID) : void 0;
     if (own) {
       const live = own.bridge.failure ? children.childSlot(sessionID) : own;
@@ -2335,7 +2308,6 @@ async function setupTools(ctx, say, onChannel, rootOf, flushUsage = async () => 
         async execute(input, tool) {
           const word = await leads.release(String(tool.sessionID), name, input ?? {}) ?? adopt.revoked(name, input ?? {});
           if (word) return { content: word };
-          await children.settled(String(tool.sessionID));
           runEnds.guard(String(tool.sessionID), name, input ?? {}, asks);
           const slot = await slotFor(String(tool.sessionID));
           const no = slot.session !== tool.sessionID && !standsBy(name, input ?? {}) ? childWriteRefusal(slot.place?.name ?? null, name, input ?? {}, asks) : null;

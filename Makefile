@@ -1,9 +1,9 @@
-.PHONY: check deps validate check-bundles check-surface lint format format-check typecheck test test-coverage test-watchdog test-extension test-opencode test-codex test-stand test-update build build-js build-release check-js surface widgets check-widgets hooks plugin
+.PHONY: check deps validate check-bundles check-surface lint format format-check typecheck test test-coverage test-watchdog test-extension test-opencode test-codex test-stand test-update build build-js build-release check-js check-frozen surface widgets check-widgets hooks plugin
 
 # Run the full CI gate locally: frontmatter contract + bundle sync + surface lint
 # + the JS ladder (lint → format → types → shipped outputs in sync → the
 # behavioural suites of the shipped code). Needs `make deps` once per clone.
-check: validate check-bundles check-surface check-widgets lint format-check typecheck check-js test
+check: validate check-bundles check-surface check-widgets lint format-check typecheck check-js check-frozen test
 
 # The dev toolchain for js/ — typescript, esbuild, eslint, prettier, and pi's
 # own types, which the extension is checked against. Nothing here ships: the
@@ -90,9 +90,15 @@ build-release:
 	@ISKRON_BUILD_CHANNEL=release node js/build.mjs
 	@bash scripts/build-skills.sh
 
-# The committed outputs are the release build: no dev mark, the bridge marked release.
+# The committed outputs are the release build: no dev mark, the bridge marked release
+# (the bytes of releases up to 7.2.7, unmarked, pass as their legacy).
 check-js:
 	@node js/build.mjs --check
+
+# The lock on them: a branch other than the release job's must leave them as its base has them.
+BASE ?= origin/main
+check-frozen:
+	@bash scripts/check-outputs-frozen.sh $(BASE)
 
 # Refresh fixtures/surface.json from the live server (network + authorized grant).
 surface:

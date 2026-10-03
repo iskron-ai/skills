@@ -5,9 +5,8 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 var VERSION = "7.2.7";
-var CHANNEL_MARK = "iskron-build:release";
+var CHANNEL_MARK = "iskron-build:dev";
 var releaseBuild = () => CHANNEL_MARK.endsWith(":release");
-var releaseBuildIn = (text) => text.includes(`"${["iskron-build", "release"].join(":")}"`);
 function buildOf(selfUrl) {
   try {
     const src = readFileSync(fileURLToPath(selfUrl));
@@ -2614,7 +2613,6 @@ function holdSocket(o) {
   let ws = null;
   let handing = null;
   let lastLife = 0;
-  let heardAt = 0;
   let pingMs = 0;
   let runtimeSeesPings = false;
   let lastTick = 0;
@@ -2622,7 +2620,7 @@ function holdSocket(o) {
   const onPing = (m) => {
     const from = m?.websocket;
     if (!ws || from !== void 0 && from !== ws) return;
-    lastLife = heardAt = Date.now();
+    lastLife = Date.now();
     runtimeSeesPings = true;
   };
   diagnostics.subscribe?.(PING_CHANNEL, onPing);
@@ -2643,12 +2641,12 @@ function holdSocket(o) {
     let gone = false;
     sock.addEventListener("ping", () => {
       if (ws !== sock) return;
-      lastLife = heardAt = Date.now();
+      lastLife = Date.now();
       runtimeSeesPings = true;
     });
     sock.addEventListener("message", (e) => {
       if (stopped || ws !== sock) return;
-      lastLife = heardAt = Date.now();
+      lastLife = Date.now();
       const raw = typeof e.data === "string" ? e.data : L("[двоичный кадр]", "[binary frame]");
       if (handing) return handing.onFrame(raw);
       let frame2 = null;
@@ -2771,9 +2769,6 @@ function holdSocket(o) {
     },
     get alive() {
       return !stopped && !!ws && (ws.readyState === 0 || ws.readyState === 1);
-    },
-    get heardAt() {
-      return heardAt;
     }
   };
 }
@@ -3952,7 +3947,7 @@ function leftOnDisk(key) {
     return false;
   }
 }
-function writeHoldRecord(key, rec4, paused = false, at2 = Date.now()) {
+function writeHoldRecord(key, rec4, paused = false) {
   if (CFG.satellite && !paused) return;
   try {
     const session = H.session ?? rec4.session;
@@ -3963,7 +3958,7 @@ function writeHoldRecord(key, rec4, paused = false, at2 = Date.now()) {
         ...rec4,
         session: session ?? void 0,
         left: left || void 0,
-        at: at2
+        at: Date.now()
       }) + "\n",
       { mode: 384 }
     );
@@ -4306,8 +4301,6 @@ var H2 = scoped(() => ({
   /** Каталог сессии, из которого занимается место (cwd в iskron_stand), — в запись держания, для возврата по каталогу (resume.ts). */
   standCwd: null,
   holder: null,
-  /** последний знак службы сокета, отпущенного уходом (parkStanding), — срок записи держания от него (holdkeep.ts) */
-  heardAt: 0,
   /** дверь основного места — того, ради которого взят сокет */
   door: null,
   currentKey: null,
@@ -5029,7 +5022,6 @@ function holdStanding(url, statusUrl2) {
 }
 function parkStanding(reason) {
   if (!H2.holder?.alive || !H2.currentKey) return null;
-  H2.heardAt = Math.max(H2.heardAt, H2.holder.heardAt);
   H2.holder.close(reason);
   H2.holder = null;
   H2.parked = true;
@@ -6112,15 +6104,13 @@ var isSymlink = (path) => {
     return false;
   }
 };
-var readBytes = (path) => {
+var versionOf = (path) => {
   try {
-    return readFileSync16(path);
+    return versionIn(readFileSync16(path, "utf8"));
   } catch {
-    return Buffer.alloc(0);
+    return null;
   }
 };
-var readText = (path) => readBytes(path).toString("utf8");
-var versionOf = (path) => versionIn(readText(path));
 function syncHome(self = selfPath()) {
   const out6 = { copied: [] };
   const home = homeBridgePath();
@@ -6135,8 +6125,7 @@ function syncHome(self = selfPath()) {
   if (isSymlink(home)) return out6;
   const homeVersion = versionOf(home);
   const cmp = homeVersion ? compareVersions(VERSION, homeVersion) : 1;
-  const healsDev = cmp === 0 && !releaseBuildIn(readText(home)) && !mine.equals(readBytes(home));
-  if ((cmp > 0 || healsDev) && releaseBuild()) {
+  if (cmp > 0 && releaseBuild()) {
     writeAtomic(home, mine);
     out6.copied.push(home);
     const plugin = opencodePluginPath();
@@ -7224,14 +7213,14 @@ function localSuspend(msg) {
       })
     );
   const cases = joinedCases();
-  const write = () => writeHoldRecord(
+  writeHoldRecord(
     key,
     {
       realm: s2.realm,
       karta: s2.karta,
-      name: s2.name ?? "",
-      url: H2.currentUrl ?? url,
-      statusUrl: H2.currentStatusUrl ?? statusUrl2,
+      name: s2.name,
+      url,
+      statusUrl: statusUrl2,
       client: harnessName(),
       key,
       session: sessionOfBridge() ?? void 0,
@@ -7239,35 +7228,9 @@ function localSuspend(msg) {
     },
     true
   );
-  write();
   S3.on = true;
-  return rearmForPause(s2).then((rearmed) => {
-    if (rearmed) write();
-    log(
-      `satellite paused for a plugin reload: ${key}, cases ${cases.length} — place and cases kept, idle window ${rearmed ? `${PAUSE_TTL_S} s` : "unchanged"}`
-    );
-    return answer({ suspended: true, key, cases: cases.length });
-  });
-}
-var PAUSE_TTL_S = Math.floor(HOLD_RECORD_MAX_AGE_MS / 1e3);
-var REARM_CAP_MS = 1e3;
-async function rearmForPause(s2) {
-  const name = s2.name ?? "";
-  if (!parkStanding(L("пауза спутника", "satellite pause"))) return false;
-  const args = {
-    action: "connect",
-    realm: s2.realm,
-    karta: s2.karta,
-    name,
-    ...placeFields({ realm: s2.realm, karta: String(s2.karta), name }),
-    ttl_seconds: PAUSE_TTL_S
-  };
-  const r = await Promise.race([
-    callTool("iskron_channel", args),
-    sleep(REARM_CAP_MS).then(() => null)
-  ]);
-  if (!r || r.isError) log(`satellite pause: idle window not re-armed — ${r?.text ?? "no answer"}`);
-  return !!r && !r.isError && H2.currentUrl !== null && !!H2.holder;
+  log(`satellite paused for a plugin reload: ${key}, cases ${cases.length} — place and cases kept`);
+  return Promise.resolve(answer({ suspended: true, key, cases: cases.length }));
 }
 function afterResume(key) {
   if (!CFG.satellite || !key) return;
@@ -8581,29 +8544,21 @@ async function deliverOne(msg) {
 function keepHoldRecord() {
   const s2 = state.standing;
   const key = H2.currentKey;
-  if (!s2 || !key || !H2.currentUrl) return;
-  const alive2 = !!H2.holder?.alive;
-  const at2 = alive2 ? Date.now() : Math.max(H2.holder?.heardAt ?? 0, H2.heardAt);
+  if (!s2 || !key || !H2.currentUrl || !H2.holder?.alive) return;
   const ch = { url: H2.currentUrl, statusUrl: H2.currentStatusUrl, cwd: H2.standCwd };
   const was = readHoldRecord(key, true);
-  if (was && at2 > (was.at ?? 0))
-    writeHoldRecord(
-      key,
-      {
-        ...was,
-        realm: s2.realm,
-        karta: s2.karta,
-        name: s2.name ?? "",
-        url: ch.url,
-        statusUrl: ch.statusUrl,
-        cwd: ch.cwd ?? was.cwd,
-        client: harnessName(),
-        key
-      },
-      false,
-      at2
-    );
-  if (!alive2) return;
+  if (was)
+    writeHoldRecord(key, {
+      ...was,
+      realm: s2.realm,
+      karta: s2.karta,
+      name: s2.name ?? "",
+      url: ch.url,
+      statusUrl: ch.statusUrl,
+      cwd: ch.cwd ?? was.cwd,
+      client: harnessName(),
+      key
+    });
   for (const p of extraPlaces()) {
     const r = readHoldRecord(p.door.key, true);
     if (r) rememberExtraStatus(p.door.key, { ...ch, cwd: ch.cwd ?? r.cwd }, r.status ?? "");

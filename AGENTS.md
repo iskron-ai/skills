@@ -156,7 +156,7 @@
 Скелеты для будущих репозиториев — `skills/iskronify/references/agents-template.md` и `reality-template.md`; протокол — `skills/iskronify/SKILL.md`. Собственный конфиг **этого** репо — `AGENTS.md` и `REALITY.md`. Правь шаблон и протокол ради всех будущих репо — не путай их с этими файлами; этот репо — первый потребитель всякой правки шаблона.
 
 ## Стек
-Markdown `skills/<name>/SKILL.md` (+ `references/*.md`) на скилл — обычные файлы, правь напрямую, грепаются полностью. Каждый пакуется в зип `<name>.skill` (внутри `<name>/SKILL.md`) командой `make build`. Код двух родов: **отгружаемый** — TypeScript под strict в `js/` (`bridge/`, `watchdog/`, `cli/`, `extension/`, `opencode/`, `roadmap/`, общее в `shared/`), однофайловые выходы без зависимостей (под-контур #4057): все каналы установки ставят `main`, поэтому закоммиченные выходы — всегда сборка выпуска, их пишет только джоб выпуска (`make build-release` в bundle-sync), `make check-js` держит, что метки dev в них нет; `make build-js` рабочей копии кладёт dev-сборку в `dist/dev/` (вне индекса) — ею гонятся пробы и живые прогоны; плагин OpenCode — форма OpenCode 2 без импортов, типы `@opencode/plugin` стираются сборкой. **Тулчейн** не отгружается: `js/package.json` с dev-зависимостями (typescript, esbuild, eslint, prettier, типы pi и OpenCode) под `js/package-lock.json` (лок-файл в `js/` нарочно, готчи #4522), пол Node 22 (`.nvmrc`), `js/build.mjs`, `scripts/*`, пробы `js/tests/*.mjs`.
+Markdown `skills/<name>/SKILL.md` (+ `references/*.md`) на скилл — обычные файлы, правь напрямую, грепаются полностью. Каждый пакуется в зип `<name>.skill` (внутри `<name>/SKILL.md`) командой `make build`. Код двух родов: **отгружаемый** — TypeScript под strict в `js/` (`bridge/`, `watchdog/`, `cli/`, `extension/`, `opencode/`, `roadmap/`, общее в `shared/`), однофайловые выходы без зависимостей (под-контур #4057): все каналы установки ставят `main`, поэтому закоммиченные выходы — всегда сборка выпуска, их пишет только джоб выпуска (`make build-release` в bundle-sync), `make check-js` держит, что метки dev в них нет, `make check-frozen` — что вне ветки выпуска они не меняются; `make build-js` рабочей копии кладёт dev-сборку в `dist/dev/` (вне индекса) — ею гонятся пробы и живые прогоны; плагин OpenCode — форма OpenCode 2 без импортов, типы `@opencode/plugin` стираются сборкой. **Тулчейн** не отгружается: `js/package.json` с dev-зависимостями (typescript, esbuild, eslint, prettier, типы pi и OpenCode) под `js/package-lock.json` (лок-файл в `js/` нарочно, готчи #4522), пол Node 22 (`.nvmrc`), `js/build.mjs`, `scripts/*`, пробы `js/tests/*.mjs`.
 
 ## Команды
 Правь исходники под `skills/<name>/`; зипы `<name>.skill` перегенерируются, не правятся руками.
@@ -168,11 +168,12 @@ Markdown `skills/<name>/SKILL.md` (+ `references/*.md`) на скилл — об
 | Пересобрать производное рабочей копии | `make build` (= `make build-js` + зипы из `skills/`; детерминированно поперёк машин; или pre-commit-хуком) |
 | Собрать выходы JS (dev) | `make build-js` → `dist/dev/` вне индекса (esbuild: `iskron.mjs` и `opencode-plugin.js` в establish-mcp, `extensions/iskron.js`, рендер в шаблон роадмапа); пробы берут их отсюда (`js/tests/built.mjs`), живой прогон — тоже |
 | Собрать выходы выпуска | `make build-release` — только джоб bundle-sync релизного PR: метка канала release, закоммиченные места, бандлы |
-| Сверить закоммиченные выходы JS | `make check-js` (сборка выпуска: метки dev нет, у моста — метка release) |
+| Сверить закоммиченные выходы JS | `make check-js` (сборка выпуска: метки dev нет, у моста — метка release; байты по 7.2.7 — наследие выпуска до меток) |
+| Замок закоммиченных выходов | `make check-frozen` (`BASE=origin/main`): ветка не `release-please--*` их не меняет против базы; то же — шаг CI на PR и pre-commit-хук |
 | Линт / формат / типы | `make lint`, `make format-check` (`make format` чинит), `make typecheck` (strict; расширение и плагин — против настоящих типов pi и OpenCode) |
 | Включить хук автосборки | `make hooks` (`core.hooksPath -> .githooks`) — не при занятом `core.hooksPath` (готчи #4522) |
 | Содержимое бандла | `unzip -l <name>.skill` |
-| Гейт CI локально | `make check` (= validate + check-bundles + check-surface + check-widgets + lint + format-check + typecheck + check-js + test) |
+| Гейт CI локально | `make check` (= validate + check-bundles + check-surface + check-widgets + lint + format-check + typecheck + check-js + check-frozen + test) |
 | Фронтматтер, обещанные файлы, имена скиллов | `make validate` (чистый Node) |
 | Сверить бандлы с исходниками | `make check-bundles` |
 | Сверить корпус со снимком поверхности | `make check-surface` (офлайн) |
@@ -184,7 +185,7 @@ Markdown `skills/<name>/SKILL.md` (+ `references/*.md`) на скилл — об
 | Обновить поставку на машине | `node ~/.iskron-bridge/iskron-bridge.mjs update` (релизы GitHub; мост, плагин OpenCode, `SETUP.md` в дом) |
 | Архив плагина для claude.ai | `make plugin` (→ `dist/iskron.zip`; CI прикладывает к релизу) |
 
-Pre-commit-хук (`.githooks/pre-commit`) на каждом коммите линтует и форматирует застейдженные исходники `js/` (lint-staged), собирает dev-выходы в `dist/dev/` и пересобирает и стейджит бандлы; закоммиченные выходы JS не трогает (включается `make hooks`; без него — `make build` и `make check` руками до коммита). Гейт корпуса — формат и сверка с поверхностью; для моста и сторожей — поведение. Существо прозы не ловит ни одна проверка — это человеческий обзор дифа.
+Pre-commit-хук (`.githooks/pre-commit`) на каждом коммите линтует и форматирует застейдженные исходники `js/` (lint-staged), собирает dev-выходы в `dist/dev/` и пересобирает и стейджит бандлы; закоммиченные выходы JS не трогает и не даёт закоммитить вне ветки выпуска (включается `make hooks`; без него — `make build` и `make check` руками до коммита). Гейт корпуса — формат и сверка с поверхностью; для моста и сторожей — поведение. Существо прозы не ловит ни одна проверка — это человеческий обзор дифа.
 
 ## Структура проекта
 Дерево — `ls`; здесь только то, чего `ls` не скажет.

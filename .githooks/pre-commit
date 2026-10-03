@@ -14,6 +14,20 @@ if [[ ! -d js/node_modules ]]; then
 fi
 
 (cd js && npx --no-install lint-staged)
+# Замок (scripts/check-outputs-frozen.sh): закоммиченные выходы вне ветки выпуска не коммитятся.
+case "$(git rev-parse --abbrev-ref HEAD)" in
+  release-please--*) ;;
+  *)
+    staged="$(git diff --cached --name-only -- skills/establish-mcp/scripts/iskron.mjs \
+      skills/establish-mcp/scripts/opencode-plugin.js extensions/iskron.js \
+      skills/product-roadmap/references/roadmap-template.html)"
+    if [[ -n "$staged" ]]; then
+      echo "pre-commit: закоммиченные выходы JS пишет только джоб выпуска (make build-release) — сними их с индекса:" >&2
+      echo "$staged" >&2
+      exit 1
+    fi
+    ;;
+esac
 node js/build.mjs >/dev/null
 bash "$root/scripts/build-skills.sh" >/dev/null
 git add -- "$root"/*.skill
