@@ -1,5 +1,6 @@
 import { L } from "../shared/lang.ts";
 import { scoped } from "../shared/scope.ts";
+import { FORM } from "./board.ts";
 import { errorMessage } from "./errors.ts";
 import { addPlace, noteStandingId, releaseStanding } from "./hold.ts";
 import { normKarta, normName } from "./names.ts";
@@ -146,14 +147,11 @@ async function replayBeside(): Promise<boolean> {
 /**
  * id места из ответа тула iskron_channel(action="register") — мост зовёт тул, не
  * API, и ответ — проза: строка «🪪 id этого места — …», id на следующей строке
- * (наблюдено на сервере 0.74.0). Без этой строки — null: id не угадывается.
+ * (наблюдено на сервере 0.74.0; английская форма — предположена, FORM.seatId).
+ * Без этой строки — null: id не угадывается.
  */
 export function standingIdOf(reply: JsonRpcMessage | null): string | null {
-  const m =
-    /id этого места[^\n]*\n\s*([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i.exec(
-      replyText(reply),
-    );
-  return m?.[1] ?? null;
+  return FORM.seatId.exec(replyText(reply))?.[1] ?? null;
 }
 
 export const replyText = (reply: JsonRpcMessage | null): string => {

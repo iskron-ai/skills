@@ -63,6 +63,13 @@ const registeredText = (name, id) =>
     ? `  🪪 id этого места — им сужают строку занятости до него одного, и его же берёт отзыв:\n     ${id}\n`
     : "") +
   "\n  Приписывание держится на сессии; …";
+// Та же форма по-английски — предположена, на .ai не наблюдена (#6632 п.2).
+const registeredTextEn = (name, id) =>
+  `This session now speaks from the standing @tester:${name ?? "(unnamed)"}. Nothing released and nobody displaced — whoever listens on this standing keeps listening.\n` +
+  (id
+    ? `  🪪 id of this seat — it narrows the busy line to this seat alone, and revoke takes it too:\n     ${id}\n`
+    : "") +
+  "\n  Attribution holds on the session; …";
 
 // Один ws-кадр сервера клиенту (без маски): FIN + opcode, длина в одной из трёх форм.
 function wsFrame(opcode, payload) {
@@ -910,7 +917,7 @@ export async function startFakeNks(opts = {}) {
                 content: [
                   {
                     type: "text",
-                    text: registeredText(
+                    text: (st.english === true ? registeredTextEn : registeredText)(
                       a.name,
                       st.registerNoId
                         ? null

@@ -1037,6 +1037,39 @@ test("English surface: iskron_stand reads an English board and hook list — an 
   assert.equal(fake.state.counts.connect, 1, "the held place is not rotated");
 });
 
+test("English surface: a recognized hook list header with a hook state word the bridge does not know is refused loudly — no second hook", async (t) => {
+  const { fake, bridge } = await ready(t, INIT, { ISKRON_BRIDGE_LANG: "en" });
+  await fake.control({
+    english: true,
+    hooksText:
+      "Webhooks for #931 (1):\n  #7 → doer:#931 — enabled [minimal]\n     wakes now (1): @tester:proba",
+  });
+  const got = await bridge.call("tools/call", {
+    name: "iskron_stand",
+    arguments: { realm: "nks-dev", karta: 931, name: "proba" },
+  });
+  assert.match(textOf(got), /the hook list is not recognized — left alone/, textOf(got));
+  assert.equal(
+    fake.state.counts.webhooks_added,
+    0,
+    "no new hook beside one the bridge cannot read",
+  );
+});
+
+test("English surface: the place id comes from the English register reply — the place beside gets its busy line", async (t) => {
+  const { fake, bridge } = await ready(t, INIT, { ISKRON_BRIDGE_LANG: "en" });
+  await fake.control({ english: true });
+  const stand = (args) => bridge.call("tools/call", { name: "iskron_stand", arguments: args });
+  const a = await stand({ realm: "@nks/nks-dev", karta: 931, name: "proba" });
+  assert.ok(!a.result?.isError, textOf(a));
+  const b = await stand({ realm: "@nks/drugoy", karta: 48, name: "proba-b" });
+  assert.ok(!b.result?.isError, textOf(b));
+  assert.doesNotMatch(textOf(b), /did not name the seat's id/, textOf(b));
+  const said = await stand({ realm: "@nks/drugoy", status: "seat beside" });
+  assert.ok(!said.result?.isError, textOf(said));
+  assert.equal(fake.state.status, "seat beside");
+});
+
 test("English surface: a place the English board reads listening under another bridge is only registered; iskron/check reads hearing and undelivered", async (t) => {
   const { fake, bridge } = await ready(t, INIT, { ISKRON_BRIDGE_LANG: "en" });
   await fake.control({

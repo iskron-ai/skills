@@ -5196,7 +5196,9 @@ var FORM = {
   undelivered: /(?:не доставлено|undelivered)\s+(\d+)/,
   hooksHeader: /^\s*(?:Вебхуки|Webhooks)(?:\s|:|\(|$)/m,
   hooksEmpty: /вебхуки не зарегистрированы|no webhooks (?:are )?registered/i,
-  hookActive: /активен|\bactive\b/
+  hookActive: /активен|\bactive\b/,
+  hookState: /активен|пауза|\bactive\b|\bpaused\b/,
+  seatId: /(?:id этого места|id of this (?:seat|place))[^\n]*\n\s*([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i
 };
 var listens = (e) => FORM.listens.test(e.rest);
 function undelivered(e) {
@@ -5486,10 +5488,7 @@ async function replayBeside() {
   return whole;
 }
 function standingIdOf(reply2) {
-  const m = /id этого места[^\n]*\n\s*([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i.exec(
-    replyText(reply2)
-  );
-  return m?.[1] ?? null;
+  return FORM.seatId.exec(replyText(reply2))?.[1] ?? null;
 }
 var replyText = (reply2) => {
   if (!reply2) return "";
@@ -6995,9 +6994,10 @@ async function adminParamNames() {
 async function armRoleHook(p) {
   const { realm, karta, name } = p;
   const hooks = await callTool("iskron_admin", { action: "list_webhooks", realm, node_id: karta });
-  const recognized = !hooks.isError && (FORM.hooksHeader.test(hooks.text) || FORM.hooksEmpty.test(hooks.text));
+  const blocks = hooks.text.split(/\n(?=\s*#\d+\s*→)/).slice(1);
+  const recognized = !hooks.isError && (FORM.hooksHeader.test(hooks.text) && blocks.every((b) => FORM.hookState.test(b)) || FORM.hooksEmpty.test(hooks.text));
   const nameRe = new RegExp(`:${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![A-Za-z0-9._-])`);
-  const wakesMe = recognized && hooks.text.split(/\n(?=\s*#\d+\s*→)/).some((b) => FORM.hookActive.test(b) && nameRe.test(b));
+  const wakesMe = recognized && blocks.some((b) => FORM.hookActive.test(b) && nameRe.test(b));
   const H4 = L("Хук инбокса роли", "Role inbox hook");
   if (p.sub)
     return L(

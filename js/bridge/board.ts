@@ -46,6 +46,9 @@ export const FORM = {
   hooksHeader: /^\s*(?:Вебхуки|Webhooks)(?:\s|:|\(|$)/m,
   hooksEmpty: /вебхуки не зарегистрированы|no webhooks (?:are )?registered/i,
   hookActive: /активен|\bactive\b/,
+  hookState: /активен|пауза|\bactive\b|\bpaused\b/,
+  seatId:
+    /(?:id этого места|id of this (?:seat|place))[^\n]*\n\s*([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i,
 };
 
 /** Слушает ли место по доске — признак присутствия, не трафика. */
