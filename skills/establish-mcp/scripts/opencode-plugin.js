@@ -2015,7 +2015,19 @@ var asChildRead = (name, args) => {
   if ((name === "iskron_case" || name === "iskron_room") && args.action === "history")
     args.keep_cursor = true;
 };
+var IDENTITY = {
+  iskron_me: "all",
+  iskron_admin: /* @__PURE__ */ new Set(["search_users", "access", "list_members", "user_webhooks"])
+};
+function identityRefusal(name, args) {
+  const action = String(args.action ?? "");
+  const of = IDENTITY[name];
+  if (!of || action === "?" || of !== "all" && !of.has(action)) return null;
+  return `Отказано (плагин): ${name}${action ? ` (${action})` : ""} — личность человека, а у дочерней сессии нет своего места: мостом корня она её не получает. Граф и дела читать можно; кто ты — спроси запустившего.`;
+}
 function childWriteRefusal(of, name, args) {
+  const notYours = identityRefusal(name, args);
+  if (notYours) return notYours;
   if (readsOnly(name, args)) {
     asChildRead(name, args);
     return null;
