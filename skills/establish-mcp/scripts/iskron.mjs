@@ -6844,11 +6844,9 @@ async function ownersOf(realm, k) {
     limit: 100,
     include_description: false
   });
-  if (!s2.isError && !/НЕ показано|not shown/i.test(s2.text))
-    return [...s2.text.matchAll(/\(#(\d+)[,)]/g)].some((m) => m[1] === k);
-  const r = await callTool("iskron_look", { realm, node_id: k });
-  if (r.isError) return r.text;
-  return /\(#\d+,\s*karta\s+主/.test(r.text) || /Проявлен как:\s*主/.test(r.text);
+  if (s2.isError) return s2.text;
+  if (/НЕ показано|not shown/i.test(s2.text)) return "список ролей владельца неполон";
+  return [...s2.text.matchAll(/\(#(\d+)[,)]/g)].some((m) => m[1] === k);
 }
 
 // js/bridge/resume.ts

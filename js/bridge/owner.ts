@@ -2,7 +2,8 @@
 // #6550, правило 2). Род роли решает сервер: iskron_search с фильтром
 // manifested_as="svatantra" отдаёт роли владельца графа, и мост берёт из строк только
 // номера «(#N,» — не прозу рода, которая сменится с локалью. Машинного поля рода в
-// ответе look/me нет (риск api #6631); страница неполна — откат на шапку iskron_look.
+// ответе look/me нет (риск api #6631). Поиск отказал или страница неполна — род не
+// прочитан: отказ «повтори», без отката на прозу шапки iskron_look.
 // Слово человека — настройка его окружения: ISKRON_BRIDGE_OWNER_ROLE=1 у моста
 // харнеса, не аргумент вызова агента. «me» и «realm-owner» — роль самого человека:
 // та же граница. Род не прочитался — отказ с причиной, не обход.
@@ -49,7 +50,10 @@ export async function ownerRefusal(realm: unknown, karta: unknown): Promise<stri
   return owner ? word(`karta=#${k}`) : null;
 }
 
-/** Роль #k — владельца? Сервер фильтром рода; неполная страница — шапка узла. Строка — причина сбоя. */
+/**
+ * Роль #k — владельца? Только фильтром рода сервера. Сбой поиска или неполная страница —
+ * род не прочитан (строка — причина): отказ «повтори», без отката на прозу шапки узла.
+ */
 async function ownersOf(realm: unknown, k: string): Promise<boolean | string> {
   const s = await callTool("iskron_search", {
     realm,
@@ -59,9 +63,7 @@ async function ownersOf(realm: unknown, k: string): Promise<boolean | string> {
     limit: 100,
     include_description: false,
   });
-  if (!s.isError && !/НЕ показано|not shown/i.test(s.text))
-    return [...s.text.matchAll(/\(#(\d+)[,)]/g)].some((m) => m[1] === k);
-  const r = await callTool("iskron_look", { realm, node_id: k });
-  if (r.isError) return r.text;
-  return /\(#\d+,\s*karta\s+主/.test(r.text) || /Проявлен как:\s*主/.test(r.text);
+  if (s.isError) return s.text;
+  if (/НЕ показано|not shown/i.test(s.text)) return "список ролей владельца неполон";
+  return [...s.text.matchAll(/\(#(\d+)[,)]/g)].some((m) => m[1] === k);
 }
