@@ -23,6 +23,7 @@ import { daemonMain } from "../bridge/daemon.ts";
 import { bridgeMain } from "../bridge/main.ts";
 import { versionLines } from "../bridge/probe.ts";
 import { reexec, syncHome, updatesDisabled } from "../bridge/update.ts";
+import { L } from "../shared/lang.ts";
 import { runWatchdogCodex } from "../watchdog/codex.ts";
 import { runWatchdog } from "../watchdog/watchdog.ts";
 import { runWatchdogExit } from "../watchdog/watchdog-exit.ts";
@@ -30,20 +31,20 @@ import { runDoctor } from "./doctor.ts";
 import { runUpdate } from "./update.ts";
 import { runUse } from "./use.ts";
 
-const USAGE = `iskron ${BUILD}
+const usage = (): string => `iskron ${BUILD}
   node iskron.mjs [bridge] [server-url] [--timeout <ms>] [--auth-dir <dir>] [--no-browser] [--debug] [--satellite] [--tools <a,b,c>]
-      (--satellite — мост прогона субагента из файла агента: только место-спутник <место позвавшего>.sub-N)
-      (--tools — какие тулы видит харнес, iskron_stand всегда; без флага — все)
-  node iskron.mjs watchdog [ключ] [--auth-dir <dir>]
-  node iskron.mjs watchdog-exit [ключ] [--auth-dir <dir>]
-  node iskron.mjs watchdog-codex [ключ] [--auth-dir <dir>]   (из оболочки Codex: CODEX_THREAD_ID, CODEX_HOME)
+      ${L("(--satellite — мост прогона субагента из файла агента: только место-спутник <место позвавшего>.sub-N)", "(--satellite — the bridge of a subagent run from an agent file: only the satellite seat <caller's seat>.sub-N)")}
+      ${L("(--tools — какие тулы видит харнес, iskron_stand всегда; без флага — все)", "(--tools — which tools the harness sees, iskron_stand always; without the flag — all)")}
+  node iskron.mjs watchdog [${L("ключ", "key")}] [--auth-dir <dir>]
+  node iskron.mjs watchdog-exit [${L("ключ", "key")}] [--auth-dir <dir>]
+  node iskron.mjs watchdog-codex [${L("ключ", "key")}] [--auth-dir <dir>]   ${L("(из оболочки Codex: CODEX_THREAD_ID, CODEX_HOME)", "(from the Codex shell: CODEX_THREAD_ID, CODEX_HOME)")}
   node iskron.mjs doctor [server-url] [--auth-dir <dir>]
   node iskron.mjs update [--auth-dir <dir>]
-  node iskron.mjs use <en|ru|url> [--auth-dir <dir>]   (en — mcp.iskron.ai, ru — mcp.iskron.ru)
-  node iskron.mjs daemon --auth-dir <dir>   (демон машины; его поднимает тонкий мост — мост по умолчанию)
+  node iskron.mjs use <en|ru|url> [--auth-dir <dir>]   ${L("(en — mcp.iskron.ai, ru — mcp.iskron.ru)", "(en — mcp.iskron.ai, ru — mcp.iskron.ru)")}
+  node iskron.mjs daemon --auth-dir <dir>   ${L("(демон машины; его поднимает тонкий мост — мост по умолчанию)", "(the machine daemon; the thin bridge raises it — the default bridge)")}
   node iskron.mjs --version
-  env: ISKRON_BRIDGE_TOKEN — личный токен вместо OAuth (или файл <auth-dir>/token);
-       ISKRON_BRIDGE_DAEMON=0 — полный мост в своём процессе, без демона машины;
+  env: ISKRON_BRIDGE_TOKEN — ${L("личный токен вместо OAuth (или файл <auth-dir>/token)", "a personal token instead of OAuth (or the file <auth-dir>/token)")};
+       ISKRON_BRIDGE_DAEMON=0 — ${L("полный мост в своём процессе, без демона машины", "the full bridge in its own process, without the machine daemon")};
        ISKRON_BRIDGE_URL, ISKRON_BRIDGE_AUTH_DIR, ISKRON_BRIDGE_NO_BROWSER, ISKRON_BRIDGE_DEBUG
 `;
 
@@ -62,7 +63,9 @@ const longLived =
 if (longLived && !updatesDisabled() && !process.env.ISKRON_BRIDGE_REEXEC) {
   const sync = syncHome();
   for (const p of sync.copied)
-    process.stderr.write(`[iskron-bridge] дом обновлён этой сборкой: ${p}\n`);
+    process.stderr.write(
+      `[iskron-bridge] ${L("дом обновлён этой сборкой", "home updated by this build")}: ${p}\n`,
+    );
   if (sync.reexec) reexec(sync.reexec, argv);
   else dispatch();
 } else dispatch();
@@ -100,7 +103,7 @@ function dispatch(): void {
       break;
     case "--help":
     case "-h":
-      process.stdout.write(USAGE);
+      process.stdout.write(usage());
       break;
     default:
       bridgeMain(argv);

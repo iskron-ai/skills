@@ -26,6 +26,7 @@ import {
   resolveStanding,
   staleBatchKeys,
 } from "./client.ts";
+import { doer, wd } from "./words.ts";
 
 const note = (s: string): void => {
   process.stderr.write(s + "\n");
@@ -37,26 +38,22 @@ export function codexDoorPath(): string {
 }
 
 export function runWatchdogCodex(argv: string[]): void {
+  parseWatchdogArgs(argv); // язык от моста — до первого слова делателю
   const threadId = process.env.CODEX_THREAD_ID?.trim();
   if (!threadId) {
-    note(
-      "ДЕЛАТЕЛЬ: нет CODEX_THREAD_ID — запускай этого сторожа из оболочки сессии Codex: там Codex кладёт id треда в окружение",
-    );
+    note(wd.noThread());
     process.exit(2);
   }
   const socketPath = codexDoorPath();
   if (!existsSync(socketPath)) {
-    note(
-      `ДЕЛАТЕЛЬ: двери нет (${socketPath}) — этот тред не под демоном app-server. Это ход ЧЕЛОВЕКА до запуска сессии, не твой: демон и сессия Codex должны стартовать с одним коротким CODEX_HOME (рецепт в SETUP, раздел Codex). Скажи ему это; пока двери нет — слушай watchdog-exit`,
-    );
+    note(wd.noDoor(socketPath));
     process.exit(2);
   }
   const target = resolveStanding(argv);
   if ("error" in target) {
-    note(`ДЕЛАТЕЛЬ: ${target.error}`);
+    note(doer(target.error));
     process.exit(2);
   }
-  parseWatchdogArgs(argv); // валидность флагов — там же
   let seenPath = seenFilePathOf(target.authDir, target.key);
   const seen = seenIds(seenPath);
   const waiting = new Map<number, string[]>(); // id запроса turn/start → id кадров, ждущих подтверждения
@@ -75,19 +72,14 @@ export function runWatchdogCodex(argv: string[]): void {
         const ids = !m?.method && typeof m?.id === "number" ? waiting.get(m.id) : undefined;
         if (!ids) return;
         waiting.delete(m.id);
-        if (m.error) return note(`ДЕЛАТЕЛЬ: тред не принял кадр — ${m.error.message ?? "отказ"}`);
-        note(`кадр вложен в тред ${threadId}`);
+        if (m.error) return note(wd.threadRefused(m.error.message ?? wd.refusal()));
+        note(wd.framePut(threadId));
         for (const id of ids) noteSeen(seenPath, id, seen);
       },
       (why) => {
         const lost = [...waiting.values()].flat();
         waiting.clear();
-        note(
-          `дверь закрылась: ${why} — открою заново на следующем кадре` +
-            (lost.length
-              ? `; без ответа: ${lost.join(", ")} — вернутся из кольца следующим взводом`
-              : ""),
-        );
+        note(wd.doorClosed(why, lost));
         door = null;
         ready = null;
       },
@@ -102,7 +94,7 @@ export function runWatchdogCodex(argv: string[]): void {
       return d;
     });
     ready.catch((e: Error) => {
-      note(`дверь не открылась: ${e.message}`);
+      note(wd.doorNotOpened(e.message));
       ready = null;
     });
     return ready;
@@ -118,9 +110,9 @@ export function runWatchdogCodex(argv: string[]): void {
         id: reqId,
         params: { threadId, input: [{ type: "text", text }], turnTrigger: "iskron-channel" },
       });
-      note(`кадр отправлен в тред ${threadId}`);
+      note(wd.frameSent(threadId));
     } catch (e) {
-      note(`ДЕЛАТЕЛЬ: кадр не вложился — ${(e as Error).message}`);
+      note(wd.frameNotPut((e as Error).message));
     }
   }
 
@@ -146,12 +138,11 @@ export function runWatchdogCodex(argv: string[]): void {
           const fromRing = replay > 0;
           if (fromRing) replay--;
           const type = ev.frame?.type;
-          if (type !== "message") return note(`кадр ${type ?? "не разобран"} — не повод будить`);
-          if (fromRing && typeof ev.frame?.id !== "string")
-            return note("кадр без id из кольца — пометить нечем, в тред не кладу повторно");
+          if (type !== "message") return note(wd.notWakeup(type));
+          if (fromRing && typeof ev.frame?.id !== "string") return note(wd.noIdFromRing());
           // Повтор уже вложенного (тот же id) — вторая линия за мостом (#5831).
           if (typeof ev.frame?.id === "string" && seen.has(ev.frame.id))
-            return note(`кадр ${ev.frame.id} уже вложен — в тред не кладу повторно`);
+            return note(wd.alreadyPut(ev.frame.id));
           // Неадресованное месту — числом: копится, строка не кладётся (#6574).
           if (ev.batch && ev.frame && !addressedToMine(ev.frame)) {
             pend.push({
@@ -165,30 +156,28 @@ export function runWatchdogCodex(argv: string[]): void {
           break;
         }
         case "stale":
-          void deliver(ev.text ?? "Искрон: лежалые кадры", staleBatchKeys(ev)); // одна пачка — один ход
+          void deliver(ev.text ?? wd.codexStale(), staleBatchKeys(ev)); // одна пачка — один ход
           break;
         case "dead":
         case "evicted":
-          note(ev.text ?? "ДЕЛАТЕЛЬ: стояние потеряно");
-          void deliver(ev.text ?? "Искрон: стояние потеряно — назовись заново: iskron_stand").then(
-            () => process.exit(1),
-          );
+          note(ev.text ?? wd.seatLost());
+          void deliver(ev.text ?? wd.codexLost()).then(() => process.exit(1));
           break;
         case "alive":
-          note(ev.text ?? "ДЕЛАТЕЛЬ: сокет рвут, а служба отвечает — мост держит место");
-          void deliver(ev.text ?? "Искрон: сокет рвут, а служба отвечает — мост держит место"); // держание идёт, сторож слушает дальше
+          note(ev.text ?? wd.aliveNote());
+          void deliver(ev.text ?? wd.codexAlive()); // держание идёт, сторож слушает дальше
           break;
         case "attached":
           replay = ev.buffered ?? 0;
           seenPath = adoptSeenPath(ev.seen, seenPath, seen); // память места на его сервере
-          note(`слушаю стояние ${ev.key}; кадры кладу в тред ${threadId}`);
+          note(wd.listeningCodex(ev.key, threadId));
           break;
         default:
           note(ev.text ?? ev.kind);
       }
     },
     onGone: (why) => {
-      note(`ДЕЛАТЕЛЬ: ${why}`);
+      note(doer(why));
       process.exit(1);
     },
   });

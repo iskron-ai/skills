@@ -4,7 +4,7 @@
 import { fileURLToPath } from "node:url";
 
 import { NOTIFIED_CLIENTS, PI_CLIENT } from "../shared/clients.ts";
-import { L } from "../shared/lang.ts";
+import { L, lang } from "../shared/lang.ts";
 import { defaultAuthDir } from "../shared/standings.ts";
 import { CFG } from "./config.ts";
 import { doors, heldKey } from "./hold.ts";
@@ -58,7 +58,9 @@ export function unheardListenBlock(realm?: string): string | null {
 function listenLine(key: string): string {
   const self = fileURLToPath(import.meta.url);
   // Сторож выводит каталог сокетов так же, как мост: не по умолчанию — скажи ему где.
-  const where = CFG.authDir === defaultAuthDir() ? "" : ` --auth-dir "${CFG.authDir}"`;
+  const authArg = CFG.authDir === defaultAuthDir() ? "" : ` --auth-dir "${CFG.authDir}"`;
+  // Язык сторожу называет мост: сам он адреса сервера не знает.
+  const where = `${authArg} --lang ${lang()}`;
   const client = clientName();
   const monitor = L(
     `под Monitor — node "${self}" watchdog ${key}${where} с наибольшим timeout_ms, перевзводить по истечении (Claude Code)`,

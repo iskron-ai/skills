@@ -7,6 +7,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
 import { isProductionServer } from "../bridge/config.ts";
+import { L } from "../shared/lang.ts";
 
 export function openCodeMcpEntries(out: (s: string) => void): void {
   const dirFiles = (d: string): string[] => [
@@ -91,7 +92,7 @@ export function openCodeMcpEntries(out: (s: string) => void): void {
       sources.push([f, readFileSync(f, "utf8")]);
     } catch {
       unreadable++;
-      out(`OpenCode: ${f} не читается`);
+      out(L(`OpenCode: ${f} не читается`, `OpenCode: ${f} is unreadable`));
     }
   }
   if (process.env.OPENCODE_CONFIG_CONTENT)
@@ -105,18 +106,29 @@ export function openCodeMcpEntries(out: (s: string) => void): void {
         if (!kind) continue;
         found++;
         if ((v as { enabled?: boolean }).enabled === false) {
-          out(`OpenCode: запись mcp «${name}» в ${file} ведёт Искрон, но выключена — не в игре`);
+          out(
+            L(
+              `OpenCode: запись mcp «${name}» в ${file} ведёт Искрон, но выключена — не в игре`,
+              `OpenCode: the mcp entry "${name}" in ${file} leads to Iskron but is disabled — not in play`,
+            ),
+          );
           continue;
         }
         out(
           kind === "bridge"
-            ? `OpenCode: запись mcp «${name}» в ${file} зовёт ${bridgePath(v)} — похоже на мост поставки. Если это он, её тулы namespaced, а мост общий для сессий сервиса: запись может уйти под подписью соседней сессии. Тогда убери её из этого файла руками: у opencode mcp есть list, add, auth, logout — команды remove нет. Поверхность поставки это плагин`
-            : `OpenCode: запись mcp «${name}» в ${file} ведёт Искрон напрямую по http — её тулы namespaced, и стояния канала у неё нет; это запасной путь, и он законен там, где мост не поднять`,
+            ? L(
+                `OpenCode: запись mcp «${name}» в ${file} зовёт ${bridgePath(v)} — похоже на мост поставки. Если это он, её тулы namespaced, а мост общий для сессий сервиса: запись может уйти под подписью соседней сессии. Тогда убери её из этого файла руками: у opencode mcp есть list, add, auth, logout — команды remove нет. Поверхность поставки это плагин`,
+                `OpenCode: the mcp entry "${name}" in ${file} calls ${bridgePath(v)} — it looks like the delivery bridge. If it is, its tools are namespaced, and the bridge is shared by the service's sessions: the entry may go out under a neighbouring session's signature. Then remove it from this file by hand: opencode mcp has list, add, auth, logout — there is no remove command. The delivery surface is the plugin`,
+              )
+            : L(
+                `OpenCode: запись mcp «${name}» в ${file} ведёт Искрон напрямую по http — её тулы namespaced, и стояния канала у неё нет; это запасной путь, и он законен там, где мост не поднять`,
+                `OpenCode: the mcp entry "${name}" in ${file} leads to Iskron directly over http — its tools are namespaced and it has no channel standing; this is the fallback path, legitimate where the bridge cannot be raised`,
+              ),
         );
       }
     } catch {
       unreadable++;
-      out(`OpenCode: ${file} не читается`);
+      out(L(`OpenCode: ${file} не читается`, `OpenCode: ${file} is unreadable`));
     }
   }
   // Чистого отчёта без названного охвата не бывает: doctor идёт вверх от СВОЕГО
@@ -124,6 +136,9 @@ export function openCodeMcpEntries(out: (s: string) => void): void {
   // видел вовсе, и молчание прочли бы как «записи нет» (граф nks-dev: #4279).
   if (!found)
     out(
-      `OpenCode: записей mcp Искрона не нашёл${unreadable ? ` в том, что прочёл (${unreadable} файл(а) не разобрались — смотри строки выше)` : ""} — смотрел вверх от ${process.cwd()}, глобальный слой и переменные; запись в другом дереве этим не проверена, позови doctor из каталога проекта`,
+      L(
+        `OpenCode: записей mcp Искрона не нашёл${unreadable ? ` в том, что прочёл (${unreadable} файл(а) не разобрались — смотри строки выше)` : ""} — смотрел вверх от ${process.cwd()}, глобальный слой и переменные; запись в другом дереве этим не проверена, позови doctor из каталога проекта`,
+        `OpenCode: found no Iskron mcp entries${unreadable ? ` in what I read (${unreadable} file(s) could not be parsed — see the lines above)` : ""} — looked upward from ${process.cwd()}, the global layer and variables; an entry in another tree is not checked by this, call doctor from the project directory`,
+      ),
     );
 }

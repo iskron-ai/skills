@@ -10,9 +10,11 @@ import { writeSync } from "node:fs";
 
 import { addressedToMine } from "../shared/addressed.ts";
 import { batchLine, caseKey, frameToText } from "../shared/frame-text.ts";
+import { L } from "../shared/lang.ts";
 import { deliveredKeys, noteSeen, seenIds } from "../shared/seen.ts";
 import { seenFilePathOf } from "../shared/standings.ts";
 import { adoptSeenPath, attach, resolveStanding, staleBatchKeys } from "./client.ts";
+import { doer, wd } from "./words.ts";
 
 // Monitor Claude Code режет строку события длиннее ~500 знаков (наблюдено:
 // «...(truncated)»), а строки в одном залпе склеивает в одно событие целиком.
@@ -39,13 +41,9 @@ export function wrapLines(text: string, max = LINE_MAX): string[] {
 const plural = (n: number): string => {
   const m10 = n % 10;
   const m100 = n % 100;
-  const word =
-    m10 === 1 && m100 !== 11
-      ? "кадр"
-      : m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14)
-        ? "кадра"
-        : "кадров";
-  return `${n} ${word}`;
+  const form =
+    m10 === 1 && m100 !== 11 ? 0 : m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14) ? 1 : 2;
+  return `${n} ${L(["кадр", "кадра", "кадров"][form], n === 1 ? "frame" : "frames")}`;
 };
 
 // Monitor склеивает строки, пришедшие в пределах ~200 мс, в одно событие и режет
@@ -96,7 +94,7 @@ const exitNow = (s: string, code: number): void => {
 export function runWatchdog(argv: string[]): void {
   const target = resolveStanding(argv);
   if ("error" in target) {
-    writeSync(2, `ДЕЛАТЕЛЬ: ${target.error}\n`);
+    writeSync(2, `${doer(target.error)}\n`);
     process.exit(2);
   }
   // Напечатанный кадр — отданный: пометка его, а не записи моста, держит перевзвод от повтора.
@@ -127,9 +125,7 @@ export function runWatchdog(argv: string[]): void {
       switch (ev.kind) {
         case "attached":
           seenPath = adoptSeenPath(ev.seen, seenPath, seen); // память места на его сервере
-          log(
-            `слушаю стояние ${ev.key}${ev.buffered ? ` (${plural(ev.buffered)} задним числом)` : ""}`,
-          );
+          log(wd.listening(ev.key, ev.buffered ? wd.backfilled(plural(ev.buffered)) : ""));
           break;
         case "frame": {
           const f = ev.frame;
@@ -202,16 +198,16 @@ export function runWatchdog(argv: string[]): void {
           break;
         case "dead":
         case "evicted":
-          loudExit(ev.text ?? "ДЕЛАТЕЛЬ: стояние потеряно", 1);
+          loudExit(ev.text ?? wd.seatLost(), 1);
           break;
         case "alive":
-          log(ev.text ?? "ДЕЛАТЕЛЬ: сокет рвут, а служба отвечает — мост держит место"); // держание идёт, сторож слушает дальше
+          log(ev.text ?? wd.aliveNote()); // держание идёт, сторож слушает дальше
           break;
         case "released":
-          log(`мост отпустил сокет: ${ev.text ?? ""}`);
+          log(wd.bridgeReleasedSocket(ev.text ?? ""));
           break;
       }
     },
-    onGone: (why) => loudExit(`ДЕЛАТЕЛЬ: ${why}`, 1),
+    onGone: (why) => loudExit(doer(why), 1),
   });
 }

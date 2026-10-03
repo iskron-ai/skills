@@ -6,8 +6,10 @@ import { connect } from "node:net";
 import { join } from "node:path";
 
 import { type ChannelEvent } from "../bridge/hold.ts";
+import { setLang } from "../shared/lang.ts";
 import { deliveredKeys, seenIds } from "../shared/seen.ts";
 import { authDirFromEnv, socketPathOf, standingsDirOf } from "../shared/standings.ts";
+import { wd } from "./words.ts";
 
 // Мост может подняться чуть позже сторожа, место — вернуться после смены демона.
 // Переменная — шов для проб, не ручка человека.
@@ -25,12 +27,13 @@ export interface WatchdogArgs {
   authDir: string;
 }
 
-/** `[ключ] [--auth-dir <dir>]` — тот же каталог, что у моста, иначе сторож ищет не там. */
+/** `[ключ] [--auth-dir <dir>] [--lang en|ru]` — каталог тот же, что у моста, иначе сторож ищет не там; язык мост называет сам. */
 export function parseWatchdogArgs(argv: string[]): WatchdogArgs {
   const out: WatchdogArgs = { authDir: authDirFromEnv() };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--auth-dir") out.authDir = argv[++i] ?? out.authDir;
+    else if (a === "--lang") setLang(argv[++i]);
     else if (!a.startsWith("--") && !out.key) out.key = a;
   }
   return out;
@@ -58,13 +61,11 @@ export function resolveStanding(argv: string[]): Resolved | { error: string } {
   if (held.length === 1) return { key: held[0], path: pathFor(held[0]), authDir };
   if (held.length === 0) {
     return {
-      error:
-        "мост не держит ни одного стояния — назовись одним вызовом iskron_stand(realm, karta, model): " +
-        "его ответ назовёт команду слушания",
+      error: wd.noHeld(),
     };
   }
   return {
-    error: `мост держит несколько стояний — назови нужное: ` + held.join(", "),
+    error: wd.severalHeld(held),
   };
 }
 
@@ -157,14 +158,10 @@ export function attach(path: string, o: AttachOptions): void {
         startedAt = Date.now();
         return void setTimeout(tryOnce, RETRY_MS);
       }
-      if (attached) return o.onGone("мост отпустил стояние или ушёл — сессия кончилась?");
+      if (attached) return o.onGone(wd.bridgeLetGo());
       if (Date.now() - startedAt > ATTACH_WINDOW_MS) {
         const s = ATTACH_WINDOW_MS / 1000;
-        return o.onGone(
-          waitingBack
-            ? `место не вернулось за ${s}s после смены демона — сокет ${path} не поднят; вернуть — iskron_stand`
-            : `мост не поднял локальный сокет ${path} за ${s}s`,
-        );
+        return o.onGone(waitingBack ? wd.seatNotBack(s, path) : wd.noSocket(path, s));
       }
       setTimeout(tryOnce, RETRY_MS);
     });

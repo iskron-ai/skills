@@ -7,6 +7,7 @@
 // по закрытому месту запись — 404, и снимок после закрытия не ляжет.
 // Claude Code и Codex цифр не дают — их месту usage не пишется вовсе.
 import { HOSTED_CLIENTS } from "../shared/clients.ts";
+import { L } from "../shared/lang.ts";
 import { scoped } from "../shared/scope.ts";
 import { harnessName } from "./client.ts";
 import { isParked } from "./hold.ts";
@@ -53,9 +54,18 @@ export async function runUsage(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
     result,
   });
   if (!HOSTED_CLIENTS.has(harnessName()))
-    return answer({ pushed: false, usage: null, why: "расход пишут только OpenCode и pi" });
+    return answer({
+      pushed: false,
+      usage: null,
+      why: L("расход пишут только OpenCode и pi", "only OpenCode and pi report usage"),
+    });
   const u = usageOf((msg.params ?? {}) as Record<string, unknown>);
-  if (!u) return answer({ pushed: false, usage: null, why: "в снимке нет цифр" });
+  if (!u)
+    return answer({
+      pushed: false,
+      usage: null,
+      why: L("в снимке нет цифр", "the snapshot has no numbers"),
+    });
   U.latest = u;
   rememberUsage(u);
   const s = usagePlace();

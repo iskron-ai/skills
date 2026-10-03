@@ -17,7 +17,7 @@
 import { SURFACE_CLIENT } from "../shared/clients.ts";
 import { L } from "../shared/lang.ts";
 import { CFG } from "./config.ts";
-import { STAND_TOOL } from "./standtool.ts";
+import { STAND_TOOL_NAME } from "./standtool.ts";
 import { state } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
 
@@ -33,7 +33,7 @@ function clientName(): string {
 
 /** Имена тулов, которые видит харнес; null — все. iskron_stand в наборе всегда. */
 export function toolSet(): Set<string> | null {
-  return CFG.tools ? new Set([...CFG.tools, STAND_TOOL.name]) : null;
+  return CFG.tools ? new Set([...CFG.tools, STAND_TOOL_NAME]) : null;
 }
 
 /**

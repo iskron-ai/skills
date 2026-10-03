@@ -6,6 +6,7 @@
 // прогона) и уходит, не выходя из дел, не снимая места и занятости. Мост нового
 // экземпляра возвращает место по ключу (`iskron/resume`, resume.ts) и принимает
 // дела прогона — на своём конце он их и покинет.
+import { L } from "../shared/lang.ts";
 import { scoped } from "../shared/scope.ts";
 import { joinedCases, seedJoined } from "./caseexit.ts";
 import { harnessName } from "./client.ts";
@@ -28,7 +29,12 @@ export function localSuspend(msg: JsonRpcMessage): Promise<JsonRpcMessage> | nul
   const s = state.standing;
   const { currentKey: key, currentUrl: url, currentStatusUrl: statusUrl } = H;
   if (!CFG.satellite || !s?.name || !key || !url)
-    return Promise.resolve(answer({ suspended: false, word: "места-спутника нет — паузы нет" }));
+    return Promise.resolve(
+      answer({
+        suspended: false,
+        word: L("места-спутника нет — паузы нет", "no satellite seat — nothing to pause"),
+      }),
+    );
   const cases = joinedCases();
   writeHoldRecord(
     key,
