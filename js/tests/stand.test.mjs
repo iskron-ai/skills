@@ -829,6 +829,36 @@ test("iskron_stand busy line over a connection closed under the request: one ret
   assert.equal(tries() - before, 1, "an HTTP answer is not retried");
 });
 
+// The same closed keep-alive connection under a request to MCP (seen live on the
+// launch line: «upstream unreachable: The socket connection was closed unexpectedly»,
+// the satellite did not stand). The bridge repeats once a request whose repeat
+// applies nothing twice — the board read here; a write is not repeated.
+test("a request to MCP whose connection closed before the answer is repeated once when a repeat applies nothing twice; a write is not", async (t) => {
+  const { fake, bridge } = await ready(t);
+  const mcp = () => fake.state.counts.mcp;
+  let before = mcp();
+  await fake.control({ mcpDrop: 1, mcpDropAction: "iskron_channel:list" });
+  const stood = await bridge.call("tools/call", {
+    name: "iskron_stand",
+    arguments: { realm: "nks-dev", karta: 931, name: "proba" },
+  });
+  assert.ok(!stood.error && !stood.result?.isError, JSON.stringify(stood.error) + textOf(stood));
+  assert.ok(mcp() - before >= 2, "the dropped board read went once more");
+  before = fake.state.calls.length;
+  await fake.control({ mcpDrop: 1, mcpDropAction: "iskron_case:say" });
+  const said = await bridge.call("tools/call", {
+    name: "iskron_case",
+    arguments: { realm: "nks-dev", action: "say", room: "#77", text: "слово" },
+  });
+  assert.ok(said.error || said.result?.isError, "a write is not repeated blindly");
+  assert.equal(
+    fake.state.calls.length,
+    before,
+    "the dropped write was never processed — and not sent again",
+  );
+  await fake.control({ mcpDrop: 0, mcpDropAction: null });
+});
+
 // The busy line is the standing's word — of THIS standing: a call for another
 // name must not post onto the address the bridge holds for the first one.
 test("iskron_stand with status for another standing is refused outright — one standing per bridge — and the held one's line stays untouched", async (t) => {

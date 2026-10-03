@@ -18,6 +18,7 @@ import { localLeave } from "./leave.ts";
 import { annotateToolList } from "./moment.ts";
 import { narrowToolList, outsideSetRefusal } from "./narrow.ts";
 import { noteLocaleEcho, withPlaceFields } from "./placefields.ts";
+import { READ_TOOLS } from "./repeat.ts";
 import { isCheckCall, isResumeCall, runCheck, runResume } from "./resume.ts";
 import { satelliteChannelRefusal } from "./satellite.ts";
 import { isStandCall, runStand } from "./stand.ts";
@@ -105,12 +106,6 @@ const NET_BACKOFF_MS = (process.env.ISKRON_BRIDGE_NET_BACKOFF_MS || "1000,2000,4
   .split(",")
   .map(Number)
   .filter((n) => Number.isFinite(n) && n >= 0);
-const READ_TOOLS = new Set([
-  "iskron_look",
-  "iskron_orient",
-  "iskron_search",
-  "iskron_semantic_search",
-]);
 
 // Переоткрыв сессию, мост сверяет список тулов с отданным харнесу (#5405).
 // Свой tools/list харнеса в полёте — он и так получит свежий список: не спрашиваем дважды.

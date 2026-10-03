@@ -1002,6 +1002,11 @@ var DeadGrantError = class extends Error {
     this.expired = expired;
   }
 };
+var CLOSED = /* @__PURE__ */ new Set(["UND_ERR_SOCKET", "ECONNRESET", "EPIPE"]);
+var closedUnder = (e) => {
+  const err = e;
+  return CLOSED.has(err?.code ?? "") || CLOSED.has(err?.cause?.code ?? "");
+};
 function errorCode(e) {
   const err = e;
   return err?.cause?.code ?? err?.code;
@@ -3168,6 +3173,26 @@ var HARNESS_VERSION_ENV = "ISKRON_HARNESS_VERSION";
 var SKILLS_ROOT_ENV = "ISKRON_SKILLS_ROOT";
 var HOSTED_CLIENTS = /* @__PURE__ */ new Set([PI_CLIENT, OPENCODE_CLIENT]);
 
+// js/bridge/repeat.ts
+var READ_TOOLS = /* @__PURE__ */ new Set([
+  "iskron_look",
+  "iskron_orient",
+  "iskron_search",
+  "iskron_semantic_search"
+]);
+var SAFE_ACTIONS = {
+  iskron_channel: /* @__PURE__ */ new Set(["list", "register"]),
+  iskron_realm: /* @__PURE__ */ new Set(["list"])
+};
+function repeatable(msg) {
+  if (msg?.id === void 0 || msg?.id === null) return true;
+  if (msg.method === "initialize" || msg.method === "tools/list") return true;
+  if (msg.method !== "tools/call") return false;
+  const name = String(msg.params?.name ?? "");
+  if (READ_TOOLS.has(name)) return true;
+  return !!SAFE_ACTIONS[name]?.has(String(msg.params?.arguments?.action ?? ""));
+}
+
 // js/bridge/transport.ts
 var state = scoped(() => ({
   sessionId: null,
@@ -3262,13 +3287,20 @@ async function post2(msg, onMessage) {
   if (state.protocolVersion) headers["mcp-protocol-version"] = state.protocolVersion;
   const boundByHeader = isInit ? standingHeader() : null;
   if (boundByHeader) headers["x-nks-standing"] = boundByHeader;
+  const send = () => fetch(CFG.serverUrl, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(msg),
+    signal: AbortSignal.timeout(CFG.timeoutMs)
+  });
   let res;
   try {
-    res = await fetch(CFG.serverUrl, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(msg),
-      signal: AbortSignal.timeout(CFG.timeoutMs)
+    res = await send().catch((e) => {
+      if (!closedUnder(e) || !repeatable(msg)) throw e;
+      log(
+        `upstream connection closed under ${msg?.method} before the answer — sending it once more`
+      );
+      return send();
     });
   } catch (e) {
     const err = e;
@@ -4632,11 +4664,6 @@ function drainSpool(path, feed) {
 }
 
 // js/bridge/statuspost.ts
-var CLOSED = /* @__PURE__ */ new Set(["UND_ERR_SOCKET", "ECONNRESET", "EPIPE"]);
-var closedUnder = (e) => {
-  const err = e;
-  return CLOSED.has(err?.code ?? "") || CLOSED.has(err?.cause?.code ?? "");
-};
 async function publishStatusTo(url, text, timeoutMs = 5e3, standingId = null) {
   const signal = AbortSignal.timeout(timeoutMs);
   const post3 = () => fetch(url, {
@@ -7854,12 +7881,6 @@ function syntheticError(id, message, outcome = UpstreamError.UNKNOWN, holdOff = 
   };
 }
 var NET_BACKOFF_MS = (process.env.ISKRON_BRIDGE_NET_BACKOFF_MS || "1000,2000,4000").split(",").map(Number).filter((n) => Number.isFinite(n) && n >= 0);
-var READ_TOOLS = /* @__PURE__ */ new Set([
-  "iskron_look",
-  "iskron_orient",
-  "iskron_search",
-  "iskron_semantic_search"
-]);
 var H3 = scoped(() => ({ listing: 0 }));
 onReinitialized(() => {
   if (H3.listing > 0) return;
