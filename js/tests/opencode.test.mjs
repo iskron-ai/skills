@@ -2801,7 +2801,7 @@ test("the end of a child's turn ends nothing: its bridge lives, a frame of its c
 // not kept reopening its socket — and it cannot stand again. Other interruptions
 // (shutdown, superseded) are no end.
 test("a lead child whose run is interrupted by the user is ended without waking the parent and cannot stand again; a superseded run is no end", async () => {
-  const { b, rec, childPid } = await leadChild("lead-cancel");
+  const { b, rec, childPid } = await leadChild("lead-cancel", { ISKRON_CASCADE_MS: 400 });
   try {
     rec.emit({ type: "session.execution.started", data: { sessionID: "child" } });
     rec.emit({
@@ -2830,6 +2830,43 @@ test("a lead child whose run is interrupted by the user is ended without waking 
     await rec.stop();
   }
 });
+
+// #147 [150], e2e10 on OpenCode 2.0.22: the human cancels the PARENT's turn while the child
+// runs (background=false) — OpenCode's task tool interrupts the child too, with the same
+// reason «user» (subagent.ts: onInterrupt → sessions.interrupt(child)). That is a dropped
+// turn, not the child's end: it keeps its place and cases, the parent gets one word,
+// unwoken. Both orders of the two events are cascades.
+for (const order of ["parent first", "child first"])
+  test(`a lead child whose turn is cut by the cancel of its parent's turn (${order}) lives on — a dropped turn, not an end`, async () => {
+    const { rec, childPid } = await leadChild(`lead-cascade-${order.split(" ")[0]}`, {
+      ISKRON_CASCADE_MS: 600,
+    });
+    const cut = (sessionID) =>
+      rec.emit({ type: "session.execution.interrupted", data: { sessionID, reason: "user" } });
+    try {
+      rec.emit({ type: "session.execution.started", data: { sessionID: "root" } });
+      rec.emit({ type: "session.execution.started", data: { sessionID: "child" } });
+      if (order === "parent first") cut("root");
+      cut("child");
+      if (order === "child first") {
+        await delay(100);
+        cut("root");
+      }
+      await until(
+        () => rec.synthetics.some((s) => /прерван отменой твоего хода/.test(s.text)),
+        "the word",
+      );
+      await delay(900);
+      assert.ok(alive(childPid), "the child's bridge lives — its place stays");
+      assert.equal(ends(rec).length, 0, "no end");
+      const word = rec.synthetics.find((s) => /прерван отменой твоего хода/.test(s.text));
+      assert.equal(word.sessionID, "root");
+      assert.equal(word.resume, false, "the word does not wake the parent");
+      await rec.call("iskron_case", { realm: "nks-dev", action: "say", room: "#7" }, "child");
+    } finally {
+      await rec.stop();
+    }
+  });
 
 // #147 [140] 1а: a satellite place the platform takes away (evicted 4000, dead token 4001)
 // ends the lead like a revoke — a word to the parent without waking it — instead of a

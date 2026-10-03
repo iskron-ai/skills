@@ -3,12 +3,14 @@
 // держит её после хода живой, кадр её дела будит её сессию (channel.ts), и
 // конец — явный акт: её уход по исходу (leave дела поручения — первого, куда она
 // вошла, — уход из дел целиком либо iskron_channel leave), слово запустившего
-// (его revoke её места — окончательно), отмена её хода в OpenCode — тоже окончательно,
+// (его revoke её места — окончательно), отмена её хода в OpenCode — тоже окончательно (не отмена хода родителя, оборвавшая
+// её ход каскадом, — cascade.ts),
 // удаление сессии. Потолка простоя нет: ожидание человека — не забытость, забытого
 // снимает запустивший. Перезагрузка плагина — не конец: ребёнок возвращается (children.ts).
 // На конце мост ребёнка гасится (выход из дел и снятие места — его, bridge/session.ts),
 // итог — синтетикой родителю. Договор и слова — leadwords.ts.
 
+import { createCascade } from "./cascade.ts";
 import * as W from "./leadwords.ts";
 import { type Place, standsBy } from "./satellite.ts";
 
@@ -32,6 +34,7 @@ export function createLeads(d: W.LeadDoors): W.Leads {
   // отменённые, снятые платформой — с причиной, которую назовёт отказ ребёнку.
   const gone = new Map<string, string | undefined>();
   const over = new Set<string>(); // кончённые любым концом, пока не встали снова
+  const cascade = createCascade();
   const who = (l: Lead, child: string): string => l.place?.name ?? `сессии ${child}`;
   const parentOf = (child: string) => d.parentOf(child).catch(() => null);
 
@@ -157,6 +160,7 @@ export function createLeads(d: W.LeadDoors): W.Leads {
     },
     nameOf: (child) => leads.get(child)?.place?.name ?? (leads.has(child) ? child : null),
     onEvent(ev) {
+      cascade.note(ev); // прерывания всех сессий: родитель ведущего — тоже (cascade.ts)
       const child: unknown = ev?.data?.sessionID;
       const l = typeof child === "string" ? leads.get(child) : undefined;
       if (!l || typeof child !== "string") return;
@@ -169,11 +173,21 @@ export function createLeads(d: W.LeadDoors): W.Leads {
           return;
         case "session.execution.interrupted":
           l.running = false;
-          // Отмена человеком или запустившим (reason "user") — конец, как revoke запустившего:
+          // Отмена хода самого ребёнка (reason "user") — конец, как revoke запустившего:
           // без пробуждения, встать снова нельзя; shutdown, superseded, inactivity — не отмена.
+          // Тот же «user» каскадом от отмены хода родителя — лишь снятый ход (cascade.ts).
           if (ev.data?.reason !== "user") return;
-          gone.set(child, W.CANCELLED_REFUSAL);
-          return void finish(child, W.CANCELLED, true, false);
+          void cascade.byParent(l.parent, Date.now()).then(async (byParent) => {
+            if (!leads.has(child)) return;
+            if (byParent) {
+              const p = await l.parent;
+              if (p) await d.tell(p, W.cascadeWord(who(l, child)), false);
+              return;
+            }
+            gone.set(child, W.CANCELLED_REFUSAL);
+            await finish(child, W.CANCELLED, true, false);
+          });
+          return;
         case "session.execution.succeeded":
         case "session.execution.failed":
           l.running = false;
