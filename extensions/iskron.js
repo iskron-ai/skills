@@ -463,8 +463,9 @@ var SKILLS_ROOT_ENV = "ISKRON_SKILLS_ROOT";
 import { createHash } from "node:crypto";
 import { readFileSync as readFileSync2 } from "node:fs";
 import { fileURLToPath } from "node:url";
-var VERSION = "7.2.7";
+var VERSION = "7.2.8";
 var releaseBuildIn = (text) => text.includes(`"${["iskron-build", "release"].join(":")}"`);
+var devBuildIn = (text) => text.includes(`"${["iskron-build", "dev"].join(":")}"`);
 function buildOf(selfUrl) {
   try {
     const src = readFileSync2(fileURLToPath(selfUrl));
@@ -717,6 +718,8 @@ var H2 = scoped(() => ({
   /** Каталог сессии, из которого занимается место (cwd в iskron_stand), — в запись держания, для возврата по каталогу (resume.ts). */
   standCwd: null,
   holder: null,
+  /** последний знак службы сокета, отпущенного уходом (parkStanding), — срок записи держания от него (holdkeep.ts) */
+  heardAt: 0,
   /** дверь основного места — того, ради которого взят сокет */
   door: null,
   currentKey: null,
@@ -1210,6 +1213,7 @@ function refreshHomeBridge(notify, canSpeak) {
     );
     return;
   }
+  if (vHome === vPackaged && !devBuildIn(home.toString("utf8"))) return;
   const was = vHome ?? "версия не читается";
   const tmp = `${homePath}.tmp-${process.pid}`;
   try {
