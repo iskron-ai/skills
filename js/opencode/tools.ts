@@ -440,7 +440,10 @@ export async function setupTools(
   // Строка запуска с делом (launch.ts): тот же вызов, что у execute, с его занятостью.
   const launcher = createLauncher<Slot>({
     rootOf,
-    childSlot: (sessionID, root) => children.childSlot(sessionID, slots.get(root)),
+    childSlot(sessionID, root) {
+      if (!slots.get(root)?.place) throw new Error(childWriteRefusal(null, STAND_TOOL, {}) ?? "");
+      return children.childSlot(sessionID, slots.get(root)); // без места корня — отказ (#6550 п.2)
+    },
     async call(slot, name, args, sessionID) {
       slot.busy++;
       try {

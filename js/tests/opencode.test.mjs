@@ -3689,6 +3689,32 @@ test("a child session whose first prompt is a launch line with a case stands as 
   }
 });
 
+// The launch line goes the same rule 2 as the child's own iskron_stand: under a root
+// holding no place it raises no bridge and takes no ordinary place — the refusal is
+// said into the prompt, before the model reads.
+test("a launch line under a root holding no place is refused aloud: no child bridge, no ordinary place", async () => {
+  const calls = join(SANDBOX, "launch-noplace.calls");
+  writeFileSync(calls, "");
+  const b = bridgeEnv("launch-noplace", { FB_CALLS: calls, FB_TOOLS: STAND_AND_CASE });
+  const rec = await plugin(b.env, {
+    sessions: [
+      { id: "root", location: { directory: "/work/root" } },
+      { id: "child", parentID: "root", location: { directory: "/work/child" } },
+    ],
+  });
+  try {
+    await until(() => rec.tools().has("iskron_stand"), "the stand tool", 8000);
+    await rec.call("iskron_case", { realm: "@nks/nks-dev", action: "mine" }, "root");
+    const bridges = pidsOf(b.log).length;
+    const read = await rec.prompt("child", "start @nks/nks-dev #48 дело №77\nБриф: почини мост.");
+    assert.match(read, /не встал: Отказано \(плагин\)[^\n]*место родителя неизвестно/);
+    assert.equal(pidsOf(b.log).length, bridges, "no bridge raised for the child");
+    assert.ok(!sentCalls(calls).some((c) => c.name === "iskron_stand"), "no stand went out");
+  } finally {
+    await rec.stop();
+  }
+});
+
 test("without a launch line a child's prompt is left as it was: no stand, no join, no bridge of its own", async () => {
   const calls = join(SANDBOX, "no-launch.calls");
   writeFileSync(calls, "");
@@ -3736,14 +3762,19 @@ test("on an English server (*.ai) the launch line reads «case №N» and the wo
   });
   try {
     await until(() => rec.tools().has("iskron_stand"), "the stand tool", 8000);
+    // Ребёнок встаёт только спутником места корня (#6550 п.2): корень стоит первым.
+    await rec.call("iskron_stand", { realm: "r5", karta: "#2816" }, "root");
+    await until(() => /мост держит стояние/.test(rec.said()), "the root's held word");
     const read = await rec.prompt("child", "start r5 #48 case №77 from @me:lead");
     assert.equal(
       read,
       "start r5 #48 case №77 from @me:lead\n" +
-        "Iskron: seated host.repo.opus-5, entered case №77 — retell the brief as your first message in the case.",
+        "Iskron: seated host.repo.opus-5.sub-1, entered case №77 — retell the brief as your first message in the case.",
     );
     assert.deepEqual(
-      sentCalls(calls).map((c) => c.arguments.room ?? c.name),
+      sentCalls(calls)
+        .slice(1)
+        .map((c) => c.arguments.room ?? c.name),
       ["iskron_stand", "#77"],
     );
   } finally {
@@ -3765,16 +3796,20 @@ test("a refused join comes back as words in the prompt, and the place stays", as
   });
   try {
     await until(() => rec.tools().has("iskron_stand"), "the stand tool", 8000);
+    await rec.call("iskron_stand", { realm: "r5", karta: "#2816" }, "root");
+    await until(() => /мост держит стояние/.test(rec.said()), "the root's held word");
     // The tail «from <seat>» is pi's: here the parent is known, and the tail does no harm.
     const read = await rec.prompt("child", "start r5 #48 case #77 from @me:lead");
     assert.equal(
       read,
       "start r5 #48 case #77 from @me:lead\n" +
-        "Искрон: встал host.repo.opus-5; в дело №77 не вошёл — дело #77 не найдено в этом графе. Место остаётся.",
-      "the root holds no place, so the child stands a place of its own",
+        "Искрон: встал host.repo.opus-5.sub-1; в дело №77 не вошёл — дело #77 не найдено в этом графе. Место остаётся.",
+      "the child stands the root's satellite",
     );
     assert.deepEqual(
-      sentCalls(calls).map((c) => [c.name, c.arguments.action]),
+      sentCalls(calls)
+        .slice(1)
+        .map((c) => [c.name, c.arguments.action]),
       [
         ["iskron_stand", undefined],
         ["iskron_case", "join"],

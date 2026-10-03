@@ -1644,12 +1644,12 @@ function createLauncher(d) {
       if (!l) return null;
       const root = await d.rootOf(sessionID);
       if (root === sessionID) return null;
-      const slot = d.childSlot(sessionID, root);
+      let slot = null;
       return enterCase(
         l,
-        (name, args) => d.call(slot, name, args, sessionID),
+        (name, args) => d.call(slot ??= d.childSlot(sessionID, root), name, args, sessionID),
         null,
-        () => slot.place?.name
+        () => slot?.place?.name
       );
     }
   };
@@ -2299,7 +2299,10 @@ async function setupTools(ctx, say, onChannel, rootOf, flushUsage = async () => 
   }
   const launcher = createLauncher({
     rootOf,
-    childSlot: (sessionID, root) => children.childSlot(sessionID, slots.get(root)),
+    childSlot(sessionID, root) {
+      if (!slots.get(root)?.place) throw new Error(childWriteRefusal(null, STAND_TOOL, {}) ?? "");
+      return children.childSlot(sessionID, slots.get(root));
+    },
     async call(slot, name, args, sessionID) {
       slot.busy++;
       try {
