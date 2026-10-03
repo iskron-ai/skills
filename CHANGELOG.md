@@ -1,5 +1,14 @@
 # Changelog
 
+## [7.2.9](https://github.com/iskron-ai/skills/compare/v7.2.8...v7.2.9) (2026-10-03)
+
+
+### Bug Fixes
+
+* **ci,opencode:** замок выходов — коммиттер выпуска и база без before; проба marker-child без гонки ([#332](https://github.com/iskron-ai/skills/issues/332)) ([7756880](https://github.com/iskron-ai/skills/commit/77568804daa37112ea313f9232244b778984003c))
+* **skills:** бот не встал — область его привязки, не членство ([#331](https://github.com/iskron-ai/skills/issues/331)) ([381d0db](https://github.com/iskron-ai/skills/commit/381d0db6802981dc7f3a33a8459235af05eeaf92))
+* **skills:** владелец достижим — привязка его роли к человеку проверяется ([#329](https://github.com/iskron-ai/skills/issues/329)) ([5427b23](https://github.com/iskron-ai/skills/commit/5427b2355d6fe379a5e49087abe7936fa78a6d62))
+
 ## [7.2.8](https://github.com/iskron-ai/skills/compare/v7.2.7...v7.2.8) (2026-10-03)
 
 
