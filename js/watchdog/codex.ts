@@ -28,6 +28,8 @@ import {
 } from "./client.ts";
 import { doer, wd } from "./words.ts";
 
+const FLUSH_WAIT_MS = 5000; // своё отпускание ждёт вложений в полёте не дольше
+
 const note = (s: string): void => {
   process.stderr.write(s + "\n");
 };
@@ -100,7 +102,14 @@ export function runWatchdogCodex(argv: string[]): void {
     return ready;
   }
 
-  async function deliver(text: string, ids: string[] = []): Promise<void> {
+  // Вложения в полёте: своё отпускание ждёт их, прежде чем выйти (#6638).
+  const inFlight = new Set<Promise<void>>();
+  function deliver(text: string, ids: string[] = []): Promise<void> {
+    const p = put(text, ids).finally(() => inFlight.delete(p));
+    inFlight.add(p);
+    return p;
+  }
+  async function put(text: string, ids: string[]): Promise<void> {
     try {
       const d = door ?? (await open());
       const reqId = nextId++;
@@ -126,7 +135,8 @@ export function runWatchdogCodex(argv: string[]): void {
   const withPend = (text: string, ids: string[]): void => {
     const got = pend;
     pend = [];
-    void deliver([...(got.length ? [batchHead(got.map((g) => g.frame))] : []), text].join("\n"), [
+    const head = got.length ? [batchHead(got.map((g) => g.frame))] : [];
+    void deliver([...head, ...(text ? [text] : [])].join("\n"), [
       ...got.flatMap((g) => g.ids),
       ...ids,
     ]);
@@ -171,6 +181,18 @@ export function runWatchdogCodex(argv: string[]): void {
           replay = ev.buffered ?? 0;
           seenPath = adoptSeenPath(ev.seen, seenPath, seen); // память места на его сервере
           note(wd.listeningCodex(ev.key, threadId));
+          break;
+        case "released":
+          note(wd.bridgeReleasedSocket(ev.text ?? ""));
+          // Своё close/revoke/leave — не уход моста: последние кадры и ждавший счёт — в тред, затем выход (#6638).
+          if (!ev.own) break;
+          if (pend.length) withPend("", []);
+          // Дверь, не ответившая на upgrade, держала бы сторожа вечно: предел и громкий выход.
+          setTimeout(() => {
+            note(wd.flushNotPut(FLUSH_WAIT_MS / 1000));
+            process.exit(1);
+          }, FLUSH_WAIT_MS);
+          void Promise.allSettled([...inFlight]).then(() => process.exit(0));
           break;
         default:
           note(ev.text ?? ev.kind);

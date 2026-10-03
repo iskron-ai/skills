@@ -204,7 +204,9 @@ export function runWatchdog(argv: string[]): void {
           log(ev.text ?? wd.aliveNote()); // держание идёт, сторож слушает дальше
           break;
         case "released":
-          log(wd.bridgeReleasedSocket(ev.text ?? ""));
+          // Своё close/revoke — последнее слово сторожа, без тревоги и ненулевого кода (#6638).
+          if (ev.own) loudExit(wd.bridgeReleasedSocket(ev.text ?? ""), 0);
+          else log(wd.bridgeReleasedSocket(ev.text ?? ""));
           break;
       }
     },

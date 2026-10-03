@@ -236,11 +236,17 @@ const held = (): Place | null =>
 /**
  * Отпустить всё, что держим: сокет службы, двери, публикацию. Идемпотентно.
  * `forget` стирает и записи держания — снятие, мёртвый токен. `keepBeside` —
- * тот же канал переоткрывается: места рядом остаются на нём.
+ * тот же канал переоткрывается: места рядом остаются на нём. `own` — отпускает
+ * своё close, revoke или leave сессии: released несёт own, сторожа уходят без тревоги (#6638).
  */
-export function releaseStanding(reason: string, forget = false, keepBeside = false): void {
+export function releaseStanding(
+  reason: string,
+  forget = false,
+  keepBeside = false,
+  own = false,
+): void {
   if (forget && H.currentKey) dropHoldRecord(H.currentKey);
-  if (!keepBeside) dropAllExtras(reason, forget);
+  if (!keepBeside) dropAllExtras(reason, forget, own);
   if (!H.holder && !H.door) return;
   // Пачка, ещё не отданная, уходит сейчас, а не теряется молча (backlog.ts).
   H.door?.flushBatches();
@@ -253,7 +259,7 @@ export function releaseStanding(reason: string, forget = false, keepBeside = fal
     broadcast({ kind: "handover", key, text: handover });
   } else {
     standingLog(`released ${H.currentKey ?? "?"}: ${reason}${forget ? " (record dropped)" : ""}`);
-    const released: ChannelEvent = { kind: "released", key, text: reason };
+    const released: ChannelEvent = { kind: "released", key, text: reason, ...(own && { own }) };
     broadcast(released);
     notify("info", released); // плагин OpenCode снимает holding по этому слову, не по догадке (#5140)
   }
@@ -437,7 +443,7 @@ function openHolder(url: string, key: string): void {
           log(
             `standing revoked by this session — released quietly, binding forgotten (${state.standing?.name ?? "unnamed"}; close ${code} arrived before the answer)`,
           );
-          releaseStanding(holdWords.revokedOwn(), true);
+          releaseStanding(holdWords.revokedOwn(), true, false, true);
           state.standing = null;
           state.standingSession = null;
           return;
@@ -447,7 +453,7 @@ function openHolder(url: string, key: string): void {
           log(
             `channel closed by this session — released quietly (close ${code} arrived before the answer)`,
           );
-          releaseStanding(holdWords.closedOwn(), true);
+          releaseStanding(holdWords.closedOwn(), true, false, true);
           state.standing = null;
           state.standingSession = null;
           return;

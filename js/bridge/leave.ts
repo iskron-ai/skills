@@ -120,6 +120,8 @@ async function leaveSatellite(reason: string): Promise<string> {
   releaseStanding(
     `${reason}: ${L("место-спутник отпущено целиком", "the satellite seat is released whole")}`,
     true,
+    false,
+    true,
   );
   releaseSatelliteClaims(); // имя свободно следующему прогону (satellite.ts)
   const line = clearedLine(st);

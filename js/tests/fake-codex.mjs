@@ -51,7 +51,8 @@ function unframe(buf) {
   return { out, rest: buf };
 }
 
-export function startFakeCodex(socketPath, logFile) {
+// mute: the socket is accepted, the upgrade is never answered — a hung daemon.
+export function startFakeCodex(socketPath, logFile, { mute = false } = {}) {
   mkdirSync(dirname(socketPath), { recursive: true });
   const server = createServer((_req, res) => {
     res.writeHead(404);
@@ -61,6 +62,8 @@ export function startFakeCodex(socketPath, logFile) {
   server.on("upgrade", (req, socket) => {
     sockets.add(socket);
     socket.on("close", () => sockets.delete(socket));
+    socket.on("error", () => {});
+    if (mute) return;
     socket.write(
       "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n",
     );

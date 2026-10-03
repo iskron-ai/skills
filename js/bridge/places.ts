@@ -132,11 +132,19 @@ export function rememberExtraStatus(key: string, ch: Channel, text: string): voi
   if (p) writeRecord(p, ch, text || "");
 }
 
-/** Отпустить место рядом: дверь закрыта; `forget` стирает запись и строку повторной регистрации. */
-export function dropExtra(key: string, reason: string, forget: boolean): void {
+/**
+ * Отпустить место рядом: дверь закрыта; `forget` стирает запись и строку повторной
+ * регистрации. `own` — своё close или revoke сессии: сторож места слышит released
+ * с own после неотданных пачек и уходит без тревоги (#6638).
+ */
+export function dropExtra(key: string, reason: string, forget: boolean, own = false): void {
   const p = extras.get(key);
   if (!p) return;
   extras.delete(key);
+  if (own) {
+    p.door.flushBatches();
+    p.door.broadcast({ kind: "released", key, text: reason, own });
+  }
   p.door.close();
   if (forget) {
     dropHoldRecord(key);
@@ -147,8 +155,8 @@ export function dropExtra(key: string, reason: string, forget: boolean): void {
   if (!handoverReason()) besideWord({ kind: "beside-gone", key, text: reason });
 }
 
-export function dropAllExtras(reason: string, forget: boolean): void {
-  for (const k of [...extras.keys()]) dropExtra(k, reason, forget);
+export function dropAllExtras(reason: string, forget: boolean, own = false): void {
+  for (const k of [...extras.keys()]) dropExtra(k, reason, forget, own);
   if (forget) state.places = [];
 }
 

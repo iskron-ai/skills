@@ -139,6 +139,10 @@ export function runWatchdogExit(argv: string[]): void {
           seenPath = adoptSeenPath(ev.seen, seenPath, seen); // память места на его сервере
           note(wd.listening(ev.key));
           break;
+        case "released":
+          note(wd.bridgeReleasedSocket(ev.text ?? ""));
+          if (ev.own) process.exit(0); // своё close/revoke — не уход моста (#6638)
+          break;
         default:
           if (ev.kind === "note" && ev.batch) head = ev.text ?? ""; // шапка пачки — делателю, с её первым кадром
           note(ev.text ?? ev.kind);

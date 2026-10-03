@@ -1771,8 +1771,9 @@ async function twoGraphs(t, A, B, init = INIT, beforeB = async () => {}) {
     const proc = spawn(NODE, [FILE, "watchdog", key, "--auth-dir", dir], {
       stdio: ["ignore", "pipe", "pipe"],
     });
-    const w = { proc, out: "" };
+    const w = { proc, out: "", err: "" };
     proc.stdout.on("data", (c) => (w.out += c));
+    proc.stderr.on("data", (c) => (w.err += c));
     t.after(() => proc.kill("SIGKILL"));
     return w;
   };
@@ -2038,6 +2039,39 @@ test("two graphs: revoking the first place is refused by the server while anothe
   assert.match(await write(NKS, "A после снятия B"), /автор: proba\)/);
   assert.equal(wa.proc.exitCode, null, "watchdog A stays attached");
 });
+
+// Сторож места рядом на своём revoke этого места и на своём close канала уходит
+// словом моста одной строкой и кодом 0, без тревоги делателю (#6638).
+const leftQuietly = async (w, word) => {
+  await waitUntil(() => w.proc.exitCode !== null, "the watchdog to leave");
+  await pause(200); // хвост вывода после выхода
+  const all = w.out + w.err;
+  assert.equal(w.proc.exitCode, 0, `one's own release is not a lost bridge:\n${all}`);
+  assert.doesNotMatch(all, /ДЕЛАТЕЛЬ|DOER/, `no alarm:\n${all}`);
+  assert.equal(all.split("\n").filter((l) => word.test(l)).length, 1, `one line:\n${all}`);
+};
+for (const action of ["revoke", "close"])
+  test(`two graphs: the watchdog of the place beside leaves with exit 0 and one line on one's own ${action}`, async (t) => {
+    const { bridge, keyA, keyB, watch } = await twoGraphs(
+      t,
+      { realm: NKS, karta: 931, name: "proba" },
+      { realm: DRUGOY, karta: 48, name: "proba-b" },
+    );
+    const wa = watch(keyA);
+    const wb = watch(keyB);
+    await waitUntil(() => wa.out.includes("слушаю стояние"), "watchdog A to attach");
+    await waitUntil(() => wb.out.includes("слушаю стояние"), "watchdog B to attach");
+    const args =
+      action === "revoke"
+        ? { realm: DRUGOY, action, karta: 48, standing: "proba-b" }
+        : { realm: NKS, action };
+    const r = await bridge.call("tools/call", { name: "iskron_channel", arguments: args });
+    assert.ok(!r.result?.isError, textOf(r));
+    const word = action === "revoke" ? /снято своим revoke/ : /канал закрыт своим close/;
+    await leftQuietly(wb, word);
+    if (action === "close") await leftQuietly(wa, word);
+    else assert.equal(wa.proc.exitCode, null, "watchdog A stays attached");
+  });
 
 // close с графом места рядом закрывает тот же канал со всеми местами — это своё
 // close, не мёртвый токен (#6634).
@@ -2720,6 +2754,35 @@ test("satellite: leave lets the place go whole — iskron/check brings nothing b
   await new Promise((res) => setTimeout(res, 300));
   assert.equal(fake.state.counts.ws_upgrades, upgrades, "no socket opened again after leave");
   assert.equal(fake.state.counts.connect, connects, "no new connect");
+});
+
+// Уход спутника своим leave — своё отпускание: сторож его места уходит словом
+// моста одной строкой и кодом 0, без тревоги (#6638).
+test("satellite: a watchdog on the satellite's place leaves with exit 0 and one line on its own leave", async (t) => {
+  const fake = await withCaller(t);
+  const home = mkdtempSync(join(tmpdir(), "iskron-sat-"));
+  const sat = await satelliteBridge(t, fake, { dir: home });
+  const r = await standAs(sat, SAT_ARGS);
+  assert.ok(!r.result?.isError, `${textOf(r)}\n${sat.stderr}`);
+  await until(() => fake.state.ws.size === 1, "the satellite's socket");
+  const proc = spawn(
+    NODE,
+    [FILE, "watchdog", `${CALLER}.sub-1--931--nks-dev`, "--auth-dir", home],
+    {
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  );
+  t.after(() => proc.kill("SIGKILL"));
+  const w = { proc, out: "", err: "" };
+  proc.stdout.on("data", (c) => (w.out += c));
+  proc.stderr.on("data", (c) => (w.err += c));
+  await until(() => w.out.includes("слушаю стояние"), "the watchdog to attach");
+  const left = await sat.call("tools/call", {
+    name: "iskron_channel",
+    arguments: { realm: "nks-dev", action: "leave" },
+  });
+  assert.ok(!left.result?.isError, textOf(left));
+  await leftQuietly(w, /место-спутник отпущено целиком/);
 });
 
 test("satellite: a session bridge still refuses a second name in its graph (#5154) and refuses satellite_of; a satellite bridge refuses anything but a satellite place", async (t) => {

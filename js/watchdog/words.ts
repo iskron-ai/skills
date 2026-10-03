@@ -96,6 +96,13 @@ export const wd = {
     L(`кадр вложен в тред ${thread}`, `frame put into thread ${thread}`),
   frameSent: (thread: string | undefined) =>
     L(`кадр отправлен в тред ${thread}`, `frame sent to thread ${thread}`),
+  flushNotPut: (s: number) =>
+    doer(
+      L(
+        `не дождался вложения за ${s}s после своего отпускания — пачка в тред не отправлена`,
+        `the put did not go through within ${s}s after one's own release — the batch was not sent to the thread`,
+      ),
+    ),
   frameNotPut: (why: string) =>
     doer(L(`кадр не вложился — ${why}`, `the frame was not put in — ${why}`)),
   doorClosed: (why: string, lost: string[]) =>

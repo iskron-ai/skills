@@ -4547,10 +4547,14 @@ function rememberExtraStatus(key, ch, text) {
   const p = extras.get(key);
   if (p) writeRecord(p, ch, text || "");
 }
-function dropExtra(key, reason, forget) {
+function dropExtra(key, reason, forget, own = false) {
   const p = extras.get(key);
   if (!p) return;
   extras.delete(key);
+  if (own) {
+    p.door.flushBatches();
+    p.door.broadcast({ kind: "released", key, text: reason, own });
+  }
   p.door.close();
   if (forget) {
     dropHoldRecord(key);
@@ -4559,8 +4563,8 @@ function dropExtra(key, reason, forget) {
   standingLog(`released ${key}: ${reason}${forget ? " (record dropped)" : ""}`);
   if (!handoverReason()) besideWord({ kind: "beside-gone", key, text: reason });
 }
-function dropAllExtras(reason, forget) {
-  for (const k of [...extras.keys()]) dropExtra(k, reason, forget);
+function dropAllExtras(reason, forget, own = false) {
+  for (const k of [...extras.keys()]) dropExtra(k, reason, forget, own);
   if (forget) state.places = [];
 }
 var nameOfAddress = (a) => typeof a === "string" ? a.replace(/^.*:/, "") : "";
@@ -4951,9 +4955,9 @@ function noteStandingId(realm, id) {
   if (d && id) d.standingId = id;
 }
 var held = () => H2.door && state.standing ? { standing: state.standing, door: H2.door } : null;
-function releaseStanding(reason, forget = false, keepBeside = false) {
+function releaseStanding(reason, forget = false, keepBeside = false, own = false) {
   if (forget && H2.currentKey) dropHoldRecord(H2.currentKey);
-  if (!keepBeside) dropAllExtras(reason, forget);
+  if (!keepBeside) dropAllExtras(reason, forget, own);
   if (!H2.holder && !H2.door) return;
   H2.door?.flushBatches();
   const key = H2.currentKey ?? void 0;
@@ -4963,7 +4967,7 @@ function releaseStanding(reason, forget = false, keepBeside = false) {
     broadcast({ kind: "handover", key, text: handover });
   } else {
     standingLog(`released ${H2.currentKey ?? "?"}: ${reason}${forget ? " (record dropped)" : ""}`);
-    const released = { kind: "released", key, text: reason };
+    const released = { kind: "released", key, text: reason, ...own && { own } };
     broadcast(released);
     notify("info", released);
   }
@@ -5107,7 +5111,7 @@ function openHolder(url, key) {
           log(
             `standing revoked by this session — released quietly, binding forgotten (${state.standing?.name ?? "unnamed"}; close ${code} arrived before the answer)`
           );
-          releaseStanding(holdWords.revokedOwn(), true);
+          releaseStanding(holdWords.revokedOwn(), true, false, true);
           state.standing = null;
           state.standingSession = null;
           return;
@@ -5116,7 +5120,7 @@ function openHolder(url, key) {
           log(
             `channel closed by this session — released quietly (close ${code} arrived before the answer)`
           );
-          releaseStanding(holdWords.closedOwn(), true);
+          releaseStanding(holdWords.closedOwn(), true, false, true);
           state.standing = null;
           state.standingSession = null;
           return;
@@ -5574,7 +5578,7 @@ function absorbCloseReply(msg, reply2) {
     return reply2;
   setClosingOwn(false);
   if (reply2?.error || reply2?.result?.isError || !closesOwn(msg)) return reply2;
-  releaseStanding(holdWords.closedOwn(), true);
+  releaseStanding(holdWords.closedOwn(), true, false, true);
   state.standing = null;
   state.standingSession = null;
   log("channel closed by this session — released quietly, binding forgotten");
@@ -5600,12 +5604,12 @@ function absorbRevokeReply(msg, reply2) {
   }
   const beside = extraIn(a.realm);
   if (beside && names(a, beside.standing)) {
-    dropExtra(beside.door.key, holdWords.revokedOwn(), true);
+    dropExtra(beside.door.key, holdWords.revokedOwn(), true, true);
     return reply2;
   }
   if (!revokesOwn(msg)) return reply2;
   const name = state.standing?.name ?? "unnamed";
-  releaseStanding(holdWords.revokedOwn(), true);
+  releaseStanding(holdWords.revokedOwn(), true, false, true);
   state.standing = null;
   state.standingSession = null;
   log(`standing revoked by this session — released quietly, binding forgotten (${name})`);
@@ -6883,6 +6887,8 @@ async function leaveSatellite(reason) {
   const st = await publishStatus("", void 0, true);
   releaseStanding(
     `${reason}: ${L("место-спутник отпущено целиком", "the satellite seat is released whole")}`,
+    true,
+    false,
     true
   );
   releaseSatelliteClaims();
@@ -9680,6 +9686,12 @@ var wd = {
   refusal: () => L("отказ", "refusal"),
   framePut: (thread) => L(`кадр вложен в тред ${thread}`, `frame put into thread ${thread}`),
   frameSent: (thread) => L(`кадр отправлен в тред ${thread}`, `frame sent to thread ${thread}`),
+  flushNotPut: (s2) => doer(
+    L(
+      `не дождался вложения за ${s2}s после своего отпускания — пачка в тред не отправлена`,
+      `the put did not go through within ${s2}s after one's own release — the batch was not sent to the thread`
+    )
+  ),
   frameNotPut: (why) => doer(L(`кадр не вложился — ${why}`, `the frame was not put in — ${why}`)),
   doorClosed: (why, lost) => L(
     `дверь закрылась: ${why} — открою заново на следующем кадре` + (lost.length ? `; без ответа: ${lost.join(", ")} — вернутся из кольца следующим взводом` : ""),
@@ -9746,6 +9758,7 @@ function attach(path, o) {
   let attached = false;
   let handover = false;
   let waitingBack = false;
+  let ownRelease = false;
   function tryOnce() {
     const sock = connect4(path);
     let buf = "";
@@ -9777,6 +9790,7 @@ function attach(path, o) {
           handover = true;
           continue;
         }
+        if (ev.kind === "released" && ev.own) ownRelease = true;
         o.onEvent(ev);
       }
     });
@@ -9790,6 +9804,7 @@ function attach(path, o) {
         startedAt = Date.now();
         return void setTimeout(tryOnce, RETRY_MS);
       }
+      if (ownRelease) return;
       if (attached) return o.onGone(wd.bridgeLetGo());
       if (Date.now() - startedAt > ATTACH_WINDOW_MS) {
         const s2 = ATTACH_WINDOW_MS / 1e3;
@@ -9802,6 +9817,7 @@ function attach(path, o) {
 }
 
 // js/watchdog/codex.ts
+var FLUSH_WAIT_MS = 5e3;
 var note = (s2) => {
   process.stderr.write(s2 + "\n");
 };
@@ -9867,7 +9883,13 @@ function runWatchdogCodex(argv2) {
     });
     return ready;
   }
-  async function deliver2(text, ids = []) {
+  const inFlight = /* @__PURE__ */ new Set();
+  function deliver2(text, ids = []) {
+    const p = put(text, ids).finally(() => inFlight.delete(p));
+    inFlight.add(p);
+    return p;
+  }
+  async function put(text, ids) {
     try {
       const d = door ?? await open();
       const reqId = nextId++;
@@ -9887,7 +9909,8 @@ function runWatchdogCodex(argv2) {
   const withPend = (text, ids) => {
     const got = pend;
     pend = [];
-    void deliver2([...got.length ? [batchHead(got.map((g) => g.frame))] : [], text].join("\n"), [
+    const head = got.length ? [batchHead(got.map((g) => g.frame))] : [];
+    void deliver2([...head, ...text ? [text] : []].join("\n"), [
       ...got.flatMap((g) => g.ids),
       ...ids
     ]);
@@ -9930,6 +9953,16 @@ function runWatchdogCodex(argv2) {
           replay = ev.buffered ?? 0;
           seenPath = adoptSeenPath(ev.seen, seenPath, seen);
           note(wd.listeningCodex(ev.key, threadId));
+          break;
+        case "released":
+          note(wd.bridgeReleasedSocket(ev.text ?? ""));
+          if (!ev.own) break;
+          if (pend.length) withPend("", []);
+          setTimeout(() => {
+            note(wd.flushNotPut(FLUSH_WAIT_MS / 1e3));
+            process.exit(1);
+          }, FLUSH_WAIT_MS);
+          void Promise.allSettled([...inFlight]).then(() => process.exit(0));
           break;
         default:
           note(ev.text ?? ev.kind);
@@ -10100,7 +10133,8 @@ function runWatchdog(argv2) {
           log2(ev.text ?? wd.aliveNote());
           break;
         case "released":
-          log2(wd.bridgeReleasedSocket(ev.text ?? ""));
+          if (ev.own) loudExit(wd.bridgeReleasedSocket(ev.text ?? ""), 0);
+          else log2(wd.bridgeReleasedSocket(ev.text ?? ""));
           break;
       }
     },
@@ -10201,6 +10235,10 @@ function runWatchdogExit(argv2) {
         case "attached":
           seenPath = adoptSeenPath(ev.seen, seenPath, seen);
           note2(wd.listening(ev.key));
+          break;
+        case "released":
+          note2(wd.bridgeReleasedSocket(ev.text ?? ""));
+          if (ev.own) process.exit(0);
           break;
         default:
           if (ev.kind === "note" && ev.batch) head = ev.text ?? "";

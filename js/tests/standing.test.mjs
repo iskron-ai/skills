@@ -525,6 +525,57 @@ test("a dead-token close leaves the watchdog loudly and reaches the harness as a
   );
 });
 
+// Своё close или revoke отпускает место словом моста (released), не уходом:
+// сторож говорит то же слово одной строкой и выходит нулём, без общей тревоги
+// «мост отпустил стояние или ушёл» и без ненулевого кода (#6638).
+async function codexDoor(t) {
+  const home = mkdtempSync("/tmp/cxd-");
+  const log = join(home, "door.log");
+  writeFileSync(log, "");
+  const door = await startFakeCodex(
+    join(home, "app-server-control", "app-server-control.sock"),
+    log,
+  );
+  t.after(() => door.stop());
+  return { CODEX_HOME: home, CODEX_THREAD_ID: "thread-own" };
+}
+const OWN_WORD = {
+  ru: { close: /канал закрыт своим close этой сессии/, revoke: /снято своим revoke/ },
+  en: {
+    close: /the channel was closed by this session's own close/,
+    revoke: /revoked by this session/,
+  },
+};
+const OWN_ARGS = {
+  close: { action: "close", realm: "nks-dev" },
+  revoke: { action: "revoke", realm: "nks-dev", karta: 931, standing: "proba" },
+};
+for (const lang of ["ru", "en"])
+  for (const sub of ["watchdog", "watchdog-exit", "watchdog-codex"])
+    for (const action of ["close", "revoke"])
+      test(`${sub} after one's own ${action} on the ${lang} surface: the bridge's word in one line, exit 0, no alarm`, async (t) => {
+        const env = { ISKRON_BRIDGE_LANG: lang };
+        const { fake, dir, bridge, key } = await connected(t, { env });
+        await waitFor(() => fake.state.ws.size === 1, "the socket");
+        const extra = sub === "watchdog-codex" ? await codexDoor(t) : {};
+        const wd = runClient(sub, dir, key, 10_000, { ...env, ...extra });
+        await waitFor(
+          () => /слушаю стояние|listening on standing/.test(wd.out + wd.err),
+          "the watchdog to attach",
+        );
+        const reply = await bridge.call("tools/call", 7, {
+          name: "iskron_channel",
+          arguments: OWN_ARGS[action],
+        });
+        assert.ok(!reply.result?.isError, JSON.stringify(reply));
+        const r = await wd.done;
+        const all = wd.out + wd.err;
+        assert.equal(r.exit, 0, `one's own ${action} is not a lost bridge:\n${all}`);
+        assert.doesNotMatch(all, /ДЕЛАТЕЛЬ|DOER/, `no alarm on one's own ${action}:\n${all}`);
+        const said = all.split("\n").filter((l) => OWN_WORD[lang][action].test(l));
+        assert.equal(said.length, 1, `the bridge's word in one line:\n${all}`);
+      });
+
 // Drops against a live service used to end the holding: the place was thrown
 // away while the grant was alive (graph nks-dev: #4664). Now the bridge keeps
 // it, reopens slower, and says so once; the Monitor watchdog stays attached.
@@ -3472,6 +3523,77 @@ test("the exit watchdog: closing flushes the batch of counts, the watchdog leave
   const second = runClient("watchdog-exit", dir, key, 3000);
   const r2 = await second.done;
   assert.equal(r2.exit, null, `nothing is handed twice:\n${second.out}`);
+});
+
+// Своё close отдаёт неотданную пачку перед released: сторож Codex выходит нулём
+// только после того, как её счёт лёг в тред, — как на dead (#6638).
+test("watchdog-codex on one's own close puts the batch the bridge flushed into the thread before it exits 0", async (t) => {
+  const { fake, dir, bridge, key } = await connected(t, {
+    env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "30000" },
+  });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const home = mkdtempSync("/tmp/cxd-");
+  const log = join(home, "door.log");
+  writeFileSync(log, "");
+  const door = await startFakeCodex(
+    join(home, "app-server-control", "app-server-control.sock"),
+    log,
+  );
+  t.after(() => door.stop());
+  const wd = runClient("watchdog-codex", dir, key, 15_000, {
+    CODEX_HOME: home,
+    CODEX_THREAD_ID: "thread-flush",
+  });
+  await waitFor(() => wd.err.includes("слушаю стояние"), "the codex watchdog to attach");
+  await sendRoom(fake, progress(49));
+  await new Promise((r) => setTimeout(r, 500));
+  assert.doesNotMatch(readFileSync(log, "utf8"), /записей/, "the batch is still held");
+  const reply = await bridge.call("tools/call", 7, {
+    name: "iskron_channel",
+    arguments: { action: "close", realm: "nks-dev" },
+  });
+  assert.ok(!reply.result?.isError, JSON.stringify(reply));
+  const r = await wd.done;
+  assert.equal(r.exit, 0, `one's own close is not a lost bridge:\n${wd.err}`);
+  assert.match(
+    readFileSync(log, "utf8"),
+    /turn\/start[^\n]*записей 1, тебе 0/,
+    `the flushed batch reached the thread before the exit:\n${wd.err}`,
+  );
+});
+
+// Дверь приняла сокет и молчит на upgrade: ожидание пачки на своём отпускании —
+// с пределом, по нему одна громкая строка и ненулевой выход, не вечное молчание.
+test("watchdog-codex on one's own close behind a door that never answers the upgrade exits loudly within the limit", async (t) => {
+  const { fake, dir, bridge, key } = await connected(t, {
+    env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "30000" },
+  });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const home = mkdtempSync("/tmp/cxd-");
+  const log = join(home, "door.log");
+  writeFileSync(log, "");
+  const door = await startFakeCodex(
+    join(home, "app-server-control", "app-server-control.sock"),
+    log,
+    { mute: true },
+  );
+  t.after(() => door.stop());
+  const wd = runClient("watchdog-codex", dir, key, 15_000, {
+    CODEX_HOME: home,
+    CODEX_THREAD_ID: "thread-mute",
+  });
+  await waitFor(() => wd.err.includes("слушаю стояние"), "the codex watchdog to attach");
+  await sendRoom(fake, progress(49));
+  await new Promise((r) => setTimeout(r, 500));
+  const reply = await bridge.call("tools/call", 7, {
+    name: "iskron_channel",
+    arguments: { action: "close", realm: "nks-dev" },
+  });
+  assert.ok(!reply.result?.isError, JSON.stringify(reply));
+  const r = await wd.done;
+  assert.notEqual(r.exit, null, `the watchdog hung past the limit:\n${wd.err}`);
+  assert.notEqual(r.exit, 0, `an unsent batch is not a quiet exit:\n${wd.err}`);
+  assert.equal(wd.err.split("не дождался вложения").length - 1, 1, `one loud line:\n${wd.err}`);
 });
 
 test("a full room batch of counts and the rest past it are not dropped: both counts ride before the next word to me", async (t) => {
