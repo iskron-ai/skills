@@ -17,6 +17,9 @@ export const VERSION = "7.2.7"; // x-release-please-version
 const CHANNEL_MARK: string = "iskron-build:dev";
 /** Эта сборка — выпуск: только ей дом машины верит как новому мосту. */
 export const releaseBuild = (): boolean => CHANNEL_MARK.endsWith(":release");
+/** Текст другой копии — сборка выпуска. Метка собрана по частям: в выходе её буквы стоят только у выпуска. */
+export const releaseBuildIn = (text: string): boolean =>
+  text.includes(`"${["iskron-build", "release"].join(":")}"`);
 
 /** Строка сборки `vX.Y.Z+хеш` для файла, чей `import.meta.url` передан. */
 export function buildOf(selfUrl: string): string {

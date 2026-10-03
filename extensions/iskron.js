@@ -464,6 +464,7 @@ import { createHash } from "node:crypto";
 import { readFileSync as readFileSync2 } from "node:fs";
 import { fileURLToPath } from "node:url";
 var VERSION = "7.2.7";
+var releaseBuildIn = (text) => text.includes(`"${["iskron-build", "release"].join(":")}"`);
 function buildOf(selfUrl) {
   try {
     const src = readFileSync2(fileURLToPath(selfUrl));
@@ -1193,6 +1194,7 @@ function refreshHomeBridge(notify, canSpeak) {
     );
     return;
   }
+  if (!releaseBuildIn(packaged.toString("utf8"))) return;
   let home;
   try {
     home = readFileSync3(homePath);
