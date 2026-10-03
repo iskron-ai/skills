@@ -1,6 +1,12 @@
 import { OWN_CLIENTS } from "../shared/clients.ts";
 import { scoped } from "../shared/scope.ts";
-import { absorbChannelReply, absorbRevokeReply, expectOwnRevoke } from "./absorb.ts";
+import {
+  absorbChannelReply,
+  absorbCloseReply,
+  absorbRevokeReply,
+  expectOwnRevoke,
+  settleOwnRevoke,
+} from "./absorb.ts";
 import { refusedAudience } from "./audience.ts";
 import { ensureAuth } from "./auth.ts";
 import { BUILD } from "./build.ts";
@@ -184,6 +190,7 @@ export async function deliver(msg: JsonRpcMessage): Promise<void> {
     await deliverOne(msg);
   } finally {
     if (listing) H.listing--;
+    settleOwnRevoke(msg);
   }
 }
 
@@ -352,7 +359,9 @@ async function deliverOne(msg: JsonRpcMessage): Promise<void> {
         // Ответ connect/mint: мост берёт сокет себе и дописывает, как слушать.
         // Успешный iskron_case — спутник помнит join прогона (#6573, caseexit.ts).
         noteCaseEntry(msg.params?.name, msg.params?.arguments, held);
-        emit(withNotice(absorbRevokeReply(msg, absorbChannelReply(msg, held))));
+        emit(
+          withNotice(absorbCloseReply(msg, absorbRevokeReply(msg, absorbChannelReply(msg, held)))),
+        );
       }
       return;
     } catch (e) {

@@ -28,6 +28,8 @@ export const H = scoped(() => ({
   resuming: 0,
   /** своё снятие в полёте (absorb.ts): закрытие 4001 обгонит ответ revoke */
   revokingOwn: false,
+  /** своё close канала в полёте (absorb.ts): закрытие 4001 обгонит ответ, как у revoke (#6634) */
+  closingOwn: false,
   /** демон гаснет, а тонкий мост этой сессии жив: он вернёт место новому демону (daemon.ts, #6485) */
   handingOver: null as string | null,
 }));
@@ -40,6 +42,11 @@ export function noteResuming(delta: number): void {
 /** absorb.ts: своё снятие в полёте — закрытие 4001 обгонит ответ revoke, и это не смерть токена. */
 export function setRevokingOwn(v: boolean): void {
   H.revokingOwn = v;
+}
+
+/** absorb.ts: своё close канала в полёте — закрытие 4001 тоже не смерть токена. */
+export function setClosingOwn(v: boolean): void {
+  H.closingOwn = v;
 }
 
 /**

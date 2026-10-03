@@ -2369,7 +2369,7 @@ test("stopping the plugin lets the real bridge clear the busy line before the ha
       { realm: "nks-dev", karta: 931, name: "proba", status: "работаю" },
       "s-real",
     );
-    assert.match(out.content, /Занятость: работаю/, out.content);
+    assert.match(out.content, /занятость @\S+: работаю/, out.content);
     assert.equal(fake.state.status, "работаю");
     // Against the real bridge the status names a real version on both sides;
     // the fake bridge carries no VERSION and only proves the shape (v?+hash).

@@ -57,7 +57,7 @@ import { deadPredecessor, resumeFromDisk } from "./resume.ts";
 import { SATELLITE_TTL_S, satelliteGate, satelliteListenWord, ttlRefused } from "./satellite.ts";
 import { separatePlace, suffixOf } from "./separate.ts";
 import { SW } from "./standwords.ts";
-import { publishStatus, standStatusOnly, TAKE_PATH, TURNED_GUIDANCE } from "./status.ts";
+import { busyLine, publishStatus, standStatusOnly, TAKE_PATH, TURNED_GUIDANCE } from "./status.ts";
 import { state } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
 import { readLatest, staleNotice } from "./update.ts";
@@ -435,7 +435,7 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
     const st = await publishStatus(a.status.trim(), realm);
     lines.push(
       st.ok
-        ? SW.status(a.status.trim())
+        ? busyLine(a.status.trim(), realm)
         : SW.statusRefused(short(st.body), st.code === 404 ? ` ${TURNED_GUIDANCE()}` : ""),
     );
   }

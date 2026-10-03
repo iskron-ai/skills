@@ -5,6 +5,12 @@ import { L } from "../shared/lang.ts";
 export const holdWords = {
   newSocket: () => L("новый сокет", "new socket"),
   revokedOwn: () => L("снято своим revoke", "revoked by this session"),
+  /** Своё close канала — не мёртвый токен (#6634): одно слово на обоих языках, connect не зовёт. */
+  closedOwn: () =>
+    L(
+      "канал закрыт своим close этой сессии — место отпущено, токен жив; встать снова — iskron_stand",
+      "the channel was closed by this session's own close — the seat is released, the token is alive; to stand again — iskron_stand",
+    ),
   resumeFailed: () => L("возврат с диска не удался", "resume from disk failed"),
   tokenDead: () => L("токен мёртв", "token dead"),
   parked: (reason: string) =>

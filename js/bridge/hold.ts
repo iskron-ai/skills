@@ -96,7 +96,7 @@ export const ledKey = (): string | null => H.currentKey;
 export const holdsChannel = (): boolean => !!H.holder?.alive && !!H.currentKey;
 /** Путь локального сокета ключа — для проверки живого держателя (resume.ts). */
 export const localSocketPathOf = (key: string): string => socketPathOf(CFG.authDir, key);
-export { noteResuming, setRevokingOwn } from "./holdstate.ts";
+export { noteResuming, setClosingOwn, setRevokingOwn } from "./holdstate.ts";
 
 // Лежалые повторы службы после пересборки сессии копятся в одно слово, а не
 // будят pi и OpenCode по одному (граф nks-dev: #4881, #5033).
@@ -438,6 +438,16 @@ function openHolder(url: string, key: string): void {
             `standing revoked by this session — released quietly, binding forgotten (${state.standing?.name ?? "unnamed"}; close ${code} arrived before the answer)`,
           );
           releaseStanding(holdWords.revokedOwn(), true);
+          state.standing = null;
+          state.standingSession = null;
+          return;
+        }
+        if (H.closingOwn) {
+          // Своё close канала — то же, что своё снятие: 4001 обогнал ответ (#6634).
+          log(
+            `channel closed by this session — released quietly (close ${code} arrived before the answer)`,
+          );
+          releaseStanding(holdWords.closedOwn(), true);
           state.standing = null;
           state.standingSession = null;
           return;

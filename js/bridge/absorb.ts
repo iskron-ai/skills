@@ -3,7 +3,13 @@
 // уходит в hold.ts; своё revoke отпускает место тихо (#5012).
 import { statusUrl as deriveStatusUrl } from "../shared/channel.ts";
 import { L } from "../shared/lang.ts";
-import { besideKeyIn, holdStanding, releaseStanding, setRevokingOwn } from "./hold.ts";
+import {
+  besideKeyIn,
+  holdStanding,
+  releaseStanding,
+  setClosingOwn,
+  setRevokingOwn,
+} from "./hold.ts";
 import { holdWords } from "./holdwords.ts";
 import { listenBlock } from "./listen.ts";
 import { dropExtra, extraIn, extraPlaces } from "./places.ts";
@@ -100,6 +106,43 @@ function names(a: Record<string, unknown>, s: Standing): boolean {
  */
 export function expectOwnRevoke(msg: JsonRpcMessage): void {
   if (revokesOwn(msg)) setRevokingOwn(true);
+  if (closesOwn(msg)) setClosingOwn(true);
+}
+
+/**
+ * Своё close — канал места, которое ведёт мост, со всеми его местами (справка
+ * iskron_channel, close): как своё снятие, не смерть токена (#6634).
+ */
+function closesOwn(msg: JsonRpcMessage): boolean {
+  const a = msg?.params?.arguments;
+  if (msg?.params?.name !== "iskron_channel" || a?.action !== "close") return false;
+  const s = state.standing;
+  return !!s && (!otherRealm(a.realm, s.realm) || !!besideKeyIn(a.realm)); // и граф места рядом — тот же канал
+}
+
+/**
+ * Вызов кончился, ответа на него мост не впитал (упал, отказан транспортом):
+ * пометка своего revoke/close снимается — иначе следующий настоящий мёртвый
+ * токен отпустился бы тихо словом «токен жив».
+ */
+export function settleOwnRevoke(msg: JsonRpcMessage): void {
+  if (msg?.params?.name !== "iskron_channel") return;
+  const action = msg.params.arguments?.action;
+  if (action === "revoke") setRevokingOwn(false);
+  if (action === "close") setClosingOwn(false);
+}
+
+export function absorbCloseReply(msg: JsonRpcMessage, reply: JsonRpcMessage): JsonRpcMessage {
+  if (msg?.params?.name !== "iskron_channel" || msg?.params?.arguments?.action !== "close")
+    return reply;
+  setClosingOwn(false);
+  // 4001 обогнал ответ — место уже отпущено (hold.ts), отпускать нечего.
+  if (reply?.error || reply?.result?.isError || !closesOwn(msg)) return reply;
+  releaseStanding(holdWords.closedOwn(), true);
+  state.standing = null;
+  state.standingSession = null;
+  log("channel closed by this session — released quietly, binding forgotten");
+  return reply;
 }
 
 export function absorbRevokeReply(msg: JsonRpcMessage, reply: JsonRpcMessage): JsonRpcMessage {

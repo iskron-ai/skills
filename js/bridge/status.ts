@@ -57,13 +57,13 @@ async function statusWord(text: string, realm: string): Promise<[string, boolean
   const st = await publishStatus(text, realm);
   if (!st.ok && !statusAddress()) return [await notHeldHere(realm), true];
   if (st.code === 404) return [`${st.body} ${TURNED_GUIDANCE()}`, true];
-  if (st.ok)
-    return [
-      `${L("занятость", "busyness")} ${placeLabel(realm)}: ${text || L("(снята)", "(cleared)")}`,
-      false,
-    ];
+  if (st.ok) return [busyLine(text, realm), false];
   return [st.body, true];
 }
+
+/** Слово о принятой занятости — одно у отдельного хода и у занятия места (#6634): называет место. */
+export const busyLine = (text: string, realm: string): string =>
+  `${L("занятость", "busyness")} ${placeLabel(realm)}: ${text || L("(снята)", "(cleared)")}`;
 
 /** Место так, как его зовёт доска; адрес, не названный hello, — помечен, а не выдан за названный. */
 function placeLabel(realm: string): string {
