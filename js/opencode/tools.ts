@@ -226,6 +226,10 @@ export async function setupTools(
     mv.guard(root, sessionID); // корень перенесён отсюда — ребёнку не поднимать его мост здесь
     // Дочерняя сессия, вставшая своим спутником, ходит своим мостом (#5154); без
     // него мост корня ей — только на чтение: запись отказывает execute (#6550 п.2).
+    if (root !== sessionID && !slots.has(sessionID)) {
+      adopt.now(); // маркер прежнего экземпляра, положенный после нашей загрузки (adopt.ts)
+      await children.settled(sessionID);
+    }
     const own = root !== sessionID ? slots.get(sessionID) : undefined;
     if (own) {
       // Умерший детский мост заменяется своим же, не мостом корня: чтения и
@@ -318,6 +322,7 @@ export async function setupTools(
             (await leads.release(String(tool.sessionID), name, input ?? {})) ??
             adopt.revoked(name, input ?? {});
           if (word) return { content: word };
+          await children.settled(String(tool.sessionID)); // ребёнок маркера: слот ещё встаёт
           runEnds.guard(String(tool.sessionID), name, input ?? {}, asks); // не мостом корня (#6361)
           const slot = await slotFor(String(tool.sessionID));
           // Ребёнок мостом корня — только читает; встаёт — своим спутником в callThrough (#6550 п.2).

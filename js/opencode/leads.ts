@@ -118,6 +118,12 @@ export function createLeads(d: W.LeadDoors): W.Leads {
     },
     released: (child) => gone.has(child),
     heard(child, kind, place) {
+      // Место-спутник снято платформой (вытеснено, токен мёртв): мост без места жнец погасил
+      // бы молча — конец, как revoke запустившего: родителю слово без пробуждения, встать нельзя.
+      if ((kind === "evicted" || kind === "dead") && leads.has(child) && !d.ownPlace(child)) {
+        gone.add(child);
+        return void finish(child, W.placeGone(kind), true, false);
+      }
       if (kind !== "held" && kind !== "frame") return;
       touch(kind === "held" && !gone.has(child) ? stood(child) : leads.get(child), place);
     },

@@ -2828,6 +2828,24 @@ test("a lead child whose run is interrupted by the user is ended without waking 
   }
 });
 
+// #147 [140] 1а: a satellite place the platform takes away (evicted 4000, dead token 4001)
+// ends the lead like a revoke — a word to the parent without waking it — instead of a
+// bridge without a place the reaper puts out half an hour later, the parent told nothing.
+for (const kind of ["evicted", "dead"])
+  test(`a lead child whose satellite place is ${kind} is ended with a word to the parent, not left to the reaper`, async () => {
+    const { b, rec, childPid } = await leadChild(`lead-${kind}`);
+    try {
+      appendFileSync(`${b.events}.${childPid}`, event(kind, { code: 4000, text: "место снято" }));
+      await until(() => !alive(childPid), "the placeless child's bridge to go");
+      await until(() => ends(rec).length === 1, "the end in the parent");
+      assert.match(ends(rec)[0].text, /КОНЧЕН[\s\S]*место-спутник/);
+      assert.equal(ends(rec)[0].resume, false, "the loss of the place does not wake the parent");
+      await assert.rejects(rec.call("iskron_stand", { realm: "nks-dev" }, "child"), /отпустил/);
+    } finally {
+      await rec.stop();
+    }
+  });
+
 // The bridge cuts the base of a satellite's name under the server's 48-sign limit
 // (bridge/satellite.ts): a root place longer than 42 signs gives «<cut base>.sub-1».
 // The plugin knows its satellite by the bridge's own rule, not by a prefix.
@@ -3323,6 +3341,54 @@ test("marker-child: a reload pauses the child's bridge and the next instance tak
     await until(() => ends(second).length === 1, "the end in the parent");
     assert.match(ends(second)[0].text, /вышел из дела №77 по исходу/);
     assert.equal(ends(second)[0].sessionID, "root");
+  } finally {
+    await second.stop();
+  }
+});
+
+// astra on 7.2.6 (№164): mid-run, after a plugin reload, the child's write, busyness and
+// leave were refused «место родителя неизвестно» — they went by the root's bridge. The
+// next instance may load before the stopped one lays its marker (inferred): the child's
+// first call takes that late marker, waits for its own satellite and goes by it.
+test("marker-child: a marker laid after the next instance loaded is taken at the child's call — its write and leave go by its own satellite", async () => {
+  const name = "reload-late";
+  const calls = join(SANDBOX, `${name}.calls`);
+  const resume = join(SANDBOX, `${name}.resume`);
+  writeFileSync(calls, "");
+  const answer = { resumed: true, holding: true, key: "k-sub", word: "место возвращено" };
+  writeFileSync(resume, JSON.stringify({ bySession: { child: answer } }));
+  const b = bridgeEnv(name, { FB_CALLS: calls, FB_TOOLS: LEAD_TOOLS, FB_RESUME: resume });
+  const sessions = [
+    { id: "root", location: { directory: "/work/root" } },
+    { id: "child", parentID: "root", location: { directory: "/work/child" } },
+  ];
+  const first = await plugin(b.env, { sessions });
+  await until(() => first.tools().has("iskron_case"), "the tools", 8000);
+  await first.call("iskron_stand", { realm: "nks-dev", karta: "#931" }, "root");
+  await rootHolds(first, b, { pid: pidOf(b.log) });
+  await first.call("iskron_stand", { realm: "nks-dev" }, "child");
+  const childPid = pidsOf(b.log)[1];
+  const sub = { ...ROOT_PLACE, name: SUB };
+  appendFileSync(`${b.events}.${childPid}`, event("held", { key: "k-sub", place: sub }));
+  await until(() => /мост держит стояние k-sub/.test(first.said()), "the child's held word");
+  await first.call("iskron_case", { realm: "nks-dev", action: "join", room: "#77" }, "child");
+  const second = await plugin(b.env, { keepMarker: true, sessions });
+  await first.stop(); // the marker lands after the next instance is up
+  const all = () =>
+    readFileSync(calls, "utf8")
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((l) => JSON.parse(l));
+  try {
+    await until(() => second.tools().has("iskron_case"), "the tools", 8000);
+    await second.call("iskron_case", { realm: "nks-dev", action: "say", room: "#77" }, "child");
+    const back = all().find((c) => c.name === "iskron/resume" && c.arguments.session === "child");
+    assert.ok(back, "the child's place asked back by key");
+    assert.equal(all().at(-1).pid, back.pid, "the child's write goes by its own satellite");
+    await second.call("iskron_case", { realm: "nks-dev", action: "leave", room: "№77" }, "child");
+    await until(() => ends(second).length === 1, "the end in the parent");
+    assert.match(ends(second)[0].text, /вышел из дела №77 по исходу/);
   } finally {
     await second.stop();
   }
