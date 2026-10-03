@@ -43,7 +43,8 @@ export function createLeads(d: W.LeadDoors): W.Leads {
    * синтетика OpenCode по затиханию ребёнка будит родителя первой, и слово с queue
    * легло бы лишь после его хода; steer ложится в идущий ход на ближайшей границе шага.
    * Порядок двух синтетик плагин не держит. Потолок, невозвращённое место (lost) и
-   * перенос родителя (away — без «КОНЧЕН»: итог не по исходу поручения) не будят.
+   * перенос родителя (away — без «КОНЧЕН»: итог не по исходу поручения) не будят; все
+   * слова — steer (leadwords.ts): queue в занятого родителя запускал после хода ещё один (e2e).
    */
   async function finish(
     child: string,
@@ -66,7 +67,7 @@ export function createLeads(d: W.LeadDoors): W.Leads {
         : kind === "away"
           ? W.awayWord(who(l, child), last)
           : W.endWord(who(l, child), why, last, kept);
-    if (parent) await d.tell(parent, word, wake, wake);
+    if (parent) await d.tell(parent, word, wake);
     else d.say(`${word}\n(родителя плагин не знает — итог некому)`, "warning");
     if (ended && !kept)
       await d

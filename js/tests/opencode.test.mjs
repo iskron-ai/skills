@@ -2186,6 +2186,8 @@ test("a parent moved with a satellite child: the old instance ends the child wit
     const toParent = A.synthetics.filter((s) => s.sessionID === "root");
     assert.match(toParent[0].text, /снят переносом родителя[\s\S]*«КОНЧЕН» не будет/);
     assert.equal(toParent[0].resume, false, "it does not wake the parent");
+    // queue в занятого родителя после его хода запускал ещё один ход (e2e: 14.217→14.229).
+    assert.equal(toParent[0].delivery, "steer", "into the going turn, not one more after it");
     assert.ok(!A.synthetics.some((s) => /КОНЧЕН —/.test(s.text)), "no «КОНЧЕН»");
     const pids = pidsOf(b.log).length;
     await assert.rejects(
@@ -2964,6 +2966,7 @@ test("a lead child idle past the ceiling — no turn, no frame, whatever else it
     await until(() => ends(rec).length === 1, "the end in the parent");
     assert.match(ends(rec)[0].text, /потолок простоя/);
     assert.equal(ends(rec)[0].resume, false, "the ceiling does not wake the parent");
+    assert.equal(ends(rec)[0].delivery, "steer", "nor queues a turn after the parent's");
   } finally {
     clearInterval(noise);
     await rec.stop();

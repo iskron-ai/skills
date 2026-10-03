@@ -1685,9 +1685,9 @@ function leadDoors(ctx, say, flush, end, slots) {
       const s = await ctx.session.get({ sessionID: child });
       return s?.parentID ?? s?.data?.parentID ?? null;
     },
-    async tell(sessionID, text, wake, steer = false) {
+    async tell(sessionID, text, wake) {
       const s = ctx.session;
-      const delivery = steer ? "steer" : "queue";
+      const delivery = "steer";
       try {
         if (typeof s.synthetic === "function")
           await s.synthetic({ sessionID, text, delivery, resume: wake });
@@ -1723,7 +1723,7 @@ function createLeads(d) {
     const parent = await l.parent;
     const last = (l.last ?? "").trim();
     const word = kind === "lost" ? lostWord(who(l, child), why) : kind === "away" ? awayWord(who(l, child), last) : endWord(who(l, child), why, last, kept);
-    if (parent) await d.tell(parent, word, wake, wake);
+    if (parent) await d.tell(parent, word, wake);
     else d.say(`${word}
 (родителя плагин не знает — итог некому)`, "warning");
     if (ended && !kept)
