@@ -46,8 +46,10 @@ import {
   restoreHoldRecord,
   sessionOfBridge,
 } from "./holdrecord.ts";
+import { holdWords } from "./holdwords.ts";
 import { returnToStanding } from "./leave.ts";
 import { placeFields } from "./placefields.ts";
+import { resumeWords } from "./resumewords.ts";
 import { publishStatus } from "./status.ts";
 import { standingLog } from "./store.ts";
 import { emit, log } from "./streams.ts";
@@ -142,7 +144,7 @@ export async function resumeFromDisk(
       ? `hold record for ${key}: no hello in time — record kept as it was, the place is not taken`
       : `hold record for ${key} is stale — dropped, the place is taken anew`,
   );
-  releaseStanding("возврат с диска не удался");
+  releaseStanding(holdWords.resumeFailed());
   // Только та самая запись: иной адрес на диске значит, что место за это время
   // занял другой путь (connect этого моста, второй мост на том же каталоге), и
   // его свежую запись прежняя не перекрывает.
@@ -228,9 +230,7 @@ function recordsFor(sel: ResumeSelector): {
 
 /** Слово о записях прежней сборки без сессии: по каталогу не возвращаются, возвращаются по имени. */
 export const legacyWord = (names: string[]): string =>
-  names
-    .map((n) => `есть место прежней сборки без сессии: ${n} — вернуть: iskron_stand(name="${n}")`)
-    .join("; ");
+  names.map((n) => resumeWords.legacy(n)).join("; ");
 
 /**
  * Места прежней сборки, которые можно предложить вернуть: сокет места не держит
@@ -266,15 +266,13 @@ export interface ResumeOutcome {
 
 /** Обратно на запаркованное место (leave, переоткрытие): сокет заново, hello — доказательство. */
 async function backToParked(key: string, how: string): Promise<ResumeOutcome> {
-  if (!returnToStanding(how)) return { resumed: false, key, word: "возврат на место не удался" };
+  if (!returnToStanding(how)) return { resumed: false, key, word: resumeWords.failed() };
   const hello = await awaitHello(4000);
   return {
     resumed: true,
     key,
     pending: Number(hello?.pending) || 0,
-    word: hello
-      ? `возврат на место, с которого мост уходил (ожидало кадров — ${Number(hello.pending) || 0})`
-      : "возврат на место, с которого мост уходил; hello за 4 с не пришёл",
+    word: resumeWords.returnedParked(hello ? Number(hello.pending) || 0 : null),
   };
 }
 
@@ -287,18 +285,10 @@ export async function resumeBy(sel: ResumeSelector, register = true): Promise<Re
   const { own: recs, sameDir, legacy: legacyRecs, left } = recordsFor(sel);
   if (!recs.length) {
     const legacy = await freeLegacy(legacyRecs);
-    const said = [
-      `своей записи держания ${sel.key ? `с ключом ${sel.key}` : `для каталога ${sel.cwd ?? "?"}`} нет`,
-    ];
+    const said = [resumeWords.noRecord(sel.key, sel.cwd)];
     const foreign = sameDir.filter((k) => !left.includes(k));
-    if (foreign.length)
-      said.push(
-        `в каталоге лежат записи мест, на которых эта сессия не стояла (${foreign.join(", ")}); по одному каталогу они не берутся, место займёт iskron_stand`,
-      );
-    if (left.length)
-      said.push(
-        `место отпущено словом держателя (leave): ${left.join(", ")} — само не вернётся, вернуть: iskron_stand тем же именем`,
-      );
+    if (foreign.length) said.push(resumeWords.foreignDir(foreign));
+    if (left.length) said.push(resumeWords.left(left));
     if (legacy.length) said.push(legacyWord(legacy));
     return {
       resumed: false,
@@ -311,24 +301,21 @@ export async function resumeBy(sel: ResumeSelector, register = true): Promise<Re
   const elsewhere: string[] = [];
   for (const rec of recs) {
     const key = keyOf(rec.realm, rec.karta, rec.name);
-    if (holdsKey(key)) return { resumed: true, key, pending: 0, word: "мост уже держит это место" };
-    if (isParked(rec.realm, rec.karta, rec.name)) return backToParked(key, "возврат по записи");
+    if (holdsKey(key))
+      return { resumed: true, key, pending: 0, word: resumeWords.alreadyHolding() };
+    if (isParked(rec.realm, rec.karta, rec.name)) return backToParked(key, resumeWords.byRecord());
     if (led && led !== key) {
-      skipped.push(`${key}: мост ведёт другое место ${led}`);
+      skipped.push(resumeWords.otherSeat(key, led));
       continue;
     }
     if (await localSocketAlive(localSocketPathOf(key))) {
-      skipped.push(`${key}: держит живой мост`);
+      skipped.push(resumeWords.liveBridge(key));
       elsewhere.push(key);
       continue;
     }
     const back = await resumeFromDisk(rec.realm, rec.karta, rec.name);
     if (!back) {
-      skipped.push(
-        readHoldRecord(key)
-          ? `${key}: hello не пришёл — запись цела, сторож повторит возврат; не ждёшь — iskron_stand`
-          : `${key}: запись протухла — место займёт iskron_stand`,
-      );
+      skipped.push(readHoldRecord(key) ? resumeWords.noHello(key) : resumeWords.stale(key));
       continue;
     }
     const lines = [back.word];
@@ -340,20 +327,20 @@ export async function resumeBy(sel: ResumeSelector, register = true): Promise<Re
         name: rec.name,
         ...placeFields(rec),
       });
-      lines.push(r.isError ? `register отказал — ${short(r.text)}` : "register");
+      lines.push(r.isError ? resumeWords.registerRefused(short(r.text)) : "register");
     }
     // Записи, которые цикл выше признал протухшими, уже стёрты — их не называть.
     const others = [
       ...new Set([...recs.map((r) => keyOf(r.realm, r.karta, r.name)), ...sameDir]),
     ].filter((k) => k !== key && readHoldRecord(k) !== null);
-    if (others.length) lines.push(`в том же каталоге записи и других мест: ${others.join(", ")}`);
+    if (others.length) lines.push(resumeWords.othersInDir(others));
     // Взятое не своё — отпустить, не кончая канала: revoke места, основавшего канал, платформа отвергает.
-    lines.push('место не твоё — iskron_channel(action="leave") отпустит его, канал цел');
+    lines.push(resumeWords.notYours());
     return { resumed: true, key, pending: back.pending, word: lines.join("; "), others };
   }
   return {
     resumed: false,
-    word: `возвращать нечего — ${skipped.join("; ")}`,
+    word: resumeWords.nothingToReturn(skipped),
     ...(elsewhere.length ? { elsewhere } : {}),
   };
 }
@@ -398,8 +385,7 @@ export const isCheckCall = (msg: JsonRpcMessage): boolean => msg?.method === "is
 /** `iskron/resume {key?, cwd?, session?}` — запрос плагина: вернуть своё место с диска. */
 export async function runResume(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   const sel = selectorFrom(msg);
-  if (!sel.key && !sel.cwd)
-    return reply(msg, { resumed: false, word: "ни key, ни cwd не передан" });
+  if (!sel.key && !sel.cwd) return reply(msg, { resumed: false, word: resumeWords.noKeyNoCwd() });
   const r = await resumeBy(sel);
   if (r.resumed) afterResume(r.key); // спутник после паузы принимает дела прогона (suspend.ts)
   return reply(msg, r);
@@ -422,41 +408,39 @@ export async function runCheck(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
           holding: false,
           resumed: false,
           key,
-          word: `место ${key} отпущено словом держателя (leave) — сторож его не поднимает; вернуть: iskron_stand тем же именем`,
+          word: resumeWords.leftByWord(key),
         });
-      const r = await backToParked(key, "сторож слуха");
+      const r = await backToParked(key, resumeWords.watchdogReason());
       return reply(msg, { holding: r.resumed, ...r });
     }
     if (!sel.key && !sel.cwd)
       return reply(msg, {
         holding: false,
         resumed: false,
-        word: "места нет, ни key, ни cwd не передан",
+        word: resumeWords.noSeatNoKeyNoCwd(),
       });
     const r = await resumeBy(sel);
     return reply(msg, { holding: r.resumed, ...r });
   }
   const board = await callTool("iskron_channel", { action: "list", realm: s.realm });
   if (board.isError)
-    return reply(msg, { holding: true, key, word: `доска не прочиталась — ${short(board.text)}` });
+    return reply(msg, { holding: true, key, word: resumeWords.boardUnread(short(board.text)) });
   const mine = parseBoard(board.text).find(
     (e) => e.karta === String(s.karta) && nameOf(e.address) === (s.name ?? ""),
   );
-  if (!mine) return reply(msg, { holding: true, key, word: "своего места на доске нет" });
+  if (!mine) return reply(msg, { holding: true, key, word: resumeWords.noSeatOnBoard() });
   const pending = undelivered(mine);
   const listening = listens(mine);
   if (listening) {
     D.reopens = 0; // слух вернулся — счёт переоткрытий с начала
-    return reply(msg, { holding: true, key, listening, pending, word: "слушаю" });
+    return reply(msg, { holding: true, key, listening, pending, word: resumeWords.listening() });
   }
   // Сокет у моста жив, а доска нас не слышит: переоткрыть тем же адресом. Счётчик
   // «не доставлено N» — только слово в ответе, решает признак слуха. Тормоз:
   // два переоткрытия подряд не вернули слух — третьего нет, слово вслух вместо
   // него (иначе каждый такт сторожа рвал бы живой сокет бесконечно).
   if (D.reopens >= REOPEN_LIMIT) {
-    const text =
-      `Искрон: доска читает место ${key} не слушающим и после ${REOPEN_LIMIT} переоткрытий сокета — ` +
-      "больше не рву; проверь доску и сервер, вернуть слух — iskron_stand с take=true.";
+    const text = resumeWords.gaveUp(key, REOPEN_LIMIT);
     if (!D.said) {
       D.said = true;
       standingLog(`reopen ${key}: gave up after ${REOPEN_LIMIT} — board still reads deaf`);
@@ -478,7 +462,7 @@ export async function runCheck(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   }
   D.reopens++;
   standingLog(`reopen ${key}: board reads deaf${pending ? ` with ${pending} pending` : ""}`);
-  parkStanding("доска не читает слушающим");
+  parkStanding(resumeWords.deafBoard());
   resumeStanding();
   const hello = await awaitHello(4000);
   return reply(msg, {
@@ -487,9 +471,7 @@ export async function runCheck(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
     listening,
     pending,
     reopened: !!hello,
-    word: hello
-      ? `сокет переоткрыт: ожидало кадров — ${Number(hello.pending) || 0}`
-      : "сокет переоткрыт, hello за 4 с не пришёл",
+    word: resumeWords.reopened(hello ? Number(hello.pending) || 0 : null),
   });
 }
 

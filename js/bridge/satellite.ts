@@ -427,7 +427,10 @@ export function satelliteChannelRefusal(args: Record<string, unknown>): string |
   const s = state.standing;
   const own = s?.name ?? "";
   if (!s || !SUB_RE.test(own))
-    return `Отказано (мост-спутник): ${action} мимо iskron_stand — место этому мосту даёт только iskron_stand с satellite_of; чужое место спутник не берёт и не снимает.`;
+    return L(
+      `Отказано (мост-спутник): ${action} мимо iskron_stand — место этому мосту даёт только iskron_stand с satellite_of; чужое место спутник не берёт и не снимает.`,
+      `Refused (satellite bridge): ${action} bypassing iskron_stand — only iskron_stand with satellite_of gives this bridge a seat; a satellite neither takes nor releases another's seat.`,
+    );
   const sameRealm = !otherRealm(args.realm, s.realm);
   const karta = normKarta(args.karta ?? s.karta);
   const target =
@@ -440,7 +443,10 @@ export function satelliteChannelRefusal(args: Record<string, unknown>): string |
     target != null &&
     (target === own || target.endsWith(`:${own}`) || (action === "revoke" && target === "mine"));
   if (sameRealm && karta === normKarta(s.karta) && mine) return null;
-  return `Отказано (мост-спутник): ${action} — только своего места ${own} (роль #${normKarta(s.karta)}, граф ${s.realm}); место позвавшего и любое другое спутник не берёт и не снимает.`;
+  return L(
+    `Отказано (мост-спутник): ${action} — только своего места ${own} (роль #${normKarta(s.karta)}, граф ${s.realm}); место позвавшего и любое другое спутник не берёт и не снимает.`,
+    `Refused (satellite bridge): ${action} — only its own seat ${own} (role #${normKarta(s.karta)}, graph ${s.realm}); a satellite neither takes nor releases the caller's seat or any other.`,
+  );
 }
 
 /** Слово о слухе вместо команды сторожа: спутник сторожа не держит. */

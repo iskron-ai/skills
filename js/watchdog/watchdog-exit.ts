@@ -15,6 +15,7 @@ import { batchLine, caseKey, frameToText } from "../shared/frame-text.ts";
 import { eventKeyOf, noteSeen, seenIds } from "../shared/seen.ts";
 import { seenFilePathOf } from "../shared/standings.ts";
 import { adoptSeenPath, attach, resolveStanding, staleBatchKeys } from "./client.ts";
+import { doer, wd } from "./words.ts";
 
 // The bridge replays its ring to every client that attaches, so a watchdog
 // re-armed after a wake meets the frame it was woken on again. Leaving on it
@@ -45,7 +46,7 @@ const note = (s: string): void => {
 export function runWatchdogExit(argv: string[]): void {
   const target = resolveStanding(argv);
   if ("error" in target) {
-    note(`ДЕЛАТЕЛЬ: ${target.error}`);
+    note(doer(target.error));
     process.exit(2);
   }
   let seenPath = seenFilePathOf(target.authDir, target.key);
@@ -73,7 +74,7 @@ export function runWatchdogExit(argv: string[]): void {
       switch (ev.kind) {
         case "frame": {
           const type = ev.frame?.type;
-          if (type !== "message") return note(`кадр ${type ?? "не разобран"} — не повод будить`);
+          if (type !== "message") return note(wd.notWakeup(type));
           const id = frameId(ev);
           // Пачка кадров комнаты (мост, roomstack.ts) — одна побудка: печатаем её
           // целиком и выходим на последнем кадре залпа, не на первом. Шапка —
@@ -81,7 +82,7 @@ export function runWatchdogExit(argv: string[]): void {
           // без адресованных не будит: её шапка ждёт ближайшей побудки.
           const last = !ev.batch || ev.batch.at >= ev.batch.of;
           if (seen.has(id)) {
-            note(`кадр ${id} уже отдан прежним взводом — не повод будить`);
+            note(wd.seenEarlier(id));
             if (last) hold();
             if (last && woke) leave();
             return;
@@ -93,7 +94,7 @@ export function runWatchdogExit(argv: string[]): void {
             if (last) {
               hold();
               if (woke) leave();
-              note("пачка без адресованных месту — счёт ждёт ближайшей побудки");
+              note(wd.unaddressed());
             }
             return;
           }
@@ -126,17 +127,17 @@ export function runWatchdogExit(argv: string[]): void {
         case "stale":
           // Пачка лежалых: не повод будить, но и не потеря — тела в логе, id помечены.
           for (const k of staleBatchKeys(ev)) noteSeen(seenPath, k, seen);
-          note(ev.text ?? "лежалые кадры");
+          note(ev.text ?? wd.staleFrames());
           break;
         case "dead":
         case "alive":
         case "evicted":
-          note(ev.text ?? "ДЕЛАТЕЛЬ: стояние потеряно");
+          note(ev.text ?? wd.seatLost());
           process.exit(1);
           break;
         case "attached":
           seenPath = adoptSeenPath(ev.seen, seenPath, seen); // память места на его сервере
-          note(`слушаю стояние ${ev.key}`);
+          note(wd.listening(ev.key));
           break;
         default:
           if (ev.kind === "note" && ev.batch) head = ev.text ?? ""; // шапка пачки — делателю, с её первым кадром
@@ -144,7 +145,7 @@ export function runWatchdogExit(argv: string[]): void {
       }
     },
     onGone: (why) => {
-      note(`ДЕЛАТЕЛЬ: ${why}`);
+      note(doer(why));
       process.exit(1);
     },
   });

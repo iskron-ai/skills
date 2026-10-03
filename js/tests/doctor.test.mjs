@@ -514,8 +514,9 @@ test("use en writes the English production address next to the grant; doctor nam
     const en = await run(["use", "en", "--auth-dir", authDir], { HOME: home });
     assert.equal(en.code, 0, `use exited ${en.code}: ${en.err}`);
     assert.equal(readFileSync(join(authDir, "server"), "utf8"), "https://mcp.iskron.ai/\n");
-    assert.match(en.out, /мост смотрит на https:\/\/mcp\.iskron\.ai\//);
-    assert.match(en.out, /продовый адрес: самообновление с релизов поставки включено/);
+    assert.match(en.out, /the bridge looks at https:\/\/mcp\.iskron\.ai\//);
+    assert.match(en.out, /production address: self-update from the delivery releases is on/);
+    assert.doesNotMatch(en.out, /[А-Яа-яЁё]/, "the answer to use en is English");
     const other = await run(["use", fake.mcpUrl, "--auth-dir", authDir], { HOME: home });
     assert.equal(other.code, 0, other.err);
     assert.match(other.out, /другой инстанс: обновлений с релизов поставки нет/);
@@ -528,8 +529,20 @@ test("use en writes the English production address next to the grant; doctor nam
       `doctor must name the server from the file and the file itself:\n${r.out}`,
     );
     assert.match(r.out, /другой инстанс: обновлений с релизов поставки нет/);
+    assert.doesNotMatch(
+      other.out,
+      /the bridge looks at|there are no updates/,
+      "the choice was ru-host",
+    );
+    await run(["use", "en", "--auth-dir", authDir], { HOME: home });
     const ru = await run(["use", "ru", "--auth-dir", authDir], { HOME: home });
     assert.equal(readFileSync(join(authDir, "server"), "utf8"), "https://mcp.iskron.ru/\n", ru.out);
+    assert.match(
+      ru.out,
+      /мост смотрит на https:\/\/mcp\.iskron\.ru\//,
+      "ru after en answers in ru",
+    );
+    assert.doesNotMatch(ru.out, /the bridge looks at|Takes effect/, ru.out);
   } finally {
     await fake.stop();
   }

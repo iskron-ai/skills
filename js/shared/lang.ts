@@ -53,6 +53,11 @@ export function setServerLang(serverUrl: string): void {
   S.current = forcedLang() ?? langOfUrl(serverUrl);
 }
 
+/** Сторож получает язык от моста флагом `--lang` (listenLine) и не угадывает его сам. */
+export function setLang(l: string | undefined): void {
+  if (l === "en" || l === "ru") S.current = l;
+}
+
 export const lang = (): Lang => (S.current ??= resolve());
 
 /** Слово на языке поставки: русское или английское. */

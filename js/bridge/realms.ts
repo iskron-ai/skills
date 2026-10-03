@@ -6,6 +6,7 @@
 // places.ts); список графов (iskron_realm list) — запасной путь, когда сличать
 // надо раньше hello. Неразрешённое имя — само по себе, не «тот же граф».
 
+import { L } from "../shared/lang.ts";
 import { scoped } from "../shared/scope.ts";
 
 // Имена графов — сессии (shared/scope.ts): у сессий демона могут быть разные серверы и учётки.
@@ -52,7 +53,10 @@ export const unknownRealm = (a: unknown, b: unknown): boolean =>
 
 /** Слово отказа по неразрешённому имени графа; held — места моста в канонической форме. */
 export const unresolvedWord = (realm: unknown, held: string[]): string =>
-  `Отказано (мост): граф «${trimmed(realm)}» мост не разрешил в @owner/slug (списка графов нет или имени в нём нет) — тот ли это граф, что у мест моста (${held.join(", ")}), не известно, и гадать нельзя. Повтори вызов с полным адресом графа @owner/slug.`;
+  L(
+    `Отказано (мост): граф «${trimmed(realm)}» мост не разрешил в @owner/slug (списка графов нет или имени в нём нет) — тот ли это граф, что у мест моста (${held.join(", ")}), не известно, и гадать нельзя. Повтори вызов с полным адресом графа @owner/slug.`,
+    `Refused (bridge): the bridge did not resolve the graph "${trimmed(realm)}" to @owner/slug (there is no list of graphs or the name is not in it) — whether it is the graph of the bridge's seats (${held.join(", ")}) is unknown, and guessing is not allowed. Repeat the call with the full graph address @owner/slug.`,
+  );
 
 /** Запомнить, что это имя графа — такой-то @owner/slug (hello, список графов). */
 export function learnRealm(alias: unknown, canonical: string): void {

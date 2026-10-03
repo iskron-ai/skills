@@ -177,8 +177,8 @@ const waitSeen = (standings, id) =>
 // The watchdog is given the auth dir the way the bridge's own block names it —
 // the `--auth-dir` flag, never a variable the bridge was not started with. One
 // lever for both halves, or a drift between their roots would pass green here.
-function runClient(sub, dir, key, timeoutMs = 8000, extraEnv = {}) {
-  const proc = spawn(NODE, [FILE, sub, ...(key ? [key] : []), "--auth-dir", dir], {
+function runClient(sub, dir, key, timeoutMs = 8000, extraEnv = {}, flags = ["--auth-dir", dir]) {
+  const proc = spawn(NODE, [FILE, sub, ...(key ? [key] : []), ...flags], {
     env: { ...process.env, ...extraEnv },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -4260,4 +4260,59 @@ test("room kinds leave the Codex thread's other frames and the old room shape as
   turns().forEach((text, i) => assert.ok(text.includes(cases[i][1]), text));
   wd.proc.kill("SIGKILL");
   await wd.done;
+});
+
+// Английская поверхность (граф nks-dev: #6080): мост и сторожа, которых он называет
+// в своём блоке, говорят уход, возврат и hello без кириллицы. Язык сторож берёт
+// из команды моста (`--lang`), не из своего окружения: оно ему язык не называет.
+const CYRILLIC = /[А-Яа-яЁё]/;
+const NO_LANG_ENV = { ISKRON_BRIDGE_LANG: "", ISKRON_BRIDGE_URL: "" };
+
+/** Флаги, которыми блок моста велит запускать сторожа `sub`. */
+function flagsOfBlock(text, sub) {
+  const tail = new RegExp(`${sub} \\S+((?: --[\\w-]+ (?:"[^"]*"|\\S+))*)`).exec(text)?.[1] ?? "";
+  return (tail.match(/--[\w-]+ (?:"[^"]*"|\S+)/g) ?? []).flatMap((f) => {
+    const at = f.indexOf(" ");
+    return [f.slice(0, at), f.slice(at + 1).replace(/^"|"$/g, "")];
+  });
+}
+
+test("English surface: leave, resume and hello — the bridge and both watchdogs it names print no Cyrillic", async (t) => {
+  const { fake, dir, bridge, text, key } = await connected(t, {
+    env: { ISKRON_BRIDGE_LANG: "en" },
+  });
+  // Прозу о месте несёт сервер (фейк — по-русски); блок моста — его слово.
+  const block = text.slice(text.indexOf("[iskron-bridge]"));
+  assert.doesNotMatch(block, CYRILLIC, block);
+  assert.match(text, /--lang en/, "the block names the language to the watchdog");
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const spawnWd = (sub) => runClient(sub, dir, key, 20_000, NO_LANG_ENV, flagsOfBlock(text, sub));
+  const mon = spawnWd("watchdog");
+  await waitFor(() => mon.out.includes("listening on standing"), "the Monitor watchdog to attach");
+  await waitFor(() => mon.out.includes('"type":"hello"'), "hello at the Monitor watchdog");
+  const exit = spawnWd("watchdog-exit");
+  await waitFor(() => exit.err.includes("not a reason to wake"), "hello at the exit watchdog");
+  for (const wd of [mon, exit]) {
+    assert.doesNotMatch(wd.out + wd.err, CYRILLIC, `${wd.out}${wd.err}`);
+    wd.proc.kill("SIGKILL");
+    await wd.done;
+  }
+  const left = await bridge.call("tools/call", 5, {
+    name: "iskron_channel",
+    arguments: { realm: "nks-dev", action: "leave" },
+  });
+  const leftText = left.result?.content?.[0]?.text ?? "";
+  assert.ok(!left.result?.isError, leftText);
+  assert.match(leftText, /busyness cleared/, leftText);
+  assert.doesNotMatch(leftText, CYRILLIC, leftText);
+  const back = await bridge.call("tools/call", 6, {
+    name: "iskron_stand",
+    arguments: { realm: "nks-dev", karta: 931, name: "proba", status: "back" },
+  });
+  const backText = (back.result?.content ?? []).map((c) => c.text ?? "").join("\n");
+  assert.ok(!back.result?.isError, backText);
+  assert.match(backText, /hello received/, backText);
+  // «(Вебхук #N создан → …)» — проза сервера внутри строки хука, не слово моста.
+  const bridgeWords = backText.replace(/\(Вебхук[^)]*\)/, "");
+  assert.doesNotMatch(bridgeWords, CYRILLIC, bridgeWords);
 });

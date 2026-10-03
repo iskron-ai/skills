@@ -10,6 +10,7 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 import { homeBridgePath } from "../shared/home.ts";
+import { L } from "../shared/lang.ts";
 import { VERSION } from "../shared/version.ts";
 import { log } from "./streams.ts";
 
@@ -51,14 +52,23 @@ export class RateLimitError extends Error {
 }
 
 function resetWord(resetAt: number | null): string {
+  const min = resetAt ? Math.max(0, Math.ceil((resetAt - Date.now()) / 60_000)) : 0;
   return resetAt
-    ? `сброс ${new Date(resetAt).toISOString()} (через ${Math.max(0, Math.ceil((resetAt - Date.now()) / 60_000))} мин)`
-    : "время сброса GitHub не назвал";
+    ? L(
+        `сброс ${new Date(resetAt).toISOString()} (через ${min} мин)`,
+        `reset ${new Date(resetAt).toISOString()} (in ${min} min)`,
+      )
+    : L("время сброса GitHub не назвал", "GitHub did not name the reset time");
 }
 
 function rateLimitWord(limit: number | null, resetAt: number | null): string {
-  const per = limit ? `${limit} запросов в час` : "лимит в час";
-  return `лимит анонимного API GitHub исчерпан: ${per} на внешний адрес машины, общий всем мостам и клиентам за ним; ${resetWord(resetAt)}`;
+  const per = limit
+    ? L(`${limit} запросов в час`, `${limit} requests an hour`)
+    : L("лимит в час", "an hourly limit");
+  return L(
+    `лимит анонимного API GitHub исчерпан: ${per} на внешний адрес машины, общий всем мостам и клиентам за ним; ${resetWord(resetAt)}`,
+    `the anonymous GitHub API limit is exhausted: ${per} per the machine's external address, shared by all bridges and clients behind it; ${resetWord(resetAt)}`,
+  );
 }
 
 /**
@@ -81,7 +91,10 @@ function rateLimitOf(res: Response): RateLimitError | null {
   if (retrySec > 0 || res.status === 429) {
     const resetAt = retrySec > 0 ? Date.now() + retrySec * 1000 : null;
     return new RateLimitError(
-      `вторичный лимит API GitHub: слишком частые запросы с внешнего адреса машины; ${resetWord(resetAt)}`,
+      L(
+        `вторичный лимит API GitHub: слишком частые запросы с внешнего адреса машины; ${resetWord(resetAt)}`,
+        `GitHub API secondary limit: too frequent requests from the machine's external address; ${resetWord(resetAt)}`,
+      ),
       null,
       resetAt,
     );
@@ -96,7 +109,10 @@ async function tagFromApi(): Promise<string | null> {
   });
   const limited = rateLimitOf(res);
   if (limited) throw limited;
-  if (!res.ok) throw new Error(`HTTP ${res.status} от ${RELEASES_URL}`);
+  if (!res.ok)
+    throw new Error(
+      L(`HTTP ${res.status} от ${RELEASES_URL}`, `HTTP ${res.status} from ${RELEASES_URL}`),
+    );
   const body = (await res.json()) as { tag_name?: string };
   return body.tag_name?.trim() || null;
 }
@@ -111,7 +127,12 @@ async function tagFromPage(url: string): Promise<string> {
   const location = res.headers.get("location") ?? "";
   const m = /\/releases\/tag\/([^/?#]+)/.exec(location);
   if (res.status < 300 || res.status >= 400 || !m)
-    throw new Error(`HTTP ${res.status} от ${url}${location ? ` → ${location}` : ""} — тега нет`);
+    throw new Error(
+      L(
+        `HTTP ${res.status} от ${url}${location ? ` → ${location}` : ""} — тега нет`,
+        `HTTP ${res.status} from ${url}${location ? ` → ${location}` : ""} — no tag`,
+      ),
+    );
   return decodeURIComponent(m[1] as string);
 }
 
@@ -159,7 +180,10 @@ export async function resolveTag(force: boolean): Promise<string | null> {
       ? new RateLimitError(
           cached.api_limit
             ? rateLimitWord(cached.api_limit, cached.api_limited_until)
-            : `лимит API GitHub, записанный другим мостом машины; ${resetWord(cached.api_limited_until)}`,
+            : L(
+                `лимит API GitHub, записанный другим мостом машины; ${resetWord(cached.api_limited_until)}`,
+                `a GitHub API limit recorded by another bridge of the machine; ${resetWord(cached.api_limited_until)}`,
+              ),
           cached.api_limit ?? null,
           cached.api_limited_until,
         )
@@ -181,7 +205,12 @@ export async function resolveTag(force: boolean): Promise<string | null> {
   if (RELEASES_PAGE_URL) {
     try {
       const tag = await tagFromPage(RELEASES_PAGE_URL);
-      log(`релизы: API не ответил (${apiErr?.message}) — тег ${tag} со страницы релизов`);
+      log(
+        L(
+          `релизы: API не ответил (${apiErr?.message}) — тег ${tag} со страницы релизов`,
+          `releases: the API did not answer (${apiErr?.message}) — tag ${tag} from the releases page`,
+        ),
+      );
       writeReleaseTag({
         source: RELEASES_URL,
         checked_at: Date.now(),
@@ -191,7 +220,7 @@ export async function resolveTag(force: boolean): Promise<string | null> {
       });
       return tag;
     } catch (e) {
-      const both = `${apiErr?.message}; запасной путь — ${(e as Error).message}`;
+      const both = `${apiErr?.message}; ${L("запасной путь", "fallback")} — ${(e as Error).message}`;
       apiErr = limit ? new RateLimitError(both, limit.limit, limit.resetAt) : new Error(both);
     }
   }

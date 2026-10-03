@@ -1,18 +1,6 @@
-// js/shared/channel.ts
-var SILENT_FLOOR_MS = Number(process.env.ISKRON_CHANNEL_SILENT_FLOOR_MS) || 6e4;
-var FLAP_PAUSES_MS = (process.env.ISKRON_CHANNEL_FLAP_MS || "5000,10000,20000,40000,60000").split(",").map(Number).filter((n2) => Number.isFinite(n2) && n2 > 0);
-function classifyOrigin(frame, myKarta) {
-  const p = frame.provenance ?? {};
-  const noAuthor = p.via === "room" && p.from_karta_seq == null && !p.from_standing;
-  if (p.via === "platform" || p.auth === "none" || p.auth === "platform" || noAuthor)
-    return "platform";
-  if (p.as_person === true) return "human";
-  if (p.from_karta_seq != null && p.user_karta_seq != null && p.from_karta_seq === p.user_karta_seq)
-    return "human";
-  if (myKarta != null && p.from_karta_seq != null && String(p.from_karta_seq) === String(myKarta))
-    return "sibling";
-  return "peer";
-}
+// js/shared/lang.ts
+import { readFileSync } from "node:fs";
+import { join as join2 } from "node:path";
 
 // js/shared/scope.ts
 import { AsyncLocalStorage } from "node:async_hooks";
@@ -65,13 +53,7 @@ import { join, resolve } from "node:path";
 var defaultAuthDir = () => join(homedir(), ".iskron-bridge");
 var authDirFromEnv = () => envOf("ISKRON_BRIDGE_AUTH_DIR")?.trim() || defaultAuthDir();
 
-// js/shared/numbering.ts
-var numberingOf = (frame) => frame.numbering === "case" ? "case" : "";
-var numberedKey = (frame, key) => key && numberingOf(frame) ? `case:${key}` : key;
-
 // js/shared/lang.ts
-import { readFileSync } from "node:fs";
-import { join as join2 } from "node:path";
 function langOfUrl(url) {
   try {
     return /\.ai\.?$/i.test(new URL(url).hostname) ? "en" : "ru";
@@ -98,6 +80,26 @@ function resolve2() {
 var S = scoped(() => ({ current: null }));
 var lang = () => S.current ??= resolve2();
 var L = (ru, en) => lang() === "en" ? en : ru;
+
+// js/shared/channel.ts
+var SILENT_FLOOR_MS = Number(process.env.ISKRON_CHANNEL_SILENT_FLOOR_MS) || 6e4;
+var FLAP_PAUSES_MS = (process.env.ISKRON_CHANNEL_FLAP_MS || "5000,10000,20000,40000,60000").split(",").map(Number).filter((n2) => Number.isFinite(n2) && n2 > 0);
+function classifyOrigin(frame, myKarta) {
+  const p = frame.provenance ?? {};
+  const noAuthor = p.via === "room" && p.from_karta_seq == null && !p.from_standing;
+  if (p.via === "platform" || p.auth === "none" || p.auth === "platform" || noAuthor)
+    return "platform";
+  if (p.as_person === true) return "human";
+  if (p.from_karta_seq != null && p.user_karta_seq != null && p.from_karta_seq === p.user_karta_seq)
+    return "human";
+  if (myKarta != null && p.from_karta_seq != null && String(p.from_karta_seq) === String(myKarta))
+    return "sibling";
+  return "peer";
+}
+
+// js/shared/numbering.ts
+var numberingOf = (frame) => frame.numbering === "case" ? "case" : "";
+var numberedKey = (frame, key) => key && numberingOf(frame) ? `case:${key}` : key;
 
 // js/shared/room-kinds.ts
 var WORDS = {
@@ -918,14 +920,31 @@ var Bridge = class {
         this.onLog(line);
       }
     });
-    proc.on("error", (e) => this.die(new Error(`мост не запустился: ${e.message}`)));
+    proc.on(
+      "error",
+      (e) => this.die(
+        new Error(
+          L(`мост не запустился: ${e.message}`, `the bridge failed to start: ${e.message}`)
+        )
+      )
+    );
     proc.on(
       "exit",
-      (code, signal) => this.die(new Error(`мост вышел (code=${code}, signal=${signal})${this.why()}`))
+      (code, signal) => this.die(
+        new Error(
+          L(
+            `мост вышел (code=${code}, signal=${signal})${this.why()}`,
+            `the bridge exited (code=${code}, signal=${signal})${this.why()}`
+          )
+        )
+      )
     );
   }
   why() {
-    return this.tail.length ? `; последнее от моста: ${this.tail.slice(-3).join(" | ")}` : "";
+    return this.tail.length ? L(
+      `; последнее от моста: ${this.tail.slice(-3).join(" | ")}`,
+      `; last from the bridge: ${this.tail.slice(-3).join(" | ")}`
+    ) : "";
   }
   die(e) {
     if (this.dead) return;
@@ -984,7 +1003,7 @@ var Bridge = class {
       const resolve4 = settle(res);
       const reject = settle(rej);
       function onAbort() {
-        reject(new Error("вызов отменён"));
+        reject(new Error(L("вызов отменён", "call aborted")));
       }
       this.pending.set(id, { resolve: resolve4, reject });
       if (opts.signal) {
@@ -994,16 +1013,26 @@ var Bridge = class {
       if (opts.timeoutMs) {
         timer = setTimeout(() => {
           this.pending.delete(id);
-          reject(new Error(`${method}: нет ответа за ${opts.timeoutMs} мс${this.why()}`));
+          reject(
+            new Error(
+              L(
+                `${method}: нет ответа за ${opts.timeoutMs} мс${this.why()}`,
+                `${method}: no answer in ${opts.timeoutMs} ms${this.why()}`
+              )
+            )
+          );
         }, opts.timeoutMs);
         timer.unref?.();
       }
-      if (!this.proc?.stdin?.writable) return reject(new Error("мост не принимает запись"));
+      if (!this.proc?.stdin?.writable)
+        return reject(
+          new Error(L("мост не принимает запись", "the bridge does not accept writes"))
+        );
       this.proc.stdin.write(JSON.stringify({ jsonrpc: "2.0", id, method, params }) + "\n");
     });
   }
   stop() {
-    this.die(new Error("сессия закрыта"));
+    this.die(new Error(L("сессия закрыта", "session closed")));
     const proc = this.proc;
     this.proc = null;
     if (!proc || proc.killed || proc.exitCode !== null) return;
@@ -1050,7 +1079,10 @@ function resultToContent(result) {
   if (out2.length) return out2;
   const structured = result?.structuredContent;
   return [
-    { type: "text", text: structured ? JSON.stringify(structured) : "(пустой ответ)" }
+    {
+      type: "text",
+      text: structured ? JSON.stringify(structured) : L("(пустой ответ)", "(empty answer)")
+    }
   ];
 }
 

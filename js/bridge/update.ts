@@ -121,7 +121,10 @@ export function syncHome(self = selfPath()): HomeSync {
  */
 export function reexec(path: string, argv: string[]): void {
   log(
-    `домашняя копия новее этой сборки (v${versionOf(path) ?? "?"} > v${VERSION}) — запускаюсь ею: ${path}`,
+    L(
+      `домашняя копия новее этой сборки (v${versionOf(path) ?? "?"} > v${VERSION}) — запускаюсь ею: ${path}`,
+      `the home copy is newer than this build (v${versionOf(path) ?? "?"} > v${VERSION}) — restarting with it: ${path}`,
+    ),
   );
   // Дом лежит вне набора скиллов: корень набора этой копии едет ему окружением (#6226).
   const root = skillsRoot();
@@ -138,7 +141,7 @@ export function reexec(path: string, argv: string[]): void {
   }
   child.on("exit", (code, signal) => process.exit(code ?? (signal ? 1 : 0)));
   child.on("error", (e) => {
-    log(`перезапуск не удался: ${e.message}`);
+    log(L(`перезапуск не удался: ${e.message}`, `restart failed: ${e.message}`));
     process.exit(1);
   });
 }
@@ -172,7 +175,7 @@ async function fetchText(url: string): Promise<string> {
     },
     signal: AbortSignal.timeout(15_000),
   });
-  if (!res.ok) throw new Error(`HTTP ${res.status} от ${url}`);
+  if (!res.ok) throw new Error(L(`HTTP ${res.status} от ${url}`, `HTTP ${res.status} from ${url}`));
   return res.text();
 }
 
@@ -187,7 +190,12 @@ export async function downloadRelease(
   const bridge = await fetchText(`${base}/skills/establish-mcp/scripts/iskron.mjs`);
   const got = versionIn(bridge);
   if (got !== version)
-    throw new Error(`скачанный мост называет v${got ?? "?"}, релиз — v${version}`);
+    throw new Error(
+      L(
+        `скачанный мост называет v${got ?? "?"}, релиз — v${version}`,
+        `the downloaded bridge names v${got ?? "?"}, the release — v${version}`,
+      ),
+    );
   const home = homeBridgePath();
   const current = versionOf(home);
   if (!isSymlink(home) && (!current || compareVersions(version, current) > 0)) {
