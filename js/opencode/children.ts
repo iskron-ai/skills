@@ -9,7 +9,7 @@
 import { sleep } from "./bridge-io.ts";
 import type { Keeper } from "./keep.ts";
 import type { Leads } from "./leadwords.ts";
-import type { LostEntry } from "./marker.ts";
+import type { LostEntry } from "./records.ts";
 import type { Slot } from "./tools.ts";
 
 /**

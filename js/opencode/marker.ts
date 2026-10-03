@@ -10,27 +10,8 @@ import { mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from 
 import { join } from "node:path";
 
 import type { KeptSlot } from "./keep.ts";
+import { entryOf, type Home, type LostEntry } from "./records.ts";
 
-/** Локация экземпляра плагина (ctx.location): каталог и рабочее пространство. */
-export interface Home {
-  directory: string;
-  workspace?: string | null;
-}
-
-export interface LostEntry {
-  session: string;
-  dir: string | null;
-  key: string | null;
-  child?: boolean;
-  /** Запись переноса сессии в другую папку (moves.ts), не остановки экземпляра. */
-  moved?: boolean;
-  of?: { realm: string; karta: string; name: string } | null;
-  room?: string | null;
-  noted?: boolean;
-  /** Имя места ребёнка и его последний текст — итог по концу после перезагрузки. */
-  name?: string;
-  last?: string;
-}
 type Lost = { at: string; entries: LostEntry[] };
 type Held = KeptSlot & { place?: { name: string } | null; moved?: boolean };
 
@@ -44,24 +25,6 @@ const tagOf = (home: Home | null): string =>
   home ? hash(`${home.directory}\0${home.workspace ?? ""}`) : "any";
 /** Метка файла `opencode-lost.@<метка>.…`; null — файл прежней сборки. */
 const tagIn = (f: string): string | null => /^opencode-lost\.@([^.]+)\./.exec(f)?.[1] ?? null;
-
-/** Запись маркера: ребёнок несёт место корня, дело поручения, сказанный ход, имя места и последний текст. */
-const entryOf = (e: LostEntry): LostEntry => ({
-  session: e.session,
-  dir: e.dir ?? null,
-  key: e.key ?? null,
-  child: !!e.child,
-  ...(e.moved ? { moved: true } : {}),
-  ...(e.child
-    ? {
-        of: e.of ?? null,
-        room: e.room ?? null,
-        ...(e.noted ? { noted: true } : {}),
-        ...(e.name ? { name: e.name } : {}),
-        ...(e.last ? { last: e.last } : {}),
-      }
-    : {}),
-});
 
 /** Держащие мосты — на диск, кого держали: остановка плагина либо перенос сессии в другую папку (home — её локация). */
 export function writeLostMarker(authDir: string, slots: Iterable<Held>, home: Home | null): void {

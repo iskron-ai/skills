@@ -1014,11 +1014,8 @@ function resultToContent(result) {
 import { createHash as createHash2 } from "node:crypto";
 import { mkdirSync, readdirSync, readFileSync as readFileSync3, unlinkSync, writeFileSync } from "node:fs";
 import { join as join3 } from "node:path";
-var PREFIX = "opencode-lost";
-var LEGACY_MS = 2 * 6e4;
-var hash = (s) => createHash2("sha256").update(s).digest("hex").slice(0, 12);
-var tagOf = (home) => home ? hash(`${home.directory}\0${home.workspace ?? ""}`) : "any";
-var tagIn = (f) => /^opencode-lost\.@([^.]+)\./.exec(f)?.[1] ?? null;
+
+// js/opencode/records.ts
 var entryOf = (e) => ({
   session: e.session,
   dir: e.dir ?? null,
@@ -1033,6 +1030,13 @@ var entryOf = (e) => ({
     ...e.last ? { last: e.last } : {}
   } : {}
 });
+
+// js/opencode/marker.ts
+var PREFIX = "opencode-lost";
+var LEGACY_MS = 2 * 6e4;
+var hash = (s) => createHash2("sha256").update(s).digest("hex").slice(0, 12);
+var tagOf = (home) => home ? hash(`${home.directory}\0${home.workspace ?? ""}`) : "any";
+var tagIn = (f) => /^opencode-lost\.@([^.]+)\./.exec(f)?.[1] ?? null;
 function writeLostMarker(authDir2, slots, home) {
   const entries = [...slots].filter((s) => s.holding && s.session).map(
     (s) => entryOf({ ...s, session: s.session, of: s.satelliteOf, name: s.place?.name })

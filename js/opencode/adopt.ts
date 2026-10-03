@@ -6,7 +6,8 @@
 // бы местом родителя (граф nks-dev: #6550, правила 1-2; #6361). Его revoke отсюда идёт
 // мостом корня как есть, но не молча: итога «КОНЧЕН» здесь не будет.
 import type { Keeper } from "./keep.ts";
-import { type Home, type LostEntry, takeLostMarker } from "./marker.ts";
+import { takeLostMarker } from "./marker.ts";
+import type { Home, LostEntry } from "./records.ts";
 import type { Slot } from "./tools.ts";
 
 export interface AdoptDoors {

@@ -9,8 +9,9 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- ответы SDK без схемы */
 import { authDir } from "./bridge-io.ts";
 import { homeOf, sessionDirectory } from "./host.ts";
-import { type Home, writeLostMarker } from "./marker.ts";
+import { writeLostMarker } from "./marker.ts";
 import type { Context } from "./plugin.ts";
+import type { Home } from "./records.ts";
 import type { Say, Slot } from "./tools.ts";
 
 /** Сколько живой экземпляр новой папки ждёт маркера переноса от прежнего. */

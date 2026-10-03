@@ -2,7 +2,7 @@
 // форма: мост не найден или половина не встала, а плагин грузится дальше.
 /* eslint-disable @typescript-eslint/no-explicit-any -- события SDK без схемы */
 import type { Bridge } from "../shared/bridge-client.ts";
-import type { Home } from "./marker.ts";
+import type { Home } from "./records.ts";
 
 export interface ToolsHalf {
   /** Сессия умерла — её мост отпускается вместе со стоянием. */
