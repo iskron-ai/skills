@@ -2031,7 +2031,12 @@ test("a marker whose writer still lives is never taken, however old", async () =
   const file = join(process.env.ISKRON_BRIDGE_AUTH_DIR, `opencode-lost.@${tag}.1.z.json`);
   const entries = [{ session: "a1", dir: LOC_A.directory, key: "k-a1", child: false }];
   writeFileSync(file, JSON.stringify({ at: new Date().toISOString(), entries }));
-  const old = (Date.now() - 11 * 60_000) / 1000;
+  // «Давно» — но не раньше старта pid 1: свежая машина CI загружена минуты назад, и маркер
+  // старше её загрузки был бы записан до своего автора (CI #316: pid 1 моложе 11 минут).
+  const { processStart } = await import("../opencode/procstart.ts");
+  const boot = processStart(1);
+  assert.ok(boot, "pid 1's start is known on this platform");
+  const old = Math.max(Date.now() - 11 * 60_000, boot + 3000) / 1000;
   utimesSync(file, old, old);
   const calls = join(SANDBOX, "old-author.calls");
   writeFileSync(calls, "");

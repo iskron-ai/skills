@@ -6990,6 +6990,7 @@ async function armRoleHook(p) {
 // js/bridge/owner.ts
 var OWNER_ENV = "ISKRON_BRIDGE_OWNER_ROLE";
 var HUMAN = /* @__PURE__ */ new Set(["me", "realm-owner"]);
+var OWNERS_PAGE = 100;
 var known = scoped(() => /* @__PURE__ */ new Map());
 var word = (what) => L(
   `Отказано (мост): ${what} — роль владельца (主). Агент не занимает её без слова человека; слово человека — настройка ${OWNER_ENV}=1 в окружении моста, которую ставит он сам. Встань своей ролью (karta) — той, что назвал тебе человек или AGENTS.md как роль агента.`,
@@ -7022,12 +7023,13 @@ async function ownersOf(realm, k) {
     q: "",
     node_type: "karta",
     manifested_as: "svatantra",
-    limit: 100,
+    limit: OWNERS_PAGE,
     include_description: false
   });
   if (s2.isError) return s2.text;
-  if (/НЕ показано|not shown/i.test(s2.text)) return "список ролей владельца неполон";
-  return [...s2.text.matchAll(/\(#(\d+)[,)]/g)].some((m) => m[1] === k);
+  const seqs = [...s2.text.matchAll(/\(#(\d+)[,)]/g)].map((m) => m[1]);
+  if (seqs.length >= OWNERS_PAGE) return "список ролей владельца неполон";
+  return seqs.includes(k);
 }
 
 // js/bridge/resume.ts

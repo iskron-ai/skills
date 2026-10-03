@@ -14,6 +14,8 @@ import { normKarta } from "./names.ts";
 
 export const OWNER_ENV = "ISKRON_BRIDGE_OWNER_ROLE";
 const HUMAN = new Set(["me", "realm-owner"]);
+/** Страница поиска ролей владельца — наибольшая, что принимает iskron_search. */
+const OWNERS_PAGE = 100;
 /** Тип роли по графу и номеру — у сессии: роль свой тип не меняет за её жизнь. */
 const known = scoped(() => new Map<string, boolean>());
 
@@ -60,10 +62,12 @@ async function ownersOf(realm: unknown, k: string): Promise<boolean | string> {
     q: "",
     node_type: "karta",
     manifested_as: "svatantra",
-    limit: 100,
+    limit: OWNERS_PAGE,
     include_description: false,
   });
   if (s.isError) return s.text;
-  if (/НЕ показано|not shown/i.test(s.text)) return "список ролей владельца неполон";
-  return [...s.text.matchAll(/\(#(\d+)[,)]/g)].some((m) => m[1] === k);
+  const seqs = [...s.text.matchAll(/\(#(\d+)[,)]/g)].map((m) => m[1]);
+  // Полная страница — за ней может быть ещё: неполнота числом, не фразой ответа (#147 [119]).
+  if (seqs.length >= OWNERS_PAGE) return "список ролей владельца неполон";
+  return seqs.includes(k);
 }
