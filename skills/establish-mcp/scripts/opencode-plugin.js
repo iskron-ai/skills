@@ -519,7 +519,7 @@ var SKILLS_ROOT_ENV = "ISKRON_SKILLS_ROOT";
 import { createHash } from "node:crypto";
 import { readFileSync as readFileSync2 } from "node:fs";
 import { fileURLToPath } from "node:url";
-var VERSION = "7.2.7";
+var VERSION = "7.2.8";
 function buildOf(selfUrl) {
   try {
     const src = readFileSync2(fileURLToPath(selfUrl));
@@ -781,6 +781,8 @@ var H2 = scoped(() => ({
   /** Каталог сессии, из которого занимается место (cwd в iskron_stand), — в запись держания, для возврата по каталогу (resume.ts). */
   standCwd: null,
   holder: null,
+  /** последний знак службы сокета, отпущенного уходом (parkStanding), — срок записи держания от него (holdkeep.ts) */
+  heardAt: 0,
   /** дверь основного места — того, ради которого взят сокет */
   door: null,
   currentKey: null,
@@ -1209,7 +1211,11 @@ function createAdopt(d) {
   }
   return {
     take,
-    /** Сессию перенесли сюда при живом экземпляре: маркер переноса, положенный прежним, — взять. */
+    /**
+     * Маркер, положенный после загрузки этого экземпляра, — взять: перенос сессии сюда при
+     * живом экземпляре либо остановка прежнего, кончившаяся позже нашей загрузки (ребёнок без
+     * своего слота спросит — иначе он ушёл бы мостом корня, astra на 7.2.6).
+     */
     now() {
       const lost = takeLostMarker(d.authDir(), d.home);
       if (!lost) return;
@@ -1406,6 +1412,7 @@ var BACK_TRIES = 4;
 var BACK_PAUSE_MS = Number(process.env.ISKRON_CHILD_BACK_PAUSE_MS) || 1e3;
 var PAUSE_MS = 1500;
 function createChildren(d) {
+  const coming = /* @__PURE__ */ new Map();
   function childSlot(sessionID, parent, back2) {
     const have = d.slots.get(sessionID);
     if (have && !have.bridge.failure) return have;
@@ -1425,10 +1432,19 @@ function createChildren(d) {
   async function back(e) {
     if (!e.of) return d.endRun(e.session, false);
     d.leads.back(e.session, e);
-    if (!await d.exists(e.session))
-      return d.leads.fail(e.session, "перезагрузка плагина, сессия субагента не читается");
-    if (!e.key) return d.leads.fail(e.session, "перезагрузка плагина, ключа места нет");
-    const own = childSlot(e.session, null, e);
+    const ready = (async () => {
+      if (!await d.exists(e.session))
+        return void await d.leads.fail(
+          e.session,
+          "перезагрузка плагина, сессия субагента не читается"
+        );
+      if (!e.key)
+        return void await d.leads.fail(e.session, "перезагрузка плагина, ключа места нет");
+      return childSlot(e.session, null, e);
+    })();
+    coming.set(e.session, ready);
+    const own = await ready.finally(() => coming.delete(e.session));
+    if (!own) return;
     for (let i = 0; i < BACK_TRIES && !own.holding; i++) {
       if (i) {
         await sleep2(BACK_PAUSE_MS);
@@ -1454,7 +1470,9 @@ function createChildren(d) {
       )
     );
   }
-  return { childSlot, back, pause };
+  const settled = (session) => coming.get(session)?.catch(() => {
+  });
+  return { childSlot, back, pause, settled };
 }
 
 // js/opencode/half.ts
@@ -1719,12 +1737,43 @@ function createLauncher(d) {
   };
 }
 
+// js/opencode/cascade.ts
+var WINDOW_MS = Number(process.env.ISKRON_CASCADE_MS) || 3e3;
+function createCascade() {
+  const cut = /* @__PURE__ */ new Map();
+  return {
+    note(ev) {
+      const s = ev?.data?.sessionID;
+      if (ev?.type !== "session.execution.interrupted" || ev.data?.reason !== "user") return;
+      if (typeof s !== "string") return;
+      const now2 = Date.now();
+      for (const [k, at] of cut) if (now2 - at > 2 * WINDOW_MS) cut.delete(k);
+      cut.set(s, now2);
+    },
+    async byParent(parent, t) {
+      const p = await parent.catch(() => null);
+      if (!p) return false;
+      const near = () => {
+        const at = cut.get(p);
+        return at !== void 0 && Math.abs(at - t) <= WINDOW_MS;
+      };
+      while (!near() && Date.now() - t < WINDOW_MS) await sleep2(50);
+      return near();
+    }
+  };
+}
+
 // js/opencode/leadwords.ts
 var CANCELLED = "его ход отменён в OpenCode (человеком или запустившим)";
+var CANCELLED_REFUSAL = "её ход отменён в OpenCode";
+var cascadeWord = (who) => `Искрон: ход субагента ${who} прерван отменой твоего хода — он не кончен: место и дела держит, ждёт кадров своего дела. Продолжить — слово в его дело; отпустить — iskron_channel(action="revoke", standing="${who}").`;
+var placeGone = (kind) => kind === "evicted" ? "его место-спутник вытеснено другим держателем" : "его место-спутник отозвано не через запустившего или закрыто платформой (4001)";
+var placeGoneRefusal = (kind) => kind === "evicted" ? "её место-спутник вытеснено другим держателем" : "её место-спутник отозвано или закрыто платформой (4001)";
+var END_MS = 5e3;
 var SUMMARY_MAX = 4e3;
-var endWord = (who, why, last, kept) => {
+var endWord = (who, why, last, kept, failed = []) => {
   const said = last.length > SUMMARY_MAX ? `${last.slice(0, SUMMARY_MAX)}…` : last;
-  const done = kept ? `${keptLine(who, kept)}; снять его — iskron_channel(action="revoke", standing="${kept}"), только словом человека. ` : "мост субагента погашен, из дел он вышел, место снято. ";
+  const done = kept ? `${keptLine(who, kept)}; снять его — iskron_channel(action="revoke", standing="${kept}"), только словом человека. ` : failed === null ? 'мост субагента погашен; снял ли он место — не ответил: осталось на доске — сними iskron_channel(action="revoke"). ' : failed.length ? `мост субагента погашен, но место не снято (сеть): ${failed.join(", ")} — сними iskron_channel(action="revoke", standing="${failed[0]}"). ` : "мост субагента погашен, из дел он вышел, место снято. ";
   return `Искрон: субагент ${who} КОНЧЕН — ${why}. Это конец поручения, не ход: ${done}Итог — его последнее слово:
 ${said || "(текста он не оставил — смотри его дело)"}`;
 };
@@ -1740,9 +1789,13 @@ function leadDoors(ctx, say, flush, end, slots) {
   return {
     say,
     ownPlace: (child) => ownPlace(slots.get(child)),
-    async end(child) {
+    async close(child) {
       await flush(child).catch(() => {
       });
+      const got = await slots.get(child)?.bridge.request("iskron/end", {}, { timeoutMs: END_MS, service: true }).catch(() => null);
+      return got?.ended ? got.failed ?? [] : null;
+    },
+    async end(child) {
       end(child);
     },
     async parentOf(child) {
@@ -1772,18 +1825,22 @@ var roomNo = (room) => String(room ?? "").replace(/^\s*[#№]\s*|\s+$/g, "");
 var names = (place, child, s) => s === child || !!place?.name && (s === place.name || s.endsWith(`:${place.name}`));
 function createLeads(d) {
   const leads = /* @__PURE__ */ new Map();
-  const gone = /* @__PURE__ */ new Set();
+  const gone = /* @__PURE__ */ new Map();
+  const over = /* @__PURE__ */ new Set();
+  const cascade = createCascade();
   const who = (l, child) => l.place?.name ?? `сессии ${child}`;
   const parentOf = (child) => d.parentOf(child).catch(() => null);
   async function finish(child, why, ended = true, wake = true, kind = "end") {
     const l = leads.get(child);
     if (!l) return;
     leads.delete(child);
+    over.add(child);
     const kept = ended && kind === "end" ? d.ownPlace(child) : null;
     if (kept) d.say(`Искрон: ${keptLine(who(l, child), kept)}`, "warning");
     const parent = await l.parent;
     const last = (l.last ?? "").trim();
-    const word = kind === "lost" ? lostWord(who(l, child), why) : kind === "away" ? awayWord(who(l, child), last) : endWord(who(l, child), why, last, kept);
+    const failed = ended && !kept ? await d.close(child).catch(() => null) : [];
+    const word = kind === "lost" ? lostWord(who(l, child), why) : kind === "away" ? awayWord(who(l, child), last) : endWord(who(l, child), why, last, kept, failed);
     if (parent) await d.tell(parent, word, wake);
     else d.say(`${word}
 (родителя плагин не знает — итог некому)`, "warning");
@@ -1802,6 +1859,7 @@ function createLeads(d) {
   function stood(child) {
     const l = leads.get(child) ?? { parent: parentOf(child) };
     leads.set(child, l);
+    over.delete(child);
     return l;
   }
   function touch(l, place) {
@@ -1827,7 +1885,7 @@ function createLeads(d) {
       for (const [child, l] of leads) {
         if (!names(l.place, child, s) || await l.parent !== caller) continue;
         if (d.ownPlace(child)) return null;
-        gone.add(child);
+        gone.set(child, void 0);
         await finish(child, "отпущен словом запустившего");
         await d.tell(child, releasedWord(), false);
         return releaseWord(who(l, child));
@@ -1835,9 +1893,22 @@ function createLeads(d) {
       return null;
     },
     released: (child) => gone.has(child),
+    goneWhy: (child) => gone.get(child),
     heard(child, kind, place) {
-      if (kind !== "held" && kind !== "frame") return;
-      touch(kind === "held" && !gone.has(child) ? stood(child) : leads.get(child), place);
+      if ((kind === "evicted" || kind === "dead") && leads.has(child) && !d.ownPlace(child)) {
+        gone.set(child, placeGoneRefusal(kind));
+        void finish(child, placeGone(kind), true, false);
+        return true;
+      }
+      if (gone.has(child)) return true;
+      if (kind === "held") {
+        over.delete(child);
+        touch(stood(child), place);
+        return false;
+      }
+      if (over.has(child)) return true;
+      if (kind === "frame") touch(leads.get(child), place);
+      return false;
     },
     back(child, was) {
       const l = stood(child);
@@ -1854,6 +1925,7 @@ function createLeads(d) {
     },
     nameOf: (child) => leads.get(child)?.place?.name ?? (leads.has(child) ? child : null),
     onEvent(ev) {
+      cascade.note(ev);
       const child = ev?.data?.sessionID;
       const l = typeof child === "string" ? leads.get(child) : void 0;
       if (!l || typeof child !== "string") return;
@@ -1867,8 +1939,17 @@ function createLeads(d) {
         case "session.execution.interrupted":
           l.running = false;
           if (ev.data?.reason !== "user") return;
-          gone.add(child);
-          return void finish(child, CANCELLED, true, false);
+          void cascade.byParent(l.parent, Date.now()).then(async (byParent) => {
+            if (!leads.has(child)) return;
+            if (byParent) {
+              const p = await l.parent;
+              if (p) await d.tell(p, cascadeWord(who(l, child)), false);
+              return;
+            }
+            gone.set(child, CANCELLED_REFUSAL);
+            await finish(child, CANCELLED, true, false);
+          });
+          return;
         case "session.execution.succeeded":
         case "session.execution.failed":
           l.running = false;
@@ -2085,7 +2166,7 @@ function createRunEnds() {
     guard(session, name, args, asks) {
       if (released.has(session) && !READ_TOOLS.has(name) && !READ_ACTIONS[name]?.has(String(args.action ?? "")))
         throw new Error(
-          `Отказано (плагин): запустивший отпустил эту дочернюю сессию — поручение кончено, место снято; ${name} не пойдёт ни её местом, ни местом запустившего, и встать снова нельзя.`
+          `Отказано (плагин): ${whys.get(session) ?? "запустивший отпустил эту дочернюю сессию"} — поручение кончено, место снято; ${name} не пойдёт ни её местом, ни местом запустившего, и встать снова нельзя.`
         );
       if (!ended.has(session) || name === STAND_TOOL || READ_TOOLS.has(name)) return;
       const action = String(args.action ?? "");
@@ -2172,9 +2253,8 @@ async function setupTools(ctx, say, onChannel, rootOf, flushUsage = async () => 
           slot.key = params.data.key;
         if (kind === "held") slot.place = heldPlace(params?.data) ?? slot.place;
         if (kind === "released" || kind === "dead" || kind === "evicted") slot.holding = false;
-        if (slot.child && slot.satelliteOf && slot.session)
-          leads.heard(slot.session, kind, slot.place);
-        relay(slot.session, params, !!slot.child);
+        const over = !!slot.child && !!slot.satelliteOf && !!slot.session && leads.heard(slot.session, kind, slot.place);
+        if (!over) relay(slot.session, params, !!slot.child);
       },
       (e) => {
         if (slot.ownStop || stopped || !slot.holding) return;
@@ -2193,7 +2273,7 @@ async function setupTools(ctx, say, onChannel, rootOf, flushUsage = async () => 
   const { home, directoryOf, exists, ours } = mv;
   const relay = mv.relay(onChannel, say);
   const runEnds = createRunEnds();
-  const endChild = (c) => runEnds.end(c, slots.get(c)?.satelliteOf, forget, leads.released(c));
+  const endChild = (c) => runEnds.end(c, slots.get(c)?.satelliteOf, forget, leads.released(c), leads.goneWhy(c));
   const leads = createLeads(leadDoors(ctx, say, flushUsage, endChild, slots));
   const keeper = createKeeper({
     say,
@@ -2234,6 +2314,10 @@ async function setupTools(ctx, say, onChannel, rootOf, flushUsage = async () => 
   async function slotFor(sessionID, touch = true) {
     const root = await rootOf(sessionID);
     mv.guard(root, sessionID);
+    if (root !== sessionID && !slots.has(sessionID)) {
+      adopt.now();
+      await children.settled(sessionID);
+    }
     const own = root !== sessionID ? slots.get(sessionID) : void 0;
     if (own) {
       const live = own.bridge.failure ? children.childSlot(sessionID) : own;
@@ -2308,6 +2392,7 @@ async function setupTools(ctx, say, onChannel, rootOf, flushUsage = async () => 
         async execute(input, tool) {
           const word = await leads.release(String(tool.sessionID), name, input ?? {}) ?? adopt.revoked(name, input ?? {});
           if (word) return { content: word };
+          await children.settled(String(tool.sessionID));
           runEnds.guard(String(tool.sessionID), name, input ?? {}, asks);
           const slot = await slotFor(String(tool.sessionID));
           const no = slot.session !== tool.sessionID && !standsBy(name, input ?? {}) ? childWriteRefusal(slot.place?.name ?? null, name, input ?? {}, asks) : null;
