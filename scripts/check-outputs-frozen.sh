@@ -10,14 +10,18 @@
 # В CI без аргументов — по событию (GITHUB_EVENT_NAME):
 #   pull_request — база HEAD^1 (основание PR в его коммите слияния), ветка GITHUB_HEAD_REF;
 #   push — ветка из GITHUB_REF; весь пуш, покоммитно, от PUSH_BEFORE (github.event.before)
-#     до HEAD; before пуст, нулевой (новая ветка) или его нет в клоне — от HEAD^1. Коммит,
-#     менявший выходы, — отказ, кроме коммита релизного PR: автор github-actions[bot]
-#     (release-please открывает PR им, и squash-коммит слияния несёт его автором) И
-#     заголовок `chore(main): release …`; одно без другого — не выпуск.
+#     до HEAD. Коммит, менявший выходы, — отказ, кроме коммита релизного PR: автор
+#     github-actions[bot] (release-please открывает PR им, и squash-коммит слияния несёт
+#     его автором), коммиттер noreply@github.com (слияние кнопкой GitHub — так у 7.2.5–7.2.8)
+#     И заголовок `chore(main): release …`; автора и заголовок подделывает `git -c`,
+#     коммиттер GitHub — только слияние на GitHub (№147 [160]). before пуст, нулевой
+#     (новая ветка, force-push) или его нет в клоне — HEAD сверяется с последним релизным
+#     коммитом своей истории: грязный предпоследний коммит иначе прошёл бы.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 RELEASE_AUTHOR="41898282+github-actions[bot]@users.noreply.github.com"
+RELEASE_COMMITTER="noreply@github.com"
 outputs=(
   skills/establish-mcp/scripts/iskron.mjs
   skills/establish-mcp/scripts/opencode-plugin.js
@@ -27,7 +31,14 @@ outputs=(
 release_branch() { [[ "$1" == release-please--* ]]; }
 release_commit() {
   [[ "$(git log -1 --format=%ae "$1")" == "$RELEASE_AUTHOR" &&
+    "$(git log -1 --format=%ce "$1")" == "$RELEASE_COMMITTER" &&
     "$(git log -1 --format=%s "$1")" == "chore(main): release "* ]]
+}
+last_release() {
+  git log --format='%H%x09%ae%x09%ce%x09%s' HEAD |
+    awk -F'\t' -v a="$RELEASE_AUTHOR" -v c="$RELEASE_COMMITTER" \
+      '!found && $2 == a && $3 == c && index($4, "chore(main): release ") == 1 { print $1; found = 1 }'
+  # без exit в awk: ранний выход рвал бы трубу git log (SIGPIPE под pipefail)
 }
 
 event="${GITHUB_EVENT_NAME:-}"
@@ -39,7 +50,19 @@ if [[ $# -eq 0 && "$event" == "push" ]]; then
   fi
   before="${PUSH_BEFORE:-}"
   if [[ -z "$before" || "$before" =~ ^0+$ ]] || ! git rev-parse -q --verify "$before^{commit}" >/dev/null; then
-    before="HEAD^1"
+    rel="$(last_release)"
+    if [[ -z "$rel" ]]; then
+      echo "✗ пуш без before, а релизного коммита в истории нет — сверять не с чем" >&2
+      exit 1
+    fi
+    changed="$(git diff --name-only "$rel" HEAD -- "${outputs[@]}")"
+    if [[ -n "$changed" ]]; then
+      echo "✗ пуш без before: выходы JS расходятся с последним выпуском $(git log -1 --format='%h %s' "$rel"):" >&2
+      echo "$changed" | sed 's/^/    /' >&2
+      exit 1
+    fi
+    echo "✓ пуш без before: выходы JS = последний выпуск $(git log -1 --format='%h %s' "$rel")"
+    exit 0
   fi
   bad=0
   for c in $(git rev-list --reverse "$before..HEAD"); do
