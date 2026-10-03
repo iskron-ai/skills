@@ -1375,16 +1375,7 @@ function createChildren(d) {
       )
     );
   }
-  function ran(ev) {
-    if (ev?.type !== "session.execution.succeeded" && ev?.type !== "session.execution.failed")
-      return;
-    const s = ev.data?.sessionID;
-    const slot = typeof s === "string" ? d.slots.get(s) : void 0;
-    if (!slot?.child || slot.satelliteOf || typeof s !== "string") return;
-    void d.leads.plain(s, slot.place?.name ?? null);
-    d.endRun(s);
-  }
-  return { childSlot, back, pause, ran };
+  return { childSlot, back, pause };
 }
 
 // js/opencode/half.ts
@@ -1662,12 +1653,6 @@ var endWord = (who, why, last, kept) => {
 ${said || "(текста он не оставил — смотри его дело)"}`;
 };
 var keptLine = (who, place) => `ребёнок ${who} стоял не спутником (${place}) — место не снято, мост не погашен`;
-async function plainEnd(d, child, place) {
-  const line = `Искрон: субагент ${place ?? `сессии ${child}`} стоял не спутником${place ? ` (${place})` : ""} — не ведущий: конец его прогона гасит его мост, место не снято`;
-  d.say(line, "warning");
-  const parent = await d.parentOf(child).catch(() => null);
-  if (parent) await d.tell(parent, `${line}.`, false);
-}
 var turnWord = (place) => `Искрон: субагент ${place} сдал ход, не поручение — он продолжает и ждёт кадров своего дела; итог ляжет сюда по его концу. Отпустить раньше — iskron_channel(action="revoke", standing="${place}").`;
 var noticeWord = (child, place) => `Искрон: уведомление OpenCode <subagent sessionID="${child}" state="completed"> — конец ХОДА субагента ${place}, не поручения: он ведущий, стоит своим местом и ждёт кадров своего дела. Не считай его закончившим — итог ляжет сюда словом «КОНЧЕН» по его концу. Отпустить раньше — iskron_channel(action="revoke", standing="${place}").`;
 var releaseWord = (who) => `Искрон: субагент ${who} отпущен — его мост погашен: выход из дел и снятие места делает он; итог лёг сюда синтетикой.`;
@@ -1802,7 +1787,6 @@ function createLeads(d) {
       const l = leads.get(child);
       return { room: l?.room ?? null, noted: !!l?.noted, last: l?.last };
     },
-    plain: (child, place) => plainEnd(d, child, place),
     nameOf: (child) => leads.get(child)?.place?.name ?? (leads.has(child) ? child : null),
     onEvent(ev) {
       const child = ev?.data?.sessionID;
@@ -1968,6 +1952,14 @@ var READ_ACTIONS = {
   iskron_me: /* @__PURE__ */ new Set(["whoami", "orgs", "kartas", "usage"]),
   iskron_history: /* @__PURE__ */ new Set(["realm", "node", "delta"])
 };
+var readsOnly = (name, args) => {
+  const action = String(args.action ?? "");
+  return READ_TOOLS.has(name) || action === "?" || !!READ_ACTIONS[name]?.has(action);
+};
+function childWriteRefusal(of, name, args) {
+  if (readsOnly(name, args)) return null;
+  return of ? `Отказано (плагин): дочерняя сессия пишет только своим местом-спутником — ${name} ушёл бы местом родителя ${of}. Встань: iskron_stand(realm, karta, satellite_of="${of}"), затем повтори; читать можно и так.` : `Отказано (плагин): дочерняя сессия пишет только своим местом-спутником, а место родителя неизвестно — корень места не держит. Своего места ей не завести; читать можно и так, писать — словом запустившему.`;
+}
 function createRunEnds() {
   const ended = /* @__PURE__ */ new Map();
   const released = /* @__PURE__ */ new Set();
@@ -2216,6 +2208,8 @@ async function setupTools(ctx, say, onChannel, rootOf, flushUsage = async () => 
           if (word) return { content: word };
           runEnds.guard(String(tool.sessionID), name, input ?? {});
           const slot = await slotFor(String(tool.sessionID));
+          const no = slot.session !== tool.sessionID && !standsBy(name, input ?? {}) ? childWriteRefusal(slot.place?.name ?? null, name, input ?? {}) : null;
+          if (no) throw new Error(no);
           slot.busy++;
           try {
             return await callThrough(slot, name, input, String(tool.sessionID));
@@ -2233,6 +2227,7 @@ async function setupTools(ctx, say, onChannel, rootOf, flushUsage = async () => 
     if (slot.resume) await slot.resume;
     const args = { ...input ?? {} };
     if (standsBy(name, args) && slot.session !== sessionID) {
+      if (!slot.place) throw new Error(childWriteRefusal(null, name, args) ?? "");
       slot = children.childSlot(sessionID, slot);
       await awaitReady(slot);
     }
@@ -2321,10 +2316,7 @@ async function setupTools(ctx, say, onChannel, rootOf, flushUsage = async () => 
       forget(s);
       runEnds.clear(s, true);
     },
-    onEvent(ev) {
-      leads.onEvent(ev);
-      children.ran(ev);
-    },
+    onEvent: (ev) => leads.onEvent(ev),
     leadOf: (s) => leads.nameOf(s),
     moved: (s, to) => mv.moved({ say, slots, rootOf, forget, slotFor, adopt: adopt.now, away: leads.away }, s, to),
     async stop() {

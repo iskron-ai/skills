@@ -148,7 +148,6 @@ export function createLeads(d: W.LeadDoors): W.Leads {
       const l = leads.get(child);
       return { room: l?.room ?? null, noted: !!l?.noted, last: l?.last };
     },
-    plain: (child, place) => W.plainEnd(d, child, place),
     nameOf: (child) => leads.get(child)?.place?.name ?? (leads.has(child) ? child : null),
     onEvent(ev) {
       const child: unknown = ev?.data?.sessionID;

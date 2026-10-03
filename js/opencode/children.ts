@@ -107,19 +107,5 @@ export function createChildren(d: ChildDoors) {
     );
   }
 
-  /**
-   * Конец хода ребёнка на обычном мосте (не спутник): он не ведущий, и конец его
-   * прогона — конец (прежнее поведение одного прогона, #6361): мост гасится, место не снимается.
-   */
-  function ran(ev: { type?: unknown; data?: { sessionID?: unknown } }): void {
-    if (ev?.type !== "session.execution.succeeded" && ev?.type !== "session.execution.failed")
-      return;
-    const s = ev.data?.sessionID;
-    const slot = typeof s === "string" ? d.slots.get(s) : undefined;
-    if (!slot?.child || slot.satelliteOf || typeof s !== "string") return;
-    void d.leads.plain(s, slot.place?.name ?? null);
-    d.endRun(s);
-  }
-
-  return { childSlot, back, pause, ran };
+  return { childSlot, back, pause };
 }
