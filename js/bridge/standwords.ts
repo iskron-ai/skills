@@ -89,8 +89,8 @@ export const SW = {
     L(`Отказано: доска не прочиталась — ${text}`, `Refused: the board did not read — ${text}`),
   boardUnknown: (start: string): string =>
     L(
-      `Отказано: форма доски не распознана — ни заголовка «Каналы», ни слова о пустом графе, ни строк мест; управляющих действий (connect, стук, хук) по догадке не делаю. Начало ответа: ${start}`,
-      `Refused: the board's form is not recognized — no «Каналы» header, no word about an empty graph, no seat lines; no controlling moves (connect, knock, hook) on a guess. The answer begins: ${start}`,
+      `Отказано: форма доски не распознана — ни заголовка «Каналы» («Channels»), ни слова о пустом графе, ни строк мест; управляющих действий (connect, стук, хук) по догадке не делаю. Начало ответа: ${start}`,
+      `Refused: the board's form is not recognized — no «Channels» («Каналы») header, no word about an empty graph, no seat lines; no controlling moves (connect, knock, hook) on a guess. The answer begins: ${start}`,
     ),
   boardAmbiguous: (n: number, name: string, karta: string): string =>
     L(

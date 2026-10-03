@@ -7,6 +7,7 @@
 // держателя API). Мост ходит к хукам тулом iskron_admin(action="add_webhook");
 // channel он передаёт, только если схема тула этот параметр объявляет.
 import { L } from "../shared/lang.ts";
+import { FORM } from "./board.ts";
 import { callTool as call, short } from "./call.ts";
 import { post, state } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
@@ -56,14 +57,15 @@ export async function armRoleHook(p: HookPlace): Promise<string> {
   const { realm, karta, name } = p;
   const hooks = await call("iskron_admin", { action: "list_webhooks", realm, node_id: karta });
   // Пустой список поверхность печатает без заголовка: «Для #N вебхуки не зарегистрированы.» (#5380).
+  // Заголовок узнан, а слово состояния хука — нет: язык угадан частично, и «не будит»
+  // поставило бы второй хук; такой список не распознан целиком.
+  const blocks = hooks.text.split(/\n(?=\s*#\d+\s*→)/).slice(1);
   const recognized =
     !hooks.isError &&
-    (/^\s*Вебхуки(?:\s|:|\(|$)/m.test(hooks.text) ||
-      /вебхуки не зарегистрированы/i.test(hooks.text));
+    ((FORM.hooksHeader.test(hooks.text) && blocks.every((b) => FORM.hookState.test(b))) ||
+      FORM.hooksEmpty.test(hooks.text));
   const nameRe = new RegExp(`:${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![A-Za-z0-9._-])`);
-  const wakesMe =
-    recognized &&
-    hooks.text.split(/\n(?=\s*#\d+\s*→)/).some((b) => /активен/.test(b) && nameRe.test(b));
+  const wakesMe = recognized && blocks.some((b) => FORM.hookActive.test(b) && nameRe.test(b));
   const H = L("Хук инбокса роли", "Role inbox hook");
   if (p.sub)
     return L(

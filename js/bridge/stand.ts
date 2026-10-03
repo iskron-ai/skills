@@ -12,7 +12,7 @@ import { statSync } from "node:fs";
 import { isAbsolute } from "node:path";
 
 import { scoped, sessionCwd } from "../shared/scope.ts";
-import { nameOf, parseBoard } from "./board.ts";
+import { FORM, listens, nameOf, parseBoard } from "./board.ts";
 import {
   besideRefusal,
   callTool as call,
@@ -199,12 +199,10 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   const entries = parseBoard(board.text);
   // Доска — проза сервера (#4514). Управляющие действия — ротация, стук, хук —
   // идут только по распознанной однозначной форме; иначе честный отказ.
-  const header = /^\s*Каналы(?:\s*\((\d+)\))?(?:\s|:|$)/m.exec(board.text);
+  const header = FORM.boardHeader.exec(board.text);
   const declared = header?.[1] != null ? Number(header[1]) : null;
   // Пустой граф — законная пустота; наблюдённые фразы держит узел формы доски (#4514).
-  const empty = /^\s*Ни одна роль этого графа (?:не держит канала|нигде не стоит)/m.test(
-    board.text,
-  );
+  const empty = FORM.boardEmpty.test(board.text);
   const recognized = !!header || empty || entries.length > 0;
   let own = entries.filter((e) => e.karta === karta && nameOf(e.address) === name);
   // Выведенное имя держит живой мост другой сессии — встаём рядом на имя.N (#5407).
@@ -236,7 +234,7 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
     const own = nameOf(e.address);
     if (!own.startsWith(`${stem}.`)) return false;
     const third = own.slice(stem.length + 1);
-    return branches.has(third) && /живой|слушает/.test(e.rest);
+    return branches.has(third) && FORM.alive.test(e.rest);
   });
   for (const e of legacy) nameNotes.push(SW.legacy(e.address, realm, karta));
   // Счёт в заголовке не сошёлся с разобранным — где-то строка, которой парсер не
@@ -263,8 +261,7 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   // Иначе connect и register; новый сокет — новый цикл входа, счёт стуков сброшен.
   let how: string;
   let heardHere: boolean;
-  const listensElsewhere =
-    !!mine && /(^|·)\s*слушает/.test(mine.rest) && !holdsStanding(realm, karta, name);
+  const listensElsewhere = !!mine && listens(mine) && !holdsStanding(realm, karta, name);
   // Мост поднят заново под местом, которое держал прежний мост этого каталога
   // (перезапуск плагина, /mcp reconnect): место возвращается с диска, не
   // ротируется — адрес, хуки и очередь те же (#5061). Доска ещё читает
