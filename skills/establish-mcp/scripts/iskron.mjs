@@ -7213,14 +7213,14 @@ function localSuspend(msg) {
       })
     );
   const cases = joinedCases();
-  writeHoldRecord(
+  const write = () => writeHoldRecord(
     key,
     {
       realm: s2.realm,
       karta: s2.karta,
-      name: s2.name,
-      url,
-      statusUrl: statusUrl2,
+      name: s2.name ?? "",
+      url: H2.currentUrl ?? url,
+      statusUrl: H2.currentStatusUrl ?? statusUrl2,
       client: harnessName(),
       key,
       session: sessionOfBridge() ?? void 0,
@@ -7228,9 +7228,35 @@ function localSuspend(msg) {
     },
     true
   );
+  write();
   S3.on = true;
-  log(`satellite paused for a plugin reload: ${key}, cases ${cases.length} — place and cases kept`);
-  return Promise.resolve(answer({ suspended: true, key, cases: cases.length }));
+  return rearmForPause(s2).then((rearmed) => {
+    if (rearmed) write();
+    log(
+      `satellite paused for a plugin reload: ${key}, cases ${cases.length} — place and cases kept, idle window ${rearmed ? `${PAUSE_TTL_S} s` : "unchanged"}`
+    );
+    return answer({ suspended: true, key, cases: cases.length });
+  });
+}
+var PAUSE_TTL_S = Math.floor(HOLD_RECORD_MAX_AGE_MS / 1e3);
+var REARM_CAP_MS = 1e3;
+async function rearmForPause(s2) {
+  const name = s2.name ?? "";
+  if (!parkStanding(L("пауза спутника", "satellite pause"))) return false;
+  const args = {
+    action: "connect",
+    realm: s2.realm,
+    karta: s2.karta,
+    name,
+    ...placeFields({ realm: s2.realm, karta: String(s2.karta), name }),
+    ttl_seconds: PAUSE_TTL_S
+  };
+  const r = await Promise.race([
+    callTool("iskron_channel", args),
+    sleep(REARM_CAP_MS).then(() => null)
+  ]);
+  if (!r || r.isError) log(`satellite pause: idle window not re-armed — ${r?.text ?? "no answer"}`);
+  return !!r && !r.isError && H2.currentUrl !== null && !!H2.holder;
 }
 function afterResume(key) {
   if (!CFG.satellite || !key) return;

@@ -2454,6 +2454,9 @@ test("satellite: a pause before the stop keeps the place and its cases; the next
   await caseAs(sat, "join", "№102");
   const paused = (await sat.call("iskron/suspend", {})).result;
   assert.equal(paused?.suspended, true, `${JSON.stringify(paused)}\n${sat.stderr}`);
+  // #147 [140] 1б: the paused place waits the hold record's term, not the satellite's 300 s window.
+  const connects = fake.state.placeArgs.filter((a) => a.action === "connect");
+  assert.equal(connects.at(-1)?.ttl_seconds, 21600, `the pause re-arms the window:\n${sat.stderr}`);
   await sat.stop();
   assert.deepEqual(caseCalls(fake, "leave"), [], `no case left on a pause:\n${sat.stderr}`);
   assert.deepEqual(revokes(fake), [], "the place is not revoked on a pause");
