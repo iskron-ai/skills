@@ -1990,10 +1990,10 @@ test("a marker written by another live OpenCode server for the same folder is it
   }
 });
 
-// A pid is reused: a live process under the writer's pid long after the writer left would
-// hold its marker «a live other server's» for ever. A live server takes its own marker in
-// seconds; one older than the term is taken whoever lives under the pid (#147 [88]).
-test("a marker of a «live other server» older than the term is taken: its pid may be another process now", async () => {
+// A pid is reused: a process under the writer's pid that STARTED after the marker was
+// written is not its writer — the marker is taken (#147 [100]: the author by the
+// process start against the marker, not by the file's age).
+test("a marker whose pid now belongs to a process started after it was written is taken", async () => {
   for (const f of lostMarkers()) rmSync(f, { force: true });
   const other = spawn(process.execPath, ["-e", "setTimeout(() => {}, 60000)"], { stdio: "ignore" });
   const tag = createHash("sha256").update(`${LOC_A.directory}\0`).digest("hex").slice(0, 12);
@@ -2018,6 +2018,35 @@ test("a marker of a «live other server» older than the term is taken: its pid 
     );
   } finally {
     other.kill();
+    await rec.stop();
+  }
+});
+
+// The writer still lives — it started before the marker — so the marker is its own however
+// old: an age bound would hand a live server's sessions to this instance (#147 [100]).
+// Pid 1 started at boot, before any marker.
+test("a marker whose writer still lives is never taken, however old", async () => {
+  for (const f of lostMarkers()) rmSync(f, { force: true });
+  const tag = createHash("sha256").update(`${LOC_A.directory}\0`).digest("hex").slice(0, 12);
+  const file = join(process.env.ISKRON_BRIDGE_AUTH_DIR, `opencode-lost.@${tag}.1.z.json`);
+  const entries = [{ session: "a1", dir: LOC_A.directory, key: "k-a1", child: false }];
+  writeFileSync(file, JSON.stringify({ at: new Date().toISOString(), entries }));
+  const old = (Date.now() - 11 * 60_000) / 1000;
+  utimesSync(file, old, old);
+  const calls = join(SANDBOX, "old-author.calls");
+  writeFileSync(calls, "");
+  const b = bridgeEnv("old-author", { FB_CALLS: calls });
+  const rec = await plugin(b.env, { ...inLoc(LOC_A, "a1"), keepMarker: true });
+  try {
+    await serverTools(rec);
+    await delay(500);
+    assert.ok(
+      !callsIn(calls).some((c) => c.name === "iskron/resume" && c.arguments.session === "a1"),
+      "the living writer's session is not taken back from here",
+    );
+    assert.ok(existsSync(file), "its marker is left to it");
+  } finally {
+    rmSync(file, { force: true });
     await rec.stop();
   }
 });
@@ -2194,9 +2223,7 @@ test("a parent moved with a satellite child: the old instance ends the child wit
   try {
     await until(() => A.tools().has("iskron_case"), "the tools", 8000);
     await A.call("iskron_stand", { realm: "nks-dev", karta: "#931" }, "root");
-    const rootPid = pidOf(b.log);
-    appendFileSync(`${b.events}.${rootPid}`, event("held", { key: "k-root", place: ROOT_PLACE }));
-    await delay(400);
+    await rootHolds(A, b);
     await A.call("iskron_stand", { realm: "nks-dev" }, "child");
     const childPid = callsIn(calls)
       .filter((c) => c.name === "iskron_stand")
@@ -2522,8 +2549,7 @@ test("a child session of a standing root raises its bridge as a satellite of the
     await rec.call("iskron_stand", { realm: "nks-dev", karta: "#2816" }, "root");
     const rootPid = pidOf(b.log);
     const place = { realm: "@nks/nks-dev", karta: "2816", name: "host.repo.opus-5" };
-    appendFileSync(`${b.events}.${rootPid}`, event("held", { key: "k-root", place }));
-    await delay(400); // the fake bridge relays event lines every 40 ms
+    await rootHolds(rec, b, { pid: rootPid, place });
     await rec.call("iskron_stand", { realm: "nks-dev", karta: "#48" }, "child");
     await rec.call("iskron_stand", { realm: "nks-dev" }, "second");
     const starts = readFileSync(b.log, "utf8").trim().split("\n");
@@ -2573,13 +2599,11 @@ test("an evicted seat's busy line through iskron_stand is not holding: no loss m
     await until(() => rec.tools().has("iskron_stand"), "the stand tool", 8000);
     await rec.call("iskron_stand", { realm: "nks-dev", karta: "#2816" }, "root");
     const place = { realm: "@nks/nks-dev", karta: "2816", name: "host.repo.opus-5" };
-    appendFileSync(`${b.events}.${pidOf(b.log)}`, event("held", { key: "k-root", place }));
-    await delay(400); // the fake bridge relays event lines every 40 ms
+    await rootHolds(rec, b, { place });
     await rec.call("iskron_stand", { realm: "nks-dev", karta: "#48" }, "child");
     const childPid = pidsOf(b.log)[1];
     const sub = { realm: "@nks/nks-dev", karta: "48", name: "host.repo.opus-5.sub-1" };
-    appendFileSync(`${b.events}.${childPid}`, event("held", { key: "k-sub", place: sub }));
-    await delay(400);
+    await rootHolds(rec, b, { pid: childPid, key: "k-sub", place: sub }); // слово «held» ребёнка
     appendFileSync(
       `${b.events}.${childPid}`,
       event("evicted", { code: 4000, text: "ДЕЛАТЕЛЬ: место отняли" }),
@@ -2630,13 +2654,11 @@ test("a satellite child holding its seat calls iskron_stand with status only: th
     await until(() => rec.tools().has("iskron_stand"), "the stand tool", 8000);
     await rec.call("iskron_stand", { realm: "nks-dev", karta: "#2816" }, "root");
     const place = { realm: "@nks/nks-dev", karta: "2816", name: "host.repo.opus-5" };
-    appendFileSync(`${b.events}.${pidOf(b.log)}`, event("held", { key: "k-root", place }));
-    await delay(400); // the fake bridge relays event lines every 40 ms
+    await rootHolds(rec, b, { place });
     await rec.call("iskron_stand", { realm: "nks-dev", karta: "#48" }, "child");
     const childPid = pidsOf(b.log)[1];
     const sub = { realm: "@nks/nks-dev", karta: "48", name: "host.repo.opus-5.sub-1" };
-    appendFileSync(`${b.events}.${childPid}`, event("held", { key: "k-sub", place: sub }));
-    await delay(400);
+    await rootHolds(rec, b, { pid: childPid, key: "k-sub", place: sub }); // слово «held» ребёнка
     await rec.call("iskron_stand", { realm: "nks-dev", status: "спутник пишет" }, "child");
     const stands = readFileSync(calls, "utf8")
       .trim()
@@ -2697,8 +2719,7 @@ async function leadChild(name, env = {}, root = ROOT_PLACE, subName = SUB) {
     await until(() => rec.tools().has("iskron_case"), "the tools", 8000);
     await rec.call("iskron_stand", { realm: "nks-dev", karta: "#931" }, "root");
     const rootPid = pidOf(b.log);
-    appendFileSync(`${b.events}.${rootPid}`, event("held", { key: "k-root", place: root }));
-    await delay(400); // the fake bridge relays event lines every 40 ms
+    await rootHolds(rec, b, { pid: rootPid, place: root });
     await rec.call("iskron_stand", { realm: "nks-dev" }, "child");
     const childPid = pidsOf(b.log)[1];
     const sub = { ...root, name: subName };
@@ -3062,8 +3083,7 @@ test("two children of one parent in one case: A's word to B wakes only B, neithe
     await until(() => rec.tools().has("iskron_case"), "the tools", 8000);
     await rec.call("iskron_stand", { realm: "nks-dev", karta: "#931" }, "root");
     const rootPid = pidOf(b.log);
-    appendFileSync(`${b.events}.${rootPid}`, event("held", { key: "k-root", place: ROOT_PLACE }));
-    await delay(400);
+    await rootHolds(rec, b, { pid: rootPid });
     const seat = {};
     for (const [s, n] of [
       ["A", 1],
@@ -3134,8 +3154,7 @@ async function reloadedChild(name, env = {}, gone = null, firstTurn = false) {
   await until(() => first.tools().has("iskron_case"), "the tools", 8000);
   await first.call("iskron_stand", { realm: "nks-dev", karta: "#931" }, "root");
   const rootPid = pidOf(b.log);
-  appendFileSync(`${b.events}.${rootPid}`, event("held", { key: "k-root", place: ROOT_PLACE }));
-  await delay(400);
+  await rootHolds(first, b, { pid: rootPid });
   await first.call("iskron_stand", { realm: "nks-dev" }, "child");
   const childPid = pidsOf(b.log)[1];
   const sub = { ...ROOT_PLACE, name: SUB };
@@ -3438,13 +3457,11 @@ test("usage: a child's spend reaches its own bridge at its end, before the bridg
     await rec.call("iskron_stand", { realm: "nks-dev", karta: "#931" }, "root");
     const rootPid = pidOf(b.log);
     const place = { realm: "@nks/nks-dev", karta: "931", name: "host.repo.opus-5" };
-    appendFileSync(`${b.events}.${rootPid}`, event("held", { key: "k-root", place }));
-    await delay(400); // the fake bridge relays event lines every 40 ms
+    await rootHolds(rec, b, { pid: rootPid, place });
     await rec.call("iskron_stand", { realm: "nks-dev" }, "child");
     const childPid = pidsOf(b.log)[1];
     const sub = { ...place, name: "host.repo.opus-5.sub-1" };
-    appendFileSync(`${b.events}.${childPid}`, event("held", { key: "k-sub", place: sub }));
-    await delay(400);
+    await rootHolds(rec, b, { pid: childPid, key: "k-sub", place: sub }); // слово «held» ребёнка
     for (const [sessionID, input] of [
       ["root", 1000],
       ["child", 200],
@@ -3510,13 +3527,11 @@ test("usage: the child's end waits for the snapshot in flight, then sends the la
     await rec.call("iskron_stand", { realm: "nks-dev", karta: "#931" }, "root");
     const rootPid = pidOf(b.log);
     const place = { realm: "@nks/nks-dev", karta: "931", name: "host.repo.opus-5" };
-    appendFileSync(`${b.events}.${rootPid}`, event("held", { key: "k-root", place }));
-    await delay(400); // the fake bridge relays event lines every 40 ms
+    await rootHolds(rec, b, { pid: rootPid, place });
     await rec.call("iskron_stand", { realm: "nks-dev" }, "child");
     const childPid = pidsOf(b.log)[1];
     const sub = { ...place, name: "host.repo.opus-5.sub-1" };
-    appendFileSync(`${b.events}.${childPid}`, event("held", { key: "k-sub", place: sub }));
-    await delay(400);
+    await rootHolds(rec, b, { pid: childPid, key: "k-sub", place: sub }); // слово «held» ребёнка
     rec.emit({ type: "session.usage.updated", data: { sessionID: "child", tokens: tok(200) } });
     await until(() => usageLines().length > 0, "the first snapshot in flight");
     rec.emit({ type: "session.usage.updated", data: { sessionID: "child", tokens: tok(300) } });
@@ -3569,8 +3584,7 @@ async function endedChild(name, more = []) {
     await rec.call("iskron_stand", { realm: "nks-dev", karta: "#931" }, "root");
     const rootPid = pidOf(b.log);
     const place = { realm: "@nks/nks-dev", karta: "931", name: "host.repo.opus-5" };
-    appendFileSync(`${b.events}.${rootPid}`, event("held", { key: "k-root", place }));
-    await delay(400); // the fake bridge relays event lines every 40 ms
+    await rootHolds(rec, b, { pid: rootPid, place });
     await rec.call("iskron_stand", { realm: "nks-dev" }, "child");
     const childPid = pidsOf(b.log)[1];
     await rec.call("iskron_channel", { realm: "nks-dev", action: "leave" }, "child");
@@ -3688,8 +3702,7 @@ test("an interrupted execution of a child session takes nothing down", async () 
     await until(() => rec.tools().has("iskron_stand"), "the stand tool", 8000);
     await rec.call("iskron_stand", { realm: "nks-dev", karta: "#931" }, "root");
     const place = { realm: "@nks/nks-dev", karta: "931", name: "host.repo.opus-5" };
-    appendFileSync(`${b.events}.${pidOf(b.log)}`, event("held", { key: "k-root", place }));
-    await delay(400);
+    await rootHolds(rec, b, { place });
     await rec.call("iskron_stand", { realm: "nks-dev" }, "child");
     const childPid = pidsOf(b.log)[1];
     rec.emit({ type: "session.execution.interrupted", data: { sessionID: "child" } });
