@@ -20,6 +20,8 @@
 // экспортов нет. Bun канал не наполняет — его пинги приходят событием сокета (ниже).
 import * as diagnostics from "node:diagnostics_channel";
 
+import { L } from "./lang.ts";
+
 /** Канал, в который undici (WebSocket Node) публикует каждый входящий протокольный пинг. */
 const PING_CHANNEL = "undici:websocket:ping";
 /** Сколько интервалов пинга соединение может молчать, прежде чем считаться подвисшим. */
@@ -89,7 +91,10 @@ export async function serviceUp(socketUrl: string): Promise<{ version?: string }
  * (справка iskron_channel action="?"; граф nks-dev: #5189).
  */
 export function deadTokenAdvice(code: number): string {
-  return `закрытие ${code} — токен мёртв, зови connect`;
+  return L(
+    `закрытие ${code} — токен мёртв, зови connect`,
+    `close ${code} — the token is dead, call connect`,
+  );
 }
 
 export type FrameOrigin = "platform" | "human" | "sibling" | "peer";
@@ -274,7 +279,7 @@ export function holdSocket(o: HoldOptions): Holder {
     sock.addEventListener("message", (e: MessageEvent) => {
       if (stopped || ws !== sock) return;
       lastLife = Date.now();
-      const raw = typeof e.data === "string" ? e.data : "[двоичный кадр]";
+      const raw = typeof e.data === "string" ? e.data : L("[двоичный кадр]", "[binary frame]");
       if (handing) return handing.onFrame(raw);
       let frame: Frame | null = null;
       if (typeof e.data === "string") {
@@ -315,7 +320,10 @@ export function holdSocket(o: HoldOptions): Holder {
         // «Прочитано» у контура значит «записано в сокет», не «взято» (#5380):
         // кадры, ушедшие в подвисшее соединение, в hello не вернутся.
         (o.onHung ?? o.onNote)?.(
-          `соединение молчит ${Math.round(silent / 1000)} с при пинге раз в ${pingMs / 1000} с — подвисло без закрытия; переоткрываю тем же адресом. Кадры, пришедшие за время молчания, могли пропасть — сверь iskron_channel(action="history")`,
+          L(
+            `соединение молчит ${Math.round(silent / 1000)} с при пинге раз в ${pingMs / 1000} с — подвисло без закрытия; переоткрываю тем же адресом. Кадры, пришедшие за время молчания, могли пропасть — сверь iskron_channel(action="history")`,
+            `the connection has been silent for ${Math.round(silent / 1000)} s with a ping every ${pingMs / 1000} s — hung without closing; reopening at the same address. Frames that arrived during the silence may be lost — check iskron_channel(action="history")`,
+          ),
         );
         try {
           sock.close();
@@ -360,7 +368,12 @@ export function holdSocket(o: HoldOptions): Holder {
         lastEviction = now;
         if (gone) return; // переоткрытие уже назначено догадкой
         gone = true;
-        o.onNote?.("закрытие 4000 — место у другого держателя; открываю заново один раз");
+        o.onNote?.(
+          L(
+            "закрытие 4000 — место у другого держателя; открываю заново один раз",
+            "close 4000 — the seat is with another holder; reopening once",
+          ),
+        );
         retry = setTimeout(open, 2000);
         return;
       }
@@ -394,7 +407,12 @@ export function holdSocket(o: HoldOptions): Holder {
           retry = setTimeout(open, wait);
           return;
         }
-        o.onNote?.("служба не отвечает — идёт раскатка, держу тот же токен");
+        o.onNote?.(
+          L(
+            "служба не отвечает — идёт раскатка, держу тот же токен",
+            "the service is not answering — a rollout is under way, keeping the same token",
+          ),
+        );
         fastDrops = 1; // простой не должен перерасти в вопрос о токене
       }
       retry = setTimeout(open, code === ROLLOUT_CODE ? 3000 : 2000);

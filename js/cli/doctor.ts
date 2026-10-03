@@ -29,6 +29,7 @@ import { homeBridgePath } from "../shared/home.ts";
 import { seamRunDir } from "../shared/seam-entrance.ts";
 import { compareVersions } from "../shared/semver.ts";
 import { VERSION, versionIn } from "../shared/version.ts";
+import { dw } from "./doctorwords.ts";
 import { openCodeMcpEntries } from "./opencode-config.ts";
 import { subagentsReport } from "./subagents.ts";
 
@@ -47,46 +48,38 @@ function homeCopyReport(): void {
     self = readFileSync(fileURLToPath(import.meta.url));
   } catch {}
   if (!existsSync(home)) {
-    out(`домашняя копия: нет (${home}) — её кладёт establish-mcp при подключении`);
+    out(dw.homeNone(home));
     return;
   }
   const bytes = readFileSync(home);
   if (self && bytes.equals(self)) {
-    out(`домашняя копия: ${home} — та же сборка, что и этот файл`);
+    out(dw.homeSame(home));
     return;
   }
   const v = versionIn(bytes.toString("utf8"));
-  out(
-    `домашняя копия: ${home} — v${v ?? "?"}+${hashOf(bytes)}, ДРУГИЕ байты: ${
-      self
-        ? `обнови её из поставки: cp "${fileURLToPath(import.meta.url)}" ${home}`
-        : "этот файл не читается"
-    }`,
-  );
+  out(dw.homeDiffers(home, v ?? "?", hashOf(bytes), self ? fileURLToPath(import.meta.url) : null));
 }
 
 /** Откуда мост взял адрес — человеку, который спрашивает «на что он смотрит». */
 export function serverSourceWord(): string {
   switch (CFG.serverSource) {
     case "argument":
-      return "аргумент запуска";
+      return dw.srcArgument();
     case "ISKRON_BRIDGE_URL":
-      return "переменная ISKRON_BRIDGE_URL";
+      return dw.srcEnv();
     case "file":
-      return `файл выбора ${serverChoicePath(CFG.authDir)}`;
+      return dw.srcFile(serverChoicePath(CFG.authDir));
     default:
-      return `по умолчанию; сменить — node <мост> use en | ru | <url>, файл ${serverChoicePath(CFG.authDir)}`;
+      return dw.srcDefault(serverChoicePath(CFG.authDir));
   }
 }
 
 /** Следит ли мост за релизами поставки на этом адресе. */
 export const freshnessWord = (url: string): string =>
-  isProductionServer(url)
-    ? "продовый адрес: самообновление с релизов поставки включено"
-    : "другой инстанс: обновлений с релизов поставки нет";
+  isProductionServer(url) ? dw.freshProd() : dw.freshOther();
 
 async function serverReport(): Promise<void> {
-  out(`сервер: ${CFG.serverUrl} (${serverSourceWord()})`);
+  out(dw.server(CFG.serverUrl, serverSourceWord()));
   out(`  ${freshnessWord(CFG.serverUrl)}`);
   let res: Response;
   try {
@@ -100,17 +93,17 @@ async function serverReport(): Promise<void> {
       signal: AbortSignal.timeout(10_000),
     });
   } catch (e) {
-    out(`  недостижим: ${errorMessage(e)}`);
+    out(dw.unreachable(errorMessage(e)));
     return;
   }
   res.body?.cancel?.();
   const www = res.headers.get("www-authenticate");
   const note = www
-    ? " (просит OAuth)"
+    ? dw.wantsOAuth()
     : res.status >= 400 && res.status < 500
-      ? " (пробник без токена — отказ ожидаем)"
+      ? dw.noTokenProbe()
       : "";
-  out(`  отвечает: HTTP ${res.status}${note}`);
+  out(dw.answers(res.status, note));
   try {
     const meta = await discoverMeta(www);
     out(`  OAuth: token endpoint ${meta.as.token_endpoint}`);
@@ -121,7 +114,7 @@ async function serverReport(): Promise<void> {
 }
 
 async function patReport(): Promise<void> {
-  out(`грант: личный токен (PAT) из ${CFG.patSource} — OAuth не используется`);
+  out(dw.grantPat(String(CFG.patSource)));
   let res: Response;
   try {
     res = await fetch(CFG.serverUrl, {
@@ -144,63 +137,60 @@ async function patReport(): Promise<void> {
       signal: AbortSignal.timeout(10_000),
     });
   } catch (e) {
-    out(`  проверить не вышло: ${errorMessage(e)}`);
+    out(dw.patCheckFailed(errorMessage(e)));
     return;
   }
   res.body?.cancel?.();
-  if (res.status === 401) {
-    out(
-      "  ТОКЕН ОТВЕРГНУТ (HTTP 401) — отозван, истёк или без прав на этот граф: выпусти новый на странице токенов графа",
-    );
-  } else if (res.ok) out(`  токен принят сервером (HTTP ${res.status})`);
-  else out(`  сервер ответил HTTP ${res.status} — не отказ токена, смотри строку «сервер»`);
+  if (res.status === 401) out(dw.patRejected());
+  else if (res.ok) out(dw.patAccepted(res.status));
+  else out(dw.patOther(res.status));
   const path = storePath();
-  if (existsSync(path)) out(`  хранилище OAuth ${path} есть, но не читается, пока стоит PAT`);
+  if (existsSync(path)) out(dw.patStore(path));
 }
 
 function grantReport(): void {
   const path = storePath();
-  out(`грант: ${path}`);
+  out(dw.grant(path));
   if (!existsSync(path)) {
-    out("  хранилища нет — мост ещё ни разу не входил на этот сервер");
+    out(dw.noStore());
     return;
   }
   const store = loadStore();
   const t = store.tokens;
   if (!t?.access_token) {
-    out("  токенов нет");
+    out(dw.noTokens());
   } else {
     const usable = tokenUsable(t);
     const left = t.expires_at ? t.expires_at - now() : null;
-    out(
-      `  access: ${usable ? "годен" : "не годен"}${left !== null ? ` (${left > 0 ? "истекает через" : "истёк"} ${seconds(Math.abs(left))})` : ""}`,
-    );
+    out(dw.access(usable, left, seconds));
     const hours = refreshHours(t);
-    if (!t.refresh_token) out("  refresh: нет");
+    if (!t.refresh_token) out(dw.refreshNone());
     else {
       const parts: string[] = [];
       if (hours.nbf)
-        parts.push(now() < hours.nbf ? `в силе через ${seconds(hours.nbf - now())}` : "в силе");
+        parts.push(
+          now() < hours.nbf ? dw.refreshValidIn(seconds(hours.nbf - now())) : dw.refreshValid(),
+        );
       if (hours.exp)
         parts.push(
           now() >= hours.exp
-            ? "ИСТЁК — нужен вход"
-            : `истекает через ${seconds(hours.exp - now())}`,
+            ? dw.refreshExpired()
+            : dw.refreshExpiresIn(seconds(hours.exp - now())),
         );
-      out(`  refresh: есть${parts.length ? ` (${parts.join(", ")})` : ""}`);
+      out(dw.refresh(parts));
     }
   }
   if (store.client?.client_id) out(`  client_id: ${store.client.client_id}`);
   const st = loadGrantState();
   if (st.refused_since)
-    out(`  отказ стоит с ${new Date(st.refused_since).toISOString()}: ${st.reason ?? ""}`);
+    out(dw.refusedSince(new Date(st.refused_since).toISOString(), st.reason ?? ""));
   for (const suffix of [".auth-pending", ".refreshing"]) {
-    if (existsSync(path + suffix)) out(`  замок: ${path + suffix}`);
+    if (existsSync(path + suffix)) out(dw.lock(path + suffix));
   }
   const logPath = grantLogPath();
   if (existsSync(logPath)) {
     const lines = readFileSync(logPath, "utf8").trim().split("\n").slice(-3);
-    out(`  grant.log, последнее:`);
+    out(dw.grantLog());
     for (const l of lines) out(`    ${l}`);
   }
 }
@@ -209,19 +199,14 @@ function grantReport(): void {
 function latestReport(): void {
   const latest = readLatest(CFG.authDir);
   if (!latest) {
-    out(
-      "свежий релиз: мост ещё не спрашивал релизы (спросит через пару секунд после старта сессии; руками — подкоманда update)",
-    );
+    out(dw.latestNotAsked());
     return;
   }
   const ago = Math.round((Date.now() - latest.checked_at) / 60_000);
-  if (!latest.version)
-    out(`свежий релиз: не узнан (${latest.error ?? "без причины"}), спрашивал ${ago} мин назад`);
+  if (!latest.version) out(dw.latestUnknown(latest.error, ago));
   else if (compareVersions(latest.version, VERSION) > 0)
-    out(
-      `свежий релиз: v${latest.version} — ЭТОТ ФАЙЛ ОТСТАЛ (v${VERSION}); в дом скачано: ${latest.downloaded.join(", ") || "ничего"}; спрашивал ${ago} мин назад`,
-    );
-  else out(`свежий релиз: v${latest.version}, этот файл не отстал; спрашивал ${ago} мин назад`);
+    out(dw.latestBehind(latest.version, VERSION, latest.downloaded, ago));
+  else out(dw.latestCurrent(latest.version, ago));
 }
 
 // A regular install of this delivery carries the bridge entry inside the
@@ -238,13 +223,13 @@ function claudePluginReport(): void {
     };
     const mine = Object.entries(reg.plugins ?? {}).filter(([k]) => /^iskron@/.test(k));
     if (!mine.length) {
-      out(`Claude Code: плагин iskron не установлен (${registry})`);
+      out(dw.pluginMissing(registry));
       return;
     }
     for (const [key, installs] of mine) {
       for (const inst of installs) {
         const manifest = inst.installPath ? join(inst.installPath, ".mcp.json") : "";
-        let entry = "запись моста в манифесте не найдена";
+        let entry = dw.entryNotFound();
         if (manifest && existsSync(manifest)) {
           try {
             const m = JSON.parse(readFileSync(manifest, "utf8")) as {
@@ -253,18 +238,18 @@ function claudePluginReport(): void {
             const hit = Object.entries(m.mcpServers ?? {}).find(([, v]) =>
               (v.args ?? []).some((a) => /iskron\.mjs/.test(a)),
             );
-            if (hit) entry = `запись «${hit[0]}» → мост из плагина`;
+            if (hit) entry = dw.entryFound(hit[0]);
           } catch {
-            entry = `${manifest} не читается`;
+            entry = dw.unreadable(manifest);
           }
         }
         out(
-          `Claude Code: плагин ${key} v${inst.version ?? "?"} (${inst.scope ?? "?"}) — ${entry}; ${inst.installPath ?? ""}`,
+          dw.pluginLine(key, inst.version ?? "?", inst.scope ?? "?", entry, inst.installPath ?? ""),
         );
       }
     }
   } catch {
-    out(`Claude Code: ${registry} не читается`);
+    out(dw.claudeUnreadable(registry));
   }
 }
 
@@ -295,7 +280,7 @@ function codexPluginReport(home: string): void {
       if (!/iskron/.test(plugin)) continue;
       const dir = join(marketDir, plugin);
       const manifest = join(dir, ".codex-plugin", "plugin.json");
-      let word = "манифеста нет";
+      let word = dw.codexNoManifest();
       if (existsSync(manifest)) {
         try {
           const m = JSON.parse(readFileSync(manifest, "utf8")) as {
@@ -305,16 +290,16 @@ function codexPluginReport(home: string): void {
           const hit = Object.values(m.mcpServers ?? {}).some((v) =>
             (v.args ?? []).some((a) => /iskron\.mjs/.test(a)),
           );
-          word = `v${m.version ?? "?"}, ${hit ? "запись моста в манифесте есть" : "записи моста в манифесте нет"}`;
+          word = dw.codexManifest(m.version ?? "?", hit);
         } catch {
-          word = `${manifest} не читается`;
+          word = dw.unreadable(manifest);
         }
       }
       found++;
-      out(`Codex: плагин ${plugin}@${market} — ${word}; ${dir}`);
+      out(dw.codexPlugin(plugin, market, word, dir));
     }
   }
-  if (!found) out(`Codex: плагина iskron в кэше нет (${cache})`);
+  if (!found) out(dw.codexNoPlugin(cache));
 }
 
 export function harnessReport(): void {
@@ -330,14 +315,11 @@ export function harnessReport(): void {
       );
       if (entries.length) {
         for (const [name, v] of entries) {
-          out(`Claude Code: запись «${name}» → ${v.command ?? ""} ${(v.args ?? []).join(" ")}`);
+          out(dw.claudeEntry(name, v.command ?? "", (v.args ?? []).join(" ")));
         }
-      } else
-        out(
-          "Claude Code: ручной записи моста в пользовательском конфиге нет (штатная — в плагине)",
-        );
+      } else out(dw.claudeNoManual());
     } catch {
-      out(`Claude Code: ${claude} не читается`);
+      out(dw.claudeUnreadable(claude));
     }
   }
   // OpenCode: плагин из поставки лежит копией в каталоге плагинов; та же сверка, что и у моста.
@@ -345,37 +327,26 @@ export function harnessReport(): void {
   if (existsSync(opencodeDir)) {
     const copy = join(opencodeDir, "plugins", "iskron.js");
     const packaged = join(dirname(fileURLToPath(import.meta.url)), "opencode-plugin.js");
-    if (!existsSync(copy)) {
-      out(`OpenCode: плагина нет (${copy}) — его кладёт establish-mcp при подключении`);
-    } else if (!existsSync(packaged)) {
-      out(
-        `OpenCode: плагин ${copy} стоит; рядом с этим файлом поставки плагина нет, сверить не с чем`,
-      );
-    } else if (readFileSync(copy).equals(readFileSync(packaged))) {
-      out(`OpenCode: плагин ${copy} — та же сборка, что в поставке`);
-    } else {
-      out(`OpenCode: плагин ${copy} — ДРУГИЕ байты, обнови из поставки: cp "${packaged}" ${copy}`);
-    }
+    if (!existsSync(copy)) out(dw.ocNoPlugin(copy));
+    else if (!existsSync(packaged)) out(dw.ocNoPackaged(copy));
+    else if (readFileSync(copy).equals(readFileSync(packaged))) out(dw.ocSame(copy));
+    else out(dw.ocDiffers(copy, packaged));
   }
   openCodeMcpEntries(out);
   for (const codexHome of codexHomes()) {
-    out(`Codex: дом ${codexHome}`);
+    out(dw.codexHome(codexHome));
     codexPluginReport(codexHome);
     const door = join(codexHome, "app-server-control", "app-server-control.sock");
-    if (existsSync(door)) out(`Codex: дверь app-server открыта (${door})`);
-    else if (Buffer.byteLength(door) > 100)
-      out(
-        `Codex: двери нет и не будет — дом длиннее предела unix-сокета; нужен короткий дом для демона и сессий`,
-      );
-    else
-      out(
-        `Codex: двери нет (${door}) — демон app-server не поднят; без неё кадр доставляет watchdog-exit`,
-      );
+    if (existsSync(door)) out(dw.codexDoorOpen(door));
+    else if (Buffer.byteLength(door) > 100) out(dw.codexDoorNever());
+    else out(dw.codexDoorNone(door));
     const codex = join(codexHome, "config.toml");
     if (existsSync(codex)) {
       const text = readFileSync(codex, "utf8");
       out(
-        `Codex: ${/^\s*\[mcp_servers\."?iskron"?\]|^\s*mcp_servers\."?iskron"?\s*=/m.test(text) ? "ручная запись моста в config.toml есть" : "ручной записи моста в config.toml нет (штатная — в плагине)"}`,
+        dw.codexManual(
+          /^\s*\[mcp_servers\."?iskron"?\]|^\s*mcp_servers\."?iskron"?\s*=/m.test(text),
+        ),
       );
     }
   }
@@ -383,30 +354,33 @@ export function harnessReport(): void {
 
 /** Демон машины своего каталога гранта: режим, сокет, pid, сборка, число сессий. */
 async function daemonReport(): Promise<void> {
-  out(
-    daemonWanted()
-      ? "демон машины: тонкий мост включён — умолчание (выключатель — ISKRON_BRIDGE_DAEMON=0 в окружении моста)"
-      : "демон машины: выключен — мост идёт полным (выключатель стоит в окружении этого процесса: ISKRON_BRIDGE_DAEMON=0 или ISKRON_BRIDGE_NO_DAEMON)",
-  );
+  out(daemonWanted() ? dw.daemonOn() : dw.daemonOff());
   // doctor не пишет: личного каталога шва нет — демона не поднимали, и проба его бы создала.
   if (!existsSync(seamRunDir(CFG.authDir))) {
-    out(`  не поднимался: каталога шва ${seamRunDir(CFG.authDir)} нет`);
+    out(dw.daemonNeverUp(seamRunDir(CFG.authDir)));
     return;
   }
   const d = await probeDaemon(["--auth-dir", CFG.authDir]);
   if (d.ok) {
-    out(`  сокет: ${d.socket}`);
+    out(dw.daemonSocket(d.socket));
     out(
-      `  отвечает: pid ${d.pid}, сборка ${d.build}${d.build.startsWith(`v${VERSION}+`) ? "" : ` — ДРУГАЯ, чем этот файл (v${VERSION})`}, сессий ${d.sessions ?? "?"}${d.path ? `, файл ${d.path}` : ""}`,
+      dw.daemonAnswers(
+        d.pid,
+        d.build,
+        !d.build.startsWith(`v${VERSION}+`),
+        VERSION,
+        d.sessions,
+        d.path,
+      ),
     );
-  } else if (d.unsafe) out(`  вход не личный: ${d.why} — тонкий мост пойдёт полным`);
-  else out(`  сокет: ${d.socket} — не отвечает (${d.why})`);
+  } else if (d.unsafe) out(dw.daemonUnsafe(d.why));
+  else out(dw.daemonSilent(d.socket, d.why));
 }
 
 export async function runDoctor(argv: string[]): Promise<void> {
   setConfig(parseArgs(argv));
   out(`iskron doctor — ${BUILD}`);
-  out(`этот файл: ${fileURLToPath(import.meta.url)}`);
+  out(dw.thisFile(fileURLToPath(import.meta.url)));
   out(`node: ${process.version}`);
   homeCopyReport();
   latestReport();

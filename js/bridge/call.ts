@@ -111,7 +111,10 @@ export function besideRefusal(realm: unknown, how: "stand" | "connect"): string 
   if (!led || !prim || !otherRealm(realm, prim.realm)) return null;
   if (how === "stand" && holdsChannel()) return null;
   return how === "connect"
-    ? `Отказано (мост): этот мост ведёт место ${led}, а connect в другом графе открыл бы второй канал и снял бы его с сокета. Место в другом графе встаёт рядом на том же канале — iskron_stand(realm=…) или register.`
+    ? L(
+        `Отказано (мост): этот мост ведёт место ${led}, а connect в другом графе открыл бы второй канал и снял бы его с сокета. Место в другом графе встаёт рядом на том же канале — iskron_stand(realm=…) или register.`,
+        `Refused (bridge): this bridge leads the seat ${led}, and a connect in another graph would open a second channel and take it off the socket. A seat in another graph stands beside on the same channel — iskron_stand(realm=…) or register.`,
+      )
     : L(
         `Отказано (мост): этот мост ведёт место ${led}, но сокета канала у него сейчас нет (ушёл с места или место отняли) — место другого графа встать рядом не может. Сперва верни ${led}: iskron_stand его графа.`,
         `Refused (bridge): this bridge leads the seat ${led}, but has no channel socket now (it left the seat or the seat was taken) — a seat of another graph cannot stand beside. First bring back ${led}: iskron_stand for its graph.`,
@@ -165,7 +168,7 @@ export async function callTool(name: string, args: Record<string, unknown>): Pro
     if (m.id === id) reply = m;
   });
   let got = reply as JsonRpcMessage | null;
-  if (!got) return { text: "ответа нет", isError: true };
+  if (!got) return { text: L("ответа нет", "no reply"), isError: true };
   if (name === "iskron_channel") {
     noteLocaleEcho(args, replyText(got));
     if (args.action === "register") noteStanding(msg, got);

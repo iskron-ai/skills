@@ -12,12 +12,7 @@
 // Сокет один на канал, а канал держит места в нескольких графах (#5838):
 // места рядом с основным — places.ts, кадр идёт к двери места своего графа.
 // Занятость делатель пишет в файл рядом с сокетом (#4231); публикует мост.
-import {
-  deadTokenAdvice,
-  holdSocket,
-  isDirectWord,
-  statusUrl as deriveStatusUrl,
-} from "../shared/channel.ts";
+import { holdSocket, isDirectWord, statusUrl as deriveStatusUrl } from "../shared/channel.ts";
 import { bindAll } from "../shared/scope.ts";
 import { deliveredKeys, noteSeen } from "../shared/seen.ts";
 import { socketPathOf } from "../shared/standings.ts";
@@ -30,6 +25,7 @@ import { isDelivered, redundantCopy } from "./fanout.ts";
 import { letGo, takeSpool } from "./handoff.ts";
 import { dropHoldRecord, keyOf, readHoldRecord, writeHoldRecord } from "./holdrecord.ts";
 import { type Frame, H, handoverReason } from "./holdstate.ts";
+import { holdWords } from "./holdwords.ts";
 import {
   addExtra,
   type Channel,
@@ -281,7 +277,7 @@ export function holdStanding(url: string, statusUrl?: string | null): string {
   // Иное имя — прежнее место мост бросает сам: его запись стирается, иначе возврат по каталогу поднимал бы брошенное (#5140).
   // То же место заново — места рядом остаются на канале (#5838).
   const same = !!H.currentKey && H.currentKey === key;
-  releaseStanding("новый сокет", !!H.currentKey && H.currentKey !== key, same);
+  releaseStanding(holdWords.newSocket(), !!H.currentKey && H.currentKey !== key, same);
   H.currentKey = key;
   H.currentUrl = url;
   H.currentStatusUrl = statusUrl || deriveStatusUrl(url);
@@ -320,7 +316,7 @@ export function parkStanding(reason: string): string | null {
   H.holder = null;
   H.parked = true;
   standingLog(`parked ${H.currentKey}: ${reason}`);
-  const text = `мост ушёл с места (${reason}) — сокет закрыт, место цело; возврат — сторож или iskron_stand`;
+  const text = holdWords.parked(reason);
   broadcast({ kind: "note", text });
   return H.currentKey;
 }
@@ -423,9 +419,7 @@ function openHolder(url: string, key: string): void {
         });
       },
       onEvicted: (code) => {
-        const text =
-          `ДЕЛАТЕЛЬ: закрытие ${code} — место отняли, слушает другой держатель; ` +
-          "привязка записей цела, занятость — пока адрес не повернули connect-ом; слух здесь — iskron_stand без name встанет рядом на имя.N; отбить место (take=true) — только словом человека";
+        const text = holdWords.evicted(code);
         log(text);
         standingLog(`evicted ${key}: close ${code}`);
         H.evictedKey = key;
@@ -443,7 +437,7 @@ function openHolder(url: string, key: string): void {
           log(
             `standing revoked by this session — released quietly, binding forgotten (${state.standing?.name ?? "unnamed"}; close ${code} arrived before the answer)`,
           );
-          releaseStanding("снято своим revoke", true);
+          releaseStanding(holdWords.revokedOwn(), true);
           state.standing = null;
           state.standingSession = null;
           return;
@@ -452,21 +446,19 @@ function openHolder(url: string, key: string): void {
           // Протухшая запись держания: место у платформы уже мертво — не тревога,
           // а тихий откат; iskron_stand займёт место заново connect-ом.
           log(`hold record for ${key} is dead at the platform (close ${code}) — dropped`);
-          releaseStanding("возврат с диска не удался", true);
+          releaseStanding(holdWords.resumeFailed(), true);
           return;
         }
-        const text = `ДЕЛАТЕЛЬ: ${deadTokenAdvice(code)}`;
+        const text = holdWords.dead(code);
         log(text);
         standingLog(`dead ${key}: close ${code}`);
         const ev: ChannelEvent = { kind: "dead", code, text };
         broadcast(ev);
         notify("error", ev);
-        releaseStanding("токен мёртв", true);
+        releaseStanding(holdWords.tokenDead(), true);
       },
       onServiceAlive: (version) => {
-        const text =
-          `ДЕЛАТЕЛЬ: сокет рвут, а служба отвечает (${version}) — место держу, переоткрываю реже; ` +
-          "не пройдёт — спроси о токене";
+        const text = holdWords.alive(version);
         log(text);
         const ev: ChannelEvent = { kind: "alive", version, text };
         broadcast(ev);

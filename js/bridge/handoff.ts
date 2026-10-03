@@ -5,6 +5,7 @@
 // адрес и сервер не вытеснит старый кодом 4000, либо до предела; пришедшее за это
 // время — в спул (spool.ts). Предел вышел — сокет закрыт, как прежде, и занятость снята.
 import { EVICTED_CODE, type Frame, type Holder } from "../shared/channel.ts";
+import { L } from "../shared/lang.ts";
 import { socketPathOf, spoolFilePathOf } from "../shared/standings.ts";
 import { CFG } from "./config.ts";
 import { type ChannelEvent } from "./door.ts";
@@ -100,9 +101,12 @@ export function takeSpool(
     const p = primary();
     const to = p && strayOf(frame, p);
     if (!p || !to) return feed(raw, frame);
-    const text =
+    const text = L(
       `ДЕЛАТЕЛЬ: кадр ${String(frame?.id ?? "?")} из спула смены демона адресован месту ${to}, ` +
-      `не вернувшемуся, — не кадр места ${p.door.key}; вернуть место — iskron_stand в его графе. Кадр: ${raw}`;
+        `не вернувшемуся, — не кадр места ${p.door.key}; вернуть место — iskron_stand в его графе. Кадр: ${raw}`,
+      `DOER: frame ${String(frame?.id ?? "?")} from the daemon-change spool is addressed to the seat ${to}, ` +
+        `which has not returned — not a frame of the seat ${p.door.key}; to bring the seat back — iskron_stand in its graph. Frame: ${raw}`,
+    );
     log(text);
     const ev: ChannelEvent = { kind: "note", text };
     p.door.broadcast(ev);

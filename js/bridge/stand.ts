@@ -64,7 +64,7 @@ import { readLatest, staleNotice } from "./update.ts";
 /** Имя места, которое ведёт мост, — для совета в отказе «стояние одно на мост». */
 const ledName = (): string => state.standing?.name ?? "";
 
-export { STAND_TOOL } from "./standtool.ts";
+export { STAND_TOOL_NAME, standTool } from "./standtool.ts";
 
 const isDirectory = (p: string): boolean => {
   try {

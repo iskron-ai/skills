@@ -6,6 +6,7 @@
 // тем, ради которого он взят: у каждого своя дверь для сторожа, своя запись
 // держания и своя строка в повторной регистрации (standing.ts).
 import { type Frame } from "../shared/channel.ts";
+import { L } from "../shared/lang.ts";
 import { scoped } from "../shared/scope.ts";
 import { harnessName } from "./client.ts";
 import { type ChannelEvent, Door, type DoorHooks } from "./door.ts";
@@ -85,7 +86,8 @@ export function addExtra(
   if (have) return key;
   // Иное место того же графа сменяет прежнее — правило «в графе одно место» уже пройдено.
   for (const p of extraPlaces())
-    if (sameRealm(p.standing.realm, s.realm)) dropExtra(p.door.key, "другое место графа", true);
+    if (sameRealm(p.standing.realm, s.realm))
+      dropExtra(p.door.key, L("другое место графа", "another seat of the graph"), true);
   const door = new Door(key, hooks);
   const handle = primaryAddress?.match(/^(.*):/)?.[1];
   if (handle && s.name) door.address = `${handle}:${s.name}`;
@@ -202,7 +204,7 @@ export function strayOf(frame: Frame | null, primary: Place): string | null {
   const back = state.places.find((s) => frame.realm != null && sameRealm(s.realm, frame.realm));
   return back
     ? keyOfPlace(back)
-    : `${String(frame.to_standing ?? "—")}, граф ${String(frame.realm ?? "—")}`;
+    : `${String(frame.to_standing ?? "—")}, ${L("граф", "graph")} ${String(frame.realm ?? "—")}`;
 }
 
 /**
@@ -219,8 +221,11 @@ export function routeFrame(frame: Frame | null, primary: Place): { door: Door; n
   const id = typeof frame.to_standing_id === "string" ? frame.to_standing_id : "";
   return {
     door: primary.door,
-    note:
+    note: L(
       `ДЕЛАТЕЛЬ: кадр ${String(frame.id ?? "?")} (to_standing_id ${id || "—"}, ${frame.to_standing ?? "—"}, граф ${frame.realm ?? "—"}) ` +
-      `не сопоставлен ни одному месту моста (${fits.length ? "подходят несколько" : "не подходит ни одно"}) — отдан основному месту ${primary.door.key}; сверь адрес кадра.`,
+        `не сопоставлен ни одному месту моста (${fits.length ? "подходят несколько" : "не подходит ни одно"}) — отдан основному месту ${primary.door.key}; сверь адрес кадра.`,
+      `DOER: frame ${String(frame.id ?? "?")} (to_standing_id ${id || "—"}, ${frame.to_standing ?? "—"}, graph ${frame.realm ?? "—"}) ` +
+        `matches no seat of the bridge (${fits.length ? "several fit" : "none fits"}) — given to the main seat ${primary.door.key}; check the frame's address.`,
+    ),
   };
 }

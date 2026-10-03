@@ -14,6 +14,7 @@
 //     место читалось бы слушающим при делателе, которого не разбудить;
 //     pi и OpenCode кадр получают уведомлением и глухими не бывают;
 //   • конец сессии: занятость снимается перед выходом (session.ts).
+import { L } from "../shared/lang.ts";
 import { scoped } from "../shared/scope.ts";
 import { resolveAgainstLed, unresolvedRefusal } from "./call.ts";
 import { notifiedClient } from "./client.ts";
@@ -45,6 +46,14 @@ import { flushUsage, usagePlace } from "./usage.ts";
 const DEAF_MS = Number(process.env.ISKRON_BRIDGE_DEAF_MS) || 15 * 60_000;
 const TICK_MS = Math.min(60_000, Math.max(200, Math.floor(DEAF_MS / 5)));
 
+const NOT_HOLDING = (): string =>
+  L("мост места не держит — уходить неоткуда", "the bridge holds no seat — nothing to leave");
+
+const clearedLine = (st: { ok: boolean; body: string }): string =>
+  st.ok
+    ? L("занятость снята", "busyness cleared")
+    : L(`занятость не снята (${st.body})`, `busyness not cleared (${st.body})`);
+
 /** Кадры этому харнесу доходят только через локального клиента моста. */
 const deafWithoutListener = (): boolean => !notifiedClient();
 
@@ -67,7 +76,7 @@ export async function leaveStanding(reason: string, byWord = false): Promise<str
   const leaving = heldPlaces().map((p) => p.key);
   if (leaving.length) await flushUsage(usagePlace()); // последний снимок расхода — пока место держится (#6401)
   const parked = parkStanding(reason);
-  if (!parked) return "мост места не держит — уходить неоткуда";
+  if (!parked) return NOT_HOLDING();
   K.beside = beside;
   K.status = publishedStatus();
   const st = await publishStatus("", undefined, true); // сокет закрыт у всех мест канала — и строка у всех
@@ -78,15 +87,24 @@ export async function leaveStanding(reason: string, byWord = false): Promise<str
   // Уход словом держателя держится: сторож слуха и возврат по каталогу или
   // ключу место не поднимают — только iskron_stand по имени (#6017).
   if (byWord) for (const k of leaving) markLeft(k, true);
-  const line = st.ok ? "занятость снята" : `занятость не снята (${st.body})`;
+  const line = clearedLine(st);
   log(`left the standing: ${reason}; ${line}`);
   const which =
     leaving.length > 1
-      ? `с мест ${leaving.join(", ")} (сокет канала у них общий)`
-      : `с места ${parked}`;
+      ? L(
+          `с мест ${leaving.join(", ")} (сокет канала у них общий)`,
+          `the seats ${leaving.join(", ")} (they share the channel socket)`,
+        )
+      : L(`с места ${parked}`, `the seat ${parked}`);
   return byWord
-    ? `ушёл ${which}: сокет закрыт, ${line}; адрес, очередь и хуки целы — почта копится; место отпущено словом, само не вернётся — вернуть: iskron_stand тем же именем`
-    : `ушёл ${which}: сокет закрыт, ${line}; адрес, очередь и хуки целы — почта копится и придёт при возвращении (сторож или iskron_stand)`;
+    ? L(
+        `ушёл ${which}: сокет закрыт, ${line}; адрес, очередь и хуки целы — почта копится; место отпущено словом, само не вернётся — вернуть: iskron_stand тем же именем`,
+        `left ${which}: the socket is closed, ${line}; address, queue and hooks intact — mail piles up; the seat is released by word and will not return by itself — to bring it back: iskron_stand with the same name`,
+      )
+    : L(
+        `ушёл ${which}: сокет закрыт, ${line}; адрес, очередь и хуки целы — почта копится и придёт при возвращении (сторож или iskron_stand)`,
+        `left ${which}: the socket is closed, ${line}; address, queue and hooks intact — mail piles up and arrives on return (the watchdog or iskron_stand)`,
+      );
 }
 
 /**
@@ -96,14 +114,20 @@ export async function leaveStanding(reason: string, byWord = false): Promise<str
  */
 async function leaveSatellite(reason: string): Promise<string> {
   const place = heldPlaces()[0]?.key;
-  if (!place) return "мост места не держит — уходить неоткуда";
+  if (!place) return NOT_HOLDING();
   await flushUsage(usagePlace());
   const st = await publishStatus("", undefined, true);
-  releaseStanding(`${reason}: место-спутник отпущено целиком`, true);
+  releaseStanding(
+    `${reason}: ${L("место-спутник отпущено целиком", "the satellite seat is released whole")}`,
+    true,
+  );
   releaseSatelliteClaims(); // имя свободно следующему прогону (satellite.ts)
-  const line = st.ok ? "занятость снята" : `занятость не снята (${st.body})`;
+  const line = clearedLine(st);
   log(`left the satellite place: ${reason}; ${line}`);
-  return `ушёл с места-спутника ${place}: сокет закрыт, ${line}; место отпущено целиком — ни сторож, ни возврат его не поднимут; встать снова — iskron_stand с satellite_of`;
+  return L(
+    `ушёл с места-спутника ${place}: сокет закрыт, ${line}; место отпущено целиком — ни сторож, ни возврат его не поднимут; встать снова — iskron_stand с satellite_of`,
+    `left the satellite seat ${place}: the socket is closed, ${line}; the seat is released whole — neither the watchdog nor a return will raise it; to stand again — iskron_stand with satellite_of`,
+  );
 }
 
 /**
@@ -118,7 +142,10 @@ async function leaveSatellite(reason: string): Promise<string> {
 export function returnToStanding(how: string): boolean {
   if (!resumeStanding()) return false;
   for (const p of heldPlaces()) markLeft(p.key, false); // на месте снова — пометка ухода словом снята
-  const text = `мост вернулся на место (${how}) — сокет открыт заново тем же адресом${K.status ? `, занятость «${K.status}» возвращена` : ""}`;
+  const text = L(
+    `мост вернулся на место (${how}) — сокет открыт заново тем же адресом${K.status ? `, занятость «${K.status}» возвращена` : ""}`,
+    `the bridge is back on the seat (${how}) — the socket is reopened at the same address${K.status ? `, busyness "${K.status}" restored` : ""}`,
+  );
   log(text);
   if (K.status) {
     const line = K.status;
@@ -146,7 +173,7 @@ export function startDeafnessWatch(): void {
   // сторож остаётся прицепленным, проба — нет (#5140).
   onListenerAttached(() =>
     setTimeout(() => {
-      if (localListeners() > 0) returnToStanding("прицепился сторож");
+      if (localListeners() > 0) returnToStanding(L("прицепился сторож", "a watchdog attached"));
     }, 300).unref(),
   );
   setInterval(() => {
@@ -155,7 +182,8 @@ export function startDeafnessWatch(): void {
     if (Date.now() - since < DEAF_MS) return;
     const s = state.standing;
     if (!s || !holdsStanding(s.realm, s.karta, s.name ?? "")) return;
-    void leaveStanding(`никто не слушает ${Math.round(DEAF_MS / 60_000)} мин`);
+    const min = Math.round(DEAF_MS / 60_000);
+    void leaveStanding(L(`никто не слушает ${min} мин`, `nobody has listened for ${min} min`));
   }, TICK_MS).unref();
 }
 
@@ -177,14 +205,20 @@ export function localLeave(msg: JsonRpcMessage): Promise<JsonRpcMessage> | null 
     const beside = besideKeyIn(realm);
     if (beside)
       return answer(
-        `Отказано (мост): место ${beside} стоит на общем канале моста рядом с ${ledKey()} — уход закрыл бы сокет всем местам канала. Уйти со всех — leave в графе ${state.standing?.realm ?? "основного места"}; снять только это место — revoke.`,
+        L(
+          `Отказано (мост): место ${beside} стоит на общем канале моста рядом с ${ledKey()} — уход закрыл бы сокет всем местам канала. Уйти со всех — leave в графе ${state.standing?.realm ?? "основного места"}; снять только это место — revoke.`,
+          `Refused (bridge): the seat ${beside} stands on the bridge's shared channel beside ${ledKey()} — leaving would close the socket for all seats of the channel. To leave all — leave in the graph ${state.standing?.realm ?? "of the main seat"}; to remove only this seat — revoke.`,
+        ),
         true,
       );
     if (state.standing && otherRealm(realm, state.standing.realm))
       return answer(
-        `Отказано (мост): в графе ${String(realm)} этот мост места не держит — уходить неоткуда; его место ${ledKey()} в графе ${state.standing.realm} не тронуто.`,
+        L(
+          `Отказано (мост): в графе ${String(realm)} этот мост места не держит — уходить неоткуда; его место ${ledKey()} в графе ${state.standing.realm} не тронуто.`,
+          `Refused (bridge): this bridge holds no seat in the graph ${String(realm)} — nothing to leave; its seat ${ledKey()} in the graph ${state.standing.realm} is untouched.`,
+        ),
         true,
       );
-    return answer(await leaveStanding("по слову делателя", true));
+    return answer(await leaveStanding(L("по слову делателя", "by the doer's word"), true));
   })();
 }

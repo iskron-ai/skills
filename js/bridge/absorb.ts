@@ -2,6 +2,7 @@
 // канала (граф nks-dev: #4233, #5033). Секрет сокета вырезается, держание
 // уходит в hold.ts; своё revoke отпускает место тихо (#5012).
 import { statusUrl as deriveStatusUrl } from "../shared/channel.ts";
+import { L } from "../shared/lang.ts";
 import { besideKeyIn, holdStanding, releaseStanding, setRevokingOwn } from "./hold.ts";
 import { listenBlock } from "./listen.ts";
 import { dropExtra, extraIn, extraPlaces } from "./places.ts";
@@ -15,6 +16,8 @@ const SOCKET_RE =
   /wss:\/\/[^\s"'`<>)\]]+|ws:\/\/(?:127\.0\.0\.1|\[?::1\]?|localhost)(?::\d+)?\/[^\s"'`<>)\]]+/;
 const STATUS_RE = /https?:\/\/[^\s"'`<>)\]]+\/channel\/status\/[^\s"'`<>)\]]+/;
 const trim = (s: string): string => s.replace(/[.,;:!?»"')\]]+$/, "");
+const REVOKED_BY_OWN = (): string => L("снято своим revoke", "removed by its own revoke");
+
 /**
  * Секрет не покидает моста (граф nks-dev: #4233, #5033): адреса сокета и
  * статуса из ответа вырезаются — слушать снаружи нечем, и никакая дверь
@@ -24,9 +27,15 @@ const hideAddresses = (text: string): string =>
   text
     .replace(
       new RegExp(SOCKET_RE.source, "g"),
-      "(адрес сокета держит мост — агенту не показывается)",
+      L(
+        "(адрес сокета держит мост — агенту не показывается)",
+        "(the bridge holds the socket address — it is not shown to the agent)",
+      ),
     )
-    .replace(new RegExp(STATUS_RE.source, "g"), "(статусный адрес держит мост)");
+    .replace(
+      new RegExp(STATUS_RE.source, "g"),
+      L("(статусный адрес держит мост)", "(the bridge holds the status address)"),
+    );
 
 /**
  * Ответ connect/mint прошёл через мост: взять из него сокет и держать, а сам
@@ -106,19 +115,22 @@ export function absorbRevokeReply(msg: JsonRpcMessage, reply: JsonRpcMessage): J
     if (revokesOwn(msg) && held.length && Array.isArray(content))
       content.push({
         type: "text",
-        text: `[iskron-bridge] ${state.standing?.name ?? "это место"} — основное место канала моста, а на канале стоят места других графов: ${held.join(", ")}. Мост ничего не отпустил; снять основное — сперва сними их (revoke в их графе).`,
+        text: L(
+          `[iskron-bridge] ${state.standing?.name ?? "это место"} — основное место канала моста, а на канале стоят места других графов: ${held.join(", ")}. Мост ничего не отпустил; снять основное — сперва сними их (revoke в их графе).`,
+          `[iskron-bridge] ${state.standing?.name ?? "this seat"} is the main seat of the bridge's channel, and seats of other graphs stand on the channel: ${held.join(", ")}. The bridge released nothing; to remove the main one, first remove them (revoke in their graph).`,
+        ),
       });
     return reply;
   }
   const beside = extraIn(a.realm);
   if (beside && names(a, beside.standing)) {
     // Место другого графа снято своим revoke: его дверь и запись — прочь, канал цел (#5838).
-    dropExtra(beside.door.key, "снято своим revoke", true);
+    dropExtra(beside.door.key, REVOKED_BY_OWN(), true);
     return reply;
   }
   if (!revokesOwn(msg)) return reply;
   const name = state.standing?.name ?? "unnamed";
-  releaseStanding("снято своим revoke", true);
+  releaseStanding(REVOKED_BY_OWN(), true);
   state.standing = null;
   state.standingSession = null;
   log(`standing revoked by this session — released quietly, binding forgotten (${name})`);

@@ -1,3 +1,4 @@
+import { L } from "../shared/lang.ts";
 import { scoped } from "../shared/scope.ts";
 import { errorMessage } from "./errors.ts";
 import { addPlace, noteStandingId, releaseStanding } from "./hold.ts";
@@ -8,6 +9,12 @@ import { otherRealm } from "./realms.ts";
 import { debug, log } from "./streams.ts";
 import { post, type Standing, state } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
+
+const SEAT_EXPIRED = (): string =>
+  L(
+    "место у платформы истекло — register: места нет",
+    "the seat expired at the platform — register: no such seat",
+  );
 
 // Remember a registration the harness made, so it can be replayed into the next
 // session. Only a call the server ACCEPTED is remembered: a refused one names no
@@ -77,7 +84,7 @@ export function ensureStanding(): Promise<void> {
         // and the next connect would replace it silently (#5168).
         log(`the standing's seat is gone, forgetting it: ${replyText(got).slice(0, 200)}`);
         state.standing = null;
-        releaseStanding("место у платформы истекло — register: места нет", true);
+        releaseStanding(SEAT_EXPIRED(), true);
       } else {
         // Any other refusal is the hour's, not the seat's: keep the memory and
         // try again before the next call. Forgetting here is what left a bridge
@@ -126,7 +133,7 @@ async function replayBeside(): Promise<boolean> {
       log(
         `the place ${key} is gone at the platform, forgetting it: ${replyText(got).slice(0, 200)}`,
       );
-      dropExtra(key, "место у платформы истекло — register: места нет", true);
+      dropExtra(key, SEAT_EXPIRED(), true);
       state.places = state.places.filter((p) => keyOfPlace(p) !== key);
     } else {
       whole = false;

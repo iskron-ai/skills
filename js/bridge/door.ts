@@ -7,6 +7,7 @@ import { createServer, type Server, type Socket } from "node:net";
 import { dirname } from "node:path";
 
 import { type Frame } from "../shared/channel.ts";
+import { L } from "../shared/lang.ts";
 import { bindScope } from "../shared/scope.ts";
 import { deliveredKeys, seenIds } from "../shared/seen.ts";
 import {
@@ -149,7 +150,12 @@ export class Door {
       const bad = privateDirProblem(dirname(path));
       if (bad) {
         this.listenError = bad;
-        this.hooks.onError(`ДЕЛАТЕЛЬ: локальный сокет стояния не поднят — ${bad}`);
+        this.hooks.onError(
+          L(
+            `ДЕЛАТЕЛЬ: локальный сокет стояния не поднят — ${bad}`,
+            `DOER: the local standing socket is not up — ${bad}`,
+          ),
+        );
         return;
       }
     }
@@ -208,7 +214,10 @@ export class Door {
     srv.on("error", (e) => {
       this.listenError = e.message;
       this.hooks.onError(
-        `ДЕЛАТЕЛЬ: локальный сокет стояния не поднялся (${e.message}) — сторожу не к чему цепляться`,
+        L(
+          `ДЕЛАТЕЛЬ: локальный сокет стояния не поднялся (${e.message}) — сторожу не к чему цепляться`,
+          `DOER: the local standing socket did not come up (${e.message}) — the watchdog has nothing to attach to`,
+        ),
       );
     });
     srv.listen(

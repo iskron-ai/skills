@@ -264,26 +264,61 @@ function connectSeam(path, hello, timeoutMs) {
 
 // js/shared/seam-entrance.ts
 import { createHash as createHash4, randomBytes } from "node:crypto";
-import { linkSync, mkdirSync as mkdirSync2, readFileSync as readFileSync2, renameSync, unlinkSync, writeFileSync } from "node:fs";
-import { dirname, join as join3, resolve as resolve2 } from "node:path";
+import { linkSync, mkdirSync as mkdirSync2, readFileSync as readFileSync3, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { dirname, join as join4, resolve as resolve3 } from "node:path";
 
 // js/shared/standings.ts
 import { createHash as createHash3 } from "node:crypto";
 import { lstatSync, mkdirSync } from "node:fs";
 import { homedir as homedir2 } from "node:os";
-import { join as join2, resolve } from "node:path";
-var defaultAuthDir = () => join2(homedir2(), ".iskron-bridge");
+import { join as join3, resolve as resolve2 } from "node:path";
+
+// js/shared/lang.ts
+import { readFileSync as readFileSync2 } from "node:fs";
+import { join as join2 } from "node:path";
+function langOfUrl(url) {
+  try {
+    return /\.ai\.?$/i.test(new URL(url).hostname) ? "en" : "ru";
+  } catch {
+    return "ru";
+  }
+}
+function forcedLang() {
+  const v = envOf("ISKRON_BRIDGE_LANG")?.trim().toLowerCase();
+  return v === "en" || v === "ru" ? v : null;
+}
+function resolve() {
+  const forced = forcedLang();
+  if (forced) return forced;
+  const fromEnv = envOf("ISKRON_BRIDGE_URL")?.trim();
+  if (fromEnv) return langOfUrl(fromEnv);
+  try {
+    const text = readFileSync2(join2(authDirFromEnv(), "server"), "utf8").trim();
+    if (text) return langOfUrl(text);
+  } catch {
+  }
+  return "ru";
+}
+var S = scoped(() => ({ current: null }));
+function setServerLang(serverUrl) {
+  S.current = forcedLang() ?? langOfUrl(serverUrl);
+}
+var lang = () => S.current ??= resolve();
+var L = (ru, en) => lang() === "en" ? en : ru;
+
+// js/shared/standings.ts
+var defaultAuthDir = () => join3(homedir2(), ".iskron-bridge");
 var authDirFromEnv = () => envOf("ISKRON_BRIDGE_AUTH_DIR")?.trim() || defaultAuthDir();
-var standingsDirOf = (authDir) => join2(authDir, "standings");
+var standingsDirOf = (authDir) => join3(authDir, "standings");
 var hashOf = (key) => createHash3("sha256").update(key).digest("hex").slice(0, 16);
 function socketPathOf(authDir, key) {
   if (process.platform === "win32") return `\\\\.\\pipe\\iskron-${hashOf(key)}`;
-  const near = join2(standingsDirOf(authDir), `${hashOf(key)}.sock`);
+  const near = join3(standingsDirOf(authDir), `${hashOf(key)}.sock`);
   if (Buffer.byteLength(near) <= SOCKET_PATH_MAX) return near;
-  return join2(shortSocketDir(), `${hashOf(resolve(authDir) + "\0" + key)}.sock`);
+  return join3(shortSocketDir(), `${hashOf(resolve2(authDir) + "\0" + key)}.sock`);
 }
 var SOCKET_PATH_MAX = 103;
-var shortSocketDir = () => join2("/tmp", `iskron-${typeof process.getuid === "function" ? process.getuid() : "u"}`);
+var shortSocketDir = () => join3("/tmp", `iskron-${typeof process.getuid === "function" ? process.getuid() : "u"}`);
 function privateDirProblem(dir) {
   let st;
   try {
@@ -296,32 +331,33 @@ function privateDirProblem(dir) {
   } catch (e) {
     return `${dir}: ${e.message}`;
   }
-  if (!st.isDirectory()) return `${dir} — не каталог`;
+  if (!st.isDirectory()) return L(`${dir} — не каталог`, `${dir} is not a directory`);
   if (typeof process.getuid === "function" && st.uid !== process.getuid())
-    return `${dir} принадлежит другому пользователю`;
-  if (st.mode & 63) return `${dir} открыт группе или прочим`;
+    return L(`${dir} принадлежит другому пользователю`, `${dir} belongs to another user`);
+  if (st.mode & 63)
+    return L(`${dir} открыт группе или прочим`, `${dir} is open to group or others`);
   return null;
 }
-var keyFilePathOf = (authDir, key) => join2(standingsDirOf(authDir), `${hashOf(key)}.key`);
-var holdFilePathOf = (authDir, key) => join2(standingsDirOf(authDir), `${hashOf(key)}.hold`);
-var spoolFilePathOf = (authDir, key) => join2(standingsDirOf(authDir), `${hashOf(key)}.spool`);
+var keyFilePathOf = (authDir, key) => join3(standingsDirOf(authDir), `${hashOf(key)}.key`);
+var holdFilePathOf = (authDir, key) => join3(standingsDirOf(authDir), `${hashOf(key)}.hold`);
+var spoolFilePathOf = (authDir, key) => join3(standingsDirOf(authDir), `${hashOf(key)}.spool`);
 function seenFilePathOf(authDir, key, server = "") {
-  if (!server) return join2(standingsDirOf(authDir), `${hashOf(key)}.seen`);
+  if (!server) return join3(standingsDirOf(authDir), `${hashOf(key)}.seen`);
   let origin = server;
   try {
     origin = new URL(server).origin;
   } catch {
   }
-  return join2(standingsDirOf(authDir), `${hashOf(key)}.${hashOf(origin).slice(0, 8)}.seen`);
+  return join3(standingsDirOf(authDir), `${hashOf(key)}.${hashOf(origin).slice(0, 8)}.seen`);
 }
 
 // js/shared/seam-entrance.ts
-var seamKey = (authDir) => createHash4("sha256").update(resolve2(authDir)).digest("hex").slice(0, 16);
-var seamRunDir = (authDir) => join3(resolve2(authDir), "run");
+var seamKey = (authDir) => createHash4("sha256").update(resolve3(authDir)).digest("hex").slice(0, 16);
+var seamRunDir = (authDir) => join4(resolve3(authDir), "run");
 var SUN_PATH_MAX = 103;
 function pipeNonce(authDir) {
   const run = seamRunDir(authDir);
-  const file = join3(run, "pipe");
+  const file = join4(run, "pipe");
   mkdirSync2(run, { recursive: true, mode: 448 });
   const tmp = `${file}.${process.pid}-${randomBytes(6).toString("hex")}`;
   try {
@@ -335,7 +371,7 @@ function pipeNonce(authDir) {
     }
   }
   for (let i = 0; i < 50; i++) {
-    const word = readFileSync2(file, "utf8").trim();
+    const word = readFileSync3(file, "utf8").trim();
     if (word) return word;
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
   }
@@ -345,9 +381,9 @@ function seamSocketPath(authDir) {
   const key = seamKey(authDir);
   if (process.platform === "win32")
     return `\\\\.\\pipe\\iskron-daemon-${key}-${pipeNonce(authDir)}`;
-  const inRun = join3(seamRunDir(authDir), "daemon.sock");
+  const inRun = join4(seamRunDir(authDir), "daemon.sock");
   if (Buffer.byteLength(inRun) <= SUN_PATH_MAX) return inRun;
-  return join3(shortSocketDir(), `daemon-${key}.sock`);
+  return join4(shortSocketDir(), `daemon-${key}.sock`);
 }
 function seamEntranceProblem(authDir) {
   if (process.platform === "win32") return null;
@@ -362,8 +398,8 @@ function seamEntranceProblem(authDir) {
   const sockDir = dirname(seamSocketPath(authDir));
   return sockDir === run ? null : privateDirProblem(sockDir);
 }
-var seamRaiseLockPath = (authDir) => join3(seamRunDir(authDir), "daemon.raising");
-var seamDaemonLockPath = (authDir) => join3(seamRunDir(authDir), "daemon.lock");
+var seamRaiseLockPath = (authDir) => join4(seamRunDir(authDir), "daemon.raising");
+var seamDaemonLockPath = (authDir) => join4(seamRunDir(authDir), "daemon.lock");
 var ownPidAlive = (pid) => {
   if (!Number.isInteger(pid) || pid <= 0) return false;
   try {
@@ -375,7 +411,7 @@ var ownPidAlive = (pid) => {
 };
 var readLock = (path) => {
   try {
-    return JSON.parse(readFileSync2(path, "utf8"));
+    return JSON.parse(readFileSync3(path, "utf8"));
   } catch {
     return null;
   }
@@ -678,39 +714,6 @@ function compareVersions(a, b) {
 import { mkdirSync as mkdirSync3, readFileSync as readFileSync4, renameSync as renameSync2, writeFileSync as writeFileSync2 } from "node:fs";
 import { homedir as homedir3 } from "node:os";
 import { join as join5 } from "node:path";
-
-// js/shared/lang.ts
-import { readFileSync as readFileSync3 } from "node:fs";
-import { join as join4 } from "node:path";
-function langOfUrl(url) {
-  try {
-    return /\.ai\.?$/i.test(new URL(url).hostname) ? "en" : "ru";
-  } catch {
-    return "ru";
-  }
-}
-function forcedLang() {
-  const v = envOf("ISKRON_BRIDGE_LANG")?.trim().toLowerCase();
-  return v === "en" || v === "ru" ? v : null;
-}
-function resolve3() {
-  const forced = forcedLang();
-  if (forced) return forced;
-  const fromEnv = envOf("ISKRON_BRIDGE_URL")?.trim();
-  if (fromEnv) return langOfUrl(fromEnv);
-  try {
-    const text = readFileSync3(join4(authDirFromEnv(), "server"), "utf8").trim();
-    if (text) return langOfUrl(text);
-  } catch {
-  }
-  return "ru";
-}
-var S = scoped(() => ({ current: null }));
-function setServerLang(serverUrl) {
-  S.current = forcedLang() ?? langOfUrl(serverUrl);
-}
-var lang = () => S.current ??= resolve3();
-var L = (ru, en) => lang() === "en" ? en : ru;
 
 // js/bridge/streams.ts
 var FLUSH_STOP_MS = 5e3;
@@ -2537,7 +2540,10 @@ async function serviceUp(socketUrl) {
   return fetch(versionUrl(socketUrl), { signal: AbortSignal.timeout(5e3) }).then((r) => r.ok ? r.json() : null).catch(() => null);
 }
 function deadTokenAdvice(code) {
-  return `закрытие ${code} — токен мёртв, зови connect`;
+  return L(
+    `закрытие ${code} — токен мёртв, зови connect`,
+    `close ${code} — the token is dead, call connect`
+  );
 }
 function classifyOrigin(frame2, myKarta) {
   const p = frame2.provenance ?? {};
@@ -2610,7 +2616,7 @@ function holdSocket(o) {
     sock.addEventListener("message", (e) => {
       if (stopped || ws !== sock) return;
       lastLife = Date.now();
-      const raw = typeof e.data === "string" ? e.data : "[двоичный кадр]";
+      const raw = typeof e.data === "string" ? e.data : L("[двоичный кадр]", "[binary frame]");
       if (handing) return handing.onFrame(raw);
       let frame2 = null;
       if (typeof e.data === "string") {
@@ -2642,7 +2648,10 @@ function holdSocket(o) {
         if (silent <= Math.max(SILENT_INTERVALS * pingMs + 1e3, SILENT_FLOOR_MS)) return;
         stopWatch();
         (o.onHung ?? o.onNote)?.(
-          `соединение молчит ${Math.round(silent / 1e3)} с при пинге раз в ${pingMs / 1e3} с — подвисло без закрытия; переоткрываю тем же адресом. Кадры, пришедшие за время молчания, могли пропасть — сверь iskron_channel(action="history")`
+          L(
+            `соединение молчит ${Math.round(silent / 1e3)} с при пинге раз в ${pingMs / 1e3} с — подвисло без закрытия; переоткрываю тем же адресом. Кадры, пришедшие за время молчания, могли пропасть — сверь iskron_channel(action="history")`,
+            `the connection has been silent for ${Math.round(silent / 1e3)} s with a ping every ${pingMs / 1e3} s — hung without closing; reopening at the same address. Frames that arrived during the silence may be lost — check iskron_channel(action="history")`
+          )
         );
         try {
           sock.close();
@@ -2681,7 +2690,12 @@ function holdSocket(o) {
         lastEviction = now2;
         if (gone) return;
         gone = true;
-        o.onNote?.("закрытие 4000 — место у другого держателя; открываю заново один раз");
+        o.onNote?.(
+          L(
+            "закрытие 4000 — место у другого держателя; открываю заново один раз",
+            "close 4000 — the seat is with another holder; reopening once"
+          )
+        );
         retry = setTimeout(open, 2e3);
         return;
       }
@@ -2709,7 +2723,12 @@ function holdSocket(o) {
           retry = setTimeout(open, wait);
           return;
         }
-        o.onNote?.("служба не отвечает — идёт раскатка, держу тот же токен");
+        o.onNote?.(
+          L(
+            "служба не отвечает — идёт раскатка, держу тот же токен",
+            "the service is not answering — a rollout is under way, keeping the same token"
+          )
+        );
         fastDrops = 1;
       }
       retry = setTimeout(open, code === ROLLOUT_CODE ? 3e3 : 2e3);
@@ -4099,7 +4118,12 @@ var Door = class {
       const bad = privateDirProblem(dirname3(path));
       if (bad) {
         this.listenError = bad;
-        this.hooks.onError(`ДЕЛАТЕЛЬ: локальный сокет стояния не поднят — ${bad}`);
+        this.hooks.onError(
+          L(
+            `ДЕЛАТЕЛЬ: локальный сокет стояния не поднят — ${bad}`,
+            `DOER: the local standing socket is not up — ${bad}`
+          )
+        );
         return;
       }
     }
@@ -4148,7 +4172,10 @@ var Door = class {
     srv.on("error", (e) => {
       this.listenError = e.message;
       this.hooks.onError(
-        `ДЕЛАТЕЛЬ: локальный сокет стояния не поднялся (${e.message}) — сторожу не к чему цепляться`
+        L(
+          `ДЕЛАТЕЛЬ: локальный сокет стояния не поднялся (${e.message}) — сторожу не к чему цепляться`,
+          `DOER: the local standing socket did not come up (${e.message}) — the watchdog has nothing to attach to`
+        )
       );
     });
     srv.listen(
@@ -4366,7 +4393,10 @@ function realmRelation(a, b) {
 var sameRealm = (a, b) => realmRelation(a, b) === "same";
 var otherRealm = (a, b) => !!trimmed(a) && !!trimmed(b) && realmRelation(a, b) === "other";
 var unknownRealm = (a, b) => !!trimmed(a) && !!trimmed(b) && realmRelation(a, b) === "unknown";
-var unresolvedWord = (realm, held2) => `Отказано (мост): граф «${trimmed(realm)}» мост не разрешил в @owner/slug (списка графов нет или имени в нём нет) — тот ли это граф, что у мест моста (${held2.join(", ")}), не известно, и гадать нельзя. Повтори вызов с полным адресом графа @owner/slug.`;
+var unresolvedWord = (realm, held2) => L(
+  `Отказано (мост): граф «${trimmed(realm)}» мост не разрешил в @owner/slug (списка графов нет или имени в нём нет) — тот ли это граф, что у мест моста (${held2.join(", ")}), не известно, и гадать нельзя. Повтори вызов с полным адресом графа @owner/slug.`,
+  `Refused (bridge): the bridge did not resolve the graph "${trimmed(realm)}" to @owner/slug (there is no list of graphs or the name is not in it) — whether it is the graph of the bridge's seats (${held2.join(", ")}) is unknown, and guessing is not allowed. Repeat the call with the full graph address @owner/slug.`
+);
 function learnRealm(alias, canonical) {
   const t = trimmed(alias);
   if (t && !t.startsWith("@") && CANON_RE.test(canonical)) aliases.set(t, canonical);
@@ -4431,7 +4461,8 @@ function addExtra(s2, ch, hooks, primaryAddress = null) {
   const have = extras.get(key);
   if (have) return key;
   for (const p of extraPlaces())
-    if (sameRealm(p.standing.realm, s2.realm)) dropExtra(p.door.key, "другое место графа", true);
+    if (sameRealm(p.standing.realm, s2.realm))
+      dropExtra(p.door.key, L("другое место графа", "another seat of the graph"), true);
   const door = new Door(key, hooks);
   const handle = primaryAddress?.match(/^(.*):/)?.[1];
   if (handle && s2.name) door.address = `${handle}:${s2.name}`;
@@ -4507,7 +4538,7 @@ function fitsOf(frame2, places) {
 function strayOf(frame2, primary) {
   if (frame2?.type !== "message" || fitsOf(frame2, all(primary))?.length !== 0) return null;
   const back = state.places.find((s2) => frame2.realm != null && sameRealm(s2.realm, frame2.realm));
-  return back ? keyOfPlace(back) : `${String(frame2.to_standing ?? "—")}, граф ${String(frame2.realm ?? "—")}`;
+  return back ? keyOfPlace(back) : `${String(frame2.to_standing ?? "—")}, ${L("граф", "graph")} ${String(frame2.realm ?? "—")}`;
 }
 function routeFrame(frame2, primary) {
   if (!frame2 || !extras.size) return { door: primary.door };
@@ -4517,7 +4548,10 @@ function routeFrame(frame2, primary) {
   const id = typeof frame2.to_standing_id === "string" ? frame2.to_standing_id : "";
   return {
     door: primary.door,
-    note: `ДЕЛАТЕЛЬ: кадр ${String(frame2.id ?? "?")} (to_standing_id ${id || "—"}, ${frame2.to_standing ?? "—"}, граф ${frame2.realm ?? "—"}) не сопоставлен ни одному месту моста (${fits.length ? "подходят несколько" : "не подходит ни одно"}) — отдан основному месту ${primary.door.key}; сверь адрес кадра.`
+    note: L(
+      `ДЕЛАТЕЛЬ: кадр ${String(frame2.id ?? "?")} (to_standing_id ${id || "—"}, ${frame2.to_standing ?? "—"}, граф ${frame2.realm ?? "—"}) не сопоставлен ни одному месту моста (${fits.length ? "подходят несколько" : "не подходит ни одно"}) — отдан основному месту ${primary.door.key}; сверь адрес кадра.`,
+      `DOER: frame ${String(frame2.id ?? "?")} (to_standing_id ${id || "—"}, ${frame2.to_standing ?? "—"}, graph ${frame2.realm ?? "—"}) matches no seat of the bridge (${fits.length ? "several fit" : "none fits"}) — given to the main seat ${primary.door.key}; check the frame's address.`
+    )
   };
 }
 
@@ -4621,7 +4655,10 @@ async function publishStatusTo(url, text, timeoutMs = 5e3, standingId = null) {
   } catch (e) {
     return {
       ok: false,
-      body: `Отказано (мост): статусный адрес не ответил — ${e.message}`
+      body: L(
+        `Отказано (мост): статусный адрес не ответил — ${e.message}`,
+        `Refused (bridge): the status address did not answer — ${e.message}`
+      )
     };
   }
   const body = (await res.text().catch(() => "")).trim();
@@ -4629,13 +4666,19 @@ async function publishStatusTo(url, text, timeoutMs = 5e3, standingId = null) {
     return {
       ok: false,
       code: 404,
-      body: `Отказано (404) поверхностью: ${body || "без тела"} — этот адрес места больше не адресует: его мог повернуть connect другого держателя, а мог держать другой экземпляр моста той же сессии. Чей он теперь, мост отсюда не знает.`
+      body: L(
+        `Отказано (404) поверхностью: ${body || "без тела"} — этот адрес места больше не адресует: его мог повернуть connect другого держателя, а мог держать другой экземпляр моста той же сессии. Чей он теперь, мост отсюда не знает.`,
+        `Refused (404) by the surface: ${body || "no body"} — this seat address no longer addresses: another holder's connect may have turned it, or another instance of the same session's bridge may have held it. Whose it is now, the bridge cannot know from here.`
+      )
     };
   if (!res.ok)
     return {
       ok: false,
       code: res.status,
-      body: `Отказано (${res.status}) поверхностью: ${body || "без тела"}`
+      body: L(
+        `Отказано (${res.status}) поверхностью: ${body || "без тела"}`,
+        `Refused (${res.status}) by the surface: ${body || "no body"}`
+      )
     };
   return { ok: true, body };
 }
@@ -4688,7 +4731,10 @@ function takeSpool(key, primary, feed) {
     const p = primary();
     const to = p && strayOf(frame2, p);
     if (!p || !to) return feed(raw, frame2);
-    const text = `ДЕЛАТЕЛЬ: кадр ${String(frame2?.id ?? "?")} из спула смены демона адресован месту ${to}, не вернувшемуся, — не кадр места ${p.door.key}; вернуть место — iskron_stand в его графе. Кадр: ${raw}`;
+    const text = L(
+      `ДЕЛАТЕЛЬ: кадр ${String(frame2?.id ?? "?")} из спула смены демона адресован месту ${to}, не вернувшемуся, — не кадр места ${p.door.key}; вернуть место — iskron_stand в его графе. Кадр: ${raw}`,
+      `DOER: frame ${String(frame2?.id ?? "?")} from the daemon-change spool is addressed to the seat ${to}, which has not returned — not a frame of the seat ${p.door.key}; to bring the seat back — iskron_stand in its graph. Frame: ${raw}`
+    );
     log(text);
     const ev = { kind: "note", text };
     p.door.broadcast(ev);
@@ -4700,6 +4746,27 @@ function takeSpool(key, primary, feed) {
   });
 }
 var handoffsSettled = () => Promise.all([...pending]).then(() => void 0);
+
+// js/bridge/holdwords.ts
+var holdWords = {
+  newSocket: () => L("новый сокет", "new socket"),
+  revokedOwn: () => L("снято своим revoke", "revoked by this session"),
+  resumeFailed: () => L("возврат с диска не удался", "resume from disk failed"),
+  tokenDead: () => L("токен мёртв", "token dead"),
+  parked: (reason) => L(
+    `мост ушёл с места (${reason}) — сокет закрыт, место цело; возврат — сторож или iskron_stand`,
+    `the bridge left the seat (${reason}) — socket closed, seat intact; to return use the watchdog or iskron_stand`
+  ),
+  evicted: (code) => L(
+    `ДЕЛАТЕЛЬ: закрытие ${code} — место отняли, слушает другой держатель; привязка записей цела, занятость — пока адрес не повернули connect-ом; слух здесь — iskron_stand без name встанет рядом на имя.N; отбить место (take=true) — только словом человека`,
+    `DOER: close ${code} — the seat was taken, another holder is listening; the write binding is intact, the seat stays occupied until the address is turned with connect; to listen here, iskron_stand without name stands beside on name.N; to retake the seat (take=true) — only on the human's word`
+  ),
+  dead: (code) => L(`ДЕЛАТЕЛЬ: ${deadTokenAdvice(code)}`, `DOER: ${deadTokenAdvice(code)}`),
+  alive: (version) => L(
+    `ДЕЛАТЕЛЬ: сокет рвут, а служба отвечает (${version}) — место держу, переоткрываю реже; не пройдёт — спроси о токене`,
+    `DOER: the socket keeps being cut while the service answers (${version}) — holding the seat, reopening less often; if it fails, ask about the token`
+  )
+};
 
 // js/bridge/hold.ts
 function keyFor() {
@@ -4846,7 +4913,7 @@ function holdStanding(url, statusUrl2) {
   const key = keyFor();
   if (url === H2.currentUrl && key === H2.currentKey && H2.holder?.alive) return key;
   const same = !!H2.currentKey && H2.currentKey === key;
-  releaseStanding("новый сокет", !!H2.currentKey && H2.currentKey !== key, same);
+  releaseStanding(holdWords.newSocket(), !!H2.currentKey && H2.currentKey !== key, same);
   H2.currentKey = key;
   H2.currentUrl = url;
   H2.currentStatusUrl = statusUrl2 || statusUrl(url);
@@ -4881,7 +4948,7 @@ function parkStanding(reason) {
   H2.holder = null;
   H2.parked = true;
   standingLog(`parked ${H2.currentKey}: ${reason}`);
-  const text = `мост ушёл с места (${reason}) — сокет закрыт, место цело; возврат — сторож или iskron_stand`;
+  const text = holdWords.parked(reason);
   broadcast({ kind: "note", text });
   return H2.currentKey;
 }
@@ -4955,7 +5022,7 @@ function openHolder(url, key) {
         });
       },
       onEvicted: (code) => {
-        const text = `ДЕЛАТЕЛЬ: закрытие ${code} — место отняли, слушает другой держатель; привязка записей цела, занятость — пока адрес не повернули connect-ом; слух здесь — iskron_stand без name встанет рядом на имя.N; отбить место (take=true) — только словом человека`;
+        const text = holdWords.evicted(code);
         log(text);
         standingLog(`evicted ${key}: close ${code}`);
         H2.evictedKey = key;
@@ -4970,26 +5037,26 @@ function openHolder(url, key) {
           log(
             `standing revoked by this session — released quietly, binding forgotten (${state.standing?.name ?? "unnamed"}; close ${code} arrived before the answer)`
           );
-          releaseStanding("снято своим revoke", true);
+          releaseStanding(holdWords.revokedOwn(), true);
           state.standing = null;
           state.standingSession = null;
           return;
         }
         if (H2.resuming > 0) {
           log(`hold record for ${key} is dead at the platform (close ${code}) — dropped`);
-          releaseStanding("возврат с диска не удался", true);
+          releaseStanding(holdWords.resumeFailed(), true);
           return;
         }
-        const text = `ДЕЛАТЕЛЬ: ${deadTokenAdvice(code)}`;
+        const text = holdWords.dead(code);
         log(text);
         standingLog(`dead ${key}: close ${code}`);
         const ev = { kind: "dead", code, text };
         broadcast(ev);
         notify("error", ev);
-        releaseStanding("токен мёртв", true);
+        releaseStanding(holdWords.tokenDead(), true);
       },
       onServiceAlive: (version) => {
-        const text = `ДЕЛАТЕЛЬ: сокет рвут, а служба отвечает (${version}) — место держу, переоткрываю реже; не пройдёт — спроси о токене`;
+        const text = holdWords.alive(version);
         log(text);
         const ev = { kind: "alive", version, text };
         broadcast(ev);
@@ -5200,7 +5267,7 @@ function rememberModel(m) {
 function placeFields(place = {}) {
   const harness = harnessName();
   const extra = extras2.get(placeKey(place)) ?? {};
-  const { model, usage, satelliteOf, satelliteOfId } = P;
+  const { model, usage: usage2, satelliteOf, satelliteOfId } = P;
   return {
     ...model ? { model } : {},
     // Язык места (#6080): английский мост просит en; русский молчит — решает умолчание сервера.
@@ -5212,7 +5279,7 @@ function placeFields(place = {}) {
       skills: skillsAttr(),
       ...harness ? { harness, harness_version: harnessVersion() } : {},
       ...satelliteOf ? { satellite_of: satelliteOf } : {},
-      ...usage ? { usage } : {}
+      ...usage2 ? { usage: usage2 } : {}
     }
   };
 }
@@ -5234,6 +5301,10 @@ function withPlaceFields(args) {
 }
 
 // js/bridge/standing.ts
+var SEAT_EXPIRED = () => L(
+  "место у платформы истекло — register: места нет",
+  "the seat expired at the platform — register: no such seat"
+);
 function noteStanding(msg, reply2) {
   const a = msg?.params?.arguments;
   if (msg?.params?.name !== "iskron_channel" || a?.action !== "register") return;
@@ -5272,7 +5343,7 @@ function ensureStanding() {
       } else if (seatIsGone(got)) {
         log(`the standing's seat is gone, forgetting it: ${replyText(got).slice(0, 200)}`);
         state.standing = null;
-        releaseStanding("место у платформы истекло — register: места нет", true);
+        releaseStanding(SEAT_EXPIRED(), true);
       } else {
         log(
           `could not re-register the standing this time, will retry before the next call: ${replyText(got).slice(0, 200)}`
@@ -5315,7 +5386,7 @@ async function replayBeside() {
       log(
         `the place ${key} is gone at the platform, forgetting it: ${replyText(got).slice(0, 200)}`
       );
-      dropExtra(key, "место у платформы истекло — register: места нет", true);
+      dropExtra(key, SEAT_EXPIRED(), true);
       state.places = state.places.filter((p) => keyOfPlace(p) !== key);
     } else {
       whole = false;
@@ -5350,10 +5421,17 @@ var isUnattributed = (reply2) => {
 var SOCKET_RE = /wss:\/\/[^\s"'`<>)\]]+|ws:\/\/(?:127\.0\.0\.1|\[?::1\]?|localhost)(?::\d+)?\/[^\s"'`<>)\]]+/;
 var STATUS_RE = /https?:\/\/[^\s"'`<>)\]]+\/channel\/status\/[^\s"'`<>)\]]+/;
 var trim = (s2) => s2.replace(/[.,;:!?»"')\]]+$/, "");
+var REVOKED_BY_OWN = () => L("снято своим revoke", "removed by its own revoke");
 var hideAddresses = (text) => text.replace(
   new RegExp(SOCKET_RE.source, "g"),
-  "(адрес сокета держит мост — агенту не показывается)"
-).replace(new RegExp(STATUS_RE.source, "g"), "(статусный адрес держит мост)");
+  L(
+    "(адрес сокета держит мост — агенту не показывается)",
+    "(the bridge holds the socket address — it is not shown to the agent)"
+  )
+).replace(
+  new RegExp(STATUS_RE.source, "g"),
+  L("(статусный адрес держит мост)", "(the bridge holds the status address)")
+);
 function absorbChannelReply(msg, reply2) {
   const a = msg?.params?.arguments;
   if (msg?.params?.name !== "iskron_channel") return reply2;
@@ -5401,18 +5479,21 @@ function absorbRevokeReply(msg, reply2) {
     if (revokesOwn(msg) && held2.length && Array.isArray(content))
       content.push({
         type: "text",
-        text: `[iskron-bridge] ${state.standing?.name ?? "это место"} — основное место канала моста, а на канале стоят места других графов: ${held2.join(", ")}. Мост ничего не отпустил; снять основное — сперва сними их (revoke в их графе).`
+        text: L(
+          `[iskron-bridge] ${state.standing?.name ?? "это место"} — основное место канала моста, а на канале стоят места других графов: ${held2.join(", ")}. Мост ничего не отпустил; снять основное — сперва сними их (revoke в их графе).`,
+          `[iskron-bridge] ${state.standing?.name ?? "this seat"} is the main seat of the bridge's channel, and seats of other graphs stand on the channel: ${held2.join(", ")}. The bridge released nothing; to remove the main one, first remove them (revoke in their graph).`
+        )
       });
     return reply2;
   }
   const beside = extraIn(a.realm);
   if (beside && names(a, beside.standing)) {
-    dropExtra(beside.door.key, "снято своим revoke", true);
+    dropExtra(beside.door.key, REVOKED_BY_OWN(), true);
     return reply2;
   }
   if (!revokesOwn(msg)) return reply2;
   const name = state.standing?.name ?? "unnamed";
-  releaseStanding("снято своим revoke", true);
+  releaseStanding(REVOKED_BY_OWN(), true);
   state.standing = null;
   state.standingSession = null;
   log(`standing revoked by this session — released quietly, binding forgotten (${name})`);
@@ -5469,7 +5550,10 @@ function besideRefusal(realm, how) {
   const led = ledKey();
   if (!led || !prim || !otherRealm(realm, prim.realm)) return null;
   if (how === "stand" && holdsChannel()) return null;
-  return how === "connect" ? `Отказано (мост): этот мост ведёт место ${led}, а connect в другом графе открыл бы второй канал и снял бы его с сокета. Место в другом графе встаёт рядом на том же канале — iskron_stand(realm=…) или register.` : L(
+  return how === "connect" ? L(
+    `Отказано (мост): этот мост ведёт место ${led}, а connect в другом графе открыл бы второй канал и снял бы его с сокета. Место в другом графе встаёт рядом на том же канале — iskron_stand(realm=…) или register.`,
+    `Refused (bridge): this bridge leads the seat ${led}, and a connect in another graph would open a second channel and take it off the socket. A seat in another graph stands beside on the same channel — iskron_stand(realm=…) or register.`
+  ) : L(
     `Отказано (мост): этот мост ведёт место ${led}, но сокета канала у него сейчас нет (ушёл с места или место отняли) — место другого графа встать рядом не может. Сперва верни ${led}: iskron_stand его графа.`,
     `Refused (bridge): this bridge leads the seat ${led}, but has no channel socket now (it left the seat or the seat was taken) — a seat of another graph cannot stand beside. First bring back ${led}: iskron_stand for its graph.`
   );
@@ -5512,7 +5596,7 @@ async function callTool(name, args) {
     if (m.id === id) reply2 = m;
   });
   let got = reply2;
-  if (!got) return { text: "ответа нет", isError: true };
+  if (!got) return { text: L("ответа нет", "no reply"), isError: true };
   if (name === "iskron_channel") {
     noteLocaleEcho(args, replyText(got));
     if (args.action === "register") noteStanding(msg, got);
@@ -5562,7 +5646,7 @@ async function statusWord(text, realm) {
   if (st.code === 404) return [`${st.body} ${TURNED_GUIDANCE()}`, true];
   if (st.ok)
     return [
-      `занятость ${statusAddress(realm)?.place ?? statusAddress(realm)?.key}: ${text || "(снята)"}`,
+      `${L("занятость", "busyness")} ${statusAddress(realm)?.place ?? statusAddress(realm)?.key}: ${text || L("(снята)", "(cleared)")}`,
       false
     ];
   return [st.body, true];
@@ -5628,15 +5712,15 @@ var publishedStatus = () => S2.lastPublished;
 async function publishStatus(text, realm, everyPlace = false) {
   const addr = statusAddress(realm);
   if (!addr) {
-    return {
-      ok: false,
-      body: "Отказано (мост): этот мост места не держит, статусного адреса у него нет."
-    };
+    return { ok: false, body: NOT_HELD() };
   }
   if (!everyPlace && !addr.standingId && heldPlaces().length > 1)
     return {
       ok: false,
-      body: `Отказано (мост): id места ${addr.key} у моста ещё не известен (hello его не назвал) — без него строка легла бы на все места канала; повтори iskron_stand этого графа.`
+      body: L(
+        `Отказано (мост): id места ${addr.key} у моста ещё не известен (hello его не назвал) — без него строка легла бы на все места канала; повтори iskron_stand этого графа.`,
+        `Refused (bridge): the bridge does not yet know the id of the seat ${addr.key} (hello did not name it) — without it the line would land on all seats of the channel; repeat iskron_stand for this graph.`
+      )
     };
   const st = await publishStatusTo(addr.url, text, 5e3, everyPlace ? null : addr.standingId);
   if (st.ok) {
@@ -5654,6 +5738,10 @@ var TWO_ENTRIES = () => L(
   "If the seat is yours and a bridge of this same session holds it (the session has two iskron entries, the plugin's and the user's), call status with the same tool set you called iskron_stand with: no move is needed."
 );
 var TURNED_GUIDANCE = () => `${TWO_ENTRIES()} ${L("Иначе", "Otherwise")} ${TAKE_PATH()}.`;
+var NOT_HELD = () => L(
+  "Отказано (мост): этот мост места не держит, статусного адреса у него нет.",
+  "Refused (bridge): this bridge holds no seat, it has no status address."
+);
 var slugOf = (realm) => realm.replace(/^@[^/]+\//, "");
 async function heldElsewhere(realm) {
   const dir = standingsDirOf(CFG.authDir);
@@ -5673,17 +5761,24 @@ async function heldElsewhere(realm) {
   return out6;
 }
 async function notHeldHere(realm) {
-  const head = "Отказано (мост): этот мост места не держит, статусного адреса у него нет.";
+  const head = NOT_HELD();
   const others = await heldElsewhere(realm);
   if (!others.length)
-    return `${head} Назовись одним вызовом iskron_stand(realm, karta, model, status) — занятость можно передать прямо в нём. Если место слушает другой держатель, iskron_stand скажет это; тогда ${TAKE_PATH()}.`;
-  const list = others.map((r) => {
-    const where = [r.cwd && `каталог ${r.cwd}`, r.client && `харнесс ${r.client}`].filter(
-      Boolean
+    return L(
+      `${head} Назовись одним вызовом iskron_stand(realm, karta, model, status) — занятость можно передать прямо в нём. Если место слушает другой держатель, iskron_stand скажет это; тогда ${TAKE_PATH()}.`,
+      `${head} Introduce yourself with one call iskron_stand(realm, karta, model, status) — busyness can be passed right in it. If another holder listens on the seat, iskron_stand will say so; then ${TAKE_PATH()}.`
     );
+  const list = others.map((r) => {
+    const where = [
+      r.cwd && `${L("каталог", "directory")} ${r.cwd}`,
+      r.client && `${L("харнесс", "harness")} ${r.client}`
+    ].filter(Boolean);
     return where.length ? `${r.key} (${where.join(", ")})` : r.key;
   }).join("; ");
-  return `${head} Места этого графа на этой машине держат живые мосты: ${list}. ${TURNED_GUIDANCE()}`;
+  return L(
+    `${head} Места этого графа на этой машине держат живые мосты: ${list}. ${TURNED_GUIDANCE()}`,
+    `${head} Seats of this graph on this machine are held by live bridges: ${list}. ${TURNED_GUIDANCE()}`
+  );
 }
 
 // js/bridge/update.ts
@@ -5716,11 +5811,18 @@ var RateLimitError = class extends Error {
   }
 };
 function resetWord(resetAt) {
-  return resetAt ? `сброс ${new Date(resetAt).toISOString()} (через ${Math.max(0, Math.ceil((resetAt - Date.now()) / 6e4))} мин)` : "время сброса GitHub не назвал";
+  const min = resetAt ? Math.max(0, Math.ceil((resetAt - Date.now()) / 6e4)) : 0;
+  return resetAt ? L(
+    `сброс ${new Date(resetAt).toISOString()} (через ${min} мин)`,
+    `reset ${new Date(resetAt).toISOString()} (in ${min} min)`
+  ) : L("время сброса GitHub не назвал", "GitHub did not name the reset time");
 }
 function rateLimitWord(limit, resetAt) {
-  const per = limit ? `${limit} запросов в час` : "лимит в час";
-  return `лимит анонимного API GitHub исчерпан: ${per} на внешний адрес машины, общий всем мостам и клиентам за ним; ${resetWord(resetAt)}`;
+  const per = limit ? L(`${limit} запросов в час`, `${limit} requests an hour`) : L("лимит в час", "an hourly limit");
+  return L(
+    `лимит анонимного API GitHub исчерпан: ${per} на внешний адрес машины, общий всем мостам и клиентам за ним; ${resetWord(resetAt)}`,
+    `the anonymous GitHub API limit is exhausted: ${per} per the machine's external address, shared by all bridges and clients behind it; ${resetWord(resetAt)}`
+  );
 }
 function rateLimitOf(res) {
   if (res.status !== 403 && res.status !== 429) return null;
@@ -5735,7 +5837,10 @@ function rateLimitOf(res) {
   if (retrySec > 0 || res.status === 429) {
     const resetAt = retrySec > 0 ? Date.now() + retrySec * 1e3 : null;
     return new RateLimitError(
-      `вторичный лимит API GitHub: слишком частые запросы с внешнего адреса машины; ${resetWord(resetAt)}`,
+      L(
+        `вторичный лимит API GitHub: слишком частые запросы с внешнего адреса машины; ${resetWord(resetAt)}`,
+        `GitHub API secondary limit: too frequent requests from the machine's external address; ${resetWord(resetAt)}`
+      ),
       null,
       resetAt
     );
@@ -5749,7 +5854,10 @@ async function tagFromApi() {
   });
   const limited = rateLimitOf(res);
   if (limited) throw limited;
-  if (!res.ok) throw new Error(`HTTP ${res.status} от ${RELEASES_URL}`);
+  if (!res.ok)
+    throw new Error(
+      L(`HTTP ${res.status} от ${RELEASES_URL}`, `HTTP ${res.status} from ${RELEASES_URL}`)
+    );
   const body = await res.json();
   return body.tag_name?.trim() || null;
 }
@@ -5762,7 +5870,12 @@ async function tagFromPage(url) {
   const location = res.headers.get("location") ?? "";
   const m = /\/releases\/tag\/([^/?#]+)/.exec(location);
   if (res.status < 300 || res.status >= 400 || !m)
-    throw new Error(`HTTP ${res.status} от ${url}${location ? ` → ${location}` : ""} — тега нет`);
+    throw new Error(
+      L(
+        `HTTP ${res.status} от ${url}${location ? ` → ${location}` : ""} — тега нет`,
+        `HTTP ${res.status} from ${url}${location ? ` → ${location}` : ""} — no tag`
+      )
+    );
   return decodeURIComponent(m[1]);
 }
 function readReleaseTag() {
@@ -5784,7 +5897,10 @@ async function resolveTag(force) {
   const now2 = Date.now();
   if (!force && cached?.tag && now2 - cached.checked_at < TAG_TTL_MS) return cached.tag;
   const knownLimit = cached?.api_limited_until && now2 < cached.api_limited_until ? new RateLimitError(
-    cached.api_limit ? rateLimitWord(cached.api_limit, cached.api_limited_until) : `лимит API GitHub, записанный другим мостом машины; ${resetWord(cached.api_limited_until)}`,
+    cached.api_limit ? rateLimitWord(cached.api_limit, cached.api_limited_until) : L(
+      `лимит API GitHub, записанный другим мостом машины; ${resetWord(cached.api_limited_until)}`,
+      `a GitHub API limit recorded by another bridge of the machine; ${resetWord(cached.api_limited_until)}`
+    ),
     cached.api_limit ?? null,
     cached.api_limited_until
   ) : null;
@@ -5803,7 +5919,12 @@ async function resolveTag(force) {
   if (RELEASES_PAGE_URL) {
     try {
       const tag = await tagFromPage(RELEASES_PAGE_URL);
-      log(`релизы: API не ответил (${apiErr?.message}) — тег ${tag} со страницы релизов`);
+      log(
+        L(
+          `релизы: API не ответил (${apiErr?.message}) — тег ${tag} со страницы релизов`,
+          `releases: the API did not answer (${apiErr?.message}) — tag ${tag} from the releases page`
+        )
+      );
       writeReleaseTag({
         source: RELEASES_URL,
         checked_at: Date.now(),
@@ -5813,7 +5934,7 @@ async function resolveTag(force) {
       });
       return tag;
     } catch (e) {
-      const both = `${apiErr?.message}; запасной путь — ${e.message}`;
+      const both = `${apiErr?.message}; ${L("запасной путь", "fallback")} — ${e.message}`;
       apiErr = limit ? new RateLimitError(both, limit.limit, limit.resetAt) : new Error(both);
     }
   }
@@ -5890,7 +6011,10 @@ function syncHome(self = selfPath()) {
 }
 function reexec(path, argv2) {
   log(
-    `домашняя копия новее этой сборки (v${versionOf(path) ?? "?"} > v${VERSION}) — запускаюсь ею: ${path}`
+    L(
+      `домашняя копия новее этой сборки (v${versionOf(path) ?? "?"} > v${VERSION}) — запускаюсь ею: ${path}`,
+      `the home copy is newer than this build (v${versionOf(path) ?? "?"} > v${VERSION}) — restarting with it: ${path}`
+    )
   );
   const root = skillsRoot();
   const child = spawn2(process.execPath, [path, ...argv2], {
@@ -5906,7 +6030,7 @@ function reexec(path, argv2) {
   }
   child.on("exit", (code, signal) => process.exit(code ?? (signal ? 1 : 0)));
   child.on("error", (e) => {
-    log(`перезапуск не удался: ${e.message}`);
+    log(L(`перезапуск не удался: ${e.message}`, `restart failed: ${e.message}`));
     process.exit(1);
   });
 }
@@ -5925,7 +6049,7 @@ async function fetchText(url) {
     },
     signal: AbortSignal.timeout(15e3)
   });
-  if (!res.ok) throw new Error(`HTTP ${res.status} от ${url}`);
+  if (!res.ok) throw new Error(L(`HTTP ${res.status} от ${url}`, `HTTP ${res.status} from ${url}`));
   return res.text();
 }
 async function downloadRelease(tag, version, authDir) {
@@ -5934,7 +6058,12 @@ async function downloadRelease(tag, version, authDir) {
   const bridge = await fetchText(`${base}/skills/establish-mcp/scripts/iskron.mjs`);
   const got = versionIn(bridge);
   if (got !== version)
-    throw new Error(`скачанный мост называет v${got ?? "?"}, релиз — v${version}`);
+    throw new Error(
+      L(
+        `скачанный мост называет v${got ?? "?"}, релиз — v${version}`,
+        `the downloaded bridge names v${got ?? "?"}, the release — v${version}`
+      )
+    );
   const home = homeBridgePath();
   const current = versionOf(home);
   if (!isSymlink(home) && (!current || compareVersions(version, current) > 0)) {
@@ -6489,13 +6618,19 @@ function satelliteChannelRefusal(args) {
   const s2 = state.standing;
   const own = s2?.name ?? "";
   if (!s2 || !SUB_RE.test(own))
-    return `Отказано (мост-спутник): ${action} мимо iskron_stand — место этому мосту даёт только iskron_stand с satellite_of; чужое место спутник не берёт и не снимает.`;
+    return L(
+      `Отказано (мост-спутник): ${action} мимо iskron_stand — место этому мосту даёт только iskron_stand с satellite_of; чужое место спутник не берёт и не снимает.`,
+      `Refused (satellite bridge): ${action} bypassing iskron_stand — only iskron_stand with satellite_of gives this bridge a seat; a satellite neither takes nor releases another's seat.`
+    );
   const sameRealm2 = !otherRealm(args.realm, s2.realm);
   const karta = normKarta(args.karta ?? s2.karta);
   const target = action === "revoke" ? args.channel != null ? null : String(args.standing ?? "") : String(args.name ?? "").trim();
   const mine = target != null && (target === own || target.endsWith(`:${own}`) || action === "revoke" && target === "mine");
   if (sameRealm2 && karta === normKarta(s2.karta) && mine) return null;
-  return `Отказано (мост-спутник): ${action} — только своего места ${own} (роль #${normKarta(s2.karta)}, граф ${s2.realm}); место позвавшего и любое другое спутник не берёт и не снимает.`;
+  return L(
+    `Отказано (мост-спутник): ${action} — только своего места ${own} (роль #${normKarta(s2.karta)}, граф ${s2.realm}); место позвавшего и любое другое спутник не берёт и не снимает.`,
+    `Refused (satellite bridge): ${action} — only its own seat ${own} (role #${normKarta(s2.karta)}, graph ${s2.realm}); a satellite neither takes nor releases the caller's seat or any other.`
+  );
 }
 var satelliteListenWord = () => L(
   `[iskron-bridge] Место-спутник: сторожа не взводи — место живёт прогоном субагента и подписывает его записи; с концом прогона мост уходит с места сам, канал гаснет окном простоя ${SATELLITE_TTL_S} с. Первый ход — вход в дело, названное постановкой, и пересказ постановки первым словом в нём.`,
@@ -6555,9 +6690,18 @@ async function runUsage(msg) {
     result
   });
   if (!HOSTED_CLIENTS.has(harnessName()))
-    return answer({ pushed: false, usage: null, why: "расход пишут только OpenCode и pi" });
+    return answer({
+      pushed: false,
+      usage: null,
+      why: L("расход пишут только OpenCode и pi", "only OpenCode and pi report usage")
+    });
   const u = usageOf(msg.params ?? {});
-  if (!u) return answer({ pushed: false, usage: null, why: "в снимке нет цифр" });
+  if (!u)
+    return answer({
+      pushed: false,
+      usage: null,
+      why: L("в снимке нет цифр", "the snapshot has no numbers")
+    });
   U.latest = u;
   rememberUsage(u);
   const s2 = usagePlace();
@@ -6578,6 +6722,8 @@ async function flushUsage(place) {
 // js/bridge/leave.ts
 var DEAF_MS = Number(process.env.ISKRON_BRIDGE_DEAF_MS) || 15 * 6e4;
 var TICK_MS = Math.min(6e4, Math.max(200, Math.floor(DEAF_MS / 5)));
+var NOT_HOLDING = () => L("мост места не держит — уходить неоткуда", "the bridge holds no seat — nothing to leave");
+var clearedLine = (st) => st.ok ? L("занятость снята", "busyness cleared") : L(`занятость не снята (${st.body})`, `busyness not cleared (${st.body})`);
 var deafWithoutListener = () => !notifiedClient();
 var K = scoped(() => ({
   /** Строка занятости, снятая уходом, — возвращается вместе с местом. */
@@ -6591,32 +6737,50 @@ async function leaveStanding(reason, byWord = false) {
   const leaving = heldPlaces().map((p) => p.key);
   if (leaving.length) await flushUsage(usagePlace());
   const parked = parkStanding(reason);
-  if (!parked) return "мост места не держит — уходить неоткуда";
+  if (!parked) return NOT_HOLDING();
   K.beside = beside;
   K.status = publishedStatus();
   const st = await publishStatus("", void 0, true);
   if (st.ok && K.status) rememberStatus(K.status);
   if (byWord) for (const k of leaving) markLeft(k, true);
-  const line = st.ok ? "занятость снята" : `занятость не снята (${st.body})`;
+  const line = clearedLine(st);
   log(`left the standing: ${reason}; ${line}`);
-  const which2 = leaving.length > 1 ? `с мест ${leaving.join(", ")} (сокет канала у них общий)` : `с места ${parked}`;
-  return byWord ? `ушёл ${which2}: сокет закрыт, ${line}; адрес, очередь и хуки целы — почта копится; место отпущено словом, само не вернётся — вернуть: iskron_stand тем же именем` : `ушёл ${which2}: сокет закрыт, ${line}; адрес, очередь и хуки целы — почта копится и придёт при возвращении (сторож или iskron_stand)`;
+  const which2 = leaving.length > 1 ? L(
+    `с мест ${leaving.join(", ")} (сокет канала у них общий)`,
+    `the seats ${leaving.join(", ")} (they share the channel socket)`
+  ) : L(`с места ${parked}`, `the seat ${parked}`);
+  return byWord ? L(
+    `ушёл ${which2}: сокет закрыт, ${line}; адрес, очередь и хуки целы — почта копится; место отпущено словом, само не вернётся — вернуть: iskron_stand тем же именем`,
+    `left ${which2}: the socket is closed, ${line}; address, queue and hooks intact — mail piles up; the seat is released by word and will not return by itself — to bring it back: iskron_stand with the same name`
+  ) : L(
+    `ушёл ${which2}: сокет закрыт, ${line}; адрес, очередь и хуки целы — почта копится и придёт при возвращении (сторож или iskron_stand)`,
+    `left ${which2}: the socket is closed, ${line}; address, queue and hooks intact — mail piles up and arrives on return (the watchdog or iskron_stand)`
+  );
 }
 async function leaveSatellite(reason) {
   const place = heldPlaces()[0]?.key;
-  if (!place) return "мост места не держит — уходить неоткуда";
+  if (!place) return NOT_HOLDING();
   await flushUsage(usagePlace());
   const st = await publishStatus("", void 0, true);
-  releaseStanding(`${reason}: место-спутник отпущено целиком`, true);
+  releaseStanding(
+    `${reason}: ${L("место-спутник отпущено целиком", "the satellite seat is released whole")}`,
+    true
+  );
   releaseSatelliteClaims();
-  const line = st.ok ? "занятость снята" : `занятость не снята (${st.body})`;
+  const line = clearedLine(st);
   log(`left the satellite place: ${reason}; ${line}`);
-  return `ушёл с места-спутника ${place}: сокет закрыт, ${line}; место отпущено целиком — ни сторож, ни возврат его не поднимут; встать снова — iskron_stand с satellite_of`;
+  return L(
+    `ушёл с места-спутника ${place}: сокет закрыт, ${line}; место отпущено целиком — ни сторож, ни возврат его не поднимут; встать снова — iskron_stand с satellite_of`,
+    `left the satellite seat ${place}: the socket is closed, ${line}; the seat is released whole — neither the watchdog nor a return will raise it; to stand again — iskron_stand with satellite_of`
+  );
 }
 function returnToStanding(how) {
   if (!resumeStanding()) return false;
   for (const p of heldPlaces()) markLeft(p.key, false);
-  const text = `мост вернулся на место (${how}) — сокет открыт заново тем же адресом${K.status ? `, занятость «${K.status}» возвращена` : ""}`;
+  const text = L(
+    `мост вернулся на место (${how}) — сокет открыт заново тем же адресом${K.status ? `, занятость «${K.status}» возвращена` : ""}`,
+    `the bridge is back on the seat (${how}) — the socket is reopened at the same address${K.status ? `, busyness "${K.status}" restored` : ""}`
+  );
   log(text);
   if (K.status) {
     const line = K.status;
@@ -6639,7 +6803,7 @@ function returnToStanding(how) {
 function startDeafnessWatch() {
   onListenerAttached(
     () => setTimeout(() => {
-      if (localListeners() > 0) returnToStanding("прицепился сторож");
+      if (localListeners() > 0) returnToStanding(L("прицепился сторож", "a watchdog attached"));
     }, 300).unref()
   );
   setInterval(() => {
@@ -6648,7 +6812,8 @@ function startDeafnessWatch() {
     if (Date.now() - since < DEAF_MS) return;
     const s2 = state.standing;
     if (!s2 || !holdsStanding(s2.realm, s2.karta, s2.name ?? "")) return;
-    void leaveStanding(`никто не слушает ${Math.round(DEAF_MS / 6e4)} мин`);
+    const min = Math.round(DEAF_MS / 6e4);
+    void leaveStanding(L(`никто не слушает ${min} мин`, `nobody has listened for ${min} min`));
   }, TICK_MS).unref();
 }
 function localLeave(msg) {
@@ -6667,15 +6832,21 @@ function localLeave(msg) {
     const beside = besideKeyIn(realm);
     if (beside)
       return answer(
-        `Отказано (мост): место ${beside} стоит на общем канале моста рядом с ${ledKey()} — уход закрыл бы сокет всем местам канала. Уйти со всех — leave в графе ${state.standing?.realm ?? "основного места"}; снять только это место — revoke.`,
+        L(
+          `Отказано (мост): место ${beside} стоит на общем канале моста рядом с ${ledKey()} — уход закрыл бы сокет всем местам канала. Уйти со всех — leave в графе ${state.standing?.realm ?? "основного места"}; снять только это место — revoke.`,
+          `Refused (bridge): the seat ${beside} stands on the bridge's shared channel beside ${ledKey()} — leaving would close the socket for all seats of the channel. To leave all — leave in the graph ${state.standing?.realm ?? "of the main seat"}; to remove only this seat — revoke.`
+        ),
         true
       );
     if (state.standing && otherRealm(realm, state.standing.realm))
       return answer(
-        `Отказано (мост): в графе ${String(realm)} этот мост места не держит — уходить неоткуда; его место ${ledKey()} в графе ${state.standing.realm} не тронуто.`,
+        L(
+          `Отказано (мост): в графе ${String(realm)} этот мост места не держит — уходить неоткуда; его место ${ledKey()} в графе ${state.standing.realm} не тронуто.`,
+          `Refused (bridge): this bridge holds no seat in the graph ${String(realm)} — nothing to leave; its seat ${ledKey()} in the graph ${state.standing.realm} is untouched.`
+        ),
         true
       );
-    return answer(await leaveStanding("по слову делателя", true));
+    return answer(await leaveStanding(L("по слову делателя", "by the doer's word"), true));
   })();
 }
 
@@ -6777,6 +6948,80 @@ async function armRoleHook(p) {
 import { existsSync as existsSync5, readdirSync as readdirSync5, readFileSync as readFileSync18 } from "node:fs";
 import { join as join15 } from "node:path";
 
+// js/bridge/resumewords.ts
+var via = "iskron_stand";
+var resumeWords = {
+  releaseFailed: () => L("возврат с диска не удался", "the return from disk failed"),
+  failed: () => L("возврат на место не удался", "the return to the seat failed"),
+  returnedParked: (pending2) => pending2 === null ? L(
+    "возврат на место, с которого мост уходил; hello за 4 с не пришёл",
+    "the return to the seat the bridge had left; hello did not come in 4 s"
+  ) : L(
+    `возврат на место, с которого мост уходил (ожидало кадров — ${pending2})`,
+    `the return to the seat the bridge had left (frames waiting — ${pending2})`
+  ),
+  legacy: (n) => L(
+    `есть место прежней сборки без сессии: ${n} — вернуть: ${via}(name="${n}")`,
+    `there is a seat of an earlier build without a session: ${n} — to bring it back: ${via}(name="${n}")`
+  ),
+  noRecord: (key, cwd) => L(
+    `своей записи держания ${key ? `с ключом ${key}` : `для каталога ${cwd ?? "?"}`} нет`,
+    `there is no own hold record ${key ? `with the key ${key}` : `for the directory ${cwd ?? "?"}`}`
+  ),
+  foreignDir: (foreign) => L(
+    `в каталоге лежат записи мест, на которых эта сессия не стояла (${foreign.join(", ")}); по одному каталогу они не берутся, место займёт ${via}`,
+    `the directory holds records of seats this session did not stand on (${foreign.join(", ")}); they are not taken by directory alone, ${via} will take the seat`
+  ),
+  left: (left) => L(
+    `место отпущено словом держателя (leave): ${left.join(", ")} — само не вернётся, вернуть: ${via} тем же именем`,
+    `the seat was released by the holder's word (leave): ${left.join(", ")} — it will not return by itself, to bring it back: ${via} with the same name`
+  ),
+  alreadyHolding: () => L("мост уже держит это место", "the bridge already holds this seat"),
+  byRecord: () => L("возврат по записи", "return by record"),
+  otherSeat: (key, led) => L(`${key}: мост ведёт другое место ${led}`, `${key}: the bridge leads another seat ${led}`),
+  liveBridge: (key) => L(`${key}: держит живой мост`, `${key}: held by a live bridge`),
+  noHello: (key) => L(
+    `${key}: hello не пришёл — запись цела, сторож повторит возврат; не ждёшь — ${via}`,
+    `${key}: hello did not come — the record is intact, the watchdog will repeat the return; if you do not wait — ${via}`
+  ),
+  stale: (key) => L(
+    `${key}: запись протухла — место займёт ${via}`,
+    `${key}: the record went stale — ${via} will take the seat`
+  ),
+  registerRefused: (text) => L(`register отказал — ${text}`, `register refused — ${text}`),
+  othersInDir: (others) => L(
+    `в том же каталоге записи и других мест: ${others.join(", ")}`,
+    `the same directory holds records of other seats too: ${others.join(", ")}`
+  ),
+  notYours: () => L(
+    'место не твоё — iskron_channel(action="leave") отпустит его, канал цел',
+    'the seat is not yours — iskron_channel(action="leave") will release it, the channel stays intact'
+  ),
+  nothingToReturn: (skipped) => L(`возвращать нечего — ${skipped.join("; ")}`, `nothing to return — ${skipped.join("; ")}`),
+  noKeyNoCwd: () => L("ни key, ни cwd не передан", "neither key nor cwd was passed"),
+  noSeatNoKeyNoCwd: () => L("места нет, ни key, ни cwd не передан", "no seat, and neither key nor cwd was passed"),
+  leftByWord: (key) => L(
+    `место ${key} отпущено словом держателя (leave) — сторож его не поднимает; вернуть: ${via} тем же именем`,
+    `the seat ${key} was released by the holder's word (leave) — the watchdog does not raise it; to bring it back: ${via} with the same name`
+  ),
+  watchdogReason: () => L("сторож слуха", "the hearing watchdog"),
+  boardUnread: (text) => L(`доска не прочиталась — ${text}`, `the board could not be read — ${text}`),
+  noSeatOnBoard: () => L("своего места на доске нет", "the own seat is not on the board"),
+  listening: () => L("слушаю", "listening"),
+  gaveUp: (key, limit) => L(
+    `Искрон: доска читает место ${key} не слушающим и после ${limit} переоткрытий сокета — больше не рву; проверь доску и сервер, вернуть слух — ${via} с take=true.`,
+    `Iskron: the board reads the seat ${key} as not listening and after ${limit} socket reopenings — I no longer tear it; check the board and the server, to restore hearing — ${via} with take=true.`
+  ),
+  deafBoard: () => L("доска не читает слушающим", "the board does not read it as listening"),
+  reopened: (pending2) => pending2 === null ? L(
+    "сокет переоткрыт, hello за 4 с не пришёл",
+    "the socket is reopened, hello did not come in 4 s"
+  ) : L(
+    `сокет переоткрыт: ожидало кадров — ${pending2}`,
+    `the socket is reopened: frames waiting — ${pending2}`
+  )
+};
+
 // js/bridge/suspend.ts
 var S3 = scoped(() => ({ on: false }));
 var suspended = () => S3.on;
@@ -6786,7 +7031,12 @@ function localSuspend(msg) {
   const s2 = state.standing;
   const { currentKey: key, currentUrl: url, currentStatusUrl: statusUrl2 } = H2;
   if (!CFG.satellite || !s2?.name || !key || !url)
-    return Promise.resolve(answer({ suspended: false, word: "места-спутника нет — паузы нет" }));
+    return Promise.resolve(
+      answer({
+        suspended: false,
+        word: L("места-спутника нет — паузы нет", "no satellite seat — nothing to pause")
+      })
+    );
   const cases = joinedCases();
   writeHoldRecord(
     key,
@@ -6868,7 +7118,7 @@ async function resumeFromDisk(realm, karta, name) {
   log(
     kept ? `hold record for ${key}: no hello in time — record kept as it was, the place is not taken` : `hold record for ${key} is stale — dropped, the place is taken anew`
   );
-  releaseStanding("возврат с диска не удался");
+  releaseStanding(resumeWords.releaseFailed());
   if (onDisk?.url === rec4.url) restoreHoldRecord(key, rec4);
   state.standing = prev;
   if (rec4.cwd) noteStandCwd(prevCwd);
@@ -6913,7 +7163,7 @@ function recordsFor(sel) {
     left
   };
 }
-var legacyWord = (names2) => names2.map((n) => `есть место прежней сборки без сессии: ${n} — вернуть: iskron_stand(name="${n}")`).join("; ");
+var legacyWord = (names2) => names2.map((n) => resumeWords.legacy(n)).join("; ");
 async function freeLegacy(recs) {
   const free = [];
   for (const r of recs) {
@@ -6924,31 +7174,23 @@ async function freeLegacy(recs) {
   return free;
 }
 async function backToParked(key, how) {
-  if (!returnToStanding(how)) return { resumed: false, key, word: "возврат на место не удался" };
+  if (!returnToStanding(how)) return { resumed: false, key, word: resumeWords.failed() };
   const hello = await awaitHello(4e3);
   return {
     resumed: true,
     key,
     pending: Number(hello?.pending) || 0,
-    word: hello ? `возврат на место, с которого мост уходил (ожидало кадров — ${Number(hello.pending) || 0})` : "возврат на место, с которого мост уходил; hello за 4 с не пришёл"
+    word: resumeWords.returnedParked(hello ? Number(hello.pending) || 0 : null)
   };
 }
 async function resumeBy(sel, register = true) {
   const { own: recs, sameDir, legacy: legacyRecs, left } = recordsFor(sel);
   if (!recs.length) {
     const legacy = await freeLegacy(legacyRecs);
-    const said = [
-      `своей записи держания ${sel.key ? `с ключом ${sel.key}` : `для каталога ${sel.cwd ?? "?"}`} нет`
-    ];
+    const said = [resumeWords.noRecord(sel.key, sel.cwd)];
     const foreign = sameDir.filter((k) => !left.includes(k));
-    if (foreign.length)
-      said.push(
-        `в каталоге лежат записи мест, на которых эта сессия не стояла (${foreign.join(", ")}); по одному каталогу они не берутся, место займёт iskron_stand`
-      );
-    if (left.length)
-      said.push(
-        `место отпущено словом держателя (leave): ${left.join(", ")} — само не вернётся, вернуть: iskron_stand тем же именем`
-      );
+    if (foreign.length) said.push(resumeWords.foreignDir(foreign));
+    if (left.length) said.push(resumeWords.left(left));
     if (legacy.length) said.push(legacyWord(legacy));
     return {
       resumed: false,
@@ -6961,22 +7203,21 @@ async function resumeBy(sel, register = true) {
   const elsewhere = [];
   for (const rec4 of recs) {
     const key = keyOf(rec4.realm, rec4.karta, rec4.name);
-    if (holdsKey(key)) return { resumed: true, key, pending: 0, word: "мост уже держит это место" };
-    if (isParked(rec4.realm, rec4.karta, rec4.name)) return backToParked(key, "возврат по записи");
+    if (holdsKey(key))
+      return { resumed: true, key, pending: 0, word: resumeWords.alreadyHolding() };
+    if (isParked(rec4.realm, rec4.karta, rec4.name)) return backToParked(key, resumeWords.byRecord());
     if (led && led !== key) {
-      skipped.push(`${key}: мост ведёт другое место ${led}`);
+      skipped.push(resumeWords.otherSeat(key, led));
       continue;
     }
     if (await localSocketAlive(localSocketPathOf(key))) {
-      skipped.push(`${key}: держит живой мост`);
+      skipped.push(resumeWords.liveBridge(key));
       elsewhere.push(key);
       continue;
     }
     const back = await resumeFromDisk(rec4.realm, rec4.karta, rec4.name);
     if (!back) {
-      skipped.push(
-        readHoldRecord(key) ? `${key}: hello не пришёл — запись цела, сторож повторит возврат; не ждёшь — iskron_stand` : `${key}: запись протухла — место займёт iskron_stand`
-      );
+      skipped.push(readHoldRecord(key) ? resumeWords.noHello(key) : resumeWords.stale(key));
       continue;
     }
     const lines = [back.word];
@@ -6988,18 +7229,18 @@ async function resumeBy(sel, register = true) {
         name: rec4.name,
         ...placeFields(rec4)
       });
-      lines.push(r.isError ? `register отказал — ${short(r.text)}` : "register");
+      lines.push(r.isError ? resumeWords.registerRefused(short(r.text)) : "register");
     }
     const others = [
       .../* @__PURE__ */ new Set([...recs.map((r) => keyOf(r.realm, r.karta, r.name)), ...sameDir])
     ].filter((k) => k !== key && readHoldRecord(k) !== null);
-    if (others.length) lines.push(`в том же каталоге записи и других мест: ${others.join(", ")}`);
-    lines.push('место не твоё — iskron_channel(action="leave") отпустит его, канал цел');
+    if (others.length) lines.push(resumeWords.othersInDir(others));
+    lines.push(resumeWords.notYours());
     return { resumed: true, key, pending: back.pending, word: lines.join("; "), others };
   }
   return {
     resumed: false,
-    word: `возвращать нечего — ${skipped.join("; ")}`,
+    word: resumeWords.nothingToReturn(skipped),
     ...elsewhere.length ? { elsewhere } : {}
   };
 }
@@ -7026,8 +7267,7 @@ var isResumeCall = (msg) => msg?.method === "iskron/resume";
 var isCheckCall = (msg) => msg?.method === "iskron/check";
 async function runResume(msg) {
   const sel = selectorFrom(msg);
-  if (!sel.key && !sel.cwd)
-    return reply(msg, { resumed: false, word: "ни key, ни cwd не передан" });
+  if (!sel.key && !sel.cwd) return reply(msg, { resumed: false, word: resumeWords.noKeyNoCwd() });
   const r = await resumeBy(sel);
   if (r.resumed) afterResume(r.key);
   return reply(msg, r);
@@ -7043,35 +7283,35 @@ async function runCheck(msg) {
           holding: false,
           resumed: false,
           key,
-          word: `место ${key} отпущено словом держателя (leave) — сторож его не поднимает; вернуть: iskron_stand тем же именем`
+          word: resumeWords.leftByWord(key)
         });
-      const r2 = await backToParked(key, "сторож слуха");
+      const r2 = await backToParked(key, resumeWords.watchdogReason());
       return reply(msg, { holding: r2.resumed, ...r2 });
     }
     if (!sel.key && !sel.cwd)
       return reply(msg, {
         holding: false,
         resumed: false,
-        word: "места нет, ни key, ни cwd не передан"
+        word: resumeWords.noSeatNoKeyNoCwd()
       });
     const r = await resumeBy(sel);
     return reply(msg, { holding: r.resumed, ...r });
   }
   const board = await callTool("iskron_channel", { action: "list", realm: s2.realm });
   if (board.isError)
-    return reply(msg, { holding: true, key, word: `доска не прочиталась — ${short(board.text)}` });
+    return reply(msg, { holding: true, key, word: resumeWords.boardUnread(short(board.text)) });
   const mine = parseBoard(board.text).find(
     (e) => e.karta === String(s2.karta) && nameOf(e.address) === (s2.name ?? "")
   );
-  if (!mine) return reply(msg, { holding: true, key, word: "своего места на доске нет" });
+  if (!mine) return reply(msg, { holding: true, key, word: resumeWords.noSeatOnBoard() });
   const pending2 = undelivered(mine);
   const listening = listens(mine);
   if (listening) {
     D.reopens = 0;
-    return reply(msg, { holding: true, key, listening, pending: pending2, word: "слушаю" });
+    return reply(msg, { holding: true, key, listening, pending: pending2, word: resumeWords.listening() });
   }
   if (D.reopens >= REOPEN_LIMIT) {
-    const text = `Искрон: доска читает место ${key} не слушающим и после ${REOPEN_LIMIT} переоткрытий сокета — больше не рву; проверь доску и сервер, вернуть слух — iskron_stand с take=true.`;
+    const text = resumeWords.gaveUp(key, REOPEN_LIMIT);
     if (!D.said) {
       D.said = true;
       standingLog(`reopen ${key}: gave up after ${REOPEN_LIMIT} — board still reads deaf`);
@@ -7093,7 +7333,7 @@ async function runCheck(msg) {
   }
   D.reopens++;
   standingLog(`reopen ${key}: board reads deaf${pending2 ? ` with ${pending2} pending` : ""}`);
-  parkStanding("доска не читает слушающим");
+  parkStanding(resumeWords.deafBoard());
   resumeStanding();
   const hello = await awaitHello(4e3);
   return reply(msg, {
@@ -7102,7 +7342,7 @@ async function runCheck(msg) {
     listening,
     pending: pending2,
     reopened: !!hello,
-    word: hello ? `сокет переоткрыт: ожидало кадров — ${Number(hello.pending) || 0}` : "сокет переоткрыт, hello за 4 с не пришёл"
+    word: resumeWords.reopened(hello ? Number(hello.pending) || 0 : null)
   });
 }
 var D = scoped(() => ({ reopens: 0, said: false }));
@@ -7355,59 +7595,92 @@ var SW = {
 };
 
 // js/bridge/standtool.ts
-var STAND_TOOL = {
-  name: "iskron_stand",
-  description: '[мост] Занять стояние одним вызовом: мост читает доску, выводит имя (машина.репо.модель), занимает место (connect и register; только register, если сокет уже держит этот мост), взводит хук инбокса роли своим входящим адресом, при room стучит кадром join в место человека по полному адресу с провода (повтор — только repeat_knock=true, один раз, не раньше чем через 2 минуты) и возвращает имя, команду сторожа, число ожидавших кадров, состояние хука и расписку стука. Место в другом графе встаёт рядом на том же канале (register): сессия слышит все свои графы, и запись в каждом подписана местом этого графа. Дальше — запустить сторожа командой из ответа и ждать. Он же — ход занятости: на месте, которое этот мост уже держит, вызов realm и status (karta и name — те же или опущены; без model, room, take — с ними это занятие места и сверка) лишь ставит строку занятости — без доски, connect, register, хука и стука; пустой status снимает; прежний iskron_channel(action="status") оставлен для совместимости. Тул исполняет мост; нет его в сессии — тулы идут мимо моста либо мост старой сборки (doctor скажет), стой по скиллу standing.',
+var STAND_TOOL_NAME = "iskron_stand";
+var str2 = (description) => ({ type: "string", description });
+var standTool = () => ({
+  name: STAND_TOOL_NAME,
+  description: L(
+    '[мост] Занять стояние одним вызовом: мост читает доску, выводит имя (машина.репо.модель), занимает место (connect и register; только register, если сокет уже держит этот мост), взводит хук инбокса роли своим входящим адресом, при room стучит кадром join в место человека по полному адресу с провода (повтор — только repeat_knock=true, один раз, не раньше чем через 2 минуты) и возвращает имя, команду сторожа, число ожидавших кадров, состояние хука и расписку стука. Место в другом графе встаёт рядом на том же канале (register): сессия слышит все свои графы, и запись в каждом подписана местом этого графа. Дальше — запустить сторожа командой из ответа и ждать. Он же — ход занятости: на месте, которое этот мост уже держит, вызов realm и status (karta и name — те же или опущены; без model, room, take — с ними это занятие места и сверка) лишь ставит строку занятости — без доски, connect, register, хука и стука; пустой status снимает; прежний iskron_channel(action="status") оставлен для совместимости. Тул исполняет мост; нет его в сессии — тулы идут мимо моста либо мост старой сборки (doctor скажет), стой по скиллу standing.',
+    `[bridge] Take a standing in one call: the bridge reads the board, derives the name (machine.repo.model), takes the seat (connect and register; only register if this bridge already holds the socket), arms the role's inbox hook with its own incoming address, with room knocks a join frame into the human's seat by the full address from the wire (a repeat — only repeat_knock=true, once, no sooner than 2 minutes) and returns the name, the watchdog command, the number of waiting frames, the hook state and the knock receipt. A seat in another graph stands beside on the same channel (register): the session hears all its graphs, and a write in each is signed by that graph's seat. Then — start the watchdog with the command from the reply and wait. It is also the busyness move: on a seat this bridge already holds, a call with realm and status (karta and name — the same or omitted; with model, room or take it is a seat-taking and a check) only sets the busyness line — no board, connect, register, hook or knock; an empty status clears; the former iskron_channel(action="status") is kept for compatibility. The bridge executes the tool; if it is not in the session, the tools go past the bridge or the bridge is an old build (doctor will say), stand by the standing skill.`
+  ),
   inputSchema: {
     type: "object",
     properties: {
-      realm: { type: "string", description: "Адрес графа: @owner/slug или rN." },
-      karta: {
-        type: "string",
-        description: "Роль агента (#N из AGENTS.md или строки запуска). Нужна, чтобы занять место; для занятости на держимом месте её можно опустить."
+      realm: str2(L("Адрес графа: @owner/slug или rN.", "Graph address: @owner/slug or rN.")),
+      karta: str2(
+        L(
+          "Роль агента (#N из AGENTS.md или строки запуска). Нужна, чтобы занять место; для занятости на держимом месте её можно опустить.",
+          "The agent's role (#N from AGENTS.md or the launch line). Needed to take a seat; for busyness on a held seat it may be omitted."
+        )
+      ),
+      name: str2(
+        L(
+          "Своя половина имени стояния; без неё выводится машина.репо.модель — модель из параметра model.",
+          "Your own half of the standing's name; without it machine.repo.model is derived — the model from the model parameter."
+        )
+      ),
+      room: str2(
+        L(
+          "Адрес места человека @handle:name (его даёт окно человека); мост стучит туда join, чтобы встать рядом с человеком.",
+          "The human's seat address @handle:name (the human's window gives it); the bridge knocks a join there to stand beside the human."
+        )
+      ),
+      model: str2(
+        L(
+          "Модель, которой бежит агент (id или имя, например claude-opus-5 или opus-5) — третья часть выведенного имени; без неё имя — машина.репо.",
+          "The model the agent runs on (id or name, for example claude-opus-5 or opus-5) — the third part of the derived name; without it the name is machine.repo."
+        )
+      ),
+      mute_siblings: {
+        type: "boolean",
+        description: L(
+          "Не слышать эхо других стояний той же роли.",
+          "Do not hear the echo of other standings of the same role."
+        )
       },
-      name: {
-        type: "string",
-        description: "Своя половина имени стояния; без неё выводится машина.репо.модель — модель из параметра model."
-      },
-      room: {
-        type: "string",
-        description: "Адрес места человека @handle:name (его даёт окно человека); мост стучит туда join, чтобы встать рядом с человеком."
-      },
-      model: {
-        type: "string",
-        description: "Модель, которой бежит агент (id или имя, например claude-opus-5 или opus-5) — третья часть выведенного имени; без неё имя — машина.репо."
-      },
-      mute_siblings: { type: "boolean", description: "Не слышать эхо других стояний той же роли." },
       take: {
         type: "boolean",
-        description: "Сознательный переход: своё место (мост этой же сессии перезапущен) агент возвращает сам, чужого живого держателя вытесняет только по слову человека — забрать сокет места, которое держит другой мост этой машины (без take выведенное имя встаёт рядом на имя.N, явное — только регистрируется, слух остаётся у держателя); либо сменить место этого моста в графе (в графе одно место на мост: другая роль или другое имя без take — отказ вслух, прежнее место остаётся на доске без слуха). Место в другом графе take не требует — оно встаёт рядом."
+        description: L(
+          "Сознательный переход: своё место (мост этой же сессии перезапущен) агент возвращает сам, чужого живого держателя вытесняет только по слову человека — забрать сокет места, которое держит другой мост этой машины (без take выведенное имя встаёт рядом на имя.N, явное — только регистрируется, слух остаётся у держателя); либо сменить место этого моста в графе (в графе одно место на мост: другая роль или другое имя без take — отказ вслух, прежнее место остаётся на доске без слуха). Место в другом графе take не требует — оно встаёт рядом.",
+          "A deliberate move: the agent takes back its own seat (this session's bridge was restarted) by itself, and displaces another live holder only on the human's word — to take the socket of a seat another bridge of this machine holds (without take a derived name stands beside on name.N, an explicit one is only registered, hearing stays with the holder); or to change this bridge's seat in a graph (one seat per bridge in a graph: another role or another name without take is a refusal aloud, the former seat stays on the board without hearing). A seat in another graph does not need take — it stands beside."
+        )
       },
-      room_karta: {
-        type: "string",
-        description: "Роль человека, чьё это место (#N), если места нет на доске; обычно роль человека, приславшего адрес места."
-      },
+      room_karta: str2(
+        L(
+          "Роль человека, чьё это место (#N), если места нет на доске; обычно роль человека, приславшего адрес места.",
+          "The role of the human whose seat it is (#N) if the seat is not on the board; usually the role of the human who sent the seat address."
+        )
+      ),
       repeat_knock: {
         type: "boolean",
-        description: "Осознанный повтор стука в то же место человека: разрешён один раз и не раньше чем через 2 минуты после первого; без него повторный вызов второго join не шлёт."
+        description: L(
+          "Осознанный повтор стука в то же место человека: разрешён один раз и не раньше чем через 2 минуты после первого; без него повторный вызов второго join не шлёт.",
+          "A deliberate repeat of the knock at the same human seat: allowed once and no sooner than 2 minutes after the first; without it a repeated call sends no second join."
+        )
       },
-      satellite_of: {
-        type: "string",
-        description: "Только мосту-спутнику субагента (запись моста с --satellite в файле агента): место позвавшего @handle:name из постановки. Мост встаёт рядом местом-спутником <имя позвавшего>.sub-N (первое свободное N), ролью из karta (её называет постановка, роль позвавшего не наследуется), без хука инбокса роли; место живёт прогоном. name, take и room с ним не передаются."
-      },
-      status: {
-        type: "string",
-        description: "Занятость места, до 64 символов: при занятии — первая строка; на месте, которое этот мост уже держит, — основной способ обновить занятость (вызов только её и ставит); пустая строка снимает."
-      },
-      cwd: {
-        type: "string",
-        description: "Директория сессии харнесса, существующий абсолютный каталог — из неё выводится репо для имени (git toplevel, в связанном ворктри — основной копии, иначе её basename) и читаются ветки при поиске мест прежнего имени, когда мост запущен не из рабочей копии; плагин OpenCode подставляет её сам. Без неё — cwd моста; несуществующая или относительная — отказ вслух."
-      }
+      satellite_of: str2(
+        L(
+          "Только мосту-спутнику субагента (запись моста с --satellite в файле агента): место позвавшего @handle:name из постановки. Мост встаёт рядом местом-спутником <имя позвавшего>.sub-N (первое свободное N), ролью из karta (её называет постановка, роль позвавшего не наследуется), без хука инбокса роли; место живёт прогоном. name, take и room с ним не передаются.",
+          "Only for a subagent's satellite bridge (the bridge entry with --satellite in the agent file): the caller's seat @handle:name from the brief. The bridge stands beside as the satellite seat <caller's name>.sub-N (the first free N), with the role from karta (the brief names it, the caller's role is not inherited), without a role inbox hook; the seat lives for the run. name, take and room are not passed with it."
+        )
+      ),
+      status: str2(
+        L(
+          "Занятость места, до 64 символов: при занятии — первая строка; на месте, которое этот мост уже держит, — основной способ обновить занятость (вызов только её и ставит); пустая строка снимает.",
+          "The seat's busyness, up to 64 characters: on taking — the first line; on a seat this bridge already holds — the main way to update busyness (the call sets only it); an empty string clears."
+        )
+      ),
+      cwd: str2(
+        L(
+          "Директория сессии харнесса, существующий абсолютный каталог — из неё выводится репо для имени (git toplevel, в связанном ворктри — основной копии, иначе её basename) и читаются ветки при поиске мест прежнего имени, когда мост запущен не из рабочей копии; плагин OpenCode подставляет её сам. Без неё — cwd моста; несуществующая или относительная — отказ вслух.",
+          "The harness session's directory, an existing absolute path — the repo for the name is derived from it (git toplevel, in a linked worktree — of the main copy, otherwise its basename) and branches are read when looking for seats of the former name, when the bridge is not started from the working copy; the OpenCode plugin supplies it itself. Without it — the bridge's cwd; a nonexistent or relative one is a refusal aloud."
+        )
+      )
     },
     required: ["realm"]
     // karta — только для занятия места; занятость на держимом месте без неё (#6509)
   }
-};
+});
 
 // js/bridge/stand.ts
 var ledName = () => state.standing?.name ?? "";
@@ -7685,31 +7958,42 @@ async function runStand(msg) {
 
 // js/bridge/moment.ts
 var WRITE_TOOL = /^iskron_(add_[a-z_]+|batch)$/;
-var JSON_LINE = "Момент скилла writing: перед вызовом по каждому узлу назови читателя, что изменит извлечение и что здесь ново; тип и given_as, три модуса как утверждения, имя-тезис, стрелки со смыслом; тело — нынешнее знание, никогда провенанс: кто сказал, когда, чьей рукой — в истории узла и в деле, узел переписывается, а не дописывается разделом; hint — семя превращения: только важное после сессии, не журнал; гроссбух — строками дела; нет дела — открой его, файл сессии — лишь запасной путь; кадром не шлётся; строки CHECKS в ответе — работа этого такта.";
-var MOMENT_LINE = "[мост] " + JSON_LINE;
-var STATUS_LINE = '[мост] Занятость ставит iskron_stand(realm, status) на месте, которое мост уже держит, — основной ход; action="status" (realm, text до 64 символов) — прежний, оставлен для совместимости: исполняет мост, держатель сокета, на сервер вызов не уходит; пустой text снимает; отказ поверхности приходит целиком.';
-var LEAVE_LINE = '[мост] action="leave" (realm) — уйти с места: исполняет мост — сокет закрыт, занятость снята, адрес, очередь и хуки целы; почта копится и придёт при возвращении (сторож или iskron_stand). У места-спутника субагента уход полный: место отпущено целиком, почта не копится, возврата нет — встать снова можно только iskron_stand с satellite_of. Сам мост уходит только там, где кадр доходит лишь сторожем (Claude Code, Codex) и сторож не взведён 15 минут; в pi и OpenCode кадр приходит уведомлением, и мост места не бросает. Занятость снимается на конце сессии.';
+var jsonLine = () => L(
+  "Момент скилла writing: перед вызовом по каждому узлу назови читателя, что изменит извлечение и что здесь ново; тип и given_as, три модуса как утверждения, имя-тезис, стрелки со смыслом; тело — нынешнее знание, никогда провенанс: кто сказал, когда, чьей рукой — в истории узла и в деле, узел переписывается, а не дописывается разделом; hint — семя превращения: только важное после сессии, не журнал; гроссбух — строками дела; нет дела — открой его, файл сессии — лишь запасной путь; кадром не шлётся; строки CHECKS в ответе — работа этого такта.",
+  "The writing skill's moment: before each node, name the reader, what will change retrieval and what is new here; type and given_as, the three modes as claims, a thesis name, arrows with sense; the body is present knowledge, never provenance: who said it, when, by whose hand — lives in the node's history and in the case, a node is rewritten, not appended with a section; hint is a transformation's seed: only what matters after the session, not a log; the ledger is case lines; no case — open one, the session file is only a fallback; not sent as a frame; the CHECKS lines in the reply are this beat's work."
+);
+var momentLine = () => L("[мост] ", "[bridge] ") + jsonLine();
+var statusLine = () => L(
+  '[мост] Занятость ставит iskron_stand(realm, status) на месте, которое мост уже держит, — основной ход; action="status" (realm, text до 64 символов) — прежний, оставлен для совместимости: исполняет мост, держатель сокета, на сервер вызов не уходит; пустой text снимает; отказ поверхности приходит целиком.',
+  '[bridge] Busyness is set by iskron_stand(realm, status) on a seat the bridge already holds — the main move; action="status" (realm, text up to 64 characters) is the former one, kept for compatibility: the bridge, the socket holder, executes it, the call does not go to the server; an empty text clears; a surface refusal comes whole.'
+);
+var leaveLine = () => L(
+  '[мост] action="leave" (realm) — уйти с места: исполняет мост — сокет закрыт, занятость снята, адрес, очередь и хуки целы; почта копится и придёт при возвращении (сторож или iskron_stand). У места-спутника субагента уход полный: место отпущено целиком, почта не копится, возврата нет — встать снова можно только iskron_stand с satellite_of. Сам мост уходит только там, где кадр доходит лишь сторожем (Claude Code, Codex) и сторож не взведён 15 минут; в pi и OpenCode кадр приходит уведомлением, и мост места не бросает. Занятость снимается на конце сессии.',
+  `[bridge] action="leave" (realm) — leave the seat: the bridge executes it — the socket is closed, busyness cleared, address, queue and hooks intact; mail piles up and arrives on return (the watchdog or iskron_stand). For a subagent's satellite seat the leave is total: the seat is released whole, mail does not pile up, there is no return — standing again is only iskron_stand with satellite_of. The bridge itself leaves only where a frame reaches only through a watchdog (Claude Code, Codex) and the watchdog has not been armed for 15 minutes; in pi and OpenCode a frame comes as a notification, and the bridge does not abandon the seat. Busyness clears at the end of the session.`
+);
 function annotateToolList(reply2) {
   const tools = reply2?.result?.tools;
   if (!Array.isArray(tools)) return;
-  const at2 = tools.findIndex((t) => t?.name === STAND_TOOL.name);
-  if (at2 >= 0) tools[at2] = STAND_TOOL;
-  else tools.push(STAND_TOOL);
+  const at2 = tools.findIndex((t) => t?.name === STAND_TOOL_NAME);
+  if (at2 >= 0) tools[at2] = standTool();
+  else tools.push(standTool());
   for (const t of tools) {
     if (t && t.name === "iskron_channel" && typeof t.description === "string") {
-      if (!t.description.includes(LEAVE_LINE)) t.description = `${LEAVE_LINE}
+      if (!t.description.includes(leaveLine()))
+        t.description = `${leaveLine()}
 
 ${t.description}`;
-      if (!t.description.includes(STATUS_LINE)) t.description = `${STATUS_LINE}
+      if (!t.description.includes(statusLine()))
+        t.description = `${statusLine()}
 ${t.description}`;
       continue;
     }
     if (!t || typeof t.name !== "string" || !WRITE_TOOL.test(t.name)) continue;
     const d = typeof t.description === "string" ? t.description : "";
-    if (d.includes(MOMENT_LINE)) continue;
-    t.description = d ? `${MOMENT_LINE}
+    if (d.includes(momentLine())) continue;
+    t.description = d ? `${momentLine()}
 
-${d}` : MOMENT_LINE;
+${d}` : momentLine();
   }
 }
 
@@ -7721,7 +8005,7 @@ function clientName2() {
   return typeof info?.name === "string" ? info.name : "";
 }
 function toolSet() {
-  return CFG.tools ? /* @__PURE__ */ new Set([...CFG.tools, STAND_TOOL.name]) : null;
+  return CFG.tools ? /* @__PURE__ */ new Set([...CFG.tools, STAND_TOOL_NAME]) : null;
 }
 var ownRealmList = (msg) => String(msg.id ?? "").startsWith("iskron-thin-realms-") && msg.params?.name === "iskron_realm" && String(msg.params?.arguments?.action ?? "") === "list";
 function outsideSetRefusal(msg) {
@@ -7867,7 +8151,7 @@ function withNotice(reply2) {
   const content = reply2?.result?.content;
   if (!Array.isArray(content)) return reply2;
   const notice = takeNotice();
-  if (notice && !content.some((c) => c?.text?.includes("ПОСТАВКА ОТСТАЛА"))) {
+  if (notice && !content.some((c) => /ПОСТАВКА ОТСТАЛА|DELIVERY BEHIND/.test(c?.text ?? ""))) {
     content.push({ type: "text", text: notice });
   }
   return reply2;
@@ -9117,14 +9401,24 @@ function openDoor(socketPath, onMessage, onClose) {
           } else if (op === 8) socket.end();
         }
       });
-      socket.on("close", () => onClose("сокет закрыт"));
+      socket.on("close", () => onClose(L("сокет закрыт", "socket closed")));
       socket.on("error", (e) => onClose(e.message));
       resolve7({
         send: (msg) => socket.write(frame(Buffer.from(JSON.stringify(msg)))),
         close: () => socket.end()
       });
     });
-    req.on("response", (res) => reject(new Error(`дверь не открылась: HTTP ${res.statusCode}`)));
+    req.on(
+      "response",
+      (res) => reject(
+        new Error(
+          L(
+            `дверь не открылась: HTTP ${res.statusCode}`,
+            `the door did not open: HTTP ${res.statusCode}`
+          )
+        )
+      )
+    );
     req.on("error", reject);
     req.end();
   });
@@ -9134,6 +9428,99 @@ function openDoor(socketPath, onMessage, onClose) {
 import { existsSync as existsSync6, readdirSync as readdirSync6, readFileSync as readFileSync21 } from "node:fs";
 import { connect as connect4 } from "node:net";
 import { join as join17 } from "node:path";
+
+// js/watchdog/words.ts
+var doer = (text) => `${L("ДЕЛАТЕЛЬ", "DOER")}: ${text}`;
+var wd = {
+  listening: (key, tail2 = "") => L(`слушаю стояние ${key}${tail2}`, `listening on standing ${key}${tail2}`),
+  listeningCodex: (key, thread) => L(
+    `слушаю стояние ${key}; кадры кладу в тред ${thread}`,
+    `listening on standing ${key}; putting frames into thread ${thread}`
+  ),
+  backfilled: (count) => L(` (${count} задним числом)`, ` (${count} back-dated)`),
+  noHeld: () => L(
+    "мост не держит ни одного стояния — назовись одним вызовом iskron_stand(realm, karta, model): его ответ назовёт команду слушания",
+    "the bridge holds no standing — name yourself with one call to iskron_stand(realm, karta, model): its answer names the listening command"
+  ),
+  severalHeld: (held2) => L(
+    `мост держит несколько стояний — назови нужное: ${held2.join(", ")}`,
+    `the bridge holds several standings — name the one you need: ${held2.join(", ")}`
+  ),
+  bridgeLetGo: () => L(
+    "мост отпустил стояние или ушёл — сессия кончилась?",
+    "the bridge released the standing or went away — did the session end?"
+  ),
+  seatNotBack: (s2, path) => L(
+    `место не вернулось за ${s2}s после смены демона — сокет ${path} не поднят; вернуть — iskron_stand`,
+    `the seat did not return within ${s2}s after the daemon change — socket ${path} is not up; to bring it back use iskron_stand`
+  ),
+  noSocket: (path, s2) => L(
+    `мост не поднял локальный сокет ${path} за ${s2}s`,
+    `the bridge did not bring up the local socket ${path} within ${s2}s`
+  ),
+  bridgeReleasedSocket: (text) => L(`мост отпустил сокет: ${text}`, `the bridge released the socket: ${text}`),
+  notWakeup: (type) => L(
+    `кадр ${type ?? "не разобран"} — не повод будить`,
+    `frame ${type ?? "unparsed"} — not a reason to wake`
+  ),
+  seenEarlier: (id) => L(
+    `кадр ${id} уже отдан прежним взводом — не повод будить`,
+    `frame ${id} was already delivered by an earlier arming — not a reason to wake`
+  ),
+  unaddressed: () => L(
+    "пачка без адресованных месту — счёт ждёт ближайшей побудки",
+    "a batch with nothing addressed to the seat — the count waits for the next wake-up"
+  ),
+  staleFrames: () => L("лежалые кадры", "stale frames"),
+  seatLost: () => doer(L("стояние потеряно", "the standing is lost")),
+  aliveNote: () => doer(
+    L(
+      "сокет рвут, а служба отвечает — мост держит место",
+      "the socket keeps being cut while the service answers — the bridge holds the seat"
+    )
+  ),
+  codexStale: () => L("Искрон: лежалые кадры", "Iskron: stale frames"),
+  codexLost: () => L(
+    "Искрон: стояние потеряно — назовись заново: iskron_stand",
+    "Iskron: the standing is lost — name yourself again: iskron_stand"
+  ),
+  codexAlive: () => L(
+    "Искрон: сокет рвут, а служба отвечает — мост держит место",
+    "Iskron: the socket keeps being cut while the service answers — the bridge holds the seat"
+  ),
+  noThread: () => doer(
+    L(
+      "нет CODEX_THREAD_ID — запускай этого сторожа из оболочки сессии Codex: там Codex кладёт id треда в окружение",
+      "no CODEX_THREAD_ID — run this watchdog from the Codex session shell: that is where Codex puts the thread id into the environment"
+    )
+  ),
+  noDoor: (path) => doer(
+    L(
+      `двери нет (${path}) — этот тред не под демоном app-server. Это ход ЧЕЛОВЕКА до запуска сессии, не твой: демон и сессия Codex должны стартовать с одним коротким CODEX_HOME (рецепт в SETUP, раздел Codex). Скажи ему это; пока двери нет — слушай watchdog-exit`,
+      `no door (${path}) — this thread is not under an app-server daemon. This is the HUMAN's move before the session starts, not yours: the daemon and the Codex session must start with one short CODEX_HOME (recipe in SETUP, section Codex). Tell them so; until there is a door, listen with watchdog-exit`
+    )
+  ),
+  threadRefused: (why) => doer(L(`тред не принял кадр — ${why}`, `the thread did not accept the frame — ${why}`)),
+  refusal: () => L("отказ", "refusal"),
+  framePut: (thread) => L(`кадр вложен в тред ${thread}`, `frame put into thread ${thread}`),
+  frameSent: (thread) => L(`кадр отправлен в тред ${thread}`, `frame sent to thread ${thread}`),
+  frameNotPut: (why) => doer(L(`кадр не вложился — ${why}`, `the frame was not put in — ${why}`)),
+  doorClosed: (why, lost) => L(
+    `дверь закрылась: ${why} — открою заново на следующем кадре` + (lost.length ? `; без ответа: ${lost.join(", ")} — вернутся из кольца следующим взводом` : ""),
+    `the door closed: ${why} — will reopen on the next frame` + (lost.length ? `; unanswered: ${lost.join(", ")} — will come back from the ring on the next arming` : "")
+  ),
+  doorNotOpened: (why) => L(`дверь не открылась: ${why}`, `the door did not open: ${why}`),
+  noIdFromRing: () => L(
+    "кадр без id из кольца — пометить нечем, в тред не кладу повторно",
+    "a frame without an id from the ring — nothing to mark it with, not putting it into the thread again"
+  ),
+  alreadyPut: (id) => L(
+    `кадр ${id} уже вложен — в тред не кладу повторно`,
+    `frame ${id} was already put in — not putting it into the thread again`
+  )
+};
+
+// js/watchdog/client.ts
 var ATTACH_WINDOW_MS = Number(process.env.ISKRON_WATCHDOG_ATTACH_MS) || 6e4;
 var RETRY_MS = 1e3;
 function parseWatchdogArgs(argv2) {
@@ -9160,11 +9547,11 @@ function resolveStanding(argv2) {
   if (held2.length === 1) return { key: held2[0], path: pathFor(held2[0]), authDir };
   if (held2.length === 0) {
     return {
-      error: "мост не держит ни одного стояния — назовись одним вызовом iskron_stand(realm, karta, model): его ответ назовёт команду слушания"
+      error: wd.noHeld()
     };
   }
   return {
-    error: `мост держит несколько стояний — назови нужное: ` + held2.join(", ")
+    error: wd.severalHeld(held2)
   };
 }
 function adoptSeenPath(named, current, seen) {
@@ -9226,12 +9613,10 @@ function attach(path, o) {
         startedAt = Date.now();
         return void setTimeout(tryOnce, RETRY_MS);
       }
-      if (attached) return o.onGone("мост отпустил стояние или ушёл — сессия кончилась?");
+      if (attached) return o.onGone(wd.bridgeLetGo());
       if (Date.now() - startedAt > ATTACH_WINDOW_MS) {
         const s2 = ATTACH_WINDOW_MS / 1e3;
-        return o.onGone(
-          waitingBack ? `место не вернулось за ${s2}s после смены демона — сокет ${path} не поднят; вернуть — iskron_stand` : `мост не поднял локальный сокет ${path} за ${s2}s`
-        );
+        return o.onGone(waitingBack ? wd.seatNotBack(s2, path) : wd.noSocket(path, s2));
       }
       setTimeout(tryOnce, RETRY_MS);
     });
@@ -9250,21 +9635,17 @@ function codexDoorPath() {
 function runWatchdogCodex(argv2) {
   const threadId = process.env.CODEX_THREAD_ID?.trim();
   if (!threadId) {
-    note(
-      "ДЕЛАТЕЛЬ: нет CODEX_THREAD_ID — запускай этого сторожа из оболочки сессии Codex: там Codex кладёт id треда в окружение"
-    );
+    note(wd.noThread());
     process.exit(2);
   }
   const socketPath = codexDoorPath();
   if (!existsSync7(socketPath)) {
-    note(
-      `ДЕЛАТЕЛЬ: двери нет (${socketPath}) — этот тред не под демоном app-server. Это ход ЧЕЛОВЕКА до запуска сессии, не твой: демон и сессия Codex должны стартовать с одним коротким CODEX_HOME (рецепт в SETUP, раздел Codex). Скажи ему это; пока двери нет — слушай watchdog-exit`
-    );
+    note(wd.noDoor(socketPath));
     process.exit(2);
   }
   const target = resolveStanding(argv2);
   if ("error" in target) {
-    note(`ДЕЛАТЕЛЬ: ${target.error}`);
+    note(doer(target.error));
     process.exit(2);
   }
   parseWatchdogArgs(argv2);
@@ -9282,16 +9663,14 @@ function runWatchdogCodex(argv2) {
         const ids = !m?.method && typeof m?.id === "number" ? waiting.get(m.id) : void 0;
         if (!ids) return;
         waiting.delete(m.id);
-        if (m.error) return note(`ДЕЛАТЕЛЬ: тред не принял кадр — ${m.error.message ?? "отказ"}`);
-        note(`кадр вложен в тред ${threadId}`);
+        if (m.error) return note(wd.threadRefused(m.error.message ?? wd.refusal()));
+        note(wd.framePut(threadId));
         for (const id of ids) noteSeen(seenPath, id, seen);
       },
       (why) => {
         const lost = [...waiting.values()].flat();
         waiting.clear();
-        note(
-          `дверь закрылась: ${why} — открою заново на следующем кадре` + (lost.length ? `; без ответа: ${lost.join(", ")} — вернутся из кольца следующим взводом` : "")
-        );
+        note(wd.doorClosed(why, lost));
         door = null;
         ready = null;
       }
@@ -9306,7 +9685,7 @@ function runWatchdogCodex(argv2) {
       return d;
     });
     ready.catch((e) => {
-      note(`дверь не открылась: ${e.message}`);
+      note(wd.doorNotOpened(e.message));
       ready = null;
     });
     return ready;
@@ -9321,9 +9700,9 @@ function runWatchdogCodex(argv2) {
         id: reqId,
         params: { threadId, input: [{ type: "text", text }], turnTrigger: "iskron-channel" }
       });
-      note(`кадр отправлен в тред ${threadId}`);
+      note(wd.frameSent(threadId));
     } catch (e) {
-      note(`ДЕЛАТЕЛЬ: кадр не вложился — ${e.message}`);
+      note(wd.frameNotPut(e.message));
     }
   }
   let replay = 0;
@@ -9343,11 +9722,10 @@ function runWatchdogCodex(argv2) {
           const fromRing = replay > 0;
           if (fromRing) replay--;
           const type = ev.frame?.type;
-          if (type !== "message") return note(`кадр ${type ?? "не разобран"} — не повод будить`);
-          if (fromRing && typeof ev.frame?.id !== "string")
-            return note("кадр без id из кольца — пометить нечем, в тред не кладу повторно");
+          if (type !== "message") return note(wd.notWakeup(type));
+          if (fromRing && typeof ev.frame?.id !== "string") return note(wd.noIdFromRing());
           if (typeof ev.frame?.id === "string" && seen.has(ev.frame.id))
-            return note(`кадр ${ev.frame.id} уже вложен — в тред не кладу повторно`);
+            return note(wd.alreadyPut(ev.frame.id));
           if (ev.batch && ev.frame && !addressedToMine(ev.frame)) {
             pend.push({
               frame: ev.frame,
@@ -9360,30 +9738,28 @@ function runWatchdogCodex(argv2) {
           break;
         }
         case "stale":
-          void deliver2(ev.text ?? "Искрон: лежалые кадры", staleBatchKeys(ev));
+          void deliver2(ev.text ?? wd.codexStale(), staleBatchKeys(ev));
           break;
         case "dead":
         case "evicted":
-          note(ev.text ?? "ДЕЛАТЕЛЬ: стояние потеряно");
-          void deliver2(ev.text ?? "Искрон: стояние потеряно — назовись заново: iskron_stand").then(
-            () => process.exit(1)
-          );
+          note(ev.text ?? wd.seatLost());
+          void deliver2(ev.text ?? wd.codexLost()).then(() => process.exit(1));
           break;
         case "alive":
-          note(ev.text ?? "ДЕЛАТЕЛЬ: сокет рвут, а служба отвечает — мост держит место");
-          void deliver2(ev.text ?? "Искрон: сокет рвут, а служба отвечает — мост держит место");
+          note(ev.text ?? wd.aliveNote());
+          void deliver2(ev.text ?? wd.codexAlive());
           break;
         case "attached":
           replay = ev.buffered ?? 0;
           seenPath = adoptSeenPath(ev.seen, seenPath, seen);
-          note(`слушаю стояние ${ev.key}; кадры кладу в тред ${threadId}`);
+          note(wd.listeningCodex(ev.key, threadId));
           break;
         default:
           note(ev.text ?? ev.kind);
       }
     },
     onGone: (why) => {
-      note(`ДЕЛАТЕЛЬ: ${why}`);
+      note(doer(why));
       process.exit(1);
     }
   });
@@ -9410,8 +9786,8 @@ function wrapLines(text, max = LINE_MAX) {
 var plural = (n) => {
   const m10 = n % 10;
   const m100 = n % 100;
-  const word = m10 === 1 && m100 !== 11 ? "кадр" : m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14) ? "кадра" : "кадров";
-  return `${n} ${word}`;
+  const form = m10 === 1 && m100 !== 11 ? 0 : m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14) ? 1 : 2;
+  return `${n} ${L(["кадр", "кадра", "кадров"][form], n === 1 ? "frame" : "frames")}`;
 };
 var ALONE_GAP_MS = Number(process.env.ISKRON_WATCHDOG_ALONE_MS) || 300;
 var RIDERS_MAX = 100;
@@ -9446,7 +9822,7 @@ var exitNow = (s2, code) => {
 function runWatchdog(argv2) {
   const target = resolveStanding(argv2);
   if ("error" in target) {
-    writeSync(2, `ДЕЛАТЕЛЬ: ${target.error}
+    writeSync(2, `${doer(target.error)}
 `);
     process.exit(2);
   }
@@ -9474,9 +9850,7 @@ function runWatchdog(argv2) {
       switch (ev.kind) {
         case "attached":
           seenPath = adoptSeenPath(ev.seen, seenPath, seen);
-          log2(
-            `слушаю стояние ${ev.key}${ev.buffered ? ` (${plural(ev.buffered)} задним числом)` : ""}`
-          );
+          log2(wd.listening(ev.key, ev.buffered ? wd.backfilled(plural(ev.buffered)) : ""));
           break;
         case "frame": {
           const f = ev.frame;
@@ -9543,17 +9917,17 @@ function runWatchdog(argv2) {
           break;
         case "dead":
         case "evicted":
-          loudExit(ev.text ?? "ДЕЛАТЕЛЬ: стояние потеряно", 1);
+          loudExit(ev.text ?? wd.seatLost(), 1);
           break;
         case "alive":
-          log2(ev.text ?? "ДЕЛАТЕЛЬ: сокет рвут, а служба отвечает — мост держит место");
+          log2(ev.text ?? wd.aliveNote());
           break;
         case "released":
-          log2(`мост отпустил сокет: ${ev.text ?? ""}`);
+          log2(wd.bridgeReleasedSocket(ev.text ?? ""));
           break;
       }
     },
-    onGone: (why) => loudExit(`ДЕЛАТЕЛЬ: ${why}`, 1)
+    onGone: (why) => loudExit(doer(why), 1)
   });
 }
 
@@ -9573,7 +9947,7 @@ var note2 = (s2) => {
 function runWatchdogExit(argv2) {
   const target = resolveStanding(argv2);
   if ("error" in target) {
-    note2(`ДЕЛАТЕЛЬ: ${target.error}`);
+    note2(doer(target.error));
     process.exit(2);
   }
   let seenPath = seenFilePathOf(target.authDir, target.key);
@@ -9598,11 +9972,11 @@ function runWatchdogExit(argv2) {
       switch (ev.kind) {
         case "frame": {
           const type = ev.frame?.type;
-          if (type !== "message") return note2(`кадр ${type ?? "не разобран"} — не повод будить`);
+          if (type !== "message") return note2(wd.notWakeup(type));
           const id = frameId(ev);
           const last = !ev.batch || ev.batch.at >= ev.batch.of;
           if (seen.has(id)) {
-            note2(`кадр ${id} уже отдан прежним взводом — не повод будить`);
+            note2(wd.seenEarlier(id));
             if (last) hold();
             if (last && woke) leave();
             return;
@@ -9612,7 +9986,7 @@ function runWatchdogExit(argv2) {
             if (last) {
               hold();
               if (woke) leave();
-              note2("пачка без адресованных месту — счёт ждёт ближайшей побудки");
+              note2(wd.unaddressed());
             }
             return;
           }
@@ -9639,17 +10013,17 @@ function runWatchdogExit(argv2) {
         }
         case "stale":
           for (const k of staleBatchKeys(ev)) noteSeen(seenPath, k, seen);
-          note2(ev.text ?? "лежалые кадры");
+          note2(ev.text ?? wd.staleFrames());
           break;
         case "dead":
         case "alive":
         case "evicted":
-          note2(ev.text ?? "ДЕЛАТЕЛЬ: стояние потеряно");
+          note2(ev.text ?? wd.seatLost());
           process.exit(1);
           break;
         case "attached":
           seenPath = adoptSeenPath(ev.seen, seenPath, seen);
-          note2(`слушаю стояние ${ev.key}`);
+          note2(wd.listening(ev.key));
           break;
         default:
           if (ev.kind === "note" && ev.batch) head = ev.text ?? "";
@@ -9657,7 +10031,7 @@ function runWatchdogExit(argv2) {
       }
     },
     onGone: (why) => {
-      note2(`ДЕЛАТЕЛЬ: ${why}`);
+      note2(doer(why));
       process.exit(1);
     }
   });
@@ -9669,6 +10043,196 @@ import { existsSync as existsSync10, readdirSync as readdirSync8, readFileSync a
 import { homedir as homedir10 } from "node:os";
 import { dirname as dirname11, join as join21 } from "node:path";
 import { fileURLToPath as fileURLToPath8 } from "node:url";
+
+// js/cli/doctorwords.ts
+var dw = {
+  homeNone: (home) => L(
+    `домашняя копия: нет (${home}) — её кладёт establish-mcp при подключении`,
+    `home copy: none (${home}) — establish-mcp places it on connect`
+  ),
+  homeSame: (home) => L(
+    `домашняя копия: ${home} — та же сборка, что и этот файл`,
+    `home copy: ${home} — the same build as this file`
+  ),
+  homeDiffers: (home, v, hash, selfPath2) => {
+    const fix = selfPath2 ? L(
+      `обнови её из поставки: cp "${selfPath2}" ${home}`,
+      `update it from the delivery: cp "${selfPath2}" ${home}`
+    ) : L("этот файл не читается", "this file is unreadable");
+    return L(
+      `домашняя копия: ${home} — v${v}+${hash}, ДРУГИЕ байты: ${fix}`,
+      `home copy: ${home} — v${v}+${hash}, DIFFERENT bytes: ${fix}`
+    );
+  },
+  srcArgument: () => L("аргумент запуска", "launch argument"),
+  srcEnv: () => L("переменная ISKRON_BRIDGE_URL", "the ISKRON_BRIDGE_URL variable"),
+  srcFile: (p) => L(`файл выбора ${p}`, `choice file ${p}`),
+  srcDefault: (p) => L(
+    `по умолчанию; сменить — node <мост> use en | ru | <url>, файл ${p}`,
+    `the default; to change — node <bridge> use en | ru | <url>, file ${p}`
+  ),
+  freshProd: () => L(
+    "продовый адрес: самообновление с релизов поставки включено",
+    "production address: self-update from the delivery releases is on"
+  ),
+  freshOther: () => L(
+    "другой инстанс: обновлений с релизов поставки нет",
+    "another instance: there are no updates from the delivery releases"
+  ),
+  server: (url, source) => L(`сервер: ${url} (${source})`, `server: ${url} (${source})`),
+  unreachable: (why) => L(`  недостижим: ${why}`, `  unreachable: ${why}`),
+  wantsOAuth: () => L(" (просит OAuth)", " (asks for OAuth)"),
+  noTokenProbe: () => L(
+    " (пробник без токена — отказ ожидаем)",
+    " (a probe without a token — a refusal is expected)"
+  ),
+  answers: (status, note3) => L(`  отвечает: HTTP ${status}${note3}`, `  answers: HTTP ${status}${note3}`),
+  grantPat: (source) => L(
+    `грант: личный токен (PAT) из ${source} — OAuth не используется`,
+    `grant: a personal token (PAT) from ${source} — OAuth is not used`
+  ),
+  patCheckFailed: (why) => L(`  проверить не вышло: ${why}`, `  the check failed: ${why}`),
+  patRejected: () => L(
+    "  ТОКЕН ОТВЕРГНУТ (HTTP 401) — отозван, истёк или без прав на этот граф: выпусти новый на странице токенов графа",
+    "  TOKEN REJECTED (HTTP 401) — revoked, expired or without rights to this graph: issue a new one on the graph's token page"
+  ),
+  patAccepted: (status) => L(
+    `  токен принят сервером (HTTP ${status})`,
+    `  the token is accepted by the server (HTTP ${status})`
+  ),
+  patOther: (status) => L(
+    `  сервер ответил HTTP ${status} — не отказ токена, смотри строку «сервер»`,
+    `  the server answered HTTP ${status} — not a token refusal, see the "server" line`
+  ),
+  patStore: (path) => L(
+    `  хранилище OAuth ${path} есть, но не читается, пока стоит PAT`,
+    `  the OAuth store ${path} exists but is not read while a PAT is set`
+  ),
+  grant: (path) => L(`грант: ${path}`, `grant: ${path}`),
+  noStore: () => L(
+    "  хранилища нет — мост ещё ни разу не входил на этот сервер",
+    "  no store — the bridge has never logged in to this server"
+  ),
+  noTokens: () => L("  токенов нет", "  no tokens"),
+  access: (usable, left, secs2) => L(
+    `  access: ${usable ? "годен" : "не годен"}${left !== null ? ` (${left > 0 ? "истекает через" : "истёк"} ${secs2(Math.abs(left))})` : ""}`,
+    `  access: ${usable ? "usable" : "not usable"}${left !== null ? ` (${left > 0 ? "expires in" : "expired"} ${secs2(Math.abs(left))})` : ""}`
+  ),
+  refreshNone: () => L("  refresh: нет", "  refresh: none"),
+  refreshValidIn: (s2) => L(`в силе через ${s2}`, `valid in ${s2}`),
+  refreshValid: () => L("в силе", "valid"),
+  refreshExpired: () => L("ИСТЁК — нужен вход", "EXPIRED — a login is needed"),
+  refreshExpiresIn: (s2) => L(`истекает через ${s2}`, `expires in ${s2}`),
+  refresh: (parts) => L(
+    `  refresh: есть${parts.length ? ` (${parts.join(", ")})` : ""}`,
+    `  refresh: present${parts.length ? ` (${parts.join(", ")})` : ""}`
+  ),
+  refusedSince: (since, reason) => L(`  отказ стоит с ${since}: ${reason}`, `  a refusal stands since ${since}: ${reason}`),
+  lock: (p) => L(`  замок: ${p}`, `  lock: ${p}`),
+  grantLog: () => L("  grant.log, последнее:", "  grant.log, latest:"),
+  latestNotAsked: () => L(
+    "свежий релиз: мост ещё не спрашивал релизы (спросит через пару секунд после старта сессии; руками — подкоманда update)",
+    "latest release: the bridge has not asked about releases yet (it will in a couple of seconds after the session starts; by hand — the update subcommand)"
+  ),
+  latestUnknown: (why, ago) => L(
+    `свежий релиз: не узнан (${why ?? "без причины"}), спрашивал ${ago} мин назад`,
+    `latest release: unknown (${why ?? "no reason"}), asked ${ago} min ago`
+  ),
+  latestBehind: (latest, v, downloaded, ago) => L(
+    `свежий релиз: v${latest} — ЭТОТ ФАЙЛ ОТСТАЛ (v${v}); в дом скачано: ${downloaded.join(", ") || "ничего"}; спрашивал ${ago} мин назад`,
+    `latest release: v${latest} — THIS FILE IS BEHIND (v${v}); downloaded to the home: ${downloaded.join(", ") || "nothing"}; asked ${ago} min ago`
+  ),
+  latestCurrent: (latest, ago) => L(
+    `свежий релиз: v${latest}, этот файл не отстал; спрашивал ${ago} мин назад`,
+    `latest release: v${latest}, this file is not behind; asked ${ago} min ago`
+  ),
+  pluginMissing: (registry) => L(
+    `Claude Code: плагин iskron не установлен (${registry})`,
+    `Claude Code: the iskron plugin is not installed (${registry})`
+  ),
+  entryNotFound: () => L("запись моста в манифесте не найдена", "no bridge entry found in the manifest"),
+  entryFound: (name) => L(`запись «${name}» → мост из плагина`, `entry "${name}" → the bridge from the plugin`),
+  unreadable: (p) => L(`${p} не читается`, `${p} is unreadable`),
+  pluginLine: (key, v, scope, entry, path) => L(
+    `Claude Code: плагин ${key} v${v} (${scope}) — ${entry}; ${path}`,
+    `Claude Code: plugin ${key} v${v} (${scope}) — ${entry}; ${path}`
+  ),
+  claudeUnreadable: (p) => L(`Claude Code: ${p} не читается`, `Claude Code: ${p} is unreadable`),
+  codexNoManifest: () => L("манифеста нет", "no manifest"),
+  codexManifest: (v, hit) => L(
+    `v${v}, ${hit ? "запись моста в манифесте есть" : "записи моста в манифесте нет"}`,
+    `v${v}, ${hit ? "the bridge entry is in the manifest" : "no bridge entry in the manifest"}`
+  ),
+  codexPlugin: (plugin, market, word, dir) => L(
+    `Codex: плагин ${plugin}@${market} — ${word}; ${dir}`,
+    `Codex: plugin ${plugin}@${market} — ${word}; ${dir}`
+  ),
+  codexNoPlugin: (cache) => L(
+    `Codex: плагина iskron в кэше нет (${cache})`,
+    `Codex: no iskron plugin in the cache (${cache})`
+  ),
+  claudeEntry: (name, cmd, args) => L(
+    `Claude Code: запись «${name}» → ${cmd} ${args}`,
+    `Claude Code: entry "${name}" → ${cmd} ${args}`
+  ),
+  claudeNoManual: () => L(
+    "Claude Code: ручной записи моста в пользовательском конфиге нет (штатная — в плагине)",
+    "Claude Code: no manual bridge entry in the user config (the standard one is in the plugin)"
+  ),
+  ocNoPlugin: (copy) => L(
+    `OpenCode: плагина нет (${copy}) — его кладёт establish-mcp при подключении`,
+    `OpenCode: no plugin (${copy}) — establish-mcp places it on connect`
+  ),
+  ocNoPackaged: (copy) => L(
+    `OpenCode: плагин ${copy} стоит; рядом с этим файлом поставки плагина нет, сверить не с чем`,
+    `OpenCode: the plugin ${copy} is installed; there is no plugin next to this delivery file, nothing to compare with`
+  ),
+  ocSame: (copy) => L(
+    `OpenCode: плагин ${copy} — та же сборка, что в поставке`,
+    `OpenCode: the plugin ${copy} — the same build as in the delivery`
+  ),
+  ocDiffers: (copy, packaged) => L(
+    `OpenCode: плагин ${copy} — ДРУГИЕ байты, обнови из поставки: cp "${packaged}" ${copy}`,
+    `OpenCode: the plugin ${copy} — DIFFERENT bytes, update from the delivery: cp "${packaged}" ${copy}`
+  ),
+  codexHome: (h) => L(`Codex: дом ${h}`, `Codex: home ${h}`),
+  codexDoorOpen: (door) => L(`Codex: дверь app-server открыта (${door})`, `Codex: the app-server door is open (${door})`),
+  codexDoorNever: () => L(
+    "Codex: двери нет и не будет — дом длиннее предела unix-сокета; нужен короткий дом для демона и сессий",
+    "Codex: there is no door and there will not be — the home is longer than the unix socket limit; a short home is needed for the daemon and sessions"
+  ),
+  codexDoorNone: (door) => L(
+    `Codex: двери нет (${door}) — демон app-server не поднят; без неё кадр доставляет watchdog-exit`,
+    `Codex: no door (${door}) — the app-server daemon is not up; without it the frame is delivered by watchdog-exit`
+  ),
+  codexManual: (has) => L(
+    `Codex: ${has ? "ручная запись моста в config.toml есть" : "ручной записи моста в config.toml нет (штатная — в плагине)"}`,
+    `Codex: ${has ? "there is a manual bridge entry in config.toml" : "no manual bridge entry in config.toml (the standard one is in the plugin)"}`
+  ),
+  daemonOn: () => L(
+    "демон машины: тонкий мост включён — умолчание (выключатель — ISKRON_BRIDGE_DAEMON=0 в окружении моста)",
+    "machine daemon: the thin bridge is on — the default (the switch is ISKRON_BRIDGE_DAEMON=0 in the bridge environment)"
+  ),
+  daemonOff: () => L(
+    "демон машины: выключен — мост идёт полным (выключатель стоит в окружении этого процесса: ISKRON_BRIDGE_DAEMON=0 или ISKRON_BRIDGE_NO_DAEMON)",
+    "machine daemon: off — the bridge runs full (the switch is set in this process environment: ISKRON_BRIDGE_DAEMON=0 or ISKRON_BRIDGE_NO_DAEMON)"
+  ),
+  daemonNeverUp: (dir) => L(
+    `  не поднимался: каталога шва ${dir} нет`,
+    `  never started: the seam directory ${dir} does not exist`
+  ),
+  daemonSocket: (s2) => L(`  сокет: ${s2}`, `  socket: ${s2}`),
+  daemonAnswers: (pid, build, other, v, sessions, path) => L(
+    `  отвечает: pid ${pid}, сборка ${build}${other ? ` — ДРУГАЯ, чем этот файл (v${v})` : ""}, сессий ${sessions ?? "?"}${path ? `, файл ${path}` : ""}`,
+    `  answers: pid ${pid}, build ${build}${other ? ` — DIFFERENT from this file (v${v})` : ""}, sessions ${sessions ?? "?"}${path ? `, file ${path}` : ""}`
+  ),
+  daemonUnsafe: (why) => L(
+    `  вход не личный: ${why} — тонкий мост пойдёт полным`,
+    `  the entrance is not private: ${why} — the thin bridge will go full`
+  ),
+  daemonSilent: (socket, why) => L(`  сокет: ${socket} — не отвечает (${why})`, `  socket: ${socket} — not answering (${why})`),
+  thisFile: (p) => L(`этот файл: ${p}`, `this file: ${p}`)
+};
 
 // js/cli/opencode-config.ts
 import { existsSync as existsSync8, readFileSync as readFileSync22 } from "node:fs";
@@ -9736,7 +10300,7 @@ function openCodeMcpEntries(out6) {
       sources.push([f, readFileSync22(f, "utf8")]);
     } catch {
       unreadable++;
-      out6(`OpenCode: ${f} не читается`);
+      out6(L(`OpenCode: ${f} не читается`, `OpenCode: ${f} is unreadable`));
     }
   }
   if (process.env.OPENCODE_CONFIG_CONTENT)
@@ -9750,21 +10314,35 @@ function openCodeMcpEntries(out6) {
         if (!kind) continue;
         found++;
         if (v.enabled === false) {
-          out6(`OpenCode: запись mcp «${name}» в ${file} ведёт Искрон, но выключена — не в игре`);
+          out6(
+            L(
+              `OpenCode: запись mcp «${name}» в ${file} ведёт Искрон, но выключена — не в игре`,
+              `OpenCode: the mcp entry "${name}" in ${file} leads to Iskron but is disabled — not in play`
+            )
+          );
           continue;
         }
         out6(
-          kind === "bridge" ? `OpenCode: запись mcp «${name}» в ${file} зовёт ${bridgePath(v)} — похоже на мост поставки. Если это он, её тулы namespaced, а мост общий для сессий сервиса: запись может уйти под подписью соседней сессии. Тогда убери её из этого файла руками: у opencode mcp есть list, add, auth, logout — команды remove нет. Поверхность поставки это плагин` : `OpenCode: запись mcp «${name}» в ${file} ведёт Искрон напрямую по http — её тулы namespaced, и стояния канала у неё нет; это запасной путь, и он законен там, где мост не поднять`
+          kind === "bridge" ? L(
+            `OpenCode: запись mcp «${name}» в ${file} зовёт ${bridgePath(v)} — похоже на мост поставки. Если это он, её тулы namespaced, а мост общий для сессий сервиса: запись может уйти под подписью соседней сессии. Тогда убери её из этого файла руками: у opencode mcp есть list, add, auth, logout — команды remove нет. Поверхность поставки это плагин`,
+            `OpenCode: the mcp entry "${name}" in ${file} calls ${bridgePath(v)} — it looks like the delivery bridge. If it is, its tools are namespaced, and the bridge is shared by the service's sessions: the entry may go out under a neighbouring session's signature. Then remove it from this file by hand: opencode mcp has list, add, auth, logout — there is no remove command. The delivery surface is the plugin`
+          ) : L(
+            `OpenCode: запись mcp «${name}» в ${file} ведёт Искрон напрямую по http — её тулы namespaced, и стояния канала у неё нет; это запасной путь, и он законен там, где мост не поднять`,
+            `OpenCode: the mcp entry "${name}" in ${file} leads to Iskron directly over http — its tools are namespaced and it has no channel standing; this is the fallback path, legitimate where the bridge cannot be raised`
+          )
         );
       }
     } catch {
       unreadable++;
-      out6(`OpenCode: ${file} не читается`);
+      out6(L(`OpenCode: ${file} не читается`, `OpenCode: ${file} is unreadable`));
     }
   }
   if (!found)
     out6(
-      `OpenCode: записей mcp Искрона не нашёл${unreadable ? ` в том, что прочёл (${unreadable} файл(а) не разобрались — смотри строки выше)` : ""} — смотрел вверх от ${process.cwd()}, глобальный слой и переменные; запись в другом дереве этим не проверена, позови doctor из каталога проекта`
+      L(
+        `OpenCode: записей mcp Искрона не нашёл${unreadable ? ` в том, что прочёл (${unreadable} файл(а) не разобрались — смотри строки выше)` : ""} — смотрел вверх от ${process.cwd()}, глобальный слой и переменные; запись в другом дереве этим не проверена, позови doctor из каталога проекта`,
+        `OpenCode: found no Iskron mcp entries${unreadable ? ` in what I read (${unreadable} file(s) could not be parsed — see the lines above)` : ""} — looked upward from ${process.cwd()}, the global layer and variables; an entry in another tree is not checked by this, call doctor from the project directory`
+      )
     );
 }
 
@@ -9962,7 +10540,10 @@ import { createInterface as createInterface4 } from "node:readline";
 var PROBE_MS = Number(process.env.ISKRON_DOCTOR_PROBE_MS) || 3e4;
 var REQUEST_MS = 2e4;
 var WIN_WAIT_MS = 4e4;
-var LOGIN_ADVICE = "войди: вызови любой тул iskron_* в основной сессии и открой ссылку входа из его ответа (или положи личный токен в ~/.iskron-bridge/token — скилл establish-mcp), потом повтори doctor";
+var loginAdvice = () => L(
+  "войди: вызови любой тул iskron_* в основной сессии и открой ссылку входа из его ответа (или положи личный токен в ~/.iskron-bridge/token — скилл establish-mcp), потом повтори doctor",
+  "log in: call any iskron_* tool in the main session and open the login link from its answer (or put a personal token in ~/.iskron-bridge/token — the establish-mcp skill), then repeat doctor"
+);
 var LOGIN_RE = /\/login\b|oauth|authoriz|sign.?in|log.?in|вход|войд|токен отвергнут|\b401\b/i;
 async function probeSatellite(label, e, cwd) {
   const lines = [];
@@ -9998,7 +10579,7 @@ async function probeSatellite(label, e, cwd) {
     wake2?.();
   });
   child.on("exit", (code, sig) => {
-    exited ??= `вышел с кодом ${code ?? sig}`;
+    exited ??= L(`вышел с кодом ${code ?? sig}`, `exited with code ${code ?? sig}`);
     wake2?.();
   });
   const deadline = Date.now() + PROBE_MS;
@@ -10021,14 +10602,30 @@ async function probeSatellite(label, e, cwd) {
   });
   const refusal2 = (what, raw) => {
     const msg = String(raw ?? "");
-    return LOGIN_RE.test(msg) ? `проба «${label}»: ${what} — спутник не вошёл: грант машины мёртв или отозван → ${LOGIN_ADVICE}` : `проба «${label}»: ${what} вернул отказ: ${msg.slice(0, 300)} → сделай, что велит отказ, и повтори doctor`;
+    return LOGIN_RE.test(msg) ? L(
+      `проба «${label}»: ${what} — спутник не вошёл: грант машины мёртв или отозван → ${loginAdvice()}`,
+      `probe "${label}": ${what} — the satellite is not logged in: the machine grant is dead or revoked → ${loginAdvice()}`
+    ) : L(
+      `проба «${label}»: ${what} вернул отказ: ${msg.slice(0, 300)} → сделай, что велит отказ, и повтори doctor`,
+      `probe "${label}": ${what} returned a refusal: ${msg.slice(0, 300)} → do what the refusal says and repeat doctor`
+    );
   };
   if (!init) {
-    const why = exited ?? `молчит ${Math.round(PROBE_MS / 1e3)}s`;
+    const why = exited ?? L(`молчит ${Math.round(PROBE_MS / 1e3)}s`, `silent for ${Math.round(PROBE_MS / 1e3)}s`);
     const flag = /unknown argument: --tools/.test(stderr) ? "--tools" : /satellite|unknown (flag|option)|неизвестн/i.test(stderr) ? "--satellite" : null;
-    const old = flag ? ` — похоже, домашний мост старше флага ${flag} → node ~/.iskron-bridge/iskron-bridge.mjs update` : " → запусти эту команду руками и прочти, что она пишет в stderr";
+    const old = flag ? L(
+      ` — похоже, домашний мост старше флага ${flag} → node ~/.iskron-bridge/iskron-bridge.mjs update`,
+      ` — it seems the home bridge is older than the ${flag} flag → node ~/.iskron-bridge/iskron-bridge.mjs update`
+    ) : L(
+      " → запусти эту команду руками и прочти, что она пишет в stderr",
+      " → run this command by hand and read what it writes to stderr"
+    );
+    const stderrNote = tail2() ? `; stderr: ${tail2()}` : "";
     findings.push(
-      `проба «${label}»: мост не ответил на initialize (${why}${tail2() ? `; stderr: ${tail2()}` : ""})${old}`
+      L(
+        `проба «${label}»: мост не ответил на initialize (${why}${stderrNote})${old}`,
+        `probe "${label}": the bridge did not answer initialize (${why}${stderrNote})${old}`
+      )
     );
   } else if (init.error) {
     findings.push(refusal2("initialize", init.error.message));
@@ -10043,18 +10640,27 @@ async function probeSatellite(label, e, cwd) {
     const tools = list?.result?.tools ?? [];
     if (!list)
       findings.push(
-        `проба «${label}»: initialize ответил (${info.name ?? "?"} v${info.version ?? "?"}), tools/list — нет (${exited ?? "молчит"}) → запусти команду руками и прочти её stderr`
+        L(
+          `проба «${label}»: initialize ответил (${info.name ?? "?"} v${info.version ?? "?"}), tools/list — нет (${exited ?? "молчит"}) → запусти команду руками и прочти её stderr`,
+          `probe "${label}": initialize answered (${info.name ?? "?"} v${info.version ?? "?"}), tools/list did not (${exited ?? "silent"}) → run the command by hand and read its stderr`
+        )
       );
     else if (list.error) findings.push(refusal2("tools/list", list.error.message));
     else {
       lines.push(
-        `проба «${label}»: мост ответил — ${info.name ?? "?"} v${info.version ?? "?"}, тулов ${tools.length}`
+        L(
+          `проба «${label}»: мост ответил — ${info.name ?? "?"} v${info.version ?? "?"}, тулов ${tools.length}`,
+          `probe "${label}": the bridge answered — ${info.name ?? "?"} v${info.version ?? "?"}, tools ${tools.length}`
+        )
       );
       for (const t of tools) {
         const bad = ["oneOf", "allOf", "anyOf"].filter((k) => t.inputSchema && k in t.inputSchema);
         if (bad.length)
           findings.push(
-            `тул ${t.name}: схема несёт ${bad.join(", ")} на верхнем уровне — сервер отдаёт схему, которую API Anthropic отвергнет («input_schema does not support oneOf, allOf, or anyOf at the top level»), и падает весь прогон субагента, не один этот тул → чинит это сервер, не файл агента и не мост (мост отдаёт схему как есть): скажи имя тула оператору сервера MCP — тому, кто держит адрес из строки «сервер» выше, — и жди его обновления, затем повтори doctor`
+            L(
+              `тул ${t.name}: схема несёт ${bad.join(", ")} на верхнем уровне — сервер отдаёт схему, которую API Anthropic отвергнет («input_schema does not support oneOf, allOf, or anyOf at the top level»), и падает весь прогон субагента, не один этот тул → чинит это сервер, не файл агента и не мост (мост отдаёт схему как есть): скажи имя тула оператору сервера MCP — тому, кто держит адрес из строки «сервер» выше, — и жди его обновления, затем повтори doctor`,
+              `tool ${t.name}: the schema carries ${bad.join(", ")} at the top level — the server hands out a schema the Anthropic API will reject ("input_schema does not support oneOf, allOf, or anyOf at the top level"), and the whole subagent run fails, not just this tool → the server fixes this, not the agent file or the bridge (the bridge passes the schema as is): tell the MCP server operator the tool name — whoever holds the address from the "server" line above — and wait for their update, then repeat doctor`
+            )
           );
       }
     }
@@ -10069,7 +10675,10 @@ async function probeSatellite(label, e, cwd) {
     if (!await within(WIN_WAIT_MS)) {
       child.kill();
       findings.push(
-        `проба «${label}»: мост не ушёл по закрытому stdin за ${WIN_WAIT_MS / 1e3}s — снят принудительно → повтори doctor; если он менял токен, вход может понадобиться заново`
+        L(
+          `проба «${label}»: мост не ушёл по закрытому stdin за ${WIN_WAIT_MS / 1e3}s — снят принудительно → повтори doctor; если он менял токен, вход может понадобиться заново`,
+          `probe "${label}": the bridge did not leave on closed stdin within ${WIN_WAIT_MS / 1e3}s — killed forcibly → repeat doctor; if it was renewing the token, a login may be needed again`
+        )
       );
     }
     return { lines, findings };
@@ -10078,27 +10687,60 @@ async function probeSatellite(label, e, cwd) {
     child.kill("SIGTERM");
     if (!await within(REQUEST_MS + 1e4)) {
       child.kill("SIGKILL");
+      const secs2 = Math.round((REQUEST_MS + 2e4) / 1e3);
       findings.push(
-        `проба «${label}»: мост не ушёл ни по закрытому stdin, ни по SIGTERM за ${Math.round((REQUEST_MS + 2e4) / 1e3)}s — снят SIGKILL → повтори doctor; если он менял токен, вход может понадобиться заново`
+        L(
+          `проба «${label}»: мост не ушёл ни по закрытому stdin, ни по SIGTERM за ${secs2}s — снят SIGKILL → повтори doctor; если он менял токен, вход может понадобиться заново`,
+          `probe "${label}": the bridge left neither on closed stdin nor on SIGTERM within ${secs2}s — killed with SIGKILL → repeat doctor; if it was renewing the token, a login may be needed again`
+        )
       );
     }
   }
   return { lines, findings };
 }
 
+// js/cli/subwords.ts
+var formWord = (form) => {
+  switch (form) {
+    case "eval-no-sep":
+      return L(
+        "--satellite стоит без `--` после кода `node -e` — node примет его за свой флаг («bad option») и не запустится",
+        '--satellite stands without `--` after the `node -e` code — node takes it for its own flag ("bad option") and will not start'
+      );
+    case "eval-session":
+      return L(
+        "мост не увидит --satellite в своём argv (нет `--` перед ним или путь моста не положен в argv[1]) и встанет мостом сессии, не спутником",
+        "the bridge will not see --satellite in its argv (no `--` before it, or the bridge path is not put into argv[1]) and will stand as a session bridge, not a satellite"
+      );
+    case "eval-other":
+      return L(
+        "код `node -e` не совпадает с эталонной формой записи — рабочей признаётся только она, сверенная живьём",
+        "the `node -e` code does not match the reference form — only that form, verified live, is accepted as working"
+      );
+    case "shell":
+      return L(
+        "форма прежнего контракта (sh -c): на Windows sh нет, а переменных в args фронтматтера Claude Code не раскрывает",
+        "the form of the former contract (sh -c): Windows has no sh, and Claude Code does not expand variables in frontmatter args"
+      );
+    case "path":
+      return L(
+        "путь к мосту записан прямо в args — машинный путь в общем файле, на другой машине его нет",
+        "the bridge path is written straight into args — a machine path in a shared file, absent on another machine"
+      );
+    case "session":
+      return L(
+        "запись зовёт мост без --satellite — субагент встал бы мостом сессии, а не спутником",
+        "the entry calls the bridge without --satellite — the subagent would stand as a session bridge, not a satellite"
+      );
+  }
+};
+var todo = () => L("НАДО:", "TODO:");
+
 // js/cli/subagents.ts
 var platform = () => process.env.ISKRON_DOCTOR_PLATFORM || process.platform;
 var BRIDGE_RE = /iskron-bridge|(^|[\\/"'\s])iskron[^\\/"'\s]*\.mjs/;
 var TEMPLATE_PARENTS = ["mcp__iskron-bridge", "mcp__plugin_iskron_iskron", "mcp__iskron"];
-var FORM_WORD = {
-  "eval-no-sep": "--satellite стоит без `--` после кода `node -e` — node примет его за свой флаг («bad option») и не запустится",
-  "eval-session": "мост не увидит --satellite в своём argv (нет `--` перед ним или путь моста не положен в argv[1]) и встанет мостом сессии, не спутником",
-  "eval-other": "код `node -e` не совпадает с эталонной формой записи — рабочей признаётся только она, сверенная живьём",
-  shell: "форма прежнего контракта (sh -c): на Windows sh нет, а переменных в args фронтматтера Claude Code не раскрывает",
-  path: "путь к мосту записан прямо в args — машинный путь в общем файле, на другой машине его нет",
-  session: "запись зовёт мост без --satellite — субагент встал бы мостом сессии, а не спутником"
-};
-var str2 = (v) => typeof v === "string" ? v : "";
+var str3 = (v) => typeof v === "string" ? v : "";
 function entriesOf(fm) {
   const raw = fm.mcpServers;
   const pairs = [];
@@ -10111,14 +10753,14 @@ function entriesOf(fm) {
   } else if (raw && typeof raw === "object") pairs.push(...Object.entries(raw));
   return pairs.map(([name, v]) => {
     const spec = v && typeof v === "object" && !Array.isArray(v) ? v : {};
-    const args = Array.isArray(spec.args) ? spec.args.map((a) => str2(a)) : [];
+    const args = Array.isArray(spec.args) ? spec.args.map((a) => str3(a)) : [];
     const env2 = {};
     if (spec.env && typeof spec.env === "object" && !Array.isArray(spec.env))
-      for (const [k, e] of Object.entries(spec.env)) env2[k] = str2(e);
-    return { name, ref: v === null, command: str2(spec.command), args, env: env2 };
+      for (const [k, e] of Object.entries(spec.env)) env2[k] = str3(e);
+    return { name, ref: v === null, command: str3(spec.command), args, env: env2 };
   });
 }
-var listOf = (v) => Array.isArray(v) ? v.map((x) => str2(x).trim()).filter(Boolean) : str2(v).split(",").map((x) => x.trim()).filter(Boolean);
+var listOf = (v) => Array.isArray(v) ? v.map((x) => str3(x).trim()).filter(Boolean) : str3(v).split(",").map((x) => x.trim()).filter(Boolean);
 function agentFiles(dir, scope) {
   if (!existsSync9(dir)) return [];
   let names2;
@@ -10135,7 +10777,7 @@ function agentFiles(dir, scope) {
       if (text !== null) fm = parseFrontmatter(text);
     } catch {
     }
-    return { path, agent: str2(fm.name) || basename5(f, ".md"), scope, fm };
+    return { path, agent: str3(fm.name) || basename5(f, ".md"), scope, fm };
   });
 }
 function projectRoot() {
@@ -10233,8 +10875,14 @@ function trustLine(root) {
   if (chain.some((d) => keys.includes(d))) return null;
   const near = keys.find((k) => chain.some((d) => d.toLowerCase() === k.toLowerCase()));
   if (near)
-    return `доверие к папке принято для «${near}», а проект открыт как «${here}» — Claude Code сравнивает путь буква в букву (C:/ и c:/ — разные папки), и в недоверенной папке сервер из фронтматтера не поднимается без диалога → запусти claude в терминале из этой папки и прими диалог доверия либо открой папку тем же написанием пути`;
-  return `доверие к папке «${here}» и её родителям в ~/.claude.json не отмечено — в недоверенной папке сервер из фронтматтера не поднимается, и диалога об этом нет → запусти claude в этой папке и прими диалог доверия`;
+    return L(
+      `доверие к папке принято для «${near}», а проект открыт как «${here}» — Claude Code сравнивает путь буква в букву (C:/ и c:/ — разные папки), и в недоверенной папке сервер из фронтматтера не поднимается без диалога → запусти claude в терминале из этой папки и прими диалог доверия либо открой папку тем же написанием пути`,
+      `folder trust was accepted for "${near}", but the project is opened as "${here}" — Claude Code compares the path letter for letter (C:/ and c:/ are different folders), and in an untrusted folder the frontmatter server does not start without a dialog → run claude in a terminal from this folder and accept the trust dialog, or open the folder with the same spelling of the path`
+    );
+  return L(
+    `доверие к папке «${here}» и её родителям в ~/.claude.json не отмечено — в недоверенной папке сервер из фронтматтера не поднимается, и диалога об этом нет → запусти claude в этой папке и прими диалог доверия`,
+    `trust for the folder "${here}" and its parents is not marked in ~/.claude.json — in an untrusted folder the frontmatter server does not start, and there is no dialog about it → run claude in this folder and accept the trust dialog`
+  );
 }
 function hasGrant() {
   if (CFG.pat) return true;
@@ -10250,26 +10898,32 @@ async function subagentsReport(out6) {
   const root = projectRoot();
   const userDir = join20(homedir9(), ".claude", "agents");
   const atHome = resolve6(root) === resolve6(homedir9());
-  const project = atHome ? [] : agentFiles(join20(root, ".claude", "agents"), "проект");
+  const project = atHome ? [] : agentFiles(join20(root, ".claude", "agents"), "project");
   const shadowed = new Set(project.map((f) => f.agent));
-  const user = agentFiles(userDir, "пользователь");
+  const user = agentFiles(userDir, "user");
   const claude = [...project, ...user.filter((f) => !shadowed.has(f.agent))];
   const opencode = [
-    ...agentFiles(join20(root, ".opencode", "agents"), "проект"),
-    ...agentFiles(join20(root, ".opencode", "agent"), "проект")
+    ...agentFiles(join20(root, ".opencode", "agents"), "project"),
+    ...agentFiles(join20(root, ".opencode", "agent"), "project")
   ];
-  out6(
-    `субагенты: проект ${root} (${process.env.ISKRON_DOCTOR_PLATFORM ? `ОС под суд: ${platform()}` : platform()})`
-  );
+  const osNote = process.env.ISKRON_DOCTOR_PLATFORM ? L(`ОС под суд: ${platform()}`, `OS under judgment: ${platform()}`) : platform();
+  out6(L(`субагенты: проект ${root} (${osNote})`, `subagents: project ${root} (${osNote})`));
   if (!claude.length && !opencode.length) {
+    const dirs = `${join20(root, ".claude", "agents")}, ${userDir}, ${join20(root, ".opencode", "agents")}`;
     out6(
-      `  файлов агентов нет (${join20(root, ".claude", "agents")}, ${userDir}, ${join20(root, ".opencode", "agents")}) — позови doctor из каталога проекта, если субагенты там`
+      L(
+        `  файлов агентов нет (${dirs}) — позови doctor из каталога проекта, если субагенты там`,
+        `  no agent files (${dirs}) — call doctor from the project directory if the subagents are there`
+      )
     );
     return;
   }
   for (const f of user.filter((f2) => shadowed.has(f2.agent)))
     out6(
-      `  ${f.path}: затенён файлом проекта с тем же именем «${f.agent}» — Claude Code берёт проектный`
+      L(
+        `  ${f.path}: затенён файлом проекта с тем же именем «${f.agent}» — Claude Code берёт проектный`,
+        `  ${f.path}: shadowed by the project file with the same name "${f.agent}" — Claude Code takes the project one`
+      )
     );
   const parents = parentBridges(root);
   const required = parents.length ? parents : TEMPLATE_PARENTS;
@@ -10284,14 +10938,14 @@ async function subagentsReport(out6) {
     let probeEntry = null;
     const own = sat.map((e) => `mcp__${e.name}`);
     const disallowed = listOf(f.fm.disallowedTools).map((d) => d.replace(/__\*$/, ""));
-    const block = (name, e) => `блоком ниже вместо прежних mcpServers и disallowedTools:
+    const block = (name, e) => `${L("блоком ниже вместо прежних mcpServers и disallowedTools", "with the block below instead of the former mcpServers and disallowedTools")}:
 ${readyEntry(
       name,
       [.../* @__PURE__ */ new Set([...disallowed, ...required])].filter((p) => p !== `mcp__${name}`),
       e ? toolsTail(e) : []
     )}`;
     const canonical = (e) => ({
-      name: `${e.name} (предложенная форма)`,
+      name: `${e.name} ${L("(предложенная форма)", "(proposed form)")}`,
       ref: false,
       command: "node",
       args: [...SATELLITE_ARGS, ...toolsTail(e)],
@@ -10300,58 +10954,96 @@ ${readyEntry(
     const refs = entries2.filter((e) => e.ref && /iskron/.test(e.name));
     for (const r of refs)
       lines.push(
-        `запись «${r.name}» — ссылка на сервер из конфига сессии, не свой мост на прогон → замени встроенной записью, ${block(expected)}`
+        L(
+          `запись «${r.name}» — ссылка на сервер из конфига сессии, не свой мост на прогон → замени встроенной записью, ${block(expected)}`,
+          `entry "${r.name}" is a reference to a server from the session config, not its own bridge per run → replace it with an inline entry, ${block(expected)}`
+        )
       );
     if (!sat.length) {
       if (ours.length)
-        lines.push(`запись «${ours[0].name}»: ${FORM_WORD.session} → ${block(expected, ours[0])}`);
+        lines.push(
+          L(
+            `запись «${ours[0].name}»: ${formWord("session")} → ${block(expected, ours[0])}`,
+            `entry "${ours[0].name}": ${formWord("session")} → ${block(expected, ours[0])}`
+          )
+        );
       else if (!refs.length)
         lines.push(
-          `записи моста-спутника нет — у субагента нет тулов графа → вставь во фронтматтер ${block(expected)}`
+          L(
+            `записи моста-спутника нет — у субагента нет тулов графа → вставь во фронтматтер ${block(expected)}`,
+            `no satellite bridge entry — the subagent has no graph tools → insert into the frontmatter ${block(expected)}`
+          )
         );
     }
     for (const e of sat) {
       byName.set(e.name, [...byName.get(e.name) ?? [], f.path]);
       if (e.name === "iskron-sub")
         lines.push(
-          `запись названа «iskron-sub» — общим именем прежнего контракта: второй файл с ним поведёт свои прогоны тем же процессом моста → переименуй запись в iskron-sub-${f.agent}`
+          L(
+            `запись названа «iskron-sub» — общим именем прежнего контракта: второй файл с ним поведёт свои прогоны тем же процессом моста → переименуй запись в iskron-sub-${f.agent}`,
+            `the entry is named "iskron-sub" — the shared name of the former contract: a second file with it would run its runs through the same bridge process → rename the entry to iskron-sub-${f.agent}`
+          )
         );
       const name = e.name === "iskron-sub" ? expected : e.name;
       const form = formOf(e);
       if (form !== "eval") {
-        lines.push(`запись «${e.name}»: ${FORM_WORD[form]} → замени ${block(name, e)}`);
+        lines.push(
+          L(
+            `запись «${e.name}»: ${formWord(form)} → замени ${block(name, e)}`,
+            `entry "${e.name}": ${formWord(form)} → replace ${block(name, e)}`
+          )
+        );
         if (!probeEntry && existsSync9(homeBridgePath())) probeEntry = canonical(e);
         continue;
       }
       if (!which(e.command, root)) {
         lines.push(
-          `команда записи «${e.name}» «${e.command}» на этой машине не находится (PATH) → поставь Node 22+ либо добавь каталог node в PATH: Claude Code запускает его по PATH`
+          L(
+            `команда записи «${e.name}» «${e.command}» на этой машине не находится (PATH) → поставь Node 22+ либо добавь каталог node в PATH: Claude Code запускает его по PATH`,
+            `the command of entry "${e.name}" "${e.command}" is not found on this machine (PATH) → install Node 22+ or add the node directory to PATH: Claude Code launches it via PATH`
+          )
         );
         continue;
       }
       const bridge = bridgePathOf(e);
       if (bridge && !existsSync9(resolve6(root, bridge))) {
         lines.push(
-          `моста по пути записи нет: ${bridge} → поставь его (скилл establish-mcp кладёт домашнюю копию ${homeBridgePath()}), затем повтори doctor`
+          L(
+            `моста по пути записи нет: ${bridge} → поставь его (скилл establish-mcp кладёт домашнюю копию ${homeBridgePath()}), затем повтори doctor`,
+            `no bridge at the entry path: ${bridge} → install it (the establish-mcp skill places a home copy at ${homeBridgePath()}), then repeat doctor`
+          )
         );
         continue;
       }
       if (!probeEntry) probeEntry = e;
     }
     const need = required.filter((p) => !own.includes(p) && !disallowed.includes(p));
-    if (sat.length && (need.length || !disallowed.length))
+    if (sat.length && (need.length || !disallowed.length)) {
+      const fix = [.../* @__PURE__ */ new Set([...disallowed, ...required])].filter((p) => !own.includes(p)).join(", ");
       lines.push(
-        `мосты позвавшего не сняты (${need.join(", ") || "disallowedTools нет"}) — субагент унаследует их тулы, и его записи уйдут местом позвавшего → замени строку: disallowedTools: ${[.../* @__PURE__ */ new Set([...disallowed, ...required])].filter((p) => !own.includes(p)).join(", ")}`
+        L(
+          `мосты позвавшего не сняты (${need.join(", ") || "disallowedTools нет"}) — субагент унаследует их тулы, и его записи уйдут местом позвавшего → замени строку: disallowedTools: ${fix}`,
+          `the caller's bridges are not removed (${need.join(", ") || "no disallowedTools"}) — the subagent would inherit their tools, and its writes would go out under the caller's seat → replace the line: disallowedTools: ${fix}`
+        )
       );
+    }
     for (const o of own.filter((o2) => disallowed.includes(o2)))
-      lines.push(`disallowedTools снимает свой же мост ${o} → убери ${o} из disallowedTools`);
+      lines.push(
+        L(
+          `disallowedTools снимает свой же мост ${o} → убери ${o} из disallowedTools`,
+          `disallowedTools removes the entry's own bridge ${o} → remove ${o} from disallowedTools`
+        )
+      );
     reports.push({ f, lines, probe: probeEntry, names: sat.map((e) => e.name) });
   }
   for (const [name, files] of byName) {
     if (files.length < 2) continue;
     for (const r of reports.filter((r2) => files.includes(r2.f.path)))
       r.lines.push(
-        `имя записи «${name}» делят ${files.length} файла(ов): ${files.join(", ")} — Claude Code держит одно соединение на имя записи, их прогоны пойдут одним процессом моста, и первый закончивший погасит место другим → переименуй запись в этом файле: iskron-sub-${r.f.agent}`
+        L(
+          `имя записи «${name}» делят ${files.length} файла(ов): ${files.join(", ")} — Claude Code держит одно соединение на имя записи, их прогоны пойдут одним процессом моста, и первый закончивший погасит место другим → переименуй запись в этом файле: iskron-sub-${r.f.agent}`,
+          `the entry name "${name}" is shared by ${files.length} file(s): ${files.join(", ")} — Claude Code keeps one connection per entry name, their runs would go through one bridge process, and the first to finish would put out the seat for the others → rename the entry in this file: iskron-sub-${r.f.agent}`
+        )
       );
   }
   const grant = hasGrant();
@@ -10361,7 +11053,13 @@ ${readyEntry(
     const seen = [];
     if (r.probe && !grant) {
       r.lines.push(
-        noGrantSaid ? "проба спутника не шла — входа в граф на этой машине нет (действие — строкой выше)" : `проба спутника не шла — входа в граф на этой машине нет → ${LOGIN_ADVICE}`
+        noGrantSaid ? L(
+          "проба спутника не шла — входа в граф на этой машине нет (действие — строкой выше)",
+          "the satellite probe did not run — there is no graph login on this machine (the action is in the line above)"
+        ) : L(
+          `проба спутника не шла — входа в граф на этой машине нет → ${loginAdvice()}`,
+          `the satellite probe did not run — there is no graph login on this machine → ${loginAdvice()}`
+        )
       );
       noGrantSaid = true;
     } else if (r.probe) {
@@ -10369,8 +11067,19 @@ ${readyEntry(
       const first2 = probed.get(key);
       if (first2) {
         if (first2.failed)
-          r.lines.push(`проба той же команды, что у «${first2.label}», не прошла — действие выше`);
-        else seen.push(`проба: та же команда, что у «${first2.label}» выше`);
+          r.lines.push(
+            L(
+              `проба той же команды, что у «${first2.label}», не прошла — действие выше`,
+              `the probe of the same command as "${first2.label}" failed — the action is above`
+            )
+          );
+        else
+          seen.push(
+            L(
+              `проба: та же команда, что у «${first2.label}» выше`,
+              `probe: the same command as "${first2.label}" above`
+            )
+          );
       } else {
         const res = await probeSatellite(r.probe.name, r.probe, root);
         probed.set(key, { label: r.probe.name, failed: res.findings.length > 0 });
@@ -10378,25 +11087,31 @@ ${readyEntry(
         r.lines.push(...res.findings);
       }
     }
-    const where = r.f.scope === "пользователь" ? " (пользовательский)" : "";
-    out6(
-      `  ${r.f.path}${where}: ${r.names.length ? `запись «${r.names.join("», «")}»` : "без записи моста-спутника"}${r.lines.length ? "" : " — в порядке"}`
-    );
+    const where = r.f.scope === "user" ? L(" (пользовательский)", " (user)") : "";
+    const named = r.names.length ? L(`запись «${r.names.join("», «")}»`, `entry "${r.names.join('", "')}"`) : L("без записи моста-спутника", "no satellite bridge entry");
+    out6(`  ${r.f.path}${where}: ${named}${r.lines.length ? "" : L(" — в порядке", " — fine")}`);
     for (const l of seen) out6(`    ${l}`);
     for (const l of r.lines) {
       const [head, ...rest2] = l.split("\n");
-      out6(`    НАДО: ${head}`);
+      out6(`    ${todo()} ${head}`);
       for (const b of rest2) out6(`      ${b}`);
     }
   }
   if (claude.length) {
     const t = trustLine(root);
-    if (t && project.length) out6(`  НАДО: ${t}`);
+    if (t && project.length) out6(`  ${todo()} ${t}`);
   }
   for (const f of opencode) {
     const keys = Object.keys(f.fm).filter((k) => k === "mcpServers" || k === "mcp");
+    const keyNote = keys.length ? L(
+      `; НАДО: ключ ${keys.join(", ")} OpenCode в файле агента не читает → убери его`,
+      `; TODO: the key ${keys.join(", ")} is not read by OpenCode in an agent file → remove it`
+    ) : "";
     out6(
-      `  ${f.path}: OpenCode — мост-спутник даёт дочерней сессии плагин поставки (строка OpenCode выше), записи в файле не нужно${keys.length ? `; НАДО: ключ ${keys.join(", ")} OpenCode в файле агента не читает → убери его` : ""}`
+      L(
+        `  ${f.path}: OpenCode — мост-спутник даёт дочерней сессии плагин поставки (строка OpenCode выше), записи в файле не нужно${keyNote}`,
+        `  ${f.path}: OpenCode — the delivery plugin gives the child session a satellite bridge (the OpenCode line above), no entry is needed in the file${keyNote}`
+      )
     );
   }
 }
@@ -10415,34 +11130,32 @@ function homeCopyReport() {
   } catch {
   }
   if (!existsSync10(home)) {
-    out3(`домашняя копия: нет (${home}) — её кладёт establish-mcp при подключении`);
+    out3(dw.homeNone(home));
     return;
   }
   const bytes = readFileSync24(home);
   if (self && bytes.equals(self)) {
-    out3(`домашняя копия: ${home} — та же сборка, что и этот файл`);
+    out3(dw.homeSame(home));
     return;
   }
   const v = versionIn(bytes.toString("utf8"));
-  out3(
-    `домашняя копия: ${home} — v${v ?? "?"}+${hashOf2(bytes)}, ДРУГИЕ байты: ${self ? `обнови её из поставки: cp "${fileURLToPath8(import.meta.url)}" ${home}` : "этот файл не читается"}`
-  );
+  out3(dw.homeDiffers(home, v ?? "?", hashOf2(bytes), self ? fileURLToPath8(import.meta.url) : null));
 }
 function serverSourceWord() {
   switch (CFG.serverSource) {
     case "argument":
-      return "аргумент запуска";
+      return dw.srcArgument();
     case "ISKRON_BRIDGE_URL":
-      return "переменная ISKRON_BRIDGE_URL";
+      return dw.srcEnv();
     case "file":
-      return `файл выбора ${serverChoicePath(CFG.authDir)}`;
+      return dw.srcFile(serverChoicePath(CFG.authDir));
     default:
-      return `по умолчанию; сменить — node <мост> use en | ru | <url>, файл ${serverChoicePath(CFG.authDir)}`;
+      return dw.srcDefault(serverChoicePath(CFG.authDir));
   }
 }
-var freshnessWord = (url) => isProductionServer(url) ? "продовый адрес: самообновление с релизов поставки включено" : "другой инстанс: обновлений с релизов поставки нет";
+var freshnessWord = (url) => isProductionServer(url) ? dw.freshProd() : dw.freshOther();
 async function serverReport() {
-  out3(`сервер: ${CFG.serverUrl} (${serverSourceWord()})`);
+  out3(dw.server(CFG.serverUrl, serverSourceWord()));
   out3(`  ${freshnessWord(CFG.serverUrl)}`);
   let res;
   try {
@@ -10456,13 +11169,13 @@ async function serverReport() {
       signal: AbortSignal.timeout(1e4)
     });
   } catch (e) {
-    out3(`  недостижим: ${errorMessage(e)}`);
+    out3(dw.unreachable(errorMessage(e)));
     return;
   }
   res.body?.cancel?.();
   const www = res.headers.get("www-authenticate");
-  const note3 = www ? " (просит OAuth)" : res.status >= 400 && res.status < 500 ? " (пробник без токена — отказ ожидаем)" : "";
-  out3(`  отвечает: HTTP ${res.status}${note3}`);
+  const note3 = www ? dw.wantsOAuth() : res.status >= 400 && res.status < 500 ? dw.noTokenProbe() : "";
+  out3(dw.answers(res.status, note3));
   try {
     const meta = await discoverMeta(www);
     out3(`  OAuth: token endpoint ${meta.as.token_endpoint}`);
@@ -10472,7 +11185,7 @@ async function serverReport() {
   }
 }
 async function patReport() {
-  out3(`грант: личный токен (PAT) из ${CFG.patSource} — OAuth не используется`);
+  out3(dw.grantPat(String(CFG.patSource)));
   let res;
   try {
     res = await fetch(CFG.serverUrl, {
@@ -10495,79 +11208,71 @@ async function patReport() {
       signal: AbortSignal.timeout(1e4)
     });
   } catch (e) {
-    out3(`  проверить не вышло: ${errorMessage(e)}`);
+    out3(dw.patCheckFailed(errorMessage(e)));
     return;
   }
   res.body?.cancel?.();
-  if (res.status === 401) {
-    out3(
-      "  ТОКЕН ОТВЕРГНУТ (HTTP 401) — отозван, истёк или без прав на этот граф: выпусти новый на странице токенов графа"
-    );
-  } else if (res.ok) out3(`  токен принят сервером (HTTP ${res.status})`);
-  else out3(`  сервер ответил HTTP ${res.status} — не отказ токена, смотри строку «сервер»`);
+  if (res.status === 401) out3(dw.patRejected());
+  else if (res.ok) out3(dw.patAccepted(res.status));
+  else out3(dw.patOther(res.status));
   const path = storePath();
-  if (existsSync10(path)) out3(`  хранилище OAuth ${path} есть, но не читается, пока стоит PAT`);
+  if (existsSync10(path)) out3(dw.patStore(path));
 }
 function grantReport() {
   const path = storePath();
-  out3(`грант: ${path}`);
+  out3(dw.grant(path));
   if (!existsSync10(path)) {
-    out3("  хранилища нет — мост ещё ни разу не входил на этот сервер");
+    out3(dw.noStore());
     return;
   }
   const store = loadStore();
   const t = store.tokens;
   if (!t?.access_token) {
-    out3("  токенов нет");
+    out3(dw.noTokens());
   } else {
     const usable = tokenUsable(t);
     const left = t.expires_at ? t.expires_at - now() : null;
-    out3(
-      `  access: ${usable ? "годен" : "не годен"}${left !== null ? ` (${left > 0 ? "истекает через" : "истёк"} ${seconds(Math.abs(left))})` : ""}`
-    );
+    out3(dw.access(usable, left, seconds));
     const hours = refreshHours(t);
-    if (!t.refresh_token) out3("  refresh: нет");
+    if (!t.refresh_token) out3(dw.refreshNone());
     else {
       const parts = [];
       if (hours.nbf)
-        parts.push(now() < hours.nbf ? `в силе через ${seconds(hours.nbf - now())}` : "в силе");
+        parts.push(
+          now() < hours.nbf ? dw.refreshValidIn(seconds(hours.nbf - now())) : dw.refreshValid()
+        );
       if (hours.exp)
         parts.push(
-          now() >= hours.exp ? "ИСТЁК — нужен вход" : `истекает через ${seconds(hours.exp - now())}`
+          now() >= hours.exp ? dw.refreshExpired() : dw.refreshExpiresIn(seconds(hours.exp - now()))
         );
-      out3(`  refresh: есть${parts.length ? ` (${parts.join(", ")})` : ""}`);
+      out3(dw.refresh(parts));
     }
   }
   if (store.client?.client_id) out3(`  client_id: ${store.client.client_id}`);
   const st = loadGrantState();
   if (st.refused_since)
-    out3(`  отказ стоит с ${new Date(st.refused_since).toISOString()}: ${st.reason ?? ""}`);
+    out3(dw.refusedSince(new Date(st.refused_since).toISOString(), st.reason ?? ""));
   for (const suffix of [".auth-pending", ".refreshing"]) {
-    if (existsSync10(path + suffix)) out3(`  замок: ${path + suffix}`);
+    if (existsSync10(path + suffix)) out3(dw.lock(path + suffix));
   }
   const logPath = grantLogPath();
   if (existsSync10(logPath)) {
     const lines = readFileSync24(logPath, "utf8").trim().split("\n").slice(-3);
-    out3(`  grant.log, последнее:`);
+    out3(dw.grantLog());
     for (const l of lines) out3(`    ${l}`);
   }
 }
 function latestReport() {
   const latest = readLatest(CFG.authDir);
   if (!latest) {
-    out3(
-      "свежий релиз: мост ещё не спрашивал релизы (спросит через пару секунд после старта сессии; руками — подкоманда update)"
-    );
+    out3(dw.latestNotAsked());
     return;
   }
   const ago = Math.round((Date.now() - latest.checked_at) / 6e4);
-  if (!latest.version)
-    out3(`свежий релиз: не узнан (${latest.error ?? "без причины"}), спрашивал ${ago} мин назад`);
+  if (!latest.version) out3(dw.latestUnknown(latest.error, ago));
   else if (compareVersions(latest.version, VERSION) > 0)
-    out3(
-      `свежий релиз: v${latest.version} — ЭТОТ ФАЙЛ ОТСТАЛ (v${VERSION}); в дом скачано: ${latest.downloaded.join(", ") || "ничего"}; спрашивал ${ago} мин назад`
-    );
-  else out3(`свежий релиз: v${latest.version}, этот файл не отстал; спрашивал ${ago} мин назад`);
+    out3(dw.latestBehind(latest.version, VERSION, latest.downloaded, ago));
+  else out3(dw.latestCurrent(latest.version, ago));
 }
 function claudePluginReport() {
   const registry = join21(homedir10(), ".claude", "plugins", "installed_plugins.json");
@@ -10576,31 +11281,31 @@ function claudePluginReport() {
     const reg = JSON.parse(readFileSync24(registry, "utf8"));
     const mine = Object.entries(reg.plugins ?? {}).filter(([k]) => /^iskron@/.test(k));
     if (!mine.length) {
-      out3(`Claude Code: плагин iskron не установлен (${registry})`);
+      out3(dw.pluginMissing(registry));
       return;
     }
     for (const [key, installs] of mine) {
       for (const inst of installs) {
         const manifest = inst.installPath ? join21(inst.installPath, ".mcp.json") : "";
-        let entry = "запись моста в манифесте не найдена";
+        let entry = dw.entryNotFound();
         if (manifest && existsSync10(manifest)) {
           try {
             const m = JSON.parse(readFileSync24(manifest, "utf8"));
             const hit = Object.entries(m.mcpServers ?? {}).find(
               ([, v]) => (v.args ?? []).some((a) => /iskron\.mjs/.test(a))
             );
-            if (hit) entry = `запись «${hit[0]}» → мост из плагина`;
+            if (hit) entry = dw.entryFound(hit[0]);
           } catch {
-            entry = `${manifest} не читается`;
+            entry = dw.unreadable(manifest);
           }
         }
         out3(
-          `Claude Code: плагин ${key} v${inst.version ?? "?"} (${inst.scope ?? "?"}) — ${entry}; ${inst.installPath ?? ""}`
+          dw.pluginLine(key, inst.version ?? "?", inst.scope ?? "?", entry, inst.installPath ?? "")
         );
       }
     }
   } catch {
-    out3(`Claude Code: ${registry} не читается`);
+    out3(dw.claudeUnreadable(registry));
   }
 }
 function codexHomes() {
@@ -10627,23 +11332,23 @@ function codexPluginReport(home) {
       if (!/iskron/.test(plugin)) continue;
       const dir = join21(marketDir, plugin);
       const manifest = join21(dir, ".codex-plugin", "plugin.json");
-      let word = "манифеста нет";
+      let word = dw.codexNoManifest();
       if (existsSync10(manifest)) {
         try {
           const m = JSON.parse(readFileSync24(manifest, "utf8"));
           const hit = Object.values(m.mcpServers ?? {}).some(
             (v) => (v.args ?? []).some((a) => /iskron\.mjs/.test(a))
           );
-          word = `v${m.version ?? "?"}, ${hit ? "запись моста в манифесте есть" : "записи моста в манифесте нет"}`;
+          word = dw.codexManifest(m.version ?? "?", hit);
         } catch {
-          word = `${manifest} не читается`;
+          word = dw.unreadable(manifest);
         }
       }
       found++;
-      out3(`Codex: плагин ${plugin}@${market} — ${word}; ${dir}`);
+      out3(dw.codexPlugin(plugin, market, word, dir));
     }
   }
-  if (!found) out3(`Codex: плагина iskron в кэше нет (${cache})`);
+  if (!found) out3(dw.codexNoPlugin(cache));
 }
 function harnessReport() {
   claudePluginReport();
@@ -10656,76 +11361,67 @@ function harnessReport() {
       );
       if (entries2.length) {
         for (const [name, v] of entries2) {
-          out3(`Claude Code: запись «${name}» → ${v.command ?? ""} ${(v.args ?? []).join(" ")}`);
+          out3(dw.claudeEntry(name, v.command ?? "", (v.args ?? []).join(" ")));
         }
-      } else
-        out3(
-          "Claude Code: ручной записи моста в пользовательском конфиге нет (штатная — в плагине)"
-        );
+      } else out3(dw.claudeNoManual());
     } catch {
-      out3(`Claude Code: ${claude} не читается`);
+      out3(dw.claudeUnreadable(claude));
     }
   }
   const opencodeDir = join21(homedir10(), ".config", "opencode");
   if (existsSync10(opencodeDir)) {
     const copy = join21(opencodeDir, "plugins", "iskron.js");
     const packaged = join21(dirname11(fileURLToPath8(import.meta.url)), "opencode-plugin.js");
-    if (!existsSync10(copy)) {
-      out3(`OpenCode: плагина нет (${copy}) — его кладёт establish-mcp при подключении`);
-    } else if (!existsSync10(packaged)) {
-      out3(
-        `OpenCode: плагин ${copy} стоит; рядом с этим файлом поставки плагина нет, сверить не с чем`
-      );
-    } else if (readFileSync24(copy).equals(readFileSync24(packaged))) {
-      out3(`OpenCode: плагин ${copy} — та же сборка, что в поставке`);
-    } else {
-      out3(`OpenCode: плагин ${copy} — ДРУГИЕ байты, обнови из поставки: cp "${packaged}" ${copy}`);
-    }
+    if (!existsSync10(copy)) out3(dw.ocNoPlugin(copy));
+    else if (!existsSync10(packaged)) out3(dw.ocNoPackaged(copy));
+    else if (readFileSync24(copy).equals(readFileSync24(packaged))) out3(dw.ocSame(copy));
+    else out3(dw.ocDiffers(copy, packaged));
   }
   openCodeMcpEntries(out3);
   for (const codexHome of codexHomes()) {
-    out3(`Codex: дом ${codexHome}`);
+    out3(dw.codexHome(codexHome));
     codexPluginReport(codexHome);
     const door = join21(codexHome, "app-server-control", "app-server-control.sock");
-    if (existsSync10(door)) out3(`Codex: дверь app-server открыта (${door})`);
-    else if (Buffer.byteLength(door) > 100)
-      out3(
-        `Codex: двери нет и не будет — дом длиннее предела unix-сокета; нужен короткий дом для демона и сессий`
-      );
-    else
-      out3(
-        `Codex: двери нет (${door}) — демон app-server не поднят; без неё кадр доставляет watchdog-exit`
-      );
+    if (existsSync10(door)) out3(dw.codexDoorOpen(door));
+    else if (Buffer.byteLength(door) > 100) out3(dw.codexDoorNever());
+    else out3(dw.codexDoorNone(door));
     const codex = join21(codexHome, "config.toml");
     if (existsSync10(codex)) {
       const text = readFileSync24(codex, "utf8");
       out3(
-        `Codex: ${/^\s*\[mcp_servers\."?iskron"?\]|^\s*mcp_servers\."?iskron"?\s*=/m.test(text) ? "ручная запись моста в config.toml есть" : "ручной записи моста в config.toml нет (штатная — в плагине)"}`
+        dw.codexManual(
+          /^\s*\[mcp_servers\."?iskron"?\]|^\s*mcp_servers\."?iskron"?\s*=/m.test(text)
+        )
       );
     }
   }
 }
 async function daemonReport() {
-  out3(
-    daemonWanted() ? "демон машины: тонкий мост включён — умолчание (выключатель — ISKRON_BRIDGE_DAEMON=0 в окружении моста)" : "демон машины: выключен — мост идёт полным (выключатель стоит в окружении этого процесса: ISKRON_BRIDGE_DAEMON=0 или ISKRON_BRIDGE_NO_DAEMON)"
-  );
+  out3(daemonWanted() ? dw.daemonOn() : dw.daemonOff());
   if (!existsSync10(seamRunDir(CFG.authDir))) {
-    out3(`  не поднимался: каталога шва ${seamRunDir(CFG.authDir)} нет`);
+    out3(dw.daemonNeverUp(seamRunDir(CFG.authDir)));
     return;
   }
   const d = await probeDaemon(["--auth-dir", CFG.authDir]);
   if (d.ok) {
-    out3(`  сокет: ${d.socket}`);
+    out3(dw.daemonSocket(d.socket));
     out3(
-      `  отвечает: pid ${d.pid}, сборка ${d.build}${d.build.startsWith(`v${VERSION}+`) ? "" : ` — ДРУГАЯ, чем этот файл (v${VERSION})`}, сессий ${d.sessions ?? "?"}${d.path ? `, файл ${d.path}` : ""}`
+      dw.daemonAnswers(
+        d.pid,
+        d.build,
+        !d.build.startsWith(`v${VERSION}+`),
+        VERSION,
+        d.sessions,
+        d.path
+      )
     );
-  } else if (d.unsafe) out3(`  вход не личный: ${d.why} — тонкий мост пойдёт полным`);
-  else out3(`  сокет: ${d.socket} — не отвечает (${d.why})`);
+  } else if (d.unsafe) out3(dw.daemonUnsafe(d.why));
+  else out3(dw.daemonSilent(d.socket, d.why));
 }
 async function runDoctor(argv2) {
   setConfig(parseArgs(argv2));
   out3(`iskron doctor — ${BUILD}`);
-  out3(`этот файл: ${fileURLToPath8(import.meta.url)}`);
+  out3(dw.thisFile(fileURLToPath8(import.meta.url)));
   out3(`node: ${process.version}`);
   homeCopyReport();
   latestReport();
@@ -10744,32 +11440,67 @@ var out4 = (s2) => {
 async function runUpdate(argv2) {
   setConfig(parseArgs(argv2));
   out4(`iskron update — ${BUILD}`);
-  out4(`сервер: ${CFG.serverUrl} (${serverSourceWord()}) — ${freshnessWord(CFG.serverUrl)}`);
+  out4(
+    L(
+      `сервер: ${CFG.serverUrl} (${serverSourceWord()}) — ${freshnessWord(CFG.serverUrl)}`,
+      `server: ${CFG.serverUrl} (${serverSourceWord()}) — ${freshnessWord(CFG.serverUrl)}`
+    )
+  );
   const latest = await checkLatest(CFG.authDir, true);
   if (!latest || !latest.version) {
     out4(
-      latest?.rate_limited ? `свежий релиз не узнан: ${latest.error} — лимит GitHub; повтори ${latest.rate_limited_until ? "после сброса" : "позже"}` : `свежий релиз не узнан: ${latest?.error ?? "нет ответа"} — сеть или GitHub; повтори позже`
+      latest?.rate_limited ? L(
+        `свежий релиз не узнан: ${latest.error} — лимит GitHub; повтори ${latest.rate_limited_until ? "после сброса" : "позже"}`,
+        `latest release unknown: ${latest.error} — GitHub rate limit; retry ${latest.rate_limited_until ? "after the reset" : "later"}`
+      ) : L(
+        `свежий релиз не узнан: ${latest?.error ?? "нет ответа"} — сеть или GitHub; повтори позже`,
+        `latest release unknown: ${latest?.error ?? "no answer"} — network or GitHub; retry later`
+      )
     );
     process.exitCode = 1;
     return;
   }
   const cmp = compareVersions(latest.version, VERSION);
+  const behind = cmp > 0 ? L(" — отстал", " — behind") : cmp < 0 ? L(" — новее релиза (сборка из ветки)", " — newer than the release (a branch build)") : L(" — не отстал", " — not behind");
   out4(
-    `свежий релиз: v${latest.version} (${latest.tag}); этот файл: v${VERSION}${cmp > 0 ? " — отстал" : cmp < 0 ? " — новее релиза (сборка из ветки)" : " — не отстал"}`
+    L(
+      `свежий релиз: v${latest.version} (${latest.tag}); этот файл: v${VERSION}${behind}`,
+      `latest release: v${latest.version} (${latest.tag}); this file: v${VERSION}${behind}`
+    )
   );
-  if (latest.error) out4(`скачать не вышло: ${latest.error}`);
-  if (latest.downloaded.length) for (const p of latest.downloaded) out4(`положено: ${p}`);
-  else out4(`в дом ничего не клалось: ${homeBridgePath()} не старше релиза`);
+  if (latest.error) out4(L(`скачать не вышло: ${latest.error}`, `download failed: ${latest.error}`));
+  if (latest.downloaded.length)
+    for (const p of latest.downloaded) out4(L(`положено: ${p}`, `placed: ${p}`));
+  else
+    out4(
+      L(
+        `в дом ничего не клалось: ${homeBridgePath()} не старше релиза`,
+        `nothing was placed in the home: ${homeBridgePath()} is not older than the release`
+      )
+    );
   harnessReport();
   out4("");
-  out4("Дальше:");
+  out4(L("Дальше:", "Next:"));
+  const setup = setupPathOf(CFG.authDir);
+  const fetched = latest.downloaded.includes(setup);
   out4(
-    `  1. Скиллы обновляет канал харнеса — порядок в свежем установщике ${setupPathOf(CFG.authDir)}${latest.downloaded.includes(setupPathOf(CFG.authDir)) ? "" : " (не скачан — возьми из релиза)"}: прочти его и исполни шаги обновления для этого харнеса.`
+    L(
+      `  1. Скиллы обновляет канал харнеса — порядок в свежем установщике ${setup}${fetched ? "" : " (не скачан — возьми из релиза)"}: прочти его и исполни шаги обновления для этого харнеса.`,
+      `  1. Skills are updated by the harness channel — the order is in the fresh installer ${setup}${fetched ? "" : " (not downloaded — take it from the release)"}: read it and carry out the update steps for this harness.`
+    )
   );
   out4(
-    "  2. Перезапусти сессии харнеса: мост, поднятый прежней сборкой, живёт до конца своей сессии."
+    L(
+      "  2. Перезапусти сессии харнеса: мост, поднятый прежней сборкой, живёт до конца своей сессии.",
+      "  2. Restart the harness sessions: a bridge started by the previous build lives until the end of its session."
+    )
   );
-  out4("  3. node ~/.iskron-bridge/iskron-bridge.mjs doctor — сверка, что стоит и работает.");
+  out4(
+    L(
+      "  3. node ~/.iskron-bridge/iskron-bridge.mjs doctor — сверка, что стоит и работает.",
+      "  3. node ~/.iskron-bridge/iskron-bridge.mjs doctor — a check of what is installed and working."
+    )
+  );
 }
 
 // js/cli/use.ts
@@ -10788,32 +11519,45 @@ function runUse(argv2) {
   setConfig(parseArgs(rest2));
   const url = word ? resolveServerChoice(word) : null;
   if (!url) {
-    out5("use: назови адрес — en (mcp.iskron.ai), ru (mcp.iskron.ru) или полный URL инстанса");
+    out5(
+      L(
+        "use: назови адрес — en (mcp.iskron.ai), ru (mcp.iskron.ru) или полный URL инстанса",
+        "use: name an address — en (mcp.iskron.ai), ru (mcp.iskron.ru) or the full URL of an instance"
+      )
+    );
     process.exitCode = 2;
     return;
   }
   const path = writeServerChoice(CFG.authDir, url);
-  out5(`мост смотрит на ${url} — записано в ${path}; ${freshnessWord(url)}`);
   out5(
-    "Действует с нового процесса моста: перезапусти сессии харнеса. Грант раздельный по адресу — первый вызов на новом адресе ведёт во вход."
+    L(
+      `мост смотрит на ${url} — записано в ${path}; ${freshnessWord(url)}`,
+      `the bridge looks at ${url} — written to ${path}; ${freshnessWord(url)}`
+    )
+  );
+  out5(
+    L(
+      "Действует с нового процесса моста: перезапусти сессии харнеса. Грант раздельный по адресу — первый вызов на новом адресе ведёт во вход.",
+      "Takes effect from a new bridge process: restart the harness sessions. The grant is separate per address — the first call at a new address leads to login."
+    )
   );
 }
 
 // js/cli/iskron.ts
-var USAGE = `iskron ${BUILD}
+var usage = () => `iskron ${BUILD}
   node iskron.mjs [bridge] [server-url] [--timeout <ms>] [--auth-dir <dir>] [--no-browser] [--debug] [--satellite] [--tools <a,b,c>]
-      (--satellite — мост прогона субагента из файла агента: только место-спутник <место позвавшего>.sub-N)
-      (--tools — какие тулы видит харнес, iskron_stand всегда; без флага — все)
-  node iskron.mjs watchdog [ключ] [--auth-dir <dir>]
-  node iskron.mjs watchdog-exit [ключ] [--auth-dir <dir>]
-  node iskron.mjs watchdog-codex [ключ] [--auth-dir <dir>]   (из оболочки Codex: CODEX_THREAD_ID, CODEX_HOME)
+      ${L("(--satellite — мост прогона субагента из файла агента: только место-спутник <место позвавшего>.sub-N)", "(--satellite — the bridge of a subagent run from an agent file: only the satellite seat <caller's seat>.sub-N)")}
+      ${L("(--tools — какие тулы видит харнес, iskron_stand всегда; без флага — все)", "(--tools — which tools the harness sees, iskron_stand always; without the flag — all)")}
+  node iskron.mjs watchdog [${L("ключ", "key")}] [--auth-dir <dir>]
+  node iskron.mjs watchdog-exit [${L("ключ", "key")}] [--auth-dir <dir>]
+  node iskron.mjs watchdog-codex [${L("ключ", "key")}] [--auth-dir <dir>]   ${L("(из оболочки Codex: CODEX_THREAD_ID, CODEX_HOME)", "(from the Codex shell: CODEX_THREAD_ID, CODEX_HOME)")}
   node iskron.mjs doctor [server-url] [--auth-dir <dir>]
   node iskron.mjs update [--auth-dir <dir>]
-  node iskron.mjs use <en|ru|url> [--auth-dir <dir>]   (en — mcp.iskron.ai, ru — mcp.iskron.ru)
-  node iskron.mjs daemon --auth-dir <dir>   (демон машины; его поднимает тонкий мост — мост по умолчанию)
+  node iskron.mjs use <en|ru|url> [--auth-dir <dir>]   ${L("(en — mcp.iskron.ai, ru — mcp.iskron.ru)", "(en — mcp.iskron.ai, ru — mcp.iskron.ru)")}
+  node iskron.mjs daemon --auth-dir <dir>   ${L("(демон машины; его поднимает тонкий мост — мост по умолчанию)", "(the machine daemon; the thin bridge raises it — the default bridge)")}
   node iskron.mjs --version
-  env: ISKRON_BRIDGE_TOKEN — личный токен вместо OAuth (или файл <auth-dir>/token);
-       ISKRON_BRIDGE_DAEMON=0 — полный мост в своём процессе, без демона машины;
+  env: ISKRON_BRIDGE_TOKEN — ${L("личный токен вместо OAuth (или файл <auth-dir>/token)", "a personal token instead of OAuth (or the file <auth-dir>/token)")};
+       ISKRON_BRIDGE_DAEMON=0 — ${L("полный мост в своём процессе, без демона машины", "the full bridge in its own process, without the machine daemon")};
        ISKRON_BRIDGE_URL, ISKRON_BRIDGE_AUTH_DIR, ISKRON_BRIDGE_NO_BROWSER, ISKRON_BRIDGE_DEBUG
 `;
 var argv = process.argv.slice(2);
@@ -10823,8 +11567,10 @@ var longLived = LONG_LIVED.has(first) || first !== void 0 && !first.startsWith("
 if (longLived && !updatesDisabled() && !process.env.ISKRON_BRIDGE_REEXEC) {
   const sync = syncHome();
   for (const p of sync.copied)
-    process.stderr.write(`[iskron-bridge] дом обновлён этой сборкой: ${p}
-`);
+    process.stderr.write(
+      `[iskron-bridge] ${L("дом обновлён этой сборкой", "home updated by this build")}: ${p}
+`
+    );
   if (sync.reexec) reexec(sync.reexec, argv);
   else dispatch();
 } else dispatch();
@@ -10859,7 +11605,7 @@ function dispatch() {
       break;
     case "--help":
     case "-h":
-      process.stdout.write(USAGE);
+      process.stdout.write(usage());
       break;
     default:
       bridgeMain(argv);

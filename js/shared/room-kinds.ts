@@ -7,6 +7,7 @@
 import { type Frame } from "./channel.ts";
 import { L, lang } from "./lang.ts";
 
+// ru:dict — таблицы слов: русская и английская рядом, язык выбирает вызывающий.
 /** Куда идёт кадр: прервать идущий ход или лечь в пачку. */
 export type Stack = "interrupt" | "batch";
 

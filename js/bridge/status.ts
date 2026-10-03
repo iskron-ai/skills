@@ -59,7 +59,7 @@ async function statusWord(text: string, realm: string): Promise<[string, boolean
   if (st.code === 404) return [`${st.body} ${TURNED_GUIDANCE()}`, true];
   if (st.ok)
     return [
-      `занятость ${statusAddress(realm)?.place ?? statusAddress(realm)?.key}: ${text || "(снята)"}`,
+      `${L("занятость", "busyness")} ${statusAddress(realm)?.place ?? statusAddress(realm)?.key}: ${text || L("(снята)", "(cleared)")}`,
       false,
     ];
   return [st.body, true];
@@ -183,17 +183,17 @@ export async function publishStatus(
 ): Promise<StatusOutcome> {
   const addr = statusAddress(realm);
   if (!addr) {
-    return {
-      ok: false,
-      body: "Отказано (мост): этот мост места не держит, статусного адреса у него нет.",
-    };
+    return { ok: false, body: NOT_HELD() };
   }
   // Мест на канале несколько, а id этого не известен — строка легла бы на все: отказ вслух.
   // Место одно — строка без id ложится на него же, как прежде.
   if (!everyPlace && !addr.standingId && heldPlaces().length > 1)
     return {
       ok: false,
-      body: `Отказано (мост): id места ${addr.key} у моста ещё не известен (hello его не назвал) — без него строка легла бы на все места канала; повтори iskron_stand этого графа.`,
+      body: L(
+        `Отказано (мост): id места ${addr.key} у моста ещё не известен (hello его не назвал) — без него строка легла бы на все места канала; повтори iskron_stand этого графа.`,
+        `Refused (bridge): the bridge does not yet know the id of the seat ${addr.key} (hello did not name it) — without it the line would land on all seats of the channel; repeat iskron_stand for this graph.`,
+      ),
     };
   const st = await publishStatusTo(addr.url, text, 5000, everyPlace ? null : addr.standingId);
   if (st.ok) {
@@ -230,6 +230,12 @@ const TWO_ENTRIES = (): string =>
 export const TURNED_GUIDANCE = (): string =>
   `${TWO_ENTRIES()} ${L("Иначе", "Otherwise")} ${TAKE_PATH()}.`;
 
+const NOT_HELD = (): string =>
+  L(
+    "Отказано (мост): этот мост места не держит, статусного адреса у него нет.",
+    "Refused (bridge): this bridge holds no seat, it has no status address.",
+  );
+
 const slugOf = (realm: string): string => realm.replace(/^@[^/]+\//, "");
 
 /**
@@ -258,20 +264,26 @@ async function heldElsewhere(realm: string): Promise<HoldRecord[]> {
 
 /** Отказ моста без стояния: называет живые мосты этой машины на этом графе, если они есть, и путь передачи целиком. */
 export async function notHeldHere(realm: string): Promise<string> {
-  const head = "Отказано (мост): этот мост места не держит, статусного адреса у него нет.";
+  const head = NOT_HELD();
   const others = await heldElsewhere(realm);
   if (!others.length)
-    return (
+    return L(
       `${head} Назовись одним вызовом iskron_stand(realm, karta, model, status) — занятость можно передать прямо в нём. ` +
-      `Если место слушает другой держатель, iskron_stand скажет это; тогда ${TAKE_PATH()}.`
+        `Если место слушает другой держатель, iskron_stand скажет это; тогда ${TAKE_PATH()}.`,
+      `${head} Introduce yourself with one call iskron_stand(realm, karta, model, status) — busyness can be passed right in it. ` +
+        `If another holder listens on the seat, iskron_stand will say so; then ${TAKE_PATH()}.`,
     );
   const list = others
     .map((r) => {
-      const where = [r.cwd && `каталог ${r.cwd}`, r.client && `харнесс ${r.client}`].filter(
-        Boolean,
-      );
+      const where = [
+        r.cwd && `${L("каталог", "directory")} ${r.cwd}`,
+        r.client && `${L("харнесс", "harness")} ${r.client}`,
+      ].filter(Boolean);
       return where.length ? `${r.key} (${where.join(", ")})` : r.key;
     })
     .join("; ");
-  return `${head} Места этого графа на этой машине держат живые мосты: ${list}. ${TURNED_GUIDANCE()}`;
+  return L(
+    `${head} Места этого графа на этой машине держат живые мосты: ${list}. ${TURNED_GUIDANCE()}`,
+    `${head} Seats of this graph on this machine are held by live bridges: ${list}. ${TURNED_GUIDANCE()}`,
+  );
 }

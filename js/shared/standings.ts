@@ -7,6 +7,7 @@ import { lstatSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
+import { L } from "./lang.ts";
 import { envOf } from "./scope.ts";
 
 export const defaultAuthDir = (): string => join(homedir(), ".iskron-bridge");
@@ -58,10 +59,11 @@ export function privateDirProblem(dir: string): string | null {
   } catch (e) {
     return `${dir}: ${(e as Error).message}`;
   }
-  if (!st.isDirectory()) return `${dir} — не каталог`;
+  if (!st.isDirectory()) return L(`${dir} — не каталог`, `${dir} is not a directory`);
   if (typeof process.getuid === "function" && st.uid !== process.getuid())
-    return `${dir} принадлежит другому пользователю`;
-  if (st.mode & 0o077) return `${dir} открыт группе или прочим`;
+    return L(`${dir} принадлежит другому пользователю`, `${dir} belongs to another user`);
+  if (st.mode & 0o077)
+    return L(`${dir} открыт группе или прочим`, `${dir} is open to group or others`);
   return null;
 }
 

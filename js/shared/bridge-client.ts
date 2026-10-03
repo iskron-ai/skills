@@ -2,6 +2,8 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { basename } from "node:path";
 
+import { L } from "./lang.ts";
+
 /**
  * Чем запускать мост. Под pi это сам node (`process.execPath`). Под OpenCode
  * процесс — Bun, встроенный в бинарь opencode; голый execPath запустил бы
@@ -92,14 +94,32 @@ export class Bridge {
         this.onLog(line);
       }
     });
-    proc.on("error", (e) => this.die(new Error(`мост не запустился: ${e.message}`)));
+    proc.on("error", (e) =>
+      this.die(
+        new Error(
+          L(`мост не запустился: ${e.message}`, `the bridge failed to start: ${e.message}`),
+        ),
+      ),
+    );
     proc.on("exit", (code, signal) =>
-      this.die(new Error(`мост вышел (code=${code}, signal=${signal})${this.why()}`)),
+      this.die(
+        new Error(
+          L(
+            `мост вышел (code=${code}, signal=${signal})${this.why()}`,
+            `the bridge exited (code=${code}, signal=${signal})${this.why()}`,
+          ),
+        ),
+      ),
     );
   }
 
   private why(): string {
-    return this.tail.length ? `; последнее от моста: ${this.tail.slice(-3).join(" | ")}` : "";
+    return this.tail.length
+      ? L(
+          `; последнее от моста: ${this.tail.slice(-3).join(" | ")}`,
+          `; last from the bridge: ${this.tail.slice(-3).join(" | ")}`,
+        )
+      : "";
   }
 
   private die(e: Error): void {
@@ -171,7 +191,7 @@ export class Bridge {
       const resolve = settle(res);
       const reject = settle(rej as (v: any) => void);
       function onAbort() {
-        reject(new Error("вызов отменён"));
+        reject(new Error(L("вызов отменён", "call aborted")));
       }
       this.pending.set(id, { resolve, reject });
       if (opts.signal) {
@@ -181,17 +201,27 @@ export class Bridge {
       if (opts.timeoutMs) {
         timer = setTimeout(() => {
           this.pending.delete(id);
-          reject(new Error(`${method}: нет ответа за ${opts.timeoutMs} мс${this.why()}`));
+          reject(
+            new Error(
+              L(
+                `${method}: нет ответа за ${opts.timeoutMs} мс${this.why()}`,
+                `${method}: no answer in ${opts.timeoutMs} ms${this.why()}`,
+              ),
+            ),
+          );
         }, opts.timeoutMs);
         timer.unref?.();
       }
-      if (!this.proc?.stdin?.writable) return reject(new Error("мост не принимает запись"));
+      if (!this.proc?.stdin?.writable)
+        return reject(
+          new Error(L("мост не принимает запись", "the bridge does not accept writes")),
+        );
       this.proc.stdin.write(JSON.stringify({ jsonrpc: "2.0", id, method, params }) + "\n");
     });
   }
 
   stop(): void {
-    this.die(new Error("сессия закрыта"));
+    this.die(new Error(L("сессия закрыта", "session closed")));
     const proc = this.proc;
     this.proc = null;
     if (!proc || proc.killed || proc.exitCode !== null) return;
@@ -252,6 +282,9 @@ export function resultToContent(result: any): Content[] {
   if (out.length) return out;
   const structured = result?.structuredContent;
   return [
-    { type: "text" as const, text: structured ? JSON.stringify(structured) : "(пустой ответ)" },
+    {
+      type: "text" as const,
+      text: structured ? JSON.stringify(structured) : L("(пустой ответ)", "(empty answer)"),
+    },
   ];
 }

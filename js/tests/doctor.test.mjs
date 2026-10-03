@@ -518,7 +518,10 @@ test("use en writes the English production address next to the grant; doctor nam
     assert.match(en.out, /продовый адрес: самообновление с релизов поставки включено/);
     const other = await run(["use", fake.mcpUrl, "--auth-dir", authDir], { HOME: home });
     assert.equal(other.code, 0, other.err);
-    assert.match(other.out, /другой инстанс: обновлений с релизов поставки нет/);
+    assert.match(
+      other.out,
+      /другой инстанс: обновлений с релизов поставки нет|another instance: there are no updates from the delivery releases/,
+    );
     const bad = await run(["use", "nowhere", "--auth-dir", authDir], { HOME: home });
     assert.equal(bad.code, 2, "a word that is neither en, ru nor a URL is refused");
     const r = await run(["doctor", "--auth-dir", authDir], { HOME: home });
@@ -527,7 +530,10 @@ test("use en writes the English production address next to the grant; doctor nam
       r.out.includes(`сервер: ${fake.mcpUrl} (файл выбора ${join(authDir, "server")})`),
       `doctor must name the server from the file and the file itself:\n${r.out}`,
     );
-    assert.match(r.out, /другой инстанс: обновлений с релизов поставки нет/);
+    assert.match(
+      r.out,
+      /другой инстанс: обновлений с релизов поставки нет|another instance: there are no updates from the delivery releases/,
+    );
     const ru = await run(["use", "ru", "--auth-dir", authDir], { HOME: home });
     assert.equal(readFileSync(join(authDir, "server"), "utf8"), "https://mcp.iskron.ru/\n", ru.out);
   } finally {

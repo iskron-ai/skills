@@ -11,6 +11,7 @@ import {
   setConfig,
   writeServerChoice,
 } from "../bridge/config.ts";
+import { L } from "../shared/lang.ts";
 import { freshnessWord } from "./doctor.ts";
 
 const out = (s: string): void => {
@@ -29,13 +30,26 @@ export function runUse(argv: string[]): void {
   setConfig(parseArgs(rest));
   const url = word ? resolveServerChoice(word) : null;
   if (!url) {
-    out("use: назови адрес — en (mcp.iskron.ai), ru (mcp.iskron.ru) или полный URL инстанса");
+    out(
+      L(
+        "use: назови адрес — en (mcp.iskron.ai), ru (mcp.iskron.ru) или полный URL инстанса",
+        "use: name an address — en (mcp.iskron.ai), ru (mcp.iskron.ru) or the full URL of an instance",
+      ),
+    );
     process.exitCode = 2;
     return;
   }
   const path = writeServerChoice(CFG.authDir, url);
-  out(`мост смотрит на ${url} — записано в ${path}; ${freshnessWord(url)}`);
   out(
-    "Действует с нового процесса моста: перезапусти сессии харнеса. Грант раздельный по адресу — первый вызов на новом адресе ведёт во вход.",
+    L(
+      `мост смотрит на ${url} — записано в ${path}; ${freshnessWord(url)}`,
+      `the bridge looks at ${url} — written to ${path}; ${freshnessWord(url)}`,
+    ),
+  );
+  out(
+    L(
+      "Действует с нового процесса моста: перезапусти сессии харнеса. Грант раздельный по адресу — первый вызов на новом адресе ведёт во вход.",
+      "Takes effect from a new bridge process: restart the harness sessions. The grant is separate per address — the first call at a new address leads to login.",
+    ),
   );
 }

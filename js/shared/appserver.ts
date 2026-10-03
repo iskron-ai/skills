@@ -8,6 +8,8 @@ import { randomBytes } from "node:crypto";
 import { request } from "node:http";
 import { type Socket } from "node:net";
 
+import { L } from "./lang.ts";
+
 /* eslint-disable @typescript-eslint/no-explicit-any -- сообщения app-server без схемы */
 
 export interface Door {
@@ -82,14 +84,23 @@ export function openDoor(
           } else if (op === 8) socket.end();
         }
       });
-      socket.on("close", () => onClose("сокет закрыт"));
+      socket.on("close", () => onClose(L("сокет закрыт", "socket closed")));
       socket.on("error", (e) => onClose(e.message));
       resolve({
         send: (msg) => socket.write(frame(Buffer.from(JSON.stringify(msg)))),
         close: () => socket.end(),
       });
     });
-    req.on("response", (res) => reject(new Error(`дверь не открылась: HTTP ${res.statusCode}`)));
+    req.on("response", (res) =>
+      reject(
+        new Error(
+          L(
+            `дверь не открылась: HTTP ${res.statusCode}`,
+            `the door did not open: HTTP ${res.statusCode}`,
+          ),
+        ),
+      ),
+    );
     req.on("error", reject);
     req.end();
   });

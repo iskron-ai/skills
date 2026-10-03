@@ -173,7 +173,7 @@ function withNotice(reply: JsonRpcMessage): JsonRpcMessage {
   const content = reply?.result?.content;
   if (!Array.isArray(content)) return reply; // ошибка без тела — строка ждёт следующего ответа
   const notice = takeNotice();
-  if (notice && !content.some((c) => c?.text?.includes("ПОСТАВКА ОТСТАЛА"))) {
+  if (notice && !content.some((c) => /ПОСТАВКА ОТСТАЛА|DELIVERY BEHIND/.test(c?.text ?? ""))) {
     content.push({ type: "text", text: notice });
   }
   return reply;
