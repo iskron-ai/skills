@@ -2060,11 +2060,13 @@ test("an eviction of a session that moved to another folder is not said into it 
   }
 });
 
-// A parent moved with its satellite children: the children's places and bridges stay
-// with the old folder's instance. If the children's tools go through the new one, a
-// write must not go by the root's slot — under the PARENT's place: a loud refusal;
-// and a revoke of such a child from there is not silent.
-test("a parent moved with a satellite child: in the new folder the child's write is refused loudly, never sent under the parent's place, and its revoke says so", async () => {
+// A parent moved to another folder: OpenCode leaves its children where they were
+// (seen live). The old instance ends each satellite child there — its bridge out,
+// the parent told «moved», no «КОНЧЕН» — instead of a second life until the ceiling;
+// the child's calls there are refused, never by a root bridge raised for the moved
+// parent (#6626). In the new folder its write is refused too, and the parent's revoke
+// of it is answered by the plugin, not sent.
+test("a parent moved with a satellite child: the old instance ends the child with «moved», refuses its calls, and the new one answers its revoke without sending it", async () => {
   const calls = join(SANDBOX, "move-kids.calls");
   writeFileSync(calls, "");
   const b = bridgeEnv("move-kids", { FB_CALLS: calls, FB_TOOLS: LEAD_TOOLS });
@@ -2090,24 +2092,49 @@ test("a parent moved with a satellite child: in the new folder the child's write
     const sub = { ...ROOT_PLACE, name: SUB };
     appendFileSync(`${b.events}.${childPid}`, event("held", { key: "k-sub", place: sub }));
     await until(() => /мост держит стояние k-sub/.test(A.said()), "the child's held word");
-    A.ctx.session.get = async ({ sessionID }) =>
-      kids(LOC_B).sessions.find((s) => s.id === sessionID);
+    // Only the root moves; the child stays in the old folder.
+    const where = { root: LOC_B, child: LOC_A };
+    const get = async ({ sessionID }) => ({
+      id: sessionID,
+      location: where[sessionID],
+      ...(sessionID === "child" ? { parentID: "root" } : {}),
+    });
+    A.ctx.session.get = get;
     A.emit({ type: "session.moved", data: { sessionID: "root", location: LOC_B } });
     await until(() => lostMarkers().length === 1, "the marker for the new folder");
+    await until(() => !alive(childPid), "the child's bridge to go with the move");
+    await until(() => A.synthetics.some((s) => s.sessionID === "root"), "the word in the parent");
+    const toParent = A.synthetics.filter((s) => s.sessionID === "root");
+    assert.match(toParent[0].text, /снят переносом родителя[\s\S]*«КОНЧЕН» не будет/);
+    assert.equal(toParent[0].resume, false, "it does not wake the parent");
+    assert.ok(!A.synthetics.some((s) => /КОНЧЕН —/.test(s.text)), "no «КОНЧЕН»");
+    const pids = pidsOf(b.log).length;
+    await assert.rejects(
+      A.call("iskron_case", { realm: "nks-dev", action: "say", room: "#77" }, "child"),
+      /кончена/,
+    );
+    await assert.rejects(A.call("iskron_look", {}, "child"), /родитель этой сессии перенесён/);
+    assert.equal(pidsOf(b.log).length, pids, "no bridge raised here for the moved parent");
     B = await plugin(b.env, { ...kids(LOC_B), keepMarker: true });
+    B.ctx.session.get = get;
     await until(() => B.tools().has("iskron_case"), "B's tools", 8000);
     const before = callsIn(calls).length;
     await assert.rejects(
       B.call("iskron_case", { realm: "nks-dev", action: "say", room: "#77" }, "child"),
-      /перенесена с родителем/,
+      /кончено переносом родителя/,
     );
-    assert.equal(callsIn(calls).length, before, "the refused write reached no bridge");
     const word = await B.call(
       "iskron_channel",
       { realm: "nks-dev", action: "revoke", standing: `@me:${SUB}` },
       "root",
     );
-    assert.match(word.content, /перенесённый с родителем[\s\S]*итога «КОНЧЕН» отсюда не будет/);
+    assert.match(word.content, /кончённый переносом родителя[\s\S]*не нужен и не послан/);
+    assert.ok(
+      !callsIn(calls)
+        .slice(before)
+        .some((c) => c.name === "iskron_channel"),
+      "the revoke reached no bridge",
+    );
   } finally {
     await A.stop();
     await B?.stop();

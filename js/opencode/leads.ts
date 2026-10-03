@@ -42,19 +42,30 @@ export function createLeads(d: W.LeadDoors): W.Leads {
    * Конец: родителю — итог, затем мост гасится (ended). Итог будит и идёт steer: родная
    * синтетика OpenCode по затиханию ребёнка будит родителя первой, и слово с queue
    * легло бы лишь после его хода; steer ложится в идущий ход на ближайшей границе шага.
-   * Порядок двух синтетик плагин не держит. Потолок и невозвращённое место не будят.
+   * Порядок двух синтетик плагин не держит. Потолок, невозвращённое место (lost) и
+   * перенос родителя (away — без «КОНЧЕН»: итог не по исходу поручения) не будят.
    */
-  async function finish(child: string, why: string, ended = true, wake = true, lost = false) {
+  async function finish(
+    child: string,
+    why: string,
+    ended = true,
+    wake = true,
+    kind: "end" | "lost" | "away" = "end",
+  ) {
     const l = leads.get(child);
     if (!l) return;
     leads.delete(child);
     // Конец снимает только спутника ребёнка: обычное место, вставшее вместо него, не трогаем.
-    const kept = ended && !lost ? d.ownPlace(child) : null;
+    const kept = ended && kind === "end" ? d.ownPlace(child) : null;
     if (kept) d.say(`Искрон: ${W.keptLine(who(l, child), kept)}`, "warning");
     const parent = await l.parent;
-    const word = lost
-      ? W.lostWord(who(l, child), why)
-      : W.endWord(who(l, child), why, (l.last ?? "").trim(), kept);
+    const last = (l.last ?? "").trim();
+    const word =
+      kind === "lost"
+        ? W.lostWord(who(l, child), why)
+        : kind === "away"
+          ? W.awayWord(who(l, child), last)
+          : W.endWord(who(l, child), why, last, kept);
     if (parent) await d.tell(parent, word, wake, wake);
     else d.say(`${word}\n(родителя плагин не знает — итог некому)`, "warning");
     if (ended && !kept)
@@ -131,7 +142,8 @@ export function createLeads(d: W.LeadDoors): W.Leads {
       if (was.last) l.last ??= was.last; // итог по концу — и после перезагрузки
       if (was.name && was.of) l.place ??= { ...was.of, name: was.name }; // revoke по имени до «held»
     },
-    fail: (child, why) => finish(child, why, true, false, true),
+    fail: (child, why) => finish(child, why, true, false, "lost"),
+    away: (child) => finish(child, "", true, false, "away"),
     snapshot: (child) => {
       const l = leads.get(child);
       return { room: l?.room ?? null, noted: !!l?.noted, last: l?.last };

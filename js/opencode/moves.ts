@@ -27,6 +27,8 @@ export interface MoveDoors {
   slotFor(session: string, touch: boolean): Promise<Slot>;
   /** Маркер своей локации — взять и вернуть его места (adopt.ts). */
   adopt(): void;
+  /** Ребёнок перенесённого корня кончен здесь (leads.ts). */
+  away(child: string): Promise<void>;
 }
 
 export function createMoves(ctx: Context) {
@@ -45,6 +47,7 @@ export function createMoves(ctx: Context) {
     const dir = home ? await directoryOf(sessionID) : null;
     return !home || !dir || dir === home.directory;
   };
+  const left = new Set<string>(); // корни, перенесённые отсюда в другую папку
   /** Сессию перенесли в локацию to. */
   function moved(d: MoveDoors, s: string, to: Home | null): void {
     if (!home || !to?.directory || d.slots.get(s)?.child) return;
@@ -59,8 +62,13 @@ export function createMoves(ctx: Context) {
         `Искрон: сессия ${s} перенесена в ${to.directory} — её место отпускаю экземпляру той папки`,
         "info",
       );
+      // Дети с родителем не переезжают (OpenCode, наблюдено): их поручение кончает перенос —
+      // мост гасится здесь, родителю «перенесён» без «КОНЧЕН», а не вторая жизнь до потолка.
+      left.add(s);
+      for (const k of kids) if (k.session) void d.away(k.session);
       return d.forget(s);
     }
+    left.delete(s);
     void d.rootOf(s).then((root) => (root === s ? d.slotFor(s, false) : null));
     setTimeout(() => d.adopt(), ADOPT_MS).unref?.();
   }
@@ -78,7 +86,18 @@ export function createMoves(ctx: Context) {
       );
     };
   }
-  return { home, directoryOf, exists, ours, moved, relay };
+  /**
+   * Вызов дочерней сессии, чей корень перенесён отсюда: мост корня здесь не поднимается
+   * (вернул бы место перенесённого корня этим экземпляром — #6626), отказ вслух.
+   */
+  function guard(root: string, session: string): void {
+    if (root === session || !left.has(root)) return;
+    throw new Error(
+      `Отказано (плагин): родитель этой сессии перенесён в другую папку — её поручение кончено переносом, ` +
+        "мост родителя здесь не поднимается, а своего места у неё нет; работа этой сессии — дальше без графа, либо слово запустившему.",
+    );
+  }
+  return { home, directoryOf, exists, ours, moved, relay, guard };
 }
 
 /* eslint-enable @typescript-eslint/no-explicit-any */

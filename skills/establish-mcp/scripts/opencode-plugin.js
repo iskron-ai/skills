@@ -1114,7 +1114,7 @@ function takeLostMarker(authDir2, home) {
 }
 
 // js/opencode/adopt.ts
-var movedWhy = (name) => `эта дочерняя сессия перенесена с родителем в другую папку, её место${name ? ` ${name}` : ""} и мост остались у экземпляра прежней папки; запись отсюда ушла бы местом родителя`;
+var movedWhy = (name) => `поручение этой дочерней сессии кончено переносом родителя в другую папку: её место${name ? ` ${name}` : ""} снято, мост погашен; запись отсюда ушла бы местом родителя`;
 function createAdopt(d) {
   const moved = /* @__PURE__ */ new Map();
   function take(entries) {
@@ -1137,13 +1137,13 @@ function createAdopt(d) {
       take(lost.entries);
       void d.keeper.resumeLost(lost.entries, lost.text);
     },
-    /** revoke места перенесённого ребёнка — слово к ответу. */
-    revokeNote(name, args) {
+    /** revoke места ребёнка, кончённого переносом родителя: ответ плагина вместо вызова. */
+    revoked(name, args) {
       const s = String(args.standing ?? "").trim();
       if (name !== "iskron_channel" || args.action !== "revoke" || !s) return null;
       for (const n2 of moved.keys())
         if (s === n2 || s.endsWith(`:${n2}`))
-          return `Искрон: ${n2} — субагент, перенесённый с родителем: его мост у экземпляра прежней папки, здесь он не ведущий — revoke ушёл как есть, итога «КОНЧЕН» отсюда не будет.`;
+          return `Искрон: ${n2} — субагент, кончённый переносом родителя: прежний экземпляр погасил его мост и снял место, итог лёг родителю словом «перенесён»; revoke не нужен и не послан.`;
       return null;
     }
   };
@@ -1672,6 +1672,8 @@ var turnWord = (place) => `Искрон: субагент ${place} сдал хо
 var noticeWord = (child, place) => `Искрон: уведомление OpenCode <subagent sessionID="${child}" state="completed"> — конец ХОДА субагента ${place}, не поручения: он ведущий, стоит своим местом и ждёт кадров своего дела. Не считай его закончившим — итог ляжет сюда словом «КОНЧЕН» по его концу. Отпустить раньше — iskron_channel(action="revoke", standing="${place}").`;
 var releaseWord = (who) => `Искрон: субагент ${who} отпущен — его мост погашен: выход из дел и снятие места делает он; итог лёг сюда синтетикой.`;
 var releasedWord = () => "Искрон: запустивший отпустил тебя — поручение кончено, место снято, из дел ты выведен; встать снова нельзя, в граф и дела больше не пиши.";
+var awayWord = (who, last) => `Искрон: субагент ${who} снят переносом родителя в другую папку — поручение здесь кончено не по исходу, итога «КОНЧЕН» не будет: его мост погашен, из дел он вышел, место снято; его сессия осталась в прежней папке. Последнее его слово:
+${last.slice(0, SUMMARY_MAX) || "(текста он не оставил — смотри его дело)"}`;
 var lostWord = (who, why) => `Искрон: субагент ${who} снят — ${why}. Место без моста уйдёт сроком канала, его дела — сроком места; итога нет, его ход — в его сессии.`;
 function leadDoors(ctx, say, flush, end, slots) {
   return {
@@ -1715,14 +1717,15 @@ function createLeads(d) {
   const gone = /* @__PURE__ */ new Set();
   const who = (l, child) => l.place?.name ?? `сессии ${child}`;
   const parentOf = (child) => d.parentOf(child).catch(() => null);
-  async function finish(child, why, ended = true, wake = true, lost = false) {
+  async function finish(child, why, ended = true, wake = true, kind = "end") {
     const l = leads.get(child);
     if (!l) return;
     leads.delete(child);
-    const kept = ended && !lost ? d.ownPlace(child) : null;
+    const kept = ended && kind === "end" ? d.ownPlace(child) : null;
     if (kept) d.say(`Искрон: ${keptLine(who(l, child), kept)}`, "warning");
     const parent = await l.parent;
-    const word = lost ? lostWord(who(l, child), why) : endWord(who(l, child), why, (l.last ?? "").trim(), kept);
+    const last = (l.last ?? "").trim();
+    const word = kind === "lost" ? lostWord(who(l, child), why) : kind === "away" ? awayWord(who(l, child), last) : endWord(who(l, child), why, last, kept);
     if (parent) await d.tell(parent, word, wake, wake);
     else d.say(`${word}
 (родителя плагин не знает — итог некому)`, "warning");
@@ -1793,7 +1796,8 @@ function createLeads(d) {
       if (was.last) l.last ??= was.last;
       if (was.name && was.of) l.place ??= { ...was.of, name: was.name };
     },
-    fail: (child, why) => finish(child, why, true, false, true),
+    fail: (child, why) => finish(child, why, true, false, "lost"),
+    away: (child) => finish(child, "", true, false, "away"),
     snapshot: (child) => {
       const l = leads.get(child);
       return { room: l?.room ?? null, noted: !!l?.noted, last: l?.last };
@@ -1911,6 +1915,7 @@ function createMoves(ctx) {
     const dir = home ? await directoryOf(sessionID) : null;
     return !home || !dir || dir === home.directory;
   };
+  const left = /* @__PURE__ */ new Set();
   function moved(d, s, to) {
     if (!home || !to?.directory || d.slots.get(s)?.child) return;
     if (to.directory !== home.directory) {
@@ -1924,8 +1929,11 @@ function createMoves(ctx) {
         `Искрон: сессия ${s} перенесена в ${to.directory} — её место отпускаю экземпляру той папки`,
         "info"
       );
+      left.add(s);
+      for (const k of kids) if (k.session) void d.away(k.session);
       return d.forget(s);
     }
+    left.delete(s);
     void d.rootOf(s).then((root) => root === s ? d.slotFor(s, false) : null);
     setTimeout(() => d.adopt(), ADOPT_MS).unref?.();
   }
@@ -1937,7 +1945,13 @@ function createMoves(ctx) {
       );
     };
   }
-  return { home, directoryOf, exists, ours, moved, relay };
+  function guard(root, session) {
+    if (root === session || !left.has(root)) return;
+    throw new Error(
+      `Отказано (плагин): родитель этой сессии перенесён в другую папку — её поручение кончено переносом, мост родителя здесь не поднимается, а своего места у неё нет; работа этой сессии — дальше без графа, либо слово запустившему.`
+    );
+  }
+  return { home, directoryOf, exists, ours, moved, relay, guard };
 }
 
 // js/opencode/runends.ts
@@ -2077,8 +2091,9 @@ async function setupTools(ctx, say, onChannel, rootOf, flushUsage = async () => 
     shake(slot);
     return slot;
   }
-  const { home, directoryOf, exists, ours, moved, relay: relayOf } = createMoves(ctx);
-  const relay = relayOf(onChannel, say);
+  const mv = createMoves(ctx);
+  const { home, directoryOf, exists, ours } = mv;
+  const relay = mv.relay(onChannel, say);
   const runEnds = createRunEnds();
   const endChild = (c) => runEnds.end(c, slots.get(c)?.satelliteOf, forget, leads.released(c));
   const leads = createLeads(leadDoors(ctx, say, flushUsage, endChild, slots));
@@ -2121,6 +2136,7 @@ async function setupTools(ctx, say, onChannel, rootOf, flushUsage = async () => 
   }
   async function slotFor(sessionID, touch = true) {
     const root = await rootOf(sessionID);
+    mv.guard(root, sessionID);
     const own = root !== sessionID ? slots.get(sessionID) : void 0;
     if (own) {
       const live = own.bridge.failure ? children.childSlot(sessionID) : own;
@@ -2196,17 +2212,13 @@ async function setupTools(ctx, say, onChannel, rootOf, flushUsage = async () => 
         // JSON Schema сервера без паспорта диалекта — той же срезкой, что у pi.
         input: toParameters(t.inputSchema),
         async execute(input, tool) {
-          const word = await leads.release(String(tool.sessionID), name, input ?? {});
+          const word = await leads.release(String(tool.sessionID), name, input ?? {}) ?? adopt.revoked(name, input ?? {});
           if (word) return { content: word };
           runEnds.guard(String(tool.sessionID), name, input ?? {});
-          const note = adopt.revokeNote(name, input ?? {});
           const slot = await slotFor(String(tool.sessionID));
           slot.busy++;
           try {
-            const out2 = await callThrough(slot, name, input, String(tool.sessionID));
-            return note ? { content: `${out2.content}
-
-${note}` } : out2;
+            return await callThrough(slot, name, input, String(tool.sessionID));
           } finally {
             slot.busy--;
             slot.lastCall = Date.now();
@@ -2314,7 +2326,7 @@ ${note}` } : out2;
       children.ran(ev);
     },
     leadOf: (s) => leads.nameOf(s),
-    moved: (s, to) => moved({ say, slots, rootOf, forget, slotFor, adopt: adopt.now }, s, to),
+    moved: (s, to) => mv.moved({ say, slots, rootOf, forget, slotFor, adopt: adopt.now, away: leads.away }, s, to),
     async stop() {
       stopped = true;
       clearInterval(reaper);

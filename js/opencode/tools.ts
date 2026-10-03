@@ -161,8 +161,9 @@ export async function setupTools(
   }
 
   // Локация экземпляра: перенесённая сессия зовёт тулы через экземпляр новой папки (moves.ts).
-  const { home, directoryOf, exists, ours, moved, relay: relayOf } = createMoves(ctx);
-  const relay = relayOf(onChannel, say);
+  const mv = createMoves(ctx);
+  const { home, directoryOf, exists, ours } = mv;
+  const relay = mv.relay(onChannel, say);
   const runEnds = createRunEnds(); // кончившиеся дети: запись с места — отказ вслух (#6361)
   // Ведущие субагенты (#6625): конец — явный акт, итог — синтетикой родителю.
   const endChild = (c: string) =>
@@ -223,6 +224,7 @@ export async function setupTools(
    */
   async function slotFor(sessionID: string, touch = true): Promise<Slot> {
     const root = await rootOf(sessionID);
+    mv.guard(root, sessionID); // корень перенесён отсюда — ребёнку не поднимать его мост здесь
     // Дочерняя сессия, вставшая своим вызовом, ходит своим мостом (#5154);
     // чтение без стояния наследует мост корня.
     const own = root !== sessionID ? slots.get(sessionID) : undefined;
@@ -315,17 +317,18 @@ export async function setupTools(
         input: toParameters(t.inputSchema),
         async execute(input, tool) {
           // revoke места своего ведущего субагента — слово запустившего: конец исполняет плагин (#6625).
-          const word = await leads.release(String(tool.sessionID), name, input ?? {});
+          // …и ребёнка, кончённого переносом родителя: снимать нечего (adopt.ts).
+          const word =
+            (await leads.release(String(tool.sessionID), name, input ?? {})) ??
+            adopt.revoked(name, input ?? {});
           if (word) return { content: word };
           runEnds.guard(String(tool.sessionID), name, input ?? {}); // не мостом корня (#6361)
-          const note = adopt.revokeNote(name, input ?? {}); // перенесённый ребёнок — не молча
           const slot = await slotFor(String(tool.sessionID));
           // Вызов в полёте — занятость: мост посреди вызова жнецу не отдаётся,
           // а простой считается от конца вызова, не от его начала.
           slot.busy++;
           try {
-            const out = await callThrough(slot, name, input, String(tool.sessionID));
-            return note ? { content: `${out.content}\n\n${note}` } : out;
+            return await callThrough(slot, name, input, String(tool.sessionID));
           } finally {
             slot.busy--;
             slot.lastCall = Date.now();
@@ -464,7 +467,8 @@ export async function setupTools(
       children.ran(ev); // конец прогона ребёнка на обычном мосте
     },
     leadOf: (s) => leads.nameOf(s),
-    moved: (s, to) => moved({ say, slots, rootOf, forget, slotFor, adopt: adopt.now }, s, to),
+    moved: (s, to) =>
+      mv.moved({ say, slots, rootOf, forget, slotFor, adopt: adopt.now, away: leads.away }, s, to),
     async stop() {
       stopped = true;
       clearInterval(reaper);
