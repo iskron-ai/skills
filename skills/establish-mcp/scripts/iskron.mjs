@@ -335,8 +335,8 @@ function pipeNonce(authDir) {
     }
   }
   for (let i = 0; i < 50; i++) {
-    const word = readFileSync2(file, "utf8").trim();
-    if (word) return word;
+    const word2 = readFileSync2(file, "utf8").trim();
+    if (word2) return word2;
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
   }
   throw new Error(`${file} stays empty — the pipe name is unknown`);
@@ -787,8 +787,8 @@ function strip(url) {
   return url.replace(/\/+$/, "");
 }
 var isProductionServer = (url) => PRODUCTION_URLS.has(strip(url));
-function resolveServerChoice(word) {
-  const w = word.trim();
+function resolveServerChoice(word2) {
+  const w = word2.trim();
   if (/^(ru|russian|русский)$/i.test(w)) return DEFAULT_SERVER_URL;
   if (/^(en|ai|english|английский)$/i.test(w)) return ENGLISH_SERVER_URL;
   try {
@@ -1794,16 +1794,16 @@ function deviceSide(meta, redirectUri, resume, onCode, called) {
           });
           return;
         } catch (e) {
-          const word = e instanceof TokenError ? e.oauthError : void 0;
-          if (word === "access_denied") {
+          const word2 = e instanceof TokenError ? e.oauthError : void 0;
+          if (word2 === "access_denied") {
             throw new Error("authorization refused on the other device", { cause: e });
           }
-          if (word === "slow_down") {
+          if (word2 === "slow_down") {
             code = { ...code, interval_ms: code.interval_ms + SLOW_DOWN_MS };
             onCode(code);
-          } else if (word && word !== "authorization_pending") {
+          } else if (word2 && word2 !== "authorization_pending") {
             renew = true;
-          } else if (!word) debug(`device poll: ${errorMessage(e)} — asking again`);
+          } else if (!word2) debug(`device poll: ${errorMessage(e)} — asking again`);
         }
       }
       if (renew) {
@@ -3055,9 +3055,9 @@ function roomKind(frame2) {
       known: false
     };
   const W2 = words();
-  const word = kind === "said" || kind === "body";
-  const withheld = word && f.body_withheld === true;
-  const to = word ? addresseeOf(f.addressee) ?? (withheld ? { addr: ["?"], label: "?" } : null) : null;
+  const word2 = kind === "said" || kind === "body";
+  const withheld = word2 && f.body_withheld === true;
+  const to = word2 ? addresseeOf(f.addressee) ?? (withheld ? { addr: ["?"], label: "?" } : null) : null;
   const addresseeLeft = f.addressee_left === true || fields.addressee_left === true;
   if (to && !addresseeLeft && (withheld || mine.length && !to.addr.some((a) => mine.includes(a)))) {
     const counts = kind === "said";
@@ -3132,8 +3132,8 @@ function addressedToMine(frame2) {
     return !!a && mine.length > 0 && a.addr.some((x) => mine.includes(x));
   };
   if (rk?.kind === "body") {
-    const word = obj(f.word);
-    if (f.addressed === true || hit(f.addressee) || str(obj(obj(word.line).fields).kind) === "important" || addressedWords.has(wordKeyOf(frame2)))
+    const word2 = obj(f.word);
+    if (f.addressed === true || hit(f.addressee) || str(obj(obj(word2.line).fields).kind) === "important" || addressedWords.has(wordKeyOf(frame2)))
       return true;
   } else if (
     // Слово мне, ответ на мою запись (#5954), помеченное важным: род слова
@@ -3792,7 +3792,7 @@ var caseOf2 = (frame2) => {
   return idOf2(room.id) || idOf2(room.seq);
 };
 var wordKey = (frame2, entry) => entry ? numberedKey(frame2, `${caseOf2(frame2)}|${entry}`) : "";
-var isWordOf = (held2, body, word) => !!word && wordKey(held2, entryOf(held2)) === wordKey(body, word);
+var isWordOf = (held2, body, word2) => !!word2 && wordKey(held2, entryOf(held2)) === wordKey(body, word2);
 var HumanWords = class {
   words = /* @__PURE__ */ new Set();
   /** Слово человека в полёте — по его собственной записи. */
@@ -3804,8 +3804,8 @@ var HumanWords = class {
     if (this.words.size > HUMAN_WORDS_KEEP && !oldest.done) this.words.delete(oldest.value);
   }
   /** true — тело несёт слово человека в полёте (word — запись слова в деле тела); память снята. */
-  forget(body, word) {
-    const key = wordKey(body, word);
+  forget(body, word2) {
+    const key = wordKey(body, word2);
     return !!key && this.words.delete(key);
   }
 };
@@ -3827,9 +3827,9 @@ var RoomBatch = class {
   /** Слова человека в полёте: их тело — слово человека, не кадр пачки. */
   humanWords = new HumanWords();
   /** Вынуть из копящейся пачки слово в полёте, чей текст пришёл: отдан он будет своим телом. */
-  dropWord(body, word, dropped) {
+  dropWord(body, word2, dropped) {
     for (let i = this.held.length - 1; i >= 0; i--) {
-      if (!isWordOf(this.held[i].frame, body, word)) continue;
+      if (!isWordOf(this.held[i].frame, body, word2)) continue;
       dropped(this.held[i].frame);
       this.held.splice(i, 1);
     }
@@ -3885,11 +3885,11 @@ function batchForWatchdogs(d, raw, frame2, emit2) {
   if (rk?.kind === "said" && rk.phase === "pending" && human)
     d.roomBatch.humanWords.remember(frame2);
   if (rk?.kind === "body") {
-    const word = idOf2(rec3(f.line).refers_to ?? f.in_reply_to);
-    if (d.roomBatch.humanWords.forget(frame2, word) && rk.phase !== "aborted") {
+    const word2 = idOf2(rec3(f.line).refers_to ?? f.in_reply_to);
+    if (d.roomBatch.humanWords.forget(frame2, word2) && rk.phase !== "aborted") {
       human = true;
       frame2.origin = "human";
-      d.roomBatch.dropWord(frame2, word, (said) => {
+      d.roomBatch.dropWord(frame2, word2, (said) => {
         for (const k of deliveredKeys(said)) noteSeen(d.seenPath, k, d.seen);
       });
     }
@@ -5547,8 +5547,8 @@ function crossPlaceRefusal(msg) {
   const unresolved2 = unresolvedRefusal(realm);
   if (unresolved2) return refusal(msg, unresolved2);
   if (a.action !== "register") {
-    const word = besideRefusal(realm, "connect");
-    if (word) return refusal(msg, word);
+    const word2 = besideRefusal(realm, "connect");
+    if (word2) return refusal(msg, word2);
   }
   const karta = normKarta(a.karta ?? state.standing?.karta ?? "");
   const name = normName(a.name);
@@ -6441,12 +6441,12 @@ function pickSatellite(entries2, of, karta, led, claim = () => true) {
   const callerId = same[0].id;
   const notes = [];
   if (led && isSatelliteOf(base, led)) {
-    const word = L(
+    const word2 = L(
       `мост уже держит ${led} — повтор этого прогона либо параллельный прогон с той же записью моста (тот же файл агента или другой с той же записью), который делит это место и потеряет его, когда первый закончит; параллельно — не больше одного прогона на запись моста`,
       `the bridge already holds ${led} — a repeat of this run or a parallel run with the same bridge entry (the same agent file or another with the same entry), which shares this seat and loses it when the first one ends; in parallel — no more than one run per bridge entry`
     );
-    log(word);
-    notes.push(word);
+    log(word2);
+    notes.push(word2);
     return { ok: true, name: led, caller, callerKarta, callerId, notes };
   }
   const taken = new Set(entries2.map((e) => nameOf(e.address)));
@@ -6829,6 +6829,36 @@ async function armRoleHook(p) {
     `${H4}: взведён на входящий адрес места (${short(h.text, 120)}).`,
     `${H4}: armed on the seat's incoming address (${short(h.text, 120)}).`
   );
+}
+
+// js/bridge/owner.ts
+var OWNER_ENV = "ISKRON_BRIDGE_OWNER_ROLE";
+var HUMAN = /* @__PURE__ */ new Set(["me", "realm-owner"]);
+var known = scoped(() => /* @__PURE__ */ new Map());
+var word = (what) => L(
+  `Отказано (мост): ${what} — роль владельца (主). Агент не занимает её без слова человека; слово человека — настройка ${OWNER_ENV}=1 в окружении моста, которую ставит он сам. Встань своей ролью (karta) — той, что назвал тебе человек или AGENTS.md как роль агента.`,
+  `Refused (bridge): ${what} is the owner's role (主). An agent does not take it without the human's word; the human's word is the setting ${OWNER_ENV}=1 in the bridge's environment, set by the human. Stand in your own role (karta) — the one the human or AGENTS.md named as the agent's.`
+);
+async function ownerRefusal(realm, karta) {
+  if (envOf(OWNER_ENV)?.trim() === "1") return null;
+  const k = normKarta(karta);
+  if (!k || k === "agent") return null;
+  if (HUMAN.has(k))
+    return word(L(`karta="${k}" — роль самого человека`, `karta="${k}" is the human's own role`));
+  if (!/^\d+$/.test(k)) return null;
+  const key = `${String(realm ?? "")}|${k}`;
+  let owner = known.get(key);
+  if (owner === void 0) {
+    const r = await callTool("iskron_look", { realm, node_id: k });
+    if (r.isError)
+      return L(
+        `Отказано (мост): тип роли #${k} не прочитался (${short(r.text, 160)}) — роль владельца без проверки не занимается; повтори.`,
+        `Refused (bridge): the type of role #${k} could not be read (${short(r.text, 160)}) — the owner's role is not taken unchecked; retry.`
+      );
+    owner = /\(#\d+,\s*karta\s+主/.test(r.text) || /Проявлен как:\s*主/.test(r.text);
+    known.set(key, owner);
+  }
+  return owner ? word(`karta=#${k}`) : null;
 }
 
 // js/bridge/resume.ts
@@ -7516,6 +7546,11 @@ async function runStand(msg) {
       return done(true);
     }
   }
+  const notOwner = await ownerRefusal(realm, karta);
+  if (notOwner) {
+    lines.push(notOwner);
+    return done(true);
+  }
   const gate = await satelliteGate(a, realm, karta, asked);
   if (gate && !gate.ok) {
     lines.push(gate.refusal);
@@ -8013,6 +8048,17 @@ async function deliverOne(msg) {
       } : hasId ? outsideSetRefusal(msg) ?? crossPlaceRefusal(msg) : null;
       if (cross) {
         emit(cross);
+        return;
+      }
+      const ch = msg.params?.arguments ?? {};
+      const takes = hasId && msg.method === "tools/call" && msg.params?.name === "iskron_channel" && ["connect", "mint", "register"].includes(String(ch.action));
+      const notOwner = takes ? await ownerRefusal(ch.realm, ch.karta) : null;
+      if (notOwner) {
+        emit({
+          jsonrpc: "2.0",
+          id: msg.id,
+          result: { isError: true, content: [{ type: "text", text: notOwner }] }
+        });
         return;
       }
       expectOwnRevoke(msg);
@@ -8711,7 +8757,7 @@ function thinMain(argv2) {
   let initCopy = null;
   let initSent = false;
   let initializedSeen = false;
-  let word = null;
+  let word2 = null;
   let leaving = null;
   let byeDone = null;
   let heldKey2 = null;
@@ -8750,9 +8796,9 @@ function thinMain(argv2) {
       }
       const f = flights.get(k);
       flights.delete(k);
-      if (word && f?.msg.method === "tools/call" && Array.isArray(msg.result?.content)) {
-        msg.result.content.push({ type: "text", text: word });
-        word = null;
+      if (word2 && f?.msg.method === "tools/call" && Array.isArray(msg.result?.content)) {
+        msg.result.content.push({ type: "text", text: word2 });
+        word2 = null;
       }
     }
     const place = placeWord(msg);
@@ -8865,7 +8911,7 @@ function thinMain(argv2) {
   const goLocal = (reason) => {
     if (mode === "local" || leaving) return;
     log(`${reason} — going as the full bridge inside this process`);
-    word = `iskron-bridge ${BUILD}: ${reason}; this bridge runs as the full bridge in its own process (the machine's daemon is the default; ${DAEMON_ENV}=0 runs the full bridge on purpose).`;
+    word2 = `iskron-bridge ${BUILD}: ${reason}; this bridge runs as the full bridge in its own process (the machine's daemon is the default; ${DAEMON_ENV}=0 runs the full bridge on purpose).`;
     const input = new PassThrough2();
     const output = new PassThrough2();
     startEngine(cfg);
@@ -9463,8 +9509,8 @@ function wrapLines(text, max = LINE_MAX) {
 var plural = (n) => {
   const m10 = n % 10;
   const m100 = n % 100;
-  const word = m10 === 1 && m100 !== 11 ? "кадр" : m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14) ? "кадра" : "кадров";
-  return `${n} ${word}`;
+  const word2 = m10 === 1 && m100 !== 11 ? "кадр" : m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14) ? "кадра" : "кадров";
+  return `${n} ${word2}`;
 };
 var ALONE_GAP_MS = Number(process.env.ISKRON_WATCHDOG_ALONE_MS) || 300;
 var RIDERS_MAX = 100;
@@ -9971,8 +10017,8 @@ function formOf(e) {
     const spliced = /process\.argv\.splice\(\s*1\s*,\s*0\s*,/.test(e.args[1] ?? "");
     if (!(spliced ? after2 : after2.slice(1)).includes("--satellite")) return "eval-session";
     const tail2 = after2.slice(1);
-    const known = !tail2.length || tail2.length === 2 && tail2[0] === "--tools" && isToolList(tail2[1]);
-    return e.args[1] === SATELLITE_CODE && after2[0] === "--satellite" && known ? "eval" : "eval-other";
+    const known2 = !tail2.length || tail2.length === 2 && tail2[0] === "--tools" && isToolList(tail2[1]);
+    return e.args[1] === SATELLITE_CODE && after2[0] === "--satellite" && known2 ? "eval" : "eval-other";
   }
   if (SHELLS.has(base)) {
     const s2 = e.args[e.args.indexOf("-c") + 1] ?? "";
@@ -10680,20 +10726,20 @@ function codexPluginReport(home) {
       if (!/iskron/.test(plugin)) continue;
       const dir = join21(marketDir, plugin);
       const manifest = join21(dir, ".codex-plugin", "plugin.json");
-      let word = "манифеста нет";
+      let word2 = "манифеста нет";
       if (existsSync10(manifest)) {
         try {
           const m = JSON.parse(readFileSync24(manifest, "utf8"));
           const hit = Object.values(m.mcpServers ?? {}).some(
             (v) => (v.args ?? []).some((a) => /iskron\.mjs/.test(a))
           );
-          word = `v${m.version ?? "?"}, ${hit ? "запись моста в манифесте есть" : "записи моста в манифесте нет"}`;
+          word2 = `v${m.version ?? "?"}, ${hit ? "запись моста в манифесте есть" : "записи моста в манифесте нет"}`;
         } catch {
-          word = `${manifest} не читается`;
+          word2 = `${manifest} не читается`;
         }
       }
       found++;
-      out3(`Codex: плагин ${plugin}@${market} — ${word}; ${dir}`);
+      out3(`Codex: плагин ${plugin}@${market} — ${word2}; ${dir}`);
     }
   }
   if (!found) out3(`Codex: плагина iskron в кэше нет (${cache})`);
@@ -10830,16 +10876,16 @@ var out5 = (s2) => {
   process.stdout.write(s2 + "\n");
 };
 function runUse(argv2) {
-  let word;
+  let word2;
   const rest2 = [];
   for (let i = 0; i < argv2.length; i++) {
     const a = argv2[i] ?? "";
     if (a === "--auth-dir") rest2.push(a, argv2[++i] ?? "");
-    else if (a.startsWith("--") || word) rest2.push(a);
-    else word = a;
+    else if (a.startsWith("--") || word2) rest2.push(a);
+    else word2 = a;
   }
   setConfig(parseArgs(rest2));
-  const url = word ? resolveServerChoice(word) : null;
+  const url = word2 ? resolveServerChoice(word2) : null;
   if (!url) {
     out5("use: назови адрес — en (mcp.iskron.ai), ru (mcp.iskron.ru) или полный URL инстанса");
     process.exitCode = 2;

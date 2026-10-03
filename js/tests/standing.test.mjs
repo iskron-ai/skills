@@ -3069,7 +3069,8 @@ test("one standing per bridge sees through sentinels and spelling: «me» is ano
 test("a padded connect keys the place as the board prints it; a bridge standing as «me» refuses the numeric role and keeps «me» after a register as «agent»", async (t) => {
   const fake = await startFakeNks();
   const dir = mkdtempSync(join(tmpdir(), "iskron-standing-"));
-  const bridge = startBridge(fake.mcpUrl, dir);
+  // «me» — роль самого человека: занимать её мост даёт только по его настройке (#6550 п.2).
+  const bridge = startBridge(fake.mcpUrl, dir, { ISKRON_BRIDGE_OWNER_ROLE: "1" });
   t.after(async () => {
     await bridge.stop();
     await fake.stop();

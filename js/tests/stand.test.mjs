@@ -108,10 +108,10 @@ const textOf = (reply) => (reply.result?.content ?? []).map((c) => c.text ?? "")
 const sentToChannel = (fake) =>
   fake.state.calls.filter((c) => c.name === "iskron_channel").map((c) => c.arguments);
 
-async function ready(t, init = INIT) {
+async function ready(t, init = INIT, env = {}) {
   const fake = await startFakeNks({ pat: PAT });
   const dir = mkdtempSync(join(tmpdir(), "iskron-stand-"));
-  const bridge = startBridge(fake.mcpUrl, dir);
+  const bridge = startBridge(fake.mcpUrl, dir, process.cwd(), env);
   t.after(async () => {
     await bridge.stop();
     await fake.stop();
@@ -827,6 +827,48 @@ test("iskron_stand busy line over a connection closed under the request: one ret
   const gone = await stand({ realm: "nks-dev", status: "ответ поверхности" });
   assert.match(textOf(gone), /Отказано \(404\)/, textOf(gone));
   assert.equal(tries() - before, 1, "an HTTP answer is not retried");
+});
+
+// The owner's role (主 svatantra) is not an agent's to take without the human's word
+// (#6550 rule 2; seen live: a child haiku stood #1226 and wrote as the owner). The
+// bridge reads the role's type from its node and refuses the stand and the raw
+// channel moves; the human's word is the bridge's environment, not an argument.
+test("a stand or a raw channel take in the owner's role (主) is refused aloud without the human's setting, and passes with it", async (t) => {
+  const { fake, bridge } = await ready(t);
+  await fake.control({ kartaTypes: { 1226: "主" } });
+  const connects = () => fake.state.counts.connect;
+  const before = connects();
+  const stand = await bridge.call("tools/call", {
+    name: "iskron_stand",
+    arguments: { realm: "nks-dev", karta: 1226, name: "proba" },
+  });
+  assert.ok(stand.result?.isError, textOf(stand));
+  assert.match(textOf(stand), /роль владельца \(主\)[\s\S]*ISKRON_BRIDGE_OWNER_ROLE=1/);
+  for (const karta of ["#1226", "me"]) {
+    const raw = await bridge.call("tools/call", {
+      name: "iskron_channel",
+      arguments: { realm: "nks-dev", action: "connect", karta, name: "proba" },
+    });
+    assert.ok(raw.result?.isError, `${karta}: ${textOf(raw)}`);
+    assert.match(textOf(raw), /роль владельца/, `${karta}: ${textOf(raw)}`);
+  }
+  assert.equal(connects(), before, "no place was taken");
+  const own = await bridge.call("tools/call", {
+    name: "iskron_stand",
+    arguments: { realm: "nks-dev", karta: 931, name: "proba" },
+  });
+  assert.ok(!own.result?.isError, `an agent's role stands as before: ${textOf(own)}`);
+});
+
+test("with the human's setting ISKRON_BRIDGE_OWNER_ROLE=1 the owner's role stands", async (t) => {
+  const { fake, bridge } = await ready(t, INIT, { ISKRON_BRIDGE_OWNER_ROLE: "1" });
+  await fake.control({ kartaTypes: { 1226: "主" } });
+  const stand = await bridge.call("tools/call", {
+    name: "iskron_stand",
+    arguments: { realm: "nks-dev", karta: 1226, name: "proba" },
+  });
+  assert.ok(!stand.result?.isError, textOf(stand));
+  assert.equal(fake.state.counts.connect, 1);
 });
 
 // The same closed keep-alive connection under a request to MCP (seen live on the

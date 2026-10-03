@@ -17,6 +17,7 @@ import {
 import { localLeave } from "./leave.ts";
 import { annotateToolList } from "./moment.ts";
 import { narrowToolList, outsideSetRefusal } from "./narrow.ts";
+import { ownerRefusal } from "./owner.ts";
 import { noteLocaleEcho, withPlaceFields } from "./placefields.ts";
 import { READ_TOOLS } from "./repeat.ts";
 import { isCheckCall, isResumeCall, runCheck, runResume } from "./resume.ts";
@@ -298,6 +299,22 @@ async function deliverOne(msg: JsonRpcMessage): Promise<void> {
           : null;
       if (cross) {
         emit(cross);
+        return;
+      }
+      // Занять место сырым ходом канала в роли владельца (主) — тоже только словом человека (owner.ts).
+      const ch = msg.params?.arguments ?? {};
+      const takes =
+        hasId &&
+        msg.method === "tools/call" &&
+        msg.params?.name === "iskron_channel" &&
+        ["connect", "mint", "register"].includes(String(ch.action));
+      const notOwner = takes ? await ownerRefusal(ch.realm, ch.karta) : null;
+      if (notOwner) {
+        emit({
+          jsonrpc: "2.0",
+          id: msg.id,
+          result: { isError: true, content: [{ type: "text", text: notOwner }] },
+        });
         return;
       }
       expectOwnRevoke(msg); // закрытие 4001 обгонит ответ — мост должен знать, что снимает сам
