@@ -7028,7 +7028,8 @@ async function ownersOf(realm, k) {
   });
   if (s2.isError) return s2.text;
   const seqs = [...s2.text.matchAll(/\(#(\d+)[,)]/g)].map((m) => m[1]);
-  if (seqs.length >= OWNERS_PAGE) return "список ролей владельца неполон";
+  if (seqs.length >= OWNERS_PAGE)
+    return L("список ролей владельца неполон", "the list of the owner's roles is incomplete");
   return seqs.includes(k);
 }
 

@@ -68,6 +68,7 @@ async function ownersOf(realm: unknown, k: string): Promise<boolean | string> {
   if (s.isError) return s.text;
   const seqs = [...s.text.matchAll(/\(#(\d+)[,)]/g)].map((m) => m[1]);
   // Полная страница — за ней может быть ещё: неполнота числом, не фразой ответа (#147 [119]).
-  if (seqs.length >= OWNERS_PAGE) return "список ролей владельца неполон";
+  if (seqs.length >= OWNERS_PAGE)
+    return L("список ролей владельца неполон", "the list of the owner's roles is incomplete");
   return seqs.includes(k);
 }
