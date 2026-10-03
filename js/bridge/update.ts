@@ -22,7 +22,7 @@ import { homeBridgePath } from "../shared/home.ts";
 import { L } from "../shared/lang.ts";
 import { scoped } from "../shared/scope.ts";
 import { compareVersions } from "../shared/semver.ts";
-import { releaseBuild, releaseBuildIn, VERSION, versionIn } from "../shared/version.ts";
+import { devBuildIn, releaseBuild, VERSION, versionIn } from "../shared/version.ts";
 import { isProductionServer } from "./config.ts";
 import { RateLimitError, resolveTag, writeAtomic } from "./releases.ts";
 import { SKILLS_ROOT_ENV, skillsRoot } from "./skillset.ts";
@@ -82,7 +82,7 @@ export interface HomeSync {
 /**
  * Дом против себя. Своя версия строго новее домашней (или дома нет) и своя сборка —
  * выпуск — своя копия ложится в дом; строго старше — дом побеждает и возвращается путём для
- * перезапуска; равная версия решается каналом: выпуск ложится на не-выпуск, прочее
+ * перезапуска; равная версия решается каналом: выпуск ложится на явную dev-сборку, прочее
  * остаётся как есть — между релизами байты различаются хешем, и по хешу старшинства нет.
  */
 export function syncHome(self = selfPath()): HomeSync {
@@ -101,8 +101,9 @@ export function syncHome(self = selfPath()): HomeSync {
   const cmp = homeVersion ? compareVersions(VERSION, homeVersion) : 1;
   // Дом освежает только сборка выпуска (#6650): сборка рабочей копии — тоже «новее»,
   // но непринята, и в доме она увела бы демону машины все сессии. При равной версии
-  // решает канал: выпуск вытесняет из дома не-выпуск — машину, заражённую dev-сборкой, лечит (#147 [140]).
-  const healsDev = cmp === 0 && !releaseBuildIn(readText(home)) && !mine.equals(readBytes(home));
+  // решает канал: выпуск вытесняет из дома ЯВНУЮ dev-сборку (#147 [140]). Дом без метки —
+  // выпуск до меток (7.2.7 и раньше), не dev: его та же версия не трогает (#147 [145]).
+  const healsDev = cmp === 0 && devBuildIn(readText(home)) && !mine.equals(readBytes(home));
   if ((cmp > 0 || healsDev) && releaseBuild()) {
     writeAtomic(home, mine);
     out.copied.push(home);

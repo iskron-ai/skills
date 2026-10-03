@@ -269,7 +269,7 @@ test("a newer release build lays itself into an older home at start", async (t) 
 // #147 [140] 2: a machine whose home caught a dev build (#6650) is healed by the release
 // of the same version — at an equal version the channel decides; a dev starter leaves a
 // release home alone.
-test("at an equal version a release build replaces a dev home, and a dev build leaves a release home", async (t) => {
+test("at an equal version a release build replaces only an explicit dev home — not an unmarked release — and a dev build leaves a release home", async (t) => {
   const fake = await startFakeNks({ pat: PAT });
   const h = home(t);
   const devText = SELF.replaceAll('"iskron-build:release"', '"iskron-build:dev"');
@@ -280,8 +280,19 @@ test("at an equal version a release build replaces a dev home, and a dev build l
     writeFileSync(p, text);
     return p;
   };
-  writeFileSync(h.bridgePath, devText);
   t.after(() => fake.stop());
+  // #147 [145]: a home without a mark is a release before the marks (7.2.7): the same
+  // version from main — other bytes, release mark — never rewrites it.
+  const unmarked = devText.replaceAll('"iskron-build:dev"', '"no-mark"');
+  writeFileSync(h.bridgePath, unmarked);
+  const main = startBridge(fake.mcpUrl, join(h.root, "a0"), { HOME: h.root }, at("main", relText));
+  try {
+    assert.ok((await main.call("initialize", INIT)).result);
+    assert.equal(readFileSync(h.bridgePath, "utf8"), unmarked, "an unmarked release home stays");
+  } finally {
+    await main.stop();
+  }
+  writeFileSync(h.bridgePath, devText);
   const healer = startBridge(fake.mcpUrl, join(h.root, "a1"), { HOME: h.root }, at("rel", relText));
   try {
     assert.ok((await healer.call("initialize", INIT)).result);
