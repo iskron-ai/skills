@@ -50,7 +50,10 @@ export function sweepStale(authDir: string, mine: string): void {
     } catch {}
   }
   // Записи держания старше срока простоя места — мертвы у платформы, стираются здесь.
+  // Запись места, чей ключ лежит рядом, — не простой: место держат, и срок записи
+  // считается от ухода его сокета (holdkeep.ts, #6649); мёртвый ключ уберёт проба ниже.
   for (const f of readdirSync(dir).filter((x) => x.endsWith(".hold"))) {
+    if (existsSync(join(dir, `${basename(f, ".hold")}.key`))) continue;
     try {
       const rec = JSON.parse(readFileSync(join(dir, f), "utf8")) as { at?: number };
       if (typeof rec.at !== "number" || Date.now() - rec.at > HOLD_RECORD_MAX_AGE_MS)

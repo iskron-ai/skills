@@ -18,6 +18,7 @@ import { CFG, readArgs, setConfig } from "./config.ts";
 import { deliver } from "./deliver.ts";
 import { errorMessage } from "./errors.ts";
 import { releaseStanding } from "./hold.ts";
+import { keepHoldRecord } from "./holdkeep.ts";
 import { handoverUnderway } from "./holdstate.ts";
 import { startDeafnessWatch } from "./leave.ts";
 import { pendingFlow } from "./oauth/flow.ts";
@@ -209,6 +210,8 @@ function openIn(io: SessionIO, origin: SessionOrigin | null, scope: Scope | null
     const closing = (!handover || CFG.satellite) && !paused;
     const spent = closing || paused ? usagePlace() : null;
     // Сокет стояния живёт ровно столько, сколько сессия; у спутника — и записи держания нет: возврата с диска у него не бывает.
+    // У прочих запись остаётся с отсчётом срока от этого ухода (#6649).
+    if (!CFG.satellite) keepHoldRecord();
     releaseStanding(why, CFG.satellite && !paused);
     // Спутник выходит из дел прогона сам (#6573), пока место на доске: конец
     // прогона — конец поручения, а истечение срока места оставило бы «slop».
