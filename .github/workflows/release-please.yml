@@ -44,8 +44,10 @@ jobs:
           cache: npm
           cache-dependency-path: js/package-lock.json
       - run: make deps
+      # ISKRON_BUILD_CHANNEL=release stamps the release channel into the shipped JS:
+      # only such a bridge refreshes a machine's home copy, a working copy's build never (#6650).
       - name: Rebuild the shipped JS and the bundles for the stamped version
-        run: make build
+        run: ISKRON_BUILD_CHANNEL=release make build
       - name: Commit them back to the release branch
         run: |
           if git diff --quiet; then exit 0; fi

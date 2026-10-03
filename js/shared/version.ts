@@ -9,6 +9,15 @@ import { fileURLToPath } from "node:url";
 
 export const VERSION = "7.2.7"; // x-release-please-version
 
+/**
+ * Метка канала сборки (#6650): ":release" вшивает только сборка выпуска (js/build.mjs под
+ * ISKRON_BUILD_CHANNEL=release — джоб bundle-sync релизного PR); всякая иная сборка — ":dev".
+ * Строка, не флаг: сборка заменяет её в выходе буквально.
+ */
+const CHANNEL_MARK: string = "iskron-build:dev";
+/** Эта сборка — выпуск: только ей дом машины верит как новому мосту. */
+export const releaseBuild = (): boolean => CHANNEL_MARK.endsWith(":release");
+
 /** Строка сборки `vX.Y.Z+хеш` для файла, чей `import.meta.url` передан. */
 export function buildOf(selfUrl: string): string {
   try {

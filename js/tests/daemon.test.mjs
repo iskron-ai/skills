@@ -331,6 +331,15 @@ test("the daemon dies mid-call: the taken call gets a verdict, the call it never
   });
 });
 
+/** Тот же мост сборкой выпуска (#6650): только она кладёт себя в дом — демон этих проб бежит ею. */
+function releaseBridge(home) {
+  const path = join(home, "release", "iskron.mjs");
+  mkdirSync(dirname(path), { recursive: true });
+  const text = readFileSync(BRIDGE, "utf8");
+  writeFileSync(path, text.replaceAll('"iskron-build:dev"', '"iskron-build:release"'));
+  return path;
+}
+
 test("the daemon updates under live sessions: the places stay, the thin bridges stay the same processes", async () => {
   await withFake(async ({ fake, dir, bridge }) => {
     const home = mkdtempSync(join(tmpdir(), "iskron-daemon-home-"));
@@ -338,7 +347,10 @@ test("the daemon updates under live sessions: the places stay, the thin bridges 
     delete env.ISKRON_BRIDGE_NO_UPDATE; // обновления — дело демона; дом — временный
     env.ISKRON_BRIDGE_DAEMON_HOME_CHECK_MS = "200";
     env.ISKRON_BRIDGE_DAEMON_TRACE = "1";
-    const d = spawn(NODE, [BRIDGE, "daemon", "--auth-dir", dir], { env, stdio: "ignore" });
+    const d = spawn(NODE, [releaseBridge(home), "daemon", "--auth-dir", dir], {
+      env,
+      stdio: "ignore",
+    });
     d.unref();
     let watchdog = null;
     try {
@@ -437,7 +449,7 @@ async function updatableDaemon(dir, extra = {}) {
   delete env.ISKRON_BRIDGE_NO_UPDATE;
   env.ISKRON_BRIDGE_DAEMON_HOME_CHECK_MS = "200";
   env.ISKRON_BRIDGE_DAEMON_TRACE = "1";
-  spawn(NODE, [BRIDGE, "daemon", "--auth-dir", dir], { env, stdio: "ignore" }).unref();
+  spawn(NODE, [releaseBridge(home), "daemon", "--auth-dir", dir], { env, stdio: "ignore" }).unref();
   const homeCopy = join(home, ".iskron-bridge", "iskron-bridge.mjs");
   await waitFor("the daemon", () => daemonPids(dir)[0]);
   await waitFor("the daemon to put itself home", () => existsSync(homeCopy));

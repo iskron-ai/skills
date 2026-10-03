@@ -5,6 +5,8 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 var VERSION = "7.2.7";
+var CHANNEL_MARK = "iskron-build:dev";
+var releaseBuild = () => CHANNEL_MARK.endsWith(":release");
 function buildOf(selfUrl) {
   try {
     const src = readFileSync(fileURLToPath(selfUrl));
@@ -6121,7 +6123,7 @@ function syncHome(self = selfPath()) {
   if (isSymlink(home)) return out6;
   const homeVersion = versionOf(home);
   const cmp = homeVersion ? compareVersions(VERSION, homeVersion) : 1;
-  if (cmp > 0) {
+  if (cmp > 0 && releaseBuild()) {
     writeAtomic(home, mine);
     out6.copied.push(home);
     const plugin = opencodePluginPath();
