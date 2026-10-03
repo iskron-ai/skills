@@ -1719,7 +1719,32 @@ function createLauncher(d) {
   };
 }
 
+// js/opencode/leadrooms.ts
+var roomNo = (room) => String(room ?? "").replace(/^\s*[#№]\s*|\s+$/g, "");
+var sits = (s) => !!s.blind || !!s.rooms?.size;
+function seatCall(s, name, args) {
+  const room = name === "iskron_case" || name === "iskron_room" ? roomNo(args.room) : null;
+  const inRoom = roomNo(args.in_room);
+  if (inRoom) (s.rooms ??= /* @__PURE__ */ new Set()).add(inRoom);
+  if (args.open_room || room !== null && args.action === "talk") s.blind = true;
+  if (args.action === "join" && room) {
+    s.room ??= room;
+    (s.rooms ??= /* @__PURE__ */ new Set()).add(room);
+  }
+  if (args.action !== "leave") return null;
+  if (name === "iskron_channel") return "ушёл с места по исходу";
+  if (room === "") {
+    s.rooms?.clear();
+    s.blind = false;
+    return "ушёл из дел по исходу";
+  }
+  if (room) s.rooms?.delete(room);
+  return room && room === s.room ? `вышел из дела №${s.room} по исходу` : null;
+}
+
 // js/opencode/leadwords.ts
+var FREE = "сдал ход, не сидя ни в одном деле: ждать кадров нечего";
+var CANCELLED = "его ход отменён в OpenCode (человеком или запустившим)";
 var SUMMARY_MAX = 4e3;
 var endWord = (who, why, last, kept) => {
   const said = last.length > SUMMARY_MAX ? `${last.slice(0, SUMMARY_MAX)}…` : last;
@@ -1769,8 +1794,7 @@ function leadDoors(ctx, say, flush, end, slots) {
 // js/opencode/leads.ts
 var LEAD_IDLE_MS = Number(process.env.ISKRON_LEAD_IDLE_MS) || 45 * 6e4;
 var TICK_MS = Math.min(6e4, Math.max(100, Math.floor(LEAD_IDLE_MS / 5)));
-var TURN = /^session\.execution\.(started|succeeded|failed)$/;
-var roomNo = (room) => String(room ?? "").replace(/^\s*[#№]\s*|\s+$/g, "");
+var TURN = /^session\.execution\.(started|succeeded|failed|interrupted)$/;
 var names = (place, child, s) => s === child || !!place?.name && (s === place.name || s.endsWith(`:${place.name}`));
 function createLeads(d) {
   const leads = /* @__PURE__ */ new Map();
@@ -1824,12 +1848,8 @@ function createLeads(d) {
       if (gone.has(child)) return;
       const l = standsBy(name, args) ? stood(child) : leads.get(child);
       if (!touch(l, place)) return;
-      const room = name === "iskron_case" || name === "iskron_room" ? roomNo(args.room) : null;
-      if (args.action === "join" && room) l.room ??= room;
-      if (args.action !== "leave") return;
-      if (name === "iskron_channel") leave(child, l, "ушёл с места по исходу");
-      else if (room === "") leave(child, l, "ушёл из дел по исходу");
-      else if (room && room === l.room) leave(child, l, `вышел из дела №${l.room} по исходу`);
+      const why = seatCall(l, name, args);
+      if (why) leave(child, l, why);
     },
     async release(caller, name, args) {
       const s = String(args.standing ?? "").trim();
@@ -1851,7 +1871,8 @@ function createLeads(d) {
     },
     back(child, was) {
       const l = stood(child);
-      if (was.room) l.room = was.room;
+      if (was.room) (l.rooms ??= /* @__PURE__ */ new Set()).add(l.room = was.room);
+      else l.blind = true;
       if (was.noted) l.noted = true;
       if (was.last) l.last ??= was.last;
       if (was.name && was.of) l.place ??= { ...was.of, name: was.name };
@@ -1875,10 +1896,15 @@ function createLeads(d) {
         case "session.text.ended":
           if (typeof ev.data?.text === "string" && ev.data.text.trim()) l.last = ev.data.text;
           return;
+        case "session.execution.interrupted":
+          l.running = false;
+          if (ev.data?.reason === "user") return void finish(child, CANCELLED, true, false);
+          return;
         case "session.execution.succeeded":
         case "session.execution.failed":
           l.running = false;
           if (l.leaving) return void finish(child, l.leaving);
+          if (!sits(l)) return void finish(child, FREE);
           if (l.noted) return;
           l.noted = true;
           void l.parent.then(async (p) => {

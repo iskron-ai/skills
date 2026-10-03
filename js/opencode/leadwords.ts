@@ -48,6 +48,10 @@ export interface LeadDoors {
   ownPlace(child: string): string | null;
 }
 
+/** Причины конца не по уходу: ход сдан вне дел; ход отменён в OpenCode. */
+export const FREE = "сдал ход, не сидя ни в одном деле: ждать кадров нечего";
+export const CANCELLED = "его ход отменён в OpenCode (человеком или запустившим)";
+
 /** Итог — последний текст ребёнка; длиннее — хвост обрезается. */
 const SUMMARY_MAX = 4000;
 

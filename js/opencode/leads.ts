@@ -3,11 +3,12 @@
 // держит её после хода живой, кадр её дела будит её сессию (channel.ts), и
 // конец — явный акт: её уход по исходу (leave дела поручения — первого, куда она
 // вошла, — уход из дел целиком либо iskron_channel leave), слово запустившего
-// (его revoke её места — окончательно), удаление сессии — или потолок простоя
-// забытого. Перезагрузка плагина — не конец: ребёнок возвращается (children.ts).
+// (его revoke её места — окончательно), отмена её хода в OpenCode, конец хода вне
+// всех дел (leadrooms.ts), удаление сессии — или потолок простоя забытого. Перезагрузка плагина — не конец: ребёнок возвращается (children.ts).
 // На конце мост ребёнка гасится (выход из дел и снятие места — его, bridge/session.ts),
 // итог — синтетикой родителю. Договор и слова — leadwords.ts.
 
+import { type Seat, seatCall, sits } from "./leadrooms.ts";
 import * as W from "./leadwords.ts";
 import { type Place, standsBy } from "./satellite.ts";
 
@@ -15,20 +16,18 @@ import { type Place, standsBy } from "./satellite.ts";
 const LEAD_IDLE_MS = Number(process.env.ISKRON_LEAD_IDLE_MS) || 45 * 60_000;
 const TICK_MS = Math.min(60_000, Math.max(100, Math.floor(LEAD_IDLE_MS / 5)));
 /** События хода — простой считается от них и от кадров, не от любого события сессии. */
-const TURN = /^session\.execution\.(started|succeeded|failed)$/;
+const TURN = /^session\.execution\.(started|succeeded|failed|interrupted)$/;
 
-interface Lead {
+interface Lead extends Seat {
   parent: Promise<string | null>;
   at: number;
   place?: Place;
-  room?: string; // дело поручения — номер без знака
   running?: boolean;
   noted?: boolean;
   leaving?: string; // уход сказан посреди хода — конец ждёт конца хода и его текста
   last?: string;
 }
 
-const roomNo = (room: unknown): string => String(room ?? "").replace(/^\s*[#№]\s*|\s+$/g, "");
 const names = (place: Place | undefined, child: string, s: string): boolean =>
   s === child || (!!place?.name && (s === place.name || s.endsWith(`:${place.name}`)));
 
@@ -111,12 +110,8 @@ export function createLeads(d: W.LeadDoors): W.Leads {
       if (gone.has(child)) return;
       const l = standsBy(name, args) ? stood(child) : leads.get(child);
       if (!touch(l, place)) return;
-      const room = name === "iskron_case" || name === "iskron_room" ? roomNo(args.room) : null;
-      if (args.action === "join" && room) l.room ??= room;
-      if (args.action !== "leave") return;
-      if (name === "iskron_channel") leave(child, l, "ушёл с места по исходу");
-      else if (room === "") leave(child, l, "ушёл из дел по исходу");
-      else if (room && room === l.room) leave(child, l, `вышел из дела №${l.room} по исходу`);
+      const why = seatCall(l, name, args);
+      if (why) leave(child, l, why);
     },
     async release(caller, name, args) {
       const s = String(args.standing ?? "").trim();
@@ -138,7 +133,8 @@ export function createLeads(d: W.LeadDoors): W.Leads {
     },
     back(child, was) {
       const l = stood(child);
-      if (was.room) l.room = was.room;
+      if (was.room) (l.rooms ??= new Set()).add((l.room = was.room));
+      else l.blind = true; // дела без номера снимок не несёт: конец по ходу — не после перезагрузки
       if (was.noted) l.noted = true; // ход родителю уже назван прежним экземпляром
       if (was.last) l.last ??= was.last; // итог по концу — и после перезагрузки
       if (was.name && was.of) l.place ??= { ...was.of, name: was.name }; // revoke по имени до «held»
@@ -162,10 +158,17 @@ export function createLeads(d: W.LeadDoors): W.Leads {
         case "session.text.ended":
           if (typeof ev.data?.text === "string" && ev.data.text.trim()) l.last = ev.data.text;
           return;
+        case "session.execution.interrupted":
+          l.running = false;
+          // Отмена человеком или запустившим (reason "user") — конец, как revoke запустившего,
+          // без пробуждения; shutdown, superseded, inactivity — не отмена поручения.
+          if (ev.data?.reason === "user") return void finish(child, W.CANCELLED, true, false);
+          return;
         case "session.execution.succeeded":
         case "session.execution.failed":
           l.running = false;
           if (l.leaving) return void finish(child, l.leaving);
+          if (!sits(l)) return void finish(child, W.FREE); // без дел ждать кадров нечего (#6550 п.4)
           if (l.noted) return;
           l.noted = true; // первый ход сдан: родителю — что это ход, не итог
           void l.parent.then(async (p) => {
