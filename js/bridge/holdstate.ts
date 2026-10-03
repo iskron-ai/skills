@@ -11,6 +11,8 @@ export const H = scoped(() => ({
   /** Каталог сессии, из которого занимается место (cwd в iskron_stand), — в запись держания, для возврата по каталогу (resume.ts). */
   standCwd: null as string | null,
   holder: null as Holder | null,
+  /** последний знак службы сокета, отпущенного уходом (parkStanding), — срок записи держания от него (holdkeep.ts) */
+  heardAt: 0,
   /** дверь основного места — того, ради которого взят сокет */
   door: null as Door | null,
   currentKey: null as string | null,

@@ -211,6 +211,8 @@ export interface Holder {
   handOff(onFrame: (raw: string) => void, onGone: (code: number) => void): void;
   /** Живой ли сокет (открыт или открывается). */
   readonly alive: boolean;
+  /** Последний знак службы (пинг или кадр), мс эпохи; 0 — не было. Попытка открыть — не знак. */
+  readonly heardAt: number;
 }
 
 /**
@@ -230,6 +232,7 @@ export function holdSocket(o: HoldOptions): Holder {
   // Живость соединения: последний знак от службы (пинг или кадр), интервал из
   // hello; таймер взводит первый увиденный пинг.
   let lastLife = 0;
+  let heardAt = 0; // как lastLife, но без отметки открытия: время последней жизни для записи держания
   let pingMs = 0;
   // Видит ли рантайм пинги вообще — держится на весь holder: соединение,
   // подвисшее до своего первого пинга, иначе не поймалось бы никогда.
@@ -241,7 +244,7 @@ export function holdSocket(o: HoldOptions): Holder {
   const onPing = (m: unknown): void => {
     const from = (m as { websocket?: unknown } | null)?.websocket;
     if (!ws || (from !== undefined && from !== ws)) return;
-    lastLife = Date.now();
+    lastLife = heardAt = Date.now();
     runtimeSeesPings = true;
   };
   diagnostics.subscribe?.(PING_CHANNEL, onPing);
@@ -265,13 +268,13 @@ export function holdSocket(o: HoldOptions): Holder {
     // нестандартное событие ping самого сокета; Node его не шлёт вовсе.
     sock.addEventListener("ping", () => {
       if (ws !== sock) return;
-      lastLife = Date.now();
+      lastLife = heardAt = Date.now();
       runtimeSeesPings = true;
     });
 
     sock.addEventListener("message", (e: MessageEvent) => {
       if (stopped || ws !== sock) return;
-      lastLife = Date.now();
+      lastLife = heardAt = Date.now();
       const raw = typeof e.data === "string" ? e.data : L("[двоичный кадр]", "[binary frame]");
       if (handing) return handing.onFrame(raw);
       let frame: Frame | null = null;
@@ -417,6 +420,9 @@ export function holdSocket(o: HoldOptions): Holder {
     },
     get alive() {
       return !stopped && !!ws && (ws.readyState === 0 || ws.readyState === 1);
+    },
+    get heardAt() {
+      return heardAt;
     },
   };
 }

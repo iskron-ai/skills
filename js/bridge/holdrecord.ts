@@ -65,7 +65,12 @@ function leftOnDisk(key: string): boolean {
  * мост, чья сессия не названа, чужую с диска не наследует (#6017).
  * `left` держится с диска, пока новое держание не скажет `left: false`.
  */
-export function writeHoldRecord(key: string, rec: HoldRecord, paused = false): void {
+export function writeHoldRecord(
+  key: string,
+  rec: HoldRecord,
+  paused = false,
+  at = Date.now(),
+): void {
   // Место спутника живёт прогоном (satellite.ts): с диска его возвращает только пауза на перезагрузку плагина (suspend.ts).
   if (CFG.satellite && !paused) return;
   try {
@@ -77,7 +82,7 @@ export function writeHoldRecord(key: string, rec: HoldRecord, paused = false): v
         ...rec,
         session: session ?? undefined,
         left: left || undefined,
-        at: Date.now(),
+        at,
       }) + "\n",
       { mode: 0o600 },
     );

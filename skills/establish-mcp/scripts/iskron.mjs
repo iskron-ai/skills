@@ -2614,6 +2614,7 @@ function holdSocket(o) {
   let ws = null;
   let handing = null;
   let lastLife = 0;
+  let heardAt = 0;
   let pingMs = 0;
   let runtimeSeesPings = false;
   let lastTick = 0;
@@ -2621,7 +2622,7 @@ function holdSocket(o) {
   const onPing = (m) => {
     const from = m?.websocket;
     if (!ws || from !== void 0 && from !== ws) return;
-    lastLife = Date.now();
+    lastLife = heardAt = Date.now();
     runtimeSeesPings = true;
   };
   diagnostics.subscribe?.(PING_CHANNEL, onPing);
@@ -2642,12 +2643,12 @@ function holdSocket(o) {
     let gone = false;
     sock.addEventListener("ping", () => {
       if (ws !== sock) return;
-      lastLife = Date.now();
+      lastLife = heardAt = Date.now();
       runtimeSeesPings = true;
     });
     sock.addEventListener("message", (e) => {
       if (stopped || ws !== sock) return;
-      lastLife = Date.now();
+      lastLife = heardAt = Date.now();
       const raw = typeof e.data === "string" ? e.data : L("[двоичный кадр]", "[binary frame]");
       if (handing) return handing.onFrame(raw);
       let frame2 = null;
@@ -2770,6 +2771,9 @@ function holdSocket(o) {
     },
     get alive() {
       return !stopped && !!ws && (ws.readyState === 0 || ws.readyState === 1);
+    },
+    get heardAt() {
+      return heardAt;
     }
   };
 }
@@ -3948,7 +3952,7 @@ function leftOnDisk(key) {
     return false;
   }
 }
-function writeHoldRecord(key, rec4, paused = false) {
+function writeHoldRecord(key, rec4, paused = false, at2 = Date.now()) {
   if (CFG.satellite && !paused) return;
   try {
     const session = H.session ?? rec4.session;
@@ -3959,7 +3963,7 @@ function writeHoldRecord(key, rec4, paused = false) {
         ...rec4,
         session: session ?? void 0,
         left: left || void 0,
-        at: Date.now()
+        at: at2
       }) + "\n",
       { mode: 384 }
     );
@@ -4302,6 +4306,8 @@ var H2 = scoped(() => ({
   /** Каталог сессии, из которого занимается место (cwd в iskron_stand), — в запись держания, для возврата по каталогу (resume.ts). */
   standCwd: null,
   holder: null,
+  /** последний знак службы сокета, отпущенного уходом (parkStanding), — срок записи держания от него (holdkeep.ts) */
+  heardAt: 0,
   /** дверь основного места — того, ради которого взят сокет */
   door: null,
   currentKey: null,
@@ -5023,6 +5029,7 @@ function holdStanding(url, statusUrl2) {
 }
 function parkStanding(reason) {
   if (!H2.holder?.alive || !H2.currentKey) return null;
+  H2.heardAt = Math.max(H2.heardAt, H2.holder.heardAt);
   H2.holder.close(reason);
   H2.holder = null;
   H2.parked = true;
@@ -8574,21 +8581,29 @@ async function deliverOne(msg) {
 function keepHoldRecord() {
   const s2 = state.standing;
   const key = H2.currentKey;
-  if (!s2 || !key || !H2.currentUrl || !H2.holder?.alive) return;
+  if (!s2 || !key || !H2.currentUrl) return;
+  const alive2 = !!H2.holder?.alive;
+  const at2 = alive2 ? Date.now() : Math.max(H2.holder?.heardAt ?? 0, H2.heardAt);
   const ch = { url: H2.currentUrl, statusUrl: H2.currentStatusUrl, cwd: H2.standCwd };
   const was = readHoldRecord(key, true);
-  if (was)
-    writeHoldRecord(key, {
-      ...was,
-      realm: s2.realm,
-      karta: s2.karta,
-      name: s2.name ?? "",
-      url: ch.url,
-      statusUrl: ch.statusUrl,
-      cwd: ch.cwd ?? was.cwd,
-      client: harnessName(),
-      key
-    });
+  if (was && at2 > (was.at ?? 0))
+    writeHoldRecord(
+      key,
+      {
+        ...was,
+        realm: s2.realm,
+        karta: s2.karta,
+        name: s2.name ?? "",
+        url: ch.url,
+        statusUrl: ch.statusUrl,
+        cwd: ch.cwd ?? was.cwd,
+        client: harnessName(),
+        key
+      },
+      false,
+      at2
+    );
+  if (!alive2) return;
   for (const p of extraPlaces()) {
     const r = readHoldRecord(p.door.key, true);
     if (r) rememberExtraStatus(p.door.key, { ...ch, cwd: ch.cwd ?? r.cwd }, r.status ?? "");
