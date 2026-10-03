@@ -43,6 +43,7 @@ import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
+import { BUILT_BRIDGE, BUILT_PLUGIN } from "./built.mjs";
 import { startFakeNks } from "./fake-nks.mjs";
 import {
   addressed,
@@ -79,14 +80,10 @@ import {
 } from "./room-frames.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const SOURCE =
-  process.env.ISKRON_OPENCODE_PLUGIN ||
-  join(HERE, "..", "..", "skills", "establish-mcp", "scripts", "opencode-plugin.js");
+const SOURCE = process.env.ISKRON_OPENCODE_PLUGIN || BUILT_PLUGIN;
 const FAKE_BRIDGE = join(HERE, "fake-bridge.mjs");
 /** The real bridge of this checkout — for the one probe that measures the plugin's stop against it. */
-const REAL_BRIDGE =
-  process.env.ISKRON_BRIDGE_PATH ||
-  join(HERE, "..", "..", "skills", "establish-mcp", "scripts", "iskron.mjs");
+const REAL_BRIDGE = process.env.ISKRON_BRIDGE_PATH || BUILT_BRIDGE;
 
 const SANDBOX = mkdtempSync(join(tmpdir(), "iskron-opencode-"));
 const COPY = join(SANDBOX, "iskron.js");
@@ -2584,7 +2581,7 @@ test("a child session of a standing root raises its bridge as a satellite of the
 // holding again (a stop would then leave a loss marker for a place it does not
 // hear, and the idle reaper would spare it), and a satellite child is still not
 // handed the root's role for its status call.
-test("an evicted seat's busy line through iskron_stand is not holding: no loss marker for it, and the satellite child is not given the root's role", async () => {
+test("an evicted satellite seat is not holding: no loss marker for it, and its busy line is refused, never sent under the root's role", async () => {
   const calls = join(SANDBOX, "evicted-status.calls");
   writeFileSync(calls, "");
   const b = bridgeEnv("evicted-status", {
@@ -2613,16 +2610,19 @@ test("an evicted seat's busy line through iskron_stand is not holding: no loss m
       `${b.events}.${childPid}`,
       event("evicted", { code: 4000, text: "ДЕЛАТЕЛЬ: место отняли" }),
     );
-    await delay(400);
-    await rec.call("iskron_stand", { realm: "nks-dev", status: "после отъёма" }, "child");
-    const last = readFileSync(calls, "utf8")
+    // A satellite seat taken away ends the lead (#147 [140]): its busy line is refused, not
+    // sent at all — under the root's role or any other.
+    await until(() => rec.synthetics.some((s) => /КОНЧЕН/.test(s.text)), "the evicted lead's end");
+    await assert.rejects(
+      rec.call("iskron_stand", { realm: "nks-dev", status: "после отъёма" }, "child"),
+      /отпустил/,
+    );
+    const busy = readFileSync(calls, "utf8")
       .trim()
       .split("\n")
       .map((l) => JSON.parse(l))
-      .filter((c) => c.name === "iskron_stand")
-      .at(-1);
-    assert.equal(last.arguments.karta, undefined, "no root role for the busy line");
-    assert.equal(last.arguments.satellite_of, "host.repo.opus-5");
+      .filter((c) => c.name === "iskron_stand" && c.arguments.status);
+    assert.deepEqual(busy, [], "no busy line sent for the evicted seat");
     await rec.stop();
     stopped = true;
     const keys = lostMarkers().flatMap(

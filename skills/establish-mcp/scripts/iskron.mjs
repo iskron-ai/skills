@@ -5,7 +5,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 var VERSION = "7.2.7";
-var CHANNEL_MARK = "iskron-build:dev";
+var CHANNEL_MARK = "iskron-build:release";
 var releaseBuild = () => CHANNEL_MARK.endsWith(":release");
 var releaseBuildIn = (text) => text.includes(`"${["iskron-build", "release"].join(":")}"`);
 function buildOf(selfUrl) {

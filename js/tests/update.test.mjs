@@ -20,15 +20,12 @@ import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
-import { fileURLToPath } from "node:url";
 
+import { BUILT_BRIDGE, REPO } from "./built.mjs";
 import { startFakeNks } from "./fake-nks.mjs";
 
 const NODE = process.env.ISKRON_NODE || process.execPath;
-const HERE = dirname(fileURLToPath(import.meta.url));
-const FILE =
-  process.env.ISKRON_BRIDGE_PATH ||
-  join(HERE, "..", "..", "skills", "establish-mcp", "scripts", "iskron.mjs");
+const FILE = process.env.ISKRON_BRIDGE_PATH || BUILT_BRIDGE;
 const INIT = {
   protocolVersion: "2025-06-18",
   capabilities: {},
@@ -220,9 +217,10 @@ test("the skill set survives the hand-over: the home copy names the starter's se
   const fake = await startFakeNks({ pat: PAT });
   const h = home(t);
   writeFileSync(h.bridgePath, newerBuild());
+  // The dev build in dist/dev carries no SKILL.md: the starter's set is the working copy's.
   const bridge = startBridge(fake.mcpUrl, join(h.root, "auth"), {
     HOME: h.root,
-    ISKRON_SKILLS_ROOT: "",
+    ISKRON_SKILLS_ROOT: join(REPO, "skills"),
     CLAUDE_PLUGIN_ROOT: "",
   });
   t.after(async () => {

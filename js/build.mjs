@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 // Сборка отгружаемого JS из единого исходника js/ (граф nks-dev: крия #4219).
 //
-//   node js/build.mjs          собрать выходы и положить их на место
-//   node js/build.mjs --check  собрать во временную память и сверить с
-//                                      закоммиченными байтами; расхождение — 1
+//   node js/build.mjs          dev-сборка в dist/dev/ (вне индекса) — пробам и прогонам
+//   ISKRON_BUILD_CHANNEL=release node js/build.mjs
+//                              сборка выпуска на закоммиченные места — только джоб выпуска
+//   node js/build.mjs --check  закоммиченные выходы — сборка выпуска; иначе — 1
 //
 // Выходы — производные артефакты, как зипы .skill: правь js/, не их.
 // Детерминизм держится тем, что esbuild закреплён лок-файлом, пути в выходе
@@ -18,6 +19,13 @@ import * as esbuild from "esbuild";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const CHECK = process.argv.includes("--check");
+/** Выходы сборки — пути от корня репо (закоммиченные) и от dist/dev (dev). */
+const OUTPUTS = [
+  "skills/establish-mcp/scripts/iskron.mjs",
+  "extensions/iskron.js",
+  "skills/establish-mcp/scripts/opencode-plugin.js",
+  "skills/product-roadmap/references/roadmap-template.html",
+];
 
 const common = {
   bundle: true,
@@ -92,38 +100,54 @@ async function produce() {
   return outputs;
 }
 
-// Канал сборки (граф nks-dev: #6650): метку выпуска вшивает только сборка под
-// ISKRON_BUILD_CHANNEL=release (джоб bundle-sync); рабочая копия собирает dev, и такой
-// мост дом машины не освежает. Сверка берёт канал закоммиченного выхода — иначе main
-// сразу после релиза расходился бы с пересборкой одной этой строкой.
+// Канал сборки (граф nks-dev: #6650; #147 [140]): все каналы установки ставят main,
+// значит закоммиченные выходы — всегда сборка выпуска; их пишет только джоб выпуска
+// (bundle-sync: ISKRON_BUILD_CHANNEL=release). Рабочая копия собирает dev в DEV_DIR вне
+// индекса — ею гонятся пробы и живые прогоны, и такой мост дом машины не освежает.
+// Сверка: в закоммиченных байтах нет метки dev, у моста — метка выпуска.
 const DEV_MARK = '"iskron-build:dev"';
 const RELEASE_MARK = '"iskron-build:release"';
 const RELEASE = process.env.ISKRON_BUILD_CHANNEL === "release";
-const stamped = (text, release) => (release ? text.replaceAll(DEV_MARK, RELEASE_MARK) : text);
+const DEV_DIR = join(ROOT, "dist", "dev");
+const BRIDGE = "skills/establish-mcp/scripts/iskron.mjs";
 
-const outputs = await produce();
-if (!outputs.get("skills/establish-mcp/scripts/iskron.mjs").includes(DEV_MARK))
-  throw new Error(`iskron.mjs: нет метки канала ${DEV_MARK} (js/shared/version.ts)`);
-let bad = 0;
-for (const [rel, built] of outputs) {
-  const path = join(ROOT, rel);
-  if (CHECK) {
-    const have = existsSync(path) ? readFileSync(path, "utf8") : null;
-    const text = stamped(built, !!have?.includes(RELEASE_MARK));
-    if (have !== text) {
-      bad++;
-      console.error(
-        `✗ ${rel}: ${have === null ? "отсутствует" : "расходится с пересборкой из js/"} — прогони 'make build-js' и закоммить`,
-      );
-    }
-  } else {
-    mkdirSync(dirname(path), { recursive: true });
-    writeFileSync(path, stamped(built, RELEASE));
-  }
-}
 if (CHECK) {
+  let bad = 0;
+  for (const rel of OUTPUTS) {
+    const path = join(ROOT, rel);
+    const have = existsSync(path) ? readFileSync(path, "utf8") : null;
+    const why =
+      have === null
+        ? "отсутствует"
+        : have.includes(DEV_MARK)
+          ? "несёт метку dev"
+          : rel === BRIDGE && !have.includes(RELEASE_MARK)
+            ? "без метки выпуска"
+            : null;
+    if (why) {
+      bad++;
+      console.error(`✗ ${rel}: ${why} — его пишет make build-release (джоб выпуска)`);
+    }
+  }
   if (bad) process.exit(1);
-  process.stdout.write(`✓ ${outputs.size} выходов отгружаемого JS побайтово равны сборке из js/\n`);
+  process.stdout.write(
+    `✓ ${OUTPUTS.length} закоммиченных выходов JS — сборка выпуска, метки dev нет\n`,
+  );
 } else {
-  process.stdout.write(`Built: ${[...outputs.keys()].join(" ")}\n`);
+  const outputs = await produce();
+  if ([...outputs.keys()].join() !== OUTPUTS.join())
+    throw new Error(
+      `выходы сборки разошлись со списком OUTPUTS: ${[...outputs.keys()].join(", ")}`,
+    );
+  if (!outputs.get(BRIDGE).includes(DEV_MARK))
+    throw new Error(`iskron.mjs: нет метки канала ${DEV_MARK} (js/shared/version.ts)`);
+  const base = RELEASE ? ROOT : DEV_DIR;
+  for (const [rel, built] of outputs) {
+    const path = join(base, rel);
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, RELEASE ? built.replaceAll(DEV_MARK, RELEASE_MARK) : built);
+  }
+  process.stdout.write(
+    `Built (${RELEASE ? "release, committed paths" : `dev, ${DEV_DIR}`}): ${[...outputs.keys()].join(" ")}\n`,
+  );
 }

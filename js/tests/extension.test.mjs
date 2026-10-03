@@ -47,6 +47,7 @@ import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
+import { BUILT_EXTENSION } from "./built.mjs";
 import {
   addressed,
   addressedBody,
@@ -76,7 +77,7 @@ import {
 } from "./room-frames.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const SOURCE = process.env.ISKRON_EXTENSION || join(HERE, "..", "..", "extensions", "iskron.js");
+const SOURCE = process.env.ISKRON_EXTENSION || BUILT_EXTENSION;
 const FAKE_BRIDGE = join(HERE, "fake-bridge.mjs");
 const MISSING_BRIDGE = join(HERE, "no-such-bridge.mjs");
 

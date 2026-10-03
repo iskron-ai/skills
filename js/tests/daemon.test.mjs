@@ -28,13 +28,12 @@ import { fileURLToPath } from "node:url";
 import { connectSeam, helloFrame, patShaOf } from "../shared/seam.ts";
 import { seamSocketPath } from "../shared/seam-entrance.ts";
 import { socketPathOf } from "../shared/standings.ts";
+import { BUILT_BRIDGE } from "./built.mjs";
 import { startFakeNks } from "./fake-nks.mjs";
 
 const NODE = process.env.ISKRON_NODE || process.execPath;
 const HERE = dirname(fileURLToPath(import.meta.url));
-const BRIDGE =
-  process.env.ISKRON_BRIDGE_PATH ||
-  join(HERE, "..", "..", "skills", "establish-mcp", "scripts", "iskron.mjs");
+const BRIDGE = process.env.ISKRON_BRIDGE_PATH || BUILT_BRIDGE;
 const PAT = "nks_pat_daemon";
 const INIT = {
   protocolVersion: "2025-06-18",

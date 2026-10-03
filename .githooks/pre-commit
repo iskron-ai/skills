@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# На каждом коммите: линт и формат застейдженных исходников js/, пересборка
-# выходов отгружаемого JS и бандлов .skill — так закоммиченные производные
-# никогда не расходятся с исходником. Включается один раз: make hooks.
+# На каждом коммите: линт и формат застейдженных исходников js/, dev-сборка
+# отгружаемого JS в dist/dev (вне индекса — ею гонятся пробы) и пересборка бандлов
+# .skill. Закоммиченные выходы JS — сборка выпуска, их пишет только джоб выпуска
+# (make build-release, #6650): хук их не трогает. Включается один раз: make hooks.
 set -euo pipefail
 
 root="$(git rev-parse --show-toplevel)"
@@ -14,7 +15,5 @@ fi
 
 (cd js && npx --no-install lint-staged)
 node js/build.mjs >/dev/null
-git add -- skills/establish-mcp/scripts/iskron.mjs skills/establish-mcp/scripts/opencode-plugin.js \
-  extensions/iskron.js skills/product-roadmap/references/roadmap-template.html
 bash "$root/scripts/build-skills.sh" >/dev/null
 git add -- "$root"/*.skill

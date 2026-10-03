@@ -23,6 +23,7 @@ import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
+import { BUILT_BRIDGE } from "./built.mjs";
 import { startFakeCodex } from "./fake-codex.mjs";
 import { startFakeNks } from "./fake-nks.mjs";
 import {
@@ -61,9 +62,7 @@ import {
 const NODE = process.env.ISKRON_NODE || process.execPath;
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const FILE =
-  process.env.ISKRON_BRIDGE_PATH ||
-  join(HERE, "..", "..", "skills", "establish-mcp", "scripts", "iskron.mjs");
+const FILE = process.env.ISKRON_BRIDGE_PATH || BUILT_BRIDGE;
 const INIT = {
   protocolVersion: "2025-06-18",
   capabilities: {},
