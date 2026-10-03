@@ -1,5 +1,13 @@
 # Changelog
 
+## [7.2.6](https://github.com/iskron-ai/skills/compare/v7.2.5...v7.2.6) (2026-10-03)
+
+
+### Bug Fixes
+
+* **bridge:** мост говорит языком поверхности ([#311](https://github.com/iskron-ai/skills/issues/311)) ([8c40523](https://github.com/iskron-ai/skills/commit/8c40523b25e0f5919971597432fc5e33468db28e))
+* **opencode:** род 主 без отката на шапку, чужой маркер по старту процесса ([#316](https://github.com/iskron-ai/skills/issues/316)) ([92570ef](https://github.com/iskron-ai/skills/commit/92570ef22a5ab5074cb71e3dbe5c896191b72150))
+
 ## [7.2.5](https://github.com/iskron-ai/skills/compare/v7.2.4...v7.2.5) (2026-10-03)
 
 
