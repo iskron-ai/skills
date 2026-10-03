@@ -43,6 +43,32 @@ test("ISKRON_BRIDGE_DEVICE_CLIENT names another client", async () => {
   );
 });
 
+// The client the human named is refused: no other one stands in for it, the
+// word names it and where it was set — the default and a registration only
+// stand in when nothing was named.
+for (const [why, env] of [
+  ["", {}],
+  [" even with ISKRON_BRIDGE_DEVICE_REGISTER=1", { ISKRON_BRIDGE_DEVICE_REGISTER: "1" }],
+]) {
+  test(`ISKRON_BRIDGE_DEVICE_CLIENT refused: no code, no stand-in, the word names it${why}`, async () => {
+    await withFake(
+      { device: { interval: 1, client: "iskron-bridge" } },
+      async ({ fake, bridge }) => {
+        const message = (await bridge.call("initialize", 1, INIT)).error?.message ?? "";
+        assert.equal(linksIn(message).device, null, `no sign-in page with a code: ${message}`);
+        assert.match(message, /operator-made/);
+        assert.match(message, /ISKRON_BRIDGE_DEVICE_CLIENT/);
+        assert.match(message, /invalid_client/);
+        assert.deepEqual(fake.state.device.asked, [
+          { client_id: "operator-made", answer: "invalid_client" },
+        ]);
+        assert.equal(fake.state.counts.register, 0, "no dynamic registration");
+      },
+      { ISKRON_BRIDGE_DEVICE_CLIENT: "operator-made", ...env },
+    );
+  });
+}
+
 // A registered client has no default audience: its grant is refused by mcp,
 // and nothing but wiping the store undoes it. So no code, and the word why.
 test("no named client on the server: no code, the word names the operator's move, the local link stays", async () => {

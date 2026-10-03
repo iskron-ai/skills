@@ -1462,6 +1462,16 @@ async function codeThrough(meta, redirectUri, clientId) {
     return await issueDeviceCode(meta, id);
   } catch (e) {
     if (!clientRefused(e)) throw e;
+    const word2 = e.error;
+    if (id === CFG.deviceClientId) {
+      throw new DeviceUnset(
+        L(
+          `сервер авторизации отверг клиента входа по коду ${id}, заданного ISKRON_BRIDGE_DEVICE_CLIENT (${word2}) — поправь переменную или клиента на сервере`,
+          `the sign-in server refused the client ${id} named by ISKRON_BRIDGE_DEVICE_CLIENT (${word2}) — fix the variable or the client on the server`
+        ),
+        word2
+      );
+    }
     if (CFG.deviceRegister) {
       log(`device client ${id} refused (${errorMessage(e)}) — registering one`);
       return await issueDeviceCode(meta, await registerDeviceClient(meta, redirectUri));
@@ -1472,7 +1482,7 @@ async function codeThrough(meta, redirectUri, clientId) {
         `вход по коду на этом сервере не настроен: нет клиента ${id} — ход оператора сервера авторизации`,
         `sign-in by code is not set up on this server: there is no client ${id} — a move for the operator of the sign-in server`
       ),
-      e.error
+      word2
     );
   }
 }
