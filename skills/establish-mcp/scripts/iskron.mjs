@@ -9686,6 +9686,12 @@ var wd = {
   refusal: () => L("отказ", "refusal"),
   framePut: (thread) => L(`кадр вложен в тред ${thread}`, `frame put into thread ${thread}`),
   frameSent: (thread) => L(`кадр отправлен в тред ${thread}`, `frame sent to thread ${thread}`),
+  flushNotPut: (s2) => doer(
+    L(
+      `не дождался вложения за ${s2}s после своего отпускания — пачка в тред не отправлена`,
+      `the put did not go through within ${s2}s after one's own release — the batch was not sent to the thread`
+    )
+  ),
   frameNotPut: (why) => doer(L(`кадр не вложился — ${why}`, `the frame was not put in — ${why}`)),
   doorClosed: (why, lost) => L(
     `дверь закрылась: ${why} — открою заново на следующем кадре` + (lost.length ? `; без ответа: ${lost.join(", ")} — вернутся из кольца следующим взводом` : ""),
@@ -9811,6 +9817,7 @@ function attach(path, o) {
 }
 
 // js/watchdog/codex.ts
+var FLUSH_WAIT_MS = 5e3;
 var note = (s2) => {
   process.stderr.write(s2 + "\n");
 };
@@ -9951,6 +9958,10 @@ function runWatchdogCodex(argv2) {
           note(wd.bridgeReleasedSocket(ev.text ?? ""));
           if (!ev.own) break;
           if (pend.length) withPend("", []);
+          setTimeout(() => {
+            note(wd.flushNotPut(FLUSH_WAIT_MS / 1e3));
+            process.exit(1);
+          }, FLUSH_WAIT_MS);
           void Promise.allSettled([...inFlight]).then(() => process.exit(0));
           break;
         default:

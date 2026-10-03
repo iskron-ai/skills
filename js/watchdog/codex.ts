@@ -28,6 +28,8 @@ import {
 } from "./client.ts";
 import { doer, wd } from "./words.ts";
 
+const FLUSH_WAIT_MS = 5000; // своё отпускание ждёт вложений в полёте не дольше
+
 const note = (s: string): void => {
   process.stderr.write(s + "\n");
 };
@@ -185,6 +187,11 @@ export function runWatchdogCodex(argv: string[]): void {
           // Своё close/revoke/leave — не уход моста: последние кадры и ждавший счёт — в тред, затем выход (#6638).
           if (!ev.own) break;
           if (pend.length) withPend("", []);
+          // Дверь, не ответившая на upgrade, держала бы сторожа вечно: предел и громкий выход.
+          setTimeout(() => {
+            note(wd.flushNotPut(FLUSH_WAIT_MS / 1000));
+            process.exit(1);
+          }, FLUSH_WAIT_MS);
           void Promise.allSettled([...inFlight]).then(() => process.exit(0));
           break;
         default:

@@ -3562,6 +3562,40 @@ test("watchdog-codex on one's own close puts the batch the bridge flushed into t
   );
 });
 
+// Дверь приняла сокет и молчит на upgrade: ожидание пачки на своём отпускании —
+// с пределом, по нему одна громкая строка и ненулевой выход, не вечное молчание.
+test("watchdog-codex on one's own close behind a door that never answers the upgrade exits loudly within the limit", async (t) => {
+  const { fake, dir, bridge, key } = await connected(t, {
+    env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "30000" },
+  });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const home = mkdtempSync("/tmp/cxd-");
+  const log = join(home, "door.log");
+  writeFileSync(log, "");
+  const door = await startFakeCodex(
+    join(home, "app-server-control", "app-server-control.sock"),
+    log,
+    { mute: true },
+  );
+  t.after(() => door.stop());
+  const wd = runClient("watchdog-codex", dir, key, 15_000, {
+    CODEX_HOME: home,
+    CODEX_THREAD_ID: "thread-mute",
+  });
+  await waitFor(() => wd.err.includes("слушаю стояние"), "the codex watchdog to attach");
+  await sendRoom(fake, progress(49));
+  await new Promise((r) => setTimeout(r, 500));
+  const reply = await bridge.call("tools/call", 7, {
+    name: "iskron_channel",
+    arguments: { action: "close", realm: "nks-dev" },
+  });
+  assert.ok(!reply.result?.isError, JSON.stringify(reply));
+  const r = await wd.done;
+  assert.notEqual(r.exit, null, `the watchdog hung past the limit:\n${wd.err}`);
+  assert.notEqual(r.exit, 0, `an unsent batch is not a quiet exit:\n${wd.err}`);
+  assert.equal(wd.err.split("не дождался вложения").length - 1, 1, `one loud line:\n${wd.err}`);
+});
+
 test("a full room batch of counts and the rest past it are not dropped: both counts ride before the next word to me", async (t) => {
   const { fake, dir, key } = await connected(t, {
     env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "30000" },
