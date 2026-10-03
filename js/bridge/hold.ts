@@ -318,6 +318,7 @@ export function holdStanding(url: string, statusUrl?: string | null): string {
 /** Уйти с места (leave.ts): сокет службы закрыт — у всех мест канала, ключи, адреса и двери целы. Возвращает ключ или null. */
 export function parkStanding(reason: string): string | null {
   if (!H.holder?.alive || !H.currentKey) return null;
+  H.heardAt = Math.max(H.heardAt, H.holder.heardAt);
   H.holder.close(reason);
   H.holder = null;
   H.parked = true;

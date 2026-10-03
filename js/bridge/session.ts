@@ -13,26 +13,21 @@ import { type Writable } from "node:stream";
 
 import { bindScope, newScope, runIn, type Scope } from "../shared/scope.ts";
 import { isSessionEnvKey, patShaOf } from "../shared/seam.ts";
-import { leaveJoinedCases, revokeSatellitePlaces, satellitePlaces } from "./caseexit.ts";
 import { CFG, readArgs, setConfig } from "./config.ts";
 import { deliver } from "./deliver.ts";
 import { errorMessage } from "./errors.ts";
-import { releaseStanding } from "./hold.ts";
-import { keepHoldRecord } from "./holdkeep.ts";
 import { handoverUnderway } from "./holdstate.ts";
 import { startDeafnessWatch } from "./leave.ts";
 import { pendingFlow } from "./oauth/flow.ts";
 import { ORPHAN_FLOW_MS } from "./oauth/pacing.ts";
 import { tokenRequestsInFlight } from "./oauth/tokenrequest.ts";
 import { holdFromEnv } from "./resume.ts";
+import { closeRun } from "./runend.ts";
 import { releaseSatelliteClaims } from "./satellite.ts";
-import { publishStatusTo } from "./status.ts";
-import { statusAddress } from "./statusaddr.ts";
 import { sleep } from "./store.ts";
 import { debug, flushStdout, guardStream, log, setSessionOutput } from "./streams.ts";
-import { suspended } from "./suspend.ts";
+import { pauseSettled, suspended } from "./suspend.ts";
 import { type JsonRpcMessage } from "./types.ts";
-import { flushUsage, usagePlace } from "./usage.ts";
 import { lastAgentWork, noteAgentWork } from "./work.ts";
 
 /** Сколько сессия демона, передающего места преемнику, ждёт вызовов в полёте: остальное тонкий мост закроет вердиктом. */
@@ -196,35 +191,12 @@ function openIn(io: SessionIO, origin: SessionOrigin | null, scope: Scope | null
     // занятость не снимается, а вызовов в полёте ждём коротко — тонкий мост
     // закроет неотвеченное вердиктом и переотправит неотправленное.
     const handover = !!origin && handoverUnderway();
-    // Занятость — слово ушедшего делателя: с концом сессии она снимается, иначе
-    // доска показывает занятого там, где никого нет (#4895). Сокет и .key
-    // отпускаются ПЕРВЫМИ, до всякого сетевого вызова, и у спутника тоже: харнес,
-    // убивающий мост по короткой отсрочке, не должен застать его с живым ключом —
-    // сторож ушёл бы на мёртвый сокет. Выход из дел и revoke идут вызовами сессии, сокет им не нужен.
-    const addr = statusAddress();
-    const places = satellitePlaces();
-    // Место закрывается с сессией всегда, кроме места не-спутника, переданного преемнику:
-    // у закрываемого последний снимок расхода уходит до revoke (#6401), и при смене демона.
-    // Пауза спутника на перезагрузку плагина (suspend.ts): место, дела и занятость ждут нового моста.
     const paused = suspended();
-    const closing = (!handover || CFG.satellite) && !paused;
-    const spent = closing || paused ? usagePlace() : null;
-    // Сокет стояния живёт ровно столько, сколько сессия; у спутника — и записи держания нет: возврата с диска у него не бывает.
-    // У прочих запись остаётся с отсчётом срока от этого ухода (#6649).
-    if (!CFG.satellite) keepHoldRecord();
-    releaseStanding(why, CFG.satellite && !paused);
-    // Спутник выходит из дел прогона сам (#6573), пока место на доске: конец
-    // прогона — конец поручения, а истечение срока места оставило бы «slop».
-    // И при смене демона: место спутника не возвращается, а потерянное место
-    // закрывается (#6593, #6550 п.4) — иначе на доске «живой · не слушает».
-    // Последний снимок расхода ложится тем же тактом — до revoke: по закрытому месту записи нет (#6401).
-    await Promise.all([paused ? null : leaveJoinedCases(), flushUsage(spent)]);
-    // Конец спутника закрывает и место (#6593): место снимается с доски.
-    if (!paused) await revokeSatellitePlaces(places);
-    // Спутник отпускается целиком и при передаче (возврата с диска нет) — его занятость уходит с ним.
-    if (addr && closing) await publishStatusTo(addr.url, "", 3000).catch(() => {});
+    // Место, дела, занятость, снимок расхода — runend.ts; сбой не обрывает уход (e2e12, №147).
+    await closeRun(why, handover).catch((e: Error) => log(`the run's end failed: ${e.message}`));
     if (handover) await Promise.race([Promise.allSettled([...pending]), sleep(HANDOVER_WAIT_MS)]);
     else await Promise.allSettled([...pending, ...tokenRequestsInFlight]);
+    if (paused) await pauseSettled(); // поздний перевзвод паузы повернул адрес — запись за ним
     await flushStdout(io.output); // an answer half-written is an answer not given
     if (origin) {
       // Сессия демона: вход по OAuth и ротация токена — процесса-демона, он живёт

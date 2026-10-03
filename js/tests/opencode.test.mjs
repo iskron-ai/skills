@@ -43,6 +43,7 @@ import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
+import { BUILT_BRIDGE, BUILT_PLUGIN } from "./built.mjs";
 import { startFakeNks } from "./fake-nks.mjs";
 import {
   addressed,
@@ -79,14 +80,10 @@ import {
 } from "./room-frames.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const SOURCE =
-  process.env.ISKRON_OPENCODE_PLUGIN ||
-  join(HERE, "..", "..", "skills", "establish-mcp", "scripts", "opencode-plugin.js");
+const SOURCE = process.env.ISKRON_OPENCODE_PLUGIN || BUILT_PLUGIN;
 const FAKE_BRIDGE = join(HERE, "fake-bridge.mjs");
 /** The real bridge of this checkout — for the one probe that measures the plugin's stop against it. */
-const REAL_BRIDGE =
-  process.env.ISKRON_BRIDGE_PATH ||
-  join(HERE, "..", "..", "skills", "establish-mcp", "scripts", "iskron.mjs");
+const REAL_BRIDGE = process.env.ISKRON_BRIDGE_PATH || BUILT_BRIDGE;
 
 const SANDBOX = mkdtempSync(join(tmpdir(), "iskron-opencode-"));
 const COPY = join(SANDBOX, "iskron.js");
@@ -252,6 +249,7 @@ const ENV_KEYS = [
   "FB_NET_UP",
   "FB_DIE_ONCE",
   "FB_ENV",
+  "FB_END_FAILED",
   "ISKRON_HARNESS_VERSION",
   "ISKRON_SKILLS_ROOT",
   "ISKRON_BRIDGE_WATCH_MS",
@@ -2584,7 +2582,7 @@ test("a child session of a standing root raises its bridge as a satellite of the
 // holding again (a stop would then leave a loss marker for a place it does not
 // hear, and the idle reaper would spare it), and a satellite child is still not
 // handed the root's role for its status call.
-test("an evicted seat's busy line through iskron_stand is not holding: no loss marker for it, and the satellite child is not given the root's role", async () => {
+test("an evicted satellite seat is not holding: no loss marker for it, and its busy line is refused, never sent under the root's role", async () => {
   const calls = join(SANDBOX, "evicted-status.calls");
   writeFileSync(calls, "");
   const b = bridgeEnv("evicted-status", {
@@ -2613,16 +2611,19 @@ test("an evicted seat's busy line through iskron_stand is not holding: no loss m
       `${b.events}.${childPid}`,
       event("evicted", { code: 4000, text: "ДЕЛАТЕЛЬ: место отняли" }),
     );
-    await delay(400);
-    await rec.call("iskron_stand", { realm: "nks-dev", status: "после отъёма" }, "child");
-    const last = readFileSync(calls, "utf8")
+    // A satellite seat taken away ends the lead (#147 [140]): its busy line is refused, not
+    // sent at all — under the root's role or any other.
+    await until(() => rec.synthetics.some((s) => /КОНЧЕН/.test(s.text)), "the evicted lead's end");
+    await assert.rejects(
+      rec.call("iskron_stand", { realm: "nks-dev", status: "после отъёма" }, "child"),
+      /вытеснено другим держателем — поручение кончено/,
+    );
+    const busy = readFileSync(calls, "utf8")
       .trim()
       .split("\n")
       .map((l) => JSON.parse(l))
-      .filter((c) => c.name === "iskron_stand")
-      .at(-1);
-    assert.equal(last.arguments.karta, undefined, "no root role for the busy line");
-    assert.equal(last.arguments.satellite_of, "host.repo.opus-5");
+      .filter((c) => c.name === "iskron_stand" && c.arguments.status);
+    assert.deepEqual(busy, [], "no busy line sent for the evicted seat");
     await rec.stop();
     stopped = true;
     const keys = lostMarkers().flatMap(
@@ -2801,7 +2802,7 @@ test("the end of a child's turn ends nothing: its bridge lives, a frame of its c
 // not kept reopening its socket — and it cannot stand again. Other interruptions
 // (shutdown, superseded) are no end.
 test("a lead child whose run is interrupted by the user is ended without waking the parent and cannot stand again; a superseded run is no end", async () => {
-  const { b, rec, childPid } = await leadChild("lead-cancel");
+  const { b, rec, childPid } = await leadChild("lead-cancel", { ISKRON_CASCADE_MS: 400 });
   try {
     rec.emit({ type: "session.execution.started", data: { sessionID: "child" } });
     rec.emit({
@@ -2821,8 +2822,107 @@ test("a lead child whose run is interrupted by the user is ended without waking 
     assert.match(ends(rec)[0].text, /отменён в OpenCode[\s\S]*место снято/);
     assert.equal(ends(rec)[0].resume, false, "a cancel does not wake the parent");
     const bridges = pidsOf(b.log).length;
-    await assert.rejects(rec.call("iskron_stand", { realm: "nks-dev" }, "child"), /отпустил/);
+    await assert.rejects(
+      rec.call("iskron_stand", { realm: "nks-dev" }, "child"),
+      /ход отменён в OpenCode — поручение кончено/,
+    );
     assert.equal(pidsOf(b.log).length, bridges, "no bridge raised for the cancelled child");
+  } finally {
+    await rec.stop();
+  }
+});
+
+// #147 [150], e2e10 on OpenCode 2.0.22: the human cancels the PARENT's turn while the child
+// runs (background=false) — OpenCode's task tool interrupts the child too, with the same
+// reason «user» (subagent.ts: onInterrupt → sessions.interrupt(child)). That is a dropped
+// turn, not the child's end: it keeps its place and cases, the parent gets one word,
+// unwoken. Both orders of the two events are cascades.
+for (const order of ["parent first", "child first"])
+  test(`a lead child whose turn is cut by the cancel of its parent's turn (${order}) lives on — a dropped turn, not an end`, async () => {
+    const { b, rec, childPid } = await leadChild(`lead-cascade-${order.split(" ")[0]}`, {
+      ISKRON_CASCADE_MS: 600,
+    });
+    const cut = (sessionID) =>
+      rec.emit({ type: "session.execution.interrupted", data: { sessionID, reason: "user" } });
+    try {
+      rec.emit({ type: "session.execution.started", data: { sessionID: "root" } });
+      rec.emit({ type: "session.execution.started", data: { sessionID: "child" } });
+      if (order === "parent first") cut("root");
+      cut("child");
+      if (order === "child first") {
+        await delay(100);
+        cut("root");
+      }
+      await until(
+        () => rec.synthetics.some((s) => /прерван отменой твоего хода/.test(s.text)),
+        "the word",
+      );
+      await delay(900);
+      assert.ok(alive(childPid), "the child's bridge lives — its place stays");
+      assert.equal(ends(rec).length, 0, "no end");
+      const word = rec.synthetics.find((s) => /прерван отменой твоего хода/.test(s.text));
+      assert.equal(word.sessionID, "root");
+      assert.equal(word.resume, false, "the word does not wake the parent");
+      await rec.call("iskron_case", { realm: "nks-dev", action: "say", room: "#7" }, "child");
+      // №147 [156]: after the dropped turn a frame of its case still wakes the child's session.
+      const f = event("frame", { frame: frame("сосед ответил"), raw: "" });
+      appendFileSync(`${b.events}.${childPid}`, f);
+      await until(
+        () => rec.prompts.some((p) => p.sessionID === "child" && /сосед ответил/.test(p.text)),
+        "the frame waking the child after the dropped turn",
+      );
+    } finally {
+      await rec.stop();
+    }
+  });
+
+// #147 [140] 1а: a satellite place the platform takes away (evicted 4000, dead token 4001)
+// ends the lead like a revoke — a word to the parent without waking it — instead of a
+// bridge without a place the reaper puts out half an hour later, the parent told nothing.
+for (const kind of ["evicted", "dead"])
+  test(`a lead child whose satellite place is ${kind} is ended with a word to the parent, not left to the reaper`, async () => {
+    const { b, rec, childPid } = await leadChild(`lead-${kind}`);
+    try {
+      const code = kind === "dead" ? 4001 : 4000;
+      const text = `ДЕЛАТЕЛЬ: канал закрыт кодом ${code} — токен мёртв. Зови connect`;
+      appendFileSync(`${b.events}.${childPid}`, event(kind, { code, text }));
+      await until(() => !alive(childPid), "the placeless child's bridge to go");
+      await until(() => ends(rec).length === 1, "the end in the parent");
+      assert.match(ends(rec)[0].text, /КОНЧЕН[\s\S]*место-спутник/);
+      assert.doesNotMatch(
+        ends(rec)[0].text,
+        /токен мёртв/,
+        "a 4001 after a revoke is no dead token",
+      );
+      if (kind === "dead") assert.match(ends(rec)[0].text, /отозвано/);
+      assert.equal(ends(rec)[0].resume, false, "the loss of the place does not wake the parent");
+      // e2e ada1ff7: the ended child was handed the bridge's «call connect» and woken for a turn.
+      await delay(200);
+      const toChild = [...rec.prompts, ...rec.synthetics].filter((p) => p.sessionID === "child");
+      assert.deepEqual(
+        toChild,
+        [],
+        "no channel word is laid into the ended child, nothing wakes it",
+      );
+      const refused = rec.call("iskron_stand", { realm: "nks-dev" }, "child");
+      await assert.rejects(refused, kind === "dead" ? /отозвано/ : /вытеснено/);
+      await assert.rejects(refused, (e) => !/запустивший отпустил/.test(e.message));
+    } finally {
+      await rec.stop();
+    }
+  });
+
+// e2e12 (№147): the parent was told «место снято» while the child's revoke had failed. The
+// plugin asks the child's bridge to end its run first (iskron/end) and words the end by its
+// answer: places not revoked are named, with the revoke to do.
+test("a lead child's end tells the parent «место не снято» when its bridge could not revoke the place", async () => {
+  const { rec, childPid } = await leadChild("lead-unrevoked", { FB_END_FAILED: SUB });
+  try {
+    await rec.call("iskron_channel", { realm: "nks-dev", action: "leave" }, "child");
+    await until(() => !alive(childPid), "the child's bridge to go");
+    await until(() => ends(rec).length === 1, "the end in the parent");
+    assert.match(ends(rec)[0].text, /место не снято \(сеть\): host\.repo\.opus-5\.sub-1/);
+    assert.doesNotMatch(ends(rec)[0].text, /место снято\./);
   } finally {
     await rec.stop();
   }
@@ -3323,6 +3423,54 @@ test("marker-child: a reload pauses the child's bridge and the next instance tak
     await until(() => ends(second).length === 1, "the end in the parent");
     assert.match(ends(second)[0].text, /вышел из дела №77 по исходу/);
     assert.equal(ends(second)[0].sessionID, "root");
+  } finally {
+    await second.stop();
+  }
+});
+
+// astra on 7.2.6 (№164): mid-run, after a plugin reload, the child's write, busyness and
+// leave were refused «место родителя неизвестно» — they went by the root's bridge. The
+// next instance may load before the stopped one lays its marker (inferred): the child's
+// first call takes that late marker, waits for its own satellite and goes by it.
+test("marker-child: a marker laid after the next instance loaded is taken at the child's call — its write and leave go by its own satellite", async () => {
+  const name = "reload-late";
+  const calls = join(SANDBOX, `${name}.calls`);
+  const resume = join(SANDBOX, `${name}.resume`);
+  writeFileSync(calls, "");
+  const answer = { resumed: true, holding: true, key: "k-sub", word: "место возвращено" };
+  writeFileSync(resume, JSON.stringify({ bySession: { child: answer } }));
+  const b = bridgeEnv(name, { FB_CALLS: calls, FB_TOOLS: LEAD_TOOLS, FB_RESUME: resume });
+  const sessions = [
+    { id: "root", location: { directory: "/work/root" } },
+    { id: "child", parentID: "root", location: { directory: "/work/child" } },
+  ];
+  const first = await plugin(b.env, { sessions });
+  await until(() => first.tools().has("iskron_case"), "the tools", 8000);
+  await first.call("iskron_stand", { realm: "nks-dev", karta: "#931" }, "root");
+  await rootHolds(first, b, { pid: pidOf(b.log) });
+  await first.call("iskron_stand", { realm: "nks-dev" }, "child");
+  const childPid = pidsOf(b.log)[1];
+  const sub = { ...ROOT_PLACE, name: SUB };
+  appendFileSync(`${b.events}.${childPid}`, event("held", { key: "k-sub", place: sub }));
+  await until(() => /мост держит стояние k-sub/.test(first.said()), "the child's held word");
+  await first.call("iskron_case", { realm: "nks-dev", action: "join", room: "#77" }, "child");
+  const second = await plugin(b.env, { keepMarker: true, sessions });
+  await first.stop(); // the marker lands after the next instance is up
+  const all = () =>
+    readFileSync(calls, "utf8")
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((l) => JSON.parse(l));
+  try {
+    await until(() => second.tools().has("iskron_case"), "the tools", 8000);
+    await second.call("iskron_case", { realm: "nks-dev", action: "say", room: "#77" }, "child");
+    const back = all().find((c) => c.name === "iskron/resume" && c.arguments.session === "child");
+    assert.ok(back, "the child's place asked back by key");
+    assert.equal(all().at(-1).pid, back.pid, "the child's write goes by its own satellite");
+    await second.call("iskron_case", { realm: "nks-dev", action: "leave", room: "№77" }, "child");
+    await until(() => ends(second).length === 1, "the end in the parent");
+    assert.match(ends(second)[0].text, /вышел из дела №77 по исходу/);
   } finally {
     await second.stop();
   }

@@ -7,8 +7,9 @@ name: CI
 # match their source. Some of what ships is code — one file carrying the bridge,
 # both standing watchdogs and doctor, the pi extension, the roadmap renderer —
 # built from js/ and held to a production ladder: lint, format, strict types
-# (the extension against pi's real types), shipped outputs byte-identical to a
-# fresh build, and the behavioural suites. Those failures (a dead callback
+# (the extension against pi's real types), the committed outputs being the release
+# build (every install channel takes main), and the behavioural suites against a
+# dev build of the tree. Those failures (a dead callback
 # listener, a burnt refresh grant, a watchdog that holds a dead token in
 # silence) are invisible to the agent and land on a human.
 
@@ -69,6 +70,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # the outputs lock walks the whole push (github.event.before..HEAD)
       - uses: actions/setup-node@v4
         with:
           # The floor the shipped file claims (global WebSocket): the suites run
@@ -80,9 +83,17 @@ jobs:
       - run: make lint
       - run: make format-check
       - run: make typecheck
-      - name: Committed outputs are byte-identical to a fresh build from js/
+      - name: Committed outputs are the release build (no dev mark; only the release job writes them)
         run: make check-js
-      - name: Behavioural suites against the built outputs (fake NKS + OAuth, fake bridge, fake socket)
+      # The lock: a PR from any branch but the release job's leaves the committed outputs
+      # as its base has them (HEAD^1 of the PR's merge commit is the base tip); a push to
+      # main is walked commit by commit from github.event.before, and only the release PR's
+      # own merge commit may change them. The script reads the event from the environment.
+      - name: Committed outputs untouched outside the release PR
+        env:
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: bash scripts/check-outputs-frozen.sh
+      - name: Behavioural suites against the dev build of js/ in dist/dev (fake NKS + OAuth, fake bridge, fake socket)
         run: make test-coverage
 
   plugin-archive:

@@ -22,7 +22,7 @@ import { homeBridgePath } from "../shared/home.ts";
 import { L } from "../shared/lang.ts";
 import { scoped } from "../shared/scope.ts";
 import { compareVersions } from "../shared/semver.ts";
-import { releaseBuild, VERSION, versionIn } from "../shared/version.ts";
+import { devBuildIn, releaseBuild, VERSION, versionIn } from "../shared/version.ts";
 import { isProductionServer } from "./config.ts";
 import { RateLimitError, resolveTag, writeAtomic } from "./releases.ts";
 import { SKILLS_ROOT_ENV, skillsRoot } from "./skillset.ts";
@@ -62,13 +62,15 @@ const isSymlink = (path: string): boolean => {
   }
 };
 
-const versionOf = (path: string): string | null => {
+const readBytes = (path: string): Buffer => {
   try {
-    return versionIn(readFileSync(path, "utf8"));
+    return readFileSync(path);
   } catch {
-    return null;
+    return Buffer.alloc(0);
   }
 };
+const readText = (path: string): string => readBytes(path).toString("utf8");
+const versionOf = (path: string): string | null => versionIn(readText(path));
 
 export interface HomeSync {
   /** Домашняя копия новее — этим файлом и надо бежать. */
@@ -80,8 +82,8 @@ export interface HomeSync {
 /**
  * Дом против себя. Своя версия строго новее домашней (или дома нет) и своя сборка —
  * выпуск — своя копия ложится в дом; строго старше — дом побеждает и возвращается путём для
- * перезапуска; равная версия оставляет всё как есть: между релизами байты
- * различаются хешем, и по хешу старшинства нет.
+ * перезапуска; равная версия решается каналом: выпуск ложится на явную dev-сборку, прочее
+ * остаётся как есть — между релизами байты различаются хешем, и по хешу старшинства нет.
  */
 export function syncHome(self = selfPath()): HomeSync {
   const out: HomeSync = { copied: [] };
@@ -98,8 +100,11 @@ export function syncHome(self = selfPath()): HomeSync {
   const homeVersion = versionOf(home);
   const cmp = homeVersion ? compareVersions(VERSION, homeVersion) : 1;
   // Дом освежает только сборка выпуска (#6650): сборка рабочей копии — тоже «новее»,
-  // но непринята, и в доме она увела бы демону машины все сессии.
-  if (cmp > 0 && releaseBuild()) {
+  // но непринята, и в доме она увела бы демону машины все сессии. При равной версии
+  // решает канал: выпуск вытесняет из дома ЯВНУЮ dev-сборку (#147 [140]). Дом без метки —
+  // выпуск до меток (7.2.7 и раньше), не dev: его та же версия не трогает (#147 [145]).
+  const healsDev = cmp === 0 && devBuildIn(readText(home)) && !mine.equals(readBytes(home));
+  if ((cmp > 0 || healsDev) && releaseBuild()) {
     writeAtomic(home, mine);
     out.copied.push(home);
     const plugin = opencodePluginPath();

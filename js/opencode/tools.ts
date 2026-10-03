@@ -138,9 +138,12 @@ export async function setupTools(
         if (kind === "held") slot.place = heldPlace(params?.data) ?? slot.place; // #6002
         if (kind === "released" || kind === "dead" || kind === "evicted") slot.holding = false;
         // Ведущий — только ребёнок-спутник (#6550 п.4); ребёнок на обычном мосте — один прогон (children.ts).
-        if (slot.child && slot.satelliteOf && slot.session)
+        const over =
+          !!slot.child &&
+          !!slot.satelliteOf &&
+          !!slot.session &&
           leads.heard(slot.session, kind, slot.place);
-        relay(slot.session, params, !!slot.child);
+        if (!over) relay(slot.session, params, !!slot.child); // кончившемуся ведущему слов о канале нет
       },
       (e) => {
         // Держащий мост вышел не по нашей воле — слух потерян, и это слово в
@@ -167,7 +170,7 @@ export async function setupTools(
   const runEnds = createRunEnds(); // кончившиеся дети: запись с места — отказ вслух (#6361)
   // Ведущие субагенты (#6625): конец — явный акт, итог — синтетикой родителю.
   const endChild = (c: string) =>
-    runEnds.end(c, slots.get(c)?.satelliteOf, forget, leads.released(c));
+    runEnds.end(c, slots.get(c)?.satelliteOf, forget, leads.released(c), leads.goneWhy(c));
   const leads = createLeads(leadDoors(ctx, say, flushUsage, endChild, slots));
   const keeper = createKeeper({
     say,
@@ -226,6 +229,10 @@ export async function setupTools(
     mv.guard(root, sessionID); // корень перенесён отсюда — ребёнку не поднимать его мост здесь
     // Дочерняя сессия, вставшая своим спутником, ходит своим мостом (#5154); без
     // него мост корня ей — только на чтение: запись отказывает execute (#6550 п.2).
+    if (root !== sessionID && !slots.has(sessionID)) {
+      adopt.now(); // маркер прежнего экземпляра, положенный после нашей загрузки (adopt.ts)
+      await children.settled(sessionID);
+    }
     const own = root !== sessionID ? slots.get(sessionID) : undefined;
     if (own) {
       // Умерший детский мост заменяется своим же, не мостом корня: чтения и
@@ -318,6 +325,7 @@ export async function setupTools(
             (await leads.release(String(tool.sessionID), name, input ?? {})) ??
             adopt.revoked(name, input ?? {});
           if (word) return { content: word };
+          await children.settled(String(tool.sessionID)); // ребёнок маркера: слот ещё встаёт
           runEnds.guard(String(tool.sessionID), name, input ?? {}, asks); // не мостом корня (#6361)
           const slot = await slotFor(String(tool.sessionID));
           // Ребёнок мостом корня — только читает; встаёт — своим спутником в callThrough (#6550 п.2).

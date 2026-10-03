@@ -9,6 +9,7 @@
 import { scoped } from "../shared/scope.ts";
 import { callTool as call } from "./call.ts";
 import { CFG } from "./config.ts";
+import { H } from "./holdstate.ts";
 import { extraPlaces } from "./places.ts";
 import { canonRealm, otherRealm } from "./realms.ts";
 import { log } from "./streams.ts";
@@ -78,9 +79,11 @@ export async function leaveJoinedCases(): Promise<void> {
 /** Места спутника — основное и в других графах; снять до releaseStanding: оно стирает места рядом. */
 export const satellitePlaces = (): Standing[] =>
   CFG.satellite
-    ? [state.standing, ...extraPlaces().map((p) => p.standing)].filter(
-        (s): s is Standing => !!s?.name,
-      )
+    ? [
+        // Вытесненное (4000) место держит другой — законный take: его revoke снял бы чужое.
+        H.evictedKey && H.evictedKey === H.currentKey ? null : state.standing,
+        ...extraPlaces().map((p) => p.standing),
+      ].filter((s): s is Standing => !!s?.name)
     : [];
 
 /**
@@ -89,24 +92,30 @@ export const satellitePlaces = (): Standing[] =>
  * канала, и в других графах. Зовётся после releaseStanding и выхода из дел:
  * сокет уже отпущен, и закрытие 4001 некому принять за смерть токена.
  */
-export async function revokeSatellitePlaces(places: Standing[]): Promise<void> {
-  if (!places.length) return;
+export async function revokeSatellitePlaces(places: Standing[]): Promise<string[]> {
+  if (!places.length) return [];
+  const failed = new Set(places.map((s) => s.name as string)); // снятое вычёркивается
   const revokes = places.map((s) =>
     call("iskron_channel", { action: "revoke", realm: s.realm, karta: s.karta, standing: s.name })
-      .then((r) =>
-        log(
-          r.isError
-            ? `could not revoke ${s.name} at the run's end: ${r.text.slice(0, 120)}`
-            : `revoked ${s.name} in ${s.realm} at the run's end (#6593)`,
-        ),
-      )
-      .catch((e: Error) => log(`could not revoke ${s.name} at the run's end: ${e.message}`)),
+      .then((r) => {
+        // Уже снятое (4001 платформы, повтор после закрытого соединения) — тоже снято.
+        if (!r.isError || ALREADY_CLOSED.test(r.text)) {
+          failed.delete(s.name as string);
+          return log(`revoked ${s.name} in ${s.realm} at the run's end (#6593)`);
+        }
+        log(`place ${s.name} NOT revoked at the run's end: ${r.text.slice(0, 120)}`);
+      })
+      .catch((e: Error) => log(`place ${s.name} NOT revoked at the run's end: ${e.message}`)),
   );
   if (!(await underCap(Promise.allSettled(revokes))))
     log(
       `revoke at the run's end exceeded ${LEAVE_CAP_MS} ms — the place lapses by the channel's term`,
     );
+  return [...failed];
 }
+
+/** Ответ revoke о месте, которого уже нет на доске. */
+const ALREADY_CLOSED = /закрыт|снят|отозван|closed|revoked|not found|не найден/i;
 
 /** true — успело под потолком конца прогона. */
 async function underCap(work: Promise<unknown>): Promise<boolean> {

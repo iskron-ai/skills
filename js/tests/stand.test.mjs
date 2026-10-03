@@ -20,17 +20,14 @@ import {
   writeFileSync,
 } from "node:fs";
 import { hostname, tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { test } from "node:test";
-import { fileURLToPath } from "node:url";
 
+import { BUILT_BRIDGE } from "./built.mjs";
 import { startFakeNks } from "./fake-nks.mjs";
 
 const NODE = process.env.ISKRON_NODE || process.execPath;
-const HERE = dirname(fileURLToPath(import.meta.url));
-const FILE =
-  process.env.ISKRON_BRIDGE_PATH ||
-  join(HERE, "..", "..", "skills", "establish-mcp", "scripts", "iskron.mjs");
+const FILE = process.env.ISKRON_BRIDGE_PATH || BUILT_BRIDGE;
 const INIT = {
   protocolVersion: "2025-06-18",
   capabilities: {},
@@ -2446,6 +2443,61 @@ test("satellite: SIGINT ends the run like stdin-close — cases left, .sub-N rev
 // its cases and its busy line stay, a hold record keeps the socket and the cases;
 // the next satellite bridge takes the place back by key and leaves the cases at
 // its own end, then revokes the place.
+// e2e12 (№147): the satellite's revoke at its end met a connection closed under it — the
+// place hung on the board, an unhandled rejection in the journal. Revoke of its own place
+// is idempotent: one repeat on a closed connection takes it off; failed both times, the
+// end says which places are not revoked, and nothing is left unhandled.
+test("satellite: its own revoke at the run's end is repeated once on a closed connection — the place goes", async (t) => {
+  const fake = await withCaller(t);
+  const sat = await satelliteBridge(t, fake);
+  assert.ok(!(await standAs(sat, SAT_ARGS)).result?.isError, sat.stderr);
+  await fake.control({ mcpDrop: 1, mcpDropAction: "iskron_channel:revoke" });
+  await sat.stop();
+  assert.deepEqual(revokes(fake), [`${CALLER}.sub-1`], `revoked on the repeat:\n${sat.stderr}`);
+  assert.ok(fake.state.closedPlaces.has(`931:${CALLER}.sub-1`), "off the board");
+  assert.doesNotMatch(sat.stderr, /unhandled rejection/);
+});
+
+test("satellite: iskron/end names the places it could not revoke; a dropped usage snapshot does not stop the revoke", async (t) => {
+  const fake = await withCaller(t);
+  const { bridge: sat } = await usageBridge(t, { fake, gap: "600000", args: ["--satellite"] });
+  assert.ok(!(await standAs(sat, SAT_ARGS)).result?.isError, sat.stderr);
+  assert.equal((await sat.call("iskron/usage", SPEND)).result?.pushed, true);
+  await sat.call("iskron/usage", { ...SPEND, tokens: 7777 });
+  await fake.control({ mcpDrop: 2, mcpDropAction: "iskron_channel:register" });
+  const ok = (await sat.call("iskron/end", {})).result;
+  assert.deepEqual(ok, { ended: true, failed: [] }, `${JSON.stringify(ok)}\n${sat.stderr}`);
+  assert.deepEqual(revokes(fake), [`${CALLER}.sub-1`], "the revoke ran past the failed snapshot");
+
+  const fake2 = await withCaller(t);
+  const sat2 = await satelliteBridge(t, fake2);
+  assert.ok(!(await standAs(sat2, SAT_ARGS)).result?.isError, sat2.stderr);
+  await fake2.control({ mcpDrop: 2, mcpDropAction: "iskron_channel:revoke" });
+  const bad = (await sat2.call("iskron/end", {})).result;
+  assert.deepEqual(bad, { ended: true, failed: [`${CALLER}.sub-1`] }, sat2.stderr);
+  await sat2.stop();
+  assert.match(sat2.stderr, /NOT revoked/);
+  assert.doesNotMatch(sat.stderr + sat2.stderr, /unhandled rejection/);
+});
+
+// #147 [145]: a re-arm slower than its cap still turns the address at the server; the
+// bridge's end waits for it and the pause record follows the new address.
+test("satellite: a pause whose re-arm loses the cap still lands its turned address in the record at the bridge's end", async (t) => {
+  const fake = await withCaller(t);
+  const dir = mkdtempSync(join(tmpdir(), "iskron-sat-slow-"));
+  const sat = await satelliteBridge(t, fake, { dir });
+  assert.ok(!(await standAs(sat, SAT_ARGS)).result?.isError, sat.stderr);
+  await fake.control({ connect_delay_ms: 1800 });
+  const paused = (await sat.call("iskron/suspend", {})).result;
+  assert.equal(paused?.suspended, true, `${JSON.stringify(paused)}\n${sat.stderr}`);
+  const rec = () => JSON.parse(readFileSync(join(dir, "standings", holdFiles(dir)[0]), "utf8"));
+  const before = rec().url;
+  await sat.stop();
+  const after = rec().url;
+  assert.notEqual(after, before, `the record follows the late turn:\n${sat.stderr}`);
+  assert.ok(after.includes(fake.state.wsToken), `the turned address: ${after}`);
+});
+
 test("satellite: a pause before the stop keeps the place and its cases; the next satellite bridge resumes them by key and leaves them at its own end", async (t) => {
   const fake = await withCaller(t);
   const dir = mkdtempSync(join(tmpdir(), "iskron-sat-pause-"));
@@ -2454,6 +2506,9 @@ test("satellite: a pause before the stop keeps the place and its cases; the next
   await caseAs(sat, "join", "№102");
   const paused = (await sat.call("iskron/suspend", {})).result;
   assert.equal(paused?.suspended, true, `${JSON.stringify(paused)}\n${sat.stderr}`);
+  // #147 [140] 1б: the paused place waits the hold record's term, not the satellite's 300 s window.
+  const connects = fake.state.placeArgs.filter((a) => a.action === "connect");
+  assert.equal(connects.at(-1)?.ttl_seconds, 21600, `the pause re-arms the window:\n${sat.stderr}`);
   await sat.stop();
   assert.deepEqual(caseCalls(fake, "leave"), [], `no case left on a pause:\n${sat.stderr}`);
   assert.deepEqual(revokes(fake), [], "the place is not revoked on a pause");

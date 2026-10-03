@@ -10,22 +10,12 @@
 // holds the two together.
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
 import { test } from "node:test";
-import { fileURLToPath } from "node:url";
 
 import { createRenderer, esc } from "../roadmap/render.ts";
+import { BUILT_TEMPLATE } from "./built.mjs";
 
-const HERE = dirname(fileURLToPath(import.meta.url));
-const TEMPLATE = join(
-  HERE,
-  "..",
-  "..",
-  "skills",
-  "product-roadmap",
-  "references",
-  "roadmap-template.html",
-);
+const TEMPLATE = BUILT_TEMPLATE;
 
 const fixture = () => ({
   repo: "acme/thing",

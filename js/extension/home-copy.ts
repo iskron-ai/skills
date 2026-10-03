@@ -12,7 +12,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { homeBridgePath } from "../shared/home.ts";
-import { releaseBuildIn, versionIn } from "../shared/version.ts";
+import { devBuildIn, releaseBuildIn, versionIn } from "../shared/version.ts";
 
 export { homeBridgePath };
 
@@ -63,7 +63,9 @@ export function packagedBridgePath(): string {
  * по версии не сработала бы никогда именно там, где поставка обновляется чаще
  * всего. Мост и сам различает себя хешем собственных байт, и скилл транспорта
  * говорит это строкой выше. Поэтому: домашняя копия должна ЗЕРКАЛИТЬ ту, что
- * приехала с поставкой, — кроме случая, когда её версия строго новее.
+ * приехала с поставкой, — кроме случая, когда её версия строго новее. Поправка
+ * #147 [145]: при равной версии зеркалится только поверх явной dev-сборки — выпуск
+ * той же версии в доме не переписывается.
  *
  * Ограды. Мост поставки не сборка выпуска (метка канала dev — сборка рабочей копии,
  * #6650) — дом не трогаем вовсе. Строго новее дома — не трогаем, потому что это мог быть свежий мост,
@@ -117,6 +119,9 @@ export function refreshHomeBridge(notify: Notify, canSpeak: boolean): void {
     );
     return;
   }
+  // Равная версия: дом вытесняется только ЯВНОЙ dev-сборкой (#147 [145]) — дом без метки
+  // есть выпуск до меток, и мост main той же версии, но иных байт, его не переписывает.
+  if (vHome === vPackaged && !devBuildIn(home.toString("utf8"))) return;
 
   const was = vHome ?? "версия не читается";
   const tmp = `${homePath}.tmp-${process.pid}`; // имя с pid: два старта рядом не пишут в один файл

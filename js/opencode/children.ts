@@ -33,6 +33,7 @@ export interface ChildDoors {
 }
 
 export function createChildren(d: ChildDoors) {
+  const coming = new Map<string, Promise<unknown>>(); // дети маркера, чей слот ещё встаёт
   /**
    * Мост дочерней сессии для её собственного стояния — один на сессию: живой
    * возвращается, умерший заменяется с его памятью о месте; участок get→set
@@ -70,12 +71,23 @@ export function createChildren(d: ChildDoors) {
     // Не спутник — не ведущий (#6550 п.4): его прогон кончился с прежним экземпляром.
     if (!e.of) return d.endRun(e.session, false);
     d.leads.back(e.session, e);
-    // Сессия не читается (удалена или сбой get) — ребёнок кончен: его запись иначе
-    // пошла бы мостом корня (#6361); место уйдёт сроком канала, родителю — слово, если он известен.
-    if (!(await d.exists(e.session)))
-      return d.leads.fail(e.session, "перезагрузка плагина, сессия субагента не читается");
-    if (!e.key) return d.leads.fail(e.session, "перезагрузка плагина, ключа места нет");
-    const own = childSlot(e.session, null, e);
+    // Вызов ребёнка, пришедший раньше его слота, ждёт его (coming), а не уходит мостом
+    // корня с отказом «место родителя неизвестно» (astra, 7.2.6).
+    const ready = (async () => {
+      // Сессия не читается (удалена или сбой get) — ребёнок кончен: его запись иначе
+      // пошла бы мостом корня (#6361); место уйдёт сроком канала, родителю — слово, если он известен.
+      if (!(await d.exists(e.session)))
+        return void (await d.leads.fail(
+          e.session,
+          "перезагрузка плагина, сессия субагента не читается",
+        ));
+      if (!e.key)
+        return void (await d.leads.fail(e.session, "перезагрузка плагина, ключа места нет"));
+      return childSlot(e.session, null, e);
+    })();
+    coming.set(e.session, ready);
+    const own = await ready.finally(() => coming.delete(e.session));
+    if (!own) return;
     for (let i = 0; i < BACK_TRIES && !own.holding; i++) {
       if (i) {
         await sleep(BACK_PAUSE_MS);
@@ -107,5 +119,9 @@ export function createChildren(d: ChildDoors) {
     );
   }
 
-  return { childSlot, back, pause };
+  /** Слот ребёнка маркера встаёт — дождаться (ошибки — не здесь). */
+  const settled = (session: string): Promise<unknown> | undefined =>
+    coming.get(session)?.catch(() => {});
+
+  return { childSlot, back, pause, settled };
 }
