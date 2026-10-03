@@ -5,11 +5,29 @@
 # иного рода, изменившая их против своей базы, — выкат мимо релиза: отказ.
 #
 #   scripts/check-outputs-frozen.sh [база] [ветка]
-#     база  — коммит, против которого сверять (по умолчанию origin/main; в CI PR — HEAD^1)
-#     ветка — имя ветки (по умолчанию текущая; в CI PR — GITHUB_HEAD_REF)
+#     база  — коммит, против которого сверять (по умолчанию origin/main)
+#     ветка — имя ветки (по умолчанию текущая)
+# В CI без аргументов — по событию (GITHUB_EVENT_NAME):
+#   pull_request — база HEAD^1 (основание PR в его коммите слияния), ветка GITHUB_HEAD_REF;
+#   push — ветка из GITHUB_REF, база HEAD^1 (родитель запушенного коммита). Пропускается
+#     только коммит релизного PR: автор — github-actions[bot] (release-please открывает PR
+#     им, и squash-коммит слияния несёт его автором) И заголовок `chore(main): release …`;
+#     одно без другого — не выпуск (заголовок пишется руками, бот пишет и иное).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+RELEASE_AUTHOR="41898282+github-actions[bot]@users.noreply.github.com"
+event="${GITHUB_EVENT_NAME:-}"
+if [[ $# -eq 0 && "$event" == "pull_request" ]]; then
+  set -- HEAD^1 "${GITHUB_HEAD_REF:-}"
+elif [[ $# -eq 0 && "$event" == "push" ]]; then
+  set -- HEAD^1 "${GITHUB_REF#refs/heads/}"
+  if [[ "$(git log -1 --format=%ae HEAD)" == "$RELEASE_AUTHOR" &&
+    "$(git log -1 --format=%s HEAD)" == "chore(main): release "* ]]; then
+    echo "✓ коммит релизного PR ($(git log -1 --format=%h HEAD)) — закоммиченные выходы пишет джоб выпуска"
+    exit 0
+  fi
+fi
 base="${1:-origin/main}"
 branch="${2:-$(git rev-parse --abbrev-ref HEAD)}"
 outputs=(

@@ -86,10 +86,11 @@ jobs:
       - name: Committed outputs are the release build (no dev mark; only the release job writes them)
         run: make check-js
       # The lock: a PR from any branch but the release job's leaves the committed outputs
-      # as its base has them (HEAD^1 of the PR's merge commit is the base tip).
+      # as its base has them (HEAD^1 of the PR's merge commit is the base tip); a push to
+      # main leaves them as the pushed commit's parent has them, unless it is the release
+      # PR's own merge commit. The script reads the event from the environment.
       - name: Committed outputs untouched outside the release PR
-        if: github.event_name == 'pull_request'
-        run: bash scripts/check-outputs-frozen.sh HEAD^1 "$GITHUB_HEAD_REF"
+        run: bash scripts/check-outputs-frozen.sh
       - name: Behavioural suites against the dev build of js/ in dist/dev (fake NKS + OAuth, fake bridge, fake socket)
         run: make test-coverage
 
