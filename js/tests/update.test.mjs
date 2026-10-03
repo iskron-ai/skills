@@ -120,11 +120,11 @@ async function releases(
   };
 }
 
-function startBridge(serverUrl, authDir, env) {
+function startBridge(serverUrl, authDir, env, file = FILE) {
   const clean = { ...process.env };
   delete clean.ISKRON_BRIDGE_NO_UPDATE; // пробы гонят под выключателем; здесь он снимается, если сама проба его не ставит
   Object.assign(clean, env);
-  const proc = spawn(NODE, [FILE, serverUrl, "--no-browser", "--auth-dir", authDir], {
+  const proc = spawn(NODE, [file, serverUrl, "--no-browser", "--auth-dir", authDir], {
     // ISKRON_BRIDGE_DAEMON=0 — полный мост в процессе: эти пробы о нём, не о шве.
     env: {
       ...clean,
@@ -242,11 +242,19 @@ test("the skill set survives the hand-over: the home copy names the starter's se
   assert.match(String(connect?.attrs?.skills?.stamp), /^[0-9a-f]{8}$/);
 });
 
-test("a newer bridge lays itself into an older home at start", async (t) => {
+// #6650: only a release build refreshes the home — the release job stamps the channel
+// (js/build.mjs under ISKRON_BUILD_CHANNEL=release); a working copy's make build-js is dev.
+const OLD_HOME = '#!/usr/bin/env node\nconst VERSION = "0.0.1";\n';
+const releaseBuildOf = (text) => text.replaceAll('"iskron-build:dev"', '"iskron-build:release"');
+
+test("a newer release build lays itself into an older home at start", async (t) => {
   const fake = await startFakeNks({ pat: PAT });
   const h = home(t);
-  writeFileSync(h.bridgePath, '#!/usr/bin/env node\nconst VERSION = "0.0.1";\n');
-  const bridge = startBridge(fake.mcpUrl, join(h.root, "auth"), { HOME: h.root });
+  writeFileSync(h.bridgePath, OLD_HOME);
+  const release = join(h.root, "release", "iskron.mjs");
+  mkdirSync(dirname(release), { recursive: true });
+  writeFileSync(release, releaseBuildOf(SELF));
+  const bridge = startBridge(fake.mcpUrl, join(h.root, "auth"), { HOME: h.root }, release);
   t.after(async () => {
     await bridge.stop();
     await fake.stop();
@@ -254,10 +262,36 @@ test("a newer bridge lays itself into an older home at start", async (t) => {
   assert.ok((await bridge.call("initialize", INIT)).result);
   assert.equal(
     readFileSync(h.bridgePath, "utf8"),
-    SELF,
+    releaseBuildOf(SELF),
     "the home copy must now be this very build",
   );
   assert.match(bridge.stderr, /дом обновлён этой сборкой/, bridge.stderr);
+});
+
+test("a working copy's build, newer than the home, never lays itself into it — bridge or watchdog", async (t) => {
+  const fake = await startFakeNks({ pat: PAT });
+  const h = home(t);
+  writeFileSync(h.bridgePath, OLD_HOME);
+  // Выход под пробой может быть и выпуском (main сразу после релиза): dev — та же сборка без метки выпуска.
+  const dev = join(h.root, "worktree", "iskron.mjs");
+  mkdirSync(dirname(dev), { recursive: true });
+  writeFileSync(dev, SELF.replaceAll('"iskron-build:release"', '"iskron-build:dev"'));
+  const bridge = startBridge(fake.mcpUrl, join(h.root, "auth"), { HOME: h.root }, dev);
+  t.after(async () => {
+    await bridge.stop();
+    await fake.stop();
+  });
+  assert.ok((await bridge.call("initialize", INIT)).result);
+  assert.equal(readFileSync(h.bridgePath, "utf8"), OLD_HOME, "the bridge left the home as it was");
+  assert.doesNotMatch(bridge.stderr, /дом обновлён этой сборкой/);
+  const clean = { ...process.env, HOME: h.root };
+  delete clean.ISKRON_BRIDGE_NO_UPDATE;
+  const watchdog = spawn(NODE, [dev, "watchdog", "--help"], { env: clean, stdio: "pipe" });
+  let err = "";
+  watchdog.stderr.on("data", (c) => (err += c));
+  await new Promise((r) => watchdog.on("exit", r));
+  assert.equal(readFileSync(h.bridgePath, "utf8"), OLD_HOME, "nor did the watchdog");
+  assert.doesNotMatch(err, /дом обновлён этой сборкой/);
 });
 
 test("a newer release is fetched into the home once per six hours and named in the first tool answer", async (t) => {

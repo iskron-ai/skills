@@ -1,7 +1,8 @@
 // Обновление поставки — свойство самого моста, не памяти человека (граф
 // nks-dev: #4509 под превращением #4504). Три движения:
-//   • дом против себя при каждом старте: своя копия новее домашней — кладём
-//     себя в дом (и плагин OpenCode рядом с ним); домашняя новее — запускаемся
+//   • дом против себя при каждом старте: своя копия новее домашней и она —
+//     сборка выпуска (не рабочей копии, #6650) — кладём себя в дом (и плагин
+//     OpenCode рядом с ним); домашняя новее — запускаемся
 //     ею (cli/iskron.ts), так что каким бы файлом ни запустил харнес, бежит
 //     новейший;
 //   • раз в шесть часов — вопрос релизам GitHub, что свежее; свежее есть —
@@ -21,7 +22,7 @@ import { homeBridgePath } from "../shared/home.ts";
 import { L } from "../shared/lang.ts";
 import { scoped } from "../shared/scope.ts";
 import { compareVersions } from "../shared/semver.ts";
-import { VERSION, versionIn } from "../shared/version.ts";
+import { releaseBuild, VERSION, versionIn } from "../shared/version.ts";
 import { isProductionServer } from "./config.ts";
 import { RateLimitError, resolveTag, writeAtomic } from "./releases.ts";
 import { SKILLS_ROOT_ENV, skillsRoot } from "./skillset.ts";
@@ -77,8 +78,8 @@ export interface HomeSync {
 }
 
 /**
- * Дом против себя. Своя версия строго новее домашней (или дома нет) — своя
- * копия ложится в дом; строго старше — дом побеждает и возвращается путём для
+ * Дом против себя. Своя версия строго новее домашней (или дома нет) и своя сборка —
+ * выпуск — своя копия ложится в дом; строго старше — дом побеждает и возвращается путём для
  * перезапуска; равная версия оставляет всё как есть: между релизами байты
  * различаются хешем, и по хешу старшинства нет.
  */
@@ -96,7 +97,9 @@ export function syncHome(self = selfPath()): HomeSync {
   if (isSymlink(home)) return out; // дом, наведённый руками на рабочую копию, — не наш
   const homeVersion = versionOf(home);
   const cmp = homeVersion ? compareVersions(VERSION, homeVersion) : 1;
-  if (cmp > 0) {
+  // Дом освежает только сборка выпуска (#6650): сборка рабочей копии — тоже «новее»,
+  // но непринята, и в доме она увела бы демону машины все сессии.
+  if (cmp > 0 && releaseBuild()) {
     writeAtomic(home, mine);
     out.copied.push(home);
     const plugin = opencodePluginPath();

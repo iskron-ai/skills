@@ -92,12 +92,24 @@ async function produce() {
   return outputs;
 }
 
+// Канал сборки (граф nks-dev: #6650): метку выпуска вшивает только сборка под
+// ISKRON_BUILD_CHANNEL=release (джоб bundle-sync); рабочая копия собирает dev, и такой
+// мост дом машины не освежает. Сверка берёт канал закоммиченного выхода — иначе main
+// сразу после релиза расходился бы с пересборкой одной этой строкой.
+const DEV_MARK = '"iskron-build:dev"';
+const RELEASE_MARK = '"iskron-build:release"';
+const RELEASE = process.env.ISKRON_BUILD_CHANNEL === "release";
+const stamped = (text, release) => (release ? text.replaceAll(DEV_MARK, RELEASE_MARK) : text);
+
 const outputs = await produce();
+if (!outputs.get("skills/establish-mcp/scripts/iskron.mjs").includes(DEV_MARK))
+  throw new Error(`iskron.mjs: нет метки канала ${DEV_MARK} (js/shared/version.ts)`);
 let bad = 0;
-for (const [rel, text] of outputs) {
+for (const [rel, built] of outputs) {
   const path = join(ROOT, rel);
   if (CHECK) {
     const have = existsSync(path) ? readFileSync(path, "utf8") : null;
+    const text = stamped(built, !!have?.includes(RELEASE_MARK));
     if (have !== text) {
       bad++;
       console.error(
@@ -106,7 +118,7 @@ for (const [rel, text] of outputs) {
     }
   } else {
     mkdirSync(dirname(path), { recursive: true });
-    writeFileSync(path, text);
+    writeFileSync(path, stamped(built, RELEASE));
   }
 }
 if (CHECK) {

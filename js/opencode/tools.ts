@@ -469,7 +469,6 @@ export async function setupTools(
     async stop() {
       stopped = true;
       clearInterval(reaper);
-      leads.stop();
       keeper.stop();
       await children.pause(); // перезагрузка — не конец ребёнка (#6625): место и дела ждут
       // Остановка с держащими мостами — на диск: следующий экземпляр скажет о потере.

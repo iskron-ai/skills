@@ -226,8 +226,10 @@ const alive = (pid) => {
 };
 
 /** A bridge script text distinguishable by version and, optionally, a trailing comment. */
-const bridgeText = (v, note = "") =>
-  `#!/usr/bin/env node\nconst VERSION = "${v}"; // x-release-please-version${note}\n`;
+// A packaged bridge is a release build unless said otherwise: only such refreshes the home (#6650).
+const bridgeText = (v, note = "", channel = "release") =>
+  `#!/usr/bin/env node\nconst VERSION = "${v}"; // x-release-please-version${note}\n` +
+  `var CHANNEL_MARK = "iskron-build:${channel}";\n`;
 
 /**
  * A package sandbox for `refreshHomeBridge()`, own to one test: `extensions/iskron.mjs`
@@ -1431,6 +1433,22 @@ test("refreshHomeBridge: a version bump replaces the home copy with its own word
     /версия та же/,
     "сказано слово случая совпавшей версии, а не версии-скачка",
   );
+});
+
+// #6650: a packaged bridge built in a working copy (channel dev) never writes the home —
+// neither by a version bump nor by different bytes — and says nothing about it.
+test("refreshHomeBridge: a packaged dev build leaves the home copy untouched", async () => {
+  const box = packageSandbox();
+  for (const [packaged, home] of [
+    [bridgeText("6.0.0", "", "dev"), bridgeText("5.0.0")],
+    [bridgeText("6.0.0", " — из ветки А", "dev"), bridgeText("6.0.0", " — из ветки Б")],
+  ]) {
+    writeFileSync(box.packaged, packaged);
+    writeFileSync(box.homeBridge, home);
+    const rec = await runRefresh(box, { ISKRON_MCP_READY_WAIT_MS: 1 });
+    assert.equal(readFileSync(box.homeBridge, "utf8"), home, "dev-сборка переписала дом");
+    assert.ok(saidNoneOf(rec), "заговорили о подмене, которой нет");
+  }
 });
 
 // Rule 8, побочное условие обеих замен: временный файл — `.tmp-<pid>` — существует

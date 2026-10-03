@@ -25,7 +25,6 @@ export interface Leads {
   /** Имя места живого ведущего субагента (без места — id сессии); не ведущий — null. */
   nameOf(child: string): string | null;
   onEvent(ev: any): void;
-  stop(): void;
 }
 
 export interface Snapshot {
@@ -47,6 +46,9 @@ export interface LeadDoors {
   /** Имя места ребёнка, если это не его спутник (обычное место сессии); спутник или места нет — null. */
   ownPlace(child: string): string | null;
 }
+
+/** Конец отменой — окончательный, как revoke запустившего. */
+export const CANCELLED = "его ход отменён в OpenCode (человеком или запустившим)";
 
 /** Итог — последний текст ребёнка; длиннее — хвост обрезается. */
 const SUMMARY_MAX = 4000;
