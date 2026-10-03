@@ -476,6 +476,7 @@ export async function startFakeNks(opts = {}) {
       // Места, ушедшие с доски (окно простоя канала истекло): ключи `<karta>:<name>`.
       if (Array.isArray(patch.dropPlaces)) for (const k of patch.dropPlaces) st.places.delete(k);
       if ("connect_refuse_ttl" in patch) st.connectRefuseTtl = patch.connect_refuse_ttl || null; // отказ окну простоя на connect
+      if ("connect_delay_ms" in patch) st.connectDelayMs = Number(patch.connect_delay_ms) || 0;
       if ("send_conflict" in patch) st.sendConflict = patch.send_conflict || null; // текст отказа 409 не о безавторности
       if ("statusGone" in patch) st.statusGone = !!patch.statusGone; // статусный адрес повернули
       if (patch.revoke_access) st.access = null;
@@ -997,6 +998,9 @@ export async function startFakeNks(opts = {}) {
             extra,
           );
         }
+        // Медленный connect (/control {connect_delay_ms}): ответ позже потолка вызывающего, адрес всё равно повёрнут.
+        if (a.action === "connect" && st.connectDelayMs)
+          await new Promise((r) => setTimeout(r, st.connectDelayMs));
         if (
           (a.action === "connect" || a.action === "mint") &&
           st.connectRefuseTtl &&

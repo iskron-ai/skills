@@ -1,6 +1,7 @@
 // Договор ведущих субагентов (leads.ts, граф nks-dev: #6625), слова о них родителю
 // и двери к контексту OpenCode, которыми они доходят: синтетика в сессию.
 /* eslint-disable @typescript-eslint/no-explicit-any -- ответы SDK без схемы */
+import type { Bridge } from "../shared/bridge-client.ts";
 import type { Context } from "./plugin.ts";
 import { ownPlace, type Place, type SatelliteSlot } from "./satellite.ts";
 import type { Say } from "./tools.ts";
@@ -12,8 +13,10 @@ export interface Leads {
   release(caller: string, name: string, args: Record<string, unknown>): Promise<string | null>;
   /** Отпущен запустившим — встать снова ему нельзя. */
   released(child: string): boolean;
-  /** Слово моста ребёнка: «held» называет место, кадр — не простой. */
-  heard(child: string, kind: unknown, place?: Place | null): void;
+  /** Окончательно кончен не запустившим — причина для отказа ребёнку; запустившим или не кончен — undefined. */
+  goneWhy(child: string): string | undefined;
+  /** Слово моста ребёнка: «held» называет место, кадр — не простой. true — ребёнок кончен, слово ему не вкладывать. */
+  heard(child: string, kind: unknown, place?: Place | null): boolean;
   /** Ребёнок прежнего экземпляра плагина возвращается ведущим — с делом поручения, сказанным ходом, последним текстом. */
   back(child: string, was: Partial<Snapshot> & { name?: string; of?: Place | null }): void;
   /** Место вернуть не удалось — мост гасится, родителю слово без пробуждения. */
@@ -41,7 +44,12 @@ export interface LeadDoors {
    * (queue в занятую сессию после хода запускал ещё один); wake — будить ли простаивающую.
    */
   tell(session: string, text: string, wake: boolean): Promise<void>;
-  /** Мост ребёнка гасится (расход — прежде), сессия помечена кончившейся. */
+  /**
+   * Мост ребёнка кончает прогон (расход — прежде, затем `iskron/end`: дела, место), но жив.
+   * Ответ — места, которые снять не удалось; null — исход неизвестен.
+   */
+  close(child: string): Promise<string[] | null>;
+  /** Мост ребёнка гасится, сессия помечена кончившейся. */
   end(child: string): Promise<void>;
   /** Имя места ребёнка, если это не его спутник (обычное место сессии); спутник или места нет — null. */
   ownPlace(child: string): string | null;
@@ -49,15 +57,47 @@ export interface LeadDoors {
 
 /** Конец отменой — окончательный, как revoke запустившего. */
 export const CANCELLED = "его ход отменён в OpenCode (человеком или запустившим)";
+export const CANCELLED_REFUSAL = "её ход отменён в OpenCode";
+/** Каскад: ход ребёнка оборван отменой хода родителя — ребёнок не кончен (cascade.ts). */
+export const cascadeWord = (who: string): string =>
+  `Искрон: ход субагента ${who} прерван отменой твоего хода — он не кончен: место и дела держит, ждёт кадров своего дела. ` +
+  `Продолжить — слово в его дело; отпустить — iskron_channel(action="revoke", standing="${who}").`;
+/**
+ * Конец потерей места: платформа его вытеснила (4000) или закрыла (4001). Своё close
+ * и revoke мост отпускает тихо, revoke запустившего кончает раньше (leads.ts) — 4001,
+ * дошедший сюда, это отзыв снаружи либо мёртвый токен, и различить их нечем: без «токен мёртв».
+ */
+export const placeGone = (kind: string): string =>
+  kind === "evicted"
+    ? "его место-спутник вытеснено другим держателем"
+    : "его место-спутник отозвано не через запустившего или закрыто платформой (4001)";
+export const placeGoneRefusal = (kind: string): string =>
+  kind === "evicted"
+    ? "её место-спутник вытеснено другим держателем"
+    : "её место-спутник отозвано или закрыто платформой (4001)";
+
+/** Конец прогона мостом ребёнка (выход из дел и revoke под своими потолками) — не дольше. */
+const END_MS = 5_000;
 
 /** Итог — последний текст ребёнка; длиннее — хвост обрезается. */
 const SUMMARY_MAX = 4000;
 
-export const endWord = (who: string, why: string, last: string, kept?: string | null): string => {
+/** failed — места, которые мост ребёнка снять не смог; null — исход его конца неизвестен. */
+export const endWord = (
+  who: string,
+  why: string,
+  last: string,
+  kept?: string | null,
+  failed: string[] | null = [],
+): string => {
   const said = last.length > SUMMARY_MAX ? `${last.slice(0, SUMMARY_MAX)}…` : last;
   const done = kept
     ? `${keptLine(who, kept)}; снять его — iskron_channel(action="revoke", standing="${kept}"), только словом человека. `
-    : "мост субагента погашен, из дел он вышел, место снято. ";
+    : failed === null
+      ? 'мост субагента погашен; снял ли он место — не ответил: осталось на доске — сними iskron_channel(action="revoke"). '
+      : failed.length
+        ? `мост субагента погашен, но место не снято (сеть): ${failed.join(", ")} — сними iskron_channel(action="revoke", standing="${failed[0]}"). `
+        : "мост субагента погашен, из дел он вышел, место снято. ";
   return (
     `Искрон: субагент ${who} КОНЧЕН — ${why}. Это конец поручения, не ход: ${done}` +
     `Итог — его последнее слово:\n${said || "(текста он не оставил — смотри его дело)"}`
@@ -101,13 +141,21 @@ export function leadDoors(
   say: Say,
   flush: (session: string) => Promise<void>,
   end: (child: string) => void,
-  slots: Map<string, SatelliteSlot & { child?: boolean }>,
+  slots: Map<string, SatelliteSlot & { child?: boolean; bridge: Pick<Bridge, "request"> }>,
 ): LeadDoors {
   return {
     say,
     ownPlace: (child) => ownPlace(slots.get(child)),
-    async end(child) {
+    async close(child) {
       await flush(child).catch(() => {});
+      // Конец прогона — до слова: исход снятия места идёт в слово родителю (№147, e2e12).
+      const got: any = await slots
+        .get(child)
+        ?.bridge.request("iskron/end", {}, { timeoutMs: END_MS, service: true })
+        .catch(() => null);
+      return got?.ended ? (got.failed ?? []) : null;
+    },
+    async end(child) {
       end(child);
     },
     async parentOf(child) {

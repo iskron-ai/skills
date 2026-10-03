@@ -20,15 +20,12 @@ import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
-import { fileURLToPath } from "node:url";
 
+import { BUILT_BRIDGE, REPO } from "./built.mjs";
 import { startFakeNks } from "./fake-nks.mjs";
 
 const NODE = process.env.ISKRON_NODE || process.execPath;
-const HERE = dirname(fileURLToPath(import.meta.url));
-const FILE =
-  process.env.ISKRON_BRIDGE_PATH ||
-  join(HERE, "..", "..", "skills", "establish-mcp", "scripts", "iskron.mjs");
+const FILE = process.env.ISKRON_BRIDGE_PATH || BUILT_BRIDGE;
 const INIT = {
   protocolVersion: "2025-06-18",
   capabilities: {},
@@ -220,9 +217,10 @@ test("the skill set survives the hand-over: the home copy names the starter's se
   const fake = await startFakeNks({ pat: PAT });
   const h = home(t);
   writeFileSync(h.bridgePath, newerBuild());
+  // The dev build in dist/dev carries no SKILL.md: the starter's set is the working copy's.
   const bridge = startBridge(fake.mcpUrl, join(h.root, "auth"), {
     HOME: h.root,
-    ISKRON_SKILLS_ROOT: "",
+    ISKRON_SKILLS_ROOT: join(REPO, "skills"),
     CLAUDE_PLUGIN_ROOT: "",
   });
   t.after(async () => {
@@ -266,6 +264,50 @@ test("a newer release build lays itself into an older home at start", async (t) 
     "the home copy must now be this very build",
   );
   assert.match(bridge.stderr, /дом обновлён этой сборкой/, bridge.stderr);
+});
+
+// #147 [140] 2: a machine whose home caught a dev build (#6650) is healed by the release
+// of the same version — at an equal version the channel decides; a dev starter leaves a
+// release home alone.
+test("at an equal version a release build replaces only an explicit dev home — not an unmarked release — and a dev build leaves a release home", async (t) => {
+  const fake = await startFakeNks({ pat: PAT });
+  const h = home(t);
+  const devText = SELF.replaceAll('"iskron-build:release"', '"iskron-build:dev"');
+  const relText = releaseBuildOf(SELF);
+  const at = (name, text) => {
+    const p = join(h.root, name, "iskron.mjs");
+    mkdirSync(dirname(p), { recursive: true });
+    writeFileSync(p, text);
+    return p;
+  };
+  t.after(() => fake.stop());
+  // #147 [145]: a home without a mark is a release before the marks (7.2.7): the same
+  // version from main — other bytes, release mark — never rewrites it.
+  const unmarked = devText.replaceAll('"iskron-build:dev"', '"no-mark"');
+  writeFileSync(h.bridgePath, unmarked);
+  const main = startBridge(fake.mcpUrl, join(h.root, "a0"), { HOME: h.root }, at("main", relText));
+  try {
+    assert.ok((await main.call("initialize", INIT)).result);
+    assert.equal(readFileSync(h.bridgePath, "utf8"), unmarked, "an unmarked release home stays");
+  } finally {
+    await main.stop();
+  }
+  writeFileSync(h.bridgePath, devText);
+  const healer = startBridge(fake.mcpUrl, join(h.root, "a1"), { HOME: h.root }, at("rel", relText));
+  try {
+    assert.ok((await healer.call("initialize", INIT)).result);
+    assert.equal(readFileSync(h.bridgePath, "utf8"), relText, "the release healed the dev home");
+  } finally {
+    await healer.stop();
+  }
+  const dev = startBridge(fake.mcpUrl, join(h.root, "a2"), { HOME: h.root }, at("dev", devText));
+  t.after(() => dev.stop());
+  assert.ok((await dev.call("initialize", INIT)).result);
+  assert.equal(
+    readFileSync(h.bridgePath, "utf8"),
+    relText,
+    "a dev starter leaves the release home",
+  );
 });
 
 test("a working copy's build, newer than the home, never lays itself into it — bridge or watchdog", async (t) => {

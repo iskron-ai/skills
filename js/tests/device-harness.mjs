@@ -7,15 +7,13 @@ import { spawn, spawnSync } from "node:child_process";
 import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { connect } from "node:net";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 
+import { BUILT_BRIDGE } from "./built.mjs";
 import { startFakeNks } from "./fake-nks.mjs";
 
 const NODE = process.env.ISKRON_NODE || process.execPath;
-const BRIDGE =
-  process.env.ISKRON_BRIDGE_PATH ||
-  join(dirname(fileURLToPath(import.meta.url)), "../../skills/establish-mcp/scripts/iskron.mjs");
+const BRIDGE = process.env.ISKRON_BRIDGE_PATH || BUILT_BRIDGE;
 
 export const INIT = {
   protocolVersion: "2025-06-18",

@@ -10,6 +10,7 @@ import { normKarta, normName } from "./names.ts";
 import { noteLocaleEcho } from "./placefields.ts";
 import { extraIn } from "./places.ts";
 import { canonRealm, otherRealm, resolveRealms, unknownRealm, unresolvedWord } from "./realms.ts";
+import { OWN_CALL_PREFIX } from "./repeat.ts";
 import { noteStanding, replyText } from "./standing.ts";
 import { post, state } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
@@ -156,7 +157,7 @@ export interface Answer {
 let seq = 0;
 
 export async function callTool(name: string, args: Record<string, unknown>): Promise<Answer> {
-  const id = `iskron-bridge-call-${++seq}`;
+  const id = `${OWN_CALL_PREFIX}${++seq}`;
   const msg: JsonRpcMessage = {
     jsonrpc: "2.0",
     id,

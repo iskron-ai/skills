@@ -23,6 +23,7 @@ import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
+import { BUILT_BRIDGE } from "./built.mjs";
 import { startFakeCodex } from "./fake-codex.mjs";
 import { startFakeNks } from "./fake-nks.mjs";
 import {
@@ -61,9 +62,7 @@ import {
 const NODE = process.env.ISKRON_NODE || process.execPath;
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const FILE =
-  process.env.ISKRON_BRIDGE_PATH ||
-  join(HERE, "..", "..", "skills", "establish-mcp", "scripts", "iskron.mjs");
+const FILE = process.env.ISKRON_BRIDGE_PATH || BUILT_BRIDGE;
 const INIT = {
   protocolVersion: "2025-06-18",
   capabilities: {},
@@ -1709,6 +1708,32 @@ test("a place held longer than the record's life without a new busy line survive
   assert.ok(!st.result?.isError, said);
   assert.match(said, /возврат места с диска после перезапуска моста/, said);
   assert.equal(fake.state.counts.connect, connects, "the place is resumed, not rotated");
+});
+
+// #147 [140] 4: a session that left its seat (socket closed, address kept) and then goes
+// renews the record with the socket's last life, not leaving the old at behind.
+test("a session gone after leaving its seat renews the hold record with the socket's last life", async (t) => {
+  const { fake, bridge, standings } = await connected(t);
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const left = await bridge.call("tools/call", 4, {
+    name: "iskron_channel",
+    arguments: { realm: "nks-dev", action: "leave" },
+  });
+  assert.ok(!left.result?.isError, JSON.stringify(left));
+  const path = join(
+    standings,
+    readdirSync(standings).find((f) => f.endsWith(".hold")),
+  );
+  const rec = JSON.parse(readFileSync(path, "utf8"));
+  writeFileSync(path, JSON.stringify({ ...rec, at: Date.now() - 5 * 3600 * 1000 }));
+  bridge.proc.kill("SIGTERM");
+  await waitFor(
+    () => bridge.proc.exitCode !== null || bridge.proc.signalCode !== null,
+    "the bridge to exit",
+  );
+  const kept = JSON.parse(readFileSync(path, "utf8"));
+  assert.ok(Date.now() - kept.at < 60_000, `the record's at is the socket's last life: ${kept.at}`);
+  assert.equal(kept.left, true, "still a left seat");
 });
 
 test("a stale hold record is dropped quietly: no dead-token alarm, the place is taken anew; an expired record is never read", async (t) => {

@@ -1,9 +1,9 @@
-.PHONY: check deps validate check-bundles check-surface lint format format-check typecheck test test-coverage test-watchdog test-extension test-opencode test-codex test-stand test-update build build-js check-js surface widgets check-widgets hooks plugin
+.PHONY: check deps validate check-bundles check-surface lint format format-check typecheck test test-coverage test-watchdog test-extension test-opencode test-codex test-stand test-update build build-js build-release check-js check-frozen surface widgets check-widgets hooks plugin
 
 # Run the full CI gate locally: frontmatter contract + bundle sync + surface lint
 # + the JS ladder (lint → format → types → shipped outputs in sync → the
 # behavioural suites of the shipped code). Needs `make deps` once per clone.
-check: validate check-bundles check-surface check-widgets lint format-check typecheck check-js test
+check: validate check-bundles check-surface check-widgets lint format-check typecheck check-js check-frozen test
 
 # The dev toolchain for js/ — typescript, esbuild, eslint, prettier, and pi's
 # own types, which the extension is checked against. Nothing here ships: the
@@ -42,32 +42,32 @@ typecheck:
 
 # Every behavioural suite, on one floor: the shipped file claims Node 22 (it
 # takes the global WebSocket), and CI holds the run there so the claim stays
-# proven. Suites run against the BUILT outputs — run `make build-js` first, or
-# `make check-js` to be told they are stale.
+# proven. Suites run against the dev build of js/ in dist/dev (js/tests/built.mjs),
+# rebuilt first — the committed outputs are the release build, not this tree's.
 # ISKRON_BRIDGE_NO_UPDATE: под пробами мост не выравнивает настоящий дом и не
 # ходит к релизам; проба самообновления снимает выключатель сама, на подставном
 # доме и подставных релизах.
-test:
+test: build-js
 	@ISKRON_BRIDGE_NO_UPDATE=1 node --test --test-timeout=300000 js/tests/*.test.mjs
 
-test-coverage:
+test-coverage: build-js
 	@ISKRON_BRIDGE_NO_UPDATE=1 node --test --test-timeout=300000 --experimental-test-coverage js/tests/*.test.mjs
 
 # One suite at a time, for the red-probe discipline (see AGENTS.md).
-test-watchdog:
+test-watchdog: build-js
 	@ISKRON_BRIDGE_NO_UPDATE=1 node --test --test-timeout=120000 js/tests/standing.test.mjs
 
-test-extension:
+test-extension: build-js
 	@ISKRON_BRIDGE_NO_UPDATE=1 node --test js/tests/extension.test.mjs
 
-test-opencode:
+test-opencode: build-js
 	@ISKRON_BRIDGE_NO_UPDATE=1 node --test js/tests/opencode.test.mjs
 
 # Probes for the bridge's own tool iskron_stand and for the self-update.
-test-stand:
+test-stand: build-js
 	@ISKRON_BRIDGE_NO_UPDATE=1 node --test --test-timeout=120000 js/tests/stand.test.mjs
 
-test-update:
+test-update: build-js
 	@ISKRON_BRIDGE_NO_UPDATE=1 node --test --test-timeout=120000 js/tests/update.test.mjs
 
 # Probe for the Codex delivery — the plugin manifest and the repo marketplace.
@@ -78,14 +78,27 @@ test-codex:
 	@ISKRON_BRIDGE_NO_UPDATE=1 node --test js/tests/codex-plugin.test.mjs
 
 # Build the shipped JS from js/: one file for the bridge, both watchdogs and
-# doctor (into both skills that carry it), the pi extension, and the roadmap
-# template with its renderer inlined. Outputs are committed derived artifacts.
+# doctor, the OpenCode plugin, the pi extension, and the roadmap template with
+# its renderer inlined — as the dev build, into dist/dev (outside the index):
+# probes and live runs take it. Every install channel takes main, so the
+# committed outputs are the release build, written only by build-release
+# (the release job, bundle-sync), never by a working copy (#6650).
 build-js:
 	@node js/build.mjs
 
-# Verify the committed outputs are byte-identical to a fresh build from js/.
+build-release:
+	@ISKRON_BUILD_CHANNEL=release node js/build.mjs
+	@bash scripts/build-skills.sh
+
+# The committed outputs are the release build: no dev mark, the bridge marked release
+# (the bytes of releases up to 7.2.7, unmarked, pass as their legacy).
 check-js:
 	@node js/build.mjs --check
+
+# The lock on them: a branch other than the release job's must leave them as its base has them.
+BASE ?= origin/main
+check-frozen:
+	@bash scripts/check-outputs-frozen.sh $(BASE)
 
 # Refresh fixtures/surface.json from the live server (network + authorized grant).
 surface:
@@ -101,8 +114,8 @@ widgets:
 check-widgets:
 	@node scripts/render-widgets.mjs --check
 
-# Regenerate every committed derived artifact: the shipped JS, then the
-# <name>.skill bundles that carry it.
+# The dev build of the shipped JS, then the <name>.skill bundles from skills/
+# (they carry the committed — release — outputs).
 build: build-js
 	@bash scripts/build-skills.sh
 

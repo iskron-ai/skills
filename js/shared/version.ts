@@ -20,6 +20,9 @@ export const releaseBuild = (): boolean => CHANNEL_MARK.endsWith(":release");
 /** Текст другой копии — сборка выпуска. Метка собрана по частям: в выходе её буквы стоят только у выпуска. */
 export const releaseBuildIn = (text: string): boolean =>
   text.includes(`"${["iskron-build", "release"].join(":")}"`);
+/** Текст другой копии — явно dev-сборка. Копия без метки (выпуски до 7.2.8) — ни то ни другое. */
+export const devBuildIn = (text: string): boolean =>
+  text.includes(`"${["iskron-build", "dev"].join(":")}"`);
 
 /** Строка сборки `vX.Y.Z+хеш` для файла, чей `import.meta.url` передан. */
 export function buildOf(selfUrl: string): string {

@@ -47,6 +47,7 @@ import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
+import { BUILT_EXTENSION } from "./built.mjs";
 import {
   addressed,
   addressedBody,
@@ -76,7 +77,7 @@ import {
 } from "./room-frames.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const SOURCE = process.env.ISKRON_EXTENSION || join(HERE, "..", "..", "extensions", "iskron.js");
+const SOURCE = process.env.ISKRON_EXTENSION || BUILT_EXTENSION;
 const FAKE_BRIDGE = join(HERE, "fake-bridge.mjs");
 const MISSING_BRIDGE = join(HERE, "no-such-bridge.mjs");
 
@@ -227,9 +228,10 @@ const alive = (pid) => {
 
 /** A bridge script text distinguishable by version and, optionally, a trailing comment. */
 // A packaged bridge is a release build unless said otherwise: only such refreshes the home (#6650).
+// channel null — копия без метки, как выпуски до 7.2.8.
 const bridgeText = (v, note = "", channel = "release") =>
   `#!/usr/bin/env node\nconst VERSION = "${v}"; // x-release-please-version${note}\n` +
-  `var CHANNEL_MARK = "iskron-build:${channel}";\n`;
+  (channel ? `var CHANNEL_MARK = "iskron-build:${channel}";\n` : "");
 
 /**
  * A package sandbox for `refreshHomeBridge()`, own to one test: `extensions/iskron.mjs`
@@ -1388,13 +1390,21 @@ test("refreshHomeBridge: a strictly newer home copy is kept, aloud", async () =>
   assert.match(rec.said(), /дома мост 7\.1\.0, в поставке 6\.0\.0 — домашний новее, не трогаю/);
 });
 
-// Rule 8, главный случай: версии равны, а байты нет — ровно то, что даёт
-// установка из git-источника (ветка едет, релизная константа стоит на месте).
-// Сверка по версии эту замену пропустила бы всегда; сверка по байтам — ловит.
-test("refreshHomeBridge: equal versions but different bytes replace the home copy", async () => {
+// Rule 8, главный случай: версии равны, а байты нет. Замена — только поверх явной
+// dev-сборки (#147 [145]); дом-выпуск той же версии — и без метки, как выпуски до
+// 7.2.8, — не переписывается: иначе мост main прошёл бы мимо релиза по всем машинам.
+test("refreshHomeBridge: equal versions replace only a dev home; a release or unmarked home of that version stays", async () => {
+  for (const kept of [bridgeText("6.0.0", " — выпуск"), bridgeText("6.0.0", " — до меток", null)]) {
+    const box = packageSandbox();
+    writeFileSync(box.packaged, bridgeText("6.0.0", " — из ветки А"));
+    writeFileSync(box.homeBridge, kept);
+    const rec = await runRefresh(box, { ISKRON_MCP_READY_WAIT_MS: 1 });
+    assert.equal(readFileSync(box.homeBridge, "utf8"), kept, "дом-выпуск переписан той же версией");
+    assert.ok(saidNoneOf(rec), "заговорили о подмене, которой нет");
+  }
   const box = packageSandbox();
   writeFileSync(box.packaged, bridgeText("6.0.0", " — из ветки А"));
-  writeFileSync(box.homeBridge, bridgeText("6.0.0", " — из ветки Б"));
+  writeFileSync(box.homeBridge, bridgeText("6.0.0", " — из ветки Б", "dev"));
   const rec = await runRefresh(box, { ISKRON_MCP_READY_WAIT_MS: 1 });
   assert.equal(
     readFileSync(box.homeBridge, "utf8"),
@@ -1451,13 +1461,23 @@ test("refreshHomeBridge: a packaged dev build leaves the home copy untouched", a
   }
 });
 
+// #147 [140] 2: at an equal version the channel decides — a release packaged bridge
+// replaces a dev home (a machine caught as in #6650 is healed).
+test("refreshHomeBridge: a release packaged bridge replaces a dev home of the same version", async () => {
+  const box = packageSandbox();
+  writeFileSync(box.packaged, bridgeText("6.0.0"));
+  writeFileSync(box.homeBridge, bridgeText("6.0.0", "", "dev"));
+  await runRefresh(box, { ISKRON_MCP_READY_WAIT_MS: 1 });
+  assert.equal(readFileSync(box.homeBridge, "utf8"), bridgeText("6.0.0"), "дом остался dev");
+});
+
 // Rule 8, побочное условие обеих замен: временный файл — `.tmp-<pid>` — существует
 // ровно между записью и rename; после успеха в каталоге не должно остаться ничего,
 // кроме итогового iskron-bridge.mjs.
 test("refreshHomeBridge: a successful replacement leaves no temp file behind", async () => {
   const box = packageSandbox();
   writeFileSync(box.packaged, bridgeText("6.0.0", " — новые байты"));
-  writeFileSync(box.homeBridge, bridgeText("6.0.0", " — старые байты"));
+  writeFileSync(box.homeBridge, bridgeText("6.0.0", " — старые байты", "dev"));
   await runRefresh(box, { ISKRON_MCP_READY_WAIT_MS: 1 });
   const left = readdirSync(box.homeBridgeDir);
   assert.deepEqual(left, ["iskron-bridge.mjs"], `каталог держит лишнее: ${left.join(", ")}`);

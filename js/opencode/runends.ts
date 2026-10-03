@@ -152,7 +152,7 @@ export function createRunEnds(): RunEnds {
         !READ_ACTIONS[name]?.has(String(args.action ?? ""))
       )
         throw new Error(
-          `Отказано (плагин): запустивший отпустил эту дочернюю сессию — поручение кончено, место снято; ` +
+          `Отказано (плагин): ${whys.get(session) ?? "запустивший отпустил эту дочернюю сессию"} — поручение кончено, место снято; ` +
             `${name} не пойдёт ни её местом, ни местом запустившего, и встать снова нельзя.`,
         );
       if (!ended.has(session) || name === STAND_TOOL || READ_TOOLS.has(name)) return;

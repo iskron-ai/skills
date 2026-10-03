@@ -23,6 +23,7 @@ import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
+import { BUILT_BRIDGE } from "./built.mjs";
 import { startFakeNks } from "./fake-nks.mjs";
 
 // Чем запускать поставку: node по умолчанию; ISKRON_NODE подставляет другой рантайм
@@ -32,17 +33,7 @@ const NODE = process.env.ISKRON_NODE || process.execPath;
 // Defaults to the source of truth; ISKRON_BRIDGE_PATH points the same suite at
 // another copy — a built bundle, an installed one, or a past revision when you
 // want to see a test fail on the defect it was written for.
-const BRIDGE =
-  process.env.ISKRON_BRIDGE_PATH ||
-  join(
-    dirname(fileURLToPath(import.meta.url)),
-    "..",
-    "..",
-    "skills",
-    "establish-mcp",
-    "scripts",
-    "iskron.mjs",
-  );
+const BRIDGE = process.env.ISKRON_BRIDGE_PATH || BUILT_BRIDGE;
 const INIT_PARAMS = {
   protocolVersion: "2025-06-18",
   capabilities: {},
