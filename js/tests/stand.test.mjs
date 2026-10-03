@@ -1553,12 +1553,50 @@ test("two graphs: the busy line of a place beside names it @handle:name, not its
   const said = await stand({ realm: DRUGOY, status: "место рядом" });
   const text = textOf(said);
   assert.ok(!said.result?.isError, text);
-  assert.equal(text.split("\n")[0], "занятость @tester:proba-b: место рядом", text);
+  // The address is the bridge's derivation from the primary's handle — said so, not passed off as the hello's.
+  assert.equal(
+    text.split("\n")[0],
+    "занятость @tester:proba-b (адрес выведен, hello его не называл): место рядом",
+    text,
+  );
   assert.ok(
     !text.split("\n")[0].includes(keyB),
     `the record key must not stand in for the place:\n${text}`,
   );
   assert.equal(fake.state.status, "место рядом");
+});
+
+// Before any hello the primary has no address to derive the handle from (#6630): the
+// answer names the place and says its address is not there yet — not the record key.
+test("two graphs: before any hello the busy line of a place beside names the place and says it has no address yet, not its record key", async (t) => {
+  const { fake, bridge } = await ready(t);
+  const stand = (args) => bridge.call("tools/call", { name: "iskron_stand", arguments: args });
+  await fake.control({ ws_mute: true }); // the channel's socket opens, no hello comes
+  const a = await stand({ realm: NKS, karta: 931, name: "proba" });
+  assert.ok(!a.result?.isError, textOf(a));
+  const b = await stand({ realm: DRUGOY, karta: 48, name: "proba-b" });
+  assert.ok(!b.result?.isError, `the second graph's place must stand beside:\n${textOf(b)}`);
+  const said = await stand({ realm: DRUGOY, status: "до hello" });
+  const text = textOf(said);
+  assert.ok(!said.result?.isError, text);
+  assert.ok(!text.split("\n")[0].includes("proba-b--48--"), `the record key stands in:\n${text}`);
+  assert.equal(
+    text.split("\n")[0],
+    "занятость места «proba-b» (адреса @handle:name ещё нет — hello не пришёл): до hello",
+    text,
+  );
+  // The socket reopens, the hello lists the places: the address is the platform's now.
+  const known = new Set(fake.state.ws);
+  await fake.control({ ws_close: 1011 });
+  const deadline = Date.now() + 10_000;
+  let after = "";
+  while (!after.startsWith("занятость @tester:proba-b:")) {
+    if (Date.now() > deadline) throw new Error(`no hello-named address:\n${after}`);
+    await new Promise((r) => setTimeout(r, 200));
+    if ([...fake.state.ws].some((s) => !known.has(s)))
+      after = textOf(await stand({ realm: DRUGOY, status: "после hello" })).split("\n")[0];
+  }
+  assert.equal(after, "занятость @tester:proba-b: после hello");
 });
 
 test("two graphs: each write is signed by the place of its own graph, also after a session turnover", async (t) => {
