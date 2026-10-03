@@ -1,5 +1,12 @@
 # Changelog
 
+## [7.2.3](https://github.com/iskron-ai/skills/compare/v7.2.2...v7.2.3) (2026-10-03)
+
+
+### Bug Fixes
+
+* **opencode,bridge:** роль владельца, запись ребёнка только спутником, передача демона, перенос с детьми ([#312](https://github.com/iskron-ai/skills/issues/312)) ([53798a1](https://github.com/iskron-ai/skills/commit/53798a10acc2712738f650898930abb93f65838a))
+
 ## [7.2.2](https://github.com/iskron-ai/skills/compare/v7.2.1...v7.2.2) (2026-10-03)
 
 
