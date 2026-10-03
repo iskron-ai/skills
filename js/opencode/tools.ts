@@ -44,7 +44,7 @@ import { createLogin } from "./login.ts";
 import { takeLostMarker, writeLostMarker } from "./marker.ts";
 import { createMoves } from "./moves.ts";
 import type { Context } from "./plugin.ts";
-import { childWriteRefusal, createRunEnds } from "./runends.ts";
+import { childWriteRefusal, createRunEnds, declaresAction } from "./runends.ts";
 import { asSatellite, heldPlace, type SatelliteSlot, STAND_TOOL, standsBy } from "./satellite.ts";
 import { statusLines, statusTool } from "./status.ts";
 
@@ -305,6 +305,7 @@ export async function setupTools(
     editor.add(statusTool(statusText));
     for (const t of state.listed) {
       const name = String(t.name);
+      const asks = declaresAction(t.inputSchema); // «?» — справка только у тула с action
       editor.add({
         name,
         description: String(t.description ?? ""),
@@ -317,12 +318,12 @@ export async function setupTools(
             (await leads.release(String(tool.sessionID), name, input ?? {})) ??
             adopt.revoked(name, input ?? {});
           if (word) return { content: word };
-          runEnds.guard(String(tool.sessionID), name, input ?? {}); // не мостом корня (#6361)
+          runEnds.guard(String(tool.sessionID), name, input ?? {}, asks); // не мостом корня (#6361)
           const slot = await slotFor(String(tool.sessionID));
           // Ребёнок мостом корня — только читает; встаёт — своим спутником в callThrough (#6550 п.2).
           const no =
             slot.session !== tool.sessionID && !standsBy(name, input ?? {})
-              ? childWriteRefusal(slot.place?.name ?? null, name, input ?? {})
+              ? childWriteRefusal(slot.place?.name ?? null, name, input ?? {}, asks)
               : null;
           if (no) throw new Error(no);
           // Вызов в полёте — занятость: мост посреди вызова жнецу не отдаётся,
@@ -359,7 +360,7 @@ export async function setupTools(
     // родительское с сокета, а её register переписывал бы привязку корня (#5154).
     if (standsBy(name, args) && slot.session !== sessionID) {
       // Место родителя неизвестно — не обычное место и не место рядом, а отказ (#6550 п.2).
-      if (!slot.place) throw new Error(childWriteRefusal(null, name, args) ?? "");
+      if (!slot.place) throw new Error(childWriteRefusal(null, name, args, false) ?? "");
       slot = children.childSlot(sessionID, slot);
       await awaitReady(slot); // свежий детский мост может запросить вход — та же гонка, что у корня
     }
@@ -428,7 +429,8 @@ export async function setupTools(
   const launcher = createLauncher<Slot>({
     rootOf,
     childSlot(sessionID, root) {
-      if (!slots.get(root)?.place) throw new Error(childWriteRefusal(null, STAND_TOOL, {}) ?? "");
+      if (!slots.get(root)?.place)
+        throw new Error(childWriteRefusal(null, STAND_TOOL, {}, false) ?? "");
       return children.childSlot(sessionID, slots.get(root)); // без места корня — отказ (#6550 п.2)
     },
     async call(slot, name, args, sessionID) {
