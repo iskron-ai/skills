@@ -1,5 +1,14 @@
 # Changelog
 
+## [7.2.8](https://github.com/iskron-ai/skills/compare/v7.2.7...v7.2.8) (2026-10-03)
+
+
+### Bug Fixes
+
+* **bridge:** запись держания переживает уход сессии — срок от ухода сокета, уборка соседа её не стирает ([#326](https://github.com/iskron-ai/skills/issues/326)) ([bc0c7e2](https://github.com/iskron-ai/skills/commit/bc0c7e2f8af0c28132d6a1983752f4145e91134c))
+* **opencode,bridge:** без потолка простоя, отмена кончает спутника, dev-сборка не трогает дом ([#325](https://github.com/iskron-ai/skills/issues/325)) ([a4d5160](https://github.com/iskron-ai/skills/commit/a4d5160423109d4a1a37a29757baa642a1c4dfc5))
+* **opencode,bridge:** ведущий кончается словом на evicted, пауза спутника до срока держания, main несёт сборку выпуска ([#328](https://github.com/iskron-ai/skills/issues/328)) ([12b942c](https://github.com/iskron-ai/skills/commit/12b942c5bece8bd0990645784a0f7de2505768a0))
+
 ## [7.2.7](https://github.com/iskron-ai/skills/compare/v7.2.6...v7.2.7) (2026-10-03)
 
 

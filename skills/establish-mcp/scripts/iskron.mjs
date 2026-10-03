@@ -4,9 +4,10 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-var VERSION = "7.2.7";
-var CHANNEL_MARK = "iskron-build:dev";
+var VERSION = "7.2.8";
+var CHANNEL_MARK = "iskron-build:release";
 var releaseBuild = () => CHANNEL_MARK.endsWith(":release");
+var devBuildIn = (text) => text.includes(`"${["iskron-build", "dev"].join(":")}"`);
 function buildOf(selfUrl) {
   try {
     const src = readFileSync(fileURLToPath(selfUrl));
@@ -2613,6 +2614,7 @@ function holdSocket(o) {
   let ws = null;
   let handing = null;
   let lastLife = 0;
+  let heardAt = 0;
   let pingMs = 0;
   let runtimeSeesPings = false;
   let lastTick = 0;
@@ -2620,7 +2622,7 @@ function holdSocket(o) {
   const onPing = (m) => {
     const from = m?.websocket;
     if (!ws || from !== void 0 && from !== ws) return;
-    lastLife = Date.now();
+    lastLife = heardAt = Date.now();
     runtimeSeesPings = true;
   };
   diagnostics.subscribe?.(PING_CHANNEL, onPing);
@@ -2641,12 +2643,12 @@ function holdSocket(o) {
     let gone = false;
     sock.addEventListener("ping", () => {
       if (ws !== sock) return;
-      lastLife = Date.now();
+      lastLife = heardAt = Date.now();
       runtimeSeesPings = true;
     });
     sock.addEventListener("message", (e) => {
       if (stopped || ws !== sock) return;
-      lastLife = Date.now();
+      lastLife = heardAt = Date.now();
       const raw = typeof e.data === "string" ? e.data : L("[двоичный кадр]", "[binary frame]");
       if (handing) return handing.onFrame(raw);
       let frame2 = null;
@@ -2769,6 +2771,9 @@ function holdSocket(o) {
     },
     get alive() {
       return !stopped && !!ws && (ws.readyState === 0 || ws.readyState === 1);
+    },
+    get heardAt() {
+      return heardAt;
     }
   };
 }
@@ -3195,6 +3200,7 @@ var SKILLS_ROOT_ENV = "ISKRON_SKILLS_ROOT";
 var HOSTED_CLIENTS = /* @__PURE__ */ new Set([PI_CLIENT, OPENCODE_CLIENT]);
 
 // js/bridge/repeat.ts
+var OWN_CALL_PREFIX = "iskron-bridge-call-";
 var READ_TOOLS = /* @__PURE__ */ new Set([
   "iskron_look",
   "iskron_orient",
@@ -3211,7 +3217,12 @@ function repeatable(msg) {
   if (msg.method !== "tools/call") return false;
   const name = String(msg.params?.name ?? "");
   if (READ_TOOLS.has(name)) return true;
-  return !!SAFE_ACTIONS[name]?.has(String(msg.params?.arguments?.action ?? ""));
+  const action = String(msg.params?.arguments?.action ?? "");
+  if (ownPlaceEnd(msg, name, action)) return true;
+  return !!SAFE_ACTIONS[name]?.has(action);
+}
+function ownPlaceEnd(msg, name, action) {
+  return name === "iskron_channel" && (action === "revoke" || action === "close") && String(msg.id ?? "").startsWith(OWN_CALL_PREFIX);
 }
 
 // js/bridge/transport.ts
@@ -3947,7 +3958,7 @@ function leftOnDisk(key) {
     return false;
   }
 }
-function writeHoldRecord(key, rec4, paused = false) {
+function writeHoldRecord(key, rec4, paused = false, at2 = Date.now()) {
   if (CFG.satellite && !paused) return;
   try {
     const session = H.session ?? rec4.session;
@@ -3958,7 +3969,7 @@ function writeHoldRecord(key, rec4, paused = false) {
         ...rec4,
         session: session ?? void 0,
         left: left || void 0,
-        at: Date.now()
+        at: at2
       }) + "\n",
       { mode: 384 }
     );
@@ -4301,6 +4312,8 @@ var H2 = scoped(() => ({
   /** Каталог сессии, из которого занимается место (cwd в iskron_stand), — в запись держания, для возврата по каталогу (resume.ts). */
   standCwd: null,
   holder: null,
+  /** последний знак службы сокета, отпущенного уходом (parkStanding), — срок записи держания от него (holdkeep.ts) */
+  heardAt: 0,
   /** дверь основного места — того, ради которого взят сокет */
   door: null,
   currentKey: null,
@@ -5022,6 +5035,7 @@ function holdStanding(url, statusUrl2) {
 }
 function parkStanding(reason) {
   if (!H2.holder?.alive || !H2.currentKey) return null;
+  H2.heardAt = Math.max(H2.heardAt, H2.holder.heardAt);
   H2.holder.close(reason);
   H2.holder = null;
   H2.parked = true;
@@ -5704,7 +5718,7 @@ function crossPlaceRefusal(msg) {
 }
 var seq = 0;
 async function callTool(name, args) {
-  const id = `iskron-bridge-call-${++seq}`;
+  const id = `${OWN_CALL_PREFIX}${++seq}`;
   const msg = {
     jsonrpc: "2.0",
     id,
@@ -6104,13 +6118,15 @@ var isSymlink = (path) => {
     return false;
   }
 };
-var versionOf = (path) => {
+var readBytes = (path) => {
   try {
-    return versionIn(readFileSync16(path, "utf8"));
+    return readFileSync16(path);
   } catch {
-    return null;
+    return Buffer.alloc(0);
   }
 };
+var readText = (path) => readBytes(path).toString("utf8");
+var versionOf = (path) => versionIn(readText(path));
 function syncHome(self = selfPath()) {
   const out6 = { copied: [] };
   const home = homeBridgePath();
@@ -6125,7 +6141,8 @@ function syncHome(self = selfPath()) {
   if (isSymlink(home)) return out6;
   const homeVersion = versionOf(home);
   const cmp = homeVersion ? compareVersions(VERSION, homeVersion) : 1;
-  if (cmp > 0 && releaseBuild()) {
+  const healsDev = cmp === 0 && devBuildIn(readText(home)) && !mine.equals(readBytes(home));
+  if ((cmp > 0 || healsDev) && releaseBuild()) {
     writeAtomic(home, mine);
     out6.copied.push(home);
     const plugin = opencodePluginPath();
@@ -6382,6 +6399,17 @@ function startEngine(cfg, opts = {}) {
 // js/bridge/session.ts
 import { createInterface as createInterface2 } from "node:readline";
 
+// js/bridge/audience.ts
+function refusedAudience(upstream) {
+  const head = `upstream refuses even a freshly obtained access token (${upstream}) — not an expiry; the token's audience/resource may not match what the server validates`;
+  const s2 = loadStore();
+  if (!s2.tokens?.by_code) {
+    return `${head} (operator lever: ISKRON_BRIDGE_RESOURCE), or the server's token validation is off`;
+  }
+  const resource = s2.meta ? resourceOf(s2.meta) : CFG.serverUrl;
+  return `${head}: this grant came by sign-in by code through client ${s2.tokens.client_id ?? "?"}, so its audience is that client's default audience on the sign-in server, which must be ${resource} — a move for the operator of the sign-in server; ISKRON_BRIDGE_RESOURCE does not reach a grant by code`;
+}
+
 // js/bridge/caseexit.ts
 var LEAVE_CAP_MS = Number(process.env.ISKRON_CASE_LEAVE_MS) || 1500;
 var joined = scoped(() => /* @__PURE__ */ new Map());
@@ -6422,40 +6450,36 @@ async function leaveJoinedCases() {
       `case leave at the run's end exceeded ${LEAVE_CAP_MS} ms — the place goes, the rest lapse by term`
     );
 }
-var satellitePlaces = () => CFG.satellite ? [state.standing, ...extraPlaces().map((p) => p.standing)].filter(
-  (s2) => !!s2?.name
-) : [];
+var satellitePlaces = () => CFG.satellite ? [
+  // Вытесненное (4000) место держит другой — законный take: его revoke снял бы чужое.
+  H2.evictedKey && H2.evictedKey === H2.currentKey ? null : state.standing,
+  ...extraPlaces().map((p) => p.standing)
+].filter((s2) => !!s2?.name) : [];
 async function revokeSatellitePlaces(places) {
-  if (!places.length) return;
+  if (!places.length) return [];
+  const failed = new Set(places.map((s2) => s2.name));
   const revokes = places.map(
-    (s2) => callTool("iskron_channel", { action: "revoke", realm: s2.realm, karta: s2.karta, standing: s2.name }).then(
-      (r) => log(
-        r.isError ? `could not revoke ${s2.name} at the run's end: ${r.text.slice(0, 120)}` : `revoked ${s2.name} in ${s2.realm} at the run's end (#6593)`
-      )
-    ).catch((e) => log(`could not revoke ${s2.name} at the run's end: ${e.message}`))
+    (s2) => callTool("iskron_channel", { action: "revoke", realm: s2.realm, karta: s2.karta, standing: s2.name }).then((r) => {
+      if (!r.isError || ALREADY_CLOSED.test(r.text)) {
+        failed.delete(s2.name);
+        return log(`revoked ${s2.name} in ${s2.realm} at the run's end (#6593)`);
+      }
+      log(`place ${s2.name} NOT revoked at the run's end: ${r.text.slice(0, 120)}`);
+    }).catch((e) => log(`place ${s2.name} NOT revoked at the run's end: ${e.message}`))
   );
   if (!await underCap(Promise.allSettled(revokes)))
     log(
       `revoke at the run's end exceeded ${LEAVE_CAP_MS} ms — the place lapses by the channel's term`
     );
+  return [...failed];
 }
+var ALREADY_CLOSED = /закрыт|снят|отозван|closed|revoked|not found|не найден/i;
 async function underCap(work) {
   let timer;
   const cap = new Promise((r) => timer = setTimeout(() => r("cap"), LEAVE_CAP_MS));
   const got = await Promise.race([work, cap]);
   clearTimeout(timer);
   return got !== "cap";
-}
-
-// js/bridge/audience.ts
-function refusedAudience(upstream) {
-  const head = `upstream refuses even a freshly obtained access token (${upstream}) — not an expiry; the token's audience/resource may not match what the server validates`;
-  const s2 = loadStore();
-  if (!s2.tokens?.by_code) {
-    return `${head} (operator lever: ISKRON_BRIDGE_RESOURCE), or the server's token validation is off`;
-  }
-  const resource = s2.meta ? resourceOf(s2.meta) : CFG.serverUrl;
-  return `${head}: this grant came by sign-in by code through client ${s2.tokens.client_id ?? "?"}, so its audience is that client's default audience on the sign-in server, which must be ${resource} — a move for the operator of the sign-in server; ISKRON_BRIDGE_RESOURCE does not reach a grant by code`;
 }
 
 // js/bridge/satellite.ts
@@ -6840,7 +6864,11 @@ async function flushUsage(place) {
   if (!place || !u || u === U.published) return;
   let timer;
   const cap = new Promise((r) => timer = setTimeout(() => r("cap"), FLUSH_CAP_MS));
-  const got = await Promise.race([publish(place, u), cap]);
+  const sent = publish(place, u).catch((e) => {
+    log(`usage: the last snapshot did not land before the place went — ${e.message}`);
+    return false;
+  });
+  const got = await Promise.race([sent, cap]);
   clearTimeout(timer);
   if (got === "cap")
     log(`usage: the last snapshot exceeded ${FLUSH_CAP_MS} ms before the place went`);
@@ -7198,7 +7226,15 @@ var resumeWords = {
 };
 
 // js/bridge/suspend.ts
-var S3 = scoped(() => ({ on: false }));
+var S3 = scoped(() => ({
+  on: false,
+  /** адрес, который повернул connect перевзвода (и проигравший потолок — тоже) */
+  turned: null,
+  /** адрес, записанный в запись паузы последним */
+  written: "",
+  write: null,
+  connect: null
+}));
 var suspended = () => S3.on;
 function localSuspend(msg) {
   if (msg?.method !== "iskron/suspend") return null;
@@ -7213,24 +7249,68 @@ function localSuspend(msg) {
       })
     );
   const cases = joinedCases();
-  writeHoldRecord(
-    key,
-    {
-      realm: s2.realm,
-      karta: s2.karta,
-      name: s2.name,
-      url,
-      statusUrl: statusUrl2,
-      client: harnessName(),
+  const write = () => {
+    const at2 = S3.turned ?? { url, statusUrl: statusUrl2 };
+    S3.written = at2.url;
+    writeHoldRecord(
       key,
-      session: sessionOfBridge() ?? void 0,
-      cases
-    },
-    true
-  );
+      {
+        realm: s2.realm,
+        karta: s2.karta,
+        name: s2.name ?? "",
+        url: at2.url,
+        statusUrl: at2.statusUrl,
+        client: harnessName(),
+        key,
+        session: sessionOfBridge() ?? void 0,
+        cases
+      },
+      true
+    );
+  };
+  S3.write = write;
+  write();
   S3.on = true;
-  log(`satellite paused for a plugin reload: ${key}, cases ${cases.length} — place and cases kept`);
-  return Promise.resolve(answer({ suspended: true, key, cases: cases.length }));
+  return rearmForPause(s2).then((rearmed) => {
+    if (rearmed) write();
+    log(
+      `satellite paused for a plugin reload: ${key}, cases ${cases.length} — place and cases kept, idle window ${rearmed ? `${PAUSE_TTL_S} s` : "unchanged"}`
+    );
+    return answer({ suspended: true, key, cases: cases.length });
+  });
+}
+var PAUSE_TTL_S = Math.floor(HOLD_RECORD_MAX_AGE_MS / 1e3);
+var REARM_CAP_MS = 1e3;
+async function rearmForPause(s2) {
+  const name = s2.name ?? "";
+  if (!parkStanding(L("пауза спутника", "satellite pause"))) return false;
+  const args = {
+    action: "connect",
+    realm: s2.realm,
+    karta: s2.karta,
+    name,
+    ...placeFields({ realm: s2.realm, karta: String(s2.karta), name }),
+    ttl_seconds: PAUSE_TTL_S
+  };
+  const connect5 = callTool("iskron_channel", args).then((r2) => {
+    if (!r2.isError && H2.currentUrl) S3.turned = { url: H2.currentUrl, statusUrl: H2.currentStatusUrl };
+    return r2;
+  });
+  S3.connect = connect5;
+  const r = await Promise.race([connect5, sleep(REARM_CAP_MS).then(() => null)]);
+  if (!r || r.isError)
+    log(`satellite pause: idle window not re-armed — ${r?.text ?? "no answer yet"}`);
+  return !!r && !r.isError && !!S3.turned;
+}
+var SETTLE_CAP_MS = 3e3;
+async function pauseSettled() {
+  if (!S3.on || !S3.connect) return;
+  await Promise.race([S3.connect.catch(() => {
+  }), sleep(SETTLE_CAP_MS)]);
+  if (S3.turned && S3.turned.url !== S3.written) {
+    S3.write?.();
+    log(`satellite pause: the late re-arm turned the address — the pause record follows it`);
+  }
 }
 function afterResume(key) {
   if (!CFG.satellite || !key) return;
@@ -8235,6 +8315,64 @@ function narrowToolList(reply2) {
   return { ...reply2, result: { ...reply2.result, tools: shown } };
 }
 
+// js/bridge/holdkeep.ts
+function keepHoldRecord() {
+  const s2 = state.standing;
+  const key = H2.currentKey;
+  if (!s2 || !key || !H2.currentUrl) return;
+  const alive2 = !!H2.holder?.alive;
+  const at2 = alive2 ? Date.now() : Math.max(H2.holder?.heardAt ?? 0, H2.heardAt);
+  const ch = { url: H2.currentUrl, statusUrl: H2.currentStatusUrl, cwd: H2.standCwd };
+  const was = readHoldRecord(key, true);
+  if (was && at2 > (was.at ?? 0))
+    writeHoldRecord(
+      key,
+      {
+        ...was,
+        realm: s2.realm,
+        karta: s2.karta,
+        name: s2.name ?? "",
+        url: ch.url,
+        statusUrl: ch.statusUrl,
+        cwd: ch.cwd ?? was.cwd,
+        client: harnessName(),
+        key
+      },
+      false,
+      at2
+    );
+  if (!alive2) return;
+  for (const p of extraPlaces()) {
+    const r = readHoldRecord(p.door.key, true);
+    if (r) rememberExtraStatus(p.door.key, { ...ch, cwd: ch.cwd ?? r.cwd }, r.status ?? "");
+  }
+}
+
+// js/bridge/runend.ts
+var R3 = scoped(() => ({ run: null }));
+function closeRun(why, handover) {
+  return R3.run ??= (async () => {
+    const addr = statusAddress();
+    const places = satellitePlaces();
+    const paused = suspended();
+    const closing = (!handover || CFG.satellite) && !paused;
+    const spent = closing || paused ? usagePlace() : null;
+    if (!CFG.satellite) keepHoldRecord();
+    releaseStanding(why, CFG.satellite && !paused);
+    await Promise.all([paused ? null : leaveJoinedCases(), flushUsage(spent)]);
+    const failed = paused ? [] : await revokeSatellitePlaces(places);
+    if (addr && closing) await publishStatusTo(addr.url, "", 3e3).catch(() => {
+    });
+    return failed;
+  })();
+}
+function localEnd(msg) {
+  if (msg?.method !== "iskron/end") return null;
+  const answer = (result) => ({ jsonrpc: "2.0", id: msg.id, result });
+  if (!CFG.satellite || suspended()) return Promise.resolve(answer({ ended: false }));
+  return closeRun(L("конец прогона по слову плагина", "the run's end on the plugin's word"), false).then((failed) => answer({ ended: true, failed })).catch((e) => answer({ ended: false, word: e.message }));
+}
+
 // js/bridge/toolsync.ts
 import { createHash as createHash7 } from "node:crypto";
 var T = scoped(() => ({ served: null }));
@@ -8339,7 +8477,7 @@ async function deliver(msg) {
   }
 }
 async function deliverOne(msg) {
-  const local = localStatus(msg) ?? localLeave(msg) ?? localSuspend(msg);
+  const local = localStatus(msg) ?? localLeave(msg) ?? localSuspend(msg) ?? localEnd(msg);
   if (local) {
     emit(await local);
     return;
@@ -8540,31 +8678,6 @@ async function deliverOne(msg) {
   }
 }
 
-// js/bridge/holdkeep.ts
-function keepHoldRecord() {
-  const s2 = state.standing;
-  const key = H2.currentKey;
-  if (!s2 || !key || !H2.currentUrl || !H2.holder?.alive) return;
-  const ch = { url: H2.currentUrl, statusUrl: H2.currentStatusUrl, cwd: H2.standCwd };
-  const was = readHoldRecord(key, true);
-  if (was)
-    writeHoldRecord(key, {
-      ...was,
-      realm: s2.realm,
-      karta: s2.karta,
-      name: s2.name ?? "",
-      url: ch.url,
-      statusUrl: ch.statusUrl,
-      cwd: ch.cwd ?? was.cwd,
-      client: harnessName(),
-      key
-    });
-  for (const p of extraPlaces()) {
-    const r = readHoldRecord(p.door.key, true);
-    if (r) rememberExtraStatus(p.door.key, { ...ch, cwd: ch.cwd ?? r.cwd }, r.status ?? "");
-  }
-}
-
 // js/bridge/work.ts
 var W = scoped(() => ({ at: 0 }));
 function noteAgentWork(at2 = Date.now()) {
@@ -8643,19 +8756,11 @@ function openIn(io, origin, scope) {
   const windDown = async (why) => {
     debug(`${why} — winding down`);
     const handover = !!origin && handoverUnderway();
-    const addr = statusAddress();
-    const places = satellitePlaces();
     const paused = suspended();
-    const closing = (!handover || CFG.satellite) && !paused;
-    const spent = closing || paused ? usagePlace() : null;
-    if (!CFG.satellite) keepHoldRecord();
-    releaseStanding(why, CFG.satellite && !paused);
-    await Promise.all([paused ? null : leaveJoinedCases(), flushUsage(spent)]);
-    if (!paused) await revokeSatellitePlaces(places);
-    if (addr && closing) await publishStatusTo(addr.url, "", 3e3).catch(() => {
-    });
+    await closeRun(why, handover).catch((e) => log(`the run's end failed: ${e.message}`));
     if (handover) await Promise.race([Promise.allSettled([...pending2]), sleep(HANDOVER_WAIT_MS)]);
     else await Promise.allSettled([...pending2, ...tokenRequestsInFlight]);
+    if (paused) await pauseSettled();
     await flushStdout(io.output);
     if (origin) {
       releaseSatelliteClaims();
