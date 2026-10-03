@@ -9,10 +9,11 @@ import { hostname } from "node:os";
 import { basename, dirname, resolve } from "node:path";
 
 import { L } from "../shared/lang.ts";
+import { NAME_MAX } from "../shared/satname.ts";
 import { sessionCwd } from "../shared/scope.ts";
 
-/** Правило имени стояния у сервера (наблюдено отказом 400). */
-export const NAME_MAX = 48;
+// Правило имени стояния у сервера (наблюдено отказом 400) — общее с плагином OpenCode.
+export { NAME_MAX };
 
 /**
  * Роль как печатает доска — голые цифры либо сентинел (agent, me, realm-owner);

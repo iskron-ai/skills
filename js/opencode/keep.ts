@@ -16,7 +16,7 @@
 //     выходит — его простой снова считает жнец.
 import type { Bridge } from "../shared/bridge-client.ts";
 import { sleep } from "./bridge-io.ts";
-import type { LostEntry } from "./marker.ts";
+import type { LostEntry } from "./records.ts";
 import type { Say } from "./tools.ts";
 
 /** Такт сторожа слуха; переменная — шов для проб, не ручка человека. Инвариант: короче простоя жнеца (tools.ts). */

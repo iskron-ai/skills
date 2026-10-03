@@ -105,6 +105,8 @@ export async function startFakeNks(opts = {}) {
     revokeReplyDelayMs: 0, // revoke: the 4001 close goes out first, the HTTP answer this much later
     statusDelayMs: 0,
     statusDrop: 0, // this many next status POSTs: the request is read, the connection closed without an answer
+    mcpDrop: 0, // the same for this many next MCP POSTs
+    mcpDropAction: null, // …only those of this "<tool>:<action>"
     listDelayMs: 0,
     realmDelayMs: 0, // hold the realm list (iskron_realm list) answer open this long
     registerToolDelayMs: 0, // hold the iskron_channel register tool open this long
@@ -133,6 +135,7 @@ export async function startFakeNks(opts = {}) {
     // фейк примет СВЕРХ снимка. Проба, которая им пользуется, моделирует сервер,
     // которого ещё нет, и обязана сказать в комментарии, какой перемены ждёт.
     futureArgs: opts.futureArgs ?? {},
+    kartaTypes: {}, // роль → тип в шапке iskron_look (主 — роль владельца)
     // Каждый tools/call как пришёл, ДО отсева по схеме: что мост ПОСЛАЛ,
     // судят здесь, а не по тому, что фейк принял.
     calls: [],
@@ -372,6 +375,9 @@ export async function startFakeNks(opts = {}) {
         "helloPending", // what the next hello says was waiting in the queue
         "statusDelayMs", // hold the status POST open this long before answering
         "statusDrop", // close the connection under this many next status POSTs
+        "mcpDrop", // close the connection under this many next MCP POSTs (with mcpDropAction — only of that action)
+        "mcpDropAction",
+        "kartaTypes",
         "listDelayMs", // hold every board read (iskron_channel list) open this long
         "realmDelayMs", // hold the realm list (iskron_realm list) answer open this long
         "registerToolDelayMs", // hold the iskron_channel register tool open this long (возврат места при переподхвате)
@@ -646,6 +652,16 @@ export async function startFakeNks(opts = {}) {
       let sid = req.headers["mcp-session-id"];
       st.acceptLanguage.add(String(req.headers["accept-language"] ?? "")); // язык, которым мост просил прозу (#6080)
       const msg = JSON.parse(await body(req));
+      // A keep-alive connection the server already closed: the request is read and
+      // never processed, the socket shut with no HTTP answer (ECONNRESET, 7.2.2 live).
+      if (
+        st.mcpDrop > 0 &&
+        (!st.mcpDropAction ||
+          `${msg.params?.name}:${msg.params?.arguments?.action}` === st.mcpDropAction)
+      ) {
+        st.mcpDrop--;
+        return req.socket.destroy();
+      }
       if (msg.method === "tools/call" && msg.params) {
         const { name, arguments: sent } = msg.params;
         st.calls.push({ name, arguments: structuredClone(sent ?? {}) });
@@ -1210,6 +1226,20 @@ export async function startFakeNks(opts = {}) {
             extra,
           );
         }
+      }
+      // Чтение роли — шапка той формы, что печатает живой iskron_look: «(#N, karta <тип>, vK)»;
+      // тип — st.kartaTypes[N], иначе 能 (adhikarin). 主 — svatantra, роль владельца.
+      if (msg.method === "tools/call" && msg.params?.name === "iskron_look") {
+        const n = String(msg.params.arguments?.node_id ?? "").replace(/^#/, "");
+        st.counts.look = (st.counts.look ?? 0) + 1;
+        const t = st.kartaTypes[n] ?? "能";
+        const text = `👤 Роль #${n} (#${n}, karta ${t}, v1)\n  Проявлен как: ${t}`;
+        return json(
+          res,
+          200,
+          { jsonrpc: "2.0", id: msg.id, result: { content: [{ type: "text", text }] } },
+          extra,
+        );
       }
       // Список графов учётки — ровно та форма, что отдаёт живой тул iskron_realm(action="list").
       if (msg.method === "tools/call" && msg.params?.name === "iskron_realm") {

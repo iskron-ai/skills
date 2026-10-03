@@ -26,6 +26,30 @@ const READ_ACTIONS: Record<string, Set<string>> = {
   iskron_history: new Set(["realm", "node", "delta"]),
 };
 
+/** Вызов только читает: ничего не подписывает и может идти мостом корня. */
+export const readsOnly = (name: string, args: Record<string, unknown>): boolean => {
+  const action = String(args.action ?? "");
+  return READ_TOOLS.has(name) || action === "?" || !!READ_ACTIONS[name]?.has(action);
+};
+
+/**
+ * Субагент говорит только своим спутником (#6550, правило 2): его запись мостом
+ * корня — отказ всегда, и под местом родителя тоже (подписалась бы им); чтения
+ * идут мостом корня. of — место корня, если он его держит.
+ */
+export function childWriteRefusal(
+  of: string | null,
+  name: string,
+  args: Record<string, unknown>,
+): string | null {
+  if (readsOnly(name, args)) return null;
+  return of
+    ? `Отказано (плагин): дочерняя сессия пишет только своим местом-спутником — ${name} ушёл бы местом родителя ${of}. ` +
+        `Встань: iskron_stand(realm, karta, satellite_of="${of}"), затем повтори; читать можно и так.`
+    : `Отказано (плагин): дочерняя сессия пишет только своим местом-спутником, а место родителя неизвестно — корень места не держит. ` +
+        "Своего места ей не завести; читать можно и так, писать — словом запустившему.";
+}
+
 export interface RunEnds {
   /** Ребёнок кончен: мост гасится forget, затем сессия помечена; of — место корня; final — отпущен запустившим; why — своё слово отказа. */
   end(

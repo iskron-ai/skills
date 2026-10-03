@@ -2,8 +2,9 @@ import { lang } from "../shared/lang.ts";
 import { scoped } from "../shared/scope.ts";
 import { noteServerDate } from "./clock.ts";
 import { CFG } from "./config.ts";
-import { errorCode, errorMessage, UpstreamError } from "./errors.ts";
+import { closedUnder, errorCode, errorMessage, UpstreamError } from "./errors.ts";
 import { loginPublished } from "./oauth/flow.ts";
+import { repeatable } from "./repeat.ts";
 import { loadStore, saveServerCache } from "./store.ts";
 import { debug, log } from "./streams.ts";
 import { type JsonRpcMessage } from "./types.ts";
@@ -143,13 +144,23 @@ export async function post(
   const boundByHeader = isInit ? standingHeader() : null;
   if (boundByHeader) headers["x-nks-standing"] = boundByHeader;
 
-  let res: Response;
-  try {
-    res = await fetch(CFG.serverUrl, {
+  const send = (): Promise<Response> =>
+    fetch(CFG.serverUrl, {
       method: "POST",
       headers,
       body: JSON.stringify(msg),
       signal: AbortSignal.timeout(CFG.timeoutMs),
+    });
+  let res: Response;
+  try {
+    // Соединение закрыто под запросом до ответа (keep-alive из пула, закрытый сервером, #6630):
+    // один повтор — только запросу, чей повтор ничего не применит дважды (repeat.ts).
+    res = await send().catch((e: unknown) => {
+      if (!closedUnder(e) || !repeatable(msg)) throw e;
+      log(
+        `upstream connection closed under ${msg?.method} before the answer — sending it once more`,
+      );
+      return send();
     });
   } catch (e) {
     const err = e as { name?: string };

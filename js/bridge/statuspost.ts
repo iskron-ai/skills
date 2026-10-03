@@ -1,6 +1,7 @@
 // POST строки занятости на названный статусный адрес — лист без зависимостей от
 // держания: его зовут и status.ts, и handoff.ts (занятость места, которое преемник
 // не взял), а hold.ts → handoff.ts → status.ts → hold.ts замкнулось бы в цикл.
+import { closedUnder } from "./errors.ts";
 
 /** Исход POST занятости; code — HTTP-код отказа поверхности, когда он был. */
 export interface StatusOutcome {
@@ -8,14 +9,6 @@ export interface StatusOutcome {
   body: string;
   code?: number;
 }
-
-// Соединение закрыто под запросом, ответа не было: Node (undici) — UND_ERR_SOCKET
-// «other side closed», Bun — ECONNRESET «The socket connection was closed unexpectedly».
-const CLOSED = new Set(["UND_ERR_SOCKET", "ECONNRESET", "EPIPE"]);
-const closedUnder = (e: unknown): boolean => {
-  const err = e as { code?: string; cause?: { code?: string } };
-  return CLOSED.has(err?.code ?? "") || CLOSED.has(err?.cause?.code ?? "");
-};
 
 /** Тот же POST на названный адрес — для выхода, когда стояние уже отпущено, а адрес снят до этого. */
 export async function publishStatusTo(

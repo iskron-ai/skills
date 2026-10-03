@@ -106,8 +106,8 @@ async function enterCase(l, call, satelliteOf, placeName) {
     const why = e.message;
     const join7 = `iskron_case(action="join", room="${room}")`;
     return L(
-      `Искрон: строка запуска — не встал: ${why}. Встань сам (iskron_stand) и войди в дело №${l.no}: ${join7}.`,
-      `Iskron: launch line — not seated: ${why}. Take your seat yourself (iskron_stand) and enter case №${l.no}: ${join7}.`
+      `Искрон: строка запуска — не встал: ${why}. Субагент встаёт только спутником места запустившего: держит он место — повтори iskron_stand и войди в дело №${l.no}: ${join7}; не держит — запустивший занимает место и запускает тебя заново, а до того работа идёт без графа, итог — словом запустившему.`,
+      `Iskron: launch line — not seated: ${why}. A subagent takes only a satellite of its launcher's seat: if the launcher holds one, repeat iskron_stand and enter case №${l.no}: ${join7}; if not, the launcher takes a seat and launches you again; until then the work goes without the graph, the result as a word to the launcher.`
     );
   }
   const place = placeName() || L("своим местом", "in a seat of its own");
@@ -802,6 +802,15 @@ var H2 = scoped(() => ({
   handingOver: null
 }));
 
+// js/shared/satname.ts
+var NAME_MAX = 48;
+var SUB_RE = /\.sub-([1-9]\d*)$/;
+var satelliteName = (base, n2) => base.slice(0, NAME_MAX - `.sub-${n2}`.length).replace(/[-._]+$/, "") + `.sub-${n2}`;
+function isSatelliteOf(base, name) {
+  const m = SUB_RE.exec(name);
+  return !!m && satelliteName(base, Number(m[1])) === name;
+}
+
 // js/bridge/realms.ts
 var aliases = scoped(() => /* @__PURE__ */ new Map());
 var R = scoped(() => ({ listing: null }));
@@ -1014,11 +1023,8 @@ function resultToContent(result) {
 import { createHash as createHash2 } from "node:crypto";
 import { mkdirSync, readdirSync, readFileSync as readFileSync3, unlinkSync, writeFileSync } from "node:fs";
 import { join as join3 } from "node:path";
-var PREFIX = "opencode-lost";
-var LEGACY_MS = 2 * 6e4;
-var hash = (s) => createHash2("sha256").update(s).digest("hex").slice(0, 12);
-var tagOf = (home) => home ? hash(`${home.directory}\0${home.workspace ?? ""}`) : "any";
-var tagIn = (f) => /^opencode-lost\.@([^.]+)\./.exec(f)?.[1] ?? null;
+
+// js/opencode/records.ts
 var entryOf = (e) => ({
   session: e.session,
   dir: e.dir ?? null,
@@ -1033,6 +1039,23 @@ var entryOf = (e) => ({
     ...e.last ? { last: e.last } : {}
   } : {}
 });
+
+// js/opencode/marker.ts
+var PREFIX = "opencode-lost";
+var LEGACY_MS = 2 * 6e4;
+var hash = (s) => createHash2("sha256").update(s).digest("hex").slice(0, 12);
+var tagOf = (home) => home ? hash(`${home.directory}\0${home.workspace ?? ""}`) : "any";
+var tagIn = (f) => /^opencode-lost\.@([^.]+)\./.exec(f)?.[1] ?? null;
+var otherLive = (f) => {
+  const pid = Number(/\.(\d+)\.[^.]+\.json$/.exec(f)?.[1]);
+  if (!pid || pid === process.pid) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return e.code === "EPERM";
+  }
+};
 function writeLostMarker(authDir2, slots, home) {
   const entries = [...slots].filter((s) => s.holding && s.session).map(
     (s) => entryOf({ ...s, session: s.session, of: s.satelliteOf, name: s.place?.name })
@@ -1081,6 +1104,7 @@ function takeLostMarker(authDir2, home) {
   for (const f of files) {
     const tag = tagIn(f);
     if (tag !== null && tag !== mine) continue;
+    if (otherLive(f)) continue;
     const lost = readOwn(join3(authDir2, f), tag, home);
     const stale = !(Date.now() - Date.parse(lost?.at ?? "") < LEGACY_MS);
     for (const e of lost?.entries ?? []) {
@@ -1101,7 +1125,7 @@ function takeLostMarker(authDir2, home) {
 }
 
 // js/opencode/adopt.ts
-var movedWhy = (name) => `эта дочерняя сессия перенесена с родителем в другую папку, её место${name ? ` ${name}` : ""} и мост остались у экземпляра прежней папки; запись отсюда ушла бы местом родителя`;
+var movedWhy = (name) => `поручение этой дочерней сессии кончено переносом родителя в другую папку: её место${name ? ` ${name}` : ""} снято, мост погашен; запись отсюда ушла бы местом родителя`;
 function createAdopt(d) {
   const moved = /* @__PURE__ */ new Map();
   function take(entries) {
@@ -1124,13 +1148,13 @@ function createAdopt(d) {
       take(lost.entries);
       void d.keeper.resumeLost(lost.entries, lost.text);
     },
-    /** revoke места перенесённого ребёнка — слово к ответу. */
-    revokeNote(name, args) {
+    /** revoke места ребёнка, кончённого переносом родителя: ответ плагина вместо вызова. */
+    revoked(name, args) {
       const s = String(args.standing ?? "").trim();
       if (name !== "iskron_channel" || args.action !== "revoke" || !s) return null;
       for (const n2 of moved.keys())
         if (s === n2 || s.endsWith(`:${n2}`))
-          return `Искрон: ${n2} — субагент, перенесённый с родителем: его мост у экземпляра прежней папки, здесь он не ведущий — revoke ушёл как есть, итога «КОНЧЕН» отсюда не будет.`;
+          return `Искрон: ${n2} — субагент, кончённый переносом родителя: прежний экземпляр погасил его мост и снял место, итог лёг родителю словом «перенесён»; revoke не нужен и не послан.`;
       return null;
     }
   };
@@ -1362,16 +1386,7 @@ function createChildren(d) {
       )
     );
   }
-  function ran(ev) {
-    if (ev?.type !== "session.execution.succeeded" && ev?.type !== "session.execution.failed")
-      return;
-    const s = ev.data?.sessionID;
-    const slot = typeof s === "string" ? d.slots.get(s) : void 0;
-    if (!slot?.child || slot.satelliteOf || typeof s !== "string") return;
-    void d.leads.plain(s, slot.place?.name ?? null);
-    d.endRun(s);
-  }
-  return { childSlot, back, pause, ran };
+  return { childSlot, back, pause };
 }
 
 // js/opencode/half.ts
@@ -1602,7 +1617,7 @@ function ownPlace(slot) {
   const p = slot?.child ? slot.place : null;
   if (!p?.name) return null;
   const of = slot?.satelliteOf?.name;
-  return of && p.name.startsWith(`${of}.sub-`) ? null : p.name;
+  return of && isSatelliteOf(of, p.name) ? null : p.name;
 }
 function heldPlace(data) {
   const p = data?.place;
@@ -1649,16 +1664,12 @@ var endWord = (who, why, last, kept) => {
 ${said || "(текста он не оставил — смотри его дело)"}`;
 };
 var keptLine = (who, place) => `ребёнок ${who} стоял не спутником (${place}) — место не снято, мост не погашен`;
-async function plainEnd(d, child, place) {
-  const line = `Искрон: субагент ${place ?? `сессии ${child}`} стоял не спутником${place ? ` (${place})` : ""} — не ведущий: конец его прогона гасит его мост, место не снято`;
-  d.say(line, "warning");
-  const parent = await d.parentOf(child).catch(() => null);
-  if (parent) await d.tell(parent, `${line}.`, false);
-}
 var turnWord = (place) => `Искрон: субагент ${place} сдал ход, не поручение — он продолжает и ждёт кадров своего дела; итог ляжет сюда по его концу. Отпустить раньше — iskron_channel(action="revoke", standing="${place}").`;
 var noticeWord = (child, place) => `Искрон: уведомление OpenCode <subagent sessionID="${child}" state="completed"> — конец ХОДА субагента ${place}, не поручения: он ведущий, стоит своим местом и ждёт кадров своего дела. Не считай его закончившим — итог ляжет сюда словом «КОНЧЕН» по его концу. Отпустить раньше — iskron_channel(action="revoke", standing="${place}").`;
 var releaseWord = (who) => `Искрон: субагент ${who} отпущен — его мост погашен: выход из дел и снятие места делает он; итог лёг сюда синтетикой.`;
 var releasedWord = () => "Искрон: запустивший отпустил тебя — поручение кончено, место снято, из дел ты выведен; встать снова нельзя, в граф и дела больше не пиши.";
+var awayWord = (who, last) => `Искрон: субагент ${who} снят переносом родителя в другую папку — поручение здесь кончено не по исходу, итога «КОНЧЕН» не будет: его мост погашен, из дел он вышел, место снято; его сессия осталась в прежней папке. Последнее его слово:
+${last.slice(0, SUMMARY_MAX) || "(текста он не оставил — смотри его дело)"}`;
 var lostWord = (who, why) => `Искрон: субагент ${who} снят — ${why}. Место без моста уйдёт сроком канала, его дела — сроком места; итога нет, его ход — в его сессии.`;
 function leadDoors(ctx, say, flush, end, slots) {
   return {
@@ -1702,14 +1713,15 @@ function createLeads(d) {
   const gone = /* @__PURE__ */ new Set();
   const who = (l, child) => l.place?.name ?? `сессии ${child}`;
   const parentOf = (child) => d.parentOf(child).catch(() => null);
-  async function finish(child, why, ended = true, wake = true, lost = false) {
+  async function finish(child, why, ended = true, wake = true, kind = "end") {
     const l = leads.get(child);
     if (!l) return;
     leads.delete(child);
-    const kept = ended && !lost ? d.ownPlace(child) : null;
+    const kept = ended && kind === "end" ? d.ownPlace(child) : null;
     if (kept) d.say(`Искрон: ${keptLine(who(l, child), kept)}`, "warning");
     const parent = await l.parent;
-    const word = lost ? lostWord(who(l, child), why) : endWord(who(l, child), why, (l.last ?? "").trim(), kept);
+    const last = (l.last ?? "").trim();
+    const word = kind === "lost" ? lostWord(who(l, child), why) : kind === "away" ? awayWord(who(l, child), last) : endWord(who(l, child), why, last, kept);
     if (parent) await d.tell(parent, word, wake, wake);
     else d.say(`${word}
 (родителя плагин не знает — итог некому)`, "warning");
@@ -1780,12 +1792,12 @@ function createLeads(d) {
       if (was.last) l.last ??= was.last;
       if (was.name && was.of) l.place ??= { ...was.of, name: was.name };
     },
-    fail: (child, why) => finish(child, why, true, false, true),
+    fail: (child, why) => finish(child, why, true, false, "lost"),
+    away: (child) => finish(child, "", true, false, "away"),
     snapshot: (child) => {
       const l = leads.get(child);
       return { room: l?.room ?? null, noted: !!l?.noted, last: l?.last };
     },
-    plain: (child, place) => plainEnd(d, child, place),
     nameOf: (child) => leads.get(child)?.place?.name ?? (leads.has(child) ? child : null),
     onEvent(ev) {
       const child = ev?.data?.sessionID;
@@ -1898,6 +1910,7 @@ function createMoves(ctx) {
     const dir = home ? await directoryOf(sessionID) : null;
     return !home || !dir || dir === home.directory;
   };
+  const left = /* @__PURE__ */ new Set();
   function moved(d, s, to) {
     if (!home || !to?.directory || d.slots.get(s)?.child) return;
     if (to.directory !== home.directory) {
@@ -1911,8 +1924,11 @@ function createMoves(ctx) {
         `Искрон: сессия ${s} перенесена в ${to.directory} — её место отпускаю экземпляру той папки`,
         "info"
       );
+      left.add(s);
+      for (const k of kids) if (k.session) void d.away(k.session);
       return d.forget(s);
     }
+    left.delete(s);
     void d.rootOf(s).then((root) => root === s ? d.slotFor(s, false) : null);
     setTimeout(() => d.adopt(), ADOPT_MS).unref?.();
   }
@@ -1924,7 +1940,13 @@ function createMoves(ctx) {
       );
     };
   }
-  return { home, directoryOf, exists, ours, moved, relay };
+  function guard(root, session) {
+    if (root === session || !left.has(root)) return;
+    throw new Error(
+      `Отказано (плагин): родитель этой сессии перенесён в другую папку — её поручение кончено переносом, мост родителя здесь не поднимается, а своего места у неё нет; работа этой сессии — дальше без графа, либо слово запустившему.`
+    );
+  }
+  return { home, directoryOf, exists, ours, moved, relay, guard };
 }
 
 // js/opencode/runends.ts
@@ -1941,6 +1963,14 @@ var READ_ACTIONS = {
   iskron_me: /* @__PURE__ */ new Set(["whoami", "orgs", "kartas", "usage"]),
   iskron_history: /* @__PURE__ */ new Set(["realm", "node", "delta"])
 };
+var readsOnly = (name, args) => {
+  const action = String(args.action ?? "");
+  return READ_TOOLS.has(name) || action === "?" || !!READ_ACTIONS[name]?.has(action);
+};
+function childWriteRefusal(of, name, args) {
+  if (readsOnly(name, args)) return null;
+  return of ? `Отказано (плагин): дочерняя сессия пишет только своим местом-спутником — ${name} ушёл бы местом родителя ${of}. Встань: iskron_stand(realm, karta, satellite_of="${of}"), затем повтори; читать можно и так.` : `Отказано (плагин): дочерняя сессия пишет только своим местом-спутником, а место родителя неизвестно — корень места не держит. Своего места ей не завести; читать можно и так, писать — словом запустившему.`;
+}
 function createRunEnds() {
   const ended = /* @__PURE__ */ new Map();
   const released = /* @__PURE__ */ new Set();
@@ -2064,8 +2094,9 @@ async function setupTools(ctx, say, onChannel, rootOf, flushUsage = async () => 
     shake(slot);
     return slot;
   }
-  const { home, directoryOf, exists, ours, moved, relay: relayOf } = createMoves(ctx);
-  const relay = relayOf(onChannel, say);
+  const mv = createMoves(ctx);
+  const { home, directoryOf, exists, ours } = mv;
+  const relay = mv.relay(onChannel, say);
   const runEnds = createRunEnds();
   const endChild = (c) => runEnds.end(c, slots.get(c)?.satelliteOf, forget, leads.released(c));
   const leads = createLeads(leadDoors(ctx, say, flushUsage, endChild, slots));
@@ -2108,6 +2139,7 @@ async function setupTools(ctx, say, onChannel, rootOf, flushUsage = async () => 
   }
   async function slotFor(sessionID, touch = true) {
     const root = await rootOf(sessionID);
+    mv.guard(root, sessionID);
     const own = root !== sessionID ? slots.get(sessionID) : void 0;
     if (own) {
       const live = own.bridge.failure ? children.childSlot(sessionID) : own;
@@ -2183,17 +2215,15 @@ async function setupTools(ctx, say, onChannel, rootOf, flushUsage = async () => 
         // JSON Schema сервера без паспорта диалекта — той же срезкой, что у pi.
         input: toParameters(t.inputSchema),
         async execute(input, tool) {
-          const word = await leads.release(String(tool.sessionID), name, input ?? {});
+          const word = await leads.release(String(tool.sessionID), name, input ?? {}) ?? adopt.revoked(name, input ?? {});
           if (word) return { content: word };
           runEnds.guard(String(tool.sessionID), name, input ?? {});
-          const note = adopt.revokeNote(name, input ?? {});
           const slot = await slotFor(String(tool.sessionID));
+          const no = slot.session !== tool.sessionID && !standsBy(name, input ?? {}) ? childWriteRefusal(slot.place?.name ?? null, name, input ?? {}) : null;
+          if (no) throw new Error(no);
           slot.busy++;
           try {
-            const out2 = await callThrough(slot, name, input, String(tool.sessionID));
-            return note ? { content: `${out2.content}
-
-${note}` } : out2;
+            return await callThrough(slot, name, input, String(tool.sessionID));
           } finally {
             slot.busy--;
             slot.lastCall = Date.now();
@@ -2208,6 +2238,7 @@ ${note}` } : out2;
     if (slot.resume) await slot.resume;
     const args = { ...input ?? {} };
     if (standsBy(name, args) && slot.session !== sessionID) {
+      if (!slot.place) throw new Error(childWriteRefusal(null, name, args) ?? "");
       slot = children.childSlot(sessionID, slot);
       await awaitReady(slot);
     }
@@ -2296,12 +2327,9 @@ ${note}` } : out2;
       forget(s);
       runEnds.clear(s, true);
     },
-    onEvent(ev) {
-      leads.onEvent(ev);
-      children.ran(ev);
-    },
+    onEvent: (ev) => leads.onEvent(ev),
     leadOf: (s) => leads.nameOf(s),
-    moved: (s, to) => moved({ say, slots, rootOf, forget, slotFor, adopt: adopt.now }, s, to),
+    moved: (s, to) => mv.moved({ say, slots, rootOf, forget, slotFor, adopt: adopt.now, away: leads.away }, s, to),
     async stop() {
       stopped = true;
       clearInterval(reaper);

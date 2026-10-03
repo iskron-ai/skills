@@ -10,27 +10,8 @@ import { mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from 
 import { join } from "node:path";
 
 import type { KeptSlot } from "./keep.ts";
+import { entryOf, type Home, type LostEntry } from "./records.ts";
 
-/** Локация экземпляра плагина (ctx.location): каталог и рабочее пространство. */
-export interface Home {
-  directory: string;
-  workspace?: string | null;
-}
-
-export interface LostEntry {
-  session: string;
-  dir: string | null;
-  key: string | null;
-  child?: boolean;
-  /** Запись переноса сессии в другую папку (moves.ts), не остановки экземпляра. */
-  moved?: boolean;
-  of?: { realm: string; karta: string; name: string } | null;
-  room?: string | null;
-  noted?: boolean;
-  /** Имя места ребёнка и его последний текст — итог по концу после перезагрузки. */
-  name?: string;
-  last?: string;
-}
 type Lost = { at: string; entries: LostEntry[] };
 type Held = KeptSlot & { place?: { name: string } | null; moved?: boolean };
 
@@ -44,24 +25,23 @@ const tagOf = (home: Home | null): string =>
   home ? hash(`${home.directory}\0${home.workspace ?? ""}`) : "any";
 /** Метка файла `opencode-lost.@<метка>.…`; null — файл прежней сборки. */
 const tagIn = (f: string): string | null => /^opencode-lost\.@([^.]+)\./.exec(f)?.[1] ?? null;
-
-/** Запись маркера: ребёнок несёт место корня, дело поручения, сказанный ход, имя места и последний текст. */
-const entryOf = (e: LostEntry): LostEntry => ({
-  session: e.session,
-  dir: e.dir ?? null,
-  key: e.key ?? null,
-  child: !!e.child,
-  ...(e.moved ? { moved: true } : {}),
-  ...(e.child
-    ? {
-        of: e.of ?? null,
-        room: e.room ?? null,
-        ...(e.noted ? { noted: true } : {}),
-        ...(e.name ? { name: e.name } : {}),
-        ...(e.last ? { last: e.last } : {}),
-      }
-    : {}),
-});
+/**
+ * Файл живого другого сервера OpenCode: на машине их бывает несколько, и каждый
+ * грузит плагин для той же папки. Маркер пишет процесс сервера (pid в имени); его
+ * сессии зовут тулы через его экземпляр — взяв чужой, этот вернул бы место своим
+ * мостом, а сессия пошла бы мостом своего сервера (наблюдено 7.2.1→7.2.2, #6626).
+ * Сервер, которого нет (перезапуск), чужим не считается.
+ */
+const otherLive = (f: string): boolean => {
+  const pid = Number(/\.(\d+)\.[^.]+\.json$/.exec(f)?.[1]);
+  if (!pid || pid === process.pid) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return (e as { code?: string }).code === "EPERM";
+  }
+};
 
 /** Держащие мосты — на диск, кого держали: остановка плагина либо перенос сессии в другую папку (home — её локация). */
 export function writeLostMarker(authDir: string, slots: Iterable<Held>, home: Home | null): void {
@@ -126,6 +106,7 @@ export function takeLostMarker(
   for (const f of files) {
     const tag = tagIn(f);
     if (tag !== null && tag !== mine) continue; // маркер другой локации — её экземпляру
+    if (otherLive(f)) continue; // маркер другого живого сервера — его экземпляру
     const lost = readOwn(join(authDir, f), tag, home);
     // Перенос, не взятый экземпляром новой папки сразу, устарел: сессия ушла дальше.
     const stale = !(Date.now() - Date.parse(lost?.at ?? "") < LEGACY_MS);

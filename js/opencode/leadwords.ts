@@ -18,10 +18,10 @@ export interface Leads {
   back(child: string, was: Partial<Snapshot> & { name?: string; of?: Place | null }): void;
   /** Место вернуть не удалось — мост гасится, родителю слово без пробуждения. */
   fail(child: string, why: string): Promise<void>;
+  /** Родителя перенесли в другую папку: ребёнок кончен здесь — мост гасится, родителю «перенесён» без «КОНЧЕН». */
+  away(child: string): Promise<void>;
   /** Что ведущего переживает перезагрузку — в маркер потери. */
   snapshot(child: string): Snapshot;
-  /** Ребёнок на обычном мосте (не спутник) кончил прогон: не ведущий — строка родителю и в журнал. */
-  plain(child: string, place: string | null): Promise<void>;
   /** Имя места живого ведущего субагента (без места — id сессии); не ведущий — null. */
   nameOf(child: string): string | null;
   onEvent(ev: any): void;
@@ -63,16 +63,6 @@ export const endWord = (who: string, why: string, last: string, kept?: string | 
 export const keptLine = (who: string, place: string): string =>
   `ребёнок ${who} стоял не спутником (${place}) — место не снято, мост не погашен`;
 
-/** Ребёнок на обычном мосте — не ведущий (#6550, правило 4): конец прогона гасит мост, место не снимает. */
-export async function plainEnd(d: LeadDoors, child: string, place: string | null): Promise<void> {
-  const line =
-    `Искрон: субагент ${place ?? `сессии ${child}`} стоял не спутником${place ? ` (${place})` : ""} — не ведущий: ` +
-    "конец его прогона гасит его мост, место не снято";
-  d.say(line, "warning");
-  const parent = await d.parentOf(child).catch(() => null);
-  if (parent) await d.tell(parent, `${line}.`, false);
-}
-
 export const turnWord = (place: string): string =>
   `Искрон: субагент ${place} сдал ход, не поручение — он продолжает и ждёт кадров своего дела; итог ляжет сюда по его концу. ` +
   `Отпустить раньше — iskron_channel(action="revoke", standing="${place}").`;
@@ -87,6 +77,10 @@ export const releaseWord = (who: string): string =>
 
 export const releasedWord = (): string =>
   "Искрон: запустивший отпустил тебя — поручение кончено, место снято, из дел ты выведен; встать снова нельзя, в граф и дела больше не пиши.";
+
+export const awayWord = (who: string, last: string): string =>
+  `Искрон: субагент ${who} снят переносом родителя в другую папку — поручение здесь кончено не по исходу, итога «КОНЧЕН» не будет: ` +
+  `его мост погашен, из дел он вышел, место снято; его сессия осталась в прежней папке. Последнее его слово:\n${last.slice(0, SUMMARY_MAX) || "(текста он не оставил — смотри его дело)"}`;
 
 export const lostWord = (who: string, why: string): string =>
   `Искрон: субагент ${who} снят — ${why}. Место без моста уйдёт сроком канала, его дела — сроком места; итога нет, его ход — в его сессии.`;

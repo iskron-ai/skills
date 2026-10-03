@@ -44,7 +44,7 @@ import { createLogin } from "./login.ts";
 import { takeLostMarker, writeLostMarker } from "./marker.ts";
 import { createMoves } from "./moves.ts";
 import type { Context } from "./plugin.ts";
-import { createRunEnds } from "./runends.ts";
+import { childWriteRefusal, createRunEnds } from "./runends.ts";
 import { asSatellite, heldPlace, type SatelliteSlot, STAND_TOOL, standsBy } from "./satellite.ts";
 import { statusLines, statusTool } from "./status.ts";
 
@@ -161,8 +161,9 @@ export async function setupTools(
   }
 
   // Локация экземпляра: перенесённая сессия зовёт тулы через экземпляр новой папки (moves.ts).
-  const { home, directoryOf, exists, ours, moved, relay: relayOf } = createMoves(ctx);
-  const relay = relayOf(onChannel, say);
+  const mv = createMoves(ctx);
+  const { home, directoryOf, exists, ours } = mv;
+  const relay = mv.relay(onChannel, say);
   const runEnds = createRunEnds(); // кончившиеся дети: запись с места — отказ вслух (#6361)
   // Ведущие субагенты (#6625): конец — явный акт, итог — синтетикой родителю.
   const endChild = (c: string) =>
@@ -223,8 +224,9 @@ export async function setupTools(
    */
   async function slotFor(sessionID: string, touch = true): Promise<Slot> {
     const root = await rootOf(sessionID);
-    // Дочерняя сессия, вставшая своим вызовом, ходит своим мостом (#5154);
-    // чтение без стояния наследует мост корня.
+    mv.guard(root, sessionID); // корень перенесён отсюда — ребёнку не поднимать его мост здесь
+    // Дочерняя сессия, вставшая своим спутником, ходит своим мостом (#5154); без
+    // него мост корня ей — только на чтение: запись отказывает execute (#6550 п.2).
     const own = root !== sessionID ? slots.get(sessionID) : undefined;
     if (own) {
       // Умерший детский мост заменяется своим же, не мостом корня: чтения и
@@ -315,17 +317,24 @@ export async function setupTools(
         input: toParameters(t.inputSchema),
         async execute(input, tool) {
           // revoke места своего ведущего субагента — слово запустившего: конец исполняет плагин (#6625).
-          const word = await leads.release(String(tool.sessionID), name, input ?? {});
+          // …и ребёнка, кончённого переносом родителя: снимать нечего (adopt.ts).
+          const word =
+            (await leads.release(String(tool.sessionID), name, input ?? {})) ??
+            adopt.revoked(name, input ?? {});
           if (word) return { content: word };
           runEnds.guard(String(tool.sessionID), name, input ?? {}); // не мостом корня (#6361)
-          const note = adopt.revokeNote(name, input ?? {}); // перенесённый ребёнок — не молча
           const slot = await slotFor(String(tool.sessionID));
+          // Ребёнок мостом корня — только читает; встаёт — своим спутником в callThrough (#6550 п.2).
+          const no =
+            slot.session !== tool.sessionID && !standsBy(name, input ?? {})
+              ? childWriteRefusal(slot.place?.name ?? null, name, input ?? {})
+              : null;
+          if (no) throw new Error(no);
           // Вызов в полёте — занятость: мост посреди вызова жнецу не отдаётся,
           // а простой считается от конца вызова, не от его начала.
           slot.busy++;
           try {
-            const out = await callThrough(slot, name, input, String(tool.sessionID));
-            return note ? { content: `${out.content}\n\n${note}` } : out;
+            return await callThrough(slot, name, input, String(tool.sessionID));
           } finally {
             slot.busy--;
             slot.lastCall = Date.now();
@@ -354,6 +363,8 @@ export async function setupTools(
     // получает свой мост, а не мост корня, — иначе её место снимало бы
     // родительское с сокета, а её register переписывал бы привязку корня (#5154).
     if (standsBy(name, args) && slot.session !== sessionID) {
+      // Место родителя неизвестно — не обычное место и не место рядом, а отказ (#6550 п.2).
+      if (!slot.place) throw new Error(childWriteRefusal(null, name, args) ?? "");
       slot = children.childSlot(sessionID, slot);
       await awaitReady(slot); // свежий детский мост может запросить вход — та же гонка, что у корня
     }
@@ -459,12 +470,10 @@ export async function setupTools(
       forget(s);
       runEnds.clear(s, true); // сессии нет — и окончательной пометки нет
     },
-    onEvent(ev) {
-      leads.onEvent(ev);
-      children.ran(ev); // конец прогона ребёнка на обычном мосте
-    },
+    onEvent: (ev) => leads.onEvent(ev),
     leadOf: (s) => leads.nameOf(s),
-    moved: (s, to) => moved({ say, slots, rootOf, forget, slotFor, adopt: adopt.now }, s, to),
+    moved: (s, to) =>
+      mv.moved({ say, slots, rootOf, forget, slotFor, adopt: adopt.now, away: leads.away }, s, to),
     async stop() {
       stopped = true;
       clearInterval(reaper);
