@@ -4,7 +4,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-var VERSION = "7.2.3";
+var VERSION = "7.2.4";
 function buildOf(selfUrl) {
   try {
     const src = readFileSync(fileURLToPath(selfUrl));

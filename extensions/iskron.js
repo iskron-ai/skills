@@ -461,7 +461,7 @@ var SKILLS_ROOT_ENV = "ISKRON_SKILLS_ROOT";
 import { createHash } from "node:crypto";
 import { readFileSync as readFileSync2 } from "node:fs";
 import { fileURLToPath } from "node:url";
-var VERSION = "7.2.3";
+var VERSION = "7.2.4";
 function buildOf(selfUrl) {
   try {
     const src = readFileSync2(fileURLToPath(selfUrl));

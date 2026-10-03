@@ -1,5 +1,12 @@
 # Changelog
 
+## [7.2.4](https://github.com/iskron-ai/skills/compare/v7.2.3...v7.2.4) (2026-10-03)
+
+
+### Bug Fixes
+
+* **opencode,bridge:** запуск под корнем без места, слово о потере слуха только своё, род роли через поиск ([#314](https://github.com/iskron-ai/skills/issues/314)) ([05d3140](https://github.com/iskron-ai/skills/commit/05d314027df363e6d303eab3ac9ea5cb82cb7273))
+
 ## [7.2.3](https://github.com/iskron-ai/skills/compare/v7.2.2...v7.2.3) (2026-10-03)
 
 
