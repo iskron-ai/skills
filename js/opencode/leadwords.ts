@@ -14,17 +14,24 @@ export interface Leads {
   released(child: string): boolean;
   /** Слово моста ребёнка: «held» называет место, кадр — не простой. */
   heard(child: string, kind: unknown, place?: Place | null): void;
-  /** Ребёнок прежнего экземпляра плагина возвращается: ведущий с его делом поручения; noted — его ход родителю уже назван. */
-  back(child: string, room: string | null | undefined, noted?: boolean): void;
+  /** Ребёнок прежнего экземпляра плагина возвращается ведущим — с делом поручения, сказанным ходом, последним текстом. */
+  back(child: string, was: Partial<Snapshot> & { name?: string; of?: Place | null }): void;
   /** Место вернуть не удалось — мост гасится, родителю слово без пробуждения. */
   fail(child: string, why: string): Promise<void>;
-  roomOf(child: string): string | null;
-  /** Первый ход ребёнка родителю назван — в маркер потери, чтобы не повторять. */
-  noted(child: string): boolean;
+  /** Что ведущего переживает перезагрузку — в маркер потери. */
+  snapshot(child: string): Snapshot;
+  /** Ребёнок на обычном мосте (не спутник) кончил прогон: не ведущий — строка родителю и в журнал. */
+  plain(child: string, place: string | null): Promise<void>;
   /** Имя места живого ведущего субагента (без места — id сессии); не ведущий — null. */
   nameOf(child: string): string | null;
   onEvent(ev: any): void;
   stop(): void;
+}
+
+export interface Snapshot {
+  room: string | null;
+  noted: boolean;
+  last?: string;
 }
 
 export interface LeadDoors {
@@ -55,6 +62,16 @@ export const endWord = (who: string, why: string, last: string, kept?: string | 
 /** Ребёнок занял обычное место вместо спутника: конец поручения его место не снимает. */
 export const keptLine = (who: string, place: string): string =>
   `ребёнок ${who} стоял не спутником (${place}) — место не снято, мост не погашен`;
+
+/** Ребёнок на обычном мосте — не ведущий (#6550, правило 4): конец прогона гасит мост, место не снимает. */
+export async function plainEnd(d: LeadDoors, child: string, place: string | null): Promise<void> {
+  const line =
+    `Искрон: субагент ${place ?? `сессии ${child}`} стоял не спутником${place ? ` (${place})` : ""} — не ведущий: ` +
+    "конец его прогона гасит его мост, место не снято";
+  d.say(line, "warning");
+  const parent = await d.parentOf(child).catch(() => null);
+  if (parent) await d.tell(parent, `${line}.`, false);
+}
 
 export const turnWord = (place: string): string =>
   `Искрон: субагент ${place} сдал ход, не поручение — он продолжает и ждёт кадров своего дела; итог ляжет сюда по его концу. ` +

@@ -124,14 +124,19 @@ export function createLeads(d: W.LeadDoors): W.Leads {
       if (kind !== "held" && kind !== "frame") return;
       touch(kind === "held" && !gone.has(child) ? stood(child) : leads.get(child), place);
     },
-    back(child, room, noted) {
+    back(child, was) {
       const l = stood(child);
-      if (room) l.room = room;
-      if (noted) l.noted = true; // ход родителю уже назван прежним экземпляром
+      if (was.room) l.room = was.room;
+      if (was.noted) l.noted = true; // ход родителю уже назван прежним экземпляром
+      if (was.last) l.last ??= was.last; // итог по концу — и после перезагрузки
+      if (was.name && was.of) l.place ??= { ...was.of, name: was.name }; // revoke по имени до «held»
     },
     fail: (child, why) => finish(child, why, true, false, true),
-    roomOf: (child) => leads.get(child)?.room ?? null,
-    noted: (child) => !!leads.get(child)?.noted,
+    snapshot: (child) => {
+      const l = leads.get(child);
+      return { room: l?.room ?? null, noted: !!l?.noted, last: l?.last };
+    },
+    plain: (child, place) => W.plainEnd(d, child, place),
     nameOf: (child) => leads.get(child)?.place?.name ?? (leads.has(child) ? child : null),
     onEvent(ev) {
       const child: unknown = ev?.data?.sessionID;

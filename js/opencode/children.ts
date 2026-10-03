@@ -28,6 +28,8 @@ export interface ChildDoors {
   keeper: Keeper<Slot>;
   leads: Leads;
   exists(session: string): Promise<boolean>;
+  /** Прогон ребёнка кончен: расход — мосту, мост гасится (live), запись мостом корня — отказ (#6361). */
+  endRun(session: string, live?: boolean): void;
 }
 
 export function createChildren(d: ChildDoors) {
@@ -65,7 +67,9 @@ export function createChildren(d: ChildDoors) {
 
   /** Ребёнок прежнего экземпляра: тот же спутник, место по ключу; не вернулось — конец. */
   async function back(e: LostEntry): Promise<void> {
-    d.leads.back(e.session, e.room, e.noted);
+    // Не спутник — не ведущий (#6550 п.4): его прогон кончился с прежним экземпляром.
+    if (!e.of) return d.endRun(e.session, false);
+    d.leads.back(e.session, e);
     // Сессия не читается (удалена или сбой get) — ребёнок кончен: его запись иначе
     // пошла бы мостом корня (#6361); место уйдёт сроком канала, родителю — слово, если он известен.
     if (!(await d.exists(e.session)))
@@ -87,10 +91,12 @@ export function createChildren(d: ChildDoors) {
 
   /** Остановка плагина: держащие мосты детей — на паузу, их место и дела ждут нового экземпляра. */
   async function pause(): Promise<void> {
-    const held = [...d.slots.values()].filter((s) => s.child && s.holding && s.session);
+    const held = [...d.slots.values()].filter(
+      (s) => s.child && s.satelliteOf && s.holding && s.session,
+    );
     for (const s of held) {
-      s.room = d.leads.roomOf(s.session as string);
-      s.noted = d.leads.noted(s.session as string);
+      const was = d.leads.snapshot(s.session as string);
+      [s.room, s.noted, s.last] = [was.room, was.noted, was.last];
     }
     await Promise.all(
       held.map((s) =>
@@ -101,5 +107,19 @@ export function createChildren(d: ChildDoors) {
     );
   }
 
-  return { childSlot, back, pause };
+  /**
+   * Конец хода ребёнка на обычном мосте (не спутник): он не ведущий, и конец его
+   * прогона — конец (прежнее поведение одного прогона, #6361): мост гасится, место не снимается.
+   */
+  function ran(ev: { type?: unknown; data?: { sessionID?: unknown } }): void {
+    if (ev?.type !== "session.execution.succeeded" && ev?.type !== "session.execution.failed")
+      return;
+    const s = ev.data?.sessionID;
+    const slot = typeof s === "string" ? d.slots.get(s) : undefined;
+    if (!slot?.child || slot.satelliteOf || typeof s !== "string") return;
+    void d.leads.plain(s, slot.place?.name ?? null);
+    d.endRun(s);
+  }
+
+  return { childSlot, back, pause, ran };
 }

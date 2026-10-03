@@ -22,14 +22,20 @@ export interface LostEntry {
   dir: string | null;
   key: string | null;
   child?: boolean;
+  /** Запись переноса сессии в другую папку (moves.ts), не остановки экземпляра. */
+  moved?: boolean;
   of?: { realm: string; karta: string; name: string } | null;
   room?: string | null;
   noted?: boolean;
+  /** Имя места ребёнка и его последний текст — итог по концу после перезагрузки. */
+  name?: string;
+  last?: string;
 }
 type Lost = { at: string; entries: LostEntry[] };
+type Held = KeptSlot & { place?: { name: string } | null; moved?: boolean };
 
 const PREFIX = "opencode-lost";
-/** Срок файла прежней сборки: экземпляры одной перезагрузки встают за секунды. */
+/** Срок файла прежней сборки и записи переноса: экземпляры встают за секунды. */
 const LEGACY_MS = 2 * 60_000;
 
 const hash = (s: string) => createHash("sha256").update(s).digest("hex").slice(0, 12);
@@ -39,28 +45,31 @@ const tagOf = (home: Home | null): string =>
 /** Метка файла `opencode-lost.@<метка>.…`; null — файл прежней сборки. */
 const tagIn = (f: string): string | null => /^opencode-lost\.@([^.]+)\./.exec(f)?.[1] ?? null;
 
-/** Поля детской записи маркера: место корня, дело поручения, сказанный ход. */
-const childPart = (e: { of?: LostEntry["of"]; room?: string | null; noted?: boolean }) => ({
-  of: e.of ?? null,
-  room: e.room ?? null,
-  ...(e.noted ? { noted: true } : {}),
+/** Запись маркера: ребёнок несёт место корня, дело поручения, сказанный ход, имя места и последний текст. */
+const entryOf = (e: LostEntry): LostEntry => ({
+  session: e.session,
+  dir: e.dir ?? null,
+  key: e.key ?? null,
+  child: !!e.child,
+  ...(e.moved ? { moved: true } : {}),
+  ...(e.child
+    ? {
+        of: e.of ?? null,
+        room: e.room ?? null,
+        ...(e.noted ? { noted: true } : {}),
+        ...(e.name ? { name: e.name } : {}),
+        ...(e.last ? { last: e.last } : {}),
+      }
+    : {}),
 });
 
-/** Остановка плагина с держащими мостами — на диск, кого держал: следующий экземпляр скажет. */
-export function writeLostMarker(
-  authDir: string,
-  slots: Iterable<KeptSlot>,
-  home: Home | null,
-): void {
+/** Держащие мосты — на диск, кого держали: остановка плагина либо перенос сессии в другую папку (home — её локация). */
+export function writeLostMarker(authDir: string, slots: Iterable<Held>, home: Home | null): void {
   const entries = [...slots]
     .filter((s) => s.holding && s.session)
-    .map((s) => ({
-      session: s.session as string,
-      dir: s.dir,
-      key: s.key,
-      child: !!s.child,
-      ...(s.child ? childPart({ of: s.satelliteOf, room: s.room, noted: s.noted }) : {}),
-    }));
+    .map((s) =>
+      entryOf({ ...s, session: s.session as string, of: s.satelliteOf, name: s.place?.name }),
+    );
   if (!entries.length) return;
   try {
     mkdirSync(authDir, { recursive: true, mode: 0o700 });
@@ -118,25 +127,21 @@ export function takeLostMarker(
     const tag = tagIn(f);
     if (tag !== null && tag !== mine) continue; // маркер другой локации — её экземпляру
     const lost = readOwn(join(authDir, f), tag, home);
+    // Перенос, не взятый экземпляром новой папки сразу, устарел: сессия ушла дальше.
+    const stale = !(Date.now() - Date.parse(lost?.at ?? "") < LEGACY_MS);
     for (const e of lost?.entries ?? []) {
-      if (!e?.session || seen.has(e.session)) continue;
+      if (!e?.session || seen.has(e.session) || (e.moved && stale)) continue;
       seen.add(e.session);
       if (lost && lost.at > at) at = lost.at;
-      entries.push({
-        session: e.session,
-        dir: e.dir ?? null,
-        key: e.key ?? null,
-        child: !!e.child,
-        ...(e.child ? childPart(e) : {}),
-      });
+      entries.push(entryOf(e));
     }
   }
   if (!entries.length) return null;
   const when = new Date(at);
   const hhmm = Number.isNaN(when.getTime()) ? at : when.toTimeString().slice(0, 5);
-  // Слово — корням: места детей возвращаются тихо своими мостами (children.ts); без корней слова нет.
+  // Слово — корням, не перенесённым: места детей возвращаются тихо (children.ts), перенос — не потеря.
   const where = entries
-    .filter((e) => !e.child)
+    .filter((e) => !e.child && !e.moved)
     .map((e) => e.key ?? e.dir ?? e.session)
     .join(", ");
   return {

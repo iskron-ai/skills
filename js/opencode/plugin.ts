@@ -23,6 +23,7 @@ import type { Plugin } from "@opencode/plugin";
 import { withWord } from "../shared/launch.ts";
 import { setupChannel } from "./channel.ts";
 import { setupCommands } from "./commands.ts";
+import { idleHalf } from "./half.ts";
 import { annotate } from "./notice.ts";
 import { type Say, setupTools } from "./tools.ts";
 import { createUsageFeed } from "./usage.ts";
@@ -93,15 +94,7 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
     say(`Искрон: канал не встал — ${(e as Error).message}`, "error");
   }
 
-  let half: Awaited<ReturnType<typeof setupTools>> = {
-    forget() {},
-    onEvent() {},
-    launch: async () => null,
-    stop() {},
-    bridgeOf: () => null,
-    leadOf: () => null,
-    moved() {},
-  };
+  let half = idleHalf();
   // Расход встаёт после тулов (ему нужен мост сессии), а конец субагента сбрасывает его прежде.
   let flushUsage = (_s: string): Promise<void> => Promise.resolve();
   try {
@@ -181,8 +174,12 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
           }
           // Сессию перенесли в другую папку (#6550 п.3): место — экземпляру её новой локации.
           case "session.moved": {
-            const dir = ev.data?.location?.directory;
-            if (id) half.moved(id, typeof dir === "string" ? dir : null);
+            const loc = ev.data?.location;
+            const to =
+              typeof loc?.directory === "string"
+                ? { directory: loc.directory, workspace: loc.workspaceID ?? null }
+                : null;
+            if (id) half.moved(id, to);
             break;
           }
           case "skill.updated":
