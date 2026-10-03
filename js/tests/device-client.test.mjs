@@ -8,7 +8,16 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { grantLanded, INIT, linksIn, readStore, waitFor, withFake } from "./device-harness.mjs";
+import {
+  grantLanded,
+  INIT,
+  killAll,
+  linksIn,
+  readStore,
+  startBridge,
+  waitFor,
+  withFake,
+} from "./device-harness.mjs";
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const codeIn = (answer) => {
@@ -40,6 +49,77 @@ test("ISKRON_BRIDGE_DEVICE_CLIENT names another client", async () => {
       assert.equal(fake.state.counts.register, 0);
     },
     { ISKRON_BRIDGE_DEVICE_CLIENT: "operator-made" },
+  );
+});
+
+// The client the human named is refused: no other one stands in for it, the
+// word names it and where it was set — the default and a registration only
+// stand in when nothing was named.
+for (const [why, env] of [
+  ["", {}],
+  [" even with ISKRON_BRIDGE_DEVICE_REGISTER=1", { ISKRON_BRIDGE_DEVICE_REGISTER: "1" }],
+]) {
+  test(`ISKRON_BRIDGE_DEVICE_CLIENT refused: no code, no stand-in, the word names it${why}`, async () => {
+    await withFake(
+      { device: { interval: 1, client: "iskron-bridge" } },
+      async ({ fake, bridge }) => {
+        const message = (await bridge.call("initialize", 1, INIT)).error?.message ?? "";
+        assert.equal(linksIn(message).device, null, `no sign-in page with a code: ${message}`);
+        assert.match(message, /operator-made/);
+        assert.match(message, /ISKRON_BRIDGE_DEVICE_CLIENT/);
+        assert.match(message, /invalid_client/);
+        assert.deepEqual(fake.state.device.asked, [
+          { client_id: "operator-made", answer: "invalid_client" },
+        ]);
+        assert.equal(fake.state.counts.register, 0, "no dynamic registration");
+      },
+      { ISKRON_BRIDGE_DEVICE_CLIENT: "operator-made", ...env },
+    );
+  });
+}
+
+// A login taken over from a bridge gone holds a dead code through the client
+// of the past login; refused, the client the human named is asked next — a
+// registration never stands in for it.
+test("the past login's client refused on takeover: the named client is asked, not a registration", async () => {
+  await withFake(
+    { device: { interval: 1, expiresIn: 1, client: "iskron-bridge" } },
+    async ({ fake, dir, bridge }) => {
+      codeIn(await bridge.call("initialize", 1, INIT));
+      await killAll(dir);
+      await sleep(1_500);
+      fake.state.device.client = "operator-made";
+      const next = startBridge(fake.mcpUrl, dir, {
+        ISKRON_BRIDGE_DEVICE_CLIENT: "operator-made",
+        ISKRON_BRIDGE_DEVICE_REGISTER: "1",
+      });
+      try {
+        codeIn(await next.call("initialize", 1, INIT));
+        assert.deepEqual(fake.state.device.asked.slice(1), [
+          { client_id: "iskron-bridge", answer: "invalid_client" },
+          { client_id: "operator-made", answer: "code" },
+        ]);
+        assert.equal(fake.state.counts.register, 0, "no dynamic registration");
+      } finally {
+        await next.stop();
+      }
+    },
+  );
+});
+
+// A refusal with no OAuth word to read is said, not asked again on a pause.
+test("a code request refused 401 with no body: no code, the word names the status, not asked again", async () => {
+  await withFake(
+    { device: { interval: 1, bare: 401 } },
+    async ({ fake, bridge }) => {
+      const message = (await bridge.call("initialize", 1, INIT)).error?.message ?? "";
+      assert.equal(linksIn(message).device, null, `no sign-in page with a code: ${message}`);
+      assert.match(message, /401/);
+      assert.match(message, /iskron-bridge/);
+      await sleep(1_500);
+      assert.deepEqual(fake.state.device.asked, [{ client_id: "iskron-bridge", answer: 401 }]);
+    },
+    { ISKRON_BRIDGE_DEVICE_REISSUE_MS: "300" },
   );
 });
 

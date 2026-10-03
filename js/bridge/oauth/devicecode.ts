@@ -28,9 +28,11 @@ export interface DeviceCode {
 /** A refusal of the device side: `error` is the server's OAuth word, if it said one. */
 export class DeviceRefusal extends Error {
   error: string | undefined;
-  constructor(message: string, error: string | undefined) {
+  status: number | undefined;
+  constructor(message: string, error: string | undefined, status?: number) {
     super(message);
     this.error = error;
+    this.status = status;
   }
 }
 
@@ -66,7 +68,11 @@ export async function post(
   if (!res.ok) {
     const error = typeof answer.error === "string" ? answer.error : undefined;
     const said = answer.error_description ?? answer.message ?? "";
-    throw new DeviceRefusal(`POST ${url} -> ${res.status} ${error ?? ""} ${said}`.trim(), error);
+    throw new DeviceRefusal(
+      `POST ${url} -> ${res.status} ${error ?? ""} ${said}`.trim(),
+      error,
+      res.status,
+    );
   }
   return answer;
 }
