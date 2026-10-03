@@ -2839,7 +2839,7 @@ test("a lead child whose run is interrupted by the user is ended without waking 
 // unwoken. Both orders of the two events are cascades.
 for (const order of ["parent first", "child first"])
   test(`a lead child whose turn is cut by the cancel of its parent's turn (${order}) lives on — a dropped turn, not an end`, async () => {
-    const { rec, childPid } = await leadChild(`lead-cascade-${order.split(" ")[0]}`, {
+    const { b, rec, childPid } = await leadChild(`lead-cascade-${order.split(" ")[0]}`, {
       ISKRON_CASCADE_MS: 600,
     });
     const cut = (sessionID) =>
@@ -2864,6 +2864,13 @@ for (const order of ["parent first", "child first"])
       assert.equal(word.sessionID, "root");
       assert.equal(word.resume, false, "the word does not wake the parent");
       await rec.call("iskron_case", { realm: "nks-dev", action: "say", room: "#7" }, "child");
+      // №147 [156]: after the dropped turn a frame of its case still wakes the child's session.
+      const f = event("frame", { frame: frame("сосед ответил"), raw: "" });
+      appendFileSync(`${b.events}.${childPid}`, f);
+      await until(
+        () => rec.prompts.some((p) => p.sessionID === "child" && /сосед ответил/.test(p.text)),
+        "the frame waking the child after the dropped turn",
+      );
     } finally {
       await rec.stop();
     }
