@@ -4547,10 +4547,14 @@ function rememberExtraStatus(key, ch, text) {
   const p = extras.get(key);
   if (p) writeRecord(p, ch, text || "");
 }
-function dropExtra(key, reason, forget) {
+function dropExtra(key, reason, forget, own = false) {
   const p = extras.get(key);
   if (!p) return;
   extras.delete(key);
+  if (own) {
+    p.door.flushBatches();
+    p.door.broadcast({ kind: "released", key, text: reason, own });
+  }
   p.door.close();
   if (forget) {
     dropHoldRecord(key);
@@ -4559,8 +4563,8 @@ function dropExtra(key, reason, forget) {
   standingLog(`released ${key}: ${reason}${forget ? " (record dropped)" : ""}`);
   if (!handoverReason()) besideWord({ kind: "beside-gone", key, text: reason });
 }
-function dropAllExtras(reason, forget) {
-  for (const k of [...extras.keys()]) dropExtra(k, reason, forget);
+function dropAllExtras(reason, forget, own = false) {
+  for (const k of [...extras.keys()]) dropExtra(k, reason, forget, own);
   if (forget) state.places = [];
 }
 var nameOfAddress = (a) => typeof a === "string" ? a.replace(/^.*:/, "") : "";
@@ -4951,9 +4955,9 @@ function noteStandingId(realm, id) {
   if (d && id) d.standingId = id;
 }
 var held = () => H2.door && state.standing ? { standing: state.standing, door: H2.door } : null;
-function releaseStanding(reason, forget = false, keepBeside = false) {
+function releaseStanding(reason, forget = false, keepBeside = false, own = false) {
   if (forget && H2.currentKey) dropHoldRecord(H2.currentKey);
-  if (!keepBeside) dropAllExtras(reason, forget);
+  if (!keepBeside) dropAllExtras(reason, forget, own);
   if (!H2.holder && !H2.door) return;
   H2.door?.flushBatches();
   const key = H2.currentKey ?? void 0;
@@ -4963,7 +4967,6 @@ function releaseStanding(reason, forget = false, keepBeside = false) {
     broadcast({ kind: "handover", key, text: handover });
   } else {
     standingLog(`released ${H2.currentKey ?? "?"}: ${reason}${forget ? " (record dropped)" : ""}`);
-    const own = reason === holdWords.closedOwn() || reason === holdWords.revokedOwn();
     const released = { kind: "released", key, text: reason, ...own && { own } };
     broadcast(released);
     notify("info", released);
@@ -5108,7 +5111,7 @@ function openHolder(url, key) {
           log(
             `standing revoked by this session — released quietly, binding forgotten (${state.standing?.name ?? "unnamed"}; close ${code} arrived before the answer)`
           );
-          releaseStanding(holdWords.revokedOwn(), true);
+          releaseStanding(holdWords.revokedOwn(), true, false, true);
           state.standing = null;
           state.standingSession = null;
           return;
@@ -5117,7 +5120,7 @@ function openHolder(url, key) {
           log(
             `channel closed by this session — released quietly (close ${code} arrived before the answer)`
           );
-          releaseStanding(holdWords.closedOwn(), true);
+          releaseStanding(holdWords.closedOwn(), true, false, true);
           state.standing = null;
           state.standingSession = null;
           return;
@@ -5575,7 +5578,7 @@ function absorbCloseReply(msg, reply2) {
     return reply2;
   setClosingOwn(false);
   if (reply2?.error || reply2?.result?.isError || !closesOwn(msg)) return reply2;
-  releaseStanding(holdWords.closedOwn(), true);
+  releaseStanding(holdWords.closedOwn(), true, false, true);
   state.standing = null;
   state.standingSession = null;
   log("channel closed by this session — released quietly, binding forgotten");
@@ -5601,12 +5604,12 @@ function absorbRevokeReply(msg, reply2) {
   }
   const beside = extraIn(a.realm);
   if (beside && names(a, beside.standing)) {
-    dropExtra(beside.door.key, holdWords.revokedOwn(), true);
+    dropExtra(beside.door.key, holdWords.revokedOwn(), true, true);
     return reply2;
   }
   if (!revokesOwn(msg)) return reply2;
   const name = state.standing?.name ?? "unnamed";
-  releaseStanding(holdWords.revokedOwn(), true);
+  releaseStanding(holdWords.revokedOwn(), true, false, true);
   state.standing = null;
   state.standingSession = null;
   log(`standing revoked by this session — released quietly, binding forgotten (${name})`);
@@ -6884,6 +6887,8 @@ async function leaveSatellite(reason) {
   const st = await publishStatus("", void 0, true);
   releaseStanding(
     `${reason}: ${L("место-спутник отпущено целиком", "the satellite seat is released whole")}`,
+    true,
+    false,
     true
   );
   releaseSatelliteClaims();
@@ -9871,7 +9876,13 @@ function runWatchdogCodex(argv2) {
     });
     return ready;
   }
-  async function deliver2(text, ids = []) {
+  const inFlight = /* @__PURE__ */ new Set();
+  function deliver2(text, ids = []) {
+    const p = put(text, ids).finally(() => inFlight.delete(p));
+    inFlight.add(p);
+    return p;
+  }
+  async function put(text, ids) {
     try {
       const d = door ?? await open();
       const reqId = nextId++;
@@ -9891,7 +9902,8 @@ function runWatchdogCodex(argv2) {
   const withPend = (text, ids) => {
     const got = pend;
     pend = [];
-    void deliver2([...got.length ? [batchHead(got.map((g) => g.frame))] : [], text].join("\n"), [
+    const head = got.length ? [batchHead(got.map((g) => g.frame))] : [];
+    void deliver2([...head, ...text ? [text] : []].join("\n"), [
       ...got.flatMap((g) => g.ids),
       ...ids
     ]);
@@ -9937,7 +9949,9 @@ function runWatchdogCodex(argv2) {
           break;
         case "released":
           note(wd.bridgeReleasedSocket(ev.text ?? ""));
-          if (ev.own) process.exit(0);
+          if (!ev.own) break;
+          if (pend.length) withPend("", []);
+          void Promise.allSettled([...inFlight]).then(() => process.exit(0));
           break;
         default:
           note(ev.text ?? ev.kind);

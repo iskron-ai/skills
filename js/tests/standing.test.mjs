@@ -3525,6 +3525,43 @@ test("the exit watchdog: closing flushes the batch of counts, the watchdog leave
   assert.equal(r2.exit, null, `nothing is handed twice:\n${second.out}`);
 });
 
+// Своё close отдаёт неотданную пачку перед released: сторож Codex выходит нулём
+// только после того, как её счёт лёг в тред, — как на dead (#6638).
+test("watchdog-codex on one's own close puts the batch the bridge flushed into the thread before it exits 0", async (t) => {
+  const { fake, dir, bridge, key } = await connected(t, {
+    env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "30000" },
+  });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const home = mkdtempSync("/tmp/cxd-");
+  const log = join(home, "door.log");
+  writeFileSync(log, "");
+  const door = await startFakeCodex(
+    join(home, "app-server-control", "app-server-control.sock"),
+    log,
+  );
+  t.after(() => door.stop());
+  const wd = runClient("watchdog-codex", dir, key, 15_000, {
+    CODEX_HOME: home,
+    CODEX_THREAD_ID: "thread-flush",
+  });
+  await waitFor(() => wd.err.includes("слушаю стояние"), "the codex watchdog to attach");
+  await sendRoom(fake, progress(49));
+  await new Promise((r) => setTimeout(r, 500));
+  assert.doesNotMatch(readFileSync(log, "utf8"), /записей/, "the batch is still held");
+  const reply = await bridge.call("tools/call", 7, {
+    name: "iskron_channel",
+    arguments: { action: "close", realm: "nks-dev" },
+  });
+  assert.ok(!reply.result?.isError, JSON.stringify(reply));
+  const r = await wd.done;
+  assert.equal(r.exit, 0, `one's own close is not a lost bridge:\n${wd.err}`);
+  assert.match(
+    readFileSync(log, "utf8"),
+    /turn\/start[^\n]*записей 1, тебе 0/,
+    `the flushed batch reached the thread before the exit:\n${wd.err}`,
+  );
+});
+
 test("a full room batch of counts and the rest past it are not dropped: both counts ride before the next word to me", async (t) => {
   const { fake, dir, key } = await connected(t, {
     env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "30000" },

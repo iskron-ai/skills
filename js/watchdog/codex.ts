@@ -100,7 +100,14 @@ export function runWatchdogCodex(argv: string[]): void {
     return ready;
   }
 
-  async function deliver(text: string, ids: string[] = []): Promise<void> {
+  // Вложения в полёте: своё отпускание ждёт их, прежде чем выйти (#6638).
+  const inFlight = new Set<Promise<void>>();
+  function deliver(text: string, ids: string[] = []): Promise<void> {
+    const p = put(text, ids).finally(() => inFlight.delete(p));
+    inFlight.add(p);
+    return p;
+  }
+  async function put(text: string, ids: string[]): Promise<void> {
     try {
       const d = door ?? (await open());
       const reqId = nextId++;
@@ -126,7 +133,8 @@ export function runWatchdogCodex(argv: string[]): void {
   const withPend = (text: string, ids: string[]): void => {
     const got = pend;
     pend = [];
-    void deliver([...(got.length ? [batchHead(got.map((g) => g.frame))] : []), text].join("\n"), [
+    const head = got.length ? [batchHead(got.map((g) => g.frame))] : [];
+    void deliver([...head, ...(text ? [text] : [])].join("\n"), [
       ...got.flatMap((g) => g.ids),
       ...ids,
     ]);
@@ -174,7 +182,10 @@ export function runWatchdogCodex(argv: string[]): void {
           break;
         case "released":
           note(wd.bridgeReleasedSocket(ev.text ?? ""));
-          if (ev.own) process.exit(0); // своё close/revoke — не уход моста (#6638)
+          // Своё close/revoke/leave — не уход моста: последние кадры и ждавший счёт — в тред, затем выход (#6638).
+          if (!ev.own) break;
+          if (pend.length) withPend("", []);
+          void Promise.allSettled([...inFlight]).then(() => process.exit(0));
           break;
         default:
           note(ev.text ?? ev.kind);
