@@ -842,6 +842,9 @@ test("a stand or a raw channel take in the owner's role (主) is refused aloud w
   });
   assert.ok(stand.result?.isError, textOf(stand));
   assert.match(textOf(stand), /роль владельца \(主\)[\s\S]*ISKRON_BRIDGE_OWNER_ROLE=1/);
+  // Род — фильтром сервера (manifested_as), не прозой шапки узла под чужой локалью.
+  assert.ok(fake.state.counts.search > 0, "the kind is asked of the server's filter");
+  assert.ok(!(fake.state.counts.look > 0), "the header's prose is not read");
   for (const karta of ["#1226", "me"]) {
     const raw = await bridge.call("tools/call", {
       name: "iskron_channel",
@@ -896,6 +899,18 @@ test("a request to MCP whose connection closed before the answer is repeated onc
     before,
     "the dropped write was never processed — and not sent again",
   );
+  // register — тоже не повторяется: что двойной ничего не меняет на сервере, мост не знает.
+  before = mcp();
+  await fake.control({ mcpDrop: 1, mcpDropAction: "iskron_channel:register" });
+  const reg = await bridge.call("tools/call", {
+    name: "iskron_channel",
+    arguments: { realm: "nks-dev", action: "register", karta: 931, name: "proba" },
+  });
+  assert.ok(
+    reg.error || reg.result?.isError,
+    "a register under a closed connection is not repeated",
+  );
+  assert.equal(mcp() - before, 1, "one request, no repeat");
   await fake.control({ mcpDrop: 0, mcpDropAction: null });
 });
 

@@ -1021,7 +1021,7 @@ function resultToContent(result) {
 
 // js/opencode/marker.ts
 import { createHash as createHash2 } from "node:crypto";
-import { mkdirSync, readdirSync, readFileSync as readFileSync3, unlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync as readFileSync3, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { join as join3 } from "node:path";
 
 // js/opencode/records.ts
@@ -1043,12 +1043,18 @@ var entryOf = (e) => ({
 // js/opencode/marker.ts
 var PREFIX = "opencode-lost";
 var LEGACY_MS = 2 * 6e4;
+var FOREIGN_MS = 10 * 6e4;
 var hash = (s) => createHash2("sha256").update(s).digest("hex").slice(0, 12);
 var tagOf = (home) => home ? hash(`${home.directory}\0${home.workspace ?? ""}`) : "any";
 var tagIn = (f) => /^opencode-lost\.@([^.]+)\./.exec(f)?.[1] ?? null;
-var otherLive = (f) => {
+var otherLive = (f, path) => {
   const pid = Number(/\.(\d+)\.[^.]+\.json$/.exec(f)?.[1]);
   if (!pid || pid === process.pid) return false;
+  try {
+    if (Date.now() - statSync(path).mtimeMs > FOREIGN_MS) return false;
+  } catch {
+    return false;
+  }
   try {
     process.kill(pid, 0);
     return true;
@@ -1104,7 +1110,7 @@ function takeLostMarker(authDir2, home) {
   for (const f of files) {
     const tag = tagIn(f);
     if (tag !== null && tag !== mine) continue;
-    if (otherLive(f)) continue;
+    if (otherLive(f, join3(authDir2, f))) continue;
     const lost = readOwn(join3(authDir2, f), tag, home);
     const stale = !(Date.now() - Date.parse(lost?.at ?? "") < LEGACY_MS);
     for (const e of lost?.entries ?? []) {
@@ -1172,7 +1178,7 @@ import {
   mkdirSync as mkdirSync2,
   readdirSync as readdirSync3,
   readFileSync as readFileSync4,
-  statSync as statSync2,
+  statSync as statSync3,
   writeFileSync as writeFileSync2
 } from "node:fs";
 import { homedir as homedir3 } from "node:os";
@@ -1184,7 +1190,7 @@ import { join as join4 } from "node:path";
 var homeBridgePath = () => join4(homedir2(), ".iskron-bridge", "iskron-bridge.mjs");
 
 // js/opencode/devicewait.ts
-import { readdirSync as readdirSync2, statSync } from "node:fs";
+import { readdirSync as readdirSync2, statSync as statSync2 } from "node:fs";
 import { join as join5 } from "node:path";
 var RENEW_BEFORE_MS = 6e4;
 var UNTIL = /valid until (\d{4}-\d\d-\d\d \d\d:\d\d:\d\d) UTC/;
@@ -1200,7 +1206,7 @@ function loginStamp(dir) {
       (f) => f.endsWith(".auth-pending") || f.endsWith(".auth-pending.device")
     );
     if (!files.some((f) => f.endsWith(".auth-pending"))) return null;
-    return files.map((f) => `${f}:${statSync(join5(dir, f)).mtimeMs}`).sort().join("|");
+    return files.map((f) => `${f}:${statSync2(join5(dir, f)).mtimeMs}`).sort().join("|");
   } catch {
     return null;
   }
@@ -1250,7 +1256,7 @@ function cachePath() {
 function grantStamp() {
   const dir = authDir();
   try {
-    return readdirSync3(dir).filter((f) => f.endsWith(".json") && f !== "opencode-tools.json").map((f) => `${f}:${statSync2(join6(dir, f)).mtimeMs}`).sort().join("|");
+    return readdirSync3(dir).filter((f) => f.endsWith(".json") && f !== "opencode-tools.json").map((f) => `${f}:${statSync3(join6(dir, f)).mtimeMs}`).sort().join("|");
   } catch {
     return "";
   }

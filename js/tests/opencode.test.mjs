@@ -35,6 +35,7 @@ import {
   readdirSync,
   readFileSync,
   rmSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -1986,6 +1987,38 @@ test("a marker written by another live OpenCode server for the same folder is it
     await until(resumed, "the gone server's session taken back");
   } finally {
     await second.stop();
+  }
+});
+
+// A pid is reused: a live process under the writer's pid long after the writer left would
+// hold its marker «a live other server's» for ever. A live server takes its own marker in
+// seconds; one older than the term is taken whoever lives under the pid (#147 [88]).
+test("a marker of a «live other server» older than the term is taken: its pid may be another process now", async () => {
+  for (const f of lostMarkers()) rmSync(f, { force: true });
+  const other = spawn(process.execPath, ["-e", "setTimeout(() => {}, 60000)"], { stdio: "ignore" });
+  const tag = createHash("sha256").update(`${LOC_A.directory}\0`).digest("hex").slice(0, 12);
+  const file = join(
+    process.env.ISKRON_BRIDGE_AUTH_DIR,
+    `opencode-lost.@${tag}.${other.pid}.y.json`,
+  );
+  const entries = [{ session: "a1", dir: LOC_A.directory, key: "k-a1", child: false }];
+  writeFileSync(file, JSON.stringify({ at: new Date().toISOString(), entries }));
+  const old = (Date.now() - 11 * 60_000) / 1000;
+  utimesSync(file, old, old);
+  const calls = join(SANDBOX, "reused-pid.calls");
+  const resume = join(SANDBOX, "reused-pid.resume");
+  writeFileSync(calls, "");
+  writeFileSync(resume, JSON.stringify({ bySession: { a1: backAnswer("k-a1") } }));
+  const b = bridgeEnv("reused-pid", { FB_CALLS: calls, FB_RESUME: resume });
+  const rec = await plugin(b.env, { ...inLoc(LOC_A, "a1"), keepMarker: true });
+  try {
+    await until(
+      () => callsIn(calls).some((c) => c.name === "iskron/resume" && c.arguments.session === "a1"),
+      "the stale marker taken",
+    );
+  } finally {
+    other.kill();
+    await rec.stop();
   }
 });
 

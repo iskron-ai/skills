@@ -14,9 +14,13 @@ export const READ_TOOLS = new Set([
   "iskron_semantic_search",
 ]);
 
-/** Действия iskron_channel и iskron_realm, чей повтор безвреден: чтение доски и списка, register (привязка той же сессии). */
+/**
+ * Действия, чей повтор безвреден: чтение доски и списка графов. register не здесь:
+ * что двойной register на сервере ничего не меняет, мост показать не может, а его
+ * пропуск догоняет ensureStanding перед следующим вызовом.
+ */
 const SAFE_ACTIONS: Record<string, Set<string>> = {
-  iskron_channel: new Set(["list", "register"]),
+  iskron_channel: new Set(["list"]),
   iskron_realm: new Set(["list"]),
 };
 

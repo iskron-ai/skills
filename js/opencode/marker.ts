@@ -6,7 +6,7 @@
 // сессии «вернул», а её занятость шла бы мостом её экземпляра, места не держащим.
 // Файл прежней сборки без метки читают все, беря записи своего каталога; снимает его срок.
 import { createHash } from "node:crypto";
-import { mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import type { KeptSlot } from "./keep.ts";
@@ -18,6 +18,8 @@ type Held = KeptSlot & { place?: { name: string } | null; moved?: boolean };
 const PREFIX = "opencode-lost";
 /** Срок файла прежней сборки и записи переноса: экземпляры встают за секунды. */
 const LEGACY_MS = 2 * 60_000;
+/** Срок маркера живого другого сервера: дольше его не взятый — не его (pid мог смениться). */
+const FOREIGN_MS = 10 * 60_000;
 
 const hash = (s: string) => createHash("sha256").update(s).digest("hex").slice(0, 12);
 /** Метка локации в имени файла; экземпляр без локации — «any». */
@@ -30,11 +32,17 @@ const tagIn = (f: string): string | null => /^opencode-lost\.@([^.]+)\./.exec(f)
  * грузит плагин для той же папки. Маркер пишет процесс сервера (pid в имени); его
  * сессии зовут тулы через его экземпляр — взяв чужой, этот вернул бы место своим
  * мостом, а сессия пошла бы мостом своего сервера (наблюдено 7.2.1→7.2.2, #6626).
- * Сервер, которого нет (перезапуск), чужим не считается.
+ * Сервер, которого нет (перезапуск), чужим не считается; и файл старше срока — тоже:
+ * живой сервер берёт свой маркер за секунды, а pid переиспользуется (#147 [88]).
  */
-const otherLive = (f: string): boolean => {
+const otherLive = (f: string, path: string): boolean => {
   const pid = Number(/\.(\d+)\.[^.]+\.json$/.exec(f)?.[1]);
   if (!pid || pid === process.pid) return false;
+  try {
+    if (Date.now() - statSync(path).mtimeMs > FOREIGN_MS) return false;
+  } catch {
+    return false;
+  }
   try {
     process.kill(pid, 0);
     return true;
@@ -106,7 +114,7 @@ export function takeLostMarker(
   for (const f of files) {
     const tag = tagIn(f);
     if (tag !== null && tag !== mine) continue; // маркер другой локации — её экземпляру
-    if (otherLive(f)) continue; // маркер другого живого сервера — его экземпляру
+    if (otherLive(f, join(authDir, f))) continue; // маркер другого живого сервера — его экземпляру
     const lost = readOwn(join(authDir, f), tag, home);
     // Перенос, не взятый экземпляром новой папки сразу, устарел: сессия ушла дальше.
     const stale = !(Date.now() - Date.parse(lost?.at ?? "") < LEGACY_MS);
