@@ -6918,7 +6918,8 @@ function recordsFor(sel) {
       const key = keyOf(rec4.realm, rec4.karta, rec4.name);
       const keyed2 = !!sel.key && key === sel.key;
       const inDir = !!sel.cwd && rec4.cwd === sel.cwd;
-      if (!keyed2 && !inDir) continue;
+      const stoodBy = !!sel.session && rec4.session === sel.session;
+      if (!keyed2 && !inDir && !stoodBy) continue;
       const fresh = readHoldRecord(key);
       if (!fresh) continue;
       if (inDir) sameDir.push(key);
