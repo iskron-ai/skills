@@ -1051,8 +1051,37 @@ function resultToContent(result) {
 
 // js/opencode/marker.ts
 import { createHash as createHash2 } from "node:crypto";
-import { mkdirSync, readdirSync, readFileSync as readFileSync3, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync as readFileSync4, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { join as join3 } from "node:path";
+
+// js/opencode/procstart.ts
+import { execFileSync } from "node:child_process";
+import { readFileSync as readFileSync3 } from "node:fs";
+var CLK_TCK = 100;
+function linuxStart(pid) {
+  const stat = readFileSync3(`/proc/${pid}/stat`, "utf8");
+  const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
+  const ticks = Number(fields[19]);
+  const btime = Number(/^btime (\d+)$/m.exec(readFileSync3("/proc/stat", "utf8"))?.[1]);
+  return Number.isFinite(ticks) && btime ? (btime + ticks / CLK_TCK) * 1e3 : null;
+}
+function psStart(pid) {
+  const out2 = execFileSync("ps", ["-o", "lstart=", "-p", String(pid)], {
+    encoding: "utf8",
+    env: { ...process.env, LC_ALL: "C" },
+    stdio: ["ignore", "pipe", "ignore"],
+    timeout: 2e3
+  }).trim();
+  const at = Date.parse(out2);
+  return Number.isNaN(at) ? null : at;
+}
+function processStart(pid) {
+  try {
+    return process.platform === "linux" ? linuxStart(pid) : psStart(pid);
+  } catch {
+    return null;
+  }
+}
 
 // js/opencode/records.ts
 var entryOf = (e) => ({
@@ -1073,23 +1102,19 @@ var entryOf = (e) => ({
 // js/opencode/marker.ts
 var PREFIX = "opencode-lost";
 var LEGACY_MS = 2 * 6e4;
-var FOREIGN_MS = 10 * 6e4;
+var START_SLACK_MS = 1e3;
 var hash = (s) => createHash2("sha256").update(s).digest("hex").slice(0, 12);
 var tagOf = (home) => home ? hash(`${home.directory}\0${home.workspace ?? ""}`) : "any";
 var tagIn = (f) => /^opencode-lost\.@([^.]+)\./.exec(f)?.[1] ?? null;
 var otherLive = (f, path) => {
   const pid = Number(/\.(\d+)\.[^.]+\.json$/.exec(f)?.[1]);
   if (!pid || pid === process.pid) return false;
+  const started = processStart(pid);
+  if (started === null) return false;
   try {
-    if (Date.now() - statSync(path).mtimeMs > FOREIGN_MS) return false;
+    return started <= statSync(path).mtimeMs + START_SLACK_MS;
   } catch {
     return false;
-  }
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (e) {
-    return e.code === "EPERM";
   }
 };
 function writeLostMarker(authDir2, slots, home) {
@@ -1115,7 +1140,7 @@ function readOwn(path, tag, home) {
   };
   let lost = null;
   try {
-    const text = readFileSync3(path, "utf8");
+    const text = readFileSync4(path, "utf8");
     if (tag !== null) drop();
     lost = JSON.parse(text);
   } catch {
@@ -1207,7 +1232,7 @@ import {
   constants,
   mkdirSync as mkdirSync2,
   readdirSync as readdirSync3,
-  readFileSync as readFileSync4,
+  readFileSync as readFileSync5,
   statSync as statSync3,
   writeFileSync as writeFileSync2
 } from "node:fs";
@@ -1294,7 +1319,7 @@ function grantStamp() {
 var sleep2 = (ms) => new Promise((r) => setTimeout(r, ms));
 function readCache() {
   try {
-    const list = JSON.parse(readFileSync4(cachePath(), "utf8"));
+    const list = JSON.parse(readFileSync5(cachePath(), "utf8"));
     return Array.isArray(list) && list.length ? list : null;
   } catch {
     return null;
@@ -2024,7 +2049,22 @@ var asChildRead = (name, args) => {
   if ((name === "iskron_case" || name === "iskron_room") && args.action === "history")
     args.keep_cursor = true;
 };
+var IDENTITY = {
+  iskron_me: "all",
+  iskron_admin: /* @__PURE__ */ new Set(["search_users", "access", "list_members", "user_webhooks"]),
+  // Организации человека и членство в них — по описанию тула, все его чтения.
+  iskron_org: /* @__PURE__ */ new Set(["list", "get", "realms", "list_members", "list_grants"])
+};
+function identityRefusal(name, args, asks) {
+  const action = String(args.action ?? "");
+  const of = IDENTITY[name];
+  if (!of || asks && action === "?") return null;
+  if (of !== "all" && !of.has(action)) return null;
+  return `Отказано (плагин): ${name}${action ? ` (${action})` : ""} — личность человека, а у дочерней сессии нет своего места: мостом корня она её не получает. Граф и дела читать можно; кто ты — спроси запустившего.`;
+}
 function childWriteRefusal(of, name, args, asks) {
+  const notYours = identityRefusal(name, args, asks);
+  if (notYours) return notYours;
   if (readsOnly(name, args, asks)) {
     asChildRead(name, args);
     return null;
@@ -2614,7 +2654,7 @@ function setupChannel(ctx, say, freshestRoot) {
 }
 
 // js/opencode/commands.ts
-import { readFileSync as readFileSync5 } from "node:fs";
+import { readFileSync as readFileSync6 } from "node:fs";
 function slashOf(markdown) {
   if (!markdown.startsWith("---")) return false;
   const end = markdown.indexOf("\n---", 3);
@@ -2637,7 +2677,7 @@ async function listSkills(ctx) {
     if (!id || !path) continue;
     let text;
     try {
-      text = readFileSync5(path, "utf8");
+      text = readFileSync6(path, "utf8");
     } catch {
       continue;
     }

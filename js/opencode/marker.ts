@@ -10,6 +10,7 @@ import { mkdirSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSy
 import { join } from "node:path";
 
 import type { KeptSlot } from "./keep.ts";
+import { processStart } from "./procstart.ts";
 import { entryOf, type Home, type LostEntry } from "./records.ts";
 
 type Lost = { at: string; entries: LostEntry[] };
@@ -18,8 +19,8 @@ type Held = KeptSlot & { place?: { name: string } | null; moved?: boolean };
 const PREFIX = "opencode-lost";
 /** Срок файла прежней сборки и записи переноса: экземпляры встают за секунды. */
 const LEGACY_MS = 2 * 60_000;
-/** Срок маркера живого другого сервера: дольше его не взятый — не его (pid мог смениться). */
-const FOREIGN_MS = 10 * 60_000;
+/** Запас на секундную точность `ps -o lstart`: старт в ту же секунду, что запись маркера, — автор. */
+const START_SLACK_MS = 1000;
 
 const hash = (s: string) => createHash("sha256").update(s).digest("hex").slice(0, 12);
 /** Метка локации в имени файла; экземпляр без локации — «any». */
@@ -32,22 +33,19 @@ const tagIn = (f: string): string | null => /^opencode-lost\.@([^.]+)\./.exec(f)
  * грузит плагин для той же папки. Маркер пишет процесс сервера (pid в имени); его
  * сессии зовут тулы через его экземпляр — взяв чужой, этот вернул бы место своим
  * мостом, а сессия пошла бы мостом своего сервера (наблюдено 7.2.1→7.2.2, #6626).
- * Сервер, которого нет (перезапуск), чужим не считается; и файл старше срока — тоже:
- * живой сервер берёт свой маркер за секунды, а pid переиспользуется (#147 [88]).
+ * Автора различает старт процесса под pid против записи маркера, не возраст файла
+ * (#147 [100]): стартовал раньше записи — это автор, живой, маркер его навсегда;
+ * позже — pid переиспользован, автора нет; процесса нет или старт не узнать — брать.
  */
 const otherLive = (f: string, path: string): boolean => {
   const pid = Number(/\.(\d+)\.[^.]+\.json$/.exec(f)?.[1]);
   if (!pid || pid === process.pid) return false;
+  const started = processStart(pid);
+  if (started === null) return false;
   try {
-    if (Date.now() - statSync(path).mtimeMs > FOREIGN_MS) return false;
+    return started <= statSync(path).mtimeMs + START_SLACK_MS;
   } catch {
     return false;
-  }
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (e) {
-    return (e as { code?: string }).code === "EPERM";
   }
 };
 

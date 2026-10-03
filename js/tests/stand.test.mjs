@@ -861,6 +861,35 @@ test("a stand or a raw channel take in the owner's role (主) is refused aloud w
   assert.ok(!own.result?.isError, `an agent's role stands as before: ${textOf(own)}`);
 });
 
+// The kind is the server's filter only: a refused or partial search does not fall back to
+// the node header's prose — the stand, in any role, is refused with «retry» (#147 [100]).
+test("a refused search of the owner's roles refuses the stand with «retry», in any role, and reads no node header", async (t) => {
+  const { fake, bridge } = await ready(t);
+  await fake.control({ kartaTypes: { 1226: "主" }, searchRefuse: true });
+  const stand = await bridge.call("tools/call", {
+    name: "iskron_stand",
+    arguments: { realm: "nks-dev", karta: 931, name: "proba" },
+  });
+  assert.ok(stand.result?.isError, textOf(stand));
+  assert.match(textOf(stand), /тип роли #931 не прочитался[\s\S]*повтори/);
+  assert.ok(!(fake.state.counts.look > 0), "no fallback to the header's prose");
+  assert.equal(fake.state.counts.connect ?? 0, 0, "no place taken");
+});
+
+// A full page of the owner's roles may hide more behind it: incompleteness by count, not
+// by a phrase of the answer (#147 [119]) — the kind is not read, the stand is refused.
+test("a full page of the owner's roles is incomplete by count: the stand is refused with «retry»", async (t) => {
+  const { fake, bridge } = await ready(t);
+  const many = Object.fromEntries(Array.from({ length: 100 }, (_, i) => [String(2000 + i), "主"]));
+  await fake.control({ kartaTypes: many });
+  const stand = await bridge.call("tools/call", {
+    name: "iskron_stand",
+    arguments: { realm: "nks-dev", karta: 931, name: "proba" },
+  });
+  assert.ok(stand.result?.isError, textOf(stand));
+  assert.match(textOf(stand), /неполон[\s\S]*повтори/);
+});
+
 test("with the human's setting ISKRON_BRIDGE_OWNER_ROLE=1 the owner's role stands", async (t) => {
   const { fake, bridge } = await ready(t, INIT, { ISKRON_BRIDGE_OWNER_ROLE: "1" });
   await fake.control({ kartaTypes: { 1226: "主" } });

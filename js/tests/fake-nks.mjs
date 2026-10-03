@@ -136,6 +136,7 @@ export async function startFakeNks(opts = {}) {
     // которого ещё нет, и обязана сказать в комментарии, какой перемены ждёт.
     futureArgs: opts.futureArgs ?? {},
     kartaTypes: {}, // роль → тип в шапке iskron_look (主 — роль владельца)
+    searchRefuse: false, // iskron_search отвечает отказом
     // Каждый tools/call как пришёл, ДО отсева по схеме: что мост ПОСЛАЛ,
     // судят здесь, а не по тому, что фейк принял.
     calls: [],
@@ -378,6 +379,7 @@ export async function startFakeNks(opts = {}) {
         "mcpDrop", // close the connection under this many next MCP POSTs (with mcpDropAction — only of that action)
         "mcpDropAction",
         "kartaTypes",
+        "searchRefuse",
         "listDelayMs", // hold every board read (iskron_channel list) open this long
         "realmDelayMs", // hold the realm list (iskron_realm list) answer open this long
         "registerToolDelayMs", // hold the iskron_channel register tool open this long (возврат места при переподхвате)
@@ -1246,6 +1248,19 @@ export async function startFakeNks(opts = {}) {
       if (msg.method === "tools/call" && msg.params?.name === "iskron_search") {
         const a = msg.params.arguments ?? {};
         st.counts.search = (st.counts.search ?? 0) + 1;
+        if (st.searchRefuse) {
+          const text = "Ошибка: поиск недоступен";
+          return json(
+            res,
+            200,
+            {
+              jsonrpc: "2.0",
+              id: msg.id,
+              result: { isError: true, content: [{ type: "text", text }] },
+            },
+            extra,
+          );
+        }
         const kind = { svatantra: "主", adhikarin: "能" }[a.manifested_as] ?? null;
         const hits = Object.entries(st.kartaTypes).filter(([, t]) => !kind || t === kind);
         const text = hits.length

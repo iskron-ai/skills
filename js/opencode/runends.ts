@@ -64,9 +64,36 @@ const asChildRead = (name: string, args: Record<string, unknown>): void => {
 };
 
 /**
+ * Чтения личности человека — не чтения графа (#6550, правило 6): сессия без своего
+ * подтверждённого места не получает её как свою и мостом корня. «?» — справка, не личность,
+ * но лишь у тула, объявившего action (asks, как в readsOnly): у прочих это вызов.
+ */
+const IDENTITY: Record<string, Set<string> | "all"> = {
+  iskron_me: "all",
+  iskron_admin: new Set(["search_users", "access", "list_members", "user_webhooks"]),
+  // Организации человека и членство в них — по описанию тула, все его чтения.
+  iskron_org: new Set(["list", "get", "realms", "list_members", "list_grants"]),
+};
+function identityRefusal(
+  name: string,
+  args: Record<string, unknown>,
+  asks: boolean,
+): string | null {
+  const action = String(args.action ?? "");
+  const of = IDENTITY[name];
+  if (!of || (asks && action === "?")) return null;
+  if (of !== "all" && !of.has(action)) return null;
+  return (
+    `Отказано (плагин): ${name}${action ? ` (${action})` : ""} — личность человека, а у дочерней сессии нет своего места: ` +
+    "мостом корня она её не получает. Граф и дела читать можно; кто ты — спроси запустившего."
+  );
+}
+
+/**
  * Субагент говорит только своим спутником (#6550, правило 2): его запись мостом
  * корня — отказ всегда, и под местом родителя тоже (подписалась бы им); чтения
- * идут мостом корня, не трогая его курсор (asChildRead). of — место корня, если он его держит.
+ * идут мостом корня, не трогая его курсор (asChildRead), кроме чтений личности
+ * человека (правило 6). of — место корня, если он его держит.
  */
 export function childWriteRefusal(
   of: string | null,
@@ -74,6 +101,8 @@ export function childWriteRefusal(
   args: Record<string, unknown>,
   asks: boolean,
 ): string | null {
+  const notYours = identityRefusal(name, args, asks);
+  if (notYours) return notYours;
   if (readsOnly(name, args, asks)) {
     asChildRead(name, args);
     return null;
