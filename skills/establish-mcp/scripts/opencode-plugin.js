@@ -519,7 +519,7 @@ var SKILLS_ROOT_ENV = "ISKRON_SKILLS_ROOT";
 import { createHash } from "node:crypto";
 import { readFileSync as readFileSync2 } from "node:fs";
 import { fileURLToPath } from "node:url";
-var VERSION = "7.2.4";
+var VERSION = "7.2.5";
 function buildOf(selfUrl) {
   try {
     const src = readFileSync2(fileURLToPath(selfUrl));
@@ -2007,9 +2007,13 @@ var READ_ACTIONS = {
     "version"
   ])
 };
-var readsOnly = (name, args) => {
+var declaresAction = (inputSchema) => {
+  const props = inputSchema?.properties;
+  return !!props && typeof props === "object" && Object.hasOwn(props, "action");
+};
+var readsOnly = (name, args, asks) => {
   const action = String(args.action ?? "");
-  return READ_TOOLS.has(name) || action === "?" || !!READ_ACTIONS[name]?.has(action);
+  return READ_TOOLS.has(name) || asks && action === "?" || !!READ_ACTIONS[name]?.has(action);
 };
 var asChildRead = (name, args) => {
   if ((name === "iskron_case" || name === "iskron_room") && args.action === "history")
@@ -2021,16 +2025,17 @@ var IDENTITY = {
   // Организации человека и членство в них — по описанию тула, все его чтения.
   iskron_org: /* @__PURE__ */ new Set(["list", "get", "realms", "list_members", "list_grants"])
 };
-function identityRefusal(name, args) {
+function identityRefusal(name, args, asks) {
   const action = String(args.action ?? "");
   const of = IDENTITY[name];
-  if (!of || action === "?" || of !== "all" && !of.has(action)) return null;
+  if (!of || asks && action === "?") return null;
+  if (of !== "all" && !of.has(action)) return null;
   return `Отказано (плагин): ${name}${action ? ` (${action})` : ""} — личность человека, а у дочерней сессии нет своего места: мостом корня она её не получает. Граф и дела читать можно; кто ты — спроси запустившего.`;
 }
-function childWriteRefusal(of, name, args) {
-  const notYours = identityRefusal(name, args);
+function childWriteRefusal(of, name, args, asks) {
+  const notYours = identityRefusal(name, args, asks);
   if (notYours) return notYours;
-  if (readsOnly(name, args)) {
+  if (readsOnly(name, args, asks)) {
     asChildRead(name, args);
     return null;
   }
@@ -2052,14 +2057,14 @@ function createRunEnds() {
       if (!released.has(session)) ended.delete(session);
       if (!ended.has(session)) whys.delete(session);
     },
-    guard(session, name, args) {
+    guard(session, name, args, asks) {
       if (released.has(session) && !READ_TOOLS.has(name) && !READ_ACTIONS[name]?.has(String(args.action ?? "")))
         throw new Error(
           `Отказано (плагин): запустивший отпустил эту дочернюю сессию — поручение кончено, место снято; ${name} не пойдёт ни её местом, ни местом запустившего, и встать снова нельзя.`
         );
       if (!ended.has(session) || name === STAND_TOOL || READ_TOOLS.has(name)) return;
       const action = String(args.action ?? "");
-      if (action === "?" || READ_ACTIONS[name]?.has(action)) return;
+      if (asks && action === "?" || READ_ACTIONS[name]?.has(action)) return;
       const of = ended.get(session)?.name ?? "<место запустившего>";
       throw new Error(
         `Отказано (плагин): ${whys.get(session) ?? "эта дочерняя сессия кончена, её место-спутник отпущено"} — ${name}${action ? ` (${action})` : ""} пошёл бы мостом и местом запустившего. Встань заново: iskron_stand(realm, karta, satellite_of="${of}"), затем повтори вызов.`
@@ -2269,6 +2274,7 @@ async function setupTools(ctx, say, onChannel, rootOf, flushUsage = async () => 
     editor.add(statusTool(statusText));
     for (const t of state2.listed) {
       const name = String(t.name);
+      const asks = declaresAction(t.inputSchema);
       editor.add({
         name,
         description: String(t.description ?? ""),
@@ -2277,9 +2283,9 @@ async function setupTools(ctx, say, onChannel, rootOf, flushUsage = async () => 
         async execute(input, tool) {
           const word = await leads.release(String(tool.sessionID), name, input ?? {}) ?? adopt.revoked(name, input ?? {});
           if (word) return { content: word };
-          runEnds.guard(String(tool.sessionID), name, input ?? {});
+          runEnds.guard(String(tool.sessionID), name, input ?? {}, asks);
           const slot = await slotFor(String(tool.sessionID));
-          const no = slot.session !== tool.sessionID && !standsBy(name, input ?? {}) ? childWriteRefusal(slot.place?.name ?? null, name, input ?? {}) : null;
+          const no = slot.session !== tool.sessionID && !standsBy(name, input ?? {}) ? childWriteRefusal(slot.place?.name ?? null, name, input ?? {}, asks) : null;
           if (no) throw new Error(no);
           slot.busy++;
           try {
@@ -2298,7 +2304,7 @@ async function setupTools(ctx, say, onChannel, rootOf, flushUsage = async () => 
     if (slot.resume) await slot.resume;
     const args = { ...input ?? {} };
     if (standsBy(name, args) && slot.session !== sessionID) {
-      if (!slot.place) throw new Error(childWriteRefusal(null, name, args) ?? "");
+      if (!slot.place) throw new Error(childWriteRefusal(null, name, args, false) ?? "");
       slot = children.childSlot(sessionID, slot);
       await awaitReady(slot);
     }
@@ -2354,7 +2360,8 @@ async function setupTools(ctx, say, onChannel, rootOf, flushUsage = async () => 
   const launcher = createLauncher({
     rootOf,
     childSlot(sessionID, root) {
-      if (!slots.get(root)?.place) throw new Error(childWriteRefusal(null, STAND_TOOL, {}) ?? "");
+      if (!slots.get(root)?.place)
+        throw new Error(childWriteRefusal(null, STAND_TOOL, {}, false) ?? "");
       return children.childSlot(sessionID, slots.get(root));
     },
     async call(slot, name, args, sessionID) {
