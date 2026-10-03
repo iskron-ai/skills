@@ -5188,9 +5188,19 @@ function parseBoard(text) {
   return out6;
 }
 var nameOf = (address) => address.slice(address.indexOf(":") + 1);
-var listens = (e) => /(^|·)\s*слушает/.test(e.rest);
+var FORM = {
+  boardHeader: /^\s*(?:Каналы|Channels)(?:\s*\((\d+)\))?(?:\s|:|$)/m,
+  boardEmpty: /^\s*(?:Ни одна роль этого графа (?:не держит канала|нигде не стоит)|No role (?:of|in) this graph (?:holds a channel|stands anywhere))/m,
+  listens: /(^|·)\s*(?:слушает|listening)/,
+  alive: /живой|слушает|\blive\b|listening/,
+  undelivered: /(?:не доставлено|undelivered)\s+(\d+)/,
+  hooksHeader: /^\s*(?:Вебхуки|Webhooks)(?:\s|:|\(|$)/m,
+  hooksEmpty: /вебхуки не зарегистрированы|no webhooks (?:are )?registered/i,
+  hookActive: /активен|\bactive\b/
+};
+var listens = (e) => FORM.listens.test(e.rest);
 function undelivered(e) {
-  const m = /не доставлено\s+(\d+)/.exec(e.rest);
+  const m = FORM.undelivered.exec(e.rest);
   return m ? Number(m[1]) : 0;
 }
 
@@ -6985,9 +6995,9 @@ async function adminParamNames() {
 async function armRoleHook(p) {
   const { realm, karta, name } = p;
   const hooks = await callTool("iskron_admin", { action: "list_webhooks", realm, node_id: karta });
-  const recognized = !hooks.isError && (/^\s*Вебхуки(?:\s|:|\(|$)/m.test(hooks.text) || /вебхуки не зарегистрированы/i.test(hooks.text));
+  const recognized = !hooks.isError && (FORM.hooksHeader.test(hooks.text) || FORM.hooksEmpty.test(hooks.text));
   const nameRe = new RegExp(`:${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![A-Za-z0-9._-])`);
-  const wakesMe = recognized && hooks.text.split(/\n(?=\s*#\d+\s*→)/).some((b) => /активен/.test(b) && nameRe.test(b));
+  const wakesMe = recognized && hooks.text.split(/\n(?=\s*#\d+\s*→)/).some((b) => FORM.hookActive.test(b) && nameRe.test(b));
   const H4 = L("Хук инбокса роли", "Role inbox hook");
   if (p.sub)
     return L(
@@ -7607,8 +7617,8 @@ var SW = {
   ),
   boardUnread: (text) => L(`Отказано: доска не прочиталась — ${text}`, `Refused: the board did not read — ${text}`),
   boardUnknown: (start) => L(
-    `Отказано: форма доски не распознана — ни заголовка «Каналы», ни слова о пустом графе, ни строк мест; управляющих действий (connect, стук, хук) по догадке не делаю. Начало ответа: ${start}`,
-    `Refused: the board's form is not recognized — no «Каналы» header, no word about an empty graph, no seat lines; no controlling moves (connect, knock, hook) on a guess. The answer begins: ${start}`
+    `Отказано: форма доски не распознана — ни заголовка «Каналы» («Channels»), ни слова о пустом графе, ни строк мест; управляющих действий (connect, стук, хук) по догадке не делаю. Начало ответа: ${start}`,
+    `Refused: the board's form is not recognized — no «Channels» («Каналы») header, no word about an empty graph, no seat lines; no controlling moves (connect, knock, hook) on a guess. The answer begins: ${start}`
   ),
   boardAmbiguous: (n, name, karta) => L(
     `Отказано: на доске ${n} места с именем ${name} у роли #${karta} — форма неоднозначна, состояние не определить.`,
@@ -7937,11 +7947,9 @@ async function runStand(msg) {
     return done(true);
   }
   const entries2 = parseBoard(board.text);
-  const header = /^\s*Каналы(?:\s*\((\d+)\))?(?:\s|:|$)/m.exec(board.text);
+  const header = FORM.boardHeader.exec(board.text);
   const declared = header?.[1] != null ? Number(header[1]) : null;
-  const empty = /^\s*Ни одна роль этого графа (?:не держит канала|нигде не стоит)/m.test(
-    board.text
-  );
+  const empty = FORM.boardEmpty.test(board.text);
   const recognized = !!header || empty || entries2.length > 0;
   let own = entries2.filter((e) => e.karta === karta && nameOf(e.address) === name);
   const separate = derived && a.take !== true && name === derived ? await separatePlace(realm, karta, derived) : null;
@@ -7961,7 +7969,7 @@ async function runStand(msg) {
     const own2 = nameOf(e.address);
     if (!own2.startsWith(`${stem}.`)) return false;
     const third = own2.slice(stem.length + 1);
-    return branches.has(third) && /живой|слушает/.test(e.rest);
+    return branches.has(third) && FORM.alive.test(e.rest);
   });
   for (const e of legacy) nameNotes.push(SW.legacy(e.address, realm, karta));
   const unread = declared != null && declared !== entries2.length;
@@ -7976,7 +7984,7 @@ async function runStand(msg) {
   let incoming = mine?.incoming ?? null;
   let how;
   let heardHere;
-  const listensElsewhere = !!mine && /(^|·)\s*слушает/.test(mine.rest) && !holdsStanding(realm, karta, name);
+  const listensElsewhere = !!mine && listens(mine) && !holdsStanding(realm, karta, name);
   const fresh = !sat && a.take !== true && !holdsStanding(realm, karta, name) && !isParked(realm, karta, name);
   const predecessorDead = fresh && listensElsewhere && await deadPredecessor(realm, karta, name);
   const resumed = fresh && !listensElsewhere ? await resumeFromDisk(realm, karta, name) : null;

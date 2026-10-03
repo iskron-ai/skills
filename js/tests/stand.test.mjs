@@ -1016,6 +1016,54 @@ test("iskron_stand refuses a truncated or ambiguous board and leaves a hook list
   );
 });
 
+// The English bridge asks accept-language: en (#6632 п.2); a server that honours
+// it prints the board and the hook list in English. mcp.iskron.ru ignores the
+// header (observed 2026-10-03), so the English forms here are assumed, not seen.
+test("English surface: iskron_stand reads an English board and hook list — an empty list arms the hook, a hook that wakes the place is left as it is", async (t) => {
+  const { fake, bridge } = await ready(t, INIT, { ISKRON_BRIDGE_LANG: "en" });
+  await fake.control({ english: true });
+  const args = { realm: "nks-dev", karta: 931, name: "proba" };
+  const first = await bridge.call("tools/call", { name: "iskron_stand", arguments: args });
+  assert.ok(!first.result?.isError, `${textOf(first)}\n${bridge.stderr}`);
+  assert.match(
+    textOf(first),
+    /Role inbox hook: armed on the seat's incoming address/,
+    textOf(first),
+  );
+  assert.equal(fake.state.counts.webhooks_added, 1, "the empty English list reads as empty");
+  const again = await bridge.call("tools/call", { name: "iskron_stand", arguments: args });
+  assert.match(textOf(again), /Role inbox hook: in place and wakes this standing/, textOf(again));
+  assert.equal(fake.state.counts.webhooks_added, 1, "no second hook");
+  assert.equal(fake.state.counts.connect, 1, "the held place is not rotated");
+});
+
+test("English surface: a place the English board reads listening under another bridge is only registered; iskron/check reads hearing and undelivered", async (t) => {
+  const { fake, bridge } = await ready(t, INIT, { ISKRON_BRIDGE_LANG: "en" });
+  await fake.control({
+    english: true,
+    places: [{ karta: "931", name: "chuzhoe", listening: true }],
+  });
+  const other = await bridge.call("tools/call", {
+    name: "iskron_stand",
+    arguments: { realm: "nks-dev", karta: 931, name: "chuzhoe" },
+  });
+  assert.match(textOf(other), /another holder already listens on the seat/, textOf(other));
+  assert.equal(fake.state.counts.connect, 0, "no connect: the live socket stays with its holder");
+
+  const { fake: f2, bridge: b2 } = await ready(t, INIT, { ISKRON_BRIDGE_LANG: "en" });
+  await f2.control({ english: true });
+  const mine = await b2.call("tools/call", {
+    name: "iskron_stand",
+    arguments: { realm: "nks-dev", karta: 931, name: "proba" },
+  });
+  assert.ok(!mine.result?.isError, textOf(mine));
+  await f2.control({ places: [{ karta: "931", name: "proba", listening: true, pending: 2 }] });
+  const check = await b2.call("iskron/check", {});
+  assert.equal(check.result?.listening, true, JSON.stringify(check));
+  assert.equal(check.result.pending, 2, JSON.stringify(check));
+  assert.notEqual(check.result.reopened, true, "a listening place is not reopened");
+});
+
 // What the place is travels with every taking and registration (#5174): model
 // without the vendor prefix, attrs with the build sign {name, version, stamp}
 // and the harness — the whole set each time, since attrs replace whole.

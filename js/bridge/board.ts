@@ -31,11 +31,28 @@ export function parseBoard(text: string): BoardEntry[] {
 /** Своя половина имени из адреса `@handle:name` — сравнивать её целиком: `endsWith(":proba")` совпало бы и на соседе `x.proba`. */
 export const nameOf = (address: string): string => address.slice(address.indexOf(":") + 1);
 
+/**
+ * Слова доски и списка хуков на обоих языках сервера: мост на английской
+ * поверхности просит accept-language: en. Машинных полей у ответов нет (#6632 п.2);
+ * русские формы наблюдены (#4514), английские — предположены, не наблюдены.
+ */
+export const FORM = {
+  boardHeader: /^\s*(?:Каналы|Channels)(?:\s*\((\d+)\))?(?:\s|:|$)/m,
+  boardEmpty:
+    /^\s*(?:Ни одна роль этого графа (?:не держит канала|нигде не стоит)|No role (?:of|in) this graph (?:holds a channel|stands anywhere))/m,
+  listens: /(^|·)\s*(?:слушает|listening)/,
+  alive: /живой|слушает|\blive\b|listening/,
+  undelivered: /(?:не доставлено|undelivered)\s+(\d+)/,
+  hooksHeader: /^\s*(?:Вебхуки|Webhooks)(?:\s|:|\(|$)/m,
+  hooksEmpty: /вебхуки не зарегистрированы|no webhooks (?:are )?registered/i,
+  hookActive: /активен|\bactive\b/,
+};
+
 /** Слушает ли место по доске — признак присутствия, не трафика. */
-export const listens = (e: BoardEntry): boolean => /(^|·)\s*слушает/.test(e.rest);
+export const listens = (e: BoardEntry): boolean => FORM.listens.test(e.rest);
 
 /** Сколько кадров доска называет недоставленными у места; 0 — строка об этом молчит. */
 export function undelivered(e: BoardEntry): number {
-  const m = /не доставлено\s+(\d+)/.exec(e.rest);
+  const m = FORM.undelivered.exec(e.rest);
   return m ? Number(m[1]) : 0;
 }

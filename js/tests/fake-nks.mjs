@@ -375,6 +375,7 @@ export async function startFakeNks(opts = {}) {
         "boardText",
         "boardByKarta", // { "931": text } — доска list с karta: только она печатает строку «id» места
         "hooksText",
+        "english", // доска и список хуков английской формой — предположенной, на .ai не наблюдённой (#6632 п.2)
         "helloPending", // what the next hello says was waiting in the queue
         "statusDelayMs", // hold the status POST open this long before answering
         "statusDrop", // close the connection under this many next status POSTs
@@ -957,19 +958,24 @@ export async function startFakeNks(opts = {}) {
           const shown = [...st.places.values()].filter(
             (p) => p.realm == null || slug(p.realm) === slug(a.realm),
           );
-          const lines = [`Каналы (${shown.length + st.rooms.length}):`];
+          const en = st.english === true;
+          const lines = [`${en ? "Channels" : "Каналы"} (${shown.length + st.rooms.length}):`];
           for (const p of shown) {
             // Форма живой доски (iskron_channel list, сервер 0.43): строка места,
             // строка занятости «💬 «…»» и строка входящего адреса «📥».
             lines.push(
-              `  #${p.karta} 👨‍💻 Роль 能 · @tester:${p.name} — живой · простой 6h · ${p.pending ? `не доставлено ${p.pending} · ` : ""}${p.listening ? "слушает" : "не слушает"} · сокет был 2026-09-08T16:43:28.211106Z · открыл @tester`,
+              en
+                ? `  #${p.karta} 👨‍💻 Role 能 · @tester:${p.name} — live · idle 6h · ${p.pending ? `undelivered ${p.pending} · ` : ""}${p.listening ? "listening" : "not listening"} · socket was 2026-09-08T16:43:28.211106Z · opened by @tester`
+                : `  #${p.karta} 👨‍💻 Роль 能 · @tester:${p.name} — живой · простой 6h · ${p.pending ? `не доставлено ${p.pending} · ` : ""}${p.listening ? "слушает" : "не слушает"} · сокет был 2026-09-08T16:43:28.211106Z · открыл @tester`,
             );
             lines.push(`     💬 «${p.status ?? "на вахте"}» · 2026-09-08T16:08:56.121391Z`);
             if (p.incoming) lines.push(`     📥 ${p.incoming}`);
           }
           for (const r of st.rooms) {
             lines.push(
-              `  #${r.karta} 👑 Человек 主 · ${r.address} — живой · простой 6h · слушает · открыл @tester`,
+              en
+                ? `  #${r.karta} 👑 Human 主 · ${r.address} — live · idle 6h · listening · opened by @tester`
+                : `  #${r.karta} 👑 Человек 主 · ${r.address} — живой · простой 6h · слушает · открыл @tester`,
             );
             lines.push(`     📥 ${base}/api/channel/in/room-${r.karta}`);
           }
@@ -1370,6 +1376,7 @@ export async function startFakeNks(opts = {}) {
           const mine = st.webhooks.filter(
             (w) => String(w.karta) === String(a.node_id) && (!w.realm || w.realm === slug(a.realm)),
           );
+          const en = st.english === true;
           // Пустой список поверхность печатает без заголовка — наблюдено на mcp.iskron.ru.
           if (!mine.length)
             return json(
@@ -1380,13 +1387,18 @@ export async function startFakeNks(opts = {}) {
                 id: msg.id,
                 result: {
                   content: [
-                    { type: "text", text: `Для #${a.node_id} вебхуки не зарегистрированы.` },
+                    {
+                      type: "text",
+                      text: en
+                        ? `No webhooks registered for #${a.node_id}.`
+                        : `Для #${a.node_id} вебхуки не зарегистрированы.`,
+                    },
                   ],
                 },
               },
               extra,
             );
-          const lines = [`Вебхуки для #${a.node_id} (${mine.length}):`];
+          const lines = [`${en ? "Webhooks for" : "Вебхуки для"} #${a.node_id} (${mine.length}):`];
           for (const w of mine) {
             const wakes =
               w.channel === "self"
@@ -1394,12 +1406,10 @@ export async function startFakeNks(opts = {}) {
                     (p) => p.karta === w.karta && p.realm != null && slug(p.realm) === w.realm,
                   )
                 : [...st.places.values()].find((p) => p.incoming === w.url);
-            lines.push(
-              `  #${w.id} → doer:#${w.karta} — ${w.active ? "активен" : "пауза"} [minimal]`,
-            );
-            lines.push(
-              `     будит сейчас (${wakes ? 1 : 0}): ${wakes ? `@tester:${wakes.name}` : "никого"}`,
-            );
+            const state = en ? (w.active ? "active" : "paused") : w.active ? "активен" : "пауза";
+            lines.push(`  #${w.id} → doer:#${w.karta} — ${state} [minimal]`);
+            const who = wakes ? `@tester:${wakes.name}` : en ? "nobody" : "никого";
+            lines.push(`     ${en ? "wakes now" : "будит сейчас"} (${wakes ? 1 : 0}): ${who}`);
           }
           return json(
             res,
