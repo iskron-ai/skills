@@ -802,6 +802,15 @@ var H2 = scoped(() => ({
   handingOver: null
 }));
 
+// js/shared/satname.ts
+var NAME_MAX = 48;
+var SUB_RE = /\.sub-([1-9]\d*)$/;
+var satelliteName = (base, n2) => base.slice(0, NAME_MAX - `.sub-${n2}`.length).replace(/[-._]+$/, "") + `.sub-${n2}`;
+function isSatelliteOf(base, name) {
+  const m = SUB_RE.exec(name);
+  return !!m && satelliteName(base, Number(m[1])) === name;
+}
+
 // js/bridge/realms.ts
 var aliases = scoped(() => /* @__PURE__ */ new Map());
 var R = scoped(() => ({ listing: null }));
@@ -1606,7 +1615,7 @@ function ownPlace(slot) {
   const p = slot?.child ? slot.place : null;
   if (!p?.name) return null;
   const of = slot?.satelliteOf?.name;
-  return of && p.name.startsWith(`${of}.sub-`) ? null : p.name;
+  return of && isSatelliteOf(of, p.name) ? null : p.name;
 }
 function heldPlace(data) {
   const p = data?.place;

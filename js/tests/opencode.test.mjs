@@ -2541,7 +2541,7 @@ const ROOT_PLACE = { realm: "@nks/nks-dev", karta: "931", name: "host.repo.opus-
 const SUB = "host.repo.opus-5.sub-1";
 
 /** A root holding a place and a child standing as its satellite on a bridge of its own. */
-async function leadChild(name, env = {}) {
+async function leadChild(name, env = {}, root = ROOT_PLACE, subName = SUB) {
   const calls = join(SANDBOX, `${name}.calls`);
   writeFileSync(calls, "");
   const b = bridgeEnv(name, { FB_CALLS: calls, FB_TOOLS: LEAD_TOOLS, ...env });
@@ -2555,11 +2555,11 @@ async function leadChild(name, env = {}) {
     await until(() => rec.tools().has("iskron_case"), "the tools", 8000);
     await rec.call("iskron_stand", { realm: "nks-dev", karta: "#931" }, "root");
     const rootPid = pidOf(b.log);
-    appendFileSync(`${b.events}.${rootPid}`, event("held", { key: "k-root", place: ROOT_PLACE }));
+    appendFileSync(`${b.events}.${rootPid}`, event("held", { key: "k-root", place: root }));
     await delay(400); // the fake bridge relays event lines every 40 ms
     await rec.call("iskron_stand", { realm: "nks-dev" }, "child");
     const childPid = pidsOf(b.log)[1];
-    const sub = { ...ROOT_PLACE, name: SUB };
+    const sub = { ...root, name: subName };
     appendFileSync(`${b.events}.${childPid}`, event("held", { key: "k-sub", place: sub }));
     await until(() => /мост держит стояние k-sub/.test(rec.said()), "the child's held word");
     return { b, rec, rootPid, childPid, sent: () => sentCalls(calls) };
@@ -2609,6 +2609,25 @@ test("the end of a child's turn ends nothing: its bridge lives, a frame of its c
       !rec.prompts.some((p) => p.sessionID === "root"),
       "the root got no frame of the child",
     );
+  } finally {
+    await rec.stop();
+  }
+});
+
+// The bridge cuts the base of a satellite's name under the server's 48-sign limit
+// (bridge/satellite.ts): a root place longer than 42 signs gives «<cut base>.sub-1».
+// The plugin knows its satellite by the bridge's own rule, not by a prefix.
+test("a satellite of a root place with a long name — its base cut by the bridge — is still its satellite: its end takes it down", async () => {
+  const root = { ...ROOT_PLACE, name: "host-machine.a-very-long-repository-name.opus-5-5" };
+  const cut = `${root.name.slice(0, 48 - ".sub-1".length).replace(/[-._]+$/, "")}.sub-1`;
+  assert.ok(!cut.startsWith(`${root.name}.sub-`), "the probe's name is cut indeed");
+  const { rec, childPid } = await leadChild("lead-long", {}, root, cut);
+  try {
+    await rec.call("iskron_channel", { realm: "nks-dev", action: "leave" }, "child");
+    await until(() => !alive(childPid), "the satellite's bridge to go with its end");
+    await until(() => ends(rec).length === 1, "the end in the parent");
+    assert.match(ends(rec)[0].text, /место снято/);
+    assert.doesNotMatch(ends(rec)[0].text, /не спутником/);
   } finally {
     await rec.stop();
   }

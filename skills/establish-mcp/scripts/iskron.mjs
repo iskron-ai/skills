@@ -4279,7 +4279,17 @@ import { execFileSync } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { hostname } from "node:os";
 import { basename as basename3, dirname as dirname4, resolve as resolve4 } from "node:path";
+
+// js/shared/satname.ts
 var NAME_MAX = 48;
+var SUB_RE = /\.sub-([1-9]\d*)$/;
+var satelliteName = (base, n) => base.slice(0, NAME_MAX - `.sub-${n}`.length).replace(/[-._]+$/, "") + `.sub-${n}`;
+function isSatelliteOf(base, name) {
+  const m = SUB_RE.exec(name);
+  return !!m && satelliteName(base, Number(m[1])) === name;
+}
+
+// js/bridge/names.ts
 var normKarta = (k) => String(k ?? "").trim().replace(/^#/, "");
 var normName = (n) => typeof n === "string" ? n.trim() : "";
 var NAME_RE = /^[a-z0-9][a-z0-9._-]*$/;
@@ -6236,12 +6246,6 @@ import {
 } from "node:fs";
 import { join as join14 } from "node:path";
 var SATELLITE_TTL_S = Number(process.env.ISKRON_BRIDGE_SATELLITE_TTL) || 300;
-var SUB_RE = /\.sub-([1-9]\d*)$/;
-var satelliteName = (base, n) => base.slice(0, NAME_MAX - `.sub-${n}`.length).replace(/[-._]+$/, "") + `.sub-${n}`;
-function isSatelliteOf(base, name) {
-  const m = SUB_RE.exec(name);
-  return !!m && satelliteName(base, Number(m[1])) === name;
-}
 var claimDir = () => join14(CFG.authDir, "satellites");
 var claimFile = (name) => join14(claimDir(), `${name.replace(/[^A-Za-z0-9._-]+/g, "_")}.claim`);
 var claims = scoped(() => /* @__PURE__ */ new Set());
