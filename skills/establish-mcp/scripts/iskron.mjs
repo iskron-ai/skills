@@ -4,7 +4,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-var VERSION = "7.2.8";
+var VERSION = "7.2.9";
 var CHANNEL_MARK = "iskron-build:release";
 var releaseBuild = () => CHANNEL_MARK.endsWith(":release");
 var devBuildIn = (text) => text.includes(`"${["iskron-build", "dev"].join(":")}"`);
