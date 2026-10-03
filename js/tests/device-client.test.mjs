@@ -8,7 +8,16 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { grantLanded, INIT, linksIn, readStore, waitFor, withFake } from "./device-harness.mjs";
+import {
+  grantLanded,
+  INIT,
+  killAll,
+  linksIn,
+  readStore,
+  startBridge,
+  waitFor,
+  withFake,
+} from "./device-harness.mjs";
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const codeIn = (answer) => {
@@ -68,6 +77,51 @@ for (const [why, env] of [
     );
   });
 }
+
+// A login taken over from a bridge gone holds a dead code through the client
+// of the past login; refused, the client the human named is asked next — a
+// registration never stands in for it.
+test("the past login's client refused on takeover: the named client is asked, not a registration", async () => {
+  await withFake(
+    { device: { interval: 1, expiresIn: 1, client: "iskron-bridge" } },
+    async ({ fake, dir, bridge }) => {
+      codeIn(await bridge.call("initialize", 1, INIT));
+      await killAll(dir);
+      await sleep(1_500);
+      fake.state.device.client = "operator-made";
+      const next = startBridge(fake.mcpUrl, dir, {
+        ISKRON_BRIDGE_DEVICE_CLIENT: "operator-made",
+        ISKRON_BRIDGE_DEVICE_REGISTER: "1",
+      });
+      try {
+        codeIn(await next.call("initialize", 1, INIT));
+        assert.deepEqual(fake.state.device.asked.slice(1), [
+          { client_id: "iskron-bridge", answer: "invalid_client" },
+          { client_id: "operator-made", answer: "code" },
+        ]);
+        assert.equal(fake.state.counts.register, 0, "no dynamic registration");
+      } finally {
+        await next.stop();
+      }
+    },
+  );
+});
+
+// A refusal with no OAuth word to read is said, not asked again on a pause.
+test("a code request refused 401 with no body: no code, the word names the status, not asked again", async () => {
+  await withFake(
+    { device: { interval: 1, bare: 401 } },
+    async ({ fake, bridge }) => {
+      const message = (await bridge.call("initialize", 1, INIT)).error?.message ?? "";
+      assert.equal(linksIn(message).device, null, `no sign-in page with a code: ${message}`);
+      assert.match(message, /401/);
+      assert.match(message, /iskron-bridge/);
+      await sleep(1_500);
+      assert.deepEqual(fake.state.device.asked, [{ client_id: "iskron-bridge", answer: 401 }]);
+    },
+    { ISKRON_BRIDGE_DEVICE_REISSUE_MS: "300" },
+  );
+});
 
 // A registered client has no default audience: its grant is refused by mcp,
 // and nothing but wiping the store undoes it. So no code, and the word why.

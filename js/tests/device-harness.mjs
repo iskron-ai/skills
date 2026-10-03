@@ -95,6 +95,12 @@ function pidsOf(dir) {
 
 /** Every process of the probe's auth dir goes, then the dir itself. */
 export async function reap(dir) {
+  await killAll(dir);
+  rmSync(dir, { recursive: true, force: true });
+}
+
+/** Every process of the probe's auth dir goes; what they left on disk stays. */
+export async function killAll(dir) {
   for (const pid of pidsOf(dir)) {
     try {
       process.kill(pid, "SIGKILL");
@@ -103,7 +109,6 @@ export async function reap(dir) {
     }
   }
   await waitFor(() => pidsOf(dir).length === 0, `the processes of ${dir} to go`, 5_000);
-  rmSync(dir, { recursive: true, force: true });
 }
 
 /** The loopback link and the device link (with its code) an answer hands out. */

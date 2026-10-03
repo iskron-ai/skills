@@ -25,6 +25,7 @@ export function deviceState(opts) {
     interval: opts.interval ?? 1, // seconds, as the wire says
     expiresIn: opts.expiresIn ?? 300,
     client: opts.client ?? null, // a client the operator set up: known without registration
+    bare: opts.bare ?? null, // a status the code request is answered with, plain text, no OAuth word
     asked: [], // { client_id, answer } — every code request as it came
     codes: new Map(), // device_code → { user_code, client_id, expires_at, last_poll, approved, denied }
     issued: [], // user codes in the order they went out
@@ -57,6 +58,11 @@ export function deviceControl(dev, patch) {
 /** POST /device — a code and the page to open it on. */
 export function deviceAuthorize(dev, st, form, base, json, res) {
   const clientId = form.get("client_id");
+  if (dev.bare) {
+    dev.asked.push({ client_id: clientId, answer: dev.bare });
+    res.writeHead(dev.bare, { "content-type": "text/plain" });
+    return res.end("Unauthorized");
+  }
   const reg =
     st.clients.get(clientId) ??
     (clientId === dev.client ? { grant_types: [DEVICE_GRANT, "refresh_token"] } : null);

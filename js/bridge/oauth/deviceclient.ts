@@ -22,6 +22,10 @@ const DEVICE_CLIENT_ID = "iskron-bridge";
 const clientRefused = (e: unknown): boolean =>
   e instanceof DeviceRefusal && /^(invalid_client|unauthorized_client)$/.test(e.error ?? "");
 
+/** Refused with no OAuth word to read: asking again on a pause would only repeat it. */
+const bareRefusal = (e: unknown): e is DeviceRefusal =>
+  e instanceof DeviceRefusal && e.error === undefined && (e.status === 400 || e.status === 401);
+
 /**
  * The server has no client for the device login. No code is offered then: a
  * registered one would yield a grant mcp refuses, with nothing to undo it but
@@ -31,9 +35,10 @@ export class DeviceUnset extends DeviceRefusal {}
 
 /**
  * A code through `clientId` — the one the login already uses — or else the
- * named client. Refused, the named client means no code at all; a dynamic
- * registration only by the operator's switch (ISKRON_BRIDGE_DEVICE_REGISTER),
- * and never in place of a client the human named (ISKRON_BRIDGE_DEVICE_CLIENT).
+ * named client, always tried before any registration. Refused, the named
+ * client means no code at all; a dynamic registration only by the operator's
+ * switch (ISKRON_BRIDGE_DEVICE_REGISTER), and never in place of a client the
+ * human named (ISKRON_BRIDGE_DEVICE_CLIENT).
  */
 export async function codeThrough(
   meta: Meta,
@@ -45,6 +50,16 @@ export async function codeThrough(
   try {
     return await issueDeviceCode(meta, id);
   } catch (e) {
+    if (bareRefusal(e)) {
+      throw new DeviceUnset(
+        L(
+          `сервер авторизации отказал в коде входа клиенту ${id}: ${e.status} без объяснения — ход оператора сервера авторизации`,
+          `the sign-in server refused a sign-in code to the client ${id}: ${e.status} with no word why — a move for the operator of the sign-in server`,
+        ),
+        undefined,
+        e.status,
+      );
+    }
     if (!clientRefused(e)) throw e;
     const word = (e as DeviceRefusal).error;
     if (id === CFG.deviceClientId) {
@@ -56,11 +71,11 @@ export async function codeThrough(
         word,
       );
     }
+    if (id !== named) return await codeThrough(meta, redirectUri, undefined);
     if (CFG.deviceRegister) {
       log(`device client ${id} refused (${errorMessage(e)}) — registering one`);
       return await issueDeviceCode(meta, await registerDeviceClient(meta, redirectUri));
     }
-    if (id !== named) return await codeThrough(meta, redirectUri, undefined);
     throw new DeviceUnset(
       L(
         `вход по коду на этом сервере не настроен: нет клиента ${id} — ход оператора сервера авторизации`,
