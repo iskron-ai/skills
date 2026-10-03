@@ -1,5 +1,12 @@
 # Changelog
 
+## [7.2.5](https://github.com/iskron-ai/skills/compare/v7.2.4...v7.2.5) (2026-10-03)
+
+
+### Bug Fixes
+
+* **opencode:** «?» — чтение только у тулов с action ([#317](https://github.com/iskron-ai/skills/issues/317)) ([7c1d0d3](https://github.com/iskron-ai/skills/commit/7c1d0d3048fb7e41f145f40132a5c55564995aed))
+
 ## [7.2.4](https://github.com/iskron-ai/skills/compare/v7.2.3...v7.2.4) (2026-10-03)
 
 
