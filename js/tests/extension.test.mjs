@@ -1451,6 +1451,16 @@ test("refreshHomeBridge: a packaged dev build leaves the home copy untouched", a
   }
 });
 
+// #147 [140] 2: at an equal version the channel decides — a release packaged bridge
+// replaces a dev home (a machine caught as in #6650 is healed).
+test("refreshHomeBridge: a release packaged bridge replaces a dev home of the same version", async () => {
+  const box = packageSandbox();
+  writeFileSync(box.packaged, bridgeText("6.0.0"));
+  writeFileSync(box.homeBridge, bridgeText("6.0.0", "", "dev"));
+  await runRefresh(box, { ISKRON_MCP_READY_WAIT_MS: 1 });
+  assert.equal(readFileSync(box.homeBridge, "utf8"), bridgeText("6.0.0"), "дом остался dev");
+});
+
 // Rule 8, побочное условие обеих замен: временный файл — `.tmp-<pid>` — существует
 // ровно между записью и rename; после успеха в каталоге не должно остаться ничего,
 // кроме итогового iskron-bridge.mjs.

@@ -268,6 +268,39 @@ test("a newer release build lays itself into an older home at start", async (t) 
   assert.match(bridge.stderr, /дом обновлён этой сборкой/, bridge.stderr);
 });
 
+// #147 [140] 2: a machine whose home caught a dev build (#6650) is healed by the release
+// of the same version — at an equal version the channel decides; a dev starter leaves a
+// release home alone.
+test("at an equal version a release build replaces a dev home, and a dev build leaves a release home", async (t) => {
+  const fake = await startFakeNks({ pat: PAT });
+  const h = home(t);
+  const devText = SELF.replaceAll('"iskron-build:release"', '"iskron-build:dev"');
+  const relText = releaseBuildOf(SELF);
+  const at = (name, text) => {
+    const p = join(h.root, name, "iskron.mjs");
+    mkdirSync(dirname(p), { recursive: true });
+    writeFileSync(p, text);
+    return p;
+  };
+  writeFileSync(h.bridgePath, devText);
+  t.after(() => fake.stop());
+  const healer = startBridge(fake.mcpUrl, join(h.root, "a1"), { HOME: h.root }, at("rel", relText));
+  try {
+    assert.ok((await healer.call("initialize", INIT)).result);
+    assert.equal(readFileSync(h.bridgePath, "utf8"), relText, "the release healed the dev home");
+  } finally {
+    await healer.stop();
+  }
+  const dev = startBridge(fake.mcpUrl, join(h.root, "a2"), { HOME: h.root }, at("dev", devText));
+  t.after(() => dev.stop());
+  assert.ok((await dev.call("initialize", INIT)).result);
+  assert.equal(
+    readFileSync(h.bridgePath, "utf8"),
+    relText,
+    "a dev starter leaves the release home",
+  );
+});
+
 test("a working copy's build, newer than the home, never lays itself into it — bridge or watchdog", async (t) => {
   const fake = await startFakeNks({ pat: PAT });
   const h = home(t);

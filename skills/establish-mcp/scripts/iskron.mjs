@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 var VERSION = "7.2.7";
 var CHANNEL_MARK = "iskron-build:dev";
 var releaseBuild = () => CHANNEL_MARK.endsWith(":release");
+var releaseBuildIn = (text) => text.includes(`"${["iskron-build", "release"].join(":")}"`);
 function buildOf(selfUrl) {
   try {
     const src = readFileSync(fileURLToPath(selfUrl));
@@ -6104,13 +6105,15 @@ var isSymlink = (path) => {
     return false;
   }
 };
-var versionOf = (path) => {
+var readBytes = (path) => {
   try {
-    return versionIn(readFileSync16(path, "utf8"));
+    return readFileSync16(path);
   } catch {
-    return null;
+    return Buffer.alloc(0);
   }
 };
+var readText = (path) => readBytes(path).toString("utf8");
+var versionOf = (path) => versionIn(readText(path));
 function syncHome(self = selfPath()) {
   const out6 = { copied: [] };
   const home = homeBridgePath();
@@ -6125,7 +6128,8 @@ function syncHome(self = selfPath()) {
   if (isSymlink(home)) return out6;
   const homeVersion = versionOf(home);
   const cmp = homeVersion ? compareVersions(VERSION, homeVersion) : 1;
-  if (cmp > 0 && releaseBuild()) {
+  const healsDev = cmp === 0 && !releaseBuildIn(readText(home)) && !mine.equals(readBytes(home));
+  if ((cmp > 0 || healsDev) && releaseBuild()) {
     writeAtomic(home, mine);
     out6.copied.push(home);
     const plugin = opencodePluginPath();
