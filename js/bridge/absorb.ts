@@ -117,7 +117,19 @@ function closesOwn(msg: JsonRpcMessage): boolean {
   const a = msg?.params?.arguments;
   if (msg?.params?.name !== "iskron_channel" || a?.action !== "close") return false;
   const s = state.standing;
-  return !!s && !otherRealm(a.realm, s.realm);
+  return !!s && (!otherRealm(a.realm, s.realm) || !!besideKeyIn(a.realm)); // и граф места рядом — тот же канал
+}
+
+/**
+ * Вызов кончился, ответа на него мост не впитал (упал, отказан транспортом):
+ * пометка своего revoke/close снимается — иначе следующий настоящий мёртвый
+ * токен отпустился бы тихо словом «токен жив».
+ */
+export function settleOwnRevoke(msg: JsonRpcMessage): void {
+  if (msg?.params?.name !== "iskron_channel") return;
+  const action = msg.params.arguments?.action;
+  if (action === "revoke") setRevokingOwn(false);
+  if (action === "close") setClosingOwn(false);
 }
 
 export function absorbCloseReply(msg: JsonRpcMessage, reply: JsonRpcMessage): JsonRpcMessage {

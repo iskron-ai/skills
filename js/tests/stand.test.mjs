@@ -1483,6 +1483,60 @@ for (const [lang, word] of [
     assert.equal(fake.state.counts.connect, 2, "the closed seat is forgotten: a fresh connect");
   });
 
+// Ответ close пришёл раньше 4001: место отпускает ответ (absorbCloseReply), и
+// позднее закрытие сокета уже никого не тревожит.
+test("one's own close answered before its 4001 releases quietly by the answer, no dead token after", async (t) => {
+  const { fake, bridge } = await ready(t);
+  const args = { realm: "nks-dev", karta: 931, name: "proba" };
+  assert.ok(
+    !(await bridge.call("tools/call", { name: "iskron_stand", arguments: args })).result?.isError,
+  );
+  await fake.control({ closeCodeDelayMs: 300 });
+  const closed = await bridge.call("tools/call", {
+    name: "iskron_channel",
+    arguments: { action: "close", realm: "nks-dev" },
+  });
+  assert.ok(!closed.result?.isError, textOf(closed));
+  await new Promise((r) => setTimeout(r, 700));
+  const kinds = bridge.notifications.map((n) => n.params?.data);
+  assert.ok(!kinds.some((d) => d?.kind === "dead"), `no dead token:\n${bridge.stderr}`);
+  assert.match(
+    bridge.stderr,
+    /channel closed by this session — released quietly, binding forgotten/,
+    "the answer released the seat, not the 4001",
+  );
+  assert.match(
+    kinds.find((d) => d?.kind === "released")?.text ?? "",
+    /канал закрыт своим close/,
+    JSON.stringify(kinds),
+  );
+});
+
+// Своё close или revoke, упавшие сами (ответа нет), не оставляют пометки «своё в
+// полёте»: иначе следующий настоящий мёртвый токен отпускался тихо словом «токен жив».
+for (const action of ["close", "revoke"])
+  test(`a failed own ${action} leaves no mark: a later real 4001 is a dead token that calls connect`, async (t) => {
+    const { fake, bridge } = await ready(t);
+    const args = { realm: "nks-dev", karta: 931, name: "proba" };
+    assert.ok(
+      !(await bridge.call("tools/call", { name: "iskron_stand", arguments: args })).result?.isError,
+    );
+    await fake.control({ mcpDrop: 5, mcpDropAction: `iskron_channel:${action}` });
+    const failed = await bridge.call("tools/call", {
+      name: "iskron_channel",
+      arguments: { action, realm: "nks-dev", karta: 931, standing: "proba" },
+    });
+    assert.ok(failed.result?.isError || failed.error, JSON.stringify(failed));
+    await fake.control({ mcpDrop: 0, ws_close: 4001 });
+    await new Promise((r) => setTimeout(r, 600));
+    const dead = bridge.notifications.map((n) => n.params?.data).find((d) => d?.kind === "dead");
+    assert.match(
+      dead?.text ?? "",
+      /зови connect/,
+      `a real dead token is announced:\n${bridge.stderr}`,
+    );
+  });
+
 test("revoking one's own standing through the bridge is quiet: no dead-token alarm, no re-registration", async (t) => {
   const { fake, bridge } = await ready(t);
   const args = { realm: "nks-dev", karta: 931, name: "proba" };
@@ -1902,6 +1956,29 @@ test("two graphs: revoking the first place is refused by the server while anothe
   assert.equal(fake.state.channels.size, 1, "the channel survives the second place's revoke");
   assert.match(await write(NKS, "A после снятия B"), /автор: proba\)/);
   assert.equal(wa.proc.exitCode, null, "watchdog A stays attached");
+});
+
+// close с графом места рядом закрывает тот же канал со всеми местами — это своё
+// close, не мёртвый токен (#6634).
+test("two graphs: close named with the graph of the place beside is one's own close — quiet release, no dead token", async (t) => {
+  const { fake, bridge } = await twoGraphs(
+    t,
+    { realm: NKS, karta: 931, name: "proba" },
+    { realm: DRUGOY, karta: 48, name: "proba-b" },
+  );
+  await fake.control({ revokeReplyDelayMs: 600 });
+  const closed = await bridge.call("tools/call", {
+    name: "iskron_channel",
+    arguments: { action: "close", realm: DRUGOY },
+  });
+  assert.ok(!closed.result?.isError, textOf(closed));
+  await pause(500);
+  const kinds = bridge.notifications.map((n) => n.params?.data);
+  assert.ok(
+    !kinds.some((d) => d?.kind === "dead"),
+    `the beside graph's close must not be a dead token:\n${bridge.stderr}`,
+  );
+  assert.match(bridge.stderr, /channel closed by this session — released quietly/, bridge.stderr);
 });
 
 test("two graphs: the stale batch and the wake batch are per place — each carries only its own frames and marks its own .seen", async (t) => {

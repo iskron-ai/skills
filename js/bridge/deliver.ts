@@ -5,6 +5,7 @@ import {
   absorbCloseReply,
   absorbRevokeReply,
   expectOwnRevoke,
+  settleOwnRevoke,
 } from "./absorb.ts";
 import { refusedAudience } from "./audience.ts";
 import { ensureAuth } from "./auth.ts";
@@ -189,6 +190,7 @@ export async function deliver(msg: JsonRpcMessage): Promise<void> {
     await deliverOne(msg);
   } finally {
     if (listing) H.listing--;
+    settleOwnRevoke(msg);
   }
 }
 

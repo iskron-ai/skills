@@ -103,6 +103,7 @@ export async function startFakeNks(opts = {}) {
     mcpStatus: null, // force an HTTP status on /mcp
     mcpHangMs: 0, // hold /mcp open past the caller's deadline: the request left, the answer never came
     revokeReplyDelayMs: 0, // revoke: the 4001 close goes out first, the HTTP answer this much later
+    closeCodeDelayMs: 0, // close: the HTTP answer goes out first, the 4001 close this much later
     statusDelayMs: 0,
     statusDrop: 0, // this many next status POSTs: the request is read, the connection closed without an answer
     mcpDrop: 0, // the same for this many next MCP POSTs
@@ -359,6 +360,7 @@ export async function startFakeNks(opts = {}) {
         "mcpStatus",
         "mcpHangMs",
         "revokeReplyDelayMs",
+        "closeCodeDelayMs",
         "accessTtl",
         "refreshDelayMs",
         "reuseDetection",
@@ -1101,8 +1103,13 @@ export async function startFakeNks(opts = {}) {
           }
           for (const sock of st.ws) {
             if (st.wsChans.get(sock) !== chan) continue;
-            sock.write(wsFrame(0x8, Buffer.from([4001 >> 8, 4001 & 0xff])));
-            setTimeout(() => sock.end(), 100).unref();
+            const shut = () => {
+              sock.write(wsFrame(0x8, Buffer.from([4001 >> 8, 4001 & 0xff])));
+              setTimeout(() => sock.end(), 100).unref();
+            };
+            // closeCodeDelayMs: ответ по HTTP обгоняет закрытие 4001 — обратный порядок.
+            if (st.closeCodeDelayMs) setTimeout(shut, st.closeCodeDelayMs).unref();
+            else shut();
           }
           st.channels.delete(chan);
           for (const [sid2, bound] of st.standings) if (bound === chan) st.standings.delete(sid2);

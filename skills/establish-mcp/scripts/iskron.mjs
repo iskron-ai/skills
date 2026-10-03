@@ -5552,7 +5552,13 @@ function closesOwn(msg) {
   const a = msg?.params?.arguments;
   if (msg?.params?.name !== "iskron_channel" || a?.action !== "close") return false;
   const s2 = state.standing;
-  return !!s2 && !otherRealm(a.realm, s2.realm);
+  return !!s2 && (!otherRealm(a.realm, s2.realm) || !!besideKeyIn(a.realm));
+}
+function settleOwnRevoke(msg) {
+  if (msg?.params?.name !== "iskron_channel") return;
+  const action = msg.params.arguments?.action;
+  if (action === "revoke") setRevokingOwn(false);
+  if (action === "close") setClosingOwn(false);
 }
 function absorbCloseReply(msg, reply2) {
   if (msg?.params?.name !== "iskron_channel" || msg?.params?.arguments?.action !== "close")
@@ -8311,6 +8317,7 @@ async function deliver(msg) {
     await deliverOne(msg);
   } finally {
     if (listing) H3.listing--;
+    settleOwnRevoke(msg);
   }
 }
 async function deliverOne(msg) {
