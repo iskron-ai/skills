@@ -63,7 +63,7 @@ export function createMoves(ctx: Context) {
         "info",
       );
       // Дети с родителем не переезжают (OpenCode, наблюдено): их поручение кончает перенос —
-      // мост гасится здесь, родителю «перенесён» без «КОНЧЕН», а не вторая жизнь до потолка.
+      // мост гасится здесь, родителю «перенесён» без «КОНЧЕН», а не вторая жизнь без конца.
       left.add(s);
       for (const k of kids) if (k.session) void d.away(k.session);
       return d.forget(s);

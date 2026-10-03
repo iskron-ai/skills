@@ -12,7 +12,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { homeBridgePath } from "../shared/home.ts";
-import { versionIn } from "../shared/version.ts";
+import { releaseBuildIn, versionIn } from "../shared/version.ts";
 
 export { homeBridgePath };
 
@@ -65,7 +65,8 @@ export function packagedBridgePath(): string {
  * говорит это строкой выше. Поэтому: домашняя копия должна ЗЕРКАЛИТЬ ту, что
  * приехала с поставкой, — кроме случая, когда её версия строго новее.
  *
- * Ограды. Строго новее дома — не трогаем, потому что это мог быть свежий мост,
+ * Ограды. Мост поставки не сборка выпуска (метка канала dev — сборка рабочей копии,
+ * #6650) — дом не трогаем вовсе. Строго новее дома — не трогаем, потому что это мог быть свежий мост,
  * положенный человеком руками. Путь, заданный переменной, не трогаем вовсе:
  * выбор человека старше нашей заботы. И НЕТ ГОЛОСА — НЕТ ПОДМЕНЫ: в сессии, где
  * сказать нечем, копия не меняется; чинить не запрещено, чинить молча запрещено,
@@ -96,6 +97,9 @@ export function refreshHomeBridge(notify: Notify, canSpeak: boolean): void {
     );
     return;
   }
+  // Дом пишет только сборка выпуска (#6650): мост рабочей копии — тоже «поставка»,
+  // но непринятая, и в доме он ушёл бы всем харнесам машины.
+  if (!releaseBuildIn(packaged.toString("utf8"))) return;
 
   let home: Buffer;
   try {

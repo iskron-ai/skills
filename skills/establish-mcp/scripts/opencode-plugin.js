@@ -1720,6 +1720,7 @@ function createLauncher(d) {
 }
 
 // js/opencode/leadwords.ts
+var CANCELLED = "его ход отменён в OpenCode (человеком или запустившим)";
 var SUMMARY_MAX = 4e3;
 var endWord = (who, why, last, kept) => {
   const said = last.length > SUMMARY_MAX ? `${last.slice(0, SUMMARY_MAX)}…` : last;
@@ -1767,9 +1768,6 @@ function leadDoors(ctx, say, flush, end, slots) {
 }
 
 // js/opencode/leads.ts
-var LEAD_IDLE_MS = Number(process.env.ISKRON_LEAD_IDLE_MS) || 45 * 6e4;
-var TICK_MS = Math.min(6e4, Math.max(100, Math.floor(LEAD_IDLE_MS / 5)));
-var TURN = /^session\.execution\.(started|succeeded|failed)$/;
 var roomNo = (room) => String(room ?? "").replace(/^\s*[#№]\s*|\s+$/g, "");
 var names = (place, child, s) => s === child || !!place?.name && (s === place.name || s.endsWith(`:${place.name}`));
 function createLeads(d) {
@@ -1802,23 +1800,15 @@ function createLeads(d) {
     if (!l.running) void finish(child, why);
   }
   function stood(child) {
-    const l = leads.get(child) ?? { parent: parentOf(child), at: Date.now() };
+    const l = leads.get(child) ?? { parent: parentOf(child) };
     leads.set(child, l);
     return l;
   }
   function touch(l, place) {
     if (!l) return false;
-    l.at = Date.now();
     if (place) l.place = place;
     return true;
   }
-  const tick = setInterval(() => {
-    const now2 = Date.now();
-    const why = `потолок простоя: ${Math.round(LEAD_IDLE_MS / 6e4)} мин без хода и без кадра`;
-    for (const [child, l] of leads)
-      if (!l.running && now2 - l.at >= LEAD_IDLE_MS) void finish(child, why, true, false);
-  }, TICK_MS);
-  tick.unref?.();
   return {
     called(child, name, args, place) {
       if (gone.has(child)) return;
@@ -1867,7 +1857,6 @@ function createLeads(d) {
       const child = ev?.data?.sessionID;
       const l = typeof child === "string" ? leads.get(child) : void 0;
       if (!l || typeof child !== "string") return;
-      if (TURN.test(String(ev.type))) l.at = Date.now();
       switch (ev.type) {
         case "session.execution.started":
           l.running = true;
@@ -1875,6 +1864,11 @@ function createLeads(d) {
         case "session.text.ended":
           if (typeof ev.data?.text === "string" && ev.data.text.trim()) l.last = ev.data.text;
           return;
+        case "session.execution.interrupted":
+          l.running = false;
+          if (ev.data?.reason !== "user") return;
+          gone.add(child);
+          return void finish(child, CANCELLED, true, false);
         case "session.execution.succeeded":
         case "session.execution.failed":
           l.running = false;
@@ -1888,8 +1882,7 @@ function createLeads(d) {
         case "session.deleted":
           return void finish(child, "сессия субагента удалена", false);
       }
-    },
-    stop: () => clearInterval(tick)
+    }
   };
 }
 
@@ -2429,7 +2422,6 @@ async function setupTools(ctx, say, onChannel, rootOf, flushUsage = async () => 
     async stop() {
       stopped = true;
       clearInterval(reaper);
-      leads.stop();
       keeper.stop();
       await children.pause();
       writeLostMarker(authDir(), slots.values(), home);
