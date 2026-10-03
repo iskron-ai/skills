@@ -82,7 +82,12 @@ export async function flushUsage(place: Standing | null): Promise<void> {
   if (!place || !u || u === U.published) return;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const cap = new Promise<"cap">((r) => (timer = setTimeout(() => r("cap"), FLUSH_CAP_MS)));
-  const got = await Promise.race([publish(place, u), cap]);
+  // Сбой сети на последнем снимке не роняет конец: место снимается и без него (e2e12, №147).
+  const sent = publish(place, u).catch((e: Error) => {
+    log(`usage: the last snapshot did not land before the place went — ${e.message}`);
+    return false;
+  });
+  const got = await Promise.race([sent, cap]);
   clearTimeout(timer);
   if (got === "cap")
     log(`usage: the last snapshot exceeded ${FLUSH_CAP_MS} ms before the place went`);

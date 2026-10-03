@@ -249,6 +249,7 @@ const ENV_KEYS = [
   "FB_NET_UP",
   "FB_DIE_ONCE",
   "FB_ENV",
+  "FB_END_FAILED",
   "ISKRON_HARNESS_VERSION",
   "ISKRON_SKILLS_ROOT",
   "ISKRON_BRIDGE_WATCH_MS",
@@ -2903,6 +2904,22 @@ for (const kind of ["evicted", "dead"])
       await rec.stop();
     }
   });
+
+// e2e12 (№147): the parent was told «место снято» while the child's revoke had failed. The
+// plugin asks the child's bridge to end its run first (iskron/end) and words the end by its
+// answer: places not revoked are named, with the revoke to do.
+test("a lead child's end tells the parent «место не снято» when its bridge could not revoke the place", async () => {
+  const { rec, childPid } = await leadChild("lead-unrevoked", { FB_END_FAILED: SUB });
+  try {
+    await rec.call("iskron_channel", { realm: "nks-dev", action: "leave" }, "child");
+    await until(() => !alive(childPid), "the child's bridge to go");
+    await until(() => ends(rec).length === 1, "the end in the parent");
+    assert.match(ends(rec)[0].text, /место не снято \(сеть\): host\.repo\.opus-5\.sub-1/);
+    assert.doesNotMatch(ends(rec)[0].text, /место снято\./);
+  } finally {
+    await rec.stop();
+  }
+});
 
 // The bridge cuts the base of a satellite's name under the server's 48-sign limit
 // (bridge/satellite.ts): a root place longer than 42 signs gives «<cut base>.sub-1».

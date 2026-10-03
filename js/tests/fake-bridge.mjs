@@ -298,6 +298,11 @@ process.stdin.on("data", (chunk) => {
           JSON.stringify({ name: msg.method, arguments: msg.params, pid: process.pid }) + "\n",
         );
       ok(msg.id, { suspended: true });
+    } else if (msg.method === "iskron/end") {
+      // The plugin ends a lead child's run before its stop (js/bridge/runend.ts);
+      // FB_END_FAILED — places the bridge could not revoke (comma-separated).
+      const failed = (process.env.FB_END_FAILED ?? "").split(",").filter(Boolean);
+      ok(msg.id, { ended: true, failed });
     } else if (msg.method === "iskron/usage") {
       // The session's spend from the OpenCode plugin (js/bridge/usage.ts, #6271).
       if (process.env.FB_CALLS)

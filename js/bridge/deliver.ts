@@ -27,6 +27,7 @@ import { ownerRefusal } from "./owner.ts";
 import { noteLocaleEcho, withPlaceFields } from "./placefields.ts";
 import { READ_TOOLS } from "./repeat.ts";
 import { isCheckCall, isResumeCall, runCheck, runResume } from "./resume.ts";
+import { localEnd } from "./runend.ts";
 import { satelliteChannelRefusal } from "./satellite.ts";
 import { isStandCall, runStand } from "./stand.ts";
 import { ensureStanding, isUnattributed, noteStanding, replyText } from "./standing.ts";
@@ -196,7 +197,7 @@ export async function deliver(msg: JsonRpcMessage): Promise<void> {
 
 async function deliverOne(msg: JsonRpcMessage): Promise<void> {
   // Слово о занятости не покидает моста: держатель сокета говорит его сам.
-  const local = localStatus(msg) ?? localLeave(msg) ?? localSuspend(msg);
+  const local = localStatus(msg) ?? localLeave(msg) ?? localSuspend(msg) ?? localEnd(msg);
   if (local) {
     emit(await local);
     return;
