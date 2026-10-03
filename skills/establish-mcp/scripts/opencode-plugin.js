@@ -1117,10 +1117,15 @@ function takeLostMarker(authDir2, home) {
   if (!entries.length) return null;
   const when = new Date(at);
   const hhmm2 = Number.isNaN(when.getTime()) ? at : when.toTimeString().slice(0, 5);
-  const where = entries.filter((e) => !e.child && !e.moved).map((e) => e.key ?? e.dir ?? e.session).join(", ");
+  const word = (of) => {
+    const where = of.filter((e) => !e.child && !e.moved).map((e) => e.key ?? e.dir ?? e.session).join(", ");
+    return where ? `Искрон: слух был потерян в ${hhmm2} — плагин остановили (перезапуск, вытеснение каталога) с держащим мостом: ${where}. Место возвращается с диска само; ожидавшие кадры придут пачкой. Не вернулось — iskron_stand.` : null;
+  };
   return {
-    text: where ? `Искрон: слух был потерян в ${hhmm2} — плагин остановили (перезапуск, вытеснение каталога) с держащим мостом: ${where}. Место возвращается с диска само; ожидавшие кадры придут пачкой. Не вернулось — iskron_stand.` : null,
-    entries
+    text: word(entries),
+    // журналу — все
+    entries,
+    wordFor: (s) => word(entries.filter((e) => e.session === s))
   };
 }
 
@@ -1146,7 +1151,7 @@ function createAdopt(d) {
       const lost = takeLostMarker(d.authDir(), d.home);
       if (!lost) return;
       take(lost.entries);
-      void d.keeper.resumeLost(lost.entries, lost.text);
+      void d.keeper.resumeLost(lost.entries, lost.wordFor);
     },
     /** revoke места ребёнка, кончённого переносом родителя: ответ плагина вместо вызова. */
     revoked(name, args) {
@@ -1440,9 +1445,8 @@ async function sessionDirectory(ctx, sessionID) {
 var WATCH_MS = Number(process.env.ISKRON_BRIDGE_WATCH_MS || 5 * 6e4);
 var PATIENCE_MS = Number(process.env.ISKRON_RESUME_PATIENCE_MS || 1e4);
 var STEP_MS = 500;
-function resumedWord(key, others) {
-  const rest = Array.isArray(others) ? others.filter((k) => typeof k === "string") : [];
-  return `Искрон: мост поднялся и сам вернул место ${key} — по своей записи держания (каталог сессии либо ключ прежнего места), без твоего хода. ` + (rest.length ? `В том же каталоге записи и других мест: ${rest.join(", ")} — каталог их не различает; возврат взял место, на котором стояла эта сессия. ` : "") + 'Сверь имя с выведенным для этой сессии: чужое — отпусти его iskron_channel(action="leave") (канал цел; revoke места, основавшего канал, платформа отвергает) и займи своё одним iskron_stand; запись, уже ушедшую этим ходом, проверь по автору в истории узла — слово под чужим именем ляжет другому месту, а мост ответит успехом.';
+function resumedWord(key) {
+  return `Искрон: мост поднялся и сам вернул место ${key} — по своей записи держания (каталог сессии либо ключ прежнего места), без твоего хода. Сверь имя с выведенным для этой сессии: чужое — отпусти его iskron_channel(action="leave") (канал цел; revoke места, основавшего канал, платформа отвергает) и займи своё одним iskron_stand; запись, уже ушедшую этим ходом, проверь по автору в истории узла — слово под чужим именем ляжет другому месту, а мост ответит успехом.`;
 }
 var elsewhereWord = (keys) => `Искрон: возврат места ${keys.join(", ")} с диска не удался — его сокет держит живой мост другой сессии, не мост этой: слух и занятость здесь места не держат. Твоё место — верни его iskron_stand(take=true), только словом человека; не твоё — встань своим именем iskron_stand.`;
 function createKeeper(doors) {
@@ -1505,8 +1509,7 @@ function createKeeper(doors) {
       if (typeof r.key === "string") slot.key = r.key;
       roots.add(root);
       doors.say(`Искрон: сессия ${root} — ${r.word}`, "info");
-      if (typeof r.key === "string" && !quiet)
-        doors.tell(root, resumedWord(r.key, r.others), slot.child);
+      if (typeof r.key === "string" && !quiet) doors.tell(root, resumedWord(r.key), slot.child);
       return "held";
     } catch (e) {
       marked.delete(root);
@@ -1542,7 +1545,7 @@ function createKeeper(doors) {
     retrying.delete(root);
     if (r?.resumed) {
       doors.say(`Искрон: сторож слуха вернул место сессии ${root} — ${r.word}`, "info");
-      if (typeof r.key === "string") doors.tell(root, resumedWord(r.key, r.others), slot.child);
+      if (typeof r.key === "string") doors.tell(root, resumedWord(r.key), slot.child);
     } else if (r?.reopened)
       doors.say(`Искрон: сторож слуха переоткрыл сокет сессии ${root} — ${r.word}`, "warning");
     else if (r?.stuck) doors.say(r.word, "error");
@@ -1563,19 +1566,17 @@ function createKeeper(doors) {
         marked.set(e.session, e);
       }
     },
-    async resumeLost(entries, word) {
+    async resumeLost(entries, wordFor) {
       const seen = /* @__PURE__ */ new Set();
-      let said = false;
       for (const e of entries) {
         if (stopped) break;
         if (e.child || !e.session || seen.has(e.session)) continue;
         seen.add(e.session);
         if (!await doors.exists(e.session)) continue;
+        const word = wordFor(e.session);
         if (word) doors.lost(e.session, word);
-        said = true;
         await doors.slotFor(e.session, false);
       }
-      return said;
     },
     resume,
     stood(slot) {
@@ -2121,7 +2122,6 @@ async function setupTools(ctx, say, onChannel, rootOf, flushUsage = async () => 
     endKid: (s, of, why) => runEnds.end(s, of, nothing, false, why)
   });
   const lost = takeLostMarker(authDir(), home);
-  let lostWord2 = lost?.text ?? null;
   if (lost?.text) say(lost.text, "warning");
   if (lost) adopt.take(lost.entries);
   function shake(slot) {
@@ -2160,10 +2160,6 @@ async function setupTools(ctx, say, onChannel, rootOf, flushUsage = async () => 
       slot.dir = dead?.dir ?? slot.dir;
       slot.key = dead?.key ?? slot.key;
       slots.set(root, slot);
-      if (lostWord2) {
-        onChannel(root, { logger: "iskron-channel", data: { kind: "lost", text: lostWord2 } });
-        lostWord2 = null;
-      }
       const s = slot;
       s.resume = keeper.resume(s, root).finally(() => s.resume = null);
     }
@@ -2290,13 +2286,7 @@ async function setupTools(ctx, say, onChannel, rootOf, flushUsage = async () => 
       }
     }
   })();
-  if (lost) {
-    const word = lostWord2;
-    lostWord2 = null;
-    void keeper.resumeLost(lost.entries, word).then((said) => {
-      if (!said) lostWord2 ??= word;
-    });
-  }
+  if (lost) void keeper.resumeLost(lost.entries, lost.wordFor);
   const launcher = createLauncher({
     rootOf,
     childSlot(sessionID, root) {

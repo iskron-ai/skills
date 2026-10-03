@@ -195,10 +195,9 @@ export async function setupTools(
     endKid: (s, of, why) => runEnds.end(s, of, nothing, false, why),
   });
   // Прежний экземпляр остановили с держащим мостом (или сессию перенесли сюда): ключи
-  // мест — сторожу, места — обратно сразу, со словом в державшие сессии (keeper.resumeLost),
-  // в первую живую — лишь когда таких нет. Только маркеры своей локации (#6626).
+  // мест — сторожу, места — обратно сразу, каждой державшей сессии — слово о её местах
+  // (keeper.resumeLost); не державшей — ни слова о чужих. Только маркеры своей локации (#6626).
   const lost = takeLostMarker(authDir(), home);
-  let lostWord = lost?.text ?? null;
   if (lost?.text) say(lost.text, "warning");
   if (lost) adopt.take(lost.entries);
 
@@ -251,10 +250,6 @@ export async function setupTools(
       slot.dir = dead?.dir ?? slot.dir;
       slot.key = dead?.key ?? slot.key;
       slots.set(root, slot);
-      if (lostWord) {
-        onChannel(root, { logger: "iskron-channel", data: { kind: "lost", text: lostWord } });
-        lostWord = null;
-      }
       // Место прежнего экземпляра плагина (вытеснение каталога, перезапуск)
       // возвращается с диска по каталогу сессии — до первого вызова тула.
       const s = slot;
@@ -427,15 +422,7 @@ export async function setupTools(
     }
   })();
 
-  if (lost) {
-    // Вызов тула другой сессии в этом окне слова о чужой потере не берёт;
-    // державших сессий нет — слово ждёт первую живую, как прежде.
-    const word = lostWord;
-    lostWord = null;
-    void keeper.resumeLost(lost.entries, word).then((said) => {
-      if (!said) lostWord ??= word;
-    });
-  }
+  if (lost) void keeper.resumeLost(lost.entries, lost.wordFor); // каждой — о её местах
 
   // Строка запуска с делом (launch.ts): тот же вызов, что у execute, с его занятостью.
   const launcher = createLauncher<Slot>({

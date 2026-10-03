@@ -1366,7 +1366,10 @@ test("a new root session with a directory asks its bridge to resume that directo
 // under a name read from the directory's record — and the directory does not
 // tell two places of one role apart (#5366). The taken name goes into the
 // session as a prompt, like the loss of hearing; the log line alone is deaf.
-test("a place resumed by the bridge itself is announced into the session with its name and the directory's other places", async () => {
+// Other places of the directory are not named to it (e2e6: two roots of one folder were
+// each named the other's key): the return takes the record this session stood (the
+// bridge checks the session), and a foreign key in its word would call it to the foreign.
+test("a place resumed by the bridge itself is announced into the session with its name — and only its own", async () => {
   const calls = join(SANDBOX, "resumed.calls");
   const resume = join(SANDBOX, "resumed.answer");
   writeFileSync(calls, "");
@@ -1394,11 +1397,7 @@ test("a place resumed by the bridge itself is announced into the session with it
     const word = rec.prompts.find((p) => /сам вернул место/.test(p.text));
     assert.equal(word.sessionID, "s-shared");
     assert.match(word.text, /место brat--931--nks-dev/, "the taken name is said");
-    assert.match(
-      word.text,
-      /других мест: proba--931--nks-dev/,
-      "the directory's other place is said",
-    );
+    assert.doesNotMatch(word.text, /proba--931--nks-dev/, "no other place is named to it");
     assert.match(word.text, /iskron_stand/, "the way to take one's own place is said");
     assert.equal(word.delivery, "steer", "into the going turn, not after it");
   } finally {
@@ -1854,6 +1853,32 @@ async function reloadedLocations(name) {
     throw e;
   }
 }
+
+// e2e6: two root sessions of one folder both held places; after the reload each got
+// the same «hearing was lost … <both keys>» — each named the other's key. A session's
+// word names its own places only.
+test("after a reload two roots of one folder each hear the loss of their own place only", async () => {
+  const calls = join(SANDBOX, "two-roots.calls");
+  writeFileSync(calls, "");
+  const b = bridgeEnv("two-roots", { FB_CALLS: calls });
+  const first = await plugin(b.env, inLoc(LOC_A, "a1", "a2"));
+  await serverTools(first);
+  await standsHeld(first, b, calls, "a1", "k-a1");
+  await standsHeld(first, b, calls, "a2", "k-a2");
+  await first.stop();
+  const second = await plugin(b.env, { ...inLoc(LOC_A, "a1", "a2"), keepMarker: true });
+  try {
+    const loss = (s) =>
+      second.prompts.find((p) => p.sessionID === s && /слух был потерян/.test(p.text));
+    await until(() => loss("a1") && loss("a2"), "the loss word in both");
+    assert.match(loss("a1").text, /k-a1/);
+    assert.doesNotMatch(loss("a1").text, /k-a2/, "a1 is not named a2's place");
+    assert.match(loss("a2").text, /k-a2/);
+    assert.doesNotMatch(loss("a2").text, /k-a1/, "a2 is not named a1's place");
+  } finally {
+    await second.stop();
+  }
+});
 
 test("a reload of every location's instance at once: each takes back only its own sessions' places, and each session hears only its own return", async () => {
   const calls = join(SANDBOX, "locs-first.calls");

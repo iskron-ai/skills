@@ -90,7 +90,7 @@ function readOwn(path: string, tag: string | null, home: Home | null): Lost | nu
 export function takeLostMarker(
   authDir: string,
   home: Home | null,
-): { text: string | null; entries: LostEntry[] } | null {
+): { text: string | null; entries: LostEntry[]; wordFor: (s: string) => string | null } | null {
   const entries: LostEntry[] = [];
   const seen = new Set<string>();
   let at = "";
@@ -121,15 +121,20 @@ export function takeLostMarker(
   const when = new Date(at);
   const hhmm = Number.isNaN(when.getTime()) ? at : when.toTimeString().slice(0, 5);
   // Слово — корням, не перенесённым: места детей возвращаются тихо (children.ts), перенос — не потеря.
-  const where = entries
-    .filter((e) => !e.child && !e.moved)
-    .map((e) => e.key ?? e.dir ?? e.session)
-    .join(", ");
-  return {
-    text: where
+  // Каждой сессии — только её места: чужой ключ в её слове звал бы её возвращать чужое.
+  const word = (of: LostEntry[]): string | null => {
+    const where = of
+      .filter((e) => !e.child && !e.moved)
+      .map((e) => e.key ?? e.dir ?? e.session)
+      .join(", ");
+    return where
       ? `Искрон: слух был потерян в ${hhmm} — плагин остановили (перезапуск, вытеснение каталога) с держащим мостом: ${where}. ` +
-        "Место возвращается с диска само; ожидавшие кадры придут пачкой. Не вернулось — iskron_stand."
-      : null,
+          "Место возвращается с диска само; ожидавшие кадры придут пачкой. Не вернулось — iskron_stand."
+      : null;
+  };
+  return {
+    text: word(entries), // журналу — все
     entries,
+    wordFor: (s) => word(entries.filter((e) => e.session === s)),
   };
 }

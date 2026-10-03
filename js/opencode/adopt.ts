@@ -45,7 +45,7 @@ export function createAdopt(d: AdoptDoors) {
       const lost = takeLostMarker(d.authDir(), d.home);
       if (!lost) return;
       take(lost.entries);
-      void d.keeper.resumeLost(lost.entries, lost.text);
+      void d.keeper.resumeLost(lost.entries, lost.wordFor);
     },
     /** revoke места ребёнка, кончённого переносом родителя: ответ плагина вместо вызова. */
     revoked(name: string, args: Record<string, unknown>): string | null {
