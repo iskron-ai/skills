@@ -60,6 +60,8 @@ const asChildRead = (name: string, args: Record<string, unknown>): void => {
 const IDENTITY: Record<string, Set<string> | "all"> = {
   iskron_me: "all",
   iskron_admin: new Set(["search_users", "access", "list_members", "user_webhooks"]),
+  // Организации человека и членство в них — по описанию тула, все его чтения.
+  iskron_org: new Set(["list", "get", "realms", "list_members", "list_grants"]),
 };
 function identityRefusal(name: string, args: Record<string, unknown>): string | null {
   const action = String(args.action ?? "");

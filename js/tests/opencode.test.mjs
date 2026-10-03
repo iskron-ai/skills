@@ -2943,11 +2943,13 @@ test("rule 2: under a root holding no place, a child's stand is refused aloud �
 // are refused to a child without a satellite; graph reads still go by the root's bridge.
 test("rule 6: a child without a satellite is refused the human's identity — iskron_me, admin's people reads — while it reads the graph", async () => {
   const tools = JSON.stringify(
-    ["iskron_stand", "iskron_case", "iskron_look", "iskron_me", "iskron_admin"].map((name) => ({
-      name,
-      description: "Тул.",
-      inputSchema: { type: "object" },
-    })),
+    ["iskron_stand", "iskron_case", "iskron_look", "iskron_me", "iskron_admin", "iskron_org"].map(
+      (name) => ({
+        name,
+        description: "Тул.",
+        inputSchema: { type: "object" },
+      }),
+    ),
   );
   const { rec, calls } = await childUnder("rule6-identity", true, tools);
   try {
@@ -2959,6 +2961,11 @@ test("rule 6: a child without a satellite is refused the human's identity — is
       ["iskron_admin", "access"],
       ["iskron_admin", "list_members"],
       ["iskron_admin", "user_webhooks"],
+      ["iskron_org", "list"],
+      ["iskron_org", "get"],
+      ["iskron_org", "realms"],
+      ["iskron_org", "list_members"],
+      ["iskron_org", "list_grants"],
     ])
       await assert.rejects(
         rec.call(name, { realm: "nks-dev", action }, "child"),
@@ -2967,6 +2974,7 @@ test("rule 6: a child without a satellite is refused the human's identity — is
       );
     assert.equal(callsIn(calls).length, before, "no identity read reached a bridge");
     await rec.call("iskron_me", { action: "?" }, "child"); // справка — не личность
+    await rec.call("iskron_org", { action: "?" }, "child");
     await rec.call("iskron_look", { realm: "nks-dev", node_id: "42" }, "child");
     assert.equal(
       callsIn(calls).at(-1).name,
@@ -3657,7 +3665,7 @@ test("a child whose run ended is refused aloud on a call that needs a place — 
 
 // Reads of the account tools sign nothing and go by the root's bridge; their
 // writing actions are refused like any call that needs a place (#6361).
-test("a child whose run ended reads realms, orgs and history by the root's bridge, not itself; their writing actions are refused", async () => {
+test("a child whose run ended reads realms and history by the root's bridge, not itself or its orgs; their writing actions are refused", async () => {
   const { rec, rootPid, sent } = await endedChild("ended-reads", [
     "iskron_realm",
     "iskron_org",
@@ -3667,9 +3675,6 @@ test("a child whose run ended reads realms, orgs and history by the root's bridg
   try {
     const reads = [
       ["iskron_realm", "list"],
-      ["iskron_org", "list"],
-      ["iskron_org", "get"],
-      ["iskron_org", "list_members"],
       ["iskron_history", "node"],
     ];
     for (const [tool, action] of reads) {
@@ -3678,7 +3683,12 @@ test("a child whose run ended reads realms, orgs and history by the root's bridg
     }
     const before = sent().length;
     // Себя мостом корня кончившийся ребёнок не читает: личность — человека (#6550 п.6).
-    await assert.rejects(rec.call("iskron_me", { action: "whoami" }, "child"), /личность человека/);
+    for (const [tool, action] of [
+      ["iskron_me", "whoami"],
+      ["iskron_org", "list"],
+      ["iskron_org", "list_members"],
+    ])
+      await assert.rejects(rec.call(tool, { action }, "child"), /личность человека/, action);
     for (const [tool, action] of [
       ["iskron_realm", "create"],
       ["iskron_org", "add_member"],

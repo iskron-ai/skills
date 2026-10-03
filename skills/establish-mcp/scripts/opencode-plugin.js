@@ -2017,7 +2017,9 @@ var asChildRead = (name, args) => {
 };
 var IDENTITY = {
   iskron_me: "all",
-  iskron_admin: /* @__PURE__ */ new Set(["search_users", "access", "list_members", "user_webhooks"])
+  iskron_admin: /* @__PURE__ */ new Set(["search_users", "access", "list_members", "user_webhooks"]),
+  // Организации человека и членство в них — по описанию тула, все его чтения.
+  iskron_org: /* @__PURE__ */ new Set(["list", "get", "realms", "list_members", "list_grants"])
 };
 function identityRefusal(name, args) {
   const action = String(args.action ?? "");
