@@ -7,7 +7,6 @@
 import { type Frame } from "./channel.ts";
 import { L, lang } from "./lang.ts";
 
-// ru:dict — таблицы слов: русская и английская рядом, язык выбирает вызывающий.
 /** Куда идёт кадр: прервать идущий ход или лечь в пачку. */
 export type Stack = "interrupt" | "batch";
 
@@ -15,6 +14,7 @@ export type Stack = "interrupt" | "batch";
  * Слова родов — данные, не код. `{имя}` — поле строки кадра; `{; имя}` —
  * необязательное поле с разделителем впереди: пустое поле уходит вместе с ним.
  */
+// ru:dict — русская таблица слов; английская рядом, язык выбирает вызывающий.
 export const WORDS: Readonly<Record<string, string>> = {
   said: "слово от {author}",
   said_pending: "слово от {author} в полёте — текст придёт следом",
@@ -112,6 +112,7 @@ export const WORDS_EN: Readonly<Record<string, string>> = {
 };
 
 /** Слова записи платформы auto по её code (#5893 §4.2, ступени — #5973); неизвестный code — WORDS.auto. */
+// ru:dict — русская таблица слов; английская рядом, язык выбирает вызывающий.
 export const AUTO_WORDS: Readonly<Record<string, string>> = {
   child_opened: "дочернее дело №{room} открыто",
   child_closing: "дочернее дело №{room} закрывается",
@@ -126,6 +127,7 @@ export const AUTO_WORDS_EN: Readonly<Record<string, string>> = {
 };
 
 /** Связь дел link по rel (#4915): чем это дело приходится делу №{room}; неизвестный rel — как пришёл. */
+// ru:dict — русская таблица слов; английская рядом, язык выбирает вызывающий.
 export const REL_WORDS: Readonly<Record<string, string>> = {
   parent: "дочернее к нему",
   child: "родительское к нему",
@@ -138,6 +140,7 @@ export const REL_WORDS_EN: Readonly<Record<string, string>> = {
 };
 
 /** Вердикт строки словом нормы (#744, #6075): провод несёт ok | partial | bad; неизвестный — как пришёл. */
+// ru:dict — русская таблица слов; английская рядом, язык выбирает вызывающий.
 export const VERDICT_WORDS: Readonly<Record<string, string>> = {
   ok: "ok",
   partial: "частично",

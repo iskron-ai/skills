@@ -11,7 +11,7 @@ import {
   setConfig,
   writeServerChoice,
 } from "../bridge/config.ts";
-import { L } from "../shared/lang.ts";
+import { L, setServerLang } from "../shared/lang.ts";
 import { freshnessWord } from "./doctor.ts";
 
 const out = (s: string): void => {
@@ -40,6 +40,7 @@ export function runUse(argv: string[]): void {
     return;
   }
   const path = writeServerChoice(CFG.authDir, url);
+  setServerLang(url); // ответ — на языке нового выбора, не прежнего
   out(
     L(
       `мост смотрит на ${url} — записано в ${path}; ${freshnessWord(url)}`,

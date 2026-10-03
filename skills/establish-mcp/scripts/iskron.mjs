@@ -303,6 +303,9 @@ var S = scoped(() => ({ current: null }));
 function setServerLang(serverUrl) {
   S.current = forcedLang() ?? langOfUrl(serverUrl);
 }
+function setLang(l) {
+  if (l === "en" || l === "ru") S.current = l;
+}
 var lang = () => S.current ??= resolve();
 var L = (ru, en) => lang() === "en" ? en : ru;
 
@@ -5147,7 +5150,8 @@ function unheardListenBlock(realm) {
 }
 function listenLine(key) {
   const self = fileURLToPath2(import.meta.url);
-  const where = CFG.authDir === defaultAuthDir() ? "" : ` --auth-dir "${CFG.authDir}"`;
+  const authArg = CFG.authDir === defaultAuthDir() ? "" : ` --auth-dir "${CFG.authDir}"`;
+  const where = `${authArg} --lang ${lang()}`;
   const client = clientName();
   const monitor = L(
     `под Monitor — node "${self}" watchdog ${key}${where} с наибольшим timeout_ms, перевзводить по истечении (Claude Code)`,
@@ -5421,7 +5425,6 @@ var isUnattributed = (reply2) => {
 var SOCKET_RE = /wss:\/\/[^\s"'`<>)\]]+|ws:\/\/(?:127\.0\.0\.1|\[?::1\]?|localhost)(?::\d+)?\/[^\s"'`<>)\]]+/;
 var STATUS_RE = /https?:\/\/[^\s"'`<>)\]]+\/channel\/status\/[^\s"'`<>)\]]+/;
 var trim = (s2) => s2.replace(/[.,;:!?»"')\]]+$/, "");
-var REVOKED_BY_OWN = () => L("снято своим revoke", "removed by its own revoke");
 var hideAddresses = (text) => text.replace(
   new RegExp(SOCKET_RE.source, "g"),
   L(
@@ -5488,12 +5491,12 @@ function absorbRevokeReply(msg, reply2) {
   }
   const beside = extraIn(a.realm);
   if (beside && names(a, beside.standing)) {
-    dropExtra(beside.door.key, REVOKED_BY_OWN(), true);
+    dropExtra(beside.door.key, holdWords.revokedOwn(), true);
     return reply2;
   }
   if (!revokesOwn(msg)) return reply2;
   const name = state.standing?.name ?? "unnamed";
-  releaseStanding(REVOKED_BY_OWN(), true);
+  releaseStanding(holdWords.revokedOwn(), true);
   state.standing = null;
   state.standingSession = null;
   log(`standing revoked by this session — released quietly, binding forgotten (${name})`);
@@ -6951,7 +6954,6 @@ import { join as join15 } from "node:path";
 // js/bridge/resumewords.ts
 var via = "iskron_stand";
 var resumeWords = {
-  releaseFailed: () => L("возврат с диска не удался", "the return from disk failed"),
   failed: () => L("возврат на место не удался", "the return to the seat failed"),
   returnedParked: (pending2) => pending2 === null ? L(
     "возврат на место, с которого мост уходил; hello за 4 с не пришёл",
@@ -7118,7 +7120,7 @@ async function resumeFromDisk(realm, karta, name) {
   log(
     kept ? `hold record for ${key}: no hello in time — record kept as it was, the place is not taken` : `hold record for ${key} is stale — dropped, the place is taken anew`
   );
-  releaseStanding(resumeWords.releaseFailed());
+  releaseStanding(holdWords.resumeFailed());
   if (onDisk?.url === rec4.url) restoreHoldRecord(key, rec4);
   state.standing = prev;
   if (rec4.cwd) noteStandCwd(prevCwd);
@@ -9528,6 +9530,7 @@ function parseWatchdogArgs(argv2) {
   for (let i = 0; i < argv2.length; i++) {
     const a = argv2[i];
     if (a === "--auth-dir") out6.authDir = argv2[++i] ?? out6.authDir;
+    else if (a === "--lang") setLang(argv2[++i]);
     else if (!a.startsWith("--") && !out6.key) out6.key = a;
   }
   return out6;
@@ -9633,6 +9636,7 @@ function codexDoorPath() {
   return join18(home, "app-server-control", "app-server-control.sock");
 }
 function runWatchdogCodex(argv2) {
+  parseWatchdogArgs(argv2);
   const threadId = process.env.CODEX_THREAD_ID?.trim();
   if (!threadId) {
     note(wd.noThread());
@@ -9648,7 +9652,6 @@ function runWatchdogCodex(argv2) {
     note(doer(target.error));
     process.exit(2);
   }
-  parseWatchdogArgs(argv2);
   let seenPath = seenFilePathOf(target.authDir, target.key);
   const seen = seenIds(seenPath);
   const waiting = /* @__PURE__ */ new Map();
@@ -11529,6 +11532,7 @@ function runUse(argv2) {
     return;
   }
   const path = writeServerChoice(CFG.authDir, url);
+  setServerLang(url);
   out5(
     L(
       `мост смотрит на ${url} — записано в ${path}; ${freshnessWord(url)}`,

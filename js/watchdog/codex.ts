@@ -38,6 +38,7 @@ export function codexDoorPath(): string {
 }
 
 export function runWatchdogCodex(argv: string[]): void {
+  parseWatchdogArgs(argv); // язык от моста — до первого слова делателю
   const threadId = process.env.CODEX_THREAD_ID?.trim();
   if (!threadId) {
     note(wd.noThread());
@@ -53,7 +54,6 @@ export function runWatchdogCodex(argv: string[]): void {
     note(doer(target.error));
     process.exit(2);
   }
-  parseWatchdogArgs(argv); // валидность флагов — там же
   let seenPath = seenFilePathOf(target.authDir, target.key);
   const seen = seenIds(seenPath);
   const waiting = new Map<number, string[]>(); // id запроса turn/start → id кадров, ждущих подтверждения

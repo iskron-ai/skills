@@ -6,7 +6,6 @@ import { L } from "../shared/lang.ts";
 const via = "iskron_stand";
 
 export const resumeWords = {
-  releaseFailed: (): string => L("возврат с диска не удался", "the return from disk failed"),
   failed: (): string => L("возврат на место не удался", "the return to the seat failed"),
   returnedParked: (pending: number | null): string =>
     pending === null

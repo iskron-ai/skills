@@ -2,8 +2,8 @@
 // cli печатают агенту или человеку, говорит через L() (shared/lang.ts) — русский
 // литерал вне L() в js/bridge, js/shared, js/watchdog, js/cli есть дефект. Литерал
 // вправе остаться, когда он сверяется с прозой сервера (регулярное выражение,
-// includes) или лежит в словаре, который по языку не выбирают: строка или строка
-// над ней несёт пометку `// ru:server`.
+// includes) или лежит в таблице, которую по языку выбирают снаружи: строка или строка
+// над ней несёт `// ru:server`, объявление таблицы — `// ru:dict` над ним.
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
@@ -39,9 +39,12 @@ function underL(node) {
 function strays(file) {
   const text = readFileSync(file, "utf8");
   const lines = text.split("\n");
-  // Файл-словарь: русская таблица с английской рядом, язык выбирают снаружи.
-  if (/^\/\/ ru:dict\b/m.test(text)) return [];
   const sf = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
+  // Таблица слов: `// ru:dict` над объявлением снимает проверку с него одного, не с файла.
+  const dicts = sf.statements.filter((s) =>
+    /\/\/ ru:dict\b/.test(text.slice(s.getFullStart(), s.getStart())),
+  );
+  const inDict = (node) => dicts.some((s) => node.pos >= s.getStart() && node.end <= s.end);
   const found = [];
   const visit = (node) => {
     const literal =
@@ -50,7 +53,7 @@ function strays(file) {
       ts.isTemplateHead(node) ||
       ts.isTemplateMiddle(node) ||
       ts.isTemplateTail(node);
-    if (literal && CYRILLIC.test(node.text) && !underL(node)) {
+    if (literal && CYRILLIC.test(node.text) && !underL(node) && !inDict(node)) {
       const line = sf.getLineAndCharacterOfPosition(node.getStart()).line;
       const marked = (i) => /\/\/ ru:server/.test(lines[i] ?? "");
       if (!marked(line) && !marked(line - 1)) found.push(`${relative(ROOT, file)}:${line + 1}`);

@@ -6,6 +6,7 @@ import { connect } from "node:net";
 import { join } from "node:path";
 
 import { type ChannelEvent } from "../bridge/hold.ts";
+import { setLang } from "../shared/lang.ts";
 import { deliveredKeys, seenIds } from "../shared/seen.ts";
 import { authDirFromEnv, socketPathOf, standingsDirOf } from "../shared/standings.ts";
 import { wd } from "./words.ts";
@@ -26,12 +27,13 @@ export interface WatchdogArgs {
   authDir: string;
 }
 
-/** `[ключ] [--auth-dir <dir>]` — тот же каталог, что у моста, иначе сторож ищет не там. */
+/** `[ключ] [--auth-dir <dir>] [--lang en|ru]` — каталог тот же, что у моста, иначе сторож ищет не там; язык мост называет сам. */
 export function parseWatchdogArgs(argv: string[]): WatchdogArgs {
   const out: WatchdogArgs = { authDir: authDirFromEnv() };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--auth-dir") out.authDir = argv[++i] ?? out.authDir;
+    else if (a === "--lang") setLang(argv[++i]);
     else if (!a.startsWith("--") && !out.key) out.key = a;
   }
   return out;

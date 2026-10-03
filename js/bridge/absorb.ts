@@ -4,6 +4,7 @@
 import { statusUrl as deriveStatusUrl } from "../shared/channel.ts";
 import { L } from "../shared/lang.ts";
 import { besideKeyIn, holdStanding, releaseStanding, setRevokingOwn } from "./hold.ts";
+import { holdWords } from "./holdwords.ts";
 import { listenBlock } from "./listen.ts";
 import { dropExtra, extraIn, extraPlaces } from "./places.ts";
 import { otherRealm } from "./realms.ts";
@@ -16,7 +17,6 @@ const SOCKET_RE =
   /wss:\/\/[^\s"'`<>)\]]+|ws:\/\/(?:127\.0\.0\.1|\[?::1\]?|localhost)(?::\d+)?\/[^\s"'`<>)\]]+/;
 const STATUS_RE = /https?:\/\/[^\s"'`<>)\]]+\/channel\/status\/[^\s"'`<>)\]]+/;
 const trim = (s: string): string => s.replace(/[.,;:!?»"')\]]+$/, "");
-const REVOKED_BY_OWN = (): string => L("снято своим revoke", "removed by its own revoke");
 
 /**
  * Секрет не покидает моста (граф nks-dev: #4233, #5033): адреса сокета и
@@ -125,12 +125,12 @@ export function absorbRevokeReply(msg: JsonRpcMessage, reply: JsonRpcMessage): J
   const beside = extraIn(a.realm);
   if (beside && names(a, beside.standing)) {
     // Место другого графа снято своим revoke: его дверь и запись — прочь, канал цел (#5838).
-    dropExtra(beside.door.key, REVOKED_BY_OWN(), true);
+    dropExtra(beside.door.key, holdWords.revokedOwn(), true);
     return reply;
   }
   if (!revokesOwn(msg)) return reply;
   const name = state.standing?.name ?? "unnamed";
-  releaseStanding(REVOKED_BY_OWN(), true);
+  releaseStanding(holdWords.revokedOwn(), true);
   state.standing = null;
   state.standingSession = null;
   log(`standing revoked by this session — released quietly, binding forgotten (${name})`);
