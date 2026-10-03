@@ -3,7 +3,13 @@
 // уходит в hold.ts; своё revoke отпускает место тихо (#5012).
 import { statusUrl as deriveStatusUrl } from "../shared/channel.ts";
 import { L } from "../shared/lang.ts";
-import { besideKeyIn, holdStanding, releaseStanding, setRevokingOwn } from "./hold.ts";
+import {
+  besideKeyIn,
+  holdStanding,
+  releaseStanding,
+  setClosingOwn,
+  setRevokingOwn,
+} from "./hold.ts";
 import { holdWords } from "./holdwords.ts";
 import { listenBlock } from "./listen.ts";
 import { dropExtra, extraIn, extraPlaces } from "./places.ts";
@@ -100,6 +106,31 @@ function names(a: Record<string, unknown>, s: Standing): boolean {
  */
 export function expectOwnRevoke(msg: JsonRpcMessage): void {
   if (revokesOwn(msg)) setRevokingOwn(true);
+  if (closesOwn(msg)) setClosingOwn(true);
+}
+
+/**
+ * Своё close — канал места, которое ведёт мост, со всеми его местами (справка
+ * iskron_channel, close): как своё снятие, не смерть токена (#6634).
+ */
+function closesOwn(msg: JsonRpcMessage): boolean {
+  const a = msg?.params?.arguments;
+  if (msg?.params?.name !== "iskron_channel" || a?.action !== "close") return false;
+  const s = state.standing;
+  return !!s && !otherRealm(a.realm, s.realm);
+}
+
+export function absorbCloseReply(msg: JsonRpcMessage, reply: JsonRpcMessage): JsonRpcMessage {
+  if (msg?.params?.name !== "iskron_channel" || msg?.params?.arguments?.action !== "close")
+    return reply;
+  setClosingOwn(false);
+  // 4001 обогнал ответ — место уже отпущено (hold.ts), отпускать нечего.
+  if (reply?.error || reply?.result?.isError || !closesOwn(msg)) return reply;
+  releaseStanding(holdWords.closedOwn(), true);
+  state.standing = null;
+  state.standingSession = null;
+  log("channel closed by this session — released quietly, binding forgotten");
+  return reply;
 }
 
 export function absorbRevokeReply(msg: JsonRpcMessage, reply: JsonRpcMessage): JsonRpcMessage {

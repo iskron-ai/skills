@@ -1,9 +1,9 @@
 // Один исполняемый файл поставки iskron на все три процесса и диагностику:
 //
 //   node iskron.mjs [bridge] [server-url] [flags]   мост stdio↔https (по умолчанию)
-//   node iskron.mjs watchdog [ключ] [--auth-dir <dir>]        сторож сокета под наблюдателем харнеса
-//   node iskron.mjs watchdog-exit [ключ] [--auth-dir <dir>]   сторож выхода-на-кадре
-//   node iskron.mjs watchdog-codex [ключ] [--auth-dir <dir>]  сторож Codex: кадр в идущий тред через app-server
+//   node iskron.mjs watchdog [ключ] [--auth-dir <dir>] [--lang en|ru]        сторож сокета под наблюдателем харнеса
+//   node iskron.mjs watchdog-exit [ключ] [--auth-dir <dir>] [--lang en|ru]   сторож выхода-на-кадре
+//   node iskron.mjs watchdog-codex [ключ] [--auth-dir <dir>] [--lang en|ru]  сторож Codex: кадр в идущий тред через app-server
 //   node iskron.mjs doctor [server-url] [flags]     какая сборка стоит и работает ли она
 //   node iskron.mjs update [--auth-dir <dir>]       свежий релиз в дом: мост, плагин OpenCode, SETUP.md
 //   node iskron.mjs use <en|ru|url> [--auth-dir <dir>]  постоянный выбор адреса сервера на этой машине
@@ -35,9 +35,10 @@ const usage = (): string => `iskron ${BUILD}
   node iskron.mjs [bridge] [server-url] [--timeout <ms>] [--auth-dir <dir>] [--no-browser] [--debug] [--satellite] [--tools <a,b,c>]
       ${L("(--satellite — мост прогона субагента из файла агента: только место-спутник <место позвавшего>.sub-N)", "(--satellite — the bridge of a subagent run from an agent file: only the satellite seat <caller's seat>.sub-N)")}
       ${L("(--tools — какие тулы видит харнес, iskron_stand всегда; без флага — все)", "(--tools — which tools the harness sees, iskron_stand always; without the flag — all)")}
-  node iskron.mjs watchdog [${L("ключ", "key")}] [--auth-dir <dir>]
-  node iskron.mjs watchdog-exit [${L("ключ", "key")}] [--auth-dir <dir>]
-  node iskron.mjs watchdog-codex [${L("ключ", "key")}] [--auth-dir <dir>]   ${L("(из оболочки Codex: CODEX_THREAD_ID, CODEX_HOME)", "(from the Codex shell: CODEX_THREAD_ID, CODEX_HOME)")}
+  node iskron.mjs watchdog [${L("ключ", "key")}] [--auth-dir <dir>] [--lang en|ru]
+  node iskron.mjs watchdog-exit [${L("ключ", "key")}] [--auth-dir <dir>] [--lang en|ru]
+  node iskron.mjs watchdog-codex [${L("ключ", "key")}] [--auth-dir <dir>] [--lang en|ru]   ${L("(из оболочки Codex: CODEX_THREAD_ID, CODEX_HOME)", "(from the Codex shell: CODEX_THREAD_ID, CODEX_HOME)")}
+      ${L("(--lang — язык поверхности; команду сторожа с ним печатает блок моста)", "(--lang — the surface language; the bridge block prints the watchdog command with it)")}
   node iskron.mjs doctor [server-url] [--auth-dir <dir>]
   node iskron.mjs update [--auth-dir <dir>]
   node iskron.mjs use <en|ru|url> [--auth-dir <dir>]   ${L("(en — mcp.iskron.ai, ru — mcp.iskron.ru)", "(en — mcp.iskron.ai, ru — mcp.iskron.ru)")}

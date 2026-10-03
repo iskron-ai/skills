@@ -1076,6 +1076,50 @@ export async function startFakeNks(opts = {}) {
             extra,
           );
         }
+        if (a.action === "close") {
+          // Канал места этой сессии — со всеми его местами; сокет закрывается 4001
+          // раньше ответа по HTTP, как у revoke (справка iskron_channel, close).
+          const chan = st.standings.get(sid);
+          const c = st.channels.get(chan);
+          if (!c)
+            return json(
+              res,
+              200,
+              {
+                jsonrpc: "2.0",
+                id: msg.id,
+                result: {
+                  isError: true,
+                  content: [{ type: "text", text: "Отказано: у этой сессии нет канала." }],
+                },
+              },
+              extra,
+            );
+          for (const p of c.places.values()) {
+            st.places.delete(`${p.karta}:${p.name}`);
+            st.closedPlaces.add(`${p.karta}:${p.name}`);
+          }
+          for (const sock of st.ws) {
+            if (st.wsChans.get(sock) !== chan) continue;
+            sock.write(wsFrame(0x8, Buffer.from([4001 >> 8, 4001 & 0xff])));
+            setTimeout(() => sock.end(), 100).unref();
+          }
+          st.channels.delete(chan);
+          for (const [sid2, bound] of st.standings) if (bound === chan) st.standings.delete(sid2);
+          if (st.revokeReplyDelayMs) await new Promise((r) => setTimeout(r, st.revokeReplyDelayMs));
+          return json(
+            res,
+            200,
+            {
+              jsonrpc: "2.0",
+              id: msg.id,
+              result: {
+                content: [{ type: "text", text: `Канал ${chan} закрыт вместе с местами.` }],
+              },
+            },
+            extra,
+          );
+        }
         if (a.action === "revoke") {
           const name = String(a.standing ?? "").replace(/^.*:/, "");
           // Снятие — по id места; основное место канала не снимается, пока на

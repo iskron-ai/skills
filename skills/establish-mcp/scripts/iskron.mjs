@@ -4314,6 +4314,8 @@ var H2 = scoped(() => ({
   resuming: 0,
   /** своё снятие в полёте (absorb.ts): закрытие 4001 обгонит ответ revoke */
   revokingOwn: false,
+  /** своё close канала в полёте (absorb.ts): закрытие 4001 обгонит ответ, как у revoke (#6634) */
+  closingOwn: false,
   /** демон гаснет, а тонкий мост этой сессии жив: он вернёт место новому демону (daemon.ts, #6485) */
   handingOver: null
 }));
@@ -4322,6 +4324,9 @@ function noteResuming(delta) {
 }
 function setRevokingOwn(v) {
   H2.revokingOwn = v;
+}
+function setClosingOwn(v) {
+  H2.closingOwn = v;
 }
 var handingOver = null;
 function beginHandover(why) {
@@ -4811,6 +4816,11 @@ var handoffsSettled = () => Promise.all([...pending]).then(() => void 0);
 var holdWords = {
   newSocket: () => L("новый сокет", "new socket"),
   revokedOwn: () => L("снято своим revoke", "revoked by this session"),
+  /** Своё close канала — не мёртвый токен (#6634): одно слово на обоих языках, connect не зовёт. */
+  closedOwn: () => L(
+    "канал закрыт своим close этой сессии — место отпущено, токен жив; встать снова — iskron_stand",
+    "the channel was closed by this session's own close — the seat is released, the token is alive; to stand again — iskron_stand"
+  ),
   resumeFailed: () => L("возврат с диска не удался", "resume from disk failed"),
   tokenDead: () => L("токен мёртв", "token dead"),
   parked: (reason) => L(
@@ -5098,6 +5108,15 @@ function openHolder(url, key) {
             `standing revoked by this session — released quietly, binding forgotten (${state.standing?.name ?? "unnamed"}; close ${code} arrived before the answer)`
           );
           releaseStanding(holdWords.revokedOwn(), true);
+          state.standing = null;
+          state.standingSession = null;
+          return;
+        }
+        if (H2.closingOwn) {
+          log(
+            `channel closed by this session — released quietly (close ${code} arrived before the answer)`
+          );
+          releaseStanding(holdWords.closedOwn(), true);
           state.standing = null;
           state.standingSession = null;
           return;
@@ -5527,6 +5546,24 @@ function names(a, s2) {
 }
 function expectOwnRevoke(msg) {
   if (revokesOwn(msg)) setRevokingOwn(true);
+  if (closesOwn(msg)) setClosingOwn(true);
+}
+function closesOwn(msg) {
+  const a = msg?.params?.arguments;
+  if (msg?.params?.name !== "iskron_channel" || a?.action !== "close") return false;
+  const s2 = state.standing;
+  return !!s2 && !otherRealm(a.realm, s2.realm);
+}
+function absorbCloseReply(msg, reply2) {
+  if (msg?.params?.name !== "iskron_channel" || msg?.params?.arguments?.action !== "close")
+    return reply2;
+  setClosingOwn(false);
+  if (reply2?.error || reply2?.result?.isError || !closesOwn(msg)) return reply2;
+  releaseStanding(holdWords.closedOwn(), true);
+  state.standing = null;
+  state.standingSession = null;
+  log("channel closed by this session — released quietly, binding forgotten");
+  return reply2;
 }
 function absorbRevokeReply(msg, reply2) {
   if (msg?.params?.name !== "iskron_channel" || msg?.params?.arguments?.action !== "revoke")
@@ -5707,13 +5744,10 @@ async function statusWord(text, realm) {
   const st = await publishStatus(text, realm);
   if (!st.ok && !statusAddress()) return [await notHeldHere(realm), true];
   if (st.code === 404) return [`${st.body} ${TURNED_GUIDANCE()}`, true];
-  if (st.ok)
-    return [
-      `${L("занятость", "busyness")} ${placeLabel(realm)}: ${text || L("(снята)", "(cleared)")}`,
-      false
-    ];
+  if (st.ok) return [busyLine(text, realm), false];
   return [st.body, true];
 }
+var busyLine = (text, realm) => `${L("занятость", "busyness")} ${placeLabel(realm)}: ${text || L("(снята)", "(cleared)")}`;
 function placeLabel(realm) {
   const a = statusAddress(realm);
   if (a?.place)
@@ -7703,7 +7737,6 @@ var SW = {
     `Занятость не публикуется: статусного адреса этого стояния у моста нет — он у держателя сокета; ${takePath}.`,
     `The busy line is not published: the bridge has no status address for this standing — the socket's holder has it; ${takePath}.`
   ),
-  status: (text) => L(`Занятость: ${text}`, `Busy: ${text}`),
   statusRefused: (body, guidance) => L(
     `Занятость не принята: ${body}${guidance}`,
     `The busy line was not accepted: ${body}${guidance}`
@@ -8069,7 +8102,7 @@ async function runStand(msg) {
   } else if (typeof a.status === "string" && a.status.trim()) {
     const st = await publishStatus(a.status.trim(), realm);
     lines.push(
-      st.ok ? SW.status(a.status.trim()) : SW.statusRefused(short(st.body), st.code === 404 ? ` ${TURNED_GUIDANCE()}` : "")
+      st.ok ? busyLine(a.status.trim(), realm) : SW.statusRefused(short(st.body), st.code === 404 ? ` ${TURNED_GUIDANCE()}` : "")
     );
   }
   const stale = staleNotice(readLatest(CFG.authDir), CFG.authDir);
@@ -8396,7 +8429,9 @@ async function deliverOne(msg) {
           }
         }
         noteCaseEntry(msg.params?.name, msg.params?.arguments, held2);
-        emit(withNotice(absorbRevokeReply(msg, absorbChannelReply(msg, held2))));
+        emit(
+          withNotice(absorbCloseReply(msg, absorbRevokeReply(msg, absorbChannelReply(msg, held2))))
+        );
       }
       return;
     } catch (e) {
@@ -11676,9 +11711,10 @@ var usage = () => `iskron ${BUILD}
   node iskron.mjs [bridge] [server-url] [--timeout <ms>] [--auth-dir <dir>] [--no-browser] [--debug] [--satellite] [--tools <a,b,c>]
       ${L("(--satellite — мост прогона субагента из файла агента: только место-спутник <место позвавшего>.sub-N)", "(--satellite — the bridge of a subagent run from an agent file: only the satellite seat <caller's seat>.sub-N)")}
       ${L("(--tools — какие тулы видит харнес, iskron_stand всегда; без флага — все)", "(--tools — which tools the harness sees, iskron_stand always; without the flag — all)")}
-  node iskron.mjs watchdog [${L("ключ", "key")}] [--auth-dir <dir>]
-  node iskron.mjs watchdog-exit [${L("ключ", "key")}] [--auth-dir <dir>]
-  node iskron.mjs watchdog-codex [${L("ключ", "key")}] [--auth-dir <dir>]   ${L("(из оболочки Codex: CODEX_THREAD_ID, CODEX_HOME)", "(from the Codex shell: CODEX_THREAD_ID, CODEX_HOME)")}
+  node iskron.mjs watchdog [${L("ключ", "key")}] [--auth-dir <dir>] [--lang en|ru]
+  node iskron.mjs watchdog-exit [${L("ключ", "key")}] [--auth-dir <dir>] [--lang en|ru]
+  node iskron.mjs watchdog-codex [${L("ключ", "key")}] [--auth-dir <dir>] [--lang en|ru]   ${L("(из оболочки Codex: CODEX_THREAD_ID, CODEX_HOME)", "(from the Codex shell: CODEX_THREAD_ID, CODEX_HOME)")}
+      ${L("(--lang — язык поверхности; команду сторожа с ним печатает блок моста)", "(--lang — the surface language; the bridge block prints the watchdog command with it)")}
   node iskron.mjs doctor [server-url] [--auth-dir <dir>]
   node iskron.mjs update [--auth-dir <dir>]
   node iskron.mjs use <en|ru|url> [--auth-dir <dir>]   ${L("(en — mcp.iskron.ai, ru — mcp.iskron.ru)", "(en — mcp.iskron.ai, ru — mcp.iskron.ru)")}

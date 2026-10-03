@@ -4277,7 +4277,7 @@ function flagsOfBlock(text, sub) {
   });
 }
 
-test("English surface: leave, resume and hello — the bridge and both watchdogs it names print no Cyrillic", async (t) => {
+test("English surface: leave, resume and hello — the bridge and the three watchdogs it names print no Cyrillic", async (t) => {
   const { fake, dir, bridge, text, key } = await connected(t, {
     env: { ISKRON_BRIDGE_LANG: "en" },
   });
@@ -4286,7 +4286,8 @@ test("English surface: leave, resume and hello — the bridge and both watchdogs
   assert.doesNotMatch(block, CYRILLIC, block);
   assert.match(text, /--lang en/, "the block names the language to the watchdog");
   await waitFor(() => fake.state.ws.size === 1, "the socket");
-  const spawnWd = (sub) => runClient(sub, dir, key, 20_000, NO_LANG_ENV, flagsOfBlock(text, sub));
+  const spawnWd = (sub, env = {}) =>
+    runClient(sub, dir, key, 20_000, { ...NO_LANG_ENV, ...env }, flagsOfBlock(text, sub));
   const mon = spawnWd("watchdog");
   await waitFor(() => mon.out.includes("listening on standing"), "the Monitor watchdog to attach");
   await waitFor(() => mon.out.includes('"type":"hello"'), "hello at the Monitor watchdog");
@@ -4297,6 +4298,21 @@ test("English surface: leave, resume and hello — the bridge and both watchdogs
     wd.proc.kill("SIGKILL");
     await wd.done;
   }
+  // Тело кадра — слово соседа (фейк — по-русски): в stderr Codex-сторожа — только его слова.
+  const home = mkdtempSync("/tmp/cxe-");
+  const door = await startFakeCodex(
+    join(home, "app-server-control", "app-server-control.sock"),
+    join(home, "door.log"),
+  );
+  t.after(() => door.stop());
+  const codex = spawnWd("watchdog-codex", { CODEX_HOME: home, CODEX_THREAD_ID: "thread-en" });
+  await waitFor(() => codex.err.includes("listening on standing"), "the Codex watchdog to attach");
+  await waitFor(() => codex.err.includes("not a reason to wake"), "hello at the Codex watchdog");
+  await sendRoom(fake, directWord());
+  await waitFor(() => codex.err.includes("frame put into thread"), "a frame into the thread");
+  assert.doesNotMatch(codex.out + codex.err, CYRILLIC, `${codex.out}${codex.err}`);
+  codex.proc.kill("SIGKILL");
+  await codex.done;
   const left = await bridge.call("tools/call", 5, {
     name: "iskron_channel",
     arguments: { realm: "nks-dev", action: "leave" },

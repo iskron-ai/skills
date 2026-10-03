@@ -264,7 +264,6 @@ export const SW = {
       `Занятость не публикуется: статусного адреса этого стояния у моста нет — он у держателя сокета; ${takePath}.`,
       `The busy line is not published: the bridge has no status address for this standing — the socket's holder has it; ${takePath}.`,
     ),
-  status: (text: string): string => L(`Занятость: ${text}`, `Busy: ${text}`),
   statusRefused: (body: string, guidance: string): string =>
     L(
       `Занятость не принята: ${body}${guidance}`,
