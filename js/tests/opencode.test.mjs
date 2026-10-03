@@ -2917,6 +2917,36 @@ test("rule 2: under a root holding no place, a child's stand is refused aloud �
   }
 });
 
+// A scout without a satellite reads the case and the channel (seen live: read and history
+// were refused as writes, 7.2.3). It reads by the root's bridge — and a case history must
+// not move the ROOT's cursor: the plugin sends it with keep_cursor.
+test("rule 2: a child without a satellite reads the case and the channel by the root's bridge, the root's cursor untouched; its say is refused", async () => {
+  const { rec, calls } = await childUnder("rule2-reads", true);
+  try {
+    const reads = [
+      ["iskron_case", { realm: "nks-dev", action: "read", room: "#77" }],
+      ["iskron_case", { realm: "nks-dev", action: "history", room: "#77" }],
+      ["iskron_case", { realm: "nks-dev", action: "mine" }],
+      ["iskron_case", { realm: "nks-dev", action: "?" }],
+      ["iskron_channel", { realm: "nks-dev", action: "history" }],
+      ["iskron_channel", { realm: "nks-dev", action: "sessions" }],
+    ];
+    for (const [name, args] of reads) await rec.call(name, args, "child");
+    const sent = callsIn(calls).filter(
+      (c) => c.name === "iskron_case" || c.name === "iskron_channel",
+    );
+    assert.equal(sent.length, reads.length, "every read went out");
+    const history = sent.find((c) => c.name === "iskron_case" && c.arguments.action === "history");
+    assert.equal(history.arguments.keep_cursor, true, "the root's cursor is not moved");
+    await assert.rejects(
+      rec.call("iskron_case", { realm: "nks-dev", action: "say", room: "#77", text: "x" }, "child"),
+      /только своим местом-спутником/,
+    );
+  } finally {
+    await rec.stop();
+  }
+});
+
 for (const rootHolds of [true, false])
   test(`rule 2: a child that never stood cannot write by the root's bridge (root ${rootHolds ? "holding a place" : "without a place"}); it reads by it`, async () => {
     const { rec, calls } = await childUnder(`rule2-write-${rootHolds}`, rootHolds);

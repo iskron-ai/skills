@@ -1963,19 +1963,38 @@ var READ_TOOLS = /* @__PURE__ */ new Set([
   "iskron_search",
   "iskron_semantic_search"
 ]);
+var CASE_READS = /* @__PURE__ */ new Set(["read", "history", "mine", "at"]);
 var READ_ACTIONS = {
-  iskron_channel: /* @__PURE__ */ new Set(["list"]),
+  iskron_case: CASE_READS,
+  iskron_room: CASE_READS,
+  // прежнее имя тула дел
+  iskron_channel: /* @__PURE__ */ new Set(["list", "sessions", "history"]),
   iskron_realm: /* @__PURE__ */ new Set(["list"]),
   iskron_org: /* @__PURE__ */ new Set(["list", "get", "realms", "list_members", "list_grants"]),
   iskron_me: /* @__PURE__ */ new Set(["whoami", "orgs", "kartas", "usage"]),
-  iskron_history: /* @__PURE__ */ new Set(["realm", "node", "delta"])
+  iskron_history: /* @__PURE__ */ new Set(["realm", "node", "delta"]),
+  iskron_admin: /* @__PURE__ */ new Set([
+    "list_members",
+    "access",
+    "search_users",
+    "list_webhooks",
+    "user_webhooks",
+    "version"
+  ])
 };
 var readsOnly = (name, args) => {
   const action = String(args.action ?? "");
   return READ_TOOLS.has(name) || action === "?" || !!READ_ACTIONS[name]?.has(action);
 };
+var asChildRead = (name, args) => {
+  if ((name === "iskron_case" || name === "iskron_room") && args.action === "history")
+    args.keep_cursor = true;
+};
 function childWriteRefusal(of, name, args) {
-  if (readsOnly(name, args)) return null;
+  if (readsOnly(name, args)) {
+    asChildRead(name, args);
+    return null;
+  }
   return of ? `Отказано (плагин): дочерняя сессия пишет только своим местом-спутником — ${name} ушёл бы местом родителя ${of}. Встань: iskron_stand(realm, karta, satellite_of="${of}"), затем повтори; читать можно и так.` : `Отказано (плагин): дочерняя сессия пишет только своим местом-спутником, а место родителя неизвестно — корень места не держит. Своего места ей не завести; читать можно и так, писать — словом запустившему.`;
 }
 function createRunEnds() {
