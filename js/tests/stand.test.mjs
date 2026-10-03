@@ -717,9 +717,7 @@ test("iskron_stand after an eviction: register only, the busy line still publish
     }
   };
   await waitFor(() => fake.state.ws.size === 1, "the socket");
-  const known = new Set(fake.state.ws);
-  await fake.control({ ws_close: 4000 });
-  await waitFor(() => [...fake.state.ws].some((s) => !known.has(s)), "the reopen");
+  // Одно вытеснение — уже уступка вслух: мост не открывается заново (#6550).
   await fake.control({ ws_close: 4000 });
   await waitFor(
     () => bridge.notifications.some((n) => n.params?.data?.kind === "evicted"),

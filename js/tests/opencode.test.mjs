@@ -24,6 +24,8 @@
 // ISKRON_OPENCODE_PLUGIN points the probe at any copy (a past revision, a
 // broken one) so it can be shown red before a fix. Run with `make test-opencode`.
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   appendFileSync,
   copyFileSync,
@@ -1906,7 +1908,8 @@ test("a marker of the previous build, without a location: each location's instan
     { session: "b1", dir: LOC_B.directory, key: "k-b1", child: false },
   ];
   writeFileSync(
-    join(process.env.ISKRON_BRIDGE_AUTH_DIR, "opencode-lost.4242.legacy.json"),
+    // pid писавшего — этот процесс: файл живого чужого сервера экземпляр не берёт.
+    join(process.env.ISKRON_BRIDGE_AUTH_DIR, `opencode-lost.${process.pid}.legacy.json`),
     JSON.stringify({ at, entries }),
   );
   const { A, B } = await reloadedLocations("locs-legacy");
@@ -1917,6 +1920,47 @@ test("a marker of the previous build, without a location: each location's instan
   } finally {
     await A.stop();
     await B.stop();
+  }
+});
+
+// Two OpenCode servers on one machine each load the plugin for the same folder (seen
+// live on a delivery update: run=85c30e6a and run=f88d2cf2 both loaded iskron.js for
+// iskron/skills). The marker of one server's instance is that server's: the other,
+// taking it, held the session's place by its bridge while the session called tools
+// through its own (#6626 again). A marker of a server that is gone (a restart) is taken.
+test("a marker written by another live OpenCode server for the same folder is its own; a gone server's marker is taken", async () => {
+  for (const f of lostMarkers()) rmSync(f, { force: true });
+  const other = spawn(process.execPath, ["-e", "setTimeout(() => {}, 60000)"], { stdio: "ignore" });
+  const tag = createHash("sha256").update(`${LOC_A.directory}\0`).digest("hex").slice(0, 12);
+  const file = join(
+    process.env.ISKRON_BRIDGE_AUTH_DIR,
+    `opencode-lost.@${tag}.${other.pid}.x.json`,
+  );
+  const entries = [{ session: "a1", dir: LOC_A.directory, key: "k-a1", child: false }];
+  writeFileSync(file, JSON.stringify({ at: new Date().toISOString(), entries }));
+  const calls = join(SANDBOX, "other-server.calls");
+  const resume = join(SANDBOX, "other-server.resume");
+  writeFileSync(calls, "");
+  writeFileSync(resume, JSON.stringify({ bySession: { a1: backAnswer("k-a1") } }));
+  const b = bridgeEnv("other-server", { FB_CALLS: calls, FB_RESUME: resume });
+  const resumed = () =>
+    callsIn(calls).some((c) => c.name === "iskron/resume" && c.arguments.session === "a1");
+  const first = await plugin(b.env, { ...inLoc(LOC_A, "a1"), keepMarker: true });
+  try {
+    await serverTools(first);
+    await delay(500);
+    assert.ok(!resumed(), "the other live server's session is not taken back from here");
+    assert.ok(existsSync(file), "its marker is left to it");
+  } finally {
+    await first.stop();
+  }
+  other.kill();
+  await until(() => !alive(other.pid), "the other server to go");
+  const second = await plugin(b.env, { ...inLoc(LOC_A, "a1"), keepMarker: true });
+  try {
+    await until(resumed, "the gone server's session taken back");
+  } finally {
+    await second.stop();
   }
 });
 

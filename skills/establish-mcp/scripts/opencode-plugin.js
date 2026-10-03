@@ -1046,6 +1046,16 @@ var LEGACY_MS = 2 * 6e4;
 var hash = (s) => createHash2("sha256").update(s).digest("hex").slice(0, 12);
 var tagOf = (home) => home ? hash(`${home.directory}\0${home.workspace ?? ""}`) : "any";
 var tagIn = (f) => /^opencode-lost\.@([^.]+)\./.exec(f)?.[1] ?? null;
+var otherLive = (f) => {
+  const pid = Number(/\.(\d+)\.[^.]+\.json$/.exec(f)?.[1]);
+  if (!pid || pid === process.pid) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return e.code === "EPERM";
+  }
+};
 function writeLostMarker(authDir2, slots, home) {
   const entries = [...slots].filter((s) => s.holding && s.session).map(
     (s) => entryOf({ ...s, session: s.session, of: s.satelliteOf, name: s.place?.name })
@@ -1094,6 +1104,7 @@ function takeLostMarker(authDir2, home) {
   for (const f of files) {
     const tag = tagIn(f);
     if (tag !== null && tag !== mine) continue;
+    if (otherLive(f)) continue;
     const lost = readOwn(join3(authDir2, f), tag, home);
     const stale = !(Date.now() - Date.parse(lost?.at ?? "") < LEGACY_MS);
     for (const e of lost?.entries ?? []) {

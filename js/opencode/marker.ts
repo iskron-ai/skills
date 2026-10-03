@@ -25,6 +25,23 @@ const tagOf = (home: Home | null): string =>
   home ? hash(`${home.directory}\0${home.workspace ?? ""}`) : "any";
 /** Метка файла `opencode-lost.@<метка>.…`; null — файл прежней сборки. */
 const tagIn = (f: string): string | null => /^opencode-lost\.@([^.]+)\./.exec(f)?.[1] ?? null;
+/**
+ * Файл живого другого сервера OpenCode: на машине их бывает несколько, и каждый
+ * грузит плагин для той же папки. Маркер пишет процесс сервера (pid в имени); его
+ * сессии зовут тулы через его экземпляр — взяв чужой, этот вернул бы место своим
+ * мостом, а сессия пошла бы мостом своего сервера (наблюдено 7.2.1→7.2.2, #6626).
+ * Сервер, которого нет (перезапуск), чужим не считается.
+ */
+const otherLive = (f: string): boolean => {
+  const pid = Number(/\.(\d+)\.[^.]+\.json$/.exec(f)?.[1]);
+  if (!pid || pid === process.pid) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return (e as { code?: string }).code === "EPERM";
+  }
+};
 
 /** Держащие мосты — на диск, кого держали: остановка плагина либо перенос сессии в другую папку (home — её локация). */
 export function writeLostMarker(authDir: string, slots: Iterable<Held>, home: Home | null): void {
@@ -89,6 +106,7 @@ export function takeLostMarker(
   for (const f of files) {
     const tag = tagIn(f);
     if (tag !== null && tag !== mine) continue; // маркер другой локации — её экземпляру
+    if (otherLive(f)) continue; // маркер другого живого сервера — его экземпляру
     const lost = readOwn(join(authDir, f), tag, home);
     // Перенос, не взятый экземпляром новой папки сразу, устарел: сессия ушла дальше.
     const stale = !(Date.now() - Date.parse(lost?.at ?? "") < LEGACY_MS);

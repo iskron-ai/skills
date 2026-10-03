@@ -2524,7 +2524,6 @@ var SILENT_INTERVALS = 3;
 var SILENT_FLOOR_MS = Number(process.env.ISKRON_CHANNEL_SILENT_FLOOR_MS) || 6e4;
 var DEAD_TOKEN_CODES = [4001, 4002];
 var EVICTED_CODE = 4e3;
-var EVICTION_WINDOW_MS = 6e4;
 var ROLLOUT_CODE = 4003;
 var FAST_DROP_MS = 5e3;
 var ERROR_GUESS_DELAY_MS = 500;
@@ -2572,7 +2571,6 @@ function holdSocket(o) {
   let slowdown = 0;
   let dead = false;
   let stopped = false;
-  let lastEviction = null;
   let retry = null;
   let ws = null;
   let handing = null;
@@ -2603,10 +2601,6 @@ function holdSocket(o) {
     stopWatch();
     lastLife = startedAt;
     let gone = false;
-    let opened = false;
-    sock.addEventListener("open", () => {
-      opened = true;
-    });
     sock.addEventListener("ping", () => {
       if (ws !== sock) return;
       lastLife = Date.now();
@@ -2678,27 +2672,8 @@ function holdSocket(o) {
         return h.onGone(code);
       }
       if (DEAD_TOKEN_CODES.includes(code)) return yieldTo(o.onDeadToken, code);
-      const now2 = Date.now();
-      const afterEviction = lastEviction !== null && now2 - lastEviction < EVICTION_WINDOW_MS;
-      if (afterEviction && code === EVICTED_CODE)
-        return yieldTo(o.onEvicted ?? o.onDeadToken, code);
-      if (code === EVICTED_CODE) {
-        lastEviction = now2;
-        if (gone) return;
-        gone = true;
-        o.onNote?.("закрытие 4000 — место у другого держателя; открываю заново один раз");
-        retry = setTimeout(open, 2e3);
-        return;
-      }
+      if (code === EVICTED_CODE) return yieldTo(o.onEvicted ?? o.onDeadToken, code);
       if (gone) return;
-      if (afterEviction && !opened && code !== ROLLOUT_CODE && now2 - startedAt < FAST_DROP_MS) {
-        gone = true;
-        const up = await serviceUp(o.url);
-        if (stopped || ws !== sock) return;
-        if (up) return yieldTo(o.onEvicted ?? o.onDeadToken, EVICTED_CODE);
-        retry = setTimeout(open, 2e3);
-        return;
-      }
       gone = true;
       const fast = Date.now() - startedAt < FAST_DROP_MS;
       fastDrops = fast ? fastDrops + 1 : 0;

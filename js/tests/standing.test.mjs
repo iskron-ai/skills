@@ -1158,11 +1158,12 @@ test("the connect answer hides the socket and status addresses; the listener blo
   assert.match(text, /адрес сокета держит мост/);
 });
 
-// 4000 is an eviction, not a dead token (the platform's own word): the bridge
-// reopens once; a second eviction within the window means another holder has
-// the place — the bridge yields aloud, keeps the binding and the status address,
-// and the busy line is still the standing's word (#5012, #5033).
-test("an eviction reopens once; the second yields aloud, and the busy line still goes out", async (t) => {
+// 4000 is an eviction, not a dead token (the platform's own word): another holder
+// has the place, and reopening the same address would evict it in turn (seen live:
+// ping-pong of two bridges of one session after a daemon handover). The bridge
+// yields aloud at once, keeps the binding and the status address, and the busy
+// line is still the standing's word; taking it back is the human's (#5012, #5033, #6550).
+test("an eviction yields aloud at once, without reopening, and the busy line still goes out", async (t) => {
   const { fake, dir, bridge, key, standings } = await connected(t);
   await waitFor(() => fake.state.ws.size === 1, "the socket");
   const wd = runClient("watchdog", dir, key, 20_000);
@@ -1172,13 +1173,10 @@ test("an eviction reopens once; the second yields aloud, and the busy line still
   const known = new Set(fake.state.ws);
   const fresh = () => [...fake.state.ws].filter((s) => !known.has(s));
   await fake.control({ ws_close: 4000 });
-  await waitFor(() => fresh().length === 1, "the bridge to reopen once after the eviction");
-  for (const s of fresh()) known.add(s);
   assert.ok(
     !bridge.notifications.some((n) => n.params?.data?.kind === "dead"),
     "an eviction must not be announced as a dead token",
   );
-  await fake.control({ ws_close: 4000 });
   await waitFor(
     () => bridge.notifications.some((n) => n.params?.data?.kind === "evicted"),
     "the eviction to reach the harness",
