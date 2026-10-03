@@ -19,6 +19,7 @@
 // всегда), а список с сервера приходит фоном и подменяется через
 // ctx.tool.reload() — сколько бы ни длился вход человека.
 import { Bridge, toParameters } from "../shared/bridge-client.ts";
+import { createAdopt } from "./adopt.ts";
 import {
   authDir,
   buildsLine,
@@ -33,13 +34,15 @@ import {
   writeCache,
 } from "./bridge-io.ts";
 import { createChildren } from "./children.ts";
-import { homeOf, hostEnvOf, sessionDirectory } from "./host.ts";
+import { idleHalf, type ToolsHalf } from "./half.ts";
+import { hostEnvOf } from "./host.ts";
 import { createKeeper, type KeptSlot, WATCH_MS } from "./keep.ts";
 import { createLauncher } from "./launch.ts";
 import { createLeads } from "./leads.ts";
 import { leadDoors } from "./leadwords.ts";
 import { createLogin } from "./login.ts";
 import { takeLostMarker, writeLostMarker } from "./marker.ts";
+import { createMoves } from "./moves.ts";
 import type { Context } from "./plugin.ts";
 import { createRunEnds } from "./runends.ts";
 import { asSatellite, heldPlace, type SatelliteSlot, STAND_TOOL, standsBy } from "./satellite.ts";
@@ -77,19 +80,6 @@ export interface Slot extends KeptSlot, SatelliteSlot {
 
 const hhmm = (): string => new Date().toTimeString().slice(0, 5);
 
-export interface ToolsHalf {
-  /** Сессия умерла — её мост отпускается вместе со стоянием. */
-  forget(session: string): void;
-  /** Событие сервиса: ход, текст, удаление ведущего субагента (leads.ts, #6625). */
-  onEvent(ev: any): void;
-  /** Первый промпт сессии — строка запуска с делом исполняется до хода модели (launch.ts). */
-  launch(session: string, text: string): Promise<string | null>;
-  stop(): void | Promise<void>;
-  bridgeOf(session: string): Bridge | null; // мост держащего слота — для расхода сессии (usage.ts)
-  /** Имя места живого ведущего субагента; не ведущий — null (notice.ts). */
-  leadOf(session: string): string | null;
-}
-
 export async function setupTools(
   ctx: Context,
   say: Say,
@@ -105,15 +95,7 @@ export async function setupTools(
         ". Задай ISKRON_BRIDGE_PATH или поставь мост скиллом establish-mcp.",
       "error",
     );
-    const none = () => null;
-    return {
-      forget() {},
-      onEvent() {},
-      launch: async () => null,
-      stop() {},
-      bridgeOf: none,
-      leadOf: none,
-    };
+    return idleHalf();
   }
   const path = found.path;
   const builds = buildsLine(path, import.meta.url);
@@ -155,8 +137,10 @@ export async function setupTools(
           slot.key = params.data.key; // ключ места — точный адрес записи для возврата
         if (kind === "held") slot.place = heldPlace(params?.data) ?? slot.place; // #6002
         if (kind === "released" || kind === "dead" || kind === "evicted") slot.holding = false;
-        if (slot.child && slot.session) leads.heard(slot.session, kind, slot.place); // #6625
-        onChannel(slot.session, params, !!slot.child);
+        // Ведущий — только ребёнок-спутник (#6550 п.4); ребёнок на обычном мосте — один прогон (children.ts).
+        if (slot.child && slot.satelliteOf && slot.session)
+          leads.heard(slot.session, kind, slot.place);
+        relay(slot.session, params, !!slot.child);
       },
       (e) => {
         // Держащий мост вышел не по нашей воле — слух потерян, и это слово в
@@ -176,19 +160,14 @@ export async function setupTools(
     return slot;
   }
 
-  const directoryOf = (sessionID: string) => sessionDirectory(ctx, sessionID);
-  const exists = (sessionID: string): Promise<boolean> =>
-    Promise.resolve()
-      .then(() => ctx.session.get({ sessionID } as any))
-      .then(
-        () => true,
-        () => false,
-      );
+  // Локация экземпляра: перенесённая сессия зовёт тулы через экземпляр новой папки (moves.ts).
+  const { home, directoryOf, exists, ours, moved, relay: relayOf } = createMoves(ctx);
+  const relay = relayOf(onChannel, say);
   const runEnds = createRunEnds(); // кончившиеся дети: запись с места — отказ вслух (#6361)
   // Ведущие субагенты (#6625): конец — явный акт, итог — синтетикой родителю.
   const endChild = (c: string) =>
     runEnds.end(c, slots.get(c)?.satelliteOf, forget, leads.released(c));
-  const leads = createLeads(leadDoors(ctx, say, flushUsage, endChild));
+  const leads = createLeads(leadDoors(ctx, say, flushUsage, endChild, slots));
   const keeper = createKeeper({
     say,
     tell: (root, text, child) =>
@@ -198,22 +177,29 @@ export async function setupTools(
     slotFor: (root, touch) => slotFor(root, touch),
     ready: readyFor,
     directoryOf,
-    exists,
+    exists: ours,
   });
-  const children = createChildren({ slots, spawn, keeper, leads, exists });
-  // Прежний экземпляр остановили с держащим мостом: ключи его мест — сторожу,
-  // чтобы возврат шёл по ключу, не по каталогу; места — обратно сразу, со словом
-  // в державшие сессии (keeper.resumeLost), в первую живую — лишь когда таких нет.
-  // Только маркеры своей локации: сессии других локаций зовут тулы через свой экземпляр (#6626).
-  const home = homeOf(ctx);
+  // Ребёнок прежнего экземпляра слота здесь не имеет: гасить нечего (и forget зовётся до конца setup).
+  const nothing = () => {};
+  const endRun = (s: string, live = true) =>
+    live
+      ? void flushUsage(s).finally(() => runEnds.end(s, null, forget))
+      : runEnds.end(s, null, nothing);
+  const children = createChildren({ slots, spawn, keeper, leads, exists, endRun });
+  const adopt = createAdopt({
+    keeper,
+    authDir,
+    home,
+    back: (e) => children.back(e),
+    endKid: (s, of, why) => runEnds.end(s, of, nothing, false, why),
+  });
+  // Прежний экземпляр остановили с держащим мостом (или сессию перенесли сюда): ключи
+  // мест — сторожу, места — обратно сразу, со словом в державшие сессии (keeper.resumeLost),
+  // в первую живую — лишь когда таких нет. Только маркеры своей локации (#6626).
   const lost = takeLostMarker(authDir(), home);
   let lostWord = lost?.text ?? null;
-  if (lost) {
-    if (lost.text) say(lost.text, "warning");
-    keeper.hint(lost.entries);
-    // Дети прежнего экземпляра (#6625): место-спутник обратно по ключу, тихо (children.ts).
-    for (const e of lost.entries) if (e.child && e.session) void children.back(e);
-  }
+  if (lost?.text) say(lost.text, "warning");
+  if (lost) adopt.take(lost.entries);
 
   function shake(slot: Slot): void {
     slot.ready = handshake(slot.bridge, login.on, login.done);
@@ -332,12 +318,14 @@ export async function setupTools(
           const word = await leads.release(String(tool.sessionID), name, input ?? {});
           if (word) return { content: word };
           runEnds.guard(String(tool.sessionID), name, input ?? {}); // не мостом корня (#6361)
+          const note = adopt.revokeNote(name, input ?? {}); // перенесённый ребёнок — не молча
           const slot = await slotFor(String(tool.sessionID));
           // Вызов в полёте — занятость: мост посреди вызова жнецу не отдаётся,
           // а простой считается от конца вызова, не от его начала.
           slot.busy++;
           try {
-            return await callThrough(slot, name, input, String(tool.sessionID));
+            const out = await callThrough(slot, name, input, String(tool.sessionID));
+            return note ? { content: `${out.content}\n\n${note}` } : out;
           } finally {
             slot.busy--;
             slot.lastCall = Date.now();
@@ -384,7 +372,8 @@ export async function setupTools(
     if (standsBy(name, args) && !busy) keeper.stood(slot);
     if (standsBy(name, args)) runEnds.clear(sessionID); // встал заново — запись снова своим мостом
     // Ребёнок, вставший своим мостом, — ведущий; его уход по исходу — конец (#6625).
-    if (slot.child && slot.session === sessionID) leads.called(sessionID, name, args, slot.place);
+    if (slot.child && slot.satelliteOf && slot.session === sessionID)
+      leads.called(sessionID, name, args, slot.place);
     return { content: textOf(result) };
   }
   if (state.listed.length)
@@ -470,8 +459,12 @@ export async function setupTools(
       forget(s);
       runEnds.clear(s, true); // сессии нет — и окончательной пометки нет
     },
-    onEvent: (ev) => leads.onEvent(ev),
+    onEvent(ev) {
+      leads.onEvent(ev);
+      children.ran(ev); // конец прогона ребёнка на обычном мосте
+    },
     leadOf: (s) => leads.nameOf(s),
+    moved: (s, to) => moved({ say, slots, rootOf, forget, slotFor, adopt: adopt.now }, s, to),
     async stop() {
       stopped = true;
       clearInterval(reaper);
