@@ -1,5 +1,15 @@
 # Changelog
 
+## [7.2.7](https://github.com/iskron-ai/skills/compare/v7.2.6...v7.2.7) (2026-10-03)
+
+
+### Bug Fixes
+
+* **bridge:** доска и хуки читаются на обоих языках сервера ([#323](https://github.com/iskron-ai/skills/issues/323)) ([b8bc206](https://github.com/iskron-ai/skills/commit/b8bc2065ad9588abbcfe27c5770e62c6442d62ca))
+* **bridge:** заданный клиент входа по коду отвергнут — отказ, не подмена ([#320](https://github.com/iskron-ai/skills/issues/320)) ([ed29cd8](https://github.com/iskron-ai/skills/commit/ed29cd8aeba54b9004ba0f12899191b34bde348b))
+* **bridge:** своё close канала — одно слово на двух языках; занятость при занятии места называет место ([#322](https://github.com/iskron-ai/skills/issues/322)) ([4e8a718](https://github.com/iskron-ai/skills/commit/4e8a718459757e0150a7ec03ae6f35a917ecd7e9))
+* **bridge:** сторож после своего close или revoke выходит нулём словом моста ([#324](https://github.com/iskron-ai/skills/issues/324)) ([fae6006](https://github.com/iskron-ai/skills/commit/fae600667dd1fb8429ef98a5e9779fd48bde82b3))
+
 ## [7.2.6](https://github.com/iskron-ai/skills/compare/v7.2.5...v7.2.6) (2026-10-03)
 
 
