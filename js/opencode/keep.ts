@@ -54,18 +54,15 @@ export interface KeptSlot {
 }
 
 /**
- * Слово агенту о месте, которое мост вернул сам: какое имя занято и с кем оно
- * делит каталог. Промпт входит следующим шагом хода, а первый вызов сессии
+ * Слово агенту о месте, которое мост вернул сам: какое имя занято. Промпт входит следующим шагом хода, а первый вызов сессии
  * ждёт возврата и уходит раньше слова: запись, сделанную им, слово не упреждает —
  * оно зовёт проверить её автора.
  */
-export function resumedWord(key: string, others?: unknown): string {
-  const rest = Array.isArray(others) ? others.filter((k) => typeof k === "string") : [];
+export function resumedWord(key: string): string {
+  // Чужие места того же каталога не называются: возврат берёт запись, на которой стояла
+  // эта сессия (мост сверяет сессию), и чужой ключ в её слове звал бы её к чужому.
   return (
     `Искрон: мост поднялся и сам вернул место ${key} — по своей записи держания (каталог сессии либо ключ прежнего места), без твоего хода. ` +
-    (rest.length
-      ? `В том же каталоге записи и других мест: ${rest.join(", ")} — каталог их не различает; возврат взял место, на котором стояла эта сессия. `
-      : "") +
     'Сверь имя с выведенным для этой сессии: чужое — отпусти его iskron_channel(action="leave") (канал цел; revoke места, основавшего канал, платформа отвергает) и займи своё одним iskron_stand; ' +
     "запись, уже ушедшую этим ходом, проверь по автору в истории узла — слово под чужим именем ляжет другому месту, а мост ответит успехом."
   );
@@ -102,9 +99,10 @@ export interface Keeper<S extends KeptSlot> {
    * ждущая кадров, тулов не зовёт, и возврат, ждавший её вызова, не приходил
    * никогда (#6137). Слово о потере — в державшую сессию, исход возврата — туда
    * же. Детские места возвращаются своим мостом по ключу, когда ребёнок встанет;
-   * сессия, которой больше нет, моста не получает. true — слово сказано хоть одной.
+   * сессия, которой больше нет, моста не получает. Слово каждой — только о её местах;
+   * сессии, не державшей места, слова о чужих нет.
    */
-  resumeLost(entries: LostEntry[], word: string | null): Promise<boolean>;
+  resumeLost(entries: LostEntry[], wordFor: (session: string) => string | null): Promise<void>;
   /** Новая сессия получила мост: вернуть её место с диска, если прежний экземпляр его держал; patience — сколько ждать ухода сокета чужого моста. */
   resume(slot: S, root: string, quiet?: boolean, patience?: number): Promise<Resumed>;
   /** Успешный stand/connect/register — сессия стоит: держащий мост не жнётся, сторож смотрит. */
@@ -212,8 +210,7 @@ export function createKeeper<S extends KeptSlot>(doors: KeeperDoors<S>): Keeper<
       // различает стояний одной роли в одной рабочей копии, а слово под чужим
       // именем ляжет брату при успешном ответе (#5366). Занятое имя — в сессию;
       // ребёнку, чьё место вернулось по его же ключу после перезагрузки, — молча: он ждёт (#6625).
-      if (typeof r.key === "string" && !quiet)
-        doors.tell(root, resumedWord(r.key, r.others), slot.child);
+      if (typeof r.key === "string" && !quiet) doors.tell(root, resumedWord(r.key), slot.child);
       return "held";
     } catch (e) {
       marked.delete(root);
@@ -255,7 +252,7 @@ export function createKeeper<S extends KeptSlot>(doors: KeeperDoors<S>): Keeper<
     if (r?.resumed) {
       doors.say(`Искрон: сторож слуха вернул место сессии ${root} — ${r.word}`, "info");
       // Тот же возврат без хода агента, тем же выбором свежайшей записи (#5366).
-      if (typeof r.key === "string") doors.tell(root, resumedWord(r.key, r.others), slot.child);
+      if (typeof r.key === "string") doors.tell(root, resumedWord(r.key), slot.child);
     } else if (r?.reopened)
       doors.say(`Искрон: сторож слуха переоткрыл сокет сессии ${root} — ${r.word}`, "warning");
     else if (r?.stuck) doors.say(r.word, "error"); // слово в сессию мост шлёт сам (kind=lost), один раз
@@ -279,19 +276,17 @@ export function createKeeper<S extends KeptSlot>(doors: KeeperDoors<S>): Keeper<
         marked.set(e.session, e);
       }
     },
-    async resumeLost(entries, word) {
+    async resumeLost(entries, wordFor) {
       const seen = new Set<string>();
-      let said = false;
       for (const e of entries) {
         if (stopped) break;
         if (e.child || !e.session || seen.has(e.session)) continue;
         seen.add(e.session);
         if (!(await doors.exists(e.session))) continue;
+        const word = wordFor(e.session); // только её места
         if (word) doors.lost(e.session, word);
-        said = true;
         await doors.slotFor(e.session, false); // новый слот сам зовёт resume; живой — уже вернул
       }
-      return said;
     },
     resume,
     stood(slot) {

@@ -3156,7 +3156,7 @@ var READ_TOOLS = /* @__PURE__ */ new Set([
   "iskron_semantic_search"
 ]);
 var SAFE_ACTIONS = {
-  iskron_channel: /* @__PURE__ */ new Set(["list", "register"]),
+  iskron_channel: /* @__PURE__ */ new Set(["list"]),
   iskron_realm: /* @__PURE__ */ new Set(["list"])
 };
 function repeatable(msg) {
@@ -6824,16 +6824,31 @@ async function ownerRefusal(realm, karta) {
   const key = `${String(realm ?? "")}|${k}`;
   let owner = known.get(key);
   if (owner === void 0) {
-    const r = await callTool("iskron_look", { realm, node_id: k });
-    if (r.isError)
+    const r = await ownersOf(realm, k);
+    if (typeof r === "string")
       return L(
-        `Отказано (мост): тип роли #${k} не прочитался (${short(r.text, 160)}) — роль владельца без проверки не занимается; повтори.`,
-        `Refused (bridge): the type of role #${k} could not be read (${short(r.text, 160)}) — the owner's role is not taken unchecked; retry.`
+        `Отказано (мост): тип роли #${k} не прочитался (${short(r, 160)}) — роль владельца без проверки не занимается; повтори.`,
+        `Refused (bridge): the type of role #${k} could not be read (${short(r, 160)}) — the owner's role is not taken unchecked; retry.`
       );
-    owner = /\(#\d+,\s*karta\s+主/.test(r.text) || /Проявлен как:\s*主/.test(r.text);
+    owner = r;
     known.set(key, owner);
   }
   return owner ? word(`karta=#${k}`) : null;
+}
+async function ownersOf(realm, k) {
+  const s2 = await callTool("iskron_search", {
+    realm,
+    q: "",
+    node_type: "karta",
+    manifested_as: "svatantra",
+    limit: 100,
+    include_description: false
+  });
+  if (!s2.isError && !/НЕ показано|not shown/i.test(s2.text))
+    return [...s2.text.matchAll(/\(#(\d+)[,)]/g)].some((m) => m[1] === k);
+  const r = await callTool("iskron_look", { realm, node_id: k });
+  if (r.isError) return r.text;
+  return /\(#\d+,\s*karta\s+主/.test(r.text) || /Проявлен как:\s*主/.test(r.text);
 }
 
 // js/bridge/resume.ts

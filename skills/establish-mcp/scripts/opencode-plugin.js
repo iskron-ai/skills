@@ -1021,7 +1021,7 @@ function resultToContent(result) {
 
 // js/opencode/marker.ts
 import { createHash as createHash2 } from "node:crypto";
-import { mkdirSync, readdirSync, readFileSync as readFileSync3, unlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync as readFileSync3, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { join as join3 } from "node:path";
 
 // js/opencode/records.ts
@@ -1043,12 +1043,18 @@ var entryOf = (e) => ({
 // js/opencode/marker.ts
 var PREFIX = "opencode-lost";
 var LEGACY_MS = 2 * 6e4;
+var FOREIGN_MS = 10 * 6e4;
 var hash = (s) => createHash2("sha256").update(s).digest("hex").slice(0, 12);
 var tagOf = (home) => home ? hash(`${home.directory}\0${home.workspace ?? ""}`) : "any";
 var tagIn = (f) => /^opencode-lost\.@([^.]+)\./.exec(f)?.[1] ?? null;
-var otherLive = (f) => {
+var otherLive = (f, path) => {
   const pid = Number(/\.(\d+)\.[^.]+\.json$/.exec(f)?.[1]);
   if (!pid || pid === process.pid) return false;
+  try {
+    if (Date.now() - statSync(path).mtimeMs > FOREIGN_MS) return false;
+  } catch {
+    return false;
+  }
   try {
     process.kill(pid, 0);
     return true;
@@ -1104,7 +1110,7 @@ function takeLostMarker(authDir2, home) {
   for (const f of files) {
     const tag = tagIn(f);
     if (tag !== null && tag !== mine) continue;
-    if (otherLive(f)) continue;
+    if (otherLive(f, join3(authDir2, f))) continue;
     const lost = readOwn(join3(authDir2, f), tag, home);
     const stale = !(Date.now() - Date.parse(lost?.at ?? "") < LEGACY_MS);
     for (const e of lost?.entries ?? []) {
@@ -1117,10 +1123,15 @@ function takeLostMarker(authDir2, home) {
   if (!entries.length) return null;
   const when = new Date(at);
   const hhmm2 = Number.isNaN(when.getTime()) ? at : when.toTimeString().slice(0, 5);
-  const where = entries.filter((e) => !e.child && !e.moved).map((e) => e.key ?? e.dir ?? e.session).join(", ");
+  const word = (of) => {
+    const where = of.filter((e) => !e.child && !e.moved).map((e) => e.key ?? e.dir ?? e.session).join(", ");
+    return where ? `Искрон: слух был потерян в ${hhmm2} — плагин остановили (перезапуск, вытеснение каталога) с держащим мостом: ${where}. Место возвращается с диска само; ожидавшие кадры придут пачкой. Не вернулось — iskron_stand.` : null;
+  };
   return {
-    text: where ? `Искрон: слух был потерян в ${hhmm2} — плагин остановили (перезапуск, вытеснение каталога) с держащим мостом: ${where}. Место возвращается с диска само; ожидавшие кадры придут пачкой. Не вернулось — iskron_stand.` : null,
-    entries
+    text: word(entries),
+    // журналу — все
+    entries,
+    wordFor: (s) => word(entries.filter((e) => e.session === s))
   };
 }
 
@@ -1146,7 +1157,7 @@ function createAdopt(d) {
       const lost = takeLostMarker(d.authDir(), d.home);
       if (!lost) return;
       take(lost.entries);
-      void d.keeper.resumeLost(lost.entries, lost.text);
+      void d.keeper.resumeLost(lost.entries, lost.wordFor);
     },
     /** revoke места ребёнка, кончённого переносом родителя: ответ плагина вместо вызова. */
     revoked(name, args) {
@@ -1167,7 +1178,7 @@ import {
   mkdirSync as mkdirSync2,
   readdirSync as readdirSync3,
   readFileSync as readFileSync4,
-  statSync as statSync2,
+  statSync as statSync3,
   writeFileSync as writeFileSync2
 } from "node:fs";
 import { homedir as homedir3 } from "node:os";
@@ -1179,7 +1190,7 @@ import { join as join4 } from "node:path";
 var homeBridgePath = () => join4(homedir2(), ".iskron-bridge", "iskron-bridge.mjs");
 
 // js/opencode/devicewait.ts
-import { readdirSync as readdirSync2, statSync } from "node:fs";
+import { readdirSync as readdirSync2, statSync as statSync2 } from "node:fs";
 import { join as join5 } from "node:path";
 var RENEW_BEFORE_MS = 6e4;
 var UNTIL = /valid until (\d{4}-\d\d-\d\d \d\d:\d\d:\d\d) UTC/;
@@ -1195,7 +1206,7 @@ function loginStamp(dir) {
       (f) => f.endsWith(".auth-pending") || f.endsWith(".auth-pending.device")
     );
     if (!files.some((f) => f.endsWith(".auth-pending"))) return null;
-    return files.map((f) => `${f}:${statSync(join5(dir, f)).mtimeMs}`).sort().join("|");
+    return files.map((f) => `${f}:${statSync2(join5(dir, f)).mtimeMs}`).sort().join("|");
   } catch {
     return null;
   }
@@ -1245,7 +1256,7 @@ function cachePath() {
 function grantStamp() {
   const dir = authDir();
   try {
-    return readdirSync3(dir).filter((f) => f.endsWith(".json") && f !== "opencode-tools.json").map((f) => `${f}:${statSync2(join6(dir, f)).mtimeMs}`).sort().join("|");
+    return readdirSync3(dir).filter((f) => f.endsWith(".json") && f !== "opencode-tools.json").map((f) => `${f}:${statSync3(join6(dir, f)).mtimeMs}`).sort().join("|");
   } catch {
     return "";
   }
@@ -1440,9 +1451,8 @@ async function sessionDirectory(ctx, sessionID) {
 var WATCH_MS = Number(process.env.ISKRON_BRIDGE_WATCH_MS || 5 * 6e4);
 var PATIENCE_MS = Number(process.env.ISKRON_RESUME_PATIENCE_MS || 1e4);
 var STEP_MS = 500;
-function resumedWord(key, others) {
-  const rest = Array.isArray(others) ? others.filter((k) => typeof k === "string") : [];
-  return `Искрон: мост поднялся и сам вернул место ${key} — по своей записи держания (каталог сессии либо ключ прежнего места), без твоего хода. ` + (rest.length ? `В том же каталоге записи и других мест: ${rest.join(", ")} — каталог их не различает; возврат взял место, на котором стояла эта сессия. ` : "") + 'Сверь имя с выведенным для этой сессии: чужое — отпусти его iskron_channel(action="leave") (канал цел; revoke места, основавшего канал, платформа отвергает) и займи своё одним iskron_stand; запись, уже ушедшую этим ходом, проверь по автору в истории узла — слово под чужим именем ляжет другому месту, а мост ответит успехом.';
+function resumedWord(key) {
+  return `Искрон: мост поднялся и сам вернул место ${key} — по своей записи держания (каталог сессии либо ключ прежнего места), без твоего хода. Сверь имя с выведенным для этой сессии: чужое — отпусти его iskron_channel(action="leave") (канал цел; revoke места, основавшего канал, платформа отвергает) и займи своё одним iskron_stand; запись, уже ушедшую этим ходом, проверь по автору в истории узла — слово под чужим именем ляжет другому месту, а мост ответит успехом.`;
 }
 var elsewhereWord = (keys) => `Искрон: возврат места ${keys.join(", ")} с диска не удался — его сокет держит живой мост другой сессии, не мост этой: слух и занятость здесь места не держат. Твоё место — верни его iskron_stand(take=true), только словом человека; не твоё — встань своим именем iskron_stand.`;
 function createKeeper(doors) {
@@ -1505,8 +1515,7 @@ function createKeeper(doors) {
       if (typeof r.key === "string") slot.key = r.key;
       roots.add(root);
       doors.say(`Искрон: сессия ${root} — ${r.word}`, "info");
-      if (typeof r.key === "string" && !quiet)
-        doors.tell(root, resumedWord(r.key, r.others), slot.child);
+      if (typeof r.key === "string" && !quiet) doors.tell(root, resumedWord(r.key), slot.child);
       return "held";
     } catch (e) {
       marked.delete(root);
@@ -1542,7 +1551,7 @@ function createKeeper(doors) {
     retrying.delete(root);
     if (r?.resumed) {
       doors.say(`Искрон: сторож слуха вернул место сессии ${root} — ${r.word}`, "info");
-      if (typeof r.key === "string") doors.tell(root, resumedWord(r.key, r.others), slot.child);
+      if (typeof r.key === "string") doors.tell(root, resumedWord(r.key), slot.child);
     } else if (r?.reopened)
       doors.say(`Искрон: сторож слуха переоткрыл сокет сессии ${root} — ${r.word}`, "warning");
     else if (r?.stuck) doors.say(r.word, "error");
@@ -1563,19 +1572,17 @@ function createKeeper(doors) {
         marked.set(e.session, e);
       }
     },
-    async resumeLost(entries, word) {
+    async resumeLost(entries, wordFor) {
       const seen = /* @__PURE__ */ new Set();
-      let said = false;
       for (const e of entries) {
         if (stopped) break;
         if (e.child || !e.session || seen.has(e.session)) continue;
         seen.add(e.session);
         if (!await doors.exists(e.session)) continue;
+        const word = wordFor(e.session);
         if (word) doors.lost(e.session, word);
-        said = true;
         await doors.slotFor(e.session, false);
       }
-      return said;
     },
     resume,
     stood(slot) {
@@ -1644,12 +1651,12 @@ function createLauncher(d) {
       if (!l) return null;
       const root = await d.rootOf(sessionID);
       if (root === sessionID) return null;
-      const slot = d.childSlot(sessionID, root);
+      let slot = null;
       return enterCase(
         l,
-        (name, args) => d.call(slot, name, args, sessionID),
+        (name, args) => d.call(slot ??= d.childSlot(sessionID, root), name, args, sessionID),
         null,
-        () => slot.place?.name
+        () => slot?.place?.name
       );
     }
   };
@@ -1684,9 +1691,9 @@ function leadDoors(ctx, say, flush, end, slots) {
       const s = await ctx.session.get({ sessionID: child });
       return s?.parentID ?? s?.data?.parentID ?? null;
     },
-    async tell(sessionID, text, wake, steer = false) {
+    async tell(sessionID, text, wake) {
       const s = ctx.session;
-      const delivery = steer ? "steer" : "queue";
+      const delivery = "steer";
       try {
         if (typeof s.synthetic === "function")
           await s.synthetic({ sessionID, text, delivery, resume: wake });
@@ -1722,7 +1729,7 @@ function createLeads(d) {
     const parent = await l.parent;
     const last = (l.last ?? "").trim();
     const word = kind === "lost" ? lostWord(who(l, child), why) : kind === "away" ? awayWord(who(l, child), last) : endWord(who(l, child), why, last, kept);
-    if (parent) await d.tell(parent, word, wake, wake);
+    if (parent) await d.tell(parent, word, wake);
     else d.say(`${word}
 (родителя плагин не знает — итог некому)`, "warning");
     if (ended && !kept)
@@ -1956,19 +1963,38 @@ var READ_TOOLS = /* @__PURE__ */ new Set([
   "iskron_search",
   "iskron_semantic_search"
 ]);
+var CASE_READS = /* @__PURE__ */ new Set(["read", "history", "mine", "at"]);
 var READ_ACTIONS = {
-  iskron_channel: /* @__PURE__ */ new Set(["list"]),
+  iskron_case: CASE_READS,
+  iskron_room: CASE_READS,
+  // прежнее имя тула дел
+  iskron_channel: /* @__PURE__ */ new Set(["list", "sessions", "history"]),
   iskron_realm: /* @__PURE__ */ new Set(["list"]),
   iskron_org: /* @__PURE__ */ new Set(["list", "get", "realms", "list_members", "list_grants"]),
   iskron_me: /* @__PURE__ */ new Set(["whoami", "orgs", "kartas", "usage"]),
-  iskron_history: /* @__PURE__ */ new Set(["realm", "node", "delta"])
+  iskron_history: /* @__PURE__ */ new Set(["realm", "node", "delta"]),
+  iskron_admin: /* @__PURE__ */ new Set([
+    "list_members",
+    "access",
+    "search_users",
+    "list_webhooks",
+    "user_webhooks",
+    "version"
+  ])
 };
 var readsOnly = (name, args) => {
   const action = String(args.action ?? "");
   return READ_TOOLS.has(name) || action === "?" || !!READ_ACTIONS[name]?.has(action);
 };
+var asChildRead = (name, args) => {
+  if ((name === "iskron_case" || name === "iskron_room") && args.action === "history")
+    args.keep_cursor = true;
+};
 function childWriteRefusal(of, name, args) {
-  if (readsOnly(name, args)) return null;
+  if (readsOnly(name, args)) {
+    asChildRead(name, args);
+    return null;
+  }
   return of ? `Отказано (плагин): дочерняя сессия пишет только своим местом-спутником — ${name} ушёл бы местом родителя ${of}. Встань: iskron_stand(realm, karta, satellite_of="${of}"), затем повтори; читать можно и так.` : `Отказано (плагин): дочерняя сессия пишет только своим местом-спутником, а место родителя неизвестно — корень места не держит. Своего места ей не завести; читать можно и так, писать — словом запустившему.`;
 }
 function createRunEnds() {
@@ -2121,7 +2147,6 @@ async function setupTools(ctx, say, onChannel, rootOf, flushUsage = async () => 
     endKid: (s, of, why) => runEnds.end(s, of, nothing, false, why)
   });
   const lost = takeLostMarker(authDir(), home);
-  let lostWord2 = lost?.text ?? null;
   if (lost?.text) say(lost.text, "warning");
   if (lost) adopt.take(lost.entries);
   function shake(slot) {
@@ -2160,10 +2185,6 @@ async function setupTools(ctx, say, onChannel, rootOf, flushUsage = async () => 
       slot.dir = dead?.dir ?? slot.dir;
       slot.key = dead?.key ?? slot.key;
       slots.set(root, slot);
-      if (lostWord2) {
-        onChannel(root, { logger: "iskron-channel", data: { kind: "lost", text: lostWord2 } });
-        lostWord2 = null;
-      }
       const s = slot;
       s.resume = keeper.resume(s, root).finally(() => s.resume = null);
     }
@@ -2290,16 +2311,13 @@ async function setupTools(ctx, say, onChannel, rootOf, flushUsage = async () => 
       }
     }
   })();
-  if (lost) {
-    const word = lostWord2;
-    lostWord2 = null;
-    void keeper.resumeLost(lost.entries, word).then((said) => {
-      if (!said) lostWord2 ??= word;
-    });
-  }
+  if (lost) void keeper.resumeLost(lost.entries, lost.wordFor);
   const launcher = createLauncher({
     rootOf,
-    childSlot: (sessionID, root) => children.childSlot(sessionID, slots.get(root)),
+    childSlot(sessionID, root) {
+      if (!slots.get(root)?.place) throw new Error(childWriteRefusal(null, STAND_TOOL, {}) ?? "");
+      return children.childSlot(sessionID, slots.get(root));
+    },
     async call(slot, name, args, sessionID) {
       slot.busy++;
       try {

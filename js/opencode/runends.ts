@@ -17,13 +17,25 @@ const READ_TOOLS = new Set([
  * Читающие действия тулов, у которых есть и пишущие: они ничего не подписывают
  * и идут мостом корня. Прочие действия этих тулов, как и записи графа и дело, — отказ.
  * invert у истории считается пишущим: его смысл по описанию тула не различён.
+ * Действия — по описаниям тулов поверхности (fixtures/surface.json, описание action).
  */
+const CASE_READS = new Set(["read", "history", "mine", "at"]);
 const READ_ACTIONS: Record<string, Set<string>> = {
-  iskron_channel: new Set(["list"]),
+  iskron_case: CASE_READS,
+  iskron_room: CASE_READS, // прежнее имя тула дел
+  iskron_channel: new Set(["list", "sessions", "history"]),
   iskron_realm: new Set(["list"]),
   iskron_org: new Set(["list", "get", "realms", "list_members", "list_grants"]),
   iskron_me: new Set(["whoami", "orgs", "kartas", "usage"]),
   iskron_history: new Set(["realm", "node", "delta"]),
+  iskron_admin: new Set([
+    "list_members",
+    "access",
+    "search_users",
+    "list_webhooks",
+    "user_webhooks",
+    "version",
+  ]),
 };
 
 /** Вызов только читает: ничего не подписывает и может идти мостом корня. */
@@ -33,16 +45,28 @@ export const readsOnly = (name: string, args: Record<string, unknown>): boolean 
 };
 
 /**
+ * Чтение ребёнка мостом корня: история дела — с keep_cursor, иначе она сдвинула бы
+ * курсор КОРНЯ, и его новости ушли бы непрочитанными. Аргументы правятся на месте.
+ */
+const asChildRead = (name: string, args: Record<string, unknown>): void => {
+  if ((name === "iskron_case" || name === "iskron_room") && args.action === "history")
+    args.keep_cursor = true;
+};
+
+/**
  * Субагент говорит только своим спутником (#6550, правило 2): его запись мостом
  * корня — отказ всегда, и под местом родителя тоже (подписалась бы им); чтения
- * идут мостом корня. of — место корня, если он его держит.
+ * идут мостом корня, не трогая его курсор (asChildRead). of — место корня, если он его держит.
  */
 export function childWriteRefusal(
   of: string | null,
   name: string,
   args: Record<string, unknown>,
 ): string | null {
-  if (readsOnly(name, args)) return null;
+  if (readsOnly(name, args)) {
+    asChildRead(name, args);
+    return null;
+  }
   return of
     ? `Отказано (плагин): дочерняя сессия пишет только своим местом-спутником — ${name} ушёл бы местом родителя ${of}. ` +
         `Встань: iskron_stand(realm, karta, satellite_of="${of}"), затем повтори; читать можно и так.`

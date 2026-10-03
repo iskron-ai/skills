@@ -31,13 +31,15 @@ export function createLauncher<S extends { place?: Place | null }>(d: LaunchDoor
       if (!l) return null;
       const root = await d.rootOf(sessionID);
       if (root === sessionID) return null; // корень входит в дело по скиллу двери
-      const slot = d.childSlot(sessionID, root);
+      // Мост ребёнка — при первом вызове: место корня неизвестно — childSlot бросает тот же
+      // отказ, что iskron_stand ребёнка (#6550 п.2), и строка запуска говорит его словом.
+      let slot: S | null = null;
       // satellite_of подставляет сам вызов (asSatellite в tools.ts) — по месту корня.
       return enterCase(
         l,
-        (name, args) => d.call(slot, name, args, sessionID),
+        (name, args) => d.call((slot ??= d.childSlot(sessionID, root)), name, args, sessionID),
         null,
-        () => slot.place?.name,
+        () => slot?.place?.name,
       );
     },
   };

@@ -1241,6 +1241,24 @@ export async function startFakeNks(opts = {}) {
           extra,
         );
       }
+      // Поиск ролей по роду — фильтр manifested_as живого iskron_search (svatantra — 主),
+      // строки той формы, что печатает живой поиск: «… (#N, karta 主, …)».
+      if (msg.method === "tools/call" && msg.params?.name === "iskron_search") {
+        const a = msg.params.arguments ?? {};
+        st.counts.search = (st.counts.search ?? 0) + 1;
+        const kind = { svatantra: "主", adhikarin: "能" }[a.manifested_as] ?? null;
+        const hits = Object.entries(st.kartaTypes).filter(([, t]) => !kind || t === kind);
+        const text = hits.length
+          ? `Найдено ${hits.length} узлов:\n` +
+            hits.map(([n, t]) => `  👑 Роль #${n} (#${n}, karta ${t}, An/Va/Ad, v1)`).join("\n")
+          : "Ничего не найдено.";
+        return json(
+          res,
+          200,
+          { jsonrpc: "2.0", id: msg.id, result: { content: [{ type: "text", text }] } },
+          extra,
+        );
+      }
       // Список графов учётки — ровно та форма, что отдаёт живой тул iskron_realm(action="list").
       if (msg.method === "tools/call" && msg.params?.name === "iskron_realm") {
         st.counts.realm_list = (st.counts.realm_list ?? 0) + 1;

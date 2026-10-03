@@ -37,8 +37,11 @@ export interface Snapshot {
 export interface LeadDoors {
   say: Say;
   parentOf(child: string): Promise<string | null>;
-  /** Синтетика в сессию; wake — будить ли её ходом; steer — в идущий ход на ближайшей границе шага, не после него. */
-  tell(session: string, text: string, wake: boolean, steer?: boolean): Promise<void>;
+  /**
+   * Синтетика в сессию — steer: в идущий ход на ближайшей границе шага, не после него
+   * (queue в занятую сессию после хода запускал ещё один); wake — будить ли простаивающую.
+   */
+  tell(session: string, text: string, wake: boolean): Promise<void>;
   /** Мост ребёнка гасится (расход — прежде), сессия помечена кончившейся. */
   end(child: string): Promise<void>;
   /** Имя места ребёнка, если это не его спутник (обычное место сессии); спутник или места нет — null. */
@@ -109,9 +112,9 @@ export function leadDoors(
       const s: any = await ctx.session.get({ sessionID: child } as any);
       return s?.parentID ?? s?.data?.parentID ?? null;
     },
-    async tell(sessionID, text, wake, steer = false) {
+    async tell(sessionID, text, wake) {
       const s: any = ctx.session;
-      const delivery = steer ? "steer" : "queue";
+      const delivery = "steer";
       try {
         if (typeof s.synthetic === "function")
           await s.synthetic({ sessionID, text, delivery, resume: wake });
