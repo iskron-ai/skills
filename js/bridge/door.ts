@@ -59,6 +59,8 @@ export interface ChannelEvent {
    * fold — число слов череды, которую закрывает строка этого кадра (без него — сам кадр).
    */
   batch?: { at: number; of: number; fold?: number; folded?: true };
+  /** kind="released": место отпущено своим close или revoke этой сессии — не уход моста, сторож выходит без тревоги (#6638). */
+  own?: true;
 }
 
 export interface DoorHooks {

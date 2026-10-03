@@ -525,6 +525,57 @@ test("a dead-token close leaves the watchdog loudly and reaches the harness as a
   );
 });
 
+// Своё close или revoke отпускает место словом моста (released), не уходом:
+// сторож говорит то же слово одной строкой и выходит нулём, без общей тревоги
+// «мост отпустил стояние или ушёл» и без ненулевого кода (#6638).
+async function codexDoor(t) {
+  const home = mkdtempSync("/tmp/cxd-");
+  const log = join(home, "door.log");
+  writeFileSync(log, "");
+  const door = await startFakeCodex(
+    join(home, "app-server-control", "app-server-control.sock"),
+    log,
+  );
+  t.after(() => door.stop());
+  return { CODEX_HOME: home, CODEX_THREAD_ID: "thread-own" };
+}
+const OWN_WORD = {
+  ru: { close: /канал закрыт своим close этой сессии/, revoke: /снято своим revoke/ },
+  en: {
+    close: /the channel was closed by this session's own close/,
+    revoke: /revoked by this session/,
+  },
+};
+const OWN_ARGS = {
+  close: { action: "close", realm: "nks-dev" },
+  revoke: { action: "revoke", realm: "nks-dev", karta: 931, standing: "proba" },
+};
+for (const lang of ["ru", "en"])
+  for (const sub of ["watchdog", "watchdog-exit", "watchdog-codex"])
+    for (const action of ["close", "revoke"])
+      test(`${sub} after one's own ${action} on the ${lang} surface: the bridge's word in one line, exit 0, no alarm`, async (t) => {
+        const env = { ISKRON_BRIDGE_LANG: lang };
+        const { fake, dir, bridge, key } = await connected(t, { env });
+        await waitFor(() => fake.state.ws.size === 1, "the socket");
+        const extra = sub === "watchdog-codex" ? await codexDoor(t) : {};
+        const wd = runClient(sub, dir, key, 10_000, { ...env, ...extra });
+        await waitFor(
+          () => /слушаю стояние|listening on standing/.test(wd.out + wd.err),
+          "the watchdog to attach",
+        );
+        const reply = await bridge.call("tools/call", 7, {
+          name: "iskron_channel",
+          arguments: OWN_ARGS[action],
+        });
+        assert.ok(!reply.result?.isError, JSON.stringify(reply));
+        const r = await wd.done;
+        const all = wd.out + wd.err;
+        assert.equal(r.exit, 0, `one's own ${action} is not a lost bridge:\n${all}`);
+        assert.doesNotMatch(all, /ДЕЛАТЕЛЬ|DOER/, `no alarm on one's own ${action}:\n${all}`);
+        const said = all.split("\n").filter((l) => OWN_WORD[lang][action].test(l));
+        assert.equal(said.length, 1, `the bridge's word in one line:\n${all}`);
+      });
+
 // Drops against a live service used to end the holding: the place was thrown
 // away while the grant was alive (graph nks-dev: #4664). Now the bridge keeps
 // it, reopens slower, and says so once; the Monitor watchdog stays attached.

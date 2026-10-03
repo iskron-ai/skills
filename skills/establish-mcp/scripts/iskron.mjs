@@ -4963,7 +4963,8 @@ function releaseStanding(reason, forget = false, keepBeside = false) {
     broadcast({ kind: "handover", key, text: handover });
   } else {
     standingLog(`released ${H2.currentKey ?? "?"}: ${reason}${forget ? " (record dropped)" : ""}`);
-    const released = { kind: "released", key, text: reason };
+    const own = reason === holdWords.closedOwn() || reason === holdWords.revokedOwn();
+    const released = { kind: "released", key, text: reason, ...own && { own } };
     broadcast(released);
     notify("info", released);
   }
@@ -9746,6 +9747,7 @@ function attach(path, o) {
   let attached = false;
   let handover = false;
   let waitingBack = false;
+  let ownRelease = false;
   function tryOnce() {
     const sock = connect4(path);
     let buf = "";
@@ -9777,6 +9779,7 @@ function attach(path, o) {
           handover = true;
           continue;
         }
+        if (ev.kind === "released" && ev.own) ownRelease = true;
         o.onEvent(ev);
       }
     });
@@ -9790,6 +9793,7 @@ function attach(path, o) {
         startedAt = Date.now();
         return void setTimeout(tryOnce, RETRY_MS);
       }
+      if (ownRelease) return;
       if (attached) return o.onGone(wd.bridgeLetGo());
       if (Date.now() - startedAt > ATTACH_WINDOW_MS) {
         const s2 = ATTACH_WINDOW_MS / 1e3;
@@ -9930,6 +9934,10 @@ function runWatchdogCodex(argv2) {
           replay = ev.buffered ?? 0;
           seenPath = adoptSeenPath(ev.seen, seenPath, seen);
           note(wd.listeningCodex(ev.key, threadId));
+          break;
+        case "released":
+          note(wd.bridgeReleasedSocket(ev.text ?? ""));
+          if (ev.own) process.exit(0);
           break;
         default:
           note(ev.text ?? ev.kind);
@@ -10100,7 +10108,8 @@ function runWatchdog(argv2) {
           log2(ev.text ?? wd.aliveNote());
           break;
         case "released":
-          log2(wd.bridgeReleasedSocket(ev.text ?? ""));
+          if (ev.own) loudExit(wd.bridgeReleasedSocket(ev.text ?? ""), 0);
+          else log2(wd.bridgeReleasedSocket(ev.text ?? ""));
           break;
       }
     },
@@ -10201,6 +10210,10 @@ function runWatchdogExit(argv2) {
         case "attached":
           seenPath = adoptSeenPath(ev.seen, seenPath, seen);
           note2(wd.listening(ev.key));
+          break;
+        case "released":
+          note2(wd.bridgeReleasedSocket(ev.text ?? ""));
+          if (ev.own) process.exit(0);
           break;
         default:
           if (ev.kind === "note" && ev.batch) head = ev.text ?? "";

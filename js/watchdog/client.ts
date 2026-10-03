@@ -109,6 +109,7 @@ export function attach(path: string, o: AttachOptions): void {
   let attached = false;
   let handover = false;
   let waitingBack = false; // место передано и ждёт возврата
+  let ownRelease = false; // мост отпустил место своим close/revoke сессии
 
   function tryOnce(): void {
     const sock = connect(path);
@@ -143,6 +144,7 @@ export function attach(path: string, o: AttachOptions): void {
           handover = true; // закрытие, которое последует, — не уход моста
           continue;
         }
+        if (ev.kind === "released" && ev.own) ownRelease = true; // своё close/revoke: сторож уходит сам
         o.onEvent(ev);
       }
     });
@@ -158,6 +160,7 @@ export function attach(path: string, o: AttachOptions): void {
         startedAt = Date.now();
         return void setTimeout(tryOnce, RETRY_MS);
       }
+      if (ownRelease) return; // своё отпускание сказано событием released — не уход моста (#6638)
       if (attached) return o.onGone(wd.bridgeLetGo());
       if (Date.now() - startedAt > ATTACH_WINDOW_MS) {
         const s = ATTACH_WINDOW_MS / 1000;

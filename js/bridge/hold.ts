@@ -253,7 +253,8 @@ export function releaseStanding(reason: string, forget = false, keepBeside = fal
     broadcast({ kind: "handover", key, text: handover });
   } else {
     standingLog(`released ${H.currentKey ?? "?"}: ${reason}${forget ? " (record dropped)" : ""}`);
-    const released: ChannelEvent = { kind: "released", key, text: reason };
+    const own = reason === holdWords.closedOwn() || reason === holdWords.revokedOwn();
+    const released: ChannelEvent = { kind: "released", key, text: reason, ...(own && { own }) };
     broadcast(released);
     notify("info", released); // плагин OpenCode снимает holding по этому слову, не по догадке (#5140)
   }

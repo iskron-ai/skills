@@ -172,6 +172,10 @@ export function runWatchdogCodex(argv: string[]): void {
           seenPath = adoptSeenPath(ev.seen, seenPath, seen); // память места на его сервере
           note(wd.listeningCodex(ev.key, threadId));
           break;
+        case "released":
+          note(wd.bridgeReleasedSocket(ev.text ?? ""));
+          if (ev.own) process.exit(0); // своё close/revoke — не уход моста (#6638)
+          break;
         default:
           note(ev.text ?? ev.kind);
       }
