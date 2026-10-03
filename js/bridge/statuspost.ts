@@ -2,6 +2,7 @@
 // держания: его зовут и status.ts, и handoff.ts (занятость места, которое преемник
 // не взял), а hold.ts → handoff.ts → status.ts → hold.ts замкнулось бы в цикл.
 import { L } from "../shared/lang.ts";
+import { closedUnder } from "./errors.ts";
 
 /** Исход POST занятости; code — HTTP-код отказа поверхности, когда он был. */
 export interface StatusOutcome {
@@ -17,13 +18,21 @@ export async function publishStatusTo(
   timeoutMs = 5000,
   standingId: string | null = null,
 ): Promise<StatusOutcome> {
-  let res: Response;
-  try {
-    res = await fetch(url, {
+  const signal = AbortSignal.timeout(timeoutMs);
+  const post = (): Promise<Response> =>
+    fetch(url, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(standingId ? { text, standing_id: standingId } : { text }),
-      signal: AbortSignal.timeout(timeoutMs),
+      signal,
+    });
+  let res: Response;
+  try {
+    // Строка занятости ставится, а не копится, — повтор безвреден. Один и только на
+    // закрытом соединении (keep-alive из пула, закрытый сервером): ответ поверхности не повторяется.
+    res = await post().catch((e: unknown) => {
+      if (!closedUnder(e) || signal.aborted) throw e;
+      return post();
     });
   } catch (e) {
     return {

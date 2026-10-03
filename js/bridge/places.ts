@@ -70,10 +70,18 @@ function writeRecord(p: Place, ch: Channel, status?: string): void {
   });
 }
 
+/** Адрес места рядом из хэндла основного места (канал один, хэндл тот же) — помечен выведенным. */
+function deriveAddress(p: Place, primaryAddress: string | null | undefined): void {
+  const handle = primaryAddress?.match(/^(.*):/)?.[1];
+  if (!handle || !p.standing.name) return;
+  p.door.address = `${handle}:${p.standing.name}`;
+  p.door.addressDerived = true;
+}
+
 /**
  * Поставить место рядом на канал, который держит мост: своя дверь и запись держания. Возвращает ключ.
- * `primaryAddress` — адрес основного места: канал один, хэндл тот же, так что до hello
- * место зовётся @handle:name, а не ключом.
+ * `primaryAddress` — адрес основного места: из него выводится @handle:name места рядом;
+ * основное ещё без адреса — у места рядом его нет до hello, что назовёт его само.
  */
 export function addExtra(
   s: Standing,
@@ -89,10 +97,9 @@ export function addExtra(
     if (sameRealm(p.standing.realm, s.realm))
       dropExtra(p.door.key, L("другое место графа", "another seat of the graph"), true);
   const door = new Door(key, hooks);
-  const handle = primaryAddress?.match(/^(.*):/)?.[1];
-  if (handle && s.name) door.address = `${handle}:${s.name}`;
-  door.open();
   const place = { standing: s, door };
+  deriveAddress(place, primaryAddress);
+  door.open();
   extras.set(key, place);
   writeRecord(place, ch);
   standingLog(`held ${key} beside the channel`);
@@ -173,7 +180,10 @@ export function learnFromHello(hello: Frame | null, primary: Place | null): void
     if (!e) continue;
     if (e.realm && unresolved(p.standing.realm)) learnRealm(p.standing.realm, e.realm);
     if (typeof e.standing_id === "string" && e.standing_id) p.door.standingId = e.standing_id;
-    if (typeof e.standing === "string" && e.standing) p.door.address = e.standing;
+    if (typeof e.standing === "string" && e.standing) {
+      p.door.address = e.standing;
+      p.door.addressDerived = false;
+    }
   }
 }
 

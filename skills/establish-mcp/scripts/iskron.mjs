@@ -4,7 +4,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-var VERSION = "7.2.1";
+var VERSION = "7.2.4";
 function buildOf(selfUrl) {
   try {
     const src = readFileSync(fileURLToPath(selfUrl));
@@ -374,8 +374,8 @@ function pipeNonce(authDir) {
     }
   }
   for (let i = 0; i < 50; i++) {
-    const word = readFileSync3(file, "utf8").trim();
-    if (word) return word;
+    const word2 = readFileSync3(file, "utf8").trim();
+    if (word2) return word2;
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
   }
   throw new Error(`${file} stays empty — the pipe name is unknown`);
@@ -793,8 +793,8 @@ function strip(url) {
   return url.replace(/\/+$/, "");
 }
 var isProductionServer = (url) => PRODUCTION_URLS.has(strip(url));
-function resolveServerChoice(word) {
-  const w = word.trim();
+function resolveServerChoice(word2) {
+  const w = word2.trim();
   if (/^(ru|russian|русский)$/i.test(w)) return DEFAULT_SERVER_URL;
   if (/^(en|ai|english|английский)$/i.test(w)) return ENGLISH_SERVER_URL;
   try {
@@ -1007,6 +1007,11 @@ var DeadGrantError = class extends Error {
     super(message);
     this.expired = expired;
   }
+};
+var CLOSED = /* @__PURE__ */ new Set(["UND_ERR_SOCKET", "ECONNRESET", "EPIPE"]);
+var closedUnder = (e) => {
+  const err = e;
+  return CLOSED.has(err?.code ?? "") || CLOSED.has(err?.cause?.code ?? "");
 };
 function errorCode(e) {
   const err = e;
@@ -1795,16 +1800,16 @@ function deviceSide(meta, redirectUri, resume, onCode, called) {
           });
           return;
         } catch (e) {
-          const word = e instanceof TokenError ? e.oauthError : void 0;
-          if (word === "access_denied") {
+          const word2 = e instanceof TokenError ? e.oauthError : void 0;
+          if (word2 === "access_denied") {
             throw new Error("authorization refused on the other device", { cause: e });
           }
-          if (word === "slow_down") {
+          if (word2 === "slow_down") {
             code = { ...code, interval_ms: code.interval_ms + SLOW_DOWN_MS };
             onCode(code);
-          } else if (word && word !== "authorization_pending") {
+          } else if (word2 && word2 !== "authorization_pending") {
             renew = true;
-          } else if (!word) debug(`device poll: ${errorMessage(e)} — asking again`);
+          } else if (!word2) debug(`device poll: ${errorMessage(e)} — asking again`);
         }
       }
       if (renew) {
@@ -2525,7 +2530,6 @@ var SILENT_INTERVALS = 3;
 var SILENT_FLOOR_MS = Number(process.env.ISKRON_CHANNEL_SILENT_FLOOR_MS) || 6e4;
 var DEAD_TOKEN_CODES = [4001, 4002];
 var EVICTED_CODE = 4e3;
-var EVICTION_WINDOW_MS = 6e4;
 var ROLLOUT_CODE = 4003;
 var FAST_DROP_MS = 5e3;
 var ERROR_GUESS_DELAY_MS = 500;
@@ -2576,7 +2580,6 @@ function holdSocket(o) {
   let slowdown = 0;
   let dead = false;
   let stopped = false;
-  let lastEviction = null;
   let retry = null;
   let ws = null;
   let handing = null;
@@ -2607,10 +2610,6 @@ function holdSocket(o) {
     stopWatch();
     lastLife = startedAt;
     let gone = false;
-    let opened = false;
-    sock.addEventListener("open", () => {
-      opened = true;
-    });
     sock.addEventListener("ping", () => {
       if (ws !== sock) return;
       lastLife = Date.now();
@@ -2685,32 +2684,8 @@ function holdSocket(o) {
         return h.onGone(code);
       }
       if (DEAD_TOKEN_CODES.includes(code)) return yieldTo(o.onDeadToken, code);
-      const now2 = Date.now();
-      const afterEviction = lastEviction !== null && now2 - lastEviction < EVICTION_WINDOW_MS;
-      if (afterEviction && code === EVICTED_CODE)
-        return yieldTo(o.onEvicted ?? o.onDeadToken, code);
-      if (code === EVICTED_CODE) {
-        lastEviction = now2;
-        if (gone) return;
-        gone = true;
-        o.onNote?.(
-          L(
-            "закрытие 4000 — место у другого держателя; открываю заново один раз",
-            "close 4000 — the seat is with another holder; reopening once"
-          )
-        );
-        retry = setTimeout(open, 2e3);
-        return;
-      }
+      if (code === EVICTED_CODE) return yieldTo(o.onEvicted ?? o.onDeadToken, code);
       if (gone) return;
-      if (afterEviction && !opened && code !== ROLLOUT_CODE && now2 - startedAt < FAST_DROP_MS) {
-        gone = true;
-        const up = await serviceUp(o.url);
-        if (stopped || ws !== sock) return;
-        if (up) return yieldTo(o.onEvicted ?? o.onDeadToken, EVICTED_CODE);
-        retry = setTimeout(open, 2e3);
-        return;
-      }
       gone = true;
       const fast = Date.now() - startedAt < FAST_DROP_MS;
       fastDrops = fast ? fastDrops + 1 : 0;
@@ -3072,9 +3047,9 @@ function roomKind(frame2) {
       known: false
     };
   const W2 = words();
-  const word = kind === "said" || kind === "body";
-  const withheld = word && f.body_withheld === true;
-  const to = word ? addresseeOf(f.addressee) ?? (withheld ? { addr: ["?"], label: "?" } : null) : null;
+  const word2 = kind === "said" || kind === "body";
+  const withheld = word2 && f.body_withheld === true;
+  const to = word2 ? addresseeOf(f.addressee) ?? (withheld ? { addr: ["?"], label: "?" } : null) : null;
   const addresseeLeft = f.addressee_left === true || fields.addressee_left === true;
   if (to && !addresseeLeft && (withheld || mine.length && !to.addr.some((a) => mine.includes(a)))) {
     const counts = kind === "said";
@@ -3149,8 +3124,8 @@ function addressedToMine(frame2) {
     return !!a && mine.length > 0 && a.addr.some((x) => mine.includes(x));
   };
   if (rk?.kind === "body") {
-    const word = obj(f.word);
-    if (f.addressed === true || hit(f.addressee) || str(obj(obj(word.line).fields).kind) === "important" || addressedWords.has(wordKeyOf(frame2)))
+    const word2 = obj(f.word);
+    if (f.addressed === true || hit(f.addressee) || str(obj(obj(word2.line).fields).kind) === "important" || addressedWords.has(wordKeyOf(frame2)))
       return true;
   } else if (
     // Слово мне, ответ на мою запись (#5954), помеченное важным: род слова
@@ -3189,6 +3164,26 @@ var NOTIFIED_CLIENTS = /* @__PURE__ */ new Set([PI_CLIENT, OPENCODE_CLIENT]);
 var HARNESS_VERSION_ENV = "ISKRON_HARNESS_VERSION";
 var SKILLS_ROOT_ENV = "ISKRON_SKILLS_ROOT";
 var HOSTED_CLIENTS = /* @__PURE__ */ new Set([PI_CLIENT, OPENCODE_CLIENT]);
+
+// js/bridge/repeat.ts
+var READ_TOOLS = /* @__PURE__ */ new Set([
+  "iskron_look",
+  "iskron_orient",
+  "iskron_search",
+  "iskron_semantic_search"
+]);
+var SAFE_ACTIONS = {
+  iskron_channel: /* @__PURE__ */ new Set(["list"]),
+  iskron_realm: /* @__PURE__ */ new Set(["list"])
+};
+function repeatable(msg) {
+  if (msg?.id === void 0 || msg?.id === null) return true;
+  if (msg.method === "initialize" || msg.method === "tools/list") return true;
+  if (msg.method !== "tools/call") return false;
+  const name = String(msg.params?.name ?? "");
+  if (READ_TOOLS.has(name)) return true;
+  return !!SAFE_ACTIONS[name]?.has(String(msg.params?.arguments?.action ?? ""));
+}
 
 // js/bridge/transport.ts
 var state = scoped(() => ({
@@ -3284,13 +3279,20 @@ async function post2(msg, onMessage) {
   if (state.protocolVersion) headers["mcp-protocol-version"] = state.protocolVersion;
   const boundByHeader = isInit ? standingHeader() : null;
   if (boundByHeader) headers["x-nks-standing"] = boundByHeader;
+  const send = () => fetch(CFG.serverUrl, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(msg),
+    signal: AbortSignal.timeout(CFG.timeoutMs)
+  });
   let res;
   try {
-    res = await fetch(CFG.serverUrl, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(msg),
-      signal: AbortSignal.timeout(CFG.timeoutMs)
+    res = await send().catch((e) => {
+      if (!closedUnder(e) || !repeatable(msg)) throw e;
+      log(
+        `upstream connection closed under ${msg?.method} before the answer — sending it once more`
+      );
+      return send();
     });
   } catch (e) {
     const err = e;
@@ -3782,7 +3784,7 @@ var caseOf2 = (frame2) => {
   return idOf2(room.id) || idOf2(room.seq);
 };
 var wordKey = (frame2, entry) => entry ? numberedKey(frame2, `${caseOf2(frame2)}|${entry}`) : "";
-var isWordOf = (held2, body, word) => !!word && wordKey(held2, entryOf(held2)) === wordKey(body, word);
+var isWordOf = (held2, body, word2) => !!word2 && wordKey(held2, entryOf(held2)) === wordKey(body, word2);
 var HumanWords = class {
   words = /* @__PURE__ */ new Set();
   /** Слово человека в полёте — по его собственной записи. */
@@ -3794,8 +3796,8 @@ var HumanWords = class {
     if (this.words.size > HUMAN_WORDS_KEEP && !oldest.done) this.words.delete(oldest.value);
   }
   /** true — тело несёт слово человека в полёте (word — запись слова в деле тела); память снята. */
-  forget(body, word) {
-    const key = wordKey(body, word);
+  forget(body, word2) {
+    const key = wordKey(body, word2);
     return !!key && this.words.delete(key);
   }
 };
@@ -3817,9 +3819,9 @@ var RoomBatch = class {
   /** Слова человека в полёте: их тело — слово человека, не кадр пачки. */
   humanWords = new HumanWords();
   /** Вынуть из копящейся пачки слово в полёте, чей текст пришёл: отдан он будет своим телом. */
-  dropWord(body, word, dropped) {
+  dropWord(body, word2, dropped) {
     for (let i = this.held.length - 1; i >= 0; i--) {
-      if (!isWordOf(this.held[i].frame, body, word)) continue;
+      if (!isWordOf(this.held[i].frame, body, word2)) continue;
       dropped(this.held[i].frame);
       this.held.splice(i, 1);
     }
@@ -3875,11 +3877,11 @@ function batchForWatchdogs(d, raw, frame2, emit2) {
   if (rk?.kind === "said" && rk.phase === "pending" && human)
     d.roomBatch.humanWords.remember(frame2);
   if (rk?.kind === "body") {
-    const word = idOf2(rec3(f.line).refers_to ?? f.in_reply_to);
-    if (d.roomBatch.humanWords.forget(frame2, word) && rk.phase !== "aborted") {
+    const word2 = idOf2(rec3(f.line).refers_to ?? f.in_reply_to);
+    if (d.roomBatch.humanWords.forget(frame2, word2) && rk.phase !== "aborted") {
       human = true;
       frame2.origin = "human";
-      d.roomBatch.dropWord(frame2, word, (said) => {
+      d.roomBatch.dropWord(frame2, word2, (said) => {
         for (const k of deliveredKeys(said)) noteSeen(d.seenPath, k, d.seen);
       });
     }
@@ -4063,8 +4065,13 @@ var Door = class {
   roomBatch = new RoomBatch();
   /** id места у платформы (hello standings[].standing_id) — по нему кадр находит дверь и занятость — место. */
   standingId = null;
-  /** Адрес места @handle:name из hello (standings[].standing) — так место зовёт доска; до hello неизвестен. */
+  /**
+   * Адрес места @handle:name — так место зовёт доска: из hello (standings[].standing), а у
+   * места рядом до того — выведен из хэндла основного места (addressDerived); нет ни того, ни другого — null.
+   */
   address = null;
+  /** address выведен мостом, а не назван hello. */
+  addressDerived = false;
   /** Почему локальный сокет не поднялся; null — поднят или ещё поднимается. */
   listenError = null;
   server = null;
@@ -4304,7 +4311,17 @@ import { execFileSync } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { hostname } from "node:os";
 import { basename as basename3, dirname as dirname4, resolve as resolve4 } from "node:path";
+
+// js/shared/satname.ts
 var NAME_MAX = 48;
+var SUB_RE = /\.sub-([1-9]\d*)$/;
+var satelliteName = (base, n) => base.slice(0, NAME_MAX - `.sub-${n}`.length).replace(/[-._]+$/, "") + `.sub-${n}`;
+function isSatelliteOf(base, name) {
+  const m = SUB_RE.exec(name);
+  return !!m && satelliteName(base, Number(m[1])) === name;
+}
+
+// js/bridge/names.ts
 var normKarta = (k) => String(k ?? "").trim().replace(/^#/, "");
 var normName = (n) => typeof n === "string" ? n.trim() : "";
 var NAME_RE = /^[a-z0-9][a-z0-9._-]*$/;
@@ -4459,6 +4476,12 @@ function writeRecord(p, ch, status) {
     key: p.door.key
   });
 }
+function deriveAddress(p, primaryAddress) {
+  const handle = primaryAddress?.match(/^(.*):/)?.[1];
+  if (!handle || !p.standing.name) return;
+  p.door.address = `${handle}:${p.standing.name}`;
+  p.door.addressDerived = true;
+}
 function addExtra(s2, ch, hooks, primaryAddress = null) {
   const key = keyOfPlace(s2);
   const have = extras.get(key);
@@ -4467,10 +4490,9 @@ function addExtra(s2, ch, hooks, primaryAddress = null) {
     if (sameRealm(p.standing.realm, s2.realm))
       dropExtra(p.door.key, L("другое место графа", "another seat of the graph"), true);
   const door = new Door(key, hooks);
-  const handle = primaryAddress?.match(/^(.*):/)?.[1];
-  if (handle && s2.name) door.address = `${handle}:${s2.name}`;
-  door.open();
   const place = { standing: s2, door };
+  deriveAddress(place, primaryAddress);
+  door.open();
   extras.set(key, place);
   writeRecord(place, ch);
   standingLog(`held ${key} beside the channel`);
@@ -4523,7 +4545,10 @@ function learnFromHello(hello, primary) {
     if (!e) continue;
     if (e.realm && unresolved(p.standing.realm)) learnRealm(p.standing.realm, e.realm);
     if (typeof e.standing_id === "string" && e.standing_id) p.door.standingId = e.standing_id;
-    if (typeof e.standing === "string" && e.standing) p.door.address = e.standing;
+    if (typeof e.standing === "string" && e.standing) {
+      p.door.address = e.standing;
+      p.door.addressDerived = false;
+    }
   }
 }
 function fitsOf(frame2, places) {
@@ -4647,13 +4672,18 @@ function drainSpool(path, feed) {
 
 // js/bridge/statuspost.ts
 async function publishStatusTo(url, text, timeoutMs = 5e3, standingId = null) {
+  const signal = AbortSignal.timeout(timeoutMs);
+  const post3 = () => fetch(url, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(standingId ? { text, standing_id: standingId } : { text }),
+    signal
+  });
   let res;
   try {
-    res = await fetch(url, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(standingId ? { text, standing_id: standingId } : { text }),
-      signal: AbortSignal.timeout(timeoutMs)
+    res = await post3().catch((e) => {
+      if (!closedUnder(e) || signal.aborted) throw e;
+      return post3();
     });
   } catch (e) {
     return {
@@ -5574,8 +5604,8 @@ function crossPlaceRefusal(msg) {
   const unresolved2 = unresolvedRefusal(realm);
   if (unresolved2) return refusal(msg, unresolved2);
   if (a.action !== "register") {
-    const word = besideRefusal(realm, "connect");
-    if (word) return refusal(msg, word);
+    const word2 = besideRefusal(realm, "connect");
+    if (word2) return refusal(msg, word2);
   }
   const karta = normKarta(a.karta ?? state.standing?.karta ?? "");
   const name = normName(a.name);
@@ -5621,12 +5651,15 @@ function serialized(fn) {
 // js/bridge/statusaddr.ts
 function statusAddress(realm) {
   if (!H2.currentStatusUrl || !H2.currentKey) return null;
-  const d = (realm ? extraIn(realm)?.door : void 0) ?? H2.door;
+  const extra = realm ? extraIn(realm) : void 0;
+  const d = extra?.door ?? H2.door;
   return {
     url: H2.currentStatusUrl,
     key: d?.key ?? H2.currentKey,
     standingId: d?.standingId ?? null,
-    place: d?.address ?? null
+    place: d?.address ?? null,
+    derived: d?.addressDerived ?? false,
+    name: (extra?.standing ?? state.standing)?.name ?? ""
   };
 }
 
@@ -5649,10 +5682,23 @@ async function statusWord(text, realm) {
   if (st.code === 404) return [`${st.body} ${TURNED_GUIDANCE()}`, true];
   if (st.ok)
     return [
-      `${L("занятость", "busyness")} ${statusAddress(realm)?.place ?? statusAddress(realm)?.key}: ${text || L("(снята)", "(cleared)")}`,
+      `${L("занятость", "busyness")} ${placeLabel(realm)}: ${text || L("(снята)", "(cleared)")}`,
       false
     ];
   return [st.body, true];
+}
+function placeLabel(realm) {
+  const a = statusAddress(realm);
+  if (a?.place)
+    return a.derived ? L(
+      `${a.place} (адрес выведен, hello его не называл)`,
+      `${a.place} (address derived, hello did not name it)`
+    ) : a.place;
+  const name = a?.name ? ` «${a.name}»` : "";
+  return L(
+    `места${name} (адреса @handle:name ещё нет — hello не пришёл)`,
+    `of the seat${name} (no @handle:name address yet — hello has not come)`
+  );
 }
 function localStatus(msg) {
   if (msg?.method !== "tools/call" || msg?.params?.name !== "iskron_channel") return null;
@@ -6341,12 +6387,6 @@ import {
 } from "node:fs";
 import { join as join14 } from "node:path";
 var SATELLITE_TTL_S = Number(process.env.ISKRON_BRIDGE_SATELLITE_TTL) || 300;
-var SUB_RE = /\.sub-([1-9]\d*)$/;
-var satelliteName = (base, n) => base.slice(0, NAME_MAX - `.sub-${n}`.length).replace(/[-._]+$/, "") + `.sub-${n}`;
-function isSatelliteOf(base, name) {
-  const m = SUB_RE.exec(name);
-  return !!m && satelliteName(base, Number(m[1])) === name;
-}
 var claimDir = () => join14(CFG.authDir, "satellites");
 var claimFile = (name) => join14(claimDir(), `${name.replace(/[^A-Za-z0-9._-]+/g, "_")}.claim`);
 var claims = scoped(() => /* @__PURE__ */ new Set());
@@ -6515,12 +6555,12 @@ function pickSatellite(entries2, of, karta, led, claim = () => true) {
   const callerId = same[0].id;
   const notes = [];
   if (led && isSatelliteOf(base, led)) {
-    const word = L(
+    const word2 = L(
       `мост уже держит ${led} — повтор этого прогона либо параллельный прогон с той же записью моста (тот же файл агента или другой с той же записью), который делит это место и потеряет его, когда первый закончит; параллельно — не больше одного прогона на запись моста`,
       `the bridge already holds ${led} — a repeat of this run or a parallel run with the same bridge entry (the same agent file or another with the same entry), which shares this seat and loses it when the first one ends; in parallel — no more than one run per bridge entry`
     );
-    log(word);
-    notes.push(word);
+    log(word2);
+    notes.push(word2);
     return { ok: true, name: led, caller, callerKarta, callerId, notes };
   }
   const taken = new Set(entries2.map((e) => nameOf(e.address)));
@@ -6947,6 +6987,51 @@ async function armRoleHook(p) {
   );
 }
 
+// js/bridge/owner.ts
+var OWNER_ENV = "ISKRON_BRIDGE_OWNER_ROLE";
+var HUMAN = /* @__PURE__ */ new Set(["me", "realm-owner"]);
+var known = scoped(() => /* @__PURE__ */ new Map());
+var word = (what) => L(
+  `Отказано (мост): ${what} — роль владельца (主). Агент не занимает её без слова человека; слово человека — настройка ${OWNER_ENV}=1 в окружении моста, которую ставит он сам. Встань своей ролью (karta) — той, что назвал тебе человек или AGENTS.md как роль агента.`,
+  `Refused (bridge): ${what} is the owner's role (主). An agent does not take it without the human's word; the human's word is the setting ${OWNER_ENV}=1 in the bridge's environment, set by the human. Stand in your own role (karta) — the one the human or AGENTS.md named as the agent's.`
+);
+async function ownerRefusal(realm, karta) {
+  if (envOf(OWNER_ENV)?.trim() === "1") return null;
+  const k = normKarta(karta);
+  if (!k || k === "agent") return null;
+  if (HUMAN.has(k))
+    return word(L(`karta="${k}" — роль самого человека`, `karta="${k}" is the human's own role`));
+  if (!/^\d+$/.test(k)) return null;
+  const key = `${String(realm ?? "")}|${k}`;
+  let owner = known.get(key);
+  if (owner === void 0) {
+    const r = await ownersOf(realm, k);
+    if (typeof r === "string")
+      return L(
+        `Отказано (мост): тип роли #${k} не прочитался (${short(r, 160)}) — роль владельца без проверки не занимается; повтори.`,
+        `Refused (bridge): the type of role #${k} could not be read (${short(r, 160)}) — the owner's role is not taken unchecked; retry.`
+      );
+    owner = r;
+    known.set(key, owner);
+  }
+  return owner ? word(`karta=#${k}`) : null;
+}
+async function ownersOf(realm, k) {
+  const s2 = await callTool("iskron_search", {
+    realm,
+    q: "",
+    node_type: "karta",
+    manifested_as: "svatantra",
+    limit: 100,
+    include_description: false
+  });
+  if (!s2.isError && !/НЕ показано|not shown/i.test(s2.text))
+    return [...s2.text.matchAll(/\(#(\d+)[,)]/g)].some((m) => m[1] === k);
+  const r = await callTool("iskron_look", { realm, node_id: k });
+  if (r.isError) return r.text;
+  return /\(#\d+,\s*karta\s+主/.test(r.text) || /Проявлен как:\s*主/.test(r.text);
+}
+
 // js/bridge/resume.ts
 import { existsSync as existsSync5, readdirSync as readdirSync5, readFileSync as readFileSync18 } from "node:fs";
 import { join as join15 } from "node:path";
@@ -7143,7 +7228,8 @@ function recordsFor(sel) {
       const key = keyOf(rec4.realm, rec4.karta, rec4.name);
       const keyed2 = !!sel.key && key === sel.key;
       const inDir = !!sel.cwd && rec4.cwd === sel.cwd;
-      if (!keyed2 && !inDir) continue;
+      const stoodBy = !!sel.session && rec4.session === sel.session;
+      if (!keyed2 && !inDir && !stoodBy) continue;
       const fresh = readHoldRecord(key);
       if (!fresh) continue;
       if (inDir) sameDir.push(key);
@@ -7732,6 +7818,11 @@ async function runStand(msg) {
       return done(true);
     }
   }
+  const notOwner = await ownerRefusal(realm, karta);
+  if (notOwner) {
+    lines.push(notOwner);
+    return done(true);
+  }
   const gate = await satelliteGate(a, realm, karta, asked);
   if (gate && !gate.ok) {
     lines.push(gate.refusal);
@@ -8108,12 +8199,6 @@ function syntheticError(id, message, outcome = UpstreamError.UNKNOWN, holdOff = 
   };
 }
 var NET_BACKOFF_MS = (process.env.ISKRON_BRIDGE_NET_BACKOFF_MS || "1000,2000,4000").split(",").map(Number).filter((n) => Number.isFinite(n) && n >= 0);
-var READ_TOOLS = /* @__PURE__ */ new Set([
-  "iskron_look",
-  "iskron_orient",
-  "iskron_search",
-  "iskron_semantic_search"
-]);
 var H3 = scoped(() => ({ listing: 0 }));
 onReinitialized(() => {
   if (H3.listing > 0) return;
@@ -8246,6 +8331,17 @@ async function deliverOne(msg) {
       } : hasId ? outsideSetRefusal(msg) ?? crossPlaceRefusal(msg) : null;
       if (cross) {
         emit(cross);
+        return;
+      }
+      const ch = msg.params?.arguments ?? {};
+      const takes = hasId && msg.method === "tools/call" && msg.params?.name === "iskron_channel" && ["connect", "mint", "register"].includes(String(ch.action));
+      const notOwner = takes ? await ownerRefusal(ch.realm, ch.karta) : null;
+      if (notOwner) {
+        emit({
+          jsonrpc: "2.0",
+          id: msg.id,
+          result: { isError: true, content: [{ type: "text", text: notOwner }] }
+        });
         return;
       }
       expectOwnRevoke(msg);
@@ -8944,7 +9040,7 @@ function thinMain(argv2) {
   let initCopy = null;
   let initSent = false;
   let initializedSeen = false;
-  let word = null;
+  let word2 = null;
   let leaving = null;
   let byeDone = null;
   let heldKey2 = null;
@@ -8983,9 +9079,9 @@ function thinMain(argv2) {
       }
       const f = flights.get(k);
       flights.delete(k);
-      if (word && f?.msg.method === "tools/call" && Array.isArray(msg.result?.content)) {
-        msg.result.content.push({ type: "text", text: word });
-        word = null;
+      if (word2 && f?.msg.method === "tools/call" && Array.isArray(msg.result?.content)) {
+        msg.result.content.push({ type: "text", text: word2 });
+        word2 = null;
       }
     }
     const place = placeWord(msg);
@@ -9098,7 +9194,7 @@ function thinMain(argv2) {
   const goLocal = (reason) => {
     if (mode === "local" || leaving) return;
     log(`${reason} — going as the full bridge inside this process`);
-    word = `iskron-bridge ${BUILD}: ${reason}; this bridge runs as the full bridge in its own process (the machine's daemon is the default; ${DAEMON_ENV}=0 runs the full bridge on purpose).`;
+    word2 = `iskron-bridge ${BUILD}: ${reason}; this bridge runs as the full bridge in its own process (the machine's daemon is the default; ${DAEMON_ENV}=0 runs the full bridge on purpose).`;
     const input = new PassThrough2();
     const output = new PassThrough2();
     startEngine(cfg);
@@ -10166,9 +10262,9 @@ var dw = {
     `v${v}, ${hit ? "запись моста в манифесте есть" : "записи моста в манифесте нет"}`,
     `v${v}, ${hit ? "the bridge entry is in the manifest" : "no bridge entry in the manifest"}`
   ),
-  codexPlugin: (plugin, market, word, dir) => L(
-    `Codex: плагин ${plugin}@${market} — ${word}; ${dir}`,
-    `Codex: plugin ${plugin}@${market} — ${word}; ${dir}`
+  codexPlugin: (plugin, market, word2, dir) => L(
+    `Codex: плагин ${plugin}@${market} — ${word2}; ${dir}`,
+    `Codex: plugin ${plugin}@${market} — ${word2}; ${dir}`
   ),
   codexNoPlugin: (cache) => L(
     `Codex: плагина iskron в кэше нет (${cache})`,
@@ -10499,8 +10595,8 @@ function formOf(e) {
     const spliced = /process\.argv\.splice\(\s*1\s*,\s*0\s*,/.test(e.args[1] ?? "");
     if (!(spliced ? after2 : after2.slice(1)).includes("--satellite")) return "eval-session";
     const tail2 = after2.slice(1);
-    const known = !tail2.length || tail2.length === 2 && tail2[0] === "--tools" && isToolList(tail2[1]);
-    return e.args[1] === SATELLITE_CODE && after2[0] === "--satellite" && known ? "eval" : "eval-other";
+    const known2 = !tail2.length || tail2.length === 2 && tail2[0] === "--tools" && isToolList(tail2[1]);
+    return e.args[1] === SATELLITE_CODE && after2[0] === "--satellite" && known2 ? "eval" : "eval-other";
   }
   if (SHELLS.has(base)) {
     const s2 = e.args[e.args.indexOf("-c") + 1] ?? "";
@@ -11335,20 +11431,20 @@ function codexPluginReport(home) {
       if (!/iskron/.test(plugin)) continue;
       const dir = join21(marketDir, plugin);
       const manifest = join21(dir, ".codex-plugin", "plugin.json");
-      let word = dw.codexNoManifest();
+      let word2 = dw.codexNoManifest();
       if (existsSync10(manifest)) {
         try {
           const m = JSON.parse(readFileSync24(manifest, "utf8"));
           const hit = Object.values(m.mcpServers ?? {}).some(
             (v) => (v.args ?? []).some((a) => /iskron\.mjs/.test(a))
           );
-          word = dw.codexManifest(m.version ?? "?", hit);
+          word2 = dw.codexManifest(m.version ?? "?", hit);
         } catch {
-          word = dw.unreadable(manifest);
+          word2 = dw.unreadable(manifest);
         }
       }
       found++;
-      out3(dw.codexPlugin(plugin, market, word, dir));
+      out3(dw.codexPlugin(plugin, market, word2, dir));
     }
   }
   if (!found) out3(dw.codexNoPlugin(cache));
@@ -11511,16 +11607,16 @@ var out5 = (s2) => {
   process.stdout.write(s2 + "\n");
 };
 function runUse(argv2) {
-  let word;
+  let word2;
   const rest2 = [];
   for (let i = 0; i < argv2.length; i++) {
     const a = argv2[i] ?? "";
     if (a === "--auth-dir") rest2.push(a, argv2[++i] ?? "");
-    else if (a.startsWith("--") || word) rest2.push(a);
-    else word = a;
+    else if (a.startsWith("--") || word2) rest2.push(a);
+    else word2 = a;
   }
   setConfig(parseArgs(rest2));
-  const url = word ? resolveServerChoice(word) : null;
+  const url = word2 ? resolveServerChoice(word2) : null;
   if (!url) {
     out5(
       L(

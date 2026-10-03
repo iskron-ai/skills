@@ -17,22 +17,71 @@ const READ_TOOLS = new Set([
  * Читающие действия тулов, у которых есть и пишущие: они ничего не подписывают
  * и идут мостом корня. Прочие действия этих тулов, как и записи графа и дело, — отказ.
  * invert у истории считается пишущим: его смысл по описанию тула не различён.
+ * Действия — по описаниям тулов поверхности (fixtures/surface.json, описание action).
  */
+const CASE_READS = new Set(["read", "history", "mine", "at"]);
 const READ_ACTIONS: Record<string, Set<string>> = {
-  iskron_channel: new Set(["list"]),
+  iskron_case: CASE_READS,
+  iskron_room: CASE_READS, // прежнее имя тула дел
+  iskron_channel: new Set(["list", "sessions", "history"]),
   iskron_realm: new Set(["list"]),
   iskron_org: new Set(["list", "get", "realms", "list_members", "list_grants"]),
   iskron_me: new Set(["whoami", "orgs", "kartas", "usage"]),
   iskron_history: new Set(["realm", "node", "delta"]),
+  iskron_admin: new Set([
+    "list_members",
+    "access",
+    "search_users",
+    "list_webhooks",
+    "user_webhooks",
+    "version",
+  ]),
 };
 
+/** Вызов только читает: ничего не подписывает и может идти мостом корня. */
+export const readsOnly = (name: string, args: Record<string, unknown>): boolean => {
+  const action = String(args.action ?? "");
+  return READ_TOOLS.has(name) || action === "?" || !!READ_ACTIONS[name]?.has(action);
+};
+
+/**
+ * Чтение ребёнка мостом корня: история дела — с keep_cursor, иначе она сдвинула бы
+ * курсор КОРНЯ, и его новости ушли бы непрочитанными. Аргументы правятся на месте.
+ */
+const asChildRead = (name: string, args: Record<string, unknown>): void => {
+  if ((name === "iskron_case" || name === "iskron_room") && args.action === "history")
+    args.keep_cursor = true;
+};
+
+/**
+ * Субагент говорит только своим спутником (#6550, правило 2): его запись мостом
+ * корня — отказ всегда, и под местом родителя тоже (подписалась бы им); чтения
+ * идут мостом корня, не трогая его курсор (asChildRead). of — место корня, если он его держит.
+ */
+export function childWriteRefusal(
+  of: string | null,
+  name: string,
+  args: Record<string, unknown>,
+): string | null {
+  if (readsOnly(name, args)) {
+    asChildRead(name, args);
+    return null;
+  }
+  return of
+    ? `Отказано (плагин): дочерняя сессия пишет только своим местом-спутником — ${name} ушёл бы местом родителя ${of}. ` +
+        `Встань: iskron_stand(realm, karta, satellite_of="${of}"), затем повтори; читать можно и так.`
+    : `Отказано (плагин): дочерняя сессия пишет только своим местом-спутником, а место родителя неизвестно — корень места не держит. ` +
+        "Своего места ей не завести; читать можно и так, писать — словом запустившему.";
+}
+
 export interface RunEnds {
-  /** Ребёнок кончен: мост гасится forget, затем сессия помечена; of — место корня; final — отпущен запустившим. */
+  /** Ребёнок кончен: мост гасится forget, затем сессия помечена; of — место корня; final — отпущен запустившим; why — своё слово отказа. */
   end(
     session: string,
     of: Place | null | undefined,
     forget: (s: string) => void,
     final?: boolean,
+    why?: string,
   ): void;
   /** Ребёнок встал заново — пометка снята; отпущенного запустившим снимает только удаление сессии (gone). */
   clear(session: string, gone?: boolean): void;
@@ -43,15 +92,18 @@ export interface RunEnds {
 export function createRunEnds(): RunEnds {
   const ended = new Map<string, Place | null>();
   const released = new Set<string>(); // revoke запустившего окончателен (#6625): встать снова нельзя
+  const whys = new Map<string, string>();
   return {
-    end(session, of, forget, final = false) {
+    end(session, of, forget, final = false, why) {
       forget(session);
       ended.set(session, of ?? null);
       if (final) released.add(session);
+      if (why) whys.set(session, why);
     },
     clear(session, gone = false) {
       if (gone) released.delete(session);
       if (!released.has(session)) ended.delete(session);
+      if (!ended.has(session)) whys.delete(session);
     },
     guard(session, name, args) {
       if (
@@ -68,7 +120,7 @@ export function createRunEnds(): RunEnds {
       if (action === "?" || READ_ACTIONS[name]?.has(action)) return;
       const of = ended.get(session)?.name ?? "<место запустившего>";
       throw new Error(
-        `Отказано (плагин): эта дочерняя сессия кончена, её место-спутник отпущено — ` +
+        `Отказано (плагин): ${whys.get(session) ?? "эта дочерняя сессия кончена, её место-спутник отпущено"} — ` +
           `${name}${action ? ` (${action})` : ""} пошёл бы мостом и местом запустившего. Встань заново: ` +
           `iskron_stand(realm, karta, satellite_of="${of}"), затем повтори вызов.`,
       );

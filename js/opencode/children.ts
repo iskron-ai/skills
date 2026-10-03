@@ -9,10 +9,14 @@
 import { sleep } from "./bridge-io.ts";
 import type { Keeper } from "./keep.ts";
 import type { Leads } from "./leadwords.ts";
-import type { LostEntry } from "./marker.ts";
+import type { LostEntry } from "./records.ts";
 import type { Slot } from "./tools.ts";
 
-/** Попыток возврата: прежний мост мог ещё не выйти, и его сокет места жив. */
+/**
+ * Возврат места ребёнка ждёт ухода сокета прежнего моста (он уходит своим bye) до
+ * BACK_MS — не счётом попыток (keep.ts); попытки — только на иные сбои возврата.
+ */
+const BACK_MS = Number(process.env.ISKRON_CHILD_BACK_MS) || 15_000;
 const BACK_TRIES = 4;
 const BACK_PAUSE_MS = Number(process.env.ISKRON_CHILD_BACK_PAUSE_MS) || 1_000;
 /** Пауза моста ребёнка перед остановкой плагина — не дольше этого. */
@@ -24,6 +28,8 @@ export interface ChildDoors {
   keeper: Keeper<Slot>;
   leads: Leads;
   exists(session: string): Promise<boolean>;
+  /** Прогон ребёнка кончен: расход — мосту, мост гасится (live), запись мостом корня — отказ (#6361). */
+  endRun(session: string, live?: boolean): void;
 }
 
 export function createChildren(d: ChildDoors) {
@@ -53,13 +59,17 @@ export function createChildren(d: ChildDoors) {
     // «held», а не ждёт такта сторожа: записи ребёнка в этом окне шли бы
     // безавторными. Без ключа возвращать нечем — ребёнок встанет заново.
     if (was?.stood && own.key)
-      own.resume = d.keeper.resume(own, sessionID, !!back).finally(() => (own.resume = null));
+      own.resume = d.keeper
+        .resume(own, sessionID, !!back, back ? BACK_MS : undefined)
+        .finally(() => (own.resume = null));
     return own;
   }
 
   /** Ребёнок прежнего экземпляра: тот же спутник, место по ключу; не вернулось — конец. */
   async function back(e: LostEntry): Promise<void> {
-    d.leads.back(e.session, e.room, e.noted);
+    // Не спутник — не ведущий (#6550 п.4): его прогон кончился с прежним экземпляром.
+    if (!e.of) return d.endRun(e.session, false);
+    d.leads.back(e.session, e);
     // Сессия не читается (удалена или сбой get) — ребёнок кончен: его запись иначе
     // пошла бы мостом корня (#6361); место уйдёт сроком канала, родителю — слово, если он известен.
     if (!(await d.exists(e.session)))
@@ -69,9 +79,11 @@ export function createChildren(d: ChildDoors) {
     for (let i = 0; i < BACK_TRIES && !own.holding; i++) {
       if (i) {
         await sleep(BACK_PAUSE_MS);
-        own.resume = d.keeper.resume(own, e.session, true).finally(() => (own.resume = null));
+        own.resume = d.keeper
+          .resume(own, e.session, true, BACK_MS)
+          .finally(() => (own.resume = null));
       }
-      await own.resume;
+      if ((await own.resume) === "elsewhere") break; // сокет прежнего моста не ушёл и за срок
     }
     if (!own.holding)
       await d.leads.fail(e.session, "перезагрузка плагина, место-спутник по ключу не вернулось");
@@ -79,10 +91,12 @@ export function createChildren(d: ChildDoors) {
 
   /** Остановка плагина: держащие мосты детей — на паузу, их место и дела ждут нового экземпляра. */
   async function pause(): Promise<void> {
-    const held = [...d.slots.values()].filter((s) => s.child && s.holding && s.session);
+    const held = [...d.slots.values()].filter(
+      (s) => s.child && s.satelliteOf && s.holding && s.session,
+    );
     for (const s of held) {
-      s.room = d.leads.roomOf(s.session as string);
-      s.noted = d.leads.noted(s.session as string);
+      const was = d.leads.snapshot(s.session as string);
+      [s.room, s.noted, s.last] = [was.room, was.noted, was.last];
     }
     await Promise.all(
       held.map((s) =>

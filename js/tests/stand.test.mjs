@@ -108,10 +108,10 @@ const textOf = (reply) => (reply.result?.content ?? []).map((c) => c.text ?? "")
 const sentToChannel = (fake) =>
   fake.state.calls.filter((c) => c.name === "iskron_channel").map((c) => c.arguments);
 
-async function ready(t, init = INIT) {
+async function ready(t, init = INIT, env = {}) {
   const fake = await startFakeNks({ pat: PAT });
   const dir = mkdtempSync(join(tmpdir(), "iskron-stand-"));
-  const bridge = startBridge(fake.mcpUrl, dir);
+  const bridge = startBridge(fake.mcpUrl, dir, process.cwd(), env);
   t.after(async () => {
     await bridge.stop();
     await fake.stop();
@@ -717,9 +717,7 @@ test("iskron_stand after an eviction: register only, the busy line still publish
     }
   };
   await waitFor(() => fake.state.ws.size === 1, "the socket");
-  const known = new Set(fake.state.ws);
-  await fake.control({ ws_close: 4000 });
-  await waitFor(() => [...fake.state.ws].some((s) => !known.has(s)), "the reopen");
+  // Одно вытеснение — уже уступка вслух: мост не открывается заново (#6550).
   await fake.control({ ws_close: 4000 });
   await waitFor(
     () => bridge.notifications.some((n) => n.params?.data?.kind === "evicted"),
@@ -795,6 +793,125 @@ test("iskron_stand busy line while the bridge reopens its own socket: published,
     0,
     "the answer came inside the reopen window",
   );
+});
+
+// Live on 7.2.1 and 7.2.2: the first busy line after a returned place failed with «the
+// socket connection was closed unexpectedly», the next one passed — a keep-alive
+// connection the server had closed. A closed connection is retried once; an HTTP
+// answer of the surface is not.
+test("iskron_stand busy line over a connection closed under the request: one retry, the line lands", async (t) => {
+  const { fake, bridge } = await ready(t);
+  const stand = (args) => bridge.call("tools/call", { name: "iskron_stand", arguments: args });
+  assert.ok(!(await stand({ realm: "nks-dev", karta: 931, name: "proba" })).result?.isError);
+  const tries = () => fake.state.counts.status_requests;
+  let before = tries();
+  await fake.control({ statusDrop: 1 });
+  const said = await stand({ realm: "nks-dev", status: "после закрытого соединения" });
+  assert.ok(!said.result?.isError, textOf(said));
+  assert.match(textOf(said), /^занятость @tester:proba: после закрытого соединения/);
+  assert.equal(fake.state.status, "после закрытого соединения");
+  assert.equal(tries() - before, 2, "the dropped POST and its one retry");
+
+  before = tries();
+  await fake.control({ statusDrop: 3 });
+  const twice = await stand({ realm: "nks-dev", status: "дважды" });
+  assert.ok(twice.result?.isError, "only one retry");
+  assert.match(textOf(twice), /статусный адрес не ответил/, textOf(twice));
+  assert.equal(tries() - before, 2, "two attempts, not more");
+  await fake.control({ statusDrop: 0 });
+
+  before = tries();
+  await fake.control({ statusGone: true });
+  const gone = await stand({ realm: "nks-dev", status: "ответ поверхности" });
+  assert.match(textOf(gone), /Отказано \(404\)/, textOf(gone));
+  assert.equal(tries() - before, 1, "an HTTP answer is not retried");
+});
+
+// The owner's role (主 svatantra) is not an agent's to take without the human's word
+// (#6550 rule 2; seen live: a child haiku stood #1226 and wrote as the owner). The
+// bridge reads the role's type from its node and refuses the stand and the raw
+// channel moves; the human's word is the bridge's environment, not an argument.
+test("a stand or a raw channel take in the owner's role (主) is refused aloud without the human's setting, and passes with it", async (t) => {
+  const { fake, bridge } = await ready(t);
+  await fake.control({ kartaTypes: { 1226: "主" } });
+  const connects = () => fake.state.counts.connect;
+  const before = connects();
+  const stand = await bridge.call("tools/call", {
+    name: "iskron_stand",
+    arguments: { realm: "nks-dev", karta: 1226, name: "proba" },
+  });
+  assert.ok(stand.result?.isError, textOf(stand));
+  assert.match(textOf(stand), /роль владельца \(主\)[\s\S]*ISKRON_BRIDGE_OWNER_ROLE=1/);
+  // Род — фильтром сервера (manifested_as), не прозой шапки узла под чужой локалью.
+  assert.ok(fake.state.counts.search > 0, "the kind is asked of the server's filter");
+  assert.ok(!(fake.state.counts.look > 0), "the header's prose is not read");
+  for (const karta of ["#1226", "me"]) {
+    const raw = await bridge.call("tools/call", {
+      name: "iskron_channel",
+      arguments: { realm: "nks-dev", action: "connect", karta, name: "proba" },
+    });
+    assert.ok(raw.result?.isError, `${karta}: ${textOf(raw)}`);
+    assert.match(textOf(raw), /роль владельца/, `${karta}: ${textOf(raw)}`);
+  }
+  assert.equal(connects(), before, "no place was taken");
+  const own = await bridge.call("tools/call", {
+    name: "iskron_stand",
+    arguments: { realm: "nks-dev", karta: 931, name: "proba" },
+  });
+  assert.ok(!own.result?.isError, `an agent's role stands as before: ${textOf(own)}`);
+});
+
+test("with the human's setting ISKRON_BRIDGE_OWNER_ROLE=1 the owner's role stands", async (t) => {
+  const { fake, bridge } = await ready(t, INIT, { ISKRON_BRIDGE_OWNER_ROLE: "1" });
+  await fake.control({ kartaTypes: { 1226: "主" } });
+  const stand = await bridge.call("tools/call", {
+    name: "iskron_stand",
+    arguments: { realm: "nks-dev", karta: 1226, name: "proba" },
+  });
+  assert.ok(!stand.result?.isError, textOf(stand));
+  assert.equal(fake.state.counts.connect, 1);
+});
+
+// The same closed keep-alive connection under a request to MCP (seen live on the
+// launch line: «upstream unreachable: The socket connection was closed unexpectedly»,
+// the satellite did not stand). The bridge repeats once a request whose repeat
+// applies nothing twice — the board read here; a write is not repeated.
+test("a request to MCP whose connection closed before the answer is repeated once when a repeat applies nothing twice; a write is not", async (t) => {
+  const { fake, bridge } = await ready(t);
+  const mcp = () => fake.state.counts.mcp;
+  let before = mcp();
+  await fake.control({ mcpDrop: 1, mcpDropAction: "iskron_channel:list" });
+  const stood = await bridge.call("tools/call", {
+    name: "iskron_stand",
+    arguments: { realm: "nks-dev", karta: 931, name: "proba" },
+  });
+  assert.ok(!stood.error && !stood.result?.isError, JSON.stringify(stood.error) + textOf(stood));
+  assert.ok(mcp() - before >= 2, "the dropped board read went once more");
+  before = fake.state.calls.length;
+  await fake.control({ mcpDrop: 1, mcpDropAction: "iskron_case:say" });
+  const said = await bridge.call("tools/call", {
+    name: "iskron_case",
+    arguments: { realm: "nks-dev", action: "say", room: "#77", text: "слово" },
+  });
+  assert.ok(said.error || said.result?.isError, "a write is not repeated blindly");
+  assert.equal(
+    fake.state.calls.length,
+    before,
+    "the dropped write was never processed — and not sent again",
+  );
+  // register — тоже не повторяется: что двойной ничего не меняет на сервере, мост не знает.
+  before = mcp();
+  await fake.control({ mcpDrop: 1, mcpDropAction: "iskron_channel:register" });
+  const reg = await bridge.call("tools/call", {
+    name: "iskron_channel",
+    arguments: { realm: "nks-dev", action: "register", karta: 931, name: "proba" },
+  });
+  assert.ok(
+    reg.error || reg.result?.isError,
+    "a register under a closed connection is not repeated",
+  );
+  assert.equal(mcp() - before, 1, "one request, no repeat");
+  await fake.control({ mcpDrop: 0, mcpDropAction: null });
 });
 
 // The busy line is the standing's word — of THIS standing: a call for another
@@ -1521,12 +1638,50 @@ test("two graphs: the busy line of a place beside names it @handle:name, not its
   const said = await stand({ realm: DRUGOY, status: "место рядом" });
   const text = textOf(said);
   assert.ok(!said.result?.isError, text);
-  assert.equal(text.split("\n")[0], "занятость @tester:proba-b: место рядом", text);
+  // The address is the bridge's derivation from the primary's handle — said so, not passed off as the hello's.
+  assert.equal(
+    text.split("\n")[0],
+    "занятость @tester:proba-b (адрес выведен, hello его не называл): место рядом",
+    text,
+  );
   assert.ok(
     !text.split("\n")[0].includes(keyB),
     `the record key must not stand in for the place:\n${text}`,
   );
   assert.equal(fake.state.status, "место рядом");
+});
+
+// Before any hello the primary has no address to derive the handle from (#6630): the
+// answer names the place and says its address is not there yet — not the record key.
+test("two graphs: before any hello the busy line of a place beside names the place and says it has no address yet, not its record key", async (t) => {
+  const { fake, bridge } = await ready(t);
+  const stand = (args) => bridge.call("tools/call", { name: "iskron_stand", arguments: args });
+  await fake.control({ ws_mute: true }); // the channel's socket opens, no hello comes
+  const a = await stand({ realm: NKS, karta: 931, name: "proba" });
+  assert.ok(!a.result?.isError, textOf(a));
+  const b = await stand({ realm: DRUGOY, karta: 48, name: "proba-b" });
+  assert.ok(!b.result?.isError, `the second graph's place must stand beside:\n${textOf(b)}`);
+  const said = await stand({ realm: DRUGOY, status: "до hello" });
+  const text = textOf(said);
+  assert.ok(!said.result?.isError, text);
+  assert.ok(!text.split("\n")[0].includes("proba-b--48--"), `the record key stands in:\n${text}`);
+  assert.equal(
+    text.split("\n")[0],
+    "занятость места «proba-b» (адреса @handle:name ещё нет — hello не пришёл): до hello",
+    text,
+  );
+  // The socket reopens, the hello lists the places: the address is the platform's now.
+  const known = new Set(fake.state.ws);
+  await fake.control({ ws_close: 1011 });
+  const deadline = Date.now() + 10_000;
+  let after = "";
+  while (!after.startsWith("занятость @tester:proba-b:")) {
+    if (Date.now() > deadline) throw new Error(`no hello-named address:\n${after}`);
+    await new Promise((r) => setTimeout(r, 200));
+    if ([...fake.state.ws].some((s) => !known.has(s)))
+      after = textOf(await stand({ realm: DRUGOY, status: "после hello" })).split("\n")[0];
+  }
+  assert.equal(after, "занятость @tester:proba-b: после hello");
 });
 
 test("two graphs: each write is signed by the place of its own graph, also after a session turnover", async (t) => {

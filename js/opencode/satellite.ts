@@ -3,6 +3,7 @@
 // --satellite, и его iskron_stand встаёт местом «место корня».sub-N в роли,
 // которую назвал агент (не назвал — роль корня).
 import { takingArgs } from "../shared/busyargs.ts";
+import { isSatelliteOf } from "../shared/satname.ts";
 
 /** Тул моста, которому плагин подставляет директорию сессии (cwd) для вывода имени. */
 export const STAND_TOOL = "iskron_stand";
@@ -29,6 +30,20 @@ export interface SatelliteSlot {
   place?: Place | null;
   /** Мост дочерней сессии поднят спутником (`--satellite`) этого места корня. */
   satelliteOf?: Place | null;
+}
+
+/**
+ * Место дочернего моста, если оно не спутник места корня («место корня».sub-N):
+ * ребёнок встал обычным местом сессии — корень не держал места, либо имя названо
+ * мимо спутника. Такое место конец поручения не снимает (#6550, правило 4). null —
+ * спутник или места нет.
+ */
+export function ownPlace(slot: (SatelliteSlot & { child?: boolean }) | undefined): string | null {
+  const p = slot?.child ? slot.place : null;
+  if (!p?.name) return null;
+  const of = slot?.satelliteOf?.name;
+  // Правилом моста: база длиннее предела имени укорачивается с конца (shared/satname.ts).
+  return of && isSatelliteOf(of, p.name) ? null : p.name;
 }
 
 /** Место из данных слова «held»; мост старше #6002 его не называет — null. */

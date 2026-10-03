@@ -1,5 +1,28 @@
 # Changelog
 
+## [7.2.4](https://github.com/iskron-ai/skills/compare/v7.2.3...v7.2.4) (2026-10-03)
+
+
+### Bug Fixes
+
+* **opencode,bridge:** запуск под корнем без места, слово о потере слуха только своё, род роли через поиск ([#314](https://github.com/iskron-ai/skills/issues/314)) ([05d3140](https://github.com/iskron-ai/skills/commit/05d314027df363e6d303eab3ac9ea5cb82cb7273))
+
+## [7.2.3](https://github.com/iskron-ai/skills/compare/v7.2.2...v7.2.3) (2026-10-03)
+
+
+### Bug Fixes
+
+* **opencode,bridge:** роль владельца, запись ребёнка только спутником, передача демона, перенос с детьми ([#312](https://github.com/iskron-ai/skills/issues/312)) ([53798a1](https://github.com/iskron-ai/skills/commit/53798a10acc2712738f650898930abb93f65838a))
+
+## [7.2.2](https://github.com/iskron-ai/skills/compare/v7.2.1...v7.2.2) (2026-10-03)
+
+
+### Bug Fixes
+
+* **bridge:** ответ занятости называет место, а не ключ записи ([#300](https://github.com/iskron-ai/skills/issues/300)) ([86488bc](https://github.com/iskron-ai/skills/commit/86488bc6c5496f224a3862876787ab28a08d9512))
+* **bridge:** повтор статуса на закрытом соединении, занятость рядом до hello ([#310](https://github.com/iskron-ai/skills/issues/310)) ([63b0269](https://github.com/iskron-ai/skills/commit/63b02697d1d1d1487929d44d39caa1dd1a91b0b2))
+* **opencode,bridge:** перенос сессии, пауза ребёнка без ложного take, КОНЧЕН вставкой ([#308](https://github.com/iskron-ai/skills/issues/308)) ([56a141a](https://github.com/iskron-ai/skills/commit/56a141a37b72ef399dff23030166d710bb4613a9))
+
 ## [7.2.1](https://github.com/iskron-ai/skills/compare/v7.2.0...v7.2.1) (2026-10-02)
 
 

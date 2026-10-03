@@ -31,6 +31,7 @@ import {
 import { join } from "node:path";
 
 import { L } from "../shared/lang.ts";
+import { isSatelliteOf, satelliteName, SUB_RE } from "../shared/satname.ts";
 import { scoped, sessionPid } from "../shared/scope.ts";
 import { type BoardEntry, nameOf, parseBoard } from "./board.ts";
 import { callTool as call, short } from "./call.ts";
@@ -44,17 +45,9 @@ import { state } from "./transport.ts";
 /** Окно простоя канала спутника, с; переменная — шов проб и ручка на случай, если контур сузит разброс. */
 export const SATELLITE_TTL_S = Number(process.env.ISKRON_BRIDGE_SATELLITE_TTL) || 300;
 
-const SUB_RE = /\.sub-([1-9]\d*)$/;
-
-/** Имя спутника номер n; не укладывается в предел — база укорачивается с конца. */
-export const satelliteName = (base: string, n: number): string =>
-  base.slice(0, NAME_MAX - `.sub-${n}`.length).replace(/[-._]+$/, "") + `.sub-${n}`;
-
-/** Своё ли имя-спутник для этой базы (любой номер) — повторный iskron_stand того же прогона возвращается на него. */
-export function isSatelliteOf(base: string, name: string): boolean {
-  const m = SUB_RE.exec(name);
-  return !!m && satelliteName(base, Number(m[1])) === name;
-}
+// Правило имени спутника — общее с плагином OpenCode (shared/satname.ts); повторный
+// iskron_stand того же прогона узнаёт своё имя по isSatelliteOf.
+export { isSatelliteOf, satelliteName };
 
 export type SatellitePick =
   | {

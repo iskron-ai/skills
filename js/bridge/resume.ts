@@ -201,7 +201,9 @@ function recordsFor(sel: ResumeSelector): {
       const key = keyOf(rec.realm, rec.karta, rec.name);
       const keyed = !!sel.key && key === sel.key;
       const inDir = !!sel.cwd && rec.cwd === sel.cwd;
-      if (!keyed && !inDir) continue;
+      // Стоявшая этой сессией — её и вне каталога: сессию переносят между папками (#6550 п.3).
+      const stoodBy = !!sel.session && rec.session === sel.session;
+      if (!keyed && !inDir && !stoodBy) continue;
       // Чтение по ключу — то же, что у stand: просроченная запись стирается и не читается.
       const fresh = readHoldRecord(key);
       if (!fresh) continue;
@@ -258,11 +260,7 @@ export interface ResumeOutcome {
   others?: string[];
   /** Имена мест прежней сборки без сессии в каталоге: не возвращены — названы, чтобы их вернули по имени. */
   legacy?: string[];
-  /**
-   * Ключи своих мест (по ключу или стоявших этой сессией), чей сокет держит живой
-   * мост другой сессии: возврат их не берёт, и сессия без слова о том считала бы
-   * место своим, а занятость шла бы мостом, места не держащим (#6626).
-   */
+  /** Свои места, чей сокет держит живой мост другой сессии: не взяты, и сессии нужно слово (#6626). */
   elsewhere?: string[];
 }
 

@@ -39,21 +39,45 @@ export function createLeads(d: W.LeadDoors): W.Leads {
   const parentOf = (child: string) => d.parentOf(child).catch(() => null);
 
   /**
-   * Конец: родителю — итог, затем мост гасится (ended): слово конца встаёт в очередь
-   * родителя раньше родной синтетики OpenCode по затиханию ребёнка. wake — будить ли
-   * родителя ходом: итог будит, потолок и невозвращённое место — нет.
+   * Конец: родителю — итог, затем мост гасится (ended). Итог будит и идёт steer: родная
+   * синтетика OpenCode по затиханию ребёнка будит родителя первой, и слово с queue
+   * легло бы лишь после его хода; steer ложится в идущий ход на ближайшей границе шага.
+   * Порядок двух синтетик плагин не держит. Потолок, невозвращённое место (lost) и
+   * перенос родителя (away — без «КОНЧЕН»: итог не по исходу поручения) не будят; все
+   * слова — steer (leadwords.ts): queue в занятого родителя запускал после хода ещё один (e2e).
    */
-  async function finish(child: string, why: string, ended = true, wake = true, lost = false) {
+  async function finish(
+    child: string,
+    why: string,
+    ended = true,
+    wake = true,
+    kind: "end" | "lost" | "away" = "end",
+  ) {
     const l = leads.get(child);
     if (!l) return;
     leads.delete(child);
+    // Конец снимает только спутника ребёнка: обычное место, вставшее вместо него, не трогаем.
+    const kept = ended && kind === "end" ? d.ownPlace(child) : null;
+    if (kept) d.say(`Искрон: ${W.keptLine(who(l, child), kept)}`, "warning");
     const parent = await l.parent;
-    const word = lost
-      ? W.lostWord(who(l, child), why)
-      : W.endWord(who(l, child), why, (l.last ?? "").trim());
+    const last = (l.last ?? "").trim();
+    const word =
+      kind === "lost"
+        ? W.lostWord(who(l, child), why)
+        : kind === "away"
+          ? W.awayWord(who(l, child), last)
+          : W.endWord(who(l, child), why, last, kept);
     if (parent) await d.tell(parent, word, wake);
     else d.say(`${word}\n(родителя плагин не знает — итог некому)`, "warning");
-    if (ended) await d.end(child).catch(() => {});
+    if (ended && !kept)
+      await d
+        .end(child)
+        .catch((e: Error) =>
+          d.say(
+            `Искрон: мост субагента ${who(l, child)} не погашен после итога — ${e.message}`,
+            "warning",
+          ),
+        );
   }
 
   function leave(child: string, l: Lead, why: string): void {
@@ -99,6 +123,7 @@ export function createLeads(d: W.LeadDoors): W.Leads {
       if (name !== "iskron_channel" || args.action !== "revoke" || !s) return null;
       for (const [child, l] of leads) {
         if (!names(l.place, child, s) || (await l.parent) !== caller) continue;
+        if (d.ownPlace(child)) return null; // не спутник — revoke идёт мостом запустившего как есть
         gone.add(child);
         await finish(child, "отпущен словом запустившего");
         await d.tell(child, W.releasedWord(), false);
@@ -111,14 +136,19 @@ export function createLeads(d: W.LeadDoors): W.Leads {
       if (kind !== "held" && kind !== "frame") return;
       touch(kind === "held" && !gone.has(child) ? stood(child) : leads.get(child), place);
     },
-    back(child, room, noted) {
+    back(child, was) {
       const l = stood(child);
-      if (room) l.room = room;
-      if (noted) l.noted = true; // ход родителю уже назван прежним экземпляром
+      if (was.room) l.room = was.room;
+      if (was.noted) l.noted = true; // ход родителю уже назван прежним экземпляром
+      if (was.last) l.last ??= was.last; // итог по концу — и после перезагрузки
+      if (was.name && was.of) l.place ??= { ...was.of, name: was.name }; // revoke по имени до «held»
     },
-    fail: (child, why) => finish(child, why, true, false, true),
-    roomOf: (child) => leads.get(child)?.room ?? null,
-    noted: (child) => !!leads.get(child)?.noted,
+    fail: (child, why) => finish(child, why, true, false, "lost"),
+    away: (child) => finish(child, "", true, false, "away"),
+    snapshot: (child) => {
+      const l = leads.get(child);
+      return { room: l?.room ?? null, noted: !!l?.noted, last: l?.last };
+    },
     nameOf: (child) => leads.get(child)?.place?.name ?? (leads.has(child) ? child : null),
     onEvent(ev) {
       const child: unknown = ev?.data?.sessionID;

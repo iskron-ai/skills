@@ -463,7 +463,7 @@ var SKILLS_ROOT_ENV = "ISKRON_SKILLS_ROOT";
 import { createHash } from "node:crypto";
 import { readFileSync as readFileSync2 } from "node:fs";
 import { fileURLToPath } from "node:url";
-var VERSION = "7.2.1";
+var VERSION = "7.2.4";
 function buildOf(selfUrl) {
   try {
     const src = readFileSync2(fileURLToPath(selfUrl));
@@ -1111,8 +1111,8 @@ async function enterCase(l, call, satelliteOf, placeName) {
     const why = e.message;
     const join4 = `iskron_case(action="join", room="${room}")`;
     return L(
-      `Искрон: строка запуска — не встал: ${why}. Встань сам (iskron_stand) и войди в дело №${l.no}: ${join4}.`,
-      `Iskron: launch line — not seated: ${why}. Take your seat yourself (iskron_stand) and enter case №${l.no}: ${join4}.`
+      `Искрон: строка запуска — не встал: ${why}. Субагент встаёт только спутником места запустившего: держит он место — повтори iskron_stand и войди в дело №${l.no}: ${join4}; не держит — запустивший занимает место и запускает тебя заново, а до того работа идёт без графа, итог — словом запустившему.`,
+      `Iskron: launch line — not seated: ${why}. A subagent takes only a satellite of its launcher's seat: if the launcher holds one, repeat iskron_stand and enter case №${l.no}: ${join4}; if not, the launcher takes a seat and launches you again; until then the work goes without the graph, the result as a word to the launcher.`
     );
   }
   const place = placeName() || L("своим местом", "in a seat of its own");

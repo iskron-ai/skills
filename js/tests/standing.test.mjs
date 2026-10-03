@@ -1158,11 +1158,12 @@ test("the connect answer hides the socket and status addresses; the listener blo
   assert.match(text, /адрес сокета держит мост/);
 });
 
-// 4000 is an eviction, not a dead token (the platform's own word): the bridge
-// reopens once; a second eviction within the window means another holder has
-// the place — the bridge yields aloud, keeps the binding and the status address,
-// and the busy line is still the standing's word (#5012, #5033).
-test("an eviction reopens once; the second yields aloud, and the busy line still goes out", async (t) => {
+// 4000 is an eviction, not a dead token (the platform's own word): another holder
+// has the place, and reopening the same address would evict it in turn (seen live:
+// ping-pong of two bridges of one session after a daemon handover). The bridge
+// yields aloud at once, keeps the binding and the status address, and the busy
+// line is still the standing's word; taking it back is the human's (#5012, #5033, #6550).
+test("an eviction yields aloud at once, without reopening, and the busy line still goes out", async (t) => {
   const { fake, dir, bridge, key, standings } = await connected(t);
   await waitFor(() => fake.state.ws.size === 1, "the socket");
   const wd = runClient("watchdog", dir, key, 20_000);
@@ -1172,13 +1173,10 @@ test("an eviction reopens once; the second yields aloud, and the busy line still
   const known = new Set(fake.state.ws);
   const fresh = () => [...fake.state.ws].filter((s) => !known.has(s));
   await fake.control({ ws_close: 4000 });
-  await waitFor(() => fresh().length === 1, "the bridge to reopen once after the eviction");
-  for (const s of fresh()) known.add(s);
   assert.ok(
     !bridge.notifications.some((n) => n.params?.data?.kind === "dead"),
     "an eviction must not be announced as a dead token",
   );
-  await fake.control({ ws_close: 4000 });
   await waitFor(
     () => bridge.notifications.some((n) => n.params?.data?.kind === "evicted"),
     "the eviction to reach the harness",
@@ -2177,9 +2175,11 @@ test("iskron/resume by the session's directory: a bridge restarted after the plu
   const second = startBridge(fake.mcpUrl, dir);
   t.after(() => second.stop());
   assert.ok((await second.call("initialize", 1, INIT)).result);
+  // Другой каталог и другая сессия: не её место. Та же сессия из другого каталога —
+  // перенос сессии, её место (проба ниже).
   const wrong = await second.call("iskron/resume", 2, {
     cwd: "/nowhere/else",
-    session: "ses-vahta",
+    session: "ses-chuzhaya",
   });
   assert.equal(wrong.result?.resumed, false, JSON.stringify(wrong));
   assert.equal(fresh().length, 0, "another directory's place is not touched");
@@ -2214,6 +2214,30 @@ test("iskron/resume by the session's directory: a bridge restarted after the plu
     readFileSync(join(dir, "standings.log"), "utf8"),
     /resumed-from-disk proba--931--nks-dev: pending 2/,
   );
+});
+
+// OpenCode moves a session between folders (graph nks-dev: #6550, rule 3): the
+// instance of its new folder asks by the new directory and the same session — the
+// record that session stood is its place, whatever directory it names.
+test("iskron/resume of a session moved to another folder takes back the place it stood, by the session", async (t) => {
+  const { fake, dir, bridge } = await connected(t);
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const before = mkdtempSync(join(tmpdir(), "iskron-moved-from-"));
+  const after = mkdtempSync(join(tmpdir(), "iskron-moved-to-"));
+  await bridge.call("iskron/resume", 4, { cwd: before, session: "ses-moved" });
+  await bridge.call("tools/call", 5, {
+    name: "iskron_stand",
+    arguments: { realm: "nks-dev", karta: 931, name: "proba", cwd: before },
+  });
+  bridge.proc.kill("SIGKILL");
+  await waitFor(() => fake.state.ws.size === 0, "the socket to close");
+  const second = startBridge(fake.mcpUrl, dir);
+  t.after(() => second.stop());
+  assert.ok((await second.call("initialize", 1, INIT)).result);
+  const back = await second.call("iskron/resume", 2, { cwd: after, session: "ses-moved" });
+  assert.equal(back.result?.resumed, true, JSON.stringify(back));
+  assert.equal(back.result.key, "proba--931--nks-dev");
+  assert.equal(fake.state.counts.connect, 1, "the place is resumed, not rotated");
 });
 
 // A resume whose hello does not come in time is not a verdict on the place: the
@@ -3043,7 +3067,8 @@ test("one standing per bridge sees through sentinels and spelling: «me» is ano
 test("a padded connect keys the place as the board prints it; a bridge standing as «me» refuses the numeric role and keeps «me» after a register as «agent»", async (t) => {
   const fake = await startFakeNks();
   const dir = mkdtempSync(join(tmpdir(), "iskron-standing-"));
-  const bridge = startBridge(fake.mcpUrl, dir);
+  // «me» — роль самого человека: занимать её мост даёт только по его настройке (#6550 п.2).
+  const bridge = startBridge(fake.mcpUrl, dir, { ISKRON_BRIDGE_OWNER_ROLE: "1" });
   t.after(async () => {
     await bridge.stop();
     await fake.stop();

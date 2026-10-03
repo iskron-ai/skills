@@ -3,8 +3,8 @@
 import { dirname } from "node:path";
 
 import { HARNESS_VERSION_ENV, SKILLS_ROOT_ENV } from "../shared/clients.ts";
-import type { Home } from "./marker.ts";
 import type { Context } from "./plugin.ts";
+import type { Home } from "./records.ts";
 
 /**
  * Что мост узнаёт о хосте только окружением (#6226). Версия самого OpenCode:

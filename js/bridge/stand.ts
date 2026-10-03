@@ -50,6 +50,7 @@ import {
   normName,
   sanitize,
 } from "./names.ts";
+import { ownerRefusal } from "./owner.ts";
 import { placeFields, rememberModel } from "./placefields.ts";
 import { otherRealm } from "./realms.ts";
 import { deadPredecessor, resumeFromDisk } from "./resume.ts";
@@ -130,6 +131,12 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
       lines.push(SW.badName(asked, fault, NAME_MAX));
       return done(true);
     }
+  }
+  // Роль владельца (主) — только словом человека (owner.ts, #6550 п.2).
+  const notOwner = await ownerRefusal(realm, karta);
+  if (notOwner) {
+    lines.push(notOwner);
+    return done(true);
   }
   // Место-спутник субагента (satellite.ts, #6002): только у моста-спутника и только оно у него.
   const gate = await satelliteGate(a, realm, karta, asked);

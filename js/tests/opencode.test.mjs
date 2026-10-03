@@ -24,6 +24,8 @@
 // ISKRON_OPENCODE_PLUGIN points the probe at any copy (a past revision, a
 // broken one) so it can be shown red before a fix. Run with `make test-opencode`.
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   appendFileSync,
   copyFileSync,
@@ -33,6 +35,7 @@ import {
   readdirSync,
   readFileSync,
   rmSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -257,6 +260,10 @@ const ENV_KEYS = [
   "ISKRON_BRIDGE_NO_BROWSER",
   "ISKRON_BRIDGE_LANG",
   "ISKRON_LEAD_IDLE_MS",
+  "ISKRON_CHILD_BACK_PAUSE_MS",
+  "ISKRON_CHILD_BACK_MS",
+  "ISKRON_RESUME_PATIENCE_MS",
+  "ISKRON_MOVE_ADOPT_MS",
 ];
 
 let seq = 0;
@@ -497,6 +504,7 @@ test("iskron_stand is given the session's directory as cwd; an explicit cwd is l
   try {
     await until(() => rec.tools().has("iskron_stand"), "the stand tool", 8000);
     await rec.call("iskron_stand", { realm: "nks-dev", karta: "#931" }, "s-dir");
+    await rootHolds(rec, b); // ребёнок встаёт только под местом корня (#6550 п.2)
     await rec.call("iskron_orient", {}, "s-dir");
     await rec.call(
       "iskron_stand",
@@ -949,6 +957,15 @@ const frame = (body) => ({
 });
 const event = (kind, extra) => JSON.stringify({ kind, ...extra }) + "\n";
 
+/**
+ * Корень держит место — его мост сказал «held» с местом: только под ним ребёнок
+ * встаёт (своим спутником, #6550 п.2). pid — мост корня (по умолчанию первый поднятый).
+ */
+async function rootHolds(rec, b, { pid = pidOf(b.log), key = "k-root", place = ROOT_PLACE } = {}) {
+  appendFileSync(`${b.events}.${pid}`, event("held", { key, place }));
+  await until(() => rec.said().includes(`мост держит стояние ${key}`), `the root's held ${key}`);
+}
+
 test("each root session gets its own bridge, and a frame goes to the session whose bridge brought it", async () => {
   const b = bridgeEnv("frame");
   const rec = await plugin(b.env);
@@ -1350,7 +1367,10 @@ test("a new root session with a directory asks its bridge to resume that directo
 // under a name read from the directory's record — and the directory does not
 // tell two places of one role apart (#5366). The taken name goes into the
 // session as a prompt, like the loss of hearing; the log line alone is deaf.
-test("a place resumed by the bridge itself is announced into the session with its name and the directory's other places", async () => {
+// Other places of the directory are not named to it (e2e6: two roots of one folder were
+// each named the other's key): the return takes the record this session stood (the
+// bridge checks the session), and a foreign key in its word would call it to the foreign.
+test("a place resumed by the bridge itself is announced into the session with its name — and only its own", async () => {
   const calls = join(SANDBOX, "resumed.calls");
   const resume = join(SANDBOX, "resumed.answer");
   writeFileSync(calls, "");
@@ -1378,11 +1398,7 @@ test("a place resumed by the bridge itself is announced into the session with it
     const word = rec.prompts.find((p) => /сам вернул место/.test(p.text));
     assert.equal(word.sessionID, "s-shared");
     assert.match(word.text, /место brat--931--nks-dev/, "the taken name is said");
-    assert.match(
-      word.text,
-      /других мест: proba--931--nks-dev/,
-      "the directory's other place is said",
-    );
+    assert.doesNotMatch(word.text, /proba--931--nks-dev/, "no other place is named to it");
     assert.match(word.text, /iskron_stand/, "the way to take one's own place is said");
     assert.equal(word.delivery, "steer", "into the going turn, not after it");
   } finally {
@@ -1839,6 +1855,32 @@ async function reloadedLocations(name) {
   }
 }
 
+// e2e6: two root sessions of one folder both held places; after the reload each got
+// the same «hearing was lost … <both keys>» — each named the other's key. A session's
+// word names its own places only.
+test("after a reload two roots of one folder each hear the loss of their own place only", async () => {
+  const calls = join(SANDBOX, "two-roots.calls");
+  writeFileSync(calls, "");
+  const b = bridgeEnv("two-roots", { FB_CALLS: calls });
+  const first = await plugin(b.env, inLoc(LOC_A, "a1", "a2"));
+  await serverTools(first);
+  await standsHeld(first, b, calls, "a1", "k-a1");
+  await standsHeld(first, b, calls, "a2", "k-a2");
+  await first.stop();
+  const second = await plugin(b.env, { ...inLoc(LOC_A, "a1", "a2"), keepMarker: true });
+  try {
+    const loss = (s) =>
+      second.prompts.find((p) => p.sessionID === s && /слух был потерян/.test(p.text));
+    await until(() => loss("a1") && loss("a2"), "the loss word in both");
+    assert.match(loss("a1").text, /k-a1/);
+    assert.doesNotMatch(loss("a1").text, /k-a2/, "a1 is not named a2's place");
+    assert.match(loss("a2").text, /k-a2/);
+    assert.doesNotMatch(loss("a2").text, /k-a1/, "a2 is not named a1's place");
+  } finally {
+    await second.stop();
+  }
+});
+
 test("a reload of every location's instance at once: each takes back only its own sessions' places, and each session hears only its own return", async () => {
   const calls = join(SANDBOX, "locs-first.calls");
   writeFileSync(calls, "");
@@ -1892,7 +1934,8 @@ test("a marker of the previous build, without a location: each location's instan
     { session: "b1", dir: LOC_B.directory, key: "k-b1", child: false },
   ];
   writeFileSync(
-    join(process.env.ISKRON_BRIDGE_AUTH_DIR, "opencode-lost.4242.legacy.json"),
+    // pid писавшего — этот процесс: файл живого чужого сервера экземпляр не берёт.
+    join(process.env.ISKRON_BRIDGE_AUTH_DIR, `opencode-lost.${process.pid}.legacy.json`),
     JSON.stringify({ at, entries }),
   );
   const { A, B } = await reloadedLocations("locs-legacy");
@@ -1903,6 +1946,79 @@ test("a marker of the previous build, without a location: each location's instan
   } finally {
     await A.stop();
     await B.stop();
+  }
+});
+
+// Two OpenCode servers on one machine each load the plugin for the same folder (seen
+// live on a delivery update: run=85c30e6a and run=f88d2cf2 both loaded iskron.js for
+// iskron/skills). The marker of one server's instance is that server's: the other,
+// taking it, held the session's place by its bridge while the session called tools
+// through its own (#6626 again). A marker of a server that is gone (a restart) is taken.
+test("a marker written by another live OpenCode server for the same folder is its own; a gone server's marker is taken", async () => {
+  for (const f of lostMarkers()) rmSync(f, { force: true });
+  const other = spawn(process.execPath, ["-e", "setTimeout(() => {}, 60000)"], { stdio: "ignore" });
+  const tag = createHash("sha256").update(`${LOC_A.directory}\0`).digest("hex").slice(0, 12);
+  const file = join(
+    process.env.ISKRON_BRIDGE_AUTH_DIR,
+    `opencode-lost.@${tag}.${other.pid}.x.json`,
+  );
+  const entries = [{ session: "a1", dir: LOC_A.directory, key: "k-a1", child: false }];
+  writeFileSync(file, JSON.stringify({ at: new Date().toISOString(), entries }));
+  const calls = join(SANDBOX, "other-server.calls");
+  const resume = join(SANDBOX, "other-server.resume");
+  writeFileSync(calls, "");
+  writeFileSync(resume, JSON.stringify({ bySession: { a1: backAnswer("k-a1") } }));
+  const b = bridgeEnv("other-server", { FB_CALLS: calls, FB_RESUME: resume });
+  const resumed = () =>
+    callsIn(calls).some((c) => c.name === "iskron/resume" && c.arguments.session === "a1");
+  const first = await plugin(b.env, { ...inLoc(LOC_A, "a1"), keepMarker: true });
+  try {
+    await serverTools(first);
+    await delay(500);
+    assert.ok(!resumed(), "the other live server's session is not taken back from here");
+    assert.ok(existsSync(file), "its marker is left to it");
+  } finally {
+    await first.stop();
+  }
+  other.kill();
+  await until(() => !alive(other.pid), "the other server to go");
+  const second = await plugin(b.env, { ...inLoc(LOC_A, "a1"), keepMarker: true });
+  try {
+    await until(resumed, "the gone server's session taken back");
+  } finally {
+    await second.stop();
+  }
+});
+
+// A pid is reused: a live process under the writer's pid long after the writer left would
+// hold its marker «a live other server's» for ever. A live server takes its own marker in
+// seconds; one older than the term is taken whoever lives under the pid (#147 [88]).
+test("a marker of a «live other server» older than the term is taken: its pid may be another process now", async () => {
+  for (const f of lostMarkers()) rmSync(f, { force: true });
+  const other = spawn(process.execPath, ["-e", "setTimeout(() => {}, 60000)"], { stdio: "ignore" });
+  const tag = createHash("sha256").update(`${LOC_A.directory}\0`).digest("hex").slice(0, 12);
+  const file = join(
+    process.env.ISKRON_BRIDGE_AUTH_DIR,
+    `opencode-lost.@${tag}.${other.pid}.y.json`,
+  );
+  const entries = [{ session: "a1", dir: LOC_A.directory, key: "k-a1", child: false }];
+  writeFileSync(file, JSON.stringify({ at: new Date().toISOString(), entries }));
+  const old = (Date.now() - 11 * 60_000) / 1000;
+  utimesSync(file, old, old);
+  const calls = join(SANDBOX, "reused-pid.calls");
+  const resume = join(SANDBOX, "reused-pid.resume");
+  writeFileSync(calls, "");
+  writeFileSync(resume, JSON.stringify({ bySession: { a1: backAnswer("k-a1") } }));
+  const b = bridgeEnv("reused-pid", { FB_CALLS: calls, FB_RESUME: resume });
+  const rec = await plugin(b.env, { ...inLoc(LOC_A, "a1"), keepMarker: true });
+  try {
+    await until(
+      () => callsIn(calls).some((c) => c.name === "iskron/resume" && c.arguments.session === "a1"),
+      "the stale marker taken",
+    );
+  } finally {
+    other.kill();
+    await rec.stop();
   }
 });
 
@@ -1919,7 +2035,13 @@ test("a session whose own place a live bridge of another session holds is told t
       word: "возвращать нечего — k-own: держит живой мост",
     }),
   );
-  const b = bridgeEnv("elsewhere", { FB_RESUME: resume });
+  const calls = join(SANDBOX, "elsewhere.calls");
+  writeFileSync(calls, "");
+  const b = bridgeEnv("elsewhere", {
+    FB_CALLS: calls,
+    FB_RESUME: resume,
+    ISKRON_RESUME_PATIENCE_MS: 1200,
+  });
   const rec = await plugin(b.env, inLoc(LOC_A, "s1"));
   try {
     await serverTools(rec);
@@ -1929,8 +2051,238 @@ test("a session whose own place a live bridge of another session holds is told t
     assert.equal(word.sessionID, "s1");
     assert.match(word.text, /k-own[\s\S]*другой сессии[\s\S]*iskron_stand\(take=true\)/);
     assert.ok(!rec.prompts.some((p) => /сам вернул место/.test(p.text)));
+    // The word comes once, after the wait for the other socket to go — not per attempt.
+    const resumes = callsIn(calls).filter((c) => c.name === "iskron/resume").length;
+    assert.ok(resumes > 1, `the resume waited for the other bridge's socket: ${resumes}`);
+    assert.equal(rec.prompts.filter((p) => /не удался/.test(p.text)).length, 1);
   } finally {
     await rec.stop();
+  }
+});
+
+// OpenCode moves a session between folders (#6550 rule 3; event session.moved with
+// data.location — @opencode/protocol). The session's tools then go through the
+// instance of its new folder: the old instance puts out its bridge (the hold record
+// stays), the new one takes the place back by the session at once.
+test("a session moved to another folder: the old location's instance lets its place go, the new one takes it back at once and says so", async () => {
+  const calls = join(SANDBOX, "move.calls");
+  const resume = join(SANDBOX, "move.resume");
+  writeFileSync(calls, "");
+  writeFileSync(resume, JSON.stringify({ bySession: { s1: backAnswer("k-s1") } }));
+  const b = bridgeEnv("move", { FB_CALLS: calls, FB_RESUME: resume, ISKRON_MOVE_ADOPT_MS: 200 });
+  const A = await plugin(b.env, inLoc(LOC_A, "s1"));
+  const B = await plugin(b.env, { ...inLoc(LOC_B), keepMarker: true });
+  try {
+    await serverTools(A);
+    await standsHeld(A, b, calls, "s1", "k-s1");
+    const oldPid = callsIn(calls)
+      .filter((c) => c.name === "iskron_channel")
+      .at(-1).pid;
+    const moved = { type: "session.moved", data: { sessionID: "s1", location: LOC_B } };
+    // The session now lives in B's folder — both instances read it there.
+    A.ctx.session.get = async ({ sessionID }) => ({ id: sessionID, location: LOC_B });
+    B.ctx.session.get = A.ctx.session.get;
+    const saidBefore = A.prompts.length;
+    A.emit(moved);
+    B.emit(moved);
+    await until(() => !alive(oldPid), "the old instance's bridge of s1 to go");
+    const back = () =>
+      callsIn(calls).find(
+        (c) => c.name === "iskron/resume" && c.arguments.session === "s1" && c.pid !== oldPid,
+      );
+    await until(back, "the new instance's resume of s1");
+    assert.equal(back().arguments.cwd, LOC_B.directory, "asked by its new folder and session");
+    await until(() => takenBack(B).length === 1, "the word in s1");
+    assert.deepEqual(takenBack(B), ["s1:k-s1"]);
+    assert.deepEqual(
+      A.prompts.slice(saidBefore),
+      [],
+      "the old instance says nothing after the move",
+    );
+    // The live new instance also takes the move's marker — and takes the place once.
+    await until(() => lostMarkers().length === 0, "the move's marker taken");
+    await delay(300);
+    const resumes = callsIn(calls).filter(
+      (c) => c.name === "iskron/resume" && c.arguments.session === "s1" && c.pid !== oldPid,
+    );
+    assert.equal(resumes.length, 1, "one return, not two");
+    assert.equal(takenBack(B).length, 1);
+  } finally {
+    await A.stop();
+    await B.stop();
+  }
+});
+
+// The instance of the new folder is often made by the move itself and loads AFTER
+// session.moved (seen live: POST /api/session/{id}/move on serve) — it never sees
+// the event. The old instance leaves a marker tagged with the NEW location; the new
+// instance takes it at setup and takes the place back at once, without a call.
+test("a session moved into a folder whose instance loads after the event: the place comes back at once from the old instance's marker", async () => {
+  const calls = join(SANDBOX, "move-late.calls");
+  const resume = join(SANDBOX, "move-late.resume");
+  writeFileSync(calls, "");
+  writeFileSync(resume, JSON.stringify({ bySession: { s1: backAnswer("k-s1") } }));
+  const b = bridgeEnv("move-late", { FB_CALLS: calls, FB_RESUME: resume });
+  const A = await plugin(b.env, inLoc(LOC_A, "s1"));
+  let B = null;
+  try {
+    await serverTools(A);
+    await standsHeld(A, b, calls, "s1", "k-s1");
+    A.ctx.session.get = async ({ sessionID }) => ({ id: sessionID, location: LOC_B });
+    A.emit({ type: "session.moved", data: { sessionID: "s1", location: LOC_B } });
+    await until(() => lostMarkers().length === 1, "the marker for the new folder");
+    writeFileSync(calls, "");
+    B = await plugin(b.env, { ...inLoc(LOC_B, "s1"), keepMarker: true });
+    await until(
+      () => callsIn(calls).some((c) => c.name === "iskron/resume" && c.arguments.session === "s1"),
+      "the return without a call",
+      3000,
+    );
+    assert.ok(!callsIn(calls).some((c) => !c.name.startsWith("iskron/")), "no tool call needed");
+    await until(() => takenBack(B).length === 1, "the word in s1");
+    assert.deepEqual(takenBack(B), ["s1:k-s1"]);
+    assert.ok(!B.prompts.some((p) => /слух был потерян/.test(p.text)), "a move is no lost hearing");
+  } finally {
+    await A.stop();
+    await B?.stop();
+  }
+});
+
+// Without the event at the old instance, a take from the new folder evicts the old
+// bridge — that is the session's own bridge taking its place: no «taken away» word.
+test("an eviction of a session that moved to another folder is not said into it as «taken away»", async () => {
+  const calls = join(SANDBOX, "move-evict.calls");
+  writeFileSync(calls, "");
+  const b = bridgeEnv("move-evict", { FB_CALLS: calls });
+  const A = await plugin(b.env, inLoc(LOC_A, "s1"));
+  try {
+    await serverTools(A);
+    await standsHeld(A, b, calls, "s1", "k-s1");
+    const pid = callsIn(calls)
+      .filter((c) => c.name === "iskron_channel")
+      .at(-1).pid;
+    A.ctx.session.get = async ({ sessionID }) => ({ id: sessionID, location: LOC_B });
+    const before = A.prompts.length;
+    appendFileSync(`${b.events}.${pid}`, event("evicted", { code: 4000, text: "отняли" }));
+    await until(() => /занято из её новой папки/.test(A.said()), "the log line");
+    await delay(200);
+    assert.deepEqual(A.prompts.slice(before), [], "no «taken away» word into the moved session");
+  } finally {
+    await A.stop();
+  }
+});
+
+// A parent moved to another folder: OpenCode leaves its children where they were
+// (seen live). The old instance ends each satellite child there — its bridge out,
+// the parent told «moved», no «КОНЧЕН» — instead of a second life until the ceiling;
+// the child's calls there are refused, never by a root bridge raised for the moved
+// parent (#6626). In the new folder its write is refused too, and the parent's revoke
+// of it is answered by the plugin, not sent.
+test("a parent moved with a satellite child: the old instance ends the child with «moved», refuses its calls, and the new one answers its revoke without sending it", async () => {
+  const calls = join(SANDBOX, "move-kids.calls");
+  writeFileSync(calls, "");
+  const b = bridgeEnv("move-kids", { FB_CALLS: calls, FB_TOOLS: LEAD_TOOLS });
+  const kids = (loc) => ({
+    location: loc,
+    sessions: [
+      { id: "root", location: loc },
+      { id: "child", parentID: "root", location: loc },
+    ],
+  });
+  const A = await plugin(b.env, kids(LOC_A));
+  let B = null;
+  try {
+    await until(() => A.tools().has("iskron_case"), "the tools", 8000);
+    await A.call("iskron_stand", { realm: "nks-dev", karta: "#931" }, "root");
+    const rootPid = pidOf(b.log);
+    appendFileSync(`${b.events}.${rootPid}`, event("held", { key: "k-root", place: ROOT_PLACE }));
+    await delay(400);
+    await A.call("iskron_stand", { realm: "nks-dev" }, "child");
+    const childPid = callsIn(calls)
+      .filter((c) => c.name === "iskron_stand")
+      .at(-1).pid;
+    const sub = { ...ROOT_PLACE, name: SUB };
+    appendFileSync(`${b.events}.${childPid}`, event("held", { key: "k-sub", place: sub }));
+    await until(() => /мост держит стояние k-sub/.test(A.said()), "the child's held word");
+    // Only the root moves; the child stays in the old folder.
+    const where = { root: LOC_B, child: LOC_A };
+    const get = async ({ sessionID }) => ({
+      id: sessionID,
+      location: where[sessionID],
+      ...(sessionID === "child" ? { parentID: "root" } : {}),
+    });
+    A.ctx.session.get = get;
+    A.emit({ type: "session.moved", data: { sessionID: "root", location: LOC_B } });
+    await until(() => lostMarkers().length === 1, "the marker for the new folder");
+    await until(() => !alive(childPid), "the child's bridge to go with the move");
+    await until(() => A.synthetics.some((s) => s.sessionID === "root"), "the word in the parent");
+    const toParent = A.synthetics.filter((s) => s.sessionID === "root");
+    assert.match(toParent[0].text, /снят переносом родителя[\s\S]*«КОНЧЕН» не будет/);
+    assert.equal(toParent[0].resume, false, "it does not wake the parent");
+    // queue в занятого родителя после его хода запускал ещё один ход (e2e: 14.217→14.229).
+    assert.equal(toParent[0].delivery, "steer", "into the going turn, not one more after it");
+    assert.ok(!A.synthetics.some((s) => /КОНЧЕН —/.test(s.text)), "no «КОНЧЕН»");
+    const pids = pidsOf(b.log).length;
+    await assert.rejects(
+      A.call("iskron_case", { realm: "nks-dev", action: "say", room: "#77" }, "child"),
+      /кончена/,
+    );
+    await assert.rejects(A.call("iskron_look", {}, "child"), /родитель этой сессии перенесён/);
+    assert.equal(pidsOf(b.log).length, pids, "no bridge raised here for the moved parent");
+    B = await plugin(b.env, { ...kids(LOC_B), keepMarker: true });
+    B.ctx.session.get = get;
+    await until(() => B.tools().has("iskron_case"), "B's tools", 8000);
+    const before = callsIn(calls).length;
+    await assert.rejects(
+      B.call("iskron_case", { realm: "nks-dev", action: "say", room: "#77" }, "child"),
+      /кончено переносом родителя/,
+    );
+    const word = await B.call(
+      "iskron_channel",
+      { realm: "nks-dev", action: "revoke", standing: `@me:${SUB}` },
+      "root",
+    );
+    assert.match(word.content, /кончённый переносом родителя[\s\S]*не нужен и не послан/);
+    assert.ok(
+      !callsIn(calls)
+        .slice(before)
+        .some((c) => c.name === "iskron_channel"),
+      "the revoke reached no bridge",
+    );
+  } finally {
+    await A.stop();
+    await B?.stop();
+  }
+});
+
+// The move without the event at the old instance: its reload must not take back the
+// place of a session that now lives in another folder — that is #6626 again.
+test("a reload after a session moved away: the old folder's instance does not take its place back", async () => {
+  const calls = join(SANDBOX, "moved-away.calls");
+  const resume = join(SANDBOX, "moved-away.resume");
+  writeFileSync(calls, "");
+  writeFileSync(resume, JSON.stringify({ bySession: { s1: backAnswer("k-s1") } }));
+  const b = bridgeEnv("moved-away", { FB_CALLS: calls, FB_RESUME: resume });
+  const first = await plugin(b.env, inLoc(LOC_A, "s1"));
+  await serverTools(first);
+  await standsHeld(first, b, calls, "s1", "k-s1");
+  await first.stop();
+  writeFileSync(calls, "");
+  const second = await plugin(b.env, {
+    location: LOC_A,
+    sessions: [{ id: "s1", location: LOC_B }],
+    keepMarker: true,
+  });
+  try {
+    await serverTools(second);
+    await delay(500);
+    assert.ok(
+      !callsIn(calls).some((c) => c.name === "iskron/resume" && c.arguments.session === "s1"),
+      "no resume of the moved session by the old folder's instance",
+    );
+    assert.ok(!second.prompts.some((p) => p.sessionID === "s1"), "no word into it from here");
+  } finally {
+    await second.stop();
   }
 });
 
@@ -2094,6 +2446,7 @@ test("a child session that stands gets a bridge of its own: the root keeps its p
     await until(() => rec.tools().has("iskron_stand"), "the stand tool", 8000);
     await rec.call("iskron_stand", { realm: "nks-dev", karta: "#2816" }, "root");
     const rootPid = pidOf(b.log);
+    await rootHolds(rec, b);
     await rec.call("iskron_stand", { realm: "nks-dev", karta: "#931" }, "child");
     assert.equal(pidsOf(b.log).length, 2, "the child's standing raises a bridge of its own");
     const childPid = pidsOf(b.log)[1];
@@ -2330,7 +2683,7 @@ const ROOT_PLACE = { realm: "@nks/nks-dev", karta: "931", name: "host.repo.opus-
 const SUB = "host.repo.opus-5.sub-1";
 
 /** A root holding a place and a child standing as its satellite on a bridge of its own. */
-async function leadChild(name, env = {}) {
+async function leadChild(name, env = {}, root = ROOT_PLACE, subName = SUB) {
   const calls = join(SANDBOX, `${name}.calls`);
   writeFileSync(calls, "");
   const b = bridgeEnv(name, { FB_CALLS: calls, FB_TOOLS: LEAD_TOOLS, ...env });
@@ -2344,11 +2697,11 @@ async function leadChild(name, env = {}) {
     await until(() => rec.tools().has("iskron_case"), "the tools", 8000);
     await rec.call("iskron_stand", { realm: "nks-dev", karta: "#931" }, "root");
     const rootPid = pidOf(b.log);
-    appendFileSync(`${b.events}.${rootPid}`, event("held", { key: "k-root", place: ROOT_PLACE }));
+    appendFileSync(`${b.events}.${rootPid}`, event("held", { key: "k-root", place: root }));
     await delay(400); // the fake bridge relays event lines every 40 ms
     await rec.call("iskron_stand", { realm: "nks-dev" }, "child");
     const childPid = pidsOf(b.log)[1];
-    const sub = { ...ROOT_PLACE, name: SUB };
+    const sub = { ...root, name: subName };
     appendFileSync(`${b.events}.${childPid}`, event("held", { key: "k-sub", place: sub }));
     await until(() => /мост держит стояние k-sub/.test(rec.said()), "the child's held word");
     return { b, rec, rootPid, childPid, sent: () => sentCalls(calls) };
@@ -2398,6 +2751,25 @@ test("the end of a child's turn ends nothing: its bridge lives, a frame of its c
       !rec.prompts.some((p) => p.sessionID === "root"),
       "the root got no frame of the child",
     );
+  } finally {
+    await rec.stop();
+  }
+});
+
+// The bridge cuts the base of a satellite's name under the server's 48-sign limit
+// (bridge/satellite.ts): a root place longer than 42 signs gives «<cut base>.sub-1».
+// The plugin knows its satellite by the bridge's own rule, not by a prefix.
+test("a satellite of a root place with a long name — its base cut by the bridge — is still its satellite: its end takes it down", async () => {
+  const root = { ...ROOT_PLACE, name: "host-machine.a-very-long-repository-name.opus-5-5" };
+  const cut = `${root.name.slice(0, 48 - ".sub-1".length).replace(/[-._]+$/, "")}.sub-1`;
+  assert.ok(!cut.startsWith(`${root.name}.sub-`), "the probe's name is cut indeed");
+  const { rec, childPid } = await leadChild("lead-long", {}, root, cut);
+  try {
+    await rec.call("iskron_channel", { realm: "nks-dev", action: "leave" }, "child");
+    await until(() => !alive(childPid), "the satellite's bridge to go with its end");
+    await until(() => ends(rec).length === 1, "the end in the parent");
+    assert.match(ends(rec)[0].text, /место снято/);
+    assert.doesNotMatch(ends(rec)[0].text, /не спутником/);
   } finally {
     await rec.stop();
   }
@@ -2460,6 +2832,21 @@ test("a child's end: the word into the parent is laid before the child's bridge 
   }
 });
 
+// OpenCode's own synthetic wakes the parent when the child goes quiet; a queued
+// «КОНЧЕН» would lie down only after that turn (seen live: +4.8 s). The end goes
+// steer — into the running turn at its next step — and wakes an idle parent.
+test("a child's end goes into the parent steer, waking it", async () => {
+  const { rec } = await leadChild("lead-steer");
+  try {
+    await rec.call("iskron_channel", { realm: "nks-dev", action: "leave" }, "child");
+    await until(() => ends(rec).length === 1, "the end in the parent");
+    assert.equal(ends(rec)[0].delivery, "steer");
+    assert.equal(ends(rec)[0].resume, true);
+  } finally {
+    await rec.stop();
+  }
+});
+
 test("a one-shot child launched into a case is ended by leaving that case — and not by leaving another", async () => {
   const calls = join(SANDBOX, "lead-oneshot.calls");
   writeFileSync(calls, "");
@@ -2491,6 +2878,92 @@ test("a one-shot child launched into a case is ended by leaving that case — an
 });
 
 // A leave without a room leaves every case — the whole outcome, like a leave of the place.
+// #6550 rule 2 (variant A, the owner's choice): a subagent speaks only by its own
+// satellite. The three cases of the scouting: a root holding no place — the child's
+// stand is refused, not an ordinary place; a child that never stood — its write is
+// refused whether the root holds a place (it would be signed by the parent's) or not;
+// its reads go by the root's bridge.
+async function childUnder(name, rootHolds) {
+  const calls = join(SANDBOX, `${name}.calls`);
+  writeFileSync(calls, "");
+  const b = bridgeEnv(name, { FB_CALLS: calls, FB_TOOLS: LEAD_TOOLS });
+  const rec = await plugin(b.env, {
+    sessions: [{ id: "root" }, { id: "child", parentID: "root" }],
+  });
+  await until(() => rec.tools().has("iskron_case"), "the tools", 8000);
+  if (rootHolds) {
+    await rec.call("iskron_stand", { realm: "nks-dev", karta: "#931" }, "root");
+    appendFileSync(
+      `${b.events}.${pidOf(b.log)}`,
+      event("held", { key: "k-root", place: ROOT_PLACE }),
+    );
+    await until(() => /мост держит стояние k-root/.test(rec.said()), "the root's held word");
+  } else await rec.call("iskron_look", { realm: "nks-dev", node_id: "1" }, "root");
+  return { rec, calls, b };
+}
+
+test("rule 2: under a root holding no place, a child's stand is refused aloud — no ordinary place, no bridge of its own", async () => {
+  const { rec, calls, b } = await childUnder("rule2-stand", false);
+  try {
+    const bridges = pidsOf(b.log).length;
+    await assert.rejects(
+      rec.call("iskron_stand", { realm: "nks-dev", karta: "#931" }, "child"),
+      /место родителя неизвестно/,
+    );
+    assert.equal(pidsOf(b.log).length, bridges, "no bridge raised for the child");
+    assert.ok(!callsIn(calls).some((c) => c.name === "iskron_stand"), "no stand went out");
+  } finally {
+    await rec.stop();
+  }
+});
+
+// A scout without a satellite reads the case and the channel (seen live: read and history
+// were refused as writes, 7.2.3). It reads by the root's bridge — and a case history must
+// not move the ROOT's cursor: the plugin sends it with keep_cursor.
+test("rule 2: a child without a satellite reads the case and the channel by the root's bridge, the root's cursor untouched; its say is refused", async () => {
+  const { rec, calls } = await childUnder("rule2-reads", true);
+  try {
+    const reads = [
+      ["iskron_case", { realm: "nks-dev", action: "read", room: "#77" }],
+      ["iskron_case", { realm: "nks-dev", action: "history", room: "#77" }],
+      ["iskron_case", { realm: "nks-dev", action: "mine" }],
+      ["iskron_case", { realm: "nks-dev", action: "?" }],
+      ["iskron_channel", { realm: "nks-dev", action: "history" }],
+      ["iskron_channel", { realm: "nks-dev", action: "sessions" }],
+    ];
+    for (const [name, args] of reads) await rec.call(name, args, "child");
+    const sent = callsIn(calls).filter(
+      (c) => c.name === "iskron_case" || c.name === "iskron_channel",
+    );
+    assert.equal(sent.length, reads.length, "every read went out");
+    const history = sent.find((c) => c.name === "iskron_case" && c.arguments.action === "history");
+    assert.equal(history.arguments.keep_cursor, true, "the root's cursor is not moved");
+    await assert.rejects(
+      rec.call("iskron_case", { realm: "nks-dev", action: "say", room: "#77", text: "x" }, "child"),
+      /только своим местом-спутником/,
+    );
+  } finally {
+    await rec.stop();
+  }
+});
+
+for (const rootHolds of [true, false])
+  test(`rule 2: a child that never stood cannot write by the root's bridge (root ${rootHolds ? "holding a place" : "without a place"}); it reads by it`, async () => {
+    const { rec, calls } = await childUnder(`rule2-write-${rootHolds}`, rootHolds);
+    try {
+      const before = callsIn(calls).length;
+      await assert.rejects(
+        rec.call("iskron_case", { realm: "nks-dev", action: "say", room: "#77" }, "child"),
+        rootHolds ? /ушёл бы местом родителя host\.repo\.opus-5/ : /место родителя неизвестно/,
+      );
+      assert.equal(callsIn(calls).length, before, "the refused write reached no bridge");
+      await rec.call("iskron_look", { realm: "nks-dev", node_id: "42" }, "child");
+      assert.equal(callsIn(calls).at(-1).name, "iskron_look", "the read goes by the root's bridge");
+    } finally {
+      await rec.stop();
+    }
+  });
+
 test("a child's case leave without a room ends it", async () => {
   const { rec, childPid } = await leadChild("lead-leave-all");
   try {
@@ -2556,6 +3029,7 @@ test("a lead child idle past the ceiling — no turn, no frame, whatever else it
     await until(() => ends(rec).length === 1, "the end in the parent");
     assert.match(ends(rec)[0].text, /потолок простоя/);
     assert.equal(ends(rec)[0].resume, false, "the ceiling does not wake the parent");
+    assert.equal(ends(rec)[0].delivery, "steer", "nor queues a turn after the parent's");
   } finally {
     clearInterval(noise);
     await rec.stop();
@@ -2756,6 +3230,61 @@ test("marker-child: a child taken back after a reload is under the ceiling again
   }
 });
 
+// The child's last text is its result at the end: it rides the marker through a
+// reload (seen live: a revoke after a reload gave «(текста он не оставил)»).
+test("marker-child: the child's last text survives a reload and is its result at the end", async () => {
+  const { second } = await reloadedChild("reload-last", {}, null, true);
+  try {
+    const word = await second.call(
+      "iskron_channel",
+      { realm: "nks-dev", action: "revoke", standing: `@me:${SUB}` },
+      "root",
+    );
+    assert.match(word.content, /отпущен/);
+    await until(() => ends(second).length === 1, "the end in the parent");
+    assert.match(ends(second)[0].text, /Итог — его последнее слово:\nжду соседа/);
+  } finally {
+    await second.stop();
+  }
+});
+
+// The previous bridge leaves by its own bye, and its socket of the child's place may
+// live on for seconds: the new child bridge waits for it to go — not a count of
+// attempts — and says nothing to the child meanwhile: no «take it back» that the
+// next attempt would make false, and no end of the child with its place whole.
+test("marker-child: while the previous bridge still holds the child's socket, the return waits for it silently and then takes the place", async () => {
+  const answers = join(SANDBOX, "reload-wait.answers");
+  const elsewhere = {
+    resumed: false,
+    elsewhere: ["k-sub"],
+    word: "возвращать нечего — k-sub: держит живой мост",
+  };
+  writeFileSync(answers, JSON.stringify({ bySession: { child: elsewhere } }));
+  const { second, all, newPid } = await reloadedChild("reload-wait", {
+    FB_RESUME: answers,
+    ISKRON_CHILD_BACK_PAUSE_MS: 150,
+  });
+  try {
+    await delay(1500); // more than every attempt by count
+    const answer = { resumed: true, holding: true, key: "k-sub", word: "место возвращено" };
+    writeFileSync(answers, JSON.stringify({ bySession: { child: answer } }));
+    const resumes = () =>
+      all().filter((c) => c.name === "iskron/resume" && c.arguments.session === "child");
+    const n = resumes().length;
+    await until(() => resumes().length > n, "the return after the socket went", 3000);
+    await delay(300);
+    const toChild = [...second.prompts, ...second.synthetics].filter(
+      (p) => p.sessionID === "child",
+    );
+    assert.deepEqual(toChild, [], "not a word to the child while it waits");
+    assert.deepEqual(second.synthetics, [], "the parent is told nothing: the child goes on");
+    await second.call("iskron_case", { realm: "nks-dev", action: "say", room: "#77" }, "child");
+    assert.equal(all().at(-1).pid, newPid, "the child writes by its own bridge again");
+  } finally {
+    await second.stop();
+  }
+});
+
 // The children's places come back quietly by their own bridges: the root's loss
 // word names the root's places only — a child's key there would call the root to
 // take back a place that is not its own.
@@ -2857,6 +3386,7 @@ test("a backlog, a stale pile and a lost hearing of a child whose session is gon
   try {
     await until(() => rec.tools().has("iskron_stand"), "the stand tool", 8000);
     await rec.call("iskron_stand", { realm: "nks-dev", karta: "#2816" }, "root");
+    await rootHolds(rec, b);
     await rec.call("iskron_stand", { realm: "nks-dev", karta: "#931" }, "child");
     const [, childPid] = pidsOf(b.log);
     gone.add("child");
@@ -3112,8 +3642,14 @@ test("a deleted child session takes its run-ended mark with it", async () => {
   try {
     rec.emit({ type: "session.deleted", data: { sessionID: "child" } });
     await delay(200);
-    await rec.call("iskron_case", { action: "say" }, "child");
-    assert.equal(sent().at(-1)?.name, "iskron_case", "the mark is gone, the call is not refused");
+    const before = sent().length;
+    // Пометки конца нет — вызов судит правило 2: ребёнок без своего спутника не пишет.
+    await assert.rejects(rec.call("iskron_case", { action: "say" }, "child"), (e) => {
+      assert.doesNotMatch(e.message, /кончена/, "the run-ended mark is gone");
+      assert.match(e.message, /только своим местом-спутником/);
+      return true;
+    });
+    assert.equal(sent().length, before);
   } finally {
     await rec.stop();
   }
@@ -3244,6 +3780,32 @@ test("a child session whose first prompt is a launch line with a case stands as 
   }
 });
 
+// The launch line goes the same rule 2 as the child's own iskron_stand: under a root
+// holding no place it raises no bridge and takes no ordinary place — the refusal is
+// said into the prompt, before the model reads.
+test("a launch line under a root holding no place is refused aloud: no child bridge, no ordinary place", async () => {
+  const calls = join(SANDBOX, "launch-noplace.calls");
+  writeFileSync(calls, "");
+  const b = bridgeEnv("launch-noplace", { FB_CALLS: calls, FB_TOOLS: STAND_AND_CASE });
+  const rec = await plugin(b.env, {
+    sessions: [
+      { id: "root", location: { directory: "/work/root" } },
+      { id: "child", parentID: "root", location: { directory: "/work/child" } },
+    ],
+  });
+  try {
+    await until(() => rec.tools().has("iskron_stand"), "the stand tool", 8000);
+    await rec.call("iskron_case", { realm: "@nks/nks-dev", action: "mine" }, "root");
+    const bridges = pidsOf(b.log).length;
+    const read = await rec.prompt("child", "start @nks/nks-dev #48 дело №77\nБриф: почини мост.");
+    assert.match(read, /не встал: Отказано \(плагин\)[^\n]*место родителя неизвестно/);
+    assert.equal(pidsOf(b.log).length, bridges, "no bridge raised for the child");
+    assert.ok(!sentCalls(calls).some((c) => c.name === "iskron_stand"), "no stand went out");
+  } finally {
+    await rec.stop();
+  }
+});
+
 test("without a launch line a child's prompt is left as it was: no stand, no join, no bridge of its own", async () => {
   const calls = join(SANDBOX, "no-launch.calls");
   writeFileSync(calls, "");
@@ -3291,14 +3853,19 @@ test("on an English server (*.ai) the launch line reads «case №N» and the wo
   });
   try {
     await until(() => rec.tools().has("iskron_stand"), "the stand tool", 8000);
+    // Ребёнок встаёт только спутником места корня (#6550 п.2): корень стоит первым.
+    await rec.call("iskron_stand", { realm: "r5", karta: "#2816" }, "root");
+    await until(() => /мост держит стояние/.test(rec.said()), "the root's held word");
     const read = await rec.prompt("child", "start r5 #48 case №77 from @me:lead");
     assert.equal(
       read,
       "start r5 #48 case №77 from @me:lead\n" +
-        "Iskron: seated host.repo.opus-5, entered case №77 — retell the brief as your first message in the case.",
+        "Iskron: seated host.repo.opus-5.sub-1, entered case №77 — retell the brief as your first message in the case.",
     );
     assert.deepEqual(
-      sentCalls(calls).map((c) => c.arguments.room ?? c.name),
+      sentCalls(calls)
+        .slice(1)
+        .map((c) => c.arguments.room ?? c.name),
       ["iskron_stand", "#77"],
     );
   } finally {
@@ -3320,16 +3887,20 @@ test("a refused join comes back as words in the prompt, and the place stays", as
   });
   try {
     await until(() => rec.tools().has("iskron_stand"), "the stand tool", 8000);
+    await rec.call("iskron_stand", { realm: "r5", karta: "#2816" }, "root");
+    await until(() => /мост держит стояние/.test(rec.said()), "the root's held word");
     // The tail «from <seat>» is pi's: here the parent is known, and the tail does no harm.
     const read = await rec.prompt("child", "start r5 #48 case #77 from @me:lead");
     assert.equal(
       read,
       "start r5 #48 case #77 from @me:lead\n" +
-        "Искрон: встал host.repo.opus-5; в дело №77 не вошёл — дело #77 не найдено в этом графе. Место остаётся.",
-      "the root holds no place, so the child stands a place of its own",
+        "Искрон: встал host.repo.opus-5.sub-1; в дело №77 не вошёл — дело #77 не найдено в этом графе. Место остаётся.",
+      "the child stands the root's satellite",
     );
     assert.deepEqual(
-      sentCalls(calls).map((c) => [c.name, c.arguments.action]),
+      sentCalls(calls)
+        .slice(1)
+        .map((c) => [c.name, c.arguments.action]),
       [
         ["iskron_stand", undefined],
         ["iskron_case", "join"],
@@ -3364,6 +3935,7 @@ test("a frame on the place of a child session that is gone is not re-addressed t
   try {
     await until(() => rec.tools().has("iskron_stand"), "the stand tool", 8000);
     await rec.call("iskron_stand", { realm: "nks-dev", karta: "#2816" }, "root");
+    await rootHolds(rec, b);
     await rec.call("iskron_stand", { realm: "nks-dev", karta: "#931" }, "child");
     const [rootPid, childPid] = pidsOf(b.log);
     assert.ok(rootPid && childPid, "two bridges");
@@ -3408,6 +3980,7 @@ test("two simultaneous standing calls of one child session share one child bridg
   try {
     await until(() => rec.tools().has("iskron_stand"), "the stand tool", 8000);
     await rec.call("iskron_stand", { realm: "nks-dev", karta: "#2816" }, "root");
+    await rootHolds(rec, b);
     await Promise.all([
       rec.call("iskron_stand", { realm: "nks-dev", karta: "#931" }, "child"),
       rec.call("iskron_channel", { action: "register", karta: "#931" }, "child"),
@@ -3456,6 +4029,7 @@ test("a child bridge raised into a pending login answers with the login address 
   try {
     await until(() => rec.tools().has("iskron_stand"), "the stand tool", 8000);
     await rec.call("iskron_stand", { realm: "nks-dev", karta: "#2816" }, "root");
+    await rootHolds(rec, b);
     rmSync(authed); // the grant dies before the child stands
     await assert.rejects(
       () => rec.call("iskron_stand", { realm: "nks-dev", karta: "#931" }, "child"),
@@ -3505,17 +4079,13 @@ test("a child's held place in the loss marker is flagged and never hints the roo
   const first = await plugin(b.env, { sessions });
   await until(() => first.tools().has("iskron_stand"), "the stand tool", 8000);
   await first.call("iskron_stand", { realm: "nks-dev", karta: "#2816" }, "root");
+  await rootHolds(first, b, { key: "root--2816--nks-dev" }); // ребёнок — только спутником (#6550 п.2)
   await first.call("iskron_stand", { realm: "nks-dev", karta: "#931" }, "child");
-  const [rootPid, childPid] = pidsOf(b.log);
-  appendFileSync(`${b.events}.${rootPid}`, event("held", { key: "root--2816--nks-dev" }));
+  const [, childPid] = pidsOf(b.log);
   appendFileSync(`${b.events}.${childPid}`, event("held", { key: "child--931--nks-dev" }));
   await until(
     () => /мост держит стояние child--931--nks-dev/.test(first.said()),
     "the child's held line",
-  );
-  await until(
-    () => /мост держит стояние root--2816--nks-dev/.test(first.said()),
-    "the root's held line",
   );
   await first.stop();
   const written = JSON.parse(readFileSync(lostMarkers()[0], "utf8"));
@@ -3527,7 +4097,7 @@ test("a child's held place in the loss marker is flagged and never hints the roo
         dir: "/work/same",
         key: "child--931--nks-dev",
         child: true,
-        of: null,
+        of: ROOT_PLACE,
         room: null,
       },
       { session: "root", dir: "/work/same", key: "root--2816--nks-dev", child: false },
@@ -3587,6 +4157,7 @@ test("a dead child bridge is replaced by a fresh child bridge that resumes the c
   try {
     await until(() => rec.tools().has("iskron_stand"), "the stand tool", 8000);
     await rec.call("iskron_stand", { realm: "nks-dev", karta: "#2816" }, "root");
+    await rootHolds(rec, b);
     await rec.call("iskron_stand", { realm: "nks-dev", karta: "#931" }, "child");
     const [rootPid, childPid] = pidsOf(b.log);
     appendFileSync(`${b.events}.${childPid}`, event("held", { key: "child--931--nks-dev" }));

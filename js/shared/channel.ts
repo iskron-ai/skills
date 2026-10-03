@@ -37,14 +37,12 @@ const SILENT_FLOOR_MS = Number(process.env.ISKRON_CHANNEL_SILENT_FLOOR_MS) || 60
 export const DEAD_TOKEN_CODES = [4001, 4002];
 /**
  * Вытеснение: каналом владеет другой держатель — новое подключение либо
- * переизданный секрет. Не смерть токена: тем же адресом открываются заново
- * один раз (вытеснили — вернулись; 404 — адрес повернули connect-ом другого).
- * Второе вытеснение в окне — либо тот же код, либо быстрый обрыв переоткрытия
- * (повёрнутый адрес не открывается) — место держит другой, и держатель
- * уступает вслух, не отбирая сокет по кругу (граф nks-dev: #5033).
+ * переизданный секрет. Не смерть токена — и не повод открыться заново: тот
+ * же адрес вытеснил бы нового держателя, а он — нас (наблюдено: пинг-понг
+ * двух мостов одной сессии после смены демона). Держатель уступает вслух
+ * сразу; отбить место (take=true) — только словом человека (граф nks-dev: #5033, #6550).
  */
 export const EVICTED_CODE = 4000;
-const EVICTION_WINDOW_MS = 60_000;
 /** Выкатка: инстанс уходит, вдох длиннее обычного. */
 export const ROLLOUT_CODE = 4003;
 
@@ -226,7 +224,6 @@ export function holdSocket(o: HoldOptions): Holder {
   let slowdown = 0; // сколько пауз подряд служба жива, а сокет рвут
   let dead = false;
   let stopped = false;
-  let lastEviction: number | null = null;
   let retry: ReturnType<typeof setTimeout> | null = null;
   let ws: WebSocket | null = null;
   let handing: { onFrame: (raw: string) => void; onGone: (code: number) => void } | null = null;
@@ -264,10 +261,6 @@ export function holdSocket(o: HoldOptions): Holder {
     stopWatch();
     lastLife = startedAt;
     let gone = false; // обрыв разбирается один раз, чем бы он ни пришёл
-    let opened = false; // апгрейд прошёл: повёрнутый адрес не открывается вовсе
-    sock.addEventListener("open", () => {
-      opened = true;
-    });
     // Bun (рантайм моста в OpenCode) канала диагностики не наполняет, но шлёт
     // нестандартное событие ping самого сокета; Node его не шлёт вовсе.
     sock.addEventListener("ping", () => {
@@ -359,36 +352,10 @@ export function holdSocket(o: HoldOptions): Holder {
       // Мёртвый токен громче любого предположения об обрыве и старше вытеснения:
       // он проходит ограду `gone` всегда и снимает уже назначенное переоткрытие.
       if (DEAD_TOKEN_CODES.includes(code)) return yieldTo(o.onDeadToken, code);
-      const now = Date.now();
-      const afterEviction = lastEviction !== null && now - lastEviction < EVICTION_WINDOW_MS;
-      // Повторное вытеснение проходит ограду `gone` так же, как мёртвый токен.
-      if (afterEviction && code === EVICTED_CODE)
-        return yieldTo(o.onEvicted ?? o.onDeadToken, code);
-      if (code === EVICTED_CODE) {
-        lastEviction = now;
-        if (gone) return; // переоткрытие уже назначено догадкой
-        gone = true;
-        o.onNote?.(
-          L(
-            "закрытие 4000 — место у другого держателя; открываю заново один раз",
-            "close 4000 — the seat is with another holder; reopening once",
-          ),
-        );
-        retry = setTimeout(open, 2000);
-        return;
-      }
+      // Вытеснение — уступить вслух сразу, не открываясь заново: проходит ограду `gone`,
+      // как мёртвый токен, и снимает уже назначенное догадкой переоткрытие.
+      if (code === EVICTED_CODE) return yieldTo(o.onEvicted ?? o.onDeadToken, code);
       if (gone) return;
-      // Переоткрытие после вытеснения не открылось вовсе: адрес повернул чужой
-      // connect (404 на апгрейде) — или это сеть. Различает служба: жива —
-      // адрес повернули, уступаем; молчит — выкатка или сеть, держим как обычно.
-      if (afterEviction && !opened && code !== ROLLOUT_CODE && now - startedAt < FAST_DROP_MS) {
-        gone = true;
-        const up = await serviceUp(o.url);
-        if (stopped || ws !== sock) return;
-        if (up) return yieldTo(o.onEvicted ?? o.onDeadToken, EVICTED_CODE);
-        retry = setTimeout(open, 2000);
-        return;
-      }
       gone = true;
       const fast = Date.now() - startedAt < FAST_DROP_MS;
       fastDrops = fast ? fastDrops + 1 : 0;

@@ -61,9 +61,12 @@ export async function enterCase(
   } catch (e) {
     const why = (e as Error).message;
     const join = `iskron_case(action="join", room="${room}")`;
+    // Субагент встаёт только спутником места запустившего (#6550 п.2): обычным местом — нет.
     return L(
-      `Искрон: строка запуска — не встал: ${why}. Встань сам (iskron_stand) и войди в дело №${l.no}: ${join}.`,
-      `Iskron: launch line — not seated: ${why}. Take your seat yourself (iskron_stand) and enter case №${l.no}: ${join}.`,
+      `Искрон: строка запуска — не встал: ${why}. Субагент встаёт только спутником места запустившего: держит он место — повтори iskron_stand и войди в дело №${l.no}: ${join}; ` +
+        "не держит — запустивший занимает место и запускает тебя заново, а до того работа идёт без графа, итог — словом запустившему.",
+      `Iskron: launch line — not seated: ${why}. A subagent takes only a satellite of its launcher's seat: if the launcher holds one, repeat iskron_stand and enter case №${l.no}: ${join}; ` +
+        "if not, the launcher takes a seat and launches you again; until then the work goes without the graph, the result as a word to the launcher.",
     );
   }
   const place = placeName() || L("своим местом", "in a seat of its own");

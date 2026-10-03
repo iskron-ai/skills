@@ -136,6 +136,14 @@ export class DeadGrantError extends Error {
   }
 }
 
+// Соединение закрыто под запросом, ответа не было: Node (undici) — UND_ERR_SOCKET
+// «other side closed», Bun — ECONNRESET «The socket connection was closed unexpectedly».
+const CLOSED = new Set(["UND_ERR_SOCKET", "ECONNRESET", "EPIPE"]);
+export const closedUnder = (e: unknown): boolean => {
+  const err = e as { code?: string; cause?: { code?: string } } | null;
+  return CLOSED.has(err?.code ?? "") || CLOSED.has(err?.cause?.code ?? "");
+};
+
 export function errorCode(e: unknown): string | undefined {
   const err = e as { code?: string; cause?: { code?: string } } | null;
   return err?.cause?.code ?? err?.code;
