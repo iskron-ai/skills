@@ -58,6 +58,14 @@ import { localSocketAlive } from "./sweep.ts";
 import { state } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
 
+/** Возврат не нашёл записи названного места (ушла по сроку): следующий iskron_stand это напомнит (#6649). */
+const RJ = scoped(() => ({ lapsed: false }));
+export function takeLapsed(): boolean {
+  const was = RJ.lapsed;
+  RJ.lapsed = false;
+  return was;
+}
+
 /** Слушающим доска читает прежний мост этого каталога, а он мёртв: запись держания цела, локальный сокет не отвечает. */
 export async function deadPredecessor(
   realm: string,
@@ -286,6 +294,11 @@ export async function resumeBy(sel: ResumeSelector, register = true): Promise<Re
   if (!recs.length) {
     const legacy = await freeLegacy(legacyRecs);
     const said = [resumeWords.noRecord(sel.key, sel.cwd)];
+    if (sel.key) {
+      // Ключ назван — место держалось; записи нет — она ушла по сроку (#6649).
+      said.push(resumeWords.rejoin());
+      RJ.lapsed = true;
+    }
     const foreign = sameDir.filter((k) => !left.includes(k));
     if (foreign.length) said.push(resumeWords.foreignDir(foreign));
     if (left.length) said.push(resumeWords.left(left));
@@ -315,7 +328,12 @@ export async function resumeBy(sel: ResumeSelector, register = true): Promise<Re
     }
     const back = await resumeFromDisk(rec.realm, rec.karta, rec.name);
     if (!back) {
-      skipped.push(readHoldRecord(key) ? resumeWords.noHello(key) : resumeWords.stale(key));
+      const kept = readHoldRecord(key);
+      skipped.push(kept ? resumeWords.noHello(key) : resumeWords.stale(key));
+      if (!kept) {
+        skipped.push(resumeWords.rejoin()); // протухшая запись — место у платформы мертво (#6649)
+        RJ.lapsed = true;
+      }
       continue;
     }
     const lines = [back.word];

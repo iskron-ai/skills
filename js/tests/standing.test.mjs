@@ -2781,6 +2781,33 @@ test("iskron/check stops reopening after two fruitless reopens and says so aloud
   await waitFor(() => fresh().length === 3, "the reopen after the reset");
 });
 
+// #6649: the plugin idle longer than the hold record's term (6 h; seen 30–32 h) — the
+// record went by its term, iskron_stand takes the seat back, but the platform had let
+// the place expire and it left all its cases. The return that finds no record of the
+// named seat says so, and the next iskron_stand repeats it: check mine, join again.
+test("a return whose hold record went by its term says to check iskron_case mine after iskron_stand — and the stand that takes the seat says it too", async (t) => {
+  const own = { ...INIT, clientInfo: { name: "opencode-iskron", version: "1" } };
+  const { fake, dir, bridge, standings } = await connected(t, { init: own });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  bridge.proc.kill("SIGKILL");
+  await waitFor(() => fake.state.ws.size === 0, "the socket to close");
+  for (const f of readdirSync(standings).filter((x) => x.endsWith(".hold")))
+    unlinkSync(join(standings, f)); // the record gone by its term
+  const next = startBridge(fake.mcpUrl, dir);
+  t.after(() => next.stop());
+  assert.ok((await next.call("initialize", 1, own)).result);
+  const back = await next.call("iskron/resume", 2, { key: "proba--931--nks-dev" });
+  assert.equal(back.result?.resumed, false, JSON.stringify(back));
+  assert.match(back.result.word, /после iskron_stand проверь iskron_case\(action="mine"\)/);
+  const st = await next.call("tools/call", 3, {
+    name: "iskron_stand",
+    arguments: { realm: "nks-dev", karta: 931, name: "proba" },
+  });
+  const said = (st.result?.content ?? []).map((c) => c.text ?? "").join("\n");
+  assert.ok(!st.result?.isError, said);
+  assert.match(said, /место могло истечь у платформы[\s\S]*войди в свои дела заново/);
+});
+
 // ── cold review of the fix (r5 #5140): what it left open ─────────────────────
 
 // A hold record keyed by the directory alone would let the OpenCode plugin take

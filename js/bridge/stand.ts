@@ -53,7 +53,8 @@ import {
 import { ownerRefusal } from "./owner.ts";
 import { placeFields, rememberModel } from "./placefields.ts";
 import { otherRealm } from "./realms.ts";
-import { deadPredecessor, resumeFromDisk } from "./resume.ts";
+import { deadPredecessor, resumeFromDisk, takeLapsed } from "./resume.ts";
+import { resumeWords } from "./resumewords.ts";
 import { SATELLITE_TTL_S, satelliteGate, satelliteListenWord, ttlRefused } from "./satellite.ts";
 import { separatePlace, suffixOf } from "./separate.ts";
 import { SW } from "./standwords.ts";
@@ -349,6 +350,8 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
       if (k.startsWith(`${realm}|${karta}|${name}|`)) knocks.delete(k);
     heardHere = true;
     how = SW.howConnect(!!mine, listensElsewhere, a.take === true);
+    // Место занято заново после возврата, не нашедшего записи: дела могли пропасть (#6649).
+    if (takeLapsed()) extra.push(`[iskron_stand] ${resumeWords.rejoin()}`);
   }
   lines.push(
     SW.head(mine?.address ?? name, karta, realm, how),

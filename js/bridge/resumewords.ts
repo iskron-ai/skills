@@ -27,6 +27,12 @@ export const resumeWords = {
       `своей записи держания ${key ? `с ключом ${key}` : `для каталога ${cwd ?? "?"}`} нет`,
       `there is no own hold record ${key ? `with the key ${key}` : `for the directory ${cwd ?? "?"}`}`,
     ),
+  /** Запись ушла по сроку (простой дольше 6 ч): место могло истечь у платформы и выйти из дел (#6649). */
+  rejoin: (): string =>
+    L(
+      `место могло истечь у платформы и выйти из своих дел — после ${via} проверь iskron_case(action="mine"); пусто — войди в свои дела заново (iskron_case action="join")`,
+      `the seat may have expired at the platform and left its cases — after ${via} check iskron_case(action="mine"); empty — join your cases again (iskron_case action="join")`,
+    ),
   foreignDir: (foreign: string[]): string =>
     L(
       `в каталоге лежат записи мест, на которых эта сессия не стояла (${foreign.join(", ")}); по одному каталогу они не берутся, место займёт ${via}`,
