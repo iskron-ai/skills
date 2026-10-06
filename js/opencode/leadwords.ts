@@ -49,6 +49,8 @@ export interface LeadDoors {
    * Ответ — места, которые снять не удалось; null — исход неизвестен.
    */
   close(child: string): Promise<string[] | null>;
+  /** Сессия помечена кончившейся, мост ещё жив: любая её запись, и встать тоже, — отказ, пока он кончает прогон. */
+  seal(child: string): void;
   /** Мост ребёнка гасится, сессия помечена кончившейся. */
   end(child: string): Promise<void>;
   /** Имя места ребёнка, если это не его спутник (обычное место сессии); спутник или места нет — null. */
@@ -82,27 +84,23 @@ const END_MS = 5_000;
 /** Итог — последний текст ребёнка; длиннее — хвост обрезается. */
 const SUMMARY_MAX = 4000;
 
-/** failed — места, которые мост ребёнка снять не смог; null — исход его конца неизвестен. */
-export const endWord = (
-  who: string,
-  why: string,
-  last: string,
-  kept?: string | null,
-  failed: string[] | null = [],
-): string => {
+/** Слово ложится до конца прогона мостом ребёнка: снятие места — в ходу, неудача — unrevokedWord. */
+export const endWord = (who: string, why: string, last: string, kept?: string | null): string => {
   const said = last.length > SUMMARY_MAX ? `${last.slice(0, SUMMARY_MAX)}…` : last;
   const done = kept
     ? `${keptLine(who, kept)}; снять его — iskron_channel(action="revoke", standing="${kept}"), только словом человека. `
-    : failed === null
-      ? 'мост субагента погашен; снял ли он место — не ответил: осталось на доске — сними iskron_channel(action="revoke"). '
-      : failed.length
-        ? `мост субагента погашен, но место не снято (сеть): ${failed.join(", ")} — сними iskron_channel(action="revoke", standing="${failed[0]}"). `
-        : "мост субагента погашен, из дел он вышел, место снято. ";
+    : "мост субагента гасится: из дел он выходит, место снимается (не снимется — скажу отдельно). ";
   return (
     `Искрон: субагент ${who} КОНЧЕН — ${why}. Это конец поручения, не ход: ${done}` +
     `Итог — его последнее слово:\n${said || "(текста он не оставил — смотри его дело)"}`
   );
 };
+
+/** Поправка к итогу, не второй конец: failed — места, которые мост ребёнка снять не смог; null — исход неизвестен. */
+export const unrevokedWord = (who: string, failed: string[] | null): string =>
+  failed === null
+    ? `Искрон: мост субагента ${who} погашен; снял ли он место — не ответил: осталось на доске — сними iskron_channel(action="revoke").`
+    : `Искрон: у субагента ${who} место не снято (сеть): ${failed.join(", ")} — сними iskron_channel(action="revoke", standing="${failed[0]}").`;
 
 /** Ребёнок занял обычное место вместо спутника: конец поручения его место не снимает. */
 export const keptLine = (who: string, place: string): string =>
@@ -125,7 +123,7 @@ export const releasedWord = (): string =>
 
 export const awayWord = (who: string, last: string): string =>
   `Искрон: субагент ${who} снят переносом родителя в другую папку — поручение здесь кончено не по исходу, итога «КОНЧЕН» не будет: ` +
-  `его мост погашен, из дел он вышел, место снято; его сессия осталась в прежней папке. Последнее его слово:\n${last.slice(0, SUMMARY_MAX) || "(текста он не оставил — смотри его дело)"}`;
+  `его мост гасится: из дел он выходит, место снимается; его сессия осталась в прежней папке. Последнее его слово:\n${last.slice(0, SUMMARY_MAX) || "(текста он не оставил — смотри его дело)"}`;
 
 export const lostWord = (who: string, why: string): string =>
   `Искрон: субагент ${who} снят — ${why}. Место без моста уйдёт сроком канала, его дела — сроком места; итога нет, его ход — в его сессии.`;
@@ -140,7 +138,7 @@ export function leadDoors(
   ctx: Context,
   say: Say,
   flush: (session: string) => Promise<void>,
-  end: (child: string) => void,
+  end: (child: string, out?: ((s: string) => void) | null) => void,
   slots: Map<string, SatelliteSlot & { child?: boolean; bridge: Pick<Bridge, "request"> }>,
 ): LeadDoors {
   return {
@@ -148,13 +146,14 @@ export function leadDoors(
     ownPlace: (child) => ownPlace(slots.get(child)),
     async close(child) {
       await flush(child).catch(() => {});
-      // Конец прогона — до слова: исход снятия места идёт в слово родителю (№147, e2e12).
+      // Конец прогона — после слова родителю: неудача снятия места — отдельным словом (№147).
       const got: any = await slots
         .get(child)
         ?.bridge.request("iskron/end", {}, { timeoutMs: END_MS, service: true })
         .catch(() => null);
       return got?.ended ? (got.failed ?? []) : null;
     },
+    seal: (child) => end(child, null), // мост не гасится
     async end(child) {
       end(child);
     },
