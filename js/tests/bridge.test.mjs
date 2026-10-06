@@ -2825,8 +2825,12 @@ test("a bridge meeting a declined login's port free publishes a new login, not t
     const back = `http://127.0.0.1:${callbackPortOf(url)}/callback?error=access_denied&state=${declined}`;
     await (await fetch(back)).text();
     const b = spawnBridge();
-    const offered = authorizeUrlIn((await b.call("initialize", 1, INIT_PARAMS)).error?.message);
-    assert.ok(offered, "the next need is offered a login");
+    const answer = await b.call("initialize", 1, INIT_PARAMS);
+    const offered = authorizeUrlIn(answer.error?.message);
+    assert.ok(
+      offered,
+      `the next need is offered a login: ${JSON.stringify(answer)}\n${a.stderr}\n${b.stderr}`,
+    );
     const now = loginState(dir);
     assert.ok(now, "a login is out");
     assert.notEqual(now, declined, "the declined login is over — this must be a new one");
