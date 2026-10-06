@@ -20,7 +20,7 @@
 // past revision) so it can be shown red before a fix.
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
@@ -216,7 +216,9 @@ test("claude hooks: jq judges a long run of spaces without an error", () => {
 // `dirs` maps a session id to its working directory, as OpenCode hands it out:
 // ctx.session.get({ sessionID }).location.directory (the plugin's own process
 // directory is the server's, not the session's).
-async function loadPlugin(dirs = {}) {
+// `own` is the instance's ctx.location.directory, `events` the stream it hears,
+// `prompts` collects the sessions it greeted.
+async function loadPlugin(dirs = {}, { own, events = [], prompts = [] } = {}) {
   const md = readFileSync(surfacesPath, "utf8");
   const block = [...md.matchAll(/```js\n([\s\S]*?)```/g)]
     .map((m) => m[1])
@@ -225,10 +227,16 @@ async function loadPlugin(dirs = {}) {
   const mod = await import(`data:text/javascript,${encodeURIComponent(block)}`);
   const hooks = {};
   await mod.default.setup({
+    location: own ? { directory: own } : undefined,
     tool: { hook: async (name, fn) => void (hooks[name] = fn) },
-    event: { subscribe: async () => (async function* () {})() },
+    event: {
+      subscribe: async () =>
+        (async function* () {
+          yield* events;
+        })(),
+    },
     session: {
-      prompt: async () => {},
+      prompt: async ({ sessionID }) => void prompts.push(sessionID),
       get: async ({ sessionID }) =>
         dirs[sessionID] ? { location: { directory: dirs[sessionID] } } : null,
     },
@@ -236,11 +244,17 @@ async function loadPlugin(dirs = {}) {
   return hooks["execute.after"];
 }
 
+// The template keeps one word per process across its instances, keyed by the
+// call's id — every call here gets its own.
+let calls = 0;
+const callID = () => `call-${++calls}`;
+
 test("opencode rituals template: wakes by outcome", async () => {
   const after = await loadPlugin();
   for (const [command, output, push, merge] of cases) {
     const input = {
       tool: "bash",
+      id: callID(),
       status: "completed",
       input: { command },
       result: { content: output, metadata: { exit: 0 } },
@@ -265,6 +279,7 @@ test("opencode rituals template: a failed trunk pull does not wake", async () =>
   ]) {
     const input = {
       tool: "bash",
+      id: callID(),
       status: "completed",
       input: { command: "git checkout main && git pull" },
       result: { content: "fatal: unable to access 'https://github.com/o/r/'", metadata: { exit } },
@@ -272,6 +287,35 @@ test("opencode rituals template: a failed trunk pull does not wake", async () =>
     await after(input);
     assert.equal(String(input.result.content).includes("мерж"), merge, `exit ${exit}`);
   }
+});
+
+// The server makes one plugin instance per spelling of a directory (/tmp/… and
+// /private/tmp/…); after canonicalising both own the session — so the greeting
+// (by session) and the reminder (by call) are said once per process, children
+// get no greeting, and the shell tool is `shell` as observed on 2.0.24.
+test("opencode rituals template: two instances of one directory speak once", async () => {
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), "rituals-once-")));
+  const created = (sessionID, parentID) => ({
+    type: "session.created",
+    data: { sessionID, parentID, location: { directory: dir } },
+  });
+  const events = [created("root-1"), created("child-1", "root-1")];
+  const prompts = [];
+  const one = await loadPlugin({ s1: dir }, { own: dir, events, prompts });
+  const two = await loadPlugin({ s1: dir }, { own: `${dir}/`, events, prompts });
+  await new Promise((r) => setTimeout(r, 100));
+  assert.deepEqual(prompts, ["root-1"]);
+  const input = {
+    tool: "shell",
+    id: callID(),
+    sessionID: "s1",
+    status: "completed",
+    input: { command: "gh pr merge 12 --squash" },
+    result: { content: "✓ Squashed and merged pull request #12", metadata: { exit: 0 } },
+  };
+  await one(input);
+  await two(input);
+  assert.equal(String(input.result.content).split("[iskron] мерж").length - 1, 1);
 });
 
 // A quiet push prints no `To <remote>`, and a cut tail (`| tail -1`, `| head -1`)
@@ -356,6 +400,7 @@ for (const [name, command, wakes, lands] of quietCases) {
     const after = await loadPlugin({ s1: a });
     const input = {
       tool: "bash",
+      id: callID(),
       sessionID: "s1",
       status: "completed",
       input: { command: cmd },
@@ -395,6 +440,7 @@ for (const trunk of ["main", "master"]) {
     const after = await loadPlugin({ s1: a });
     const input = {
       tool: "bash",
+      id: callID(),
       sessionID: "s1",
       status: "completed",
       input: { command: cmd },
@@ -411,6 +457,7 @@ test("quiet push: a session without a known directory stays silent", async () =>
   const after = await loadPlugin({});
   const input = {
     tool: "bash",
+    id: callID(),
     sessionID: "unknown",
     status: "completed",
     input: { command: cmd },
