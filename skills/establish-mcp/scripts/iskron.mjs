@@ -4,7 +4,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-var VERSION = "7.2.8";
+var VERSION = "7.3.0";
 var CHANNEL_MARK = "iskron-build:release";
 var releaseBuild = () => CHANNEL_MARK.endsWith(":release");
 var devBuildIn = (text) => text.includes(`"${["iskron-build", "dev"].join(":")}"`);
@@ -120,9 +120,9 @@ var PASS_ENV = /* @__PURE__ */ new Set([
 ]);
 var isSessionEnvKey = (k) => k !== TOKEN_ENV && (k.startsWith("ISKRON_") || PASS_ENV.has(k));
 function seamEnv(env2 = process.env) {
-  const out6 = {};
-  for (const [k, v] of Object.entries(env2)) if (v !== void 0 && isSessionEnvKey(k)) out6[k] = v;
-  return out6;
+  const out7 = {};
+  for (const [k, v] of Object.entries(env2)) if (v !== void 0 && isSessionEnvKey(k)) out7[k] = v;
+  return out7;
 }
 var BASE_ENV = [
   "HOME",
@@ -138,9 +138,9 @@ var BASE_ENV = [
   TOKEN_ENV
 ];
 function daemonEnv(env2 = process.env) {
-  const out6 = seamEnv(env2);
-  for (const k of BASE_ENV) if (env2[k] !== void 0) out6[k] = env2[k];
-  return out6;
+  const out7 = seamEnv(env2);
+  for (const k of BASE_ENV) if (env2[k] !== void 0) out7[k] = env2[k];
+  return out7;
 }
 function helloFrame(o) {
   return {
@@ -769,21 +769,21 @@ function emit(msg) {
 `);
   writeTo(sessionStream(), JSON.stringify(msg) + "\n");
 }
-function flushStdout(out6 = sessionStream()) {
-  return new Promise((resolve7) => {
-    if (!canWrite(out6)) return resolve7();
+function flushStdout(out7 = sessionStream()) {
+  return new Promise((resolve8) => {
+    if (!canWrite(out7)) return resolve8();
     let done = false;
     const finish = () => {
       if (done) return;
       done = true;
-      out6.off("error", finish);
-      out6.off("close", finish);
-      resolve7();
+      out7.off("error", finish);
+      out7.off("close", finish);
+      resolve8();
     };
-    out6.once("error", finish);
-    out6.once("close", finish);
-    if (backlogged.has(out6)) out6.once("drain", finish);
-    else out6.write("", finish);
+    out7.once("error", finish);
+    out7.once("close", finish);
+    if (backlogged.has(out7)) out7.once("drain", finish);
+    else out7.write("", finish);
     setTimeout(finish, FLUSH_STOP_MS).unref();
   });
 }
@@ -836,10 +836,10 @@ var ArgsError = class extends Error {
   code;
   /** Что сказать в stdout вместо слова в stderr (--version). */
   out;
-  constructor(message, code, out6 = null) {
+  constructor(message, code, out7 = null) {
     super(message);
     this.code = code;
-    this.out = out6;
+    this.out = out7;
   }
 };
 function parseArgs(argv2) {
@@ -984,7 +984,7 @@ var AuthPending = class extends Error {
   authorizeUrl;
   constructor(url, note3, device) {
     super(
-      `authorization required — open in a browser: ${url}${note3 ? ` (${note3})` : ""}` + (typeof device === "string" ? ` — no sign-in by code: ${device}` : device ? ` — or sign in from another device: ${device.link} (code ${device.user_code}, valid until ${utcTime(device.expires_at)}; a call in its last minute or later brings a new one)` : "") + ` — or give the bridge a personal access token instead (ISKRON_BRIDGE_TOKEN, or the file <auth-dir>/token)`
+      `authorization required — open in a browser: ${url}${note3 ? ` (${note3})` : ""}` + (typeof device === "string" ? ` — no sign-in by code: ${device}` : device ? ` — or sign in from another device: ${device.link} (code ${device.user_code}, valid until ${utcTime(device.expires_at)}; a call after that brings a new one)` : "") + ` — or give the bridge a personal access token instead (ISKRON_BRIDGE_TOKEN, or the file <auth-dir>/token)`
     );
     this.authorizeUrl = url;
   }
@@ -1224,9 +1224,9 @@ async function post(url, type, body) {
   const answer = await res.json().catch(() => null) ?? {};
   if (!res.ok) {
     const error = typeof answer.error === "string" ? answer.error : void 0;
-    const said = answer.error_description ?? answer.message ?? "";
+    const said2 = answer.error_description ?? answer.message ?? "";
     throw new DeviceRefusal(
-      `POST ${url} -> ${res.status} ${error ?? ""} ${said}`.trim(),
+      `POST ${url} -> ${res.status} ${error ?? ""} ${said2}`.trim(),
       error,
       res.status
     );
@@ -1270,12 +1270,12 @@ function pidAlive(pid) {
   }
 }
 function portListening(port, timeoutMs = 700) {
-  return new Promise((resolve7) => {
-    if (!Number.isInteger(port)) return resolve7(false);
+  return new Promise((resolve8) => {
+    if (!Number.isInteger(port)) return resolve8(false);
     const sock = connect3({ host: "127.0.0.1", port });
     const done = (v) => {
       sock.destroy();
-      resolve7(v);
+      resolve8(v);
     };
     sock.setTimeout(timeoutMs, () => done(false));
     sock.once("connect", () => done(true));
@@ -1349,7 +1349,7 @@ function installAuthLockExitHook() {
 import { createServer as createServer2 } from "node:http";
 var PAGE_HOLD_MS = 2e4;
 function bindCallback(port) {
-  return new Promise((resolve7, reject) => {
+  return new Promise((resolve8, reject) => {
     let handOff = null;
     let received = null;
     let browser = null;
@@ -1415,7 +1415,7 @@ function bindCallback(port) {
     server.listen(port, "127.0.0.1", () => {
       server.removeListener("error", reject);
       server.on("error", (e) => log(`callback server: ${e.message}`));
-      resolve7({
+      resolve8({
         port,
         report: (failure) => tellBrowser(
           failure ? `iskron-bridge: authorization failed (${esc(failure)}) — nothing was stored; the agent has the details.` : "iskron-bridge: authenticated — you can close this tab."
@@ -1436,7 +1436,7 @@ function bindCallback(port) {
             () => rej(new Error("timed out waiting for the browser authorization")),
             timeoutMs
           ) : null;
-          const settle = (v) => {
+          const settle2 = (v) => {
             if (v.state !== expectedState) {
               tellBrowser(
                 "iskron-bridge: this page belongs to a login that is over — open the link the agent gave you."
@@ -1450,9 +1450,9 @@ function bindCallback(port) {
             else res(v.code);
             return true;
           };
-          if (received && settle(received)) return;
+          if (received && settle2(received)) return;
           received = null;
-          handOff = settle;
+          handOff = settle2;
         })
       });
     });
@@ -1663,7 +1663,7 @@ function windowsOpener(url) {
 }
 
 // js/bridge/oauth/pacing.ts
-var pauses = (v, fallback) => (v || fallback).split(",").map(Number).filter((n) => Number.isFinite(n) && n >= 0);
+var pauses = (v, fallback2) => (v || fallback2).split(",").map(Number).filter((n) => Number.isFinite(n) && n >= 0);
 var DEAD_RECHECK_MS = pauses(process.env.ISKRON_BRIDGE_DEAD_RECHECK_MS, "1000,2000");
 var IN_CALL_WAIT_MS = Number(process.env.ISKRON_BRIDGE_IN_CALL_WAIT_MS) || 1e4;
 var ORPHAN_FLOW_MS = Number(process.env.ISKRON_BRIDGE_ORPHAN_FLOW_MS) || 5 * 6e4;
@@ -1773,7 +1773,7 @@ function deviceSide(meta, redirectUri, resume, onCode, called) {
   const first2 = new Promise((r) => tellFirst = r);
   let unset2;
   const pause = (ms3) => pauseUntil(halt.signal, ms3);
-  const fresh = async (clientId) => {
+  const fresh2 = async (clientId) => {
     try {
       const code = await codeThrough(meta, redirectUri, clientId);
       return halt.signal.aborted ? null : code;
@@ -1796,7 +1796,7 @@ function deviceSide(meta, redirectUri, resume, onCode, called) {
       tellFirst(null);
       return never;
     }
-    let code = resume && resume.expires_at > Date.now() ? resume : await fresh(resume?.client_id);
+    let code = resume && resume.expires_at > Date.now() ? resume : await fresh2(resume?.client_id);
     tellFirst(code ?? unset2 ?? null);
     if (unset2) return giveUp();
     onCode(code);
@@ -1805,7 +1805,7 @@ function deviceSide(meta, redirectUri, resume, onCode, called) {
       while (!code) {
         await pause(REISSUE_PAUSE_MS);
         if (halt.signal.aborted) return never;
-        code = await fresh(clientId);
+        code = await fresh2(clientId);
         if (unset2) return giveUp();
         if (code) onCode(code);
       }
@@ -1843,7 +1843,7 @@ function deviceSide(meta, redirectUri, resume, onCode, called) {
         }
       }
       if (renew) {
-        code = newer(code) ?? await fresh(clientId);
+        code = newer(code) ?? await fresh2(clientId);
         if (halt.signal.aborted) return never;
         if (unset2) return giveUp();
         onCode(code);
@@ -1865,7 +1865,6 @@ function deviceSide(meta, redirectUri, resume, onCode, called) {
 
 // js/bridge/oauth/devicehandout.ts
 import { readFileSync as readFileSync7, renameSync as renameSync5, writeFileSync as writeFileSync5 } from "node:fs";
-var RENEW_BEFORE_MS = 6e4;
 var freshPath = () => `${authLockPath()}.device`;
 function callerCode(state2) {
   try {
@@ -1878,30 +1877,30 @@ function callerCode(state2) {
 var later = (a, b) => !a || b && b.expires_at > a.expires_at ? b : a;
 async function joinedPending(meta, l, note3) {
   const stale = later(l.device, callerCode(l.state));
-  const device = stale && stale.expires_at - Date.now() < RENEW_BEFORE_MS ? await renewed(meta, l, stale) : stale;
+  const device = stale && stale.expires_at <= Date.now() ? await renewed(meta, l, stale) : stale;
   return new AuthPending(l.authorize_url, note3, device ?? l.device_unset);
 }
 async function renewed(meta, l, stale) {
-  const alive2 = (c) => c && c.expires_at > Date.now() ? c : void 0;
+  const alive3 = (c) => c && c.expires_at > Date.now() ? c : void 0;
   let code;
   try {
     code = await issueDeviceCode(meta, stale.client_id);
   } catch (e) {
     log(`no fresh code for sign-in from another device: ${errorMessage(e)}`);
-    return alive2(stale);
+    return alive3(stale);
   }
   const other = callerCode(l.state);
-  if (other && other.device_code !== stale.device_code) return alive2(other);
-  const fresh = { ...code, interval_ms: Math.max(code.interval_ms, stale.interval_ms) };
+  if (other && other.device_code !== stale.device_code) return alive3(other);
+  const fresh2 = { ...code, interval_ms: Math.max(code.interval_ms, stale.interval_ms) };
   const tmp = `${freshPath()}.tmp-${process.pid}`;
   try {
-    writeFileSync5(tmp, JSON.stringify({ state: l.state, code: fresh }), { mode: 384 });
+    writeFileSync5(tmp, JSON.stringify({ state: l.state, code: fresh2 }), { mode: 384 });
     renameSync5(tmp, freshPath());
   } catch (e) {
     log(`fresh code for sign-in from another device not kept: ${errorMessage(e)}`);
-    return alive2(stale);
+    return alive3(stale);
   }
-  return fresh;
+  return fresh2;
 }
 
 // js/bridge/oauth/flow.ts
@@ -1913,6 +1912,11 @@ var DEVICE_FIRST_WAIT_MS = 1e4;
 var flows = /* @__PURE__ */ new Set();
 function pendingFlow() {
   return flows.size ? Promise.allSettled([...flows]).then(() => {
+  }) : null;
+}
+var clicked = /* @__PURE__ */ new Set();
+function clickPending() {
+  return clicked.size ? Promise.allSettled([...clicked]).then(() => {
   }) : null;
 }
 var loginLink = (port, key) => `http://127.0.0.1:${port}/login?k=${key}`;
@@ -1934,12 +1938,12 @@ function published(l) {
 function older(l) {
   return !!l?.authorize_url && !l.state;
 }
-var firstCode = (first2) => new Promise((resolve7) => {
-  const t = setTimeout(() => resolve7(void 0), DEVICE_FIRST_WAIT_MS);
+var firstCode = (first2) => new Promise((resolve8) => {
+  const t = setTimeout(() => resolve8(void 0), DEVICE_FIRST_WAIT_MS);
   t.unref?.();
   void first2.then((c) => {
     clearTimeout(t);
-    resolve7(c ?? void 0);
+    resolve8(c ?? void 0);
   });
 });
 function loginPublished() {
@@ -2081,6 +2085,7 @@ function runFlow(meta, cb, login, openTab) {
   const redirectUri = redirectFor(login.callback_port);
   const key = login.authorize_url.slice(linkPrefix(login.callback_port).length);
   cb.serveLogin(key, async () => {
+    if (flow) clicked.add(flow);
     const client = await ensureClient(meta, redirectUri);
     const current = readAuthLock();
     if (current && ours(current)) writeAuthLock({ ...current, client_id: client.client_id });
@@ -2159,7 +2164,10 @@ function runFlow(meta, cb, login, openTab) {
       releaseAuthLock(ours);
       if (RELEASE_GAP_MS) await sleep(RELEASE_GAP_MS);
       cb.close();
-      if (flow) flows.delete(flow);
+      if (flow) {
+        flows.delete(flow);
+        clicked.delete(flow);
+      }
     }
   })();
   flows.add(flow);
@@ -2367,13 +2375,13 @@ async function refreshOnce(meta, cur, proactive) {
 var ENDPOINT_CHECK_BUDGET_MS = 1e4;
 async function tokenEndpointMoved(meta) {
   try {
-    const fresh = await Promise.race([
+    const fresh2 = await Promise.race([
       discoverMeta(null),
       sleep(ENDPOINT_CHECK_BUDGET_MS).then(() => {
         throw new Error("discovery did not answer within the budget");
       })
     ]);
-    return fresh.as.token_endpoint !== meta.as.token_endpoint;
+    return fresh2.as.token_endpoint !== meta.as.token_endpoint;
   } catch {
     return true;
   }
@@ -2404,8 +2412,8 @@ async function refreshShared(meta, rejected, proactive, interactive) {
         try {
           const cur = loadStore().tokens;
           if (!cur?.refresh_token) throw new DeadGrantError("no refresh grant on disk");
-          const fresh = await refreshOnce(meta, cur, proactive);
-          if (fresh) return fresh;
+          const fresh2 = await refreshOnce(meta, cur, proactive);
+          if (fresh2) return fresh2;
         } catch (e) {
           if (e instanceof DeadGrantError) noteRefusal(e.message);
           throw e;
@@ -2998,8 +3006,8 @@ function roomOf(v) {
 var mineOf = (frame2) => [str(frame2.to_standing_id), str(frame2.to_standing)].filter(Boolean);
 function myRole(frame2, fields) {
   const ka = obj(fields.karta);
-  const seq2 = str(ka.seq);
-  if (!seq2 || seq2 !== str(frame2.karta_seq)) return false;
+  const seq3 = str(ka.seq);
+  if (!seq3 || seq3 !== str(frame2.karta_seq)) return false;
   const theirs = str(ka.realm);
   const mine = str(frame2.realm) || str(obj(frame2.room).realm);
   return !theirs || !mine || theirs === mine;
@@ -3096,8 +3104,8 @@ function roomKind(frame2) {
       count: wordsCount(n)
     });
     const aside = { pair, counts, run };
-    const words2 = run(counts ? 1 : 0);
-    return { kind, rule: "batch", words: words2, author, phase: null, known: true, aside };
+    const words3 = run(counts ? 1 : 0);
+    return { kind, rule: "batch", words: words3, author, phase: null, known: true, aside };
   }
   const pending2 = kind === "said" && f.body_pending === true && !str(f.body) && !str(line.done);
   const aborted = kind === "body" && fields.aborted === true;
@@ -3422,8 +3430,8 @@ async function post2(msg, onMessage) {
 }
 var reinit = scoped(() => ({ inFlight: null }));
 var reinitHooks = [];
-var onReinitialized = (hook) => {
-  reinitHooks.push(hook);
+var onReinitialized = (hook2) => {
+  reinitHooks.push(hook2);
 };
 async function reinitialize() {
   if (reinit.inFlight) return reinit.inFlight;
@@ -3450,7 +3458,7 @@ async function reinitialize() {
       await post2({ jsonrpc: "2.0", method: "notifications/initialized" }, () => {
       });
       log(`session re-established (${state.sessionId || "no session id"})`);
-      for (const hook of reinitHooks) void hook();
+      for (const hook2 of reinitHooks) void hook2();
     } finally {
       reinit.inFlight = null;
     }
@@ -3549,14 +3557,14 @@ function frameToText(frame2, raw) {
     const rk = roomKind(frame2);
     const line = rec(f.line);
     const entry = idOf(f.entry_id) || idOf(line.entry_id);
-    const words2 = rk ? rk.words : phrase("legacy", { kind: f.kind, stack: typeof f.stack === "string" ? f.stack : "" });
-    const author = rk?.author && !words2.includes(rk.author) ? rk.author : "";
+    const words3 = rk ? rk.words : phrase("legacy", { kind: f.kind, stack: typeof f.stack === "string" ? f.stack : "" });
+    const author = rk?.author && !words3.includes(rk.author) ? rk.author : "";
     const who = origin === "platform" ? "" : whoOf2(frame2, false);
     const by = [author, who].filter(Boolean).join(", ");
     const withReply = rk?.kind !== "body";
-    const head = `${caseHead(frame2, true)}${entry ? ` [${entry}]` : ""} ${words2}${by ? ` — ${by}` : ""}${tail(frame2, withReply)}`;
+    const head = `${caseHead(frame2, true)}${entry ? ` [${entry}]` : ""} ${words3}${by ? ` — ${by}` : ""}${tail(frame2, withReply)}`;
     const lines2 = [head];
-    if (text && !words2.includes(text.trim())) lines2.push(text);
+    if (text && !words3.includes(text.trim())) lines2.push(text);
     return lines2.join("\n");
   }
   const lines = [`${whoOf2(frame2, true) || "?"}${tail(frame2, true)}`];
@@ -3573,27 +3581,27 @@ function batchLine(frame2, run, withZachin = true) {
   const line = rec(f.line);
   const e = f.entry_id ?? line.entry_id ?? f.id;
   const entry = typeof e === "number" || typeof e === "string" ? e : "?";
-  const words2 = rk?.words ?? `${L("кадр", "frame")} ${typeof f.id === "string" ? f.id : "?"}`;
-  const author = rk?.author && !words2.includes(rk.author) ? ` — ${rk.author}` : "";
+  const words3 = rk?.words ?? `${L("кадр", "frame")} ${typeof f.id === "string" ? f.id : "?"}`;
+  const author = rk?.author && !words3.includes(rk.author) ? ` — ${rk.author}` : "";
   const flat = [...textOf(frame2).replace(/\s+/g, " ").trim()];
   const text = flat.length > BATCH_TEXT ? flat.slice(0, BATCH_TEXT).join("") + "…" : flat.join("");
-  const dup = !!text && words2.includes(text);
-  return `${pre}[${entry}] ${words2}${author}${tail(frame2, rk?.kind !== "body")}${text && !dup ? `: ${text}` : ""}`;
+  const dup = !!text && words3.includes(text);
+  return `${pre}[${entry}] ${words3}${author}${tail(frame2, rk?.kind !== "body")}${text && !dup ? `: ${text}` : ""}`;
 }
 function foldAsides(frames) {
   const asides = frames.map((f) => roomKind(f)?.aside ?? null);
-  const out6 = [];
+  const out7 = [];
   let n = 0;
   asides.forEach((a, i) => {
     if (!a) {
       n = 0;
-      out6.push(1);
+      out7.push(1);
       return;
     }
     n = (i > 0 && asides[i - 1]?.pair === a.pair ? n : 0) + (a.counts ? 1 : 0);
-    out6.push(asides[i + 1]?.pair === a.pair ? null : n);
+    out7.push(asides[i + 1]?.pair === a.pair ? null : n);
   });
-  return out6;
+  return out7;
 }
 function caseCountLine(frames) {
   const c = frames.length ? caseOf(frames[0]) : null;
@@ -3828,8 +3836,8 @@ var isWordOf = (held2, body, word2) => !!word2 && wordKey(held2, entryOf(held2))
 var HumanWords = class {
   words = /* @__PURE__ */ new Set();
   /** Слово человека в полёте — по его собственной записи. */
-  remember(said) {
-    const key = wordKey(said, entryOf(said));
+  remember(said2) {
+    const key = wordKey(said2, entryOf(said2));
     if (!key) return;
     this.words.add(key);
     const oldest = this.words.values().next();
@@ -3921,8 +3929,8 @@ function batchForWatchdogs(d, raw, frame2, emit2) {
     if (d.roomBatch.humanWords.forget(frame2, word2) && rk.phase !== "aborted") {
       human = true;
       frame2.origin = "human";
-      d.roomBatch.dropWord(frame2, word2, (said) => {
-        for (const k of deliveredKeys(said)) noteSeen(d.seenPath, k, d.seen);
+      d.roomBatch.dropWord(frame2, word2, (said2) => {
+        for (const k of deliveredKeys(said2)) noteSeen(d.seenPath, k, d.seen);
       });
     }
   }
@@ -4012,12 +4020,12 @@ function dropHoldRecord(key) {
 
 // js/bridge/sweep.ts
 function localSocketAlive(sock) {
-  return new Promise((resolve7) => {
-    if (process.platform !== "win32" && !existsSync(sock)) return resolve7(false);
+  return new Promise((resolve8) => {
+    if (process.platform !== "win32" && !existsSync(sock)) return resolve8(false);
     const probe = connectLocal(sock);
     const done = (v) => {
       probe.destroy();
-      resolve7(v);
+      resolve8(v);
     };
     probe.once("connect", () => done(true));
     probe.once("error", () => done(false));
@@ -4389,10 +4397,10 @@ var PART_MIN = 3;
 var CUT_ORDER = ["repo", "host", "model"];
 function fitName(parts) {
   const p = { ...parts };
-  const join22 = () => [p.host, p.repo, p.model].filter(Boolean).join(".").replace(/[-.]+$/, "");
+  const join25 = () => [p.host, p.repo, p.model].filter(Boolean).join(".").replace(/[-.]+$/, "");
   const cut = [];
   for (const k of CUT_ORDER) {
-    const over = join22().length - NAME_MAX;
+    const over = join25().length - NAME_MAX;
     if (over <= 0) break;
     const keep = Math.max(k === "model" ? 1 : PART_MIN, p[k].length - over);
     if (keep >= p[k].length) continue;
@@ -4400,7 +4408,7 @@ function fitName(parts) {
     cut.push(k);
   }
   return {
-    name: join22().slice(0, NAME_MAX).replace(/[-.]+$/, ""),
+    name: join25().slice(0, NAME_MAX).replace(/[-.]+$/, ""),
     cut
   };
 }
@@ -4699,13 +4707,13 @@ function drainSpool(path, feed) {
   const tick = () => {
     const all2 = entries(path);
     if (!all2) return void draining.delete(path);
-    const fresh = [];
+    const fresh2 = [];
     for (const e of all2.slice(taken)) {
       if (e.open) openedAt = e.open;
-      if (typeof e.frame === "string") fresh.push([e.frame, e.at ?? openedAt]);
+      if (typeof e.frame === "string") fresh2.push([e.frame, e.at ?? openedAt]);
     }
-    if (fresh.length) log(`handover spool: ${fresh.length} frame(s) of the outgoing daemon`);
-    for (const [raw, at2] of fresh) give(raw, at2);
+    if (fresh2.length) log(`handover spool: ${fresh2.length} frame(s) of the outgoing daemon`);
+    for (const [raw, at2] of fresh2) give(raw, at2);
     taken = all2.length;
     const opened = all2.filter((e) => e.open).length;
     const done = all2.filter((e) => e.done).length;
@@ -4777,14 +4785,14 @@ function keepUntilEvicted(holder, key, statusUrl2) {
   openSpool(path);
   let timer;
   let over = false;
-  const done = new Promise((resolve7) => {
+  const done = new Promise((resolve8) => {
     const end = (why, after2) => {
       if (over) return;
       over = true;
       clearTimeout(timer);
       closeSpool(path);
       log(`place ${key} handed over: ${why}`);
-      void Promise.resolve(after2).then(() => resolve7());
+      void Promise.resolve(after2).then(() => resolve8());
     };
     timer = setTimeout(() => {
       const cleared = statusUrl2 ? clearBusy(key, statusUrl2, door) : void 0;
@@ -4940,10 +4948,10 @@ var localListeners = () => doors().reduce((n, d) => n + d.clients.size, 0);
 function awaitHello(timeoutMs) {
   const seen = H2.door?.ring.find((r) => r.frame?.type === "hello")?.frame ?? null;
   if (seen) return Promise.resolve(seen);
-  return new Promise((resolve7) => {
+  return new Promise((resolve8) => {
     const done = (f) => {
       H2.helloWaiters.delete(done);
-      resolve7(f);
+      resolve8(f);
     };
     H2.helloWaiters.add(done);
     setTimeout(() => done(null), timeoutMs).unref();
@@ -5193,21 +5201,107 @@ var STATUS_ONLY_ARGS = /* @__PURE__ */ new Set([
 var unset = (v) => v == null || v === false || v === "";
 var takingArgs = (args) => Object.keys(args).filter((k) => !STATUS_ONLY_ARGS.has(k) && !unset(args[k]));
 
+// js/bridge/fields.ts
+var LIVE_STATE = "active";
+var isObj = (v) => !!v && typeof v === "object" && !Array.isArray(v);
+var is = {
+  str: (v) => v === void 0 || typeof v === "string",
+  num: (v) => v === void 0 || typeof v === "number" && Number.isFinite(v),
+  bool: (v) => v === void 0 || typeof v === "boolean",
+  strOrNull: (v) => v === void 0 || v === null || typeof v === "string"
+};
+var SEAT_KEYS = {
+  seat_id: is.str,
+  karta_seq: is.num,
+  karta_name: is.str,
+  standing: is.str,
+  listening: is.bool,
+  state: is.str,
+  pending: is.num,
+  inbound: is.str,
+  locale: is.str,
+  satellite_of: is.strOrNull,
+  realm: is.str,
+  doing: is.str,
+  opened: is.bool
+};
+var structuredOf = (reply2) => reply2?.result?.structuredContent;
+var incomplete = (sc) => isObj(sc) && (sc.incomplete === true || sc.dropped !== void 0 && sc.dropped !== 0);
+var said = /* @__PURE__ */ new Set();
+function fallback(what, sc) {
+  const why = sc === void 0 ? "no field — the prose template" : incomplete(sc) ? "fields incomplete — the prose template" : "field off its form — the prose template";
+  if (!said.has(`${what}|${why}`)) {
+    said.add(`${what}|${why}`);
+    log(`structuredContent ${what}: ${why}`);
+  }
+  return null;
+}
+var seat = (v) => isObj(v) && Object.entries(SEAT_KEYS).every(([k, ok]) => ok(v[k])) ? v : null;
+function seats(sc, action) {
+  const what = `iskron_channel ${action}`;
+  if (!isObj(sc) || incomplete(sc) || sc.action !== action || !Array.isArray(sc.seats))
+    return fallback(what, sc);
+  const out7 = sc.seats.map(seat);
+  return out7.every((s2) => s2) ? out7 : fallback(what, sc);
+}
+function boardField(sc) {
+  const list = seats(sc, "list");
+  if (!list) return null;
+  const folded = sc.folded;
+  const whole = list.every(
+    (s2) => typeof s2.karta_seq === "number" && typeof s2.standing === "string" && s2.standing.startsWith("@") && typeof s2.listening === "boolean"
+  );
+  if (!whole || !is.num(folded)) return fallback("iskron_channel list", sc);
+  return { seats: list, folded: typeof folded === "number" ? folded : 0 };
+}
+function seatField(sc, action) {
+  const list = seats(sc, action);
+  if (!list) return null;
+  return list.length === 1 ? list[0] : fallback(`iskron_channel ${action}`, sc);
+}
+
 // js/bridge/board.ts
+var fromField = (s2) => ({
+  karta: String(s2.karta_seq),
+  address: s2.standing ?? "",
+  rest: "",
+  incoming: s2.inbound ?? null,
+  id: s2.seat_id ?? null,
+  listening: s2.listening,
+  undelivered: s2.pending ?? 0,
+  // Живость — только status api; неизвестное или отсутствующее значение — не живой.
+  alive: s2.state === LIVE_STATE
+});
+function readBoard(a) {
+  const board = boardField(a.structured);
+  if (board) {
+    const entries3 = board.seats.map(fromField);
+    const declared = board.folded > 0 ? entries3.length + board.folded : null;
+    return { entries: entries3, recognized: true, declared };
+  }
+  const entries2 = parseBoard(a.text);
+  const header = FORM.boardHeader.exec(a.text);
+  const empty = FORM.boardEmpty.test(a.text);
+  return {
+    entries: entries2,
+    recognized: !!header || empty || entries2.length > 0,
+    declared: header?.[1] != null ? Number(header[1]) : null
+  };
+}
 function parseBoard(text) {
-  const out6 = [];
+  const out7 = [];
   for (const line of text.split("\n")) {
     const m = /^\s*#(\d+)\s.*?·\s(@\S+)\s—\s(.*)$/.exec(line);
     if (m) {
-      out6.push({ karta: m[1], address: m[2], rest: m[3], incoming: null, id: null });
+      out7.push({ karta: m[1], address: m[2], rest: m[3], incoming: null, id: null });
       continue;
     }
     const inc = /📥\s*(https?:\/\/\S+)/.exec(line);
-    if (inc && out6.length) out6[out6.length - 1].incoming = inc[1];
+    if (inc && out7.length) out7[out7.length - 1].incoming = inc[1];
     const id = /^\s*id\s+([0-9a-f][0-9a-f-]{7,})\s*$/i.exec(line);
-    if (id && out6.length) out6[out6.length - 1].id = id[1];
+    if (id && out7.length) out7[out7.length - 1].id = id[1];
   }
-  return out6;
+  return out7;
 }
 var nameOf = (address) => address.slice(address.indexOf(":") + 1);
 var FORM = {
@@ -5222,8 +5316,10 @@ var FORM = {
   hookState: /активен|пауза|\bactive\b|\bpaused\b/,
   seatId: /(?:id этого места|id of this (?:seat|place))[^\n]*\n\s*([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i
 };
-var listens = (e) => FORM.listens.test(e.rest);
+var listens = (e) => e.listening ?? FORM.listens.test(e.rest);
+var alive = (e) => e.alive ?? FORM.alive.test(e.rest);
 function undelivered(e) {
+  if (e.undelivered != null) return e.undelivered;
   const m = FORM.undelivered.exec(e.rest);
   return m ? Number(m[1]) : 0;
 }
@@ -5398,10 +5494,12 @@ function placeFields(place = {}) {
   };
 }
 var PLACE_ACTIONS = /* @__PURE__ */ new Set(["connect", "mint", "register"]);
-function noteLocaleEcho(args, text) {
+function noteLocaleEcho(args, text, structured) {
   const asked = args.locale;
   if (typeof asked !== "string" || P.localeWarned) return;
-  const echo = /\blocale\b["']?\s*[:=]\s*["']?([a-z]{2})\b/i.exec(text)?.[1]?.toLowerCase();
+  const action = String(args.action);
+  const field = PLACE_ACTIONS.has(action) ? seatField(structured, action)?.locale : void 0;
+  const echo = (field ?? /\blocale\b["']?\s*[:=]\s*["']?([a-z]{2})\b/i.exec(text)?.[1])?.toLowerCase();
   if (!echo || echo === asked) return;
   P.localeWarned = true;
   log(`locale: asked ${asked}, the server answered ${echo} — its prose stays in ${echo}`);
@@ -5413,6 +5511,21 @@ function withPlaceFields(args) {
     extras2.set(placeKey(args), { ...args.attrs });
   return { ...args, ...placeFields(args) };
 }
+
+// js/bridge/refusal.ts
+function refusalOf(reply2) {
+  const r = reply2?.result?._meta?.["iskron/refusal"];
+  if (!isObj(r) || !is.str(r.rule) || !is.num(r.status)) return null;
+  return {
+    ...typeof r.rule === "string" ? { rule: r.rule } : {},
+    ...typeof r.status === "number" ? { status: r.status } : {},
+    ...isObj(r.data) ? { data: r.data } : {}
+  };
+}
+var openedConcurrently = (reply2) => {
+  const r = reply2?.result?.isError ? refusalOf(reply2) : null;
+  return !!r && !r.rule && r.status === 409;
+};
 
 // js/bridge/standing.ts
 var SEAT_EXPIRED = () => L(
@@ -5472,6 +5585,12 @@ function ensureStanding() {
   return R2.inFlight;
 }
 async function replayRegister(place) {
+  const got = await registerOnce(place);
+  if (!openedConcurrently(got)) return got;
+  log("register refused by a concurrent opening (409, no rule) — registering again once");
+  return registerOnce(place);
+}
+async function registerOnce(place) {
   const id = `iskron-bridge-restanding-${++state.reinitCounter}`;
   let reply2 = null;
   await post2(
@@ -5510,7 +5629,7 @@ async function replayBeside() {
   return whole;
 }
 function standingIdOf(reply2) {
-  return FORM.seatId.exec(replyText(reply2))?.[1] ?? null;
+  return seatField(structuredOf(reply2), "register")?.seat_id ?? FORM.seatId.exec(replyText(reply2))?.[1] ?? null;
 }
 var replyText = (reply2) => {
   if (!reply2) return "";
@@ -5518,11 +5637,19 @@ var replyText = (reply2) => {
   const content = reply2.result?.content;
   return Array.isArray(content) ? content.map((c) => c?.text ?? "").join("\n") : JSON.stringify(reply2.result ?? "");
 };
-var seatIsGone = (reply2) => /no such standing|take it with connect|такого стояния|занять.*connect/i.test(replyText(reply2));
+var seatIsGone = (reply2) => {
+  const rule = refusalOf(reply2)?.rule;
+  if (rule) return rule === "standing_not_held";
+  return /no such standing|take it with connect|такого стояния|занять.*connect/i.test(
+    replyText(reply2)
+  );
+};
 var UNATTRIBUTED_CODE = /write_unattributed\w*|session_not_registered/;
 var UNATTRIBUTED_REFUSAL = /не зарегистрирован[аоы]? ни за каким стоянием|hold no registered standing/i;
 var isUnattributed = (reply2) => {
   if (!reply2) return false;
+  const rule = refusalOf(reply2)?.rule;
+  if (rule) return UNATTRIBUTED_CODE.test(rule);
   const text = replyText(reply2);
   if (UNATTRIBUTED_CODE.test(text)) return true;
   return !!reply2.result?.isError && UNATTRIBUTED_REFUSAL.test(text);
@@ -5717,7 +5844,7 @@ function crossPlaceRefusal(msg) {
   return refusal(msg, otherPlaceWord(led, asked, sameName));
 }
 var seq = 0;
-async function callTool(name, args) {
+async function ask(name, args) {
   const id = `${OWN_CALL_PREFIX}${++seq}`;
   const msg = {
     jsonrpc: "2.0",
@@ -5729,14 +5856,26 @@ async function callTool(name, args) {
   await post2(msg, (m) => {
     if (m.id === id) reply2 = m;
   });
-  let got = reply2;
+  return { msg, got: reply2 };
+}
+async function callTool(name, args) {
+  let { msg, got } = await ask(name, args);
+  if (name === "iskron_channel" && args.action === "register" && openedConcurrently(got))
+    ({ msg, got } = await ask(name, args));
   if (!got) return { text: L("ответа нет", "no reply"), isError: true };
+  const structured = structuredOf(got);
+  const refusal2 = refusalOf(got);
   if (name === "iskron_channel") {
-    noteLocaleEcho(args, replyText(got));
+    noteLocaleEcho(args, replyText(got), structured);
     if (args.action === "register") noteStanding(msg, got);
     if (args.action === "connect") got = absorbChannelReply(msg, got);
   }
-  return { text: replyText(got), isError: !!got.error || !!got.result?.isError };
+  return {
+    text: replyText(got),
+    isError: !!got.error || !!got.result?.isError,
+    ...structured !== void 0 ? { structured } : {},
+    ...refusal2 ? { refusal: refusal2 } : {}
+  };
 }
 var short = (s2, n = 300) => s2.length > n ? `${s2.slice(0, n)}…` : s2;
 var Q = scoped(() => ({ chain: Promise.resolve() }));
@@ -5836,7 +5975,7 @@ async function standStatusOnly(msg) {
     if (cwd !== process.cwd() && !isDirectory(cwd)) return { miss: { why: "cwd", cwd } };
     noteStandCwd(cwd);
   }
-  const [said, isError] = await statusWord(a.status.trim(), realm);
+  const [said2, isError] = await statusWord(a.status.trim(), realm);
   const heard = holdsStanding(r, k, n);
   const why = wasEvicted(r, k, n) ? L(
     "слух у другого держателя — вернуть его iskron_stand с take=true только по слову человека",
@@ -5845,7 +5984,7 @@ async function standStatusOnly(msg) {
     "сокет переоткрывается — строка опубликована, слух вернётся сам",
     "the socket is reopening — the line is published, the hearing comes back by itself"
   );
-  const body = isError || heard ? said : `${said}; ${why}`;
+  const body = isError || heard ? said2 : `${said2}; ${why}`;
   const listen = isError || !heard ? null : unheardListenBlock(realm);
   return { reply: replyTo(msg)(listen ? `${body}
 ${listen}` : body, isError) };
@@ -5894,18 +6033,18 @@ async function heldElsewhere(realm) {
   const dir = standingsDirOf(CFG.authDir);
   if (!existsSync3(dir)) return [];
   const anyRealm = !realm || /^r\d+$/.test(realm);
-  const out6 = [];
+  const out7 = [];
   for (const f of readdirSync4(dir).filter((x) => x.endsWith(".hold"))) {
     try {
       const rec4 = JSON.parse(readFileSync14(join11(dir, f), "utf8"));
       if (!rec4?.realm || rec4.karta == null) continue;
       if (!anyRealm && slugOf(String(rec4.realm)) !== slugOf(realm)) continue;
       const key = keyOf(rec4.realm, rec4.karta, rec4.name ?? "");
-      if (await localSocketAlive(socketPathOf(CFG.authDir, key))) out6.push({ ...rec4, key });
+      if (await localSocketAlive(socketPathOf(CFG.authDir, key))) out7.push({ ...rec4, key });
     } catch {
     }
   }
-  return out6;
+  return out7;
 }
 async function notHeldHere(realm) {
   const head = NOT_HELD();
@@ -6128,36 +6267,36 @@ var readBytes = (path) => {
 var readText = (path) => readBytes(path).toString("utf8");
 var versionOf = (path) => versionIn(readText(path));
 function syncHome(self = selfPath()) {
-  const out6 = { copied: [] };
+  const out7 = { copied: [] };
   const home = homeBridgePath();
   let mine;
   try {
     mine = readFileSync16(self);
   } catch {
-    return out6;
+    return out7;
   }
-  if (!versionIn(mine.toString("utf8"))) return out6;
-  if (self === home) return out6;
-  if (isSymlink(home)) return out6;
+  if (!versionIn(mine.toString("utf8"))) return out7;
+  if (self === home) return out7;
+  if (isSymlink(home)) return out7;
   const homeVersion = versionOf(home);
   const cmp = homeVersion ? compareVersions(VERSION, homeVersion) : 1;
   const healsDev = cmp === 0 && devBuildIn(readText(home)) && !mine.equals(readBytes(home));
   if ((cmp > 0 || healsDev) && releaseBuild()) {
     writeAtomic(home, mine);
-    out6.copied.push(home);
+    out7.copied.push(home);
     const plugin = opencodePluginPath();
     const packaged = join13(dirname8(self), "opencode-plugin.js");
     if (existsSync4(plugin) && existsSync4(packaged)) {
-      const fresh = readFileSync16(packaged);
-      if (!readFileSync16(plugin).equals(fresh)) {
-        writeAtomic(plugin, fresh);
-        out6.copied.push(plugin);
+      const fresh2 = readFileSync16(packaged);
+      if (!readFileSync16(plugin).equals(fresh2)) {
+        writeAtomic(plugin, fresh2);
+        out7.copied.push(plugin);
       }
     }
   } else if (cmp < 0 && homeVersion) {
-    out6.reexec = home;
+    out7.reexec = home;
   }
-  return out6;
+  return out7;
 }
 function reexec(path, argv2) {
   log(
@@ -6222,9 +6361,9 @@ async function downloadRelease(tag, version, authDir) {
   }
   const plugin = opencodePluginPath();
   if (existsSync4(plugin)) {
-    const fresh = await fetchText(`${base}/skills/establish-mcp/scripts/opencode-plugin.js`);
-    if (readFileSync16(plugin, "utf8") !== fresh) {
-      writeAtomic(plugin, fresh);
+    const fresh2 = await fetchText(`${base}/skills/establish-mcp/scripts/opencode-plugin.js`);
+    if (readFileSync16(plugin, "utf8") !== fresh2) {
+      writeAtomic(plugin, fresh2);
       written.push(plugin);
     }
   }
@@ -6460,7 +6599,7 @@ async function revokeSatellitePlaces(places) {
   const failed = new Set(places.map((s2) => s2.name));
   const revokes = places.map(
     (s2) => callTool("iskron_channel", { action: "revoke", realm: s2.realm, karta: s2.karta, standing: s2.name }).then((r) => {
-      if (!r.isError || ALREADY_CLOSED.test(r.text)) {
+      if (!r.isError || alreadyClosed(r)) {
         failed.delete(s2.name);
         return log(`revoked ${s2.name} in ${s2.realm} at the run's end (#6593)`);
       }
@@ -6474,6 +6613,7 @@ async function revokeSatellitePlaces(places) {
   return [...failed];
 }
 var ALREADY_CLOSED = /закрыт|снят|отозван|closed|revoked|not found|не найден/i;
+var alreadyClosed = (r) => r.refusal ? r.refusal.status === 410 || r.refusal.status === 404 && !r.refusal.rule : ALREADY_CLOSED.test(r.text);
 async function underCap(work) {
   let timer;
   const cap = new Promise((r) => timer = setTimeout(() => r("cap"), LEAVE_CAP_MS));
@@ -6502,7 +6642,7 @@ var allClaims = /* @__PURE__ */ new Map();
 var releaseOnExit = false;
 var LOCK_STALE_MS = 1e4;
 var LOCK_WAIT_MS = 3e3;
-function alive(pid) {
+function alive2(pid) {
   try {
     process.kill(pid, 0);
     return true;
@@ -6518,7 +6658,7 @@ function claimName(name) {
   } catch {
   }
   const me = sessionPid();
-  if (pid && pid !== me && alive(pid)) return false;
+  if (pid && pid !== me && alive2(pid)) return false;
   writeFileSync11(file, `${me}
 `, { mode: 384 });
   if (!releaseOnExit) process.once("exit", releaseAllClaims);
@@ -6552,7 +6692,7 @@ function lockOwner(lock) {
 }
 function abandoned(lock, owner) {
   const pid = owner ? Number(owner.split(" ")[0]) : 0;
-  if (pid && !alive(pid)) return true;
+  if (pid && !alive2(pid)) return true;
   try {
     return Date.now() - statSync5(lock).mtimeMs > LOCK_STALE_MS;
   } catch {
@@ -6727,7 +6867,7 @@ async function satelliteGate(a, realm, karta, asked) {
     );
   const s2 = state.standing;
   const led = s2 && !otherRealm(s2.realm, realm) ? s2.name ?? null : null;
-  const entries2 = parseBoard(b.text);
+  const { entries: entries2 } = readBoard(b);
   const [pick, unsure] = await underClaimLock(
     (claim) => pickSatellite(entries2, of, karta, led, claim)
   );
@@ -6742,7 +6882,7 @@ async function satelliteGate(a, realm, karta, asked) {
   if (!pick.callerId) {
     const k = await callTool("iskron_channel", { action: "list", realm, karta: pick.callerKarta });
     if (!k.isError)
-      pick.callerId = parseBoard(k.text).find((e) => e.address === pick.caller)?.id ?? null;
+      pick.callerId = readBoard(k).entries.find((e) => e.address === pick.caller)?.id ?? null;
   }
   noteSatelliteOf(pick.caller, pick.callerId);
   pick.notes.push(
@@ -6760,7 +6900,7 @@ async function satelliteGate(a, realm, karta, asked) {
     );
   return pick;
 }
-var ttlRefused = (text) => /ttl/i.test(text) || /(^|\D)4\d\d(\D|$)/.test(text);
+var ttlRefused = (a) => a.refusal?.rule ? a.refusal.rule === "ttl_out_of_range" : /ttl/i.test(a.text) || /(^|\D)4\d\d(\D|$)/.test(a.text);
 var PLACE_ACTIONS2 = /* @__PURE__ */ new Set(["connect", "mint", "register", "revoke"]);
 function satelliteChannelRefusal(args) {
   if (!CFG.satellite) return null;
@@ -7011,7 +7151,29 @@ function localLeave(msg) {
 import { statSync as statSync6 } from "node:fs";
 import { isAbsolute as isAbsolute2 } from "node:path";
 
-// js/bridge/hook.ts
+// js/bridge/hookfields.ts
+var hook = (v) => {
+  if (!isObj(v) || typeof v.active !== "boolean") return null;
+  if (!is.num(v.id) || !is.str(v.kind) || !is.num(v.target_karta_seq) || !is.bool(v.reaches_you))
+    return null;
+  const reaches = v.reaches;
+  if (reaches !== void 0) {
+    if (!Array.isArray(reaches)) return null;
+    if (!reaches.every((r) => isObj(r) && is.strOrNull(r.standing) && is.bool(r.you))) return null;
+  }
+  if (v.reaches_you === void 0 && reaches === void 0) return null;
+  return v;
+};
+function hooksField(sc, action = "list_webhooks") {
+  const what = `iskron_admin ${action}`;
+  if (!isObj(sc) || incomplete(sc) || sc.action !== action || !Array.isArray(sc.webhooks))
+    return fallback(what, sc);
+  const out7 = sc.webhooks.map(hook);
+  return out7.every((h) => h) ? out7 : fallback(what, sc);
+}
+var reachesYou = (h) => h.reaches_you ?? (h.reaches ?? []).some((r) => r.you === true);
+
+// js/bridge/hooklist.ts
 async function adminParamNames() {
   const id = `iskron-bridge-admin-schema-${++state.reinitCounter}`;
   let got = null;
@@ -7029,13 +7191,27 @@ async function adminParamNames() {
   if (!admin) return null;
   return new Set(Object.keys(admin.inputSchema?.properties ?? {}));
 }
+function fromProse(text, isError, name) {
+  const blocks = text.split(/\n(?=\s*#\d+\s*→)/).slice(1);
+  const recognized = !isError && (FORM.hooksHeader.test(text) && blocks.every((b) => FORM.hookState.test(b)) || FORM.hooksEmpty.test(text));
+  const nameRe = new RegExp(`:${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![A-Za-z0-9._-])`);
+  return {
+    recognized,
+    wakesMe: recognized && blocks.some((b) => FORM.hookActive.test(b) && nameRe.test(b))
+  };
+}
+async function readRoleHooks(realm, karta, name) {
+  const hooks = await callTool("iskron_admin", { action: "list_webhooks", realm, node_id: karta });
+  const fields = hooks.isError ? null : hooksField(hooks.structured);
+  const read = fields ? { recognized: true, wakesMe: fields.some((h) => h.active && reachesYou(h)) } : fromProse(hooks.text, hooks.isError, name);
+  return { ...read, text: hooks.text };
+}
+
+// js/bridge/hook.ts
 async function armRoleHook(p) {
   const { realm, karta, name } = p;
-  const hooks = await callTool("iskron_admin", { action: "list_webhooks", realm, node_id: karta });
-  const blocks = hooks.text.split(/\n(?=\s*#\d+\s*→)/).slice(1);
-  const recognized = !hooks.isError && (FORM.hooksHeader.test(hooks.text) && blocks.every((b) => FORM.hookState.test(b)) || FORM.hooksEmpty.test(hooks.text));
-  const nameRe = new RegExp(`:${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![A-Za-z0-9._-])`);
-  const wakesMe = recognized && blocks.some((b) => FORM.hookActive.test(b) && nameRe.test(b));
+  const hooks = await readRoleHooks(realm, karta, name);
+  const { recognized, wakesMe } = hooks;
   const H4 = L("Хук инбокса роли", "Role inbox hook");
   if (p.sub)
     return L(
@@ -7170,6 +7346,11 @@ var resumeWords = {
   noRecord: (key, cwd) => L(
     `своей записи держания ${key ? `с ключом ${key}` : `для каталога ${cwd ?? "?"}`} нет`,
     `there is no own hold record ${key ? `with the key ${key}` : `for the directory ${cwd ?? "?"}`}`
+  ),
+  /** Запись ушла по сроку (простой дольше 6 ч): место могло истечь у платформы и выйти из дел (#6649). */
+  rejoin: () => L(
+    `место могло истечь у платформы и выйти из своих дел — после ${via} проверь iskron_case(action="mine"); пусто — войди в свои дела заново (iskron_case action="join")`,
+    `the seat may have expired at the platform and left its cases — after ${via} check iskron_case(action="mine"); empty — join your cases again (iskron_case action="join")`
   ),
   foreignDir: (foreign) => L(
     `в каталоге лежат записи мест, на которых эта сессия не стояла (${foreign.join(", ")}); по одному каталогу они не берутся, место займёт ${via}`,
@@ -7318,6 +7499,12 @@ function afterResume(key) {
 }
 
 // js/bridge/resume.ts
+var RJ = scoped(() => ({ lapsed: false }));
+function takeLapsed() {
+  const was = RJ.lapsed;
+  RJ.lapsed = false;
+  return was;
+}
 async function deadPredecessor(realm, karta, name) {
   const key = keyOf(realm, karta, name);
   if (!readHoldRecord(key)) return false;
@@ -7398,17 +7585,17 @@ function recordsFor(sel) {
       const inDir = !!sel.cwd && rec4.cwd === sel.cwd;
       const stoodBy = !!sel.session && rec4.session === sel.session;
       if (!keyed2 && !inDir && !stoodBy) continue;
-      const fresh = readHoldRecord(key);
-      if (!fresh) continue;
+      const fresh2 = readHoldRecord(key);
+      if (!fresh2) continue;
       if (inDir) sameDir.push(key);
-      if (fresh.left) {
+      if (fresh2.left) {
         left.push(key);
         continue;
       }
-      const stoodHere = key === led || !!sel.session && fresh.session === sel.session;
-      if (keyed2) byKey.push(fresh);
-      else if (stoodHere) byCwd.push(fresh);
-      else if (!fresh.session) legacy.push(fresh);
+      const stoodHere = key === led || !!sel.session && fresh2.session === sel.session;
+      if (keyed2) byKey.push(fresh2);
+      else if (stoodHere) byCwd.push(fresh2);
+      else if (!fresh2.session) legacy.push(fresh2);
     } catch {
     }
   }
@@ -7443,14 +7630,18 @@ async function resumeBy(sel, register = true) {
   const { own: recs, sameDir, legacy: legacyRecs, left } = recordsFor(sel);
   if (!recs.length) {
     const legacy = await freeLegacy(legacyRecs);
-    const said = [resumeWords.noRecord(sel.key, sel.cwd)];
+    const said2 = [resumeWords.noRecord(sel.key, sel.cwd)];
+    if (sel.key) {
+      said2.push(resumeWords.rejoin());
+      RJ.lapsed = true;
+    }
     const foreign = sameDir.filter((k) => !left.includes(k));
-    if (foreign.length) said.push(resumeWords.foreignDir(foreign));
-    if (left.length) said.push(resumeWords.left(left));
-    if (legacy.length) said.push(legacyWord(legacy));
+    if (foreign.length) said2.push(resumeWords.foreignDir(foreign));
+    if (left.length) said2.push(resumeWords.left(left));
+    if (legacy.length) said2.push(legacyWord(legacy));
     return {
       resumed: false,
-      word: said.join(" — "),
+      word: said2.join(" — "),
       ...legacy.length ? { legacy } : {}
     };
   }
@@ -7473,7 +7664,12 @@ async function resumeBy(sel, register = true) {
     }
     const back = await resumeFromDisk(rec4.realm, rec4.karta, rec4.name);
     if (!back) {
-      skipped.push(readHoldRecord(key) ? resumeWords.noHello(key) : resumeWords.stale(key));
+      const kept = readHoldRecord(key);
+      skipped.push(kept ? resumeWords.noHello(key) : resumeWords.stale(key));
+      if (!kept) {
+        skipped.push(resumeWords.rejoin());
+        RJ.lapsed = true;
+      }
       continue;
     }
     const lines = [back.word];
@@ -7556,7 +7752,7 @@ async function runCheck(msg) {
   const board = await callTool("iskron_channel", { action: "list", realm: s2.realm });
   if (board.isError)
     return reply(msg, { holding: true, key, word: resumeWords.boardUnread(short(board.text)) });
-  const mine = parseBoard(board.text).find(
+  const mine = readBoard(board).entries.find(
     (e) => e.karta === String(s2.karta) && nameOf(e.address) === (s2.name ?? "")
   );
   if (!mine) return reply(msg, { holding: true, key, word: resumeWords.noSeatOnBoard() });
@@ -8036,11 +8232,7 @@ async function runStand(msg) {
     lines.push(SW.boardUnread(short(board.text)));
     return done(true);
   }
-  const entries2 = parseBoard(board.text);
-  const header = FORM.boardHeader.exec(board.text);
-  const declared = header?.[1] != null ? Number(header[1]) : null;
-  const empty = FORM.boardEmpty.test(board.text);
-  const recognized = !!header || empty || entries2.length > 0;
+  const { entries: entries2, recognized, declared } = readBoard(board);
   let own = entries2.filter((e) => e.karta === karta && nameOf(e.address) === name);
   const separate = derived && a.take !== true && name === derived ? await separatePlace(realm, karta, derived) : null;
   if (separate) {
@@ -8059,7 +8251,7 @@ async function runStand(msg) {
     const own2 = nameOf(e.address);
     if (!own2.startsWith(`${stem}.`)) return false;
     const third = own2.slice(stem.length + 1);
-    return branches.has(third) && FORM.alive.test(e.rest);
+    return branches.has(third) && alive(e);
   });
   for (const e of legacy) nameNotes.push(SW.legacy(e.address, realm, karta));
   const unread = declared != null && declared !== entries2.length;
@@ -8075,9 +8267,9 @@ async function runStand(msg) {
   let how;
   let heardHere;
   const listensElsewhere = !!mine && listens(mine) && !holdsStanding(realm, karta, name);
-  const fresh = !sat && a.take !== true && !holdsStanding(realm, karta, name) && !isParked(realm, karta, name);
-  const predecessorDead = fresh && listensElsewhere && await deadPredecessor(realm, karta, name);
-  const resumed = fresh && !listensElsewhere ? await resumeFromDisk(realm, karta, name) : null;
+  const fresh2 = !sat && a.take !== true && !holdsStanding(realm, karta, name) && !isParked(realm, karta, name);
+  const predecessorDead = fresh2 && listensElsewhere && await deadPredecessor(realm, karta, name);
+  const resumed = fresh2 && !listensElsewhere ? await resumeFromDisk(realm, karta, name) : null;
   const extra = [];
   let socketBefore = false;
   if (beside) {
@@ -8121,7 +8313,7 @@ async function runStand(msg) {
     if (typeof a.mute_siblings === "boolean") args.mute_siblings = a.mute_siblings;
     if (sat) args.ttl_seconds = SATELLITE_TTL_S;
     let c = await callTool("iskron_channel", args);
-    if (sat && c.isError && ttlRefused(c.text)) {
+    if (sat && c.isError && ttlRefused(c)) {
       extra.push(SW.ttlRefused(SATELLITE_TTL_S, short(c.text, 120)));
       delete args.ttl_seconds;
       c = await callTool("iskron_channel", args);
@@ -8130,7 +8322,7 @@ async function runStand(msg) {
       lines.push(SW.refused("connect", short(c.text)));
       return done(true);
     }
-    incoming = /https?:\/\/\S+\/channel\/in\/\S+/.exec(c.text)?.[0] ?? incoming;
+    incoming = seatField(c.structured, "connect")?.inbound ?? /https?:\/\/\S+\/channel\/in\/\S+/.exec(c.text)?.[0] ?? incoming;
     const r = await register();
     if (r.isError) {
       lines.push(SW.takenButRegister(short(r.text)));
@@ -8140,6 +8332,7 @@ async function runStand(msg) {
       if (k.startsWith(`${realm}|${karta}|${name}|`)) knocks.delete(k);
     heardHere = true;
     how = SW.howConnect(!!mine, listensElsewhere, a.take === true);
+    if (takeLapsed()) extra.push(`[iskron_stand] ${resumeWords.rejoin()}`);
   }
   lines.push(
     SW.head(mine?.address ?? name, karta, realm, how),
@@ -8320,8 +8513,8 @@ function keepHoldRecord() {
   const s2 = state.standing;
   const key = H2.currentKey;
   if (!s2 || !key || !H2.currentUrl) return;
-  const alive2 = !!H2.holder?.alive;
-  const at2 = alive2 ? Date.now() : Math.max(H2.holder?.heardAt ?? 0, H2.heardAt);
+  const alive3 = !!H2.holder?.alive;
+  const at2 = alive3 ? Date.now() : Math.max(H2.holder?.heardAt ?? 0, H2.heardAt);
   const ch = { url: H2.currentUrl, statusUrl: H2.currentStatusUrl, cwd: H2.standCwd };
   const was = readHoldRecord(key, true);
   if (was && at2 > (was.at ?? 0))
@@ -8341,7 +8534,7 @@ function keepHoldRecord() {
       false,
       at2
     );
-  if (!alive2) return;
+  if (!alive3) return;
   for (const p of extraPlaces()) {
     const r = readHoldRecord(p.door.key, true);
     if (r) rememberExtraStatus(p.door.key, { ...ch, cwd: ch.cwd ?? r.cwd }, r.status ?? "");
@@ -8386,11 +8579,11 @@ function noteServedTools(result) {
   const print = toolsPrint(result);
   if (print) T.served = print;
 }
-async function recheckTools(ask, emit2) {
+async function recheckTools(ask2, emit2) {
   if (!T.served) return;
-  const fresh = toolsPrint((await ask().catch(() => null))?.result);
-  if (!fresh || fresh === T.served) return;
-  T.served = fresh;
+  const fresh2 = toolsPrint((await ask2().catch(() => null))?.result);
+  if (!fresh2 || fresh2 === T.served) return;
+  T.served = fresh2;
   log("tool list changed under the re-opened session — telling the harness (tools/list_changed)");
   emit2({ jsonrpc: "2.0", method: "notifications/tools/list_changed" });
 }
@@ -8574,7 +8767,7 @@ async function deliverOne(msg) {
       await post2(msg, forward);
       const held2 = heldReply;
       if (held2 && msg.params?.name === "iskron_channel" && msg.params.arguments)
-        noteLocaleEcho(msg.params.arguments, replyText(held2));
+        noteLocaleEcho(msg.params.arguments, replyText(held2), structuredOf(held2));
       if (held2) {
         if (state.standing && isUnattributed(held2)) {
           state.standingSession = null;
@@ -8749,7 +8942,7 @@ function openIn(io, origin, scope) {
   );
   let leaving = null;
   let markEnded;
-  const ended = new Promise((resolve7) => markEnded = resolve7);
+  const ended = new Promise((resolve8) => markEnded = resolve8);
   const leave = bindScope(
     (why) => leaving ??= windDown(why).finally(markEnded)
   );
@@ -8766,7 +8959,7 @@ function openIn(io, origin, scope) {
       releaseSatelliteClaims();
       return;
     }
-    const flow = pendingFlow();
+    const flow = clickPending();
     if (flow) {
       log(
         `${why}, but an authorization flow is pending — staying up for the human's click, at most ${Math.round(ORPHAN_FLOW_MS / 1e3)}s`
@@ -9571,9 +9764,9 @@ function thinMain(argv2) {
     } else if (link) {
       const l = link;
       acks = !!l.welcome.ack;
-      await new Promise((resolve7) => {
-        byeDone = resolve7;
-        setTimeout(resolve7, BYE_MS).unref?.();
+      await new Promise((resolve8) => {
+        byeDone = resolve8;
+        setTimeout(resolve8, BYE_MS).unref?.();
         l.send({ t: "bye", why });
       });
       l.close();
@@ -9677,7 +9870,7 @@ function frame(data) {
   return Buffer.concat([head, mask, masked]);
 }
 function openDoor(socketPath, onMessage, onClose) {
-  return new Promise((resolve7, reject) => {
+  return new Promise((resolve8, reject) => {
     const req = request({
       socketPath,
       path: "/",
@@ -9720,7 +9913,7 @@ function openDoor(socketPath, onMessage, onClose) {
       });
       socket.on("close", () => onClose(L("сокет закрыт", "socket closed")));
       socket.on("error", (e) => onClose(e.message));
-      resolve7({
+      resolve8({
         send: (msg) => socket.write(frame(Buffer.from(JSON.stringify(msg)))),
         close: () => socket.end()
       });
@@ -9847,14 +10040,14 @@ var wd = {
 var ATTACH_WINDOW_MS = Number(process.env.ISKRON_WATCHDOG_ATTACH_MS) || 6e4;
 var RETRY_MS = 1e3;
 function parseWatchdogArgs(argv2) {
-  const out6 = { authDir: authDirFromEnv() };
+  const out7 = { authDir: authDirFromEnv() };
   for (let i = 0; i < argv2.length; i++) {
     const a = argv2[i];
-    if (a === "--auth-dir") out6.authDir = argv2[++i] ?? out6.authDir;
+    if (a === "--auth-dir") out7.authDir = argv2[++i] ?? out7.authDir;
     else if (a === "--lang") setLang(argv2[++i]);
-    else if (!a.startsWith("--") && !out6.key) out6.key = a;
+    else if (!a.startsWith("--") && !out7.key) out7.key = a;
   }
-  return out6;
+  return out7;
 }
 function resolveStanding(argv2) {
   const { key, authDir } = parseWatchdogArgs(argv2);
@@ -10114,19 +10307,19 @@ function runWatchdogCodex(argv2) {
 import { writeSync } from "node:fs";
 var LINE_MAX = 400;
 function wrapLines(text, max = LINE_MAX) {
-  const out6 = [];
+  const out7 = [];
   for (const line of text.split("\n")) {
     let rest2 = line;
     while ([...rest2].length > max) {
       const head = [...rest2].slice(0, max).join("");
       const cut = head.lastIndexOf(" ");
       const at2 = cut > max / 2 ? cut : head.length;
-      out6.push(rest2.slice(0, at2).trimEnd());
+      out7.push(rest2.slice(0, at2).trimEnd());
       rest2 = rest2.slice(at2).trimStart();
     }
-    out6.push(rest2);
+    out7.push(rest2);
   }
-  return out6;
+  return out7;
 }
 var plural = (n) => {
   const m10 = n % 10;
@@ -10177,7 +10370,7 @@ function runWatchdog(argv2) {
   const folded = [];
   const cases = /* @__PURE__ */ new Set();
   let head = "";
-  let fresh = false;
+  let fresh2 = false;
   const riders = [];
   const riderMarks = [];
   const hold = () => {
@@ -10213,11 +10406,11 @@ function runWatchdog(argv2) {
           if (ev.batch) {
             if (ev.batch.at === 1) {
               cases.clear();
-              fresh = false;
+              fresh2 = false;
             }
-            if (!again) fresh = true;
+            if (!again) fresh2 = true;
             const last = ev.batch.at >= ev.batch.of;
-            if (last && !fresh) head = "";
+            if (last && !fresh2) head = "";
             if (ev.batch.folded) {
               if (!again) folded.push(mark);
               if (last) hold();
@@ -10588,7 +10781,7 @@ var dw = {
 import { existsSync as existsSync8, readFileSync as readFileSync22 } from "node:fs";
 import { homedir as homedir7 } from "node:os";
 import { dirname as dirname9, join as join19 } from "node:path";
-function openCodeMcpEntries(out6) {
+function openCodeMcpEntries(out7) {
   const dirFiles = (d) => [
     join19(d, "opencode.json"),
     join19(d, "opencode.jsonc"),
@@ -10650,7 +10843,7 @@ function openCodeMcpEntries(out6) {
       sources.push([f, readFileSync22(f, "utf8")]);
     } catch {
       unreadable++;
-      out6(L(`OpenCode: ${f} не читается`, `OpenCode: ${f} is unreadable`));
+      out7(L(`OpenCode: ${f} не читается`, `OpenCode: ${f} is unreadable`));
     }
   }
   if (process.env.OPENCODE_CONFIG_CONTENT)
@@ -10664,7 +10857,7 @@ function openCodeMcpEntries(out6) {
         if (!kind) continue;
         found++;
         if (v.enabled === false) {
-          out6(
+          out7(
             L(
               `OpenCode: запись mcp «${name}» в ${file} ведёт Искрон, но выключена — не в игре`,
               `OpenCode: the mcp entry "${name}" in ${file} leads to Iskron but is disabled — not in play`
@@ -10672,7 +10865,7 @@ function openCodeMcpEntries(out6) {
           );
           continue;
         }
-        out6(
+        out7(
           kind === "bridge" ? L(
             `OpenCode: запись mcp «${name}» в ${file} зовёт ${bridgePath(v)} — похоже на мост поставки. Если это он, её тулы namespaced, а мост общий для сессий сервиса: запись может уйти под подписью соседней сессии. Тогда убери её из этого файла руками: у opencode mcp есть list, add, auth, logout — команды remove нет. Поверхность поставки это плагин`,
             `OpenCode: the mcp entry "${name}" in ${file} calls ${bridgePath(v)} — it looks like the delivery bridge. If it is, its tools are namespaced, and the bridge is shared by the service's sessions: the entry may go out under a neighbouring session's signature. Then remove it from this file by hand: opencode mcp has list, add, auth, logout — there is no remove command. The delivery surface is the plugin`
@@ -10684,11 +10877,11 @@ function openCodeMcpEntries(out6) {
       }
     } catch {
       unreadable++;
-      out6(L(`OpenCode: ${file} не читается`, `OpenCode: ${file} is unreadable`));
+      out7(L(`OpenCode: ${file} не читается`, `OpenCode: ${file} is unreadable`));
     }
   }
   if (!found)
-    out6(
+    out7(
       L(
         `OpenCode: записей mcp Искрона не нашёл${unreadable ? ` в том, что прочёл (${unreadable} файл(а) не разобрались — смотри строки выше)` : ""} — смотрел вверх от ${process.cwd()}, глобальный слой и переменные; запись в другом дереве этим не проверена, позови doctor из каталога проекта`,
         `OpenCode: found no Iskron mcp entries${unreadable ? ` in what I read (${unreadable} file(s) could not be parsed — see the lines above)` : ""} — looked upward from ${process.cwd()}, the global layer and variables; an entry in another tree is not checked by this, call doctor from the project directory`
@@ -10713,12 +10906,12 @@ function parseScalar(raw) {
   const s2 = raw.trim();
   if (s2.startsWith("[") && s2.endsWith("]")) return splitFlow(s2.slice(1, -1)).map(parseScalar);
   if (s2.startsWith("{") && s2.endsWith("}")) {
-    const out6 = {};
+    const out7 = {};
     for (const part of splitFlow(s2.slice(1, -1))) {
       const m = KEY.exec(part);
-      if (m) out6[unquoteKey(m[1].trim())] = m[2] === void 0 ? null : parseScalar(m[2]);
+      if (m) out7[unquoteKey(m[1].trim())] = m[2] === void 0 ? null : parseScalar(m[2]);
     }
-    return out6;
+    return out7;
   }
   if (s2.startsWith('"')) {
     try {
@@ -10832,9 +11025,9 @@ var SHELLS = /* @__PURE__ */ new Set(["sh", "bash", "zsh", "dash"]);
 var cmdBase = (c) => basename4(c.replace(/\\/g, "/")).replace(/\.exe$/i, "").toLowerCase();
 var isToolList = (v) => !!v && v.split(",").some((s2) => s2.trim().length > 0);
 function toolsTail(e) {
-  const words2 = SHELLS.has(cmdBase(e.command)) ? (e.args[e.args.indexOf("-c") + 1] ?? "").split(/\s+/).map((w) => w.replace(/^["']|["']$/g, "")) : e.args;
-  const at2 = words2.indexOf("--tools");
-  const v = at2 >= 0 ? words2[at2 + 1] : void 0;
+  const words3 = SHELLS.has(cmdBase(e.command)) ? (e.args[e.args.indexOf("-c") + 1] ?? "").split(/\s+/).map((w) => w.replace(/^["']|["']$/g, "")) : e.args;
+  const at2 = words3.indexOf("--tools");
+  const v = at2 >= 0 ? words3[at2 + 1] : void 0;
   return isToolList(v) ? ["--tools", v] : [];
 }
 function formOf(e) {
@@ -10933,7 +11126,7 @@ async function probeSatellite(label, e, cwd) {
     wake2?.();
   });
   const deadline = Date.now() + PROBE_MS;
-  const ask = async (id, method, params) => {
+  const ask2 = async (id, method, params) => {
     if (!exited)
       child.stdin.write(JSON.stringify({ jsonrpc: "2.0", id, method, params }) + "\n", () => {
       });
@@ -10945,7 +11138,7 @@ async function probeSatellite(label, e, cwd) {
     return replies.get(id) ?? null;
   };
   const tail2 = () => stderr.trim().split("\n").slice(-2).map((s2) => s2.slice(0, 300)).join(" | ");
-  const init = await ask(1, "initialize", {
+  const init = await ask2(1, "initialize", {
     protocolVersion: "2025-06-18",
     capabilities: {},
     clientInfo: { name: "iskron-doctor", version: "1" }
@@ -10986,7 +11179,7 @@ async function probeSatellite(label, e, cwd) {
       }
     );
     const info = init.result?.serverInfo ?? {};
-    const list = await ask(2, "tools/list", {});
+    const list = await ask2(2, "tools/list", {});
     const tools = list?.result?.tools ?? [];
     if (!list)
       findings.push(
@@ -11244,7 +11437,7 @@ function hasGrant() {
     return false;
   }
 }
-async function subagentsReport(out6) {
+async function subagentsReport(out7) {
   const root = projectRoot();
   const userDir = join20(homedir9(), ".claude", "agents");
   const atHome = resolve6(root) === resolve6(homedir9());
@@ -11257,10 +11450,10 @@ async function subagentsReport(out6) {
     ...agentFiles(join20(root, ".opencode", "agent"), "project")
   ];
   const osNote = process.env.ISKRON_DOCTOR_PLATFORM ? L(`ОС под суд: ${platform()}`, `OS under judgment: ${platform()}`) : platform();
-  out6(L(`субагенты: проект ${root} (${osNote})`, `subagents: project ${root} (${osNote})`));
+  out7(L(`субагенты: проект ${root} (${osNote})`, `subagents: project ${root} (${osNote})`));
   if (!claude.length && !opencode.length) {
     const dirs = `${join20(root, ".claude", "agents")}, ${userDir}, ${join20(root, ".opencode", "agents")}`;
-    out6(
+    out7(
       L(
         `  файлов агентов нет (${dirs}) — позови doctor из каталога проекта, если субагенты там`,
         `  no agent files (${dirs}) — call doctor from the project directory if the subagents are there`
@@ -11269,7 +11462,7 @@ async function subagentsReport(out6) {
     return;
   }
   for (const f of user.filter((f2) => shadowed.has(f2.agent)))
-    out6(
+    out7(
       L(
         `  ${f.path}: затенён файлом проекта с тем же именем «${f.agent}» — Claude Code берёт проектный`,
         `  ${f.path}: shadowed by the project file with the same name "${f.agent}" — Claude Code takes the project one`
@@ -11439,17 +11632,17 @@ ${readyEntry(
     }
     const where = r.f.scope === "user" ? L(" (пользовательский)", " (user)") : "";
     const named = r.names.length ? L(`запись «${r.names.join("», «")}»`, `entry "${r.names.join('", "')}"`) : L("без записи моста-спутника", "no satellite bridge entry");
-    out6(`  ${r.f.path}${where}: ${named}${r.lines.length ? "" : L(" — в порядке", " — fine")}`);
-    for (const l of seen) out6(`    ${l}`);
+    out7(`  ${r.f.path}${where}: ${named}${r.lines.length ? "" : L(" — в порядке", " — fine")}`);
+    for (const l of seen) out7(`    ${l}`);
     for (const l of r.lines) {
       const [head, ...rest2] = l.split("\n");
-      out6(`    ${todo()} ${head}`);
-      for (const b of rest2) out6(`      ${b}`);
+      out7(`    ${todo()} ${head}`);
+      for (const b of rest2) out7(`      ${b}`);
     }
   }
   if (claude.length) {
     const t = trustLine(root);
-    if (t && project.length) out6(`  ${todo()} ${t}`);
+    if (t && project.length) out7(`  ${todo()} ${t}`);
   }
   for (const f of opencode) {
     const keys = Object.keys(f.fm).filter((k) => k === "mcpServers" || k === "mcp");
@@ -11457,7 +11650,7 @@ ${readyEntry(
       `; НАДО: ключ ${keys.join(", ")} OpenCode в файле агента не читает → убери его`,
       `; TODO: the key ${keys.join(", ")} is not read by OpenCode in an agent file → remove it`
     ) : "";
-    out6(
+    out7(
       L(
         `  ${f.path}: OpenCode — мост-спутник даёт дочерней сессии плагин поставки (строка OpenCode выше), записи в файле не нужно${keyNote}`,
         `  ${f.path}: OpenCode — the delivery plugin gives the child session a satellite bridge (the OpenCode line above), no entry is needed in the file${keyNote}`
@@ -11783,14 +11976,286 @@ async function runDoctor(argv2) {
   await subagentsReport(out3);
 }
 
-// js/cli/update.ts
+// js/cli/rituals.ts
+import { mkdtempSync as mkdtempSync2, readdirSync as readdirSync9, realpathSync as realpathSync2, rmSync as rmSync3 } from "node:fs";
+import { tmpdir as tmpdir2 } from "node:os";
+import { join as join24, resolve as resolve7 } from "node:path";
+
+// js/cli/ritualprobe.ts
+import { mkdtempSync, rmSync as rmSync2, symlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join as join23 } from "node:path";
+import { pathToFileURL } from "node:url";
+
+// js/cli/ritualcalls.ts
+import { homedir as homedir11 } from "node:os";
+import { join as join22 } from "node:path";
+var memoryPath = join22(homedir11(), ".claude", "projects", "-probe", "memory", "MEMORY.md");
+var pushed = "To github.com:o/r.git\n   1234567..89abcde  feat/x -> feat/x";
+var seq2 = 0;
+var fresh = (kind) => `${kind}-${++seq2}`;
+var isPlain = (id) => id.startsWith("plain-");
+var calls = (sessionID) => ({
+  before: ["write", "edit"].map((tool) => ({
+    tool,
+    sessionID,
+    agent: "build",
+    messageID: "msg",
+    id: fresh(tool),
+    input: { filePath: memoryPath, content: "x" }
+  })),
+  plain: [
+    {
+      tool: "write",
+      sessionID,
+      agent: "build",
+      messageID: "msg",
+      id: fresh("plain"),
+      input: { filePath: "README.md", content: "x" }
+    }
+  ],
+  after: [
+    ["git push -u origin feat/x", pushed],
+    ["gh pr merge 12 --squash --delete-branch", ""]
+  ].map(([command, content]) => ({
+    tool: "bash",
+    sessionID,
+    agent: "build",
+    messageID: "msg",
+    id: fresh("bash"),
+    status: "completed",
+    input: { command },
+    result: { content, metadata: { exit: 0 } }
+  }))
+});
+var BROKEN = /* @__PURE__ */ new Set(["ReferenceError", "TypeError", "SyntaxError", "RangeError"]);
+async function runHooks(hooks, sessionID) {
+  const hit = [];
+  const broken = [];
+  const c = calls(sessionID);
+  for (const [name, inputs] of [
+    ["execute.before", c.before],
+    ["execute.before", c.plain],
+    ["execute.after", c.after]
+  ]) {
+    for (const input of inputs) {
+      const was = JSON.stringify(input);
+      const what = `${name} ${input.tool}${isPlain(input.id) ? " (not a memory path)" : ""}`;
+      for (const fn of hooks[name] ?? []) {
+        try {
+          await fn(input);
+        } catch (e) {
+          const err = e;
+          const said2 = `${what}: throw (${err?.name ?? "?"}: ${String(err?.message ?? e)})`;
+          hit.push(said2);
+          if (BROKEN.has(err?.name) || isPlain(input.id) || name === "execute.after")
+            broken.push(said2);
+        }
+      }
+      if (JSON.stringify(input) !== was) hit.push(`${what}: changed`);
+    }
+  }
+  return { hit, broken };
+}
+
+// js/cli/ritualprobe.ts
+var SETTLE_MS = 200;
+var SETUP_MS = 5e3;
+var loose = (fields = {}) => new Proxy(fields, {
+  get: (t, k) => k in t || typeof k === "symbol" || k === "then" ? t[k] : loose(async () => void 0)
+});
+var baseline = new Set(Reflect.ownKeys(globalThis));
+var dropPluginGlobals = () => {
+  const g = globalThis;
+  for (const k of Reflect.ownKeys(globalThis)) if (!baseline.has(k)) delete g[k];
+};
+var probes = 0;
+var created = (sessionID, directory) => {
+  const location = { directory };
+  return {
+    type: "session.created",
+    location,
+    data: { sessionID, projectID: `prj-${sessionID}`, location }
+  };
+};
+var settle = (ms3 = SETTLE_MS) => new Promise((r) => setTimeout(r, ms3));
+async function probeScope(file, own, foreign) {
+  const aliasRoot = mkdtempSync(join23(tmpdir(), "ritual-scope-alias-"));
+  try {
+    const alias = join23(aliasRoot, "own");
+    symlinkSync(own, alias, "dir");
+    return await probeWith(file, own, alias, foreign);
+  } finally {
+    rmSync2(aliasRoot, { recursive: true, force: true });
+  }
+}
+async function probeWith(file, own, alias, foreign) {
+  dropPluginGlobals();
+  const tag = ++probes;
+  const who = ["mine", "twin", "theirs"];
+  const id = Object.fromEntries(who.map((w) => [w, `${w}@${tag}`]));
+  const whoOf3 = (sessionID) => who.find((w) => id[w] === sessionID);
+  const dirs = { mine: own, twin: alias, theirs: foreign };
+  const writes = { mine: 0, twin: 0, theirs: 0 };
+  const hooks = {};
+  const reads = /* @__PURE__ */ new Set(["get", "list", "messages", "children", "status"]);
+  const session = new Proxy(
+    {},
+    {
+      get: (_, k) => {
+        if (typeof k === "symbol" || k === "then") return void 0;
+        if (k === "get")
+          return async ({ sessionID } = {}) => {
+            const who2 = whoOf3(sessionID);
+            return who2 ? { id: sessionID, location: { directory: dirs[who2] } } : null;
+          };
+        if (reads.has(k)) return async () => [];
+        return async (arg) => {
+          const who2 = whoOf3(arg?.sessionID);
+          if (who2) writes[who2] += 1;
+        };
+      }
+    }
+  );
+  const ctx = loose({
+    location: { directory: alias },
+    session,
+    tool: loose({ hook: async (name, fn) => void (hooks[name] ??= []).push(fn) }),
+    event: loose({
+      subscribe: ({ signal } = {}) => (async function* () {
+        for (const w of who) yield created(id[w], dirs[w]);
+        if (signal) await new Promise((r) => signal.addEventListener("abort", r));
+      })()
+    })
+  });
+  const mod = await import(`${pathToFileURL(file).href}?scope=${Date.now()}`);
+  const plugin = mod.default ?? Object.values(mod).find((v) => typeof v?.setup === "function");
+  if (typeof plugin?.setup !== "function") throw new Error("no default export { setup }");
+  let timer;
+  const cleanup = await Promise.race([
+    plugin.setup(ctx),
+    new Promise(
+      (_, no) => timer = setTimeout(
+        () => no(new Error(`setup did not return in ${SETUP_MS} ms`)),
+        SETUP_MS
+      )
+    )
+  ]).finally(() => clearTimeout(timer));
+  await settle();
+  const onEvents = { ...writes };
+  const mine = await runHooks(hooks, id.mine);
+  await settle(50);
+  if (typeof cleanup === "function") await cleanup();
+  return {
+    writes: onEvents,
+    broken: mine.broken,
+    ownBefore: mine.hit.some(
+      (h) => h.startsWith("execute.before write: throw") && !mine.broken.includes(h)
+    ),
+    ownAfter: mine.hit.includes("execute.after bash: changed")
+  };
+}
+
+// js/cli/rituals.ts
 var out4 = (s2) => {
+  process.stdout.write(s2 + "\n");
+};
+async function auditRepo(repo) {
+  const own = realpathSync2(repo);
+  const dir = join24(own, ".opencode", "plugins");
+  let names2;
+  try {
+    names2 = readdirSync9(dir).filter((n) => /\.(m?js|ts)$/.test(n));
+  } catch {
+    return [];
+  }
+  const foreign = realpathSync2(mkdtempSync2(join24(tmpdir2(), "ritual-scope-foreign-")));
+  const verdicts = [];
+  try {
+    for (const name of names2.sort()) {
+      const file = join24(dir, name);
+      try {
+        const scope = await probeScope(file, own, foreign);
+        const hole = scope.writes.theirs > 0 || lostSpelling(scope) || scope.broken.length > 0;
+        verdicts.push({ file, hole, scope });
+      } catch (e) {
+        verdicts.push({ file, hole: true, error: String(e?.message ?? e) });
+      }
+    }
+  } finally {
+    rmSync3(foreign, { recursive: true, force: true });
+  }
+  return verdicts;
+}
+var lostSpelling = (s2) => s2.writes.mine > 0 !== s2.writes.twin > 0;
+var RULE = () => L(
+  "правило — скилл iskronify, Шаг 4 «Хуки», образец — его references/harness-surfaces.md",
+  "the rule is skill iskronify, Step 4 «Хуки», the sample is its references/harness-surfaces.md"
+);
+var FIX_SCOPE = () => L(
+  `починка: подписка на поток событий берёт каталог события (location.directory события или его data), канонизирует его и ctx.location.directory (realpath, при ошибке — строка, без завершающего разделителя) и пропускает чужой; ${RULE()}`,
+  `fix: the event-stream subscriber takes the event's directory (location.directory of the event or its data), canonicalises it and ctx.location.directory (realpath, the string on failure, no trailing separator) and skips a foreign one; ${RULE()}`
+);
+var FIX_BROKEN = () => L(
+  `починка: хук тула исполняется в своей сессии как написан — имена определены, бросает только guard на пути памяти; ${RULE()}`,
+  `fix: a tool hook runs in its own session as written — its names defined, only the guard throws, on a memory path; ${RULE()}`
+);
+function words2(v) {
+  const s2 = v.scope;
+  if (v.error || !s2)
+    return [L(`не проверен  ${v.file}: ${v.error}`, `not checked  ${v.file}: ${v.error}`)];
+  if (!v.hole) {
+    const quiet = s2.writes.mine + s2.writes.twin === 0 ? L(" (в свою сессию не пишет)", " (writes nothing into its own session)") : "";
+    return [`ok  ${v.file}${quiet}`];
+  }
+  const lines = [L(`ДЫРА  ${v.file}`, `HOLE  ${v.file}`)];
+  if (s2.writes.theirs > 0)
+    lines.push(
+      L(
+        `  пишет в сессию чужого каталога: ${s2.writes.theirs} записей на session.created — та сессия получит адреса этого репо`,
+        `  writes into a session of another directory: ${s2.writes.theirs} writes on session.created — that session gets this repo's addresses`
+      )
+    );
+  if (lostSpelling(s2))
+    lines.push(
+      L(
+        `  своя сессия под другим написанием каталога без приветствия (настоящий путь: ${s2.writes.mine}, написание экземпляра: ${s2.writes.twin}) — каталоги сравниваются сырой строкой, а одна папка приходит то /tmp/…, то /private/tmp/…`,
+        `  its own session under another spelling of the folder gets no greeting (the real path: ${s2.writes.mine}, the instance's spelling: ${s2.writes.twin}) — directories are compared as raw strings, while one folder comes as /tmp/… and as /private/tmp/…`
+      )
+    );
+  if (s2.writes.theirs > 0 || lostSpelling(s2)) lines.push(`  ${FIX_SCOPE()}`);
+  for (const h of s2.broken)
+    lines.push(
+      L(
+        `  хук тула сломан в своей сессии (плагин исполнен как есть) — ${h}`,
+        `  a tool hook breaks in its own session (the plugin is run as is) — ${h}`
+      )
+    );
+  if (s2.broken.length) lines.push(`  ${FIX_BROKEN()}`);
+  return lines;
+}
+async function runCheckRituals(argv2) {
+  const json = argv2.includes("--json");
+  const repos = argv2.filter((a) => a !== "--json");
+  const verdicts = [];
+  for (const repo of repos.length ? repos : ["."])
+    verdicts.push(...await auditRepo(resolve7(repo)));
+  if (json) out4(JSON.stringify(verdicts));
+  else if (verdicts.length === 0)
+    out4(L("плагинов в .opencode/plugins нет", "no plugins in .opencode/plugins"));
+  else for (const v of verdicts) for (const line of words2(v)) out4(line);
+  const code = verdicts.some((v) => v.hole) ? 1 : 0;
+  process.stdout.write("", () => process.exit(code));
+}
+
+// js/cli/update.ts
+var out5 = (s2) => {
   process.stdout.write(s2 + "\n");
 };
 async function runUpdate(argv2) {
   setConfig(parseArgs(argv2));
-  out4(`iskron update — ${BUILD}`);
-  out4(
+  out5(`iskron update — ${BUILD}`);
+  out5(
     L(
       `сервер: ${CFG.serverUrl} (${serverSourceWord()}) — ${freshnessWord(CFG.serverUrl)}`,
       `server: ${CFG.serverUrl} (${serverSourceWord()}) — ${freshnessWord(CFG.serverUrl)}`
@@ -11798,7 +12263,7 @@ async function runUpdate(argv2) {
   );
   const latest = await checkLatest(CFG.authDir, true);
   if (!latest || !latest.version) {
-    out4(
+    out5(
       latest?.rate_limited ? L(
         `свежий релиз не узнан: ${latest.error} — лимит GitHub; повтори ${latest.rate_limited_until ? "после сброса" : "позже"}`,
         `latest release unknown: ${latest.error} — GitHub rate limit; retry ${latest.rate_limited_until ? "after the reset" : "later"}`
@@ -11812,40 +12277,40 @@ async function runUpdate(argv2) {
   }
   const cmp = compareVersions(latest.version, VERSION);
   const behind = cmp > 0 ? L(" — отстал", " — behind") : cmp < 0 ? L(" — новее релиза (сборка из ветки)", " — newer than the release (a branch build)") : L(" — не отстал", " — not behind");
-  out4(
+  out5(
     L(
       `свежий релиз: v${latest.version} (${latest.tag}); этот файл: v${VERSION}${behind}`,
       `latest release: v${latest.version} (${latest.tag}); this file: v${VERSION}${behind}`
     )
   );
-  if (latest.error) out4(L(`скачать не вышло: ${latest.error}`, `download failed: ${latest.error}`));
+  if (latest.error) out5(L(`скачать не вышло: ${latest.error}`, `download failed: ${latest.error}`));
   if (latest.downloaded.length)
-    for (const p of latest.downloaded) out4(L(`положено: ${p}`, `placed: ${p}`));
+    for (const p of latest.downloaded) out5(L(`положено: ${p}`, `placed: ${p}`));
   else
-    out4(
+    out5(
       L(
         `в дом ничего не клалось: ${homeBridgePath()} не старше релиза`,
         `nothing was placed in the home: ${homeBridgePath()} is not older than the release`
       )
     );
   harnessReport();
-  out4("");
-  out4(L("Дальше:", "Next:"));
+  out5("");
+  out5(L("Дальше:", "Next:"));
   const setup = setupPathOf(CFG.authDir);
   const fetched = latest.downloaded.includes(setup);
-  out4(
+  out5(
     L(
       `  1. Скиллы обновляет канал харнеса — порядок в свежем установщике ${setup}${fetched ? "" : " (не скачан — возьми из релиза)"}: прочти его и исполни шаги обновления для этого харнеса.`,
       `  1. Skills are updated by the harness channel — the order is in the fresh installer ${setup}${fetched ? "" : " (not downloaded — take it from the release)"}: read it and carry out the update steps for this harness.`
     )
   );
-  out4(
+  out5(
     L(
       "  2. Перезапусти сессии харнеса: мост, поднятый прежней сборкой, живёт до конца своей сессии.",
       "  2. Restart the harness sessions: a bridge started by the previous build lives until the end of its session."
     )
   );
-  out4(
+  out5(
     L(
       "  3. node ~/.iskron-bridge/iskron-bridge.mjs doctor — сверка, что стоит и работает.",
       "  3. node ~/.iskron-bridge/iskron-bridge.mjs doctor — a check of what is installed and working."
@@ -11854,7 +12319,7 @@ async function runUpdate(argv2) {
 }
 
 // js/cli/use.ts
-var out5 = (s2) => {
+var out6 = (s2) => {
   process.stdout.write(s2 + "\n");
 };
 function runUse(argv2) {
@@ -11869,7 +12334,7 @@ function runUse(argv2) {
   setConfig(parseArgs(rest2));
   const url = word2 ? resolveServerChoice(word2) : null;
   if (!url) {
-    out5(
+    out6(
       L(
         "use: назови адрес — en (mcp.iskron.ai), ru (mcp.iskron.ru) или полный URL инстанса",
         "use: name an address — en (mcp.iskron.ai), ru (mcp.iskron.ru) or the full URL of an instance"
@@ -11880,13 +12345,13 @@ function runUse(argv2) {
   }
   const path = writeServerChoice(CFG.authDir, url);
   setServerLang(url);
-  out5(
+  out6(
     L(
       `мост смотрит на ${url} — записано в ${path}; ${freshnessWord(url)}`,
       `the bridge looks at ${url} — written to ${path}; ${freshnessWord(url)}`
     )
   );
-  out5(
+  out6(
     L(
       "Действует с нового процесса моста: перезапусти сессии харнеса. Грант раздельный по адресу — первый вызов на новом адресе ведёт во вход.",
       "Takes effect from a new bridge process: restart the harness sessions. The grant is separate per address — the first call at a new address leads to login."
@@ -11906,6 +12371,7 @@ var usage = () => `iskron ${BUILD}
   node iskron.mjs doctor [server-url] [--auth-dir <dir>]
   node iskron.mjs update [--auth-dir <dir>]
   node iskron.mjs use <en|ru|url> [--auth-dir <dir>]   ${L("(en — mcp.iskron.ai, ru — mcp.iskron.ru)", "(en — mcp.iskron.ai, ru — mcp.iskron.ru)")}
+  node iskron.mjs check-rituals [${L("репо", "repo")}...] [--json]   ${L("(плагины .opencode/plugins не пишут в сессии чужих каталогов и не ломаются; без репо — текущий каталог)", "(.opencode/plugins write into no session of another directory and do not break; no repo — the current directory)")}
   node iskron.mjs daemon --auth-dir <dir>   ${L("(демон машины; его поднимает тонкий мост — мост по умолчанию)", "(the machine daemon; the thin bridge raises it — the default bridge)")}
   node iskron.mjs --version
   env: ISKRON_BRIDGE_TOKEN — ${L("личный токен вместо OAuth (или файл <auth-dir>/token)", "a personal token instead of OAuth (or the file <auth-dir>/token)")};
@@ -11915,7 +12381,7 @@ var usage = () => `iskron ${BUILD}
 var argv = process.argv.slice(2);
 var [first, ...rest] = argv;
 var LONG_LIVED = /* @__PURE__ */ new Set([void 0, "bridge", "watchdog", "watchdog-exit", "watchdog-codex"]);
-var longLived = LONG_LIVED.has(first) || first !== void 0 && !first.startsWith("--") && !["doctor", "update", "use", "daemon", "-h"].includes(first);
+var longLived = LONG_LIVED.has(first) || first !== void 0 && !first.startsWith("--") && !["doctor", "update", "use", "check-rituals", "daemon", "-h"].includes(first);
 if (longLived && !updatesDisabled() && !process.env.ISKRON_BRIDGE_REEXEC) {
   const sync = syncHome();
   for (const p of sync.copied)
@@ -11945,6 +12411,9 @@ function dispatch() {
       break;
     case "use":
       runUse(rest);
+      break;
+    case "check-rituals":
+      void runCheckRituals(rest);
       break;
     case "bridge":
       bridgeMain(rest);
