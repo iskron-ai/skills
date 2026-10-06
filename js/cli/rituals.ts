@@ -1,7 +1,8 @@
-// check-rituals — ревизор области плагинов ритуалов OpenCode в репо (граф
-// nks-dev, узел #6686): каждый .opencode/plugins/* грузится против подставного
-// ctx (cli/ritualprobe.ts) и не должен писать в сессию чужого каталога, бросать
-// или подменять вызов тула в ней. Код 1 — дыра или плагин не загрузился.
+// check-rituals — ревизор плагинов ритуалов OpenCode в репо (граф nks-dev,
+// узлы #6686, #5048): каждый .opencode/plugins/* грузится против подставного
+// ctx (cli/ritualprobe.ts); подписка на поток событий не пишет в сессию чужого
+// каталога, хуки тулов не ломаются в своей. Код 1 — дыра, поломка или плагин
+// не загрузился.
 import { mkdtempSync, readdirSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -35,7 +36,7 @@ export async function auditRepo(repo: string): Promise<Verdict[]> {
     const file = join(dir, name);
     try {
       const scope = await probeScope(file, own, foreign);
-      const hole = scope.writes.theirs > 0 || scope.foreign.length > 0 || scope.broken.length > 0;
+      const hole = scope.writes.theirs > 0 || scope.broken.length > 0;
       verdicts.push({ file, hole, scope });
     } catch (e) {
       verdicts.push({ file, hole: true, error: String((e as Error)?.message ?? e) });
@@ -44,10 +45,20 @@ export async function auditRepo(repo: string): Promise<Verdict[]> {
   return verdicts;
 }
 
-const FIX = (): string =>
+const RULE = (): string =>
   L(
-    "починка: событие и вызов тула берут каталог сессии (location.directory события; у хука тула — ctx.session.get(sessionID)) и сравнивают с ctx.location.directory, чужой — пропуск без броска и правки; правило — скилл iskronify, Шаг 4 «Хуки», образец — его references/harness-surfaces.md",
-    "fix: the event and the tool call take the session's directory (the event's location.directory; for a tool hook — ctx.session.get(sessionID)) and compare it with ctx.location.directory, a foreign one is skipped without a throw or an edit; the rule is skill iskronify, Step 4 «Хуки», the sample is its references/harness-surfaces.md",
+    "правило — скилл iskronify, Шаг 4 «Хуки», образец — его references/harness-surfaces.md",
+    "the rule is skill iskronify, Step 4 «Хуки», the sample is its references/harness-surfaces.md",
+  );
+const FIX_SCOPE = (): string =>
+  L(
+    `починка: подписка на поток событий берёт каталог события (location.directory события или его data), канонизирует его и ctx.location.directory (realpath, при ошибке — строка, без завершающего разделителя) и пропускает чужой; ${RULE()}`,
+    `fix: the event-stream subscriber takes the event's directory (location.directory of the event or its data), canonicalises it and ctx.location.directory (realpath, the string on failure, no trailing separator) and skips a foreign one; ${RULE()}`,
+  );
+const FIX_BROKEN = (): string =>
+  L(
+    `починка: хук тула исполняется в своей сессии как написан — имена определены, бросает только guard на пути памяти; ${RULE()}`,
+    `fix: a tool hook runs in its own session as written — its names defined, only the guard throws, on a memory path; ${RULE()}`,
   );
 
 function words(v: Verdict): string[] {
@@ -69,21 +80,15 @@ function words(v: Verdict): string[] {
         `  writes into a session of another directory: ${s.writes.theirs} writes on session.created — that session gets this repo's addresses`,
       ),
     );
+  if (s.writes.theirs > 0) lines.push(`  ${FIX_SCOPE()}`);
   for (const h of s.broken)
     lines.push(
       L(
-        `  хук сломан (плагин исполнен как есть) — ${h}`,
-        `  a hook is broken (the plugin is run as is) — ${h}`,
+        `  хук тула сломан в своей сессии (плагин исполнен как есть) — ${h}`,
+        `  a tool hook breaks in its own session (the plugin is run as is) — ${h}`,
       ),
     );
-  for (const h of new Set(s.foreign.filter((x) => !s.broken.includes(x))))
-    lines.push(
-      L(
-        `  хук тула в сессии чужого каталога — ${h}`,
-        `  a tool hook in a session of another directory — ${h}`,
-      ),
-    );
-  lines.push(`  ${FIX()}`);
+  if (s.broken.length) lines.push(`  ${FIX_BROKEN()}`);
   return lines;
 }
 

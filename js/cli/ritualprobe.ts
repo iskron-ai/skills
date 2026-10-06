@@ -1,8 +1,13 @@
-// Прогон области плагина ритуалов OpenCode (граф nks-dev, узел #6686). Поток
-// ctx.event.subscribe и хуки ctx.tool.hook — одни на сервер OpenCode машины:
-// плагин проекта видит создание сессий и вызовы тулов всех каталогов. Плагин
-// грузится против подставного ctx с двумя каталогами; каталог сессии у хука —
-// только через ctx.session.get(sessionID): вход хука каталога не несёт.
+// Прогон области плагина ритуалов OpenCode (граф nks-dev, узлы #6686, #5048).
+// Поток ctx.event.subscribe один на сервер OpenCode машины: экземпляр видит
+// session.created всех каталогов — его область и проверяется. Хуки ctx.tool.hook
+// будит только вызов в каталоге экземпляра (наблюдено на 2.0.24): они гоняются в
+// своей сессии и судятся лишь на поломку. Каталог экземпляра даётся через
+// символическую ссылку, а события несут настоящий путь: так же /tmp и
+// /private/tmp расходятся живьём, и сырое сравнение строк теряет свою сессию.
+import { mkdtempSync, symlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { type Fn, runHooks, type Who } from "./ritualcalls.ts";
@@ -10,13 +15,11 @@ import { type Fn, runHooks, type Who } from "./ritualcalls.ts";
 const SETTLE_MS = 200;
 const SETUP_MS = 5000;
 
-/** Чем плагин задел сессию: записи в неё, бросок или подмена результата хуком тула. */
+/** Чем плагин задел сессии: записи на событиях потока и поломки хуков тулов. */
 export interface Scope {
   /** Записи в сессию на session.created. */
   writes: Record<Who, number>;
-  /** Хук тула в сессии чужого каталога: «execute.before write» — бросил, «execute.after bash» — подменил. */
-  foreign: string[];
-  /** Хук сломан в любой сессии: ошибка кода (ReferenceError…), бросок на обычной записи или после вызова. */
+  /** Хук тула сломан в своей сессии: ошибка кода (ReferenceError…), бросок на обычной записи или после вызова. */
   broken: string[];
   /** В своей сессии guard бросил на записи в путь памяти. */
   ownBefore: boolean;
@@ -45,7 +48,7 @@ const created = (sessionID: Who, directory: string) => {
 
 const settle = (ms = SETTLE_MS) => new Promise((r) => setTimeout(r, ms));
 
-/** Грузит плагин из файла с ctx.location = own и проверяет его против сессий own и foreign. */
+/** Грузит плагин из файла с ctx.location — ссылкой на own — и проверяет его против сессий own и foreign. */
 export async function probeScope(file: string, own: string, foreign: string): Promise<Scope> {
   const dirs: Record<Who, string> = { mine: own, theirs: foreign };
   const writes: Record<Who, number> = { mine: 0, theirs: 0 };
@@ -68,8 +71,10 @@ export async function probeScope(file: string, own: string, foreign: string): Pr
       },
     },
   );
+  const alias = join(mkdtempSync(join(tmpdir(), "ritual-scope-alias-")), "own");
+  symlinkSync(own, alias, "dir");
   const ctx = loose({
-    location: { directory: own },
+    location: { directory: alias },
     session,
     tool: loose({ hook: async (name: string, fn: Fn) => void (hooks[name] ??= []).push(fn) }),
     event: loose({
@@ -102,20 +107,14 @@ export async function probeScope(file: string, own: string, foreign: string): Pr
   ]).finally(() => clearTimeout(timer));
   await settle();
   const onEvents = { ...writes };
-  const theirs = await runHooks(hooks, "theirs");
   const mine = await runHooks(hooks, "mine");
   await settle(50);
   if (typeof cleanup === "function") await cleanup();
-  const touched = theirs.hit;
-  if (writes.theirs > onEvents.theirs)
-    touched.push(`hooks wrote into the session: ${writes.theirs - onEvents.theirs}`);
-  const broken = [...new Set([...mine.broken, ...theirs.broken])];
   return {
     writes: onEvents,
-    foreign: touched,
-    broken,
+    broken: mine.broken,
     ownBefore: mine.hit.some(
-      (h) => h.startsWith("execute.before write: throw") && !broken.includes(h),
+      (h) => h.startsWith("execute.before write: throw") && !mine.broken.includes(h),
     ),
     ownAfter: mine.hit.includes("execute.after bash: changed"),
   };
