@@ -31,11 +31,11 @@
     ],
     "PreToolUse": [
       {
-        "matcher": "Write|Edit|MultiEdit",
+        "matcher": "Write|Edit|MultiEdit|NotebookEdit",
         "hooks": [
           {
             "type": "command",
-            "command": "jq -r '.tool_input.file_path // \"\"' | grep -Eq '\\.claude/projects/.*/memory/' && { echo 'BLOCKED: локальная память агента запрещена целиком, по директории (AGENTS.md, Persistence rules). Маршрутизируй факт: конвенции репо / код-факты → AGENTS.md; состояние проекта → NKS (nks-dev, #1506); пользовательский факт вне проекта, включая факты машины → личный граф человека @handle/mind (minding). Директория заморожена на стабе-запрете.' >&2; exit 2; } || exit 0"
+            "command": "jq -r '.tool_input.file_path // .tool_input.notebook_path // \"\"' | grep -Eq '\\.claude/projects/.*/memory/' && { echo 'BLOCKED: локальная память агента запрещена целиком, по директории (AGENTS.md, Persistence rules). Маршрутизируй факт: конвенции репо / код-факты → AGENTS.md; состояние проекта → NKS (nks-dev, #1506); пользовательский факт вне проекта, включая факты машины → личный граф человека @handle/mind (minding). Директория заморожена на стабе-запрете.' >&2; exit 2; } || exit 0"
           }
         ]
       }

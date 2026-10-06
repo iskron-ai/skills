@@ -21,7 +21,7 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -175,6 +175,47 @@ const settings = JSON.parse(readFileSync(settingsPath, "utf8"));
 const bashHooks = settings.hooks.PostToolUse.filter((g) => g.matcher === "Bash").flatMap(
   (g) => g.hooks,
 );
+
+// Memory-guard: every writing tool of Claude Code, its path where the tool keeps
+// it — file_path, and notebook_path for NotebookEdit (Agent SDK NotebookEditInput).
+// Judged in this repo's settings and in the hooks.md template that ships.
+const guardOf = (groups, tool) =>
+  groups
+    .filter((g) =>
+      (g.matcher ?? "")
+        .split(/[|,]/)
+        .map((s) => s.trim())
+        .includes(tool),
+    )
+    .flatMap((g) => g.hooks);
+const templateGuard = () => {
+  const md = readFileSync(templatePath, "utf8");
+  const block = md.split("## Memory-guard")[1].match(/```json\n([\s\S]*?)```/)[1];
+  return [JSON.parse(block)];
+};
+const memory = join(homedir(), ".claude", "projects", "-x", "memory");
+const guardCases = [
+  ["Write", { file_path: join(memory, "MEMORY.md") }, 2],
+  ["NotebookEdit", { notebook_path: join(memory, "n.ipynb"), new_source: "x" }, 2],
+  ["NotebookEdit", { notebook_path: join(tmpdir(), "n.ipynb"), new_source: "x" }, 0],
+  ["Write", { file_path: join(tmpdir(), "a.md") }, 0],
+];
+for (const [where, groups] of [
+  ["settings", () => settings.hooks.PreToolUse ?? []],
+  ["hooks.md", templateGuard],
+]) {
+  for (const [tool, toolInput, code] of guardCases) {
+    test(`memory-guard (${where}): ${tool} ${Object.values(toolInput)[0]} → ${code}`, () => {
+      const hooks = guardOf(groups(), tool);
+      assert.ok(hooks.length, `a PreToolUse hook matches ${tool}`);
+      const payload = JSON.stringify({ tool_name: tool, tool_input: toolInput });
+      const codes = hooks.map(
+        (h) => spawnSync("bash", ["-c", h.command], { input: payload, encoding: "utf8" }).status,
+      );
+      assert.ok(codes.includes(code) && codes.every((c) => c === 0 || c === code), codes);
+    });
+  }
+}
 
 // every `jq -e '<filter>'` a hook command runs (the push hook runs two)
 const filtersOf = (command) => [...command.matchAll(/jq -e '([^']+)'/g)].map((m) => m[1]);

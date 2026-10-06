@@ -36,10 +36,10 @@ def a: "(?:>&|\\\\.|\\x27[^\\x27]*\\x27|\\x22(?:[^\\x22\\\\]|\\\\.)*\\x22|[^;&|)
 **Свежесть ветки** — предложи pre-push-хук (или тот же гейт): `git fetch -q origin main && git merge-base --is-ancestor origin/main HEAD || echo 'ветка отстала от main — перебазируй до пуша'`.
 
 ## Memory-guard
-Под `"PreToolUse"` — собственный массив события. Блокирует (exit 2, сообщение в stderr); маршрут в личный граф стоит всегда:
+Под `"PreToolUse"` — собственный массив события. Блокирует (exit 2, сообщение в stderr); маршрут в личный граф стоит всегда. Путь — `tool_input.file_path` (Write, Edit, MultiEdit) или `tool_input.notebook_path` (NotebookEdit, поле по типам Agent SDK):
 ```json
-{ "matcher": "Write|Edit|MultiEdit", "hooks": [ { "type": "command",
-  "command": "jq -r '.tool_input.file_path // \"\"' | grep -Eq '\\.claude/projects/.*/memory/' && { echo 'BLOCKED: local agent memory is forbidden entirely, not by category (AGENTS.md, Persistence rules). Route the fact: repo conventions / code facts → AGENTS.md; project state, this repo'\\''s servers and dated duties → the project realm; a user-scoped fact no project owns → the personal realm @<handle>/mind (minding skill). This dir stays frozen at its prohibition stub.' >&2; exit 2; } || exit 0" } ] }
+{ "matcher": "Write|Edit|MultiEdit|NotebookEdit", "hooks": [ { "type": "command",
+  "command": "jq -r '.tool_input.file_path // .tool_input.notebook_path // \"\"' | grep -Eq '\\.claude/projects/.*/memory/' && { echo 'BLOCKED: local agent memory is forbidden entirely, not by category (AGENTS.md, Persistence rules). Route the fact: repo conventions / code facts → AGENTS.md; project state, this repo'\\''s servers and dated duties → the project realm; a user-scoped fact no project owns → the personal realm @<handle>/mind (minding skill). This dir stays frozen at its prohibition stub.' >&2; exit 2; } || exit 0" } ] }
 ```
 
 ## Spec-write (только interop `full`)
