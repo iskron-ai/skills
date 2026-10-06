@@ -34,7 +34,7 @@ import { L } from "../shared/lang.ts";
 import { isSatelliteOf, satelliteName, SUB_RE } from "../shared/satname.ts";
 import { scoped, sessionPid } from "../shared/scope.ts";
 import { type BoardEntry, nameOf, readBoard } from "./board.ts";
-import { callTool as call, short } from "./call.ts";
+import { type Answer, callTool as call, short } from "./call.ts";
 import { CFG } from "./config.ts";
 import { NAME_MAX, nameFault, normKarta } from "./names.ts";
 import { noteSatelliteOf } from "./placefields.ts";
@@ -407,11 +407,14 @@ export async function satelliteGate(
 }
 
 /**
- * Отказ ли connect именно окну простоя: ответ называет ttl либо несёт код 4xx.
- * Разброс окна и слова отказа держит контур — мост не угадывает их формулировку.
+ * Отказ ли connect именно окну простоя: правило отказа api (`ttl_out_of_range`),
+ * а без правила — ответ называет ttl либо несёт код 4xx. Разброс окна и слова
+ * отказа держит контур — мост не угадывает их формулировку.
  */
-export const ttlRefused = (text: string): boolean =>
-  /ttl/i.test(text) || /(^|\D)4\d\d(\D|$)/.test(text);
+export const ttlRefused = (a: Pick<Answer, "text" | "refusal">): boolean =>
+  a.refusal?.rule
+    ? a.refusal.rule === "ttl_out_of_range"
+    : /ttl/i.test(a.text) || /(^|\D)4\d\d(\D|$)/.test(a.text);
 
 const PLACE_ACTIONS = new Set(["connect", "mint", "register", "revoke"]);
 

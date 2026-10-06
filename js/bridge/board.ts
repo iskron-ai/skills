@@ -2,7 +2,7 @@
 // сервера (граф nks-dev: #4514), разобранная по наблюдённой форме: строка места
 // `#N … · @handle:name — …`, за ней `📥 адрес`. Управляющие действия идут только
 // по распознанной однозначной форме.
-import { type PlaceField, placesField } from "./fields.ts";
+import { boardField, LIVE_STATE, type Seat } from "./fields.ts";
 
 export interface BoardEntry {
   karta: string;
@@ -21,26 +21,31 @@ export interface Board {
   entries: BoardEntry[];
   /** Форма узнана: поля, шапка, фраза пустой доски или хоть одно место. */
   recognized: boolean;
-  /** Счёт мест в шапке прозы; у полей — null: массив сверки не требует. */
+  /** Счёт мест в шапке прозы; у полей — со свёрнутыми (folded), без них null: массив сверки не требует. */
   declared: number | null;
 }
 
-const fromField = (p: PlaceField): BoardEntry => ({
-  karta: String(p.karta),
-  address: p.address,
+const fromField = (s: Seat): BoardEntry => ({
+  karta: String(s.karta_seq),
+  address: s.standing ?? "",
   rest: "",
-  incoming: p.inbox,
-  id: p.id,
-  listening: p.listening,
-  undelivered: p.undelivered,
-  // Доска перечисляет живые места: без отдельного признака место живо.
-  alive: p.alive ?? true,
+  incoming: s.inbound ?? null,
+  id: s.seat_id ?? null,
+  listening: s.listening,
+  undelivered: s.pending ?? 0,
+  // Живость — только status api; неизвестное или отсутствующее значение — не живой.
+  alive: s.state === LIVE_STATE,
 });
 
 /** Ответ iskron_channel list: поля, если сервер их дал по форме, иначе проза. */
 export function readBoard(a: { text: string; structured?: unknown }): Board {
-  const places = placesField(a.structured);
-  if (places) return { entries: places.map(fromField), recognized: true, declared: null };
+  const board = boardField(a.structured);
+  if (board) {
+    const entries = board.seats.map(fromField);
+    // Свёрнутые места доска не перечислила — как шапка прозы, чей счёт не сошёлся.
+    const declared = board.folded > 0 ? entries.length + board.folded : null;
+    return { entries, recognized: true, declared };
+  }
   const entries = parseBoard(a.text);
   const header = FORM.boardHeader.exec(a.text);
   // Пустой граф — законная пустота; наблюдённые фразы держит узел формы доски (#4514).

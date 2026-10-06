@@ -326,7 +326,7 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
     if (typeof a.mute_siblings === "boolean") args.mute_siblings = a.mute_siblings;
     if (sat) args.ttl_seconds = SATELLITE_TTL_S; // приглашения спутнику не переживают прогон (#6001, условие а)
     let c = await call("iskron_channel", args); // новый сокет держатель берёт сам и заново: кольцо кадров чистое
-    if (sat && c.isError && ttlRefused(c.text)) {
+    if (sat && c.isError && ttlRefused(c)) {
       // Разброс окна держит контур; вне его — место всё же нужно прогону, окно — умолчание контура.
       extra.push(SW.ttlRefused(SATELLITE_TTL_S, short(c.text, 120)));
       delete args.ttl_seconds;
@@ -337,7 +337,7 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
       return done(true);
     }
     incoming =
-      seatField(c.structured, "connect")?.inbox ??
+      seatField(c.structured, "connect")?.inbound ??
       /https?:\/\/\S+\/channel\/in\/\S+/.exec(c.text)?.[0] ??
       incoming;
     const r = await register();
@@ -383,7 +383,6 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
       karta,
       name,
       incoming,
-      id: standingIdIn(realm),
       heardHere,
       sub,
       beside: !!main && otherRealm(realm, main.realm), // место на канале, открытом в другом графе

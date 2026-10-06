@@ -9,7 +9,7 @@
 import { L } from "../shared/lang.ts";
 import { FORM } from "./board.ts";
 import { callTool as call, short } from "./call.ts";
-import { type HookField, hooksField } from "./fields.ts";
+import { hooksField, reachesYou } from "./fields.ts";
 import { post, state } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
 
@@ -44,8 +44,6 @@ export interface HookPlace {
   name: string;
   /** входящий адрес места — только у места графа, где открыт канал */
   incoming: string | null;
-  /** id места из register — им поля списка хуков называют, кого хук будит */
-  id: string | null;
   heardHere: boolean;
   /** отдельное место имя.N — хук роли ему не взводится */
   sub: boolean;
@@ -54,15 +52,6 @@ export interface HookPlace {
   /** граф, где открыт канал (основное место) — для слова об адресе */
   channelRealm: string;
 }
-
-/**
- * Будит ли хук из полей это место: хук на канал доставляет местам роли этого
- * графа на живых сокетах; прочий — по id места либо по его входящему адресу.
- */
-const wakes = (h: HookField, p: HookPlace): boolean =>
-  h.target.kind === "channel" ||
-  (!!p.id && h.target.standing_id === p.id) ||
-  (!!p.incoming && h.target.url === p.incoming);
 
 /** Список хуков прозой: узнан ли и будит ли хук место с этим именем. */
 function fromProse(
@@ -91,7 +80,7 @@ export async function armRoleHook(p: HookPlace): Promise<string> {
   const hooks = await call("iskron_admin", { action: "list_webhooks", realm, node_id: karta });
   const fields = hooks.isError ? null : hooksField(hooks.structured);
   const { recognized, wakesMe } = fields
-    ? { recognized: true, wakesMe: fields.some((h) => h.active && wakes(h, p)) }
+    ? { recognized: true, wakesMe: fields.some((h) => h.active && reachesYou(h)) }
     : fromProse(hooks.text, hooks.isError, name);
   const H = L("Хук инбокса роли", "Role inbox hook");
   if (p.sub)

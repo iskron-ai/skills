@@ -4,7 +4,7 @@
 import { L } from "../shared/lang.ts";
 import { scoped } from "../shared/scope.ts";
 import { absorbChannelReply } from "./absorb.ts";
-import { structuredOf } from "./fields.ts";
+import { type Refusal, refusalOf, structuredOf } from "./fields.ts";
 import { holdsChannel, ledKey } from "./hold.ts";
 import { keyOf } from "./holdrecord.ts";
 import { normKarta, normName } from "./names.ts";
@@ -155,6 +155,8 @@ export interface Answer {
   isError: boolean;
   /** structuredContent ответа как есть (fields.ts); нет у сервера — нет и здесь. */
   structured?: unknown;
+  /** _meta["iskron/refusal"] отказа по форме (fields.ts). */
+  refusal?: Refusal;
 }
 
 let seq = 0;
@@ -174,6 +176,7 @@ export async function callTool(name: string, args: Record<string, unknown>): Pro
   let got = reply as JsonRpcMessage | null;
   if (!got) return { text: L("ответа нет", "no reply"), isError: true };
   const structured = structuredOf(got);
+  const refusal = refusalOf(got);
   if (name === "iskron_channel") {
     noteLocaleEcho(args, replyText(got), structured);
     if (args.action === "register") noteStanding(msg, got);
@@ -183,6 +186,7 @@ export async function callTool(name: string, args: Record<string, unknown>): Pro
     text: replyText(got),
     isError: !!got.error || !!got.result?.isError,
     ...(structured !== undefined ? { structured } : {}),
+    ...(refusal ? { refusal } : {}),
   };
 }
 

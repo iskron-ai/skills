@@ -3491,26 +3491,27 @@ test("satellite: iskron_stand with status and satellite_of on the held .sub-N se
 });
 
 // Поля structuredContent вместо прозы (#6637, дело №186): сервер кладёт их рядом с
-// текстом, и мост читает поле, когда оно есть и по форме, — проза тогда хоть на
-// другом языке. Без полей — прежний шаблон и строка в лог.
+// текстом ключами api ({action, seats[]}, {action, webhooks[]}, отказ —
+// _meta["iskron/refusal"]), и мост читает поле, когда оно есть и по форме, — проза
+// тогда хоть на другом языке. Без полей — прежний шаблон и строка в лог.
 test("structuredContent: board, register, connect and hook fields carry iskron_stand through prose of a form the bridge does not know", async (t) => {
   const { fake, bridge } = await ready(t);
   await fake.control({ structured: true, garble: true });
   const stand = (args) => bridge.call("tools/call", { name: "iskron_stand", arguments: args });
   const first = await stand({ realm: "nks-dev", karta: 931, name: "proba" });
   assert.ok(!first.result?.isError, `${textOf(first)}\n${bridge.stderr}`);
-  // Входящий адрес — из поля inbox connect: в прозе его нет.
+  // Входящий адрес — из seats[0].inbound connect: в прозе его нет.
   assert.match(textOf(first), /Хук инбокса роли: взведён на входящий адрес места/, textOf(first));
   assert.equal(
     fake.state.webhooks.at(-1)?.url,
     `${fake.mcpUrl.replace(/\/mcp$/, "")}/api/channel/in/mailbox-proba`,
   );
-  // Своё место на доске полей — слушает этот мост: только register; хук будит его по standing_id.
+  // Своё место на доске полей — слушает этот мост: только register; хук будит его — reaches_you.
   const again = await stand({ realm: "nks-dev", karta: 931, name: "proba" });
   assert.match(textOf(again), /Хук инбокса роли: стоит и будит это стояние/, textOf(again));
   assert.equal(fake.state.counts.connect, 1, "the held place is not rotated");
   assert.equal(fake.state.counts.webhooks_added, 1, "no second hook");
-  // id места рядом — из поля standing_id register: занятость доходит.
+  // id места рядом — из seats[0].seat_id register: занятость доходит.
   const beside = await stand({ realm: "@nks/drugoy", karta: 48, name: "proba-b" });
   assert.ok(!beside.result?.isError, textOf(beside));
   assert.doesNotMatch(textOf(beside), /register id места не назвал/, textOf(beside));
@@ -3563,6 +3564,73 @@ test("structuredContent: without fields the prose path stands and the log says s
   );
 });
 
+// Живость места — только status api (state): иное значение живым не читается.
+test("structuredContent: a seat of the former name is alive only by state active — another state is not", async (t) => {
+  const repo = mkdtempSync(join(tmpdir(), "iskron-legacy-"));
+  const g = (...a) =>
+    execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...a], { cwd: repo });
+  g("init", "-q", "-b", "main");
+  g("commit", "-q", "--allow-empty", "-m", "x");
+  const { fake, bridge } = await ready(t);
+  const args = { realm: "nks-dev", karta: 931, name: "h.r.opus", cwd: repo };
+  await fake.control({
+    structured: true,
+    places: [{ karta: "931", name: "h.r.main", listening: false, state: "expired" }],
+  });
+  const off = await bridge.call("tools/call", { name: "iskron_stand", arguments: args });
+  assert.ok(!off.result?.isError, textOf(off));
+  assert.doesNotMatch(textOf(off), /место прежнего имени/, textOf(off));
+  await fake.control({
+    places: [{ karta: "931", name: "h.r.main", listening: false, state: "active" }],
+  });
+  const on = await bridge.call("tools/call", { name: "iskron_stand", arguments: args });
+  assert.match(textOf(on), /место прежнего имени @tester:h\.r\.main/, textOf(on));
+});
+
+// Отказ — правилом api (_meta["iskron/refusal"].rule), проза ему не нужна.
+test("structuredContent: an unattributed refusal is told by its rule — the bridge re-binds and repeats; another rule is not repeated", async (t) => {
+  const { fake, bridge } = await ready(t);
+  const stood = await bridge.call("tools/call", {
+    name: "iskron_stand",
+    arguments: { realm: "nks-dev", karta: 931, name: "proba" },
+  });
+  assert.ok(!stood.result?.isError, textOf(stood));
+  const send = (text) =>
+    bridge.call("tools/call", {
+      name: "iskron_channel",
+      arguments: { realm: "nks-dev", action: "send", karta: 931, standing: "proba", text },
+    });
+  await fake.control({ structured: true, garble: true, unbind: true });
+  const regs = fake.state.counts.register_standing;
+  const ok = await send("первое");
+  assert.ok(!ok.result?.isError, `${textOf(ok)}\n${bridge.stderr}`);
+  assert.ok(fake.state.counts.register_standing > regs, "re-bound by the rule");
+  await fake.control({ garble: false, unbind: true, unattributed_rule: "standing_required" });
+  const before = fake.state.counts.register_standing;
+  const other = await send("второе");
+  assert.equal(other.result?.isError, true, textOf(other));
+  assert.equal(fake.state.counts.register_standing, before, "another rule buys no register");
+});
+
+test("satellite: a connect refusal is the window's only by the rule ttl_out_of_range — another rule is not retried without ttl", async (t) => {
+  const fake = await withCaller(t);
+  await fake.control({ structured: true, garble: true, connect_refuse_ttl: "x" });
+  const sat = await satelliteBridge(t, fake);
+  const r = await standAs(sat, SAT_ARGS);
+  assert.ok(!r.result?.isError, `${textOf(r)}\n${sat.stderr}`);
+  assert.equal(fake.state.counts.ttl_refused, 1, "the ttl was offered once");
+  const fake2 = await withCaller(t);
+  await fake2.control({
+    structured: true,
+    connect_refuse_ttl: "Отказано (422): окно простоя вне разброса контура",
+    connect_refuse_rule: "satellite_of_unknown",
+  });
+  const sat2 = await satelliteBridge(t, fake2);
+  const r2 = await standAs(sat2, SAT_ARGS);
+  assert.equal(r2.result?.isError, true, textOf(r2));
+  assert.equal(fake2.state.counts.ttl_refused, 1, "no retry without ttl");
+});
+
 for (const [how, env] of [
   ["the full bridge", {}],
   [
@@ -3603,7 +3671,7 @@ test("outputSchema rides tools/list to the harness through the narrowing and the
   });
   const tools = SERVER_TOOLS.map((x) =>
     x.name === "iskron_channel"
-      ? { ...x, outputSchema: schema("places") }
+      ? { ...x, outputSchema: schema("seats") }
       : x.name === "iskron_add_vimarsha"
         ? { ...x, outputSchema: schema("nodes") }
         : x,
@@ -3618,7 +3686,7 @@ test("outputSchema rides tools/list to the harness through the narrowing and the
   const list = await bridge.call("tools/list");
   const byName = Object.fromEntries((list.result?.tools ?? []).map((x) => [x.name, x]));
   assert.ok(!("mute_siblings" in byName.iskron_channel.inputSchema.properties), "narrowed");
-  assert.deepEqual(byName.iskron_channel.outputSchema, schema("places"));
+  assert.deepEqual(byName.iskron_channel.outputSchema, schema("seats"));
   assert.ok(byName.iskron_add_vimarsha.description.startsWith("[мост]"), "moment line");
   assert.deepEqual(byName.iskron_add_vimarsha.outputSchema, schema("nodes"));
 });

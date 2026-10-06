@@ -2,7 +2,7 @@ import { L } from "../shared/lang.ts";
 import { scoped } from "../shared/scope.ts";
 import { FORM } from "./board.ts";
 import { errorMessage } from "./errors.ts";
-import { seatField, structuredOf } from "./fields.ts";
+import { refusalOf, seatField, structuredOf } from "./fields.ts";
 import { addPlace, noteStandingId, releaseStanding } from "./hold.ts";
 import { normKarta, normName } from "./names.ts";
 import { placeFields } from "./placefields.ts";
@@ -146,14 +146,14 @@ async function replayBeside(): Promise<boolean> {
 }
 
 /**
- * id места из ответа тула iskron_channel(action="register"): поле standing_id
+ * id места из ответа тула iskron_channel(action="register"): seats[0].seat_id
  * structuredContent (fields.ts), без него — проза: строка «🪪 id этого места — …»,
  * id на следующей строке (наблюдено на сервере 0.74.0; английская форма —
  * предположена, FORM.seatId). Ни того ни другого — null: id не угадывается.
  */
 export function standingIdOf(reply: JsonRpcMessage | null): string | null {
   return (
-    seatField(structuredOf(reply), "register")?.standing_id ??
+    seatField(structuredOf(reply), "register")?.seat_id ??
     FORM.seatId.exec(replyText(reply))?.[1] ??
     null
   );
@@ -169,8 +169,11 @@ export const replyText = (reply: JsonRpcMessage | null): string => {
 };
 
 // The surface's own words for "no seat to bind to" — the one refusal that
-// means the remembered standing is no longer takeable by register.
+// means the remembered standing is no longer takeable by register. The API names
+// no rule for it (a bare 404), so a refusal that carries a rule
+// (_meta["iskron/refusal"], fields.ts) is some other refusal; without one, the prose.
 export const seatIsGone = (reply: JsonRpcMessage | null): boolean =>
+  !refusalOf(reply)?.rule &&
   /no such standing|take it with connect|такого стояния|занять.*connect/i.test(replyText(reply));
 
 // The surface's marks for a call that ran WITHOUT its author: the channel
@@ -186,6 +189,9 @@ const UNATTRIBUTED_REFUSAL =
 
 export const isUnattributed = (reply: JsonRpcMessage | null): boolean => {
   if (!reply) return false;
+  // A refusal's rule, where the API named one, decides alone (_meta["iskron/refusal"]).
+  const rule = refusalOf(reply)?.rule;
+  if (rule) return UNATTRIBUTED_CODE.test(rule);
   const text = replyText(reply);
   if (UNATTRIBUTED_CODE.test(text)) return true;
   return !!reply.result?.isError && UNATTRIBUTED_REFUSAL.test(text);

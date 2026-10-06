@@ -7,7 +7,7 @@
 // после отпуска сокета и .key, до revoke места, — тем же ходом iskron_case leave. Отказ не бьёт: дело
 // закроется сроком места и без нас, слово — в журнал моста.
 import { scoped } from "../shared/scope.ts";
-import { callTool as call } from "./call.ts";
+import { type Answer, callTool as call } from "./call.ts";
 import { CFG } from "./config.ts";
 import { H } from "./holdstate.ts";
 import { extraPlaces } from "./places.ts";
@@ -99,7 +99,7 @@ export async function revokeSatellitePlaces(places: Standing[]): Promise<string[
     call("iskron_channel", { action: "revoke", realm: s.realm, karta: s.karta, standing: s.name })
       .then((r) => {
         // Уже снятое (4001 платформы, повтор после закрытого соединения) — тоже снято.
-        if (!r.isError || ALREADY_CLOSED.test(r.text)) {
+        if (!r.isError || alreadyClosed(r)) {
           failed.delete(s.name as string);
           return log(`revoked ${s.name} in ${s.realm} at the run's end (#6593)`);
         }
@@ -114,8 +114,17 @@ export async function revokeSatellitePlaces(places: Standing[]): Promise<string[
   return [...failed];
 }
 
-/** Ответ revoke о месте, которого уже нет на доске. */
+/**
+ * Ответ revoke о месте, которого уже нет на доске. Отказ api своего правила этому
+ * не даёт: место кончилось — 410, неизвестно — 404 без правила
+ * (`_meta["iskron/refusal"]`); прочий отказ api — иной (основное место канала и
+ * т.п.); без данных — проза.
+ */
 const ALREADY_CLOSED = /закрыт|снят|отозван|closed|revoked|not found|не найден/i;
+const alreadyClosed = (r: Answer): boolean =>
+  r.refusal
+    ? r.refusal.status === 410 || (r.refusal.status === 404 && !r.refusal.rule)
+    : ALREADY_CLOSED.test(r.text);
 
 /** true — успело под потолком конца прогона. */
 async function underCap(work: Promise<unknown>): Promise<boolean> {
