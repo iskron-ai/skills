@@ -3044,10 +3044,20 @@ for (const kind of ["leave", "evicted"])
         rec.call("iskron_case", { realm: "nks-dev", action: "say", room: "#7" }, "child"),
         /Отказано \(плагин\)/,
       );
-      if (kind === "evicted")
+      // Встать снова в этом окне нельзя (#6550 п.4): stand, connect, register — тот же отказ.
+      const again =
+        kind === "evicted"
+          ? /вытеснено другим держателем — поручение кончено/
+          : /кончена — поручение кончено/;
+      await assert.rejects(
+        rec.call("iskron_stand", { realm: "nks-dev", status: "после конца" }, "child"),
+        again,
+      );
+      await assert.rejects(rec.call("iskron_stand", { realm: "nks-dev" }, "child"), again);
+      for (const action of ["connect", "register"])
         await assert.rejects(
-          rec.call("iskron_stand", { realm: "nks-dev", status: "после отъёма" }, "child"),
-          /вытеснено другим держателем — поручение кончено/,
+          rec.call("iskron_channel", { realm: "nks-dev", action }, "child"),
+          again,
         );
       assert.equal(sent().length, before, "no call of the ended child reached a bridge");
     } finally {

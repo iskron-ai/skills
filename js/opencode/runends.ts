@@ -115,11 +115,14 @@ export function childWriteRefusal(
 }
 
 export interface RunEnds {
-  /** Ребёнок кончен: мост гасится forget, затем сессия помечена; of — место корня; final — отпущен запустившим; why — своё слово отказа. */
+  /**
+   * Ребёнок кончен: мост гасится forget, затем сессия помечена; of — место корня; final — отпущен запустившим; why — своё слово отказа.
+   * forget null — мост ещё кончает прогон: до его гашения любая запись, и встать тоже, — отказ.
+   */
   end(
     session: string,
     of: Place | null | undefined,
-    forget: (s: string) => void,
+    forget: ((s: string) => void) | null,
     final?: boolean,
     why?: string,
   ): void;
@@ -133,26 +136,30 @@ export function createRunEnds(): RunEnds {
   const ended = new Map<string, Place | null>();
   const released = new Set<string>(); // revoke запустившего окончателен (#6625): встать снова нельзя
   const whys = new Map<string, string>();
+  const sealed = new Set<string>(); // кончен, мост ещё не погашен
   return {
     end(session, of, forget, final = false, why) {
-      forget(session);
+      if (forget) forget(session);
+      else sealed.add(session);
       ended.set(session, of ?? null);
       if (final) released.add(session);
       if (why) whys.set(session, why);
     },
     clear(session, gone = false) {
+      sealed.delete(session);
       if (gone) released.delete(session);
       if (!released.has(session)) ended.delete(session);
       if (!ended.has(session)) whys.delete(session);
     },
     guard(session, name, args, asks) {
+      const final = released.has(session);
       if (
-        released.has(session) &&
+        (final || sealed.has(session)) &&
         !READ_TOOLS.has(name) &&
         !READ_ACTIONS[name]?.has(String(args.action ?? ""))
       )
         throw new Error(
-          `Отказано (плагин): ${whys.get(session) ?? "запустивший отпустил эту дочернюю сессию"} — поручение кончено, место снято; ` +
+          `Отказано (плагин): ${whys.get(session) ?? (final ? "запустивший отпустил эту дочернюю сессию" : "эта дочерняя сессия кончена")} — поручение кончено, место снято; ` +
             `${name} не пойдёт ни её местом, ни местом запустившего, и встать снова нельзя.`,
         );
       if (!ended.has(session) || name === STAND_TOOL || READ_TOOLS.has(name)) return;
