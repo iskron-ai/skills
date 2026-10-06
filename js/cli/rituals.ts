@@ -1,0 +1,95 @@
+// check-rituals — ревизор области плагинов ритуалов OpenCode в репо (граф
+// nks-dev, узел #6686): каждый .opencode/plugins/* грузится против подставного
+// ctx (cli/ritualprobe.ts) и не должен писать в сессию чужого каталога, бросать
+// или подменять вызов тула в ней. Код 1 — дыра или плагин не загрузился.
+import { mkdtempSync, readdirSync, realpathSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+
+import { L } from "../shared/lang.ts";
+import { probeScope, type Scope } from "./ritualprobe.ts";
+
+const out = (s: string): void => {
+  process.stdout.write(s + "\n");
+};
+
+export interface Verdict {
+  file: string;
+  hole: boolean;
+  scope?: Scope;
+  error?: string;
+}
+
+export async function auditRepo(repo: string): Promise<Verdict[]> {
+  const own = realpathSync(repo);
+  const dir = join(own, ".opencode", "plugins");
+  let names: string[];
+  try {
+    names = readdirSync(dir).filter((n) => /\.(m?js|ts)$/.test(n));
+  } catch {
+    return [];
+  }
+  const foreign = realpathSync(mkdtempSync(join(tmpdir(), "ritual-scope-foreign-")));
+  const verdicts: Verdict[] = [];
+  for (const name of names.sort()) {
+    const file = join(dir, name);
+    try {
+      const scope = await probeScope(file, own, foreign);
+      verdicts.push({ file, hole: scope.writes.theirs > 0 || scope.foreign.length > 0, scope });
+    } catch (e) {
+      verdicts.push({ file, hole: true, error: String((e as Error)?.message ?? e) });
+    }
+  }
+  return verdicts;
+}
+
+const FIX = (): string =>
+  L(
+    "починка: событие и вызов тула берут каталог сессии (location.directory события; у хука тула — ctx.session.get(sessionID)) и сравнивают с ctx.location.directory, чужой — пропуск без броска и правки; правило — скилл iskronify, Шаг 4 «Хуки», образец — его references/harness-surfaces.md",
+    "fix: the event and the tool call take the session's directory (the event's location.directory; for a tool hook — ctx.session.get(sessionID)) and compare it with ctx.location.directory, a foreign one is skipped without a throw or an edit; the rule is skill iskronify, Step 4 «Хуки», the sample is its references/harness-surfaces.md",
+  );
+
+function words(v: Verdict): string[] {
+  const s = v.scope;
+  if (v.error || !s)
+    return [L(`не проверен  ${v.file}: ${v.error}`, `not checked  ${v.file}: ${v.error}`)];
+  if (!v.hole) {
+    const quiet =
+      s.writes.mine === 0
+        ? L(" (в свою сессию не пишет)", " (writes nothing into its own session)")
+        : "";
+    return [`ok  ${v.file}${quiet}`];
+  }
+  const lines = [L(`ДЫРА  ${v.file}`, `HOLE  ${v.file}`)];
+  if (s.writes.theirs > 0)
+    lines.push(
+      L(
+        `  пишет в сессию чужого каталога: ${s.writes.theirs} записей на session.created — та сессия получит адреса этого репо`,
+        `  writes into a session of another directory: ${s.writes.theirs} writes on session.created — that session gets this repo's addresses`,
+      ),
+    );
+  for (const h of new Set(s.foreign))
+    lines.push(
+      L(
+        `  хук тула в сессии чужого каталога — ${h}`,
+        `  a tool hook in a session of another directory — ${h}`,
+      ),
+    );
+  lines.push(`  ${FIX()}`);
+  return lines;
+}
+
+export async function runCheckRituals(argv: string[]): Promise<void> {
+  const json = argv.includes("--json");
+  const repos = argv.filter((a) => a !== "--json");
+  const verdicts: Verdict[] = [];
+  for (const repo of repos.length ? repos : ["."])
+    verdicts.push(...(await auditRepo(resolve(repo))));
+  if (json) out(JSON.stringify(verdicts));
+  else if (verdicts.length === 0)
+    out(L("плагинов в .opencode/plugins нет", "no plugins in .opencode/plugins"));
+  else for (const v of verdicts) for (const line of words(v)) out(line);
+  // Плагин мог оставить таймеры и подписки: выход — когда вывод слит.
+  const code = verdicts.some((v) => v.hole) ? 1 : 0;
+  process.stdout.write("", () => process.exit(code));
+}
