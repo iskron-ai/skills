@@ -463,7 +463,7 @@ var SKILLS_ROOT_ENV = "ISKRON_SKILLS_ROOT";
 import { createHash } from "node:crypto";
 import { readFileSync as readFileSync2 } from "node:fs";
 import { fileURLToPath } from "node:url";
-var VERSION = "7.2.8";
+var VERSION = "7.3.0";
 var releaseBuildIn = (text) => text.includes(`"${["iskron-build", "release"].join(":")}"`);
 var devBuildIn = (text) => text.includes(`"${["iskron-build", "dev"].join(":")}"`);
 function buildOf(selfUrl) {

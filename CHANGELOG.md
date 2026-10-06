@@ -1,5 +1,27 @@
 # Changelog
 
+## [7.3.0](https://github.com/iskron-ai/skills/compare/v7.2.8...v7.3.0) (2026-10-06)
+
+
+### Features
+
+* **bridge:** поля structuredContent вместо прозы, где сервер их даёт ([#335](https://github.com/iskron-ai/skills/issues/335)) ([937c111](https://github.com/iskron-ai/skills/commit/937c111a0ccca21b5c19758e0889a151357e0737))
+
+
+### Bug Fixes
+
+* **bridge,skills:** место вернулось после долгой выгрузки — проверить дела ([#333](https://github.com/iskron-ai/skills/issues/333)) ([888db50](https://github.com/iskron-ai/skills/commit/888db505379988574359877cc6de5098fec3e771))
+* **bridge:** код входа живёт свой срок целиком, ожидание входа выходит по SIGTERM ([#339](https://github.com/iskron-ai/skills/issues/339)) ([7ef493c](https://github.com/iskron-ai/skills/commit/7ef493c07c771f87790c50906686bb4126d2ba6a))
+* **bridge:** неполные поля сервера (dropped, incomplete) — в прозу ([#336](https://github.com/iskron-ai/skills/issues/336)) ([3d53826](https://github.com/iskron-ai/skills/commit/3d53826672ca14d0d32a89340129c2d116692ce3))
+* **ci,opencode:** замок выходов — коммиттер выпуска и база без before; проба marker-child без гонки ([#332](https://github.com/iskron-ai/skills/issues/332)) ([7756880](https://github.com/iskron-ai/skills/commit/77568804daa37112ea313f9232244b778984003c))
+* **iskronify:** плагин ритуалов пишет только в сессии своего каталога — проба и ревизор ([#340](https://github.com/iskron-ai/skills/issues/340)) ([06da1c9](https://github.com/iskron-ai/skills/commit/06da1c91e4e4e16c1ae9d6251bf7e3861a037ac3))
+* **iskronify:** ритуалы OpenCode — только сессии своего каталога ([#338](https://github.com/iskron-ai/skills/issues/338)) ([7643441](https://github.com/iskron-ai/skills/commit/7643441fb997542f5bc58ca5e24ace31c18129ed))
+* **opencode:** ведущий кончен с «КОНЧЕН» — его вызовы отказ, пока мост кончает прогон ([#343](https://github.com/iskron-ai/skills/issues/343)) ([5add109](https://github.com/iskron-ai/skills/commit/5add10997363e64df5ec2c65e4dd9217452a9a1d))
+* **opencode:** КОНЧЕН сразу, неудача снятия места — отдельным словом без пробуждения ([#337](https://github.com/iskron-ai/skills/issues/337)) ([1e58da3](https://github.com/iskron-ai/skills/commit/1e58da3429fcd3e1a1bd4340d8ab4b8ae2ee99df))
+* **opencode:** место держит каталог загруженным — побудки доходят ночью ([#334](https://github.com/iskron-ai/skills/issues/334)) ([c88ff48](https://github.com/iskron-ai/skills/commit/c88ff4815d72719c7727a236645ef97b31a215c0))
+* **skills:** бот не встал — область его привязки, не членство ([#331](https://github.com/iskron-ai/skills/issues/331)) ([381d0db](https://github.com/iskron-ai/skills/commit/381d0db6802981dc7f3a33a8459235af05eeaf92))
+* **skills:** владелец достижим — привязка его роли к человеку проверяется ([#329](https://github.com/iskron-ai/skills/issues/329)) ([5427b23](https://github.com/iskron-ai/skills/commit/5427b2355d6fe379a5e49087abe7936fa78a6d62))
+
 ## [7.2.8](https://github.com/iskron-ai/skills/compare/v7.2.7...v7.2.8) (2026-10-03)
 
 
