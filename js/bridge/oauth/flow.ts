@@ -51,6 +51,12 @@ const flows = new Set<Promise<void>>();
 export function pendingFlow(): Promise<void> | null {
   return flows.size ? Promise.allSettled([...flows]).then(() => {}) : null;
 }
+// …and those whose loopback link was opened: a sign-in page minted on it sends
+// its redirect to this port, so a human is mid-click there.
+const clicked = new Set<Promise<void>>();
+export function clickPending(): Promise<void> | null {
+  return clicked.size ? Promise.allSettled([...clicked]).then(() => {}) : null;
+}
 
 // The link a human is given is the bridge's own loopback address, not the
 // sign-in server's page. Opening it mints the authorize URL at that moment,
@@ -329,6 +335,7 @@ function runFlow(
   // redirect exchanges the code under that same client.
   const key = login.authorize_url.slice(linkPrefix(login.callback_port).length);
   cb.serveLogin(key, async () => {
+    if (flow) clicked.add(flow);
     const client = await ensureClient(meta, redirectUri);
     const current = readAuthLock();
     if (current && ours(current)) writeAuthLock({ ...current, client_id: client.client_id });
@@ -419,7 +426,10 @@ function runFlow(
       releaseAuthLock(ours); // the record before the port: see the takeover in interactiveFlow
       if (RELEASE_GAP_MS) await sleep(RELEASE_GAP_MS);
       cb.close();
-      if (flow) flows.delete(flow);
+      if (flow) {
+        flows.delete(flow);
+        clicked.delete(flow);
+      }
     }
   })();
   flows.add(flow);
