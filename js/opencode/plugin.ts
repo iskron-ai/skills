@@ -220,10 +220,12 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
     }
   })();
 
-  // Экземпляр другого написания того же каталога поднимает этот, выгруженный с местом (twins.ts).
+  // Экземпляр другого написания того же каталога поднимает этот, выгруженный с местом;
+  // ребёнок, перенесённый в другой каталог, находит здесь корень (twins.ts).
   const twins = createTwins(ctx, homeOf(ctx), {
     say,
     lost: (s, text) => onChannel(s, { logger: "iskron-channel", data: { kind: "lost", text } }),
+    holds: (r) => half.held(r),
   });
 
   // Остановка ждёт паузы мостов субагентов (children.ts): перезагрузка — не их конец.

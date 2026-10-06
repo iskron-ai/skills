@@ -40,7 +40,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -2364,6 +2364,148 @@ test("a spelling unloaded with a place and the wake fails: the twin says so loud
     await twin.stop();
     A.restore();
     for (const f of lostMarkers()) rmSync(f, { force: true });
+  }
+});
+
+// Cold review of #341: the wake is a move, and a move is not free — the twin checks
+// first. The spelling up again by itself (a person's request, a reload) or its marker
+// already taken — nothing to wake.
+test("a spelling unloaded with a place: no wake when the marker is taken or the spelling is up again by itself", async () => {
+  const { LINK, REAL } = spellings("wake-skip");
+  const calls = join(SANDBOX, "wake-skip.calls");
+  writeFileSync(calls, "");
+  const b = bridgeEnv("wake-skip", { FB_CALLS: calls, ISKRON_WAKE_MS: 10_000 });
+  const sessions = [{ id: "w3", location: LINK }];
+  const twin = await plugin(b.env, { location: REAL, sessions, keepMarker: true });
+  const unloaded = []; // stopped, their stderr capture given back in reverse at the end
+  let again = null;
+  try {
+    for (const up of [false, true]) {
+      const A = await plugin(b.env, { location: LINK, sessions });
+      unloaded.push(A);
+      await serverTools(A);
+      await standsHeld(A, b, calls, "w3", `k-w3-${up}`);
+      await A.cleanup(); // the pause before the wake is 1 s here
+      if (up) again = await plugin(b.env, { location: LINK, sessions, keepMarker: true });
+      else for (const f of lostMarkers()) rmSync(f, { force: true }); // taken by another
+      await delay(1600);
+      assert.deepEqual(twin.moves, [], up ? "the spelling is up again" : "the marker is taken");
+    }
+  } finally {
+    await again?.stop();
+    for (const r of unloaded.reverse()) r.restore();
+    await twin.stop();
+    for (const f of lostMarkers()) rmSync(f, { force: true });
+  }
+});
+
+// A marker of another LIVE server of the same folder is never taken by this one
+// (takeLostMarker, otherLive): it does not count as the woken spelling's marker left
+// untaken — or the twin would say «place let go» about a place that came back.
+test("the wake's check ignores a marker of another live server of the same folder", async () => {
+  const { LINK, REAL } = spellings("wake-other");
+  const calls = join(SANDBOX, "wake-other.calls");
+  const resume = join(SANDBOX, "wake-other.resume");
+  writeFileSync(calls, "");
+  writeFileSync(resume, JSON.stringify({ bySession: { w4: backAnswer("k-w4") } }));
+  const b = bridgeEnv("wake-other", { FB_CALLS: calls, FB_RESUME: resume, ISKRON_WAKE_MS: 1500 });
+  const sessions = [{ id: "w4", location: LINK }];
+  const A = await plugin(b.env, { location: LINK, sessions });
+  const twin = await plugin(b.env, { location: REAL, sessions, keepMarker: true });
+  const other = spawn("sleep", ["30"], { stdio: "ignore" });
+  let woken = null;
+  try {
+    await serverTools(A);
+    await standsHeld(A, b, calls, "w4", "k-w4");
+    await A.cleanup();
+    const mine = lostMarkers().find((f) => basename(f).includes(`.${process.pid}.`));
+    const otherTag = basename(mine).split(".")[1];
+    await delay(1100); // the other server's start lies before its marker's write
+    writeFileSync(
+      join(process.env.ISKRON_BRIDGE_AUTH_DIR, `opencode-lost.${otherTag}.${other.pid}.x.json`),
+      JSON.stringify({ at: new Date().toISOString(), entries: [{ session: "zz", key: "k-zz" }] }),
+    );
+    await until(() => twin.moves.length === 1, "the twin's wake");
+    woken = await plugin(b.env, { location: LINK, sessions, keepMarker: true });
+    await until(() => /поднят заново/.test(twin.said()), "the twin sees its marker taken");
+    assert.doesNotMatch(twin.said(), /не поднят/, "no word of a place let go");
+  } finally {
+    other.kill();
+    await woken?.stop();
+    await twin.stop();
+    A.restore();
+    for (const f of lostMarkers()) rmSync(f, { force: true });
+  }
+});
+
+// #6695: the parent moves its child session alone into another folder (OpenCode
+// session_move); the child's calls now reach the instance of the NEW folder, which
+// holds no slot of the root — and iskron_stand(satellite_of) was refused «the root holds
+// no place» while the parent held it. The root is found in the process registry, and
+// the child stands as a satellite of its place, as before the move.
+test("a child moved alone into another folder stands as a satellite of the parent's place held by the parent folder's instance", async () => {
+  const calls = join(SANDBOX, "kid-moved.calls");
+  writeFileSync(calls, "");
+  const b = bridgeEnv("kid-moved", {
+    FB_CALLS: calls,
+    FB_TOOLS: JSON.stringify([
+      { name: "iskron_stand", description: "Стояние.", inputSchema: { type: "object" } },
+    ]),
+  });
+  const sessions = [
+    { id: "p1", location: LOC_A },
+    { id: "k1", parentID: "p1", location: LOC_B },
+  ];
+  const A = await plugin(b.env, { location: LOC_A, sessions });
+  const B = await plugin(b.env, { location: LOC_B, sessions, keepMarker: true });
+  try {
+    await until(() => A.tools().has("iskron_stand"), "the stand tool", 8000);
+    await until(() => B.tools().has("iskron_stand"), "the stand tool in B", 8000);
+    await A.call("iskron_stand", { realm: "nks-dev", karta: "#931" }, "p1");
+    const rootPid = callsIn(calls).at(-1).pid;
+    await rootHolds(A, b, { pid: rootPid });
+    await B.call("iskron_stand", { realm: "nks-dev", karta: "#48" }, "k1");
+    const stand = callsIn(calls)
+      .filter((c) => c.name === "iskron_stand")
+      .at(-1);
+    assert.equal(stand.arguments.satellite_of, ROOT_PLACE.name, "a satellite of the root's place");
+    assert.notEqual(stand.pid, rootPid, "by a bridge of its own");
+    const resumes = callsIn(calls).filter(
+      (c) => c.name === "iskron/resume" && c.arguments.session === "p1" && c.pid !== rootPid,
+    );
+    assert.deepEqual(resumes, [], "the child's instance does not take the parent's place back");
+  } finally {
+    await B.stop();
+    await A.stop();
+  }
+});
+
+test("a child moved alone into another folder whose parent's place is held by no instance of this process: an honest refusal", async () => {
+  const calls = join(SANDBOX, "kid-far.calls");
+  writeFileSync(calls, "");
+  const b = bridgeEnv("kid-far", {
+    FB_CALLS: calls,
+    FB_TOOLS: JSON.stringify([
+      { name: "iskron_stand", description: "Стояние.", inputSchema: { type: "object" } },
+    ]),
+  });
+  const sessions = [
+    { id: "p2", location: LOC_A },
+    { id: "k2", parentID: "p2", location: LOC_B },
+  ];
+  const B = await plugin(b.env, { location: LOC_B, sessions });
+  try {
+    await until(() => B.tools().has("iskron_stand"), "the stand tool", 8000);
+    await assert.rejects(
+      B.call("iskron_stand", { realm: "nks-dev", karta: "#48" }, "k2"),
+      /перенесена в другой каталог[\s\S]*родитель в другом процессе/,
+    );
+    assert.ok(
+      !callsIn(calls).some((c) => c.name === "iskron/resume" && c.arguments.session === "p2"),
+      "no return of the parent's place from the child's folder",
+    );
+  } finally {
+    await B.stop();
   }
 });
 

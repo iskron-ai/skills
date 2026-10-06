@@ -4,15 +4,21 @@
 // его же каталог. Выгрузили его с местом (keepalive выключен или сорвался) — он кладёт маркер,
 // а живой экземпляр другого написания того же каталога его будит: ctx.session.move сессии в её
 // же каталог — единственный найденный вызов поверхности плагина, поднимающий выгруженное
-// написание без хода (get, context, update, switchAgent, wait, interrupt — не поднимают).
-// Поднятый экземпляр берёт маркер при старте. Не поднялся — громко в журнал и слово сессии;
-// места близнец сам не держит. Реестр — на globalThis: он общий у экземпляров процесса.
+// написание (get, context, update, switchAgent, wait, interrupt — не поднимают).
+// ЦЕНА (наблюдено живьём на 2.0.24): ход модели перенос не начинает, но в историю сессии
+// ложится location-switched, и следующий ход несёт модели строку «The working directory has
+// been changed to <тот же каталог>». Поэтому будим, только если написание не поднялось само
+// и маркер ещё лежит. Поднятый экземпляр берёт маркер при старте. Не поднялся — громко в
+// журнал и слово сессии; места близнец сам не держит. Реестр — на globalThis: он общий у
+// экземпляров процесса; по нему же ребёнок, перенесённый в другой каталог, находит корень
+// родителя (moves.ts, #6695).
 /* eslint-disable @typescript-eslint/no-explicit-any -- вызов SDK без типа в @opencode/plugin 2.0.4 */
 import { canonDir } from "../shared/canon.ts";
 import { authDir } from "./bridge-io.ts";
 import { markerWaits } from "./marker.ts";
 import type { Context } from "./plugin.ts";
 import type { Home, LostEntry } from "./records.ts";
+import type { Slot } from "./slot.ts";
 
 /** Сколько ждать, что поднятый экземпляр возьмёт маркер. */
 const WAKE_MS = Number(process.env.ISKRON_WAKE_MS) || 15_000;
@@ -20,11 +26,23 @@ const WAKE_MS = Number(process.env.ISKRON_WAKE_MS) || 15_000;
 const PAUSE_MS = Math.min(1_000, WAKE_MS / 5);
 
 interface Twin {
-  home: Home;
+  home: Home | null;
   wake(home: Home, entries: LostEntry[]): void;
+  /** Слот корня, держащий место в этом экземпляре; нет — null. */
+  holds(root: string): Slot | null;
 }
 
 const registry = (): Set<Twin> => ((globalThis as any).__iskronTwins ??= new Set<Twin>());
+
+/** Слот, держащий место корня в каком-либо экземпляре этого процесса (moves.ts, #6695). */
+export function heldInProcess(root: string): Slot | null {
+  for (const t of registry()) {
+    const s = t.holds(root);
+    if (s) return s;
+  }
+  return null;
+}
+
 const folderOf = (h: Home): string => `${canonDir(h.directory)}\0${h.workspace ?? ""}`;
 const sameSpelling = (a: Home, b: Home): boolean =>
   a.directory === b.directory && (a.workspace ?? null) === (b.workspace ?? null);
@@ -34,12 +52,13 @@ export interface TwinDoors {
   say(text: string, level: "info" | "warning" | "error"): void;
   /** Громкое слово в сессию (channel.ts, kind=lost). */
   lost(session: string, text: string): void;
+  /** Слот корня, держащий место в этом экземпляре (tools.ts). */
+  holds(root: string): Slot | null;
 }
 
 export function createTwins(ctx: Context, home: Home | null, d: TwinDoors) {
   let gone = false;
-  if (!home) return { leave() {}, left(_: LostEntry[]) {} };
-  const me: Twin = { home, wake: (h, e) => void wake(h, e) };
+  const me: Twin = { home, wake: (h, e) => void wake(h, e), holds: (r) => d.holds(r) };
   registry().add(me);
 
   /** Поднять экземпляр написания h, выгруженного с местами entries. */
@@ -47,10 +66,13 @@ export function createTwins(ctx: Context, home: Home | null, d: TwinDoors) {
     const roots = entries.filter((e) => !e.child && !e.moved && e.session);
     await sleep(PAUSE_MS);
     if (gone || !roots.length) return;
+    // Написание уже поднялось само (запрос человека, перезагрузка) или маркер уже взят — не будить.
+    const up = [...registry()].some((t) => t.home && sameSpelling(t.home, h));
+    if (up || !markerWaits(authDir(), h)) return;
     let why = "";
     for (const e of roots) {
       try {
-        // В её же каталог: OpenCode поднимает каталог назначения, ход модели не начинается.
+        // В её же каталог: OpenCode поднимает каталог назначения; хода нет, в истории — location-switched.
         const args = { sessionID: e.session, directory: h.directory, delivery: "queue" };
         await (ctx.session as any).move(args);
         why = "";
@@ -89,11 +111,11 @@ export function createTwins(ctx: Context, home: Home | null, d: TwinDoors) {
     },
     /** Остановка с местами entries (маркер лёг): живой близнец будит это написание. */
     left(entries: LostEntry[]): void {
-      if (!entries.length) return;
-      const live = [...registry()];
+      if (!home || !entries.length) return;
+      const live = [...registry()].filter((t) => t.home);
       // То же написание живо (перезагрузка плагина) — маркер его, будить нечего.
-      if (live.some((t) => sameSpelling(t.home, home))) return;
-      live.find((t) => folderOf(t.home) === folderOf(home))?.wake(home, entries);
+      if (live.some((t) => sameSpelling(t.home as Home, home))) return;
+      live.find((t) => folderOf(t.home as Home) === folderOf(home))?.wake(home, entries);
     },
   };
 }

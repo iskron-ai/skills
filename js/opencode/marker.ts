@@ -80,10 +80,15 @@ export function writeLostMarker(
   }
 }
 
-/** Лежит ли маркер этой локации, никем не взятый (twins.ts: поднялся ли её экземпляр). */
+/**
+ * Лежит ли маркер этой локации, никем не взятый (twins.ts: поднялся ли её экземпляр).
+ * Маркер другого живого сервера того же каталога не в счёт: takeLostMarker его не берёт.
+ */
 export function markerWaits(authDir: string, home: Home | null): boolean {
   try {
-    return readdirSync(authDir).some((f) => f.startsWith(`${PREFIX}.@${tagOf(home)}.`));
+    return readdirSync(authDir).some(
+      (f) => f.startsWith(`${PREFIX}.@${tagOf(home)}.`) && !otherLive(f, join(authDir, f)),
+    );
   } catch {
     return false;
   }

@@ -3,6 +3,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- события SDK без схемы */
 import type { Bridge } from "../shared/bridge-client.ts";
 import type { Home, LostEntry } from "./records.ts";
+import type { Slot } from "./slot.ts";
 
 export interface ToolsHalf {
   /** Сессия умерла — её мост отпускается вместе со стоянием. */
@@ -20,6 +21,8 @@ export interface ToolsHalf {
   holders(): string[];
   /** У сессии есть мост этого экземпляра — она в его каталоге (keepalive.ts). */
   owns(session: string): boolean;
+  /** Слот корня, держащий место в этом экземпляре; нет — null (twins.ts). */
+  held(root: string): Slot | null;
   /** Сессию перенесли в локацию to (событие session.moved). */
   moved(session: string, to: Home | null): void;
 }
@@ -33,6 +36,7 @@ export const idleHalf = (): ToolsHalf => ({
   leadOf: () => null,
   holders: () => [],
   owns: () => false,
+  held: () => null,
   moved() {},
 });
 
