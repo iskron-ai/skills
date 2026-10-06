@@ -268,6 +268,7 @@ const ENV_KEYS = [
   "FB_DIE_ONCE",
   "FB_ENV",
   "FB_END_FAILED",
+  "FB_END_DELAY_MS",
   "ISKRON_HARNESS_VERSION",
   "ISKRON_SKILLS_ROOT",
   "ISKRON_BRIDGE_WATCH_MS",
@@ -3023,6 +3024,36 @@ test("a lead child's end: «КОНЧЕН» is laid before the child's bridge is 
     await rec.stop();
   }
 });
+
+// CI after the word went first: the bridge's iskron/end takes seconds (a revoke with its
+// retry), and a call of the ended child in that window went out by its satellite — after
+// «КОНЧЕН». The child is ended from the word on: its writes are refused, none reaches a bridge.
+for (const kind of ["leave", "evicted"])
+  test(`a lead child ended by ${kind} is refused from «КОНЧЕН» on, while its bridge still ends its run`, async () => {
+    const { b, rec, childPid, sent } = await leadChild(`lead-sealed-${kind}`, {
+      FB_END_DELAY_MS: 1500,
+    });
+    try {
+      if (kind === "leave")
+        await rec.call("iskron_channel", { realm: "nks-dev", action: "leave" }, "child");
+      else appendFileSync(`${b.events}.${childPid}`, event("evicted", { code: 4000, text: "x" }));
+      await until(() => ends(rec).length === 1, "the end in the parent");
+      assert.ok(alive(childPid), "the child's bridge still ends its run");
+      const before = sent().length;
+      await assert.rejects(
+        rec.call("iskron_case", { realm: "nks-dev", action: "say", room: "#7" }, "child"),
+        /Отказано \(плагин\)/,
+      );
+      if (kind === "evicted")
+        await assert.rejects(
+          rec.call("iskron_stand", { realm: "nks-dev", status: "после отъёма" }, "child"),
+          /вытеснено другим держателем — поручение кончено/,
+        );
+      assert.equal(sent().length, before, "no call of the ended child reached a bridge");
+    } finally {
+      await rec.stop();
+    }
+  });
 
 // OpenCode 2.0.22 unloads a location after 60 min without durable session events, and
 // the place goes with the plugin — frames and wakes never come until the next request.

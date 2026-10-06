@@ -49,6 +49,8 @@ export interface LeadDoors {
    * Ответ — места, которые снять не удалось; null — исход неизвестен.
    */
   close(child: string): Promise<string[] | null>;
+  /** Сессия помечена кончившейся, мост ещё жив: её вызовы — отказ, пока он кончает прогон. */
+  seal(child: string): void;
   /** Мост ребёнка гасится, сессия помечена кончившейся. */
   end(child: string): Promise<void>;
   /** Имя места ребёнка, если это не его спутник (обычное место сессии); спутник или места нет — null. */
@@ -136,7 +138,7 @@ export function leadDoors(
   ctx: Context,
   say: Say,
   flush: (session: string) => Promise<void>,
-  end: (child: string) => void,
+  end: (child: string, out?: (s: string) => void) => void,
   slots: Map<string, SatelliteSlot & { child?: boolean; bridge: Pick<Bridge, "request"> }>,
 ): LeadDoors {
   return {
@@ -151,6 +153,7 @@ export function leadDoors(
         .catch(() => null);
       return got?.ended ? (got.failed ?? []) : null;
     },
+    seal: (child) => end(child, () => {}), // мост не гасится
     async end(child) {
       end(child);
     },
