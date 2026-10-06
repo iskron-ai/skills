@@ -5,11 +5,13 @@
 // родителя в нём нет — он из session.get), снятие — permission.replied (requestID).
 // Прерванный не отменой ход ребёнка без места-спутника (shutdown, superseded, inactivity)
 // плагин не видел вовсе: leads.ts слышит только ведущих, у них своя логика (#6550 п.4).
-// Поток событий общий для сервиса: своё — сессия, чей каталог после realpath — каталог
-// экземпляра; экземпляры по написанию каталога делят модуль, и слово идёт раз — по id.
+// Поток событий общий для сервиса: своё — сессия, чей каталог СТРОКОЙ равен каталогу
+// экземпляра, не после realpath. На каждое написание каталога (/tmp/W, /private/tmp/W)
+// свой экземпляр, и хуки, тулы и ведущие ребёнка живут только в экземпляре его написания —
+// только он знает, ведущий ли ребёнок; набор ведущих на модуль держался бы на общей копии
+// модуля и пережил бы выгрузку своего экземпляра. Слово — одно, от экземпляра написания.
+// Цена: у не фонового ребёнка слово ляжет после ответа человека; shutdown до ответа session.get его теряет.
 /* eslint-disable @typescript-eslint/no-explicit-any -- события и ответы SDK без схемы */
-import { realpathSync } from "node:fs";
-
 import { sleep } from "./bridge-io.ts";
 import { homeOf } from "./host.ts";
 import type { Context } from "./plugin.ts";
@@ -20,29 +22,12 @@ const WAIT_MS = Number(process.env.ISKRON_PERMISSION_WAIT_MS) || 20_000;
 const RESOURCES = 3;
 const RESOURCE_MAX = 160;
 
-/** Сказанное — на модуль, не на экземпляр: экземпляры одного процесса делят его. */
-const told = new Set<string>();
-function once(key: string): boolean {
-  if (told.has(key)) return false;
-  told.add(key);
-  if (told.size > 1000) told.delete(told.values().next().value as string);
-  return true;
-}
-
 export interface WaitDoors {
   /** Синтетика в сессию родителя — steer; wake — будить ли простаивающую. */
   tell(session: string, text: string, wake: boolean): Promise<void>;
   /** Ведущий субагент (спутник) — его прерывания ведёт leads.ts. */
   isLead(child: string): boolean;
 }
-
-const canon = (p: string): string => {
-  try {
-    return realpathSync(p);
-  } catch {
-    return p;
-  }
-};
 
 export const askWord = (who: string, action: string, resources: string[]): string => {
   const cut = resources.slice(0, RESOURCES).map((r) => {
@@ -59,11 +44,17 @@ export const interruptWord = (who: string, reason: string): string =>
 
 export function createWaits(ctx: Context, d: WaitDoors) {
   const home = homeOf(ctx);
-  const own = home ? canon(home.directory) : null;
   const answered = new Set<string>();
+  const told = new Set<string>();
+  const once = (key: string): boolean => {
+    if (told.has(key)) return false;
+    told.add(key);
+    if (told.size > 1000) told.delete(told.values().next().value as string);
+    return true;
+  };
   let stopped = false;
 
-  /** Ребёнок этого каталога: родитель и имя; корень, чужой каталог, нечитаемая сессия — null. */
+  /** Ребёнок написания этого экземпляра: родитель и имя; корень, иное написание, нечитаемая сессия — null. */
   async function childOf(
     sessionID: string,
     ev: any,
@@ -75,7 +66,7 @@ export function createWaits(ctx: Context, d: WaitDoors) {
     const parent: unknown = s?.parentID;
     if (typeof parent !== "string" || !parent) return null;
     const dir: unknown = s?.location?.directory ?? ev?.location?.directory;
-    if (own && typeof dir === "string" && dir && canon(dir) !== own) return null;
+    if (home && typeof dir === "string" && dir && dir !== home.directory) return null;
     const title = typeof s?.title === "string" ? s.title.trim() : "";
     return { parent, who: title ? `«${title}» (${sessionID})` : sessionID };
   }
