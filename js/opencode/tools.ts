@@ -37,6 +37,7 @@ import { createChildren } from "./children.ts";
 import { idleHalf, type ToolsHalf } from "./half.ts";
 import { hostEnvOf } from "./host.ts";
 import { createKeeper, type KeptSlot, WATCH_MS } from "./keep.ts";
+import { holdersOf } from "./keepalive.ts";
 import { createLauncher } from "./launch.ts";
 import { createLeads } from "./leads.ts";
 import { leadDoors } from "./leadwords.ts";
@@ -472,6 +473,8 @@ export async function setupTools(
     },
     onEvent: (ev) => leads.onEvent(ev),
     leadOf: (s) => leads.nameOf(s),
+    holders: () => holdersOf(slots.values()),
+    owns: (s) => slots.has(s),
     moved: (s, to) =>
       mv.moved({ say, slots, rootOf, forget, slotFor, adopt: adopt.now, away: leads.away }, s, to),
     async stop() {
