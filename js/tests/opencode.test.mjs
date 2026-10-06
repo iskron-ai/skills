@@ -290,6 +290,7 @@ const ENV_KEYS = [
   "ISKRON_RESUME_PATIENCE_MS",
   "ISKRON_MOVE_ADOPT_MS",
   "ISKRON_KEEPALIVE_MS",
+  "ISKRON_PERMISSION_WAIT_MS",
   "ISKRON_WAKE_MS",
 ];
 
@@ -3218,15 +3219,16 @@ const LEAD_TOOLS = fakeTools(LEAD_NAMES);
 const ROOT_PLACE = { realm: "@nks/nks-dev", karta: "931", name: "host.repo.opus-5" };
 const SUB = "host.repo.opus-5.sub-1";
 
-/** A root holding a place and a child standing as its satellite on a bridge of its own. */
-async function leadChild(name, env = {}, root = ROOT_PLACE, subName = SUB) {
+/** A root holding a place and a child standing as its satellite on a bridge of its own; dir — the instance's and both sessions' directory. */
+async function leadChild(name, env = {}, root = ROOT_PLACE, subName = SUB, dir = undefined) {
   const calls = join(SANDBOX, `${name}.calls`);
   writeFileSync(calls, "");
   const b = bridgeEnv(name, { FB_CALLS: calls, FB_TOOLS: LEAD_TOOLS, ...env });
   const rec = await plugin(b.env, {
+    location: dir ? { directory: dir } : undefined,
     sessions: [
-      { id: "root", location: { directory: "/work/root" } },
-      { id: "child", parentID: "root", location: { directory: "/work/child" } },
+      { id: "root", location: { directory: dir ?? "/work/root" } },
+      { id: "child", parentID: "root", location: { directory: dir ?? "/work/child" } },
     ],
   });
   try {
@@ -3306,6 +3308,10 @@ test("a lead child whose run is interrupted by the user is ended without waking 
     await delay(300);
     assert.ok(alive(childPid), "a superseded run is not a cancel");
     assert.equal(ends(rec).length, 0);
+    assert.ok(
+      !rec.synthetics.some((s) => /прерван \(superseded\)/.test(s.text)),
+      "a lead's interruption is leads.ts's to word, not the word of a child without a place",
+    );
     rec.emit({ type: "session.execution.started", data: { sessionID: "child" } });
     rec.emit({
       type: "session.execution.interrupted",
@@ -5807,6 +5813,143 @@ test("a doer's word without a standing is still a doer's word: silence of from_s
       "no from_standing outside a room is honest silence, not the platform",
     );
     assert.equal(rec.prompts[0].delivery, "steer");
+  } finally {
+    await rec.stop();
+  }
+});
+
+// №147, observed on OpenCode 2.0.24 (surface #5048): a background child (background=true)
+// hangs on a permission request without a timeout — nobody answers in the background, its
+// turn never ends, the parent gets no <subagent state=…> at all. The request is the event
+// permission.asked (Permission.Request: id, sessionID, action, resources — no parentID, the
+// parent comes from session.get); permission.replied {requestID} takes it back. The event
+// stream is the service's: only a child of this instance's spelling of its directory is
+// ours — a string match, not realpath: each spelling (/tmp/W, /private/tmp/W) has its own
+// instance, and only the one of the child's spelling holds its hooks and leads (#5048).
+// A child's turn interrupted not by a cancel, the child without a place of its own, was
+// unheard: the parent gets a word without waking.
+const WAIT_SESSIONS = (dir) => [
+  { id: "root", location: { directory: dir } },
+  {
+    id: "child",
+    parentID: "root",
+    title: "разбор (@general subagent)",
+    location: { directory: dir },
+  },
+  { id: "far", parentID: "root", location: { directory: "/elsewhere/of/another" } },
+];
+const waitWords = (rec) => rec.synthetics.filter((s) => /ждёт разрешения|прерван \(/.test(s.text));
+/** Two spellings of one directory — the probe's symlink (spellings above), so they differ on any OS. */
+const twoSpellings = (name) => {
+  const { LINK, REAL } = spellings(name);
+  return { real: REAL.directory, link: LINK.directory };
+};
+
+test("a background child waiting on a permission: the parent hears it once, woken, from the instance of its spelling only; a repeat, a replied request, a root and another directory — no word", async () => {
+  const { real, link } = twoSpellings("permission-asked");
+  const env = { ISKRON_PERMISSION_WAIT_MS: 100 };
+  const rec = await plugin(bridgeEnv("permission-asked", env).env, {
+    location: { directory: real },
+    sessions: WAIT_SESSIONS(real),
+  });
+  const other = await plugin(bridgeEnv("permission-asked-link", env).env, {
+    location: { directory: link },
+    sessions: WAIT_SESSIONS(real),
+  });
+  const ask = (id, sessionID) => {
+    const ev = {
+      type: "permission.asked",
+      data: { id, sessionID, action: "bash", resources: ["git push origin main"] },
+    };
+    rec.emit(ev);
+    other.emit(ev); // the stream is the service's: every instance sees it
+  };
+  try {
+    ask("per_1", "child");
+    ask("per_1", "child");
+    ask("per_2", "root");
+    ask("per_3", "far");
+    ask("per_4", "child");
+    rec.emit({
+      type: "permission.replied",
+      data: { sessionID: "child", requestID: "per_4", reply: "once" },
+    });
+    await until(() => waitWords(rec).length === 1, "the word to the parent");
+    await delay(400);
+    assert.equal(waitWords(rec).length, 1, JSON.stringify(waitWords(rec)));
+    const [w] = waitWords(rec);
+    assert.equal(w.sessionID, "root");
+    assert.equal(w.delivery, "steer");
+    assert.equal(w.resume, true, "a hanging child wakes the parent");
+    assert.match(
+      w.text,
+      /субагент «разбор \(@general subagent\)» \(child\) ждёт разрешения: bash: git push origin main — ответь в его сессии или отмени его ход/,
+    );
+    ask("per_1", "child");
+    await delay(300);
+    assert.equal(waitWords(rec).length, 1, "the same request is told once");
+    assert.deepEqual(waitWords(other), [], "two spellings of the directory give no second word");
+  } finally {
+    await other.stop();
+    await rec.stop();
+  }
+});
+
+test("a lead child interrupted (superseded) gets no word from the instance of another spelling of its directory; a plain child of that spelling does", async () => {
+  const { real, link } = twoSpellings("lead-spelling");
+  const { rec } = await leadChild("lead-spelling", {}, ROOT_PLACE, SUB, real);
+  const other = await plugin(bridgeEnv("lead-spelling-link").env, {
+    location: { directory: link },
+    sessions: [
+      { id: "root", location: { directory: real } },
+      { id: "child", parentID: "root", location: { directory: real } },
+      { id: "plain", parentID: "root", location: { directory: link } },
+    ],
+  });
+  const cut = (id, sessionID, reason) => {
+    const ev = { type: "session.execution.interrupted", id, data: { sessionID, reason } };
+    rec.emit(ev);
+    other.emit(ev);
+  };
+  try {
+    rec.emit({ type: "session.execution.started", data: { sessionID: "child" } });
+    cut("evt_lead", "child", "superseded");
+    cut("evt_plain", "plain", "shutdown");
+    await until(() => waitWords(other).length > 0, "the word about the plain child");
+    await delay(300);
+    assert.equal(waitWords(other).length, 1, JSON.stringify(waitWords(other)));
+    assert.match(waitWords(other)[0].text, /ход субагента plain прерван \(shutdown\)/);
+    assert.deepEqual(waitWords(rec), [], "a lead's interruption is leads.ts's (#6550 п.4)");
+  } finally {
+    await other.stop();
+    await rec.stop();
+  }
+});
+
+test("a child without a place whose turn is interrupted by shutdown: the parent hears it without waking; a cancel by the user is no such word", async () => {
+  const b = bridgeEnv("child-interrupted");
+  const rec = await plugin(b.env, {
+    location: { directory: SANDBOX },
+    sessions: WAIT_SESSIONS(SANDBOX),
+  });
+  const cut = (id, sessionID, reason) =>
+    rec.emit({ type: "session.execution.interrupted", id, data: { sessionID, reason } });
+  try {
+    cut("evt_1", "child", "shutdown");
+    cut("evt_1", "child", "shutdown");
+    cut("evt_2", "child", "user");
+    cut("evt_3", "far", "inactivity");
+    cut("evt_4", "root", "shutdown");
+    await until(() => waitWords(rec).length === 1, "the word to the parent");
+    await delay(300);
+    assert.equal(waitWords(rec).length, 1, JSON.stringify(waitWords(rec)));
+    const [w] = waitWords(rec);
+    assert.equal(w.sessionID, "root");
+    assert.equal(w.resume, false, "an interruption does not wake the parent");
+    assert.match(
+      w.text,
+      /ход субагента «разбор \(@general subagent\)» \(child\) прерван \(shutdown\)/,
+    );
   } finally {
     await rec.stop();
   }
