@@ -3,9 +3,10 @@
 // session.created всех каталогов — его область и проверяется. Хуки ctx.tool.hook
 // будит только вызов в каталоге экземпляра (наблюдено на 2.0.24): они гоняются в
 // своей сессии и судятся лишь на поломку. Каталог экземпляра даётся через
-// символическую ссылку, а события несут настоящий путь: так же /tmp и
-// /private/tmp расходятся живьём, и сырое сравнение строк теряет свою сессию.
-import { mkdtempSync, symlinkSync } from "node:fs";
+// символическую ссылку, а своя сессия приходит дважды — настоящим путём и
+// написанием экземпляра: так же /tmp и /private/tmp расходятся живьём, и сырое
+// сравнение строк теряет свою сессию под одним из написаний.
+import { mkdtempSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -58,15 +59,34 @@ const created = (sessionID: string, directory: string) => {
 
 const settle = (ms = SETTLE_MS) => new Promise((r) => setTimeout(r, ms));
 
-/** Грузит плагин из файла с ctx.location — ссылкой на own — и проверяет его против сессий own и foreign. */
+/**
+ * Грузит плагин из файла с ctx.location — ссылкой на own — и проверяет его против
+ * сессий own (обоими написаниями) и foreign. Каталог ссылки убирается за собой.
+ */
 export async function probeScope(file: string, own: string, foreign: string): Promise<Scope> {
+  const aliasRoot = mkdtempSync(join(tmpdir(), "ritual-scope-alias-"));
+  try {
+    const alias = join(aliasRoot, "own");
+    symlinkSync(own, alias, "dir");
+    return await probeWith(file, own, alias, foreign);
+  } finally {
+    rmSync(aliasRoot, { recursive: true, force: true });
+  }
+}
+
+async function probeWith(
+  file: string,
+  own: string,
+  alias: string,
+  foreign: string,
+): Promise<Scope> {
   dropPluginGlobals();
   const tag = ++probes;
-  const id: Record<Who, string> = { mine: `mine@${tag}`, theirs: `theirs@${tag}` };
-  const whoOf = (sessionID?: string): Who | undefined =>
-    sessionID === id.mine ? "mine" : sessionID === id.theirs ? "theirs" : undefined;
-  const dirs: Record<Who, string> = { mine: own, theirs: foreign };
-  const writes: Record<Who, number> = { mine: 0, theirs: 0 };
+  const who: Who[] = ["mine", "twin", "theirs"];
+  const id = Object.fromEntries(who.map((w) => [w, `${w}@${tag}`])) as Record<Who, string>;
+  const whoOf = (sessionID?: string): Who | undefined => who.find((w) => id[w] === sessionID);
+  const dirs: Record<Who, string> = { mine: own, twin: alias, theirs: foreign };
+  const writes: Record<Who, number> = { mine: 0, twin: 0, theirs: 0 };
   const hooks: Record<string, Fn[]> = {};
   const reads = new Set(["get", "list", "messages", "children", "status"]);
   const session = new Proxy(
@@ -87,8 +107,6 @@ export async function probeScope(file: string, own: string, foreign: string): Pr
       },
     },
   );
-  const alias = join(mkdtempSync(join(tmpdir(), "ritual-scope-alias-")), "own");
-  symlinkSync(own, alias, "dir");
   const ctx = loose({
     location: { directory: alias },
     session,
@@ -96,8 +114,7 @@ export async function probeScope(file: string, own: string, foreign: string): Pr
     event: loose({
       subscribe: ({ signal }: { signal?: AbortSignal } = {}) =>
         (async function* () {
-          yield created(id.mine, own);
-          yield created(id.theirs, foreign);
+          for (const w of who) yield created(id[w], dirs[w]);
           if (signal) await new Promise((r) => signal.addEventListener("abort", r));
         })(),
     }),

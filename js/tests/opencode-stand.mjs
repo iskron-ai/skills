@@ -15,6 +15,7 @@ import {
   mkdtempSync,
   readFileSync,
   realpathSync,
+  rmSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -23,6 +24,13 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 export const settle = (ms = 50) => new Promise((r) => setTimeout(r, ms));
+
+// Every stand's folder goes when the process does: the module of the plugin is
+// loaded from it, so it stays while the probes of this file run.
+const roots = [];
+process.on("exit", () => {
+  for (const r of roots) rmSync(r, { recursive: true, force: true });
+});
 
 // The sample may keep a word-once set per process on globalThis (one live
 // server runs every instance in one process). Within a stand it is shared, as
@@ -52,6 +60,7 @@ export async function standServer(source) {
   const tag = `${process.pid}-${++stands}`;
   const sid = (name) => `${name}@${tag}`;
   const root = realpathSync(mkdtempSync(join(tmpdir(), "opencode-stand-")));
+  roots.push(root);
   const own = join(root, "own");
   const foreign = join(root, "foreign");
   const alias = join(root, "own-alias");
@@ -101,7 +110,8 @@ export async function standServer(source) {
     const ctx = {
       location: { directory: location },
       tool: { hook: async (name, fn) => void (hooks[name] ??= []).push(fn) },
-      event: { subscribe: async (o) => subscribe(o) },
+      // @opencode/client promise/client.d.ts: subscribe(options) → AsyncIterable, not a Promise.
+      event: { subscribe: (o) => subscribe(o) },
       session: {
         prompt: write,
         synthetic: write,

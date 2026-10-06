@@ -5,7 +5,8 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 export type Fn = (...a: unknown[]) => unknown;
-export type Who = "mine" | "theirs";
+/** Своя сессия (настоящий путь), своя под написанием экземпляра (ссылка), чужая. */
+export type Who = "mine" | "twin" | "theirs";
 
 const memoryPath = join(homedir(), ".claude", "projects", "-probe", "memory", "MEMORY.md");
 const pushed = "To github.com:o/r.git\n   1234567..89abcde  feat/x -> feat/x";

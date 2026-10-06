@@ -8,8 +8,12 @@
 // ISKRON_RITUAL_SAMPLES (path-delimited markdown files) points the probe at any
 // copy (a past revision) so it can be shown red before a fix.
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { test } from "node:test";
+import { pathToFileURL } from "node:url";
 
 import { REPO } from "./built.mjs";
 import { memoryPath, ritualSample, settle, standServer, toolCall } from "./opencode-stand.mjs";
@@ -19,6 +23,42 @@ const sources = process.env.ISKRON_RITUAL_SAMPLES?.split(delimiter) ?? [
 ];
 
 const pushed = "To github.com:o/r.git\n   1234567..89abcde  feat/x -> feat/x";
+
+// The stand hands out event.subscribe as the types do (an AsyncIterable, not a
+// Promise): a plugin that does not await it is not red here.
+test("opencode stand: a subscriber that does not await subscribe() is greeted", async () => {
+  const s = await standServer(`export default { id: "n", async setup(ctx) {
+    const it = ctx.event.subscribe({})[Symbol.asyncIterator]();
+    (async () => { for (;;) { const { value: ev, done } = await it.next(); if (done) break;
+      await ctx.session.prompt({ sessionID: ev.data.sessionID, text: "hi" });
+    } })();
+  } };`);
+  await s.instance(s.own);
+  await s.create("mine", s.own);
+  assert.equal(s.greeted("mine"), 1);
+});
+
+test("opencode stand: the temp folder is as it was after the process", () => {
+  const tmp = mkdtempSync(join(tmpdir(), "opencode-stand-tmp-"));
+  const stand = pathToFileURL(join(REPO, "js", "tests", "opencode-stand.mjs")).href;
+  const r = spawnSync(
+    process.execPath,
+    [
+      "--input-type=module",
+      "-e",
+      `const { standServer } = await import(${JSON.stringify(stand)});
+       const s = await standServer('export default { id: "x", async setup() {} };');
+       await s.instance(s.own); await s.stop();`,
+    ],
+    { encoding: "utf8", env: { ...process.env, TMPDIR: tmp, TMP: tmp, TEMP: tmp } },
+  );
+  assert.equal(r.status, 0, r.stderr);
+  try {
+    assert.deepEqual(readdirSync(tmp), []);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
 
 for (const md of sources) {
   const source = ritualSample(md);

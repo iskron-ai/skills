@@ -1,9 +1,10 @@
 // check-rituals — ревизор плагинов ритуалов OpenCode в репо (граф nks-dev,
 // узлы #6686, #5048): каждый .opencode/plugins/* грузится против подставного
 // ctx (cli/ritualprobe.ts); подписка на поток событий не пишет в сессию чужого
-// каталога, хуки тулов не ломаются в своей. Код 1 — дыра, поломка или плагин
-// не загрузился.
-import { mkdtempSync, readdirSync, realpathSync } from "node:fs";
+// каталога и не теряет свою под другим написанием, хуки тулов не ломаются в
+// своей. Код 1 — дыра, поломка или плагин не загрузился. Временные каталоги
+// прогона убираются за собой.
+import { mkdtempSync, readdirSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -32,18 +33,25 @@ export async function auditRepo(repo: string): Promise<Verdict[]> {
   }
   const foreign = realpathSync(mkdtempSync(join(tmpdir(), "ritual-scope-foreign-")));
   const verdicts: Verdict[] = [];
-  for (const name of names.sort()) {
-    const file = join(dir, name);
-    try {
-      const scope = await probeScope(file, own, foreign);
-      const hole = scope.writes.theirs > 0 || scope.broken.length > 0;
-      verdicts.push({ file, hole, scope });
-    } catch (e) {
-      verdicts.push({ file, hole: true, error: String((e as Error)?.message ?? e) });
+  try {
+    for (const name of names.sort()) {
+      const file = join(dir, name);
+      try {
+        const scope = await probeScope(file, own, foreign);
+        const hole = scope.writes.theirs > 0 || lostSpelling(scope) || scope.broken.length > 0;
+        verdicts.push({ file, hole, scope });
+      } catch (e) {
+        verdicts.push({ file, hole: true, error: String((e as Error)?.message ?? e) });
+      }
     }
+  } finally {
+    rmSync(foreign, { recursive: true, force: true });
   }
   return verdicts;
 }
+
+/** Своя сессия приветствована под одним написанием каталога и потеряна под другим. */
+const lostSpelling = (s: Scope): boolean => s.writes.mine > 0 !== s.writes.twin > 0;
 
 const RULE = (): string =>
   L(
@@ -67,7 +75,7 @@ function words(v: Verdict): string[] {
     return [L(`не проверен  ${v.file}: ${v.error}`, `not checked  ${v.file}: ${v.error}`)];
   if (!v.hole) {
     const quiet =
-      s.writes.mine === 0
+      s.writes.mine + s.writes.twin === 0
         ? L(" (в свою сессию не пишет)", " (writes nothing into its own session)")
         : "";
     return [`ok  ${v.file}${quiet}`];
@@ -80,7 +88,14 @@ function words(v: Verdict): string[] {
         `  writes into a session of another directory: ${s.writes.theirs} writes on session.created — that session gets this repo's addresses`,
       ),
     );
-  if (s.writes.theirs > 0) lines.push(`  ${FIX_SCOPE()}`);
+  if (lostSpelling(s))
+    lines.push(
+      L(
+        `  своя сессия под другим написанием каталога без приветствия (настоящий путь: ${s.writes.mine}, написание экземпляра: ${s.writes.twin}) — каталоги сравниваются сырой строкой, а одна папка приходит то /tmp/…, то /private/tmp/…`,
+        `  its own session under another spelling of the folder gets no greeting (the real path: ${s.writes.mine}, the instance's spelling: ${s.writes.twin}) — directories are compared as raw strings, while one folder comes as /tmp/… and as /private/tmp/…`,
+      ),
+    );
+  if (s.writes.theirs > 0 || lostSpelling(s)) lines.push(`  ${FIX_SCOPE()}`);
   for (const h of s.broken)
     lines.push(
       L(

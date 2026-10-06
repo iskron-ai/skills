@@ -24,11 +24,12 @@ import {
   readdirSync,
   readFileSync,
   realpathSync,
+  rmSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join, relative } from "node:path";
-import { test } from "node:test";
+import { after, test } from "node:test";
 
 import { BUILT_BRIDGE, REPO } from "./built.mjs";
 
@@ -50,8 +51,14 @@ const samples = sources.flatMap((path) =>
   pluginSamples(readFileSync(path, "utf8")).map((source, i) => ({ path, i, source })),
 );
 
+const made = [];
+after(() => {
+  for (const d of made) rmSync(d, { recursive: true, force: true });
+});
+
 function repoWith(source) {
   const repo = realpathSync(mkdtempSync(join(tmpdir(), "ritual-scope-")));
+  made.push(repo);
   mkdirSync(join(repo, ".opencode", "plugins"), { recursive: true });
   writeFileSync(join(repo, ".opencode", "plugins", "rituals.js"), source);
   return repo;
@@ -125,10 +132,41 @@ test("check-rituals: a greeting without a directory check is a hole, with the fi
   assert.match(out, /realpath.*iskronify, Шаг 4/);
 });
 
-test("check-rituals: a raw string compare loses its own session (the directory comes aliased)", () => {
+test("check-rituals: a raw string compare losing its own session under another spelling is a hole", () => {
   const { status, out } = check(repoWith(greet("raw")), false);
-  assert.equal(status, 0);
-  assert.match(out, /в свою сессию не пишет/);
+  assert.equal(status, 1, out);
+  assert.match(out, /своя сессия под другим написанием каталога без приветствия/);
+  assert.match(out, /realpath.*iskronify, Шаг 4/);
+});
+
+// @opencode/client promise/client.d.ts: event.subscribe(options) → AsyncIterable.
+// A plugin taking it as such — no await, its iterator by hand — is not red.
+test("check-rituals: a subscriber that does not await subscribe() is judged as written", () => {
+  const source = `import { realpathSync } from "node:fs";
+  const canon = (p) => { try { return realpathSync(p); } catch { return p; } };
+  export default { id: "n", async setup(ctx) {
+    const it = ctx.event.subscribe({})[Symbol.asyncIterator]();
+    (async () => { for (;;) { const { value: ev, done } = await it.next(); if (done) break;
+      if (canon(ev.data?.location?.directory) !== canon(ctx.location.directory)) continue;
+      await ctx.session.prompt({ sessionID: ev.data.sessionID, text: "hi" });
+    } })();
+  } };`;
+  const { status, verdicts } = check(repoWith(source));
+  assert.equal(status, 0, JSON.stringify(verdicts));
+  assert.equal(verdicts[0].scope.writes.mine, 1);
+});
+
+test("check-rituals: the temp folder is as it was after a run", () => {
+  const tmp = mkdtempSync(join(tmpdir(), "ritual-scope-tmp-"));
+  made.push(tmp);
+  const repo = repoWith(greet("canon"));
+  writeFileSync(join(repo, ".opencode", "plugins", "second.js"), guard);
+  const r = spawnSync(process.execPath, [BUILT_BRIDGE, "check-rituals", "--json", repo], {
+    encoding: "utf8",
+    env: { ...process.env, TMPDIR: tmp, TMP: tmp, TEMP: tmp },
+  });
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.deepEqual(readdirSync(tmp), []);
 });
 
 test("check-rituals: a tool hook without a directory check is not a hole", () => {
@@ -159,11 +197,12 @@ test("check-rituals: a greeting scoped by canonical directories — clean, its o
 // each run starts clean and with its own session and call ids.
 test("check-rituals: two plugins with a word-once set on globalThis are judged apart", () => {
   const once = `import { realpathSync } from "node:fs";
+  const canon = (p) => { try { return realpathSync(p); } catch { return p; } };
   export default { id: "o", async setup(ctx) {
     const said = (globalThis.__probeOnce ??= new Set());
-    const own = realpathSync(ctx.location.directory);
+    const own = canon(ctx.location.directory);
     (async () => { for await (const ev of await ctx.event.subscribe({})) {
-      if (ev.data?.location?.directory !== own) continue;
+      if (canon(ev.data?.location?.directory) !== own) continue;
       if (said.has(ev.data.sessionID)) continue;
       said.add(ev.data.sessionID);
       await ctx.session.prompt({ sessionID: ev.data.sessionID, text: "hi" });
