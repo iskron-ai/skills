@@ -15,7 +15,8 @@
 //   • the revizor itself, on small leaky and scoped plugins.
 //
 // ISKRON_RITUAL_SAMPLES (path-delimited markdown files) points the probe at any
-// copy (a past revision) so it can be shown red before a fix.
+// copy (a past revision) so it can be shown red before a fix; ISKRON_BRIDGE_PATH
+// does the same for the revizor.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import {
@@ -32,6 +33,8 @@ import { delimiter, join, relative } from "node:path";
 import { after, test } from "node:test";
 
 import { BUILT_BRIDGE, REPO } from "./built.mjs";
+
+const BRIDGE = process.env.ISKRON_BRIDGE_PATH || BUILT_BRIDGE;
 
 const skills = join(REPO, "skills");
 const sources =
@@ -67,7 +70,7 @@ function repoWith(source) {
 function check(repo, json = true) {
   const r = spawnSync(
     process.execPath,
-    [BUILT_BRIDGE, "check-rituals", ...(json ? ["--json"] : []), repo],
+    [BRIDGE, "check-rituals", ...(json ? ["--json"] : []), repo],
     {
       encoding: "utf8",
       env: { ...process.env, ISKRON_BRIDGE_LANG: "ru" },
@@ -161,7 +164,7 @@ test("check-rituals: the temp folder is as it was after a run", () => {
   made.push(tmp);
   const repo = repoWith(greet("canon"));
   writeFileSync(join(repo, ".opencode", "plugins", "second.js"), guard);
-  const r = spawnSync(process.execPath, [BUILT_BRIDGE, "check-rituals", "--json", repo], {
+  const r = spawnSync(process.execPath, [BRIDGE, "check-rituals", "--json", repo], {
     encoding: "utf8",
     env: { ...process.env, TMPDIR: tmp, TMP: tmp, TEMP: tmp },
   });
@@ -227,4 +230,33 @@ test("check-rituals: a plugin that does not load is not passed", () => {
   const { status, verdicts } = check(repoWith("export const x = 1;"));
   assert.equal(status, 1);
   assert.match(verdicts[0].error, /setup/);
+});
+
+const call = (...args) =>
+  spawnSync(process.execPath, [BRIDGE, "check-rituals", ...args], {
+    encoding: "utf8",
+    env: { ...process.env, ISKRON_BRIDGE_LANG: "ru" },
+  });
+
+for (const flag of ["--help", "-h"])
+  test(`check-rituals ${flag}: the usage, code 0`, () => {
+    const r = call(flag);
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, /check-rituals \[репо\.\.\.\] \[--json\]/);
+    assert.doesNotMatch(r.stderr, /\n\s+at /);
+  });
+
+test("check-rituals: an unknown flag — said, code 2, no stack", () => {
+  const r = call("--frob");
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /неизвестный флаг --frob/);
+  assert.doesNotMatch(r.stderr, /\n\s+at /);
+});
+
+test("check-rituals: a missing repo — said, code 2, no stack", () => {
+  const missing = join(tmpdir(), "ritual-scope-no-such-repo");
+  const r = call(missing);
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, new RegExp(`нет такого каталога: ${missing}`));
+  assert.doesNotMatch(r.stderr, /\n\s+at /);
 });

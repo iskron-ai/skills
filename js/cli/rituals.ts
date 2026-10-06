@@ -4,7 +4,7 @@
 // каталога и не теряет свою под другим написанием, хуки тулов не ломаются в
 // своей. Код 1 — дыра, поломка или плагин не загрузился. Временные каталоги
 // прогона убираются за собой.
-import { mkdtempSync, readdirSync, realpathSync, rmSync } from "node:fs";
+import { mkdtempSync, readdirSync, realpathSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -107,12 +107,34 @@ function words(v: Verdict): string[] {
   return lines;
 }
 
+export const RITUALS_USAGE = (): string =>
+  `node iskron.mjs check-rituals [${L("репо", "repo")}...] [--json]   ${L("(плагины .opencode/plugins не пишут в сессии чужих каталогов и не ломаются; без репо — текущий каталог)", "(.opencode/plugins write into no session of another directory and do not break; no repo — the current directory)")}`;
+
+const isDir = (p: string): boolean => {
+  try {
+    return statSync(p).isDirectory();
+  } catch {
+    return false;
+  }
+};
+
+/** Слово ошибки вызова и код 2 — без стектрейса. */
+const refuse = (word: string): void => {
+  process.stderr.write(`check-rituals: ${word}\n${RITUALS_USAGE()}\n`);
+  process.exitCode = 2;
+};
+
 export async function runCheckRituals(argv: string[]): Promise<void> {
+  if (argv.includes("--help") || argv.includes("-h")) return out(RITUALS_USAGE());
+  const flag = argv.find((a) => a.startsWith("-") && a !== "--json");
+  if (flag) return refuse(L(`неизвестный флаг ${flag}`, `unknown flag ${flag}`));
   const json = argv.includes("--json");
-  const repos = argv.filter((a) => a !== "--json");
+  const repos = argv.filter((a) => a !== "--json").map((a) => resolve(a));
+  const missing = repos.find((r) => !isDir(r));
+  if (missing) return refuse(L(`нет такого каталога: ${missing}`, `no such directory: ${missing}`));
   const verdicts: Verdict[] = [];
-  for (const repo of repos.length ? repos : ["."])
-    verdicts.push(...(await auditRepo(resolve(repo))));
+  for (const repo of repos.length ? repos : [resolve(".")])
+    verdicts.push(...(await auditRepo(repo)));
   if (json) out(JSON.stringify(verdicts));
   else if (verdicts.length === 0)
     out(L("плагинов в .opencode/plugins нет", "no plugins in .opencode/plugins"));
