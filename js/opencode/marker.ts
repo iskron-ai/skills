@@ -23,7 +23,11 @@ const LEGACY_MS = 2 * 60_000;
 const START_SLACK_MS = 1000;
 
 const hash = (s: string) => createHash("sha256").update(s).digest("hex").slice(0, 12);
-/** Метка локации в имени файла; экземпляр без локации — «any». */
+/**
+ * Метка локации в имени файла; экземпляр без локации — «any». Написание каталога — как
+ * пришло, не канонизированное: OpenCode 2.0.24 держит экземпляр на каждое написание, и
+ * хуки сессии идут только в экземпляр её написания (граф nks-dev: #5048, дело №147).
+ */
 const tagOf = (home: Home | null): string =>
   home ? hash(`${home.directory}\0${home.workspace ?? ""}`) : "any";
 /** Метка файла `opencode-lost.@<метка>.…`; null — файл прежней сборки. */
@@ -49,22 +53,44 @@ const otherLive = (f: string, path: string): boolean => {
   }
 };
 
-/** Держащие мосты — на диск, кого держали: остановка плагина либо перенос сессии в другую папку (home — её локация). */
-export function writeLostMarker(authDir: string, slots: Iterable<Held>, home: Home | null): void {
+/**
+ * Держащие мосты — на диск, кого держали: остановка плагина либо перенос сессии в другую
+ * папку (home — её локация). Возвращает записанное; файл не лёг — пусто.
+ */
+export function writeLostMarker(
+  authDir: string,
+  slots: Iterable<Held>,
+  home: Home | null,
+): LostEntry[] {
   const entries = [...slots]
     .filter((s) => s.holding && s.session)
     .map((s) =>
       entryOf({ ...s, session: s.session as string, of: s.satelliteOf, name: s.place?.name }),
     );
-  if (!entries.length) return;
+  if (!entries.length) return [];
   try {
     mkdirSync(authDir, { recursive: true, mode: 0o700 });
     const lost: Lost = { at: new Date().toISOString(), entries };
     const rand = Math.random().toString(36).slice(2, 8);
     const name = `${PREFIX}.@${tagOf(home)}.${process.pid}.${rand}.json`;
     writeFileSync(join(authDir, name), JSON.stringify(lost), { mode: 0o600 });
+    return entries;
   } catch {
-    /* маркер — слово, не обязательство */
+    return []; // маркер — слово, не обязательство
+  }
+}
+
+/**
+ * Лежит ли маркер этой локации, никем не взятый (twins.ts: поднялся ли её экземпляр).
+ * Маркер другого живого сервера того же каталога не в счёт: takeLostMarker его не берёт.
+ */
+export function markerWaits(authDir: string, home: Home | null): boolean {
+  try {
+    return readdirSync(authDir).some(
+      (f) => f.startsWith(`${PREFIX}.@${tagOf(home)}.`) && !otherLive(f, join(authDir, f)),
+    );
+  } catch {
+    return false;
   }
 }
 

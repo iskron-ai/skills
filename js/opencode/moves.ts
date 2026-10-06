@@ -6,13 +6,18 @@
 // переносом и грузится после события: он берёт маркер при setup; живой — по событию,
 // дав прежнему его положить. Место возвращается с терпением к уходу прежнего сокета
 // (keep.ts); дети-спутники едут маркером, и их запись в новой папке — отказ (adopt.ts).
+// Ребёнка переносят и одного, без родителя (#6695): вставший спутником едет им же
+// (handoff.ts); не вставший — экземпляр его новой папки находит корень в
+// экземпляре папки родителя (farRoot) и ставит спутника его места.
 /* eslint-disable @typescript-eslint/no-explicit-any -- ответы SDK без схемы */
 import { authDir } from "./bridge-io.ts";
 import { homeOf, sessionDirectory } from "./host.ts";
 import { writeLostMarker } from "./marker.ts";
 import type { Context } from "./plugin.ts";
 import type { Home } from "./records.ts";
-import type { Say, Slot } from "./tools.ts";
+import type { Slot } from "./slot.ts";
+import type { Say } from "./tools.ts";
+import { heldInProcess } from "./twins.ts";
 
 /** Сколько живой экземпляр новой папки ждёт маркера переноса от прежнего. */
 const ADOPT_MS = Number(process.env.ISKRON_MOVE_ADOPT_MS) || 1_000;
@@ -51,6 +56,7 @@ export function createMoves(ctx: Context) {
   /** Сессию перенесли в локацию to. */
   function moved(d: MoveDoors, s: string, to: Home | null): void {
     if (!home || !to?.directory || d.slots.get(s)?.child) return;
+    // Написание — как пришло: перенос /tmp/A ↔ /private/tmp/A — перенос между экземплярами (#5048).
     if (to.directory !== home.directory) {
       const root = d.slots.get(s);
       if (!root) return;
@@ -97,7 +103,26 @@ export function createMoves(ctx: Context) {
         "мост родителя здесь не поднимается, а своего места у неё нет; работа этой сессии — дальше без графа, либо слово запустившему.",
     );
   }
-  return { home, directoryOf, exists, ours, moved, relay, guard };
+  /**
+   * Корень дочерней сессии, которую перенесли одну в этот каталог (#6695): место родителя
+   * держит экземпляр его каталога, и в этом процессе он находится общим реестром (twins.ts) —
+   * ребёнок встаёт спутником его места, как до переноса. Не нашёлся, а корень в другом
+   * каталоге — "foreign": мост корня здесь его места не возвращает (#6626), встать — отказ.
+   */
+  async function farRoot(root: string): Promise<Slot | "foreign" | null> {
+    const held = heldInProcess(root);
+    if (held) return held;
+    const dir = home ? await directoryOf(root) : null;
+    return home && dir && dir !== home.directory ? "foreign" : null;
+  }
+  /** Отказ встать спутником корня из другого каталога, которого процесс не держит, — на этот миг. */
+  const farRefusal = async (root: string | null): Promise<string | null> =>
+    root && (await farRoot(root)) === "foreign"
+      ? "Отказано (плагин): эта дочерняя сессия перенесена в другой каталог, чем её родитель, а место родителя " +
+        "не держит ни один экземпляр плагина этого процесса OpenCode — родитель в другом процессе либо места не держит. " +
+        "Спутником отсюда не встать; читать можно и так, писать — словом запустившему."
+      : null;
+  return { home, directoryOf, exists, ours, moved, relay, guard, farRoot, farRefusal };
 }
 
 /* eslint-enable @typescript-eslint/no-explicit-any */
