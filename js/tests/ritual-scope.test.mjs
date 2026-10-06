@@ -154,6 +154,36 @@ test("check-rituals: a greeting scoped by canonical directories — clean, its o
   assert.equal(verdicts[0].scope.writes.mine, 1);
 });
 
+// A plugin may say a word once per process (globalThis), as one live server runs
+// every instance in one process; the revizor runs plugins in one process too, so
+// each run starts clean and with its own session and call ids.
+test("check-rituals: two plugins with a word-once set on globalThis are judged apart", () => {
+  const once = `import { realpathSync } from "node:fs";
+  export default { id: "o", async setup(ctx) {
+    const said = (globalThis.__probeOnce ??= new Set());
+    const own = realpathSync(ctx.location.directory);
+    (async () => { for await (const ev of await ctx.event.subscribe({})) {
+      if (ev.data?.location?.directory !== own) continue;
+      if (said.has(ev.data.sessionID)) continue;
+      said.add(ev.data.sessionID);
+      await ctx.session.prompt({ sessionID: ev.data.sessionID, text: "hi" });
+    } })();
+    await ctx.tool.hook("execute.after", async (input) => {
+      if (said.has(input.id)) return;
+      said.add(input.id);
+      input.result = { ...input.result, content: "noted" };
+    });
+  } };`;
+  const repo = repoWith(once);
+  writeFileSync(join(repo, ".opencode", "plugins", "second.js"), once);
+  const { status, verdicts } = check(repo);
+  assert.equal(status, 0, JSON.stringify(verdicts));
+  for (const v of verdicts) {
+    assert.equal(v.scope.writes.mine, 1, `${v.file}: its own session greeted`);
+    assert.ok(v.scope.ownAfter, `${v.file}: its own push woke`);
+  }
+});
+
 test("check-rituals: a plugin that does not load is not passed", () => {
   const { status, verdicts } = check(repoWith("export const x = 1;"));
   assert.equal(status, 1);

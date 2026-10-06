@@ -10,13 +10,19 @@ export type Who = "mine" | "theirs";
 const memoryPath = join(homedir(), ".claude", "projects", "-probe", "memory", "MEMORY.md");
 const pushed = "To github.com:o/r.git\n   1234567..89abcde  feat/x -> feat/x";
 
-const calls = (sessionID: Who) => ({
+// Образец может говорить однажды на вызов (ключ — id вызова) на весь процесс:
+// у каждого вызова свой id, чтобы прогоны и плагины одного процесса не глушили друг друга.
+let seq = 0;
+const fresh = (kind: string): string => `${kind}-${++seq}`;
+const isPlain = (id: string): boolean => id.startsWith("plain-");
+
+const calls = (sessionID: string) => ({
   before: ["write", "edit"].map((tool) => ({
     tool,
     sessionID,
     agent: "build",
     messageID: "msg",
-    id: `call-${tool}`,
+    id: fresh(tool),
     input: { filePath: memoryPath, content: "x" },
   })),
   plain: [
@@ -25,7 +31,7 @@ const calls = (sessionID: Who) => ({
       sessionID,
       agent: "build",
       messageID: "msg",
-      id: "call-plain",
+      id: fresh("plain"),
       input: { filePath: "README.md", content: "x" },
     },
   ],
@@ -37,7 +43,7 @@ const calls = (sessionID: Who) => ({
     sessionID,
     agent: "build",
     messageID: "msg",
-    id: "call-bash",
+    id: fresh("bash"),
     status: "completed",
     input: { command },
     result: { content, metadata: { exit: 0 } },
@@ -56,10 +62,10 @@ export interface Hits {
 }
 
 /** Зовёт хуки тулов на вызовах сессии; что бросило, подменило вызов или сломалось. */
-export async function runHooks(hooks: Record<string, Fn[]>, who: Who): Promise<Hits> {
+export async function runHooks(hooks: Record<string, Fn[]>, sessionID: string): Promise<Hits> {
   const hit: string[] = [];
   const broken: string[] = [];
-  const c = calls(who);
+  const c = calls(sessionID);
   for (const [name, inputs] of [
     ["execute.before", c.before],
     ["execute.before", c.plain],
@@ -67,7 +73,7 @@ export async function runHooks(hooks: Record<string, Fn[]>, who: Who): Promise<H
   ] as const) {
     for (const input of inputs) {
       const was = JSON.stringify(input);
-      const what = `${name} ${input.tool}${input.id === "call-plain" ? " (not a memory path)" : ""}`;
+      const what = `${name} ${input.tool}${isPlain(input.id) ? " (not a memory path)" : ""}`;
       for (const fn of hooks[name] ?? []) {
         try {
           await fn(input);
@@ -75,7 +81,7 @@ export async function runHooks(hooks: Record<string, Fn[]>, who: Who): Promise<H
           const err = e as Error;
           const said = `${what}: throw (${err?.name ?? "?"}: ${String(err?.message ?? e)})`;
           hit.push(said);
-          if (BROKEN.has(err?.name) || input.id === "call-plain" || name === "execute.after")
+          if (BROKEN.has(err?.name) || isPlain(input.id) || name === "execute.after")
             broken.push(said);
         }
       }

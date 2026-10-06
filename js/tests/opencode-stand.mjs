@@ -24,6 +24,17 @@ import { pathToFileURL } from "node:url";
 
 export const settle = (ms = 50) => new Promise((r) => setTimeout(r, ms));
 
+// The sample may keep a word-once set per process on globalThis (one live
+// server runs every instance in one process). Within a stand it is shared, as
+// live; between stands — each probe — whatever the plugin put there is dropped,
+// and session and call ids are fresh, so no probe hears another's.
+const baseline = new Set(Reflect.ownKeys(globalThis));
+const dropPluginGlobals = () => {
+  for (const k of Reflect.ownKeys(globalThis)) if (!baseline.has(k)) delete globalThis[k];
+};
+let stands = 0;
+let calls = 0;
+
 /** The rituals plugin block of a markdown file, exactly as written. */
 export function ritualSample(mdPath) {
   const md = readFileSync(mdPath, "utf8");
@@ -37,6 +48,9 @@ export function ritualSample(mdPath) {
 export const memoryPath = join(homedir(), ".claude", "projects", "-stand", "memory", "MEMORY.md");
 
 export async function standServer(source) {
+  dropPluginGlobals();
+  const tag = `${process.pid}-${++stands}`;
+  const sid = (name) => `${name}@${tag}`;
   const root = realpathSync(mkdtempSync(join(tmpdir(), "opencode-stand-")));
   const own = join(root, "own");
   const foreign = join(root, "foreign");
@@ -49,14 +63,17 @@ export async function standServer(source) {
   writeFileSync(file, source);
   const mod = await import(`${pathToFileURL(file).href}?stand=${Date.now()}-${Math.random()}`);
 
-  const sessions = new Map(); // id → { dir, parentID }
+  // Probes name sessions ("mine", "theirs"); the server sees them as <name>@<stand>.
+  const known = new Map(); // id → { dir, parentID }
+  const sessions = { set: (name, s) => void known.set(sid(name), s) };
   const prompts = []; // { sessionID, text }
-  const failing = new Set(); // session ids whose prompt throws
+  const failing = { add: (name) => void gone.add(sid(name)) };
+  const gone = new Set();
   const streams = new Set(); // one queue per subscriber
   const cleanups = [];
 
   const write = async (arg = {}) => {
-    if (failing.has(arg.sessionID)) throw new Error(`session ${arg.sessionID} is gone`);
+    if (gone.has(arg.sessionID)) throw new Error(`session ${arg.sessionID} is gone`);
     prompts.push({ sessionID: arg.sessionID, text: String(arg.text ?? "") });
   };
 
@@ -89,7 +106,7 @@ export async function standServer(source) {
         prompt: write,
         synthetic: write,
         get: async ({ sessionID } = {}) => {
-          const s = sessions.get(sessionID);
+          const s = known.get(sessionID);
           return s ? { id: sessionID, parentID: s.parentID, location: { directory: s.dir } } : null;
         },
       },
@@ -98,7 +115,10 @@ export async function standServer(source) {
     if (typeof cleanup === "function") cleanups.push(cleanup);
     await settle(); // the subscription is taken
     return {
+      /** Calls the instance's hooks; the session is named as by the probe, the call id is fresh unless given. */
       async call(name, input) {
+        input.sessionID = sid(input.sessionID);
+        input.id ??= `call-${++calls}`;
         for (const fn of hooks[name] ?? []) await fn(input);
         return input;
       },
@@ -106,8 +126,10 @@ export async function standServer(source) {
   }
 
   /** A session is created in `dir`: the event goes down the one stream. */
-  async function create(sessionID, dir, parentID) {
-    sessions.set(sessionID, { dir, parentID });
+  async function create(name, dir, parentName) {
+    const sessionID = sid(name);
+    const parentID = parentName ? sid(parentName) : undefined;
+    known.set(sessionID, { dir, parentID });
     const location = { directory: dir };
     const data = { sessionID, projectID: "prj", location };
     if (parentID) data.parentID = parentID;
@@ -115,20 +137,19 @@ export async function standServer(source) {
     await settle();
   }
 
-  const greeted = (sessionID) => prompts.filter((p) => p.sessionID === sessionID).length;
+  const greeted = (name) => prompts.filter((p) => p.sessionID === sid(name)).length;
   const stop = async () => {
     for (const c of cleanups) await c();
   };
   return { own, foreign, alias, sessions, failing, instance, create, greeted, stop };
 }
 
-/** A tool call as the hooks of 2.0.24 get it: sessionID, no directory. */
+/** A tool call as the hooks of 2.0.24 get it: sessionID, no directory; the stand gives it a fresh id. */
 export const toolCall = (tool, sessionID, input, result) => ({
   tool,
   sessionID,
   agent: "build",
   messageID: "msg",
-  id: "call",
   input,
   ...(result ? { status: "completed", result } : {}),
 });

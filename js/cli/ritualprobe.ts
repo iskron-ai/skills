@@ -37,7 +37,17 @@ const loose = (fields: object = {}): object =>
         : loose(async () => undefined),
   });
 
-const created = (sessionID: Who, directory: string) => {
+// Образец может держать «сказано однажды» на globalThis — общим для всех экземпляров
+// процесса, как на живом сервере. Ревизор гоняет плагины и прогоны одним процессом:
+// перед каждым прогоном добавленное плагинами снимается, id сессий — свои у прогона.
+const baseline = new Set(Reflect.ownKeys(globalThis));
+const dropPluginGlobals = (): void => {
+  const g = globalThis as Record<PropertyKey, unknown>;
+  for (const k of Reflect.ownKeys(globalThis)) if (!baseline.has(k)) delete g[k];
+};
+let probes = 0;
+
+const created = (sessionID: string, directory: string) => {
   const location = { directory };
   return {
     type: "session.created",
@@ -50,6 +60,11 @@ const settle = (ms = SETTLE_MS) => new Promise((r) => setTimeout(r, ms));
 
 /** Грузит плагин из файла с ctx.location — ссылкой на own — и проверяет его против сессий own и foreign. */
 export async function probeScope(file: string, own: string, foreign: string): Promise<Scope> {
+  dropPluginGlobals();
+  const tag = ++probes;
+  const id: Record<Who, string> = { mine: `mine@${tag}`, theirs: `theirs@${tag}` };
+  const whoOf = (sessionID?: string): Who | undefined =>
+    sessionID === id.mine ? "mine" : sessionID === id.theirs ? "theirs" : undefined;
   const dirs: Record<Who, string> = { mine: own, theirs: foreign };
   const writes: Record<Who, number> = { mine: 0, theirs: 0 };
   const hooks: Record<string, Fn[]> = {};
@@ -60,13 +75,14 @@ export async function probeScope(file: string, own: string, foreign: string): Pr
       get: (_, k) => {
         if (typeof k === "symbol" || k === "then") return undefined;
         if (k === "get")
-          return async ({ sessionID }: { sessionID?: Who } = {}) =>
-            sessionID && dirs[sessionID]
-              ? { id: sessionID, location: { directory: dirs[sessionID] } }
-              : null;
+          return async ({ sessionID }: { sessionID?: string } = {}) => {
+            const who = whoOf(sessionID);
+            return who ? { id: sessionID, location: { directory: dirs[who] } } : null;
+          };
         if (reads.has(k)) return async () => [];
-        return async (arg?: { sessionID?: Who }) => {
-          if (arg?.sessionID && arg.sessionID in writes) writes[arg.sessionID] += 1;
+        return async (arg?: { sessionID?: string }) => {
+          const who = whoOf(arg?.sessionID);
+          if (who) writes[who] += 1;
         };
       },
     },
@@ -80,8 +96,8 @@ export async function probeScope(file: string, own: string, foreign: string): Pr
     event: loose({
       subscribe: ({ signal }: { signal?: AbortSignal } = {}) =>
         (async function* () {
-          yield created("mine", own);
-          yield created("theirs", foreign);
+          yield created(id.mine, own);
+          yield created(id.theirs, foreign);
           if (signal) await new Promise((r) => signal.addEventListener("abort", r));
         })(),
     }),
@@ -107,7 +123,7 @@ export async function probeScope(file: string, own: string, foreign: string): Pr
   ]).finally(() => clearTimeout(timer));
   await settle();
   const onEvents = { ...writes };
-  const mine = await runHooks(hooks, "mine");
+  const mine = await runHooks(hooks, id.mine);
   await settle(50);
   if (typeof cleanup === "function") await cleanup();
   return {
