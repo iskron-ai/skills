@@ -74,6 +74,19 @@ for (const md of sources) {
     assert.equal(s.greeted("mine"), 1, "its own root session is greeted");
   });
 
+  // iskronify fills the greeting from the AGENTS.md frontmatter: the sample shows
+  // which slots, as an explicit template, not a stub.
+  test(name("the greeting is a template of the AGENTS.md frontmatter addresses"), async () => {
+    const s = await standServer(source);
+    await s.instance(s.own);
+    await s.create("mine", s.own);
+    await s.stop();
+    const [text = ""] = s.words("mine");
+    for (const slot of ["<Граф>", "<Фокус-контур>", "<Роль агента>", "<Роль владельца>"])
+      assert.ok(text.includes(slot), `the greeting names ${slot}: ${text}`);
+    assert.match(text, /«Старт»/);
+  });
+
   test(name("(б) its own folder under another spelling is greeted"), async () => {
     const s = await standServer(source);
     await s.instance(s.own);

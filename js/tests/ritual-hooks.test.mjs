@@ -458,21 +458,22 @@ test("quiet push: a session without a known directory stays silent", async () =>
 // Another forge's merge rides the same defs with its own head and confirmation
 // (hooks.md names fj): the defs are taken from the template itself, so the copy
 // that ships to other repos is judged, not this repo's projection.
+const fj = [
+  ['fj pr merge 12 -m "fix -h parsing"', "", true],
+  ["fj pr merge 12 --method squash", "", true],
+  ["fj pr merge 1 | tail", "Merged PR #1", true],
+  ["fj pr merge 1 | tail", "", false],
+  ["fj pr merge --help", "", false],
+  ['fj pr merge 12 -m "x" -h', "", false],
+  ['fj pr merge 12 -m "x" --help', "", false],
+];
+
 test("iskronify template defs judge another forge's merge by outcome", () => {
   const skill = readFileSync(templatePath, "utf8");
   const push = skill.split("\n").find((l) => l.startsWith("def a:") && l.includes(' push"'));
   assert.ok(push, "push filter line present in hooks.md");
   const defs = push.slice(0, push.lastIndexOf("; ran(") + 2);
   const filter = defs + 'ran("fj pr merge"; "-h|--help"; "Merged PR #")';
-  const fj = [
-    ['fj pr merge 12 -m "fix -h parsing"', "", true],
-    ["fj pr merge 12 --method squash", "", true],
-    ["fj pr merge 1 | tail", "Merged PR #1", true],
-    ["fj pr merge 1 | tail", "", false],
-    ["fj pr merge --help", "", false],
-    ['fj pr merge 12 -m "x" -h', "", false],
-    ['fj pr merge 12 -m "x" --help', "", false],
-  ];
   for (const [command, output, wakes] of fj) {
     const payload = JSON.stringify({ tool_input: { command }, tool_response: { stdout: output } });
     let ran = true;
@@ -482,6 +483,21 @@ test("iskronify template defs judge another forge's merge by outcome", () => {
       ran = false;
     }
     assert.equal(ran, wakes, command);
+  }
+});
+
+// The OpenCode sample knows the same forges as hooks.md: fj by its outcome too.
+test("opencode rituals template: another forge's merge (fj) wakes by outcome", async () => {
+  const after = await loadPlugin();
+  for (const [command, output, wakes] of fj) {
+    const input = {
+      tool: "shell",
+      status: "completed",
+      input: { command },
+      result: { content: output, metadata: { exit: 0 } },
+    };
+    await after(input);
+    assert.equal(String(input.result.content).includes("мерж"), wakes, command);
   }
 });
 

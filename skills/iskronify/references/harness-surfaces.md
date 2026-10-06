@@ -126,7 +126,8 @@ export default {
       const tagsOnly = /^(?=[\s\S]*\n [*] \[new tag\])(?![\s\S]*\n (?:[ +-] |\* (?!\[new tag\])))/; // метка выпуска — не ветка на ревью
       const note = (ran(push, "-h|--help", /To [^\n]+(?:\n [!=] .*)*\n [ *+-]/) && !tagsOnly.test(out)) || quiet
         ? "[iskron] пуш — не отгрузка: самопроверка, словарный проход по тексту PR, холодное ревью этапа."
-        : ran("gh pr merge", "-h|--help|--auto|--disable-auto", /(Merged|Squashed and merged|Rebased and merged) pull request/) || ((exit ?? 0) === 0 && pull.test(cmd))
+        : ran("gh pr merge", "-h|--help|--auto|--disable-auto", /(Merged|Squashed and merged|Rebased and merged) pull request/) ||
+            ran("fj pr merge", "-h|--help", /Merged PR #/) || ((exit ?? 0) === 0 && pull.test(cmd))
           ? "[iskron] мерж — акты после мержа AGENTS.md: проткать, карта, модусы, закрыть по оси, reconcile, фидбэк, словарь."
           : "";
       if (!note || !(await mine(input.sessionID)) || !once(input.id)) return;
@@ -140,13 +141,20 @@ export default {
     // своего: каталог события совпадает с каталогом этого экземпляра (ctx.location), и только
     // корневой (без parentID) — дочерние сессии (субагенты и служебные) пропускаются.
     // Сбой промпта одной сессии ловится на месте; отказ цикла пишется в stderr сервиса.
+    // Слово — то же, что хук SessionStart Claude Code: адреса из фронтматтера AGENTS.md этого репо;
+    // iskronify подставляет слоты «Граф», «Фокус-контур», «Роль агента», «Роль владельца» при прогоне,
+    // угловых скобок в плагине репо не остаётся.
+    const START =
+      "Прочти раздел «Старт» скилла-двери iskron до действий. Адреса (AGENTS.md, фронтматтер): граф <Граф>, " +
+      "фокус-контур #<Фокус-контур>, роль агента #<Роль агента>, роль владельца #<Роль владельца>. " +
+      "Стояние — только на вахту, одним iskron_stand.";
     const ac = new AbortController();
     (async () => {
       for await (const ev of await ctx.event.subscribe({ signal: ac.signal })) {
         if (ev.type !== "session.created" || !own || (await canon(ev.data?.location?.directory)) !== own) continue;
         if (typeof ev.data?.parentID === "string" || !once(ev.data?.sessionID)) continue;
         try {
-          await ctx.session.prompt({ sessionID: ev.data.sessionID, text: "Прочти раздел «Старт» скилла-двери iskron…", delivery: "queue" });
+          await ctx.session.prompt({ sessionID: ev.data.sessionID, text: START, delivery: "queue" });
         } catch (e) {
           console.error("[iskron-rituals] ориентация сессии не дошла:", e);
         }
