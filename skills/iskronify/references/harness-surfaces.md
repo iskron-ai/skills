@@ -120,13 +120,19 @@ export default {
     });
     // ориентация: слово в новую сессию — ctx.event.subscribe даёт async-итерируемое событий;
     // поток общий для сервиса на машину и несёт сессии всех каталогов — слово только в сессию
-    // своего: каталог события совпадает с каталогом этого экземпляра (ctx.location).
-    // Отказ цикла пишется в stderr сервиса, а не глотается: молчащий ритуал хуже отсутствующего.
+    // своего: каталог события совпадает с каталогом этого экземпляра (ctx.location), и только
+    // корневой (без parentID) — дочерние служебные сессии приветствия не получают.
+    // Сбой промпта одной сессии ловится на месте; отказ цикла пишется в stderr сервиса.
     const ac = new AbortController();
     (async () => {
       for await (const ev of await ctx.event.subscribe({ signal: ac.signal })) {
-        if (ev.type === "session.created" && own && ev.data?.location?.directory === own)
+        if (ev.type !== "session.created" || !own || ev.data?.location?.directory !== own) continue;
+        if (typeof ev.data?.parentID === "string") continue;
+        try {
           await ctx.session.prompt({ sessionID: ev.data.sessionID, text: "Прочти раздел «Старт» скилла-двери iskron…", delivery: "queue" });
+        } catch (e) {
+          console.error("[iskron-rituals] ориентация сессии не дошла:", e);
+        }
       }
     })().catch((e) => console.error("[iskron-rituals] ориентация остановилась:", e));
     return () => ac.abort(); // cleanup при выгрузке плагина
@@ -134,9 +140,9 @@ export default {
 };
 ```
 
-`ctx.tool.hook("execute.before", …)` / `("execute.after", …)` оборачивают вызовы тулов — **throw из `execute.before` и есть блокировка**: memory-guard здесь — throw, не код выхода; в `execute.after` у завершившегося вызова (`status: "completed"`) заменяется поле `result` целиком (его собственные поля только для чтения). Формы сверены с типами пакета 2.0.4 (`@opencode/plugin` → `dist/promise/tool.d.ts`, `plugin.d.ts`; событие `session.created` — `@opencode/schema`, `session-event.d.ts`: `data.sessionID`, `data.projectID`, `data.location`); живой прогон ритуалов на 2.x в этой поставке не делался — сверяй по типам при апгрейде. TUI у серверного плагина нет: слово человеку идёт промптом в сессию или в stderr сервиса. Ключ фронтматтера `slash: true` парсер 2.x отбрасывает: команды палитры «/» регистрирует плагин через `ctx.command.transform`.
+`ctx.tool.hook("execute.before", …)` / `("execute.after", …)` оборачивают вызовы тулов — **throw из `execute.before` и есть блокировка**: memory-guard здесь — throw, не код выхода; в `execute.after` у завершившегося вызова (`status: "completed"`) заменяется поле `result` целиком (его собственные поля только для чтения). Формы сверены с типами пакета 2.0.4 (`@opencode/plugin` → `dist/promise/tool.d.ts`, `plugin.d.ts`; событие `session.created` — `@opencode/schema`, `session-event.d.ts`: `data.sessionID`, `data.projectID`, `data.location`, необязательный `data.parentID`); живой прогон ритуалов на 2.x в этой поставке не делался — сверяй по типам при апгрейде. TUI у серверного плагина нет: слово человеку идёт промптом в сессию или в stderr сервиса. Ключ фронтматтера `slash: true` парсер 2.x отбрасывает: команды палитры «/» регистрирует плагин через `ctx.command.transform`.
 
-**Поток событий общий для сервиса OpenCode на машину**: проектный плагин лежит в `.opencode/plugins/` своего рабочего дерева, но `ctx.event.subscribe` несёт создание сессий всех каталогов, открытых в сервисе. Ориентация без условия на каталог кладёт адреса этого `AGENTS.md` первым словом в чужие сессии, и агент там встаёт под чужой ролью. Поэтому образец сверяет `ev.data.location.directory` события с `ctx.location.directory` экземпляра плагина (`ctx.location` — `@opencode/plugin` 2.0.4, `plugin.d.ts`) и молчит, когда каталога экземпляра нет. Видит ли `ctx.tool.hook` вызовы сессий чужих каталогов, типы 2.0.4 не говорят (у `Hooks` нет опции области, во входе `execute.before`/`execute.after` — `sessionID` без каталога, `dist/promise/tool.d.ts`, `registration.d.ts`), поэтому тул-хуки образца сверяют каталог сессии из `ctx.session.get` с тем же `ctx.location.directory` и молчат, только когда оба известны и разошлись (неизвестный каталог guard не глушит) — иначе guard блокировал бы запись в чужих сессиях, а напоминания о пуше и мерже приходили бы чужим; проверить живьём: сервис с двумя каталогами, write в путь памяти из сессии второго — без условия хук первого бросает.
+**Поток событий общий для сервиса OpenCode на машину**: проектный плагин лежит в `.opencode/plugins/` своего рабочего дерева, но `ctx.event.subscribe` несёт создание сессий всех каталогов, открытых в сервисе. Ориентация без условия на каталог кладёт адреса этого `AGENTS.md` первым словом в чужие сессии, и агент там встаёт под чужой ролью. Поэтому образец сверяет `ev.data.location.directory` события с `ctx.location.directory` экземпляра плагина (`ctx.location` — `@opencode/plugin` 2.0.4, `plugin.d.ts`) и молчит, когда каталога экземпляра нет. Приветствие получает только корневая сессия (`data.parentID` не строка; поле — `session-event.d.ts`, `Created.data`): дочерние сессии своего каталога заводит служебный код — плагин поставки создаёт и удаляет такую раз в ~50 минут, — и слово туда либо тратит ход модели, либо уходит в уже удалённую сессию; поэтому же промпт обёрнут в try/catch — отказ одной сессии иначе бросает из `await` и гасит весь цикл ориентации. Видит ли `ctx.tool.hook` вызовы сессий чужих каталогов, типы 2.0.4 не говорят (у `Hooks` нет опции области, во входе `execute.before`/`execute.after` — `sessionID` без каталога, `dist/promise/tool.d.ts`, `registration.d.ts`), поэтому тул-хуки образца сверяют каталог сессии из `ctx.session.get` с тем же `ctx.location.directory` и молчат, только когда оба известны и разошлись (неизвестный каталог guard не глушит) — иначе guard блокировал бы запись в чужих сессиях, а напоминания о пуше и мерже приходили бы чужим; проверить живьём: сервис с двумя каталогами, write в путь памяти из сессии второго — без условия хук первого бросает.
 
 Маппинг ритуалов: ориентация → `ctx.event.subscribe` на `session.created` своего каталога; memory-guard → `ctx.tool.hook("execute.before")` с throw; пуш и мерж → `ctx.tool.hook("execute.after")` по shell-тулу — оба только для сессий своего каталога. Ролевые файлы суб-агентов: `.opencode/agents/` (см. `delegation.md`).
 
