@@ -21,3 +21,12 @@ export function refusalOf(reply: JsonRpcMessage | null): Refusal | null {
     ...(isObj(r.data) ? { data: r.data } : {}),
   };
 }
+
+/**
+ * register отказан гонкой открытия места: 409 без rule («opened concurrently;
+ * register again») — прочие 409 регистрации api называет своим rule. Повтор — один.
+ */
+export const openedConcurrently = (reply: JsonRpcMessage | null): boolean => {
+  const r = reply?.result?.isError ? refusalOf(reply) : null;
+  return !!r && !r.rule && r.status === 409;
+};

@@ -423,6 +423,7 @@ export async function startFakeNks(opts = {}) {
         "silentNewSession",
         "standingRefuseNext",
         "standingSeatGoneNext",
+        "registerConcurrentNext", // столько ближайших register отказать гонкой открытия (409 без rule)
         "registerNoId", // ответ register без standing_id — id места мосту не известен
         "adminChannelSelf", // tools/list объявляет у iskron_admin параметр channel
         "rooms",
@@ -876,21 +877,41 @@ export async function startFakeNks(opts = {}) {
             await new Promise((r) => setTimeout(r, st.registerToolDelayMs));
           if (st.standingSeatGoneNext > 0) {
             st.standingSeatGoneNext--;
+            // Под structured — как api: 422, rule standing_not_held из errors[0] (дело №186 [22]).
             return json(
               res,
               200,
               {
                 jsonrpc: "2.0",
                 id: msg.id,
-                result: {
-                  isError: true,
-                  content: [
-                    {
-                      type: "text",
-                      text: `Отказано (404): no such standing «${a.name ?? ""}» — take it with connect`,
-                    },
-                  ],
-                },
+                result: refused(
+                  `Отказано (404): no such standing «${a.name ?? ""}» — take it with connect`,
+                  "Abgelehnt (422).",
+                  {
+                    rule: "standing_not_held",
+                    status: 422,
+                    data: { your_standings: [{ name: "andere" }] },
+                  },
+                ),
+              },
+              extra,
+            );
+          }
+          if (st.registerConcurrentNext > 0) {
+            st.registerConcurrentNext--;
+            st.counts.register_concurrent = (st.counts.register_concurrent ?? 0) + 1;
+            // Гонка открытия места у api: 409 без rule — «register again».
+            return json(
+              res,
+              200,
+              {
+                jsonrpc: "2.0",
+                id: msg.id,
+                result: refused(
+                  "Отказано (409): place opened concurrently; register again",
+                  "Abgelehnt (409).",
+                  { status: 409 },
+                ),
               },
               extra,
             );

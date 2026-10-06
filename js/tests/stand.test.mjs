@@ -3612,6 +3612,48 @@ test("structuredContent: an unattributed refusal is told by its rule — the bri
   assert.equal(fake.state.counts.register_standing, before, "another rule buys no register");
 });
 
+// register «места больше нет» — 422 с rule standing_not_held (дело №186 [22]); проза ему не нужна.
+test("structuredContent: a replayed register refused by rule standing_not_held forgets the seat — the prose may say anything", async (t) => {
+  const { fake, bridge } = await ready(t);
+  const stood = await bridge.call("tools/call", {
+    name: "iskron_stand",
+    arguments: { realm: "nks-dev", karta: 931, name: "proba" },
+  });
+  assert.ok(!stood.result?.isError, textOf(stood));
+  await fake.control({
+    structured: true,
+    garble: true,
+    kill_session: true,
+    standingSeatGoneNext: 1,
+  });
+  await bridge.call("tools/call", {
+    name: "iskron_channel",
+    arguments: { realm: "nks-dev", action: "list" },
+  });
+  assert.match(bridge.stderr, /the standing's seat is gone, forgetting it/, bridge.stderr);
+  assert.doesNotMatch(bridge.stderr, /could not re-register the standing/, bridge.stderr);
+});
+
+// Гонка открытия места у register — 409 без rule: мост регистрирует ещё раз, один.
+test("structuredContent: a register refused by a concurrent opening (409, no rule) is repeated once — by iskron_stand and by the replay", async (t) => {
+  const { fake, bridge } = await ready(t);
+  await fake.control({ structured: true, garble: true, registerConcurrentNext: 1 });
+  const stood = await bridge.call("tools/call", {
+    name: "iskron_stand",
+    arguments: { realm: "nks-dev", karta: 931, name: "proba" },
+  });
+  assert.ok(!stood.result?.isError, `${textOf(stood)}\n${bridge.stderr}`);
+  assert.equal(fake.state.counts.register_concurrent, 1);
+  await fake.control({ kill_session: true, registerConcurrentNext: 1 });
+  await bridge.call("tools/call", {
+    name: "iskron_channel",
+    arguments: { realm: "nks-dev", action: "list" },
+  });
+  assert.equal(fake.state.counts.register_concurrent, 2, "the replay met the race");
+  assert.match(bridge.stderr, /registering again once/, bridge.stderr);
+  assert.doesNotMatch(bridge.stderr, /could not re-register the standing/, bridge.stderr);
+});
+
 test("satellite: a connect refusal is the window's only by the rule ttl_out_of_range — another rule is not retried without ttl", async (t) => {
   const fake = await withCaller(t);
   await fake.control({ structured: true, garble: true, connect_refuse_ttl: "x" });

@@ -8,7 +8,7 @@ import { normKarta, normName } from "./names.ts";
 import { placeFields } from "./placefields.ts";
 import { dropExtra, keyOfPlace, rememberPlace } from "./places.ts";
 import { otherRealm } from "./realms.ts";
-import { refusalOf } from "./refusal.ts";
+import { openedConcurrently, refusalOf } from "./refusal.ts";
 import { debug, log } from "./streams.ts";
 import { post, type Standing, state } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
@@ -106,6 +106,13 @@ export function ensureStanding(): Promise<void> {
 }
 
 export async function replayRegister(place: Standing | null): Promise<JsonRpcMessage | null> {
+  const got = await registerOnce(place);
+  if (!openedConcurrently(got)) return got;
+  log("register refused by a concurrent opening (409, no rule) — registering again once");
+  return registerOnce(place);
+}
+
+async function registerOnce(place: Standing | null): Promise<JsonRpcMessage | null> {
   const id = `iskron-bridge-restanding-${++state.reinitCounter}`;
   let reply: JsonRpcMessage | null = null;
   await post(
@@ -169,13 +176,18 @@ export const replyText = (reply: JsonRpcMessage | null): string => {
     : JSON.stringify(reply.result ?? "");
 };
 
-// The surface's own words for "no seat to bind to" — the one refusal that
-// means the remembered standing is no longer takeable by register. The API names
-// no rule for it (a bare 404), so a refusal that carries a rule
-// (_meta["iskron/refusal"], fields.ts) is some other refusal; without one, the prose.
-export const seatIsGone = (reply: JsonRpcMessage | null): boolean =>
-  !refusalOf(reply)?.rule &&
-  /no such standing|take it with connect|такого стояния|занять.*connect/i.test(replyText(reply));
+// "No seat to bind to" — the one refusal that means the remembered standing is
+// no longer takeable by register. The API says it by rule (422, errors[0].rule =
+// standing_not_held, carried in _meta["iskron/refusal"], refusal.ts); another
+// rule is another refusal; with no rule (a 404 or 409 of register, or no _meta
+// at all) — the surface's own words, as before.
+export const seatIsGone = (reply: JsonRpcMessage | null): boolean => {
+  const rule = refusalOf(reply)?.rule;
+  if (rule) return rule === "standing_not_held";
+  return /no such standing|take it with connect|такого стояния|занять.*connect/i.test(
+    replyText(reply),
+  );
+};
 
 // The surface's marks for a call that ran WITHOUT its author: the channel
 // refuses (409, nothing applied), the graph factories write and warn. Either
