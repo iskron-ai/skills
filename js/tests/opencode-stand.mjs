@@ -117,7 +117,7 @@ export async function standServer(source) {
     return {
       /** Calls the instance's hooks; the session is named as by the probe, the call id is fresh unless given. */
       async call(name, input) {
-        input.sessionID = sid(input.sessionID);
+        if (!String(input.sessionID).endsWith(`@${tag}`)) input.sessionID = sid(input.sessionID);
         input.id ??= `call-${++calls}`;
         for (const fn of hooks[name] ?? []) await fn(input);
         return input;

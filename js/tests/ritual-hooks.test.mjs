@@ -233,11 +233,17 @@ async function loadPlugin(dirs = {}) {
   };
 }
 
+// The template keeps one word per process across its instances, keyed by the
+// call's id — every call here gets its own.
+let calls = 0;
+const callID = () => `call-${++calls}`;
+
 test("opencode rituals template: wakes by outcome", async () => {
   const after = await loadPlugin();
   for (const [command, output, push, merge] of cases) {
     const input = {
       tool: "bash",
+      id: callID(),
       status: "completed",
       input: { command },
       result: { content: output, metadata: { exit: 0 } },
@@ -262,6 +268,7 @@ test("opencode rituals template: a failed trunk pull does not wake", async () =>
   ]) {
     const input = {
       tool: "bash",
+      id: callID(),
       status: "completed",
       input: { command: "git checkout main && git pull" },
       result: { content: "fatal: unable to access 'https://github.com/o/r/'", metadata: { exit } },
@@ -269,6 +276,34 @@ test("opencode rituals template: a failed trunk pull does not wake", async () =>
     await after(input);
     assert.equal(String(input.result.content).includes("мерж"), merge, `exit ${exit}`);
   }
+});
+
+// The server makes one plugin instance per spelling of a directory (/tmp/… and
+// /private/tmp/…); after canonicalising both own the session — so the greeting
+// (by session) and the reminder (by call) are said once per process, children
+// get no greeting, and the shell tool is `shell` as observed on 2.0.24.
+test("opencode rituals template: two instances of one directory speak once", async () => {
+  const s = await standServer(ritualSample(surfacesPath));
+  const one = await s.instance(s.own);
+  const two = await s.instance(`${s.own}/`);
+  await s.create("root-1", s.own);
+  await s.create("child-1", s.own, "root-1");
+  await new Promise((r) => setTimeout(r, 100));
+  assert.equal(s.greeted("root-1"), 1);
+  assert.equal(s.greeted("child-1"), 0);
+  s.sessions.set("s1", { dir: s.own });
+  const input = {
+    tool: "shell",
+    id: callID(),
+    sessionID: "s1",
+    status: "completed",
+    input: { command: "gh pr merge 12 --squash" },
+    result: { content: "✓ Squashed and merged pull request #12", metadata: { exit: 0 } },
+  };
+  await one.call("execute.after", input);
+  await two.call("execute.after", input);
+  await s.stop();
+  assert.equal(String(input.result.content).split("[iskron] мерж").length - 1, 1);
 });
 
 // A quiet push prints no `To <remote>`, and a cut tail (`| tail -1`, `| head -1`)
@@ -353,6 +388,7 @@ for (const [name, command, wakes, lands] of quietCases) {
     const after = await loadPlugin({ s1: a });
     const input = {
       tool: "bash",
+      id: callID(),
       sessionID: "s1",
       status: "completed",
       input: { command: cmd },
@@ -392,6 +428,7 @@ for (const trunk of ["main", "master"]) {
     const after = await loadPlugin({ s1: a });
     const input = {
       tool: "bash",
+      id: callID(),
       sessionID: "s1",
       status: "completed",
       input: { command: cmd },
@@ -408,6 +445,7 @@ test("quiet push: a session without a known directory stays silent", async () =>
   const after = await loadPlugin({});
   const input = {
     tool: "bash",
+    id: callID(),
     sessionID: "unknown",
     status: "completed",
     input: { command: cmd },
