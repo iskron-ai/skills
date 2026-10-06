@@ -165,7 +165,7 @@ export async function setupTools(
   }
 
   // Локация экземпляра: перенесённая сессия зовёт тулы через экземпляр новой папки (moves.ts).
-  const mv = createMoves(ctx, rootOf, () => !stopped);
+  const mv = createMoves(ctx);
   const { home, directoryOf, exists, ours } = mv;
   const relay = mv.relay(onChannel, say);
   const runEnds = createRunEnds(); // кончившиеся дети: запись с места — отказ вслух (#6361)
@@ -182,7 +182,7 @@ export async function setupTools(
     slotFor: (root, touch) => slotFor(root, touch),
     ready: readyFor,
     directoryOf,
-    exists: async (s) => (await ours(s)) && mv.twins.claim(s), // одно написание каталога
+    exists: ours,
   });
   // Ребёнок прежнего экземпляра слота здесь не имеет: гасить нечего (и forget зовётся до конца setup).
   const nothing = () => {};
@@ -309,8 +309,7 @@ export async function setupTools(
       spare ? 1 : 0,
     );
 
-  await ctx.tool.transform((raw) => {
-    const editor = mv.twins.editor(raw); // вызов идёт экземпляру, ведущему корень сессии
+  await ctx.tool.transform((editor) => {
     editor.add(statusTool(statusText));
     for (const t of state.listed) {
       const name = String(t.name);
@@ -466,7 +465,7 @@ export async function setupTools(
   }
 
   return {
-    launch: mv.twins.launcher(launcher.launch),
+    launch: launcher.launch,
     bridgeOf: (s) => [slots.get(s)].find((x) => x?.holding)?.bridge ?? null,
     forget(s) {
       forget(s);
@@ -484,7 +483,7 @@ export async function setupTools(
       keeper.stop();
       await children.pause(); // перезагрузка — не конец ребёнка (#6625): место и дела ждут
       // Остановка с держащими мостами — на диск: следующий экземпляр скажет о потере.
-      writeLostMarker(authDir(), slots.values(), home);
+      const left = writeLostMarker(authDir(), slots.values(), home);
       if (spare) spare.ownStop = true;
       spare?.bridge.stop();
       spare = null;
@@ -493,6 +492,7 @@ export async function setupTools(
         slot.bridge.stop();
       }
       slots.clear();
+      return left; // близнецу каталога — будить экземпляр этого написания (twins.ts)
     },
   };
 }

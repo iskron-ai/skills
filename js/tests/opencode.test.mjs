@@ -150,6 +150,7 @@ function fakeCtx({
   const prompts = [];
   const synthetics = [];
   const updates = [];
+  const moves = [];
   const hooks = {};
   const tools = registry();
   const commands = registry();
@@ -191,6 +192,11 @@ function fakeCtx({
               if (faults.removeFails > 0 && faults.removeFails--) throw new Error("remove refused");
             },
           }),
+      // A move — the twin's wake of an unloaded spelling (twins.ts); moveFails — it throws.
+      move: async (o) => {
+        moves.push(o);
+        if (faults.moveFails) throw new Error("move refused");
+      },
       // A synthetic message — how OpenCode's own subagent tool reports to the parent.
       synthetic: async (o) => {
         synthetics.push(o);
@@ -225,6 +231,7 @@ function fakeCtx({
     prompts,
     synthetics,
     updates,
+    moves,
     tools: () => tools.get(),
     commands: () => commands.get(),
     hooks,
@@ -282,6 +289,7 @@ const ENV_KEYS = [
   "ISKRON_RESUME_PATIENCE_MS",
   "ISKRON_MOVE_ADOPT_MS",
   "ISKRON_KEEPALIVE_MS",
+  "ISKRON_WAKE_MS",
 ];
 
 let seq = 0;
@@ -314,6 +322,9 @@ async function plugin(env = {}, ctxOpts = {}) {
   const restore = captureStderr(rec.stderr);
   rec.cleanup = await def.setup(rec.ctx);
   rec.said = () => rec.stderr.join("");
+  // Captures nest: an instance stopped while a later one still listens keeps its capture
+  // (cleanup), and gives it back after the later one's stop (restore).
+  rec.restore = restore;
   rec.stop = async () => {
     await rec.cleanup?.();
     restore();
@@ -2196,99 +2207,162 @@ test("a session moved to another folder: the old location's instance lets its pl
   }
 });
 
-// #5048: OpenCode 2.0.24 names one folder now /private/tmp/…, now /tmp/…: the marker's
-// location tag, the move check and the folder of a session were string-compared and
-// missed the instance's own sessions. A link and its target stand in for the two paths.
-test("one folder by two paths (a link and its target): the marker is taken, a «move» into the same folder is not a move, and an earlier build's marker is taken", async () => {
-  const real = mkdtempSync(join(SANDBOX, "canon-real-"));
+// Case №147 (#5048), seen live on OpenCode 2.0.24: an instance per SPELLING of a folder
+// (/tmp/A and /private/tmp/A), and a session's hooks and tool calls reach only the instance
+// of its own spelling. So the place is that instance's: the marker it leaves is taken by
+// the instance of the same spelling, never by a twin — even a twin that came up first —
+// and a move between the two spellings is a move between instances. A link and its target
+// stand in for the two spellings.
+const spellings = (name) => {
+  const real = mkdtempSync(join(SANDBOX, `${name}-real-`));
   const link = `${real}-link`;
   symlinkSync(real, link);
-  const LINK = { directory: link };
-  const REAL = { directory: `${real}/` };
-  const calls = join(SANDBOX, "canon.calls");
-  const resume = join(SANDBOX, "canon.resume");
-  writeFileSync(calls, "");
-  const bySession = { c1: backAnswer("k-c1"), c3: backAnswer("k-c3") };
-  writeFileSync(resume, JSON.stringify({ bySession }));
-  const b = bridgeEnv("canon", { FB_CALLS: calls, FB_RESUME: resume });
-  const resumed = (s) => () =>
-    callsIn(calls).some((c) => c.name === "iskron/resume" && c.arguments.session === s);
+  return { LINK: { directory: link }, REAL: { directory: real } };
+};
 
-  // A reload: the instance stopped under one path, the next comes up under the other.
-  const first = await plugin(b.env, inLoc(LINK, "c1", "c2"));
-  await serverTools(first);
-  await standsHeld(first, b, calls, "c1", "k-c1");
-  await standsHeld(first, b, calls, "c2", "k-c2");
-  // A «move» of c2 into its own folder spelled the other way: the place stays.
-  const pid2 = callsIn(calls)
-    .filter((c) => c.name === "iskron_channel")
-    .at(-1).pid;
-  first.emit({ type: "session.moved", data: { sessionID: "c2", location: REAL } });
-  await delay(300);
-  assert.doesNotMatch(first.said(), /перенесена в/, "not a move: the same folder");
-  assert.ok(alive(pid2), "c2's bridge lives on");
-  await first.stop();
-  const second = await plugin(b.env, { ...inLoc(REAL, "c1"), keepMarker: true });
-  try {
-    await until(resumed("c1"), "c1's place back by the other path");
-  } finally {
-    await second.stop();
-  }
-
-  // An earlier build hashed the folder as it came: its marker is taken all the same.
-  for (const f of lostMarkers()) rmSync(f, { force: true });
-  const rawTag = createHash("sha256").update(`${link}\0`).digest("hex").slice(0, 12);
-  const at = new Date().toISOString();
-  writeFileSync(
-    join(process.env.ISKRON_BRIDGE_AUTH_DIR, `opencode-lost.@${rawTag}.${process.pid}.old.json`),
-    JSON.stringify({ at, entries: [{ session: "c3", key: "k-c3", dir: link }] }),
-  );
-  const third = await plugin(b.env, { ...inLoc(LINK, "c3"), keepMarker: true });
-  try {
-    await until(resumed("c3"), "c3's place back from the earlier build's marker");
-  } finally {
-    await third.stop();
-  }
-});
-
-// Case №147: OpenCode 2.0.24 loads an instance per spelling of a folder (/tmp/A and
-// /private/tmp/A) in one process; with canonical paths both read a session as theirs,
-// and the place came back twice, by two bridges. One instance holds the root; the twin
-// hands its calls over.
-test("two instances of one folder by two spellings: the place comes back once, and the twin's calls go to the instance holding the root", async () => {
-  const real = mkdtempSync(join(SANDBOX, "twins-real-"));
-  const link = `${real}-link`;
-  symlinkSync(real, link);
-  const calls = join(SANDBOX, "twins.calls");
-  const resume = join(SANDBOX, "twins.resume");
+test("two spellings of one folder: a spelling's marker is taken by that spelling's instance, not by a twin up first", async () => {
+  const { LINK, REAL } = spellings("spell");
+  const calls = join(SANDBOX, "spell.calls");
+  const resume = join(SANDBOX, "spell.resume");
   writeFileSync(calls, "");
   writeFileSync(resume, JSON.stringify({ bySession: { t1: backAnswer("k-t1") } }));
-  const b = bridgeEnv("twins", { FB_CALLS: calls, FB_RESUME: resume });
-  const first = await plugin(b.env, inLoc({ directory: link }, "t1"));
+  const b = bridgeEnv("spell", { FB_CALLS: calls, FB_RESUME: resume });
+  const sessions = [{ id: "t1", location: LINK }]; // t1 lives in the link's spelling
+  const first = await plugin(b.env, { location: LINK, sessions });
   await serverTools(first);
   await standsHeld(first, b, calls, "t1", "k-t1");
   await first.stop();
-  const before = callsIn(calls).length; // the first instance's own resume at its stand
-  const of = (name) =>
+  const before = callsIn(calls).length;
+  const resumes = () =>
     callsIn(calls)
       .slice(before)
-      .filter((c) => c.name === name && (name !== "iskron/resume" || c.arguments.session === "t1"));
-  const A = await plugin(b.env, { ...inLoc({ directory: link }, "t1"), keepMarker: true });
-  const B = await plugin(b.env, { ...inLoc({ directory: real }, "t1"), keepMarker: true });
+      .filter((c) => c.name === "iskron/resume" && c.arguments.session === "t1");
+  const twin = await plugin(b.env, { location: REAL, sessions, keepMarker: true });
+  let own = null;
   try {
-    await until(() => of("iskron/resume").length === 1, "t1's place back");
-    await serverTools(B);
-    await B.call("iskron_orient", {}, "t1");
+    await delay(600);
+    assert.deepEqual(resumes(), [], "the twin up first does not take the link's marker");
+    own = await plugin(b.env, { location: LINK, sessions, keepMarker: true });
+    await until(() => resumes().length === 1, "t1's place back by its own spelling");
     await delay(300);
-    assert.equal(of("iskron/resume").length, 1, "the place comes back once, by one bridge");
-    assert.deepEqual(
-      of("iskron_orient").map((c) => c.pid),
-      [of("iskron/resume")[0].pid],
-      "the twin's call goes through the bridge that took the place back",
+    assert.equal(resumes().length, 1, "once");
+  } finally {
+    await twin.stop();
+    await own?.stop();
+  }
+});
+
+test("two spellings of one folder: a move from one spelling to the other hands the place to the other's instance", async () => {
+  const { LINK, REAL } = spellings("spell-move");
+  const calls = join(SANDBOX, "spell-move.calls");
+  const resume = join(SANDBOX, "spell-move.resume");
+  writeFileSync(calls, "");
+  writeFileSync(resume, JSON.stringify({ bySession: { m1: backAnswer("k-m1") } }));
+  const b = bridgeEnv("spell-move", {
+    FB_CALLS: calls,
+    FB_RESUME: resume,
+    ISKRON_MOVE_ADOPT_MS: 200,
+  });
+  const A = await plugin(b.env, inLoc(LINK, "m1"));
+  const B = await plugin(b.env, { ...inLoc(REAL), keepMarker: true });
+  try {
+    await serverTools(A);
+    await standsHeld(A, b, calls, "m1", "k-m1");
+    const oldPid = callsIn(calls)
+      .filter((c) => c.name === "iskron_channel")
+      .at(-1).pid;
+    A.ctx.session.get = async ({ sessionID }) => ({ id: sessionID, location: REAL });
+    B.ctx.session.get = A.ctx.session.get;
+    const moved = { type: "session.moved", data: { sessionID: "m1", location: REAL } };
+    A.emit(moved);
+    B.emit(moved);
+    await until(() => /перенесена в/.test(A.said()), "the link's instance lets the place go");
+    await until(() => !alive(oldPid), "its bridge of m1 to go");
+    await until(
+      () =>
+        callsIn(calls).some(
+          (c) => c.name === "iskron/resume" && c.arguments.session === "m1" && c.pid !== oldPid,
+        ),
+      "the target's instance takes it back",
     );
   } finally {
     await A.stop();
     await B.stop();
+  }
+});
+
+// The instance of a spelling unloaded with a place (keepalive off or failed) is not
+// reloaded until a request comes to that spelling — at night, hours. A live twin of the
+// folder wakes it by moving the session into its own folder: seen live, the one call of the
+// plugin surface that boots an unloaded spelling without a turn. The woken instance takes
+// the marker at setup; the twin never holds the place. The probe plays OpenCode's part:
+// on the move it loads the woken instance.
+test("a spelling unloaded with a place: its live twin wakes it by a move into its own folder, and the place comes back once, by the woken instance", async () => {
+  const { LINK, REAL } = spellings("wake");
+  const calls = join(SANDBOX, "wake.calls");
+  const resume = join(SANDBOX, "wake.resume");
+  writeFileSync(calls, "");
+  writeFileSync(resume, JSON.stringify({ bySession: { w1: backAnswer("k-w1") } }));
+  const b = bridgeEnv("wake", { FB_CALLS: calls, FB_RESUME: resume, ISKRON_WAKE_MS: 1500 });
+  const sessions = [{ id: "w1", location: LINK }];
+  const A = await plugin(b.env, { location: LINK, sessions });
+  const twin = await plugin(b.env, { location: REAL, sessions, keepMarker: true });
+  let woken = null;
+  try {
+    await serverTools(A);
+    await standsHeld(A, b, calls, "w1", "k-w1");
+    const before = callsIn(calls).length;
+    const resumes = () =>
+      callsIn(calls)
+        .slice(before)
+        .filter((c) => c.name === "iskron/resume" && c.arguments.session === "w1");
+    await A.cleanup(); // the link's spelling unloaded
+    await until(() => twin.moves.length === 1, "the twin's wake");
+    assert.deepEqual(twin.moves[0], {
+      sessionID: "w1",
+      directory: LINK.directory,
+      delivery: "queue",
+    });
+    assert.deepEqual(resumes(), [], "the twin does not take the place itself");
+    woken = await plugin(b.env, { location: LINK, sessions, keepMarker: true });
+    await until(() => resumes().length === 1, "the place back by the woken instance");
+    await until(() => /поднят заново/.test(twin.said()), "the twin sees the marker taken");
+    assert.equal(resumes().length, 1, "once");
+    assert.equal(twin.moves.length, 1, "one wake");
+    assert.ok(!twin.prompts.some((p) => /отпущено/.test(p.text)), "no word of loss");
+  } finally {
+    await woken?.stop();
+    await twin.stop();
+    A.restore();
+  }
+});
+
+test("a spelling unloaded with a place and the wake fails: the twin says so loudly and tells the session to stand again", async () => {
+  const { LINK, REAL } = spellings("wake-fail");
+  const calls = join(SANDBOX, "wake-fail.calls");
+  writeFileSync(calls, "");
+  const b = bridgeEnv("wake-fail", { FB_CALLS: calls, ISKRON_WAKE_MS: 1500 });
+  const sessions = [{ id: "w2", location: LINK }];
+  const A = await plugin(b.env, { location: LINK, sessions });
+  const twin = await plugin(b.env, {
+    location: REAL,
+    sessions,
+    keepMarker: true,
+    faults: { moveFails: true },
+  });
+  try {
+    await serverTools(A);
+    await standsHeld(A, b, calls, "w2", "k-w2");
+    await A.cleanup();
+    await until(() => /не поднят — move refused/.test(twin.said()), "the loud line");
+    assert.match(twin.said(), /\[iskron\/error\][^\n]*выгружен с местом \(k-w2\)/);
+    await until(() => twin.prompts.some((p) => p.sessionID === "w2"), "the word in w2");
+    const word = twin.prompts.find((p) => p.sessionID === "w2").text;
+    assert.match(word, /место k-w2 отпущено[\s\S]*iskron_stand/);
+  } finally {
+    await twin.stop();
+    A.restore();
+    for (const f of lostMarkers()) rmSync(f, { force: true });
   }
 });
 

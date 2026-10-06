@@ -7,14 +7,12 @@
 // дав прежнему его положить. Место возвращается с терпением к уходу прежнего сокета
 // (keep.ts); дети-спутники едут маркером, и их запись в новой папке — отказ (adopt.ts).
 /* eslint-disable @typescript-eslint/no-explicit-any -- ответы SDK без схемы */
-import { canonDir, sameDir } from "../shared/canon.ts";
 import { authDir } from "./bridge-io.ts";
 import { homeOf, sessionDirectory } from "./host.ts";
 import { writeLostMarker } from "./marker.ts";
 import type { Context } from "./plugin.ts";
 import type { Home } from "./records.ts";
 import type { Say, Slot } from "./tools.ts";
-import { createTwins } from "./twins.ts";
 
 /** Сколько живой экземпляр новой папки ждёт маркера переноса от прежнего. */
 const ADOPT_MS = Number(process.env.ISKRON_MOVE_ADOPT_MS) || 1_000;
@@ -33,18 +31,8 @@ export interface MoveDoors {
   away(child: string): Promise<void>;
 }
 
-export function createMoves(
-  ctx: Context,
-  rootOf: (session: string) => Promise<string>,
-  live: () => boolean,
-) {
+export function createMoves(ctx: Context) {
   const home = homeOf(ctx);
-  // Экземпляр того же каталога другим написанием — корень ведёт один из них (twins.ts).
-  const twins = createTwins(
-    rootOf,
-    live,
-    home ? `${canonDir(home.directory)}\0${home.workspace ?? ""}` : null,
-  );
   const directoryOf = (sessionID: string) => sessionDirectory(ctx, sessionID);
   const exists = (sessionID: string): Promise<boolean> =>
     Promise.resolve()
@@ -57,13 +45,14 @@ export function createMoves(
   const ours = async (sessionID: string): Promise<boolean> => {
     if (!(await exists(sessionID))) return false;
     const dir = home ? await directoryOf(sessionID) : null;
-    return !home || !dir || sameDir(dir, home.directory);
+    return !home || !dir || dir === home.directory;
   };
   const left = new Set<string>(); // корни, перенесённые отсюда в другую папку
   /** Сессию перенесли в локацию to. */
   function moved(d: MoveDoors, s: string, to: Home | null): void {
     if (!home || !to?.directory || d.slots.get(s)?.child) return;
-    if (!sameDir(to.directory, home.directory)) {
+    // Написание — как пришло: перенос /tmp/A ↔ /private/tmp/A — перенос между экземплярами (#5048).
+    if (to.directory !== home.directory) {
       const root = d.slots.get(s);
       if (!root) return;
       const of = root.place?.name;
@@ -78,12 +67,10 @@ export function createMoves(
       // мост гасится здесь, родителю «перенесён» без «КОНЧЕН», а не вторая жизнь без конца.
       left.add(s);
       for (const k of kids) if (k.session) void d.away(k.session);
-      twins.release(s);
       return d.forget(s);
     }
     left.delete(s);
-    // Переносом сюда корень берёт один экземпляр каталога, не каждое его написание.
-    void d.rootOf(s).then((root) => (root === s && twins.claim(s) ? d.slotFor(s, false) : null));
+    void d.rootOf(s).then((root) => (root === s ? d.slotFor(s, false) : null));
     setTimeout(() => d.adopt(), ADOPT_MS).unref?.();
   }
   /**
@@ -111,7 +98,7 @@ export function createMoves(
         "мост родителя здесь не поднимается, а своего места у неё нет; работа этой сессии — дальше без графа, либо слово запустившему.",
     );
   }
-  return { home, directoryOf, exists, ours, moved, relay, guard, twins };
+  return { home, directoryOf, exists, ours, moved, relay, guard };
 }
 
 /* eslint-enable @typescript-eslint/no-explicit-any */

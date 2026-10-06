@@ -2,7 +2,7 @@
 // форма: мост не найден или половина не встала, а плагин грузится дальше.
 /* eslint-disable @typescript-eslint/no-explicit-any -- события SDK без схемы */
 import type { Bridge } from "../shared/bridge-client.ts";
-import type { Home } from "./records.ts";
+import type { Home, LostEntry } from "./records.ts";
 
 export interface ToolsHalf {
   /** Сессия умерла — её мост отпускается вместе со стоянием. */
@@ -11,7 +11,8 @@ export interface ToolsHalf {
   onEvent(ev: any): void;
   /** Первый промпт сессии — строка запуска с делом исполняется до хода модели (launch.ts). */
   launch(session: string, text: string): Promise<string | null>;
-  stop(): void | Promise<void>;
+  /** Остановка; держанные места, легшие маркером, — наверх (twins.ts). */
+  stop(): void | Promise<void | LostEntry[]>;
   bridgeOf(session: string): Bridge | null; // мост держащего слота — для расхода сессии (usage.ts)
   /** Имя места живого ведущего субагента; не ведущий — null (notice.ts). */
   leadOf(session: string): string | null;

@@ -9,7 +9,6 @@ import { createHash } from "node:crypto";
 import { mkdirSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { canonDir, sameDir } from "../shared/canon.ts";
 import type { KeptSlot } from "./keep.ts";
 import { processStart } from "./procstart.ts";
 import { entryOf, type Home, type LostEntry } from "./records.ts";
@@ -24,16 +23,13 @@ const LEGACY_MS = 2 * 60_000;
 const START_SLACK_MS = 1000;
 
 const hash = (s: string) => createHash("sha256").update(s).digest("hex").slice(0, 12);
-const tagFor = (dir: string, home: Home): string => hash(`${dir}\0${home.workspace ?? ""}`);
-/** Метка локации в имени файла — от канонического пути (#5048); экземпляр без локации — «any». */
-const tagOf = (home: Home | null): string =>
-  home ? tagFor(canonDir(home.directory), home) : "any";
 /**
- * Метки, которые этот экземпляр берёт: каноническая и — для маркеров сборки до канонизации,
- * хешировавшей путь как пришёл, — от сырого пути своей локации; иначе возврат ломался бы на обновлении.
+ * Метка локации в имени файла; экземпляр без локации — «any». Написание каталога — как
+ * пришло, не канонизированное: OpenCode 2.0.24 держит экземпляр на каждое написание, и
+ * хуки сессии идут только в экземпляр её написания (граф nks-dev: #5048, дело №147).
  */
-const tagsOf = (home: Home | null): Set<string> =>
-  new Set(home ? [tagOf(home), tagFor(home.directory, home)] : ["any"]);
+const tagOf = (home: Home | null): string =>
+  home ? hash(`${home.directory}\0${home.workspace ?? ""}`) : "any";
 /** Метка файла `opencode-lost.@<метка>.…`; null — файл прежней сборки. */
 const tagIn = (f: string): string | null => /^opencode-lost\.@([^.]+)\./.exec(f)?.[1] ?? null;
 /**
@@ -57,22 +53,39 @@ const otherLive = (f: string, path: string): boolean => {
   }
 };
 
-/** Держащие мосты — на диск, кого держали: остановка плагина либо перенос сессии в другую папку (home — её локация). */
-export function writeLostMarker(authDir: string, slots: Iterable<Held>, home: Home | null): void {
+/**
+ * Держащие мосты — на диск, кого держали: остановка плагина либо перенос сессии в другую
+ * папку (home — её локация). Возвращает записанное; файл не лёг — пусто.
+ */
+export function writeLostMarker(
+  authDir: string,
+  slots: Iterable<Held>,
+  home: Home | null,
+): LostEntry[] {
   const entries = [...slots]
     .filter((s) => s.holding && s.session)
     .map((s) =>
       entryOf({ ...s, session: s.session as string, of: s.satelliteOf, name: s.place?.name }),
     );
-  if (!entries.length) return;
+  if (!entries.length) return [];
   try {
     mkdirSync(authDir, { recursive: true, mode: 0o700 });
     const lost: Lost = { at: new Date().toISOString(), entries };
     const rand = Math.random().toString(36).slice(2, 8);
     const name = `${PREFIX}.@${tagOf(home)}.${process.pid}.${rand}.json`;
     writeFileSync(join(authDir, name), JSON.stringify(lost), { mode: 0o600 });
+    return entries;
   } catch {
-    /* маркер — слово, не обязательство */
+    return []; // маркер — слово, не обязательство
+  }
+}
+
+/** Лежит ли маркер этой локации, никем не взятый (twins.ts: поднялся ли её экземпляр). */
+export function markerWaits(authDir: string, home: Home | null): boolean {
+  try {
+    return readdirSync(authDir).some((f) => f.startsWith(`${PREFIX}.@${tagOf(home)}.`));
+  } catch {
+    return false;
   }
 }
 
@@ -96,7 +109,7 @@ function readOwn(path: string, tag: string | null, home: Home | null): Lost | nu
   if (tag === null && !(Date.now() - Date.parse(lost?.at ?? "") < LEGACY_MS)) drop();
   if (!lost) return null;
   // Прежняя сборка писала файл без метки: своя запись в нём — запись своего каталога.
-  const mine = (e: LostEntry) => tag !== null || !home || !e.dir || sameDir(e.dir, home.directory);
+  const mine = (e: LostEntry) => tag !== null || !home || !e.dir || e.dir === home.directory;
   return { at: lost.at, entries: (lost.entries ?? []).filter(mine) };
 }
 
@@ -114,12 +127,12 @@ export function takeLostMarker(
   } catch {
     return null;
   }
-  const mine = tagsOf(home);
+  const mine = tagOf(home);
   // Файлы своей метки — первыми: запись сессии из файла прежней сборки их не перебивает.
   files.sort((a, b) => Number(tagIn(b) !== null) - Number(tagIn(a) !== null));
   for (const f of files) {
     const tag = tagIn(f);
-    if (tag !== null && !mine.has(tag)) continue; // маркер другой локации — её экземпляру
+    if (tag !== null && tag !== mine) continue; // маркер другой локации — её экземпляру
     if (otherLive(f, join(authDir, f))) continue; // маркер другого живого сервера — его экземпляру
     const lost = readOwn(join(authDir, f), tag, home);
     // Перенос, не взятый экземпляром новой папки сразу, устарел: сессия ушла дальше.
