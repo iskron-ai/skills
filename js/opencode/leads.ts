@@ -39,7 +39,7 @@ export function createLeads(d: W.LeadDoors): W.Leads {
   const parentOf = (child: string) => d.parentOf(child).catch(() => null);
 
   /**
-   * Конец: мост кончает прогон (ended), родителю — итог с исходом снятия места, затем мост гасится. Итог будит и идёт steer: родная
+   * Конец: родителю — итог, затем мост кончает прогон и гасится (ended); место не снято — поправка без пробуждения. Итог будит и идёт steer: родная
    * синтетика OpenCode по затиханию ребёнка будит родителя первой, и слово с queue
    * легло бы лишь после его хода; steer ложится в идущий ход на ближайшей границе шага.
    * Порядок двух синтетик плагин не держит. Отмена, невозвращённое место (lost) и
@@ -60,28 +60,38 @@ export function createLeads(d: W.LeadDoors): W.Leads {
     // Конец снимает только спутника ребёнка: обычное место, вставшее вместо него, не трогаем.
     const kept = ended && kind === "end" ? d.ownPlace(child) : null;
     if (kept) d.say(`Искрон: ${W.keptLine(who(l, child), kept)}`, "warning");
+    // Кончен с первого слова: пока мост кончает прогон (секунды), запись ребёнка — отказ,
+    // а не вызов его спутником после «КОНЧЕН» (№147).
+    if (ended && !kept) d.seal(child);
     const parent = await l.parent;
     const last = (l.last ?? "").trim();
-    // Мост кончает прогон до слова — «место снято» только по его ответу (e2e12, №147), — а
-    // гаснет после: слово ложится раньше родной синтетики OpenCode о затихшем ребёнке.
-    const failed = ended && !kept ? await d.close(child).catch(() => null) : [];
-    const word =
+    const tell = async (text: string, wakes: boolean) => {
+      if (parent) await d.tell(parent, text, wakes);
+      else d.say(`${text}\n(родителя плагин не знает — итог некому)`, "warning");
+    };
+    await tell(
       kind === "lost"
         ? W.lostWord(who(l, child), why)
         : kind === "away"
           ? W.awayWord(who(l, child), last)
-          : W.endWord(who(l, child), why, last, kept, failed);
-    if (parent) await d.tell(parent, word, wake);
-    else d.say(`${word}\n(родителя плагин не знает — итог некому)`, "warning");
-    if (ended && !kept)
-      await d
-        .end(child)
-        .catch((e: Error) =>
-          d.say(
-            `Искрон: мост субагента ${who(l, child)} не погашен после итога — ${e.message}`,
-            "warning",
-          ),
-        );
+          : W.endWord(who(l, child), why, last, kept),
+      wake,
+    );
+    if (!ended || kept) return;
+    // Мост кончает прогон и гаснет после слова: конец прогона (revoke с повтором) длится
+    // секунды, и слово после него ложилось позже родной синтетики OpenCode — родитель
+    // просыпался дважды (№147, 7.2.8). Неудача снятия — поправкой, не вторым «КОНЧЕН», не будя.
+    const failed = await d.close(child).catch(() => null);
+    await d
+      .end(child)
+      .catch((e: Error) =>
+        d.say(
+          `Искрон: мост субагента ${who(l, child)} не погашен после итога — ${e.message}`,
+          "warning",
+        ),
+      );
+    if (kind !== "lost" && (failed === null || failed.length))
+      await tell(W.unrevokedWord(who(l, child), failed), false);
   }
 
   function leave(child: string, l: Lead, why: string): void {

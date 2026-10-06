@@ -301,8 +301,17 @@ process.stdin.on("data", (chunk) => {
     } else if (msg.method === "iskron/end") {
       // The plugin ends a lead child's run before its stop (js/bridge/runend.ts);
       // FB_END_FAILED — places the bridge could not revoke (comma-separated).
+      if (process.env.FB_CALLS)
+        appendFileSync(
+          process.env.FB_CALLS,
+          JSON.stringify({ name: msg.method, arguments: msg.params, pid: process.pid }) + "\n",
+        );
+      // FB_END_DELAY_MS — the answer comes this much later: a revoke with its retry, live ~2 s.
       const failed = (process.env.FB_END_FAILED ?? "").split(",").filter(Boolean);
-      ok(msg.id, { ended: true, failed });
+      setTimeout(
+        () => ok(msg.id, { ended: true, failed }),
+        Number(process.env.FB_END_DELAY_MS || 0),
+      );
     } else if (msg.method === "iskron/usage") {
       // The session's spend from the OpenCode plugin (js/bridge/usage.ts, #6271).
       if (process.env.FB_CALLS)

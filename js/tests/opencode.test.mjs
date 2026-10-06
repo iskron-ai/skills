@@ -268,6 +268,7 @@ const ENV_KEYS = [
   "FB_DIE_ONCE",
   "FB_ENV",
   "FB_END_FAILED",
+  "FB_END_DELAY_MS",
   "ISKRON_HARNESS_VERSION",
   "ISKRON_SKILLS_ROOT",
   "ISKRON_BRIDGE_WATCH_MS",
@@ -2869,7 +2870,7 @@ test("a lead child whose run is interrupted by the user is ended without waking 
     });
     await until(() => !alive(childPid), "the cancelled child's bridge to go");
     await until(() => ends(rec).length === 1, "the end in the parent");
-    assert.match(ends(rec)[0].text, /отменён в OpenCode[\s\S]*место снято/);
+    assert.match(ends(rec)[0].text, /отменён в OpenCode[\s\S]*место снимается/);
     assert.equal(ends(rec)[0].resume, false, "a cancel does not wake the parent");
     const bridges = pidsOf(b.log).length;
     await assert.rejects(
@@ -2963,20 +2964,106 @@ for (const kind of ["evicted", "dead"])
   });
 
 // e2e12 (№147): the parent was told «место снято» while the child's revoke had failed. The
-// plugin asks the child's bridge to end its run first (iskron/end) and words the end by its
-// answer: places not revoked are named, with the revoke to do.
-test("a lead child's end tells the parent «место не снято» when its bridge could not revoke the place", async () => {
+// end's word says the place is being taken down; the child's bridge ends its run after it
+// (iskron/end), and places not revoked come as a correction — not a second «КОНЧЕН», not waking.
+test("a lead child's end: a place its bridge could not revoke comes after «КОНЧЕН» as a correction that does not wake the parent", async () => {
   const { rec, childPid } = await leadChild("lead-unrevoked", { FB_END_FAILED: SUB });
   try {
     await rec.call("iskron_channel", { realm: "nks-dev", action: "leave" }, "child");
     await until(() => !alive(childPid), "the child's bridge to go");
-    await until(() => ends(rec).length === 1, "the end in the parent");
-    assert.match(ends(rec)[0].text, /место не снято \(сеть\): host\.repo\.opus-5\.sub-1/);
-    assert.doesNotMatch(ends(rec)[0].text, /место снято\./);
+    const fix = () => rec.synthetics.find((s) => /место не снято/.test(s.text));
+    await until(fix, "the correction in the parent");
+    assert.equal(ends(rec).length, 1, "one «КОНЧЕН»");
+    assert.doesNotMatch(ends(rec)[0].text, /не снято/);
+    assert.equal(fix().sessionID, "root");
+    assert.match(fix().text, /место не снято \(сеть\): host\.repo\.opus-5\.sub-1/);
+    assert.doesNotMatch(fix().text, /КОНЧЕН/);
+    assert.equal(fix().resume, false, "the correction does not wake the parent");
+    assert.ok(rec.synthetics.indexOf(ends(rec)[0]) < rec.synthetics.indexOf(fix()));
   } finally {
     await rec.stop();
   }
 });
+
+test("a lead child's end with its place revoked: no word after «КОНЧЕН»", async () => {
+  const { rec, childPid } = await leadChild("lead-revoked");
+  try {
+    await rec.call("iskron_channel", { realm: "nks-dev", action: "leave" }, "child");
+    await until(() => !alive(childPid), "the child's bridge to go");
+    await until(() => ends(rec).length === 1, "the end in the parent");
+    await delay(300);
+    assert.equal(
+      rec.synthetics.filter((s) => s.sessionID === "root").length,
+      1,
+      "only «КОНЧЕН» in the parent",
+    );
+  } finally {
+    await rec.stop();
+  }
+});
+
+// 7.2.8 live (№147): with the child's run ended first (revoke with a retry, ~2 s), «КОНЧЕН»
+// lay down after OpenCode's own synthetic had woken the parent — it woke twice. The word
+// goes first, the bridge's iskron/end after it.
+test("a lead child's end: «КОНЧЕН» is laid before the child's bridge is asked to end its run", async () => {
+  const { rec } = await leadChild("lead-word-first");
+  const runEnded = () =>
+    readFileSync(join(SANDBOX, "lead-word-first.calls"), "utf8").includes('"name":"iskron/end"');
+  const synthetic = rec.ctx.session.synthetic;
+  let endedBeforeWord = null;
+  rec.ctx.session.synthetic = async (o) => {
+    if (/КОНЧЕН/.test(o.text)) endedBeforeWord = runEnded();
+    return synthetic(o);
+  };
+  try {
+    await rec.call("iskron_channel", { realm: "nks-dev", action: "leave" }, "child");
+    await until(() => ends(rec).length === 1, "the end in the parent");
+    assert.equal(endedBeforeWord, false, "iskron/end went out only after the word");
+    await until(runEnded, "the run's end after the word");
+  } finally {
+    await rec.stop();
+  }
+});
+
+// CI after the word went first: the bridge's iskron/end takes seconds (a revoke with its
+// retry), and a call of the ended child in that window went out by its satellite — after
+// «КОНЧЕН». The child is ended from the word on: its writes are refused, none reaches a bridge.
+for (const kind of ["leave", "evicted"])
+  test(`a lead child ended by ${kind} is refused from «КОНЧЕН» on, while its bridge still ends its run`, async () => {
+    const { b, rec, childPid, sent } = await leadChild(`lead-sealed-${kind}`, {
+      FB_END_DELAY_MS: 1500,
+    });
+    try {
+      if (kind === "leave")
+        await rec.call("iskron_channel", { realm: "nks-dev", action: "leave" }, "child");
+      else appendFileSync(`${b.events}.${childPid}`, event("evicted", { code: 4000, text: "x" }));
+      await until(() => ends(rec).length === 1, "the end in the parent");
+      assert.ok(alive(childPid), "the child's bridge still ends its run");
+      const before = sent().length;
+      await assert.rejects(
+        rec.call("iskron_case", { realm: "nks-dev", action: "say", room: "#7" }, "child"),
+        /Отказано \(плагин\)/,
+      );
+      // Встать снова в этом окне нельзя (#6550 п.4): stand, connect, register — тот же отказ.
+      const again =
+        kind === "evicted"
+          ? /вытеснено другим держателем — поручение кончено/
+          : /кончена — поручение кончено/;
+      await assert.rejects(
+        rec.call("iskron_stand", { realm: "nks-dev", status: "после конца" }, "child"),
+        again,
+      );
+      await assert.rejects(rec.call("iskron_stand", { realm: "nks-dev" }, "child"), again);
+      for (const action of ["connect", "register"])
+        await assert.rejects(
+          rec.call("iskron_channel", { realm: "nks-dev", action }, "child"),
+          again,
+        );
+      assert.equal(sent().length, before, "no call of the ended child reached a bridge");
+    } finally {
+      await rec.stop();
+    }
+  });
 
 // OpenCode 2.0.22 unloads a location after 60 min without durable session events, and
 // the place goes with the plugin — frames and wakes never come until the next request.
@@ -3123,7 +3210,7 @@ test("a satellite of a root place with a long name — its base cut by the bridg
     await rec.call("iskron_channel", { realm: "nks-dev", action: "leave" }, "child");
     await until(() => !alive(childPid), "the satellite's bridge to go with its end");
     await until(() => ends(rec).length === 1, "the end in the parent");
-    assert.match(ends(rec)[0].text, /место снято/);
+    assert.match(ends(rec)[0].text, /место снимается/);
     assert.doesNotMatch(ends(rec)[0].text, /не спутником/);
   } finally {
     await rec.stop();
