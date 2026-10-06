@@ -24,7 +24,9 @@ export function refusalOf(reply: JsonRpcMessage | null): Refusal | null {
 
 /**
  * register отказан гонкой открытия места: 409 без rule («opened concurrently;
- * register again») — прочие 409 регистрации api называет своим rule. Повтор — один.
+ * register again»). Rule здесь — из errors[0] ProblemDetail (корневой rule nks-mcp
+ * не читает): 409 регистрации с правилом только в корне придёт сюда без rule и
+ * тоже получит повтор — один, отказ которого вернётся как есть.
  */
 export const openedConcurrently = (reply: JsonRpcMessage | null): boolean => {
   const r = reply?.result?.isError ? refusalOf(reply) : null;

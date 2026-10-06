@@ -60,11 +60,23 @@ const SEAT_KEYS: Record<string, (v: unknown) => boolean> = {
 export const structuredOf = (reply: JsonRpcMessage | null): unknown =>
   reply?.result?.structuredContent;
 
+/**
+ * Данные прошли не целиком: сервер выбросил ряды (`dropped` > 0) или не донёс
+ * их вовсе (`incomplete: true`, остался {action, incomplete}). Такие поля не
+ * годятся — места или хука, которого в них нет, проза бы не потеряла.
+ */
+export const incomplete = (sc: unknown): boolean =>
+  isObj(sc) && (sc.incomplete === true || (sc.dropped !== undefined && sc.dropped !== 0));
+
 const said = new Set<string>();
-/** Поля нет или оно не по форме — шаблон; одна строка в лог на ход за процесс (сторож читает доску каждый такт). */
+/** Поля нет, они неполны или не по форме — шаблон; одна строка в лог на ход за процесс (сторож читает доску каждый такт). */
 export function fallback(what: string, sc: unknown): null {
   const why =
-    sc === undefined ? "no field — the prose template" : "field off its form — the prose template";
+    sc === undefined
+      ? "no field — the prose template"
+      : incomplete(sc)
+        ? "fields incomplete — the prose template"
+        : "field off its form — the prose template";
   if (!said.has(`${what}|${why}`)) {
     said.add(`${what}|${why}`);
     log(`structuredContent ${what}: ${why}`);
@@ -78,7 +90,8 @@ const seat = (v: unknown): Seat | null =>
 /** seats[] ответа этого action — все по форме, иначе null (одно непонятое место — и весь ответ шаблоном). */
 function seats(sc: unknown, action: string): Seat[] | null {
   const what = `iskron_channel ${action}`;
-  if (!isObj(sc) || sc.action !== action || !Array.isArray(sc.seats)) return fallback(what, sc);
+  if (!isObj(sc) || incomplete(sc) || sc.action !== action || !Array.isArray(sc.seats))
+    return fallback(what, sc);
   const out = sc.seats.map(seat);
   return out.every((s) => s) ? (out as Seat[]) : fallback(what, sc);
 }
