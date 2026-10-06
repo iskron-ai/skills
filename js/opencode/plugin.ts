@@ -25,9 +25,11 @@ import { setupChannel } from "./channel.ts";
 import { setupCommands } from "./commands.ts";
 import { idleHalf } from "./half.ts";
 import { createKeepAlive, KEEPALIVE_TITLE } from "./keepalive.ts";
+import { teller } from "./leadwords.ts";
 import { annotate } from "./notice.ts";
 import { type Say, setupTools } from "./tools.ts";
 import { createUsageFeed } from "./usage.ts";
+import { createWaits } from "./waits.ts";
 
 export type Context = Plugin.Context;
 
@@ -148,6 +150,11 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
     owns: (s) => half.owns(s),
     say: (t, level) => say(t, level ?? "warning"),
   });
+  // Ребёнок ждёт разрешения или его ход прерван не отменой — слово родителю (waits.ts, №147).
+  const waits = createWaits(ctx, {
+    tell: teller(ctx, say),
+    isLead: (s) => half.leadOf(s) !== null,
+  });
   const controller = new AbortController();
   void (async () => {
     try {
@@ -156,6 +163,7 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
         const id: string | undefined = ev?.data?.sessionID;
         half.onEvent(ev); // ход, текст и удаление ведущего субагента (leads.ts)
         keepalive.onEvent(ev);
+        waits.onEvent(ev);
         switch (ev?.type) {
           case "session.deleted":
             if (!id) break;
@@ -222,6 +230,7 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
   return async () => {
     controller.abort();
     keepalive.stop();
+    waits.stop();
     usage.stop();
     ch?.stop();
     await half.stop();
