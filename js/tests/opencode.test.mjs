@@ -2251,6 +2251,47 @@ test("one folder by two paths (a link and its target): the marker is taken, a «
   }
 });
 
+// Case №147: OpenCode 2.0.24 loads an instance per spelling of a folder (/tmp/A and
+// /private/tmp/A) in one process; with canonical paths both read a session as theirs,
+// and the place came back twice, by two bridges. One instance holds the root; the twin
+// hands its calls over.
+test("two instances of one folder by two spellings: the place comes back once, and the twin's calls go to the instance holding the root", async () => {
+  const real = mkdtempSync(join(SANDBOX, "twins-real-"));
+  const link = `${real}-link`;
+  symlinkSync(real, link);
+  const calls = join(SANDBOX, "twins.calls");
+  const resume = join(SANDBOX, "twins.resume");
+  writeFileSync(calls, "");
+  writeFileSync(resume, JSON.stringify({ bySession: { t1: backAnswer("k-t1") } }));
+  const b = bridgeEnv("twins", { FB_CALLS: calls, FB_RESUME: resume });
+  const first = await plugin(b.env, inLoc({ directory: link }, "t1"));
+  await serverTools(first);
+  await standsHeld(first, b, calls, "t1", "k-t1");
+  await first.stop();
+  const before = callsIn(calls).length; // the first instance's own resume at its stand
+  const of = (name) =>
+    callsIn(calls)
+      .slice(before)
+      .filter((c) => c.name === name && (name !== "iskron/resume" || c.arguments.session === "t1"));
+  const A = await plugin(b.env, { ...inLoc({ directory: link }, "t1"), keepMarker: true });
+  const B = await plugin(b.env, { ...inLoc({ directory: real }, "t1"), keepMarker: true });
+  try {
+    await until(() => of("iskron/resume").length === 1, "t1's place back");
+    await serverTools(B);
+    await B.call("iskron_orient", {}, "t1");
+    await delay(300);
+    assert.equal(of("iskron/resume").length, 1, "the place comes back once, by one bridge");
+    assert.deepEqual(
+      of("iskron_orient").map((c) => c.pid),
+      [of("iskron/resume")[0].pid],
+      "the twin's call goes through the bridge that took the place back",
+    );
+  } finally {
+    await A.stop();
+    await B.stop();
+  }
+});
+
 // The instance of the new folder is often made by the move itself and loads AFTER
 // session.moved (seen live: POST /api/session/{id}/move on serve) — it never sees
 // the event. The old instance leaves a marker tagged with the NEW location; the new

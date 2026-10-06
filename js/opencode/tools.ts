@@ -165,7 +165,7 @@ export async function setupTools(
   }
 
   // Локация экземпляра: перенесённая сессия зовёт тулы через экземпляр новой папки (moves.ts).
-  const mv = createMoves(ctx);
+  const mv = createMoves(ctx, rootOf, () => !stopped);
   const { home, directoryOf, exists, ours } = mv;
   const relay = mv.relay(onChannel, say);
   const runEnds = createRunEnds(); // кончившиеся дети: запись с места — отказ вслух (#6361)
@@ -182,7 +182,7 @@ export async function setupTools(
     slotFor: (root, touch) => slotFor(root, touch),
     ready: readyFor,
     directoryOf,
-    exists: ours,
+    exists: async (s) => (await ours(s)) && mv.twins.claim(s), // одно написание каталога
   });
   // Ребёнок прежнего экземпляра слота здесь не имеет: гасить нечего (и forget зовётся до конца setup).
   const nothing = () => {};
@@ -309,7 +309,8 @@ export async function setupTools(
       spare ? 1 : 0,
     );
 
-  await ctx.tool.transform((editor) => {
+  await ctx.tool.transform((raw) => {
+    const editor = mv.twins.editor(raw); // вызов идёт экземпляру, ведущему корень сессии
     editor.add(statusTool(statusText));
     for (const t of state.listed) {
       const name = String(t.name);
@@ -465,7 +466,7 @@ export async function setupTools(
   }
 
   return {
-    launch: launcher.launch,
+    launch: mv.twins.launcher(launcher.launch),
     bridgeOf: (s) => [slots.get(s)].find((x) => x?.holding)?.bridge ?? null,
     forget(s) {
       forget(s);
