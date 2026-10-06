@@ -6,11 +6,13 @@
 // сказанный родителю ход уходят в маркер потери (keep.ts). Новый экземпляр поднимает
 // ребёнку мост тем же спутником и возвращает место по ключу — без слова ребёнку: его сессия ждёт дальше;
 // связка с родителем — parentID сессии (leads.ts). Не вернулось — конец со словом родителю.
-import { sleep } from "./bridge-io.ts";
+import { authDir, sleep } from "./bridge-io.ts";
 import type { Keeper } from "./keep.ts";
 import type { Leads } from "./leadwords.ts";
-import type { LostEntry } from "./records.ts";
+import { writeLostMarker } from "./marker.ts";
+import type { Home, LostEntry } from "./records.ts";
 import type { Slot } from "./tools.ts";
+import { adoptIn, handedOver, handOver } from "./twins.ts";
 
 /**
  * Возврат места ребёнка ждёт ухода сокета прежнего моста (он уходит своим bye) до
@@ -30,6 +32,8 @@ export interface ChildDoors {
   exists(session: string): Promise<boolean>;
   /** Прогон ребёнка кончен: расход — мосту, мост гасится (live), запись мостом корня — отказ (#6361). */
   endRun(session: string, live?: boolean): void;
+  /** Мост сессии гасится здесь; место не снимается (ребёнок уехал в другую папку). */
+  forget(session: string): void;
 }
 
 export function createChildren(d: ChildDoors) {
@@ -119,9 +123,38 @@ export function createChildren(d: ChildDoors) {
     );
   }
 
-  /** Слот ребёнка маркера встаёт — дождаться (ошибки — не здесь). */
-  const settled = (session: string): Promise<unknown> | undefined =>
-    coming.get(session)?.catch(() => {});
+  /**
+   * Ребёнка перенесли одного в другую папку (#6695): его спутник — экземпляру той папки, как
+   * корень при переносе и как при перезагрузке: пауза моста, маркер с меткой новой папки
+   * (ключ, место корня, дело, ход), мост здесь гаснет. Ведущий не кончается — ни «КОНЧЕН»,
+   * ни снятия места: экземпляр новой папки возвращает место по ключу тем же спутником.
+   */
+  function handoff(session: string, to: Home | null, home: Home | null): boolean {
+    const s = d.slots.get(session);
+    if (!s?.child || !s.satelliteOf || !s.holding) return false;
+    if (!home || !to?.directory || to.directory === home.directory) return false;
+    const was = d.leads.handoff(session);
+    [s.room, s.noted, s.last] = [was.room, was.noted, was.last];
+    // Вызовы ребёнка в новой папке ждут маркера (settled), а не встают вторым спутником.
+    handOver(
+      session,
+      s.bridge
+        .request("iskron/suspend", {}, { timeoutMs: PAUSE_MS, service: true })
+        .catch(() => {})
+        .then(() => {
+          writeLostMarker(authDir(), [s], to);
+          d.forget(session);
+          adoptIn(to); // живой экземпляр новой папки берёт маркер сразу (twins.ts)
+        }),
+    );
+    return true;
+  }
 
-  return { childSlot, back, pause, settled };
+  /** Слот ребёнка маркера встаёт — дождаться (ошибки — не здесь). */
+  const settled = async (session: string): Promise<unknown> => {
+    await handedOver(session); // спутник ребёнка ещё едет сюда из прежней папки (handoff)
+    return coming.get(session)?.catch(() => {});
+  };
+
+  return { childSlot, back, pause, settled, handoff };
 }

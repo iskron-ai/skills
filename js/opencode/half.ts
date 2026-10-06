@@ -23,6 +23,8 @@ export interface ToolsHalf {
   owns(session: string): boolean;
   /** Слот корня, держащий место в этом экземпляре; нет — null (twins.ts). */
   held(root: string): Slot | null;
+  /** Взять маркер своей локации сейчас — ребёнок перенесён сюда (adopt.ts, #6695). */
+  adopt(): void;
   /** Сессию перенесли в локацию to (событие session.moved). */
   moved(session: string, to: Home | null): void;
 }
@@ -37,6 +39,7 @@ export const idleHalf = (): ToolsHalf => ({
   holders: () => [],
   owns: () => false,
   held: () => null,
+  adopt() {},
   moved() {},
 });
 

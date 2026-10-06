@@ -36,7 +36,7 @@ import {
 import { createChildren } from "./children.ts";
 import { idleHalf, type ToolsHalf } from "./half.ts";
 import { hostEnvOf } from "./host.ts";
-import { createKeeper, WATCH_MS } from "./keep.ts";
+import { createKeeper } from "./keep.ts";
 import { holdersOf } from "./keepalive.ts";
 import { createLauncher } from "./launch.ts";
 import { createLeads } from "./leads.ts";
@@ -47,23 +47,10 @@ import { createMoves } from "./moves.ts";
 import type { Context } from "./plugin.ts";
 import { childWriteRefusal, createRunEnds, declaresAction } from "./runends.ts";
 import { asSatellite, heldPlace, STAND_TOOL, standsBy } from "./satellite.ts";
-import type { Slot } from "./slot.ts";
+import { IDLE_MS, REAP_MS, type Slot } from "./slot.ts";
 import { statusLines, statusTool } from "./status.ts";
 
 export type Say = (text: string, level: "info" | "warning" | "error") => void;
-
-/**
- * Мост сессии, которая давно молчит и ничего не держит, отпускается. Инвариант:
- * IDLE_MS > WATCH_MS — сторож слуха (keep.ts) смотрит за стоявшим слотом чаще,
- * чем жнец его сжимает, иначе мост, потерявший место, ушёл бы прежде возврата.
- */
-const IDLE_MS = Number(process.env.ISKRON_BRIDGE_IDLE_MS || 30 * 60_000);
-if (IDLE_MS <= WATCH_MS)
-  process.stderr.write(
-    `[iskron/warning] ISKRON_BRIDGE_IDLE_MS (${IDLE_MS}) не длиннее такта сторожа слуха (${WATCH_MS}): слот может быть сжат прежде возврата места\n`,
-  );
-/** Шаг жнеца простоя; переменная — для проб. */
-const REAP_MS = Number(process.env.ISKRON_BRIDGE_REAP_MS || 60_000);
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- ответы моста приходят без схемы */
 
@@ -93,6 +80,7 @@ export async function setupTools(
   const hostEnv = await hostEnvOf(ctx); // версия OpenCode и корень набора — раз на плагин
 
   const slots = new Map<string, Slot>();
+  const unasked = new WeakSet<Slot>(); // слот корня, ещё не спросивший место с диска
   let spare: Slot | null = null;
   let stopped = false;
 
@@ -180,7 +168,7 @@ export async function setupTools(
     live
       ? void flushUsage(s).finally(() => runEnds.end(s, null, forget))
       : runEnds.end(s, null, nothing);
-  const children = createChildren({ slots, spawn, keeper, leads, exists, endRun });
+  const children = createChildren({ slots, spawn, keeper, leads, exists, endRun, forget });
   const adopt = createAdopt({
     keeper,
     authDir,
@@ -232,8 +220,9 @@ export async function setupTools(
       if (touch) live.lastCall = Date.now();
       return live;
     }
-    // Ребёнок, перенесённый в другой каталог: корень держит экземпляр каталога родителя (#6695).
-    const far = root !== sessionID && !slots.has(root) ? await mv.farRoot(root) : null;
+    // Ребёнок, перенесённый в другой каталог (#6695): корень держит экземпляр каталога родителя,
+    // либо он чужой — место корня отсюда не возвращается. Решается на каждом вызове, не слотом.
+    const far = root !== sessionID && !slots.get(root)?.place ? await mv.farRoot(root) : null;
     if (far && far !== "foreign") return far;
     let slot = slots.get(root);
     let dead: Slot | undefined;
@@ -251,11 +240,13 @@ export async function setupTools(
       slot.dir = dead?.dir ?? slot.dir;
       slot.key = dead?.key ?? slot.key;
       slots.set(root, slot);
-      // Место прежнего экземпляра плагина (вытеснение каталога, перезапуск)
-      // возвращается с диска по каталогу сессии — до первого вызова тула.
-      const s = slot;
-      if (far !== "foreign") s.resume = keeper.resume(s, root).finally(() => (s.resume = null));
+      unasked.add(slot);
     }
+    // Место прежнего экземпляра плагина (вытеснение каталога, перезапуск) возвращается
+    // с диска по каталогу сессии — до первого вызова тула; корнем чужим — никогда.
+    const s = slot;
+    if (far !== "foreign" && unasked.delete(s))
+      s.resume = keeper.resume(s, root).finally(() => (s.resume = null));
     if (touch) slot.lastCall = Date.now();
     return slot;
   }
@@ -364,7 +355,7 @@ export async function setupTools(
       // Место родителя неизвестно — не обычное место и не место рядом, а отказ (#6550 п.2).
       if (!slot.place)
         throw new Error(
-          mv.farRefusal(slot.session) ?? childWriteRefusal(null, name, args, false) ?? "",
+          (await mv.farRefusal(slot.session)) ?? childWriteRefusal(null, name, args, false) ?? "",
         );
       slot = children.childSlot(sessionID, slot);
       await awaitReady(slot); // свежий детский мост может запросить вход — та же гонка, что у корня
@@ -472,7 +463,10 @@ export async function setupTools(
     holders: () => holdersOf(slots.values()),
     owns: (s) => slots.has(s),
     held: (r) => [slots.get(r)].find((x) => x?.holding && x.place && !x.bridge.failure) ?? null,
+    adopt: () => adopt.now(),
+    // Ребёнок-спутник, перенесённый один, едет своим спутником в новую папку (children.ts, #6695).
     moved: (s, to) =>
+      children.handoff(s, to, home) ||
       mv.moved({ say, slots, rootOf, forget, slotFor, adopt: adopt.now, away: leads.away }, s, to),
     async stop() {
       stopped = true;

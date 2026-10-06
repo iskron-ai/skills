@@ -2509,6 +2509,136 @@ test("a child moved alone into another folder whose parent's place is held by no
   }
 });
 
+// Re-review of #341: «foreign» is decided on every call, not kept in the root's slot of
+// the child's folder. The parent standing later is heard at once (no stale refusal), and
+// a dead bridge of that slot is replaced without taking the parent's place back — the
+// child's instance never returns the root's place.
+test("a moved child's foreign root is decided per call: the parent standing later is seen, and a dead bridge of the root's slot never takes the parent's place back", async () => {
+  const calls = join(SANDBOX, "kid-percall.calls");
+  writeFileSync(calls, "");
+  const b = bridgeEnv("kid-percall", { FB_CALLS: calls, FB_TOOLS: LEAD_TOOLS });
+  const sessions = [
+    { id: "p3", location: LOC_A },
+    { id: "k3", parentID: "p3", location: LOC_B },
+  ];
+  const parentResumes = () =>
+    callsIn(calls).filter((c) => c.name === "iskron/resume" && c.arguments.session === "p3");
+  const B = await plugin(b.env, { location: LOC_B, sessions });
+  let A = null;
+  try {
+    await until(() => B.tools().has("iskron_look"), "the tools", 8000);
+    await B.call("iskron_look", { realm: "nks-dev", node_id: "1" }, "k3");
+    const readPid = callsIn(calls).find((c) => c.name === "iskron_look").pid;
+    process.kill(readPid, "SIGKILL");
+    await until(() => !alive(readPid), "the root slot's bridge in B to die");
+    await B.call("iskron_look", { realm: "nks-dev", node_id: "1" }, "k3");
+    await assert.rejects(B.call("iskron_stand", { realm: "nks-dev" }, "k3"), /перенесена/);
+    await delay(300);
+    assert.deepEqual(parentResumes(), [], "B never asks the parent's place back");
+    A = await plugin(b.env, { location: LOC_A, sessions, keepMarker: true });
+    await until(() => A.tools().has("iskron_stand"), "the stand tool in A", 8000);
+    await A.call("iskron_stand", { realm: "nks-dev", karta: "#931" }, "p3");
+    const rootPid = callsIn(calls)
+      .filter((c) => c.name === "iskron_stand")
+      .at(-1).pid;
+    await rootHolds(A, b, { pid: rootPid });
+    await B.call("iskron_stand", { realm: "nks-dev", karta: "#48" }, "k3");
+    const stand = callsIn(calls)
+      .filter((c) => c.name === "iskron_stand")
+      .at(-1);
+    assert.equal(stand.arguments.satellite_of, ROOT_PLACE.name, "the parent's place is seen now");
+  } finally {
+    await A?.stop();
+    await B.stop();
+  }
+});
+
+// Re-review of #341: the case of #6695 itself — the child STOOD as a satellite in A,
+// then was moved alone into B. A kept its satellite and B raised a second one on the same
+// root's place: an orphan on the board, or the first one evicted with a false «КОНЧЕН»
+// to the parent. The move hands the satellite over as a reload does: A pauses it, writes
+// the marker with B's tag and lets it go; B takes the place back by key, the same satellite.
+test("a satellite child moved alone into another folder: its satellite is handed over — one bridge, the place not taken off, no «КОНЧЕН», its writes go by it", async () => {
+  const calls = join(SANDBOX, "kid-hand.calls");
+  const resume = join(SANDBOX, "kid-hand.resume");
+  writeFileSync(calls, "");
+  const answer = { resumed: true, holding: true, key: "k-sub", word: "место возвращено" };
+  writeFileSync(resume, JSON.stringify({ bySession: { k4: answer } }));
+  const b = bridgeEnv("kid-hand", { FB_CALLS: calls, FB_TOOLS: LEAD_TOOLS, FB_RESUME: resume });
+  const sessions = [
+    { id: "p4", location: LOC_A },
+    { id: "k4", parentID: "p4", location: LOC_A },
+  ];
+  const A = await plugin(b.env, { location: LOC_A, sessions });
+  const B = await plugin(b.env, { location: LOC_B, sessions, keepMarker: true });
+  try {
+    await until(() => A.tools().has("iskron_case"), "the tools", 8000);
+    await until(() => B.tools().has("iskron_case"), "the tools in B", 8000);
+    await A.call("iskron_stand", { realm: "nks-dev", karta: "#931" }, "p4");
+    const rootPid = callsIn(calls)
+      .filter((c) => c.name === "iskron_stand")
+      .at(-1).pid;
+    await rootHolds(A, b, { pid: rootPid });
+    await A.call("iskron_stand", { realm: "nks-dev" }, "k4");
+    const childPid = callsIn(calls)
+      .filter((c) => c.name === "iskron_stand")
+      .at(-1).pid;
+    const sub = { ...ROOT_PLACE, name: SUB };
+    appendFileSync(`${b.events}.${childPid}`, event("held", { key: "k-sub", place: sub }));
+    await until(() => /мост держит стояние k-sub/.test(A.said()), "the child's held word");
+    await A.call("iskron_case", { realm: "nks-dev", action: "join", room: "#77" }, "k4");
+    // The parent moves k4 alone into B's folder.
+    const movedGet = async ({ sessionID }) =>
+      sessionID === "k4"
+        ? { id: "k4", parentID: "p4", location: LOC_B }
+        : { id: sessionID, location: LOC_A };
+    A.ctx.session.get = movedGet;
+    B.ctx.session.get = movedGet;
+    const moved = { type: "session.moved", data: { sessionID: "k4", location: LOC_B } };
+    A.emit(moved);
+    B.emit(moved);
+    const back = () =>
+      callsIn(calls).find(
+        (c) => c.name === "iskron/resume" && c.arguments.session === "k4" && c.pid !== childPid,
+      );
+    await until(back, "B takes the child's place back", 8000);
+    const newPid = back().pid;
+    assert.deepEqual(back().arguments, { key: "k-sub", session: "k4" }, "by its key");
+    await until(() => !alive(childPid), "A's satellite to go");
+    const suspends = callsIn(calls).filter((c) => c.name === "iskron/suspend");
+    assert.deepEqual(
+      suspends.map((c) => c.pid),
+      [childPid],
+      "A paused it, not ended it",
+    );
+    const start = readFileSync(b.log, "utf8")
+      .trim()
+      .split("\n")
+      .find((l) => Number(l.split(/\s+/)[1]) === newPid);
+    assert.match(start, /--satellite/, "the same satellite of the root's place");
+    // A child's call in B right away goes by the handed satellite, not a second one.
+    await B.call("iskron_stand", { realm: "nks-dev", status: "в новой папке" }, "k4");
+    await B.call("iskron_case", { realm: "nks-dev", action: "say", room: "#77" }, "k4");
+    assert.equal(saidBy(callsIn(calls)), newPid, "its write goes by the handed satellite");
+    const sats = readFileSync(b.log, "utf8")
+      .trim()
+      .split("\n")
+      .filter((l) => /--satellite/.test(l));
+    assert.equal(sats.length, 2, "A's satellite and its handover — no third bridge");
+    assert.ok(
+      !callsIn(calls).some(
+        (c) => c.name === "iskron_channel" && ["revoke", "leave"].includes(c.arguments?.action),
+      ),
+      "the place is not taken off",
+    );
+    await delay(300);
+    assert.deepEqual([...ends(A), ...ends(B)], [], "no «КОНЧЕН» to the parent");
+  } finally {
+    await B.stop();
+    await A.stop();
+  }
+});
+
 // The instance of the new folder is often made by the move itself and loads AFTER
 // session.moved (seen live: POST /api/session/{id}/move on serve) — it never sees
 // the event. The old instance leaves a marker tagged with the NEW location; the new

@@ -226,6 +226,7 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
     say,
     lost: (s, text) => onChannel(s, { logger: "iskron-channel", data: { kind: "lost", text } }),
     holds: (r) => half.held(r),
+    adopt: () => half.adopt(),
   });
 
   // Остановка ждёт паузы мостов субагентов (children.ts): перезагрузка — не их конец.

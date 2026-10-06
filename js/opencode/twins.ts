@@ -30,9 +30,26 @@ interface Twin {
   wake(home: Home, entries: LostEntry[]): void;
   /** Слот корня, держащий место в этом экземпляре; нет — null. */
   holds(root: string): Slot | null;
+  /** Взять маркер своей локации сейчас (adopt.ts). */
+  adopt(): void;
 }
 
 const registry = (): Set<Twin> => ((globalThis as any).__iskronTwins ??= new Set<Twin>());
+/** Спутники детей, перенесённых в другую папку, чей маркер ещё не лёг (children.ts, #6695). */
+const handing = (): Map<string, Promise<unknown>> =>
+  ((globalThis as any).__iskronHanding ??= new Map<string, Promise<unknown>>());
+
+/** Передача спутника сессии экземпляру новой папки идёт — её вызовы там ждут маркера. */
+export function handOver(session: string, p: Promise<unknown>): void {
+  handing().set(session, p);
+  void p.finally(() => handing().get(session) === p && handing().delete(session));
+}
+export const handedOver = (session: string): Promise<unknown> | undefined => handing().get(session);
+
+/** Маркер лёг с меткой to: живой экземпляр этого написания берёт его сейчас. */
+export function adoptIn(to: Home): void {
+  for (const t of registry()) if (t.home && sameSpelling(t.home, to)) t.adopt();
+}
 
 /** Слот, держащий место корня в каком-либо экземпляре этого процесса (moves.ts, #6695). */
 export function heldInProcess(root: string): Slot | null {
@@ -54,11 +71,18 @@ export interface TwinDoors {
   lost(session: string, text: string): void;
   /** Слот корня, держащий место в этом экземпляре (tools.ts). */
   holds(root: string): Slot | null;
+  /** Взять маркер своей локации сейчас (adopt.ts). */
+  adopt(): void;
 }
 
 export function createTwins(ctx: Context, home: Home | null, d: TwinDoors) {
   let gone = false;
-  const me: Twin = { home, wake: (h, e) => void wake(h, e), holds: (r) => d.holds(r) };
+  const me: Twin = {
+    home,
+    wake: (h, e) => void wake(h, e),
+    holds: (r) => d.holds(r),
+    adopt: () => d.adopt(),
+  };
   registry().add(me);
 
   /** Поднять экземпляр написания h, выгруженного с местами entries. */
