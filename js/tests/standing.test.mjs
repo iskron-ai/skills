@@ -2744,8 +2744,10 @@ test("iskron/check: a held place the board reads deaf with waiting frames gets i
 test("iskron/check stops reopening after two fruitless reopens and says so aloud once; hearing back resets the count", async (t) => {
   const { fake, dir, bridge } = await connected(t);
   await waitFor(() => fake.state.ws.size === 1, "the socket");
-  const known = new Set(fake.state.ws);
-  const fresh = () => [...fake.state.ws].filter((x) => !known.has(x));
+  // Reopens are counted by upgrades: a reopen closes the previous socket, and the fake now
+  // drops a closed socket (it used to keep every one — the count once rode on that).
+  const ups = fake.state.counts.ws_upgrades;
+  const fresh = () => ({ length: fake.state.counts.ws_upgrades - ups });
   const deaf = () => fake.control({ places: [{ karta: 931, name: "proba", listening: false }] });
   // The fake reads the board off the socket: each reopen makes it «слушает» again,
   // so the probe re-deafens the board after each one, as a stuck server would.
