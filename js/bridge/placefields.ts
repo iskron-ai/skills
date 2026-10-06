@@ -91,11 +91,12 @@ export function noteLocaleEcho(
   structured?: unknown,
 ): void {
   const asked = args.locale;
-  if (typeof asked !== "string" || P.localeWarned || !PLACE_ACTIONS.has(String(args.action)))
-    return;
+  if (typeof asked !== "string" || P.localeWarned) return;
+  const action = String(args.action);
+  // Поле — только у ответа места; прочие ходы, как и прежде, судятся одной прозой.
+  const field = PLACE_ACTIONS.has(action) ? seatField(structured, action)?.locale : undefined;
   const echo = (
-    seatField(structured, String(args.action))?.locale ??
-    /\blocale\b["']?\s*[:=]\s*["']?([a-z]{2})\b/i.exec(text)?.[1]
+    field ?? /\blocale\b["']?\s*[:=]\s*["']?([a-z]{2})\b/i.exec(text)?.[1]
   )?.toLowerCase();
   if (!echo || echo === asked) return;
   P.localeWarned = true;

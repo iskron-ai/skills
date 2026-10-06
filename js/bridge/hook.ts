@@ -7,36 +7,8 @@
 // держателя API). Мост ходит к хукам тулом iskron_admin(action="add_webhook");
 // channel он передаёт, только если схема тула этот параметр объявляет.
 import { L } from "../shared/lang.ts";
-import { FORM } from "./board.ts";
 import { callTool as call, short } from "./call.ts";
-import { hooksField, reachesYou } from "./fields.ts";
-import { post, state } from "./transport.ts";
-import { type JsonRpcMessage } from "./types.ts";
-
-/**
- * Параметры iskron_admin по схеме сервера — читаются заново на каждый iskron_stand:
- * работающий мост подхватывает channel, как только сервер его объявит. null —
- * схему прочесть не удалось (tools/list отказал, пуст или тул на другой странице).
- */
-async function adminParamNames(): Promise<Set<string> | null> {
-  const id = `iskron-bridge-admin-schema-${++state.reinitCounter}`;
-  let got: JsonRpcMessage | null = null;
-  try {
-    await post({ jsonrpc: "2.0", id, method: "tools/list", params: {} }, (m) => {
-      if (m.id === id) got = m;
-    });
-  } catch {
-    return null;
-  }
-  const result = (got as JsonRpcMessage | null)?.result;
-  const tools = result?.tools;
-  if (!Array.isArray(tools)) return null;
-  const admin = (
-    tools as { name?: string; inputSchema?: { properties?: Record<string, unknown> } }[]
-  ).find((t) => t?.name === "iskron_admin");
-  if (!admin) return null; // тула на этой странице нет (список постраничный или урезан) — схема не прочтена
-  return new Set(Object.keys(admin.inputSchema?.properties ?? {}));
-}
+import { adminParamNames, readRoleHooks } from "./hooklist.ts";
 
 export interface HookPlace {
   realm: string;
@@ -53,35 +25,11 @@ export interface HookPlace {
   channelRealm: string;
 }
 
-/** Список хуков прозой: узнан ли и будит ли хук место с этим именем. */
-function fromProse(
-  text: string,
-  isError: boolean,
-  name: string,
-): { recognized: boolean; wakesMe: boolean } {
-  // Пустой список поверхность печатает без заголовка: «Для #N вебхуки не зарегистрированы.» (#5380).
-  // Заголовок узнан, а слово состояния хука — нет: язык угадан частично, и «не будит»
-  // поставило бы второй хук; такой список не распознан целиком.
-  const blocks = text.split(/\n(?=\s*#\d+\s*→)/).slice(1);
-  const recognized =
-    !isError &&
-    ((FORM.hooksHeader.test(text) && blocks.every((b) => FORM.hookState.test(b))) ||
-      FORM.hooksEmpty.test(text));
-  const nameRe = new RegExp(`:${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![A-Za-z0-9._-])`);
-  return {
-    recognized,
-    wakesMe: recognized && blocks.some((b) => FORM.hookActive.test(b) && nameRe.test(b)),
-  };
-}
-
 /** Шаг хука инбокса роли; возвращает строку ответа iskron_stand. */
 export async function armRoleHook(p: HookPlace): Promise<string> {
   const { realm, karta, name } = p;
-  const hooks = await call("iskron_admin", { action: "list_webhooks", realm, node_id: karta });
-  const fields = hooks.isError ? null : hooksField(hooks.structured);
-  const { recognized, wakesMe } = fields
-    ? { recognized: true, wakesMe: fields.some((h) => h.active && reachesYou(h)) }
-    : fromProse(hooks.text, hooks.isError, name);
+  const hooks = await readRoleHooks(realm, karta, name);
+  const { recognized, wakesMe } = hooks;
   const H = L("Хук инбокса роли", "Role inbox hook");
   if (p.sub)
     return L(

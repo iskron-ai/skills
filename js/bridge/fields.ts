@@ -1,9 +1,10 @@
 // Поля ответов сервера рядом с прозой (граф nks-dev: #6637): structuredContent
 // `{action, …}` на успехе iskron_channel и iskron_admin — ключами api, как их шлёт
 // nks-mcp, — и `_meta["iskron/refusal"]` = {rule, status, data} на отказе. Мост
-// читает поле, когда оно есть и сходится с формой ниже, иначе — прежний шаблон
+// читает поле, когда оно есть и сходится с формой, иначе — прежний шаблон
 // прозы (board.ts, standing.ts, hook.ts), со строкой в лог. Секретов (сокет,
-// статусный адрес, url хука) в полях нет — они только в тексте.
+// статусный адрес, url хука) в полях нет — они только в тексте. Здесь — места
+// (seats[]) и общее; хуки — hookfields.ts, отказ — refusal.ts.
 import { log } from "./streams.ts";
 import { type JsonRpcMessage } from "./types.ts";
 
@@ -29,30 +30,12 @@ export interface Seat {
   opened?: boolean;
 }
 
-/** Хук роли — webhooks[] ответа list_webhooks и user_webhooks. */
-export interface Hook {
-  id?: number;
-  kind?: string;
-  target_karta_seq?: number;
-  active: boolean;
-  reaches?: { standing?: string | null; you?: boolean }[];
-  /** будит ли хук место этой сессии — считает api */
-  reaches_you?: boolean;
-}
-
-/** Отказ api как данные: правило ProblemDetail, статус и его data без секретов. */
-export interface Refusal {
-  rule?: string;
-  status?: number;
-  data?: Record<string, unknown>;
-}
-
 /** Место живо — только по status api; иное и отсутствующее значение живости не дают. */
 export const LIVE_STATE = "active";
 
 type Obj = Record<string, unknown>;
-const isObj = (v: unknown): v is Obj => !!v && typeof v === "object" && !Array.isArray(v);
-const is = {
+export const isObj = (v: unknown): v is Obj => !!v && typeof v === "object" && !Array.isArray(v);
+export const is = {
   str: (v: unknown) => v === undefined || typeof v === "string",
   num: (v: unknown) => v === undefined || (typeof v === "number" && Number.isFinite(v)),
   bool: (v: unknown) => v === undefined || typeof v === "boolean",
@@ -77,20 +60,9 @@ const SEAT_KEYS: Record<string, (v: unknown) => boolean> = {
 export const structuredOf = (reply: JsonRpcMessage | null): unknown =>
   reply?.result?.structuredContent;
 
-/** `_meta["iskron/refusal"]` отказа по форме, иначе null. */
-export function refusalOf(reply: JsonRpcMessage | null): Refusal | null {
-  const r: unknown = reply?.result?._meta?.["iskron/refusal"];
-  if (!isObj(r) || !is.str(r.rule) || !is.num(r.status)) return null;
-  return {
-    ...(typeof r.rule === "string" ? { rule: r.rule } : {}),
-    ...(typeof r.status === "number" ? { status: r.status } : {}),
-    ...(isObj(r.data) ? { data: r.data } : {}),
-  };
-}
-
 const said = new Set<string>();
 /** Поля нет или оно не по форме — шаблон; одна строка в лог на ход за процесс (сторож читает доску каждый такт). */
-function fallback(what: string, sc: unknown): null {
+export function fallback(what: string, sc: unknown): null {
   const why =
     sc === undefined ? "no field — the prose template" : "field off its form — the prose template";
   if (!said.has(`${what}|${why}`)) {
@@ -133,29 +105,3 @@ export function seatField(sc: unknown, action: string): Seat | null {
   if (!list) return null;
   return list.length === 1 ? list[0] : fallback(`iskron_channel ${action}`, sc);
 }
-
-const hook = (v: unknown): Hook | null => {
-  if (!isObj(v) || typeof v.active !== "boolean") return null;
-  if (!is.num(v.id) || !is.str(v.kind) || !is.num(v.target_karta_seq) || !is.bool(v.reaches_you))
-    return null;
-  const reaches = v.reaches;
-  if (reaches !== undefined) {
-    if (!Array.isArray(reaches)) return null;
-    if (!reaches.every((r) => isObj(r) && is.strOrNull(r.standing) && is.bool(r.you))) return null;
-  }
-  // «Будит ли меня» — только словом api: без reaches_you и reaches судить нечем.
-  if (v.reaches_you === undefined && reaches === undefined) return null;
-  return v as unknown as Hook;
-};
-
-/** webhooks[] списка хуков — все по форме, иначе null. */
-export function hooksField(sc: unknown, action = "list_webhooks"): Hook[] | null {
-  const what = `iskron_admin ${action}`;
-  if (!isObj(sc) || sc.action !== action || !Array.isArray(sc.webhooks)) return fallback(what, sc);
-  const out = sc.webhooks.map(hook);
-  return out.every((h) => h) ? (out as Hook[]) : fallback(what, sc);
-}
-
-/** Будит ли хук место этой сессии — reaches_you, иначе reaches[].you. */
-export const reachesYou = (h: Hook): boolean =>
-  h.reaches_you ?? (h.reaches ?? []).some((r) => r.you === true);
