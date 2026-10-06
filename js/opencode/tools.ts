@@ -35,6 +35,7 @@ import {
 } from "./bridge-io.ts";
 import { createChildren } from "./children.ts";
 import { idleHalf, type ToolsHalf } from "./half.ts";
+import { createHandoff } from "./handoff.ts";
 import { hostEnvOf } from "./host.ts";
 import { createKeeper } from "./keep.ts";
 import { holdersOf } from "./keepalive.ts";
@@ -168,7 +169,8 @@ export async function setupTools(
     live
       ? void flushUsage(s).finally(() => runEnds.end(s, null, forget))
       : runEnds.end(s, null, nothing);
-  const children = createChildren({ slots, spawn, keeper, leads, exists, endRun, forget });
+  const children = createChildren({ slots, spawn, keeper, leads, exists, endRun });
+  const handoff = createHandoff({ slots, leads, forget }); // ребёнок-спутник перенесён один (#6695)
   const adopt = createAdopt({
     keeper,
     authDir,
@@ -464,9 +466,9 @@ export async function setupTools(
     owns: (s) => slots.has(s),
     held: (r) => [slots.get(r)].find((x) => x?.holding && x.place && !x.bridge.failure) ?? null,
     adopt: () => adopt.now(),
-    // Ребёнок-спутник, перенесённый один, едет своим спутником в новую папку (children.ts, #6695).
+    // Ребёнок-спутник, перенесённый один, едет своим спутником в новую папку (handoff.ts, #6695).
     moved: (s, to) =>
-      children.handoff(s, to, home) ||
+      handoff(s, to, home) ||
       mv.moved({ say, slots, rootOf, forget, slotFor, adopt: adopt.now, away: leads.away }, s, to),
     async stop() {
       stopped = true;
