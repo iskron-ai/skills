@@ -1738,7 +1738,12 @@ export async function startFakeNks(opts = {}) {
     const ofPlace = (pl) => placeName === undefined || pl.name === placeName;
     if (placeName !== undefined) st.wsNames.set(socket, placeName);
     for (const pl of st.places.values()) if (ofPlace(pl)) pl.listening = true;
-    socket.on("end", () => socket.destroy()); // сокет апгрейда полуоткрыт: без этого «close» после смерти моста не приходит
+    // Сокет апгрейда читается: без чтения поток стоит на паузе, «end» не приходит и место
+    // слушало бы и после смерти моста. Кадр закрытия клиента (opcode 8) — конец сокета.
+    socket.on("data", (buf) => {
+      if ((buf[0] & 0x0f) === 0x8) socket.end();
+    });
+    socket.on("end", () => socket.destroy()); // полуоткрытый сокет закрывается целиком
     socket.on("close", () => {
       st.ws.delete(socket);
       st.wsNames.delete(socket);

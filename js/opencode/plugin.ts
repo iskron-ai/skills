@@ -24,6 +24,7 @@ import { withWord } from "../shared/launch.ts";
 import { setupChannel } from "./channel.ts";
 import { setupCommands } from "./commands.ts";
 import { idleHalf } from "./half.ts";
+import { createKeepAlive, KEEPALIVE_TITLE } from "./keepalive.ts";
 import { annotate } from "./notice.ts";
 import { type Say, setupTools } from "./tools.ts";
 import { createUsageFeed } from "./usage.ts";
@@ -141,6 +142,12 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
     bridgeOf: (s) => half.bridgeOf(s),
   });
   flushUsage = (s) => usage.flush(s);
+  // Каталог выгружается через 60 мин без сохраняемых событий — место его держит (keepalive.ts).
+  const keepalive = createKeepAlive(ctx, {
+    holders: () => half.holders(),
+    owns: (s) => half.owns(s),
+    say: (t, level) => say(t, level ?? "warning"),
+  });
   const controller = new AbortController();
   void (async () => {
     try {
@@ -148,6 +155,7 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
         const ev: any = event;
         const id: string | undefined = ev?.data?.sessionID;
         half.onEvent(ev); // ход, текст и удаление ведущего субагента (leads.ts)
+        keepalive.onEvent(ev);
         switch (ev?.type) {
           case "session.deleted":
             if (!id) break;
@@ -163,6 +171,8 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
             // на вложенности два и глубже корень — корень родителя, иначе
             // внук получил бы отдельный мост вместо родительского.
             if (!id) break;
+            // Служебная сессия продления каталога (keepalive.ts) — не активность корня.
+            if (ev.data?.title === KEEPALIVE_TITLE) break;
             const parent = ev.data?.parentID;
             if (typeof parent === "string")
               void rootOf(parent).then((root) => {
@@ -211,6 +221,7 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
   // Остановка ждёт паузы мостов субагентов (children.ts): перезагрузка — не их конец.
   return async () => {
     controller.abort();
+    keepalive.stop();
     usage.stop();
     ch?.stop();
     await half.stop();

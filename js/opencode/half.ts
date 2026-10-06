@@ -15,6 +15,10 @@ export interface ToolsHalf {
   bridgeOf(session: string): Bridge | null; // мост держащего слота — для расхода сессии (usage.ts)
   /** Имя места живого ведущего субагента; не ведущий — null (notice.ts). */
   leadOf(session: string): string | null;
+  /** Сессии с занятым местом — корень, ведущий спутник; корни первыми (keepalive.ts). */
+  holders(): string[];
+  /** У сессии есть мост этого экземпляра — она в его каталоге (keepalive.ts). */
+  owns(session: string): boolean;
   /** Сессию перенесли в локацию to (событие session.moved). */
   moved(session: string, to: Home | null): void;
 }
@@ -26,6 +30,8 @@ export const idleHalf = (): ToolsHalf => ({
   stop() {},
   bridgeOf: () => null,
   leadOf: () => null,
+  holders: () => [],
+  owns: () => false,
   moved() {},
 });
 

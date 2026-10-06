@@ -721,6 +721,9 @@ test("iskron_stand after an eviction: register only, the busy line still publish
     () => bridge.notifications.some((n) => n.params?.data?.kind === "evicted"),
     "the eviction",
   );
+  // 4000 — место взял другой держатель: доска читает его слушающим. Фейк не держит этого
+  // сам (он снимает слушание с закрытием сокета), держатель-вытеснитель ставится явно.
+  await fake.control({ places: [{ karta: 931, name: "proba", listening: true }] });
   // Вызов занятия (с model) — только register и слово об отъёме; занятость уходит и тут.
   const again = await bridge.call("tools/call", {
     name: "iskron_stand",
