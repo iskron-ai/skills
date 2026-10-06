@@ -174,9 +174,13 @@ function fakeCtx({
           ? { id: `inbox-${prompts.length}`, type: "user", delivery: o.delivery }
           : {};
       },
-      // A session update (title, metadata, permissions) — the plugin's keepalive (keepalive.ts).
-      update: async (o) => {
-        updates.push(o);
+      // Create and remove — the plugin's keepalive child (keepalive.ts); both are logged in updates.
+      create: async (o) => {
+        updates.push({ create: o });
+        return { id: `ka-${updates.length}`, parentID: o?.parentID };
+      },
+      remove: async (o) => {
+        updates.push({ remove: o });
       },
       // A synthetic message — how OpenCode's own subagent tool reports to the parent.
       synthetic: async (o) => {
@@ -2937,19 +2941,23 @@ test("a lead child's end tells the parent «место не снято» when it
 
 // OpenCode 2.0.22 unloads a location after 60 min without durable session events, and
 // the place goes with the plugin — frames and wakes never come until the next request.
-// While a place is held the plugin lays one durable event itself: the session's own
-// metadata, rewritten unchanged — only after a quiet stretch, never without a place.
-test("keepalive: a held place rewrites its session's metadata after a quiet stretch; no place or fresh activity — nothing", async () => {
+// While a place is held the plugin lays one located event itself: a child of the place's
+// session, created and removed at once (an update of the session's metadata carries no
+// location from the plugin and was seen not to keep the location: evicted at 61 min) —
+// only after a quiet stretch, never without a place.
+test("keepalive: a held place creates and removes a child of its session after a quiet stretch; no place or fresh activity — nothing", async () => {
   const b = bridgeEnv("keepalive", { FB_TOOLS: LEAD_TOOLS });
   const env = { ...b.env, ISKRON_KEEPALIVE_MS: 400 };
-  const sessions = [{ id: "root", metadata: { mine: "kept" } }];
-  const rec = await plugin(env, { sessions });
+  const rec = await plugin(env);
   try {
     await until(() => rec.tools().has("iskron_stand"), "the stand tool", 8000);
     await delay(700);
     assert.deepEqual(rec.updates, [], "no place — the location is not held");
     // A turn in the session is the durable activity itself: no event of ours while it goes.
-    const step = () => rec.emit({ type: "session.step.ended", data: { sessionID: "root" } });
+    // A turn runs under its location: its events carry the envelope that extends the term.
+    const at = { directory: "/work/root" };
+    const step = () =>
+      rec.emit({ type: "session.step.ended", location: at, data: { sessionID: "root" } });
     await rec.call("iskron_stand", { realm: "nks-dev", karta: "#931" }, "root");
     step();
     const busy = setInterval(step, 100);
@@ -2957,8 +2965,9 @@ test("keepalive: a held place rewrites its session's metadata after a quiet stre
     await delay(1000);
     clearInterval(busy);
     assert.deepEqual(rec.updates, [], "fresh activity — nothing laid");
-    await until(() => rec.updates.length > 0, "the keepalive after the quiet stretch");
-    assert.deepEqual(rec.updates[0], { sessionID: "root", metadata: { mine: "kept" } });
+    await until(() => rec.updates.length > 1, "the keepalive after the quiet stretch");
+    assert.equal(rec.updates[0].create?.parentID, "root", "a child of the place's session");
+    assert.deepEqual(rec.updates[1], { remove: { sessionID: "ka-1" } }, "removed at once");
     assert.deepEqual(rec.prompts, [], "the session is not prompted");
   } finally {
     await rec.stop();
