@@ -7,6 +7,7 @@
 //   node iskron.mjs doctor [server-url] [flags]     какая сборка стоит и работает ли она
 //   node iskron.mjs update [--auth-dir <dir>]       свежий релиз в дом: мост, плагин OpenCode, SETUP.md
 //   node iskron.mjs use <en|ru|url> [--auth-dir <dir>]  постоянный выбор адреса сервера на этой машине
+//   node iskron.mjs check-rituals [репо...] [--json]  плагины ритуалов OpenCode не пишут в сессии чужих каталогов и не ломаются
 //   node iskron.mjs daemon --auth-dir <dir>         демон машины для тонких мостов (bridge/daemon.ts)
 //   node iskron.mjs --version                       сборка vX.Y.Z+хеш и сборка демона (без неё при ISKRON_BRIDGE_DAEMON=0)
 //
@@ -28,6 +29,7 @@ import { runWatchdogCodex } from "../watchdog/codex.ts";
 import { runWatchdog } from "../watchdog/watchdog.ts";
 import { runWatchdogExit } from "../watchdog/watchdog-exit.ts";
 import { runDoctor } from "./doctor.ts";
+import { runCheckRituals } from "./rituals.ts";
 import { runUpdate } from "./update.ts";
 import { runUse } from "./use.ts";
 
@@ -42,6 +44,7 @@ const usage = (): string => `iskron ${BUILD}
   node iskron.mjs doctor [server-url] [--auth-dir <dir>]
   node iskron.mjs update [--auth-dir <dir>]
   node iskron.mjs use <en|ru|url> [--auth-dir <dir>]   ${L("(en — mcp.iskron.ai, ru — mcp.iskron.ru)", "(en — mcp.iskron.ai, ru — mcp.iskron.ru)")}
+  node iskron.mjs check-rituals [${L("репо", "repo")}...] [--json]   ${L("(плагины .opencode/plugins не пишут в сессии чужих каталогов и не ломаются; без репо — текущий каталог)", "(.opencode/plugins write into no session of another directory and do not break; no repo — the current directory)")}
   node iskron.mjs daemon --auth-dir <dir>   ${L("(демон машины; его поднимает тонкий мост — мост по умолчанию)", "(the machine daemon; the thin bridge raises it — the default bridge)")}
   node iskron.mjs --version
   env: ISKRON_BRIDGE_TOKEN — ${L("личный токен вместо OAuth (или файл <auth-dir>/token)", "a personal token instead of OAuth (or the file <auth-dir>/token)")};
@@ -60,7 +63,7 @@ const longLived =
   LONG_LIVED.has(first) ||
   (first !== undefined &&
     !first.startsWith("--") &&
-    !["doctor", "update", "use", "daemon", "-h"].includes(first));
+    !["doctor", "update", "use", "check-rituals", "daemon", "-h"].includes(first));
 if (longLived && !updatesDisabled() && !process.env.ISKRON_BRIDGE_REEXEC) {
   const sync = syncHome();
   for (const p of sync.copied)
@@ -90,6 +93,9 @@ function dispatch(): void {
       break;
     case "use":
       runUse(rest);
+      break;
+    case "check-rituals":
+      void runCheckRituals(rest);
       break;
     case "bridge":
       bridgeMain(rest);

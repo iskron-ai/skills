@@ -20,11 +20,13 @@
 // past revision) so it can be shown red before a fix.
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, realpathSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
+
+import { ritualSample, standServer } from "./opencode-stand.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const settingsPath = process.env.ISKRON_HOOKS_SETTINGS ?? join(root, ".claude", "settings.json");
@@ -213,35 +215,22 @@ test("claude hooks: jq judges a long run of spaces without an error", () => {
   }
 });
 
-// `dirs` maps a session id to its working directory, as OpenCode hands it out:
-// ctx.session.get({ sessionID }).location.directory (the plugin's own process
-// directory is the server's, not the session's).
-// `own` is the instance's ctx.location.directory, `events` the stream it hears,
-// `prompts` collects the sessions it greeted.
-async function loadPlugin(dirs = {}, { own, events = [], prompts = [] } = {}) {
-  const md = readFileSync(surfacesPath, "utf8");
-  const block = [...md.matchAll(/```js\n([\s\S]*?)```/g)]
-    .map((m) => m[1])
-    .find((b) => b.includes("iskron-rituals"));
-  assert.ok(block, "rituals plugin block present in harness-surfaces.md");
-  const mod = await import(`data:text/javascript,${encodeURIComponent(block)}`);
-  const hooks = {};
-  await mod.default.setup({
-    location: own ? { directory: own } : undefined,
-    tool: { hook: async (name, fn) => void (hooks[name] = fn) },
-    event: {
-      subscribe: async () =>
-        (async function* () {
-          yield* events;
-        })(),
-    },
-    session: {
-      prompt: async ({ sessionID }) => void prompts.push(sessionID),
-      get: async ({ sessionID }) =>
-        dirs[sessionID] ? { location: { directory: dirs[sessionID] } } : null,
-    },
-  });
-  return hooks["execute.after"];
+// The sample runs on the stand-in server (opencode-stand.mjs) as an instance
+// with ctx.location of its own folder. `dirs` maps a session id to its working
+// directory, as OpenCode hands it out: ctx.session.get({ sessionID })
+// .location.directory (the plugin's own process directory is the server's);
+// the instance stands in the folder of s1 when there is one, else in the
+// stand's own. A call without a sessionID is made in a session of that folder.
+async function loadPlugin(dirs = {}) {
+  const s = await standServer(ritualSample(surfacesPath));
+  const home = dirs.s1 ?? s.own;
+  const plugin = await s.instance(home);
+  s.sessions.set("mine", { dir: home });
+  for (const [id, dir] of Object.entries(dirs)) s.sessions.set(id, { dir });
+  return async (input) => {
+    input.sessionID ??= "mine";
+    await plugin.call("execute.after", input);
+  };
 }
 
 // The template keeps one word per process across its instances, keyed by the
@@ -294,17 +283,15 @@ test("opencode rituals template: a failed trunk pull does not wake", async () =>
 // (by session) and the reminder (by call) are said once per process, children
 // get no greeting, and the shell tool is `shell` as observed on 2.0.24.
 test("opencode rituals template: two instances of one directory speak once", async () => {
-  const dir = realpathSync(mkdtempSync(join(tmpdir(), "rituals-once-")));
-  const created = (sessionID, parentID) => ({
-    type: "session.created",
-    data: { sessionID, parentID, location: { directory: dir } },
-  });
-  const events = [created("root-1"), created("child-1", "root-1")];
-  const prompts = [];
-  const one = await loadPlugin({ s1: dir }, { own: dir, events, prompts });
-  const two = await loadPlugin({ s1: dir }, { own: `${dir}/`, events, prompts });
+  const s = await standServer(ritualSample(surfacesPath));
+  const one = await s.instance(s.own);
+  const two = await s.instance(`${s.own}/`);
+  await s.create("root-1", s.own);
+  await s.create("child-1", s.own, "root-1");
   await new Promise((r) => setTimeout(r, 100));
-  assert.deepEqual(prompts, ["root-1"]);
+  assert.equal(s.greeted("root-1"), 1);
+  assert.equal(s.greeted("child-1"), 0);
+  s.sessions.set("s1", { dir: s.own });
   const input = {
     tool: "shell",
     id: callID(),
@@ -313,8 +300,9 @@ test("opencode rituals template: two instances of one directory speak once", asy
     input: { command: "gh pr merge 12 --squash" },
     result: { content: "✓ Squashed and merged pull request #12", metadata: { exit: 0 } },
   };
-  await one(input);
-  await two(input);
+  await one.call("execute.after", input);
+  await two.call("execute.after", input);
+  await s.stop();
   assert.equal(String(input.result.content).split("[iskron] мерж").length - 1, 1);
 });
 
