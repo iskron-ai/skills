@@ -12,6 +12,11 @@
 // в 10:03). Явный {location} из поверхности плагина ставит только session.create. Поэтому
 // событие — дочерняя сессия места, созданная и сразу удалённая: её session.created несёт
 // location родителя, ход ей не даётся, корневой список её не показывает.
+//
+// ЦЕНА. Каталог, где занято место, не выгружается никогда — службы каталога живут, пока
+// живо место. И выгрузка больше не снимает зависший ход: перед выгрузкой сервер прерывал
+// ходы каталога с reason "inactivity", теперь этого не будет — зависший ход снимает человек
+// (отмена). Выключатель — ISKRON_KEEPALIVE_MS=0 (SETUP.md, раздел OpenCode).
 /* eslint-disable @typescript-eslint/no-explicit-any -- события и ответы SDK без схемы */
 import type { Context } from "./plugin.ts";
 
@@ -42,7 +47,7 @@ export interface KeepDoors {
   holders(): string[];
   /** Сессия этого экземпляра: её события продлевают срок его каталога. */
   owns(session: string): boolean;
-  say(text: string): void;
+  say(text: string, level?: "warning" | "error"): void;
 }
 
 /** Сессии держащих слотов, корни первыми: событие ляжет в корень с местом. */
@@ -58,22 +63,56 @@ export function createKeepAlive(ctx: Context, d: KeepDoors): KeepAlive {
   if (EVERY_MS <= 0) return { onEvent() {}, stop() {} };
   let last = Date.now();
   let busy = false;
+  const leftover = new Set<string>(); // служебные сессии, которые удалить не вышло
+  // remove есть у контекста OpenCode 2.0.22, но не в типах @opencode/plugin 2.0.4.
+  const remove = (id: string): Promise<unknown> => (ctx.session as any).remove({ sessionID: id });
   async function touch(session: string): Promise<void> {
-    const s: any = await ctx.session.create({ parentID: session, title: KEEPALIVE_TITLE } as any);
+    let s: any;
+    try {
+      s = await ctx.session.create({ parentID: session, title: KEEPALIVE_TITLE } as any);
+    } catch (e) {
+      return d.say(
+        `Искрон: каталог не продлён — служебная сессия не создана: ${(e as Error).message}`,
+      );
+    }
+    // Создана — срок продлён (её session.created несёт location); дальше только уборка.
     const id = s?.id ?? s?.data?.id;
-    // remove есть у контекста OpenCode 2.0.22, но не в типах @opencode/plugin 2.0.4.
-    if (typeof id === "string") await (ctx.session as any).remove({ sessionID: id });
+    if (typeof id !== "string")
+      return d.say(
+        `Искрон: каталог продлён, но id служебной сессии из ответа create не разобран (${JSON.stringify(s ?? null).slice(0, 160)}) — она останется дочерней сессией места «${KEEPALIVE_TITLE}», удали её руками`,
+        "error",
+      );
+    try {
+      await remove(id).catch(() => remove(id)); // один повтор
+    } catch (e) {
+      leftover.add(id);
+      d.say(
+        `Искрон: каталог продлён, служебная сессия ${id} не удалена (${(e as Error).message}) — повторю на следующем такте`,
+      );
+    }
+  }
+  /** Неудалённые служебные сессии — по одной попытке на такт. */
+  async function sweep(): Promise<void> {
+    for (const id of [...leftover])
+      await remove(id).then(
+        () => leftover.delete(id),
+        () => {},
+      );
   }
   const timer = setInterval(
     () => {
-      if (busy || Date.now() - last < EVERY_MS) return;
+      if (busy) return;
+      if (leftover.size) {
+        busy = true;
+        void sweep().finally(() => (busy = false));
+        return;
+      }
+      if (Date.now() - last < EVERY_MS) return;
       const held = d.holders();
       if (!held.length) return; // без места каталог не держим
       busy = true;
       last = Date.now();
-      void touch(held[0])
-        .catch((e: Error) => d.say(`Искрон: каталог не продлён событием сессии — ${e.message}`))
-        .finally(() => (busy = false));
+      void touch(held[0]).finally(() => (busy = false));
     },
     Math.max(50, Math.min(60_000, EVERY_MS / 5)),
   );

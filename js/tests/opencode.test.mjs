@@ -144,6 +144,7 @@ function fakeCtx({
   inboxIds = false,
   app = { name: "opencode", version: "2.0.18-probe", channel: "latest" },
   location = undefined, // ctx.location — the location this instance is loaded for
+  faults = {}, // the session API's failures a probe asks for (keepalive)
 } = {}) {
   const prompts = [];
   const synthetics = [];
@@ -175,12 +176,14 @@ function fakeCtx({
           : {};
       },
       // Create and remove — the plugin's keepalive child (keepalive.ts); both are logged in updates.
+      // createNoId — the answer carries no id; removeFails — so many next removes throw.
       create: async (o) => {
         updates.push({ create: o });
-        return { id: `ka-${updates.length}`, parentID: o?.parentID };
+        return faults.createNoId ? {} : { id: `ka-${updates.length}`, parentID: o?.parentID };
       },
       remove: async (o) => {
         updates.push({ remove: o });
+        if (faults.removeFails > 0 && faults.removeFails--) throw new Error("remove refused");
       },
       // A synthetic message — how OpenCode's own subagent tool reports to the parent.
       synthetic: async (o) => {
@@ -2971,6 +2974,40 @@ test("keepalive: a held place creates and removes a child of its session after a
     assert.deepEqual(rec.prompts, [], "the session is not prompted");
   } finally {
     await rec.stop();
+  }
+});
+
+// Cold review of #334: a remove that fails twice leaves the helper session — it is
+// remembered and removed on the next tick, and the word says the term WAS extended;
+// a create answer without an id is said loudly instead of passing in silence.
+test("keepalive: a helper session not removed is said honestly and removed on the next tick; an answer without an id is loud", async () => {
+  const run = async (name, faults) => {
+    const b = bridgeEnv(name, { FB_TOOLS: LEAD_TOOLS });
+    const rec = await plugin({ ...b.env, ISKRON_KEEPALIVE_MS: 300 }, { faults });
+    await until(() => rec.tools().has("iskron_stand"), "the stand tool", 8000);
+    await rec.call("iskron_stand", { realm: "nks-dev", karta: "#931" }, "root");
+    await rootHolds(rec, b);
+    return rec;
+  };
+  const rec = await run("keepalive-leftover", { removeFails: 2 });
+  try {
+    const removes = () => rec.updates.filter((u) => u.remove?.sessionID === "ka-1");
+    await until(() => removes().length === 3, "two failed removes, then the next tick's");
+    assert.match(rec.said(), /каталог продлён, служебная сессия ka-1 не удалена[\s\S]*повторю/);
+    assert.doesNotMatch(rec.said(), /каталог не продлён/);
+  } finally {
+    await rec.stop();
+  }
+  const blind = await run("keepalive-noid", { createNoId: true });
+  try {
+    await until(
+      () => /id служебной сессии из ответа create не разобран/.test(blind.said()),
+      "the loud word",
+    );
+    assert.match(blind.said(), /\[iskron\/error\]/);
+    assert.ok(!blind.updates.some((u) => u.remove), "nothing to remove without an id");
+  } finally {
+    await blind.stop();
   }
 });
 

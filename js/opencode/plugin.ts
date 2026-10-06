@@ -24,7 +24,7 @@ import { withWord } from "../shared/launch.ts";
 import { setupChannel } from "./channel.ts";
 import { setupCommands } from "./commands.ts";
 import { idleHalf } from "./half.ts";
-import { createKeepAlive } from "./keepalive.ts";
+import { createKeepAlive, KEEPALIVE_TITLE } from "./keepalive.ts";
 import { annotate } from "./notice.ts";
 import { type Say, setupTools } from "./tools.ts";
 import { createUsageFeed } from "./usage.ts";
@@ -146,7 +146,7 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
   const keepalive = createKeepAlive(ctx, {
     holders: () => half.holders(),
     owns: (s) => half.owns(s),
-    say: (t) => say(t, "warning"),
+    say: (t, level) => say(t, level ?? "warning"),
   });
   const controller = new AbortController();
   void (async () => {
@@ -171,6 +171,8 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
             // на вложенности два и глубже корень — корень родителя, иначе
             // внук получил бы отдельный мост вместо родительского.
             if (!id) break;
+            // Служебная сессия продления каталога (keepalive.ts) — не активность корня.
+            if (ev.data?.title === KEEPALIVE_TITLE) break;
             const parent = ev.data?.parentID;
             if (typeof parent === "string")
               void rootOf(parent).then((root) => {
