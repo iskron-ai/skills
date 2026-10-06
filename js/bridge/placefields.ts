@@ -10,6 +10,7 @@ import { VERSION } from "../shared/version.ts";
 import { BUILD } from "./build.ts";
 import { harnessName, harnessVersion } from "./client.ts";
 import { CFG } from "./config.ts";
+import { seatField } from "./fields.ts";
 import { normKarta, normName } from "./names.ts";
 import { skillsAttr } from "./skillset.ts";
 import { log } from "./streams.ts";
@@ -82,11 +83,21 @@ const PLACE_ACTIONS = new Set(["connect", "mint", "register"]);
 /**
  * Эхо locale в ответе connect/register (api отвечает действующим языком места):
  * расходится с запрошенным — одна строка в лог на сессию; эха нет — старый api, молчим.
+ * Поле locale structuredContent (fields.ts) сильнее строки в прозе.
  */
-export function noteLocaleEcho(args: Record<string, unknown>, text: string): void {
+export function noteLocaleEcho(
+  args: Record<string, unknown>,
+  text: string,
+  structured?: unknown,
+): void {
   const asked = args.locale;
   if (typeof asked !== "string" || P.localeWarned) return;
-  const echo = /\blocale\b["']?\s*[:=]\s*["']?([a-z]{2})\b/i.exec(text)?.[1]?.toLowerCase();
+  const action = String(args.action);
+  // Поле — только у ответа места; прочие ходы, как и прежде, судятся одной прозой.
+  const field = PLACE_ACTIONS.has(action) ? seatField(structured, action)?.locale : undefined;
+  const echo = (
+    field ?? /\blocale\b["']?\s*[:=]\s*["']?([a-z]{2})\b/i.exec(text)?.[1]
+  )?.toLowerCase();
   if (!echo || echo === asked) return;
   P.localeWarned = true;
   log(`locale: asked ${asked}, the server answered ${echo} — its prose stays in ${echo}`);

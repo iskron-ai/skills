@@ -4,12 +4,14 @@
 import { L } from "../shared/lang.ts";
 import { scoped } from "../shared/scope.ts";
 import { absorbChannelReply } from "./absorb.ts";
+import { structuredOf } from "./fields.ts";
 import { holdsChannel, ledKey } from "./hold.ts";
 import { keyOf } from "./holdrecord.ts";
 import { normKarta, normName } from "./names.ts";
 import { noteLocaleEcho } from "./placefields.ts";
 import { extraIn } from "./places.ts";
 import { canonRealm, otherRealm, resolveRealms, unknownRealm, unresolvedWord } from "./realms.ts";
+import { openedConcurrently, type Refusal, refusalOf } from "./refusal.ts";
 import { OWN_CALL_PREFIX } from "./repeat.ts";
 import { noteStanding, replyText } from "./standing.ts";
 import { post, state } from "./transport.ts";
@@ -152,11 +154,18 @@ export function crossPlaceRefusal(msg: JsonRpcMessage): JsonRpcMessage | null {
 export interface Answer {
   text: string;
   isError: boolean;
+  /** structuredContent ответа как есть (fields.ts); нет у сервера — нет и здесь. */
+  structured?: unknown;
+  /** _meta["iskron/refusal"] отказа по форме (fields.ts). */
+  refusal?: Refusal;
 }
 
 let seq = 0;
 
-export async function callTool(name: string, args: Record<string, unknown>): Promise<Answer> {
+async function ask(
+  name: string,
+  args: Record<string, unknown>,
+): Promise<{ msg: JsonRpcMessage; got: JsonRpcMessage | null }> {
   const id = `${OWN_CALL_PREFIX}${++seq}`;
   const msg: JsonRpcMessage = {
     jsonrpc: "2.0",
@@ -168,14 +177,28 @@ export async function callTool(name: string, args: Record<string, unknown>): Pro
   await post(msg, (m) => {
     if (m.id === id) reply = m;
   });
-  let got = reply as JsonRpcMessage | null;
+  return { msg, got: reply as JsonRpcMessage | null };
+}
+
+export async function callTool(name: string, args: Record<string, unknown>): Promise<Answer> {
+  let { msg, got } = await ask(name, args);
+  // Гонка открытия места (409 без rule, refusal.ts) — register ещё раз, один.
+  if (name === "iskron_channel" && args.action === "register" && openedConcurrently(got))
+    ({ msg, got } = await ask(name, args));
   if (!got) return { text: L("ответа нет", "no reply"), isError: true };
+  const structured = structuredOf(got);
+  const refusal = refusalOf(got);
   if (name === "iskron_channel") {
-    noteLocaleEcho(args, replyText(got));
+    noteLocaleEcho(args, replyText(got), structured);
     if (args.action === "register") noteStanding(msg, got);
     if (args.action === "connect") got = absorbChannelReply(msg, got);
   }
-  return { text: replyText(got), isError: !!got.error || !!got.result?.isError };
+  return {
+    text: replyText(got),
+    isError: !!got.error || !!got.result?.isError,
+    ...(structured !== undefined ? { structured } : {}),
+    ...(refusal ? { refusal } : {}),
+  };
 }
 
 export const short = (s: string, n = 300): string => (s.length > n ? `${s.slice(0, n)}…` : s);

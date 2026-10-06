@@ -20,6 +20,7 @@ import {
   TokenRefused,
   UpstreamError,
 } from "./errors.ts";
+import { structuredOf } from "./fields.ts";
 import { localLeave } from "./leave.ts";
 import { annotateToolList } from "./moment.ts";
 import { narrowToolList, outsideSetRefusal } from "./narrow.ts";
@@ -335,7 +336,7 @@ async function deliverOne(msg: JsonRpcMessage): Promise<void> {
       await post(msg, forward);
       const held = heldReply as JsonRpcMessage | null;
       if (held && msg.params?.name === "iskron_channel" && msg.params.arguments)
-        noteLocaleEcho(msg.params.arguments, replyText(held));
+        noteLocaleEcho(msg.params.arguments, replyText(held), structuredOf(held));
       if (held) {
         if (state.standing && isUnattributed(held)) {
           // The binding this session trusted is gone on the server's side — a
