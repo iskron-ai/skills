@@ -204,6 +204,9 @@ export async function startFakeNks(opts = {}) {
     wsAddress: new Map(), // открытый сокет → путь его адреса: новое подключение тем же путём вытесняет прежнее
     evicted: new Set(), // вытесненные сокеты, ещё не закрытые: служба в них не пишет, но сервер они держат
     richTools: false, // /control {richTools:true}: tools/list с пишущими тулами — для проверки приписки момента
+    structured: false, // /control {structured:true}: доска, register, connect и list_webhooks несут structuredContent (#6637)
+    garble: false, // /control {garble:true}: их проза — формой, которой мост не знает (секреты connect остаются в тексте)
+    lastStructured: null, // последний отданный structuredContent — проба сверяет, что харнес получил его нетронутым
     tools: opts.tools ?? null, // список тулов целиком, как его отдал бы сервер: схема, которую API отвергнет, — у doctor
     // Сессия открыта credential'ом и умирает вместе с ним (#188 в nks-dev):
     // сменился bearer — старая сессия закрыта. Как сервер отвечает на мёртвый
@@ -290,6 +293,48 @@ export async function startFakeNks(opts = {}) {
     });
     res.end(JSON.stringify(obj));
   };
+  // structuredContent рядом с прозой (#6637) — {action, …} ключами api, как их шлёт
+  // nks-mcp (PR #408). Под garble проза заменена формой, которой мост не знает: поле
+  // должно её перевесить.
+  const fielded = (result, fields, garbled) => {
+    if (!st.structured) return result;
+    st.lastStructured = structuredClone(fields);
+    return {
+      ...result,
+      structuredContent: fields,
+      ...(st.garble ? { content: [{ type: "text", text: garbled }] } : {}),
+    };
+  };
+  // Отказ api как данные — _meta["iskron/refusal"] = {rule, status, data}; только под structured.
+  const refused = (text, garbled, refusal) => ({
+    isError: true,
+    content: [{ type: "text", text: st.structured && st.garble ? garbled : text }],
+    ...(st.structured ? { _meta: { "iskron/refusal": refusal } } : {}),
+  });
+  /** id места: место канала, иначе свой постоянный (место, объявленное пробой). */
+  const idOfPlace = (p) => {
+    for (const [, c] of st.channels) {
+      const pl = c.places.get(slug(p.realm));
+      if (pl && pl.name === p.name) return pl.standing_id;
+    }
+    return (p.id ??= randomUUID());
+  };
+  const seatField = (p) => ({
+    seat_id: idOfPlace(p),
+    karta_seq: Number(p.karta),
+    karta_name: "Роль",
+    standing: `@tester:${p.name}`,
+    state: p.state ?? "active",
+    listening: !!p.listening,
+    pending: p.pending ?? 0,
+    ...(p.incoming ? { inbound: p.incoming } : {}),
+    ...(p.realm ? { realm: slug(p.realm) } : {}),
+  });
+  /** Имена мест канала этой сессии — кого «you» у хука. */
+  const sessionNames = (sid) =>
+    new Set(
+      [...(st.channels.get(st.standings.get(sid))?.places.values() ?? [])].map((p) => p.name),
+    );
 
   let base = null;
   const server = createServer(async (req, res) => {
@@ -359,6 +404,8 @@ export async function startFakeNks(opts = {}) {
       }
       for (const k of [
         "richTools",
+        "structured",
+        "garble",
         "versionUp",
         "serverVersion",
         "refreshStatus",
@@ -376,6 +423,7 @@ export async function startFakeNks(opts = {}) {
         "silentNewSession",
         "standingRefuseNext",
         "standingSeatGoneNext",
+        "registerConcurrentNext", // столько ближайших register отказать гонкой открытия (409 без rule)
         "registerNoId", // ответ register без standing_id — id места мосту не известен
         "adminChannelSelf", // tools/list объявляет у iskron_admin параметр channel
         "rooms",
@@ -470,12 +518,16 @@ export async function startFakeNks(opts = {}) {
             incoming: `${base}/api/channel/in/mailbox-${pl.name}`,
             listening: pl.listening !== false,
             pending: pl.pending ?? 0, // «не доставлено N» on the board
+            ...(pl.state ? { state: pl.state } : {}), // status места в api — только в полях
           });
         }
       }
       // Места, ушедшие с доски (окно простоя канала истекло): ключи `<karta>:<name>`.
       if (Array.isArray(patch.dropPlaces)) for (const k of patch.dropPlaces) st.places.delete(k);
       if ("connect_refuse_ttl" in patch) st.connectRefuseTtl = patch.connect_refuse_ttl || null; // отказ окну простоя на connect
+      if ("connect_refuse_rule" in patch) st.connectRefuseRule = patch.connect_refuse_rule; // правило этого отказа в _meta (под structured)
+      if ("unattributed_rule" in patch) st.unattributedRule = patch.unattributed_rule; // правило отказа безавторному send (под structured)
+      if (patch.unbind) st.standings.clear(); // привязки сессий к каналам потеряны, каналы и места целы
       if ("connect_delay_ms" in patch) st.connectDelayMs = Number(patch.connect_delay_ms) || 0;
       if ("send_conflict" in patch) st.sendConflict = patch.send_conflict || null; // текст отказа 409 не о безавторности
       if ("statusGone" in patch) st.statusGone = !!patch.statusGone; // статусный адрес повернули
@@ -825,21 +877,41 @@ export async function startFakeNks(opts = {}) {
             await new Promise((r) => setTimeout(r, st.registerToolDelayMs));
           if (st.standingSeatGoneNext > 0) {
             st.standingSeatGoneNext--;
+            // Под structured — как api: 422, rule standing_not_held из errors[0] (дело №186 [22]).
             return json(
               res,
               200,
               {
                 jsonrpc: "2.0",
                 id: msg.id,
-                result: {
-                  isError: true,
-                  content: [
-                    {
-                      type: "text",
-                      text: `Отказано (404): no such standing «${a.name ?? ""}» — take it with connect`,
-                    },
-                  ],
-                },
+                result: refused(
+                  `Отказано (404): no such standing «${a.name ?? ""}» — take it with connect`,
+                  "Abgelehnt (422).",
+                  {
+                    rule: "standing_not_held",
+                    status: 422,
+                    data: { your_standings: [{ name: "andere" }] },
+                  },
+                ),
+              },
+              extra,
+            );
+          }
+          if (st.registerConcurrentNext > 0) {
+            st.registerConcurrentNext--;
+            st.counts.register_concurrent = (st.counts.register_concurrent ?? 0) + 1;
+            // Гонка открытия места у api: 409 без rule — «register again».
+            return json(
+              res,
+              200,
+              {
+                jsonrpc: "2.0",
+                id: msg.id,
+                result: refused(
+                  "Отказано (409): place opened concurrently; register again",
+                  "Abgelehnt (409).",
+                  { status: 409 },
+                ),
               },
               extra,
             );
@@ -894,7 +966,11 @@ export async function startFakeNks(opts = {}) {
             ...("satellite_of" in a ? { satellite_of: a.satellite_of } : {}),
             ...("locale" in a ? { locale: a.locale } : {}),
           });
+          const existed = !!channelOfPlace(a.realm, cleanName(a.name));
           const reg = registerPlace(sid, a.realm, a.karta, a.name);
+          const seatId = st.registerNoId
+            ? null
+            : st.channels.get(st.standings.get(sid))?.places.get(slug(a.realm))?.standing_id;
           if (reg.added) {
             // Место рядом на канале: на доске его графа, слушает — если сокет канала открыт.
             const listening = [...st.ws].some((s) => st.wsChans.get(s) === reg.channel);
@@ -914,20 +990,31 @@ export async function startFakeNks(opts = {}) {
               id: msg.id,
               // Ответ тула — проза, как на живом сервере 0.74.0: id места строкой после
               // «🪪 id этого места». Нового hello нет: сокет канала сам несёт кадры нового места.
-              result: {
-                content: [
-                  {
-                    type: "text",
-                    text: (st.english === true ? registeredTextEn : registeredText)(
-                      a.name,
-                      st.registerNoId
-                        ? null
-                        : st.channels.get(st.standings.get(sid))?.places.get(slug(a.realm))
-                            ?.standing_id,
-                    ),
-                  },
-                ],
-              },
+              result: fielded(
+                {
+                  content: [
+                    {
+                      type: "text",
+                      text: (st.english === true ? registeredTextEn : registeredText)(
+                        a.name,
+                        seatId,
+                      ),
+                    },
+                  ],
+                },
+                {
+                  action: "register",
+                  seats: [
+                    {
+                      ...(seatId ? { seat_id: seatId } : {}),
+                      standing: `@tester:${cleanName(a.name)}`,
+                      opened: !existed,
+                      locale: a.locale ?? "ru",
+                    },
+                  ],
+                },
+                `Sitzung spricht jetzt für @tester:${a.name ?? "(unnamed)"}.`,
+              ),
             },
             extra,
           );
@@ -987,13 +1074,30 @@ export async function startFakeNks(opts = {}) {
             );
             lines.push(`     📥 ${base}/api/channel/in/room-${r.karta}`);
           }
+          const seats = [
+            ...shown.map(seatField),
+            ...st.rooms.map((r) => ({
+              seat_id: (r.id ??= randomUUID()),
+              karta_seq: Number(r.karta),
+              karta_name: "Человек",
+              standing: r.address,
+              state: "active",
+              listening: true,
+              pending: 0,
+              inbound: `${base}/api/channel/in/room-${r.karta}`,
+            })),
+          ];
           return json(
             res,
             200,
             {
               jsonrpc: "2.0",
               id: msg.id,
-              result: { content: [{ type: "text", text: lines.join("\n") }] },
+              result: fielded(
+                { content: [{ type: "text", text: lines.join("\n") }] },
+                { action: "list", seats },
+                `Kanäle in unbekannter Form: ${seats.length}`,
+              ),
             },
             extra,
           );
@@ -1014,7 +1118,15 @@ export async function startFakeNks(opts = {}) {
             {
               jsonrpc: "2.0",
               id: msg.id,
-              result: { isError: true, content: [{ type: "text", text: st.connectRefuseTtl }] },
+              result: refused(st.connectRefuseTtl, "Abgelehnt.", {
+                ...(st.connectRefuseRule !== undefined
+                  ? st.connectRefuseRule
+                    ? { rule: st.connectRefuseRule }
+                    : {}
+                  : { rule: "ttl_out_of_range" }),
+                status: 422,
+                data: { ttl_min: 60, ttl_max: 86400 },
+              }),
             },
             extra,
           );
@@ -1079,18 +1191,34 @@ export async function startFakeNks(opts = {}) {
             {
               jsonrpc: "2.0",
               id: msg.id,
-              result: {
-                content: [
-                  {
-                    type: "text",
-                    text:
-                      `Место занято: ${a.name ?? "(unnamed)"}.\n` +
-                      `📥 входящий: ${base}/api/channel/in/mailbox-${a.name ?? "unnamed"}\n` +
-                      `сокет (показан один раз): ${wsUrl}\n` +
-                      `статус: ${base}/channel/status/${st.wsToken}`,
-                  },
-                ],
-              },
+              result: fielded(
+                {
+                  content: [
+                    {
+                      type: "text",
+                      text:
+                        `Место занято: ${a.name ?? "(unnamed)"}.\n` +
+                        `📥 входящий: ${base}/api/channel/in/mailbox-${a.name ?? "unnamed"}\n` +
+                        `сокет (показан один раз): ${wsUrl}\n` +
+                        `статус: ${base}/channel/status/${st.wsToken}`,
+                    },
+                  ],
+                },
+                {
+                  action: a.action,
+                  seats: [
+                    {
+                      seat_id: st.channels.get(chan)?.places.get(slug(a.realm))?.standing_id,
+                      channel_id: chan,
+                      karta_seq: Number(karta),
+                      inbound: `${base}/api/channel/in/mailbox-${a.name ?? "unnamed"}`,
+                      locale: a.locale ?? "ru",
+                    },
+                  ],
+                },
+                // Секреты — только в тексте, и под garble тоже (слово держателя nks-mcp, дело №186).
+                `Platz genommen.\nSocket: ${wsUrl}\nStatus: ${base}/channel/status/${st.wsToken}`,
+              ),
             },
             extra,
           );
@@ -1265,15 +1393,11 @@ export async function startFakeNks(opts = {}) {
               {
                 jsonrpc: "2.0",
                 id: msg.id,
-                result: {
-                  isError: true,
-                  content: [
-                    {
-                      type: "text",
-                      text: "Ошибка: Отказано (409): Эта сессия не зарегистрирована ни за каким стоянием, поэтому слово пришло бы без автора и читалось бы как слова владельца учётки.",
-                    },
-                  ],
-                },
+                result: refused(
+                  "Ошибка: Отказано (409): Эта сессия не зарегистрирована ни за каким стоянием, поэтому слово пришло бы без автора и читалось бы как слова владельца учётки.",
+                  "Abgelehnt (409).",
+                  { rule: st.unattributedRule ?? "session_not_registered", status: 409 },
+                ),
               },
               extra,
             );
@@ -1388,6 +1512,29 @@ export async function startFakeNks(opts = {}) {
             (w) => String(w.karta) === String(a.node_id) && (!w.realm || w.realm === slug(a.realm)),
           );
           const en = st.english === true;
+          const wakesOf = (w) =>
+            w.channel === "self"
+              ? [...st.places.values()].find(
+                  (p) => p.karta === w.karta && p.realm != null && slug(p.realm) === w.realm,
+                )
+              : [...st.places.values()].find((p) => p.incoming === w.url);
+          // Как у api: kind и кого хук достаёт; «you» — место канала этой сессии; url не отдаётся.
+          const mineNames = sessionNames(sid);
+          const webhooks = mine.map((w) => {
+            const wakes = wakesOf(w);
+            const reaches = wakes
+              ? [{ standing: `@tester:${wakes.name}`, you: mineNames.has(wakes.name) }]
+              : [];
+            return {
+              id: w.id,
+              kind: w.channel === "self" ? "channel" : "url",
+              ...(w.channel === "self" ? { target_karta_seq: Number(w.karta) } : {}),
+              active: w.active,
+              reaches,
+              reaches_you: reaches.some((r) => r.you),
+            };
+          });
+          const hooksGarbled = `Haken: ${webhooks.length}`;
           // Пустой список поверхность печатает без заголовка — наблюдено на mcp.iskron.ru.
           if (!mine.length)
             return json(
@@ -1396,27 +1543,26 @@ export async function startFakeNks(opts = {}) {
               {
                 jsonrpc: "2.0",
                 id: msg.id,
-                result: {
-                  content: [
-                    {
-                      type: "text",
-                      text: en
-                        ? `No webhooks registered for #${a.node_id}.`
-                        : `Для #${a.node_id} вебхуки не зарегистрированы.`,
-                    },
-                  ],
-                },
+                result: fielded(
+                  {
+                    content: [
+                      {
+                        type: "text",
+                        text: en
+                          ? `No webhooks registered for #${a.node_id}.`
+                          : `Для #${a.node_id} вебхуки не зарегистрированы.`,
+                      },
+                    ],
+                  },
+                  { action: "list_webhooks", webhooks },
+                  hooksGarbled,
+                ),
               },
               extra,
             );
           const lines = [`${en ? "Webhooks for" : "Вебхуки для"} #${a.node_id} (${mine.length}):`];
           for (const w of mine) {
-            const wakes =
-              w.channel === "self"
-                ? [...st.places.values()].find(
-                    (p) => p.karta === w.karta && p.realm != null && slug(p.realm) === w.realm,
-                  )
-                : [...st.places.values()].find((p) => p.incoming === w.url);
+            const wakes = wakesOf(w);
             const state = en ? (w.active ? "active" : "paused") : w.active ? "активен" : "пауза";
             lines.push(`  #${w.id} → doer:#${w.karta} — ${state} [minimal]`);
             const who = wakes ? `@tester:${wakes.name}` : en ? "nobody" : "никого";
@@ -1428,7 +1574,11 @@ export async function startFakeNks(opts = {}) {
             {
               jsonrpc: "2.0",
               id: msg.id,
-              result: { content: [{ type: "text", text: lines.join("\n") }] },
+              result: fielded(
+                { content: [{ type: "text", text: lines.join("\n") }] },
+                { action: "list_webhooks", webhooks },
+                hooksGarbled,
+              ),
             },
             extra,
           );

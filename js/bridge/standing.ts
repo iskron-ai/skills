@@ -2,11 +2,13 @@ import { L } from "../shared/lang.ts";
 import { scoped } from "../shared/scope.ts";
 import { FORM } from "./board.ts";
 import { errorMessage } from "./errors.ts";
+import { seatField, structuredOf } from "./fields.ts";
 import { addPlace, noteStandingId, releaseStanding } from "./hold.ts";
 import { normKarta, normName } from "./names.ts";
 import { placeFields } from "./placefields.ts";
 import { dropExtra, keyOfPlace, rememberPlace } from "./places.ts";
 import { otherRealm } from "./realms.ts";
+import { openedConcurrently, refusalOf } from "./refusal.ts";
 import { debug, log } from "./streams.ts";
 import { post, type Standing, state } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
@@ -104,6 +106,13 @@ export function ensureStanding(): Promise<void> {
 }
 
 export async function replayRegister(place: Standing | null): Promise<JsonRpcMessage | null> {
+  const got = await registerOnce(place);
+  if (!openedConcurrently(got)) return got;
+  log("register refused by a concurrent opening (409, no rule) — registering again once");
+  return registerOnce(place);
+}
+
+async function registerOnce(place: Standing | null): Promise<JsonRpcMessage | null> {
   const id = `iskron-bridge-restanding-${++state.reinitCounter}`;
   let reply: JsonRpcMessage | null = null;
   await post(
@@ -145,13 +154,17 @@ async function replayBeside(): Promise<boolean> {
 }
 
 /**
- * id места из ответа тула iskron_channel(action="register") — мост зовёт тул, не
- * API, и ответ — проза: строка «🪪 id этого места — …», id на следующей строке
- * (наблюдено на сервере 0.74.0; английская форма — предположена, FORM.seatId).
- * Без этой строки — null: id не угадывается.
+ * id места из ответа тула iskron_channel(action="register"): seats[0].seat_id
+ * structuredContent (fields.ts), без него — проза: строка «🪪 id этого места — …»,
+ * id на следующей строке (наблюдено на сервере 0.74.0; английская форма —
+ * предположена, FORM.seatId). Ни того ни другого — null: id не угадывается.
  */
 export function standingIdOf(reply: JsonRpcMessage | null): string | null {
-  return FORM.seatId.exec(replyText(reply))?.[1] ?? null;
+  return (
+    seatField(structuredOf(reply), "register")?.seat_id ??
+    FORM.seatId.exec(replyText(reply))?.[1] ??
+    null
+  );
 }
 
 export const replyText = (reply: JsonRpcMessage | null): string => {
@@ -163,10 +176,18 @@ export const replyText = (reply: JsonRpcMessage | null): string => {
     : JSON.stringify(reply.result ?? "");
 };
 
-// The surface's own words for "no seat to bind to" — the one refusal that
-// means the remembered standing is no longer takeable by register.
-export const seatIsGone = (reply: JsonRpcMessage | null): boolean =>
-  /no such standing|take it with connect|такого стояния|занять.*connect/i.test(replyText(reply));
+// "No seat to bind to" — the one refusal that means the remembered standing is
+// no longer takeable by register. The API says it by rule (422, errors[0].rule =
+// standing_not_held, carried in _meta["iskron/refusal"], refusal.ts); another
+// rule is another refusal; with no rule (a 404 or 409 of register, or no _meta
+// at all) — the surface's own words, as before.
+export const seatIsGone = (reply: JsonRpcMessage | null): boolean => {
+  const rule = refusalOf(reply)?.rule;
+  if (rule) return rule === "standing_not_held";
+  return /no such standing|take it with connect|такого стояния|занять.*connect/i.test(
+    replyText(reply),
+  );
+};
 
 // The surface's marks for a call that ran WITHOUT its author: the channel
 // refuses (409, nothing applied), the graph factories write and warn. Either
@@ -181,6 +202,9 @@ const UNATTRIBUTED_REFUSAL =
 
 export const isUnattributed = (reply: JsonRpcMessage | null): boolean => {
   if (!reply) return false;
+  // A refusal's rule, where the API named one, decides alone (_meta["iskron/refusal"]).
+  const rule = refusalOf(reply)?.rule;
+  if (rule) return UNATTRIBUTED_CODE.test(rule);
   const text = replyText(reply);
   if (UNATTRIBUTED_CODE.test(text)) return true;
   return !!reply.result?.isError && UNATTRIBUTED_REFUSAL.test(text);
