@@ -81,10 +81,35 @@ export default {
     // тул оболочки на 2.0.24 — shell; bash — для прежних версий
     const isShell = (tool) => ["shell", "bash"].includes(tool);
     // memory-guard: бросок из execute.before блокирует вызов; путь памяти — тот же, что у guard'а Claude Code
-    const isLocalMemoryPath = (p) => /\.claude[\\/]projects[\\/].*[\\/]memory[\\/]/.test(String(p));
+    // сравнивается путь, а не строка: относительный — от каталога сессии, `//`, `/./`, `..` схлопнуты
+    // (resolve), ссылки раскрыты realpath ближайшего существующего предка; память узнаётся и по
+    // ~/.claude/projects за ссылкой
+    const { existsSync, realpathSync } = await import("node:fs");
+    const { dirname, join, relative, resolve } = await import("node:path");
+    const { homedir } = await import("node:os");
+    const real = (p) => {
+      let head = p;
+      while (!existsSync(head) && dirname(head) !== head) head = dirname(head);
+      try { return join(realpathSync(head), relative(head, p)); } catch { return p; }
+    };
+    const slash = (p) => p.replaceAll("\\", "/");
+    const projects = slash(real(resolve(homedir(), ".claude", "projects")));
+    const isLocalMemoryPath = (p, base) => {
+      const abs = resolve(base || process.cwd(), String(p));
+      return [slash(abs), slash(real(abs))].some((x) =>
+        /\/\.claude\/projects\/.*\/memory\//.test(x) || (x.startsWith(`${projects}/`) && /\/memory\//.test(x.slice(projects.length))));
+    };
+    // пути вызова: write и edit — поле path (filePath прежних версий); patch (apply_patch) — заголовки
+    // patchText «*** Add File: », «*** Update File: », «*** Delete File: » и цель «*** Move to: »
+    const pathsOf = (input) =>
+      ["patch", "apply_patch"].includes(input.tool)
+        ? [...String(input.input?.patchText ?? "").matchAll(/^\*\*\* (?:(?:Add|Update|Delete) File|Move to): (.+)$/gm)].map((m) => m[1].trim())
+        : ["write", "edit"].includes(input.tool) ? [input.input?.path ?? input.input?.filePath ?? ""] : [];
     await ctx.tool.hook("execute.before", async (input) => {
-      const path = input.input?.path ?? input.input?.filePath ?? "";
-      if (!["write", "edit"].includes(input.tool) || !isLocalMemoryPath(path)) return;
+      const paths = pathsOf(input);
+      if (!paths.length) return;
+      const base = (await dirOf(input.sessionID)) || own;
+      if (!paths.some((p) => isLocalMemoryPath(p, base))) return;
       if (!(await mine(input.sessionID))) return;
       throw new Error("local agent memory is forbidden for project state");
     });
@@ -126,7 +151,8 @@ export default {
       const tagsOnly = /^(?=[\s\S]*\n [*] \[new tag\])(?![\s\S]*\n (?:[ +-] |\* (?!\[new tag\])))/; // метка выпуска — не ветка на ревью
       const note = (ran(push, "-h|--help", /To [^\n]+(?:\n [!=] .*)*\n [ *+-]/) && !tagsOnly.test(out)) || quiet
         ? "[iskron] пуш — не отгрузка: самопроверка, словарный проход по тексту PR, холодное ревью этапа."
-        : ran("gh pr merge", "-h|--help|--auto|--disable-auto", /(Merged|Squashed and merged|Rebased and merged) pull request/) || ((exit ?? 0) === 0 && pull.test(cmd))
+        : ran("gh pr merge", "-h|--help|--auto|--disable-auto", /(Merged|Squashed and merged|Rebased and merged) pull request/) ||
+            ran("fj pr merge", "-h|--help", /Merged PR #/) || ((exit ?? 0) === 0 && pull.test(cmd))
           ? "[iskron] мерж — акты после мержа AGENTS.md: проткать, карта, модусы, закрыть по оси, reconcile, фидбэк, словарь."
           : "";
       if (!note || !(await mine(input.sessionID)) || !once(input.id)) return;
@@ -140,13 +166,20 @@ export default {
     // своего: каталог события совпадает с каталогом этого экземпляра (ctx.location), и только
     // корневой (без parentID) — дочерние сессии (субагенты и служебные) пропускаются.
     // Сбой промпта одной сессии ловится на месте; отказ цикла пишется в stderr сервиса.
+    // Слово — то же, что хук SessionStart Claude Code: адреса из фронтматтера AGENTS.md этого репо;
+    // iskronify подставляет слоты «Граф», «Фокус-контур», «Роль агента», «Роль владельца» при прогоне,
+    // угловых скобок в плагине репо не остаётся.
+    const START =
+      "Прочти раздел «Старт» скилла-двери iskron до действий. Адреса (AGENTS.md, фронтматтер): граф <Граф>, " +
+      "фокус-контур #<Фокус-контур>, роль агента #<Роль агента>, роль владельца #<Роль владельца>. " +
+      "Стояние — только на вахту, одним iskron_stand.";
     const ac = new AbortController();
     (async () => {
       for await (const ev of await ctx.event.subscribe({ signal: ac.signal })) {
         if (ev.type !== "session.created" || !own || (await canon(ev.data?.location?.directory)) !== own) continue;
         if (typeof ev.data?.parentID === "string" || !once(ev.data?.sessionID)) continue;
         try {
-          await ctx.session.prompt({ sessionID: ev.data.sessionID, text: "Прочти раздел «Старт» скилла-двери iskron…", delivery: "queue" });
+          await ctx.session.prompt({ sessionID: ev.data.sessionID, text: START, delivery: "queue" });
         } catch (e) {
           console.error("[iskron-rituals] ориентация сессии не дошла:", e);
         }
@@ -157,7 +190,7 @@ export default {
 };
 ```
 
-`ctx.tool.hook("execute.before", …)` / `("execute.after", …)` оборачивают вызовы тулов — **throw из `execute.before` и есть блокировка**: memory-guard здесь — throw, не код выхода; в `execute.after` у завершившегося вызова (`status: "completed"`) заменяется поле `result` целиком (его собственные поля только для чтения). Формы сверены с типами пакета 2.0.4 (`@opencode/plugin` → `dist/promise/tool.d.ts`, `plugin.d.ts`; событие `session.created` — `@opencode/schema`, `session-event.d.ts`: `data.sessionID`, `data.projectID`, `data.location`, необязательный `data.parentID`); живьём на 2.0.24 (изолированный `opencode serve`, два каталога, проектный плагин в одном) наблюдены область хуков и потока и список тулов: оболочка — `shell` (образец держит и `bash` прежних версий), запись — `write` и `edit`, путь во входе — `path` (образец читает и `filePath`); прогон самого образца показал приветствие корневой сессии своего каталога — дважды, по экземпляру на каждое написание каталога, отсюда общий набор однократности на `globalThis`; с ним приветствие ровно одно и только корню своего каталога, чужому корню и дочерней сессии нет. Guard: `write` по памяти своей сессии отказан, обычный файл и память чужой сессии проходят. Напоминание на настоящем `git push` — одна строка в своей сессии, в чужой нет. Не наблюдены напоминание после мержа и тул `edit` — сверяй по типам и строке `REALITY.md` при апгрейде. TUI у серверного плагина нет: слово человеку идёт промптом в сессию или в stderr сервиса. Ключ фронтматтера `slash: true` парсер 2.x отбрасывает: команды палитры «/» регистрирует плагин через `ctx.command.transform`.
+`ctx.tool.hook("execute.before", …)` / `("execute.after", …)` оборачивают вызовы тулов — **throw из `execute.before` и есть блокировка**: memory-guard здесь — throw, не код выхода; в `execute.after` у завершившегося вызова (`status: "completed"`) заменяется поле `result` целиком (его собственные поля только для чтения). Формы сверены с типами пакета 2.0.4 (`@opencode/plugin` → `dist/promise/tool.d.ts`, `plugin.d.ts`; событие `session.created` — `@opencode/schema`, `session-event.d.ts`: `data.sessionID`, `data.projectID`, `data.location`, необязательный `data.parentID`); живьём на 2.0.24 (изолированный `opencode serve`, два каталога, проектный плагин в одном) наблюдены область хуков и потока и список тулов: оболочка — `shell` (образец держит и `bash` прежних версий), запись — `write` и `edit`, путь во входе — `path` (образец читает и `filePath`); тул `patch` (псевдоним `apply_patch`) несёт пути в `patchText` заголовками `*** Add File:`, `*** Update File:`, `*** Delete File:` и `*** Move to:` — прочитано в бинаре 2.0.24, прогоном guard на `patch` не наблюдался; прогон самого образца показал приветствие корневой сессии своего каталога — дважды, по экземпляру на каждое написание каталога, отсюда общий набор однократности на `globalThis`; с ним приветствие ровно одно и только корню своего каталога, чужому корню и дочерней сессии нет. Guard: `write` по памяти своей сессии отказан, обычный файл и память чужой сессии проходят. Напоминание на настоящем `git push` — одна строка в своей сессии, в чужой нет. Не наблюдены напоминание после мержа и тул `edit` — сверяй по типам и строке `REALITY.md` при апгрейде. TUI у серверного плагина нет: слово человеку идёт промптом в сессию или в stderr сервиса. Ключ фронтматтера `slash: true` парсер 2.x отбрасывает: команды палитры «/» регистрирует плагин через `ctx.command.transform`.
 
 **Поток событий общий для сервиса OpenCode на машину**: проектный плагин лежит в `.opencode/plugins/` своего рабочего дерева, но `ctx.event.subscribe` несёт создание сессий всех каталогов, открытых в сервисе. Ориентация без условия на каталог кладёт адреса этого `AGENTS.md` первым словом в чужие сессии, и агент там встаёт под чужой ролью. Поэтому образец сверяет `ev.data.location.directory` события с `ctx.location.directory` экземпляра плагина (`ctx.location` — `@opencode/plugin` 2.0.4, `plugin.d.ts`) и молчит, когда каталога экземпляра нет. Приветствие получает только корневая сессия (`data.parentID` не строка; поле — `session-event.d.ts`, `Created.data`): дочерние сессии (субагенты и служебные) пропускаются — слово туда либо тратит ход модели, либо уходит в уже удалённую сессию; поэтому же промпт обёрнут в try/catch — отказ одной сессии иначе бросает из `await` и гасит весь цикл ориентации. Область `ctx.tool.hook` типы 2.0.4 не называют (у `Hooks` нет опции области, во входе `execute.before`/`execute.after` — `sessionID` без каталога, `dist/promise/tool.d.ts`, `registration.d.ts`); на 2.0.24 наблюдено: tool-хуки срабатывают только для сессий каталога экземпляра; поток событий общий. Условие `mine` в тул-хуках образца остаётся поясом поверх наблюдённого — дёшево и держит, если область сменится в другой версии: каталог сессии из `ctx.session.get` сверяется с тем же `ctx.location.directory`, и хук молчит, только когда оба известны и разошлись (неизвестный каталог guard не глушит). Каталоги сравниваются после `realpath` (при ошибке — исходная строка) без завершающего разделителя: одна и та же папка приходит то `/private/tmp/…`, то `/tmp/…`, и сырое сравнение отсекло бы собственную сессию.
 

@@ -20,10 +20,10 @@
 // past revision) so it can be shown red before a fix.
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { test } from "node:test";
+import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { ritualSample, standServer } from "./opencode-stand.mjs";
@@ -175,6 +175,56 @@ const settings = JSON.parse(readFileSync(settingsPath, "utf8"));
 const bashHooks = settings.hooks.PostToolUse.filter((g) => g.matcher === "Bash").flatMap(
   (g) => g.hooks,
 );
+
+// Memory-guard: every writing tool of Claude Code, its path where the tool keeps
+// it — file_path, and notebook_path for NotebookEdit (Agent SDK NotebookEditInput).
+// Judged in this repo's settings and in the hooks.md template that ships.
+const guardOf = (groups, tool) =>
+  groups
+    .filter((g) =>
+      (g.matcher ?? "")
+        .split(/[|,]/)
+        .map((s) => s.trim())
+        .includes(tool),
+    )
+    .flatMap((g) => g.hooks);
+const templateGuard = () => {
+  const md = readFileSync(templatePath, "utf8");
+  const block = md.split("## Memory-guard")[1].match(/```json\n([\s\S]*?)```/)[1];
+  return [JSON.parse(block)];
+};
+const memory = join(homedir(), ".claude", "projects", "-x", "memory");
+// a memory folder of its own under a temp root, and a link to it — the guard
+// judges the path, not the string (a link, `/./`, `//` do not get past)
+const fake = mkdtempSync(join(tmpdir(), "guard-link-"));
+mkdirSync(join(fake, ".claude", "projects", "p", "memory"), { recursive: true });
+symlinkSync(join(fake, ".claude", "projects", "p", "memory"), join(fake, "link"), "dir");
+after(() => rmSync(fake, { recursive: true, force: true }));
+const guardCases = [
+  ["Write", { file_path: join(memory, "MEMORY.md") }, 2],
+  ["Write", { file_path: `${join(fake, "link")}/MEMORY.md` }, 2],
+  ["Write", { file_path: `${homedir()}/.claude/./projects/-x/memory/MEMORY.md` }, 2],
+  ["Edit", { file_path: `${homedir()}/.claude//projects/-x/memory/MEMORY.md` }, 2],
+  ["NotebookEdit", { notebook_path: join(memory, "n.ipynb"), new_source: "x" }, 2],
+  ["NotebookEdit", { notebook_path: join(tmpdir(), "n.ipynb"), new_source: "x" }, 0],
+  ["Write", { file_path: join(tmpdir(), "a.md") }, 0],
+];
+for (const [where, groups] of [
+  ["settings", () => settings.hooks.PreToolUse ?? []],
+  ["hooks.md", templateGuard],
+]) {
+  for (const [tool, toolInput, code] of guardCases) {
+    test(`memory-guard (${where}): ${tool} ${Object.values(toolInput)[0]} → ${code}`, () => {
+      const hooks = guardOf(groups(), tool);
+      assert.ok(hooks.length, `a PreToolUse hook matches ${tool}`);
+      const payload = JSON.stringify({ tool_name: tool, tool_input: toolInput });
+      const codes = hooks.map(
+        (h) => spawnSync("bash", ["-c", h.command], { input: payload, encoding: "utf8" }).status,
+      );
+      assert.ok(codes.includes(code) && codes.every((c) => c === 0 || c === code), codes);
+    });
+  }
+}
 
 // every `jq -e '<filter>'` a hook command runs (the push hook runs two)
 const filtersOf = (command) => [...command.matchAll(/jq -e '([^']+)'/g)].map((m) => m[1]);
@@ -458,21 +508,22 @@ test("quiet push: a session without a known directory stays silent", async () =>
 // Another forge's merge rides the same defs with its own head and confirmation
 // (hooks.md names fj): the defs are taken from the template itself, so the copy
 // that ships to other repos is judged, not this repo's projection.
+const fj = [
+  ['fj pr merge 12 -m "fix -h parsing"', "", true],
+  ["fj pr merge 12 --method squash", "", true],
+  ["fj pr merge 1 | tail", "Merged PR #1", true],
+  ["fj pr merge 1 | tail", "", false],
+  ["fj pr merge --help", "", false],
+  ['fj pr merge 12 -m "x" -h', "", false],
+  ['fj pr merge 12 -m "x" --help', "", false],
+];
+
 test("iskronify template defs judge another forge's merge by outcome", () => {
   const skill = readFileSync(templatePath, "utf8");
   const push = skill.split("\n").find((l) => l.startsWith("def a:") && l.includes(' push"'));
   assert.ok(push, "push filter line present in hooks.md");
   const defs = push.slice(0, push.lastIndexOf("; ran(") + 2);
   const filter = defs + 'ran("fj pr merge"; "-h|--help"; "Merged PR #")';
-  const fj = [
-    ['fj pr merge 12 -m "fix -h parsing"', "", true],
-    ["fj pr merge 12 --method squash", "", true],
-    ["fj pr merge 1 | tail", "Merged PR #1", true],
-    ["fj pr merge 1 | tail", "", false],
-    ["fj pr merge --help", "", false],
-    ['fj pr merge 12 -m "x" -h', "", false],
-    ['fj pr merge 12 -m "x" --help', "", false],
-  ];
   for (const [command, output, wakes] of fj) {
     const payload = JSON.stringify({ tool_input: { command }, tool_response: { stdout: output } });
     let ran = true;
@@ -482,6 +533,21 @@ test("iskronify template defs judge another forge's merge by outcome", () => {
       ran = false;
     }
     assert.equal(ran, wakes, command);
+  }
+});
+
+// The OpenCode sample knows the same forges as hooks.md: fj by its outcome too.
+test("opencode rituals template: another forge's merge (fj) wakes by outcome", async () => {
+  const after = await loadPlugin();
+  for (const [command, output, wakes] of fj) {
+    const input = {
+      tool: "shell",
+      status: "completed",
+      input: { command },
+      result: { content: output, metadata: { exit: 0 } },
+    };
+    await after(input);
+    assert.equal(String(input.result.content).includes("мерж"), wakes, command);
   }
 });
 

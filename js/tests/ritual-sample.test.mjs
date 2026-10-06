@@ -9,8 +9,8 @@
 // copy (a past revision) so it can be shown red before a fix.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readdirSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { test } from "node:test";
 import { pathToFileURL } from "node:url";
@@ -74,6 +74,19 @@ for (const md of sources) {
     assert.equal(s.greeted("mine"), 1, "its own root session is greeted");
   });
 
+  // iskronify fills the greeting from the AGENTS.md frontmatter: the sample shows
+  // which slots, as an explicit template, not a stub.
+  test(name("the greeting is a template of the AGENTS.md frontmatter addresses"), async () => {
+    const s = await standServer(source);
+    await s.instance(s.own);
+    await s.create("mine", s.own);
+    await s.stop();
+    const [text = ""] = s.words("mine");
+    for (const slot of ["<Граф>", "<Фокус-контур>", "<Роль агента>", "<Роль владельца>"])
+      assert.ok(text.includes(slot), `the greeting names ${slot}: ${text}`);
+    assert.match(text, /«Старт»/);
+  });
+
   test(name("(б) its own folder under another spelling is greeted"), async () => {
     const s = await standServer(source);
     await s.instance(s.own);
@@ -118,6 +131,66 @@ for (const md of sources) {
       await s.stop();
     },
   );
+
+  // patch (2.0.24) carries its paths inside patchText, one header per file.
+  test(
+    name("guard reads patch: own memory refused, own file passes, a foreign session untouched"),
+    async () => {
+      const s = await standServer(source);
+      const p = await s.instance(s.own);
+      s.sessions.set("mine", { dir: s.own });
+      s.sessions.set("theirs", { dir: s.foreign });
+      const patch = (...headers) => ({
+        patchText: ["*** Begin Patch", ...headers.flatMap((h) => [h, "+x"]), "*** End Patch"].join(
+          "\n",
+        ),
+      });
+      const intoMemory = [
+        patch(`*** Add File: ${memoryPath}`),
+        patch(`*** Update File: ${join(s.own, "a.md")}`, `*** Update File: ${memoryPath}`),
+        patch(`*** Delete File: ${memoryPath}`),
+        patch(`*** Update File: ${join(s.own, "a.md")}\n*** Move to: ${memoryPath}`),
+      ];
+      for (const tool of ["patch", "apply_patch"])
+        for (const input of intoMemory)
+          await assert.rejects(
+            p.call("execute.before", toolCall(tool, "mine", input)),
+            (e) => !["ReferenceError", "TypeError"].includes(e?.name),
+            `${tool}: ${input.patchText}`,
+          );
+      await p.call(
+        "execute.before",
+        toolCall("patch", "mine", patch(`*** Add File: ${join(s.own, "a.md")}`)),
+      );
+      for (const input of intoMemory)
+        await p.call("execute.before", toolCall("patch", "theirs", input));
+      await s.stop();
+    },
+  );
+
+  // The guard judges the path, not the string: a link to a memory folder,
+  // `/./` and `//` in the path do not get past it.
+  test(name("guard sees through a link, /./ and //"), async () => {
+    const s = await standServer(source);
+    const p = await s.instance(s.own);
+    s.sessions.set("mine", { dir: s.own });
+    const mem = join(s.own, ".claude", "projects", "p", "memory");
+    mkdirSync(mem, { recursive: true });
+    symlinkSync(mem, join(s.own, "link"), "dir");
+    for (const path of [
+      `${join(s.own, "link")}/MEMORY.md`,
+      `${homedir()}/.claude/./projects/-stand/memory/MEMORY.md`,
+      `${homedir()}/.claude//projects/-stand/memory/MEMORY.md`,
+      "link/MEMORY.md",
+    ])
+      await assert.rejects(
+        p.call("execute.before", toolCall("write", "mine", { path, content: "x" })),
+        (e) => !["ReferenceError", "TypeError"].includes(e?.name),
+        path,
+      );
+    await p.call("execute.before", toolCall("write", "mine", { path: "notes.md", content: "x" }));
+    await s.stop();
+  });
 
   test(name("(е) two instances of one folder under two spellings greet once"), async () => {
     const s = await standServer(source);

@@ -147,11 +147,12 @@ export async function standServer(source) {
     await settle();
   }
 
-  const greeted = (name) => prompts.filter((p) => p.sessionID === sid(name)).length;
+  const words = (name) => prompts.filter((p) => p.sessionID === sid(name)).map((p) => p.text);
+  const greeted = (name) => words(name).length;
   const stop = async () => {
     for (const c of cleanups) await c();
   };
-  return { own, foreign, alias, sessions, failing, instance, create, greeted, stop };
+  return { own, foreign, alias, sessions, failing, instance, create, greeted, words, stop };
 }
 
 /** A tool call as the hooks of 2.0.24 get it: sessionID, no directory; the stand gives it a fresh id. */
