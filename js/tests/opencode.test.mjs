@@ -144,9 +144,11 @@ function fakeCtx({
   inboxIds = false,
   app = { name: "opencode", version: "2.0.18-probe", channel: "latest" },
   location = undefined, // ctx.location — the location this instance is loaded for
+  faults = {}, // the session API's failures a probe asks for (keepalive)
 } = {}) {
   const prompts = [];
   const synthetics = [];
+  const updates = [];
   const hooks = {};
   const tools = registry();
   const commands = registry();
@@ -173,6 +175,21 @@ function fakeCtx({
           ? { id: `inbox-${prompts.length}`, type: "user", delivery: o.delivery }
           : {};
       },
+      // Create and remove — the plugin's keepalive child (keepalive.ts); both are logged in updates.
+      // createNoId — the answer carries no id; removeFails — so many next removes throw.
+      create: async (o) => {
+        updates.push({ create: o });
+        return faults.createNoId ? {} : { id: `ka-${updates.length}`, parentID: o?.parentID };
+      },
+      // noRemove — the context has no remove at all (a future OpenCode).
+      ...(faults.noRemove
+        ? {}
+        : {
+            remove: async (o) => {
+              updates.push({ remove: o });
+              if (faults.removeFails > 0 && faults.removeFails--) throw new Error("remove refused");
+            },
+          }),
       // A synthetic message — how OpenCode's own subagent tool reports to the parent.
       synthetic: async (o) => {
         synthetics.push(o);
@@ -206,6 +223,7 @@ function fakeCtx({
     ctx,
     prompts,
     synthetics,
+    updates,
     tools: () => tools.get(),
     commands: () => commands.get(),
     hooks,
@@ -262,6 +280,7 @@ const ENV_KEYS = [
   "ISKRON_CHILD_BACK_MS",
   "ISKRON_RESUME_PATIENCE_MS",
   "ISKRON_MOVE_ADOPT_MS",
+  "ISKRON_KEEPALIVE_MS",
 ];
 
 let seq = 0;
@@ -2954,6 +2973,139 @@ test("a lead child's end tells the parent «место не снято» when it
     await until(() => ends(rec).length === 1, "the end in the parent");
     assert.match(ends(rec)[0].text, /место не снято \(сеть\): host\.repo\.opus-5\.sub-1/);
     assert.doesNotMatch(ends(rec)[0].text, /место снято\./);
+  } finally {
+    await rec.stop();
+  }
+});
+
+// OpenCode 2.0.22 unloads a location after 60 min without durable session events, and
+// the place goes with the plugin — frames and wakes never come until the next request.
+// While a place is held the plugin lays one located event itself: a child of the place's
+// session, created and removed at once (an update of the session's metadata carries no
+// location from the plugin and was seen not to keep the location: evicted at 61 min) —
+// only after a quiet stretch, never without a place.
+test("keepalive: a held place creates and removes a child of its session after a quiet stretch; no place or fresh activity — nothing", async () => {
+  const b = bridgeEnv("keepalive", { FB_TOOLS: LEAD_TOOLS });
+  const env = { ...b.env, ISKRON_KEEPALIVE_MS: 400 };
+  const rec = await plugin(env);
+  try {
+    await until(() => rec.tools().has("iskron_stand"), "the stand tool", 8000);
+    await delay(700);
+    assert.deepEqual(rec.updates, [], "no place — the location is not held");
+    // A turn in the session is the durable activity itself: no event of ours while it goes.
+    // A turn runs under its location: its events carry the envelope that extends the term.
+    const at = { directory: "/work/root" };
+    const step = () =>
+      rec.emit({ type: "session.step.ended", location: at, data: { sessionID: "root" } });
+    await rec.call("iskron_stand", { realm: "nks-dev", karta: "#931" }, "root");
+    step();
+    const busy = setInterval(step, 100);
+    await rootHolds(rec, b);
+    await delay(1000);
+    clearInterval(busy);
+    assert.deepEqual(rec.updates, [], "fresh activity — nothing laid");
+    await until(() => rec.updates.length > 1, "the keepalive after the quiet stretch");
+    assert.equal(rec.updates[0].create?.parentID, "root", "a child of the place's session");
+    assert.deepEqual(rec.updates[1], { remove: { sessionID: "ka-1" } }, "removed at once");
+    assert.deepEqual(rec.prompts, [], "the session is not prompted");
+  } finally {
+    await rec.stop();
+  }
+});
+
+// Cold review of #334: a remove that fails twice leaves the helper session — it is
+// remembered and removed on the next tick, and the word says the term WAS extended;
+// a create answer without an id is said loudly instead of passing in silence.
+test("keepalive: a helper session not removed is said honestly and removed on the next tick; an answer without an id is loud", async () => {
+  const run = async (name, faults) => {
+    const b = bridgeEnv(name, { FB_TOOLS: LEAD_TOOLS });
+    const rec = await plugin({ ...b.env, ISKRON_KEEPALIVE_MS: 300 }, { faults });
+    await until(() => rec.tools().has("iskron_stand"), "the stand tool", 8000);
+    await rec.call("iskron_stand", { realm: "nks-dev", karta: "#931" }, "root");
+    await rootHolds(rec, b);
+    return rec;
+  };
+  const rec = await run("keepalive-leftover", { removeFails: 2 });
+  try {
+    const removes = () => rec.updates.filter((u) => u.remove?.sessionID === "ka-1");
+    await until(() => removes().length === 3, "two failed removes, then the next tick's");
+    assert.match(rec.said(), /каталог продлён, служебная сессия ka-1 не удалена[\s\S]*повторю/);
+    assert.doesNotMatch(rec.said(), /каталог не продлён/);
+  } finally {
+    await rec.stop();
+  }
+  const blind = await run("keepalive-noid", { createNoId: true });
+  try {
+    await until(
+      () => /id служебной сессии из ответа create не разобран/.test(blind.said()),
+      "the loud word",
+    );
+    assert.match(blind.said(), /\[iskron\/error\]/);
+    assert.ok(!blind.updates.some((u) => u.remove), "nothing to remove without an id");
+  } finally {
+    await blind.stop();
+  }
+});
+
+// Re-review of #334: with cleanup ahead of the extension, a remove that never succeeds
+// (or no remove at all) stopped the creates — the location went at the next term, in
+// silence. The extension goes every term whatever the cleanup does, and nothing rejects.
+test("keepalive: a remove that always fails or is absent never stops the extension; no unhandled rejection", async () => {
+  const rejections = [];
+  const onRejection = (e) => rejections.push(e);
+  process.on("unhandledRejection", onRejection);
+  try {
+    for (const [name, faults] of [
+      ["keepalive-refused", { removeFails: Infinity }],
+      ["keepalive-noremove", { noRemove: true }],
+    ]) {
+      const b = bridgeEnv(name, { FB_TOOLS: LEAD_TOOLS });
+      const rec = await plugin({ ...b.env, ISKRON_KEEPALIVE_MS: 200 }, { faults });
+      try {
+        await until(() => rec.tools().has("iskron_stand"), "the stand tool", 8000);
+        await rec.call("iskron_stand", { realm: "nks-dev", karta: "#931" }, "root");
+        await rootHolds(rec, b);
+        const creates = () => rec.updates.filter((u) => u.create).length;
+        await until(() => creates() >= 4, `${name}: a create every term`);
+        if (faults.noRemove) {
+          const said = rec.said().match(/нет remove/g) ?? [];
+          assert.equal(said.length, 1, "no remove — said once, loudly");
+          assert.match(rec.said(), /\[iskron\/error\][^\n]*нет remove/);
+        } else assert.doesNotMatch(rec.said(), /такт продления каталога сорвался/);
+      } finally {
+        await rec.stop();
+      }
+    }
+    await delay(100);
+    assert.deepEqual(rejections, [], "no unhandled rejection");
+  } finally {
+    process.off("unhandledRejection", onRejection);
+  }
+});
+
+// The helper session's own session.created is not the root's activity: it must not
+// make its root the freshest one, where frames of a bridge nobody owns go.
+test("keepalive: the helper session's birth does not refresh its root for ownerless frames", async () => {
+  const b = bridgeEnv("keepalive-seen");
+  const rec = await plugin(b.env, {
+    sessions: [
+      { id: "old", time: { updated: 1 } },
+      { id: "fresh", time: { updated: 5 } },
+      { id: "ka-x", parentID: "old" },
+    ],
+  });
+  try {
+    await serverTools(rec);
+    rec.emit({ type: "session.created", data: { sessionID: "old" } });
+    await delay(50); // seen is stamped in ms: apart, or a tie keeps the first
+    rec.emit({ type: "session.created", data: { sessionID: "fresh" } });
+    await delay(50);
+    const title = "iskron: каталог держит место";
+    rec.emit({ type: "session.created", data: { sessionID: "ka-x", parentID: "old", title } });
+    await delay(50);
+    appendFileSync(b.events, event("frame", { frame: { type: "message", body: "x" }, raw: "" }));
+    await until(() => rec.prompts.length === 1, "the frame to be prompted");
+    assert.equal(rec.prompts[0].sessionID, "fresh", "the helper's birth refreshed no root");
   } finally {
     await rec.stop();
   }
