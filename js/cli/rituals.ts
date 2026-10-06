@@ -1,8 +1,8 @@
 // check-rituals — ревизор плагинов ритуалов OpenCode в репо (граф nks-dev,
 // узлы #6686, #5048): каждый .opencode/plugins/* грузится против подставного
 // ctx (cli/ritualprobe.ts); подписка на поток событий не пишет в сессию чужого
-// каталога и не теряет свою под другим написанием, хуки тулов не ломаются в
-// своей. Код 1 — дыра, поломка или плагин не загрузился. Временные каталоги
+// каталога, приветствует свою корневую и не теряет её под другим написанием,
+// хуки тулов не ломаются в своей. Код 1 — дыра, поломка или плагин не загрузился. Временные каталоги
 // прогона убираются за собой.
 import { mkdtempSync, readdirSync, realpathSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -38,7 +38,8 @@ export async function auditRepo(repo: string): Promise<Verdict[]> {
       const file = join(dir, name);
       try {
         const scope = await probeScope(file, own, foreign);
-        const hole = scope.writes.theirs > 0 || lostSpelling(scope) || scope.broken.length > 0;
+        const hole =
+          scope.writes.theirs > 0 || lostSpelling(scope) || mute(scope) || scope.broken.length > 0;
         verdicts.push({ file, hole, scope });
       } catch (e) {
         verdicts.push({ file, hole: true, error: String((e as Error)?.message ?? e) });
@@ -52,6 +53,9 @@ export async function auditRepo(repo: string): Promise<Verdict[]> {
 
 /** Своя сессия приветствована под одним написанием каталога и потеряна под другим. */
 const lostSpelling = (s: Scope): boolean => s.writes.mine > 0 !== s.writes.twin > 0;
+
+/** Подписан на поток событий, а своей корневой сессии не приветствует ни под каким написанием. */
+const mute = (s: Scope): boolean => s.subscribed && s.writes.mine + s.writes.twin === 0;
 
 const RULE = (): string =>
   L(
@@ -74,10 +78,12 @@ function words(v: Verdict): string[] {
   if (v.error || !s)
     return [L(`не проверен  ${v.file}: ${v.error}`, `not checked  ${v.file}: ${v.error}`)];
   if (!v.hole) {
-    const quiet =
-      s.writes.mine + s.writes.twin === 0
-        ? L(" (в свою сессию не пишет)", " (writes nothing into its own session)")
-        : "";
+    const quiet = s.subscribed
+      ? ""
+      : L(
+          " (на поток событий не подписан — только хуки тулов)",
+          " (no event-stream subscription — tool hooks only)",
+        );
     return [`ok  ${v.file}${quiet}`];
   }
   const lines = [L(`ДЫРА  ${v.file}`, `HOLE  ${v.file}`)];
@@ -95,7 +101,14 @@ function words(v: Verdict): string[] {
         `  its own session under another spelling of the folder gets no greeting (the real path: ${s.writes.mine}, the instance's spelling: ${s.writes.twin}) — directories are compared as raw strings, while one folder comes as /tmp/… and as /private/tmp/…`,
       ),
     );
-  if (s.writes.theirs > 0 || lostSpelling(s)) lines.push(`  ${FIX_SCOPE()}`);
+  if (mute(s))
+    lines.push(
+      L(
+        "  подписан на поток событий, а своя корневая сессия приветствия не получила — каталог экземпляра берётся не из ctx.location.directory (поля ctx.directory в Context нет) или условие не пропускает свою",
+        "  subscribed to the event stream, yet its own root session got no greeting — the instance's directory is not taken from ctx.location.directory (Context has no ctx.directory) or the condition drops its own",
+      ),
+    );
+  if (s.writes.theirs > 0 || lostSpelling(s) || mute(s)) lines.push(`  ${FIX_SCOPE()}`);
   for (const h of s.broken)
     lines.push(
       L(

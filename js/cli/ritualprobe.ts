@@ -20,6 +20,8 @@ const SETUP_MS = 5000;
 export interface Scope {
   /** Записи в сессию на session.created. */
   writes: Record<Who, number>;
+  /** Плагин подписался на поток событий (ctx.event.subscribe). */
+  subscribed: boolean;
   /** Хук тула сломан в своей сессии: ошибка кода (ReferenceError…), бросок на обычной записи или после вызова. */
   broken: string[];
   /** В своей сессии guard бросил на записи в путь памяти. */
@@ -34,6 +36,21 @@ const loose = (fields: object = {}): object =>
   new Proxy(fields, {
     get: (t, k) =>
       k in t || typeof k === "symbol" || k === "then"
+        ? (t as Record<PropertyKey, unknown>)[k]
+        : loose(async () => undefined),
+  });
+
+// Поля Context (@opencode/plugin 2.0.4, promise/plugin.d.ts): неназванные прогоном —
+// заглушки; поля вне Context (ctx.directory и т. п.) — undefined, как живьём.
+const DOMAINS = new Set(
+  "app location options agent aisdk command event experimental integration mcp model generate permission plugin provider reference rpc session shell skill storage tool vcs websearch worktree".split(
+    " ",
+  ),
+);
+const context = (fields: object): object =>
+  new Proxy(fields, {
+    get: (t, k) =>
+      k in t || typeof k === "symbol" || !DOMAINS.has(k)
         ? (t as Record<PropertyKey, unknown>)[k]
         : loose(async () => undefined),
   });
@@ -107,16 +124,19 @@ async function probeWith(
       },
     },
   );
-  const ctx = loose({
+  let subscribed = false;
+  const ctx = context({
     location: { directory: alias },
     session,
     tool: loose({ hook: async (name: string, fn: Fn) => void (hooks[name] ??= []).push(fn) }),
     event: loose({
-      subscribe: ({ signal }: { signal?: AbortSignal } = {}) =>
-        (async function* () {
+      subscribe: ({ signal }: { signal?: AbortSignal } = {}) => {
+        subscribed = true;
+        return (async function* () {
           for (const w of who) yield created(id[w], dirs[w]);
           if (signal) await new Promise((r) => signal.addEventListener("abort", r));
-        })(),
+        })();
+      },
     }),
   });
   const mod = (await import(`${pathToFileURL(file).href}?scope=${Date.now()}`)) as Record<
@@ -145,6 +165,7 @@ async function probeWith(
   if (typeof cleanup === "function") await cleanup();
   return {
     writes: onEvents,
+    subscribed,
     broken: mine.broken,
     ownBefore: mine.hit.some(
       (h) => h.startsWith("execute.before write: throw") && !mine.broken.includes(h),
