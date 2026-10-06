@@ -132,6 +132,42 @@ for (const md of sources) {
     },
   );
 
+  // patch (2.0.24) carries its paths inside patchText, one header per file.
+  test(
+    name("guard reads patch: own memory refused, own file passes, a foreign session untouched"),
+    async () => {
+      const s = await standServer(source);
+      const p = await s.instance(s.own);
+      s.sessions.set("mine", { dir: s.own });
+      s.sessions.set("theirs", { dir: s.foreign });
+      const patch = (...headers) => ({
+        patchText: ["*** Begin Patch", ...headers.flatMap((h) => [h, "+x"]), "*** End Patch"].join(
+          "\n",
+        ),
+      });
+      const intoMemory = [
+        patch(`*** Add File: ${memoryPath}`),
+        patch(`*** Update File: ${join(s.own, "a.md")}`, `*** Update File: ${memoryPath}`),
+        patch(`*** Delete File: ${memoryPath}`),
+        patch(`*** Update File: ${join(s.own, "a.md")}\n*** Move to: ${memoryPath}`),
+      ];
+      for (const tool of ["patch", "apply_patch"])
+        for (const input of intoMemory)
+          await assert.rejects(
+            p.call("execute.before", toolCall(tool, "mine", input)),
+            (e) => !["ReferenceError", "TypeError"].includes(e?.name),
+            `${tool}: ${input.patchText}`,
+          );
+      await p.call(
+        "execute.before",
+        toolCall("patch", "mine", patch(`*** Add File: ${join(s.own, "a.md")}`)),
+      );
+      for (const input of intoMemory)
+        await p.call("execute.before", toolCall("patch", "theirs", input));
+      await s.stop();
+    },
+  );
+
   test(name("(е) two instances of one folder under two spellings greet once"), async () => {
     const s = await standServer(source);
     await s.instance(s.own);
