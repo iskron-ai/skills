@@ -26,6 +26,8 @@ import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
+import { ritualSample, standServer } from "./opencode-stand.mjs";
+
 const root = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const settingsPath = process.env.ISKRON_HOOKS_SETTINGS ?? join(root, ".claude", "settings.json");
 const surfacesPath =
@@ -213,27 +215,22 @@ test("claude hooks: jq judges a long run of spaces without an error", () => {
   }
 });
 
-// `dirs` maps a session id to its working directory, as OpenCode hands it out:
-// ctx.session.get({ sessionID }).location.directory (the plugin's own process
-// directory is the server's, not the session's).
+// The sample runs on the stand-in server (opencode-stand.mjs) as an instance
+// with ctx.location of its own folder. `dirs` maps a session id to its working
+// directory, as OpenCode hands it out: ctx.session.get({ sessionID })
+// .location.directory (the plugin's own process directory is the server's);
+// the instance stands in the folder of s1 when there is one, else in the
+// stand's own. A call without a sessionID is made in a session of that folder.
 async function loadPlugin(dirs = {}) {
-  const md = readFileSync(surfacesPath, "utf8");
-  const block = [...md.matchAll(/```js\n([\s\S]*?)```/g)]
-    .map((m) => m[1])
-    .find((b) => b.includes("iskron-rituals"));
-  assert.ok(block, "rituals plugin block present in harness-surfaces.md");
-  const mod = await import(`data:text/javascript,${encodeURIComponent(block)}`);
-  const hooks = {};
-  await mod.default.setup({
-    tool: { hook: async (name, fn) => void (hooks[name] = fn) },
-    event: { subscribe: async () => (async function* () {})() },
-    session: {
-      prompt: async () => {},
-      get: async ({ sessionID }) =>
-        dirs[sessionID] ? { location: { directory: dirs[sessionID] } } : null,
-    },
-  });
-  return hooks["execute.after"];
+  const s = await standServer(ritualSample(surfacesPath));
+  const home = dirs.s1 ?? s.own;
+  const plugin = await s.instance(home);
+  s.sessions.set("mine", { dir: home });
+  for (const [id, dir] of Object.entries(dirs)) s.sessions.set(id, { dir });
+  return async (input) => {
+    input.sessionID ??= "mine";
+    await plugin.call("execute.after", input);
+  };
 }
 
 test("opencode rituals template: wakes by outcome", async () => {
