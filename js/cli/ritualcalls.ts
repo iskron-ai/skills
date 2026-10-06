@@ -67,7 +67,7 @@ export async function runHooks(hooks: Record<string, Fn[]>, who: Who): Promise<H
   ] as const) {
     for (const input of inputs) {
       const was = JSON.stringify(input);
-      const what = `${name} ${input.tool}${input.id === "call-plain" ? " (не путь памяти)" : ""}`;
+      const what = `${name} ${input.tool}${input.id === "call-plain" ? " (not a memory path)" : ""}`;
       for (const fn of hooks[name] ?? []) {
         try {
           await fn(input);
