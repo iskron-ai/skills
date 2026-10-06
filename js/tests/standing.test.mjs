@@ -15,6 +15,7 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  symlinkSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -2891,6 +2892,32 @@ test("a hold record names its harness and key: another harness's record is not r
   const holds = readdirSync(standings).filter((f) => f.endsWith(".hold"));
   assert.equal(holds.length, 1, "one record: the old one is dropped with the old place");
   assert.equal(record().key, "vtoraya--931--nks-dev");
+});
+
+// #5048: OpenCode 2.0.24 gives one folder as /private/tmp/… and as /tmp/…; the record's
+// directory was compared as a string and missed the folder's own records.
+test("a hold record's directory matches the same folder by another path (a link and its target)", async (t) => {
+  const own = { ...INIT, clientInfo: { name: "opencode-iskron", version: "1" } };
+  const { fake, dir, bridge } = await connected(t, { init: own });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const real = mkdtempSync(join(tmpdir(), "iskron-canon-real-"));
+  const link = `${real}-link`;
+  symlinkSync(real, link);
+  await bridge.call("iskron/resume", 4, { cwd: link, session: "ses-1" });
+  const stood = await bridge.call("tools/call", 5, {
+    name: "iskron_stand",
+    arguments: { realm: "nks-dev", karta: 931, name: "proba", cwd: link },
+  });
+  assert.ok(!stood.result?.isError, JSON.stringify(stood));
+  bridge.proc.kill("SIGKILL");
+  await waitFor(() => fake.state.ws.size === 0, "the socket to close");
+  const next = startBridge(fake.mcpUrl, dir);
+  t.after(() => next.stop());
+  assert.ok((await next.call("initialize", 1, own)).result);
+  // Another session of the same folder, by the target's path and with a trailing slash.
+  const other = await next.call("iskron/resume", 2, { cwd: `${real}/`, session: "ses-2" });
+  assert.equal(other.result?.resumed, false, JSON.stringify(other));
+  assert.match(other.result.word, /не стояла \(proba--931--nks-dev\)/, "the folder's record seen");
 });
 
 // A bridge that leads a parked place (leave) must not be talked into another

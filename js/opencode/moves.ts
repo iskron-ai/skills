@@ -7,6 +7,7 @@
 // дав прежнему его положить. Место возвращается с терпением к уходу прежнего сокета
 // (keep.ts); дети-спутники едут маркером, и их запись в новой папке — отказ (adopt.ts).
 /* eslint-disable @typescript-eslint/no-explicit-any -- ответы SDK без схемы */
+import { sameDir } from "../shared/canon.ts";
 import { authDir } from "./bridge-io.ts";
 import { homeOf, sessionDirectory } from "./host.ts";
 import { writeLostMarker } from "./marker.ts";
@@ -45,13 +46,13 @@ export function createMoves(ctx: Context) {
   const ours = async (sessionID: string): Promise<boolean> => {
     if (!(await exists(sessionID))) return false;
     const dir = home ? await directoryOf(sessionID) : null;
-    return !home || !dir || dir === home.directory;
+    return !home || !dir || sameDir(dir, home.directory);
   };
   const left = new Set<string>(); // корни, перенесённые отсюда в другую папку
   /** Сессию перенесли в локацию to. */
   function moved(d: MoveDoors, s: string, to: Home | null): void {
     if (!home || !to?.directory || d.slots.get(s)?.child) return;
-    if (to.directory !== home.directory) {
+    if (!sameDir(to.directory, home.directory)) {
       const root = d.slots.get(s);
       if (!root) return;
       const of = root.place?.name;

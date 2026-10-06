@@ -35,6 +35,7 @@ import {
   readdirSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   utimesSync,
   writeFileSync,
 } from "node:fs";
@@ -2173,6 +2174,61 @@ test("a session moved to another folder: the old location's instance lets its pl
   } finally {
     await A.stop();
     await B.stop();
+  }
+});
+
+// #5048: OpenCode 2.0.24 names one folder now /private/tmp/…, now /tmp/…: the marker's
+// location tag, the move check and the folder of a session were string-compared and
+// missed the instance's own sessions. A link and its target stand in for the two paths.
+test("one folder by two paths (a link and its target): the marker is taken, a «move» into the same folder is not a move, and an earlier build's marker is taken", async () => {
+  const real = mkdtempSync(join(SANDBOX, "canon-real-"));
+  const link = `${real}-link`;
+  symlinkSync(real, link);
+  const LINK = { directory: link };
+  const REAL = { directory: `${real}/` };
+  const calls = join(SANDBOX, "canon.calls");
+  const resume = join(SANDBOX, "canon.resume");
+  writeFileSync(calls, "");
+  const bySession = { c1: backAnswer("k-c1"), c3: backAnswer("k-c3") };
+  writeFileSync(resume, JSON.stringify({ bySession }));
+  const b = bridgeEnv("canon", { FB_CALLS: calls, FB_RESUME: resume });
+  const resumed = (s) => () =>
+    callsIn(calls).some((c) => c.name === "iskron/resume" && c.arguments.session === s);
+
+  // A reload: the instance stopped under one path, the next comes up under the other.
+  const first = await plugin(b.env, inLoc(LINK, "c1", "c2"));
+  await serverTools(first);
+  await standsHeld(first, b, calls, "c1", "k-c1");
+  await standsHeld(first, b, calls, "c2", "k-c2");
+  // A «move» of c2 into its own folder spelled the other way: the place stays.
+  const pid2 = callsIn(calls)
+    .filter((c) => c.name === "iskron_channel")
+    .at(-1).pid;
+  first.emit({ type: "session.moved", data: { sessionID: "c2", location: REAL } });
+  await delay(300);
+  assert.doesNotMatch(first.said(), /перенесена в/, "not a move: the same folder");
+  assert.ok(alive(pid2), "c2's bridge lives on");
+  await first.stop();
+  const second = await plugin(b.env, { ...inLoc(REAL, "c1"), keepMarker: true });
+  try {
+    await until(resumed("c1"), "c1's place back by the other path");
+  } finally {
+    await second.stop();
+  }
+
+  // An earlier build hashed the folder as it came: its marker is taken all the same.
+  for (const f of lostMarkers()) rmSync(f, { force: true });
+  const rawTag = createHash("sha256").update(`${link}\0`).digest("hex").slice(0, 12);
+  const at = new Date().toISOString();
+  writeFileSync(
+    join(process.env.ISKRON_BRIDGE_AUTH_DIR, `opencode-lost.@${rawTag}.${process.pid}.old.json`),
+    JSON.stringify({ at, entries: [{ session: "c3", key: "k-c3", dir: link }] }),
+  );
+  const third = await plugin(b.env, { ...inLoc(LINK, "c3"), keepMarker: true });
+  try {
+    await until(resumed("c3"), "c3's place back from the earlier build's marker");
+  } finally {
+    await third.stop();
   }
 });
 
