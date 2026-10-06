@@ -65,10 +65,12 @@ export default {
       const dir = await dirOf(sessionID);
       return !own || typeof dir !== "string" || !dir || dir === own;
     };
-    // memory-guard: бросок из execute.before блокирует вызов
+    // memory-guard: бросок из execute.before блокирует вызов; путь памяти — тот же, что у guard'а Claude Code
+    const isLocalMemoryPath = (p) => /\.claude[\\/]projects[\\/].*[\\/]memory[\\/]/.test(String(p));
     await ctx.tool.hook("execute.before", async (input) => {
+      if (!(await mine(input.sessionID))) return;
       const path = input.input?.filePath ?? input.input?.path ?? "";
-      if (["write", "edit"].includes(input.tool) && isLocalMemoryPath(path) && (await mine(input.sessionID)))
+      if (["write", "edit"].includes(input.tool) && isLocalMemoryPath(path))
         throw new Error("local agent memory is forbidden for project state");
     });
     // пуш и мерж: после shell-вызова дописать одну строку в результат — пуш
