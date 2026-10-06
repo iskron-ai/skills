@@ -175,7 +175,34 @@ test("check-rituals: the temp folder is as it was after a run", () => {
 test("check-rituals: a tool hook without a directory check is not a hole", () => {
   const { status, verdicts } = check(repoWith(guard));
   assert.equal(status, 0, JSON.stringify(verdicts));
+  assert.equal(verdicts[0].scope.subscribed, false, "tool hooks only — not mute");
   assert.ok(verdicts[0].scope.ownBefore);
+});
+
+// A subscriber that greets no session of its own is mute: live, a filter on
+// ctx.directory (Context has only location) drops every session.
+test("check-rituals: a subscriber filtering on ctx.directory is mute — a hole", () => {
+  const source = `import { realpathSync } from "node:fs";
+  const canon = (p) => { try { return realpathSync(p); } catch { return p; } };
+  export default { id: "d", async setup(ctx) {
+    (async () => { for await (const ev of ctx.event.subscribe({})) {
+      if (canon(ev.data?.location?.directory) !== canon(ctx.directory)) continue;
+      await ctx.session.prompt({ sessionID: ev.data.sessionID, text: "hi" });
+    } })();
+  } };`;
+  const { status, out } = check(repoWith(source), false);
+  assert.equal(status, 1, out);
+  assert.match(out, /своя корневая сессия приветствия не получила/);
+  assert.match(out, /ctx\.location\.directory.*realpath/);
+});
+
+test("check-rituals: a subscriber greeting nobody is mute — a hole", () => {
+  const source = `export default { id: "m", async setup(ctx) {
+    (async () => { for await (const ev of ctx.event.subscribe({})) void ev; })();
+  } };`;
+  const { status, verdicts } = check(repoWith(source));
+  assert.equal(status, 1, JSON.stringify(verdicts));
+  assert.equal(verdicts[0].scope.subscribed, true);
 });
 
 test("check-rituals: a hook calling an undefined name is broken, the name said", () => {
