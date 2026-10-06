@@ -108,11 +108,14 @@ export default {
       };
     });
     // ориентация: слово в новую сессию — ctx.event.subscribe даёт async-итерируемое событий;
-    // отказ цикла пишется в stderr сервиса, а не глотается: молчащий ритуал хуже отсутствующего.
+    // поток общий для сервиса на машину и несёт сессии всех каталогов — слово только в сессию
+    // своего: каталог события совпадает с каталогом этого экземпляра (ctx.location).
+    // Отказ цикла пишется в stderr сервиса, а не глотается: молчащий ритуал хуже отсутствующего.
+    const own = ctx.location?.directory;
     const ac = new AbortController();
     (async () => {
       for await (const ev of await ctx.event.subscribe({ signal: ac.signal })) {
-        if (ev.type === "session.created")
+        if (ev.type === "session.created" && own && ev.data?.location?.directory === own)
           await ctx.session.prompt({ sessionID: ev.data.sessionID, text: "Прочти раздел «Старт» скилла-двери iskron…", delivery: "queue" });
       }
     })().catch((e) => console.error("[iskron-rituals] ориентация остановилась:", e));
@@ -123,7 +126,9 @@ export default {
 
 `ctx.tool.hook("execute.before", …)` / `("execute.after", …)` оборачивают вызовы тулов — **throw из `execute.before` и есть блокировка**: memory-guard здесь — throw, не код выхода; в `execute.after` у завершившегося вызова (`status: "completed"`) заменяется поле `result` целиком (его собственные поля только для чтения). Формы сверены с типами пакета 2.0.4 (`@opencode/plugin` → `dist/promise/tool.d.ts`, `plugin.d.ts`; событие `session.created` — `@opencode/schema`, `session-event.d.ts`: `data.sessionID`, `data.projectID`, `data.location`); живой прогон ритуалов на 2.x в этой поставке не делался — сверяй по типам при апгрейде. TUI у серверного плагина нет: слово человеку идёт промптом в сессию или в stderr сервиса. Ключ фронтматтера `slash: true` парсер 2.x отбрасывает: команды палитры «/» регистрирует плагин через `ctx.command.transform`.
 
-Маппинг ритуалов: ориентация → `ctx.event.subscribe` на `session.created`; memory-guard → `ctx.tool.hook("execute.before")` с throw; пуш и мерж → `ctx.tool.hook("execute.after")` по shell-тулу. Ролевые файлы суб-агентов: `.opencode/agents/` (см. `delegation.md`).
+**Поток событий общий для сервиса OpenCode на машину**: проектный плагин лежит в `.opencode/plugins/` своего рабочего дерева, но `ctx.event.subscribe` несёт создание сессий всех каталогов, открытых в сервисе. Ориентация без условия на каталог кладёт адреса этого `AGENTS.md` первым словом в чужие сессии, и агент там встаёт под чужой ролью. Поэтому образец сверяет `ev.data.location.directory` события с `ctx.location.directory` экземпляра плагина (`ctx.location` — `@opencode/plugin` 2.0.4, `plugin.d.ts`) и молчит, когда каталога экземпляра нет.
+
+Маппинг ритуалов: ориентация → `ctx.event.subscribe` на `session.created` своего каталога; memory-guard → `ctx.tool.hook("execute.before")` с throw; пуш и мерж → `ctx.tool.hook("execute.after")` по shell-тулу. Ролевые файлы суб-агентов: `.opencode/agents/` (см. `delegation.md`).
 
 ## Чек-лист перепроверки (мейнтейнерам)
 
@@ -131,5 +136,5 @@ export default {
 
 - **Claude Code** — путь settings, имена хук-событий, синтаксис импорта в `CLAUDE.md`.
 - **Codex** — список событий `[hooks]` и форма TOML, source'ы `SessionStart`, имена файлов `AGENTS.md` / `AGENTS.override.md` и порядок их мержа.
-- **OpenCode** — имена директорий плагинов (`.opencode/plugins/`), форма плагина (`{ id, setup(ctx) }`), имена хуков `ctx.tool.hook("execute.before" | "execute.after")` и что throw из `execute.before` всё ещё блокирует, форма события `session.created` в `@opencode/schema`.
+- **OpenCode** — имена директорий плагинов (`.opencode/plugins/`), форма плагина (`{ id, setup(ctx) }`), имена хуков `ctx.tool.hook("execute.before" | "execute.after")` и что throw из `execute.before` всё ещё блокирует, форма события `session.created` в `@opencode/schema` и `ctx.location` экземпляра, по которому ориентация отсекает чужие каталоги.
 - Харнесс, обретший или потерявший поверхность, меняет то, что iskronify может обещать: сначала обнови таблицу, затем Шаг 4.
