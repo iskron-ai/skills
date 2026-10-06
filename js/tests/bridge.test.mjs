@@ -384,6 +384,8 @@ test("a bridge told to stop mid-flow outlives it, so the human's click still lan
   await withFake(t, {}, async ({ dir, spawnBridge }) => {
     const bridge = spawnBridge();
     const url = authorizeUrlIn((await bridge.call("initialize", 1, INIT_PARAMS)).error.message);
+    // The human opened the link: the sign-in page is minted, its redirect comes here.
+    await (await fetch(url, { redirect: "manual" })).text();
     bridge.proc.kill("SIGTERM"); // what a harness does when its session ends
     await new Promise((r) => setTimeout(r, 400));
     assert.equal(bridge.proc.exitCode, null, "the bridge left while a human was mid-login");
@@ -3427,6 +3429,7 @@ test("a bridge left by its harness mid-login waits for the click only so long, t
     const pending = await bridge.call("initialize", 1, INIT_PARAMS);
     const first = authorizeUrlIn(pending.error?.message);
     assert.ok(first, "a login must be pending");
+    await (await fetch(first, { redirect: "manual" })).text(); // opened, never finished
     const gone = exited(bridge);
     bridge.proc.stdin.end(); // the harness is gone
     await Promise.race([gone, pause(4000)]);

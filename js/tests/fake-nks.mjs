@@ -296,8 +296,18 @@ export async function startFakeNks(opts = {}) {
   // structuredContent рядом с прозой (#6637) — {action, …} ключами api, как их шлёт
   // nks-mcp (PR #408). Под garble проза заменена формой, которой мост не знает: поле
   // должно её перевесить.
-  const fielded = (result, fields, garbled) => {
+  // Неполные данные nks-mcp 0.104.1: "dropped" — первый ряд seats[]/webhooks[] выброшен
+  // и dropped: 1; "incomplete" — остался {action, incomplete: true}.
+  const damaged = (fields) => {
+    if (st.fieldsDamage === "incomplete") return { action: fields.action, incomplete: true };
+    if (st.fieldsDamage !== "dropped") return fields;
+    const key = Array.isArray(fields.seats) ? "seats" : "webhooks";
+    if (!Array.isArray(fields[key]) || !fields[key].length) return fields;
+    return { ...fields, [key]: fields[key].slice(1), dropped: 1 };
+  };
+  const fielded = (result, whole, garbled) => {
     if (!st.structured) return result;
+    const fields = damaged(whole);
     st.lastStructured = structuredClone(fields);
     return {
       ...result,
@@ -406,6 +416,7 @@ export async function startFakeNks(opts = {}) {
         "richTools",
         "structured",
         "garble",
+        "fieldsDamage", // "dropped" | "incomplete" | null — неполные поля (под structured)
         "versionUp",
         "serverVersion",
         "refreshStatus",
@@ -1727,7 +1738,12 @@ export async function startFakeNks(opts = {}) {
     const ofPlace = (pl) => placeName === undefined || pl.name === placeName;
     if (placeName !== undefined) st.wsNames.set(socket, placeName);
     for (const pl of st.places.values()) if (ofPlace(pl)) pl.listening = true;
-    socket.on("end", () => socket.destroy()); // сокет апгрейда полуоткрыт: без этого «close» после смерти моста не приходит
+    // Сокет апгрейда читается: без чтения поток стоит на паузе, «end» не приходит и место
+    // слушало бы и после смерти моста. Кадр закрытия клиента (opcode 8) — конец сокета.
+    socket.on("data", (buf) => {
+      if ((buf[0] & 0x0f) === 0x8) socket.end();
+    });
+    socket.on("end", () => socket.destroy()); // полуоткрытый сокет закрывается целиком
     socket.on("close", () => {
       st.ws.delete(socket);
       st.wsNames.delete(socket);

@@ -211,7 +211,7 @@ process.stdin.on("data", (chunk) => {
                   .toISOString()
                   .replace("T", " ")
                   .slice(0, 19) +
-                " UTC; a call in its last minute or later brings a new one)"
+                " UTC; a call after that brings a new one)"
               : process.env.FB_DEVICE_UNSET
                 ? ` — no sign-in by code: ${process.env.FB_DEVICE_UNSET}`
                 : "") +
