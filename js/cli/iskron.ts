@@ -7,7 +7,7 @@
 //   node iskron.mjs doctor [server-url] [flags]     какая сборка стоит и работает ли она
 //   node iskron.mjs update [--auth-dir <dir>]       свежий релиз в дом: мост, плагин OpenCode, SETUP.md
 //   node iskron.mjs use <en|ru|url> [--auth-dir <dir>]  постоянный выбор адреса сервера на этой машине
-//   node iskron.mjs check-rituals [репо...] [--json]  плагины ритуалов OpenCode не пишут в сессии чужих каталогов и не ломаются
+//   node iskron.mjs check-rituals [репо...] [--json] [-- репо...]  плагины ритуалов OpenCode не пишут в сессии чужих каталогов и не ломаются
 //   node iskron.mjs daemon --auth-dir <dir>         демон машины для тонких мостов (bridge/daemon.ts)
 //   node iskron.mjs version | --version             сборка vX.Y.Z+хеш и сборка демона (без неё при ISKRON_BRIDGE_DAEMON=0)
 //
