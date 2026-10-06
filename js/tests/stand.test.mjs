@@ -3526,6 +3526,47 @@ test("structuredContent: board, register, connect and hook fields carry iskron_s
   assert.doesNotMatch(bridge.stderr, /the prose template/, bridge.stderr);
 });
 
+// Неполные поля (nks-mcp 0.104.1, дело №186 [36]): выброшенный ряд (dropped) или
+// данные, не прошедшие целиком (incomplete), — не доска и не список хуков: проза.
+test("structuredContent: fields with dropped rows are not the board or the hook list — the prose finds the held place and its hook", async (t) => {
+  const { fake, bridge } = await ready(t);
+  await fake.control({ structured: true });
+  const args = { realm: "nks-dev", karta: 931, name: "proba" };
+  const first = await bridge.call("tools/call", { name: "iskron_stand", arguments: args });
+  assert.ok(!first.result?.isError, textOf(first));
+  await fake.control({ fieldsDamage: "dropped" });
+  const again = await bridge.call("tools/call", { name: "iskron_stand", arguments: args });
+  assert.ok(!again.result?.isError, textOf(again));
+  assert.equal(fake.state.lastStructured?.dropped, 1, "the fake dropped a row");
+  assert.equal(fake.state.counts.connect, 1, "the held place is not rotated");
+  assert.match(textOf(again), /Хук инбокса роли: стоит и будит это стояние/, textOf(again));
+  assert.equal(fake.state.counts.webhooks_added, 1, "no second hook");
+  assert.match(
+    bridge.stderr,
+    /structuredContent iskron_channel list: fields incomplete — the prose template/,
+  );
+});
+
+test("structuredContent: incomplete fields — {action, incomplete} — send iskron_stand to the prose and say so", async (t) => {
+  const { fake, bridge } = await ready(t);
+  await fake.control({ structured: true, fieldsDamage: "incomplete" });
+  const r = await bridge.call("tools/call", {
+    name: "iskron_stand",
+    arguments: { realm: "nks-dev", karta: 931, name: "proba" },
+  });
+  assert.ok(!r.result?.isError, textOf(r));
+  assert.deepEqual(fake.state.lastStructured, { action: "list_webhooks", incomplete: true });
+  for (const what of [
+    "iskron_channel list",
+    "iskron_channel connect",
+    "iskron_admin list_webhooks",
+  ])
+    assert.ok(
+      bridge.stderr.includes(`structuredContent ${what}: fields incomplete — the prose template`),
+      `${what}\n${bridge.stderr}`,
+    );
+});
+
 test("structuredContent: without fields the prose path stands and the log says so once; fields of another form fall back too", async (t) => {
   const { bridge } = await ready(t);
   const args = { realm: "nks-dev", karta: 931, name: "proba" };

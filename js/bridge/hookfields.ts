@@ -1,6 +1,6 @@
 // Хуки роли полями (граф nks-dev: #6637): webhooks[] ответа iskron_admin
 // list_webhooks и user_webhooks ключами api. url хука и секрет в поля не кладутся.
-import { fallback, is, isObj } from "./fields.ts";
+import { fallback, incomplete, is, isObj } from "./fields.ts";
 
 /** Хук роли — webhooks[] ответа list_webhooks и user_webhooks. */
 export interface Hook {
@@ -30,7 +30,8 @@ const hook = (v: unknown): Hook | null => {
 /** webhooks[] списка хуков — все по форме, иначе null. */
 export function hooksField(sc: unknown, action = "list_webhooks"): Hook[] | null {
   const what = `iskron_admin ${action}`;
-  if (!isObj(sc) || sc.action !== action || !Array.isArray(sc.webhooks)) return fallback(what, sc);
+  if (!isObj(sc) || incomplete(sc) || sc.action !== action || !Array.isArray(sc.webhooks))
+    return fallback(what, sc);
   const out = sc.webhooks.map(hook);
   return out.every((h) => h) ? (out as Hook[]) : fallback(what, sc);
 }
