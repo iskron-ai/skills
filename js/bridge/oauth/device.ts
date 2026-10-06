@@ -34,7 +34,7 @@ const never = new Promise<never>(() => {});
  * word why when the server has no client for it — then the side stops asking),
  * so the login's record — what every bridge of the machine hands out — stays current.
  * `called` reads the code a caller issued: one that found the record's code
- * dead or dying asks a fresh one (devicehandout.ts), and that one is polled
+ * dead asks a fresh one (devicehandout.ts), and that one is polled
  * from then on, the old one never again.
  */
 export function deviceSide(
