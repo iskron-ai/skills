@@ -33,6 +33,9 @@ const EVERY_MS = (() => {
 const DURABLE =
   /^session\.(execution\.(started|succeeded|failed|interrupted)|(step|text|reasoning|compaction)\.(started|ended|failed)|tool\.(called|success|failed|input\.(started|ended))|shell\.(started|ended)|skill\.activated|instructions\.updated|message\.content\.updated|usage\.recorded|retry\.scheduled)$/;
 
+/** Сколько неудалённых служебных сессий плагин помнит для повтора. */
+const LEFTOVER_MAX = 20;
+
 /** Заголовок дочерней сессии-однодневки: по нему её узнают в событиях и журнале. */
 export const KEEPALIVE_TITLE = "iskron: каталог держит место";
 
@@ -63,56 +66,87 @@ export function createKeepAlive(ctx: Context, d: KeepDoors): KeepAlive {
   if (EVERY_MS <= 0) return { onEvent() {}, stop() {} };
   let last = Date.now();
   let busy = false;
-  const leftover = new Set<string>(); // служебные сессии, которые удалить не вышло
-  // remove есть у контекста OpenCode 2.0.22, но не в типах @opencode/plugin 2.0.4.
-  const remove = (id: string): Promise<unknown> => (ctx.session as any).remove({ sessionID: id });
-  async function touch(session: string): Promise<void> {
+  // Служебные сессии, которые удалить не вышло: повтор — по попытке на такт, после продления.
+  const leftover = new Set<string>();
+  let noRemoveSaid = false;
+  let capSaid = false;
+  /** Одна попытка удаления; любой сбой, и синхронный, — false, не отказ промиса. */
+  async function removeOnce(id: string): Promise<boolean> {
+    // remove есть у контекста OpenCode 2.0.22, но не в типах @opencode/plugin 2.0.4.
+    const fn = (ctx.session as any).remove;
+    if (typeof fn !== "function") {
+      if (!noRemoveSaid)
+        d.say(
+          `Искрон: у контекста сессий OpenCode нет remove — служебные сессии продления «${KEEPALIVE_TITLE}» не удаляются и копятся дочерними у места; продление идёт`,
+          "error",
+        );
+      noRemoveSaid = true;
+      return false;
+    }
+    try {
+      await fn.call(ctx.session, { sessionID: id });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  function remember(id: string): void {
+    leftover.add(id);
+    if (leftover.size <= LEFTOVER_MAX) return;
+    const oldest = leftover.values().next().value as string;
+    leftover.delete(oldest); // за пределом не помним: удалит человек
+    if (!capSaid)
+      d.say(
+        `Искрон: неудалённых служебных сессий продления больше ${LEFTOVER_MAX} — старшие больше не повторяю, удали дочерние «${KEEPALIVE_TITLE}» руками`,
+        "error",
+      );
+    capSaid = true;
+  }
+  /** Продление: служебная сессия создана — срок продлён (её session.created несёт location). */
+  async function touch(session: string): Promise<string | null> {
     let s: any;
     try {
       s = await ctx.session.create({ parentID: session, title: KEEPALIVE_TITLE } as any);
     } catch (e) {
-      return d.say(
-        `Искрон: каталог не продлён — служебная сессия не создана: ${(e as Error).message}`,
-      );
+      d.say(`Искрон: каталог не продлён — служебная сессия не создана: ${(e as Error).message}`);
+      return null;
     }
-    // Создана — срок продлён (её session.created несёт location); дальше только уборка.
     const id = s?.id ?? s?.data?.id;
-    if (typeof id !== "string")
-      return d.say(
-        `Искрон: каталог продлён, но id служебной сессии из ответа create не разобран (${JSON.stringify(s ?? null).slice(0, 160)}) — она останется дочерней сессией места «${KEEPALIVE_TITLE}», удали её руками`,
-        "error",
-      );
-    try {
-      await remove(id).catch(() => remove(id)); // один повтор
-    } catch (e) {
-      leftover.add(id);
-      d.say(
-        `Искрон: каталог продлён, служебная сессия ${id} не удалена (${(e as Error).message}) — повторю на следующем такте`,
-      );
-    }
+    if (typeof id === "string") return id;
+    d.say(
+      `Искрон: каталог продлён, но id служебной сессии из ответа create не разобран (${JSON.stringify(s ?? null).slice(0, 160)}) — она останется дочерней сессией места «${KEEPALIVE_TITLE}», удали её руками`,
+      "error",
+    );
+    return null;
   }
-  /** Неудалённые служебные сессии — по одной попытке на такт. */
-  async function sweep(): Promise<void> {
-    for (const id of [...leftover])
-      await remove(id).then(
-        () => leftover.delete(id),
-        () => {},
+  /** Уборка — после продления и независимо от него: свежей две попытки, прежним по одной. */
+  async function tidy(fresh: string | null): Promise<void> {
+    for (const id of [...leftover]) if (await removeOnce(id)) leftover.delete(id);
+    if (!fresh) return;
+    if ((await removeOnce(fresh)) || (await removeOnce(fresh))) return;
+    remember(fresh);
+    if (!noRemoveSaid)
+      d.say(
+        `Искрон: каталог продлён, служебная сессия ${fresh} не удалена — повторю на следующем такте`,
       );
+  }
+  async function tick(): Promise<void> {
+    let fresh: string | null = null;
+    const held = Date.now() - last >= EVERY_MS ? d.holders() : [];
+    if (held.length) {
+      // без места каталог не держим
+      last = Date.now();
+      fresh = await touch(held[0]);
+    }
+    await tidy(fresh);
   }
   const timer = setInterval(
     () => {
       if (busy) return;
-      if (leftover.size) {
-        busy = true;
-        void sweep().finally(() => (busy = false));
-        return;
-      }
-      if (Date.now() - last < EVERY_MS) return;
-      const held = d.holders();
-      if (!held.length) return; // без места каталог не держим
       busy = true;
-      last = Date.now();
-      void touch(held[0]).finally(() => (busy = false));
+      void tick()
+        .catch((e: Error) => d.say(`Искрон: такт продления каталога сорвался — ${e.message}`))
+        .finally(() => (busy = false));
     },
     Math.max(50, Math.min(60_000, EVERY_MS / 5)),
   );

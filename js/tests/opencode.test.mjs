@@ -181,10 +181,15 @@ function fakeCtx({
         updates.push({ create: o });
         return faults.createNoId ? {} : { id: `ka-${updates.length}`, parentID: o?.parentID };
       },
-      remove: async (o) => {
-        updates.push({ remove: o });
-        if (faults.removeFails > 0 && faults.removeFails--) throw new Error("remove refused");
-      },
+      // noRemove — the context has no remove at all (a future OpenCode).
+      ...(faults.noRemove
+        ? {}
+        : {
+            remove: async (o) => {
+              updates.push({ remove: o });
+              if (faults.removeFails > 0 && faults.removeFails--) throw new Error("remove refused");
+            },
+          }),
       // A synthetic message — how OpenCode's own subagent tool reports to the parent.
       synthetic: async (o) => {
         synthetics.push(o);
@@ -3008,6 +3013,70 @@ test("keepalive: a helper session not removed is said honestly and removed on th
     assert.ok(!blind.updates.some((u) => u.remove), "nothing to remove without an id");
   } finally {
     await blind.stop();
+  }
+});
+
+// Re-review of #334: with cleanup ahead of the extension, a remove that never succeeds
+// (or no remove at all) stopped the creates — the location went at the next term, in
+// silence. The extension goes every term whatever the cleanup does, and nothing rejects.
+test("keepalive: a remove that always fails or is absent never stops the extension; no unhandled rejection", async () => {
+  const rejections = [];
+  const onRejection = (e) => rejections.push(e);
+  process.on("unhandledRejection", onRejection);
+  try {
+    for (const [name, faults] of [
+      ["keepalive-refused", { removeFails: Infinity }],
+      ["keepalive-noremove", { noRemove: true }],
+    ]) {
+      const b = bridgeEnv(name, { FB_TOOLS: LEAD_TOOLS });
+      const rec = await plugin({ ...b.env, ISKRON_KEEPALIVE_MS: 200 }, { faults });
+      try {
+        await until(() => rec.tools().has("iskron_stand"), "the stand tool", 8000);
+        await rec.call("iskron_stand", { realm: "nks-dev", karta: "#931" }, "root");
+        await rootHolds(rec, b);
+        const creates = () => rec.updates.filter((u) => u.create).length;
+        await until(() => creates() >= 4, `${name}: a create every term`);
+        if (faults.noRemove) {
+          const said = rec.said().match(/нет remove/g) ?? [];
+          assert.equal(said.length, 1, "no remove — said once, loudly");
+          assert.match(rec.said(), /\[iskron\/error\][^\n]*нет remove/);
+        } else assert.doesNotMatch(rec.said(), /такт продления каталога сорвался/);
+      } finally {
+        await rec.stop();
+      }
+    }
+    await delay(100);
+    assert.deepEqual(rejections, [], "no unhandled rejection");
+  } finally {
+    process.off("unhandledRejection", onRejection);
+  }
+});
+
+// The helper session's own session.created is not the root's activity: it must not
+// make its root the freshest one, where frames of a bridge nobody owns go.
+test("keepalive: the helper session's birth does not refresh its root for ownerless frames", async () => {
+  const b = bridgeEnv("keepalive-seen");
+  const rec = await plugin(b.env, {
+    sessions: [
+      { id: "old", time: { updated: 1 } },
+      { id: "fresh", time: { updated: 5 } },
+      { id: "ka-x", parentID: "old" },
+    ],
+  });
+  try {
+    await serverTools(rec);
+    rec.emit({ type: "session.created", data: { sessionID: "old" } });
+    await delay(50); // seen is stamped in ms: apart, or a tie keeps the first
+    rec.emit({ type: "session.created", data: { sessionID: "fresh" } });
+    await delay(50);
+    const title = "iskron: каталог держит место";
+    rec.emit({ type: "session.created", data: { sessionID: "ka-x", parentID: "old", title } });
+    await delay(50);
+    appendFileSync(b.events, event("frame", { frame: { type: "message", body: "x" }, raw: "" }));
+    await until(() => rec.prompts.length === 1, "the frame to be prompted");
+    assert.equal(rec.prompts[0].sessionID, "fresh", "the helper's birth refreshed no root");
+  } finally {
+    await rec.stop();
   }
 });
 
