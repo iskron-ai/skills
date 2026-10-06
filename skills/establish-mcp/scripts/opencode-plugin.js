@@ -519,7 +519,7 @@ var SKILLS_ROOT_ENV = "ISKRON_SKILLS_ROOT";
 import { createHash } from "node:crypto";
 import { readFileSync as readFileSync2 } from "node:fs";
 import { fileURLToPath } from "node:url";
-var VERSION = "7.2.8";
+var VERSION = "7.3.0";
 function buildOf(selfUrl) {
   try {
     const src = readFileSync2(fileURLToPath(selfUrl));
@@ -1255,7 +1255,6 @@ var homeBridgePath = () => join4(homedir2(), ".iskron-bridge", "iskron-bridge.mj
 // js/opencode/devicewait.ts
 import { readdirSync as readdirSync2, statSync as statSync2 } from "node:fs";
 import { join as join5 } from "node:path";
-var RENEW_BEFORE_MS = 6e4;
 var UNTIL = /valid until (\d{4}-\d\d-\d\d \d\d:\d\d:\d\d) UTC/;
 function deviceOf(message) {
   const link = /from another device: (\S+)/.exec(message)?.[1];
@@ -1282,7 +1281,7 @@ function codeWatch(dir, message) {
     moved: () => {
       const now2 = loginStamp(dir);
       if (now2 !== null && now2 !== before) return true;
-      return now2 !== null && end - Date.now() < RENEW_BEFORE_MS;
+      return now2 !== null && end <= Date.now();
     }
   };
 }
@@ -1486,6 +1485,8 @@ var idleHalf = () => ({
   },
   bridgeOf: () => null,
   leadOf: () => null,
+  holders: () => [],
+  owns: () => false,
   moved() {
   }
 });
@@ -1676,6 +1677,108 @@ function createKeeper(doors) {
   };
 }
 
+// js/opencode/keepalive.ts
+var EVERY_MS = (() => {
+  const v = process.env.ISKRON_KEEPALIVE_MS;
+  return v === void 0 || v === "" ? 50 * 6e4 : Number(v) || 0;
+})();
+var DURABLE = /^session\.(execution\.(started|succeeded|failed|interrupted)|(step|text|reasoning|compaction)\.(started|ended|failed)|tool\.(called|success|failed|input\.(started|ended))|shell\.(started|ended)|skill\.activated|instructions\.updated|message\.content\.updated|usage\.recorded|retry\.scheduled)$/;
+var LEFTOVER_MAX = 20;
+var KEEPALIVE_TITLE = "iskron: каталог держит место";
+var holdersOf = (slots) => [...slots].filter((x) => x.holding && x.session).sort((a, b) => Number(!!a.child) - Number(!!b.child)).map((x) => x.session);
+function createKeepAlive(ctx, d) {
+  if (EVERY_MS <= 0) return { onEvent() {
+  }, stop() {
+  } };
+  let last = Date.now();
+  let busy = false;
+  const leftover = /* @__PURE__ */ new Set();
+  let noRemoveSaid = false;
+  let capSaid = false;
+  async function removeOnce(id) {
+    const fn = ctx.session.remove;
+    if (typeof fn !== "function") {
+      if (!noRemoveSaid)
+        d.say(
+          `Искрон: у контекста сессий OpenCode нет remove — служебные сессии продления «${KEEPALIVE_TITLE}» не удаляются и копятся дочерними у места; продление идёт`,
+          "error"
+        );
+      noRemoveSaid = true;
+      return false;
+    }
+    try {
+      await fn.call(ctx.session, { sessionID: id });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  function remember(id) {
+    leftover.add(id);
+    if (leftover.size <= LEFTOVER_MAX) return;
+    const oldest = leftover.values().next().value;
+    leftover.delete(oldest);
+    if (!capSaid)
+      d.say(
+        `Искрон: неудалённых служебных сессий продления больше ${LEFTOVER_MAX} — старшие больше не повторяю, удали дочерние «${KEEPALIVE_TITLE}» руками`,
+        "error"
+      );
+    capSaid = true;
+  }
+  async function touch(session) {
+    let s;
+    try {
+      s = await ctx.session.create({ parentID: session, title: KEEPALIVE_TITLE });
+    } catch (e) {
+      d.say(`Искрон: каталог не продлён — служебная сессия не создана: ${e.message}`);
+      return null;
+    }
+    const id = s?.id ?? s?.data?.id;
+    if (typeof id === "string") return id;
+    d.say(
+      `Искрон: каталог продлён, но id служебной сессии из ответа create не разобран (${JSON.stringify(s ?? null).slice(0, 160)}) — она останется дочерней сессией места «${KEEPALIVE_TITLE}», удали её руками`,
+      "error"
+    );
+    return null;
+  }
+  async function tidy(fresh) {
+    for (const id of [...leftover]) if (await removeOnce(id)) leftover.delete(id);
+    if (!fresh) return;
+    if (await removeOnce(fresh) || await removeOnce(fresh)) return;
+    remember(fresh);
+    if (!noRemoveSaid)
+      d.say(
+        `Искрон: каталог продлён, служебная сессия ${fresh} не удалена — повторю на следующем такте`
+      );
+  }
+  async function tick() {
+    let fresh = null;
+    const held = Date.now() - last >= EVERY_MS ? d.holders() : [];
+    if (held.length) {
+      last = Date.now();
+      fresh = await touch(held[0]);
+    }
+    await tidy(fresh);
+  }
+  const timer = setInterval(
+    () => {
+      if (busy) return;
+      busy = true;
+      void tick().catch((e) => d.say(`Искрон: такт продления каталога сорвался — ${e.message}`)).finally(() => busy = false);
+    },
+    Math.max(50, Math.min(6e4, EVERY_MS / 5))
+  );
+  timer.unref?.();
+  return {
+    onEvent(ev) {
+      const s = ev?.data?.sessionID;
+      if (typeof s === "string" && ev?.location && DURABLE.test(String(ev?.type)) && d.owns(s))
+        last = Date.now();
+    },
+    stop: () => clearInterval(timer)
+  };
+}
+
 // js/shared/busyargs.ts
 var STATUS_ONLY_ARGS = /* @__PURE__ */ new Set([
   "realm",
@@ -1771,18 +1874,19 @@ var placeGone = (kind) => kind === "evicted" ? "его место-спутник
 var placeGoneRefusal = (kind) => kind === "evicted" ? "её место-спутник вытеснено другим держателем" : "её место-спутник отозвано или закрыто платформой (4001)";
 var END_MS = 5e3;
 var SUMMARY_MAX = 4e3;
-var endWord = (who, why, last, kept, failed = []) => {
+var endWord = (who, why, last, kept) => {
   const said = last.length > SUMMARY_MAX ? `${last.slice(0, SUMMARY_MAX)}…` : last;
-  const done = kept ? `${keptLine(who, kept)}; снять его — iskron_channel(action="revoke", standing="${kept}"), только словом человека. ` : failed === null ? 'мост субагента погашен; снял ли он место — не ответил: осталось на доске — сними iskron_channel(action="revoke"). ' : failed.length ? `мост субагента погашен, но место не снято (сеть): ${failed.join(", ")} — сними iskron_channel(action="revoke", standing="${failed[0]}"). ` : "мост субагента погашен, из дел он вышел, место снято. ";
+  const done = kept ? `${keptLine(who, kept)}; снять его — iskron_channel(action="revoke", standing="${kept}"), только словом человека. ` : "мост субагента гасится: из дел он выходит, место снимается (не снимется — скажу отдельно). ";
   return `Искрон: субагент ${who} КОНЧЕН — ${why}. Это конец поручения, не ход: ${done}Итог — его последнее слово:
 ${said || "(текста он не оставил — смотри его дело)"}`;
 };
+var unrevokedWord = (who, failed) => failed === null ? `Искрон: мост субагента ${who} погашен; снял ли он место — не ответил: осталось на доске — сними iskron_channel(action="revoke").` : `Искрон: у субагента ${who} место не снято (сеть): ${failed.join(", ")} — сними iskron_channel(action="revoke", standing="${failed[0]}").`;
 var keptLine = (who, place) => `ребёнок ${who} стоял не спутником (${place}) — место не снято, мост не погашен`;
 var turnWord = (place) => `Искрон: субагент ${place} сдал ход, не поручение — он продолжает и ждёт кадров своего дела; итог ляжет сюда по его концу. Отпустить раньше — iskron_channel(action="revoke", standing="${place}").`;
 var noticeWord = (child, place) => `Искрон: уведомление OpenCode <subagent sessionID="${child}" state="completed"> — конец ХОДА субагента ${place}, не поручения: он ведущий, стоит своим местом и ждёт кадров своего дела. Не считай его закончившим — итог ляжет сюда словом «КОНЧЕН» по его концу. Отпустить раньше — iskron_channel(action="revoke", standing="${place}").`;
 var releaseWord = (who) => `Искрон: субагент ${who} отпущен — его мост погашен: выход из дел и снятие места делает он; итог лёг сюда синтетикой.`;
 var releasedWord = () => "Искрон: запустивший отпустил тебя — поручение кончено, место снято, из дел ты выведен; встать снова нельзя, в граф и дела больше не пиши.";
-var awayWord = (who, last) => `Искрон: субагент ${who} снят переносом родителя в другую папку — поручение здесь кончено не по исходу, итога «КОНЧЕН» не будет: его мост погашен, из дел он вышел, место снято; его сессия осталась в прежней папке. Последнее его слово:
+var awayWord = (who, last) => `Искрон: субагент ${who} снят переносом родителя в другую папку — поручение здесь кончено не по исходу, итога «КОНЧЕН» не будет: его мост гасится: из дел он выходит, место снимается; его сессия осталась в прежней папке. Последнее его слово:
 ${last.slice(0, SUMMARY_MAX) || "(текста он не оставил — смотри его дело)"}`;
 var lostWord = (who, why) => `Искрон: субагент ${who} снят — ${why}. Место без моста уйдёт сроком канала, его дела — сроком места; итога нет, его ход — в его сессии.`;
 function leadDoors(ctx, say, flush, end, slots) {
@@ -1795,6 +1899,8 @@ function leadDoors(ctx, say, flush, end, slots) {
       const got = await slots.get(child)?.bridge.request("iskron/end", {}, { timeoutMs: END_MS, service: true }).catch(() => null);
       return got?.ended ? got.failed ?? [] : null;
     },
+    seal: (child) => end(child, null),
+    // мост не гасится
     async end(child) {
       end(child);
     },
@@ -1837,20 +1943,28 @@ function createLeads(d) {
     over.add(child);
     const kept = ended && kind === "end" ? d.ownPlace(child) : null;
     if (kept) d.say(`Искрон: ${keptLine(who(l, child), kept)}`, "warning");
+    if (ended && !kept) d.seal(child);
     const parent = await l.parent;
     const last = (l.last ?? "").trim();
-    const failed = ended && !kept ? await d.close(child).catch(() => null) : [];
-    const word = kind === "lost" ? lostWord(who(l, child), why) : kind === "away" ? awayWord(who(l, child), last) : endWord(who(l, child), why, last, kept, failed);
-    if (parent) await d.tell(parent, word, wake);
-    else d.say(`${word}
+    const tell = async (text, wakes) => {
+      if (parent) await d.tell(parent, text, wakes);
+      else d.say(`${text}
 (родителя плагин не знает — итог некому)`, "warning");
-    if (ended && !kept)
-      await d.end(child).catch(
-        (e) => d.say(
-          `Искрон: мост субагента ${who(l, child)} не погашен после итога — ${e.message}`,
-          "warning"
-        )
-      );
+    };
+    await tell(
+      kind === "lost" ? lostWord(who(l, child), why) : kind === "away" ? awayWord(who(l, child), last) : endWord(who(l, child), why, last, kept),
+      wake
+    );
+    if (!ended || kept) return;
+    const failed = await d.close(child).catch(() => null);
+    await d.end(child).catch(
+      (e) => d.say(
+        `Искрон: мост субагента ${who(l, child)} не погашен после итога — ${e.message}`,
+        "warning"
+      )
+    );
+    if (kind !== "lost" && (failed === null || failed.length))
+      await tell(unrevokedWord(who(l, child), failed), false);
   }
   function leave(child, l, why) {
     l.leaving = why;
@@ -2151,22 +2265,26 @@ function createRunEnds() {
   const ended = /* @__PURE__ */ new Map();
   const released = /* @__PURE__ */ new Set();
   const whys = /* @__PURE__ */ new Map();
+  const sealed = /* @__PURE__ */ new Set();
   return {
     end(session, of, forget, final = false, why) {
-      forget(session);
+      if (forget) forget(session);
+      else sealed.add(session);
       ended.set(session, of ?? null);
       if (final) released.add(session);
       if (why) whys.set(session, why);
     },
     clear(session, gone = false) {
+      sealed.delete(session);
       if (gone) released.delete(session);
       if (!released.has(session)) ended.delete(session);
       if (!ended.has(session)) whys.delete(session);
     },
     guard(session, name, args, asks) {
-      if (released.has(session) && !READ_TOOLS.has(name) && !READ_ACTIONS[name]?.has(String(args.action ?? "")))
+      const final = released.has(session);
+      if ((final || sealed.has(session)) && !READ_TOOLS.has(name) && !READ_ACTIONS[name]?.has(String(args.action ?? "")))
         throw new Error(
-          `Отказано (плагин): ${whys.get(session) ?? "запустивший отпустил эту дочернюю сессию"} — поручение кончено, место снято; ${name} не пойдёт ни её местом, ни местом запустившего, и встать снова нельзя.`
+          `Отказано (плагин): ${whys.get(session) ?? (final ? "запустивший отпустил эту дочернюю сессию" : "эта дочерняя сессия кончена")} — поручение кончено, место снято; ${name} не пойдёт ни её местом, ни местом запустившего, и встать снова нельзя.`
         );
       if (!ended.has(session) || name === STAND_TOOL || READ_TOOLS.has(name)) return;
       const action = String(args.action ?? "");
@@ -2273,7 +2391,7 @@ async function setupTools(ctx, say, onChannel, rootOf, flushUsage = async () => 
   const { home, directoryOf, exists, ours } = mv;
   const relay = mv.relay(onChannel, say);
   const runEnds = createRunEnds();
-  const endChild = (c) => runEnds.end(c, slots.get(c)?.satelliteOf, forget, leads.released(c), leads.goneWhy(c));
+  const endChild = (c, out2 = forget) => runEnds.end(c, slots.get(c)?.satelliteOf, out2, leads.released(c), leads.goneWhy(c));
   const leads = createLeads(leadDoors(ctx, say, flushUsage, endChild, slots));
   const keeper = createKeeper({
     say,
@@ -2503,6 +2621,8 @@ async function setupTools(ctx, say, onChannel, rootOf, flushUsage = async () => 
     },
     onEvent: (ev) => leads.onEvent(ev),
     leadOf: (s) => leads.nameOf(s),
+    holders: () => holdersOf(slots.values()),
+    owns: (s) => slots.has(s),
     moved: (s, to) => mv.moved({ say, slots, rootOf, forget, slotFor, adopt: adopt.now, away: leads.away }, s, to),
     async stop() {
       stopped = true;
@@ -3005,6 +3125,11 @@ ${counts}`;
     bridgeOf: (s) => half.bridgeOf(s)
   });
   flushUsage = (s) => usage.flush(s);
+  const keepalive = createKeepAlive(ctx, {
+    holders: () => half.holders(),
+    owns: (s) => half.owns(s),
+    say: (t, level) => say(t, level ?? "warning")
+  });
   const controller = new AbortController();
   void (async () => {
     try {
@@ -3012,6 +3137,7 @@ ${counts}`;
         const ev = event;
         const id = ev?.data?.sessionID;
         half.onEvent(ev);
+        keepalive.onEvent(ev);
         switch (ev?.type) {
           case "session.deleted":
             if (!id) break;
@@ -3024,6 +3150,7 @@ ${counts}`;
             break;
           case "session.created": {
             if (!id) break;
+            if (ev.data?.title === KEEPALIVE_TITLE) break;
             const parent = ev.data?.parentID;
             if (typeof parent === "string")
               void rootOf(parent).then((root) => {
@@ -3066,6 +3193,7 @@ ${counts}`;
   })();
   return async () => {
     controller.abort();
+    keepalive.stop();
     usage.stop();
     ch?.stop();
     await half.stop();

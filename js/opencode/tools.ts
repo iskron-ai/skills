@@ -170,8 +170,8 @@ export async function setupTools(
   const relay = mv.relay(onChannel, say);
   const runEnds = createRunEnds(); // кончившиеся дети: запись с места — отказ вслух (#6361)
   // Ведущие субагенты (#6625): конец — явный акт, итог — синтетикой родителю.
-  const endChild = (c: string) =>
-    runEnds.end(c, slots.get(c)?.satelliteOf, forget, leads.released(c), leads.goneWhy(c));
+  const endChild = (c: string, out: ((s: string) => void) | null = forget) =>
+    runEnds.end(c, slots.get(c)?.satelliteOf, out, leads.released(c), leads.goneWhy(c));
   const leads = createLeads(leadDoors(ctx, say, flushUsage, endChild, slots));
   const keeper = createKeeper({
     say,

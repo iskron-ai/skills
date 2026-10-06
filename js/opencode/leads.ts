@@ -60,6 +60,9 @@ export function createLeads(d: W.LeadDoors): W.Leads {
     // Конец снимает только спутника ребёнка: обычное место, вставшее вместо него, не трогаем.
     const kept = ended && kind === "end" ? d.ownPlace(child) : null;
     if (kept) d.say(`Искрон: ${W.keptLine(who(l, child), kept)}`, "warning");
+    // Кончен с первого слова: пока мост кончает прогон (секунды), запись ребёнка — отказ,
+    // а не вызов его спутником после «КОНЧЕН» (№147).
+    if (ended && !kept) d.seal(child);
     const parent = await l.parent;
     const last = (l.last ?? "").trim();
     const tell = async (text: string, wakes: boolean) => {

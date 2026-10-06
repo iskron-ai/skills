@@ -180,6 +180,7 @@ Markdown `skills/<name>/SKILL.md` (+ `references/*.md`) на скилл — об
 | Все пробы отгружаемого кода | `make test` (офлайн, против собранных выходов: фейк NKS + OAuth, подставные мост и сокет, фикстура роадмапа; CI — на Node 22; `make test-coverage` — с покрытием) |
 | Пробы по предметам | `make test-extension` (pi), `make test-opencode` (плагин OpenCode 2 против подставного контекста), `make test-codex` (структурная часть офлайн, тяжёлая — при валидаторе Codex), `make test-watchdog` (сторожа против фейка, закрывающего сокет кодом мёртвого токена), `make test-stand`, `make test-update` (под `ISKRON_BRIDGE_NO_UPDATE=1`) — все входят в `make test` |
 | Пробы моста под Bun OpenCode | `ISKRON_NODE=$(which opencode) BUN_BE_BUN=1 make test` — условие «Node не нужен» |
+| Ревизор области плагинов ритуалов OpenCode | `node scripts/check-ritual-scope.mjs [репо...]` — подкоманда `check-rituals` dev-сборки моста (`js/cli/rituals.ts`): `.opencode/plugins/*` против подставного ctx с двумя каталогами; код 1 — подписка на поток событий пишет в сессию чужого каталога, хук тула ломается в своей или плагин не загрузился |
 | Обновить снимок поверхности | `make surface` (сеть + грант; через встроенный iskron-bridge, включая его тул `iskron_stand`) |
 | Пересобрать скилл виджетов из графа | `make widgets` (сеть + грант: снимок договора и узлов-виджетов в `fixtures/widgets.json`, затем `skills/widgets/SKILL.md`; руками не правится); `make check-widgets` — офлайн-сверка, входит в `make check` |
 | Обновить поставку на машине | `node ~/.iskron-bridge/iskron-bridge.mjs update` (релизы GitHub; мост, плагин OpenCode, `SETUP.md` в дом) |
@@ -239,4 +240,4 @@ Pre-commit-хук (`.githooks/pre-commit`) на каждом коммите ли
 - **Пуш и `gh` — две личности**: отказ `gh pr create` рядом с работающим пушем — сперва аккаунт (готчи #4522).
 - **Никогда** `--force`, `--no-verify`, `--no-gpg-sign`, `git reset --hard` без явного указания.
 
-*(iskronify: контракт 19, штамп 2026-10-02 — прогони заново, когда описание установленного iskronify называет контракт выше или когда источники, из которых выведен этот файл, сдвинулись после этой даты.)*
+*(iskronify: контракт 20, штамп 2026-10-06 — прогони заново, когда описание установленного iskronify называет контракт выше или когда источники, из которых выведен этот файл, сдвинулись после этой даты.)*
