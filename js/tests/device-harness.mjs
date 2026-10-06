@@ -43,6 +43,7 @@ export function startBridge(serverUrl, authDir, env = {}) {
   });
   proc.stderr.on("data", (c) => (stderr += c));
   return {
+    proc,
     get stderr() {
       return stderr;
     },

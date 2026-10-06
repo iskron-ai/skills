@@ -69,6 +69,42 @@ test("a login taken over from a bridge gone keeps its code, and the code still l
   }
 });
 
+// Live 06.10: a bridge polling for a code did not go on SIGTERM — it sat out
+// the wait for a click on a link nobody had opened, and only kill -9 took it.
+// The code lives in the login's record, so leaving loses nothing.
+for (const [how, stopIt] of [
+  ["SIGTERM", (p) => p.kill("SIGTERM")],
+  ["SIGINT", (p) => p.kill("SIGINT")],
+  ["stdin closed", (p) => p.stdin.end()],
+]) {
+  test(`a bridge waiting for a code leaves within a second on ${how}, and the next one keeps the code`, async () => {
+    const fake = await startFakeNks({ device: NAMED });
+    const dir = mkdtempSync(join(tmpdir(), "iskron-device-test-"));
+    const full = { ISKRON_BRIDGE_DAEMON: "0" };
+    const first = startBridge(fake.mcpUrl, dir, full);
+    let second;
+    try {
+      const code = codeIn(await first.call("initialize", 1, INIT));
+      await waitFor(() => fake.state.device.polls.length >= 1, "the code to be polled");
+      const gone = new Promise((r) => first.proc.once("exit", r));
+      const at = Date.now();
+      stopIt(first.proc);
+      await Promise.race([gone, sleep(3_000)]);
+      const took = Date.now() - at;
+      assert.notEqual(first.proc.exitCode ?? first.proc.signalCode, null, `still up after ${how}`);
+      assert.ok(took <= 1_000, `left ${took} ms after ${how}`);
+      second = startBridge(fake.mcpUrl, dir, full);
+      assert.equal(codeIn(await second.call("initialize", 1, INIT)), code, "the code stays good");
+      assert.equal(fake.state.device.issued.length, 1, "no second code");
+    } finally {
+      await first.stop();
+      await second?.stop();
+      await reap(dir);
+      await fake.stop();
+    }
+  });
+}
+
 test("the device poll asks for the resource the loopback login asks for", async () => {
   await withFake({ device: NAMED }, async ({ fake, dir, bridge }) => {
     await fake.control({ device_approve: codeIn(await bridge.call("initialize", 1, INIT)) });

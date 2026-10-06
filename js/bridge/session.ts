@@ -18,7 +18,7 @@ import { deliver } from "./deliver.ts";
 import { errorMessage } from "./errors.ts";
 import { handoverUnderway } from "./holdstate.ts";
 import { startDeafnessWatch } from "./leave.ts";
-import { pendingFlow } from "./oauth/flow.ts";
+import { clickPending } from "./oauth/flow.ts";
 import { ORPHAN_FLOW_MS } from "./oauth/pacing.ts";
 import { tokenRequestsInFlight } from "./oauth/tokenrequest.ts";
 import { holdFromEnv } from "./resume.ts";
@@ -165,8 +165,8 @@ function openIn(io: SessionIO, origin: SessionOrigin | null, scope: Scope | null
       p.finally(() => pending.delete(p));
     }),
   );
-  // A human may be mid-click on OUR authorize URL: dying now kills the callback
-  // server and silently loses their login, and the click is not repeatable —
+  // A human may be mid-click on OUR authorize URL (the loopback link opened):
+  // dying now kills the callback server and silently loses their login, and the click is not repeatable —
   // the human sees a browser error, not a retry. So a bridge asked to go away
   // outlives a pending flow, and a token rotation already in flight must land
   // on disk before exit; each request's own timeout bounds the wait. A harness
@@ -204,10 +204,13 @@ function openIn(io: SessionIO, origin: SessionOrigin | null, scope: Scope | null
       releaseSatelliteClaims();
       return;
     }
-    const flow = pendingFlow();
+    const flow = clickPending();
     if (flow) {
       // The login has no deadline while a harness holds us; once it is gone,
       // the click is waited for only so long — nothing is left hanging forever.
+      // A login whose link nobody opened — a code polled for another device —
+      // is not waited for: the record keeps link and code, the next bridge takes
+      // both over, and a harness stopping us is not made to kill us.
       log(
         `${why}, but an authorization flow is pending — staying up for the human's click, ` +
           `at most ${Math.round(ORPHAN_FLOW_MS / 1000)}s`,

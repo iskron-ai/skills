@@ -843,10 +843,41 @@ test("no code because the server has no client: the line and the status name the
   }
 });
 
-// The bridge names the code's end; with under a minute left the human could not
-// make it, so the plugin asks again by itself — the bridge's answer to that is
-// a fresh code — and tells the new page with its end.
-test("a code with under a minute left: the plugin asks again and tells the fresh page", async () => {
+// The bridge names the code's end and holds the code to it: a code with under a
+// minute left is still the one the human was given, and the plugin does not
+// ask past it — a new page would make theirs dead. Once the end has passed the
+// plugin asks again by itself; the bridge's answer to that is a fresh code.
+test("a code with under a minute left stays told: the plugin does not ask for another", async () => {
+  const authDir = mkdtempSync(join(SANDBOX, "auth-device-last-"));
+  const prevAuth = process.env.ISKRON_BRIDGE_AUTH_DIR;
+  process.env.ISKRON_BRIDGE_AUTH_DIR = authDir;
+  const authed = join(SANDBOX, "device-last.authed");
+  const deviceFile = join(SANDBOX, "device-last.page");
+  const first = "https://auth.example/device?code=LAST1111";
+  const next = "https://auth.example/device?code=EARLY222";
+  writeFileSync(deviceFile, first);
+  writeFileSync(join(authDir, "mcp.example_x.json.auth-pending"), "{}");
+  const b = bridgeEnv("device-last", {
+    FB_MODE: "auth",
+    FB_AUTHED: authed,
+    FB_DEVICE_FILE: deviceFile,
+    FB_DEVICE_LEFT_S: 30,
+    ISKRON_MCP_AUTH_POLL_MS: 50,
+  });
+  const rec = await plugin(b.env);
+  try {
+    await until(() => rec.said().includes(first), "the first page");
+    writeFileSync(deviceFile, next);
+    await delay(600);
+    assert.ok(!rec.said().includes(next), "no other page while the told one lives");
+  } finally {
+    writeFileSync(authed, "");
+    await rec.stop();
+    process.env.ISKRON_BRIDGE_AUTH_DIR = prevAuth;
+  }
+});
+
+test("a code past its end: the plugin asks again and tells the fresh page", async () => {
   const authDir = mkdtempSync(join(SANDBOX, "auth-device-dying-"));
   const prevAuth = process.env.ISKRON_BRIDGE_AUTH_DIR;
   process.env.ISKRON_BRIDGE_AUTH_DIR = authDir;
@@ -860,7 +891,7 @@ test("a code with under a minute left: the plugin asks again and tells the fresh
     FB_MODE: "auth",
     FB_AUTHED: authed,
     FB_DEVICE_FILE: deviceFile,
-    FB_DEVICE_LEFT_S: 30,
+    FB_DEVICE_LEFT_S: -1,
     ISKRON_MCP_AUTH_POLL_MS: 50,
   });
   const rec = await plugin(b.env);
