@@ -186,14 +186,27 @@ test("a call that finds the code dead hands out a fresh one", async () => {
   });
 });
 
-test("a call that finds under a minute left hands out a fresh code, and that one is polled", async () => {
-  const device = { interval: 1, expiresIn: 30, client: "iskron-bridge" };
+// The code goes to the human through an agent: the link they open must still be
+// the polled one, to its very end. Live 06.10: a code replaced a minute early
+// was opened dead (Rauthy, «DeviceAuthCode does not exist»).
+test("a call in the code's last minute hands out the same code, polled to its end; past it, a new one", async () => {
+  const device = { interval: 1, expiresIn: 3, client: "iskron-bridge" };
   await withFake({ device }, async ({ fake, dir, bridge }) => {
     const first = codeIn(await bridge.call("initialize", 1, INIT));
-    const next = codeIn(await bridge.call("initialize", 2, INIT));
-    assert.notEqual(next, first, "a code with 30 s left is not handed out");
+    await sleep(1_200);
+    const again = codeIn(await bridge.call("initialize", 2, INIT));
+    assert.equal(again, first, "a code with seconds left is still the one handed out");
+    assert.deepEqual(fake.state.device.issued, [first], "no code issued while the first lives");
     const polls = fake.state.device.polls;
-    await waitFor(() => polls.some((p) => p.user_code === next), "the fresh code to be polled");
+    await waitFor(
+      () => polls.some((p) => p.user_code === first && p.answer === "authorization_pending"),
+      "the first code to be polled",
+    );
+    await sleep(2_000);
+    const next = codeIn(await bridge.call("initialize", 3, INIT));
+    assert.notEqual(next, first, "past its end the code is replaced");
+    assert.equal(next, fake.state.device.issued.at(-1));
+    await waitFor(() => polls.some((p) => p.user_code === next), "the new code to be polled");
     const from = polls.findIndex((p) => p.user_code === next);
     await fake.control({ device_approve: next });
     await grantLanded(dir);
