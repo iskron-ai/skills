@@ -121,7 +121,7 @@ function words(v: Verdict): string[] {
 }
 
 export const RITUALS_USAGE = (): string =>
-  `node iskron.mjs check-rituals [${L("репо", "repo")}...] [--json]   ${L("(плагины .opencode/plugins не пишут в сессии чужих каталогов и не ломаются; без репо — текущий каталог)", "(.opencode/plugins write into no session of another directory and do not break; no repo — the current directory)")}`;
+  `node iskron.mjs check-rituals [${L("репо", "repo")}...] [--json] [-- ${L("репо", "repo")}...]   ${L("(плагины .opencode/plugins не пишут в сессии чужих каталогов и не ломаются; без репо — текущий каталог)", "(.opencode/plugins write into no session of another directory and do not break; no repo — the current directory)")}`;
 
 const isDir = (p: string): boolean => {
   try {
@@ -138,11 +138,21 @@ const refuse = (word: string): void => {
 };
 
 export async function runCheckRituals(argv: string[]): Promise<void> {
-  if (argv.includes("--help") || argv.includes("-h")) return out(RITUALS_USAGE());
-  const flag = argv.find((a) => a.startsWith("-") && a !== "--json");
-  if (flag) return refuse(L(`неизвестный флаг ${flag}`, `unknown flag ${flag}`));
-  const json = argv.includes("--json");
-  const repos = argv.filter((a) => a !== "--json").map((a) => resolve(a));
+  // После `--` флагов нет: всё — каталоги, и те, чьё имя начинается с «-».
+  const end = argv.indexOf("--");
+  const head = end < 0 ? argv : argv.slice(0, end);
+  const tail = end < 0 ? [] : argv.slice(end + 1);
+  if (head.includes("--help") || head.includes("-h")) return out(RITUALS_USAGE());
+  const flag = head.find((a) => a.startsWith("-") && a !== "--json");
+  if (flag)
+    return refuse(
+      L(
+        `неизвестный флаг ${flag} (каталог с таким именем — ./${flag} или после --)`,
+        `unknown flag ${flag} (a directory of that name — ./${flag} or after --)`,
+      ),
+    );
+  const json = head.includes("--json");
+  const repos = [...head.filter((a) => a !== "--json"), ...tail].map((a) => resolve(a));
   const missing = repos.find((r) => !isDir(r));
   if (missing) return refuse(L(`нет такого каталога: ${missing}`, `no such directory: ${missing}`));
   const verdicts: Verdict[] = [];
