@@ -29,7 +29,7 @@ import { runWatchdogCodex } from "../watchdog/codex.ts";
 import { runWatchdog } from "../watchdog/watchdog.ts";
 import { runWatchdogExit } from "../watchdog/watchdog-exit.ts";
 import { runDoctor } from "./doctor.ts";
-import { runCheckRituals } from "./rituals.ts";
+import { RITUALS_USAGE, runCheckRituals } from "./rituals.ts";
 import { runUpdate } from "./update.ts";
 import { runUse } from "./use.ts";
 
@@ -44,7 +44,7 @@ const usage = (): string => `iskron ${BUILD}
   node iskron.mjs doctor [server-url] [--auth-dir <dir>]
   node iskron.mjs update [--auth-dir <dir>]
   node iskron.mjs use <en|ru|url> [--auth-dir <dir>]   ${L("(en — mcp.iskron.ai, ru — mcp.iskron.ru)", "(en — mcp.iskron.ai, ru — mcp.iskron.ru)")}
-  node iskron.mjs check-rituals [${L("репо", "repo")}...] [--json]   ${L("(плагины .opencode/plugins не пишут в сессии чужих каталогов и не ломаются; без репо — текущий каталог)", "(.opencode/plugins write into no session of another directory and do not break; no repo — the current directory)")}
+  ${RITUALS_USAGE()}
   node iskron.mjs daemon --auth-dir <dir>   ${L("(демон машины; его поднимает тонкий мост — мост по умолчанию)", "(the machine daemon; the thin bridge raises it — the default bridge)")}
   node iskron.mjs --version
   env: ISKRON_BRIDGE_TOKEN — ${L("личный токен вместо OAuth (или файл <auth-dir>/token)", "a personal token instead of OAuth (or the file <auth-dir>/token)")};
