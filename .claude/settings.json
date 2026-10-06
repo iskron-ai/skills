@@ -35,7 +35,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "jq -r '.tool_input.file_path // .tool_input.notebook_path // \"\"' | grep -Eq '\\.claude/projects/.*/memory/' && { echo 'BLOCKED: локальная память агента запрещена целиком, по директории (AGENTS.md, Persistence rules). Маршрутизируй факт: конвенции репо / код-факты → AGENTS.md; состояние проекта → NKS (nks-dev, #1506); пользовательский факт вне проекта, включая факты машины → личный граф человека @handle/mind (minding). Директория заморожена на стабе-запрете.' >&2; exit 2; } || exit 0"
+            "command": "p=$(jq -r '.tool_input.file_path // .tool_input.notebook_path // \"\"'); [ -n \"$p\" ] || exit 0; case \"$p\" in /*) ;; *) p=\"$PWD/$p\" ;; esac; i=0; while [ -L \"$p\" ] && [ $i -lt 8 ]; do l=$(readlink \"$p\"); case \"$l\" in /*) p=$l ;; *) p=${p%/*}/$l ;; esac; i=$((i+1)); done; p=$(printf '%s' \"$p\" | sed -e 's#//*#/#g' -e ':a' -e 's#/\\./#/#g' -e 'ta'); d=$p; t=; while [ ! -d \"$d\" ]; do t=\"/${d##*/}$t\"; d=${d%/*}; [ -n \"$d\" ] || d=/; done; r=$(cd \"$d\" && pwd -P)$t; m=$(cd \"$HOME/.claude/projects\" 2>/dev/null && pwd -P); { case \"$p\" in */.claude/projects/*/memory/*) true ;; *) false ;; esac || case \"$r\" in */.claude/projects/*/memory/*) true ;; \"$m\"/*/memory/*) [ -n \"$m\" ] ;; *) false ;; esac; } && { echo 'BLOCKED: локальная память агента запрещена целиком, по директории (AGENTS.md, Persistence rules). Маршрутизируй факт: конвенции репо / код-факты → AGENTS.md; состояние проекта → NKS (nks-dev, #1506); пользовательский факт вне проекта, включая факты машины → личный граф человека @handle/mind (minding). Директория заморожена на стабе-запрете.' >&2; exit 2; } || exit 0"
           }
         ]
       }

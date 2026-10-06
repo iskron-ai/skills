@@ -81,7 +81,24 @@ export default {
     // тул оболочки на 2.0.24 — shell; bash — для прежних версий
     const isShell = (tool) => ["shell", "bash"].includes(tool);
     // memory-guard: бросок из execute.before блокирует вызов; путь памяти — тот же, что у guard'а Claude Code
-    const isLocalMemoryPath = (p) => /\.claude[\\/]projects[\\/].*[\\/]memory[\\/]/.test(String(p));
+    // сравнивается путь, а не строка: относительный — от каталога сессии, `//`, `/./`, `..` схлопнуты
+    // (resolve), ссылки раскрыты realpath ближайшего существующего предка; память узнаётся и по
+    // ~/.claude/projects за ссылкой
+    const { existsSync, realpathSync } = await import("node:fs");
+    const { dirname, join, relative, resolve } = await import("node:path");
+    const { homedir } = await import("node:os");
+    const real = (p) => {
+      let head = p;
+      while (!existsSync(head) && dirname(head) !== head) head = dirname(head);
+      try { return join(realpathSync(head), relative(head, p)); } catch { return p; }
+    };
+    const slash = (p) => p.replaceAll("\\", "/");
+    const projects = slash(real(resolve(homedir(), ".claude", "projects")));
+    const isLocalMemoryPath = (p, base) => {
+      const abs = resolve(base || process.cwd(), String(p));
+      return [slash(abs), slash(real(abs))].some((x) =>
+        /\/\.claude\/projects\/.*\/memory\//.test(x) || (x.startsWith(`${projects}/`) && /\/memory\//.test(x.slice(projects.length))));
+    };
     // пути вызова: write и edit — поле path (filePath прежних версий); patch (apply_patch) — заголовки
     // patchText «*** Add File: », «*** Update File: », «*** Delete File: » и цель «*** Move to: »
     const pathsOf = (input) =>
@@ -89,7 +106,10 @@ export default {
         ? [...String(input.input?.patchText ?? "").matchAll(/^\*\*\* (?:(?:Add|Update|Delete) File|Move to): (.+)$/gm)].map((m) => m[1].trim())
         : ["write", "edit"].includes(input.tool) ? [input.input?.path ?? input.input?.filePath ?? ""] : [];
     await ctx.tool.hook("execute.before", async (input) => {
-      if (!pathsOf(input).some(isLocalMemoryPath)) return;
+      const paths = pathsOf(input);
+      if (!paths.length) return;
+      const base = (await dirOf(input.sessionID)) || own;
+      if (!paths.some((p) => isLocalMemoryPath(p, base))) return;
       if (!(await mine(input.sessionID))) return;
       throw new Error("local agent memory is forbidden for project state");
     });

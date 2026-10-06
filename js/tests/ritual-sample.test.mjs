@@ -9,8 +9,8 @@
 // copy (a past revision) so it can be shown red before a fix.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readdirSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { test } from "node:test";
 import { pathToFileURL } from "node:url";
@@ -167,6 +167,30 @@ for (const md of sources) {
       await s.stop();
     },
   );
+
+  // The guard judges the path, not the string: a link to a memory folder,
+  // `/./` and `//` in the path do not get past it.
+  test(name("guard sees through a link, /./ and //"), async () => {
+    const s = await standServer(source);
+    const p = await s.instance(s.own);
+    s.sessions.set("mine", { dir: s.own });
+    const mem = join(s.own, ".claude", "projects", "p", "memory");
+    mkdirSync(mem, { recursive: true });
+    symlinkSync(mem, join(s.own, "link"), "dir");
+    for (const path of [
+      `${join(s.own, "link")}/MEMORY.md`,
+      `${homedir()}/.claude/./projects/-stand/memory/MEMORY.md`,
+      `${homedir()}/.claude//projects/-stand/memory/MEMORY.md`,
+      "link/MEMORY.md",
+    ])
+      await assert.rejects(
+        p.call("execute.before", toolCall("write", "mine", { path, content: "x" })),
+        (e) => !["ReferenceError", "TypeError"].includes(e?.name),
+        path,
+      );
+    await p.call("execute.before", toolCall("write", "mine", { path: "notes.md", content: "x" }));
+    await s.stop();
+  });
 
   test(name("(е) two instances of one folder under two spellings greet once"), async () => {
     const s = await standServer(source);

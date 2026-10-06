@@ -20,10 +20,10 @@
 // past revision) so it can be shown red before a fix.
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { test } from "node:test";
+import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { ritualSample, standServer } from "./opencode-stand.mjs";
@@ -194,8 +194,17 @@ const templateGuard = () => {
   return [JSON.parse(block)];
 };
 const memory = join(homedir(), ".claude", "projects", "-x", "memory");
+// a memory folder of its own under a temp root, and a link to it — the guard
+// judges the path, not the string (a link, `/./`, `//` do not get past)
+const fake = mkdtempSync(join(tmpdir(), "guard-link-"));
+mkdirSync(join(fake, ".claude", "projects", "p", "memory"), { recursive: true });
+symlinkSync(join(fake, ".claude", "projects", "p", "memory"), join(fake, "link"), "dir");
+after(() => rmSync(fake, { recursive: true, force: true }));
 const guardCases = [
   ["Write", { file_path: join(memory, "MEMORY.md") }, 2],
+  ["Write", { file_path: `${join(fake, "link")}/MEMORY.md` }, 2],
+  ["Write", { file_path: `${homedir()}/.claude/./projects/-x/memory/MEMORY.md` }, 2],
+  ["Edit", { file_path: `${homedir()}/.claude//projects/-x/memory/MEMORY.md` }, 2],
   ["NotebookEdit", { notebook_path: join(memory, "n.ipynb"), new_source: "x" }, 2],
   ["NotebookEdit", { notebook_path: join(tmpdir(), "n.ipynb"), new_source: "x" }, 0],
   ["Write", { file_path: join(tmpdir(), "a.md") }, 0],
