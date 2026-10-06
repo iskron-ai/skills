@@ -259,8 +259,10 @@ test("check-rituals: a plugin that does not load is not passed", () => {
   assert.match(verdicts[0].error, /setup/);
 });
 
-const call = (...args) =>
+const call = (...args) => callIn(undefined, ...args);
+const callIn = (cwd, ...args) =>
   spawnSync(process.execPath, [BRIDGE, "check-rituals", ...args], {
+    cwd,
     encoding: "utf8",
     env: { ...process.env, ISKRON_BRIDGE_LANG: "ru" },
   });
@@ -277,7 +279,24 @@ test("check-rituals: an unknown flag — said, code 2, no stack", () => {
   const r = call("--frob");
   assert.equal(r.status, 2);
   assert.match(r.stderr, /неизвестный флаг --frob/);
+  assert.match(r.stderr, /\.\/--frob/, "the word names ./<name> for a directory of that name");
+  assert.match(r.stderr, /после --/, "the word names -- for a directory of that name");
   assert.doesNotMatch(r.stderr, /\n\s+at /);
+});
+
+test("check-rituals: after -- a name starting with «-» is a directory, flags too", () => {
+  const parent = realpathSync(mkdtempSync(join(tmpdir(), "ritual-scope-dash-")));
+  made.push(parent);
+  const repo = join(parent, "-repo");
+  mkdirSync(join(repo, ".opencode", "plugins"), { recursive: true });
+  writeFileSync(join(repo, ".opencode", "plugins", "rituals.js"), greet("canon"));
+  const r = callIn(parent, "--json", "--", "-repo");
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  const [v] = JSON.parse(r.stdout);
+  assert.equal(v.file, join(repo, ".opencode", "plugins", "rituals.js"));
+  const help = callIn(parent, "--", "--help");
+  assert.equal(help.status, 2, "--help after -- is a directory, here a missing one");
+  assert.match(help.stderr, /нет такого каталога: .*--help/);
 });
 
 test("check-rituals: a missing repo — said, code 2, no stack", () => {

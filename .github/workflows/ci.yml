@@ -93,6 +93,11 @@ jobs:
         env:
           PUSH_BEFORE: ${{ github.event.before }}
         run: bash scripts/check-outputs-frozen.sh
+      # The bridge's callback rungs sit in 42000–43999, inside Linux's ephemeral range: under the
+      # suites' own load the runner's sockets can hold every rung, and a probe meets «all candidate
+      # callback ports are held» that is not its subject. The ladder is proven by its own squatter probes.
+      - name: Ephemeral ports off the callback rungs
+        run: sudo sysctl -w net.ipv4.ip_local_port_range="44000 60999"
       - name: Behavioural suites against the dev build of js/ in dist/dev (fake NKS + OAuth, fake bridge, fake socket)
         run: make test-coverage
 

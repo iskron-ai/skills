@@ -62,6 +62,9 @@ test("--version names the plugin's version as the build, whichever subcommand as
     top.out.trim(),
     "the bridge subcommand must name the same build",
   );
+  const bare = await run(["version"]);
+  assert.equal(bare.code, 0, `version without dashes is a subcommand, not a URL: ${bare.err}`);
+  assert.equal(bare.out.trim(), top.out.trim(), "version must name the same build as --version");
 });
 
 test("--help lists every subcommand and exits 0", async () => {
