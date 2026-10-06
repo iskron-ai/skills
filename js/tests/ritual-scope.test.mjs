@@ -41,19 +41,10 @@ const pluginSamples = (md) =>
     .map((m) => m[1])
     .filter((b) => /export default/.test(b) && /setup\s*\(\s*ctx\s*\)/.test(b));
 
-// The sample names the memory-path test as a helper the projection fills in;
-// staged as is, it would throw ReferenceError on every write — fill it the same way.
-const filled = (source) =>
-  /isLocalMemoryPath\(/.test(source) && !/(function|const|let) isLocalMemoryPath\b/.test(source)
-    ? `const isLocalMemoryPath = (p) => /\\/memory\\//.test(String(p));\n${source}`
-    : source;
-
+// A sample is run exactly as written: a name it leaves undefined is its failure,
+// never filled in here.
 const samples = sources.flatMap((path) =>
-  pluginSamples(readFileSync(path, "utf8")).map((source, i) => ({
-    path,
-    i,
-    source: filled(source),
-  })),
+  pluginSamples(readFileSync(path, "utf8")).map((source, i) => ({ path, i, source })),
 );
 
 function repoWith(source) {
@@ -88,7 +79,9 @@ for (const { path, i, source } of samples) {
   test(`opencode plugin sample touches only its own directory: ${relative(REPO, path)} #${i}`, () => {
     const { status, verdicts, err } = check(repoWith(source));
     const [v] = verdicts;
-    assert.equal(v.error, undefined, err);
+    const sample = `${relative(REPO, path)} #${i}`;
+    assert.equal(v.error, undefined, `${sample}: ${err}`);
+    assert.deepEqual(v.scope.broken, [], `${sample}: a hook breaks when run as written`);
     assert.equal(v.scope.writes.theirs, 0, "a session of another directory was written to");
     assert.deepEqual(
       v.scope.foreign,
@@ -131,7 +124,21 @@ test("check-rituals: a greeting without a directory check is a hole, with the fi
 test("check-rituals: a guard that blocks every directory is a hole", () => {
   const { status, verdicts } = check(repoWith(guard(false)));
   assert.equal(status, 1);
-  assert.ok(verdicts[0].scope.foreign.includes("execute.before write: throw (no)"));
+  assert.ok(verdicts[0].scope.foreign.includes("execute.before write: throw (Error: no)"));
+  assert.deepEqual(verdicts[0].scope.broken, []);
+});
+
+test("check-rituals: a hook calling an undefined name is broken, the name said", () => {
+  const source = `export default { id: "u", async setup(ctx) {
+    await ctx.tool.hook("execute.before", async (input) => {
+      const info = await ctx.session.get({ sessionID: input.sessionID });
+      if (info?.location?.directory !== ctx.location.directory) return;
+      if (isLocalMemoryPath(input.input?.filePath)) throw new Error("no");
+    });
+  } };`;
+  const { status, out } = check(repoWith(source), false);
+  assert.equal(status, 1);
+  assert.match(out, /хук сломан .*ReferenceError: isLocalMemoryPath is not defined/);
 });
 
 test("check-rituals: a hook that writes a reminder into a foreign session is a hole", () => {

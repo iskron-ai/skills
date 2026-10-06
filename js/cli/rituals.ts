@@ -35,7 +35,8 @@ export async function auditRepo(repo: string): Promise<Verdict[]> {
     const file = join(dir, name);
     try {
       const scope = await probeScope(file, own, foreign);
-      verdicts.push({ file, hole: scope.writes.theirs > 0 || scope.foreign.length > 0, scope });
+      const hole = scope.writes.theirs > 0 || scope.foreign.length > 0 || scope.broken.length > 0;
+      verdicts.push({ file, hole, scope });
     } catch (e) {
       verdicts.push({ file, hole: true, error: String((e as Error)?.message ?? e) });
     }
@@ -68,7 +69,14 @@ function words(v: Verdict): string[] {
         `  writes into a session of another directory: ${s.writes.theirs} writes on session.created — that session gets this repo's addresses`,
       ),
     );
-  for (const h of new Set(s.foreign))
+  for (const h of s.broken)
+    lines.push(
+      L(
+        `  хук сломан (плагин исполнен как есть) — ${h}`,
+        `  a hook is broken (the plugin is run as is) — ${h}`,
+      ),
+    );
+  for (const h of new Set(s.foreign.filter((x) => !s.broken.includes(x))))
     lines.push(
       L(
         `  хук тула в сессии чужого каталога — ${h}`,

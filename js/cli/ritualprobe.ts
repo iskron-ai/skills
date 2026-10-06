@@ -16,6 +16,8 @@ export interface Scope {
   writes: Record<Who, number>;
   /** Хук тула в сессии чужого каталога: «execute.before write» — бросил, «execute.after bash» — подменил. */
   foreign: string[];
+  /** Хук сломан в любой сессии: ошибка кода (ReferenceError…), бросок на обычной записи или после вызова. */
+  broken: string[];
   /** В своей сессии guard бросил на записи в путь памяти. */
   ownBefore: boolean;
   /** Хук после пуша в своей сессии дописал результат. */
@@ -100,16 +102,21 @@ export async function probeScope(file: string, own: string, foreign: string): Pr
   ]).finally(() => clearTimeout(timer));
   await settle();
   const onEvents = { ...writes };
-  const foreignHits = await runHooks(hooks, "theirs");
-  const ownHits = await runHooks(hooks, "mine");
+  const theirs = await runHooks(hooks, "theirs");
+  const mine = await runHooks(hooks, "mine");
   await settle(50);
   if (typeof cleanup === "function") await cleanup();
+  const touched = theirs.hit;
   if (writes.theirs > onEvents.theirs)
-    foreignHits.push(`hooks wrote into the session: ${writes.theirs - onEvents.theirs}`);
+    touched.push(`hooks wrote into the session: ${writes.theirs - onEvents.theirs}`);
+  const broken = [...new Set([...mine.broken, ...theirs.broken])];
   return {
     writes: onEvents,
-    foreign: foreignHits,
-    ownBefore: ownHits.some((h) => h.startsWith("execute.before write: throw")),
-    ownAfter: ownHits.includes("execute.after bash: changed"),
+    foreign: touched,
+    broken,
+    ownBefore: mine.hit.some(
+      (h) => h.startsWith("execute.before write: throw") && !broken.includes(h),
+    ),
+    ownAfter: mine.hit.includes("execute.after bash: changed"),
   };
 }
