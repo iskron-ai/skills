@@ -6,10 +6,6 @@ import { type Meta } from "../types.ts";
 import { type AuthLock, authLockPath } from "./authlock.ts";
 import { type DeviceCode, issueDeviceCode } from "./devicecode.ts";
 
-// A code with less than this left is no use to a human reading the answer now:
-// by the time they open the page and sign in, it is gone.
-const RENEW_BEFORE_MS = 60_000;
-
 // The login's record is written only by the bridge holding its port, so a
 // fresh code a joining caller asked for goes beside it, under the login's
 // state; the device side takes it up from there (device.ts) and writes it into
@@ -36,8 +32,10 @@ const later = (a?: DeviceCode, b?: DeviceCode): DeviceCode | undefined =>
 /**
  * What a caller joining a login hands out: its loopback link and, while one
  * stands, the same login's code for sign-in from another device (#6570). A
- * code that is dead or dies within a minute is replaced by a fresh one. None
- * offered because the server has no client for it — the word why.
+ * code is handed out to its very end and replaced only once dead: it goes to
+ * the human through an agent, and the link they were given must still be the
+ * polled one when they open it — a code replaced early is one they open dead.
+ * None offered because the server has no client for it — the word why.
  */
 export async function joinedPending(
   meta: Meta,
@@ -45,10 +43,7 @@ export async function joinedPending(
   note?: string,
 ): Promise<AuthPending> {
   const stale = later(l.device, callerCode(l.state));
-  const device =
-    stale && stale.expires_at - Date.now() < RENEW_BEFORE_MS
-      ? await renewed(meta, l, stale)
-      : stale;
+  const device = stale && stale.expires_at <= Date.now() ? await renewed(meta, l, stale) : stale;
   return new AuthPending(l.authorize_url, note, device ?? l.device_unset);
 }
 
