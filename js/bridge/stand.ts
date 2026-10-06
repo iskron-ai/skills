@@ -12,7 +12,7 @@ import { statSync } from "node:fs";
 import { isAbsolute } from "node:path";
 
 import { scoped, sessionCwd } from "../shared/scope.ts";
-import { FORM, listens, nameOf, parseBoard } from "./board.ts";
+import { alive, listens, nameOf, readBoard } from "./board.ts";
 import {
   besideRefusal,
   callTool as call,
@@ -23,6 +23,7 @@ import {
   unresolvedRefusal,
 } from "./call.ts";
 import { CFG } from "./config.ts";
+import { seatField } from "./fields.ts";
 import {
   awaitHello,
   doors,
@@ -197,14 +198,9 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
     lines.push(SW.boardUnread(short(board.text)));
     return done(true);
   }
-  const entries = parseBoard(board.text);
-  // Доска — проза сервера (#4514). Управляющие действия — ротация, стук, хук —
-  // идут только по распознанной однозначной форме; иначе честный отказ.
-  const header = FORM.boardHeader.exec(board.text);
-  const declared = header?.[1] != null ? Number(header[1]) : null;
-  // Пустой граф — законная пустота; наблюдённые фразы держит узел формы доски (#4514).
-  const empty = FORM.boardEmpty.test(board.text);
-  const recognized = !!header || empty || entries.length > 0;
+  // Доска — поля или проза сервера (board.ts, #4514). Управляющие действия — ротация,
+  // стук, хук — идут только по распознанной однозначной форме; иначе честный отказ.
+  const { entries, recognized, declared } = readBoard(board);
   let own = entries.filter((e) => e.karta === karta && nameOf(e.address) === name);
   // Выведенное имя держит живой мост другой сессии — встаём рядом на имя.N (#5407).
   const separate =
@@ -235,7 +231,7 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
     const own = nameOf(e.address);
     if (!own.startsWith(`${stem}.`)) return false;
     const third = own.slice(stem.length + 1);
-    return branches.has(third) && FORM.alive.test(e.rest);
+    return branches.has(third) && alive(e);
   });
   for (const e of legacy) nameNotes.push(SW.legacy(e.address, realm, karta));
   // Счёт в заголовке не сошёлся с разобранным — где-то строка, которой парсер не
@@ -340,7 +336,10 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
       lines.push(SW.refused("connect", short(c.text)));
       return done(true);
     }
-    incoming = /https?:\/\/\S+\/channel\/in\/\S+/.exec(c.text)?.[0] ?? incoming;
+    incoming =
+      seatField(c.structured, "connect")?.inbox ??
+      /https?:\/\/\S+\/channel\/in\/\S+/.exec(c.text)?.[0] ??
+      incoming;
     const r = await register();
     if (r.isError) {
       lines.push(SW.takenButRegister(short(r.text)));
@@ -384,6 +383,7 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
       karta,
       name,
       incoming,
+      id: standingIdIn(realm),
       heardHere,
       sub,
       beside: !!main && otherRealm(realm, main.realm), // место на канале, открытом в другом графе

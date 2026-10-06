@@ -2,6 +2,7 @@ import { L } from "../shared/lang.ts";
 import { scoped } from "../shared/scope.ts";
 import { FORM } from "./board.ts";
 import { errorMessage } from "./errors.ts";
+import { seatField, structuredOf } from "./fields.ts";
 import { addPlace, noteStandingId, releaseStanding } from "./hold.ts";
 import { normKarta, normName } from "./names.ts";
 import { placeFields } from "./placefields.ts";
@@ -145,13 +146,17 @@ async function replayBeside(): Promise<boolean> {
 }
 
 /**
- * id места из ответа тула iskron_channel(action="register") — мост зовёт тул, не
- * API, и ответ — проза: строка «🪪 id этого места — …», id на следующей строке
- * (наблюдено на сервере 0.74.0; английская форма — предположена, FORM.seatId).
- * Без этой строки — null: id не угадывается.
+ * id места из ответа тула iskron_channel(action="register"): поле standing_id
+ * structuredContent (fields.ts), без него — проза: строка «🪪 id этого места — …»,
+ * id на следующей строке (наблюдено на сервере 0.74.0; английская форма —
+ * предположена, FORM.seatId). Ни того ни другого — null: id не угадывается.
  */
 export function standingIdOf(reply: JsonRpcMessage | null): string | null {
-  return FORM.seatId.exec(replyText(reply))?.[1] ?? null;
+  return (
+    seatField(structuredOf(reply), "register")?.standing_id ??
+    FORM.seatId.exec(replyText(reply))?.[1] ??
+    null
+  );
 }
 
 export const replyText = (reply: JsonRpcMessage | null): string => {

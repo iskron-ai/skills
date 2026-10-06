@@ -33,7 +33,7 @@ import { join } from "node:path";
 import { L } from "../shared/lang.ts";
 import { isSatelliteOf, satelliteName, SUB_RE } from "../shared/satname.ts";
 import { scoped, sessionPid } from "../shared/scope.ts";
-import { type BoardEntry, nameOf, parseBoard } from "./board.ts";
+import { type BoardEntry, nameOf, readBoard } from "./board.ts";
 import { callTool as call, short } from "./call.ts";
 import { CFG } from "./config.ts";
 import { NAME_MAX, nameFault, normKarta } from "./names.ts";
@@ -371,7 +371,7 @@ export async function satelliteGate(
     );
   const s = state.standing;
   const led = s && !otherRealm(s.realm, realm) ? (s.name ?? null) : null;
-  const entries = parseBoard(b.text);
+  const { entries } = readBoard(b);
   const [pick, unsure] = await underClaimLock((claim) =>
     pickSatellite(entries, of, karta, led, claim),
   );
@@ -387,7 +387,7 @@ export async function satelliteGate(
   if (!pick.callerId) {
     const k = await call("iskron_channel", { action: "list", realm, karta: pick.callerKarta });
     if (!k.isError)
-      pick.callerId = parseBoard(k.text).find((e) => e.address === pick.caller)?.id ?? null;
+      pick.callerId = readBoard(k).entries.find((e) => e.address === pick.caller)?.id ?? null;
   }
   noteSatelliteOf(pick.caller, pick.callerId);
   pick.notes.push(

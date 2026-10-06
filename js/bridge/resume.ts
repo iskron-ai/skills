@@ -20,7 +20,7 @@ import { join } from "node:path";
 import { L } from "../shared/lang.ts";
 import { envOf, scoped } from "../shared/scope.ts";
 import { standingsDirOf } from "../shared/standings.ts";
-import { listens, nameOf, parseBoard, undelivered } from "./board.ts";
+import { listens, nameOf, readBoard, undelivered } from "./board.ts";
 import { callTool, short } from "./call.ts";
 import { harnessName } from "./client.ts";
 import { CFG } from "./config.ts";
@@ -443,7 +443,7 @@ export async function runCheck(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   const board = await callTool("iskron_channel", { action: "list", realm: s.realm });
   if (board.isError)
     return reply(msg, { holding: true, key, word: resumeWords.boardUnread(short(board.text)) });
-  const mine = parseBoard(board.text).find(
+  const mine = readBoard(board).entries.find(
     (e) => e.karta === String(s.karta) && nameOf(e.address) === (s.name ?? ""),
   );
   if (!mine) return reply(msg, { holding: true, key, word: resumeWords.noSeatOnBoard() });

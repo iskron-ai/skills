@@ -71,7 +71,13 @@ export function outsideSetRefusal(msg: JsonRpcMessage): JsonRpcMessage | null {
   };
 }
 
-type Tool = { name?: string; description?: string; inputSchema?: Record<string, unknown> };
+/** outputSchema сужение не трогает: по ней харнес сверяет structuredContent ответа (fields.ts). */
+type Tool = {
+  name?: string;
+  description?: string;
+  inputSchema?: Record<string, unknown>;
+  outputSchema?: Record<string, unknown>;
+};
 
 /** Перечень action без ходов моста: «одно из: a | b | c» (или «one of:»). */
 function withoutPlaceMoves(text: string): string {

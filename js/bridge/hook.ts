@@ -9,6 +9,7 @@
 import { L } from "../shared/lang.ts";
 import { FORM } from "./board.ts";
 import { callTool as call, short } from "./call.ts";
+import { type HookField, hooksField } from "./fields.ts";
 import { post, state } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
 
@@ -43,6 +44,8 @@ export interface HookPlace {
   name: string;
   /** входящий адрес места — только у места графа, где открыт канал */
   incoming: string | null;
+  /** id места из register — им поля списка хуков называют, кого хук будит */
+  id: string | null;
   heardHere: boolean;
   /** отдельное место имя.N — хук роли ему не взводится */
   sub: boolean;
@@ -52,20 +55,44 @@ export interface HookPlace {
   channelRealm: string;
 }
 
+/**
+ * Будит ли хук из полей это место: хук на канал доставляет местам роли этого
+ * графа на живых сокетах; прочий — по id места либо по его входящему адресу.
+ */
+const wakes = (h: HookField, p: HookPlace): boolean =>
+  h.target.kind === "channel" ||
+  (!!p.id && h.target.standing_id === p.id) ||
+  (!!p.incoming && h.target.url === p.incoming);
+
+/** Список хуков прозой: узнан ли и будит ли хук место с этим именем. */
+function fromProse(
+  text: string,
+  isError: boolean,
+  name: string,
+): { recognized: boolean; wakesMe: boolean } {
+  // Пустой список поверхность печатает без заголовка: «Для #N вебхуки не зарегистрированы.» (#5380).
+  // Заголовок узнан, а слово состояния хука — нет: язык угадан частично, и «не будит»
+  // поставило бы второй хук; такой список не распознан целиком.
+  const blocks = text.split(/\n(?=\s*#\d+\s*→)/).slice(1);
+  const recognized =
+    !isError &&
+    ((FORM.hooksHeader.test(text) && blocks.every((b) => FORM.hookState.test(b))) ||
+      FORM.hooksEmpty.test(text));
+  const nameRe = new RegExp(`:${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![A-Za-z0-9._-])`);
+  return {
+    recognized,
+    wakesMe: recognized && blocks.some((b) => FORM.hookActive.test(b) && nameRe.test(b)),
+  };
+}
+
 /** Шаг хука инбокса роли; возвращает строку ответа iskron_stand. */
 export async function armRoleHook(p: HookPlace): Promise<string> {
   const { realm, karta, name } = p;
   const hooks = await call("iskron_admin", { action: "list_webhooks", realm, node_id: karta });
-  // Пустой список поверхность печатает без заголовка: «Для #N вебхуки не зарегистрированы.» (#5380).
-  // Заголовок узнан, а слово состояния хука — нет: язык угадан частично, и «не будит»
-  // поставило бы второй хук; такой список не распознан целиком.
-  const blocks = hooks.text.split(/\n(?=\s*#\d+\s*→)/).slice(1);
-  const recognized =
-    !hooks.isError &&
-    ((FORM.hooksHeader.test(hooks.text) && blocks.every((b) => FORM.hookState.test(b))) ||
-      FORM.hooksEmpty.test(hooks.text));
-  const nameRe = new RegExp(`:${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![A-Za-z0-9._-])`);
-  const wakesMe = recognized && blocks.some((b) => FORM.hookActive.test(b) && nameRe.test(b));
+  const fields = hooks.isError ? null : hooksField(hooks.structured);
+  const { recognized, wakesMe } = fields
+    ? { recognized: true, wakesMe: fields.some((h) => h.active && wakes(h, p)) }
+    : fromProse(hooks.text, hooks.isError, name);
   const H = L("Хук инбокса роли", "Role inbox hook");
   if (p.sub)
     return L(

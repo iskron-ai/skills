@@ -4,6 +4,7 @@
 import { L } from "../shared/lang.ts";
 import { scoped } from "../shared/scope.ts";
 import { absorbChannelReply } from "./absorb.ts";
+import { structuredOf } from "./fields.ts";
 import { holdsChannel, ledKey } from "./hold.ts";
 import { keyOf } from "./holdrecord.ts";
 import { normKarta, normName } from "./names.ts";
@@ -152,6 +153,8 @@ export function crossPlaceRefusal(msg: JsonRpcMessage): JsonRpcMessage | null {
 export interface Answer {
   text: string;
   isError: boolean;
+  /** structuredContent ответа как есть (fields.ts); нет у сервера — нет и здесь. */
+  structured?: unknown;
 }
 
 let seq = 0;
@@ -170,12 +173,17 @@ export async function callTool(name: string, args: Record<string, unknown>): Pro
   });
   let got = reply as JsonRpcMessage | null;
   if (!got) return { text: L("ответа нет", "no reply"), isError: true };
+  const structured = structuredOf(got);
   if (name === "iskron_channel") {
-    noteLocaleEcho(args, replyText(got));
+    noteLocaleEcho(args, replyText(got), structured);
     if (args.action === "register") noteStanding(msg, got);
     if (args.action === "connect") got = absorbChannelReply(msg, got);
   }
-  return { text: replyText(got), isError: !!got.error || !!got.result?.isError };
+  return {
+    text: replyText(got),
+    isError: !!got.error || !!got.result?.isError,
+    ...(structured !== undefined ? { structured } : {}),
+  };
 }
 
 export const short = (s: string, n = 300): string => (s.length > n ? `${s.slice(0, n)}…` : s);
