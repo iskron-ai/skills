@@ -25,6 +25,8 @@ export interface Leads {
   away(child: string): Promise<void>;
   /** Что ведущего переживает перезагрузку — в маркер потери. */
   snapshot(child: string): Snapshot;
+  /** Ребёнка перенесли в другую папку (#6695): ведущий уходит отсюда без конца — снимок в маркер. */
+  handoff(child: string): Snapshot;
   /** Имя места живого ведущего субагента (без места — id сессии); не ведущий — null. */
   nameOf(child: string): string | null;
   onEvent(ev: any): void;

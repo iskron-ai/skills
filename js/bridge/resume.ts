@@ -17,6 +17,7 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
+import { sameDir as oneDir } from "../shared/canon.ts";
 import { L } from "../shared/lang.ts";
 import { envOf, scoped } from "../shared/scope.ts";
 import { standingsDirOf } from "../shared/standings.ts";
@@ -208,7 +209,7 @@ function recordsFor(sel: ResumeSelector): {
       if (!rec || rec.client !== mine) continue; // чужой харнесс — не наше место
       const key = keyOf(rec.realm, rec.karta, rec.name);
       const keyed = !!sel.key && key === sel.key;
-      const inDir = !!sel.cwd && rec.cwd === sel.cwd;
+      const inDir = oneDir(rec.cwd, sel.cwd); // /tmp и /private/tmp — один каталог (#5048)
       // Стоявшая этой сессией — её и вне каталога: сессию переносят между папками (#6550 п.3).
       const stoodBy = !!sel.session && rec.session === sel.session;
       if (!keyed && !inDir && !stoodBy) continue;

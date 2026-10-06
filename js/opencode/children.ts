@@ -11,6 +11,7 @@ import type { Keeper } from "./keep.ts";
 import type { Leads } from "./leadwords.ts";
 import type { LostEntry } from "./records.ts";
 import type { Slot } from "./tools.ts";
+import { handedOver } from "./twins.ts";
 
 /**
  * Возврат места ребёнка ждёт ухода сокета прежнего моста (он уходит своим bye) до
@@ -20,7 +21,7 @@ const BACK_MS = Number(process.env.ISKRON_CHILD_BACK_MS) || 15_000;
 const BACK_TRIES = 4;
 const BACK_PAUSE_MS = Number(process.env.ISKRON_CHILD_BACK_PAUSE_MS) || 1_000;
 /** Пауза моста ребёнка перед остановкой плагина — не дольше этого. */
-const PAUSE_MS = 1_500;
+export const PAUSE_MS = 1_500;
 
 export interface ChildDoors {
   slots: Map<string, Slot>;
@@ -120,8 +121,10 @@ export function createChildren(d: ChildDoors) {
   }
 
   /** Слот ребёнка маркера встаёт — дождаться (ошибки — не здесь). */
-  const settled = (session: string): Promise<unknown> | undefined =>
-    coming.get(session)?.catch(() => {});
+  const settled = async (session: string): Promise<unknown> => {
+    await handedOver(session); // спутник ребёнка ещё едет сюда из прежней папки (handoff.ts)
+    return coming.get(session)?.catch(() => {});
+  };
 
   return { childSlot, back, pause, settled };
 }

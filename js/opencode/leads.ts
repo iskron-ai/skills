@@ -171,6 +171,11 @@ export function createLeads(d: W.LeadDoors): W.Leads {
       const l = leads.get(child);
       return { room: l?.room ?? null, noted: !!l?.noted, last: l?.last };
     },
+    handoff(child) {
+      const l = leads.get(child);
+      leads.delete(child); // ни «КОНЧЕН», ни over: ведущий живёт в экземпляре новой папки
+      return { room: l?.room ?? null, noted: !!l?.noted, last: l?.last };
+    },
     nameOf: (child) => leads.get(child)?.place?.name ?? (leads.has(child) ? child : null),
     onEvent(ev) {
       cascade.note(ev); // прерывания всех сессий: родитель ведущего — тоже (cascade.ts)

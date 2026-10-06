@@ -24,10 +24,12 @@ import { withWord } from "../shared/launch.ts";
 import { setupChannel } from "./channel.ts";
 import { setupCommands } from "./commands.ts";
 import { idleHalf } from "./half.ts";
+import { homeOf } from "./host.ts";
 import { createKeepAlive, KEEPALIVE_TITLE } from "./keepalive.ts";
 import { teller } from "./leadwords.ts";
 import { annotate } from "./notice.ts";
 import { type Say, setupTools } from "./tools.ts";
+import { createTwins } from "./twins.ts";
 import { createUsageFeed } from "./usage.ts";
 import { createWaits } from "./waits.ts";
 
@@ -226,14 +228,24 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
     }
   })();
 
+  // Экземпляр другого написания того же каталога поднимает этот, выгруженный с местом;
+  // ребёнок, перенесённый в другой каталог, находит здесь корень (twins.ts).
+  const twins = createTwins(ctx, homeOf(ctx), {
+    say,
+    lost: (s, text) => onChannel(s, { logger: "iskron-channel", data: { kind: "lost", text } }),
+    holds: (r) => half.held(r),
+    adopt: () => half.adopt(),
+  });
+
   // Остановка ждёт паузы мостов субагентов (children.ts): перезагрузка — не их конец.
   return async () => {
+    twins.leave();
     controller.abort();
     keepalive.stop();
     waits.stop();
     usage.stop();
     ch?.stop();
-    await half.stop();
+    twins.left((await half.stop()) || []);
   };
 }
 
