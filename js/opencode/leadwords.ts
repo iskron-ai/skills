@@ -163,21 +163,26 @@ export function leadDoors(
       const s: any = await ctx.session.get({ sessionID: child } as any);
       return s?.parentID ?? s?.data?.parentID ?? null;
     },
-    async tell(sessionID, text, wake) {
-      const s: any = ctx.session;
-      const delivery = "steer";
-      try {
-        if (typeof s.synthetic === "function")
-          await s.synthetic({ sessionID, text, delivery, resume: wake });
-        else await s.prompt({ sessionID, text, delivery, resume: wake });
-        say(`Искрон: слово о субагенте вложено в сессию ${sessionID}`, "info");
-      } catch (e) {
-        say(
-          `Искрон: слово о субагенте не вложилось в ${sessionID}: ${(e as Error).message}`,
-          "error",
-        );
-      }
-    },
+    tell: teller(ctx, say),
+  };
+}
+
+/** Слово о субагенте в сессию — синтетикой (нет её — промптом), steer; wake — resume. */
+export function teller(ctx: Context, say: Say): LeadDoors["tell"] {
+  return async (sessionID, text, wake) => {
+    const s: any = ctx.session;
+    const delivery = "steer";
+    try {
+      if (typeof s.synthetic === "function")
+        await s.synthetic({ sessionID, text, delivery, resume: wake });
+      else await s.prompt({ sessionID, text, delivery, resume: wake });
+      say(`Искрон: слово о субагенте вложено в сессию ${sessionID}`, "info");
+    } catch (e) {
+      say(
+        `Искрон: слово о субагенте не вложилось в ${sessionID}: ${(e as Error).message}`,
+        "error",
+      );
+    }
   };
 }
 
