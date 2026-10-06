@@ -12,6 +12,7 @@ const SETUP_MS = 5000;
 
 /** Чем плагин задел сессию: записи в неё, бросок или подмена результата хуком тула. */
 export interface Scope {
+  /** Записи в сессию на session.created. */
   writes: Record<Who, number>;
   /** Хук тула в сессии чужого каталога: «execute.before write» — бросил, «execute.after bash» — подменил. */
   foreign: string[];
@@ -98,12 +99,15 @@ export async function probeScope(file: string, own: string, foreign: string): Pr
     ),
   ]).finally(() => clearTimeout(timer));
   await settle();
+  const onEvents = { ...writes };
   const foreignHits = await runHooks(hooks, "theirs");
   const ownHits = await runHooks(hooks, "mine");
   await settle(50);
   if (typeof cleanup === "function") await cleanup();
+  if (writes.theirs > onEvents.theirs)
+    foreignHits.push(`hooks wrote into the session: ${writes.theirs - onEvents.theirs}`);
   return {
-    writes,
+    writes: onEvents,
     foreign: foreignHits,
     ownBefore: ownHits.some((h) => h.startsWith("execute.before write: throw")),
     ownAfter: ownHits.includes("execute.after bash: changed"),

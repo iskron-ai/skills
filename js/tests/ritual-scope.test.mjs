@@ -134,6 +134,18 @@ test("check-rituals: a guard that blocks every directory is a hole", () => {
   assert.ok(verdicts[0].scope.foreign.includes("execute.before write: throw (no)"));
 });
 
+test("check-rituals: a hook that writes a reminder into a foreign session is a hole", () => {
+  const source = `export default { id: "w", async setup(ctx) {
+    await ctx.tool.hook("execute.after", async (input) => {
+      await ctx.session.synthetic({ sessionID: input.sessionID, text: "pushed" });
+    });
+  } };`;
+  const { status, verdicts } = check(repoWith(source));
+  assert.equal(status, 1);
+  assert.equal(verdicts[0].scope.writes.theirs, 0);
+  assert.ok(verdicts[0].scope.foreign.includes("hooks wrote into the session: 2"));
+});
+
 test("check-rituals: scoped by the event and by ctx.session.get — clean", () => {
   for (const source of [greet(true), guard(true)]) {
     const { status, verdicts } = check(repoWith(source));
