@@ -3002,8 +3002,12 @@ test("a delivery skill's files outside the working copy are read without an ask 
   );
   // Another root: a foreign set whose own establish-mcp carries no bridge.
   const elsewhere = join(home, "elsewhere", "skills");
-  // A root with no lock (a plugin's own directory): the root is the set.
+  // A root with no lock (a hand-filled directory): nothing proves what set a skill is of.
   const plugged = join(home, "plugged", "skills");
+  // A root whose lock is there but does not parse: a refusal, not a lockless root.
+  const broken = join(home, "broken", "skills");
+  mkdirSync(broken, { recursive: true });
+  writeFileSync(join(home, "broken", ".skill-lock.json"), '{"version":3,"skills":{');
   // A root whose lock does not name the bridge's source: the bridge was laid there by hand.
   const partial = join(home, "partial", "skills");
   mkdirSync(partial, { recursive: true });
@@ -3022,6 +3026,8 @@ test("a delivery skill's files outside the working copy are read without an ask 
     skill("kin", 'name: kin\nslash: true\ndescription: "of a lockless set"', plugged),
     carrier(partial),
     skill("stray", 'name: stray\nslash: true\ndescription: "of a lock without"', partial),
+    carrier(broken),
+    skill("torn", 'name: torn\nslash: true\ndescription: "of a broken lock"', broken),
     {
       id: "opencode",
       name: "opencode",
@@ -3156,8 +3162,23 @@ test("a delivery skill's files outside the working copy are read without an ask 
     );
     assert.equal(
       await read(join(plugged, "kin", "references", "phrasebook.md")),
-      "allow",
-      "a skill of a lockless root that carries the bridge is read",
+      "ask",
+      "a lockless root opens nothing, though it carries the bridge — no source is proven",
+    );
+    assert.equal(
+      await read(join(plugged, "establish-mcp", "SKILL.md")),
+      "ask",
+      "not even its bridge skill",
+    );
+    assert.equal(
+      await read(join(broken, "torn", "references", "phrasebook.md")),
+      "ask",
+      "a lock that does not parse opens nothing",
+    );
+    assert.equal(
+      await read(join(broken, "establish-mcp", "SKILL.md")),
+      "ask",
+      "not even the bridge skill beside it",
     );
     assert.equal(
       await read(join(set, "establish-mcp", "scripts", "iskron.mjs")),
@@ -3187,6 +3208,27 @@ test("a delivery skill's files outside the working copy are read without an ask 
     };
     for (const cb of rec.hooks["permission.evaluate"] ?? []) await cb(twice);
     assert.equal(twice.effect, "ask", "a call id met twice opens nothing");
+    // A call id this instance met once, asked for by another session (whose tool hooks fired
+    // in another instance): the call is not that session's.
+    const once = (sessionID, tool, input) =>
+      Promise.all(
+        (rec.hooks["tool.execute.before"] ?? []).map((cb) =>
+          cb({ tool, sessionID, agent: "build", messageID: "m", id: "once", input }),
+        ),
+      );
+    await once("a", "read", { filePath: join(refs, "phrasebook.md") });
+    const stranger = {
+      sessionID: "b",
+      action: ext,
+      resources: [`${refs}/*`],
+      effect: "ask",
+      source: { type: "tool", messageID: "m", id: "once" },
+    };
+    for (const cb of rec.hooks["permission.evaluate"] ?? []) await cb(stranger);
+    assert.equal(stranger.effect, "ask", "an ask of another session than the call's opens nothing");
+    const own = { ...stranger, sessionID: "a", effect: "ask" };
+    for (const cb of rec.hooks["permission.evaluate"] ?? []) await cb(own);
+    assert.equal(own.effect, "allow", "the same ask of the call's own session is lifted");
     assert.equal(
       await rec.ask("read", { path: join(set, "phrasebook.md") }, ext, [`${set}/*`]),
       "ask",

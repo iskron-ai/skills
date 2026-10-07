@@ -4,8 +4,9 @@
 // set lies outside it: SKILL.md comes through the skill tool, its references/*.md
 // do not. The plugin lifts that ask for reading only, and only inside the
 // directory of a delivery skill — one of the installed set that carries the delivery's
-// bridge, told by its root (and, in a shared flat root, by the install lock's source);
-// a glob or grep, only in a skill no symlink of which leads out.
+// bridge, told by its root and by the install lock's source beside it (no readable lock —
+// nothing); a glob or grep, only in a skill no symlink of which leads out; an ask, only
+// for a call of its own session.
 //
 // Observed on OpenCode 2.0.24 (isolated --standalone): the permission "evaluate" hook
 // sees {action: "external_directory", resources: ["<dir of the path>/*"], effect: "ask",
@@ -71,19 +72,18 @@ async function skillDirs(ctx: Context): Promise<string[]> {
     const id = String(s?.id ?? "");
     if (dir && basename(dir) === id) listed.push({ id, dir });
   }
-  // The delivery's sets: roots whose bridge skill carries the bridge. In a flat root that
-  // other sets share, the lock names the delivery's source — a lock that does not name it
-  // opens nothing; no lock — the root is the set.
+  // The delivery's sets: roots whose bridge skill carries the bridge. A skill is the set's
+  // only when the install lock beside the root names it with the bridge skill's source:
+  // a root shares its directory with any other set. No lock proves nothing, and a lock
+  // that does not parse is a refusal — either root opens nothing.
   const sets = new Map<string, ReturnType<typeof skillLock>>();
   for (const { id, dir } of listed)
     if (id === BRIDGE_SKILL && existsSync(join(dir, "scripts", BRIDGE_FILE)))
       sets.set(dirname(dir), skillLock(dirname(dir)));
   return listed
     .filter(({ id, dir }) => {
-      const root = dirname(dir);
-      if (!sets.has(root)) return false;
-      const lock = sets.get(root);
-      if (!lock) return true;
+      const lock = sets.get(dirname(dir));
+      if (!lock) return false;
       const source = lock[BRIDGE_SKILL]?.source;
       return typeof source === "string" && lock[id]?.source === source;
     })
@@ -178,7 +178,9 @@ export async function setupSkillReads(ctx: Context): Promise<boolean> {
     if (e?.action !== "external_directory" || e.effect !== "ask") return;
     const id = e.source?.type === "tool" ? e.source.id : null;
     const call = typeof id === "string" ? calls.get(id) : undefined;
-    if (!call || !READERS.has(call.tool)) return;
+    // The call is the ask's only when it is of the same session: an id is not unique across them.
+    if (!call || !READERS.has(call.tool) || typeof e.sessionID !== "string") return;
+    if (e.sessionID !== call.session) return;
     const paths = reached(call, Array.isArray(e.resources) ? e.resources : [], base);
     if (!paths) return;
     const roots = await skillDirs(ctx);
