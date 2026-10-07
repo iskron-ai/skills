@@ -41,7 +41,6 @@ import {
 } from "./places.ts";
 import { otherRealm, sameRealm } from "./realms.ts";
 import { batchForWatchdogs, noteRoomKind } from "./roomstack.ts";
-import { trimmedEvent } from "./statuspost.ts";
 import { standingLog } from "./store.ts";
 import { emit, log } from "./streams.ts";
 import { type Standing, state } from "./transport.ts";
@@ -347,7 +346,6 @@ export function resumeStanding(): boolean {
 
 /** Кадр одной двери: кольцо, рассылка её клиентам, уведомление — как прежде у единственного места. */
 function deliverTo(d: Door, raw: string, frame: Frame | null, full: Frame | null): void {
-  if (full?.type === "status_trimmed") return notify("info", keyed(d, trimmedEvent(full))); // #6729
   const seenPath = d.seenPath;
   const id = full?.type === "message" && typeof full.id === "string" ? full.id : "";
   // Копия события графа, уже предложенного или отданного (веер, fanout.ts), — никому.

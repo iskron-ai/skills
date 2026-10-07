@@ -3,7 +3,6 @@
 // не взял), а hold.ts → handoff.ts → status.ts → hold.ts замкнулось бы в цикл.
 import { L } from "../shared/lang.ts";
 import { closedUnder } from "./errors.ts";
-import { log } from "./streams.ts";
 
 /** Исход POST занятости; code — HTTP-код отказа поверхности, когда он был. */
 export interface StatusOutcome {
@@ -17,8 +16,7 @@ export interface StatusOutcome {
 /**
  * Строка занятости длиннее предела ложится обрезанной по слову, полный текст —
  * в истории места (граф nks-dev: #6729, нудж #6730; дело №234): ответ POST — 200
- * с warnings[] кода trimmed_to_limit, кадр сокета — {type: "status_trimmed", code,
- * doing, max, message}. doing — принятая строка, null — сервер её не назвал.
+ * с warnings[] кода trimmed_to_limit. doing — принятая строка, null — сервер её не назвал.
  */
 export interface StatusTrim {
   doing: string | null;
@@ -31,8 +29,8 @@ const TRIMMED = "trimmed_to_limit";
 type Obj = Record<string, unknown>;
 const obj = (v: unknown): Obj => (v && typeof v === "object" ? (v as Obj) : {});
 
-/** Обрезка из предупреждения ответа или кадра сокета; поля ищутся и в data, и на верхнем уровне ответа. */
-export function trimOf(w: unknown, top: unknown = {}): StatusTrim {
+/** Обрезка из предупреждения ответа; поля ищутся и в data, и на верхнем уровне ответа. */
+function trimOf(w: unknown, top: unknown): StatusTrim {
   const [a, b, c] = [obj(w), obj(obj(w).data), obj(top)];
   const pick = (k: string): unknown => a[k] ?? b[k] ?? c[k];
   const doing = pick("doing");
@@ -72,14 +70,6 @@ function trimmedIn(body: string, sent: string): StatusTrim | undefined {
   if (!w) return undefined;
   const t = trimOf(w, parsed);
   return { ...t, doing: t.doing ?? trimToWord(sent, t.max ?? 64) };
-}
-
-/** Слово о кадре сокета status_trimmed — в лог моста и клиенту; агента кадр не будит. */
-export function trimmedEvent(frame: unknown): { kind: "note"; text: string } {
-  const t = trimOf(frame);
-  const text = `${t.doing === null ? "" : `«${t.doing}» — `}${trimNudge(t)}`;
-  log(`status_trimmed: ${text}`);
-  return { kind: "note", text };
 }
 
 /** Нудж обрезки агенту: до скольких обрезано, слово сервера; ход — переназвать коротко. */

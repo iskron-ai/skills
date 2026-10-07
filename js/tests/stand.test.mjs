@@ -3439,8 +3439,8 @@ test("iskron_stand with status on the seat this bridge holds only sets the busy 
 
 // Строка длиннее 64 ложится обрезанной по слову, ответ — 200 с warnings[]
 // trimmed_to_limit (#6729, нудж #6730, дело №234): мост называет агенту принятую
-// строку и нудж, а не отправленную; кадр сокета status_trimmed — слово, не побудка.
-test("a busy line the server trims: every status move names the accepted line and the nudge; a status_trimmed frame does not wake the watchdog", async (t) => {
+// строку и нудж, а не отправленную.
+test("a busy line the server trims: every status move names the accepted line and the nudge", async (t) => {
   const { fake, dir, bridge } = await ready(t);
   await fake.control({ statusTrim: true });
   const long = "пишу пробу обрезки строки занятости, которая намеренно длиннее шестидесяти знаков";
@@ -3459,9 +3459,7 @@ test("a busy line the server trims: every status move names the accepted line an
       `${what}: the sent line is named, not the accepted one:\n${text}`,
     );
   };
-  const first = await stand({ ...seat, status: long });
-  check(first, "taking the seat");
-  const key = / watchdog (\S+)/.exec(textOf(first))?.[1];
+  check(await stand({ ...seat, status: long }), "taking the seat");
   check(await stand({ realm: "nks-dev", status: long }), "status only");
   check(
     await bridge.call("tools/call", {
@@ -3489,33 +3487,6 @@ test("a busy line the server trims: every status move names the accepted line an
   const refused = await stand({ realm: "nks-dev", status: long });
   assert.ok(refused.result?.isError, textOf(refused));
   assert.match(textOf(refused), /Отказано \(422\)/);
-  // Кадр сокета status_trimmed: сторож его не печатает, клиенту — уведомление-слово.
-  const wd = spawn(NODE, [FILE, "watchdog", key], {
-    env: { ...process.env, ISKRON_BRIDGE_AUTH_DIR: dir, ISKRON_BRIDGE_NO_UPDATE: "1" },
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  t.after(() => wd.kill());
-  let out = "";
-  wd.stdout.on("data", (c) => (out += c));
-  await waitUntil(() => /слушаю стояние/.test(out), "the watchdog to attach");
-  await fake.control({
-    ws_send: JSON.stringify({
-      type: "status_trimmed",
-      code: "trimmed_to_limit",
-      doing: "через сокет…",
-      max: 64,
-      message: "переназови: обрезано до 64",
-    }),
-  });
-  await waitUntil(
-    () =>
-      bridge.notifications.some(
-        (n) => n.params?.data?.kind === "note" && /через сокет…/.test(n.params.data.text),
-      ),
-    "the note to the client",
-  );
-  await new Promise((r) => setTimeout(r, 300));
-  assert.doesNotMatch(out, /status_trimmed|через сокет/, `the watchdog was woken:\n${out}`);
 });
 
 // realm + status без karta, когда занятость не ставится, — отказ называет почему (#6509).
