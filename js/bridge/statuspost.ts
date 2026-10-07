@@ -26,7 +26,7 @@ export interface StatusTrim {
   message: string;
 }
 
-export const TRIMMED = "trimmed_to_limit";
+const TRIMMED = "trimmed_to_limit";
 
 type Obj = Record<string, unknown>;
 const obj = (v: unknown): Obj => (v && typeof v === "object" ? (v as Obj) : {});
