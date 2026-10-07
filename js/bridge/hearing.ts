@@ -1,38 +1,92 @@
-// Слушает ли просимое место другая сессия (решение владельца #6706): мост не
-// советует take=true и не берёт сырым connect, mint или register места, которое
-// может слушать живая другая сессия. «Слушает» — живой локальный сокет места,
-// который держит не эта сессия, либо строка «слушает» на доске; доска не
-// прочлась — мост не знает, и это не «свободно».
+// Слушает ли место другая сессия (решение владельца #6706) — одно знание о месте
+// на все пути: совет take=true в отказе «место одно на мост», сырой connect,
+// mint и register, выбор места рядом в iskron_stand. «Слушает» — живой локальный
+// сокет места, который держит не эта сессия, либо строка «слушает» на доске.
+// Доска не прочлась или разобрана не целиком (счёт мест в шапке не сошёлся с
+// разобранным, а место среди разобранных не найдено) — мост не знает, кто
+// слушает: это не «свободно», ни совета take=true, ни прохода без take.
+// Роль-сентинел (agent, me, realm-owner) — не число доски: «agent» берёт роль
+// места, которое мост ведёт в этом графе, иначе место ищется под любой ролью.
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+
 import { L } from "../shared/lang.ts";
-import { listens, nameOf, readBoard } from "./board.ts";
+import { standingsDirOf } from "../shared/standings.ts";
+import { type Board, type BoardEntry, listens, nameOf, readBoard } from "./board.ts";
 import { type AskedHearing, callTool as call } from "./call.ts";
+import { CFG } from "./config.ts";
 import { holdsStanding, isParked, ledKey, localSocketPathOf, wasEvicted } from "./hold.ts";
 import { keyOf, readHoldRecord, sessionOfBridge } from "./holdrecord.ts";
 import { normKarta, normName } from "./names.ts";
+import { sameRealm } from "./realms.ts";
 import { localSocketAlive } from "./sweep.ts";
 import { state } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
 
-/** Живой локальный сокет места держит мост другой сессии (своя сессия — её запись держания). */
-export async function heldLocallyByOther(key: string): Promise<boolean> {
-  if (!(await localSocketAlive(localSocketPathOf(key)))) return false;
-  const me = sessionOfBridge();
-  return !(me && readHoldRecord(key, true)?.session === me);
+/** Роль не числом — сентинел: доска печатает роли числами, сличить его с ней нельзя. */
+export const isSentinel = (karta: string): boolean => !/^\d+$/.test(karta);
+
+/** Роль вызова в форме доски: «agent» — роль места, которое мост ведёт в этом графе. */
+export function seatKarta(realm: unknown, karta: unknown): string {
+  const k = normKarta(karta);
+  if (k !== "agent") return k;
+  const r = String(realm ?? "").trim();
+  const led = [state.standing, ...state.places].find(
+    (p) => p && (p.realm === r || sameRealm(r, p.realm)),
+  );
+  return led ? String(led.karta) : k;
 }
 
-/** Кто слушает место: другая сессия, никто или мост не знает (доска не прочлась). */
+/** Строка доски — это место: то же имя и та же роль (сентинел — любая). */
+export const ofSeat = (e: BoardEntry, karta: string, name: string): boolean =>
+  (isSentinel(karta) || e.karta === karta) && nameOf(e.address) === name;
+
+/** Что доска знает о месте. */
+export function boardHearing(bd: Board | null, karta: string, name: string): AskedHearing {
+  if (!bd?.recognized) return "unknown";
+  const at = bd.entries.filter((e) => ofSeat(e, karta, name));
+  if (at.some(listens)) return "other";
+  const unread = bd.declared != null && bd.declared !== bd.entries.length;
+  return unread && (at.length === 0 || isSentinel(karta)) ? "unknown" : "free";
+}
+
+/** Ключи мест графа под этим именем у любой роли, что лежат в каталоге гранта. */
+function keysNamed(realm: string, name: string): string[] {
+  const dir = standingsDirOf(CFG.authDir);
+  try {
+    return readdirSync(dir)
+      .filter((f) => f.endsWith(".key"))
+      .map((f) => readFileSync(join(dir, f), "utf8").trim())
+      .filter((k) => {
+        const m = /^.*?--(.+)--/.exec(k);
+        return !!m && keyOf(realm, m[1], name) === k;
+      });
+  } catch {
+    return [];
+  }
+}
+
+/** Живой локальный сокет места держит мост другой сессии (своя сессия — её запись держания). */
+async function heldLocallyByOther(realm: string, karta: string, name: string): Promise<boolean> {
+  const me = sessionOfBridge();
+  for (const key of isSentinel(karta) ? keysNamed(realm, name) : [keyOf(realm, karta, name)])
+    if (
+      (await localSocketAlive(localSocketPathOf(key))) &&
+      !(me && readHoldRecord(key, true)?.session === me)
+    )
+      return true;
+  return false;
+}
+
+/** Кто слушает место: другая сессия, никто или мост не знает. */
 export async function askedHearing(
   realm: string,
   karta: string,
   name: string,
 ): Promise<AskedHearing> {
-  if (await heldLocallyByOther(keyOf(realm, karta, name))) return "other";
+  if (await heldLocallyByOther(realm, karta, name)) return "other";
   const b = await call("iskron_channel", { action: "list", realm }).catch(() => null);
-  const bd = b && !b.isError ? readBoard(b) : null;
-  if (!bd?.recognized) return "unknown";
-  return bd.entries.some((e) => e.karta === karta && nameOf(e.address) === name && listens(e))
-    ? "other"
-    : "free";
+  return boardHearing(b && !b.isError ? readBoard(b) : null, karta, name);
 }
 
 /**
@@ -47,7 +101,7 @@ export async function rawSeatRefusal(msg: JsonRpcMessage): Promise<string | null
   const action = String(a.action);
   if (!["connect", "mint", "register"].includes(action)) return null;
   const realm = typeof a.realm === "string" ? a.realm.trim() : "";
-  const karta = normKarta(a.karta ?? state.standing?.karta ?? "");
+  const karta = seatKarta(realm, a.karta ?? state.standing?.karta ?? "");
   const name = normName(a.name);
   if (!realm || !karta || ledHere(realm, karta, name)) return null;
   const hearing = await askedHearing(realm, karta, name);
@@ -57,8 +111,8 @@ export async function rawSeatRefusal(msg: JsonRpcMessage): Promise<string | null
     hearing === "other"
       ? L(`место ${seat} слушает другая сессия`, `another session listens on the seat ${seat}`)
       : L(
-          `слушает ли место ${seat} другая сессия, мост не знает (доска не прочлась)`,
-          `the bridge does not know whether another session listens on the seat ${seat} (the board did not read)`,
+          `слушает ли место ${seat} другая сессия, мост не знает (доска не прочлась или разобрана не целиком)`,
+          `the bridge does not know whether another session listens on the seat ${seat} (the board did not read, or not all of it)`,
         );
   return L(
     `Отказано (мост): ${who} — ${action} ${action === "register" ? "подписал бы записи чужим местом" : "отнял бы его"}; вызов не отправлен. Встань iskron_stand: своё место мост вернёт сам, у чужого встанет рядом на имя.N со слухом.`,

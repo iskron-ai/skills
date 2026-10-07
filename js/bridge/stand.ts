@@ -14,6 +14,7 @@ import { isAbsolute } from "node:path";
 import { scoped, sessionCwd } from "../shared/scope.ts";
 import { alive, listens, nameOf, readBoard } from "./board.ts";
 import {
+  type AskedHearing,
   besideRefusal,
   callTool as call,
   leadsOtherPlace,
@@ -26,7 +27,7 @@ import {
 import { CFG } from "./config.ts";
 import { wireEviction } from "./evicted.ts";
 import { seatField } from "./fields.ts";
-import { askedHearing, ledHere } from "./hearing.ts";
+import { askedHearing, boardHearing, ledHere, ofSeat, seatKarta } from "./hearing.ts";
 import {
   awaitHello,
   doors,
@@ -115,7 +116,7 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   if ("reply" in statusOnly) return statusOnly.reply;
   const a = msg.params?.arguments ?? {};
   const realm = typeof a.realm === "string" ? a.realm.trim() : "";
-  const karta = a.karta != null ? normKarta(a.karta) : "";
+  let karta = a.karta != null ? normKarta(a.karta) : "";
   const lines: string[] = [];
   const done = (isError = false): JsonRpcMessage => ({
     jsonrpc: "2.0",
@@ -172,6 +173,7 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   let name = asked || sat?.name || derived;
   const base = sat ? "" : name; // основа места рядом: выведенное или явное имя (#6706)
   await resolveAgainstLed(realm); // графы сличаются в одной форме @owner/slug (#5838)
+  karta = seatKarta(realm, karta); // «agent» — роль места этого графа, до любой проверки места (hearing.ts)
   // Мост уже стоит на отдельном месте этого имени — туда же (#5407); take=true зовёт само имя.
   const led0 = state.standing && !otherRealm(state.standing.realm, realm) ? state.standing : null;
   // Основу места рядом мост помнит сам (#6706); по виду имени её не угадать — glm-5.3 не место рядом glm-5.
@@ -230,13 +232,15 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   }
   // Доска — поля или проза сервера (board.ts, #4514). Управляющие действия — ротация,
   // стук, хук — идут только по распознанной однозначной форме; иначе честный отказ.
-  const { entries, recognized, declared } = readBoard(board);
-  let own = entries.filter((e) => e.karta === karta && nameOf(e.address) === name);
+  const bd = readBoard(board);
+  const { entries, recognized, declared } = bd;
+  let own = entries.filter((e) => ofSeat(e, karta, name));
   // Счёт в заголовке не сошёлся с разобранным — где-то строка, которой парсер не
-  // понял; она могла быть твоим живым местом. Ротировать вслепую нельзя, а
-  // явный take=true — слово делателя, что он это понимает.
+  // понял; она могла быть твоим живым местом или чужим. Кто слушает, мост не
+  // знает (hearing.ts): вслепую не ротирует, а явный take=true — слово делателя.
   const unread = declared != null && declared !== entries.length;
-  if (!recognized || own.length > 1 || (unread && own.length === 0 && a.take !== true)) {
+  const hearing = (n: string): AskedHearing => boardHearing(bd, karta, n);
+  if (!recognized || own.length > 1 || (hearing(name) === "unknown" && a.take !== true)) {
     lines.push(
       !recognized
         ? SW.boardUnknown(short(board.text, 160))
@@ -252,10 +256,9 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   let byRecord: Resumed | null = null; // своё место, возвращённое по записи держания (seatFor)
   // Основа, от которой выбирается место рядом: место рядом, названное своим именем, — его основа, не base.N.N (#6706).
   const root = base ? baseOf(realm, karta, base) : "";
-  if (base && a.take !== true && name === base) {
-    const listensOnBoard = (n: string): boolean =>
-      entries.some((e) => e.karta === karta && nameOf(e.address) === n && listens(e));
-    const seat = await seatFor(realm, karta, base, listensOnBoard, beside, cwd, root);
+  // Место другого графа встаёт register, а он слуха не отнимает: take=true там не берёт чужого — место выбирается так же.
+  if (base && (a.take !== true || beside) && name === base) {
+    const seat = await seatFor(realm, karta, base, hearing, beside, cwd, root);
     const choice = seat.choice;
     byRecord = seat.resumed;
     if ("refusal" in choice) {
@@ -264,14 +267,9 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
     }
     name = choice.name;
     ownSession = choice.own;
-    own = entries.filter((e) => e.karta === karta && nameOf(e.address) === name);
+    own = entries.filter((e) => ofSeat(e, karta, name));
     if (own.length > 1) {
       lines.push(SW.boardAmbiguous(own.length, name, karta));
-      return done(true);
-    }
-    // Выбранное место рядом — среди нераспознанных строк? Его могла слушать другая сессия: вслепую не берётся.
-    if (unread && own.length === 0 && !choice.own) {
-      lines.push(SW.boardCount(declared ?? 0, entries.length));
       return done(true);
     }
     if (choice.note) nameNotes.push(choice.note);

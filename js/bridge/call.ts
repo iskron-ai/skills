@@ -14,6 +14,7 @@ import { canonRealm, otherRealm, resolveRealms, unknownRealm, unresolvedWord } f
 import { openedConcurrently, type Refusal, refusalOf } from "./refusal.ts";
 import { OWN_CALL_PREFIX } from "./repeat.ts";
 import { noteStanding, replyText } from "./standing.ts";
+import { takingSeat } from "./taking.ts";
 import { post, state } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
 
@@ -201,7 +202,11 @@ async function ask(
   return { msg, got: reply as JsonRpcMessage | null };
 }
 
-export async function callTool(name: string, args: Record<string, unknown>): Promise<Answer> {
+/** connect и mint места — под намерением до записи держания включительно (taking.ts). */
+export const callTool = (name: string, args: Record<string, unknown>): Promise<Answer> =>
+  name === "iskron_channel" ? takingSeat(args, () => answer(name, args)) : answer(name, args);
+
+async function answer(name: string, args: Record<string, unknown>): Promise<Answer> {
   let { msg, got } = await ask(name, args);
   // Гонка открытия места (409 без rule, refusal.ts) — register ещё раз, один.
   if (name === "iskron_channel" && args.action === "register" && openedConcurrently(got))

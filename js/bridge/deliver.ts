@@ -38,6 +38,7 @@ import { localStatus } from "./status.ts";
 import { loadServerCache, saveServerCache, sleep } from "./store.ts";
 import { emit, log } from "./streams.ts";
 import { localSuspend } from "./suspend.ts";
+import { beginTaking } from "./taking.ts";
 import { noteServedTools, recheckTools } from "./toolsync.ts";
 import { currentAccessToken, onReinitialized, post, reinitialize, state } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
@@ -248,6 +249,7 @@ async function deliverOne(msg: JsonRpcMessage): Promise<void> {
     emit(m);
   };
 
+  let endTaking: (() => void) | null = null;
   for (;;) {
     try {
       if (
@@ -348,6 +350,9 @@ async function deliverOne(msg: JsonRpcMessage): Promise<void> {
         msg.params.arguments
       )
         msg.params.arguments = withPlaceFields(msg.params.arguments); // поля места и в пяти вызовах (#5174)
+      // Сырой connect или mint — под намерением до записи держания (taking.ts, #6706).
+      endTaking =
+        msg.params?.name === "iskron_channel" ? beginTaking(msg.params.arguments ?? {}) : null;
       await post(msg, forward);
       const held = heldReply as JsonRpcMessage | null;
       if (held && msg.params?.name === "iskron_channel" && msg.params.arguments)
@@ -366,7 +371,10 @@ async function deliverOne(msg: JsonRpcMessage): Promise<void> {
             log("the call ran unattributed — re-binding the standing and repeating it once");
             await ensureStanding();
             if (state.standingSession !== state.sessionId) await ensureStanding(); // one passing refusal is not the hour
-            if (state.standingSession === state.sessionId) continue;
+            if (state.standingSession === state.sessionId) {
+              endTaking?.();
+              continue;
+            }
           } else {
             log(
               `a write went out unattributed (${replyText(held).slice(0, 120)}) — the standing is re-bound before the next call`,
@@ -380,8 +388,10 @@ async function deliverOne(msg: JsonRpcMessage): Promise<void> {
           withNotice(absorbCloseReply(msg, absorbRevokeReply(msg, absorbChannelReply(msg, held)))),
         );
       }
+      endTaking?.();
       return;
     } catch (e) {
+      endTaking?.();
       note(e);
       if (
         e instanceof UpstreamError &&

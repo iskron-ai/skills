@@ -15,11 +15,12 @@ import { otherRealm } from "./realms.ts";
 import { baseOf } from "./separate.ts";
 import { standingLog } from "./store.ts";
 import { log } from "./streams.ts";
+import { takerOf } from "./taking.ts";
 import { reinitialize, type Standing, state } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
 
-/** Сколько ждать записи нового держателя: она ложится сразу за его connect, 4000 может её обогнать. */
-const WAIT_MS = 1500;
+/** Как часто перечитывать намерение и запись нового держателя, пока его connect в полёте. */
+const LOOK_MS = 100;
 /** Через сколько повторить место рядом, когда первую попытку оборвала сеть. */
 const RETRY_MS = 2000;
 
@@ -37,15 +38,24 @@ function announceEvicted(code: number, text: string): void {
   notify("warning", ev);
 }
 
-/** Отнял ли место новый мост этой сессии — по записи держания под тем же ключом с другим адресом. */
+/**
+ * Отнял ли место новый мост этой сессии — по записи держания под тем же ключом с
+ * другим адресом. Её connect ещё в полёте (его намерение лежит, taking.ts; 4000
+ * обгоняет ответ) — ждём его исхода, а не срока: намерение пишется до connect,
+ * так что без него отнявший — не мост этой сессии на этой машине.
+ */
 async function takenBySession(key: string, url: string): Promise<boolean> {
   const me = sessionOfBridge();
   if (!me) return false;
-  for (const end = Date.now() + WAIT_MS; ;) {
+  const changed = (): boolean | null => {
     const r = readHoldRecord(key, true);
-    if (r && r.url !== url) return r.session === me;
-    if (Date.now() >= end) return false;
-    await new Promise((res) => setTimeout(res, 100));
+    return r && r.url !== url ? r.session === me : null;
+  };
+  for (;;) {
+    const got = changed();
+    if (got !== null) return got;
+    if (takerOf(key) !== me) return changed() ?? false; // запись могла лечь за миг до стирания намерения
+    await new Promise((res) => setTimeout(res, LOOK_MS));
   }
 }
 
@@ -190,9 +200,9 @@ export async function standBesideAgain(): Promise<boolean> {
 const UNSIGNED = new Set(["list", "leave", "close", "revoke", "?"]);
 
 /**
- * Вызов харнеса в граф отнятого места, пока мост не встал рядом: сессия всё ещё
- * привязана к нему, и запись легла бы под подписью места, которое слушает
- * другой (#6706). Отказ вслух; iskron_stand и неподписывающие ходы канала идут.
+ * Вызов харнеса в граф любого места отнятого канала, пока мост не встал рядом:
+ * сессия всё ещё привязана к ним, и запись легла бы под подписью места без
+ * слуха (#6706). Отказ вслух; iskron_stand и неподписывающие ходы канала идут.
  */
 export function evictedRefusal(msg: JsonRpcMessage): string | null {
   const s = state.standing;
@@ -202,7 +212,10 @@ export function evictedRefusal(msg: JsonRpcMessage): string | null {
   const a = msg.params?.arguments ?? {};
   if (tool === "iskron_stand") return null;
   if (tool === "iskron_channel" && UNSIGNED.has(String(a.action))) return null;
-  if (typeof a.realm !== "string" || otherRealm(a.realm, s.realm)) return null;
+  // Отъём закрывает весь канал: места других графов на нём глухи так же, как основное.
+  const realm = a.realm;
+  if (typeof realm !== "string" || [s, ...state.places].every((p) => otherRealm(realm, p.realm)))
+    return null;
   return holdWords.evictedRefusal(s.name ?? "", baseOf(s.realm, s.karta, s.name ?? ""));
 }
 

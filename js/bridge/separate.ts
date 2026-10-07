@@ -8,6 +8,7 @@
 // (держатель вне каталога гранта или своё не доказано); чья сессия — по записи
 // держания, которую пишет держатель.
 import { sameDir } from "../shared/canon.ts";
+import { type AskedHearing } from "./call.ts";
 import { harnessName } from "./client.ts";
 import { holdsStanding, isParked, ledKey, localSocketPathOf, wasEvicted } from "./hold.ts";
 import { keyOf, readHoldRecord, seatBaseOf, sessionOfBridge } from "./holdrecord.ts";
@@ -49,14 +50,17 @@ export async function ownByRecord(
   return !(await localSocketAlive(localSocketPathOf(key)));
 }
 
-/** Кто держит место: этот мост, прежний мост этой сессии, кто-то другой — или никто. */
-type Holder = "mine" | "session" | "taken" | "free";
+/** Кто держит место: этот мост, прежний мост этой сессии, кто-то другой, никто — или мост не знает. */
+type Holder = "mine" | "session" | "taken" | "free" | "unknown";
+
+/** Что доска знает о месте под именем (hearing.ts): слушает другой, никто — или мост не знает. */
+export type BoardHearing = (name: string) => AskedHearing;
 
 async function holderOf(
   realm: string,
   karta: string,
   name: string,
-  listensOnBoard: (name: string) => boolean,
+  hearing: BoardHearing,
   cwd: string,
 ): Promise<Holder> {
   // Ушёл с места словом — своё, пока адрес жив: взявшая его сессия повернула бы адрес,
@@ -74,7 +78,10 @@ async function holderOf(
   if (theirsByRecord(key)) return "taken";
   // Доска «слушает», а живого локального держателя нет: своё доказывает только
   // запись этой сессии (возврат по ней); иначе слушающий — не наш, встаём рядом.
-  return listensOnBoard(name) && !(await ownByRecord(realm, karta, name, cwd)) ? "taken" : "free";
+  // Доска разобрана не целиком и места среди разобранных нет — мост не знает.
+  const h = hearing(name);
+  if (h === "unknown") return "unknown";
+  return h === "other" && !(await ownByRecord(realm, karta, name, cwd)) ? "taken" : "free";
 }
 
 /**
@@ -93,21 +100,23 @@ export type PlaceChoice = { name: string; own: boolean; note: string | null } | 
  * моста этой сессии — `own`, его мост возвращает сам), иначе на первое `root.N`,
  * которое свободно или своё. `root` — основа, от которой выбрано base (место
  * рядом, названное своим именем, — его основа, не proba.2.2); у основного — оно
- * само. Все сто заняты — отказ: подписи без слуха нет.
+ * само. Все сто заняты — отказ: подписи без слуха нет. Кто держит выбранное,
+ * мост не знает (доска разобрана не целиком) — отказ: вслепую не встаёт.
  * `taken` — имена, занятые наверняка (возврат по записи не дал слуха).
  */
 export async function placeFor(
   realm: string,
   karta: string,
   base: string,
-  listensOnBoard: (name: string) => boolean,
+  hearing: BoardHearing,
   cwd: string,
   taken: ReadonlySet<string> = new Set(),
   root = base,
 ): Promise<PlaceChoice> {
   const holder = async (name: string): Promise<Holder> =>
-    taken.has(name) ? "taken" : await holderOf(realm, karta, name, listensOnBoard, cwd);
+    taken.has(name) ? "taken" : await holderOf(realm, karta, name, hearing, cwd);
   const first = await holder(base);
+  if (first === "unknown") return { refusal: SEP.unknown(base) };
   if (first !== "taken") {
     const own = first === "session";
     return { name: base, own, note: own ? SEP.ownSession(base) : null };
@@ -117,6 +126,7 @@ export async function placeFor(
     if (cand === base) continue;
     const h = await holder(cand);
     if (h === "taken") continue;
+    if (h === "unknown") return { refusal: SEP.unknown(cand) };
     const own = h === "session";
     return { name: cand, own, note: SEP.beside(base, cand, own) };
   }
@@ -137,17 +147,17 @@ export async function seatFor(
   realm: string,
   karta: string,
   base: string,
-  listensOnBoard: (name: string) => boolean,
+  hearing: BoardHearing,
   besideRealm: boolean,
   cwd: string,
   root = base,
 ): Promise<{ choice: PlaceChoice; resumed: Resumed | null }> {
   const taken = new Set<string>();
   for (;;) {
-    const choice = await placeFor(realm, karta, base, listensOnBoard, cwd, taken, root);
+    const choice = await placeFor(realm, karta, base, hearing, cwd, taken, root);
     if ("refusal" in choice || choice.own || besideRealm) return { choice, resumed: null };
     const at = choice.name;
-    if (!listensOnBoard(at) || !(await ownByRecord(realm, karta, at, cwd)))
+    if (hearing(at) !== "other" || !(await ownByRecord(realm, karta, at, cwd)))
       return { choice, resumed: null };
     const resumed = await resumeFromDisk(realm, karta, at);
     if (resumed)

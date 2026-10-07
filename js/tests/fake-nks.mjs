@@ -549,6 +549,9 @@ export async function startFakeNks(opts = {}) {
       if ("unattributed_rule" in patch) st.unattributedRule = patch.unattributed_rule; // правило отказа безавторному send (под structured)
       if (patch.unbind) st.standings.clear(); // привязки сессий к каналам потеряны, каналы и места целы
       if ("connect_delay_ms" in patch) st.connectDelayMs = Number(patch.connect_delay_ms) || 0;
+      // Адрес повёрнут и прежний сокет места закрыт 4000 сразу, а ответ connect — позже (#6706).
+      if ("connect_reply_delay_ms" in patch)
+        st.connectReplyDelayMs = Number(patch.connect_reply_delay_ms) || 0;
       if ("case_join_delay_ms" in patch) st.caseJoinDelayMs = Number(patch.case_join_delay_ms) || 0; // медленный вход в дело
       if ("send_conflict" in patch) st.sendConflict = patch.send_conflict || null; // текст отказа 409 не о безавторности
       if ("statusGone" in patch) st.statusGone = !!patch.statusGone; // статусный адрес повернули
@@ -1207,6 +1210,13 @@ export async function startFakeNks(opts = {}) {
             incoming: `${base}/api/channel/in/mailbox-${a.name ?? "unnamed"}`,
             listening: true,
           });
+          if (st.connectReplyDelayMs) {
+            for (const old of [...st.ws].filter((s) => st.wsNames.get(s) === name)) {
+              old.write(wsFrame(0x8, Buffer.from([4000 >> 8, 4000 & 0xff])));
+              setTimeout(() => old.end(), 200).unref();
+            }
+            await new Promise((r) => setTimeout(r, st.connectReplyDelayMs));
+          }
           const wsUrl = `${base.replace(/^http:/, "ws:")}/channel/ws/${st.wsToken}`;
           return json(
             res,
