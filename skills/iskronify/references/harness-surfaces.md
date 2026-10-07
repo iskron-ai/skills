@@ -75,9 +75,10 @@ export default {
     };
     // сервер заводит экземпляр плагина на каждое написание каталога (/tmp/… и /private/tmp/…), после canon
     // оба считают сессию своей — слово однократно на процесс: общий для экземпляров набор,
-    // ключ — sessionID приветствия, id вызова (callID) напоминания
+    // ключ — sessionID приветствия, id вызова (callID) напоминания; нет ключа — не дедуплицируется,
+    // иначе первый вызов без id занял бы ключ undefined и заглушил все следующие
     const said = (globalThis.__iskronRitualsSaid ??= new Set());
-    const once = (key) => !said.has(key) && !!said.add(key);
+    const once = (key) => key == null || (!said.has(key) && !!said.add(key));
     // тул оболочки на 2.0.24 — shell; bash — для прежних версий
     const isShell = (tool) => ["shell", "bash"].includes(tool);
     // memory-guard: бросок из execute.before блокирует вызов; путь памяти — тот же, что у guard'а Claude Code
