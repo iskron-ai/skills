@@ -222,7 +222,27 @@ export const dw = {
       `  не поднимался: каталога шва ${dir} нет`,
       `  never started: the seam directory ${dir} does not exist`,
     ),
-  daemonSocket: (s: string) => L(`  сокет: ${s}`, `  socket: ${s}`),
+  daemonGrant: (dir: string) =>
+    L(
+      `  каталог гранта: ${dir} — один демон на каталог`,
+      `  grant directory: ${dir} — one daemon per directory`,
+    ),
+  daemonSocket: (s: string) => L(`  вход, сокет: ${s}`, `  entrance, socket: ${s}`),
+  fallbackNone: () =>
+    L(
+      "  мимо демона (полным мостом в своём процессе — запасным путём или выключателем) не идёт ни одна сессия",
+      "  no session goes around the daemon (the full bridge in its own process — the fallback path or the switch)",
+    ),
+  fallbackCount: (n: number) =>
+    L(
+      `  мимо демона (полным мостом в своём процессе — запасным путём или выключателем) идут сессий: ${n} — демон их не видит и в «сессий» не считает`,
+      `  sessions around the daemon (the full bridge in its own process — the fallback path or the switch): ${n} — the daemon does not see them nor count them in "sessions"`,
+    ),
+  fallbackOne: (pid: number, build: string, since: string, cwd: string, why: string) =>
+    L(
+      `    pid ${pid}, сборка ${build}, с ${since}, каталог ${cwd}: ${why}`,
+      `    pid ${pid}, build ${build}, since ${since}, directory ${cwd}: ${why}`,
+    ),
   daemonAnswers: (
     pid: unknown,
     build: string,

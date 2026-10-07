@@ -91,7 +91,7 @@ function agentFiles(dir: string, scope: AgentFile["scope"]): AgentFile[] {
 }
 
 /** Корень проекта: первый каталог вверх от cwd с файлами агентов, иначе с .git, иначе cwd; дом — не проект. */
-function projectRoot(): string {
+export function projectRoot(): string {
   const home = resolve(homedir());
   let gitRoot: string | null = null;
   for (let d = process.cwd(); ;) {
@@ -107,7 +107,7 @@ function projectRoot(): string {
 }
 
 /** Где на этой машине лежит команда; null — не нашлась. */
-function which(cmd: string, cwd: string): string | null {
+export function which(cmd: string, cwd: string): string | null {
   if (isAbsolute(cmd) || /[\\/]/.test(cmd)) {
     const p = resolve(cwd, cmd);
     return existsSync(p) ? p : null;
@@ -128,7 +128,7 @@ function which(cmd: string, cwd: string): string | null {
 }
 
 /** Адрес — сервер графа: продовый (русский или английский) либо тот, на который смотрит мост этой машины. */
-function graphServer(url: string): boolean {
+export function graphServer(url: string): boolean {
   const norm = (u: string) => u.trim().replace(/\/+$/, "").toLowerCase();
   return isProductionServer(url) || norm(url) === norm(CFG.serverUrl);
 }
