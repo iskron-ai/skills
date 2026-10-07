@@ -34,6 +34,7 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
   symlinkSync,
   utimesSync,
@@ -157,10 +158,25 @@ function fakeCtx({
   const queue = [];
   let wake = null;
   const stderr = [];
+  let calls = 0;
   const ctx = {
     app,
     ...(location ? { location } : {}),
-    tool: { transform: tools.transform, reload: tools.reload },
+    tool: {
+      transform: tools.transform,
+      reload: tools.reload,
+      hook: async (name, cb) => {
+        (hooks[`tool.${name}`] ??= []).push(cb);
+        return { dispose: async () => {} };
+      },
+    },
+    // Permission hooks: "evaluate" gets a mutable evaluation, as in OpenCode 2.0.24.
+    permission: {
+      hook: async (name, cb) => {
+        (hooks[`permission.${name}`] ??= []).push(cb);
+        return { dispose: async () => {} };
+      },
+    },
     command: { transform: commands.transform, reload: commands.reload },
     session: {
       // A deleted session is a thrown NotFound in OpenCode; an unlisted one is
@@ -235,6 +251,24 @@ function fakeCtx({
     tools: () => tools.get(),
     commands: () => commands.get(),
     hooks,
+    /**
+     * A tool call that meets a permission check, the order OpenCode 2.0.24 runs them in:
+     * tool "execute.before", then permission "evaluate" with the call's id; returns the effect.
+     */
+    ask: async (tool, input, action, resources, effect = "ask") => {
+      const id = `call-${++calls}`;
+      for (const cb of hooks["tool.execute.before"] ?? [])
+        await cb({ tool, sessionID: "s", agent: "build", messageID: "m", id, input });
+      const e = {
+        sessionID: "s",
+        action,
+        resources,
+        effect,
+        source: { type: "tool", messageID: "m", id },
+      };
+      for (const cb of hooks["permission.evaluate"] ?? []) await cb(e);
+      return e.effect;
+    },
     /** A prompt into a session through its "prompt" hooks; returns what the model would read. */
     prompt: async (sessionID, text) => {
       const p = { sessionID, messageID: "m", prompt: { text }, delivery: "queue" };
@@ -2926,6 +2960,114 @@ test("every installed skill with `slash: true` becomes a «/» command that load
     skills.push(skill("design", 'name: design\nslash: true\ndescription: "Проектирование"'));
     rec.emit({ type: "skill.updated", data: {} });
     await until(() => rec.commands().has("design"), "the new command");
+  } finally {
+    await rec.stop();
+  }
+});
+
+// ── reading the delivery's skill files (graph nks-dev: #6847) ────────────────
+
+test("a delivery skill's files outside the working copy are read without an ask — reading only, only inside that skill", async () => {
+  // As installed by `npx skills add --global`: the set in .agents/skills, a harness
+  // directory of symlinks to it; OpenCode lists the skills by their canonical paths
+  // and names the ask by the path as the tool got it.
+  const home = mkdtempSync(join(SANDBOX, "skill-reads-"));
+  const set = join(home, ".agents", "skills");
+  const skill = (id, head) => {
+    mkdirSync(join(set, id, "references"), { recursive: true });
+    const path = join(set, id, "SKILL.md");
+    writeFileSync(path, `---\n${head}\n---\n# ${id}\n`);
+    writeFileSync(join(set, id, "references", "phrasebook.md"), "# phrasebook\n");
+    return { id, name: id, description: id, path: realpathSync(path), content: "" };
+  };
+  const skills = [
+    skill("iskron", 'name: iskron\nslash: true\ndescription: "door"'),
+    skill("foreign", 'name: foreign\ndescription: "not of the delivery"'),
+    {
+      id: "opencode",
+      name: "opencode",
+      description: "builtin",
+      path: "/builtin/opencode.md",
+      content: "",
+    },
+  ];
+  mkdirSync(join(home, ".claude", "skills"), { recursive: true });
+  symlinkSync(join(set, "iskron"), join(home, ".claude", "skills", "iskron"));
+  const outside = join(home, "secrets");
+  mkdirSync(outside);
+  writeFileSync(join(outside, "key"), "x");
+  symlinkSync(join(outside, "key"), join(set, "iskron", "references", "leak.md"));
+
+  const refs = join(set, "iskron", "references");
+  const rec = await plugin({ ISKRON_BRIDGE_PATH: join(SANDBOX, "no-such-bridge.mjs") }, { skills });
+  try {
+    const ext = "external_directory";
+    const read = (path) => rec.ask("read", { path }, ext, [`${dirname(path)}/*`]);
+    assert.equal(
+      await read(join(refs, "phrasebook.md")),
+      "allow",
+      "a reference of a delivery skill is read",
+    );
+    assert.equal(await read(join(set, "iskron", "SKILL.md")), "allow", "and its own SKILL.md");
+    assert.equal(
+      await read(join(home, ".claude", "skills", "iskron", "references", "phrasebook.md")),
+      "allow",
+      "and the same file through the harness's symlink",
+    );
+    assert.equal(
+      await rec.ask("glob", { pattern: "*.md", path: refs }, ext, [`${refs}/*`]),
+      "allow",
+      "a glob inside the skill",
+    );
+    assert.equal(
+      await rec.ask("grep", { pattern: "phrase", path: refs }, ext, [`${refs}/*`]),
+      "allow",
+      "a grep inside the skill",
+    );
+
+    assert.equal(
+      await rec.ask("write", { path: join(refs, "x.md"), content: "x" }, ext, [`${refs}/*`]),
+      "ask",
+      "a write into the skill keeps its ask",
+    );
+    assert.equal(
+      await rec.ask("bash", { command: `cat ${refs}/phrasebook.md` }, ext, [`${refs}/*`]),
+      "ask",
+      "so does the shell",
+    );
+    assert.equal(
+      await read(join(outside, "key")),
+      "ask",
+      "a path outside the skills keeps its ask",
+    );
+    assert.equal(await read(join(refs, "leak.md")), "ask", "and so does a symlink out of a skill");
+    assert.equal(
+      await read(join(set, "foreign", "references", "phrasebook.md")),
+      "ask",
+      "a skill not of the delivery keeps its ask",
+    );
+    assert.equal(
+      await rec.ask("read", { path: join(set, "phrasebook.md") }, ext, [`${set}/*`]),
+      "ask",
+      "the set's directory itself is wider than a skill",
+    );
+    assert.equal(
+      await rec.ask("glob", { pattern: "../../*", path: refs }, ext, [`${refs}/*`]),
+      "ask",
+      "a glob climbing out of the skill keeps its ask",
+    );
+    assert.equal(
+      await rec.ask("read", { path: join(refs, "phrasebook.md") }, ext, [`${refs}/*`], "deny"),
+      "deny",
+      "an explicit deny stays a deny",
+    );
+    assert.equal(
+      await rec.ask("read", { path: join(refs, "phrasebook.md") }, "read", [
+        join(refs, "phrasebook.md"),
+      ]),
+      "ask",
+      "only the external_directory check is touched",
+    );
   } finally {
     await rec.stop();
   }
