@@ -184,8 +184,8 @@ export async function setupTools(
   const lost = takeLostMarker(authDir(), home);
   if (lost?.text) say(lost.text, "warning");
   if (lost) adopt.take(lost.entries);
-  // Остановленный экземпляр маркеров не берёт: отложенный приём переноса (moves.ts) и
-  // бужение близнеца пережили бы остановку и сняли маркер следующего экземпляра папки.
+  // Остановленный экземпляр маркеров не берёт: отложенный приём переноса (moves.ts)
+  // пережил бы остановку и снял маркер следующего экземпляра папки.
   const adoptNow = () => void (stopped || adopt.now());
 
   function shake(slot: Slot): void {
