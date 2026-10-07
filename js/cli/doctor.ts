@@ -4,7 +4,7 @@
 // Исключение одно — проба моста-спутника в разделе «субагенты»: это запуск
 // самого моста, и пишет он то, что пишет мост (кэш ответа сервера, обновлённый грант).
 import { createHash } from "node:crypto";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -30,6 +30,7 @@ import { homeBridgePath } from "../shared/home.ts";
 import { seamRunDir } from "../shared/seam-entrance.ts";
 import { compareVersions } from "../shared/semver.ts";
 import { VERSION, versionIn } from "../shared/version.ts";
+import { codexCopies } from "./codexcache.ts";
 import { type Launch, launchReport, openCodeRuntimeWord } from "./doctornode.ts";
 import { secondPathReport } from "./doctorpaths.ts";
 import { skillsReport } from "./doctorskills.ts";
@@ -279,42 +280,31 @@ function codexPluginReport(home: string): void {
   const cache = join(home, "plugins", "cache");
   if (!existsSync(cache)) return;
   let found = 0;
-  for (const market of readdirSync(cache)) {
-    const marketDir = join(cache, market);
-    let plugins: string[];
-    try {
-      plugins = readdirSync(marketDir);
-    } catch {
-      continue;
-    }
-    for (const plugin of plugins) {
-      if (!/iskron/.test(plugin)) continue;
-      const dir = join(marketDir, plugin);
-      const manifest = join(dir, ".codex-plugin", "plugin.json");
-      let word = dw.codexNoManifest();
-      if (existsSync(manifest)) {
-        try {
-          const m = JSON.parse(readFileSync(manifest, "utf8")) as {
-            version?: string;
-            mcpServers?: Record<string, { command?: string; args?: string[] }>;
-          };
-          const hit = Object.values(m.mcpServers ?? {}).find((v) =>
-            (v.args ?? []).some((a) => /iskron\.mjs/.test(a)),
-          );
-          word = dw.codexManifest(m.version ?? "?", !!hit);
-          if (hit)
-            launches.push({
-              who: `Codex ${plugin}@${market}`,
-              harness: "codex",
-              command: hit.command ?? "",
-            });
-        } catch {
-          word = dw.unreadable(manifest);
-        }
+  for (const { market, plugin, dir } of codexCopies(home)) {
+    const manifest = join(dir, ".codex-plugin", "plugin.json");
+    let word = dw.codexNoManifest();
+    if (existsSync(manifest)) {
+      try {
+        const m = JSON.parse(readFileSync(manifest, "utf8")) as {
+          version?: string;
+          mcpServers?: Record<string, { command?: string; args?: string[] }>;
+        };
+        const hit = Object.values(m.mcpServers ?? {}).find((v) =>
+          (v.args ?? []).some((a) => /iskron\.mjs/.test(a)),
+        );
+        word = dw.codexManifest(m.version ?? "?", !!hit);
+        if (hit)
+          launches.push({
+            who: `Codex ${plugin}@${market}`,
+            harness: "codex",
+            command: hit.command ?? "",
+          });
+      } catch {
+        word = dw.unreadable(manifest);
       }
-      found++;
-      out(dw.codexPlugin(plugin, market, word, dir));
     }
+    found++;
+    out(dw.codexPlugin(plugin, market, word, dir));
   }
   if (!found) out(dw.codexNoPlugin(cache));
 }

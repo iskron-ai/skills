@@ -25,21 +25,29 @@ const alive = (pid: number): boolean => {
 };
 
 /**
- * Отметить свою сессию запасной; отметка уходит с процессом, а отметки убитых
- * (SIGKILL, падение) снимает следующий мост, идущий запасным путём, — чтобы pid,
- * доставшийся другому процессу, не читался сессией. Сбой записи не мешает мосту.
+ * Снять отметки убитых (SIGKILL, падение): pid, доставшийся другому процессу, не
+ * должен читаться сессией. Зовут следующий мост мимо демона и демон при подъёме.
  */
+export function pruneFallbacks(authDir: string): void {
+  let names: string[] = [];
+  try {
+    names = readdirSync(fallbackDir(authDir));
+  } catch {}
+  for (const n of names) {
+    const pid = parseInt(n, 10);
+    if (Number.isInteger(pid) && !alive(pid))
+      try {
+        unlinkSync(join(fallbackDir(authDir), n));
+      } catch {}
+  }
+}
+
+/** Отметить свою сессию мимо демона; отметка уходит с процессом. Сбой записи не мешает мосту. */
 export function markFallback(authDir: string, f: Omit<Fallback, "pid" | "since">): void {
   const file = join(fallbackDir(authDir), `${process.pid}.json`);
   try {
     mkdirSync(fallbackDir(authDir), { recursive: true, mode: 0o700 });
-    for (const n of readdirSync(fallbackDir(authDir))) {
-      const pid = parseInt(n, 10);
-      if (Number.isInteger(pid) && !alive(pid))
-        try {
-          unlinkSync(join(fallbackDir(authDir), n));
-        } catch {}
-    }
+    pruneFallbacks(authDir);
     const rec: Fallback = { pid: process.pid, since: new Date().toISOString(), ...f };
     writeFileSync(file, JSON.stringify(rec), { mode: 0o600 });
     process.once("exit", () => {

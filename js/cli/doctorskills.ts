@@ -2,7 +2,7 @@
 // версия набора — версия файла моста внутри него (как attrs.skills.version), и
 // она расходится с build.version ровно тогда, когда мост обновился, а набор нет.
 // Скиллы мост не обновляет — их кладёт канал харнесса, его ход и называется.
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -13,6 +13,7 @@ import { BRIDGE_FILE, BRIDGE_SKILL } from "../shared/clients.ts";
 import { L } from "../shared/lang.ts";
 import { compareVersions } from "../shared/semver.ts";
 import { VERSION, versionIn } from "../shared/version.ts";
+import { codexCopies } from "./codexcache.ts";
 import { todo } from "./subwords.ts";
 
 type Out = (s: string) => void;
@@ -31,20 +32,8 @@ function sets(codexHomes: string[]): [string, Kind][] {
         for (const i of installs)
           if (i.installPath) found.push([join(i.installPath, "skills"), "claude"]);
   } catch {}
-  for (const home of codexHomes) {
-    const cache = join(home, "plugins", "cache");
-    let markets: string[] = [];
-    try {
-      markets = readdirSync(cache);
-    } catch {}
-    for (const m of markets) {
-      let plugins: string[] = [];
-      try {
-        plugins = readdirSync(join(cache, m)).filter((p) => /iskron/.test(p));
-      } catch {}
-      for (const p of plugins) found.push([join(cache, m, p, "skills"), "codex"]);
-    }
-  }
+  for (const home of codexHomes)
+    for (const c of codexCopies(home)) found.push([join(c.dir, "skills"), "codex"]);
   found.push([join(homedir(), ".agents", "skills"), "flat"]);
   const own = skillsRoot();
   if (own) found.push([own, "other"]);

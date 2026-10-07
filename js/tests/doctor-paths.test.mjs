@@ -141,7 +141,8 @@ test("doctor: the bridge entry's command not in PATH is a finding with the absol
   await withHome(async ({ fake, home, authDir }) => {
     claudePlugin(home, "node", "9.9.9");
     const codex = join(home, "cxh");
-    const manifest = join(codex, "plugins", "cache", "iskron", "iskron", ".codex-plugin");
+    // Уровень версии под плагином — раскладка кэша Codex у других плагинов машины.
+    const manifest = join(codex, "plugins", "cache", "iskron", "iskron", "9.9.9", ".codex-plugin");
     mkdirSync(manifest, { recursive: true });
     writeFileSync(
       join(manifest, "plugin.json"),
