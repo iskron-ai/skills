@@ -91,12 +91,14 @@ export function adoptSeenPath(
 /**
  * Пачка лежалых в миг отдачи — по памяти сторожа `has` (shared/stalebatch.ts). Кадр
  * старого моста несёт лишь показанные кадры и метки сверх них (unshown): тогда — его
- * текст со счётом «не вошло» и его метки, показанные — метками доставки (#5831).
+ * текст со счётом «не вошло» и его метки, показанные — метками доставки (#5831). Сверх
+ * показанных событие вошло лишь числом: его `ev:`/`evs:` метятся `cev:`/`cevs:` (seen.ts).
  */
 export function staleOf(ev: ChannelEvent, has: Marks): { text: string; keys: string[] } {
   if (!ev.unshown) return staleBatch(ev.frames ?? [], has);
   const shown = (ev.frames ?? []).flatMap((f) => deliveryKeys(f));
-  return { text: ev.text ?? "", keys: [...shown, ...ev.unshown] };
+  const named = ev.unshown.map((k) => (/^evs?:/.test(k) ? `c${k}` : k));
+  return { text: ev.text ?? "", keys: [...shown, ...named] };
 }
 
 /**

@@ -16,8 +16,9 @@ import { join } from "node:path";
 import { type ChannelEvent } from "../bridge/hold.ts";
 import { addressedToMine } from "../shared/addressed.ts";
 import { type Door, openDoor } from "../shared/appserver.ts";
+import { type Frame } from "../shared/channel.ts";
 import { frameToText } from "../shared/frame-text.ts";
-import { deliveryKeys, noteSeen, seenIds } from "../shared/seen.ts";
+import { deliveryKeys, eventIn, noteSeen, seenIds } from "../shared/seen.ts";
 import { seenFilePathOf } from "../shared/standings.ts";
 import {
   adoptSeenPath,
@@ -75,13 +76,16 @@ export function runWatchdogCodex(argv: string[]): void {
         const ids = !m?.method && typeof m?.id === "number" ? waiting.get(m.id) : undefined;
         if (!ids) return;
         waiting.delete(m.id);
+        settle(m.id, !m.error);
         if (m.error) return note(wd.threadRefused(m.error.message ?? wd.refusal()));
         note(wd.framePut(threadId));
         for (const id of ids) noteSeen(seenPath, id, seen);
       },
       (why) => {
         const lost = [...waiting.values()].flat();
+        const gone = [...waiting.keys()];
         waiting.clear();
+        for (const r of gone) settle(r, false);
         note(wd.doorClosed(why, lost));
         door = null;
         ready = null;
@@ -124,9 +128,44 @@ export function runWatchdogCodex(argv: string[]): void {
       });
       note(wd.frameSent(threadId));
     } catch (e) {
-      waiting.delete(reqId); // дверь не открылась — в тред не ушёл
+      if (waiting.delete(reqId)) settle(reqId, false); // дверь не открылась — в тред не ушёл
       note(wd.frameNotPut((e as Error).message));
     }
+  }
+
+  // Копии, чьё событие несёт лишь ход, ещё ждущий ответа треда, не считаются, но и не
+  // теряются: они ждут при нём. Принят — их метки пишутся; отказан или дверь закрылась —
+  // счёт возвращается в ожидание, пачка лежалых судится заново (seen.ts eventIn).
+  type Held = { frame: Frame; ids: string[]; stale: boolean };
+  const heldBy = new Map<number, Held[]>();
+  function holdOut(items: Held[]): Held[] {
+    return items.filter((h) => {
+      if (eventIn(h.frame, (k) => seen.has(k))) return true;
+      const r = [...waiting].find(([, ids]) => eventIn(h.frame, (k) => ids.includes(k)))?.[0];
+      if (r === undefined) return true;
+      heldBy.set(r, [...(heldBy.get(r) ?? []), h]);
+      return false;
+    });
+  }
+  function settle(reqId: number, ok: boolean): void {
+    const held = heldBy.get(reqId) ?? [];
+    heldBy.delete(reqId);
+    if (ok) return held.forEach((h) => h.ids.forEach((k) => noteSeen(seenPath, k, seen)));
+    pend.unshift(...held.filter((h) => !h.stale).map(({ frame, ids }) => ({ frame, ids })));
+    const stale = held.filter((h) => h.stale).map((h) => h.frame);
+    if (stale.length) putStale(stale);
+  }
+  /** Пачка лежалых — один ход, судится в миг вложения (shared/stalebatch.ts); метки — по принятию. */
+  function putStale(frames: Frame[], ev?: ChannelEvent): void {
+    // Пачка моста прежней формы идёт его текстом — судить её нечем (client.ts staleOf).
+    const rest = ev?.unshown
+      ? frames
+      : holdOut(frames.map((f) => ({ frame: f, ids: deliveryKeys(f), stale: true }))).map(
+          (h) => h.frame,
+        );
+    const b = staleOf({ ...(ev ?? { kind: "stale" }), frames: rest }, (k) => seen.has(k));
+    if (b.text) void deliver(b.text, b.keys);
+    else for (const k of b.keys) noteSeen(seenPath, k, seen);
   }
 
   // Мост отдаёт из кольца задним числом только то, что никто не доставил (#5428),
@@ -137,18 +176,13 @@ export function runWatchdogCodex(argv: string[]): void {
   // по делам они едут шапкой с ближайшим кадром в тред; текст их в тред не идёт.
   let pend: { frame: NonNullable<ChannelEvent["frame"]>; ids: string[] }[] = [];
   /**
-   * Ждущий счёт — шапкой впереди `text`, составленной в миг вложения: по памяти сторожа
-   * и меткам ходов, уже ушедших в тред и ждущих принятия (seen.ts eventIn, client.ts heldHeads).
+   * Ждущий счёт — шапкой впереди `text`, составленной в миг вложения: по памяти сторожа;
+   * копии события хода, ждущего ответа треда, ждут при нём (holdOut, client.ts heldHeads).
    */
   const withPend = (text: string, ids: string[], carrier?: ChannelEvent["frame"]): void => {
-    const got = pend;
+    const got = holdOut(pend.map((p) => ({ ...p, stale: false })));
     pend = [];
-    const sent = new Set([...waiting.values()].flat());
-    const head = heldHeads(
-      [got.map((g) => g.frame)],
-      (k) => seen.has(k) || sent.has(k),
-      carrier ? [carrier] : [],
-    );
+    const head = heldHeads([got.map((g) => g.frame)], (k) => seen.has(k), carrier ? [carrier] : []);
     const keys = [...got.flatMap((g) => g.ids), ...ids];
     const lines = [...head, ...(text ? [text] : [])];
     // Нечего вкладывать — ждавшее уже в ходе: метки пишутся, пустого хода в тред нет.
@@ -177,15 +211,9 @@ export function runWatchdogCodex(argv: string[]): void {
           withPend(frameToText(ev.frame, ev.raw ?? ""), deliveryKeys(ev.frame), ev.frame);
           break;
         }
-        case "stale": {
-          // Одна пачка — один ход, судится в миг вложения (shared/stalebatch.ts): по памяти
-          // сторожа и меткам ходов, уже ушедших в тред; метки пачки — по принятию тредом.
-          const sent = new Set([...waiting.values()].flat());
-          const b = staleOf(ev, (k) => seen.has(k) || sent.has(k));
-          if (b.text) void deliver(b.text, b.keys);
-          else for (const k of b.keys) noteSeen(seenPath, k, seen);
+        case "stale":
+          putStale(ev.frames ?? [], ev);
           break;
-        }
         case "dead":
         case "evicted":
           note(ev.text ?? wd.seatLost());

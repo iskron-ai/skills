@@ -53,11 +53,13 @@ function unframe(buf) {
 
 // mute: the socket is accepted, the upgrade is never answered — a hung daemon.
 // upgradeDelayMs: the upgrade is answered this late — a daemon slow to open the door.
+// refuseTurns: the first this many turns are refused (after turnDelayMs, like an answer).
 export function startFakeCodex(
   socketPath,
   logFile,
-  { mute = false, turnDelayMs = 0, upgradeDelayMs = 0 } = {},
+  { mute = false, turnDelayMs = 0, upgradeDelayMs = 0, refuseTurns = 0 } = {},
 ) {
+  let refuse = refuseTurns;
   mkdirSync(dirname(socketPath), { recursive: true });
   const server = createServer((_req, res) => {
     res.writeHead(404);
@@ -99,13 +101,20 @@ export function startFakeCodex(
           );
         } else if (msg.method === "turn/start") {
           // turnDelayMs: ход принят не сразу — сторож метит отданное только по ответу.
+          const refused = refuse > 0 && refuse--;
           const answer = () =>
             socket.write(
               frame(
-                JSON.stringify({
-                  id: msg.id,
-                  result: { turn: { id: "turn-1", status: "inProgress", items: [], error: null } },
-                }),
+                JSON.stringify(
+                  refused
+                    ? { id: msg.id, error: { code: -32600, message: "turn refused" } }
+                    : {
+                        id: msg.id,
+                        result: {
+                          turn: { id: "turn-1", status: "inProgress", items: [], error: null },
+                        },
+                      },
+                ),
               ),
             );
           if (turnDelayMs) setTimeout(answer, turnDelayMs).unref();
