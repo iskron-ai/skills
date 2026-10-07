@@ -324,6 +324,7 @@ export function roomKind(frame: Frame | null | undefined): RoomKind | null {
     realm: node.realm,
     // reasoning дельты узла — тело записи node (line.done, body кадра), не поле (слово api, #6070).
     reasoning: kind === "node" ? line.done || f.body : undefined,
+    withdraws: fields.withdraws,
   };
   const rule = RULES[kind];
   const author = str(values.author);
@@ -382,12 +383,14 @@ export function roomKind(frame: Frame | null | undefined): RoomKind | null {
         ? (autoWords()[str(values.code)] ?? W.auto)
         : cause && askWord(`invite_${cause}`)
           ? askWord(`invite_${cause}`)
-          : ASK_KINDS.has(kind)
-            ? askWord(kind)
-            : // op узла (bound | updated | deleted | undeleted): без op и bound — прежнее слово.
-              kind === "node" && NODE_OPS[str(fields.op)]
-              ? W[NODE_OPS[str(fields.op)]]
-              : W[kind];
+          : kind === "progress" && str(fields.withdraws)
+            ? askWord("ask_withdrawn")
+            : ASK_KINDS.has(kind)
+              ? askWord(kind)
+              : // op узла (bound | updated | deleted | undeleted): без op и bound — прежнее слово.
+                kind === "node" && NODE_OPS[str(fields.op)]
+                ? W[NODE_OPS[str(fields.op)]]
+                : W[kind];
   let text = fill(wordsOf ?? "", values);
   if (kind === "closing") {
     // На бою (api 0.88.0) may_object — массив объектов {id, standing, name, karta};

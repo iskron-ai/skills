@@ -449,12 +449,13 @@ export const ack = (entry_id, refers_to, addressee = HUMAN.standing) =>
     },
   });
 
-/** Снятие вопроса: обычная строка progress роли спросившего на ключе вопроса, поля пусты. */
-export const askWithdrawn = (entry_id) =>
+/** Снятие вопроса: progress роли спросившего на ключе вопроса, fields.withdraws — номер снятого ask (#6867, ЧТЕНИЕ). */
+export const askWithdrawn = (entry_id, withdraws) =>
   roomFrame("progress", {
     entry_id,
     key: ASK_KEY,
     line: { done: "снят: выкатили иначе", verdict: "bad" },
+    fields: { withdraws },
     envelope: { realm: MY_REALM, karta_seq: MY_KARTA },
   });
 

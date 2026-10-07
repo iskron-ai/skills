@@ -5510,7 +5510,7 @@ test("question kinds: an answer to my seat steers; an answer to another and a wi
     assert.doesNotMatch(q.text, /рекомендация/, "no recommendation — no words for it");
     await quiet(ask(95, MY_KARTA + 1));
     await quiet(answer(96, 95, BORIS));
-    await quiet(askWithdrawn(98));
+    await quiet(askWithdrawn(98, 95)); // a question to another withdrawn
     const a = await send(answer(91, 90, ME, { choice: "later" }), 2);
     assert.equal(a.delivery, "steer", "the answer to my question wakes me now");
     assert.match(a.text, /^№7 «Стенд»: записей 3, тебе 0 — /, "the others ride as a count");
@@ -5522,6 +5522,13 @@ test("question kinds: an answer to my seat steers; an answer to another and a wi
     const s = await send(toSeat, 3);
     assert.equal(s.delivery, "steer", "a question to my seat interrupts");
     assert.match(s.text, /спрашивает роль 🚚 Поставщик плитки \(место proba \(@tester:proba\)\)/);
+    // The withdrawal of a question to me (fields.withdraws) is mine, in words, without a wake.
+    const w = await send(askWithdrawn(99, 90), 4);
+    assert.equal(w.delivery, "queue", "a withdrawn question to me batches");
+    assert.match(
+      w.text,
+      /вопрос \[90\] снят: \[выкат: сегодня\?\] \[снят: выкатили иначе\] = slop/,
+    );
   } finally {
     await rec.stop();
   }

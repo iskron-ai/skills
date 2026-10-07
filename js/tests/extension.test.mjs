@@ -831,7 +831,7 @@ test("question kinds: ask to my role, answer and ack to my seat, a call of my ro
       ask(95, MY_KARTA + 1),
       answer(96, 95, BORIS),
       ack(97, 96),
-      askWithdrawn(98),
+      askWithdrawn(98, 95),
       echo, // my own question to my own role is not a question to me
     ];
     for (const f of [...mine.map(([f]) => f), ...rest]) push(events, frame(f));

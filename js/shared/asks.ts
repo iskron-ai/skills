@@ -14,7 +14,8 @@ export const ASK_WORDS: Readonly<Record<string, string>> = {
   ask_advice: "рекомендация: {option}{ — why}",
   answer: "{author} отвечает на [{refers_to}]: {reply}",
   ack: "ответ [{refers_to}] принят{: reply} · {author}",
-  // Снятие вопроса — обычная строка progress на его ключе: своего слова у неё нет.
+  // Снятие — progress роли спросившего на ключе вопроса с fields.withdraws.
+  ask_withdrawn: "вопрос [{withdraws}] снят: [{key}] [{done}] = {verdict} · {author}",
   // Зов роли платформой по погасшему месту: cause — почему зовут.
   invite_ownerless: "платформа зовёт роль {who} в дело: место {standing} погасло, его строки ничьи",
   invite_answer_waiting:
@@ -29,6 +30,7 @@ export const ASK_WORDS_EN: Readonly<Record<string, string>> = {
   ask_advice: "recommended: {option}{ — why}",
   answer: "{author} answers [{refers_to}]: {reply}",
   ack: "answer [{refers_to}] accepted{: reply} · {author}",
+  ask_withdrawn: "question [{withdraws}] withdrawn: [{key}] [{done}] = {verdict} · {author}",
   invite_ownerless:
     "the platform calls the role {who} to the case: the seat {standing} is gone, its lines are nobody's",
   invite_answer_waiting:
@@ -62,6 +64,25 @@ export function askedMine(frame: Rec, fields: Rec): boolean {
   if (place?.addr.some((a) => mine.includes(a))) return true;
   return myRole(frame, { karta: to.karta });
 }
+
+/** Вопросы мне, которые видел этот процесс: ключ — дело и номер ask. */
+const asksToMe = new Set<string>();
+const ASKS_KEPT = 512;
+const askKey = (frame: Rec, entry: unknown): string =>
+  `${str(obj(frame.room).id) || str(obj(frame.room).seq)}|${str(entry)}`;
+
+/** Запомнить вопрос мне — его снятие придёт строкой progress с номером этого ask. */
+export function rememberAsk(frame: Rec): void {
+  asksToMe.add(askKey(frame, obj(frame.line).entry_id ?? frame.entry_id));
+  for (const old of asksToMe) {
+    if (asksToMe.size <= ASKS_KEPT) break;
+    asksToMe.delete(old);
+  }
+}
+
+/** Снятие вопроса, который был задан мне (fields.withdraws — номер ask). */
+export const withdrawsMine = (frame: Rec, fields: Rec): boolean =>
+  !!str(fields.withdraws) && asksToMe.has(askKey(frame, fields.withdraws));
 
 /** Ответ или приём мне: адресат кадра (addressee, иначе fields.to) — моё место, и он из дела не вышел. */
 export function addressedMine(frame: Rec): boolean {
