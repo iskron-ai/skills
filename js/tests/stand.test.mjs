@@ -1321,6 +1321,58 @@ test("iskron_stand: skills of a flat install whose lock has no establish-mcp ent
   });
 });
 
+// npx skills 1.7.1 keeps the global lock in $XDG_STATE_HOME/skills/.skill-lock.json when
+// that is set, a project's in <dir>/skills-lock.json (getSkillLockPath, getLocalLockPath).
+test("iskron_stand: skills of a flat install whose lock is in XDG_STATE_HOME — the lock's name and fold", async (t) => {
+  const home = mkdtempSync(join(tmpdir(), "iskron-xdg-"));
+  const file = skillSet(join(home, ".agents", "skills"));
+  const FORK = "someone/skills";
+  const lock = {
+    version: 3,
+    skills: {
+      "establish-mcp": { source: FORK, skillFolderHash: "7".repeat(40) },
+      entry: { source: FORK, skillFolderHash: "8".repeat(40) },
+      stranger: { source: "someone/else", skillFolderHash: "9".repeat(40) },
+    },
+  };
+  mkdirSync(join(home, "state", "skills"), { recursive: true });
+  writeFileSync(join(home, "state", "skills", ".skill-lock.json"), JSON.stringify(lock));
+  const { fake, bridge } = await holderReady(t, {
+    file,
+    env: { HOME: home, XDG_STATE_HOME: join(home, "state") },
+  });
+  assert.ok(!(await stand(bridge)).result?.isError);
+  assert.deepEqual(placeSends(fake).at(-1).attrs?.skills, {
+    name: FORK,
+    version: MINE,
+    stamp: lockFold(lock, FORK),
+  });
+});
+
+test("iskron_stand: skills of a project install — the name from <dir>/skills-lock.json", async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "iskron-project-"));
+  const root = join(dir, ".agents", "skills");
+  const file = skillSet(root);
+  const FORK = "someone/skills";
+  writeFileSync(
+    join(dir, "skills-lock.json"),
+    JSON.stringify({
+      version: 1,
+      skills: { "establish-mcp": { source: FORK, sourceType: "github", computedHash: "x" } },
+    }),
+  );
+  const { fake, bridge } = await holderReady(t, {
+    file,
+    env: { HOME: mkdtempSync(join(tmpdir(), "iskron-project-home-")) },
+  });
+  assert.ok(!(await stand(bridge)).result?.isError);
+  assert.deepEqual(placeSends(fake).at(-1).attrs?.skills, {
+    name: FORK,
+    version: MINE,
+    stamp: treeStamp(root),
+  });
+});
+
 test("iskron_stand: skills of a set named by ISKRON_SKILLS_ROOT — its own bridge version and SKILL.md hash; our client's host version from the environment", async (t) => {
   const root = join(mkdtempSync(join(tmpdir(), "iskron-plugin-")), "skills");
   skillSet(root, '#!/usr/bin/env node\nconst VERSION = "1.2.3";\n');

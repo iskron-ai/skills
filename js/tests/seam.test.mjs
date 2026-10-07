@@ -150,6 +150,7 @@ test("the handshake carries what the session needs — not the personal token", 
     CLAUDE_PLUGIN_ROOT: "/p",
     HTTPS_PROXY: "http://proxy",
     NODE_EXTRA_CA_CERTS: "/ca",
+    XDG_STATE_HOME: "/state",
     SECRET_OF_SOMEONE_ELSE: "no",
   });
   assert.deepEqual(Object.keys(env).sort(), [
@@ -157,6 +158,7 @@ test("the handshake carries what the session needs — not the personal token", 
     "HTTPS_PROXY",
     "ISKRON_HARNESS_VERSION",
     "NODE_EXTRA_CA_CERTS",
+    "XDG_STATE_HOME",
   ]);
   const h = helloFrame({ build: "b", path: "/f", argv: ["--satellite"], patSha: patShaOf("t") });
   assert.equal(h.seam, SEAM_PROTOCOL);
