@@ -133,7 +133,8 @@ test("tools/list carries iskron_stand — the bridge's own tool, in the server's
 });
 
 test("iskron_stand: one call takes the place, arms the inbox hook and knocks; a second call neither rotates nor knocks again", async (t) => {
-  const { fake, bridge } = await ready(t);
+  // «Повтор рано» — внутри окна: окно шва в 300 мс под нагрузкой истекает между вызовами.
+  const { fake, bridge } = await ready(t, INIT, { ISKRON_STAND_KNOCK_REPEAT_MS: "120000" });
   await fake.control({
     rooms: [
       { karta: "3505", address: "@tester:thread-k2" },

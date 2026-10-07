@@ -162,6 +162,8 @@ async function withFake(fn) {
         process.kill(pid, "SIGKILL");
       } catch {}
     }
+    // Сигнал доходит не сразу: живой ещё демон пишет в каталог, пока его сносят (ENOTEMPTY).
+    await waitFor("the daemons gone", () => !daemonPids(dir).some(alive), 10_000);
     await fake.stop();
     rmSync(dir, { recursive: true, force: true });
   }
@@ -618,6 +620,12 @@ test("a pause asked while the daemon hands over is taken: the place, case, idle 
         "the satellite through the successor",
         () => /through the machine's bridge daemon v99/.test(s.stderr),
         30_000,
+      );
+      // Обе строки пишутся одним ходом, но приходят из трубы порознь: ждём вторую саму.
+      await waitFor(
+        "the pause word",
+        () => /is paused and waits on its pause record|bringing its place .* back/.test(s.stderr),
+        5_000,
       );
       assert.match(s.stderr, /is paused and waits on its pause record/);
       await endBridge(s);
@@ -1503,9 +1511,11 @@ test("SIGTERM of the daemon: the watchdog hears the place again and prints a wor
       });
       await waitFor("the old daemon gone", () => !alive(first), 30_000);
       await fake.control({ ws_say: { name: "term-w", text: "после SIGTERM", id: "term-w-1" } });
+      // Кадр спула встаёт в кольцо преемника и после более нового живого (spool.ts), а
+      // сторож печатает прямые слова с паузой между ними: ждём оба слова, не одно.
       await waitFor(
-        "the watchdog to print the word",
-        () => /после SIGTERM/.test(wd.out),
+        "the watchdog to print both words",
+        () => /после SIGTERM/.test(wd.out) && /в окне SIGTERM/.test(wd.out),
         10_000,
       ).catch((e) => {
         throw new Error(`${e.message}\nexit ${wd.proc.exitCode}\n${wd.out}\n${journalOf(dir)}`);
