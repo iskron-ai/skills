@@ -569,6 +569,44 @@ try {
   fail("js/cli/satform.ts", `сверка копий кода записи моста-спутника не удалась: ${e.message}`);
 }
 
+// `description` ролевых файлов агентов — YAML-скаляр, и без кавычек он plain:
+// «: » внутри делает из него вторую пару ключ-значение, « #» обрезает
+// комментарием, ведущий спецсимвол меняет тип. Харнесс разбирает такой
+// фронтматтер неверно молча. Образец в delegation.md проецируется в чужие репо,
+// поэтому сверяются и его блоки, и собственные .claude/agents/*.md.
+const YAML_INDICATOR = /^[-?:,[\]{}#&*!|>'"%@`]/;
+function checkRoleFrontmatter(rel, lines, from) {
+  if (lines[from] !== "---") return;
+  for (let i = from + 1; i < lines.length && lines[i] !== "---"; i++) {
+    const m = /^description:\s+(.*)$/.exec(lines[i]);
+    if (!m) continue;
+    const value = m[1].trimEnd();
+    const where = `${rel}:${i + 1}`;
+    if (value[0] === '"' || value[0] === "'") {
+      const err = scalarError(value);
+      if (err) fail(where, `\`description\` — ${err}`);
+    } else if (value.includes(": ") || value.includes(" #") || YAML_INDICATOR.test(value)) {
+      fail(where, "`description` без кавычек — plain-скаляр YAML с «: », « #» или ведущим спецсимволом разбирается неверно; пиши в двойных кавычках, внутренние `\"` экранируй");
+    }
+  }
+}
+try {
+  const agentsDir = join(root, ".claude", "agents");
+  if (existsSync(agentsDir)) {
+    for (const f of readdirSync(agentsDir).filter((f) => f.endsWith(".md"))) {
+      const rel = join(".claude", "agents", f);
+      checkRoleFrontmatter(rel, readFileSync(join(root, rel), "utf8").split("\n"), 0);
+    }
+  }
+  const rel = join("skills", "iskronify", "references", "delegation.md");
+  const lines = readFileSync(join(root, rel), "utf8").split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i] === "```markdown") checkRoleFrontmatter(rel, lines, i + 1);
+  }
+} catch (e) {
+  fail("ролевые файлы", `проверка фронтматтера не удалась: ${e.message}`);
+}
+
 // Маркеры конфликта слияния в отслеживаемых текстовых файлах. Слияние, разведённое
 // пересборкой производных, оставило их в REALITY.md, и ни одна проверка этого не
 // увидела. Строка `=======` засчитывается только рядом с `<<<<<<< `/`>>>>>>> ` —
