@@ -412,6 +412,14 @@ export const ask = (entry_id, seq = MY_KARTA, fields = {}, key = ASK_KEY) =>
     envelope: { realm: MY_REALM, karta_seq: MY_KARTA },
   });
 
+/** Переспрос (#6778): новый вопрос на ключе отвечает на ответ refers_to. */
+export const reask = (entry_id, seq, refers_to) => {
+  const f = ask(entry_id, seq);
+  f.line.refers_to = refers_to;
+  f.in_reply_to = refers_to;
+  return f;
+};
+
 /** Место строкой-адресом — формой места провода {id, standing, name?}. */
 const placeOf = (standing) => ({ id: standing === ME ? ME_ID : `id-${standing}`, standing });
 

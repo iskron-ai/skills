@@ -1,6 +1,6 @@
 // Адресованность записи дела месту читателя — закон доставки (граф nks-dev:
 // #6574): в ход текстом входит только адресованное, прочее — числом.
-import { ASK_KINDS, askedMine, closesMine, rememberAsk } from "./asks.ts";
+import { ASK_KINDS, askedMine, closesMine, noteAnswer, rememberAsk } from "./asks.ts";
 import { classifyOrigin, type Frame } from "./channel.ts";
 import { numberedKey } from "./numbering.ts";
 import { addresseeOf, after, byKind, mineOf, myRole, obj, roomKind, str } from "./room-kinds.ts";
@@ -56,6 +56,8 @@ export function addressedToMine(frame: Frame | null | undefined): boolean {
   const fields = obj(line.fields);
   const rk = roomKind(frame);
   if (rk?.aside) return false; // слово не мне (#6081): факт без тела
+  // Ответ на вопрос мне — псевдонимом в память до всякого решения: переспрос сошлётся на него.
+  if (rk?.kind === "answer") noteAnswer(f);
   const mine = mineOf(f);
   const hit = (v: unknown): boolean => {
     const a = addresseeOf(v);

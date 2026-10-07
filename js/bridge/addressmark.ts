@@ -9,7 +9,7 @@
 // первый помнит в памяти отданного места (.seen), чтобы узнать второй и после
 // своего перезапуска и в лежалых.
 import { addressedToMine, wordKeyOf } from "../shared/addressed.ts";
-import { askedMine, askFromPerson, askKeyOf, askLineKeyOf, closedKeyOf } from "../shared/asks.ts";
+import { answerAliasOf, askedMine, askFromPerson, askKeyOf, closedKeyOf } from "../shared/asks.ts";
 import { type Frame } from "../shared/channel.ts";
 import { roomKind } from "../shared/room-kinds.ts";
 import { noteSeen } from "../shared/seen.ts";
@@ -30,8 +30,10 @@ export function markAddressed(frame: Frame, seenPath: string, seen: Set<string>)
     if (seen.has(markOf(frame)) || addressedToMine(frame)) frame.addressed = true;
   } else if (rk?.kind === "ask" && askedMine(frame, fieldsOf(frame))) {
     noteSeen(seenPath, `ask:${askKeyOf(frame)}`, seen);
-    noteSeen(seenPath, `ask:${askLineKeyOf(frame)}`, seen);
   } else if (rk?.kind === "ask" || rk?.kind === "progress" || rk?.kind === "answer") {
+    // Ответ на вопрос мне — псевдонимом в память: переспрос другому сошлётся на него.
+    const a = answerAliasOf(frame);
+    if (a && seen.has(`ask:${a.of}`)) noteSeen(seenPath, `ask:${a.alias}`, seen);
     const k = closedKeyOf(frame);
     if (k && seen.has(`ask:${k}`)) frame.addressed = true;
   }
