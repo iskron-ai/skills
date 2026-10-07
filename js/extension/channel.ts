@@ -90,7 +90,7 @@ export function setupChannel(pi: ExtensionAPI): (params: any) => void {
           (asideTimer as { unref?: () => void }).unref?.();
           return;
         }
-        takeRoomCopies(aside, frame, (f) => f); // копии дела события, которое кадр несёт текстом (#6563)
+        takeRoomCopies(aside, [frame], (f) => f); // копии дела события, которое кадр несёт текстом (#6563)
         flushAsides(); // накопленное — прежде следующего кадра: порядок цел
         // Кадр комнаты с event_kind рода «в пачку» (словарь родов, #5851) ход не
         // режет — ждёт его конца; кадр без event_kind — прежним путём, вставкой.
@@ -116,7 +116,7 @@ export function setupChannel(pi: ExtensionAPI): (params: any) => void {
         return;
       case "stale":
       case "backlog":
-        for (const f of ev.frames ?? []) takeRoomCopies(aside, f, (x) => x); // их события — текстом пачки (#6563)
+        takeRoomCopies(aside, ev.frames ?? [], (f) => f); // показанные пачкой — текстом (#6563)
         // Одна пачка — одно слово в ход: лежалые кадры или побудка с накопленным.
         if (ev.text)
           pi.sendMessage(

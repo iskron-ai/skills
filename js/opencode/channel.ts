@@ -204,8 +204,7 @@ export function setupChannel(ctx: Context, say: Say, freshestRoot: () => string 
    * счёт их не повторит (#5842, #6563). Только своя сессия: у чужой своя доставка.
    */
   function takeOwnCopies(p: Pile | undefined, frames: (Frame | null)[] | undefined): void {
-    for (const f of frames ?? [])
-      for (const fs of p ? [p.held, p.riders] : []) takeRoomCopies(fs, f, (x) => x);
+    for (const fs of p ? [p.held, p.riders] : []) takeRoomCopies(fs, frames ?? [], (x) => x);
   }
 
   /** Счёт попутных записей пачек — строками шапки; пачки отдают их. */

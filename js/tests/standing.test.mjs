@@ -3550,6 +3550,89 @@ test("a wake-up window does not count a case copy whose inbox frame is in the sa
   );
 });
 
+// Копия дела гаснет только перед копией инбокса, вошедшей в ход ТЕКСТОМ: копия инбокса
+// за пределом показанных пачкой (её назвало лишь число) копии дела не гасит — ни в
+// пачке, ни меткой отданного после неё (решение стюарда #931 по краю окна).
+const others = (n, from, extra) =>
+  Array.from({ length: n }, (_, i) => graphEvent(`other-${from + i}`, from + i, "другое", extra));
+
+test("an inbox frame past the shown part of a wake-up window leaves its case copy counted, and a later case copy offered", async (t) => {
+  const { fake, bridge } = await connected(t, {
+    env: { ISKRON_BRIDGE_BACKLOG_MS: "800" },
+    init: { ...INIT, clientInfo: { name: "opencode-iskron", version: "1" } },
+  });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const backlogs = () => bridge.notifications.filter((n) => n.params?.data?.kind === "backlog");
+  await fake.control({ ws_send: JSON.stringify({ type: "hello", pending: 23 }) });
+  await sendRoom(fake, { ...nodeOp("updated", 91), event_id: 77 });
+  await fake.control({
+    ws_send_many: [
+      ...others(20, 1001),
+      graphEvent("inbox-1", 77, "событие семьдесят семь"),
+      graphEvent("inbox-2", 78, "событие семьдесят восемь"),
+    ],
+  });
+  await waitFor(() => backlogs().length === 1, "the backlog notification");
+  const text = backlogs()[0].params.data.text;
+  assert.ok(!text.includes("событие семьдесят"), `an inbox frame past the cut was shown:\n${text}`);
+  assert.match(text, /записей 1/, `the case copy of a counted-only inbox frame vanished:\n${text}`);
+  await sendRoom(fake, { ...nodeOp("updated", 92), event_id: 78 });
+  await waitFor(
+    () => bridge.notifications.some((n) => n.params?.data?.frame?.id === "room-msg-92"),
+    "the later case copy offered",
+  );
+});
+
+test("a stale inbox frame past the shown part of its burst leaves a held case copy counted under the Monitor watchdog", async (t) => {
+  const { fake, dir, key } = await connected(t, { env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "4000" } });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog", dir, key, 20_000);
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
+  await sendRoom(fake, { ...nodeOp("updated", 98), event_id: 84 });
+  await fake.control({
+    ws_send_many: [
+      ...others(20, 2001, { stale: true }),
+      graphEvent("inbox-8", 84, "событие восемьдесят четыре", { stale: true }),
+    ],
+  });
+  await waitFor(() => wd.out.includes("Лежалых кадров: 21"), "the stale batch");
+  assert.ok(
+    !wd.out.includes("событие восемьдесят четыре"),
+    `the inbox frame was shown:\n${wd.out}`,
+  );
+  await quietThenNudge(fake, wd, 4500, 993);
+  assert.match(
+    wd.out,
+    /записей 1/,
+    `the case copy of a counted-only inbox frame vanished:\n${wd.out}`,
+  );
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
+test("a stale inbox frame past the shown part of its burst neither swallows a live case copy nor marks its event shown", async (t) => {
+  const { fake, bridge } = await connected(t, {
+    init: { ...INIT, clientInfo: { name: "opencode-iskron", version: "1" } },
+  });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const offered = (id) => bridge.notifications.some((n) => n.params?.data?.frame?.id === id);
+  await fake.control({
+    ws_send_many: [
+      ...others(20, 3001, { stale: true }),
+      graphEvent("inbox-9", 85, "событие восемьдесят пять", { stale: true }),
+      graphEvent("inbox-10", 86, "событие восемьдесят шесть", { stale: true }),
+    ],
+  });
+  await sendRoom(fake, { ...nodeOp("updated", 101), event_id: 85 });
+  await waitFor(() => offered("room-msg-101"), "the case copy beside the waiting burst");
+  await waitFor(
+    () => bridge.notifications.some((n) => n.params?.data?.kind === "stale"),
+    "the stale batch",
+  );
+  await sendRoom(fake, { ...nodeOp("updated", 102), event_id: 86 });
+  await waitFor(() => offered("room-msg-102"), "the case copy after the burst");
+});
+
 test("a count the Monitor watchdog holds unprinted loses the case copy whose inbox frame comes next", async (t) => {
   const { fake, dir, key } = await connected(t, { env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "1000" } });
   await waitFor(() => fake.state.ws.size === 1, "the socket");
@@ -3580,6 +3663,26 @@ test("a count the exit watchdog holds loses the case copy whose inbox frame wake
   assert.ok(
     !wd.out.includes("записей"),
     `exit watchdog: case copy counted beside its inbox frame:\n${wd.out}`,
+  );
+});
+
+test("a count the exit watchdog holds loses the case copy whose stale inbox frame its burst shows", async (t) => {
+  const { fake, dir, key } = await connected(t, { env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "1000" } });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog-exit", dir, key, 20_000);
+  await waitFor(() => wd.err.includes("hello"), "hello to be noted");
+  await sendRoom(fake, { ...nodeOp("updated", 99), event_id: 87 });
+  await waitFor(() => wd.err.includes("счёт ждёт ближайшей побудки"), "the batch held", 6000);
+  await fake.control({
+    ws_send: graphEvent("inbox-11", 87, "событие восемьдесят семь", { stale: true }),
+  });
+  await waitFor(() => wd.err.includes("событие восемьдесят семь"), "the stale batch in the log");
+  await nudge(fake, 994);
+  await wd.done;
+  assert.ok(wd.out.includes("[994]"), `the word to me:\n${wd.out}`);
+  assert.ok(
+    !wd.out.includes("записей"),
+    `exit watchdog: case copy counted after its stale inbox frame was shown:\n${wd.out}`,
   );
 });
 

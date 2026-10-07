@@ -12,16 +12,9 @@ import { addressedToMine } from "../shared/addressed.ts";
 import { type Frame } from "../shared/channel.ts";
 import { batchLine, caseKey, frameToText } from "../shared/frame-text.ts";
 import { L } from "../shared/lang.ts";
-import { deliveredKeys, noteSeen, seenIds } from "../shared/seen.ts";
+import { deliveredKeys, noteSeen, seenIds, staleBatchKeys } from "../shared/seen.ts";
 import { seenFilePathOf } from "../shared/standings.ts";
-import {
-  adoptSeenPath,
-  attach,
-  dropHeldCopies,
-  heldHeads,
-  resolveStanding,
-  staleBatchKeys,
-} from "./client.ts";
+import { adoptSeenPath, attach, dropHeldCopies, heldHeads, resolveStanding } from "./client.ts";
 import { doer, wd } from "./words.ts";
 
 // Monitor Claude Code режет строку события длиннее ~500 знаков (наблюдено:

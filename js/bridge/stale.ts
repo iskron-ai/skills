@@ -8,7 +8,7 @@ import { addressedToMine } from "../shared/addressed.ts";
 import { type Frame } from "../shared/channel.ts";
 import { caseCountLines, frameToText } from "../shared/frame-text.ts";
 import { L } from "../shared/lang.ts";
-import { deliveredKeys, eventKeyOf, isRoomCopy } from "../shared/seen.ts";
+import { countedKeys, eventKeyOf, isRoomCopy, takeRoomCopies } from "../shared/seen.ts";
 import { type ChannelEvent } from "./door.ts";
 
 const STALE_BURST_KEEP = 20;
@@ -33,9 +33,12 @@ export class StaleBurst {
       const all = this.burst.splice(0);
       if (!all.length) return; // все копии вынула живая копия того же события
       const frames = all.slice(0, STALE_BURST_KEEP);
-      // Закон #6574: адресованные месту — текстом, прочие записи дел — счётом.
+      // Закон #6574: адресованные месту — текстом, прочие записи дел — счётом; копия
+      // дела события, чья копия инбокса показана здесь текстом, счётом не повторяется.
+      const counted = [...frames];
+      takeRoomCopies(counted, frames, (f) => f);
       const bodies = [
-        ...caseCountLines(frames),
+        ...caseCountLines(counted),
         ...frames
           .filter((f) => addressedToMine(f))
           .map((f) => {
@@ -47,9 +50,10 @@ export class StaleBurst {
         {
           kind: "stale",
           frames,
-          // Сторож метит отданным и то, что пачка назвала числом: иначе оно вернётся с повтором (#5831).
+          // Сторож метит отданным и то, что пачка назвала числом: иначе оно вернётся с повтором (#5831);
+          // метками счёта — текстом его событие не вошло (seen.ts countedKeys).
           ...(all.length > frames.length
-            ? { unshown: all.slice(frames.length).flatMap((f) => deliveredKeys(f)) }
+            ? { unshown: all.slice(frames.length).flatMap((f) => countedKeys(f)) }
             : {}),
           text:
             L(
@@ -76,15 +80,24 @@ export class StaleBurst {
     }, STALE_BURST_MS).unref();
   }
 
-  /** Лежит ли в копящейся пачке копия этого события графа (fanout.ts); notRoom — не считая копий дела. */
-  hasEvent(evKey: string, notRoom = false): boolean {
-    return this.burst.some((f) => eventKeyOf(f) === evKey && !(notRoom && isRoomCopy(f)));
+  /** Лежит ли в копящейся пачке копия этого события графа того же рода — копия дела либо инбокса (fanout.ts). */
+  hasEvent(evKey: string, room: boolean): boolean {
+    return this.burst.some((f) => eventKeyOf(f) === evKey && isRoomCopy(f) === room);
   }
 
-  /** Вынуть из копящейся пачки копии события — живая копия будит, пачка нет (fanout.ts). */
+  /**
+   * Вынуть из копящейся пачки лежалые копии инбокса события — живая копия будит, пачка
+   * нет (fanout.ts). Копии дела остаются: их гасит только показанный текстом (takeCopies).
+   */
   dropEvent(evKey: string): void {
     for (let i = this.burst.length - 1; i >= 0; i--)
-      if (eventKeyOf(this.burst[i]) === evKey) this.burst.splice(i, 1);
+      if (eventKeyOf(this.burst[i]) === evKey && !isRoomCopy(this.burst[i]))
+        this.burst.splice(i, 1);
+  }
+
+  /** Вынуть копии дела событий, вошедших в ход текстом кадров `shown` (seen.ts takeRoomCopies). */
+  takeCopies(shown: readonly (Frame | null)[]): Frame[] {
+    return takeRoomCopies(this.burst, shown, (f) => f);
   }
 
   /** Забыть накопленное — при отпускании стояния. */

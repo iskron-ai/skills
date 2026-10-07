@@ -42,27 +42,29 @@ export function eventKeyOf(frame: Frame | null | undefined): string {
 /**
  * Копия события в деле: запись дела отдаётся счётом, не текстом события (#6574),
  * поэтому её доставка события не метит — кадр инбокса того же события будить
- * вправе; сама она гаснет перед отданной или ждущей копией (fanout.ts).
+ * вправе; сама она гаснет только перед копией инбокса, вошедшей в ход текстом.
  */
 export const isRoomCopy = (frame: Frame | null | undefined): boolean =>
   frame?.provenance?.via === "room" && !!eventKeyOf(frame);
 
 /**
- * Копии дела того события, что несёт этот кадр инбокса, — вынуть из ждущей пачки:
- * копия гаснет, пока другая ждёт (#5842), событие войдёт текстом кадра инбокса, и
- * счёт пачки его не повторит (#6563). Возвращает вынутые; кадр без события или
- * сама копия дела не вынимает ничего.
+ * Копии дела событий, которые кадры `shown` внесли в ход ТЕКСТОМ, — вынуть из ждущей
+ * пачки: событие вошло текстом копии инбокса, и счёт его не повторит (#5842, #6563).
+ * Одно правило всех путей — моста и клиентов: `shown` — только кадры, вошедшие
+ * текстом (живой кадр; показанные кадры пачки), никогда не названные лишь числом
+ * сверх показанных — такая копия инбокса копию дела не гасит (решение стюарда #931).
+ * Возвращает вынутые; копия дела и кадр без события не вынимают ничего.
  */
 export function takeRoomCopies<T>(
   pile: T[],
-  frame: Frame | null | undefined,
+  shown: readonly (Frame | null | undefined)[],
   frameOf: (x: T) => Frame | null | undefined,
 ): T[] {
-  const ev = isRoomCopy(frame) ? "" : eventKeyOf(frame);
+  const evs = new Set(shown.map(eventMarkOf).filter(Boolean));
   const out: T[] = [];
-  for (let i = pile.length - 1; ev && i >= 0; i--) {
+  for (let i = pile.length - 1; evs.size && i >= 0; i--) {
     const f = frameOf(pile[i]);
-    if (isRoomCopy(f) && eventKeyOf(f) === ev) out.unshift(...pile.splice(i, 1));
+    if (isRoomCopy(f) && evs.has(eventKeyOf(f))) out.unshift(...pile.splice(i, 1));
   }
   return out;
 }
@@ -75,11 +77,27 @@ export const eventMarkOf = (frame: Frame | null | undefined): string =>
  * Метки доставленного кадра: его id и событие графа. Лежалая копия метит событие
  * отдельно (`evs:`) — пачка не будит, и живая копия того же события будить вправе.
  */
-export function deliveredKeys(frame: Frame | null | undefined): string[] {
+export const deliveredKeys = (frame: Frame | null | undefined): string[] => keysOf(frame, "");
+
+function keysOf(frame: Frame | null | undefined, prefix: string): string[] {
   const id = typeof frame?.id === "string" ? frame.id : "";
   const ev = eventMarkOf(frame);
-  return [id, ev && frame?.stale === true ? `evs:${ev.slice(3)}` : ev].filter(Boolean);
+  const mark = ev && frame?.stale === true ? `evs:${ev.slice(3)}` : ev;
+  return [id, mark && prefix + mark].filter(Boolean);
 }
+
+/**
+ * Метки кадра пачки, названного лишь числом сверх показанных (#5831): событие —
+ * с приставкой `c` (`cev:`, `cevs:`). Другие копии инбокса гаснут перед ним, как
+ * перед отданным, а копия дела — нет: текстом событие в ход не вошло (fanout.ts).
+ */
+export const countedKeys = (frame: Frame | null | undefined): string[] => keysOf(frame, "c");
+
+/** Метки лежалой пачки: показанные кадры и названные числом сверх них (#5831) — у моста и сторожей. */
+export const staleBatchKeys = (ev: { frames?: Frame[]; unshown?: string[] }): string[] => [
+  ...(ev.frames ?? []).flatMap((f) => deliveredKeys(f)),
+  ...(ev.unshown ?? []),
+];
 
 export function seenIds(seenPath: string): Set<string> {
   try {

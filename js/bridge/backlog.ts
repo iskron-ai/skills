@@ -22,10 +22,8 @@ const BODY_CAP = 800;
 const at = (f: Frame): string => (typeof f.received_at === "string" ? f.received_at : "");
 
 export class Backlog {
-  private readonly frames: Frame[] = [];
   /** Все кадры окна — пачка показывает первые BACKLOG_KEEP, отданными метятся все (#5831). */
   private readonly all: Frame[] = [];
-  private total = 0;
   /** Прямые слова окна — ушли отдельно; шапка называет их числом. */
   private direct = 0;
   private pending = 0;
@@ -59,20 +57,29 @@ export class Backlog {
     }
     const id = typeof frame.id === "string" ? frame.id : "";
     if (id && this.all.some((f) => f.id === id)) return true;
-    this.total++;
     this.all.push(frame);
-    if (this.frames.length < BACKLOG_KEEP) this.frames.push(frame);
     return true;
+  }
+
+  /** Лежит ли кадр в открытом окне — его судьба (текстом или числом) решится пачкой (fanout.ts). */
+  holds(frame: Frame | null): boolean {
+    return !!frame && this.all.includes(frame);
+  }
+
+  /** Вынуть из окна копии дела событий, вошедших в ход текстом кадров `shown` (seen.ts takeRoomCopies). */
+  takeCopies(shown: readonly (Frame | null)[]): Frame[] {
+    return takeRoomCopies(this.all, shown, (f) => f);
   }
 
   private close(): void {
     this.timer = null;
-    const got = this.frames.splice(0).sort((a, b) => (at(a) < at(b) ? -1 : at(a) > at(b) ? 1 : 0));
     const all = this.all.splice(0);
-    const count = this.total;
+    const got = all
+      .slice(0, BACKLOG_KEEP)
+      .sort((a, b) => (at(a) < at(b) ? -1 : at(a) > at(b) ? 1 : 0));
+    const count = all.length;
     const expected = this.pending;
     const direct = this.direct;
-    this.total = 0;
     this.direct = 0;
     this.pending = 0;
     const emit = this.flush;
@@ -80,9 +87,10 @@ export class Backlog {
     if (!got.length || !emit) return;
     // Закон #6574: адресованные месту — текстом, прочие записи дел — счётом
     // по одному на дело; поручений отвечать конверт не несёт.
-    // Копия дела события, чей кадр инбокса в том же окне, счётом не повторяется (#5842, #6563).
+    // Копия дела события, чей кадр инбокса показан здесь текстом, счётом не повторяется;
+    // кадр инбокса сверх показанных копию дела не гасит (seen.ts takeRoomCopies).
     const counted = [...got];
-    for (const f of all) takeRoomCopies(counted, f, (x) => x);
+    takeRoomCopies(counted, got, (f) => f);
     const bodies = [
       ...caseCountLines(counted),
       ...got

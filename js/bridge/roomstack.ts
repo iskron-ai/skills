@@ -53,13 +53,14 @@ export class RoomBatch {
     }
   }
 
-  /** Вынуть из копящейся пачки копии дела события, которое несёт кадр инбокса (seen.ts). */
-  dropEvent(frame: Frame, dropped: (frame: Frame) => void): void {
-    takeRoomCopies(this.held, frame, (h) => h.frame).forEach((h) => dropped(h.frame));
+  /** Вынуть из копящейся пачки копии дела событий, вошедших в ход текстом кадров `shown` (seen.ts). */
+  takeCopies(shown: readonly (Frame | null)[]): Frame[] {
+    const out = takeRoomCopies(this.held, shown, (h) => h.frame).map((h) => h.frame);
     if (!this.held.length && this.timer) {
       clearTimeout(this.timer);
       this.timer = null;
     }
+    return out;
   }
 
   /** Лежит ли кадр в копящейся пачке — кольцо не отдаёт его прицепившемуся отдельно (door.ts). */

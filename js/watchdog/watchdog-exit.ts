@@ -13,9 +13,9 @@ import { type ChannelEvent } from "../bridge/hold.ts";
 import { addressedToMine } from "../shared/addressed.ts";
 import { type Frame } from "../shared/channel.ts";
 import { batchLine, caseKey, frameToText } from "../shared/frame-text.ts";
-import { eventMarkOf, noteSeen, seenIds } from "../shared/seen.ts";
+import { eventMarkOf, noteSeen, seenIds, staleBatchKeys } from "../shared/seen.ts";
 import { seenFilePathOf } from "../shared/standings.ts";
-import { adoptSeenPath, attach, heldHeads, resolveStanding, staleBatchKeys } from "./client.ts";
+import { adoptSeenPath, attach, dropHeldCopies, heldHeads, resolveStanding } from "./client.ts";
 import { doer, wd } from "./words.ts";
 
 // The bridge replays its ring to every client that attaches, so a watchdog
@@ -129,7 +129,9 @@ export function runWatchdogExit(argv: string[]): void {
           break;
         }
         case "stale":
-          // Пачка лежалых: не повод будить, но и не потеря — тела в логе, id помечены.
+          // Пачка лежалых: не повод будить, но и не потеря — тела в логе, id помечены;
+          // копии дела показанных ею событий ждущий счёт не повторит.
+          dropHeldCopies(riders, ev.frames ?? []);
           for (const k of staleBatchKeys(ev)) noteSeen(seenPath, k, seen);
           note(ev.text ?? wd.staleFrames());
           break;

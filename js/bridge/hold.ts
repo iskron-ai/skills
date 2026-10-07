@@ -21,7 +21,7 @@ import { harnessName, notifiedClient } from "./client.ts";
 import { stampOrigin } from "./complete.ts";
 import { CFG } from "./config.ts";
 import { type ChannelEvent, Door, type DoorHooks, ENV_KEY } from "./door.ts";
-import { isDelivered, redundantCopy } from "./fanout.ts";
+import { batchHandedOut, isDelivered, redundantCopy, takeShownCopies } from "./fanout.ts";
 import { letGo, takeSpool } from "./handoff.ts";
 import { dropHoldRecord, keyOf, readHoldRecord, writeHoldRecord } from "./holdrecord.ts";
 import { type Frame, H, handoverReason } from "./holdstate.ts";
@@ -363,8 +363,7 @@ function deliverTo(d: Door, raw: string, frame: Frame | null, full: Frame | null
     return again
       ? log(`stale frame ${id} already delivered — dropped`)
       : d.stale.note(full, (ev, all) => {
-          if (notifiedClient())
-            for (const f of all) for (const k of deliveredKeys(f)) noteSeen(seenPath, k, d.seen);
+          batchHandedOut(d, ev.frames ?? [], notifiedClient() ? all : null);
           d.broadcast(ev);
           notify("info", keyed(d, ev));
         });
@@ -376,6 +375,8 @@ function deliverTo(d: Door, raw: string, frame: Frame | null, full: Frame | null
   const ev: ChannelEvent = { kind: "frame", raw: text, frame: full };
   const msg = full?.type === "message" && !again ? full : null;
   if (msg) noteRoomKind(msg);
+  // Сторожам кадр идёт текстом: копии дела его события — вон, прежде чем уйдёт накопленное.
+  if (msg && !notifiedClient()) takeShownCopies(d, [msg]);
   // Сторожам кадр комнаты «в пачку» — пачкой по окну, прерывающий — после накопленного (roomstack.ts).
   const toBatch = (b: ChannelEvent): void => (d.broadcast(b), notify("info", keyed(d, b)));
   if (msg && !notifiedClient() && batchForWatchdogs(d, text, msg, toBatch)) return;
@@ -388,13 +389,14 @@ function deliverTo(d: Door, raw: string, frame: Frame | null, full: Frame | null
     // умерший в окне мост его не потеряет: платформа отдаст снова. Метятся все
     // кадры окна, и не показанные пачкой: она называет их числом и адресом history.
     const flushBacklog = (b: ChannelEvent, all: Frame[]): void => {
-      for (const f of all) for (const k of deliveredKeys(f)) noteSeen(seenPath, k, d.seen);
+      batchHandedOut(d, b.frames ?? [], all);
       notify("info", keyed(d, b));
     };
     if (hello && Number(full.pending) > 0) d.backlog.open(Number(full.pending), flushBacklog);
     if (full?.type === "message") {
       if (full.origin === "platform") d.backlog.open(0, flushBacklog);
       if (d.backlog.note(full)) return;
+      takeShownCopies(d, [full]);
     }
     for (const k of deliveredKeys(full)) noteSeen(seenPath, k, d.seen);
   }

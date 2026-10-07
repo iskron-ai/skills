@@ -9,7 +9,7 @@ import { type ChannelEvent } from "../bridge/hold.ts";
 import { type Frame } from "../shared/channel.ts";
 import { batchHead } from "../shared/frame-text.ts";
 import { setLang } from "../shared/lang.ts";
-import { deliveredKeys, seenIds, takeRoomCopies } from "../shared/seen.ts";
+import { seenIds, takeRoomCopies } from "../shared/seen.ts";
 import { authDirFromEnv, socketPathOf, standingsDirOf } from "../shared/standings.ts";
 import { wd } from "./words.ts";
 
@@ -101,15 +101,9 @@ export function heldHeads(groups: Frame[][], carrier?: Frame | null): string[] {
 }
 
 /** Копии дела событий, которые кадры несут текстом в ход, — вон из ждущих пачек (#5842, #6563). */
-export function dropHeldCopies(groups: Frame[][], carriers: (Frame | null | undefined)[]): void {
-  for (const c of carriers) if (c) for (const g of groups) takeRoomCopies(g, c, (f) => f);
+export function dropHeldCopies(groups: Frame[][], shown: (Frame | null | undefined)[]): void {
+  for (const g of groups) takeRoomCopies(g, shown, (f) => f);
 }
-
-/** Метки лежалой пачки: показанные кадры и названные числом сверх них (#5831). */
-export const staleBatchKeys = (ev: ChannelEvent): string[] => [
-  ...(ev.frames ?? []).flatMap((f) => deliveredKeys(f)),
-  ...(ev.unshown ?? []),
-];
 
 export interface AttachOptions {
   onEvent: (ev: ChannelEvent) => void;
