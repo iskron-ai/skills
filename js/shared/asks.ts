@@ -53,7 +53,14 @@ const phrase = (key: string, values: Rec = {}): string => fill(askWord(key) ?? "
  */
 const toOf = (fields: Rec): Rec => obj(fields.to);
 
-/** Вопрос мне: to.karta — моя роль (сверка как у приглашения роли) либо to.standing — моё место. */
+/** Аккаунт места по адресу @handle:name; без адреса — пусто. */
+const handleOf = (address: string): string => /^@([^:]+):/.exec(address)?.[1] ?? "";
+
+/**
+ * Вопрос мне: to.standing — моё место; иначе to.karta — моя роль (сверка как у
+ * приглашения роли), а названное место, если есть, — того же аккаунта: на вопрос
+ * месту отвечают места его аккаунта в этой роли (#6867), чужим он не адресован.
+ */
 export function askedMine(frame: Rec, fields: Rec): boolean {
   const mine = mineOf(frame);
   // Эхо своего вопроса — не вопрос мне, даже если спрошена моя же роль.
@@ -62,7 +69,10 @@ export function askedMine(frame: Rec, fields: Rec): boolean {
   const to = toOf(fields);
   const place = addresseeOf(to.standing);
   if (place?.addr.some((a) => mine.includes(a))) return true;
-  return myRole(frame, { karta: to.karta });
+  if (!myRole(frame, { karta: to.karta })) return false;
+  if (!place) return true;
+  const theirs = handleOf(str(obj(to.standing).standing) || str(to.standing));
+  return !!theirs && theirs === handleOf(str(frame.to_standing));
 }
 
 /** Вопросы мне, которые видел этот процесс: ключ — дело и номер ask. */

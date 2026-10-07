@@ -5522,8 +5522,16 @@ test("question kinds: an answer to my seat steers; an answer to another and a wi
     const s = await send(toSeat, 3);
     assert.equal(s.delivery, "steer", "a question to my seat interrupts");
     assert.match(s.text, /спрашивает роль 🚚 Поставщик плитки \(место proba \(@tester:proba\)\)/);
+    // A question to a place of my account in my role is mine (any of its places answers, #6867);
+    // to a place of another account in my role — not mine.
+    const sibling = ask(100);
+    sibling.line.fields.to.standing = { id: "id-sibling", standing: "@tester:other" };
+    assert.equal((await send(sibling, 4)).delivery, "steer", "my account, my role — mine");
+    const foreign = ask(101);
+    foreign.line.fields.to.standing = { id: "id-boris", standing: BORIS };
+    await quiet(foreign);
     // The withdrawal of a question to me (fields.withdraws) is mine, in words, without a wake.
-    const w = await send(askWithdrawn(99, 90), 4);
+    const w = await send(askWithdrawn(99, 90), 5);
     assert.equal(w.delivery, "queue", "a withdrawn question to me batches");
     assert.match(
       w.text,
