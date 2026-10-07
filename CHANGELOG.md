@@ -1,5 +1,16 @@
 # Changelog
 
+## [7.4.1](https://github.com/iskron-ai/skills/compare/v7.4.0...v7.4.1) (2026-10-07)
+
+
+### Bug Fixes
+
+* **bridge:** a daemon handover pauses satellites with live bridges instead of ending their runs ([#355](https://github.com/iskron-ai/skills/issues/355)) ([669a281](https://github.com/iskron-ai/skills/commit/669a2817f5bdb8067f27cb05ff58d311ff70fa02))
+* **iskronify:** description ролей в образце delegation.md — в двойных кавычках ([#354](https://github.com/iskron-ai/skills/issues/354)) ([8c07d2c](https://github.com/iskron-ai/skills/commit/8c07d2c868aec1ad7934da04ddf489bfe158d72e))
+* **iskronify:** memory-guard блокирует путь, не раскрывшийся за 8 переходов ссылок ([#353](https://github.com/iskron-ai/skills/issues/353)) ([a54f4d3](https://github.com/iskron-ai/skills/commit/a54f4d38191ab0321a973fa1c8845e983972851d))
+* **iskronify:** образец ритуалов без id не глушит напоминания; свой мост роли — харнесс-нейтрально ([#350](https://github.com/iskron-ai/skills/issues/350)) ([e1508d9](https://github.com/iskron-ai/skills/commit/e1508d91583811fc4fc22ae49f5913bff51ba506))
+* **opencode:** the permission word says only the human answers, in the child's session window ([#351](https://github.com/iskron-ai/skills/issues/351)) ([60f7e3e](https://github.com/iskron-ai/skills/commit/60f7e3ebdd6151e8810d0288571d6156c5e37e2c))
+
 ## [7.4.0](https://github.com/iskron-ai/skills/compare/v7.3.0...v7.4.0) (2026-10-06)
 
 
