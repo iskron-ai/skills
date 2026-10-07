@@ -275,6 +275,17 @@ mkdir -p ~/.iskron-bridge
 curl -fsSL https://raw.githubusercontent.com/iskron-ai/skills/main/skills/establish-mcp/scripts/iskron.mjs -o ~/.iskron-bridge/iskron-bridge.mjs
 ```
 
+На Windows — PowerShell (`curl` там — псевдоним `Invoke-WebRequest`, поэтому `curl.exe`):
+
+```powershell
+New-Item -ItemType Directory -Force "$HOME\.iskron-bridge" | Out-Null
+curl.exe -fsSL https://raw.githubusercontent.com/iskron-ai/skills/main/skills/establish-mcp/scripts/iskron.mjs -o "$HOME\.iskron-bridge\iskron-bridge.mjs"
+(Get-Command node).Source    # абсолютный путь к node — для command записи ниже
+```
+
+В записи Windows-путь пишется с удвоенной обратной косой
+(`"C:\\Users\\<имя>\\.iskron-bridge\\iskron-bridge.mjs"`) или прямыми (`C:/Users/<имя>/…`).
+
 **Claude Code без плагина** (`--scope user`: граф следует за пользователем, не за одним
 проектом — скоуп по умолчанию зарегистрировал бы его проектно-локально):
 
@@ -293,7 +304,8 @@ claude mcp add --scope user iskron-bridge -- node "$HOME/.iskron-bridge/iskron-b
 Конфиг Claude Desktop лежит в `~/Library/Application Support/Claude/claude_desktop_config.json`
 (macOS) или `%APPDATA%\Claude\claude_desktop_config.json` (Windows); приложение
 читает его на старте — перезапусти его. Оконное приложение не видит `PATH` оболочки:
-стоит Node под nvm и подобными — в `command` абсолютный путь (`which node`).
+стоит Node под nvm и подобными — в `command` абсолютный путь (`which node`; на Windows —
+`(Get-Command node).Source`).
 
 Путь абсолютный: `~` в таких конфигах не раскрывается. Клади запись в
 **пользовательский** конфиг харнесса (домашняя директория), не в проектный — граф

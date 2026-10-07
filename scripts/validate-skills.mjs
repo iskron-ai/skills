@@ -504,7 +504,8 @@ try {
 }
 
 // 7. Путь к графу один — мост (слово владельца): отгружаемая MCP-запись —
-//    только stdio-процесс моста, http-записи к серверу нет ни в одном манифесте.
+//    только `node <поставка>/skills/establish-mcp/scripts/iskron.mjs`; ни http-записи,
+//    ни иного процесса (mcp-remote и подобных) ни в одном манифесте.
 //    Запись с url в обход моста пишет в граф без места, и подпись записи
 //    теряется молча.
 try {
@@ -517,7 +518,12 @@ try {
     const servers = read();
     if (!servers || typeof servers !== "object") continue;
     for (const [name, rec] of Object.entries(servers)) {
-      if (rec?.url || (rec?.type && rec.type !== "stdio") || !rec?.command) {
+      const bridge =
+        rec?.command === "node" &&
+        Array.isArray(rec.args) &&
+        rec.args.length === 1 &&
+        /(^|\/)skills\/establish-mcp\/scripts\/iskron\.mjs$/.test(rec.args[0]);
+      if (rec?.url || (rec?.type && rec.type !== "stdio") || !bridge) {
         fail(label, `запись \`${name}\` — не stdio-мост: путь к графу в поставке только мост, http-записи к серверу быть не должно`);
       }
     }
