@@ -9,11 +9,12 @@
 import { writeSync } from "node:fs";
 
 import { addressedToMine } from "../shared/addressed.ts";
+import { type Frame } from "../shared/channel.ts";
 import { batchLine, caseKey, frameToText } from "../shared/frame-text.ts";
 import { L } from "../shared/lang.ts";
 import { deliveredKeys, noteSeen, seenIds } from "../shared/seen.ts";
 import { seenFilePathOf } from "../shared/standings.ts";
-import { adoptSeenPath, attach, resolveStanding, staleBatchKeys } from "./client.ts";
+import { adoptSeenPath, attach, heldHeads, resolveStanding, staleBatchKeys } from "./client.ts";
 import { doer, wd } from "./words.ts";
 
 // Monitor Claude Code режет строку события длиннее ~500 знаков (наблюдено:
@@ -107,16 +108,17 @@ export function runWatchdog(argv: string[]): void {
   // печатается сама — её шапка ждёт и уходит перед ближайшей адресованной строкой.
   let head = ""; // шапка идущей пачки — до её первой адресованной строки
   let fresh = false; // в идущей пачке есть не отданный прежде кадр
-  const riders: string[] = []; // шапки пачек из одних счётов
+  let batch: Frame[] = []; // кадры идущей пачки — её счёт, если адресованных в ней нет
+  const riders: Frame[][] = []; // пачки из одних счётов — кадрами до печати (heldHeads)
   const riderMarks: (() => void)[] = []; // их пометки — после печати
   const hold = (): void => {
-    if (head) riders.push(head);
+    if (head) riders.push(batch);
     riders.splice(0, Math.max(0, riders.length - RIDERS_MAX)); // старшие уходят: счёт не копится без меры
     head = "";
   };
   /** Ждущие шапки и шапка идущей пачки — строками перед адресованным; пометки — после печати. */
-  const take = (): { lines: string[]; marks: (() => void)[] } => {
-    const lines = [...riders.splice(0), ...(head ? [head] : [])];
+  const take = (carrier: Frame): { lines: string[]; marks: (() => void)[] } => {
+    const lines = [...heldHeads(riders, carrier), ...(head ? [head] : [])];
     head = "";
     return { lines, marks: riderMarks.splice(0) };
   };
@@ -150,7 +152,9 @@ export function runWatchdog(argv: string[]): void {
             if (ev.batch.at === 1) {
               cases.clear(); // зачин дела — у первой его строки в пачке
               fresh = false;
+              batch = [];
             }
+            batch.push(f);
             if (!again) fresh = true;
             const last = ev.batch.at >= ev.batch.of;
             // Пачка из одних отданных — повтор: её шапка уже ушла и в ждущий счёт не встаёт.
@@ -170,7 +174,7 @@ export function runWatchdog(argv: string[]): void {
             const first = !cases.has(caseKey(f));
             cases.add(caseKey(f));
             if (!again) {
-              const r = take();
+              const r = take(f);
               out([...r.lines, ...wrapLines(batchLine(f, ev.batch.fold, first))], false, () =>
                 [...r.marks, all].forEach((m) => m()),
               );
@@ -179,7 +183,7 @@ export function runWatchdog(argv: string[]): void {
             break;
           }
           if (!again) {
-            const r = take();
+            const r = take(f);
             if (r.lines.length) out(r.lines, false, () => r.marks.forEach((m) => m()));
             out(wrapLines(frameToText(f, ev.raw ?? "")), true, mark);
           }

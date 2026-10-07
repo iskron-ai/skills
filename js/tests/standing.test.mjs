@@ -3530,6 +3530,59 @@ test("a bound node rides in the batch by count as well", async (t) => {
   assert.ok(!out.includes("в деле узел"), `node words leaked:\n${out}`);
 });
 
+// Копия дела, ждущая счётом где бы то ни было — в окне побудки, в удержанной шапке
+// сторожа, — гаснет перед кадром инбокса своего события (#5842, #6563).
+test("a wake-up window does not count a case copy whose inbox frame is in the same window", async (t) => {
+  const { fake, bridge } = await connected(t, {
+    env: { ISKRON_BRIDGE_BACKLOG_MS: "800" },
+    init: { ...INIT, clientInfo: { name: "opencode-iskron", version: "1" } },
+  });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const backlogs = () => bridge.notifications.filter((n) => n.params?.data?.kind === "backlog");
+  await fake.control({ ws_send: JSON.stringify({ type: "hello", pending: 2 }) });
+  await sendRoom(fake, { ...nodeOp("updated", 91), event_id: 77 });
+  await fake.control({ ws_send: graphEvent("inbox-1", 77, "событие семьдесят семь") });
+  await waitFor(() => backlogs().length === 1, "the backlog notification");
+  const text = backlogs()[0].params.data.text;
+  assert.ok(
+    !/записей/.test(text),
+    `the case copy of the inbox event is counted in the wake batch:\n${text}`,
+  );
+});
+
+test("a count the Monitor watchdog holds unprinted loses the case copy whose inbox frame comes next", async (t) => {
+  const { fake, dir, key } = await connected(t, { env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "1000" } });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog", dir, key, 20_000);
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
+  await sendRoom(fake, { ...nodeOp("updated", 93), event_id: 79 });
+  await new Promise((r) => setTimeout(r, 1500)); // bridge window flushed; watchdog holds the count unprinted
+  assert.ok(!wd.out.includes("записей"), "count alone is not printed");
+  await fake.control({ ws_send: graphEvent("inbox-3", 79, "событие семьдесят девять") });
+  await waitFor(() => wd.out.includes("событие семьдесят девять"), "the inbox frame");
+  assert.ok(
+    !wd.out.includes("записей"),
+    `the held count of the case copy rode with the inbox frame of the same event:\n${wd.out}`,
+  );
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
+test("a count the exit watchdog holds loses the case copy whose inbox frame wakes it", async (t) => {
+  const { fake, dir, key } = await connected(t, { env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "1000" } });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog-exit", dir, key, 20_000);
+  await waitFor(() => wd.err.includes("hello"), "hello to be noted");
+  await sendRoom(fake, { ...nodeOp("updated", 94), event_id: 80 });
+  await waitFor(() => wd.err.includes("счёт ждёт ближайшей побудки"), "the batch held", 6000);
+  await fake.control({ ws_send: graphEvent("inbox-4", 80, "событие восемьдесят") });
+  await wd.done;
+  assert.ok(
+    !wd.out.includes("записей"),
+    `exit watchdog: case copy counted beside its inbox frame:\n${wd.out}`,
+  );
+});
+
 // Строки работы одного ключа (room.id, line.key) в пачке сворачиваются в последнюю
 // (#6718): счёт называет записи после свёртки и сменённые числом; строка bad и
 // адресованное месту слово не сворачиваются; отданными метятся все кадры пачки.

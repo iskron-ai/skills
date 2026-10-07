@@ -11,6 +11,7 @@ import { addressedToMine } from "../shared/addressed.ts";
 import { type Frame, isDirectWord } from "../shared/channel.ts";
 import { caseCountLines, frameToText } from "../shared/frame-text.ts";
 import { L } from "../shared/lang.ts";
+import { takeRoomCopies } from "../shared/seen.ts";
 import { type ChannelEvent } from "./door.ts";
 
 /** Окно накопления; переменная — шов для проб, не ручка человека. */
@@ -79,8 +80,11 @@ export class Backlog {
     if (!got.length || !emit) return;
     // Закон #6574: адресованные месту — текстом, прочие записи дел — счётом
     // по одному на дело; поручений отвечать конверт не несёт.
+    // Копия дела события, чей кадр инбокса в том же окне, счётом не повторяется (#5842, #6563).
+    const counted = [...got];
+    for (const f of all) takeRoomCopies(counted, f, (x) => x);
     const bodies = [
-      ...caseCountLines(got),
+      ...caseCountLines(counted),
       ...got
         .filter((f) => addressedToMine(f))
         .map((f) => {

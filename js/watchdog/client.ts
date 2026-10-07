@@ -6,8 +6,10 @@ import { connect } from "node:net";
 import { join } from "node:path";
 
 import { type ChannelEvent } from "../bridge/hold.ts";
+import { type Frame } from "../shared/channel.ts";
+import { batchHead } from "../shared/frame-text.ts";
 import { setLang } from "../shared/lang.ts";
-import { deliveredKeys, seenIds } from "../shared/seen.ts";
+import { deliveredKeys, seenIds, takeRoomCopies } from "../shared/seen.ts";
 import { authDirFromEnv, socketPathOf, standingsDirOf } from "../shared/standings.ts";
 import { wd } from "./words.ts";
 
@@ -83,6 +85,19 @@ export function adoptSeenPath(
   seen.clear();
   for (const x of seenIds(named)) seen.add(x);
   return named;
+}
+
+/**
+ * Шапки ждущих пачек из одних счётов (#6574) — строками, в момент печати: пачка
+ * ждёт кадрами, и кадр, несущий событие текстом (carrier), вынимает из неё копии
+ * дела того же события — счёт его не повторит (#5842, #6563). Группы забираются.
+ */
+export function heldHeads(groups: Frame[][], carrier?: Frame | null): string[] {
+  if (carrier) for (const g of groups) takeRoomCopies(g, carrier, (f) => f);
+  return groups
+    .splice(0)
+    .filter((g) => g.length)
+    .map(batchHead);
 }
 
 /** Метки лежалой пачки: показанные кадры и названные числом сверх них (#5831). */

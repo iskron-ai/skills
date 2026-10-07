@@ -11,10 +11,11 @@ import { writeSync } from "node:fs";
 
 import { type ChannelEvent } from "../bridge/hold.ts";
 import { addressedToMine } from "../shared/addressed.ts";
+import { type Frame } from "../shared/channel.ts";
 import { batchLine, caseKey, frameToText } from "../shared/frame-text.ts";
 import { eventMarkOf, noteSeen, seenIds } from "../shared/seen.ts";
 import { seenFilePathOf } from "../shared/standings.ts";
-import { adoptSeenPath, attach, resolveStanding, staleBatchKeys } from "./client.ts";
+import { adoptSeenPath, attach, heldHeads, resolveStanding, staleBatchKeys } from "./client.ts";
 import { doer, wd } from "./words.ts";
 
 // The bridge replays its ring to every client that attaches, so a watchdog
@@ -57,10 +58,11 @@ export function runWatchdogExit(argv: string[]): void {
   const cases = new Set<string>(); // дела, уже названные зачином в идущей пачке
   // Пачка из одних счётов (#6574) не будит: шапка ждёт ближайшей побудки, id —
   // её пометки; со смертью сторожа неотданное придёт кольцом моста снова.
-  const riders: string[] = [];
+  let batch: Frame[] = []; // кадры идущей пачки — её счёт, если она не разбудила
+  const riders: Frame[][] = []; // пачки из одних счётов — кадрами до побудки (heldHeads)
   const riderIds: string[] = [];
   const hold = (): void => {
-    if (head) riders.push(head);
+    if (head) riders.push(batch);
     riders.splice(0, Math.max(0, riders.length - 100)); // старшие уходят: счёт не копится без меры
     head = "";
   };
@@ -81,6 +83,8 @@ export function runWatchdogExit(argv: string[]): void {
           // счётом по делам (#6574); строка — только адресованному месту. Пачка
           // без адресованных не будит: её шапка ждёт ближайшей побудки.
           const last = !ev.batch || ev.batch.at >= ev.batch.of;
+          if (ev.batch?.at === 1) batch = [];
+          if (ev.batch && ev.frame) batch.push(ev.frame);
           if (seen.has(id)) {
             note(wd.seenEarlier(id));
             if (last) hold();
@@ -103,7 +107,7 @@ export function runWatchdogExit(argv: string[]): void {
             folded.push(id);
             return;
           }
-          for (const s of [...riders.splice(0), ...(head ? [head] : [])]) wake(s);
+          for (const s of [...heldHeads(riders, ev.frame), ...(head ? [head] : [])]) wake(s);
           head = "";
           const key = ev.frame ? caseKey(ev.frame) : "";
           const first = !cases.has(key);
