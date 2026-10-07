@@ -11,7 +11,7 @@ import { addressedToMine } from "../shared/addressed.ts";
 import { type Frame, isDirectWord } from "../shared/channel.ts";
 import { caseCountLines, frameToText } from "../shared/frame-text.ts";
 import { L } from "../shared/lang.ts";
-import { splitBatch, takeRoomCopies } from "../shared/seen.ts";
+import { type Marks, splitBatch } from "../shared/seen.ts";
 import { type ChannelEvent } from "./door.ts";
 
 /** Окно накопления; переменная — шов для проб, не ручка человека. */
@@ -28,10 +28,16 @@ export class Backlog {
   private direct = 0;
   private pending = 0;
   private timer: ReturnType<typeof setTimeout> | null = null;
-  private flush: ((ev: ChannelEvent, all: Frame[]) => void) | null = null;
+  private flush: ((ev: ChannelEvent) => void) | null = null;
+
+  /** `has` — метки места: событие, уже вошедшее в ход, пачка не повторяет (seen.ts eventIn). */
+  private readonly has: Marks;
+  constructor(has: Marks) {
+    this.has = has;
+  }
 
   /** Открыть окно — по hello с pending либо по кадру платформы; открытое не продлевается, только пополняется. */
-  open(expected: number, emit: (ev: ChannelEvent, all: Frame[]) => void): void {
+  open(expected: number, emit: (ev: ChannelEvent) => void): void {
     this.pending = Math.max(this.pending, expected);
     this.flush = emit;
     if (this.timer) return;
@@ -61,16 +67,11 @@ export class Backlog {
     return true;
   }
 
-  /** Вынуть из окна копии дела событий, вошедших в ход текстом кадров `shown` (seen.ts takeRoomCopies). */
-  takeCopies(shown: readonly (Frame | null)[]): Frame[] {
-    return takeRoomCopies(this.all, shown, (f) => f);
-  }
-
   private close(): void {
     this.timer = null;
     const all = this.all.splice(0);
-    // Копия дела события, показанного здесь текстом, — ни строкой счёта, ни кадром (seen.ts splitBatch).
-    const { shown, kept } = splitBatch(all, BACKLOG_KEEP);
+    // Событие — один раз, текстом или числом (seen.ts splitBatch); метки пачки — marks.
+    const { shown, kept, keys } = splitBatch(all, BACKLOG_KEEP, this.has);
     const got = shown.sort((a, b) => (at(a) < at(b) ? -1 : at(a) > at(b) ? 1 : 0));
     const count = kept.length;
     const expected = this.pending;
@@ -106,14 +107,12 @@ export class Backlog {
         'in full and the rest — iskron_channel(action="history", view="log").' +
         (direct ? ` ${direct} direct messages are not here: each came on its own and whole.` : ""),
     );
-    emit(
-      {
-        kind: "backlog",
-        frames: got,
-        pending: expected,
-        text: `${head}\n\n${bodies.join("\n\n")}`,
-      },
-      all,
-    );
+    emit({
+      kind: "backlog",
+      frames: got,
+      marks: keys,
+      pending: expected,
+      text: `${head}\n\n${bodies.join("\n\n")}`,
+    });
   }
 }

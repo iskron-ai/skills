@@ -13,9 +13,9 @@ import { type ChannelEvent } from "../bridge/hold.ts";
 import { addressedToMine } from "../shared/addressed.ts";
 import { type Frame } from "../shared/channel.ts";
 import { batchLine, caseKey, frameToText } from "../shared/frame-text.ts";
-import { eventMarkOf, noteSeen, seenIds, staleBatchKeys } from "../shared/seen.ts";
+import { deliveryKeys, noteSeen, seenIds } from "../shared/seen.ts";
 import { seenFilePathOf } from "../shared/standings.ts";
-import { adoptSeenPath, attach, dropHeldCopies, heldHeads, resolveStanding } from "./client.ts";
+import { adoptSeenPath, attach, heldHeads, resolveStanding } from "./client.ts";
 import { doer, wd } from "./words.ts";
 
 // The bridge replays its ring to every client that attaches, so a watchdog
@@ -52,8 +52,9 @@ export function runWatchdogExit(argv: string[]): void {
   }
   let seenPath = seenFilePathOf(target.authDir, target.key);
   const seen = seenIds(seenPath);
-  let woke = false; // отдан хоть один кадр залпа пачки
-  let head = ""; // шапка идущей пачки: счёт по делам и указатель
+  let head = false; // шапка идущей пачки ждёт её последнего кадра
+  let fresh = false; // в идущей пачке есть не отданный прежде кадр
+  let block: { lines: string[]; shown: Frame[]; ids: string[] } = { lines: [], shown: [], ids: [] };
   const folded: string[] = []; // id свёрнутых адресных слов череды — метятся с её строкой (#6081)
   const cases = new Set<string>(); // дела, уже названные зачином в идущей пачке
   // Пачка из одних счётов (#6574) не будит: шапка ждёт ближайшей побудки, id —
@@ -64,12 +65,7 @@ export function runWatchdogExit(argv: string[]): void {
   const hold = (): void => {
     if (head) riders.push(batch);
     riders.splice(0, Math.max(0, riders.length - 100)); // старшие уходят: счёт не копится без меры
-    head = "";
-  };
-  // Выход после побудки: записи пачки за отданной строкой названы её шапкой — отданы.
-  const leave = (): never => {
-    for (const k of [...riderIds.splice(0), ...folded.splice(0)]) noteSeen(seenPath, k, seen);
-    process.exit(0);
+    head = false;
   };
   attach(target.path, {
     onEvent: (ev) => {
@@ -78,61 +74,67 @@ export function runWatchdogExit(argv: string[]): void {
           const type = ev.frame?.type;
           if (type !== "message") return note(wd.notWakeup(type));
           const id = frameId(ev);
-          // Пачка кадров комнаты (мост, roomstack.ts) — одна побудка: печатаем её
-          // целиком и выходим на последнем кадре залпа, не на первом. Шапка —
-          // счётом по делам (#6574); строка — только адресованному месту. Пачка
-          // без адресованных не будит: её шапка ждёт ближайшей побудки.
-          const last = !ev.batch || ev.batch.at >= ev.batch.of;
-          if (ev.batch?.at === 1) batch = [];
-          if (ev.batch && ev.frame) batch.push(ev.frame);
-          if (seen.has(id)) {
-            note(wd.seenEarlier(id));
-            if (last) hold();
-            if (last && woke) leave();
-            return;
+          const f = ev.frame ?? null;
+          const has = (k: string): boolean => seen.has(k);
+          // Сперва отдать, затем пометить напечатанное — с событием, если оно вошло текстом
+          // (seen.ts deliveryKeys); выход И ЕСТЬ доставка. Запись до побудки при смерти между
+          // ними потеряла бы кадр насовсем.
+          const deliver = (
+            groups: Frame[][],
+            lines: string[],
+            shown: Frame[],
+            ids: string[],
+          ): never => {
+            for (const s of [...heldHeads(groups, has, shown), ...lines]) wake(s);
+            const keys = [...riderIds.splice(0), ...ids, ...shown.flatMap((s) => deliveryKeys(s))];
+            for (const k of keys) noteSeen(seenPath, k, seen);
+            process.exit(0);
+          };
+          if (!ev.batch) {
+            if (seen.has(id)) return note(wd.seenEarlier(id));
+            return deliver(
+              riders.splice(0),
+              [f ? frameToText(f, ev.raw ?? "") : (ev.raw ?? "")],
+              f ? [f] : [],
+              [id],
+            );
           }
-          // Запись дела, не адресованная месту (#6574): без строки и без будки на
-          // кадр — шапка пачки назвала её числом.
-          if (ev.batch && !addressedToMine(ev.frame)) {
-            riderIds.push(id, ...folded.splice(0));
-            if (last) {
-              hold();
-              if (woke) leave();
-              note(wd.unaddressed());
+          // Пачка кадров комнаты (мост, roomstack.ts) — одна побудка: печатается блоком на
+          // последнем кадре залпа — шапка по всем её кадрам (#6574), строки только адресованным
+          // месту. Пачка без адресованных не будит: её шапка ждёт ближайшей побудки.
+          if (ev.batch.at === 1) {
+            batch = [];
+            cases.clear(); // зачин дела — у первой его строки в пачке
+            block = { lines: [], shown: [], ids: [] };
+            fresh = false;
+          }
+          if (f) batch.push(f);
+          if (seen.has(id)) note(wd.seenEarlier(id));
+          else {
+            fresh = true;
+            if (ev.batch.folded) folded.push(id);
+            else if (!f || !addressedToMine(f)) riderIds.push(id, ...folded.splice(0));
+            else {
+              const first = !cases.has(caseKey(f));
+              cases.add(caseKey(f));
+              block.lines.push(batchLine(f, ev.batch.fold, first));
+              block.shown.push(f);
+              block.ids.push(id, ...folded.splice(0));
             }
-            return;
           }
-          if (ev.batch?.at === 1) cases.clear(); // зачин дела — у первой его строки в пачке
-          if (ev.batch?.folded) {
-            folded.push(id);
-            return;
+          if (ev.batch.at < ev.batch.of) return;
+          if (!fresh) head = false; // пачка из одних отданных — повтор: в ждущий счёт не встаёт
+          if (!block.lines.length) {
+            hold();
+            return note(wd.unaddressed());
           }
-          for (const s of [...heldHeads(riders, ev.frame), ...(head ? [head] : [])]) wake(s);
-          head = "";
-          const key = ev.frame ? caseKey(ev.frame) : "";
-          const first = !cases.has(key);
-          cases.add(key);
-          // Сперва отдать: запись до побудки при смерти между ними потеряла бы кадр насовсем.
-          wake(
-            !ev.frame
-              ? (ev.raw ?? "")
-              : ev.batch
-                ? batchLine(ev.frame, ev.batch.fold, first)
-                : frameToText(ev.frame, ev.raw ?? ""),
-          );
-          for (const k of [...riderIds.splice(0), ...folded.splice(0)]) noteSeen(seenPath, k, seen);
-          noteSeen(seenPath, id, seen);
-          const evKey = eventMarkOf(ev.frame);
-          if (evKey) noteSeen(seenPath, evKey, seen); // событие графа отдано — другие копии веера тоже
-          woke = true;
-          if (last) process.exit(0); // конец процесса И ЕСТЬ доставка
-          break;
+          const groups = [...riders.splice(0), ...(head ? [batch] : [])];
+          head = false;
+          return deliver(groups, block.lines, block.shown, block.ids);
         }
         case "stale":
-          // Пачка лежалых: не повод будить, но и не потеря — тела в логе, id помечены;
-          // копии дела показанных ею событий ждущий счёт не повторит.
-          dropHeldCopies(riders, ev.frames ?? []);
-          for (const k of staleBatchKeys(ev)) noteSeen(seenPath, k, seen);
+          // Пачка лежалых: не повод будить, но и не потеря — тела в логе, метки пачки помечены.
+          for (const k of ev.marks ?? []) noteSeen(seenPath, k, seen);
           note(ev.text ?? wd.staleFrames());
           break;
         case "dead":
@@ -150,7 +152,7 @@ export function runWatchdogExit(argv: string[]): void {
           if (ev.own) process.exit(0); // своё close/revoke — не уход моста (#6638)
           break;
         default:
-          if (ev.kind === "note" && ev.batch) head = ev.text ?? ""; // шапка пачки — делателю, с её первым кадром
+          if (ev.kind === "note" && ev.batch) head = true; // шапка пачки — её кадрами, с её первым кадром
           note(ev.text ?? ev.kind);
       }
     },

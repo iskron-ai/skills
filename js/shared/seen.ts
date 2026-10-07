@@ -8,6 +8,7 @@
 // (#5831); лежалые файлы прибирает уборка по возрасту (sweep.ts).
 import { appendFileSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 
+import { addressedToMine } from "./addressed.ts";
 import { type Frame } from "./channel.ts";
 
 /**
@@ -39,86 +40,93 @@ export function eventKeyOf(frame: Frame | null | undefined): string {
   return evOf((body as Record<string, unknown>).event_id);
 }
 
-/**
- * Копия события в деле: запись дела отдаётся счётом, не текстом события (#6574),
- * поэтому её доставка события не метит — кадр инбокса того же события будить
- * вправе; сама она гаснет только перед копией инбокса, вошедшей в ход текстом.
- */
-export const isRoomCopy = (frame: Frame | null | undefined): boolean =>
-  frame?.provenance?.via === "room" && !!eventKeyOf(frame);
+// Одно событие — один раз в ход: текстом или числом (граф nks-dev: #5842, #6563, #6574;
+// решение стюарда #931). Правило — две функции ниже, и только они: deliveryKeys — что
+// метит доставка, eventIn — гасит ли копию уже помеченное. Метку пишет тот, кто внёс
+// кадр в ход (шапка файла), в миг внесения; составляющий счёт проверяет eventIn.
+
+/** Читатель меток: память доставленного, своя или с локальными метками пачки поверх. */
+export type Marks = (key: string) => boolean;
 
 /**
- * Копии дела событий, которые кадры `shown` внесли в ход ТЕКСТОМ, — вынуть из ждущей
- * пачки: событие вошло текстом копии инбокса, и счёт его не повторит (#5842, #6563).
- * Одно правило всех путей — моста и клиентов: `shown` — только кадры, вошедшие
- * текстом (живой кадр; показанные кадры пачки), никогда не названные лишь числом
- * сверх показанных — такая копия инбокса копию дела не гасит (решение стюарда #931).
- * Возвращает вынутые; копия дела и кадр без события не вынимают ничего.
+ * Копия, которую доставка вносит в ход ТЕКСТОМ: всё, кроме записи дела, не адресованной
+ * месту, — та входит числом (#6574). Копия инбокса и слово человека в деле — текст.
  */
-export function takeRoomCopies<T>(
-  pile: T[],
-  shown: readonly (Frame | null | undefined)[],
-  frameOf: (x: T) => Frame | null | undefined,
-): T[] {
-  const evs = new Set(shown.map(eventMarkOf).filter(Boolean));
-  const out: T[] = [];
-  for (let i = pile.length - 1; evs.size && i >= 0; i--) {
-    const f = frameOf(pile[i]);
-    if (isRoomCopy(f) && evs.has(eventKeyOf(f))) out.unshift(...pile.splice(i, 1));
-  }
-  return out;
+export const asText = (frame: Frame): boolean => addressedToMine(frame);
+
+/**
+ * Метки доставки кадра: id и, если кадр несёт событие графа и вошёл текстом, — событие:
+ * `ev:` живой копией, `evs:` лежалой (пачка не будит — живая будить вправе, #5842).
+ * `named` — текстовая копия названа лишь числом сверх показанных (#5831): событие
+ * метится `cev:`/`cevs:` — другие текстовые копии гаснут, запись дела нет. Копия, вошедшая
+ * числом, метит только id: текстом событие не вошло.
+ */
+export function deliveryKeys(frame: Frame | null | undefined, named = false): string[] {
+  const id = typeof frame?.id === "string" ? frame.id : "";
+  const ev = frame && asText(frame) ? eventKeyOf(frame) : "";
+  const mark = ev && frame?.stale === true ? `evs:${ev.slice(3)}` : ev;
+  return [id, mark && (named ? `c${mark}` : mark)].filter(Boolean);
 }
 
 /**
- * Пачка, которая показывает первые `keep` кадров: копии дела событий, показанных ею
- * текстом, — вон из пачки целиком, внутри показанных и за пределом (#5842, #6563). Место
- * поглощённой занимает следующий кадр — и его событие, показанное текстом, поглощает
- * свои копии тоже. `kept` — кадры пачки, дошедшие текстом или числом, каждый один раз:
- * первые `keep` из них показаны (`shown`); `absorbed` — поглощённые, они отданы с пачкой.
+ * Событие этой копии уже в ходе — копию не предлагать и не считать. Любую копию гасит
+ * текст события (`ev:`); копию, входящую числом, и лежалую — ещё лежалый текст (`evs:`);
+ * текстовую — и копия, названная числом (`cev:`, у лежалой и `cevs:`). Живую текстовую
+ * копию лежалый текст не гасит: она будит (#5842); запись дела, текстом не вошедшую, —
+ * только текст события (решение стюарда #931).
+ */
+export function eventIn(frame: Frame | null | undefined, has: Marks): boolean {
+  const ev = frame ? eventKeyOf(frame) : "";
+  if (!ev || !frame) return false;
+  const n = ev.slice(3);
+  const stale = frame.stale === true;
+  const keys = !asText(frame)
+    ? [ev, `evs:${n}`]
+    : stale
+      ? [ev, `evs:${n}`, `cev:${n}`, `cevs:${n}`]
+      : [ev, `cev:${n}`];
+  return keys.some(has);
+}
+
+/** Та же ли это копия события по роду доставки — текст или число (веер, fanout.ts). */
+export const sameCopy = (a: Frame | null | undefined, b: Frame): boolean =>
+  !!a && eventKeyOf(a) === eventKeyOf(b) && asText(a) === asText(b);
+
+/**
+ * Пачка, показывающая первые `keep` кадров (`Infinity` — все): копия, чьё событие уже
+ * в ходе (`has`) или входит текстом этой же пачки, — вон, где бы ни стояла; её место
+ * занимает следующий кадр. `kept` — кадры, дошедшие текстом или числом, каждый один
+ * раз; `keys` — метки доставки всей пачки, и вынутых: пишет их внёсший пачку.
  */
 export function splitBatch(
   all: readonly Frame[],
   keep: number,
-): { shown: Frame[]; kept: Frame[]; absorbed: Frame[] } {
-  const kept = [...all];
-  const absorbed: Frame[] = [];
-  for (let got = 1; got;) {
-    const taken = takeRoomCopies(kept, kept.slice(0, keep), (f) => f);
-    absorbed.push(...taken);
-    got = taken.length;
+  has: Marks,
+): { shown: Frame[]; kept: Frame[]; keys: string[] } {
+  let kept = all.filter((f) => !eventIn(f, has));
+  for (;;) {
+    const shown = new Set(kept.slice(0, keep));
+    const marks = new Set<string>();
+    const local: Marks = (k) => marks.has(k) || has(k);
+    const texts = kept.filter((f) => {
+      if (!asText(f)) return true;
+      if (eventIn(f, local)) return false; // текст события уже выше в этой пачке
+      for (const k of deliveryKeys(f, !shown.has(f))) marks.add(k);
+      return true;
+    });
+    const next = texts.filter((f) => asText(f) || !eventIn(f, local));
+    if (next.length < kept.length) {
+      kept = next;
+      continue;
+    }
+    const on = new Set(next.slice(0, keep));
+    return {
+      shown: next.slice(0, keep),
+      kept: next,
+      keys: all.flatMap((f) => deliveryKeys(f, !on.has(f))),
+    };
   }
-  return { shown: kept.slice(0, keep), kept, absorbed };
 }
-
-/** Метка события, которую пишет доставка кадра: "" — у копии дела и у кадра без события. */
-export const eventMarkOf = (frame: Frame | null | undefined): string =>
-  isRoomCopy(frame) ? "" : eventKeyOf(frame);
-
-/**
- * Метки доставленного кадра: его id и событие графа. Лежалая копия метит событие
- * отдельно (`evs:`) — пачка не будит, и живая копия того же события будить вправе.
- */
-export const deliveredKeys = (frame: Frame | null | undefined): string[] => keysOf(frame, "");
-
-function keysOf(frame: Frame | null | undefined, prefix: string): string[] {
-  const id = typeof frame?.id === "string" ? frame.id : "";
-  const ev = eventMarkOf(frame);
-  const mark = ev && frame?.stale === true ? `evs:${ev.slice(3)}` : ev;
-  return [id, mark && prefix + mark].filter(Boolean);
-}
-
-/**
- * Метки кадра пачки, названного лишь числом сверх показанных (#5831): событие —
- * с приставкой `c` (`cev:`, `cevs:`). Другие копии инбокса гаснут перед ним, как
- * перед отданным, а копия дела — нет: текстом событие в ход не вошло (fanout.ts).
- */
-export const countedKeys = (frame: Frame | null | undefined): string[] => keysOf(frame, "c");
-
-/** Метки лежалой пачки: показанные кадры и названные числом сверх них (#5831) — у моста и сторожей. */
-export const staleBatchKeys = (ev: { frames?: Frame[]; unshown?: string[] }): string[] => [
-  ...(ev.frames ?? []).flatMap((f) => deliveredKeys(f)),
-  ...(ev.unshown ?? []),
-];
 
 export function seenIds(seenPath: string): Set<string> {
   try {

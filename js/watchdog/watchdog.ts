@@ -12,9 +12,9 @@ import { addressedToMine } from "../shared/addressed.ts";
 import { type Frame } from "../shared/channel.ts";
 import { batchLine, caseKey, frameToText } from "../shared/frame-text.ts";
 import { L } from "../shared/lang.ts";
-import { deliveredKeys, noteSeen, seenIds, staleBatchKeys } from "../shared/seen.ts";
+import { deliveryKeys, noteSeen, seenIds } from "../shared/seen.ts";
 import { seenFilePathOf } from "../shared/standings.ts";
-import { adoptSeenPath, attach, dropHeldCopies, heldHeads, resolveStanding } from "./client.ts";
+import { adoptSeenPath, attach, heldHeads, resolveStanding } from "./client.ts";
 import { doer, wd } from "./words.ts";
 
 // Monitor Claude Code режет строку события длиннее ~500 знаков (наблюдено:
@@ -61,13 +61,16 @@ let lastAlone = false;
 /**
  * Блок строк одной записью; alone — отдельным событием Monitor. after — когда
  * запись ушла (колбэк write), не когда вызвана: пометка .seen — после отдачи.
+ * Строки-функция составляется в миг печати: по памяти, где уже метки напечатанного выше.
  */
-const out = (lines: string[], alone = false, after?: () => void): void => {
+const out = (lines: string[] | (() => string[]), alone = false, after?: () => void): void => {
   queue = queue.then(async () => {
     const wait = lastAt && (alone || lastAlone) ? lastAt + ALONE_GAP_MS - Date.now() : 0;
     if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+    const text = typeof lines === "function" ? lines() : lines;
+    if (!text.length) return after?.();
     const failed = await new Promise<boolean>((r) =>
-      process.stdout.write(lines.join("\n") + "\n", (e) => r(!!e)),
+      process.stdout.write(text.join("\n") + "\n", (e) => r(!!e)),
     );
     lastAt = Date.now();
     lastAlone = alone;
@@ -106,21 +109,30 @@ export function runWatchdog(argv: string[]): void {
   const cases = new Set<string>(); // дела, уже названные зачином в идущей пачке
   // Под Monitor строка stdout будит ход: пачка из одних счётов (#6574) не
   // печатается сама — её шапка ждёт и уходит перед ближайшей адресованной строкой.
-  let head = ""; // шапка идущей пачки — до её первой адресованной строки
+  let head = false; // шапка идущей пачки ждёт её первой адресованной строки
   let fresh = false; // в идущей пачке есть не отданный прежде кадр
-  let batch: Frame[] = []; // кадры идущей пачки — её счёт, если адресованных в ней нет
+  let batch: Frame[] = []; // кадры идущей пачки — её счёт
   const riders: Frame[][] = []; // пачки из одних счётов — кадрами до печати (heldHeads)
   const riderMarks: (() => void)[] = []; // их пометки — после печати
   const hold = (): void => {
     if (head) riders.push(batch);
     riders.splice(0, Math.max(0, riders.length - RIDERS_MAX)); // старшие уходят: счёт не копится без меры
-    head = "";
+    head = false;
   };
-  /** Ждущие шапки и шапка идущей пачки — строками перед адресованным; пометки — после печати. */
-  const take = (carrier: Frame): { lines: string[]; marks: (() => void)[] } => {
-    const lines = [...heldHeads(riders, carrier), ...(head ? [head] : [])];
-    head = "";
-    return { lines, marks: riderMarks.splice(0) };
+  /** Строки и пометки адресованных строк идущей пачки — печатаются блоком на её последнем кадре. */
+  let block: { lines: string[]; marks: (() => void)[]; carriers: Frame[] } = {
+    lines: [],
+    marks: [],
+    carriers: [],
+  };
+  /** Ждущие шапки и шапка идущей пачки — строками перед адресованным, в миг печати; пометки — после. */
+  const take = (carriers: Frame[]): { lines: () => string[]; marks: (() => void)[] } => {
+    const groups = [...riders.splice(0), ...(head ? [batch] : [])];
+    head = false;
+    return {
+      lines: () => heldHeads(groups, (k) => seen.has(k), carriers),
+      marks: riderMarks.splice(0),
+    };
   };
   attach(target.path, {
     onEvent: (ev) => {
@@ -140,7 +152,7 @@ export function runWatchdog(argv: string[]): void {
           const again = !!id && (seen.has(id) || queued.has(id));
           if (id && !again) queued.add(id);
           const mark = (): void => {
-            for (const k of deliveredKeys(f)) noteSeen(seenPath, k, seen); // после печати
+            for (const k of deliveryKeys(f)) noteSeen(seenPath, k, seen); // после печати
             queued.delete(id);
           };
           if (ev.batch) {
@@ -148,57 +160,63 @@ export function runWatchdog(argv: string[]): void {
             // адресованному месту. Адресное слово не мне, свёрнутое в череду
             // (folded), своей строки не печатает: метится вместе со строкой
             // череды, которая его считает (#6081); неадресованное — метится
-            // сразу: шапка назвала его числом.
+            // с шапкой, назвавшей его числом. Пачка печатается одним блоком на
+            // последнем кадре: её шапка — по всем её кадрам (client.ts heldHeads).
             if (ev.batch.at === 1) {
               cases.clear(); // зачин дела — у первой его строки в пачке
               fresh = false;
               batch = [];
+              block = { lines: [], marks: [], carriers: [] };
             }
             batch.push(f);
             if (!again) fresh = true;
-            const last = ev.batch.at >= ev.batch.of;
-            // Пачка из одних отданных — повтор: её шапка уже ушла и в ждущий счёт не встаёт.
-            if (last && !fresh) head = "";
             if (ev.batch.folded) {
               if (!again) folded.push(mark);
-              if (last) hold();
+            } else {
+              const within = folded.splice(0);
+              const all = (): void => [...within, mark].forEach((m) => m());
+              if (!addressedToMine(f)) riderMarks.push(all);
+              else if (again) all();
+              else {
+                const first = !cases.has(caseKey(f));
+                cases.add(caseKey(f));
+                block.lines.push(...wrapLines(batchLine(f, ev.batch.fold, first)));
+                block.marks.push(all);
+                block.carriers.push(f);
+              }
+            }
+            if (ev.batch.at < ev.batch.of) break;
+            // Пачка из одних отданных — повтор: её шапка уже ушла и в ждущий счёт не встаёт.
+            if (!fresh) head = false;
+            if (!block.lines.length) {
+              hold();
               break;
             }
-            const within = folded.splice(0);
-            const all = (): void => [...within, mark].forEach((m) => m());
-            if (!addressedToMine(f)) {
-              riderMarks.push(all);
-              if (last) hold();
-              break;
-            }
-            const first = !cases.has(caseKey(f));
-            cases.add(caseKey(f));
-            if (!again) {
-              const r = take(f);
-              out([...r.lines, ...wrapLines(batchLine(f, ev.batch.fold, first))], false, () =>
-                [...r.marks, all].forEach((m) => m()),
-              );
-            } else all();
-            if (last) hold();
+            const r = take(block.carriers);
+            const { lines, marks } = block;
+            out(
+              () => [...r.lines(), ...lines],
+              false,
+              () => [...r.marks, ...marks].forEach((m) => m()),
+            );
             break;
           }
           if (!again) {
-            const r = take(f);
-            if (r.lines.length) out(r.lines, false, () => r.marks.forEach((m) => m()));
+            const r = take([f]);
+            out(r.lines, false, () => r.marks.forEach((m) => m()));
             out(wrapLines(frameToText(f, ev.raw ?? "")), true, mark);
           }
           break;
         }
         case "note":
           if (ev.batch)
-            head = ev.text ?? ""; // шапка пачки — с её первой адресованной строкой
+            head = true; // шапка пачки — её кадрами, с её первой адресованной строкой
           else log(ev.text ?? "");
           break;
         case "stale":
           // Одна пачка — одно событие. Напечатана — отдана, и названное числом сверх показанного тоже.
-          dropHeldCopies(riders, ev.frames ?? []); // её события ждущий счёт не повторит
           out(wrapLines(ev.text ?? ""), false, () => {
-            for (const k of staleBatchKeys(ev)) noteSeen(seenPath, k, seen);
+            for (const k of ev.marks ?? []) noteSeen(seenPath, k, seen);
           });
           break;
         case "dead":

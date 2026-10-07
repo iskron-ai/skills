@@ -8,6 +8,10 @@
 // ISKRON_BRIDGE_PATH points the same probe at any copy: against the previous
 // bridge the connect answer carries no listener block and no local socket
 // appears — the red this probe exists to show.
+//
+// The suite runs as one file per subject (standing-*.test.mjs): each sets
+// ISKRON_STANDING_PART before importing this module, and only the tests under
+// its `part(...)` mark register — every subject within the per-file time limit.
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import {
@@ -23,7 +27,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { test } from "node:test";
+import { test as nodeTest } from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { BUILT_BRIDGE } from "./built.mjs";
@@ -59,6 +63,12 @@ import {
   withdraw,
   withheld,
 } from "./room-frames.mjs";
+
+// Часть свода, которую регистрирует этот файл-предмет (шапка выше); без неё — весь свод.
+const ONLY = process.env.ISKRON_STANDING_PART ?? "";
+let current = "core";
+const part = (name) => void (current = name);
+const test = (...args) => (!ONLY || ONLY === current ? nodeTest(...args) : undefined);
 
 // Чем запускать поставку: node по умолчанию; ISKRON_NODE подставляет другой рантайм
 // (например, `opencode` под BUN_BE_BUN=1 — Bun, встроенный в OpenCode).
@@ -1883,6 +1893,7 @@ test("a seat gone at the platform releases the hold too: socket closed aloud, re
   );
 });
 
+part("hearing");
 // ── keeping the hearing (graph nks-dev: #5140) ───────────────────────────────
 
 // The OpenCode plugin has no local socket client, so «attached» never reached
@@ -3434,6 +3445,7 @@ test("two bridges on two places: the board reads both listening, and revoking on
   assert.ok(!/@tester:vtoraya/.test(after), "the revoked place is off the board");
 });
 
+part("rooms");
 // ── room kinds for watchdogs (#5851): the bridge batches, an interrupt flushes first ──
 
 const sendRoom = (fake, frame) => fake.control({ ws_send: JSON.stringify(frame) });
@@ -3572,6 +3584,8 @@ test("a bound node rides in the batch by count as well", async (t) => {
   assert.ok(!out.includes("в деле узел"), `node words leaked:\n${out}`);
 });
 
+// ── one event, once into the turn: as text or by count (#5842, #6563) ──
+part("events");
 // Копия дела, ждущая счётом где бы то ни было — в окне побудки, в удержанной шапке
 // сторожа, — гаснет перед кадром инбокса своего события (#5842, #6563).
 test("a wake-up window does not count a case copy whose inbox frame is in the same window", async (t) => {
@@ -3827,6 +3841,82 @@ test("a case copy coming while the Monitor watchdog still prints the stale burst
 
 // Живой кадр инбокса, пока сторож не прицеплен, текстом не вошёл: вытесненный из кольца
 // неотданным, он не гасит копию дела своего события — та доходит счётом (#5842).
+// Находки второго круга (класс «одно событие — один раз в ход»).
+// №1: запись дела от человека входит текстом — и её событие тоже; копия инбокса того же
+// события второй раз текстом не входит.
+test("a human case record delivered as text marks its event: the inbox copy of it is not delivered again", async (t) => {
+  const { fake, bridge } = await connected(t, {
+    init: { ...INIT, clientInfo: { name: "opencode-iskron", version: "1" } },
+  });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const offered = (id) => bridge.notifications.some((n) => n.params?.data?.frame?.id === id);
+  const rec = nodeOp("updated", 120);
+  await sendRoom(fake, {
+    ...rec,
+    event_id: 401,
+    provenance: { ...rec.provenance, as_person: true },
+  });
+  await waitFor(() => offered("room-msg-120"), "the human record as text");
+  await fake.control({ ws_send: graphEvent("inbox-h", 401, "событие четыреста один") });
+  await fake.control({
+    ws_send: JSON.stringify({ id: "live-h", type: "message", body: "живое-ч" }),
+  });
+  await waitFor(() => offered("live-h"), "the live frame after it");
+  assert.equal(offered("inbox-h"), false, "the event went in as text twice");
+});
+
+// №2: сторож выхода помечает только кадр, который напечатал, — не весь повтор кольца:
+// событие, чей кадр инбокса он не напечатал, потом доходит хотя бы счётом.
+test("the exit watchdog marks only the frame it printed, not the whole replay: an unprinted event still reaches the doer", async (t) => {
+  const { fake, dir, key } = await connected(t, { env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "500" } });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  await fake.control({
+    ws_send_many: [
+      graphEvent("inbox-x1", 311, "событие триста одиннадцать"),
+      graphEvent("inbox-x2", 312, "событие триста двенадцать"),
+    ],
+  });
+  await new Promise((r) => setTimeout(r, 300));
+  const w1 = runClient("watchdog-exit", dir, key, 20_000);
+  await w1.done;
+  assert.ok(w1.out.includes("событие триста одиннадцать"), w1.out);
+  await fake.control({
+    ws_send_many: Array.from({ length: 21 }, (_, i) =>
+      JSON.stringify({ id: `fx-${i}`, type: "message", body: `fx ${i}` }),
+    ),
+  });
+  await sendRoom(fake, { ...nodeOp("updated", 312), event_id: 312 });
+  await new Promise((r) => setTimeout(r, 1000));
+  const w2 = runClient("watchdog", dir, key, 20_000);
+  await waitFor(() => w2.out.includes("слушаю стояние"), "the watchdog to attach");
+  await fake.control({
+    ws_send: JSON.stringify({ id: "live-x", type: "message", body: "живое-х" }),
+  });
+  await waitFor(() => w2.out.includes("живое-х"), "the live frame");
+  assert.ok(
+    w2.out.includes("событие триста двенадцать") || w2.out.includes("записей 1"),
+    `the event the exit watchdog never printed reached the doer neither as text nor by count:\n${w2.out}`,
+  );
+  w2.proc.kill("SIGKILL");
+  await w2.done;
+});
+
+// №3: «задним числом N» — после отсечения: копия дела, чьё событие повтор отдаёт текстом,
+// не кадр повтора.
+test("the back-dated count a watchdog is told on attach is the frames it gets, after the cut", async (t) => {
+  const { fake, dir, key } = await connected(t, { env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "500" } });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  await fake.control({ ws_send: graphEvent("inbox-b", 321, "событие триста двадцать один") });
+  await sendRoom(fake, { ...nodeOp("updated", 321), event_id: 321 });
+  await new Promise((r) => setTimeout(r, 1000)); // окно дела ушло в пустой сокет; оба в кольце
+  const wd = runClient("watchdog", dir, key, 20_000);
+  await waitFor(() => wd.out.includes("событие триста двадцать один"), "the replayed inbox frame");
+  // Повтор — hello и кадр инбокса; копия дела его события отсечена и не названа.
+  assert.match(wd.out, /слушаю стояние \S+ \(2 кадра задним числом\)/, wd.out);
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
 test("an inbox frame no watchdog heard and the ring dropped leaves its case copy counted", async (t) => {
   const { fake, dir, key } = await connected(t, { env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "1000" } });
   await waitFor(() => fake.state.ws.size === 1, "the socket");
@@ -4039,7 +4129,7 @@ test("a case record carrying the event_id of a delivered inbox frame is dropped;
     () => wd.out.includes("событие семьдесят восемь"),
     "the inbox frame after its case copy",
   );
-  await waitSeen(standings, "room-msg-92");
+  await waitSeen(standings, "ev:78"); // текст события помечен — копию дела не считает никто
   await quietThenNudge(fake, wd, 1500, 992);
   assert.ok(!wd.out.includes("записей"), `the waiting case copy was counted too:\n${wd.out}`);
   // Копия дела, уже отданная счётом, события не держит: кадр инбокса — текстом.
@@ -4057,6 +4147,7 @@ test("a case record carrying the event_id of a delivered inbox frame is dropped;
   await wd.done;
 });
 
+part("rooms");
 // A word in two phases (#5893 §4.5b): the batch carries them by count (#6574);
 // a body to me still reaches the Monitor watchdog at once, whole.
 test("a said in flight, deferred bodies and aborts ride in the batch by count, printing nothing alone; a body of my word reaches the watchdog at once, the count before it", async (t) => {
@@ -4282,6 +4373,7 @@ test("a full room batch of counts and the rest past it are not dropped: both cou
   await wd.done;
 });
 
+part("words");
 // ── An addressed word not to me (#6081): no body, no wake; #6574: words not to
 // the seat are one count of the case in the batch. To me — whole and by its stack. ──
 

@@ -9,7 +9,7 @@ import { type ChannelEvent } from "../bridge/hold.ts";
 import { type Frame } from "../shared/channel.ts";
 import { batchHead } from "../shared/frame-text.ts";
 import { setLang } from "../shared/lang.ts";
-import { seenIds, takeRoomCopies } from "../shared/seen.ts";
+import { deliveryKeys, eventIn, type Marks, seenIds } from "../shared/seen.ts";
 import { authDirFromEnv, socketPathOf, standingsDirOf } from "../shared/standings.ts";
 import { wd } from "./words.ts";
 
@@ -88,21 +88,17 @@ export function adoptSeenPath(
 }
 
 /**
- * Шапки ждущих пачек из одних счётов (#6574) — строками, в момент печати: пачка
- * ждёт кадрами, и кадр, несущий событие текстом (carrier), вынимает из неё копии
- * дела того же события — счёт его не повторит (#5842, #6563). Группы забираются.
+ * Шапки пачек — строками в момент печати (#6574): пачка ждёт кадрами, и копия, чьё
+ * событие уже в ходе по памяти сторожа или входит текстом этого же вывода — кадрами
+ * `carriers`, — не считается (seen.ts eventIn). Сами они в своей шапке остаются.
  */
-export function heldHeads(groups: Frame[][], carrier?: Frame | null): string[] {
-  dropHeldCopies(groups, [carrier]);
+export function heldHeads(groups: Frame[][], marks: Marks, carriers: Frame[] = []): string[] {
+  const own = new Set(carriers.flatMap((f) => deliveryKeys(f)));
+  const has: Marks = (k) => marks(k) || own.has(k);
   return groups
-    .splice(0)
+    .map((g) => g.filter((f) => carriers.includes(f) || !eventIn(f, has)))
     .filter((g) => g.length)
     .map(batchHead);
-}
-
-/** Копии дела событий, которые кадры несут текстом в ход, — вон из ждущих пачек (#5842, #6563). */
-export function dropHeldCopies(groups: Frame[][], shown: (Frame | null | undefined)[]): void {
-  for (const g of groups) takeRoomCopies(g, shown, (f) => f);
 }
 
 export interface AttachOptions {

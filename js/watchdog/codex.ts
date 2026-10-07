@@ -16,16 +16,10 @@ import { join } from "node:path";
 import { type ChannelEvent } from "../bridge/hold.ts";
 import { addressedToMine } from "../shared/addressed.ts";
 import { type Door, openDoor } from "../shared/appserver.ts";
-import { batchHead, frameToText } from "../shared/frame-text.ts";
-import {
-  deliveredKeys,
-  noteSeen,
-  seenIds,
-  staleBatchKeys,
-  takeRoomCopies,
-} from "../shared/seen.ts";
+import { frameToText } from "../shared/frame-text.ts";
+import { deliveryKeys, noteSeen, seenIds } from "../shared/seen.ts";
 import { seenFilePathOf } from "../shared/standings.ts";
-import { adoptSeenPath, attach, parseWatchdogArgs, resolveStanding } from "./client.ts";
+import { adoptSeenPath, attach, heldHeads, parseWatchdogArgs, resolveStanding } from "./client.ts";
 import { doer, wd } from "./words.ts";
 
 const FLUSH_WAIT_MS = 5000; // своё отпускание ждёт вложений в полёте не дольше
@@ -132,10 +126,19 @@ export function runWatchdogCodex(argv: string[]): void {
   // Неадресованные месту записи дел (#6574) копятся и хода не начинают: счётом
   // по делам они едут шапкой с ближайшим кадром в тред; текст их в тред не идёт.
   let pend: { frame: NonNullable<ChannelEvent["frame"]>; ids: string[] }[] = [];
-  const withPend = (text: string, ids: string[]): void => {
+  /**
+   * Ждущий счёт — шапкой впереди `text`, составленной в миг вложения: по памяти сторожа
+   * и меткам ходов, уже ушедших в тред и ждущих принятия (seen.ts eventIn, client.ts heldHeads).
+   */
+  const withPend = (text: string, ids: string[], carrier?: ChannelEvent["frame"]): void => {
     const got = pend;
     pend = [];
-    const head = got.length ? [batchHead(got.map((g) => g.frame))] : [];
+    const sent = new Set([...waiting.values()].flat());
+    const head = heldHeads(
+      [got.map((g) => g.frame)],
+      (k) => seen.has(k) || sent.has(k),
+      carrier ? [carrier] : [],
+    );
     void deliver([...head, ...(text ? [text] : [])].join("\n"), [
       ...got.flatMap((g) => g.ids),
       ...ids,
@@ -155,27 +158,18 @@ export function runWatchdogCodex(argv: string[]): void {
             return note(wd.alreadyPut(ev.frame.id));
           // Неадресованное месту — числом: копится, строка не кладётся (#6574).
           if (ev.batch && ev.frame && !addressedToMine(ev.frame)) {
-            pend.push({
-              frame: ev.frame,
-              ids: [...deliveredKeys(ev.frame), ...(ev.frame.id ? [ev.frame.id] : [])],
-            });
+            pend.push({ frame: ev.frame, ids: deliveryKeys(ev.frame) });
             pend.splice(0, Math.max(0, pend.length - 500)); // старшие уходят: счёт ждёт, не копится без меры
             return;
           }
-          // Копии дела события, которое кадр несёт текстом, счёт не повторяет — метятся с ним (#6563).
-          const copies = takeRoomCopies(pend, [ev.frame], (g) => g.frame).flatMap((g) => g.ids);
-          const keys = [...deliveredKeys(ev.frame), ...copies];
-          withPend(frameToText(ev.frame, ev.raw ?? ""), keys); // накопленное — шапкой впереди
+          // Накопленное — шапкой впереди; кадр идёт текстом — метки по принятию тредом.
+          withPend(frameToText(ev.frame, ev.raw ?? ""), deliveryKeys(ev.frame), ev.frame);
           break;
         }
-        case "stale": {
-          // Одна пачка — один ход; копии дела её событий ждущий счёт не повторит — метятся с ней.
-          const copies = takeRoomCopies(pend, ev.frames ?? [], (g) => g.frame).flatMap(
-            (g) => g.ids,
-          );
-          void deliver(ev.text ?? wd.codexStale(), [...staleBatchKeys(ev), ...copies]);
+        case "stale":
+          // Одна пачка — один ход; метки пачки — по принятию тредом.
+          void deliver(ev.text ?? wd.codexStale(), ev.marks ?? []);
           break;
-        }
         case "dead":
         case "evicted":
           note(ev.text ?? wd.seatLost());

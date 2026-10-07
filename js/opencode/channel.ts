@@ -33,7 +33,7 @@ import { addressedToMine } from "../shared/addressed.ts";
 import { classifyOrigin, type Frame, isDirectWord } from "../shared/channel.ts";
 import { batchHead, batchLines, frameToText } from "../shared/frame-text.ts";
 import { roomKind, stackOf } from "../shared/room-kinds.ts";
-import { takeRoomCopies } from "../shared/seen.ts";
+import { deliveryKeys, eventIn } from "../shared/seen.ts";
 import type { Context } from "./plugin.ts";
 import { type Say } from "./tools.ts";
 
@@ -83,7 +83,11 @@ interface Pile {
   timer: ReturnType<typeof setTimeout> | null;
   /** Промпт пачки в очереди сессии, ещё не взятый ходом; inbox null — ещё в полёте. */
   pending: { session: string; inbox: string | null; at: number } | null;
+  /** Метки внесённого в эту сессию текстом (seen.ts deliveryKeys): счёт пачки их не повторит. */
+  marks: Set<string>;
 }
+
+const MARKS_KEPT = 500;
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- уведомления моста без схемы */
 
@@ -169,8 +173,8 @@ export function setupChannel(ctx: Context, say: Say, freshestRoot: () => string 
   function flush(p: Pile): void {
     if (p.timer) clearTimeout(p.timer);
     p.timer = null;
-    if (!p.held.length) return;
-    const frames = p.held.splice(0);
+    const frames = fresh(p, p.held.splice(0));
+    if (!frames.length) return;
     // Пачка из одних счётов хода не будит (#6574): ждёт попутного промпта.
     if (!frames.some((f) => addressedToMine(f))) {
       p.riders.push(...frames);
@@ -179,7 +183,10 @@ export function setupChannel(ctx: Context, say: Say, freshestRoot: () => string 
     }
     const at = Date.now();
     p.pending = { session: "", inbox: null, at };
-    const text = [batchHead([...p.riders.splice(0), ...frames]), ...batchLines(frames)].join("\n");
+    const text = [
+      batchHead([...fresh(p, p.riders.splice(0)), ...frames]),
+      ...batchLines(frames),
+    ].join("\n");
     void deliver(p.session, text, `пачка дела (${frames.length})`, "queue", p.child).then((got) => {
       // Без id взятия не увидеть: следующая пачка — по окну, не по взятию.
       const inbox = got?.inbox && !takenEarly.delete(got.inbox) ? got.inbox : null;
@@ -192,24 +199,38 @@ export function setupChannel(ctx: Context, say: Say, freshestRoot: () => string 
     const key = `${child ? "child" : "root"}:${session ?? ""}`;
     let p = piles.get(key);
     if (!p)
-      piles.set(key, (p = { session, child, held: [], riders: [], timer: null, pending: null }));
+      piles.set(
+        key,
+        (p = {
+          session,
+          child,
+          held: [],
+          riders: [],
+          timer: null,
+          pending: null,
+          marks: new Set(),
+        }),
+      );
     if (frame.id && p.held.some((f) => f.id === frame.id)) return; // повтор ждущего
     p.held.push(frame);
     if (!p.pending && p.held.length >= CASE_BATCH_CAP) return flush(p);
     if (!p.timer) schedule(p);
   }
 
-  /**
-   * Копии дела событий, которые эти кадры несут текстом, — вон из своей пачки:
-   * счёт их не повторит (#5842, #6563). Только своя сессия: у чужой своя доставка.
-   */
-  function takeOwnCopies(p: Pile | undefined, frames: (Frame | null)[] | undefined): void {
-    for (const fs of p ? [p.held, p.riders] : []) takeRoomCopies(fs, frames ?? [], (x) => x);
+  /** Внесённое в сессию текстом — в метки её пачки. Только своя сессия: у чужой своя доставка. */
+  function noteOwn(p: Pile | undefined, keys: string[] | undefined): void {
+    if (!p) return;
+    for (const k of keys ?? []) p.marks.add(k);
+    for (const old of p.marks) if (p.marks.size > MARKS_KEPT) p.marks.delete(old);
   }
+
+  /** Кадры пачки, чьё событие в сессию ещё не вошло (seen.ts eventIn). */
+  const fresh = (p: Pile, fs: Frame[]): Frame[] =>
+    fs.filter((f) => !eventIn(f, (k) => p.marks.has(k)));
 
   /** Счёт попутных записей пачек — строками шапки; пачки отдают их. */
   function riding(ps: Pile[]): string[] {
-    const got = ps.flatMap((p) => p.riders.splice(0));
+    const got = ps.flatMap((p) => fresh(p, p.riders.splice(0)));
     return got.length ? [batchHead(got)] : [];
   }
 
@@ -259,7 +280,7 @@ export function setupChannel(ctx: Context, say: Say, freshestRoot: () => string 
           // кадра, как прежде (#4957); пачка — одним промптом очередью, прочее — вставкой.
           if (frame && toPile(frame)) return pile(session, child, frame);
           const own = piles.get(`${child ? "child" : "root"}:${session ?? ""}`);
-          takeOwnCopies(own, [frame]); // копии дела события, которое кадр несёт текстом
+          noteOwn(own, deliveryKeys(frame)); // кадр входит текстом — счёт пачки его не повторит
           void deliver(
             session,
             [...riding(own ? [own] : []), frameToText(frame, ev.raw ?? "")].join("\n"),
@@ -279,11 +300,11 @@ export function setupChannel(ctx: Context, say: Say, freshestRoot: () => string 
           );
           return;
         case "stale":
-          takeOwnCopies(piles.get(`${child ? "child" : "root"}:${session ?? ""}`), ev.frames);
+          noteOwn(piles.get(`${child ? "child" : "root"}:${session ?? ""}`), ev.marks);
           if (ev.text) void deliver(session, ev.text, "пачка лежалых кадров", "queue", child); // одна пачка — один промпт
           return;
         case "backlog":
-          takeOwnCopies(piles.get(`${child ? "child" : "root"}:${session ?? ""}`), ev.frames);
+          noteOwn(piles.get(`${child ? "child" : "root"}:${session ?? ""}`), ev.marks);
           // Побудка с накопленным — один промпт на пачку, не ход на кадр (#5140).
           // Очередью — сознательная развилка: пачка в полтора десятка кадров,
           // вставленная посреди хода, режет работу делателя; одним промптом она

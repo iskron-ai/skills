@@ -9,7 +9,7 @@ import { dirname } from "node:path";
 import { type Frame } from "../shared/channel.ts";
 import { L } from "../shared/lang.ts";
 import { bindScope } from "../shared/scope.ts";
-import { deliveredKeys, seenIds } from "../shared/seen.ts";
+import { type Marks, seenIds, splitBatch } from "../shared/seen.ts";
 import {
   keyFilePathOf,
   privateDirProblem,
@@ -20,7 +20,7 @@ import {
 } from "../shared/standings.ts";
 import { Backlog } from "./backlog.ts";
 import { CFG } from "./config.ts";
-import { caseCopyShown, isDelivered, takeShownCopies } from "./fanout.ts";
+import { marksOf } from "./fanout.ts";
 import { countOnly, emitBatch, RoomBatch } from "./roomstack.ts";
 import { StaleBurst } from "./stale.ts";
 import { log } from "./streams.ts";
@@ -47,8 +47,8 @@ export interface ChannelEvent {
   seen?: string;
   /** kind="stale": лежалые кадры полосы — принятое, пока место не слушали, или повтор службы; kind="backlog": кадры пачки по received_at. */
   frames?: Frame[];
-  /** kind="stale": метки кадров полосы сверх показанных — названы числом и адресом history, отдаются вместе с пачкой. */
-  unshown?: string[];
+  /** kind="stale" и "backlog": метки доставки пачки (seen.ts splitBatch) — пишет внёсший её в ход. */
+  marks?: string[];
   /** kind="held": место, которое мост держит, — по нему плагин OpenCode ставит спутником дочернюю сессию (#6002). */
   place?: { realm: string; karta: string; name: string };
   /** kind="backlog": сколько кадров ожидало по hello. */
@@ -80,16 +80,13 @@ export class Door {
   seen: Set<string>;
   /** С какого мига ни один локальный клиент не слушает; null — слушают. */
   idleAt: number | null = Date.now();
+  /** Метки места: память моста и файл .seen, который пишут внёсшие кадр в ход (seen.ts eventIn). */
+  readonly marks: Marks = (k) => marksOf(this.seen, this.seenPath)(k);
   /** Пачки места — лежалая и побудки: у каждого места свои (#5838). */
-  readonly stale = new StaleBurst();
-  readonly backlog = new Backlog();
+  readonly stale = new StaleBurst(this.marks);
+  readonly backlog = new Backlog(this.marks);
   /** Пачка кадров комнаты рода «в пачку» — для сторожей, не для клиентов уведомлений (roomstack.ts, #5851). */
-  readonly roomBatch = new RoomBatch();
-  /**
-   * События, которые мост отдал текстом (живой кадр, показанный кадр пачки), — у сторожа
-   * метка ляжет лишь после печати, а копия дела гаснет уже сейчас (fanout.ts takeShownCopies).
-   */
-  readonly textEvents = new Set<string>();
+  readonly roomBatch = new RoomBatch(this.marks);
   /** id места у платформы (hello standings[].standing_id) — по нему кадр находит дверь и занятость — место. */
   standingId: string | null = null;
   /**
@@ -193,15 +190,16 @@ export class Door {
         // местный клиент ещё не получал: перевзведённый сторож не должен нести
         // делателю то же кольцо второй раз — память доставленного у моста есть.
         // Доставленным кадр помечает отдавший его клиент (печатью, выходом) — файл читается заново.
-        // Кадр, лежащий в копящейся пачке комнаты, придёт с ней, не отдельно. Копия дела,
-        // чьё событие уже вошло текстом, не повторяется (fanout.ts caseCopyShown).
-        const backlog = this.ring.filter(
+        // Кадр, лежащий в копящейся пачке комнаты, придёт с ней, не отдельно. Событие —
+        // один раз, текстом или числом, и внутри повтора (seen.ts splitBatch).
+        const waiting = this.ring.filter(
           ({ frame }) =>
             frame?.type !== "message" ||
-            (!isDelivered(deliveredKeys(frame), this.seen, this.seenPath) &&
-              !this.roomBatch.holds(frame) &&
-              !caseCopyShown(frame, this)),
+            (!this.marks(String(frame.id ?? "")) && !this.roomBatch.holds(frame)),
         );
+        const msgs = waiting.flatMap(({ frame }) => (frame?.type === "message" ? [frame] : []));
+        const kept = new Set<Frame | null>(splitBatch(msgs, Infinity, this.marks).kept);
+        const backlog = waiting.filter(({ frame }) => frame?.type !== "message" || kept.has(frame));
         sock.write(
           JSON.stringify({
             kind: "attached",
@@ -210,15 +208,10 @@ export class Door {
             seen: this.seenPath,
           } satisfies ChannelEvent) + "\n",
         );
-        // Кадры, которые повтор отдаёт текстом, — вошли текстом: копии дела их событий
-        // не повторяются счётом рядом и гаснут впредь (fanout.ts takeShownCopies).
-        const texts = backlog.filter((h) => !countOnly(h.frame)).map((h) => h.frame);
-        takeShownCopies(this, texts);
         // Неадресованные месту записи дел (#6574) — пачкой впереди, счётом: так
         // пришли бы и живыми; поодиночке сторож взял бы их за побудку.
-        const counts = backlog.filter(
-          (h): h is { raw: string; frame: Frame } =>
-            countOnly(h.frame) && !caseCopyShown(h.frame, this),
+        const counts = backlog.filter((h): h is { raw: string; frame: Frame } =>
+          countOnly(h.frame),
         );
         const put = (ev: ChannelEvent): void => void sock.write(JSON.stringify(ev) + "\n");
         if (counts.length) emitBatch(counts, put);

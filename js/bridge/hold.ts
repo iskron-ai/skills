@@ -14,14 +14,14 @@
 // Занятость делатель пишет в файл рядом с сокетом (#4231); публикует мост.
 import { holdSocket, isDirectWord, statusUrl as deriveStatusUrl } from "../shared/channel.ts";
 import { bindAll } from "../shared/scope.ts";
-import { deliveredKeys, noteSeen } from "../shared/seen.ts";
+import { deliveryKeys, noteSeen } from "../shared/seen.ts";
 import { socketPathOf } from "../shared/standings.ts";
 import { markAddressed } from "./addressmark.ts";
 import { harnessName, notifiedClient } from "./client.ts";
 import { stampOrigin } from "./complete.ts";
 import { CFG } from "./config.ts";
 import { type ChannelEvent, Door, type DoorHooks, ENV_KEY } from "./door.ts";
-import { batchHandedOut, isDelivered, redundantCopy, takeShownCopies } from "./fanout.ts";
+import { isDelivered, redundantCopy } from "./fanout.ts";
 import { letGo, takeSpool } from "./handoff.ts";
 import { dropHoldRecord, keyOf, readHoldRecord, writeHoldRecord } from "./holdrecord.ts";
 import { type Frame, H, handoverReason } from "./holdstate.ts";
@@ -362,8 +362,8 @@ function deliverTo(d: Door, raw: string, frame: Frame | null, full: Frame | null
   if (full?.type === "message" && full.stale === true && !isDirectWord(full))
     return again
       ? log(`stale frame ${id} already delivered — dropped`)
-      : d.stale.note(full, (ev, all) => {
-          batchHandedOut(d, ev.frames ?? [], notifiedClient() ? all : null);
+      : d.stale.note(full, (ev) => {
+          if (notifiedClient()) for (const k of ev.marks ?? []) noteSeen(seenPath, k, d.seen);
           d.broadcast(ev);
           notify("info", keyed(d, ev));
         });
@@ -375,8 +375,6 @@ function deliverTo(d: Door, raw: string, frame: Frame | null, full: Frame | null
   const ev: ChannelEvent = { kind: "frame", raw: text, frame: full };
   const msg = full?.type === "message" && !again ? full : null;
   if (msg) noteRoomKind(msg);
-  // Прицепленному сторожу кадр — текстом: копии дела события вон; без него — повтором кольца.
-  if (msg && !notifiedClient() && d.clients.size) takeShownCopies(d, [msg]);
   // Сторожам кадр комнаты «в пачку» — пачкой по окну, прерывающий — после накопленного (roomstack.ts).
   const toBatch = (b: ChannelEvent): void => (d.broadcast(b), notify("info", keyed(d, b)));
   if (msg && !notifiedClient() && batchForWatchdogs(d, text, msg, toBatch)) return;
@@ -388,17 +386,16 @@ function deliverTo(d: Door, raw: string, frame: Frame | null, full: Frame | null
     // уведомления — кадр в окне пачки (backlog.ts, #5140) ещё не отдан, и
     // умерший в окне мост его не потеряет: платформа отдаст снова. Метятся все
     // кадры окна, и не показанные пачкой: она называет их числом и адресом history.
-    const flushBacklog = (b: ChannelEvent, all: Frame[]): void => {
-      batchHandedOut(d, b.frames ?? [], all);
+    const flushBacklog = (b: ChannelEvent): void => {
+      for (const k of b.marks ?? []) noteSeen(seenPath, k, d.seen);
       notify("info", keyed(d, b));
     };
     if (hello && Number(full.pending) > 0) d.backlog.open(Number(full.pending), flushBacklog);
     if (full?.type === "message") {
       if (full.origin === "platform") d.backlog.open(0, flushBacklog);
       if (d.backlog.note(full)) return;
-      takeShownCopies(d, [full]);
     }
-    for (const k of deliveredKeys(full)) noteSeen(seenPath, k, d.seen);
+    for (const k of deliveryKeys(full)) noteSeen(seenPath, k, d.seen);
   }
   notify("info", keyed(d, ev));
 }

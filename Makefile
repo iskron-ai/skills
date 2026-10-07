@@ -55,7 +55,7 @@ test-coverage: build-js
 
 # One suite at a time, for the red-probe discipline (see AGENTS.md).
 test-watchdog: build-js
-	@ISKRON_BRIDGE_NO_UPDATE=1 node --test --test-timeout=120000 js/tests/standing.test.mjs
+	@ISKRON_BRIDGE_NO_UPDATE=1 node --test --test-timeout=120000 js/tests/standing-*.test.mjs
 
 test-extension: build-js
 	@ISKRON_BRIDGE_NO_UPDATE=1 node --test js/tests/extension.test.mjs

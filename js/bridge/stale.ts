@@ -8,7 +8,7 @@ import { addressedToMine } from "../shared/addressed.ts";
 import { type Frame } from "../shared/channel.ts";
 import { caseCountLines, frameToText } from "../shared/frame-text.ts";
 import { L } from "../shared/lang.ts";
-import { countedKeys, eventKeyOf, isRoomCopy, splitBatch, takeRoomCopies } from "../shared/seen.ts";
+import { type Marks, sameCopy, splitBatch } from "../shared/seen.ts";
 import { type ChannelEvent } from "./door.ts";
 
 const STALE_BURST_KEEP = 20;
@@ -20,11 +20,17 @@ export class StaleBurst {
   private readonly burst: Frame[] = [];
   private timer: ReturnType<typeof setTimeout> | null = null;
 
+  /** `has` — метки места: событие, уже вошедшее в ход, пачка не повторяет (seen.ts eventIn). */
+  private readonly has: Marks;
+  constructor(has: Marks) {
+    this.has = has;
+  }
+
   /**
-   * Положить лежалый кадр в пачку; по истечении полосы `flush` получает одно событие
-   * и все кадры полосы, показанные и нет. Повтор id, уже лежащего в пачке, — не второй кадр.
+   * Положить лежалый кадр в пачку; по истечении полосы `flush` получает одно событие.
+   * Повтор id, уже лежащего в пачке, — не второй кадр.
    */
-  note(frame: Frame, flush: (ev: ChannelEvent, all: Frame[]) => void): void {
+  note(frame: Frame, flush: (ev: ChannelEvent) => void): void {
     const id = typeof frame.id === "string" ? frame.id : "";
     if (!id || !this.burst.some((f) => f.id === id)) this.burst.push(frame);
     if (this.timer) return;
@@ -32,13 +38,11 @@ export class StaleBurst {
       this.timer = null;
       const all = this.burst.splice(0);
       if (!all.length) return; // все копии вынула живая копия того же события
-      // Закон #6574: адресованные месту — текстом, прочие записи дел — счётом; копия дела
-      // события, показанного здесь текстом, — ни строкой счёта, ни кадром (seen.ts splitBatch).
-      const { shown: frames, kept } = splitBatch(all, STALE_BURST_KEEP);
+      // Закон #6574: адресованные месту — текстом, прочие записи дел — счётом; событие —
+      // один раз (seen.ts splitBatch). Метки пачки пишет внёсший её в ход (marks, #5831).
+      const { shown: frames, kept, keys } = splitBatch(all, STALE_BURST_KEEP, this.has);
       const count = kept.length;
-      // Не показанные и поглощённые отдаются с пачкой — метятся с ней (unshown).
-      const on = new Set(frames);
-      const left = all.filter((f) => !on.has(f));
+      if (!count) return;
       const bodies = [
         ...caseCountLines(frames),
         ...frames
@@ -48,56 +52,42 @@ export class StaleBurst {
             return [...t].length > BODY_CAP ? [...t].slice(0, BODY_CAP).join("") + "…" : t;
           }),
       ];
-      flush(
-        {
-          kind: "stale",
-          frames,
-          // Сторож метит отданным и то, что пачка назвала числом: иначе оно вернётся с повтором (#5831);
-          // метками счёта — текстом его событие не вошло (seen.ts countedKeys).
-          ...(left.length ? { unshown: left.flatMap((f) => countedKeys(f)) } : {}),
-          text:
-            L(
-              `Лежалых кадров: ${count}` +
-                (count > frames.length
-                  ? `, здесь первые ${frames.length}, не вошло ${count - frames.length}`
-                  : "") +
-                " — принятые, пока место не слушали, или повтор службы после пересборки сессии; " +
-                "адресованные месту — текстом, прочие — счётом; " +
-                'полностью и не вошедшее — iskron_channel(action="history").',
-              `Stale frames: ${count}` +
-                (count > frames.length
-                  ? `, the first ${frames.length} here, ${count - frames.length} left out`
-                  : "") +
-                " — taken while the seat was not listening, or the service repeating after a session rebuild; " +
-                "those addressed to the seat as text, the rest by count; " +
-                'in full and the rest — iskron_channel(action="history").',
-            ) +
-            "\n\n" +
-            bodies.join("\n\n"),
-        },
-        all,
-      );
+      flush({
+        kind: "stale",
+        frames,
+        marks: keys,
+        text:
+          L(
+            `Лежалых кадров: ${count}` +
+              (count > frames.length
+                ? `, здесь первые ${frames.length}, не вошло ${count - frames.length}`
+                : "") +
+              " — принятые, пока место не слушали, или повтор службы после пересборки сессии; " +
+              "адресованные месту — текстом, прочие — счётом; " +
+              'полностью и не вошедшее — iskron_channel(action="history").',
+            `Stale frames: ${count}` +
+              (count > frames.length
+                ? `, the first ${frames.length} here, ${count - frames.length} left out`
+                : "") +
+              " — taken while the seat was not listening, or the service repeating after a session rebuild; " +
+              "those addressed to the seat as text, the rest by count; " +
+              'in full and the rest — iskron_channel(action="history").',
+          ) +
+          "\n\n" +
+          bodies.join("\n\n"),
+      });
     }, STALE_BURST_MS).unref();
   }
 
-  /** Лежит ли в копящейся пачке копия этого события графа того же рода — копия дела либо инбокса (fanout.ts). */
-  hasEvent(evKey: string, room: boolean): boolean {
-    return this.burst.some((f) => eventKeyOf(f) === evKey && isRoomCopy(f) === room);
+  /** Лежит ли в копящейся пачке копия этого события того же рода (fanout.ts). */
+  holdsCopy(frame: Frame): boolean {
+    return this.burst.some((f) => sameCopy(f, frame));
   }
 
-  /**
-   * Вынуть из копящейся пачки лежалые копии инбокса события — живая копия будит, пачка
-   * нет (fanout.ts). Копии дела остаются: их гасит только показанный текстом (takeCopies).
-   */
-  dropEvent(evKey: string): void {
+  /** Вынуть из копящейся пачки лежалые копии того же рода — живая будит, пачка нет (fanout.ts). */
+  dropCopies(frame: Frame): void {
     for (let i = this.burst.length - 1; i >= 0; i--)
-      if (eventKeyOf(this.burst[i]) === evKey && !isRoomCopy(this.burst[i]))
-        this.burst.splice(i, 1);
-  }
-
-  /** Вынуть копии дела событий, вошедших в ход текстом кадров `shown` (seen.ts takeRoomCopies). */
-  takeCopies(shown: readonly (Frame | null)[]): Frame[] {
-    return takeRoomCopies(this.burst, shown, (f) => f);
+      if (sameCopy(this.burst[i], frame)) this.burst.splice(i, 1);
   }
 
   /** Забыть накопленное — при отпускании стояния. */
