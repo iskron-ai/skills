@@ -12,6 +12,7 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import {
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
@@ -19,6 +20,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
@@ -1629,6 +1631,37 @@ test("a re-armed watchdog counts back-dated only what it prints: the hellos of r
   wd.proc.kill("SIGKILL");
   await wd.done;
 });
+
+// The listening line waits for the ring the bridge named; the watchdog's last word must
+// not wait behind it. A door gone (or a dead token) before the ring is out is loud: the
+// listening line, the alarm, exit 1 — never a silent exit 0.
+for (const [what, after] of [
+  ["the door closes", (sock) => setTimeout(() => sock.destroy(), 100)],
+  [
+    "a dead token comes",
+    (sock) => sock.write(JSON.stringify({ kind: "dead", code: 4001, text: "токен мёртв" }) + "\n"),
+  ],
+]) {
+  test(`${what} before the ring the bridge named is out: the watchdog says so and exits 1`, async (t) => {
+    const { socketPathOf } = await import("../shared/standings.ts");
+    const dir = mkdtempSync(join(tmpdir(), "iskron-ring-"));
+    const key = "ring--931--nks-dev";
+    const path = socketPathOf(dir, key);
+    mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+    const door = createServer((sock) => {
+      sock.write(JSON.stringify({ kind: "attached", key, buffered: 3 }) + "\n");
+      sock.write(JSON.stringify({ kind: "frame", raw: '{"type":"hello"}' }) + "\n");
+      after(sock);
+    });
+    await new Promise((r) => door.listen(path, r));
+    t.after(() => door.close());
+    const wd = runClient("watchdog", dir, key, 6000);
+    const { exit } = await wd.done;
+    assert.equal(exit, 1, `exit ${exit}:\n${wd.out}`);
+    assert.match(wd.out, /слушаю стояние ring--931--nks-dev\n\{"type":"hello"\}\n/, wd.out);
+    assert.match(wd.out, /ДЕЛАТЕЛЬ|токен мёртв/, wd.out);
+  });
+}
 
 // A bridge raised anew under a place a previous bridge of this auth dir held
 // (plugin restart, /mcp reconnect) takes the place back from disk — the same

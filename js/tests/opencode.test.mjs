@@ -1396,13 +1396,29 @@ test("a platform word that repeats one still waiting in the session's queue is n
     assert.equal(rec.prompts[0].delivery, "queue");
     appendFileSync(`${b.events}.${pid}`, tact("t5", "Час на «ревью» — подними голову"));
     await until(() => rec.prompts.length === 2, "a different word goes");
+    // A burst shows only the first frames of its window, and the bridge has marked all of
+    // them delivered: one of more than a frame goes whole, or what it left out is lost.
+    appendFileSync(
+      `${b.events}.${pid}`,
+      event("backlog", {
+        frames: Array.from({ length: 20 }, (_, i) => ({
+          type: "message",
+          id: `w${i}`,
+          origin: "platform",
+          provenance: { via: "platform" },
+          body: HOUR,
+        })),
+        text: "Побудка: кадров 25, здесь первые 20, не вошло 5",
+      }),
+    );
+    await until(() => rec.prompts.length === 3, "a burst of more than one frame goes whole");
     rec.emit({
       type: "session.inbox.delivered",
       data: { sessionID: "s-tact", inboxID: "inbox-1" },
     });
     await delay(100);
     appendFileSync(`${b.events}.${pid}`, tact("t6", HOUR));
-    await until(() => rec.prompts.length === 3, "the next hour's word after the take");
+    await until(() => rec.prompts.length === 4, "the next hour's word after the take");
   } finally {
     await rec.stop();
   }
