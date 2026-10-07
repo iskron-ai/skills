@@ -4,7 +4,7 @@
 // set lies outside it: SKILL.md comes through the skill tool, its references/*.md
 // do not. The plugin lifts that ask for reading only, and only inside the
 // directory of a delivery skill — one of the installed set that carries the delivery's
-// bridge, told by its root and by the install lock's source beside it (no readable lock —
+// bridge, told by its root and by the install lock's source (shared/skilllock.ts; no readable lock —
 // nothing); a glob or grep, only in a skill no symlink of which leads out; an ask, only
 // for a call of its own session.
 //
@@ -73,7 +73,7 @@ async function skillDirs(ctx: Context): Promise<string[]> {
     if (dir && basename(dir) === id) listed.push({ id, dir });
   }
   // The delivery's sets: roots whose bridge skill carries the bridge. A skill is the set's
-  // only when the install lock beside the root names it with the bridge skill's source:
+  // only when the install lock of the root names it with the bridge skill's source:
   // a root shares its directory with any other set. No lock proves nothing, and a lock
   // that does not parse is a refusal — either root opens nothing.
   const sets = new Map<string, ReturnType<typeof skillLock>>();

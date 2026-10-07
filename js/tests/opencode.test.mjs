@@ -3320,6 +3320,97 @@ test("a delivery skill's files outside the working copy are read without an ask 
   }
 });
 
+// Where npx skills 1.7.1 keeps its lock (getSkillLockPath, getLocalLockPath): the global
+// root ~/.agents/skills — in $XDG_STATE_HOME/skills/.skill-lock.json when that is set,
+// else beside the root; a project's <dir>/.agents/skills — in <dir>/skills-lock.json.
+test("a delivery skill is told by the lock where npx skills lays it — the XDG state lock, the project lock", async () => {
+  const h = mkdtempSync(join(SANDBOX, "lock-places-"));
+  const SET = "iskron-ai/skills";
+  const skill = (root, id) => {
+    mkdirSync(join(root, id, "references"), { recursive: true });
+    const path = join(root, id, "SKILL.md");
+    writeFileSync(path, `---\nname: ${id}\ndescription: "x"\n---\n`);
+    writeFileSync(join(root, id, "references", "a.md"), "a\n");
+    if (id === "establish-mcp") {
+      mkdirSync(join(root, id, "scripts"));
+      writeFileSync(join(root, id, "scripts", "iskron.mjs"), "");
+    }
+    return { id, name: id, description: "x", path: realpathSync(path), content: "" };
+  };
+  const global = join(h, ".agents", "skills");
+  const project = join(h, "proj", ".agents", "skills");
+  const other = join(h, "other", "skills");
+  const lock = (skills) => JSON.stringify({ version: 3, skills });
+  mkdirSync(join(h, "state", "skills"), { recursive: true });
+  writeFileSync(
+    join(h, "state", "skills", ".skill-lock.json"),
+    lock({
+      "establish-mcp": { source: SET },
+      iskron: { source: SET },
+      odd: { source: SET },
+      foreign: { source: "someone/else" },
+    }),
+  );
+  const skills = [
+    skill(global, "establish-mcp"),
+    skill(global, "iskron"),
+    skill(global, "foreign"),
+    skill(project, "establish-mcp"),
+    skill(project, "kin"),
+    skill(project, "stray"),
+    skill(other, "establish-mcp"),
+    skill(other, "odd"),
+  ];
+  writeFileSync(
+    join(h, "proj", "skills-lock.json"),
+    JSON.stringify({
+      version: 1,
+      skills: {
+        "establish-mcp": { source: SET, sourceType: "github" },
+        kin: { source: SET, sourceType: "github" },
+        stray: { source: "someone/else", sourceType: "github" },
+      },
+    }),
+  );
+  const saved = { HOME: process.env.HOME, XDG_STATE_HOME: process.env.XDG_STATE_HOME };
+  const rec = await plugin({ ISKRON_BRIDGE_PATH: join(SANDBOX, "no-such-bridge.mjs") }, { skills });
+  try {
+    process.env.HOME = h;
+    process.env.XDG_STATE_HOME = join(h, "state");
+    const read = (path) =>
+      rec.ask("read", { filePath: path }, "external_directory", [`${dirname(path)}/*`]);
+    const ref = (root, id) => join(root, id, "references", "a.md");
+    assert.equal(
+      await read(ref(global, "iskron")),
+      "allow",
+      "the global root by the XDG state lock",
+    );
+    assert.equal(await read(ref(global, "foreign")), "ask", "another source in it keeps its ask");
+    assert.equal(
+      await read(ref(project, "kin")),
+      "allow",
+      "a project's root by its skills-lock.json",
+    );
+    assert.equal(await read(ref(project, "stray")), "ask", "another source there keeps its ask");
+    assert.equal(
+      await read(ref(other, "odd")),
+      "ask",
+      "the XDG state lock speaks only for the global root",
+    );
+    delete process.env.XDG_STATE_HOME;
+    assert.equal(
+      await read(ref(global, "iskron")),
+      "ask",
+      "without XDG_STATE_HOME the lock is beside the root — and there is none",
+    );
+  } finally {
+    for (const [k, v] of Object.entries(saved))
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    await rec.stop();
+  }
+});
+
 // Keep the sandbox's auth dir existing for the cache tests that run first.
 mkdirSync(process.env.ISKRON_BRIDGE_AUTH_DIR, { recursive: true });
 

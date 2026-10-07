@@ -144,10 +144,11 @@ export const patShaOf = (pat: string | null | undefined): string | null =>
   pat ? createHash("sha256").update(pat).digest("hex").slice(0, 16) : null;
 
 // Окружение, которое нужно сессии в демоне: всё своё (ISKRON_*, кроме токена),
-// корень плагина, прокси и доверенные сертификаты. Остальное окружение харнеса
-// демону не нужно.
+// корень плагина, место лока скиллов (XDG_STATE_HOME, shared/skilllock.ts), прокси
+// и доверенные сертификаты. Остальное окружение харнеса демону не нужно.
 const PASS_ENV = new Set([
   "CLAUDE_PLUGIN_ROOT",
+  "XDG_STATE_HOME",
   "NODE_EXTRA_CA_CERTS",
   "NODE_USE_ENV_PROXY",
   "HTTP_PROXY",

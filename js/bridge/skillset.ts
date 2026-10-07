@@ -46,11 +46,11 @@ const sha8 = (h: ReturnType<typeof createHash>): string => h.digest("hex").slice
 
 /**
  * Плоская установка: источник набора — source записи establish-mcp в
- * .skill-lock.json рядом с корнем (она несёт мост; граф nks-dev: #6226), без
+ * локе там, где его кладёт npx skills (shared/skilllock.ts; она несёт мост; граф nks-dev: #6226), без
  * неё — SET; stamp — свёртка skillFolderHash записей этого источника.
  */
 function lockSet(root: string): { name: string; stamp: string | null } {
-  const skills = skillLock(root);
+  const skills = skillLock(root, env("XDG_STATE_HOME"));
   if (!skills) return { name: SET, stamp: null };
   const own = skills[BRIDGE_SKILL]?.source;
   const name = typeof own === "string" && own.trim() ? own.trim() : SET;
