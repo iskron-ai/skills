@@ -1,7 +1,7 @@
 import { L } from "../shared/lang.ts";
 import { scoped } from "../shared/scope.ts";
 import { FORM } from "./board.ts";
-import { deafSeatTaken } from "./deaf.ts";
+import { deafPlaceIn, deafSeatTaken } from "./deaf.ts";
 import { errorMessage } from "./errors.ts";
 import { standBesideAgain } from "./evicted.ts";
 import { seatField, structuredOf } from "./fields.ts";
@@ -147,6 +147,12 @@ async function registerOnce(place: Standing | null): Promise<JsonRpcMessage | nu
 async function replayBeside(): Promise<boolean> {
   let whole = true;
   for (const place of [...state.places]) {
+    // Место без слуха, которое может слушать другая сессия, привязкой не повторяется (deaf.ts, #6706).
+    const deaf = deafPlaceIn(place.realm) ? await deafSeatTaken(place) : null;
+    if (deaf) {
+      log(`place ${keyOfPlace(place)} not re-registered: ${deaf}`);
+      continue;
+    }
     const got = await replayRegister(place);
     if (got && !got.error && !got.result?.isError) continue;
     const key = keyOfPlace(place);

@@ -26,6 +26,8 @@ export const H = scoped(() => ({
   parked: false,
   /** ключ места, чей сокет отпущен мёртвым токеном (4001), пока мост не взял сокет снова (deaf.ts) */
   deadKey: null as string | null,
+  /** места других графов того же канала на миг 4001: сервер их привязку помнит, слуха нет (deaf.ts) */
+  deadPlaces: [] as { realm: string; karta: string | number; name?: string }[],
   attachHooks: [] as (() => void)[],
   helloWaiters: new Set<(f: Frame | null) => void>(),
   /** возвратов с диска в полёте: мёртвый токен при них — протухшая запись, не тревога */

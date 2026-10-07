@@ -15,7 +15,7 @@ import { otherRealm } from "./realms.ts";
 import { baseOf } from "./separate.ts";
 import { standingLog } from "./store.ts";
 import { log } from "./streams.ts";
-import { takerOf } from "./taking.ts";
+import { ownTaking, takerOf } from "./taking.ts";
 import { reinitialize, type Standing, state } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
 
@@ -100,6 +100,12 @@ async function standBeside(
 }
 
 async function yieldPlace(key: string, url: string, code: number): Promise<void> {
+  // Свой connect этого места в полёте: 4000 обогнал его ответ — адрес повернул этот мост сам.
+  const own = ownTaking(key);
+  if (own) {
+    await own;
+    if (H.currentUrl !== url) return;
+  }
   const s = state.standing;
   const beside = B.beside;
   if (await takenBySession(key, url)) {

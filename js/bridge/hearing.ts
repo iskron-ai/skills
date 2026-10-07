@@ -13,12 +13,12 @@ import { join } from "node:path";
 import { L } from "../shared/lang.ts";
 import { standingsDirOf } from "../shared/standings.ts";
 import { type Board, type BoardEntry, listens, nameOf, readBoard } from "./board.ts";
-import { type AskedHearing, callTool as call } from "./call.ts";
+import { type AskedHearing, callTool as call, resolveAgainstLed } from "./call.ts";
 import { CFG } from "./config.ts";
-import { holdsStanding, isParked, ledKey, localSocketPathOf, wasEvicted } from "./hold.ts";
+import { doors, holdsStanding, isParked, ledKey, localSocketPathOf, wasEvicted } from "./hold.ts";
 import { holdRecordsNamed, keyOf, readHoldRecord, sessionOfBridge } from "./holdrecord.ts";
 import { normKarta, normName } from "./names.ts";
-import { sameRealm } from "./realms.ts";
+import { resolveRealms, sameRealm } from "./realms.ts";
 import { localSocketAlive } from "./sweep.ts";
 import { state } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
@@ -53,6 +53,27 @@ export const unresolvedAgent = (karta: string, what: string): string | null =>
         `Refused (bridge): karta="agent" — the bridge leads no seat in this graph and does not know which role this session held the name under, and a seat under the sentinel matches neither the board nor a former hold (${what} could make a second seat or take another's). Name the role by number — the agent's role from AGENTS.md.`,
       );
 
+/**
+ * Написание графа места: тот же граф, записанный иначе, чем у мест, которые
+ * ведёт мост, или у записей держания этого имени, берёт их написание — у места
+ * один ключ, и своё под другим написанием не становится чужим. Не разрешилось — как есть.
+ */
+export async function seatRealm(given: unknown, asked: unknown): Promise<string> {
+  const realm = typeof given === "string" ? given.trim() : "";
+  const name = normName(asked);
+  const known = [
+    ...[state.standing, ...state.places].flatMap((p) => (p ? [p.realm] : [])),
+    ...(name ? holdRecordsNamed(name).flatMap((r) => (r.realm ? [r.realm] : [])) : []),
+  ];
+  await resolveAgainstLed(realm); // графы сличаются в одной форме @owner/slug (#5838)
+  if (!realm || !known.length || known.includes(realm)) return realm;
+  await resolveRealms([realm, ...known], async () => {
+    const r = await call("iskron_realm", { action: "list" });
+    return r.isError ? null : r.text;
+  });
+  return known.find((r) => sameRealm(r, realm)) ?? realm;
+}
+
 /** Строка доски — это место: то же имя и та же роль (сентинел — любая). */
 export const ofSeat = (e: BoardEntry, karta: string, name: string): boolean =>
   (isSentinel(karta) || e.karta === karta) && nameOf(e.address) === name;
@@ -82,15 +103,21 @@ function keysNamed(realm: string, name: string): string[] {
   }
 }
 
-/** Живой локальный сокет места держит мост другой сессии (своя сессия — её запись держания). */
-async function heldLocallyByOther(realm: string, karta: string, name: string): Promise<boolean> {
+/**
+ * Кто держит живой локальный сокет места: сама дверь этого моста, прежний мост
+ * этой сессии (её запись держания), другой — или никто (сокета нет).
+ */
+export async function localHolder(key: string): Promise<"self" | "session" | "other" | null> {
+  if (!(await localSocketAlive(localSocketPathOf(key)))) return null;
+  if (doors().some((d) => d.key === key && d.ownsSocket)) return "self";
   const me = sessionOfBridge();
+  return me && readHoldRecord(key, true)?.session === me ? "session" : "other";
+}
+
+/** Живой локальный сокет места держит мост другой сессии. */
+async function heldLocallyByOther(realm: string, karta: string, name: string): Promise<boolean> {
   for (const key of isSentinel(karta) ? keysNamed(realm, name) : [keyOf(realm, karta, name)])
-    if (
-      (await localSocketAlive(localSocketPathOf(key))) &&
-      !(me && readHoldRecord(key, true)?.session === me)
-    )
-      return true;
+    if ((await localHolder(key)) === "other") return true;
   return false;
 }
 
@@ -118,8 +145,9 @@ export async function rawSeatRefusal(msg: JsonRpcMessage): Promise<string | null
   if (!["connect", "mint", "register"].includes(action)) return null;
   const realm = typeof a.realm === "string" ? a.realm.trim() : "";
   const name = normName(a.name);
-  const karta = seatKarta(realm, a.karta ?? state.standing?.karta ?? "", name);
-  if (!realm || !karta) return null;
+  // Роль не названа — та же неизвестность, что «agent»: место без роли не сличить ни с чем.
+  const karta = seatKarta(realm, normKarta(a.karta) || "agent", name);
+  if (!realm) return null;
   const agent = unresolvedAgent(karta, action);
   if (agent) return agent;
   if (ledHere(realm, karta, name)) return null;

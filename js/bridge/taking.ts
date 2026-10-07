@@ -1,11 +1,14 @@
-// Намерение занять место (граф nks-dev: решение #6706): мост названной сессии
-// пишет его до connect или mint и стирает по исходу. Прежний мост той же
-// сессии, получив 4000, по нему знает, что место берёт своя сессия, и ждёт
-// исхода её connect — записи держания с новым адресом либо стёртого намерения, —
-// а не времени: медленный connect не делает из своего места два.
+// Намерение занять место (граф nks-dev: решение #6706): connect или mint места
+// идут под ним до записи держания включительно. Свой — в памяти моста: 4000,
+// обогнавший ответ своего connect, — поворот адреса этим же мостом, не отъём.
+// Мост названной сессии пишет его и файлом: прежний мост той же сессии, получив
+// 4000, по нему знает, что место берёт своя сессия, и ждёт исхода её connect —
+// записи держания с новым адресом либо стёртого намерения, — а не времени:
+// медленный connect не делает из своего места два.
 import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 
+import { scoped } from "../shared/scope.ts";
 import { takingFilePathOf } from "../shared/standings.ts";
 import { CFG } from "./config.ts";
 import { seatKarta } from "./hearing.ts";
@@ -38,18 +41,16 @@ export function takerOf(key: string): string | null {
   }
 }
 
-/**
- * Намерение под connect или mint места из args — до вызова; возвращает, чем его
- * стереть по исходу (после записи держания). Мост без названной сессии его не пишет.
- */
-export function beginTaking(args: Record<string, unknown>): () => void {
+/** Свои connect и mint в полёте: ключ места → исход. */
+const OWN = scoped(() => new Map<string, Promise<void>>());
+
+/** Свой connect или mint этого места в полёте — его исход; нет — null. */
+export const ownTaking = (key: string): Promise<void> | null => OWN.get(key) ?? null;
+
+function writeIntent(key: string): () => void {
   const session = sessionOfBridge();
-  const action = String(args.action);
-  const realm = typeof args.realm === "string" ? args.realm.trim() : "";
-  if (!session || CFG.satellite || !realm || (action !== "connect" && action !== "mint"))
-    return () => {};
-  const name = normName(args.name);
-  const path = pathOf(keyOf(realm, seatKarta(realm, args.karta, name), name));
+  if (!session || CFG.satellite) return () => {};
+  const path = pathOf(key);
   try {
     mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
     writeFileSync(path, JSON.stringify({ session, pid: process.pid }) + "\n", { mode: 0o600 });
@@ -60,6 +61,30 @@ export function beginTaking(args: Record<string, unknown>): () => void {
     try {
       unlinkSync(path);
     } catch {}
+  };
+}
+
+/**
+ * Намерение под connect или mint места из args — до вызова; возвращает, чем его
+ * снять по исходу (после записи держания). Повторное снятие ничего не делает.
+ */
+export function beginTaking(args: Record<string, unknown>): () => void {
+  const action = String(args.action);
+  const realm = typeof args.realm === "string" ? args.realm.trim() : "";
+  if (!realm || (action !== "connect" && action !== "mint")) return () => {};
+  const name = normName(args.name);
+  const key = keyOf(realm, seatKarta(realm, args.karta, name), name);
+  let settle = (): void => {};
+  const done = new Promise<void>((res) => (settle = res));
+  OWN.set(key, done);
+  const unfile = writeIntent(key);
+  let ended = false;
+  return () => {
+    if (ended) return;
+    ended = true;
+    if (OWN.get(key) === done) OWN.delete(key);
+    unfile();
+    settle();
   };
 }
 

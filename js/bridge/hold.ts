@@ -475,8 +475,8 @@ function openHolder(url: string, key: string): void {
         const ev: ChannelEvent = { kind: "dead", code, text };
         broadcast(ev);
         notify("error", ev);
+        Object.assign(H, { deadKey: key, deadPlaces: [...state.places] }); // привязка помнится, слуха нет (deaf.ts)
         releaseStanding(holdWords.tokenDead(), true);
-        H.deadKey = key; // привязка помнится, слуха нет (deaf.ts)
       },
       onServiceAlive: (version) => {
         const text = holdWords.alive(version);

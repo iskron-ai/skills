@@ -23,7 +23,7 @@ import {
 } from "./errors.ts";
 import { evictedRefusal } from "./evicted.ts";
 import { structuredOf } from "./fields.ts";
-import { rawSeatRefusal } from "./hearing.ts";
+import { rawSeatRefusal, seatRealm } from "./hearing.ts";
 import { localLeave } from "./leave.ts";
 import { annotateToolList } from "./moment.ts";
 import { narrowToolList, outsideSetRefusal } from "./narrow.ts";
@@ -333,7 +333,9 @@ async function deliverOne(msg: JsonRpcMessage): Promise<void> {
         msg.method === "tools/call" &&
         msg.params?.name === "iskron_channel" &&
         ["connect", "mint", "register"].includes(String(ch.action));
-      // Место, которое слушает другая сессия, сырым ходом не берётся и им не подписываются (#6706).
+      // Граф своего места — его написанием (hearing.ts); место, которое слушает другая сессия,
+      // сырым ходом не берётся и им не подписываются (#6706).
+      if (takes && ch.realm != null) ch.realm = await seatRealm(ch.realm, ch.name);
       const notOwner = takes
         ? ((await ownerRefusal(ch.realm, ch.karta)) ?? (await rawSeatRefusal(msg)))
         : null;

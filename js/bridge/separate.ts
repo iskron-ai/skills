@@ -10,6 +10,7 @@
 import { sameDir } from "../shared/canon.ts";
 import { type AskedHearing } from "./call.ts";
 import { harnessName } from "./client.ts";
+import { localHolder } from "./hearing.ts";
 import { holdsStanding, isParked, ledKey, localSocketPathOf, wasEvicted } from "./hold.ts";
 import { keyOf, readHoldRecord, seatBaseOf, sessionOfBridge } from "./holdrecord.ts";
 import { NAME_MAX } from "./names.ts";
@@ -69,10 +70,8 @@ async function holderOf(
   if (wasEvicted(realm, karta, name)) return "taken"; // отнял другой держатель (4000)
   const key = keyOf(realm, karta, name);
   if (ledKey() === key) return "mine"; // своё место в окне переоткрытия сокета
-  if (await localSocketAlive(localSocketPathOf(key))) {
-    const me = sessionOfBridge();
-    return me && readHoldRecord(key, true)?.session === me ? "session" : "taken";
-  }
+  const local = await localHolder(key);
+  if (local) return local === "self" ? "mine" : local === "session" ? "session" : "taken";
   // Запись другой названной сессии — её место, хоть доска и не читает его слушающим:
   // её мост вернёт его сам (перезапуск сервиса харнесса), возврат с диска не наш.
   if (theirsByRecord(key)) return "taken";

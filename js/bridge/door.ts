@@ -135,6 +135,11 @@ export class Door {
     return socketPathOf(this.authDir, this.key);
   }
 
+  /** По пути сокета лежит сокет этой двери, а не положенный поверх преемником. */
+  get ownsSocket(): boolean {
+    return !!this.stamps.sock && stampOf(this.socketPath) === this.stamps.sock;
+  }
+
   push(raw: string, frame: Frame | null): void {
     this.ring.push({ raw, frame });
     if (this.ring.length > RING) this.ring.shift();

@@ -19,7 +19,6 @@ import {
   callTool as call,
   leadsOtherPlace,
   otherPlaceWord,
-  resolveAgainstLed,
   serialized,
   short,
   unresolvedRefusal,
@@ -33,6 +32,7 @@ import {
   ledHere,
   ofSeat,
   seatKarta,
+  seatRealm,
   unresolvedAgent,
 } from "./hearing.ts";
 import {
@@ -122,7 +122,7 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   const statusOnly = await standStatusOnly(msg);
   if ("reply" in statusOnly) return statusOnly.reply;
   const a = msg.params?.arguments ?? {};
-  const realm = typeof a.realm === "string" ? a.realm.trim() : "";
+  let realm = typeof a.realm === "string" ? a.realm.trim() : "";
   let karta = a.karta != null ? normKarta(a.karta) : "";
   const lines: string[] = [];
   const done = (isError = false): JsonRpcMessage => ({
@@ -179,7 +179,7 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   const derived = asked || sat ? "" : (fitted?.name ?? "");
   let name = asked || sat?.name || derived;
   const base = sat ? "" : name; // основа места рядом: выведенное или явное имя (#6706)
-  await resolveAgainstLed(realm); // графы сличаются в одной форме @owner/slug (#5838)
+  realm = await seatRealm(realm, name); // одна форма графа (#5838), своё место — под своим написанием (hearing.ts)
   karta = seatKarta(realm, karta, name); // «agent» — роль своего места, до любой проверки (hearing.ts)
   // Мост уже стоит на отдельном месте этого имени — туда же (#5407); take=true зовёт само имя.
   const led0 = state.standing && !otherRealm(state.standing.realm, realm) ? state.standing : null;
