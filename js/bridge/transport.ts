@@ -1,3 +1,4 @@
+import { withFieldsAsked } from "../shared/fields.ts";
 import { lang } from "../shared/lang.ts";
 import { scoped } from "../shared/scope.ts";
 import { noteServerDate } from "./clock.ts";
@@ -144,11 +145,13 @@ export async function post(
   const boundByHeader = isInit ? standingHeader() : null;
   if (boundByHeader) headers["x-nks-standing"] = boundByHeader;
 
+  // Поля ответа мост просит для себя при каждом открытии сессии, и при повторном (shared/fields.ts).
+  const sent = isInit ? { ...msg, params: withFieldsAsked(msg.params) } : msg;
   const send = (): Promise<Response> =>
     fetch(CFG.serverUrl, {
       method: "POST",
       headers,
-      body: JSON.stringify(msg),
+      body: JSON.stringify(sent),
       signal: AbortSignal.timeout(CFG.timeoutMs),
     });
   let res: Response;

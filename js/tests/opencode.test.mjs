@@ -272,6 +272,7 @@ const ENV_KEYS = [
   "FB_RESUME",
   "FB_STAND_HELD",
   "FB_INITS",
+  "FB_INIT_CAPS",
   "FB_NET_UP",
   "FB_DIE_ONCE",
   "FB_ENV",
@@ -655,6 +656,22 @@ test("a bridge stuck in someone's browser: tools come from the last list at once
     );
     await delay(300);
     assert.equal(settled, false, "a call over a mute bridge must keep waiting, not answer");
+  } finally {
+    await rec.stop();
+  }
+});
+
+// Поля ответа по запросу (#6637, #6731): плагин объявляет iskron/structured мосту —
+// иначе мост их срезает, как харнесу без ключа.
+test("the plugin asks the bridge for response fields in its handshake", async () => {
+  const caps = join(SANDBOX, "fields.caps");
+  writeFileSync(caps, "");
+  const b = bridgeEnv("fields", { FB_INIT_CAPS: caps });
+  const rec = await plugin(b.env);
+  try {
+    await until(() => readFileSync(caps, "utf8").trim(), "the handshake", 8000);
+    const seen = readFileSync(caps, "utf8").trim().split("\n").map(JSON.parse);
+    assert.deepEqual(seen[0], { experimental: { "iskron/structured": {} } }, JSON.stringify(seen));
   } finally {
     await rec.stop();
   }

@@ -14,6 +14,7 @@ import { join, resolve } from "node:path";
 
 import { type Bridge, resultToContent } from "../shared/bridge-client.ts";
 import { OPENCODE_CLIENT } from "../shared/clients.ts";
+import { FIELDS_CAPABILITIES } from "../shared/fields.ts";
 import { homeBridgePath } from "../shared/home.ts";
 import { buildOf, buildOfFile } from "../shared/version.ts";
 import { codeWatch, deviceOf } from "./devicewait.ts";
@@ -140,7 +141,7 @@ export async function handshake(
         "initialize",
         {
           protocolVersion: PROTOCOL,
-          capabilities: {},
+          capabilities: FIELDS_CAPABILITIES, // поля ответа — и этому клиенту (#6637)
           clientInfo: { name: OPENCODE_CLIENT, version: "1" },
         },
         { timeoutMs: Math.max(1, deadline - Date.now()) },

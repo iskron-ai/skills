@@ -215,6 +215,9 @@ export async function startFakeNks(opts = {}) {
     structured: false, // /control {structured:true}: доска, register, connect и list_webhooks несут structuredContent (#6637)
     garble: false, // /control {garble:true}: их проза — формой, которой мост не знает (секреты connect остаются в тексте)
     lastStructured: null, // последний отданный structuredContent — проба сверяет, что харнес получил его нетронутым
+    structuredGate: false, // /control {structuredGate:true}: поля — только сессии, объявившей iskron/structured (#6731)
+    initAsked: false, // последнее initialize объявило iskron/structured
+    initCaps: [], // capabilities каждого initialize, как пришли
     tools: opts.tools ?? null, // список тулов целиком, как его отдал бы сервер: схема, которую API отвергнет, — у doctor
     // Сессия открыта credential'ом и умирает вместе с ним (#188 в nks-dev):
     // сменился bearer — старая сессия закрыта. Как сервер отвечает на мёртвый
@@ -314,7 +317,7 @@ export async function startFakeNks(opts = {}) {
     return { ...fields, [key]: fields[key].slice(1), dropped: 1 };
   };
   const fielded = (result, whole, garbled) => {
-    if (!st.structured) return result;
+    if (!st.structured || (st.structuredGate && !st.initAsked)) return result;
     const fields = damaged(whole);
     st.lastStructured = structuredClone(fields);
     return {
@@ -446,6 +449,7 @@ export async function startFakeNks(opts = {}) {
       for (const k of [
         "richTools",
         "structured",
+        "structuredGate",
         "garble",
         "fieldsDamage", // "dropped" | "incomplete" | null — неполные поля (под structured)
         "versionUp",
@@ -821,6 +825,9 @@ export async function startFakeNks(opts = {}) {
       }
 
       if (msg.method === "initialize") {
+        // Поля ответа — только сессии, объявившей capability (#6731); structuredGate включает правило.
+        st.initCaps.push(msg.params?.capabilities ?? null);
+        st.initAsked = "iskron/structured" in (msg.params?.capabilities?.experimental ?? {});
         const fresh = token("session");
         st.sessions.add(fresh);
         st.sessionTokens.set(fresh, bearer);

@@ -34,6 +34,8 @@ const INIT = {
   clientInfo: { name: "stand-probe", version: "0" },
 };
 const PAT = "nks_pat_stand";
+/** Харнес, объявивший поля ответа (#6731), — как плагин OpenCode и расширение pi. */
+const ASKS_FIELDS = { ...INIT, capabilities: { experimental: { "iskron/structured": {} } } };
 
 function startBridge(serverUrl, authDir, cwd = process.cwd(), env = {}, args = [], file = FILE) {
   const notifications = [];
@@ -3795,9 +3797,9 @@ for (const [how, env] of [
     },
   ],
 ])
-  test(`structuredContent reaches the harness untouched (${how}) — no socket or status address is added to it`, async (t) => {
-    const { fake, bridge } = await ready(t, INIT, env);
-    await fake.control({ structured: true });
+  test(`structuredContent reaches a harness that asked for it untouched (${how}) — no socket or status address is added to it`, async (t) => {
+    const { fake, bridge } = await ready(t, ASKS_FIELDS, env);
+    await fake.control({ structured: true, structuredGate: true });
     const channel = (a) =>
       bridge.call("tools/call", { name: "iskron_channel", arguments: { realm: "nks-dev", ...a } });
     const taken = await channel({ action: "connect", karta: 931, name: "proba" });
@@ -3817,7 +3819,50 @@ for (const [how, env] of [
       assert.match(bridge.stderr, /through the machine's bridge daemon/, bridge.stderr);
   });
 
-test("outputSchema rides tools/list to the harness through the narrowing and the moment line", async (t) => {
+// Поля по запросу (#6637, решение #6731): мост объявляет iskron/structured серверу
+// всегда — в рукопожатии харнеса и в повторном, — и читает поля сам; харнесу, не
+// объявившему ключ (Claude Code), structuredContent и outputSchema не отдаются:
+// при полях он отдал бы модели одни поля без текста (#6707).
+test("the bridge asks the server for fields on every handshake; a harness that did not ask gets the full text without structuredContent or outputSchema", async (t) => {
+  const tools = SERVER_TOOLS.map((x) =>
+    x.name === "iskron_channel" ? { ...x, outputSchema: { type: "object" } } : x,
+  );
+  const fake = await startFakeNks({ pat: PAT, tools });
+  const bridge = startBridge(fake.mcpUrl, mkdtempSync(join(tmpdir(), "iskron-fields-")));
+  t.after(async () => {
+    await bridge.stop();
+    await fake.stop();
+  });
+  assert.ok((await bridge.call("initialize", INIT)).result);
+  assert.deepEqual(fake.state.initCaps.at(-1), { experimental: { "iskron/structured": {} } });
+  const list = await bridge.call("tools/list");
+  const channelTool = (list.result?.tools ?? []).find((x) => x.name === "iskron_channel");
+  assert.ok(channelTool && !("outputSchema" in channelTool), JSON.stringify(channelTool));
+  await fake.control({ structured: true, structuredGate: true, garble: true });
+  const stand = await bridge.call("tools/call", {
+    name: "iskron_stand",
+    arguments: { realm: "nks-dev", karta: 931, name: "proba" },
+  });
+  // Проза — формой, которой мост не знает: место и хук он нашёл по полям, которые просил сам.
+  assert.match(textOf(stand), /Хук инбокса роли: взведён на входящий адрес места/, textOf(stand));
+  const board = await bridge.call("tools/call", {
+    name: "iskron_channel",
+    arguments: { realm: "nks-dev", action: "list" },
+  });
+  assert.ok(fake.state.lastStructured, "the server sent fields to the bridge");
+  assert.ok(!("structuredContent" in board.result), JSON.stringify(board.result));
+  assert.ok(textOf(board).length > 0, "the full text stays");
+  // Повторное рукопожатие после потери сессии — тоже с ключом.
+  await fake.control({ kill_session: true });
+  await bridge.call("tools/call", {
+    name: "iskron_channel",
+    arguments: { realm: "nks-dev", action: "list" },
+  });
+  assert.ok(fake.state.initCaps.length >= 2, JSON.stringify(fake.state.initCaps));
+  assert.deepEqual(fake.state.initCaps.at(-1), { experimental: { "iskron/structured": {} } });
+});
+
+test("outputSchema rides tools/list to a harness that asked for fields through the narrowing and the moment line", async (t) => {
   const schema = (key) => ({
     type: "object",
     properties: { [key]: { type: "array", items: { type: "object" } } },
@@ -3835,7 +3880,7 @@ test("outputSchema rides tools/list to the harness through the narrowing and the
     await bridge.stop();
     await fake.stop();
   });
-  assert.ok((await bridge.call("initialize", INIT)).result);
+  assert.ok((await bridge.call("initialize", ASKS_FIELDS)).result);
   const list = await bridge.call("tools/list");
   const byName = Object.fromEntries((list.result?.tools ?? []).map((x) => [x.name, x]));
   assert.ok(!("mute_siblings" in byName.iskron_channel.inputSchema.properties), "narrowed");

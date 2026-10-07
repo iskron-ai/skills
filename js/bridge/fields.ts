@@ -5,7 +5,9 @@
 // прозы (board.ts, standing.ts, hook.ts), со строкой в лог. Секретов (сокет,
 // статусный адрес, url хука) в полях нет — они только в тексте. Здесь — места
 // (seats[]) и общее; хуки — hookfields.ts, отказ — refusal.ts.
+import { asksFields } from "../shared/fields.ts";
 import { log } from "./streams.ts";
+import { state } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
 
 /** Место — seats[] ответа list, connect и register (у connect и register — одно). */
@@ -59,6 +61,20 @@ const SEAT_KEYS: Record<string, (v: unknown) => boolean> = {
 
 export const structuredOf = (reply: JsonRpcMessage | null): unknown =>
   reply?.result?.structuredContent;
+
+/** Харнес сам просил поля ответа (shared/fields.ts, #6731) — иначе они ему не отдаются. */
+export const harnessAsksFields = (): boolean => asksFields(state.initParams);
+
+/**
+ * Ответ тула харнесу: без structuredContent, если поля он не просил, — Claude Code
+ * при них отдаёт модели одни поля без текста (#6707). Мост их уже прочёл.
+ */
+export function forHarness(reply: JsonRpcMessage): JsonRpcMessage {
+  const r = reply?.result;
+  if (!r || !("structuredContent" in r) || harnessAsksFields()) return reply;
+  const { structuredContent: _, ...rest } = r;
+  return { ...reply, result: rest };
+}
 
 /**
  * Данные прошли не целиком: сервер выбросил ряды (`dropped` > 0) или не донёс

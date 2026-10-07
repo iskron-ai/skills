@@ -17,6 +17,7 @@
 import { SURFACE_CLIENT } from "../shared/clients.ts";
 import { L } from "../shared/lang.ts";
 import { CFG } from "./config.ts";
+import { harnessAsksFields } from "./fields.ts";
 import { STAND_TOOL_NAME } from "./standtool.ts";
 import { state } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
@@ -71,7 +72,10 @@ export function outsideSetRefusal(msg: JsonRpcMessage): JsonRpcMessage | null {
   };
 }
 
-/** outputSchema сужение не трогает: по ней харнес сверяет structuredContent ответа (fields.ts). */
+/**
+ * outputSchema харнес получает, только если просил поля ответа (fields.ts, #6731):
+ * по ней он сверяет structuredContent, а без полей схема лишь обещает их.
+ */
 type Tool = {
   name?: string;
   description?: string;
@@ -91,6 +95,11 @@ function withoutPlaceMoves(text: string): string {
         .filter((s) => !PLACE_MOVES.has(s))
         .join(" | "),
   );
+}
+
+function withoutSchema(t: Tool): Tool {
+  const { outputSchema: _, ...rest } = t;
+  return rest;
 }
 
 function channelForHarness(t: Tool): Tool {
@@ -114,14 +123,17 @@ function channelForHarness(t: Tool): Tool {
 
 /**
  * Копия ответа tools/list для харнеса: тулы вне набора убраны, схема iskron_channel
- * без полей ходов над местом. Исходный ответ не трогается — он идёт в общий кэш.
+ * без полей ходов над местом, outputSchema — только харнесу, просившему поля.
+ * Исходный ответ не трогается — он идёт в общий кэш.
  */
 export function narrowToolList(reply: JsonRpcMessage): JsonRpcMessage {
   const tools = reply?.result?.tools;
   if (!Array.isArray(tools) || clientName() === SURFACE_CLIENT) return reply;
   const set = toolSet();
+  const fields = harnessAsksFields();
   const shown = (tools as Tool[])
     .filter((t) => !set || set.has(String(t?.name)))
-    .map((t) => (t?.name === "iskron_channel" ? channelForHarness(t) : t));
+    .map((t) => (t?.name === "iskron_channel" ? channelForHarness(t) : t))
+    .map((t) => (fields || !t || !("outputSchema" in t) ? t : withoutSchema(t)));
   return { ...reply, result: { ...reply.result, tools: shown } };
 }

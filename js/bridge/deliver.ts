@@ -20,7 +20,7 @@ import {
   TokenRefused,
   UpstreamError,
 } from "./errors.ts";
-import { structuredOf } from "./fields.ts";
+import { forHarness, structuredOf } from "./fields.ts";
 import { localLeave } from "./leave.ts";
 import { annotateToolList } from "./moment.ts";
 import { narrowToolList, outsideSetRefusal } from "./narrow.ts";
@@ -362,7 +362,11 @@ async function deliverOne(msg: JsonRpcMessage): Promise<void> {
         // Успешный iskron_case — спутник помнит join прогона (#6573, caseexit.ts).
         noteCaseEntry(msg.params?.name, msg.params?.arguments, held);
         emit(
-          withNotice(absorbCloseReply(msg, absorbRevokeReply(msg, absorbChannelReply(msg, held)))),
+          forHarness(
+            withNotice(
+              absorbCloseReply(msg, absorbRevokeReply(msg, absorbChannelReply(msg, held))),
+            ),
+          ),
         );
       }
       return;

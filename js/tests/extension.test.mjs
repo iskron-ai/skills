@@ -167,6 +167,7 @@ const ENV_KEYS = [
   "FB_TOOLS_FILE",
   "FB_CHANGED",
   "FB_REPLY",
+  "FB_INIT_CAPS",
   "FB_CALLS",
   "FB_STAND_HELD",
   "FB_ENV",
@@ -443,6 +444,20 @@ test("bridge raised: every server tool stands in the session under its own name"
     assert.deepEqual(channel.parameters.required, ["action"]);
     // The prompt line is one sentence of the description, not the whole of it.
     assert.equal(channel.promptSnippet, "Живой канал делателя.");
+  } finally {
+    await rec.stop();
+  }
+});
+
+// Поля ответа по запросу (#6637, #6731): расширение их читает (details.structuredContent)
+// и объявляет iskron/structured мосту — иначе мост их срезает, как харнесу без ключа.
+test("the extension asks the bridge for response fields in its handshake", async () => {
+  const caps = join(SANDBOX, "fields.caps");
+  const { env } = bridgeEnv("fields", { FB_INIT_CAPS: caps });
+  const rec = await session(env);
+  try {
+    const seen = readFileSync(caps, "utf8").trim().split("\n").map(JSON.parse);
+    assert.deepEqual(seen[0], { experimental: { "iskron/structured": {} } }, JSON.stringify(seen));
   } finally {
     await rec.stop();
   }
