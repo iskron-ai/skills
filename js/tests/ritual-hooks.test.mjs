@@ -200,6 +200,24 @@ const fake = mkdtempSync(join(tmpdir(), "guard-link-"));
 mkdirSync(join(fake, ".claude", "projects", "p", "memory"), { recursive: true });
 symlinkSync(join(fake, ".claude", "projects", "p", "memory"), join(fake, "link"), "dir");
 after(() => rmSync(fake, { recursive: true, force: true }));
+// a chain of links under a home of its own: the guard follows 8 hops, and a path
+// still a link after them is blocked — closed on refusal, a cycle too
+const home = mkdtempSync(join(tmpdir(), "guard-home-"));
+mkdirSync(join(home, ".claude", "projects", "x", "memory"), { recursive: true });
+mkdirSync(join(home, "safe"));
+after(() => rmSync(home, { recursive: true, force: true }));
+const chain = (name, n, target) => {
+  const dir = join(home, "chains", name);
+  mkdirSync(dir, { recursive: true });
+  for (let i = 0; i < n; i++)
+    symlinkSync(i === n - 1 ? target : join(dir, `l${i + 1}`), join(dir, `l${i}`));
+  return join(dir, "l0");
+};
+const cycle = join(home, "chains", "cycle");
+mkdirSync(cycle, { recursive: true });
+symlinkSync(join(cycle, "b"), join(cycle, "a"));
+symlinkSync(join(cycle, "a"), join(cycle, "b"));
+const memoryFile = join(home, ".claude", "projects", "x", "memory", "f");
 const guardCases = [
   ["Write", { file_path: join(memory, "MEMORY.md") }, 2],
   ["Write", { file_path: `${join(fake, "link")}/MEMORY.md` }, 2],
@@ -208,20 +226,29 @@ const guardCases = [
   ["NotebookEdit", { notebook_path: join(memory, "n.ipynb"), new_source: "x" }, 2],
   ["NotebookEdit", { notebook_path: join(tmpdir(), "n.ipynb"), new_source: "x" }, 0],
   ["Write", { file_path: join(tmpdir(), "a.md") }, 0],
+  ["Write", { file_path: chain("nine", 9, memoryFile) }, 2, home],
+  ["Write", { file_path: chain("eight", 8, memoryFile) }, 2, home],
+  ["Write", { file_path: chain("safe", 3, join(home, "safe", "f")) }, 0, home],
+  ["Write", { file_path: join(cycle, "a") }, 2, home],
 ];
 for (const [where, groups] of [
   ["settings", () => settings.hooks.PreToolUse ?? []],
   ["hooks.md", templateGuard],
 ]) {
-  for (const [tool, toolInput, code] of guardCases) {
+  for (const [tool, toolInput, code, HOME] of guardCases) {
     test(`memory-guard (${where}): ${tool} ${Object.values(toolInput)[0]} → ${code}`, () => {
       const hooks = guardOf(groups(), tool);
       assert.ok(hooks.length, `a PreToolUse hook matches ${tool}`);
       const payload = JSON.stringify({ tool_name: tool, tool_input: toolInput });
+      const env = HOME ? { ...process.env, HOME } : process.env;
       const codes = hooks.map(
-        (h) => spawnSync("bash", ["-c", h.command], { input: payload, encoding: "utf8" }).status,
+        (h) =>
+          spawnSync("bash", ["-c", h.command], { input: payload, encoding: "utf8", env }).status,
       );
-      assert.ok(codes.includes(code) && codes.every((c) => c === 0 || c === code), codes);
+      assert.ok(
+        codes.includes(code) && codes.every((c) => c === 0 || c === code),
+        `exit codes: ${codes}`,
+      );
     });
   }
 }
