@@ -328,6 +328,7 @@ const ENV_KEYS = [
   "ISKRON_PERMISSION_WAIT_MS",
   "ISKRON_WAKE_MS",
   "ISKRON_OPENCODE_PENDING_MS",
+  "ISKRON_OPENCODE_WAKE_HOLD_MS",
 ];
 
 let seq = 0;
@@ -1499,12 +1500,16 @@ test("a platform word that repeats one still waiting in the session's queue is n
   }
 });
 
-// The take of a queued wake prompt is a signal OpenCode may never give (the case
-// piles wait for it no longer than their bound too): a word whose prompt has waited
-// untaken past that bound no longer holds back the same word.
-test("a platform word waiting untaken past the pending bound no longer holds back the same word", async () => {
+// The take of a queued wake prompt is a signal OpenCode may never give: a word whose
+// prompt has waited untaken past its own bound no longer holds back the same word.
+// That bound is longer than the hour of the attention tact and than the case piles'
+// bound — a shorter one would let the next hour's word through, the very case.
+test("a platform word waiting untaken holds back the same word past the case piles' bound, up to its own", async () => {
   const b = bridgeEnv("tact-silent");
-  const rec = await plugin({ ...b.env, ISKRON_OPENCODE_PENDING_MS: 400 }, { inboxIds: true });
+  const rec = await plugin(
+    { ...b.env, ISKRON_OPENCODE_PENDING_MS: 200, ISKRON_OPENCODE_WAKE_HOLD_MS: 1200 },
+    { inboxIds: true },
+  );
   try {
     await serverTools(rec);
     await rec.call("iskron_channel", { action: "connect" }, "s-tact-silent");
@@ -1519,10 +1524,11 @@ test("a platform word waiting untaken past the pending bound no longer holds bac
       });
     appendFileSync(`${b.events}.${pid}`, tact("t1"));
     await until(() => rec.prompts.length === 1, "the first tact prompt");
-    appendFileSync(`${b.events}.${pid}`, tact("t2"));
-    await delay(150);
-    assert.equal(rec.prompts.length, 1, "within the bound the repeat is held back");
     await delay(400);
+    appendFileSync(`${b.events}.${pid}`, tact("t2"));
+    await delay(200);
+    assert.equal(rec.prompts.length, 1, "past the case piles' bound the repeat is still held back");
+    await delay(800);
     appendFileSync(`${b.events}.${pid}`, tact("t3"));
     await until(() => rec.prompts.length === 2, "the word after the bound, no take seen");
   } finally {

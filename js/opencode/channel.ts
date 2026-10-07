@@ -56,6 +56,12 @@ const CASE_BATCH_MS = Number(process.env.ISKRON_OPENCODE_BATCH_MS) || 5_000;
 const CASE_BATCH_CAP = 20;
 /** Промпт пачки, о взятии которого OpenCode молчит дольше, считается взятым: кадры не ждут вечно. */
 const PENDING_MAX_MS = Number(process.env.ISKRON_OPENCODE_PENDING_MS) || 120_000;
+/**
+ * Слово платформы, о взятии чьего промпта OpenCode молчит, держит свой повтор не
+ * дольше этого: предел длиннее часа такта внимания, иначе повтор следующего часа
+ * прошёл бы — ровно тот случай (#6569); встав, сессия снимает держание раньше.
+ */
+const WAKE_HOLD_MS = Number(process.env.ISKRON_OPENCODE_WAKE_HOLD_MS) || 6 * 3_600_000;
 
 /**
  * Кадр дела в пачку: не прямое слово и не слово человека (его полёт и обрыв —
@@ -156,7 +162,7 @@ export function setupChannel(ctx: Context, say: Say, freshestRoot: () => string 
   // ход в несколько часов копил в очереди OpenCode те же слова подряд (#6569).
   // Пока промпт не взят, тот же промпт в очередь второй раз не встаёт; ключ —
   // весь текст, не тело: то же тело в другом деле — другое слово. О взятии
-  // OpenCode может молчать — как и пачка дела, слово ждёт его не дольше предела.
+  // OpenCode может молчать — слово ждёт его не дольше своего предела (WAKE_HOLD_MS).
   const queuedWakes = new Map<string, { session: string; word: string; at: number }>();
   // Гасится только пачка из одного кадра: пачка показывает лишь первые кадры
   // окна, а мост метит отданными все — у пачки больше одного кадра непоказанное
@@ -168,8 +174,7 @@ export function setupChannel(ctx: Context, say: Say, freshestRoot: () => string 
   };
   const waiting = (session: string | null, word: string): boolean => {
     const id = session ?? freshestRoot();
-    for (const [k, q] of queuedWakes)
-      if (q.at + PENDING_MAX_MS <= Date.now()) queuedWakes.delete(k);
+    for (const [k, q] of queuedWakes) if (q.at + WAKE_HOLD_MS <= Date.now()) queuedWakes.delete(k);
     return [...queuedWakes.values()].some((q) => q.session === id && q.word === word);
   };
 

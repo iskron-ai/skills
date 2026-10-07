@@ -1663,6 +1663,32 @@ for (const [what, after] of [
   });
 }
 
+// A handover inside the ring's wait re-attaches: the listening line of the first
+// attach still waits in the queue, and it says its own ring — not the next one's.
+test("a handover before the ring is out: each listening line carries its own ring's hello", async (t) => {
+  const { socketPathOf } = await import("../shared/standings.ts");
+  const dir = mkdtempSync(join(tmpdir(), "iskron-ring-"));
+  const key = "ring--931--nks-dev";
+  const path = socketPathOf(dir, key);
+  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+  let n = 0;
+  const door = createServer((sock) => {
+    const i = ++n;
+    sock.write(JSON.stringify({ kind: "attached", key, buffered: i === 1 ? 2 : 1 }) + "\n");
+    sock.write(JSON.stringify({ kind: "frame", raw: `{"type":"hello","n":${i}}` }) + "\n");
+    if (i === 1) {
+      sock.write(JSON.stringify({ kind: "handover" }) + "\n");
+      setTimeout(() => sock.destroy(), 50);
+    } else setTimeout(() => sock.destroy(), 300);
+  });
+  await new Promise((r) => door.listen(path, r));
+  t.after(() => door.close());
+  const wd = runClient("watchdog", dir, key, 6000);
+  await wd.done;
+  assert.match(wd.out, /слушаю стояние ring--931--nks-dev\n\{"type":"hello","n":1\}\n/, wd.out);
+  assert.match(wd.out, /слушаю стояние ring--931--nks-dev\n\{"type":"hello","n":2\}\n/, wd.out);
+});
+
 // A bridge raised anew under a place a previous bridge of this auth dir held
 // (plugin restart, /mcp reconnect) takes the place back from disk — the same
 // address, no connect; a revoke or a dead token forgets the record (#5061).
