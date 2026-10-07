@@ -13,6 +13,7 @@ import { harnessName } from "./client.ts";
 import { localHolder } from "./hearing.ts";
 import { holdsStanding, isParked, ledKey, localSocketPathOf, wasEvicted } from "./hold.ts";
 import { keyOf, readHoldRecord, seatBaseOf, sessionOfBridge } from "./holdrecord.ts";
+import { heardOnReturn } from "./leave.ts";
 import { NAME_MAX } from "./names.ts";
 import { resumeFromDisk } from "./resume.ts";
 import { SEP } from "./separatewords.ts";
@@ -66,6 +67,7 @@ async function holderOf(
 ): Promise<Holder> {
   // Ушёл с места словом — своё, пока адрес жив: взявшая его сессия повернула бы адрес,
   // и возврат это докажет отказом сокета (stand.ts); доска в окне после ухода ещё читает «слушает».
+  await heardOnReturn(); // возврат без hello — не своё место со слухом: отпущен (leave.ts)
   if (holdsStanding(realm, karta, name) || isParked(realm, karta, name)) return "mine";
   if (wasEvicted(realm, karta, name)) return "taken"; // отнял другой держатель (4000)
   const key = keyOf(realm, karta, name);

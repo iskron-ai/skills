@@ -20,6 +20,7 @@ import { resolveAgainstLed, unresolvedRefusal } from "./call.ts";
 import { notifiedClient } from "./client.ts";
 import { CFG } from "./config.ts";
 import {
+  awaitHello,
   besideKeyIn,
   heldPlaces,
   holdsStanding,
@@ -34,6 +35,7 @@ import {
   resumeStanding,
 } from "./hold.ts";
 import { markLeft } from "./holdrecord.ts";
+import { H } from "./holdstate.ts";
 import { otherRealm } from "./realms.ts";
 import { releaseSatelliteClaims } from "./satellite.ts";
 import { publishedStatus, publishStatus } from "./status.ts";
@@ -167,6 +169,21 @@ export function returnToStanding(how: string): boolean {
     params: { level: "info", logger: "iskron-channel", data: { kind: "note", text } },
   });
   return true;
+}
+
+/**
+ * Возврат тем же адресом слышит, только когда пришёл hello этого открытия; нет
+ * его за срок — адрес мог повернуть другой (контур отвечает на него 404, не
+ * кодом закрытия): сокет отпущен, место выбирается заново (#6706).
+ */
+export async function heardOnReturn(): Promise<void> {
+  if (!H.unheard || (await awaitHello(4000))) return;
+  const why = L(
+    "возврат на место не дал hello — адрес мог повернуть другой",
+    "the return to the seat gave no hello — another may have turned the address",
+  );
+  log(why);
+  releaseStanding(why, false, false, true);
 }
 
 export function startDeafnessWatch(): void {

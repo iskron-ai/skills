@@ -1,15 +1,17 @@
 // Место без слуха (граф nks-dev: решение #6706): мост ведёт место, а его сокета
-// не держит — ушёл словом (leave) или токен мёртв (4001). Сокет у мест канала
-// общий: глохнут разом основное и места других графов. За это время любое из
-// них могла взять другая сессия; запись, сырой register и повторная привязка
-// после смены сессии подписали бы её место. Пока доска не скажет, что место
-// графа вызова не слушает никто, — не подписываться: доска не прочлась или
-// читает его слушающим (в окне сразу после ухода это может быть и свой
-// закрытый сокет) — отказ вслух; вернуть своё или встать рядом — iskron_stand.
-// Отнятое (4000) — evicted.ts.
+// не держит — ушёл словом (leave), вернулся тем же адресом без hello (адрес мог
+// повернуть другой: контур отвечает на него 404) или токен мёртв (4001). Сокет
+// у мест канала общий: глохнут разом основное и места других графов. За это
+// время любое из них могла взять другая сессия; запись, сырой register и
+// повторная привязка после смены сессии подписали бы её место. Пока доска не
+// скажет, что место графа вызова не слушает никто, — не подписываться: доска не
+// прочлась или читает его слушающим (в окне сразу после ухода это может быть и
+// свой закрытый сокет) — отказ вслух; вернуть своё или встать рядом —
+// iskron_stand. Отнятое (4000) — evicted.ts.
 import { L } from "../shared/lang.ts";
 import { askedHearing } from "./hearing.ts";
-import { diedOn, isParked, ledKey } from "./hold.ts";
+import { isParked, ledKey } from "./hold.ts";
+import { keyOf } from "./holdrecord.ts";
 import { H } from "./holdstate.ts";
 import { otherRealm } from "./realms.ts";
 import { state } from "./transport.ts";
@@ -20,12 +22,16 @@ type Place = { realm: string; karta: string | number; name?: string };
 /** Ходы канала, которые записей не подписывают. */
 const UNSIGNED = new Set(["list", "leave", "close", "revoke", "?"]);
 
+/** Отпустил ли мост сокет ИМЕННО этого места мёртвым токеном и не взял снова. */
+const diedOn = (realm: string, karta: string | number, name: string): boolean =>
+  !!H.deadKey && H.deadKey === keyOf(realm, karta, name);
+
 /** Места канала без слуха — ушёл словом или сокет отпущен мёртвым токеном; слух есть — пусто. */
 function deafPlaces(): Place[] {
   const s = state.standing;
   if (!s) return [];
   const name = s.name ?? "";
-  if (isParked(s.realm, s.karta, name)) return [s, ...state.places];
+  if (isParked(s.realm, s.karta, name) || H.unheard) return [s, ...state.places];
   if (!ledKey() && diedOn(s.realm, s.karta, name)) return [s, ...H.deadPlaces];
   return [];
 }

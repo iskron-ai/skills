@@ -50,7 +50,7 @@ import {
 import { keyOf, noteSeatBase } from "./holdrecord.ts";
 import { armRoleHook } from "./hook.ts";
 import { knock, resetKnocks } from "./knock.ts";
-import { returnToStanding } from "./leave.ts";
+import { heardOnReturn, returnToStanding } from "./leave.ts";
 import { listenBlock } from "./listen.ts";
 import {
   deriveParts,
@@ -367,7 +367,7 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
     // Ушёл с места и вернулся: тот же адрес, сокет открыт заново, register — атрибуция.
     // Адрес за это время повернула другая сессия — сокет отказан и отпущен: место её,
     // подписи им нет — тот же вызов заново выберет место рядом (#6706).
-    await awaitHello(4000);
+    await heardOnReturn(); // нет hello — адрес мог повернуть другой: сокет отпущен (leave.ts)
     if (!holdsStanding(realm, karta, name) && !R.again) {
       R.again = true;
       try {

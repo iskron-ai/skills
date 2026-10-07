@@ -17,6 +17,7 @@ import { type AskedHearing, callTool as call, resolveAgainstLed } from "./call.t
 import { CFG } from "./config.ts";
 import { doors, holdsStanding, isParked, ledKey, localSocketPathOf, wasEvicted } from "./hold.ts";
 import { holdRecordsNamed, keyOf, readHoldRecord, sessionOfBridge } from "./holdrecord.ts";
+import { H } from "./holdstate.ts";
 import { normKarta, normName } from "./names.ts";
 import { resolveRealms, sameRealm } from "./realms.ts";
 import { localSocketAlive } from "./sweep.ts";
@@ -176,6 +177,7 @@ export function ledHere(realm: string, karta: string, name: string): boolean {
   if (holdsStanding(realm, karta, name)) return true;
   return (
     ledKey() === keyOf(realm, karta, name) &&
+    !H.unheard && // вернулся тем же адресом без hello — адрес мог повернуть другой (deaf.ts)
     !wasEvicted(realm, karta, name) &&
     !isParked(realm, karta, name)
   );

@@ -133,7 +133,7 @@ function isOwn(realm: string, karta: string | number, name: string): boolean {
 
 /** Держит ли этот мост сокет ИМЕННО этого стояния — тогда register довольно, connect ротировал бы живое место без причины. */
 export function holdsStanding(realm: string, karta: string | number, name: string): boolean {
-  return !!H.holder?.alive && isOwn(realm, karta, name);
+  return !!H.holder?.alive && !H.unheard && isOwn(realm, karta, name); // возврат без hello — не держание
 }
 
 /** Отняли ли у этого моста сокет ИМЕННО этого стояния (закрытие 4000): привязка цела, слух — у другого; статусный адрес — пока его не повернул чужой connect. */
@@ -155,10 +155,6 @@ export const heldPlaces = (): { key: string; realm: string; primary: boolean }[]
 
 /** Место другого графа, если вызов его называет: уход и занятость — места своего графа (#5838). */
 export const besideKeyIn = (realm: unknown): string | null => extraIn(realm)?.door.key ?? null;
-
-/** Отпустил ли мост сокет ИМЕННО этого места мёртвым токеном и не взял снова. */
-export const diedOn = (realm: string, karta: string | number, name: string): boolean =>
-  !!H.deadKey && H.deadKey === keyOf(realm, karta, name);
 
 /** Ушёл ли мост с ИМЕННО этого места (leave.ts): адрес помнит, сокет закрыт — вернуться можно без connect. */
 export const isParked = (realm: string, karta: string | number, name: string): boolean =>
@@ -275,7 +271,7 @@ export function releaseStanding(
   for (const w of [...H.helloWaiters]) w(null); // ждать hello от отпущенного сокета незачем
   H.door?.close();
   H.door = null;
-  H.parked = false;
+  Object.assign(H, { parked: false, unheard: false });
   H.currentKey = null;
   H.currentUrl = null;
   H.currentStatusUrl = null;
@@ -339,7 +335,7 @@ export function parkStanding(reason: string): string | null {
 /** Вернуться на место, с которого ушёл: тот же адрес, сокет открыт заново. */
 export function resumeStanding(): boolean {
   if (!H.parked || !H.currentUrl || !H.currentKey) return false;
-  H.parked = false;
+  Object.assign(H, { parked: false, unheard: true }); // слух вернётся с hello этого открытия
   // Доказательство слуха — свежий hello за этим открытием, не прежний из кольца (#5036 §4).
   for (const d of doors())
     for (let i = d.ring.length - 1; i >= 0; i--)
@@ -378,6 +374,7 @@ function deliverTo(d: Door, raw: string, frame: Frame | null, full: Frame | null
   // В кольцо идёт и hello — каждой двери: сторож, прицепившийся позже, должен увидеть доказательство держания, а не только рабочие кадры.
   const hello = full?.type === "hello";
   for (const x of hello ? doors() : [d]) x.push(text, full);
+  if (hello) H.unheard = false;
   if (hello) for (const w of [...H.helloWaiters]) w(full);
   const ev: ChannelEvent = { kind: "frame", raw: text, frame: full };
   const msg = full?.type === "message" && !again ? full : null;

@@ -199,6 +199,8 @@ export async function startFakeNks(opts = {}) {
     messages: new Map(), // id → полный текст: то, что history view=message отдаёт мосту при дочитывании
     status: null, // последняя принятая строка занятости
     wsToken: "tok",
+    turned404: false, // апгрейд по адресу, который повернул connect того же места, — HTTP 404, как у контура
+    latestToken: new Map(), // имя места → адрес сокета последнего connect
     wsTokens: new Map(), // адрес сокета → имя места; wsNames: открытый сокет → имя места (несколько мостов на одном фейке)
     wsNames: new Map(),
     wsAddress: new Map(), // открытый сокет → путь его адреса: новое подключение тем же путём вытесняет прежнее
@@ -401,6 +403,7 @@ export async function startFakeNks(opts = {}) {
       if (patch.ws_hang) for (const sock of st.ws) st.hung.add(sock);
       if (patch.case_leave_hang) st.caseLeaveHang = true;
       if (Number.isInteger(patch.ws_refuse)) st.wsRefuse = patch.ws_refuse; // один раз: следующий апгрейд закрывается этим кодом, дальнейшие принимаются
+      if ("turned_404" in patch) st.turned404 = !!patch.turned_404;
       if (patch.ws_mute) st.wsMute = true; // один раз: следующий апгрейд принят, но hello не идёт — служба медлит
       if (Number.isInteger(patch.ws_close)) {
         for (const sock of st.ws) {
@@ -1201,6 +1204,7 @@ export async function startFakeNks(opts = {}) {
           st.standings.set(sid, chan);
           st.wsChannel.set(st.wsToken, chan);
           st.wsTokens.set(st.wsToken, name);
+          st.latestToken.set(name, st.wsToken);
           st.placeAttrs.set(`${karta}:${name}`, a.attrs);
           st.closedPlaces.delete(`${karta}:${name}`);
           st.places.set(`${karta}:${name}`, {
@@ -1722,6 +1726,12 @@ export async function startFakeNks(opts = {}) {
   server.on("upgrade", (req, socket) => {
     const u = new URL(req.url, base);
     if (!u.pathname.startsWith("/channel/ws/")) return socket.destroy();
+    const token = u.pathname.slice("/channel/ws/".length);
+    const seat = st.wsTokens.get(token);
+    if (st.turned404 && seat !== undefined && st.latestToken.get(seat) !== token) {
+      socket.end("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n");
+      return;
+    }
     const accept = createHash("sha1")
       .update(req.headers["sec-websocket-key"] + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")
       .digest("base64");

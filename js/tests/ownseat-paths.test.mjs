@@ -5,6 +5,7 @@
 //
 // ISKRON_BRIDGE_PATH наводит пробу на любую копию моста.
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { mkdtempSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,6 +13,8 @@ import { test } from "node:test";
 
 import {
   channel,
+  FILE,
+  NODE,
   placeArgs,
   placeOf,
   saidKind,
@@ -134,4 +137,47 @@ test("a raw connect without a role on an empty bridge does not take the seat ano
   }
   assert.deepEqual(placeArgs(fake, "connect"), ["proba"], "nothing taken");
   assert.deepEqual(placeArgs(fake, "register"), ["proba"], "nothing signed");
+});
+
+const leftThenTurned = async (t) => {
+  const { fake, dir, cwd, up } = await setup(t);
+  await fake.control({ turned_404: true });
+  const b1 = await up();
+  assert.equal(
+    placeOf(await stand(b1, { realm: "nks-dev", karta: 931, name: "proba", cwd })),
+    "proba",
+  );
+  await until(() => fake.state.ws.size === 1, "b1 socket");
+  assert.ok(!(await channel(b1, { realm: "nks-dev", action: "leave" })).result?.isError);
+  await until(() => fake.state.places.get("931:proba")?.listening === false, "left");
+  const b2 = await up(mkdtempSync(join(tmpdir(), "iskron-ownseat-m2-")));
+  assert.equal(
+    placeOf(await stand(b2, { realm: "nks-dev", karta: 931, name: "proba", cwd })),
+    "proba",
+  );
+  await until(() => fake.state.places.get("931:proba")?.listening === true, "b2 hears proba");
+  return { fake, dir, cwd, b1 };
+};
+
+test("left by word, another session turned the address (the platform answers 404): iskron_stand by name stands beside, not registering over its hearing", async (t) => {
+  const { fake, cwd, b1 } = await leftThenTurned(t);
+  const before = placeArgs(fake, "register").length;
+  const s1 = await stand(b1, { realm: "nks-dev", karta: 931, name: "proba", cwd });
+  const regs = placeArgs(fake, "register").slice(before);
+  assert.ok(!regs.includes("proba"), `b1 signed with proba: ${regs}\n${textOf(s1)}`);
+  assert.equal(placeOf(s1), "proba.2", textOf(s1));
+});
+
+test("left by word, another session turned the address (404), then a watchdog attaches: a write is refused, not signed with its seat", async (t) => {
+  const { fake, dir, b1 } = await leftThenTurned(t);
+  const wd = spawn(NODE, [FILE, "watchdog", "proba--931--nks-dev", "--auth-dir", dir], {
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  t.after(() => wd.kill("SIGKILL"));
+  await until(() => /вернулся на место|back on the seat/.test(b1.stderr), "the return");
+  await sleep(1500);
+  const before = fake.state.writes.length;
+  const w = await write(b1);
+  assert.ok(w.result?.isError, textOf(w));
+  assert.equal(fake.state.writes.length, before, JSON.stringify(fake.state.writes));
 });

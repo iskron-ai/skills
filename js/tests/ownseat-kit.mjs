@@ -11,8 +11,8 @@ import { join } from "node:path";
 import { BUILT_BRIDGE } from "./built.mjs";
 import { startFakeNks } from "./fake-nks.mjs";
 
-const NODE = process.env.ISKRON_NODE || process.execPath;
-const FILE = process.env.ISKRON_BRIDGE_PATH || BUILT_BRIDGE;
+export const NODE = process.env.ISKRON_NODE || process.execPath;
+export const FILE = process.env.ISKRON_BRIDGE_PATH || BUILT_BRIDGE;
 const PAT = "nks_pat_stand";
 const INIT = {
   protocolVersion: "2025-06-18",
