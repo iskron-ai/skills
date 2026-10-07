@@ -136,6 +136,41 @@ test("three fast drops against a live service: the doer is told once, and the ho
   }
 });
 
+// #6726: a rollout keeps /version silent for minutes, and every two fast drops
+// after the first word asked the service again — one band of unavailability gave
+// the doer the same note every few seconds. One band, one note; the hello of the
+// reopened socket ends the band, and the next band is told again.
+test("a silent /version: one band of drops gives the rollout note once; the hello of the reopen ends the band", async () => {
+  sockets.length = 0;
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => {
+    throw new Error("service not answering");
+  };
+  try {
+    const notes = [];
+    const holder = holdSocket({
+      url: "ws://127.0.0.1:9/channel/ws/tok",
+      onFrame: () => {},
+      onDeadToken: () => assert.fail("a rollout is not a dead token"),
+      onServiceAlive: () => assert.fail("the service is silent here"),
+      onNote: (t) => notes.push(t),
+    });
+    const drop = async () => {
+      sockets[sockets.length - 1].fire("close", { code: 1006 });
+      await delay(2100); // the reopen delay, then the next socket is up
+    };
+    for (let i = 0; i < 5; i++) await drop(); // the third asks /version; the fifth asked again
+    const rollout = () => notes.filter((n) => /раскатка|rollout/.test(n)).length;
+    assert.equal(rollout(), 1, `one band of unavailability, one note:\n${notes.join("\n")}`);
+    sockets[sockets.length - 1].fire("message", { data: JSON.stringify({ type: "hello" }) });
+    for (let i = 0; i < 2; i++) await drop(); // a new band after the hello: fastDrops was left at 1
+    assert.equal(rollout(), 2, `the next band is told again:\n${notes.join("\n")}`);
+    holder.close();
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
 // #6586: a socket still opening at the daemon change is not kept for eviction.
 // Opening after the successor's socket, it would make the service evict the
 // successor with 4000 — and the successor's eviction word would drop the place.
