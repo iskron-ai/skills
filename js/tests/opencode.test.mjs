@@ -49,10 +49,10 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { BUILT_BRIDGE, BUILT_PLUGIN } from "./built.mjs";
 import { startFakeNks } from "./fake-nks.mjs";
 import {
+  ack,
   addressed,
   addressedBody,
   addressedInFlight,
-  ack,
   addressedLeft,
   answer,
   ask,

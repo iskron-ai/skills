@@ -30,10 +30,10 @@ import { BUILT_BRIDGE } from "./built.mjs";
 import { startFakeCodex } from "./fake-codex.mjs";
 import { startFakeNks } from "./fake-nks.mjs";
 import {
+  ack,
   addressed,
   addressedBody,
   addressedInFlight,
-  ack,
   addressedLeft,
   answer,
   ask,
