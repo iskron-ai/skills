@@ -4132,6 +4132,69 @@ test("a re-armed watchdog is not handed again from the ring a case copy whose ev
   await w3.done;
 });
 
+// Пачка лежалых судится в миг отдачи, не составления: лежалая копия дела, чьё событие
+// живая копия инбокса внесла текстом раньше, пачкой не считается — и когда сторож ещё
+// не пометил этот текст (тред не принял ход, очередь печати занята).
+test("a stale case copy whose event a live inbox frame already took into the Codex thread is not counted by the stale burst", async (t) => {
+  const { fake, dir, key } = await connected(t);
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const extra = await codexDoor(t, { turnDelayMs: 3000 });
+  const log = join(extra.CODEX_HOME, "door.log");
+  const wd = runClient("watchdog-codex", dir, key, 30_000, extra);
+  await waitFor(() => wd.err.includes("слушаю стояние"), "the codex watchdog to attach");
+  await sendRoom(fake, { ...nodeOp("updated", 101), event_id: 93, stale: true });
+  await fake.control({ ws_send: graphEvent("inbox-p1", 93, "событие девяносто три") });
+  const turns = () =>
+    readFileSync(log, "utf8")
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((l) => JSON.parse(l))
+      .filter((c) => c.method === "turn/start")
+      .map((c) => c.params.input[0].text);
+  await new Promise((r) => setTimeout(r, 2500)); // пачка лежалых ушла бы сторожу
+  await fake.control({
+    ws_send: JSON.stringify({ id: "live-p1", type: "message", body: "живое" }),
+  });
+  await waitFor(
+    () => turns().some((x) => x.includes("живое")),
+    "the live frame in the thread",
+    20_000,
+  );
+  assert.ok(
+    turns().some((x) => x.includes("событие девяносто три")),
+    JSON.stringify(turns()),
+  );
+  for (const text of turns()) assert.doesNotMatch(text, /записей/, text);
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
+test("a stale case copy whose event a live inbox frame already took into the Monitor queue is not counted by the stale burst", async (t) => {
+  const { fake, dir, key } = await connected(t);
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog", dir, key, 30_000, { ISKRON_WATCHDOG_ALONE_MS: "4000" });
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
+  await fake.control({
+    ws_send: JSON.stringify({ id: "live-p0", type: "message", body: "живое-0" }),
+  });
+  await waitFor(() => wd.out.includes("живое-0"), "the first live frame");
+  await sendRoom(fake, { ...nodeOp("updated", 102), event_id: 94, stale: true });
+  await fake.control({ ws_send: graphEvent("inbox-p2", 94, "событие девяносто четыре") });
+  await new Promise((r) => setTimeout(r, 2500)); // пачка лежалых ушла бы сторожу
+  await fake.control({
+    ws_send: JSON.stringify({ id: "live-p2", type: "message", body: "живое-2" }),
+  });
+  await waitFor(() => wd.out.includes("живое-2"), "the last live frame", 25_000);
+  assert.ok(wd.out.includes("событие девяносто четыре"), wd.out);
+  assert.ok(
+    !wd.out.includes("записей"),
+    `the stale burst counted the event shown as text:\n${wd.out}`,
+  );
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
 test("a case copy coming while the Codex watchdog still hands the stale burst into the thread is not counted", async (t) => {
   const { fake, dir, key } = await connected(t, { env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "1000" } });
   await waitFor(() => fake.state.ws.size === 1, "the socket");

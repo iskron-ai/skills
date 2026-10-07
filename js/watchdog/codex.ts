@@ -18,6 +18,7 @@ import { addressedToMine } from "../shared/addressed.ts";
 import { type Door, openDoor } from "../shared/appserver.ts";
 import { frameToText } from "../shared/frame-text.ts";
 import { deliveryKeys, noteSeen, seenIds } from "../shared/seen.ts";
+import { staleBatch } from "../shared/stalebatch.ts";
 import { seenFilePathOf } from "../shared/standings.ts";
 import { adoptSeenPath, attach, heldHeads, parseWatchdogArgs, resolveStanding } from "./client.ts";
 import { doer, wd } from "./words.ts";
@@ -166,10 +167,15 @@ export function runWatchdogCodex(argv: string[]): void {
           withPend(frameToText(ev.frame, ev.raw ?? ""), deliveryKeys(ev.frame), ev.frame);
           break;
         }
-        case "stale":
-          // Одна пачка — один ход; метки пачки — по принятию тредом.
-          void deliver(ev.text ?? wd.codexStale(), ev.marks ?? []);
+        case "stale": {
+          // Одна пачка — один ход, судится в миг вложения (shared/stalebatch.ts): по памяти
+          // сторожа и меткам ходов, уже ушедших в тред; метки пачки — по принятию тредом.
+          const sent = new Set([...waiting.values()].flat());
+          const b = staleBatch(ev.frames ?? [], (k) => seen.has(k) || sent.has(k));
+          if (b.text) void deliver(b.text, b.keys);
+          else for (const k of b.keys) noteSeen(seenPath, k, seen);
           break;
+        }
         case "dead":
         case "evicted":
           note(ev.text ?? wd.seatLost());

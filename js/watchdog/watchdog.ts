@@ -13,6 +13,7 @@ import { type Frame } from "../shared/channel.ts";
 import { batchLine, caseKey, frameToText } from "../shared/frame-text.ts";
 import { L } from "../shared/lang.ts";
 import { deliveryKeys, noteSeen, seenIds } from "../shared/seen.ts";
+import { staleBatch } from "../shared/stalebatch.ts";
 import { seenFilePathOf } from "../shared/standings.ts";
 import { adoptSeenPath, attach, heldHeads, resolveStanding } from "./client.ts";
 import { RingReplay } from "./replay.ts";
@@ -249,12 +250,21 @@ export function runWatchdog(argv: string[]): void {
             head = true; // шапка пачки — её кадрами, с её первой адресованной строкой
           else log(ev.text ?? "");
           break;
-        case "stale":
-          // Одна пачка — одно событие. Напечатана — отдана, и названное числом сверх показанного тоже.
-          out(wrapLines(ev.text ?? ""), false, () => {
-            for (const k of ev.marks ?? []) noteSeen(seenPath, k, seen);
+        case "stale": {
+          // Одна пачка — одно событие, судится в миг печати по памяти сторожа (shared/stalebatch.ts):
+          // событие, напечатанное выше в очереди, пачка не повторит. Напечатана — отдана вся.
+          const burst = ev.frames ?? [];
+          let keys: string[] = [];
+          const lines = (): string[] => {
+            const b = staleBatch(burst, (k) => seen.has(k));
+            keys = b.keys;
+            return b.text ? wrapLines(b.text) : [];
+          };
+          out(lines, false, () => {
+            for (const k of keys) noteSeen(seenPath, k, seen);
           });
           break;
+        }
         case "dead":
         case "evicted":
           leave(ev.text ?? wd.seatLost(), 1);

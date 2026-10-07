@@ -46,7 +46,7 @@ export interface ChannelEvent {
   buffered?: number;
   /** kind="attached": файл памяти отданного этого места — сторож метит и читает его, а не выводит путь сам (сервер ему не известен). */
   seen?: string;
-  /** kind="stale": лежалые кадры полосы — принятое, пока место не слушали, или повтор службы; kind="backlog": кадры пачки по received_at. */
+  /** kind="stale": все кадры полосы — принятое, пока место не слушали, или повтор службы; сторож судит их сам в миг отдачи (shared/stalebatch.ts); kind="backlog": показанные кадры пачки по received_at. */
   frames?: Frame[];
   /** kind="stale" и "backlog": метки доставки пачки (seen.ts splitBatch) — пишет внёсший её в ход. */
   marks?: string[];

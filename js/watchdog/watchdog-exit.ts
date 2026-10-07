@@ -14,6 +14,7 @@ import { addressedToMine } from "../shared/addressed.ts";
 import { type Frame } from "../shared/channel.ts";
 import { batchLine, caseKey, frameToText } from "../shared/frame-text.ts";
 import { deliveryKeys, noteSeen, seenIds } from "../shared/seen.ts";
+import { staleBatch } from "../shared/stalebatch.ts";
 import { seenFilePathOf } from "../shared/standings.ts";
 import { adoptSeenPath, attach, heldHeads, resolveStanding } from "./client.ts";
 import { doer, wd } from "./words.ts";
@@ -133,9 +134,13 @@ export function runWatchdogExit(argv: string[]): void {
           return deliver(groups, block.lines, block.shown, block.ids);
         }
         case "stale":
-          // Пачка лежалых: не повод будить, но и не потеря — тела в логе, метки пачки помечены.
-          for (const k of ev.marks ?? []) noteSeen(seenPath, k, seen);
-          note(ev.text ?? wd.staleFrames());
+          {
+            // Пачка лежалых: не повод будить, но и не потеря — тела в логе, метки пачки помечены;
+            // судится в миг записи по памяти сторожа (shared/stalebatch.ts).
+            const b = staleBatch(ev.frames ?? [], (k) => seen.has(k));
+            if (b.text) note(b.text);
+            for (const k of b.keys) noteSeen(seenPath, k, seen);
+          }
           break;
         case "dead":
         case "alive":
