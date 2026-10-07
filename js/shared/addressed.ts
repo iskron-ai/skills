@@ -1,6 +1,7 @@
 // Адресованность записи дела месту читателя — закон доставки (граф nks-dev:
 // #6574): в ход текстом входит только адресованное, прочее — числом.
-import { ASK_KINDS, askedMine, closesMine, noteAnswer, rememberAsk } from "./asks.ts";
+import { closesMine, noteAsk, processAsks } from "./askmemory.ts";
+import { ASK_KINDS, askedMine } from "./asks.ts";
 import { classifyOrigin, type Frame } from "./channel.ts";
 import { numberedKey } from "./numbering.ts";
 import { addresseeOf, after, byKind, mineOf, myRole, obj, roomKind, str } from "./room-kinds.ts";
@@ -35,6 +36,28 @@ function rememberWord(key: string): void {
   }
 }
 
+/** Роды, гасящие вопрос мне (askmemory.ts). */
+const ASK_CLOSERS = new Set(["ask", "answer", "ack", "progress"]);
+/**
+ * Решение памяти вопросов о кадре — один раз на кадр: адресованность кадра
+ * спрашивают много раз (пачка, счёт, свёртка), а память кадр же и меняет.
+ * Первое решение помнится по id кадра.
+ */
+const askDecided = new Map<string, boolean>();
+function askMemory(f: Rec): boolean {
+  const id = str(f.id) || wordKeyOf(f as Frame);
+  const was = askDecided.get(id);
+  if (was !== undefined) return was;
+  const hit = closesMine(processAsks, f);
+  noteAsk(processAsks, f);
+  askDecided.set(id, hit);
+  for (const old of askDecided.keys()) {
+    if (askDecided.size <= WORDS_KEPT) break;
+    askDecided.delete(old);
+  }
+  return hit;
+}
+
 /**
  * Адресовано ли кадр места читателя — закон #6574: в ход текстом входит только
  * адресованное месту — слово ему (addressee), ответ на его запись
@@ -56,8 +79,8 @@ export function addressedToMine(frame: Frame | null | undefined): boolean {
   const fields = obj(line.fields);
   const rk = roomKind(frame);
   if (rk?.aside) return false; // слово не мне (#6081): факт без тела
-  // Ответ на вопрос мне — псевдонимом в память до всякого решения: переспрос сошлётся на него.
-  if (rk?.kind === "answer") noteAnswer(f);
+  // Память вопросов мне — до всякого решения: «принята» мне гасит ключ, хоть и адресована выше.
+  const closesAsk = !!rk && ASK_CLOSERS.has(rk.kind) && askMemory(f);
   const mine = mineOf(f);
   const hit = (v: unknown): boolean => {
     const a = addresseeOf(v);
@@ -90,17 +113,9 @@ export function addressedToMine(frame: Frame | null | undefined): boolean {
     return true;
   }
   // Вопрос моей роли или моему месту (#6867); ответ и приём адресованы addressee — выше.
-  // Снятие вопроса мне — текстом в пачке: вопрос, на который я стою, больше не открыт.
-  if (rk?.kind === "ask" && askedMine(f, fields)) {
-    rememberAsk(f);
-    return true;
-  }
-  // Ответ другого места моей роли и переспрос другому — тоже: вопрос мне больше не открыт.
-  if (
-    (rk?.kind === "progress" || rk?.kind === "answer" || rk?.kind === "ask") &&
-    (closesMine(f) || f.addressed === true)
-  )
-    return true;
+  // Гасящее вопрос мне (снятие, ответ другого места, переспрос другому) — тоже.
+  if (rk?.kind === "ask" && askedMine(f, fields)) return true;
+  if (closesAsk || (rk && ASK_CLOSERS.has(rk.kind) && f.addressed === true)) return true;
   // Приглашение мне или его отзыв: ключ invite:<моё место>, приглашение роли — моей роли.
   if (rk?.kind === "invite" || rk?.kind === "withdraw") {
     if (mine.includes(after(str(line.key), "invite:"))) return true;

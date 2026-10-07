@@ -841,8 +841,6 @@ test("question kinds: the answer to my seat and a call of my role wake; a questi
       [ack(92, 91, ME), "followUp"],
       [roleCall(93, "ownerless"), "steer"],
       [roleCall(94, "answer_waiting"), "steer"],
-      // A re-ask of another role, answering the answer to my question, puts mine out (#6867, #6778).
-      [reask(103, MY_KARTA + 1, 91), "followUp"],
     ];
     const echo = ask(99);
     echo.line.author = { kind: "standing", standing: ME, name: "proba" };
@@ -864,7 +862,9 @@ test("question kinds: the answer to my seat and a call of my role wake; a questi
       otherSeat,
       otherCount,
       myAnswer,
-      ask(104, MY_KARTA + 1), // a fresh question on the same key answers nothing — not mine
+      // After «accepted» the key's question is out: a new question on it is fresh, not a re-ask.
+      reask(103, MY_KARTA + 1, 91),
+      ask(104, MY_KARTA + 1),
     ];
     for (const f of [...mine.map(([f]) => f), ...rest]) push(events, frame(f));
     await delay(1000);
@@ -890,7 +890,7 @@ test("question kinds: the answer to my seat and a call of my role wake; a questi
     assert.match(waiting, /ответ ждёт приёма, спросившее место @aleksei:gone ушло/);
     const count = rec.messages.at(-1);
     assert.equal(count.opts.deliverAs, "nextTurn");
-    assert.match(count.msg.content, /^№7 «Стенд»: записей 9, тебе 0/);
+    assert.match(count.msg.content, /^№7 «Стенд»: записей 10, тебе 0/);
   } finally {
     await rec.stop();
   }

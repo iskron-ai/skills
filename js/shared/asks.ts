@@ -3,7 +3,6 @@
 // и их слова. Правило стопки держит словарь родов (room-kinds.ts), слова — здесь.
 import { classifyOrigin, type Frame } from "./channel.ts";
 import { L, lang } from "./lang.ts";
-import { numberedKey } from "./numbering.ts";
 import { addresseeOf, fill, mineOf, myRole, obj, type Rec, str } from "./room-fields.ts";
 
 // ru:dict — русская таблица слов; английская рядом, язык выбирает вызывающий.
@@ -56,7 +55,7 @@ const phrase = (key: string, values: Rec = {}): string => fill(askWord(key) ?? "
 const toOf = (fields: Rec): Rec => obj(fields.to);
 
 /** Строку написало моё место — эхо своей записи. */
-const byMe = (frame: Rec): boolean => {
+export const byMe = (frame: Rec): boolean => {
   const mine = mineOf(frame);
   const author = obj(obj(frame.line).author);
   return [str(author.id), str(author.standing)].some((a) => a && mine.includes(a));
@@ -90,79 +89,6 @@ export function askedMine(frame: Rec, fields: Rec): boolean {
   const theirs = handleOf(str(obj(to.standing).standing) || str(to.standing));
   return !!theirs && theirs === handleOf(str(frame.to_standing));
 }
-
-/**
- * Вопросы мне, которые видел этот процесс: ключ — дело и номер ask (и номера
- * ответов на него). Его гасят снятие, ответ другого места моей роли (адресован
- * спросившему, не мне) и переспрос другому — их месту несут словами. Сторож выхода и перезапущенный мост вопроса не
- * видели — гасящее им метит мост (bridge/addressmark.ts) по .seen места.
- */
-const asksToMe = new Set<string>();
-const ASKS_KEPT = 512;
-// Место читателя — процесс держит несколько мест; номер свой в каждом деле и
-// в счёте кадра: смена нумерации забывает прежние (#6576), как у слова.
-const askKey = (frame: Rec, entry: unknown): string =>
-  numberedKey(
-    frame as Frame,
-    `${mineOf(frame)[0] ?? ""}|${str(obj(frame.room).id) || str(obj(frame.room).seq)}|${str(entry)}`,
-  );
-
-/** Ключ памяти записи этого кадра — вопроса мне или ответа на него. */
-export const askKeyOf = (frame: Rec): string =>
-  askKey(frame, obj(frame.line).entry_id ?? frame.entry_id);
-const refersOf = (frame: Rec): string => str(obj(frame.line).refers_to) || str(frame.in_reply_to);
-/**
- * Ключ памяти вопроса, который гасит этот кадр: у снятия — fields.withdraws;
- * у ответа — его вопрос (line.refers_to, иначе in_reply_to конверта); у
- * переспроса другому — ответ, на который он отвечает (#6778): ответ на вопрос мне
- * память помнит псевдонимом вопроса (noteAnswer). Свежий вопрос на том же ключе
- * ни на что не отвечает — не гасит. Иного — пусто.
- */
-export const closedKeyOf = (frame: Rec): string => {
-  // Эхо своей записи адресовано не мне — гасить у меня нечего.
-  if (byMe(frame)) return "";
-  const line = obj(frame.line);
-  const kind = str(line.kind);
-  const n =
-    kind === "progress"
-      ? str(obj(line.fields).withdraws)
-      : kind === "answer" || (kind === "ask" && !askedMine(frame, obj(line.fields)))
-        ? refersOf(frame)
-        : "";
-  return n ? askKey(frame, n) : "";
-};
-
-/**
- * Ответ на вопрос (любой, и свой): of — ключ его вопроса, alias — ключ ответа,
- * которым переспрос назовёт этот вопрос; не ответ — null.
- */
-export function answerAliasOf(frame: Rec): { of: string; alias: string } | null {
-  const n = str(obj(frame.line).kind) === "answer" ? refersOf(frame) : "";
-  return n ? { of: askKey(frame, n), alias: askKeyOf(frame) } : null;
-}
-
-/** Ответ на вопрос мне — в память псевдонимом: переспрос другому сошлётся на него. */
-export function noteAnswer(frame: Rec): void {
-  const a = answerAliasOf(frame);
-  if (a && asksToMe.has(a.of)) remember(a.alias);
-}
-
-/** Запомнить вопрос мне — его погасят снятие, ответ другого места или переспрос. */
-export const rememberAsk = (frame: Rec): void => remember(askKeyOf(frame));
-
-function remember(key: string): void {
-  asksToMe.add(key);
-  for (const old of asksToMe) {
-    if (asksToMe.size <= ASKS_KEPT) break;
-    asksToMe.delete(old);
-  }
-}
-
-/** Снятие, ответ или переспрос, гасящие вопрос, который был задан мне. */
-export const closesMine = (frame: Rec): boolean => {
-  const k = closedKeyOf(frame);
-  return !!k && asksToMe.has(k);
-};
 
 /** Ответ или приём мне: адресат кадра (addressee, иначе fields.to) — моё место, и он из дела не вышел. */
 export function addressedMine(frame: Rec): boolean {

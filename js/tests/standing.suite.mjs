@@ -5267,11 +5267,17 @@ test("question kinds under the Monitor watchdog: a question to me, its withdrawa
 // The withdrawal of a question to me names only the ask's number: the exit
 // watchdog gets it in a new process, and the bridge may have restarted since
 // the ask. The bridge keeps the ask in the seat's .seen and marks the withdrawal.
-// A re-ask of another role, answering the answer to my question, puts it out the
-// same way (#6867, #6778): the bridge keeps that answer in .seen too.
-for (const [what, closer, words] of [
-  ["a withdrawn question", () => askWithdrawn(91, 90), "вопрос [90] снят"],
-  ["a question re-asked of another role", () => reask(91, MY_KARTA + 1, 89), "[91] Алексей"],
+// A re-ask of another role on its key, answered or not, puts it out the same way:
+// the last line of the key is no longer my question (#6867, #6778).
+for (const [what, closer, words, answered] of [
+  ["a withdrawn question", () => askWithdrawn(91, 90), "вопрос [90] снят", false],
+  ["a question re-asked of another role", () => ask(91, MY_KARTA + 1), "[91] Алексей", false],
+  [
+    "an answered question re-asked of another role",
+    () => reask(91, MY_KARTA + 1, 89),
+    "[91] Алексей",
+    true,
+  ],
 ])
   test(`${what} to me across a bridge restart: the exit watchdog wakes on it in words`, async (t) => {
     const { fake, dir, key, bridge } = await connected(t, {
@@ -5283,7 +5289,8 @@ for (const [what, closer, words] of [
     await sendRoom(fake, ask(90));
     assert.equal((await first.done).exit, 0, `the question to me wakes: ${first.err}`);
     assert.ok(first.out.includes("спрашивает роль"), `the question in words:\n${first.out}`);
-    await sendRoom(fake, answer(89, 90, BORIS)); // my role's other seat answered the asker
+    // my role's other seat answered the asker
+    if (answered) await sendRoom(fake, answer(89, 90, BORIS));
     await new Promise((r) => setTimeout(r, 300));
     bridge.proc.kill("SIGKILL");
     await waitFor(() => bridge.proc.signalCode !== null, "the first bridge to exit");
