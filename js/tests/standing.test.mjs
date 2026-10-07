@@ -1575,9 +1575,59 @@ test("a re-armed watchdog gets hello and only the frames no local client has see
     !again.out.includes("первое слово"),
     `a delivered frame must not come a second time:\n${again.out}`,
   );
-  assert.match(again.out, /слушаю стояние \S+ \(2 кадра задним числом\)/, again.out);
+  // hello — доказательство держания, не слово делателю: в счёт не входит (#5671).
+  assert.match(again.out, /слушаю стояние \S+ \(1 кадр задним числом\)/, again.out);
   again.proc.kill("SIGKILL");
   await again.done;
+});
+
+// #5671: every reopen of the socket leaves its hello in the ring, and a re-armed
+// watchdog used to count them all as frames «back-dated» — a count that grew from
+// arming to arming with nothing for the doer to read. Hello replays once, the
+// latest; the count names only the frames the watchdog will print.
+test("a re-armed watchdog counts back-dated only what it prints: the hellos of reopens neither count nor pile up", async (t) => {
+  const { fake, dir, key, standings } = await connected(t);
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  for (let i = 0; i < 2; i++) {
+    const before = new Set(fake.state.ws);
+    await fake.control({ ws_close: 1001 }); // the service drops the socket: the bridge reopens, a new hello lands in the ring
+    await waitFor(
+      () => [...fake.state.ws].some((s) => !before.has(s)),
+      `reopen ${i + 1} of the socket`,
+    );
+  }
+  await new Promise((r) => setTimeout(r, 300));
+  for (let arming = 1; arming <= 2; arming++) {
+    const wd = runClient("watchdog", dir, key, 6000);
+    await waitFor(() => wd.out.includes("слушаю стояние"), `arming ${arming} to attach`);
+    await new Promise((r) => setTimeout(r, 400));
+    assert.doesNotMatch(
+      wd.out,
+      /задним числом/,
+      `arming ${arming}: only hellos — no call to read:\n${wd.out}`,
+    );
+    assert.equal(
+      (wd.out.match(/"type":"hello"/g) ?? []).length,
+      1,
+      `arming ${arming}: one hello, the latest — proof of holding, not a pile:\n${wd.out}`,
+    );
+    wd.proc.kill("SIGKILL");
+    await wd.done;
+  }
+  await fake.control({
+    ws_send: JSON.stringify({ type: "message", id: "m-9", body: "слово мимо сторожа" }),
+  });
+  await new Promise((r) => setTimeout(r, 300));
+  const wd = runClient("watchdog", dir, key, 6000);
+  await waitFor(() => wd.out.includes("слово мимо сторожа"), "the unseen word");
+  await waitSeen(standings, "m-9");
+  assert.match(wd.out, /слушаю стояние \S+ \(1 кадр задним числом\)\n/, wd.out);
+  assert.ok(
+    wd.out.indexOf("слушаю стояние") < wd.out.indexOf("слово мимо сторожа"),
+    `the listening line comes first:\n${wd.out}`,
+  );
+  wd.proc.kill("SIGKILL");
+  await wd.done;
 });
 
 // A bridge raised anew under a place a previous bridge of this auth dir held

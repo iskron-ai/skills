@@ -57,16 +57,27 @@ let queue: Promise<void> = Promise.resolve();
 let lastAt = 0;
 let lastAlone = false;
 
+/** Сколько строка прицепления ждёт кадров кольца, названных мостом, не дольше. */
+const REPLAY_WAIT_MS = 1000;
+
 /**
  * Блок строк одной записью; alone — отдельным событием Monitor. after — когда
  * запись ушла (колбэк write), не когда вызвана: пометка .seen — после отдачи.
+ * ready — строки известны позже, чем встают в очередь: очередь ждёт их на своём месте.
  */
-const out = (lines: string[], alone = false, after?: () => void): void => {
+const out = (
+  lines: string[] | (() => string[]),
+  alone = false,
+  after?: () => void,
+  ready?: Promise<void>,
+): void => {
   queue = queue.then(async () => {
+    await ready;
+    const text = typeof lines === "function" ? lines() : lines;
     const wait = lastAt && (alone || lastAlone) ? lastAt + ALONE_GAP_MS - Date.now() : 0;
     if (wait > 0) await new Promise((r) => setTimeout(r, wait));
     const failed = await new Promise<boolean>((r) =>
-      process.stdout.write(lines.join("\n") + "\n", (e) => r(!!e)),
+      process.stdout.write(text.join("\n") + "\n", (e) => r(!!e)),
     );
     lastAt = Date.now();
     lastAlone = alone;
@@ -120,15 +131,52 @@ export function runWatchdog(argv: string[]): void {
     head = "";
     return { lines, marks: riderMarks.splice(0) };
   };
+  // Кольцо моста отдаёт прицепившемуся hello каждого переоткрытия сокета (#5671):
+  // «задним числом» зовёт делателя читать, поэтому строка прицепления ждёт кадров
+  // кольца (их число — buffered) и считает лишь те, что сторож напечатает; hello
+  // из кольца — один, последний, следом за ней.
+  let replay = 0; // кадров кольца ещё впереди
+  let printed = 0; // из них печатаются строкой делателю
+  let hello = ""; // последний hello кольца
+  let replayed: (() => void) | null = null;
+  const endReplay = (): void => {
+    replay = 0;
+    replayed?.();
+    replayed = null;
+  };
   attach(target.path, {
     onEvent: (ev) => {
+      const fromRing = ev.kind === "frame" && replay > 0;
+      if (fromRing) replay--;
       switch (ev.kind) {
-        case "attached":
+        case "attached": {
           seenPath = adoptSeenPath(ev.seen, seenPath, seen); // память места на его сервере
-          log(wd.listening(ev.key, ev.buffered ? wd.backfilled(plural(ev.buffered)) : ""));
+          endReplay();
+          replay = ev.buffered ?? 0;
+          printed = 0;
+          hello = "";
+          let done = (): void => {};
+          const ready = new Promise<void>((r) => (done = r));
+          replayed = done;
+          setTimeout(() => replayed === done && endReplay(), REPLAY_WAIT_MS).unref();
+          const key = ev.key;
+          out(
+            () => [
+              wd.listening(key, printed ? wd.backfilled(plural(printed)) : ""),
+              ...(hello ? [hello] : []),
+            ],
+            false,
+            undefined,
+            ready,
+          );
           break;
+        }
         case "frame": {
           const f = ev.frame;
+          if (fromRing && f?.type === "hello") {
+            hello = ev.raw ?? "";
+            break;
+          }
           if (f?.type !== "message") {
             log(ev.raw ?? ""); // служебный кадр (hello, статус) короток и печатается как есть
             break;
@@ -170,6 +218,7 @@ export function runWatchdog(argv: string[]): void {
             const first = !cases.has(caseKey(f));
             cases.add(caseKey(f));
             if (!again) {
+              if (fromRing) printed++;
               const r = take();
               out([...r.lines, ...wrapLines(batchLine(f, ev.batch.fold, first))], false, () =>
                 [...r.marks, all].forEach((m) => m()),
@@ -179,6 +228,7 @@ export function runWatchdog(argv: string[]): void {
             break;
           }
           if (!again) {
+            if (fromRing) printed++;
             const r = take();
             if (r.lines.length) out(r.lines, false, () => r.marks.forEach((m) => m()));
             out(wrapLines(frameToText(f, ev.raw ?? "")), true, mark);
@@ -209,6 +259,7 @@ export function runWatchdog(argv: string[]): void {
           else log(wd.bridgeReleasedSocket(ev.text ?? ""));
           break;
       }
+      if (replayed && replay === 0) endReplay(); // кольцо отдано: строка прицепления знает счёт
     },
     onGone: (why) => loudExit(doer(why), 1),
   });
