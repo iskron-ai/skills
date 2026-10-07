@@ -4,7 +4,7 @@
 // Исключение одно — проба моста-спутника в разделе «субагенты»: это запуск
 // самого моста, и пишет он то, что пишет мост (кэш ответа сервера, обновлённый грант).
 import { createHash } from "node:crypto";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -19,6 +19,7 @@ import {
   setConfig,
 } from "../bridge/config.ts";
 import { errorMessage } from "../bridge/errors.ts";
+import { readFallbacks } from "../bridge/fallback.ts";
 import { discoverMeta } from "../bridge/oauth/discovery.ts";
 import { probeDaemon } from "../bridge/probe.ts";
 import { grantLogPath, loadGrantState, loadStore, storePath } from "../bridge/store.ts";
@@ -29,6 +30,10 @@ import { homeBridgePath } from "../shared/home.ts";
 import { seamRunDir } from "../shared/seam-entrance.ts";
 import { compareVersions } from "../shared/semver.ts";
 import { VERSION, versionIn } from "../shared/version.ts";
+import { codexCopies } from "./codexcache.ts";
+import { type Launch, launchReport, openCodeRuntimeWord } from "./doctornode.ts";
+import { secondPathReport } from "./doctorpaths.ts";
+import { skillsReport } from "./doctorskills.ts";
 import { dw } from "./doctorwords.ts";
 import { openCodeMcpEntries } from "./opencode-config.ts";
 import { subagentsReport } from "./subagents.ts";
@@ -233,12 +238,19 @@ function claudePluginReport(): void {
         if (manifest && existsSync(manifest)) {
           try {
             const m = JSON.parse(readFileSync(manifest, "utf8")) as {
-              mcpServers?: Record<string, { args?: string[] }>;
+              mcpServers?: Record<string, { command?: string; args?: string[] }>;
             };
             const hit = Object.entries(m.mcpServers ?? {}).find(([, v]) =>
               (v.args ?? []).some((a) => /iskron\.mjs/.test(a)),
             );
-            if (hit) entry = dw.entryFound(hit[0]);
+            if (hit) {
+              entry = dw.entryFound(hit[0]);
+              launches.push({
+                who: `Claude Code ${key}`,
+                harness: "claude",
+                command: hit[1].command ?? "",
+              });
+            }
           } catch {
             entry = dw.unreadable(manifest);
           }
@@ -268,41 +280,40 @@ function codexPluginReport(home: string): void {
   const cache = join(home, "plugins", "cache");
   if (!existsSync(cache)) return;
   let found = 0;
-  for (const market of readdirSync(cache)) {
-    const marketDir = join(cache, market);
-    let plugins: string[];
-    try {
-      plugins = readdirSync(marketDir);
-    } catch {
-      continue;
-    }
-    for (const plugin of plugins) {
-      if (!/iskron/.test(plugin)) continue;
-      const dir = join(marketDir, plugin);
-      const manifest = join(dir, ".codex-plugin", "plugin.json");
-      let word = dw.codexNoManifest();
-      if (existsSync(manifest)) {
-        try {
-          const m = JSON.parse(readFileSync(manifest, "utf8")) as {
-            version?: string;
-            mcpServers?: Record<string, { args?: string[] }>;
-          };
-          const hit = Object.values(m.mcpServers ?? {}).some((v) =>
-            (v.args ?? []).some((a) => /iskron\.mjs/.test(a)),
-          );
-          word = dw.codexManifest(m.version ?? "?", hit);
-        } catch {
-          word = dw.unreadable(manifest);
-        }
+  for (const { market, plugin, dir } of codexCopies(home)) {
+    const manifest = join(dir, ".codex-plugin", "plugin.json");
+    let word = dw.codexNoManifest();
+    if (existsSync(manifest)) {
+      try {
+        const m = JSON.parse(readFileSync(manifest, "utf8")) as {
+          version?: string;
+          mcpServers?: Record<string, { command?: string; args?: string[] }>;
+        };
+        const hit = Object.values(m.mcpServers ?? {}).find((v) =>
+          (v.args ?? []).some((a) => /iskron\.mjs/.test(a)),
+        );
+        word = dw.codexManifest(m.version ?? "?", !!hit);
+        if (hit)
+          launches.push({
+            who: `Codex ${plugin}@${market}`,
+            harness: "codex",
+            command: hit.command ?? "",
+          });
+      } catch {
+        word = dw.unreadable(manifest);
       }
-      found++;
-      out(dw.codexPlugin(plugin, market, word, dir));
     }
+    found++;
+    out(dw.codexPlugin(plugin, market, word, dir));
   }
   if (!found) out(dw.codexNoPlugin(cache));
 }
 
+// Команды stdio-записей моста, найденные отчётом харнессов, — для сверки с PATH (doctornode.ts).
+const launches: Launch[] = [];
+
 export function harnessReport(): void {
+  launches.length = 0;
   claudePluginReport();
   const claude = join(homedir(), ".claude.json");
   if (existsSync(claude)) {
@@ -316,6 +327,12 @@ export function harnessReport(): void {
       if (entries.length) {
         for (const [name, v] of entries) {
           out(dw.claudeEntry(name, v.command ?? "", (v.args ?? []).join(" ")));
+          launches.push({
+            who: `Claude Code «${name}»`,
+            harness: "claude",
+            command: v.command ?? "",
+            entry: name,
+          });
         }
       } else out(dw.claudeNoManual());
     } catch {
@@ -331,6 +348,7 @@ export function harnessReport(): void {
     else if (!existsSync(packaged)) out(dw.ocNoPackaged(copy));
     else if (readFileSync(copy).equals(readFileSync(packaged))) out(dw.ocSame(copy));
     else out(dw.ocDiffers(copy, packaged));
+    if (existsSync(copy)) out(openCodeRuntimeWord());
   }
   openCodeMcpEntries(out);
   for (const codexHome of codexHomes()) {
@@ -350,11 +368,20 @@ export function harnessReport(): void {
       );
     }
   }
+  launchReport(out, launches);
+  secondPathReport(out, codexHomes());
 }
 
 /** Демон машины своего каталога гранта: режим, сокет, pid, сборка, число сессий. */
 async function daemonReport(): Promise<void> {
   out(daemonWanted() ? dw.daemonOn() : dw.daemonOff());
+  out(dw.daemonGrant(CFG.authDir));
+  const fallbacks = readFallbacks(CFG.authDir);
+  if (!fallbacks.length) out(dw.fallbackNone());
+  else {
+    out(dw.fallbackCount(fallbacks.length));
+    for (const f of fallbacks) out(dw.fallbackOne(f.pid, f.build, f.since, f.cwd, f.why));
+  }
   // doctor не пишет: личного каталога шва нет — демона не поднимали, и проба его бы создала.
   if (!existsSync(seamRunDir(CFG.authDir))) {
     out(dw.daemonNeverUp(seamRunDir(CFG.authDir)));
@@ -389,5 +416,6 @@ export async function runDoctor(argv: string[]): Promise<void> {
   if (CFG.pat) await patReport();
   else grantReport();
   harnessReport();
+  skillsReport(out, codexHomes());
   await subagentsReport(out);
 }

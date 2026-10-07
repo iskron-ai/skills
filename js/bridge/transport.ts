@@ -9,6 +9,7 @@ import { repeatable } from "./repeat.ts";
 import { loadStore, saveServerCache } from "./store.ts";
 import { debug, log } from "./streams.ts";
 import { type JsonRpcMessage } from "./types.ts";
+import { unnamedSeatRefusal } from "./unnamed.ts";
 
 // -------------------------------------------------- streamable HTTP client
 
@@ -114,6 +115,8 @@ export async function post(
   msg: JsonRpcMessage,
   onMessage: (m: JsonRpcMessage) => void,
 ): Promise<void> {
+  const unnamed = unnamedSeatRefusal(msg);
+  if (unnamed) return void onMessage(unnamed);
   const headers: Record<string, string> = {
     "content-type": "application/json",
     accept: "application/json, text/event-stream",

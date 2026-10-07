@@ -1,15 +1,14 @@
-// Тонкий мост — сторона агента на шве «тонкий мост ↔ демон машины» (провод —
-// shared/seam.ts, вход — shared/seam-entrance.ts, демон — daemon.ts). Держит
-// stdio харнеса и отдаёт всё демону своего каталога гранта: JSON-RPC как есть в
-// обе стороны. Сам хранит только то, без чего обрыв стал бы молчанием или
-// потерей: копию initialize харнеса, вызовы в полёте и ключ места, которое держит
-// его сессия.
+// Тонкий мост — сторона агента на шве «тонкий мост ↔ демон машины» (провод — shared/seam.ts,
+// вход — shared/seam-entrance.ts, демон — daemon.ts). Держит stdio харнеса и отдаёт всё демону
+// своего каталога гранта: JSON-RPC как есть в обе стороны. Сам хранит только то, без чего обрыв
+// стал бы молчанием или потерей: копию initialize харнеса, вызовы в полёте и ключ места,
+// которое держит его сессия.
 //
-//   демона нет      поднимает его отсоединённо (`iskron.mjs daemon`, копией новее из
-//                   своей и домашней) под выборами (замок подъёма в личном каталоге шва);
-//                   не встал, вход не личный, замка не взять — полный мост в процессе, и
-//                   мост говорит это: stderr и первый ответ тула. Поднятый демон ушёл
-//                   кодом «демон уже есть» — ждать живого, а не идти полным
+//   демона нет      поднимает его отсоединённо (`iskron.mjs daemon`, копией новее из своей и
+//                   домашней) под выборами (замок подъёма в личном каталоге шва); не встал,
+//                   вход не личный, замка не взять — полный мост в процессе, и мост говорит
+//                   это: stderr, первый ответ тула, отметка запасного пути (fallback.ts).
+//                   Поднятый демон ушёл кодом «демон уже есть» — ждать живого, не идти полным
 //   обрыв связи     запрос, чей приём демон подтвердил (ack), — вердикт «исход
 //                   неизвестен»; не подтверждённый демоном, говорящим ack, сессия не
 //                   видела — он переотправляется после переподхвата сам, вместо ошибки;
@@ -47,6 +46,7 @@ import { DAEMON_BUSY_EXIT } from "./daemon.ts";
 import { syntheticError } from "./deliver.ts";
 import { fullBridgeSigint, installCrashWords, startEngine } from "./engine.ts";
 import { NOT_SENT, UNKNOWN } from "./errors.ts";
+import { markFallback } from "./fallback.ts";
 import { lostPlaces, placeWord, realmListAsk } from "./lostplaces.ts";
 import { type Raise, raiseDaemon, SELF } from "./raise.ts";
 import { type BridgeSession, openSession } from "./session.ts";
@@ -297,6 +297,7 @@ export function thinMain(argv: string[]): void {
   const goLocal = (reason: string) => {
     if (mode === "local" || leaving) return;
     log(`${reason} — going as the full bridge inside this process`);
+    markFallback(authDir, { build: BUILD, cwd: process.cwd(), why: reason });
     word =
       `iskron-bridge ${BUILD}: ${reason}; this bridge runs as the full bridge in its own process ` +
       `(the machine's daemon is the default; ${DAEMON_ENV}=0 runs the full bridge on purpose).`;
