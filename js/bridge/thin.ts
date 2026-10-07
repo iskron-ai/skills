@@ -18,7 +18,7 @@
 //                   переподхват по id локальной сессии; сессия новая — initialize
 //                   переигрывается, место сессии возвращается по записи держания
 //                   (запрос iskron/resume с его ключом), и вызовы харнеса ждут этих
-//                   ходов; место не вернулось (у спутника записи нет) — уведомление
+//                   ходов (спутник на паузе места не берёт); не вернулось — уведомление
 //                   lost и отказ вслух каждого вызова тула в его граф, кроме
 //                   iskron_stand
 //   конец           stdin закрыт, SIGTERM — bye демону с ограниченным ожиданием
@@ -108,6 +108,7 @@ export function thinMain(argv: string[]): void {
   let leaving: Promise<void> | null = null;
   let byeDone: (() => void) | null = null;
   let heldKey: string | null = null; // место, которое держит сессия, — вернуть его в новой сессии
+  let paused = false; // харнес поставил спутника на паузу (bridge/suspend.ts): место ждёт по записи паузы
   let everAttached = false;
   let successorAwaited = 0; // миг, когда уходящий демон назвал преемника
   const queue: JsonRpcMessage[] = [];
@@ -146,6 +147,7 @@ export function thinMain(argv: string[]): void {
       }
       const f = flights.get(k);
       flights.delete(k);
+      if (f?.msg.method === "iskron/suspend" && msg.result?.suspended === true) paused = true;
       if (word && f?.msg.method === "tools/call" && Array.isArray(msg.result?.content)) {
         msg.result.content.push({ type: "text", text: word });
         word = null;
@@ -279,7 +281,10 @@ export function thinMain(argv: string[]): void {
       );
     }
     live.clear();
-    if (held) {
+    // Спутник на паузе места не берёт: его конец — не конец прогона, место и дела ждут по записи паузы.
+    if (held && paused)
+      log(`the session is new — its place ${held.key} is paused and waits on its pause record`);
+    else if (held) {
       const id = `iskron-thin-resume-${++replays}`;
       replayIds.add(key(id));
       resuming.set(key(id), held);

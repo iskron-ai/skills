@@ -5,7 +5,8 @@
 // остановки: мост пишет запись держания места-спутника (адрес сокета и дела
 // прогона) и уходит, не выходя из дел, не снимая места и занятости. Мост нового
 // экземпляра возвращает место по ключу (`iskron/resume`, resume.ts) и принимает
-// дела прогона — на своём конце он их и покинет.
+// дела прогона — на своём конце он их и покинет. Та же пауза — у спутника с живым
+// мостом при передаче демона преемнику (daemon.ts): её ставит сама передача.
 import { L } from "../shared/lang.ts";
 import { scoped } from "../shared/scope.ts";
 import { callTool as call } from "./call.ts";
@@ -28,6 +29,8 @@ import { type JsonRpcMessage } from "./types.ts";
 
 const S = scoped(() => ({
   on: false,
+  /** ответ паузы — повторному запросу (пауза уже стоит, место отпущено) */
+  answer: null as { key: string; cases: number } | null,
   /** адрес, который повернул connect перевзвода (и проигравший потолок — тоже) */
   turned: null as { url: string; statusUrl: string | null } | null,
   /** адрес, записанный в запись паузы последним */
@@ -43,15 +46,46 @@ export const suspended = (): boolean => S.on;
 export function localSuspend(msg: JsonRpcMessage): Promise<JsonRpcMessage> | null {
   if (msg?.method !== "iskron/suspend") return null;
   const answer = (result: unknown): JsonRpcMessage => ({ jsonrpc: "2.0", id: msg.id, result });
+  // Пауза уже стоит (повторный запрос, передача демона её поставила) — тот же ответ.
+  if (S.on && S.answer) return Promise.resolve(answer({ suspended: true, ...S.answer }));
   const s = state.standing;
-  const { currentKey: key, currentUrl: url, currentStatusUrl: statusUrl } = H;
-  if (!CFG.satellite || !s?.name || !key || !url)
+  const key = pauseRecord();
+  if (!key || !s)
     return Promise.resolve(
       answer({
         suspended: false,
         word: L("места-спутника нет — паузы нет", "no satellite seat — nothing to pause"),
       }),
     );
+  return rearmForPause(s).then((rearmed) => {
+    if (rearmed) S.write?.();
+    log(
+      `satellite paused for a plugin reload: ${key}, cases ${S.answer?.cases ?? 0} — place and cases kept, idle window ${rearmed ? `${PAUSE_TTL_S} s` : "unchanged"}`,
+    );
+    return answer({ suspended: true, ...S.answer });
+  });
+}
+
+/**
+ * Передача демона преемнику, а мост спутника жив (daemon.ts): пауза, как перед
+ * перезагрузкой плагина, — место, дела и занятость ждут его в новой сессии; сокет
+ * места не паркуется и не перевзводится: его держит передача до вытеснения
+ * преемником (handoff.ts), окно простоя — прежнее.
+ */
+export function pauseForHandover(why: string): void {
+  if (S.on) return;
+  const key = pauseRecord();
+  if (key)
+    log(
+      `satellite paused for the daemon handover (${why}): ${key}, cases ${S.answer?.cases ?? 0} — place and cases kept`,
+    );
+}
+
+/** Запись паузы места-спутника (адрес сокета и дела прогона); ключ — или null, места нет. */
+function pauseRecord(): string | null {
+  const s = state.standing;
+  const { currentKey: key, currentUrl: url, currentStatusUrl: statusUrl } = H;
+  if (!CFG.satellite || !s?.name || !key || !url) return null;
   const cases = joinedCases();
   const write = () => {
     const at = S.turned ?? { url, statusUrl };
@@ -75,13 +109,8 @@ export function localSuspend(msg: JsonRpcMessage): Promise<JsonRpcMessage> | nul
   S.write = write;
   write(); // прежний адрес — сразу: мост, погашенный посреди перевзвода, оставит запись
   S.on = true;
-  return rearmForPause(s).then((rearmed) => {
-    if (rearmed) write();
-    log(
-      `satellite paused for a plugin reload: ${key}, cases ${cases.length} — place and cases kept, idle window ${rearmed ? `${PAUSE_TTL_S} s` : "unchanged"}`,
-    );
-    return answer({ suspended: true, key, cases: cases.length });
-  });
+  S.answer = { key, cases: cases.length };
+  return key;
 }
 
 /**

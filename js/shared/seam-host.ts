@@ -63,6 +63,11 @@ export interface SeamHost {
    * без ack тонкий мост знает, что они не ушли, и переотправит их преемнику.
    */
   draining?(): boolean;
+  /**
+   * Запрос, который уходящий демон отвечает сам (пауза спутника: передача её уже
+   * поставила); null — не берётся, как прочие.
+   */
+  answerDraining?(session: string, msg: RpcMessage): Promise<RpcMessage> | null;
 }
 
 const HELLO_WAIT_MS = 5_000;
@@ -100,9 +105,18 @@ export function serveSeam(socket: Socket, host: SeamHost, graceMs = SEAM_REATTAC
       const request = msg.method !== undefined && msg.id !== undefined && msg.id !== null;
       // Уходящий демон не берёт новых запросов (без ack тонкий мост переотправит их
       // преемнику); уведомления (cancelled) и ответы харнеса на запросы сервера —
-      // о том, что уже в полёте в этой сессии, — ей и доставляются.
+      // о том, что уже в полёте в этой сессии, — ей и доставляются. Что хозяин отвечает
+      // сам (answerDraining), — принимается и отвечается им.
       if (request && host.draining?.()) {
-        say(`request ${JSON.stringify(msg.id)} not taken: the daemon is handing over`);
+        const late = host.answerDraining?.(s.id, msg) ?? null;
+        if (!late) {
+          say(`request ${JSON.stringify(msg.id)} not taken: the daemon is handing over`);
+          return;
+        }
+        writeFrame(socket, { t: "ack", id: msg.id as string | number });
+        void late
+          .then((reply) => writeFrame(socket, { t: "rpc", msg: reply }))
+          .catch((e: Error) => say(`request ${JSON.stringify(msg.id)} failed: ${e.message}`));
         return;
       }
       chain = chain.then(

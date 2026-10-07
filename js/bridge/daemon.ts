@@ -19,7 +19,8 @@
 //                   их преемнику), ждёт вызовов в полёте, закрывает двери мест без слова
 //                   «отпущено» и без снятия занятости, поднимает преемника новой копией;
 //                   тонкие мосты переподхватываются, места возвращаются по записи
-//                   держания (resume.ts); сокеты мест уходящий держит до вытеснения
+//                   держания (resume.ts), место спутника с живым мостом — по записи
+//                   паузы (suspend.ts); сокеты мест уходящий держит до вытеснения
 //                   преемником, пришедшее досылает ему спулом (handoff.ts), и уходит
 //   журнал          <каталог гранта>/run/daemon.log — слово демона и его сессий
 import { spawn } from "node:child_process";
@@ -29,7 +30,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { homeBridgePath } from "../shared/home.ts";
-import { runIn } from "../shared/scope.ts";
+import { runIn, type Scope } from "../shared/scope.ts";
 import { type SeamHello, writeFrame } from "../shared/seam.ts";
 import { ownPidAlive, seamRunDir, seamSocketPath } from "../shared/seam-entrance.ts";
 import {
@@ -50,6 +51,7 @@ import { handoffsSettled } from "./handoff.ts";
 import { beginHandover, beginSessionHandover } from "./holdstate.ts";
 import { type BridgeSession, openSession } from "./session.ts";
 import { log, setProcessLog } from "./streams.ts";
+import { localSuspend, pauseForHandover } from "./suspend.ts";
 import {
   pendNotice,
   startFreshnessWatch,
@@ -134,6 +136,8 @@ export async function daemonMain(argv: string[]): Promise<void> {
   /** pid тонкого моста сессии: шов оборван, а мост жив — он в окне переподхвата. */
   const bridgePids = new Map<string, number>();
   const sockets = new Set<Socket>();
+  /** Области сессий, переданных преемнику: запрос паузы в окне передачи отвечается в них. */
+  const handed = new Map<string, Scope>();
   let draining = false;
   let counter = 0;
   let lastNotice: string | null = null;
@@ -160,6 +164,14 @@ export async function daemonMain(argv: string[]): Promise<void> {
     // Тонким мостам — слово: ждать преемника, а не поднимать демон самим.
     for (const so of sockets) writeFrame(so, { t: "handover", why });
     spawnDaemon(to, authDir, true); // преемник ждёт, пока этот отпустит вход
+    // Спутник, чей тонкий мост жив, вернётся к преемнику: смена демона — пауза, не конец
+    // прогона (suspend.ts) — место и дела ждут его. Мост умер — спутник кончается, как прежде.
+    for (const [id, e] of engines) {
+      if (!e.scope) continue;
+      handed.set(id, e.scope);
+      if (attached.has(id) || ownPidAlive(bridgePids.get(id)))
+        runIn(e.scope, () => pauseForHandover(why));
+    }
     await Promise.allSettled([...sessions.values()].map((s) => s.end(`daemon handover: ${why}`)));
     for (const so of sockets) so.end(); // связь оборвалась — вердикты, переотправка, переподхват
     // Сокеты мест — до вытеснения преемником или до предела (handoff.ts, #6586).
@@ -208,6 +220,11 @@ export async function daemonMain(argv: string[]): Promise<void> {
     log: (m) => log(m),
     count: () => sessions.size,
     draining: () => draining,
+    // Пауза, запрошенная в окне передачи, уже стоит (pauseForHandover) — ответ её, а не отказ.
+    answerDraining(id, msg) {
+      const scope = handed.get(id);
+      return scope ? runIn(scope, () => localSuspend(msg)) : null;
+    },
     find: (id) => sessions.get(id) ?? null,
     open(hello) {
       const id = `s${++counter}-${process.pid}`;
