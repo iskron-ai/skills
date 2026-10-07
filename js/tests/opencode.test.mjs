@@ -1313,7 +1313,7 @@ test("a stale burst is one prompt into the holder's session, bodies included", a
   }
 });
 
-test("an eviction is loud in OpenCode: a prompt into the holder's session naming the place beside and take=true on the human's word", async () => {
+test("an eviction is loud in OpenCode: a prompt into the holder's session — the bridge stands beside by itself, take=true on the human's word", async () => {
   const b = bridgeEnv("evicted");
   const rec = await plugin(b.env);
   try {
@@ -1326,10 +1326,8 @@ test("an eviction is loud in OpenCode: a prompt into the holder's session naming
     await until(() => rec.prompts.length === 1, "the eviction prompt");
     assert.equal(rec.prompts[0].sessionID, "s-evicted");
     assert.match(rec.prompts[0].text, /место отняли/);
-    assert.match(
-      rec.prompts[0].text,
-      /встанет рядом на имя\.N; отбить место \(take=true\) — только словом человека/,
-    );
+    assert.match(rec.prompts[0].text, /Мост сам встаёт рядом на имя\.N со слухом/);
+    assert.match(rec.prompts[0].text, /Вытеснить ту сессию \(take=true\) — только словом человека/);
   } finally {
     await rec.stop();
   }
@@ -2173,10 +2171,12 @@ test("a marker whose writer still lives is never taken, however old", async () =
   }
 });
 
-// The session's own place (by its key, or stood by it) is held by a live bridge of
-// another session: the resume takes nothing, and the session is told so with the
-// way back — not left to believe the place is its own (#6626).
-test("a session whose own place a live bridge of another session holds is told the return failed, and how to take it", async () => {
+// The session's own place (by its key, or stood by it) is held by another live
+// bridge: the resume takes nothing, and the session is told so with the way back —
+// not left to believe the place is its own (#6626). The way is iskron_stand by the
+// name, no take: the bridge tells its own session's former bridge from another
+// session's itself — not the agent's memory, not the human (#6702, #6706).
+test("a session whose own place another live bridge holds is told the return failed, and that iskron_stand by the name sorts it without take", async () => {
   const resume = join(SANDBOX, "elsewhere.resume");
   writeFileSync(
     resume,
@@ -2200,7 +2200,9 @@ test("a session whose own place a live bridge of another session holds is told t
     await until(() => rec.prompts.some((p) => /не удался/.test(p.text)), "the word to s1");
     const word = rec.prompts.find((p) => /не удался/.test(p.text));
     assert.equal(word.sessionID, "s1");
-    assert.match(word.text, /k-own[\s\S]*другой сессии[\s\S]*iskron_stand\(take=true\)/);
+    assert.match(word.text, /k-own[\s\S]*iskron_stand с этим именем, take не нужен/);
+    assert.match(word.text, /прежнего моста этой же сессии мост вернёт сам/);
+    assert.doesNotMatch(word.text, /take=true/);
     assert.ok(!rec.prompts.some((p) => /сам вернул место/.test(p.text)));
     // The word comes once, after the wait for the other socket to go — not per attempt.
     const resumes = callsIn(calls).filter((c) => c.name === "iskron/resume").length;

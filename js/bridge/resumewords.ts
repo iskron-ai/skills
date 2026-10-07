@@ -38,6 +38,12 @@ export const resumeWords = {
       `в каталоге лежат записи мест, на которых эта сессия не стояла (${foreign.join(", ")}); по одному каталогу они не берутся, место займёт ${via}`,
       `the directory holds records of seats this session did not stand on (${foreign.join(", ")}); they are not taken by directory alone, ${via} will take the seat`,
     ),
+  /** Запись по ключу, на которой стояла другая сессия: место соседа не берётся (#6706). */
+  neighbourKey: (keys: string[]): string =>
+    L(
+      `на месте ${keys.join(", ")} стояла другая сессия — место соседа возврат не берёт; своё место займёт ${via}`,
+      `another session stood on the seat ${keys.join(", ")} — a return does not take a neighbour's seat; ${via} will take your own`,
+    ),
   left: (left: string[]): string =>
     L(
       `место отпущено словом держателя (leave): ${left.join(", ")} — само не вернётся, вернуть: ${via} тем же именем`,
@@ -90,9 +96,9 @@ export const resumeWords = {
   gaveUp: (key: string, limit: number): string =>
     L(
       `Искрон: доска читает место ${key} не слушающим и после ${limit} переоткрытий сокета — ` +
-        `больше не рву; проверь доску и сервер, вернуть слух — ${via} с take=true.`,
+        `больше не рву; проверь доску и сервер, вернуть слух — ${via} тем же именем: другую сессию на месте он не тронет и встанет рядом; take=true — только словом человека.`,
       `Iskron: the board reads the seat ${key} as not listening and after ${limit} socket reopenings — ` +
-        `I no longer tear it; check the board and the server, to restore hearing — ${via} with take=true.`,
+        `I no longer tear it; check the board and the server, to restore hearing — ${via} with the same name: it leaves another session on the seat alone and stands beside; take=true — only on the human's word.`,
     ),
   deafBoard: (): string =>
     L("доска не читает слушающим", "the board does not read it as listening"),

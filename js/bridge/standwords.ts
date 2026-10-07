@@ -45,8 +45,8 @@ function missWord(m: StatusMiss, of?: string): string {
       );
     case "elsewhere":
       return L(
-        `${only}, а сокета и статусного адреса этого места у моста нет — сокет места не у этого моста: только register при слухе другого держателя либо сокет отпущен (мёртвый токен, снятие); займи место iskron_stand с karta.`,
-        `${only}, and the bridge has neither the socket nor the status address of this seat — the seat's socket is not with this bridge: register only while another holder hears, or the socket was released (dead token, revoke); take the seat by iskron_stand with karta.`,
+        `${only}, а сокета и статусного адреса этого места у моста нет — сокет места не у этого моста: место ждёт возврата с диска либо сокет отпущен (мёртвый токен, снятие); займи место iskron_stand с karta.`,
+        `${only}, and the bridge has neither the socket nor the status address of this seat — the seat's socket is not with this bridge: the seat waits for its return from disk, or the socket was released (dead token, revoke); take the seat by iskron_stand with karta.`,
       );
   }
 }
@@ -99,8 +99,8 @@ export const SW = {
     ),
   boardCount: (declared: number, parsed: number): string =>
     L(
-      `Отказано: доска объявляет ${declared} мест, разобрано ${parsed}, и своего места среди разобранных нет — нераспознанная строка могла быть им; connect ротировал бы его вслепую. Уверен, что места нет, — повтори с take=true.`,
-      `Refused: the board declares ${declared} seats, ${parsed} were read, and your own is not among them — the unread line may be it; connect would rotate it blind. Sure there is no seat — repeat with take=true.`,
+      `Отказано: доска объявляет ${declared} мест, разобрано ${parsed}, и своего места среди разобранных нет — нераспознанная строка могла быть им — или местом, которое слушает другая сессия; connect ротировал бы его вслепую, а take=true отнял бы его. Повтори, когда доска прочтётся, либо встань под другим name.`,
+      `Refused: the board declares ${declared} seats, ${parsed} were read, and your own is not among them — the unread line may be it, or a seat another session listens on; connect would rotate it blind, and take=true would take it. Repeat when the board reads, or stand under another name.`,
     ),
   boardCountFound: (declared: number, parsed: number): string =>
     L(
@@ -124,21 +124,17 @@ export const SW = {
       "возврат на место, с которого мост уходил, — сокет открыт заново тем же адресом, register",
       "back to the seat the bridge had left — the socket reopened at the same address, register",
     ),
-  howEvicted: (): string =>
+  /** Место прежнего моста этой же сессии харнесса (#6706): своё — мост вернул его сам, без take от агента. */
+  howOwnSession: (): string =>
     L(
-      "место отняли у этого моста (закрытие 4000) — слушает другой держатель; только register: привязка цела, слух — у него; слух здесь — iskron_stand без name встанет рядом на имя.N; отбить место (take=true) — только словом человека",
-      "the seat was taken from this bridge (close 4000) — another holder listens; register only: the binding holds, the hearing is theirs; hearing here — iskron_stand without name stands beside as name.N; taking the seat back (take=true) — only on the human's word",
+      "своё место этой сессии — вернул: его держал прежний мост этой же сессии харнесса, connect (сокет теперь у этого моста, прежний получил 4000) и register",
+      "this session's own seat — taken back: a former bridge of this same harness session held it, connect (the socket is now this bridge's, the former one got 4000) and register",
     ),
-  howDeadPredecessor: (): string =>
+  /** Слушает другой держатель, а места рядом нет (#6706): подписи чужим местом без слуха не бывает. */
+  otherHolder: (holder: string): string =>
     L(
-      "слушающим доска ещё читает прежний мост этого каталога, а он мёртв (его сокет не отвечает, запись держания цела) — только register; как только доска его отпустит (закрытый сокет прежние серверы держали «слушающим» около минуты; с честной живостью, по слову контура, — почти сразу), тот же вызов вернёт место с диска тем же адресом — повтори",
-      "the board still reads this directory's former bridge as listening, and it is dead (its socket does not answer, the holding record is intact) — register only; once the board lets it go (older servers kept a closed socket «listening» about a minute; with honest liveness, by the contour's word, almost at once) the same call returns the seat from disk at the same address — repeat it",
-    ),
-  /** Место слушает другой держатель (#6594): атрибуция есть, ход вперёд — свой, не человека. */
-  howOtherHolder: (holder: string, realm: string, karta: string, explicit: boolean): string =>
-    L(
-      `место уже слушает другой держатель — ${holder} — только register: записи подписаны этим именем, слух — у него. Дальше без человека: слух здесь — ${explicit ? "iskron_stand без name (встанет на выведенное имя, а держит его живой сосед — рядом на имя.N)" : "iskron_stand с другим name"}; кто держит — спроси его одним словом: iskron_channel(action="send", realm="${realm}", karta="${karta}", standing="${holder}", text="<кто ты и зачем>"); твоё по памяти этой сессии (её мост перезапущен) — верни сам take=true; вытеснить живого чужого — только словом человека`,
-      `another holder already listens on the seat — ${holder} — register only: records are signed with this name, the hearing is theirs. Go on without the human: hearing here — ${explicit ? "iskron_stand without name (it takes the derived name, or stands beside as name.N if a live neighbour holds that)" : "iskron_stand with another name"}; who holds it — ask them in one word: iskron_channel(action="send", realm="${realm}", karta="${karta}", standing="${holder}", text="<who you are and why>"); yours by this session's memory (its bridge restarted) — take it back yourself with take=true; evicting a live stranger — only on the human's word`,
+      `Отказано (мост): место ${holder} слушает другой держатель — подписываться им без слуха мост не станет; встань своим местом: iskron_stand без name либо с другим name.`,
+      `Refused (bridge): another holder listens on the seat ${holder} — the bridge will not sign with it without hearing; stand on your own seat: iskron_stand without name or with another name.`,
     ),
   howRegister: (): string =>
     L("сокет уже держит этот мост — register", "this bridge already holds the socket — register"),
@@ -176,8 +172,8 @@ export const SW = {
     ),
   noWatchdog: (): string =>
     L(
-      "Команда сторожа не выдаётся: сокет у другого держателя, местного нет — эта сессия кадры и приглашения не принимает.",
-      "No watchdog command: another holder has the socket, there is none here — this session takes no frames and no invitations.",
+      "Команда сторожа не выдаётся: сокета этого места у моста ещё нет — эта сессия кадры и приглашения не принимает, пока место не вернётся.",
+      "No watchdog command: the bridge does not hold this seat's socket yet — this session takes no frames and no invitations until the seat is back.",
     ),
   noSocket: (): string =>
     L(
@@ -188,11 +184,6 @@ export const SW = {
     L(
       "Место записано, но двери у него нет — сокет канала моста не жив; кадры этого графа сюда не придут.",
       "The seat is recorded, but it has no door — the bridge's channel socket is not alive; this graph's frames will not come here.",
-    ),
-  hearingElsewhere: (): string =>
-    L(
-      "Слух — у другого держателя; здесь только атрибуция записей.",
-      "The hearing is another holder's; here only the attribution of records.",
     ),
   besideHeard: (): string =>
     L(
@@ -221,8 +212,8 @@ export const SW = {
     ),
   knockNotHere: (room: string): string =>
     L(
-      `Место человека ${room}: стук не отправлен — ответ человека ушёл бы держателю сокета, не сюда; нужен вход здесь — другим name; отбить место (take=true) — только словом человека.`,
-      `The human's seat ${room}: no knock sent — the human's answer would go to the socket's holder, not here; entry here — with another name; taking the seat back (take=true) — only on the human's word.`,
+      `Место человека ${room}: стук не отправлен — сокета этого места у моста ещё нет, ответ человека сюда не пришёл бы; постучи тем же вызовом, когда место вернётся.`,
+      `The human's seat ${room}: no knock sent — the bridge does not hold this seat's socket yet, the human's answer would not come here; knock with the same call once the seat is back.`,
     ),
   knockTwice: (room: string): string =>
     L(
@@ -253,11 +244,6 @@ export const SW = {
     L(
       `Место человека ${room}: ${again ? "повторный " : ""}стук отправлен — ${text} Жди первого слова из места человека с шапкой; до него туда не пиши — встанешь рядом с человеком, когда оно придёт.`,
       `The human's seat ${room}: ${again ? "repeated " : ""}knock sent — ${text} Wait for the first message from the human's seat with its header; do not write there before it — you will stand beside the human when it comes.`,
-    ),
-  statusAfterDead: (): string =>
-    L(
-      "Занятость не публикуется: статусного адреса у моста пока нет — повтори тот же вызов, когда доска отпустит мёртвый прежний мост: место вернётся с диска вместе с ним.",
-      "The busy line is not published: the bridge has no status address yet — repeat the same call when the board lets the dead former bridge go: the seat returns from disk together with it.",
     ),
   statusElsewhere: (takePath: string): string =>
     L(

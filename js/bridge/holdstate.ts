@@ -24,6 +24,12 @@ export const H = scoped(() => ({
   evictedEvent: null as ChannelEvent | null,
   /** ушёл с места: сокет службы закрыт, ключ и адреса целы (leave.ts) */
   parked: false,
+  /** сокет открыт заново тем же адресом (возврат, обрыв), а hello этого открытия ещё нет: адрес мог повернуть другой (deaf.ts) */
+  unheard: false,
+  /** ключ места, чей сокет мост отпустил, а привязку помнит (мёртвый токен, переоткрытие без hello), пока hello не докажет слух снова (deaf.ts) */
+  deafKey: null as string | null,
+  /** места других графов того же канала на миг 4001: сервер их привязку помнит, слуха нет (deaf.ts) */
+  deadPlaces: [] as { realm: string; karta: string | number; name?: string }[],
   attachHooks: [] as (() => void)[],
   helloWaiters: new Set<(f: Frame | null) => void>(),
   /** возвратов с диска в полёте: мёртвый токен при них — протухшая запись, не тревога */
@@ -35,6 +41,14 @@ export const H = scoped(() => ({
   /** демон гаснет, а тонкий мост этой сессии жив: он вернёт место новому демону (daemon.ts, #6485) */
   handingOver: null as string | null,
 }));
+
+/** Ход после отъёма места (evicted.ts): ставится один раз при загрузке, процессу — один на все сессии. */
+export const E: { next: ((key: string, url: string, code: number) => void) | null } = {
+  next: null,
+};
+export function whenEvicted(fn: (key: string, url: string, code: number) => void): void {
+  E.next = fn;
+}
 
 /** Возврат с диска в полёте (+1) или кончился (−1): мёртвый токен при нём — протухшая запись, не тревога. */
 export function noteResuming(delta: number): void {

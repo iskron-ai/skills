@@ -1219,9 +1219,10 @@ test("the connect answer hides the socket and status addresses; the listener blo
 // 4000 is an eviction, not a dead token (the platform's own word): another holder
 // has the place, and reopening the same address would evict it in turn (seen live:
 // ping-pong of two bridges of one session after a daemon handover). The bridge
-// yields aloud at once, keeps the binding and the status address, and the busy
-// line is still the standing's word; taking it back is the human's (#5012, #5033, #6550).
-test("an eviction yields aloud at once, without reopening, and the busy line still goes out", async (t) => {
+// yields aloud at once and never reopens the taken address; taking it back is the
+// human's (#5012, #5033, #6550). It is not left deaf either: it stands beside on
+// name.N with hearing by itself, and the busy line goes from there (#6706).
+test("an eviction yields aloud at once, never reopens the taken address, stands beside, and the busy line still goes out", async (t) => {
   const { fake, dir, bridge, key, standings } = await connected(t);
   await waitFor(() => fake.state.ws.size === 1, "the socket");
   const wd = runClient("watchdog", dir, key, 20_000);
@@ -1246,21 +1247,28 @@ test("an eviction yields aloud at once, without reopening, and the busy line sti
   const r = await wd.done;
   assert.notEqual(r.exit, 0, "the Monitor watchdog leaves loudly on an eviction");
   assert.match(wd.out, /место отняли/);
-  // A watchdog re-armed after that must not sit silent on a place the bridge no longer hears.
-  const again = runClient("watchdog", dir, key, 6000);
-  const r2 = await again.done;
-  assert.notEqual(
-    r2.exit,
-    0,
-    `a re-armed watchdog must leave loudly, not listen to nothing: ${again.out}`,
+  await waitFor(
+    () => bridge.notifications.some((n) => n.params?.data?.kind === "resumed"),
+    "the word about the seat beside",
   );
-  assert.match(again.out, /место отняли/);
   await new Promise((r) => setTimeout(r, 2500));
-  assert.equal(fresh().length, 0, "after yielding the bridge must not keep reopening");
+  const taken = new Set([...known].map((s) => fake.state.wsAddress.get(s)));
+  assert.equal(
+    fresh().filter((s) => taken.has(fake.state.wsAddress.get(s))).length,
+    0,
+    "after yielding the bridge must not reopen the taken address",
+  );
+  assert.equal(fresh().length, 1, "one socket — the seat beside");
+  // A watchdog re-armed after that listens to the seat beside, not to nothing.
+  const beside = key.replace(/^proba--/, "proba.2--");
   assert.ok(
     readdirSync(standings).some((f) => f.endsWith(".key")),
     "the standing is kept: the key file stays",
   );
+  const again = runClient("watchdog", dir, beside, 6000);
+  await waitFor(() => again.out.includes("слушаю стояние"), "the re-armed watchdog to attach");
+  again.proc.kill("SIGKILL");
+  await again.done;
   const st = await bridge.call("tools/call", 8, {
     name: "iskron_channel",
     arguments: { realm: "nks-dev", action: "status", text: "после вытеснения" },
@@ -1583,7 +1591,7 @@ test("a re-armed watchdog gets hello and only the frames no local client has see
 // A bridge raised anew under a place a previous bridge of this auth dir held
 // (plugin restart, /mcp reconnect) takes the place back from disk — the same
 // address, no connect; a revoke or a dead token forgets the record (#5061).
-test("a bridge restarted under a held place resumes it from disk: same address, no connect, the old busy line not published anew; while the board still reads «слушает» — only register", async (t) => {
+test("a bridge restarted under a held place resumes it from disk: same address, no connect, the old busy line not published anew", async (t) => {
   const { fake, dir, bridge, standings } = await connected(t);
   await waitFor(() => fake.state.ws.size === 1, "the socket");
   const st0 = await bridge.call("tools/call", 4, {
@@ -1608,18 +1616,8 @@ test("a bridge restarted under a held place resumes it from disk: same address, 
   const second = startBridge(fake.mcpUrl, dir);
   t.after(() => second.stop());
   assert.ok((await second.call("initialize", 1, INIT)).result);
-  // The platform's grace window: the board still reads «слушает» for a while after the
-  // predecessor died — the canon says only register then; the record waits.
-  await fake.control({ places: [{ karta: "931", name: "proba", listening: true }] });
-  const early = await second.call("tools/call", 2, {
-    name: "iskron_stand",
-    arguments: { realm: "nks-dev", karta: 931, name: "proba" },
-  });
-  const saidEarly = (early.result?.content ?? []).map((c) => c.text ?? "").join("\n");
-  assert.match(saidEarly, /прежний мост этого каталога, а он мёртв/, saidEarly);
-  assert.match(saidEarly, /вернёт место с диска/, "the answer names the way back");
-  assert.equal(fresh().length, 0, "no socket is opened while the board reads «слушает»");
-  assert.equal(fake.state.counts.connect, 1);
+  // Окно платформы, пока доска ещё читает мёртвого «слушающим», — без «только
+  // register» (#6706): stand.test.mjs, «a stopped holder listening».
   await fake.control({ places: [{ karta: "931", name: "proba", listening: false }] });
 
   const posts = fake.state.counts.status_posts;
@@ -1795,7 +1793,7 @@ test("a dead token forgets the hold record; a live holder's place is not taken f
   });
   const said = (st.result?.content ?? []).map((c) => c.text ?? "").join("\n");
   assert.ok(!/возврат места с диска/.test(said), `a live holder keeps its place:\n${said}`);
-  assert.match(said, /слушает другой держатель/, said);
+  assert.match(said, /встаю рядом на proba\.2/, said);
   await fake.control({ ws_close: 4001 });
   await waitFor(
     () => bridge.notifications.some((n) => n.params?.data?.kind === "dead"),
@@ -2678,8 +2676,10 @@ test("iskron/resume of the session's own place whose socket a live bridge holds 
   assert.equal(fake.state.ws.size, 1, "the live holder keeps its socket");
 });
 
-// A bridge no session was named to must not inherit the session of the record
-// it rewrites: the id belongs to the process that was told it, not to the file.
+// A bridge no session was named to must not inherit the session of the record:
+// the id belongs to the process that was told it, not to the file. The seat a
+// named session stood on is that session's (#6706): the bridge stands beside and
+// leaves the record as it was.
 test("a bridge with no named session does not carry the previous holder's session into the record", async (t) => {
   const { fake, dir, bridge } = await connected(t);
   await waitFor(() => fake.state.ws.size === 1, "the socket");
@@ -2701,11 +2701,17 @@ test("a bridge with no named session does not carry the previous holder's sessio
     arguments: { realm: "nks-dev", karta: 931, name: "proba", cwd },
   });
   const said = (st.result?.content ?? []).map((c) => c.text ?? "").join("\n");
-  assert.match(said, /возврат места с диска/, said);
+  assert.doesNotMatch(said, /возврат места с диска/, said);
+  assert.match(said, /стояние (?:@tester:)?proba\.2 — /, said);
   assert.equal(
     holdOf(standings, "proba--931--nks-dev")?.session,
+    "ses-prezhnyaya",
+    "the named session's record is left as it was",
+  );
+  assert.equal(
+    holdOf(standings, "proba.2--931--nks-dev")?.session,
     undefined,
-    "the new process was told no session — the record carries none",
+    "the new process was told no session — its record carries none",
   );
 });
 

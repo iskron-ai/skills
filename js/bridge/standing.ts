@@ -1,7 +1,9 @@
 import { L } from "../shared/lang.ts";
 import { scoped } from "../shared/scope.ts";
 import { FORM } from "./board.ts";
+import { deafPlaceIn, deafSeatTaken } from "./deaf.ts";
 import { errorMessage } from "./errors.ts";
+import { standBesideAgain } from "./evicted.ts";
 import { seatField, structuredOf } from "./fields.ts";
 import { addPlace, noteStandingId, releaseStanding } from "./hold.ts";
 import { normKarta, normName } from "./names.ts";
@@ -68,12 +70,21 @@ const R = scoped(() => ({ inFlight: null as Promise<void> | null }));
 // Put the remembered standing back on the current session — before the call
 // that would otherwise land unattributed. Silent by contract: register releases
 // nothing and evicts nobody, so replaying it costs one call and no state.
-export function ensureStanding(): Promise<void> {
+export async function ensureStanding(): Promise<void> {
+  // Место отнято (4000), рядом встать не вышло: ещё попытка; отнятым не подписываться (#6706).
+  if (state.standing && (await standBesideAgain())) return;
+  return replayStanding();
+}
+
+function replayStanding(): Promise<void> {
   if (!state.standing || !state.sessionId) return Promise.resolve();
   if (state.standingSession === state.sessionId) return Promise.resolve();
   if (R.inFlight) return R.inFlight; // wait for the replay already running
   R.inFlight = (async () => {
     try {
+      // Место без слуха, которое может слушать другая сессия, привязкой не повторяется (deaf.ts, #6706).
+      const deaf = await deafSeatTaken();
+      if (deaf) return log(`standing not re-registered: ${deaf}`);
       const got = await replayRegister(state.standing);
       if (got && !got.error && !got.result?.isError) {
         // Места других графов — тем же ходом: иначе их записи легли бы без автора (#5838).
@@ -136,6 +147,12 @@ async function registerOnce(place: Standing | null): Promise<JsonRpcMessage | nu
 async function replayBeside(): Promise<boolean> {
   let whole = true;
   for (const place of [...state.places]) {
+    // Место без слуха, которое может слушать другая сессия, привязкой не повторяется (deaf.ts, #6706).
+    const deaf = deafPlaceIn(place.realm) ? await deafSeatTaken(place) : null;
+    if (deaf) {
+      log(`place ${keyOfPlace(place)} not re-registered: ${deaf}`);
+      continue;
+    }
     const got = await replayRegister(place);
     if (got && !got.error && !got.result?.isError) continue;
     const key = keyOfPlace(place);

@@ -3,10 +3,11 @@
 // ротирует его connect-ом: адрес, хуки и очередь остаются теми же. Секрет
 // лежит 0600 рядом с ключом стояния, как грант; стирается снятием и мёртвым
 // токеном (hold.ts).
-import { readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 
 import { scoped } from "../shared/scope.ts";
-import { holdFilePathOf } from "../shared/standings.ts";
+import { baseFilePathOf, holdFilePathOf } from "../shared/standings.ts";
 import { CFG } from "./config.ts";
 import { log } from "./streams.ts";
 
@@ -39,6 +40,8 @@ export interface HoldRecord {
   at?: number;
   /** дела, в которые вошёл спутник, — пишет только его пауза на перезагрузку плагина (suspend.ts) */
   cases?: { realm?: string; room: string }[];
+  /** основа места: имя, от которого мост выбрал это место рядом (`имя.N`), у основного — само имя (#6706) */
+  base?: string;
 }
 
 /** Срок записи — время простоя, которое платформа даёт месту без сокета. */
@@ -51,13 +54,51 @@ export function noteHarnessSession(id: string | undefined): void {
 }
 export const sessionOfBridge = (): string | null => H.session;
 
-/** Отпущено ли место словом держателя по прежней записи ключа — переписывание записи этого не снимает. */
-function leftOnDisk(key: string): boolean {
+function onDisk(key: string): HoldRecord | null {
   try {
-    return (JSON.parse(readFileSync(holdFilePathFor(key), "utf8")) as HoldRecord)?.left === true;
+    return JSON.parse(readFileSync(holdFilePathFor(key), "utf8")) as HoldRecord;
   } catch {
-    return false;
+    return null;
   }
+}
+
+/**
+ * Основа места знает только выбравший его мост: по виду имени её не угадать —
+ * модель в выведенном имени несёт точки (`glm-5.3`), явное имя тоже (#6706).
+ * Она лежит и отдельным файлом рядом с записью держания: отъём и мёртвый токен
+ * стирают запись, а основа не стареет — новое занятие места (и мост, поднятый
+ * заново) берёт её оттуда.
+ */
+const B = scoped(() => new Map<string, string>());
+export function noteSeatBase(key: string, base: string): void {
+  B.set(key, base);
+  if (CFG.satellite) return;
+  try {
+    const path = baseFilePathOf(CFG.authDir, key);
+    mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+    writeFileSync(path, base + "\n", { mode: 0o600 });
+  } catch (e) {
+    log(`seat base not written: ${(e as Error).message}`);
+  }
+}
+const baseOnDisk = (key: string): string | null => {
+  try {
+    return readFileSync(baseFilePathOf(CFG.authDir, key), "utf8").trim() || null;
+  } catch {
+    return null;
+  }
+};
+/**
+ * Основа места: запомненная этим мостом (выбор места, возврат по записи), иначе
+ * записанная тем, кто выбрал место прежде (запись держания любой давности, затем
+ * файл основы) — тогда и запоминается; null — неизвестна.
+ */
+export function seatBaseOf(key: string): string | null {
+  const known = B.get(key);
+  if (known) return known;
+  const base = readHoldRecord(key, true)?.base ?? baseOnDisk(key);
+  if (base) B.set(key, base);
+  return base ?? null;
 }
 
 /**
@@ -75,13 +116,15 @@ export function writeHoldRecord(
   if (CFG.satellite && !paused) return;
   try {
     const session = H.session ?? rec.session;
-    const left = rec.left ?? leftOnDisk(key);
+    const was = rec.left == null || (rec.base ?? B.get(key)) == null ? onDisk(key) : null;
+    const left = rec.left ?? was?.left === true;
     writeFileSync(
       holdFilePathFor(key),
       JSON.stringify({
         ...rec,
         session: session ?? undefined,
         left: left || undefined,
+        base: B.get(key) ?? rec.base ?? was?.base ?? baseOnDisk(key) ?? undefined,
         at,
       }) + "\n",
       { mode: 0o600 },
@@ -123,6 +166,29 @@ export function readHoldRecord(key: string, anyAge = false): HoldRecord | null {
   } catch {
     return null;
   }
+}
+/** Записи держания под этим именем у любой роли — какого графа, судит вызывающий. */
+export function holdRecordsNamed(name: string): HoldRecord[] {
+  const dir = dirname(holdFilePathFor("_"));
+  try {
+    return readdirSync(dir)
+      .filter((f) => f.endsWith(".hold"))
+      .map((f) => {
+        try {
+          return JSON.parse(readFileSync(join(dir, f), "utf8")) as HoldRecord;
+        } catch {
+          return null;
+        }
+      })
+      .filter((r): r is HoldRecord => !!r && r.name === name && r.karta != null);
+  } catch {
+    return [];
+  }
+}
+/** Стереть запись, только если она этого держателя (тот же адрес): запись нового держателя, отнявшего место, цела. */
+export function dropOwnHoldRecord(key: string, url: string | null): void {
+  const r = readHoldRecord(key, true);
+  if (!r || !url || r.url === url) dropHoldRecord(key);
 }
 export function dropHoldRecord(key: string): void {
   try {

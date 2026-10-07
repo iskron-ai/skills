@@ -14,6 +14,7 @@ import { canonRealm, otherRealm, resolveRealms, unknownRealm, unresolvedWord } f
 import { openedConcurrently, type Refusal, refusalOf } from "./refusal.ts";
 import { OWN_CALL_PREFIX } from "./repeat.ts";
 import { noteStanding, replyText } from "./standing.ts";
+import { takingSeat } from "./taking.ts";
 import { post, state } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
 
@@ -77,23 +78,44 @@ export function unresolvedRefusal(realm: unknown): string | null {
     : null;
 }
 
+/**
+ * Кто слушает просимое место: никто (совет take=true уместен), другая сессия,
+ * либо мост не знает (доска не прочлась, прямой вызов доски не читает) — тогда
+ * take=true не советуется: живое место другой сессии отнимают только словом человека (#6706).
+ */
+export type AskedHearing = "free" | "other" | "unknown";
+
 /** Слово отказа: совет по тому, ЧЕМ просимое место отличается от ведомого. */
-export function otherPlaceWord(led: string, asked: string, sameName = false): string {
+export function otherPlaceWord(
+  led: string,
+  asked: string,
+  sameName = false,
+  hearing: AskedHearing = "free",
+): string {
+  const same = sameName
+    ? L("то же имя под другой ролью; ", "the same name under another role; ")
+    : "";
   const advice =
-    led === asked
-      ? L(
-          "ключи совпали — это то же место: повтори iskron_stand с take=true, чтобы переоткрыть его сознательно",
-          "the keys match — it is the same seat: repeat iskron_stand with take=true to reopen it deliberately",
+    hearing !== "free"
+      ? same +
+        L(
+          `${hearing === "other" ? `место ${asked} слушает другая сессия` : `слушает ли место ${asked} другая сессия, мост не знает`} — его не трогай; своё место этого моста — ${led}: оставайся на нём либо назови другое name; встать рядом — iskron_stand без name; отнять место (take=true) — только по слову человека`,
+          `${hearing === "other" ? `another session listens on the seat ${asked}` : `the bridge does not know whether another session listens on the seat ${asked}`} — leave it alone; this bridge's own seat is ${led}: stay on it or pass another name; to stand beside — iskron_stand without name; taking the seat (take=true) — only on the human's word`,
         )
-      : sameName
+      : led === asked
         ? L(
-            "то же имя под другой ролью (оно вывелось из того же каталога) — передай другое name, либо iskron_stand с take=true, чтобы сменить место этого моста",
-            "the same name under another role (derived from the same directory) — pass another name, or iskron_stand with take=true to change this bridge's seat",
+            "ключи совпали — это то же место: повтори iskron_stand с take=true, чтобы переоткрыть его сознательно",
+            "the keys match — it is the same seat: repeat iskron_stand with take=true to reopen it deliberately",
           )
-        : L(
-            "занять другое место вместо этого — iskron_stand с take=true (прежнее останется на доске без слуха; ненужное сними revoke)",
-            "to take another seat instead of this one — iskron_stand with take=true (the former stays on the board without hearing; remove what is not needed with revoke)",
-          );
+        : sameName
+          ? L(
+              "то же имя под другой ролью (оно вывелось из того же каталога) — передай другое name, либо iskron_stand с take=true, чтобы сменить место этого моста",
+              "the same name under another role (derived from the same directory) — pass another name, or iskron_stand with take=true to change this bridge's seat",
+            )
+          : L(
+              "занять другое место вместо этого — iskron_stand с take=true (прежнее останется на доске без слуха; ненужное сними revoke)",
+              "to take another seat instead of this one — iskron_stand with take=true (the former stays on the board without hearing; remove what is not needed with revoke)",
+            );
   const Advice = `${advice.charAt(0).toUpperCase()}${advice.slice(1)}`;
   return L(
     `Отказано (мост): этот мост уже ведёт место ${led} — в графе место одно на мост, и место ${asked} его сняло бы с сокета молча. ` +
@@ -148,7 +170,7 @@ export function crossPlaceRefusal(msg: JsonRpcMessage): JsonRpcMessage | null {
   if (!led) return null;
   const asked = keyOf(realm, karta, name);
   const sameName = name === (state.standing?.name ?? "");
-  return refusal(msg, otherPlaceWord(led, asked, sameName));
+  return refusal(msg, otherPlaceWord(led, asked, sameName, "unknown")); // доска не читается
 }
 
 export interface Answer {
@@ -180,7 +202,11 @@ async function ask(
   return { msg, got: reply as JsonRpcMessage | null };
 }
 
-export async function callTool(name: string, args: Record<string, unknown>): Promise<Answer> {
+/** connect и mint места — под намерением до записи держания включительно (taking.ts). */
+export const callTool = (name: string, args: Record<string, unknown>): Promise<Answer> =>
+  name === "iskron_channel" ? takingSeat(args, () => answer(name, args)) : answer(name, args);
+
+async function answer(name: string, args: Record<string, unknown>): Promise<Answer> {
   let { msg, got } = await ask(name, args);
   // Гонка открытия места (409 без rule, refusal.ts) — register ещё раз, один.
   if (name === "iskron_channel" && args.action === "register" && openedConcurrently(got))
