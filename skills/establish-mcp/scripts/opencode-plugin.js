@@ -519,7 +519,7 @@ var SKILLS_ROOT_ENV = "ISKRON_SKILLS_ROOT";
 import { createHash } from "node:crypto";
 import { readFileSync as readFileSync2 } from "node:fs";
 import { fileURLToPath } from "node:url";
-var VERSION = "7.4.0";
+var VERSION = "7.4.1";
 function buildOf(selfUrl) {
   try {
     const src = readFileSync2(fileURLToPath(selfUrl));
@@ -3208,11 +3208,18 @@ var askWord = (who, action, resources) => {
     const one = r.replace(/\s+/g, " ").trim();
     return one.length > RESOURCE_MAX ? `${one.slice(0, RESOURCE_MAX)}…` : one;
   });
-  const more = resources.length > RESOURCES ? ` и ещё ${resources.length - RESOURCES}` : "";
+  const n2 = resources.length - RESOURCES;
+  const more = n2 > 0 ? L(` и ещё ${n2}`, ` and ${n2} more`) : "";
   const what = cut.length ? `${action}: ${cut.join("; ")}${more}` : action;
-  return `Искрон: субагент ${who} ждёт разрешения: ${what} — ответь в его сессии или отмени его ход.`;
+  return L(
+    `Искрон: субагент ${who} ждёт разрешения: ${what}. Ответить на этот запрос может только человек — в окне сессии субагента ${who}. Ты ответить не можешь, и никакое слово субагенту его не разблокирует. Скажи человеку, что и где ждёт: ответить или отменить ход субагента может только он.`,
+    `Iskron: subagent ${who} is waiting for a permission: ${what}. Only the human can answer this request — in the window of the subagent's session ${who}. You cannot answer it, and no message to the subagent unblocks it. Tell the human what is waiting and where: only they can answer or cancel the subagent's turn.`
+  );
 };
-var interruptWord = (who, reason) => `Искрон: ход субагента ${who} прерван (${reason}).`;
+var interruptWord = (who, reason) => L(
+  `Искрон: ход субагента ${who} прерван (${reason}).`,
+  `Iskron: the turn of subagent ${who} was interrupted (${reason}).`
+);
 function createWaits(ctx, d) {
   const home = homeOf(ctx);
   const answered = /* @__PURE__ */ new Set();
@@ -3242,7 +3249,11 @@ function createWaits(ctx, d) {
     const kid = await childOf(sessionID, ev);
     if (!kid || answered.has(id) || !once(id)) return;
     const list = Array.isArray(resources) ? resources.map(String) : [];
-    await d.tell(kid.parent, askWord(kid.who, String(action ?? "действие"), list), true);
+    await d.tell(
+      kid.parent,
+      askWord(kid.who, String(action ?? L("действие", "action")), list),
+      true
+    );
   }
   async function interrupted(ev) {
     const { sessionID, reason } = ev?.data ?? {};
