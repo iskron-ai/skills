@@ -70,11 +70,7 @@ export function busyLine(text: string, realm: string): string {
   const t = S.trims.get(statusAddress(realm)?.key ?? "");
   if (t?.sent !== text)
     return `${L("занятость", "busyness")} ${placeLabel(realm)}: ${text || L("(снята)", "(cleared)")}`;
-  // Сервер не назвал принятую строку — отправленную за неё не выдаём: она обрезана, легла — на доске.
-  const kept =
-    t.doing ??
-    L(`(обрезана; легла — на доске iskron_channel list)`, `(trimmed; what landed is on the board)`);
-  return `${L("занятость", "busyness")} ${placeLabel(realm)}: ${kept}; ${trimNudge(t)}`;
+  return `${L("занятость", "busyness")} ${placeLabel(realm)}: ${t.doing ?? text}; ${trimNudge(t)}`;
 }
 
 /** Место так, как его зовёт доска; адрес, не названный hello, — помечен, а не выдан за названный. */

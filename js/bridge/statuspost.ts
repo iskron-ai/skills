@@ -45,8 +45,22 @@ export function trimOf(w: unknown, top: unknown = {}): StatusTrim {
   };
 }
 
-/** warnings[] кода trimmed_to_limit в теле удачного ответа; иначе undefined (тело не JSON — прежний сервер). */
-function trimmedIn(body: string): StatusTrim | undefined {
+/**
+ * Строка, какой сервер её кладёт, когда принятую он не назвал: по слову до max
+ * знаков с «…» — правило обрезки api 0.108.0 (дело №234 [22], #6729).
+ */
+export function trimToWord(text: string, max: number): string {
+  const head = [...text].slice(0, max - 1).join("");
+  const cut = head.lastIndexOf(" ");
+  return (cut > 0 ? head.slice(0, cut) : head).trimEnd() + "…";
+}
+
+/**
+ * warnings[] кода trimmed_to_limit в теле удачного ответа; иначе undefined (тело не
+ * JSON — прежний сервер). Принятую строку, не названную сервером, выводит правило:
+ * отправленная за принятую не выдаётся и в держание не ложится.
+ */
+function trimmedIn(body: string, sent: string): StatusTrim | undefined {
   let parsed: unknown;
   try {
     parsed = JSON.parse(body);
@@ -55,7 +69,9 @@ function trimmedIn(body: string): StatusTrim | undefined {
   }
   const warnings = obj(parsed).warnings;
   const w = Array.isArray(warnings) ? warnings.find((x) => obj(x).code === TRIMMED) : undefined;
-  return w ? trimOf(w, parsed) : undefined;
+  if (!w) return undefined;
+  const t = trimOf(w, parsed);
+  return { ...t, doing: t.doing ?? trimToWord(sent, t.max ?? 64) };
 }
 
 /** Слово о кадре сокета status_trimmed — в лог моста и клиенту; агента кадр не будит. */
@@ -128,6 +144,6 @@ export async function publishStatusTo(
         `Refused (${res.status}) by the surface: ${body || "no body"}`,
       ),
     };
-  const trimmed = trimmedIn(body);
+  const trimmed = trimmedIn(body, text);
   return { ok: true, body, ...(trimmed ? { trimmed } : {}) };
 }

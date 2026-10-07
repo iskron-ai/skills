@@ -199,6 +199,15 @@ export function setupChannel(ctx: Context, say: Say, freshestRoot: () => string 
     if (!p.timer) schedule(p);
   }
 
+  /**
+   * Копии дела событий, которые эти кадры несут текстом, — вон из своей пачки:
+   * счёт их не повторит (#5842, #6563). Только своя сессия: у чужой своя доставка.
+   */
+  function takeOwnCopies(p: Pile | undefined, frames: (Frame | null)[] | undefined): void {
+    for (const f of frames ?? [])
+      for (const fs of p ? [p.held, p.riders] : []) takeRoomCopies(fs, f, (x) => x);
+  }
+
   /** Счёт попутных записей пачек — строками шапки; пачки отдают их. */
   function riding(ps: Pile[]): string[] {
     const got = ps.flatMap((p) => p.riders.splice(0));
@@ -250,10 +259,8 @@ export function setupChannel(ctx: Context, say: Say, freshestRoot: () => string 
           // Путь кадра (#5851): с event_kind — правило рода, без него — своя стопка
           // кадра, как прежде (#4957); пачка — одним промптом очередью, прочее — вставкой.
           if (frame && toPile(frame)) return pile(session, child, frame);
-          // Копии дела события, которое кадр несёт текстом, счёт не повторяет (#5842, #6563).
-          for (const p of piles.values())
-            for (const fs of [p.held, p.riders]) takeRoomCopies(fs, frame, (f) => f);
           const own = piles.get(`${child ? "child" : "root"}:${session ?? ""}`);
+          takeOwnCopies(own, [frame]); // копии дела события, которое кадр несёт текстом
           void deliver(
             session,
             [...riding(own ? [own] : []), frameToText(frame, ev.raw ?? "")].join("\n"),
@@ -273,9 +280,11 @@ export function setupChannel(ctx: Context, say: Say, freshestRoot: () => string 
           );
           return;
         case "stale":
+          takeOwnCopies(piles.get(`${child ? "child" : "root"}:${session ?? ""}`), ev.frames);
           if (ev.text) void deliver(session, ev.text, "пачка лежалых кадров", "queue", child); // одна пачка — один промпт
           return;
         case "backlog":
+          takeOwnCopies(piles.get(`${child ? "child" : "root"}:${session ?? ""}`), ev.frames);
           // Побудка с накопленным — один промпт на пачку, не ход на кадр (#5140).
           // Очередью — сознательная развилка: пачка в полтора десятка кадров,
           // вставленная посреди хода, режет работу делателя; одним промптом она

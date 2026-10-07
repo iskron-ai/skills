@@ -3,12 +3,13 @@
 // capabilities.experimental["iskron/structured"] в initialize. Харнес, который
 // получил поля, может передать модели одни поля без текста (Claude Code, #6707);
 // мост просит их для собственного разбора всегда, а харнесу отдаёт, только если
-// просил он сам. Плагин OpenCode и расширение pi объявляют ключ мосту.
+// просил он сам. Плагин OpenCode (поля — когда текста нет, bridge-client.ts
+// resultToContent) и расширение pi (details тула) объявляют ключ мосту.
 
 /** Ключ capability полей ответа. */
 export const FIELDS_CAPABILITY = "iskron/structured";
 
-/** capabilities клиента моста, который читает поля (плагин OpenCode, расширение pi). */
+/** capabilities клиента моста, которому поля отдаются (плагин OpenCode, расширение pi). */
 export const FIELDS_CAPABILITIES = { experimental: { [FIELDS_CAPABILITY]: {} } };
 
 type Obj = Record<string, unknown>;

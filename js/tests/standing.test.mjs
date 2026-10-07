@@ -3583,6 +3583,29 @@ test("a count the exit watchdog holds loses the case copy whose inbox frame wake
   );
 });
 
+test("a count the Codex watchdog holds loses the case copy whose inbox frame goes into the thread", async (t) => {
+  const { fake, dir, key } = await connected(t, { env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "1000" } });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const extra = await codexDoor(t);
+  const log = join(extra.CODEX_HOME, "door.log");
+  const wd = runClient("watchdog-codex", dir, key, 15_000, extra);
+  await waitFor(() => wd.err.includes("слушаю стояние"), "the codex watchdog to attach");
+  await sendRoom(fake, { ...nodeOp("updated", 95), event_id: 81 });
+  await new Promise((r) => setTimeout(r, 1500)); // окно моста ушло; счёт ждёт ближайшего хода
+  await fake.control({ ws_send: graphEvent("inbox-5", 81, "событие восемьдесят один") });
+  await waitFor(() => readFileSync(log, "utf8").includes("turn/start"), "the frame in the thread");
+  const turns = readFileSync(log, "utf8")
+    .trim()
+    .split("\n")
+    .map((l) => JSON.parse(l))
+    .filter((c) => c.method === "turn/start");
+  assert.equal(turns.length, 1, JSON.stringify(turns));
+  assert.match(turns[0].params.input[0].text, /событие восемьдесят один/);
+  assert.doesNotMatch(turns[0].params.input[0].text, /записей/);
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
 // Строки работы одного ключа (room.id, line.key) в пачке сворачиваются в последнюю
 // (#6718): счёт называет записи после свёртки и сменённые числом; строка bad и
 // адресованное месту слово не сворачиваются; отданными метятся все кадры пачки.

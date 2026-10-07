@@ -63,7 +63,7 @@ function redundantEvent(
   const holds = (f: Frame | null): boolean => eventKeyOf(f) === ev && (room || !isRoomCopy(f));
   const keys = stale ? [ev, `evs:${ev.slice(3)}`] : [ev];
   if (isDelivered(keys, seen, seenPath) || ring.some((r) => holds(r.frame))) return ev;
-  if (stale && burst.hasEvent(ev, !room)) return ev;
+  if ((stale || room) && burst.hasEvent(ev, !room)) return ev;
   if (!room) burst.dropEvent(ev);
   return "";
 }

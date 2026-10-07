@@ -3474,7 +3474,16 @@ test("a busy line the server trims: every status move names the accepted line an
   await fake.control({ statusTrim: "bare" });
   const bare = textOf(await stand({ realm: "nks-dev", status: long }));
   assert.ok(!bare.includes(long), `the sent line named as accepted:\n${bare}`);
-  assert.match(bare, /обрезана; легла — на доске[^\n]*; сервер обрезал строку до 64 знаков/, bare);
+  assert.ok(
+    bare.includes(`: ${fake.state.status}; сервер обрезал строку до 64 знаков`),
+    `the accepted line, by the server's trimming rule:\n${bare}`,
+  );
+  // В держание ложится принятая строка: возврат места не опубликует отправленную.
+  const held = readdirSync(join(dir, "standings"))
+    .filter((f) => f.endsWith(".hold"))
+    .map((f) => JSON.parse(readFileSync(join(dir, "standings", f), "utf8")).status);
+  assert.ok(held.length && !held.includes(long), `the hold record: ${JSON.stringify(held)}`);
+  assert.ok(held.includes(fake.state.status), `the hold record: ${JSON.stringify(held)}`);
   // Прежний сервер: отказ 422 приходит целиком, как прежде.
   await fake.control({ statusTrim: false });
   const refused = await stand({ realm: "nks-dev", status: long });

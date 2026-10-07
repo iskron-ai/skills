@@ -116,6 +116,7 @@ export function setupChannel(pi: ExtensionAPI): (params: any) => void {
         return;
       case "stale":
       case "backlog":
+        for (const f of ev.frames ?? []) takeRoomCopies(aside, f, (x) => x); // их события — текстом пачки (#6563)
         // Одна пачка — одно слово в ход: лежалые кадры или побудка с накопленным.
         if (ev.text)
           pi.sendMessage(
