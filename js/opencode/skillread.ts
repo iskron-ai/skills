@@ -16,7 +16,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- hook payloads without a schema */
 import { readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 
 import { slashOf } from "./commands.ts";
 import type { Context } from "./plugin.ts";
@@ -66,8 +66,10 @@ async function skillDirs(ctx: Context): Promise<string[]> {
       continue;
     }
     if (!slashOf(text)) continue;
+    // A skill's own directory bears its id, as an install lays it out: a SKILL.md that
+    // lies in a wider directory (a repository root) opens nothing.
     const dir = canon(dirname(path));
-    if (dir) out.push(dir);
+    if (dir && basename(dir) === String(s?.id ?? "")) out.push(dir);
   }
   return out;
 }
@@ -98,20 +100,25 @@ function reached(call: Call, resources: readonly string[], base: string | null):
     if (!abs) return null;
     out.push(abs);
   }
-  const pattern = input.pattern;
-  if (call.tool === "glob" && typeof pattern === "string") {
-    if (isAbsolute(pattern) || /(^|[\\/])\.\.([\\/]|$)/.test(pattern)) return null;
+  // A file pattern (glob's pattern, grep's include) stays under the path: no root, no
+  // home, no ".." anywhere — braces could spell a climb a segment check would miss.
+  for (const key of ["pattern", "include"]) {
+    if (call.tool === "grep" && key === "pattern") continue;
+    const pat = input[key];
+    if (pat === undefined) continue;
+    if (typeof pat !== "string" || isAbsolute(pat) || pat.startsWith("~") || pat.includes(".."))
+      return null;
   }
   return out.length ? out : null;
 }
 
-export async function setupSkillReads(ctx: Context): Promise<void> {
-  const permission: any = (ctx as any).permission;
-  const tool: any = (ctx as any).tool;
-  if (typeof permission?.hook !== "function" || typeof tool?.hook !== "function") return;
+/** False — this OpenCode has no permission or tool hooks, and the reads keep their ask. */
+export async function setupSkillReads(ctx: Context): Promise<boolean> {
+  const { permission, tool } = ctx as Partial<Pick<Context, "permission" | "tool">>;
+  if (typeof permission?.hook !== "function" || typeof tool?.hook !== "function") return false;
 
   const calls = new Map<string, Call>();
-  await tool.hook("execute.before", (t: any) => {
+  await tool.hook("execute.before", (t) => {
     if (typeof t?.id !== "string" || typeof t?.tool !== "string") return;
     calls.set(t.id, { tool: t.tool, input: t.input });
     while (calls.size > CALLS) calls.delete(calls.keys().next().value as string);
@@ -124,7 +131,7 @@ export async function setupSkillReads(ctx: Context): Promise<void> {
 
   // Only an ask is lifted: an explicit deny of the user's config stays a deny. The
   // evaluation does not tell a configured ask from the default one — both are lifted.
-  await permission.hook("evaluate", async (e: any) => {
+  await permission.hook("evaluate", async (e) => {
     if (e?.action !== "external_directory" || e.effect !== "ask") return;
     const id = e.source?.type === "tool" ? e.source.id : null;
     const call = typeof id === "string" ? calls.get(id) : undefined;
@@ -132,13 +139,11 @@ export async function setupSkillReads(ctx: Context): Promise<void> {
     const paths = reached(call, Array.isArray(e.resources) ? e.resources : [], base);
     if (!paths) return;
     const roots = await skillDirs(ctx);
-    if (!roots.length) return;
     for (const p of paths) {
       const c = canon(p);
       if (!c || !roots.some((r) => within(c, r))) return;
     }
     e.effect = "allow";
   });
+  return true;
 }
-
-/* eslint-enable @typescript-eslint/no-explicit-any */

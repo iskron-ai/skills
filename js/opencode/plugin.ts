@@ -142,7 +142,11 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
 
   // Files of a delivery skill outside the working copy are read without an ask (skillread.ts, #6847).
   try {
-    await setupSkillReads(ctx);
+    if (!(await setupSkillReads(ctx)))
+      say(
+        "skill-reads: this OpenCode has no permission hooks — skill files outside the working copy stay behind an ask",
+        "warning",
+      );
   } catch (e) {
     say(`skill-reads: ${(e as Error).message}`, "error");
   }

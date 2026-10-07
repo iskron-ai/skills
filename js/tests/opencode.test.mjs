@@ -2991,6 +2991,18 @@ test("a delivery skill's files outside the working copy are read without an ask 
       content: "",
     },
   ];
+  // A SKILL.md with `slash: true` at a repository's root: the root is not the skill's directory.
+  const repo = join(home, "repo");
+  mkdirSync(repo);
+  writeFileSync(join(repo, "SKILL.md"), '---\nname: wide\nslash: true\ndescription: "x"\n---\n');
+  writeFileSync(join(repo, "notes.md"), "x");
+  skills.push({
+    id: "wide",
+    name: "wide",
+    description: "x",
+    path: join(repo, "SKILL.md"),
+    content: "",
+  });
   mkdirSync(join(home, ".claude", "skills"), { recursive: true });
   symlinkSync(join(set, "iskron"), join(home, ".claude", "skills", "iskron"));
   const outside = join(home, "secrets");
@@ -3079,6 +3091,21 @@ test("a delivery skill's files outside the working copy are read without an ask 
       await rec.ask("glob", { pattern: "../../*", path: refs }, ext, [`${refs}/*`]),
       "ask",
       "a glob climbing out of the skill keeps its ask",
+    );
+    assert.equal(
+      await rec.ask("glob", { pattern: "{..,x}/*", path: refs }, ext, [`${refs}/*`]),
+      "ask",
+      "so does a climb spelled in braces",
+    );
+    assert.equal(
+      await rec.ask("grep", { pattern: "x", path: refs, include: "../../*" }, ext, [`${refs}/*`]),
+      "ask",
+      "and a grep whose include climbs out",
+    );
+    assert.equal(
+      await read(join(repo, "notes.md")),
+      "ask",
+      "a SKILL.md with `slash: true` in a wider directory opens nothing",
     );
     assert.equal(
       await rec.ask("read", { path: join(refs, "phrasebook.md") }, ext, [`${refs}/*`], "deny"),
