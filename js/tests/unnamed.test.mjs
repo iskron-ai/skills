@@ -94,6 +94,39 @@ const daemonPids = (home) => {
   }
 };
 
+// Безымянное место — место самого человека (#6053): словом человека
+// (ISKRON_BRIDGE_OWNER_ROLE=1) мост берёт его, роль агента без имени — нет и тогда.
+test("the human's own unnamed seat passes on the human's word; a role seat without a name does not", async () => {
+  const fake = await startFakeNks({ pat: PAT });
+  const home = mkdtempSync(join(tmpdir(), "iskron-unnamed-"));
+  const b = startBridge(fake.mcpUrl, home, {
+    ISKRON_BRIDGE_DAEMON: "0",
+    ISKRON_BRIDGE_OWNER_ROLE: "1",
+  });
+  try {
+    assert.ok((await b.call("initialize", INIT)).result, "initialize");
+    const role = await b.call("tools/call", {
+      name: "iskron_channel",
+      arguments: { action: "connect", realm: "nks-dev", karta: 931 },
+    });
+    assert.match(textOf(role), /без имени места/, textOf(role));
+    const human = await b.call("tools/call", {
+      name: "iskron_channel",
+      arguments: { action: "connect", realm: "nks-dev", karta: "me" },
+    });
+    assert.doesNotMatch(textOf(human), /без имени места/, textOf(human));
+    assert.deepEqual(
+      seatMoves(fake).map((a) => a.karta),
+      ["me"],
+      "only the human's seat reached the server",
+    );
+  } finally {
+    await b.stop();
+    await fake.stop();
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
 for (const [mode, env] of [
   ["the full bridge", { ISKRON_BRIDGE_DAEMON: "0" }],
   ["a thin bridge through the machine's daemon", { ISKRON_BRIDGE_DAEMON_IDLE_MS: "500" }],

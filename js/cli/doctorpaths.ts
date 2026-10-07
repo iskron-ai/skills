@@ -60,8 +60,8 @@ function claudeCode(out: Out): void {
   for (const c of ever.map(String).filter((c) => CONNECTOR_RE.test(c)))
     out(
       L(
-        `${todo()} Claude Code: коннектор «${c}» подключался — коннекторы claude.ai приходят в каждую сессию Claude Code рядом с мостом; адреса коннектора на диске нет. Ведёт он на сервер графа — это второй путь мимо моста → убери его в claude.ai (Настройки → Коннекторы) или выключи в Claude Code (/mcp)`,
-        `${todo()} Claude Code: the connector "${c}" has connected — claude.ai connectors come into every Claude Code session next to the bridge; the connector's address is not on disk. If it leads to the graph server, it is a second path around the bridge → remove it in claude.ai (Settings → Connectors) or disable it in Claude Code (/mcp)`,
+        `Claude Code: коннектор «${c}» в истории подключений (${file}, claudeAiMcpEverConnected; строка останется и после снятия) — коннекторы claude.ai приходят в каждую сессию Claude Code рядом с мостом, а адреса коннектора на диске нет. Если он стоит и ведёт на сервер графа — это второй путь мимо моста → убери его в claude.ai (Настройки → Коннекторы) или выключи в Claude Code (/mcp)`,
+        `Claude Code: the connector "${c}" is in the connection history (${file}, claudeAiMcpEverConnected; the line stays after removal) — claude.ai connectors come into every Claude Code session next to the bridge, and the connector's address is not on disk. If it is installed and leads to the graph server, it is a second path around the bridge → remove it in claude.ai (Settings → Connectors) or disable it in Claude Code (/mcp)`,
       ),
     );
 }

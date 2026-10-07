@@ -41,29 +41,24 @@ function fix(l: Launch, node: string | null): string {
   const bridge = homeBridgePath().replace(homedir(), "$HOME");
   const abs =
     node ?? L("<абсолютный путь к node: command -v node>", "<absolute node path: command -v node>");
-  const n = l.entry ?? "iskron-bridge";
-  const add =
-    l.harness === "claude"
-      ? `claude mcp add --scope user "${n}" -- ${abs} "${bridge}"`
-      : `codex mcp add iskron-bridge -- ${abs} "${bridge}"`;
-  const off = l.entry
-    ? L(
-        `вместо прежней: сперва claude mcp remove "${n}" --scope user`,
-        `instead of the old one: first claude mcp remove "${n}" --scope user`,
-      )
-    : l.harness === "claude"
+  const shell = L(
+    "запускай харнесс из оболочки, где node находится",
+    "start the harness from a shell where node is found",
+  );
+  // Ход не ставит второго моста рядом с первым: ручная запись переписывается на месте,
+  // плагинная Claude Code заменяется ручной и выключается; Codex выключить запись плагина
+  // не даёт — ему только оболочка (#6728: два пути — дефект).
+  const abs_ =
+    l.harness === "codex"
       ? L(
-          "и выключи запись плагина в /mcp, чтобы мост был один",
-          "and disable the plugin entry in /mcp so the bridge is one",
+          "плагинной записи Codex абсолютного пути не вписать, а вторая запись рядом дала бы два моста",
+          "the Codex plugin entry takes no absolute path, and a second entry beside it would make two bridges",
         )
       : L(
-          "запись плагина останется рядом, и мостов станет два, пока стоит плагин",
-          "the plugin entry stays beside it, and there are two bridges while the plugin is installed",
+          `либо запись с абсолютным путём к node, от PATH не зависящая: ${l.entry ? `claude mcp remove "${l.entry}" --scope user, затем ` : ""}claude mcp add --scope user "${l.entry ?? "iskron-bridge"}" -- ${abs} "${bridge}"${l.entry ? "" : " — и выключи запись плагина plugin:iskron:iskron в /mcp, чтобы мост был один"}; путь привязан к этой установке node — сменишь её, перепиши запись`,
+          `or an entry with the absolute node path, independent of PATH: ${l.entry ? `claude mcp remove "${l.entry}" --scope user, then ` : ""}claude mcp add --scope user "${l.entry ?? "iskron-bridge"}" -- ${abs} "${bridge}"${l.entry ? "" : " — and disable the plugin entry plugin:iskron:iskron in /mcp so the bridge is one"}; the path is tied to this node install — change it, rewrite the entry`,
         );
-  return L(
-    `    ход: запускай харнесс из оболочки, где node находится; либо запись с абсолютным путём к node, от PATH не зависящая: ${add} — ${off}`,
-    `    fix: start the harness from a shell where node is found; or an entry with the absolute node path, independent of PATH: ${add} — ${off}`,
-  );
+  return L(`    ход: ${shell}; ${abs_}`, `    fix: ${shell}; ${abs_}`);
 }
 
 /** Команда каждой stdio-записи моста: найдена ли, где, и увидит ли её харнесс, запущенный не из оболочки. */
@@ -99,8 +94,8 @@ export function launchReport(out: (s: string) => void, launches: Launch[]): void
     }
     out(
       L(
-        `${l.who}: «${cmd}» → ${found} — в PATH этой оболочки; каталог ${dir} кладёт туда профиль оболочки или менеджер версий, и харнесс, запущенный не из оболочки (приложение, сервис), его может не увидеть: spawn ENOENT. Какой PATH у харнесса, отсюда не видно`,
-        `${l.who}: "${cmd}" → ${found} — in this shell's PATH; the directory ${dir} is put there by the shell profile or a version manager, and a harness started outside a shell (an app, a service) may not see it: spawn ENOENT. The harness's PATH cannot be seen from here`,
+        `${l.who}: «${cmd}» → ${found} — в PATH этой оболочки; каталог ${dir} кладёт туда профиль оболочки или менеджер версий, и харнесс, запущенный не из оболочки (приложение, сервис), его может не увидеть. Какой PATH у харнесса, отсюда не видно; пишет харнесс spawn ENOENT — ход строкой ниже`,
+        `${l.who}: "${cmd}" → ${found} — in this shell's PATH; the directory ${dir} is put there by the shell profile or a version manager, and a harness started outside a shell (an app, a service) may not see it. The harness's PATH cannot be seen from here; if the harness says spawn ENOENT — the fix is on the next line`,
       ),
     );
     out(fix(l, found));

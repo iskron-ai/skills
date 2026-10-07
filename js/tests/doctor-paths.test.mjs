@@ -105,13 +105,30 @@ test("doctor names the grant directory and a session on the fallback path, by pi
 test("doctor: the bridge entry's command not in PATH is a finding with the absolute-node fix", async () => {
   await withHome(async ({ fake, home, authDir }) => {
     claudePlugin(home, "node", "9.9.9");
+    const codex = join(home, "cxh");
+    const manifest = join(codex, "plugins", "cache", "iskron", "iskron", ".codex-plugin");
+    mkdirSync(manifest, { recursive: true });
+    writeFileSync(
+      join(manifest, "plugin.json"),
+      JSON.stringify({
+        version: "9.9.9",
+        mcpServers: {
+          iskron: { command: "node", args: ["./skills/establish-mcp/scripts/iskron.mjs"] },
+        },
+      }),
+    );
     const empty = join(home, "empty-bin");
     mkdirSync(empty);
     const r = await run(
       ["doctor", fake.mcpUrl, "--auth-dir", authDir],
-      { HOME: home, PATH: empty },
+      { HOME: home, PATH: empty, CODEX_HOME: codex },
       home,
     );
+    // Ход не ставит второго моста (#6728): Codex выключить запись плагина не даёт — второй записи не советуем.
+    assert.match(r.out, /НАДО: Codex iskron@iskron: команда «node» не найдена/, r.out);
+    assert.match(r.out, /плагинной записи Codex абсолютного пути не вписать/, r.out);
+    assert.doesNotMatch(r.out, /codex mcp add/, r.out);
+    assert.match(r.out, /выключи запись плагина plugin:iskron:iskron в \/mcp/, r.out);
     assert.match(
       r.out,
       /НАДО: Claude Code iskron@iskron: команда «node» не найдена в PATH этой оболочки .*spawn ENOENT/,
@@ -185,7 +202,12 @@ test("doctor names an http entry to the graph server next to the bridge in Claud
     assert.doesNotMatch(r.out, /«чужой» ведёт/, r.out);
     assert.match(r.out, /НАДО: Codex .*«graph».*codex mcp remove "graph"/, r.out);
     assert.doesNotMatch(r.out, /«other» ведёт/, r.out);
-    assert.match(r.out, /НАДО: Claude Code: коннектор «claude\.ai Iskron» подключался/, r.out);
+    // История подключений не гаснет после снятия коннектора — строка без «НАДО», иначе doctor не позеленеет.
+    assert.match(
+      r.out,
+      /^Claude Code: коннектор «claude\.ai Iskron» в истории подключений/m,
+      r.out,
+    );
     assert.doesNotMatch(r.out, /коннектор «claude\.ai Google Drive»/, r.out);
   });
 });

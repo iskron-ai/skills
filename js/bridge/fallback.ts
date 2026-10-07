@@ -15,11 +15,31 @@ export interface Fallback {
 
 export const fallbackDir = (authDir: string): string => join(resolve(authDir), "fallback");
 
-/** Отметить свою сессию запасной; отметка уходит с процессом. Сбой записи не мешает мосту. */
+const alive = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === "EPERM";
+  }
+};
+
+/**
+ * Отметить свою сессию запасной; отметка уходит с процессом, а отметки убитых
+ * (SIGKILL, падение) снимает следующий мост, идущий запасным путём, — чтобы pid,
+ * доставшийся другому процессу, не читался сессией. Сбой записи не мешает мосту.
+ */
 export function markFallback(authDir: string, f: Omit<Fallback, "pid" | "since">): void {
   const file = join(fallbackDir(authDir), `${process.pid}.json`);
   try {
     mkdirSync(fallbackDir(authDir), { recursive: true, mode: 0o700 });
+    for (const n of readdirSync(fallbackDir(authDir))) {
+      const pid = parseInt(n, 10);
+      if (Number.isInteger(pid) && !alive(pid))
+        try {
+          unlinkSync(join(fallbackDir(authDir), n));
+        } catch {}
+    }
     const rec: Fallback = { pid: process.pid, since: new Date().toISOString(), ...f };
     writeFileSync(file, JSON.stringify(rec), { mode: 0o600 });
     process.once("exit", () => {
@@ -29,15 +49,6 @@ export function markFallback(authDir: string, f: Omit<Fallback, "pid" | "since">
     });
   } catch {}
 }
-
-const alive = (pid: number): boolean => {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (e) {
-    return (e as NodeJS.ErrnoException).code === "EPERM";
-  }
-};
 
 /** Живые запасные сессии каталога гранта; отметки умерших процессов не читаются (и не стираются: doctor не пишет). */
 export function readFallbacks(authDir: string): Fallback[] {
