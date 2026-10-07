@@ -340,9 +340,9 @@ test("doctor reads the project config too, and leaves a foreign server alone", a
 });
 
 // Три рода записи различаются ценой: мост поставки — чужая подпись, нативная
-// http-запись — законный запасной путь, выключенная — не в игре. И .jsonc
+// http-запись — путь мимо моста, который убирают, выключенная — не в игре. И .jsonc
 // существует ради комментариев: JSON.parse на них падает (#5559).
-test("doctor tells the bridge entry from the http fallback and reads jsonc with comments", async () => {
+test("doctor tells the bridge entry from the http entry and reads jsonc with comments", async () => {
   const fake = await startFakeNks();
   const home = mkdtempSync(join(tmpdir(), "iskron-doctor-"));
   const project = mkdtempSync(join(tmpdir(), "iskron-doctor-proj-"));
@@ -369,11 +369,12 @@ test("doctor tells the bridge entry from the http fallback and reads jsonc with 
       /«прямой».*напрямую по http/,
       `the http fallback must be told apart: ${r.out}`,
     );
-    assert.doesNotMatch(
+    assert.match(
       r.out,
-      /«прямой».*Убери/,
-      `the http fallback must not be ordered away: ${r.out}`,
+      /«прямой».*Путь к графу один — мост.*Убери/,
+      `the http entry must be ordered away — the one path is the bridge: ${r.out}`,
     );
+    assert.doesNotMatch(r.out, /законен/, `no http path is legitimate: ${r.out}`);
     assert.match(
       r.out,
       /«выключенный».*выключена/,
