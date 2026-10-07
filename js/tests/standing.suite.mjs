@@ -4188,9 +4188,9 @@ test("a live case copy is not swallowed by a stale copy waiting in an unsent bur
   assert.equal(counted.length, 1, `the event reached the doer ${counted.length} times:\n${wd.out}`);
 });
 
-// Копия, удержанная копией того же рода в кольце, не теряется: та будет предложена не позже
-// и вытеснится не раньше удержанной — событие доходит один раз (страж удержания кольцом).
-test("a copy held back by an unprinted ring copy is not lost when that one is evicted: the event reaches the watchdog once", async (t) => {
+// Копия, удержанная старшей копией того же рода в кольце, доходит ею — один раз; кольцо
+// здесь полно, но не вытесняет (страж удержания кольцом, fanout.ts redundantEvent).
+test("a copy held back by an unprinted ring copy reaches the watchdog once through that copy", async (t) => {
   const { fake, dir, key } = await connected(t);
   await waitFor(() => fake.state.ws.size === 1, "the socket");
   await fake.control({
@@ -4267,6 +4267,46 @@ test("a turn the Codex thread refused does not swallow the waiting count of a ca
   assert.ok(
     turns().some((x) => /записей 1/.test(x)),
     `the case copy's count was swallowed by a refused turn: ${JSON.stringify(turns())}`,
+  );
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
+// Дверь закрылась под ходом с текстом события: лежалая копия дела, ждавшая при нём, в
+// закрытую дверь не уходит — входит счётом в следующую открытую, ровно раз.
+test("a stale burst held by a turn whose Codex door closed goes into the next opened door once", async (t) => {
+  const { fake, dir, key } = await connected(t);
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const extra = await codexDoor(t, { turnDelayMs: 3000, closeTurns: 1 });
+  const log = join(extra.CODEX_HOME, "door.log");
+  const wd = runClient("watchdog-codex", dir, key, 30_000, extra);
+  await waitFor(() => wd.err.includes("слушаю стояние"), "the codex watchdog to attach");
+  await fake.control({ ws_send: graphEvent("inbox-c", 607, "событие шестьсот семь") });
+  await new Promise((r) => setTimeout(r, 100));
+  await sendRoom(fake, { ...nodeOp("updated", 121), event_id: 607, stale: true });
+  await waitFor(() => /дверь закрылась|door closed/.test(wd.err), "the door to close", 20_000);
+  await fake.control({
+    ws_send: JSON.stringify({ id: "live-c1", type: "message", body: "живое-c1" }),
+  });
+  const turns = () =>
+    readFileSync(log, "utf8")
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((l) => JSON.parse(l))
+      .filter((c) => c.method === "turn/start")
+      .map((c) => c.params.input[0].text);
+  await waitFor(
+    () => turns().some((x) => x.includes("живое-c1")),
+    "the live frame in the thread",
+    20_000,
+  );
+  await new Promise((r) => setTimeout(r, 300));
+  const counted = turns().filter((x) => /записей 1/.test(x));
+  assert.equal(
+    counted.length,
+    1,
+    `the event went in ${counted.length} times: ${JSON.stringify(turns())}`,
   );
   wd.proc.kill("SIGKILL");
   await wd.done;

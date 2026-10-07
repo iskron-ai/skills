@@ -54,12 +54,14 @@ function unframe(buf) {
 // mute: the socket is accepted, the upgrade is never answered — a hung daemon.
 // upgradeDelayMs: the upgrade is answered this late — a daemon slow to open the door.
 // refuseTurns: the first this many turns are refused (after turnDelayMs, like an answer).
+// closeTurns: on the first this many turns the socket is destroyed instead of an answer.
 export function startFakeCodex(
   socketPath,
   logFile,
-  { mute = false, turnDelayMs = 0, upgradeDelayMs = 0, refuseTurns = 0 } = {},
+  { mute = false, turnDelayMs = 0, upgradeDelayMs = 0, refuseTurns = 0, closeTurns = 0 } = {},
 ) {
   let refuse = refuseTurns;
+  let close = closeTurns;
   mkdirSync(dirname(socketPath), { recursive: true });
   const server = createServer((_req, res) => {
     res.writeHead(404);
@@ -101,6 +103,10 @@ export function startFakeCodex(
           );
         } else if (msg.method === "turn/start") {
           // turnDelayMs: ход принят не сразу — сторож метит отданное только по ответу.
+          if (close > 0 && close--) {
+            setTimeout(() => socket.destroy(), turnDelayMs).unref();
+            continue;
+          }
           const refused = refuse > 0 && refuse--;
           const answer = () =>
             socket.write(
