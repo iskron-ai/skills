@@ -39,7 +39,7 @@ import {
   standingIdIn,
   wasEvicted,
 } from "./hold.ts";
-import { keyOf, noteSeatBase, readHoldRecord, sessionOfBridge } from "./holdrecord.ts";
+import { keyOf, noteSeatBase, readHoldRecord, seatBaseOf, sessionOfBridge } from "./holdrecord.ts";
 import { armRoleHook } from "./hook.ts";
 import { knock, resetKnocks } from "./knock.ts";
 import { returnToStanding } from "./leave.ts";
@@ -281,9 +281,10 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
     }
     if (choice.note) nameNotes.push(choice.note);
   }
-  if (base) noteSeatBase(keyOf(realm, karta, name), base); // до connect: запись держания несёт основу
+  // До connect: запись держания несёт основу; известную мосту не перезаписывать — явный proba.2 остаётся рядом с proba (#6706).
+  if (base && !seatBaseOf(keyOf(realm, karta, name))) noteSeatBase(keyOf(realm, karta, name), base);
   const take = a.take === true || ownSession;
-  const sub = !!sat || (!!base && name !== base); // отдельное место и спутник: хук инбокса роли не взводится
+  const sub = !!sat || baseOf(realm, karta, name) !== name; // место рядом и спутник: хук инбокса роли не взводится
   // Места прежнего стандарта имени (машина.репо.ветка) той же машины и репо —
   // сироты после перехода на машина.репо.модель: их адрес держат ростеры дел
   // и хуки инбокса, а слушает их никто. Прежнее имя узнаётся по третьей части,
