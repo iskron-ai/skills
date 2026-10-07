@@ -11,6 +11,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 
 import {
+  boardLine,
   channel,
   FILE,
   NODE,
@@ -178,7 +179,7 @@ test("left by word, another session turned the address (404), then a watchdog at
   await sleep(1500);
   const before = fake.state.writes.length;
   const w = await write(b1);
-  assert.ok(w.result?.isError, textOf(w));
+  assert.ok(w.result?.isError, `${textOf(w)}\n${b1.stderr}`);
   assert.equal(fake.state.writes.length, before, JSON.stringify(fake.state.writes));
 });
 
@@ -208,4 +209,34 @@ test("the socket dropped and another session turned the address meanwhile (404 o
   const s1 = await stand(b1, { realm: "nks-dev", karta: 931, name: "proba", cwd });
   assert.ok(!placeArgs(fake, "register").slice(regs).includes("proba"), textOf(s1));
   assert.equal(placeOf(s1), "proba.2", textOf(s1));
+});
+
+test("a reopen onto a turned address released by iskron_stand, the stand then refused: a write is still refused, not signed with the released seat", async (t) => {
+  const { fake, cwd, up } = await setup(t);
+  await fake.control({ turned_404: true });
+  const b1 = await up();
+  assert.equal(
+    placeOf(await stand(b1, { realm: "nks-dev", karta: 931, name: "proba", cwd })),
+    "proba",
+  );
+  await until(() => fake.state.ws.size === 1, "b1 socket");
+  await fake.control({ ws_close: 1012 });
+  await until(() => fake.state.places.get("931:proba")?.listening === false, "dropped");
+  const b2 = await up(otherDir(t));
+  assert.equal(
+    placeOf(await stand(b2, { realm: "nks-dev", karta: 931, name: "proba", cwd })),
+    "proba",
+  );
+  await until(() => fake.state.places.get("931:proba")?.listening === true, "b2 hears proba");
+  await sleep(3000);
+  await fake.control({
+    boardText: `Каналы (3):\n${boardLine("proba")}\n${boardLine("other")}\n  ??? строка иной формы`,
+  });
+  const s1 = await stand(b1, { realm: "nks-dev", karta: 931, name: "proba", cwd });
+  assert.ok(s1.result?.isError, textOf(s1));
+  await fake.control({ boardText: null });
+  const before = fake.state.writes.length;
+  const w = await write(b1);
+  assert.ok(w.result?.isError, `${textOf(w)}\n${b1.stderr}`);
+  assert.equal(fake.state.writes.length, before, JSON.stringify(fake.state.writes));
 });

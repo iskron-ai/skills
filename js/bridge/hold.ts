@@ -288,7 +288,7 @@ export function holdStanding(url: string, statusUrl?: string | null): string {
   const same = !!H.currentKey && H.currentKey === key;
   releaseStanding(holdWords.newSocket(), !!H.currentKey && H.currentKey !== key, same);
   const status = statusUrl || deriveStatusUrl(url);
-  Object.assign(H, { currentKey: key, deadKey: null, currentUrl: url, currentStatusUrl: status });
+  Object.assign(H, { currentKey: key, currentUrl: url, currentStatusUrl: status });
   H.door = new Door(key, doorHooks);
   H.door.open();
   const s = state.standing;
@@ -376,7 +376,7 @@ function deliverTo(d: Door, raw: string, frame: Frame | null, full: Frame | null
   // В кольцо идёт и hello — каждой двери: сторож, прицепившийся позже, должен увидеть доказательство держания, а не только рабочие кадры.
   const hello = full?.type === "hello";
   for (const x of hello ? doors() : [d]) x.push(text, full);
-  if (hello) H.unheard = false;
+  if (hello) Object.assign(H, { unheard: false, deafKey: null }); // слух доказан
   if (hello) for (const w of [...H.helloWaiters]) w(full);
   const ev: ChannelEvent = { kind: "frame", raw: text, frame: full };
   const msg = full?.type === "message" && !again ? full : null;
@@ -475,7 +475,7 @@ function openHolder(url: string, key: string): void {
         const ev: ChannelEvent = { kind: "dead", code, text };
         broadcast(ev);
         notify("error", ev);
-        Object.assign(H, { deadKey: key, deadPlaces: [...state.places] }); // привязка помнится, слуха нет (deaf.ts)
+        Object.assign(H, { deafKey: key, deadPlaces: [...state.places] }); // привязка помнится, слуха нет (deaf.ts)
         releaseStanding(holdWords.tokenDead(), true);
       },
       onServiceAlive: (version) => {

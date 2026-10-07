@@ -183,6 +183,7 @@ export async function heardOnReturn(): Promise<void> {
     "the socket reopened at the same address gave no hello — another may have turned the address",
   );
   log(why);
+  H.deafKey = H.currentKey; // привязка помнится, слуха нет (deaf.ts)
   releaseStanding(why, false, false, true);
 }
 

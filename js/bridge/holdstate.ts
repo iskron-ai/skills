@@ -26,8 +26,8 @@ export const H = scoped(() => ({
   parked: false,
   /** сокет открыт заново тем же адресом (возврат, обрыв), а hello этого открытия ещё нет: адрес мог повернуть другой (deaf.ts) */
   unheard: false,
-  /** ключ места, чей сокет отпущен мёртвым токеном (4001), пока мост не взял сокет снова (deaf.ts) */
-  deadKey: null as string | null,
+  /** ключ места, чей сокет мост отпустил, а привязку помнит (мёртвый токен, переоткрытие без hello), пока hello не докажет слух снова (deaf.ts) */
+  deafKey: null as string | null,
   /** места других графов того же канала на миг 4001: сервер их привязку помнит, слуха нет (deaf.ts) */
   deadPlaces: [] as { realm: string; karta: string | number; name?: string }[],
   attachHooks: [] as (() => void)[],
