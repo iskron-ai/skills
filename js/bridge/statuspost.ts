@@ -3,6 +3,7 @@
 // не взял), а hold.ts → handoff.ts → status.ts → hold.ts замкнулось бы в цикл.
 import { L } from "../shared/lang.ts";
 import { closedUnder } from "./errors.ts";
+import { log } from "./streams.ts";
 
 /** Исход POST занятости; code — HTTP-код отказа поверхности, когда он был. */
 export interface StatusOutcome {
@@ -55,6 +56,14 @@ function trimmedIn(body: string): StatusTrim | undefined {
   const warnings = obj(parsed).warnings;
   const w = Array.isArray(warnings) ? warnings.find((x) => obj(x).code === TRIMMED) : undefined;
   return w ? trimOf(w, parsed) : undefined;
+}
+
+/** Слово о кадре сокета status_trimmed — в лог моста и клиенту; агента кадр не будит. */
+export function trimmedNote(frame: unknown): string {
+  const t = trimOf(frame);
+  const text = `${t.doing === null ? "" : `«${t.doing}» — `}${trimNudge(t)}`;
+  log(`status_trimmed: ${text}`);
+  return text;
 }
 
 /** Нудж обрезки агенту: до скольких обрезано, слово сервера; ход — переназвать коротко. */
