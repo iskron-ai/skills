@@ -4,7 +4,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-var VERSION = "7.3.0";
+var VERSION = "7.4.0";
 var CHANNEL_MARK = "iskron-build:release";
 var releaseBuild = () => CHANNEL_MARK.endsWith(":release");
 var devBuildIn = (text) => text.includes(`"${["iskron-build", "dev"].join(":")}"`);
@@ -513,7 +513,7 @@ function serveSeam(socket, host, graceMs = SEAM_REATTACH_GRACE_MS) {
   helloTimer.unref?.();
   socket.on("error", () => {
   });
-  const refuse = (reason) => {
+  const refuse2 = (reason) => {
     say(`seam refused: ${reason}`);
     writeFrame(socket, { t: "refuse", seam: SEAM_PROTOCOL, build: host.build, reason });
     socket.end();
@@ -558,7 +558,7 @@ function serveSeam(socket, host, graceMs = SEAM_REATTACH_GRACE_MS) {
         helloSeen = true;
         clearTimeout(helloTimer);
         const why = checkHello(f);
-        if (why) return refuse(why);
+        if (why) return refuse2(why);
         void accept(f);
         return;
       }
@@ -593,7 +593,7 @@ function serveSeam(socket, host, graceMs = SEAM_REATTACH_GRACE_MS) {
     const resumed = !!s2;
     if (!s2) {
       const opened = await host.open(hello);
-      if (typeof opened === "string") return refuse(opened);
+      if (typeof opened === "string") return refuse2(opened);
       s2 = opened;
     }
     const grace = graceTimers.get(s2);
@@ -2993,9 +2993,9 @@ function authorOf(author) {
 }
 var after = (key, prefix) => key.startsWith(prefix) ? key.slice(prefix.length) : key;
 function fill(template, v) {
-  return template.replace(/\{([^\w{}]*)(\w+)\}/g, (_m, sep, name) => {
+  return template.replace(/\{([^\w{}]*)(\w+)\}/g, (_m, sep2, name) => {
     const x = str(v[name]);
-    if (sep) return x ? sep + x : "";
+    if (sep2) return x ? sep2 + x : "";
     return x || "?";
   });
 }
@@ -6834,9 +6834,9 @@ function pickSatellite(entries2, of, karta, led, claim = () => true) {
 }
 async function satelliteGate(a, realm, karta, asked) {
   const of = typeof a.satellite_of === "string" ? a.satellite_of.trim() : "";
-  const refuse = (refusal2) => ({ ok: false, refusal: refusal2 });
+  const refuse2 = (refusal2) => ({ ok: false, refusal: refusal2 });
   if (CFG.satellite && !of)
-    return refuse(
+    return refuse2(
       L(
         "Отказано (мост): это мост-спутник — он занимает только место-спутник субагента; передай satellite_of — место позвавшего (@handle:name) из постановки.",
         "Refused (bridge): this is a satellite bridge — it takes only a subagent's satellite seat; pass satellite_of — the caller's seat (@handle:name) from the brief."
@@ -6844,14 +6844,14 @@ async function satelliteGate(a, realm, karta, asked) {
     );
   if (!of) return null;
   if (!CFG.satellite)
-    return refuse(
+    return refuse2(
       L(
         "Отказано (мост): satellite_of — только мосту-спутнику (запись моста с --satellite в файле агента); этот мост — мост сессии, и место-спутник на нём заняло бы голос позвавшего. Субагенту без своего моста — предел: он говорит местом позвавшего и называет себя в своих строках.",
         "Refused (bridge): satellite_of is for a satellite bridge only (a bridge entry with --satellite in the agent file); this is a session bridge, and a satellite seat on it would take the caller's voice. A subagent without a bridge of its own has a limit: it speaks as the caller's seat and names itself in its lines."
       )
     );
   if (asked || a.take === true || typeof a.room === "string" && a.room.trim())
-    return refuse(
+    return refuse2(
       L(
         "Отказано (мост): имя спутника выводит мост — name, take и room вместе с satellite_of не передаются.",
         "Refused (bridge): the bridge derives the satellite's name — name, take and room do not go with satellite_of."
@@ -6859,7 +6859,7 @@ async function satelliteGate(a, realm, karta, asked) {
     );
   const b = await callTool("iskron_channel", { action: "list", realm });
   if (b.isError)
-    return refuse(
+    return refuse2(
       L(
         `Отказано: доска не прочиталась — ${short(b.text)}`,
         `Refused: the board did not read — ${short(b.text)}`
@@ -6938,11 +6938,11 @@ function usageOf(p) {
     if (v !== void 0) u[k] = v;
   }
   if (typeof p.model === "string" && p.model.trim()) u.model = p.model.trim().slice(0, 120);
-  const context = num(p.context);
+  const context2 = num(p.context);
   const window = num(p.window);
-  if (context !== void 0) u.context = context;
+  if (context2 !== void 0) u.context = context2;
   if (window) u.window = window;
-  if (context !== void 0 && window) u.percent = Math.round(100 * context / window);
+  if (context2 !== void 0 && window) u.percent = Math.round(100 * context2 / window);
   return Object.keys(u).length ? { ...u, at: (/* @__PURE__ */ new Date()).toISOString() } : null;
 }
 function moved(a, b) {
@@ -7328,6 +7328,20 @@ async function ownersOf(realm, k) {
 import { existsSync as existsSync5, readdirSync as readdirSync5, readFileSync as readFileSync18 } from "node:fs";
 import { join as join15 } from "node:path";
 
+// js/shared/canon.ts
+import { realpathSync as realpathSync2 } from "node:fs";
+import { sep } from "node:path";
+function canonDir(p) {
+  let real2 = p;
+  try {
+    real2 = realpathSync2.native(p);
+  } catch {
+  }
+  while (real2.length > 1 && (real2.endsWith("/") || real2.endsWith(sep))) real2 = real2.slice(0, -1);
+  return real2;
+}
+var sameDir = (a, b) => !!a && !!b && (a === b || canonDir(a) === canonDir(b));
+
 // js/bridge/resumewords.ts
 var via = "iskron_stand";
 var resumeWords = {
@@ -7573,7 +7587,7 @@ function recordsFor(sel) {
   const led = ledKey();
   const byKey = [];
   const byCwd = [];
-  const sameDir = [];
+  const sameDir2 = [];
   const legacy = [];
   const left = [];
   for (const f of readdirSync5(dir).filter((x) => x.endsWith(".hold"))) {
@@ -7582,12 +7596,12 @@ function recordsFor(sel) {
       if (!rec4 || rec4.client !== mine) continue;
       const key = keyOf(rec4.realm, rec4.karta, rec4.name);
       const keyed2 = !!sel.key && key === sel.key;
-      const inDir = !!sel.cwd && rec4.cwd === sel.cwd;
+      const inDir = sameDir(rec4.cwd, sel.cwd);
       const stoodBy = !!sel.session && rec4.session === sel.session;
       if (!keyed2 && !inDir && !stoodBy) continue;
       const fresh2 = readHoldRecord(key);
       if (!fresh2) continue;
-      if (inDir) sameDir.push(key);
+      if (inDir) sameDir2.push(key);
       if (fresh2.left) {
         left.push(key);
         continue;
@@ -7601,7 +7615,7 @@ function recordsFor(sel) {
   }
   return {
     own: [...byKey, ...byCwd.sort((a, b) => (b.at ?? 0) - (a.at ?? 0))],
-    sameDir,
+    sameDir: sameDir2,
     legacy,
     left
   };
@@ -7627,7 +7641,7 @@ async function backToParked(key, how) {
   };
 }
 async function resumeBy(sel, register = true) {
-  const { own: recs, sameDir, legacy: legacyRecs, left } = recordsFor(sel);
+  const { own: recs, sameDir: sameDir2, legacy: legacyRecs, left } = recordsFor(sel);
   if (!recs.length) {
     const legacy = await freeLegacy(legacyRecs);
     const said2 = [resumeWords.noRecord(sel.key, sel.cwd)];
@@ -7635,7 +7649,7 @@ async function resumeBy(sel, register = true) {
       said2.push(resumeWords.rejoin());
       RJ.lapsed = true;
     }
-    const foreign = sameDir.filter((k) => !left.includes(k));
+    const foreign = sameDir2.filter((k) => !left.includes(k));
     if (foreign.length) said2.push(resumeWords.foreignDir(foreign));
     if (left.length) said2.push(resumeWords.left(left));
     if (legacy.length) said2.push(legacyWord(legacy));
@@ -7684,7 +7698,7 @@ async function resumeBy(sel, register = true) {
       lines.push(r.isError ? resumeWords.registerRefused(short(r.text)) : "register");
     }
     const others = [
-      .../* @__PURE__ */ new Set([...recs.map((r) => keyOf(r.realm, r.karta, r.name)), ...sameDir])
+      .../* @__PURE__ */ new Set([...recs.map((r) => keyOf(r.realm, r.karta, r.name)), ...sameDir2])
     ].filter((k) => k !== key && readHoldRecord(k) !== null);
     if (others.length) lines.push(resumeWords.othersInDir(others));
     lines.push(resumeWords.notYours());
@@ -11033,9 +11047,9 @@ function toolsTail(e) {
 function formOf(e) {
   const base = cmdBase(e.command);
   if (base === "node" && (e.args[0] === "-e" || e.args[0] === "--eval")) {
-    const sep = e.args.indexOf("--", 2);
-    if (sep < 0) return e.args.slice(2).includes("--satellite") ? "eval-no-sep" : "session";
-    const after2 = e.args.slice(sep + 1);
+    const sep2 = e.args.indexOf("--", 2);
+    if (sep2 < 0) return e.args.slice(2).includes("--satellite") ? "eval-no-sep" : "session";
+    const after2 = e.args.slice(sep2 + 1);
     const spliced = /process\.argv\.splice\(\s*1\s*,\s*0\s*,/.test(e.args[1] ?? "");
     if (!(spliced ? after2 : after2.slice(1)).includes("--satellite")) return "eval-session";
     const tail2 = after2.slice(1);
@@ -11977,7 +11991,7 @@ async function runDoctor(argv2) {
 }
 
 // js/cli/rituals.ts
-import { mkdtempSync as mkdtempSync2, readdirSync as readdirSync9, realpathSync as realpathSync2, rmSync as rmSync3 } from "node:fs";
+import { mkdtempSync as mkdtempSync2, readdirSync as readdirSync9, realpathSync as realpathSync3, rmSync as rmSync3, statSync as statSync9 } from "node:fs";
 import { tmpdir as tmpdir2 } from "node:os";
 import { join as join24, resolve as resolve7 } from "node:path";
 
@@ -12064,6 +12078,14 @@ var SETUP_MS = 5e3;
 var loose = (fields = {}) => new Proxy(fields, {
   get: (t, k) => k in t || typeof k === "symbol" || k === "then" ? t[k] : loose(async () => void 0)
 });
+var DOMAINS = new Set(
+  "app location options agent aisdk command event experimental integration mcp model generate permission plugin provider reference rpc session shell skill storage tool vcs websearch worktree".split(
+    " "
+  )
+);
+var context = (fields) => new Proxy(fields, {
+  get: (t, k) => k in t || typeof k === "symbol" || !DOMAINS.has(k) ? t[k] : loose(async () => void 0)
+});
 var baseline = new Set(Reflect.ownKeys(globalThis));
 var dropPluginGlobals = () => {
   const g = globalThis;
@@ -12117,15 +12139,19 @@ async function probeWith(file, own, alias, foreign) {
       }
     }
   );
-  const ctx = loose({
+  let subscribed = false;
+  const ctx = context({
     location: { directory: alias },
     session,
     tool: loose({ hook: async (name, fn) => void (hooks[name] ??= []).push(fn) }),
     event: loose({
-      subscribe: ({ signal } = {}) => (async function* () {
-        for (const w of who) yield created(id[w], dirs[w]);
-        if (signal) await new Promise((r) => signal.addEventListener("abort", r));
-      })()
+      subscribe: ({ signal } = {}) => {
+        subscribed = true;
+        return (async function* () {
+          for (const w of who) yield created(id[w], dirs[w]);
+          if (signal) await new Promise((r) => signal.addEventListener("abort", r));
+        })();
+      }
     })
   });
   const mod = await import(`${pathToFileURL(file).href}?scope=${Date.now()}`);
@@ -12148,6 +12174,7 @@ async function probeWith(file, own, alias, foreign) {
   if (typeof cleanup === "function") await cleanup();
   return {
     writes: onEvents,
+    subscribed,
     broken: mine.broken,
     ownBefore: mine.hit.some(
       (h) => h.startsWith("execute.before write: throw") && !mine.broken.includes(h)
@@ -12161,7 +12188,7 @@ var out4 = (s2) => {
   process.stdout.write(s2 + "\n");
 };
 async function auditRepo(repo) {
-  const own = realpathSync2(repo);
+  const own = realpathSync3(repo);
   const dir = join24(own, ".opencode", "plugins");
   let names2;
   try {
@@ -12169,14 +12196,14 @@ async function auditRepo(repo) {
   } catch {
     return [];
   }
-  const foreign = realpathSync2(mkdtempSync2(join24(tmpdir2(), "ritual-scope-foreign-")));
+  const foreign = realpathSync3(mkdtempSync2(join24(tmpdir2(), "ritual-scope-foreign-")));
   const verdicts = [];
   try {
     for (const name of names2.sort()) {
       const file = join24(dir, name);
       try {
         const scope = await probeScope(file, own, foreign);
-        const hole = scope.writes.theirs > 0 || lostSpelling(scope) || scope.broken.length > 0;
+        const hole = scope.writes.theirs > 0 || lostSpelling(scope) || mute(scope) || scope.broken.length > 0;
         verdicts.push({ file, hole, scope });
       } catch (e) {
         verdicts.push({ file, hole: true, error: String(e?.message ?? e) });
@@ -12188,6 +12215,7 @@ async function auditRepo(repo) {
   return verdicts;
 }
 var lostSpelling = (s2) => s2.writes.mine > 0 !== s2.writes.twin > 0;
+var mute = (s2) => s2.subscribed && s2.writes.mine + s2.writes.twin === 0;
 var RULE = () => L(
   "правило — скилл iskronify, Шаг 4 «Хуки», образец — его references/harness-surfaces.md",
   "the rule is skill iskronify, Step 4 «Хуки», the sample is its references/harness-surfaces.md"
@@ -12205,7 +12233,10 @@ function words2(v) {
   if (v.error || !s2)
     return [L(`не проверен  ${v.file}: ${v.error}`, `not checked  ${v.file}: ${v.error}`)];
   if (!v.hole) {
-    const quiet = s2.writes.mine + s2.writes.twin === 0 ? L(" (в свою сессию не пишет)", " (writes nothing into its own session)") : "";
+    const quiet = s2.subscribed ? "" : L(
+      " (на поток событий не подписан — только хуки тулов)",
+      " (no event-stream subscription — tool hooks only)"
+    );
     return [`ok  ${v.file}${quiet}`];
   }
   const lines = [L(`ДЫРА  ${v.file}`, `HOLE  ${v.file}`)];
@@ -12223,7 +12254,14 @@ function words2(v) {
         `  its own session under another spelling of the folder gets no greeting (the real path: ${s2.writes.mine}, the instance's spelling: ${s2.writes.twin}) — directories are compared as raw strings, while one folder comes as /tmp/… and as /private/tmp/…`
       )
     );
-  if (s2.writes.theirs > 0 || lostSpelling(s2)) lines.push(`  ${FIX_SCOPE()}`);
+  if (mute(s2))
+    lines.push(
+      L(
+        "  подписан на поток событий, а своя корневая сессия приветствия не получила — каталог экземпляра берётся не из ctx.location.directory (поля ctx.directory в Context нет) или условие не пропускает свою",
+        "  subscribed to the event stream, yet its own root session got no greeting — the instance's directory is not taken from ctx.location.directory (Context has no ctx.directory) or the condition drops its own"
+      )
+    );
+  if (s2.writes.theirs > 0 || lostSpelling(s2) || mute(s2)) lines.push(`  ${FIX_SCOPE()}`);
   for (const h of s2.broken)
     lines.push(
       L(
@@ -12234,12 +12272,40 @@ function words2(v) {
   if (s2.broken.length) lines.push(`  ${FIX_BROKEN()}`);
   return lines;
 }
+var RITUALS_USAGE = () => `node iskron.mjs check-rituals [${L("репо", "repo")}...] [--json] [-- ${L("репо", "repo")}...]   ${L("(плагины .opencode/plugins не пишут в сессии чужих каталогов и не ломаются; без репо — текущий каталог)", "(.opencode/plugins write into no session of another directory and do not break; no repo — the current directory)")}`;
+var isDir = (p) => {
+  try {
+    return statSync9(p).isDirectory();
+  } catch {
+    return false;
+  }
+};
+var refuse = (word2) => {
+  process.stderr.write(`check-rituals: ${word2}
+${RITUALS_USAGE()}
+`);
+  process.exitCode = 2;
+};
 async function runCheckRituals(argv2) {
-  const json = argv2.includes("--json");
-  const repos = argv2.filter((a) => a !== "--json");
+  const end = argv2.indexOf("--");
+  const head = end < 0 ? argv2 : argv2.slice(0, end);
+  const tail2 = end < 0 ? [] : argv2.slice(end + 1);
+  if (head.includes("--help") || head.includes("-h")) return out4(RITUALS_USAGE());
+  const flag = head.find((a) => a.startsWith("-") && a !== "--json");
+  if (flag)
+    return refuse(
+      L(
+        `неизвестный флаг ${flag} (каталог с таким именем — ./${flag} или после --)`,
+        `unknown flag ${flag} (a directory of that name — ./${flag} or after --)`
+      )
+    );
+  const json = head.includes("--json");
+  const repos = [...head.filter((a) => a !== "--json"), ...tail2].map((a) => resolve7(a));
+  const missing = repos.find((r) => !isDir(r));
+  if (missing) return refuse(L(`нет такого каталога: ${missing}`, `no such directory: ${missing}`));
   const verdicts = [];
-  for (const repo of repos.length ? repos : ["."])
-    verdicts.push(...await auditRepo(resolve7(repo)));
+  for (const repo of repos.length ? repos : [resolve7(".")])
+    verdicts.push(...await auditRepo(repo));
   if (json) out4(JSON.stringify(verdicts));
   else if (verdicts.length === 0)
     out4(L("плагинов в .opencode/plugins нет", "no plugins in .opencode/plugins"));
@@ -12371,9 +12437,9 @@ var usage = () => `iskron ${BUILD}
   node iskron.mjs doctor [server-url] [--auth-dir <dir>]
   node iskron.mjs update [--auth-dir <dir>]
   node iskron.mjs use <en|ru|url> [--auth-dir <dir>]   ${L("(en — mcp.iskron.ai, ru — mcp.iskron.ru)", "(en — mcp.iskron.ai, ru — mcp.iskron.ru)")}
-  node iskron.mjs check-rituals [${L("репо", "repo")}...] [--json]   ${L("(плагины .opencode/plugins не пишут в сессии чужих каталогов и не ломаются; без репо — текущий каталог)", "(.opencode/plugins write into no session of another directory and do not break; no repo — the current directory)")}
+  ${RITUALS_USAGE()}
   node iskron.mjs daemon --auth-dir <dir>   ${L("(демон машины; его поднимает тонкий мост — мост по умолчанию)", "(the machine daemon; the thin bridge raises it — the default bridge)")}
-  node iskron.mjs --version
+  node iskron.mjs version   ${L("(или --version)", "(or --version)")}
   env: ISKRON_BRIDGE_TOKEN — ${L("личный токен вместо OAuth (или файл <auth-dir>/token)", "a personal token instead of OAuth (or the file <auth-dir>/token)")};
        ISKRON_BRIDGE_DAEMON=0 — ${L("полный мост в своём процессе, без демона машины", "the full bridge in its own process, without the machine daemon")};
        ISKRON_BRIDGE_URL, ISKRON_BRIDGE_AUTH_DIR, ISKRON_BRIDGE_NO_BROWSER, ISKRON_BRIDGE_DEBUG
@@ -12381,7 +12447,7 @@ var usage = () => `iskron ${BUILD}
 var argv = process.argv.slice(2);
 var [first, ...rest] = argv;
 var LONG_LIVED = /* @__PURE__ */ new Set([void 0, "bridge", "watchdog", "watchdog-exit", "watchdog-codex"]);
-var longLived = LONG_LIVED.has(first) || first !== void 0 && !first.startsWith("--") && !["doctor", "update", "use", "check-rituals", "daemon", "-h"].includes(first);
+var longLived = LONG_LIVED.has(first) || first !== void 0 && !first.startsWith("--") && !["doctor", "update", "use", "check-rituals", "daemon", "version", "-h"].includes(first);
 if (longLived && !updatesDisabled() && !process.env.ISKRON_BRIDGE_REEXEC) {
   const sync = syncHome();
   for (const p of sync.copied)
@@ -12422,6 +12488,7 @@ function dispatch() {
       void daemonMain(rest);
       break;
     case "--version":
+    case "version":
       void versionLines(rest).then((lines) => process.stdout.write(lines.join("\n") + "\n"));
       break;
     case "--help":

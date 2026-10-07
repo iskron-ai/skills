@@ -1,5 +1,21 @@
 # Changelog
 
+## [7.4.0](https://github.com/iskron-ai/skills/compare/v7.3.0...v7.4.0) (2026-10-06)
+
+
+### Features
+
+* **iskronify:** Шаг 4 — проверка плагинов ритуалов OpenCode check-rituals; контракт 20 ([#342](https://github.com/iskron-ai/skills/issues/342)) ([273962e](https://github.com/iskron-ai/skills/commit/273962e9ba60e7b6e8592422ea634a559893da0d))
+* **opencode:** родитель слышит, что субагент ждёт разрешения или прерван ([#346](https://github.com/iskron-ai/skills/issues/346)) ([b176ef4](https://github.com/iskron-ai/skills/commit/b176ef4afbe1ad3f0b5ed664b4efe5a715c919f7))
+
+
+### Bug Fixes
+
+* **cli:** check-rituals --help и неверный путь без стектрейса ([#344](https://github.com/iskron-ai/skills/issues/344)) ([ece2444](https://github.com/iskron-ai/skills/commit/ece2444874bde8dc7eccf9e8c3060b38ac417790))
+* **cli:** version без дефисов — подкоманда; check-rituals понимает -- ([#349](https://github.com/iskron-ai/skills/issues/349)) ([72a3bd0](https://github.com/iskron-ai/skills/commit/72a3bd0e59e5a45f4a0c97f0517a918f295e40f1))
+* **opencode,bridge:** место ведёт экземпляр точного написания каталога, близнец будит выгруженного ([#341](https://github.com/iskron-ai/skills/issues/341)) ([41463a4](https://github.com/iskron-ai/skills/commit/41463a457a81ce74aaf42d9cf6ce6690f1d3d515))
+* **skills:** establish-mcp — код входа до своего срока, мост без открытой ссылки уходит по SIGTERM ([#348](https://github.com/iskron-ai/skills/issues/348)) ([f5ae70c](https://github.com/iskron-ai/skills/commit/f5ae70c889ce28cf24f0c5338bb03ba0314b6654))
+
 ## [7.3.0](https://github.com/iskron-ai/skills/compare/v7.2.8...v7.3.0) (2026-10-06)
 
 
