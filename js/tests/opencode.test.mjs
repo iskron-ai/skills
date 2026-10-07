@@ -1366,6 +1366,48 @@ test("a backlog burst — the wake with everything that waited — is one prompt
   }
 });
 
+// #6569: the attention tact sends one frame an hour, each its own id; the bridge
+// hands each on as a wake burst, and the plugin queued every one — a turn that ran
+// for hours let four of the same text pile up in OpenCode's queue and come one
+// after another. While a wake prompt waits untaken, the same platform word again
+// is not queued a second time; once it is taken, the next hour's word goes.
+test("a platform word that repeats one still waiting in the session's queue is not queued again; taken, the next one goes", async () => {
+  const b = bridgeEnv("tact");
+  const rec = await plugin(b.env, { inboxIds: true });
+  try {
+    await serverTools(rec);
+    await rec.call("iskron_channel", { action: "connect" }, "s-tact");
+    const pid = pidOf(b.log);
+    const tact = (id, body) =>
+      event("backlog", {
+        frames: [
+          { type: "message", id, origin: "platform", provenance: { via: "platform" }, body },
+        ],
+        text: `Побудка: кадров 1\n\n${body}`,
+      });
+    const HOUR = "Час на «вахта» — подними голову";
+    for (const id of ["t1", "t2", "t3", "t4"]) {
+      appendFileSync(`${b.events}.${pid}`, tact(id, HOUR));
+      await delay(150);
+    }
+    await until(() => rec.prompts.length >= 1, "the first tact prompt");
+    await delay(300);
+    assert.equal(rec.prompts.length, 1, "one tact word in the queue, not four");
+    assert.equal(rec.prompts[0].delivery, "queue");
+    appendFileSync(`${b.events}.${pid}`, tact("t5", "Час на «ревью» — подними голову"));
+    await until(() => rec.prompts.length === 2, "a different word goes");
+    rec.emit({
+      type: "session.inbox.delivered",
+      data: { sessionID: "s-tact", inboxID: "inbox-1" },
+    });
+    await delay(100);
+    appendFileSync(`${b.events}.${pid}`, tact("t6", HOUR));
+    await until(() => rec.prompts.length === 3, "the next hour's word after the take");
+  } finally {
+    await rec.stop();
+  }
+});
+
 // A new root session asks its bridge to take back the place of its directory
 // before the first call: the record a previous plugin instance left on disk
 // (an evicted location, a restart) names the directory, and the bridge finds it.

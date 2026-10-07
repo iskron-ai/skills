@@ -151,6 +151,28 @@ export function setupChannel(ctx: Context, say: Say, freshestRoot: () => string 
   // отданный промпт.
   const piles = new Map<string, Pile>();
   const takenEarly = new Set<string>();
+  // Слова платформы в промптах побудки, ждущих в очереди сессии (inbox → сессия и
+  // тела): такт внимания шлёт голове кадр в час, каждый со своим id, и ход в
+  // несколько часов копил в очереди OpenCode те же слова подряд (#6569). Пока
+  // промпт не взят, повтор его слова в очередь не встаёт.
+  const queuedWakes = new Map<string, { session: string; words: Set<string> }>();
+  /** Ключи кадров пачки, если все они — слова платформы с телом; иначе null. */
+  const platformWords = (frames: Frame[] | undefined): Set<string> | null => {
+    if (!frames?.length) return null;
+    const words = new Set<string>();
+    for (const f of frames) {
+      if (typeof f?.body !== "string" || (f.origin ?? classifyOrigin(f)) !== "platform")
+        return null;
+      words.add(f.body);
+    }
+    return words;
+  };
+  const waitingWords = (session: string | null): Set<string> => {
+    const id = session ?? freshestRoot();
+    const got = new Set<string>();
+    for (const q of queuedWakes.values()) if (q.session === id) for (const w of q.words) got.add(w);
+    return got;
+  };
 
   function schedule(p: Pile): void {
     if (p.timer) clearTimeout(p.timer);
@@ -211,6 +233,8 @@ export function setupChannel(ctx: Context, say: Say, freshestRoot: () => string 
 
   return {
     taken(session, inbox) {
+      if (inbox) queuedWakes.delete(inbox);
+      else for (const [k, q] of queuedWakes) if (q.session === session) queuedWakes.delete(k);
       let matched = false;
       for (const p of piles.values()) {
         if (!p.pending || (inbox ? p.pending.inbox !== inbox : p.pending.session !== session))
@@ -276,14 +300,29 @@ export function setupChannel(ctx: Context, say: Say, freshestRoot: () => string 
           // Очередью — сознательная развилка: пачка в полтора десятка кадров,
           // вставленная посреди хода, режет работу делателя; одним промптом она
           // по одному за ход не всплывёт, а ждёт лишь конца текущего хода.
-          if (ev.text)
+          if (ev.text) {
+            const words = platformWords(ev.frames);
+            if (words) {
+              const waiting = waitingWords(session);
+              if ([...words].every((w) => waiting.has(w)))
+                return say(
+                  "Искрон: пачка побудки повторяет слово, ждущее в очереди сессии, — второй раз не вкладываю",
+                  "info",
+                );
+            }
             void deliver(
               session,
               ev.text,
               `пачка побудки (${ev.frames?.length ?? 0})`,
               "queue",
               child,
-            );
+            ).then((got) => {
+              // Без id взятия не увидеть — повтор такого промпта не гасится.
+              if (!words || !got?.inbox || takenEarly.delete(got.inbox)) return;
+              queuedWakes.set(got.inbox, { session: got.session, words });
+              for (const k of queuedWakes.keys()) if (queuedWakes.size > 100) queuedWakes.delete(k);
+            });
+          }
           return;
         case "lost":
           // Держащий мост вышел или прежний плагин остановили: громко, в сессию.
