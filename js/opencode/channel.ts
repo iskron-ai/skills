@@ -152,19 +152,18 @@ export function setupChannel(ctx: Context, say: Say, freshestRoot: () => string 
   const piles = new Map<string, Pile>();
   const takenEarly = new Set<string>();
   // Слова платформы в промптах побудки, ждущих в очереди сессии (inbox → сессия и
-  // тела): такт внимания шлёт голове кадр в час, каждый со своим id, и ход в
-  // несколько часов копил в очереди OpenCode те же слова подряд (#6569). Пока
-  // промпт не взят, повтор его слова в очередь не встаёт.
+  // текст промпта): такт внимания шлёт голове кадр в час, каждый со своим id, и
+  // ход в несколько часов копил в очереди OpenCode те же слова подряд (#6569).
+  // Пока промпт не взят, тот же промпт в очередь второй раз не встаёт; ключ —
+  // весь текст, не тело: то же тело в другом деле — другое слово.
   const queuedWakes = new Map<string, { session: string; word: string }>();
   // Гасится только пачка из одного кадра: пачка показывает лишь первые кадры
   // окна, а мост метит отданными все — у пачки больше одного кадра непоказанное
   // ушло бы вместе с ней.
-  /** Слово платформы — тело единственного кадра пачки; иначе null. */
-  const platformWord = (frames: Frame[] | undefined): string | null => {
-    const f = frames?.length === 1 ? frames[0] : null;
-    return f && typeof f.body === "string" && (f.origin ?? classifyOrigin(f)) === "platform"
-      ? f.body
-      : null;
+  /** Текст пачки из единственного кадра платформы; иначе null. */
+  const platformWord = (ev: ChannelEvent): string | null => {
+    const f = ev.frames?.length === 1 ? ev.frames[0] : null;
+    return f && ev.text && (f.origin ?? classifyOrigin(f)) === "platform" ? ev.text : null;
   };
   const waiting = (session: string | null, word: string): boolean => {
     const id = session ?? freshestRoot();
@@ -298,7 +297,7 @@ export function setupChannel(ctx: Context, say: Say, freshestRoot: () => string 
           // вставленная посреди хода, режет работу делателя; одним промптом она
           // по одному за ход не всплывёт, а ждёт лишь конца текущего хода.
           if (ev.text) {
-            const word = platformWord(ev.frames);
+            const word = platformWord(ev);
             if (word !== null && waiting(session, word))
               return say(
                 "Искрон: пачка побудки повторяет слово, ждущее в очереди сессии, — второй раз не вкладываю",

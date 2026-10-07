@@ -1412,13 +1412,32 @@ test("a platform word that repeats one still waiting in the session's queue is n
       }),
     );
     await until(() => rec.prompts.length === 3, "a burst of more than one frame goes whole");
+    // The same body from another case is another word: its prompt text differs, and it goes.
+    const caseWord = (id, room) =>
+      event("backlog", {
+        frames: [
+          {
+            type: "message",
+            id,
+            room,
+            origin: "platform",
+            provenance: { via: "room" },
+            body: "место покинуло дело",
+          },
+        ],
+        text: `Побудка: кадров 1\n\nзапись дела ${room} от платформы\nместо покинуло дело`,
+      });
+    appendFileSync(`${b.events}.${pid}`, caseWord("c1", "№5"));
+    await until(() => rec.prompts.length === 4, "the word of case №5");
+    appendFileSync(`${b.events}.${pid}`, caseWord("c2", "№7"));
+    await until(() => rec.prompts.length === 5, "the same body from case №7 goes too");
     rec.emit({
       type: "session.inbox.delivered",
       data: { sessionID: "s-tact", inboxID: "inbox-1" },
     });
     await delay(100);
     appendFileSync(`${b.events}.${pid}`, tact("t6", HOUR));
-    await until(() => rec.prompts.length === 4, "the next hour's word after the take");
+    await until(() => rec.prompts.length === 6, "the next hour's word after the take");
   } finally {
     await rec.stop();
   }
