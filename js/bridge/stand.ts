@@ -192,13 +192,15 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   const led = besideTaken ? null : leadsOtherPlace(realm, karta, name);
   if (led && a.take !== true) {
     // Просимое место слушает другая сессия — take=true не советуется: вытеснить её — словом человека (#6706).
-    const b = await call("iskron_channel", { action: "list", realm });
-    const heard = b.isError
-      ? false
-      : readBoard(b).entries.some(
-          (e) => e.karta === karta && nameOf(e.address) === name && listens(e),
-        );
-    lines.push(otherPlaceWord(led, keyOf(realm, karta, name), name === ledName(), heard));
+    // Доска не прочлась — мост не знает, кто слушает, и take=true не советует тоже.
+    const b = await call("iskron_channel", { action: "list", realm }).catch(() => null);
+    const bd = b && !b.isError ? readBoard(b) : null;
+    const hearing = !bd?.recognized
+      ? "unknown"
+      : bd.entries.some((e) => e.karta === karta && nameOf(e.address) === name && listens(e))
+        ? "other"
+        : "free";
+    lines.push(otherPlaceWord(led, keyOf(realm, karta, name), name === ledName(), hearing));
     return done(true);
   }
   // Место другого графа встаёт рядом на канале, который держит мост (#5838).

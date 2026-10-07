@@ -806,6 +806,49 @@ test("iskron_stand refusal «already leads another seat»: no take=true advice w
   assert.doesNotMatch(text, /iskron_stand с take=true/, text);
 });
 
+// Where the bridge does not know who hears the asked seat — the board did not
+// read, or a bare connect/register/mint that reads no board — the refusal stays
+// neutral: this bridge's own seat, the move beside, take=true only on the human's word.
+const neutralRefusal = (text, led) => {
+  assert.match(text, /уже ведёт место/, text);
+  assert.match(text, new RegExp(`своё место этого моста — ${led}`), text);
+  assert.match(text, /встать рядом — iskron_stand без name/, text);
+  assert.match(text, /take=true\) — только по слову человека/, text);
+  assert.doesNotMatch(text, /iskron_stand с take=true/, text);
+};
+
+test("iskron_stand refusal «already leads another seat» with an unread board: no take=true advice, the neutral word", async (t) => {
+  const { fake, bridge } = await ready(t);
+  const own = { realm: "nks-dev", karta: 931, name: "zond" };
+  assert.ok(
+    !(await bridge.call("tools/call", { name: "iskron_stand", arguments: own })).result?.isError,
+  );
+  await fake.control({ mcpDrop: 8, mcpDropAction: "iskron_channel:list" });
+  const r = await bridge.call("tools/call", {
+    name: "iskron_stand",
+    arguments: { ...own, name: "proba" },
+  });
+  await fake.control({ mcpDrop: 0, mcpDropAction: null });
+  assert.ok(r.result?.isError, textOf(r));
+  neutralRefusal(textOf(r), "zond--931--nks-dev");
+});
+
+test("a bare iskron_channel connect, register or mint under another seat: refused with no take=true advice", async (t) => {
+  const { bridge } = await ready(t);
+  const own = { realm: "nks-dev", karta: 931, name: "zond" };
+  assert.ok(
+    !(await bridge.call("tools/call", { name: "iskron_stand", arguments: own })).result?.isError,
+  );
+  for (const action of ["connect", "register", "mint"]) {
+    const r = await bridge.call("tools/call", {
+      name: "iskron_channel",
+      arguments: { realm: "nks-dev", action, karta: 931, name: "proba" },
+    });
+    assert.ok(r.result?.isError, `${action}: ${textOf(r)}`);
+    neutralRefusal(textOf(r), "zond--931--nks-dev");
+  }
+});
+
 // In the window of the bridge's own reopening (a close that is not an eviction —
 // the socket is re-opened after 2 s) the busy line goes out too, and the answer
 // says the hearing comes back by itself — not «another holder, take» (#6509).
