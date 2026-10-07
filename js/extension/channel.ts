@@ -14,7 +14,7 @@ import { addressedToMine } from "../shared/addressed.ts";
 import { type Frame } from "../shared/channel.ts";
 import { batchHead, batchLines, frameToText } from "../shared/frame-text.ts";
 import { byKind, roomKind, stackOf } from "../shared/room-kinds.ts";
-import { deliveryKeys, eventIn } from "../shared/seen.ts";
+import { deliveryKeys, eventIn, isTact, onlyTacts } from "../shared/seen.ts";
 
 /** Окно свёртки неадресованных кадров дела; переменная — шов для проб. */
 const ASIDE_MS = Number(process.env.ISKRON_PI_ASIDE_MS) || 3_000;
@@ -71,6 +71,27 @@ export function setupChannel(pi: ExtensionAPI): (params: any) => void {
     );
   }
 
+  // Одна пачка — одно слово в ход: лежалые кадры или побудка с накопленным.
+  function sendBatch(ev: ChannelEvent): void {
+    pi.sendMessage(
+      {
+        customType: "iskron-channel",
+        content: ev.text ?? "",
+        display: true,
+        details: ev.kind === "stale" ? { stale: true } : { backlog: true },
+      },
+      { triggerTurn: true, deliverAs: "steer" },
+    );
+  }
+
+  // Такт внимания, ждущий конца занятого хода (#6569): освободившись, агент видит последний.
+  let tact: ChannelEvent | null = null;
+  pi.on("agent_end", async () => {
+    const t = tact;
+    tact = null;
+    if (t) sendBatch(t);
+  });
+
   return (params: any) => {
     const ev = params?.data as ChannelEvent | undefined;
     if (!ev || typeof ev !== "object") return;
@@ -123,17 +144,14 @@ export function setupChannel(pi: ExtensionAPI): (params: any) => void {
       case "stale":
       case "backlog":
         noteText(ev.marks); // метки пачки — внесённое ею в ход
-        // Одна пачка — одно слово в ход: лежалые кадры или побудка с накопленным.
-        if (ev.text)
-          pi.sendMessage(
-            {
-              customType: "iskron-channel",
-              content: ev.text,
-              display: true,
-              details: ev.kind === "stale" ? { stale: true } : { backlog: true },
-            },
-            { triggerTurn: true, deliverAs: "steer" },
-          );
+        if (!ev.text) return;
+        // Такт внимания в занятый ход не входит: ждёт его конца, новый вытесняет ждущий (seen.ts foldedTacts).
+        if (onlyTacts(ev.frames) && ctxRef?.isIdle?.() === false) {
+          tact = ev;
+          return;
+        }
+        if (ev.frames?.some(isTact)) tact = null;
+        sendBatch(ev);
         return;
       case "evicted":
         loud(

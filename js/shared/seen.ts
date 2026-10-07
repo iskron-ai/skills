@@ -88,22 +88,44 @@ export function eventIn(frame: Frame | null | undefined, has: Marks): boolean {
   return keys.some(has);
 }
 
+/**
+ * Кадр такта внимания (граф @nks/nks-dev, узел #6169): платформа метит его
+ * provenance.wake="look_up" — слово стюарда api, на проводе не наблюдено.
+ */
+export const isTact = (frame: Frame | null | undefined): boolean =>
+  frame?.provenance?.wake === "look_up";
+
+/**
+ * Свёртка тактов (#6569): из тактов `all` в ход входит последний; прежние — ни текстом, ни
+ * счётом, метятся отданными вместе с ним. Пока ход занят, такт ждёт его конца, и новый
+ * вытесняет ждущий — так доставку держат pi и OpenCode (`onlyTacts`).
+ */
+export function foldedTacts(all: readonly (Frame | null | undefined)[]): Set<Frame> {
+  return new Set(all.filter((f): f is Frame => isTact(f)).slice(0, -1));
+}
+
+/** Пачка из одних тактов — её занятый ход держит до своего конца последней (#6569). */
+export const onlyTacts = (frames: readonly Frame[] | undefined): boolean =>
+  !!frames?.length && frames.every(isTact);
+
 /** Та же ли это копия события по роду доставки — текст или число (веер, fanout.ts). */
 export const sameCopy = (a: Frame | null | undefined, b: Frame): boolean =>
   !!a && eventKeyOf(a) === eventKeyOf(b) && asText(a) === asText(b);
 
 /**
  * Пачка, показывающая первые `keep` кадров (`Infinity` — все): копия, чьё событие уже
- * в ходе (`has`) или входит текстом этой же пачки, — вон, где бы ни стояла; её место
- * занимает следующий кадр. `kept` — кадры, дошедшие текстом или числом, каждый один
- * раз; `keys` — метки доставки всей пачки, и вынутых: пишет их внёсший пачку.
+ * в ходе (`has`) или входит текстом этой же пачки, — вон, где бы ни стояла, как и такт,
+ * за которым в пачке идёт новее (`foldedTacts`); её место занимает следующий кадр.
+ * `kept` — кадры, дошедшие текстом или числом, каждый один раз; `keys` — метки
+ * доставки всей пачки, и вынутых: пишет их внёсший пачку.
  */
 export function splitBatch(
   all: readonly Frame[],
   keep: number,
   has: Marks,
 ): { shown: Frame[]; kept: Frame[]; keys: string[] } {
-  let kept = all.filter((f) => !eventIn(f, has));
+  const folded = foldedTacts(all);
+  let kept = all.filter((f) => !folded.has(f) && !eventIn(f, has));
   for (;;) {
     const shown = new Set(kept.slice(0, keep));
     const marks = new Set<string>();

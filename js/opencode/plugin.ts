@@ -225,6 +225,11 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
           case "session.idle":
             if (id) ch?.taken(id);
             break;
+          // Занят ли ход — ждёт ли такт внимания его конца (channel.ts, #6569); retry — тоже ход.
+          case "session.status":
+            if (id && typeof ev.data?.status?.type === "string")
+              ch?.status(id, ev.data.status.type !== "idle");
+            break;
           // Конец хода — не конец субагента (#6625): ребёнок ждёт кадров своего дела,
           // кончает его явный акт (leads.ts). Здесь — лишь ждущий снимок расхода.
           case "session.execution.succeeded":

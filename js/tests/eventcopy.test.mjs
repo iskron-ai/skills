@@ -171,6 +171,39 @@ test("a wake-up batch shows twenty frames past the case copies it absorbs", () =
   assert.doesNotMatch(ev.text, /не вошло/, ev.text);
 });
 
+// #6569: такты внимания в одной пачке — в ход входит последний; прежние ни текстом, ни
+// счётом, метками — как отданные.
+const tact = (n, extra = {}) => ({
+  type: "message",
+  id: `tact-${n}`,
+  origin: "platform",
+  provenance: { via: "platform", wake: "look_up" },
+  body: `Час на «вахта ${n}»`,
+  ...extra,
+});
+
+test("a wake-up batch of three tacts shows the last one, counts one and marks all", () => {
+  const b = new Backlog(none);
+  let ev = null;
+  b.open(0, (e) => (ev = e));
+  for (const n of [1, 2, 3]) b.note(tact(n));
+  b.flushNow();
+  assert.match(ev.text, /Побудка: кадров 1 /, ev.text);
+  assert.match(ev.text, /вахта 3/);
+  assert.doesNotMatch(ev.text, /вахта [12]/, ev.text);
+  for (const n of [1, 2, 3]) assert.ok(ev.marks.includes(`tact-${n}`), `tact-${n} unmarked`);
+});
+
+test("a stale burst of three tacts shows the last one and marks all", async () => {
+  const s = new StaleBurst(none);
+  let got = null;
+  for (const n of [1, 2, 3]) s.note(tact(n, { stale: true }), (ev) => (got = ev));
+  await pause(1700);
+  assert.match(got?.text ?? "", /Лежалых кадров: 1 /, got?.text);
+  assert.doesNotMatch(got.text, /вахта [12]/, got.text);
+  for (const n of [1, 2, 3]) assert.ok(got.marks.includes(`tact-${n}`), `tact-${n} unmarked`);
+});
+
 test("pi: an inbox frame inside a backlog batch takes its case copy out of the aside", async () => {
   const sent = [];
   const deliver = piChannel({ on: () => {}, sendMessage: (m) => sent.push(m.content) });
