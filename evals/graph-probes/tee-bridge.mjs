@@ -55,4 +55,7 @@ child.stdout.on("data", (c) => {
 });
 for (const sig of ["SIGTERM", "SIGINT", "SIGHUP"])
   process.on(sig, () => child.kill(sig));
-child.on("exit", (code, signal) => process.exit(code ?? (signal ? 1 : 0)));
+// «close», не «exit»: stdout моста дочитан; выход — только когда свой stdout сброшен читателю.
+child.on("close", (code, signal) =>
+  process.stdout.end(() => process.exit(code ?? (signal ? 1 : 0))),
+);
