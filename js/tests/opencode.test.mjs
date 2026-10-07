@@ -5512,7 +5512,9 @@ test("room kinds: a said in flight, bodies and aborts not to me prompt nothing a
 // A case burst was one queue prompt per frame, and OpenCode hands the queue out one
 // prompt per turn: on a live case the lag reached an hour and a half, and direct
 // words stood in the same queue behind it.
-const caseBurst = (from, n) => Array.from({ length: n }, (_, i) => progress(from + i));
+// Ключи разные: строки одного ключа свернулись бы в последнюю (#6718).
+const caseBurst = (from, n) =>
+  Array.from({ length: n }, (_, i) => progress(from + i, `key-${from + i}`));
 const lines = (frames) =>
   frames.map((frame) => event("frame", { frame, raw: JSON.stringify(frame) })).join("");
 

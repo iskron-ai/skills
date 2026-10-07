@@ -3694,8 +3694,8 @@ test("the exit watchdog does not leave on a batch of counts alone: the count hea
   await waitFor(() => fake.state.ws.size === 1, "the socket");
   const wd = runClient("watchdog-exit", dir, key, 15_000);
   await waitFor(() => wd.err.includes("hello"), "hello to be noted");
-  await sendRoom(fake, progress(46));
-  await sendRoom(fake, progress(48));
+  await sendRoom(fake, progress(46, "a"));
+  await sendRoom(fake, progress(48, "b"));
   await waitFor(() => wd.err.includes("счёт ждёт ближайшей побудки"), "the batch held", 6000);
   assert.equal(wd.proc.exitCode, null, `the exit watchdog left on counts alone: ${wd.out}`);
   assert.equal(wd.out, "", `counts alone printed:\n${wd.out}`);
@@ -3810,7 +3810,7 @@ test("a full room batch of counts and the rest past it are not dropped: both cou
   await waitFor(() => fake.state.ws.size === 1, "the socket");
   const wd = runClient("watchdog", dir, key, 20_000);
   await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
-  for (let i = 0; i < 21; i++) await sendRoom(fake, progress(200 + i));
+  for (let i = 0; i < 21; i++) await sendRoom(fake, progress(200 + i, `key-${i}`));
   await quietThenNudge(fake, wd, 1500);
   assert.ok(wd.out.includes("записей 20, тебе 0"), `the full batch's count:\n${wd.out}`);
   assert.ok(wd.out.includes("записей 1, тебе 0"), `the rest flushed before the word:\n${wd.out}`);
