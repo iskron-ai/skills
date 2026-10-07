@@ -88,11 +88,16 @@ export function setupTacts(
       const timer = prev?.timer ?? setTimeout(() => release(id), WAKE_HOLD_MS);
       (timer as { unref?: () => void }).unref?.();
       held.set(id, { session, child, ev, timer });
-      say("Искрон: такт внимания ждёт конца хода сессии — прежний ждущий свёрнут", "info");
+      say(
+        `Искрон: такт внимания ждёт конца хода сессии${prev ? " — прежний ждущий свёрнут" : ""}`,
+        "info",
+      );
       return true;
     },
     busy(session) {
       busy.add(session);
+      // Сессия, удалённая без idle, занятой не висит без меры: старшие уходят.
+      for (const s of busy) if (busy.size > 100) busy.delete(s);
     },
     taken(session, inbox) {
       if (inbox) return void queued.delete(inbox);
