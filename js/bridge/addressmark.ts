@@ -2,13 +2,14 @@
 // (граф nks-dev: #6574, роды вопроса — #6867).
 //
 // Тело слова признаков адресованности не несёт: им адресовано слово в полёте.
-// Так же снятие вопроса — строка progress с номером ask, без адресата.
+// Так же гасящее вопрос мне — снятие (progress с номером ask) и ответ другого
+// места моей роли (адресован спросившему).
 // Сторож выхода выходит на первом кадре, второй приходит новому процессу —
 // память процесса его не узнает. Мост видит оба: метит второй addressed;
 // первый помнит в памяти отданного места (.seen), чтобы узнать второй и после
 // своего перезапуска и в лежалых.
 import { addressedToMine, wordKeyOf } from "../shared/addressed.ts";
-import { askKeyOf, withdrawnKeyOf } from "../shared/asks.ts";
+import { askKeyOf, closedKeyOf } from "../shared/asks.ts";
 import { type Frame } from "../shared/channel.ts";
 import { roomKind } from "../shared/room-kinds.ts";
 import { noteSeen } from "../shared/seen.ts";
@@ -24,8 +25,8 @@ export function markAddressed(frame: Frame, seenPath: string, seen: Set<string>)
     if (seen.has(markOf(frame)) || addressedToMine(frame)) frame.addressed = true;
   } else if (rk?.kind === "ask") {
     if (addressedToMine(frame)) noteSeen(seenPath, `ask:${askKeyOf(frame)}`, seen);
-  } else if (rk?.kind === "progress") {
-    const k = withdrawnKeyOf(frame);
+  } else if (rk?.kind === "progress" || rk?.kind === "answer") {
+    const k = closedKeyOf(frame);
     if (k && seen.has(`ask:${k}`)) frame.addressed = true;
   }
 }

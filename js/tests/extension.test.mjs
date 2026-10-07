@@ -827,12 +827,19 @@ test("question kinds: the answer to my seat and a call of my role wake; a questi
     ];
     const echo = ask(99);
     echo.line.author = { kind: "standing", standing: ME, name: "proba" };
+    // The memory of a question to me is the reader seat's and of its numbering (#6576):
+    // the same number withdrawn for another seat of the process, or in another count, is not mine.
+    const otherSeat = askWithdrawn(100, 90);
+    Object.assign(otherSeat, { to_standing: "@tester:other", to_standing_id: "id-other" });
+    const otherCount = { ...askWithdrawn(101, 90), numbering: "case" };
     const rest = [
       ask(95, MY_KARTA + 1),
       answer(96, 95, BORIS),
       ack(97, 96),
       askWithdrawn(98, 95),
       echo, // my own question to my own role is not a question to me
+      otherSeat,
+      otherCount,
     ];
     for (const f of [...mine.map(([f]) => f), ...rest]) push(events, frame(f));
     await delay(1000);
@@ -858,7 +865,7 @@ test("question kinds: the answer to my seat and a call of my role wake; a questi
     assert.match(waiting, /ответ ждёт приёма, спросившее место @aleksei:gone ушло/);
     const count = rec.messages.at(-1);
     assert.equal(count.opts.deliverAs, "nextTurn");
-    assert.match(count.msg.content, /^№7 «Стенд»: записей 5, тебе 0/);
+    assert.match(count.msg.content, /^№7 «Стенд»: записей 7, тебе 0/);
   } finally {
     await rec.stop();
   }

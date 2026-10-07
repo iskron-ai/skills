@@ -33,6 +33,7 @@ import {
   addressed,
   addressedBody,
   addressedInFlight,
+  ack,
   addressedLeft,
   answer,
   ask,
@@ -4252,6 +4253,33 @@ test("question kinds under the Monitor watchdog: a question to my role waits in 
   const q = flat.indexOf("спрашивает роль 🚚 Поставщик плитки");
   assert.ok(q >= 0, `the question to me in words:\n${wd.out}`);
   assert.ok(flat.indexOf("отвечает на [90]") > q, `the batch goes before the answer:\n${wd.out}`);
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
+// #6868: an answer to another's question is a count; an answer by another seat
+// of my role to the question asked of me closes it — in words, not waking, as
+// the ack to me; the answer to another seat does not fold into it.
+test("question kinds under the Monitor watchdog: another seat's answer to my question and an ack to me ride in words; an answer to another's question is a count", async (t) => {
+  const { fake, dir, key } = await connected(t, {
+    env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "10000" },
+  });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog", dir, key, 20_000);
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
+  await sendRoom(fake, ask(90));
+  await sendRoom(fake, answer(91, 90, BORIS)); // my role's other seat answered the asker Boris
+  await sendRoom(fake, answer(96, 95, BORIS)); // a question I was never asked
+  await sendRoom(fake, ack(97, 96, ME));
+  await new Promise((r) => setTimeout(r, 1000));
+  assert.ok(!wd.out.includes("отвечает на"), `an answer not to me interrupted:\n${wd.out}`);
+  await nudge(fake);
+  await waitFor(() => wd.out.includes("[999]"), "the word to me", 3000);
+  const flat = wd.out.replace(/\n/g, " ");
+  assert.match(flat, /записей 4, тебе 3/, wd.out);
+  assert.match(flat, /отвечает на \[90\]/, `the answer to my question in words:\n${wd.out}`);
+  assert.match(flat, /ответ \[96\] принят/, `the ack to me in words:\n${wd.out}`);
+  assert.doesNotMatch(flat, /отвечает на \[95\]/, `another's answer leaked:\n${wd.out}`);
   wd.proc.kill("SIGKILL");
   await wd.done;
 });

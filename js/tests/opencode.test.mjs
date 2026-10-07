@@ -52,6 +52,7 @@ import {
   addressed,
   addressedBody,
   addressedInFlight,
+  ack,
   addressedLeft,
   answer,
   ask,
@@ -6131,6 +6132,10 @@ test("question kinds: an answer to my seat steers; an answer to another and a wi
       w.text,
       /вопрос \[90\] снят: \[выкат: сегодня\?\] \[снят: выкатили иначе\] = slop/,
     );
+    // «Accepted» on my answer is mine, in words, without a wake.
+    const k = await send(ack(102, 91, ME), 6);
+    assert.equal(k.delivery, "queue", "an ack to me batches");
+    assert.match(k.text, /ответ \[91\] принят: «выкатываю после обеда»/);
   } finally {
     await rec.stop();
   }

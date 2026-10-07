@@ -1,7 +1,9 @@
 // Вопрос в деле — роды ask, answer, ack (граф nks-dev: контракт #6866, роды
 // #6867, зов роли #6870; доля моста — #6868): кому вопрос, кому ответ и приём,
 // и их слова. Правило стопки держит словарь родов (room-kinds.ts), слова — здесь.
+import { type Frame } from "./channel.ts";
 import { L, lang } from "./lang.ts";
+import { numberedKey } from "./numbering.ts";
 import { addresseeOf, fill, mineOf, myRole, obj, type Rec, str } from "./room-fields.ts";
 
 // ru:dict — русская таблица слов; английская рядом, язык выбирает вызывающий.
@@ -76,22 +78,38 @@ export function askedMine(frame: Rec, fields: Rec): boolean {
 }
 
 /**
- * Вопросы мне, которые видел этот процесс: ключ — дело и номер ask. Сторож
- * выхода и перезапущенный мост их не видели — снятие им метит мост
- * (bridge/addressmark.ts) по своей памяти отданного места (.seen).
+ * Вопросы мне, которые видел этот процесс: ключ — дело и номер ask. Его гасят
+ * снятие и ответ другого места моей роли (адресован спросившему, не мне) —
+ * их месту несут словами. Сторож выхода и перезапущенный мост вопроса не
+ * видели — гасящее им метит мост (bridge/addressmark.ts) по .seen места.
  */
 const asksToMe = new Set<string>();
 const ASKS_KEPT = 512;
+// Место читателя — процесс держит несколько мест; номер свой в каждом деле и
+// в счёте кадра: смена нумерации забывает прежние (#6576), как у слова.
 const askKey = (frame: Rec, entry: unknown): string =>
-  `${str(obj(frame.room).id) || str(obj(frame.room).seq)}|${str(entry)}`;
+  numberedKey(
+    frame as Frame,
+    `${mineOf(frame)[0] ?? ""}|${str(obj(frame.room).id) || str(obj(frame.room).seq)}|${str(entry)}`,
+  );
 
 /** Ключ памяти вопроса этого кадра ask. */
 export const askKeyOf = (frame: Rec): string =>
   askKey(frame, obj(frame.line).entry_id ?? frame.entry_id);
-/** Ключ памяти вопроса, который снимает этот кадр (fields.withdraws); без него — пусто. */
-export const withdrawnKeyOf = (frame: Rec): string => {
-  const w = str(obj(obj(frame.line).fields).withdraws);
-  return w ? askKey(frame, w) : "";
+/**
+ * Ключ памяти вопроса, который гасит этот кадр: у снятия — fields.withdraws,
+ * у ответа — line.refers_to; иного — пусто.
+ */
+export const closedKeyOf = (frame: Rec): string => {
+  const line = obj(frame.line);
+  const kind = str(line.kind);
+  const n =
+    kind === "progress"
+      ? str(obj(line.fields).withdraws)
+      : kind === "answer"
+        ? str(line.refers_to)
+        : "";
+  return n ? askKey(frame, n) : "";
 };
 
 /** Запомнить вопрос мне — его снятие придёт строкой progress с номером этого ask. */
@@ -103,9 +121,11 @@ export function rememberAsk(frame: Rec): void {
   }
 }
 
-/** Снятие вопроса, который был задан мне (fields.withdraws — номер ask). */
-export const withdrawsMine = (frame: Rec, fields: Rec): boolean =>
-  !!str(fields.withdraws) && asksToMe.has(askKey(frame, fields.withdraws));
+/** Снятие или ответ, гасящие вопрос, который был задан мне. */
+export const closesMine = (frame: Rec): boolean => {
+  const k = closedKeyOf(frame);
+  return !!k && asksToMe.has(k);
+};
 
 /** Ответ или приём мне: адресат кадра (addressee, иначе fields.to) — моё место, и он из дела не вышел. */
 export function addressedMine(frame: Rec): boolean {
