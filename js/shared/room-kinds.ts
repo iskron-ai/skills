@@ -4,7 +4,7 @@
 // стопкой) словарь не трогает: путь у него прежний — у каждого харнеса свой,
 // как до словаря. Правила — кодом (RULES и stackOf), слова — ДАННЫМИ (WORDS):
 // локализация заменит таблицу, не код.
-import { addressedMine, ASK_KINDS, askedMine, askValues, askWord } from "./asks.ts";
+import { addressedMine, ASK_KINDS, askValues, askWord } from "./asks.ts";
 import { type Frame } from "./channel.ts";
 import { L, lang } from "./lang.ts";
 import { addresseeOf, after, fill, mineOf, myRole, obj, type Rec, str } from "./room-fields.ts";
@@ -176,10 +176,9 @@ const NODE_OPS: Readonly<Record<string, string>> = {
  * Правило рода: interrupt и batch — всегда так; stack — по стопке кадра
  * (said и body: стопка — метка слова); mine — прерывает, когда цель — своё
  * стояние или своя роль (invite). Слово в полёте и обрыв — в пачку (#5953).
- * role — прерывает вопрос моей роли или моему месту; addressed — прерывает,
- * когда адресат кадра (addressee) — моё место.
+ * addressed — прерывает, когда адресат кадра (addressee) — моё место.
  */
-type Rule = Stack | "stack" | "mine" | "role" | "addressed";
+type Rule = Stack | "stack" | "mine" | "addressed";
 const RULES: Readonly<Record<string, Rule>> = {
   said: "stack",
   body: "stack",
@@ -188,10 +187,11 @@ const RULES: Readonly<Record<string, Rule>> = {
   objection: "interrupt",
   late_objection: "interrupt",
   invite: "mine",
-  // Вопрос — моей роли или моему месту; ответ и приём — адресату кадра (#6867, #6655).
-  ask: "role",
+  // Толчок по ожиданию (#6655): прерывает только ответ ждавшему; вопрос мне,
+  // «принята» и снятие — пачкой, текстом как адресованные (#6868).
+  ask: "batch",
   answer: "addressed",
-  ack: "addressed",
+  ack: "batch",
   progress: "batch",
   opened: "batch",
   joined: "batch",
@@ -412,15 +412,11 @@ export function roomKind(frame: Frame | null | undefined): RoomKind | null {
         ? mine.includes(str(values.target)) || myRole(f, fields)
           ? "interrupt"
           : "batch"
-        : rule === "role"
-          ? askedMine(f, fields)
+        : rule === "addressed"
+          ? addressedMine(f)
             ? "interrupt"
             : "batch"
-          : rule === "addressed"
-            ? addressedMine(f)
-              ? "interrupt"
-              : "batch"
-            : rule;
+          : rule;
   // Слово в полёте (текста нет) и обрыв не будят: в пачку при любой стопке.
   const phase = pending ? "pending" : aborted ? "aborted" : null;
   return { kind, rule: phase ? "batch" : stack, words: text, author, phase, known: true };

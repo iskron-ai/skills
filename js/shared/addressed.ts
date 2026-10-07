@@ -93,7 +93,7 @@ export function addressedToMine(frame: Frame | null | undefined): boolean {
     rememberAsk(f);
     return true;
   }
-  if (rk?.kind === "progress" && withdrawsMine(f, fields)) return true;
+  if (rk?.kind === "progress" && (withdrawsMine(f, fields) || f.addressed === true)) return true;
   // Приглашение мне или его отзыв: ключ invite:<моё место>, приглашение роли — моей роли.
   if (rk?.kind === "invite" || rk?.kind === "withdraw") {
     if (mine.includes(after(str(line.key), "invite:"))) return true;

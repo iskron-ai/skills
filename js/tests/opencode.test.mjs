@@ -6099,7 +6099,7 @@ test("question kinds: an answer to my seat steers; an answer to another and a wi
       { id: "later", label: "После обеда", context: "после выкладки api" },
     ];
     const q = await send(ask(90, MY_KARTA, { form: "choice", options, recommendation: {} }), 1);
-    assert.equal(q.delivery, "steer", "a question to my role interrupts");
+    assert.equal(q.delivery, "queue", "a question to my role comes in words, not interrupting");
     assert.match(q.text, /варианты: now «Сейчас», later «После обеда» \(после выкладки api\)/);
     assert.doesNotMatch(q.text, /рекомендация/, "no recommendation — no words for it");
     await quiet(ask(95, MY_KARTA + 1));
@@ -6110,17 +6110,17 @@ test("question kinds: an answer to my seat steers; an answer to another and a wi
     assert.match(a.text, /^№7 «Стенд»: записей 3, тебе 0 — /, "the others ride as a count");
     assert.match(a.text, /Дмитрий \(@dmitry:phone\) отвечает на \[90\]: later; «после обеда»/);
     assert.doesNotMatch(a.text, /снят|@boris/);
-    // A question to my seat (fields.to.standing) wakes me even when its role is not mine.
+    // A question to my seat (fields.to.standing) is mine even when its role is not mine.
     const toSeat = ask(97, MY_KARTA + 1);
     toSeat.line.fields.to.standing = { id: ME_ID, standing: ME, name: "proba" };
     const s = await send(toSeat, 3);
-    assert.equal(s.delivery, "steer", "a question to my seat interrupts");
+    assert.equal(s.delivery, "queue", "a question to my seat comes in words");
     assert.match(s.text, /спрашивает роль 🚚 Поставщик плитки \(место proba \(@tester:proba\)\)/);
     // A question to a place of my account in my role is mine (any of its places answers, #6867);
     // to a place of another account in my role — not mine.
     const sibling = ask(100);
     sibling.line.fields.to.standing = { id: "id-sibling", standing: "@tester:other" };
-    assert.equal((await send(sibling, 4)).delivery, "steer", "my account, my role — mine");
+    assert.equal((await send(sibling, 4)).delivery, "queue", "my account, my role — mine");
     const foreign = ask(101);
     foreign.line.fields.to.standing = { id: "id-boris", standing: BORIS };
     await quiet(foreign);

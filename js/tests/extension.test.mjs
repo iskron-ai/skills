@@ -811,17 +811,17 @@ test("room kinds: closing and records to me go by their way; the rest of the cas
 });
 
 // A question in the case (Э1 contract, graph nks-dev #6866/#6867; the bridge's
-// share — #6868): a question to my role, an answer to my question, an ack to me
-// and the platform's call of my role wake now, in words (#6655); the same kinds
-// for others are a count of the case, and the withdrawal goes later.
-test("question kinds: ask to my role, answer and ack to my seat, a call of my role wake; others are a count", async () => {
+// share — #6868): the answer to my question and the platform's call of my role
+// wake now (#6655); a question to my role and an ack to me come in words with
+// the next turn; the same kinds for others are a count of the case.
+test("question kinds: the answer to my seat and a call of my role wake; a question and an ack to me follow up; others are a count", async () => {
   const { events, env } = eventsEnv("question-kinds");
   const rec = await session({ ...env, ISKRON_PI_ASIDE_MS: 300 });
   try {
     const mine = [
-      [ask(90), "steer"],
+      [ask(90), "followUp"],
       [answer(91, 90), "steer"],
-      [ack(92, 91, ME), "steer"],
+      [ack(92, 91, ME), "followUp"],
       [roleCall(93, "ownerless"), "steer"],
       [roleCall(94, "answer_waiting"), "steer"],
     ];

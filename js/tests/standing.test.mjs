@@ -34,6 +34,9 @@ import {
   addressedBody,
   addressedInFlight,
   addressedLeft,
+  answer,
+  ask,
+  askWithdrawn,
   auto,
   body as bodyFrame,
   bodyAborted,
@@ -4228,6 +4231,67 @@ test("a reply to me in two phases across a bridge restart: the body is still kno
   const r2 = await next.done;
   assert.equal(r2.exit, 0, `the body of a word to me must wake after the restart: ${next.err}`);
   assert.ok(next.out.includes("ответ после перезапуска ЦЕЛ"), `the body as text:\n${next.out}`);
+});
+
+// A question in the case (#6867; the bridge's share — #6868, #6655): a question
+// to my role waits in the batch in words; the answer to it interrupts and the
+// waiting batch goes first.
+test("question kinds under the Monitor watchdog: a question to my role waits in words; the answer to my seat interrupts after it", async (t) => {
+  const { fake, dir, key } = await connected(t, {
+    env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "10000" },
+  });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog", dir, key, 20_000);
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
+  await sendRoom(fake, ask(90));
+  await new Promise((r) => setTimeout(r, 1000));
+  assert.ok(!wd.out.includes("спрашивает роль"), `the question interrupted:\n${wd.out}`);
+  await sendRoom(fake, answer(91, 90, ME));
+  await waitFor(() => wd.out.includes("отвечает на [90]"), "the answer to be printed");
+  const flat = wd.out.replace(/\n/g, " ");
+  const q = flat.indexOf("спрашивает роль 🚚 Поставщик плитки");
+  assert.ok(q >= 0, `the question to me in words:\n${wd.out}`);
+  assert.ok(flat.indexOf("отвечает на [90]") > q, `the batch goes before the answer:\n${wd.out}`);
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
+// The withdrawal of a question to me names only the ask's number: the exit
+// watchdog gets it in a new process, and the bridge may have restarted since
+// the ask. The bridge keeps the ask in the seat's .seen and marks the withdrawal.
+test("a withdrawn question to me across a bridge restart: the exit watchdog wakes on it in words", async (t) => {
+  const { fake, dir, key, bridge } = await connected(t, {
+    env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "800" },
+  });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const first = runClient("watchdog-exit", dir, key, 15_000);
+  await waitFor(() => first.err.includes("hello"), "hello to be noted");
+  await sendRoom(fake, ask(90));
+  assert.equal((await first.done).exit, 0, `the question to me wakes: ${first.err}`);
+  assert.ok(first.out.includes("спрашивает роль"), `the question in words:\n${first.out}`);
+  bridge.proc.kill("SIGKILL");
+  await waitFor(() => bridge.proc.signalCode !== null, "the first bridge to exit");
+  await waitFor(() => fake.state.ws.size === 0, "the fake to see the socket close");
+  const second = startBridge(fake.mcpUrl, dir, { ISKRON_BRIDGE_ROOM_BATCH_MS: "800" });
+  t.after(() => second.stop());
+  assert.ok((await second.call("initialize", 1, INIT)).result);
+  await fake.control({ places: [{ karta: "931", name: "proba", listening: false }] });
+  const st = await second.call("tools/call", 2, {
+    name: "iskron_stand",
+    arguments: { realm: "nks-dev", karta: 931, name: "proba" },
+  });
+  assert.ok(!st.result?.isError, JSON.stringify(st));
+  await waitFor(() => fake.state.ws.size === 1, "the place resumed");
+  const next = runClient("watchdog-exit", dir, key, 6000);
+  await waitFor(() => next.err.includes("hello"), "hello to be noted");
+  await sendRoom(fake, askWithdrawn(91, 90));
+  const r2 = await next.done;
+  assert.equal(
+    r2.exit,
+    0,
+    `the withdrawal of my question must wake after the restart: ${next.err}`,
+  );
+  assert.ok(next.out.includes("вопрос [90] снят"), `the withdrawal in words:\n${next.out}`);
 });
 
 // A batch whose every frame was handed already (#6574): its head went out with

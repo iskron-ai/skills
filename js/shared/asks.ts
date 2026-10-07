@@ -75,15 +75,28 @@ export function askedMine(frame: Rec, fields: Rec): boolean {
   return !!theirs && theirs === handleOf(str(frame.to_standing));
 }
 
-/** Вопросы мне, которые видел этот процесс: ключ — дело и номер ask. */
+/**
+ * Вопросы мне, которые видел этот процесс: ключ — дело и номер ask. Сторож
+ * выхода и перезапущенный мост их не видели — снятие им метит мост
+ * (bridge/addressmark.ts) по своей памяти отданного места (.seen).
+ */
 const asksToMe = new Set<string>();
 const ASKS_KEPT = 512;
 const askKey = (frame: Rec, entry: unknown): string =>
   `${str(obj(frame.room).id) || str(obj(frame.room).seq)}|${str(entry)}`;
 
+/** Ключ памяти вопроса этого кадра ask. */
+export const askKeyOf = (frame: Rec): string =>
+  askKey(frame, obj(frame.line).entry_id ?? frame.entry_id);
+/** Ключ памяти вопроса, который снимает этот кадр (fields.withdraws); без него — пусто. */
+export const withdrawnKeyOf = (frame: Rec): string => {
+  const w = str(obj(obj(frame.line).fields).withdraws);
+  return w ? askKey(frame, w) : "";
+};
+
 /** Запомнить вопрос мне — его снятие придёт строкой progress с номером этого ask. */
 export function rememberAsk(frame: Rec): void {
-  asksToMe.add(askKey(frame, obj(frame.line).entry_id ?? frame.entry_id));
+  asksToMe.add(askKeyOf(frame));
   for (const old of asksToMe) {
     if (asksToMe.size <= ASKS_KEPT) break;
     asksToMe.delete(old);
