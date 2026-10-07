@@ -4,7 +4,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-var VERSION = "7.4.0";
+var VERSION = "7.4.1";
 var CHANNEL_MARK = "iskron-build:release";
 var releaseBuild = () => CHANNEL_MARK.endsWith(":release");
 var devBuildIn = (text) => text.includes(`"${["iskron-build", "dev"].join(":")}"`);
@@ -524,7 +524,13 @@ function serveSeam(socket, host, graceMs = SEAM_REATTACH_GRACE_MS) {
       const msg = f.msg;
       const request2 = msg.method !== void 0 && msg.id !== void 0 && msg.id !== null;
       if (request2 && host.draining?.()) {
-        say(`request ${JSON.stringify(msg.id)} not taken: the daemon is handing over`);
+        const late = host.answerDraining?.(s2.id, msg) ?? null;
+        if (!late) {
+          say(`request ${JSON.stringify(msg.id)} not taken: the daemon is handing over`);
+          return;
+        }
+        writeFrame(socket, { t: "ack", id: msg.id });
+        void late.then((reply2) => writeFrame(socket, { t: "rpc", msg: reply2 })).catch((e) => say(`request ${JSON.stringify(msg.id)} failed: ${e.message}`));
         return;
       }
       chain = chain.then(
@@ -4980,7 +4986,7 @@ function noteStandingId(realm, id) {
   if (d && id) d.standingId = id;
 }
 var held = () => H2.door && state.standing ? { standing: state.standing, door: H2.door } : null;
-function releaseStanding(reason, forget = false, keepBeside = false, own = false) {
+function releaseStanding(reason, forget = false, keepBeside = false, own = false, keepBusy = false) {
   if (forget && H2.currentKey) dropHoldRecord(H2.currentKey);
   if (!keepBeside) dropAllExtras(reason, forget, own);
   if (!H2.holder && !H2.door) return;
@@ -4996,7 +5002,8 @@ function releaseStanding(reason, forget = false, keepBeside = false, own = false
     broadcast(released);
     notify("info", released);
   }
-  letGo(H2.holder, handover && !forget ? key ?? null : null, reason, H2.currentStatusUrl);
+  const busy = keepBusy ? null : H2.currentStatusUrl;
+  letGo(H2.holder, handover && !forget ? key ?? null : null, reason, busy);
   H2.holder = null;
   for (const w of [...H2.helloWaiters]) w(null);
   H2.door?.close();
@@ -6535,20 +6542,6 @@ function startEngine(cfg, opts = {}) {
   if (opts.freshness !== false) startFreshnessWatch(CFG.authDir, CFG.serverUrl);
 }
 
-// js/bridge/session.ts
-import { createInterface as createInterface2 } from "node:readline";
-
-// js/bridge/audience.ts
-function refusedAudience(upstream) {
-  const head = `upstream refuses even a freshly obtained access token (${upstream}) — not an expiry; the token's audience/resource may not match what the server validates`;
-  const s2 = loadStore();
-  if (!s2.tokens?.by_code) {
-    return `${head} (operator lever: ISKRON_BRIDGE_RESOURCE), or the server's token validation is off`;
-  }
-  const resource = s2.meta ? resourceOf(s2.meta) : CFG.serverUrl;
-  return `${head}: this grant came by sign-in by code through client ${s2.tokens.client_id ?? "?"}, so its audience is that client's default audience on the sign-in server, which must be ${resource} — a move for the operator of the sign-in server; ISKRON_BRIDGE_RESOURCE does not reach a grant by code`;
-}
-
 // js/bridge/caseexit.ts
 var LEAVE_CAP_MS = Number(process.env.ISKRON_CASE_LEAVE_MS) || 1500;
 var joined = scoped(() => /* @__PURE__ */ new Map());
@@ -6620,6 +6613,242 @@ async function underCap(work) {
   const got = await Promise.race([work, cap]);
   clearTimeout(timer);
   return got !== "cap";
+}
+
+// js/bridge/pauserecord.ts
+var P2 = scoped(() => ({
+  kind: null,
+  /** ответ паузы — повторному запросу (пауза уже стоит, место отпущено) */
+  answer: null,
+  /** адрес, который повернул connect перевзвода (и проигравший потолок — тоже) */
+  turned: null,
+  /** адрес, записанный в запись паузы последним */
+  written: "",
+  write: null,
+  connect: null
+}));
+var suspended = () => P2.kind !== null;
+var handoverPauseKey = () => P2.kind === "handover" ? P2.answer?.key ?? null : null;
+function pauseForHandover(why) {
+  if (P2.kind) return;
+  const key = pauseRecord("handover");
+  if (key)
+    log(
+      `satellite paused for the daemon handover (${why}): ${key}, cases ${P2.answer?.cases ?? 0} — place and cases kept`
+    );
+}
+function pauseRecord(kind) {
+  const s2 = state.standing;
+  const { currentKey: key, currentUrl: url, currentStatusUrl: statusUrl2 } = H2;
+  if (!CFG.satellite || !s2?.name || !key || !url) return null;
+  const write = () => {
+    const at2 = P2.turned ?? { url, statusUrl: statusUrl2 };
+    const cases = joinedCases();
+    P2.written = at2.url;
+    P2.answer = { key, cases: cases.length };
+    writeHoldRecord(
+      key,
+      {
+        realm: s2.realm,
+        karta: s2.karta,
+        name: s2.name ?? "",
+        url: at2.url,
+        statusUrl: at2.statusUrl,
+        client: harnessName(),
+        key,
+        session: sessionOfBridge() ?? void 0,
+        cases
+      },
+      true
+    );
+  };
+  P2.write = write;
+  write();
+  P2.kind = kind;
+  return key;
+}
+
+// js/bridge/holdkeep.ts
+function keepHoldRecord() {
+  const s2 = state.standing;
+  const key = H2.currentKey;
+  if (!s2 || !key || !H2.currentUrl) return;
+  const alive3 = !!H2.holder?.alive;
+  const at2 = alive3 ? Date.now() : Math.max(H2.holder?.heardAt ?? 0, H2.heardAt);
+  const ch = { url: H2.currentUrl, statusUrl: H2.currentStatusUrl, cwd: H2.standCwd };
+  const was = readHoldRecord(key, true);
+  if (was && at2 > (was.at ?? 0))
+    writeHoldRecord(
+      key,
+      {
+        ...was,
+        realm: s2.realm,
+        karta: s2.karta,
+        name: s2.name ?? "",
+        url: ch.url,
+        statusUrl: ch.statusUrl,
+        cwd: ch.cwd ?? was.cwd,
+        client: harnessName(),
+        key
+      },
+      false,
+      at2
+    );
+  if (!alive3) return;
+  for (const p of extraPlaces()) {
+    const r = readHoldRecord(p.door.key, true);
+    if (r) rememberExtraStatus(p.door.key, { ...ch, cwd: ch.cwd ?? r.cwd }, r.status ?? "");
+  }
+}
+
+// js/bridge/usagefields.ts
+var SPENT = ["tokens", "input", "output", "cache_read", "cache_write"];
+var num = (v) => typeof v === "number" && Number.isFinite(v) && v >= 0 ? Math.round(v) : void 0;
+function usageOf(p) {
+  const u = {};
+  for (const k of SPENT) {
+    const v = num(p[k]);
+    if (v !== void 0) u[k] = v;
+  }
+  if (typeof p.model === "string" && p.model.trim()) u.model = p.model.trim().slice(0, 120);
+  const context2 = num(p.context);
+  const window = num(p.window);
+  if (context2 !== void 0) u.context = context2;
+  if (window) u.window = window;
+  if (context2 !== void 0 && window) u.percent = Math.round(100 * context2 / window);
+  return Object.keys(u).length ? { ...u, at: (/* @__PURE__ */ new Date()).toISOString() } : null;
+}
+function moved(a, b) {
+  if (!a) return true;
+  if (a.percent !== void 0 && b.percent !== void 0 && Math.abs(b.percent - a.percent) >= 5)
+    return true;
+  if (b.tokens !== void 0 && (a.tokens === void 0 || b.tokens >= a.tokens * 1.1 + 1))
+    return true;
+  return a.window !== b.window || b.model !== void 0 && a.model !== b.model;
+}
+
+// js/bridge/usage.ts
+var MIN_GAP_MS = Number(process.env.ISKRON_USAGE_GAP_MS || 6e4);
+var FLUSH_CAP_MS = Number(process.env.ISKRON_CASE_LEAVE_MS) || 1500;
+var U = scoped(() => ({ published: null, latest: null, at: 0 }));
+var isUsageCall = (msg) => msg?.method === "iskron/usage";
+function usagePlace() {
+  const s2 = state.standing;
+  return s2 && !isParked(s2.realm, s2.karta, s2.name ?? "") ? s2 : null;
+}
+async function publish(place, u) {
+  U.at = Date.now();
+  const got = await replayRegister(place);
+  const ok = !!got && !got.error && !got.result?.isError;
+  if (ok) U.published = u;
+  else
+    log(
+      `usage: register did not take the attrs this time — ${JSON.stringify(got?.error ?? got?.result ?? null).slice(0, 200)}`
+    );
+  return ok;
+}
+async function runUsage(msg) {
+  const answer = (result) => ({
+    jsonrpc: "2.0",
+    id: msg.id,
+    result
+  });
+  if (!HOSTED_CLIENTS.has(harnessName()))
+    return answer({
+      pushed: false,
+      usage: null,
+      why: L("расход пишут только OpenCode и pi", "only OpenCode and pi report usage")
+    });
+  const u = usageOf(msg.params ?? {});
+  if (!u)
+    return answer({
+      pushed: false,
+      usage: null,
+      why: L("в снимке нет цифр", "the snapshot has no numbers")
+    });
+  U.latest = u;
+  rememberUsage(u);
+  const s2 = usagePlace();
+  const due = !!s2 && Date.now() - U.at >= MIN_GAP_MS && moved(U.published, u);
+  return answer({ pushed: due && s2 ? await publish(s2, u) : false, usage: u });
+}
+async function flushUsage(place) {
+  const u = U.latest;
+  if (!place || !u || u === U.published) return;
+  let timer;
+  const cap = new Promise((r) => timer = setTimeout(() => r("cap"), FLUSH_CAP_MS));
+  const sent = publish(place, u).catch((e) => {
+    log(`usage: the last snapshot did not land before the place went — ${e.message}`);
+    return false;
+  });
+  const got = await Promise.race([sent, cap]);
+  clearTimeout(timer);
+  if (got === "cap")
+    log(`usage: the last snapshot exceeded ${FLUSH_CAP_MS} ms before the place went`);
+}
+
+// js/bridge/runend.ts
+var R3 = scoped(() => ({
+  run: null,
+  /** места и занятость прогона на паузе передачи — её конец, если мост не вернулся */
+  held: null
+}));
+function closeRun(why, handover) {
+  return R3.run ??= (async () => {
+    const addr = statusAddress();
+    const places = satellitePlaces();
+    const paused = suspended();
+    const closing = (!handover || CFG.satellite) && !paused;
+    const spent = closing || paused ? usagePlace() : null;
+    if (!CFG.satellite) keepHoldRecord();
+    releaseStanding(why, CFG.satellite && !paused, false, false, paused);
+    if (paused) R3.held = { places, addr };
+    await Promise.all([paused ? null : leaveJoinedCases(), flushUsage(spent)]);
+    const failed = paused ? [] : await revokeSatellitePlaces(places);
+    if (addr && closing) await publishStatusTo(addr.url, "", 3e3).catch(() => {
+    });
+    return failed;
+  })();
+}
+async function endUnreturnedPause(bridgePid, waitMs) {
+  const key = handoverPauseKey();
+  const held2 = R3.held;
+  if (!key || !held2) return;
+  const until = Date.now() + waitMs;
+  for (; ; ) {
+    if (handoverPauseKey() !== key || !readHoldRecord(key)) return;
+    if (await localSocketAlive(localSocketPathOf(key))) return;
+    if (!ownPidAlive(bridgePid)) break;
+    if (Date.now() > until) return log(`handover pause of ${key}: the bridge lives on — kept`);
+    await sleep(200);
+  }
+  log(`handover pause of ${key}: the bridge left in the handover window — the run ends`);
+  dropHoldRecord(key);
+  await leaveJoinedCases();
+  const failed = await revokeSatellitePlaces(held2.places);
+  if (failed.length) log(`handover pause of ${key}: NOT revoked ${failed.join(", ")}`);
+  if (held2.addr) await publishStatusTo(held2.addr.url, "", 3e3).catch(() => {
+  });
+}
+function localEnd(msg) {
+  if (msg?.method !== "iskron/end") return null;
+  const answer = (result) => ({ jsonrpc: "2.0", id: msg.id, result });
+  if (!CFG.satellite || suspended()) return Promise.resolve(answer({ ended: false }));
+  return closeRun(L("конец прогона по слову плагина", "the run's end on the plugin's word"), false).then((failed) => answer({ ended: true, failed })).catch((e) => answer({ ended: false, word: e.message }));
+}
+
+// js/bridge/session.ts
+import { createInterface as createInterface2 } from "node:readline";
+
+// js/bridge/audience.ts
+function refusedAudience(upstream) {
+  const head = `upstream refuses even a freshly obtained access token (${upstream}) — not an expiry; the token's audience/resource may not match what the server validates`;
+  const s2 = loadStore();
+  if (!s2.tokens?.by_code) {
+    return `${head} (operator lever: ISKRON_BRIDGE_RESOURCE), or the server's token validation is off`;
+  }
+  const resource = s2.meta ? resourceOf(s2.meta) : CFG.serverUrl;
+  return `${head}: this grant came by sign-in by code through client ${s2.tokens.client_id ?? "?"}, so its audience is that client's default audience on the sign-in server, which must be ${resource} — a move for the operator of the sign-in server; ISKRON_BRIDGE_RESOURCE does not reach a grant by code`;
 }
 
 // js/bridge/satellite.ts
@@ -6927,92 +7156,6 @@ var satelliteListenWord = () => L(
   `[iskron-bridge] Место-спутник: сторожа не взводи — место живёт прогоном субагента и подписывает его записи; с концом прогона мост уходит с места сам, канал гаснет окном простоя ${SATELLITE_TTL_S} с. Первый ход — вход в дело, названное постановкой, и пересказ постановки первым словом в нём.`,
   `[iskron-bridge] Satellite seat: do not arm a watchdog — the seat lives by the subagent's run and signs its records; when the run ends the bridge leaves the seat itself, the channel dies after the ${SATELLITE_TTL_S} s idle window. The first move — enter the case the brief names and retell the brief as your first message in it.`
 );
-
-// js/bridge/usagefields.ts
-var SPENT = ["tokens", "input", "output", "cache_read", "cache_write"];
-var num = (v) => typeof v === "number" && Number.isFinite(v) && v >= 0 ? Math.round(v) : void 0;
-function usageOf(p) {
-  const u = {};
-  for (const k of SPENT) {
-    const v = num(p[k]);
-    if (v !== void 0) u[k] = v;
-  }
-  if (typeof p.model === "string" && p.model.trim()) u.model = p.model.trim().slice(0, 120);
-  const context2 = num(p.context);
-  const window = num(p.window);
-  if (context2 !== void 0) u.context = context2;
-  if (window) u.window = window;
-  if (context2 !== void 0 && window) u.percent = Math.round(100 * context2 / window);
-  return Object.keys(u).length ? { ...u, at: (/* @__PURE__ */ new Date()).toISOString() } : null;
-}
-function moved(a, b) {
-  if (!a) return true;
-  if (a.percent !== void 0 && b.percent !== void 0 && Math.abs(b.percent - a.percent) >= 5)
-    return true;
-  if (b.tokens !== void 0 && (a.tokens === void 0 || b.tokens >= a.tokens * 1.1 + 1))
-    return true;
-  return a.window !== b.window || b.model !== void 0 && a.model !== b.model;
-}
-
-// js/bridge/usage.ts
-var MIN_GAP_MS = Number(process.env.ISKRON_USAGE_GAP_MS || 6e4);
-var FLUSH_CAP_MS = Number(process.env.ISKRON_CASE_LEAVE_MS) || 1500;
-var U = scoped(() => ({ published: null, latest: null, at: 0 }));
-var isUsageCall = (msg) => msg?.method === "iskron/usage";
-function usagePlace() {
-  const s2 = state.standing;
-  return s2 && !isParked(s2.realm, s2.karta, s2.name ?? "") ? s2 : null;
-}
-async function publish(place, u) {
-  U.at = Date.now();
-  const got = await replayRegister(place);
-  const ok = !!got && !got.error && !got.result?.isError;
-  if (ok) U.published = u;
-  else
-    log(
-      `usage: register did not take the attrs this time — ${JSON.stringify(got?.error ?? got?.result ?? null).slice(0, 200)}`
-    );
-  return ok;
-}
-async function runUsage(msg) {
-  const answer = (result) => ({
-    jsonrpc: "2.0",
-    id: msg.id,
-    result
-  });
-  if (!HOSTED_CLIENTS.has(harnessName()))
-    return answer({
-      pushed: false,
-      usage: null,
-      why: L("расход пишут только OpenCode и pi", "only OpenCode and pi report usage")
-    });
-  const u = usageOf(msg.params ?? {});
-  if (!u)
-    return answer({
-      pushed: false,
-      usage: null,
-      why: L("в снимке нет цифр", "the snapshot has no numbers")
-    });
-  U.latest = u;
-  rememberUsage(u);
-  const s2 = usagePlace();
-  const due = !!s2 && Date.now() - U.at >= MIN_GAP_MS && moved(U.published, u);
-  return answer({ pushed: due && s2 ? await publish(s2, u) : false, usage: u });
-}
-async function flushUsage(place) {
-  const u = U.latest;
-  if (!place || !u || u === U.published) return;
-  let timer;
-  const cap = new Promise((r) => timer = setTimeout(() => r("cap"), FLUSH_CAP_MS));
-  const sent = publish(place, u).catch((e) => {
-    log(`usage: the last snapshot did not land before the place went — ${e.message}`);
-    return false;
-  });
-  const got = await Promise.race([sent, cap]);
-  clearTimeout(timer);
-  if (got === "cap")
-    log(`usage: the last snapshot exceeded ${FLUSH_CAP_MS} ms before the place went`);
-}
 
 // js/bridge/leave.ts
 var DEAF_MS = Number(process.env.ISKRON_BRIDGE_DEAF_MS) || 15 * 6e4;
@@ -7421,64 +7564,34 @@ var resumeWords = {
 };
 
 // js/bridge/suspend.ts
-var S3 = scoped(() => ({
-  on: false,
-  /** адрес, который повернул connect перевзвода (и проигравший потолок — тоже) */
-  turned: null,
-  /** адрес, записанный в запись паузы последним */
-  written: "",
-  write: null,
-  connect: null
-}));
-var suspended = () => S3.on;
 function localSuspend(msg) {
   if (msg?.method !== "iskron/suspend") return null;
   const answer = (result) => ({ jsonrpc: "2.0", id: msg.id, result });
   const s2 = state.standing;
-  const { currentKey: key, currentUrl: url, currentStatusUrl: statusUrl2 } = H2;
-  if (!CFG.satellite || !s2?.name || !key || !url)
+  const drained = P2.kind === "handover";
+  if (drained) P2.kind = "suspend";
+  else if (P2.kind && P2.answer) return Promise.resolve(answer({ suspended: true, ...P2.answer }));
+  const key = drained ? P2.answer?.key ?? null : pauseRecord("suspend");
+  if (!key || !s2)
     return Promise.resolve(
       answer({
         suspended: false,
         word: L("места-спутника нет — паузы нет", "no satellite seat — nothing to pause")
       })
     );
-  const cases = joinedCases();
-  const write = () => {
-    const at2 = S3.turned ?? { url, statusUrl: statusUrl2 };
-    S3.written = at2.url;
-    writeHoldRecord(
-      key,
-      {
-        realm: s2.realm,
-        karta: s2.karta,
-        name: s2.name ?? "",
-        url: at2.url,
-        statusUrl: at2.statusUrl,
-        client: harnessName(),
-        key,
-        session: sessionOfBridge() ?? void 0,
-        cases
-      },
-      true
-    );
-  };
-  S3.write = write;
-  write();
-  S3.on = true;
-  return rearmForPause(s2).then((rearmed) => {
-    if (rearmed) write();
+  return rearmForPause(s2, drained).then((rearmed) => {
+    if (rearmed) P2.write?.();
     log(
-      `satellite paused for a plugin reload: ${key}, cases ${cases.length} — place and cases kept, idle window ${rearmed ? `${PAUSE_TTL_S} s` : "unchanged"}`
+      `satellite paused for a plugin reload${drained ? " in the daemon handover" : ""}: ${key}, cases ${P2.answer?.cases ?? 0} — place and cases kept, idle window ${rearmed ? `${PAUSE_TTL_S} s` : "unchanged"}`
     );
-    return answer({ suspended: true, key, cases: cases.length });
+    return answer({ suspended: true, ...P2.answer });
   });
 }
 var PAUSE_TTL_S = Math.floor(HOLD_RECORD_MAX_AGE_MS / 1e3);
 var REARM_CAP_MS = 1e3;
-async function rearmForPause(s2) {
+async function rearmForPause(s2, drained) {
   const name = s2.name ?? "";
-  if (!parkStanding(L("пауза спутника", "satellite pause"))) return false;
+  if (!drained && !parkStanding(L("пауза спутника", "satellite pause"))) return false;
   const args = {
     action: "connect",
     realm: s2.realm,
@@ -7488,24 +7601,28 @@ async function rearmForPause(s2) {
     ttl_seconds: PAUSE_TTL_S
   };
   const connect5 = callTool("iskron_channel", args).then((r2) => {
-    if (!r2.isError && H2.currentUrl) S3.turned = { url: H2.currentUrl, statusUrl: H2.currentStatusUrl };
+    if (!r2.isError && H2.currentUrl) P2.turned = { url: H2.currentUrl, statusUrl: H2.currentStatusUrl };
+    if (drained) {
+      releaseStanding(L("пауза спутника", "satellite pause"), false, false, false, true);
+      P2.write?.();
+    }
     return r2;
   });
-  S3.connect = connect5;
+  P2.connect = connect5;
   const r = await Promise.race([connect5, sleep(REARM_CAP_MS).then(() => null)]);
   if (!r || r.isError)
     log(`satellite pause: idle window not re-armed — ${r?.text ?? "no answer yet"}`);
-  return !!r && !r.isError && !!S3.turned;
+  return !!r && !r.isError && !!P2.turned;
 }
 var SETTLE_CAP_MS = 3e3;
 async function pauseSettled() {
-  if (!S3.on || !S3.connect) return;
-  await Promise.race([S3.connect.catch(() => {
+  if (!P2.kind) return;
+  if (P2.connect) await Promise.race([P2.connect.catch(() => {
   }), sleep(SETTLE_CAP_MS)]);
-  if (S3.turned && S3.turned.url !== S3.written) {
-    S3.write?.();
+  const turned = !!P2.turned && P2.turned.url !== P2.written;
+  P2.write?.();
+  if (turned)
     log(`satellite pause: the late re-arm turned the address — the pause record follows it`);
-  }
 }
 function afterResume(key) {
   if (!CFG.satellite || !key) return;
@@ -8522,64 +8639,6 @@ function narrowToolList(reply2) {
   return { ...reply2, result: { ...reply2.result, tools: shown } };
 }
 
-// js/bridge/holdkeep.ts
-function keepHoldRecord() {
-  const s2 = state.standing;
-  const key = H2.currentKey;
-  if (!s2 || !key || !H2.currentUrl) return;
-  const alive3 = !!H2.holder?.alive;
-  const at2 = alive3 ? Date.now() : Math.max(H2.holder?.heardAt ?? 0, H2.heardAt);
-  const ch = { url: H2.currentUrl, statusUrl: H2.currentStatusUrl, cwd: H2.standCwd };
-  const was = readHoldRecord(key, true);
-  if (was && at2 > (was.at ?? 0))
-    writeHoldRecord(
-      key,
-      {
-        ...was,
-        realm: s2.realm,
-        karta: s2.karta,
-        name: s2.name ?? "",
-        url: ch.url,
-        statusUrl: ch.statusUrl,
-        cwd: ch.cwd ?? was.cwd,
-        client: harnessName(),
-        key
-      },
-      false,
-      at2
-    );
-  if (!alive3) return;
-  for (const p of extraPlaces()) {
-    const r = readHoldRecord(p.door.key, true);
-    if (r) rememberExtraStatus(p.door.key, { ...ch, cwd: ch.cwd ?? r.cwd }, r.status ?? "");
-  }
-}
-
-// js/bridge/runend.ts
-var R3 = scoped(() => ({ run: null }));
-function closeRun(why, handover) {
-  return R3.run ??= (async () => {
-    const addr = statusAddress();
-    const places = satellitePlaces();
-    const paused = suspended();
-    const closing = (!handover || CFG.satellite) && !paused;
-    const spent = closing || paused ? usagePlace() : null;
-    if (!CFG.satellite) keepHoldRecord();
-    releaseStanding(why, CFG.satellite && !paused);
-    await Promise.all([paused ? null : leaveJoinedCases(), flushUsage(spent)]);
-    const failed = paused ? [] : await revokeSatellitePlaces(places);
-    if (addr && closing) await publishStatusTo(addr.url, "", 3e3).catch(() => {
-    });
-    return failed;
-  })();
-}
-function localEnd(msg) {
-  if (msg?.method !== "iskron/end") return null;
-  const answer = (result) => ({ jsonrpc: "2.0", id: msg.id, result });
-  if (!CFG.satellite || suspended()) return Promise.resolve(answer({ ended: false }));
-  return closeRun(L("конец прогона по слову плагина", "the run's end on the plugin's word"), false).then((failed) => answer({ ended: true, failed })).catch((e) => answer({ ended: false, word: e.message }));
-}
-
 // js/bridge/toolsync.ts
 import { createHash as createHash7 } from "node:crypto";
 var T = scoped(() => ({ served: null }));
@@ -9000,6 +9059,7 @@ var IDLE_MS = ms("ISKRON_BRIDGE_DAEMON_IDLE_MS", 6e4);
 var HOME_CHECK_MS = ms("ISKRON_BRIDGE_DAEMON_HOME_CHECK_MS", 6e4);
 var SUCCESSOR_WAIT_MS = ms("ISKRON_BRIDGE_DAEMON_SUCCESSOR_WAIT_MS", 2e4);
 var GRACE_MS = ms("ISKRON_BRIDGE_DAEMON_GRACE_MS", 5e3);
+var RETURN_WAIT_MS = ms("ISKRON_BRIDGE_DAEMON_RETURN_WAIT_MS", 3e4);
 var JOURNAL_MAX = 256e3;
 var DAEMON_BUSY_EXIT = 75;
 var SELF = (() => {
@@ -9055,6 +9115,8 @@ async function daemonMain(argv2) {
   const attached = /* @__PURE__ */ new Set();
   const bridgePids = /* @__PURE__ */ new Map();
   const sockets = /* @__PURE__ */ new Set();
+  const handed = /* @__PURE__ */ new Map();
+  const answering = /* @__PURE__ */ new Set();
   let draining2 = false;
   let counter2 = 0;
   let lastNotice = null;
@@ -9077,9 +9139,23 @@ async function daemonMain(argv2) {
     server?.close();
     for (const so of sockets) writeFrame(so, { t: "handover", why });
     spawnDaemon(to, authDir, true);
+    const paused = [];
+    for (const [id, e] of engines) {
+      if (!e.scope) continue;
+      handed.set(id, e.scope);
+      const pid = bridgePids.get(id) ?? 0;
+      if (!attached.has(id) && !ownPidAlive(pid)) continue;
+      runIn(e.scope, () => pauseForHandover(why));
+      paused.push([e.scope, pid]);
+    }
     await Promise.allSettled([...sessions.values()].map((s2) => s2.end(`daemon handover: ${why}`)));
+    await Promise.allSettled([...answering]);
     for (const so of sockets) so.end();
     await handoffsSettled();
+    await Promise.allSettled([...answering]);
+    await Promise.allSettled(
+      paused.map(([scope, pid]) => runIn(scope, () => endUnreturnedPause(pid, RETURN_WAIT_MS)))
+    );
     log("handed over — leaving");
     setTimeout(() => process.exit(0), 300);
   };
@@ -9116,6 +9192,19 @@ async function daemonMain(argv2) {
     log: (m) => log(m),
     count: () => sessions.size,
     draining: () => draining2,
+    // Пауза, запрошенная в окне передачи: пауза передачи становится паузой харнеса —
+    // перевзвод окна и занятость, как у обычной (suspend.ts), — ответ её, а не отказ.
+    answerDraining(id, msg) {
+      const scope = handed.get(id);
+      const p = scope ? runIn(scope, () => localSuspend(msg)) : null;
+      if (scope && p) {
+        const settled = p.then(() => runIn(scope, pauseSettled));
+        answering.add(settled);
+        void settled.finally(() => answering.delete(settled)).catch(() => {
+        });
+      }
+      return p;
+    },
     find: (id) => sessions.get(id) ?? null,
     open(hello) {
       const id = `s${++counter2}-${process.pid}`;
@@ -9470,6 +9559,7 @@ function thinMain(argv2) {
   let leaving = null;
   let byeDone = null;
   let heldKey2 = null;
+  let paused = false;
   let everAttached = false;
   let successorAwaited = 0;
   const queue2 = [];
@@ -9505,6 +9595,7 @@ function thinMain(argv2) {
       }
       const f = flights.get(k);
       flights.delete(k);
+      if (f?.msg.method === "iskron/suspend" && msg.result?.suspended === true) paused = true;
       if (word2 && f?.msg.method === "tools/call" && Array.isArray(msg.result?.content)) {
         msg.result.content.push({ type: "text", text: word2 });
         word2 = null;
@@ -9608,7 +9699,9 @@ function thinMain(argv2) {
       );
     }
     live.clear();
-    if (held2) {
+    if (held2 && paused)
+      log(`the session is new — its place ${held2.key} is paused and waits on its pause record`);
+    else if (held2) {
       const id = `iskron-thin-resume-${++replays}`;
       replayIds.add(key(id));
       resuming.set(key(id), held2);
