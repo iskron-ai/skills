@@ -14,9 +14,8 @@ import { addressedToMine } from "../shared/addressed.ts";
 import { type Frame } from "../shared/channel.ts";
 import { batchLine, caseKey, frameToText } from "../shared/frame-text.ts";
 import { deliveryKeys, noteSeen, seenIds } from "../shared/seen.ts";
-import { staleBatch } from "../shared/stalebatch.ts";
 import { seenFilePathOf } from "../shared/standings.ts";
-import { adoptSeenPath, attach, heldHeads, resolveStanding } from "./client.ts";
+import { adoptSeenPath, attach, heldHeads, resolveStanding, staleOf } from "./client.ts";
 import { doer, wd } from "./words.ts";
 
 // The bridge replays its ring to every client that attaches, so a watchdog
@@ -137,7 +136,7 @@ export function runWatchdogExit(argv: string[]): void {
           {
             // Пачка лежалых: не повод будить, но и не потеря — тела в логе, метки пачки помечены;
             // судится в миг записи по памяти сторожа (shared/stalebatch.ts).
-            const b = staleBatch(ev.frames ?? [], (k) => seen.has(k));
+            const b = staleOf(ev, (k) => seen.has(k));
             if (b.text) note(b.text);
             for (const k of b.keys) noteSeen(seenPath, k, seen);
           }

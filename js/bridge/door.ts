@@ -50,6 +50,8 @@ export interface ChannelEvent {
   frames?: Frame[];
   /** kind="stale" и "backlog": метки доставки пачки (seen.ts splitBatch) — пишет внёсший её в ход. */
   marks?: string[];
+  /** kind="stale" моста прежней сборки: показаны не все кадры, это — метки сверх показанных (watchdog/client.ts staleOf). */
+  unshown?: string[];
   /** kind="held": место, которое мост держит, — по нему плагин OpenCode ставит спутником дочернюю сессию (#6002). */
   place?: { realm: string; karta: string; name: string };
   /** kind="backlog": сколько кадров ожидало по hello. */

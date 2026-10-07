@@ -10,6 +10,7 @@ import { type Frame } from "../shared/channel.ts";
 import { batchHead } from "../shared/frame-text.ts";
 import { setLang } from "../shared/lang.ts";
 import { deliveryKeys, eventIn, type Marks, seenIds } from "../shared/seen.ts";
+import { staleBatch } from "../shared/stalebatch.ts";
 import { authDirFromEnv, socketPathOf, standingsDirOf } from "../shared/standings.ts";
 import { wd } from "./words.ts";
 
@@ -85,6 +86,17 @@ export function adoptSeenPath(
   seen.clear();
   for (const x of seenIds(named)) seen.add(x);
   return named;
+}
+
+/**
+ * Пачка лежалых в миг отдачи — по памяти сторожа `has` (shared/stalebatch.ts). Кадр
+ * старого моста несёт лишь показанные кадры и метки сверх них (unshown): тогда — его
+ * текст со счётом «не вошло» и его метки, показанные — метками доставки (#5831).
+ */
+export function staleOf(ev: ChannelEvent, has: Marks): { text: string; keys: string[] } {
+  if (!ev.unshown) return staleBatch(ev.frames ?? [], has);
+  const shown = (ev.frames ?? []).flatMap((f) => deliveryKeys(f));
+  return { text: ev.text ?? "", keys: [...shown, ...ev.unshown] };
 }
 
 /**

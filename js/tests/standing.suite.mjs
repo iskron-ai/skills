@@ -4170,6 +4170,76 @@ test("a stale case copy whose event a live inbox frame already took into the Cod
   await wd.done;
 });
 
+// Ход уходит в тред Codex с мига постановки во вложение, не с открытия двери: пачка
+// лежалых, судимая, пока дверь открывается, не считает событие, уже отданное текстом.
+test("a stale case copy whose event went into the Codex thread while the door was still opening is not counted", async (t) => {
+  const { fake, dir, key } = await connected(t);
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const extra = await codexDoor(t, { upgradeDelayMs: 4000 });
+  const log = join(extra.CODEX_HOME, "door.log");
+  const wd = runClient("watchdog-codex", dir, key, 30_000, extra);
+  await waitFor(() => wd.err.includes("слушаю стояние"), "the codex watchdog to attach");
+  await fake.control({ ws_send: graphEvent("inbox-d", 95, "событие девяносто пять") });
+  await new Promise((r) => setTimeout(r, 200));
+  await sendRoom(fake, { ...nodeOp("updated", 103), event_id: 95, stale: true });
+  const turns = () =>
+    readFileSync(log, "utf8")
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((l) => JSON.parse(l))
+      .filter((c) => c.method === "turn/start")
+      .map((c) => c.params.input[0].text);
+  await new Promise((r) => setTimeout(r, 2000)); // пачка лежалых разобрана, дверь ещё открывается
+  await fake.control({ ws_send: JSON.stringify({ id: "live-d", type: "message", body: "живое" }) });
+  await waitFor(
+    () => turns().some((x) => x.includes("живое")),
+    "the live frame in the thread",
+    20_000,
+  );
+  assert.ok(
+    turns().some((x) => x.includes("событие девяносто пять")),
+    JSON.stringify(turns()),
+  );
+  for (const text of turns()) assert.doesNotMatch(text, /записей/, text);
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
+// Сторож новый, мост старый: пачка лежалых прежней формы — первые 20 кадров и метки
+// сверх них (unshown) — отдаётся её текстом со счётом «не вошло»; сверх показанных
+// метится метками моста, не текстом события.
+test("a stale burst of the old bridge's form keeps its left-out count and marks the unshown by the bridge's keys", async (t) => {
+  const { socketPathOf } = await import("../shared/standings.ts");
+  const dir = mkdtempSync(join(tmpdir(), "iskron-oldstale-"));
+  const key = "old--931--nks-dev";
+  const path = socketPathOf(dir, key);
+  const seenPath = join(dir, "old.seen");
+  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+  const frames = Array.from({ length: 20 }, (_, i) =>
+    JSON.parse(graphEvent(`s-${i}`, 200 + i, "лежалое", { stale: true })),
+  );
+  const unshown = ["u-0", "cevs:300", "u-1", "cevs:301"];
+  const text = "Лежалых кадров: 22, здесь первые 20, не вошло 2 — старый мост";
+  const door = createServer((sock) => {
+    sock.write(JSON.stringify({ kind: "attached", key, buffered: 0, seen: seenPath }) + "\n");
+    sock.write(JSON.stringify({ kind: "stale", frames, unshown, text }) + "\n");
+  });
+  await new Promise((r) => door.listen(path, r));
+  t.after(() => door.close());
+  const wd = runClient("watchdog", dir, key, 8000);
+  await waitFor(() => wd.out.includes("Лежалых кадров"), "the stale burst");
+  assert.match(wd.out, /не вошло 2/, `the left-out count was lost:\n${wd.out}`);
+  await waitFor(
+    () => existsSync(seenPath) && readFileSync(seenPath, "utf8").includes("u-1"),
+    "the unshown marked",
+  );
+  const seen = readFileSync(seenPath, "utf8").split("\n");
+  assert.ok(seen.includes("cevs:300") && !seen.includes("evs:300"), seen.join(" "));
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
 test("a stale case copy whose event a live inbox frame already took into the Monitor queue is not counted by the stale burst", async (t) => {
   const { fake, dir, key } = await connected(t);
   await waitFor(() => fake.state.ws.size === 1, "the socket");

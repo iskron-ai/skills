@@ -18,9 +18,15 @@ import { addressedToMine } from "../shared/addressed.ts";
 import { type Door, openDoor } from "../shared/appserver.ts";
 import { frameToText } from "../shared/frame-text.ts";
 import { deliveryKeys, noteSeen, seenIds } from "../shared/seen.ts";
-import { staleBatch } from "../shared/stalebatch.ts";
 import { seenFilePathOf } from "../shared/standings.ts";
-import { adoptSeenPath, attach, heldHeads, parseWatchdogArgs, resolveStanding } from "./client.ts";
+import {
+  adoptSeenPath,
+  attach,
+  heldHeads,
+  parseWatchdogArgs,
+  resolveStanding,
+  staleOf,
+} from "./client.ts";
 import { doer, wd } from "./words.ts";
 
 const FLUSH_WAIT_MS = 5000; // своё отпускание ждёт вложений в полёте не дольше
@@ -100,15 +106,17 @@ export function runWatchdogCodex(argv: string[]): void {
   // Вложения в полёте: своё отпускание ждёт их, прежде чем выйти (#6638).
   const inFlight = new Set<Promise<void>>();
   function deliver(text: string, ids: string[] = []): Promise<void> {
-    const p = put(text, ids).finally(() => inFlight.delete(p));
+    // Ушёл в тред с мига постановки, не с открытия двери: пачки, судимые до её открытия,
+    // видят его метки в waiting (seen.ts eventIn); отказ двери метки снимает.
+    const reqId = nextId++;
+    waiting.set(reqId, ids);
+    const p = put(reqId, text).finally(() => inFlight.delete(p));
     inFlight.add(p);
     return p;
   }
-  async function put(text: string, ids: string[]): Promise<void> {
+  async function put(reqId: number, text: string): Promise<void> {
     try {
       const d = door ?? (await open());
-      const reqId = nextId++;
-      waiting.set(reqId, ids);
       d.send({
         method: "turn/start",
         id: reqId,
@@ -116,6 +124,7 @@ export function runWatchdogCodex(argv: string[]): void {
       });
       note(wd.frameSent(threadId));
     } catch (e) {
+      waiting.delete(reqId); // дверь не открылась — в тред не ушёл
       note(wd.frameNotPut((e as Error).message));
     }
   }
@@ -171,7 +180,7 @@ export function runWatchdogCodex(argv: string[]): void {
           // Одна пачка — один ход, судится в миг вложения (shared/stalebatch.ts): по памяти
           // сторожа и меткам ходов, уже ушедших в тред; метки пачки — по принятию тредом.
           const sent = new Set([...waiting.values()].flat());
-          const b = staleBatch(ev.frames ?? [], (k) => seen.has(k) || sent.has(k));
+          const b = staleOf(ev, (k) => seen.has(k) || sent.has(k));
           if (b.text) void deliver(b.text, b.keys);
           else for (const k of b.keys) noteSeen(seenPath, k, seen);
           break;

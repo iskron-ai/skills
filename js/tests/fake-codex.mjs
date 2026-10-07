@@ -52,18 +52,24 @@ function unframe(buf) {
 }
 
 // mute: the socket is accepted, the upgrade is never answered — a hung daemon.
-export function startFakeCodex(socketPath, logFile, { mute = false, turnDelayMs = 0 } = {}) {
+// upgradeDelayMs: the upgrade is answered this late — a daemon slow to open the door.
+export function startFakeCodex(
+  socketPath,
+  logFile,
+  { mute = false, turnDelayMs = 0, upgradeDelayMs = 0 } = {},
+) {
   mkdirSync(dirname(socketPath), { recursive: true });
   const server = createServer((_req, res) => {
     res.writeHead(404);
     res.end();
   });
   const sockets = new Set();
-  server.on("upgrade", (req, socket) => {
+  server.on("upgrade", async (req, socket) => {
     sockets.add(socket);
     socket.on("close", () => sockets.delete(socket));
     socket.on("error", () => {});
     if (mute) return;
+    if (upgradeDelayMs) await new Promise((r) => setTimeout(r, upgradeDelayMs));
     socket.write(
       "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n",
     );
