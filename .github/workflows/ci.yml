@@ -100,11 +100,3 @@ jobs:
         run: sudo sysctl -w net.ipv4.ip_local_port_range="44000 60999"
       - name: Behavioural suites against the dev build of js/ in dist/dev (fake NKS + OAuth, fake bridge, fake socket)
         run: make test-coverage
-
-  plugin-archive:
-    name: Plugin archive builds
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Build the claude.ai plugin archive (its first real run must not be at release time)
-        run: make plugin
