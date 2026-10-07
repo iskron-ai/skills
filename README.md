@@ -28,7 +28,7 @@
 
 ### Быстрее всего: отдай установку своему агенту
 
-Вставь этот промпт в агента, которым уже пользуешься (Claude Code, Cursor, Codex):
+Вставь этот промпт в агента, которым уже пользуешься (Claude Code, Cursor, Codex, Claude Desktop):
 
 ```
 Установи мне скиллы iskron: скачай https://raw.githubusercontent.com/iskron-ai/skills/main/SETUP.md
@@ -76,9 +76,9 @@ pi install git:github.com/iskron-ai/skills
 
 Ставит скиллы **и** расширение `iskron` разом. Расширение — то, чего плоская установка дать не может: тулы `iskron_*` поднимаются прямо в сессии через встроенный мост (отдельно подключать граф-сервер не нужно — первый вызов уводит в браузер на обычный OAuth), а сокет живого канала держит сама сессия, без отдельного сторожа. Стояние агент занимает сам, изнутри — позвал `iskron_channel(action="connect")` и `register`, и слушание включилось: адрес сокета из ответа расширение берёт само, сессии не покидая. Обновление — `pi update git:github.com/iskron-ai/skills` (или `pi update --extensions`, чтобы обновить сразу все установленные пакеты).
 
-### claude.ai
+### Claude Desktop
 
-Плагин целиком: каждый [релиз](https://github.com/iskron-ai/skills/releases/latest) начиная с v3.2.0 несёт `iskron.zip` — архив плагина. Загрузи его как плагин в claude.ai; для обновления загрузи ассет более свежего релиза — то же имя плагина перезаписывает установленную копию. Автообновления у этого канала нет: установлено то, что ты загрузил последним (его `version` лежит в `.claude-plugin/plugin.json` внутри архива).
+Скиллы — загрузи каждый `*.skill` из корня репозитория в разделе скиллов настроек Claude Desktop. Граф — мост `iskron-bridge` stdio-записью в `claude_desktop_config.json`; файл моста и запись — в `SETUP.md`, ветка Claude Desktop. Путь к графу один — мост: харнесс без локальных stdio-серверов MCP (claude.ai в браузере и подобные) до графа не дотянется.
 
 ### Любой другой агент: плоская установка (npx)
 
@@ -98,7 +98,7 @@ npx skills add iskron-ai/skills --all --global
 
 ### Отдельные скиллы вручную
 
-Каждый `*.skill` — закоммиченный zip-бандл (`<name>/SKILL.md`). Загрузи его как Skill в claude.ai или распакуй в свою директорию скиллов:
+Каждый `*.skill` — закоммиченный zip-бандл (`<name>/SKILL.md`). Загрузи его как Skill в Claude Desktop или распакуй в свою директорию скиллов:
 
 ```sh
 unzip design.skill -d ~/.claude/skills/
@@ -108,7 +108,6 @@ unzip design.skill -d ~/.claude/skills/
 
 - `skills/<name>/SKILL.md` — **источник истины.**
 - `*.skill` — закоммиченные **производные** бандлы. Не редактируются руками; `make build` (или просто коммить с включённым хуком `make hooks` — он пересобирает их на каждом коммите).
-- `make plugin` — архив плагина для claude.ai (`dist/iskron.zip`); CI прикладывает его к каждому релизу.
 - `.claude-plugin/marketplace.json` + `.claude-plugin/plugin.json` — манифесты плагина; версию пишет release-please при мерже релизного PR.
 - `.mcp.json` — запись MCP плагина: stdio-мост из поставки (`skills/establish-mcp/scripts/iskron.mjs`), говорящий с `https://mcp.iskron.ru/` (английская версия — `https://mcp.iskron.ai/`, выбор одной командой `use en`; см. `SETUP.md`, раздел «Прежде всего: язык»).
 - `DERIVATION.md` — карта деривации скиллов из канона методологии + языковой контракт.

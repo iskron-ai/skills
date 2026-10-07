@@ -81,6 +81,14 @@ pi install git:github.com/iskron-ai/skills
 `~/.claude/skills/`), а тулы и канал приносит **плагин из поставки** — шаг 2, ветка
 OpenCode.
 
+**Claude Desktop** — скиллы загружает человек: каждый `<имя>.skill` из корня этого
+репозитория (`https://github.com/iskron-ai/skills`, или
+`https://raw.githubusercontent.com/iskron-ai/skills/main/<имя>.skill`) — в разделе
+скиллов настроек Claude Desktop, по одному файлу. Мост для него из скиллов не
+берётся: файл моста кладётся на диск отдельно и регистрируется stdio-записью — шаг 2,
+«Как поднять мост», ветка Claude Desktop. Нет у тебя оболочки — продиктуй человеку
+оба шага и жди.
+
 ## 2. Подключи граф-сервер
 
 **Claude Code + плагин из шага 1: сервер приходит с мостом внутри, логин — первым вызовом.**
@@ -258,6 +266,26 @@ cp "$src" ~/.iskron-bridge/iskron-bridge.mjs && echo "скопирован из 
 Плагинный канал кладёт настоящие файлы под `~/.claude/plugins/cache/`, поэтому
 ищем в обоих местах и берём первое попавшееся.
 
+**Claude Desktop** скиллов на диск не кладёт (они загружены в приложение, шаг 1), и
+`find` выше ничего не найдёт: мост берётся прямо из поставки — `main` несёт сборку
+последнего выпуска, дальше мост обновляет себя сам (раздел 3):
+
+```sh
+mkdir -p ~/.iskron-bridge
+curl -fsSL https://raw.githubusercontent.com/iskron-ai/skills/main/skills/establish-mcp/scripts/iskron.mjs -o ~/.iskron-bridge/iskron-bridge.mjs
+```
+
+На Windows — PowerShell (`curl` там — псевдоним `Invoke-WebRequest`, поэтому `curl.exe`):
+
+```powershell
+New-Item -ItemType Directory -Force "$HOME\.iskron-bridge" | Out-Null
+curl.exe -fsSL https://raw.githubusercontent.com/iskron-ai/skills/main/skills/establish-mcp/scripts/iskron.mjs -o "$HOME\.iskron-bridge\iskron-bridge.mjs"
+(Get-Command node).Source    # абсолютный путь к node — для command записи ниже
+```
+
+В записи Windows-путь пишется с удвоенной обратной косой
+(`"C:\\Users\\<имя>\\.iskron-bridge\\iskron-bridge.mjs"`) или прямыми (`C:/Users/<имя>/…`).
+
 **Claude Code без плагина** (`--scope user`: граф следует за пользователем, не за одним
 проектом — скоуп по умолчанию зарегистрировал бы его проектно-локально):
 
@@ -272,6 +300,12 @@ claude mcp add --scope user iskron-bridge -- node "$HOME/.iskron-bridge/iskron-b
 ```json
 { "mcpServers": { "iskron-bridge": { "command": "node", "args": ["/абс/путь/до/.iskron-bridge/iskron-bridge.mjs"] } } }
 ```
+
+Конфиг Claude Desktop лежит в `~/Library/Application Support/Claude/claude_desktop_config.json`
+(macOS) или `%APPDATA%\Claude\claude_desktop_config.json` (Windows); приложение
+читает его на старте — перезапусти его. Оконное приложение не видит `PATH` оболочки:
+стоит Node под nvm и подобными — в `command` абсолютный путь (`which node`; на Windows —
+`(Get-Command node).Source`).
 
 Путь абсолютный: `~` в таких конфигах не раскрывается. Клади запись в
 **пользовательский** конфиг харнесса (домашняя директория), не в проектный — граф
