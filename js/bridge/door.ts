@@ -20,7 +20,7 @@ import {
 } from "../shared/standings.ts";
 import { Backlog } from "./backlog.ts";
 import { CFG } from "./config.ts";
-import { caseCopyShown, isDelivered } from "./fanout.ts";
+import { caseCopyShown, isDelivered, takeShownCopies } from "./fanout.ts";
 import { countOnly, emitBatch, RoomBatch } from "./roomstack.ts";
 import { StaleBurst } from "./stale.ts";
 import { log } from "./streams.ts";
@@ -210,10 +210,15 @@ export class Door {
             seen: this.seenPath,
           } satisfies ChannelEvent) + "\n",
         );
+        // Кадры, которые повтор отдаёт текстом, — вошли текстом: копии дела их событий
+        // не повторяются счётом рядом и гаснут впредь (fanout.ts takeShownCopies).
+        const texts = backlog.filter((h) => !countOnly(h.frame)).map((h) => h.frame);
+        takeShownCopies(this, texts);
         // Неадресованные месту записи дел (#6574) — пачкой впереди, счётом: так
         // пришли бы и живыми; поодиночке сторож взял бы их за побудку.
-        const counts = backlog.filter((h): h is { raw: string; frame: Frame } =>
-          countOnly(h.frame),
+        const counts = backlog.filter(
+          (h): h is { raw: string; frame: Frame } =>
+            countOnly(h.frame) && !caseCopyShown(h.frame, this),
         );
         const put = (ev: ChannelEvent): void => void sock.write(JSON.stringify(ev) + "\n");
         if (counts.length) emitBatch(counts, put);

@@ -375,8 +375,8 @@ function deliverTo(d: Door, raw: string, frame: Frame | null, full: Frame | null
   const ev: ChannelEvent = { kind: "frame", raw: text, frame: full };
   const msg = full?.type === "message" && !again ? full : null;
   if (msg) noteRoomKind(msg);
-  // Сторожам кадр идёт текстом: копии дела его события — вон, прежде чем уйдёт накопленное.
-  if (msg && !notifiedClient()) takeShownCopies(d, [msg]);
+  // Прицепленному сторожу кадр — текстом: копии дела события вон; без него — повтором кольца.
+  if (msg && !notifiedClient() && d.clients.size) takeShownCopies(d, [msg]);
   // Сторожам кадр комнаты «в пачку» — пачкой по окну, прерывающий — после накопленного (roomstack.ts).
   const toBatch = (b: ChannelEvent): void => (d.broadcast(b), notify("info", keyed(d, b)));
   if (msg && !notifiedClient() && batchForWatchdogs(d, text, msg, toBatch)) return;

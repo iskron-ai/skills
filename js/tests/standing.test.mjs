@@ -3825,6 +3825,54 @@ test("a case copy coming while the Monitor watchdog still prints the stale burst
   await wd.done;
 });
 
+// Живой кадр инбокса, пока сторож не прицеплен, текстом не вошёл: вытесненный из кольца
+// неотданным, он не гасит копию дела своего события — та доходит счётом (#5842).
+test("an inbox frame no watchdog heard and the ring dropped leaves its case copy counted", async (t) => {
+  const { fake, dir, key } = await connected(t, { env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "1000" } });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  await fake.control({
+    ws_send_many: [
+      graphEvent("inbox-p", 301, "событие триста один"),
+      ...Array.from({ length: 21 }, (_, i) =>
+        JSON.stringify({ id: `fill-${i}`, type: "message", body: `fill ${i}` }),
+      ),
+      JSON.stringify({ ...nodeOp("updated", 301), event_id: 301 }),
+    ],
+  });
+  await new Promise((r) => setTimeout(r, 1200));
+  const wd = runClient("watchdog", dir, key, 20_000);
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
+  await fake.control({
+    ws_send: JSON.stringify({ id: "live-p", type: "message", body: "живое-п" }),
+  });
+  await waitFor(() => wd.out.includes("живое-п"), "the live frame");
+  assert.ok(
+    wd.out.includes("событие триста один") || wd.out.includes("записей 1"),
+    `the event reached the doer neither as text nor by count:\n${wd.out}`,
+  );
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
+// Кольцо, повторяя прицепившемуся кадр инбокса текстом, не отдаёт рядом счётом копию дела
+// того же события.
+test("the ring replays an inbox frame as text and not the case copy of its event beside it", async (t) => {
+  const { fake, dir, key } = await connected(t, { env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "500" } });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  await fake.control({ ws_send: graphEvent("inbox-q", 302, "событие триста два") });
+  await sendRoom(fake, { ...nodeOp("updated", 302), event_id: 302 });
+  await new Promise((r) => setTimeout(r, 1000)); // окно дела ушло в пустой сокет; оба в кольце
+  const wd = runClient("watchdog", dir, key, 20_000);
+  await waitFor(() => wd.out.includes("событие триста два"), "the replayed inbox frame");
+  await fake.control({
+    ws_send: JSON.stringify({ id: "live-q", type: "message", body: "живое-к" }),
+  });
+  await waitFor(() => wd.out.includes("живое-к"), "the live frame");
+  assert.ok(!wd.out.includes("записей"), `counted beside its text on replay:\n${wd.out}`);
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
 // Дом подставного Codex — под TMPDIR пробы и убирается вместе с ней.
 test("the fake Codex home lives under the probe's TMPDIR and is gone after its test", async (t) => {
   let home = "";
