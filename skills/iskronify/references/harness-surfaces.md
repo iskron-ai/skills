@@ -83,21 +83,32 @@ export default {
     const isShell = (tool) => ["shell", "bash"].includes(tool);
     // memory-guard: бросок из execute.before блокирует вызов; путь памяти — тот же, что у guard'а Claude Code
     // сравнивается путь, а не строка: относительный — от каталога сессии, `//`, `/./`, `..` схлопнуты
-    // (resolve), ссылки раскрыты realpath ближайшего существующего предка; память узнаётся и по
-    // ~/.claude/projects за ссылкой
-    const { existsSync, realpathSync } = await import("node:fs");
-    const { dirname, join, relative, resolve } = await import("node:path");
+    // (resolve), ссылки раскрыты до конца, висячие тоже: ссылка на ещё не созданный файл судится по
+    // раскрытому пути цели; память узнаётся и по ~/.claude/projects за ссылкой. Цикл или больше
+    // 8 переходов — путь не решён, guard отказывает (закрыто на отказ, как хук Claude Code)
+    const { existsSync, lstatSync, readlinkSync, realpathSync } = await import("node:fs");
+    const { basename, dirname, join, resolve } = await import("node:path");
     const { homedir } = await import("node:os");
-    const real = (p) => {
-      let head = p;
-      while (!existsSync(head) && dirname(head) !== head) head = dirname(head);
-      try { return join(realpathSync(head), relative(head, p)); } catch { return p; }
+    const real = (p, hops = { n: 0 }) => {
+      for (;;) {
+        let link = false;
+        try { link = lstatSync(p).isSymbolicLink(); } catch { /* нет такого — судит предок */ }
+        if (!link) break;
+        if (++hops.n > 8) throw new Error(`link chain not resolved: ${p}`);
+        p = resolve(dirname(p), readlinkSync(p));
+      }
+      if (existsSync(p)) return realpathSync(p);
+      return dirname(p) === p ? p : join(real(dirname(p), hops), basename(p));
     };
     const slash = (p) => p.replaceAll("\\", "/");
-    const projects = slash(real(resolve(homedir(), ".claude", "projects")));
+    let projects = resolve(homedir(), ".claude", "projects");
+    try { projects = real(projects); } catch { /* не решён — сравнение по строке */ }
+    projects = slash(projects);
     const isLocalMemoryPath = (p, base) => {
       const abs = resolve(base || process.cwd(), String(p));
-      return [slash(abs), slash(real(abs))].some((x) =>
+      let r;
+      try { r = real(abs); } catch { return true; }
+      return [slash(abs), slash(r)].some((x) =>
         /\/\.claude\/projects\/.*\/memory\//.test(x) || (x.startsWith(`${projects}/`) && /\/memory\//.test(x.slice(projects.length))));
     };
     // пути вызова: write и edit — поле path (filePath прежних версий); patch (apply_patch) — заголовки

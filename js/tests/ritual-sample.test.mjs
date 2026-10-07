@@ -192,6 +192,34 @@ for (const md of sources) {
     await s.stop();
   });
 
+  // A link to a file not yet written is judged by its target; a chain past 8
+  // hops or a cycle is not resolved — the guard refuses (closed on failure).
+  test(name("guard follows a dangling link; a long chain or a cycle is refused"), async () => {
+    const s = await standServer(source);
+    const p = await s.instance(s.own);
+    s.sessions.set("mine", { dir: s.own });
+    const mem = join(s.own, ".claude", "projects", "x", "memory");
+    mkdirSync(mem, { recursive: true });
+    const at = (...names) => join(s.own, "links", ...names);
+    mkdirSync(at(), { recursive: true });
+    symlinkSync(join(mem, "new.md"), at("dangling"));
+    symlinkSync(join(mem, "sub"), at("dangling-dir"));
+    for (let i = 0; i < 9; i++)
+      symlinkSync(i === 8 ? join(mem, "new.md") : at(`l${i + 1}`), at(`l${i}`));
+    symlinkSync(at("b"), at("a"));
+    symlinkSync(at("a"), at("b"));
+    symlinkSync(join(s.own, "safe", "new.md"), at("safe"));
+    const passed = [];
+    for (const path of [at("dangling"), at("dangling-dir", "f.md"), at("l0"), at("a")])
+      await p.call("execute.before", toolCall("write", "mine", { path, content: "x" })).then(
+        () => passed.push(path),
+        (e) => assert.ok(!["ReferenceError", "TypeError"].includes(e?.name), e),
+      );
+    assert.deepEqual(passed, [], "each is refused");
+    await p.call("execute.before", toolCall("write", "mine", { path: at("safe"), content: "x" }));
+    await s.stop();
+  });
+
   test(name("(е) two instances of one folder under two spellings greet once"), async () => {
     const s = await standServer(source);
     await s.instance(s.own);
