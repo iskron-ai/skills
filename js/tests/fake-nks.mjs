@@ -408,6 +408,15 @@ export async function startFakeNks(opts = {}) {
           setTimeout(() => sock.end(), 200).unref();
         }
       }
+      // Отъём места новым держателем (#6706): кодом закрываются прежние сокеты места, новейший цел.
+      if (patch.ws_close_old) {
+        const { name, code } = patch.ws_close_old;
+        const of = [...st.ws].filter((s) => st.wsNames.get(s) === name);
+        for (const sock of of.slice(0, -1)) {
+          sock.write(wsFrame(0x8, Buffer.from([code >> 8, code & 0xff])));
+          setTimeout(() => sock.end(), 200).unref();
+        }
+      }
       if (patch.kill_session) {
         for (const s of st.sessions) st.dead.add(s);
         st.sessions.clear();

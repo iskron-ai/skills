@@ -124,6 +124,11 @@ export function readHoldRecord(key: string, anyAge = false): HoldRecord | null {
     return null;
   }
 }
+/** Стереть запись, только если она этого держателя (тот же адрес): запись нового держателя, отнявшего место, цела. */
+export function dropOwnHoldRecord(key: string, url: string | null): void {
+  const r = readHoldRecord(key, true);
+  if (!r || !url || r.url === url) dropHoldRecord(key);
+}
 export function dropHoldRecord(key: string): void {
   try {
     unlinkSync(holdFilePathFor(key));

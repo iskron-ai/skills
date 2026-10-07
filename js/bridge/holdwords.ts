@@ -25,6 +25,28 @@ export const holdWords = {
       `DOER: close ${code} — the seat was taken, another holder is listening; ` +
         "the write binding is intact, the seat stays occupied until the address is turned with connect; to listen here, iskron_stand without name stands beside on name.N; to retake the seat (take=true) — only on the human's word",
     ),
+  /** Отнятое место другой сессии (#6706): держатель встаёт рядом сам, исход — следующим словом. */
+  evictedBeside: (code: number, name: string) =>
+    L(
+      `ДЕЛАТЕЛЬ: закрытие ${code} — место отняли (${name}), слушает другой держатель; его место не перехватываю и им не подписываюсь — встаю рядом на ${name}.N со слухом сам; исход — следующим словом, место и команду сторожа скажет iskron_stand тем же вызовом; вытеснить ту сессию (take=true) — только словом человека`,
+      `DOER: close ${code} — the seat ${name} was taken, another holder is listening; not taking it over and not signing with it — standing beside as ${name}.N with hearing myself; the outcome comes next, iskron_stand with the same call tells the seat and the watchdog command; evicting that session (take=true) — only on the human's word`,
+    ),
+  besideDone: (name: string, said: string) =>
+    L(
+      `Искрон: место ${name} отняли (4000) — мост встал рядом своим местом со слухом. ${said}`,
+      `Iskron: the seat ${name} was taken (4000) — the bridge stood beside on its own seat with hearing. ${said}`,
+    ),
+  besideFailed: (name: string, said: string) =>
+    L(
+      `Искрон: место ${name} отняли (4000), встать рядом мост не смог — слуха нет: ${said}`,
+      `Iskron: the seat ${name} was taken (4000), and the bridge could not stand beside — no hearing: ${said}`,
+    ),
+  /** Место взял новый мост этой же сессии (перезапуск, компакшн): уступка без тревоги. */
+  takenBySession: () =>
+    L(
+      "место взял новый мост этой же сессии — этот экземпляр отпускает сокет, слух — у нового",
+      "a new bridge of this same session took the seat — this instance lets the socket go, the hearing is the new one's",
+    ),
   dead: (code: number) => L(`ДЕЛАТЕЛЬ: ${deadTokenAdvice(code)}`, `DOER: ${deadTokenAdvice(code)}`),
   alive: (version: string) =>
     L(

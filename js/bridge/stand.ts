@@ -19,10 +19,12 @@ import {
   leadsOtherPlace,
   otherPlaceWord,
   resolveAgainstLed,
+  serialized,
   short,
   unresolvedRefusal,
 } from "./call.ts";
 import { CFG } from "./config.ts";
+import { wireEviction } from "./evicted.ts";
 import { seatField } from "./fields.ts";
 import {
   awaitHello,
@@ -34,7 +36,6 @@ import {
   ledKey,
   noteStandCwd,
   standingIdIn,
-  wasEvicted,
 } from "./hold.ts";
 import { keyOf } from "./holdrecord.ts";
 import { armRoleHook } from "./hook.ts";
@@ -54,10 +55,10 @@ import {
 import { ownerRefusal } from "./owner.ts";
 import { placeFields, rememberModel } from "./placefields.ts";
 import { otherRealm } from "./realms.ts";
-import { deadPredecessor, resumeFromDisk, takeLapsed } from "./resume.ts";
+import { resumeFromDisk, takeLapsed } from "./resume.ts";
 import { resumeWords } from "./resumewords.ts";
 import { SATELLITE_TTL_S, satelliteGate, satelliteListenWord, ttlRefused } from "./satellite.ts";
-import { separatePlace, suffixOf } from "./separate.ts";
+import { deadPredecessor, placeFor, suffixOf } from "./separate.ts";
 import { SW } from "./standwords.ts";
 import { busyLine, publishStatus, standStatusOnly, TAKE_PATH, TURNED_GUIDANCE } from "./status.ts";
 import { state } from "./transport.ts";
@@ -79,6 +80,28 @@ const isDirectory = (p: string): boolean => {
 
 export const isStandCall = (msg: JsonRpcMessage): boolean =>
   msg?.method === "tools/call" && msg?.params?.name === "iskron_stand";
+
+/** Место отняли (evicted.ts, #6706): встать рядом на имя.N тем же ходом, что iskron_stand с этим именем. */
+wireEviction(async (place, cwd) => {
+  const r = await serialized(() =>
+    runStand({
+      jsonrpc: "2.0",
+      id: "iskron-bridge-evicted",
+      method: "tools/call",
+      params: {
+        name: "iskron_stand",
+        arguments: {
+          realm: place.realm,
+          karta: String(place.karta),
+          name: place.name ?? "",
+          ...(cwd && isDirectory(cwd) ? { cwd } : {}),
+        },
+      },
+    }),
+  );
+  const text = ((r.result?.content ?? []) as { text?: string }[]).map((c) => c.text ?? "");
+  return { ok: !r.result?.isError, text: text.join("\n") };
+});
 
 /**
  * Стуки в места людей — когда и сколько, ключ (граф, роль, имя, адрес места). Правило
@@ -152,11 +175,13 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   const fitted = parts ? fitName(parts) : null;
   const derived = asked || sat ? "" : (fitted?.name ?? "");
   let name = asked || sat?.name || derived;
+  const base = sat ? "" : name; // основа места рядом: выведенное или явное имя (#6706)
   await resolveAgainstLed(realm); // графы сличаются в одной форме @owner/slug (#5838)
-  // Мост уже стоит на отдельном месте этого выведенного имени — туда же (#5407).
+  // Мост уже стоит на отдельном месте этого имени — туда же (#5407); take=true зовёт само имя.
   const led0 = state.standing && !otherRealm(state.standing.realm, realm) ? state.standing : null;
-  if (derived && led0 && String(led0.karta) === String(karta) && suffixOf(derived, led0.name ?? ""))
-    name = led0.name ?? name;
+  const onSuffix =
+    !!base && !!led0 && String(led0.karta) === String(karta) && !!suffixOf(base, led0.name ?? "");
+  if (onSuffix && a.take !== true) name = led0?.name ?? name;
   if (parts && fitted && fitted.cut.length) {
     const what = fitted.cut.map(SW.cutPart).join(", ");
     nameNotes.push(SW.nameCut(joinName(parts), NAME_MAX, name, what));
@@ -202,17 +227,42 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   // стук, хук — идут только по распознанной однозначной форме; иначе честный отказ.
   const { entries, recognized, declared } = readBoard(board);
   let own = entries.filter((e) => e.karta === karta && nameOf(e.address) === name);
-  // Выведенное имя держит живой мост другой сессии — встаём рядом на имя.N (#5407).
-  const separate =
-    derived && a.take !== true && name === derived
-      ? await separatePlace(realm, karta, derived)
-      : null;
-  if (separate) {
-    name = separate.name;
-    own = entries.filter((e) => e.karta === karta && nameOf(e.address) === name);
-    nameNotes.push(separate.note);
+  // Счёт в заголовке не сошёлся с разобранным — где-то строка, которой парсер не
+  // понял; она могла быть твоим живым местом. Ротировать вслепую нельзя, а
+  // явный take=true — слово делателя, что он это понимает.
+  const unread = declared != null && declared !== entries.length;
+  if (!recognized || own.length > 1 || (unread && own.length === 0 && a.take !== true)) {
+    lines.push(
+      !recognized
+        ? SW.boardUnknown(short(board.text, 160))
+        : own.length > 1
+          ? SW.boardAmbiguous(own.length, name, karta)
+          : SW.boardCount(declared ?? 0, entries.length),
+    );
+    return done(true);
   }
-  const sub = !!sat || (!!derived && name !== derived); // отдельное место и спутник: хук инбокса роли не взводится
+  // Имя держит прежний мост этой сессии — своё, возвращается сам; другая сессия —
+  // встаём рядом на имя.N со слухом; чужим местом не подписываемся (#6706).
+  let ownSession = false;
+  if (base && a.take !== true && name === base) {
+    const listensOnBoard = (n: string): boolean =>
+      entries.some((e) => e.karta === karta && nameOf(e.address) === n && listens(e));
+    const choice = await placeFor(realm, karta, base, listensOnBoard);
+    if ("refusal" in choice) {
+      lines.push(choice.refusal);
+      return done(true);
+    }
+    name = choice.name;
+    ownSession = choice.own;
+    own = entries.filter((e) => e.karta === karta && nameOf(e.address) === name);
+    if (own.length > 1) {
+      lines.push(SW.boardAmbiguous(own.length, name, karta));
+      return done(true);
+    }
+    if (choice.note) nameNotes.push(choice.note);
+  }
+  const take = a.take === true || ownSession;
+  const sub = !!sat || (!!base && name !== base); // отдельное место и спутник: хук инбокса роли не взводится
   // Места прежнего стандарта имени (машина.репо.ветка) той же машины и репо —
   // сироты после перехода на машина.репо.модель: их адрес держат ростеры дел
   // и хуки инбокса, а слушает их никто. Прежнее имя узнаётся по третьей части,
@@ -234,28 +284,14 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
     return branches.has(third) && alive(e);
   });
   for (const e of legacy) nameNotes.push(SW.legacy(e.address, realm, karta));
-  // Счёт в заголовке не сошёлся с разобранным — где-то строка, которой парсер не
-  // понял; она могла быть твоим живым местом. Ротировать вслепую нельзя, а
-  // явный take=true — слово делателя, что он это понимает.
-  const unread = declared != null && declared !== entries.length;
-  if (!recognized || own.length > 1 || (unread && own.length === 0 && a.take !== true)) {
-    lines.push(
-      !recognized
-        ? SW.boardUnknown(short(board.text, 160))
-        : own.length > 1
-          ? SW.boardAmbiguous(own.length, name, karta)
-          : SW.boardCount(declared ?? 0, entries.length),
-    );
-    return done(true);
-  }
   if (unread) lines.push(SW.boardCountFound(declared ?? 0, entries.length));
   const mine = own[0];
   let incoming = mine?.incoming ?? null;
 
-  // 2. Место. Свой сокет держит этот мост — register. Место слушает ДРУГОЙ мост
-  // (та же рабочая копия в другой сессии) — тоже register: живое стояние не
-  // ротируется без причины (#4342), а причина называется явно — take=true.
-  // Иначе connect и register; новый сокет — новый цикл входа, счёт стуков сброшен.
+  // 2. Место. Свой сокет держит этот мост — register. Место другой сессии сюда
+  // не доходит — выше выбрано место рядом (#6706); своё место прежнего моста этой
+  // сессии — connect, как по take. Иначе connect и register; новый сокет — новый
+  // цикл входа, счёт стуков сброшен.
   let how: string;
   let heardHere: boolean;
   const listensElsewhere = !!mine && listens(mine) && !holdsStanding(realm, karta, name);
@@ -266,7 +302,7 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   // как велит канон, и ответ говорит, что слушающий — мёртвый предшественник.
   // Спутник с диска не возвращается: его место живёт прогоном (satellite.ts).
   const fresh =
-    !sat && a.take !== true && !holdsStanding(realm, karta, name) && !isParked(realm, karta, name);
+    !sat && !take && !holdsStanding(realm, karta, name) && !isParked(realm, karta, name);
   const predecessorDead = fresh && listensElsewhere && (await deadPredecessor(realm, karta, name));
   const resumed = fresh && !listensElsewhere ? await resumeFromDisk(realm, karta, name) : null;
   const extra: string[] = []; // строки после шапки ответа
@@ -296,7 +332,7 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
     // Строку занятости из записи возврат не публикует заново (#6017): свежая
     // отметка выдала бы прежнее слово о работе за сказанное сейчас.
     how = `${resumed.word}, register`;
-  } else if (a.take !== true && isParked(realm, karta, name) && returnToStanding("iskron_stand")) {
+  } else if (!take && isParked(realm, karta, name) && returnToStanding("iskron_stand")) {
     // Ушёл с места и вернулся: тот же адрес, сокет открыт заново, register — атрибуция.
     const r = await register();
     if (r.isError) {
@@ -305,21 +341,19 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
     }
     heardHere = true;
     how = SW.howReturned();
-  } else if (a.take !== true && (holdsStanding(realm, karta, name) || listensElsewhere)) {
+  } else if (!take && (holdsStanding(realm, karta, name) || predecessorDead)) {
     const r = await register();
     if (r.isError) {
       lines.push(SW.refused("register", short(r.text)));
       return done(true);
     }
-    heardHere = !listensElsewhere;
-    socketBefore = !listensElsewhere;
-    how = listensElsewhere
-      ? wasEvicted(realm, karta, name)
-        ? SW.howEvicted()
-        : predecessorDead
-          ? SW.howDeadPredecessor()
-          : SW.howOtherHolder(mine?.address ?? name, realm, karta, !!asked)
-      : SW.howRegister();
+    heardHere = !predecessorDead;
+    socketBefore = !predecessorDead;
+    how = predecessorDead ? SW.howDeadPredecessor() : SW.howRegister();
+  } else if (!take && listensElsewhere) {
+    // Слушает другой держатель, а места рядом выбрано не было: подписи без слуха нет (#6706).
+    lines.push(SW.otherHolder(mine?.address ?? name));
+    return done(true);
   } else {
     const args: Record<string, unknown> = { action: "connect", realm, karta, name };
     Object.assign(args, here());
@@ -348,7 +382,9 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
     for (const k of [...knocks.keys()])
       if (k.startsWith(`${realm}|${karta}|${name}|`)) knocks.delete(k);
     heardHere = true;
-    how = SW.howConnect(!!mine, listensElsewhere, a.take === true);
+    how = ownSession
+      ? SW.howOwnSession()
+      : SW.howConnect(!!mine, listensElsewhere, a.take === true);
     // Место занято заново после возврата, не нашедшего записи: дела могли пропасть (#6649).
     if (takeLapsed()) extra.push(`[iskron_stand] ${resumeWords.rejoin()}`);
   }

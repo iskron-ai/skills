@@ -23,8 +23,8 @@ import { CFG } from "./config.ts";
 import { type ChannelEvent, Door, type DoorHooks, ENV_KEY } from "./door.ts";
 import { isDelivered, redundantCopy } from "./fanout.ts";
 import { letGo, takeSpool } from "./handoff.ts";
-import { dropHoldRecord, keyOf, readHoldRecord, writeHoldRecord } from "./holdrecord.ts";
-import { type Frame, H, handoverReason } from "./holdstate.ts";
+import { dropOwnHoldRecord, keyOf, readHoldRecord, writeHoldRecord } from "./holdrecord.ts";
+import { E, type Frame, H, handoverReason } from "./holdstate.ts";
 import { holdWords } from "./holdwords.ts";
 import {
   addExtra,
@@ -194,11 +194,11 @@ export const heldKey = (realm?: string): string | null =>
   (realm ? besideKeyIn(realm) : null) ?? H.currentKey;
 
 /** Событие канала — всем дверям: сокет у мест общий. */
-function broadcast(ev: ChannelEvent): void {
+export function broadcast(ev: ChannelEvent): void {
   for (const d of doors()) d.broadcast(ev);
 }
 
-function notify(level: "info" | "warning" | "error", data: ChannelEvent): void {
+export function notify(level: "info" | "warning" | "error", data: ChannelEvent): void {
   emit({
     jsonrpc: "2.0",
     method: "notifications/message",
@@ -247,7 +247,7 @@ export function releaseStanding(
   own = false,
   keepBusy = false,
 ): void {
-  if (forget && H.currentKey) dropHoldRecord(H.currentKey);
+  if (forget && H.currentKey) dropOwnHoldRecord(H.currentKey, H.currentUrl);
   if (!keepBeside) dropAllExtras(reason, forget, own);
   if (!H.holder && !H.door) return;
   // Пачка, ещё не отданная, уходит сейчас, а не теряется молча (backlog.ts).
@@ -429,15 +429,10 @@ function openHolder(url: string, key: string): void {
         });
       },
       onEvicted: (code) => {
-        const text = holdWords.evicted(code);
-        log(text);
         standingLog(`evicted ${key}: close ${code}`);
         H.evictedKey = key;
-        dropHoldRecord(key); // адрес повернули — запись мертва
-        const ev: ChannelEvent = { kind: "evicted", code, text };
-        H.evictedEvent = ev;
-        broadcast(ev);
-        notify("warning", ev);
+        dropOwnHoldRecord(key, url); // адрес повернули — своя запись мертва, запись отнявшего цела
+        E.next?.(key, url, code); // слово об отъёме и ход дальше — evicted.ts
       },
       onDeadToken: (code) => {
         if (H.revokingOwn) {

@@ -36,6 +36,14 @@ export const H = scoped(() => ({
   handingOver: null as string | null,
 }));
 
+/** Ход после отъёма места (evicted.ts): ставится один раз при загрузке, процессу — один на все сессии. */
+export const E: { next: ((key: string, url: string, code: number) => void) | null } = {
+  next: null,
+};
+export function whenEvicted(fn: (key: string, url: string, code: number) => void): void {
+  E.next = fn;
+}
+
 /** Возврат с диска в полёте (+1) или кончился (−1): мёртвый токен при нём — протухшая запись, не тревога. */
 export function noteResuming(delta: number): void {
   H.resuming += delta;

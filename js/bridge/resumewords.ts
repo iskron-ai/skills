@@ -38,6 +38,12 @@ export const resumeWords = {
       `в каталоге лежат записи мест, на которых эта сессия не стояла (${foreign.join(", ")}); по одному каталогу они не берутся, место займёт ${via}`,
       `the directory holds records of seats this session did not stand on (${foreign.join(", ")}); they are not taken by directory alone, ${via} will take the seat`,
     ),
+  /** Запись по ключу, на которой стояла другая сессия: место соседа не берётся (#6706). */
+  neighbourKey: (keys: string[]): string =>
+    L(
+      `на месте ${keys.join(", ")} стояла другая сессия — место соседа возврат не берёт; своё место займёт ${via}`,
+      `another session stood on the seat ${keys.join(", ")} — a return does not take a neighbour's seat; ${via} will take your own`,
+    ),
   left: (left: string[]): string =>
     L(
       `место отпущено словом держателя (leave): ${left.join(", ")} — само не вернётся, вернуть: ${via} тем же именем`,

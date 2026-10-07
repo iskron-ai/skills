@@ -648,61 +648,47 @@ test("iskron_stand: a deliberate repeat after the window, one only; a new entry 
   );
 });
 
-test("iskron_stand: a place listening under another bridge is registered, never rotated, unless take=true", async (t) => {
+// An explicit name another holder listens on is neither signed with nor taken
+// over (the owner's decision #6706): the bridge stands beside on name.N with
+// hearing, no role-inbox hook; take=true stays the human's word for eviction.
+test("iskron_stand: an explicit name another holder listens on is left alone — the bridge stands beside on name.2 with hearing, unless take=true", async (t) => {
   const { fake, bridge } = await ready(t);
   await fake.control({ places: [{ karta: "931", name: "proba", listening: true }] });
   const args = { realm: "nks-dev", karta: 931, name: "proba" };
   const first = await bridge.call("tools/call", { name: "iskron_stand", arguments: args });
   const text = textOf(first);
-  assert.match(text, /место уже слушает другой держатель .* — только register/, text);
-  // The answer leads forward, not to the human (#6594): the holder is named,
-  // hearing comes by a call without name, the holder is asked in one word.
-  assert.match(text, /другой держатель — @tester:proba —/, `the holder is named:\n${text}`);
-  assert.match(text, /Дальше без человека: слух здесь — iskron_stand без name/, text);
+  assert.ok(!first.result?.isError, text);
+  assert.match(text, /стояние (?:@tester:)?proba\.2 — роль #931/, text);
   assert.match(
     text,
-    /iskron_channel\(action="send", realm="nks-dev", karta="931", standing="@tester:proba", text=/,
+    /место proba держит другая сессия — .*встаю рядом на proba\.2 со слухом/,
     text,
   );
-  assert.match(text, /Слух — у другого держателя/, text);
-  assert.ok(!/Слушать:/.test(text), "no watchdog command is handed out without a local holder");
-  assert.match(text, /Команда сторожа не выдаётся/, text);
-  const knock = await bridge.call("tools/call", {
-    name: "iskron_stand",
-    arguments: { ...args, room: "@tester:thread-k2" },
-  });
-  assert.match(
-    textOf(knock),
-    /Место человека @[^:]+:[^:]+: стук не отправлен — ответ человека ушёл бы держателю сокета/,
-    textOf(knock),
-  );
-  assert.equal(fake.state.sends.length, 0, "no join while the socket is elsewhere");
+  assert.doesNotMatch(text, /только register|по памяти|атрибуция/, text);
+  assert.match(text, /Слушать: .*node "/, "the seat beside is heard here");
+  assert.match(text, /hello получен/, text);
   let counts = (await fake.control({})).counts;
-  assert.equal(counts.connect, 0, "no connect: the live socket stays with its holder");
-  assert.equal(
-    counts.register_standing,
-    2,
-    "both only-register calls registered, neither connected",
-  );
+  assert.equal(counts.connect, 1, "one connect — for the seat beside");
+  assert.equal(fake.state.placeArgs.find((p) => p.action === "connect")?.name, "proba.2");
+  assert.equal(counts.webhooks_added, 0, "no role-inbox hook for a seat beside");
+  const again = await bridge.call("tools/call", { name: "iskron_stand", arguments: args });
+  assert.match(textOf(again), /стояние @tester:proba\.2 — .*сокет уже держит этот мост/);
+  assert.equal((await fake.control({})).counts.connect, 1, "the second call comes back");
   const taken = await bridge.call("tools/call", {
     name: "iskron_stand",
     arguments: { ...args, take: true },
   });
-  assert.match(textOf(taken), /connect по take/, textOf(taken));
+  assert.match(textOf(taken), /стояние @tester:proba — .*connect по take/, textOf(taken));
   assert.match(textOf(taken), /hello получен/, "a fresh hello after the explicit take");
-  assert.match(
-    textOf(taken),
-    /Слушать: .*node "/,
-    "the watchdog command comes with the local holder",
-  );
   counts = (await fake.control({})).counts;
-  assert.equal(counts.connect, 1, "take=true is the named cause for rotation");
+  assert.equal(counts.connect, 2, "take=true is the named cause for rotation");
 });
 
-// After an eviction the bridge keeps the standing (#5033): a repeated stand is
-// register only and says the place was taken; the busy line still goes out from
-// the standing, and take=true brings the hearing back.
-test("iskron_stand after an eviction: register only, the busy line still published, take=true re-enters", async (t) => {
+// A session whose seat another session took (close 4000) is not left deaf (#6706,
+// #5402): the bridge stands beside on name.N with hearing by itself and says so
+// into the session; a repeated stand comes back there, the busy line goes from it,
+// and take=true — the human's word — brings the evicted name back.
+test("iskron_stand after an eviction: the bridge stands beside on name.2 by itself, says so, and a repeated stand comes back there", async (t) => {
   const { fake, bridge } = await ready(t);
   const args = { realm: "nks-dev", karta: 931, name: "proba" };
   const first = await bridge.call("tools/call", { name: "iskron_stand", arguments: args });
@@ -715,50 +701,35 @@ test("iskron_stand after an eviction: register only, the busy line still publish
     }
   };
   await waitFor(() => fake.state.ws.size === 1, "the socket");
-  // Одно вытеснение — уже уступка вслух: мост не открывается заново (#6550).
-  await fake.control({ ws_close: 4000 });
-  await waitFor(
-    () => bridge.notifications.some((n) => n.params?.data?.kind === "evicted"),
-    "the eviction",
-  );
   // 4000 — место взял другой держатель: доска читает его слушающим. Фейк не держит этого
   // сам (он снимает слушание с закрытием сокета), держатель-вытеснитель ставится явно.
+  await fake.control({ ws_close: 4000 });
   await fake.control({ places: [{ karta: 931, name: "proba", listening: true }] });
-  // Вызов занятия (с model) — только register и слово об отъёме; занятость уходит и тут.
+  const said = (kind) => bridge.notifications.find((n) => n.params?.data?.kind === kind);
+  await waitFor(() => said("evicted"), "the eviction");
+  assert.match(said("evicted").params.data.text, /место отняли \(proba\).*встаю рядом на proba\.N/);
+  await waitFor(() => said("resumed"), "the word about the seat beside");
+  const word = said("resumed").params.data.text;
+  assert.match(word, /место proba отняли \(4000\) — мост встал рядом своим местом со слухом/, word);
+  assert.match(word, /стояние (?:@tester:)?proba\.2 — роль #931/, word);
+  assert.match(word, /Слушать: .*watchdog proba\.2--931--nks-dev/, word);
+  assert.equal(fake.state.placeArgs.filter((p) => p.action === "connect").at(-1)?.name, "proba.2");
+  // Повтор тем же именем — на место рядом, не подпись чужим; занятость уходит от него.
+  const connects = fake.state.counts.connect;
   const again = await bridge.call("tools/call", {
     name: "iskron_stand",
     arguments: { ...args, model: "opus-5", status: "после отъёма" },
   });
   const text = textOf(again);
-  assert.match(text, /место отняли у этого моста/, text);
-  assert.match(text, /только register/, text);
-  assert.match(text, /^занятость @\S+: после отъёма$/m, "the busy line is the standing's word");
-  assert.equal(fake.state.status, "после отъёма");
-  // Занятость — от стояния, не от живого сокета (#5033, #5035): и одна занятость
-  // (realm + status) после отъёма публикуется, пока статусный адрес у моста (#6509).
-  const connects = fake.state.counts.connect;
-  const registers = fake.state.counts.register_standing;
-  const bare = await bridge.call("tools/call", {
-    name: "iskron_stand",
-    arguments: { realm: "nks-dev", status: "без роли" },
-  });
-  assert.ok(!bare.result?.isError, textOf(bare));
-  assert.match(textOf(bare), /^занятость @tester:proba: без роли/, textOf(bare));
-  // Строка ушла, а слух — у другого: ответ говорит это сам (#5036, standing «Занятость»).
-  assert.match(textOf(bare), /слух у другого держателя — .*take=true только по слову человека/);
-  assert.doesNotMatch(
-    textOf(bare),
-    /Сторож к этому месту/,
-    "no listen line: the socket is not here",
-  );
-  assert.equal(fake.state.status, "без роли");
-  assert.equal(fake.state.counts.connect, connects, "no connect");
-  assert.equal(fake.state.counts.register_standing, registers, "no register");
+  assert.match(text, /стояние @tester:proba\.2 — .*сокет уже держит этот мост — register/, text);
+  assert.doesNotMatch(text, /только register|место отняли у этого моста/, text);
+  assert.match(text, /^занятость @tester:proba\.2: после отъёма$/m, text);
+  assert.equal(fake.state.counts.connect, connects, "no new connect");
   const taken = await bridge.call("tools/call", {
     name: "iskron_stand",
     arguments: { ...args, take: true },
   });
-  assert.match(textOf(taken), /connect по take/, textOf(taken));
+  assert.match(textOf(taken), /стояние @tester:proba — .*connect по take/, textOf(taken));
   assert.match(textOf(taken), /hello получен/, "a fresh hello after the explicit take");
 });
 
@@ -1070,7 +1041,7 @@ test("English surface: the place id comes from the English register reply — th
   assert.equal(fake.state.status, "seat beside");
 });
 
-test("English surface: a place the English board reads listening under another bridge is only registered; iskron/check reads hearing and undelivered", async (t) => {
+test("English surface: a place the English board reads listening under another holder is left alone — the bridge stands beside; iskron/check reads hearing and undelivered", async (t) => {
   const { fake, bridge } = await ready(t, INIT, { ISKRON_BRIDGE_LANG: "en" });
   await fake.control({
     english: true,
@@ -1080,8 +1051,13 @@ test("English surface: a place the English board reads listening under another b
     name: "iskron_stand",
     arguments: { realm: "nks-dev", karta: 931, name: "chuzhoe" },
   });
-  assert.match(textOf(other), /another holder already listens on the seat/, textOf(other));
-  assert.equal(fake.state.counts.connect, 0, "no connect: the live socket stays with its holder");
+  assert.match(textOf(other), /another session holds the seat chuzhoe/, textOf(other));
+  assert.match(textOf(other), /standing beside as chuzhoe\.2 with hearing/, textOf(other));
+  assert.equal(
+    fake.state.placeArgs.filter((p) => p.action === "connect").at(-1)?.name,
+    "chuzhoe.2",
+    "the holder's seat is not rotated",
+  );
 
   const { fake: f2, bridge: b2 } = await ready(t, INIT, { ISKRON_BRIDGE_LANG: "en" });
   await f2.control({ english: true });
@@ -1395,11 +1371,10 @@ test("iskron_stand: a derived name another live session holds yields a separate 
   const r = await second.call("tools/call", { name: "iskron_stand", arguments: args });
   assert.ok(!r.result?.isError, standText(r));
   assert.equal(placeOf(r), `${base}.2`, standText(r));
-  assert.ok(standText(r).includes(`место ${base} держит живая сессия`), standText(r));
-  assert.ok(
-    standText(r).includes(`вернись: iskron_stand(name="${base}", take=true)`),
-    "the answer names the way back to one's own place",
-  );
+  assert.ok(standText(r).includes(`место ${base} держит другая сессия`), standText(r));
+  assert.ok(standText(r).includes(`встаю рядом на ${base}.2 со слухом`), standText(r));
+  // «Своё или чужое» решает мост по сессии, не память агента (#6706).
+  assert.doesNotMatch(standText(r), /по памяти|iskron_stand\(name=/, standText(r));
   assert.equal(fake.state.counts.connect, connects + 1, "one connect — for the new place");
   assert.equal(fake.state.ws.size, 2, "the first session keeps its socket");
   assert.equal(fake.state.counts.webhooks_added, hooks, "no role-inbox hook for a separate place");
@@ -1465,6 +1440,93 @@ test("iskron_stand: a separate place that left and stands again does not stack n
   });
   const back = await second.call("tools/call", { name: "iskron_stand", arguments: args });
   assert.equal(placeOf(back), `${base}.2`, standText(back));
+});
+
+// «Своё или чужое» знает мост, не память агента (#6702, решение #6706): плагин
+// называет сессию харнесса в iskron/resume, запись держания живого держателя её
+// несёт. Две сессии над одним каталогом гранта, имя — явное.
+async function bySession(t, first, then) {
+  const { fake, dir, bridge } = await ready(t);
+  const cwd = mkdtempSync(join(tmpdir(), "iskron-by-session-"));
+  const args = { realm: "nks-dev", karta: 931, name: "proba", cwd };
+  await bridge.call("iskron/resume", { cwd, session: first });
+  const stood = await bridge.call("tools/call", { name: "iskron_stand", arguments: args });
+  assert.ok(!stood.result?.isError, standText(stood));
+  await until(() => fake.state.ws.size === 1, "the first session's socket");
+  const second = startBridge(fake.mcpUrl, dir);
+  t.after(() => second.stop());
+  assert.ok((await second.call("initialize", INIT)).result);
+  await second.call("iskron/resume", { cwd, session: then });
+  const r = await second.call("tools/call", { name: "iskron_stand", arguments: args });
+  const connects = () =>
+    fake.state.placeArgs.filter((p) => p.action === "connect").map((p) => p.name);
+  return { fake, dir, bridge, r, connects };
+}
+
+test("iskron_stand: a name a former bridge of THIS session holds is taken back by itself, without take; the former bridge yields quietly", async (t) => {
+  const { fake, dir, bridge, r, connects } = await bySession(t, "ses-1", "ses-1");
+  const text = standText(r);
+  assert.ok(!r.result?.isError, text);
+  assert.equal(placeOf(r), "proba", text);
+  assert.match(text, /своё место этой сессии — вернул/, text);
+  assert.doesNotMatch(text, /только register|по памяти|встаю рядом/, text);
+  assert.match(text, /hello получен/, text);
+  assert.deepEqual(connects(), ["proba", "proba"], "the own seat is taken back, no seat beside");
+  // Платформа закрывает прежний сокет места кодом 4000: прежний мост этой сессии уступает
+  // тихо — не «место отняли» и не место рядом, запись нового держателя цела.
+  await fake.control({ ws_close_old: { name: "proba", code: 4000 } });
+  const released = () =>
+    bridge.notifications.find((n) => n.params?.data?.kind === "released")?.params.data;
+  await until(released, "the former bridge to let the socket go");
+  assert.equal(released().own, true, JSON.stringify(released()));
+  assert.match(released().text, /место взял новый мост этой же сессии/);
+  await new Promise((res) => setTimeout(res, 1000));
+  assert.ok(!bridge.notifications.some((n) => n.params?.data?.kind === "evicted"));
+  assert.deepEqual(connects(), ["proba", "proba"], "the former bridge stands nowhere beside");
+  const holds = readdirSync(join(dir, "standings")).filter((f) => f.endsWith(".hold"));
+  assert.equal(holds.length, 1, holds.join(", "));
+  const rec = JSON.parse(readFileSync(join(dir, "standings", holds[0]), "utf8"));
+  assert.equal(rec.session, "ses-1", "the new holder's record is not dropped by the former one");
+});
+
+test("iskron_stand: an explicit name a live bridge of ANOTHER session holds is not signed with — the bridge stands beside on name.2 with hearing", async (t) => {
+  const { fake, r, connects } = await bySession(t, "ses-1", "ses-2");
+  const text = standText(r);
+  assert.ok(!r.result?.isError, text);
+  assert.equal(placeOf(r), "proba.2", text);
+  assert.match(text, /место proba держит другая сессия — .*встаю рядом на proba\.2 со слухом/);
+  assert.doesNotMatch(text, /только register|по памяти/, text);
+  assert.match(text, /Слушать: .*watchdog proba\.2--931--nks-dev/, text);
+  assert.deepEqual(connects(), ["proba", "proba.2"], "the other session's seat is not rotated");
+  assert.equal(fake.state.ws.size, 2, "the other session keeps its socket");
+  assert.equal(fake.state.counts.webhooks_added, 1, "no role-inbox hook for the seat beside");
+});
+
+// Возврат с диска по ключу не поднимает место соседа той же роли и каталога: на
+// записи стояла другая названная сессия — место её, не этой (#5366, #6706).
+test("iskron/resume by key never takes a neighbour's seat: a record another session stood on is named, not resumed", async (t) => {
+  const { fake, dir, bridge } = await ready(t);
+  const cwd = mkdtempSync(join(tmpdir(), "iskron-neighbour-"));
+  await bridge.call("iskron/resume", { cwd, session: "ses-sosed" });
+  const stood = await bridge.call("tools/call", {
+    name: "iskron_stand",
+    arguments: { realm: "nks-dev", karta: 931, name: "proba", cwd },
+  });
+  assert.ok(!stood.result?.isError, standText(stood));
+  await bridge.stop();
+  await until(() => fake.state.ws.size === 0, "the neighbour's socket to close");
+  const next = startBridge(fake.mcpUrl, dir);
+  t.after(() => next.stop());
+  assert.ok((await next.call("initialize", INIT)).result);
+  const key = "proba--931--nks-dev";
+  const r = await next.call("iskron/resume", { key, cwd, session: "ses-moya" });
+  assert.equal(r.result?.resumed, false, JSON.stringify(r.result));
+  assert.match(r.result.word, /на месте proba--931--nks-dev стояла другая сессия/);
+  await new Promise((res) => setTimeout(res, 300));
+  assert.equal(fake.state.ws.size, 0, "no socket is opened for the neighbour's seat");
+  // Своя сессия по тому же ключу место получает.
+  const own = await next.call("iskron/resume", { key, cwd, session: "ses-sosed" });
+  assert.equal(own.result?.resumed, true, JSON.stringify(own.result));
 });
 
 test("iskron_stand: take=true on the bridge's own place re-enters with a fresh socket and a fresh hello", async (t) => {
@@ -3599,8 +3661,13 @@ test("structuredContent: without fields the prose path stands and the log says s
     name: "iskron_stand",
     arguments: { realm: "nks-dev", karta: 931, name: "chuzhoe" },
   });
-  assert.match(textOf(other), /место уже слушает другой держатель/, textOf(other));
-  assert.equal(f2.state.counts.connect, 0, "no connect: the live socket stays with its holder");
+  // Прозой доска прочитала держателя: место его не перехватывается — рядом, на chuzhoe.2 (#6706).
+  assert.match(textOf(other), /стояние \S*chuzhoe\.2 — роль/, textOf(other));
+  assert.equal(
+    f2.state.placeArgs.filter((p) => p.action === "connect").at(-1)?.name,
+    "chuzhoe.2",
+    "the one connect is for the seat beside; the holder's seat is not rotated",
+  );
   assert.match(
     b2.stderr,
     /iskron_channel list: field off its form — the prose template/,
