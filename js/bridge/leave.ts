@@ -20,6 +20,7 @@ import { resolveAgainstLed, unresolvedRefusal } from "./call.ts";
 import { notifiedClient } from "./client.ts";
 import { CFG } from "./config.ts";
 import {
+  awaitHello,
   besideKeyIn,
   heldPlaces,
   holdsStanding,
@@ -34,6 +35,7 @@ import {
   resumeStanding,
 } from "./hold.ts";
 import { markLeft } from "./holdrecord.ts";
+import { H } from "./holdstate.ts";
 import { otherRealm } from "./realms.ts";
 import { releaseSatelliteClaims } from "./satellite.ts";
 import { publishedStatus, publishStatus } from "./status.ts";
@@ -169,8 +171,24 @@ export function returnToStanding(how: string): boolean {
   return true;
 }
 
+/**
+ * Сокет, открытый заново тем же адресом (возврат, обрыв), слышит, только когда пришёл hello этого открытия; нет
+ * его за срок — адрес мог повернуть другой (контур отвечает на него 404, не
+ * кодом закрытия): сокет отпущен, место выбирается заново (#6706).
+ */
+export async function heardOnReturn(): Promise<void> {
+  if (!H.unheard || (await awaitHello(4000))) return;
+  const why = L(
+    "сокет, открытый заново тем же адресом, не дал hello — адрес мог повернуть другой",
+    "the socket reopened at the same address gave no hello — another may have turned the address",
+  );
+  log(why);
+  H.deafKey = H.currentKey; // привязка помнится, слуха нет (deaf.ts)
+  releaseStanding(why, false, false, true);
+}
+
 export function startDeafnessWatch(): void {
-  // Проба живости соседнего моста (sweepStale, deadPredecessor) цепляется к
+  // Проба живости соседнего моста (sweepStale, ownByRecord) цепляется к
   // локальному сокету и тут же отпадает — вернуть с места она не должна:
   // сторож остаётся прицепленным, проба — нет (#5140).
   onListenerAttached(() =>

@@ -2,7 +2,7 @@
 // к которому цепляется сторож места, его кольцо кадров и память отданного.
 // Сокет службы у моста один на канал (hold.ts), дверей — по одной на место:
 // канал держит места в нескольких графах, и кадр идёт к двери своего места.
-import { chmodSync, mkdirSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, unlinkSync, utimesSync } from "node:fs";
 import { createServer, type Server, type Socket } from "node:net";
 import { dirname } from "node:path";
 
@@ -20,6 +20,7 @@ import {
 } from "../shared/standings.ts";
 import { Backlog } from "./backlog.ts";
 import { CFG } from "./config.ts";
+import { closeServerKeeping, stampOf, unlinkOwned, writeOwned } from "./doorfiles.ts";
 import { isDelivered } from "./fanout.ts";
 import { countOnly, emitBatch, RoomBatch } from "./roomstack.ts";
 import { StaleBurst } from "./stale.ts";
@@ -98,6 +99,8 @@ export class Door {
   listenError: string | null = null;
   private server: Server | null = null;
   private freshen: ReturnType<typeof setInterval> | null = null;
+  /** Отпечатки .key и .sock, которые положила эта дверь (doorfiles.ts): close сносит только их. */
+  private stamps: { key: string | null; sock: string | null } = { key: null, sock: null };
   private readonly hooks: DoorHooks;
   // Каталог гранта и сервер — сессии, открывшей дверь (shared/scope.ts): дверь
   // закрывается и из чужой области (уход демона), а пути у неё те же.
@@ -130,6 +133,11 @@ export class Door {
 
   get socketPath(): string {
     return socketPathOf(this.authDir, this.key);
+  }
+
+  /** По пути сокета лежит сокет этой двери, а не положенный поверх преемником. */
+  get ownsSocket(): boolean {
+    return !!this.stamps.sock && stampOf(this.socketPath) === this.stamps.sock;
   }
 
   push(raw: string, frame: Frame | null): void {
@@ -167,7 +175,7 @@ export class Door {
       }
     }
     sweepStale(authDir, key);
-    writeFileSync(keyFilePathOf(authDir, key), key + "\n", { mode: 0o600 });
+    this.stamps = { key: writeOwned(keyFilePathOf(authDir, key), key + "\n"), sock: null };
     if (process.platform !== "win32") {
       try {
         unlinkSync(path);
@@ -235,12 +243,14 @@ export class Door {
             chmodSync(path, 0o600);
           } catch {}
         }
+        this.stamps.sock = stampOf(path);
         log(`standing socket held; local listeners attach at ${path}`);
         // Чистка /tmp (macOS — трое суток без доступа) не снесёт сокет долгой вахты.
         if (dirname(path) === shortSocketDir()) {
           const touch = (): void => {
             const now = new Date();
-            for (const p of [dirname(path), path])
+            const mine = stampOf(path) === this.stamps.sock;
+            for (const p of mine ? [dirname(path), path] : [dirname(path)])
               try {
                 utimesSync(p, now, now);
               } catch {}
@@ -279,22 +289,20 @@ export class Door {
     if (this.freshen) clearInterval(this.freshen);
     const srv = this.server;
     this.server = null;
-    if (srv) {
+    const shut = (): void => {
       try {
-        srv.close();
+        srv?.close();
       } catch {}
-    }
-    for (const p of [
-      keyFilePathOf(this.authDir, this.key),
-      ...(this.persistent ? [] : [this.seenPath]),
-    ]) {
+    };
+    // Файлы двери — только свои: тем же путём мог встать преемник того же места (doorfiles.ts).
+    // Сокет, ещё не поднятый (отпечатка нет), закрывается как есть.
+    if (process.platform === "win32" || !this.stamps.sock) shut();
+    else closeServerKeeping(this.socketPath, this.stamps.sock, shut);
+    unlinkOwned(keyFilePathOf(this.authDir, this.key), this.stamps.key);
+    this.stamps = { key: null, sock: null };
+    if (!this.persistent) {
       try {
-        unlinkSync(p);
-      } catch {}
-    }
-    if (process.platform !== "win32") {
-      try {
-        unlinkSync(this.socketPath);
+        unlinkSync(this.seenPath);
       } catch {}
     }
     this.ring.length = 0;

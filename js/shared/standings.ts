@@ -74,6 +74,14 @@ export const keyFilePathOf = (authDir: string, key: string): string =>
 export const holdFilePathOf = (authDir: string, key: string): string =>
   join(standingsDirOf(authDir), `${hashOf(key)}.hold`);
 
+/** Основа места (граф nks-dev: #6706): переживает запись держания, которую стирает мёртвый токен. */
+export const baseFilePathOf = (authDir: string, key: string): string =>
+  join(standingsDirOf(authDir), `${hashOf(key)}.base`);
+
+/** Намерение занять место (0600): лежит, пока connect моста в полёте (граф nks-dev: #6706). */
+export const takingFilePathOf = (authDir: string, key: string): string =>
+  join(standingsDirOf(authDir), `${hashOf(key)}.taking`);
+
 /** Спул передачи (0600): кадры, пришедшие уходящему демону после закрытия двери места, — преемнику (граф nks-dev: #6586). */
 export const spoolFilePathOf = (authDir: string, key: string): string =>
   join(standingsDirOf(authDir), `${hashOf(key)}.spool`);

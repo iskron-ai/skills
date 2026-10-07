@@ -198,6 +198,8 @@ export interface HoldOptions {
   onNote?: (text: string) => void;
   /** Соединение подвисло и переоткрывается: кадры могли пропасть — слово громче служебного. Без него — как onNote. */
   onHung?: (text: string) => void;
+  /** Сокет оборвался и откроется заново тем же адресом: до hello нового открытия слуха нет — адрес мог повернуть другой (контур отвечает 404). */
+  onDropped?: () => void;
 }
 
 export interface Holder {
@@ -364,6 +366,7 @@ export function holdSocket(o: HoldOptions): Holder {
       if (code === EVICTED_CODE) return yieldTo(o.onEvicted ?? o.onDeadToken, code);
       if (gone) return;
       gone = true;
+      o.onDropped?.();
       const fast = Date.now() - startedAt < FAST_DROP_MS;
       fastDrops = fast ? fastDrops + 1 : 0;
       if (!fast) slowdown = 0; // сокет прожил — полоса обрывов кончилась
