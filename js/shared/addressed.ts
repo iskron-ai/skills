@@ -1,5 +1,6 @@
 // Адресованность записи дела месту читателя — закон доставки (граф nks-dev:
 // #6574): в ход текстом входит только адресованное, прочее — числом.
+import { askedMine } from "./asks.ts";
 import { classifyOrigin, type Frame } from "./channel.ts";
 import { numberedKey } from "./numbering.ts";
 import { addresseeOf, after, byKind, mineOf, myRole, obj, roomKind, str } from "./room-kinds.ts";
@@ -86,6 +87,8 @@ export function addressedToMine(frame: Frame | null | undefined): boolean {
     if (rk?.phase === "pending") rememberWord(wordKeyOf(frame));
     return true;
   }
+  // Вопрос моей роли или моему месту (#6867); ответ и приём адресованы addressee — выше.
+  if (rk?.kind === "ask" && askedMine(f, fields)) return true;
   // Приглашение мне или его отзыв: ключ invite:<моё место>, приглашение роли — моей роли.
   if (rk?.kind === "invite" || rk?.kind === "withdraw") {
     if (mine.includes(after(str(line.key), "invite:"))) return true;

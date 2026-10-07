@@ -382,3 +382,69 @@ export const addressedBody = (entry_id, refers_to, addressee = BORIS) => ({
   stack: "interrupt",
   addressee,
 });
+
+// ── Вопрос в деле (контракт Э1: граф nks-dev #6866, роды — #6867) ──
+// Роды ask, answer, ack под свободным ключом; payload записи — поля строки
+// (fields), как у прочих родов провода. Форма — по контракту, боем не наблюдена.
+export const ASK_KEY = "выкат: сегодня?";
+/** Человек, отвечающий на вопрос, — место роли-адресата, не участник дела. */
+export const HUMAN = {
+  kind: "standing",
+  standing: "@dmitry:phone",
+  name: "Дмитрий",
+  karta: { seq: 1226, name: "Владелец" },
+};
+
+/** Вопрос роли seq (по умолчанию моей): yes_no с рекомендацией. */
+export const ask = (entry_id, seq = MY_KARTA, fields = {}) =>
+  roomFrame("ask", {
+    entry_id,
+    key: ASK_KEY,
+    line: { done: "Выкатывать сегодня?", verdict: "partial" },
+    fields: {
+      to_karta: { seq, name: "🚚 Поставщик плитки", realm: MY_REALM },
+      form: "yes_no",
+      recommendation: { option: "yes", why: "гейт зелёный" },
+      ...fields,
+    },
+    envelope: { realm: MY_REALM, karta_seq: MY_KARTA },
+  });
+
+/** Ответ человека на вопрос refers_to; кадр адресован месту спросившего. */
+export const answer = (entry_id, refers_to, addressee = ME, fields = { choice: "yes" }) =>
+  roomFrame("answer", {
+    entry_id,
+    key: ASK_KEY,
+    author: HUMAN,
+    line: { done: "после обеда", verdict: "partial", in_reply_to: refers_to },
+    fields,
+    envelope: { realm: MY_REALM, karta_seq: MY_KARTA, addressee, in_reply_to: refers_to },
+  });
+
+/** «Принята» на ответ refers_to; кадр адресован месту ответившего. */
+export const ack = (entry_id, refers_to, addressee = HUMAN.standing) =>
+  roomFrame("ack", {
+    entry_id,
+    key: ASK_KEY,
+    line: { done: "выкатываю после обеда", verdict: "ok", in_reply_to: refers_to },
+    envelope: { realm: MY_REALM, karta_seq: MY_KARTA, addressee, in_reply_to: refers_to },
+  });
+
+/** Снятие вопроса: progress роли спросившего на ключе вопроса, fields.withdraws — номер ask. */
+export const askWithdrawn = (entry_id, withdraws) =>
+  roomFrame("progress", {
+    entry_id,
+    key: ASK_KEY,
+    line: { done: "снят: выкатили иначе", verdict: "bad" },
+    fields: { withdraws },
+    envelope: { realm: MY_REALM, karta_seq: MY_KARTA },
+  });
+
+/** Зов роли платформой (#6870): приглашение роли с cause и погасшим местом. */
+export const roleCall = (entry_id, cause, seq = MY_KARTA) => {
+  const f = roleInvite(entry_id, seq);
+  f.line.author = PLATFORM;
+  f.provenance = { auth: "platform", via: "room" };
+  f.line.fields = { ...f.line.fields, cause, standing: "@aleksei:gone" };
+  return f;
+};

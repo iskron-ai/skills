@@ -4,8 +4,12 @@
 // стопкой) словарь не трогает: путь у него прежний — у каждого харнеса свой,
 // как до словаря. Правила — кодом (RULES и stackOf), слова — ДАННЫМИ (WORDS):
 // локализация заменит таблицу, не код.
+import { addressedMine, ASK_KINDS, askedMine, askValues, askWord } from "./asks.ts";
 import { type Frame } from "./channel.ts";
 import { L, lang } from "./lang.ts";
+import { addresseeOf, after, fill, mineOf, myRole, obj, type Rec, str } from "./room-fields.ts";
+
+export { addresseeOf, after, mineOf, myRole, obj, str };
 
 /** Куда идёт кадр: прервать идущий ход или лечь в пачку. */
 export type Stack = "interrupt" | "batch";
@@ -172,8 +176,10 @@ const NODE_OPS: Readonly<Record<string, string>> = {
  * Правило рода: interrupt и batch — всегда так; stack — по стопке кадра
  * (said и body: стопка — метка слова); mine — прерывает, когда цель — своё
  * стояние или своя роль (invite). Слово в полёте и обрыв — в пачку (#5953).
+ * role — прерывает вопрос моей роли или моему месту; addressed — прерывает,
+ * когда адресат кадра (addressee) — моё место.
  */
-type Rule = Stack | "stack" | "mine";
+type Rule = Stack | "stack" | "mine" | "role" | "addressed";
 const RULES: Readonly<Record<string, Rule>> = {
   said: "stack",
   body: "stack",
@@ -182,6 +188,10 @@ const RULES: Readonly<Record<string, Rule>> = {
   objection: "interrupt",
   late_objection: "interrupt",
   invite: "mine",
+  // Вопрос — моей роли или моему месту; ответ и приём — адресату кадра (#6867, #6655).
+  ask: "role",
+  answer: "addressed",
+  ack: "addressed",
   progress: "batch",
   opened: "batch",
   joined: "batch",
@@ -214,12 +224,6 @@ export interface RoomKind {
   aside?: { pair: string; counts: boolean; run: (n: number) => string };
 }
 
-type Rec = Record<string, unknown>;
-export const obj = (v: unknown): Rec =>
-  v && typeof v === "object" && !Array.isArray(v) ? (v as Rec) : {};
-export const str = (v: unknown): string =>
-  typeof v === "string" ? v : typeof v === "number" || typeof v === "boolean" ? String(v) : "";
-
 /** Кто написал: имя (стояние), иначе стояние, иначе платформа; a — author строки или место in_reply_to_from. */
 function authorOf(author: unknown): string {
   const a = obj(author);
@@ -230,39 +234,10 @@ function authorOf(author: unknown): string {
   return a.kind === "platform" ? L("платформа", "platform") : "?";
 }
 
-export const after = (key: string, prefix: string): string =>
-  key.startsWith(prefix) ? key.slice(prefix.length) : key;
-
-function fill(template: string, v: Rec): string {
-  return template.replace(/\{([^\w{}]*)(\w+)\}/g, (_m, sep: string, name: string) => {
-    const x = str(v[name]);
-    if (sep) return x ? sep + x : "";
-    return x || "?";
-  });
-}
-
 /** Связанное дело в полях link и auto — {id, seq, zachin} (#5893 §4.3a): seq, иначе id; голая строка — как есть. */
 function roomOf(v: unknown): string {
   const r = obj(v);
   return str(r.seq) || str(r.id) || str(v);
-}
-
-/** Своё стояние кадра для ключа invite — id места и его адрес: формат ключа (#5893 §4.2) ещё не подтверждён. */
-export const mineOf = (frame: Rec): string[] =>
-  [str(frame.to_standing_id), str(frame.to_standing)].filter(Boolean);
-
-/**
- * Приглашение моей роли (api 0.89.6): ключ несёт id узла роли, поля строки —
- * karta {id, name, seq, realm} (наблюдено на бою), кадр — мой karta_seq. seq
- * принадлежит графу: названные с обеих сторон графы обязаны совпасть.
- */
-export function myRole(frame: Rec, fields: Rec): boolean {
-  const ka = obj(fields.karta);
-  const seq = str(ka.seq);
-  if (!seq || seq !== str(frame.karta_seq)) return false;
-  const theirs = str(ka.realm);
-  const mine = str(frame.realm) || str(obj(frame.room).realm);
-  return !theirs || !mine || theirs === mine;
 }
 
 /** Имя приглашённого из полей строки: место, иначе роль. */
@@ -272,24 +247,6 @@ function whoOf(fields: Rec): string {
   const name = str(st.name) || str(ka.name);
   const addr = str(st.standing);
   return name && addr ? `${name} (${addr})` : name || addr;
-}
-
-/**
- * Адресат слова (api 0.91.3, наблюдено на бою): верхний addressee конверта —
- * строка-адрес места; объект места {standing | handle+name, id, name} тоже
- * принимается. addr — чем сравнивать с моим местом, label — как назвать.
- */
-export function addresseeOf(v: unknown): { addr: string[]; label: string } | null {
-  if (typeof v === "string") return v ? { addr: [v], label: v } : null;
-  const o = obj(v);
-  const handle = str(o.handle).replace(/^@/, "");
-  const standing =
-    str(o.standing) || (handle ? `@${handle}${str(o.name) ? `:${str(o.name)}` : ""}` : "");
-  const id = str(o.id);
-  const name = str(o.standing) ? str(o.name) : "";
-  const label = name && standing ? `${name} (${standing})` : standing || str(o.name) || id;
-  const addr = [standing, id].filter(Boolean);
-  return addr.length ? { addr, label } : null;
 }
 
 /** Число слов словом таблицы языка: 1 слово, 3 слова, 5 слов. */
@@ -322,6 +279,7 @@ export function roomKind(frame: Frame | null | undefined): RoomKind | null {
   const key = str(line.key);
   const mine = mineOf(f);
   const node = obj(fields.node);
+  const cause = kind === "invite" ? str(fields.cause) : "";
   // У body строка — запись тела (у обрыва по сроку её автор — платформа);
   // автор самого слова — in_reply_to_from конверта (#5893 §4.5b, §4.6).
   const byWhom = authorOf(
@@ -341,15 +299,24 @@ export function roomKind(frame: Frame | null | undefined): RoomKind | null {
     evidence: Array.isArray(fields.evidence) ? fields.evidence.map(str).join(", ") : "",
     entry_id: line.entry_id ?? f.entry_id,
     // Слово, которому body несёт текст или обрыв: refers_to строки, иначе in_reply_to конверта.
-    refers_to: str(line.refers_to) || str(f.in_reply_to) || str(obj(f.word).entry_id),
+    // Ответ и приём (#6867) — in_reply_to строки или конверта.
+    refers_to:
+      str(line.refers_to) ||
+      str(line.in_reply_to) ||
+      str(f.in_reply_to) ||
+      str(obj(f.word).entry_id),
     reason: fields.reason,
     target: after(key, "invite:"),
     // Ключ несёт id; имя приглашённого — в полях строки (наблюдено на бою: standing/karta с name).
     // Вошедший и ушедший — место fields.standing (уход по сроку пишет платформа, api 0.89.6), иначе автор.
+    // Зов роли (#6870) — роль по имени; fields.standing там — погасшее место.
     who:
       kind === "joined" || kind === "left"
         ? whoOf({ standing: fields.standing }) || byWhom
-        : whoOf(fields) || after(key, "invite:"),
+        : (cause ? whoOf({ karta: fields.karta }) : whoOf(fields)) || after(key, "invite:"),
+    standing: str(fields.standing) || addresseeOf(fields.standing)?.label,
+    withdraws: fields.withdraws,
+    ...(ASK_KINDS.has(kind) ? askValues(kind, line, fields) : {}),
     room: roomOf(fields.room) || after(key, "link:"),
     rel: relWords()[str(fields.rel)] ?? fields.rel,
     code: fields.code,
@@ -414,10 +381,16 @@ export function roomKind(frame: Frame | null | undefined): RoomKind | null {
         : W.body_aborted
       : kind === "auto"
         ? (autoWords()[str(values.code)] ?? W.auto)
-        : // op узла (bound | updated | deleted | undeleted): без op и bound — прежнее слово.
-          kind === "node" && NODE_OPS[str(fields.op)]
-          ? W[NODE_OPS[str(fields.op)]]
-          : W[kind];
+        : cause && askWord(`invite_${cause}`)
+          ? askWord(`invite_${cause}`)
+          : kind === "progress" && str(fields.withdraws)
+            ? askWord("ask_withdrawn")
+            : ASK_KINDS.has(kind)
+              ? askWord(kind)
+              : // op узла (bound | updated | deleted | undeleted): без op и bound — прежнее слово.
+                kind === "node" && NODE_OPS[str(fields.op)]
+                ? W[NODE_OPS[str(fields.op)]]
+                : W[kind];
   let text = fill(wordsOf ?? "", values);
   if (kind === "closing") {
     // На бою (api 0.88.0) may_object — массив объектов {id, standing, name, karta};
@@ -439,7 +412,15 @@ export function roomKind(frame: Frame | null | undefined): RoomKind | null {
         ? mine.includes(str(values.target)) || myRole(f, fields)
           ? "interrupt"
           : "batch"
-        : rule;
+        : rule === "role"
+          ? askedMine(f, fields)
+            ? "interrupt"
+            : "batch"
+          : rule === "addressed"
+            ? addressedMine(f)
+              ? "interrupt"
+              : "batch"
+            : rule;
   // Слово в полёте (текста нет) и обрыв не будят: в пачку при любой стопке.
   const phase = pending ? "pending" : aborted ? "aborted" : null;
   return { kind, rule: phase ? "batch" : stack, words: text, author, phase, known: true };

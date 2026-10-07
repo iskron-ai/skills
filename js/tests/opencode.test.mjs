@@ -52,6 +52,9 @@ import {
   addressedBody,
   addressedInFlight,
   addressedLeft,
+  answer,
+  ask,
+  askWithdrawn,
   auto,
   body as bodyFrame,
   bodyAborted,
@@ -5468,6 +5471,51 @@ test("room kinds: closing steers a busy agent despite stack=defer and says who m
     assert.equal(p10.delivery, "steer", "closing interrupts even when I may not object");
     assert.match(p10.text, /возражать не тебе/);
     assert.doesNotMatch(p10.text, /ты можешь возразить/);
+  } finally {
+    await rec.stop();
+  }
+});
+
+// A question in the case (Э1 contract, graph nks-dev #6867; the bridge's share — #6868):
+// the answer to my question steers the waiting agent at once (#6655); the same
+// kinds to others prompt nothing; the withdrawal and the choice question words.
+test("question kinds: an answer to my seat steers; an answer to another and a withdrawal ride the next prompt", async () => {
+  const b = bridgeEnv("room-asks");
+  const rec = await plugin(b.env);
+  try {
+    await serverTools(rec);
+    await until(() => rec.tools().has("iskron_channel"), "the channel tool");
+    await rec.call("iskron_channel", { action: "connect" }, "s-asks");
+    const [pid] = pidsOf(b.log);
+    const push = (frame) =>
+      appendFileSync(`${b.events}.${pid}`, event("frame", { frame, raw: JSON.stringify(frame) }));
+    const send = async (frame, i) => {
+      push(frame);
+      await until(() => rec.prompts.length === i, `prompt ${i}`);
+      return rec.prompts[i - 1];
+    };
+    const quiet = async (frame) => {
+      const n = rec.prompts.length;
+      push(frame);
+      await delay(BATCH_MS * 4);
+      assert.equal(rec.prompts.length, n, `${frame.event_kind} prompted on its own`);
+    };
+    const options = [
+      { id: "now", label: "Сейчас" },
+      { id: "later", label: "После обеда", context: "после выкладки api" },
+    ];
+    const q = await send(ask(90, MY_KARTA, { form: "choice", options, recommendation: {} }), 1);
+    assert.equal(q.delivery, "steer", "a question to my role interrupts");
+    assert.match(q.text, /варианты: now «Сейчас», later «После обеда» \(после выкладки api\)/);
+    assert.doesNotMatch(q.text, /рекомендация/, "no recommendation — no words for it");
+    await quiet(ask(95, MY_KARTA + 1));
+    await quiet(answer(96, 95, BORIS));
+    await quiet(askWithdrawn(98, 95));
+    const a = await send(answer(91, 90, ME, { choice: "later" }), 2);
+    assert.equal(a.delivery, "steer", "the answer to my question wakes me now");
+    assert.match(a.text, /^№7 «Стенд»: записей 3, тебе 0 — /, "the others ride as a count");
+    assert.match(a.text, /Дмитрий \(@dmitry:phone\) отвечает на \[90\]: later; «после обеда»/);
+    assert.doesNotMatch(a.text, /снят|@boris/);
   } finally {
     await rec.stop();
   }

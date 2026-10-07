@@ -49,10 +49,14 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { BUILT_EXTENSION } from "./built.mjs";
 import {
+  ack,
   addressed,
   addressedBody,
   addressedInFlight,
   addressedLeft,
+  answer,
+  ask,
+  askWithdrawn,
   auto,
   body as bodyFrame,
   bodyAborted,
@@ -67,6 +71,7 @@ import {
   ME_ID,
   MY_KARTA,
   progress,
+  roleCall,
   roleInvite,
   roomFrame,
   said,
@@ -800,6 +805,60 @@ test("room kinds: closing and records to me go by their way; the rest of the cas
     assert.match(count.msg.content, /^№7 «Стенд»: записей 7, тебе 0/);
     assert.ok(!count.msg.content.includes("слово со стопкой"), count.msg.content);
     assert.ok(!count.msg.content.includes("пробы зелёные"), count.msg.content);
+  } finally {
+    await rec.stop();
+  }
+});
+
+// A question in the case (Э1 contract, graph nks-dev #6866/#6867; the bridge's
+// share — #6868): a question to my role, an answer to my question, an ack to me
+// and the platform's call of my role wake now, in words (#6655); the same kinds
+// for others are a count of the case, and the withdrawal goes later.
+test("question kinds: ask to my role, answer and ack to my seat, a call of my role wake; others are a count", async () => {
+  const { events, env } = eventsEnv("question-kinds");
+  const rec = await session({ ...env, ISKRON_PI_ASIDE_MS: 300 });
+  try {
+    const mine = [
+      [ask(90), "steer"],
+      [answer(91, 90), "steer"],
+      [ack(92, 91, ME), "steer"],
+      [roleCall(93, "ownerless"), "steer"],
+      [roleCall(94, "answer_waiting"), "steer"],
+    ];
+    const echo = ask(99);
+    echo.line.author = { kind: "standing", standing: ME, name: "proba" };
+    const rest = [
+      ask(95, MY_KARTA + 1),
+      answer(96, 95, BORIS),
+      ack(97, 96),
+      askWithdrawn(98, 95),
+      echo, // my own question to my own role is not a question to me
+    ];
+    for (const f of [...mine.map(([f]) => f), ...rest]) push(events, frame(f));
+    await delay(1000);
+    assert.equal(rec.messages.length, mine.length + 1, JSON.stringify(rec.messages));
+    mine.forEach(([f, way], i) =>
+      assert.equal(
+        rec.messages[i].opts.deliverAs,
+        way,
+        `${f.event_kind} [${f.entry_id}] must go ${way}`,
+      ),
+    );
+    const [q, a, k, gone, waiting] = rec.messages.map((m) => m.msg.content);
+    assert.match(
+      q,
+      /спрашивает роль 🚚 Поставщик плитки \[выкат: сегодня\?\]: «Выкатывать сегодня\?»; ответ: да или нет \(yes \| no\); рекомендация: yes — гейт зелёный/,
+    );
+    assert.match(a, /Дмитрий \(@dmitry:phone\) отвечает на \[90\]: yes; «после обеда»/);
+    assert.match(k, /ответ \[91\] принят: «выкатываю после обеда»/);
+    assert.match(
+      gone,
+      /платформа зовёт роль 🚚 Поставщик плитки в дело: место @aleksei:gone погасло/,
+    );
+    assert.match(waiting, /ответ ждёт приёма, спросившее место @aleksei:gone ушло/);
+    const count = rec.messages.at(-1);
+    assert.equal(count.opts.deliverAs, "nextTurn");
+    assert.match(count.msg.content, /^№7 «Стенд»: записей 5, тебе 0/);
   } finally {
     await rec.stop();
   }
