@@ -397,36 +397,30 @@ export async function startFakeNks(opts = {}) {
       }
       const kept = trim ? trimToWord(text, 64) : text;
       st.status = kept;
-      if (trim) {
-        st.counts.status_posts++;
-        const chan = st.channels.get(st.wsChannel.get(p.slice("/channel/status/".length)));
-        for (const pl of chan?.places.values() ?? [])
-          if (!standing_id || pl.standing_id === standing_id)
-            st.placeStatus.set(pl.standing_id, kept);
-        // statusTrim "bare": живая форма полей предупреждения не наблюдена — только code.
-        const bare = st.statusTrim === "bare";
-        return json(res, 200, {
-          ok: true,
-          ...(bare ? {} : { doing: kept }),
-          warnings: [
-            bare
-              ? { code: "trimmed_to_limit" }
-              : {
-                  code: "trimmed_to_limit",
-                  message: "переназови: обрезано до 64",
-                  doing: kept,
-                  max: 64,
-                },
-          ],
-        });
-      }
       st.counts.status_posts++;
       // Строка держится у места: со standing_id — у одного места канала, без него — у всех (#5838).
       const chan = st.channels.get(st.wsChannel.get(p.slice("/channel/status/".length)));
       for (const pl of chan?.places.values() ?? [])
         if (!standing_id || pl.standing_id === standing_id)
-          st.placeStatus.set(pl.standing_id, text);
-      return json(res, 200, { ok: true });
+          st.placeStatus.set(pl.standing_id, kept);
+      // Форма ответа api 0.108.0 (дело №234 [139]): 200 {doing, doing_at, warnings?};
+      // принятая строка — doing верхнего уровня, элемент warnings — {code, message}.
+      // statusTrim "old" — сервер без doing в ответе; "stray" — в элементе предупреждения
+      // лишние doing и max, которых сервер не шлёт: мост их не читает.
+      const old = st.statusTrim === "old";
+      const warning = { code: "trimmed_to_limit", message: "переназови: обрезано до 64" };
+      return json(res, 200, {
+        ...(old ? { ok: true } : { doing: kept || null, doing_at: new Date().toISOString() }),
+        ...(trim
+          ? {
+              warnings: [
+                st.statusTrim === "stray"
+                  ? { ...warning, doing: "не эта строка", max: 10 }
+                  : warning,
+              ],
+            }
+          : {}),
+      });
     }
 
     if (p === "/control") {

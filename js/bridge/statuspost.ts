@@ -9,6 +9,8 @@ export interface StatusOutcome {
   ok: boolean;
   body: string;
   code?: number;
+  /** Строка, которую сервер принял: doing ответа; без него при обрезке — выведенная правилом, иначе нет (легла отправленная). */
+  doing?: string;
   /** Строка принята обрезанной (warnings[] trimmed_to_limit). */
   trimmed?: StatusTrim;
 }
@@ -16,36 +18,24 @@ export interface StatusOutcome {
 /**
  * Строка занятости длиннее предела ложится обрезанной по слову, полный текст —
  * в истории места (граф nks-dev: #6729, нудж #6730; дело №234): ответ POST — 200
- * с warnings[] кода trimmed_to_limit. doing — принятая строка, null — сервер её не назвал.
+ * {doing, doing_at, warnings?}, элемент warnings — {code: trimmed_to_limit, message}
+ * (дело №234 [139]). doing — принятая строка, message — слово сервера агенту.
  */
 export interface StatusTrim {
-  doing: string | null;
-  max: number | null;
+  doing: string;
   message: string;
 }
 
 const TRIMMED = "trimmed_to_limit";
+/** Предел строки api 0.108.0 — только для вывода принятой строки, когда ответ её не назвал. */
+const LIMIT = 64;
 
 type Obj = Record<string, unknown>;
 const obj = (v: unknown): Obj => (v && typeof v === "object" ? (v as Obj) : {});
 
-/** Обрезка из предупреждения ответа; поля ищутся и в data, и на верхнем уровне ответа. */
-function trimOf(w: unknown, top: unknown): StatusTrim {
-  const [a, b, c] = [obj(w), obj(obj(w).data), obj(top)];
-  const pick = (k: string): unknown => a[k] ?? b[k] ?? c[k];
-  const doing = pick("doing");
-  const max = Number(pick("max"));
-  const message = pick("message");
-  return {
-    doing: typeof doing === "string" ? doing : null,
-    max: Number.isFinite(max) && max > 0 ? max : null,
-    message: typeof message === "string" ? message.trim() : "",
-  };
-}
-
 /**
- * Строка, какой сервер её кладёт, когда принятую он не назвал: по слову до max
- * знаков с «…» — правило обрезки api 0.108.0 (дело №234 [22], #6729).
+ * Строка, какой сервер её кладёт, — запасной путь, когда ответ doing не несёт
+ * (сервер до api 0.108.0): по слову до max знаков с «…» (дело №234 [22], #6729).
  */
 export function trimToWord(text: string, max: number): string {
   const chars = [...text];
@@ -56,32 +46,34 @@ export function trimToWord(text: string, max: number): string {
 }
 
 /**
- * warnings[] кода trimmed_to_limit в теле удачного ответа; иначе undefined (тело не
- * JSON — прежний сервер). Принятую строку, не названную сервером, выводит правило:
- * отправленная за принятую не выдаётся и в держание не ложится.
+ * Принятая строка и обрезка из тела удачного ответа. Принятая — doing верхнего
+ * уровня; ответ без doing (тело не JSON или сервер до api 0.108.0) — отправленная,
+ * а при предупреждении trimmed_to_limit — выведенная правилом: отправленная за
+ * принятую не выдаётся и в держание не ложится.
  */
-function trimmedIn(body: string, sent: string): StatusTrim | undefined {
-  let parsed: unknown;
+function acceptedIn(body: string, sent: string): Pick<StatusOutcome, "doing" | "trimmed"> {
+  let parsed: Obj = {};
   try {
-    parsed = JSON.parse(body);
+    parsed = obj(JSON.parse(body));
   } catch {
-    return undefined;
+    /* прежний сервер: тело не JSON */
   }
-  const warnings = obj(parsed).warnings;
-  const w = Array.isArray(warnings) ? warnings.find((x) => obj(x).code === TRIMMED) : undefined;
-  if (!w) return undefined;
-  const t = trimOf(w, parsed);
-  return { ...t, doing: t.doing ?? trimToWord(sent, t.max ?? 64) };
+  const warnings = Array.isArray(parsed.warnings) ? parsed.warnings : [];
+  const w = obj(warnings.find((x) => obj(x).code === TRIMMED));
+  const told = typeof parsed.doing === "string" ? parsed.doing : null;
+  if (!w.code) return told === null ? {} : { doing: told };
+  const doing = told ?? trimToWord(sent, LIMIT);
+  const message = typeof w.message === "string" ? w.message.trim() : "";
+  return { doing, trimmed: { doing, message } };
 }
 
-/** Нудж обрезки агенту: до скольких обрезано, слово сервера; ход — переназвать коротко. */
+/** Нудж обрезки агенту: слово сервера; без него — что обрезано; ход — переназвать коротко. */
 export function trimNudge(t: StatusTrim): string {
   if (t.message)
     return L(`строка обрезана сервером: ${t.message}`, `the server trimmed the line: ${t.message}`);
-  const max = t.max ?? 64;
   return L(
-    `сервер обрезал строку до ${max} знаков; полный текст — в истории места, переназови короче`,
-    `the server trimmed the line to ${max} characters; the full text is in the seat's history, rename it shorter`,
+    "сервер обрезал строку; полный текст — в истории места, переназови короче",
+    "the server trimmed the line; the full text is in the seat's history, rename it shorter",
   );
 }
 
@@ -136,6 +128,5 @@ export async function publishStatusTo(
         `Refused (${res.status}) by the surface: ${body || "no body"}`,
       ),
     };
-  const trimmed = trimmedIn(body, text);
-  return { ok: true, body, ...(trimmed ? { trimmed } : {}) };
+  return { ok: true, body, ...acceptedIn(body, text) };
 }

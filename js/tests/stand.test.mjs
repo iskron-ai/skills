@@ -3468,13 +3468,21 @@ test("a busy line the server trims: every status move names the accepted line an
     }),
     "action status",
   );
-  // Предупреждение с одним code: отправленная строка за принятую не выдаётся.
-  await fake.control({ statusTrim: "bare" });
-  const bare = textOf(await stand({ realm: "nks-dev", status: long }));
-  assert.ok(!bare.includes(long), `the sent line named as accepted:\n${bare}`);
+  // Принятая строка — doing верхнего уровня ответа; поля внутри предупреждения мост не читает.
+  await fake.control({ statusTrim: "stray" });
+  const stray = textOf(await stand({ realm: "nks-dev", status: long }));
   assert.ok(
-    bare.includes(`: ${fake.state.status}; сервер обрезал строку до 64 знаков`),
-    `the accepted line, by the server's trimming rule:\n${bare}`,
+    stray.includes(`: ${fake.state.status}; строка обрезана сервером: переназови`),
+    `the accepted line is the answer's top-level doing:\n${stray}`,
+  );
+  assert.ok(!stray.includes("не эта строка"), `a field inside the warning was read:\n${stray}`);
+  // Ответ без doing (прежний сервер): отправленная строка за принятую не выдаётся.
+  await fake.control({ statusTrim: "old" });
+  const old = textOf(await stand({ realm: "nks-dev", status: long }));
+  assert.ok(!old.includes(long), `the sent line named as accepted:\n${old}`);
+  assert.ok(
+    old.includes(`: ${fake.state.status}; строка обрезана сервером: переназови`),
+    `the accepted line, by the server's trimming rule:\n${old}`,
   );
   // Слово, кончающееся ровно на пределе, остаётся целым.
   const edge = `${"а".repeat(30)} ${"б".repeat(32)} вввв`;

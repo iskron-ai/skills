@@ -70,7 +70,7 @@ export function busyLine(text: string, realm: string): string {
   const t = S.trims.get(statusAddress(realm)?.key ?? "");
   if (t?.sent !== text)
     return `${L("занятость", "busyness")} ${placeLabel(realm)}: ${text || L("(снята)", "(cleared)")}`;
-  return `${L("занятость", "busyness")} ${placeLabel(realm)}: ${t.doing ?? text}; ${trimNudge(t)}`;
+  return `${L("занятость", "busyness")} ${placeLabel(realm)}: ${t.doing}; ${trimNudge(t)}`;
 }
 
 /** Место так, как его зовёт доска; адрес, не названный hello, — помечен, а не выдан за названный. */
@@ -227,7 +227,7 @@ export async function publishStatus(
   const st = await publishStatusTo(addr.url, text, 5000, everyPlace ? null : addr.standingId);
   if (st.ok) {
     // Легла принятая строка: обрезанная сервером возвращается после перезапуска такой, какой легла.
-    const kept = st.trimmed?.doing ?? text;
+    const kept = st.doing ?? text;
     if (st.trimmed) S.trims.set(addr.key, { ...st.trimmed, sent: text });
     else S.trims.delete(addr.key);
     if (addr.key === statusAddress()?.key) S.lastPublished = kept;
