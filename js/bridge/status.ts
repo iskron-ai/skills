@@ -29,7 +29,7 @@ import { normKarta, normName } from "./names.ts";
 import { extraIn } from "./places.ts";
 import { sameRealm } from "./realms.ts";
 import { statusAddress } from "./statusaddr.ts";
-import { publishStatusTo, type StatusOutcome } from "./statuspost.ts";
+import { publishStatusTo, type StatusOutcome, type StatusTrim, trimNudge } from "./statuspost.ts";
 import { localSocketAlive } from "./sweep.ts";
 import { type Standing, state } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
@@ -61,9 +61,17 @@ async function statusWord(text: string, realm: string): Promise<[string, boolean
   return [st.body, true];
 }
 
-/** Слово о принятой занятости — одно у отдельного хода и у занятия места (#6634): называет место. */
-export const busyLine = (text: string, realm: string): string =>
-  `${L("занятость", "busyness")} ${placeLabel(realm)}: ${text || L("(снята)", "(cleared)")}`;
+/**
+ * Слово о принятой занятости — одно у отдельного хода и у занятия места (#6634):
+ * называет место. Строку, которую сервер принял обрезанной (#6729), слово
+ * называет принятой, не отправленной, и несёт нудж (#6730).
+ */
+export function busyLine(text: string, realm: string): string {
+  const t = S.trims.get(statusAddress(realm)?.key ?? "");
+  const kept = t?.sent === text ? (t.doing ?? text) : text;
+  const line = `${L("занятость", "busyness")} ${placeLabel(realm)}: ${kept || L("(снята)", "(cleared)")}`;
+  return t?.sent === text ? `${line}; ${trimNudge(t)}` : line;
+}
 
 /** Место так, как его зовёт доска; адрес, не названный hello, — помечен, а не выдан за названный. */
 function placeLabel(realm: string): string {
@@ -184,7 +192,11 @@ function ledIn(realm: string): Standing | undefined {
     : extraIn(realm)?.standing;
 }
 
-const S = scoped(() => ({ lastPublished: "" }));
+const S = scoped(() => ({
+  lastPublished: "",
+  /** Последняя обрезка сервером по месту (ключ адреса): отправленная строка и что легло. */
+  trims: new Map<string, StatusTrim & { sent: string }>(),
+}));
 /** Последняя строка занятости, которую доска приняла от этого моста; пустая — снята. */
 export const publishedStatus = (): string => S.lastPublished;
 
@@ -214,8 +226,12 @@ export async function publishStatus(
     };
   const st = await publishStatusTo(addr.url, text, 5000, everyPlace ? null : addr.standingId);
   if (st.ok) {
-    if (addr.key === statusAddress()?.key) S.lastPublished = text;
-    rememberStatus(text, realm);
+    // Легла принятая строка: обрезанная сервером возвращается после перезапуска такой, какой легла.
+    const kept = st.trimmed?.doing ?? text;
+    if (st.trimmed) S.trims.set(addr.key, { ...st.trimmed, sent: text });
+    else S.trims.delete(addr.key);
+    if (addr.key === statusAddress()?.key) S.lastPublished = kept;
+    rememberStatus(kept, realm);
   }
   return st;
 }

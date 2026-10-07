@@ -41,6 +41,7 @@ import {
 } from "./places.ts";
 import { otherRealm, sameRealm } from "./realms.ts";
 import { batchForWatchdogs, noteRoomKind } from "./roomstack.ts";
+import { trimNudge, trimOf } from "./statuspost.ts";
 import { standingLog } from "./store.ts";
 import { emit, log } from "./streams.ts";
 import { type Standing, state } from "./transport.ts";
@@ -346,6 +347,8 @@ export function resumeStanding(): boolean {
 
 /** Кадр одной двери: кольцо, рассылка её клиентам, уведомление — как прежде у единственного места. */
 function deliverTo(d: Door, raw: string, frame: Frame | null, full: Frame | null): void {
+  // Ответ сокета на строку занятости, принятую обрезанной (#6729), — слово, не побудка (statuspost.ts).
+  if (full?.type === "status_trimmed") return trimmedNote(d, full);
   const seenPath = d.seenPath;
   const id = full?.type === "message" && typeof full.id === "string" ? full.id : "";
   // Копия события графа, уже предложенного или отданного (веер, fanout.ts), — никому.
@@ -403,6 +406,14 @@ function deliverTo(d: Door, raw: string, frame: Frame | null, full: Frame | null
 }
 
 /** Событие места другого графа несёт его ключ — клиент уведомлений знает, чьё оно (#5838). */
+/** status_trimmed — в лог моста и уведомлением клиенту; ни в кольцо, ни сторожу: агента он не будит. */
+function trimmedNote(d: Door, f: Frame): void {
+  const t = trimOf(f);
+  const text = `${t.doing === null ? "" : `«${t.doing}» — `}${trimNudge(t)}`;
+  log(`status_trimmed: ${text}`);
+  notify("info", keyed(d, { kind: "note", text }));
+}
+
 const keyed = (d: Door, ev: ChannelEvent): ChannelEvent =>
   d === H.door ? ev : { ...ev, key: d.key };
 

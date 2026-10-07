@@ -72,6 +72,14 @@ const registeredTextEn = (name, id) =>
   "\n  Attribution holds on the session; …";
 
 // Один ws-кадр сервера клиенту (без маски): FIN + opcode, длина в одной из трёх форм.
+/** Обрезка прозы по слову до max знаков с «…» — как api 0.108.0 (#6729). */
+function trimToWord(text, max) {
+  const chars = [...text];
+  const head = chars.slice(0, max - 1).join("");
+  const cut = head.lastIndexOf(" ");
+  return (cut > 0 ? head.slice(0, cut) : head).trimEnd() + "…";
+}
+
 function wsFrame(opcode, payload) {
   const data = Buffer.isBuffer(payload) ? payload : Buffer.from(payload, "utf8");
   let head;
@@ -374,10 +382,33 @@ export async function startFakeNks(opts = {}) {
         return req.socket.destroy();
       }
       if (st.statusGone) return json(res, 404, { error: "no such standing" }); // адрес повернул чужой connect
-      if (typeof text !== "string" || [...text].length > 70) {
+      // api 0.108.0 (#6729, дело №234): длиннее 64 — режется по слову с «…», 200 с warnings[];
+      // statusTrim: false — прежний сервер, отказ 422.
+      const trim = st.statusTrim && typeof text === "string" && [...text].length > 64;
+      if (!trim && (typeof text !== "string" || [...text].length > 70)) {
         return json(res, 422, { error: "busy line too long" });
       }
-      st.status = text;
+      const kept = trim ? trimToWord(text, 64) : text;
+      st.status = kept;
+      if (trim) {
+        st.counts.status_posts++;
+        const chan = st.channels.get(st.wsChannel.get(p.slice("/channel/status/".length)));
+        for (const pl of chan?.places.values() ?? [])
+          if (!standing_id || pl.standing_id === standing_id)
+            st.placeStatus.set(pl.standing_id, kept);
+        return json(res, 200, {
+          ok: true,
+          doing: kept,
+          warnings: [
+            {
+              code: "trimmed_to_limit",
+              message: "переназови: обрезано до 64",
+              doing: kept,
+              max: 64,
+            },
+          ],
+        });
+      }
       st.counts.status_posts++;
       // Строка держится у места: со standing_id — у одного места канала, без него — у всех (#5838).
       const chan = st.channels.get(st.wsChannel.get(p.slice("/channel/status/".length)));
@@ -445,6 +476,7 @@ export async function startFakeNks(opts = {}) {
         "helloPending", // what the next hello says was waiting in the queue
         "statusDelayMs", // hold the status POST open this long before answering
         "statusDrop", // close the connection under this many next status POSTs
+        "statusTrim", // a line over 64 is trimmed by word and answered 200 with warnings[] (api 0.108.0)
         "mcpDrop", // close the connection under this many next MCP POSTs (with mcpDropAction — only of that action)
         "mcpDropAction",
         "kartaTypes",

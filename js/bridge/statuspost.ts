@@ -9,6 +9,63 @@ export interface StatusOutcome {
   ok: boolean;
   body: string;
   code?: number;
+  /** Строка принята обрезанной (warnings[] trimmed_to_limit). */
+  trimmed?: StatusTrim;
+}
+
+/**
+ * Строка занятости длиннее предела ложится обрезанной по слову, полный текст —
+ * в истории места (граф nks-dev: #6729, нудж #6730; дело №234): ответ POST — 200
+ * с warnings[] кода trimmed_to_limit, кадр сокета — {type: "status_trimmed", code,
+ * doing, max, message}. doing — принятая строка, null — сервер её не назвал.
+ */
+export interface StatusTrim {
+  doing: string | null;
+  max: number | null;
+  message: string;
+}
+
+export const TRIMMED = "trimmed_to_limit";
+
+type Obj = Record<string, unknown>;
+const obj = (v: unknown): Obj => (v && typeof v === "object" ? (v as Obj) : {});
+
+/** Обрезка из предупреждения ответа или кадра сокета; поля ищутся и в data, и на верхнем уровне ответа. */
+export function trimOf(w: unknown, top: unknown = {}): StatusTrim {
+  const [a, b, c] = [obj(w), obj(obj(w).data), obj(top)];
+  const pick = (k: string): unknown => a[k] ?? b[k] ?? c[k];
+  const doing = pick("doing");
+  const max = Number(pick("max") ?? pick("limit"));
+  const message = pick("message");
+  return {
+    doing: typeof doing === "string" ? doing : null,
+    max: Number.isFinite(max) && max > 0 ? max : null,
+    message: typeof message === "string" ? message.trim() : "",
+  };
+}
+
+/** warnings[] кода trimmed_to_limit в теле удачного ответа; иначе undefined (тело не JSON — прежний сервер). */
+function trimmedIn(body: string): StatusTrim | undefined {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    return undefined;
+  }
+  const warnings = obj(parsed).warnings;
+  const w = Array.isArray(warnings) ? warnings.find((x) => obj(x).code === TRIMMED) : undefined;
+  return w ? trimOf(w, parsed) : undefined;
+}
+
+/** Нудж обрезки агенту: до скольких обрезано, слово сервера; ход — переназвать коротко. */
+export function trimNudge(t: StatusTrim): string {
+  if (t.message)
+    return L(`строка обрезана сервером: ${t.message}`, `the server trimmed the line: ${t.message}`);
+  const max = t.max ?? 64;
+  return L(
+    `сервер обрезал строку до ${max} знаков; полный текст — в истории места, переназови короче`,
+    `the server trimmed the line to ${max} characters; the full text is in the seat's history, rename it shorter`,
+  );
 }
 
 /** Тот же POST на названный адрес — для выхода, когда стояние уже отпущено, а адрес снят до этого. */
@@ -62,5 +119,6 @@ export async function publishStatusTo(
         `Refused (${res.status}) by the surface: ${body || "no body"}`,
       ),
     };
-  return { ok: true, body };
+  const trimmed = trimmedIn(body);
+  return { ok: true, body, ...(trimmed ? { trimmed } : {}) };
 }
