@@ -155,8 +155,9 @@ export function setupChannel(ctx: Context, say: Say, freshestRoot: () => string 
   // текст промпта): такт внимания шлёт голове кадр в час, каждый со своим id, и
   // ход в несколько часов копил в очереди OpenCode те же слова подряд (#6569).
   // Пока промпт не взят, тот же промпт в очередь второй раз не встаёт; ключ —
-  // весь текст, не тело: то же тело в другом деле — другое слово.
-  const queuedWakes = new Map<string, { session: string; word: string }>();
+  // весь текст, не тело: то же тело в другом деле — другое слово. О взятии
+  // OpenCode может молчать — как и пачка дела, слово ждёт его не дольше предела.
+  const queuedWakes = new Map<string, { session: string; word: string; at: number }>();
   // Гасится только пачка из одного кадра: пачка показывает лишь первые кадры
   // окна, а мост метит отданными все — у пачки больше одного кадра непоказанное
   // ушло бы вместе с ней.
@@ -167,6 +168,8 @@ export function setupChannel(ctx: Context, say: Say, freshestRoot: () => string 
   };
   const waiting = (session: string | null, word: string): boolean => {
     const id = session ?? freshestRoot();
+    for (const [k, q] of queuedWakes)
+      if (q.at + PENDING_MAX_MS <= Date.now()) queuedWakes.delete(k);
     return [...queuedWakes.values()].some((q) => q.session === id && q.word === word);
   };
 
@@ -312,7 +315,7 @@ export function setupChannel(ctx: Context, say: Say, freshestRoot: () => string 
             ).then((got) => {
               // Без id взятия не увидеть — повтор такого промпта не гасится.
               if (word === null || !got?.inbox || takenEarly.delete(got.inbox)) return;
-              queuedWakes.set(got.inbox, { session: got.session, word });
+              queuedWakes.set(got.inbox, { session: got.session, word, at: Date.now() });
               for (const k of queuedWakes.keys()) if (queuedWakes.size > 100) queuedWakes.delete(k);
             });
           }

@@ -327,6 +327,7 @@ const ENV_KEYS = [
   "ISKRON_KEEPALIVE_MS",
   "ISKRON_PERMISSION_WAIT_MS",
   "ISKRON_WAKE_MS",
+  "ISKRON_OPENCODE_PENDING_MS",
 ];
 
 let seq = 0;
@@ -1493,6 +1494,37 @@ test("a platform word that repeats one still waiting in the session's queue is n
     await delay(100);
     appendFileSync(`${b.events}.${pid}`, tact("t6", HOUR));
     await until(() => rec.prompts.length === 6, "the next hour's word after the take");
+  } finally {
+    await rec.stop();
+  }
+});
+
+// The take of a queued wake prompt is a signal OpenCode may never give (the case
+// piles wait for it no longer than their bound too): a word whose prompt has waited
+// untaken past that bound no longer holds back the same word.
+test("a platform word waiting untaken past the pending bound no longer holds back the same word", async () => {
+  const b = bridgeEnv("tact-silent");
+  const rec = await plugin({ ...b.env, ISKRON_OPENCODE_PENDING_MS: 400 }, { inboxIds: true });
+  try {
+    await serverTools(rec);
+    await rec.call("iskron_channel", { action: "connect" }, "s-tact-silent");
+    const pid = pidOf(b.log);
+    const HOUR = "Час на «вахта» — подними голову";
+    const tact = (id) =>
+      event("backlog", {
+        frames: [
+          { type: "message", id, origin: "platform", provenance: { via: "platform" }, body: HOUR },
+        ],
+        text: `Побудка: кадров 1\n\n${HOUR}`,
+      });
+    appendFileSync(`${b.events}.${pid}`, tact("t1"));
+    await until(() => rec.prompts.length === 1, "the first tact prompt");
+    appendFileSync(`${b.events}.${pid}`, tact("t2"));
+    await delay(150);
+    assert.equal(rec.prompts.length, 1, "within the bound the repeat is held back");
+    await delay(400);
+    appendFileSync(`${b.events}.${pid}`, tact("t3"));
+    await until(() => rec.prompts.length === 2, "the word after the bound, no take seen");
   } finally {
     await rec.stop();
   }
