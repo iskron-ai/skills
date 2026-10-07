@@ -575,15 +575,19 @@ test("a planned daemon change pauses a satellite whose bridge lives: its place a
   });
 });
 
-test("a pause asked while the daemon hands over is taken: the place and case wait on the pause record, not taken on the successor", async () => {
+// Ревью #355, п.3: пауза, принятая в окне передачи, держит то же, что обычный
+// iskron/suspend, — окно паузы перевзведено, занятость не снимается пределом передачи.
+test("a pause asked while the daemon hands over is taken: the place, case, idle window and busy line wait on the pause record, not taken on the successor", async () => {
   await withFake(async ({ fake, dir, bridge }) => {
-    const d = await updatableDaemon(dir);
+    const d = await updatableDaemon(dir, { ISKRON_BRIDGE_DAEMON_HANDOFF_MS: "1500" });
     try {
       await fake.control({ places: [{ karta: "931", name: SAT_CALLER, listening: true }] });
       const s = bridge({}, ["--satellite"]);
       await handshake(s);
       const r = await stand(s, satStand);
       assert.ok(!r.result?.isError, textOf(r));
+      const busy = await stand(s, { ...satStand, status: "спутник пишет" });
+      assert.ok(!busy.result?.isError, textOf(busy));
       await caseJoin(s, "№55");
       // Вызов в полёте держит сессию уходящего демона: пауза приходит в окно передачи.
       await fake.control({ listDelayMs: 4000 });
@@ -604,6 +608,12 @@ test("a pause asked while the daemon hands over is taken: the place and case wai
       );
       assert.equal(paused.cases, 1, JSON.stringify(paused));
       assert.doesNotMatch(journalOf(dir), /not taken: the daemon is handing over/);
+      const connects = fake.state.placeArgs.filter((a) => a.action === "connect");
+      assert.equal(
+        connects.at(-1)?.ttl_seconds,
+        21600,
+        `the pause re-arms the window:\n${journalOf(dir)}`,
+      );
       await waitFor(
         "the satellite through the successor",
         () => /through the machine's bridge daemon v99/.test(s.stderr),
@@ -611,7 +621,8 @@ test("a pause asked while the daemon hands over is taken: the place and case wai
       );
       assert.match(s.stderr, /is paused and waits on its pause record/);
       await endBridge(s);
-      await new Promise((res) => setTimeout(res, 500));
+      await new Promise((res) => setTimeout(res, 2500)); // за предел передачи
+      assert.equal(fake.state.status, "спутник пишет", `the busy line stays:\n${journalOf(dir)}`);
       assert.deepEqual(caseLeaves(fake), [], `no case left on a pause:\n${journalOf(dir)}`);
       assert.deepEqual(placeRevokes(fake), [], "the place is not revoked on a pause");
       assert.ok(fake.state.places.has(SAT_SEAT), "the place stays on the board");
@@ -645,6 +656,80 @@ test("a satellite whose bridge is gone when the daemon hands over ends as before
       assert.deepEqual(caseLeaves(fake), ["№66"], journalOf(dir));
       await waitFor("the place revoked", () => !fake.state.places.has(SAT_SEAT), 10_000);
       assert.deepEqual(placeRevokes(fake), [`${SAT_CALLER}.sub-1`], journalOf(dir));
+    } finally {
+      d.cleanup();
+    }
+  });
+});
+
+// Ревью #355, п.1: пауза передачи — не пауза iskron/suspend. Ребёнок, закрывший stdin
+// или умерший в окне передачи, к преемнику не вернётся: его прогон кончается, как на main.
+for (const [how, gone] of [
+  ["closes stdin", (s) => endBridge(s)],
+  ["dies", (s) => s.stop()],
+]) {
+  test(`a satellite whose child ${how} in the handover window ends its run: case left, place revoked`, async () => {
+    await withFake(async ({ fake, dir, bridge }) => {
+      const d = await updatableDaemon(dir, { ISKRON_BRIDGE_DAEMON_HANDOFF_MS: "1500" });
+      try {
+        await fake.control({ places: [{ karta: "931", name: SAT_CALLER, listening: true }] });
+        const s = bridge({}, ["--satellite"]);
+        await handshake(s);
+        const r = await stand(s, satStand);
+        assert.ok(!r.result?.isError, textOf(r));
+        await caseJoin(s, "№71");
+        d.bump(3000); // преемник встаёт не сразу — окно, в котором места ни у кого
+        await waitFor("the handover", () => /handing over to/.test(journalOf(dir)), 10_000);
+        await gone(s);
+        await waitFor("the run's case left", () => caseLeaves(fake).length > 0, 20_000).catch(
+          (e) => {
+            throw new Error(`${e.message}\n${journalOf(dir)}`);
+          },
+        );
+        assert.deepEqual(caseLeaves(fake), ["№71"], journalOf(dir));
+        await waitFor("the place revoked", () => !fake.state.places.has(SAT_SEAT), 10_000);
+        assert.deepEqual(placeRevokes(fake), [`${SAT_CALLER}.sub-1`], journalOf(dir));
+        const holds = readdirSync(join(dir, "standings")).filter((f) => f.endsWith(".hold"));
+        assert.deepEqual(holds, [], "no pause record outlives the run");
+      } finally {
+        d.cleanup();
+      }
+    });
+  });
+}
+
+// Ревью #355, п.2: вход в дело, ответивший, пока уходящий демон ждёт вызовов в
+// полёте, ложится в запись паузы — преемник принимает и его, и выходит из него на конце.
+test("a case joined while the daemon waits for calls in flight lands in the pause record and is left at the run's end", async () => {
+  await withFake(async ({ fake, dir, bridge }) => {
+    const d = await updatableDaemon(dir);
+    try {
+      await fake.control({ places: [{ karta: "931", name: SAT_CALLER, listening: true }] });
+      const s = bridge({}, ["--satellite"]);
+      await handshake(s);
+      const r = await stand(s, satStand);
+      assert.ok(!r.result?.isError, textOf(r));
+      await fake.control({ case_join_delay_ms: 2500 });
+      const joined = caseJoin(s, "№72");
+      await waitFor("the join at the server", () =>
+        fake.state.calls.some((c) => c.name === "iskron_case" && c.arguments.room === "№72"),
+      );
+      d.bump();
+      const j = await joined;
+      assert.ok(j.result && !j.result.isError, `the join answered: ${JSON.stringify(j)}`);
+      await fake.control({ case_join_delay_ms: 0 });
+      await waitFor(
+        "the satellite through the successor",
+        () => /through the machine's bridge daemon v99/.test(s.stderr),
+        30_000,
+      );
+      const after = await write(s, "after the change");
+      assert.ok(after.result && !after.result.isError, JSON.stringify(after));
+      await endBridge(s);
+      await waitFor("the run's case left", () => caseLeaves(fake).length > 0, 10_000).catch((e) => {
+        throw new Error(`${e.message}\n${s.stderr}\n${journalOf(dir)}`);
+      });
+      assert.deepEqual(caseLeaves(fake), ["№72"], journalOf(dir));
     } finally {
       d.cleanup();
     }
@@ -1887,13 +1972,27 @@ test("SIGTERM of the daemon with a satellite: the lost seat is said and the next
     const [first] = await waitFor("the daemon", () => daemonPids(dir)[0] && daemonPids(dir));
     process.kill(first, "SIGTERM");
     await waitFor("the successor daemon", () => daemonPids(dir).length === 2, 30_000);
-    const refused = await write(s, "sat-term");
-    assert.equal(
-      refused.result?.isError,
-      true,
-      `the lost satellite seat refuses the next call: ${JSON.stringify(refused)}`,
+    await waitFor(
+      "the word to the harness",
+      () =>
+        s.notifications.some((n) =>
+          /потеряно при смене демона/.test(JSON.stringify(n.params?.data ?? {})),
+        ),
+      10_000,
     );
-    assert.match(textOf(refused), /место спутника потеряно при смене демона/);
+    // Отказ держится на каждом вызове до нового iskron_stand, не на одном первом.
+    const before = fake.state.writes.length;
+    for (const name of ["sat-term-1", "sat-term-2"]) {
+      const refused = await write(s, name);
+      assert.equal(
+        refused.result?.isError,
+        true,
+        `the lost satellite seat refuses ${name}: ${JSON.stringify(refused)}`,
+      );
+      assert.match(textOf(refused), /место спутника потеряно при смене демона/);
+      assert.match(textOf(refused), /iskron_stand с satellite_of/);
+    }
+    assert.equal(fake.state.writes.length, before, "no refused write went out");
     assert.equal(fake.state.counts.unattributed, 0, JSON.stringify(fake.state.writes));
     const again = await stand(s, sat);
     assert.ok(!again.result?.isError, textOf(again));

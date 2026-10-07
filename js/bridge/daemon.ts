@@ -49,9 +49,11 @@ import { installCrashWords, startEngine } from "./engine.ts";
 import { errorMessage } from "./errors.ts";
 import { handoffsSettled } from "./handoff.ts";
 import { beginHandover, beginSessionHandover } from "./holdstate.ts";
+import { pauseForHandover } from "./pauserecord.ts";
+import { endUnreturnedPause } from "./runend.ts";
 import { type BridgeSession, openSession } from "./session.ts";
 import { log, setProcessLog } from "./streams.ts";
-import { localSuspend, pauseForHandover } from "./suspend.ts";
+import { localSuspend } from "./suspend.ts";
 import {
   pendNotice,
   startFreshnessWatch,
@@ -72,6 +74,8 @@ const HOME_CHECK_MS = ms("ISKRON_BRIDGE_DAEMON_HOME_CHECK_MS", 60_000);
 const SUCCESSOR_WAIT_MS = ms("ISKRON_BRIDGE_DAEMON_SUCCESSOR_WAIT_MS", 20_000);
 /** Сколько демон держит сессию, чей шов закрылся без bye (переподхват). */
 const GRACE_MS = ms("ISKRON_BRIDGE_DAEMON_GRACE_MS", 5_000);
+/** Сколько уходящий демон ждёт живой тонкий мост спутника на паузе передачи у преемника. */
+const RETURN_WAIT_MS = ms("ISKRON_BRIDGE_DAEMON_RETURN_WAIT_MS", 30_000);
 const JOURNAL_MAX = 256_000;
 
 /** Код выхода: демон этого гранта уже жив (или встаёт) — поднявшему ждать его, а не идти полным. */
@@ -138,6 +142,7 @@ export async function daemonMain(argv: string[]): Promise<void> {
   const sockets = new Set<Socket>();
   /** Области сессий, переданных преемнику: запрос паузы в окне передачи отвечается в них. */
   const handed = new Map<string, Scope>();
+  const answering = new Set<Promise<unknown>>();
   let draining = false;
   let counter = 0;
   let lastNotice: string | null = null;
@@ -165,17 +170,25 @@ export async function daemonMain(argv: string[]): Promise<void> {
     for (const so of sockets) writeFrame(so, { t: "handover", why });
     spawnDaemon(to, authDir, true); // преемник ждёт, пока этот отпустит вход
     // Спутник, чей тонкий мост жив, вернётся к преемнику: смена демона — пауза, не конец
-    // прогона (suspend.ts) — место и дела ждут его. Мост умер — спутник кончается, как прежде.
+    // прогона (pauserecord.ts) — место и дела ждут его. Мост умер — спутник кончается, как прежде.
+    const paused: [Scope, number][] = [];
     for (const [id, e] of engines) {
       if (!e.scope) continue;
       handed.set(id, e.scope);
-      if (attached.has(id) || ownPidAlive(bridgePids.get(id)))
-        runIn(e.scope, () => pauseForHandover(why));
+      const pid = bridgePids.get(id) ?? 0;
+      if (!attached.has(id) && !ownPidAlive(pid)) continue;
+      runIn(e.scope, () => pauseForHandover(why));
+      paused.push([e.scope, pid]);
     }
     await Promise.allSettled([...sessions.values()].map((s) => s.end(`daemon handover: ${why}`)));
+    await Promise.allSettled([...answering]); // ответ паузы окна передачи — до обрыва связи
     for (const so of sockets) so.end(); // связь оборвалась — вердикты, переотправка, переподхват
     // Сокеты мест — до вытеснения преемником или до предела (handoff.ts, #6586).
     await handoffsSettled();
+    // Мост ушёл в окне передачи, не вернув места, — прогон на паузе передачи кончается (runend.ts).
+    await Promise.allSettled(
+      paused.map(([scope, pid]) => runIn(scope, () => endUnreturnedPause(pid, RETURN_WAIT_MS))),
+    );
     log("handed over — leaving");
     setTimeout(() => process.exit(0), 300);
   };
@@ -220,10 +233,16 @@ export async function daemonMain(argv: string[]): Promise<void> {
     log: (m) => log(m),
     count: () => sessions.size,
     draining: () => draining,
-    // Пауза, запрошенная в окне передачи, уже стоит (pauseForHandover) — ответ её, а не отказ.
+    // Пауза, запрошенная в окне передачи: пауза передачи становится паузой харнеса —
+    // перевзвод окна и занятость, как у обычной (suspend.ts), — ответ её, а не отказ.
     answerDraining(id, msg) {
       const scope = handed.get(id);
-      return scope ? runIn(scope, () => localSuspend(msg)) : null;
+      const p = scope ? runIn(scope, () => localSuspend(msg)) : null;
+      if (p) {
+        answering.add(p);
+        void p.finally(() => answering.delete(p)).catch(() => {});
+      }
+      return p;
     },
     find: (id) => sessions.get(id) ?? null,
     open(hello) {

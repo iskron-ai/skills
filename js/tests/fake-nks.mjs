@@ -540,6 +540,7 @@ export async function startFakeNks(opts = {}) {
       if ("unattributed_rule" in patch) st.unattributedRule = patch.unattributed_rule; // правило отказа безавторному send (под structured)
       if (patch.unbind) st.standings.clear(); // привязки сессий к каналам потеряны, каналы и места целы
       if ("connect_delay_ms" in patch) st.connectDelayMs = Number(patch.connect_delay_ms) || 0;
+      if ("case_join_delay_ms" in patch) st.caseJoinDelayMs = Number(patch.case_join_delay_ms) || 0; // медленный вход в дело
       if ("send_conflict" in patch) st.sendConflict = patch.send_conflict || null; // текст отказа 409 не о безавторности
       if ("statusGone" in patch) st.statusGone = !!patch.statusGone; // статусный адрес повернули
       if (patch.revoke_access) st.access = null;
@@ -743,6 +744,8 @@ export async function startFakeNks(opts = {}) {
         st.calls.push({ name, arguments: structuredClone(sent ?? {}) });
         // Медленный api на выходе из дела (/control {case_leave_hang}): leave не отвечает вовсе.
         if (st.caseLeaveHang && name === "iskron_case" && sent?.action === "leave") return;
+        if (st.caseJoinDelayMs && name === "iskron_case" && sent?.action === "join")
+          await new Promise((r) => setTimeout(r, st.caseJoinDelayMs));
         const declared = DECLARED_ARGS[name];
         if (declared && sent && typeof sent === "object") {
           const ok = new Set([...declared, ...(st.futureArgs[name] ?? [])]);
