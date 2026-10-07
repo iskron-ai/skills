@@ -15,7 +15,8 @@
 // ones come with skill.updated, with realpath'd paths — so the list is read at the ask.
 /* eslint-disable @typescript-eslint/no-explicit-any -- hook payloads without a schema */
 import { readFileSync, realpathSync } from "node:fs";
-import { dirname, isAbsolute, relative } from "node:path";
+import { homedir } from "node:os";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 
 import { slashOf } from "./commands.ts";
 import type { Context } from "./plugin.ts";
@@ -71,8 +72,18 @@ async function skillDirs(ctx: Context): Promise<string[]> {
   return out;
 }
 
-/** Paths a reading call reaches, as it named them; null — a call that names more than paths. */
-function reached(call: Call, resources: readonly string[]): string[] | null {
+/**
+ * A path as OpenCode 2.0.24 resolves a tool's path (FileAccess.resolve): "~" and "~/…"
+ * from the home, a relative one from the session's directory; no base — null.
+ */
+export function absolute(p: string, base: string | null): string | null {
+  if (p === "~" || p.startsWith("~/")) return join(homedir(), p.slice(1));
+  if (isAbsolute(p)) return p;
+  return base ? resolve(base, p) : null;
+}
+
+/** Paths a reading call reaches; null — a call that names more than paths. */
+function reached(call: Call, resources: readonly string[], base: string | null): string[] | null {
   const out: string[] = [];
   for (const r of resources) {
     const dir = resourceDir(String(r));
@@ -83,8 +94,9 @@ function reached(call: Call, resources: readonly string[]): string[] | null {
   for (const key of ["path", "filePath"]) {
     const p = input[key];
     if (p === undefined) continue;
-    if (typeof p !== "string" || !isAbsolute(p)) return null;
-    out.push(p);
+    const abs = typeof p === "string" ? absolute(p, base) : null;
+    if (!abs) return null;
+    out.push(abs);
   }
   const pattern = input.pattern;
   if (call.tool === "glob" && typeof pattern === "string") {
@@ -105,13 +117,19 @@ export async function setupSkillReads(ctx: Context): Promise<void> {
     while (calls.size > CALLS) calls.delete(calls.keys().next().value as string);
   });
 
-  // Only an ask is lifted: an explicit deny of the user's config stays a deny.
+  // A relative path is the session's, and a session's hooks fire only in the instance
+  // whose directory it is (#5048) — so this instance's directory is the session's.
+  const loc = (ctx as { location?: { directory?: unknown } }).location;
+  const base = typeof loc?.directory === "string" && loc.directory ? loc.directory : null;
+
+  // Only an ask is lifted: an explicit deny of the user's config stays a deny. The
+  // evaluation does not tell a configured ask from the default one — both are lifted.
   await permission.hook("evaluate", async (e: any) => {
     if (e?.action !== "external_directory" || e.effect !== "ask") return;
     const id = e.source?.type === "tool" ? e.source.id : null;
     const call = typeof id === "string" ? calls.get(id) : undefined;
     if (!call || !READERS.has(call.tool)) return;
-    const paths = reached(call, Array.isArray(e.resources) ? e.resources : []);
+    const paths = reached(call, Array.isArray(e.resources) ? e.resources : [], base);
     if (!paths) return;
     const roots = await skillDirs(ctx);
     if (!roots.length) return;

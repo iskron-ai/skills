@@ -2999,10 +2999,34 @@ test("a delivery skill's files outside the working copy are read without an ask 
   symlinkSync(join(outside, "key"), join(set, "iskron", "references", "leak.md"));
 
   const refs = join(set, "iskron", "references");
-  const rec = await plugin({ ISKRON_BRIDGE_PATH: join(SANDBOX, "no-such-bridge.mjs") }, { skills });
+  // The session's directory — a relative path of a tool is resolved from it.
+  const work = join(home, "work");
+  mkdirSync(work);
+  const rec = await plugin(
+    { ISKRON_BRIDGE_PATH: join(SANDBOX, "no-such-bridge.mjs") },
+    { skills, location: { directory: work } },
+  );
   try {
     const ext = "external_directory";
     const read = (path) => rec.ask("read", { path }, ext, [`${dirname(path)}/*`]);
+    // OpenCode resolves "~/…" and a relative path itself and names the ask by the result.
+    const named = (path, abs) => rec.ask("read", { path }, ext, [`${dirname(abs)}/*`]);
+    const viaHome = `~/${basename(home)}/.agents/skills/iskron/references/phrasebook.md`;
+    assert.equal(
+      await named(viaHome, join(refs, "phrasebook.md")),
+      "allow",
+      "a path through ~ is read",
+    );
+    assert.equal(
+      await named("../.agents/skills/iskron/references/phrasebook.md", join(refs, "phrasebook.md")),
+      "allow",
+      "and a path relative to the session's directory",
+    );
+    assert.equal(
+      await named("../secrets/key", join(outside, "key")),
+      "ask",
+      "a relative path out of the skills keeps its ask",
+    );
     assert.equal(
       await read(join(refs, "phrasebook.md")),
       "allow",
