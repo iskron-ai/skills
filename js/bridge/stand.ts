@@ -36,6 +36,7 @@ import {
   ledKey,
   noteStandCwd,
   standingIdIn,
+  wasEvicted,
 } from "./hold.ts";
 import { keyOf } from "./holdrecord.ts";
 import { armRoleHook } from "./hook.ts";
@@ -59,7 +60,7 @@ import { otherRealm } from "./realms.ts";
 import { resumeFromDisk, takeLapsed } from "./resume.ts";
 import { resumeWords } from "./resumewords.ts";
 import { SATELLITE_TTL_S, satelliteGate, satelliteListenWord, ttlRefused } from "./satellite.ts";
-import { type Resumed, seatFor, suffixOf } from "./separate.ts";
+import { baseOf, type Resumed, seatFor, suffixOf } from "./separate.ts";
 import { SW } from "./standwords.ts";
 import { busyLine, publishStatus, standStatusOnly, TAKE_PATH, TURNED_GUIDANCE } from "./status.ts";
 import { state } from "./transport.ts";
@@ -94,7 +95,7 @@ wireEviction(async (place, cwd) => {
         arguments: {
           realm: place.realm,
           karta: String(place.karta),
-          name: place.name ?? "",
+          name: baseOf(place.name ?? ""), // отнятое место рядом proba.2 — основа proba, не proba.2
           ...(cwd && isDirectory(cwd) ? { cwd } : {}),
         },
       },
@@ -169,9 +170,11 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   await resolveAgainstLed(realm); // графы сличаются в одной форме @owner/slug (#5838)
   // Мост уже стоит на отдельном месте этого имени — туда же (#5407); take=true зовёт само имя.
   const led0 = state.standing && !otherRealm(state.standing.realm, realm) ? state.standing : null;
-  const onSuffix =
+  const ledSuffix =
     !!base && !!led0 && String(led0.karta) === String(karta) && !!suffixOf(base, led0.name ?? "");
-  if (onSuffix && a.take !== true) name = led0?.name ?? name;
+  // Отнятое место рядом — не возврат: следующее место рядом выбирает seatFor (#6706).
+  const besideTaken = ledSuffix && !!led0 && wasEvicted(led0.realm, led0.karta, led0.name ?? "");
+  if (ledSuffix && !besideTaken && a.take !== true) name = led0?.name ?? name;
   if (parts && fitted && fitted.cut.length) {
     const what = fitted.cut.map(SW.cutPart).join(", ");
     nameNotes.push(SW.nameCut(joinName(parts), NAME_MAX, name, what));
@@ -186,9 +189,16 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
     lines.push(unresolved);
     return done(true);
   }
-  const led = leadsOtherPlace(realm, karta, name);
+  const led = besideTaken ? null : leadsOtherPlace(realm, karta, name);
   if (led && a.take !== true) {
-    lines.push(otherPlaceWord(led, keyOf(realm, karta, name), name === ledName()));
+    // Просимое место слушает другая сессия — take=true не советуется: вытеснить её — словом человека (#6706).
+    const b = await call("iskron_channel", { action: "list", realm });
+    const heard = b.isError
+      ? false
+      : readBoard(b).entries.some(
+          (e) => e.karta === karta && nameOf(e.address) === name && listens(e),
+        );
+    lines.push(otherPlaceWord(led, keyOf(realm, karta, name), name === ledName(), heard));
     return done(true);
   }
   // Место другого графа встаёт рядом на канале, который держит мост (#5838).

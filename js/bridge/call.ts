@@ -78,9 +78,18 @@ export function unresolvedRefusal(realm: unknown): string | null {
 }
 
 /** Слово отказа: совет по тому, ЧЕМ просимое место отличается от ведомого. */
-export function otherPlaceWord(led: string, asked: string, sameName = false): string {
-  const advice =
-    led === asked
+export function otherPlaceWord(
+  led: string,
+  asked: string,
+  sameName = false,
+  heardByOther = false,
+): string {
+  const advice = heardByOther
+    ? L(
+        `место ${asked} слушает другая сессия — его не трогай и take=true не зови: вытеснить её — только словом человека; своё место этого моста — ${led}: оставайся на нём либо назови другое name`,
+        `another session listens on the seat ${asked} — leave it alone and do not call take=true: evicting it is only on the human's word; this bridge's own seat is ${led}: stay on it or pass another name`,
+      )
+    : led === asked
       ? L(
           "ключи совпали — это то же место: повтори iskron_stand с take=true, чтобы переоткрыть его сознательно",
           "the keys match — it is the same seat: repeat iskron_stand with take=true to reopen it deliberately",

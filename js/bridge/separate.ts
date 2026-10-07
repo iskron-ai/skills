@@ -23,6 +23,12 @@ export function suffixOf(base: string, name: string): number | null {
   return /^[1-9]\d*$/.test(tail) && Number(tail) >= 2 ? Number(tail) : null;
 }
 
+/** Основа имени места рядом: `база.N` (N ≥ 2) → `база`; иное имя — само. */
+export function baseOf(name: string): string {
+  const m = /^(.+)\.([1-9]\d*)$/.exec(name);
+  return m && Number(m[2]) >= 2 ? m[1] : name;
+}
+
 /** Имя отдельного места номер n; не укладывается в предел — база укорачивается с конца. */
 export const suffixed = (base: string, n: number): string =>
   base.slice(0, NAME_MAX - `.${n}`.length).replace(/[-._]+$/, "") + `.${n}`;

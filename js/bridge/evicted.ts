@@ -9,6 +9,7 @@ import { broadcast, ledKey, notify, releaseStanding, wasEvicted } from "./hold.t
 import { readHoldRecord, sessionOfBridge } from "./holdrecord.ts";
 import { H, whenEvicted } from "./holdstate.ts";
 import { holdWords } from "./holdwords.ts";
+import { baseOf } from "./separate.ts";
 import { standingLog } from "./store.ts";
 import { log } from "./streams.ts";
 import { type Standing, state } from "./transport.ts";
@@ -81,10 +82,13 @@ async function yieldPlace(key: string, url: string, code: number): Promise<void>
   const name = s?.name ?? "";
   if (CFG.satellite || !s || !name || !beside)
     return announceEvicted(code, holdWords.evicted(code));
-  announceEvicted(code, holdWords.evictedBeside(code, name));
+  const base = baseOf(name); // место рядом отняли — следующее рядом с основой, не proba.2.2
+  announceEvicted(code, holdWords.evictedBeside(code, name, base));
   const r = await standBeside(key, s, name, beside);
   if (!r) return;
-  const text = r.ok ? holdWords.besideDone(name, r.text) : holdWords.besideFailed(name, r.text);
+  const text = r.ok
+    ? holdWords.besideDone(name, r.text)
+    : holdWords.besideFailed(name, base, r.text);
   log(text);
   standingLog(`evicted ${key}: ${r.ok ? "stood beside" : "could not stand beside"}`);
   // В сессию — словом, как возврат места без её хода (#5366): плагин вкладывает его промптом.

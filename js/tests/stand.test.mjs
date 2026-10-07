@@ -733,6 +733,79 @@ test("iskron_stand after an eviction: the bridge stands beside on name.2 by itse
   assert.match(textOf(taken), /hello получен/, "a fresh hello after the explicit take");
 });
 
+// The seat beside taken in its turn (#6706): the next seat beside comes from the
+// base name — proba.3, not proba.2.2 — and a repeated stand with the base name
+// comes back there by register, not into a refusal advising take=true.
+async function besideTaken(t, dropBoard = 0) {
+  const { fake, bridge } = await ready(t);
+  await fake.control({ places: [{ karta: "931", name: "proba", listening: true }] });
+  const args = { realm: "nks-dev", karta: 931, name: "proba" };
+  const first = await bridge.call("tools/call", { name: "iskron_stand", arguments: args });
+  assert.match(textOf(first), /стояние (?:@tester:)?proba\.2 — роль #931/, textOf(first));
+  await until(() => fake.state.ws.size === 1, "the socket");
+  if (dropBoard) await fake.control({ mcpDrop: dropBoard, mcpDropAction: "iskron_channel:list" });
+  await fake.control({ ws_close: 4000 });
+  // Закрытый сокет фейк снимает со слуха; держатель-вытеснитель ставится после этого.
+  await until(() => fake.state.places.get("931:proba.2")?.listening === false, "the closed socket");
+  await fake.control({
+    places: [
+      { karta: "931", name: "proba", listening: true },
+      { karta: "931", name: "proba.2", listening: true },
+    ],
+  });
+  return { fake, bridge, args };
+}
+const besideWord = (bridge, re) => () =>
+  bridge.notifications
+    .map((n) => n.params?.data)
+    .find((d) => d?.kind === "resumed" && re.test(d.text ?? ""));
+
+test("iskron_stand after the seat beside is taken: the bridge stands on proba.3, and a repeated stand by the base name comes back there", async (t) => {
+  const { fake, bridge, args } = await besideTaken(t);
+  const word = besideWord(bridge, /мост встал рядом/);
+  await until(word, `the word about the seat beside:\n${bridge.stderr}`);
+  assert.match(word().text, /стояние (?:@tester:)?proba\.3 — роль #931/, word().text);
+  assert.equal(fake.state.placeArgs.filter((p) => p.action === "connect").at(-1)?.name, "proba.3");
+  const connects = fake.state.counts.connect;
+  const again = await bridge.call("tools/call", { name: "iskron_stand", arguments: args });
+  const text = textOf(again);
+  assert.ok(!again.result?.isError, text);
+  assert.match(text, /стояние @tester:proba\.3 — .*сокет уже держит этот мост — register/, text);
+  assert.equal(fake.state.counts.connect, connects, "no new connect");
+});
+
+test("iskron_stand after the seat beside is taken and the network kept it from standing beside: a repeated stand by the base name stands on proba.3", async (t) => {
+  const { fake, bridge, args } = await besideTaken(t, 8);
+  await until(besideWord(bridge, /встать рядом мост не смог/), `the failure:\n${bridge.stderr}`);
+  await fake.control({ mcpDrop: 0, mcpDropAction: null });
+  const again = await bridge.call("tools/call", { name: "iskron_stand", arguments: args });
+  const text = textOf(again);
+  assert.ok(!again.result?.isError, text);
+  assert.match(text, /стояние (?:@tester:)?proba\.3 — роль #931/, text);
+  assert.match(text, /Слушать: /, "the seat beside is heard here");
+  assert.equal(fake.state.placeArgs.filter((p) => p.action === "connect").at(-1)?.name, "proba.3");
+});
+
+// One seat per bridge: asked for a seat another live session listens on, the
+// refusal does not advise take=true — that would evict it without the human's word.
+test("iskron_stand refusal «already leads another seat»: no take=true advice when another session listens on the asked seat", async (t) => {
+  const { fake, bridge } = await ready(t);
+  const own = { realm: "nks-dev", karta: 931, name: "zond" };
+  assert.ok(
+    !(await bridge.call("tools/call", { name: "iskron_stand", arguments: own })).result?.isError,
+  );
+  await fake.control({ places: [{ karta: "931", name: "proba", listening: true }] });
+  const r = await bridge.call("tools/call", {
+    name: "iskron_stand",
+    arguments: { ...own, name: "proba" },
+  });
+  const text = textOf(r);
+  assert.ok(r.result?.isError, text);
+  assert.match(text, /уже ведёт место/, text);
+  assert.match(text, /слушает другая сессия/, text);
+  assert.doesNotMatch(text, /iskron_stand с take=true/, text);
+});
+
 // In the window of the bridge's own reopening (a close that is not an eviction —
 // the socket is re-opened after 2 s) the busy line goes out too, and the answer
 // says the hearing comes back by itself — not «another holder, take» (#6509).
