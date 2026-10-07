@@ -238,12 +238,14 @@ const held = (): Place | null =>
  * `forget` стирает и записи держания — снятие, мёртвый токен. `keepBeside` —
  * тот же канал переоткрывается: места рядом остаются на нём. `own` — отпускает
  * своё close, revoke или leave сессии: released несёт own, сторожа уходят без тревоги (#6638).
+ * `keepBusy` — место на паузе (suspend.ts): переданный сокет, не взятый преемником, занятость не снимает.
  */
 export function releaseStanding(
   reason: string,
   forget = false,
   keepBeside = false,
   own = false,
+  keepBusy = false,
 ): void {
   if (forget && H.currentKey) dropHoldRecord(H.currentKey);
   if (!keepBeside) dropAllExtras(reason, forget, own);
@@ -263,7 +265,8 @@ export function releaseStanding(
     broadcast(released);
     notify("info", released); // плагин OpenCode снимает holding по этому слову, не по догадке (#5140)
   }
-  letGo(H.holder, handover && !forget ? (key ?? null) : null, reason, H.currentStatusUrl); // до вытеснения (#6586)
+  const busy = keepBusy ? null : H.currentStatusUrl;
+  letGo(H.holder, handover && !forget ? (key ?? null) : null, reason, busy); // до вытеснения (#6586)
   H.holder = null;
   for (const w of [...H.helloWaiters]) w(null); // ждать hello от отпущенного сокета незачем
   H.door?.close();

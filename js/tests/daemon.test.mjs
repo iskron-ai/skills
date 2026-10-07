@@ -509,52 +509,279 @@ test("writes sent while the daemon hands over land signed — the place comes ba
   });
 });
 
-// Ревью #280, пп.2–3: место спутника записи держания не имеет и смену демона не
-// переживает — агент узнаёт это словами, а не безавторными записями.
-test("a satellite whose place did not survive the daemon change is told so: the next call is refused aloud", async () => {
+// Дело №151: место субагента кончается только явным актом, смена демона — пауза.
+// Передача преемнику при живом мосте спутника ставит паузу сама (bridge/suspend.ts):
+// место, дела и занятость ждут, мост возвращает место у преемника по записи паузы.
+const SAT_CALLER = "host.repo.opus-5";
+const SAT_SEAT = `931:${SAT_CALLER}.sub-1`;
+const satStand = { realm: "nks-dev", karta: 931, satellite_of: `@tester:${SAT_CALLER}` };
+const caseJoin = (s, room) =>
+  s.request("tools/call", {
+    name: "iskron_case",
+    arguments: { realm: "nks-dev", action: "join", room },
+  });
+const caseLeaves = (fake) =>
+  fake.state.calls
+    .filter((c) => c.name === "iskron_case" && c.arguments.action === "leave")
+    .map((c) => c.arguments.room);
+const placeRevokes = (fake) =>
+  fake.state.calls
+    .filter((c) => c.name === "iskron_channel" && c.arguments.action === "revoke")
+    .map((c) => c.arguments.standing);
+const endBridge = (b) =>
+  new Promise((r) => {
+    if (b.proc.exitCode !== null) return r();
+    b.proc.once("exit", r);
+    b.proc.stdin.end();
+  });
+
+test("a planned daemon change pauses a satellite whose bridge lives: its place and case stay and come back on the successor", async () => {
   await withFake(async ({ fake, dir, bridge }) => {
     const d = await updatableDaemon(dir);
     try {
-      const CALLER = "host.repo.opus-5";
-      await fake.control({ places: [{ karta: "931", name: CALLER, listening: true }] });
+      await fake.control({ places: [{ karta: "931", name: SAT_CALLER, listening: true }] });
       const s = bridge({}, ["--satellite"]);
       await handshake(s);
-      const sat = { realm: "nks-dev", karta: 931, satellite_of: `@tester:${CALLER}` };
-      const r = await stand(s, sat);
+      const r = await stand(s, satStand);
       assert.ok(!r.result?.isError, textOf(r));
+      await caseJoin(s, "№44");
       d.bump();
       await waitFor(
         "the satellite through the successor",
         () => /through the machine's bridge daemon v99/.test(s.stderr),
         30_000,
       );
-      await waitFor(
-        "the word to the harness",
-        () =>
-          s.notifications.some((n) =>
-            /потеряно при смене демона/.test(JSON.stringify(n.params?.data ?? {})),
-          ),
-        10_000,
-      );
-      // Плановая смена закрывает потерянное место так же, как SIGTERM (#6593).
+      const after = await write(s, "after the change");
       assert.ok(
-        !fake.state.places.has(`931:${CALLER}.sub-1`),
-        `the lost satellite seat is off the board:\n${journalOf(dir)}`,
+        after.result && !after.result.isError,
+        `the seat came back: ${JSON.stringify(after)}\n${s.stderr}\n${journalOf(dir)}`,
       );
-      // Отказ держится на каждом вызове до нового iskron_stand, не на одном первом.
-      const before = fake.state.writes.length;
-      for (const name of ["after-1", "after-2"]) {
-        const refused = await write(s, name);
-        assert.equal(refused.result?.isError, true, `${name}: ${JSON.stringify(refused)}`);
-        assert.match(textOf(refused), /место спутника потеряно при смене демона/);
-        assert.match(textOf(refused), /iskron_stand с satellite_of/);
+      assert.equal(fake.state.counts.unattributed, 0, JSON.stringify(fake.state.writes));
+      assert.deepEqual(caseLeaves(fake), [], `no case left on the change:\n${journalOf(dir)}`);
+      assert.deepEqual(placeRevokes(fake), [], "the place is not revoked on the change");
+      assert.ok(fake.state.places.has(SAT_SEAT), "the place stays on the board");
+      assert.ok(
+        !s.notifications.some((n) => n.params?.data?.kind === "lost"),
+        "no lost word to the harness",
+      );
+      // Настоящий конец прогона — у преемника: дело, принятое по записи паузы, покидается.
+      await endBridge(s);
+      await waitFor("the run's case left", () => caseLeaves(fake).length > 0, 10_000);
+      assert.deepEqual(caseLeaves(fake), ["№44"], journalOf(dir));
+      assert.deepEqual(placeRevokes(fake), [`${SAT_CALLER}.sub-1`], journalOf(dir));
+    } finally {
+      d.cleanup();
+    }
+  });
+});
+
+// Ревью #355, п.3: пауза, принятая в окне передачи, держит то же, что обычный
+// iskron/suspend, — окно паузы перевзведено, занятость не снимается пределом передачи.
+test("a pause asked while the daemon hands over is taken: the place, case, idle window and busy line wait on the pause record, not taken on the successor", async () => {
+  await withFake(async ({ fake, dir, bridge }) => {
+    const d = await updatableDaemon(dir, { ISKRON_BRIDGE_DAEMON_HANDOFF_MS: "1500" });
+    try {
+      await fake.control({ places: [{ karta: "931", name: SAT_CALLER, listening: true }] });
+      const s = bridge({}, ["--satellite"]);
+      await handshake(s);
+      const r = await stand(s, satStand);
+      assert.ok(!r.result?.isError, textOf(r));
+      const busy = await stand(s, { ...satStand, status: "спутник пишет" });
+      assert.ok(!busy.result?.isError, textOf(busy));
+      await caseJoin(s, "№55");
+      // Вызов в полёте держит сессию уходящего демона: пауза приходит в окно передачи.
+      await fake.control({ listDelayMs: 4000 });
+      const lists = fake.state.counts.list;
+      s.request("tools/call", {
+        name: "iskron_channel",
+        arguments: { action: "list", realm: "nks-dev" },
+      }).catch(() => {});
+      await waitFor("the slow call at the server", () => fake.state.counts.list > lists);
+      d.bump();
+      await waitFor("the handover", () => /handing over to/.test(journalOf(dir)), 10_000);
+      await fake.control({ listDelayMs: 0 });
+      const paused = (await s.request("iskron/suspend", {})).result;
+      assert.equal(
+        paused?.suspended,
+        true,
+        `${JSON.stringify(paused)}\n${s.stderr}\n${journalOf(dir)}`,
+      );
+      assert.equal(paused.cases, 1, JSON.stringify(paused));
+      assert.doesNotMatch(journalOf(dir), /not taken: the daemon is handing over/);
+      const connects = fake.state.placeArgs.filter((a) => a.action === "connect");
+      assert.equal(
+        connects.at(-1)?.ttl_seconds,
+        21600,
+        `the pause re-arms the window:\n${journalOf(dir)}`,
+      );
+      await waitFor(
+        "the satellite through the successor",
+        () => /through the machine's bridge daemon v99/.test(s.stderr),
+        30_000,
+      );
+      assert.match(s.stderr, /is paused and waits on its pause record/);
+      await endBridge(s);
+      await new Promise((res) => setTimeout(res, 2500)); // за предел передачи
+      assert.equal(fake.state.status, "спутник пишет", `the busy line stays:\n${journalOf(dir)}`);
+      assert.deepEqual(caseLeaves(fake), [], `no case left on a pause:\n${journalOf(dir)}`);
+      assert.deepEqual(placeRevokes(fake), [], "the place is not revoked on a pause");
+      assert.ok(fake.state.places.has(SAT_SEAT), "the place stays on the board");
+      const holds = readdirSync(join(dir, "standings")).filter((f) => f.endsWith(".hold"));
+      assert.equal(holds.length, 1, "a pause record keeps the place");
+      const rec = JSON.parse(readFileSync(join(dir, "standings", holds[0]), "utf8"));
+      assert.deepEqual(
+        rec.cases.map((c) => c.room),
+        ["№55"],
+      );
+    } finally {
+      d.cleanup();
+    }
+  });
+});
+
+// Перепроверка #355: перевзвод паузы в окне передачи, проигравший потолок ответа, сервер
+// всё равно исполнит — уходящий демон ждёт его, и запись паузы идёт за повёрнутым адресом.
+test("a pause asked in the handover window whose re-arm loses the cap still lands its turned address in the pause record", async () => {
+  await withFake(async ({ fake, dir, bridge }) => {
+    // Предел передачи короче ответа connect: ничто, кроме самого перевзвода, демона не держит.
+    const d = await updatableDaemon(dir, { ISKRON_BRIDGE_DAEMON_HANDOFF_MS: "500" });
+    try {
+      await fake.control({ places: [{ karta: "931", name: SAT_CALLER, listening: true }] });
+      const s = bridge({}, ["--satellite"]);
+      await handshake(s);
+      const r = await stand(s, satStand);
+      assert.ok(!r.result?.isError, textOf(r));
+      // Вызов в полёте другой сессии держит уходящий демон на связи после конца сессии
+      // спутника, но отпускает его раньше ответа connect.
+      const other = bridge({});
+      await handshake(other);
+      await fake.control({ listDelayMs: 1500 });
+      const lists = fake.state.counts.list;
+      other
+        .request("tools/call", {
+          name: "iskron_channel",
+          arguments: { action: "list", realm: "nks-dev" },
+        })
+        .catch(() => {});
+      await waitFor("the slow call at the server", () => fake.state.counts.list > lists);
+      d.bump();
+      await waitFor("the handover", () => /handing over to/.test(journalOf(dir)), 10_000);
+      await fake.control({ listDelayMs: 0, connect_delay_ms: 3000 });
+      const connects = fake.state.counts.connect;
+      const paused = (await s.request("iskron/suspend", {})).result;
+      assert.equal(paused?.suspended, true, `${JSON.stringify(paused)}\n${journalOf(dir)}`);
+      await waitFor(
+        "the outgoing daemon gone",
+        () => /handed over — leaving/.test(journalOf(dir)),
+        30_000,
+      );
+      await endBridge(s);
+      await waitFor("the re-arm at the server", () => fake.state.counts.connect > connects);
+      await new Promise((res) => setTimeout(res, 300)); // запись за ответом — если демон её дождался
+      const holds = readdirSync(join(dir, "standings")).filter((f) => f.endsWith(".hold"));
+      assert.equal(holds.length, 1, "a pause record keeps the place");
+      const rec = JSON.parse(readFileSync(join(dir, "standings", holds[0]), "utf8"));
+      assert.ok(
+        rec.url.includes(fake.state.wsToken),
+        `the record follows the turned address: ${rec.url} vs ${fake.state.wsToken}\n${journalOf(dir)}`,
+      );
+    } finally {
+      d.cleanup();
+    }
+  });
+});
+
+test("a satellite whose bridge is gone when the daemon hands over ends as before: case left, place revoked", async () => {
+  await withFake(async ({ fake, dir, bridge }) => {
+    const d = await updatableDaemon(dir, { ISKRON_BRIDGE_DAEMON_GRACE_MS: "60000" });
+    try {
+      await fake.control({ places: [{ karta: "931", name: SAT_CALLER, listening: true }] });
+      const s = bridge({}, ["--satellite"]);
+      await handshake(s);
+      const r = await stand(s, satStand);
+      assert.ok(!r.result?.isError, textOf(r));
+      await caseJoin(s, "№66");
+      await s.stop(); // SIGKILL: шов оборван без bye, сессия в окне переподхвата
+      await waitFor("the seam closed", () => /closed without bye/.test(journalOf(dir)));
+      d.bump();
+      await waitFor("the run's case left", () => caseLeaves(fake).length > 0, 30_000);
+      assert.deepEqual(caseLeaves(fake), ["№66"], journalOf(dir));
+      await waitFor("the place revoked", () => !fake.state.places.has(SAT_SEAT), 10_000);
+      assert.deepEqual(placeRevokes(fake), [`${SAT_CALLER}.sub-1`], journalOf(dir));
+    } finally {
+      d.cleanup();
+    }
+  });
+});
+
+// Ревью #355, п.1: пауза передачи — не пауза iskron/suspend. Ребёнок, закрывший stdin
+// или умерший в окне передачи, к преемнику не вернётся: его прогон кончается, как на main.
+for (const [how, gone] of [
+  ["closes stdin", (s) => endBridge(s)],
+  ["dies", (s) => s.stop()],
+]) {
+  test(`a satellite whose child ${how} in the handover window ends its run: case left, place revoked`, async () => {
+    await withFake(async ({ fake, dir, bridge }) => {
+      const d = await updatableDaemon(dir, { ISKRON_BRIDGE_DAEMON_HANDOFF_MS: "1500" });
+      try {
+        await fake.control({ places: [{ karta: "931", name: SAT_CALLER, listening: true }] });
+        const s = bridge({}, ["--satellite"]);
+        await handshake(s);
+        const r = await stand(s, satStand);
+        assert.ok(!r.result?.isError, textOf(r));
+        await caseJoin(s, "№71");
+        d.bump(3000); // преемник встаёт не сразу — окно, в котором места ни у кого
+        await waitFor("the handover", () => /handing over to/.test(journalOf(dir)), 10_000);
+        await gone(s);
+        await waitFor("the run's case left", () => caseLeaves(fake).length > 0, 20_000).catch(
+          (e) => {
+            throw new Error(`${e.message}\n${journalOf(dir)}`);
+          },
+        );
+        assert.deepEqual(caseLeaves(fake), ["№71"], journalOf(dir));
+        await waitFor("the place revoked", () => !fake.state.places.has(SAT_SEAT), 10_000);
+        assert.deepEqual(placeRevokes(fake), [`${SAT_CALLER}.sub-1`], journalOf(dir));
+        const holds = readdirSync(join(dir, "standings")).filter((f) => f.endsWith(".hold"));
+        assert.deepEqual(holds, [], "no pause record outlives the run");
+      } finally {
+        d.cleanup();
       }
-      assert.equal(fake.state.writes.length, before, "no refused write went out");
-      assert.equal(fake.state.counts.unattributed, 0, JSON.stringify(fake.state.writes));
-      const again = await stand(s, sat);
-      assert.ok(!again.result?.isError, textOf(again));
-      await write(s, "signed");
-      assert.equal(fake.state.counts.unattributed, 0, JSON.stringify(fake.state.writes));
+    });
+  });
+}
+
+// Ревью #355, п.2: вход в дело, ответивший, пока уходящий демон ждёт вызовов в
+// полёте, ложится в запись паузы — преемник принимает и его, и выходит из него на конце.
+test("a case joined while the daemon waits for calls in flight lands in the pause record and is left at the run's end", async () => {
+  await withFake(async ({ fake, dir, bridge }) => {
+    const d = await updatableDaemon(dir);
+    try {
+      await fake.control({ places: [{ karta: "931", name: SAT_CALLER, listening: true }] });
+      const s = bridge({}, ["--satellite"]);
+      await handshake(s);
+      const r = await stand(s, satStand);
+      assert.ok(!r.result?.isError, textOf(r));
+      await fake.control({ case_join_delay_ms: 2500 });
+      const joined = caseJoin(s, "№72");
+      await waitFor("the join at the server", () =>
+        fake.state.calls.some((c) => c.name === "iskron_case" && c.arguments.room === "№72"),
+      );
+      d.bump();
+      const j = await joined;
+      assert.ok(j.result && !j.result.isError, `the join answered: ${JSON.stringify(j)}`);
+      await fake.control({ case_join_delay_ms: 0 });
+      await waitFor(
+        "the satellite through the successor",
+        () => /through the machine's bridge daemon v99/.test(s.stderr),
+        30_000,
+      );
+      const after = await write(s, "after the change");
+      assert.ok(after.result && !after.result.isError, JSON.stringify(after));
+      await endBridge(s);
+      await waitFor("the run's case left", () => caseLeaves(fake).length > 0, 10_000).catch((e) => {
+        throw new Error(`${e.message}\n${s.stderr}\n${journalOf(dir)}`);
+      });
+      assert.deepEqual(caseLeaves(fake), ["№72"], journalOf(dir));
     } finally {
       d.cleanup();
     }
@@ -1797,13 +2024,27 @@ test("SIGTERM of the daemon with a satellite: the lost seat is said and the next
     const [first] = await waitFor("the daemon", () => daemonPids(dir)[0] && daemonPids(dir));
     process.kill(first, "SIGTERM");
     await waitFor("the successor daemon", () => daemonPids(dir).length === 2, 30_000);
-    const refused = await write(s, "sat-term");
-    assert.equal(
-      refused.result?.isError,
-      true,
-      `the lost satellite seat refuses the next call: ${JSON.stringify(refused)}`,
+    await waitFor(
+      "the word to the harness",
+      () =>
+        s.notifications.some((n) =>
+          /потеряно при смене демона/.test(JSON.stringify(n.params?.data ?? {})),
+        ),
+      10_000,
     );
-    assert.match(textOf(refused), /место спутника потеряно при смене демона/);
+    // Отказ держится на каждом вызове до нового iskron_stand, не на одном первом.
+    const before = fake.state.writes.length;
+    for (const name of ["sat-term-1", "sat-term-2"]) {
+      const refused = await write(s, name);
+      assert.equal(
+        refused.result?.isError,
+        true,
+        `the lost satellite seat refuses ${name}: ${JSON.stringify(refused)}`,
+      );
+      assert.match(textOf(refused), /место спутника потеряно при смене демона/);
+      assert.match(textOf(refused), /iskron_stand с satellite_of/);
+    }
+    assert.equal(fake.state.writes.length, before, "no refused write went out");
     assert.equal(fake.state.counts.unattributed, 0, JSON.stringify(fake.state.writes));
     const again = await stand(s, sat);
     assert.ok(!again.result?.isError, textOf(again));
