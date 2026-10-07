@@ -356,6 +356,47 @@ test("opencode rituals template: two instances of one directory speak once", asy
   assert.equal(String(input.result.content).split("[iskron] мерж").length - 1, 1);
 });
 
+// Without a call id there is no key to be once by: each instance of the
+// directory speaks for itself — two words, not silence.
+test("opencode rituals template: two instances, a call without an id, each speak", async () => {
+  const s = await standServer(ritualSample(surfacesPath));
+  const one = await s.instance(s.own);
+  const two = await s.instance(`${s.own}/`);
+  s.sessions.set("s1", { dir: s.own });
+  const input = {
+    tool: "shell",
+    id: undefined,
+    sessionID: "s1",
+    status: "completed",
+    input: { command: "gh pr merge 12 --squash" },
+    result: { content: "✓ Squashed and merged pull request #12", metadata: { exit: 0 } },
+  };
+  await one.call("execute.after", input);
+  await two.call("execute.after", input);
+  await s.stop();
+  assert.equal(String(input.result.content).split("[iskron] мерж").length - 1, 2);
+});
+
+// A call without an id has nothing to be once by: the first such call must not
+// take the key `undefined` and silence every later reminder.
+test("opencode rituals template: calls without an id each get the reminder", async () => {
+  const after = await loadPlugin();
+  for (const n of [1, 2]) {
+    const input = {
+      tool: "shell",
+      id: undefined,
+      status: "completed",
+      input: { command: "git push" },
+      result: {
+        content: "To github.com:o/r.git\n * [new branch]      b -> b",
+        metadata: { exit: 0 },
+      },
+    };
+    await after(input);
+    assert.ok(String(input.result.content).includes("[iskron] пуш"), `call ${n}`);
+  }
+});
+
 // A quiet push prints no `To <remote>`, and a cut tail (`| tail -1`, `| head -1`)
 // makes its output indistinguishable from a refusal — so the state of git speaks:
 // after the call HEAD equals @{push} only when the remote took the push. The
