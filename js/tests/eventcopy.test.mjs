@@ -12,6 +12,7 @@ import { test } from "node:test";
 import { redundantCopy } from "../bridge/fanout.ts";
 import { RoomBatch } from "../bridge/roomstack.ts";
 import { StaleBurst } from "../bridge/stale.ts";
+import { deliveredKeys } from "../shared/seen.ts";
 import { graphPosed, progress } from "./room-frames.mjs";
 
 process.env.ISKRON_OPENCODE_BATCH_MS = "50";
@@ -37,6 +38,19 @@ test("a live case copy dies before a stale inbox copy of its event waiting in th
   d.stale.note(stale, () => {});
   assert.equal(redundantCopy(caseCopy(), d), true);
   d.stale.drop();
+});
+
+test("a live case copy dies after the stale inbox copy of its event was handed in a burst", () => {
+  const d = {
+    ring: [],
+    seen: new Set(),
+    seenPath: join(mkdtempSync(join(tmpdir(), "iskron-evcopy-")), "x.seen"),
+    stale: new StaleBurst(),
+    roomBatch: new RoomBatch(),
+  };
+  for (const k of deliveredKeys({ ...inbox(), stale: true })) d.seen.add(k);
+  assert.equal(redundantCopy(caseCopy(), d), true);
+  assert.equal(redundantCopy(inbox(), d), false, "a live inbox copy still wakes");
 });
 
 const opencode = () =>

@@ -34,7 +34,7 @@ function trimOf(w: unknown, top: unknown): StatusTrim {
   const [a, b, c] = [obj(w), obj(obj(w).data), obj(top)];
   const pick = (k: string): unknown => a[k] ?? b[k] ?? c[k];
   const doing = pick("doing");
-  const max = Number(pick("max") ?? pick("limit"));
+  const max = Number(pick("max"));
   const message = pick("message");
   return {
     doing: typeof doing === "string" ? doing : null,

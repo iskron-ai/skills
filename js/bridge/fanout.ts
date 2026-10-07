@@ -43,7 +43,7 @@ export function isDelivered(keys: string[], seen: Set<string>, seenPath: string)
 
 /**
  * Метка события, если эту копию предлагать незачем: событие уже отдано (живой копией;
- * лежалой — только для лежалой же) или другая его копия ещё ждёт в кольце либо в пачке
+ * лежалой — для лежалой же и для копии дела) или другая его копия ещё ждёт в кольце либо в пачке
  * и будет предложена и так. Кадр, вытесненный из кольца неотданным, не держит событие:
  * следующая копия предлагается. Живая копия вынимает лежалую из копящейся пачки.
  */
@@ -61,7 +61,7 @@ function redundantEvent(
   // инбокса не держит — та несёт событие текстом и вынимает её из лежалой пачки.
   const room = isRoomCopy(frame);
   const holds = (f: Frame | null): boolean => eventKeyOf(f) === ev && (room || !isRoomCopy(f));
-  const keys = stale ? [ev, `evs:${ev.slice(3)}`] : [ev];
+  const keys = stale || room ? [ev, `evs:${ev.slice(3)}`] : [ev];
   if (isDelivered(keys, seen, seenPath) || ring.some((r) => holds(r.frame))) return ev;
   if ((stale || room) && burst.hasEvent(ev, !room)) return ev;
   if (!room) burst.dropEvent(ev);
