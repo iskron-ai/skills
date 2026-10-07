@@ -5230,6 +5230,39 @@ test("question kinds under the Monitor watchdog: another seat's answer to my que
   await wd.done;
 });
 
+// #6868 and the fold of a key's lines (#6718): the question kinds and the
+// withdrawal of a question to me do not fold into a later line of the same key.
+test("question kinds under the Monitor watchdog: a question to me, its withdrawal and an ack do not fold into a later line of the key", async (t) => {
+  const { fake, dir, key } = await connected(t, {
+    env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "10000" },
+  });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog", dir, key, 20_000);
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
+  const withdrawn = askWithdrawn(91, 90);
+  withdrawn.line.verdict = "partial";
+  await sendRoom(fake, ask(90));
+  await sendRoom(fake, withdrawn);
+  await sendRoom(fake, ack(92, 89, ME));
+  await sendRoom(
+    fake,
+    roomFrame("progress", {
+      entry_id: 93,
+      key: "выкат: сегодня?",
+      line: { done: "дальше", verdict: "ok" },
+    }),
+  );
+  await new Promise((r) => setTimeout(r, 1000));
+  await nudge(fake);
+  await waitFor(() => wd.out.includes("[999]"), "the word to me", 3000);
+  const flat = wd.out.replace(/\n/g, " ");
+  assert.match(flat, /спрашивает роль/, `the question folded:\n${wd.out}`);
+  assert.match(flat, /вопрос \[90\] снят/, `the withdrawal folded:\n${wd.out}`);
+  assert.match(flat, /ответ \[89\] принят/, `the ack folded:\n${wd.out}`);
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
 // The withdrawal of a question to me names only the ask's number: the exit
 // watchdog gets it in a new process, and the bridge may have restarted since
 // the ask. The bridge keeps the ask in the seat's .seen and marks the withdrawal.
