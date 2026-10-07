@@ -16,11 +16,11 @@
 // that ships to other repos) must carry the very filters this repo runs, so
 // the projection cannot drift from its source.
 //
-// ISKRON_HOOKS_SETTINGS / ISKRON_HOOKS_SURFACES point the probe at any copy (a
-// past revision) so it can be shown red before a fix.
+// ISKRON_HOOKS_SETTINGS / ISKRON_HOOKS_SURFACES / ISKRON_HOOKS_TEMPLATE point
+// the probe at any copy (a past revision) so it can be shown red before a fix.
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { after, test } from "node:test";
@@ -33,7 +33,8 @@ const settingsPath = process.env.ISKRON_HOOKS_SETTINGS ?? join(root, ".claude", 
 const surfacesPath =
   process.env.ISKRON_HOOKS_SURFACES ??
   join(root, "skills", "iskronify", "references", "harness-surfaces.md");
-const templatePath = join(root, "skills", "iskronify", "references", "hooks.md");
+const templatePath =
+  process.env.ISKRON_HOOKS_TEMPLATE ?? join(root, "skills", "iskronify", "references", "hooks.md");
 
 // [command, output, wakes push?, wakes merge?]
 const cases = [
@@ -200,6 +201,34 @@ const fake = mkdtempSync(join(tmpdir(), "guard-link-"));
 mkdirSync(join(fake, ".claude", "projects", "p", "memory"), { recursive: true });
 symlinkSync(join(fake, ".claude", "projects", "p", "memory"), join(fake, "link"), "dir");
 after(() => rmSync(fake, { recursive: true, force: true }));
+// links under a home of its own: the path is resolved component by component,
+// as realpath -m — a dangling link by its target, `..` in a link's target after
+// the link before it; past 40 hops or a cycle the guard blocks (closed on failure)
+// physical, so that a hop is a hop of the chain (/tmp, /var are links on macOS)
+const home = realpathSync(mkdtempSync(join(tmpdir(), "guard-home-")));
+mkdirSync(join(home, ".claude", "projects", "x", "memory", "sub"), { recursive: true });
+mkdirSync(join(home, "safe", "sub"), { recursive: true });
+after(() => rmSync(home, { recursive: true, force: true }));
+const chain = (name, n, target) => {
+  const dir = join(home, "chains", name);
+  mkdirSync(dir, { recursive: true });
+  for (let i = 0; i < n; i++)
+    symlinkSync(i === n - 1 ? target : join(dir, `l${i + 1}`), join(dir, `l${i}`));
+  return join(dir, "l0");
+};
+const cycle = join(home, "chains", "cycle");
+mkdirSync(cycle, { recursive: true });
+symlinkSync(join(cycle, "b"), join(cycle, "a"));
+symlinkSync(join(cycle, "a"), join(cycle, "b"));
+const memoryFile = join(home, ".claude", "projects", "x", "memory", "f");
+// alias.md → jump/../note.md, jump → <dir>/sub: the target is <dir>/note.md
+const dotdot = (name, dir) => {
+  const at = join(home, "dotdot", name);
+  mkdirSync(at, { recursive: true });
+  symlinkSync(join(dir, "sub"), join(at, "jump"));
+  symlinkSync("jump/../note.md", join(at, "alias.md"));
+  return join(at, "alias.md");
+};
 const guardCases = [
   ["Write", { file_path: join(memory, "MEMORY.md") }, 2],
   ["Write", { file_path: `${join(fake, "link")}/MEMORY.md` }, 2],
@@ -208,23 +237,58 @@ const guardCases = [
   ["NotebookEdit", { notebook_path: join(memory, "n.ipynb"), new_source: "x" }, 2],
   ["NotebookEdit", { notebook_path: join(tmpdir(), "n.ipynb"), new_source: "x" }, 0],
   ["Write", { file_path: join(tmpdir(), "a.md") }, 0],
+  ["Write", { file_path: chain("nine", 9, memoryFile) }, 2, home],
+  ["Write", { file_path: chain("eight", 8, memoryFile) }, 2, home],
+  ["Write", { file_path: chain("safe", 3, join(home, "safe", "f")) }, 0, home],
+  ["Write", { file_path: join(cycle, "a") }, 2, home],
+  ["Write", { file_path: chain("dangling", 1, join(dirname(memoryFile), "new.md")) }, 2, home],
+  ["Write", { file_path: dotdot("memory", dirname(memoryFile)) }, 2, home],
+  ["Write", { file_path: dotdot("safe", join(home, "safe")) }, 0, home],
+  ["Write", { file_path: `${join(home, "safe", "a")}/../b.md` }, 0, home],
+  ["Write", { file_path: chain("forty", 40, join(home, "safe", "f")) }, 0, home],
+  ["Write", { file_path: chain("forty-one", 41, join(home, "safe", "f")) }, 2, home],
+  // a case-insensitive disk (APFS, Windows) takes any spelling for the same folder
+  ["Write", { file_path: join(home, ".claude", "projects", "x", "MEMORY", "f") }, 2, home],
+  ["Write", { file_path: join(home, ".Claude", "projects", "x", "memory", "f") }, 2, home],
+  ["Write", { file_path: join(home, ".claude", "PROJECTS", "x", "memory", "f") }, 2, home],
+  ["Write", { file_path: join(home, "notes", "Memory", "f") }, 0, home],
 ];
 for (const [where, groups] of [
   ["settings", () => settings.hooks.PreToolUse ?? []],
   ["hooks.md", templateGuard],
 ]) {
-  for (const [tool, toolInput, code] of guardCases) {
+  for (const [tool, toolInput, code, HOME] of guardCases) {
     test(`memory-guard (${where}): ${tool} ${Object.values(toolInput)[0]} → ${code}`, () => {
       const hooks = guardOf(groups(), tool);
       assert.ok(hooks.length, `a PreToolUse hook matches ${tool}`);
       const payload = JSON.stringify({ tool_name: tool, tool_input: toolInput });
-      const codes = hooks.map(
-        (h) => spawnSync("bash", ["-c", h.command], { input: payload, encoding: "utf8" }).status,
-      );
-      assert.ok(codes.includes(code) && codes.every((c) => c === 0 || c === code), codes);
+      const env = HOME ? { ...process.env, HOME } : process.env;
+      // POSIX sh too: dash on Linux, bash in posix mode on macOS
+      for (const shell of ["bash", "sh"]) {
+        const codes = hooks.map(
+          (h) =>
+            spawnSync(shell, ["-c", h.command], { input: payload, encoding: "utf8", env }).status,
+        );
+        assert.ok(
+          codes.includes(code) && codes.every((c) => c === 0 || c === code),
+          `${shell} exit codes: ${codes}`,
+        );
+      }
     });
   }
 }
+
+// One rule in both carriers: this repo's guard is the template's, but for the
+// words it says.
+test(
+  "memory-guard: this repo runs the template's guard",
+  { skip: !!(process.env.ISKRON_HOOKS_SETTINGS || process.env.ISKRON_HOOKS_TEMPLATE) },
+  () => {
+    const logic = (groups) =>
+      guardOf(groups, "Write").map((h) => h.command.replace(/echo '.*' >&2/, "echo … >&2"));
+    assert.deepEqual(logic(settings.hooks.PreToolUse ?? []), logic(templateGuard()));
+  },
+);
 
 // every `jq -e '<filter>'` a hook command runs (the push hook runs two)
 const filtersOf = (command) => [...command.matchAll(/jq -e '([^']+)'/g)].map((m) => m[1]);
@@ -594,7 +658,7 @@ test("opencode rituals template: another forge's merge (fj) wakes by outcome", a
 
 test(
   "iskronify template carries the filters this repo runs",
-  { skip: !!process.env.ISKRON_HOOKS_SETTINGS },
+  { skip: !!(process.env.ISKRON_HOOKS_SETTINGS || process.env.ISKRON_HOOKS_TEMPLATE) },
   () => {
     const skill = readFileSync(templatePath, "utf8");
     for (const h of bashHooks) {
