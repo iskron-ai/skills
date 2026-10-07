@@ -59,11 +59,11 @@ function trimmedIn(body: string): StatusTrim | undefined {
 }
 
 /** Слово о кадре сокета status_trimmed — в лог моста и клиенту; агента кадр не будит. */
-export function trimmedNote(frame: unknown): string {
+export function trimmedEvent(frame: unknown): { kind: "note"; text: string } {
   const t = trimOf(frame);
   const text = `${t.doing === null ? "" : `«${t.doing}» — `}${trimNudge(t)}`;
   log(`status_trimmed: ${text}`);
-  return text;
+  return { kind: "note", text };
 }
 
 /** Нудж обрезки агенту: до скольких обрезано, слово сервера; ход — переназвать коротко. */

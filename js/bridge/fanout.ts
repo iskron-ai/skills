@@ -6,6 +6,7 @@ import { statSync } from "node:fs";
 import { type Frame } from "../shared/channel.ts";
 import { eventKeyOf, isRoomCopy, seenIds } from "../shared/seen.ts";
 import { type StaleBurst } from "./stale.ts";
+import { log } from "./streams.ts";
 
 /**
  * Последнее прочтение каждого файла .seen и его отпечаток (inode, размер, mtime).
@@ -45,7 +46,7 @@ export function isDelivered(keys: string[], seen: Set<string>, seenPath: string)
  * и будет предложена и так. Кадр, вытесненный из кольца неотданным, не держит событие:
  * следующая копия предлагается. Живая копия вынимает лежалую из копящейся пачки.
  */
-export function redundantCopy(
+function redundantEvent(
   frame: Frame | null,
   ring: readonly { frame: Frame | null }[],
   seen: Set<string>,
@@ -64,4 +65,13 @@ export function redundantCopy(
   if (stale && burst.hasEvent(ev, !room)) return ev;
   if (!room) burst.dropEvent(ev);
   return "";
+}
+
+/** Копию предлагать незачем (redundantEvent) — строкой в лог моста, и true. */
+export function redundantCopy(...args: Parameters<typeof redundantEvent>): boolean {
+  const ev = redundantEvent(...args);
+  const id = args[0]?.id;
+  if (ev)
+    log(`frame ${typeof id === "string" ? id : "?"} carries ${ev} already offered — not raised`);
+  return !!ev;
 }
